@@ -918,7 +918,11 @@
       "generating": "正在生成分鏡提示詞...",
       "creating": "正在生成漫畫頁面...",
       "complete": "生成完成！",
-      "step": "步驟 {current}/{total}"
+      "step": "步驟 {current}/{total}",
+      "analysisTitle": "參考圖分析結果",
+      "promptTitle": "生成的提示詞",
+      "clickToExpand": "點擊展開/收起",
+      "noAnalysis": "未進行圖像分析（使用手動描述）"
     },
     "messages": {
       "uploadFirst": "請先上傳參考圖",

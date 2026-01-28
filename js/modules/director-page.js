@@ -1214,11 +1214,15 @@ class DirectorPage {
             currentStep++;
             this.updateProgress(currentStep, totalSteps, '正在分析参考图...');
             const imageAnalysis = await this.analyzeReferenceImage();
+            // 显示分析结果
+            this.showAnalysisResult(imageAnalysis);
 
             // Step 2: 生成分镜提示词
             currentStep++;
             this.updateProgress(currentStep, totalSteps, '正在生成分镜提示词...');
             const comicPrompt = await this.generateComicPrompt(imageAnalysis, sceneDescription, panelCount, layout);
+            // 显示生成的提示词
+            this.showPromptResult(comicPrompt);
 
             // Step 3-N: 生成多张漫画页面
             let successCount = 0;
@@ -1464,6 +1468,8 @@ class DirectorPage {
             currentStep++;
             this.updateProgress(currentStep, totalSteps, '正在分析参考图...');
             const imageAnalysis = await this.analyzeReferenceImage();
+            // 显示分析结果
+            this.showAnalysisResult(imageAnalysis);
 
             // 为每个提示词生成漫画页面
             for (let i = 0; i < prompts.length; i++) {
@@ -1473,6 +1479,8 @@ class DirectorPage {
                 currentStep++;
                 this.updateProgress(currentStep, totalSteps, `生成第 ${i + 1}/${prompts.length} 张：构建提示词...`);
                 const comicPrompt = await this.generateComicPrompt(imageAnalysis, sceneDescription, panelCount, layout);
+                // 显示当前场景的提示词（多场景模式下会更新显示）
+                this.showPromptResult(comicPrompt);
 
                 // 生成漫画页面
                 currentStep++;
@@ -1744,6 +1752,12 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`;
         const progressArea = document.getElementById('directorProgressArea');
         const resultArea = document.getElementById('directorResultArea');
         
+        // 获取国际化文本
+        const i18n = window.i18n;
+        const analysisTitle = i18n?.t('director.progress.analysisTitle') || '参考图分析结果';
+        const promptTitle = i18n?.t('director.progress.promptTitle') || '生成的提示词';
+        const clickToExpand = i18n?.t('director.progress.clickToExpand') || '点击展开/收起';
+        
         if (progressArea) {
             progressArea.classList.remove('hidden');
             progressArea.innerHTML = `
@@ -1756,6 +1770,47 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`;
                         <div id="directorProgressBar" class="h-full bg-gradient-to-r from-blue-400 to-purple-500 rounded-full transition-all duration-500" style="width: 0%"></div>
                     </div>
                     <p class="text-white opacity-50 text-sm mt-2" id="directorProgressStep">步骤 1/4</p>
+                    
+                    <!-- 可折叠面板容器 -->
+                    <div class="mt-6 max-w-lg mx-auto space-y-3">
+                        <!-- 分析结果面板 -->
+                        <div id="directorAnalysisPanel" class="hidden bg-white bg-opacity-5 border border-white border-opacity-10 rounded-lg overflow-hidden">
+                            <div class="flex justify-between items-center cursor-pointer p-3 hover:bg-white hover:bg-opacity-5 transition-colors" onclick="window.directorPage.togglePanel('analysis')">
+                                <span class="text-white text-sm font-medium flex items-center">
+                                    <i class="fas fa-search-plus mr-2 text-blue-400"></i>
+                                    ${analysisTitle}
+                                </span>
+                                <div class="flex items-center">
+                                    <span class="text-white text-opacity-50 text-xs mr-2">${clickToExpand}</span>
+                                    <i id="directorAnalysisArrow" class="fas fa-chevron-down text-white text-opacity-50 transition-transform duration-300"></i>
+                                </div>
+                            </div>
+                            <div id="directorAnalysisContent" class="max-h-0 overflow-hidden transition-all duration-300 ease-out">
+                                <div class="p-3 pt-0 border-t border-white border-opacity-10">
+                                    <div id="directorAnalysisText" class="text-white text-opacity-80 text-sm font-mono whitespace-pre-wrap text-left max-h-48 overflow-y-auto"></div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- 提示词面板 -->
+                        <div id="directorPromptPanel" class="hidden bg-white bg-opacity-5 border border-white border-opacity-10 rounded-lg overflow-hidden">
+                            <div class="flex justify-between items-center cursor-pointer p-3 hover:bg-white hover:bg-opacity-5 transition-colors" onclick="window.directorPage.togglePanel('prompt')">
+                                <span class="text-white text-sm font-medium flex items-center">
+                                    <i class="fas fa-magic mr-2 text-purple-400"></i>
+                                    ${promptTitle}
+                                </span>
+                                <div class="flex items-center">
+                                    <span class="text-white text-opacity-50 text-xs mr-2">${clickToExpand}</span>
+                                    <i id="directorPromptArrow" class="fas fa-chevron-down text-white text-opacity-50 transition-transform duration-300"></i>
+                                </div>
+                            </div>
+                            <div id="directorPromptContent" class="max-h-0 overflow-hidden transition-all duration-300 ease-out">
+                                <div class="p-3 pt-0 border-t border-white border-opacity-10">
+                                    <div id="directorPromptText" class="text-white text-opacity-80 text-sm font-mono whitespace-pre-wrap text-left max-h-48 overflow-y-auto"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             `;
         }
@@ -1789,6 +1844,86 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`;
         if (resultArea) {
             resultArea.classList.remove('hidden');
         }
+    }
+
+    // 显示分析结果
+    showAnalysisResult(text) {
+        const panel = document.getElementById('directorAnalysisPanel');
+        const textEl = document.getElementById('directorAnalysisText');
+        
+        if (!panel || !textEl) {
+            console.warn('[DirectorPage] 分析结果面板元素不存在');
+            return;
+        }
+        
+        // 如果没有分析结果，显示提示信息
+        const i18n = window.i18n;
+        const noAnalysis = i18n?.t('director.progress.noAnalysis') || '未进行图像分析（使用手动描述）';
+        
+        textEl.textContent = text || noAnalysis;
+        panel.classList.remove('hidden');
+        
+        // 添加淡入动画
+        panel.style.opacity = '0';
+        requestAnimationFrame(() => {
+            panel.style.transition = 'opacity 0.3s ease-out';
+            panel.style.opacity = '1';
+        });
+        
+        console.log('[DirectorPage] 显示分析结果:', text?.substring(0, 100) + '...');
+    }
+
+    // 显示提示词结果
+    showPromptResult(text) {
+        const panel = document.getElementById('directorPromptPanel');
+        const textEl = document.getElementById('directorPromptText');
+        
+        if (!panel || !textEl) {
+            console.warn('[DirectorPage] 提示词面板元素不存在');
+            return;
+        }
+        
+        textEl.textContent = text || '';
+        panel.classList.remove('hidden');
+        
+        // 添加淡入动画
+        panel.style.opacity = '0';
+        requestAnimationFrame(() => {
+            panel.style.transition = 'opacity 0.3s ease-out';
+            panel.style.opacity = '1';
+        });
+        
+        console.log('[DirectorPage] 显示提示词:', text?.substring(0, 100) + '...');
+    }
+
+    // 切换面板展开/折叠
+    togglePanel(panelType) {
+        const contentId = panelType === 'analysis' ? 'directorAnalysisContent' : 'directorPromptContent';
+        const arrowId = panelType === 'analysis' ? 'directorAnalysisArrow' : 'directorPromptArrow';
+        
+        const content = document.getElementById(contentId);
+        const arrow = document.getElementById(arrowId);
+        
+        if (!content || !arrow) {
+            console.warn('[DirectorPage] 面板元素不存在:', panelType);
+            return;
+        }
+        
+        const isExpanded = content.classList.contains('max-h-48');
+        
+        if (isExpanded) {
+            // 收起
+            content.classList.remove('max-h-48');
+            content.classList.add('max-h-0');
+            arrow.style.transform = 'rotate(0deg)';
+        } else {
+            // 展开
+            content.classList.remove('max-h-0');
+            content.classList.add('max-h-48');
+            arrow.style.transform = 'rotate(180deg)';
+        }
+        
+        console.log('[DirectorPage] 切换面板:', panelType, isExpanded ? '收起' : '展开');
     }
 
     // 显示结果（单图模式）

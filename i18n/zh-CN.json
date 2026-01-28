@@ -757,7 +757,11 @@
       "generating": "正在生成分镜提示词...",
       "creating": "正在生成漫画页面...",
       "complete": "生成完成！",
-      "step": "步骤 {current}/{total}"
+      "step": "步骤 {current}/{total}",
+      "analysisTitle": "参考图分析结果",
+      "promptTitle": "生成的提示词",
+      "clickToExpand": "点击展开/收起",
+      "noAnalysis": "未进行图像分析（使用手动描述）"
     },
     "messages": {
       "uploadFirst": "请先上传参考图",
