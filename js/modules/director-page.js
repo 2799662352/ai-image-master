@@ -784,7 +784,7 @@ class DirectorPage {
         }
     }
 
-    // 渲染模板列表（包含编辑按钮）
+    // 渲染模板列表（包含编辑按钮）- Kinetic Typography / Cyberpunk 风格
     renderTemplateList() {
         const container = document.getElementById('directorTemplateList');
         if (!container) return;
@@ -792,39 +792,39 @@ class DirectorPage {
         const i18n = window.i18n;
         let html = '';
         
-        // 内置模板图标配置
+        // 内置模板图标配置 - Cyberpunk 风格
         const builtinIcons = {
-            anime: { icon: 'fa-film', bg: 'bg-[#FCE300]' },
-            manga: { icon: 'fa-book-open', bg: 'bg-[#27272A] border-2 border-[#3F3F46]' },
-            movie: { icon: 'fa-video', bg: 'bg-[#FCE300]' },
-            webtoon: { icon: 'fa-mobile-alt', bg: 'bg-[#FCE300]' },
-            comic: { icon: 'fa-mask', bg: 'bg-[#FCE300]' },
-            illustration: { icon: 'fa-paint-brush', bg: 'bg-[#FCE300]' }
+            anime: { icon: 'fa-film', bg: 'bg-[#FCE300]', textColor: 'text-black' },
+            manga: { icon: 'fa-book-open', bg: 'bg-[#27272A] border-2 border-[#3F3F46]', textColor: 'text-white' },
+            movie: { icon: 'fa-video', bg: 'bg-[#FCE300]', textColor: 'text-black' },
+            webtoon: { icon: 'fa-mobile-alt', bg: 'bg-[#FCE300]', textColor: 'text-black' },
+            comic: { icon: 'fa-mask', bg: 'bg-[#FCE300]', textColor: 'text-black' },
+            illustration: { icon: 'fa-paint-brush', bg: 'bg-[#FCE300]', textColor: 'text-black' }
         };
         
-        // 渲染内置模板
+        // 渲染内置模板 - Cyberpunk 风格卡片
         for (const key in this.styleTemplates) {
             const template = this.styleTemplates[key];
-            const icons = builtinIcons[key] || { icon: 'fa-palette', bg: 'bg-pink-500' };
+            const icons = builtinIcons[key] || { icon: 'fa-palette', bg: 'bg-[#FCE300]', textColor: 'text-black' };
             const isModified = this.templateOverrides[key] !== undefined;
             const isSelected = this.currentTemplate === key;
             
             html += `
-                <div class="template-card cursor-pointer border-2 ${isSelected ? 'border-pink-500 bg-pink-50' : 'border-gray-200 hover:border-pink-400'} rounded-none p-4 transition-all relative" data-template="${key}">
+                <div class="template-card cursor-pointer border-2 ${isSelected ? 'border-[#FCE300] bg-[#FCE300] bg-opacity-10' : 'border-[#3F3F46] hover:border-[#FCE300]'} bg-[#27272A] rounded-none p-4 transition-all relative group" data-template="${key}">
                     <div class="flex items-start space-x-3">
                         <div class="w-12 h-12 ${icons.bg} rounded-none flex items-center justify-center flex-shrink-0">
-                            <i class="fas ${icons.icon} text-white text-xl"></i>
+                            <i class="fas ${icons.icon} ${icons.textColor} text-xl"></i>
                         </div>
                         <div class="flex-1 min-w-0">
-                            <h4 class="font-bold text-gray-800 flex items-center">
+                            <h4 class="font-bold text-[#FAFAFA] flex items-center uppercase tracking-tight">
                                 ${template.name}
-                                ${isModified ? '<span class="ml-2 text-xs bg-yellow-100 text-yellow-700 px-1 rounded">已修改</span>' : ''}
+                                ${isModified ? '<span class="ml-2 text-xs bg-[#FCE300] text-black px-1 font-bold uppercase">已修改</span>' : ''}
                             </h4>
-                            <p class="text-gray-500 text-sm mt-1">${i18n?.t(`director.templates.${key}.desc`) || ''}</p>
+                            <p class="text-[#A1A1AA] text-sm mt-1">${i18n?.t(`director.templates.${key}.desc`) || ''}</p>
                         </div>
                     </div>
                     <button onclick="event.stopPropagation(); window.directorPage.openTemplateEditor('${key}', true)" 
-                            class="absolute top-2 right-2 w-8 h-8 bg-gray-100 hover:bg-pink-100 text-gray-500 hover:text-pink-500 rounded-full flex items-center justify-center transition-colors cursor-pointer"
+                            class="absolute top-2 right-2 w-8 h-8 bg-[#3F3F46] hover:bg-[#FCE300] text-[#A1A1AA] hover:text-black rounded-none flex items-center justify-center transition-all cursor-pointer"
                             title="${i18n?.t('director.templateModal.edit') || '编辑'}">
                         <i class="fas fa-edit text-sm"></i>
                     </button>
@@ -832,27 +832,27 @@ class DirectorPage {
             `;
         }
         
-        // 渲染自定义模板
+        // 渲染自定义模板 - Cyberpunk 风格
         for (const key in this.customTemplates) {
             const template = this.customTemplates[key];
             const isSelected = this.currentTemplate === key;
             
             html += `
-                <div class="template-card cursor-pointer border-2 ${isSelected ? 'border-pink-500 bg-pink-50' : 'border-gray-200 hover:border-pink-400'} rounded-none p-4 transition-all relative" data-template="${key}">
+                <div class="template-card cursor-pointer border-2 ${isSelected ? 'border-[#FCE300] bg-[#FCE300] bg-opacity-10' : 'border-[#3F3F46] hover:border-[#FCE300]'} bg-[#27272A] rounded-none p-4 transition-all relative group" data-template="${key}">
                     <div class="flex items-start space-x-3">
-                        <div class="w-12 h-12 bg-gradient-to-br from-pink-400 to-purple-500 rounded-none flex items-center justify-center flex-shrink-0">
+                        <div class="w-12 h-12 bg-gradient-to-br from-[#EC4899] to-[#8B5CF6] rounded-none flex items-center justify-center flex-shrink-0">
                             <i class="fas fa-star text-white text-xl"></i>
                         </div>
                         <div class="flex-1 min-w-0">
-                            <h4 class="font-bold text-gray-800 flex items-center">
+                            <h4 class="font-bold text-[#FAFAFA] flex items-center uppercase tracking-tight">
                                 ${template.name}
-                                <span class="ml-2 text-xs bg-purple-100 text-purple-700 px-1 rounded">${i18n?.t('director.templateModal.custom') || '自定义'}</span>
+                                <span class="ml-2 text-xs bg-[#8B5CF6] text-white px-1 font-bold uppercase">${i18n?.t('director.templateModal.custom') || '自定义'}</span>
                             </h4>
-                            <p class="text-gray-500 text-sm mt-1 truncate">${template.prefix?.substring(0, 50) || ''}...</p>
+                            <p class="text-[#A1A1AA] text-sm mt-1 truncate">${template.prefix?.substring(0, 50) || ''}...</p>
                         </div>
                     </div>
                     <button onclick="event.stopPropagation(); window.directorPage.openTemplateEditor('${key}', false)" 
-                            class="absolute top-2 right-2 w-8 h-8 bg-gray-100 hover:bg-pink-100 text-gray-500 hover:text-pink-500 rounded-full flex items-center justify-center transition-colors cursor-pointer"
+                            class="absolute top-2 right-2 w-8 h-8 bg-[#3F3F46] hover:bg-[#FCE300] text-[#A1A1AA] hover:text-black rounded-none flex items-center justify-center transition-all cursor-pointer"
                             title="${i18n?.t('director.templateModal.edit') || '编辑'}">
                         <i class="fas fa-edit text-sm"></i>
                     </button>

@@ -2308,22 +2308,22 @@
         </div>
     </div>
 
-    <!-- 导演模式风格模板选择模态框 -->
-    <div id="directorTemplateModal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-[50000] flex items-center justify-center p-4">
-        <div class="bg-white rounded-none w-full max-w-2xl mx-4 max-h-[85vh] overflow-hidden flex flex-col">
+    <!-- 导演模式风格模板选择模态框 - Kinetic Typography 风格 -->
+    <div id="directorTemplateModal" class="fixed inset-0 bg-[#09090B] bg-opacity-90 hidden z-[50000] flex items-center justify-center p-4">
+        <div class="bg-[#09090B] border-2 border-[#3F3F46] rounded-none w-full max-w-2xl mx-4 max-h-[85vh] overflow-hidden flex flex-col">
             <!-- 模态框头部 -->
-            <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-                <h3 class="text-xl font-bold flex items-center">
-                    <i class="fas fa-palette text-pink-500 mr-2"></i>
+            <div class="px-6 py-4 border-b-2 border-[#3F3F46] flex items-center justify-between">
+                <h3 class="text-xl font-bold flex items-center text-[#FAFAFA] uppercase tracking-tighter">
+                    <i class="fas fa-palette text-[#FCE300] mr-2"></i>
                     <span data-i18n="director.templateModal.title">选择风格模板</span>
                 </h3>
-                <button id="closeTemplateModalX" class="text-gray-400 hover:text-gray-600 transition-colors">
+                <button id="closeTemplateModalX" class="text-[#A1A1AA] hover:text-[#FCE300] transition-colors cursor-pointer">
                     <i class="fas fa-times text-xl"></i>
                 </button>
             </div>
             
             <!-- 模态框内容 -->
-            <div class="flex-1 overflow-y-auto p-4">
+            <div class="flex-1 overflow-y-auto p-4 bg-[#09090B]">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="directorTemplateList">
                     <!-- 动画截图风格 -->
                     <div class="template-card cursor-pointer border-2 border-gray-200 hover:border-pink-400 rounded-none p-4 transition-all" data-template="anime">
@@ -2405,114 +2405,114 @@
                 </div>
             </div>
             
-            <!-- 模态框底部 -->
-            <div class="px-6 py-4 border-t border-gray-200 flex justify-between">
+            <!-- 模态框底部 - Kinetic Typography 风格 -->
+            <div class="px-6 py-4 border-t-2 border-[#3F3F46] flex justify-between bg-[#09090B]">
                 <div class="flex space-x-2">
-                    <button onclick="window.directorPage.createNewTemplate()" class="bg-pink-500 hover:bg-pink-600 text-white py-2 px-4 rounded-none transition-colors cursor-pointer">
+                    <button onclick="window.directorPage.createNewTemplate()" class="bg-[#FCE300] hover:scale-105 active:scale-95 text-black py-2 px-4 rounded-none transition-all font-bold uppercase tracking-tighter cursor-pointer">
                         <i class="fas fa-plus mr-2"></i>
                         <span data-i18n="director.templateModal.createNew">新建模板</span>
                     </button>
-                    <button onclick="window.directorPage.importTemplates()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 px-4 rounded-none transition-colors cursor-pointer">
+                    <button onclick="window.directorPage.importTemplates()" class="bg-[#27272A] hover:bg-[#3F3F46] text-[#FAFAFA] border-2 border-[#3F3F46] py-2 px-4 rounded-none transition-all font-bold uppercase tracking-tighter cursor-pointer">
                         <i class="fas fa-file-import mr-2"></i>
                         <span data-i18n="director.templateModal.import">导入</span>
                     </button>
-                    <button onclick="window.directorPage.exportTemplates()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 px-4 rounded-none transition-colors cursor-pointer">
+                    <button onclick="window.directorPage.exportTemplates()" class="bg-[#27272A] hover:bg-[#3F3F46] text-[#FAFAFA] border-2 border-[#3F3F46] py-2 px-4 rounded-none transition-all font-bold uppercase tracking-tighter cursor-pointer">
                         <i class="fas fa-file-export mr-2"></i>
                         <span data-i18n="director.templateModal.export">导出</span>
                     </button>
                 </div>
-                <button id="closeTemplateModal" class="bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 px-6 rounded-none transition-colors cursor-pointer">
+                <button id="closeTemplateModal" class="bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 px-6 rounded-none transition-colors cursor-pointer font-bold uppercase tracking-tighter">
                     <span data-i18n="director.templateModal.cancel">取消</span>
                 </button>
             </div>
         </div>
     </div>
 
-    <!-- 模板编辑器弹窗 -->
-    <div id="directorTemplateEditorModal" class="fixed inset-0 bg-black bg-opacity-60 hidden z-[60000] flex items-center justify-center p-4">
-        <div class="bg-white rounded-none w-full max-w-2xl mx-4 max-h-[90vh] overflow-hidden flex flex-col">
+    <!-- 模板编辑器弹窗 - Kinetic Typography / Cyberpunk 2077 风格 -->
+    <div id="directorTemplateEditorModal" class="fixed inset-0 bg-[#09090B] bg-opacity-90 hidden z-[60000] flex items-center justify-center p-4">
+        <div class="bg-[#09090B] border-2 border-[#3F3F46] rounded-none w-full max-w-2xl mx-4 max-h-[90vh] overflow-hidden flex flex-col">
             <!-- 编辑器头部 -->
-            <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-                <h3 class="text-xl font-bold flex items-center">
-                    <i class="fas fa-edit text-pink-500 mr-2"></i>
+            <div class="px-6 py-4 border-b-2 border-[#3F3F46] flex items-center justify-between">
+                <h3 class="text-xl font-bold flex items-center text-[#FAFAFA] uppercase tracking-tighter">
+                    <i class="fas fa-edit text-[#FCE300] mr-2"></i>
                     <span id="templateEditorTitle" data-i18n="director.templateEditor.title">编辑模板</span>
                 </h3>
-                <button onclick="window.directorPage.closeTemplateEditor()" class="text-gray-400 hover:text-gray-600 transition-colors cursor-pointer">
+                <button onclick="window.directorPage.closeTemplateEditor()" class="text-[#A1A1AA] hover:text-[#FCE300] transition-colors cursor-pointer">
                     <i class="fas fa-times text-xl"></i>
                 </button>
             </div>
             
             <!-- 编辑器内容 -->
-            <div class="flex-1 overflow-y-auto p-6 space-y-4">
+            <div class="flex-1 overflow-y-auto p-6 space-y-6 bg-[#09090B]">
                 <!-- 模板名称 -->
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">
-                        <i class="fas fa-tag text-pink-500 mr-1"></i>
+                    <label class="flex items-center text-sm font-bold text-[#FAFAFA] mb-2 uppercase tracking-wide">
+                        <span class="w-6 h-6 rounded-none bg-[#FCE300] text-black flex items-center justify-center text-xs mr-2">1</span>
                         <span data-i18n="director.templateEditor.name">模板名称</span>
                     </label>
                     <input type="text" id="templateEditorName" 
-                           class="w-full px-3 py-2 border border-gray-300 rounded-none focus:outline-none focus:ring-2 focus:ring-pink-400 focus:border-transparent"
+                           class="w-full px-4 py-3 bg-[#27272A] border-2 border-[#3F3F46] rounded-none text-[#FAFAFA] text-lg font-bold uppercase tracking-tight placeholder-[#71717A] focus:outline-none focus:border-[#FCE300] transition-colors"
                            placeholder="例如：我的动漫风格">
                 </div>
                 
                 <!-- 提示词前缀 -->
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">
-                        <i class="fas fa-play text-green-500 mr-1"></i>
+                    <label class="flex items-center text-sm font-bold text-[#FAFAFA] mb-2 uppercase tracking-wide">
+                        <span class="w-6 h-6 rounded-none bg-[#22C55E] text-black flex items-center justify-center text-xs mr-2">2</span>
                         <span data-i18n="director.templateEditor.prefix">提示词前缀 (Prefix)</span>
                     </label>
                     <textarea id="templateEditorPrefix" rows="3"
-                              class="w-full px-3 py-2 border border-gray-300 rounded-none focus:outline-none focus:ring-2 focus:ring-pink-400 focus:border-transparent font-mono text-sm"
+                              class="w-full px-4 py-3 bg-[#27272A] border-2 border-[#3F3F46] rounded-none text-[#FAFAFA] font-mono text-sm placeholder-[#71717A] focus:outline-none focus:border-[#22C55E] transition-colors resize-none"
                               placeholder="添加在提示词开头的内容..."></textarea>
-                    <p class="text-xs text-gray-500 mt-1" data-i18n="director.templateEditor.prefixHint">会自动添加到每次生成的提示词开头</p>
+                    <p class="text-xs text-[#71717A] mt-1 uppercase tracking-wide" data-i18n="director.templateEditor.prefixHint">会自动添加到每次生成的提示词开头</p>
                 </div>
                 
                 <!-- 提示词后缀 -->
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">
-                        <i class="fas fa-stop text-blue-500 mr-1"></i>
+                    <label class="flex items-center text-sm font-bold text-[#FAFAFA] mb-2 uppercase tracking-wide">
+                        <span class="w-6 h-6 rounded-none bg-[#3B82F6] text-white flex items-center justify-center text-xs mr-2">3</span>
                         <span data-i18n="director.templateEditor.suffix">提示词后缀 (Suffix)</span>
                     </label>
                     <textarea id="templateEditorSuffix" rows="3"
-                              class="w-full px-3 py-2 border border-gray-300 rounded-none focus:outline-none focus:ring-2 focus:ring-pink-400 focus:border-transparent font-mono text-sm"
+                              class="w-full px-4 py-3 bg-[#27272A] border-2 border-[#3F3F46] rounded-none text-[#FAFAFA] font-mono text-sm placeholder-[#71717A] focus:outline-none focus:border-[#3B82F6] transition-colors resize-none"
                               placeholder="添加在提示词末尾的内容..."></textarea>
-                    <p class="text-xs text-gray-500 mt-1" data-i18n="director.templateEditor.suffixHint">会自动添加到每次生成的提示词末尾</p>
+                    <p class="text-xs text-[#71717A] mt-1 uppercase tracking-wide" data-i18n="director.templateEditor.suffixHint">会自动添加到每次生成的提示词末尾</p>
                 </div>
                 
                 <!-- 负面提示词 -->
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">
-                        <i class="fas fa-ban text-red-500 mr-1"></i>
+                    <label class="flex items-center text-sm font-bold text-[#FAFAFA] mb-2 uppercase tracking-wide">
+                        <span class="w-6 h-6 rounded-none bg-[#EF4444] text-white flex items-center justify-center text-xs mr-2">4</span>
                         <span data-i18n="director.templateEditor.negative">负面提示词 (Negative)</span>
                     </label>
                     <textarea id="templateEditorNegative" rows="3"
-                              class="w-full px-3 py-2 border border-gray-300 rounded-none focus:outline-none focus:ring-2 focus:ring-pink-400 focus:border-transparent font-mono text-sm"
+                              class="w-full px-4 py-3 bg-[#27272A] border-2 border-[#3F3F46] rounded-none text-[#FAFAFA] font-mono text-sm placeholder-[#71717A] focus:outline-none focus:border-[#EF4444] transition-colors resize-none"
                               placeholder="不希望出现在图片中的内容..."></textarea>
-                    <p class="text-xs text-gray-500 mt-1" data-i18n="director.templateEditor.negativeHint">告诉 AI 避免生成的元素</p>
+                    <p class="text-xs text-[#71717A] mt-1 uppercase tracking-wide" data-i18n="director.templateEditor.negativeHint">告诉 AI 避免生成的元素</p>
                 </div>
             </div>
             
             <!-- 编辑器底部 -->
-            <div class="px-6 py-4 border-t border-gray-200 flex justify-between">
-                <div>
+            <div class="px-6 py-4 border-t-2 border-[#3F3F46] flex justify-between bg-[#09090B]">
+                <div class="flex space-x-2">
                     <button id="templateEditorDeleteBtn" onclick="window.directorPage.deleteCurrentTemplate()" 
-                            class="hidden bg-red-100 hover:bg-red-200 text-red-700 py-2 px-4 rounded-none transition-colors cursor-pointer">
+                            class="hidden bg-[#EF4444] hover:bg-[#DC2626] text-white py-2 px-4 rounded-none transition-all font-bold uppercase tracking-tighter cursor-pointer hover:scale-105 active:scale-95">
                         <i class="fas fa-trash mr-2"></i>
                         <span data-i18n="director.templateEditor.delete">删除</span>
                     </button>
                     <button id="templateEditorResetBtn" onclick="window.directorPage.resetCurrentTemplate()" 
-                            class="hidden bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 px-4 rounded-none transition-colors cursor-pointer">
+                            class="hidden bg-[#27272A] hover:bg-[#3F3F46] text-[#FAFAFA] border-2 border-[#3F3F46] py-2 px-4 rounded-none transition-all font-bold uppercase tracking-tighter cursor-pointer">
                         <i class="fas fa-undo mr-2"></i>
                         <span data-i18n="director.templateEditor.reset">恢复默认</span>
                     </button>
                 </div>
                 <div class="flex space-x-3">
                     <button onclick="window.directorPage.closeTemplateEditor()" 
-                            class="bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 px-6 rounded-none transition-colors cursor-pointer">
+                            class="bg-[#27272A] hover:bg-[#3F3F46] text-[#FAFAFA] border-2 border-[#3F3F46] py-2 px-6 rounded-none transition-all font-bold uppercase tracking-tighter cursor-pointer">
                         <span data-i18n="director.templateEditor.cancel">取消</span>
                     </button>
                     <button onclick="window.directorPage.saveTemplateFromEditor()" 
-                            class="bg-pink-500 hover:bg-pink-600 text-white py-2 px-6 rounded-none transition-colors cursor-pointer">
+                            class="bg-[#FCE300] hover:scale-105 active:scale-95 text-black py-2 px-6 rounded-none transition-all font-bold uppercase tracking-tighter cursor-pointer">
                         <i class="fas fa-save mr-2"></i>
                         <span data-i18n="director.templateEditor.save">保存</span>
                     </button>
