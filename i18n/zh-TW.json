@@ -843,7 +843,10 @@
       "landscape43": "橫版 4:3",
       "portrait34": "直版 3:4",
       "landscape32": "橫版 3:2",
-      "portrait23": "直版 2:3"
+      "portrait23": "直版 2:3",
+      "cinema": "影院 21:9 超寬屏",
+      "landscape54": "橫版 5:4 傳統",
+      "portrait45": "直版 4:5 社媒"
     },
     "resolutionOptions": {
       "1k": "1K 標準",

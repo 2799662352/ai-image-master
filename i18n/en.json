@@ -706,7 +706,10 @@
       "landscape43": "Landscape 4:3",
       "portrait34": "Portrait 3:4",
       "landscape32": "Landscape 3:2",
-      "portrait23": "Portrait 2:3"
+      "portrait23": "Portrait 2:3",
+      "cinema": "Cinema 21:9 Ultra-wide",
+      "landscape54": "Landscape 5:4 Classic",
+      "portrait45": "Portrait 4:5 Social"
     },
     "resolutionOptions": {
       "1k": "1K Standard",
