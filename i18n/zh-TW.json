@@ -855,7 +855,30 @@
     },
     "templateModal": {
       "title": "選擇風格模板",
-      "cancel": "取消"
+      "cancel": "取消",
+      "createNew": "新建模板",
+      "import": "匯入",
+      "export": "匯出",
+      "edit": "編輯",
+      "custom": "自訂"
+    },
+    "templateEditor": {
+      "title": "編輯模板",
+      "editTitle": "編輯模板",
+      "createTitle": "新建模板",
+      "name": "模板名稱",
+      "prefix": "提示詞前綴 (Prefix)",
+      "prefixHint": "會自動添加到每次生成的提示詞開頭",
+      "suffix": "提示詞後綴 (Suffix)",
+      "suffixHint": "會自動添加到每次生成的提示詞末尾",
+      "negative": "負面提示詞 (Negative)",
+      "negativeHint": "告訴 AI 避免生成的元素",
+      "save": "儲存",
+      "cancel": "取消",
+      "delete": "刪除",
+      "reset": "恢復預設",
+      "deleteConfirm": "確定要刪除這個模板嗎？",
+      "resetConfirm": "確定要恢復這個模板到預設值嗎？"
     },
     "templates": {
       "anime": {

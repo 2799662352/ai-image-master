@@ -13,6 +13,16 @@ const pageStateStore = new Store({
     }
 });
 
+// 模板存储配置
+const templateStore = new Store({
+    name: 'custom-templates',
+    defaults: {
+        version: '1.0.0',
+        templates: {},  // 用户自定义模板
+        overrides: {}   // 对内置模板的修改
+    }
+});
+
 // 记录启动时间（用于性能追踪）
 const startTime = Date.now();
 
@@ -322,6 +332,144 @@ ipcMain.handle('get-cache-size', async () => {
     } catch (error) {
         console.error('获取缓存大小失败:', error);
         return { cacheSize: 0 };
+    }
+});
+
+// ==================== 模板存储 IPC ====================
+
+// 保存自定义模板
+ipcMain.handle('save-template', async (event, templateKey, templateData) => {
+    try {
+        templateStore.set(`templates.${templateKey}`, templateData);
+        return { success: true };
+    } catch (error) {
+        console.error('保存模板失败:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// 保存内置模板的修改
+ipcMain.handle('save-template-override', async (event, templateKey, templateData) => {
+    try {
+        templateStore.set(`overrides.${templateKey}`, templateData);
+        return { success: true };
+    } catch (error) {
+        console.error('保存模板修改失败:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// 加载所有自定义模板
+ipcMain.handle('load-custom-templates', async () => {
+    try {
+        return templateStore.get('templates') || {};
+    } catch (error) {
+        console.error('加载自定义模板失败:', error);
+        return {};
+    }
+});
+
+// 加载内置模板的修改
+ipcMain.handle('load-template-overrides', async () => {
+    try {
+        return templateStore.get('overrides') || {};
+    } catch (error) {
+        console.error('加载模板修改失败:', error);
+        return {};
+    }
+});
+
+// 删除自定义模板
+ipcMain.handle('delete-template', async (event, templateKey) => {
+    try {
+        templateStore.delete(`templates.${templateKey}`);
+        return { success: true };
+    } catch (error) {
+        console.error('删除模板失败:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// 重置内置模板修改
+ipcMain.handle('reset-template-override', async (event, templateKey) => {
+    try {
+        templateStore.delete(`overrides.${templateKey}`);
+        return { success: true };
+    } catch (error) {
+        console.error('重置模板失败:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// 导出模板到文件
+ipcMain.handle('export-templates', async () => {
+    try {
+        const result = await dialog.showSaveDialog(mainWindow, {
+            title: '导出模板',
+            defaultPath: 'my-templates.json',
+            filters: [{ name: 'JSON 文件', extensions: ['json'] }]
+        });
+        
+        if (result.canceled || !result.filePath) {
+            return { success: false, canceled: true };
+        }
+        
+        const exportData = {
+            version: '1.0.0',
+            exportDate: new Date().toISOString(),
+            templates: templateStore.get('templates') || {},
+            overrides: templateStore.get('overrides') || {}
+        };
+        
+        await fs.promises.writeFile(result.filePath, JSON.stringify(exportData, null, 2), 'utf-8');
+        return { success: true, path: result.filePath };
+    } catch (error) {
+        console.error('导出模板失败:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// 从文件导入模板
+ipcMain.handle('import-templates', async () => {
+    try {
+        const result = await dialog.showOpenDialog(mainWindow, {
+            title: '导入模板',
+            filters: [{ name: 'JSON 文件', extensions: ['json'] }],
+            properties: ['openFile']
+        });
+        
+        if (result.canceled || result.filePaths.length === 0) {
+            return { success: false, canceled: true };
+        }
+        
+        const data = await fs.promises.readFile(result.filePaths[0], 'utf-8');
+        const importData = JSON.parse(data);
+        
+        // 验证数据格式
+        if (!importData.templates && !importData.overrides) {
+            return { success: false, error: '无效的模板文件格式' };
+        }
+        
+        // 合并导入的模板
+        if (importData.templates) {
+            const existing = templateStore.get('templates') || {};
+            templateStore.set('templates', { ...existing, ...importData.templates });
+        }
+        if (importData.overrides) {
+            const existing = templateStore.get('overrides') || {};
+            templateStore.set('overrides', { ...existing, ...importData.overrides });
+        }
+        
+        return { 
+            success: true, 
+            imported: {
+                templates: Object.keys(importData.templates || {}).length,
+                overrides: Object.keys(importData.overrides || {}).length
+            }
+        };
+    } catch (error) {
+        console.error('导入模板失败:', error);
+        return { success: false, error: error.message };
     }
 });
 

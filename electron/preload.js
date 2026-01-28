@@ -58,7 +58,32 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke('clear-web-cache'),
     
     getCacheSize: () => 
-        ipcRenderer.invoke('get-cache-size')
+        ipcRenderer.invoke('get-cache-size'),
+    
+    // 模板存储
+    saveTemplate: (templateKey, templateData) => 
+        ipcRenderer.invoke('save-template', templateKey, templateData),
+    
+    saveTemplateOverride: (templateKey, templateData) => 
+        ipcRenderer.invoke('save-template-override', templateKey, templateData),
+    
+    loadCustomTemplates: () => 
+        ipcRenderer.invoke('load-custom-templates'),
+    
+    loadTemplateOverrides: () => 
+        ipcRenderer.invoke('load-template-overrides'),
+    
+    deleteTemplate: (templateKey) => 
+        ipcRenderer.invoke('delete-template', templateKey),
+    
+    resetTemplateOverride: (templateKey) => 
+        ipcRenderer.invoke('reset-template-override', templateKey),
+    
+    exportTemplates: () => 
+        ipcRenderer.invoke('export-templates'),
+    
+    importTemplates: () => 
+        ipcRenderer.invoke('import-templates')
 });
 
 console.log('Electron preload 已加载，electronAPI 可用');

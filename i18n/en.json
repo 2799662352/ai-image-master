@@ -718,7 +718,30 @@
     },
     "templateModal": {
       "title": "Select Style Template",
-      "cancel": "Cancel"
+      "cancel": "Cancel",
+      "createNew": "New Template",
+      "import": "Import",
+      "export": "Export",
+      "edit": "Edit",
+      "custom": "Custom"
+    },
+    "templateEditor": {
+      "title": "Edit Template",
+      "editTitle": "Edit Template",
+      "createTitle": "New Template",
+      "name": "Template Name",
+      "prefix": "Prompt Prefix",
+      "prefixHint": "Added to the beginning of each generation prompt",
+      "suffix": "Prompt Suffix",
+      "suffixHint": "Added to the end of each generation prompt",
+      "negative": "Negative Prompt",
+      "negativeHint": "Elements to avoid in the generated image",
+      "save": "Save",
+      "cancel": "Cancel",
+      "delete": "Delete",
+      "reset": "Reset to Default",
+      "deleteConfirm": "Are you sure you want to delete this template?",
+      "resetConfirm": "Are you sure you want to reset this template to default?"
     },
     "templates": {
       "anime": {

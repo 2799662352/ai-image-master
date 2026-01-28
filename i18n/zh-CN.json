@@ -694,7 +694,30 @@
     },
     "templateModal": {
       "title": "选择风格模板",
-      "cancel": "取消"
+      "cancel": "取消",
+      "createNew": "新建模板",
+      "import": "导入",
+      "export": "导出",
+      "edit": "编辑",
+      "custom": "自定义"
+    },
+    "templateEditor": {
+      "title": "编辑模板",
+      "editTitle": "编辑模板",
+      "createTitle": "新建模板",
+      "name": "模板名称",
+      "prefix": "提示词前缀 (Prefix)",
+      "prefixHint": "会自动添加到每次生成的提示词开头",
+      "suffix": "提示词后缀 (Suffix)",
+      "suffixHint": "会自动添加到每次生成的提示词末尾",
+      "negative": "负面提示词 (Negative)",
+      "negativeHint": "告诉 AI 避免生成的元素",
+      "save": "保存",
+      "cancel": "取消",
+      "delete": "删除",
+      "reset": "恢复默认",
+      "deleteConfirm": "确定要删除这个模板吗？",
+      "resetConfirm": "确定要恢复这个模板到默认值吗？"
     },
     "templates": {
       "anime": {

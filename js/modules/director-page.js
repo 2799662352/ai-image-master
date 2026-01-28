@@ -64,6 +64,19 @@ class DirectorPage {
             }
         };
 
+        // 保存内置模板的默认值（用于重置）
+        this.defaultStyleTemplates = JSON.parse(JSON.stringify(this.styleTemplates));
+        
+        // 用户自定义模板
+        this.customTemplates = {};
+        
+        // 内置模板的修改
+        this.templateOverrides = {};
+        
+        // 当前编辑的模板信息
+        this.editingTemplateKey = null;
+        this.editingTemplateIsBuiltin = false;
+
         // 布局配置
         this.layouts = {
             '6grid': { 
@@ -182,6 +195,8 @@ class DirectorPage {
     init() {
         this.bindEvents();
         this.bindStateAutoSave();
+        // 初始化时加载用户模板
+        this.loadUserTemplates();
     }
 
     // 页面激活时调用
@@ -711,6 +726,9 @@ class DirectorPage {
 
     // 显示模板选择模态框
     showTemplateModal() {
+        // 先渲染模板列表（包含编辑按钮和自定义模板）
+        this.renderTemplateList();
+        
         const modal = document.getElementById('directorTemplateModal');
         if (modal) {
             modal.classList.remove('hidden');
@@ -725,12 +743,428 @@ class DirectorPage {
         }
     }
 
+    // ==================== 模板管理方法 ====================
+
+    // 加载用户自定义模板和内置模板修改
+    async loadUserTemplates() {
+        try {
+            if (window.electronAPI?.isElectron) {
+                // Electron 环境：从本地文件加载
+                this.customTemplates = await window.electronAPI.loadCustomTemplates() || {};
+                this.templateOverrides = await window.electronAPI.loadTemplateOverrides() || {};
+                
+                // 应用内置模板的修改
+                for (const key in this.templateOverrides) {
+                    if (this.styleTemplates[key]) {
+                        this.styleTemplates[key] = { ...this.styleTemplates[key], ...this.templateOverrides[key] };
+                    }
+                }
+                
+                console.log('[DirectorPage] 已加载用户模板:', {
+                    custom: Object.keys(this.customTemplates).length,
+                    overrides: Object.keys(this.templateOverrides).length
+                });
+            } else {
+                // 浏览器环境：从 localStorage 加载
+                const customData = localStorage.getItem('director_custom_templates');
+                const overridesData = localStorage.getItem('director_template_overrides');
+                
+                if (customData) this.customTemplates = JSON.parse(customData);
+                if (overridesData) {
+                    this.templateOverrides = JSON.parse(overridesData);
+                    for (const key in this.templateOverrides) {
+                        if (this.styleTemplates[key]) {
+                            this.styleTemplates[key] = { ...this.styleTemplates[key], ...this.templateOverrides[key] };
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('[DirectorPage] 加载用户模板失败:', error);
+        }
+    }
+
+    // 渲染模板列表（包含编辑按钮）
+    renderTemplateList() {
+        const container = document.getElementById('directorTemplateList');
+        if (!container) return;
+        
+        const i18n = window.i18n;
+        let html = '';
+        
+        // 内置模板图标配置
+        const builtinIcons = {
+            anime: { icon: 'fa-film', bg: 'bg-[#FCE300]' },
+            manga: { icon: 'fa-book-open', bg: 'bg-[#27272A] border-2 border-[#3F3F46]' },
+            movie: { icon: 'fa-video', bg: 'bg-[#FCE300]' },
+            webtoon: { icon: 'fa-mobile-alt', bg: 'bg-[#FCE300]' },
+            comic: { icon: 'fa-mask', bg: 'bg-[#FCE300]' },
+            illustration: { icon: 'fa-paint-brush', bg: 'bg-[#FCE300]' }
+        };
+        
+        // 渲染内置模板
+        for (const key in this.styleTemplates) {
+            const template = this.styleTemplates[key];
+            const icons = builtinIcons[key] || { icon: 'fa-palette', bg: 'bg-pink-500' };
+            const isModified = this.templateOverrides[key] !== undefined;
+            const isSelected = this.currentTemplate === key;
+            
+            html += `
+                <div class="template-card cursor-pointer border-2 ${isSelected ? 'border-pink-500 bg-pink-50' : 'border-gray-200 hover:border-pink-400'} rounded-none p-4 transition-all relative" data-template="${key}">
+                    <div class="flex items-start space-x-3">
+                        <div class="w-12 h-12 ${icons.bg} rounded-none flex items-center justify-center flex-shrink-0">
+                            <i class="fas ${icons.icon} text-white text-xl"></i>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <h4 class="font-bold text-gray-800 flex items-center">
+                                ${template.name}
+                                ${isModified ? '<span class="ml-2 text-xs bg-yellow-100 text-yellow-700 px-1 rounded">已修改</span>' : ''}
+                            </h4>
+                            <p class="text-gray-500 text-sm mt-1">${i18n?.t(`director.templates.${key}.desc`) || ''}</p>
+                        </div>
+                    </div>
+                    <button onclick="event.stopPropagation(); window.directorPage.openTemplateEditor('${key}', true)" 
+                            class="absolute top-2 right-2 w-8 h-8 bg-gray-100 hover:bg-pink-100 text-gray-500 hover:text-pink-500 rounded-full flex items-center justify-center transition-colors cursor-pointer"
+                            title="${i18n?.t('director.templateModal.edit') || '编辑'}">
+                        <i class="fas fa-edit text-sm"></i>
+                    </button>
+                </div>
+            `;
+        }
+        
+        // 渲染自定义模板
+        for (const key in this.customTemplates) {
+            const template = this.customTemplates[key];
+            const isSelected = this.currentTemplate === key;
+            
+            html += `
+                <div class="template-card cursor-pointer border-2 ${isSelected ? 'border-pink-500 bg-pink-50' : 'border-gray-200 hover:border-pink-400'} rounded-none p-4 transition-all relative" data-template="${key}">
+                    <div class="flex items-start space-x-3">
+                        <div class="w-12 h-12 bg-gradient-to-br from-pink-400 to-purple-500 rounded-none flex items-center justify-center flex-shrink-0">
+                            <i class="fas fa-star text-white text-xl"></i>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <h4 class="font-bold text-gray-800 flex items-center">
+                                ${template.name}
+                                <span class="ml-2 text-xs bg-purple-100 text-purple-700 px-1 rounded">${i18n?.t('director.templateModal.custom') || '自定义'}</span>
+                            </h4>
+                            <p class="text-gray-500 text-sm mt-1 truncate">${template.prefix?.substring(0, 50) || ''}...</p>
+                        </div>
+                    </div>
+                    <button onclick="event.stopPropagation(); window.directorPage.openTemplateEditor('${key}', false)" 
+                            class="absolute top-2 right-2 w-8 h-8 bg-gray-100 hover:bg-pink-100 text-gray-500 hover:text-pink-500 rounded-full flex items-center justify-center transition-colors cursor-pointer"
+                            title="${i18n?.t('director.templateModal.edit') || '编辑'}">
+                        <i class="fas fa-edit text-sm"></i>
+                    </button>
+                </div>
+            `;
+        }
+        
+        container.innerHTML = html;
+    }
+
+    // 打开模板编辑器
+    openTemplateEditor(templateKey, isBuiltin = false) {
+        const modal = document.getElementById('directorTemplateEditorModal');
+        if (!modal) return;
+        
+        this.editingTemplateKey = templateKey;
+        this.editingTemplateIsBuiltin = isBuiltin;
+        
+        const nameInput = document.getElementById('templateEditorName');
+        const prefixInput = document.getElementById('templateEditorPrefix');
+        const suffixInput = document.getElementById('templateEditorSuffix');
+        const negativeInput = document.getElementById('templateEditorNegative');
+        const deleteBtn = document.getElementById('templateEditorDeleteBtn');
+        const resetBtn = document.getElementById('templateEditorResetBtn');
+        const titleEl = document.getElementById('templateEditorTitle');
+        
+        let template;
+        if (isBuiltin) {
+            template = this.styleTemplates[templateKey];
+            // 显示重置按钮（仅当有修改时）
+            if (deleteBtn) deleteBtn.classList.add('hidden');
+            if (resetBtn) {
+                if (this.templateOverrides[templateKey]) {
+                    resetBtn.classList.remove('hidden');
+                } else {
+                    resetBtn.classList.add('hidden');
+                }
+            }
+        } else {
+            template = this.customTemplates[templateKey];
+            // 自定义模板显示删除按钮
+            if (deleteBtn) deleteBtn.classList.remove('hidden');
+            if (resetBtn) resetBtn.classList.add('hidden');
+        }
+        
+        if (!template && templateKey) {
+            console.error('[DirectorPage] 找不到模板:', templateKey);
+            return;
+        }
+        
+        // 填充表单
+        if (nameInput) nameInput.value = template?.name || '';
+        if (prefixInput) prefixInput.value = template?.prefix || '';
+        if (suffixInput) suffixInput.value = template?.suffix || '';
+        if (negativeInput) negativeInput.value = template?.negative || '';
+        
+        // 更新标题
+        const i18n = window.i18n;
+        if (titleEl) {
+            titleEl.textContent = templateKey 
+                ? (i18n?.t('director.templateEditor.editTitle') || '编辑模板')
+                : (i18n?.t('director.templateEditor.createTitle') || '新建模板');
+        }
+        
+        // 显示弹窗
+        modal.classList.remove('hidden');
+    }
+
+    // 关闭模板编辑器
+    closeTemplateEditor() {
+        const modal = document.getElementById('directorTemplateEditorModal');
+        if (modal) {
+            modal.classList.add('hidden');
+        }
+        this.editingTemplateKey = null;
+        this.editingTemplateIsBuiltin = false;
+    }
+
+    // 从编辑器保存模板
+    async saveTemplateFromEditor() {
+        const nameInput = document.getElementById('templateEditorName');
+        const prefixInput = document.getElementById('templateEditorPrefix');
+        const suffixInput = document.getElementById('templateEditorSuffix');
+        const negativeInput = document.getElementById('templateEditorNegative');
+        
+        const name = nameInput?.value?.trim();
+        const prefix = prefixInput?.value?.trim() || '';
+        const suffix = suffixInput?.value?.trim() || '';
+        const negative = negativeInput?.value?.trim() || '';
+        
+        if (!name) {
+            this.app.showToast('请输入模板名称', 'warning');
+            return;
+        }
+        
+        const templateData = { name, prefix, suffix, negative };
+        
+        try {
+            if (this.editingTemplateIsBuiltin && this.editingTemplateKey) {
+                // 保存内置模板的修改
+                this.templateOverrides[this.editingTemplateKey] = templateData;
+                this.styleTemplates[this.editingTemplateKey] = { ...this.styleTemplates[this.editingTemplateKey], ...templateData };
+                
+                if (window.electronAPI?.isElectron) {
+                    await window.electronAPI.saveTemplateOverride(this.editingTemplateKey, templateData);
+                } else {
+                    localStorage.setItem('director_template_overrides', JSON.stringify(this.templateOverrides));
+                }
+            } else {
+                // 新建或保存自定义模板
+                const key = this.editingTemplateKey || `custom_${Date.now()}`;
+                this.customTemplates[key] = templateData;
+                
+                if (window.electronAPI?.isElectron) {
+                    await window.electronAPI.saveTemplate(key, templateData);
+                } else {
+                    localStorage.setItem('director_custom_templates', JSON.stringify(this.customTemplates));
+                }
+            }
+            
+            this.app.showToast('模板已保存', 'success');
+            this.closeTemplateEditor();
+            this.renderTemplateList();
+        } catch (error) {
+            console.error('[DirectorPage] 保存模板失败:', error);
+            this.app.showToast('保存失败: ' + error.message, 'error');
+        }
+    }
+
+    // 删除当前编辑的自定义模板
+    async deleteCurrentTemplate() {
+        if (!this.editingTemplateKey || this.editingTemplateIsBuiltin) {
+            return;
+        }
+        
+        const i18n = window.i18n;
+        const confirmMsg = i18n?.t('director.templateEditor.deleteConfirm') || '确定要删除这个模板吗？';
+        
+        if (!confirm(confirmMsg)) {
+            return;
+        }
+        
+        try {
+            delete this.customTemplates[this.editingTemplateKey];
+            
+            if (window.electronAPI?.isElectron) {
+                await window.electronAPI.deleteTemplate(this.editingTemplateKey);
+            } else {
+                localStorage.setItem('director_custom_templates', JSON.stringify(this.customTemplates));
+            }
+            
+            // 如果当前选中的是被删除的模板，清除选择
+            if (this.currentTemplate === this.editingTemplateKey) {
+                this.clearTemplate();
+            }
+            
+            this.app.showToast('模板已删除', 'success');
+            this.closeTemplateEditor();
+            this.renderTemplateList();
+        } catch (error) {
+            console.error('[DirectorPage] 删除模板失败:', error);
+            this.app.showToast('删除失败: ' + error.message, 'error');
+        }
+    }
+
+    // 重置内置模板到默认值
+    async resetCurrentTemplate() {
+        if (!this.editingTemplateKey || !this.editingTemplateIsBuiltin) {
+            return;
+        }
+        
+        const i18n = window.i18n;
+        const confirmMsg = i18n?.t('director.templateEditor.resetConfirm') || '确定要恢复这个模板到默认值吗？';
+        
+        if (!confirm(confirmMsg)) {
+            return;
+        }
+        
+        try {
+            // 恢复默认值
+            delete this.templateOverrides[this.editingTemplateKey];
+            this.styleTemplates[this.editingTemplateKey] = { ...this.defaultStyleTemplates[this.editingTemplateKey] };
+            
+            if (window.electronAPI?.isElectron) {
+                await window.electronAPI.resetTemplateOverride(this.editingTemplateKey);
+            } else {
+                localStorage.setItem('director_template_overrides', JSON.stringify(this.templateOverrides));
+            }
+            
+            this.app.showToast('模板已恢复默认', 'success');
+            this.closeTemplateEditor();
+            this.renderTemplateList();
+        } catch (error) {
+            console.error('[DirectorPage] 重置模板失败:', error);
+            this.app.showToast('重置失败: ' + error.message, 'error');
+        }
+    }
+
+    // 创建新模板
+    createNewTemplate() {
+        this.editingTemplateKey = null;
+        this.editingTemplateIsBuiltin = false;
+        this.openTemplateEditor(null, false);
+        
+        // 显示删除按钮（但实际上新模板保存后才能删除）
+        const deleteBtn = document.getElementById('templateEditorDeleteBtn');
+        if (deleteBtn) deleteBtn.classList.add('hidden');
+    }
+
+    // 导入模板
+    async importTemplates() {
+        try {
+            if (window.electronAPI?.isElectron) {
+                const result = await window.electronAPI.importTemplates();
+                if (result.canceled) return;
+                
+                if (result.success) {
+                    // 重新加载模板
+                    await this.loadUserTemplates();
+                    this.renderTemplateList();
+                    this.app.showToast(`已导入 ${result.imported.templates + result.imported.overrides} 个模板`, 'success');
+                } else {
+                    this.app.showToast('导入失败: ' + result.error, 'error');
+                }
+            } else {
+                // 浏览器环境：使用 file input
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = '.json';
+                input.onchange = async (e) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    
+                    try {
+                        const text = await file.text();
+                        const data = JSON.parse(text);
+                        
+                        if (data.templates) {
+                            this.customTemplates = { ...this.customTemplates, ...data.templates };
+                            localStorage.setItem('director_custom_templates', JSON.stringify(this.customTemplates));
+                        }
+                        if (data.overrides) {
+                            this.templateOverrides = { ...this.templateOverrides, ...data.overrides };
+                            localStorage.setItem('director_template_overrides', JSON.stringify(this.templateOverrides));
+                            // 应用修改
+                            for (const key in data.overrides) {
+                                if (this.styleTemplates[key]) {
+                                    this.styleTemplates[key] = { ...this.styleTemplates[key], ...data.overrides[key] };
+                                }
+                            }
+                        }
+                        
+                        this.renderTemplateList();
+                        this.app.showToast('模板导入成功', 'success');
+                    } catch (error) {
+                        this.app.showToast('导入失败: 文件格式错误', 'error');
+                    }
+                };
+                input.click();
+            }
+        } catch (error) {
+            console.error('[DirectorPage] 导入模板失败:', error);
+            this.app.showToast('导入失败: ' + error.message, 'error');
+        }
+    }
+
+    // 导出模板
+    async exportTemplates() {
+        try {
+            if (window.electronAPI?.isElectron) {
+                const result = await window.electronAPI.exportTemplates();
+                if (result.canceled) return;
+                
+                if (result.success) {
+                    this.app.showToast('模板已导出到: ' + result.path, 'success');
+                } else {
+                    this.app.showToast('导出失败: ' + result.error, 'error');
+                }
+            } else {
+                // 浏览器环境：下载文件
+                const exportData = {
+                    version: '1.0.0',
+                    exportDate: new Date().toISOString(),
+                    templates: this.customTemplates,
+                    overrides: this.templateOverrides
+                };
+                
+                const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'my-templates.json';
+                a.click();
+                URL.revokeObjectURL(url);
+                
+                this.app.showToast('模板已导出', 'success');
+            }
+        } catch (error) {
+            console.error('[DirectorPage] 导出模板失败:', error);
+            this.app.showToast('导出失败: ' + error.message, 'error');
+        }
+    }
+
+    // ==================== 模板管理方法结束 ====================
+
     // 选择模板
     selectTemplate(templateKey) {
-        if (!this.styleTemplates[templateKey]) return;
+        // 检查内置模板和自定义模板
+        const template = this.styleTemplates[templateKey] || this.customTemplates[templateKey];
+        if (!template) return;
         
         this.currentTemplate = templateKey;
-        const template = this.styleTemplates[templateKey];
         
         // 更新显示
         const nameSpan = document.getElementById('directorTemplateName');
@@ -1625,11 +2059,15 @@ class DirectorPage {
         let templateSuffix = '';
         let templateNegative = '';
         
-        if (this.currentTemplate && this.styleTemplates[this.currentTemplate]) {
-            const template = this.styleTemplates[this.currentTemplate];
-            templatePrefix = template.prefix;
-            templateSuffix = template.suffix;
-            templateNegative = template.negative;
+        // 检查内置模板和自定义模板
+        const currentTemplateData = this.currentTemplate 
+            ? (this.styleTemplates[this.currentTemplate] || this.customTemplates[this.currentTemplate])
+            : null;
+            
+        if (currentTemplateData) {
+            templatePrefix = currentTemplateData.prefix || '';
+            templateSuffix = currentTemplateData.suffix || '';
+            templateNegative = currentTemplateData.negative || '';
         }
         
         // 构建漫画页面提示词
