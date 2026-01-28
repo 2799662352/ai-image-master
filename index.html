@@ -1,0 +1,3066 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    
+    <!-- 基本SEO信息 -->
+    <title>CATIMATION-Cyberpunk Master - 智能图片生成与编辑平台 | gpt-4o-image AI绘画工具</title>
+    <meta name="description" content="CATIMATION-Cyberpunk Master是基于gpt-4o-image模型的专业AI图片生成平台，支持文本生成图片、参考图生成、批量生成等功能。为创作者提供高质量的AI绘画工具。">
+    <meta name="keywords" content="AI图片生成,AI绘画,gpt-4o-image,文本生成图片,AI创作,图片编辑,批量生成,参考图生成,CATIMATION,Cyberpunk">
+    <meta name="author" content="CATIMATION">
+    <meta name="robots" content="index, follow">
+    <meta name="language" content="zh-CN">
+    <meta name="geo.region" content="CN">
+    <meta name="geo.placename" content="China">
+    
+    <!-- Canonical URL -->
+    <link rel="canonical" href="https://lazycat.cyberpunk.ai">
+
+    <!-- 多语言 hreflang 标签 -->
+    <link rel="alternate" hreflang="zh-CN" href="https://lazycat.cyberpunk.ai/">
+    <link rel="alternate" hreflang="en" href="https://lazycat.cyberpunk.ai/en/">
+    <link rel="alternate" hreflang="zh-TW" href="https://lazycat.cyberpunk.ai/zh-TW/">
+    <link rel="alternate" hreflang="ru" href="https://lazycat.cyberpunk.ai/ru/">
+    <link rel="alternate" hreflang="x-default" href="https://lazycat.cyberpunk.ai/">
+
+    <!-- 多尺寸Favicon -->
+    <link rel="icon" type="image/x-icon" href="images/favicon.ico">
+    <link rel="icon" type="image/png" sizes="16x16" href="images/favicon-16x16.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="images/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="images/favicon-192x192.png">
+    <link rel="icon" type="image/png" sizes="512x512" href="images/favicon-512x512.png">
+
+    <!-- Apple设备图标 -->
+    <link rel="apple-touch-icon" href="images/apple-touch-icon.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="images/apple-touch-icon.png">
+
+    <!-- PWA相关 - Kinetic Typography 配色 -->
+    <meta name="theme-color" content="#09090B">
+    <meta name="msapplication-TileColor" content="#09090B">
+    <meta name="msapplication-TileImage" content="/images/favicon-192x192.png">
+    
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="CATIMATION-Cyberpunk Master">
+    <meta property="og:title" content="CATIMATION-Cyberpunk Master - 智能图片生成与编辑平台">
+    <meta property="og:description" content="基于gpt-4o-image模型的专业AI图片生成平台，支持文本生成图片、参考图生成、批量生成等功能。效果等同于sora.chatgpt.com。">
+    <meta property="og:url" content="https://lazycat.cyberpunk.ai">
+    <meta property="og:image" content="https://lazycat.cyberpunk.ai/images/favicon-512x512.png">
+    <meta property="og:image:width" content="512">
+    <meta property="og:image:height" content="512">
+    <meta property="og:image:alt" content="CATIMATION-Cyberpunk MasterLogo">
+    <meta property="og:locale" content="zh_CN">
+    
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="CATIMATION-Cyberpunk Master - 智能图片生成与编辑平台">
+    <meta name="twitter:description" content="基于gpt-4o-image模型的专业AI图片生成平台，支持文本生成图片、参考图生成、批量生成等功能。">
+    <meta name="twitter:image" content="https://lazycat.cyberpunk.ai/images/favicon-512x512.png">
+    <meta name="twitter:image:alt" content="CATIMATION-Cyberpunk MasterLogo">
+    
+    <!-- 安全和性能相关 -->
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="referrer" content="strict-origin-when-cross-origin">
+    <meta name="format-detection" content="telephone=no">
+    
+    <!-- 缓存控制 - 确保用户能及时获取最新版本 -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    
+    <!-- 结构化数据 -->
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "CATIMATION-Cyberpunk Master",
+        "alternateName": "AI图片生成器",
+        "description": "基于gpt-4o-image模型的专业AI图片生成平台，支持文本生成图片、参考图生成、批量生成等功能。效果等同于sora.chatgpt.com。",
+        "url": "https://lazycat.cyberpunk.ai",
+        "logo": {
+            "@type": "ImageObject",
+            "url": "https://lazycat.cyberpunk.ai/images/favicon-512x512.png",
+            "width": 512,
+            "height": 512
+        },
+        "author": {
+            "@type": "Organization",
+            "name": "CATIMATION",
+            "url": "https://lazycat.ai",
+            "contactPoint": {
+                "@type": "ContactPoint",
+                "email": "hi@lazycat.ai",
+                "contactType": "customer service"
+            }
+        },
+        "applicationCategory": "Design Application",
+        "operatingSystem": "Web Browser",
+        "offers": {
+            "@type": "Offer",
+            "price": "0",
+            "priceCurrency": "CNY",
+            "availability": "https://schema.org/InStock"
+        },
+        "featureList": [
+            "AI图片生成",
+            "文本转图片",
+            "参考图生成",
+            "批量图片生成",
+            "图片编辑",
+            "高清图片输出"
+        ],
+        "inLanguage": "zh-CN",
+        "isAccessibleForFree": true
+    }
+    </script>
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="manifest.json">
+    
+    <!-- DNS预获取优化 -->
+    <link rel="dns-prefetch" href="//cdn.tailwindcss.com">
+    <link rel="dns-prefetch" href="//cdnjs.cloudflare.com">
+    <link rel="preconnect" href="https://cdn.tailwindcss.com" crossorigin>
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+    
+    <!-- 资源提示 -->
+    <!-- JSZip使用prefetch而非preload，因为只在用户执行批量下载时才需要，避免浏览器preload警告 -->
+    <link rel="prefetch" href="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" as="script" crossorigin="anonymous">
+    <link rel="prefetch" href="images/favicon-512x512.png">
+    <link rel="prefetch" href="images/apple-touch-icon.png">
+    
+    <!-- 搜索引擎优化链接 -->
+    <link rel="alternate" type="application/rss+xml" title="CATIMATION-Cyberpunk Master更新" href="/sitemap.xml">
+    
+    <!-- 移动端优化 -->
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="CATIMATION-Cyberpunk">
+    
+    <!-- Microsoft应用相关 -->
+    <meta name="msapplication-config" content="browserconfig.xml">
+    <meta name="msapplication-tooltip" content="AI图片生成工具">
+    <meta name="msapplication-starturl" content="/">
+    <meta name="msapplication-navbutton-color" content="#667eea">
+    
+    <!-- 辅助功能和可用性 -->
+    <meta name="color-scheme" content="light">
+    <meta name="supported-color-schemes" content="light">
+    
+    <!-- 内联关键CSS避免FOUC -->
+    <style>
+        /* 基础样式，避免无样式内容闪烁 */
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+        
+        /* ========================================
+           CYBERPUNK 2077 视频加载页面
+           ======================================== */
+        .page-loader {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #0D0D0D;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+            transition: opacity 0.8s ease, visibility 0.8s ease;
+            overflow: hidden;
+        }
+        
+        .page-loader.loaded {
+            opacity: 0;
+            visibility: hidden;
+        }
+        
+        /* 视频容器 */
+        .intro-video-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+        
+        .intro-video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        
+        /* 视频叠加层 - 扫描线效果 */
+        .video-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            background: repeating-linear-gradient(
+                0deg,
+                rgba(0, 0, 0, 0.1) 0px,
+                rgba(0, 0, 0, 0.1) 1px,
+                transparent 1px,
+                transparent 2px
+            );
+            z-index: 2;
+        }
+        
+        /* 跳过按钮 */
+        .skip-intro-btn {
+            position: absolute;
+            bottom: 40px;
+            right: 40px;
+            padding: 12px 32px;
+            background: transparent;
+            border: 2px solid #FCE300;
+            color: #FCE300;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 14px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            cursor: pointer;
+            z-index: 10;
+            transition: all 0.3s ease;
+        }
+        
+        .skip-intro-btn:hover {
+            background: #FCE300;
+            color: #0D0D0D;
+            box-shadow: 0 0 20px #FCE300, 0 0 40px #FCE300;
+        }
+        
+        /* 进入按钮 */
+        .enter-btn {
+            position: absolute;
+            bottom: 50%;
+            left: 50%;
+            transform: translate(-50%, 50%);
+            padding: 20px 60px;
+            background: transparent;
+            border: 3px solid #FCE300;
+            color: #FCE300;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 18px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 4px;
+            cursor: pointer;
+            z-index: 10;
+            transition: all 0.3s ease;
+            animation: pulse-glow 2s ease-in-out infinite;
+        }
+        
+        .enter-btn:hover {
+            background: #FCE300;
+            color: #0D0D0D;
+            box-shadow: 0 0 30px #FCE300, 0 0 60px #FCE300, 0 0 90px #FCE300;
+            transform: translate(-50%, 50%) scale(1.05);
+        }
+        
+        @keyframes pulse-glow {
+            0%, 100% { box-shadow: 0 0 10px #FCE300, 0 0 20px rgba(252, 227, 0, 0.5); }
+            50% { box-shadow: 0 0 20px #FCE300, 0 0 40px rgba(252, 227, 0, 0.8); }
+        }
+        
+        /* 左上角 Logo */
+        .intro-logo {
+            position: absolute;
+            top: 40px;
+            left: 40px;
+            z-index: 10;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 24px;
+            font-weight: 700;
+            color: #FCE300;
+            text-shadow: 0 0 10px #FCE300, 0 0 20px #FCE300;
+            letter-spacing: 4px;
+        }
+        
+        /* 底部加载文字 */
+        .intro-loading-text {
+            position: absolute;
+            bottom: 40px;
+            left: 40px;
+            z-index: 10;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 12px;
+            color: #00FFFF;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            animation: glitchText 2s infinite;
+        }
+        
+        @keyframes glitchText {
+            0%, 100% { opacity: 1; text-shadow: none; }
+            10% { opacity: 0.8; text-shadow: -2px 0 #FF00FF, 2px 0 #00FFFF; }
+            20% { opacity: 1; text-shadow: none; }
+            30% { opacity: 0.9; text-shadow: 2px 0 #FF00FF, -2px 0 #00FFFF; }
+            40% { opacity: 1; text-shadow: none; }
+        }
+        
+        /* 进度条 */
+        .intro-progress {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            height: 3px;
+            background: #FCE300;
+            box-shadow: 0 0 10px #FCE300;
+            z-index: 10;
+            transition: width 0.1s linear;
+        }
+        
+        /* 备用加载内容（无视频时） */
+        .loader-content {
+            text-align: center;
+            color: white;
+            z-index: 5;
+            display: none;
+        }
+        
+        .loader-content.active {
+            display: block;
+        }
+        
+        .loader-spinner {
+            width: 60px;
+            height: 60px;
+            border: 3px solid rgba(252, 227, 0, 0.2);
+            border-top: 3px solid #FCE300;
+            border-right: 3px solid #00FFFF;
+            border-radius: 0;
+            animation: spinCyber 1s linear infinite;
+            margin: 0 auto 24px;
+            box-shadow: 0 0 20px rgba(252, 227, 0, 0.3);
+        }
+        
+        .loader-text {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            color: #FCE300;
+            text-shadow: 0 0 10px #FCE300;
+            letter-spacing: 4px;
+        }
+        
+        .loader-subtitle {
+            font-family: 'Exo 2', sans-serif;
+            font-size: 14px;
+            opacity: 0.8;
+            margin-bottom: 20px;
+            color: #00FFFF;
+            letter-spacing: 2px;
+        }
+        
+        .loader-progress {
+            width: 300px;
+            height: 3px;
+            background: rgba(252, 227, 0, 0.2);
+            border-radius: 0;
+            overflow: hidden;
+            margin: 0 auto;
+        }
+        
+        .loader-progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #00FFFF, #FCE300, #FF00FF);
+            width: 0%;
+            animation: loadProgress 2s ease-in-out infinite;
+            box-shadow: 0 0 10px #FCE300;
+        }
+        
+        @keyframes loadProgress {
+            0% { width: 0%; }
+            50% { width: 70%; }
+            100% { width: 100%; }
+        }
+        
+        @keyframes spinCyber {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        /* 渐进式显示动画 */
+        .animate-fade-in {
+            animation: fadeIn 0.5s ease-in-out;
+        }
+        
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px) scale(0.95);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+        
+        /* 隐藏主内容直到加载完成 */
+        .main-content {
+            opacity: 0;
+            transition: opacity 0.5s ease;
+        }
+        
+        .main-content.loaded {
+            opacity: 1;
+        }
+        
+        /* 字体图标优化 */
+        .fas, .fab {
+            font-display: swap;
+        }
+        
+        /* 屏幕阅读器专用样式 */
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+        
+        .focus\:not-sr-only:focus {
+            position: static;
+            width: auto;
+            height: auto;
+            padding: inherit;
+            margin: inherit;
+            overflow: visible;
+            clip: auto;
+            white-space: normal;
+        }
+        
+        /* 禁用状态增强样式 */
+        .ratio-btn:disabled,
+        .edit-ratio-btn:disabled,
+        select:disabled {
+            position: relative;
+            background: #f3f4f6 !important;
+            color: #9ca3af !important;
+            cursor: not-allowed !important;
+            filter: grayscale(0.8) !important;
+        }
+        
+        .ratio-btn:disabled::before,
+        .edit-ratio-btn:disabled::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(45deg, transparent 40%, rgba(239, 68, 68, 0.1) 45%, rgba(239, 68, 68, 0.1) 55%, transparent 60%);
+            background-size: 8px 8px;
+            pointer-events: none;
+            border-radius: inherit;
+        }
+        
+        /* 禁用图标样式 */
+        .disabled-indicator {
+            animation: disabledPulse 2s infinite ease-in-out;
+        }
+        
+        @keyframes disabledPulse {
+            0%, 100% {
+                opacity: 0.6;
+            }
+            50% {
+                opacity: 1;
+            }
+        }
+        
+        /* 增强的悬浮提示样式 */
+        .enhanced-tooltip {
+            animation: tooltipFadeIn 0.3s ease-out;
+            background: linear-gradient(135deg, #1f2937 0%, #374151 100%) !important;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2), 0 0 8px rgba(239, 68, 68, 0.1) !important;
+        }
+        
+        @keyframes tooltipFadeIn {
+            from {
+                opacity: 0;
+                transform: translateX(-50%) translateY(4px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(-50%) translateY(0);
+            }
+        }
+
+        /* 结果Tab切换样式 */
+        .tab-result-btn {
+            background: transparent;
+            color: rgba(255, 255, 255, 0.7);
+            border: none;
+            transition: all 0.3s ease;
+        }
+
+        .tab-result-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: rgba(255, 255, 255, 0.9);
+        }
+
+        .tab-result-btn.active {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- CYBERPUNK 字体 - Orbitron (标题) + Exo 2 (正文) + Noto Sans SC (中文) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@300;400;500;600;700&family=Orbitron:wght@400;500;600;700;800;900&family=Noto+Sans+SC:wght@500;700;900&display=swap" rel="stylesheet">
+    
+    <!-- user-select 样式已移至 css/base.css，避免重复定义 -->
+    <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" as="style" onload="this.onload=null;this.rel='stylesheet';" crossorigin="anonymous">
+    <noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" crossorigin="anonymous"></noscript>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" crossorigin="anonymous"></script>
+    <script src="cdn/browser-image-compression/browser-image-compression.js"></script>
+
+    <!-- Choices.js - 下拉选择器库（本地版本） -->
+    <link rel="stylesheet" href="lib/choices.js/choices.min.css">
+    <script src="lib/choices.js/choices.min.js"></script>
+
+    <!-- 自定义CSS模块 - 使用 preload 优化加载 -->
+    <link rel="preload" href="css/main.css?v=1.0.0" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="css/main.css?v=1.0.0"></noscript>
+    <!-- 非关键样式已移至外部CSS文件 -->
+
+    <!-- Microsoft Clarity 流量监控 - Electron 环境中禁用 -->
+    <!-- 
+    <script>
+        (function(c,l,a,r,i,t,y){
+            c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
+            t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
+            y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
+        })(window, document, "clarity", "script", "ujv6fcjfyo");
+    </script>
+    -->
+</head>
+<body class="min-h-screen gradient-bg">
+    <!-- CYBERPUNK 2077 风格视频加载页面 -->
+    <div class="page-loader" id="pageLoader">
+        <!-- 视频容器 -->
+        <div class="intro-video-container" id="introVideoContainer">
+            <!-- 视频文件路径: 将 mp4 文件放在 videos/ 文件夹下 -->
+            <video class="intro-video" id="introVideo" playsinline>
+                <source src="videos/sb_compressed.mp4" type="video/mp4">
+            </video>
+            <!-- 扫描线叠加层 -->
+            <div class="video-overlay"></div>
+        </div>
+        
+        <!-- 左上角 Logo -->
+        <div class="intro-logo">CATIMATION//CYBERPUNK</div>
+        
+        <!-- 底部加载文字 -->
+        <div class="intro-loading-text" id="introLoadingText">INITIALIZING NEURAL LINK...</div>
+        
+        <!-- 视频进度条 -->
+        <div class="intro-progress" id="introProgress" style="width: 0%;"></div>
+        
+        <!-- 跳过按钮 -->
+        <button class="skip-intro-btn" id="skipIntroBtn">SKIP /// 跳过</button>
+        
+        <!-- 进入按钮 (视频播放完后显示) -->
+        <button class="enter-btn" id="enterBtn" style="display: none;">ENTER NIGHT CITY /// 进入夜之城</button>
+        
+        <!-- 备用加载内容（视频加载失败时显示） -->
+        <div class="loader-content" id="fallbackLoader">
+            <div class="loader-spinner"></div>
+            <div class="loader-text" data-i18n="common.appName">CATIMATION-Cyberpunk Master</div>
+            <div class="loader-subtitle" data-i18n="common.loading">LOADING NIGHT CITY...</div>
+            <div class="loader-progress">
+                <div class="loader-progress-bar"></div>
+            </div>
+        </div>
+    </div>
+
+        <!-- 主要内容 -->
+    <div class="main-content" id="mainContent">
+        <!-- 跳转到主内容的链接（无障碍优化） -->
+        <a href="#main-content" class="sr-only focus:not-sr-only focus:absolute focus:top-0 focus:left-0 bg-blue-600 text-white p-2 z-50">跳转到主内容</a>
+        
+        <!-- 顶部导航 -->
+        <nav class="glass-effect text-white p-4" role="navigation" aria-label="主导航">
+        <div class="container mx-auto flex justify-between items-center">
+            <div class="flex items-center space-x-2 lg:space-x-4">
+                <img src="images/logo.png" alt="CATIMATION-Cyberpunk MasterLogo" class="w-8 h-8 cursor-pointer hover:opacity-80 transition-opacity" onclick="app.switchTab('generate', true)" title="返回图片编辑">
+                <!-- 桌面端标题 -->
+                <h1 class="text-2xl font-bold hidden lg:block cursor-pointer hover:opacity-80 transition-opacity" onclick="app.switchTab('generate', true)" data-i18n-attr="title:common.generate" data-i18n="common.appName">CATIMATION-Cyberpunk Master</h1>
+                <!-- 平板端标题 -->
+                <h1 class="text-xl font-bold hidden md:block lg:hidden cursor-pointer hover:opacity-80 transition-opacity" onclick="app.switchTab('generate', true)" data-i18n-attr="title:common.generate" data-i18n="common.appNameShort">CATIMATION</h1>
+                <!-- 移动端标题 -->
+                <h1 class="text-lg font-bold md:hidden cursor-pointer hover:opacity-80 transition-opacity" onclick="app.switchTab('generate', true)" data-i18n-attr="title:common.generate" data-i18n="common.appNameMobile">AI出图</h1>
+
+                <!-- 模型选择器 - 移到 Logo 旁边（仅桌面端显示） -->
+                <div class="model-selector-wrapper hidden md:block">
+                    <label for="modelSelector" class="sr-only">选择AI模型</label>
+                    <select id="modelSelector" class="model-select" aria-label="AI模型选择器">
+                        <!-- 选项将由 JavaScript 动态生成 -->
+                    </select>
+                </div>
+            </div>
+
+            <!-- 桌面端导航菜单 -->
+            <div class="hidden md:flex items-center space-x-2 lg:space-x-4">
+                <button id="activityBtn" class="flex items-center space-x-1 lg:space-x-2 bg-[#FCE300] text-black hover:scale-105 active:scale-95 px-3 lg:px-4 py-2 rounded-none transition-all relative overflow-hidden font-bold uppercase tracking-tighter"
+                        title="活动优惠">
+                    <div class="absolute inset-0 bg-white opacity-0 hover:opacity-10 transition-opacity"></div>
+                    <i class="fas fa-gift relative z-10"></i>
+                    <span class="relative z-10 hidden lg:inline" data-i18n="nav.activity">活动</span>
+                    <div class="absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+                </button>
+                <button id="settingsBtn" class="relative flex items-center space-x-1 lg:space-x-2 bg-[#27272A] border-2 border-[#3F3F46] hover:bg-[#FCE300] hover:text-black hover:border-[#FCE300] px-3 lg:px-4 py-2 rounded-none transition-all z-50 cursor-pointer"
+                        title="API设置">
+                    <i class="fas fa-cog"></i>
+                    <span class="hidden lg:inline" data-i18n="common.settings">设置</span>
+                </button>
+                <!-- 语言切换器 -->
+                <div class="relative">
+                    <button id="languageSwitcher" class="flex items-center space-x-1 lg:space-x-2 bg-[#27272A] border-2 border-[#3F3F46] hover:bg-[#FCE300] hover:text-black hover:border-[#FCE300] px-3 lg:px-4 py-2 rounded-none transition-all z-50 cursor-pointer"
+                            title="切换语言">
+                        <i class="fas fa-globe"></i>
+                        <span id="currentLangName" class="font-semibold">中</span>
+                        <i class="fas fa-chevron-down text-sm"></i>
+                    </button>
+                    <div id="languageDropdown" class="absolute right-0 top-full mt-2 bg-[#09090B] border-2 border-[#3F3F46] rounded-none z-[999999] min-w-40 hidden">
+                        <div class="py-2" id="languageList">
+                            <button class="w-full px-4 py-2 text-left hover:bg-[#FCE300] hover:text-black transition-colors flex items-center justify-between text-[#FAFAFA] cursor-pointer"
+                                    data-lang="zh-CN">
+                                <span>简体中文</span>
+                                <i class="fas fa-check text-[#FCE300] hidden" data-check="zh-CN"></i>
+                            </button>
+                            <button class="w-full px-4 py-2 text-left hover:bg-[#FCE300] hover:text-black transition-colors flex items-center justify-between text-[#FAFAFA] cursor-pointer"
+                                    data-lang="en">
+                                <span>English</span>
+                                <i class="fas fa-check text-[#FCE300] hidden" data-check="en"></i>
+                            </button>
+                            <button class="w-full px-4 py-2 text-left hover:bg-[#FCE300] hover:text-black transition-colors flex items-center justify-between text-[#FAFAFA] cursor-pointer"
+                                    data-lang="zh-TW">
+                                <span>繁體中文</span>
+                                <i class="fas fa-check text-[#FCE300] hidden" data-check="zh-TW"></i>
+                            </button>
+                            <button class="w-full px-4 py-2 text-left hover:bg-[#FCE300] hover:text-black transition-colors flex items-center justify-between text-[#FAFAFA] cursor-pointer"
+                                    data-lang="ru">
+                                <span>Русский</span>
+                                <i class="fas fa-check text-[#FCE300] hidden" data-check="ru"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 移动端菜单按钮和模型选择器 -->
+            <div class="md:hidden flex items-center space-x-2">
+                <!-- 模型选择器 - 移动端顶部显示 -->
+                <div class="model-selector-wrapper-mobile">
+                    <label for="modelSelectorMobile" class="sr-only">选择AI模型</label>
+                    <select id="modelSelectorMobile" class="model-select-mobile" aria-label="移动端AI模型选择器">
+                        <!-- 选项将由 JavaScript 动态生成 -->
+                    </select>
+                </div>
+
+                <!-- 汉堡菜单按钮 -->
+                <button id="mobileMenuBtn" class="bg-[#27272A] border-2 border-[#3F3F46] hover:bg-[#FCE300] hover:text-black hover:border-[#FCE300] p-2 rounded-none transition-all" aria-label="打开移动端菜单" data-i18n-attr="title:nav.menu" title="菜单">
+                    <div class="w-6 h-6 flex flex-col justify-center items-center">
+                        <span class="block w-5 h-0.5 bg-white mb-1 transition-all duration-300" id="menuLine1"></span>
+                        <span class="block w-5 h-0.5 bg-white mb-1 transition-all duration-300" id="menuLine2"></span>
+                        <span class="block w-5 h-0.5 bg-white transition-all duration-300" id="menuLine3"></span>
+                    </div>
+                </button>
+            </div>
+        </div>
+
+        <!-- 移动端下拉菜单 -->
+        <div id="mobileMenu" class="md:hidden bg-[#09090B] border border-[#3F3F46] backdrop-filter backdrop-blur-sm border-t border-white border-opacity-20 hidden">
+            <div class="container mx-auto px-4 py-4 space-y-3">
+                <!-- CATIMATION文档 -->
+                <a href="#"
+                   class="w-full flex items-center space-x-2 bg-[#27272A] border-2 border-[#3F3F46] hover:bg-[#FCE300] hover:text-black hover:border-[#FCE300] px-4 py-3 rounded-none transition-all">
+                    <i class="fas fa-book text-[#FCE300]"></i>
+                    <span class="text-white" data-i18n="common.docs">CATIMATION文档</span>
+                </a>
+
+                <button id="activityBtnMobile" class="w-full flex items-center justify-between bg-[#FCE300] text-black hover:scale-105 active:scale-95 px-4 py-3 rounded-none transition-all relative overflow-hidden font-bold uppercase tracking-tighter">
+                    <div class="absolute inset-0 bg-white opacity-0 hover:opacity-10 transition-opacity"></div>
+                    <div class="flex items-center space-x-2 relative z-10">
+                        <i class="fas fa-gift"></i>
+                        <span class="font-medium" data-i18n="nav.activity">活动优惠</span>
+                    </div>
+                    <div class="w-2 h-2 bg-red-500 rounded-full animate-pulse relative z-10"></div>
+                </button>
+
+                <button id="aboutBtnMobile" class="w-full flex items-center space-x-2 bg-[#27272A] border-2 border-[#3F3F46] hover:bg-[#FCE300] hover:text-black hover:border-[#FCE300] px-4 py-3 rounded-none transition-all">
+                    <i class="fas fa-info-circle"></i>
+                    <span data-i18n="common.about">使用说明</span>
+                </button>
+
+                <button id="settingsBtnMobile" class="relative w-full flex items-center space-x-2 bg-[#27272A] border-2 border-[#3F3F46] hover:bg-[#FCE300] hover:text-black hover:border-[#FCE300] px-4 py-3 rounded-none transition-all cursor-pointer">
+                    <i class="fas fa-cog"></i>
+                    <span data-i18n="common.settings">API设置</span>
+                </button>
+
+                <!-- 语言切换器 - 移动端 -->
+                <div class="w-full bg-white bg-opacity-20 rounded-none p-3">
+                    <div class="flex items-center space-x-2 mb-2 text-white text-sm">
+                        <i class="fas fa-globe"></i>
+                        <span data-i18n="nav.switchLanguage">切换语言</span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2" id="languageListMobile">
+                        <button class="language-option-mobile px-3 py-2 bg-[#27272A] border-2 border-[#3F3F46] hover:bg-[#FCE300] hover:text-black hover:border-[#FCE300] rounded-none transition-all flex items-center justify-between"
+                                data-lang="zh-CN">
+                            <span class="text-white text-sm">简体中文</span>
+                            <i class="fas fa-check text-green-400 hidden" data-check-mobile="zh-CN"></i>
+                        </button>
+                        <button class="language-option-mobile px-3 py-2 bg-[#27272A] border-2 border-[#3F3F46] hover:bg-[#FCE300] hover:text-black hover:border-[#FCE300] rounded-none transition-all flex items-center justify-between"
+                                data-lang="en">
+                            <span class="text-white text-sm">English</span>
+                            <i class="fas fa-check text-green-400 hidden" data-check-mobile="en"></i>
+                        </button>
+                        <button class="language-option-mobile px-3 py-2 bg-[#27272A] border-2 border-[#3F3F46] hover:bg-[#FCE300] hover:text-black hover:border-[#FCE300] rounded-none transition-all flex items-center justify-between"
+                                data-lang="zh-TW">
+                            <span class="text-white text-sm">繁體中文</span>
+                            <i class="fas fa-check text-green-400 hidden" data-check-mobile="zh-TW"></i>
+                        </button>
+                        <button class="language-option-mobile px-3 py-2 bg-[#27272A] border-2 border-[#3F3F46] hover:bg-[#FCE300] hover:text-black hover:border-[#FCE300] rounded-none transition-all flex items-center justify-between"
+                                data-lang="ru">
+                            <span class="text-white text-sm">Русский</span>
+                            <i class="fas fa-check text-green-400 hidden" data-check-mobile="ru"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+        <!-- 主要内容区域 -->
+        <main id="main-content" class="container mx-auto px-4 pt-4 pb-8" role="main" aria-label="AI图片生成工具主要功能区域">
+
+        <!-- 项目说明模态框 -->
+        <div id="aboutModal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-[50000] flex items-center justify-center p-4">
+            <div class="bg-white rounded-none p-5 w-full max-w-4xl mx-4 max-h-96 overflow-y-auto">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-xl font-bold text-gray-800">
+                        <i class="fas fa-palette text-purple-500 mr-2"></i><span data-i18n="about.title">CATIMATION-Cyberpunk Master - 项目说明</span>
+                    </h3>
+                    <button id="closeAbout" class="text-gray-500 hover:text-gray-700 transition-colors" data-i18n-attr="title:about.close,aria-label:about.close" title="关闭说明" aria-label="关闭说明">
+                        <i class="fas fa-times text-xl"></i>
+                    </button>
+                </div>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-gray-700 text-sm">
+                    <!-- 第一行 -->
+                    <!-- API模型说明 -->
+                    <div class="bg-blue-50 border border-blue-200 rounded-none p-4">
+                        <h4 class="font-semibold text-blue-800 mb-3 flex items-center">
+                            <i class="fas fa-robot mr-2"></i><span data-i18n="about.aiModel.title">AI模型说明</span>
+                        </h4>
+                        <div class="space-y-3 text-blue-700 text-sm">
+                            <div class="bg-blue-100 rounded p-3">
+                                <p class="font-semibold mb-1">🍌 <strong data-i18n="about.aiModel.nanoBanana.name">Nano Banner</strong>（<span data-i18n="about.aiModel.nanoBanana.tag">新模型</span>）</p>
+                                <p data-i18n="about.aiModel.nanoBanana.description">速度快、一致性好，专为高效图片生成优化，是谷歌 Gemini 2.5 Flash 预览版。</p>
+                            </div>
+                            <div>
+                                <p><strong data-i18n="about.aiModel.gpt4o.name">gpt-4o-image</strong>：<span data-i18n="about.aiModel.gpt4o.description">效果等于</span>
+                                <a href="https://sora.chatgpt.com" target="_blank" rel="noopener" class="text-blue-600 underline hover:text-blue-800">sora.chatgpt.com</a></p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 生成时间说明 -->
+                    <div class="bg-amber-50 border border-amber-200 rounded-none p-4">
+                        <h4 class="font-semibold text-amber-800 mb-3 flex items-center">
+                            <i class="fas fa-clock mr-2"></i><span data-i18n="about.generationTime.title">生成时间说明</span>
+                        </h4>
+                        <p class="text-amber-700 leading-relaxed">
+                            <span data-i18n="about.generationTime.description">每张图片 用时不等 Nano Banana、Flux 模型大概很快！ 10s 左右，而gpt-4o-image 模型大概 2 分钟左右，这是正常现象，请耐心等待。</span>
+                            <br>
+                            <span data-i18n="about.generationTime.factors">生成时间受网络状况、提示词复杂度、服务器负载、官方是否出故障等因素影响。</span>
+                        </p>
+                    </div>
+
+                    <!-- 第二行 -->
+                    <!-- 功能特色 -->
+                    <div class="bg-green-50 border border-green-200 rounded-none p-4">
+                        <h4 class="font-semibold text-green-800 mb-3 flex items-center">
+                            <i class="fas fa-star mr-2"></i><span data-i18n="about.features.title">功能特色</span>
+                        </h4>
+                        <ul class="text-green-700 space-y-2 text-sm">
+                            <li class="flex items-start">
+                                <i class="fas fa-check text-green-600 mr-2 mt-1 text-sm"></i>
+                                <span data-i18n="about.features.feature1">支持单图生成和批量生成</span>
+                            </li>
+                            <li class="flex items-start">
+                                <i class="fas fa-check text-green-600 mr-2 mt-1 text-sm"></i>
+                                <span data-i18n="about.features.feature2">支持参考图（垫图）功能</span>
+                            </li>
+                            <li class="flex items-start">
+                                <i class="fas fa-check text-green-600 mr-2 mt-1 text-sm"></i>
+                                <span data-i18n="about.features.feature3">多种图片尺寸选择</span>
+                            </li>
+                            <li class="flex items-start">
+                                <i class="fas fa-check text-green-600 mr-2 mt-1 text-sm"></i>
+                                <span data-i18n="about.features.feature4">完善的历史记录和下载功能</span>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <!-- 使用提示 -->
+                    <div class="bg-gray-50 border border-gray-200 rounded-none p-4">
+                        <h4 class="font-semibold text-gray-800 mb-3 flex items-center">
+                            <i class="fas fa-lightbulb mr-2"></i><span data-i18n="about.tips.title">使用提示</span>
+                        </h4>
+                        <ul class="text-gray-700 space-y-2 text-sm">
+                            <li>• <span data-i18n="about.tips.tip1">提示词尽量具体详细，有助于生成更准确的图片</span></li>
+                            <li>• <span data-i18n="about.tips.tip2">参考图功能可以帮助生成风格一致的作品</span></li>
+                            <li>• <span data-i18n="about.tips.tip3">批量生成时建议合理设置并发数量</span></li>
+                            <li>• <span data-i18n="about.tips.tip4">生成过程中请保持页面开启，避免中断生成</span></li>
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Nano Banana Pro API 常见问题 -->
+                <div id="nano-banana-faq-section" class="mt-6 pt-4 border-t border-gray-200">
+                    <h4 class="font-semibold text-gray-800 mb-3 flex items-center">
+                        <i class="fas fa-question-circle text-orange-500 mr-2"></i>
+                        Nano Banana Pro API 常见问题
+                    </h4>
+                    <div class="bg-orange-50 border border-orange-200 rounded-none p-4 space-y-3">
+                        <p class="text-sm text-gray-700">
+                            <strong>Nano Banana Pro</strong> (<code class="bg-gray-200 px-1 rounded text-xs">gemini-3-pro-image-preview</code>) 
+                            是一个强大的图片生成和编辑模型，但有一些内容限制。
+                        </p>
+                        
+                        <div class="space-y-2">
+                            <details class="text-sm">
+                                <summary class="font-medium text-gray-800 cursor-pointer hover:text-orange-600">
+                                    <i class="fas fa-chevron-right mr-1"></i>
+                                    常见拒绝场景
+                                </summary>
+                                <ul class="mt-2 ml-5 space-y-1 text-gray-700 list-disc">
+                                    <li><strong>去水印</strong>：违反内容政策，会被拒绝</li>
+                                    <li><strong>换脸</strong>：涉及隐私和伦理问题，会被拒绝</li>
+                                    <li><strong>NSFW内容</strong>：不适当内容会被安全策略拒绝</li>
+                                    <li><strong>知识库限制</strong>：仅支持2025年1月之前的内容</li>
+                                </ul>
+                            </details>
+                            
+                            <details class="text-sm">
+                                <summary class="font-medium text-gray-800 cursor-pointer hover:text-orange-600">
+                                    <i class="fas fa-chevron-right mr-1"></i>
+                                    典型错误响应
+                                </summary>
+                                <div class="mt-2 ml-5 text-gray-700 space-y-1">
+                                    <p>当请求被拒绝时，API 通常返回：</p>
+                                    <code class="block bg-gray-800 text-green-400 p-2 rounded text-xs mt-1">
+                                        "I'm just a language model and can't help with that."
+                                    </code>
+                                    <p class="text-xs text-gray-600 mt-1">
+                                        本工具会自动识别拒绝原因并在错误弹窗中展示详细信息。
+                                    </p>
+                                </div>
+                            </details>
+                            
+                            <details class="text-sm">
+                                <summary class="font-medium text-gray-800 cursor-pointer hover:text-orange-600">
+                                    <i class="fas fa-chevron-right mr-1"></i>
+                                    知识库截止时间
+                                </summary>
+                                <div class="mt-2 ml-5 text-gray-700">
+                                    <p><strong>截止时间：2025年1月</strong></p>
+                                    <p class="text-xs mt-1">
+                                        示例：无法处理"iPhone 17"等未发布产品，建议使用已存在的产品或通用描述。
+                                    </p>
+                                    <a href="https://ai.google.dev/gemini-api/docs/models?hl=zh-cn#gemini-3-pro-image-preview" 
+                                       target="_blank" rel="noopener" 
+                                       class="text-blue-600 hover:text-blue-800 underline text-xs mt-1 inline-block">
+                                        查看 Google 官方文档 <i class="fas fa-external-link-alt text-xs"></i>
+                                    </a>
+                                </div>
+                            </details>
+                        </div>
+                        
+                        <div class="pt-3 border-t border-orange-200">
+                            <a href="docs/nano-banana-faq.md" target="_blank" 
+                               class="text-blue-600 hover:text-blue-800 underline text-sm font-medium flex items-center">
+                                <i class="fas fa-book-open mr-2"></i>
+                                查看完整常见问题文档
+                            </a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 底部联系方式文字提示 -->
+                <div class="mt-5 pt-4 border-t border-gray-200 text-center text-sm text-gray-600">
+                    <p class="mb-1">
+                        <i class="fas fa-envelope mr-1 text-purple-500"></i>
+                        产品建议反馈：
+                        <i class="fab fa-weixin text-green-500 mx-2"></i>微信 <strong>8765058</strong>
+                        <span class="mx-2">|</span>
+                        <i class="fas fa-envelope text-blue-500 mr-1"></i>邮箱 <a href="/cdn-cgi/l/email-protection#086061486978617161266b6765" class="text-purple-600 hover:text-purple-800 underline font-medium"><span class="__cf_email__" data-cfemail="5a32331a3b2a33233374393537">[email&#160;protected]</span></a>
+                    </p>
+                </div>
+
+                <div class="mt-6 text-center">
+                    <button id="closeAboutFooter" class="bg-purple-500 hover:bg-purple-600 text-white py-2 px-6 rounded-none transition-colors">
+                        <i class="fas fa-check mr-2"></i><span data-i18n="about.closeButton">我知道了</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 活动弹窗模态框 -->
+        <div id="activityModal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-[50000] flex items-center justify-center p-4">
+            <div class="bg-white rounded-none w-full max-w-md mx-4 max-h-screen overflow-y-auto relative">
+                <!-- 关闭按钮 -->
+                <button id="closeActivity" class="absolute top-4 right-4 text-gray-500 hover:text-gray-700 transition-colors z-10" data-i18n-attr="title:activity.close,aria-label:activity.close" title="关闭活动" aria-label="关闭活动">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+                
+                <!-- 活动内容 -->
+                <div class="bg-[#FCE300] p-6 relative overflow-hidden">
+                    <!-- 背景装饰 -->
+                    <div class="absolute inset-0 opacity-20">
+                        <div class="absolute top-0 left-0 w-20 h-20 bg-white rounded-full -translate-x-10 -translate-y-10 animate-pulse"></div>
+                        <div class="absolute top-0 right-0 w-16 h-16 bg-white rounded-full translate-x-8 -translate-y-8 animate-pulse delay-300"></div>
+                        <div class="absolute bottom-0 left-1/4 w-12 h-12 bg-white rounded-full animate-pulse delay-700"></div>
+                        <div class="absolute bottom-0 right-1/3 w-10 h-10 bg-white rounded-full animate-pulse delay-500"></div>
+                    </div>
+                    
+                    <div class="relative z-10 text-center text-white">
+                        <!-- 活动图标 -->
+                        <div class="bg-white bg-opacity-20 rounded-full p-3 w-16 h-16 mx-auto mb-3 backdrop-blur-sm">
+                            <i class="fas fa-gift text-2xl"></i>
+                        </div>
+
+                        <!-- 活动标题 -->
+                        <h3 class="text-xl font-bold mb-2" data-i18n="activity.title">
+                            🎉 新用户专享福利
+                        </h3>
+
+                        <!-- 活动副标题 -->
+                        <p class="text-base font-semibold mb-2 opacity-95" data-i18n="activity.subtitle">
+                            每个用户自动赠送 $0.05 美金
+                        </p>
+
+                        <!-- 活动描述 -->
+                        <p class="text-xs opacity-90 mb-4 leading-relaxed" data-i18n="activity.description">
+                            可生成 1 张 Nano Banana Pro 或 5 张 Sora_image
+                        </p>
+                    </div>
+                </div>
+                
+                <!-- 底部行动区域 -->
+                <div class="p-6">
+                    <!-- 充值活动说明 -->
+                    <div class="bg-[#27272A] border-2 border-[#3F3F46] rounded-none p-4 mb-4">
+                        <div class="flex items-start space-x-3">
+                            <div class="flex-shrink-0 bg-amber-100 rounded-full w-10 h-10 flex items-center justify-center">
+                                <i class="fas fa-gift text-amber-600 text-lg"></i>
+                            </div>
+                            <div class="flex-1">
+                                <h4 class="font-bold text-amber-900 text-sm mb-2 flex items-center">
+                                    <span data-i18n="activity.recharge.title">充值阶梯加赠活动</span>
+                                    <span class="ml-2 text-xs bg-red-500 text-white px-2 py-0.5 rounded-full animate-pulse" data-i18n="activity.recharge.badge">HOT</span>
+                                </h4>
+                                <div class="space-y-1.5 mb-2">
+                                    <p class="text-sm text-amber-900 flex items-center">
+                                        <i class="fas fa-check-circle text-amber-500 mr-2 flex-shrink-0"></i>
+                                        <span><strong data-i18n="activity.recharge.benefit1">首充加赠 1 美金</strong></span>
+                                    </p>
+                                    <p class="text-sm text-amber-900 flex items-center">
+                                        <i class="fas fa-check-circle text-amber-500 mr-2 flex-shrink-0"></i>
+                                        <span><strong data-i18n="activity.recharge.benefit2">100 美金起加赠 10%</strong></span>
+                                    </p>
+                                    <p class="text-sm text-amber-900 flex items-center">
+                                        <i class="fas fa-rocket text-amber-500 mr-2 flex-shrink-0"></i>
+                                        <span data-i18n="activity.recharge.benefit3">多充多送~</span>
+                                    </p>
+                                </div>
+                                <a href="#"
+                                   class="inline-flex items-center text-xs font-semibold text-amber-700 hover:text-amber-900 underline group">
+                                    <span data-i18n="activity.recharge.viewDetails">查看详细规则</span>
+                                    <i class="fas fa-arrow-right ml-1 text-xs group-hover:translate-x-1 transition-transform duration-200"></i>
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 行动按钮 -->
+                    <div class="space-y-2">
+                        <a href="#"
+                           class="w-full bg-[#FCE300] text-black py-2.5 px-6 rounded-none font-bold uppercase tracking-tighter transition-all duration-300 transform hover:scale-105 active:scale-95 flex items-center justify-center space-x-2 group">
+                            <span data-i18n="activity.buttons.register">加入CATIMATION</span>
+                            <i class="fas fa-cat text-sm group-hover:translate-x-1 transition-transform duration-300"></i>
+                        </a>
+
+                        <button id="closeActivityFooter" class="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 px-6 rounded-none transition-colors text-sm" data-i18n="activity.buttons.later">
+                            稍后再说
+                        </button>
+                    </div>
+
+                    <!-- 底部说明 -->
+                    <p class="text-[11px] text-gray-500 text-center mt-3" data-i18n="activity.info.note">
+                        *注册后即可在令牌页面查看赠送的免费额度
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 版本更新提示模态框 -->
+        <div id="updateModal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-[50000] items-center justify-center p-4">
+            <div class="bg-white rounded-none p-6 w-full max-w-md mx-4 shadow-2xl">
+                <div class="text-center">
+                    <!-- 图标 -->
+                    <div class="bg-[#FCE300] rounded-none p-4 w-16 h-16 mx-auto mb-4 flex items-center justify-center">
+                        <i class="fas fa-arrow-up text-white text-2xl"></i>
+                    </div>
+                    
+                    <!-- 标题 -->
+                    <h3 class="text-xl font-bold text-gray-800 mb-2">
+                        发现新版本
+                    </h3>
+                    
+                    <!-- 版本号 -->
+                    <p class="text-sm text-gray-600 mb-4">
+                        新版本 <span id="updateVersionText" class="font-semibold text-purple-600">1.0.0</span> 已发布
+                    </p>
+                    
+                    <!-- 更新内容列表 -->
+                    <div id="updateNotesContainer" class="bg-[#27272A] border-2 border-[#3F3F46] rounded-none p-4 mb-4 text-left hidden">
+                        <h4 class="text-sm font-semibold text-gray-800 mb-2 flex items-center">
+                            <i class="fas fa-sparkles text-purple-500 mr-2"></i>
+                            更新内容
+                        </h4>
+                        <ul id="updateNotesList" class="space-y-2 text-sm text-gray-700">
+                            <!-- 动态插入更新内容 -->
+                        </ul>
+                    </div>
+                    
+                    <!-- 提示信息 -->
+                    <div class="bg-blue-50 border border-blue-200 rounded-none p-4 mb-6 text-left">
+                        <p class="text-sm text-gray-700 leading-relaxed">
+                            <i class="fas fa-info-circle text-blue-500 mr-2"></i>
+                            为了获得最佳体验，建议您立即更新到最新版本。更新将自动刷新页面并清除缓存。
+                        </p>
+                    </div>
+                    
+                    <!-- 按钮组 -->
+                    <div class="flex space-x-3">
+                        <button id="cancelUpdate" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 px-4 rounded-none transition-colors font-medium">
+                            稍后更新
+                        </button>
+                        <button id="confirmUpdate" class="flex-1 bg-[#FCE300] text-black py-2.5 px-4 rounded-none transition-all font-bold uppercase tracking-tighter hover:scale-105 active:scale-95">
+                            立即更新
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 抽卡模式确认对话框 -->
+        <div id="cardConfirmModal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-[50000] flex items-center justify-center p-4">
+            <div class="bg-white rounded-none p-6 w-full max-w-md mx-4 shadow-2xl">
+                <div class="text-center">
+                    <div class="bg-[#FCE300] rounded-none p-4 w-16 h-16 mx-auto mb-4 flex items-center justify-center">
+                        <i class="fas fa-dice text-white text-2xl"></i>
+                    </div>
+                    
+                    <h3 class="text-xl font-bold text-gray-800 mb-2">确认抽卡生成</h3>
+                    
+                    <div class="bg-orange-50 border border-orange-200 rounded-none p-4 mb-4 text-left">
+                        <div class="space-y-2 text-sm text-gray-700">
+                            <div class="flex justify-between">
+                                <span>生成模式：</span>
+                                <span class="font-semibold">🎰 抽卡模式</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span>生成数量：</span>
+                                <span class="font-semibold text-orange-600" id="confirmCardCount">5 张</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span>当前模型：</span>
+                                <span class="font-semibold" id="confirmModelName">-</span>
+                            </div>
+                            <div class="flex justify-between border-t border-orange-200 pt-2 mt-2">
+                                <span>预估费用：</span>
+                                <span class="font-bold text-lg text-orange-600" id="confirmTotalCost">$0.00</span>
+                            </div>
+                            <div class="text-xs text-gray-500">
+                                单价 <span id="confirmUnitPrice">$0.00</span>/张 × <span id="confirmQuantity">5</span>张
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="bg-blue-50 border border-blue-200 rounded-none p-3 mb-4 text-left">
+                        <p class="text-xs text-gray-600 leading-relaxed">
+                            <i class="fas fa-info-circle text-blue-500 mr-1"></i>
+                            抽卡模式将使用相同提示词调用 <strong><span id="confirmCallCount">5</span> 次</strong> API，
+                            生成多张风格相似但有差异的图片，帮助您挑选最满意的效果。
+                        </p>
+                    </div>
+                    
+                    <div class="flex space-x-3">
+                        <button id="cancelCardConfirm" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2.5 px-4 rounded-none transition-colors font-medium">
+                            取消
+                        </button>
+                        <button id="confirmCardGenerate" class="flex-1 bg-[#FCE300] text-black py-2.5 px-4 rounded-none transition-all font-bold uppercase tracking-tighter hover:scale-105 active:scale-95">
+                            确认生成
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Kinetic Typography - 统计 Marquee -->
+        <div class="marquee-container bg-[#FCE300] py-4 mb-6 border-y-4 border-black" aria-label="CYBERPUNK STATS">
+            <div class="marquee-content marquee-medium">
+                <!-- 第一组内容 - CYBERPUNK 2077 STYLE -->
+                <span class="marquee-item text-black font-black text-2xl md:text-4xl uppercase tracking-widest">
+                    CYBERPUNK CIIA CATIMATION INTEGRATED INTELLIGENT AGENT
+                </span>
+                <span class="marquee-separator text-black mx-6">///</span>
+                <span class="marquee-item text-black font-black text-xl md:text-3xl uppercase tracking-wide">
+                    <span class="text-3xl md:text-5xl font-black">10K+</span> USERS ONLINE
+                </span>
+                <span class="marquee-separator text-black mx-6">///</span>
+                <span class="marquee-item text-black font-black text-xl md:text-3xl uppercase tracking-wide">
+                    <span class="text-3xl md:text-5xl font-black">100K+</span> IMAGES GENERATED
+                </span>
+                <span class="marquee-separator text-black mx-6">///</span>
+                <span class="marquee-item text-black font-black text-xl md:text-3xl uppercase tracking-wide">
+                    <span class="text-3xl md:text-5xl font-black">24/7</span> NEURAL LINK ACTIVE
+                </span>
+                <span class="marquee-separator text-black mx-6">///</span>
+                <span class="marquee-item text-black font-black text-xl md:text-3xl uppercase tracking-wide">
+                    WAKE UP SAMURAI — WE HAVE A CITY TO BURN
+                </span>
+                <span class="marquee-separator text-black mx-6">///</span>
+                <!-- 重复内容以确保无缝滚动 -->
+                <span class="marquee-item text-black font-black text-2xl md:text-4xl uppercase tracking-widest">
+                    CYBERPUNK CIIA CATIMATION INTEGRATED INTELLIGENT AGENT
+                </span>
+                <span class="marquee-separator text-black mx-6">///</span>
+                <span class="marquee-item text-black font-black text-xl md:text-3xl uppercase tracking-wide">
+                    <span class="text-3xl md:text-5xl font-black">10K+</span> USERS ONLINE
+                </span>
+                <span class="marquee-separator text-black mx-6">///</span>
+                <span class="marquee-item text-black font-black text-xl md:text-3xl uppercase tracking-wide">
+                    <span class="text-3xl md:text-5xl font-black">100K+</span> IMAGES GENERATED
+                </span>
+                <span class="marquee-separator text-black mx-6">///</span>
+                <span class="marquee-item text-black font-black text-xl md:text-3xl uppercase tracking-wide">
+                    <span class="text-3xl md:text-5xl font-black">24/7</span> NEURAL LINK ACTIVE
+                </span>
+                <span class="marquee-separator text-black mx-6">///</span>
+                <span class="marquee-item text-black font-black text-xl md:text-3xl uppercase tracking-wide">
+                    WAKE UP SAMURAI — WE HAVE A CITY TO BURN
+                </span>
+                <span class="marquee-separator text-black mx-6">///</span>
+            </div>
+        </div>
+
+        <!-- 功能导航标签 -->
+        <div class="flex justify-center mb-6 mt-2">
+            <div class="flex border-b-2 border-[#3F3F46]">
+                <button class="tab-btn active flex-1 px-4 md:px-8 py-3 text-center font-medium transition-all duration-300 flex items-center justify-center space-x-1 md:space-x-2 whitespace-nowrap" data-tab="generate">
+                    <i class="fas fa-magic text-sm"></i>
+                    <span class="text-base whitespace-nowrap desktop-text font-bold" data-i18n="nav.generateImage">图片编辑</span>
+                    <span class="text-sm whitespace-nowrap mobile-text" data-i18n="nav.generateImageShort">出图</span>
+                </button>
+                <button class="tab-btn flex-1 px-4 md:px-8 py-3 text-center font-medium transition-all duration-300 flex items-center justify-center space-x-1 md:space-x-2 whitespace-nowrap relative" data-tab="batch">
+                    <!-- 抽卡角标 -->
+                    <span class="tab-btn-badge" data-i18n="nav.badge.lottery">抽卡</span>
+                    <i class="fas fa-layer-group text-sm"></i>
+                    <span class="text-base whitespace-nowrap desktop-text font-bold" data-i18n="nav.batchGenerate">批量生成</span>
+                    <span class="text-sm whitespace-nowrap mobile-text" data-i18n="nav.batchShort">批量</span>
+                </button>
+                <button class="tab-btn flex-1 px-4 md:px-8 py-3 text-center font-medium transition-all duration-300 flex items-center justify-center space-x-1 md:space-x-2 whitespace-nowrap" data-tab="compare">
+                    <i class="fas fa-balance-scale text-sm"></i>
+                    <span class="text-base whitespace-nowrap desktop-text font-bold" data-i18n="nav.modelCompare">模型对比</span>
+                    <span class="text-sm whitespace-nowrap mobile-text" data-i18n="nav.compareShort">对比</span>
+                </button>
+                <button class="tab-btn flex-1 px-4 md:px-8 py-3 text-center font-medium transition-all duration-300 flex items-center justify-center space-x-1 md:space-x-2 whitespace-nowrap" data-tab="history">
+                    <i class="fas fa-history text-sm"></i>
+                    <span class="text-base whitespace-nowrap desktop-text font-bold" data-i18n="nav.historyRecords">历史记录</span>
+                    <span class="text-sm whitespace-nowrap mobile-text" data-i18n="nav.historyShort">记录</span>
+                </button>
+                <button class="tab-btn flex-1 px-4 md:px-8 py-3 text-center font-medium transition-all duration-300 flex items-center justify-center space-x-1 md:space-x-2 whitespace-nowrap" data-tab="understand">
+                    <i class="fas fa-eye text-sm"></i>
+                    <span class="text-base whitespace-nowrap desktop-text font-bold" data-i18n="nav.imageUnderstand">图像理解</span>
+                    <span class="text-sm whitespace-nowrap mobile-text" data-i18n="nav.understandShort">识图</span>
+                </button>
+                <button class="tab-btn flex-1 px-4 md:px-8 py-3 text-center font-medium transition-all duration-300 flex items-center justify-center space-x-1 md:space-x-2 whitespace-nowrap" data-tab="director">
+                    <i class="fas fa-film text-sm"></i>
+                    <span class="text-base whitespace-nowrap desktop-text font-bold" data-i18n="nav.director">导演模式</span>
+                    <span class="text-sm whitespace-nowrap mobile-text" data-i18n="nav.directorShort">导演</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- 图片生成面板 -->
+        <div id="generatePanel" class="tab-panel bg-[#09090B] border border-[#3F3F46] rounded-none p-4 md:p-6 relative overflow-hidden">
+            <!-- Kinetic Typography - 装饰性背景数字 -->
+            <div class="text-massive absolute -right-8 -top-8 opacity-[0.03] select-none pointer-events-none z-0" aria-hidden="true">01</div>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 relative z-10">
+                <!-- 左侧控制面板 -->
+                <div class="space-y-4 md:space-y-6">
+                    <!-- 参考图上传区域 -->
+                    <div>
+                        <div class="flex items-center justify-between mb-2">
+                            <label class="block text-white text-sm font-medium" data-i18n="generate.image2ImageLabel">图生图 (垫图可选，不上传即文生图)</label>
+                            <span class="text-white text-xs opacity-70" data-i18n="generate.apiCallLimit">（API调用不止8 张图片输入）</span>
+                        </div>
+                        <div id="referenceImageArea" class="border-2 border-dashed border-white border-opacity-30 rounded-none p-4 text-center cursor-pointer hover:border-opacity-50 transition-all">
+                            <div id="referenceUploadPrompt" class="space-y-2">
+                                <i class="fas fa-cloud-upload-alt text-2xl text-white opacity-50"></i>
+                                <p class="text-white opacity-70 text-sm" data-i18n="generate.clickToUpload">点击上传参考图片</p>
+                                <div class="text-white opacity-50 text-xs">
+                                    <div class="flex items-center justify-center space-x-2">
+                                        <span id="referenceImageLimit">支持 JPG、PNG 格式，最多上传8张图片，单个文件最大20MB</span>
+                                    </div>
+                                    <div class="flex items-center justify-center space-x-1 mt-0.5">
+                                        <i class="fas fa-info-circle"></i>
+                                        <span data-i18n="generate.autoCompressionInfo">大图片在生成时自动压缩，不影响质量</span>
+                                    </div>
+                                    <div class="flex items-center justify-center space-x-1 mt-1">
+                                        <i class="fas fa-paste"></i>
+                                        <span class="hidden md:inline" data-i18n="generate.pasteImageDesktop">或按快捷键粘贴图片</span>
+                                        <span class="md:hidden" data-i18n="generate.pasteImageMobile">或直接粘贴图片</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="referenceImagesPreview" class="hidden space-y-3">
+                                <div id="referenceImagesList" class="grid grid-cols-3 gap-3">
+                                    <!-- 参考图预览将在这里动态生成 -->
+                                </div>
+                                <div id="addMoreReferenceArea" class="hidden">
+                                    <div class="flex items-center justify-center space-x-2">
+                                        <i class="fas fa-plus text-white opacity-50"></i>
+                                        <span class="text-white opacity-70 text-sm" data-i18n="generate.labels.addMoreReferences">添加更多参考图</span>
+                                        <span id="referenceCountText" class="text-white opacity-50 text-xs">(0/3)</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <input type="file" id="referenceImageUpload" accept="image/*" multiple class="hidden" aria-label="选择参考图片">
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="flex items-center justify-between mb-2">
+                            <label class="block text-white text-sm font-medium" data-i18n="generate.describeImage">描述您想要的图片</label>
+                            <button id="promptTemplateBtn" class="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-none text-sm transition-all flex items-center space-x-1">
+                                <i class="fas fa-lightbulb"></i>
+                                <span data-i18n="generate.templates">提示词模板</span>
+                            </button>
+                        </div>
+                        <textarea id="promptInput" rows="4" data-i18n-attr="placeholder:generate.promptPlaceholder" placeholder="例如: 一只可爱的小猫咪坐在花园里，油画风格，高清，细节丰富"
+                                  class="w-full px-3 py-2 bg-[#27272A] border-2 border-[#3F3F46] rounded-none text-[#FAFAFA] placeholder-[#A1A1AA] focus:outline-none focus:border-[#FCE300] resize-none"></textarea>
+                    </div>
+
+                    <div class="flex space-x-3">
+                        <button id="clearInputBtn" class="flex-shrink-0 bg-gray-500 bg-opacity-60 hover:bg-opacity-80 text-white py-3 px-4 rounded-none font-medium transition-all" title="清空提示词输入">
+                            <i class="fas fa-eraser"></i>
+                            <span class="hidden sm:inline sm:ml-2" data-i18n="common.clear">清空</span>
+                        </button>
+                        <button id="generateBtn" class="flex-1 bg-[#FCE300] text-black py-3 px-6 rounded-none font-bold uppercase tracking-tighter transition-all transform hover:scale-105 active:scale-95">
+                            <i class="fas fa-magic mr-2"></i><span data-i18n="generate.buttons.generateButton">开始生成</span>
+                        </button>
+                    </div>
+                    
+                    <div>
+                        <label class="block text-white text-sm font-medium mb-2" data-i18n="generate.imageSize">图片尺寸</label>
+                        <div id="ratioButtons" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                            <button class="ratio-btn active text-white py-2 px-2 md:px-4 rounded-none transition-all text-xs md:text-sm" data-ratio="1:1">
+                                <div class="flex flex-col md:flex-row items-center justify-center">
+                                    <span>方形</span>
+                                    <span class="text-xs opacity-75 md:hidden">1:1</span>
+                                    <span class="hidden md:inline md:ml-1">1:1</span>
+                                </div>
+                            </button>
+                            <button class="ratio-btn text-white py-2 px-2 md:px-4 rounded-none transition-all text-xs md:text-sm" data-ratio="2:3">
+                                <div class="flex flex-col md:flex-row items-center justify-center">
+                                    <span>竖版</span>
+                                    <span class="text-xs opacity-75 md:hidden">2:3</span>
+                                    <span class="hidden md:inline md:ml-1">2:3</span>
+                                </div>
+                            </button>
+                            <button class="ratio-btn text-white py-2 px-2 md:px-4 rounded-none transition-all text-xs md:text-sm" data-ratio="3:2">
+                                <div class="flex flex-col md:flex-row items-center justify-center">
+                                    <span>横版</span>
+                                    <span class="text-xs opacity-75 md:hidden">3:2</span>
+                                    <span class="hidden md:inline md:ml-1">3:2</span>
+                                </div>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 分辨率选择器 - 仅对支持的模型显示 -->
+                    <div id="resolutionContainer" class="hidden">
+                        <label class="block text-white text-sm font-medium mb-2 mt-4" data-i18n="generate.resolution">图片分辨率</label>
+                        <div id="resolutionButtons" class="grid grid-cols-3 gap-2">
+                            <!-- 动态渲染分辨率按钮 -->
+                        </div>
+
+                        <!-- 最终分辨率显示 -->
+                        <div id="finalResolutionDisplay" class="mt-3 p-3 bg-[#09090B] border border-[#3F3F46] rounded-none border border-white border-opacity-20 backdrop-blur-sm">
+                            <div class="flex items-center justify-center text-white">
+                                <span class="text-sm opacity-70 mr-2" data-i18n="generate.finalResolution">最终分辨率：</span>
+                                <span id="finalResolutionValue" class="font-semibold text-lg">2048 × 2048</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label for="generateCount" class="block text-white text-sm font-medium mb-2" data-i18n="generate.quantity">数量</label>
+                        <select id="generateCount" name="generateCount" aria-label="选择生成图片的数量" class="w-full px-3 py-2 bg-white bg-opacity-90 border border-white border-opacity-30 rounded-none focus:outline-none focus:ring-2 focus:ring-purple-400 focus:border-transparent text-gray-800 font-medium">
+                            <option value="1">1张</option>
+                            <option value="2">2张</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- 右侧结果展示 -->
+                <div>
+                    <!-- Tab导航 - 初始隐藏 -->
+                    <div id="resultTabs" class="hidden mb-4">
+                        <div class="bg-[#09090B] border border-[#3F3F46] rounded-none p-1">
+                            <div class="flex space-x-1">
+                                <button id="resultTab" class="tab-result-btn active flex-1 text-center py-2 px-4 rounded-none font-medium transition-all text-white text-sm">
+                                    <i class="fas fa-image mr-2"></i><span data-i18n="generate.labels.resultTab">生成结果</span>
+                                </button>
+                                <button id="originalTab" class="tab-result-btn flex-1 text-center py-2 px-4 rounded-none font-medium transition-all text-white text-sm">
+                                    <i class="fas fa-file-image mr-2"></i><span data-i18n="generate.labels.originalTab">原图/参考图</span>
+                                </button>
+                                <button id="compareTab" class="tab-result-btn flex-1 text-center py-2 px-4 rounded-none font-medium transition-all text-white text-sm">
+                                    <i class="fas fa-columns mr-2"></i><span data-i18n="generate.labels.compareTab">对比显示</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 结果显示区域 -->
+                    <div id="imageResult" class="bg-[#27272A] rounded-none p-4 min-h-64 flex items-center justify-center">
+                        <div class="text-center text-white opacity-50">
+                            <i class="fas fa-image text-4xl mb-4"></i>
+                            <p data-i18n="generate.labels.generatedImagesPlaceholder">生成的图片将在这里显示</p>
+                        </div>
+                    </div>
+
+                    <!-- 原图显示区域 - 初始隐藏 -->
+                    <div id="originalImages" class="hidden bg-[#27272A] rounded-none p-4 min-h-64">
+                        <h4 class="text-white font-medium mb-3" data-i18n="generate.labels.referenceImageTitle">参考图/原图</h4>
+                        <div id="originalImagesContent" class="space-y-3">
+                            <!-- 原图内容将在这里动态生成 -->
+                        </div>
+                    </div>
+
+                    <!-- 对比显示区域 - 初始隐藏 -->
+                    <div id="compareView" class="hidden bg-[#27272A] rounded-none p-4 min-h-64">
+                        <h4 class="text-white font-medium mb-3">前后对比</h4>
+                        <div id="compareContent" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div id="beforeSection" class="space-y-2">
+                                <h5 class="text-white text-sm font-medium opacity-75">原图/参考图</h5>
+                                <div id="beforeImages" class="space-y-2">
+                                    <!-- 对比前图片 -->
+                                </div>
+                            </div>
+                            <div id="afterSection" class="space-y-2">
+                                <h5 class="text-white text-sm font-medium opacity-75">生成结果</h5>
+                                <div id="afterImages" class="space-y-2">
+                                    <!-- 对比后图片 -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="loadingProgress" class="hidden mt-4">
+                        <div class="bg-white bg-opacity-20 rounded-full h-2">
+                            <div id="progressBar" class="bg-[#FCE300] h-2 rounded-none transition-all duration-300" style="width: 0%"></div>
+                        </div>
+                        <p class="text-white text-sm mt-2 text-center" id="progressText">正在生成图片...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+
+
+        <!-- 批量生成面板 -->
+        <div id="batchPanel" class="tab-panel bg-[#09090B] border border-[#3F3F46] rounded-none p-4 md:p-6 hidden relative overflow-hidden">
+            <!-- Kinetic Typography - 装饰性背景数字 -->
+            <div class="text-massive absolute -right-8 -top-8 opacity-[0.03] select-none pointer-events-none z-0" aria-hidden="true">02</div>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 mb-6 relative z-10">
+                <!-- 左侧：批量提示词输入 -->
+                <div class="space-y-6">
+                    <!-- 新增：模式选择器 -->
+                    <div class="mb-4">
+                        <div class="flex items-center space-x-3">
+                            <label id="cardModeLabel" class="flex items-center cursor-pointer px-4 py-3 bg-[#FCE300] rounded-none text-black font-bold uppercase tracking-tighter transition-all hover:scale-105">
+                                <input type="radio" name="batchMode" value="card" checked class="mr-2">
+                                <span data-i18n="batch.modes.card">🎰 抽卡模式（推荐）</span>
+                            </label>
+                            <label id="multiModeLabel" class="flex items-center cursor-pointer px-4 py-3 bg-[#09090B] border border-[#3F3F46] hover:bg-opacity-20 rounded-none text-white transition-all">
+                                <input type="radio" name="batchMode" value="multi" class="mr-2">
+                                <span data-i18n="batch.modes.multi">📋 多提示词模式</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- 抽卡模式UI（默认显示） -->
+                    <div id="cardModeUI" class="space-y-4">
+                        <!-- 提示词输入 -->
+                        <div>
+                            <div class="flex items-center justify-between mb-2">
+                                <label class="block text-white text-sm font-medium" data-i18n="batch.labels.promptInput">输入提示词（支持多行）</label>
+                                <button id="batchPromptTemplateBtn" class="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-none text-sm transition-all flex items-center space-x-1">
+                                    <i class="fas fa-lightbulb"></i>
+                                    <span data-i18n="batch.labels.promptTemplate">提示词模板</span>
+                                </button>
+                            </div>
+                            <textarea id="cardPromptInput" rows="6"
+                                      placeholder="设计一张图文店促销活动传单，宣传年终大促销活动。
+设计风格：活力促销风格，吸引眼球
+配色方案：橙红色为主色调，营造热烈促销氛围"
+                                      data-i18n-attr="placeholder:batch.placeholders.cardMode"
+                                      class="w-full px-3 py-2 bg-[#27272A] border-2 border-[#3F3F46] rounded-none text-[#FAFAFA] placeholder-[#A1A1AA] focus:outline-none focus:border-[#FCE300] resize-none"></textarea>
+                            <p class="text-white text-xs opacity-70 mt-1">
+                                <i class="fas fa-info-circle mr-1"></i><span data-i18n="batch.labels.cardWarning">一个提示词，生成多张图片供您挑选，务必提示词和图片合规，违规内容出图失败AI厂商仍然扣费</span>
+                            </p>
+                        </div>
+
+                        <!-- 抽卡数量滑块 -->
+                        <div>
+                            <div class="flex items-center justify-between mb-2">
+                                <label class="text-white text-sm font-medium" data-i18n="batch.labels.quantity">生成数量（抽卡张数）</label>
+                                <span id="cardCountDisplay" class="text-orange-300 font-bold text-lg">5 张</span>
+                            </div>
+                            <input type="range" id="cardCount" min="2" max="10" value="5" 
+                                   aria-label="选择抽卡生成数量"
+                                   class="w-full h-2 bg-white bg-opacity-20 rounded-none appearance-none cursor-pointer slider-orange">
+                            <div class="flex justify-between text-white text-xs opacity-50 mt-1">
+                                <span>2张</span>
+                                <span>10张</span>
+                            </div>
+                        </div>
+
+                        <!-- 费用预估 -->
+                        <div id="cardCostEstimate" class="bg-blue-500 bg-opacity-20 border border-blue-400 border-opacity-40 rounded-none p-4">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center space-x-2">
+                                    <i class="fas fa-calculator text-blue-300"></i>
+                                    <span class="text-white text-sm" data-i18n="batch.labels.costEstimate">预估费用</span>
+                                </div>
+                                <div class="text-right">
+                                    <div class="text-blue-200 text-xs opacity-80"><span data-i18n="batch.labels.currentModel">当前模型：</span><span id="cardModelName">-</span></div>
+                                    <div class="text-orange-300 font-bold text-xl" id="cardTotalCost">$0.00</div>
+                                    <div class="text-white text-xs opacity-70"><span data-i18n="batch.labels.unitPrice">单价</span> <span id="cardUnitPrice">$0.00</span>/<span data-i18n="batch.labels.perImage">张</span> × <span id="cardQuantity">5</span><span data-i18n="batch.labels.perImage">张</span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 多提示词模式UI（初始隐藏） -->
+                    <div id="multiModeUI" class="hidden space-y-4">
+                        <div>
+                            <div class="flex items-center justify-between mb-2">
+                                <label class="block text-white text-sm font-medium" data-i18n="batch.labels.multiPromptInput">批量提示词（用空行分隔不同提示词）</label>
+                                <button id="batchPromptTemplateBtn2" class="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-none text-sm transition-all flex items-center space-x-1">
+                                    <i class="fas fa-lightbulb"></i>
+                                    <span data-i18n="batch.labels.promptTemplate">提示词模板</span>
+                                </button>
+                            </div>
+                            <textarea id="batchPrompts" rows="10"
+                                      placeholder="设计一张图文店促销活动传单，宣传年终大促销活动。
+设计风格：活力促销风格，吸引眼球
+配色方案：橙红色为主色调
+
+一只可爱的小猫咪坐在花园里，
+油画风格，高清，细节丰富，
+温暖的午后阳光
+
+现代简约风格的客厅设计"
+                                      data-i18n-attr="placeholder:batch.placeholders.multiMode"
+                                      class="w-full px-3 py-2 bg-[#27272A] border-2 border-[#3F3F46] rounded-none text-[#FAFAFA] placeholder-[#A1A1AA] focus:outline-none focus:border-[#FCE300] resize-none"></textarea>
+                            <p class="text-white text-xs opacity-70 mt-1">
+                                <i class="fas fa-info-circle mr-1"></i>
+                                <span data-i18n="batch.labels.multiPromptHint">用<strong>空行</strong>分隔不同提示词，每个提示词内可自由换行</span>
+                            </p>
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-4 gap-4">
+                        <div>
+                            <label for="batchRatio" class="block text-white text-sm font-medium mb-2" data-i18n="batch.labels.batchSize">批量尺寸</label>
+                            <select id="batchRatio" name="batchRatio" aria-label="选择批量生成图片的尺寸比例" class="w-full px-3 py-2 bg-white bg-opacity-90 border border-white border-opacity-30 rounded-none focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent text-gray-800 font-medium">
+                                <option value="auto" data-i18n="batch.ratioOptions.auto">自适应</option>
+                                <option value="1:1" data-i18n="batch.ratioOptions.square">方形 1:1</option>
+                                <option value="2:3" data-i18n="batch.ratioOptions.portrait">竖版 2:3</option>
+                                <option value="3:2" data-i18n="batch.ratioOptions.landscape">横版 3:2</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="batchResolution" class="block text-white text-sm font-medium mb-2" data-i18n="batch.labels.resolution">清晰度</label>
+                            <select id="batchResolution" name="batchResolution" aria-label="选择批量生成图片的清晰度" class="w-full px-3 py-2 bg-white bg-opacity-90 border border-white border-opacity-30 rounded-none focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent text-gray-800 font-medium">
+                                <option value="1K" data-i18n="batch.resolutionOptions.1k">1K 标准</option>
+                                <option value="2K" selected data-i18n="batch.resolutionOptions.2k">2K 高清</option>
+                                <option value="4K" data-i18n="batch.resolutionOptions.4k">4K 超清</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="batchCount" id="batchCountLabel" class="flex items-center text-white text-sm font-medium mb-2">数量</label>
+                            <select id="batchCount" name="batchCount" aria-label="选择每个提示词生成图片的数量" class="w-full px-3 py-2 bg-white bg-opacity-90 border border-white border-opacity-30 rounded-none focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent text-gray-800 font-medium">
+                                <option value="1">1张</option>
+                                <option value="2">2张</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="batchConcurrency" class="block text-white text-sm font-medium mb-2" data-i18n="batch.labels.batchQuantity">数量</label>
+                            <select id="batchConcurrency" name="batchConcurrency" aria-label="选择批量生成的并发数量" class="w-full px-3 py-2 bg-white bg-opacity-90 border border-white border-opacity-30 rounded-none focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent text-gray-800 font-medium">
+                                <option value="1">1个</option>
+                                <option value="2">2个</option>
+                                <option value="3" selected>3个</option>
+                                <option value="4">4个</option>
+                                <option value="5">5个</option>
+                                <option value="6">6个</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 右侧：参考图上传区域 -->
+                <div class="space-y-6">
+                    <div>
+                        <div class="flex items-center justify-between mb-2">
+                            <label class="block text-white text-sm font-medium" data-i18n="batch.labels.batchReferenceImage">批量参考图（垫图）</label>
+                            <span class="text-white text-xs opacity-70" data-i18n="batch.labels.optional" data-i18n-options='{"max":8}'>可选，最多8张</span>
+                        </div>
+                        <div id="batchReferenceImageArea" class="border-2 border-dashed border-white border-opacity-30 rounded-none p-6 text-center cursor-pointer hover:border-opacity-50 transition-all">
+                            <div id="batchReferenceUploadPrompt" class="space-y-3">
+                                <i class="fas fa-cloud-upload-alt text-3xl text-white opacity-50"></i>
+                                <p class="text-white opacity-70 text-sm" data-i18n="batch.upload.clickToUpload">点击上传批量参考图片</p>
+                                <div class="text-white opacity-50 text-xs">
+                                    <div class="flex items-center justify-center space-x-2">
+                                        <span data-i18n="batch.labels.formatSupport" data-i18n-options='{"max":8}'>支持 JPG、PNG 格式，最多上传8张图片，单个文件最大20MB</span>
+                                    </div>
+                                    <div class="flex items-center justify-center space-x-1 mt-1">
+                                        <i class="fas fa-paste"></i>
+                                        <span class="hidden md:inline" data-i18n="batch.labels.pasteShortcutDesktop">或按快捷键粘贴图片</span>
+                                        <span class="md:hidden" data-i18n="batch.labels.pasteShortcutMobile">或直接粘贴图片</span>
+                                    </div>
+                                </div>
+                                <div class="bg-blue-500 bg-opacity-20 rounded-none p-3 mt-4">
+                                    <p class="text-white text-xs">
+                                        <i class="fas fa-info-circle mr-1"></i>
+                                        <span data-i18n="batch.labels.sharedReference">所有提示词将共用这些参考图生成</span>
+                                    </p>
+                                </div>
+                            </div>
+                            <div id="batchReferenceImagesPreview" class="hidden space-y-3">
+                                <div id="batchReferenceImagesList" class="grid grid-cols-3 gap-3">
+                                    <!-- 批量参考图预览将在这里动态生成 -->
+                                </div>
+                                <div id="addMoreBatchReferenceArea" class="hidden">
+                                    <div class="flex items-center justify-center space-x-2">
+                                        <i class="fas fa-plus text-white opacity-50"></i>
+                                        <span class="text-white opacity-70 text-sm" data-i18n="batch.labels.addMore">添加更多参考图</span>
+                                        <span id="batchReferenceCountText" class="text-white opacity-50 text-xs">(0/3)</span>
+                                    </div>
+                                </div>
+                                <div class="bg-green-500 bg-opacity-20 rounded-none p-2 mt-3">
+                                    <p class="text-white text-xs">
+                                        <i class="fas fa-check-circle mr-1"></i>
+                                        <span data-i18n="batch.labels.sharedReferenceConfirm">将作为所有提示词的参考图</span>
+                                    </p>
+                                </div>
+                            </div>
+                            <input type="file" id="batchReferenceImageUpload" accept="image/*" multiple class="hidden" aria-label="选择批量参考图片" data-i18n-attr="aria-label:batch.labels.selectBatchReference">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 生成按钮和进度 -->
+            <div class="space-y-4">
+                <button id="batchGenerateBtn" class="w-full bg-[#FCE300] text-black py-3 px-6 rounded-none font-bold uppercase tracking-tighter transition-all transform hover:scale-105 active:scale-95">
+                    <i class="fas fa-layer-group mr-2"></i><span data-i18n="batch.buttons.startBatch">开始批量生成</span>
+                </button>
+
+                <div id="batchProgress" class="hidden space-y-4">
+                    <div class="bg-white bg-opacity-20 rounded-full h-2">
+                        <div id="batchProgressBar" class="bg-[#FCE300] h-2 rounded-none transition-all duration-300" style="width: 0%"></div>
+                    </div>
+                    <p class="text-white text-sm text-center" id="batchProgressText">准备批量生成...</p>
+                </div>
+
+                <div id="batchResults" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-6"></div>
+            </div>
+
+            <!-- 批量生成注意事项说明 -->
+            <div class="mt-6 bg-amber-500 bg-opacity-15 border border-amber-400 border-opacity-30 rounded-none p-4">
+                <div class="flex items-start space-x-3">
+                    <i class="fas fa-exclamation-triangle text-amber-400 mt-1"></i>
+                    <div class="flex-1">
+                        <h4 class="text-amber-300 font-semibold mb-2" data-i18n="batch.notice.title">批量生成重要注意事项</h4>
+                        <ul class="text-amber-100 text-sm space-y-2">
+                            <li class="flex items-start space-x-2">
+                                <i class="fas fa-dot-circle text-amber-400 mt-1 text-xs"></i>
+                                <span><strong data-i18n="batch.notice.keepPageOpen">必须保持页面开启：</strong><span data-i18n="batch.notice.keepPageOpenDesc">批量生成过程中，请勿关闭浏览器标签页或刷新页面，否则任务会立即中断</span></span>
+                            </li>
+                            <li class="flex items-start space-x-2">
+                                <i class="fas fa-dot-circle text-amber-400 mt-1 text-xs"></i>
+                                <span><strong data-i18n="batch.notice.localMechanism">本地运行机制：</strong><span data-i18n="batch.notice.localMechanismDesc">本工具无后台服务，所有任务在浏览器中运行，关闭页面后无法恢复未完成的任务</span></span>
+                            </li>
+                            <li class="flex items-start space-x-2">
+                                <i class="fas fa-dot-circle text-amber-400 mt-1 text-xs"></i>
+                                <span><strong data-i18n="batch.notice.reasonableQuantity">合理设置数量：</strong><span data-i18n="batch.notice.reasonableQuantityDesc">建议根据网络状况调整并发数量，避免过多并发请求导致失败</span></span>
+                            </li>
+                            <li class="flex items-start space-x-2">
+                                <i class="fas fa-dot-circle text-amber-400 mt-1 text-xs"></i>
+                                <span><strong data-i18n="batch.notice.saveImages">及时保存图片：</strong><span data-i18n="batch.notice.saveImagesDesc">生成完成后请及时下载保存图片，避免因意外关闭页面而丢失结果</span></span>
+                            </li>
+                            <li class="flex items-start space-x-2">
+                                <i class="fas fa-dot-circle text-amber-400 mt-1 text-xs"></i>
+                                <span><strong data-i18n="batch.notice.longDuration">生成时间较长：</strong><span data-i18n="batch.notice.longDurationDesc">每张图片需要2-4分钟，大批量生成请预留充足时间</span></span>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 模型对比面板 -->
+        <div id="comparePanel" class="tab-panel bg-[#09090B] border border-[#3F3F46] rounded-none p-4 md:p-6 hidden relative overflow-hidden">
+            <!-- Kinetic Typography - 装饰性背景数字 -->
+            <div class="text-massive absolute -right-8 -top-8 opacity-[0.03] select-none pointer-events-none z-0" aria-hidden="true">03</div>
+            <!-- 模型选择区域 -->
+            <div class="mb-6">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
+                    <!-- 左侧模型选择 -->
+                    <div class="space-y-2">
+                        <label for="leftModelSelect" class="block text-white text-sm font-medium" data-i18n="compare.labels.leftModel">左侧模型</label>
+                        <select id="leftModelSelect" class="w-full bg-[#09090B] border border-[#3F3F46] text-white rounded-none px-4 py-2.5 border border-white border-opacity-20 focus:border-opacity-40 focus:bg-opacity-20 transition-all">
+                            <option value="" data-i18n="compare.labels.selectModel">选择模型</option>
+                        </select>
+                        <div id="leftModelInfo" class="mt-1"></div>
+                    </div>
+
+                    <!-- VS 标识 -->
+                    <div class="flex justify-center items-center">
+                        <div class="bg-[#FCE300] text-black rounded-none w-12 h-12 flex items-center justify-center font-bold text-lg">
+                            VS
+                        </div>
+                    </div>
+
+                    <!-- 右侧模型选择 -->
+                    <div class="space-y-2">
+                        <label for="rightModelSelect" class="block text-white text-sm font-medium" data-i18n="compare.labels.rightModel">右侧模型</label>
+                        <select id="rightModelSelect" class="w-full bg-[#09090B] border border-[#3F3F46] text-white rounded-none px-4 py-2.5 border border-white border-opacity-20 focus:border-opacity-40 focus:bg-opacity-20 transition-all">
+                            <option value="" data-i18n="compare.labels.selectModel">选择模型</option>
+                        </select>
+                        <div id="rightModelInfo" class="mt-1"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 输入区域 -->
+            <div class="space-y-6 mb-6">
+                <!-- 上部：提示词和参考图片 -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+                    <!-- 左列：提示词和尺寸 -->
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-white text-sm font-medium mb-2" data-i18n="compare.labels.prompt">提示词</label>
+                            <textarea id="comparePrompt" rows="4" class="w-full bg-[#09090B] border border-[#3F3F46] text-white placeholder-white placeholder-opacity-50 rounded-none p-3 border border-white border-opacity-20 focus:border-opacity-40 focus:bg-opacity-20 transition-all resize-none"
+                                      placeholder="描述你想要生成的图片..." data-i18n-attr="placeholder:compare.labels.promptPlaceholder"></textarea>
+                        </div>
+
+                        <!-- 尺寸选择 -->
+                        <div>
+                            <label class="block text-white text-sm font-medium mb-2" data-i18n="compare.labels.commonRatios">共同支持的尺寸</label>
+                            <div id="compareRatioButtons" class="flex flex-wrap gap-2">
+                                <!-- 动态生成比例按钮 -->
+                                <div class="text-white opacity-50 text-sm w-full text-center py-4" data-i18n="compare.labels.selectModelsFirst">
+                                    请先选择两个模型
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 右列：参考图片 -->
+                    <div>
+                        <label class="block text-white text-sm font-medium mb-2" data-i18n="compare.labels.referenceImages">参考图片（可选，最多8张）</label>
+                        <div id="compareReferenceImageArea" class="border-2 border-dashed border-white border-opacity-20 rounded-none p-4 cursor-pointer hover:border-opacity-30 transition-all min-h-[120px] flex items-center justify-center">
+                            <div id="compareReferenceUploadPrompt" class="space-y-2 text-center w-full">
+                                <i class="fas fa-cloud-upload-alt text-2xl text-white opacity-50"></i>
+                                <p class="text-white opacity-70 text-sm" data-i18n="compare.labels.uploadHint">点击或拖拽上传参考图片</p>
+                                <p class="text-white opacity-50 text-xs" data-i18n="compare.labels.formatHint">支持 JPG、PNG、GIF 格式</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 下部：按钮组 -->
+                <div class="flex justify-center items-center gap-3 mt-6">
+                    <button id="clearCompareInputBtn" type="button" class="bg-gray-500 bg-opacity-60 hover:bg-opacity-80 text-white py-3 px-4 rounded-none font-medium transition-all">
+                        <i class="fas fa-eraser"></i>
+                        <span class="ml-2" data-i18n="compare.buttons.clear">清空</span>
+                    </button>
+                    <button id="compareBtn" type="button" class="bg-[#FCE300] text-black py-3 px-6 rounded-none font-bold uppercase tracking-tighter transition-all transform hover:scale-105 active:scale-95">
+                        <i class="fas fa-balance-scale mr-2"></i>
+                        <span data-i18n="compare.buttons.startCompare">开始对比</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 对比结果区域 -->
+            <div id="compareResults" class="relative"></div>
+
+            <!-- 评价按钮区域 -->
+            <div id="evaluationArea" class="mt-6 hidden">
+                <div class="bg-[#09090B] border border-[#3F3F46] rounded-none p-4">
+                    <p class="text-white text-center mb-4" data-i18n="compare.evaluation.question">您认为哪个模型生成的图片更好？</p>
+                    <div class="flex flex-wrap justify-center gap-2">
+                        <button type="button" class="evaluation-btn bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-none transition-all" data-evaluation="left">
+                            <i class="fas fa-chevron-left mr-2"></i><span data-i18n="compare.evaluation.leftButton">左边更好</span>
+                        </button>
+                        <button type="button" class="evaluation-btn bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-none transition-all" data-evaluation="equal_good">
+                            <i class="fas fa-equals mr-2"></i><span data-i18n="compare.evaluation.equalGood">一样好</span>
+                        </button>
+                        <button type="button" class="evaluation-btn bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-none transition-all" data-evaluation="equal_bad">
+                            <i class="fas fa-thumbs-down mr-2"></i><span data-i18n="compare.evaluation.equalBad">一样糟糕</span>
+                        </button>
+                        <button type="button" class="evaluation-btn bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-none transition-all" data-evaluation="right">
+                            <span data-i18n="compare.evaluation.rightButton">右边更好</span><i class="fas fa-chevron-right ml-2"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 历史记录面板 -->
+        <div id="historyPanel" class="tab-panel bg-[#09090B] border border-[#3F3F46] rounded-none p-4 md:p-6 hidden relative overflow-hidden">
+            <!-- Kinetic Typography - 装饰性背景数字 -->
+            <div class="text-massive absolute -right-8 -top-8 opacity-[0.03] select-none pointer-events-none z-0" aria-hidden="true">04</div>
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4 relative z-10">
+                <h3 class="text-white text-xl font-bold" data-i18n="history.title">历史记录</h3>
+                <button type="button" id="clearHistory" class="bg-red-500 hover:bg-red-600 text-white py-2 px-4 rounded-none transition-colors">
+                    <i class="fas fa-trash mr-2"></i>
+                    <span class="hidden sm:inline" data-i18n="history.clearHistory">清空记录</span>
+                    <span class="sm:hidden" data-i18n="common.clear">清空</span>
+                </button>
+            </div>
+
+
+            <div id="historyList" class="space-y-4">
+                <div class="text-center text-white opacity-50 py-8">
+                    <i class="fas fa-history text-4xl mb-4"></i>
+                    <p>暂无历史记录</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 图像理解面板 -->
+        <div id="understandPanel" class="tab-panel bg-[#09090B] border border-[#3F3F46] rounded-none p-4 md:p-6 hidden relative overflow-hidden">
+            <!-- Kinetic Typography - 装饰性背景数字 -->
+            <div class="text-massive absolute -right-8 -top-8 opacity-[0.03] select-none pointer-events-none z-0" aria-hidden="true">05</div>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 relative z-10">
+                <!-- 左侧：上传和配置区 -->
+                <div class="space-y-4">
+                    <!-- 图片上传区域 -->
+                    <div>
+                        <div class="flex items-center justify-between mb-2">
+                            <label class="block text-white text-sm font-medium" data-i18n="understand.pageTitle">上传图片进行理解</label>
+                            <span class="text-white text-xs opacity-70" data-i18n="understand.multiImageSupport">支持多图联合分析</span>
+                        </div>
+                        <div id="understandImageArea" class="border-2 border-dashed border-white border-opacity-30 rounded-none p-4 text-center cursor-pointer hover:border-opacity-50 transition-all">
+                            <div id="understandUploadPrompt" class="space-y-2">
+                                <i class="fas fa-cloud-upload-alt text-2xl text-white opacity-50"></i>
+                                <p class="text-white opacity-70 text-sm" data-i18n="understand.upload.clickToUpload">点击上传图片</p>
+                                <div class="text-white opacity-50 text-xs">
+                                    <div class="flex items-center justify-center space-x-2">
+                                        <span data-i18n="understand.upload.formatInfo">支持 JPG、PNG 格式，单个文件最大 20MB</span>
+                                    </div>
+                                    <div class="flex items-center justify-center space-x-1 mt-0.5">
+                                        <i class="fas fa-info-circle"></i>
+                                        <span data-i18n="understand.upload.compressionInfo">大图片自动压缩，不影响理解质量</span>
+                                    </div>
+                                    <div class="flex items-center justify-center space-x-1 mt-1">
+                                        <i class="fas fa-paste"></i>
+                                        <span class="hidden md:inline" data-i18n="understand.upload.pasteKeyboardHint">或按快捷键粘贴图片</span>
+                                        <span class="md:hidden" data-i18n="understand.upload.pasteMobileHint">或直接粘贴图片</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="understandImagesPreview" class="hidden space-y-3">
+                                <div id="understandImagesList" class="grid grid-cols-3 gap-3">
+                                    <!-- 图片预览将在这里动态生成 -->
+                                </div>
+                                <div id="addMoreUnderstandArea">
+                                    <div class="flex items-center justify-center space-x-2">
+                                        <i class="fas fa-plus text-white opacity-50"></i>
+                                        <span class="text-white opacity-70 text-sm" data-i18n="understand.upload.addMoreImages">添加更多图片</span>
+                                        <span id="understandCountText" class="text-white opacity-50 text-xs">(0)</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 角色选择器 -->
+                    <div class="mb-3">
+                        <div class="flex flex-wrap gap-2" id="understandRoleSelector">
+                            <!-- 角色标签将动态生成 -->
+                        </div>
+                    </div>
+
+                    <!-- 提示词输入 -->
+                    <div class="space-y-2">
+                        <div class="flex items-center justify-between">
+                            <label class="block text-white text-sm font-medium flex items-center">
+                                <i class="fas fa-comment-dots mr-2"></i>
+                                <span id="currentRoleName" data-i18n="understand.prompt.label">提问（可选）</span>
+                            </label>
+                            <button
+                                type="button"
+                                id="customPromptBtn"
+                                class="text-white opacity-50 hover:opacity-100 text-xs transition-opacity">
+                                <i class="fas fa-edit mr-1"></i><span data-i18n="understand.roles.custom">自定义</span>
+                            </button>
+                        </div>
+                        <textarea
+                            id="understandPrompt"
+                            class="w-full p-3 rounded-none bg-[#09090B] border border-[#3F3F46] text-white placeholder-white placeholder-opacity-50 border border-white border-opacity-20 focus:border-opacity-50 focus:outline-none resize-none"
+                            rows="3"
+                            data-i18n-placeholder="understand.prompt.placeholder"
+                            placeholder="例如：这张图片里有什么？描述图片中的场景..."></textarea>
+                        <p class="text-white opacity-50 text-xs">
+                            <span id="roleHintText" data-i18n="understand.prompt.roleHint">点击上方角色标签快速应用专业提示词</span>
+                        </p>
+                    </div>
+
+                    <!-- 模型选择按钮 -->
+                    <div class="space-y-2">
+                        <label class="block text-white text-sm font-medium flex items-center">
+                            <i class="fas fa-brain mr-2"></i>
+                            <span data-i18n="understand.models.selectModel">选择模型</span>
+                        </label>
+                        <button
+                            type="button"
+                            id="selectModelBtn"
+                            class="w-full p-3 rounded-none bg-[#09090B] border border-[#3F3F46] text-white border border-white border-opacity-20 hover:bg-opacity-15 focus:border-opacity-50 focus:outline-none transition-all flex items-center justify-between">
+                            <div class="flex items-center space-x-2">
+                                <span id="visionModelIcon">⚡</span>
+                                <span id="visionModelName">Qwen OCR</span>
+                            </div>
+                            <i class="fas fa-chevron-down text-white opacity-50"></i>
+                        </button>
+                        <p class="text-white opacity-50 text-xs" data-i18n="understand.models.selectOtherModel">
+                            点击选择其他模型或查看价格信息
+                        </p>
+                    </div>
+
+                    <!-- 自定义模型输入 -->
+                    <div class="space-y-2">
+                        <div class="flex items-center justify-between">
+                            <label class="block text-white text-sm font-medium flex items-center">
+                                <i class="fas fa-cog mr-2"></i>
+                                <span data-i18n="understand.models.customModelOptional">自定义模型（可选）</span>
+                            </label>
+                            <button
+                                type="button"
+                                id="toggleCustomModel"
+                                class="text-white opacity-70 hover:opacity-100 text-xs transition-opacity">
+                                <i class="fas fa-chevron-down mr-1"></i><span data-i18n="understand.models.expand">展开</span>
+                            </button>
+                        </div>
+                        <div id="customModelInputArea" class="hidden">
+                            <input
+                                type="text"
+                                id="customModelInput"
+                                class="w-full p-3 rounded-none bg-[#09090B] border border-[#3F3F46] text-white placeholder-white placeholder-opacity-50 border border-white border-opacity-20 focus:border-opacity-50 focus:outline-none"
+                                data-i18n-placeholder="understand.models.customModelPlaceholder"
+                                placeholder="例如：gpt-4-vision-preview">
+                            <p class="text-white opacity-50 text-xs mt-1" data-i18n="understand.models.customModelHint">
+                                填写后将使用自定义模型，留空使用上方选择的模型
+                            </p>
+                        </div>
+                    </div>
+
+                    <!-- 分析按钮 -->
+                    <button
+                        id="analyzeBtn"
+                        type="button"
+                        class="w-full bg-[#FCE300] text-black py-3 px-6 rounded-none font-bold uppercase tracking-tighter transition-all hover:scale-105 active:scale-95">
+                        <i class="fas fa-eye mr-2"></i><span data-i18n="understand.buttons.startAnalysis">开始分析</span>
+                    </button>
+                </div>
+
+                <!-- 右侧：结果展示区 -->
+                <div class="space-y-4">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-white text-xl font-bold flex items-center">
+                            <i class="fas fa-file-alt mr-2"></i>
+                            <span data-i18n="understand.labels.result">分析结果</span>
+                        </h3>
+                        <button
+                            id="copyResultBtn"
+                            type="button"
+                            class="bg-blue-500 hover:bg-blue-600 text-white py-2 px-4 rounded-none text-sm transition-colors hidden">
+                            <i class="fas fa-copy mr-2"></i><span data-i18n="understand.buttons.copyResult">复制结果</span>
+                        </button>
+                    </div>
+
+                    <!-- 结果容器 -->
+                    <div id="understandResult" class="bg-[#27272A] rounded-none p-6 min-h-96">
+                        <div class="flex items-center justify-center h-full">
+                            <div class="text-center text-white opacity-50">
+                                <i class="fas fa-info-circle text-4xl mb-4"></i>
+                                <p data-i18n="understand.labels.resultPlaceholder">上传图片后点击"开始分析"查看结果</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 导演模式面板 -->
+        <div id="directorPanel" class="tab-panel bg-[#09090B] border border-[#3F3F46] rounded-none p-4 md:p-6 hidden relative overflow-hidden">
+            <!-- Kinetic Typography - 装饰性背景数字 -->
+            <div class="text-massive absolute -right-8 -top-8 opacity-[0.03] select-none pointer-events-none z-0" aria-hidden="true">06</div>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6 relative z-10">
+                <!-- 左侧：参考图上传和场景描述 -->
+                <div class="space-y-4">
+                    <!-- 参考图上传区 -->
+                    <div class="bg-[#27272A] rounded-none p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="text-white font-semibold flex items-center">
+                                <i class="fas fa-image mr-2 text-blue-400"></i>
+                                <span data-i18n="director.labels.referenceImage">参考图</span>
+                            </h3>
+                            <button id="directorExampleGalleryBtn" class="bg-cyan-500 hover:bg-cyan-600 text-white px-3 py-1.5 rounded-none text-sm transition-all flex items-center space-x-1">
+                                <i class="fas fa-images"></i>
+                                <span data-i18n="director.buttons.exampleGallery">示例图库</span>
+                            </button>
+                        </div>
+                        
+                        <!-- 上传区域 -->
+                        <div id="directorUploadArea" 
+                             class="border-2 border-dashed border-white border-opacity-30 rounded-none p-6 text-center cursor-pointer hover:border-opacity-50 hover:bg-white hover:bg-opacity-5 transition-all">
+                            <i class="fas fa-cloud-upload-alt text-4xl text-white opacity-50 mb-3"></i>
+                            <p class="text-white opacity-70 mb-2" data-i18n="director.labels.uploadHint">点击或拖拽上传参考图</p>
+                            <p class="text-white opacity-50 text-sm mb-1" data-i18n="director.labels.uploadFormat">支持 JPG、PNG、WebP 格式，最多8张</p>
+                            <p class="text-white opacity-40 text-xs" data-i18n="director.labels.multiImageHint">多张参考图可提高角色一致性</p>
+                        </div>
+                        
+                        <!-- 图片预览 -->
+                        <div id="directorImagePreview" class="hidden mt-4"></div>
+                    </div>
+                    
+                    <!-- 生成模式选择 -->
+                    <div class="bg-[#27272A] rounded-none p-4">
+                        <h3 class="text-white font-semibold mb-3 flex items-center">
+                            <i class="fas fa-sliders-h mr-2 text-yellow-400"></i>
+                            <span data-i18n="director.labels.modeSelect">生成模式</span>
+                        </h3>
+                        <div class="flex space-x-3">
+                            <label id="directorSingleModeLabel" class="flex-1 flex items-center justify-center cursor-pointer px-4 py-3 bg-[#FCE300] rounded-none text-black font-bold uppercase tracking-tighter transition-all hover:scale-105">
+                                <input type="radio" name="directorMode" value="single" class="hidden" checked>
+                                <i class="fas fa-image mr-2"></i>
+                                <span data-i18n="director.modes.single">单图模式</span>
+                            </label>
+                            <label id="directorMultiModeLabel" class="flex-1 flex items-center justify-center cursor-pointer px-4 py-3 bg-[#09090B] border border-[#3F3F46] hover:bg-opacity-20 rounded-none text-white transition-all">
+                                <input type="radio" name="directorMode" value="multi" class="hidden">
+                                <i class="fas fa-layer-group mr-2"></i>
+                                <span data-i18n="director.modes.multi">多提示词模式</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- 风格模板选择 -->
+                    <div class="bg-[#27272A] rounded-none p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="text-white font-semibold flex items-center">
+                                <i class="fas fa-palette mr-2 text-pink-400"></i>
+                                <span data-i18n="director.labels.styleTemplate">风格模板</span>
+                            </h3>
+                            <button id="directorTemplateBtn" class="bg-pink-500 hover:bg-pink-600 text-white px-3 py-1.5 rounded-none text-sm transition-all flex items-center space-x-1">
+                                <i class="fas fa-magic"></i>
+                                <span data-i18n="director.buttons.selectTemplate">选择模板</span>
+                            </button>
+                        </div>
+                        <div id="directorSelectedTemplate" class="bg-[#09090B] border border-[#3F3F46] rounded-none p-3">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center space-x-2">
+                                    <span id="directorTemplateName" class="text-white text-sm">默认（无模板）</span>
+                                </div>
+                                <button id="directorClearTemplate" class="hidden text-red-400 hover:text-red-300 text-xs">
+                                    <i class="fas fa-times mr-1"></i>清除
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 单图模式：场景描述 -->
+                    <div id="directorSingleModeUI" class="bg-[#27272A] rounded-none p-4">
+                        <h3 class="text-white font-semibold mb-3 flex items-center">
+                            <i class="fas fa-pen mr-2 text-green-400"></i>
+                            <span data-i18n="director.labels.sceneDescription">场景描述</span>
+                            <span class="text-white opacity-50 text-sm ml-2" data-i18n="director.labels.optional">(可选)</span>
+                        </h3>
+                        <textarea id="directorSceneInput" 
+                                  rows="4" 
+                                  class="w-full px-4 py-3 bg-[#09090B] border border-[#3F3F46] border border-white border-opacity-20 rounded-none text-white placeholder-white placeholder-opacity-50 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                                  data-i18n-attr="placeholder:director.labels.scenePlaceholder"
+                                  placeholder="描述场景、剧情或您想要的效果...（留空则AI自动分析参考图）"></textarea>
+                    </div>
+
+                    <!-- 多提示词模式：批量场景描述 -->
+                    <div id="directorMultiModeUI" class="bg-[#27272A] rounded-none p-4 hidden">
+                        <h3 class="text-white font-semibold mb-3 flex items-center justify-between">
+                            <div class="flex items-center">
+                                <i class="fas fa-list-alt mr-2 text-orange-400"></i>
+                                <span data-i18n="director.labels.multiSceneDescription">多场景描述</span>
+                            </div>
+                            <span id="directorPromptCount" class="text-white opacity-50 text-sm">0 个场景</span>
+                        </h3>
+                        <textarea id="directorMultiSceneInput" 
+                                  rows="8" 
+                                  class="w-full px-4 py-3 bg-[#09090B] border border-[#3F3F46] border border-white border-opacity-20 rounded-none text-white placeholder-white placeholder-opacity-50 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none font-mono text-sm"
+                                  data-i18n-attr="placeholder:director.labels.multiScenePlaceholder"
+                                  placeholder="每个场景用空行分隔，例如：&#10;&#10;场景1：男主站在雨中，背对镜头&#10;&#10;场景2：女主在窗边看书，阳光洒落&#10;&#10;场景3：两人在咖啡店相遇"></textarea>
+                        <p class="text-white opacity-50 text-xs mt-2">
+                            <i class="fas fa-info-circle mr-1"></i>
+                            <span data-i18n="director.labels.multiSceneHint">用空行分隔不同场景，每个场景生成一张漫画分镜页面</span>
+                        </p>
+                    </div>
+                </div>
+                
+                <!-- 右侧：布局选择和生成 -->
+                <div class="space-y-4">
+                    <!-- 布局选择 -->
+                    <div class="bg-[#27272A] rounded-none p-4">
+                        <h3 class="text-white font-semibold mb-3 flex items-center">
+                            <i class="fas fa-th mr-2 text-purple-400"></i>
+                            <span data-i18n="director.labels.layoutSelect">选择分镜布局</span>
+                        </h3>
+                        
+                        <div id="directorLayoutOptions" class="grid grid-cols-2 gap-3">
+                            <!-- 6格布局 -->
+                            <div class="layout-card cursor-pointer rounded-none p-4 bg-blue-500 bg-opacity-30 ring-2 ring-blue-400 transition-all hover:bg-opacity-40" data-layout="6grid">
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="text-white font-medium" data-i18n="director.layouts.6grid">6格标准</span>
+                                    <div class="grid grid-cols-3 gap-0.5 w-8 h-6">
+                                        <div class="bg-white bg-opacity-60 rounded-sm"></div>
+                                        <div class="bg-white bg-opacity-60 rounded-sm"></div>
+                                        <div class="bg-white bg-opacity-60 rounded-sm"></div>
+                                        <div class="bg-white bg-opacity-60 rounded-sm"></div>
+                                        <div class="bg-white bg-opacity-60 rounded-sm"></div>
+                                        <div class="bg-white bg-opacity-60 rounded-sm"></div>
+                                    </div>
+                                </div>
+                                <p class="text-white opacity-60 text-xs" data-i18n="director.layoutDesc.6grid">2行×3列，适合完整故事</p>
+                            </div>
+                            
+                            <!-- 4格布局 -->
+                            <div class="layout-card cursor-pointer rounded-none p-4 bg-[#09090B] border border-[#3F3F46] transition-all hover:bg-opacity-20" data-layout="4grid">
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="text-white font-medium" data-i18n="director.layouts.4grid">4格方正</span>
+                                    <div class="grid grid-cols-2 gap-0.5 w-6 h-6">
+                                        <div class="bg-white bg-opacity-60 rounded-sm"></div>
+                                        <div class="bg-white bg-opacity-60 rounded-sm"></div>
+                                        <div class="bg-white bg-opacity-60 rounded-sm"></div>
+                                        <div class="bg-white bg-opacity-60 rounded-sm"></div>
+                                    </div>
+                                </div>
+                                <p class="text-white opacity-60 text-xs" data-i18n="director.layoutDesc.4grid">2行×2列，适合转折场景</p>
+                            </div>
+                            
+                            <!-- 2格特写 -->
+                            <div class="layout-card cursor-pointer rounded-none p-4 bg-[#09090B] border border-[#3F3F46] transition-all hover:bg-opacity-20" data-layout="2closeup">
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="text-white font-medium" data-i18n="director.layouts.2closeup">2格特写</span>
+                                    <div class="grid grid-cols-2 gap-0.5 w-8 h-4">
+                                        <div class="bg-white bg-opacity-60 rounded-sm"></div>
+                                        <div class="bg-white bg-opacity-60 rounded-sm"></div>
+                                    </div>
+                                </div>
+                                <p class="text-white opacity-60 text-xs" data-i18n="director.layoutDesc.2closeup">1行×2列，适合表情特写</p>
+                            </div>
+                            
+                            <!-- 9格全景 -->
+                            <div class="layout-card cursor-pointer rounded-none p-4 bg-[#09090B] border border-[#3F3F46] transition-all hover:bg-opacity-20" data-layout="9grid">
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="text-white font-medium" data-i18n="director.layouts.9grid">9格全景</span>
+                                    <div class="grid grid-cols-3 gap-0.5 w-6 h-6">
+                                        <div class="bg-white bg-opacity-60 rounded-sm"></div>
+                                        <div class="bg-white bg-opacity-60 rounded-sm"></div>
+                                        <div class="bg-white bg-opacity-60 rounded-sm"></div>
+                                        <div class="bg-white bg-opacity-60 rounded-sm"></div>
+                                        <div class="bg-white bg-opacity-60 rounded-sm"></div>
+                                        <div class="bg-white bg-opacity-60 rounded-sm"></div>
+                                        <div class="bg-white bg-opacity-60 rounded-sm"></div>
+                                        <div class="bg-white bg-opacity-60 rounded-sm"></div>
+                                        <div class="bg-white bg-opacity-60 rounded-sm"></div>
+                                    </div>
+                                </div>
+                                <p class="text-white opacity-60 text-xs" data-i18n="director.layoutDesc.9grid">3行×3列，适合动作场景</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 出图数量控制（参考批量生成页面样式） -->
+                    <div class="bg-[#27272A] rounded-none p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <label class="text-white text-sm font-medium" data-i18n="director.labels.generateCount">生成数量（抽卡张数）</label>
+                            <span id="directorCountDisplay" class="text-green-300 font-bold text-xl">1张</span>
+                        </div>
+                        <input type="range" id="directorImageCount" min="1" max="10" value="1" 
+                               aria-label="选择生成数量"
+                               class="w-full h-2 bg-white bg-opacity-20 rounded-none appearance-none cursor-pointer slider-green">
+                        <div class="flex justify-between text-white text-xs opacity-50 mt-1">
+                            <span>1张</span>
+                            <span>10张</span>
+                        </div>
+                        <p class="text-white text-xs opacity-50 mt-2">
+                            <i class="fas fa-info-circle mr-1"></i>
+                            <span data-i18n="director.labels.countHint">同一场景生成多张，挑选最佳效果</span>
+                        </p>
+                    </div>
+                    
+                    <!-- 图片尺寸和分辨率选择 -->
+                    <div class="grid grid-cols-2 gap-4">
+                        <!-- 图片尺寸 -->
+                        <div class="bg-[#27272A] rounded-none p-4">
+                            <label class="block text-white text-sm font-medium mb-2" data-i18n="director.labels.imageRatio">图片尺寸</label>
+                            <select id="directorRatio" class="w-full px-3 py-2 bg-white bg-opacity-90 border border-white border-opacity-30 rounded-none focus:outline-none focus:ring-2 focus:ring-purple-400 text-gray-800 font-medium">
+                                <option value="auto" data-i18n="director.ratioOptions.auto">自适应</option>
+                                <option value="1:1" data-i18n="director.ratioOptions.square">方形 1:1</option>
+                                <option value="16:9" data-i18n="director.ratioOptions.landscape169">横版 16:9</option>
+                                <option value="9:16" data-i18n="director.ratioOptions.portrait916">竖版 9:16</option>
+                                <option value="4:3" data-i18n="director.ratioOptions.landscape43">横版 4:3</option>
+                                <option value="3:4" data-i18n="director.ratioOptions.portrait34">竖版 3:4</option>
+                                <option value="3:2" selected data-i18n="director.ratioOptions.landscape32">横版 3:2</option>
+                                <option value="2:3" data-i18n="director.ratioOptions.portrait23">竖版 2:3</option>
+                            </select>
+                        </div>
+                        <!-- 分辨率 -->
+                        <div class="bg-[#27272A] rounded-none p-4">
+                            <label class="block text-white text-sm font-medium mb-2" data-i18n="director.labels.resolution">清晰度</label>
+                            <select id="directorResolution" class="w-full px-3 py-2 bg-white bg-opacity-90 border border-white border-opacity-30 rounded-none focus:outline-none focus:ring-2 focus:ring-purple-400 text-gray-800 font-medium">
+                                <option value="1K" data-i18n="director.resolutionOptions.1k">1K 标准</option>
+                                <option value="2K" selected data-i18n="director.resolutionOptions.2k">2K 高清</option>
+                                <option value="4K" data-i18n="director.resolutionOptions.4k">4K 超清</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <!-- 生成按钮 -->
+                    <button id="directorGenerateBtn" 
+                            disabled
+                            class="w-full py-4 bg-[#FCE300] text-black disabled:bg-[#27272A] disabled:text-[#A1A1AA] disabled:border-2 disabled:border-[#3F3F46] disabled:cursor-not-allowed font-bold uppercase tracking-tighter rounded-none transition-all transform hover:scale-105 active:scale-95 disabled:transform-none">
+                        <i class="fas fa-magic mr-2"></i>
+                        <span data-i18n="director.buttons.generate">一键生成漫画分镜</span>
+                    </button>
+                    
+                    <!-- 进度区域 -->
+                    <div id="directorProgressArea" class="hidden bg-[#27272A] rounded-none p-6"></div>
+                </div>
+            </div>
+            
+            <!-- 结果展示区（网格布局，放在两列布局外部，类似批量生成页面） -->
+            <div id="directorResultArea">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-white text-xl font-bold flex items-center">
+                        <i class="fas fa-images mr-2 text-green-400"></i>
+                        <span data-i18n="director.labels.results">生成结果</span>
+                    </h3>
+                    <div class="flex items-center space-x-3">
+                        <span id="directorResultCount" class="text-white text-sm opacity-70"></span>
+                        <button id="directorDownloadAllBtn" class="hidden bg-[#FCE300] text-black px-4 py-2 rounded-none text-sm font-bold uppercase tracking-tighter transition-all hover:scale-105 active:scale-95">
+                            <i class="fas fa-download mr-2"></i>
+                            <span data-i18n="director.buttons.downloadAll">下载全部</span>
+                        </button>
+                    </div>
+                </div>
+                <!-- 空状态提示 -->
+                <div id="directorEmptyState" class="bg-[#27272A] rounded-none p-8 text-center">
+                    <i class="fas fa-film text-5xl text-white opacity-30 mb-4"></i>
+                    <p class="text-white opacity-50 text-lg" data-i18n="director.labels.emptyResults">生成的漫画分镜将在这里显示</p>
+                    <p class="text-white opacity-30 text-sm mt-2" data-i18n="director.labels.emptyResultsHint">上传参考图并点击生成按钮开始创作</p>
+                </div>
+                <!-- 结果网格 -->
+                <div id="directorResultsGrid" class="hidden grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"></div>
+            </div>
+        </div>
+
+    </main> <!-- 主要内容区域结束 -->
+
+    <!-- 导演模式示例图库模态框 -->
+    <div id="directorGalleryModal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-[50000] flex items-center justify-center p-4">
+        <div class="bg-white rounded-none w-full max-w-4xl mx-4 max-h-[90vh] overflow-hidden flex flex-col">
+            <!-- 模态框头部 -->
+            <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                <h3 class="text-xl font-bold flex items-center">
+                    <i class="fas fa-images text-cyan-500 mr-2"></i>
+                    <span data-i18n="director.galleryModal.title">示例图库</span>
+                </h3>
+                <div class="flex items-center space-x-4">
+                    <span id="gallerySelectedCount" class="text-gray-500 text-sm">已选择 0 张</span>
+                    <button id="closeGalleryModalX" class="text-gray-400 hover:text-gray-600 transition-colors">
+                        <i class="fas fa-times text-xl"></i>
+                    </button>
+                </div>
+            </div>
+            
+            <!-- 模态框内容 -->
+            <div class="flex-1 overflow-y-auto p-4">
+                <p class="text-gray-500 text-sm mb-4" data-i18n="director.galleryModal.hint">点击选择示例图片作为参考图，可多选（最多8张）</p>
+                <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3" id="directorGalleryGrid">
+                    <!-- 示例图片将通过JS动态加载 -->
+                </div>
+            </div>
+            
+            <!-- 模态框底部 -->
+            <div class="px-6 py-4 border-t border-gray-200 flex justify-end space-x-3">
+                <button id="closeGalleryModal" class="bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 px-6 rounded-none transition-colors">
+                    <span data-i18n="director.galleryModal.cancel">取消</span>
+                </button>
+                <button id="confirmGallerySelection" class="bg-cyan-500 hover:bg-cyan-600 text-white py-2 px-6 rounded-none transition-colors">
+                    <i class="fas fa-check mr-2"></i>
+                    <span data-i18n="director.galleryModal.confirm">确认选择</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 导演模式风格模板选择模态框 -->
+    <div id="directorTemplateModal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-[50000] flex items-center justify-center p-4">
+        <div class="bg-white rounded-none w-full max-w-2xl mx-4 max-h-[85vh] overflow-hidden flex flex-col">
+            <!-- 模态框头部 -->
+            <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                <h3 class="text-xl font-bold flex items-center">
+                    <i class="fas fa-palette text-pink-500 mr-2"></i>
+                    <span data-i18n="director.templateModal.title">选择风格模板</span>
+                </h3>
+                <button id="closeTemplateModalX" class="text-gray-400 hover:text-gray-600 transition-colors">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+            
+            <!-- 模态框内容 -->
+            <div class="flex-1 overflow-y-auto p-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="directorTemplateList">
+                    <!-- 动画截图风格 -->
+                    <div class="template-card cursor-pointer border-2 border-gray-200 hover:border-pink-400 rounded-none p-4 transition-all" data-template="anime">
+                        <div class="flex items-start space-x-3">
+                            <div class="w-12 h-12 bg-[#FCE300] rounded-none flex items-center justify-center flex-shrink-0">
+                                <i class="fas fa-film text-white text-xl"></i>
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <h4 class="font-bold text-gray-800" data-i18n="director.templates.anime.name">动画截图风格</h4>
+                                <p class="text-gray-500 text-sm mt-1" data-i18n="director.templates.anime.desc">TV动画风格，故事板分镜，高质量赛璐璐着色</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 漫画分镜风格 -->
+                    <div class="template-card cursor-pointer border-2 border-gray-200 hover:border-pink-400 rounded-none p-4 transition-all" data-template="manga">
+                        <div class="flex items-start space-x-3">
+                            <div class="w-12 h-12 bg-[#27272A] border-2 border-[#3F3F46] rounded-none flex items-center justify-center flex-shrink-0">
+                                <i class="fas fa-book-open text-white text-xl"></i>
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <h4 class="font-bold text-gray-800" data-i18n="director.templates.manga.name">漫画分镜风格</h4>
+                                <p class="text-gray-500 text-sm mt-1" data-i18n="director.templates.manga.desc">黑白漫画风格，对话框，网点效果，动态线条</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 电影分镜风格 -->
+                    <div class="template-card cursor-pointer border-2 border-gray-200 hover:border-pink-400 rounded-none p-4 transition-all" data-template="movie">
+                        <div class="flex items-start space-x-3">
+                            <div class="w-12 h-12 bg-[#FCE300] rounded-none flex items-center justify-center flex-shrink-0">
+                                <i class="fas fa-video text-white text-xl"></i>
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <h4 class="font-bold text-gray-800" data-i18n="director.templates.movie.name">电影分镜风格</h4>
+                                <p class="text-gray-500 text-sm mt-1" data-i18n="director.templates.movie.desc">真实电影感，电影级调色，景深效果，宽银幕</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 韩漫风格 -->
+                    <div class="template-card cursor-pointer border-2 border-gray-200 hover:border-pink-400 rounded-none p-4 transition-all" data-template="webtoon">
+                        <div class="flex items-start space-x-3">
+                            <div class="w-12 h-12 bg-[#FCE300] rounded-none flex items-center justify-center flex-shrink-0">
+                                <i class="fas fa-mobile-alt text-white text-xl"></i>
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <h4 class="font-bold text-gray-800" data-i18n="director.templates.webtoon.name">韩漫/条漫风格</h4>
+                                <p class="text-gray-500 text-sm mt-1" data-i18n="director.templates.webtoon.desc">全彩韩漫风格，竖向条漫排版，清新唯美</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 美漫风格 -->
+                    <div class="template-card cursor-pointer border-2 border-gray-200 hover:border-pink-400 rounded-none p-4 transition-all" data-template="comic">
+                        <div class="flex items-start space-x-3">
+                            <div class="w-12 h-12 bg-[#FCE300] rounded-none flex items-center justify-center flex-shrink-0">
+                                <i class="fas fa-mask text-white text-xl"></i>
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <h4 class="font-bold text-gray-800" data-i18n="director.templates.comic.name">美漫风格</h4>
+                                <p class="text-gray-500 text-sm mt-1" data-i18n="director.templates.comic.desc">美式漫画风格，粗线条，强对比，超级英雄感</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 插画风格 -->
+                    <div class="template-card cursor-pointer border-2 border-gray-200 hover:border-pink-400 rounded-none p-4 transition-all" data-template="illustration">
+                        <div class="flex items-start space-x-3">
+                            <div class="w-12 h-12 bg-[#FCE300] rounded-none flex items-center justify-center flex-shrink-0">
+                                <i class="fas fa-paint-brush text-white text-xl"></i>
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <h4 class="font-bold text-gray-800" data-i18n="director.templates.illustration.name">插画风格</h4>
+                                <p class="text-gray-500 text-sm mt-1" data-i18n="director.templates.illustration.desc">精美插画风格，丰富细节，艺术质感</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 模态框底部 -->
+            <div class="px-6 py-4 border-t border-gray-200 flex justify-end space-x-3">
+                <button id="closeTemplateModal" class="bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 px-6 rounded-none transition-colors">
+                    <span data-i18n="director.templateModal.cancel">取消</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- API 配置模态框 - Kinetic Typography 风格 -->
+    <div id="settingsModal" class="fixed inset-0 bg-[#09090B] bg-opacity-90 hidden z-[50000] flex items-center justify-center p-4">
+        <div class="bg-[#09090B] border-2 border-[#3F3F46] rounded-none w-full max-w-lg mx-4 max-h-[90vh] overflow-hidden flex flex-col">
+            <!-- 模态框头部 -->
+            <div class="px-6 py-4 border-b-2 border-[#3F3F46] flex items-center justify-between">
+                <h3 class="text-xl font-bold flex items-center text-[#FAFAFA] uppercase tracking-tighter">
+                    <i class="fas fa-cog text-[#FCE300] mr-2"></i>
+                    <span data-i18n="settingsModal.title">API设置</span>
+                </h3>
+                <button id="closeSettingsX" class="text-[#A1A1AA] hover:text-[#FCE300] transition-colors">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+            
+            <!-- 模态框内容 - 可滚动 -->
+            <div class="flex-1 overflow-y-auto p-6 bg-[#09090B]">
+                <!-- 步骤 1: 选择 API 站点 -->
+                <div class="mb-6">
+                    <div class="flex items-center mb-4">
+                        <span class="w-6 h-6 rounded-none bg-[#FCE300] text-black flex items-center justify-center text-sm font-bold mr-2">1</span>
+                        <span class="font-bold text-[#FAFAFA] uppercase tracking-tighter" data-i18n="settingsModal.selectSite">选择 API 站点</span>
+                    </div>
+                    
+                    <!-- 站点卡片网格 -->
+                    <div id="siteCardsContainer" class="grid grid-cols-3 gap-3 mb-4">
+                        <!-- 站点卡片将通过 JavaScript 动态生成 -->
+                    </div>
+                    
+                    <!-- 添加自定义站点按钮 -->
+                    <button id="addCustomSiteBtn" class="w-full border-2 border-dashed border-[#3F3F46] hover:border-[#FCE300] rounded-none p-3 text-[#A1A1AA] hover:text-[#FCE300] transition-colors flex items-center justify-center">
+                        <i class="fas fa-plus mr-2"></i>
+                        <span data-i18n="settingsModal.addCustomSite">添加自定义站点</span>
+                    </button>
+                </div>
+                
+                <!-- 步骤 2: 输入 API Key -->
+                <div class="mb-6">
+                    <div class="flex items-center mb-4">
+                        <span class="w-6 h-6 rounded-none bg-[#FCE300] text-black flex items-center justify-center text-sm font-bold mr-2">2</span>
+                        <span class="font-bold text-[#FAFAFA] uppercase tracking-tighter" data-i18n="settingsModal.enterApiKey">输入 API Key</span>
+                    </div>
+                    
+                    <div class="relative">
+                        <input type="password" id="apiKeyInput" 
+                               data-i18n-attr="placeholder:settingsModal.fields.imageApiKey.placeholder" 
+                               placeholder="请输入您的图片生成 API Key"
+                               class="w-full px-4 py-3 pr-10 bg-[#27272A] border-2 border-[#3F3F46] rounded-none text-[#FAFAFA] placeholder-[#A1A1AA] focus:outline-none focus:border-[#FCE300]">
+                        <button id="toggleApiKeyVisibility" class="absolute right-3 top-1/2 -translate-y-1/2 text-[#A1A1AA] hover:text-[#FCE300]">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                    </div>
+                    
+                    <!-- 当前站点提示 -->
+                    <p id="currentSiteHint" class="text-sm text-[#FCE300] mt-2 flex items-center">
+                        <i class="fas fa-info-circle mr-1"></i>
+                        <span></span>
+                    </p>
+                </div>
+
+                <!-- 图像理解 API Key (保留原有功能) -->
+                <div class="mb-6">
+                    <label class="block text-sm font-bold text-[#FAFAFA] mb-2">
+                        <i class="fas fa-eye mr-1 text-[#FCE300]"></i><span data-i18n="settingsModal.fields.visionApiKey.label">图像理解 API Key（按量计费）</span>
+                    </label>
+                    <input type="password" id="visionApiKeyInput" data-i18n-attr="placeholder:settingsModal.fields.visionApiKey.placeholder" placeholder="请输入您的图像理解 API Key（可选）"
+                           class="w-full px-3 py-2 bg-[#27272A] border-2 border-[#3F3F46] rounded-none text-[#FAFAFA] placeholder-[#A1A1AA] focus:outline-none focus:border-[#FCE300]">
+                    <p class="text-xs text-[#A1A1AA] mt-1">
+                        <span data-i18n="settingsModal.fields.visionApiKey.description">用于图像理解功能，可选填</span>。<span data-i18n="settingsModal.fields.visionApiKey.note">需要在
+                        <a href="#" class="text-[#FCE300] underline hover:text-[#FAFAFA]">CATIMATION后台</a>
+                        创建<strong>按量计费</strong>类型的令牌</span>
+                    </p>
+                </div>
+                
+                <!-- 如何获取 API Key -->
+                <div class="bg-[#27272A] border-2 border-[#3F3F46] rounded-none p-4">
+                    <button id="toggleHowToGet" class="w-full flex items-center justify-between text-[#FAFAFA] hover:text-[#FCE300]">
+                        <span class="flex items-center">
+                            <i class="fas fa-question-circle mr-2 text-[#FCE300]"></i>
+                            <span data-i18n="settingsModal.howToGet.title">如何获取 API Key?</span>
+                        </span>
+                        <i class="fas fa-chevron-down transition-transform" id="howToGetIcon"></i>
+                    </button>
+                    <div id="howToGetContent" class="hidden mt-3 text-sm text-[#A1A1AA]">
+                        <ol class="list-decimal list-inside space-y-1">
+                            <li><span data-i18n="settingsModal.howToGet.step1">访问</span> <a href="#" class="text-[#FCE300] underline hover:text-[#FAFAFA]">CATIMATION后台-令牌页面</a></li>
+                            <li data-i18n="settingsModal.howToGet.step2">点击"创建令牌"按钮</li>
+                            <li data-i18n="settingsModal.howToGet.step3">填写令牌名称（如：按次计费出图）</li>
+                            <li data-i18n="settingsModal.howToGet.step4">选择计费模式：<strong class="text-[#FCE300]">按次计费</strong></li>
+                            <li data-i18n="settingsModal.howToGet.step5">点击创建，复制生成的API Key</li>
+                        </ol>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 模态框底部 -->
+            <div class="px-6 py-4 border-t-2 border-[#3F3F46] flex space-x-3 bg-[#09090B]">
+                <button id="testConnection" class="flex-1 bg-[#27272A] border-2 border-[#3F3F46] hover:bg-[#3F3F46] text-[#FAFAFA] py-2.5 px-4 rounded-none transition-colors flex items-center justify-center font-bold uppercase tracking-tighter">
+                    <i class="fas fa-plug mr-2"></i>
+                    <span data-i18n="settingsModal.buttons.test">测试连接</span>
+                </button>
+                <button id="saveApiConfig" class="flex-1 bg-[#FCE300] hover:scale-105 active:scale-95 text-black py-2.5 px-4 rounded-none transition-all flex items-center justify-center font-bold uppercase tracking-tighter">
+                    <i class="fas fa-check mr-2"></i>
+                    <span data-i18n="settingsModal.buttons.save">保存配置</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加/编辑自定义站点模态框 - Kinetic Typography 风格 -->
+    <div id="customSiteModal" class="fixed inset-0 bg-[#09090B] bg-opacity-90 hidden z-[50001] flex items-center justify-center p-4">
+        <div class="bg-[#09090B] border-2 border-[#3F3F46] rounded-none p-6 w-full max-w-md mx-4">
+            <h3 id="customSiteModalTitle" class="text-lg font-bold mb-4 flex items-center text-[#FAFAFA] uppercase tracking-tighter">
+                <i class="fas fa-plus-circle text-[#FCE300] mr-2"></i>
+                <span data-i18n="settingsModal.customSite.addTitle">添加自定义站点</span>
+            </h3>
+            
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1" data-i18n="settingsModal.customSite.name">站点名称 *</label>
+                    <input type="text" id="customSiteName" data-i18n-attr="placeholder:settingsModal.customSite.namePlaceholder" placeholder="例如：我的 API 服务"
+                           class="w-full px-3 py-2 border border-[#3F3F46] rounded-none focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1" data-i18n="settingsModal.customSite.baseUrl">Base URL *</label>
+                    <input type="url" id="customSiteBaseURL" placeholder="https://api.example.com"
+                           class="w-full px-3 py-2 border border-[#3F3F46] rounded-none focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1" data-i18n="settingsModal.customSite.pathPrefix">路径前缀（可选）</label>
+                    <input type="text" id="customSitePathPrefix" placeholder="/v1"
+                           class="w-full px-3 py-2 border border-[#3F3F46] rounded-none focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1" data-i18n="settingsModal.customSite.apiKey">默认 API Key（可选）</label>
+                    <input type="password" id="customSiteApiKey" placeholder="sk-..."
+                           class="w-full px-3 py-2 border border-[#3F3F46] rounded-none focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1" data-i18n="settingsModal.customSite.description">描述（可选）</label>
+                    <input type="text" id="customSiteDescription" data-i18n-attr="placeholder:settingsModal.customSite.descriptionPlaceholder" placeholder="站点描述"
+                           class="w-full px-3 py-2 border border-[#3F3F46] rounded-none focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+            </div>
+            
+            <div class="flex space-x-3 mt-6">
+                <button id="cancelCustomSite" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 px-4 rounded-none transition-colors" data-i18n="settingsModal.customSite.cancel">
+                    取消
+                </button>
+                <button id="saveCustomSite" class="flex-1 bg-green-500 hover:bg-green-600 text-white py-2 px-4 rounded-none transition-colors" data-i18n="settingsModal.customSite.save">
+                    保存
+                </button>
+            </div>
+            
+            <!-- 隐藏字段：编辑模式下存储站点 key -->
+            <input type="hidden" id="editingSiteKey" value="">
+        </div>
+    </div>
+
+    <!-- 图像理解模型选择弹窗 -->
+        <div id="visionModelModal" class="fixed inset-0 bg-black bg-opacity-80 z-[60] flex items-center justify-center hidden">
+            <div class="bg-white rounded-none max-w-3xl w-full max-h-[85vh] m-4 overflow-hidden">
+                <!-- 弹窗头部 -->
+                <div class="flex items-center justify-between p-6 border-b border-gray-200">
+                    <div class="flex items-center space-x-3">
+                        <i class="fas fa-brain text-blue-500 text-xl"></i>
+                        <h2 class="text-xl font-bold text-gray-800" data-i18n="understand.models.selectVisionModel">选择图像理解模型</h2>
+                    </div>
+                    <button type="button" id="closeVisionModelModal" class="text-gray-400 hover:text-gray-600 transition-colors" data-i18n-title="understand.models.close" title="关闭">
+                        <i class="fas fa-times text-xl"></i>
+                    </button>
+                </div>
+
+                <!-- 模型列表容器（懒加载） -->
+                <div class="p-6 overflow-y-auto max-h-[calc(85vh-100px)]">
+                    <div id="visionModelList" class="space-y-3">
+                        <!-- 模型卡片将在这里动态生成 -->
+                        <div class="text-center text-gray-500 py-8">
+                            <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
+                            <p>加载模型列表中...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 提示词模板弹窗 -->
+        <div id="promptTemplateModal" class="fixed inset-0 bg-black bg-opacity-80 z-[60] flex items-center justify-center hidden">
+            <div class="bg-white rounded-none max-w-4xl w-full max-h-[85vh] m-4 overflow-hidden">
+                <!-- 弹窗头部 -->
+                <div class="flex items-center justify-between p-6 border-b border-gray-200">
+                    <div class="flex items-center space-x-3">
+                        <i class="fas fa-lightbulb text-blue-500 text-xl"></i>
+                        <h2 class="text-xl font-bold text-gray-800">提示词模板库</h2>
+                    </div>
+                    <button id="closeTemplateModal" class="text-gray-400 hover:text-gray-600 transition-colors" title="关闭模板库">
+                        <i class="fas fa-times text-xl"></i>
+                    </button>
+                </div>
+                
+                <!-- 分类标签 -->
+                <div class="px-6 py-4 border-b border-gray-100">
+                    <div class="flex space-x-2">
+                        <button class="template-category-btn active px-4 py-2 bg-blue-500 text-white rounded-none text-sm font-medium transition-all" data-category="热门">
+                            🔥 热门
+                        </button>
+                        <button class="template-category-btn px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-none text-sm font-medium transition-all" data-category="电商">
+                            👔 电商
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- 模板内容区域 -->
+                <div class="p-6 overflow-y-auto max-h-[60vh]">
+                    <div id="templateGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <!-- 模板卡片将在这里动态生成 -->
+                    </div>
+                    
+                    <!-- 加载状态 -->
+                    <div id="templateLoading" class="hidden text-center py-8">
+                        <i class="fas fa-spinner fa-spin text-gray-400 text-2xl mb-2"></i>
+                        <p class="text-gray-500">加载模板中...</p>
+                    </div>
+                    
+                    <!-- 空状态 -->
+                    <div id="templateEmpty" class="hidden text-center py-12">
+                        <i class="fas fa-file-alt text-gray-300 text-4xl mb-4"></i>
+                        <p class="text-gray-500">该分类暂无模板</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SEO隐藏内容 -->
+        <div class="sr-only" aria-hidden="true">
+            <h1>CATIMATION-Cyberpunk Master - 专业的AI图片生成平台</h1>
+            <p>我们提供基于GPT-4o-image模型的高质量AI图片生成服务，支持文本转图片、参考图生成、批量图片生成等多种功能。</p>
+            <p>主要功能包括：AI绘画、智能图片生成、文本描述生成图片、参考图片风格迁移、批量图片创作、高清图片输出。</p>
+            <p>适用于设计师、创作者、内容制作者、艺术家等专业用户，提供高效便捷的AI创作工具。</p>
+            <p>技术特点：基于最新的gpt-4o-image模型，效果媲美ChatGPT Sora，支持多种图片尺寸和风格，生成质量高，创作效率快。</p>
+        </div>
+
+        <!-- Kinetic Typography - CYBERPUNK FEATURES Marquee -->
+        <div class="marquee-container border-t-4 border-b-4 border-[#FCE300] py-4 mt-16 bg-black" aria-label="CYBERPUNK FEATURES">
+            <div class="marquee-content marquee-slow marquee-reverse">
+                <!-- 第一组内容 - CYBERPUNK 2077 STYLE -->
+                <span class="marquee-item text-[#FCE300] font-black text-lg md:text-2xl uppercase tracking-widest">
+                    <i class="fas fa-bolt mr-2"></i> TURBO GENERATION
+                </span>
+                <span class="marquee-separator text-[#FCE300]/50 mx-4">&lt;&lt;&lt;</span>
+                <span class="marquee-item text-[#FCE300] font-black text-lg md:text-2xl uppercase tracking-widest">
+                    <i class="fas fa-image mr-2"></i> ULTRA HD OUTPUT
+                </span>
+                <span class="marquee-separator text-[#FCE300]/50 mx-4">&lt;&lt;&lt;</span>
+                <span class="marquee-item text-[#FCE300] font-black text-lg md:text-2xl uppercase tracking-widest">
+                    <i class="fas fa-layer-group mr-2"></i> BATCH PROCESSING
+                </span>
+                <span class="marquee-separator text-[#FCE300]/50 mx-4">&lt;&lt;&lt;</span>
+                <span class="marquee-item text-[#FCE300] font-black text-lg md:text-2xl uppercase tracking-widest">
+                    <i class="fas fa-magic mr-2"></i> NEURAL EDITING
+                </span>
+                <span class="marquee-separator text-[#FCE300]/50 mx-4">&lt;&lt;&lt;</span>
+                <span class="marquee-item text-[#FCE300] font-black text-lg md:text-2xl uppercase tracking-widest">
+                    <i class="fas fa-eye mr-2"></i> IMAGE ANALYSIS
+                </span>
+                <span class="marquee-separator text-[#FCE300]/50 mx-4">&lt;&lt;&lt;</span>
+                <span class="marquee-item text-[#FCE300] font-black text-lg md:text-2xl uppercase tracking-widest">
+                    <i class="fas fa-film mr-2"></i> DIRECTOR MODE
+                </span>
+                <span class="marquee-separator text-[#FCE300]/50 mx-4">&lt;&lt;&lt;</span>
+                <span class="marquee-item text-[#FCE300] font-black text-lg md:text-2xl uppercase tracking-widest">
+                    NIGHT CITY NEVER SLEEPS
+                </span>
+                <span class="marquee-separator text-[#FCE300]/50 mx-4">&lt;&lt;&lt;</span>
+                <!-- 重复内容 -->
+                <span class="marquee-item text-[#FCE300] font-black text-lg md:text-2xl uppercase tracking-widest">
+                    <i class="fas fa-bolt mr-2"></i> TURBO GENERATION
+                </span>
+                <span class="marquee-separator text-[#FCE300]/50 mx-4">&lt;&lt;&lt;</span>
+                <span class="marquee-item text-[#FCE300] font-black text-lg md:text-2xl uppercase tracking-widest">
+                    <i class="fas fa-image mr-2"></i> ULTRA HD OUTPUT
+                </span>
+                <span class="marquee-separator text-[#FCE300]/50 mx-4">&lt;&lt;&lt;</span>
+                <span class="marquee-item text-[#FCE300] font-black text-lg md:text-2xl uppercase tracking-widest">
+                    <i class="fas fa-layer-group mr-2"></i> BATCH PROCESSING
+                </span>
+                <span class="marquee-separator text-[#FCE300]/50 mx-4">&lt;&lt;&lt;</span>
+                <span class="marquee-item text-[#FCE300] font-black text-lg md:text-2xl uppercase tracking-widest">
+                    <i class="fas fa-magic mr-2"></i> NEURAL EDITING
+                </span>
+                <span class="marquee-separator text-[#FCE300]/50 mx-4">&lt;&lt;&lt;</span>
+                <span class="marquee-item text-[#FCE300] font-black text-lg md:text-2xl uppercase tracking-widest">
+                    <i class="fas fa-eye mr-2"></i> IMAGE ANALYSIS
+                </span>
+                <span class="marquee-separator text-[#FCE300]/50 mx-4">&lt;&lt;&lt;</span>
+                <span class="marquee-item text-[#FCE300] font-black text-lg md:text-2xl uppercase tracking-widest">
+                    <i class="fas fa-film mr-2"></i> DIRECTOR MODE
+                </span>
+                <span class="marquee-separator text-[#FCE300]/50 mx-4">&lt;&lt;&lt;</span>
+                <span class="marquee-item text-[#FCE300] font-black text-lg md:text-2xl uppercase tracking-widest">
+                    NIGHT CITY NEVER SLEEPS
+                </span>
+                <span class="marquee-separator text-[#FCE300]/50 mx-4">&lt;&lt;&lt;</span>
+            </div>
+        </div>
+
+        <!-- 底部 Footer -->
+        <footer class="py-8 bg-[#09090B] border-t-2 border-[#3F3F46]">
+            <div class="container mx-auto px-4">
+                <!-- 主要内容区域：4栏布局（桌面端）/ 堆叠布局（移动端） -->
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 md:gap-8 mb-6">
+                    <!-- 免责说明 -->
+                    <div class="text-left">
+                        <h3 class="text-white font-semibold mb-3 flex items-center">
+                            <i class="fas fa-exclamation-triangle mr-2"></i>
+                            <span data-i18n="footer.disclaimer.title">免责说明</span>
+                        </h3>
+                        <p class="text-white text-sm opacity-70 leading-relaxed" data-i18n="footer.disclaimer.content">
+                            本站仅提供AI图片生成工具服务，用户需遵守相关法律法规，不得生成违法违规内容。生成的图片版权归用户所有，本站不承担任何法律责任。
+                        </p>
+                    </div>
+
+                    <!-- CATIMATION服务 -->
+                    <div class="text-left">
+                        <h3 class="text-white font-semibold mb-3 flex items-center">
+                            <i class="fas fa-cat mr-2"></i>
+                            <span data-i18n="footer.enterprise.title">CATIMATION服务</span>
+                        </h3>
+                        <p class="text-white text-sm opacity-80 leading-relaxed mb-2" data-i18n="footer.enterprise.description">
+                            CYBERPUNK CIIA - 下一代智能图像生成平台，为创作者提供极致的 AI 创作体验。
+                        </p>
+                        <p class="text-white text-sm opacity-80 mt-3">
+                            <i class="fas fa-robot mr-2"></i>
+                            <span>NEURAL LINK ACTIVE</span>
+                        </p>
+                    </div>
+                    
+                    <!-- CATIMATION链接 -->
+                    <div class="text-left">
+                        <h3 class="text-white font-semibold mb-3 flex items-center">
+                            <i class="fas fa-link mr-2"></i>
+                            <span data-i18n="footer.links.title">CATIMATION链接</span>
+                        </h3>
+                        <ul class="space-y-2">
+                            <li>
+                                <a href="#"
+                                   class="text-white text-sm opacity-80 hover:opacity-100 hover:text-[#FCE300] transition-all inline-flex items-center group">
+                                    <i class="fas fa-book mr-2 text-xs"></i>
+                                    <span class="group-hover:underline" data-i18n="footer.links.docs">CATIMATION文档</span>
+                                    <i class="fas fa-external-link-alt ml-1 text-xs opacity-50"></i>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="#"
+                                   class="text-white text-sm opacity-80 hover:opacity-100 hover:text-[#FCE300] transition-all inline-flex items-center group">
+                                    <i class="fas fa-home mr-2 text-xs"></i>
+                                    <span class="group-hover:underline" data-i18n="footer.links.official">CATIMATION官网</span>
+                                    <i class="fas fa-external-link-alt ml-1 text-xs opacity-50"></i>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="#"
+                                   class="text-white text-sm opacity-80 hover:opacity-100 hover:text-[#FCE300] transition-all inline-flex items-center group">
+                                    <i class="fas fa-microchip mr-2 text-xs"></i>
+                                    <span class="group-hover:underline" data-i18n="footer.links.wiki">CIIA 知识库</span>
+                                    <i class="fas fa-external-link-alt ml-1 text-xs opacity-50"></i>
+                                </a>
+                            </li>
+                            <li>
+                                <a href="changelog.html"
+                                   class="text-white text-sm opacity-80 hover:opacity-100 hover:text-[#FCE300] transition-all inline-flex items-center group">
+                                    <i class="fas fa-clipboard-list mr-2 text-xs"></i>
+                                    <span class="group-hover:underline" data-i18n="footer.links.changelog">更新日志</span>
+                                </a>
+                            </li>
+                        </ul>
+                    </div>
+
+                    <!-- CATIMATION资源 -->
+                    <div class="text-left">
+                        <h3 class="text-white font-semibold mb-3 flex items-center">
+                            <i class="fas fa-lightbulb mr-2"></i>
+                            <span data-i18n="footer.resources">CATIMATION资源</span>
+                        </h3>
+                        <ul class="space-y-2">
+                            <li>
+                                <a href="#"
+                                   class="text-white text-sm opacity-80 hover:opacity-100 hover:text-[#FCE300] transition-all inline-flex items-center group">
+                                    <i class="fas fa-book mr-2 text-xs"></i>
+                                    <span class="group-hover:underline" data-i18n="common.docs">使用指南</span>
+                                    <i class="fas fa-external-link-alt ml-1 text-xs opacity-50"></i>
+                                </a>
+                            </li>
+                            <li>
+                                <button type="button" id="aboutBtnFooter" class="text-white text-sm opacity-80 hover:opacity-100 hover:text-[#FCE300] transition-all inline-flex items-center group w-full text-left">
+                                    <i class="fas fa-info-circle mr-2 text-xs"></i>
+                                    <span class="group-hover:underline" data-i18n="common.about">关于CATIMATION</span>
+                                </button>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <!-- 版权信息 -->
+                <div class="pt-6 border-t border-white border-opacity-20 text-center">
+                    <p class="text-white text-sm opacity-60">
+                        <i class="fas fa-copyright mr-1"></i>
+                        <span data-i18n="footer.copyright">2025 CATIMATION-Cyberpunk Master 保留所有权利</span>
+                    </p>
+                </div>
+            </div>
+        </footer>
+    </div> <!-- 主要内容结束 -->
+
+    <!-- CYBERPUNK 2077 视频加载 + 应用初始化 -->
+    <script>
+        // CYBERPUNK INTRO VIDEO CONTROLLER
+        (function() {
+            let appInitialized = false;
+            let videoEnded = false;
+            let videoLoaded = false;
+            
+            const loadingMessages = [
+                'INITIALIZING NEURAL LINK...',
+                'CONNECTING TO NIGHT CITY...',
+                'LOADING CYBERWARE...',
+                'SYNCING WITH ARASAKA NETWORK...',
+                'BYPASSING ICE PROTOCOLS...',
+                'ESTABLISHING SECURE CONNECTION...',
+                'CALIBRATING OPTICS...',
+                'READY TO JACK IN...'
+            ];
+            
+            let messageIndex = 0;
+            
+            // 循环显示加载消息
+            function cycleLoadingMessage() {
+                const loadingText = document.getElementById('introLoadingText');
+                if (loadingText) {
+                    loadingText.textContent = loadingMessages[messageIndex];
+                    messageIndex = (messageIndex + 1) % loadingMessages.length;
+                }
+            }
+            
+            // 隐藏加载器并显示主内容
+            function hideLoader() {
+                const pageLoader = document.getElementById('pageLoader');
+                const mainContent = document.getElementById('mainContent');
+                
+                if (pageLoader && mainContent) {
+                    pageLoader.classList.add('loaded');
+                    mainContent.classList.add('loaded');
+                    
+                    // 完全移除加载器
+                    setTimeout(function() {
+                        if (pageLoader.parentNode) {
+                            pageLoader.parentNode.removeChild(pageLoader);
+                        }
+                    }, 800);
+                }
+            }
+            
+            // 显示进入按钮
+            function showEnterButton() {
+                const enterBtn = document.getElementById('enterBtn');
+                const skipBtn = document.getElementById('skipIntroBtn');
+                const loadingText = document.getElementById('introLoadingText');
+                const fallbackLoader = document.getElementById('fallbackLoader');
+                const introProgress = document.getElementById('introProgress');
+                
+                // 显示进入按钮
+                if (enterBtn) {
+                    enterBtn.style.display = 'block';
+                }
+                
+                // 隐藏跳过按钮
+                if (skipBtn) {
+                    skipBtn.style.display = 'none';
+                }
+                
+                // 隐藏加载文字
+                if (loadingText) {
+                    loadingText.style.display = 'none';
+                }
+                
+                // 隐藏备用加载器（解决 UI 冲突）
+                if (fallbackLoader) {
+                    fallbackLoader.classList.remove('active');
+                    fallbackLoader.style.display = 'none';
+                }
+                
+                // 隐藏进度条
+                if (introProgress) {
+                    introProgress.style.display = 'none';
+                }
+            }
+            
+            // 检查是否可以显示进入按钮
+            function checkReadyToEnter() {
+                if (appInitialized && videoEnded) {
+                    console.log('✅ 视频播放完成 + 应用初始化完成，显示进入按钮');
+                    showEnterButton();
+                }
+            }
+            
+            // 跳过视频直接进入
+            function skipIntro() {
+                console.log('⏭️ 跳过 Intro 视频');
+                videoEnded = true;
+                
+                // 停止视频
+                const video = document.getElementById('introVideo');
+                if (video) {
+                    video.pause();
+                }
+                
+                // 如果应用已初始化，直接进入
+                if (appInitialized) {
+                    hideLoader();
+                } else {
+                    // 显示备用加载器
+                    const fallbackLoader = document.getElementById('fallbackLoader');
+                    const videoContainer = document.getElementById('introVideoContainer');
+                    if (fallbackLoader) fallbackLoader.classList.add('active');
+                    if (videoContainer) videoContainer.style.display = 'none';
+                    
+                    // 等待应用初始化
+                    console.log('⏳ 等待应用初始化...');
+                }
+            }
+            
+            // DOM 加载完成后初始化视频
+            document.addEventListener('DOMContentLoaded', function() {
+                console.log('📄 DOM 加载完成，初始化 Cyberpunk Intro...');
+                
+                const video = document.getElementById('introVideo');
+                const skipBtn = document.getElementById('skipIntroBtn');
+                const enterBtn = document.getElementById('enterBtn');
+                const progressBar = document.getElementById('introProgress');
+                const fallbackLoader = document.getElementById('fallbackLoader');
+                const videoContainer = document.getElementById('introVideoContainer');
+                
+                // 开始循环加载消息
+                setInterval(cycleLoadingMessage, 2000);
+                
+                // 跳过按钮点击事件
+                if (skipBtn) {
+                    skipBtn.addEventListener('click', skipIntro);
+                }
+                
+                // 进入按钮点击事件
+                if (enterBtn) {
+                    enterBtn.addEventListener('click', function() {
+                        console.log('🚀 进入夜之城！');
+                        hideLoader();
+                    });
+                }
+                
+                // 视频相关事件
+                if (video) {
+                    // 视频加载成功
+                    video.addEventListener('canplaythrough', function() {
+                        console.log('🎬 视频加载完成，开始播放');
+                        videoLoaded = true;
+                        video.play().catch(function(err) {
+                            console.warn('⚠️ 带声音自动播放被阻止，尝试静音播放:', err);
+                            // 尝试静音播放
+                            video.muted = true;
+                            video.play().then(function() {
+                                console.log('🔇 静音播放成功，用户可点击取消静音');
+                            }).catch(function(err2) {
+                                console.warn('⚠️ 静音播放也失败:', err2);
+                                // 显示备用加载器
+                                if (fallbackLoader) fallbackLoader.classList.add('active');
+                                if (videoContainer) videoContainer.style.opacity = '0.3';
+                            });
+                        });
+                    });
+                    
+                    // 视频播放进度
+                    video.addEventListener('timeupdate', function() {
+                        if (progressBar && video.duration) {
+                            const progress = (video.currentTime / video.duration) * 100;
+                            progressBar.style.width = progress + '%';
+                        }
+                    });
+                    
+                    // 视频播放结束
+                    video.addEventListener('ended', function() {
+                        console.log('🎬 视频播放完成');
+                        videoEnded = true;
+                        checkReadyToEnter();
+                    });
+                    
+                    // 视频加载错误 - 显示备用加载器
+                    video.addEventListener('error', function() {
+                        console.warn('⚠️ 视频加载失败，使用备用加载器');
+                        videoEnded = true; // 跳过视频
+                        if (fallbackLoader) fallbackLoader.classList.add('active');
+                        if (videoContainer) videoContainer.style.display = 'none';
+                        checkReadyToEnter();
+                    });
+                } else {
+                    // 无视频元素，直接使用备用加载器
+                    videoEnded = true;
+                    if (fallbackLoader) fallbackLoader.classList.add('active');
+                }
+            });
+            
+            // 监听应用初始化完成事件
+            window.addEventListener('appReady', function() {
+                console.log('✅ 应用初始化完成');
+                appInitialized = true;
+                checkReadyToEnter();
+            });
+            
+            // 备用：如果 120 秒后视频仍未结束，显示进入按钮（不自动跳过，让用户自己决定）
+            setTimeout(function() {
+                if (!videoEnded) {
+                    console.log('⏰ 视频播放超过 2 分钟，显示进入按钮');
+                    videoEnded = true;
+                    checkReadyToEnter();
+                }
+            }, 120000);
+            
+            // 备用：如果 10 秒后应用仍未初始化，强制标记为已初始化
+            setTimeout(function() {
+                if (!appInitialized) {
+                    console.warn('⚠️ 应用初始化超时，强制标记为已初始化');
+                    appInitialized = true;
+                    // 如果视频已结束，显示进入按钮
+                    if (videoEnded) {
+                        showEnterButton();
+                    }
+                }
+            }, 10000);
+            
+            // 键盘快捷键：按 ESC 或 空格 跳过
+            document.addEventListener('keydown', function(e) {
+                if ((e.key === 'Escape' || e.key === ' ') && !videoEnded) {
+                    e.preventDefault();
+                    skipIntro();
+                }
+            });
+        })();
+    </script>
+
+    <!-- 加载模块文件 -->
+    <!-- 性能监控 - 最早加载以捕获完整指标 -->
+    <script src="js/performance-monitor.js?v=1.0.0" defer></script>
+    
+    <!-- ========== 关键脚本：使用 defer 保持执行顺序 ========== -->
+    <!-- StorageBridge - Electron 存储桥接，需要在其他模块之前加载 -->
+    <script src="js/storage-bridge.js?v=1.0.0" defer></script>
+    <!-- PageStateManager - 页面状态持久化服务 -->
+    <script src="js/services/page-state-manager.js?v=1.0.0" defer></script>
+    <!-- 国际化模块 - 需要最先加载 -->
+    <script src="js/i18n.js?v=1.0.4" defer></script>
+    <!-- API 模块 -->
+    <script src="js/api.js?v=1.0.2" defer></script>
+    <!-- 组件模块 -->
+    <script src="js/components.js?v=1.0.2" defer></script>
+    
+    <!-- 页面模块 - 必须在 app.js 之前加载（因为 app.js 使用这些类） -->
+    <script src="js/modules/generate-page.js?v=1.0.2" defer></script>
+    <script src="js/modules/batch-page.js?v=1.0.2" defer></script>
+    <script src="js/modules/history-page.js?v=1.0.2" defer></script>
+    <script src="js/modules/compare-page.js?v=1.0.2" defer></script>
+    <script src="js/modules/understand-page.js?v=1.0.2" defer></script>
+    <script src="js/modules/director-page.js?v=1.0.12" defer></script>
+    <script src="js/modules/prompt-templates.js?v=1.0.2" defer></script>
+    
+    <!-- R2 存储服务 - 需要在 app.js 之前加载（历史记录迁移依赖） -->
+    <script src="js/services/r2-storage.js?v=1.0.2" defer></script>
+    
+    <!-- 主应用模块 - 必须在所有依赖（包括页面模块和 R2 服务）之后 -->
+    <script src="js/app.js?v=1.0.2" defer></script>
+    
+    <!-- ========== 非关键脚本：使用 async 异步加载，不阻塞渲染 ========== -->
+    <!-- 服务模块 -->
+    <script src="js/services/version-checker.js?v=1.0.2" async></script>
+    <!-- 调试助手 -->
+    <script src="debug-helper.js?v=1.0.2" async></script>
+
+    <!-- Toast 通知 - 放在 body 最外层，确保最高层级 -->
+    <div id="toast" class="fixed top-4 right-4 z-[999999] hidden">
+        <div class="bg-white rounded-none shadow-lg p-4 max-w-sm">
+            <div class="flex items-center">
+                <div id="toastIcon" class="flex-shrink-0 mr-3"></div>
+                <div id="toastMessage" class="text-gray-800"></div>
+            </div>
+        </div>
+    </div>
+</body>
+</html> 

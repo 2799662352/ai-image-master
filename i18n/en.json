@@ -1,0 +1,1104 @@
+{
+  "common": {
+    "appName": "LazyCat-Cyberpunk Master",
+    "appNameShort": "LazyCat",
+    "appNameMobile": "LazyCat",
+    "generate": "Generate",
+    "batch": "Batch",
+    "compare": "Compare",
+    "history": "History",
+    "understand": "Image Understanding",
+    "settings": "Settings",
+    "about": "About",
+    "docs": "Docs",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "download": "Download",
+    "upload": "Upload",
+    "copy": "Copy",
+    "close": "Close",
+    "confirm": "Confirm",
+    "clear": "Clear",
+    "loading": "Loading LazyCat AI Image Generation Platform...",
+    "processing": "Processing...",
+    "success": "Success",
+    "error": "Error",
+    "warning": "Warning"
+  },
+  "nav": {
+    "generateImage": "Generate Image",
+    "generateImageShort": "Generate",
+    "batchGenerate": "Batch Generate",
+    "batchShort": "Batch",
+    "modelCompare": "Model Compare",
+    "compareShort": "Compare",
+    "historyRecords": "History Records",
+    "historyShort": "History",
+    "imageUnderstand": "Image Understanding",
+    "understandShort": "Understand",
+    "director": "Director Mode",
+    "directorShort": "Director",
+    "switchLanguage": "Switch",
+    "model": "Model",
+    "activity": "Promo",
+    "menu": "Menu",
+    "apiStatus": {
+      "label": "API Status",
+      "notConfigured": "Not Configured",
+      "connected": "Connected"
+    },
+    "settingsButton": {
+      "notConfigured": "Not Set",
+      "configured": "Configured"
+    },
+    "badge": {
+      "lottery": "Lucky Draw"
+    }
+  },
+  "settings": {
+    "title": "Settings",
+    "apiKey": "API Key",
+    "apiKeyPlaceholder": "Enter your API Key",
+    "apiKeyRequired": "API Key is required",
+    "baseUrl": "API Base URL",
+    "baseUrlPlaceholder": "Enter API Base URL",
+    "testConnection": "Test Connection",
+    "saveSuccess": "Settings saved successfully",
+    "testSuccess": "Connection test successful",
+    "testFailed": "Connection test failed"
+  },
+  "generate": {
+    "title": "Generate Image",
+    "prompt": "Prompt",
+    "promptPlaceholder": "Describe the image you want to generate...",
+    "promptRequired": "Please enter a prompt",
+    "negativePrompt": "Negative Prompt",
+    "negativePromptPlaceholder": "Describe what you don't want in the image...",
+    "model": "Model",
+    "selectModel": "Select Model",
+    "aspectRatio": "Aspect Ratio",
+    "resolution": "Resolution",
+    "referenceImage": "Reference Image",
+    "uploadReference": "Upload Reference",
+    "removeReference": "Remove Reference",
+    "generating": "Generating image...",
+    "generateSuccess": "Image generated successfully",
+    "generateFailed": "Image generation failed",
+    "downloadImage": "Download Image",
+    "copyPrompt": "Copy Prompt",
+    "useTemplate": "Use Template",
+    "templates": "Prompt Templates",
+    "quantity": "Quantity",
+    "quantityOptions": {
+      "1": "1 image",
+      "2": "2 images"
+    },
+    "finalResolution": "Final Resolution",
+    "imageSize": "Image Size",
+    "describeImage": "Describe your desired image",
+    "image2ImageLabel": "Image-to-Image (Optional, omit for text-to-image)",
+    "apiCallLimit": "(API supports 6+ image inputs)",
+    "clickToUpload": "Click to upload reference images",
+    "pasteImageDesktop": "Or use shortcut keys to paste images",
+    "pasteImageMobile": "Or paste images directly",
+    "autoCompressionInfo": "Large images are auto-compressed during generation without quality loss",
+    "messages": {
+      "promptRequired": "Please enter an image description",
+      "apiKeyNotSet": "Please set API Key first",
+      "generateSuccess": "Image generated successfully",
+      "generateWithReferenceSuccess": "Image generated successfully based on {count} reference image(s)",
+      "processingFile": "Processing file, skipping duplicate trigger",
+      "fileSelectionActive": "File selection is active, skipping duplicate trigger",
+      "skipDuplicateUpload": "Duplicate upload detected, ignoring task",
+      "invalidResult": "No valid image generated",
+      "generateError": "An error occurred during image generation",
+      "noImageInClipboard": "No image found in clipboard, please copy an image and try again",
+      "pastedImagesSuccess": "Successfully pasted {count} image(s)",
+      "pasteError": "Failed to paste image, please try again",
+      "uploadCancelled": "Upload task has been cancelled",
+      "fileNotImage": "{filename} is not an image file",
+      "fileTooLarge": "{filename} is too large ({size}MB), maximum size is 20MB",
+      "unsupportedFormat": "{filename} format not supported, please use JPG, PNG, WebP or BMP format",
+      "fileTooSmall": "{filename} is too small, may not be a valid image file",
+      "fileDuplicate": "{filename} already exists, skipping duplicate file",
+      "uploadLimitReached": "Upload limit reached, only processing first {max} images",
+      "reachedMaxImages": "Maximum of {max} reference images allowed",
+      "fluxModelLimitInfo": "Flux model currently supports only 1 reference image, awaiting future improvements",
+      "uploadSuccess": "Reference image uploaded successfully (took {time} seconds)",
+      "uploadSuccessMultiple": "Successfully uploaded {count} reference image(s) (took {time} seconds)",
+      "uploadFailed": "Image upload failed: {error}",
+      "fileReadFailed": "File read failed: {error}",
+      "fileReadAborted": "File read was aborted",
+      "fileReadTimeout": "File read timed out",
+      "invalidBase64": "Base64 data is abnormally short, conversion may have failed",
+      "base64ValidationFailed": "Base64 format validation failed",
+      "conversionFailed": "File conversion failed, retried {retries} time(s): {error}",
+      "imageValidationFailed": "Image data validation failed: {error}",
+      "imageDecodeFailed": "Base64 data cannot be decoded as a valid image",
+      "imageDimensionInvalid": "Image dimensions are invalid",
+      "imageValidationTimeout": "Image validation timed out",
+      "compressionFailed": "Image compression failed, uploading original: {error}",
+      "compressingImages": "Compressing {count} large image(s)...",
+      "compressionInfo": "Large images are automatically compressed without affecting generation quality",
+      "compressionComplete": "Compressed {count} image(s), starting generation...",
+      "noCompressionNeeded": "File {filename} size is {size}MB, no compression needed",
+      "startCompression": "Starting compression for file: {filename}, original size: {size}MB",
+      "filenameTooLong": "Filename too long, will be truncated: {filename}",
+      "inputCleared": "Input has been cleared",
+      "referenceImageRemoved": "Reference image removed: {filename}",
+      "estimatedTime4K": "Estimated time: 4-6 minutes",
+      "estimatedTime2K": "Estimated time: 2-4 minutes",
+      "estimatedTime1K": "Estimated time: 1-3 minutes",
+      "generatingWithEstimate": "Generating... {estimate}, please be patient",
+      "generatingProgress": "Generating image...",
+      "connectingServer": "Connecting to AI server...",
+      "analyzingPrompt": "Analyzing prompt content...",
+      "startGenerating": "Starting image generation, estimated 2-4 minutes...",
+      "creatingArt": "Creating artwork, please be patient...",
+      "generatingInProgress": "Image generation in progress...",
+      "optimizingQuality": "Optimizing image quality...",
+      "almostComplete": "Almost complete, please wait...",
+      "generationFailed": "Image generation failed, please try again",
+      "noReferencesUploaded": "No reference images uploaded",
+      "noGeneratedImages": "No images generated yet",
+      "downloading": "Downloading {completed}/{total}",
+      "batchDownloadCompleted": "Batch download completed",
+      "batchDownloadError": "Batch download error",
+      "downloadHelperTitle": "Download Help",
+      "downloadHelperMessage": "Due to browser security restrictions, automatic batch download is not available.",
+      "downloadSteps": "Please follow these steps to download manually:",
+      "downloadStep1": "Click the \"View Images\" button below",
+      "downloadStep2": "In the image preview, right-click on the image",
+      "downloadStep3": "Select \"Save Image As\"",
+      "downloadStep4": "Repeat steps 2-3 to download all images",
+      "viewImages": "View Images",
+      "understood": "Got it",
+      "pageActivated": "Image generation page activated",
+      "pageDeactivated": "Image generation page deactivated",
+      "pageLoadIncomplete": "Page loading incomplete, please refresh the page"
+    },
+    "labels": {
+      "generatedImagesPlaceholder": "Generated images will be displayed here",
+      "referenceImageLabel": "Reference {index}",
+      "generateResultLabel": "Result {index}",
+      "addMoreReferences": "Add More References",
+      "resultTab": "Generated Results",
+      "originalTab": "Original/Reference",
+      "compareTab": "Comparison View",
+      "referenceImageTitle": "Reference/Original Images",
+      "uploadPrompt": "Upload reference images, supports click to select or Ctrl+V to paste",
+      "referenceImageCount": "({current}/{max})",
+      "supportedFormats": "Supports JPG, PNG formats, upload up to {max} images, max 20MB per file",
+      "fluxModelInfo": "Supports JPG, PNG formats, Flux model currently supports only 1 image, max 20MB per file, awaiting future improvements",
+      "uploadIndicatorTooltip": "Uploading to cloud...",
+      "uploadCompleteTooltip": "Uploaded to cloud",
+      "needsCompressionTooltip": "Large file, will be automatically compressed during generation",
+      "needsCompressionLabel": "MB will be compressed",
+      "removeButtonLabel": "Remove reference {index}",
+      "fileSizeFormat": "{size}MB",
+      "quickSolutionTitle": "Quick Solution:"
+    },
+    "buttons": {
+      "generateButton": "Start Generation",
+      "generating": "Generating...",
+      "clearInput": "Clear Input",
+      "download": "Download",
+      "expandView": "View Larger",
+      "batchDownloadAll": "Batch Download All",
+      "retryGenerate": "Regenerate",
+      "viewDetails": "View Details"
+    },
+    "errors": {
+      "invalidFileReaderResult": "FileReader returned invalid result",
+      "readerErrorMessage": "File read failed: {error}",
+      "imageSizeInvalid": "Image dimensions are invalid",
+      "detailedErrorTitle": "View Complete Error Details",
+      "pageElementNotFound": "referenceImageArea element not found, DOM may not be fully loaded",
+      "imageContainerNotFound": "Empty result display container does not exist",
+      "errorContainerNotFound": "Error display container does not exist"
+    },
+    "dialogs": {
+      "errorTitle": "View Details"
+    }
+  },
+  "batch": {
+    "title": "Batch Generate",
+    "modes": {
+      "card": "🎰 Lucky Draw Mode (Recommended)",
+      "multi": "📋 Multiple Prompts Mode"
+    },
+    "upload": {
+      "processing": "Processing batch files, skipping duplicate trigger",
+      "selectionActive": "Batch file selection is active, skipping duplicate trigger",
+      "clickToUpload": "Click to upload batch reference images",
+      "pasteSupport": "Or paste images here"
+    },
+    "messages": {
+      "uploadSuccess": "Batch reference images uploaded successfully",
+      "uploadSuccessMultiple": "Successfully uploaded {count} batch reference image(s) (took {time} seconds)",
+      "uploadFailed": "Batch images upload failed: {error}",
+      "pasteSuccess": "Successfully pasted {count} image(s) to batch references",
+      "pasteFailed": "Failed to paste images, please try again",
+      "fluxModelLimit": "Flux model currently supports only 1 reference image, awaiting future improvements",
+      "maxImagesReached": "Maximum of {max} reference images allowed",
+      "limitReached": "Upload limit reached, only processing first {max} images",
+      "batchComplete": "Batch generation complete",
+      "batchFailed": "Batch generation failed",
+      "duplicateTask": "Duplicate batch upload detected, ignoring task"
+    },
+    "buttons": {
+      "startBatch": "Start Batch Generation",
+      "stopBatch": "Stop Generation",
+      "clearInput": "Clear Input"
+    },
+    "labels": {
+      "referenceImage": "Batch Reference {index}",
+      "removeImage": "Remove Batch Reference {index}",
+      "addMore": "Add More Batch References",
+      "quantity": "Generation Quantity (Lucky Draw Count)",
+      "quantityCount": "{count} images",
+      "costEstimate": "Estimated Cost",
+      "promptInput": "Enter prompts (supports multiple lines)",
+      "promptTemplate": "Prompt Templates",
+      "currentModel": "Current Model:",
+      "unitPrice": "Unit Price",
+      "perImage": "image",
+      "batchReferenceImage": "Batch Reference Images (Seed)",
+      "optional": "Optional, max {max} images",
+      "formatSupport": "Supports JPG, PNG formats, upload up to {max} images, max 20MB per file",
+      "pasteShortcutDesktop": "Or use shortcut keys to paste images",
+      "pasteShortcutMobile": "Or paste images directly",
+      "sharedReference": "All prompts will share these reference images",
+      "sharedReferenceConfirm": "Will be used as reference images for all prompts",
+      "batchSize": "Batch Size",
+      "batchQuantity": "Quantity",
+      "resolution": "Resolution",
+      "multiPromptInput": "Batch Prompts (separate prompts with blank lines)",
+      "multiPromptHint": "Separate prompts with blank lines, each prompt can have multiple lines",
+      "cardWarning": "One prompt generates multiple images for selection. Ensure prompts and images comply with regulations. Non-compliant content will fail but AI providers will still charge",
+      "batchLabel": "Batch Generate {index}",
+      "selectBatchReference": "Select batch reference images",
+      "emptyResults": "Batch generation results will be displayed here"
+    },
+    "placeholders": {
+      "cardMode": "Design a promotional flyer for a graphic shop, advertising year-end sales.\nDesign style: Vibrant promotional style, eye-catching\nColor scheme: Orange-red as the main color, creating a lively promotional atmosphere",
+      "multiMode": "Design a promotional flyer for a graphic shop, advertising year-end sales.\nDesign style: Vibrant promotional style, eye-catching\nColor scheme: Orange-red as the main color\n\nA cute little cat sitting in a garden,\nOil painting style, high definition, rich details,\nWarm afternoon sunlight\n\nModern minimalist living room design"
+    },
+    "ratioOptions": {
+      "auto": "Auto",
+      "square": "Square 1:1",
+      "portrait": "Portrait 2:3",
+      "landscape": "Landscape 3:2",
+      "widescreen": "Widescreen 16:9"
+    },
+    "resolutionOptions": {
+      "1k": "1K Standard",
+      "2k": "2K HD",
+      "4k": "4K Ultra HD"
+    },
+    "notice": {
+      "title": "Important Batch Generation Notes",
+      "keepPageOpen": "Keep Page Open:",
+      "keepPageOpenDesc": "Do not close browser tab or refresh page during batch generation, or the task will be interrupted immediately",
+      "localMechanism": "Local Operation:",
+      "localMechanismDesc": "This tool has no backend service. All tasks run in the browser. Incomplete tasks cannot be recovered after closing the page",
+      "reasonableQuantity": "Set Reasonable Quantity:",
+      "reasonableQuantityDesc": "Adjust concurrency based on network conditions to avoid failures from too many concurrent requests",
+      "saveImages": "Save Images Promptly:",
+      "saveImagesDesc": "Download and save images promptly after generation to avoid loss due to accidental page closure",
+      "longDuration": "Long Generation Time:",
+      "longDurationDesc": "Each image takes 2-4 minutes. Allow sufficient time for large batch generation"
+    },
+    "progress": {
+      "processing": "Processing {count} batch reference image(s)...",
+      "current": "Processed {current}/{total}",
+      "generating": "Batch generating...",
+      "completed": "Completed {count} image(s)"
+    },
+    "status": {
+      "batchCount": "Quantity",
+      "concurrency": "Concurrency",
+      "startBatch": "Start Batch Generation",
+      "stopBatch": "Stop Generation",
+      "progressLabel": "Progress",
+      "completed": "Completed",
+      "failed": "Failed",
+      "generating": "Generating",
+      "batchComplete": "Batch generation complete",
+      "downloadAll": "Download All"
+    }
+  },
+  "compare": {
+    "title": "Model Compare",
+    "pageActivated": "Model compare page activated",
+    "pageDeactivated": "Model compare page deactivated",
+    "models": {
+      "selectLeft": "Select left model",
+      "selectRight": "Select right model",
+      "speed": "Speed: {speed}",
+      "price": "Price: ${price}/image",
+      "noCommonRatios": "Selected models have no common supported sizes"
+    },
+    "upload": {
+      "clickToUpload": "Click to upload comparison reference images",
+      "clickOrDrag": "Click or drag to upload reference images",
+      "supportedFormats": "Supports JPG, PNG formats"
+    },
+    "buttons": {
+      "startCompare": "Start Comparison",
+      "clearInput": "Clear Input",
+      "recompare": "Re-compare",
+      "clear": "Clear"
+    },
+    "messages": {
+      "comparing": "Comparing...",
+      "compareComplete": "Comparison complete",
+      "compareFailed": "Comparison failed: {error}"
+    },
+    "labels": {
+      "referenceImage": "Comparison Reference {index}",
+      "removeImage": "Remove Comparison Reference {index}",
+      "leftResult": "Left Result",
+      "rightResult": "Right Result",
+      "parameters": "Parameters",
+      "ratio": "Ratio: {ratio}",
+      "generateFailed": "Generation Failed",
+      "generateSuccess": "Generated Successfully",
+      "leftModel": "Left Model",
+      "rightModel": "Right Model",
+      "selectModel": "Select Model",
+      "prompt": "Prompt",
+      "commonRatios": "Common Supported Ratios",
+      "commonRatiosTitle": "Common Supported Ratios",
+      "selectModelsFirst": "Please select two models first",
+      "referenceImages": "Reference Images (Optional, max 3)",
+      "uploadHint": "Click or drag to upload reference images",
+      "formatHint": "Supports JPG, PNG, GIF formats",
+      "promptPlaceholder": "Describe the image you want to generate..."
+    },
+    "evaluation": {
+      "leftBetter": "Left model better",
+      "rightBetter": "Right model better",
+      "similar": "Similar quality",
+      "save": "Save Evaluation",
+      "question": "Which model generated better images?",
+      "leftButton": "Left Better",
+      "rightButton": "Right Better",
+      "equalGood": "Equally Good",
+      "equalBad": "Equally Bad"
+    },
+    "selectModels": "Select models to compare",
+    "modelCount": "{count} models selected",
+    "compareNow": "Start Comparison",
+    "comparing": "Comparing...",
+    "compareComplete": "Comparison complete",
+    "samePrompt": "Use same prompt",
+    "sameSettings": "Use same settings"
+  },
+  "history": {
+    "title": "History Records",
+    "noHistory": "No history records",
+    "clearHistory": "Clear History",
+    "confirmClear": "Are you sure you want to clear all history?",
+    "storage": {
+      "uploading": "Uploading",
+      "cloud": "Cloud",
+      "local": "Local",
+      "cloudModeTitle": "Secure Cloud Storage",
+      "localModeTitle": "Local Browser Storage",
+      "privacyTitle": "Privacy Protection",
+      "privacyDesc": "Images are encrypted and stored anonymously, accessible only by you",
+      "smartStorageTitle": "Smart Storage",
+      "smartStorageDesc": "Automatically upload to cloud, save 95%+ local space",
+      "syncTitle": "Sync Management",
+      "syncDesc": "Cloud images sync cleaned when deleting records",
+      "expirationTitle": "Expiration",
+      "expirationDesc": "Cloud storage for 30 days, automatically cleaned after expiration"
+    },
+    "types": {
+      "networkRestricted": "Network Restricted",
+      "winner": "{model} Winner",
+      "pending": "Pending Evaluation"
+    },
+    "details": {
+      "model": "Model: {model}",
+      "ratio": "Size: {ratio}",
+      "referenceCount": "{count} reference image(s)",
+      "networkRestrictedNote": "Generated successfully, but images may require special network environment to access"
+    },
+    "buttons": {
+      "view": "View Image",
+      "download": "Download Image",
+      "batchDownload": "Batch Download",
+      "delete": "Delete Record",
+      "migrateToCloud": "Migrate to Cloud",
+      "networkOptions": "Network Restricted Options",
+      "uploading": "Image uploading, please wait"
+    },
+    "downloadHelp": {
+      "title": "Download Help",
+      "message": "Due to browser security restrictions, automatic batch download is not available.",
+      "stepsTitle": "Please follow these steps to download manually:",
+      "step1": "Click the \"View Images\" button below",
+      "step2": "In the image preview, right-click on the image",
+      "step3": "Select \"Save Image As\"",
+      "step4": "Repeat steps 2-3 to download all images",
+      "viewImages": "View Images",
+      "understood": "Got it"
+    },
+    "networkRestricted": {
+      "title": "Network Restricted Images",
+      "description": "These images have been successfully generated, but may not be directly accessible due to network environment restrictions.",
+      "instruction": "You can copy the image URLs and open them in a network environment with external access.",
+      "imageAddresses": "Image URLs ({count} image(s))",
+      "imageLabel": "Image {index}",
+      "copy": "Copy",
+      "open": "Open",
+      "solutionTitle": "Solutions",
+      "explanationTitle": "Explanation",
+      "solution1": "Copy image URL to clipboard",
+      "solution2": "Batch copy all URLs",
+      "solution3": "Retry access",
+      "solutionItem1": "Copy image URL to clipboard",
+      "solutionItem2": "Paste and open on a device with external network access",
+      "solutionItem3": "Use VPN or proxy service to access",
+      "solutionItem4": "Contact technical support for domestic mirror URLs",
+      "copyAll": "Copy All URLs",
+      "retry": "Retry Access",
+      "close": "Close"
+    },
+    "deleteItem": "Delete Record",
+    "viewImage": "View Image",
+    "regenerate": "Regenerate",
+    "cloudSync": "Cloud Sync",
+    "syncSuccess": "Sync successful",
+    "syncFailed": "Sync failed",
+    "messages": {
+      "downloadStarting": "Starting batch download...",
+      "downloading": "Downloading {completed}/{total}",
+      "downloadComplete": "Batch download complete",
+      "deleted": "Record deleted",
+      "notFound": "History record not found",
+      "cloudUnavailable": "Cloud storage service unavailable",
+      "migrating": "Migrating to cloud..."
+    },
+    "labels": {
+      "empty": "No history records",
+      "storageStatus": "Storage Status",
+      "privacyProtection": "Privacy Protection",
+      "privacyProtectionDesc": "Images are encrypted and stored anonymously, accessible only by you",
+      "smartStorage": "Smart Storage",
+      "smartStorageDesc": "Automatically upload to cloud, save 95%+ local space",
+      "syncManagement": "Sync Management",
+      "syncManagementDesc": "Cloud images sync cleaned when deleting records",
+      "expirationPeriod": "Expiration",
+      "expirationPeriodDesc": "Cloud storage for 30 days, automatically cleaned after expiration",
+      "localStorageMode": "Local Storage Mode",
+      "localStorageModeDesc": "Images saved in browser, occupy device storage space",
+      "configureCloudStorage": "Recommend Configuring Cloud Storage",
+      "configureCloudStorageDesc": "Configure Worker URL to save space and protect privacy",
+      "migrateAllToCloud": "Migrate {count} local records to cloud with one click",
+      "recordsCount": "{count} record(s)",
+      "localUsage": "Local usage: {percent}%"
+    }
+  },
+  "understand": {
+    "title": "Image Understanding",
+    "pageTitle": "Upload Images for Understanding",
+    "multiImageSupport": "Multi-image Joint Analysis Supported",
+    "upload": {
+      "title": "Upload Image",
+      "clickToUpload": "Click to upload image",
+      "dragHint": "Or drag image here",
+      "pasteSupport": "Supports pasting images (Ctrl+V)",
+      "formatInfo": "Supports JPG, PNG formats, max 20MB per file",
+      "compressionInfo": "Large images auto-compressed without affecting quality",
+      "pasteKeyboardHint": "Or use shortcut keys to paste images",
+      "pasteMobileHint": "Or paste images directly",
+      "addMoreImages": "Add more images"
+    },
+    "models": {
+      "selectModel": "Select Model",
+      "selectVisionModel": "Select Vision Model",
+      "currentModel": "Current Model",
+      "recommended": "Recommended",
+      "customModel": "Custom Model",
+      "customModelOptional": "Custom Model (Optional)",
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "customModelPlaceholder": "e.g.: gpt-4-vision-preview",
+      "customModelHint": "Use custom model if filled, otherwise use selected model above",
+      "selectOtherModel": "Click to select other models or view pricing",
+      "close": "Close"
+    },
+    "roles": {
+      "selectRole": "Select Analysis Role",
+      "universal": "Universal Recognition + Encyclopedia",
+      "universalShort": "Universal",
+      "productTitle": "Product Title Generator",
+      "productTitleShort": "Product Title",
+      "amazonBullets": "Amazon Five Points",
+      "amazonBulletsShort": "Five Points",
+      "productAnalysis": "Product Attribute Analyzer",
+      "productAnalysisShort": "Attributes",
+      "ocrExtract": "OCR Extract",
+      "ocrExtractShort": "OCR",
+      "document": "Document Recognition",
+      "product": "Product Analysis",
+      "custom": "Custom",
+      "customPrompt": "Custom Prompt"
+    },
+    "prompt": {
+      "label": "Question (Optional)",
+      "placeholder": "e.g.: What's in this image? Describe the scene...",
+      "roleHint": "Click role tags above to apply professional prompts quickly"
+    },
+    "buttons": {
+      "analyze": "Analyze Image",
+      "startAnalysis": "Start Analysis",
+      "copyResult": "Copy Result"
+    },
+    "messages": {
+      "analyzing": "Analyzing image...",
+      "analyzeSuccess": "Analysis complete",
+      "analyzeFailed": "Analysis failed",
+      "copied": "Copied to clipboard",
+      "copyFailed": "Copy failed",
+      "uploadFirst": "Please upload an image first",
+      "promptRequired": "Please enter custom prompt",
+      "analyzeError": "Image analysis failed: {error}",
+      "unsupportedFileType": "Unsupported file type",
+      "fileTooLarge": "File too large, maximum {size}MB"
+    },
+    "labels": {
+      "result": "Analysis Result",
+      "resultPlaceholder": "Upload image then click \"Start Analysis\" to view results",
+      "imageLabel": "Image {index}",
+      "imageCount": "({count})",
+      "deleteImage": "Delete Image",
+      "addMore": "Add More Images",
+      "maxImages": "Maximum {max} images allowed"
+    },
+    "uploadImage": "Upload Image",
+    "analyzing": "Analyzing image...",
+    "analyzeSuccess": "Analysis complete",
+    "analyzeFailed": "Analysis failed",
+    "description": "Description",
+    "tags": "Tags",
+    "colors": "Main Colors",
+    "roleData": {
+      "universal": {
+        "name": "Universal Recognition + Encyclopedia",
+        "shortName": "Universal",
+        "description": "General image recognition and encyclopedia knowledge analysis"
+      },
+      "product-title": {
+        "name": "Product Title Generator",
+        "shortName": "Product Title",
+        "description": "Generate attractive e-commerce titles for product images"
+      },
+      "amazon-bullets": {
+        "name": "Amazon Five Points",
+        "shortName": "Five Points",
+        "description": "Generate five-point descriptions for Amazon product detail pages"
+      },
+      "product-analysis": {
+        "name": "Product Attribute Analyzer",
+        "shortName": "Attribute Analysis",
+        "description": "Deep analysis of product attributes, extract structured information"
+      },
+      "ocr-extract": {
+        "name": "OCR Extract",
+        "shortName": "OCR Extract",
+        "description": "Quickly extract all text content from images"
+      }
+    },
+    "visionModelData": {
+      "gpt-5.2": {
+        "displayName": "GPT-5.2",
+        "description": "Latest flagship model, excellent understanding and reasoning ability",
+        "features": [
+          "Top Understanding",
+          "Deep Reasoning",
+          "Multimodal Analysis"
+        ]
+      },
+      "gemini-3-pro-preview": {
+        "displayName": "Gemini 3 Pro Preview",
+        "description": "Google's latest flagship preview version, powerful multimodal capabilities",
+        "features": [
+          "Flagship Performance",
+          "Multi-image Understanding",
+          "Deep Analysis"
+        ]
+      },
+      "gemini-2.5-flash-preview-09-2025": {
+        "displayName": "Gemini 2.5 Flash",
+        "description": "Fast response version, extremely cost-effective",
+        "features": [
+          "Ultra-fast Response",
+          "Cost-effective",
+          "Reasoning Mode"
+        ]
+      },
+      "gpt-5-mini": {
+        "displayName": "GPT-5-mini",
+        "description": "Lightweight and efficient version, suitable for daily use",
+        "features": [
+          "High Cost-performance",
+          "Fast Response",
+          "Accurate Understanding"
+        ]
+      },
+      "claude-haiku-4-5-20251001": {
+        "displayName": "Claude Haiku 4.5",
+        "description": "Anthropic lightweight model, fast and accurate",
+        "features": [
+          "Fast Speed",
+          "Low Cost",
+          "Detail Description"
+        ]
+      },
+      "qwen-vl-ocr-latest": {
+        "displayName": "Qwen OCR Latest",
+        "description": "Alibaba Cloud Qwen professional OCR recognition, ultra-fast text extraction",
+        "features": [
+          "OCR Specialized",
+          "Ultra-fast Response",
+          "Ultra-high Accuracy"
+        ]
+      },
+      "recommended": "Recommended",
+      "current": "Current"
+    }
+  },
+  "director": {
+    "title": "Director Mode",
+    "pageTitle": "Comic Panel Auto-Generation",
+    "labels": {
+      "referenceImage": "Reference Image",
+      "uploadHint": "Click or drag to upload reference images",
+      "uploadFormat": "Supports JPG, PNG, WebP formats, up to 8 images",
+      "multiImageHint": "Multiple reference images improve character consistency",
+      "sceneDescription": "Scene Description",
+      "optional": "(Optional)",
+      "scenePlaceholder": "Describe the scene, plot, or desired effect... (Leave empty for AI auto-analysis)",
+      "layoutSelect": "Select Panel Layout",
+      "modeSelect": "Generation Mode",
+      "multiSceneDescription": "Multi-Scene Description",
+      "multiScenePlaceholder": "Separate each scene with a blank line, e.g.:\n\nScene 1: Hero standing in the rain, back to camera\n\nScene 2: Heroine reading by the window, sunlight streaming in\n\nScene 3: They meet at a coffee shop",
+      "multiSceneHint": "Separate scenes with blank lines, each scene generates one comic panel page",
+      "generateCount": "Generation Count (Draw Cards)",
+      "countHint": "Generate multiple images for the same scene, pick the best one",
+      "results": "Generation Results",
+      "emptyResults": "Generated comic panels will be displayed here",
+      "emptyResultsHint": "Upload reference images and click generate to start creating",
+      "styleTemplate": "Style Template",
+      "imageRatio": "Image Ratio",
+      "resolution": "Resolution"
+    },
+    "ratioOptions": {
+      "auto": "Auto",
+      "square": "Square 1:1",
+      "landscape169": "Landscape 16:9",
+      "portrait916": "Portrait 9:16",
+      "landscape43": "Landscape 4:3",
+      "portrait34": "Portrait 3:4",
+      "landscape32": "Landscape 3:2",
+      "portrait23": "Portrait 2:3"
+    },
+    "resolutionOptions": {
+      "1k": "1K Standard",
+      "2k": "2K HD",
+      "4k": "4K Ultra HD"
+    },
+    "templateModal": {
+      "title": "Select Style Template",
+      "cancel": "Cancel"
+    },
+    "templates": {
+      "anime": {
+        "name": "Anime Style",
+        "desc": "TV anime style, storyboard panels, cel shading"
+      },
+      "manga": {
+        "name": "Manga Style",
+        "desc": "B&W manga style, screentone, dynamic lines"
+      },
+      "movie": {
+        "name": "Cinematic Style",
+        "desc": "Film look, cinematic grading, depth of field"
+      },
+      "webtoon": {
+        "name": "Webtoon Style",
+        "desc": "Full color Korean manhwa, vertical scroll"
+      },
+      "comic": {
+        "name": "Comic Style",
+        "desc": "American comic style, bold lines, high contrast"
+      },
+      "illustration": {
+        "name": "Illustration Style",
+        "desc": "Beautiful illustration, rich details, artistic"
+      }
+    },
+    "modes": {
+      "single": "Single Mode",
+      "multi": "Multi-Prompt Mode"
+    },
+    "layouts": {
+      "6grid": "6-Panel Standard",
+      "4grid": "4-Panel Square",
+      "2closeup": "2-Panel Close-up",
+      "9grid": "9-Panel Panorama"
+    },
+    "layoutDesc": {
+      "6grid": "2 rows × 3 cols, ideal for complete stories",
+      "4grid": "2 rows × 2 cols, ideal for turning points",
+      "2closeup": "1 row × 2 cols, ideal for close-ups",
+      "9grid": "3 rows × 3 cols, ideal for action scenes"
+    },
+    "buttons": {
+      "generate": "Generate Comic Panels",
+      "download": "Download Image",
+      "downloadAll": "Download All",
+      "regenerate": "Regenerate",
+      "selectTemplate": "Select Template",
+      "exampleGallery": "Example Gallery"
+    },
+    "galleryModal": {
+      "title": "Example Gallery",
+      "hint": "Click to select example images as reference (max 8)",
+      "cancel": "Cancel",
+      "confirm": "Confirm Selection"
+    },
+    "progress": {
+      "analyzing": "Analyzing reference image...",
+      "generating": "Generating panel prompts...",
+      "creating": "Creating comic page...",
+      "complete": "Generation complete!",
+      "step": "Step {current}/{total}"
+    },
+    "messages": {
+      "uploadFirst": "Please upload a reference image first",
+      "generating": "Generation in progress, please wait",
+      "apiKeyRequired": "Please set image generation API Key first",
+      "success": "Comic page generated successfully!",
+      "failed": "Generation failed: {error}",
+      "downloadStarted": "Download started",
+      "noImage": "No image available for download"
+    }
+  },
+  "messages": {
+    "apiKeyNotSet": "Please set API Key first",
+    "promptRequired": "Please enter a prompt",
+    "modelRequired": "Please select a model",
+    "imageGenerating": "Generating image, please wait...",
+    "imageGenerated": "Image generated successfully!",
+    "imageFailed": "Image generation failed, please try again",
+    "copied": "Copied to clipboard",
+    "copyFailed": "Copy failed",
+    "downloaded": "Downloaded successfully",
+    "downloadFailed": "Download failed",
+    "saved": "Saved successfully",
+    "saveFailed": "Save failed",
+    "deleted": "Deleted successfully",
+    "networkError": "Network error, please check your connection",
+    "uploadSuccess": "Upload successful",
+    "uploadFailed": "Upload failed",
+    "fileTooLarge": "File too large, maximum {size}MB",
+    "invalidFileType": "Unsupported file type",
+    "processingImage": "Processing image..."
+  },
+  "models": {
+    "gemini-3-pro-image-preview": {
+      "name": "🍌 Nano Banana Pro",
+      "displayName": "60s, gemini-3-pro-image-preview Google native endpoint, supports multi-size 4K, $0.05/image 🔥 1/5 official price"
+    },
+    "gemini-2.5-flash-image": {
+      "name": "🍌 Nano Banana",
+      "displayName": "15s, gemini-2.5-flash-image Google native endpoint, supports multi aspect ratios, fixed 1K resolution, $0.025/image"
+    },
+    "seedream-4-5-251128": {
+      "name": "SeeDream 4.5",
+      "displayName": "15s generation, SeeDream overseas version seedream-4-5-251128, ultra-clear generation and editing, supports 2K/4K resolution, URL and Base64 output, $0.045/image"
+    },
+    "sora_image": {
+      "name": "Sora_image",
+      "displayName": "90s generation, Sora web version, same as gpt-4o-image, cheapest price! $0.01/image [Recommended]"
+    },
+    "flux-kontext-pro": {
+      "name": "Flux Kontext Pro",
+      "displayName": "15s generation, flux-kontext-pro, English prompts only, high-quality image generation, $0.035/image"
+    },
+    "flux-kontext-max": {
+      "name": "Flux Kontext Max",
+      "displayName": "15s generation, flux-kontext-max, supports Chinese prompts, ultra-high quality image editing, $0.07/image"
+    }
+  },
+  "aspectRatios": {
+    "auto": {
+      "label": "Auto",
+      "description": "Smart"
+    },
+    "1:1": {
+      "label": "Square",
+      "description": "Common",
+      "full": "Square 1:1"
+    },
+    "2:3": {
+      "label": "Portrait",
+      "description": "Classic",
+      "full": "Portrait 2:3"
+    },
+    "3:2": {
+      "label": "Landscape",
+      "description": "Classic",
+      "full": "Landscape 3:2"
+    },
+    "4:3": {
+      "label": "Landscape",
+      "description": "Standard",
+      "full": "Landscape 4:3"
+    },
+    "3:4": {
+      "label": "Portrait",
+      "description": "Standard",
+      "full": "Portrait 3:4"
+    },
+    "16:9": {
+      "label": "Landscape",
+      "description": "Widescreen",
+      "full": "Landscape 16:9"
+    },
+    "9:16": {
+      "label": "Portrait",
+      "description": "Mobile",
+      "full": "Portrait 9:16"
+    },
+    "21:9": {
+      "label": "Cinema",
+      "description": "Ultra-wide",
+      "full": "Cinema 21:9"
+    },
+    "5:4": {
+      "label": "Landscape",
+      "description": "Traditional",
+      "full": "Landscape 5:4"
+    },
+    "4:5": {
+      "label": "Portrait",
+      "description": "Social",
+      "full": "Portrait 4:5"
+    },
+    "3:7": {
+      "label": "Ultra Portrait",
+      "description": "",
+      "full": "Ultra Portrait 3:7"
+    },
+    "7:3": {
+      "label": "Ultra Landscape",
+      "description": "",
+      "full": "Ultra Landscape 7:3"
+    }
+  },
+  "resolutions": {
+    "1K": {
+      "label": "1K Standard",
+      "description": "Fast"
+    },
+    "2K": {
+      "label": "2K HD",
+      "description": "Slower",
+      "descriptionAlt": "Standard"
+    },
+    "4K": {
+      "label": "4K Ultra",
+      "description": "Print Quality",
+      "descriptionAlt": "Ultra HD"
+    }
+  },
+  "templates": {
+    "categories": {
+      "popular": "Popular",
+      "ecommerce": "E-commerce",
+      "art": "Art",
+      "photography": "Photography"
+    }
+  },
+  "activity": {
+    "title": "🎉 New User Exclusive Benefits",
+    "subtitle": "Every user automatically receives $0.05 USD",
+    "description": "Generate 1 Nano Banana Pro or 5 Sora_image images",
+    "close": "Close Promotion",
+    "recharge": {
+      "title": "Tiered Recharge Bonus Event",
+      "badge": "HOT",
+      "amount": "Recharge {amount} get {bonus} bonus",
+      "viewDetails": "View Detailed Rules",
+      "benefit1": "First Recharge Bonus: $1 USD",
+      "benefit2": "Recharge $100+ Get 10% Bonus",
+      "benefit3": "More You Recharge, More You Get~"
+    },
+    "buttons": {
+      "register": "Register Now for Benefits",
+      "rechargeNow": "Recharge Now",
+      "close": "Close",
+      "later": "Later"
+    },
+    "info": {
+      "period": "Event Period: {start} - {end}",
+      "rules": "Event Rules",
+      "autoCredit": "Bonus will be automatically credited",
+      "disclaimer": "The platform reserves the right of final interpretation",
+      "note": "*Free credits can be viewed on the token page after registration"
+    }
+  },
+  "settingsModal": {
+    "title": "API Settings",
+    "selectSite": "Select API Site",
+    "enterApiKey": "Enter API Key",
+    "addCustomSite": "Add Custom Site",
+    "howToGet": {
+      "title": "How to Get API Key",
+      "step1": "Visit LazyCat Dashboard - Tokens Page",
+      "step2": "Click \"Create Token\" button",
+      "step3": "Enter token name (e.g.: Pay-per-use Image)",
+      "step4": "Select billing mode: Pay-per-use",
+      "step5": "Click create and copy the generated API Key",
+      "viewExample": "View Token Creation Example"
+    },
+    "fields": {
+      "imageApiKey": {
+        "label": "Image Generation API Key (Pay-per-use)",
+        "placeholder": "Enter your image generation API Key",
+        "description": "Used for image generation, editing and other functions"
+      },
+      "visionApiKey": {
+        "label": "Image Understanding API Key (Pay-as-you-go)",
+        "placeholder": "Enter your image understanding API Key (optional)",
+        "description": "Used for image understanding function, optional",
+        "note": "Requires creating a pay-as-you-go billing mode token in LazyCat Dashboard"
+      }
+    },
+    "buttons": {
+      "save": "Save",
+      "test": "Test Connection",
+      "cancel": "Cancel"
+    },
+    "customSite": {
+      "title": "Custom Site",
+      "name": "Site Name",
+      "baseURL": "Base URL",
+      "pathPrefix": "Path Prefix (Optional)",
+      "apiKey": "Default API Key (Optional)",
+      "description": "Description (Optional)",
+      "save": "Save",
+      "cancel": "Cancel",
+      "editTitle": "Edit Custom Site",
+      "addTitle": "Add Custom Site",
+      "namePlaceholder": "例如：我的 API 服务",
+      "baseUrl": "Base URL *",
+      "descriptionPlaceholder": "站点描述"
+    },
+    "messages": {
+      "saveSuccess": "Settings saved successfully",
+      "testSuccess": "Connection test successful",
+      "testFailed": "Connection test failed",
+      "apiKeyRequired": "Please enter API Key",
+      "invalidFormat": "API Key format is incorrect"
+    }
+  },
+  "about": {
+    "title": "AI Image Master - Project Description",
+    "close": "Close Description",
+    "closeButton": "Got it",
+    "aiModel": {
+      "title": "AI Model Description",
+      "nanoBanana": {
+        "name": "Nano Banner",
+        "tag": "New Model",
+        "description": "Fast speed, good consistency, optimized for efficient image generation, powered by Google Gemini 2.5 Flash Preview."
+      },
+      "gpt4o": {
+        "name": "gpt-4o-image",
+        "description": "Equivalent to"
+      }
+    },
+    "generationTime": {
+      "title": "Generation Time Description",
+      "description": "Each image takes varying time. Nano Banana and Flux models are very fast! Around 10s, while gpt-4o-image model takes about 2 minutes. This is normal, please be patient.",
+      "factors": "Generation time is affected by network conditions, prompt complexity, server load, and whether the official service has issues."
+    },
+    "features": {
+      "title": "Key Features",
+      "feature1": "Supports single and batch image generation",
+      "feature2": "Supports reference image (seed image) functionality",
+      "feature3": "Multiple image size options",
+      "feature4": "Complete history and download functionality"
+    },
+    "tips": {
+      "title": "Usage Tips",
+      "tip1": "Make prompts as specific and detailed as possible for more accurate images",
+      "tip2": "Reference image feature helps generate style-consistent works",
+      "tip3": "Set reasonable concurrency when batch generating",
+      "tip4": "Keep the page open during generation to avoid interruptions"
+    },
+    "faq": {
+      "title": "Nano Banana Pro API FAQ",
+      "description": "is a powerful image generation and editing model, but has some content restrictions.",
+      "rejectionScenarios": {
+        "title": "Common Rejection Scenarios",
+        "watermark": "Watermark removal: Violates content policy, will be rejected",
+        "faceSwap": "Face swapping: Involves privacy and ethical issues, will be rejected",
+        "nsfw": "NSFW content: Inappropriate content will be rejected by safety policy",
+        "knowledge": "Knowledge base limitation: Only supports content before January 2025"
+      },
+      "errorResponse": {
+        "title": "Typical Error Response",
+        "description": "When a request is rejected, the API typically returns:",
+        "message": "\"I'm just a language model and can't help with that.\"",
+        "note": "This tool automatically identifies rejection reasons and displays detailed information in error dialogs."
+      },
+      "knowledgeCutoff": {
+        "title": "Knowledge Base Cutoff",
+        "date": "Cutoff: January 2025",
+        "example": "Example: Cannot process unreleased products like \"iPhone 17\", recommend using existing products or generic descriptions.",
+        "viewDocs": "View Google Official Documentation"
+      },
+      "viewFullDocs": "View Complete FAQ Documentation"
+    },
+    "contact": {
+      "title": "Product Feedback:",
+      "wechat": "WeChat",
+      "email": "Email"
+    }
+  },
+  "footer": {
+    "disclaimer": {
+      "title": "Disclaimer",
+      "content": "This site only provides AI image generation tool services. Users must comply with relevant laws and regulations and must not generate illegal content. The copyright of generated images belongs to the user, and this site assumes no legal responsibility."
+    },
+    "enterprise": {
+      "title": "Enterprise Services",
+      "description": "This tool is particularly suitable for industry use, channel partners, and large enterprises. For front-end customization and independent deployment services, large customers can contact us.",
+      "contact": "WeChat: {wechat}",
+      "contactLabel": "Contact WeChat:"
+    },
+    "links": {
+      "title": "Links",
+      "docs": "APIYI Documentation Center",
+      "official": "APIYI Official Website",
+      "wiki": "Feishu AI Knowledge Base",
+      "changelog": "Changelog"
+    },
+    "resources": "Resources",
+    "copyright": "2025 APIYI All Rights Reserved"
+  },
+  "seo": {
+    "title": "AI Image Master - Free Online AI Image Generator",
+    "description": "AI Image Master is a powerful online AI image generation tool that supports multiple AI models including DALL·E 3, Stable Diffusion, Midjourney, and more. Create high-quality AI artwork with ease.",
+    "keywords": "AI image generation,AI art,DALL·E 3,Stable Diffusion,Midjourney,AI artwork,image generator"
+  }
+}

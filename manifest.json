@@ -1,0 +1,97 @@
+{
+    "name": "CATIMATION-Cyberpunk Master",
+    "short_name": "AI图片大师",
+    "description": "基于gpt-4o-image模型的专业AI图片生成平台",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#667eea",
+    "theme_color": "#667eea",
+    "orientation": "portrait-primary",
+    "scope": "/",
+    "lang": "zh-CN",
+    "dir": "ltr",
+    "categories": ["productivity", "graphics", "utilities"],
+    "icons": [
+        {
+            "src": "images/favicon-16x16.png",
+            "sizes": "16x16",
+            "type": "image/png",
+            "purpose": "any"
+        },
+        {
+            "src": "images/favicon-32x32.png",
+            "sizes": "32x32",
+            "type": "image/png",
+            "purpose": "any"
+        },
+        {
+            "src": "images/favicon-192x192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "images/favicon-512x512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "images/apple-touch-icon.png",
+            "sizes": "180x180",
+            "type": "image/png",
+            "purpose": "any"
+        }
+    ],
+    "screenshots": [
+        {
+            "src": "images/favicon-512x512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "form_factor": "wide",
+            "label": "AI图片生成界面"
+        }
+    ],
+    "shortcuts": [
+        {
+            "name": "图片生成",
+            "short_name": "生成",
+            "description": "快速开始图片生成",
+            "url": "/#generate",
+            "icons": [
+                {
+                    "src": "images/favicon-192x192.png",
+                    "sizes": "192x192",
+                    "type": "image/png"
+                }
+            ]
+        },
+        {
+            "name": "批量生成",
+            "short_name": "批量",
+            "description": "批量生成多张图片",
+            "url": "/#batch",
+            "icons": [
+                {
+                    "src": "images/favicon-192x192.png",
+                    "sizes": "192x192",
+                    "type": "image/png"
+                }
+            ]
+        }
+    ]
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+

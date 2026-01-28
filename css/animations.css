@@ -1,0 +1,438 @@
+/* 动画样式 */
+
+/* 基础动画 */
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+@keyframes loadProgress {
+    0% { width: 0%; }
+    50% { width: 70%; }
+    100% { width: 100%; }
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px) scale(0.95);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* 渐进式显示动画 */
+.animate-fade-in {
+    animation: fadeIn 0.5s ease-in-out;
+}
+
+/* 移动端汉堡菜单动画 */
+#mobileMenu {
+    animation: slideDown 0.3s ease-out;
+}
+
+/* 加载器动画 - Kinetic Typography 风格 */
+.loading-spinner {
+    border: 3px solid var(--muted, #27272A);
+    border-top: 3px solid var(--accent, #FCE300);
+    border-radius: 0;
+    width: 40px;
+    height: 40px;
+    animation: spin 1s linear infinite;
+}
+
+/* 悬停动画 - Kinetic Typography 风格（无阴影） */
+.hover-lift {
+    transition: all 0.2s ease;
+}
+
+.hover-lift:hover {
+    transform: scale(1.02);
+    box-shadow: none;
+}
+
+/* 按钮点击动画 */
+.btn-click {
+    transition: all 0.1s ease;
+}
+
+.btn-click:active {
+    transform: scale(0.98);
+}
+
+/* 脉冲动画 */
+.pulse {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: .5;
+    }
+}
+
+/* 弹跳动画 */
+.bounce {
+    animation: bounce 1s infinite;
+}
+
+@keyframes bounce {
+    0%, 20%, 53%, 80%, 100% {
+        animation-timing-function: cubic-bezier(0.215, 0.610, 0.355, 1.000);
+        transform: translate3d(0,0,0);
+    }
+    40%, 43% {
+        animation-timing-function: cubic-bezier(0.755, 0.050, 0.855, 0.060);
+        transform: translate3d(0, -30px, 0);
+    }
+    70% {
+        animation-timing-function: cubic-bezier(0.755, 0.050, 0.855, 0.060);
+        transform: translate3d(0, -15px, 0);
+    }
+    90% {
+        transform: translate3d(0,-4px,0);
+    }
+}
+
+/* 淡入淡出动画 */
+.fade-in {
+    opacity: 0;
+    animation: fadeIn 0.5s ease-in-out forwards;
+}
+
+.fade-out {
+    opacity: 1;
+    animation: fadeOut 0.5s ease-in-out forwards;
+}
+
+@keyframes fadeOut {
+    from {
+        opacity: 1;
+    }
+    to {
+        opacity: 0;
+    }
+}
+
+/* 滑动动画 */
+.slide-in-left {
+    animation: slideInLeft 0.5s ease-out;
+}
+
+@keyframes slideInLeft {
+    from {
+        transform: translateX(-100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+.slide-in-right {
+    animation: slideInRight 0.5s ease-out;
+}
+
+@keyframes slideInRight {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+/* 缩放动画 */
+.scale-in {
+    animation: scaleIn 0.3s ease-out;
+}
+
+@keyframes scaleIn {
+    from {
+        transform: scale(0.8);
+        opacity: 0;
+    }
+    to {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+/* 进度条动画 */
+.progress-bar {
+    transition: width 0.3s ease;
+}
+
+/* 悬停时的边框效果 - Kinetic Typography 风格（无发光） */
+.glow-on-hover {
+    transition: all 0.2s ease;
+}
+
+.glow-on-hover:hover {
+    border-color: var(--accent, #FCE300);
+    box-shadow: none;
+}
+
+/* 打字机效果 - Kinetic Typography 风格 */
+.typewriter {
+    overflow: hidden;
+    border-right: .15em solid var(--accent, #FCE300);
+    white-space: nowrap;
+    margin: 0 auto;
+    letter-spacing: -0.025em;
+    animation: typing 3.5s steps(40, end), blink-caret .75s step-end infinite;
+}
+
+@keyframes typing {
+    from { width: 0 }
+    to { width: 100% }
+}
+
+@keyframes blink-caret {
+    from, to { border-color: transparent }
+    50% { border-color: var(--accent, #FCE300); }
+}
+
+/* 高亮闪烁效果 - Kinetic Typography 风格 */
+.highlight-flash {
+    animation: highlightFlash 2s ease-in-out;
+}
+
+@keyframes highlightFlash {
+    0% {
+        background-color: transparent;
+    }
+    50% {
+        background-color: rgba(223, 225, 4, 0.3); /* accent color with opacity */
+    }
+    100% {
+        background-color: transparent;
+    }
+}
+
+/* ========================================
+   Kinetic Typography - Marquee 无限滚动系统
+   高能量、永不停止的动态元素
+   ======================================== */
+
+/* Marquee 关键帧动画 */
+@keyframes marquee {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+}
+
+@keyframes marquee-reverse {
+    0% { transform: translateX(-50%); }
+    100% { transform: translateX(0); }
+}
+
+/* Marquee 容器 - CYBERPUNK 2077 STYLE */
+.marquee-container {
+    overflow: hidden;
+    white-space: nowrap;
+    width: 100%;
+    position: relative;
+}
+
+/* Marquee 内容 - 默认速度 */
+.marquee-content {
+    display: inline-flex;
+    animation: marquee 20s linear infinite;
+    will-change: transform;
+}
+
+/* Marquee 快速 - 统计数字 */
+.marquee-fast {
+    animation: marquee 12s linear infinite;
+}
+
+/* Marquee 中速 - 评价/功能 */
+.marquee-medium {
+    animation: marquee 25s linear infinite;
+}
+
+/* Marquee 慢速 - 长文本 */
+.marquee-slow {
+    animation: marquee 40s linear infinite;
+}
+
+/* Marquee 反向 */
+.marquee-reverse {
+    animation: marquee-reverse 25s linear infinite;
+}
+
+/* Marquee 反向慢速组合 */
+.marquee-slow.marquee-reverse {
+    animation: marquee-reverse 40s linear infinite;
+}
+
+/* Marquee 项目间距 - CYBERPUNK STYLE */
+.marquee-item {
+    display: inline-flex;
+    align-items: center;
+    padding: 0 2rem;
+    letter-spacing: 0.1em;
+}
+
+/* Marquee 分隔符 */
+.marquee-separator {
+    display: inline-flex;
+    align-items: center;
+    padding: 0 1rem;
+    color: var(--muted-foreground);
+    font-weight: 900;
+}
+
+/* ========================================
+   CYBERPUNK 2077 GLITCH EFFECTS
+   ======================================== */
+
+/* 基础 Glitch 故障效果 */
+@keyframes glitch {
+    0%, 100% { transform: translate(0); }
+    20% { transform: translate(-2px, 2px); }
+    40% { transform: translate(-2px, -2px); }
+    60% { transform: translate(2px, 2px); }
+    80% { transform: translate(2px, -2px); }
+}
+
+/* Glitch 倾斜效果 */
+@keyframes glitch-skew {
+    0%, 100% { transform: skew(0deg); }
+    20% { transform: skew(-2deg); }
+    40% { transform: skew(2deg); }
+    60% { transform: skew(-1deg); }
+    80% { transform: skew(1deg); }
+}
+
+/* Glitch 颜色分离效果 */
+@keyframes glitch-color {
+    0%, 100% {
+        text-shadow: none;
+    }
+    25% {
+        text-shadow: -2px 0 var(--cyber-cyan), 2px 0 var(--cyber-magenta);
+    }
+    50% {
+        text-shadow: 2px 0 var(--cyber-cyan), -2px 0 var(--cyber-magenta);
+    }
+    75% {
+        text-shadow: -1px 0 var(--cyber-cyan), 1px 0 var(--cyber-magenta);
+    }
+}
+
+/* Glitch 闪烁效果 */
+@keyframes glitch-flash {
+    0%, 100% { opacity: 1; }
+    10% { opacity: 0.8; }
+    20% { opacity: 1; }
+    30% { opacity: 0.9; }
+    40% { opacity: 1; }
+    50% { opacity: 0.7; }
+    60% { opacity: 1; }
+}
+
+/* Hover 触发 Glitch */
+.glitch-hover:hover {
+    animation: glitch 0.3s ease-in-out;
+}
+
+.glitch-skew-hover:hover {
+    animation: glitch-skew 0.5s ease-in-out;
+}
+
+.glitch-color-hover:hover {
+    animation: glitch-color 0.3s ease-in-out;
+}
+
+/* 持续 Glitch 效果 (谨慎使用) */
+.glitch-continuous {
+    animation: glitch 0.5s ease-in-out infinite;
+}
+
+/* Marquee hover glitch */
+.marquee-container:hover .marquee-item {
+    animation: glitch 0.3s ease-in-out;
+}
+
+/* 复合 Glitch 效果 */
+.glitch-intense:hover {
+    animation: glitch 0.2s ease-in-out, glitch-color 0.3s ease-in-out;
+}
+
+/* 模态框入场动画 */
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px) scale(0.95);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+.modal-animate {
+    animation: slideUp 0.3s ease-out;
+}
+
+/* ========================================
+   减少动画偏好支持
+   尊重用户系统设置
+   ======================================== */
+
+@media (prefers-reduced-motion: reduce) {
+    .marquee-content,
+    .marquee-fast,
+    .marquee-medium,
+    .marquee-slow,
+    .marquee-reverse {
+        animation: none !important;
+    }
+    
+    .loading-spinner {
+        animation: none !important;
+    }
+    
+    .pulse,
+    .bounce {
+        animation: none !important;
+    }
+    
+    .hover-lift:hover {
+        transform: none !important;
+    }
+    
+    .modal-animate {
+        animation: none !important;
+    }
+    
+    /* 保持元素可见但移除动画 */
+    .fade-in,
+    .slide-in-left,
+    .slide-in-right,
+    .scale-in {
+        animation: none !important;
+        opacity: 1 !important;
+        transform: none !important;
+    }
+} 

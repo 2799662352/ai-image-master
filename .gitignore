@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+
+# Electron cache
+.cache/
+*.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Package manager locks (using npm)
+yarn.lock
+pnpm-lock.yaml
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/
+
+# Test
+coverage/
+
+# Project specific - exclude large/sensitive files
+video_*.mp4
+lQLPKIIzYQI-*.png
+柏拉图api.md

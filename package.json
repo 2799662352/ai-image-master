@@ -1,0 +1,109 @@
+{
+  "name": "catimation-cyberpunk-master",
+  "version": "1.0.0",
+  "description": "CATIMATION-Cyberpunk Master - AI图片生成桌面应用",
+  "main": "electron/main.js",
+  "author": "CATIMATION",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "electron:dev": "electron . --dev",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win",
+    "build:win64": "electron-builder --win --x64",
+    "build:win32": "electron-builder --win --ia32",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux",
+    "build:all": "electron-builder -mwl",
+    "build:dir": "electron-builder --dir",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "electron-store": "^8.1.0"
+  },
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^26.4.0",
+    "sharp": "^0.34.5"
+  },
+  "build": {
+    "appId": "com.catimation.cyberpunk-master",
+    "productName": "CATIMATION-Cyberpunk Master",
+    "copyright": "Copyright © 2024-2026 CATIMATION",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "**/*",
+      "!dist/**",
+      "!build/**",
+      "!docs/**",
+      "!node_modules/.cache/**",
+      "!**/*.md",
+      "!.git/**",
+      "!.gitignore",
+      "!lQLPKIIzYQI-oU_MoMyusN5w3Ih7aMhgCVE586l9-QA_174_160.png",
+      "!柏拉图api.md",
+      "!**/*.map",
+      "!**/*.ts",
+      "!.env*",
+      "!electron-builder.yml",
+      "!tsconfig.json"
+    ],
+    "asar": true,
+    "compression": "normal",
+    "removePackageScripts": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "legalTrademarks": "CATIMATION-Cyberpunk Master"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "CATIMATION Cyberpunk Master",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerLanguages": ["zh_CN", "en_US"],
+      "language": "2052",
+      "runAfterFinish": true
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-Portable.${ext}"
+    },
+    "mac": {
+      "target": ["dmg", "zip"],
+      "icon": "build/icon.png",
+      "category": "public.app-category.graphics-design",
+      "darkModeSupport": true
+    },
+    "dmg": {
+      "title": "${productName}",
+      "icon": "build/icon.png"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "icon": "build/icon.png",
+      "category": "Graphics",
+      "maintainer": "CATIMATION <hi@lazycat.ai>",
+      "synopsis": "AI图片生成桌面应用"
+    }
+  }
+}

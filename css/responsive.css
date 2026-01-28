@@ -1,0 +1,490 @@
+/* 响应式样式 */
+
+/* ========================================
+   Kinetic Typography - 移动端触摸目标优化
+   最小 44x44px 触摸目标
+   ======================================== */
+
+/* 移动端优化样式 */
+@media (max-width: 767px) {
+    /* 毛玻璃效果优化 */
+    .glass-effect {
+        -webkit-backdrop-filter: blur(8px);
+        backdrop-filter: blur(8px);
+    }
+    
+    /* 移动端按钮优化 - 最小 44px 触摸目标 */
+    .tab-btn {
+        min-height: 44px;
+        min-width: 44px;
+        padding: 0.5rem 0.75rem;
+    }
+    
+    .ratio-btn, .edit-ratio-btn {
+        min-height: 44px;
+        min-width: 44px;
+    }
+    
+    /* 通用按钮触摸目标 */
+    .btn, button {
+        min-height: 44px;
+    }
+    
+    /* 移动端表单元素优化 */
+    textarea, input, select {
+        font-size: 16px; /* 防止iOS放大 */
+        min-height: 44px;
+    }
+    
+    /* 移动端描述文字始终可见（不依赖 hover） */
+    .md\:opacity-0 {
+        opacity: 1 !important;
+    }
+    
+    /* 移动端 Marquee 字体缩小 */
+    .marquee-item {
+        font-size: 0.875rem;
+        padding: 0 1rem;
+    }
+    
+    /* 移动端装饰性数字缩小 */
+    .text-massive {
+        font-size: clamp(4rem, 20vw, 8rem);
+    }
+    
+    /* 移动端模态框优化 */
+    #settingsModal .bg-white,
+    #aboutModal .bg-white {
+        margin: 1rem;
+        max-height: calc(100vh - 2rem);
+    }
+    
+    /* 移动端容器优化 */
+    .container {
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+    
+    /* 移动端字体大小调整 */
+    .text-xl {
+        font-size: 1.125rem;
+    }
+    
+    .text-2xl {
+        font-size: 1.25rem;
+    }
+    
+    /* 移动端间距优化 */
+    .space-y-6 > * + * {
+        margin-top: 1rem;
+    }
+    
+    .space-y-4 > * + * {
+        margin-top: 0.75rem;
+    }
+    
+    /* 移动端网格布局 */
+    .grid-cols-3 {
+        grid-template-columns: repeat(1, minmax(0, 1fr));
+        gap: 0.75rem;
+    }
+    
+    .lg\:grid-cols-2 {
+        grid-template-columns: repeat(1, minmax(0, 1fr));
+    }
+    
+    .md\:grid-cols-2 {
+        grid-template-columns: repeat(1, minmax(0, 1fr));
+    }
+    
+    .lg\:grid-cols-3 {
+        grid-template-columns: repeat(1, minmax(0, 1fr));
+    }
+    
+    /* 移动端图片预览 */
+    .image-preview {
+        min-height: 200px;
+    }
+    
+    /* 移动端Toast通知 */
+    .toast {
+        left: 1rem;
+        right: 1rem;
+        min-width: auto;
+    }
+    
+    /* 移动端模态框 */
+    .modal {
+        padding: 0.5rem;
+    }
+    
+    .modal-content {
+        padding: 1rem;
+        max-height: 95vh;
+    }
+    
+    /* 移动端按钮组 */
+    .btn-group {
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+    
+    /* 移动端表单 */
+    .form-group {
+        margin-bottom: 1rem;
+    }
+    
+    .form-row {
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+    
+    /* 移动端导航 */
+    .nav-item {
+        padding: 0.75rem;
+    }
+    
+    /* 移动端卡片 */
+    .card {
+        padding: 1rem;
+    }
+    
+    /* 移动端文本截断 */
+    .mobile-truncate {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+}
+
+/* 平板设备优化 */
+@media (min-width: 768px) and (max-width: 1023px) {
+    /* 平板端容器 */
+    .container {
+        padding-left: 1.5rem;
+        padding-right: 1.5rem;
+    }
+    
+    /* 平板端网格布局 */
+    .md\:grid-cols-2 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    
+    .lg\:grid-cols-3 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    
+    /* 平板端字体大小 */
+    .text-2xl {
+        font-size: 1.5rem;
+    }
+    
+    .text-xl {
+        font-size: 1.25rem;
+    }
+    
+    /* 平板端间距 */
+    .space-y-6 > * + * {
+        margin-top: 1.5rem;
+    }
+    
+    /* 平板端按钮 - 适配扁平化设计 */
+    .tab-btn {
+        min-height: 44px;
+    }
+    
+    .ratio-btn, .edit-ratio-btn {
+        min-height: 45px;
+    }
+    
+    /* 平板端模态框 */
+    .modal-content {
+        max-width: 36rem;
+    }
+    
+    /* 平板端图片预览 */
+    .image-preview {
+        min-height: 250px;
+    }
+}
+
+/* 大屏设备优化 */
+@media (min-width: 1024px) {
+    /* 大屏容器 */
+    .container {
+        max-width: 1200px;
+        margin: 0 auto;
+    }
+    
+    /* 大屏网格布局 */
+    .lg\:grid-cols-2 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    
+    .lg\:grid-cols-3 {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    
+    /* 大屏间距 */
+    .lg\:space-y-8 > * + * {
+        margin-top: 2rem;
+    }
+    
+    .lg\:gap-8 {
+        gap: 2rem;
+    }
+    
+    /* 大屏字体 */
+    .lg\:text-3xl {
+        font-size: 1.875rem;
+    }
+    
+    .lg\:text-2xl {
+        font-size: 1.5rem;
+    }
+    
+    /* 大屏按钮悬停效果 */
+    .btn:hover {
+        transform: translateY(-2px);
+    }
+    
+    /* 大屏卡片悬停效果 */
+    .card:hover {
+        transform: translateY(-4px);
+    }
+    
+    /* 大屏图片预览 */
+    .image-preview {
+        min-height: 300px;
+    }
+    
+    /* 大屏模态框 */
+    .modal-content {
+        max-width: 42rem;
+    }
+}
+
+/* 超大屏设备优化 */
+@media (min-width: 1280px) {
+    /* 超大屏容器 */
+    .container {
+        max-width: 1400px;
+    }
+    
+    /* 超大屏网格布局 */
+    .xl\:grid-cols-4 {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+    
+    .xl\:grid-cols-3 {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    
+    /* 超大屏间距 */
+    .xl\:gap-10 {
+        gap: 2.5rem;
+    }
+    
+    /* 超大屏字体 */
+    .xl\:text-4xl {
+        font-size: 2.25rem;
+    }
+    
+    .xl\:text-3xl {
+        font-size: 1.875rem;
+    }
+    
+    /* 超大屏图片预览 */
+    .image-preview {
+        min-height: 350px;
+    }
+    
+    /* 超大屏模态框 */
+    .modal-content {
+        max-width: 48rem;
+    }
+}
+
+/* 高DPI屏幕优化 */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+    /* 高DPI图标优化 */
+    .icon {
+        image-rendering: -webkit-optimize-contrast;
+        image-rendering: -moz-crisp-edges;
+        image-rendering: -webkit-crisp-edges;
+        image-rendering: crisp-edges;
+    }
+    
+    /* 高DPI边框优化 */
+    .border-thin {
+        border-width: 0.5px;
+    }
+}
+
+/* 深色模式支持 */
+@media (prefers-color-scheme: dark) {
+    /* 深色模式下的颜色调整 */
+    .auto-dark {
+        filter: invert(1) hue-rotate(180deg);
+    }
+    
+    /* 深色模式下的文本颜色 */
+    .text-auto {
+        color: #e5e7eb;
+    }
+    
+    /* 深色模式下的背景颜色 */
+    .bg-auto {
+        background-color: #1f2937;
+    }
+}
+
+/* 减少动画偏好支持 */
+@media (prefers-reduced-motion: reduce) {
+    /* 禁用动画 */
+    * {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+    
+    /* 禁用滚动行为 */
+    html {
+        scroll-behavior: auto !important;
+    }
+}
+
+/* 打印样式优化 */
+@media print {
+    /* 打印时隐藏不必要的元素 */
+    .no-print {
+        display: none !important;
+    }
+    
+    /* 打印时的背景 */
+    body {
+        background: white !important;
+        color: black !important;
+    }
+    
+    /* 打印时的链接 */
+    a {
+        color: black !important;
+        text-decoration: underline !important;
+    }
+    
+    /* 打印时的按钮 */
+    .btn {
+        border: 1px solid black !important;
+        background: white !important;
+        color: black !important;
+    }
+    
+    /* 打印时的卡片 */
+    .card {
+        border: 1px solid black !important;
+        background: white !important;
+        box-shadow: none !important;
+    }
+}
+
+/* 横屏/竖屏优化 */
+@media (orientation: landscape) {
+    /* 横屏时的优化 */
+    .landscape-optimized {
+        height: 100vh;
+        overflow-y: auto;
+    }
+}
+
+@media (orientation: portrait) {
+    /* 竖屏时的优化 */
+    .portrait-optimized {
+        width: 100vw;
+        overflow-x: auto;
+    }
+}
+
+/* 触摸设备优化 */
+@media (hover: none) and (pointer: coarse) {
+    /* 触摸设备按钮优化 */
+    .btn {
+        min-height: 44px;
+        min-width: 44px;
+    }
+    
+    /* 触摸设备链接优化 */
+    a {
+        min-height: 44px;
+        display: inline-flex;
+        align-items: center;
+    }
+    
+    /* 触摸设备输入框优化 */
+    input, textarea, select {
+        min-height: 44px;
+    }
+}
+
+/* 鼠标设备优化 */
+@media (hover: hover) and (pointer: fine) {
+    /* 鼠标悬停效果 */
+    .hover-effect:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
+    
+    /* 鼠标悬停时的透明度变化 */
+    .hover-opacity:hover {
+        opacity: 0.8;
+    }
+}
+
+/* 容器查询支持 - 新特性，Safari iOS 16+ 支持 */
+/* 为老版本浏览器提供传统媒体查询的fallback */
+
+/* Fallback: 使用传统媒体查询 */
+@media (max-width: 400px) {
+    .container-small {
+        padding: 0.5rem;
+    }
+    
+    .container-small .text-lg {
+        font-size: 1rem;
+    }
+}
+
+@media (min-width: 800px) {
+    .container-large {
+        padding: 2rem;
+    }
+    
+    .container-large .grid-cols-1 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+/* 现代浏览器：容器查询（优先级更高） */
+@supports (container-type: inline-size) {
+    @container (max-width: 400px) {
+        /* 小容器内的样式 */
+        .container-small {
+            padding: 0.5rem;
+        }
+        
+        .container-small .text-lg {
+            font-size: 1rem;
+        }
+    }
+
+    @container (min-width: 800px) {
+        /* 大容器内的样式 */
+        .container-large {
+            padding: 2rem;
+        }
+        
+        .container-large .grid-cols-1 {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+    }
+} 

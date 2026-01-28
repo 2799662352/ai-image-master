@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1"
+        xmlns:xhtml="http://www.w3.org/1999/xhtml">
+    
+    <!-- 主页 -->
+    <url>
+        <loc>https://ai-image.apiyi.com/</loc>
+        <lastmod>2024-12-19</lastmod>
+        <changefreq>weekly</changefreq>
+        <priority>1.0</priority>
+        <image:image>
+            <image:loc>https://ai-image.apiyi.com/images/favicon-512x512.png</image:loc>
+            <image:title>API易-AI图片大师Logo</image:title>
+            <image:caption>专业的AI图片生成平台Logo</image:caption>
+        </image:image>
+    </url>
+    
+    <!-- 图片生成功能页面 -->
+    <url>
+        <loc>https://ai-image.apiyi.com/#generate</loc>
+        <lastmod>2024-12-19</lastmod>
+        <changefreq>monthly</changefreq>
+        <priority>0.9</priority>
+    </url>
+    
+    <!-- 批量生成功能页面 -->
+    <url>
+        <loc>https://ai-image.apiyi.com/#batch</loc>
+        <lastmod>2024-12-19</lastmod>
+        <changefreq>monthly</changefreq>
+        <priority>0.8</priority>
+    </url>
+    
+    <!-- 历史记录页面 -->
+    <url>
+        <loc>https://ai-image.apiyi.com/#history</loc>
+        <lastmod>2024-12-19</lastmod>
+        <changefreq>daily</changefreq>
+        <priority>0.6</priority>
+    </url>
+    
+    <!-- PWA Manifest -->
+    <url>
+        <loc>https://ai-image.apiyi.com/manifest.json</loc>
+        <lastmod>2024-12-19</lastmod>
+        <changefreq>monthly</changefreq>
+        <priority>0.3</priority>
+    </url>
+    
+</urlset> 

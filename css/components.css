@@ -1,0 +1,1666 @@
+/* 组件样式 - Kinetic Typography Design System */
+
+/* ========================================
+   Choices.js 模型选择器自定义主题
+   ======================================== */
+
+/* 桌面端模型选择器容器 */
+.model-selector-wrapper {
+    position: relative;
+    display: inline-block;
+}
+
+/* 原生 select 元素在 Choices.js 初始化前可见 */
+.model-selector-wrapper select,
+.model-selector-wrapper-mobile select {
+    min-width: 200px;
+    padding: 0.5rem 1rem;
+    background: var(--muted, #27272A);
+    border: 2px solid var(--border, #3F3F46);
+    border-radius: 0;
+    color: var(--foreground, #FAFAFA);
+    font-weight: 600;
+}
+
+/* 强制隐藏被 Choices.js 管理的 select 元素（初始化后） */
+/* 注意：不使用 pointer-events: none，因为 Choices.js 需要事件传播 */
+.model-selector-wrapper select.model-select,
+.model-selector-wrapper-mobile select.model-select-mobile {
+    position: absolute !important;
+    left: -9999px !important;
+    opacity: 0 !important;
+}
+
+/* Choices.js 主容器 - 桌面端 */
+.model-selector-wrapper .choices {
+    margin-bottom: 0;
+    font-size: 16px !important; /* 确保字体大小 */
+}
+
+.model-selector-wrapper .choices__inner {
+    background: var(--muted, #27272A);
+    border: 2px solid var(--border, #3F3F46);
+    border-radius: 0;
+    padding: 0.5rem 0.75rem; /* px-3 py-2 */
+    min-height: auto;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem; /* space-x-1 */
+    font-size: 16px !important; /* 确保字体大小 */
+}
+
+/* 大屏幕样式 */
+@media (min-width: 1024px) {
+    .model-selector-wrapper .choices__inner {
+        padding: 0.5rem 1rem; /* lg:px-4 */
+        gap: 0.5rem; /* lg:space-x-2 */
+    }
+}
+
+.model-selector-wrapper .choices__inner:hover {
+    background: var(--accent, #FCE300);
+    color: var(--accent-foreground, #000000);
+    border-color: var(--accent, #FCE300);
+}
+
+/* 选中的选项显示 */
+.model-selector-wrapper .choices__list--single {
+    padding: 0;
+    display: flex;
+    align-items: center;
+}
+
+.model-selector-wrapper .choices__item--selectable {
+    color: var(--foreground, #FAFAFA) !important;
+    font-weight: 700 !important;
+    font-size: 16px !important;
+    text-transform: uppercase;
+    letter-spacing: -0.025em;
+    padding-right: 0;
+}
+
+/* 确保选中项中的所有元素都继承字体大小 */
+.model-selector-wrapper .choices__list--single .choices__item,
+.model-selector-wrapper .choices__list--single span {
+    font-size: 16px !important;
+    font-weight: 500 !important;
+}
+
+/* 图标样式 */
+.model-selector-wrapper .choices__item--selectable i.fa-robot {
+    color: #93c5fd; /* blue-300，与其他按钮图标颜色一致 */
+    font-size: 17px !important; /* 图标稍大一点 */
+}
+
+/* 下拉箭头 - 完全隐藏（多重保险） */
+.model-selector-wrapper .choices__inner::after,
+.model-selector-wrapper .choices__inner::before,
+.model-selector-wrapper .choices::after,
+.model-selector-wrapper .choices::before {
+    display: none !important;
+    content: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    width: 0 !important;
+    height: 0 !important;
+}
+
+/* 隐藏 Choices.js 的按钮元素（关闭按钮等） */
+.model-selector-wrapper .choices__button {
+    display: none !important;
+}
+
+/* 隐藏任何可能的箭头图标 */
+.model-selector-wrapper .choices [data-type="select-one"]::after,
+.model-selector-wrapper [data-type*="select"]::after {
+    display: none !important;
+}
+
+/* 确保容器没有背景图（有些库用背景图做箭头） */
+.model-selector-wrapper .choices,
+.model-selector-wrapper .choices__inner {
+    background-image: none !important;
+}
+
+/* 移除右侧内边距，防止箭头占位 */
+.model-selector-wrapper .choices__inner {
+    padding-right: 0.75rem !important;
+}
+
+@media (min-width: 1024px) {
+    .model-selector-wrapper .choices__inner {
+        padding-right: 1rem !important;
+    }
+}
+
+/* 下拉菜单 */
+.model-selector-wrapper .choices__list--dropdown {
+    background: var(--background, #09090B);
+    border-radius: 0;
+    box-shadow: none;
+    border: 2px solid var(--border, #3F3F46);
+    z-index: 999999;
+    min-width: 320px;
+    margin-top: 0.5rem;
+}
+
+.model-selector-wrapper .choices__list--dropdown .choices__list {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+/* 下拉选项 */
+.model-selector-wrapper .choices__list--dropdown .choices__item {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border, #3F3F46);
+    font-size: 14px;
+}
+
+.model-selector-wrapper .choices__list--dropdown .choices__item:last-child {
+    border-bottom: none;
+}
+
+.model-selector-wrapper .choices__list--dropdown .choices__item--selectable {
+    color: var(--foreground, #FAFAFA);
+    padding: 16px 20px;
+}
+
+.model-selector-wrapper .choices__list--dropdown .choices__item:hover,
+.model-selector-wrapper .choices__list--dropdown .choices__item--highlighted {
+    background: var(--accent, #FCE300);
+    color: var(--accent-foreground, #000000);
+}
+
+.model-selector-wrapper .choices__list--dropdown .choices__item--selectable.is-highlighted {
+    background: var(--accent, #FCE300);
+    color: var(--accent-foreground, #000000);
+}
+
+/* 模型名称和描述样式 - Kinetic Typography 风格 */
+.model-selector-wrapper .model-name {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--foreground, #FAFAFA);
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    pointer-events: none;
+    text-transform: uppercase;
+    letter-spacing: -0.025em;
+}
+
+.model-selector-wrapper .model-desc {
+    font-size: 13px;
+    color: var(--muted-foreground, #A1A1AA);
+    line-height: 1.4;
+    pointer-events: none;
+}
+
+/* 搜索输入框 */
+.model-selector-wrapper .choices__input {
+    background-color: var(--muted, #27272A);
+    border: 2px solid var(--border, #3F3F46);
+    border-radius: 0;
+    margin-bottom: 8px;
+    padding: 8px 12px;
+    font-size: 14px;
+    color: var(--foreground, #FAFAFA);
+}
+
+.model-selector-wrapper .choices__input:focus {
+    outline: none;
+    border-color: var(--accent, #FCE300);
+}
+
+/* ========================================
+   移动端模型选择器
+   ======================================== */
+
+.model-selector-wrapper-mobile {
+    position: relative;
+    /* 移动端导航栏中显示时的样式优化 */
+    max-width: 200px;
+    flex-shrink: 1;
+}
+
+.model-selector-wrapper-mobile .choices {
+    margin-bottom: 0;
+    font-size: 16px !important; /* 确保字体大小 */
+}
+
+.model-selector-wrapper-mobile .choices__inner {
+    background: var(--muted, #27272A);
+    border: 2px solid var(--border, #3F3F46);
+    border-radius: 0;
+    padding: 0.375rem 0.5rem;
+    min-height: auto;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 14px !important;
+}
+
+.model-selector-wrapper-mobile .choices__inner:hover {
+    background: var(--accent, #FCE300);
+    color: var(--accent-foreground, #000000);
+    border-color: var(--accent, #FCE300);
+}
+
+.model-selector-wrapper-mobile .choices__list--single {
+    padding: 0;
+    display: flex;
+    align-items: center;
+}
+
+.model-selector-wrapper-mobile .choices__item--selectable {
+    color: var(--foreground, #FAFAFA) !important;
+    font-weight: 700 !important;
+    font-size: 14px !important;
+    text-transform: uppercase;
+}
+
+/* 确保选中项中的所有元素都继承字体大小 */
+.model-selector-wrapper-mobile .choices__list--single .choices__item,
+.model-selector-wrapper-mobile .choices__list--single span {
+    font-size: 14px !important;
+    font-weight: 500 !important;
+}
+
+/* 图标样式 */
+.model-selector-wrapper-mobile .choices__item--selectable i.fa-robot {
+    color: #93c5fd; /* blue-300，与其他按钮图标颜色一致 */
+    font-size: 14px !important; /* 移动端导航栏紧凑图标 */
+}
+
+/* 下拉箭头 - 完全隐藏（多重保险） */
+.model-selector-wrapper-mobile .choices__inner::after,
+.model-selector-wrapper-mobile .choices__inner::before,
+.model-selector-wrapper-mobile .choices::after,
+.model-selector-wrapper-mobile .choices::before {
+    display: none !important;
+    content: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    width: 0 !important;
+    height: 0 !important;
+}
+
+/* 隐藏 Choices.js 的按钮元素 */
+.model-selector-wrapper-mobile .choices__button {
+    display: none !important;
+}
+
+/* 隐藏任何可能的箭头图标 */
+.model-selector-wrapper-mobile .choices [data-type="select-one"]::after,
+.model-selector-wrapper-mobile [data-type*="select"]::after {
+    display: none !important;
+}
+
+/* 确保容器没有背景图 */
+.model-selector-wrapper-mobile .choices,
+.model-selector-wrapper-mobile .choices__inner {
+    background-image: none !important;
+}
+
+/* 移除右侧内边距，防止箭头占位 */
+.model-selector-wrapper-mobile .choices__inner {
+    padding-right: 0.75rem !important;
+}
+
+.model-selector-wrapper-mobile .choices__list--dropdown {
+    background: var(--background, #09090B);
+    border-radius: 0;
+    box-shadow: none;
+    border: 2px solid var(--border, #3F3F46);
+    z-index: 999999;
+    width: 100%;
+    margin-top: 0.5rem;
+}
+
+/* 移动端下拉列表滚动容器 */
+.model-selector-wrapper-mobile .choices__list--dropdown .choices__list {
+    max-height: 60vh; /* 移动端最大高度为视口的60% */
+    overflow-y: auto;
+}
+
+.model-selector-wrapper-mobile .choices__list--dropdown .choices__item {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border, #3F3F46);
+}
+
+.model-selector-wrapper-mobile .choices__list--dropdown .choices__item:hover {
+    background: var(--accent, #FCE300);
+    color: var(--accent-foreground, #000000);
+}
+
+.model-selector-wrapper-mobile .model-name {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--foreground, #FAFAFA);
+    margin-bottom: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    pointer-events: none;
+    text-transform: uppercase;
+}
+
+.model-selector-wrapper-mobile .model-desc {
+    /* 移动端隐藏详细描述，节省空间 */
+    display: none !important;
+}
+
+/* 屏幕阅读器专用标签（无障碍） */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+}
+
+/* 标签按钮样式 - Kinetic Typography 风格 */
+.tab-btn {
+    background: transparent !important;
+    color: var(--muted-foreground, #A1A1AA) !important;
+    border-bottom: 2px solid transparent !important;
+    border-left: none !important;
+    border-right: none !important;
+    border-top: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    position: relative;
+    text-transform: uppercase;
+    font-weight: 900;
+    letter-spacing: -0.025em;
+    padding: 0.75rem 1.25rem;
+    font-size: 0.9375rem;
+}
+
+.tab-btn.active {
+    color: var(--accent, #FCE300) !important;
+    border-bottom-color: var(--accent, #FCE300) !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    transform: none !important;
+}
+
+.tab-btn:not(.active):hover {
+    color: var(--accent, #FCE300) !important;
+    border-bottom-color: var(--accent, #FCE300) !important;
+    background: transparent !important;
+    transform: translateY(-2px);
+}
+
+/* Tab 按钮过渡动画 */
+.tab-btn {
+    transition: all 0.2s ease;
+}
+
+/* 导航栏响应式文案 - 默认显示桌面端文案 */
+.tab-btn .mobile-text {
+    display: none;
+}
+
+.tab-btn .desktop-text {
+    display: inline;
+}
+
+/* 移动端 (宽度 <= 640px) 显示简短文案 */
+@media (max-width: 640px) {
+    .tab-btn .desktop-text {
+        display: none;
+    }
+
+    .tab-btn .mobile-text {
+        display: inline;
+    }
+}
+
+/* 比例按钮样式 - Kinetic Typography 风格 */
+.ratio-btn.active {
+    background: var(--accent, #FCE300) !important;
+    color: var(--accent-foreground, #000000) !important;
+    box-shadow: none;
+    transform: none;
+    border: 2px solid var(--accent, #FCE300);
+}
+
+.ratio-btn:not(.active) {
+    background: var(--muted, #27272A);
+    color: var(--foreground, #FAFAFA);
+    border: 2px solid var(--border, #3F3F46);
+    transition: all 0.2s ease;
+}
+
+/* 比例按钮硬反转悬停效果 */
+.ratio-btn:not(.active):hover {
+    background: var(--foreground, #FAFAFA);
+    color: var(--background, #09090B);
+    border-color: var(--foreground, #FAFAFA);
+    transform: scale(1.02);
+}
+
+/* 编辑比例按钮样式 - Kinetic Typography 风格 */
+.edit-ratio-btn.active {
+    background: var(--accent, #FCE300) !important;
+    color: var(--accent-foreground, #000000) !important;
+    box-shadow: none;
+    transform: none;
+    border: 2px solid var(--accent, #FCE300);
+}
+
+.edit-ratio-btn:not(.active) {
+    background: var(--muted, #27272A);
+    color: var(--foreground, #FAFAFA);
+    border: 2px solid var(--border, #3F3F46);
+}
+
+.edit-ratio-btn:not(.active):hover {
+    background: var(--accent, #FCE300);
+    color: var(--accent-foreground, #000000);
+    border-color: var(--accent, #FCE300);
+}
+
+/* 模型选择器样式 */
+/* 确保模型选择器容器有足够的层级 */
+#modelSelector,
+#modelSelectorMobile {
+    position: relative;
+    z-index: 9999;
+}
+
+/* 模型选择器下拉菜单必须具有最高层级 */
+#modelDropdown,
+#modelDropdownMobile {
+    z-index: 999999 !important;
+    position: absolute !important;
+    /* 强制创建新的层叠上下文并确保最高层级 */
+    transform: translateZ(0);
+    will-change: transform;
+    /* 额外保险措施 */
+    isolation: isolate;
+}
+
+/* 确保图片结果容器层级较低 */
+#imageResult {
+    position: relative;
+    z-index: 1;
+}
+
+/* 确保生成的图片容器层级较低 */
+#imageResult .relative {
+    z-index: 1;
+}
+
+/* 确保所有页面的图片容器都有较低层级 */
+.relative.group {
+    z-index: 1 !important;
+}
+
+/* 确保主要内容区域层级较低 */
+main#main-content {
+    position: relative;
+    z-index: 1;
+}
+
+/* 确保生成面板层级较低 */
+#generatePanel,
+#batchPanel,
+#editPanel,
+#historyPanel,
+#comparePanel {
+    position: relative;
+    z-index: 1;
+}
+
+/* 导航栏层级设置 */
+nav.glass-effect {
+    position: relative;
+    z-index: 10000;
+}
+
+/* 确保导航栏内的模型选择器容器具有更高层级 */
+nav.glass-effect #modelSelector,
+nav.glass-effect #modelSelectorMobile {
+    position: relative;
+    z-index: 10001;
+}
+
+/* 确保批量生成结果容器层级较低 */
+#batchResults {
+    position: relative;
+    z-index: 1;
+}
+
+#batchResults .relative {
+    z-index: 1;
+}
+
+.model-option {
+    padding: 12px 16px;
+    cursor: pointer !important;
+    transition: all 0.2s ease;
+    border-bottom: 1px solid var(--border, #3F3F46);
+    pointer-events: auto !important;
+}
+
+.model-option:last-child {
+    border-bottom: none;
+}
+
+.model-option:hover {
+    background: var(--accent, #FCE300);
+    color: var(--accent-foreground, #000000);
+}
+
+.model-option.active {
+    background: var(--accent, #FCE300);
+    border-left: 4px solid var(--accent-foreground, #000000);
+    color: var(--accent-foreground, #000000);
+}
+
+.model-name {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--foreground, #FAFAFA);
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-transform: uppercase;
+    letter-spacing: -0.025em;
+}
+
+.model-desc {
+    font-size: 13px;
+    color: var(--muted-foreground, #A1A1AA);
+    line-height: 1.4;
+}
+
+/* 模型头部 - 名称和徽章并排显示 */
+.model-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 4px;
+    gap: 12px;
+    pointer-events: none; /* 让点击事件穿透到父元素 */
+}
+
+/* 让 model-name 在 header 内部时可以自适应 */
+.model-header .model-name {
+    flex: 1;
+    margin-bottom: 0;
+}
+
+/* 徽章容器 */
+.model-badges {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;  /* 防止徽章被压缩 */
+    pointer-events: none; /* 让点击事件穿透到父元素 */
+}
+
+/* 徽章基础样式 - Kinetic Typography 风格 */
+.model-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 8px;
+    border-radius: 0;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.2;
+    white-space: nowrap;
+    pointer-events: none;
+    text-transform: uppercase;
+}
+
+/* 时间徽章 */
+.model-badge-time {
+    background: var(--muted, #27272A);
+    color: var(--muted-foreground, #A1A1AA);
+    border: 1px solid var(--border, #3F3F46);
+}
+
+/* New 徽章 - 酸性黄 */
+.model-badge-new {
+    background: var(--accent, #FCE300);
+    color: var(--accent-foreground, #000000);
+}
+
+/* 热门徽章 */
+.model-badge-hot {
+    background: var(--accent, #FCE300);
+    color: var(--accent-foreground, #000000);
+}
+
+/* Toast 通知样式 - Kinetic Typography 风格 */
+.toast {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    z-index: 10000;
+    min-width: 300px;
+    max-width: 500px;
+    background: var(--background, #09090B);
+    border-radius: 0;
+    box-shadow: none;
+    border: 2px solid var(--border, #3F3F46);
+    overflow: hidden;
+    animation: slideInRight 0.3s ease-out;
+}
+
+.toast.success {
+    border-left: 4px solid var(--accent, #FCE300);
+}
+
+.toast.error {
+    border-left: 4px solid #ef4444;
+}
+
+.toast.warning {
+    border-left: 4px solid var(--accent, #FCE300);
+}
+
+.toast.info {
+    border-left: 4px solid var(--foreground, #FAFAFA);
+}
+
+.toast-content {
+    padding: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.toast-icon {
+    flex-shrink: 0;
+    width: 1.5rem;
+    height: 1.5rem;
+}
+
+.toast-message {
+    flex: 1;
+    color: var(--foreground, #FAFAFA);
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+}
+
+.toast-close {
+    flex-shrink: 0;
+    width: 1.5rem;
+    height: 1.5rem;
+    cursor: pointer;
+    color: var(--muted-foreground, #A1A1AA);
+    transition: color 0.2s ease;
+}
+
+.toast-close:hover {
+    color: var(--foreground, #FAFAFA);
+}
+
+/* 模态框样式 - Kinetic Typography 风格 */
+.modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(9, 9, 11, 0.9);
+    z-index: 50000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+}
+
+.modal-content {
+    background: var(--background, #09090B);
+    border-radius: 0;
+    border: 2px solid var(--border, #3F3F46);
+    padding: 2rem;
+    width: 100%;
+    max-width: 32rem;
+    max-height: 90vh;
+    overflow-y: auto;
+    position: relative;
+    animation: modalSlideUp 0.3s ease-out;
+}
+
+/* 模态框入场动画 - Kinetic Typography 风格 */
+@keyframes modalSlideUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px) scale(0.95);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+.modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+}
+
+.modal-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--foreground, #FAFAFA);
+    text-transform: uppercase;
+    letter-spacing: -0.025em;
+}
+
+.modal-close {
+    width: 2rem;
+    height: 2rem;
+    cursor: pointer;
+    color: var(--muted-foreground, #A1A1AA);
+    transition: all 0.2s ease;
+    border: none;
+    background: none;
+    border-radius: 0;
+}
+
+.modal-close:hover {
+    color: var(--accent, #FCE300);
+    background: transparent;
+}
+
+.modal-body {
+    margin-bottom: 1.5rem;
+}
+
+.modal-footer {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: flex-end;
+}
+
+/* 图片预览组件 - Kinetic Typography 风格 */
+.image-preview {
+    position: relative;
+    border-radius: 0;
+    overflow: hidden;
+    background: var(--muted, #27272A);
+    border: 2px solid var(--border, #3F3F46);
+}
+
+.image-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.image-preview-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.image-preview:hover .image-preview-overlay {
+    opacity: 1;
+}
+
+.image-preview-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.image-preview-btn {
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 0;
+    background: var(--accent, #FCE300);
+    color: var(--accent-foreground, #000000);
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
+.image-preview-btn:hover {
+    background: var(--foreground, #FAFAFA);
+    transform: scale(1.05);
+}
+
+/* 进度条组件 - Kinetic Typography 风格 */
+.progress {
+    width: 100%;
+    height: 0.5rem;
+    background: var(--muted, #27272A);
+    border-radius: 0;
+    overflow: hidden;
+    border: 1px solid var(--border, #3F3F46);
+}
+
+.progress-bar {
+    height: 100%;
+    background: var(--accent, #FCE300);
+    border-radius: 0;
+    transition: width 0.3s ease;
+}
+
+.progress-striped .progress-bar {
+    background-image: linear-gradient(
+        45deg,
+        rgba(255, 255, 255, 0.15) 25%,
+        transparent 25%,
+        transparent 50%,
+        rgba(255, 255, 255, 0.15) 50%,
+        rgba(255, 255, 255, 0.15) 75%,
+        transparent 75%,
+        transparent
+    );
+    background-size: 1rem 1rem;
+}
+
+.progress-animated .progress-bar {
+    animation: progress-bar-stripes 1s linear infinite;
+}
+
+@keyframes progress-bar-stripes {
+    0% {
+        background-position: 1rem 0;
+    }
+    100% {
+        background-position: 0 0;
+    }
+}
+
+/* 标签组件 - Kinetic Typography 风格 */
+.tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.75rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    border-radius: 0;
+    border: 2px solid transparent;
+    text-transform: uppercase;
+}
+
+.tag-primary {
+    background: var(--accent, #FCE300);
+    color: var(--accent-foreground, #000000);
+    border-color: var(--accent, #FCE300);
+}
+
+.tag-success {
+    background: var(--accent, #FCE300);
+    color: var(--accent-foreground, #000000);
+    border-color: var(--accent, #FCE300);
+}
+
+.tag-warning {
+    background: var(--muted, #27272A);
+    color: var(--foreground, #FAFAFA);
+    border-color: var(--border, #3F3F46);
+}
+
+.tag-error {
+    background: #ef4444;
+    color: var(--foreground, #FAFAFA);
+    border-color: #ef4444;
+}
+
+.tag-closable {
+    padding-right: 0.5rem;
+}
+
+.tag-close {
+    margin-left: 0.5rem;
+    cursor: pointer;
+    opacity: 0.5;
+    transition: opacity 0.2s ease;
+}
+
+.tag-close:hover {
+    opacity: 1;
+}
+
+/* 加载骨架屏 - Kinetic Typography 风格 */
+.skeleton {
+    background: linear-gradient(90deg, var(--muted) 25%, var(--border) 50%, var(--muted) 75%);
+    background-size: 200% 100%;
+    animation: skeleton-loading 1.5s infinite;
+}
+
+@keyframes skeleton-loading {
+    0% {
+        background-position: 200% 0;
+    }
+    100% {
+        background-position: -200% 0;
+    }
+}
+
+.skeleton-text {
+    height: 1rem;
+    border-radius: 0;
+    margin-bottom: 0.5rem;
+}
+
+.skeleton-text.short {
+    width: 60%;
+}
+
+.skeleton-text.medium {
+    width: 80%;
+}
+
+.skeleton-text.long {
+    width: 100%;
+}
+
+.skeleton-avatar {
+    width: 3rem;
+    height: 3rem;
+    border-radius: 0;
+}
+
+.skeleton-image {
+    width: 100%;
+    height: 12rem;
+    border-radius: 0;
+}
+
+/* 徽章组件 - Kinetic Typography 风格 */
+.badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.5rem;
+    height: 1.5rem;
+    padding: 0 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    border-radius: 0;
+    color: var(--accent-foreground, #000000);
+    text-transform: uppercase;
+}
+
+.badge-primary {
+    background: var(--accent, #FCE300);
+}
+
+.badge-success {
+    background: var(--accent, #FCE300);
+}
+
+.badge-warning {
+    background: var(--muted, #27272A);
+    color: var(--foreground, #FAFAFA);
+    border: 1px solid var(--border, #3F3F46);
+}
+
+.badge-error {
+    background: #ef4444;
+    color: var(--foreground, #FAFAFA);
+}
+
+.badge-dot {
+    position: relative;
+}
+
+.badge-dot::after {
+    content: '';
+    position: absolute;
+    top: -0.25rem;
+    right: -0.25rem;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: #ef4444;
+}
+
+/* 分页组件 */
+.pagination {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.pagination-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    border: 2px solid var(--border, #3F3F46);
+    border-radius: 0;
+    background: var(--muted, #27272A);
+    color: var(--foreground, #FAFAFA);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.pagination-btn:hover {
+    background: var(--accent, #FCE300);
+    color: var(--accent-foreground, #000000);
+    border-color: var(--accent, #FCE300);
+}
+
+.pagination-btn.active {
+    background: var(--accent, #FCE300);
+    color: var(--accent-foreground, #000000);
+    border-color: var(--accent, #FCE300);
+}
+
+.pagination-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.pagination-btn:disabled:hover {
+    background: var(--muted, #27272A);
+    color: var(--foreground, #FAFAFA);
+    border-color: var(--border, #3F3F46);
+}
+
+/* 空状态组件 */
+.empty-state {
+    text-align: center;
+    padding: 3rem 1rem;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.empty-state-icon {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    opacity: 0.5;
+}
+
+.empty-state-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+
+.empty-state-description {
+    font-size: 0.875rem;
+    opacity: 0.8;
+    margin-bottom: 1.5rem;
+}
+
+.empty-state-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1.5rem;
+    background: var(--accent, #FCE300);
+    border: 2px solid var(--accent, #FCE300);
+    border-radius: 0;
+    color: var(--accent-foreground, #000000);
+    text-decoration: none;
+    transition: all 0.2s ease;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.empty-state-action:hover {
+    transform: scale(1.05);
+    color: var(--accent-foreground, #000000);
+}
+
+/* ===== 模型对比页面样式 - Kinetic Typography 风格 ===== */
+/* 评价按钮样式 */
+.evaluation-btn {
+    position: relative;
+    overflow: hidden;
+    transition: all 0.2s ease;
+    border-radius: 0;
+}
+
+.evaluation-btn:hover {
+    transform: scale(1.05);
+    box-shadow: none;
+}
+
+.evaluation-btn.selected {
+    background: var(--accent, #FCE300) !important;
+    color: var(--accent-foreground, #000000) !important;
+    box-shadow: none;
+}
+
+.evaluation-btn.selected::after {
+    content: '✓';
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    background: var(--background, #09090B);
+    color: var(--accent, #FCE300);
+    width: 20px;
+    height: 20px;
+    border-radius: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: bold;
+    box-shadow: none;
+    border: 2px solid var(--accent, #FCE300);
+}
+
+/* 对比面板中的比例按钮 */
+#compareRatioButtons .ratio-btn {
+    transition: all 0.2s ease;
+}
+
+#compareRatioButtons .ratio-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* 拖拽悬停效果 - Kinetic Typography 风格 */
+#compareReferenceImageArea.drag-over {
+    border-color: var(--accent, #FCE300) !important;
+    background: rgba(223, 225, 4, 0.05);
+}
+
+/* 对比结果卡片悬停效果 */
+.compare-result-card {
+    transition: all 0.3s ease;
+    border-radius: 0;
+}
+
+.compare-result-card:hover {
+    transform: none;
+    box-shadow: none;
+    background: var(--accent, #FCE300);
+    color: var(--accent-foreground, #000000);
+}
+
+/* 抽卡数量滑块样式 - 增强版 */
+input[type="range"].slider-orange {
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+    width: 100%;
+    position: relative;
+}
+
+/* Webkit轨道 - 增强视觉 */
+input[type="range"].slider-orange::-webkit-slider-track {
+    background: rgba(255, 255, 255, 0.15);
+    height: 10px;
+    border-radius: 5px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Webkit滑块按钮 - Kinetic Typography 风格 */
+input[type="range"].slider-orange::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 26px;
+    height: 26px;
+    border-radius: 0;
+    background: var(--accent, #FCE300);
+    cursor: pointer;
+    box-shadow: none;
+    margin-top: -8px;
+    transition: all 0.2s ease;
+    border: 2px solid var(--accent-foreground, #000000);
+}
+
+input[type="range"].slider-orange::-webkit-slider-thumb:hover {
+    transform: scale(1.1);
+    box-shadow: none;
+    border-color: var(--accent-foreground, #000000);
+}
+
+input[type="range"].slider-orange::-webkit-slider-thumb:active {
+    transform: scale(0.95);
+    box-shadow: none;
+}
+
+/* Mozilla轨道 */
+input[type="range"].slider-orange::-moz-range-track {
+    background: rgba(255, 255, 255, 0.15);
+    height: 10px;
+    border-radius: 5px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Mozilla滑块按钮 - Kinetic Typography 风格 */
+input[type="range"].slider-orange::-moz-range-thumb {
+    width: 26px;
+    height: 26px;
+    border-radius: 0;
+    background: var(--accent, #FCE300);
+    cursor: pointer;
+    box-shadow: none;
+    border: 2px solid var(--accent-foreground, #000000);
+    transition: all 0.2s ease;
+}
+
+input[type="range"].slider-orange::-moz-range-thumb:hover {
+    transform: scale(1.1);
+    box-shadow: none;
+    border-color: var(--accent-foreground, #000000);
+}
+
+input[type="range"].slider-orange::-moz-range-thumb:active {
+    transform: scale(0.95);
+    box-shadow: none;
+}
+
+/* 进度填充效果 - Kinetic Typography 风格 */
+input[type="range"].slider-orange {
+    background: linear-gradient(to right, 
+        var(--accent, #FCE300) 0%, 
+        var(--accent, #FCE300) var(--range-progress, 37.5%), 
+        var(--muted, #27272A) var(--range-progress, 37.5%), 
+        var(--muted, #27272A) 100%);
+    height: 10px;
+    border-radius: 0;
+    border: 2px solid var(--border, #3F3F46);
+}
+
+/* 导演模式数量滑块样式 - 绿色主题 */
+input[type="range"].slider-green {
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+    width: 100%;
+    position: relative;
+}
+
+input[type="range"].slider-green::-webkit-slider-track {
+    background: rgba(255, 255, 255, 0.15);
+    height: 10px;
+    border-radius: 5px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+input[type="range"].slider-green::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 26px;
+    height: 26px;
+    border-radius: 0;
+    background: var(--accent, #FCE300);
+    cursor: pointer;
+    box-shadow: none;
+    margin-top: -8px;
+    transition: all 0.2s ease;
+    border: 2px solid var(--accent-foreground, #000000);
+}
+
+input[type="range"].slider-green::-webkit-slider-thumb:hover {
+    transform: scale(1.1);
+    box-shadow: none;
+    border-color: var(--accent-foreground, #000000);
+}
+
+input[type="range"].slider-green::-moz-range-track {
+    background: rgba(255, 255, 255, 0.15);
+    height: 10px;
+    border-radius: 5px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+input[type="range"].slider-green::-moz-range-thumb {
+    width: 26px;
+    height: 26px;
+    border-radius: 0;
+    background: var(--accent, #FCE300);
+    cursor: pointer;
+    box-shadow: none;
+    border: 2px solid var(--accent-foreground, #000000);
+    transition: all 0.2s ease;
+}
+
+input[type="range"].slider-green::-moz-range-thumb:hover {
+    transform: scale(1.1);
+    box-shadow: none;
+    border-color: var(--accent-foreground, #000000);
+}
+
+/* 模式切换按钮样式优化 */
+input[type="radio"][name="batchMode"] {
+    accent-color: #f97316;
+}
+
+/* Tab 按钮角标样式 - Kinetic Typography 风格 */
+.tab-btn-badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    z-index: 10;
+    pointer-events: none;
+    
+    /* 方形徽章 */
+    background: var(--accent, #FCE300);
+    color: var(--accent-foreground, #000000);
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 0;
+    
+    /* 无阴影 */
+    box-shadow: none;
+    line-height: 1.2;
+    white-space: nowrap;
+    text-transform: uppercase;
+}
+
+/* 响应式适配：移动端调整位置和大小 */
+@media (max-width: 768px) {
+    .tab-btn-badge {
+        font-size: 9px;
+        padding: 2px 5px;
+        top: -3px;
+        right: -3px;
+    }
+}
+
+/* 确保按钮有相对定位以便角标绝对定位 */
+.tab-btn.relative {
+    position: relative;
+}
+
+/* ========== 图像理解页面样式 ========== */
+
+/* 图片网格布局 */
+.understand-image-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 12px;
+}
+
+@media (max-width: 640px) {
+    .understand-image-grid {
+        grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+        gap: 8px;
+    }
+}
+
+/* 分析进度动画 */
+@keyframes progress {
+    0% {
+        transform: translateX(-100%);
+    }
+    100% {
+        transform: translateX(400%);
+    }
+}
+
+.animate-progress {
+    animation: progress 1.5s ease-in-out infinite;
+}
+
+/* 角色按钮样式 */
+.role-btn {
+    cursor: pointer;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+
+.role-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.role-btn:active {
+    transform: translateY(0);
+}
+
+/* 角色按钮激活状态 */
+.role-btn.bg-opacity-20 {
+    border-color: rgba(255, 255, 255, 0.3);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* 流式输出打字机光标效果 */
+.typing-cursor {
+    display: inline-block;
+    width: 2px;
+    height: 1.2em;
+    background-color: rgba(255, 255, 255, 0.8);
+    margin-left: 2px;
+    vertical-align: text-bottom;
+    animation: cursor-blink 1s step-end infinite;
+}
+
+@keyframes cursor-blink {
+    0%, 50% {
+        opacity: 1;
+    }
+    51%, 100% {
+        opacity: 0;
+    }
+}
+
+/* 流式输出内容容器 */
+#streamingContent {
+    min-height: 300px !important;
+    line-height: 1.8 !important;
+    word-wrap: break-word !important;
+    overflow-wrap: break-word !important;
+    white-space: pre-wrap !important;
+    width: 100% !important;
+    display: block !important;
+    overflow: visible !important;
+    max-height: none !important;
+}
+
+/* 控制结果区域高度和滚动 */
+#understandResult {
+    max-height: 800px;
+    min-height: 400px;
+    overflow-y: auto;
+    scroll-behavior: smooth;
+}
+
+/* 确保结果区域内容从顶部开始，占满宽度 */
+#understandResult > * {
+    width: 100%;
+}
+
+/* 确保文本容器也没有高度限制 */
+#understandResult .text-white {
+    max-height: none !important;
+    overflow: visible !important;
+}
+
+/* 响应式调整结果区域高度 */
+@media (max-height: 900px) {
+    #understandResult {
+        max-height: 60vh;
+        min-height: 300px;
+    }
+}
+
+@media (max-height: 700px) {
+    #understandResult {
+        max-height: 50vh;
+        min-height: 250px;
+    }
+}
+
+/* 美化滚动条 */
+#understandResult::-webkit-scrollbar {
+    width: 8px;
+}
+
+#understandResult::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+}
+
+#understandResult::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+}
+
+#understandResult::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+/* ========== 站点选择卡片样式 ========== */
+
+/* 站点卡片样式 - Kinetic Typography 风格 */
+.site-card {
+    min-height: 80px;
+    transition: all 0.2s ease;
+    border-radius: 0;
+}
+
+.site-card:hover {
+    transform: none;
+    box-shadow: none;
+    background: var(--accent, #FCE300);
+    color: var(--accent-foreground, #000000);
+}
+
+.site-card.selected {
+    border-color: var(--accent, #FCE300);
+    background-color: var(--accent, #FCE300);
+    color: var(--accent-foreground, #000000);
+}
+
+/* 右键菜单样式 */
+#siteContextMenu {
+    min-width: 120px;
+    animation: fadeIn 0.15s ease;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* 模态框动画 */
+#settingsModal > div,
+#customSiteModal > div {
+    animation: slideUp 0.2s ease;
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* ========================================
+   CYBERPUNK 霓虹发光效果系统
+   ======================================== */
+
+/* 霓虹发光文字 */
+.neon-text-yellow {
+    color: var(--cyber-yellow);
+    text-shadow: 0 0 10px var(--cyber-yellow), 0 0 20px var(--cyber-yellow), 0 0 40px var(--cyber-yellow);
+}
+
+.neon-text-cyan {
+    color: var(--cyber-cyan);
+    text-shadow: 0 0 10px var(--cyber-cyan), 0 0 20px var(--cyber-cyan);
+}
+
+.neon-text-magenta {
+    color: var(--cyber-magenta);
+    text-shadow: 0 0 10px var(--cyber-magenta), 0 0 20px var(--cyber-magenta);
+}
+
+.neon-text-green {
+    color: var(--cyber-green);
+    text-shadow: 0 0 10px var(--cyber-green), 0 0 20px var(--cyber-green);
+}
+
+.neon-text-red {
+    color: var(--cyber-red);
+    text-shadow: 0 0 10px var(--cyber-red), 0 0 20px var(--cyber-red);
+}
+
+/* 霓虹边框发光 */
+.neon-border-yellow {
+    border-color: var(--cyber-yellow);
+    box-shadow: 0 0 5px var(--cyber-yellow), inset 0 0 5px var(--cyber-yellow);
+}
+
+.neon-border-cyan {
+    border-color: var(--cyber-cyan);
+    box-shadow: 0 0 5px var(--cyber-cyan), inset 0 0 5px var(--cyber-cyan);
+}
+
+.neon-border-magenta {
+    border-color: var(--cyber-magenta);
+    box-shadow: 0 0 5px var(--cyber-magenta), inset 0 0 5px var(--cyber-magenta);
+}
+
+/* 霓虹按钮 hover 效果 */
+.btn-neon:hover,
+.neon-hover:hover {
+    box-shadow: 0 0 15px var(--cyber-yellow), 0 0 30px var(--cyber-yellow);
+    border-color: var(--cyber-yellow);
+}
+
+/* 霓虹输入框 focus */
+.input-neon:focus,
+.neon-focus:focus {
+    border-color: var(--cyber-cyan);
+    box-shadow: 0 0 10px var(--cyber-cyan);
+    outline: none;
+}
+
+/* 霓虹卡片 hover */
+.card-neon:hover {
+    border-color: var(--cyber-yellow);
+    box-shadow: 0 0 20px var(--cyber-yellow), inset 0 0 10px rgba(252, 227, 0, 0.1);
+}
+
+/* 脉冲发光动画 */
+@keyframes neon-pulse {
+    0%, 100% {
+        box-shadow: 0 0 5px var(--cyber-yellow), 0 0 10px var(--cyber-yellow);
+    }
+    50% {
+        box-shadow: 0 0 20px var(--cyber-yellow), 0 0 40px var(--cyber-yellow);
+    }
+}
+
+.neon-pulse {
+    animation: neon-pulse 2s ease-in-out infinite;
+}
+
+/* 闪烁霓虹效果 */
+@keyframes neon-flicker {
+    0%, 19%, 21%, 23%, 25%, 54%, 56%, 100% {
+        text-shadow: 0 0 10px var(--cyber-yellow), 0 0 20px var(--cyber-yellow), 0 0 40px var(--cyber-yellow);
+    }
+    20%, 24%, 55% {
+        text-shadow: none;
+    }
+}
+
+.neon-flicker {
+    animation: neon-flicker 3s linear infinite;
+}

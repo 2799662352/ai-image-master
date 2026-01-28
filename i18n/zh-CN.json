@@ -1,0 +1,1018 @@
+{
+  "common": {
+    "appName": "CATIMATION-Cyberpunk Master",
+    "appNameShort": "CATIMATION",
+    "appNameMobile": "CATIMATION",
+    "generate": "生成",
+    "batch": "批量",
+    "compare": "对比",
+    "history": "历史",
+    "understand": "图像理解",
+    "settings": "设置",
+    "about": "说明",
+    "docs": "开发文档",
+    "save": "保存",
+    "cancel": "取消",
+    "delete": "删除",
+    "download": "下载",
+    "upload": "上传",
+    "copy": "复制",
+    "close": "关闭",
+    "confirm": "确认",
+    "clear": "清空",
+    "loading": "正在加载 CATIMATION-AI图片生成测试平台...",
+    "processing": "处理中...",
+    "success": "成功",
+    "error": "错误",
+    "warning": "警告"
+  },
+  "nav": {
+    "generateImage": "生成图片",
+    "generateImageShort": "出图",
+    "batchGenerate": "批量生成",
+    "batchShort": "批量",
+    "modelCompare": "模型对比",
+    "compareShort": "对比",
+    "historyRecords": "历史记录",
+    "historyShort": "记录",
+    "imageUnderstand": "图像理解",
+    "understandShort": "识图",
+    "director": "导演模式",
+    "directorShort": "导演",
+    "switchLanguage": "切换语言",
+    "model": "模型",
+    "activity": "活动",
+    "menu": "菜单",
+    "apiStatus": {
+      "label": "API状态",
+      "notConfigured": "未配置",
+      "connected": "已连接"
+    },
+    "settingsButton": {
+      "notConfigured": "未设置",
+      "configured": "已设置"
+    },
+    "badge": {
+      "lottery": "抽卡"
+    }
+  },
+  "settings": {
+    "title": "设置",
+    "apiKey": "API Key",
+    "apiKeyPlaceholder": "请输入你的 API Key",
+    "apiKeyRequired": "API Key 是必需的",
+    "baseUrl": "API 基础地址",
+    "baseUrlPlaceholder": "请输入 API 基础地址",
+    "testConnection": "测试连接",
+    "saveSuccess": "设置保存成功",
+    "testSuccess": "连接测试成功",
+    "testFailed": "连接测试失败"
+  },
+  "generate": {
+    "title": "生成图片",
+    "prompt": "提示词",
+    "promptPlaceholder": "描述你想要生成的图片...",
+    "promptRequired": "请输入提示词",
+    "negativePrompt": "负面提示词",
+    "negativePromptPlaceholder": "描述你不想在图片中看到的内容...",
+    "model": "模型",
+    "selectModel": "选择模型",
+    "aspectRatio": "比例",
+    "resolution": "分辨率",
+    "referenceImage": "参考图片",
+    "uploadReference": "上传参考图",
+    "removeReference": "移除参考图",
+    "generating": "正在生成图片...",
+    "generateSuccess": "图片生成成功",
+    "generateFailed": "图片生成失败",
+    "downloadImage": "下载图片",
+    "copyPrompt": "复制提示词",
+    "useTemplate": "使用模板",
+    "templates": "提示词模板",
+    "quantity": "数量",
+    "quantityOptions": {
+      "1": "1张",
+      "2": "2张"
+    },
+    "finalResolution": "最终分辨率",
+    "imageSize": "图片尺寸",
+    "describeImage": "描述您想要的图片",
+    "image2ImageLabel": "图生图 (垫图可选，不上传即文生图)",
+    "apiCallLimit": "（API调用不止8 张图片输入）",
+    "clickToUpload": "点击上传参考图片",
+    "pasteImageDesktop": "或按快捷键粘贴图片",
+    "pasteImageMobile": "或直接粘贴图片",
+    "autoCompressionInfo": "大图片在生成时自动压缩，不影响质量",
+    "messages": {
+      "promptRequired": "请输入图片描述",
+      "apiKeyNotSet": "请先设置API Key",
+      "generateSuccess": "图片生成成功",
+      "generateWithReferenceSuccess": "基于{count}张参考图的图片生成成功",
+      "processingFile": "正在处理文件，跳过重复触发",
+      "fileSelectionActive": "文件选择已激活，跳过重复触发",
+      "skipDuplicateUpload": "检测到重复上传，忽略任务",
+      "invalidResult": "未生成有效图片",
+      "generateError": "图片生成过程中出现错误",
+      "noImageInClipboard": "剪贴板中没有找到图片，请复制图片后再试",
+      "pastedImagesSuccess": "成功粘贴 {count} 张图片",
+      "pasteError": "粘贴图片失败，请重试",
+      "uploadCancelled": "上传任务已被取消",
+      "fileNotImage": "{filename} 不是图片文件",
+      "fileTooLarge": "{filename} 文件过大（{size}MB），最大支持20MB",
+      "unsupportedFormat": "{filename} 格式不支持，请使用 JPG、PNG、WebP 或 BMP 格式",
+      "fileTooSmall": "{filename} 文件过小，可能不是有效的图片文件",
+      "fileDuplicate": "{filename} 已存在，跳过重复文件",
+      "uploadLimitReached": "已达到上传上限，仅处理前{max}张图片",
+      "reachedMaxImages": "最多只能上传{max}张参考图",
+      "fluxModelLimitInfo": "Flux 模型目前暂时仅支持一张配图，静待后续改进",
+      "uploadSuccess": "参考图上传成功 (耗时{time}秒)",
+      "uploadSuccessMultiple": "成功上传 {count} 张参考图 (耗时{time}秒)",
+      "uploadFailed": "图片上传失败: {error}",
+      "fileReadFailed": "文件读取失败: {error}",
+      "fileReadAborted": "文件读取被中断",
+      "fileReadTimeout": "文件读取超时",
+      "invalidBase64": "Base64数据异常短，可能转换失败",
+      "base64ValidationFailed": "Base64格式验证失败",
+      "conversionFailed": "文件转换失败，已重试{retries}次: {error}",
+      "imageValidationFailed": "图片数据验证失败: {error}",
+      "imageDecodeFailed": "Base64数据无法解析为有效图片",
+      "imageDimensionInvalid": "图片尺寸无效",
+      "imageValidationTimeout": "图片验证超时",
+      "compressionFailed": "图片压缩失败，使用原图上传: {error}",
+      "compressingImages": "正在压缩 {count} 张大图片...",
+      "compressionInfo": "大图片自动压缩，不影响生成质量",
+      "compressionComplete": "已压缩 {count} 张图片，开始生成...",
+      "noCompressionNeeded": "文件 {filename} 大小为 {size}MB，无需压缩",
+      "startCompression": "开始压缩文件: {filename}, 原大小: {size}MB",
+      "filenameTooLong": "文件名过长，将被截断: {filename}",
+      "inputCleared": "已清空输入内容",
+      "referenceImageRemoved": "已移除参考图: {filename}",
+      "estimatedTime4K": "预计需要 4-6 分钟",
+      "estimatedTime2K": "预计需要 2-4 分钟",
+      "estimatedTime1K": "预计需要 1-3 分钟",
+      "generatingWithEstimate": "生成中... {estimate}，请耐心等待",
+      "generatingProgress": "正在生成图片...",
+      "connectingServer": "正在连接AI服务器...",
+      "analyzingPrompt": "正在分析提示词内容...",
+      "startGenerating": "开始生成图片，预计需要2-4分钟...",
+      "creatingArt": "正在创作中，请耐心等待...",
+      "generatingInProgress": "图片生成进行中...",
+      "optimizingQuality": "正在优化图片质量...",
+      "almostComplete": "即将完成，请稍候...",
+      "generationFailed": "图片生成失败，请重试",
+      "noReferencesUploaded": "没有上传参考图",
+      "noGeneratedImages": "还未生成图片",
+      "downloading": "正在下载 {completed}/{total}",
+      "batchDownloadCompleted": "批量下载完成",
+      "batchDownloadError": "批量下载出错",
+      "downloadHelperTitle": "下载帮助",
+      "downloadHelperMessage": "由于浏览器安全限制，无法自动批量下载。",
+      "downloadSteps": "请按以下步骤手动下载：",
+      "downloadStep1": "点击下方\"查看图片\"按钮",
+      "downloadStep2": "在图片预览中，右键图片",
+      "downloadStep3": "选择\"图片另存为\"",
+      "downloadStep4": "重复步骤2-3下载所有图片",
+      "viewImages": "查看图片",
+      "understood": "知道了",
+      "pageActivated": "图片生成页面已激活",
+      "pageDeactivated": "图片生成页面已失活",
+      "pageLoadIncomplete": "页面加载未完成，请刷新页面"
+    },
+    "labels": {
+      "generatedImagesPlaceholder": "生成的图片将在这里显示",
+      "referenceImageLabel": "参考图{index}",
+      "generateResultLabel": "结果{index}",
+      "addMoreReferences": "添加更多参考图",
+      "resultTab": "生成结果",
+      "originalTab": "原图/参考图",
+      "compareTab": "对比显示",
+      "referenceImageTitle": "参考图/原图",
+      "uploadPrompt": "上传参考图，支持点击选择或Ctrl+V粘贴",
+      "referenceImageCount": "({current}/{max})",
+      "supportedFormats": "支持 JPG、PNG 格式，最多上传{max}张图片，单个文件最大20MB",
+      "fluxModelInfo": "支持 JPG、PNG 格式，Flux模型目前仅支持1张图片，单个文件最大20MB，静待后续改进",
+      "uploadIndicatorTooltip": "正在上传到云端...",
+      "uploadCompleteTooltip": "已上传到云端",
+      "needsCompressionTooltip": "文件较大，生成时将自动压缩",
+      "needsCompressionLabel": "MB 将压缩",
+      "removeButtonLabel": "移除参考图{index}",
+      "fileSizeFormat": "{size}MB",
+      "quickSolutionTitle": "快速解决建议："
+    },
+    "buttons": {
+      "generateButton": "开始生成",
+      "generating": "生成中...",
+      "clearInput": "清空输入",
+      "download": "下载",
+      "expandView": "查看大图",
+      "batchDownloadAll": "批量下载全部",
+      "retryGenerate": "重新生成",
+      "viewDetails": "查看详情"
+    },
+    "errors": {
+      "invalidFileReaderResult": "FileReader返回无效结果",
+      "readerErrorMessage": "文件读取失败: {error}",
+      "imageSizeInvalid": "图片尺寸无效",
+      "detailedErrorTitle": "查看完整错误详情",
+      "pageElementNotFound": "referenceImageArea 元素未找到，可能DOM还未完全加载",
+      "imageContainerNotFound": "空结果显示容器不存在",
+      "errorContainerNotFound": "错误显示容器不存在"
+    },
+    "dialogs": {
+      "errorTitle": "查看详情"
+    }
+  },
+  "batch": {
+    "title": "批量生成",
+    "modes": {
+      "card": "🎰 抽卡模式（推荐）",
+      "multi": "📋 多提示词模式"
+    },
+    "upload": {
+      "processing": "正在处理批量文件，跳过重复触发",
+      "selectionActive": "批量文件选择已激活，跳过重复触发",
+      "clickToUpload": "点击上传批量参考图片",
+      "pasteSupport": "或粘贴图片到此处"
+    },
+    "messages": {
+      "uploadSuccess": "批量参考图上传成功",
+      "uploadSuccessMultiple": "成功上传 {count} 张批量参考图 (耗时{time}秒)",
+      "uploadFailed": "批量图片上传失败: {error}",
+      "pasteSuccess": "成功粘贴 {count} 张图片到批量参考图",
+      "pasteFailed": "粘贴图片失败，请重试",
+      "fluxModelLimit": "Flux 模型目前暂时仅支持一张配图，静待后续改进",
+      "maxImagesReached": "最多只能上传{max}张参考图",
+      "limitReached": "已达到上传上限，仅处理前{max}张图片",
+      "batchComplete": "批量生成完成",
+      "batchFailed": "批量生成失败",
+      "duplicateTask": "检测到重复批量上传，忽略任务"
+    },
+    "buttons": {
+      "startBatch": "开始批量生成",
+      "stopBatch": "停止生成",
+      "clearInput": "清空输入"
+    },
+    "labels": {
+      "referenceImage": "批量参考图{index}",
+      "removeImage": "移除批量参考图{index}",
+      "addMore": "添加更多批量参考图",
+      "quantity": "生成数量（抽卡张数）",
+      "quantityCount": "{count}张",
+      "costEstimate": "预估费用",
+      "promptInput": "输入提示词（支持多行）",
+      "promptTemplate": "提示词模板",
+      "currentModel": "当前模型：",
+      "unitPrice": "单价",
+      "perImage": "张",
+      "batchReferenceImage": "批量参考图（垫图）",
+      "optional": "可选，最多{max}张",
+      "formatSupport": "支持 JPG、PNG 格式，最多上传{max}张图片，单个文件最大20MB",
+      "pasteShortcutDesktop": "或按快捷键粘贴图片",
+      "pasteShortcutMobile": "或直接粘贴图片",
+      "sharedReference": "所有提示词将共用这些参考图生成",
+      "sharedReferenceConfirm": "将作为所有提示词的参考图",
+      "batchSize": "批量尺寸",
+      "batchQuantity": "数量",
+      "resolution": "清晰度",
+      "multiPromptInput": "批量提示词（用空行分隔不同提示词）",
+      "multiPromptHint": "用空行分隔不同提示词，每个提示词内可自由换行",
+      "cardWarning": "一个提示词，生成多张图片供您挑选，务必提示词和图片合规，违规内容出图失败AI厂商仍然扣费",
+      "batchLabel": "批量生成 {index}",
+      "selectBatchReference": "选择批量参考图片",
+      "emptyResults": "批量生成的结果将在这里显示"
+    },
+    "placeholders": {
+      "cardMode": "设计一张图文店促销活动传单，宣传年终大促销活动。\n设计风格：活力促销风格，吸引眼球\n配色方案：橙红色为主色调，营造热烈促销氛围",
+      "multiMode": "设计一张图文店促销活动传单，宣传年终大促销活动。\n设计风格：活力促销风格，吸引眼球\n配色方案：橙红色为主色调\n\n一只可爱的小猫咪坐在花园里，\n油画风格，高清，细节丰富，\n温暖的午后阳光\n\n现代简约风格的客厅设计"
+    },
+    "ratioOptions": {
+      "auto": "自适应",
+      "square": "方形 1:1",
+      "portrait": "竖版 2:3",
+      "landscape": "横版 3:2",
+      "widescreen": "宽屏 16:9"
+    },
+    "resolutionOptions": {
+      "1k": "1K 标准",
+      "2k": "2K 高清",
+      "4k": "4K 超清"
+    },
+    "notice": {
+      "title": "批量生成重要注意事项",
+      "keepPageOpen": "必须保持页面开启：",
+      "keepPageOpenDesc": "批量生成过程中，请勿关闭浏览器标签页或刷新页面，否则任务会立即中断",
+      "localMechanism": "本地运行机制：",
+      "localMechanismDesc": "本工具无后台服务，所有任务在浏览器中运行，关闭页面后无法恢复未完成的任务",
+      "reasonableQuantity": "合理设置数量：",
+      "reasonableQuantityDesc": "建议根据网络状况调整并发数量，避免过多并发请求导致失败",
+      "saveImages": "及时保存图片：",
+      "saveImagesDesc": "生成完成后请及时下载保存图片，避免因意外关闭页面而丢失结果",
+      "longDuration": "生成时间较长：",
+      "longDurationDesc": "每张图片需要2-4分钟，大批量生成请预留充足时间"
+    },
+    "progress": {
+      "processing": "正在处理 {count} 张批量参考图...",
+      "current": "已处理 {current}/{total}",
+      "generating": "正在批量生成...",
+      "completed": "已完成 {count} 张"
+    },
+    "status": {
+      "batchCount": "生成数量",
+      "concurrency": "并发数",
+      "startBatch": "开始批量生成",
+      "stopBatch": "停止生成",
+      "progressLabel": "进度",
+      "completed": "已完成",
+      "failed": "失败",
+      "generating": "生成中",
+      "batchComplete": "批量生成完成",
+      "downloadAll": "下载全部"
+    }
+  },
+  "compare": {
+    "title": "模型对比",
+    "pageActivated": "模型对比页面已激活",
+    "pageDeactivated": "模型对比页面已停用",
+    "models": {
+      "selectLeft": "选择左侧模型",
+      "selectRight": "选择右侧模型",
+      "speed": "速度: {speed}",
+      "price": "价格: ${price}/张",
+      "noCommonRatios": "所选模型没有共同支持的尺寸"
+    },
+    "upload": {
+      "clickToUpload": "点击上传对比参考图片",
+      "clickOrDrag": "点击或拖拽上传参考图片",
+      "supportedFormats": "支持 JPG、PNG 格式"
+    },
+    "buttons": {
+      "startCompare": "开始对比",
+      "clearInput": "清空输入",
+      "recompare": "重新对比",
+      "clear": "清空"
+    },
+    "messages": {
+      "comparing": "正在对比...",
+      "compareComplete": "对比完成",
+      "compareFailed": "对比失败: {error}"
+    },
+    "labels": {
+      "referenceImage": "对比参考图{index}",
+      "removeImage": "移除对比参考图{index}",
+      "leftResult": "左侧结果",
+      "rightResult": "右侧结果",
+      "parameters": "参数设置",
+      "ratio": "比例: {ratio}",
+      "generateFailed": "生成失败",
+      "generateSuccess": "生成成功",
+      "leftModel": "左侧模型",
+      "rightModel": "右侧模型",
+      "selectModel": "选择模型",
+      "prompt": "提示词",
+      "commonRatios": "共同支持的尺寸",
+      "commonRatiosTitle": "共同支持的尺寸",
+      "selectModelsFirst": "请先选择两个模型",
+      "referenceImages": "参考图片（可选，最多3张）",
+      "uploadHint": "点击或拖拽上传参考图片",
+      "formatHint": "支持 JPG、PNG、GIF 格式",
+      "promptPlaceholder": "描述你想要生成的图片..."
+    },
+    "evaluation": {
+      "leftBetter": "左侧模型更好",
+      "rightBetter": "右侧模型更好",
+      "similar": "两者相当",
+      "save": "保存评价",
+      "question": "您认为哪个模型生成的图片更好？",
+      "leftButton": "左边更好",
+      "rightButton": "右边更好",
+      "equalGood": "一样好",
+      "equalBad": "一样糟糕"
+    },
+    "selectModels": "选择要对比的模型",
+    "modelCount": "已选择 {count} 个模型",
+    "compareNow": "开始对比",
+    "comparing": "正在对比...",
+    "compareComplete": "对比完成",
+    "samePrompt": "使用相同提示词",
+    "sameSettings": "使用相同设置"
+  },
+  "history": {
+    "title": "历史记录",
+    "noHistory": "暂无历史记录",
+    "clearHistory": "清空历史记录",
+    "confirmClear": "确定要清空所有历史记录吗？",
+    "storage": {
+      "uploading": "上传中",
+      "cloud": "云端",
+      "local": "本地",
+      "cloudModeTitle": "安全云端存储",
+      "localModeTitle": "本地浏览器存储",
+      "privacyTitle": "隐私保护",
+      "privacyDesc": "图片经加密后匿名存储，仅您可访问",
+      "smartStorageTitle": "智能存储",
+      "smartStorageDesc": "自动上传云端，节省本地空间 95%+",
+      "syncTitle": "同步管理",
+      "syncDesc": "删除记录时云端图片同步清理",
+      "expirationTitle": "有效期限",
+      "expirationDesc": "云端保存 30 天，到期自动清理"
+    },
+    "types": {
+      "networkRestricted": "网络受限",
+      "winner": "{model} 胜出",
+      "pending": "待评价"
+    },
+    "details": {
+      "model": "模型: {model}",
+      "ratio": "尺寸: {ratio}",
+      "referenceCount": "{count}张参考图",
+      "networkRestrictedNote": "生成成功，但图片可能需要特殊网络环境访问"
+    },
+    "buttons": {
+      "view": "查看图片",
+      "download": "下载图片",
+      "batchDownload": "批量下载",
+      "delete": "删除记录",
+      "migrateToCloud": "迁移到云端",
+      "networkOptions": "网络受限选项",
+      "uploading": "图片上传中，请稍候"
+    },
+    "downloadHelp": {
+      "title": "下载帮助",
+      "message": "由于浏览器安全限制，无法自动批量下载。",
+      "stepsTitle": "请按以下步骤手动下载：",
+      "step1": "点击下方\"查看图片\"按钮",
+      "step2": "在图片预览中，右键图片",
+      "step3": "选择\"图片另存为\"",
+      "step4": "重复步骤2-3下载所有图片",
+      "viewImages": "查看图片",
+      "understood": "知道了"
+    },
+    "networkRestricted": {
+      "title": "网络受限的图片",
+      "description": "这些图片已成功生成，但可能因网络环境限制无法直接访问。",
+      "instruction": "您可以复制图片地址，然后在具有外网访问权限的网络环境中打开。",
+      "imageAddresses": "图片地址 ({count}张)",
+      "imageLabel": "图片 {index}",
+      "copy": "复制",
+      "open": "打开",
+      "solutionTitle": "解决方案",
+      "explanationTitle": "说明",
+      "solution1": "复制图片地址到剪贴板",
+      "solution2": "批量复制所有地址",
+      "solution3": "重新尝试访问",
+      "solutionItem1": "复制图片地址到剪贴板",
+      "solutionItem2": "在具有外网访问权限的设备上粘贴并打开",
+      "solutionItem3": "使用VPN或代理服务访问",
+      "solutionItem4": "联系技术支持获取国内镜像地址",
+      "copyAll": "复制所有地址",
+      "retry": "重试访问",
+      "close": "关闭"
+    },
+    "deleteItem": "删除记录",
+    "viewImage": "查看图片",
+    "regenerate": "重新生成",
+    "cloudSync": "云端同步",
+    "syncSuccess": "同步成功",
+    "syncFailed": "同步失败",
+    "messages": {
+      "downloadStarting": "开始批量下载...",
+      "downloading": "正在下载 {completed}/{total}",
+      "downloadComplete": "批量下载完成",
+      "deleted": "记录已删除",
+      "notFound": "历史记录不存在",
+      "cloudUnavailable": "云存储服务不可用",
+      "migrating": "正在迁移到云端..."
+    },
+    "labels": {
+      "empty": "暂无历史记录",
+      "storageStatus": "存储状态",
+      "privacyProtection": "隐私保护",
+      "privacyProtectionDesc": "图片经加密后匿名存储，仅您可访问",
+      "smartStorage": "智能存储",
+      "smartStorageDesc": "自动上传云端，节省本地空间 95%+",
+      "syncManagement": "同步管理",
+      "syncManagementDesc": "删除记录时云端图片同步清理",
+      "expirationPeriod": "有效期限",
+      "expirationPeriodDesc": "云端保存 30 天，到期自动清理",
+      "localStorageMode": "本地存储模式",
+      "localStorageModeDesc": "图片保存在浏览器，占用设备存储空间",
+      "configureCloudStorage": "建议配置云端存储",
+      "configureCloudStorageDesc": "配置 Worker URL 以节省空间并保护隐私",
+      "migrateAllToCloud": "一键迁移 {count} 条本地记录到云端",
+      "recordsCount": "{count} 条记录",
+      "localUsage": "本地占用: {percent}%"
+    }
+  },
+  "understand": {
+    "title": "图像理解",
+    "pageTitle": "上传图片进行理解",
+    "multiImageSupport": "支持多图联合分析",
+    "upload": {
+      "title": "上传图片",
+      "clickToUpload": "点击上传图片",
+      "dragHint": "或拖拽图片到此处",
+      "pasteSupport": "支持粘贴图片 (Ctrl+V)",
+      "formatInfo": "支持 JPG、PNG 格式，单个文件最大 20MB",
+      "compressionInfo": "大图片自动压缩，不影响理解质量",
+      "pasteKeyboardHint": "或按快捷键粘贴图片",
+      "pasteMobileHint": "或直接粘贴图片",
+      "addMoreImages": "添加更多图片"
+    },
+    "models": {
+      "selectModel": "选择模型",
+      "selectVisionModel": "选择图像理解模型",
+      "currentModel": "当前模型",
+      "recommended": "推荐",
+      "customModel": "自定义模型",
+      "customModelOptional": "自定义模型（可选）",
+      "expand": "展开",
+      "collapse": "收起",
+      "customModelPlaceholder": "例如：gpt-4o",
+      "customModelHint": "填写后将使用自定义模型，留空使用上方选择的模型",
+      "selectOtherModel": "点击选择其他模型或查看价格信息",
+      "close": "关闭"
+    },
+    "roles": {
+      "selectRole": "选择分析角色",
+      "universal": "万物识别+百科",
+      "universalShort": "万物识别",
+      "productTitle": "商品取标题",
+      "productTitleShort": "商品标题",
+      "amazonBullets": "亚马逊五点描述",
+      "amazonBulletsShort": "五点描述",
+      "productAnalysis": "商品属性分析器",
+      "productAnalysisShort": "属性分析",
+      "ocrExtract": "OCR 提取",
+      "ocrExtractShort": "OCR 提取",
+      "document": "文档识别",
+      "product": "商品分析",
+      "custom": "自定义",
+      "customPrompt": "自定义提示词"
+    },
+    "prompt": {
+      "label": "提问（可选）",
+      "placeholder": "例如：这张图片里有什么？描述图片中的场景...",
+      "roleHint": "点击上方角色标签快速应用专业提示词"
+    },
+    "buttons": {
+      "analyze": "分析图片",
+      "startAnalysis": "开始分析",
+      "copyResult": "复制结果"
+    },
+    "messages": {
+      "analyzing": "正在分析图片...",
+      "analyzeSuccess": "分析完成",
+      "analyzeFailed": "分析失败",
+      "copied": "已复制到剪贴板",
+      "copyFailed": "复制失败",
+      "uploadFirst": "请先上传图片",
+      "promptRequired": "请输入自定义提示词",
+      "analyzeError": "图片分析失败: {error}",
+      "unsupportedFileType": "不支持的文件类型",
+      "fileTooLarge": "文件过大，最大支持 {size}MB"
+    },
+    "labels": {
+      "result": "分析结果",
+      "resultPlaceholder": "上传图片后点击「开始分析」查看结果",
+      "imageLabel": "图片 {index}",
+      "imageCount": "({count})",
+      "deleteImage": "删除图片",
+      "addMore": "添加更多图片",
+      "maxImages": "最多上传 {max} 张图片"
+    },
+    "uploadImage": "上传图片",
+    "analyzing": "正在分析图片...",
+    "analyzeSuccess": "分析完成",
+    "analyzeFailed": "分析失败",
+    "description": "图片描述",
+    "tags": "标签",
+    "colors": "主要颜色",
+    "roleData": {
+      "universal": {
+        "name": "万物识别+百科",
+        "shortName": "万物识别",
+        "description": "通用图像识别和百科知识分析"
+      },
+      "product-title": {
+        "name": "商品取标题",
+        "shortName": "商品标题",
+        "description": "为商品图片生成吸引人的电商标题"
+      },
+      "amazon-bullets": {
+        "name": "亚马逊五点描述",
+        "shortName": "五点描述",
+        "description": "生成亚马逊商品详情页的五点描述"
+      },
+      "product-analysis": {
+        "name": "商品属性分析器",
+        "shortName": "属性分析",
+        "description": "深度分析商品属性，提取结构化信息"
+      },
+      "ocr-extract": {
+        "name": "OCR 提取",
+        "shortName": "OCR 提取",
+        "description": "快速提取图片中的所有文字内容"
+      }
+    },
+    "visionModelData": {
+      "gpt-5.2": {
+        "displayName": "GPT-5.2",
+        "description": "最新旗舰模型，卓越理解与推理能力",
+        "features": ["顶级理解", "深度推理", "多模态分析"]
+      },
+      "gemini-3-pro-preview": {
+        "displayName": "Gemini 3 Pro Preview",
+        "description": "Google 最新旗舰预览版，强大的多模态能力",
+        "features": ["旗舰性能", "多图理解", "深度分析"]
+      },
+      "gemini-2.5-flash-preview-09-2025": {
+        "displayName": "Gemini 2.5 Flash",
+        "description": "快速响应版本，性价比极高",
+        "features": ["极速响应", "性价比高", "推理模式"]
+      },
+      "gpt-5-mini": {
+        "displayName": "GPT-5-mini",
+        "description": "轻量高效版本，适合日常使用",
+        "features": ["高性价比", "快速响应", "准确理解"]
+      },
+      "claude-haiku-4-5-20251001": {
+        "displayName": "Claude Haiku 4.5",
+        "description": "Anthropic 轻量模型，快速且精准",
+        "features": ["速度快", "成本优", "细节描述"]
+      },
+      "qwen-vl-ocr-latest": {
+        "displayName": "Qwen OCR Latest",
+        "description": "阿里云千问 专业 OCR 识别，极速提取文字",
+        "features": ["OCR 专用", "极速响应", "超高准确率"]
+      },
+      "recommended": "推荐",
+      "current": "当前"
+    }
+  },
+  "director": {
+    "title": "导演模式",
+    "pageTitle": "漫画分镜自动生成",
+    "labels": {
+      "referenceImage": "参考图",
+      "uploadHint": "点击或拖拽上传参考图",
+      "uploadFormat": "支持 JPG、PNG、WebP 格式，最多8张",
+      "multiImageHint": "多张参考图可提高角色一致性",
+      "sceneDescription": "场景描述",
+      "optional": "(可选)",
+      "scenePlaceholder": "描述场景、剧情或您想要的效果...（留空则AI自动分析参考图）",
+      "layoutSelect": "选择分镜布局",
+      "modeSelect": "生成模式",
+      "multiSceneDescription": "多场景描述",
+      "multiScenePlaceholder": "每个场景用空行分隔，例如：\n\n场景1：男主站在雨中，背对镜头\n\n场景2：女主在窗边看书，阳光洒落\n\n场景3：两人在咖啡店相遇",
+      "multiSceneHint": "用空行分隔不同场景，每个场景生成一张漫画分镜页面",
+      "generateCount": "生成数量（抽卡张数）",
+      "countHint": "同一场景生成多张，挑选最佳效果",
+      "results": "生成结果",
+      "emptyResults": "生成的漫画分镜将在这里显示",
+      "emptyResultsHint": "上传参考图并点击生成按钮开始创作",
+      "styleTemplate": "风格模板",
+      "imageRatio": "图片尺寸",
+      "resolution": "清晰度"
+    },
+    "ratioOptions": {
+      "auto": "自适应",
+      "square": "方形 1:1",
+      "landscape169": "横版 16:9",
+      "portrait916": "竖版 9:16",
+      "landscape43": "横版 4:3",
+      "portrait34": "竖版 3:4",
+      "landscape32": "横版 3:2",
+      "portrait23": "竖版 2:3"
+    },
+    "resolutionOptions": {
+      "1k": "1K 标准",
+      "2k": "2K 高清",
+      "4k": "4K 超清"
+    },
+    "templateModal": {
+      "title": "选择风格模板",
+      "cancel": "取消"
+    },
+    "templates": {
+      "anime": {
+        "name": "动画截图风格",
+        "desc": "TV动画风格，故事板分镜，高质量赛璐璐着色"
+      },
+      "manga": {
+        "name": "漫画分镜风格",
+        "desc": "黑白漫画风格，对话框，网点效果，动态线条"
+      },
+      "movie": {
+        "name": "电影分镜风格",
+        "desc": "真实电影感，电影级调色，景深效果，宽银幕"
+      },
+      "webtoon": {
+        "name": "韩漫/条漫风格",
+        "desc": "全彩韩漫风格，竖向条漫排版，清新唯美"
+      },
+      "comic": {
+        "name": "美漫风格",
+        "desc": "美式漫画风格，粗线条，强对比，超级英雄感"
+      },
+      "illustration": {
+        "name": "插画风格",
+        "desc": "精美插画风格，丰富细节，艺术质感"
+      }
+    },
+    "modes": {
+      "single": "单图模式",
+      "multi": "多提示词模式"
+    },
+    "layouts": {
+      "6grid": "6格标准",
+      "4grid": "4格方正",
+      "2closeup": "2格特写",
+      "9grid": "9格全景"
+    },
+    "layoutDesc": {
+      "6grid": "2行×3列，适合完整故事",
+      "4grid": "2行×2列，适合转折场景",
+      "2closeup": "1行×2列，适合表情特写",
+      "9grid": "3行×3列，适合动作场景"
+    },
+    "buttons": {
+      "generate": "一键生成漫画分镜",
+      "download": "下载图片",
+      "downloadAll": "下载全部",
+      "regenerate": "重新生成",
+      "selectTemplate": "选择模板",
+      "exampleGallery": "示例图库"
+    },
+    "galleryModal": {
+      "title": "示例图库",
+      "hint": "点击选择示例图片作为参考图，可多选（最多8张）",
+      "cancel": "取消",
+      "confirm": "确认选择"
+    },
+    "progress": {
+      "analyzing": "正在分析参考图...",
+      "generating": "正在生成分镜提示词...",
+      "creating": "正在生成漫画页面...",
+      "complete": "生成完成！",
+      "step": "步骤 {current}/{total}"
+    },
+    "messages": {
+      "uploadFirst": "请先上传参考图",
+      "generating": "正在生成中，请稍候",
+      "apiKeyRequired": "请先设置图片生成 API Key",
+      "success": "漫画页面生成成功！",
+      "failed": "生成失败: {error}",
+      "downloadStarted": "下载已开始",
+      "noImage": "没有可下载的图片"
+    }
+  },
+  "messages": {
+    "apiKeyNotSet": "请先设置 API Key",
+    "promptRequired": "请输入提示词",
+    "modelRequired": "请选择模型",
+    "imageGenerating": "正在生成图片，请稍候...",
+    "imageGenerated": "图片生成成功！",
+    "imageFailed": "图片生成失败，请重试",
+    "copied": "已复制到剪贴板",
+    "copyFailed": "复制失败",
+    "downloaded": "下载成功",
+    "downloadFailed": "下载失败",
+    "saved": "保存成功",
+    "saveFailed": "保存失败",
+    "deleted": "删除成功",
+    "networkError": "网络错误，请检查网络连接",
+    "uploadSuccess": "上传成功",
+    "uploadFailed": "上传失败",
+    "fileTooLarge": "文件过大，最大支持 {size}MB",
+    "invalidFileType": "不支持的文件类型",
+    "processingImage": "正在处理图片..."
+  },
+  "models": {
+    "gemini-3-pro-image-preview": {
+      "name": "🍌 Nano Banana Pro",
+      "displayName": "60s，gemini-3-pro-image-preview 谷歌原生端点请求，支持多尺寸4K，$0.05/张🔥 官网1/5价格"
+    },
+    "gemini-2.5-flash-image": {
+      "name": "🍌 Nano Banana",
+      "displayName": "15s，gemini-2.5-flash-image 谷歌原生端点请求，支持多宽高比，固定1K分辨率，$0.025/张"
+    },
+    "seedream-4-5-251128": {
+      "name": "SeeDream 4.5",
+      "displayName": "15s出图，即梦海外版seedream-4-5-251128，超清生图编辑，支持2K/4K分辨率，支持URL与Base64输出, $0.045/张"
+    },
+    "sora_image": {
+      "name": "Sora_image",
+      "displayName": "90s出图，Sora网页版出图， 同名 gpt-4o-image，价格最便宜~！$0.01/张【荐】"
+    },
+    "flux-kontext-pro": {
+      "name": "Flux Kontext Pro",
+      "displayName": "15s出图，flux-kontext-pro，只支持英文提示词，高质量图片生成，$0.035/张"
+    },
+    "flux-kontext-max": {
+      "name": "Flux Kontext Max",
+      "displayName": "15s出图，flux-kontext-max，提示词支持中文，超高质量图片编辑。$0.07/张"
+    }
+  },
+  "aspectRatios": {
+    "auto": { "label": "自适应", "description": "智能" },
+    "1:1": { "label": "方形", "description": "常用", "full": "方形 1:1" },
+    "2:3": { "label": "竖版", "description": "经典", "full": "竖版 2:3" },
+    "3:2": { "label": "横版", "description": "经典", "full": "横版 3:2" },
+    "4:3": { "label": "横版", "description": "标准", "full": "横版 4:3" },
+    "3:4": { "label": "竖版", "description": "标准", "full": "竖版 3:4" },
+    "16:9": { "label": "横版", "description": "宽屏", "full": "横版 16:9" },
+    "9:16": { "label": "竖版", "description": "竖屏", "full": "竖版 9:16" },
+    "21:9": { "label": "影院", "description": "超宽屏", "full": "影院 21:9" },
+    "5:4": { "label": "横版", "description": "传统", "full": "横版 5:4" },
+    "4:5": { "label": "竖版", "description": "社媒", "full": "竖版 4:5" },
+    "3:7": { "label": "超窄竖版", "description": "", "full": "超窄竖版 3:7" },
+    "7:3": { "label": "超宽横版", "description": "", "full": "超宽横版 7:3" }
+  },
+  "resolutions": {
+    "1K": { "label": "1K 标准", "description": "高效" },
+    "2K": { "label": "2K 高清", "description": "稍慢速度", "descriptionAlt": "标准分辨率" },
+    "4K": { "label": "4K 超清", "description": "印刷所需", "descriptionAlt": "超高分辨率" }
+  },
+  "templates": {
+    "categories": {
+      "popular": "热门",
+      "ecommerce": "电商",
+      "art": "艺术",
+      "photography": "摄影"
+    }
+  },
+  "activity": {
+    "title": "🎉 新用户专享福利",
+    "subtitle": "每个用户自动赠送 $0.05 美金",
+    "description": "可生成 1 张 Nano Banana Pro 或 5 张 Sora_image",
+    "close": "关闭活动",
+    "recharge": {
+      "title": "充值阶梯加赠活动",
+      "badge": "HOT",
+      "amount": "充值 {amount} 赠送 {bonus}",
+      "viewDetails": "查看详细规则",
+      "benefit1": "首充加赠 1 美金",
+      "benefit2": "100 美金起加赠 10%",
+      "benefit3": "多充多送~"
+    },
+    "buttons": {
+      "register": "立即注册获取福利",
+      "rechargeNow": "立即充值",
+      "close": "关闭",
+      "later": "稍后再说"
+    },
+    "info": {
+      "period": "活动时间: {start} - {end}",
+      "rules": "活动规则",
+      "autoCredit": "赠送额度将自动到账",
+      "disclaimer": "活动最终解释权归平台所有",
+      "note": "*注册后即可在令牌页面查看赠送的免费额度"
+    }
+  },
+  "settingsModal": {
+    "title": "API设置",
+    "selectSite": "选择 API 站点",
+    "enterApiKey": "输入 API Key",
+    "addCustomSite": "添加自定义站点",
+    "howToGet": {
+      "title": "如何获取API Key",
+      "step1": "访问 CATIMATION后台-令牌页面",
+      "step2": "点击\"创建令牌\"按钮",
+      "step3": "填写令牌名称（如：按次计费出图）",
+      "step4": "选择计费模式：按次计费",
+      "step5": "点击创建，复制生成的API Key",
+      "viewExample": "查看创建令牌示例图"
+    },
+    "fields": {
+      "imageApiKey": {
+        "label": "图片生成 API Key（按次计费）",
+        "placeholder": "请输入您的图片生成 API Key",
+        "description": "用于图片生成、编辑等功能"
+      },
+      "visionApiKey": {
+        "label": "图像理解 API Key（按量计费）",
+        "placeholder": "请输入您的图像理解 API Key（可选）",
+        "description": "用于图像理解功能，可选填",
+        "note": "需要在 CATIMATION后台 创建按量计费模式的令牌"
+      }
+    },
+    "buttons": {
+      "save": "保存",
+      "test": "测试连接",
+      "cancel": "取消"
+    },
+    "customSite": {
+      "title": "自定义站点",
+      "name": "站点名称 *",
+      "namePlaceholder": "例如：我的 API 服务",
+      "baseUrl": "Base URL *",
+      "baseURL": "Base URL *",
+      "pathPrefix": "路径前缀（可选）",
+      "apiKey": "默认 API Key（可选）",
+      "description": "描述（可选）",
+      "descriptionPlaceholder": "站点描述",
+      "save": "保存",
+      "cancel": "取消",
+      "editTitle": "编辑自定义站点",
+      "addTitle": "添加自定义站点"
+    },
+    "messages": {
+      "saveSuccess": "设置保存成功",
+      "testSuccess": "连接测试成功",
+      "testFailed": "连接测试失败",
+      "apiKeyRequired": "请输入API Key",
+      "invalidFormat": "API Key 格式不正确"
+    }
+  },
+  "about": {
+    "title": "CATIMATION-Cyberpunk Master - 项目说明",
+    "close": "关闭说明",
+    "closeButton": "我知道了",
+    "aiModel": {
+      "title": "AI模型说明",
+      "nanoBanana": {
+        "name": "Nano Banner",
+        "tag": "新模型",
+        "description": "速度快、一致性好，专为高效图片生成优化，是谷歌 Gemini 2.5 Flash 预览版。"
+      },
+      "gpt4o": {
+        "name": "gpt-4o-image",
+        "description": "效果等于"
+      }
+    },
+    "generationTime": {
+      "title": "生成时间说明",
+      "description": "每张图片 用时不等 Nano Banana、Flux 模型大概很快！ 10s 左右，而gpt-4o-image 模型大概 2 分钟左右，这是正常现象，请耐心等待。",
+      "factors": "生成时间受网络状况、提示词复杂度、服务器负载、官方是否出故障等因素影响。"
+    },
+    "features": {
+      "title": "功能特色",
+      "feature1": "支持单图生成和批量生成",
+      "feature2": "支持参考图（垫图）功能",
+      "feature3": "多种图片尺寸选择",
+      "feature4": "完善的历史记录和下载功能"
+    },
+    "tips": {
+      "title": "使用提示",
+      "tip1": "提示词尽量具体详细，有助于生成更准确的图片",
+      "tip2": "参考图功能可以帮助生成风格一致的作品",
+      "tip3": "批量生成时建议合理设置并发数量",
+      "tip4": "生成过程中请保持页面开启，避免中断生成"
+    },
+    "faq": {
+      "title": "Nano Banana Pro API 常见问题",
+      "description": "是一个强大的图片生成和编辑模型，但有一些内容限制。",
+      "rejectionScenarios": {
+        "title": "常见拒绝场景",
+        "watermark": "去水印：违反内容政策，会被拒绝",
+        "faceSwap": "换脸：涉及隐私和伦理问题，会被拒绝",
+        "nsfw": "NSFW内容：不适当内容会被安全策略拒绝",
+        "knowledge": "知识库限制：仅支持2025年1月之前的内容"
+      },
+      "errorResponse": {
+        "title": "典型错误响应",
+        "description": "当请求被拒绝时，API 通常返回：",
+        "message": "\"I'm just a language model and can't help with that.\"",
+        "note": "本工具会自动识别拒绝原因并在错误弹窗中展示详细信息。"
+      },
+      "knowledgeCutoff": {
+        "title": "知识库截止时间",
+        "date": "截止时间：2025年1月",
+        "example": "示例：无法处理 iPhone 17 等未发布产品，建议使用已存在的产品或通用描述。",
+        "viewDocs": "查看 Google 官方文档"
+      },
+      "viewFullDocs": "查看完整常见问题文档"
+    },
+    "contact": {
+      "title": "产品建议反馈：",
+      "wechat": "微信",
+      "email": "邮箱"
+    }
+  },
+  "footer": {
+    "disclaimer": {
+      "title": "免责说明",
+      "content": "本站仅提供AI图片生成工具服务，用户需遵守相关法律法规，不得生成违法违规内容。生成的图片版权归用户所有，本站不承担任何法律责任。"
+    },
+    "enterprise": {
+      "title": "企业服务",
+      "description": "本工具特别适合行业、渠道方、大型企业内部使用，如需要享受前端定制和独立部署服务的大客户可以联系。",
+      "contact": "联系微信：{wechat}",
+      "contactLabel": "联系微信："
+    },
+    "links": {
+      "title": "友情链接",
+      "docs": "CATIMATION 文档中心",
+      "official": "CATIMATION 官网",
+      "wiki": "飞书 AI 知识库",
+      "changelog": "更新日志"
+    },
+    "resources": "资源",
+    "copyright": "2025 CATIMATION 保留所有权利"
+  },
+  "seo": {
+    "title": "CATIMATION-Cyberpunk Master - 免费在线AI图片生成工具",
+    "description": "CATIMATION-Cyberpunk Master是一款强大的在线AI图片生成工具，支持多种AI模型，包括GPT-4o-image等，轻松创建高质量AI艺术作品。",
+    "keywords": "AI图片生成,AI绘画,DALL·E 3,Stable Diffusion,Midjourney,AI艺术,图片生成器"
+  }
+}
