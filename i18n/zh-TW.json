@@ -924,6 +924,13 @@
       "clickToExpand": "點擊展開/收起",
       "noAnalysis": "未進行圖像分析（使用手動描述）"
     },
+    "assets": {
+      "analysisCard": "圖像分析",
+      "promptCard": "生成提示詞",
+      "copyTooltip": "複製內容",
+      "copySuccess": "已複製到剪貼簿",
+      "copyFailed": "複製失敗"
+    },
     "messages": {
       "uploadFirst": "請先上傳參考圖",
       "generating": "正在生成中，請稍候",

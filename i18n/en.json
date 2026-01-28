@@ -787,6 +787,13 @@
       "clickToExpand": "Click to expand/collapse",
       "noAnalysis": "No image analysis (using manual description)"
     },
+    "assets": {
+      "analysisCard": "Image Analysis",
+      "promptCard": "Generated Prompt",
+      "copyTooltip": "Copy content",
+      "copySuccess": "Copied to clipboard",
+      "copyFailed": "Copy failed"
+    },
     "messages": {
       "uploadFirst": "Please upload a reference image first",
       "generating": "Generation in progress, please wait",

@@ -14,6 +14,8 @@ class DirectorPage {
         this.generatedResult = null;
         this.generatedResults = []; // 多图结果
         this.currentResultIndex = 0; // 当前显示的结果索引
+        this.lastAnalysisResult = null; // 上一次的分析结果（资产）
+        this.lastComicPrompt = null; // 上一次的提示词（资产）
         this.currentMode = 'single'; // 当前模式：single / multi
         this.gallerySelectedImages = []; // 示例图库选中的图片
         this.stateRestored = false; // 标记状态是否已恢复
@@ -1757,6 +1759,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`;
         const analysisTitle = i18n?.t('director.progress.analysisTitle') || '参考图分析结果';
         const promptTitle = i18n?.t('director.progress.promptTitle') || '生成的提示词';
         const clickToExpand = i18n?.t('director.progress.clickToExpand') || '点击展开/收起';
+        const copyTooltip = i18n?.t('director.assets.copyTooltip') || '复制内容';
         
         if (progressArea) {
             progressArea.classList.remove('hidden');
@@ -1775,14 +1778,19 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`;
                     <div class="mt-6 max-w-lg mx-auto space-y-3">
                         <!-- 分析结果面板 -->
                         <div id="directorAnalysisPanel" class="hidden bg-white bg-opacity-5 border border-white border-opacity-10 rounded-lg overflow-hidden">
-                            <div class="flex justify-between items-center cursor-pointer p-3 hover:bg-white hover:bg-opacity-5 transition-colors" onclick="window.directorPage.togglePanel('analysis')">
-                                <span class="text-white text-sm font-medium flex items-center">
+                            <div class="flex justify-between items-center p-3 hover:bg-white hover:bg-opacity-5 transition-colors">
+                                <span class="text-white text-sm font-medium flex items-center cursor-pointer" onclick="window.directorPage.togglePanel('analysis')">
                                     <i class="fas fa-search-plus mr-2 text-blue-400"></i>
                                     ${analysisTitle}
                                 </span>
-                                <div class="flex items-center">
-                                    <span class="text-white text-opacity-50 text-xs mr-2">${clickToExpand}</span>
-                                    <i id="directorAnalysisArrow" class="fas fa-chevron-down text-white text-opacity-50 transition-transform duration-300"></i>
+                                <div class="flex items-center space-x-2">
+                                    <button onclick="event.stopPropagation(); window.directorPage.copyAnalysis(this)" 
+                                            class="text-blue-400 hover:text-blue-300 p-1 rounded transition-colors cursor-pointer" 
+                                            title="${copyTooltip}">
+                                        <i class="fas fa-copy text-sm"></i>
+                                    </button>
+                                    <span class="text-white text-opacity-50 text-xs">${clickToExpand}</span>
+                                    <i id="directorAnalysisArrow" class="fas fa-chevron-down text-white text-opacity-50 transition-transform duration-300 cursor-pointer" onclick="window.directorPage.togglePanel('analysis')"></i>
                                 </div>
                             </div>
                             <div id="directorAnalysisContent" class="max-h-0 overflow-hidden transition-all duration-300 ease-out">
@@ -1794,14 +1802,19 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`;
                         
                         <!-- 提示词面板 -->
                         <div id="directorPromptPanel" class="hidden bg-white bg-opacity-5 border border-white border-opacity-10 rounded-lg overflow-hidden">
-                            <div class="flex justify-between items-center cursor-pointer p-3 hover:bg-white hover:bg-opacity-5 transition-colors" onclick="window.directorPage.togglePanel('prompt')">
-                                <span class="text-white text-sm font-medium flex items-center">
+                            <div class="flex justify-between items-center p-3 hover:bg-white hover:bg-opacity-5 transition-colors">
+                                <span class="text-white text-sm font-medium flex items-center cursor-pointer" onclick="window.directorPage.togglePanel('prompt')">
                                     <i class="fas fa-magic mr-2 text-purple-400"></i>
                                     ${promptTitle}
                                 </span>
-                                <div class="flex items-center">
-                                    <span class="text-white text-opacity-50 text-xs mr-2">${clickToExpand}</span>
-                                    <i id="directorPromptArrow" class="fas fa-chevron-down text-white text-opacity-50 transition-transform duration-300"></i>
+                                <div class="flex items-center space-x-2">
+                                    <button onclick="event.stopPropagation(); window.directorPage.copyPrompt(this)" 
+                                            class="text-purple-400 hover:text-purple-300 p-1 rounded transition-colors cursor-pointer" 
+                                            title="${copyTooltip}">
+                                        <i class="fas fa-copy text-sm"></i>
+                                    </button>
+                                    <span class="text-white text-opacity-50 text-xs">${clickToExpand}</span>
+                                    <i id="directorPromptArrow" class="fas fa-chevron-down text-white text-opacity-50 transition-transform duration-300 cursor-pointer" onclick="window.directorPage.togglePanel('prompt')"></i>
                                 </div>
                             </div>
                             <div id="directorPromptContent" class="max-h-0 overflow-hidden transition-all duration-300 ease-out">
@@ -1844,10 +1857,139 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`;
         if (resultArea) {
             resultArea.classList.remove('hidden');
         }
+        
+        // 渲染资产区域（分析结果和提示词卡片）
+        this.renderAssetsSection();
+    }
+
+    // 渲染资产卡片区（在结果区域显示分析结果和提示词）
+    renderAssetsSection() {
+        const assetsSection = document.getElementById('directorAssetsSection');
+        if (!assetsSection) {
+            console.warn('[DirectorPage] 资产区域元素不存在');
+            return;
+        }
+        
+        // 如果没有任何资产数据，隐藏区域
+        if (!this.lastAnalysisResult && !this.lastComicPrompt) {
+            assetsSection.classList.add('hidden');
+            return;
+        }
+        
+        const i18n = window.i18n;
+        const analysisTitle = i18n?.t('director.assets.analysisCard') || '图像分析';
+        const promptTitle = i18n?.t('director.assets.promptCard') || '生成提示词';
+        const copyTooltip = i18n?.t('director.assets.copyTooltip') || '复制内容';
+        const expandText = i18n?.t('director.progress.clickToExpand') || '点击展开/收起';
+        
+        let html = '';
+        
+        // 分析结果卡片
+        if (this.lastAnalysisResult) {
+            html += `
+                <div class="bg-[#27272A] border border-white border-opacity-10 rounded-lg overflow-hidden">
+                    <div class="flex justify-between items-center p-3 hover:bg-white hover:bg-opacity-5 transition-colors">
+                        <span class="text-white text-sm font-medium flex items-center cursor-pointer" onclick="window.directorPage.toggleAssetPanel('analysis')">
+                            <i class="fas fa-search-plus mr-2 text-blue-400"></i>
+                            ${analysisTitle}
+                        </span>
+                        <div class="flex items-center space-x-2">
+                            <button onclick="event.stopPropagation(); window.directorPage.copyAnalysis(this)" 
+                                    class="text-blue-400 hover:text-blue-300 p-1 rounded transition-colors cursor-pointer" 
+                                    title="${copyTooltip}">
+                                <i class="fas fa-copy text-sm"></i>
+                            </button>
+                            <span class="text-white text-opacity-50 text-xs">${expandText}</span>
+                            <i id="directorAssetAnalysisArrow" class="fas fa-chevron-down text-white text-opacity-50 transition-transform duration-300 cursor-pointer" onclick="window.directorPage.toggleAssetPanel('analysis')"></i>
+                        </div>
+                    </div>
+                    <div id="directorAssetAnalysisContent" class="max-h-0 overflow-hidden transition-all duration-300 ease-out">
+                        <div class="p-3 pt-0 border-t border-white border-opacity-10">
+                            <div class="text-white text-opacity-80 text-sm font-mono whitespace-pre-wrap text-left max-h-64 overflow-y-auto">${this.escapeHtml(this.lastAnalysisResult)}</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // 提示词卡片
+        if (this.lastComicPrompt) {
+            html += `
+                <div class="bg-[#27272A] border border-white border-opacity-10 rounded-lg overflow-hidden">
+                    <div class="flex justify-between items-center p-3 hover:bg-white hover:bg-opacity-5 transition-colors">
+                        <span class="text-white text-sm font-medium flex items-center cursor-pointer" onclick="window.directorPage.toggleAssetPanel('prompt')">
+                            <i class="fas fa-magic mr-2 text-purple-400"></i>
+                            ${promptTitle}
+                        </span>
+                        <div class="flex items-center space-x-2">
+                            <button onclick="event.stopPropagation(); window.directorPage.copyPrompt(this)" 
+                                    class="text-purple-400 hover:text-purple-300 p-1 rounded transition-colors cursor-pointer" 
+                                    title="${copyTooltip}">
+                                <i class="fas fa-copy text-sm"></i>
+                            </button>
+                            <span class="text-white text-opacity-50 text-xs">${expandText}</span>
+                            <i id="directorAssetPromptArrow" class="fas fa-chevron-down text-white text-opacity-50 transition-transform duration-300 cursor-pointer" onclick="window.directorPage.toggleAssetPanel('prompt')"></i>
+                        </div>
+                    </div>
+                    <div id="directorAssetPromptContent" class="max-h-0 overflow-hidden transition-all duration-300 ease-out">
+                        <div class="p-3 pt-0 border-t border-white border-opacity-10">
+                            <div class="text-white text-opacity-80 text-sm font-mono whitespace-pre-wrap text-left max-h-64 overflow-y-auto">${this.escapeHtml(this.lastComicPrompt)}</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        assetsSection.innerHTML = html;
+        assetsSection.classList.remove('hidden');
+        
+        console.log('[DirectorPage] 资产区域已渲染:', {
+            hasAnalysis: !!this.lastAnalysisResult,
+            hasPrompt: !!this.lastComicPrompt
+        });
+    }
+
+    // 切换资产面板展开/折叠（结果区域的卡片）
+    toggleAssetPanel(panelType) {
+        const contentId = panelType === 'analysis' ? 'directorAssetAnalysisContent' : 'directorAssetPromptContent';
+        const arrowId = panelType === 'analysis' ? 'directorAssetAnalysisArrow' : 'directorAssetPromptArrow';
+        
+        const content = document.getElementById(contentId);
+        const arrow = document.getElementById(arrowId);
+        
+        if (!content || !arrow) {
+            console.warn('[DirectorPage] 资产面板元素不存在:', panelType);
+            return;
+        }
+        
+        const isExpanded = content.classList.contains('max-h-64');
+        
+        if (isExpanded) {
+            // 收起
+            content.classList.remove('max-h-64');
+            content.classList.add('max-h-0');
+            arrow.style.transform = 'rotate(0deg)';
+        } else {
+            // 展开
+            content.classList.remove('max-h-0');
+            content.classList.add('max-h-64');
+            arrow.style.transform = 'rotate(180deg)';
+        }
+    }
+
+    // HTML 转义（防止 XSS）
+    escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
 
     // 显示分析结果
     showAnalysisResult(text) {
+        // 存储分析结果到实例属性（作为资产保留）
+        this.lastAnalysisResult = text;
+        
         const panel = document.getElementById('directorAnalysisPanel');
         const textEl = document.getElementById('directorAnalysisText');
         
@@ -1875,6 +2017,9 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`;
 
     // 显示提示词结果
     showPromptResult(text) {
+        // 存储提示词到实例属性（作为资产保留）
+        this.lastComicPrompt = text;
+        
         const panel = document.getElementById('directorPromptPanel');
         const textEl = document.getElementById('directorPromptText');
         
@@ -1924,6 +2069,72 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`;
         }
         
         console.log('[DirectorPage] 切换面板:', panelType, isExpanded ? '收起' : '展开');
+    }
+
+    // 复制分析结果到剪贴板
+    async copyAnalysis(buttonEl) {
+        if (!this.lastAnalysisResult) {
+            this.app.showToast('没有可复制的分析结果', 'warning');
+            return;
+        }
+        
+        try {
+            await navigator.clipboard.writeText(this.lastAnalysisResult);
+            const i18n = window.i18n;
+            const successMsg = i18n?.t('director.assets.copySuccess') || '已复制到剪贴板';
+            this.app.showToast(successMsg, 'success');
+            
+            // 按钮图标动画反馈
+            if (buttonEl) {
+                const icon = buttonEl.querySelector('i');
+                if (icon) {
+                    icon.classList.remove('fa-copy');
+                    icon.classList.add('fa-check');
+                    setTimeout(() => {
+                        icon.classList.remove('fa-check');
+                        icon.classList.add('fa-copy');
+                    }, 1500);
+                }
+            }
+        } catch (error) {
+            console.error('复制失败:', error);
+            const i18n = window.i18n;
+            const failMsg = i18n?.t('director.assets.copyFailed') || '复制失败';
+            this.app.showToast(failMsg, 'error');
+        }
+    }
+
+    // 复制提示词到剪贴板
+    async copyPrompt(buttonEl) {
+        if (!this.lastComicPrompt) {
+            this.app.showToast('没有可复制的提示词', 'warning');
+            return;
+        }
+        
+        try {
+            await navigator.clipboard.writeText(this.lastComicPrompt);
+            const i18n = window.i18n;
+            const successMsg = i18n?.t('director.assets.copySuccess') || '已复制到剪贴板';
+            this.app.showToast(successMsg, 'success');
+            
+            // 按钮图标动画反馈
+            if (buttonEl) {
+                const icon = buttonEl.querySelector('i');
+                if (icon) {
+                    icon.classList.remove('fa-copy');
+                    icon.classList.add('fa-check');
+                    setTimeout(() => {
+                        icon.classList.remove('fa-check');
+                        icon.classList.add('fa-copy');
+                    }, 1500);
+                }
+            }
+        } catch (error) {
+            console.error('复制失败:', error);
+            const i18n = window.i18n;
+            const failMsg = i18n?.t('director.assets.copyFailed') || '复制失败';
+            this.app.showToast(failMsg, 'error');
+        }
     }
 
     // 显示结果（单图模式）

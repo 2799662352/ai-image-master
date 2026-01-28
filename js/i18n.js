@@ -217,7 +217,7 @@ class I18n {
         this.cacheConfig = {
             enabled: true,
             prefix: 'i18n_cache_',
-            version: '1.4.0', // 更新版本号会强制刷新缓存
+            version: '1.5.0', // 更新版本号会强制刷新缓存
             expirationTime: 7 * 24 * 60 * 60 * 1000 // 7天过期
         };
 

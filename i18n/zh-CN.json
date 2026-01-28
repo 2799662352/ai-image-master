@@ -763,6 +763,13 @@
       "clickToExpand": "点击展开/收起",
       "noAnalysis": "未进行图像分析（使用手动描述）"
     },
+    "assets": {
+      "analysisCard": "图像分析",
+      "promptCard": "生成提示词",
+      "copyTooltip": "复制内容",
+      "copySuccess": "已复制到剪贴板",
+      "copyFailed": "复制失败"
+    },
     "messages": {
       "uploadFirst": "请先上传参考图",
       "generating": "正在生成中，请稍候",
