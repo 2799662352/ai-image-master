@@ -768,7 +768,10 @@
       "promptCard": "生成提示词",
       "copyTooltip": "复制内容",
       "copySuccess": "已复制到剪贴板",
-      "copyFailed": "复制失败"
+      "copyFailed": "复制失败",
+      "clickToView": "点击查看",
+      "copyBtn": "复制",
+      "closeBtn": "关闭"
     },
     "messages": {
       "uploadFirst": "请先上传参考图",

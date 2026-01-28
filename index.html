@@ -2229,6 +2229,47 @@
 
     </main> <!-- 主要内容区域结束 -->
 
+    <!-- 导演模式资产查看弹窗 -->
+    <div id="directorAssetModal" class="fixed inset-0 bg-black bg-opacity-60 hidden z-[60000] flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="bg-[#1a1a1a] bg-opacity-95 border border-white border-opacity-20 rounded-lg w-full max-w-2xl mx-4 max-h-[85vh] overflow-hidden flex flex-col shadow-2xl"
+             style="backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);">
+            <!-- 弹窗头部 -->
+            <div class="px-5 py-4 border-b border-white border-opacity-10 flex items-center justify-between">
+                <h3 id="assetModalTitle" class="text-lg font-bold text-white flex items-center">
+                    <i id="assetModalIcon" class="fas fa-search-plus mr-2 text-blue-400"></i>
+                    <span id="assetModalTitleText">图像分析</span>
+                </h3>
+                <div class="flex items-center space-x-3">
+                    <button id="assetModalCopyBtn" 
+                            onclick="window.directorPage.copyModalContent()" 
+                            class="flex items-center space-x-2 bg-white bg-opacity-10 hover:bg-opacity-20 text-white px-4 py-2 rounded-lg transition-all duration-200 cursor-pointer"
+                            title="复制内容">
+                        <i class="fas fa-copy"></i>
+                        <span data-i18n="director.assets.copyBtn">复制</span>
+                    </button>
+                    <button id="closeAssetModalX" 
+                            onclick="window.directorPage.closeAssetModal()" 
+                            class="text-white text-opacity-60 hover:text-opacity-100 transition-colors p-2 cursor-pointer">
+                        <i class="fas fa-times text-xl"></i>
+                    </button>
+                </div>
+            </div>
+            
+            <!-- 弹窗内容 -->
+            <div class="flex-1 overflow-y-auto p-5">
+                <div id="assetModalContent" class="text-white text-opacity-90 text-sm font-mono whitespace-pre-wrap leading-relaxed select-text"></div>
+            </div>
+            
+            <!-- 弹窗底部 -->
+            <div class="px-5 py-4 border-t border-white border-opacity-10 flex justify-end">
+                <button onclick="window.directorPage.closeAssetModal()" 
+                        class="bg-white bg-opacity-10 hover:bg-opacity-20 text-white py-2 px-6 rounded-lg transition-all duration-200 cursor-pointer">
+                    <span data-i18n="director.assets.closeBtn">关闭</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- 导演模式示例图库模态框 -->
     <div id="directorGalleryModal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-[50000] flex items-center justify-center p-4">
         <div class="bg-white rounded-none w-full max-w-4xl mx-4 max-h-[90vh] overflow-hidden flex flex-col">

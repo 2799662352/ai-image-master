@@ -1758,8 +1758,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`;
         const i18n = window.i18n;
         const analysisTitle = i18n?.t('director.progress.analysisTitle') || '参考图分析结果';
         const promptTitle = i18n?.t('director.progress.promptTitle') || '生成的提示词';
-        const clickToExpand = i18n?.t('director.progress.clickToExpand') || '点击展开/收起';
-        const copyTooltip = i18n?.t('director.assets.copyTooltip') || '复制内容';
+        const clickToView = i18n?.t('director.assets.clickToView') || '点击查看';
         
         if (progressArea) {
             progressArea.classList.remove('hidden');
@@ -1774,52 +1773,34 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`;
                     </div>
                     <p class="text-white opacity-50 text-sm mt-2" id="directorProgressStep">步骤 1/4</p>
                     
-                    <!-- 可折叠面板容器 -->
+                    <!-- 资产面板容器（点击打开弹窗） -->
                     <div class="mt-6 max-w-lg mx-auto space-y-3">
                         <!-- 分析结果面板 -->
-                        <div id="directorAnalysisPanel" class="hidden bg-white bg-opacity-5 border border-white border-opacity-10 rounded-lg overflow-hidden">
-                            <div class="flex justify-between items-center p-3 hover:bg-white hover:bg-opacity-5 transition-colors">
-                                <span class="text-white text-sm font-medium flex items-center cursor-pointer" onclick="window.directorPage.togglePanel('analysis')">
+                        <div id="directorAnalysisPanel" class="hidden bg-white bg-opacity-5 border border-white border-opacity-10 rounded-lg overflow-hidden cursor-pointer hover:bg-white hover:bg-opacity-10 transition-all duration-200"
+                             onclick="window.directorPage.showAssetModal('analysis')">
+                            <div class="flex justify-between items-center p-3">
+                                <span class="text-white text-sm font-medium flex items-center">
                                     <i class="fas fa-search-plus mr-2 text-blue-400"></i>
                                     ${analysisTitle}
                                 </span>
                                 <div class="flex items-center space-x-2">
-                                    <button onclick="event.stopPropagation(); window.directorPage.copyAnalysis(this)" 
-                                            class="text-blue-400 hover:text-blue-300 p-1 rounded transition-colors cursor-pointer" 
-                                            title="${copyTooltip}">
-                                        <i class="fas fa-copy text-sm"></i>
-                                    </button>
-                                    <span class="text-white text-opacity-50 text-xs">${clickToExpand}</span>
-                                    <i id="directorAnalysisArrow" class="fas fa-chevron-down text-white text-opacity-50 transition-transform duration-300 cursor-pointer" onclick="window.directorPage.togglePanel('analysis')"></i>
-                                </div>
-                            </div>
-                            <div id="directorAnalysisContent" class="max-h-0 overflow-hidden transition-all duration-300 ease-out">
-                                <div class="p-3 pt-0 border-t border-white border-opacity-10">
-                                    <div id="directorAnalysisText" class="text-white text-opacity-80 text-sm font-mono whitespace-pre-wrap text-left max-h-48 overflow-y-auto"></div>
+                                    <span class="text-white text-opacity-50 text-xs">${clickToView}</span>
+                                    <i class="fas fa-external-link-alt text-white text-opacity-50 text-xs"></i>
                                 </div>
                             </div>
                         </div>
                         
                         <!-- 提示词面板 -->
-                        <div id="directorPromptPanel" class="hidden bg-white bg-opacity-5 border border-white border-opacity-10 rounded-lg overflow-hidden">
-                            <div class="flex justify-between items-center p-3 hover:bg-white hover:bg-opacity-5 transition-colors">
-                                <span class="text-white text-sm font-medium flex items-center cursor-pointer" onclick="window.directorPage.togglePanel('prompt')">
+                        <div id="directorPromptPanel" class="hidden bg-white bg-opacity-5 border border-white border-opacity-10 rounded-lg overflow-hidden cursor-pointer hover:bg-white hover:bg-opacity-10 transition-all duration-200"
+                             onclick="window.directorPage.showAssetModal('prompt')">
+                            <div class="flex justify-between items-center p-3">
+                                <span class="text-white text-sm font-medium flex items-center">
                                     <i class="fas fa-magic mr-2 text-purple-400"></i>
                                     ${promptTitle}
                                 </span>
                                 <div class="flex items-center space-x-2">
-                                    <button onclick="event.stopPropagation(); window.directorPage.copyPrompt(this)" 
-                                            class="text-purple-400 hover:text-purple-300 p-1 rounded transition-colors cursor-pointer" 
-                                            title="${copyTooltip}">
-                                        <i class="fas fa-copy text-sm"></i>
-                                    </button>
-                                    <span class="text-white text-opacity-50 text-xs">${clickToExpand}</span>
-                                    <i id="directorPromptArrow" class="fas fa-chevron-down text-white text-opacity-50 transition-transform duration-300 cursor-pointer" onclick="window.directorPage.togglePanel('prompt')"></i>
-                                </div>
-                            </div>
-                            <div id="directorPromptContent" class="max-h-0 overflow-hidden transition-all duration-300 ease-out">
-                                <div class="p-3 pt-0 border-t border-white border-opacity-10">
-                                    <div id="directorPromptText" class="text-white text-opacity-80 text-sm font-mono whitespace-pre-wrap text-left max-h-48 overflow-y-auto"></div>
+                                    <span class="text-white text-opacity-50 text-xs">${clickToView}</span>
+                                    <i class="fas fa-external-link-alt text-white text-opacity-50 text-xs"></i>
                                 </div>
                             </div>
                         </div>
@@ -1879,61 +1860,42 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`;
         const i18n = window.i18n;
         const analysisTitle = i18n?.t('director.assets.analysisCard') || '图像分析';
         const promptTitle = i18n?.t('director.assets.promptCard') || '生成提示词';
-        const copyTooltip = i18n?.t('director.assets.copyTooltip') || '复制内容';
-        const expandText = i18n?.t('director.progress.clickToExpand') || '点击展开/收起';
+        const clickToView = i18n?.t('director.assets.clickToView') || '点击查看';
         
         let html = '';
         
-        // 分析结果卡片
+        // 分析结果卡片（点击打开弹窗）
         if (this.lastAnalysisResult) {
             html += `
-                <div class="bg-[#27272A] border border-white border-opacity-10 rounded-lg overflow-hidden">
-                    <div class="flex justify-between items-center p-3 hover:bg-white hover:bg-opacity-5 transition-colors">
-                        <span class="text-white text-sm font-medium flex items-center cursor-pointer" onclick="window.directorPage.toggleAssetPanel('analysis')">
+                <div class="bg-[#27272A] border border-white border-opacity-10 rounded-lg overflow-hidden cursor-pointer hover:bg-white hover:bg-opacity-5 transition-all duration-200"
+                     onclick="window.directorPage.showAssetModal('analysis')">
+                    <div class="flex justify-between items-center p-3">
+                        <span class="text-white text-sm font-medium flex items-center">
                             <i class="fas fa-search-plus mr-2 text-blue-400"></i>
                             ${analysisTitle}
                         </span>
                         <div class="flex items-center space-x-2">
-                            <button onclick="event.stopPropagation(); window.directorPage.copyAnalysis(this)" 
-                                    class="text-blue-400 hover:text-blue-300 p-1 rounded transition-colors cursor-pointer" 
-                                    title="${copyTooltip}">
-                                <i class="fas fa-copy text-sm"></i>
-                            </button>
-                            <span class="text-white text-opacity-50 text-xs">${expandText}</span>
-                            <i id="directorAssetAnalysisArrow" class="fas fa-chevron-down text-white text-opacity-50 transition-transform duration-300 cursor-pointer" onclick="window.directorPage.toggleAssetPanel('analysis')"></i>
-                        </div>
-                    </div>
-                    <div id="directorAssetAnalysisContent" class="max-h-0 overflow-hidden transition-all duration-300 ease-out">
-                        <div class="p-3 pt-0 border-t border-white border-opacity-10">
-                            <div class="text-white text-opacity-80 text-sm font-mono whitespace-pre-wrap text-left max-h-64 overflow-y-auto">${this.escapeHtml(this.lastAnalysisResult)}</div>
+                            <span class="text-white text-opacity-50 text-xs">${clickToView}</span>
+                            <i class="fas fa-external-link-alt text-white text-opacity-50 text-xs"></i>
                         </div>
                     </div>
                 </div>
             `;
         }
         
-        // 提示词卡片
+        // 提示词卡片（点击打开弹窗）
         if (this.lastComicPrompt) {
             html += `
-                <div class="bg-[#27272A] border border-white border-opacity-10 rounded-lg overflow-hidden">
-                    <div class="flex justify-between items-center p-3 hover:bg-white hover:bg-opacity-5 transition-colors">
-                        <span class="text-white text-sm font-medium flex items-center cursor-pointer" onclick="window.directorPage.toggleAssetPanel('prompt')">
+                <div class="bg-[#27272A] border border-white border-opacity-10 rounded-lg overflow-hidden cursor-pointer hover:bg-white hover:bg-opacity-5 transition-all duration-200"
+                     onclick="window.directorPage.showAssetModal('prompt')">
+                    <div class="flex justify-between items-center p-3">
+                        <span class="text-white text-sm font-medium flex items-center">
                             <i class="fas fa-magic mr-2 text-purple-400"></i>
                             ${promptTitle}
                         </span>
                         <div class="flex items-center space-x-2">
-                            <button onclick="event.stopPropagation(); window.directorPage.copyPrompt(this)" 
-                                    class="text-purple-400 hover:text-purple-300 p-1 rounded transition-colors cursor-pointer" 
-                                    title="${copyTooltip}">
-                                <i class="fas fa-copy text-sm"></i>
-                            </button>
-                            <span class="text-white text-opacity-50 text-xs">${expandText}</span>
-                            <i id="directorAssetPromptArrow" class="fas fa-chevron-down text-white text-opacity-50 transition-transform duration-300 cursor-pointer" onclick="window.directorPage.toggleAssetPanel('prompt')"></i>
-                        </div>
-                    </div>
-                    <div id="directorAssetPromptContent" class="max-h-0 overflow-hidden transition-all duration-300 ease-out">
-                        <div class="p-3 pt-0 border-t border-white border-opacity-10">
-                            <div class="text-white text-opacity-80 text-sm font-mono whitespace-pre-wrap text-left max-h-64 overflow-y-auto">${this.escapeHtml(this.lastComicPrompt)}</div>
+                            <span class="text-white text-opacity-50 text-xs">${clickToView}</span>
+                            <i class="fas fa-external-link-alt text-white text-opacity-50 text-xs"></i>
                         </div>
                     </div>
                 </div>
@@ -1985,24 +1947,120 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`;
         return div.innerHTML;
     }
 
+    // 显示资产弹窗
+    showAssetModal(type) {
+        const modal = document.getElementById('directorAssetModal');
+        const titleIcon = document.getElementById('assetModalIcon');
+        const titleText = document.getElementById('assetModalTitleText');
+        const content = document.getElementById('assetModalContent');
+        
+        if (!modal || !content) {
+            console.warn('[DirectorPage] 资产弹窗元素不存在');
+            return;
+        }
+        
+        const i18n = window.i18n;
+        
+        // 设置当前显示的资产类型
+        this.currentModalType = type;
+        
+        if (type === 'analysis') {
+            titleIcon.className = 'fas fa-search-plus mr-2 text-blue-400';
+            titleText.textContent = i18n?.t('director.assets.analysisCard') || '图像分析';
+            content.textContent = this.lastAnalysisResult || (i18n?.t('director.progress.noAnalysis') || '未进行图像分析');
+        } else if (type === 'prompt') {
+            titleIcon.className = 'fas fa-magic mr-2 text-purple-400';
+            titleText.textContent = i18n?.t('director.assets.promptCard') || '生成提示词';
+            content.textContent = this.lastComicPrompt || '';
+        }
+        
+        // 显示弹窗
+        modal.classList.remove('hidden');
+        
+        // 添加 ESC 键关闭
+        this._modalEscHandler = (e) => {
+            if (e.key === 'Escape') {
+                this.closeAssetModal();
+            }
+        };
+        document.addEventListener('keydown', this._modalEscHandler);
+        
+        // 点击背景关闭
+        modal.onclick = (e) => {
+            if (e.target === modal) {
+                this.closeAssetModal();
+            }
+        };
+        
+        console.log('[DirectorPage] 打开资产弹窗:', type);
+    }
+
+    // 关闭资产弹窗
+    closeAssetModal() {
+        const modal = document.getElementById('directorAssetModal');
+        if (modal) {
+            modal.classList.add('hidden');
+        }
+        
+        // 移除 ESC 键监听
+        if (this._modalEscHandler) {
+            document.removeEventListener('keydown', this._modalEscHandler);
+            this._modalEscHandler = null;
+        }
+        
+        console.log('[DirectorPage] 关闭资产弹窗');
+    }
+
+    // 复制弹窗内容
+    async copyModalContent() {
+        const content = this.currentModalType === 'analysis' 
+            ? this.lastAnalysisResult 
+            : this.lastComicPrompt;
+        
+        if (!content) {
+            this.app.showToast('没有可复制的内容', 'warning');
+            return;
+        }
+        
+        try {
+            await navigator.clipboard.writeText(content);
+            const i18n = window.i18n;
+            const successMsg = i18n?.t('director.assets.copySuccess') || '已复制到剪贴板';
+            this.app.showToast(successMsg, 'success');
+            
+            // 按钮图标动画反馈
+            const copyBtn = document.getElementById('assetModalCopyBtn');
+            if (copyBtn) {
+                const icon = copyBtn.querySelector('i');
+                if (icon) {
+                    icon.classList.remove('fa-copy');
+                    icon.classList.add('fa-check');
+                    setTimeout(() => {
+                        icon.classList.remove('fa-check');
+                        icon.classList.add('fa-copy');
+                    }, 1500);
+                }
+            }
+        } catch (error) {
+            console.error('复制失败:', error);
+            const i18n = window.i18n;
+            const failMsg = i18n?.t('director.assets.copyFailed') || '复制失败';
+            this.app.showToast(failMsg, 'error');
+        }
+    }
+
     // 显示分析结果
     showAnalysisResult(text) {
         // 存储分析结果到实例属性（作为资产保留）
         this.lastAnalysisResult = text;
         
         const panel = document.getElementById('directorAnalysisPanel');
-        const textEl = document.getElementById('directorAnalysisText');
         
-        if (!panel || !textEl) {
+        if (!panel) {
             console.warn('[DirectorPage] 分析结果面板元素不存在');
             return;
         }
         
-        // 如果没有分析结果，显示提示信息
-        const i18n = window.i18n;
-        const noAnalysis = i18n?.t('director.progress.noAnalysis') || '未进行图像分析（使用手动描述）';
-        
-        textEl.textContent = text || noAnalysis;
         panel.classList.remove('hidden');
         
         // 添加淡入动画
@@ -2012,7 +2070,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`;
             panel.style.opacity = '1';
         });
         
-        console.log('[DirectorPage] 显示分析结果:', text?.substring(0, 100) + '...');
+        console.log('[DirectorPage] 显示分析结果面板（点击查看完整内容）');
     }
 
     // 显示提示词结果
@@ -2021,14 +2079,12 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`;
         this.lastComicPrompt = text;
         
         const panel = document.getElementById('directorPromptPanel');
-        const textEl = document.getElementById('directorPromptText');
         
-        if (!panel || !textEl) {
+        if (!panel) {
             console.warn('[DirectorPage] 提示词面板元素不存在');
             return;
         }
         
-        textEl.textContent = text || '';
         panel.classList.remove('hidden');
         
         // 添加淡入动画
@@ -2038,7 +2094,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`;
             panel.style.opacity = '1';
         });
         
-        console.log('[DirectorPage] 显示提示词:', text?.substring(0, 100) + '...');
+        console.log('[DirectorPage] 显示提示词面板（点击查看完整内容）');
     }
 
     // 切换面板展开/折叠

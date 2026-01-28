@@ -929,7 +929,10 @@
       "promptCard": "生成提示詞",
       "copyTooltip": "複製內容",
       "copySuccess": "已複製到剪貼簿",
-      "copyFailed": "複製失敗"
+      "copyFailed": "複製失敗",
+      "clickToView": "點擊查看",
+      "copyBtn": "複製",
+      "closeBtn": "關閉"
     },
     "messages": {
       "uploadFirst": "請先上傳參考圖",
