@@ -217,7 +217,7 @@ class I18n {
         this.cacheConfig = {
             enabled: true,
             prefix: 'i18n_cache_',
-            version: '1.2.0', // 更新版本号会强制刷新缓存
+            version: '1.3.0', // 更新版本号会强制刷新缓存
             expirationTime: 7 * 24 * 60 * 60 * 1000 // 7天过期
         };
 
@@ -229,6 +229,29 @@ class I18n {
 
         // 缺失翻译键记录（用于调试）
         this.missingKeys = new Set();
+
+        // 计算并缓存 i18n 文件的绝对基础路径（防止路径污染）
+        this.i18nBasePath = this._calculateBasePath();
+    }
+
+    /**
+     * 计算 i18n 文件的绝对基础路径
+     * 在构造函数中调用一次，后续复用，避免路径被污染
+     */
+    _calculateBasePath() {
+        if (window.location.protocol === 'file:') {
+            // Electron file:// 协议：从当前 URL 提取目录路径
+            const href = window.location.href;
+            // 移除文件名（如 index.html），获取目录路径
+            const lastSlash = href.lastIndexOf('/');
+            const dir = href.substring(0, lastSlash);
+            const basePath = `${dir}/i18n/`;
+            console.log(`[i18n] Calculated base path: ${basePath}`);
+            return basePath;
+        } else {
+            // Web 环境使用绝对路径
+            return '/i18n/';
+        }
     }
 
     /**
@@ -399,9 +422,10 @@ class I18n {
         try {
             // 添加时间戳防止浏览器缓存
             const cacheBuster = `?v=${Date.now()}`;
-            // 使用相对路径，兼容 Electron 和 Web 环境
-            const basePath = window.location.protocol === 'file:' ? './i18n/' : '/i18n/';
-            const response = await fetch(`${basePath}${lang}.json${cacheBuster}`);
+            // 使用构造时计算的绝对路径，避免路径污染
+            const url = `${this.i18nBasePath}${lang}.json${cacheBuster}`;
+            console.log(`[i18n] Fetching: ${url}`);
+            const response = await fetch(url);
             if (!response.ok) {
                 throw new Error(`Failed to load language file: ${lang}`);
             }
