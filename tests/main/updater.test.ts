@@ -1,43 +1,48 @@
 // tests/main/updater.test.ts
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
-// Mock electron-updater
-const mockAutoUpdater = {
-  autoDownload: false,
-  autoInstallOnAppQuit: false,
-  autoRunAppAfterInstall: false,
-  allowPrerelease: false,
-  allowDowngrade: false,
-  setFeedURL: vi.fn(),
-  checkForUpdates: vi.fn().mockResolvedValue({
-    updateInfo: { version: '2.0.0' }
-  }),
-  downloadUpdate: vi.fn().mockResolvedValue(undefined),
-  quitAndInstall: vi.fn(),
-  on: vi.fn()
-}
+// Use vi.hoisted to create mocks that are hoisted along with vi.mock
+const { mockAutoUpdater, mockIpcMain, mockApp, mockBrowserWindow } = vi.hoisted(() => {
+  const mockAutoUpdater = {
+    autoDownload: false,
+    autoInstallOnAppQuit: false,
+    autoRunAppAfterInstall: false,
+    allowPrerelease: false,
+    allowDowngrade: false,
+    setFeedURL: vi.fn(),
+    checkForUpdates: vi.fn().mockResolvedValue({
+      updateInfo: { version: '2.0.0' }
+    }),
+    downloadUpdate: vi.fn().mockResolvedValue(undefined),
+    quitAndInstall: vi.fn(),
+    on: vi.fn()
+  }
 
+  const mockIpcMain = {
+    handle: vi.fn()
+  }
+
+  const mockApp = {
+    getVersion: vi.fn().mockReturnValue('1.0.0')
+  }
+
+  const mockBrowserWindow = {
+    webContents: {
+      send: vi.fn()
+    },
+    isDestroyed: vi.fn().mockReturnValue(false)
+  }
+
+  return { mockAutoUpdater, mockIpcMain, mockApp, mockBrowserWindow }
+})
+
+// Mock electron-updater
 vi.mock('electron-updater', () => ({
   autoUpdater: mockAutoUpdater,
   default: mockAutoUpdater
 }))
 
 // Mock electron
-const mockIpcMain = {
-  handle: vi.fn()
-}
-
-const mockApp = {
-  getVersion: vi.fn().mockReturnValue('1.0.0')
-}
-
-const mockBrowserWindow = {
-  webContents: {
-    send: vi.fn()
-  },
-  isDestroyed: vi.fn().mockReturnValue(false)
-}
-
 vi.mock('electron', () => ({
   ipcMain: mockIpcMain,
   app: mockApp,
