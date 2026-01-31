@@ -69,6 +69,9 @@ describe('SiteManager', () => {
     }
 
     vi.clearAllMocks()
+    
+    // Mock window.alert for validation tests (after clearAllMocks)
+    window.alert = vi.fn()
 
     manager = createSiteManager({
       showToast: vi.fn(),
@@ -179,18 +182,20 @@ describe('SiteManager', () => {
 
   describe('saveFromModal', () => {
     it('should validate required fields', () => {
-      const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
+      const alertMock = vi.fn()
+      vi.stubGlobal('alert', alertMock)
 
       const result = manager.saveFromModal()
 
       expect(result).toBe(false)
-      expect(alertSpy).toHaveBeenCalledWith('请输入站点名称')
+      expect(alertMock).toHaveBeenCalledWith('请输入站点名称')
 
-      alertSpy.mockRestore()
+      vi.unstubAllGlobals()
     })
 
     it('should validate URL format', () => {
-      const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
+      const alertMock = vi.fn()
+      vi.stubGlobal('alert', alertMock)
 
       const nameInput = document.getElementById('customSiteName') as HTMLInputElement
       const urlInput = document.getElementById('customSiteBaseURL') as HTMLInputElement
@@ -200,9 +205,9 @@ describe('SiteManager', () => {
       const result = manager.saveFromModal()
 
       expect(result).toBe(false)
-      expect(alertSpy).toHaveBeenCalledWith(expect.stringContaining('URL 格式不正确'))
+      expect(alertMock).toHaveBeenCalledWith(expect.stringContaining('URL 格式不正确'))
 
-      alertSpy.mockRestore()
+      vi.unstubAllGlobals()
     })
 
     it('should add new custom site', () => {
