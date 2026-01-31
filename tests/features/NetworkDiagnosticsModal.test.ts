@@ -283,15 +283,29 @@ describe('NetworkDiagnosticsModal', () => {
   
   describe('事件监听', () => {
     it('init() 监听 networkRestrictedImages 事件', () => {
+      // 捕获事件处理器
+      let capturedHandler: ((e: CustomEvent) => void) | null = null
+      const addEventListenerSpy = vi.spyOn(window, 'addEventListener').mockImplementation(
+        (type: string, handler: EventListenerOrEventListenerObject) => {
+          if (type === 'networkRestrictedImages' && typeof handler === 'function') {
+            capturedHandler = handler as (e: CustomEvent) => void
+          }
+        }
+      )
+      
       const modal = createNetworkDiagnosticsModal()
       modal.init()
       
-      const event = new CustomEvent('networkRestrictedImages', {
-        detail: createTestInfo()
-      })
-      window.dispatchEvent(event)
+      // 验证事件监听器已注册
+      expect(capturedHandler).not.toBeNull()
+      
+      // 手动调用处理器模拟事件触发
+      const mockEvent = { detail: createTestInfo() } as CustomEvent
+      capturedHandler!(mockEvent)
       
       expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+      
+      addEventListenerSpy.mockRestore()
     })
   })
   
