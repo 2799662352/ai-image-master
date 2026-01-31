@@ -10,17 +10,58 @@ import {
 } from '../../src/renderer/src/services/cache/ImageCacheService'
 
 describe('ImageCacheService', () => {
+  // 存储事件监听器，以便手动触发
+  let eventListeners: Map<string, EventListener[]>
+  
   beforeEach(() => {
+    // 初始化事件监听器存储
+    eventListeners = new Map()
+    
     // 重置 window 对象上的 mock
     ;(window as any).aiImageAPI = {
       cleanupExpiredCache: vi.fn(),
       getCachedImage: vi.fn()
     }
+    
+    // Mock addEventListener 以捕获事件监听器
+    ;(window as any).addEventListener = vi.fn((event: string, listener: EventListener) => {
+      if (!eventListeners.has(event)) {
+        eventListeners.set(event, [])
+      }
+      eventListeners.get(event)!.push(listener)
+    })
+    
+    // Mock removeEventListener
+    ;(window as any).removeEventListener = vi.fn((event: string, listener: EventListener) => {
+      const listeners = eventListeners.get(event)
+      if (listeners) {
+        const index = listeners.indexOf(listener)
+        if (index > -1) {
+          listeners.splice(index, 1)
+        }
+      }
+    })
+    
+    // Mock dispatchEvent 以触发已注册的监听器
+    ;(window as any).dispatchEvent = vi.fn((event: Event) => {
+      const listeners = eventListeners.get(event.type)
+      if (listeners) {
+        listeners.forEach(listener => {
+          try {
+            listener(event)
+          } catch (e) {
+            // 忽略错误
+          }
+        })
+      }
+      return true
+    })
   })
   
   afterEach(() => {
     vi.restoreAllMocks()
     delete (window as any).aiImageAPI
+    eventListeners.clear()
   })
   
   describe('创建实例', () => {
