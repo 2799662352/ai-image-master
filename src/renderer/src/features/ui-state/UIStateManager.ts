@@ -311,11 +311,12 @@ export class UIStateManager {
       font-size: 12px;
       white-space: nowrap;
       z-index: 1000;
-      opacity: 0;
       pointer-events: none;
       transition: opacity 0.3s ease;
       box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
     `
+    // Set opacity explicitly for testability (JSDOM cssText parsing issue)
+    tooltip.style.opacity = '0'
 
     // 添加小箭头
     const arrow = document.createElement('div')

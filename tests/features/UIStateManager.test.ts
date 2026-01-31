@@ -103,7 +103,8 @@ describe('UIStateManager', () => {
     })
 
     it('should handle Seedream model specially', () => {
-      mockApiImageAPI.getCurrentModel.mockReturnValueOnce({
+      // Use mockReturnValue (not Once) because getCurrentModel is called multiple times in the loop
+      mockApiImageAPI.getCurrentModel.mockReturnValue({
         name: 'Seedream XL',
         displayName: 'Seedream',
         capabilities: { multipleImages: false }
@@ -114,6 +115,13 @@ describe('UIStateManager', () => {
       const batchCount = document.getElementById('batchCount') as HTMLSelectElement
       expect(batchCount.disabled).toBe(true)
       expect(batchCount.title).toContain('Seedream')
+
+      // Reset mock to default for other tests
+      mockApiImageAPI.getCurrentModel.mockReturnValue({
+        name: 'Test Model',
+        displayName: 'Test',
+        capabilities: { multipleImages: true, customSize: true }
+      })
     })
   })
 
