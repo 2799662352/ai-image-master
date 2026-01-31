@@ -57,6 +57,27 @@ export function off<K extends keyof HTMLElementEventMap>(
 }
 
 /**
+ * 添加 CSS 类
+ */
+export function addClass(element: HTMLElement | null, className: string): void {
+  element?.classList.add(className)
+}
+
+/**
+ * 移除 CSS 类
+ */
+export function removeClass(element: HTMLElement | null, className: string): void {
+  element?.classList.remove(className)
+}
+
+/**
+ * 检测是否有 CSS 类
+ */
+export function hasClass(element: HTMLElement | null, className: string): boolean {
+  return element?.classList.contains(className) ?? false
+}
+
+/**
  * 添加/移除 CSS 类
  */
 export function toggleClass(element: HTMLElement | null, className: string, force?: boolean): void {
@@ -67,14 +88,18 @@ export function toggleClass(element: HTMLElement | null, className: string, forc
  * 显示元素
  */
 export function show(element: HTMLElement | null): void {
-  element?.classList.remove('hidden')
+  if (element) {
+    element.style.display = ''
+  }
 }
 
 /**
  * 隐藏元素
  */
 export function hide(element: HTMLElement | null): void {
-  element?.classList.add('hidden')
+  if (element) {
+    element.style.display = 'none'
+  }
 }
 
 /**
@@ -89,7 +114,7 @@ export function toggle(element: HTMLElement | null): void {
  */
 export function createElement<K extends keyof HTMLElementTagNameMap>(
   tag: K,
-  attrs?: Record<string, string>,
+  attrs?: Record<string, any>,
   children?: (Node | string)[]
 ): HTMLElementTagNameMap[K] {
   const el = document.createElement(tag)
@@ -98,6 +123,11 @@ export function createElement<K extends keyof HTMLElementTagNameMap>(
     Object.entries(attrs).forEach(([key, value]) => {
       if (key === 'className') {
         el.className = value
+      } else if (key === 'textContent') {
+        el.textContent = value
+      } else if (key in el) {
+        // 直接设置 DOM 属性 (如 type, placeholder 等)
+        (el as any)[key] = value
       } else {
         el.setAttribute(key, value)
       }
