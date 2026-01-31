@@ -1,0 +1,94 @@
+import { defineConfig } from 'vitest/config'
+import { resolve } from 'path'
+
+export default defineConfig({
+  test: {
+    globals: true,
+    environment: 'jsdom',
+    include: ['src/**/*.{test,spec}.{js,ts}', 'tests/**/*.{test,spec}.{js,ts}'],
+    exclude: ['node_modules', 'dist', 'build', '**/*.bench.ts'],
+    // 自动清理 mocks，确保测试隔离
+    clearMocks: true,
+    restoreMocks: true,
+    unstubGlobals: true,
+    // 测试超时设置
+    testTimeout: 10000,
+    hookTimeout: 10000,
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'json', 'html', 'json-summary', 'lcov'],
+      reportsDirectory: './coverage',
+      include: [
+        'src/renderer/src/**/*.ts',
+        'src/main/**/*.ts',
+        'src/preload/**/*.ts'
+      ],
+      exclude: [
+        'node_modules/',
+        'dist/',
+        'build/',
+        '**/*.d.ts',
+        '**/*.config.*',
+        '**/types/**',
+        '**/index.ts',
+        '**/*.test.ts',
+        '**/*.spec.ts',
+        '**/__mocks__/**'
+      ],
+      thresholds: {
+        // 目标 90%（V13 更新）
+        lines: 90,
+        functions: 90,
+        branches: 80,
+        statements: 90,
+        // 启用单文件阈值检查
+        perFile: true,
+        // 允许阈值逐步提升
+        autoUpdate: false, // 手动控制阈值更新
+        // 关键模块更高要求
+        'src/renderer/src/services/**/*.ts': {
+          lines: 92,
+          functions: 92,
+          branches: 82,
+          statements: 92
+        },
+        'src/renderer/src/features/**/*.ts': {
+          lines: 90,
+          functions: 90,
+          branches: 78,
+          statements: 90
+        },
+        'src/renderer/src/core/**/*.ts': {
+          lines: 94,
+          functions: 94,
+          branches: 82,
+          statements: 94
+        },
+        // 页面模块
+        'src/renderer/src/pages/**/*.ts': {
+          lines: 88,
+          functions: 88,
+          branches: 75,
+          statements: 88
+        }
+      }
+    },
+    setupFiles: ['./tests/setup.ts']
+  },
+  resolve: {
+    alias: {
+      '@': resolve(__dirname, './src'),
+      '@main': resolve(__dirname, './src/main'),
+      '@preload': resolve(__dirname, './src/preload'),
+      '@renderer': resolve(__dirname, './src/renderer/src'),
+      '@/types': resolve(__dirname, './src/types'),
+      '@/services': resolve(__dirname, './src/renderer/src/services'),
+      '@/features': resolve(__dirname, './src/renderer/src/features'),
+      '@/core': resolve(__dirname, './src/renderer/src/core'),
+      '@/utils': resolve(__dirname, './src/renderer/src/utils')
+    }
+  }
+})
+
+// Vitest bench 配置 (V15) - 通过 CLI 参数指定
+// 运行命令: npm run test:bench

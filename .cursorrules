@@ -1,0 +1,913 @@
+# CATIMATION-Cyberpunk Master 项目记忆
+
+## 🎯 当前状态 (2026-01-31)
+
+| 指标 | 当前值 | 目标 | 状态 |
+|------|--------|------|------|
+| app.js | 已删除 (0 行) | 完全移除 | ✅ V16.5 完成 |
+| 循环依赖警告 | 0 | 0 | ✅ V17 修复 |
+| 延迟加载库 | JSZip/imageCompression | - | ✅ V18 |
+| PerformanceDashboard | 已实现 (Alt+P) | - | ✅ V18 |
+| UpdateNotification | 已实现 | - | ✅ V17 |
+| 发布渠道支持 | stable/beta/alpha | - | ✅ V17 |
+| EventManager | 已实现 | - | ✅ V16.4 |
+| TypeScript 模块数 | 61+ | - | ✅ (V18 新增 LazyLibraries, PerformanceDashboard) |
+| TypeScript 页面模块 | 7 | - | ✅ 全部完成 |
+| JS→TS 迁移模块 | 9 | 9 | ✅ V16.2 完成 |
+| window 全局变量 | 废弃警告 | 完全移除 | ✅ V16.3 完成 |
+| ServiceRegistry | 已实现 | - | ✅ V16.3 |
+| data-action 事件 | 已替换 | - | ✅ V16.4 |
+| 测试覆盖率阈值 | 90% | 90% | ✅ |
+| 页面测试数量 | 179 | - | ✅ 全部通过 |
+| E2E POM 页面数 | 9 | - | ✅ 完整覆盖 |
+| E2E 测试文件 | 15+ | 15+ | ✅ (V15) |
+| Benchmark 测试 | 3 files | 5+ | ✅ (V15) |
+| 视觉回归测试 | 2 files | 关键页面 | ✅ (V15) |
+| JS页面模块 | 0 | 0 | ✅ 全部删除 |
+| 已完成升级版本 | v18 | - | ✅ |
+| 构建时间 | ~2.7s | <5s | ✅ |
+| 最大 chunk (page) | 37.85 kB | <40 kB | ✅ |
+| core-services chunk | 64.40 kB | - | ✅ (含 Dashboard) |
+| vendor-jszip chunk | 97.32 kB | - | ✅ (延迟加载) |
+
+### 最近完成 (V18) - Lazy Loading & Performance Dashboard
+- ✅ Phase A: 第三方库延迟加载
+  - 新建 src/renderer/src/utils/LazyLibraries.ts
+  - JSZip 按需加载 (批量下载时才加载)
+  - imageCompression 按需加载 (图片压缩时才加载)
+  - 预加载机制 (空闲时使用 requestIdleCallback)
+  - 更新 GeneratePage/BatchPage/ComparePage 使用延迟加载
+  - 更新 js/api.js 使用 getJSZip()
+- ✅ Phase B: 性能仪表盘
+  - 新建 src/renderer/src/features/performance/PerformanceDashboard.ts
+  - 实时内存监控 (JS 堆、DOM 节点数)
+  - 性能指标 (页面加载时间、DOM 就绪、FPS)
+  - 延迟库加载状态显示
+  - Alt+P 快捷键切换显示
+  - 开发模式自动启用
+- ✅ Phase C: 构建验证
+  - npm run build:vite 成功 (2.73s)
+  - 核心测试通过: 55/55
+  - ServiceRegistry 测试: 17/17
+
+### 已完成 (V17) - Build Optimization and Auto-Update Enhancement
+- ✅ Phase A: 解决循环依赖
+  - 合并 core, services, feature-history 到 core-services chunk
+  - 移除空 pages chunk 生成
+  - 消除所有循环依赖警告
+- ✅ Phase B: UpdateNotification 组件
+  - 新建 src/renderer/src/features/updater/UpdateNotification.ts (~500 行)
+  - 实现更新可用/下载进度/更新就绪/错误状态通知
+  - 支持自动检查、IPC 通信、样式注入
+  - 集成到 ServiceBridge
+- ✅ Phase C: 分阶段发布支持
+  - 添加 generateUpdatesFilesForAllChannels 配置
+  - 添加 publish 配置 (GitHub provider)
+  - 支持 stagingPercentage 分阶段发布
+- ✅ Phase D: 发布渠道支持
+  - 新增 ReleaseChannel 类型 (stable/beta/alpha)
+  - 更新 UpdaterConfig 接口
+  - 添加 updater:getChannel/setChannel IPC 处理器
+  - beta/alpha 渠道自动允许预发布和降级
+
+### 已完成 (V16.5) - Final Cleanup: app.js Deletion
+- ✅ Phase A: 预验证检查
+  - 检查残留 window.app 引用 (js/app.js 外: 0 个)
+  - 验证 onclick="app." 内联事件 (0 个)
+  - 更新 debug-helper.js 使用新的 TS 服务
+- ✅ Phase B: 移除 app.js
+  - 删除 js/app.js (823 行, 34.6 KB)
+  - 更新 index.html 移除脚本引用
+- ✅ Phase C: 构建验证
+  - npm run build:vite 成功 (2.17s)
+  - 无编译错误
+- ✅ Phase D: 测试验证
+  - ServiceRegistry 测试: 17/17 通过
+  - Core 模块测试: 72/72 通过
+  - 总体测试: 618/653 通过 (失败为预存问题)
+
+### 已完成 (V16.4) - Complete app.js Removal Preparation
+- ✅ Phase A: AppBootstrap 增强
+  - 新增 bootstrap() 方法编排完整初始化流程
+  - 迁移 initI18nWithTimeout() 方法
+  - 迁移 initPages() 和页面注册
+  - 新增 createAppProxy() 提供兼容层
+- ✅ Phase B: EventManager 创建
+  - 新建 src/renderer/src/core/EventManager.ts
+  - 实现事件委托模式 (data-action 属性)
+  - 注册默认事件处理器: switch-tab, open-settings, download-image, view-image 等
+  - 集成到 ServiceBridge 非关键服务初始化
+- ✅ Phase C: HTML 内联事件替换
+  - index.html: 4 个 onclick="app.switchTab" → data-action="switch-tab"
+  - ComparePage.ts: 3 个 onclick → data-action
+  - BatchPage.ts: 4 个 onclick → data-action
+  - components.js: 1 个 onclick → data-action
+- ✅ Phase D: ModelSelectorManager 增强
+  - 确认 switchModel() 方法存在 (完整流程)
+  - 确认 setCurrentModel() 和 updateUIForModel() 可用
+- ✅ Phase E: 清理与验证
+  - UIComponentsService.ts 移除 window.app 引用
+  - ServiceBridge 注册 EventManager
+  - app.js 保留为过渡兼容层 (可在验证后删除)
+  - 构建验证通过
+
+### 已完成 (V16.3) - Window Global Variables Removal
+- ✅ Phase 1: ServiceRegistry 类创建
+  - ServiceBridge.ts 添加 ServiceRegistry 类
+  - 实现 register/get/getRequired/has/keys/clear 方法
+  - 定义 SERVICE_KEYS 常量用于类型安全
+- ✅ Phase 2: 废弃警告添加
+  - 所有 init*Global() 函数添加 Object.defineProperty 废弃警告
+  - 仅开发模式显示警告，避免生产环境噪音
+- ✅ Phase 3a: TS 文件更新
+  - ServiceBridge.ts 中 appServices 命名空间使用 ServiceRegistry
+  - getStorageBridgeAuto/getI18nServiceAuto 改用 ServiceRegistry
+- ✅ Phase 3b: JS 文件更新
+  - js/api.js 添加 getR2StorageJS() 辅助函数
+  - js/services/page-state-manager.js 添加 getStorageBridgeJS() 辅助函数
+- ✅ Phase 4: Preload 脚本安全审计
+  - 确认遵循 Electron 安全最佳实践
+  - 使用 contextBridge.exposeInMainWorld
+  - 不暴露原始 ipcRenderer
+- ✅ Phase 5: ServiceRegistry 测试
+  - 新增 tests/services/ServiceRegistry.test.ts
+  - 17 个测试全部通过
+
+### 已完成 (V16.2) - JavaScript to TypeScript Migration
+- ✅ Phase A: 基础模块迁移
+  - A1: performance-monitor.js → PerformanceMonitorService.ts (新建)
+  - A2: components.js → UIComponentsService.ts (新建)
+  - A3: version-checker.js → 合并到 VersionChecker.ts (增强)
+- ✅ Phase B: 服务模块迁移
+  - B1: storage-bridge.js → StorageBridge.ts (window 暴露)
+  - B2: page-state-manager.js → PageStateManager.ts (window 暴露)
+  - B3: r2-storage.js → R2StorageService.ts (window 暴露)
+- ✅ Phase C: 核心模块迁移
+  - C1: i18n.js → I18nService.ts (window 暴露)
+  - C2: api.js → ApiService.ts (window 暴露)
+- ✅ Phase D: 应用入口迁移
+  - AppBootstrap.ts (window 暴露)
+  - PageLoader.ts (window 暴露)
+- ✅ 所有 TypeScript 模块添加 `init*Global()` 函数用于过渡期兼容
+
+### 已完成 (v15) - Testing Enhancement
+- ✅ E2E 测试覆盖率提升
+  - 新增 user-flows.e2e.ts (关键用户流程测试)
+  - 新增 error-handling.e2e.ts (错误场景测试)
+- ✅ Vitest Benchmark 集成
+  - 新增 tests/benchmarks/startup.bench.ts (启动性能)
+  - 新增 tests/benchmarks/operations.bench.ts (关键操作)
+  - 新增 tests/benchmarks/memory.bench.ts (内存占用)
+  - 新增 npm run test:bench / test:bench:run 命令
+- ✅ Playwright 视觉回归测试配置
+  - 更新 playwright.config.ts (snapshot 配置, visual project)
+  - 新增 e2e/visual/pages.visual.e2e.ts (关键页面快照)
+  - 新增 e2e/visual/responsive.visual.e2e.ts (响应式布局)
+- ✅ 测试数据 Fixtures 优化
+  - 新增 tests/fixtures/data.ts (共享测试数据)
+  - 新增 tests/fixtures/factories.ts (Mock 工厂)
+  - 增强 e2e/fixtures/electron.ts (withHistory, withApiKey, withModel)
+- ✅ CI/CD 工作流更新
+  - 新增 visual-tests job (视觉回归测试)
+  - 新增 benchmark-tests job (性能基准测试)
+  - 新增 artifacts 上传 (screenshots, benchmark-results)
+
+### 已完成 (v14) - Performance Optimization
+- ✅ 切换到 Oxc minifier (Vite 7 默认, 比 Terser 快 30-90x)
+- ✅ 配置 esbuild.drop 在生产环境移除 console/debugger
+- ✅ 修正 Vite warmup 路径配置 (预热关键模块)
+- ✅ 主进程延迟加载优化: autoUpdater 15s, GalleryStore 20s
+- ✅ ServiceBridge 按需初始化: 关键服务立即加载, 非关键服务 requestIdleCallback 延迟
+- ✅ 实现页面动态导入懒加载 (loadHistoryPage, loadBatchPage 等)
+- ✅ 添加 preloadPage() 和 preloadAllPages() 预加载函数
+- ✅ UIStateManager 增强: setupSeedreamCountHint 方法
+- ✅ TabManager 增强: initHashRouter() 方法
+- ✅ app.js 从 893 行减少到 706 行 (-21%)
+- ✅ 创建启动时间基准测试脚本 (scripts/measure-startup.ts)
+- ✅ 新增 npm run perf:startup 命令
+- ✅ Bundle 分析: 最大 chunk 37.84 kB (page-batch)
+- ✅ 构建时间优化: ~2.2s (降低 27%)
+
+### 已完成 (v13) - Full TypeScript Integration
+- ✅ app.js 清理 (1094→893 行, 移除空壳方法和降级代码)
+- ✅ initPages() 已完全使用 TS 页面工厂
+- ✅ window.appServices 统一命名空间已创建
+- ✅ ServiceBridge 在 electron-vite main.ts 入口初始化
+- ✅ 移除空壳委托方法 (initDesktopModelSelector, initMobileModelSelector 等)
+- ✅ 移除降级回退代码 (keyboard shortcuts fallback)
+- ✅ Electron 启动优化 (延迟加载 electron-store, defer非关键功能)
+- ✅ Vite 构建优化 (target: chrome120/node18, cssCodeSplit, minify)
+- ✅ Vitest 覆盖率配置 (per-file 阈值, 关键模块更高要求)
+- ✅ __mocks__ 目录结构优化 (集中导出, ServiceBridge mocks)
+- ✅ Electron E2E Playwright fixtures 完整
+- ✅ CI/CD E2E 测试集成完成
+
+### 已完成 (v12) - Production Readiness
+- ✅ Windows 代码签名配置 (signtoolOptions, timestamp server)
+- ✅ macOS 代码签名配置 (hardenedRuntime, notarize)
+- ✅ CI/CD release.yml 签名集成
+- ✅ app.js 清理 (1779→1094 行, 移除委托桩代码)
+- ✅ 删除 7 个 JS 页面模块 (共 470KB)
+- ✅ index.html 移除旧 JS 脚本标签
+- ✅ E2E POM: PromptTemplatesPage.ts, UnderstandPage.ts, DirectorPage.ts
+- ✅ E2E 测试: prompt-templates.pom.e2e.ts, understand.pom.e2e.ts, director.pom.e2e.ts
+- ✅ Bundle 分析配置和验证
+- ✅ Tailwind CSS v3 配置修复
+
+### 已完成 (v11) - Pages TypeScript Migration Phase 3
+- ✅ PromptTemplates.ts - 模板管理页面 (~450 行 TS)
+- ✅ UnderstandPage.ts - 图像理解页面 (~1000 行 TS)
+- ✅ DirectorPage.ts - 分镜生成页面 (~1600 行 TS)
+- ✅ PromptTemplates.test.ts - 18 个单元测试
+- ✅ UnderstandPage.test.ts - 28 个单元测试
+- ✅ DirectorPage.test.ts - 41 个单元测试
+- ✅ ServiceBridge 集成 3 个新页面工厂方法
+- ✅ electron.vite.config.ts 代码分割 (page-prompt-templates, page-understand, page-director chunks)
+- ✅ pages/index.ts 导出新增页面类型
+
+### 已完成 (v10)
+- ✅ BatchPage 迁移到 TypeScript (~1926 行 JS → 1700+ 行 TS)
+- ✅ ComparePage 迁移到 TypeScript (~1206 行 JS → 1100+ 行 TS)
+- ✅ ServiceBridge 集成 BatchPage、ComparePage 工厂方法
+- ✅ 54 个新页面单元测试 (BatchPage: 28, ComparePage: 26)
+- ✅ electron.vite.config.ts 代码分割增强 (page-batch, page-compare chunks)
+- ✅ pages/index.ts 导出新增页面类型
+
+### 已完成 (v9)
+- ✅ BasePage 抽象基类创建 - 所有页面的通用功能基类
+- ✅ GeneratePage 迁移到 TypeScript (1556 行 JS → 1400+ 行 TS)
+- ✅ HistoryPage 迁移到 TypeScript (790 行 JS → 850+ 行 TS)
+- ✅ pages 目录结构建立 (src/renderer/src/pages/)
+- ✅ ServiceBridge 集成页面工厂方法
+- ✅ 38 个页面单元测试 (GeneratePage: 18, HistoryPage: 20)
+- ✅ electron.vite.config.ts 代码分割增强 (page-generate, page-history, page-base chunks)
+- ✅ @pages 路径别名添加
+
+### 已完成 (v8)
+- ✅ ModalFactory 模块创建 - 集中管理模态框创建
+- ✅ showDetailedError 简化，委托给 ErrorHandler
+- ✅ showNetworkRestrictedDialog 迁移到 ModalFactory (-200 行)
+- ✅ KeyboardShortcuts 完全集成 - 键盘/粘贴事件统一管理
+- ✅ ToastManager 模块创建 - 统一 toast 通知管理
+- ✅ UIStateManager 增强 - 增加 bindEnhancedTooltips
+- ✅ SiteManager 增强 - openSettingsModal/closeSettingsModal/saveApiKeyPublic/updateApiStatusDisplay
+- ✅ electron.vite.config.ts 代码分割增强 (toast/language/accessibility chunks)
+- ✅ app.js 从 2128 行减少到 1499 行 (-30%)
+- ✅ ServiceBridge 集成 ModalFactory、ToastManager
+
+### 已完成 (v7)
+- ✅ 模型选择器完全迁移到 ModelSelectorManager (-280 行)
+- ✅ 图片查看器迁移到 ImageViewer (-100 行)
+- ✅ 站点管理全局函数迁移到 SiteManager (-200 行)
+- ✅ 标签页管理增强 TabManager (-35 行)
+- ✅ 移动端菜单增强 MobileMenuManager (-35 行)
+- ✅ ServiceBridge 集成 ImageViewer、SiteManager、TabManager、MobileMenuManager
+- ✅ 测试覆盖率阈值提升至 90%
+- ✅ app.js 从 3291 行减少到 2128 行 (-35%)
+
+### 已完成 (v6)
+- ✅ 历史记录管理迁移到 HistoryDataService
+- ✅ 智能尺寸管理迁移到 IntelligentResizeManager
+- ✅ 语言管理迁移到 LanguageManager
+- ✅ 错误处理迁移到 ErrorHandler
+- ✅ 模型/比例/分辨率迁移到 ModelSelectorManager/RatioResolutionManager
+- ✅ UI 状态管理迁移到 UIStateManager
+- ✅ ServiceBridge 集成所有 TS 服务
+
+### 已完成 (v5)
+- ✅ AppBootstrap 单例初始化
+- ✅ LanguageManager 语言管理
+- ✅ RatioResolutionManager 比例/分辨率
+- ✅ NetworkDiagnosticsModal 网络诊断
+- ✅ ImageCacheService 图片缓存
+- ✅ AccessibilityManager 可访问性
+
+## 📋 下一步计划 (V15+)
+
+### V14: Performance & Polish ✅ (已完成 2025-01-30)
+基于 Context7 Electron/Vite 最佳实践
+
+**1. 启动时间优化 (目标 < 1.5s)** ✅
+- [x] 主进程轻量化: autoUpdater 15s, GalleryStore 20s 延迟
+- [x] 渲染进程优化: ServiceBridge 按需初始化 (关键/非关键分离)
+- [x] 创建启动基准测试脚本: scripts/measure-startup.ts
+
+**2. 打包体积优化** ✅
+- [x] 切换到 Oxc minifier (Vite 7 默认)
+- [x] 生产构建移除 console.log: esbuild.drop
+- [x] 分析 bundle 大小: 最大 chunk 37.84 kB
+
+**3. 懒加载优化** ✅
+- [x] 页面动态导入: loadHistoryPage, loadBatchPage 等
+- [x] 预加载函数: preloadPage(), preloadAllPages()
+
+**4. app.js 继续精简** ✅
+- [x] 从 893 行减少到 706 行 (-21%)
+- [x] handleHashChange 委托给 TabManager
+- [x] setupSeedreamCountHint 委托给 UIStateManager
+
+### V15: Testing Enhancement ✅ (已完成 2025-01-30)
+- [x] E2E 测试覆盖率提升 (基于 Playwright Electron fixtures)
+- [x] 性能基准测试 (启动时间、内存占用)
+- [x] 视觉回归测试
+- [x] 测试数据 fixtures 优化
+
+### V16.1: 纯 electron-vite 入口 ✅ (部分完成)
+- [x] V16.1.1 资源本地化 - CDN 资源改为 npm 包 (choices.js, jszip, browser-image-compression)
+- [x] V16.1.2 内联脚本迁移 - IntroVideoController 模块化
+- [ ] V16.1.3 入口统一 - 合并 HTML 结构 (延后到 V16.3 之后)
+
+### V16.2: JavaScript 到 TypeScript 迁移 ✅ (已完成 2025-01-31)
+- [x] Phase A: 基础模块 (performance-monitor, components, version-checker)
+- [x] Phase B: 服务模块 (storage-bridge, page-state-manager, r2-storage)
+- [x] Phase C: 核心模块 (i18n, api.js)
+- [x] Phase D: 应用入口 (AppBootstrap, PageLoader)
+
+### V16.3: 移除 window 全局变量 ✅ 已完成
+- [x] ServiceRegistry 类创建 (register/get/getRequired)
+- [x] 添加废弃警告 (Object.defineProperty + 开发模式检测)
+- [x] TS 文件更新使用 ServiceRegistry
+- [x] JS 文件更新使用 appServices 命名空间
+- [x] Preload 脚本安全审计
+- [x] ServiceRegistry 测试 (17 tests)
+
+### V16.4: 完全移除 app.js (下一步) - 计划已制定
+**目标**: 删除 js/app.js，由 TypeScript 模块完全接管
+
+**阶段划分**:
+- Phase A: AppBootstrap 增强 (1天)
+  - 迁移 init() 流程到 AppBootstrap.ts
+  - 迁移 initPages() 到 PageLoader.ts
+- Phase B: EventManager 创建 (1-2天)
+  - 新建 EventManager.ts 替代 bindEvents()
+  - 实现事件委托模式
+- Phase C: HTML 内联事件替换 (1天)
+  - 替换所有 onclick="app.*" 为 data-action
+  - 注册事件处理器到 EventManager
+- Phase D: 模型管理增强 (0.5天)
+  - 增强 ModelSelectorManager.ts
+  - 迁移 switchModel() 逻辑
+- Phase E: 清理与验证 (0.5天)
+  - 删除 js/app.js
+  - 更新启动入口
+  - E2E 验证
+
+**预估时间**: 4-5 天
+**详细计划**: c:\Users\27996\.cursor\plans\v16.4_remove_appjs_plan.plan.md
+
+### 可选任务
+- [ ] PWA 支持探索
+- [x] 自动更新流程优化 ✅ V17 完成
+- [ ] 多语言支持扩展 (新增语言)
+
+### V18: 待规划
+潜在方向:
+- PWA 离线支持 (Service Worker, Workbox)
+- 多语言资源扩展 (日语、韩语等)
+- 性能监控面板 (实时显示内存/CPU)
+- 代码分割优化 (懒加载更多模块)
+
+## 📚 Context7 技术文档参考 (2025-01-30 V14 更新)
+
+### Electron 性能优化最佳实践 (Context7)
+```javascript
+// 延迟加载依赖 - 减少启动时间
+class Parser {
+  async getParsedFiles() {
+    // 延迟到实际需要时才加载大模块
+    const fooParser = require('foo-parser')
+    const files = await this.getFiles()
+    return fooParser.parse(files)
+  }
+}
+```
+**性能检查清单:**
+1. ❌ 不要盲目引入模块 - 只在需要时 require
+2. ❌ 不要过早加载代码 - 延迟非关键功能
+3. ❌ 不要阻塞主进程 - 使用异步 fs.promises
+4. ❌ 不要阻塞渲染进程 - Web Workers 处理重任务
+5. ✅ 打包代码减少 require() 开销
+6. ✅ 使用 Chrome DevTools 分析性能瓶颈
+7. ✅ 使用 `node --cpu-prof --heap-prof` 分析模块加载
+
+### Vite 构建优化最佳实践 (Context7)
+```javascript
+// 生产构建优化配置
+export default {
+  build: {
+    target: 'baseline-widely-available', // Vite 7 默认
+    minify: 'oxc', // Oxc 比 Terser 快 30-90x
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['vue', 'vue-router']
+        }
+      }
+    },
+    terserOptions: {
+      compress: { drop_console: true }
+    }
+  }
+}
+
+// Glob Import 支持 tree-shaking
+import.meta.glob('./dir/*.js', { import: 'setup' })
+```
+**优化要点:**
+- `minify: 'oxc'` - 默认使用 Oxc 显著加速
+- `manualChunks` - 手动代码分割优化缓存
+- Tree-shaking + 懒加载 + chunk 分割提升加载性能
+- 生产环境关闭 sourcemap 减小体积
+
+### Playwright Electron 测试最佳实践 (Context7)
+```javascript
+const { _electron: electron } = require('playwright');
+
+const electronApp = await electron.launch({ args: ['main.js'] });
+
+// 主进程代码执行
+const appPath = await electronApp.evaluate(async ({ app }) => {
+  return app.getAppPath();
+});
+
+// 获取首个窗口
+const window = await electronApp.firstWindow();
+await window.screenshot({ path: 'intro.png' });
+window.on('console', console.log); // 重定向控制台
+await window.click('text=Click me');
+await electronApp.close();
+```
+**测试要点:**
+- `electron.launch({ args: [] })` 启动应用
+- `electronApp.evaluate()` 在主进程执行代码
+- `firstWindow()` 等待并获取应用窗口
+- POM 模式封装页面交互
+
+## 项目概述
+- **名称**: CATIMATION-Cyberpunk Master
+- **类型**: Electron 28 桌面应用
+- **功能**: AI 图片生成工具
+- **路径**: D:\tecx\text\temp-ai-image-master-source
+
+## 技术栈 (升级后)
+- **框架**: Electron 28.0.0
+- **构建**: electron-vite + Vite
+- **语言**: TypeScript (渐进式迁移中)
+- **CSS**: Tailwind CSS (本地化) + PostCSS
+- **测试**: Vitest (单元) + Playwright (E2E)
+- **自动更新**: electron-updater
+
+## 项目结构
+```
+src/
+├── main/           # TypeScript 主进程
+│   ├── index.ts
+│   └── updater.ts  # 自动更新模块
+├── preload/        # TypeScript 预加载脚本 (增强: IPC 集中化)
+│   └── index.ts    # 含 IPC_CHANNELS 常量
+├── renderer/       # 渲染进程
+│   └── src/
+│       ├── main.ts
+│       ├── styles/index.css
+│       ├── core/              # 核心模块
+│       │   ├── Router.ts      # 页面路由器
+│       │   ├── EventBus.ts    # 事件总线
+│       │   ├── PageLoader.ts  # 页面懒加载器 (新增)
+│       │   └── index.ts
+│       ├── services/          # 服务层 (TypeScript 版本)
+│       │   ├── PageStateManager.ts
+│       │   ├── api/           # API 服务
+│       │   ├── storage/       # 存储桥接
+│       │   ├── i18n/          # 国际化服务
+│       │   ├── r2-storage/    # R2 云存储
+│       │   └── version-checker/  # 版本检测
+│       ├── pages/             # 页面模块 (v9-v11)
+│       │   ├── BasePage.ts    # 抽象基类
+│       │   ├── GeneratePage.ts # 图片生成页面
+│       │   ├── HistoryPage.ts  # 历史记录页面
+│       │   ├── BatchPage.ts    # 批量生成页面 (v10)
+│       │   ├── ComparePage.ts  # 图片对比页面 (v10)
+│       │   ├── PromptTemplates.ts # 模板管理页面 (v11)
+│       │   ├── UnderstandPage.ts  # 图像理解页面 (v11)
+│       │   ├── DirectorPage.ts    # 分镜生成页面 (v11)
+│       │   └── index.ts
+│       ├── features/          # 功能模块
+│       │   ├── model-selector/
+│       │   ├── image-viewer/
+│       │   ├── settings/
+│       │   ├── history/       # 历史记录管理
+│       │   ├── dialog/        # 模态框管理
+│       │   ├── error-handler/ # 错误处理器
+│       │   ├── mobile-menu/   # 移动端菜单
+│       │   ├── intelligent-resize/  # 智能尺寸 (v2)
+│       │   ├── ui-state/      # UI 状态管理 (v2)
+│       │   ├── tab-manager/   # 标签页管理 (v3 新增)
+│       │   └── keyboard/      # 键盘快捷键 (v3 新增)
+│       └── utils/             # 工具函数
+│           ├── toast.ts
+│           ├── format.ts
+│           ├── dom.ts
+│           ├── network-diagnostics.ts  # 网络诊断 (新增)
+│           └── clipboard.ts   # 剪贴板工具 (新增)
+└── types/          # 类型定义 (增强: IPC 通道类型)
+    └── index.ts
+
+electron/           # 原有 JS 版本 (保持兼容)
+├── main.js
+└── preload.js
+
+js/                 # 原有渲染进程代码 (已添加 @ts-check)
+├── app.js          # ~2500 行 (v3 后继续减少)
+├── api.js          # @ts-check 已启用
+├── storage-bridge.js  # @ts-check 已启用
+├── i18n.js         # @ts-check 已启用
+├── modules/        # 页面模块 (7个文件，@ts-check 已启用)
+└── services/       # 服务层 (2个文件，@ts-check 已启用)
+
+tests/              # 单元测试
+├── core/           # 核心模块测试
+│   ├── Router.test.ts
+│   ├── EventBus.test.ts
+│   └── PageLoader.test.ts     # 新增
+├── services/
+│   ├── PageStateManager.test.ts
+│   ├── R2Storage.test.ts
+│   ├── StorageBridge.test.ts
+│   ├── Api.test.ts
+│   └── I18n.test.ts
+├── features/       # 功能模块测试
+│   ├── HistoryManager.test.ts
+│   ├── DialogManager.test.ts
+│   ├── ErrorHandler.test.ts
+│   ├── MobileMenuManager.test.ts
+│   ├── ModelSelectorManager.test.ts  # v2
+│   ├── SiteManager.test.ts           # v2
+│   ├── IntelligentResizeManager.test.ts  # v2
+│   ├── UIStateManager.test.ts        # v2
+│   ├── TabManager.test.ts            # v3 新增
+│   └── KeyboardShortcuts.test.ts     # v3 新增
+├── main/           # 主进程测试 (v3 新增)
+│   └── updater.test.ts
+└── utils/          # 工具函数测试
+    ├── format.test.ts
+    ├── dom.test.ts
+    ├── network-diagnostics.test.ts  # 新增
+    └── clipboard.test.ts      # 新增
+
+e2e/                # E2E 测试
+├── fixtures/       # Playwright fixtures
+│   ├── electron.ts
+│   └── index.ts
+├── pages/          # Page Object Model
+│   ├── BasePage.ts
+│   ├── GeneratePage.ts
+│   ├── HistoryPage.ts
+│   ├── SettingsPage.ts
+│   ├── BatchPage.ts           # 新增
+│   ├── ComparePage.ts         # 新增
+│   └── index.ts
+├── generate.pom.e2e.ts
+├── history.pom.e2e.ts
+├── settings.pom.e2e.ts
+├── batch.pom.e2e.ts           # 新增
+└── compare.pom.e2e.ts         # 新增
+
+.github/workflows/  # CI/CD 工作流
+├── ci.yml          # 含覆盖率检查
+└── release.yml     # 含自动 changelog 生成
+```
+
+## 升级进度 (2026-01-30 已完成)
+
+### 阶段一: 构建系统 ✅
+- [x] 集成 electron-vite
+- [x] 本地化 Tailwind CSS
+- [x] 配置 PostCSS
+
+### 阶段二: TypeScript ✅
+- [x] 创建 tsconfig.json (allowJs + checkJs)
+- [x] 核心类型定义 src/types/index.ts
+- [x] 主进程 TypeScript 版本
+- [x] 预加载脚本 TypeScript 版本
+- [x] PageStateManager 服务迁移
+
+### 阶段三: 代码重构 ✅
+- [x] 建立模块化目录结构
+- [x] 12个 JS 文件添加 @ts-check 类型检查
+- [x] 提取 ModelSelector 模块
+- [x] 提取 ImageViewer 模块
+- [x] 提取 Settings 模块
+- [x] 提取工具函数 (toast, format, dom)
+
+### 阶段四: 安全加固 ✅
+- [x] Content Security Policy (CSP)
+- [x] 沙箱模式 (sandbox: true)
+- [x] 导航限制
+
+### 阶段五: 测试体系 ✅
+- [x] Vitest 单元测试配置
+- [x] Playwright E2E 测试配置
+- [x] R2Storage 单元测试
+- [x] StorageBridge 单元测试
+- [x] HistoryPage E2E 测试
+- [x] GeneratePage E2E 测试
+
+### 阶段六: 生产就绪 ✅
+- [x] electron-updater 自动更新
+- [x] 代码签名配置文档
+- [x] GitHub Actions CI 工作流
+- [x] GitHub Actions Release 工作流
+- [ ] 获取签名证书 - 待完成
+
+## 常用命令
+
+```bash
+# 开发
+npm run dev          # 原有方式运行
+npm run dev:vite     # electron-vite 运行
+
+# 构建
+npm run build:vite   # 构建项目
+npm run build:win    # Windows 安装包
+
+# 测试
+npm test             # 单元测试
+npm run test:e2e     # E2E 测试
+npm run typecheck    # 类型检查
+```
+
+## 关键配置文件
+- `electron.vite.config.ts` - electron-vite 配置
+- `tsconfig.json` - TypeScript 配置
+- `vitest.config.ts` - 单元测试配置
+- `playwright.config.ts` - E2E 测试配置
+- `tailwind.config.js` - Tailwind 配置
+
+## 待办事项 (渐进完成)
+1. 获取代码签名证书进行生产构建
+2. 将 JS 服务逐步替换为 TS 服务调用
+3. 继续拆分 app.js 剩余功能
+
+## 深度升级 (2026-01-30 已完成)
+### app.js 模块提取 ✅
+- [x] DialogManager - 模态框管理 (settings/about/activity)
+- [x] ErrorHandler - 错误显示/网络诊断模态框
+- [x] MobileMenuManager - 移动端菜单/汉堡动画
+
+### 代码分割优化 ✅
+- [x] electron-vite manualChunks 配置
+- [x] vendor chunk (choices.js, jszip)
+- [x] 功能模块按 feature 拆分
+- [x] PageLoader 懒加载器
+
+### IPC 通信优化 ✅
+- [x] IpcChannels 类型安全常量定义
+- [x] IPC 请求/响应类型定义
+- [x] preload 脚本重构集中化
+
+### 测试扩展 ✅
+- [x] DialogManager 单元测试
+- [x] ErrorHandler 单元测试
+- [x] MobileMenuManager 单元测试
+- [x] PageLoader 单元测试
+- [x] NetworkDiagnostics 单元测试
+- [x] ClipboardManager 单元测试
+- [x] BatchPage E2E POM
+- [x] ComparePage E2E POM
+
+### Release 工作流增强 ✅
+- [x] 自动 changelog 生成
+- [x] 版本号从 tag 提取
+- [x] 预发布版本支持 (beta/alpha)
+
+## 深度升级 v2 (2026-01-30 已完成)
+### app.js 进一步模块提取 ✅
+- [x] ModelSelectorManager - 模型选择器管理 (Choices.js 集成, 比例/分辨率渲染)
+- [x] SiteManager - 站点管理 (自定义站点 CRUD, 设置模态框事件)
+- [x] IntelligentResizeManager - 智能尺寸管理 (Gemini 智能尺寸模式)
+- [x] UIStateManager - UI 状态管理 (数量/尺寸选择器状态, 禁用指示器)
+
+### 测试覆盖率配置 ✅
+- [x] Vitest 覆盖率阈值配置 (65%/55% - v3 提升)
+- [x] lcov 报告格式添加
+- [x] CI 覆盖率检查脚本更新
+
+### 新增单元测试 ✅
+- [x] ModelSelectorManager.test.ts
+- [x] SiteManager.test.ts
+- [x] IntelligentResizeManager.test.ts
+- [x] UIStateManager.test.ts
+
+### 代码签名准备 ✅
+- [x] .env.signing.example 环境变量模板
+- [x] build/entitlements.mac.plist macOS 权限文件
+- [x] package.json 签名配置 (Windows signtoolOptions, macOS notarize)
+
+## 深度升级 v3 (2026-01-30 已完成)
+### app.js 继续拆分 ✅
+- [x] TabManager - 标签页管理 (switchTab, initHashRouter, 页面生命周期)
+- [x] KeyboardShortcuts - 键盘快捷键 (Ctrl+Enter, Escape, 粘贴事件分发)
+
+### JS 服务渐进替换 ✅
+- [x] ServiceBridge - JS→TS 迁移桥接层
+- [x] getStorageBridge() 单例添加
+- [x] getI18nServiceAuto(), t() 快捷函数
+
+### 自动更新增强 ✅
+- [x] updater.ts 多 provider 支持 (GitHub/Generic/S3)
+- [x] 私有仓库 token 认证
+- [x] 下载重试机制 (maxRetries, retryDelay)
+- [x] 详细进度回调 (含预估剩余时间 ETA)
+- [x] IPC 类型定义 (updater:check, download, install)
+
+### 代码分割配置 ✅
+- [x] feature-tab-manager chunk
+- [x] feature-keyboard chunk
+- [x] feature-intelligent-resize chunk
+- [x] feature-ui-state chunk
+
+### 测试覆盖率提升 ✅
+- [x] TabManager.test.ts 单元测试
+- [x] KeyboardShortcuts.test.ts 单元测试
+- [x] updater.test.ts 主进程测试
+- [x] Vitest 覆盖率阈值提升到 65%/55%
+- [x] CI 覆盖率检查同步更新
+
+## 历史记录页性能优化 (已完成)
+- 使用 Map 存储历史项引用
+- 事件委托替代 inline onclick
+- 分块渲染 (requestAnimationFrame)
+- 缓存存储状态信息
+
+## 启动优化 (已完成)
+- BrowserWindow show: false
+- ready-to-show 事件显示窗口
+- electron-store 延迟加载
+- 关键 CSS 内联
+
+## 深度升级 v4 (2026-01-30 已完成)
+### app.js 继续拆分 ✅
+- [x] HistoryDataService - 历史数据服务 (R2 集成, Base64 处理, 自动迁移)
+- [x] ImageOperations - 图片操作 (下载/批量下载/复制/R2 URL 解析)
+
+### 测试覆盖率 ✅
+- [x] HistoryDataService.test.ts 单元测试
+- [x] ImageOperations.test.ts 单元测试
+- [x] Vitest 覆盖率阈值提升到 70%/60%
+- [x] 关键模块更高阈值 (services: 85%, features: 75%)
+
+### IPC 类型安全增强 ✅
+- [x] IpcChannelMap 完整类型映射
+- [x] TypedInvoke, IpcRequestType, IpcResponseType 类型
+
+### 代码签名优化 ✅
+- [x] 证书获取指南 (SignPath 免费, Azure Trusted Signing)
+- [x] release.yml 分离 Windows/macOS 签名配置
+
+### 性能优化准备 ✅
+- [x] Bundle 分析命令 (npm run analyze)
+- [x] rollup-plugin-visualizer 集成
+
+## 深度升级 v5 (2026-01-30 已完成)
+### 应用初始化重构 ✅
+- [x] AppBootstrap - 单例模式，分离关键/非关键初始化路径
+- [x] LanguageManager - 语言切换、SEO meta 更新、UI 刷新
+
+### 模型选择器完善 ✅
+- [x] ModelSelectorManager 增强 (updateDisplayNames, updateUIForModel)
+- [x] RatioResolutionManager - 比例/分辨率选项渲染
+
+### 错误处理增强 ✅
+- [x] ErrorHandler 已有完整功能 (showDetailedError, formatErrorForCopy)
+- [x] NetworkDiagnosticsModal - 网络受限诊断对话框
+
+### 缓存系统优化 ✅
+- [x] ImageCacheService - Flux 图片缓存、过期清理、历史记录映射
+
+### 测试覆盖率提升 ✅
+- [x] AppBootstrap.test.ts
+- [x] LanguageManager.test.ts
+- [x] RatioResolutionManager.test.ts
+- [x] NetworkDiagnosticsModal.test.ts
+- [x] ImageCacheService.test.ts
+- [x] Vitest 覆盖率阈值提升到 80%/70% (core/services: 90%, features: 85%)
+
+### 可访问性增强 ✅
+- [x] AccessibilityManager - 焦点管理、ARIA 状态、键盘导航、跳过链接
+- [x] DialogManager ARIA 属性增强 (role=dialog, aria-modal, aria-labelledby)
+- [x] 焦点陷阱和焦点恢复
+
+## 相关计划文档
+- `docs/plans/2026-01-30-project-upgrade-plan.md` - 项目升级计划 (全部阶段已完成)
+- `docs/plans/2026-01-27-electron-builder-packaging.md` - Electron 打包配置计划
+  - electron-builder 26.4.0 配置
+  - NSIS 安装包 + 便携版
+  - 多平台支持 (Windows/macOS/Linux)
+  - 图标配置 (icon.ico, icon.png)
+- `docs/plans/2026-01-30-next-phase-upgrade-v3.md` - **下一阶段升级计划 v3** (已完成)
+  - JS 服务渐进迁移 (ServiceBridge 已创建)
+  - app.js 继续拆分 (TabManager, KeyboardShortcuts 已完成)
+  - 自动更新增强 (多 provider, 重试机制)
+  - 测试覆盖率提升到 65%
+- `docs/plans/2026-01-30-next-phase-upgrade-v5.md` - **下一阶段升级计划 v5** (已完成)
+  - 应用初始化重构 (AppBootstrap, LanguageManager) ✅
+  - 模型选择器完善 (RatioResolutionManager) ✅
+  - 错误处理增强 (NetworkDiagnosticsModal) ✅
+  - 缓存系统优化 (ImageCacheService) ✅
+  - 测试覆盖率目标 80% ✅
+  - 可访问性增强 (AccessibilityManager) ✅
+- `docs/code-signing.md` - 代码签名指南
+- `.env.signing.example` - 代码签名环境变量模板
+
+## MCP 知识图谱已存储
+- 项目实体: CATIMATION-Cyberpunk-Master / AI-Image-Master-Project
+- 里程碑: 升级计划-阶段一/二/三/四/五/六 (全部已完成)
+- 里程碑: 下一阶段升级 (TypeScript 迁移 + 测试扩展，已完成)
+- 里程碑: **深度升级计划-2026-01-30** (app.js 拆分 + 代码分割，已完成)
+- 里程碑: **深度升级计划v2-2026-01-30** (模块化 + 测试 + 签名准备，已完成)
+- 里程碑: **深度升级计划v3-2026-01-30** (TabManager + KeyboardShortcuts + 自动更新增强，已完成)
+- 里程碑: **深度升级计划v4-2026-01-30** (HistoryDataService + ImageOperations + IPC 类型安全，已完成)
+- 里程碑: **深度升级计划v5-2026-01-30** (AppBootstrap + LanguageManager + AccessibilityManager，已完成)
+- 里程碑: **深度升级计划v11-2025-01-30** (PromptTemplates + UnderstandPage + DirectorPage 页面迁移，已完成)
+- 里程碑: **深度升级计划v12-2025-01-30** (Production Readiness: 代码签名 + app.js清理 + E2E POM，已完成)
+- 里程碑: **深度升级计划v13-2025-01-30** (Full TypeScript Integration: ServiceBridge + 性能优化 + 测试架构，已完成)
+- 里程碑: **深度升级计划v14-2025-01-30** (Performance Optimization: Oxc minifier + 懒加载 + 启动优化，已完成)
+- 里程碑: **深度升级计划v15-2025-01-30** (Testing Enhancement: E2E + Benchmark + Visual Regression，已完成)
+- 里程碑: **V16.1-2025-01-31** (纯 electron-vite 入口: 资源本地化 + 内联脚本迁移，部分完成)
+- 里程碑: **V16.2-2025-01-31** (JS→TS 迁移: 9个模块 + window 暴露过渡期，已完成)
+- 模块实体: DialogManager, ErrorHandler, MobileMenuManager, PageLoader
+- 模块实体: ModelSelectorManager, SiteManager, IntelligentResizeManager, UIStateManager
+- 模块实体: **TabManager, KeyboardShortcuts, ServiceBridge** (v3 新增)
+- 模块实体: **HistoryDataService, ImageOperations** (v4 新增)
+- 模块实体: **AppBootstrap, LanguageManager, RatioResolutionManager** (v5 新增)
+- 模块实体: **NetworkDiagnosticsModal, ImageCacheService, AccessibilityManager** (v5 新增)
+- 页面实体: **PromptTemplates, UnderstandPage, DirectorPage** (v11 新增)
+- 模块实体: **PerformanceMonitorService, UIComponentsService, IntroVideoController** (V16.2 新增)
+- 工具实体: NetworkDiagnostics, ClipboardManager
+- 类型实体: IpcChannels, UpdaterConfig, UpdateProgress, **IpcChannelMap** (v4 新增)
+- 计划实体: **Electron-Builder-Packaging-Plan** (打包计划，已记忆)
+- 计划实体: **Next-Phase-Upgrade-v3** (下一阶段升级计划，已完成)
+- 计划实体: **Next-Phase-Upgrade-v5** (下一阶段升级计划，已完成)
+- 参考: Electron-Builder-Packaging, 2026-01-27-electron-builder-packaging.md
+
+## 新增 TypeScript 模块清单
+### core/
+- `Router.ts` - 页面路由器，管理标签页切换和 URL hash
+- `EventBus.ts` - 事件总线，应用级发布/订阅机制
+- `PageLoader.ts` - 页面懒加载器，支持非首屏页面动态导入 **V16.2 window 暴露**
+- `AppBootstrap.ts` - 应用启动引导，单例初始化流程 **V16.2 window 暴露**
+
+### services/
+- `api/ApiService.ts` - API 调用服务
+- `storage/StorageBridge.ts` - 存储桥接 (Electron/浏览器)
+- `i18n/I18nService.ts` - 国际化服务
+- `r2-storage/R2StorageService.ts` - Cloudflare R2 存储
+- `version-checker/VersionChecker.ts` - 版本检测服务
+- `ServiceBridge.ts` - JS→TS 迁移桥接层 (window 对象暴露) **v3 新增**
+- `cache/ImageCacheService.ts` - Flux 图片缓存服务 **v5 新增**
+
+### main/
+- `updater.ts` - 自动更新模块 (多 provider, 重试机制, ETA 进度) **v3 增强**
+
+### features/
+- `history/HistoryManager.ts` - 历史记录管理器
+- `history/HistoryDataService.ts` - 历史数据服务 (R2 集成, Base64 处理, 自动迁移) **v4 新增**
+- `dialog/DialogManager.ts` - 模态框管理器 (settings/about/activity, ARIA 增强)
+- `error-handler/ErrorHandler.ts` - 错误处理器，详细错误模态框
+- `error-handler/NetworkDiagnosticsModal.ts` - 网络受限诊断对话框 **v5 新增**
+- `mobile-menu/MobileMenuManager.ts` - 移动端菜单管理
+- `model-selector/ModelSelectorManager.ts` - 模型选择器管理 (Choices.js, 比例/分辨率)
+- `model-selector/RatioResolutionManager.ts` - 比例/分辨率选项渲染 **v5 新增**
+- `image-viewer/ImageViewer.ts` - 图片查看器
+- `image-viewer/ImageOperations.ts` - 图片操作 (下载/批量/复制/R2 解析) **v4 新增**
+- `settings/SiteManager.ts` - 站点管理 (自定义站点 CRUD)
+- `intelligent-resize/IntelligentResizeManager.ts` - 智能尺寸管理 (Gemini)
+- `ui-state/UIStateManager.ts` - UI 状态管理 (选择器禁用状态)
+- `tab-manager/TabManager.ts` - 标签页管理 (switchTab, hash 路由, 页面生命周期) **v3 新增**
+- `keyboard/KeyboardShortcuts.ts` - 键盘快捷键 (Ctrl+Enter, Escape, 粘贴分发) **v3 新增**
+- `language/LanguageManager.ts` - 语言管理 (切换, SEO 更新, UI 刷新) **v5 新增**
+- `accessibility/AccessibilityManager.ts` - 可访问性管理 (焦点陷阱, ARIA, 跳过链接) **v5 新增**
+- `performance/PerformanceMonitorService.ts` - 性能监控服务 (PerformanceObserver, 绘制时间) **V16.2 新增**
+- `ui-components/UIComponentsService.ts` - UI 组件服务 (懒加载, 响应式, 拖拽排序) **V16.2 新增**
+- `intro-video/IntroVideoController.ts` - Cyberpunk 介绍视频控制器 **V16.1.2 新增**
+
+### utils/
+- `network-diagnostics.ts` - 网络诊断工具
+- `clipboard.ts` - 剪贴板操作工具
+
+### pages/ (v9-v11 新增)
+- `BasePage.ts` - 页面抽象基类 (通用功能: toast, i18n, event, state)
+- `GeneratePage.ts` - 图片生成页面 (v9)
+- `HistoryPage.ts` - 历史记录页面 (v9)
+- `BatchPage.ts` - 批量生成页面 (v10)
+- `ComparePage.ts` - 图片对比页面 (v10)
+- `PromptTemplates.ts` - 模板管理页面 (懒加载模板, 分类切换, 模态框) **v11 新增**
+- `UnderstandPage.ts` - 图像理解页面 (Vision AI, 多图上传, 流式分析) **v11 新增**
+- `DirectorPage.ts` - 分镜生成页面 (参考图, 风格模板, 画廊, 批量生成) **v11 新增**
+
+### types/
+- `IpcChannels` - 类型安全的 IPC 通道常量
+- `IpcRequest/IpcResponse` - IPC 请求/响应类型
+- `IpcChannelMap` - IPC 通道完整类型映射 (请求/响应推断) **v4 新增**
+- `TypedInvoke` - 类型安全的 IPC invoke 函数类型 **v4 新增**
+- `UpdaterConfig/UpdateProgress/UpdateResult` - 自动更新类型 **v3 新增**

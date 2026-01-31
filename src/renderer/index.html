@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CATIMATION-Cyberpunk Master</title>
+    
+    <!-- 关键内联样式 - 确保加载页面立即显示 -->
+    <style>
+        html, body { margin: 0; padding: 0; background-color: #09090B; }
+        .loading-container {
+            position: fixed;
+            inset: 0;
+            background: #09090B;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 1rem;
+        }
+        .loading-spinner {
+            width: 48px;
+            height: 48px;
+            border: 3px solid rgba(252, 227, 0, 0.2);
+            border-top-color: #FCE300;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .loading-text { color: #FCE300; font-size: 1.25rem; font-weight: bold; }
+        .loading-subtitle { color: rgba(255,255,255,0.5); font-size: 0.875rem; }
+    </style>
+</head>
+<body>
+    <!-- 加载指示器 -->
+    <div class="loading-container" id="loadingContainer">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">CATIMATION-Cyberpunk Master</div>
+        <div class="loading-subtitle">正在加载应用...</div>
+    </div>
+
+    <!-- 主应用入口 -->
+    <div id="app"></div>
+
+    <!-- Vite 入口脚本 -->
+    <script type="module" src="./src/main.ts"></script>
+</body>
+</html>

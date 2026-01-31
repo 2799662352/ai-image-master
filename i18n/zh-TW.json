@@ -553,7 +553,9 @@
       "configureCloudStorage": "建议配置雲端存储",
       "configureCloudStorageDesc": "配置 Worker URL 以節省空间並保护隐私",
       "migrateAllToCloud": "一键迁移 {count} 條本地記錄到雲端",
-      "localUsage": "本地占用: {percent}%"
+      "localUsage": "本地占用: {percent}%",
+      "clearWebCache": "清除網頁快取",
+      "clearWebCacheDesc": "清除瀏覽器暫存的臨時檔案"
     },
     "storage": {
       "uploading": "上傳中",
@@ -934,7 +936,15 @@
       "title": "示例圖庫",
       "hint": "點擊選擇示例圖片作為參考圖，可多選（最多8張）",
       "cancel": "取消",
-      "confirm": "確認選擇"
+      "confirm": "確認選擇",
+      "editMode": "編輯",
+      "customTitle": "我的圖片",
+      "builtinTitle": "內建示例",
+      "addImage": "添加圖片",
+      "noCustomImages": "暫無自訂圖片",
+      "addImageHint": "點擊上方按鈕添加您的圖片",
+      "deleteSelected": "刪除選中",
+      "deleteConfirm": "確定要刪除選中的圖片嗎？"
     },
     "progress": {
       "analyzing": "正在分析參考圖...",

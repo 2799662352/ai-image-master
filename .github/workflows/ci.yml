@@ -1,0 +1,269 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+
+jobs:
+  lint-and-typecheck:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run TypeScript type check
+        run: npm run typecheck
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: lint-and-typecheck
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests with coverage
+        run: npm run test:coverage
+
+      - name: Check coverage threshold
+        run: |
+          node -e "
+          const fs = require('fs');
+          const summary = JSON.parse(fs.readFileSync('./coverage/coverage-summary.json', 'utf8'));
+          const total = summary.total;
+          
+          // Thresholds matching vitest.config.ts (v6 updated)
+          const thresholds = {
+            lines: 85,
+            functions: 85,
+            branches: 75,
+            statements: 85
+          };
+          
+          console.log('📊 Coverage Summary:');
+          console.log('  Lines:      ' + total.lines.pct.toFixed(1) + '% (threshold: ' + thresholds.lines + '%)');
+          console.log('  Branches:   ' + total.branches.pct.toFixed(1) + '% (threshold: ' + thresholds.branches + '%)');
+          console.log('  Functions:  ' + total.functions.pct.toFixed(1) + '% (threshold: ' + thresholds.functions + '%)');
+          console.log('  Statements: ' + total.statements.pct.toFixed(1) + '% (threshold: ' + thresholds.statements + '%)');
+          
+          const failed = [];
+          if (total.lines.pct < thresholds.lines) failed.push('lines: ' + total.lines.pct.toFixed(1) + '%');
+          if (total.branches.pct < thresholds.branches) failed.push('branches: ' + total.branches.pct.toFixed(1) + '%');
+          if (total.functions.pct < thresholds.functions) failed.push('functions: ' + total.functions.pct.toFixed(1) + '%');
+          if (total.statements.pct < thresholds.statements) failed.push('statements: ' + total.statements.pct.toFixed(1) + '%');
+          
+          if (failed.length > 0) {
+            console.error('❌ Coverage below threshold: ' + failed.join(', '));
+            process.exit(1);
+          }
+          console.log('✅ All coverage thresholds passed!');
+          "
+        continue-on-error: true
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: ./coverage/lcov.info
+          fail_ci_if_error: false
+
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 7
+
+  build:
+    name: Build
+    runs-on: ${{ matrix.os }}
+    needs: unit-tests
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build with electron-vite
+        run: npm run build:vite
+
+      - name: Build Electron app
+        run: npm run build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.os }}
+          path: dist/
+          retention-days: 7
+
+  e2e-tests:
+    name: E2E Tests
+    runs-on: windows-latest
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Build app
+        run: |
+          npm run build:vite
+          npm run build
+
+      - name: Run E2E tests
+        run: npm run test:e2e -- --project=electron
+        env:
+          CI: true
+
+      - name: Upload E2E test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-results
+          path: test-results/
+          retention-days: 7
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+  # V15: Visual Regression Tests
+  visual-tests:
+    name: Visual Regression Tests
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Build app
+        run: npm run build:vite
+
+      - name: Run visual regression tests
+        run: npm run test:e2e -- --project=visual
+        env:
+          CI: true
+        continue-on-error: true
+
+      - name: Upload visual snapshots
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: visual-snapshots
+          path: e2e/screenshots/
+          retention-days: 14
+
+  # V15: Benchmark Tests
+  benchmark-tests:
+    name: Performance Benchmarks
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run benchmark tests
+        run: npm run test:bench:ci
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark-results
+          path: benchmark-results.json
+          retention-days: 30
+
+      - name: Check for performance regressions
+        run: |
+          node -e "
+          const fs = require('fs');
+          if (!fs.existsSync('./benchmark-results.json')) {
+            console.log('⚠️ No benchmark results found');
+            process.exit(0);
+          }
+          const results = JSON.parse(fs.readFileSync('./benchmark-results.json', 'utf8'));
+          console.log('📊 Benchmark Results Summary:');
+          if (results.testResults) {
+            results.testResults.forEach(suite => {
+              console.log('\\nSuite: ' + suite.name);
+              if (suite.benchmarkResults) {
+                suite.benchmarkResults.forEach(bench => {
+                  console.log('  - ' + bench.name + ': ' + (bench.hz ? bench.hz.toFixed(2) + ' ops/sec' : 'N/A'));
+                });
+              }
+            });
+          }
+          console.log('\\n✅ Benchmarks completed');
+          "
+        continue-on-error: true

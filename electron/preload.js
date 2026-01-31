@@ -83,7 +83,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.invoke('export-templates'),
     
     importTemplates: () => 
-        ipcRenderer.invoke('import-templates')
+        ipcRenderer.invoke('import-templates'),
+    
+    // 自定义图库存储
+    saveCustomGallery: (images) => 
+        ipcRenderer.invoke('save-custom-gallery', images),
+    
+    loadCustomGallery: () => 
+        ipcRenderer.invoke('load-custom-gallery'),
+    
+    deleteCustomGalleryImage: (imageId) => 
+        ipcRenderer.invoke('delete-custom-gallery-image', imageId),
+    
+    addCustomGalleryImage: (imageData) => 
+        ipcRenderer.invoke('add-custom-gallery-image', imageData),
+    
+    getCustomGalleryPath: () => 
+        ipcRenderer.invoke('get-custom-gallery-path')
 });
 
 console.log('Electron preload 已加载，electronAPI 可用');

@@ -1,11 +1,14 @@
 {
   "name": "catimation-cyberpunk-master",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "CATIMATION-Cyberpunk Master - AI图片生成桌面应用",
-  "main": "electron/main.js",
+  "main": "dist/main/index.js",
   "author": "CATIMATION",
   "license": "MIT",
   "scripts": {
+    "dev:vite": "electron-vite dev",
+    "build:vite": "electron-vite build",
+    "preview": "electron-vite preview",
     "start": "electron .",
     "dev": "electron . --dev",
     "electron:dev": "electron . --dev",
@@ -17,15 +20,48 @@
     "build:linux": "electron-builder --linux",
     "build:all": "electron-builder -mwl",
     "build:dir": "electron-builder --dir",
-    "postinstall": "electron-builder install-app-deps"
+    "postinstall": "electron-builder install-app-deps",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:ui": "vitest --ui",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:report": "playwright show-report",
+    "analyze": "electron-vite build -- --mode analyze",
+    "analyze:report": "npx vite-bundle-visualizer",
+    "perf:startup": "npx tsx scripts/measure-startup.ts",
+    "test:bench": "vitest bench",
+    "test:bench:run": "vitest bench --run",
+    "test:bench:ci": "vitest bench --run"
   },
   "dependencies": {
-    "electron-store": "^8.1.0"
+    "browser-image-compression": "^2.0.2",
+    "choices.js": "^11.1.0",
+    "electron-store": "^8.1.0",
+    "electron-updater": "^6.7.3",
+    "jszip": "^3.10.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.0",
+    "@tailwindcss/postcss": "^4.1.18",
+    "@testing-library/dom": "^10.4.1",
+    "@types/node": "^20.19.30",
+    "autoprefixer": "^10.4.23",
     "electron": "^28.0.0",
     "electron-builder": "^26.4.0",
-    "sharp": "^0.34.5"
+    "electron-vite": "^5.0.0",
+    "jsdom": "^27.4.0",
+    "postcss": "^8.5.6",
+    "rollup-plugin-visualizer": "^5.14.0",
+    "sharp": "^0.34.5",
+    "tailwindcss": "^3.4.19",
+    "terser": "^5.46.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1",
+    "vitest": "^4.0.18"
   },
   "build": {
     "appId": "com.catimation.cyberpunk-master",
@@ -60,15 +96,27 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "build/icon.ico",
-      "legalTrademarks": "CATIMATION-Cyberpunk Master"
+      "legalTrademarks": "CATIMATION-Cyberpunk Master",
+      "publisherName": "CATIMATION",
+      "signtoolOptions": {
+        "signingHashAlgorithms": [
+          "sha256"
+        ],
+        "timeStampServer": "http://timestamp.digicert.com",
+        "certificateSubjectName": "${env.WIN_CERTIFICATE_SUBJECT_NAME}"
+      }
     },
     "nsis": {
       "oneClick": false,
@@ -81,7 +129,10 @@
       "shortcutName": "CATIMATION Cyberpunk Master",
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
-      "installerLanguages": ["zh_CN", "en_US"],
+      "installerLanguages": [
+        "zh_CN",
+        "en_US"
+      ],
       "language": "2052",
       "runAfterFinish": true
     },
@@ -89,21 +140,41 @@
       "artifactName": "${productName}-${version}-Portable.${ext}"
     },
     "mac": {
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "icon": "build/icon.png",
       "category": "public.app-category.graphics-design",
-      "darkModeSupport": true
+      "darkModeSupport": true,
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": {
+        "teamId": "${env.APPLE_TEAM_ID}"
+      }
     },
     "dmg": {
       "title": "${productName}",
       "icon": "build/icon.png"
     },
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "icon": "build/icon.png",
       "category": "Graphics",
       "maintainer": "CATIMATION <hi@lazycat.ai>",
       "synopsis": "AI图片生成桌面应用"
-    }
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "catimation",
+      "repo": "catimation-cyberpunk-master",
+      "releaseType": "release"
+    },
+    "generateUpdatesFilesForAllChannels": true
   }
 }

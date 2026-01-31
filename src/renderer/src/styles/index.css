@@ -1,0 +1,82 @@
+/* src/renderer/src/styles/index.css - Tailwind CSS 入口 */
+
+/* Tailwind 基础层 */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 自定义基础样式 */
+@layer base {
+  html, body {
+    margin: 0;
+    padding: 0;
+    background-color: #09090B;
+    color: #FAFAFA;
+    font-family: 'Exo 2', 'Noto Sans SC', system-ui, -apple-system, sans-serif;
+  }
+
+  /* 滚动条样式 */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(252, 227, 0, 0.3);
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(252, 227, 0, 0.5);
+  }
+}
+
+/* 自定义组件 */
+@layer components {
+  /* 玻璃效果 */
+  .glass-effect {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  /* 渐变背景 */
+  .gradient-bg {
+    background: linear-gradient(135deg, #09090B 0%, #1a1a2e 50%, #09090B 100%);
+  }
+
+  /* Cyberpunk 按钮 */
+  .btn-cyberpunk {
+    @apply bg-cyberpunk-yellow text-cyberpunk-black font-bold py-2 px-4;
+    @apply hover:shadow-lg hover:shadow-cyberpunk-yellow/30;
+    @apply transition-all duration-200;
+    @apply active:scale-95;
+  }
+
+  /* 标签按钮 */
+  .tab-btn {
+    @apply px-4 py-2 rounded-lg transition-all duration-200;
+    @apply text-white/70 hover:text-white hover:bg-white/10;
+  }
+
+  .tab-btn.active {
+    @apply bg-cyberpunk-yellow text-cyberpunk-black;
+  }
+}
+
+/* 自定义工具类 */
+@layer utilities {
+  /* 文本发光效果 */
+  .text-glow {
+    text-shadow: 0 0 10px currentColor, 0 0 20px currentColor;
+  }
+
+  /* 边框发光效果 */
+  .border-glow {
+    box-shadow: 0 0 10px rgba(252, 227, 0, 0.3);
+  }
+}

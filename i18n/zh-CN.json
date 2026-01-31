@@ -245,16 +245,25 @@
       "limitReached": "已达到上传上限，仅处理前{max}张图片",
       "batchComplete": "批量生成完成",
       "batchFailed": "批量生成失败",
-      "duplicateTask": "检测到重复批量上传，忽略任务"
+      "duplicateTask": "检测到重复批量上传，忽略任务",
+      "cardComplete": "抽卡生成完成！共生成 {count} 张图片"
     },
     "buttons": {
       "startBatch": "开始批量生成",
       "stopBatch": "停止生成",
-      "clearInput": "清空输入"
+      "clearInput": "清空输入",
+      "startGenerate": "开始生成",
+      "removeReference": "移除参考图",
+      "addMoreReference": "添加更多参考图",
+      "download": "下载",
+      "batchDownload": "批量下载",
+      "view": "查看大图"
     },
     "labels": {
       "referenceImage": "批量参考图{index}",
+      "referenceImageAlt": "批量参考图",
       "removeImage": "移除批量参考图{index}",
+      "removeReferenceAria": "移除此参考图",
       "addMore": "添加更多批量参考图",
       "quantity": "生成数量（抽卡张数）",
       "quantityCount": "{count}张",
@@ -279,7 +288,10 @@
       "cardWarning": "一个提示词，生成多张图片供您挑选，务必提示词和图片合规，违规内容出图失败AI厂商仍然扣费",
       "batchLabel": "批量生成 {index}",
       "selectBatchReference": "选择批量参考图片",
-      "emptyResults": "批量生成的结果将在这里显示"
+      "emptyResults": "批量生成的结果将在这里显示",
+      "imageCount": "第 {index} 张",
+      "generateSuccess": "生成成功",
+      "batchGenerateAlt": "批量生成结果"
     },
     "placeholders": {
       "cardMode": "设计一张图文店促销活动传单，宣传年终大促销活动。\n设计风格：活力促销风格，吸引眼球\n配色方案：橙红色为主色调，营造热烈促销氛围",
@@ -314,7 +326,9 @@
       "processing": "正在处理 {count} 张批量参考图...",
       "current": "已处理 {current}/{total}",
       "generating": "正在批量生成...",
-      "completed": "已完成 {count} 张"
+      "completed": "已完成 {count} 张",
+      "cardGenerating": "正在抽卡生成中...",
+      "status": "进度: {current}/{total}"
     },
     "status": {
       "batchCount": "生成数量",
@@ -500,7 +514,9 @@
       "configureCloudStorageDesc": "配置 Worker URL 以节省空间并保护隐私",
       "migrateAllToCloud": "一键迁移 {count} 条本地记录到云端",
       "recordsCount": "{count} 条记录",
-      "localUsage": "本地占用: {percent}%"
+      "localUsage": "本地占用: {percent}%",
+      "clearWebCache": "清除网页缓存",
+      "clearWebCacheDesc": "清除浏览器缓存的临时文件"
     }
   },
   "understand": {
@@ -773,7 +789,15 @@
       "title": "示例图库",
       "hint": "点击选择示例图片作为参考图，可多选（最多8张）",
       "cancel": "取消",
-      "confirm": "确认选择"
+      "confirm": "确认选择",
+      "editMode": "编辑",
+      "customTitle": "我的图片",
+      "builtinTitle": "内置示例",
+      "addImage": "添加图片",
+      "noCustomImages": "暂无自定义图片",
+      "addImageHint": "点击上方按钮添加您的图片",
+      "deleteSelected": "删除选中",
+      "deleteConfirm": "确定要删除选中的图片吗？"
     },
     "progress": {
       "analyzing": "正在分析参考图...",

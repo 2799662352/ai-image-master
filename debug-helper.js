@@ -47,16 +47,32 @@ window.debugHelper = {
         }
     },
     
-    // 检查应用状态
+    // 检查应用状态 - V16.5: 使用新的 TypeScript 服务
     checkApp: function() {
         console.log('=== 应用状态检查 ===');
         
-        if (window.app) {
-            console.log('✅ app 已初始化');
+        // 检查新的 TypeScript 服务
+        const appBootstrap = window.appBootstrapTS;
+        const tabManager = window.tabManagerTS;
+        const appServices = window.appServices;
+        
+        if (appBootstrap) {
+            console.log('✅ AppBootstrap 已初始化');
+            console.log('当前标签页:', tabManager?.getCurrentTab?.() || 'unknown');
+        } else if (window.app) {
+            // 向后兼容旧的 app 对象
+            console.log('✅ app 已初始化 (旧版)');
             console.log('当前标签页:', window.app.currentTab);
             console.log('页面实例:', Object.keys(window.app.pages || {}));
         } else {
-            console.error('❌ app 未初始化');
+            console.error('❌ 应用未初始化');
+        }
+        
+        // 检查 ServiceRegistry
+        if (appServices) {
+            console.log('✅ appServices 命名空间已初始化');
+            console.log('服务:', Object.keys(appServices.services || {}));
+            console.log('功能:', Object.keys(appServices.features || {}));
         }
     },
     
@@ -74,13 +90,18 @@ window.debugHelper = {
         console.log('\n✅ 检查完成');
     },
     
-    // 强制重新初始化模型选择器
+    // 强制重新初始化模型选择器 - V16.5: 使用 ModelSelectorManager
     reinitModelSelector: function() {
         console.log('🔄 强制重新初始化模型选择器...');
         
-        if (window.app && window.app.initModelSelector) {
-            window.app.initModelSelector();
+        const modelSelector = window.modelSelectorManagerTS;
+        if (modelSelector && modelSelector.init) {
+            modelSelector.init();
             console.log('✅ 模型选择器重新初始化完成');
+        } else if (window.app && window.app.initModelSelector) {
+            // 向后兼容
+            window.app.initModelSelector();
+            console.log('✅ 模型选择器重新初始化完成 (旧版)');
         } else {
             console.error('❌ 无法重新初始化模型选择器');
         }
@@ -140,27 +161,37 @@ window.debugHelper = {
         console.log('加载时间:', performance.now() + 'ms');
     },
     
-    // 手动测试模型切换
+    // 手动测试模型切换 - V16.5: 使用 ModelSelectorManager
     testModelSwitch: function(modelName = 'sora_image') {
         console.log('🧪 手动测试模型切换到:', modelName);
         
-        if (window.app && window.app.switchModel) {
-            window.app.switchModel(modelName);
+        const modelSelector = window.modelSelectorManagerTS;
+        if (modelSelector && modelSelector.switchModel) {
+            modelSelector.switchModel(modelName);
             console.log('✅ 切换命令已发送');
+        } else if (window.app && window.app.switchModel) {
+            // 向后兼容
+            window.app.switchModel(modelName);
+            console.log('✅ 切换命令已发送 (旧版)');
         } else {
             console.error('❌ 无法找到切换方法');
         }
     },
     
-    // 测试下拉菜单交互
+    // 测试下拉菜单交互 - V16.5: 使用 ModelSelectorManager
     testDropdownInteraction: function() {
         console.log('🧪 测试下拉菜单交互...');
         
+        const modelSelector = window.modelSelectorManagerTS;
+        
         // 1. 测试打开
         console.log('1. 测试打开下拉菜单');
-        if (window.app && window.app.openModelDropdown) {
-            window.app.openModelDropdown();
+        if (modelSelector && modelSelector.openDropdown) {
+            modelSelector.openDropdown();
             console.log('✅ 打开命令已发送');
+        } else if (window.app && window.app.openModelDropdown) {
+            window.app.openModelDropdown();
+            console.log('✅ 打开命令已发送 (旧版)');
         }
         
         // 2. 等待一秒后检查状态
@@ -171,9 +202,12 @@ window.debugHelper = {
             // 3. 再等待一秒后测试关闭
             setTimeout(() => {
                 console.log('3. 测试关闭下拉菜单');
-                if (window.app && window.app.closeModelDropdown) {
-                    window.app.closeModelDropdown();
+                if (modelSelector && modelSelector.closeDropdown) {
+                    modelSelector.closeDropdown();
                     console.log('✅ 关闭命令已发送');
+                } else if (window.app && window.app.closeModelDropdown) {
+                    window.app.closeModelDropdown();
+                    console.log('✅ 关闭命令已发送 (旧版)');
                 }
             }, 1000);
         }, 1000);

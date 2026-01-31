@@ -500,7 +500,9 @@
       "configureCloudStorageDesc": "Configure Worker URL to save space and protect privacy",
       "migrateAllToCloud": "Migrate {count} local records to cloud with one click",
       "recordsCount": "{count} record(s)",
-      "localUsage": "Local usage: {percent}%"
+      "localUsage": "Local usage: {percent}%",
+      "clearWebCache": "Clear Web Cache",
+      "clearWebCacheDesc": "Clear browser cached temporary files"
     }
   },
   "understand": {
@@ -797,7 +799,15 @@
       "title": "Example Gallery",
       "hint": "Click to select example images as reference (max 8)",
       "cancel": "Cancel",
-      "confirm": "Confirm Selection"
+      "confirm": "Confirm Selection",
+      "editMode": "Edit",
+      "customTitle": "My Images",
+      "builtinTitle": "Built-in Examples",
+      "addImage": "Add Image",
+      "noCustomImages": "No custom images yet",
+      "addImageHint": "Click button above to add your images",
+      "deleteSelected": "Delete Selected",
+      "deleteConfirm": "Are you sure you want to delete the selected images?"
     },
     "progress": {
       "analyzing": "Analyzing reference image...",

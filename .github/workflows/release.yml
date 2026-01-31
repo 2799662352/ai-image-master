@@ -1,0 +1,247 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 1.0.0)'
+        required: true
+        type: string
+      skip_tests:
+        description: 'Skip tests before release'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # 验证和测试
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    if: ${{ !inputs.skip_tests }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run type check
+        run: npm run typecheck
+
+      - name: Run unit tests
+        run: npm run test:run
+
+      - name: Build for E2E tests
+        run: npm run build:vite
+        env:
+          NODE_ENV: test
+
+      - name: Run E2E tests
+        run: npm run test:e2e
+        env:
+          CI: true
+          # Electron E2E 需要 xvfb 在 Linux 上
+          DISPLAY: ':99'
+
+      - name: Upload E2E test screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: e2e/screenshots/
+          retention-days: 7
+
+  # 构建应用
+  release:
+    name: Build (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    needs: [validate]
+    if: always() && (needs.validate.result == 'success' || needs.validate.result == 'skipped')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win
+          - os: macos-latest
+            platform: mac
+          # - os: ubuntu-latest
+          #   platform: linux
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build with electron-vite
+        run: npm run build:vite
+        env:
+          NODE_ENV: production
+
+      # Windows 代码签名构建
+      - name: Build and publish (Windows)
+        if: matrix.platform == 'win'
+        run: npm run build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_ENV: production
+          # Windows 代码签名 (传统证书)
+          WIN_CSC_LINK: ${{ secrets.WIN_CERTIFICATE }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CERTIFICATE_PASSWORD }}
+          WIN_CERTIFICATE_SUBJECT_NAME: ${{ secrets.WIN_CERTIFICATE_SUBJECT_NAME }}
+          # 或使用 Azure Trusted Signing (推荐用于 EV 证书)
+          # AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          # AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          # AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+
+      # macOS 代码签名和公证构建
+      - name: Build and publish (macOS)
+        if: matrix.platform == 'mac'
+        run: npm run build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_ENV: production
+          # macOS 代码签名
+          CSC_LINK: ${{ secrets.MAC_CERTIFICATE }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+          # Optional: Identity name for code signing
+          # CSC_NAME: ${{ secrets.MAC_IDENTITY_NAME }}
+          # Apple 公证 (required for distribution)
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}
+          path: |
+            dist/*.exe
+            dist/*.dmg
+            dist/*.zip
+            dist/*.yml
+            dist/*.blockmap
+          retention-days: 30
+
+  # 创建 GitHub Release
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # 获取上一个 tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          
+          if [ -z "$PREV_TAG" ]; then
+            echo "No previous tag found, generating full changelog"
+            CHANGES=$(git log --oneline --no-merges | head -50)
+          else
+            echo "Previous tag: $PREV_TAG"
+            CHANGES=$(git log --oneline --no-merges ${PREV_TAG}..HEAD)
+          fi
+          
+          # 分类变更
+          FEATURES=$(echo "$CHANGES" | grep -iE '(feat|add|new)' || true)
+          FIXES=$(echo "$CHANGES" | grep -iE '(fix|bug|patch)' || true)
+          IMPROVEMENTS=$(echo "$CHANGES" | grep -iE '(improve|update|enhance|refactor)' || true)
+          OTHER=$(echo "$CHANGES" | grep -ivE '(feat|add|new|fix|bug|patch|improve|update|enhance|refactor)' || true)
+          
+          # 构建 changelog
+          BODY="## What's Changed in v${{ steps.get_version.outputs.VERSION }}\n\n"
+          
+          if [ -n "$FEATURES" ]; then
+            BODY="${BODY}### 🚀 New Features\n\n$FEATURES\n\n"
+          fi
+          
+          if [ -n "$FIXES" ]; then
+            BODY="${BODY}### 🐛 Bug Fixes\n\n$FIXES\n\n"
+          fi
+          
+          if [ -n "$IMPROVEMENTS" ]; then
+            BODY="${BODY}### 💎 Improvements\n\n$IMPROVEMENTS\n\n"
+          fi
+          
+          if [ -n "$OTHER" ]; then
+            BODY="${BODY}### 📝 Other Changes\n\n$OTHER\n\n"
+          fi
+          
+          # 保存到文件
+          echo -e "$BODY" > changelog.md
+          
+          # 输出到 GITHUB_OUTPUT
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          cat changelog.md >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: List artifacts
+        run: |
+          echo "=== Downloaded Artifacts ==="
+          find release-artifacts -type f | sort
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: v${{ steps.get_version.outputs.VERSION }}
+          body: ${{ steps.changelog.outputs.changelog }}
+          files: |
+            release-artifacts/**/*.exe
+            release-artifacts/**/*.dmg
+            release-artifacts/**/*.zip
+            release-artifacts/**/*.yml
+            release-artifacts/**/*.blockmap
+          draft: true
+          prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload changelog artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: changelog
+          path: changelog.md
+          retention-days: 30
