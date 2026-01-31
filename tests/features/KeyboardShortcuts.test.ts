@@ -2,33 +2,60 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { KeyboardShortcuts, createKeyboardShortcuts } from '../../src/renderer/src/features/keyboard'
 
-// Mock document
-const mockDocument = {
-  addEventListener: vi.fn(),
-  removeEventListener: vi.fn(),
-  getElementById: vi.fn(),
-  activeElement: null as Element | null
+// Create a mock ClipboardEvent for JSDOM environments
+const createMockClipboardEvent = (type: string): ClipboardEvent => {
+  const event = new Event(type, { bubbles: true, cancelable: true }) as ClipboardEvent
+  Object.defineProperty(event, 'clipboardData', {
+    value: {
+      getData: vi.fn().mockReturnValue(''),
+      setData: vi.fn(),
+      items: [],
+      files: []
+    },
+    writable: false
+  })
+  return event
 }
 
-// Mock window
-const mockWindow = {
-  closeCustomSiteModal: vi.fn()
-}
+// Store original values
+let originalActiveElement: PropertyDescriptor | undefined
+let mockActiveElement: Element | null = null
+let addEventListenerSpy: ReturnType<typeof vi.spyOn>
+let removeEventListenerSpy: ReturnType<typeof vi.spyOn>
+let getElementByIdSpy: ReturnType<typeof vi.spyOn>
 
 beforeEach(() => {
-  vi.stubGlobal('document', mockDocument)
-  vi.stubGlobal('window', mockWindow)
+  // Setup window mock
+  ;(window as any).closeCustomSiteModal = vi.fn()
   
-  // Reset mocks
-  mockDocument.addEventListener.mockReset()
-  mockDocument.removeEventListener.mockReset()
-  mockDocument.getElementById.mockReset()
-  mockDocument.activeElement = null
-  mockWindow.closeCustomSiteModal.mockReset()
+  // Spy on document methods
+  addEventListenerSpy = vi.spyOn(document, 'addEventListener')
+  removeEventListenerSpy = vi.spyOn(document, 'removeEventListener')
+  getElementByIdSpy = vi.spyOn(document, 'getElementById')
+  
+  // Mock activeElement using Object.defineProperty
+  mockActiveElement = null
+  originalActiveElement = Object.getOwnPropertyDescriptor(document, 'activeElement')
+  Object.defineProperty(document, 'activeElement', {
+    get: () => mockActiveElement,
+    configurable: true
+  })
 })
 
 afterEach(() => {
-  vi.unstubAllGlobals()
+  // Restore activeElement
+  if (originalActiveElement) {
+    Object.defineProperty(document, 'activeElement', originalActiveElement)
+  }
+  
+  // Restore spies
+  addEventListenerSpy.mockRestore()
+  removeEventListenerSpy.mockRestore()
+  getElementByIdSpy.mockRestore()
+  
+  // Clean up window
+  delete (window as any).closeCustomSiteModal
+  
   vi.clearAllMocks()
 })
 
@@ -58,7 +85,7 @@ describe('KeyboardShortcuts', () => {
       const shortcuts = createKeyboardShortcuts(createDefaultConfig())
       shortcuts.init()
       
-      expect(mockDocument.addEventListener).toHaveBeenCalledWith(
+      expect(addEventListenerSpy).toHaveBeenCalledWith(
         'keydown',
         expect.any(Function)
       )
@@ -68,7 +95,7 @@ describe('KeyboardShortcuts', () => {
       const shortcuts = createKeyboardShortcuts(createDefaultConfig())
       shortcuts.init()
       
-      expect(mockDocument.addEventListener).toHaveBeenCalledWith(
+      expect(addEventListenerSpy).toHaveBeenCalledWith(
         'paste',
         expect.any(Function)
       )
@@ -167,7 +194,7 @@ describe('KeyboardShortcuts', () => {
             contains: vi.fn().mockReturnValue(false) // not hidden = visible
           }
         }
-        mockDocument.getElementById.mockReturnValue(modal)
+        getElementByIdSpy.mockReturnValue(modal as unknown as HTMLElement)
         
         const config = createDefaultConfig()
         const shortcuts = createKeyboardShortcuts(config)
@@ -175,17 +202,17 @@ describe('KeyboardShortcuts', () => {
         const event = new KeyboardEvent('keydown', { key: 'Escape' })
         shortcuts.handleKeyboard(event)
         
-        expect(mockWindow.closeCustomSiteModal).toHaveBeenCalled()
+        expect((window as any).closeCustomSiteModal).toHaveBeenCalled()
       })
 
       it('should close settings if no custom site modal', () => {
         // First call for customSiteModal returns null
-        mockDocument.getElementById.mockImplementation((id: string) => {
+        getElementByIdSpy.mockImplementation((id: string) => {
           if (id === 'customSiteModal') return null
           if (id === 'settingsModal') {
             return {
               classList: { contains: vi.fn().mockReturnValue(false) }
-            }
+            } as unknown as HTMLElement
           }
           return null
         })
@@ -200,7 +227,7 @@ describe('KeyboardShortcuts', () => {
       })
 
       it('should always try to close about and activity', () => {
-        mockDocument.getElementById.mockReturnValue(null)
+        getElementByIdSpy.mockReturnValue(null)
         
         const config = createDefaultConfig()
         const shortcuts = createKeyboardShortcuts(config)
@@ -217,7 +244,7 @@ describe('KeyboardShortcuts', () => {
   describe('handlePaste', () => {
     it('should not process paste in textarea', () => {
       const textarea = document.createElement('textarea')
-      mockDocument.activeElement = textarea
+      mockActiveElement = textarea
       
       const config = createDefaultConfig()
       const handlePasteEvent = vi.fn()
@@ -227,7 +254,7 @@ describe('KeyboardShortcuts', () => {
       
       const shortcuts = createKeyboardShortcuts(config)
       
-      const event = new ClipboardEvent('paste')
+      const event = createMockClipboardEvent('paste')
       shortcuts.handlePaste(event)
       
       expect(handlePasteEvent).not.toHaveBeenCalled()
@@ -235,7 +262,7 @@ describe('KeyboardShortcuts', () => {
 
     it('should not process paste in input', () => {
       const input = document.createElement('input')
-      mockDocument.activeElement = input
+      mockActiveElement = input
       
       const config = createDefaultConfig()
       const handlePasteEvent = vi.fn()
@@ -245,7 +272,7 @@ describe('KeyboardShortcuts', () => {
       
       const shortcuts = createKeyboardShortcuts(config)
       
-      const event = new ClipboardEvent('paste')
+      const event = createMockClipboardEvent('paste')
       shortcuts.handlePaste(event)
       
       expect(handlePasteEvent).not.toHaveBeenCalled()
@@ -254,8 +281,8 @@ describe('KeyboardShortcuts', () => {
 
   describe('isInImageUploadContext', () => {
     it('should return false when not in upload context', () => {
-      mockDocument.activeElement = null
-      mockDocument.getElementById.mockReturnValue(null)
+      mockActiveElement = null
+      getElementByIdSpy.mockReturnValue(null)
       
       const shortcuts = createKeyboardShortcuts(createDefaultConfig())
       
@@ -267,8 +294,8 @@ describe('KeyboardShortcuts', () => {
       const childElement = document.createElement('button')
       uploadArea.appendChild(childElement)
       
-      mockDocument.activeElement = childElement
-      mockDocument.getElementById.mockImplementation((id: string) => {
+      mockActiveElement = childElement
+      getElementByIdSpy.mockImplementation((id: string) => {
         if (id === 'referenceImageArea') return uploadArea
         return null
       })
@@ -365,11 +392,11 @@ describe('KeyboardShortcuts', () => {
       
       shortcuts.destroy()
       
-      expect(mockDocument.removeEventListener).toHaveBeenCalledWith(
+      expect(removeEventListenerSpy).toHaveBeenCalledWith(
         'keydown',
         expect.any(Function)
       )
-      expect(mockDocument.removeEventListener).toHaveBeenCalledWith(
+      expect(removeEventListenerSpy).toHaveBeenCalledWith(
         'paste',
         expect.any(Function)
       )
