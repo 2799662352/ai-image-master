@@ -73,8 +73,8 @@
       "buildResources": "build"
     },
     "files": [
-      "**/*",
-      "!dist/**",
+      "dist/**/*",
+      "package.json",
       "!build/**",
       "!docs/**",
       "!node_modules/.cache/**",
@@ -109,13 +109,7 @@
       ],
       "icon": "build/icon.ico",
       "legalTrademarks": "CATIMATION-Cyberpunk Master",
-      "signtoolOptions": {
-        "signingHashAlgorithms": [
-          "sha256"
-        ],
-        "timeStampServer": "http://timestamp.digicert.com",
-        "certificateSubjectName": "${env.WIN_CERTIFICATE_SUBJECT_NAME}"
-      }
+      "forceCodeSigning": false
     },
     "nsis": {
       "oneClick": false,
