@@ -6,18 +6,36 @@ import {
   getModelSelectorManager
 } from '../../src/renderer/src/features/model-selector/ModelSelectorManager'
 
-// Mock Choices.js
+// Mock Choices.js - Complete mock class
 class MockChoices {
   element: HTMLElement
+  options: any
+  passedElement: { element: HTMLElement }
   static instances: MockChoices[] = []
 
-  constructor(element: HTMLElement, _options: any) {
-    this.element = element
+  constructor(element: HTMLElement | string, options?: any) {
+    this.element = typeof element === 'string' 
+      ? document.querySelector(element) as HTMLElement 
+      : element
+    this.options = options
+    this.passedElement = { element: this.element }
     MockChoices.instances.push(this)
+    
+    // Call callbackOnInit if provided
+    if (options?.callbackOnInit) {
+      options.callbackOnInit()
+    }
   }
 
+  setChoices = vi.fn()
+  clearChoices = vi.fn()
+  clearStore = vi.fn()
   setChoiceByValue = vi.fn()
+  getValue = vi.fn(() => ({ value: 'test' }))
   destroy = vi.fn()
+  init = vi.fn()
+  enable = vi.fn()
+  disable = vi.fn()
 
   static clearInstances() {
     MockChoices.instances = []
@@ -59,13 +77,15 @@ describe('ModelSelectorManager', () => {
       <label id="batchCountLabel"></label>
     `
 
-    // Setup global mocks
-    ;(window as any).Choices = MockChoices
-    ;(window as any).aiImageAPI = mockApiImageAPI
-    ;(window as any).i18n = {
+    // Setup global mocks using vi.stubGlobal for proper typeof checks
+    vi.stubGlobal('Choices', MockChoices)
+    vi.stubGlobal('aiImageAPI', mockApiImageAPI)
+    vi.stubGlobal('i18n', {
       translations: { 'zh-CN': { aspectRatios: {}, resolutions: {} } },
       currentLang: 'zh-CN'
-    }
+    })
+    // Also set on window for window.aiImageAPI access
+    ;(window as any).aiImageAPI = mockApiImageAPI
 
     MockChoices.clearInstances()
     vi.clearAllMocks()
@@ -78,9 +98,8 @@ describe('ModelSelectorManager', () => {
   afterEach(() => {
     manager.destroy()
     document.body.innerHTML = ''
-    delete (window as any).Choices
+    vi.unstubAllGlobals()
     delete (window as any).aiImageAPI
-    delete (window as any).i18n
   })
 
   describe('init', () => {
@@ -93,12 +112,23 @@ describe('ModelSelectorManager', () => {
 
     it('should retry if Choices.js is not available', () => {
       vi.useFakeTimers()
-      delete (window as any).Choices
+      // Unstub Choices to simulate it not being loaded yet
+      vi.unstubAllGlobals()
+      // Re-stub aiImageAPI as it was also unstubbed
+      vi.stubGlobal('aiImageAPI', mockApiImageAPI)
+      ;(window as any).aiImageAPI = mockApiImageAPI
+      vi.stubGlobal('i18n', {
+        translations: { 'zh-CN': { aspectRatios: {}, resolutions: {} } },
+        currentLang: 'zh-CN'
+      })
 
       manager.init(0)
 
-      // First retry
-      ;(window as any).Choices = MockChoices
+      // Verify no instances created yet (Choices not available)
+      expect(MockChoices.instances.length).toBe(0)
+
+      // Now stub Choices and advance timers
+      vi.stubGlobal('Choices', MockChoices)
       vi.advanceTimersByTime(100)
 
       expect(MockChoices.instances.length).toBeGreaterThan(0)
