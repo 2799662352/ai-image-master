@@ -1,4 +1,18 @@
-// API调用模块
+// @ts-check
+/// <reference path="../src/types/index.ts" />
+
+/**
+ * API调用模块
+ * @description 处理与 AI 图片生成 API 的所有通信
+ * 
+ * V16.3: 使用 window.appServices 命名空间
+ */
+
+// V16.3: 辅助函数获取 r2Storage (优先 appServices)
+function getR2StorageJS() {
+    return window.appServices?.services?.r2Storage || window.r2Storage;
+}
+
 class AIImageAPI {
     constructor() {
         // 可选的API站点配置（内置站点）
@@ -702,8 +716,8 @@ class AIImageAPI {
         if (!model) return modelKey;
 
         // 尝试从 i18n 获取翻译
-        if (typeof i18n !== 'undefined' && i18n.t) {
-            const translatedName = i18n.t(`models.${modelKey}.displayName`);
+        if (typeof window.i18nServiceTS !== 'undefined' && window.i18nServiceTS.t) {
+            const translatedName = window.i18nServiceTS.t(`models.${modelKey}.displayName`);
             // 如果找到了翻译且不是返回的键名本身，使用翻译
             if (translatedName && !translatedName.startsWith('models.')) {
                 return translatedName;
@@ -2441,7 +2455,9 @@ class AIImageAPI {
         }
         
         // 异步上传到 R2（不阻塞图片显示）
-        if (window.r2Storage) {
+        // V16.3: 使用 appServices
+        const r2Storage = getR2StorageJS();
+        if (r2Storage) {
             // 立即开始异步上传，但不等待结果
             this.asyncUploadToR2(allUrls, modelConfig).catch(error => {
                 console.warn('后台 R2 上传失败:', error);
@@ -2665,15 +2681,23 @@ class AIImageAPI {
     }
 
     // 异步上传到 R2（后台执行，不阻塞）
+    // V16.3: 优先使用 appServices
     async asyncUploadToR2(urls, modelConfig) {
         // 延迟100ms开始，让UI先响应
         await new Promise(resolve => setTimeout(resolve, 100));
 
+        // V16.3: 使用 appServices
+        const r2Storage = getR2StorageJS();
+        if (!r2Storage) {
+            console.log('R2 服务未加载，跳过上传');
+            return;
+        }
+
         try {
             // 确保 R2 服务已初始化
-            await window.r2Storage.init();
+            await r2Storage.init();
 
-            if (!window.r2Storage.isAvailable()) {
+            if (!r2Storage.isAvailable()) {
                 console.log('R2 服务不可用，跳过上传');
                 return;
             }
@@ -2725,13 +2749,15 @@ class AIImageAPI {
 
     // 上传图片到 R2 存储
     async uploadImagesToR2(urls) {
-        if (!window.r2Storage || !urls || urls.length === 0) {
+        // V16.3: 使用 appServices
+        const r2Storage = getR2StorageJS();
+        if (!r2Storage || !urls || urls.length === 0) {
             return urls;
         }
 
         try {
             // R2 服务已在调用前初始化，直接检查可用性
-            if (!window.r2Storage.isAvailable()) {
+            if (!r2Storage.isAvailable()) {
                 console.log('R2 服务不可用');
                 return urls;
             }
@@ -2741,21 +2767,21 @@ class AIImageAPI {
                 urls.map(async (url) => {
                     try {
                         // 如果已经是 R2 URL，直接返回
-                        if (window.r2Storage.isR2Url(url)) {
+                        if (r2Storage.isR2Url(url)) {
                             return url;
                         }
 
                         // 根据类型处理
                         if (url.startsWith('data:image')) {
                             // Base64 图片，上传到 R2
-                            const r2Url = await window.r2Storage.uploadBase64(url, {
+                            const r2Url = await r2Storage.uploadBase64(url, {
                                 model: this.model,
                                 timestamp: Date.now()
                             });
                             return r2Url;
                         } else {
                             // 远程 URL，缓存到 R2
-                            const r2Url = await window.r2Storage.cacheRemoteUrl(url, {
+                            const r2Url = await r2Storage.cacheRemoteUrl(url, {
                                 model: this.model,
                                 timestamp: Date.now()
                             });
@@ -2963,7 +2989,9 @@ class AIImageAPI {
             }
 
             // 检查是否是 R2 URL（R2 URL 通常不会有跨域问题）
-            const isR2Url = window.r2Storage && window.r2Storage.isR2Url && window.r2Storage.isR2Url(url);
+            // V16.3: 使用 appServices
+            const r2Storage = getR2StorageJS();
+            const isR2Url = r2Storage && r2Storage.isR2Url && r2Storage.isR2Url(url);
 
             // 获取当前模型信息
             const currentModel = this.getCurrentModel();
@@ -3099,7 +3127,13 @@ class AIImageAPI {
         }
 
         try {
-            const zip = new JSZip();
+            // V18: 使用延迟加载获取 JSZip
+            const getJSZip = window.getJSZip;
+            if (typeof getJSZip !== 'function') {
+                throw new Error('JSZip 加载器未就绪');
+            }
+            const JSZipClass = await getJSZip();
+            const zip = new JSZipClass();
             let completed = 0;
             let successCount = 0;
             const prefix = this.getDownloadPrefix(modelKey);
@@ -3114,7 +3148,9 @@ class AIImageAPI {
                         blob = await this.dataUrlToBlob(url);
                     } else {
                         // 检查是否是 R2 URL（R2 URL 应该可以正常下载）
-                        const isR2Url = window.r2Storage && window.r2Storage.isR2Url && window.r2Storage.isR2Url(url);
+                        // V16.3: 使用 appServices
+                        const r2Storage = getR2StorageJS();
+                        const isR2Url = r2Storage && r2Storage.isR2Url && r2Storage.isR2Url(url);
                         if (isR2Url) {
                             const response = await fetch(url);
                             if (response.ok) {
@@ -3192,7 +3228,9 @@ class AIImageAPI {
         console.log('尝试下载blob:', url);
 
         // 检查是否是 R2 URL
-        const isR2Url = window.r2Storage && window.r2Storage.isR2Url && window.r2Storage.isR2Url(url);
+        // V16.3: 使用 appServices
+        const r2Storage = getR2StorageJS();
+        const isR2Url = r2Storage && r2Storage.isR2Url && r2Storage.isR2Url(url);
 
         // R2 URL 应该可以直接下载
         if (isR2Url) {
