@@ -133,23 +133,47 @@ describe('MobileMenuManager', () => {
   describe('isMobileViewport', () => {
     it('should check viewport width against breakpoint', () => {
       // 默认断点是 768px
-      Object.defineProperty(window, 'innerWidth', { value: 500, writable: true })
+      Object.defineProperty(window, 'innerWidth', { value: 500, writable: true, configurable: true })
       expect(menuManager.isMobileViewport()).toBe(true)
       
-      Object.defineProperty(window, 'innerWidth', { value: 1024, writable: true })
+      Object.defineProperty(window, 'innerWidth', { value: 1024, writable: true, configurable: true })
       expect(menuManager.isMobileViewport()).toBe(false)
     })
   })
 
   describe('resize handler', () => {
     it('should close menu when viewport exceeds breakpoint', () => {
+      // 捕获 resize handler
+      let capturedResizeHandler: (() => void) | null = null
+      const addEventListenerSpy = vi.spyOn(window, 'addEventListener').mockImplementation(
+        (type: string, handler: EventListenerOrEventListenerObject) => {
+          if (type === 'resize' && typeof handler === 'function') {
+            capturedResizeHandler = handler as () => void
+          }
+        }
+      )
+      
+      // 重新创建 manager 以捕获 handler
+      menuManager.destroy()
+      menuManager = createMobileMenuManager()
+      menuManager.init()
+      
       menuManager.open()
       expect(menuManager.isOpen()).toBe(true)
       
-      Object.defineProperty(window, 'innerWidth', { value: 1024, writable: true })
-      window.dispatchEvent(new Event('resize'))
+      // Mock window.innerWidth 超过断点
+      Object.defineProperty(window, 'innerWidth', {
+        get: () => 1024,
+        configurable: true
+      })
+      
+      // 手动调用 resize handler
+      expect(capturedResizeHandler).not.toBeNull()
+      capturedResizeHandler!()
       
       expect(menuManager.isOpen()).toBe(false)
+      
+      addEventListenerSpy.mockRestore()
     })
   })
 
@@ -186,10 +210,10 @@ describe('MobileMenuManager', () => {
       })
       manager.init()
       
-      Object.defineProperty(window, 'innerWidth', { value: 800, writable: true })
+      Object.defineProperty(window, 'innerWidth', { value: 800, writable: true, configurable: true })
       expect(manager.isMobileViewport()).toBe(true)
       
-      Object.defineProperty(window, 'innerWidth', { value: 1200, writable: true })
+      Object.defineProperty(window, 'innerWidth', { value: 1200, writable: true, configurable: true })
       expect(manager.isMobileViewport()).toBe(false)
       
       manager.destroy()
