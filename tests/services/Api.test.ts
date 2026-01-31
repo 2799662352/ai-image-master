@@ -162,7 +162,7 @@ describe('ApiService', () => {
       })
       
       expect(result.success).toBe(false)
-      expect(result.error).toContain('401')
+      expect(result.error).toContain('Unauthorized')
     })
   })
 })
