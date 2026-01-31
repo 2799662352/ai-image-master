@@ -109,7 +109,6 @@
       ],
       "icon": "build/icon.ico",
       "legalTrademarks": "CATIMATION-Cyberpunk Master",
-      "publisherName": "CATIMATION",
       "signtoolOptions": {
         "signingHashAlgorithms": [
           "sha256"
@@ -151,9 +150,7 @@
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
-      "notarize": {
-        "teamId": "${env.APPLE_TEAM_ID}"
-      }
+      "notarize": false
     },
     "dmg": {
       "title": "${productName}",
