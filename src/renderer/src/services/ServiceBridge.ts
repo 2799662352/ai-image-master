@@ -11,6 +11,7 @@ import { getStorageBridge, StorageBridge } from './storage'
 import { getI18nService, I18nService } from './i18n'
 import { getApiService, ApiService } from './api'
 import { getR2StorageService, R2StorageService, initR2StorageGlobal } from './r2-storage'
+import { initPageStateManagerGlobal, getPageStateManager, PageStateManager } from './PageStateManager'
 import { getVersionChecker, VersionChecker } from './version-checker'
 import { getHistoryDataService, HistoryDataService } from '../features/history'
 import { getIntelligentResizeManager, IntelligentResizeManager } from '../features/intelligent-resize'
@@ -293,6 +294,11 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
         // R2StorageService - 后台存储
         const r2Storage = initR2StorageGlobal()  // V16.5: Also sets window.r2Storage for backward compatibility
         ServiceRegistry.register(SERVICE_KEYS.R2_STORAGE, r2Storage)
+
+        // PageStateManager - 页面状态管理
+        const pageStateManager = initPageStateManagerGlobal()
+        ServiceRegistry.register(SERVICE_KEYS.PAGE_STATE, pageStateManager)
+        console.log('[ServiceBridge] ✓ PageStateManager (TS) 已就绪')
 
         // VersionChecker - 版本检查可延迟
         const versionChecker = getVersionChecker()
