@@ -23,18 +23,22 @@ describe('IntelligentResizeManager', () => {
   let manager: IntelligentResizeManager
 
   beforeEach(() => {
-    // Setup DOM
+    // Setup DOM - must match structure expected by implementation
+    // Implementation uses: '#ratioButtons .ratio-btn' selector
+    // Implementation uses: batchRatioSelect.closest('div') for container
     document.body.innerHTML = `
       <div id="ratioContainer">
-        <div class="ratio-buttons-container">
+        <div id="ratioButtons" class="ratio-buttons-container">
           <button class="ratio-btn" data-ratio="1:1">1:1</button>
           <button class="ratio-btn" data-ratio="16:9">16:9</button>
         </div>
       </div>
-      <select id="batchRatio">
-        <option value="1:1">1:1</option>
-        <option value="16:9">16:9</option>
-      </select>
+      <div id="batchRatioContainer">
+        <select id="batchRatio">
+          <option value="1:1">1:1</option>
+          <option value="16:9">16:9</option>
+        </select>
+      </div>
     `
 
     // Setup global mocks
