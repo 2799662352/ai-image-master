@@ -35,7 +35,6 @@ nano banann/
 │   │   ├── compare-page.js     ← 模型对比页面 (38KB)
 │   │   └── prompt-templates.js ← 提示词模板 (11KB)
 │   └── services/
-│       ├── version-checker.js  ← 版本检测服务 (14KB)
 │       └── r2-storage.js       ← R2 云存储服务 (14KB)
 │
 ├── css/                    ← 样式文件
