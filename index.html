@@ -4,6 +4,53 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     
+    <!-- ⚡ 关键内联样式 - 确保加载页面立即显示，避免白屏 -->
+    <style>
+        /* 基础背景和加载器样式 - 无需等待外部CSS */
+        html, body { margin: 0; padding: 0; background-color: #09090B; }
+        .page-loader {
+            position: fixed;
+            inset: 0;
+            background: #09090B;
+            z-index: 99999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .loader-content {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            gap: 1rem;
+        }
+        .loader-spinner {
+            width: 48px;
+            height: 48px;
+            border: 3px solid rgba(252, 227, 0, 0.2);
+            border-top-color: #FCE300;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .loader-text { color: #FCE300; font-size: 1.25rem; font-weight: bold; }
+        .loader-subtitle { color: rgba(255,255,255,0.5); font-size: 0.875rem; }
+        .intro-video-container { position: absolute; inset: 0; }
+        .intro-video { width: 100%; height: 100%; object-fit: cover; }
+        .intro-logo { position: absolute; top: 2rem; left: 2rem; color: #FCE300; font-size: 0.875rem; font-weight: bold; letter-spacing: 0.1em; }
+        .intro-loading-text { position: absolute; bottom: 4rem; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,0.7); font-size: 0.75rem; letter-spacing: 0.2em; }
+        .intro-progress { position: absolute; bottom: 0; left: 0; height: 2px; background: #FCE300; transition: width 0.3s; }
+        .skip-intro-btn, .enter-btn { position: absolute; padding: 0.75rem 1.5rem; background: transparent; border: 1px solid rgba(252,227,0,0.5); color: #FCE300; cursor: pointer; font-size: 0.75rem; letter-spacing: 0.1em; transition: all 0.3s; }
+        .skip-intro-btn { bottom: 2rem; right: 2rem; }
+        .enter-btn { bottom: 50%; right: 50%; transform: translate(50%, 50%); }
+        .skip-intro-btn:hover, .enter-btn:hover { background: #FCE300; color: #09090B; }
+        .main-content { display: none; }
+        /* 加载完成后显示主内容 */
+        .main-content.loaded { display: block !important; }
+        .page-loader.loaded { opacity: 0; pointer-events: none; transition: opacity 0.3s; }
+        /* 隐藏辅助类 */
+        .hidden { display: none !important; }
+    </style>
+    
     <!-- 基本SEO信息 -->
     <title>CATIMATION-Cyberpunk Master - 智能图片生成与编辑平台 | gpt-4o-image AI绘画工具</title>
     <meta name="description" content="CATIMATION-Cyberpunk Master是基于gpt-4o-image模型的专业AI图片生成平台，支持文本生成图片、参考图生成、批量生成等功能。为创作者提供高质量的AI绘画工具。">
@@ -610,13 +657,13 @@
         <nav class="glass-effect text-white p-4" role="navigation" aria-label="主导航">
         <div class="container mx-auto flex justify-between items-center">
             <div class="flex items-center space-x-2 lg:space-x-4">
-                <img src="images/logo.png" alt="CATIMATION-Cyberpunk MasterLogo" class="w-8 h-8 cursor-pointer hover:opacity-80 transition-opacity" onclick="app.switchTab('generate', true)" title="返回图片编辑">
+                <img src="images/logo.png" alt="CATIMATION-Cyberpunk MasterLogo" class="w-8 h-8 cursor-pointer hover:opacity-80 transition-opacity" data-action="switch-tab" data-tab="generate" title="返回图片编辑">
                 <!-- 桌面端标题 -->
-                <h1 class="text-2xl font-bold hidden lg:block cursor-pointer hover:opacity-80 transition-opacity" onclick="app.switchTab('generate', true)" data-i18n-attr="title:common.generate" data-i18n="common.appName">CATIMATION-Cyberpunk Master</h1>
+                <h1 class="text-2xl font-bold hidden lg:block cursor-pointer hover:opacity-80 transition-opacity" data-action="switch-tab" data-tab="generate" data-i18n-attr="title:common.generate" data-i18n="common.appName">CATIMATION-Cyberpunk Master</h1>
                 <!-- 平板端标题 -->
-                <h1 class="text-xl font-bold hidden md:block lg:hidden cursor-pointer hover:opacity-80 transition-opacity" onclick="app.switchTab('generate', true)" data-i18n-attr="title:common.generate" data-i18n="common.appNameShort">CATIMATION</h1>
+                <h1 class="text-xl font-bold hidden md:block lg:hidden cursor-pointer hover:opacity-80 transition-opacity" data-action="switch-tab" data-tab="generate" data-i18n-attr="title:common.generate" data-i18n="common.appNameShort">CATIMATION</h1>
                 <!-- 移动端标题 -->
-                <h1 class="text-lg font-bold md:hidden cursor-pointer hover:opacity-80 transition-opacity" onclick="app.switchTab('generate', true)" data-i18n-attr="title:common.generate" data-i18n="common.appNameMobile">AI出图</h1>
+                <h1 class="text-lg font-bold md:hidden cursor-pointer hover:opacity-80 transition-opacity" data-action="switch-tab" data-tab="generate" data-i18n-attr="title:common.generate" data-i18n="common.appNameMobile">AI出图</h1>
 
                 <!-- 模型选择器 - 移到 Logo 旁边（仅桌面端显示） -->
                 <div class="model-selector-wrapper hidden md:block">
@@ -2270,40 +2317,92 @@
         </div>
     </div>
 
-    <!-- 导演模式示例图库模态框 -->
-    <div id="directorGalleryModal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-[50000] flex items-center justify-center p-4">
-        <div class="bg-white rounded-none w-full max-w-4xl mx-4 max-h-[90vh] overflow-hidden flex flex-col">
+    <!-- 导演模式示例图库模态框 - Kinetic Typography / Cyberpunk 2077 风格 -->
+    <div id="directorGalleryModal" class="fixed inset-0 bg-[#09090B] bg-opacity-90 hidden z-[50000] flex items-center justify-center p-4">
+        <div class="bg-[#09090B] border-2 border-[#3F3F46] rounded-none w-full max-w-4xl mx-4 max-h-[90vh] overflow-hidden flex flex-col">
             <!-- 模态框头部 -->
-            <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-                <h3 class="text-xl font-bold flex items-center">
-                    <i class="fas fa-images text-cyan-500 mr-2"></i>
+            <div class="px-6 py-4 border-b-2 border-[#3F3F46] flex items-center justify-between">
+                <h3 class="text-xl font-bold flex items-center text-[#FAFAFA] uppercase tracking-tighter">
+                    <i class="fas fa-images text-[#FCE300] mr-2"></i>
                     <span data-i18n="director.galleryModal.title">示例图库</span>
                 </h3>
                 <div class="flex items-center space-x-4">
-                    <span id="gallerySelectedCount" class="text-gray-500 text-sm">已选择 0 张</span>
-                    <button id="closeGalleryModalX" class="text-gray-400 hover:text-gray-600 transition-colors">
+                    <!-- 编辑模式切换 -->
+                    <button id="galleryEditModeBtn" onclick="window.directorPage.toggleGalleryEditMode()" 
+                            class="text-[#A1A1AA] hover:text-[#FCE300] transition-colors cursor-pointer px-3 py-1 border border-[#3F3F46] hover:border-[#FCE300] rounded-none"
+                            title="编辑模式">
+                        <i class="fas fa-edit mr-1"></i>
+                        <span data-i18n="director.galleryModal.editMode">编辑</span>
+                    </button>
+                    <span id="gallerySelectedCount" class="text-[#A1A1AA] text-sm font-bold uppercase tracking-wide">已选择 0 张</span>
+                    <button id="closeGalleryModalX" class="text-[#A1A1AA] hover:text-[#FCE300] transition-colors cursor-pointer">
                         <i class="fas fa-times text-xl"></i>
                     </button>
                 </div>
             </div>
             
             <!-- 模态框内容 -->
-            <div class="flex-1 overflow-y-auto p-4">
-                <p class="text-gray-500 text-sm mb-4" data-i18n="director.galleryModal.hint">点击选择示例图片作为参考图，可多选（最多8张）</p>
-                <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3" id="directorGalleryGrid">
-                    <!-- 示例图片将通过JS动态加载 -->
+            <div class="flex-1 overflow-y-auto p-4 bg-[#09090B]">
+                <!-- 提示文字 -->
+                <p id="galleryHintText" class="text-[#A1A1AA] text-sm mb-4 uppercase tracking-wide" data-i18n="director.galleryModal.hint">点击选择示例图片作为参考图，可多选（最多8张）</p>
+                
+                <!-- 用户自定义图片区域 -->
+                <div id="customGallerySection" class="mb-6">
+                    <div class="flex items-center justify-between mb-3">
+                        <h4 class="text-[#FAFAFA] font-bold uppercase tracking-tight flex items-center">
+                            <i class="fas fa-star text-[#EC4899] mr-2"></i>
+                            <span data-i18n="director.galleryModal.customTitle">我的图片</span>
+                            <span id="customImageCount" class="ml-2 text-xs text-[#A1A1AA]">(0)</span>
+                        </h4>
+                        <button id="addCustomImageBtn" onclick="window.directorPage.addCustomGalleryImage()" 
+                                class="bg-[#EC4899] hover:scale-105 active:scale-95 text-white py-1.5 px-4 rounded-none transition-all font-bold uppercase tracking-tighter cursor-pointer text-sm">
+                            <i class="fas fa-plus mr-1"></i>
+                            <span data-i18n="director.galleryModal.addImage">添加图片</span>
+                        </button>
+                    </div>
+                    <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3" id="customGalleryGrid">
+                        <!-- 用户自定义图片将通过JS动态加载 -->
+                        <div id="customGalleryEmpty" class="col-span-full text-center py-8 text-[#71717A] border-2 border-dashed border-[#3F3F46] rounded-none">
+                            <i class="fas fa-image text-3xl mb-2 opacity-50"></i>
+                            <p class="text-sm uppercase tracking-wide" data-i18n="director.galleryModal.noCustomImages">暂无自定义图片</p>
+                            <p class="text-xs mt-1" data-i18n="director.galleryModal.addImageHint">点击上方按钮添加您的图片</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 内置示例图片区域 -->
+                <div id="builtinGallerySection">
+                    <h4 class="text-[#FAFAFA] font-bold uppercase tracking-tight flex items-center mb-3">
+                        <i class="fas fa-folder text-[#FCE300] mr-2"></i>
+                        <span data-i18n="director.galleryModal.builtinTitle">内置示例</span>
+                        <span id="builtinImageCount" class="ml-2 text-xs text-[#A1A1AA]">(38)</span>
+                    </h4>
+                    <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3" id="directorGalleryGrid">
+                        <!-- 内置示例图片将通过JS动态加载 -->
+                    </div>
                 </div>
             </div>
             
             <!-- 模态框底部 -->
-            <div class="px-6 py-4 border-t border-gray-200 flex justify-end space-x-3">
-                <button id="closeGalleryModal" class="bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 px-6 rounded-none transition-colors">
-                    <span data-i18n="director.galleryModal.cancel">取消</span>
-                </button>
-                <button id="confirmGallerySelection" class="bg-cyan-500 hover:bg-cyan-600 text-white py-2 px-6 rounded-none transition-colors">
-                    <i class="fas fa-check mr-2"></i>
-                    <span data-i18n="director.galleryModal.confirm">确认选择</span>
-                </button>
+            <div class="px-6 py-4 border-t-2 border-[#3F3F46] flex justify-between bg-[#09090B]">
+                <div id="galleryEditActions" class="hidden flex space-x-2">
+                    <button id="deleteSelectedBtn" onclick="window.directorPage.deleteSelectedCustomImages()" 
+                            class="bg-[#EF4444] hover:bg-[#DC2626] text-white py-2 px-4 rounded-none transition-all font-bold uppercase tracking-tighter cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                            disabled>
+                        <i class="fas fa-trash mr-2"></i>
+                        <span data-i18n="director.galleryModal.deleteSelected">删除选中</span>
+                    </button>
+                </div>
+                <div class="flex-1"></div>
+                <div class="flex space-x-3">
+                    <button id="closeGalleryModal" class="bg-[#27272A] hover:bg-[#3F3F46] text-[#FAFAFA] border-2 border-[#3F3F46] py-2 px-6 rounded-none transition-all font-bold uppercase tracking-tighter cursor-pointer">
+                        <span data-i18n="director.galleryModal.cancel">取消</span>
+                    </button>
+                    <button id="confirmGallerySelection" class="bg-[#FCE300] hover:scale-105 active:scale-95 text-black py-2 px-6 rounded-none transition-all font-bold uppercase tracking-tighter cursor-pointer">
+                        <i class="fas fa-check mr-2"></i>
+                        <span data-i18n="director.galleryModal.confirm">确认选择</span>
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -2322,92 +2421,22 @@
                 </button>
             </div>
             
-            <!-- 模态框内容 -->
+            <!-- 模态框内容 - 动态渲染 -->
             <div class="flex-1 overflow-y-auto p-4 bg-[#09090B]">
+                <!-- 加载提示 -->
+                <div class="text-center py-8 text-[#A1A1AA]" id="templateListLoading">
+                    <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
+                    <p class="uppercase tracking-wide text-sm">加载模板中...</p>
+                </div>
+                <!-- 模板网格由 JS 动态渲染 -->
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="directorTemplateList">
-                    <!-- 动画截图风格 -->
-                    <div class="template-card cursor-pointer border-2 border-gray-200 hover:border-pink-400 rounded-none p-4 transition-all" data-template="anime">
-                        <div class="flex items-start space-x-3">
-                            <div class="w-12 h-12 bg-[#FCE300] rounded-none flex items-center justify-center flex-shrink-0">
-                                <i class="fas fa-film text-white text-xl"></i>
-                            </div>
-                            <div class="flex-1 min-w-0">
-                                <h4 class="font-bold text-gray-800" data-i18n="director.templates.anime.name">动画截图风格</h4>
-                                <p class="text-gray-500 text-sm mt-1" data-i18n="director.templates.anime.desc">TV动画风格，故事板分镜，高质量赛璐璐着色</p>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- 漫画分镜风格 -->
-                    <div class="template-card cursor-pointer border-2 border-gray-200 hover:border-pink-400 rounded-none p-4 transition-all" data-template="manga">
-                        <div class="flex items-start space-x-3">
-                            <div class="w-12 h-12 bg-[#27272A] border-2 border-[#3F3F46] rounded-none flex items-center justify-center flex-shrink-0">
-                                <i class="fas fa-book-open text-white text-xl"></i>
-                            </div>
-                            <div class="flex-1 min-w-0">
-                                <h4 class="font-bold text-gray-800" data-i18n="director.templates.manga.name">漫画分镜风格</h4>
-                                <p class="text-gray-500 text-sm mt-1" data-i18n="director.templates.manga.desc">黑白漫画风格，对话框，网点效果，动态线条</p>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- 电影分镜风格 -->
-                    <div class="template-card cursor-pointer border-2 border-gray-200 hover:border-pink-400 rounded-none p-4 transition-all" data-template="movie">
-                        <div class="flex items-start space-x-3">
-                            <div class="w-12 h-12 bg-[#FCE300] rounded-none flex items-center justify-center flex-shrink-0">
-                                <i class="fas fa-video text-white text-xl"></i>
-                            </div>
-                            <div class="flex-1 min-w-0">
-                                <h4 class="font-bold text-gray-800" data-i18n="director.templates.movie.name">电影分镜风格</h4>
-                                <p class="text-gray-500 text-sm mt-1" data-i18n="director.templates.movie.desc">真实电影感，电影级调色，景深效果，宽银幕</p>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- 韩漫风格 -->
-                    <div class="template-card cursor-pointer border-2 border-gray-200 hover:border-pink-400 rounded-none p-4 transition-all" data-template="webtoon">
-                        <div class="flex items-start space-x-3">
-                            <div class="w-12 h-12 bg-[#FCE300] rounded-none flex items-center justify-center flex-shrink-0">
-                                <i class="fas fa-mobile-alt text-white text-xl"></i>
-                            </div>
-                            <div class="flex-1 min-w-0">
-                                <h4 class="font-bold text-gray-800" data-i18n="director.templates.webtoon.name">韩漫/条漫风格</h4>
-                                <p class="text-gray-500 text-sm mt-1" data-i18n="director.templates.webtoon.desc">全彩韩漫风格，竖向条漫排版，清新唯美</p>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- 美漫风格 -->
-                    <div class="template-card cursor-pointer border-2 border-gray-200 hover:border-pink-400 rounded-none p-4 transition-all" data-template="comic">
-                        <div class="flex items-start space-x-3">
-                            <div class="w-12 h-12 bg-[#FCE300] rounded-none flex items-center justify-center flex-shrink-0">
-                                <i class="fas fa-mask text-white text-xl"></i>
-                            </div>
-                            <div class="flex-1 min-w-0">
-                                <h4 class="font-bold text-gray-800" data-i18n="director.templates.comic.name">美漫风格</h4>
-                                <p class="text-gray-500 text-sm mt-1" data-i18n="director.templates.comic.desc">美式漫画风格，粗线条，强对比，超级英雄感</p>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- 插画风格 -->
-                    <div class="template-card cursor-pointer border-2 border-gray-200 hover:border-pink-400 rounded-none p-4 transition-all" data-template="illustration">
-                        <div class="flex items-start space-x-3">
-                            <div class="w-12 h-12 bg-[#FCE300] rounded-none flex items-center justify-center flex-shrink-0">
-                                <i class="fas fa-paint-brush text-white text-xl"></i>
-                            </div>
-                            <div class="flex-1 min-w-0">
-                                <h4 class="font-bold text-gray-800" data-i18n="director.templates.illustration.name">插画风格</h4>
-                                <p class="text-gray-500 text-sm mt-1" data-i18n="director.templates.illustration.desc">精美插画风格，丰富细节，艺术质感</p>
-                            </div>
-                        </div>
-                    </div>
+                    <!-- 内容由 renderTemplateList() 动态生成 -->
                 </div>
             </div>
             
-            <!-- 模态框底部 - Kinetic Typography 风格 -->
-            <div class="px-6 py-4 border-t-2 border-[#3F3F46] flex justify-between bg-[#09090B]">
-                <div class="flex space-x-2">
+            <!-- 模态框底部 - Kinetic Typography / Cyberpunk 风格 -->
+            <div class="px-6 py-4 border-t-2 border-[#3F3F46] flex flex-col sm:flex-row justify-between gap-3 bg-[#09090B]">
+                <div class="flex flex-wrap gap-2">
                     <button onclick="window.directorPage.createNewTemplate()" class="bg-[#FCE300] hover:scale-105 active:scale-95 text-black py-2 px-4 rounded-none transition-all font-bold uppercase tracking-tighter cursor-pointer">
                         <i class="fas fa-plus mr-2"></i>
                         <span data-i18n="director.templateModal.createNew">新建模板</span>
@@ -2421,7 +2450,7 @@
                         <span data-i18n="director.templateModal.export">导出</span>
                     </button>
                 </div>
-                <button id="closeTemplateModal" class="bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 px-6 rounded-none transition-colors cursor-pointer font-bold uppercase tracking-tighter">
+                <button id="closeTemplateModal" class="bg-[#27272A] hover:bg-[#3F3F46] text-[#FAFAFA] border-2 border-[#3F3F46] py-2 px-6 rounded-none transition-all font-bold uppercase tracking-tighter cursor-pointer">
                     <span data-i18n="director.templateModal.cancel">取消</span>
                 </button>
             </div>
@@ -3172,8 +3201,6 @@
     </script>
 
     <!-- 加载模块文件 -->
-    <!-- 性能监控 - 最早加载以捕获完整指标 -->
-    <script src="js/performance-monitor.js?v=1.0.0" defer></script>
     
     <!-- ========== 关键脚本：使用 defer 保持执行顺序 ========== -->
     <!-- StorageBridge - Electron 存储桥接，需要在其他模块之前加载 -->
@@ -3181,26 +3208,20 @@
     <!-- PageStateManager - 页面状态持久化服务 -->
     <script src="js/services/page-state-manager.js?v=1.0.0" defer></script>
     <!-- 国际化模块 - 需要最先加载 -->
-    <script src="js/i18n.js?v=1.0.4" defer></script>
+    <script src="js/i18n.js?v=1.0.5" defer></script>
     <!-- API 模块 -->
     <script src="js/api.js?v=1.0.2" defer></script>
     <!-- 组件模块 -->
     <script src="js/components.js?v=1.0.2" defer></script>
     
-    <!-- 页面模块 - 必须在 app.js 之前加载（因为 app.js 使用这些类） -->
-    <script src="js/modules/generate-page.js?v=1.0.2" defer></script>
-    <script src="js/modules/batch-page.js?v=1.0.2" defer></script>
-    <script src="js/modules/history-page.js?v=1.0.2" defer></script>
-    <script src="js/modules/compare-page.js?v=1.0.2" defer></script>
-    <script src="js/modules/understand-page.js?v=1.0.2" defer></script>
-    <script src="js/modules/director-page.js?v=1.0.12" defer></script>
-    <script src="js/modules/prompt-templates.js?v=1.0.2" defer></script>
+    <!-- 页面模块已迁移到 TypeScript (src/renderer/src/pages/) -->
+    <!-- 由 electron-vite 构建并通过 ServiceBridge 加载 -->
     
     <!-- R2 存储服务 - 需要在 app.js 之前加载（历史记录迁移依赖） -->
     <script src="js/services/r2-storage.js?v=1.0.2" defer></script>
     
-    <!-- 主应用模块 - 必须在所有依赖（包括页面模块和 R2 服务）之后 -->
-    <script src="js/app.js?v=1.0.2" defer></script>
+    <!-- V16.5: app.js 已移除，功能已迁移到 TypeScript 模块 -->
+    <!-- 应用初始化: AppBootstrap.ts + EventManager.ts (通过 ServiceBridge 加载) -->
     
     <!-- ========== 非关键脚本：使用 async 异步加载，不阻塞渲染 ========== -->
     <!-- 服务模块 -->
