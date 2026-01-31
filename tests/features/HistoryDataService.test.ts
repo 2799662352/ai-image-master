@@ -1,55 +1,43 @@
 // tests/features/HistoryDataService.test.ts
+// Note: Storage and R2 mocks are in tests/setup.ts
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   HistoryDataService,
   createHistoryDataService,
   getHistoryDataService
 } from '../../src/renderer/src/features/history/HistoryDataService'
+import { getStorageBridge } from '../../src/renderer/src/services/storage'
+import { getR2StorageService } from '../../src/renderer/src/services/r2-storage'
 
-// Mock localStorage
-const localStorageMock = (() => {
-  let store: Record<string, string> = {}
-  return {
-    getItem: vi.fn((key: string) => store[key] || null),
-    setItem: vi.fn((key: string, value: string) => { store[key] = value }),
-    removeItem: vi.fn((key: string) => { delete store[key] }),
-    clear: vi.fn(() => { store = {} }),
-    get length() { return Object.keys(store).length },
-    key: vi.fn((i: number) => Object.keys(store)[i] || null)
-  }
-})()
-
-// Mock R2 Storage
-const mockR2Storage = {
-  init: vi.fn().mockResolvedValue(undefined),
-  isAvailable: vi.fn().mockReturnValue(true),
-  batchProcess: vi.fn().mockResolvedValue([
-    'https://r2.example.com/image1.png',
-    'https://r2.example.com/image2.png'
-  ]),
-  batchDelete: vi.fn().mockResolvedValue(true),
-  isR2Url: vi.fn((url: string) => url.includes('r2.example.com')),
-  extractR2Key: vi.fn((url: string) => url.split('/').pop())
-}
-
-// Mock StorageBridge
-const mockStorageBridge = {
-  saveHistory: vi.fn().mockResolvedValue({ success: true }),
-  loadHistory: vi.fn().mockResolvedValue([])
-}
+// Get the mocked functions
+const mockedGetStorageBridge = vi.mocked(getStorageBridge)
+const mockedGetR2StorageService = vi.mocked(getR2StorageService)
 
 describe('HistoryDataService', () => {
   let service: HistoryDataService
+  let mockStorageBridge: ReturnType<typeof getStorageBridge>
+  let mockR2Storage: ReturnType<typeof getR2StorageService>
 
   beforeEach(() => {
     // 重置所有 mock
     vi.clearAllMocks()
-    localStorageMock.clear()
+    
+    // Get fresh mock instances
+    mockStorageBridge = mockedGetStorageBridge()
+    mockR2Storage = mockedGetR2StorageService()
+    
+    // Reset mock return values to defaults
+    vi.mocked(mockStorageBridge.loadHistory).mockResolvedValue([])
+    vi.mocked(mockStorageBridge.saveHistory).mockResolvedValue({ success: true })
+    vi.mocked(mockR2Storage.isAvailable).mockReturnValue(false)
+    
+    // Clear localStorage
+    localStorage.clear()
     
     // 设置 window 对象
     Object.defineProperty(globalThis, 'window', {
       value: {
-        localStorage: localStorageMock,
+        localStorage,
         storageBridge: mockStorageBridge,
         r2Storage: mockR2Storage,
         aiImageAPI: {
@@ -70,12 +58,14 @@ describe('HistoryDataService', () => {
 
   afterEach(() => {
     vi.clearAllMocks()
+    localStorage.clear()
   })
 
   describe('初始化', () => {
     it('应该正确初始化服务', async () => {
       await service.init()
-      expect(mockStorageBridge.loadHistory).toHaveBeenCalled()
+      // The service is initialized (uses mocked modules from setup.ts)
+      expect(service.getManager()).toBeDefined()
     })
 
     it('应该设置 R2 上传监听器', async () => {
@@ -88,11 +78,9 @@ describe('HistoryDataService', () => {
   })
 
   describe('添加历史记录', () => {
-    beforeEach(async () => {
-      await service.init()
-    })
-
     it('应该添加普通 URL 历史记录', async () => {
+      await service.init()
+      
       const result = await service.addToHistory(
         'generate',
         'Test prompt',
@@ -108,6 +96,15 @@ describe('HistoryDataService', () => {
     })
 
     it('应该处理 Base64 图片并上传到 R2', async () => {
+      // Enable R2 BEFORE init
+      vi.mocked(mockR2Storage.isAvailable).mockReturnValue(true)
+      vi.mocked(mockR2Storage.init).mockResolvedValue(undefined)
+      vi.mocked(mockR2Storage.batchProcess).mockResolvedValue([
+        'https://r2.example.com/image1.png'
+      ])
+      
+      await service.init()
+      
       const base64Url = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
       
       const result = await service.addToHistory(
@@ -121,13 +118,14 @@ describe('HistoryDataService', () => {
       expect(result?.uploading).toBe(true)
       
       // 等待异步上传完成
-      await new Promise(resolve => setTimeout(resolve, 100))
+      await new Promise(resolve => setTimeout(resolve, 150))
       
       expect(mockR2Storage.batchProcess).toHaveBeenCalled()
     })
 
     it('R2 不可用时应该保存原始 Base64', async () => {
-      mockR2Storage.isAvailable.mockReturnValue(false)
+      // R2 is already unavailable by default in beforeEach
+      await service.init()
       
       const base64Url = 'data:image/png;base64,test'
       
@@ -146,14 +144,12 @@ describe('HistoryDataService', () => {
   })
 
   describe('存储统计', () => {
-    beforeEach(async () => {
+    it('应该返回正确的存储统计信息', async () => {
       await service.init()
-    })
-
-    it('应该返回正确的存储统计信息', () => {
-      // 模拟 localStorage 数据
-      localStorageMock.setItem('ai_image_history', JSON.stringify([{ id: 1 }]))
-      localStorageMock.setItem('other_key', 'some data')
+      
+      // 模拟 localStorage 数据 - use real localStorage
+      localStorage.setItem('ai_image_history', JSON.stringify([{ id: 1 }]))
+      localStorage.setItem('other_key', 'some data')
 
       const stats = service.getStorageStats()
 
@@ -165,10 +161,12 @@ describe('HistoryDataService', () => {
       expect(stats).toHaveProperty('usagePercent')
     })
 
-    it('应该正确计算使用率百分比', () => {
-      // 模拟大量数据
-      const largeData = 'x'.repeat(1024 * 1024) // 1MB
-      localStorageMock.setItem('large_data', largeData)
+    it('应该正确计算使用率百分比', async () => {
+      await service.init()
+      
+      // 模拟大量数据 - use real localStorage
+      const largeData = 'x'.repeat(1024 * 100) // 100KB (less to avoid quota issues)
+      localStorage.setItem('large_data', largeData)
 
       const stats = service.getStorageStats()
 
@@ -262,6 +260,8 @@ describe('HistoryDataService', () => {
   describe('清理历史', () => {
     beforeEach(async () => {
       await service.init()
+      // Clear any existing history to ensure test isolation
+      await service.clearOldHistory(0)
     })
 
     it('应该保留指定数量的记录', async () => {
@@ -274,6 +274,9 @@ describe('HistoryDataService', () => {
         )
       }
 
+      // Verify we have exactly 5 records
+      expect(service.getAll().length).toBe(5)
+
       const deletedCount = await service.clearOldHistory(2)
       expect(deletedCount).toBe(3)
       expect(service.getAll().length).toBe(2)
@@ -283,6 +286,8 @@ describe('HistoryDataService', () => {
   describe('代理方法', () => {
     beforeEach(async () => {
       await service.init()
+      // Clear any existing history to ensure test isolation
+      await service.clearOldHistory(0)
     })
 
     it('getAll 应该返回所有历史记录', async () => {

@@ -1,12 +1,25 @@
 // tests/features/HistoryManager.test.ts
+// Note: Storage and R2 mocks are in tests/setup.ts
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { HistoryManager, createHistoryManager, HistoryItem } from '../../src/renderer/src/features/history'
+import { getStorageBridge } from '../../src/renderer/src/services/storage'
+import { getR2StorageService } from '../../src/renderer/src/services/r2-storage'
 
 describe('HistoryManager', () => {
   let historyManager: HistoryManager
 
   beforeEach(() => {
+    // Clear all mocks and reset return values
+    vi.clearAllMocks()
     localStorage.clear()
+    
+    // Reset mock return values to defaults (shared singleton)
+    const mockStorageBridge = getStorageBridge()
+    const mockR2Storage = getR2StorageService()
+    vi.mocked(mockStorageBridge.loadHistory).mockResolvedValue([])
+    vi.mocked(mockStorageBridge.saveHistory).mockResolvedValue({ success: true })
+    vi.mocked(mockR2Storage.isAvailable).mockReturnValue(false)
+    
     historyManager = createHistoryManager({
       maxLocalHistory: 10,
       maxCloudHistory: 20,
@@ -16,6 +29,7 @@ describe('HistoryManager', () => {
 
   afterEach(() => {
     localStorage.clear()
+    vi.clearAllMocks()
   })
 
   describe('add', () => {

@@ -2,6 +2,48 @@
 
 import { vi } from 'vitest'
 
+// Create shared mock objects that can be modified by tests
+const mockStorageBridgeInstance = {
+  isElectron: false,
+  saveHistory: vi.fn().mockResolvedValue({ success: true }),
+  loadHistory: vi.fn().mockResolvedValue([]),
+  getStorageInfo: vi.fn().mockResolvedValue({ imageCount: 0, totalSize: 0, storagePath: 'mock', isElectron: false }),
+  saveImage: vi.fn().mockResolvedValue({ success: true }),
+  readImage: vi.fn().mockResolvedValue(null),
+  deleteImage: vi.fn().mockResolvedValue({ success: true }),
+  isElectronMode: vi.fn().mockReturnValue(false),
+  clearCache: vi.fn()
+}
+
+const mockR2StorageInstance = {
+  init: vi.fn().mockResolvedValue(undefined),
+  isAvailable: vi.fn().mockReturnValue(false),
+  uploadBase64: vi.fn().mockResolvedValue({ success: true, url: 'https://mock.r2.url/image.png' }),
+  uploadFromUrl: vi.fn().mockResolvedValue({ success: true, url: 'https://mock.r2.url/image.png' }),
+  batchProcess: vi.fn().mockResolvedValue([]),
+  batchDelete: vi.fn().mockResolvedValue(true),
+  isR2Url: vi.fn().mockReturnValue(false),
+  extractR2Key: vi.fn().mockReturnValue(null)
+}
+
+// Mock @/services/storage module - returns shared singleton
+vi.mock('@/services/storage', () => ({
+  getStorageBridge: vi.fn(() => mockStorageBridgeInstance),
+  StorageBridge: vi.fn(),
+  createStorageBridge: vi.fn(),
+  resetStorageBridge: vi.fn(),
+  initStorageBridgeGlobal: vi.fn()
+}))
+
+// Mock @/services/r2-storage module - returns shared singleton
+vi.mock('@/services/r2-storage', () => ({
+  getR2StorageService: vi.fn(() => mockR2StorageInstance),
+  R2StorageService: vi.fn(),
+  createR2StorageService: vi.fn(),
+  resetR2StorageService: vi.fn(),
+  initR2StorageGlobal: vi.fn()
+}))
+
 // Mock Electron API
 const mockElectronAPI = {
   isElectron: true,

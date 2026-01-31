@@ -76,17 +76,19 @@ export default defineConfig({
     setupFiles: ['./tests/setup.ts']
   },
   resolve: {
-    alias: {
-      '@': resolve(__dirname, './src'),
-      '@main': resolve(__dirname, './src/main'),
-      '@preload': resolve(__dirname, './src/preload'),
-      '@renderer': resolve(__dirname, './src/renderer/src'),
-      '@/types': resolve(__dirname, './src/types'),
-      '@/services': resolve(__dirname, './src/renderer/src/services'),
-      '@/features': resolve(__dirname, './src/renderer/src/features'),
-      '@/core': resolve(__dirname, './src/renderer/src/core'),
-      '@/utils': resolve(__dirname, './src/renderer/src/utils')
-    }
+    alias: [
+      // More specific aliases must come first
+      { find: '@/services', replacement: resolve(__dirname, './src/renderer/src/services') },
+      { find: '@/features', replacement: resolve(__dirname, './src/renderer/src/features') },
+      { find: '@/core', replacement: resolve(__dirname, './src/renderer/src/core') },
+      { find: '@/utils', replacement: resolve(__dirname, './src/renderer/src/utils') },
+      { find: '@/types', replacement: resolve(__dirname, './src/types') },
+      { find: '@renderer', replacement: resolve(__dirname, './src/renderer/src') },
+      { find: '@main', replacement: resolve(__dirname, './src/main') },
+      { find: '@preload', replacement: resolve(__dirname, './src/preload') },
+      // Most general alias last
+      { find: '@', replacement: resolve(__dirname, './src') }
+    ]
   }
 })
 
