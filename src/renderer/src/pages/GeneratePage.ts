@@ -71,7 +71,15 @@ export class GeneratePage extends BasePage {
     // 图片生成按钮
     const generateBtn = this.getElement('generateBtn')
     if (generateBtn) {
-      generateBtn.addEventListener('click', () => this.generateImage())
+      console.log('[GeneratePage] ✅ 生成按钮已绑定点击事件')
+      generateBtn.addEventListener('click', (e) => {
+        console.log('[GeneratePage] 🎯 生成按钮被点击')
+        e.preventDefault()
+        e.stopPropagation()
+        this.generateImage()
+      })
+    } else {
+      console.warn('[GeneratePage] ⚠️ 生成按钮未找到: generateBtn')
     }
 
     // 清空输入按钮
@@ -208,6 +216,10 @@ export class GeneratePage extends BasePage {
       if (target.closest('.remove-reference-btn')) return
       if (target.closest('[data-dynamic-add-button="true"]')) {
         console.log('点击了动态添加更多按钮，跳过主区域处理')
+        return
+      }
+      if (target.closest('.preview-trigger')) {
+        // 点击预览触发器，不处理（由 preview handler 处理）
         return
       }
       if (target.closest('.relative.bg-white.bg-opacity-10')) {
@@ -677,11 +689,11 @@ export class GeneratePage extends BasePage {
         result = await api.generateImage(prompt, this.currentRatio, generateCount, resolution)
       }
 
-      if (result.success && result.urls.length > 0) {
-        this.displayGeneratedImages(result.urls, imageResult)
+      if (result.success && result.images && result.images.length > 0) {
+        this.displayGeneratedImages(result.images, imageResult)
 
         const historyType = this.referenceImages.length > 0 ? 'generate-with-reference' : 'generate'
-        this.app.addToHistory(historyType, prompt, result.urls, this.currentRatio)
+        this.app.addToHistory(historyType, prompt, result.images, this.currentRatio)
 
         const successMessage =
           this.referenceImages.length > 0
@@ -771,6 +783,8 @@ export class GeneratePage extends BasePage {
         maxSizeMB: 2,
         maxWidthOrHeight: 2048,
         useWebWorker: true,
+        // 使用本地文件避免 CSP 限制（Worker 默认从 CDN 加载脚本会被阻止）
+        libURL: './cdn/browser-image-compression/browser-image-compression.js',
         fileType: file.type,
         initialQuality: 0.9,
         alwaysKeepResolution: false
@@ -834,13 +848,19 @@ export class GeneratePage extends BasePage {
         const imageItem = document.createElement('div')
         imageItem.className = 'relative bg-white bg-opacity-10 rounded-lg p-2 group'
         const mimeType = (imageData.mimeType || 'image/jpeg').toLowerCase()
+        const imageUrl = `data:${mimeType};base64,${imageData.base64}`
         imageItem.innerHTML = `
           <div class="relative">
-            <img src="data:${mimeType};base64,${imageData.base64}"
-                 class="w-full aspect-square object-cover rounded-lg"
-                 alt="${this.t('generate.labels.referenceImageLabel', { index: index + 1 })}">
+            <div class="preview-trigger cursor-pointer relative group/img" data-preview-index="${index}">
+              <img src="${imageUrl}"
+                   class="w-full aspect-square object-cover rounded-lg transition-transform duration-300 group-hover/img:scale-105"
+                   alt="${this.t('generate.labels.referenceImageLabel', { index: index + 1 })}">
+              <div class="absolute inset-0 bg-black/0 group-hover/img:bg-black/40 transition-all duration-300 rounded-lg flex items-center justify-center">
+                <i class="fas fa-search-plus text-white text-lg opacity-0 group-hover/img:opacity-100 transition-opacity duration-300"></i>
+              </div>
+            </div>
             ${imageData.needsCompression ? `
-              <div class="absolute top-1 left-1 bg-orange-500 bg-opacity-90 text-white text-xs px-2 py-0.5 rounded flex items-center space-x-1">
+              <div class="absolute top-1 left-1 bg-orange-500 bg-opacity-90 text-white text-xs px-2 py-0.5 rounded flex items-center space-x-1 pointer-events-none">
                 <i class="fas fa-compress-alt"></i>
                 <span>${(imageData.fileSize / (1024 * 1024)).toFixed(1)}MB</span>
               </div>
@@ -885,6 +905,17 @@ export class GeneratePage extends BasePage {
           this.removeReferenceImage(imageId)
         })
       })
+
+      // 绑定图片预览事件
+      const previewTriggers = imagesList.querySelectorAll('.preview-trigger')
+      previewTriggers.forEach((trigger) => {
+        trigger.addEventListener('click', (e: Event) => {
+          e.stopPropagation()
+          const target = (e.target as HTMLElement).closest('.preview-trigger') as HTMLElement
+          const previewIndex = parseInt(target?.dataset.previewIndex || '0', 10)
+          this.previewReferenceImage(previewIndex)
+        })
+      })
     }
 
     this.updateIntelligentResizeIfNeeded()
@@ -913,6 +944,24 @@ export class GeneratePage extends BasePage {
       const removedImage = this.referenceImages.splice(index, 1)[0]
       this.updateReferenceImagesPreview()
       this.showToast(this.t('generate.messages.referenceImageRemoved', { filename: removedImage.fileName }), 'info')
+    }
+  }
+
+  private previewReferenceImage(index: number): void {
+    if (index < 0 || index >= this.referenceImages.length) return
+    
+    // 构建所有参考图的 URL 数组
+    const urls = this.referenceImages.map((img) => {
+      const mimeType = (img.mimeType || 'image/jpeg').toLowerCase()
+      return `data:${mimeType};base64,${img.base64}`
+    })
+    
+    // 使用 ImageViewer 预览
+    const imageViewer = (window as any).imageViewerTS
+    if (imageViewer?.view) {
+      imageViewer.view(urls, index)
+    } else if ((this.app as any).viewImage) {
+      ;(this.app as any).viewImage(urls, index)
     }
   }
 

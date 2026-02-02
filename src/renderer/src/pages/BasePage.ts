@@ -92,16 +92,21 @@ export abstract class BasePage {
 
   /**
    * 安全地添加事件监听器
+   * @param elementId - 元素 ID
+   * @param event - 事件类型
+   * @param handler - 事件处理函数
+   * @param silent - 是否静默（不输出警告），用于动态创建的元素
    */
   protected addEventListenerSafe(
     elementId: string,
     event: string,
-    handler: EventListener
+    handler: EventListener,
+    silent: boolean = false
   ): void {
     const element = document.getElementById(elementId)
     if (element) {
       element.addEventListener(event, handler)
-    } else {
+    } else if (!silent) {
       console.warn(`[BasePage] Element not found: ${elementId}`)
     }
   }

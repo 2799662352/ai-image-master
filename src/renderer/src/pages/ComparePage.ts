@@ -68,6 +68,7 @@ export class ComparePage extends BasePage {
   private isProcessing: boolean = false
   private isSelectingFile: boolean = false
   private currentComparison: ComparisonData | null = null
+  private modelSelectorsInitialized: boolean = false
 
   constructor(app: AppInterface) {
     super(app)
@@ -106,13 +107,21 @@ export class ComparePage extends BasePage {
     console.log('模型对比页面已激活')
     this.setupEventListeners()
 
-    setTimeout(() => {
-      console.log('🔄 延迟初始化模型选择器开始...')
-      this.initModelSelectors()
-      this.updateRatioButtons()
-      this.checkFluxModelsAndUpdateLimit()
+    // 仅在首次激活时初始化模型选择器，避免重复初始化
+    if (!this.modelSelectorsInitialized) {
+      setTimeout(() => {
+        console.log('🔄 延迟初始化模型选择器开始...')
+        this.initModelSelectors()
+        this.updateRatioButtons()
+        this.checkFluxModelsAndUpdateLimit()
+        this.updateReferenceImageDisplay()
+        this.modelSelectorsInitialized = true
+      }, 100)
+    } else {
+      // 已初始化，只更新必要的 UI
       this.updateReferenceImageDisplay()
-    }, 300)
+      this.checkFluxModelsAndUpdateLimit()
+    }
   }
 
   onDeactivate(): void {
@@ -816,6 +825,8 @@ export class ComparePage extends BasePage {
         maxSizeMB: 2,
         maxWidthOrHeight: 2048,
         useWebWorker: true,
+        // 使用本地文件避免 CSP 限制（Worker 默认从 CDN 加载脚本会被阻止）
+        libURL: './cdn/browser-image-compression/browser-image-compression.js',
         fileType: file.type,
         initialQuality: 0.9,
         alwaysKeepResolution: false

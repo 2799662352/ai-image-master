@@ -679,15 +679,21 @@ export class BatchPage extends BasePage {
         const imageItem = document.createElement('div')
         imageItem.className = 'relative bg-white bg-opacity-10 rounded-lg p-2 group'
         const mimeType = (imageData.mimeType || 'image/jpeg').toLowerCase()
+        const imageUrl = `data:${mimeType};base64,${imageData.base64}`
         const altText = this.t('batch.labels.referenceImageAlt', { index: index + 1 })
         const removeTitle = this.t('batch.buttons.removeReference')
         const removeAriaLabel = this.t('batch.labels.removeReferenceAria', { index: index + 1 })
         imageItem.innerHTML = `
           <div class="relative">
-            <img src="data:${mimeType};base64,${imageData.base64}"
-                 class="w-full aspect-square object-cover rounded-lg"
-                 alt="${altText}">
-            <button class="remove-batch-reference-btn absolute -top-1 -right-1 bg-red-500 hover:bg-red-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs transition-colors opacity-0 group-hover:opacity-100"
+            <div class="preview-trigger cursor-pointer relative group/img" data-preview-index="${index}" title="点击预览">
+              <img src="${imageUrl}"
+                   class="w-full aspect-square object-cover rounded-lg transition-transform duration-300 group-hover/img:scale-105"
+                   alt="${altText}">
+              <div class="absolute inset-0 bg-black/0 group-hover/img:bg-black/40 transition-all duration-300 rounded-lg flex items-center justify-center">
+                <i class="fas fa-search-plus text-white text-lg opacity-0 group-hover/img:opacity-100 transition-opacity duration-300"></i>
+              </div>
+            </div>
+            <button class="remove-batch-reference-btn absolute -top-1 -right-1 bg-red-500 hover:bg-red-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs transition-colors opacity-0 group-hover:opacity-100 z-10"
                     title="${removeTitle}"
                     aria-label="${removeAriaLabel}"
                     data-image-id="${imageData.id}">
@@ -728,9 +734,38 @@ export class BatchPage extends BasePage {
           this.removeBatchReferenceImage(imageId)
         })
       })
+
+      // 绑定图片预览事件
+      const previewTriggers = imagesList.querySelectorAll('.preview-trigger')
+      previewTriggers.forEach((trigger) => {
+        trigger.addEventListener('click', (e: Event) => {
+          e.stopPropagation()
+          const target = (e.target as HTMLElement).closest('.preview-trigger') as HTMLElement
+          const previewIndex = parseInt(target?.dataset.previewIndex || '0', 10)
+          this.previewBatchReferenceImage(previewIndex)
+        })
+      })
     }
 
     this.saveCurrentState()
+  }
+
+  private previewBatchReferenceImage(index: number): void {
+    if (index < 0 || index >= this.batchReferenceImages.length) return
+    
+    // 构建所有参考图的 URL 数组
+    const urls = this.batchReferenceImages.map((img) => {
+      const mimeType = (img.mimeType || 'image/jpeg').toLowerCase()
+      return `data:${mimeType};base64,${img.base64}`
+    })
+    
+    // 使用 ImageViewer 预览
+    const imageViewer = (window as any).imageViewerTS
+    if (imageViewer?.view) {
+      imageViewer.view(urls, index)
+    } else if ((this.app as any).viewImage) {
+      ;(this.app as any).viewImage(urls, index)
+    }
   }
 
   private removeBatchReferenceImage(imageId: number): void {
@@ -1376,6 +1411,8 @@ export class BatchPage extends BasePage {
         maxSizeMB: 2,
         maxWidthOrHeight: 2048,
         useWebWorker: true,
+        // 使用本地文件避免 CSP 限制（Worker 默认从 CDN 加载脚本会被阻止）
+        libURL: './cdn/browser-image-compression/browser-image-compression.js',
         fileType: file.type,
         initialQuality: 0.9,
         alwaysKeepResolution: false
