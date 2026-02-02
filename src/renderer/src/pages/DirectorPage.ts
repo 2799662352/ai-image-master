@@ -2068,6 +2068,292 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
     })
   }
 
+  // ==================== 结果导航方法 ====================
+
+  /**
+   * 显示单图结果
+   */
+  showResult(imageData: string): void {
+    const progressArea = this.getElement<HTMLElement>('directorProgressArea')
+    const resultArea = this.getElement<HTMLElement>('directorResultArea')
+
+    if (progressArea) progressArea.classList.add('hidden')
+
+    if (resultArea) {
+      resultArea.classList.remove('hidden')
+      
+      const imageSrc = this.getImageSrc(imageData)
+
+      resultArea.innerHTML = `
+        <div class="space-y-4">
+          <div class="relative group">
+            <img src="${imageSrc}" 
+                 alt="生成的漫画页面" 
+                 class="w-full rounded-lg shadow-lg cursor-pointer"
+                 onclick="window.directorPage?.previewCurrentResult()">
+            <div class="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all rounded-lg flex items-center justify-center">
+              <i class="fas fa-search-plus text-white text-3xl opacity-0 group-hover:opacity-100 transition-opacity"></i>
+            </div>
+          </div>
+          <div class="flex justify-center space-x-4">
+            <button id="directorDownloadBtn" 
+                    class="px-6 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors">
+              <i class="fas fa-download mr-2"></i>下载图片
+            </button>
+            <button id="directorRegenerateBtn" 
+                    class="px-6 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors">
+              <i class="fas fa-redo mr-2"></i>重新生成
+            </button>
+          </div>
+        </div>
+      `
+
+      // 重新绑定按钮事件
+      document.getElementById('directorDownloadBtn')?.addEventListener('click', () => this.downloadCurrentResult())
+      document.getElementById('directorRegenerateBtn')?.addEventListener('click', () => this.startGeneration())
+    }
+  }
+
+  /**
+   * 显示多图结果（主图+缩略图导航+左右箭头）
+   */
+  showMultiResults(): void {
+    const progressArea = this.getElement<HTMLElement>('directorProgressArea')
+    const resultArea = this.getElement<HTMLElement>('directorResultArea')
+
+    if (progressArea) progressArea.classList.add('hidden')
+
+    if (!resultArea) return
+
+    const successResults = this.generatedResults.filter(r => r.success)
+    const totalCount = this.generatedResults.length
+    const successCount = successResults.length
+
+    if (successCount === 0) {
+      resultArea.classList.add('hidden')
+      return
+    }
+
+    resultArea.classList.remove('hidden')
+    
+    // 找到第一个成功的结果
+    while (this.currentResultIndex < this.generatedResults.length && !this.generatedResults[this.currentResultIndex].success) {
+      this.currentResultIndex++
+    }
+    if (this.currentResultIndex >= this.generatedResults.length) {
+      this.currentResultIndex = this.generatedResults.findIndex(r => r.success)
+    }
+
+    const currentResult = this.generatedResults[this.currentResultIndex]
+    const imageSrc = currentResult?.imageData ? this.getImageSrc(currentResult.imageData) : ''
+
+    // 生成缩略图
+    let thumbnailsHtml = ''
+    this.generatedResults.forEach((result, index) => {
+      if (result.success && result.imageData) {
+        const thumbSrc = this.getImageSrc(result.imageData)
+        const isActive = index === this.currentResultIndex
+        thumbnailsHtml += `
+          <div class="cursor-pointer rounded-lg overflow-hidden border-2 transition-all ${isActive ? 'border-blue-400 ring-2 ring-blue-400' : 'border-transparent opacity-60 hover:opacity-100'}"
+               onclick="window.directorPage?.switchToResult(${index})">
+            <img src="${thumbSrc}" alt="第${index + 1}张" class="w-16 h-16 object-cover">
+          </div>
+        `
+      } else {
+        thumbnailsHtml += `
+          <div class="rounded-lg overflow-hidden border-2 border-red-400 opacity-50 cursor-not-allowed">
+            <div class="w-16 h-16 bg-red-500 bg-opacity-20 flex items-center justify-center">
+              <i class="fas fa-times text-red-400"></i>
+            </div>
+          </div>
+        `
+      }
+    })
+
+    resultArea.innerHTML = `
+      <div class="space-y-4">
+        <!-- 统计信息 -->
+        <div class="flex items-center justify-between text-white">
+          <span class="opacity-70">
+            <i class="fas fa-images mr-2"></i>
+            成功 ${successCount}/${totalCount} 张
+          </span>
+          <span class="text-sm opacity-50" id="directorResultCounter">
+            第 ${this.currentResultIndex + 1}/${totalCount} 张
+          </span>
+        </div>
+
+        <!-- 主图显示 -->
+        <div class="relative group">
+          <img id="directorMainImage" 
+               src="${imageSrc}" 
+               alt="生成的漫画页面" 
+               class="w-full rounded-lg shadow-lg cursor-pointer"
+               onclick="window.directorPage?.previewCurrentResult()">
+          <div class="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all rounded-lg flex items-center justify-center">
+            <i class="fas fa-search-plus text-white text-3xl opacity-0 group-hover:opacity-100 transition-opacity"></i>
+          </div>
+          
+          <!-- 左右切换按钮 -->
+          <button class="absolute left-2 top-1/2 -translate-y-1/2 bg-black bg-opacity-50 hover:bg-opacity-70 text-white rounded-full w-10 h-10 flex items-center justify-center transition-all"
+                  onclick="window.directorPage?.navigateResult(-1)">
+            <i class="fas fa-chevron-left"></i>
+          </button>
+          <button class="absolute right-2 top-1/2 -translate-y-1/2 bg-black bg-opacity-50 hover:bg-opacity-70 text-white rounded-full w-10 h-10 flex items-center justify-center transition-all"
+                  onclick="window.directorPage?.navigateResult(1)">
+            <i class="fas fa-chevron-right"></i>
+          </button>
+        </div>
+
+        <!-- 场景描述 -->
+        <div class="bg-white bg-opacity-10 rounded-lg p-3">
+          <p class="text-white text-sm opacity-70" id="directorCurrentPrompt">${this.escapeHtmlText(currentResult?.prompt || '')}</p>
+        </div>
+
+        <!-- 缩略图列表 -->
+        <div class="flex space-x-2 overflow-x-auto pb-2" id="directorThumbnails">
+          ${thumbnailsHtml}
+        </div>
+
+        <!-- 操作按钮 -->
+        <div class="flex justify-center space-x-4 flex-wrap gap-2">
+          <button id="directorDownloadCurrentBtn" 
+                  class="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors text-sm">
+            <i class="fas fa-download mr-2"></i>下载当前
+          </button>
+          <button id="directorDownloadAllBtn" 
+                  class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors text-sm">
+            <i class="fas fa-file-archive mr-2"></i>下载全部 (${successCount})
+          </button>
+          <button id="directorRegenerateBtn" 
+                  class="px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-lg transition-colors text-sm">
+            <i class="fas fa-redo mr-2"></i>重新生成
+          </button>
+        </div>
+      </div>
+    `
+
+    // 绑定按钮事件
+    document.getElementById('directorDownloadCurrentBtn')?.addEventListener('click', () => this.downloadCurrentResult())
+    document.getElementById('directorDownloadAllBtn')?.addEventListener('click', () => this.downloadAllResults())
+    document.getElementById('directorRegenerateBtn')?.addEventListener('click', () => this.startGeneration())
+  }
+
+  /**
+   * 切换到指定结果
+   * @public 供 onclick 调用
+   */
+  switchToResult(index: number): void {
+    if (index >= 0 && index < this.generatedResults.length && this.generatedResults[index].success) {
+      this.currentResultIndex = index
+      this.updateCurrentResultDisplay()
+    }
+  }
+
+  /**
+   * 导航结果（上一张/下一张，循环）
+   * @public 供 onclick 调用
+   */
+  navigateResult(direction: number): void {
+    let newIndex = this.currentResultIndex + direction
+    
+    // 循环查找下一个成功的结果
+    const maxAttempts = this.generatedResults.length
+    let attempts = 0
+    
+    while (attempts < maxAttempts) {
+      if (newIndex < 0) newIndex = this.generatedResults.length - 1
+      if (newIndex >= this.generatedResults.length) newIndex = 0
+      
+      if (this.generatedResults[newIndex].success) {
+        this.currentResultIndex = newIndex
+        this.updateCurrentResultDisplay()
+        return
+      }
+      
+      newIndex += direction
+      attempts++
+    }
+  }
+
+  /**
+   * 更新当前结果显示（主图和缩略图高亮）
+   */
+  updateCurrentResultDisplay(): void {
+    const currentResult = this.generatedResults[this.currentResultIndex]
+    if (!currentResult || !currentResult.success || !currentResult.imageData) return
+
+    // 更新主图
+    const mainImage = document.getElementById('directorMainImage') as HTMLImageElement | null
+    if (mainImage) {
+      mainImage.src = this.getImageSrc(currentResult.imageData)
+    }
+
+    // 更新场景描述
+    const promptEl = document.getElementById('directorCurrentPrompt')
+    if (promptEl) {
+      promptEl.textContent = currentResult.prompt || ''
+    }
+
+    // 更新缩略图高亮
+    const thumbnails = document.querySelectorAll('#directorThumbnails > div')
+    thumbnails.forEach((thumb, index) => {
+      if (this.generatedResults[index]?.success) {
+        if (index === this.currentResultIndex) {
+          thumb.className = 'cursor-pointer rounded-lg overflow-hidden border-2 transition-all border-blue-400 ring-2 ring-blue-400'
+        } else {
+          thumb.className = 'cursor-pointer rounded-lg overflow-hidden border-2 transition-all border-transparent opacity-60 hover:opacity-100'
+        }
+      }
+    })
+
+    // 更新计数
+    const counterEl = document.getElementById('directorResultCounter')
+    if (counterEl) {
+      counterEl.textContent = `第 ${this.currentResultIndex + 1}/${this.generatedResults.length} 张`
+    }
+  }
+
+  /**
+   * 下载当前显示的结果
+   * @public 供 onclick 调用
+   */
+  downloadCurrentResult(): void {
+    const currentResult = this.generatedResults[this.currentResultIndex]
+    if (!currentResult || !currentResult.success || !currentResult.imageData) {
+      this.showToast('当前图片无法下载', 'warning')
+      return
+    }
+
+    const imageSrc = this.getImageSrc(currentResult.imageData)
+    const filename = `comic_page_${this.currentLayout}_${this.currentResultIndex + 1}_${Date.now()}.png`
+    this.downloadImage(imageSrc, filename)
+  }
+
+  /**
+   * 预览当前结果
+   * @public 供 onclick 调用
+   */
+  previewCurrentResult(): void {
+    const currentResult = this.generatedResults[this.currentResultIndex]
+    if (!currentResult?.success || !currentResult.imageData) return
+
+    const imageSrc = this.getImageSrc(currentResult.imageData)
+    this.previewImage(imageSrc)
+  }
+
+  /**
+   * 预览图片（调用全局预览功能）
+   */
+  private previewImage(src: string): void {
+    const viewImage = (this.app as any).viewImage
+    if (viewImage) {
+      viewImage([src], 0)
+    } else {
+      window.open(src, '_blank')
+    }
+  }
+
   /**
    * 保存到历史记录
    */
