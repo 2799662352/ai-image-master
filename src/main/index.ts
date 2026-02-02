@@ -2,7 +2,7 @@
 import { app, BrowserWindow, ipcMain, dialog, Menu, shell, nativeTheme } from 'electron'
 import * as path from 'path'
 import * as fs from 'fs'
-import { autoUpdaterInstance } from './updater'
+import { getAutoUpdaterInstance } from './updater'
 
 // 检测开发模式：通过命令行参数或环境变量
 const isDev = process.argv.includes('--dev') || process.env.NODE_ENV === 'development'
@@ -505,8 +505,14 @@ function deferNonCriticalInit(): void {
     setTimeout(() => {
       // 检查窗口是否仍然有效
       if (currentWindow && !currentWindow.isDestroyed()) {
-        autoUpdaterInstance.setMainWindow(currentWindow)
-        autoUpdaterInstance.checkForUpdatesOnStartup(0)
+        // 使用 getAutoUpdaterInstance() 获取已初始化的实例
+        const autoUpdater = getAutoUpdaterInstance({
+          provider: 'github',
+          owner: '2799662352',
+          repo: 'ai-image-master'
+        })
+        autoUpdater.setMainWindow(currentWindow)
+        autoUpdater.checkForUpdatesOnStartup(0)
         console.log(`[Performance] Auto-updater initialized: ${Date.now() - startTime}ms`)
       }
     }, 15000)
