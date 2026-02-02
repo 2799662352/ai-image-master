@@ -141,6 +141,8 @@ export class DirectorPage extends BasePage {
   // 分析资产
   private lastAnalysisResult: string | null = null
   private lastComicPrompt: string | null = null
+  private currentModalType: 'analysis' | 'prompt' | null = null
+  private modalEscHandler: ((e: KeyboardEvent) => void) | null = null
 
   // 图库
   private gallerySelectedImages: string[] = []
@@ -148,7 +150,7 @@ export class DirectorPage extends BasePage {
   private galleryEditMode: boolean = false
   private galleryDeleteSelection: string[] = []
   private exampleGalleryCount: number = 38
-  private exampleGalleryPath: string = './assets/templates/'
+  private exampleGalleryPath: string = 'assets/templates/'
 
   // 模板管理
   private customTemplates: StyleTemplates = {}
@@ -245,6 +247,11 @@ export class DirectorPage extends BasePage {
     this.bindStateAutoSave()
     this.loadUserTemplates()
     this.loadCustomGalleryImages()
+    
+    // 初始化 UI 状态
+    this.updateLayoutSelection()
+    this.updateGenerateButtonState()
+    
     this.isInitialized = true
   }
 
@@ -333,14 +340,30 @@ export class DirectorPage extends BasePage {
    */
   private setupLayoutSelection(): void {
     const layoutContainer = this.getElement<HTMLElement>('directorLayoutOptions')
+    console.log('[DirectorPage] 设置布局选择, 容器存在:', !!layoutContainer)
+    
     if (layoutContainer) {
       layoutContainer.addEventListener('click', (e: MouseEvent) => {
         const card = (e.target as HTMLElement).closest('.layout-card') as HTMLElement | null
+        console.log('[DirectorPage] 布局点击, 卡片:', card?.dataset.layout)
         if (card?.dataset.layout) {
           this.selectLayout(card.dataset.layout as LayoutType)
         }
       })
     }
+    
+    // 备用方案：直接绑定到每个布局卡片
+    const cards = document.querySelectorAll<HTMLElement>('.layout-card[data-layout]')
+    console.log('[DirectorPage] 找到布局卡片数量:', cards.length)
+    cards.forEach(card => {
+      card.addEventListener('click', () => {
+        const layout = card.dataset.layout as LayoutType
+        console.log('[DirectorPage] 直接点击布局:', layout)
+        if (layout) {
+          this.selectLayout(layout)
+        }
+      })
+    })
   }
 
   /**
@@ -498,7 +521,8 @@ export class DirectorPage extends BasePage {
    * 加载内置图库网格
    */
   private loadBuiltinGalleryGrid(): void {
-    const grid = this.getElement<HTMLElement>('builtinGalleryGrid')
+    // HTML 中使用 directorGalleryGrid 而不是 builtinGalleryGrid
+    const grid = this.getElement<HTMLElement>('directorGalleryGrid')
     if (!grid) return
 
     grid.innerHTML = ''
@@ -674,11 +698,11 @@ export class DirectorPage extends BasePage {
       const electronAPI = (window as any).electronAPI
 
       if (electronAPI?.isElectron) {
-        const templates = await electronAPI.loadTemplates()
-        if (templates) {
-          this.customTemplates = templates.templates || {}
-          this.templateOverrides = templates.overrides || {}
-        }
+        // 使用正确的 API 名称
+        const customTemplates = await electronAPI.loadCustomTemplates?.()
+        const templateOverrides = await electronAPI.loadTemplateOverrides?.()
+        this.customTemplates = customTemplates || {}
+        this.templateOverrides = templateOverrides || {}
       } else {
         const customData = localStorage.getItem('director_custom_templates')
         const overrideData = localStorage.getItem('director_template_overrides')
@@ -723,9 +747,13 @@ export class DirectorPage extends BasePage {
   /**
    * 渲染模板列表
    */
-  private renderTemplateList(): void {
+  renderTemplateList(): void {
+    const loading = document.getElementById('templateListLoading')
     const list = this.getElement<HTMLElement>('directorTemplateList')
     if (!list) return
+
+    // 隐藏加载状态
+    if (loading) loading.classList.add('hidden')
 
     list.innerHTML = ''
 
@@ -740,6 +768,15 @@ export class DirectorPage extends BasePage {
       const card = this.createTemplateCard(key, template, false)
       list.appendChild(card)
     })
+
+    if (list.children.length === 0) {
+      list.innerHTML = `
+        <div class="col-span-2 text-center py-8 text-[#A1A1AA]">
+          <i class="fas fa-folder-open text-4xl mb-4"></i>
+          <p>暂无模板</p>
+        </div>
+      `
+    }
   }
 
   /**
@@ -748,21 +785,61 @@ export class DirectorPage extends BasePage {
   private createTemplateCard(key: string, template: StyleTemplate, isBuiltin: boolean): HTMLElement {
     const card = document.createElement('div')
     const isSelected = this.currentTemplate === key
+    const isModified = this.templateOverrides[key] !== undefined
 
-    card.className = `template-card cursor-pointer p-4 rounded-lg border-2 transition-all ${
-      isSelected ? 'border-pink-500 bg-pink-500 bg-opacity-10' : 'border-gray-600 hover:border-gray-400'
-    }`
+    card.className = `template-card cursor-pointer border-2 ${
+      isSelected ? 'border-[#FCE300] bg-[#FCE300] bg-opacity-10' : 'border-[#3F3F46] hover:border-[#FCE300]'
+    } bg-[#27272A] rounded-none p-4 transition-all relative group`
     card.dataset.template = key
 
+    const badgeHtml = isBuiltin 
+      ? (isModified ? '<span class="ml-2 text-xs bg-[#FCE300] text-black px-1 font-bold uppercase">已修改</span>' : '<span class="text-xs text-[#A1A1AA]">内置</span>')
+      : '<span class="ml-2 text-xs bg-[#8B5CF6] text-white px-1 font-bold uppercase">自定义</span>'
+
     card.innerHTML = `
-      <div class="flex items-center justify-between mb-2">
-        <h4 class="text-white font-medium">${template.name}</h4>
-        ${isBuiltin ? '<span class="text-xs text-gray-400">内置</span>' : '<span class="text-xs text-pink-400">自定义</span>'}
+      <div class="flex items-start justify-between">
+        <div class="flex-1 min-w-0">
+          <h4 class="font-bold text-[#FAFAFA] flex items-center uppercase tracking-tight">
+            ${this.escapeHtmlText(template.name)}
+            ${badgeHtml}
+          </h4>
+          <p class="text-[#A1A1AA] text-sm mt-1 line-clamp-2">${this.escapeHtmlText(template.prefix.substring(0, 80))}...</p>
+        </div>
+        <button class="edit-template-btn w-8 h-8 bg-[#3F3F46] hover:bg-[#FCE300] text-[#A1A1AA] hover:text-black rounded-none flex items-center justify-center transition-all cursor-pointer ml-2 flex-shrink-0"
+                title="编辑">
+          <i class="fas fa-edit text-sm"></i>
+        </button>
       </div>
-      <p class="text-gray-400 text-xs line-clamp-2">${template.prefix.substring(0, 100)}...</p>
     `
 
+    // 点击卡片选择模板
+    card.addEventListener('click', (e) => {
+      // 如果点击的是编辑按钮，不选择模板
+      if ((e.target as HTMLElement).closest('.edit-template-btn')) {
+        return
+      }
+      this.selectTemplate(key)
+    })
+
+    // 编辑按钮点击事件
+    const editBtn = card.querySelector('.edit-template-btn')
+    if (editBtn) {
+      editBtn.addEventListener('click', (e) => {
+        e.stopPropagation()
+        this.openTemplateEditor(template, key, isBuiltin)
+      })
+    }
+
     return card
+  }
+
+  /**
+   * HTML 文本转义
+   */
+  private escapeHtmlText(text: string): string {
+    const div = document.createElement('div')
+    div.textContent = text
+    return div.innerHTML
   }
 
   /**
@@ -922,15 +999,60 @@ export class DirectorPage extends BasePage {
    * 处理单张图片上传
    */
   private async handleSingleImageUpload(file: File): Promise<void> {
-    const base64 = await this.fileToBase64(file)
+    // 先压缩图片
+    const compressedFile = await this.compressImage(file)
+    
+    // 转换为 base64
+    const base64 = await this.fileToBase64(compressedFile)
 
     this.referenceImages.push({
       base64,
       fileName: file.name,
       fileSize: file.size,
       mimeType: file.type || 'image/jpeg',
-      originalFile: file
+      originalFile: compressedFile
     })
+  }
+
+  /**
+   * 压缩图片
+   * @param file 原始图片文件
+   * @param maxSizeMB 最大文件大小（MB）
+   * @param maxWidthOrHeight 最大宽度或高度（像素）
+   * @returns 压缩后的文件，如果压缩失败则返回原文件
+   */
+  private async compressImage(
+    file: File,
+    maxSizeMB: number = 2,
+    maxWidthOrHeight: number = 2048
+  ): Promise<File> {
+    // 检查 imageCompression 库是否存在
+    const imageCompression = (window as any).imageCompression
+    if (typeof imageCompression === 'undefined') {
+      console.warn('[DirectorPage] 图片压缩库未加载，使用原图')
+      return file
+    }
+
+    const options = {
+      maxSizeMB,
+      maxWidthOrHeight,
+      useWebWorker: true,
+      fileType: file.type
+    }
+
+    try {
+      console.log(
+        `[DirectorPage] 压缩图片: ${file.name}, 原始大小: ${(file.size / 1024 / 1024).toFixed(2)}MB`
+      )
+      const compressedFile = await imageCompression(file, options)
+      console.log(
+        `[DirectorPage] 压缩完成: ${(compressedFile.size / 1024 / 1024).toFixed(2)}MB`
+      )
+      return compressedFile
+    } catch (error) {
+      console.warn('[DirectorPage] 图片压缩失败，使用原图:', error)
+      return file
+    }
   }
 
   /**
@@ -1091,11 +1213,13 @@ export class DirectorPage extends BasePage {
     cards.forEach(card => {
       const isSelected = card.dataset.layout === this.currentLayout
       if (isSelected) {
-        card.classList.add('border-pink-500', 'bg-pink-500', 'bg-opacity-10')
-        card.classList.remove('border-gray-600')
+        // 选中状态：蓝色高亮
+        card.classList.add('bg-blue-500', 'bg-opacity-30', 'ring-2', 'ring-blue-400')
+        card.classList.remove('bg-[#09090B]', 'border', 'border-[#3F3F46]')
       } else {
-        card.classList.remove('border-pink-500', 'bg-pink-500', 'bg-opacity-10')
-        card.classList.add('border-gray-600')
+        // 未选中状态：深色背景
+        card.classList.remove('bg-blue-500', 'bg-opacity-30', 'ring-2', 'ring-blue-400')
+        card.classList.add('bg-[#09090B]', 'border', 'border-[#3F3F46]')
       }
     })
   }
@@ -1183,22 +1307,32 @@ export class DirectorPage extends BasePage {
     const panelCount = layout.rows * layout.cols
 
     this.clearResultsGrid()
-    this.showProgress('正在分析参考图...')
+    this.showProgress(`正在分析参考图... (将生成 ${imageCount} 张)`)
 
+    // 总步骤：分析1 + 生成提示词1 + 生成图片N
+    const totalSteps = 2 + imageCount
+    let currentStep = 0
     let successCount = 0
 
     try {
-      // 分析参考图
+      // Step 1: 分析参考图
+      currentStep++
+      this.updateProgress(currentStep, totalSteps, '正在分析参考图...')
       const imageAnalysis = await this.analyzeReferenceImage()
-      this.lastAnalysisResult = imageAnalysis
+      this.showAnalysisResult(imageAnalysis)
 
+      // Step 2: 生成分镜提示词
+      currentStep++
+      this.updateProgress(currentStep, totalSteps, '正在生成分镜提示词...')
+      const comicPrompt = await this.generateComicPrompt(imageAnalysis, sceneDescription, panelCount, layout)
+      this.showPromptResult(comicPrompt)
+
+      // Step 3-N: 生成多张漫画页面
       for (let i = 0; i < imageCount; i++) {
-        this.updateProgress(i + 1, imageCount, `生成第 ${i + 1}/${imageCount} 张...`)
+        currentStep++
+        this.updateProgress(currentStep, totalSteps, `正在生成第 ${i + 1}/${imageCount} 张漫画...`)
 
         try {
-          const comicPrompt = await this.generateComicPrompt(imageAnalysis, sceneDescription, panelCount, layout)
-          this.lastComicPrompt = comicPrompt
-
           const result = await this.generateComicPage(comicPrompt, layout)
           successCount++
 
@@ -1210,6 +1344,7 @@ export class DirectorPage extends BasePage {
           })
           this.addResultCard(this.generatedResults[this.generatedResults.length - 1], i)
         } catch (error: any) {
+          console.error(`第 ${i + 1} 张生成失败:`, error)
           this.generatedResults.push({
             success: false,
             error: error.message,
@@ -1257,21 +1392,37 @@ export class DirectorPage extends BasePage {
 
     const layout = this.layouts[this.currentLayout]
     const panelCount = layout.rows * layout.cols
+    
+    // 总步骤：分析1次 + 每个场景2步（提示词+生成）
+    const totalSteps = prompts.length * 2 + 1
+    let currentStep = 0
     let successCount = 0
 
     this.clearResultsGrid()
     this.showProgress('正在分析参考图...')
 
     try {
+      // Step 1: 分析参考图（只需一次）
+      currentStep++
+      this.updateProgress(currentStep, totalSteps, '正在分析参考图...')
       const imageAnalysis = await this.analyzeReferenceImage()
-      this.lastAnalysisResult = imageAnalysis
+      this.showAnalysisResult(imageAnalysis)
 
+      // 为每个提示词生成漫画页面
       for (let i = 0; i < prompts.length; i++) {
         const sceneDescription = prompts[i]
-        this.updateProgress(i + 1, prompts.length, `生成第 ${i + 1}/${prompts.length} 张...`)
+        
+        // 生成分镜提示词
+        currentStep++
+        this.updateProgress(currentStep, totalSteps, `生成第 ${i + 1}/${prompts.length} 张：构建提示词...`)
+        const comicPrompt = await this.generateComicPrompt(imageAnalysis, sceneDescription, panelCount, layout)
+        this.showPromptResult(comicPrompt)
 
+        // 生成漫画页面
+        currentStep++
+        this.updateProgress(currentStep, totalSteps, `生成第 ${i + 1}/${prompts.length} 张：生成图片...`)
+        
         try {
-          const comicPrompt = await this.generateComicPrompt(imageAnalysis, sceneDescription, panelCount, layout)
           const result = await this.generateComicPage(comicPrompt, layout)
           successCount++
 
@@ -1283,6 +1434,7 @@ export class DirectorPage extends BasePage {
           })
           this.addResultCard(this.generatedResults[this.generatedResults.length - 1], i)
         } catch (error: any) {
+          console.error(`第 ${i + 1} 张生成失败:`, error)
           this.generatedResults.push({
             success: false,
             error: error.message,
@@ -1325,8 +1477,21 @@ export class DirectorPage extends BasePage {
     }))
 
     const analysisPrompt = images.length > 1
-      ? `请详细分析这${images.length}张参考图片，包括人物特征、场景环境、画面构图、色调和风格。请用简洁的英文描述。`
-      : '请详细分析这张图片，包括人物特征、场景环境、画面构图、色调和风格。请用简洁的英文描述。'
+      ? `请详细分析这${images.length}张参考图片，包括：
+1. 人物特征（面部特征、发型、衣着、姿态）
+2. 场景环境（地点、光线、氛围）
+3. 画面构图和视角
+4. 色调和风格
+5. 各图片之间的关联性和风格一致性
+
+请用简洁的英文描述，以便后续生成分镜使用。`
+      : `请详细分析这张图片，包括：
+1. 人物特征（面部特征、发型、衣着、姿态）
+2. 场景环境（地点、光线、氛围）
+3. 画面构图和视角
+4. 色调和风格
+
+请用简洁的英文描述，以便后续生成分镜使用。`
 
     return new Promise((resolve, reject) => {
       let result = ''
@@ -1376,7 +1541,7 @@ export class DirectorPage extends BasePage {
       templateNegative = currentTemplateData.negative || ''
     }
 
-    const panelPrompts = []
+    const panelPrompts: string[] = []
     for (let i = 0; i < panelCount; i++) {
       panelPrompts.push(`Panel ${i + 1}: ${viewAngles[i]}, ${userDescription}`)
     }
@@ -1496,14 +1661,68 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
   }
 
   /**
-   * 显示进度
+   * 显示进度 - 创建完整的进度 UI
    */
   private showProgress(message: string): void {
     const progressArea = this.getElement<HTMLElement>('directorProgressArea')
-    const progressText = this.getElement<HTMLElement>('directorProgressText')
+    const resultArea = this.getElement<HTMLElement>('directorResultArea')
+    
+    const analysisTitle = this.t('director.progress.analysisTitle') || '参考图分析结果'
+    const promptTitle = this.t('director.progress.promptTitle') || '生成的提示词'
+    const clickToView = this.t('director.assets.clickToView') || '点击查看'
+    
+    if (progressArea) {
+      progressArea.classList.remove('hidden')
+      progressArea.innerHTML = `
+        <div class="text-center py-8">
+          <div class="relative inline-block mb-4">
+            <i class="fas fa-film text-6xl text-white opacity-30 animate-pulse"></i>
+          </div>
+          <p class="text-white text-lg mb-2" id="directorProgressText">${message}</p>
+          <div class="w-64 h-2 bg-white bg-opacity-20 rounded-full mx-auto overflow-hidden">
+            <div id="directorProgressBar" class="h-full bg-gradient-to-r from-blue-400 to-purple-500 rounded-full transition-all duration-500" style="width: 0%"></div>
+          </div>
+          <p class="text-white opacity-50 text-sm mt-2" id="directorProgressStep">步骤 1/4</p>
+          
+          <!-- 资产面板容器（点击打开弹窗） -->
+          <div class="mt-6 max-w-lg mx-auto space-y-3">
+            <!-- 分析结果面板 -->
+            <div id="directorAnalysisPanel" class="hidden bg-white bg-opacity-5 border border-white border-opacity-10 rounded-lg overflow-hidden cursor-pointer hover:bg-white hover:bg-opacity-10 transition-all duration-200"
+                 onclick="window.directorPage?.showAssetModal('analysis')">
+              <div class="flex justify-between items-center p-3">
+                <span class="text-white text-sm font-medium flex items-center">
+                  <i class="fas fa-search-plus mr-2 text-blue-400"></i>
+                  ${analysisTitle}
+                </span>
+                <div class="flex items-center space-x-2">
+                  <span class="text-white text-opacity-50 text-xs">${clickToView}</span>
+                  <i class="fas fa-external-link-alt text-white text-opacity-50 text-xs"></i>
+                </div>
+              </div>
+            </div>
+            
+            <!-- 提示词面板 -->
+            <div id="directorPromptPanel" class="hidden bg-white bg-opacity-5 border border-white border-opacity-10 rounded-lg overflow-hidden cursor-pointer hover:bg-white hover:bg-opacity-10 transition-all duration-200"
+                 onclick="window.directorPage?.showAssetModal('prompt')">
+              <div class="flex justify-between items-center p-3">
+                <span class="text-white text-sm font-medium flex items-center">
+                  <i class="fas fa-magic mr-2 text-purple-400"></i>
+                  ${promptTitle}
+                </span>
+                <div class="flex items-center space-x-2">
+                  <span class="text-white text-opacity-50 text-xs">${clickToView}</span>
+                  <i class="fas fa-external-link-alt text-white text-opacity-50 text-xs"></i>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      `
+    }
 
-    if (progressArea) progressArea.classList.remove('hidden')
-    if (progressText) progressText.textContent = message
+    if (resultArea) {
+      resultArea.classList.add('hidden')
+    }
   }
 
   /**
@@ -1512,10 +1731,14 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
   private updateProgress(current: number, total: number, message: string): void {
     const progressText = this.getElement<HTMLElement>('directorProgressText')
     const progressBar = this.getElement<HTMLElement>('directorProgressBar')
+    const progressStep = this.getElement<HTMLElement>('directorProgressStep')
 
     if (progressText) progressText.textContent = message
     if (progressBar) {
       progressBar.style.width = `${(current / total) * 100}%`
+    }
+    if (progressStep) {
+      progressStep.textContent = `步骤 ${current}/${total}`
     }
   }
 
@@ -1524,7 +1747,158 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
    */
   private hideProgress(): void {
     const progressArea = this.getElement<HTMLElement>('directorProgressArea')
-    if (progressArea) progressArea.classList.add('hidden')
+    const resultArea = this.getElement<HTMLElement>('directorResultArea')
+    
+    if (progressArea) {
+      progressArea.classList.add('hidden')
+    }
+    
+    // 恢复结果区域可见性
+    if (resultArea) {
+      resultArea.classList.remove('hidden')
+    }
+    
+    // 渲染资产区域（分析结果和提示词卡片）
+    this.renderAssetsSection()
+  }
+
+  /**
+   * 显示分析结果（在进度区域显示面板）
+   */
+  private showAnalysisResult(analysis: string): void {
+    this.lastAnalysisResult = analysis
+    const panel = document.getElementById('directorAnalysisPanel')
+    if (panel) {
+      panel.classList.remove('hidden')
+    }
+  }
+
+  /**
+   * 显示提示词结果（在进度区域显示面板）
+   */
+  private showPromptResult(prompt: string): void {
+    this.lastComicPrompt = prompt
+    const panel = document.getElementById('directorPromptPanel')
+    if (panel) {
+      panel.classList.remove('hidden')
+    }
+  }
+
+  /**
+   * 渲染资产卡片区（在结果区域显示分析结果和提示词）
+   */
+  private renderAssetsSection(): void {
+    const assetsSection = this.getElement<HTMLElement>('directorAssetsSection')
+    if (!assetsSection) {
+      console.warn('[DirectorPage] 资产区域元素不存在')
+      return
+    }
+    
+    // 如果没有任何资产数据，隐藏区域
+    if (!this.lastAnalysisResult && !this.lastComicPrompt) {
+      assetsSection.classList.add('hidden')
+      return
+    }
+    
+    const analysisTitle = this.t('director.assets.analysisCard') || '图像分析'
+    const promptTitle = this.t('director.assets.promptCard') || '生成提示词'
+    const clickToView = this.t('director.assets.clickToView') || '点击查看'
+    
+    let html = ''
+    
+    // 分析结果卡片（点击打开弹窗）
+    if (this.lastAnalysisResult) {
+      html += `
+        <div class="bg-[#27272A] border border-white border-opacity-10 rounded-lg overflow-hidden cursor-pointer hover:bg-white hover:bg-opacity-5 transition-all duration-200"
+             onclick="window.directorPage?.showAssetModal('analysis')">
+          <div class="flex justify-between items-center p-3">
+            <span class="text-white text-sm font-medium flex items-center">
+              <i class="fas fa-search-plus mr-2 text-blue-400"></i>
+              ${analysisTitle}
+            </span>
+            <div class="flex items-center space-x-2">
+              <span class="text-white text-opacity-50 text-xs">${clickToView}</span>
+              <i class="fas fa-external-link-alt text-white text-opacity-50 text-xs"></i>
+            </div>
+          </div>
+        </div>
+      `
+    }
+    
+    // 提示词卡片（点击打开弹窗）
+    if (this.lastComicPrompt) {
+      html += `
+        <div class="bg-[#27272A] border border-white border-opacity-10 rounded-lg overflow-hidden cursor-pointer hover:bg-white hover:bg-opacity-5 transition-all duration-200"
+             onclick="window.directorPage?.showAssetModal('prompt')">
+          <div class="flex justify-between items-center p-3">
+            <span class="text-white text-sm font-medium flex items-center">
+              <i class="fas fa-magic mr-2 text-purple-400"></i>
+              ${promptTitle}
+            </span>
+            <div class="flex items-center space-x-2">
+              <span class="text-white text-opacity-50 text-xs">${clickToView}</span>
+              <i class="fas fa-external-link-alt text-white text-opacity-50 text-xs"></i>
+            </div>
+          </div>
+        </div>
+      `
+    }
+    
+    assetsSection.innerHTML = html
+    assetsSection.classList.remove('hidden')
+    
+    console.log('[DirectorPage] 资产区域已渲染:', {
+      hasAnalysis: !!this.lastAnalysisResult,
+      hasPrompt: !!this.lastComicPrompt
+    })
+  }
+
+  /**
+   * 显示资产弹窗
+   */
+  showAssetModal(type: 'analysis' | 'prompt'): void {
+    const modal = document.getElementById('directorAssetModal')
+    const titleIcon = document.getElementById('assetModalIcon')
+    const titleText = document.getElementById('assetModalTitleText')
+    const content = document.getElementById('assetModalContent')
+    
+    if (!modal || !content) {
+      console.warn('[DirectorPage] 资产弹窗元素不存在')
+      return
+    }
+    
+    // 设置当前显示的资产类型
+    this.currentModalType = type
+    
+    if (type === 'analysis') {
+      if (titleIcon) titleIcon.className = 'fas fa-search-plus mr-2 text-blue-400'
+      if (titleText) titleText.textContent = this.t('director.assets.analysisCard') || '图像分析'
+      content.textContent = this.lastAnalysisResult || (this.t('director.progress.noAnalysis') || '未进行图像分析')
+    } else if (type === 'prompt') {
+      if (titleIcon) titleIcon.className = 'fas fa-magic mr-2 text-purple-400'
+      if (titleText) titleText.textContent = this.t('director.assets.promptCard') || '生成提示词'
+      content.textContent = this.lastComicPrompt || ''
+    }
+    
+    // 显示弹窗
+    modal.classList.remove('hidden')
+    
+    // 添加 ESC 键关闭
+    this.modalEscHandler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        this.closeAssetModal()
+      }
+    }
+    document.addEventListener('keydown', this.modalEscHandler)
+    
+    // 点击背景关闭
+    modal.onclick = (e) => {
+      if (e.target === modal) {
+        this.closeAssetModal()
+      }
+    }
+    
+    console.log('[DirectorPage] 打开资产弹窗:', type)
   }
 
   /**
@@ -1898,6 +2272,511 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
    */
   onLanguageChange(): void {
     this.updateLayoutSelection()
+  }
+
+  // ==================== 资产弹窗方法 ====================
+
+  /**
+   * 关闭资产弹窗
+   */
+  closeAssetModal(): void {
+    const modal = document.getElementById('directorAssetModal')
+    if (modal) {
+      modal.classList.add('hidden')
+    }
+    console.log('[DirectorPage] 关闭资产弹窗')
+  }
+
+  /**
+   * 复制弹窗内容
+   */
+  async copyModalContent(): Promise<void> {
+    const content = this.lastAnalysisResult || this.lastComicPrompt
+    
+    if (!content) {
+      this.app.showToast?.('没有可复制的内容', 'warning')
+      return
+    }
+    
+    try {
+      await navigator.clipboard.writeText(content)
+      this.app.showToast?.('已复制到剪贴板', 'success')
+    } catch (error) {
+      console.error('[DirectorPage] 复制失败:', error)
+      this.app.showToast?.('复制失败', 'error')
+    }
+  }
+
+  // ==================== 图库编辑模式方法 ====================
+
+  /**
+   * 切换图库编辑模式
+   */
+  toggleGalleryEditMode(): void {
+    this.galleryEditMode = !this.galleryEditMode
+    
+    const editBtn = document.getElementById('galleryEditModeBtn')
+    const editActions = document.getElementById('galleryEditActions')
+    const confirmBtn = document.querySelector('#galleryModal button[data-action="confirm"]') as HTMLElement
+    const cancelBtn = document.querySelector('#galleryModal button[data-action="cancel"]') as HTMLElement
+    
+    if (this.galleryEditMode) {
+      editBtn?.classList.add('text-[#FCE300]', 'border-[#FCE300]')
+      editActions?.classList.remove('hidden')
+      if (confirmBtn) confirmBtn.classList.add('hidden')
+      this.galleryDeleteSelection = []
+      this.updateDeleteButtonState()
+    } else {
+      editBtn?.classList.remove('text-[#FCE300]', 'border-[#FCE300]')
+      editActions?.classList.add('hidden')
+      if (confirmBtn) confirmBtn.classList.remove('hidden')
+      this.galleryDeleteSelection = []
+    }
+    
+    // 重新渲染图库以显示/隐藏选择框
+    this.loadGalleryImages()
+  }
+
+  /**
+   * 更新删除按钮状态
+   */
+  private updateDeleteButtonState(): void {
+    const deleteBtn = document.getElementById('deleteSelectedBtn') as HTMLButtonElement
+    if (deleteBtn) {
+      deleteBtn.disabled = this.galleryDeleteSelection.length === 0
+    }
+  }
+
+  /**
+   * 添加自定义图库图片
+   */
+  addCustomGalleryImage(): void {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = 'image/*'
+    input.multiple = true
+    
+    input.onchange = async (e) => {
+      const files = (e.target as HTMLInputElement).files
+      if (!files || files.length === 0) return
+      
+      try {
+        for (const file of Array.from(files)) {
+          const base64 = await this.fileToBase64ForGallery(file)
+          const imageData: CustomGalleryImage = {
+            id: `custom_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            name: file.name,
+            base64: base64,
+            filename: file.name,
+            createdAt: new Date().toISOString()
+          }
+          this.customGalleryImages.push(imageData)
+        }
+        
+        this.saveCustomGalleryToStorage()
+        this.loadGalleryImages()
+        this.app.showToast?.(`已添加 ${files.length} 张图片`, 'success')
+      } catch (error) {
+        console.error('[DirectorPage] 添加图片失败:', error)
+        this.app.showToast?.('添加图片失败', 'error')
+      }
+    }
+    
+    input.click()
+  }
+
+  /**
+   * 文件转 Base64（用于图库）
+   */
+  private fileToBase64ForGallery(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result as string)
+      reader.onerror = reject
+      reader.readAsDataURL(file)
+    })
+  }
+
+  /**
+   * 保存自定义图库到存储
+   */
+  private saveCustomGalleryToStorage(): void {
+    try {
+      localStorage.setItem('director_custom_gallery', JSON.stringify(this.customGalleryImages))
+    } catch (error) {
+      console.error('[DirectorPage] 保存自定义图库失败:', error)
+    }
+  }
+
+  /**
+   * 从存储加载自定义图库
+   */
+  private loadCustomGalleryFromStorage(): void {
+    try {
+      const data = localStorage.getItem('director_custom_gallery')
+      this.customGalleryImages = data ? JSON.parse(data) : []
+    } catch {
+      this.customGalleryImages = []
+    }
+  }
+
+  /**
+   * 删除选中的自定义图片
+   */
+  deleteSelectedCustomImages(): void {
+    if (this.galleryDeleteSelection.length === 0) return
+    
+    if (!confirm(`确定要删除选中的 ${this.galleryDeleteSelection.length} 张图片吗？`)) {
+      return
+    }
+    
+    try {
+      this.customGalleryImages = this.customGalleryImages.filter(
+        img => !this.galleryDeleteSelection.includes(img.id)
+      )
+      
+      this.saveCustomGalleryToStorage()
+      this.galleryDeleteSelection = []
+      this.updateDeleteButtonState()
+      this.loadGalleryImages()
+      
+      this.app.showToast?.('已删除选中的图片', 'success')
+    } catch (error) {
+      console.error('[DirectorPage] 删除图片失败:', error)
+      this.app.showToast?.('删除图片失败', 'error')
+    }
+  }
+
+  /**
+   * 切换自定义图片的删除选择
+   */
+  toggleCustomImageDeleteSelection(imageId: string): void {
+    const index = this.galleryDeleteSelection.indexOf(imageId)
+    if (index >= 0) {
+      this.galleryDeleteSelection.splice(index, 1)
+    } else {
+      this.galleryDeleteSelection.push(imageId)
+    }
+    this.updateDeleteButtonState()
+    this.loadGalleryImages()
+  }
+
+  // ==================== 模板编辑器方法 ====================
+
+  /**
+   * 打开模板编辑器
+   */
+  openTemplateEditor(template: StyleTemplate | null, templateKey: string | null, isBuiltin: boolean): void {
+    const editor = document.getElementById('directorTemplateEditorModal')
+    if (!editor) {
+      console.error('[DirectorPage] 模板编辑器不存在: directorTemplateEditorModal')
+      return
+    }
+    
+    this.editingTemplateKey = templateKey
+    this.editingTemplateIsBuiltin = isBuiltin
+    
+    // 填充表单
+    const nameInput = document.getElementById('templateEditorName') as HTMLInputElement
+    const prefixInput = document.getElementById('templateEditorPrefix') as HTMLTextAreaElement
+    const suffixInput = document.getElementById('templateEditorSuffix') as HTMLTextAreaElement
+    const negativeInput = document.getElementById('templateEditorNegative') as HTMLTextAreaElement
+    const titleEl = document.getElementById('templateEditorTitle')
+    const deleteBtn = document.getElementById('templateEditorDeleteBtn')
+    const resetBtn = document.getElementById('templateEditorResetBtn')
+    
+    if (template) {
+      if (nameInput) nameInput.value = template.name || ''
+      if (prefixInput) prefixInput.value = template.prefix || ''
+      if (suffixInput) suffixInput.value = template.suffix || ''
+      if (negativeInput) negativeInput.value = template.negative || ''
+      if (titleEl) titleEl.textContent = '编辑模板'
+      
+      // 内置模板显示重置按钮，自定义模板显示删除按钮
+      if (isBuiltin) {
+        deleteBtn?.classList.add('hidden')
+        resetBtn?.classList.remove('hidden')
+      } else {
+        deleteBtn?.classList.remove('hidden')
+        resetBtn?.classList.add('hidden')
+      }
+    } else {
+      if (nameInput) nameInput.value = ''
+      if (prefixInput) prefixInput.value = ''
+      if (suffixInput) suffixInput.value = ''
+      if (negativeInput) negativeInput.value = ''
+      if (titleEl) titleEl.textContent = '新建模板'
+      deleteBtn?.classList.add('hidden')
+      resetBtn?.classList.add('hidden')
+    }
+    
+    editor.classList.remove('hidden')
+  }
+
+  /**
+   * 关闭模板编辑器
+   */
+  closeTemplateEditor(): void {
+    const editor = document.getElementById('directorTemplateEditorModal')
+    if (editor) {
+      editor.classList.add('hidden')
+    }
+    this.editingTemplateKey = null
+    this.editingTemplateIsBuiltin = false
+  }
+
+  /**
+   * 创建新模板
+   */
+  createNewTemplate(): void {
+    this.openTemplateEditor(null, null, false)
+  }
+
+  /**
+   * 保存模板
+   */
+  saveTemplateFromEditor(): void {
+    const nameInput = document.getElementById('templateEditorName') as HTMLInputElement
+    const prefixInput = document.getElementById('templateEditorPrefix') as HTMLTextAreaElement
+    const suffixInput = document.getElementById('templateEditorSuffix') as HTMLTextAreaElement
+    const negativeInput = document.getElementById('templateEditorNegative') as HTMLTextAreaElement
+    
+    const name = nameInput?.value?.trim()
+    const prefix = prefixInput?.value?.trim() || ''
+    const suffix = suffixInput?.value?.trim() || ''
+    const negative = negativeInput?.value?.trim() || ''
+    
+    if (!name) {
+      this.app.showToast?.('请填写模板名称', 'warning')
+      return
+    }
+    
+    try {
+      const template: StyleTemplate = { name, prefix, suffix, negative }
+      
+      if (this.editingTemplateKey) {
+        if (this.editingTemplateIsBuiltin) {
+          // 覆盖内置模板
+          this.templateOverrides[this.editingTemplateKey] = template
+          this.styleTemplates[this.editingTemplateKey] = template
+        } else {
+          // 编辑自定义模板
+          this.customTemplates[this.editingTemplateKey] = template
+        }
+      } else {
+        // 新建自定义模板
+        const newKey = `custom_${Date.now()}`
+        this.customTemplates[newKey] = template
+      }
+      
+      this.saveTemplatesToStorage()
+      this.closeTemplateEditor()
+      this.renderTemplateList()
+      
+      this.app.showToast?.('模板已保存', 'success')
+    } catch (error) {
+      console.error('[DirectorPage] 保存模板失败:', error)
+      this.app.showToast?.('保存模板失败', 'error')
+    }
+  }
+
+  /**
+   * 删除当前模板
+   */
+  deleteCurrentTemplate(): void {
+    if (!this.editingTemplateKey || this.editingTemplateIsBuiltin) return
+    
+    if (!confirm('确定要删除这个模板吗？')) return
+    
+    try {
+      delete this.customTemplates[this.editingTemplateKey]
+      this.saveTemplatesToStorage()
+      
+      this.closeTemplateEditor()
+      this.renderTemplateList()
+      
+      this.app.showToast?.('模板已删除', 'success')
+    } catch (error) {
+      console.error('[DirectorPage] 删除模板失败:', error)
+      this.app.showToast?.('删除模板失败', 'error')
+    }
+  }
+
+  /**
+   * 重置当前模板（恢复内置模板默认值）
+   */
+  resetCurrentTemplate(): void {
+    if (!this.editingTemplateKey || !this.editingTemplateIsBuiltin) return
+    
+    if (!confirm('确定要恢复此模板的默认值吗？')) return
+    
+    try {
+      const original = this.defaultStyleTemplates[this.editingTemplateKey]
+      
+      if (original) {
+        // 移除覆盖
+        delete this.templateOverrides[this.editingTemplateKey]
+        // 恢复默认值
+        this.styleTemplates[this.editingTemplateKey] = JSON.parse(JSON.stringify(original))
+        
+        this.saveTemplatesToStorage()
+        
+        // 更新编辑器中的值
+        const nameInput = document.getElementById('templateEditorName') as HTMLInputElement
+        const prefixInput = document.getElementById('templateEditorPrefix') as HTMLTextAreaElement
+        const suffixInput = document.getElementById('templateEditorSuffix') as HTMLTextAreaElement
+        const negativeInput = document.getElementById('templateEditorNegative') as HTMLTextAreaElement
+        
+        if (nameInput) nameInput.value = original.name
+        if (prefixInput) prefixInput.value = original.prefix
+        if (suffixInput) suffixInput.value = original.suffix
+        if (negativeInput) negativeInput.value = original.negative
+        
+        this.app.showToast?.('已恢复默认值', 'success')
+      }
+    } catch (error) {
+      console.error('[DirectorPage] 重置模板失败:', error)
+      this.app.showToast?.('重置失败', 'error')
+    }
+  }
+
+  /**
+   * 保存模板到存储
+   */
+  private saveTemplatesToStorage(): void {
+    try {
+      localStorage.setItem('director_custom_templates', JSON.stringify(this.customTemplates))
+      localStorage.setItem('director_template_overrides', JSON.stringify(this.templateOverrides))
+    } catch (error) {
+      console.error('[DirectorPage] 保存模板失败:', error)
+    }
+  }
+
+  /**
+   * 从存储加载模板
+   */
+  private loadTemplatesFromStorage(): void {
+    try {
+      const customData = localStorage.getItem('director_custom_templates')
+      this.customTemplates = customData ? JSON.parse(customData) : {}
+      
+      const overridesData = localStorage.getItem('director_template_overrides')
+      this.templateOverrides = overridesData ? JSON.parse(overridesData) : {}
+      
+      // 应用覆盖
+      for (const key of Object.keys(this.templateOverrides)) {
+        if (this.styleTemplates[key]) {
+          this.styleTemplates[key] = this.templateOverrides[key]
+        }
+      }
+    } catch {
+      this.customTemplates = {}
+      this.templateOverrides = {}
+    }
+  }
+
+  // ==================== 模板导入导出方法 ====================
+
+  /**
+   * 导入模板
+   */
+  async importTemplates(): Promise<void> {
+    try {
+      const electronAPI = (window as any).electronAPI
+      
+      if (electronAPI?.isElectron && electronAPI.importTemplates) {
+        const result = await electronAPI.importTemplates()
+        if (result?.canceled) return
+        
+        if (result?.success) {
+          this.loadTemplatesFromStorage()
+          this.renderTemplateList()
+          this.app.showToast?.(`已导入模板`, 'success')
+        } else {
+          this.app.showToast?.('导入失败: ' + (result?.error || '未知错误'), 'error')
+        }
+      } else {
+        // 浏览器环境：使用文件选择
+        const input = document.createElement('input')
+        input.type = 'file'
+        input.accept = '.json'
+        
+        input.onchange = async (e) => {
+          const file = (e.target as HTMLInputElement).files?.[0]
+          if (!file) return
+          
+          try {
+            const text = await file.text()
+            const imported = JSON.parse(text)
+            
+            let count = 0
+            for (const [key, template] of Object.entries(imported)) {
+              if ((template as any).name && ((template as any).prefix !== undefined || (template as any).prompt !== undefined)) {
+                const newKey = `imported_${Date.now()}_${count}`
+                this.customTemplates[newKey] = template as StyleTemplate
+                count++
+              }
+            }
+            
+            this.saveTemplatesToStorage()
+            this.renderTemplateList()
+            
+            this.app.showToast?.(`已导入 ${count} 个模板`, 'success')
+          } catch (error) {
+            console.error('[DirectorPage] 导入失败:', error)
+            this.app.showToast?.('导入失败: 无效的文件格式', 'error')
+          }
+        }
+        
+        input.click()
+      }
+    } catch (error) {
+      console.error('[DirectorPage] 导入模板失败:', error)
+      this.app.showToast?.('导入失败', 'error')
+    }
+  }
+
+  /**
+   * 导出模板
+   */
+  async exportTemplates(): Promise<void> {
+    try {
+      const allTemplates = { ...this.customTemplates }
+      
+      if (Object.keys(allTemplates).length === 0) {
+        this.app.showToast?.('没有可导出的自定义模板', 'warning')
+        return
+      }
+      
+      const electronAPI = (window as any).electronAPI
+      
+      if (electronAPI?.isElectron && electronAPI.exportTemplates) {
+        const result = await electronAPI.exportTemplates()
+        if (result?.canceled) return
+        
+        if (result?.success) {
+          this.app.showToast?.('模板已导出到: ' + result.path, 'success')
+        } else {
+          this.app.showToast?.('导出失败: ' + (result?.error || '未知错误'), 'error')
+        }
+      } else {
+        // 浏览器环境：下载 JSON 文件
+        const dataStr = JSON.stringify(allTemplates, null, 2)
+        const blob = new Blob([dataStr], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `director-templates-${new Date().toISOString().split('T')[0]}.json`
+        a.click()
+        
+        URL.revokeObjectURL(url)
+        this.app.showToast?.('模板已导出', 'success')
+      }
+    } catch (error) {
+      console.error('[DirectorPage] 导出模板失败:', error)
+      this.app.showToast?.('导出失败', 'error')
+    }
   }
 
   /**
