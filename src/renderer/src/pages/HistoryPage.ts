@@ -5,6 +5,9 @@
  */
 
 import { BasePage, type AppInterface } from './BasePage'
+import { getHistoryManager } from '../features/history/HistoryManager'
+import { VirtualScroller } from '../core/VirtualScroller'
+import { isValidImageUrl, isPendingUrl, filterValidImageUrls, getFirstValidThumbnail } from '../utils/url-validator'
 
 // Types
 export interface HistoryItem {
@@ -40,6 +43,22 @@ export class HistoryPage extends BasePage {
   private readonly CACHE_DURATION: number = 5000
   private readonly CHUNK_SIZE: number = 10
   private historyItemsMap: Map<number, HistoryItem> = new Map()
+  private unsubscribeHistoryChange: (() => void) | null = null
+  private isLoading: boolean = false
+  private loadingTimeout: ReturnType<typeof setTimeout> | null = null
+  private virtualScroller: VirtualScroller<HistoryItem> | null = null
+  private readonly ITEM_HEIGHT = 88  // 预估卡片高度 (含缩略图)
+  private loadRequestId: number = 0  // 用于防止竞态条件
+
+  // 无限滚动分页属性
+  private readonly PAGE_SIZE = 30
+  private currentPage = 0
+  private hasMoreItems = true
+  private loadMoreObserver: IntersectionObserver | null = null
+  private allHistoryItems: HistoryItem[] = []  // 缓存所有历史记录
+
+  // 图片懒加载 Observer
+  private imageObserver: IntersectionObserver | null = null
 
   constructor(app: AppInterface) {
     super(app)
@@ -49,7 +68,101 @@ export class HistoryPage extends BasePage {
   init(): void {
     this.bindEvents()
     this.bindDelegatedEvents()
+    this.bindUploadSuccessListener()
+    this.subscribeToHistoryChanges()
     this.isInitialized = true
+  }
+
+  /**
+   * 订阅 HistoryManager 数据变更，实现实时刷新
+   */
+  private subscribeToHistoryChanges(): void {
+    // 避免重复订阅
+    if (this.unsubscribeHistoryChange) {
+      this.unsubscribeHistoryChange()
+    }
+
+    const historyManager = getHistoryManager()
+    this.unsubscribeHistoryChange = historyManager.onChange((history, action) => {
+      console.log(`[HistoryPage] 收到数据变更通知: ${action}, 记录数: ${history.length}`)
+      
+      // 同步更新 app.history 确保数据一致性
+      this.app.history = [...history]
+      
+      // 只在页面可见时刷新 UI
+      if (this.isVisible()) {
+        this.loadPanel()
+      }
+    })
+
+    console.log('[HistoryPage] 已订阅 HistoryManager 数据变更')
+  }
+
+  /**
+   * 检查页面是否可见
+   */
+  private isVisible(): boolean {
+    const panel = document.getElementById('historyPanel')
+    return panel !== null && !panel.classList.contains('hidden')
+  }
+
+  /**
+   * 监听上传成功事件，显示视觉反馈
+   */
+  private bindUploadSuccessListener(): void {
+    window.addEventListener('historyUploadSuccess', ((event: CustomEvent) => {
+      const { itemId, imageCount } = event.detail
+      this.showUploadSuccessFeedback(itemId, imageCount)
+    }) as EventListener)
+  }
+
+  /**
+   * 显示上传成功的视觉反馈 - Cyberpunk 风格
+   */
+  private showUploadSuccessFeedback(itemId: number, imageCount: number): void {
+    // 1. 刷新面板以确保显示最新状态
+    this.loadPanel()
+
+    // 2. 延迟一帧确保 DOM 已更新
+    requestAnimationFrame(() => {
+      // 3. 为对应的历史记录卡片添加成功动画
+      const historyCard = document.querySelector(`[data-history-id="${itemId}"]`) as HTMLElement
+      if (historyCard) {
+        // Cyberpunk 黄色闪光边框效果
+        historyCard.style.transition = 'all 0.3s ease-out'
+        historyCard.style.boxShadow = '0 0 30px rgba(252, 227, 0, 0.6), inset 0 0 20px rgba(252, 227, 0, 0.1)'
+        historyCard.style.borderColor = '#FCE300'
+        historyCard.style.borderWidth = '2px'
+        historyCard.style.borderStyle = 'solid'
+        
+        // 找到云端标签并添加弹出 + 闪烁动画
+        const cloudBadge = historyCard.querySelector('.cloud-badge') as HTMLElement
+        if (cloudBadge) {
+          cloudBadge.style.transition = 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)'
+          cloudBadge.style.transform = 'scale(1.3)'
+          cloudBadge.style.boxShadow = '0 0 15px rgba(34, 197, 94, 0.8)'
+          
+          setTimeout(() => {
+            cloudBadge.style.transform = 'scale(1)'
+            cloudBadge.style.boxShadow = ''
+          }, 400)
+        }
+
+        // 移除卡片动画效果
+        setTimeout(() => {
+          historyCard.style.boxShadow = ''
+          historyCard.style.borderColor = ''
+          historyCard.style.borderWidth = ''
+          historyCard.style.borderStyle = ''
+        }, 1500)
+      }
+
+      // 4. 显示成功 Toast（带图标）
+      const message = imageCount > 1 
+        ? this.t('history.messages.uploadSuccess', { count: imageCount })
+        : this.t('history.messages.uploadSuccessSingle')
+      this.showToast(message, 'success')
+    })
   }
 
   bindEvents(): void {
@@ -76,11 +189,12 @@ export class HistoryPage extends BasePage {
 
     historyList.addEventListener('click', (e: Event) => {
       const target = e.target as HTMLElement
-      const button = target.closest('button[data-action]') as HTMLButtonElement | null
-      if (!button) return
+      // 支持 button 和其他带 data-action 的元素（如缩略图 div）
+      const actionElement = target.closest('[data-action]') as HTMLElement | null
+      if (!actionElement) return
 
-      const action = button.dataset.action
-      const itemId = parseInt(button.dataset.itemId || '0', 10)
+      const action = actionElement.dataset.action
+      const itemId = parseInt(actionElement.dataset.itemId || '0', 10)
       const item = this.historyItemsMap.get(itemId)
 
       if (!item) {
@@ -112,15 +226,25 @@ export class HistoryPage extends BasePage {
   }
 
   private viewImage(urls: string[], index: number): void {
+    // 过滤掉无效 URL
+    const validUrls = filterValidImageUrls(urls)
+    if (validUrls.length === 0) return
+    
     const imageViewer = (window as any).imageViewerTS
     if (imageViewer?.view) {
-      imageViewer.view(urls, index)
+      imageViewer.view(validUrls, Math.min(index, validUrls.length - 1))
     } else if ((this.app as any).viewImage) {
-      ;(this.app as any).viewImage(urls, index)
+      ;(this.app as any).viewImage(validUrls, Math.min(index, validUrls.length - 1))
     }
   }
 
   private downloadImage(url: string): void {
+    // 检查 URL 有效性
+    if (!isValidImageUrl(url)) {
+      this.showToast(this.t('history.messages.uploading') || '图片正在上传中，请稍候', 'warning')
+      return
+    }
+    
     if ((this.app as any).downloadImage) {
       ;(this.app as any).downloadImage(url)
     } else {
@@ -131,9 +255,94 @@ export class HistoryPage extends BasePage {
 
   // ==================== 面板加载 ====================
 
+  /**
+   * 显示骨架屏加载状态
+   */
+  private showSkeleton(): void {
+    const historyList = this.getElement('historyList')
+    if (!historyList) return
+
+    const skeletonCount = 6
+    const skeletons = Array(skeletonCount).fill(0).map((_, index) => `
+      <div class="history-skeleton bg-white bg-opacity-5 rounded-lg p-4 flex items-center space-x-4"
+           style="animation-delay: ${index * 100}ms">
+        <div class="flex-shrink-0">
+          <div class="w-10 h-10 bg-white bg-opacity-10 rounded-lg skeleton-pulse"></div>
+        </div>
+        <div class="flex-1 min-w-0 space-y-2">
+          <div class="h-4 bg-white bg-opacity-10 rounded w-3/4 skeleton-pulse"></div>
+          <div class="flex space-x-2">
+            <div class="h-3 bg-white bg-opacity-10 rounded w-16 skeleton-pulse"></div>
+            <div class="h-3 bg-white bg-opacity-10 rounded w-24 skeleton-pulse"></div>
+          </div>
+        </div>
+        <div class="flex-shrink-0 flex space-x-2">
+          <div class="w-8 h-8 bg-white bg-opacity-10 rounded-lg skeleton-pulse"></div>
+          <div class="w-8 h-8 bg-white bg-opacity-10 rounded-lg skeleton-pulse"></div>
+          <div class="w-8 h-8 bg-white bg-opacity-10 rounded-lg skeleton-pulse"></div>
+        </div>
+      </div>
+    `).join('')
+
+    historyList.innerHTML = skeletons
+  }
+
+  /**
+   * 隐藏骨架屏
+   */
+  private hideSkeleton(): void {
+    this.isLoading = false
+  }
+
   loadPanel(): void {
     const historyList = this.getElement('historyList')
-    const history = this.app.history || []
+    if (!historyList) return
+
+    // 如果正在加载，跳过
+    if (this.isLoading) return
+    
+    // 生成新的请求 ID，用于防止竞态条件
+    const currentRequestId = ++this.loadRequestId
+    this.isLoading = true
+
+    // 清除之前的加载超时
+    if (this.loadingTimeout) {
+      clearTimeout(this.loadingTimeout)
+    }
+
+    // 先显示骨架屏
+    this.showSkeleton()
+
+    // 使用 requestIdleCallback 延迟加载数据，避免阻塞 UI
+    this.requestIdleCallback(() => {
+      // 检查是否仍是当前请求（防止竞态条件）
+      if (currentRequestId !== this.loadRequestId) {
+        return
+      }
+      this.loadPanelData()
+    }, { timeout: 100 })
+  }
+
+  /**
+   * 实际加载面板数据
+   */
+  private loadPanelData(): void {
+    const historyList = this.getElement('historyList')
+    if (!historyList) {
+      this.isLoading = false
+      return
+    }
+    
+    // 优先从 HistoryManager 获取最新数据，确保实时同步
+    const historyManager = getHistoryManager()
+    const history = historyManager.getAll().length > 0 
+      ? historyManager.getAll() 
+      : (this.app.history || [])
+
+    // 缓存所有历史记录（用于无限滚动）
+    this.allHistoryItems = history
+    this.currentPage = 0
+    this.hasMoreItems = history.length > this.PAGE_SIZE
 
     // 清空历史项目映射
     this.historyItemsMap.clear()
@@ -143,27 +352,145 @@ export class HistoryPage extends BasePage {
       this.historyItemsMap.set(item.id, item)
     })
 
-    // 更新存储状态
-    this.updateStorageStatusCached()
+    // 更新存储状态（异步，不阻塞）
+    this.requestIdleCallback(() => {
+      this.updateStorageStatusCached()
+    }, { timeout: 500 })
 
     if (history.length === 0) {
       const emptyText = this.t('history.labels.empty')
-      if (historyList) {
-        historyList.innerHTML = `
-          <div class="text-center text-white opacity-50 py-8">
-            <i class="fas fa-history text-4xl mb-4"></i>
-            <p>${emptyText}</p>
-          </div>
-        `
-      }
+      historyList.innerHTML = `
+        <div class="text-center text-white opacity-50 py-8">
+          <i class="fas fa-history text-4xl mb-4"></i>
+          <p>${emptyText}</p>
+        </div>
+      `
+      this.isLoading = false
       return
     }
 
-    // 清空列表
-    if (historyList) {
-      historyList.innerHTML = ''
-      this.renderHistoryChunked(history, historyList, 0)
+    // 直接分块渲染所有记录（禁用虚拟滚动，避免渲染 bug）
+    historyList.innerHTML = ''
+    this.renderHistoryChunked(history, historyList, 0)
+
+    this.isLoading = false
+  }
+
+  private initVirtualScroller(history: HistoryItem[], container: HTMLElement): void {
+    // 销毁旧实例
+    if (this.virtualScroller) {
+      this.virtualScroller.destroy()
     }
+
+    this.virtualScroller = new VirtualScroller({
+      container,
+      items: history,
+      itemHeight: this.ITEM_HEIGHT,
+      overscan: 5,
+      renderItem: (item: HistoryItem, _index: number) => this.createHistoryCard(item)
+    })
+    
+    this.virtualScroller.init()
+    console.log(`[HistoryPage] 虚拟滚动已启用，共 ${history.length} 条记录`)
+
+    // 设置无限滚动
+    this.requestIdleCallback(() => {
+      this.setupInfiniteScroll()
+    }, { timeout: 500 })
+  }
+
+  /**
+   * 设置无限滚动 (Intersection Observer)
+   * 注意: VirtualScroller 使用窗口级滚动，已包含所有数据
+   * 无限滚动目前不需要，因为虚拟滚动已处理全部数据
+   */
+  private setupInfiniteScroll(): void {
+    // VirtualScroller 已经包含全部数据，使用虚拟渲染
+    // 无需额外的无限滚动加载逻辑
+    console.log('[HistoryPage] 虚拟滚动已包含全部数据，无需无限滚动')
+  }
+
+  /**
+   * 旧版无限滚动 (已废弃)
+   * 保留用于非虚拟滚动模式
+   */
+  private setupInfiniteScrollLegacy(): void {
+    const historyList = this.getElement('historyList')
+    if (!historyList) return
+    
+    // 清理旧的 Observer
+    if (this.loadMoreObserver) {
+      this.loadMoreObserver.disconnect()
+      this.loadMoreObserver = null
+    }
+
+    // 移除旧的哨兵元素
+    const oldSentinel = historyList.querySelector('[data-sentinel="true"]')
+    if (oldSentinel) {
+      oldSentinel.remove()
+    }
+
+    // 创建哨兵元素
+    const sentinel = document.createElement('div')
+    sentinel.className = 'history-load-more-sentinel'
+    sentinel.style.cssText = 'height: 1px; width: 100%;'
+    sentinel.setAttribute('data-sentinel', 'true')
+    
+    // 使用窗口级滚动检测
+    const contentContainer = historyList.querySelector('.virtual-scroll-content') || historyList
+    contentContainer.appendChild(sentinel)
+    
+    // 使用 Intersection Observer 检测滚动到底部 (root: null = viewport)
+    this.loadMoreObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting && this.hasMoreItems && !this.isLoading) {
+            this.loadMoreItems()
+          }
+        })
+      },
+      {
+        root: null,  // 使用视口
+        threshold: 0.1,
+        rootMargin: '100px'  // 提前 100px 触发
+      }
+    )
+    
+    this.loadMoreObserver.observe(sentinel)
+    console.log('[HistoryPage] 无限滚动已启用')
+  }
+
+  /**
+   * 加载更多历史记录
+   */
+  private loadMoreItems(): void {
+    if (!this.hasMoreItems || this.isLoading) return
+    
+    const nextPage = this.currentPage + 1
+    const startIndex = nextPage * this.PAGE_SIZE
+    const endIndex = startIndex + this.PAGE_SIZE
+    
+    if (startIndex >= this.allHistoryItems.length) {
+      this.hasMoreItems = false
+      return
+    }
+    
+    this.currentPage = nextPage
+    
+    // 检查是否还有更多
+    if (endIndex >= this.allHistoryItems.length) {
+      this.hasMoreItems = false
+    }
+    
+    // 获取累积数据
+    const itemsToRender = this.allHistoryItems.slice(0, endIndex)
+    
+    // 更新虚拟滚动数据
+    if (this.virtualScroller) {
+      this.virtualScroller.updateItems(itemsToRender)
+    }
+    
+    console.log(`[HistoryPage] 加载更多: 第 ${nextPage + 1} 页，共 ${itemsToRender.length}/${this.allHistoryItems.length} 条`)
   }
 
   private renderHistoryChunked(history: HistoryItem[], container: HTMLElement, startIndex: number): void {
@@ -182,6 +509,8 @@ export class HistoryPage extends BasePage {
         this.renderHistoryChunked(history, container, endIndex)
       })
     } else {
+      // 渲染完成，隐藏骨架屏
+      this.isLoading = false
       this.scheduleImagePreload(history)
     }
   }
@@ -195,117 +524,149 @@ export class HistoryPage extends BasePage {
     const isComparison = item.type === 'compare'
     const isCloudStored = item.r2Storage === true
     const isUploading = item.uploading === true
-    const hasPlaceholder = item.urls && item.urls.some((url) => url.startsWith('pending:'))
+    const hasPlaceholder = item.urls && item.urls.some((url) => isPendingUrl(url))
 
-    historyCard.className = `bg-white bg-opacity-5 rounded-lg p-4 flex items-center space-x-4 ${
-      isNetworkRestricted ? 'border border-orange-500 border-opacity-30' : ''
-    } ${isComparison ? 'border border-purple-500 border-opacity-30' : ''}`
+    // 添加 data-history-id 用于动画定位
+    historyCard.setAttribute('data-history-id', String(item.id))
+
+    // 使用新的 history-card 样式类
+    historyCard.className = `history-card rounded-xl p-3 flex items-center gap-4 group ${
+      isNetworkRestricted ? 'border-orange-500/30' : ''
+    } ${isComparison ? 'border-purple-500/30' : ''}`
 
     const typeIconMap: Record<string, string> = {
       generate: 'fa-magic',
       edit: 'fa-edit',
       batch: 'fa-layer-group',
       compare: 'fa-balance-scale',
-      network_restricted: 'fa-exclamation-triangle'
+      network_restricted: 'fa-exclamation-triangle',
+      'generate-with-reference': 'fa-images'
     }
     const typeIcon = typeIconMap[item.type] || 'fa-image'
 
-    const date = new Date(item.timestamp).toLocaleString('zh-CN')
-    const imageCountText = item.urls.length > 1 ? ` (${item.urls.length}张)` : ''
+    // 格式化日期
+    const dateObj = new Date(item.timestamp)
+    const date = dateObj.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
+    const time = dateObj.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+    const imageCountText = item.urls.length > 1 ? `${item.urls.length}张` : ''
 
-    // 存储状态标识
+    // 获取缩略图 URL（排除无效 URL）
+    const thumbnailUrl = getFirstValidThumbnail(item.urls || [])
+
+    // 缩略图 HTML - 可点击预览
+    const thumbnailHtml = thumbnailUrl 
+      ? `<div class="history-thumbnail flex-shrink-0 w-14 h-14 rounded-lg overflow-hidden ring-1 ring-white/10 cursor-pointer relative group/thumb" 
+             data-action="view" data-item-id="${item.id}" title="点击预览">
+          <img src="${thumbnailUrl}" alt="" class="w-full h-full object-cover transition-transform duration-300 group-hover/thumb:scale-110" loading="lazy" decoding="async" />
+          <div class="absolute inset-0 bg-black/0 group-hover/thumb:bg-black/40 transition-all duration-300 flex items-center justify-center">
+            <i class="fas fa-search-plus text-white opacity-0 group-hover/thumb:opacity-100 transition-opacity duration-300"></i>
+          </div>
+        </div>`
+      : `<div class="history-thumbnail flex-shrink-0 w-14 h-14 rounded-lg bg-gradient-to-br from-white/10 to-white/5 flex items-center justify-center ring-1 ring-white/10 cursor-pointer"
+             data-action="view" data-item-id="${item.id}" title="点击预览">
+          <i class="fas ${typeIcon} text-xl ${
+            isNetworkRestricted ? 'text-orange-400' : isComparison ? 'text-purple-400' : 'text-white/50'
+          }"></i>
+        </div>`
+
+    // 存储状态徽章 - 使用新样式
     const storageBadge = isUploading || hasPlaceholder
-      ? `<span class="inline-flex items-center text-xs bg-yellow-500 bg-opacity-20 text-yellow-200 px-2 py-0.5 rounded-full whitespace-nowrap ml-1">
-          <i class="fas fa-cloud-upload-alt fa-spin mr-1"></i>${this.t('history.storage.uploading')}
+      ? `<span class="badge-uploading inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full text-yellow-300 whitespace-nowrap">
+          <i class="fas fa-cloud-upload-alt fa-spin text-yellow-400"></i>${this.t('history.storage.uploading')}
         </span>`
       : isCloudStored
-      ? `<span class="inline-flex items-center text-xs bg-green-500 bg-opacity-20 text-green-200 px-2 py-0.5 rounded-full whitespace-nowrap ml-1">
-          <i class="fas fa-cloud-check mr-1"></i>${this.t('history.storage.cloud')}
+      ? `<span class="badge-cloud inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full text-green-300 whitespace-nowrap">
+          <i class="fas fa-check-circle text-green-400"></i>${this.t('history.storage.cloud')}
         </span>`
-      : `<span class="inline-flex items-center text-xs bg-gray-500 bg-opacity-20 text-gray-300 px-2 py-0.5 rounded-full whitespace-nowrap ml-1">
-          <i class="fas fa-hdd mr-1"></i>${this.t('history.storage.local')}
+      : `<span class="badge-local inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full text-gray-400 whitespace-nowrap">
+          <i class="fas fa-hdd text-gray-500"></i>${this.t('history.storage.local')}
         </span>`
 
     // 特殊项目标识
     let specialBadge = ''
     if (isNetworkRestricted) {
-      specialBadge = `<span class="inline-flex items-center text-xs bg-orange-500 bg-opacity-20 text-orange-200 px-2.5 py-1 rounded-full whitespace-nowrap">
-        <i class="fas fa-wifi mr-1"></i>${this.t('history.types.networkRestricted')}
+      specialBadge = `<span class="inline-flex items-center gap-1 text-xs bg-orange-500/20 text-orange-300 px-2 py-0.5 rounded-full border border-orange-500/30 whitespace-nowrap">
+        <i class="fas fa-wifi text-orange-400"></i>${this.t('history.types.networkRestricted')}
       </span>`
     } else if (isComparison && item.comparison?.winnerModelName) {
-      specialBadge = `<span class="inline-flex items-center text-xs bg-purple-500 bg-opacity-20 text-purple-200 px-2.5 py-1 rounded-full whitespace-nowrap">
-        <i class="fas fa-trophy mr-1"></i>${this.t('history.types.winner', { model: item.comparison.winnerModelName })}
+      specialBadge = `<span class="inline-flex items-center gap-1 text-xs bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded-full border border-purple-500/30 whitespace-nowrap">
+        <i class="fas fa-trophy text-purple-400"></i>${this.t('history.types.winner', { model: item.comparison.winnerModelName })}
       </span>`
     } else if (isComparison) {
-      specialBadge = `<span class="inline-flex items-center text-xs bg-gray-500 bg-opacity-20 text-gray-300 px-2.5 py-1 rounded-full whitespace-nowrap">
-        <i class="fas fa-balance-scale mr-1"></i>${this.t('history.types.pending')}
+      specialBadge = `<span class="inline-flex items-center gap-1 text-xs bg-gray-500/20 text-gray-400 px-2 py-0.5 rounded-full border border-gray-500/30 whitespace-nowrap">
+        <i class="fas fa-balance-scale text-gray-500"></i>${this.t('history.types.pending')}
       </span>`
     }
 
     // 对比详情
     const comparisonDetails =
       isComparison && item.comparison
-        ? `<div class="text-xs text-white opacity-70 mt-1">
+        ? `<div class="text-xs text-white/50 mt-1">
             <span>${item.comparison.leftModelName} vs ${item.comparison.rightModelName}</span>
-            ${item.referenceImages && item.referenceImages.length > 0 ? ` | ${item.referenceImages.length}张参考图` : ''}
+            ${item.referenceImages && item.referenceImages.length > 0 ? ` · ${item.referenceImages.length}张参考图` : ''}
           </div>`
         : ''
 
+    // 截断过长的提示词
+    const maxPromptLength = 50
+    const displayPrompt = item.prompt.length > maxPromptLength 
+      ? item.prompt.substring(0, maxPromptLength) + '...' 
+      : item.prompt
+
     historyCard.innerHTML = `
-      <div class="flex-shrink-0">
-        <i class="fas ${typeIcon} text-2xl ${
-          isNetworkRestricted ? 'text-orange-400' : isComparison ? 'text-purple-400' : 'text-white opacity-70'
-        }"></i>
-      </div>
-      <div class="flex-1">
-        <div class="flex items-start flex-wrap gap-2">
-          <h4 class="text-white font-medium ${isComparison ? 'mr-auto' : ''}">${item.prompt}${imageCountText}</h4>
+      ${thumbnailHtml}
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2 flex-wrap">
+          <h4 class="text-white font-medium text-sm truncate max-w-[200px]" title="${item.prompt}">${displayPrompt}</h4>
+          ${imageCountText ? `<span class="text-xs text-cyan-400/80">(${imageCountText})</span>` : ''}
           ${storageBadge}
           ${specialBadge}
         </div>
-        <p class="text-white opacity-50 text-sm">${date}</p>
-        <div class="flex flex-wrap items-center gap-2 text-xs">
-          ${item.model ? `<span class="text-white opacity-70"><i class="fas fa-robot mr-1"></i>模型: ${item.model}</span>` : ''}
-          ${item.ratio && item.ratio !== '网络受限' ? `<span class="text-white opacity-70"><i class="fas fa-expand mr-1"></i>尺寸: ${item.ratio}</span>` : ''}
+        <div class="flex items-center gap-2 mt-1 text-xs text-white/40">
+          <span class="inline-flex items-center gap-1">
+            <i class="fas fa-clock text-white/30"></i>${date} ${time}
+          </span>
+          ${item.model ? `<span class="meta-dot"></span><span class="inline-flex items-center gap-1"><i class="fas fa-robot text-cyan-400/50"></i>${item.model}</span>` : ''}
+          ${item.ratio && item.ratio !== '网络受限' ? `<span class="meta-dot"></span><span class="inline-flex items-center gap-1"><i class="fas fa-expand text-purple-400/50"></i>${item.ratio}</span>` : ''}
         </div>
-        ${isNetworkRestricted ? '<p class="text-orange-300 text-xs mt-1">✓ 生成成功，但图片可能需要特殊网络环境访问</p>' : ''}
+        ${isNetworkRestricted ? '<p class="text-orange-300/80 text-xs mt-1">✓ 生成成功，需要特殊网络访问</p>' : ''}
         ${comparisonDetails}
       </div>
-      <div class="flex space-x-2">
+      <div class="flex items-center gap-1.5 flex-shrink-0">
         ${
           item.urls.length > 0 && !hasPlaceholder
             ? `
-            <button data-action="view" data-item-id="${item.id}" class="bg-white bg-opacity-20 hover:bg-opacity-30 text-white p-2 rounded-lg transition-all" title="查看图片">
+            <button data-action="view" data-item-id="${item.id}" class="history-action-btn view-btn p-2 rounded-lg bg-white/5 hover:bg-cyan-500/20 text-white/70 hover:text-cyan-400" title="查看图片">
               <i class="fas fa-eye"></i>
             </button>
             ${
               isNetworkRestricted
-                ? `<button data-action="network-restricted" data-item-id="${item.id}" class="bg-orange-500 bg-opacity-50 hover:bg-opacity-70 text-white p-2 rounded-lg transition-all" title="网络受限选项">
+                ? `<button data-action="network-restricted" data-item-id="${item.id}" class="history-action-btn p-2 rounded-lg bg-orange-500/20 hover:bg-orange-500/30 text-orange-400" title="网络受限选项">
                     <i class="fas fa-link"></i>
                   </button>`
                 : item.urls.length === 1
-                ? `<button data-action="download-single" data-item-id="${item.id}" class="bg-white bg-opacity-20 hover:bg-opacity-30 text-white p-2 rounded-lg transition-all" title="下载图片">
+                ? `<button data-action="download-single" data-item-id="${item.id}" class="history-action-btn download-btn p-2 rounded-lg bg-white/5 hover:bg-green-500/20 text-white/70 hover:text-green-400" title="下载图片">
                     <i class="fas fa-download"></i>
                   </button>`
-                : `<button data-action="download-multiple" data-item-id="${item.id}" class="bg-white bg-opacity-20 hover:bg-opacity-30 text-white p-2 rounded-lg transition-all" title="批量下载">
+                : `<button data-action="download-multiple" data-item-id="${item.id}" class="history-action-btn download-btn p-2 rounded-lg bg-white/5 hover:bg-green-500/20 text-white/70 hover:text-green-400" title="批量下载">
                     <i class="fas fa-file-archive"></i>
                   </button>`
             }`
             : hasPlaceholder
-            ? `<button disabled class="bg-gray-500 bg-opacity-20 text-gray-400 p-2 rounded-lg cursor-not-allowed" title="图片上传中，请稍候">
+            ? `<button disabled class="p-2 rounded-lg bg-gray-500/10 text-gray-500 cursor-not-allowed" title="图片上传中">
                 <i class="fas fa-hourglass-half"></i>
               </button>`
             : ''
         }
         ${
           !isCloudStored && !hasPlaceholder && item.urls.some((url) => url.startsWith('data:'))
-            ? `<button data-action="migrate" data-item-id="${item.id}" class="bg-blue-500 bg-opacity-50 hover:bg-opacity-70 text-white p-2 rounded-lg transition-all" title="迁移到云端">
+            ? `<button data-action="migrate" data-item-id="${item.id}" class="history-action-btn p-2 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 text-blue-400" title="迁移到云端">
                 <i class="fas fa-cloud-upload-alt"></i>
               </button>`
             : ''
         }
-        <button data-action="delete" data-item-id="${item.id}" class="bg-red-500 bg-opacity-50 hover:bg-opacity-70 text-white p-2 rounded-lg transition-all" title="删除记录">
-          <i class="fas fa-trash"></i>
+        <button data-action="delete" data-item-id="${item.id}" class="history-action-btn delete-btn p-2 rounded-lg bg-white/5 hover:bg-red-500/20 text-white/70 hover:text-red-400" title="删除记录">
+          <i class="fas fa-trash-alt"></i>
         </button>
       </div>
     `
@@ -316,15 +677,73 @@ export class HistoryPage extends BasePage {
   // ==================== 图片预加载 ====================
 
   private scheduleImagePreload(history: HistoryItem[]): void {
-    const allUrls = history.flatMap((item) => item.urls || [])
-    if (allUrls.length > 0) {
+    // 只预加载前 8 条记录的首张图片（减少内存压力）
+    const itemsToPreload = history.slice(0, 8)
+    
+    const allUrls = itemsToPreload
+      .map((item) => item.urls?.[0])  // 只取每条记录的第一张图
+      .filter((url): url is string => isValidImageUrl(url))
+    
+    // 限制最多 8 张图片
+    const limitedUrls = allUrls.slice(0, 8)
+    
+    if (limitedUrls.length > 0) {
       this.requestIdleCallback(
         () => {
-          this.getApi()?.preloadImages?.(allUrls)
+          this.getApi()?.preloadImages?.(limitedUrls)
+          console.log(`[HistoryPage] 预加载 ${limitedUrls.length} 张首屏图片`)
         },
-        { timeout: 3000 }
+        { timeout: 2000 }
       )
     }
+  }
+
+  /**
+   * 设置图片懒加载 (Intersection Observer)
+   * 用于更精细的图片加载控制
+   */
+  private setupImageLazyLoading(): void {
+    // 清理旧的 Observer
+    if (this.imageObserver) {
+      this.imageObserver.disconnect()
+    }
+    
+    this.imageObserver = new IntersectionObserver(
+      (entries, observer) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            const img = entry.target as HTMLImageElement
+            if (img.dataset.src) {
+              img.src = img.dataset.src
+              img.removeAttribute('data-src')
+              observer.unobserve(img)
+            }
+          }
+        })
+      },
+      { 
+        threshold: 0.1,
+        rootMargin: '50px'  // 提前 50px 开始加载
+      }
+    )
+  }
+
+  /**
+   * 为图片元素添加懒加载属性
+   * @param img 图片元素
+   * @param src 图片源地址
+   */
+  private applyLazyLoading(img: HTMLImageElement, src: string): void {
+    // 使用原生浏览器懒加载
+    img.loading = 'lazy'
+    img.decoding = 'async'
+    
+    // 如果需要 Intersection Observer 懒加载，使用 data-src
+    // img.dataset.src = src
+    // this.imageObserver?.observe(img)
+    
+    // 直接设置 src（配合 loading="lazy"）
+    img.src = src
   }
 
   // ==================== 存储状态 ====================
@@ -339,12 +758,36 @@ export class HistoryPage extends BasePage {
 
     this.requestIdleCallback(
       () => {
-        this.storageInfoCache = (this.app as any).getStorageInfo?.() || {
-          totalSize: '0',
-          historySize: '0',
-          historyCount: 0,
-          estimatedLimit: 5000000,
-          r2Enabled: false
+        // 优先使用 app.getStorageInfo，否则自行计算
+        const appStorageInfo = (this.app as any).getStorageInfo?.()
+        if (appStorageInfo) {
+          this.storageInfoCache = appStorageInfo
+        } else {
+          // 自行计算存储信息
+          const historyStr = localStorage.getItem('ai_image_history') || '[]'
+          const historySizeKB = (historyStr.length / 1024).toFixed(2)
+          const historyCount = (this.app.history || []).length
+
+          // 计算所有 localStorage 的大小
+          let totalSize = 0
+          for (const key in localStorage) {
+            if (Object.prototype.hasOwnProperty.call(localStorage, key)) {
+              totalSize += localStorage[key].length
+            }
+          }
+          const totalSizeKB = (totalSize / 1024).toFixed(2)
+
+          // 检查 R2 存储是否可用
+          const r2Storage = (window as any).r2Storage
+          const r2Enabled = r2Storage?.isAvailable?.() ?? false
+
+          this.storageInfoCache = {
+            historySize: historySizeKB,
+            historyCount: historyCount,
+            totalSize: totalSizeKB,
+            estimatedLimit: 5120, // localStorage 通常限制为 5MB
+            r2Enabled: r2Enabled
+          }
         }
         this.storageInfoCacheTime = Date.now()
         this.renderStorageStatus(this.storageInfoCache!)
@@ -385,8 +828,10 @@ export class HistoryPage extends BasePage {
     migrateableCount: number
   ): string {
     const isElectron = !!(window as any).electronAPI?.isElectron
+    const usagePercentNum = parseFloat(usagePercent)
 
     return `
+      <!-- 主状态栏 -->
       <div class="bg-gradient-to-r ${
         storageInfo.r2Enabled ? 'from-blue-600 to-purple-600' : 'from-gray-600 to-gray-700'
       } bg-opacity-20 rounded-lg p-3 mb-3">
@@ -401,28 +846,89 @@ export class HistoryPage extends BasePage {
             </div>
           </div>
           <div class="text-right">
-            <span class="text-xs ${parseFloat(usagePercent) > 80 ? 'text-orange-400' : 'text-gray-300'}">
+            <span class="text-xs ${usagePercentNum > 80 ? 'text-orange-400' : 'text-gray-300'}">
               ${this.t('history.labels.localUsage', { percent: usagePercent })}
             </span>
           </div>
         </div>
       </div>
 
-      <div class="grid grid-cols-2 gap-2 mb-3">
+      <!-- 功能说明卡片 -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
         ${
           storageInfo.r2Enabled
             ? `
-            <div class="bg-blue-500 bg-opacity-10 rounded-lg p-2 border border-blue-400 border-opacity-20">
-              <span class="text-blue-300 text-xs"><i class="fas fa-shield-alt mr-1"></i>${this.t('history.labels.privacyProtection')}</span>
+            <!-- 隐私保护 -->
+            <div class="bg-blue-500 bg-opacity-10 rounded-lg p-2.5 border border-blue-400 border-opacity-20">
+              <div class="flex items-start space-x-2">
+                <i class="fas fa-shield-alt text-blue-400 mt-0.5"></i>
+                <div>
+                  <span class="text-blue-300 font-medium text-xs">${this.t('history.labels.privacyProtection')}</span>
+                  <p class="text-blue-200 text-xs opacity-90 mt-0.5">${this.t('history.labels.privacyProtectionDesc')}</p>
+                </div>
+              </div>
             </div>
-            <div class="bg-green-500 bg-opacity-10 rounded-lg p-2 border border-green-400 border-opacity-20">
-              <span class="text-green-300 text-xs"><i class="fas fa-cloud mr-1"></i>${this.t('history.labels.smartStorage')}</span>
+
+            <!-- 智能存储 -->
+            <div class="bg-green-500 bg-opacity-10 rounded-lg p-2.5 border border-green-400 border-opacity-20">
+              <div class="flex items-start space-x-2">
+                <i class="fas fa-cloud text-green-400 mt-0.5"></i>
+                <div>
+                  <span class="text-green-300 font-medium text-xs">${this.t('history.labels.smartStorage')}</span>
+                  <p class="text-green-200 text-xs opacity-90 mt-0.5">${this.t('history.labels.smartStorageDesc')}</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- 同步管理 -->
+            <div class="bg-yellow-500 bg-opacity-10 rounded-lg p-2.5 border border-yellow-400 border-opacity-20">
+              <div class="flex items-start space-x-2">
+                <i class="fas fa-sync-alt text-yellow-400 mt-0.5"></i>
+                <div>
+                  <span class="text-yellow-300 font-medium text-xs">${this.t('history.labels.syncManagement')}</span>
+                  <p class="text-yellow-200 text-xs opacity-90 mt-0.5">${this.t('history.labels.syncManagementDesc')}</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- 有效期限 -->
+            <div class="bg-gray-500 bg-opacity-10 rounded-lg p-2.5 border border-gray-400 border-opacity-20">
+              <div class="flex items-start space-x-2">
+                <i class="fas fa-clock text-gray-400 mt-0.5"></i>
+                <div>
+                  <span class="text-gray-300 font-medium text-xs">${this.t('history.labels.expirationPeriod')}</span>
+                  <p class="text-gray-200 text-xs opacity-90 mt-0.5">${this.t('history.labels.expirationPeriodDesc')}</p>
+                </div>
+              </div>
             </div>
           `
             : `
-            <div class="bg-yellow-500 bg-opacity-10 rounded-lg p-2 border border-yellow-400 border-opacity-20 col-span-2">
-              <span class="text-yellow-300 text-xs"><i class="fas fa-exclamation-triangle mr-1"></i>${this.t('history.labels.localStorageMode')}</span>
+            <!-- 本地存储警告 -->
+            <div class="bg-yellow-500 bg-opacity-10 rounded-lg p-2.5 border border-yellow-400 border-opacity-20 col-span-2">
+              <div class="flex items-start space-x-2">
+                <i class="fas fa-exclamation-triangle text-yellow-400 mt-0.5"></i>
+                <div>
+                  <span class="text-yellow-300 font-medium text-xs">${this.t('history.labels.localStorageMode')}</span>
+                  <p class="text-yellow-200 text-xs opacity-90 mt-0.5">${this.t('history.labels.localStorageModeDesc')}</p>
+                </div>
+              </div>
             </div>
+            ${
+              usagePercentNum > 50
+                ? `
+              <!-- 建议配置云端存储 -->
+              <div class="bg-orange-500 bg-opacity-10 rounded-lg p-2.5 border border-orange-400 border-opacity-20 col-span-2">
+                <div class="flex items-start space-x-2">
+                  <i class="fas fa-info-circle text-orange-400 mt-0.5"></i>
+                  <div>
+                    <span class="text-orange-300 font-medium text-xs">${this.t('history.labels.configureCloudStorage')}</span>
+                    <p class="text-orange-200 text-xs opacity-90 mt-0.5">${this.t('history.labels.configureCloudStorageDesc')}</p>
+                  </div>
+                </div>
+              </div>
+            `
+                : ''
+            }
           `
         }
       </div>
@@ -432,7 +938,7 @@ export class HistoryPage extends BasePage {
           ? `
           <div class="text-center mb-2">
             <button onclick="window.historyPageTS?.migrateAllToCloud()"
-                    class="bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white text-xs px-4 py-2 rounded-lg transition-all">
+                    class="bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white text-xs px-4 py-2 rounded-lg transition-all shadow-lg transform hover:scale-105">
               <i class="fas fa-cloud-upload-alt mr-1.5"></i>
               ${this.t('history.labels.migrateAllToCloud', { count: migrateableCount })}
             </button>
@@ -444,13 +950,17 @@ export class HistoryPage extends BasePage {
       ${
         isElectron
           ? `
+          <!-- 清理缓存按钮（仅 Electron 模式显示） -->
           <div class="text-center border-t border-gray-600 border-opacity-30 pt-3 mt-2">
             <button onclick="window.historyPageTS?.clearWebCache()"
                     id="clearWebCacheBtn"
-                    class="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white text-xs px-4 py-2 rounded-lg transition-all">
+                    class="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white text-xs px-4 py-2 rounded-lg transition-all shadow-lg transform hover:scale-105">
               <i class="fas fa-broom mr-1.5"></i>
               ${this.t('history.labels.clearWebCache')}
             </button>
+            <p class="text-gray-400 text-xs mt-1 opacity-70">
+              ${this.t('history.labels.clearWebCacheDesc')}
+            </p>
           </div>
         `
           : ''
@@ -466,6 +976,13 @@ export class HistoryPage extends BasePage {
   // ==================== 下载操作 ====================
 
   async downloadMultipleImages(urls: string[], prompt: string): Promise<void> {
+    // 过滤掉无效 URL
+    const validUrls = filterValidImageUrls(urls)
+    if (validUrls.length === 0) {
+      this.showToast(this.t('history.messages.uploading') || '图片正在上传中，请稍候', 'warning')
+      return
+    }
+    
     try {
       const promptPrefix = prompt.replace(/[^\w\u4e00-\u9fa5]/g, '').substring(0, 20)
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19)
@@ -474,7 +991,7 @@ export class HistoryPage extends BasePage {
       this.showToast(this.t('history.messages.downloadStarting'), 'info')
 
       const api = this.getApi()
-      const result = await api?.downloadImagesAsZip?.(urls, zipFilename, (completed: number, total: number) => {
+      const result = await api?.downloadImagesAsZip?.(validUrls, zipFilename, (completed: number, total: number) => {
         this.showToast(this.t('history.messages.downloading', { completed, total }), 'info')
       }, api?.model)
 
@@ -711,14 +1228,21 @@ export class HistoryPage extends BasePage {
   // ==================== 删除和迁移 ====================
 
   async deleteHistoryItem(id: number): Promise<void> {
-    const itemToDelete = (this.app.history || []).find((item: HistoryItem) => item.id === id)
+    const historyManager = getHistoryManager()
+    const itemToDelete = historyManager.getById(id)
 
-    if (itemToDelete) {
+    if (!itemToDelete) {
+      this.showToast(this.t('history.messages.notFound') || '记录不存在', 'error')
+      return
+    }
+
+    try {
+      // 删除云端图片（失败不影响本地删除）
       const r2Storage = (window as any).r2Storage
       if (itemToDelete.r2Storage && r2Storage?.isAvailable?.()) {
         try {
           const r2Keys: string[] = []
-          itemToDelete.urls.forEach((url: string) => {
+          itemToDelete.urls?.forEach((url: string) => {
             if (r2Storage.isR2Url?.(url)) {
               const key = r2Storage.extractR2Key?.(url)
               if (key) r2Keys.push(key)
@@ -730,15 +1254,25 @@ export class HistoryPage extends BasePage {
             await r2Storage.batchDelete?.(r2Keys)
           }
         } catch (error) {
-          console.error('删除云端图片失败:', error)
+          console.error('删除云端图片失败（继续删除本地记录）:', error)
         }
       }
-    }
 
-    this.app.history = (this.app.history || []).filter((item: HistoryItem) => item.id !== id)
-    ;(this.app as any).saveHistory?.()
-    this.loadPanel()
-    this.showToast(this.t('history.messages.deleted'), 'success')
+      // 使用 HistoryManager 删除（会自动同步到文件）
+      const deleted = await historyManager.delete(id)
+      
+      if (deleted) {
+        // 同步到 app.history
+        this.app.history = historyManager.getAll()
+        this.loadPanel()
+        this.showToast(this.t('history.messages.deleted'), 'success')
+      } else {
+        this.showToast(this.t('history.messages.deleteFailed') || '删除失败', 'error')
+      }
+    } catch (error) {
+      console.error('删除历史记录失败:', error)
+      this.showToast(this.t('history.messages.deleteFailed') || '删除失败，请重试', 'error')
+    }
   }
 
   async migrateToCloud(id: number): Promise<void> {
@@ -927,11 +1461,30 @@ export class HistoryPage extends BasePage {
 
   onActivate(): void {
     console.log('历史记录页面已激活')
-    this.requestIdleCallback(() => this.loadPanel(), { timeout: 500 })
+    // 使用较短的超时，因为骨架屏会立即显示
+    this.requestIdleCallback(() => this.loadPanel(), { timeout: 50 })
   }
 
   onDeactivate(): void {
     console.log('历史记录页面已失活')
+    // 清理加载更多 Observer
+    if (this.loadMoreObserver) {
+      this.loadMoreObserver.disconnect()
+      this.loadMoreObserver = null
+    }
+    // 清理图片懒加载 Observer
+    if (this.imageObserver) {
+      this.imageObserver.disconnect()
+      this.imageObserver = null
+    }
+    // 清理虚拟滚动
+    if (this.virtualScroller) {
+      this.virtualScroller.destroy()
+      this.virtualScroller = null
+    }
+    // 重置分页状态
+    this.currentPage = 0
+    this.hasMoreItems = true
   }
 
   onLanguageChange(lang: string): void {
@@ -945,6 +1498,8 @@ let historyPageInstance: HistoryPage | null = null
 
 export function createHistoryPage(app: AppInterface): HistoryPage {
   historyPageInstance = new HistoryPage(app)
+  // 注册到全局对象，供 onclick 调用
+  ;(window as any).historyPageTS = historyPageInstance
   return historyPageInstance
 }
 

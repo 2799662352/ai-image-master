@@ -80,3 +80,14 @@ export {
   isImageCompressionLoaded,
   getLibraryLoadStatus
 } from './LazyLibraries'
+
+// URL 验证工具
+export {
+  isValidImageUrl,
+  isBase64DataUrl,
+  isExternalUrl,
+  isPendingUrl,
+  isRemovedPlaceholder,
+  filterValidImageUrls,
+  getFirstValidThumbnail
+} from './url-validator'

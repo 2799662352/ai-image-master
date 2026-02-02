@@ -27,6 +27,7 @@ export interface HistoryItem {
   timestamp?: string
   imageUrl?: string
   images?: string[]
+  urls?: string[]  // 新的多图字段
   [key: string]: any
 }
 
@@ -144,7 +145,7 @@ export class StorageBridge {
           }
         }
         
-        // 处理多图 images
+        // 处理多图 images (旧字段)
         if (item.images?.length) {
           newItem.images = await Promise.all(item.images.map(async (img, idx) => {
             if (img?.startsWith('data:image')) {
@@ -153,6 +154,28 @@ export class StorageBridge {
             }
             return img
           }))
+        }
+        
+        // 处理 urls 字段 - 移除 base64，保留云端 URL
+        // 注意: 不保存为本地文件 (electron://)，因为 CSP 会阻止加载
+        // R2 上传由 HistoryDataService 处理，这里只做清理
+        if (item.urls?.length) {
+          newItem.urls = item.urls.map((url: string) => {
+            // 保留有效的云端 URL（R2、https 等）
+            if (url && !url.startsWith('data:image') && !url.startsWith('pending:')) {
+              return url
+            }
+            // base64 和 pending 占位符标记为已移除
+            if (url?.startsWith('data:image') && url.length > 1000) {
+              return '[base64-removed]'
+            }
+            return url
+          })
+        }
+        
+        // 清理临时字段 originalUrls（上传期间暂存的 base64）- 不应保存到磁盘
+        if (newItem.originalUrls) {
+          delete newItem.originalUrls
         }
         
         return newItem
@@ -171,6 +194,16 @@ export class StorageBridge {
             newItem.images = newItem.images.map(img => 
               img?.startsWith('data:image') && img.length > 1000 ? '[base64-removed]' : img
             )
+          }
+          // 处理 urls 字段 - 重要！
+          if (newItem.urls?.length) {
+            newItem.urls = newItem.urls.map((url: string) => 
+              url?.startsWith('data:image') && url.length > 1000 ? '[base64-removed]' : url
+            )
+          }
+          // 清理临时字段
+          if (newItem.originalUrls) {
+            delete newItem.originalUrls
           }
           return newItem
         })
