@@ -158,6 +158,22 @@ export class HistoryDataService {
       })
 
       console.log('[HistoryDataService] 历史记录已更新为 R2 URLs')
+
+      // 触发 r2UploadComplete 事件，通知 GeneratePage 更新上传指示器
+      window.dispatchEvent(new CustomEvent('r2UploadComplete', {
+        detail: {
+          originalUrls,
+          r2Urls
+        }
+      }))
+
+      // 触发上传成功事件，通知 HistoryPage 显示反馈
+      window.dispatchEvent(new CustomEvent('historyUploadSuccess', {
+        detail: {
+          itemId: historyItem.id,
+          imageCount: r2Urls.length
+        }
+      }))
     } catch (error) {
       console.error('[HistoryDataService] 上传到 R2 失败:', error)
 

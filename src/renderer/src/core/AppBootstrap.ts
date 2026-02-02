@@ -414,10 +414,18 @@ export class AppBootstrap {
           
           // 注册语言切换回调
           this.setupI18nCallbacks(windowI18n)
+          // 更新 DOM 翻译
+          if (typeof windowI18n.updateDOM === 'function') {
+            windowI18n.updateDOM()
+          }
         }
       } else {
         await i18n.init()
         this.setupI18nCallbacks(i18n)
+        // 更新 DOM 翻译
+        if (typeof i18n.updateDOM === 'function') {
+          i18n.updateDOM()
+        }
       }
     } catch (error) {
       console.warn('[AppBootstrap] ⚠️ i18n 初始化失败或超时，使用默认语言:', (error as Error).message)
@@ -497,6 +505,13 @@ export class AppBootstrap {
     w.directorPage = this.pages.director
     w.promptTemplates = this.pages.promptTemplates
 
+    // 将页面传递给 TabManager
+    const tabManager = ServiceRegistry.get<any>(SERVICE_KEYS.TAB_MANAGER)
+    if (tabManager) {
+      tabManager.setPages(this.pages)
+      console.log('[AppBootstrap] ✅ 页面已传递给 TabManager')
+    }
+
     console.log('[AppBootstrap] ✅ 页面模块初始化完成')
   }
 
@@ -529,13 +544,26 @@ export class AppBootstrap {
 
       // 历史记录
       get history() { return self.history },
-      addToHistory: (type: string, prompt: string, urls: string[], ratio?: string) => {
+      set history(value: any[]) { self.history = value },
+      addToHistory: async (type: string, prompt: string, urls: string[], ratio?: string) => {
         const historyService = ServiceRegistry.get<any>(SERVICE_KEYS.HISTORY_DATA)
-        if (historyService) {
-          const item = { type, prompt, images: urls, ratio, timestamp: Date.now() }
-          historyService.add(item)
+        if (historyService && historyService.addToHistory) {
+          await historyService.addToHistory(type, prompt, urls, ratio)
           self.history = historyService.getAll()
         }
+      },
+      clearHistory: async () => {
+        const historyService = ServiceRegistry.get<any>(SERVICE_KEYS.HISTORY_DATA)
+        if (historyService?.clearOldHistory) {
+          await historyService.clearOldHistory(0)  // 清空所有记录
+          self.history = historyService.getAll() || []
+        } else {
+          self.history = []
+        }
+      },
+      saveHistory: () => {
+        // 历史记录通过 HistoryDataService 自动保存，此方法保留兼容性
+        console.log('[AppBootstrap] saveHistory called - auto-saved via HistoryDataService')
       },
 
       // 图片操作

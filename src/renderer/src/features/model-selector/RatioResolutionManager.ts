@@ -416,12 +416,19 @@ export class RatioResolutionManager {
    */
   private getRatioLabel(ratio: RatioOption): { label: string; subtitle: string } {
     try {
-      if (typeof i18n !== 'undefined' && i18n.translations && i18n.currentLang) {
-        const translated = i18n.translations[i18n.currentLang]?.aspectRatios?.[ratio.key]
-        if (translated) {
+      // 使用 TypeScript 版本的 I18nService
+      const i18nService = (window as any).i18n
+      if (i18nService && typeof i18nService.t === 'function') {
+        const labelKey = `aspectRatios.${ratio.key}.label`
+        const descKey = `aspectRatios.${ratio.key}.description`
+        const translatedLabel = i18nService.t(labelKey)
+        const translatedDesc = i18nService.t(descKey)
+        
+        // 如果翻译成功（返回值不等于 key 本身）
+        if (translatedLabel !== labelKey) {
           return {
-            label: `${translated.label} ${ratio.key}`,
-            subtitle: translated.description || ratio.key
+            label: `${translatedLabel} ${ratio.key}`,
+            subtitle: translatedDesc !== descKey ? translatedDesc : ratio.key
           }
         }
       }
@@ -440,12 +447,19 @@ export class RatioResolutionManager {
    */
   private getResolutionLabel(resolution: ResolutionOption): { label: string; subtitle: string } {
     try {
-      if (typeof i18n !== 'undefined' && i18n.translations && i18n.currentLang) {
-        const translated = i18n.translations[i18n.currentLang]?.resolutions?.[resolution.key]
-        if (translated) {
+      // 使用 TypeScript 版本的 I18nService
+      const i18nService = (window as any).i18n
+      if (i18nService && typeof i18nService.t === 'function') {
+        const labelKey = `resolutions.${resolution.key}.label`
+        const descKey = `resolutions.${resolution.key}.description`
+        const translatedLabel = i18nService.t(labelKey)
+        const translatedDesc = i18nService.t(descKey)
+        
+        // 如果翻译成功（返回值不等于 key 本身）
+        if (translatedLabel !== labelKey) {
           return {
-            label: translated.label,
-            subtitle: translated.description || ''
+            label: translatedLabel,
+            subtitle: translatedDesc !== descKey ? translatedDesc : ''
           }
         }
       }

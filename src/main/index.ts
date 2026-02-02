@@ -1,8 +1,11 @@
 // src/main/index.ts - Electron 主进程 (TypeScript)
-import { app, BrowserWindow, ipcMain, dialog, Menu, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, Menu, shell, nativeTheme } from 'electron'
 import * as path from 'path'
 import * as fs from 'fs'
 import { autoUpdaterInstance } from './updater'
+
+// 检测开发模式：通过命令行参数或环境变量
+const isDev = process.argv.includes('--dev') || process.env.NODE_ENV === 'development'
 
 // 类型定义
 interface StoreInstance {
@@ -94,6 +97,59 @@ Menu.setApplicationMenu(null)
 app.commandLine.appendSwitch('disable-gpu-shader-disk-cache')
 app.commandLine.appendSwitch('disable-gpu-program-cache')
 
+// 开发模式下禁用 HTTP 磁盘缓存，避免缓存锁定问题
+if (isDev) {
+  app.commandLine.appendSwitch('disable-http-cache')
+}
+
+/**
+ * 清理可能损坏的 Chromium 缓存目录
+ * 解决 Windows 上常见的缓存锁定/权限问题
+ * - Unable to move the cache
+ * - Unable to create cache
+ * - Failed to delete the database (Service Worker)
+ */
+function cleanupCorruptedCache(): void {
+  try {
+    const userDataPath = app.getPath('userData')
+    const cacheDirs = [
+      'Cache',
+      'Code Cache', 
+      'GPUCache',
+      'Service Worker',
+      'databases'  // WebSQL legacy cleanup (Electron 32+)
+    ]
+
+    for (const dirName of cacheDirs) {
+      const dirPath = path.join(userDataPath, dirName)
+      if (fs.existsSync(dirPath)) {
+        // 尝试重命名为临时目录（避免直接删除时的锁定问题）
+        const tempPath = path.join(userDataPath, `${dirName}_old_${Date.now()}`)
+        try {
+          fs.renameSync(dirPath, tempPath)
+          // 异步删除旧目录
+          fs.rm(tempPath, { recursive: true, force: true }, () => {})
+        } catch {
+          // 如果重命名失败（文件被锁定），跳过
+        }
+      }
+    }
+  } catch (error) {
+    // 缓存清理失败不影响应用启动
+    console.warn('[Cache Cleanup] 清理缓存目录时出错:', error)
+  }
+}
+
+// 在 app ready 之前清理缓存（仅首次启动或检测到问题时）
+const cacheCleanupMarker = path.join(app.getPath('userData'), '.cache_cleaned')
+if (!fs.existsSync(cacheCleanupMarker)) {
+  cleanupCorruptedCache()
+  // 标记已清理，避免每次启动都清理
+  try {
+    fs.writeFileSync(cacheCleanupMarker, new Date().toISOString())
+  } catch {}
+}
+
 // 数据存储目录
 let userDataPath: string
 let imagesDir: string
@@ -164,6 +220,7 @@ function createWindow(): void {
           "img-src 'self' data: blob: https: file:",
           "connect-src 'self' https: wss:",
           "media-src 'self' data: blob:",
+          "worker-src 'self' blob:", // 允许 Web Worker 从 blob URL 创建（图片压缩库需要）
           "frame-src 'none'"
         ].join('; ')
       }
@@ -189,21 +246,214 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
-  mainWindow.once('ready-to-show', () => {
-    console.log(`[Performance] Ready to show: ${Date.now() - startTime}ms`)
-    mainWindow?.show()
+  // 键盘快捷键: F5, Ctrl+R, Cmd+R 刷新页面
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    // F5 刷新
+    if (input.key === 'F5') {
+      mainWindow?.webContents.reload()
+      event.preventDefault()
+    }
+    // Ctrl+R 或 Cmd+R 刷新
+    if ((input.control || input.meta) && input.key.toLowerCase() === 'r') {
+      mainWindow?.webContents.reload()
+      event.preventDefault()
+    }
+    // Ctrl+Shift+R 或 Cmd+Shift+R 强制刷新（清除缓存）
+    if ((input.control || input.meta) && input.shift && input.key.toLowerCase() === 'r') {
+      mainWindow?.webContents.reloadIgnoringCache()
+      event.preventDefault()
+    }
+    // F12 打开开发者工具（仅开发模式）
+    if (isDev && input.key === 'F12') {
+      mainWindow?.webContents.toggleDevTools()
+      event.preventDefault()
+    }
   })
 
-  // 开发模式使用 Vite dev server
-  if (process.env.NODE_ENV === 'development') {
-    mainWindow.loadURL('http://localhost:5173')
+  mainWindow.once('ready-to-show', async () => {
+    console.log(`[Performance] Ready to show: ${Date.now() - startTime}ms`)
+    
+    // 清理 Service Worker 缓存（解决 service_worker_storage 错误）
+    if (isDev) {
+      try {
+        await mainWindow?.webContents.session.clearStorageData({
+          storages: ['serviceworkers']
+        })
+      } catch {
+        // 忽略清理错误
+      }
+    }
+    
+    mainWindow?.show()
+    
+    // 发送初始主题状态
+    mainWindow?.webContents.send('native-theme-changed', {
+      shouldUseDarkColors: nativeTheme.shouldUseDarkColors,
+      prefersReducedTransparency: nativeTheme.prefersReducedTransparency
+    })
+  })
+
+  // 监听系统主题变化
+  nativeTheme.on('updated', () => {
+    mainWindow?.webContents.send('native-theme-changed', {
+      shouldUseDarkColors: nativeTheme.shouldUseDarkColors,
+      prefersReducedTransparency: nativeTheme.prefersReducedTransparency
+    })
+  })
+
+  // 加载页面 - 始终使用构建好的文件
+  // 如果需要热重载开发，请使用 electron-vite dev
+  mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
+  
+  // 开发模式打开 DevTools
+  if (isDev) {
     mainWindow.webContents.openDevTools()
-  } else {
-    mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
   }
 
   mainWindow.webContents.on('did-finish-load', () => {
     console.log(`[Performance] Page loaded: ${Date.now() - startTime}ms`)
+  })
+
+  // 右键菜单 - 支持图片保存
+  mainWindow.webContents.on('context-menu', (_event, params) => {
+    const menuTemplate: Electron.MenuItemConstructorOptions[] = []
+
+    // 图片右键菜单
+    if (params.mediaType === 'image' && params.srcURL) {
+      menuTemplate.push(
+        {
+          label: '保存图片',
+          click: () => {
+            // 获取文件扩展名
+            const url = params.srcURL
+            let ext = '.png'
+            if (url.includes('.jpg') || url.includes('.jpeg') || url.startsWith('data:image/jpeg')) {
+              ext = '.jpg'
+            } else if (url.includes('.webp') || url.startsWith('data:image/webp')) {
+              ext = '.webp'
+            } else if (url.includes('.gif') || url.startsWith('data:image/gif')) {
+              ext = '.gif'
+            }
+
+            dialog.showSaveDialog(mainWindow!, {
+              title: '保存图片',
+              defaultPath: `image_${Date.now()}${ext}`,
+              filters: [
+                { name: '图片文件', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }
+              ]
+            }).then(async (result) => {
+              if (!result.canceled && result.filePath) {
+                try {
+                  if (url.startsWith('data:')) {
+                    // base64 图片
+                    const base64Data = url.replace(/^data:image\/\w+;base64,/, '')
+                    fs.writeFileSync(result.filePath, Buffer.from(base64Data, 'base64'))
+                  } else {
+                    // 网络图片 - 使用 webContents.downloadURL
+                    mainWindow?.webContents.downloadURL(url)
+                  }
+                } catch (error) {
+                  console.error('保存图片失败:', error)
+                }
+              }
+            })
+          }
+        },
+        {
+          label: '复制图片',
+          click: () => {
+            mainWindow?.webContents.copyImageAt(params.x, params.y)
+          }
+        },
+        {
+          label: '在浏览器中打开',
+          click: () => {
+            if (params.srcURL && !params.srcURL.startsWith('data:')) {
+              shell.openExternal(params.srcURL)
+            }
+          },
+          enabled: !params.srcURL.startsWith('data:')
+        },
+        { type: 'separator' }
+      )
+    }
+
+    // 链接右键菜单
+    if (params.linkURL) {
+      menuTemplate.push(
+        {
+          label: '复制链接',
+          click: () => {
+            const { clipboard } = require('electron')
+            clipboard.writeText(params.linkURL)
+          }
+        },
+        {
+          label: '在浏览器中打开',
+          click: () => {
+            shell.openExternal(params.linkURL)
+          }
+        },
+        { type: 'separator' }
+      )
+    }
+
+    // 文本选择右键菜单
+    if (params.selectionText) {
+      menuTemplate.push(
+        { role: 'copy', label: '复制' },
+        { type: 'separator' }
+      )
+    }
+
+    // 可编辑区域右键菜单
+    if (params.isEditable) {
+      menuTemplate.push(
+        { role: 'undo', label: '撤销' },
+        { role: 'redo', label: '重做' },
+        { type: 'separator' },
+        { role: 'cut', label: '剪切' },
+        { role: 'copy', label: '复制' },
+        { role: 'paste', label: '粘贴' },
+        { role: 'selectAll', label: '全选' }
+      )
+    }
+
+    // 通用菜单项
+    if (menuTemplate.length === 0) {
+      menuTemplate.push(
+        { role: 'reload', label: '刷新' },
+        { type: 'separator' },
+        { role: 'toggleDevTools', label: '开发者工具', visible: isDev }
+      )
+    }
+
+    // 显示菜单
+    if (menuTemplate.length > 0) {
+      const menu = Menu.buildFromTemplate(menuTemplate)
+      menu.popup()
+    }
+  })
+
+  // 下载处理 - 让用户选择保存位置
+  mainWindow.webContents.session.on('will-download', (_event, item, _webContents) => {
+    // 弹出保存对话框让用户选择位置
+    const suggestedName = item.getFilename() || `download_${Date.now()}.png`
+    
+    dialog.showSaveDialog(mainWindow!, {
+      title: '保存图片',
+      defaultPath: suggestedName,
+      filters: [
+        { name: '图片文件', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] },
+        { name: '所有文件', extensions: ['*'] }
+      ]
+    }).then((result) => {
+      if (!result.canceled && result.filePath) {
+        item.setSavePath(result.filePath)
+      } else {
+        item.cancel()
+      }
+    })
   })
 
   mainWindow.on('closed', () => {
@@ -247,17 +497,21 @@ function deferNonCriticalInit(): void {
     console.log(`[Performance] Stores warmed up: ${Date.now() - startTime}ms`)
   }, 5000)
 
-  // 非关键路径：初始化自动更新（生产环境，延迟 15 秒）
+  // 非关键路径：初始化自动更新（仅生产环境，延迟 15 秒）
   // 用户完全交互后再检查更新，避免网络争用
-  if (mainWindow && process.env.NODE_ENV !== 'development') {
+  if (!isDev) {
+    // 捕获当前 mainWindow 引用，避免闭包问题
+    const currentWindow = mainWindow
     setTimeout(() => {
-      // 再次检查 mainWindow 是否仍然存在（窗口可能已关闭）
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        autoUpdaterInstance.setMainWindow(mainWindow)
+      // 检查窗口是否仍然有效
+      if (currentWindow && !currentWindow.isDestroyed()) {
+        autoUpdaterInstance.setMainWindow(currentWindow)
         autoUpdaterInstance.checkForUpdatesOnStartup(0)
         console.log(`[Performance] Auto-updater initialized: ${Date.now() - startTime}ms`)
       }
     }, 15000)
+  } else {
+    console.log('[Dev] Auto-updater skipped in development mode')
   }
 
   // 非关键路径：预热 Gallery store（延迟 20 秒）
@@ -700,6 +954,29 @@ ipcMain.handle('delete-custom-gallery-image', async (_event, imageId: string) =>
     return { success: true }
   } catch (error: any) {
     console.error('删除自定义图库图片失败:', error)
+    return { success: false, error: error.message }
+  }
+})
+
+// 手动清理缓存（用于解决缓存问题）
+ipcMain.handle('clear-app-cache', async () => {
+  try {
+    if (mainWindow) {
+      await mainWindow.webContents.session.clearCache()
+      await mainWindow.webContents.session.clearStorageData({
+        storages: ['serviceworkers', 'cachestorage', 'shadercache']
+      })
+    }
+    
+    // 删除缓存清理标记，下次启动时会重新清理文件系统缓存
+    const markerPath = path.join(app.getPath('userData'), '.cache_cleaned')
+    if (fs.existsSync(markerPath)) {
+      fs.unlinkSync(markerPath)
+    }
+    
+    return { success: true, message: '缓存已清理，重启应用生效' }
+  } catch (error: any) {
+    console.error('清理缓存失败:', error)
     return { success: false, error: error.message }
   }
 })

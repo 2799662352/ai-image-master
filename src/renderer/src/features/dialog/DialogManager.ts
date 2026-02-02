@@ -26,6 +26,7 @@ export class DialogManager {
   private elements: DialogElements
   private escapeHandler: ((e: KeyboardEvent) => void) | null = null
   private callbacks: Map<string, { onOpen?: () => void; onClose?: () => void }> = new Map()
+  private focusTrapHandlers: Map<string, (e: KeyboardEvent) => void> = new Map()
 
   constructor(config: DialogConfig = {}, elements: DialogElements = DEFAULT_ELEMENTS) {
     this.config = {
@@ -173,6 +174,9 @@ export class DialogManager {
       }
     }, 100)
 
+    // 设置焦点陷阱
+    this.trapFocus(modal, dialogId)
+
     // 调用回调
     onOpenCallback?.()
     this.config.onOpen?.(dialogId)
@@ -181,6 +185,51 @@ export class DialogManager {
   
   /** 保存之前的焦点 */
   private previousFocus: HTMLElement | null = null
+
+  /**
+   * 设置焦点陷阱，确保 Tab 键在模态框内循环
+   */
+  private trapFocus(element: HTMLElement, dialogId: string): void {
+    const focusableSelector = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return
+      
+      const focusableElements = element.querySelectorAll<HTMLElement>(focusableSelector)
+      if (focusableElements.length === 0) return
+      
+      const firstFocusable = focusableElements[0]
+      const lastFocusable = focusableElements[focusableElements.length - 1]
+
+      if (e.shiftKey) {
+        // Shift + Tab
+        if (document.activeElement === firstFocusable) {
+          lastFocusable.focus()
+          e.preventDefault()
+        }
+      } else {
+        // Tab
+        if (document.activeElement === lastFocusable) {
+          firstFocusable.focus()
+          e.preventDefault()
+        }
+      }
+    }
+
+    element.addEventListener('keydown', handler)
+    this.focusTrapHandlers.set(dialogId, handler)
+  }
+
+  /**
+   * 移除焦点陷阱
+   */
+  private removeFocusTrap(element: HTMLElement, dialogId: string): void {
+    const handler = this.focusTrapHandlers.get(dialogId)
+    if (handler) {
+      element.removeEventListener('keydown', handler)
+      this.focusTrapHandlers.delete(dialogId)
+    }
+  }
 
   /**
    * 通用关闭模态框方法
@@ -195,6 +244,9 @@ export class DialogManager {
       
       // 移除 ARIA 属性
       modal.removeAttribute('aria-modal')
+      
+      // 移除焦点陷阱
+      this.removeFocusTrap(modal, dialogId)
       
       // 恢复之前的焦点
       if (this.previousFocus && document.body.contains(this.previousFocus)) {

@@ -50,3 +50,15 @@ export {
   initEventManagerGlobal
 } from './EventManager'
 export type { EventHandler as ActionEventHandler, ActionHandlers, EventManagerConfig } from './EventManager'
+
+// 加载状态管理器
+export { LoadingManager, loadingManager } from './LoadingManager'
+
+// 重试管理器
+export { withRetry, isNetworkError, isRetryableStatusCode } from './RetryManager'
+export type { RetryOptions } from './RetryManager'
+
+// 虚拟滚动器
+// 历史记录页性能优化 - 只渲染可见区域的元素
+export { VirtualScroller } from './VirtualScroller'
+export type { VirtualScrollerOptions } from './VirtualScroller'

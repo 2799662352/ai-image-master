@@ -75,7 +75,11 @@ const IPC_CHANNELS = {
     'updater:download-progress',
     'updater:update-downloaded',
     'updater:update-error'
-  ]
+  ],
+  // 系统主题事件
+  SYSTEM: {
+    NATIVE_THEME_CHANGED: 'native-theme-changed'
+  }
 } as const
 
 // ==================== 类型定义 ====================
@@ -172,6 +176,12 @@ export interface ElectronAPI {
   getAppVersion: () => Promise<string>
   onUpdateEvent: (channel: string, callback: (data: any) => void) => void
   removeUpdateListener: (channel: string) => void
+  // 系统主题监听
+  onNativeThemeChanged: (callback: (data: { shouldUseDarkColors: boolean; prefersReducedTransparency: boolean }) => void) => void
+  removeNativeThemeListener: () => void
+  // 通用事件监听（用于更新等事件）
+  on: (channel: string, callback: (...args: any[]) => void) => void
+  off: (channel: string) => void
 }
 
 // ==================== IPC 调用辅助函数 ====================
@@ -325,6 +335,41 @@ const electronAPI: ElectronAPI = {
 
   removeUpdateListener: (channel: string) => {
     if (IPC_CHANNELS.UPDATE_EVENTS.includes(channel as any)) {
+      ipcRenderer.removeAllListeners(channel)
+    }
+  },
+
+  // ============ 系统主题监听 ============
+  onNativeThemeChanged: (callback: (data: { shouldUseDarkColors: boolean; prefersReducedTransparency: boolean }) => void) => {
+    ipcRenderer.on(IPC_CHANNELS.SYSTEM.NATIVE_THEME_CHANGED, (_event, data) => callback(data))
+  },
+
+  removeNativeThemeListener: () => {
+    ipcRenderer.removeAllListeners(IPC_CHANNELS.SYSTEM.NATIVE_THEME_CHANGED)
+  },
+
+  // ============ 通用事件监听 ============
+  // 允许的通道：更新事件 + 系统事件
+  on: (channel: string, callback: (...args: any[]) => void) => {
+    const allowedChannels = [
+      ...IPC_CHANNELS.UPDATE_EVENTS,
+      IPC_CHANNELS.SYSTEM.NATIVE_THEME_CHANGED,
+      'updater:download-retry' // 额外的更新重试事件
+    ]
+    if (allowedChannels.includes(channel)) {
+      ipcRenderer.on(channel, (_event: IpcRendererEvent, ...args: any[]) => callback(...args))
+    } else {
+      console.warn(`[Preload] 不允许监听的通道: ${channel}`)
+    }
+  },
+
+  off: (channel: string) => {
+    const allowedChannels = [
+      ...IPC_CHANNELS.UPDATE_EVENTS,
+      IPC_CHANNELS.SYSTEM.NATIVE_THEME_CHANGED,
+      'updater:download-retry'
+    ]
+    if (allowedChannels.includes(channel)) {
       ipcRenderer.removeAllListeners(channel)
     }
   }

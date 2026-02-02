@@ -111,6 +111,9 @@ export class ModelSelectorManager {
 
       this.initialized = true
       console.log('✅ 模型选择器初始化完成')
+      
+      // 初始化时更新比例和分辨率选项
+      this.updateUIForModel()
     } catch (error) {
       console.error('❌ 模型选择器初始化失败:', error)
     }
@@ -225,9 +228,9 @@ export class ModelSelectorManager {
     return {
       item: ({ classNames }: any, data: any) => {
         const modelName = data.label.split(' - ')[0]
+        // 模型名称本身已包含 emoji，直接显示即可
         return template(`
           <div class="${classNames.item}" style="display: flex; align-items: center; gap: 0.5rem;">
-            <i class="fas fa-robot" style="font-size: 17px;"></i>
             <span style="font-size: 16px; font-weight: 500;">${modelName}</span>
           </div>
         `)

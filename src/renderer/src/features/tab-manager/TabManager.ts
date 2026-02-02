@@ -31,7 +31,8 @@ export class TabManager {
     'batch',
     'compare',
     'history',
-    'understand'
+    'understand',
+    'director'
   ]
 
   constructor(config: TabManagerConfig = {}) {
