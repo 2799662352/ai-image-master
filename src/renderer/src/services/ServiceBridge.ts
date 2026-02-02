@@ -503,6 +503,40 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
     }
     console.log('[ServiceBridge] ✓ 统一服务命名空间 window.appServices 已创建')
 
+    // 暴露 aiImageAPI 兼容接口 (供 SiteManager 等模块使用)
+    const apiService = getApiService()
+    ;(window as any).aiImageAPI = {
+      // 站点管理
+      getAllSites: () => apiService.getAllSites(),
+      getCurrentSite: () => apiService.getCurrentSite(),
+      get currentSite() { return apiService.currentSiteKey },
+      saveSite: (key: string) => apiService.saveSite(key),
+
+      // 自定义站点 CRUD
+      addCustomSite: (key: string, config: any) => apiService.addCustomSite(key, config),
+      updateCustomSite: (key: string, config: any) => apiService.updateCustomSite(key, config),
+      removeCustomSite: (key: string) => apiService.removeCustomSite(key),
+
+      // API Key 管理
+      getStoredApiKey: (site?: string) => apiService.getStoredApiKey(site),
+      getStoredVisionApiKey: (site?: string) => apiService.getStoredVisionApiKey(site),
+      saveApiKey: (key: string) => apiService.saveApiKey(key),
+      saveVisionApiKey: (key: string) => apiService.saveVisionApiKey(key),
+      hasApiKey: () => apiService.hasApiKey(),
+      get apiKey() { return apiService.hasApiKey() ? 'configured' : null },
+
+      // 模型管理
+      getCurrentModel: () => apiService.getCurrentModel(),
+      getAllModels: () => apiService.getAllModels(),
+      setModel: (key: string) => apiService.setModel(key),
+      get model() { return apiService.getCurrentModel()?.name },
+
+      // 图片生成
+      generateImage: (params: any) => apiService.generateImage(params),
+      getModelCapabilities: (modelKey?: string) => apiService.getModelCapabilities(modelKey)
+    }
+    console.log('[ServiceBridge] ✓ window.aiImageAPI 兼容接口已创建')
+
     window.__serviceBridgeInitialized = true
     console.log(`[ServiceBridge] 服务桥接初始化完成: ${(performance.now() - startTime).toFixed(1)}ms`)
 

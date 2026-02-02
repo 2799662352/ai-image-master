@@ -388,12 +388,104 @@ export class ApiService {
     localStorage.setItem('current_model', model)
   }
 
-  private getStoredApiKey(site: string): string | null {
-    return localStorage.getItem(`api_key_${site}`)
+  /**
+   * 获取存储的 API Key（公开方法）
+   */
+  getStoredApiKey(site?: string): string | null {
+    return localStorage.getItem(`api_key_${site || this.currentSite}`)
   }
 
-  private getStoredVisionApiKey(site: string): string | null {
-    return localStorage.getItem(`vision_api_key_${site}`)
+  /**
+   * 获取存储的 Vision API Key（公开方法）
+   */
+  getStoredVisionApiKey(site?: string): string | null {
+    return localStorage.getItem(`vision_api_key_${site || this.currentSite}`)
+  }
+
+  /**
+   * 保存 Vision API Key
+   */
+  saveVisionApiKey(key: string): boolean {
+    try {
+      localStorage.setItem(`vision_api_key_${this.currentSite}`, key)
+      this.visionApiKey = key
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * 保存站点选择（setSite 的别名，兼容 SiteManager）
+   */
+  saveSite(siteKey: string): boolean {
+    return this.setSite(siteKey)
+  }
+
+  /**
+   * 获取当前站点 key
+   */
+  get currentSiteKey(): string {
+    return this.currentSite
+  }
+
+  /**
+   * 添加自定义站点
+   */
+  addCustomSite(key: string, config: Partial<ApiSite>): boolean {
+    if (!key || !config.name || !config.baseURL) return false
+    if (BUILT_IN_SITES[key]) return false
+
+    const newSite: ApiSite = {
+      name: config.name,
+      baseURL: config.baseURL,
+      description: config.description || '用户自定义站点',
+      authType: config.authType || 'bearer',
+      pathPrefix: config.pathPrefix,
+      defaultApiKey: config.defaultApiKey,
+      isBuiltIn: false
+    }
+
+    this.customSites[key] = newSite
+    this.saveCustomSites()
+    this.apiSites = { ...BUILT_IN_SITES, ...this.customSites }
+    return true
+  }
+
+  /**
+   * 更新自定义站点
+   */
+  updateCustomSite(key: string, config: Partial<ApiSite>): boolean {
+    if (!this.customSites[key]) return false
+
+    this.customSites[key] = { ...this.customSites[key], ...config }
+    this.saveCustomSites()
+    this.apiSites = { ...BUILT_IN_SITES, ...this.customSites }
+    return true
+  }
+
+  /**
+   * 删除自定义站点
+   */
+  removeCustomSite(key: string): boolean {
+    if (!this.customSites[key]) return false
+
+    delete this.customSites[key]
+    this.saveCustomSites()
+    this.apiSites = { ...BUILT_IN_SITES, ...this.customSites }
+
+    // 如果删除的是当前站点，切换到默认
+    if (this.currentSite === key) {
+      this.setSite('b-apiyi')
+    }
+    return true
+  }
+
+  /**
+   * 保存自定义站点到 localStorage
+   */
+  private saveCustomSites(): void {
+    localStorage.setItem('custom_sites', JSON.stringify(this.customSites))
   }
 
   private loadCustomSites(): Record<string, ApiSite> {
