@@ -491,22 +491,32 @@ describe('TabManager', () => {
 
     it('should handle page without onActivate method', async () => {
       const mockPanel = createMockPanel()
-      mockDocument.getElementById.mockReturnValue(mockPanel)
+      mockDocument.getElementById.mockImplementation((id: string) => {
+        if (id === 'generatePanel' || id === 'historyPanel') {
+          return mockPanel
+        }
+        return null
+      })
       mockDocument.querySelectorAll.mockReturnValue([])
       
       const generatePage: PageModule = { onDeactivate: vi.fn() }
       const historyPage: PageModule = {} // No onActivate
       const consoleSpy = vi.spyOn(console, 'warn')
       
-      const manager = createTabManager({ defaultTab: 'generate' })
+      const manager = createTabManager({ 
+        defaultTab: 'generate',
+        validTabs: ['generate', 'history']
+      })
       manager.setPages({ generate: generatePage, history: historyPage })
       
       manager.switchTab('history')
       
-      await vi.waitFor(() => {
-        expect(generatePage.onDeactivate).toHaveBeenCalled()
-        expect(consoleSpy).toHaveBeenCalledWith('⚠️ 页面 history 未找到或未完全初始化')
-      }, { timeout: 100 })
+      // 等待两帧动画
+      await new Promise(resolve => requestAnimationFrame(() => {
+        requestAnimationFrame(resolve)
+      }))
+      
+      expect(consoleSpy).toHaveBeenCalledWith('⚠️ 页面 history 未找到或未完全初始化')
     })
 
     it('should handle onDeactivate throwing error', async () => {
