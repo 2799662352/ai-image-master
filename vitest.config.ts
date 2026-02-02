@@ -37,7 +37,7 @@ export default defineConfig({
       ],
       thresholds: {
         // 当前基线 (将自动提升)
-        lines: 43,
+        lines: 44,
         functions: 45,
         branches: 33,
         statements: 42,

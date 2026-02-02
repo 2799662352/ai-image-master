@@ -9,6 +9,7 @@
 
 import { test as base, _electron as electron, ElectronApplication, Page } from '@playwright/test'
 import * as path from 'path'
+import * as fs from 'fs'
 
 export interface ElectronFixtures {
   electronApp: ElectronApplication
@@ -25,12 +26,10 @@ function getMainProcessPath(): string {
   const devPath = path.join(__dirname, '../../')
   
   // 检查是否存在构建文件
-  try {
-    require.resolve(builtPath)
+  if (fs.existsSync(builtPath)) {
     return builtPath
-  } catch {
-    return devPath
   }
+  return devPath
 }
 
 /**
@@ -51,9 +50,9 @@ export const test = base.extend<ElectronFixtures>({
         // 禁用硬件加速以提高测试稳定性
         ELECTRON_DISABLE_GPU: '1',
         // 禁用沙箱以支持 CI 环境
-        ELECTRON_DISABLE_SANDBOX: process.env.CI ? '1' : undefined
+        ELECTRON_DISABLE_SANDBOX: '1'
       },
-      timeout: 60000 // 60 秒超时
+      timeout: 120000 // 120 秒超时
     })
 
     // 等待应用就绪

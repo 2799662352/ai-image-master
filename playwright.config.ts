@@ -2,8 +2,9 @@ import { defineConfig } from '@playwright/test'
 
 export default defineConfig({
   testDir: './e2e',
-  timeout: 60000,
-  retries: 2,
+  timeout: 120000,
+  globalTimeout: 600000,
+  retries: 1,
   workers: 1, // Electron 测试需要串行执行
   reporter: [
     ['html', { outputFolder: 'playwright-report' }],

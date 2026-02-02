@@ -251,9 +251,12 @@ function deferNonCriticalInit(): void {
   // 用户完全交互后再检查更新，避免网络争用
   if (mainWindow && process.env.NODE_ENV !== 'development') {
     setTimeout(() => {
-      autoUpdaterInstance.setMainWindow(mainWindow!)
-      autoUpdaterInstance.checkForUpdatesOnStartup(0)
-      console.log(`[Performance] Auto-updater initialized: ${Date.now() - startTime}ms`)
+      // 再次检查 mainWindow 是否仍然存在（窗口可能已关闭）
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        autoUpdaterInstance.setMainWindow(mainWindow)
+        autoUpdaterInstance.checkForUpdatesOnStartup(0)
+        console.log(`[Performance] Auto-updater initialized: ${Date.now() - startTime}ms`)
+      }
     }, 15000)
   }
 

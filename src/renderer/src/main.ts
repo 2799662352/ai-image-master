@@ -41,6 +41,9 @@ console.log('📦 [V18] 资源优化: Choices.js 同步加载, JSZip/imageCompre
 // 导入 ServiceBridge
 import { initServiceBridge, isServiceBridgeReady } from './services/ServiceBridge'
 
+// V16.4 - 导入 AppBootstrap (替代 app.js)
+import { getAppBootstrap, initAppBootstrapGlobal } from './core/AppBootstrap'
+
 // V16.1.2 - 导入 IntroVideoController (替代 index.html 内联脚本)
 import { initIntroVideo } from './features/intro-video'
 
@@ -99,6 +102,22 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (isServiceBridgeReady()) {
     console.log('[main.ts] ✅ 所有 TypeScript 服务已就绪')
     console.log('[main.ts] 📦 window.appServices 命名空间可用')
+    
+    // V16.4: 初始化 AppBootstrap 并启动应用
+    // 注意: 在 electron-vite SPA 模式下，需要调用 bootstrap() 来渲染 UI
+    try {
+      const appBootstrap = initAppBootstrapGlobal()
+      await appBootstrap.bootstrap()
+      console.log('[main.ts] ✅ AppBootstrap 启动完成')
+      
+      // 隐藏加载容器，显示应用
+      const loadingContainer = document.getElementById('loadingContainer')
+      if (loadingContainer) {
+        loadingContainer.style.display = 'none'
+      }
+    } catch (error) {
+      console.error('[main.ts] AppBootstrap 启动失败:', error)
+    }
     
     // V18: 空闲时预加载大型库
     preloadLibraries()
