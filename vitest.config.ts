@@ -36,12 +36,13 @@ export default defineConfig({
         '**/__mocks__/**'
       ],
       thresholds: {
-        // 当前实际覆盖率基线（40%）- 逐步提升
-        lines: 40,
-        functions: 40,
-        branches: 25,
-        statements: 40,
-        // 禁用单文件阈值检查
+        // 当前基线 (将自动提升)
+        lines: 43,
+        functions: 45,
+        branches: 33,
+        statements: 42,
+        // 启用自动更新 - 当覆盖率提升时自动提高基线
+        autoUpdate: (newThreshold: number) => Math.floor(newThreshold),
         perFile: false
       }
     },
