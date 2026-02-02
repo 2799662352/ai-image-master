@@ -8,20 +8,20 @@
   "scripts": {
     "dev": "electron-vite dev",
     "dev:static": "electron . --dev",
-    "build:vite": "electron-vite build",
     "preview": "electron-vite preview",
     "start": "electron .",
-    "electron:dev": "electron-vite dev",
-    "build": "electron-builder",
-    "build:win": "electron-builder --win",
-    "build:win64": "electron-builder --win --x64",
-    "build:win32": "electron-builder --win --ia32",
-    "build:mac": "electron-builder --mac",
-    "build:linux": "electron-builder --linux",
-    "build:all": "electron-builder -mwl",
-    "build:dir": "electron-builder --dir",
-    "postinstall": "electron-builder install-app-deps",
     "typecheck": "tsc --noEmit",
+    "build:vite": "electron-vite build",
+    "build": "npm run build:vite && electron-builder",
+    "build:win": "npm run build:vite && electron-builder --win",
+    "build:win64": "npm run build:vite && electron-builder --win --x64",
+    "build:mac": "npm run build:vite && electron-builder --mac",
+    "build:linux": "npm run build:vite && electron-builder --linux",
+    "build:all": "npm run build:vite && electron-builder -mwl",
+    "build:dir": "npm run build:vite && electron-builder --dir",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "postinstall": "electron-builder install-app-deps",
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
@@ -34,7 +34,8 @@
     "perf:startup": "npx tsx scripts/measure-startup.ts",
     "test:bench": "vitest bench",
     "test:bench:run": "vitest bench --run",
-    "test:bench:ci": "vitest bench --run"
+    "test:bench:ci": "vitest bench --run",
+    "release": "npm run build:vite && electron-builder --publish always"
   },
   "dependencies": {
     "browser-image-compression": "^2.0.2",
@@ -64,109 +65,9 @@
     "vite": "^7.3.1",
     "vitest": "^4.0.18"
   },
-  "build": {
-    "appId": "com.catimation.cyberpunk-master",
-    "productName": "CATIMATION-Cyberpunk Master",
-    "copyright": "Copyright © 2024-2026 CATIMATION",
-    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
-    "directories": {
-      "output": "dist",
-      "buildResources": "build"
-    },
-    "files": [
-      "dist/**/*",
-      "package.json",
-      "!build/**",
-      "!docs/**",
-      "!node_modules/.cache/**",
-      "!**/*.md",
-      "!.git/**",
-      "!.gitignore",
-      "!lQLPKIIzYQI-oU_MoMyusN5w3Ih7aMhgCVE586l9-QA_174_160.png",
-      "!柏拉图api.md",
-      "!**/*.map",
-      "!**/*.ts",
-      "!.env*",
-      "!electron-builder.yml",
-      "!tsconfig.json"
-    ],
-    "asar": true,
-    "compression": "normal",
-    "removePackageScripts": true,
-    "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "icon": "build/icon.ico",
-      "legalTrademarks": "CATIMATION-Cyberpunk Master",
-      "forceCodeSigning": false
-    },
-    "nsis": {
-      "oneClick": false,
-      "perMachine": false,
-      "allowElevation": true,
-      "allowToChangeInstallationDirectory": true,
-      "deleteAppDataOnUninstall": false,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "CATIMATION Cyberpunk Master",
-      "installerIcon": "build/icon.ico",
-      "uninstallerIcon": "build/icon.ico",
-      "installerLanguages": [
-        "zh_CN",
-        "en_US"
-      ],
-      "language": "2052",
-      "runAfterFinish": true
-    },
-    "portable": {
-      "artifactName": "${productName}-${version}-Portable.${ext}"
-    },
-    "mac": {
-      "target": [
-        "dmg",
-        "zip"
-      ],
-      "icon": "build/icon.png",
-      "category": "public.app-category.graphics-design",
-      "darkModeSupport": true,
-      "hardenedRuntime": true,
-      "gatekeeperAssess": false,
-      "entitlements": "build/entitlements.mac.plist",
-      "entitlementsInherit": "build/entitlements.mac.plist",
-      "notarize": false
-    },
-    "dmg": {
-      "title": "${productName}",
-      "icon": "build/icon.png"
-    },
-    "linux": {
-      "target": [
-        "AppImage",
-        "deb"
-      ],
-      "icon": "build/icon.png",
-      "category": "Graphics",
-      "maintainer": "CATIMATION <hi@lazycat.ai>",
-      "synopsis": "AI图片生成桌面应用"
-    },
-    "publish": {
-      "provider": "github",
-      "owner": "catimation",
-      "repo": "catimation-cyberpunk-master",
-      "releaseType": "release"
-    },
-    "generateUpdatesFilesForAllChannels": true
-  }
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/2799662352/ai-image-master.git"
+  },
+  "homepage": "https://github.com/2799662352/ai-image-master"
 }

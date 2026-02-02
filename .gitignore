@@ -4,6 +4,11 @@ node_modules/
 # Build output
 dist/
 out/
+release/
+
+# Playwright
+playwright-report/
+test-results/
 
 # Electron cache
 .cache/

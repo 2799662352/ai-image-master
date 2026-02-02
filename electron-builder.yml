@@ -1,0 +1,156 @@
+# electron-builder configuration
+# https://www.electron.build/configuration/configuration
+
+appId: com.catimation.cyberpunk-master
+productName: CATIMATION-Cyberpunk Master
+copyright: Copyright © 2024-2026 CATIMATION
+
+# Artifact naming pattern
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+
+# Directory configuration
+directories:
+  output: release
+  buildResources: build
+
+# Files to include/exclude
+files:
+  - dist/**/*
+  - package.json
+  # Exclude development files
+  - "!**/*.ts"
+  - "!**/*.tsx"
+  - "!**/*.map"
+  - "!**/node_modules/.cache/**"
+  - "!**/.git/**"
+  - "!**/.gitignore"
+  - "!**/.env*"
+  - "!**/tsconfig*.json"
+  - "!**/electron.vite.config.*"
+  - "!**/vite.config.*"
+  - "!**/playwright.config.*"
+  - "!**/vitest.config.*"
+  - "!**/*.md"
+  - "!**/docs/**"
+  - "!**/tests/**"
+  - "!**/e2e/**"
+  - "!**/build/**"
+  - "!**/.vscode/**"
+  - "!**/.cursor/**"
+
+# Resources to unpack from asar (for native modules or files that need direct access)
+asarUnpack:
+  - resources/**
+
+# ASAR archive settings
+asar: true
+compression: maximum
+
+# Remove scripts from package.json
+removePackageScripts: true
+
+# Windows configuration
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+  icon: build/icon.ico
+  legalTrademarks: CATIMATION-Cyberpunk Master
+  # Code signing (uncomment when certificate is available)
+  # signingHashAlgorithms:
+  #   - sha256
+  # certificateSubjectName: "Your Company Name"
+  # timeStampServer: "http://timestamp.digicert.com"
+  forceCodeSigning: false
+
+# NSIS installer configuration
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: CATIMATION Cyberpunk Master
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerLanguages:
+    - zh_CN
+    - en_US
+  language: "2052"  # Simplified Chinese
+  runAfterFinish: true
+  artifactName: ${productName}-${version}-Setup.${ext}
+  # Differential update support
+  differentialPackage: true
+
+# Portable configuration
+portable:
+  artifactName: ${productName}-${version}-Portable.${ext}
+
+# macOS configuration
+mac:
+  target:
+    - dmg
+    - zip
+  icon: build/icon.png
+  category: public.app-category.graphics-design
+  darkModeSupport: true
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # Notarization (uncomment when credentials are available)
+  # notarize:
+  #   teamId: "YOUR_TEAM_ID"
+  extendInfo:
+    NSCameraUsageDescription: "Application requests access to the device's camera."
+    NSMicrophoneUsageDescription: "Application requests access to the device's microphone."
+    NSDocumentsFolderUsageDescription: "Application requests access to the user's Documents folder."
+    NSDownloadsFolderUsageDescription: "Application requests access to the user's Downloads folder."
+
+# DMG configuration
+dmg:
+  title: ${productName}
+  icon: build/icon.png
+  artifactName: ${productName}-${version}.${ext}
+
+# Linux configuration
+linux:
+  target:
+    - AppImage
+    - deb
+  icon: build/icon.png
+  category: Graphics
+  maintainer: CATIMATION <hi@lazycat.ai>
+  synopsis: AI图片生成桌面应用
+  description: AI Image Generation Desktop Application with multi-model support
+
+# AppImage configuration
+appImage:
+  artifactName: ${productName}-${version}.${ext}
+
+# Deb configuration
+deb:
+  artifactName: ${productName}-${version}.${ext}
+  depends:
+    - libnotify4
+    - libxtst6
+    - libnss3
+
+# Auto-update configuration
+publish:
+  provider: github
+  owner: 2799662352
+  repo: ai-image-master
+  releaseType: release
+
+# Generate update files for all channels
+generateUpdatesFilesForAllChannels: true
+
+# Don't rebuild native modules (they should be pre-built)
+npmRebuild: false
