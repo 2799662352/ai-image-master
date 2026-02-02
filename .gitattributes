@@ -1,0 +1,21 @@
+# Linguist overrides for GitHub language statistics
+
+# Mark vendor directories as vendored (excluded from language stats)
+cdn/** linguist-vendored
+lib/** linguist-vendored
+src/renderer/public/cdn/** linguist-vendored
+src/renderer/public/lib/** linguist-vendored
+playwright-report/** linguist-generated
+
+# Mark specific vendor files
+*.min.js linguist-vendored
+*.min.css linguist-vendored
+tailwind.js linguist-vendored
+
+# Ensure TypeScript is detected
+*.ts linguist-language=TypeScript
+*.tsx linguist-language=TypeScript
+
+# Mark generated files
+dist/** linguist-generated
+out/** linguist-generated
