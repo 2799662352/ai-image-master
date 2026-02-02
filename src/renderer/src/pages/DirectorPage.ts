@@ -158,40 +158,40 @@ export class DirectorPage extends BasePage {
   private editingTemplateKey: string | null = null
   private editingTemplateIsBuiltin: boolean = false
 
-  // 风格模板库
+  // 风格模板库 - 名称将在 getTemplateDisplayName() 中国际化
   private styleTemplates: StyleTemplates = {
     anime: {
-      name: '动画截图风格',
+      name: 'anime', // i18n key: director.templates.styles.anime
       prefix: 'anime screencap, TV anime, storyboard panel, sequential storytelling, narrative composition, ',
       suffix: ', masterpiece, best quality, absurdres, very aesthetic, full color, anime cel shading, TV anime coloring',
       negative: 'blurry, lowres, upscaled, artistic error, film grain, scan artifacts, bad anatomy, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, halftone, multiple views, logo, too many watermarks'
     },
     manga: {
-      name: '漫画分镜风格',
+      name: 'manga', // i18n key: director.templates.styles.manga
       prefix: 'manga panel, comic storyboard, sequential art, black and white manga, screentone, ',
       suffix: ', masterpiece, best quality, manga style, high contrast, dynamic lines, speech bubbles layout',
       negative: 'blurry, lowres, bad anatomy, worst quality, color, photorealistic, 3d render'
     },
     movie: {
-      name: '电影分镜风格',
+      name: 'movie', // i18n key: director.templates.styles.movie
       prefix: 'cinematic storyboard, film still, movie scene, cinematography, ',
       suffix: ', masterpiece, best quality, cinematic lighting, depth of field, widescreen, film grain, color grading',
       negative: 'anime, cartoon, illustration, bad anatomy, worst quality, low quality'
     },
     webtoon: {
-      name: '韩漫/条漫风格',
+      name: 'webtoon', // i18n key: director.templates.styles.webtoon
       prefix: 'webtoon style, korean manhwa, full color comic, vertical scroll format, ',
       suffix: ', masterpiece, best quality, soft shading, clean lineart, vibrant colors, romantic atmosphere',
       negative: 'blurry, lowres, bad anatomy, worst quality, black and white, monochrome'
     },
     comic: {
-      name: '美漫风格',
+      name: 'comic', // i18n key: director.templates.styles.comic
       prefix: 'american comic style, superhero comic, comic book panel, bold lineart, ',
       suffix: ', masterpiece, best quality, dynamic pose, strong contrast, halftone dots, action scene',
       negative: 'blurry, lowres, bad anatomy, worst quality, anime style, soft shading'
     },
     illustration: {
-      name: '插画风格',
+      name: 'illustration', // i18n key: director.templates.styles.illustration
       prefix: 'illustration, detailed artwork, artistic composition, ',
       suffix: ', masterpiece, best quality, highly detailed, beautiful lighting, artistic, professional illustration',
       negative: 'blurry, lowres, bad anatomy, worst quality, bad quality, simple background'
@@ -200,34 +200,34 @@ export class DirectorPage extends BasePage {
 
   private defaultStyleTemplates: StyleTemplates
 
-  // 布局配置
+  // 布局配置 - 名称和描述将在 getLayoutDisplayName/Description() 中国际化
   private layouts: LayoutConfigs = {
     '6grid': {
       rows: 2,
       cols: 3,
-      name: '6格标准',
-      description: '2行×3列，适合完整故事',
+      name: '6grid', // i18n key: director.layouts.6grid.name
+      description: '6grid', // i18n key: director.layouts.6grid.description
       ratio: '3:2'
     },
     '4grid': {
       rows: 2,
       cols: 2,
-      name: '4格方正',
-      description: '2行×2列，适合转折场景',
+      name: '4grid', // i18n key: director.layouts.4grid.name
+      description: '4grid', // i18n key: director.layouts.4grid.description
       ratio: '1:1'
     },
     '2closeup': {
       rows: 1,
       cols: 2,
-      name: '2格特写',
-      description: '1行×2列，适合表情特写',
+      name: '2closeup', // i18n key: director.layouts.2closeup.name
+      description: '2closeup', // i18n key: director.layouts.2closeup.description
       ratio: '16:9'
     },
     '9grid': {
       rows: 3,
       cols: 3,
-      name: '9格全景',
-      description: '3行×3列，适合动作场景',
+      name: '9grid', // i18n key: director.layouts.9grid.name
+      description: '9grid', // i18n key: director.layouts.9grid.description
       ratio: '1:1'
     }
   }
@@ -504,7 +504,7 @@ export class DirectorPage extends BasePage {
           <div class="relative z-10">
             <i class="fas fa-folder-open text-4xl mb-3" style="color: #06B6D4;"></i>
             <p class="text-[#FAFAFA] text-sm uppercase tracking-widest font-bold mb-1">NO_DATA_FOUND</p>
-            <p class="text-[#71717A] text-xs uppercase tracking-wide">点击上方按钮添加您的图片</p>
+            <p class="text-[#71717A] text-xs uppercase tracking-wide">${this.t('director.gallery.clickToAddImages') || '点击上方按钮添加您的图片'}</p>
           </div>
         </div>
       `
@@ -579,7 +579,7 @@ export class DirectorPage extends BasePage {
     card.dataset.imagePath = imagePath
 
     card.innerHTML = `
-      <img src="${imagePath}" alt="示例图片 ${index}" 
+      <img src="${imagePath}" alt="${this.t('director.gallery.exampleImage', { index }) || `示例图片 ${index}`}" 
            class="w-full h-32 object-cover transition-transform duration-300 group-hover:scale-105" loading="lazy">
       <div class="gallery-check ${isSelected ? '' : 'hidden'} absolute top-2 right-2 w-6 h-6 z-30 flex items-center justify-center bg-pink-500">
         <i class="fas fa-check text-white text-xs"></i>
@@ -617,7 +617,7 @@ export class DirectorPage extends BasePage {
       this.gallerySelectedImages.splice(idx, 1)
     } else {
       if (this.gallerySelectedImages.length >= this.maxReferenceImages) {
-        this.showToast(`最多选择 ${this.maxReferenceImages} 张图片`, 'warning')
+        this.showToast(this.t('director.messages.maxSelectImages', { max: this.maxReferenceImages }) || `最多选择 ${this.maxReferenceImages} 张图片`, 'warning')
         return
       }
       this.gallerySelectedImages.push(imagePath)
@@ -667,11 +667,11 @@ export class DirectorPage extends BasePage {
    */
   async confirmGallerySelection(): Promise<void> {
     if (this.gallerySelectedImages.length === 0) {
-      this.showToast('请选择至少一张图片', 'warning')
+      this.showToast(this.t('director.messages.selectAtLeastOne') || '请选择至少一张图片', 'warning')
       return
     }
 
-    this.showToast(`正在加载 ${this.gallerySelectedImages.length} 张图片...`, 'info')
+    this.showToast(this.t('director.messages.loadingImages', { count: this.gallerySelectedImages.length }) || `正在加载 ${this.gallerySelectedImages.length} 张图片...`, 'info')
 
     for (const imagePath of this.gallerySelectedImages) {
       try {
@@ -685,7 +685,7 @@ export class DirectorPage extends BasePage {
     }
 
     this.hideGalleryModal()
-    this.showToast(`已添加 ${this.gallerySelectedImages.length} 张参考图`, 'success')
+    this.showToast(this.t('director.messages.addedReferenceImages', { count: this.gallerySelectedImages.length }) || `已添加 ${this.gallerySelectedImages.length} 张参考图`, 'success')
   }
 
   // ==================== 模板管理 ====================
@@ -773,7 +773,7 @@ export class DirectorPage extends BasePage {
       list.innerHTML = `
         <div class="col-span-2 text-center py-8 text-[#A1A1AA]">
           <i class="fas fa-folder-open text-4xl mb-4"></i>
-          <p>暂无模板</p>
+          <p>${this.t('director.templates.noTemplates') || '暂无模板'}</p>
         </div>
       `
     }
@@ -792,21 +792,25 @@ export class DirectorPage extends BasePage {
     } bg-[#27272A] rounded-none p-4 transition-all relative group`
     card.dataset.template = key
 
+    const modifiedText = this.t('director.templates.modified') || '已修改'
+    const builtinText = this.t('director.templates.builtin') || '内置'
+    const customText = this.t('director.templates.custom') || '自定义'
     const badgeHtml = isBuiltin 
-      ? (isModified ? '<span class="ml-2 text-xs bg-[#FCE300] text-black px-1 font-bold uppercase">已修改</span>' : '<span class="text-xs text-[#A1A1AA]">内置</span>')
-      : '<span class="ml-2 text-xs bg-[#8B5CF6] text-white px-1 font-bold uppercase">自定义</span>'
+      ? (isModified ? `<span class="ml-2 text-xs bg-[#FCE300] text-black px-1 font-bold uppercase">${modifiedText}</span>` : `<span class="text-xs text-[#A1A1AA]">${builtinText}</span>`)
+      : `<span class="ml-2 text-xs bg-[#8B5CF6] text-white px-1 font-bold uppercase">${customText}</span>`
 
+    const displayName = this.getTemplateDisplayName(key, template)
     card.innerHTML = `
       <div class="flex items-start justify-between">
         <div class="flex-1 min-w-0">
           <h4 class="font-bold text-[#FAFAFA] flex items-center uppercase tracking-tight">
-            ${this.escapeHtmlText(template.name)}
+            ${this.escapeHtmlText(displayName)}
             ${badgeHtml}
           </h4>
           <p class="text-[#A1A1AA] text-sm mt-1 line-clamp-2">${this.escapeHtmlText(template.prefix.substring(0, 80))}...</p>
         </div>
         <button class="edit-template-btn w-8 h-8 bg-[#3F3F46] hover:bg-[#FCE300] text-[#A1A1AA] hover:text-black rounded-none flex items-center justify-center transition-all cursor-pointer ml-2 flex-shrink-0"
-                title="编辑">
+                title="${this.t('director.buttons.edit') || '编辑'}">
           <i class="fas fa-edit text-sm"></i>
         </button>
       </div>
@@ -843,6 +847,53 @@ export class DirectorPage extends BasePage {
   }
 
   /**
+   * 获取模板的国际化显示名称
+   */
+  private getTemplateDisplayName(key: string, template: StyleTemplate): string {
+    // 内置模板使用 i18n key
+    const builtinTemplateNames: Record<string, string> = {
+      anime: this.t('director.templates.styles.anime') || '动画截图风格',
+      manga: this.t('director.templates.styles.manga') || '漫画分镜风格',
+      movie: this.t('director.templates.styles.movie') || '电影分镜风格',
+      webtoon: this.t('director.templates.styles.webtoon') || '韩漫/条漫风格',
+      comic: this.t('director.templates.styles.comic') || '美漫风格',
+      illustration: this.t('director.templates.styles.illustration') || '插画风格'
+    }
+    
+    // 如果是内置模板，返回国际化名称；否则返回自定义模板的原名
+    if (builtinTemplateNames[key]) {
+      return builtinTemplateNames[key]
+    }
+    return template.name
+  }
+
+  /**
+   * 获取布局的国际化显示名称
+   */
+  private getLayoutDisplayName(layoutKey: string): string {
+    const layoutNames: Record<string, string> = {
+      '6grid': this.t('director.layouts.6grid.name') || '6格标准',
+      '4grid': this.t('director.layouts.4grid.name') || '4格方正',
+      '2closeup': this.t('director.layouts.2closeup.name') || '2格特写',
+      '9grid': this.t('director.layouts.9grid.name') || '9格全景'
+    }
+    return layoutNames[layoutKey] || layoutKey
+  }
+
+  /**
+   * 获取布局的国际化描述
+   */
+  private getLayoutDisplayDescription(layoutKey: string): string {
+    const layoutDescriptions: Record<string, string> = {
+      '6grid': this.t('director.layouts.6grid.description') || '2行×3列，适合完整故事',
+      '4grid': this.t('director.layouts.4grid.description') || '2行×2列，适合转折场景',
+      '2closeup': this.t('director.layouts.2closeup.description') || '1行×2列，适合表情特写',
+      '9grid': this.t('director.layouts.9grid.description') || '3行×3列，适合动作场景'
+    }
+    return layoutDescriptions[layoutKey] || ''
+  }
+
+  /**
    * 选择模板
    */
   selectTemplate(templateKey: string): void {
@@ -850,12 +901,13 @@ export class DirectorPage extends BasePage {
     if (!template) return
 
     this.currentTemplate = templateKey
+    const displayName = this.getTemplateDisplayName(templateKey, template)
 
     const nameSpan = this.getElement<HTMLElement>('directorTemplateName')
     const clearBtn = this.getElement<HTMLElement>('directorClearTemplate')
 
     if (nameSpan) {
-      nameSpan.textContent = template.name
+      nameSpan.textContent = displayName
       nameSpan.classList.add('text-pink-400')
     }
     if (clearBtn) {
@@ -863,7 +915,7 @@ export class DirectorPage extends BasePage {
     }
 
     this.hideTemplateModal()
-    this.showToast(`已选择「${template.name}」模板`, 'success')
+    this.showToast(this.t('director.messages.templateSelected', { name: displayName }) || `已选择「${displayName}」模板`, 'success')
     this.saveCurrentState()
   }
 
@@ -877,7 +929,7 @@ export class DirectorPage extends BasePage {
     const clearBtn = this.getElement<HTMLElement>('directorClearTemplate')
 
     if (nameSpan) {
-      nameSpan.textContent = '默认（无模板）'
+      nameSpan.textContent = this.t('director.templates.default') || '默认（无模板）'
       nameSpan.classList.remove('text-pink-400')
     }
     if (clearBtn) {
@@ -896,7 +948,7 @@ export class DirectorPage extends BasePage {
     if (this.isGenerating || this.isProcessingFiles) return
 
     if (this.referenceImages.length >= this.maxReferenceImages) {
-      this.showToast(`最多上传 ${this.maxReferenceImages} 张参考图`, 'warning')
+      this.showToast(this.t('director.messages.maxUploadImages', { max: this.maxReferenceImages }) || `最多上传 ${this.maxReferenceImages} 张参考图`, 'warning')
       return
     }
 
@@ -972,7 +1024,7 @@ export class DirectorPage extends BasePage {
       for (const file of files) {
         if (!file.type.startsWith('image/')) continue
         if (this.referenceImages.length >= this.maxReferenceImages) {
-          this.showToast(`最多上传 ${this.maxReferenceImages} 张参考图`, 'warning')
+          this.showToast(this.t('director.messages.maxUploadImages', { max: this.maxReferenceImages }) || `最多上传 ${this.maxReferenceImages} 张参考图`, 'warning')
           break
         }
 
@@ -988,7 +1040,7 @@ export class DirectorPage extends BasePage {
       this.updateGenerateButtonState()
 
       if (successCount > 0) {
-        this.showToast(`已上传 ${successCount} 张图片`, 'success')
+        this.showToast(this.t('director.messages.uploadedImages', { count: successCount }) || `已上传 ${successCount} 张图片`, 'success')
       }
     } finally {
       this.isProcessingFiles = false
@@ -1089,7 +1141,24 @@ export class DirectorPage extends BasePage {
     if (uploadArea) uploadArea.classList.add('hidden')
     preview.classList.remove('hidden')
 
+    // 当有多张参考图时显示"清空全部"按钮
+    const clearAllText = this.t('director.buttons.clearAll') || '清空全部'
+    const referenceImagesText = this.t('director.labels.referenceImages') || '参考图'
+    const clearAllButton = this.referenceImages.length > 1 ? `
+      <button onclick="window.directorPage?.clearAllReferenceImages()" 
+              class="text-red-400 hover:text-red-300 text-xs transition-colors">
+        <i class="fas fa-trash-alt mr-1"></i>${clearAllText}
+      </button>
+    ` : ''
+
     preview.innerHTML = `
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-white text-sm opacity-70">
+          <i class="fas fa-images mr-1"></i>
+          ${referenceImagesText} (${this.referenceImages.length}/${this.maxReferenceImages})
+        </span>
+        ${clearAllButton}
+      </div>
       <div class="grid grid-cols-4 gap-2 mb-3">
         ${this.referenceImages.map((img, index) => `
           <div class="relative group aspect-square">
@@ -1108,7 +1177,6 @@ export class DirectorPage extends BasePage {
           </div>
         ` : ''}
       </div>
-      <p class="text-sm text-gray-400 text-center">${this.referenceImages.length}/${this.maxReferenceImages} 张参考图</p>
     `
 
     // 绑定删除按钮
@@ -1138,14 +1206,22 @@ export class DirectorPage extends BasePage {
   }
 
   /**
-   * 清除所有参考图
+   * 清除所有参考图（旧方法名，保留兼容）
    */
   clearReferenceImage(): void {
+    this.clearAllReferenceImages()
+  }
+
+  /**
+   * 清空所有参考图
+   * @public 供 onclick 调用
+   */
+  clearAllReferenceImages(): void {
     this.referenceImages = []
     this.updateReferenceImagesPreview()
     this.updateGenerateButtonState()
     this.saveCurrentState()
-    this.showToast('已清除所有参考图', 'info')
+    this.showToast(this.t('director.messages.clearedAllReferenceImages') || '已清空所有参考图', 'info')
   }
 
   // ==================== 模式和布局 ====================
@@ -1174,7 +1250,7 @@ export class DirectorPage extends BasePage {
       }
 
       const btnSpan = generateBtn?.querySelector('span')
-      if (btnSpan) btnSpan.textContent = '一键生成漫画分镜'
+      if (btnSpan) btnSpan.textContent = this.t('director.buttons.generateSingle') || '一键生成漫画分镜'
     } else {
       singleUI?.classList.add('hidden')
       multiUI?.classList.remove('hidden')
@@ -1187,7 +1263,7 @@ export class DirectorPage extends BasePage {
       }
 
       const btnSpan = generateBtn?.querySelector('span')
-      if (btnSpan) btnSpan.textContent = '批量生成漫画分镜'
+      if (btnSpan) btnSpan.textContent = this.t('director.buttons.generateBatch') || '批量生成漫画分镜'
 
       this.updatePromptCount()
     }
@@ -1233,7 +1309,7 @@ export class DirectorPage extends BasePage {
 
     if (multiSceneInput && countSpan) {
       const prompts = this.parseMultiPrompts(multiSceneInput.value)
-      countSpan.textContent = `${prompts.length} 个场景`
+      countSpan.textContent = this.t('director.labels.sceneCount', { count: prompts.length }) || `${prompts.length} 个场景`
     }
   }
 
@@ -1253,7 +1329,7 @@ export class DirectorPage extends BasePage {
     const display = this.getElement<HTMLElement>('directorCountDisplay')
     if (slider && display) {
       this.imageCount = parseInt(slider.value)
-      display.textContent = `${this.imageCount}张`
+      display.textContent = this.t('director.labels.imageCountDisplay', { count: this.imageCount }) || `${this.imageCount}张`
     }
   }
 
@@ -1274,13 +1350,13 @@ export class DirectorPage extends BasePage {
    */
   async startGeneration(): Promise<void> {
     if (this.referenceImages.length === 0) {
-      this.showToast('请先上传参考图', 'warning')
+      this.showToast(this.t('director.messages.uploadReferenceFirst') || '请先上传参考图', 'warning')
       return
     }
 
     const api = this.getApi()
     if (!api?.apiKey) {
-      this.showToast('请先在设置中配置 API Key', 'error')
+      this.showToast(this.t('director.messages.configureApiKey') || '请先在设置中配置 API Key', 'error')
       return
     }
 
@@ -1307,7 +1383,7 @@ export class DirectorPage extends BasePage {
     const panelCount = layout.rows * layout.cols
 
     this.clearResultsGrid()
-    this.showProgress(`正在分析参考图... (将生成 ${imageCount} 张)`)
+    this.showProgress(this.t('director.progress.analyzingWithCount', { count: imageCount }) || `正在分析参考图... (将生成 ${imageCount} 张)`)
 
     // 总步骤：分析1 + 生成提示词1 + 生成图片N
     const totalSteps = 2 + imageCount
@@ -1317,20 +1393,20 @@ export class DirectorPage extends BasePage {
     try {
       // Step 1: 分析参考图
       currentStep++
-      this.updateProgress(currentStep, totalSteps, '正在分析参考图...')
+      this.updateProgress(currentStep, totalSteps, this.t('director.progress.analyzingReference') || '正在分析参考图...')
       const imageAnalysis = await this.analyzeReferenceImage()
       this.showAnalysisResult(imageAnalysis)
 
       // Step 2: 生成分镜提示词
       currentStep++
-      this.updateProgress(currentStep, totalSteps, '正在生成分镜提示词...')
+      this.updateProgress(currentStep, totalSteps, this.t('director.progress.generatingPrompt') || '正在生成分镜提示词...')
       const comicPrompt = await this.generateComicPrompt(imageAnalysis, sceneDescription, panelCount, layout)
       this.showPromptResult(comicPrompt)
 
       // Step 3-N: 生成多张漫画页面
       for (let i = 0; i < imageCount; i++) {
         currentStep++
-        this.updateProgress(currentStep, totalSteps, `正在生成第 ${i + 1}/${imageCount} 张漫画...`)
+        this.updateProgress(currentStep, totalSteps, this.t('director.progress.generatingComic', { current: i + 1, total: imageCount }) || `正在生成第 ${i + 1}/${imageCount} 张漫画...`)
 
         try {
           const result = await this.generateComicPage(comicPrompt, layout)
@@ -1339,7 +1415,7 @@ export class DirectorPage extends BasePage {
           this.generatedResults.push({
             success: true,
             imageData: result,
-            prompt: sceneDescription || '自动分析',
+            prompt: sceneDescription || (this.t('director.labels.autoAnalysis') || '自动分析'),
             index: i
           })
           this.addResultCard(this.generatedResults[this.generatedResults.length - 1], i)
@@ -1348,7 +1424,7 @@ export class DirectorPage extends BasePage {
           this.generatedResults.push({
             success: false,
             error: error.message,
-            prompt: sceneDescription || '自动分析',
+            prompt: sceneDescription || (this.t('director.labels.autoAnalysis') || '自动分析'),
             index: i
           })
           this.addResultCard(this.generatedResults[this.generatedResults.length - 1], i)
@@ -1359,14 +1435,14 @@ export class DirectorPage extends BasePage {
       this.updateResultsHeader(successCount, imageCount)
 
       if (successCount > 0) {
-        this.showToast(`成功生成 ${successCount}/${imageCount} 张漫画页面！`, 'success')
+        this.showToast(this.t('director.messages.generateSuccess', { success: successCount, total: imageCount }) || `成功生成 ${successCount}/${imageCount} 张漫画页面！`, 'success')
         this.saveToHistory(sceneDescription, successCount)
       } else {
-        this.showToast('所有图片生成失败，请重试', 'error')
+        this.showToast(this.t('director.messages.allGenerationFailed') || '所有图片生成失败，请重试', 'error')
       }
     } catch (error: any) {
       console.error('生成失败:', error)
-      this.showToast('生成失败: ' + error.message, 'error')
+      this.showToast((this.t('director.messages.generateFailed') || '生成失败: ') + error.message, 'error')
       this.hideProgress()
     } finally {
       this.isGenerating = false
@@ -1382,7 +1458,7 @@ export class DirectorPage extends BasePage {
     const prompts = this.parseMultiPrompts(multiSceneInput?.value || '')
 
     if (prompts.length === 0) {
-      this.showToast('请输入至少一个场景描述', 'warning')
+      this.showToast(this.t('director.messages.enterAtLeastOneScene') || '请输入至少一个场景描述', 'warning')
       return
     }
 
@@ -1399,12 +1475,12 @@ export class DirectorPage extends BasePage {
     let successCount = 0
 
     this.clearResultsGrid()
-    this.showProgress('正在分析参考图...')
+    this.showProgress(this.t('director.progress.analyzingReference') || '正在分析参考图...')
 
     try {
       // Step 1: 分析参考图（只需一次）
       currentStep++
-      this.updateProgress(currentStep, totalSteps, '正在分析参考图...')
+      this.updateProgress(currentStep, totalSteps, this.t('director.progress.analyzingReference') || '正在分析参考图...')
       const imageAnalysis = await this.analyzeReferenceImage()
       this.showAnalysisResult(imageAnalysis)
 
@@ -1414,13 +1490,13 @@ export class DirectorPage extends BasePage {
         
         // 生成分镜提示词
         currentStep++
-        this.updateProgress(currentStep, totalSteps, `生成第 ${i + 1}/${prompts.length} 张：构建提示词...`)
+        this.updateProgress(currentStep, totalSteps, this.t('director.progress.buildingPrompt', { current: i + 1, total: prompts.length }) || `生成第 ${i + 1}/${prompts.length} 张：构建提示词...`)
         const comicPrompt = await this.generateComicPrompt(imageAnalysis, sceneDescription, panelCount, layout)
         this.showPromptResult(comicPrompt)
 
         // 生成漫画页面
         currentStep++
-        this.updateProgress(currentStep, totalSteps, `生成第 ${i + 1}/${prompts.length} 张：生成图片...`)
+        this.updateProgress(currentStep, totalSteps, this.t('director.progress.generatingImage', { current: i + 1, total: prompts.length }) || `生成第 ${i + 1}/${prompts.length} 张：生成图片...`)
         
         try {
           const result = await this.generateComicPage(comicPrompt, layout)
@@ -1449,11 +1525,11 @@ export class DirectorPage extends BasePage {
       this.updateResultsHeader(successCount, prompts.length)
 
       if (successCount > 0) {
-        this.showToast(`批量生成完成！成功 ${successCount}/${prompts.length} 张`, 'success')
+        this.showToast(this.t('director.messages.batchGenerateSuccess', { success: successCount, total: prompts.length }) || `批量生成完成！成功 ${successCount}/${prompts.length} 张`, 'success')
       }
     } catch (error: any) {
       console.error('批量生成失败:', error)
-      this.showToast('批量生成失败: ' + error.message, 'error')
+      this.showToast((this.t('director.messages.batchGenerateFailed') || '批量生成失败: ') + error.message, 'error')
       this.hideProgress()
     } finally {
       this.isGenerating = false
@@ -1468,7 +1544,8 @@ export class DirectorPage extends BasePage {
     const api = this.getApi()
     if (!api?.visionApiKey) {
       const sceneInput = this.getElement<HTMLTextAreaElement>('directorSceneInput')?.value.trim()
-      return sceneInput || '请详细描述图片中的场景、人物、环境和氛围。'
+      const defaultDescription = this.t('director.prompts.defaultSceneDescription') || '请详细描述图片中的场景、人物、环境和氛围。'
+      return sceneInput || defaultDescription
     }
 
     const images = this.referenceImages.map(img => ({
@@ -1476,8 +1553,9 @@ export class DirectorPage extends BasePage {
       mimeType: img.mimeType || 'image/jpeg'
     }))
 
-    const analysisPrompt = images.length > 1
-      ? `请详细分析这${images.length}张参考图片，包括：
+    // Analysis prompts for vision API - these are intentionally detailed
+    const multiImagePrompt = this.t('director.prompts.analyzeMultipleImages', { count: images.length }) || 
+      `请详细分析这${images.length}张参考图片，包括：
 1. 人物特征（面部特征、发型、衣着、姿态）
 2. 场景环境（地点、光线、氛围）
 3. 画面构图和视角
@@ -1485,13 +1563,17 @@ export class DirectorPage extends BasePage {
 5. 各图片之间的关联性和风格一致性
 
 请用简洁的英文描述，以便后续生成分镜使用。`
-      : `请详细分析这张图片，包括：
+    
+    const singleImagePrompt = this.t('director.prompts.analyzeSingleImage') ||
+      `请详细分析这张图片，包括：
 1. 人物特征（面部特征、发型、衣着、姿态）
 2. 场景环境（地点、光线、氛围）
 3. 画面构图和视角
 4. 色调和风格
 
 请用简洁的英文描述，以便后续生成分镜使用。`
+
+    const analysisPrompt = images.length > 1 ? multiImagePrompt : singleImagePrompt
 
     return new Promise((resolve, reject) => {
       let result = ''
@@ -1554,7 +1636,7 @@ Panel Descriptions:
 ${panelPrompts.join('\n')}
 
 Important Instructions:
-- Each panel should have '分镜X' label in the top-left corner
+- Each panel should have 'Panel X' label in the top-left corner
 - No speech bubbles, no dialogue text
 - No timecode, no subtitles
 - Consistent character appearance across all panels
@@ -1641,7 +1723,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
       return result.urls[0]
     }
 
-    throw new Error(result.error || '生成失败')
+    throw new Error(result.error || (this.t('director.messages.generateFailedShort') || '生成失败'))
   }
 
   // ==================== 结果显示 ====================
@@ -1682,7 +1764,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
           <div class="w-64 h-2 bg-white bg-opacity-20 rounded-full mx-auto overflow-hidden">
             <div id="directorProgressBar" class="h-full bg-gradient-to-r from-blue-400 to-purple-500 rounded-full transition-all duration-500" style="width: 0%"></div>
           </div>
-          <p class="text-white opacity-50 text-sm mt-2" id="directorProgressStep">步骤 1/4</p>
+          <p class="text-white opacity-50 text-sm mt-2" id="directorProgressStep">${this.t('director.progress.step', { current: 1, total: 4 }) || '步骤 1/4'}</p>
           
           <!-- 资产面板容器（点击打开弹窗） -->
           <div class="mt-6 max-w-lg mx-auto space-y-3">
@@ -1738,7 +1820,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
       progressBar.style.width = `${(current / total) * 100}%`
     }
     if (progressStep) {
-      progressStep.textContent = `步骤 ${current}/${total}`
+      progressStep.textContent = this.t('director.progress.step', { current, total }) || `步骤 ${current}/${total}`
     }
   }
 
@@ -1921,21 +2003,25 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
 
     if (result.success && result.imageData) {
       const imageSrc = this.getImageSrc(result.imageData)
+      const comicPanelAlt = this.t('director.labels.comicPanel', { index: index + 1 }) || `漫画分镜 ${index + 1}`
+      const downloadTitle = this.t('director.buttons.downloadImage') || '下载图片'
+      const viewTitle = this.t('director.buttons.viewLarge') || '查看大图'
+      const successText = this.t('director.labels.generateSuccess') || '生成成功'
       card.innerHTML = `
         <div class="relative group">
-          <img src="${imageSrc}" alt="漫画分镜 ${index + 1}" class="w-full h-48 object-cover rounded-lg mb-2" loading="lazy">
+          <img src="${imageSrc}" alt="${comicPanelAlt}" class="w-full h-48 object-cover rounded-lg mb-2" loading="lazy">
           <div class="absolute inset-0 bg-black bg-opacity-50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center space-x-2">
-            <button class="download-single bg-white bg-opacity-20 hover:bg-opacity-30 text-white p-2 rounded-lg transition-all" data-index="${index}" title="下载图片">
+            <button class="download-single bg-white bg-opacity-20 hover:bg-opacity-30 text-white p-2 rounded-lg transition-all" data-index="${index}" title="${downloadTitle}">
               <i class="fas fa-download"></i>
             </button>
-            <button class="preview-result bg-white bg-opacity-20 hover:bg-opacity-30 text-white p-2 rounded-lg transition-all" data-index="${index}" title="查看大图">
+            <button class="preview-result bg-white bg-opacity-20 hover:bg-opacity-30 text-white p-2 rounded-lg transition-all" data-index="${index}" title="${viewTitle}">
               <i class="fas fa-expand"></i>
             </button>
           </div>
         </div>
         <p class="text-white text-xs truncate">${result.prompt}</p>
         <div class="flex items-center justify-between mt-2">
-          <span class="text-green-400 text-xs"><i class="fas fa-check-circle mr-1"></i>生成成功</span>
+          <span class="text-green-400 text-xs"><i class="fas fa-check-circle mr-1"></i>${successText}</span>
           <span class="text-gray-400 text-xs">#${index + 1}</span>
         </div>
       `
@@ -1950,6 +2036,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
         previewBtn.addEventListener('click', () => this.previewResult(index))
       }
     } else {
+      const failedText = this.t('director.labels.generateFailed') || '生成失败'
       card.innerHTML = `
         <div class="h-48 bg-red-500 bg-opacity-20 rounded-lg flex items-center justify-center mb-2 relative">
           <i class="fas fa-exclamation-triangle text-red-400 text-2xl"></i>
@@ -1957,7 +2044,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
         </div>
         <p class="text-white text-xs truncate mb-2">${result.prompt}</p>
         <div class="bg-red-600 bg-opacity-20 rounded p-2">
-          <p class="text-red-300 text-xs">${result.error || '生成失败'}</p>
+          <p class="text-red-300 text-xs">${result.error || failedText}</p>
         </div>
       `
     }
@@ -1973,7 +2060,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
     const downloadAllBtn = this.getElement<HTMLElement>('directorDownloadAllBtn')
 
     if (countSpan) {
-      countSpan.textContent = `成功 ${successCount}/${totalCount} 张`
+      countSpan.textContent = this.t('director.labels.successCount', { success: successCount, total: totalCount }) || `成功 ${successCount}/${totalCount} 张`
     }
     if (downloadAllBtn) {
       if (successCount > 1) {
@@ -2051,11 +2138,11 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
   downloadAllResults(): void {
     const successResults = this.generatedResults.filter(r => r.success)
     if (successResults.length === 0) {
-      this.showToast('没有可下载的图片', 'warning')
+      this.showToast(this.t('director.messages.noDownloadableImages') || '没有可下载的图片', 'warning')
       return
     }
 
-    this.showToast(`开始下载 ${successResults.length} 张图片...`, 'info')
+    this.showToast(this.t('director.messages.startDownloading', { count: successResults.length }) || `开始下载 ${successResults.length} 张图片...`, 'info')
 
     successResults.forEach((result, i) => {
       setTimeout(() => {
@@ -2088,7 +2175,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
         <div class="space-y-4">
           <div class="relative group">
             <img src="${imageSrc}" 
-                 alt="生成的漫画页面" 
+                 alt="${this.t('director.labels.generatedComicPage') || '生成的漫画页面'}" 
                  class="w-full rounded-lg shadow-lg cursor-pointer"
                  onclick="window.directorPage?.previewCurrentResult()">
             <div class="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all rounded-lg flex items-center justify-center">
@@ -2098,11 +2185,11 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
           <div class="flex justify-center space-x-4">
             <button id="directorDownloadBtn" 
                     class="px-6 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors">
-              <i class="fas fa-download mr-2"></i>下载图片
+              <i class="fas fa-download mr-2"></i>${this.t('director.buttons.downloadImage') || '下载图片'}
             </button>
             <button id="directorRegenerateBtn" 
                     class="px-6 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors">
-              <i class="fas fa-redo mr-2"></i>重新生成
+              <i class="fas fa-redo mr-2"></i>${this.t('director.buttons.regenerate') || '重新生成'}
             </button>
           </div>
         </div>
@@ -2153,10 +2240,11 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
       if (result.success && result.imageData) {
         const thumbSrc = this.getImageSrc(result.imageData)
         const isActive = index === this.currentResultIndex
+        const thumbAlt = this.t('director.labels.imageNumber', { index: index + 1 }) || `第${index + 1}张`
         thumbnailsHtml += `
           <div class="cursor-pointer rounded-lg overflow-hidden border-2 transition-all ${isActive ? 'border-blue-400 ring-2 ring-blue-400' : 'border-transparent opacity-60 hover:opacity-100'}"
                onclick="window.directorPage?.switchToResult(${index})">
-            <img src="${thumbSrc}" alt="第${index + 1}张" class="w-16 h-16 object-cover">
+            <img src="${thumbSrc}" alt="${thumbAlt}" class="w-16 h-16 object-cover">
           </div>
         `
       } else {
@@ -2170,16 +2258,22 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
       }
     })
 
+    const successCountText = this.t('director.labels.successCount', { success: successCount, total: totalCount }) || `成功 ${successCount}/${totalCount} 张`
+    const currentCountText = this.t('director.labels.currentImage', { current: this.currentResultIndex + 1, total: totalCount }) || `第 ${this.currentResultIndex + 1}/${totalCount} 张`
+    const downloadCurrentText = this.t('director.buttons.downloadCurrent') || '下载当前'
+    const downloadAllText = this.t('director.buttons.downloadAll') || '下载全部'
+    const regenerateText = this.t('director.buttons.regenerate') || '重新生成'
+    
     resultArea.innerHTML = `
       <div class="space-y-4">
         <!-- 统计信息 -->
         <div class="flex items-center justify-between text-white">
           <span class="opacity-70">
             <i class="fas fa-images mr-2"></i>
-            成功 ${successCount}/${totalCount} 张
+            ${successCountText}
           </span>
           <span class="text-sm opacity-50" id="directorResultCounter">
-            第 ${this.currentResultIndex + 1}/${totalCount} 张
+            ${currentCountText}
           </span>
         </div>
 
@@ -2187,7 +2281,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
         <div class="relative group">
           <img id="directorMainImage" 
                src="${imageSrc}" 
-               alt="生成的漫画页面" 
+               alt="${this.t('director.labels.generatedComicPage') || '生成的漫画页面'}" 
                class="w-full rounded-lg shadow-lg cursor-pointer"
                onclick="window.directorPage?.previewCurrentResult()">
           <div class="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all rounded-lg flex items-center justify-center">
@@ -2219,15 +2313,15 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
         <div class="flex justify-center space-x-4 flex-wrap gap-2">
           <button id="directorDownloadCurrentBtn" 
                   class="px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors text-sm">
-            <i class="fas fa-download mr-2"></i>下载当前
+            <i class="fas fa-download mr-2"></i>${downloadCurrentText}
           </button>
           <button id="directorDownloadAllBtn" 
                   class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors text-sm">
-            <i class="fas fa-file-archive mr-2"></i>下载全部 (${successCount})
+            <i class="fas fa-file-archive mr-2"></i>${downloadAllText} (${successCount})
           </button>
           <button id="directorRegenerateBtn" 
                   class="px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-lg transition-colors text-sm">
-            <i class="fas fa-redo mr-2"></i>重新生成
+            <i class="fas fa-redo mr-2"></i>${regenerateText}
           </button>
         </div>
       </div>
@@ -2310,7 +2404,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
     // 更新计数
     const counterEl = document.getElementById('directorResultCounter')
     if (counterEl) {
-      counterEl.textContent = `第 ${this.currentResultIndex + 1}/${this.generatedResults.length} 张`
+      counterEl.textContent = this.t('director.labels.currentImage', { current: this.currentResultIndex + 1, total: this.generatedResults.length }) || `第 ${this.currentResultIndex + 1}/${this.generatedResults.length} 张`
     }
   }
 
@@ -2321,7 +2415,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
   downloadCurrentResult(): void {
     const currentResult = this.generatedResults[this.currentResultIndex]
     if (!currentResult || !currentResult.success || !currentResult.imageData) {
-      this.showToast('当前图片无法下载', 'warning')
+      this.showToast(this.t('director.messages.cannotDownloadCurrent') || '当前图片无法下载', 'warning')
       return
     }
 
@@ -2343,15 +2437,91 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
   }
 
   /**
-   * 预览图片（调用全局预览功能）
+   * 全屏预览图片
+   * @public 供外部调用
+   * @param imageSrc 图片源（URL 或 base64）
    */
-  private previewImage(src: string): void {
-    const viewImage = (this.app as any).viewImage
-    if (viewImage) {
-      viewImage([src], 0)
-    } else {
-      window.open(src, '_blank')
+  public previewImage(imageSrc: string): void {
+    // 创建遮罩层
+    const overlay = document.createElement('div')
+    overlay.className = 'fixed inset-0 flex items-center justify-center cursor-pointer'
+    overlay.style.cssText = `
+      z-index: 70000;
+      background-color: rgba(0, 0, 0, 0.9);
+      opacity: 0;
+      transition: opacity 0.3s ease-in-out;
+    `
+
+    // 创建图片元素
+    const img = document.createElement('img')
+    img.src = imageSrc
+    img.className = 'object-contain'
+    img.style.cssText = `
+      max-width: 90vw;
+      max-height: 90vh;
+      opacity: 0;
+      transform: scale(0.9);
+      transition: opacity 0.3s ease-in-out, transform 0.3s ease-in-out;
+    `
+    // 阻止点击图片关闭
+    img.onclick = (e: MouseEvent) => e.stopPropagation()
+
+    // 创建关闭按钮
+    const closeBtn = document.createElement('button')
+    closeBtn.className = 'absolute top-4 right-4 text-white text-3xl hover:text-gray-300 transition-colors'
+    closeBtn.style.cssText = `
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 8px;
+      line-height: 1;
+    `
+    closeBtn.innerHTML = '<i class="fas fa-times"></i>'
+    closeBtn.onclick = (e: MouseEvent) => {
+      e.stopPropagation()
+      closeOverlay()
     }
+
+    // 关闭函数（带动画）
+    const closeOverlay = (): void => {
+      // 移除 ESC 事件监听
+      document.removeEventListener('keydown', escHandler)
+      
+      // 渐出动画
+      overlay.style.opacity = '0'
+      img.style.opacity = '0'
+      img.style.transform = 'scale(0.9)'
+      
+      // 动画结束后移除元素
+      setTimeout(() => {
+        if (overlay.parentNode) {
+          overlay.remove()
+        }
+      }, 300)
+    }
+
+    // ESC 键关闭
+    const escHandler = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        closeOverlay()
+      }
+    }
+    document.addEventListener('keydown', escHandler)
+
+    // 点击遮罩层关闭
+    overlay.onclick = () => closeOverlay()
+
+    // 组装并添加到 DOM
+    overlay.appendChild(img)
+    overlay.appendChild(closeBtn)
+    document.body.appendChild(overlay)
+
+    // 触发渐入动画（需要在下一帧执行）
+    requestAnimationFrame(() => {
+      overlay.style.opacity = '1'
+      img.style.opacity = '1'
+      img.style.transform = 'scale(1)'
+    })
   }
 
   /**
@@ -2365,7 +2535,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
 
       this.app.addToHistory(
         'director',
-        description || '导演模式 - 自动分析',
+        description || (this.t('director.labels.directorModeAutoAnalysis') || '导演模式 - 自动分析'),
         successUrls,
         this.currentRatio
       )
@@ -2489,6 +2659,16 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
     }
   }
 
+  /**
+   * 立即保存状态（无防抖，用于页面失活时）
+   */
+  private saveCurrentStateImmediate(): void {
+    const pageStateManager = (window as any).pageStateManager
+    if (pageStateManager?.savePageState) {
+      pageStateManager.savePageState('director', this.collectState())
+    }
+  }
+
   // ==================== 页面生命周期 ====================
 
   /**
@@ -2549,8 +2729,8 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
    * 页面停用
    */
   onDeactivate(): void {
-    this.saveCurrentState()
-    console.log('导演模式页面已停用')
+    console.log('导演模式页面已失活')
+    this.saveCurrentStateImmediate()
   }
 
   /**
@@ -2580,16 +2760,16 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
     const content = this.lastAnalysisResult || this.lastComicPrompt
     
     if (!content) {
-      this.app.showToast?.('没有可复制的内容', 'warning')
+      this.app.showToast?.(this.t('director.messages.noCopyContent') || '没有可复制的内容', 'warning')
       return
     }
     
     try {
       await navigator.clipboard.writeText(content)
-      this.app.showToast?.('已复制到剪贴板', 'success')
+      this.app.showToast?.(this.t('common.copySuccess') || '已复制到剪贴板', 'success')
     } catch (error) {
       console.error('[DirectorPage] 复制失败:', error)
-      this.app.showToast?.('复制失败', 'error')
+      this.app.showToast?.(this.t('common.copyFailed') || '复制失败', 'error')
     }
   }
 
@@ -2661,10 +2841,10 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
         
         this.saveCustomGalleryToStorage()
         this.loadGalleryImages()
-        this.app.showToast?.(`已添加 ${files.length} 张图片`, 'success')
+        this.app.showToast?.(this.t('director.messages.addedImages', { count: files.length }) || `已添加 ${files.length} 张图片`, 'success')
       } catch (error) {
         console.error('[DirectorPage] 添加图片失败:', error)
-        this.app.showToast?.('添加图片失败', 'error')
+        this.app.showToast?.(this.t('director.messages.addImagesFailed') || '添加图片失败', 'error')
       }
     }
     
@@ -2712,7 +2892,8 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
   deleteSelectedCustomImages(): void {
     if (this.galleryDeleteSelection.length === 0) return
     
-    if (!confirm(`确定要删除选中的 ${this.galleryDeleteSelection.length} 张图片吗？`)) {
+    const confirmMsg = this.t('director.messages.confirmDeleteImages', { count: this.galleryDeleteSelection.length }) || `确定要删除选中的 ${this.galleryDeleteSelection.length} 张图片吗？`
+    if (!confirm(confirmMsg)) {
       return
     }
     
@@ -2726,10 +2907,10 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
       this.updateDeleteButtonState()
       this.loadGalleryImages()
       
-      this.app.showToast?.('已删除选中的图片', 'success')
+      this.app.showToast?.(this.t('director.messages.deletedSelectedImages') || '已删除选中的图片', 'success')
     } catch (error) {
       console.error('[DirectorPage] 删除图片失败:', error)
-      this.app.showToast?.('删除图片失败', 'error')
+      this.app.showToast?.(this.t('director.messages.deleteImagesFailed') || '删除图片失败', 'error')
     }
   }
 
@@ -2776,7 +2957,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
       if (prefixInput) prefixInput.value = template.prefix || ''
       if (suffixInput) suffixInput.value = template.suffix || ''
       if (negativeInput) negativeInput.value = template.negative || ''
-      if (titleEl) titleEl.textContent = '编辑模板'
+      if (titleEl) titleEl.textContent = this.t('director.templates.editTemplate') || '编辑模板'
       
       // 内置模板显示重置按钮，自定义模板显示删除按钮
       if (isBuiltin) {
@@ -2791,7 +2972,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
       if (prefixInput) prefixInput.value = ''
       if (suffixInput) suffixInput.value = ''
       if (negativeInput) negativeInput.value = ''
-      if (titleEl) titleEl.textContent = '新建模板'
+      if (titleEl) titleEl.textContent = this.t('director.templates.newTemplate') || '新建模板'
       deleteBtn?.classList.add('hidden')
       resetBtn?.classList.add('hidden')
     }
@@ -2833,7 +3014,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
     const negative = negativeInput?.value?.trim() || ''
     
     if (!name) {
-      this.app.showToast?.('请填写模板名称', 'warning')
+      this.app.showToast?.(this.t('director.messages.enterTemplateName') || '请填写模板名称', 'warning')
       return
     }
     
@@ -2859,10 +3040,10 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
       this.closeTemplateEditor()
       this.renderTemplateList()
       
-      this.app.showToast?.('模板已保存', 'success')
+      this.app.showToast?.(this.t('director.messages.templateSaved') || '模板已保存', 'success')
     } catch (error) {
       console.error('[DirectorPage] 保存模板失败:', error)
-      this.app.showToast?.('保存模板失败', 'error')
+      this.app.showToast?.(this.t('director.messages.templateSaveFailed') || '保存模板失败', 'error')
     }
   }
 
@@ -2872,7 +3053,8 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
   deleteCurrentTemplate(): void {
     if (!this.editingTemplateKey || this.editingTemplateIsBuiltin) return
     
-    if (!confirm('确定要删除这个模板吗？')) return
+    const confirmMsg = this.t('director.messages.confirmDeleteTemplate') || '确定要删除这个模板吗？'
+    if (!confirm(confirmMsg)) return
     
     try {
       delete this.customTemplates[this.editingTemplateKey]
@@ -2881,10 +3063,10 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
       this.closeTemplateEditor()
       this.renderTemplateList()
       
-      this.app.showToast?.('模板已删除', 'success')
+      this.app.showToast?.(this.t('director.messages.templateDeleted') || '模板已删除', 'success')
     } catch (error) {
       console.error('[DirectorPage] 删除模板失败:', error)
-      this.app.showToast?.('删除模板失败', 'error')
+      this.app.showToast?.(this.t('director.messages.templateDeleteFailed') || '删除模板失败', 'error')
     }
   }
 
@@ -2894,7 +3076,8 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
   resetCurrentTemplate(): void {
     if (!this.editingTemplateKey || !this.editingTemplateIsBuiltin) return
     
-    if (!confirm('确定要恢复此模板的默认值吗？')) return
+    const confirmMsg = this.t('director.messages.confirmResetTemplate') || '确定要恢复此模板的默认值吗？'
+    if (!confirm(confirmMsg)) return
     
     try {
       const original = this.defaultStyleTemplates[this.editingTemplateKey]
@@ -2918,11 +3101,11 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
         if (suffixInput) suffixInput.value = original.suffix
         if (negativeInput) negativeInput.value = original.negative
         
-        this.app.showToast?.('已恢复默认值', 'success')
+        this.app.showToast?.(this.t('director.messages.restoredDefaults') || '已恢复默认值', 'success')
       }
     } catch (error) {
       console.error('[DirectorPage] 重置模板失败:', error)
-      this.app.showToast?.('重置失败', 'error')
+      this.app.showToast?.(this.t('director.messages.resetFailed') || '重置失败', 'error')
     }
   }
 
@@ -2977,9 +3160,9 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
         if (result?.success) {
           this.loadTemplatesFromStorage()
           this.renderTemplateList()
-          this.app.showToast?.(`已导入模板`, 'success')
+          this.app.showToast?.(this.t('director.messages.templatesImported') || '已导入模板', 'success')
         } else {
-          this.app.showToast?.('导入失败: ' + (result?.error || '未知错误'), 'error')
+          this.app.showToast?.((this.t('director.messages.importFailed') || '导入失败: ') + (result?.error || (this.t('common.unknownError') || '未知错误')), 'error')
         }
       } else {
         // 浏览器环境：使用文件选择
@@ -3007,10 +3190,10 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
             this.saveTemplatesToStorage()
             this.renderTemplateList()
             
-            this.app.showToast?.(`已导入 ${count} 个模板`, 'success')
+            this.app.showToast?.(this.t('director.messages.importedTemplatesCount', { count }) || `已导入 ${count} 个模板`, 'success')
           } catch (error) {
             console.error('[DirectorPage] 导入失败:', error)
-            this.app.showToast?.('导入失败: 无效的文件格式', 'error')
+            this.app.showToast?.(this.t('director.messages.importFailedInvalidFormat') || '导入失败: 无效的文件格式', 'error')
           }
         }
         
@@ -3018,7 +3201,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
       }
     } catch (error) {
       console.error('[DirectorPage] 导入模板失败:', error)
-      this.app.showToast?.('导入失败', 'error')
+      this.app.showToast?.(this.t('director.messages.importFailed') || '导入失败', 'error')
     }
   }
 
@@ -3030,7 +3213,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
       const allTemplates = { ...this.customTemplates }
       
       if (Object.keys(allTemplates).length === 0) {
-        this.app.showToast?.('没有可导出的自定义模板', 'warning')
+        this.app.showToast?.(this.t('director.messages.noTemplatesToExport') || '没有可导出的自定义模板', 'warning')
         return
       }
       
@@ -3041,9 +3224,9 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
         if (result?.canceled) return
         
         if (result?.success) {
-          this.app.showToast?.('模板已导出到: ' + result.path, 'success')
+          this.app.showToast?.((this.t('director.messages.templatesExportedTo') || '模板已导出到: ') + result.path, 'success')
         } else {
-          this.app.showToast?.('导出失败: ' + (result?.error || '未知错误'), 'error')
+          this.app.showToast?.((this.t('director.messages.exportFailed') || '导出失败: ') + (result?.error || (this.t('common.unknownError') || '未知错误')), 'error')
         }
       } else {
         // 浏览器环境：下载 JSON 文件
@@ -3057,11 +3240,11 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
         a.click()
         
         URL.revokeObjectURL(url)
-        this.app.showToast?.('模板已导出', 'success')
+        this.app.showToast?.(this.t('director.messages.templatesExported') || '模板已导出', 'success')
       }
     } catch (error) {
       console.error('[DirectorPage] 导出模板失败:', error)
-      this.app.showToast?.('导出失败', 'error')
+      this.app.showToast?.(this.t('director.messages.exportFailed') || '导出失败', 'error')
     }
   }
 
