@@ -1,140 +1,267 @@
-# AI图片大师 - 完整源码参考
+# AI Image Master
 
-> 完整扒取自 https://imagen.apiyi.com/ (2025-12-01)
-> 使用 Puppeteer MCP + Fetch 工具完整扒取
-> 仅供学习参考使用
+<div align="center">
 
-## 🚀 快速启动
+![TypeScript](https://img.shields.io/badge/TypeScript-95%25-3178C6?style=flat-square&logo=typescript&logoColor=white)
+![Electron](https://img.shields.io/badge/Electron-35.0.0-47848F?style=flat-square&logo=electron&logoColor=white)
+![Vite](https://img.shields.io/badge/Vite-6.2.0-646CFF?style=flat-square&logo=vite&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
 
-```bash
-cd "D:\tecx\text\nano banann"
-python -m http.server 8888
-# 浏览器访问 http://localhost:8888
-```
+**AI 图片生成桌面应用 - 支持多种 AI 模型**
 
-## 📁 完整项目结构
+[功能特性](#-功能特性) • [快速开始](#-快速开始) • [技术架构](#-技术架构) • [项目结构](#-项目结构)
 
-```
-nano banann/
-├── index.html              ← 主页面 (完整版 95KB)
-├── manifest.json           ← PWA 配置
-├── version.json            ← 版本信息
-├── sitemap.xml             ← 站点地图
-├── browserconfig.xml       ← 浏览器配置
-├── debug-helper.js         ← 调试工具
-├── README.md               ← 说明文档
-│
-├── js/                     ← JavaScript 模块
-│   ├── api.js              ← API 调用类 AIImageAPI (129KB)
-│   ├── app.js              ← 主应用类 AIImageApp (123KB)
-│   ├── components.js       ← UI 组件类 UIComponents
-│   ├── modules/
-│   │   ├── generate-page.js    ← 图片生成页面 (70KB)
-│   │   ├── batch-page.js       ← 批量生成页面 (65KB)
-│   │   ├── history-page.js     ← 历史记录页面 (36KB)
-│   │   ├── compare-page.js     ← 模型对比页面 (38KB)
-│   │   └── prompt-templates.js ← 提示词模板 (11KB)
-│   └── services/
-│       └── r2-storage.js       ← R2 云存储服务 (14KB)
-│
-├── css/                    ← 样式文件
-│   ├── main.css            ← CSS 入口文件
-│   ├── base.css            ← 基础样式 (渐变、毛玻璃)
-│   ├── components.css      ← 组件样式 (按钮、模态框)
-│   ├── animations.css      ← 动画效果
-│   └── responsive.css      ← 响应式样式 (9KB)
-│
-├── images/                 ← 图片资源
-│   ├── logo.png            ← 网站 Logo
-│   ├── favicon.*           ← 各种尺寸的图标
-│   ├── apple-touch-icon.png ← iOS 图标
-│   ├── add-key-cost-by-call.png ← API 计费说明图
-│   └── templates/          ← 提示词模板预览图 (12张)
-│       ├── shouban.png     ← 手办场景
-│       ├── tiezhi.png      ← 贴纸效果
-│       ├── duoyuansu.png   ← 多元素融合
-│       ├── simuphot.png    ← 模拟自拍
-│       ├── 3dprint.png     ← 3D打印场景
-│       ├── dongshen.png    ← 动漫转真人
-│       ├── yinhua.png      ← 提取印花
-│       ├── koutu.png       ← 精细抠图
-│       ├── gaoqing.png     ← 模糊变清晰
-│       ├── santu.png       ← 三视图
-│       ├── yuansu.png      ← 元素替换
-│       └── yizhi.png       ← 图案移植
-│
-└── data/
-    └── prompt-templates.json ← 完整提示词模板数据
-```
-
-## 🛠 技术栈
-
-| 技术 | 说明 |
-|------|------|
-| Tailwind CSS | CDN 方式引入，无需编译 |
-| Font Awesome 6 | 图标库 |
-| JSZip | 批量下载压缩功能 |
-| 原生 ES6 Class | 无框架依赖，纯 JavaScript |
-| LocalStorage | 本地历史记录存储 |
-| R2 Storage | Cloudflare R2 云存储集成 |
-| PWA | 渐进式 Web 应用支持 |
-
-## 🎯 核心功能模块
-
-### 1. 图片生成 (generate-page.js)
-- 支持多种 AI 模型 (Gemini, Seedream, Sora, Flux)
-- 参考图上传 (支持拖拽、粘贴、多图)
-- 多种比例和分辨率选择
-- 实时进度显示
-
-### 2. 批量生成 (batch-page.js)
-- 抽卡模式 (同一提示词生成多张)
-- 多提示词模式 (批量不同提示词)
-- 并发控制 (最多3个同时)
-- 费用预估
-
-### 3. 模型对比 (compare-page.js)
-- 双模型同时生成对比
-- 用户评价功能
-- 自动同步参考图
-
-### 4. 历史记录 (history-page.js)
-- 自动保存生成记录
-- R2 云端存储迁移
-- 批量下载和删除
-
-### 5. API 管理 (api.js)
-- 多模型支持和切换
-- 智能超时和重试机制
-- 图片上传到 R2
-- 网络可访问性检测
-
-## 🎨 UI/UX 特点
-
-- **紫色渐变背景** - 视觉冲击力强
-- **毛玻璃效果** - backdrop-filter: blur()
-- **响应式设计** - 移动端适配完善
-- **无障碍优化** - ARIA 属性支持
-- **动画效果** - 流畅的交互反馈
-
-## 📝 学习要点
-
-1. **模块化架构** - 每个功能独立模块
-2. **事件驱动** - CustomEvent 模块间通信
-3. **文件上传** - FileReader + Base64 转换
-4. **批量并发** - Promise.all + 队列控制
-5. **本地存储** - localStorage + 存储优化
-6. **云端集成** - R2 Storage API 使用
-7. **版本管理** - 自动检测更新机制
-
-## ⚠️ 注意事项
-
-1. 需要配置有效的 API Key 才能使用生成功能
-2. R2 云存储需要配置 Worker URL
-3. 部分模型有使用限制和计费说明
-4. 本地运行需要 HTTP 服务器 (CORS 限制)
+</div>
 
 ---
 
-*扒取时间: 2025-12-01*
-*扒取工具: Cursor + Puppeteer MCP + Fetch*
+## ✨ 功能特性
+
+### 🎨 图片生成
+- **多模型支持**: Gemini, Seedream, Sora, Flux Kontext
+- **参考图上传**: 拖拽、粘贴、多图支持
+- **智能比例**: 自动检测最佳比例
+- **多分辨率**: 1K / 2K / 4K 可选
+
+### 🎬 导演模式 (Director Mode)
+- **九宫格分镜**: 3×3 电影级分镜生成
+- **剧场版动画**: 日式动画风格，权重标记语法
+- **电影级模板**: 分形几何原则，角色一致性保证
+- **Sora2 视频提示词**: 一键生成视频提示词
+- **多风格模板**: 动画、漫画、电影、韩漫、美漫、插画
+
+### 📦 批量生成
+- **抽卡模式**: 同一提示词生成多张
+- **多提示词模式**: 批量不同提示词
+- **并发控制**: 智能队列管理
+
+### 🔍 模型对比
+- 双模型同时生成对比
+- 参考图自动同步
+
+### 📜 历史记录
+- 自动保存生成记录
+- R2 云端存储
+- 批量下载/删除
+- 点击预览大图
+
+### 🖼️ 图像理解
+- 多模型图像分析
+- 流式输出响应
+- 自定义提示词
+
+---
+
+## 🚀 快速开始
+
+### 环境要求
+
+- Node.js >= 18.0.0
+- npm >= 9.0.0
+
+### 安装依赖
+
+```bash
+npm install
+```
+
+### 开发模式
+
+```bash
+npm run dev
+```
+
+### 构建应用
+
+```bash
+# 构建渲染进程
+npm run build:vite
+
+# 构建 Electron 应用
+npm run build
+
+# 打包为安装程序
+npm run package
+```
+
+---
+
+## 🏗️ 技术架构
+
+| 层级 | 技术 | 说明 |
+|------|------|------|
+| **框架** | Electron 35 | 跨平台桌面应用 |
+| **构建** | Vite 6 + electron-vite | 快速开发构建 |
+| **语言** | TypeScript 5.7 | 类型安全 |
+| **样式** | Tailwind CSS 4 | 原子化 CSS |
+| **存储** | Cloudflare R2 | 云端图片存储 |
+| **测试** | Vitest + Playwright | 单元测试 + E2E |
+
+### 架构特点
+
+```
+┌─────────────────────────────────────────────────────┐
+│                    Electron Main                     │
+│  ┌───────────────┐  ┌───────────────┐  ┌─────────┐ │
+│  │  Auto Updater │  │  IPC Handlers │  │ Dialogs │ │
+│  └───────────────┘  └───────────────┘  └─────────┘ │
+└─────────────────────────────────────────────────────┘
+                           │
+                    IPC Bridge (Preload)
+                           │
+┌─────────────────────────────────────────────────────┐
+│                  Renderer Process                    │
+│  ┌─────────────────────────────────────────────┐   │
+│  │              ServiceBridge (TS)              │   │
+│  │  ┌─────────┐ ┌─────────┐ ┌───────────────┐ │   │
+│  │  │ API Svc │ │ Storage │ │ HistoryManager│ │   │
+│  │  └─────────┘ └─────────┘ └───────────────┘ │   │
+│  └─────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────┐   │
+│  │                 Pages (TS)                   │   │
+│  │  ┌──────────┐ ┌──────────┐ ┌────────────┐  │   │
+│  │  │ Generate │ │ Director │ │  History   │  │   │
+│  │  │   Page   │ │   Page   │ │    Page    │  │   │
+│  │  └──────────┘ └──────────┘ └────────────┘  │   │
+│  └─────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────┘
+```
+
+---
+
+## 📁 项目结构
+
+```
+ai-image-master/
+├── src/
+│   ├── main/                    # Electron 主进程
+│   │   └── index.ts             # 主进程入口
+│   ├── preload/                 # 预加载脚本
+│   │   └── index.ts             # IPC 桥接
+│   └── renderer/                # 渲染进程
+│       ├── src/
+│       │   ├── pages/           # 页面模块
+│       │   │   ├── GeneratePage.ts    # 图片生成
+│       │   │   ├── DirectorPage.ts    # 导演模式 ⭐
+│       │   │   ├── BatchPage.ts       # 批量生成
+│       │   │   ├── HistoryPage.ts     # 历史记录
+│       │   │   ├── ComparePage.ts     # 模型对比
+│       │   │   └── UnderstandPage.ts  # 图像理解
+│       │   ├── services/        # 服务层
+│       │   │   ├── api/         # API 服务
+│       │   │   ├── storage/     # 存储服务
+│       │   │   └── i18n/        # 国际化
+│       │   ├── features/        # 功能模块
+│       │   │   ├── model-selector/    # 模型选择器
+│       │   │   ├── tab-manager/       # 标签管理
+│       │   │   └── history/           # 历史数据服务
+│       │   ├── core/            # 核心模块
+│       │   │   ├── AppBootstrap.ts    # 应用引导
+│       │   │   └── VirtualScroller.ts # 虚拟滚动
+│       │   └── utils/           # 工具函数
+│       ├── public/              # 静态资源
+│       │   ├── i18n/            # 多语言文件
+│       │   ├── css/             # 样式文件
+│       │   └── data/            # 配置数据
+│       └── index.html           # HTML 入口
+├── tests/                       # 测试文件
+├── e2e/                         # E2E 测试
+├── docs/                        # 文档
+│   └── plans/                   # 开发计划
+└── dist/                        # 构建输出
+```
+
+---
+
+## 🎬 导演模式详解
+
+### 风格模板
+
+| 模板 | 说明 | 特点 |
+|------|------|------|
+| `theatrical` | 剧场版动画 | 日式权重标记 `((style:1.5))` |
+| `cinematic` | 电影级九宫格 | 分形几何，角色一致性 |
+| `anime` | 动画截图 | 赛璐璐着色 |
+| `manga` | 漫画分镜 | 黑白墨线，网点 |
+| `movie` | 电影分镜 | 宽银幕，戏剧光影 |
+| `webtoon` | 韩漫/条漫 | 全彩，纵向排版 |
+
+### JSON Shots 系统
+
+```typescript
+// AI 生成结构化分镜
+{
+  "shots": [
+    {
+      "shot_number": "分镜1",
+      "prompt_text": "Wide shot, character stands..."
+    },
+    // ... 9个分镜
+  ],
+  "style_template": "theatrical",
+  "negative_prompt": "..."
+}
+```
+
+### Sora2 视频提示词
+
+```
+@角色卡 The video plays out in a continuous 9-part sequence:
+1. Wide shot: character in the rain...
+2. Over-the-shoulder: looking at city...
+...
+9. Back view: walking away...
+```
+
+---
+
+## 🌍 国际化支持
+
+- 🇨🇳 简体中文 (zh-CN)
+- 🇹🇼 繁体中文 (zh-TW)
+- 🇺🇸 English (en)
+- 🇷🇺 Русский (ru)
+
+---
+
+## 📊 测试覆盖
+
+```bash
+# 运行单元测试
+npm test
+
+# 运行 E2E 测试
+npm run test:e2e
+
+# 查看测试覆盖率
+npm run test:coverage
+```
+
+当前覆盖率: **53%** (1281/1298 tests passing)
+
+---
+
+## 📝 开发日志
+
+### 2026-02-02
+- ✅ Director Mode 优化 - 电影级九宫格
+- ✅ 剧场版动画风格模板
+- ✅ JSON Shots 风格配置系统
+- ✅ Sora2 视频提示词生成
+- ✅ 历史页面缩略图点击预览
+- ✅ 参考图点击预览 (全页面)
+- ✅ i18n 多语言完善
+
+---
+
+## 📄 License
+
+MIT License - 详见 [LICENSE](LICENSE)
+
+---
+
+<div align="center">
+
+**Built with ❤️ using Electron + TypeScript + Vite**
+
+</div>
