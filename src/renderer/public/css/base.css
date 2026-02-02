@@ -1,0 +1,994 @@
+/* 基础样式 */
+
+/* ========================================
+   CYBERPUNK 2077 Design System
+   配色方案：深黑背景 + 赛博朋克黄强调色
+   ======================================== */
+
+:root {
+  --background: #0D0D0D;
+  --foreground: #FAFAFA;
+  --muted: #27272A;
+  --muted-foreground: #A1A1AA;
+  --accent: #FCE300;
+  --accent-foreground: #000000;
+  --border: #3F3F46;
+  /* CYBERPUNK 2077 COLORS */
+  --cyber-yellow: #FCE300;
+  --cyber-red: #FF003C;
+  --cyber-cyan: #00FFFF;
+  --cyber-magenta: #FF00FF;
+  --cyber-green: #00FF00;
+  /* NEON GLOW EFFECTS */
+  --neon-glow: 0 0 10px currentColor;
+  --neon-glow-strong: 0 0 10px currentColor, 0 0 20px currentColor, 0 0 40px currentColor;
+}
+
+/* 全局字体设置 - CYBERPUNK STYLE */
+body {
+  font-family: 'Exo 2', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  background-color: var(--background);
+  color: var(--foreground);
+}
+
+/* 标题字体 - Orbitron (几何科技感) */
+h1, h2, h3, .logo-text, .marquee-item, .text-hero, .text-massive {
+  font-family: 'Orbitron', 'Exo 2', 'Noto Sans SC', sans-serif;
+}
+
+/* ========================================
+   CYBERPUNK 扫描线效果 (CRT Scanlines)
+   ======================================== */
+
+/* 扫描线效果 - 轻微 */
+.scanlines {
+  position: relative;
+}
+
+.scanlines::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.1) 0px,
+    rgba(0, 0, 0, 0.1) 1px,
+    transparent 1px,
+    transparent 2px
+  );
+  pointer-events: none;
+  z-index: 100;
+}
+
+/* 强烈扫描线效果 */
+.scanlines-strong::before {
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.15) 0px,
+    rgba(0, 0, 0, 0.15) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+
+/* 彩色扫描线效果 (青色调) */
+.scanlines-cyber::before {
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 255, 255, 0.03) 0px,
+    rgba(0, 255, 255, 0.03) 1px,
+    transparent 1px,
+    transparent 2px
+  );
+}
+
+/* CRT 闪烁效果 */
+@keyframes crt-flicker {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.98; }
+}
+
+.crt-flicker {
+  animation: crt-flicker 0.1s infinite;
+}
+
+/* ========================================
+   Tailwind CSS 后备样式
+   当 Tailwind CDN 无法加载时使用
+   ======================================== */
+
+/* hidden 类 - 基础隐藏 */
+.hidden {
+    display: none !important;
+}
+
+/* 响应式显示类 - md 断点 (768px+) */
+@media (min-width: 768px) {
+    .md\:flex {
+        display: flex !important;
+    }
+    .md\:block {
+        display: block !important;
+    }
+    .md\:hidden {
+        display: none !important;
+    }
+    .md\:inline-flex {
+        display: inline-flex !important;
+    }
+}
+
+/* 响应式显示类 - lg 断点 (1024px+) */
+@media (min-width: 1024px) {
+    .lg\:block {
+        display: block !important;
+    }
+    .lg\:hidden {
+        display: none !important;
+    }
+    .lg\:flex {
+        display: flex !important;
+    }
+    .lg\:inline {
+        display: inline !important;
+    }
+}
+
+/* 背景纯色 - Kinetic Typography 风格（无渐变） */
+.gradient-bg {
+    background: var(--background);
+}
+
+/* 面板效果 - Kinetic Typography 风格（无毛玻璃） */
+.glass-effect {
+    background: var(--muted);
+    border: 2px solid var(--border);
+}
+
+/* 表单样式 */
+/* 自定义下拉框样式 - 排除 Choices.js 管理的 select 元素 */
+select:not(.model-select):not(.model-select-mobile) {
+    -moz-appearance: none;
+    -webkit-appearance: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6,9 12,15 18,9'%3e%3c/polyline%3e%3c/svg%3e");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    background-size: 16px;
+    padding-right: 40px;
+}
+
+select:not(.model-select):not(.model-select-mobile):focus {
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.2);
+}
+
+select:not(.model-select):not(.model-select-mobile) option {
+    background-color: var(--muted);
+    color: var(--foreground);
+    padding: 8px 12px;
+}
+
+select:not(.model-select):not(.model-select-mobile) option:checked {
+    background-color: var(--accent);
+    color: var(--accent-foreground);
+}
+
+/* 输入框和文本域样式 - Kinetic Typography 风格 */
+input[type="text"],
+input[type="password"],
+input[type="email"],
+textarea {
+    transition: all 0.2s ease;
+    background-color: var(--muted);
+    color: var(--foreground);
+    border: 2px solid var(--border);
+    border-radius: 0;
+}
+
+input[type="text"]::placeholder,
+input[type="password"]::placeholder,
+input[type="email"]::placeholder,
+textarea::placeholder {
+    color: var(--muted-foreground);
+}
+
+input[type="text"]:focus,
+input[type="password"]:focus,
+input[type="email"]:focus,
+textarea:focus {
+    outline: none;
+    box-shadow: none;
+    border-color: var(--accent);
+}
+
+/* ========================================
+   戏剧化输入框 - Kinetic Typography 核心特征
+   超大尺寸、底部边框、大字体
+   ======================================== */
+
+/* 戏剧化输入框 - 超大尺寸 */
+.input-dramatic {
+    height: 6rem; /* 96px */
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid var(--border);
+    border-radius: 0;
+    font-size: 2rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: -0.02em;
+    padding: 0;
+    color: var(--foreground);
+    transition: border-color 0.2s ease;
+}
+
+.input-dramatic::placeholder {
+    color: var(--muted);
+    text-transform: uppercase;
+}
+
+.input-dramatic:focus {
+    outline: none;
+    border-bottom-color: var(--cyber-cyan);
+    box-shadow: 0 2px 10px var(--cyber-cyan);
+}
+
+/* CYBERPUNK 输入框变体 */
+.input-cyber {
+    background: transparent;
+    border: 2px solid var(--border);
+    border-radius: 0;
+    color: var(--foreground);
+    transition: all 0.3s ease;
+}
+
+.input-cyber:focus {
+    outline: none;
+    border-color: var(--cyber-cyan);
+    box-shadow: 0 0 10px var(--cyber-cyan), inset 0 0 5px rgba(0, 255, 255, 0.1);
+}
+
+.input-cyber::placeholder {
+    color: var(--muted-foreground);
+}
+
+/* 戏剧化文本域 */
+.textarea-dramatic {
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid var(--border);
+    border-radius: 0;
+    font-size: 1.5rem;
+    font-weight: 500;
+    padding: 1rem 0;
+    min-height: 8rem;
+    resize: vertical;
+    color: var(--foreground);
+    transition: border-color 0.2s ease;
+}
+
+.textarea-dramatic::placeholder {
+    color: var(--muted);
+}
+
+.textarea-dramatic:focus {
+    outline: none;
+    border-bottom-color: var(--accent);
+}
+
+/* 输入框标签 - Kinetic Typography 风格 */
+.input-label {
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted-foreground);
+    margin-bottom: 0.5rem;
+}
+
+/* 按钮基础样式 - Kinetic Typography 风格 */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 3.5rem; /* 56px - 标准高度 */
+    padding: 0 2rem;
+    border-radius: 0;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: -0.025em;
+    transition: all 0.2s ease;
+    cursor: pointer;
+    border: 2px solid var(--border);
+    text-decoration: none;
+    font-size: 1rem;
+}
+
+/* 按钮悬停/激活状态 - CYBERPUNK 霓虹效果 */
+.btn:hover {
+    transform: scale(1.05);
+    box-shadow: 0 0 15px var(--cyber-yellow), 0 0 30px var(--cyber-yellow);
+    border-color: var(--cyber-yellow);
+}
+
+.btn:active {
+    transform: scale(0.95);
+    box-shadow: 0 0 10px var(--cyber-yellow);
+}
+
+/* CYBERPUNK 按钮变体 */
+.btn-cyber {
+    background: transparent;
+    border: 2px solid var(--cyber-yellow);
+    color: var(--cyber-yellow);
+    position: relative;
+    overflow: hidden;
+}
+
+.btn-cyber::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, var(--cyber-yellow), transparent);
+    transition: left 0.5s ease;
+}
+
+.btn-cyber:hover::before {
+    left: 100%;
+}
+
+.btn-cyber:hover {
+    background: var(--cyber-yellow);
+    color: var(--background);
+    box-shadow: 0 0 20px var(--cyber-yellow), 0 0 40px var(--cyber-yellow);
+}
+
+/* 青色霓虹按钮 */
+.btn-cyber-cyan {
+    border-color: var(--cyber-cyan);
+    color: var(--cyber-cyan);
+}
+
+.btn-cyber-cyan:hover {
+    background: var(--cyber-cyan);
+    color: var(--background);
+    box-shadow: 0 0 20px var(--cyber-cyan), 0 0 40px var(--cyber-cyan);
+}
+
+/* 品红霓虹按钮 */
+.btn-cyber-magenta {
+    border-color: var(--cyber-magenta);
+    color: var(--cyber-magenta);
+}
+
+.btn-cyber-magenta:hover {
+    background: var(--cyber-magenta);
+    color: var(--background);
+    box-shadow: 0 0 20px var(--cyber-magenta), 0 0 40px var(--cyber-magenta);
+}
+
+/* 按钮尺寸变体 */
+.btn-sm {
+    height: 2.5rem; /* 40px */
+    padding: 0 1rem;
+    font-size: 0.875rem;
+}
+
+.btn-lg {
+    height: 5rem; /* 80px */
+    padding: 0 3rem;
+    font-size: 1.25rem;
+}
+
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.btn:disabled:hover {
+    transform: none;
+}
+
+/* 主要按钮 - Kinetic Typography 风格（酸性黄） */
+.btn-gradient {
+    background: var(--accent);
+    color: var(--accent-foreground);
+    border-color: var(--accent);
+    font-weight: 900;
+    height: 3.5rem; /* 56px - 与 .btn 一致 */
+    padding: 0 2.5rem;
+    font-size: 1.125rem;
+}
+
+.btn-gradient:hover {
+    transform: scale(1.05);
+    box-shadow: none;
+    background: var(--accent);
+}
+
+.btn-gradient:active {
+    transform: scale(0.95);
+}
+
+/* 轮廓按钮变体 */
+.btn-outline {
+    background: transparent;
+    color: var(--foreground);
+    border: 2px solid var(--border);
+}
+
+.btn-outline:hover {
+    background: var(--foreground);
+    color: var(--background);
+    border-color: var(--foreground);
+}
+
+/* 幽灵按钮变体 */
+.btn-ghost {
+    background: transparent;
+    color: var(--foreground);
+    border: none;
+}
+
+.btn-ghost:hover {
+    color: var(--accent);
+    transform: none;
+}
+
+/* 文本样式 - Kinetic Typography 风格（酸性黄强调） */
+.text-gradient {
+    color: var(--accent);
+}
+
+/* 卡片样式 - Kinetic Typography 风格 */
+.card {
+    background: var(--background);
+    border: 2px solid var(--border);
+    border-radius: 0;
+    padding: 2rem;
+    position: relative;
+}
+
+/* 卡片悬停硬反转效果 - Kinetic Typography 核心特征 */
+.card-hover {
+    transition: all 0.3s ease;
+    cursor: pointer;
+}
+
+.card-hover:hover {
+    background: var(--accent) !important;
+    border-color: var(--accent) !important;
+    transform: none;
+    box-shadow: none;
+}
+
+/* CYBERPUNK 卡片样式 */
+.card-cyber {
+    background: var(--background);
+    border: 2px solid var(--border);
+    border-radius: 0;
+    transition: all 0.3s ease;
+    position: relative;
+}
+
+.card-cyber::before {
+    content: '';
+    position: absolute;
+    top: -2px;
+    left: -2px;
+    right: -2px;
+    bottom: -2px;
+    background: linear-gradient(45deg, var(--cyber-cyan), var(--cyber-magenta), var(--cyber-yellow));
+    z-index: -1;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.card-cyber:hover {
+    border-color: var(--cyber-yellow);
+    box-shadow: 0 0 20px var(--cyber-yellow), inset 0 0 10px rgba(252, 227, 0, 0.1);
+}
+
+.card-cyber:hover::before {
+    opacity: 0.5;
+}
+
+/* 青色边框卡片 */
+.card-cyber-cyan:hover {
+    border-color: var(--cyber-cyan);
+    box-shadow: 0 0 20px var(--cyber-cyan), inset 0 0 10px rgba(0, 255, 255, 0.1);
+}
+
+/* 品红边框卡片 */
+.card-cyber-magenta:hover {
+    border-color: var(--cyber-magenta);
+    box-shadow: 0 0 20px var(--cyber-magenta), inset 0 0 10px rgba(255, 0, 255, 0.1);
+}
+
+/* 卡片内所有文字在悬停时反转为黑色 */
+.card-hover:hover,
+.card-hover:hover *,
+.card-hover:hover h1,
+.card-hover:hover h2,
+.card-hover:hover h3,
+.card-hover:hover h4,
+.card-hover:hover p,
+.card-hover:hover span,
+.card-hover:hover a,
+.card-hover:hover i {
+    color: var(--accent-foreground) !important;
+}
+
+/* 卡片内次要文字悬停时降低不透明度 */
+.card-hover:hover .text-muted,
+.card-hover:hover .text-muted-foreground {
+    opacity: 0.7;
+}
+
+/* 卡片内按钮悬停时反转 */
+.card-hover:hover .btn {
+    background: var(--accent-foreground) !important;
+    color: var(--accent) !important;
+    border-color: var(--accent-foreground) !important;
+}
+
+/* 卡片变体 - 带边框强调 */
+.card-bordered {
+    border-width: 2px;
+}
+
+/* 卡片变体 - 次要背景 */
+.card-muted {
+    background: var(--muted);
+}
+
+/* 分割线 - Kinetic Typography 风格 */
+.divider {
+    height: 2px;
+    background: var(--border);
+    margin: 1rem 0;
+}
+
+/* 圆角样式 - Kinetic Typography 风格（无圆角） */
+.rounded-custom {
+    border-radius: 0;
+}
+
+/* 阴影样式 - Kinetic Typography 风格（无阴影） */
+.shadow-custom {
+    box-shadow: none;
+}
+
+.shadow-custom-lg {
+    box-shadow: none;
+}
+
+/* 边框样式 */
+.border-glass {
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+/* 溢出处理 */
+.text-ellipsis {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 滚动条样式 */
+.scrollbar-custom {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.3) transparent;
+}
+
+.scrollbar-custom::-webkit-scrollbar {
+    width: 6px;
+}
+
+.scrollbar-custom::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.scrollbar-custom::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.3);
+    border-radius: 3px;
+}
+
+.scrollbar-custom::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.5);
+}
+
+/* 网格布局辅助 */
+.grid-auto-fit {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1rem;
+}
+
+.grid-auto-fill {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 1rem;
+}
+
+/* 弹性布局辅助 */
+.flex-center {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.flex-between {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.flex-start {
+    display: flex;
+    align-items: flex-start;
+}
+
+.flex-end {
+    display: flex;
+    align-items: flex-end;
+}
+
+/* 间距辅助 */
+.space-y-custom > * + * {
+    margin-top: 1rem;
+}
+
+.space-x-custom > * + * {
+    margin-left: 1rem;
+}
+
+/* 图片样式 */
+.img-cover {
+    object-fit: cover;
+    object-position: center;
+}
+
+.img-contain {
+    object-fit: contain;
+    object-position: center;
+}
+
+/* 透明度变化 */
+.opacity-hover {
+    transition: opacity 0.3s ease;
+}
+
+.opacity-hover:hover {
+    opacity: 0.8;
+}
+
+/* 背景颜色变体 - Kinetic Typography 风格（纯色） */
+.bg-gradient-primary {
+    background: var(--accent);
+    color: var(--accent-foreground);
+}
+
+.bg-gradient-secondary {
+    background: var(--muted);
+    color: var(--foreground);
+}
+
+.bg-gradient-success {
+    background: var(--accent);
+    color: var(--accent-foreground);
+}
+
+.bg-gradient-warning {
+    background: var(--accent);
+    color: var(--accent-foreground);
+}
+
+.bg-gradient-danger {
+    background: #EF4444;
+    color: var(--foreground);
+}
+
+/* 文本选择样式 - Kinetic Typography 风格 */
+::selection {
+    background: var(--accent);
+    color: var(--accent-foreground);
+}
+
+::-moz-selection {
+    background: var(--accent);
+    color: var(--accent-foreground);
+}
+
+/* 确保文本可以正常选择 - 强制生效 */
+* {
+    -webkit-user-select: text !important;
+    -moz-user-select: text !important;
+    -ms-user-select: text !important;
+    user-select: text !important;
+}
+
+/* 确保标签、文本内容可以被选择 */
+label,
+span,
+p,
+div,
+h1, h2, h3, h4, h5, h6 {
+    -webkit-user-select: text !important;
+    -moz-user-select: text !important;
+    -ms-user-select: text !important;
+    user-select: text !important;
+}
+
+/* 特定元素禁用选择 */
+button, 
+input[type="button"], 
+input[type="submit"], 
+input[type="reset"],
+.tab-btn,
+.ratio-btn,
+.edit-ratio-btn,
+.btn {
+    -webkit-user-select: none !important;
+    -moz-user-select: none !important;
+    -ms-user-select: none !important;
+    user-select: none !important;
+}
+
+/* ========================================
+   中文页面样式优化
+   针对简体中文和繁体中文的特殊处理
+   ======================================== */
+
+/* 中文字间距优化 - 正向间距使中文更清晰 */
+html[lang="zh-CN"] .tab-btn,
+html[lang="zh-TW"] .tab-btn {
+  letter-spacing: 0.05em;
+}
+
+html[lang="zh-CN"] .btn,
+html[lang="zh-TW"] .btn {
+  letter-spacing: 0.08em;
+}
+
+/* 中文导航和按钮字重增强 */
+html[lang="zh-CN"] .tab-btn,
+html[lang="zh-TW"] .tab-btn,
+html[lang="zh-CN"] .btn-gradient,
+html[lang="zh-TW"] .btn-gradient {
+  font-weight: 900;
+}
+
+/* 中文标题字重增强 */
+html[lang="zh-CN"] h1,
+html[lang="zh-CN"] h2,
+html[lang="zh-CN"] h3,
+html[lang="zh-TW"] h1,
+html[lang="zh-TW"] h2,
+html[lang="zh-TW"] h3 {
+  font-weight: 900;
+  letter-spacing: 0.02em;
+}
+
+/* ========================================
+   Kinetic Typography - 超大显示字体系统
+   视口响应式排版，戏剧性字体层级
+   ======================================== */
+
+/* Hero 超大显示文字 - 视口响应式 */
+.text-hero {
+  font-size: clamp(3rem, 12vw, 14rem);
+  font-weight: 900;
+  line-height: 0.85;
+  letter-spacing: -0.05em;
+  text-transform: uppercase;
+}
+
+/* 装饰性巨型数字 - 背景装饰元素 */
+.text-massive {
+  font-size: clamp(6rem, 15vw, 12rem);
+  font-weight: 900;
+  line-height: 1;
+  color: var(--muted);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Section 标题 - 大尺度响应式 */
+.text-section {
+  font-size: clamp(2.5rem, 8vw, 6rem);
+  font-weight: 900;
+  line-height: 0.9;
+  letter-spacing: -0.03em;
+  text-transform: uppercase;
+}
+
+/* 卡片标题 - 响应式缩放 */
+.text-card-title {
+  font-size: clamp(1.5rem, 4vw, 3.5rem);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+/* 加大正文 - Kinetic Typography 风格 */
+.text-body-large {
+  font-size: clamp(1.125rem, 2vw, 1.5rem);
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+/* 小标签 - 宽松字距 */
+.text-label {
+  font-size: clamp(0.75rem, 1.5vw, 1.125rem);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* ========================================
+   Kinetic Typography - 间距系统
+   更大的间距，更戏剧性的布局
+   ======================================== */
+
+/* Section 间距 - 大尺度 */
+.section-spacing {
+  padding-top: 8rem;
+  padding-bottom: 8rem;
+}
+
+.section-spacing-sm {
+  padding-top: 5rem;
+  padding-bottom: 5rem;
+}
+
+/* 内容宽度 - 推到边缘 */
+.container-wide {
+  max-width: 95vw;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.container-full {
+  max-width: 100%;
+  width: 100%;
+}
+
+/* 卡片间距 - 加大 */
+.gap-kinetic {
+  gap: 2rem;
+}
+
+@media (min-width: 768px) {
+  .gap-kinetic {
+    gap: 2.5rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .gap-kinetic {
+    gap: 3rem;
+  }
+}
+
+/* 面板内边距 - 加大 */
+.panel-padding {
+  padding: 1.5rem;
+}
+
+@media (min-width: 768px) {
+  .panel-padding {
+    padding: 2rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .panel-padding {
+    padding: 3rem;
+  }
+}
+
+/* ========================================
+   无障碍增强 - Kinetic Typography
+   焦点指示器、减少动画偏好
+   ======================================== */
+
+/* 焦点指示器 - 高可见性酸性黄 */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 按钮焦点状态 */
+.btn:focus-visible,
+.tab-btn:focus-visible,
+.ratio-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 输入框焦点状态 */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* 链接焦点状态 */
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  text-decoration: underline;
+}
+
+/* 跳过链接 - 无障碍导航 */
+.skip-link {
+  position: absolute;
+  top: -100%;
+  left: 0;
+  background: var(--accent);
+  color: var(--accent-foreground);
+  padding: 1rem 2rem;
+  z-index: 100000;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.skip-link:focus {
+  top: 0;
+}
+
+/* 屏幕阅读器专用文本 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* 减少动画偏好 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  
+  .marquee-content {
+    animation: none !important;
+  }
+  
+  .btn:hover,
+  .card-hover:hover {
+    transform: none !important;
+  }
+}
+
+/* 高对比度模式 */
+@media (prefers-contrast: high) {
+  :root {
+    --border: #FFFFFF;
+  }
+  
+  .btn,
+  .card,
+  .tab-btn {
+    border-width: 3px;
+  }
+} 

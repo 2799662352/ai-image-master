@@ -1,0 +1,39 @@
+/* 主CSS文件 - 统一管理所有CSS模块 */
+
+/* 导入所有CSS模块 */
+@import url('base.css');
+@import url('components.css');
+@import url('animations.css');
+@import url('responsive.css');
+@import url('changelog.css');
+
+/* 项目特定的样式覆盖 */
+/* 在这里可以添加项目特定的样式覆盖 */
+
+/* R2 上传状态指示器样式 */
+.upload-indicator {
+    transition: all 0.3s ease;
+    z-index: 10;
+}
+
+.upload-indicator.uploading {
+    animation: pulse 1.5s infinite;
+}
+
+.upload-indicator.uploaded {
+    background-color: rgba(34, 197, 94, 0.7) !important;
+}
+
+.upload-indicator.uploaded i {
+    animation: none !important;
+    color: white;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 0.8;
+    }
+    50% {
+        opacity: 1;
+    }
+}

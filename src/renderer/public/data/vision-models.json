@@ -1,0 +1,73 @@
+{
+  "models": [
+    {
+      "id": "gpt-5.2",
+      "name": "GPT-5.2",
+      "displayName": "GPT-5.2",
+      "shortName": "GPT-5.2",
+      "description": "最新旗舰模型，卓越理解与推理能力",
+      "features": ["顶级理解", "深度推理", "多模态分析"],
+      "price": "$1.75/$14 per 1M tokens",
+      "icon": "🚀",
+      "recommended": true
+    },
+    {
+      "id": "gemini-3-pro-preview",
+      "name": "Gemini 3 Pro Preview",
+      "displayName": "Gemini 3 Pro Preview",
+      "shortName": "Gemini 3 Pro",
+      "description": "Google 最新旗舰预览版，强大的多模态能力",
+      "features": ["旗舰性能", "多图理解", "深度分析"],
+      "price": "$2/$12 per 1M tokens",
+      "icon": "💎",
+      "recommended": true
+    },
+    {
+      "id": "gemini-2.5-flash-preview-09-2025",
+      "name": "Gemini 2.5 Flash",
+      "displayName": "Gemini 2.5 Flash",
+      "shortName": "Gemini 2.5",
+      "description": "快速响应版本，性价比极高",
+      "features": ["极速响应", "性价比高", "推理模式"],
+      "price": "$0.3/$2.4 per 1M tokens",
+      "icon": "⚡",
+      "recommended": true
+    },
+    {
+      "id": "gpt-5-mini",
+      "name": "GPT-5-mini",
+      "displayName": "GPT-5-mini",
+      "shortName": "GPT-5-mini",
+      "description": "轻量高效版本，适合日常使用",
+      "features": ["高性价比", "快速响应", "准确理解"],
+      "price": "$0.25/$2 per 1M tokens",
+      "icon": "🔥",
+      "recommended": false
+    },
+    {
+      "id": "claude-haiku-4-5-20251001",
+      "name": "Claude Haiku 4.5",
+      "displayName": "Claude Haiku 4.5",
+      "shortName": "Haiku 4.5",
+      "description": "Anthropic 轻量模型，快速且精准",
+      "features": ["速度快", "成本优", "细节描述"],
+      "price": "$1/$5 per 1M tokens",
+      "icon": "🧠",
+      "recommended": false
+    },
+    {
+      "id": "qwen-vl-ocr-latest",
+      "name": "Qwen OCR Latest",
+      "displayName": "Qwen OCR Latest",
+      "shortName": "Qwen OCR",
+      "description": "阿里云千问 专业 OCR 识别，极速提取文字",
+      "features": ["OCR 专用", "极速响应", "超高准确率"],
+      "price": "$0.044/$0.073 per 1M tokens",
+      "icon": "📝",
+      "recommended": false
+    }
+  ],
+  "defaultModel": "gpt-5.2",
+  "customModelEnabled": true,
+  "customModelPlaceholder": "例如：gpt-4o"
+}
