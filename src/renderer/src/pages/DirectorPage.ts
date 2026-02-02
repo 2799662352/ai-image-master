@@ -130,7 +130,7 @@ export class DirectorPage extends BasePage {
   private imageCount: number = 1
   private currentRatio: string = '3:2'
   private currentResolution: string = '2K'
-  private currentTemplate: string | null = null
+  private currentTemplate: string | null = 'theatrical'  // 默认使用剧场版动画风格
   private currentMode: GenerationMode = 'single'
 
   // 生成结果
@@ -157,6 +157,135 @@ export class DirectorPage extends BasePage {
   private templateOverrides: StyleTemplates = {}
   private editingTemplateKey: string | null = null
   private editingTemplateIsBuiltin: boolean = false
+
+  // 图像理解模型
+  private visionModel: string = 'gpt-5.2'
+  private visionModelConfig: { models: Array<{ id: string; name: string; shortName?: string; icon?: string; recommended?: boolean; description?: string; features?: string[]; price?: string }>; defaultModel: string } | null = null
+
+  // 完整 Gem 系统提示词（北风诉苦原版 v1.1）- 用于生成 JSON 格式分镜提示词
+  private gemSystemPrompt: string = `(NanoBananaPro视角裂变专家
+
+:核心角色 "多维视角一致性生成助手 (3x3精简版)"
+
+:目的 "基于用户提供的单张参考图描述，保持视觉锚点绝对不变，通过特定视角的强化组合，生成9个（3x3宫格）极具沉浸感的JSON格式英文提示词。"
+
+:作者 "北风诉苦（bailing200215），漫剧自用版 v1.1"
+
+:适配模型 "NanoBananaPro"
+
+;;──────────────────────────────────────────────────────────────────────
+;; 核心能力设定
+;;──────────────────────────────────────────────────────────────────────
+
+:能力 (
+
+(视觉锁定 "能够精准提取并锁定参考图中的核心元素（人物ID、衣着细节、环境布局、特定光影），确保在9张分镜中这些描述一字不差或高度一致。")
+
+(特定镜头强化 "侧重于沉浸式和关系视角的构建，重点生成背后、过肩及主观镜头。")
+
+(随机排列 "能够生成9种高张力的镜头组合，避免平庸的平视镜头。")
+
+(格式输出 "严格遵守NanoBananaPro的JSON格式要求，输出3x3布局配置。")
+)
+
+;;──────────────────────────────────────────────────────────────────────
+;; 变量库 (已根据要求调整)
+;;──────────────────────────────────────────────────────────────────────
+
+:镜头变量库 (
+
+;; 剔除了常规的 Long, Medium, Close，保留极端的或更有张力的景别
+
+(景别 '( "Extreme Close-up (ECU - Focus on eyes/details)" "Full Body Shot" "Cowboy Shot (Thigh-up)" "Upper Body Shot (Chest-up)" "Wide Angle Full Shot" ))
+
+;; 强调了需要的视角，但保留部分其他视角以供填充剩余空位
+
+(视角 '( "Back View (Walking away/Looking at scenery)" "Over-the-Shoulder (OTS)" "Point of View (POV)" "Low Angle (Heroic)" "High Angle (Vulnerable)" "Dutch Angle (Tilted)" "Top-Down / God's Eye View" ))
+
+(构图 '( "Rule of Thirds" "Center Composition" "Depth of Field (Bokeh)" "Framing within a frame" "Dynamic Diagonal" ))
+)
+
+;;──────────────────────────────────────────────────────────────────────
+;; 输入与处理
+;;──────────────────────────────────────────────────────────────────────
+
+:输入 (
+
+(格式 "用户提供的参考图详细描述 (包含人物、环境、光影)")
+
+(处理流程 (
+
+  "1. 【提取锚点】：将用户的描述定义为 [Base_Prompt]，这部分在生成时不可修改。"
+
+  "2. 【权重分配】：在9个分镜中，强制分配：2个背后视角，3个过肩视角(OTS)，2个主观视角(POV)，剩余2个随机分配(如荷兰角或俯视)。"
+
+  "3. 【合成Prompt】：Prompt结构 = [Camera_Setup] + [Base_Prompt] + [Quality_Tags] + [Marking_Instructions]。"
+
+  "4. 【JSON封装】：填入shots数组，确保shot_number从'分镜1'到'分镜9'。"
+
+))
+)
+
+;;──────────────────────────────────────────────────────────────────────
+;; 输出结构定义 (JSON)
+;;──────────────────────────────────────────────────────────────────────
+
+:输出 (
+
+(格式 "JSON String wrapped in code block")
+
+(结构模板
+  \`\`\`json
+  {
+    "image_generation_model": "NanoBananaPro",
+    "grid_layout": "3x3",
+    "grid_aspect_ratio": "16:9",
+    "global_watermark": {
+      "position": "bottom_center",
+      "size": "small"
+    },
+    "shots": [
+      // 循环9次，i 从 1 到 9
+      {
+        "shot_number": "分镜{i}",
+        "prompt_text": "[特定的镜头语言], [用户提供的固定参考图描述], [画质与细节词]. '分镜{i}' in the top-left corner. No timecode, no subtitles."
+      }
+    ]
+  }
+  \`\`\`
+)
+)
+
+;;──────────────────────────────────────────────────────────────────────
+;; 约束模块 (硬性规定)
+;;──────────────────────────────────────────────────────────────────────
+
+:约束 (
+
+(C1 "一致性绝对优先：无论视角如何变化，人物特征（发型、衣着、面孔）和环境必须保持一致。")
+
+(C2 "视角强制分布：9个分镜中必须包含：
+     - 至少 2个 背后视角 (Back View)；
+     - 至少 3个 过肩视角 (Over-the-Shoulder)；
+     - 至少 2个 主观视角 (Point of View/POV)；
+     - 剩余 2个 自由选择高张力视角（如上帝视角或大特写）。")
+
+(C3 "景别限制：严禁使用 'Medium Shot', 'Long Shot', 'Close-up' 这种平庸的描述。请使用 'Cowboy Shot', 'Extreme Close-up', 'Full Body' 等替代。")
+
+(C4 "格式规范：JSON必须纯净，shots数组必须精确包含9个对象。")
+
+(C5 "文字指令：每个prompt必须包含 \"'分镜X' in the top-left corner\" 和 \"no timecode, no subtitles\"。")
+
+(C6 "语言：Prompt内容必须为英文。")
+)
+
+;;──────────────────────────────────────────────────────────────────────
+;; 运行指令
+;;──────────────────────────────────────────────────────────────────────
+
+(运行方法 "请用户输入参考图的详细描述（中文或英文），助手将自动生成包含9个（3x3）特定强化视角的JSON代码块。")
+
+)`
 
   // 风格模板库 - 名称将在 getTemplateDisplayName() 中国际化
   private styleTemplates: StyleTemplates = {
@@ -195,6 +324,18 @@ export class DirectorPage extends BasePage {
       prefix: 'illustration, detailed artwork, artistic composition, ',
       suffix: ', masterpiece, best quality, highly detailed, beautiful lighting, artistic, professional illustration',
       negative: 'blurry, lowres, bad anatomy, worst quality, bad quality, simple background'
+    },
+    cinematic: {
+      name: 'cinematic', // i18n key: director.templates.styles.cinematic  电影级九宫格
+      prefix: 'A precise 3x3 grid storyboard, split screen, comic book layout with 9 equal panels. Symmetrical grid, hard borders, clean white dividing lines. ',
+      suffix: ', Cinematic lighting, photorealistic, sequence photography, 8K resolution. Same characters, same outfit, same lighting across all 9 panels. No text, no speech bubbles',
+      negative: 'text, speech bubbles, dialogue, watermark, signature, blurry, low quality, inconsistent characters, different outfits, style change, irregular panels, asymmetric grid'
+    },
+    theatrical: {
+      name: 'theatrical', // i18n key: director.templates.styles.theatrical  剧场版动画
+      prefix: '((現代的な撮影技術を駆使した日本のアニメ映画スタイル:1.5)), ((劇場版クオリティのスクリーンショット:1.5)), ((TVアニメの没入感:1.4)), 以下のプロンプトに従って画像の絵コンテを調整します。日本のアニメ映画版で、監督に見せるための絵コンテです。ストーリー感を表現します。複数のカットで構成されたものは必ず映画版のスクリーンショットで構成された絵コンテで、テキスト内のすべてのストーリー情報を漏らさず、最も重要な演技のカットを示してください。((参考画像の画風に完全に従って構築します:1.6)), ((画風の完全再現:1.6)), ((オリジナル画風を維持:1.5)), ',
+      suffix: ', 高品質, 8k, masterpiece, best quality, absurdres, veryaesthetic, full color, anime cel shading, TV anime coloring, modern anime style, cinematic lighting, highly detailed, depth of field, anime screencap, TV anime, storyboard panel, sequential storytelling, narrative composition, key animation frames, emotional acting focus',
+      negative: '低品質, 作画崩壊, 実写, 3D, 異なる画風, 画風の変更, 文字, ぼやけ, (worst quality, low quality:1.4), illustration, static illustration, poster, artbook, sketch, monochrome, grayscale'
     }
   }
 
@@ -228,9 +369,26 @@ export class DirectorPage extends BasePage {
       cols: 3,
       name: '9grid', // i18n key: director.layouts.9grid.name
       description: '9grid', // i18n key: director.layouts.9grid.description
-      ratio: '1:1'
+      ratio: '16:9'  // 默认横屏，分形几何原则：总图和单格比例一致
     }
   }
+
+  // 电影级九宫格提示词模板（基于工作流优化）
+  private cinematicGridPromptTemplate = `A precise 3x3 grid storyboard, split screen, comic book layout with 9 equal panels.
+Aspect Ratio Constraint: The entire image is {RATIO}, and each of the 9 individual panels is also strictly {RATIO}.
+Layout: Symmetrical grid, hard borders, clean white dividing lines. No text, no speech bubbles.
+Consistency: Same characters, same outfit, same lighting across all 9 panels.
+Story Sequence: {STORY_DESCRIPTION}
+
+Panel Breakdown:
+{PANEL_DESCRIPTIONS}
+
+Visual Style: Cinematic lighting, photorealistic, sequence photography, 8K resolution.
+Character Reference: {CHARACTER_DESCRIPTION}`
+
+  // Sora2 视频提示词模板
+  private sora2VideoPromptTemplate = `{CHARACTER_CARD} The video plays out in a continuous 9-part sequence:
+{VIDEO_SEQUENCES}`
 
   constructor(app: AppInterface) {
     super(app)
@@ -247,12 +405,75 @@ export class DirectorPage extends BasePage {
     this.bindStateAutoSave()
     this.loadUserTemplates()
     this.loadCustomGalleryImages()
+    this.loadVisionModelConfig()
     
     // 初始化 UI 状态
     this.updateLayoutSelection()
     this.updateGenerateButtonState()
+    this.syncDefaultTemplateUI()  // 同步默认模板 UI
     
     this.isInitialized = true
+  }
+
+  /**
+   * 同步默认模板的 UI 显示
+   */
+  private syncDefaultTemplateUI(): void {
+    if (!this.currentTemplate) return
+
+    const template = this.styleTemplates[this.currentTemplate] || this.customTemplates[this.currentTemplate]
+    if (!template) return
+
+    const displayName = this.getTemplateDisplayName(this.currentTemplate, template)
+    const nameSpan = this.getElement<HTMLElement>('directorTemplateName')
+    const clearBtn = this.getElement<HTMLElement>('directorClearTemplate')
+
+    if (nameSpan) {
+      nameSpan.textContent = displayName
+      nameSpan.classList.add('text-pink-400')
+    }
+    if (clearBtn) {
+      clearBtn.classList.remove('hidden')
+    }
+
+    console.log('[DirectorPage] 默认模板已设置:', this.currentTemplate, displayName)
+  }
+
+  /**
+   * 加载图像理解模型配置
+   */
+  private async loadVisionModelConfig(): Promise<void> {
+    try {
+      const response = await fetch('data/vision-models.json?v=' + Date.now())
+      this.visionModelConfig = await response.json()
+      this.visionModel = this.visionModelConfig!.defaultModel
+      this.updateVisionModelDisplay()
+      console.log('✅ 导演模式加载视觉模型配置:', this.visionModelConfig)
+    } catch (error) {
+      console.warn('⚠️ 加载视觉模型配置失败，使用默认值:', error)
+      this.visionModelConfig = {
+        models: [
+          { id: 'gpt-5.2', name: 'GPT-5.2', shortName: 'GPT-5.2', icon: '🚀', recommended: true }
+        ],
+        defaultModel: 'gpt-5.2'
+      }
+    }
+  }
+
+  /**
+   * 更新图像理解模型显示
+   */
+  private updateVisionModelDisplay(): void {
+    const iconEl = this.getElement<HTMLElement>('directorVisionModelIcon')
+    const nameEl = this.getElement<HTMLElement>('directorVisionModelName')
+    
+    if (!this.visionModelConfig || !iconEl || !nameEl) return
+    
+    const model = this.visionModelConfig.models.find(m => m.id === this.visionModel)
+    if (model) {
+      iconEl.textContent = model.icon || '🤖'
+      nameEl.textContent = model.shortName || model.name || model.id
+    }
   }
 
   /**
@@ -262,8 +483,11 @@ export class DirectorPage extends BasePage {
     // 上传区域
     this.setupUploadArea()
 
-    // 清除参考图按钮
-    this.addEventListenerSafe('directorClearImage', 'click', () => this.clearReferenceImage())
+    // 清除参考图按钮（动态元素，静默模式）
+    this.addEventListenerSafe('directorClearImage', 'click', () => this.clearReferenceImage(), true)
+
+    // 图像理解模型选择
+    this.addEventListenerSafe('directorVisionModelBtn', 'click', () => this.openVisionModelModal())
 
     // 模式切换
     this.setupModeSwitch()
@@ -277,12 +501,12 @@ export class DirectorPage extends BasePage {
     // 生成按钮
     this.addEventListenerSafe('directorGenerateBtn', 'click', () => this.startGeneration())
 
-    // 下载按钮
-    this.addEventListenerSafe('directorDownloadBtn', 'click', () => this.downloadResult())
-    this.addEventListenerSafe('directorDownloadAllBtn', 'click', () => this.downloadAllResults())
+    // 下载按钮（动态元素，静默模式）
+    this.addEventListenerSafe('directorDownloadBtn', 'click', () => this.downloadResult(), true)
+    this.addEventListenerSafe('directorDownloadAllBtn', 'click', () => this.downloadAllResults(), true)
 
-    // 重新生成按钮
-    this.addEventListenerSafe('directorRegenerateBtn', 'click', () => this.startGeneration())
+    // 重新生成按钮（动态元素，静默模式）
+    this.addEventListenerSafe('directorRegenerateBtn', 'click', () => this.startGeneration(), true)
 
     // 出图数量滑块
     this.addEventListenerSafe('directorImageCount', 'input', () => this.updateImageCountDisplay())
@@ -857,7 +1081,9 @@ export class DirectorPage extends BasePage {
       movie: this.t('director.templates.styles.movie') || '电影分镜风格',
       webtoon: this.t('director.templates.styles.webtoon') || '韩漫/条漫风格',
       comic: this.t('director.templates.styles.comic') || '美漫风格',
-      illustration: this.t('director.templates.styles.illustration') || '插画风格'
+      illustration: this.t('director.templates.styles.illustration') || '插画风格',
+      cinematic: this.t('director.templates.styles.cinematic') || '电影级九宫格',
+      theatrical: this.t('director.templates.styles.theatrical') || '剧场版动画'
     }
     
     // 如果是内置模板，返回国际化名称；否则返回自定义模板的原名
@@ -872,10 +1098,10 @@ export class DirectorPage extends BasePage {
    */
   private getLayoutDisplayName(layoutKey: string): string {
     const layoutNames: Record<string, string> = {
-      '6grid': this.t('director.layouts.6grid.name') || '6格标准',
-      '4grid': this.t('director.layouts.4grid.name') || '4格方正',
-      '2closeup': this.t('director.layouts.2closeup.name') || '2格特写',
-      '9grid': this.t('director.layouts.9grid.name') || '9格全景'
+      '6grid': this.t('director.layouts.6grid') || '6格标准',
+      '4grid': this.t('director.layouts.4grid') || '4格方正',
+      '2closeup': this.t('director.layouts.2closeup') || '2格特写',
+      '9grid': this.t('director.layouts.9grid') || '9格全景'
     }
     return layoutNames[layoutKey] || layoutKey
   }
@@ -885,10 +1111,10 @@ export class DirectorPage extends BasePage {
    */
   private getLayoutDisplayDescription(layoutKey: string): string {
     const layoutDescriptions: Record<string, string> = {
-      '6grid': this.t('director.layouts.6grid.description') || '2行×3列，适合完整故事',
-      '4grid': this.t('director.layouts.4grid.description') || '2行×2列，适合转折场景',
-      '2closeup': this.t('director.layouts.2closeup.description') || '1行×2列，适合表情特写',
-      '9grid': this.t('director.layouts.9grid.description') || '3行×3列，适合动作场景'
+      '6grid': this.t('director.layoutDesc.6grid') || '2行×3列，适合完整故事',
+      '4grid': this.t('director.layoutDesc.4grid') || '2行×2列，适合转折场景',
+      '2closeup': this.t('director.layoutDesc.2closeup') || '1行×2列，适合表情特写',
+      '9grid': this.t('director.layoutDesc.9grid') || '3行×3列，适合动作场景'
     }
     return layoutDescriptions[layoutKey] || ''
   }
@@ -1089,6 +1315,8 @@ export class DirectorPage extends BasePage {
       maxSizeMB,
       maxWidthOrHeight,
       useWebWorker: true,
+      // 使用本地文件避免 CSP 限制（Worker 默认从 CDN 加载脚本会被阻止）
+      libURL: './cdn/browser-image-compression/browser-image-compression.js',
       fileType: file.type
     }
 
@@ -1162,10 +1390,15 @@ export class DirectorPage extends BasePage {
       <div class="grid grid-cols-4 gap-2 mb-3">
         ${this.referenceImages.map((img, index) => `
           <div class="relative group aspect-square">
-            <img src="data:${img.mimeType};base64,${img.base64}" 
-                 class="w-full h-full object-cover rounded-lg" alt="${img.fileName}">
+            <div class="preview-trigger cursor-pointer relative group/img w-full h-full" data-preview-index="${index}" title="点击预览">
+              <img src="data:${img.mimeType};base64,${img.base64}" 
+                   class="w-full h-full object-cover rounded-lg transition-transform duration-300 group-hover/img:scale-105" alt="${img.fileName}">
+              <div class="absolute inset-0 bg-black/0 group-hover/img:bg-black/40 transition-all duration-300 rounded-lg flex items-center justify-center">
+                <i class="fas fa-search-plus text-white text-lg opacity-0 group-hover/img:opacity-100 transition-opacity duration-300"></i>
+              </div>
+            </div>
             <button class="delete-ref-img absolute top-1 right-1 w-5 h-5 bg-red-500 hover:bg-red-600 rounded-full 
-                          flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                          flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10"
                     data-index="${index}">
               <i class="fas fa-times text-white text-xs"></i>
             </button>
@@ -1188,6 +1421,15 @@ export class DirectorPage extends BasePage {
       })
     })
 
+    // 绑定图片预览
+    preview.querySelectorAll('.preview-trigger').forEach(trigger => {
+      trigger.addEventListener('click', (e: Event) => {
+        e.stopPropagation()
+        const index = parseInt((trigger as HTMLElement).dataset.previewIndex || '0', 10)
+        this.previewReferenceImage(index)
+      })
+    })
+
     // 绑定添加更多
     const addMoreBtn = preview.querySelector('.add-more-ref')
     if (addMoreBtn) {
@@ -1203,6 +1445,27 @@ export class DirectorPage extends BasePage {
     this.updateReferenceImagesPreview()
     this.updateGenerateButtonState()
     this.saveCurrentState()
+  }
+
+  /**
+   * 预览参考图
+   */
+  private previewReferenceImage(index: number): void {
+    if (index < 0 || index >= this.referenceImages.length) return
+    
+    // 构建所有参考图的 URL 数组
+    const urls = this.referenceImages.map((img) => {
+      const mimeType = (img.mimeType || 'image/jpeg').toLowerCase()
+      return `data:${mimeType};base64,${img.base64}`
+    })
+    
+    // 使用 ImageViewer 预览
+    const imageViewer = (window as any).imageViewerTS
+    if (imageViewer?.view) {
+      imageViewer.view(urls, index)
+    } else if ((this.app as any).viewImage) {
+      ;(this.app as any).viewImage(urls, index)
+    }
   }
 
   /**
@@ -1553,35 +1816,73 @@ export class DirectorPage extends BasePage {
       mimeType: img.mimeType || 'image/jpeg'
     }))
 
-    // Analysis prompts for vision API - these are intentionally detailed
-    const multiImagePrompt = this.t('director.prompts.analyzeMultipleImages', { count: images.length }) || 
-      `请详细分析这${images.length}张参考图片，包括：
-1. 人物特征（面部特征、发型、衣着、姿态）
-2. 场景环境（地点、光线、氛围）
-3. 画面构图和视角
-4. 色调和风格
-5. 各图片之间的关联性和风格一致性
+    // Analysis prompts for vision API - ALWAYS output in English + Japanese for NanoBananaPro compatibility
+    const multiImagePrompt = `Analyze these ${images.length} reference images in detail. Output in English with Japanese terms where appropriate.
 
-请用简洁的英文描述，以便后续生成分镜使用。`
+## Required Analysis (output in English):
+
+### 1. Character Features / キャラクター特徴
+- Facial features, hairstyle (color, style, length)
+- Clothing details (type, color, patterns, accessories)
+- Pose, expression, body proportions
+
+### 2. Scene Environment / 場景環境  
+- Location, setting, background elements
+- Lighting conditions (direction, color, mood)
+- Atmosphere and mood
+
+### 3. Composition & Camera / 構図とカメラ
+- Viewing angle, perspective
+- Framing, focal points
+
+### 4. Art Style / アートスタイル
+- Color palette, saturation levels
+- Art style (anime, realistic, etc.)
+- Line art style, shading technique
+
+### 5. Consistency Analysis / 一貫性分析
+- Visual consistency across all images
+- Shared elements and style coherence
+
+Output must be in English. Use concise descriptions suitable for image generation prompts.`
     
-    const singleImagePrompt = this.t('director.prompts.analyzeSingleImage') ||
-      `请详细分析这张图片，包括：
-1. 人物特征（面部特征、发型、衣着、姿态）
-2. 场景环境（地点、光线、氛围）
-3. 画面构图和视角
-4. 色调和风格
+    const singleImagePrompt = `Analyze this reference image in detail. Output in English with Japanese terms where appropriate.
 
-请用简洁的英文描述，以便后续生成分镜使用。`
+## Required Analysis (output in English):
+
+### 1. Character Features / キャラクター特徴
+- Facial features, hairstyle (color, style, length)
+- Clothing details (type, color, patterns, accessories)
+- Pose, expression, body proportions
+
+### 2. Scene Environment / 場景環境
+- Location, setting, background elements
+- Lighting conditions (direction, color, mood)
+- Atmosphere and mood
+
+### 3. Composition & Camera / 構図とカメラ
+- Viewing angle, perspective
+- Framing, focal points
+
+### 4. Art Style / アートスタイル
+- Color palette, saturation levels
+- Art style (anime, realistic, etc.)
+- Line art style, shading technique
+
+Output must be in English. Use concise descriptions suitable for image generation prompts.`
 
     const analysisPrompt = images.length > 1 ? multiImagePrompt : singleImagePrompt
 
     return new Promise((resolve, reject) => {
       let result = ''
 
+      // 使用导演模式选择的图像理解模型
+      console.log('📸 导演模式使用视觉模型:', this.visionModel)
+
       api.analyzeImagesStream(
         images,
         analysisPrompt,
-        'gemini-2.0-flash',
+        this.visionModel,
         null,
         (chunk: string) => { result += chunk },
         () => { resolve(result) },
@@ -1598,7 +1899,7 @@ export class DirectorPage extends BasePage {
   }
 
   /**
-   * 生成分镜提示词
+   * 生成分镜提示词 - 优先使用 Gem AI 生成 JSON 格式，回退到模板方式
    */
   private async generateComicPrompt(
     imageAnalysis: string,
@@ -1606,23 +1907,329 @@ export class DirectorPage extends BasePage {
     panelCount: number,
     layout: LayoutConfig
   ): Promise<string> {
-    const userDescription = sceneDescription || imageAnalysis
-    const viewAngles = this.generateViewAngles(panelCount)
-
+    // 获取当前模板的提示词
     let templatePrefix = ''
     let templateSuffix = ''
     let templateNegative = ''
-
+    
     const currentTemplateData = this.currentTemplate
       ? (this.styleTemplates[this.currentTemplate] || this.customTemplates[this.currentTemplate])
       : null
-
+    
     if (currentTemplateData) {
       templatePrefix = currentTemplateData.prefix || ''
       templateSuffix = currentTemplateData.suffix || ''
       templateNegative = currentTemplateData.negative || ''
     }
 
+    // 尝试使用 Gem AI 生成 JSON 格式（需要有参考图片和 Vision API Key）
+    const api = this.getApi()
+    if (this.referenceImages.length > 0 && api.visionApiKey) {
+      try {
+        console.log('[DirectorPage] 尝试使用 Gem AI 生成 JSON shots...')
+        const jsonShots = await this.generateJsonShots(imageAnalysis, sceneDescription, panelCount, layout)
+        if (jsonShots && jsonShots.length > 0) {
+          console.log('[DirectorPage] Gem AI 生成成功:', jsonShots.length, '个分镜')
+          // 缓存 shots 数据，用于生成视频提示词
+          this.lastGeneratedShots = jsonShots
+          return this.convertJsonShotsToPrompt(jsonShots, panelCount, layout, templatePrefix, templateSuffix, templateNegative)
+        }
+      } catch (error) {
+        console.warn('[DirectorPage] Gem AI 生成失败，回退到模板方式:', error)
+      }
+    }
+
+    // 回退到模板方式
+    console.log('[DirectorPage] 使用模板方式生成提示词')
+    return this.generateTemplatePrompt(imageAnalysis, sceneDescription, panelCount, layout, templatePrefix, templateSuffix, templateNegative)
+  }
+
+  /**
+   * 使用 Gem 系统提示词生成 JSON shots
+   */
+  private async generateJsonShots(
+    imageAnalysis: string,
+    sceneDescription: string,
+    panelCount: number,
+    layout: LayoutConfig
+  ): Promise<Array<{ shot_number: string; prompt_text: string }> | null> {
+    const api = this.getApi()
+    
+    // 准备参考图片
+    const images = this.referenceImages.map(img => ({
+      base64: img.base64,
+      mimeType: img.mimeType || 'image/jpeg'
+    }))
+
+    // 计算视角分布（根据分镜数量动态调整）
+    const viewDistribution = this.calculateViewDistribution(panelCount)
+
+    // 获取当前选中的风格模板
+    const styleConfig = this.getStyleConfigForJsonShots()
+
+    // 构建完整的 Gem 提示词
+    const userInput = `
+## 参考图分析结果
+${imageAnalysis}
+
+## 用户场景描述
+${sceneDescription || '根据参考图生成连续的分镜画面'}
+
+## 布局要求
+- 分镜数量: ${panelCount}
+- 布局: ${layout.rows}行 x ${layout.cols}列
+- 画幅比例: ${layout.ratio || '16:9'}
+
+## 视角分布要求
+${viewDistribution}
+
+## 风格要求
+${styleConfig.styleInstructions}
+
+请严格按照以下 JSON 格式输出 ${panelCount} 个分镜提示词：
+\`\`\`json
+{
+  "image_generation_model": "NanoBananaPro",
+  "grid_layout": "${layout.rows}x${layout.cols}",
+  "grid_aspect_ratio": "${layout.ratio || '16:9'}",
+  "style_template": "${this.currentTemplate || 'default'}",
+  "style_prefix": "${styleConfig.prefix}",
+  "style_suffix": "${styleConfig.suffix}",
+  "negative_prompt": "${styleConfig.negative}",
+  "shots": [
+    {
+      "shot_number": "分镜1",
+      "prompt_text": "${styleConfig.shotPrefix}[Camera Setup], [Scene Description]${styleConfig.shotSuffix}. '分镜1' in the top-left corner. No timecode, no subtitles."
+    }
+    // ... 共 ${panelCount} 个
+  ]
+}
+\`\`\`
+
+重要：
+1. 所有 prompt_text 必须是英文
+2. 每个 prompt_text 必须包含 "'分镜X' in the top-left corner. No timecode, no subtitles."
+3. 人物外观、服装、环境必须在所有分镜中保持一致
+4. 禁止使用 Medium Shot、Long Shot、Close-up 等平庸描述
+5. 每个 shot 的 prompt_text 必须包含风格前缀和后缀标签
+${styleConfig.additionalRules}
+`
+
+    const fullPrompt = this.gemSystemPrompt + '\n\n' + userInput
+
+    console.log('[DirectorPage] 使用风格模板:', this.currentTemplate || 'default')
+    console.log('[DirectorPage] 风格配置:', styleConfig)
+
+    return new Promise((resolve) => {
+      let result = ''
+      
+      api.analyzeImagesStream(
+        images,
+        fullPrompt,
+        this.visionModel,
+        null,
+        (chunk: string) => {
+          result += chunk
+        },
+        () => {
+          const parsed = this.parseJsonShotsResponse(result, panelCount)
+          resolve(parsed)
+        },
+        () => {
+          resolve(null)
+        }
+      )
+    })
+  }
+
+  /**
+   * 解析 AI 返回的 JSON shots 响应
+   */
+  private parseJsonShotsResponse(
+    response: string,
+    expectedCount: number
+  ): Array<{ shot_number: string; prompt_text: string }> | null {
+    try {
+      // 提取 JSON 代码块
+      const jsonMatch = response.match(/```json\s*([\s\S]*?)\s*```/)
+      let jsonStr = jsonMatch ? jsonMatch[1] : response
+      
+      // 尝试找到 JSON 对象
+      const jsonObjMatch = jsonStr.match(/\{[\s\S]*"shots"[\s\S]*\}/)
+      if (jsonObjMatch) {
+        jsonStr = jsonObjMatch[0]
+      }
+
+      const parsed = JSON.parse(jsonStr)
+      
+      if (parsed.shots && Array.isArray(parsed.shots)) {
+        let shots = parsed.shots.slice(0, expectedCount)
+        
+        // 如果数量不足，填充缺失的 shots
+        while (shots.length < expectedCount) {
+          const idx = shots.length + 1
+          shots.push({
+            shot_number: `分镜${idx}`,
+            prompt_text: `Full Body Shot, character in scene, consistent with reference. '分镜${idx}' in the top-left corner. No timecode, no subtitles.`
+          })
+        }
+        
+        console.log('[DirectorPage] 解析 JSON shots 成功:', shots)
+        return shots
+      }
+      
+      return null
+    } catch (error) {
+      console.warn('[DirectorPage] JSON 解析失败:', error, '\n原始响应:', response.substring(0, 500))
+      return null
+    }
+  }
+
+  /**
+   * 将 JSON shots 转换为最终提示词
+   */
+  private convertJsonShotsToPrompt(
+    shots: Array<{ shot_number: string; prompt_text: string }>,
+    panelCount: number,
+    layout: LayoutConfig,
+    templatePrefix: string,
+    templateSuffix: string,
+    templateNegative: string
+  ): string {
+    // 对于 9 宫格，使用电影级提示词模板
+    if (panelCount === 9 && this.currentLayout === '9grid') {
+      return this.generateCinematicGridPrompt(shots, layout)
+    }
+
+    const panelPrompts = shots.map((shot, i) => 
+      `Panel ${i + 1} (${shot.shot_number}): ${shot.prompt_text}`
+    ).join('\n')
+
+    let comicPrompt = `${templatePrefix}Create a single comic page image with ${panelCount} panels arranged in a ${layout.rows}x${layout.cols} grid layout.
+
+Art Style: Maintain consistent art style throughout all panels. Professional manga/comic quality.
+
+Panel Descriptions (AI Generated):
+${panelPrompts}
+
+Important Instructions:
+- Each panel MUST have the corresponding '分镜X' label in the top-left corner
+- No speech bubbles, no dialogue text
+- No timecode, no subtitles
+- Consistent character appearance across all panels
+- Clear panel borders with slight gaps between panels
+- Cinematic lighting and composition
+- High detail and quality rendering${templateSuffix}`
+
+    if (templateNegative) {
+      comicPrompt += `\n\nNegative prompt (avoid these): ${templateNegative}`
+    }
+
+    return comicPrompt
+  }
+
+  /**
+   * 生成电影级九宫格提示词（基于工作流优化）
+   * 遵循分形几何原则：总图和单格比例完全一致
+   */
+  private generateCinematicGridPrompt(
+    shots: Array<{ shot_number: string; prompt_text: string }>,
+    layout: LayoutConfig
+  ): string {
+    const ratio = this.currentRatio === 'auto' ? layout.ratio : this.currentRatio
+    
+    // 构建面板描述
+    const panelDescriptions = shots.map((shot, i) => {
+      // 从 prompt_text 中提取镜头描述（去掉标记指令部分）
+      let description = shot.prompt_text
+        .replace(/'分镜\d+' in the top-left corner\.?\s*/gi, '')
+        .replace(/No timecode,?\s*no subtitles\.?\s*/gi, '')
+        .trim()
+      
+      return `Panel ${i + 1}: ${description}`
+    }).join('\n')
+
+    // 提取角色描述（从第一个 shot 中提取核心描述作为统一基准）
+    const characterDescription = this.extractCharacterDescription(shots[0]?.prompt_text || '')
+
+    // 获取场景描述
+    const sceneInput = this.getElement<HTMLTextAreaElement>('directorSceneInput')
+    const storyDescription = sceneInput?.value.trim() || 'Continuous cinematic sequence with clear narrative progression'
+
+    // 使用电影级模板
+    return this.cinematicGridPromptTemplate
+      .replace('{RATIO}', ratio)
+      .replace('{STORY_DESCRIPTION}', storyDescription)
+      .replace('{PANEL_DESCRIPTIONS}', panelDescriptions)
+      .replace('{CHARACTER_DESCRIPTION}', characterDescription)
+  }
+
+  /**
+   * 从提示词中提取角色描述（用于保持一致性）
+   */
+  private extractCharacterDescription(promptText: string): string {
+    // 移除镜头语言和标记指令，保留核心角色描述
+    let description = promptText
+      .replace(/^(Wide shot|Long shot|Medium shot|Close-up|Extreme close-up|Over-the-shoulder|POV|Dutch angle|Low angle|High angle|Back view)[,:]\s*/gi, '')
+      .replace(/'分镜\d+' in the top-left corner\.?\s*/gi, '')
+      .replace(/No timecode,?\s*no subtitles\.?\s*/gi, '')
+      .replace(/[,.]?\s*(masterpiece|best quality|high detail|8K|cinematic lighting)[,.\s]*/gi, '')
+      .trim()
+    
+    return description || 'Based on reference image'
+  }
+
+  /**
+   * 生成 Sora2 视频提示词
+   * @param shots 分镜数组
+   * @param characterCard 角色卡名称（如 @jhrsa.glacialwil）
+   */
+  generateSora2VideoPrompt(
+    shots: Array<{ shot_number: string; prompt_text: string }>,
+    characterCard: string = ''
+  ): string {
+    const videoSequences = shots.map((shot, i) => {
+      // 提取镜头类型和描述
+      const shotText = shot.prompt_text
+        .replace(/'分镜\d+' in the top-left corner\.?\s*/gi, '')
+        .replace(/No timecode,?\s*no subtitles\.?\s*/gi, '')
+        .trim()
+      
+      return `${i + 1}. ${shotText}`
+    }).join('\n')
+
+    return this.sora2VideoPromptTemplate
+      .replace('{CHARACTER_CARD}', characterCard)
+      .replace('{VIDEO_SEQUENCES}', videoSequences)
+  }
+
+  /**
+   * 获取当前生成的分镜数据（供外部调用生成视频提示词）
+   */
+  getGeneratedShots(): Array<{ shot_number: string; prompt_text: string }> | null {
+    // 从最近的生成结果中解析 shots
+    // 这里返回缓存的 shots 数据
+    return this.lastGeneratedShots || null
+  }
+
+  // 缓存最近生成的 shots
+  private lastGeneratedShots: Array<{ shot_number: string; prompt_text: string }> | null = null
+
+  /**
+   * 模板方式生成提示词（回退模式）
+   */
+  private generateTemplatePrompt(
+    imageAnalysis: string,
+    sceneDescription: string,
+    panelCount: number,
+    layout: LayoutConfig,
+    templatePrefix: string,
+    templateSuffix: string,
+    templateNegative: string
+  ): string {
+    const userDescription = sceneDescription || imageAnalysis
+    const viewAngles = this.generateViewAngles(panelCount)
+    
     const panelPrompts: string[] = []
     for (let i = 0; i < panelCount; i++) {
       panelPrompts.push(`Panel ${i + 1}: ${viewAngles[i]}, ${userDescription}`)
@@ -1636,7 +2243,7 @@ Panel Descriptions:
 ${panelPrompts.join('\n')}
 
 Important Instructions:
-- Each panel should have 'Panel X' label in the top-left corner
+- Each panel should have '分镜{i+1}' label in the top-left corner
 - No speech bubbles, no dialogue text
 - No timecode, no subtitles
 - Consistent character appearance across all panels
@@ -1655,6 +2262,180 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
     }
 
     return comicPrompt
+  }
+
+  /**
+   * 获取当前风格模板的 JSON shots 配置
+   * 直接将风格参数集成到 AI 生成的 JSON 结构中
+   */
+  private getStyleConfigForJsonShots(): {
+    prefix: string
+    suffix: string
+    negative: string
+    shotPrefix: string
+    shotSuffix: string
+    styleInstructions: string
+    additionalRules: string
+  } {
+    const template = this.currentTemplate
+    const templateData = template 
+      ? (this.styleTemplates[template] || this.customTemplates[template])
+      : null
+
+    // 默认配置
+    const defaultConfig = {
+      prefix: '',
+      suffix: ', masterpiece, best quality, highly detailed, cinematic lighting',
+      negative: 'blurry, lowres, bad anatomy, worst quality, inconsistent style',
+      shotPrefix: '',
+      shotSuffix: '',
+      styleInstructions: '使用电影级分镜语言，保持角色和环境的一致性。',
+      additionalRules: ''
+    }
+
+    if (!templateData) {
+      return defaultConfig
+    }
+
+    // 根据不同模板返回不同配置
+    switch (template) {
+      case 'theatrical':
+        return {
+          prefix: templateData.prefix,
+          suffix: templateData.suffix,
+          negative: templateData.negative,
+          shotPrefix: '((日本劇場版アニメスタイル:1.5)), ',
+          shotSuffix: ', anime cel shading, TV anime coloring, modern anime style',
+          styleInstructions: `
+【剧场版动画风格要求】
+- 严格遵循日本动画电影的撮影技术和画面构成
+- 使用 ((権重标记:1.x)) 语法强调关键风格元素
+- 每个分镜必须保持劇場版画质水准
+- 人物作画必须一致，禁止作画崩壊
+- 采用 anime cel shading 和 TV anime coloring
+- 参考图的画风必须 100% 复刻到所有分镜
+
+关键标签（必须包含在每个 shot 中）:
+- 劇場版クオリティ (theatrical quality)
+- anime screencap (动画截屏)
+- masterpiece, best quality
+- cinematic lighting
+- depth of field`,
+          additionalRules: `
+6. 【剧场版专用】每个 shot 必须包含日式动画权重标签如 ((style:1.5))
+7. 【剧场版专用】禁止实写(実写)、3D、不同画风(異なる画風)的元素
+8. 【剧场版专用】强调 "参考画像の画風に完全に従って構築" - 完全按照参考图画风构建`
+        }
+
+      case 'cinematic':
+        return {
+          prefix: templateData.prefix,
+          suffix: templateData.suffix,
+          negative: templateData.negative,
+          shotPrefix: 'Cinematic storyboard panel, ',
+          shotSuffix: ', photorealistic, sequence photography, 8K resolution',
+          styleInstructions: `
+【电影级九宫格风格要求】
+- 生成精确的 3x3 网格分镜板 (split screen, comic book layout)
+- 分形几何原则：总图和单格比例必须完全一致
+- 对称网格，硬边框，干净的白色分隔线
+- 禁止文字、对话气泡
+- 所有 9 个面板必须保持角色、服装、光照的绝对一致
+
+关键标签（必须包含在每个 shot 中）:
+- Symmetrical grid, hard borders
+- Same characters, same outfit, same lighting
+- Cinematic lighting, photorealistic
+- 8K resolution`,
+          additionalRules: `
+6. 【电影级专用】严格保持九宫格比例一致性
+7. 【电影级专用】禁止不规则面板(irregular panels)、不对称网格(asymmetric grid)
+8. 【电影级专用】每个面板必须有清晰的叙事承接关系`
+        }
+
+      case 'anime':
+        return {
+          prefix: templateData.prefix,
+          suffix: templateData.suffix,
+          negative: templateData.negative,
+          shotPrefix: 'anime screenshot, ',
+          shotSuffix: ', anime style, cel shading',
+          styleInstructions: '使用动画截图风格，保持赛璐璐着色和清晰线条。',
+          additionalRules: ''
+        }
+
+      case 'manga':
+        return {
+          prefix: templateData.prefix,
+          suffix: templateData.suffix,
+          negative: templateData.negative,
+          shotPrefix: 'manga panel, black and white, ',
+          shotSuffix: ', manga style, ink drawing, screentone',
+          styleInstructions: '使用漫画分镜风格，黑白墨线，网点效果。',
+          additionalRules: ''
+        }
+
+      case 'movie':
+        return {
+          prefix: templateData.prefix,
+          suffix: templateData.suffix,
+          negative: templateData.negative,
+          shotPrefix: 'movie still, cinematic, ',
+          shotSuffix: ', film grain, dramatic lighting, widescreen',
+          styleInstructions: '使用电影剧照风格，宽银幕比例，戏剧性光影。',
+          additionalRules: ''
+        }
+
+      default:
+        return {
+          prefix: templateData.prefix || '',
+          suffix: templateData.suffix || defaultConfig.suffix,
+          negative: templateData.negative || defaultConfig.negative,
+          shotPrefix: '',
+          shotSuffix: '',
+          styleInstructions: defaultConfig.styleInstructions,
+          additionalRules: ''
+        }
+    }
+  }
+
+  /**
+   * 根据分镜数量计算视角分布要求（用于 Gem AI 提示词）
+   */
+  private calculateViewDistribution(panelCount: number): string {
+    if (panelCount === 9) {
+      // 9宫格标准分布（北风诉苦原版规则）
+      return `- 至少 2个 背后视角 (Back View)
+- 至少 3个 过肩视角 (Over-the-Shoulder/OTS)
+- 至少 2个 主观视角 (Point of View/POV)
+- 剩余 2个 自由选择高张力视角（如 Dutch Angle、Extreme Close-up、Top-Down）`
+    } else if (panelCount === 6) {
+      // 6宫格分布
+      return `- 至少 1个 背后视角 (Back View)
+- 至少 2个 过肩视角 (Over-the-Shoulder/OTS)
+- 至少 1个 主观视角 (Point of View/POV)
+- 剩余 2个 自由选择高张力视角`
+    } else if (panelCount === 4) {
+      // 4宫格分布
+      return `- 至少 1个 背后视角 (Back View)
+- 至少 1个 过肩视角 (Over-the-Shoulder/OTS)
+- 至少 1个 主观视角 (Point of View/POV)
+- 剩余 1个 自由选择高张力视角`
+    } else if (panelCount === 2) {
+      // 2宫格分布
+      return `- 1个 过肩视角 (Over-the-Shoulder/OTS)
+- 1个 主观视角或背后视角`
+    } else {
+      // 其他数量动态计算
+      const backView = Math.max(1, Math.floor(panelCount * 0.22))
+      const ots = Math.max(1, Math.floor(panelCount * 0.33))
+      const pov = Math.max(1, Math.floor(panelCount * 0.22))
+      const free = panelCount - backView - ots - pov
+      return `- 约 ${backView}个 背后视角 (Back View)
+- 约 ${ots}个 过肩视角 (Over-the-Shoulder/OTS)
+- 约 ${pov}个 主观视角 (Point of View/POV)
+- 约 ${free}个 自由选择高张力视角`
+    }
   }
 
   /**
@@ -2614,7 +3395,13 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
     }
 
     if (state.referenceImages?.length) {
-      this.referenceImages = state.referenceImages.filter(img => img?.base64) as DirectorReferenceImage[]
+      // 恢复参考图并重新生成 ID
+      this.referenceImages = state.referenceImages
+        .filter(img => img?.base64)
+        .map((img, index) => ({
+          ...img,
+          id: img.id || Date.now() + index
+        })) as DirectorReferenceImage[]
       this.updateReferenceImagesPreview()
     }
 
@@ -2625,10 +3412,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
    * 保存页面状态
    */
   saveState(): void {
-    const pageStateManager = (window as any).pageStateManager
-    if (pageStateManager?.savePageState) {
-      pageStateManager.savePageState('director', this.collectState())
-    }
+    this.saveCurrentStateImmediate()
   }
 
   /**
@@ -2638,11 +3422,15 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
     if (this.stateRestored) return
 
     const pageStateManager = (window as any).pageStateManager
-    if (pageStateManager?.getPageState) {
-      const state = pageStateManager.getPageState('director') as DirectorPageState | null
-      if (state) {
-        this.applyState(state)
-        console.log('📥 恢复 DirectorPage 状态:', state)
+    if (pageStateManager?.loadState) {
+      try {
+        const state = await pageStateManager.loadState('director') as DirectorPageState | null
+        if (state) {
+          this.applyState(state)
+          console.log('📥 恢复 DirectorPage 状态:', state)
+        }
+      } catch (error) {
+        console.error('❌ 恢复 DirectorPage 状态失败:', error)
       }
     }
 
@@ -2664,8 +3452,8 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
    */
   private saveCurrentStateImmediate(): void {
     const pageStateManager = (window as any).pageStateManager
-    if (pageStateManager?.savePageState) {
-      pageStateManager.savePageState('director', this.collectState())
+    if (pageStateManager?.saveStateImmediate) {
+      pageStateManager.saveStateImmediate('director', this.collectState())
     }
   }
 
@@ -2680,9 +3468,9 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
     this.updateLayoutSelection()
     this.updateGenerateButtonState()
 
-    this.requestIdleCallback(() => {
+    this.requestIdleCallback(async () => {
       if (!this.stateRestored) {
-        this.restoreState()
+        await this.restoreState()
       }
       this.switchMode(this.currentMode)
       this.restoreResultsDisplay()
@@ -3246,6 +4034,131 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
       console.error('[DirectorPage] 导出模板失败:', error)
       this.app.showToast?.(this.t('director.messages.exportFailed') || '导出失败', 'error')
     }
+  }
+
+  // ==================== 图像理解模型选择 ====================
+
+  /**
+   * 打开图像理解模型选择弹窗
+   */
+  private openVisionModelModal(): void {
+    if (!this.visionModelConfig) {
+      this.showToast('模型配置未加载', 'error')
+      return
+    }
+
+    // 创建或获取弹窗
+    let modal = document.getElementById('directorVisionModelModal')
+    if (!modal) {
+      modal = document.createElement('div')
+      modal.id = 'directorVisionModelModal'
+      modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden'
+      document.body.appendChild(modal)
+    }
+
+    // 渲染弹窗内容
+    const models = this.visionModelConfig.models
+    const recommendedText = this.t('understand.visionModelData.recommended') || '推荐'
+    const currentText = this.t('understand.visionModelData.current') || '当前'
+
+    // Cyberpunk 暗色主题弹窗
+    modal.innerHTML = `
+      <div class="bg-[#09090B] border-2 border-[#3F3F46] max-w-2xl w-full mx-4 max-h-[80vh] overflow-hidden shadow-2xl">
+        <!-- 标题栏 - Kinetic Typography 风格 -->
+        <div class="flex items-center justify-between px-6 py-4 border-b-2 border-[#3F3F46] bg-[#18181B]">
+          <h3 class="text-xl font-bold text-white flex items-center uppercase tracking-tight">
+            <span class="mr-3 text-2xl">🤖</span>
+            <span data-i18n="director.labels.selectVisionModel">${this.t('director.labels.selectVisionModel') || '选择图像理解模型'}</span>
+          </h3>
+          <button id="directorVisionModelCloseBtn" class="text-[#A1A1AA] hover:text-[#FCE300] text-2xl transition-colors duration-200">&times;</button>
+        </div>
+        <!-- 模型列表 -->
+        <div class="p-4 overflow-y-auto max-h-[60vh] space-y-3">
+          ${models.map(model => {
+            const isSelected = model.id === this.visionModel
+            return `
+              <div class="vision-model-card cursor-pointer p-4 border-2 transition-all duration-200
+                          ${isSelected 
+                            ? 'border-[#FCE300] bg-[#FCE300] bg-opacity-10' 
+                            : 'border-[#3F3F46] bg-[#18181B] hover:border-[#FCE300] hover:bg-[#27272A]'}"
+                   data-model-id="${model.id}">
+                <div class="flex items-start space-x-4">
+                  <div class="text-3xl flex-shrink-0">${model.icon || '🤖'}</div>
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+                      <div class="flex items-center space-x-2 flex-wrap gap-1">
+                        <span class="text-white font-bold text-lg uppercase tracking-tight">${model.shortName || model.name || model.id}</span>
+                        ${model.recommended ? `<span class="bg-[#FCE300] text-black text-xs px-2 py-1 font-bold uppercase tracking-wide">${recommendedText}</span>` : ''}
+                        ${isSelected ? `<span class="bg-[#22C55E] text-white text-xs px-2 py-1 font-bold uppercase tracking-wide">${currentText}</span>` : ''}
+                      </div>
+                      ${model.price ? `<span class="text-[#A1A1AA] text-sm font-mono bg-[#27272A] px-2 py-1 border border-[#3F3F46]">${model.price}</span>` : ''}
+                    </div>
+                    <p class="text-[#A1A1AA] text-sm mb-3 leading-relaxed">${model.description || ''}</p>
+                    ${model.features && model.features.length > 0 ? `
+                      <div class="flex flex-wrap gap-2">
+                        ${model.features.map(f => `<span class="bg-[#27272A] text-[#FAFAFA] text-xs px-2 py-1 border border-[#3F3F46] font-medium">${f}</span>`).join('')}
+                      </div>
+                    ` : ''}
+                  </div>
+                </div>
+              </div>
+            `
+          }).join('')}
+        </div>
+      </div>
+    `
+
+    // 显示弹窗
+    modal.classList.remove('hidden')
+
+    // 绑定关闭按钮
+    document.getElementById('directorVisionModelCloseBtn')?.addEventListener('click', () => {
+      modal?.classList.add('hidden')
+    })
+
+    // 点击外部关闭
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) {
+        modal?.classList.add('hidden')
+      }
+    })
+
+    // 绑定模型选择
+    modal.querySelectorAll('.vision-model-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const modelId = card.getAttribute('data-model-id')
+        if (modelId) {
+          this.selectVisionModel(modelId)
+          modal?.classList.add('hidden')
+        }
+      })
+    })
+  }
+
+  /**
+   * 选择图像理解模型
+   */
+  private selectVisionModel(modelId: string): void {
+    this.visionModel = modelId
+    this.updateVisionModelDisplay()
+    console.log('📸 导演模式切换视觉模型:', modelId)
+    this.showToast(`已切换到 ${this.getVisionModelName(modelId)}`, 'success')
+  }
+
+  /**
+   * 获取模型显示名称
+   */
+  private getVisionModelName(modelId: string): string {
+    if (!this.visionModelConfig) return modelId
+    const model = this.visionModelConfig.models.find(m => m.id === modelId)
+    return model?.shortName || model?.name || modelId
+  }
+
+  /**
+   * 获取当前图像理解模型
+   */
+  getCurrentVisionModel(): string {
+    return this.visionModel
   }
 
   /**

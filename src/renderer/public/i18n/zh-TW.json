@@ -1,0 +1,1242 @@
+{
+  "common": {
+    "appName": "CATIMATION-Cyberpunk Master",
+    "appNameShort": "CATIMATION",
+    "appNameMobile": "CATIMATION",
+    "generate": "生成",
+    "batch": "批量",
+    "compare": "對比",
+    "history": "歷史",
+    "understand": "圖像理解",
+    "settings": "設定",
+    "about": "說明",
+    "docs": "開發文檔",
+    "save": "儲存",
+    "cancel": "取消",
+    "delete": "刪除",
+    "download": "下載",
+    "upload": "上傳",
+    "copy": "複製",
+    "close": "關閉",
+    "confirm": "確認",
+    "clear": "清空",
+    "loading": "正在載入 CATIMATION-AI圖片生成測試平台...",
+    "processing": "處理中...",
+    "success": "成功",
+    "error": "錯誤",
+    "warning": "警告"
+  },
+  "intro": {
+    "skip": "SKIP /// 跳過",
+    "enter": "ENTER NIGHT CITY /// 進入夜之城"
+  },
+  "nav": {
+    "generateImage": "圖片編輯",
+    "generateImageShort": "出圖",
+    "batchGenerate": "批量生成",
+    "batchShort": "批量",
+    "modelCompare": "模型對比",
+    "compareShort": "對比",
+    "historyRecords": "歷史記錄",
+    "historyShort": "記錄",
+    "imageUnderstand": "圖像理解",
+    "understandShort": "識圖",
+    "director": "導演模式",
+    "directorShort": "導演",
+    "switchLanguage": "切換語言",
+    "model": "模型",
+    "activity": "活動",
+    "menu": "選單",
+    "backToGenerate": "返回圖片編輯",
+    "activityTitle": "活動優惠",
+    "settingsTitle": "API設定",
+    "apiStatus": {
+      "label": "API狀態",
+      "notConfigured": "未配置",
+      "connected": "已連接"
+    },
+    "settingsButton": {
+      "notConfigured": "未設定",
+      "configured": "已設定"
+    },
+    "badge": {
+      "lottery": "抽卡"
+    },
+    "skipToContent": "跳轉到主內容",
+    "mainNavigation": "主導航",
+    "selectModel": "選擇AI模型",
+    "modelSelector": "AI模型選擇器",
+    "modelSelectorMobile": "移動端AI模型選擇器",
+    "openMobileMenu": "打開移動端選單",
+    "mainContentArea": "AI圖片生成工具主要功能區域"
+  },
+  "settingsModal": {
+    "title": "API設定",
+    "howToGet": {
+      "title": "如何獲取API Key",
+      "step1": "訪問",
+      "step2": "點擊「創建令牌」按鈕",
+      "step3": "填寫令牌名稱（如：按次計費出圖）",
+      "step4": "選擇計費模式：按次計費",
+      "step5": "點擊創建，複製生成的API Key",
+      "viewExample": "查看創建令牌示例圖"
+    },
+    "fields": {
+      "imageApiKey": {
+        "label": "圖片生成 API Key（按次計費）",
+        "placeholder": "請輸入您的圖片生成 API Key",
+        "description": "用於圖片生成、編輯等功能"
+      },
+      "visionApiKey": {
+        "label": "圖像理解 API Key（按量計費）",
+        "placeholder": "請輸入您的圖像理解 API Key（可選）",
+        "description": "用於圖像理解功能，可選填",
+        "note": "需要在 CATIMATION後台 創建按量計費類型的令牌"
+      }
+    },
+    "buttons": {
+      "save": "儲存",
+      "cancel": "取消",
+      "test": "測試連接"
+    },
+    "selectSite": "選擇 API 站點",
+    "enterApiKey": "輸入 API Key",
+    "addCustomSite": "添加自定义站點",
+    "customSite": {
+      "title": "自定义站點",
+      "name": "站點名称 *",
+      "namePlaceholder": "例如：我的 API 服务",
+      "baseUrl": "Base URL *",
+      "baseURL": "Base URL *",
+      "pathPrefix": "路径前缀（可選）",
+      "apiKey": "默認 API Key（可選）",
+      "description": "描述（可選）",
+      "descriptionPlaceholder": "站點描述",
+      "save": "保存",
+      "cancel": "取消",
+      "editTitle": "编辑自定义站點",
+      "addTitle": "添加自定义站點"
+    },
+    "messages": {
+      "saveSuccess": "設置保存成功",
+      "testSuccess": "連接測試成功",
+      "testFailed": "連接測試失敗",
+      "apiKeyRequired": "請輸入API Key",
+      "invalidFormat": "API Key 格式不正確"
+    }
+  },
+  "about": {
+    "title": "AI圖片大師 - 項目說明",
+    "close": "關閉說明",
+    "aiModel": {
+      "title": "AI模型說明",
+      "nanoBanana": {
+        "name": "Nano Banner",
+        "tag": "新模型",
+        "description": "速度快、一致性好，專為高效圖片生成優化，是谷歌 Gemini 2.5 Flash 預覽版。"
+      },
+      "gpt4o": {
+        "name": "gpt-4o-image",
+        "description": "效果等於"
+      }
+    },
+    "generationTime": {
+      "title": "生成時間說明",
+      "description": "每張圖片用時不等 Nano Banana、Flux 模型大概很快！ 10s 左右，而gpt-4o-image 模型大概 2 分鐘左右，這是正常現象，請耐心等待。",
+      "factors": "生成時間受網路狀況、提示詞複雜度、伺服器負載、官方是否出故障等因素影響。"
+    },
+    "features": {
+      "title": "功能特色",
+      "feature1": "支援單圖生成和批量生成",
+      "feature2": "支援參考圖（墊圖）功能",
+      "feature3": "多種圖片尺寸選擇",
+      "feature4": "完善的歷史記錄和下載功能"
+    },
+    "tips": {
+      "title": "使用提示",
+      "tip1": "提示詞盡量具體詳細，有助於生成更準確的圖片",
+      "tip2": "參考圖功能可以幫助生成風格一致的作品",
+      "tip3": "批量生成時建議合理設定並發數量",
+      "tip4": "生成過程中請保持頁面開啟，避免中斷生成"
+    },
+    "closeButton": "我知道了",
+    "faq": {
+      "title": "Nano Banana Pro API 常见問題",
+      "description": "是一个強大的圖片生成和编辑模型，但有一些內容限製。",
+      "rejectionScenarios": {
+        "title": "常见拒绝場景",
+        "watermark": "去水印：违反內容政策，会被拒绝",
+        "faceSwap": "換脸：涉及隐私和伦理問題，会被拒绝",
+        "nsfw": "NSFW內容：不適當內容会被安全策略拒绝",
+        "knowledge": "知識库限製：仅支持2025年1月之前的內容"
+      },
+      "errorResponse": {
+        "title": "典型錯誤響應",
+        "description": "當請求被拒绝时，API 通常返回：",
+        "message": "\"I'm just a language model and can't help with that.\"",
+        "note": "本工具会自動識別拒绝原因並在錯誤弹窗中展示详細信息。"
+      },
+      "knowledgeCutoff": {
+        "title": "知識库截止时间",
+        "date": "截止时间：2025年1月",
+        "example": "示例：无法處理 iPhone 17 等未發布产品，建议使用已存在的产品或通用描述。",
+        "viewDocs": "查看 Google 官方文檔"
+      },
+      "viewFullDocs": "查看完整常见問題文檔"
+    },
+    "contact": {
+      "title": "产品建议反馈：",
+      "wechat": "微信",
+      "email": "邮箱"
+    }
+  },
+  "activity": {
+    "title": "新用戶專享福利",
+    "subtitle": "每個用戶自動贈送 $0.05 美金",
+    "description": "可生成 1 張 Nano Banana Pro 或 5 張 Sora_image",
+    "close": "關閉活動",
+    "recharge": {
+      "title": "充值階梯加贈活動",
+      "badge": "HOT",
+      "benefit1": "首充加贈 1 美金",
+      "benefit2": "100 美金起加贈 10%",
+      "benefit3": "多充多送~",
+      "viewDetails": "查看詳細規則",
+      "amount": "充值 {amount} 赠送 {bonus}"
+    },
+    "buttons": {
+      "register": "立即註冊獲取福利",
+      "later": "稍後再說",
+      "rechargeNow": "立即充值",
+      "close": "關閉"
+    },
+    "info": {
+      "note": "*註冊後即可在令牌頁面查看贈送的免費額度",
+      "period": "活動时间: {start} - {end}",
+      "rules": "活動规则",
+      "autoCredit": "赠送额度将自動到账",
+      "disclaimer": "活動最終解释权归平台所有"
+    }
+  },
+  "generate": {
+    "title": "生成圖片",
+    "prompt": "提示詞",
+    "promptPlaceholder": "例如：一隻可愛的小貓咪坐在花園裡，油畫風格，高清，細節豐富",
+    "promptRequired": "請輸入提示詞",
+    "negativePrompt": "負面提示詞",
+    "negativePromptPlaceholder": "描述你不想在圖片中看到的內容...",
+    "model": "模型",
+    "selectModel": "選擇模型",
+    "aspectRatio": "比例",
+    "resolution": "圖片分辨率",
+    "referenceImage": "參考圖片",
+    "uploadReference": "上傳參考圖",
+    "removeReference": "移除參考圖",
+    "generating": "正在生成圖片...",
+    "generateSuccess": "圖片生成成功",
+    "generateFailed": "圖片生成失敗",
+    "downloadImage": "下載圖片",
+    "copyPrompt": "複製提示詞",
+    "useTemplate": "使用模板",
+    "templates": "提示詞模板",
+    "quantity": "數量",
+    "quantityOptions": {
+      "1": "1張",
+      "2": "2張"
+    },
+    "finalResolution": "最終分辨率：",
+    "imageSize": "圖片尺寸",
+    "describeImage": "描述您想要的圖片",
+    "image2ImageLabel": "圖生圖 (墊圖可選，不上傳即文生圖)",
+    "apiCallLimit": "（API調用不止8 張圖片輸入）",
+    "clickToUpload": "點擊上傳參考圖片",
+    "pasteImageDesktop": "或按快捷鍵貼上圖片",
+    "pasteImageMobile": "或直接貼上圖片",
+    "autoCompressionInfo": "大圖片在生成時自動壓縮，不影響品質",
+    "messages": {
+      "promptRequired": "請輸入圖片描述",
+      "apiKeyNotSet": "請先設定API Key",
+      "generateSuccess": "圖片生成成功",
+      "generateWithReferenceSuccess": "基於{count}張參考圖的圖片生成成功",
+      "processingFile": "正在處理檔案，跳過重複觸發",
+      "fileSelectionActive": "檔案選擇已啟動，跳過重複觸發",
+      "skipDuplicateUpload": "檢測到重複上傳，忽略任務",
+      "invalidResult": "未生成有效圖片",
+      "generateError": "圖片生成過程中出現錯誤",
+      "noImageInClipboard": "剪貼簿中沒有找到圖片，請複製圖片後再試",
+      "pastedImagesSuccess": "成功貼上 {count} 張圖片",
+      "pasteError": "貼上圖片失敗，請重試",
+      "uploadCancelled": "上傳任務已被取消",
+      "fileNotImage": "{filename} 不是圖片檔案",
+      "fileTooLarge": "{filename} 檔案過大（{size}MB），最大支援20MB",
+      "unsupportedFormat": "{filename} 格式不支援，請使用 JPG、PNG、WebP 或 BMP 格式",
+      "fileTooSmall": "{filename} 檔案過小，可能不是有效的圖片檔案",
+      "fileDuplicate": "{filename} 已存在，跳過重複檔案",
+      "uploadLimitReached": "已達到上傳上限，僅處理前{max}張圖片",
+      "reachedMaxImages": "最多只能上傳{max}張參考圖",
+      "fluxModelLimitInfo": "Flux 模型目前暫時僅支援一張配圖，靜待後續改進",
+      "uploadSuccess": "參考圖上傳成功 (耗時{time}秒)",
+      "uploadSuccessMultiple": "成功上傳 {count} 張參考圖 (耗時{time}秒)",
+      "uploadFailed": "圖片上傳失敗: {error}",
+      "fileReadFailed": "檔案讀取失敗: {error}",
+      "fileReadAborted": "檔案讀取被中斷",
+      "fileReadTimeout": "檔案讀取逾時",
+      "invalidBase64": "Base64資料異常短，可能轉換失敗",
+      "base64ValidationFailed": "Base64格式驗證失敗",
+      "conversionFailed": "檔案轉換失敗，已重試{retries}次: {error}",
+      "imageValidationFailed": "圖片資料驗證失敗: {error}",
+      "imageDecodeFailed": "Base64資料無法解析為有效圖片",
+      "imageDimensionInvalid": "圖片尺寸無效",
+      "imageValidationTimeout": "圖片驗證逾時",
+      "compressionFailed": "圖片壓縮失敗，使用原圖上傳: {error}",
+      "compressingImages": "正在壓縮 {count} 張大圖片...",
+      "compressionInfo": "大圖片自動壓縮，不影響生成品質",
+      "compressionComplete": "已壓縮 {count} 張圖片，開始生成...",
+      "inputCleared": "已清空輸入內容",
+      "referenceImageRemoved": "已移除參考圖: {filename}",
+      "estimatedTime4K": "預計需要 4-6 分鐘",
+      "estimatedTime2K": "預計需要 2-4 分鐘",
+      "estimatedTime1K": "預計需要 1-3 分鐘",
+      "generatingWithEstimate": "生成中... {estimate}，請耐心等待",
+      "generatingProgress": "正在生成圖片...",
+      "connectingServer": "正在連線AI伺服器...",
+      "analyzingPrompt": "正在分析提示詞內容...",
+      "startGenerating": "開始生成圖片，預計需要2-4分鐘...",
+      "creatingArt": "正在創作中，請耐心等待...",
+      "generatingInProgress": "圖片生成進行中...",
+      "optimizingQuality": "正在最佳化圖片品質...",
+      "almostComplete": "即將完成，請稍候...",
+      "generationFailed": "圖片生成失敗，請重試",
+      "noReferencesUploaded": "沒有上傳參考圖",
+      "noGeneratedImages": "還未生成圖片",
+      "downloading": "正在下載 {completed}/{total}",
+      "batchDownloadCompleted": "批量下載完成",
+      "batchDownloadError": "批量下載出錯",
+      "downloadHelperTitle": "下載說明",
+      "downloadHelperMessage": "由於瀏覽器安全限制，無法自動批量下載。",
+      "downloadSteps": "請按以下步驟手動下載：",
+      "downloadStep1": "點擊下方「檢視圖片」按鈕",
+      "downloadStep2": "在圖片預覽中，右鍵圖片",
+      "downloadStep3": "選擇「圖片另存為」",
+      "downloadStep4": "重複步驟2-3下載所有圖片",
+      "viewImages": "檢視圖片",
+      "understood": "知道了",
+      "pageActivated": "圖片生成頁面已啟動",
+      "pageDeactivated": "圖片生成頁面已失活",
+      "pageLoadIncomplete": "頁面載入未完成，請重新整理頁面",
+      "noCompressionNeeded": "文件 {filename} 大小为 {size}MB，无需压缩",
+      "startCompression": "開始压缩文件: {filename}, 原大小: {size}MB",
+      "filenameTooLong": "文件名过长，将被截断: {filename}"
+    },
+    "buttons": {
+      "generateButton": "開始生成",
+      "generating": "生成中...",
+      "clearInput": "清空輸入",
+      "clearPromptTitle": "清空提示詞輸入",
+      "download": "下載",
+      "expandView": "檢視大圖",
+      "batchDownloadAll": "批量下載全部",
+      "retryGenerate": "重新生成",
+      "viewDetails": "檢視詳情"
+    },
+    "labels": {
+      "generatedImagesPlaceholder": "生成的圖片將在這裡顯示",
+      "referenceImageLabel": "參考圖{index}",
+      "generateResultLabel": "結果{index}",
+      "addMoreReferences": "新增更多參考圖",
+      "resultTab": "生成結果",
+      "originalTab": "原圖/參考圖",
+      "compareTab": "對比顯示",
+      "referenceImageTitle": "參考圖/原圖",
+      "uploadPrompt": "上傳參考圖，支援點擊選擇或Ctrl+V貼上",
+      "referenceImageCount": "({current}/{max})",
+      "supportedFormats": "支援 JPG、PNG 格式，最多上傳{max}張圖片，單個檔案最大20MB",
+      "fluxModelInfo": "支援 JPG、PNG 格式，Flux模型目前僅支援1張圖片，單個檔案最大20MB，靜待後續改進",
+      "uploadIndicatorTooltip": "正在上傳到雲端...",
+      "uploadCompleteTooltip": "已上傳到雲端",
+      "needsCompressionTooltip": "檔案較大，生成時將自動壓縮",
+      "needsCompressionLabel": "MB 將壓縮",
+      "removeButtonLabel": "移除參考圖{index}",
+      "fileSizeFormat": "{size}MB",
+      "quickSolutionTitle": "快速解決建議：",
+      "compareViewTitle": "對比視圖"
+    },
+    "errors": {
+      "invalidFileReaderResult": "FileReader返回無效結果",
+      "readerErrorMessage": "檔案讀取失敗: {error}",
+      "imageSizeInvalid": "圖片尺寸無效",
+      "detailedErrorTitle": "檢視完整錯誤詳情",
+      "pageElementNotFound": "referenceImageArea 元素未找到，可能DOM還未完全載入",
+      "imageContainerNotFound": "空結果顯示容器不存在",
+      "errorContainerNotFound": "錯誤顯示容器不存在"
+    },
+      "dialogs": {
+      "errorTitle": "檢視詳情"
+    },
+    "clearPromptTitle": "清空提示詞"
+  },
+  "batch": {
+    "title": "批量生成",
+    "modes": {
+      "card": "🎰 抽卡模式（推薦）",
+      "multi": "📋 多提示詞模式"
+    },
+    "labels": {
+      "promptInput": "輸入提示詞（支援多行）",
+      "promptTemplate": "提示詞模板",
+      "cardWarning": "一個提示詞，生成多張圖片供您挑選，務必提示詞和圖片合規，違規內容出圖失敗AI廠商仍然扣費",
+      "quantity": "生成數量（抽卡張數）",
+      "costEstimate": "預估費用",
+      "currentModel": "當前模型：",
+      "unitPrice": "單價",
+      "perImage": "張",
+      "multiPromptInput": "批量提示詞（用空行分隔不同提示詞）",
+      "multiPromptHint": "用空行分隔不同提示詞，每個提示詞內可自由換行",
+      "batchSize": "批量尺寸",
+      "batchQuantity": "數量",
+      "resolution": "清晰度",
+      "batchReferenceImage": "批量參考圖（墊圖）",
+      "optional": "可選，最多{max}張",
+      "formatSupport": "支援 JPG、PNG 格式，最多上傳{max}張圖片，單個檔案最大20MB",
+      "pasteShortcutDesktop": "或按快捷鍵貼上圖片",
+      "pasteShortcutMobile": "或直接貼上圖片",
+      "sharedReference": "所有提示詞將共用這些參考圖生成",
+      "addMore": "新增更多參考圖",
+      "sharedReferenceConfirm": "將作為所有提示詞的參考圖",
+      "quantityCount": "{count}張",
+      "emptyResults": "還沒有生成結果，開始批量生成吧！",
+      "promptCount": "{count}條",
+      "referenceImage": "批量參考圖{index}",
+      "removeImage": "移除批量參考圖{index}",
+      "batchLabel": "批量生成 {index}",
+      "selectBatchReference": "選擇批量參考圖片",
+      "perPromptQuantity": "每提示詞生成數量",
+      "concurrency": "並發數",
+      "uploadAriaLabel": "上傳參考圖片"
+    },
+    "ratioOptions": {
+      "auto": "自適應",
+      "square": "方形 1:1",
+      "portrait": "豎版 2:3",
+      "landscape": "橫版 3:2",
+      "widescreen": "寬屏 16:9"
+    },
+    "resolutionOptions": {
+      "1k": "1K 標準",
+      "2k": "2K 高清",
+      "4k": "4K 超清"
+    },
+    "upload": {
+      "clickToUpload": "點擊上傳批量參考圖片",
+      "processing": "正在處理批量文件，跳过重複触發",
+      "selectionActive": "批量文件選擇已激活，跳过重複触發",
+      "pasteSupport": "或粘贴圖片到此處"
+    },
+    "buttons": {
+      "startBatch": "開始批量生成",
+      "stopBatch": "停止生成",
+      "clearInput": "清空輸入"
+    },
+    "notice": {
+      "title": "批量生成重要注意事項",
+      "keepPageOpen": "必須保持頁面開啟：",
+      "keepPageOpenDesc": "批量生成過程中，請勿關閉瀏覽器標籤頁或重新整理頁面，否則任務會立即中斷",
+      "localMechanism": "本地運行機制：",
+      "localMechanismDesc": "本工具無後台服務，所有任務在瀏覽器中運行，關閉頁面後無法恢復未完成的任務",
+      "reasonableQuantity": "合理設定數量：",
+      "reasonableQuantityDesc": "建議根據網路狀況調整並發數量，避免過多並發請求導致失敗",
+      "saveImages": "及時儲存圖片：",
+      "saveImagesDesc": "生成完成後請及時下載儲存圖片，避免因意外關閉頁面而丟失結果",
+      "longDuration": "生成時間較長：",
+      "longDurationDesc": "每張圖片需要2-4分鐘，大批量生成請預留充足時間"
+    },
+    "progress": {
+      "processing": "正在處理 {count} 張批量參考圖...",
+      "current": "已處理 {current}/{total}",
+      "generating": "正在批量生成...",
+      "completed": "已完成 {count} 張"
+    },
+    "status": {
+      "batchCount": "生成數量",
+      "concurrency": "並發數",
+      "startBatch": "開始批量生成",
+      "stopBatch": "停止生成",
+      "progressLabel": "進度",
+      "completed": "已完成",
+      "failed": "失敗",
+      "generating": "生成中",
+      "batchComplete": "批量生成完成",
+      "downloadAll": "下載全部"
+    },
+    "countDisplay": "{{count}} 張",
+    "rangeLabels": {
+      "min": "{{count}}張",
+      "max": "{{count}}張"
+    },
+    "quantityOptions": {
+      "1": "1張",
+      "2": "2張"
+    },
+    "concurrencyOptions": {
+      "1": "1個",
+      "2": "2個",
+      "3": "3個",
+      "4": "4個",
+      "5": "5個",
+      "6": "6個"
+    },
+    "messages": {
+      "uploadSuccess": "批量參考圖上傳成功",
+      "uploadSuccessMultiple": "成功上傳 {count} 張批量參考圖 (耗时{time}秒)",
+      "uploadFailed": "批量圖片上傳失敗: {error}",
+      "pasteSuccess": "成功粘贴 {count} 張圖片到批量參考圖",
+      "pasteFailed": "粘贴圖片失敗，請重試",
+      "fluxModelLimit": "Flux 模型目前暂时仅支持一張配圖，静待后续改進",
+      "maxImagesReached": "最多只能上傳{max}張參考圖",
+      "limitReached": "已达到上傳上限，仅處理前{max}張圖片",
+      "batchComplete": "批量生成完成",
+      "batchFailed": "批量生成失敗",
+      "duplicateTask": "检測到重複批量上傳，忽略任务"
+    },
+    "placeholders": {
+      "cardMode": "設计一張圖文店促销活動傳單，宣傳年終大促销活動。\n設计風格：活力促销風格，吸引眼球\n配色方案：橙红色为主色調，营造熱烈促销氛围",
+      "multiMode": "設计一張圖文店促销活動傳單，宣傳年終大促销活動。\n設计風格：活力促销風格，吸引眼球\n配色方案：橙红色为主色調\n\n一只可爱的小猫咪坐在花园裡，\n油畫風格，高清，細節豐富，\n温暖的午后阳光\n\n现代簡约風格的客厅設计"
+    }
+  },
+  "compare": {
+    "title": "模型對比",
+    "labels": {
+      "leftModel": "左側模型",
+      "rightModel": "右側模型",
+      "selectModel": "選擇模型",
+      "prompt": "提示詞",
+      "commonRatios": "共同支援的尺寸",
+      "selectModelsFirst": "請先選擇兩個模型",
+      "referenceImages": "參考圖片（可選，最多3張）",
+      "uploadHint": "點擊或拖拽上傳參考圖片",
+      "formatHint": "支援 JPG、PNG、GIF 格式",
+      "referenceImage": "對比參考圖{index}",
+      "removeImage": "移除對比參考圖{index}",
+      "leftResult": "左侧結果",
+      "rightResult": "右侧結果",
+      "parameters": "參數設置",
+      "ratio": "比例: {ratio}",
+      "generateFailed": "生成失敗",
+      "generateSuccess": "生成成功",
+      "commonRatiosTitle": "共同支持的尺寸",
+      "promptPlaceholder": "描述你想要生成的圖片..."
+    },
+    "buttons": {
+      "clear": "清空",
+      "startCompare": "開始對比",
+      "clearInput": "清空輸入",
+      "recompare": "重新對比"
+    },
+    "evaluation": {
+      "question": "您認為哪個模型生成的圖片更好？",
+      "leftButton": "左邊更好",
+      "equalGood": "一樣好",
+      "equalBad": "一樣糟糕",
+      "rightButton": "右邊更好",
+      "leftBetter": "左侧模型更好",
+      "rightBetter": "右侧模型更好",
+      "similar": "两者相當",
+      "save": "保存评价"
+    },
+    "selectModels": "選擇要對比的模型",
+    "modelCount": "已選擇 {count} 個模型",
+    "compareNow": "開始對比",
+    "comparing": "正在對比...",
+    "compareComplete": "對比完成",
+    "samePrompt": "使用相同提示詞",
+    "sameSettings": "使用相同設定",
+    "pageActivated": "模型對比页面已激活",
+    "pageDeactivated": "模型對比页面已停用",
+    "models": {
+      "selectLeft": "選擇左侧模型",
+      "selectRight": "選擇右侧模型",
+      "speed": "速度: {speed}",
+      "price": "价格: ${price}/張",
+      "noCommonRatios": "所選模型没有共同支持的尺寸"
+    },
+    "upload": {
+      "clickToUpload": "點击上傳對比參考圖片",
+      "clickOrDrag": "點击或拖拽上傳參考圖片",
+      "supportedFormats": "支持 JPG、PNG 格式"
+    },
+    "messages": {
+      "comparing": "正在對比...",
+      "compareComplete": "對比完成",
+      "compareFailed": "對比失敗: {error}"
+    }
+  },
+  "history": {
+    "title": "歷史記錄",
+    "clearHistory": "清空記錄",
+    "labels": {
+      "empty": "暫無歷史記錄",
+      "recordsCount": "{count} 條記錄",
+      "storageStatus": "存储狀態",
+      "privacyProtection": "隐私保护",
+      "privacyProtectionDesc": "圖片經加密后匿名存储，仅您可访問",
+      "smartStorage": "智能存储",
+      "smartStorageDesc": "自動上傳雲端，節省本地空间 95%+",
+      "syncManagement": "同步管理",
+      "syncManagementDesc": "刪除記錄时雲端圖片同步清理",
+      "expirationPeriod": "有效期限",
+      "expirationPeriodDesc": "雲端保存 30 天，到期自動清理",
+      "localStorageMode": "本地存储模式",
+      "localStorageModeDesc": "圖片保存在浏览器，占用設备存储空间",
+      "configureCloudStorage": "建议配置雲端存储",
+      "configureCloudStorageDesc": "配置 Worker URL 以節省空间並保护隐私",
+      "migrateAllToCloud": "一键迁移 {count} 條本地記錄到雲端",
+      "localUsage": "本地占用: {percent}%",
+      "clearWebCache": "清除網頁快取",
+      "clearWebCacheDesc": "清除瀏覽器暫存的臨時檔案"
+    },
+    "storage": {
+      "uploading": "上傳中",
+      "cloud": "雲端",
+      "local": "本地",
+      "cloudModeTitle": "安全雲端儲存",
+      "localModeTitle": "本地瀏覽器儲存",
+      "privacyTitle": "隐私保护",
+      "privacyDesc": "圖片經加密后匿名存储，仅您可访問",
+      "smartStorageTitle": "智能存储",
+      "smartStorageDesc": "自動上傳雲端，節省本地空间 95%+",
+      "syncTitle": "同步管理",
+      "syncDesc": "刪除記錄时雲端圖片同步清理",
+      "expirationTitle": "有效期限",
+      "expirationDesc": "雲端保存 30 天，到期自動清理"
+    },
+    "types": {
+      "networkRestricted": "網路受限",
+      "winner": "{model} 勝出",
+      "pending": "待評價"
+    },
+    "messages": {
+      "downloadStarting": "開始批量下載...",
+      "downloading": "正在下載 {completed}/{total}",
+      "downloadComplete": "批量下載完成",
+      "deleted": "記錄已刪除",
+      "notFound": "歷史記錄不存在",
+      "cloudUnavailable": "雲端儲存服務不可用",
+      "migrating": "正在遷移到雲端..."
+    },
+    "downloadHelp": {
+      "title": "下載說明",
+      "message": "由於瀏覽器安全限制，無法自動批量下載。",
+      "stepsTitle": "請按以下步驟手動下載：",
+      "step1": "點擊下方「檢視圖片」按鈕",
+      "step2": "在圖片預覽中，右鍵圖片",
+      "step3": "選擇「圖片另存為」",
+      "step4": "重複步驟2-3下載所有圖片",
+      "viewImages": "檢視圖片",
+      "understood": "知道了"
+    },
+    "networkRestricted": {
+      "title": "網路受限的圖片",
+      "explanationTitle": "說明",
+      "description": "這些圖片已成功生成，但可能因網路環境限制無法直接訪問。",
+      "instruction": "您可以複製圖片地址，然後在具有外網訪問權限的網路環境中開啟。",
+      "imageAddresses": "圖片地址 ({count}張)",
+      "imageLabel": "圖片 {index}",
+      "copy": "複製",
+      "open": "開啟",
+      "solutionTitle": "解決方案",
+      "solutionItem1": "複製圖片地址到剪貼簿",
+      "solutionItem2": "在具有外網訪問權限的裝置上貼上並開啟",
+      "solutionItem3": "使用VPN或代理服務訪問",
+      "solutionItem4": "聯絡技術支援獲取國內鏡像地址",
+      "copyAll": "複製所有地址",
+      "retry": "重試訪問",
+      "close": "關閉",
+      "solution1": "複製圖片地址到剪贴板",
+      "solution2": "批量複製所有地址",
+      "solution3": "重新尝試访問"
+    },
+    "noHistory": "暫無歷史記錄",
+    "confirmClear": "確定要清空所有歷史記錄嗎？",
+    "deleteItem": "刪除記錄",
+    "viewImage": "檢視圖片",
+    "regenerate": "重新生成",
+    "cloudSync": "雲端同步",
+    "syncSuccess": "同步成功",
+    "syncFailed": "同步失敗",
+    "details": {
+      "model": "模型: {model}",
+      "ratio": "尺寸: {ratio}",
+      "referenceCount": "{count}張參考圖",
+      "networkRestrictedNote": "生成成功，但圖片可能需要特殊網络环境访問"
+    },
+    "buttons": {
+      "view": "查看圖片",
+      "download": "下載圖片",
+      "batchDownload": "批量下載",
+      "delete": "刪除記錄",
+      "migrateToCloud": "迁移到雲端",
+      "networkOptions": "網络受限選项",
+      "uploading": "圖片上傳中，請稍候"
+    }
+  },
+  "understand": {
+    "title": "圖像理解",
+    "pageTitle": "上傳圖片進行理解",
+    "multiImageSupport": "支援多圖聯合分析",
+    "upload": {
+      "title": "上傳圖片",
+      "clickToUpload": "點擊上傳圖片",
+      "dragHint": "或拖拽圖片到此處",
+      "pasteSupport": "支援貼上圖片 (Ctrl+V)",
+      "formatInfo": "支援 JPG、PNG 格式，單個檔案最大 20MB",
+      "compressionInfo": "大圖片自動壓縮，不影響理解品質",
+      "pasteKeyboardHint": "或按快捷鍵貼上圖片",
+      "pasteMobileHint": "或直接貼上圖片",
+      "addMoreImages": "新增更多圖片"
+    },
+    "models": {
+      "selectModel": "選擇模型",
+      "selectVisionModel": "選擇圖像理解模型",
+      "currentModel": "當前模型",
+      "recommended": "推薦",
+      "customModel": "自訂模型",
+      "customModelOptional": "自訂模型（可選）",
+      "expand": "展開",
+      "collapse": "收起",
+      "customModelPlaceholder": "例如：gpt-4-vision-preview",
+      "customModelHint": "填寫後使用自訂模型，否則使用上方選擇的模型",
+      "selectOtherModel": "點擊選擇其他模型或檢視價格",
+      "close": "關閉"
+    },
+    "roles": {
+      "selectRole": "選擇分析角色",
+      "universal": "萬物識別+百科",
+      "universalShort": "萬物識別",
+      "productTitle": "商品取標題",
+      "productTitleShort": "商品標題",
+      "amazonBullets": "亞馬遜五點描述",
+      "amazonBulletsShort": "五點描述",
+      "productAnalysis": "商品屬性分析器",
+      "productAnalysisShort": "屬性分析",
+      "ocrExtract": "OCR 提取",
+      "ocrExtractShort": "OCR 提取",
+      "document": "文件識別",
+      "product": "商品分析",
+      "custom": "自訂",
+      "customPrompt": "自訂提示詞"
+    },
+    "prompt": {
+      "label": "提問（可選）",
+      "placeholder": "例如：這是什麼？請描述場景...",
+      "roleHint": "點擊上方角色標籤快速應用專業提示詞"
+    },
+    "buttons": {
+      "analyze": "分析圖片",
+      "startAnalysis": "開始分析",
+      "copyResult": "複製結果"
+    },
+    "messages": {
+      "analyzing": "正在分析圖片...",
+      "analyzeSuccess": "分析完成",
+      "analyzeFailed": "分析失敗",
+      "copied": "已複製到剪貼簿",
+      "copyFailed": "複製失敗",
+      "uploadFirst": "請先上傳圖片",
+      "promptRequired": "請輸入自訂提示詞",
+      "analyzeError": "圖片分析失敗: {error}",
+      "unsupportedFileType": "不支援的檔案類型",
+      "fileTooLarge": "檔案過大，最大支援 {size}MB"
+    },
+    "labels": {
+      "result": "分析結果",
+      "resultPlaceholder": "上傳圖片後點擊「開始分析」檢視結果",
+      "imageLabel": "圖片 {index}",
+      "imageCount": "({count})",
+      "deleteImage": "刪除圖片",
+      "addMore": "新增更多圖片",
+      "maxImages": "最多上傳 {max} 張圖片"
+    },
+    "uploadImage": "上傳圖片",
+    "analyzing": "正在分析圖片...",
+    "analyzeSuccess": "分析完成",
+    "analyzeFailed": "分析失敗",
+    "description": "圖片描述",
+    "tags": "標籤",
+    "colors": "主要顏色",
+    "roleData": {
+      "universal": {
+        "name": "萬物識別+百科",
+        "shortName": "萬物識別",
+        "description": "通用圖像識別和百科知識分析"
+      },
+      "product-title": {
+        "name": "商品取標題",
+        "shortName": "商品標題",
+        "description": "為商品圖片生成吸引人的電商標題"
+      },
+      "amazon-bullets": {
+        "name": "亞馬遜五點描述",
+        "shortName": "五點描述",
+        "description": "生成亞馬遜商品詳情頁的五點描述"
+      },
+      "product-analysis": {
+        "name": "商品屬性分析器",
+        "shortName": "屬性分析",
+        "description": "深度分析商品屬性，提取結構化資訊"
+      },
+      "ocr-extract": {
+        "name": "OCR 提取",
+        "shortName": "OCR 提取",
+        "description": "快速提取圖片中的所有文字內容"
+      }
+    },
+    "visionModelData": {
+      "gpt-5.2": {
+        "displayName": "GPT-5.2",
+        "description": "最新旗艦模型，卓越理解與推理能力",
+        "features": [
+          "頂級理解",
+          "深度推理",
+          "多模態分析"
+        ]
+      },
+      "gemini-3-pro-preview": {
+        "displayName": "Gemini 3 Pro Preview",
+        "description": "Google 最新旗艦預覽版，強大的多模態能力",
+        "features": [
+          "旗艦性能",
+          "多圖理解",
+          "深度分析"
+        ]
+      },
+      "gemini-2.5-flash-preview-09-2025": {
+        "displayName": "Gemini 2.5 Flash",
+        "description": "快速回應版本，性價比極高",
+        "features": [
+          "極速回應",
+          "性價比高",
+          "推理模式"
+        ]
+      },
+      "gpt-5-mini": {
+        "displayName": "GPT-5-mini",
+        "description": "輕量高效版本，適合日常使用",
+        "features": [
+          "高性價比",
+          "快速回應",
+          "準確理解"
+        ]
+      },
+      "claude-haiku-4-5-20251001": {
+        "displayName": "Claude Haiku 4.5",
+        "description": "Anthropic 輕量模型，快速且精準",
+        "features": [
+          "速度快",
+          "成本優",
+          "細節描述"
+        ]
+      },
+      "qwen-vl-ocr-latest": {
+        "displayName": "Qwen OCR Latest",
+        "description": "阿里雲千問 專業 OCR 識別，極速提取文字",
+        "features": [
+          "OCR 專用",
+          "極速回應",
+          "超高準確率"
+        ]
+      },
+      "recommended": "推薦",
+      "current": "當前"
+    }
+  },
+  "director": {
+    "title": "導演模式",
+    "pageTitle": "漫畫分鏡自動生成",
+    "countDisplay": "{count}張",
+    "rangeLabels": {
+      "min": "最少",
+      "max": "最多"
+    },
+    "selectVisionModelTitle": "選擇視覺模型",
+    "copyContentTitle": "複製內容",
+    "editModeTitle": "編輯模式",
+    "labels": {
+      "referenceImage": "參考圖",
+      "uploadHint": "點擊或拖曳上傳參考圖",
+      "uploadFormat": "支援 JPG、PNG、WebP 格式，最多8張",
+      "multiImageHint": "多張參考圖可提高角色一致性",
+      "sceneDescription": "場景描述",
+      "optional": "(可選)",
+      "scenePlaceholder": "描述場景、劇情或您想要的效果...（留空則AI自動分析參考圖）",
+      "layoutSelect": "選擇分鏡佈局",
+      "modeSelect": "生成模式",
+      "multiSceneDescription": "多場景描述",
+      "multiScenePlaceholder": "每個場景用空行分隔，例如：\n\n場景1：男主站在雨中，背對鏡頭\n\n場景2：女主在窗邊看書，陽光灑落\n\n場景3：兩人在咖啡店相遇",
+      "multiSceneHint": "用空行分隔不同場景，每個場景生成一張漫畫分鏡頁面",
+      "generateCount": "生成數量（抽卡張數）",
+      "countHint": "同一場景生成多張，挑選最佳效果",
+      "results": "生成結果",
+      "emptyResults": "生成的漫畫分鏡將在這裡顯示",
+      "emptyResultsHint": "上傳參考圖並點擊生成按鈕開始創作",
+      "styleTemplate": "風格模板",
+      "imageRatio": "圖片尺寸",
+      "resolution": "清晰度",
+      "countDisplay": "{count}張",
+      "rangeLabels": {
+        "min": "最少",
+        "max": "最多"
+      },
+      "selectVisionModelTitle": "選擇視覺模型",
+      "copyContentTitle": "複製內容",
+      "editModeTitle": "編輯模式"
+    },
+    "ratioOptions": {
+      "auto": "自適應",
+      "square": "方形 1:1",
+      "landscape169": "橫版 16:9",
+      "portrait916": "直版 9:16",
+      "landscape43": "橫版 4:3",
+      "portrait34": "直版 3:4",
+      "landscape32": "橫版 3:2",
+      "portrait23": "直版 2:3",
+      "cinema": "影院 21:9 超寬屏",
+      "landscape54": "橫版 5:4 傳統",
+      "portrait45": "直版 4:5 社媒"
+    },
+    "resolutionOptions": {
+      "1k": "1K 標準",
+      "2k": "2K 高清",
+      "4k": "4K 超清"
+    },
+    "templateModal": {
+      "title": "選擇風格模板",
+      "cancel": "取消",
+      "createNew": "新建模板",
+      "import": "匯入",
+      "export": "匯出",
+      "edit": "編輯",
+      "custom": "自訂"
+    },
+    "templateEditor": {
+      "title": "編輯模板",
+      "editTitle": "編輯模板",
+      "createTitle": "新建模板",
+      "name": "模板名稱",
+      "prefix": "提示詞前綴 (Prefix)",
+      "prefixHint": "會自動添加到每次生成的提示詞開頭",
+      "suffix": "提示詞後綴 (Suffix)",
+      "suffixHint": "會自動添加到每次生成的提示詞末尾",
+      "negative": "負面提示詞 (Negative)",
+      "negativeHint": "告訴 AI 避免生成的元素",
+      "save": "儲存",
+      "cancel": "取消",
+      "delete": "刪除",
+      "reset": "恢復預設",
+      "deleteConfirm": "確定要刪除這個模板嗎？",
+      "resetConfirm": "確定要恢復這個模板到預設值嗎？",
+      "namePlaceholder": "輸入模板名稱",
+      "prefixPlaceholder": "輸入前綴提示詞",
+      "suffixPlaceholder": "輸入後綴提示詞",
+      "negativePlaceholder": "輸入負面提示詞"
+    },
+    "templates": {
+      "anime": {
+        "name": "動畫截圖風格",
+        "desc": "TV動畫風格，故事板分鏡，高質量賽璐璐著色"
+      },
+      "manga": {
+        "name": "漫畫分鏡風格",
+        "desc": "黑白漫畫風格，對話框，網點效果，動態線條"
+      },
+      "movie": {
+        "name": "電影分鏡風格",
+        "desc": "真實電影感，電影級調色，景深效果，寬銀幕"
+      },
+      "webtoon": {
+        "name": "韓漫/條漫風格",
+        "desc": "全彩韓漫風格，縱向條漫排版，清新唯美"
+      },
+      "comic": {
+        "name": "美漫風格",
+        "desc": "美式漫畫風格，粗線條，強對比，超級英雄感"
+      },
+      "illustration": {
+        "name": "插畫風格",
+        "desc": "精美插畫風格，豐富細節，藝術質感"
+      },
+      "cinematic": {
+        "name": "電影級九宮格",
+        "desc": "精確3×3網格分鏡，分形幾何原則，角色服裝光照絕對一致"
+      },
+      "theatrical": {
+        "name": "劇場版動畫",
+        "desc": "日式劇場版畫質，權重標記語法，畫風100%複刻參考圖"
+      }
+    },
+    "modes": {
+      "single": "單圖模式",
+      "multi": "多提示詞模式"
+    },
+    "layouts": {
+      "6grid": "6格標準",
+      "4grid": "4格方正",
+      "2closeup": "2格特寫",
+      "9grid": "9格全景"
+    },
+    "layoutDesc": {
+      "6grid": "2行×3列，適合完整故事",
+      "4grid": "2行×2列，適合轉折場景",
+      "2closeup": "1行×2列，適合表情特寫",
+      "9grid": "3行×3列，適合動作場景"
+    },
+    "buttons": {
+      "generate": "一鍵生成漫畫分鏡",
+      "download": "下載圖片",
+      "downloadAll": "下載全部",
+      "regenerate": "重新生成",
+      "selectTemplate": "選擇模板",
+      "exampleGallery": "示例圖庫"
+    },
+    "galleryModal": {
+      "title": "示例圖庫",
+      "hint": "點擊選擇示例圖片作為參考圖，可多選（最多8張）",
+      "cancel": "取消",
+      "confirm": "確認選擇",
+      "editMode": "編輯",
+      "customTitle": "我的圖片",
+      "builtinTitle": "內建示例",
+      "addImage": "添加圖片",
+      "noCustomImages": "暫無自訂圖片",
+      "addImageHint": "點擊上方按鈕添加您的圖片",
+      "deleteSelected": "刪除選中",
+      "deleteConfirm": "確定要刪除選中的圖片嗎？"
+    },
+    "progress": {
+      "analyzing": "正在分析參考圖...",
+      "generating": "正在生成分鏡提示詞...",
+      "creating": "正在生成漫畫頁面...",
+      "complete": "生成完成！",
+      "step": "步驟 {current}/{total}",
+      "analysisTitle": "參考圖分析結果",
+      "promptTitle": "生成的提示詞",
+      "clickToExpand": "點擊展開/收起",
+      "noAnalysis": "未進行圖像分析（使用手動描述）"
+    },
+    "assets": {
+      "analysisCard": "圖像分析",
+      "promptCard": "生成提示詞",
+      "copyTooltip": "複製內容",
+      "copySuccess": "已複製到剪貼簿",
+      "copyFailed": "複製失敗",
+      "clickToView": "點擊查看",
+      "copyBtn": "複製",
+      "closeBtn": "關閉"
+    },
+    "messages": {
+      "uploadFirst": "請先上傳參考圖",
+      "generating": "正在生成中，請稍候",
+      "apiKeyRequired": "請先設定圖片生成 API Key",
+      "success": "漫畫頁面生成成功！",
+      "failed": "生成失敗: {error}",
+      "downloadStarted": "下載已開始",
+      "noImage": "沒有可下載的圖片"
+    }
+  },
+  "messages": {
+    "apiKeyNotSet": "請先設定 API Key",
+    "promptRequired": "請輸入提示詞",
+    "modelRequired": "請選擇模型",
+    "imageGenerating": "正在生成圖片，請稍候...",
+    "imageGenerated": "圖片生成成功！",
+    "imageFailed": "圖片生成失敗，請重試",
+    "copied": "已複製到剪貼簿",
+    "copyFailed": "複製失敗",
+    "downloaded": "下載成功",
+    "downloadFailed": "下載失敗",
+    "saved": "儲存成功",
+    "saveFailed": "儲存失敗",
+    "deleted": "刪除成功",
+    "networkError": "網路錯誤，請檢查網路連線",
+    "uploadSuccess": "上傳成功",
+    "uploadFailed": "上傳失敗",
+    "fileTooLarge": "檔案過大，最大支援 {size}MB",
+    "invalidFileType": "不支援的檔案類型",
+    "processingImage": "正在處理圖片..."
+  },
+  "aspectRatios": {
+    "auto": {
+      "label": "自適應",
+      "description": "智能"
+    },
+    "1:1": {
+      "label": "方形",
+      "description": "常用",
+      "full": "方形 1:1"
+    },
+    "2:3": {
+      "label": "豎版",
+      "description": "經典",
+      "full": "豎版 2:3"
+    },
+    "3:2": {
+      "label": "橫版",
+      "description": "經典",
+      "full": "橫版 3:2"
+    },
+    "4:3": {
+      "label": "橫版",
+      "description": "標準",
+      "full": "橫版 4:3"
+    },
+    "3:4": {
+      "label": "豎版",
+      "description": "標準",
+      "full": "豎版 3:4"
+    },
+    "16:9": {
+      "label": "橫版",
+      "description": "寬螢幕",
+      "full": "橫版 16:9"
+    },
+    "9:16": {
+      "label": "豎版",
+      "description": "豎屏",
+      "full": "豎版 9:16"
+    },
+    "21:9": {
+      "label": "影院",
+      "description": "超寬螢幕",
+      "full": "影院 21:9"
+    },
+    "5:4": {
+      "label": "橫版",
+      "description": "傳統",
+      "full": "橫版 5:4"
+    },
+    "4:5": {
+      "label": "豎版",
+      "description": "社媒",
+      "full": "豎版 4:5"
+    },
+    "3:7": {
+      "label": "超窄豎版",
+      "description": "",
+      "full": "超窄豎版 3:7"
+    },
+    "7:3": {
+      "label": "超寬橫版",
+      "description": "",
+      "full": "超寬橫版 7:3"
+    }
+  },
+  "resolutions": {
+    "1K": {
+      "label": "1K 標準",
+      "description": "高效"
+    },
+    "2K": {
+      "label": "2K 高清",
+      "description": "稍慢速度",
+      "descriptionAlt": "標準解析度"
+    },
+    "4K": {
+      "label": "4K 超清",
+      "description": "印刷所需",
+      "descriptionAlt": "超高解析度"
+    }
+  },
+  "models": {
+    "gemini-3-pro-image-preview": {
+      "name": "🍌 Nano Banana Pro",
+      "displayName": "60s，gemini-3-pro-image-preview 谷歌原生端點請求，支援多尺寸4K，$0.05/張🔥 官網1/5價格"
+    },
+    "gemini-2.5-flash-image": {
+      "name": "🍌 Nano Banana",
+      "displayName": "15s，gemini-2.5-flash-image 谷歌原生端點請求，支援多寬高比，固定1K解析度，$0.025/張"
+    },
+    "seedream-4-5-251128": {
+      "name": "SeeDream 4.5",
+      "displayName": "15s出圖，即夢海外版seedream-4-5-251128，超清生圖編輯，支援2K/4K解析度，支援URL與Base64輸出, $0.045/張"
+    },
+    "sora_image": {
+      "name": "Sora_image",
+      "displayName": "90s出圖，Sora網頁版出圖， 同名 gpt-4o-image，價格最便宜~！$0.01/張【薦】"
+    },
+    "flux-kontext-pro": {
+      "name": "Flux Kontext Pro",
+      "displayName": "15s出圖，flux-kontext-pro，只支援英文提示詞，高品質圖片生成，$0.035/張"
+    },
+    "flux-kontext-max": {
+      "name": "Flux Kontext Max",
+      "displayName": "15s出圖，flux-kontext-max，提示詞支援中文，超高品質圖片編輯。$0.07/張"
+    }
+  },
+  "templates": {
+    "categories": {
+      "popular": "熱門",
+      "ecommerce": "電商",
+      "art": "藝術",
+      "photography": "攝影"
+    }
+  },
+  "template": {
+    "closeTitle": "關閉模板庫"
+  },
+  "seo": {
+    "title": "AI圖片大師 - 免費線上AI圖片生成工具",
+    "description": "AI圖片大師是一款強大的線上AI圖片生成工具，支援多種AI模型，包括DALL·E 3、Stable Diffusion、Midjourney等，輕鬆創建高品質AI藝術作品。",
+    "keywords": "AI圖片生成,AI繪畫,DALL·E 3,Stable Diffusion,Midjourney,AI藝術,圖片生成器"
+  },
+  "settings": {
+    "title": "設置",
+    "apiKey": "API Key",
+    "apiKeyPlaceholder": "請輸入你的 API Key",
+    "apiKeyRequired": "API Key 是必需的",
+    "baseUrl": "API 基础地址",
+    "baseUrlPlaceholder": "請輸入 API 基础地址",
+    "testConnection": "測試連接",
+    "saveSuccess": "設置保存成功",
+    "testSuccess": "連接測試成功",
+    "testFailed": "連接測試失敗"
+  },
+  "update": {
+    "title": "發現新版本",
+    "versionReleased": "版本 {version} 已發佈",
+    "notes": "更新說明",
+    "description": "新版本包含重要更新和錯誤修復",
+    "later": "稍後提醒",
+    "now": "立即更新"
+  },
+  "cardConfirm": {
+    "title": "確認生成",
+    "modeLabel": "生成模式",
+    "modeCard": "抽卡模式",
+    "quantityLabel": "生成數量",
+    "modelLabel": "使用模型",
+    "costLabel": "預估費用",
+    "priceBreakdown": "單價 {price} × {count} 張",
+    "description": "確認以上信息後開始生成",
+    "confirm": "確認生成"
+  },
+  "footer": {
+    "disclaimer": {
+      "title": "免责说明",
+      "content": "本站仅提供AI圖片生成工具服务，用户需遵守相關法律法规，不得生成违法违规內容。生成的圖片版权归用户所有，本站不承担任何法律责任。"
+    },
+    "enterprise": {
+      "title": "企業服务",
+      "description": "本工具特別適合行業、渠道方、大型企業內部使用，如需要享受前端定製和独立部署服务的大客户可以联系。",
+      "contact": "联系微信：{wechat}",
+      "contactLabel": "联系微信："
+    },
+    "links": {
+      "title": "友情链接",
+      "docs": "CATIMATION 文檔中心",
+      "official": "CATIMATION 官網",
+      "wiki": "飞书 AI 知識库",
+      "changelog": "更新日志"
+    },
+    "resources": "资源",
+    "copyright": "2025 CATIMATION 保留所有权利"
+  }
+}
