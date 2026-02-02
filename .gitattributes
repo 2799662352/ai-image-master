@@ -7,6 +7,10 @@ src/renderer/public/cdn/** linguist-vendored
 src/renderer/public/lib/** linguist-vendored
 playwright-report/** linguist-generated
 
+# Exclude IDE configuration and skill scripts
+.cursor/** linguist-vendored
+.vscode/** linguist-vendored
+
 # Mark specific vendor files
 *.min.js linguist-vendored
 *.min.css linguist-vendored
