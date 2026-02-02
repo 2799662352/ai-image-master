@@ -37,10 +37,10 @@ export default defineConfig({
       ],
       thresholds: {
         // 当前基线 (将自动提升)
-        lines: 47,
-        functions: 49,
-        branches: 36,
-        statements: 46,
+        lines: 51,
+        functions: 52,
+        branches: 39,
+        statements: 49,
         // 启用自动更新 - 当覆盖率提升时自动提高基线
         autoUpdate: (newThreshold: number) => Math.floor(newThreshold),
         perFile: false
