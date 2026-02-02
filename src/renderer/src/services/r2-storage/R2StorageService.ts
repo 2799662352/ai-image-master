@@ -139,25 +139,45 @@ export class R2StorageService {
         return { success: false, error: '无效的图片数据' }
       }
 
+      // 提取 base64 数据
+      const base64Match = base64Data.match(/^data:([^;]+);base64,(.+)$/)
+      if (!base64Match) {
+        return { success: false, error: '无效的 base64 数据格式' }
+      }
+
+      const mimeType = base64Match[1]
+      const base64Content = base64Match[2]
+
       // 检查文件大小
-      const base64Size = (base64Data.length * 3) / 4
+      const base64Size = (base64Content.length * 3) / 4
       if (this.config && base64Size > this.config.features.maxFileSize) {
         return { success: false, error: '图片大小超过限制' }
       }
 
-      const { signature, timestamp, nonce } = this.generateSignature({ action: 'upload' })
+      const { signature, timestamp, nonce } = this.generateSignature({
+        type: 'upload',
+        mimeType,
+        size: base64Content.length
+      })
 
-      const response = await fetch(`${this.workerUrl}/upload`, {
+      // 使用正确的 API 端点: /api/upload-base64
+      const response = await fetch(`${this.workerUrl}/api/upload-base64`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-Signature': signature,
           'X-Timestamp': String(timestamp),
-          'X-Nonce': nonce
+          'X-Nonce': nonce,
+          'Origin': window.location.origin
         },
         body: JSON.stringify({
-          image: base64Data,
-          metadata
+          base64: base64Content,
+          mimeType,
+          metadata: {
+            ...metadata,
+            source: 'ai-image-master',
+            uploadedAt: new Date().toISOString()
+          }
         })
       })
 
@@ -167,11 +187,17 @@ export class R2StorageService {
       }
 
       const result = await response.json()
-      return {
-        success: true,
-        url: result.url,
-        key: result.key
+      
+      if (result.success && result.url) {
+        console.log('图片已上传到 R2:', result.url)
+        return {
+          success: true,
+          url: result.url,
+          key: result.key
+        }
       }
+
+      return { success: false, error: result.error || '上传失败' }
     } catch (error) {
       console.error('R2 上传失败:', error)
       return { success: false, error: (error as Error).message }
@@ -179,7 +205,7 @@ export class R2StorageService {
   }
 
   /**
-   * 通过 URL 上传图片到 R2
+   * 通过 URL 缓存图片到 R2
    */
   async uploadFromUrl(imageUrl: string, metadata: UploadMetadata = {}): Promise<UploadResult> {
     await this.init()
@@ -188,35 +214,55 @@ export class R2StorageService {
       return { success: false, error: 'R2 服务不可用' }
     }
 
-    try {
-      const { signature, timestamp, nonce } = this.generateSignature({ action: 'proxy-upload' })
+    // 如果已经是 R2 URL，直接返回
+    if (this.isR2Url(imageUrl)) {
+      return { success: true, url: imageUrl }
+    }
 
-      const response = await fetch(`${this.workerUrl}/proxy-upload`, {
+    try {
+      const { signature, timestamp, nonce } = this.generateSignature({
+        type: 'cache',
+        url: imageUrl
+      })
+
+      // 使用正确的 API 端点: /api/cache-image
+      const response = await fetch(`${this.workerUrl}/api/cache-image`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-Signature': signature,
           'X-Timestamp': String(timestamp),
-          'X-Nonce': nonce
+          'X-Nonce': nonce,
+          'Origin': window.location.origin
         },
         body: JSON.stringify({
           url: imageUrl,
-          metadata
+          metadata: {
+            ...metadata,
+            source: 'ai-image-master',
+            cachedAt: new Date().toISOString()
+          }
         })
       })
 
       if (!response.ok) {
-        return { success: false, error: `代理上传失败: ${response.status}` }
+        return { success: false, error: `缓存失败: ${response.status}` }
       }
 
       const result = await response.json()
-      return {
-        success: true,
-        url: result.url,
-        key: result.key
+      
+      if (result.success && result.cachedUrl) {
+        console.log('远程图片已缓存到 R2:', result.cachedUrl)
+        return {
+          success: true,
+          url: result.cachedUrl,
+          key: result.key
+        }
       }
+
+      return { success: false, error: result.error || '缓存失败' }
     } catch (error) {
-      console.error('R2 代理上传失败:', error)
+      console.error('R2 缓存失败:', error)
       return { success: false, error: (error as Error).message }
     }
   }
@@ -254,22 +300,138 @@ export class R2StorageService {
     }
 
     try {
-      const { signature, timestamp, nonce } = this.generateSignature({ action: 'delete', key })
-
-      const response = await fetch(`${this.workerUrl}/delete/${key}`, {
-        method: 'DELETE',
-        headers: {
-          'X-Signature': signature,
-          'X-Timestamp': String(timestamp),
-          'X-Nonce': nonce
-        }
+      const { signature, timestamp, nonce } = this.generateSignature({
+        type: 'delete',
+        key
       })
 
-      return response.ok
+      // 使用正确的 API 端点: /api/delete-image
+      const response = await fetch(`${this.workerUrl}/api/delete-image`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Signature': signature,
+          'X-Timestamp': String(timestamp),
+          'X-Nonce': nonce,
+          'Origin': window.location.origin
+        },
+        body: JSON.stringify({
+          key
+        })
+      })
+
+      const result = await response.json()
+      return result.success
     } catch (error) {
       console.error('删除图片失败:', error)
       return false
     }
+  }
+
+  /**
+   * 批量处理图片上传到 R2（并行上传优化）
+   */
+  async batchProcess(urls: string[], concurrency: number = 4): Promise<string[]> {
+    await this.init()
+
+    if (!this.isAvailable()) {
+      console.warn('[R2StorageService] 服务不可用，返回原始 URLs')
+      return urls
+    }
+
+    console.log(`[R2StorageService] 开始并行上传 ${urls.length} 张图片，并发数: ${concurrency}`)
+    const startTime = Date.now()
+
+    // 单张图片上传处理函数
+    const processUrl = async (url: string, index: number): Promise<{ index: number; result: string }> => {
+      try {
+        if (url.startsWith('data:image')) {
+          // Base64 图片
+          const result = await this.uploadBase64(url)
+          if (result.success && result.url) {
+            return { index, result: result.url }
+          }
+        } else if (url.startsWith('http')) {
+          // 远程 URL
+          const result = await this.uploadFromUrl(url)
+          if (result.success && result.url) {
+            return { index, result: result.url }
+          }
+        }
+        // 其他类型或上传失败，保留原始 URL
+        return { index, result: url }
+      } catch (error) {
+        console.error(`[R2StorageService] 上传第 ${index + 1} 张图片失败:`, error)
+        return { index, result: url }
+      }
+    }
+
+    // 并行上传（控制并发数）
+    const results: string[] = new Array(urls.length)
+    
+    // 分批并行处理
+    for (let i = 0; i < urls.length; i += concurrency) {
+      const batch = urls.slice(i, i + concurrency)
+      const batchPromises = batch.map((url, batchIndex) => 
+        processUrl(url, i + batchIndex)
+      )
+      
+      const batchResults = await Promise.all(batchPromises)
+      batchResults.forEach(({ index, result }) => {
+        results[index] = result
+      })
+      
+      console.log(`[R2StorageService] 已完成 ${Math.min(i + concurrency, urls.length)}/${urls.length} 张`)
+    }
+
+    const elapsed = Date.now() - startTime
+    console.log(`[R2StorageService] 批量上传完成，耗时 ${elapsed}ms`)
+
+    return results
+  }
+
+  /**
+   * 检查是否为 R2 URL
+   */
+  isR2Url(url: string): boolean {
+    if (!url || !this.workerUrl) return false
+
+    // 检查是否为 R2 域名
+    return url.includes('r2.imagen.apiyi.com') ||
+           url.includes('r2.apiyi.com') ||
+           url.includes('r2-image.apiyi.com') ||
+           url.includes(this.workerUrl)
+  }
+
+  /**
+   * 从 URL 提取 R2 Key
+   */
+  extractR2Key(url: string): string | null {
+    if (!this.isR2Url(url)) return null
+
+    try {
+      const urlObj = new URL(url)
+      // 提取路径部分作为 key
+      // 例如: /flux/202501/xxx.jpg
+      return urlObj.pathname.replace(/^\//, '')
+    } catch (error) {
+      console.error('提取 R2 Key 失败:', error)
+      return null
+    }
+  }
+
+  /**
+   * 批量删除
+   */
+  async batchDelete(r2Keys: string[]): Promise<number> {
+    const results = await Promise.allSettled(
+      r2Keys.map(key => this.deleteImage(key))
+    )
+
+    const successCount = results.filter(r => r.status === 'fulfilled' && r.value).length
+    console.log(`批量删除完成: ${successCount}/${r2Keys.length} 成功`)
+
+    return successCount
   }
 
   /**
@@ -334,9 +496,15 @@ let r2StorageDeprecationWarningShown = false
 /**
  * 初始化并暴露到 window（过渡期）
  * V16.3: 添加废弃警告
+ * V16.6: 自动调用 init() 确保服务可用
  */
 export function initR2StorageGlobal(): R2StorageService {
   const service = getR2StorageService()
+  
+  // V16.6: 确保服务初始化
+  service.init().catch(err => {
+    console.warn('[R2StorageService] 初始化失败:', err)
+  })
 
   // 过渡期: 暴露到 window (带废弃警告)
   if (typeof window !== 'undefined') {

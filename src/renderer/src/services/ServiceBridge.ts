@@ -235,6 +235,8 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
       const i18n = getI18nService()
       await i18n.init()
       window.i18nServiceTS = i18n
+      // 兼容性：BasePage.t() 使用 window.i18n
+      ;(window as any).i18n = i18n
       ServiceRegistry.register(SERVICE_KEYS.I18N, i18n)
       console.log('[ServiceBridge] ✓ I18nService (TS) 已就绪')
 
@@ -262,6 +264,11 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
           ;(window as any).app?.showToast?.(msg, type)
         }
       })
+      
+      // 绑定标签按钮点击事件和初始化 hash 路由
+      tabManager.bindTabButtons()
+      tabManager.initHashRouter()
+      
       window.tabManagerTS = tabManager
       ServiceRegistry.register(SERVICE_KEYS.TAB_MANAGER, tabManager)
       console.log('[ServiceBridge] ✓ TabManager (TS) 已就绪')
@@ -353,6 +360,8 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
             ;(window as any).app?.updateApiStatus?.(hasKey)
           }
         })
+        // 初始化设置模态框事件监听（按钮点击等）
+        siteManager.initSettingsModalEvents()
         window.siteManagerTS = siteManager
         ServiceRegistry.register(SERVICE_KEYS.SITE_MANAGER, siteManager)
 
@@ -389,6 +398,31 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
         ServiceRegistry.register(SERVICE_KEYS.PERFORMANCE_DASHBOARD, performanceDashboard)
         // 初始化性能面板 (开发模式自动启用)
         performanceDashboard.init()
+
+        // KeyboardShortcuts - 键盘快捷键
+        const keyboardShortcuts = createKeyboardShortcuts({
+          executeAction: () => {
+            // Ctrl/Cmd + Enter 执行当前页面的主要操作
+            const tabManager = ServiceRegistry.get<any>(SERVICE_KEYS.TAB_MANAGER)
+            const currentTab = tabManager?.getCurrentTab()
+            if (currentTab === 'generate') {
+              ;(window as any).generatePageTS?.generateImage?.()
+            } else if (currentTab === 'batch') {
+              ;(window as any).batchPageTS?.startBatch?.()
+            }
+          },
+          copyToClipboard: async (text: string) => {
+            await navigator.clipboard.writeText(text)
+          },
+          showToast: (msg: string, type: 'success' | 'error' | 'info') => {
+            const toast = ServiceRegistry.get<any>(SERVICE_KEYS.TOAST)
+            toast?.show(msg, type)
+          }
+        })
+        window.keyboardShortcutsTS = keyboardShortcuts
+        ServiceRegistry.register(SERVICE_KEYS.KEYBOARD_SHORTCUTS, keyboardShortcuts)
+        // 初始化键盘快捷键
+        keyboardShortcuts.init()
 
         console.log(`[ServiceBridge] 非关键服务初始化完成: ${(performance.now() - nonCriticalStart).toFixed(1)}ms`)
         
@@ -533,7 +567,156 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
 
       // 图片生成
       generateImage: (params: any) => apiService.generateImage(params),
-      getModelCapabilities: (modelKey?: string) => apiService.getModelCapabilities(modelKey)
+      generateImageWithReference: (prompt: string, referenceImages: any[], ratio?: string, count?: number, resolution?: string) => 
+        apiService.generateImageWithReference(prompt, referenceImages, ratio || '1:1', count || 1, resolution),
+      getModelCapabilities: (modelKey?: string) => apiService.getModelCapabilities(modelKey),
+
+      // 批量生成
+      batchGenerate: (prompts: string[], ratio?: string, concurrency?: number, n?: number, resolution?: string | null) => 
+        apiService.batchGenerate(prompts, ratio, concurrency, n, resolution),
+      batchGenerateWithReference: (prompts: string[], referenceImages: string[], ratio?: string, concurrency?: number, n?: number, resolution?: string | null) => 
+        apiService.batchGenerateWithReference(prompts, referenceImages, ratio, concurrency, n, resolution),
+
+      // 图像理解
+      understandImage: (params: any) => apiService.understandImage(params),
+      
+      // Vision API Key
+      get visionApiKey() { return apiService.getStoredVisionApiKey() },
+      
+      // 流式图像分析
+      analyzeImagesStream: (
+        images: Array<{ base64: string; mimeType?: string }>,
+        prompt: string,
+        model: string,
+        maxTokens: number | null,
+        onChunk: (chunk: string) => void,
+        onComplete: () => void,
+        onError: (error: Error) => void
+      ) => apiService.analyzeImagesStream(images, prompt, model, maxTokens, onChunk, onComplete, onError),
+
+      // 图片下载
+      downloadImage: async (url: string, filename?: string | null, _model?: string) => {
+        const suggestedName = filename || `image_${Date.now()}.png`
+        let blobUrl: string | null = null
+        
+        try {
+          // Electron 环境：使用主进程保存
+          if (window.electronAPI?.isElectron) {
+            let base64Data: string
+            
+            if (url.startsWith('data:')) {
+              base64Data = url
+            } else {
+              // 获取图片数据
+              const response = await fetch(url)
+              const blob = await response.blob()
+              base64Data = await new Promise<string>((resolve) => {
+                const reader = new FileReader()
+                reader.onloadend = () => resolve(reader.result as string)
+                reader.readAsDataURL(blob)
+              })
+            }
+            
+            // 使用 StorageBridge 导出到用户选择的目录
+            const storageBridge = getStorageBridge()
+            const result = await storageBridge.exportImageToPath(base64Data, suggestedName)
+            
+            if (result.success) {
+              return { success: true, message: '图片下载成功' }
+            } else {
+              return { success: false, error: result.error || '保存失败' }
+            }
+          }
+          
+          // 浏览器环境：使用 <a> 下载
+          if (url.startsWith('data:')) {
+            blobUrl = url
+          } else {
+            const response = await fetch(url)
+            const blob = await response.blob()
+            blobUrl = URL.createObjectURL(blob)
+          }
+
+          const link = document.createElement('a')
+          link.href = blobUrl
+          link.download = suggestedName
+          document.body.appendChild(link)
+          link.click()
+          document.body.removeChild(link)
+          
+          return { success: true, message: '图片下载成功' }
+        } catch (error) {
+          console.error('下载图片失败:', error)
+          return { success: false, error: (error as Error).message }
+        } finally {
+          // 确保释放 blob URL 避免内存泄漏
+          if (blobUrl && !url.startsWith('data:')) {
+            URL.revokeObjectURL(blobUrl)
+          }
+        }
+      },
+
+      // 批量下载为 ZIP
+      downloadImagesAsZip: async (
+        urls: string[],
+        zipFilename: string,
+        onProgress?: (completed: number, total: number) => void,
+        _model?: string
+      ) => {
+        try {
+          // 动态导入 JSZip
+          const JSZip = (await import('jszip')).default
+          const zip = new JSZip()
+
+          for (let i = 0; i < urls.length; i++) {
+            const url = urls[i]
+            onProgress?.(i, urls.length)
+
+            try {
+              let blob: Blob
+              if (url.startsWith('data:')) {
+                // base64 转 blob
+                const response = await fetch(url)
+                blob = await response.blob()
+              } else {
+                const response = await fetch(url)
+                blob = await response.blob()
+              }
+
+              const ext = blob.type.split('/')[1] || 'png'
+              zip.file(`image_${i + 1}.${ext}`, blob)
+            } catch (err) {
+              console.error(`下载第 ${i + 1} 张图片失败:`, err)
+            }
+          }
+
+          onProgress?.(urls.length, urls.length)
+
+          const content = await zip.generateAsync({ type: 'blob' })
+          const blobUrl = URL.createObjectURL(content)
+
+          const link = document.createElement('a')
+          link.href = blobUrl
+          link.download = zipFilename
+          document.body.appendChild(link)
+          link.click()
+          document.body.removeChild(link)
+
+          URL.revokeObjectURL(blobUrl)
+          return { success: true, message: `已下载 ${urls.length} 张图片` }
+        } catch (error) {
+          console.error('批量下载失败:', error)
+          throw new Error('批量下载失败，请右键图片选择"另存为"手动下载')
+        }
+      },
+
+      // 图片预加载
+      preloadImages: (urls: string[]) => {
+        urls.forEach(url => {
+          const img = new Image()
+          img.src = url
+        })
+      }
     }
     console.log('[ServiceBridge] ✓ window.aiImageAPI 兼容接口已创建')
 

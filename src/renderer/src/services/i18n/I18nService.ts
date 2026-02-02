@@ -4,7 +4,7 @@
  * 支持多语言切换、动态加载、文本翻译
  */
 
-export type Language = 'zh-CN' | 'en-US' | 'ja-JP' | string
+export type Language = 'zh-CN' | 'en' | 'zh-TW' | 'ru' | string
 
 export interface I18nConfig {
   defaultLanguage: Language
@@ -71,11 +71,12 @@ const DEFAULT_TRANSLATIONS: TranslationData = {
   }
 }
 
-// 支持的语言列表
+// 支持的语言列表 - 必须与 public/i18n/ 目录下的翻译文件匹配
 const SUPPORTED_LANGUAGES: LanguageInfo[] = [
   { code: 'zh-CN', name: 'Chinese (Simplified)', nativeName: '简体中文' },
-  { code: 'en-US', name: 'English', nativeName: 'English' },
-  { code: 'ja-JP', name: 'Japanese', nativeName: '日本語' }
+  { code: 'en', name: 'English', nativeName: 'English' },
+  { code: 'zh-TW', name: 'Chinese (Traditional)', nativeName: '繁體中文' },
+  { code: 'ru', name: 'Russian', nativeName: 'Русский' }
 ]
 
 export class I18nService {
@@ -90,7 +91,7 @@ export class I18nService {
     this.config = {
       defaultLanguage: 'zh-CN',
       fallbackLanguage: 'zh-CN',
-      supportedLanguages: ['zh-CN', 'en-US', 'ja-JP'],
+      supportedLanguages: ['zh-CN', 'en', 'zh-TW', 'ru'],
       basePath: './i18n/',
       cacheEnabled: true,
       version: '1.0.0',
@@ -100,7 +101,8 @@ export class I18nService {
     this.currentLanguage = this.getStoredLanguage() || this.config.defaultLanguage
     this.translations = { ...DEFAULT_TRANSLATIONS }
     this.loadedLanguages = new Map()
-    this.loadedLanguages.set('zh-CN', DEFAULT_TRANSLATIONS)
+    // 不预缓存 zh-CN，让 loadLanguage 从文件加载完整翻译
+    // this.loadedLanguages.set('zh-CN', DEFAULT_TRANSLATIONS)
     this.initialized = false
     this.onLanguageChangeCallbacks = new Set()
   }
@@ -257,6 +259,9 @@ export class I18nService {
       // 触发回调
       this.onLanguageChangeCallbacks.forEach(cb => cb(lang))
       
+      // 更新 DOM 中的翻译
+      this.updateDOM()
+      
       console.log(`[i18n] Language changed to: ${lang}`)
       return true
     } catch (error) {
@@ -317,11 +322,14 @@ export class I18nService {
     // 处理属性翻译
     const attrElements = document.querySelectorAll('[data-i18n-attr]')
     attrElements.forEach(el => {
-      const attrs = el.getAttribute('data-i18n-attr')?.split(',') || []
+      // 支持 ',' 或 ';' 作为属性分隔符
+      const attrValue = el.getAttribute('data-i18n-attr') || ''
+      const attrs = attrValue.split(/[,;]/)
       attrs.forEach(attr => {
         const [name, key] = attr.split(':')
         if (name && key) {
-          el.setAttribute(name.trim(), this.t(key.trim()))
+          const translated = this.t(key.trim())
+          el.setAttribute(name.trim(), translated)
         }
       })
     })
