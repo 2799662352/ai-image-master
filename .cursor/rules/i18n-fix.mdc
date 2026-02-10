@@ -1,0 +1,150 @@
+---
+description: i18n 翻译服务修复经验 - 确保 TypeScript 页面能正确使用国际化翻译
+globs: ["src/renderer/src/**/*.ts"]
+alwaysApply: false
+---
+
+# i18n 翻译服务修复经验
+
+## 问题根因
+
+TypeScript 版本的页面使用 `this.t(key)` 方法获取翻译，该方法依赖 `window.i18n` 对象。
+如果 `window.i18n` 未正确设置，翻译键会原样显示（如 `history.labels.empty`）而不是翻译后的文字。
+
+## 修复方案
+
+### 1. ServiceBridge 必须设置 window.i18n
+
+在 `ServiceBridge.ts` 初始化 I18nService 后，必须同时设置 `window.i18n`：
+
+```typescript
+// I18nService - UI 文本显示必需
+const i18n = getI18nService()
+await i18n.init()
+window.i18nServiceTS = i18n
+// 兼容性：BasePage.t() 使用 window.i18n
+;(window as any).i18n = i18n
+ServiceRegistry.register(SERVICE_KEYS.I18N, i18n)
+```
+
+### 2. BasePage.t() 方法实现
+
+BasePage 中的 `t()` 方法会查找 `window.i18n`：
+
+```typescript
+protected t(key: string, params?: Record<string, string | number>): string {
+  const i18n = (window as any).i18n
+  if (i18n?.t) {
+    return i18n.t(key, params)
+  }
+  return key  // 回退：返回原始键
+}
+```
+
+### 3. 服务初始化顺序
+
+确保 R2Storage 等服务在使用前调用 `init()`：
+
+```typescript
+export function initR2StorageGlobal(): R2StorageService {
+  const service = getR2StorageService()
+  
+  // 确保服务初始化
+  service.init().catch(err => {
+    console.warn('[R2StorageService] 初始化失败:', err)
+  })
+  
+  // 暴露到 window...
+}
+```
+
+## 检查清单
+
+- [ ] `ServiceBridge.ts` 设置了 `window.i18n = i18n`
+- [ ] I18nService 的 `init()` 在页面加载前被调用
+- [ ] 翻译键在 `i18n/*.json` 文件中存在
+- [ ] 页面继承 BasePage 并使用 `this.t()` 方法
+
+## 常见问题
+
+1. **翻译键原样显示**: 检查 `window.i18n` 是否已设置
+2. **部分翻译不工作**: 检查翻译文件中是否有该键
+3. **初始化时翻译不工作**: 检查服务初始化顺序，确保 i18n 先于页面初始化
+4. **新功能翻译缺失**: TypeScript 代码中使用的翻译键必须在 `zh-CN.json` 和 `en.json` 中都存在
+
+## 检查翻译键是否完整的方法
+
+```bash
+# 搜索代码中使用的翻译键
+rg "this\.t\('([^']+)'" --only-matching src/renderer/src/pages/
+
+# 检查翻译文件中是否有对应的键
+rg "keyName" src/renderer/public/i18n/zh-CN.json
+```
+
+## 常见缺失的翻译键模式
+
+DirectorPage 等页面可能使用了代码中定义但翻译文件中未添加的键，例如：
+- `*.buttons.generateSingle` / `*.buttons.generateBatch` (单图/批量模式切换)
+- `*.buttons.edit` / `*.buttons.clearAll` (编辑/清空按钮)
+- `*.buttons.viewLarge` / `*.buttons.downloadCurrent` (查看/下载按钮)
+- `*.templates.styles.*` (模板样式名称)
+- `*.layouts.*.name` / `*.layouts.*.description` (布局名称和描述)
+- `*.messages.*` (各种用户提示消息)
+- `*.progress.*` (进度提示)
+- `*.prompts.*` (AI 提示词模板)
+
+## 翻译键结构注意事项
+
+代码和 JSON 的结构必须匹配。注意区分两种使用方式：
+
+### 1. HTML data-i18n 属性 (使用扁平键)
+
+```html
+<span data-i18n="director.layouts.6grid">6格标准</span>
+<p data-i18n="director.layoutDesc.6grid">描述</p>
+```
+
+对应 JSON：
+```json
+{
+  "director": {
+    "layouts": {
+      "6grid": "6格标准"
+    },
+    "layoutDesc": {
+      "6grid": "2行×3列，适合完整故事"
+    }
+  }
+}
+```
+
+### 2. TypeScript this.t() 调用 (必须与 JSON 结构匹配)
+
+```typescript
+// 使用扁平键
+this.t('director.layouts.6grid')
+this.t('director.layoutDesc.6grid')
+
+// 或使用嵌套键 (如果 JSON 是嵌套的)
+this.t('director.templates.styles.anime')
+```
+
+### 常见错误
+
+- HTML 使用 `data-i18n="director.layouts.6grid"`
+- JSON 改成嵌套 `director.layouts.6grid.name`
+- 结果：翻译失败，显示原始键名
+
+**解决方案：** 保持 JSON 结构与 HTML data-i18n 属性一致
+
+**修复后需要重新编译**: `npm run build:vite`
+
+## 完成的 i18n 对齐
+
+参考: `docs/plans/2026-02-02-i18n-complete-alignment.md`
+
+已添加 130+ 个缺失的翻译键，覆盖：
+- director.* (模板、布局、消息、进度、提示词等)
+- history.* (消息、下载帮助等)
+- common.* (通用翻译)
