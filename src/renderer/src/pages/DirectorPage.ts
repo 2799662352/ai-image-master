@@ -2074,7 +2074,7 @@ ${styleConfig.styleInstructions}
   "style_prefix": "${styleConfig.prefix}",
   "style_suffix": "${styleConfig.suffix}",
   "negative_prompt": "${styleConfig.negative}",
-  "character_anchor": "[从参考图提取的精确人物描述: 性别、年龄、发型(颜色+款式+长度)、瞳色、肤色、面部特征、精确服装(类型+颜色+图案+配饰)、体型。此描述必须逐字嵌入每个 shot 的 prompt_text 中]",
+  "character_anchor": "[从参考图提取的精确人物描述: 性别、年龄、发型(颜色+款式+长度)、瞳色、肤色、面部特征、精确服装(类型+颜色+图案+配饰)、体型。此字段为全局锚点，shot 中用短引用 'same character as anchor' 即可，不要重复完整描述]",
   "shots": [
     {
       "shot_number": "分镜1",
@@ -2154,10 +2154,9 @@ ${styleConfig.additionalRules}
         
         while (shots.length < expectedCount) {
           const idx = shots.length + 1
-          const anchor = this.lastCharacterAnchor || 'character in scene, consistent with reference'
           shots.push({
             shot_number: `分镜${idx}`,
-            prompt_text: `Full Body Shot, ${anchor}. '分镜${idx}' in the top-left corner. No timecode, no subtitles.`
+            prompt_text: `Full Body Shot, same character as anchor, neutral pose. '分镜${idx}' in the top-left corner. No timecode, no subtitles.`
           })
         }
         
@@ -2785,15 +2784,6 @@ Scene Context: ${sceneDescription || imageAnalysis || 'Based on reference image'
     }
 
     throw new Error(result.error || (this.t('director.messages.generateFailedShort') || '生成失败'))
-  }
-
-  /**
-   * 构建简短的角色锚点引用标记（嵌入到提示词内部，不作为前缀）
-   * 保持简短以避免抢占布局指令的注意力权重
-   */
-  private buildCharacterReferenceTag(): string {
-    if (!this.lastCharacterAnchor) return ''
-    return `[REF CHARACTER: ${this.lastCharacterAnchor}]`
   }
 
   // ==================== 结果显示 ====================
