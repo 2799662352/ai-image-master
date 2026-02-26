@@ -56,8 +56,8 @@ export const EnhancedShotSchema = ShotSchema.extend({
     medium: z.string().describe('Medium grain: action chain within this shot. E.g. "reach → grasp → pull back"'),
     fine: z.string().describe('Fine grain: occlusion/highlight/shadow micro-changes. E.g. "shadow crosses face L-to-R as head turns"')
   }),
-  motion: z.nullable(z.record(z.string(), z.string())).describe(
-    'Per-body-part motion intensity. E.g. {"head":"low-subtle nod","arms":"high-reaching up","torso":"medium-lean","legs":"static"}. Null if fully static.'
+  motion: z.nullable(z.string()).describe(
+    'Per-body-part motion intensity as formatted string. E.g. "head:low-subtle nod, arms:high-reaching up, torso:medium-lean, legs:static". Null if fully static shot.'
   )
 })
 
@@ -210,10 +210,7 @@ ${input.additionalRules}`
         if (shot.color_grade) parts.push(`Color: ${shot.color_grade.dominant}, accent ${shot.color_grade.accent}`)
         if (shot.emotion_target) parts.push(`Emotion: ${shot.emotion_target}`)
         parts.push(`[${shot.seq}]`)
-        if (shot.motion) {
-          const motionStr = Object.entries(shot.motion).map(([k, v]) => `${k}:${v}`).join(', ')
-          parts.push(`Motion(${motionStr})`)
-        }
+        if (shot.motion) parts.push(`Motion(${shot.motion})`)
         return `${i + 1}. ${parts.filter(Boolean).join(', ')}`
       })
       .join('\n')
