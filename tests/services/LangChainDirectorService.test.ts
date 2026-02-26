@@ -16,6 +16,11 @@ vi.mock('@langchain/openai', () => {
   return { ChatOpenAI: MockChatOpenAI }
 })
 
+const NULL_FIELDS = {
+  micro_expression: null, color_grade: null, atmosphere: null,
+  body_physics: null, composition: null, emotion_target: null
+} as const
+
 beforeEach(() => {
   mockStructuredInvoke.mockReset()
   mockInvoke.mockReset()
@@ -62,7 +67,8 @@ describe('Zod Schema Validation', () => {
       spatial: 'flat string instead of object',
       action: 'walks forward',
       light: 'natural ambient',
-      label: '分镜1'
+      label: '分镜1',
+      ...NULL_FIELDS
     }
     const result = ShotSchema.safeParse(badShot)
     expect(result.success).toBe(false)
@@ -99,7 +105,8 @@ describe('LangChainDirectorService', () => {
         spatial: { fg: 'glass', mg: 'woman', bg: 'city' },
         action: 'gazes down',
         light: 'warm 4500K',
-        label: '分镜1'
+        label: '分镜1',
+        ...NULL_FIELDS
       }
     ]
     const nl = service.shotsToNaturalLanguage(shots)
@@ -121,7 +128,8 @@ describe('LangChainDirectorService', () => {
           spatial: { fg: 'glass', mg: 'woman', bg: 'city' },
           action: 'gazes down',
           light: 'warm 4500K',
-          label: '分镜1'
+          label: '分镜1',
+          ...NULL_FIELDS
         }
       ]
     }
@@ -145,7 +153,8 @@ describe('LangChainDirectorService', () => {
       shots: [{
         kf: 'KF1 - WS - 3s', lens: '24mm static',
         spatial: { fg: 'fence', mg: 'man', bg: 'mountains' },
-        action: 'walks', light: 'daylight 5600K', label: '分镜1'
+        action: 'walks', light: 'daylight 5600K', label: '分镜1',
+        ...NULL_FIELDS
       }]
     }
     const result = service.buildFinalPrompt(shotsResponse, 'comp', 'style', 'story', 'constraints', 'no blur, no text')
@@ -159,7 +168,8 @@ describe('LangChainDirectorService', () => {
       character_anchor: 'Man',
       shots: [{
         kf: 'KF1', lens: '50mm', spatial: { fg: 'a', mg: 'b', bg: 'c' },
-        action: 'stands', light: 'ambient', label: '分镜1'
+        action: 'stands', light: 'ambient', label: '分镜1',
+        ...NULL_FIELDS
       }]
     }
     const result = service.buildFinalPrompt(shotsResponse, 'c', 's', 'd', 'x')
@@ -173,7 +183,8 @@ describe('LangChainDirectorService', () => {
       shots: [{
         kf: 'KF1 - CU - 2s', lens: '85mm static',
         spatial: { fg: 'fg', mg: 'mg', bg: 'bg' },
-        action: 'walks', light: 'warm', label: '分镜1'
+        action: 'walks', light: 'warm', label: '分镜1',
+        ...NULL_FIELDS
       }]
     }
     mockStructuredInvoke.mockResolvedValue(mockResponse)
@@ -241,9 +252,22 @@ describe('Zod Schema Edge Cases', () => {
   it('should reject shot with numeric kf instead of string', () => {
     const badShot = {
       kf: 1, lens: '85mm', spatial: { fg: 'a', mg: 'b', bg: 'c' },
-      action: 'walks', light: 'ambient', label: '分镜1'
+      action: 'walks', light: 'ambient', label: '分镜1',
+      ...NULL_FIELDS
     }
     const result = ShotSchema.safeParse(badShot)
+    expect(result.success).toBe(false)
+  })
+
+  it('should reject shot with undefined (not null) for nullable field', () => {
+    const shot = {
+      kf: 'KF1', lens: '50mm', spatial: { fg: 'a', mg: 'b', bg: 'c' },
+      action: 'walks', light: 'ambient', label: '分镜1',
+      micro_expression: undefined,
+      color_grade: null, atmosphere: null,
+      body_physics: null, composition: null, emotion_target: null
+    }
+    const result = ShotSchema.safeParse(shot)
     expect(result.success).toBe(false)
   })
 
