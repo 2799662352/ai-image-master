@@ -439,10 +439,12 @@ Step 5 - Contact Sheet Output: Output ONE single master image as a Cinematic Con
 <output_format>
 Output as JSON code block with the following structure.
 
-CRITICAL - Character Anchor: Before writing shots, you MUST define a "character_anchor" field that contains a FIXED, detailed description of EVERY subject from the reference image. This EXACT text must be embedded verbatim in every shot's prompt_text to ensure identical character rendering. Include: gender, approximate age, hair (color+style+length), eye color, skin tone, facial features, exact clothing (type+color+pattern+accessories), body build/height. Do NOT paraphrase or vary this description across shots.
+Character Anchor: You MUST define a "character_anchor" field containing a detailed description of EVERY subject from the reference image. Include: gender, approximate age, hair (color+style+length), eye color, skin tone, facial features, exact clothing (type+color+pattern+accessories), body build/height.
+
+IMPORTANT: Do NOT repeat the full character_anchor in every shot's prompt_text. Instead, each shot should use a SHORT reference like "same character as anchor" and focus its token budget on camera setup, environment, action, and lighting. The character_anchor field itself is the single source of truth.
 
 Each shot's prompt_text must follow the pattern:
-"[KF Label + Shot Type + Duration], [Camera Setup + Lens + Movement], [CHARACTER_ANCHOR verbatim], [Environment + Action + Pose], [Lighting + DoF + Mood]. 'KF{N}' in the top-left corner. No timecode, no subtitles."
+"[KF Label + Shot Type + Duration], [Camera Setup + Lens + Movement], same character as anchor, [Environment + Action + Pose], [Lighting + DoF + Mood]. 'KF{N}' in the top-left corner. No timecode, no subtitles."
 </output_format>
 
 <shot_design_vocabulary>
@@ -2082,7 +2084,7 @@ ${styleConfig.styleInstructions}
   "shots": [
     {
       "shot_number": "分镜1",
-      "prompt_text": "${styleConfig.shotPrefix}[Camera Setup], [CHARACTER_ANCHOR verbatim], [Scene + Action]${styleConfig.shotSuffix}. '分镜1' in the top-left corner. No timecode, no subtitles."
+      "prompt_text": "${styleConfig.shotPrefix}[Camera Setup], same character as anchor, [Scene + Action]${styleConfig.shotSuffix}. '分镜1' in the top-left corner. No timecode, no subtitles."
     }
     // ... 共 ${panelCount} 个
   ]
@@ -2092,8 +2094,8 @@ ${styleConfig.styleInstructions}
 重要：
 1. 所有 prompt_text 必须是英文
 2. 每个 prompt_text 必须包含 "'分镜X' in the top-left corner. No timecode, no subtitles."
-3. **【关键】必须先定义 character_anchor 字段，包含从参考图提取的完整人物外观描述（发色、发型、瞳色、服装细节等），然后在每个 shot 的 prompt_text 中原封不动地嵌入这段描述，禁止在不同 shot 之间变换措辞**
-4. 如果参考图中有人物，character_anchor 字段是【必填】的，即使系统提示词没有明确要求。格式示例："young woman, long black hair with bangs, brown eyes, fair skin, wearing white blouse and navy skirt"
+3. **【关键】必须定义 character_anchor 字段，包含从参考图提取的完整人物外观描述（发色、发型、瞳色、服装细节等）。如果参考图中有人物，此字段为【必填】。**
+4. **【重要】每个 shot 的 prompt_text 中不要重复完整 character_anchor 文本！用简短引用 "same character as anchor" 即可。把 token 预算留给镜头、环境和动作描述。**
 5. 禁止使用 Medium Shot、Long Shot、Close-up 等平庸描述
 6. 每个 shot 的 prompt_text 必须包含风格前缀和后缀标签
 ${styleConfig.additionalRules}
@@ -2316,10 +2318,10 @@ Character Consistency: ${characterDescription}${templateSuffix}`
    * 从提示词中提取角色描述（用于保持一致性）
    */
   private extractCharacterDescription(promptText: string): string {
-    // Global anchor takes priority over per-shot extraction to guarantee
-    // identical character description across all panels
+    // When anchor exists, embed it ONCE here as the single authoritative definition.
+    // Shots reference it via short tag to avoid 11x repetition that drowns layout instructions.
     if (this.lastCharacterAnchor) {
-      return this.lastCharacterAnchor
+      return `${this.lastCharacterAnchor}. All panels must depict this exact character.`
     }
 
     let description = promptText
@@ -2603,7 +2605,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
 8. 【导演级专用】景深规则：广角用深景深，特写用浅景深+自然散景，禁止全程统一景深
 9. 【导演级专用】禁止引入参考图中不存在的新角色或物体
 10. 【导演级专用】禁止猜测真实身份、品牌或地名，仅描述可见视觉元素
-11. 【关键-角色锚点】必须定义 character_anchor 字段，包含从参考图提取的精确人物描述（发色+发型+瞳色+服装细节+体型），然后在每个 shot 的 prompt_text 中逐字复制这段描述，严禁在不同 shot 间变换措辞`
+11. 【关键-角色锚点】必须定义 character_anchor 字段（发色+发型+瞳色+服装细节+体型），但 shot 中只需简短引用 "same character as anchor"，不要重复完整描述以节省 token`
         }
 
       case 'anime':
@@ -2773,19 +2775,13 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
     const ratio = this.currentRatio === 'auto' ? layout.ratio : this.currentRatio
     const api = this.getApi()
 
-    // 参考图权重模拟：通过提示词强制模型尊重参考图
-    const refWeightPrefix = preparedImages.length > 0
-      ? this.buildReferenceWeightPrompt()
-      : ''
-    const finalPrompt = refWeightPrefix ? `${refWeightPrefix}\n\n${prompt}` : prompt
-
-    console.log('[DirectorPage] 最终提示词长度:', finalPrompt.length, '字符')
-    if (finalPrompt.length > 4000) {
+    console.log('[DirectorPage] 最终提示词长度:', prompt.length, '字符')
+    if (prompt.length > 4000) {
       console.warn('[DirectorPage] 提示词可能过长，建议精简场景描述')
     }
 
     const result = await api.generateImageWithReference(
-      finalPrompt,
+      prompt,
       preparedImages,
       ratio,
       1,
@@ -2800,47 +2796,12 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
   }
 
   /**
-   * 构建参考图权重模拟提示词
-   * 通过文本指令让模型更尊重参考图中的人物外观，模拟 ref_strength 效果
+   * 构建简短的角色锚点引用标记（嵌入到提示词内部，不作为前缀）
+   * 保持简短以避免抢占布局指令的注意力权重
    */
-  private buildReferenceWeightPrompt(): string {
-    const anchor = this.lastCharacterAnchor
-    const anchorClause = anchor
-      ? `Character identity from reference: ${anchor}. `
-      : ''
-
-    switch (this.currentTemplate) {
-      case 'cinematic':
-        return `[REFERENCE IMAGE PRIORITY: HIGHEST] STRICTLY follow the reference image(s). ${anchorClause}Reproduce the EXACT same character: identical face, hair color and style, eye color, skin tone, body proportions, and clothing details. Any deviation from the reference character appearance is FORBIDDEN. The reference image is the absolute ground truth for character identity.`
-
-      case 'theatrical': {
-        const anchorClauseJP = anchor
-          ? `参考キャラクター: ${anchor}。`
-          : ''
-        return `[参考画像の完全再現] 参考画像に完全に従ってください。${anchorClauseJP}同じキャラクターの顔、髪型、髪色、服装の細部をそのまま再現してください。画風は参考画像と100%一致させること。`
-      }
-
-      case 'anime':
-      case 'manga':
-      case 'webtoon':
-      case 'comic':
-      case 'illustration':
-        return `[REFERENCE PRIORITY: HIGH] Maintain the SAME character appearance as the reference image. ${anchorClause}Keep identical: face features, hairstyle, hair color, eye color, outfit details. Character consistency with reference is critical.`
-
-      case 'movie':
-        return `[REFERENCE PRIORITY: HIGH] STRICTLY MAINTAIN the SAME character appearance, face, hairstyle, skin tone, and clothing as the reference image. ${anchorClause}Photographic consistency is essential.`
-
-      case null:
-        return anchorClause
-          ? `[REFERENCE] Follow the reference image. ${anchorClause}Maintain character consistency across all panels.`
-          : ''
-
-      default: {
-        const _exhaustiveCheck: never = this.currentTemplate
-        console.warn('[DirectorPage] Unhandled template in buildReferenceWeightPrompt:', _exhaustiveCheck)
-        return ''
-      }
-    }
+  private buildCharacterReferenceTag(): string {
+    if (!this.lastCharacterAnchor) return ''
+    return `[REF CHARACTER: ${this.lastCharacterAnchor}]`
   }
 
   // ==================== 结果显示 ====================
