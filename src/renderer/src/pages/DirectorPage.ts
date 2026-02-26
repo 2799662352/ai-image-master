@@ -439,20 +439,10 @@ Step 5 - Contact Sheet Output: Output ONE single master image as a Cinematic Con
 <output_format>
 Output as JSON code block with the following structure.
 
-CRITICAL — Base Prompt Anchoring:
+CRITICAL - Character Anchor: Before writing shots, you MUST define a "character_anchor" field that contains a FIXED, detailed description of EVERY subject from the reference image. This EXACT text must be embedded verbatim in every shot's prompt_text to ensure identical character rendering. Include: gender, approximate age, hair (color+style+length), eye color, skin tone, facial features, exact clothing (type+color+pattern+accessories), body build/height. Do NOT paraphrase or vary this description across shots.
 
-Step A) Extract a "character_anchor" from the reference image. This is a FIXED, FROZEN description of ALL subjects: gender, age, hair (color+style+length), eye color, skin tone, facial features, exact clothing (type+color+pattern+accessories), body build, AND the environment/lighting. This text becomes [Base_Prompt] and is IMMUTABLE.
-
-Step B) Each shot's prompt_text MUST follow this strict 4-part formula:
-  [Camera_Setup] + [Base_Prompt] + [Quality_Tags] + [Marking_Instructions]
-
-Where:
-- [Camera_Setup] = "KF{N} - {Shot Type} - {Duration}, {Camera Angle}, {Lens}, {Movement}" — THIS IS THE ONLY PART THAT CHANGES BETWEEN SHOTS
-- [Base_Prompt] = the character_anchor text, copied VERBATIM with ZERO modifications — identical in ALL shots, word-for-word
-- [Quality_Tags] = "masterpiece, best quality, 8K, cinematic lighting, natural depth of field"
-- [Marking_Instructions] = "'分镜{N}' in the top-left corner. No timecode, no subtitles."
-
-ABSOLUTE RULE: The [Base_Prompt] portion must be CHARACTER-FOR-CHARACTER identical across all 9 shots. Do NOT rephrase, do NOT add action verbs, do NOT change adjective order. Copy-paste it exactly.
+Each shot's prompt_text must follow the pattern:
+"[KF Label + Shot Type + Duration], [Camera Setup + Lens + Movement], [CHARACTER_ANCHOR verbatim], [Environment + Action + Pose], [Lighting + DoF + Mood]. 'KF{N}' in the top-left corner. No timecode, no subtitles."
 </output_format>
 
 <shot_design_vocabulary>
@@ -2080,24 +2070,23 @@ ${styleConfig.styleInstructions}
   "style_prefix": "${styleConfig.prefix}",
   "style_suffix": "${styleConfig.suffix}",
   "negative_prompt": "${styleConfig.negative}",
-  "character_anchor": "[从参考图提取的完整冻结描述（Base_Prompt）: 人物外貌+服装+环境+光影，此文本在所有 shot 中逐字复制，零修改]",
+  "character_anchor": "[从参考图提取的精确人物描述: 性别、年龄、发型(颜色+款式+长度)、瞳色、肤色、面部特征、精确服装(类型+颜色+图案+配饰)、体型。此描述必须逐字嵌入每个 shot 的 prompt_text 中]",
   "shots": [
     {
       "shot_number": "分镜1",
-      "prompt_text": "${styleConfig.shotPrefix}KF1 - [Shot Type] - [Duration], [Camera Angle + Lens + Movement], [character_anchor 原封不动复制], ${styleConfig.shotSuffix}. '分镜1' in the top-left corner. No timecode, no subtitles."
+      "prompt_text": "${styleConfig.shotPrefix}[Camera Setup], [CHARACTER_ANCHOR verbatim], [Scene + Action]${styleConfig.shotSuffix}. '分镜1' in the top-left corner. No timecode, no subtitles."
     }
-    // ... 共 ${panelCount} 个，仅 Camera_Setup 部分变化，Base_Prompt 部分逐字相同
+    // ... 共 ${panelCount} 个
   ]
 }
 \`\`\`
 
-重要（一致性绝对优先）：
+重要：
 1. 所有 prompt_text 必须是英文
-2. 每个 prompt_text 严格遵循 4 段式公式：[Camera_Setup] + [Base_Prompt] + [Quality_Tags] + [Marking_Instructions]
-3. **【一字不差】character_anchor（即 Base_Prompt）必须在所有 ${panelCount} 个 shot 中逐字逐句完全相同，禁止任何改写、换序、增删。只有 Camera_Setup 部分在不同 shot 间变化**
-4. 每个 prompt_text 必须包含 "'分镜X' in the top-left corner. No timecode, no subtitles."
-5. 禁止使用 Medium Shot、Long Shot、Close-up 等平庸描述
-6. 每个 shot 的 prompt_text 必须包含风格前缀和后缀标签
+2. 每个 prompt_text 必须包含 "'分镜X' in the top-left corner. No timecode, no subtitles."
+3. **【关键】必须先定义 character_anchor 字段，包含从参考图提取的完整人物外观描述（发色、发型、瞳色、服装细节等），然后在每个 shot 的 prompt_text 中原封不动地嵌入这段描述，禁止在不同 shot 之间变换措辞**
+4. 禁止使用 Medium Shot、Long Shot、Close-up 等平庸描述
+5. 每个 shot 的 prompt_text 必须包含风格前缀和后缀标签
 ${styleConfig.additionalRules}
 `
 
@@ -2438,7 +2427,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
 
   /**
    * 根据当前模板选择对应的 Gem 系统提示词（exhaustive switch）
-   * cinematic 使用专用导演级提示词，其他模板使用通用视角裂变提示词
+   * cinematic 使用专用导演级提示词，其他模板使用北风诉苦通用提示词
    */
   private getGemSystemPromptForTemplate(): string {
     switch (this.currentTemplate) {
@@ -2581,7 +2570,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
 8. 【导演级专用】景深规则：广角用深景深，特写用浅景深+自然散景，禁止全程统一景深
 9. 【导演级专用】禁止引入参考图中不存在的新角色或物体
 10. 【导演级专用】禁止猜测真实身份、品牌或地名，仅描述可见视觉元素
-11. 【一字不差-Base_Prompt锚点】character_anchor = Base_Prompt，包含参考图中完整的人物+环境+光影描述。每个 shot 的 prompt_text 中 Base_Prompt 部分必须逐字逐句完全相同（copy-paste），仅 Camera_Setup 部分在不同 shot 间变化`
+11. 【关键-角色锚点】必须定义 character_anchor 字段，包含从参考图提取的精确人物描述（发色+发型+瞳色+服装细节+体型），然后在每个 shot 的 prompt_text 中逐字复制这段描述，严禁在不同 shot 间变换措辞`
         }
 
       case 'anime':
@@ -2663,7 +2652,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
    */
   private calculateViewDistribution(panelCount: number): string {
     if (panelCount === 9) {
-      // 9宫格标准分布（视角裂变原版规则）
+      // 9宫格标准分布（北风诉苦原版规则）
       return `- 至少 2个 背后视角 (Back View)
 - 至少 3个 过肩视角 (Over-the-Shoulder/OTS)
 - 至少 2个 主观视角 (Point of View/POV)
@@ -2751,8 +2740,14 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
     const ratio = this.currentRatio === 'auto' ? layout.ratio : this.currentRatio
     const api = this.getApi()
 
+    // 参考图权重模拟：通过提示词强制模型尊重参考图
+    const refWeightPrefix = preparedImages.length > 0
+      ? this.buildReferenceWeightPrompt()
+      : ''
+    const finalPrompt = refWeightPrefix ? `${refWeightPrefix}\n\n${prompt}` : prompt
+
     const result = await api.generateImageWithReference(
-      prompt,
+      finalPrompt,
       preparedImages,
       ratio,
       1,
@@ -2764,6 +2759,46 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
     }
 
     throw new Error(result.error || (this.t('director.messages.generateFailedShort') || '生成失败'))
+  }
+
+  /**
+   * 构建参考图权重模拟提示词
+   * 通过文本指令让模型更尊重参考图中的人物外观，模拟 ref_strength 效果
+   */
+  private buildReferenceWeightPrompt(): string {
+    const anchor = this.lastCharacterAnchor
+    const anchorClause = anchor
+      ? `Character identity from reference: ${anchor}. `
+      : ''
+
+    switch (this.currentTemplate) {
+      case 'cinematic':
+        return `[REFERENCE IMAGE PRIORITY: HIGHEST] STRICTLY follow the reference image(s). ${anchorClause}Reproduce the EXACT same character: identical face, hair color and style, eye color, skin tone, body proportions, and clothing details. Any deviation from the reference character appearance is FORBIDDEN. The reference image is the absolute ground truth for character identity.`
+
+      case 'theatrical':
+        return `[参考画像の完全再現] 参考画像に完全に従ってください。${anchorClause}同じキャラクターの顔、髪型、髪色、服装の細部をそのまま再現してください。画風は参考画像と100%一致させること。`
+
+      case 'anime':
+      case 'manga':
+      case 'webtoon':
+      case 'comic':
+      case 'illustration':
+        return `[REFERENCE PRIORITY: HIGH] Maintain the SAME character appearance as the reference image. ${anchorClause}Keep identical: face features, hairstyle, hair color, eye color, outfit details. Character consistency with reference is critical.`
+
+      case 'movie':
+        return `[REFERENCE PRIORITY: HIGH] STRICTLY MAINTAIN the SAME character appearance, face, hairstyle, skin tone, and clothing as the reference image. ${anchorClause}Photographic consistency is essential.`
+
+      case null:
+        return anchorClause
+          ? `[REFERENCE] Follow the reference image. ${anchorClause}Maintain character consistency across all panels.`
+          : ''
+
+      default: {
+        const _exhaustiveCheck: never = this.currentTemplate
+        console.warn('[DirectorPage] Unhandled template in buildReferenceWeightPrompt:', _exhaustiveCheck)
+        return ''
+      }
+    }
   }
 
   // ==================== 结果显示 ====================
