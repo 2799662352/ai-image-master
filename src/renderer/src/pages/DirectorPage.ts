@@ -23,6 +23,10 @@ export type GenerationMode = 'single' | 'multi'
  */
 export type StyleTemplateKey = 'anime' | 'manga' | 'movie' | 'webtoon' | 'comic' | 'illustration' | 'cinematic' | 'theatrical'
 
+const BUILTIN_TEMPLATE_KEYS: ReadonlySet<string> = new Set<StyleTemplateKey>([
+  'anime', 'manga', 'movie', 'webtoon', 'comic', 'illustration', 'cinematic', 'theatrical'
+])
+
 /**
  * 风格模板
  */
@@ -433,8 +437,12 @@ Step 5 - Contact Sheet Output: Output ONE single master image as a Cinematic Con
 </workflow>
 
 <output_format>
-Output as JSON code block with the following structure. Each shot's prompt_text must follow the pattern:
-"[KF Label + Shot Type + Duration], [Camera Setup + Lens + Movement], [Full Scene Description with all subjects from reference], [Lighting + DoF + Mood]. 'KF{N}' in the top-left corner. No timecode, no subtitles."
+Output as JSON code block with the following structure.
+
+CRITICAL - Character Anchor: Before writing shots, you MUST define a "character_anchor" field that contains a FIXED, detailed description of EVERY subject from the reference image. This EXACT text must be embedded verbatim in every shot's prompt_text to ensure identical character rendering. Include: gender, approximate age, hair (color+style+length), eye color, skin tone, facial features, exact clothing (type+color+pattern+accessories), body build/height. Do NOT paraphrase or vary this description across shots.
+
+Each shot's prompt_text must follow the pattern:
+"[KF Label + Shot Type + Duration], [Camera Setup + Lens + Movement], [CHARACTER_ANCHOR verbatim], [Environment + Action + Pose], [Lighting + DoF + Mood]. 'KF{N}' in the top-left corner. No timecode, no subtitles."
 </output_format>
 
 <shot_design_vocabulary>
@@ -1182,7 +1190,9 @@ Shot Types: Extreme Wide Shot (EWS), Wide Shot (WS), Full Shot (FS), Cowboy Shot
    * 选择模板
    */
   selectTemplate(templateKey: string): void {
-    const template = this.styleTemplates[templateKey as StyleTemplateKey] || this.customTemplates[templateKey]
+    const template = this.isBuiltinTemplate(templateKey)
+      ? this.styleTemplates[templateKey]
+      : this.customTemplates[templateKey]
     if (!template) return
 
     if (this.isBuiltinTemplate(templateKey)) {
@@ -2060,10 +2070,11 @@ ${styleConfig.styleInstructions}
   "style_prefix": "${styleConfig.prefix}",
   "style_suffix": "${styleConfig.suffix}",
   "negative_prompt": "${styleConfig.negative}",
+  "character_anchor": "[从参考图提取的精确人物描述: 性别、年龄、发型(颜色+款式+长度)、瞳色、肤色、面部特征、精确服装(类型+颜色+图案+配饰)、体型。此描述必须逐字嵌入每个 shot 的 prompt_text 中]",
   "shots": [
     {
       "shot_number": "分镜1",
-      "prompt_text": "${styleConfig.shotPrefix}[Camera Setup], [Scene Description]${styleConfig.shotSuffix}. '分镜1' in the top-left corner. No timecode, no subtitles."
+      "prompt_text": "${styleConfig.shotPrefix}[Camera Setup], [CHARACTER_ANCHOR verbatim], [Scene + Action]${styleConfig.shotSuffix}. '分镜1' in the top-left corner. No timecode, no subtitles."
     }
     // ... 共 ${panelCount} 个
   ]
@@ -2073,7 +2084,7 @@ ${styleConfig.styleInstructions}
 重要：
 1. 所有 prompt_text 必须是英文
 2. 每个 prompt_text 必须包含 "'分镜X' in the top-left corner. No timecode, no subtitles."
-3. 人物外观、服装、环境必须在所有分镜中保持一致
+3. **【关键】必须先定义 character_anchor 字段，包含从参考图提取的完整人物外观描述（发色、发型、瞳色、服装细节等），然后在每个 shot 的 prompt_text 中原封不动地嵌入这段描述，禁止在不同 shot 之间变换措辞**
 4. 禁止使用 Medium Shot、Long Shot、Close-up 等平庸描述
 5. 每个 shot 的 prompt_text 必须包含风格前缀和后缀标签
 ${styleConfig.additionalRules}
@@ -2128,15 +2139,20 @@ ${styleConfig.additionalRules}
 
       const parsed = JSON.parse(jsonStr)
       
+      if (parsed.character_anchor && typeof parsed.character_anchor === 'string') {
+        this.lastCharacterAnchor = parsed.character_anchor
+        console.log('[DirectorPage] 角色锚点:', parsed.character_anchor.substring(0, 100), '...')
+      }
+
       if (parsed.shots && Array.isArray(parsed.shots)) {
         let shots = parsed.shots.slice(0, expectedCount)
         
-        // 如果数量不足，填充缺失的 shots
         while (shots.length < expectedCount) {
           const idx = shots.length + 1
+          const anchor = this.lastCharacterAnchor || 'character in scene, consistent with reference'
           shots.push({
             shot_number: `分镜${idx}`,
-            prompt_text: `Full Body Shot, character in scene, consistent with reference. '分镜${idx}' in the top-left corner. No timecode, no subtitles.`
+            prompt_text: `Full Body Shot, ${anchor}. '分镜${idx}' in the top-left corner. No timecode, no subtitles.`
           })
         }
         
@@ -2291,12 +2307,17 @@ Character Consistency: ${characterDescription}${templateSuffix}`
    * 从提示词中提取角色描述（用于保持一致性）
    */
   private extractCharacterDescription(promptText: string): string {
-    // 移除镜头语言和标记指令，保留核心角色描述
+    if (this.lastCharacterAnchor) {
+      return this.lastCharacterAnchor
+    }
+
     let description = promptText
-      .replace(/^(Wide shot|Long shot|Medium shot|Close-up|Extreme close-up|Over-the-shoulder|POV|Dutch angle|Low angle|High angle|Back view)[,:]\s*/gi, '')
+      .replace(/^(Wide shot|Long shot|Medium shot|Close-up|Extreme close-up|Over-the-shoulder|POV|Dutch angle|Low angle|High angle|Back view|Cowboy shot|Full body|ECU|EWS)[,:]\s*/gi, '')
+      .replace(/^(KF\d+\s*[-–]\s*\w[\w\s]*[-–]\s*\d+s)[,:]\s*/gi, '')
       .replace(/'分镜\d+' in the top-left corner\.?\s*/gi, '')
       .replace(/No timecode,?\s*no subtitles\.?\s*/gi, '')
-      .replace(/[,.]?\s*(masterpiece|best quality|high detail|8K|cinematic lighting)[,.\s]*/gi, '')
+      .replace(/[,.]?\s*(masterpiece|best quality|high detail|8K|cinematic lighting|photorealistic|sequence photography|natural depth of field|award-winning)[,.\s]*/gi, '')
+      .replace(/Cinematic (keyframe|Contact Sheet)[,.\s]*/gi, '')
       .trim()
     
     return description || 'Based on reference image'
@@ -2335,8 +2356,9 @@ Character Consistency: ${characterDescription}${templateSuffix}`
     return this.lastGeneratedShots || null
   }
 
-  // 缓存最近生成的 shots
+  // 缓存最近生成的 shots 和角色锚点
   private lastGeneratedShots: Array<{ shot_number: string; prompt_text: string }> | null = null
+  private lastCharacterAnchor: string | null = null
 
   /**
    * 模板方式生成提示词（回退模式）
@@ -2391,7 +2413,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
    * 类型守卫：判断 key 是否为内置模板
    */
   private isBuiltinTemplate(key: string): key is StyleTemplateKey {
-    return key in this.styleTemplates
+    return BUILTIN_TEMPLATE_KEYS.has(key)
   }
 
   /**
@@ -2547,7 +2569,8 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
 7. 【导演级专用】情感递进必须遵循 setup → build → turn → payoff 四幕结构
 8. 【导演级专用】景深规则：广角用深景深，特写用浅景深+自然散景，禁止全程统一景深
 9. 【导演级专用】禁止引入参考图中不存在的新角色或物体
-10. 【导演级专用】禁止猜测真实身份、品牌或地名，仅描述可见视觉元素`
+10. 【导演级专用】禁止猜测真实身份、品牌或地名，仅描述可见视觉元素
+11. 【关键-角色锚点】必须定义 character_anchor 字段，包含从参考图提取的精确人物描述（发色+发型+瞳色+服装细节+体型），然后在每个 shot 的 prompt_text 中逐字复制这段描述，严禁在不同 shot 间变换措辞`
         }
 
       case 'anime':
@@ -3770,7 +3793,9 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
    * 复制弹窗内容
    */
   async copyModalContent(): Promise<void> {
-    const content = this.lastAnalysisResult || this.lastComicPrompt
+    const content = this.currentModalType === 'analysis'
+      ? this.lastAnalysisResult
+      : this.lastComicPrompt
     
     if (!content) {
       this.app.showToast?.(this.t('director.messages.noCopyContent') || '没有可复制的内容', 'warning')
