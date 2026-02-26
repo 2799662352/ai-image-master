@@ -338,7 +338,7 @@ export class DirectorPage extends BasePage {
     cinematic: {
       name: 'cinematic', // i18n key: director.templates.styles.cinematic  电影级九宫格（导演级分镜）
       prefix: 'Cinematic Contact Sheet, award-winning trailer storyboard, precise grid layout with equal panels. Symmetrical grid, hard borders, clean white dividing lines. Each panel labeled with KF number + shot type + suggested duration. ',
-      suffix: ', Cinematic lighting, photorealistic, sequence photography, 8K resolution, natural depth of field, deeper DoF in wides shallower in close-ups with natural bokeh. Same characters, same wardrobe, same environment, same time-of-day lighting across all panels. No text, no speech bubbles. Emotional progression: setup to build to turn to payoff',
+      suffix: ', photorealistic, sequence photography, 8K resolution, natural depth of field, deeper DoF in wides shallower in close-ups with natural bokeh',
       negative: 'text, speech bubbles, dialogue, watermark, signature, blurry, low quality, inconsistent characters, different outfits, style change, irregular panels, asymmetric grid, new characters not in reference, guessed identities, brand logos'
     },
     theatrical: {
