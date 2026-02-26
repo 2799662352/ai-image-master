@@ -384,19 +384,18 @@ export class DirectorPage extends BasePage {
   }
 
   // 电影级九宫格提示词模板（导演级分镜 - 基于 trailer director + cinematographer + storyboard artist 工作流）
-  private cinematicGridPromptTemplate = `Cinematic Contact Sheet / Storyboard Grid. ONE single master image containing ALL keyframes.
-Aspect Ratio Constraint: The entire image is {RATIO}, and each individual panel is also strictly {RATIO}.
-Grid: Default 3x3. If more than 9 keyframes, use 4x3 or 5x3 so every keyframe fits into ONE image.
-Layout: Symmetrical grid, hard borders, clean white dividing lines.
+  private cinematicGridPromptTemplate = `[COMPOSITION] Cinematic Contact Sheet, ONE single master image, 3x3 storyboard grid.
+Aspect ratio: entire image {RATIO}, each panel also {RATIO}. Symmetrical grid, hard borders, clean white dividing lines.
 
-Character Identity (MUST be identical in ALL 9 panels): {CHARACTER_DESCRIPTION}
+[SUBJECT] {CHARACTER_DESCRIPTION}
 
-Story Sequence: {STORY_DESCRIPTION}
+[STORY] {STORY_DESCRIPTION}
 
-Panel Breakdown:
+[PANELS]
 {PANEL_DESCRIPTIONS}
 
-Visual Style: Cinematic lighting, photorealistic, 8K resolution.`
+[STYLE] Cinematic lighting, photorealistic, sequence photography, 8K resolution.
+[CONSTRAINTS] Do NOT change character appearance between panels. Maintain exact facial proportions, hairstyle, hair color, eye color, skin tone, and outfit from reference across ALL 9 panels.`
 
   // 电影导演级分镜 Gem 系统提示词（cinematic 模板专用 - trailer director + cinematographer + storyboard artist）
   private cinematicGemSystemPrompt: string = `<role>
