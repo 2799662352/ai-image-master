@@ -448,57 +448,42 @@ Step 5 - Contact Sheet Output: Output ONE single master image as a Cinematic Con
 Output a 3-LAYER structured response:
 
 LAYER 1 — Scene (global context):
-- scene.d: Narrative arc in "A → B → C" format (setup → build → payoff)
+- scene.d: Narrative arc in "A → B → C" format
 - scene.cap: Structured title "subject-action-environment"
 - scene.env: Environment summary (lighting/space/style)
-- scene.bgm: Sound design with 4 layers (base ambient + env sounds + action foley + melody/silence strategy)
-- scene.tension: Core dramatic tension driving the sequence
+- scene.shot_flow: Sequence flow for all shots ("S1 establishing → S2 push-in → S3 reverse → ...")
 
 LAYER 2 — Objects (persistent entities):
-- objs[]: Each key subject/prop with visual features, spatial position, physics type (rigid/articulated/cloth/fluid), cross-shot consistency anchors, and psychology externalization (how appearance reflects inner state)
+- objs[]: Each key subject/prop with: name, visual features (include physics type + invariant cross-shot anchors in this field), spatial position (FG/MG/BG)
 
-LAYER 3 — Shots (per-keyframe):
-- All fields from shot design rules below, PLUS:
-- seq: Sequence encoding showing connection to neighboring shots ("S3: match-cut from S2 → leads to S4 reaction")
-- alignment: 3-grain analysis (coarse: composition change, medium: action chain, fine: shadow/highlight micro-changes)
-- motion: Per-body-part intensity ("head:low-nod, arms:high-reaching, torso:medium-lean, legs:static")
+LAYER 3 — Shots (per-keyframe, 8 fields):
+- kf: KF number + shot type + duration
+- lens: focal length + camera movement
+- spatial: {fg, mg, bg} three depth layers
+- action: anchor verb + manner words + body physics interaction (combine physical forces into this field)
+- light: source + direction + quality + color temp + color grade hint (combine color grading into this field)
+- label: panel label
+- micro_expression: Start → transition → end micro-arc (null if not applicable)
+- atmosphere: physical medium between camera and subject (null if clear air)
 
-Also output "character_anchor" (single source of truth for main character appearance) and "notes" (cross-shot verification summary).
+Also output "character_anchor" as single source of truth for main character appearance.
 </output_format>
 
-<scene_narrative_rules>
-Every sequence MUST have a clear emotional arc expressed in 3 beats:
-- Beat A (Setup): Establish spatial context, character state, dominant mood
-- Beat B (Build/Turn): Introduce change — action shift, emotional escalation, environmental disruption
-- Beat C (Payoff): Resolution or cliffhanger — the image viewer's eye journey must end with impact
+<director_thinking_guide>
+When designing shots, internally consider these dimensions (they guide quality but are NOT separate output fields):
+- Narrative arc with 3 beats: Setup → Build/Turn → Payoff
+- Core dramatic tension driving the sequence
+- Sound design: ambient + environment + foley + melody/silence
+- Cross-shot consistency: invariant visual anchors across all shots
+- Shot-to-shot flow: match cuts, reverse angles, time jumps
+- Multi-granularity: composition changes (coarse), action chains (medium), shadow/highlight shifts (fine)
+- Body physics: how gravity, wind, fatigue, temperature affect posture and movement
+- Color grading: dominant/accent color hierarchy (80/20 rule), film texture
+- Composition principles: leading lines, framing, negative space, rule of thirds
+- Emotion-shot matching: shot type must match target emotion
 
-Core tension: Identify ONE driving conflict/question that sustains viewer attention across all shots.
-E.g. "she wants to speak but fear seals her lips" or "the object in his hand will change everything"
-
-Sound design (bgm) — specify all 4 layers:
-- Base: continuous ambient foundation (room tone, wind drone, silence)
-- Env: diegetic environment sounds (rain on glass, clock ticking, distant traffic)
-- Action: foley tied to character movement (fabric rustle, heel clicks, breath)
-- Melody: non-diegetic music or deliberate silence ("sparse piano emerges at Beat C", "complete silence until the slap")
-</scene_narrative_rules>
-
-<cross_shot_consistency>
-For EVERY persistent object/character, define invariant anchors:
-- Which visual features MUST remain identical across ALL shots (hair, outfit, scars, props)
-- Which features MAY change (expression, pose, lighting angle)
-- Physics type constrains motion: cloth drapes with gravity, hair follows head rotation, rigid objects maintain shape
-
-Sequence encoding (seq field):
-Each shot MUST describe its relationship to neighbors:
-- "S1: opening establishing → S2 motivated by character entering frame"
-- "S3: match-cut from S2 hand reaching → S4: reverse angle reaction"
-- "S5: time-jump, same location, lighting shifted to dusk"
-
-Multi-granularity alignment:
-- Coarse: How does the overall composition change from the previous shot? (e.g., "wide → close")
-- Medium: What is the action chain within this single shot? (e.g., "reaches forward → grasps → pulls back")
-- Fine: What micro-changes occur in occlusion, highlights, or shadows? (e.g., "shadow crosses face L-to-R as cloud passes")
-</cross_shot_consistency>
+Embed these considerations INTO the 8 output fields — especially action, light, spatial, and atmosphere.
+</director_thinking_guide>
 
 <shot_design_vocabulary>
 Camera Angles: Eye-level, Low angle (heroic), High angle (vulnerable), Dutch angle (tension), Bird's eye, Worm's eye, Over-the-shoulder (OTS), POV
@@ -2181,7 +2166,7 @@ Output must be in English. Use concise descriptions suitable for image generatio
     }
 
     // 优先使用 LangChain 结构化输出
-    const langchainService = getLangChainDirectorService()
+    const langchainService = getLangChainDirectorService(this.visionModel)
     if (langchainService && this.referenceImages.length > 0) {
       try {
         console.log('[DirectorPage] Using LangChain structured output...')
@@ -2641,6 +2626,11 @@ ${styleConfig.additionalRules}
         parts.push(s.light)
         if (s.micro_expression) parts.push(s.micro_expression)
         if (s.atmosphere) parts.push(s.atmosphere)
+        if (s.body_physics) parts.push(s.body_physics)
+        if (s.color_grade) parts.push(s.color_grade)
+        if (s.composition) parts.push(s.composition)
+        if (s.emotion_target) parts.push(`Emotion: ${s.emotion_target}`)
+        if (s.seq) parts.push(`[${s.seq}]`)
         return `${i + 1}. ${parts.filter(Boolean).join(', ')}`
       }
       // Priority 2: Use cached parsed panels (only if array lengths match)

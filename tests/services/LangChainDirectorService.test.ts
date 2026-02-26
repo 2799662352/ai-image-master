@@ -18,7 +18,13 @@ vi.mock('@langchain/openai', () => {
 
 const NULL_FIELDS = {
   micro_expression: null,
-  atmosphere: null
+  color_grade: null,
+  atmosphere: null,
+  body_physics: null,
+  composition: null,
+  emotion_target: null,
+  seq: null,
+  motion: null
 } as const
 
 const SCENE_FIELDS = {
@@ -26,9 +32,12 @@ const SCENE_FIELDS = {
     d: 'setup → build → payoff',
     cap: 'test-subject-action-env',
     env: 'interior, warm light',
+    bgm: { base: 'ambient drone', env: 'rain', action: 'footsteps', melody: 'sparse piano' },
+    tension: 'test dramatic tension',
     shot_flow: 'S1 establishing → S2 close-up'
   },
-  objs: [{ n: 'test character', f: 'black hair, red dress, articulated biped', s: 'MG center' }]
+  objs: [{ n: 'test character', f: 'black hair, red dress, articulated biped', s: 'MG center', psych: null }],
+  notes: null
 } as const
 
 const makeShot = (overrides = {}) => ({

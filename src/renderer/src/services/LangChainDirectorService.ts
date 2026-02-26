@@ -2,9 +2,10 @@ import { z } from 'zod'
 import { ChatOpenAI } from '@langchain/openai'
 import { HumanMessage, SystemMessage } from '@langchain/core/messages'
 
-// ==================== Zod Schemas (Optimized for token budget) ====================
+// ==================== Zod Schemas ====================
 
 export const ShotSchema = z.object({
+  // Required fields
   kf: z.string().describe('KF number + shot type + duration'),
   lens: z.string().describe('Focal length + camera movement'),
   spatial: z.object({
@@ -12,31 +13,49 @@ export const ShotSchema = z.object({
     mg: z.string().describe('Midground layer'),
     bg: z.string().describe('Background layer')
   }),
-  action: z.string().describe('Anchor verb + manner + body physics interaction'),
-  light: z.string().describe('Source + direction + quality + color temp + color grade hint'),
+  action: z.string().describe('Anchor verb + manner + body physics'),
+  light: z.string().describe('Source + direction + quality + color temp'),
   label: z.string().describe('Panel label'),
-  micro_expression: z.nullable(z.string()).describe('Start → transition → end micro-arc. Null if N/A'),
-  atmosphere: z.nullable(z.string()).describe('Physical medium between camera and subject. Null if clear')
+  // Nullable fields (restored)
+  micro_expression: z.nullable(z.string()).describe('Start -> transition -> end micro-arc. Null if N/A'),
+  color_grade: z.nullable(z.string()).describe('Dominant color HEX + accent + film texture. Null if default'),
+  atmosphere: z.nullable(z.string()).describe('Physical medium: fog/dust/rays. Null if clear'),
+  body_physics: z.nullable(z.string()).describe('Body-environment force interaction. Null if static'),
+  composition: z.nullable(z.string()).describe('Composition principle applied. Null if centered'),
+  emotion_target: z.nullable(z.string()).describe('Target audience emotion. Null if neutral'),
+  seq: z.nullable(z.string()).describe('Connection to neighboring shots. Null if standalone'),
+  motion: z.nullable(z.string()).describe('Per-body-part intensity. Null if static')
+})
+
+export const BgmSchema = z.object({
+  base: z.string().describe('Ambient foundation'),
+  env: z.string().describe('Environment sounds'),
+  action: z.string().describe('Action foley'),
+  melody: z.string().describe('Melody or silence strategy')
 })
 
 export const SceneInfoSchema = z.object({
-  d: z.string().describe('Narrative arc: "A → B → C"'),
-  cap: z.string().describe('Title: "subject-action-environment"'),
+  d: z.string().describe('Narrative arc: A -> B -> C'),
+  cap: z.string().describe('Title: subject-action-environment'),
   env: z.string().describe('Environment: lighting/space/style'),
-  shot_flow: z.string().describe('Sequence flow: "S1 establishing → S2 push-in → S3 reverse → ..."')
+  bgm: BgmSchema,
+  tension: z.string().describe('Core dramatic tension'),
+  shot_flow: z.string().describe('Sequence flow: S1 -> S2 -> ...')
 })
 
 export const SceneObjectSchema = z.object({
   n: z.string().describe('Object name'),
-  f: z.string().describe('Visual features + physics type + invariant anchors'),
-  s: z.string().describe('Spatial: FG/MG/BG + position')
+  f: z.string().describe('Visual features + physics + anchors'),
+  s: z.string().describe('Spatial: FG/MG/BG + position'),
+  psych: z.nullable(z.string()).describe('Appearance = inner state. Null if inanimate')
 })
 
 export const SceneResponseSchema = z.object({
   scene: SceneInfoSchema,
   objs: z.array(SceneObjectSchema),
   character_anchor: z.string().describe('Primary character appearance'),
-  shots: z.array(ShotSchema)
+  shots: z.array(ShotSchema),
+  notes: z.nullable(z.string()).describe('Cross-shot verification. Null if none')
 })
 
 export type ShotData = z.infer<typeof ShotSchema>
@@ -44,7 +63,6 @@ export type ShotsResponse = z.infer<typeof SceneResponseSchema>
 export type SceneInfo = z.infer<typeof SceneInfoSchema>
 export type SceneObject = z.infer<typeof SceneObjectSchema>
 
-// Legacy alias
 export const ShotsResponseSchema = SceneResponseSchema
 
 // ==================== Service Types ====================
@@ -147,7 +165,13 @@ ${input.additionalRules}`
         parts.push(`FG: ${sp.fg}, MG: ${sp.mg}, BG: ${sp.bg}`)
         parts.push(shot.light)
         if (shot.micro_expression) parts.push(shot.micro_expression)
+        if (shot.color_grade) parts.push(shot.color_grade)
         if (shot.atmosphere) parts.push(shot.atmosphere)
+        if (shot.body_physics) parts.push(shot.body_physics)
+        if (shot.composition) parts.push(shot.composition)
+        if (shot.emotion_target) parts.push(shot.emotion_target)
+        if (shot.seq) parts.push(shot.seq)
+        if (shot.motion) parts.push(shot.motion)
         return `${i + 1}. ${parts.filter(Boolean).join(', ')}`
       })
       .join('\n')
@@ -162,8 +186,18 @@ ${input.additionalRules}`
     negative?: string
   ): string {
     const compact = {
-      scene: response.scene,
-      objs: response.objs,
+      scene: {
+        ...response.scene,
+        bgm: response.scene.bgm,
+        tension: response.scene.tension,
+        shot_flow: response.scene.shot_flow
+      },
+      objs: response.objs.map((o) => ({
+        n: o.n,
+        f: o.f,
+        s: o.s,
+        ...(o.psych && { psych: o.psych })
+      })),
       c: gridLayout,
       s: response.character_anchor,
       st: style,
@@ -176,10 +210,17 @@ ${input.additionalRules}`
         a: shot.action,
         li: shot.light,
         ...(shot.micro_expression && { me: shot.micro_expression }),
-        ...(shot.atmosphere && { atm: shot.atmosphere })
+        ...(shot.color_grade && { cg: shot.color_grade }),
+        ...(shot.atmosphere && { atm: shot.atmosphere }),
+        ...(shot.body_physics && { bp: shot.body_physics }),
+        ...(shot.composition && { comp: shot.composition }),
+        ...(shot.emotion_target && { et: shot.emotion_target }),
+        ...(shot.seq && { seq: shot.seq }),
+        ...(shot.motion && { mot: shot.motion })
       })),
       x: constraints,
-      ...(negative && { n: negative })
+      ...(negative && { n: negative }),
+      ...(response.notes && { notes: response.notes })
     }
     return JSON.stringify(compact)
   }

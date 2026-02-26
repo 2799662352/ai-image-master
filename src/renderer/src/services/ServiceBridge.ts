@@ -993,7 +993,7 @@ export function initDirectorPage(app: AppInterface): DirectorPage {
 let _langchainDirectorInstance: LangChainDirectorService | null = null
 let _langchainCacheKey: string | null = null
 
-export function getLangChainDirectorService(): LangChainDirectorService | null {
+export function getLangChainDirectorService(model?: string): LangChainDirectorService | null {
   const api = (window as any).aiImageAPI
   const apiKey = api?.visionApiKey as string | undefined
   if (!apiKey) {
@@ -1008,12 +1008,12 @@ export function getLangChainDirectorService(): LangChainDirectorService | null {
     return null
   }
 
-  const cacheKey = `${apiKey}|${baseURL}`
+  const cacheKey = `${apiKey}|${baseURL}|${model || ''}`
   if (!_langchainDirectorInstance || _langchainCacheKey !== cacheKey) {
-    _langchainDirectorInstance = new LangChainDirectorService({ apiKey, baseURL })
+    _langchainDirectorInstance = new LangChainDirectorService({ apiKey, baseURL, model })
     _langchainCacheKey = cacheKey
     ServiceRegistry.register(SERVICE_KEYS.LANGCHAIN_DIRECTOR, _langchainDirectorInstance)
-    console.log('[ServiceBridge] ✓ LangChainDirectorService 实例已创建, baseURL:', baseURL)
+    console.log('[ServiceBridge] ✓ LangChainDirectorService 实例已创建, baseURL:', baseURL, 'model:', model || 'default')
   }
   return _langchainDirectorInstance
 }
