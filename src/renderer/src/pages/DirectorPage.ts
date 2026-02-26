@@ -1518,6 +1518,7 @@ Shot Types: Extreme Wide Shot (EWS), Wide Shot (WS), Full Shot (FS), Cowboy Shot
    */
   removeReferenceImage(index: number): void {
     this.referenceImages.splice(index, 1)
+    this.lastCharacterAnchor = null
     this.updateReferenceImagesPreview()
     this.updateGenerateButtonState()
     this.saveCurrentState()
@@ -1557,6 +1558,8 @@ Shot Types: Extreme Wide Shot (EWS), Wide Shot (WS), Full Shot (FS), Cowboy Shot
    */
   clearAllReferenceImages(): void {
     this.referenceImages = []
+    this.lastCharacterAnchor = null
+    this.lastGeneratedShots = null
     this.updateReferenceImagesPreview()
     this.updateGenerateButtonState()
     this.saveCurrentState()
@@ -1713,6 +1716,7 @@ Shot Types: Extreme Wide Shot (EWS), Wide Shot (WS), Full Shot (FS), Cowboy Shot
    */
   private async startSingleGeneration(): Promise<void> {
     this.isGenerating = true
+    this.lastCharacterAnchor = null
     this.updateGenerateButtonState()
     this.generatedResults = []
 
@@ -1793,6 +1797,7 @@ Shot Types: Extreme Wide Shot (EWS), Wide Shot (WS), Full Shot (FS), Cowboy Shot
    * 多提示词模式批量生成
    */
   private async startMultiGeneration(): Promise<void> {
+    this.lastCharacterAnchor = null
     const multiSceneInput = this.getElement<HTMLTextAreaElement>('directorMultiSceneInput')
     const prompts = this.parseMultiPrompts(multiSceneInput?.value || '')
 
@@ -2013,7 +2018,10 @@ Output must be in English. Use concise descriptions suitable for image generatio
       }
     }
 
-    // 回退到模板方式
+    // 回退到模板方式 — 尝试从图片分析结果中提取基础角色锚点
+    if (!this.lastCharacterAnchor && imageAnalysis) {
+      this.lastCharacterAnchor = this.extractAnchorFromAnalysis(imageAnalysis)
+    }
     console.log('[DirectorPage] 使用模板方式生成提示词')
     return this.generateTemplatePrompt(imageAnalysis, sceneDescription, panelCount, layout, templatePrefix, templateSuffix, templateNegative)
   }
@@ -2085,8 +2093,9 @@ ${styleConfig.styleInstructions}
 1. 所有 prompt_text 必须是英文
 2. 每个 prompt_text 必须包含 "'分镜X' in the top-left corner. No timecode, no subtitles."
 3. **【关键】必须先定义 character_anchor 字段，包含从参考图提取的完整人物外观描述（发色、发型、瞳色、服装细节等），然后在每个 shot 的 prompt_text 中原封不动地嵌入这段描述，禁止在不同 shot 之间变换措辞**
-4. 禁止使用 Medium Shot、Long Shot、Close-up 等平庸描述
-5. 每个 shot 的 prompt_text 必须包含风格前缀和后缀标签
+4. 如果参考图中有人物，character_anchor 字段是【必填】的，即使系统提示词没有明确要求。格式示例："young woman, long black hair with bangs, brown eyes, fair skin, wearing white blouse and navy skirt"
+5. 禁止使用 Medium Shot、Long Shot、Close-up 等平庸描述
+6. 每个 shot 的 prompt_text 必须包含风格前缀和后缀标签
 ${styleConfig.additionalRules}
 `
 
@@ -2307,6 +2316,8 @@ Character Consistency: ${characterDescription}${templateSuffix}`
    * 从提示词中提取角色描述（用于保持一致性）
    */
   private extractCharacterDescription(promptText: string): string {
+    // Global anchor takes priority over per-shot extraction to guarantee
+    // identical character description across all panels
     if (this.lastCharacterAnchor) {
       return this.lastCharacterAnchor
     }
@@ -2321,6 +2332,28 @@ Character Consistency: ${characterDescription}${templateSuffix}`
       .trim()
     
     return description || 'Based on reference image'
+  }
+
+  /**
+   * 从 Vision API 的图片分析结果中提取基础角色锚点（回退方案）
+   * 用于 Gem AI 不可用时仍能提供基本的角色一致性描述
+   */
+  private extractAnchorFromAnalysis(analysis: string): string | null {
+    const characterSection = analysis.match(
+      /(?:Character Features|キャラクター特徴|Character|人物)[:\s/]*[\s\S]*?(?=###|$)/i
+    )
+    if (!characterSection) return null
+
+    const section = characterSection[0]
+      .replace(/^#+.*$/gm, '')
+      .replace(/[-*]\s*/g, '')
+      .trim()
+      .split('\n')
+      .filter(line => line.trim().length > 5)
+      .join(', ')
+      .substring(0, 500)
+
+    return section || null
   }
 
   /**
@@ -2746,6 +2779,11 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
       : ''
     const finalPrompt = refWeightPrefix ? `${refWeightPrefix}\n\n${prompt}` : prompt
 
+    console.log('[DirectorPage] 最终提示词长度:', finalPrompt.length, '字符')
+    if (finalPrompt.length > 4000) {
+      console.warn('[DirectorPage] 提示词可能过长，建议精简场景描述')
+    }
+
     const result = await api.generateImageWithReference(
       finalPrompt,
       preparedImages,
@@ -2775,8 +2813,12 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
       case 'cinematic':
         return `[REFERENCE IMAGE PRIORITY: HIGHEST] STRICTLY follow the reference image(s). ${anchorClause}Reproduce the EXACT same character: identical face, hair color and style, eye color, skin tone, body proportions, and clothing details. Any deviation from the reference character appearance is FORBIDDEN. The reference image is the absolute ground truth for character identity.`
 
-      case 'theatrical':
-        return `[参考画像の完全再現] 参考画像に完全に従ってください。${anchorClause}同じキャラクターの顔、髪型、髪色、服装の細部をそのまま再現してください。画風は参考画像と100%一致させること。`
+      case 'theatrical': {
+        const anchorClauseJP = anchor
+          ? `参考キャラクター: ${anchor}。`
+          : ''
+        return `[参考画像の完全再現] 参考画像に完全に従ってください。${anchorClauseJP}同じキャラクターの顔、髪型、髪色、服装の細部をそのまま再現してください。画風は参考画像と100%一致させること。`
+      }
 
       case 'anime':
       case 'manga':
