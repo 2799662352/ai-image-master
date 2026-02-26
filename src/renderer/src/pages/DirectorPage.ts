@@ -2160,10 +2160,21 @@ Output must be in English. Use concise descriptions suitable for image generatio
           prompt_text: JSON.stringify(shot)
         }))
 
-        return this.convertJsonShotsToPrompt(
-          this.lastGeneratedShots, panelCount, layout,
-          templatePrefix, templateSuffix, templateNegative
+        const ratio = this.currentRatio === 'auto' ? layout.ratio : this.currentRatio
+        const characterDesc = this.extractCharacterDescription(shotsResponse.shots[0]?.kf || '')
+        const sceneInput = this.getElement<HTMLTextAreaElement>('directorSceneInput')
+        const storyCtx = sceneInput?.value.trim() || 'Continuous cinematic sequence'
+
+        const finalPrompt = langchainService.buildFinalPrompt(
+          shotsResponse,
+          `Cinematic Contact Sheet, ONE master image, ${layout.rows}x${layout.cols} storyboard grid. Aspect ratio: ${ratio}. Each panel labeled with KF number.`,
+          `${this.getArtStyleDescription()}${templateSuffix}`,
+          storyCtx,
+          `${shotsResponse.character_anchor}. Identical character across ALL ${panelCount} panels.`,
+          templateNegative || undefined
         )
+        console.log('[DirectorPage] LangChain final prompt length:', finalPrompt.length, 'chars, with', shotsResponse.shots.filter(s => s.micro_expression).length, 'micro_expressions,', shotsResponse.shots.filter(s => s.color_grade).length, 'color_grades')
+        return finalPrompt
       } catch (error: any) {
         const msg = error?.message || ''
         if (msg.includes('401') || msg.includes('Unauthorized') || msg.includes('API key')) {
