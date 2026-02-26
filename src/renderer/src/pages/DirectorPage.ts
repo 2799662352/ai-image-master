@@ -439,7 +439,7 @@ Step 5 - Contact Sheet Output: Output ONE single master image as a Cinematic Con
 <output_format>
 Output as JSON code block with the following structure.
 
-CRITICAL — Base Prompt Anchoring (inspired by 北风诉苦 v1.1 methodology):
+CRITICAL — Base Prompt Anchoring:
 
 Step A) Extract a "character_anchor" from the reference image. This is a FIXED, FROZEN description of ALL subjects: gender, age, hair (color+style+length), eye color, skin tone, facial features, exact clothing (type+color+pattern+accessories), body build, AND the environment/lighting. This text becomes [Base_Prompt] and is IMMUTABLE.
 
@@ -2438,7 +2438,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
 
   /**
    * 根据当前模板选择对应的 Gem 系统提示词（exhaustive switch）
-   * cinematic 使用专用导演级提示词，其他模板使用北风诉苦通用提示词
+   * cinematic 使用专用导演级提示词，其他模板使用通用视角裂变提示词
    */
   private getGemSystemPromptForTemplate(): string {
     switch (this.currentTemplate) {
@@ -2581,7 +2581,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
 8. 【导演级专用】景深规则：广角用深景深，特写用浅景深+自然散景，禁止全程统一景深
 9. 【导演级专用】禁止引入参考图中不存在的新角色或物体
 10. 【导演级专用】禁止猜测真实身份、品牌或地名，仅描述可见视觉元素
-11. 【一字不差-Base_Prompt锚点】参照北风诉苦方法论：character_anchor = Base_Prompt，包含参考图中完整的人物+环境+光影描述。每个 shot 的 prompt_text 中 Base_Prompt 部分必须逐字逐句完全相同（copy-paste），仅 Camera_Setup 部分在不同 shot 间变化`
+11. 【一字不差-Base_Prompt锚点】character_anchor = Base_Prompt，包含参考图中完整的人物+环境+光影描述。每个 shot 的 prompt_text 中 Base_Prompt 部分必须逐字逐句完全相同（copy-paste），仅 Camera_Setup 部分在不同 shot 间变化`
         }
 
       case 'anime':
@@ -2663,7 +2663,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
    */
   private calculateViewDistribution(panelCount: number): string {
     if (panelCount === 9) {
-      // 9宫格标准分布（北风诉苦原版规则）
+      // 9宫格标准分布（视角裂变原版规则）
       return `- 至少 2个 背后视角 (Back View)
 - 至少 3个 过肩视角 (Over-the-Shoulder/OTS)
 - 至少 2个 主观视角 (Point of View/POV)
