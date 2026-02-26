@@ -2406,24 +2406,20 @@ ${panelDescriptions}
     }
 
     const characterAnchor = this.lastCharacterAnchor || ''
-    const characterLine = characterAnchor
-      ? `\nCharacter Identity (same in ALL panels): ${characterAnchor}`
+    const subjectLine = characterAnchor
+      ? `\n[SUBJECT] ${characterAnchor}`
       : ''
 
-    let comicPrompt = `${templatePrefix}Create a single comic page image with ${panelCount} panels arranged in a ${layout.rows}x${layout.cols} grid layout.
+    let comicPrompt = `${templatePrefix}[COMPOSITION] Single comic page, ${panelCount} panels in ${layout.rows}x${layout.cols} grid.
+${subjectLine}
+[STYLE] ${this.getArtStyleDescription()}
 
-Art Style: ${this.getArtStyleDescription()}${characterLine}
+[STORY] ${sceneDescription || imageAnalysis || 'Based on reference image'}
 
-Panel Descriptions:
+[PANELS]
 ${panelPrompts.join('\n')}
 
-Important Instructions:
-- Each panel should have '分镜{i+1}' label in the top-left corner
-- No speech bubbles, no dialogue text
-- No timecode, no subtitles
-- Clear panel borders with slight gaps between panels
-
-Scene Context: ${sceneDescription || imageAnalysis || 'Based on reference image'}${templateSuffix}`
+[CONSTRAINTS] Each panel labeled '分镜{i+1}' top-left. No speech bubbles, no dialogue. Maintain exact character appearance from reference.${templateSuffix}`
 
     if (templateNegative) {
       comicPrompt += `\n\nNegative prompt (avoid these): ${templateNegative}`
