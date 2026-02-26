@@ -2298,6 +2298,10 @@ ${panelPrompts}
       const description = shot.prompt_text
         .replace(/'分镜\d+' in the top-left corner\.?\s*/gi, '')
         .replace(/No timecode,?\s*no subtitles\.?\s*/gi, '')
+        .replace(/same character\s*[-—–]\s*maintain exact facial proportions and outfit from reference[,.]?\s*/gi, '')
+        .replace(/maintain exact facial proportions[^.]*\.\s*/gi, '')
+        .replace(/Cinematic (keyframe|Contact Sheet)[,.\s]*/gi, '')
+        .replace(/award-winning trailer storyboard panel[,.\s]*/gi, '')
         .trim()
       
       return `Panel ${i + 1}: ${description}`
@@ -2338,6 +2342,8 @@ ${panelPrompts}
       const description = shot.prompt_text
         .replace(/'分镜\d+' in the top-left corner\.?\s*/gi, '')
         .replace(/No timecode,?\s*no subtitles\.?\s*/gi, '')
+        .replace(/same character\s*[-—–]\s*maintain exact facial proportions and outfit from reference[,.]?\s*/gi, '')
+        .replace(/maintain exact facial proportions[^.]*\.\s*/gi, '')
         .trim()
       return `Panel ${i + 1}: ${description}`
     }).join('\n')
@@ -2824,8 +2830,8 @@ ${panelPrompts.join('\n')}
     const api = this.getApi()
 
     console.log('[DirectorPage] 最终提示词长度:', prompt.length, '字符')
-    if (prompt.length > 4000) {
-      console.warn('[DirectorPage] 提示词可能过长，建议精简场景描述')
+    if (prompt.length > 8000) {
+      console.warn('[DirectorPage] 提示词超过 8000 字符，可能影响生成质量')
     }
 
     const result = await api.generateImageWithReference(
