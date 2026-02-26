@@ -29,17 +29,27 @@ describe('Zod Schema Validation', () => {
       spatial: { fg: 'rain-streaked glass', mg: 'woman at table', bg: 'blurred city' },
       action: 'gazes down, bites lower lip',
       light: 'upper-left window, soft, warm 4500K',
-      label: '分镜1'
+      label: '分镜1',
+      micro_expression: 'composure -> breath -> faint smile',
+      color_grade: { dominant: 'warm amber #CBBFA2', accent: 'cool teal #003333', texture: 'matte' },
+      atmosphere: 'thin dust motes',
+      body_physics: null,
+      composition: 'rule of thirds',
+      emotion_target: 'quiet relief'
     }
     const result = ShotSchema.safeParse(validShot)
     expect(result.success).toBe(true)
   })
 
-  it('should reject shot missing required field', () => {
+  it('should reject shot missing required field (spatial)', () => {
     const badShot = {
       kf: 'KF1 - CU - 2s',
       lens: '85mm static',
-      label: '分镜1'
+      action: 'gazes down',
+      light: 'warm 4500K',
+      label: '分镜1',
+      micro_expression: null, color_grade: null, atmosphere: null,
+      body_physics: null, composition: null, emotion_target: null
     }
     const result = ShotSchema.safeParse(badShot)
     expect(result.success).toBe(false)
@@ -68,7 +78,9 @@ describe('Zod Schema Validation', () => {
           spatial: { fg: 'glass', mg: 'woman', bg: 'city' },
           action: 'gazes down',
           light: 'soft warm 4500K',
-          label: '分镜1'
+          label: '分镜1',
+          micro_expression: null, color_grade: null, atmosphere: null,
+          body_physics: null, composition: null, emotion_target: null
         }
       ]
     }
@@ -221,7 +233,7 @@ describe('Zod Schema Edge Cases', () => {
   })
 
   it('should reject ShotsResponse missing character_anchor', () => {
-    const response = { shots: [{ kf: 'KF1', lens: '50mm', spatial: { fg: 'a', mg: 'b', bg: 'c' }, action: 'x', light: 'y', label: 'z' }] }
+    const response = { shots: [{ kf: 'KF1', lens: '50mm', spatial: { fg: 'a', mg: 'b', bg: 'c' }, action: 'x', light: 'y', label: 'z', micro_expression: null, color_grade: null, atmosphere: null, body_physics: null, composition: null, emotion_target: null }] }
     const result = ShotsResponseSchema.safeParse(response)
     expect(result.success).toBe(false)
   })
@@ -278,13 +290,15 @@ describe('Optional fields integration', () => {
     expect(parsed.p[0].em).toBe('relief')
   })
 
-  it('should omit optional fields from compact output when not present', () => {
+  it('should omit nullable fields from compact output when null', () => {
     const service = new LangChainDirectorService({ apiKey: 'test-key', baseURL: 'https://api.test.com' })
     const shotsResponse = {
       character_anchor: 'Man',
       shots: [{
         kf: 'KF1', lens: '50mm', spatial: { fg: 'a', mg: 'b', bg: 'c' },
-        action: 'walks', light: 'ambient', label: '分镜1'
+        action: 'walks', light: 'ambient', label: '分镜1',
+        micro_expression: null, color_grade: null, atmosphere: null,
+        body_physics: null, composition: null, emotion_target: null
       }]
     }
     const result = service.buildFinalPrompt(shotsResponse, 'c', 's', 'd', 'x')

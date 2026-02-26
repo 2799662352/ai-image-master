@@ -15,33 +15,33 @@ export const ShotSchema = z.object({
   action: z.string().describe('One anchor verb + manner words, no verb stacking'),
   light: z.string().describe('Source + direction + quality + color temperature'),
   label: z.string().describe('Panel label like 分镜1'),
-  micro_expression: z.string().optional().describe(
+  micro_expression: z.nullable(z.string()).describe(
     'Physiological micro-action sequence (NOT emotion adjectives). Format: Start state -> Transition action -> End micro-expression. ' +
     'E.g. "maintains composure -> deep visible breath -> faint relieved smile slowly forms" or ' +
-    '"eyes glisten -> lower lip trembles -> gaze drops to floor". For wider shots use body posture instead.'
+    '"eyes glisten -> lower lip trembles -> gaze drops to floor". For wider shots use body posture instead. Null if not applicable.'
   ),
-  color_grade: z.object({
+  color_grade: z.nullable(z.object({
     dominant: z.string().describe('Primary color covering 80%+ of frame, with HEX code. E.g. "warm amber #CBBFA2"'),
     accent: z.string().describe('Secondary color in small accent areas only. E.g. "cool teal #003333 in shadows"'),
     texture: z.string().describe('Film stock / grading style. E.g. "bleach bypass, coarse grain, matte finish"')
-  }).optional().describe('Color grading with dominant/accent hierarchy (80/20 rule). Never mix warm and cool equally.'),
-  atmosphere: z.string().optional().describe(
+  })).describe('Color grading with dominant/accent hierarchy (80/20 rule). Never mix warm and cool equally. Null if not specified.'),
+  atmosphere: z.nullable(z.string()).describe(
     'Atmospheric medium between camera and subject. E.g. "thick dust motes catching backlight", ' +
     '"morning haze softening background 2 stops", "volumetric god rays through broken ceiling". ' +
-    'Never write "atmospheric" alone - specify the physical medium.'
+    'Never write "atmospheric" alone - specify the physical medium. Null if clear air.'
   ),
-  body_physics: z.string().optional().describe(
+  body_physics: z.nullable(z.string()).describe(
     'Physical interaction between body and environment forces. E.g. "15-degree forward lean against wind, coat flaring behind", ' +
-    '"weight shifting to left foot on uneven ground", "chest heaving from exertion, steam from breath in cold air"'
+    '"weight shifting to left foot on uneven ground", "chest heaving from exertion, steam from breath in cold air". Null if static pose.'
   ),
-  composition: z.string().optional().describe(
+  composition: z.nullable(z.string()).describe(
     'Composition principle applied. E.g. "leading lines from train tracks converge on subject", ' +
     '"natural frame through doorway arch", "negative space on right implying loneliness", ' +
-    '"rule of thirds with subject at left intersection point"'
+    '"rule of thirds with subject at left intersection point". Null if standard centered.'
   ),
-  emotion_target: z.string().optional().describe(
+  emotion_target: z.nullable(z.string()).describe(
     'Target emotion this shot conveys to audience (for shot-emotion consistency check). ' +
-    'E.g. "isolation", "mounting tension", "quiet relief", "voyeuristic unease"'
+    'E.g. "isolation", "mounting tension", "quiet relief", "voyeuristic unease". Null if neutral.'
   )
 })
 
