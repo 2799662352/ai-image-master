@@ -2286,18 +2286,19 @@ Important Instructions:
     const sceneInput = this.getElement<HTMLTextAreaElement>('directorSceneInput')
     const storyDescription = sceneInput?.value.trim() || 'Continuous sequence with clear narrative progression'
 
-    let prompt = `${templatePrefix}A precise 3x3 grid storyboard with 9 equal panels.
-Aspect Ratio: The entire image is ${ratio}, each panel is also ${ratio}.
-Layout: Symmetrical grid, hard borders, clean dividing lines.
+    let prompt = `${templatePrefix}[COMPOSITION] 3x3 grid storyboard, 9 equal panels.
+Aspect ratio: entire image ${ratio}, each panel also ${ratio}. Symmetrical grid, hard borders, clean dividing lines.
 
-Art Style: ${this.getArtStyleDescription()}
+[SUBJECT] ${characterDescription}
 
-Character Identity (MUST be identical in ALL 9 panels): ${characterDescription}
+[STYLE] ${this.getArtStyleDescription()}
 
-Story Sequence: ${storyDescription}
+[STORY] ${storyDescription}
 
-Panel Breakdown:
-${panelDescriptions}${templateSuffix}`
+[PANELS]
+${panelDescriptions}
+
+[CONSTRAINTS] Maintain exact facial proportions, hairstyle, hair color, and outfit from reference across ALL panels.${templateSuffix}`
 
     if (templateNegative) {
       prompt += `\n\nNegative prompt: ${templateNegative}`
