@@ -87,7 +87,7 @@ export class LangChainDirectorService {
       model: config.model || 'gpt-4o',
       apiKey: config.apiKey,
       maxRetries: 2,
-      configuration: { baseURL: `${config.baseURL}/v1` }
+      configuration: { baseURL: `${config.baseURL.replace(/\/v1\/?$/, '')}/v1` }
     })
     this.structuredLlm = this.llm.withStructuredOutput(ShotsResponseSchema)
   }
@@ -153,6 +153,10 @@ ${input.additionalRules}`
         const sp = shot.spatial
         parts.push(`FG: ${sp.fg}, MG: ${sp.mg}, BG: ${sp.bg}`)
         parts.push(shot.light)
+        if (shot.micro_expression) parts.push(shot.micro_expression)
+        if (shot.atmosphere) parts.push(shot.atmosphere)
+        if (shot.body_physics) parts.push(shot.body_physics)
+        if (shot.composition) parts.push(shot.composition)
         return `${i + 1}. ${parts.filter(Boolean).join(', ')}`
       })
       .join('\n')

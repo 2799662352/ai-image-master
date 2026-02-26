@@ -996,11 +996,17 @@ let _langchainCacheKey: string | null = null
 export function getLangChainDirectorService(): LangChainDirectorService | null {
   const api = (window as any).aiImageAPI
   const apiKey = api?.visionApiKey as string | undefined
-  if (!apiKey) return null
+  if (!apiKey) {
+    console.debug('[ServiceBridge] LangChainDirector unavailable: no visionApiKey configured')
+    return null
+  }
 
   const site = api?.getCurrentSite?.()
   const baseURL = site?.baseURL as string | undefined
-  if (!baseURL) return null
+  if (!baseURL) {
+    console.debug('[ServiceBridge] LangChainDirector unavailable: no site baseURL')
+    return null
+  }
 
   const cacheKey = `${apiKey}|${baseURL}`
   if (!_langchainDirectorInstance || _langchainCacheKey !== cacheKey) {

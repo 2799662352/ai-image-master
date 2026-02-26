@@ -572,8 +572,7 @@ Physical interaction with environment:
 
 FORBIDDEN: bare action verbs without physical context ("walks", "runs", "stands", "sits"). Every action MUST include how gravity, surface, weather, or fatigue affects the body.
 
-For emotional moments, use Start-Transition-End micro-arc:
-"Maintains composure → deep visible breath → faint relieved smile slowly forms"
+For emotional moments, apply the Start-Transition-End micro-arc from <micro_performance_rules>.
 </action_physics_rules>`
 
   // Sora2 视频提示词模板
@@ -2165,8 +2164,13 @@ Output must be in English. Use concise descriptions suitable for image generatio
           this.lastGeneratedShots, panelCount, layout,
           templatePrefix, templateSuffix, templateNegative
         )
-      } catch (error) {
-        console.warn('[DirectorPage] LangChain failed, trying legacy path:', error)
+      } catch (error: any) {
+        const msg = error?.message || ''
+        if (msg.includes('401') || msg.includes('Unauthorized') || msg.includes('API key')) {
+          console.error('[DirectorPage] LangChain auth failed (invalid API key), skipping legacy too:', msg)
+        } else {
+          console.warn('[DirectorPage] LangChain failed, trying legacy path:', error)
+        }
       }
     }
 
@@ -2558,25 +2562,33 @@ ${styleConfig.additionalRules}
     shots: Array<{ shot_number: string; prompt_text: string }>,
     characterCard: string = ''
   ): string {
+    const useStructured = this.lastShotsResponse?.shots.length === shots.length
+    const useParsed = this.lastParsedPanels?.length === shots.length
+
     const videoSequences = shots.map((shot, i) => {
-      // Priority 1: Use LangChain structured response
-      const structuredShot = this.lastShotsResponse?.shots[i]
-      if (structuredShot) {
-        const parts = [structuredShot.kf, structuredShot.lens, structuredShot.action]
-        const sp = structuredShot.spatial
+      // Priority 1: Use LangChain structured response (only if array lengths match)
+      if (useStructured) {
+        const s = this.lastShotsResponse!.shots[i]
+        const parts = [s.kf, s.lens, s.action]
+        const sp = s.spatial
         parts.push(`FG: ${sp.fg}, MG: ${sp.mg}, BG: ${sp.bg}`)
-        parts.push(structuredShot.light)
+        parts.push(s.light)
+        if (s.micro_expression) parts.push(s.micro_expression)
+        if (s.atmosphere) parts.push(s.atmosphere)
+        if (s.body_physics) parts.push(s.body_physics)
         return `${i + 1}. ${parts.filter(Boolean).join(', ')}`
       }
-      // Priority 2: Use cached parsed panels
-      const panel = this.lastParsedPanels?.[i]
-      if (panel?.lens && panel?.action) {
-        const parts = [panel.shot, panel.lens, panel.action]
-        if (panel.spatial) {
-          parts.push(`FG: ${panel.spatial.fg}, MG: ${panel.spatial.mg}, BG: ${panel.spatial.bg}`)
+      // Priority 2: Use cached parsed panels (only if array lengths match)
+      if (useParsed) {
+        const panel = this.lastParsedPanels![i]
+        if (panel?.lens && panel?.action) {
+          const parts = [panel.shot, panel.lens, panel.action]
+          if (panel.spatial) {
+            parts.push(`FG: ${panel.spatial.fg}, MG: ${panel.spatial.mg}, BG: ${panel.spatial.bg}`)
+          }
+          if (panel.light) parts.push(panel.light)
+          return `${i + 1}. ${parts.filter(Boolean).join(', ')}`
         }
-        if (panel.light) parts.push(panel.light)
-        return `${i + 1}. ${parts.filter(Boolean).join(', ')}`
       }
       // Priority 3: Try JSON parse, then raw text
       try {

@@ -234,4 +234,78 @@ describe('Zod Schema Edge Cases', () => {
     const result = ShotSchema.safeParse(badShot)
     expect(result.success).toBe(false)
   })
+
+  it('should accept shot with all optional fields filled', () => {
+    const fullShot = {
+      kf: 'KF1 - CU - 2s', lens: '85mm static',
+      spatial: { fg: 'glass', mg: 'woman', bg: 'city' },
+      action: 'gazes down', light: 'warm 4500K', label: '分镜1',
+      micro_expression: 'composure -> deep breath -> faint smile',
+      color_grade: { dominant: 'warm amber #CBBFA2', accent: 'cool teal #003333', texture: 'bleach bypass' },
+      atmosphere: 'thin dust motes in backlight',
+      body_physics: '15-degree lean against wind',
+      composition: 'leading lines from railings',
+      emotion_target: 'quiet relief'
+    }
+    const result = ShotSchema.safeParse(fullShot)
+    expect(result.success).toBe(true)
+  })
+})
+
+describe('Optional fields integration', () => {
+  it('should include optional fields in buildFinalPrompt compact output', () => {
+    const service = new LangChainDirectorService({ apiKey: 'test-key', baseURL: 'https://api.test.com' })
+    const shotsResponse = {
+      character_anchor: 'Woman, black hair',
+      shots: [{
+        kf: 'KF1 - CU - 2s', lens: '85mm', spatial: { fg: 'a', mg: 'b', bg: 'c' },
+        action: 'gazes', light: 'warm', label: '分镜1',
+        micro_expression: 'composure -> breath -> smile',
+        color_grade: { dominant: '#CBBFA2', accent: '#003333', texture: 'matte' },
+        atmosphere: 'dust motes',
+        body_physics: 'leaning forward',
+        composition: 'rule of thirds',
+        emotion_target: 'relief'
+      }]
+    }
+    const result = service.buildFinalPrompt(shotsResponse, 'c', 's', 'd', 'x')
+    const parsed = JSON.parse(result)
+    expect(parsed.p[0].me).toBe('composure -> breath -> smile')
+    expect(parsed.p[0].cg.dominant).toBe('#CBBFA2')
+    expect(parsed.p[0].atm).toBe('dust motes')
+    expect(parsed.p[0].bp).toBe('leaning forward')
+    expect(parsed.p[0].comp).toBe('rule of thirds')
+    expect(parsed.p[0].em).toBe('relief')
+  })
+
+  it('should omit optional fields from compact output when not present', () => {
+    const service = new LangChainDirectorService({ apiKey: 'test-key', baseURL: 'https://api.test.com' })
+    const shotsResponse = {
+      character_anchor: 'Man',
+      shots: [{
+        kf: 'KF1', lens: '50mm', spatial: { fg: 'a', mg: 'b', bg: 'c' },
+        action: 'walks', light: 'ambient', label: '分镜1'
+      }]
+    }
+    const result = service.buildFinalPrompt(shotsResponse, 'c', 's', 'd', 'x')
+    const parsed = JSON.parse(result)
+    expect(parsed.p[0].me).toBeUndefined()
+    expect(parsed.p[0].cg).toBeUndefined()
+    expect(parsed.p[0].atm).toBeUndefined()
+  })
+
+  it('should include optional fields in shotsToNaturalLanguage', () => {
+    const service = new LangChainDirectorService({ apiKey: 'test-key', baseURL: 'https://api.test.com' })
+    const shots = [{
+      kf: 'KF1 - CU - 2s', lens: '85mm', spatial: { fg: 'a', mg: 'b', bg: 'c' },
+      action: 'gazes', light: 'warm', label: '分镜1',
+      micro_expression: 'composure -> smile',
+      atmosphere: 'morning haze',
+      body_physics: 'leaning into wind'
+    }]
+    const nl = service.shotsToNaturalLanguage(shots)
+    expect(nl).toContain('composure -> smile')
+    expect(nl).toContain('morning haze')
+    expect(nl).toContain('leaning into wind')
+  })
 })
