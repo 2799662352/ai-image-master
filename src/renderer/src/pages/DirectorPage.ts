@@ -389,7 +389,7 @@ Aspect ratio: entire image {RATIO}, each panel also {RATIO}. Symmetrical grid, h
 
 [SUBJECT] {CHARACTER_DESCRIPTION}
 
-[STYLE] Cinematic lighting, photorealistic, sequence photography, 8K resolution.
+[STYLE] Photorealistic, 8K resolution. Each panel has motivated lighting from a specific source, not generic "cinematic lighting". Dominant color temperature consistent across panels.
 
 [STORY] {STORY_DESCRIPTION}
 
@@ -438,7 +438,7 @@ Character Anchor: You MUST define a "character_anchor" field containing a detail
 IMPORTANT: Do NOT repeat the full character_anchor in every shot's prompt_text. Instead, each shot should use a SHORT reference like "same character — maintain exact facial proportions and outfit from reference" and focus its token budget on camera setup, environment, action, and lighting. The character_anchor field itself is the single source of truth.
 
 Each shot's prompt_text must follow the pattern:
-"[KF Label + Shot Type + Duration], [Camera Setup + Lens + Movement], same character — maintain exact facial proportions and outfit from reference, [Environment + Action + Pose], [Lighting + DoF + Mood]. 'KF{N}' in the top-left corner. No timecode, no subtitles."
+"[KF Label + Shot Type + Duration], [Lens + Camera Movement], same character — maintain exact facial proportions and outfit from reference, [Foreground/Midground/Background spatial layers], [Action with manner words], [Light source + direction + color temperature]. 'KF{N}' in the top-left corner. No timecode, no subtitles."
 </output_format>
 
 <shot_design_vocabulary>
@@ -446,7 +446,65 @@ Camera Angles: Eye-level, Low angle (heroic), High angle (vulnerable), Dutch ang
 Lens Types: Wide 24mm (establishing), Standard 50mm (natural), Telephoto 85mm (portrait compression), Macro (detail), Anamorphic (cinematic)
 Camera Movement: Static/locked, Slow push-in, Pull-back reveal, Tracking/dolly, Crane up/down, Handheld (urgency), Steadicam orbit
 Shot Types: Extreme Wide Shot (EWS), Wide Shot (WS), Full Shot (FS), Cowboy Shot, Medium Close-up (MCU), Close-up (CU), Extreme Close-up (ECU), Insert/Detail
-</shot_design_vocabulary>`
+</shot_design_vocabulary>
+
+<camera_physics>
+MANDATORY — every shot MUST obey these optical physics rules. Violations produce "fake AI look":
+
+Shot-Lens-DoF Consistency:
+- EWS/WS + 24mm wide → Deep DoF (everything sharp). Emotion: epic, lonely, establishing
+- FS/Cowboy + 35-50mm → Medium DoF. Emotion: narrative, daily life
+- MCU/CU + 85mm portrait → Shallow DoF (bokeh background). Emotion: intimacy, emotion amplifier
+- ECU + 105mm+ → Very shallow DoF. Emotion: micro-expression, pressure
+
+FORBIDDEN combinations (physically impossible):
+- Wide angle (24mm) + shallow DoF → NEVER
+- Long shot + shallow DoF → NEVER (unless tilt-shift)
+- Telephoto (135mm+) + deep DoF → NEVER
+</camera_physics>
+
+<spatial_depth>
+Every shot MUST define three spatial layers to avoid flat "cardboard cutout" look:
+- Foreground: framing element, partial occlusion, or textured surface (out of focus if shallow DoF)
+- Midground: primary subject and action zone (sharp focus)
+- Background: environment context, atmosphere, depth cues (bokeh or haze)
+
+Example: "Foreground: rain-streaked window glass (soft focus). Midground: woman sitting at table, sharp. Background: blurred city lights through window."
+If a shot has NO foreground element, compensate with strong atmospheric depth (fog, dust motes, light rays).
+</spatial_depth>
+
+<lighting_rules>
+NEVER write vague lighting words like "cinematic lighting" or "atmospheric". Instead specify:
+1. Light SOURCE: where does light physically come from? (window, lamp, neon sign, sunset, screen glow)
+2. Light DIRECTION: which side of the subject does it hit? (upper-left key, rim from behind, under-light)
+3. Light QUALITY: hard (sharp shadows) or soft (diffused, wrapping)?
+4. Light RATIO: key-to-fill ratio (e.g., 4:1 dramatic, 2:1 natural, 1:1 flat/clinical)
+
+Color hierarchy: designate ONE dominant color temperature (warm OR cool) covering 80%+ of the frame. Complementary color appears ONLY in small accent areas.
+</lighting_rules>
+
+<expression_rules>
+For CU/MCU shots, NEVER use emotion adjectives (sad, happy, angry). Describe PHYSIOLOGICAL MICRO-ACTIONS:
+- Sadness: eyes glisten, lower lip trembles, gaze drops to floor
+- Joy: crow's feet crinkle, teeth visible, eyes squint
+- Fear: pupils dilate, nostrils flare, jaw clenches
+- Tension: swallows hard, jaw tightens, brow furrows
+- Shyness: averts gaze, chin tucks, bites lower lip
+
+For wider shots, express emotion through BODY POSTURE:
+- Defeat: shoulders slumped, head bowed, arms hanging
+- Confidence: chest open, chin slightly raised, steady gaze
+- Anxiety: fidgeting hands, weight shifting, hunched shoulders
+</expression_rules>
+
+<action_rules>
+Each panel: ONE primary verb (anchor action) + manner words for HOW.
+FORBIDDEN: stacking multiple verbs ("runs, jumps, rolls, draws sword").
+CORRECT: "sprinting with 15-degree forward lean, coat flaring behind, head turning over shoulder"
+
+For emotional moments, use Start-Transition-End micro-arc within a single panel:
+"Maintains composure → deep visible breath → faint relieved smile slowly forms"
+</action_rules>`
 
   // Sora2 视频提示词模板
   private sora2VideoPromptTemplate = `{CHARACTER_CARD} The video plays out in a continuous 9-part sequence:
