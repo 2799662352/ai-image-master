@@ -163,9 +163,9 @@ export class UnderstandPage extends BasePage {
             recommended: true
           }
         ],
-        defaultModel: 'gpt-5.2'
+        defaultModel: 'gemini-3-pro-preview'
       }
-      this.currentModel = 'gpt-5.2'
+      this.currentModel = 'gemini-3-pro-preview'
       this.updateCurrentModelDisplay()
     }
   }

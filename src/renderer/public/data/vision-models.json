@@ -67,7 +67,7 @@
       "recommended": false
     }
   ],
-  "defaultModel": "gpt-5.2",
+  "defaultModel": "gemini-3-pro-preview",
   "customModelEnabled": true,
   "customModelPlaceholder": "例如：gpt-4o"
 }

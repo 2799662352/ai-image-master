@@ -198,7 +198,7 @@ export class DirectorPage extends BasePage {
   private editingTemplateIsBuiltin: boolean = false
 
   // 图像理解模型
-  private visionModel: string = 'gpt-5.2'
+  private visionModel: string = 'gemini-3-pro-preview'
   private visionModelConfig: { models: Array<{ id: string; name: string; shortName?: string; icon?: string; recommended?: boolean; description?: string; features?: string[]; price?: string }>; defaultModel: string } | null = null
 
   // 完整 Gem 系统提示词（北风诉苦原版 v1.1）- 用于生成 JSON 格式分镜提示词
@@ -682,7 +682,7 @@ For emotional moments, apply the Start-Transition-End micro-arc from <micro_perf
         models: [
           { id: 'gpt-5.2', name: 'GPT-5.2', shortName: 'GPT-5.2', icon: '🚀', recommended: true }
         ],
-        defaultModel: 'gpt-5.2'
+        defaultModel: 'gemini-3-pro-preview'
       }
     }
   }
