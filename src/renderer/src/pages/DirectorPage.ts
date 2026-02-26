@@ -61,6 +61,33 @@ export interface LayoutConfig {
 }
 
 /**
+ * JSON 格式图片提示词 — Panel 结构
+ */
+export interface JsonPromptPanel {
+  id: number
+  shot?: string
+  lens?: string
+  spatial?: { fg?: string; mg?: string; bg?: string }
+  action?: string
+  light?: string
+  mood?: string
+  desc?: string
+}
+
+/**
+ * JSON 格式图片提示词 — 顶层结构
+ */
+export interface JsonPrompt {
+  composition: string
+  subject: string
+  style: string
+  story: string
+  panels: JsonPromptPanel[]
+  constraints: string
+  negative?: string
+}
+
+/**
  * 布局配置集合
  */
 export interface LayoutConfigs {
@@ -382,21 +409,6 @@ export class DirectorPage extends BasePage {
       ratio: '16:9'  // 默认横屏，分形几何原则：总图和单格比例一致
     }
   }
-
-  // 电影级九宫格提示词模板（导演级分镜 - 基于 trailer director + cinematographer + storyboard artist 工作流）
-  private cinematicGridPromptTemplate = `[COMPOSITION] Cinematic Contact Sheet, ONE single master image, 3x3 storyboard grid.
-Aspect ratio: entire image {RATIO}, each panel also {RATIO}. Symmetrical grid, hard borders, clean white dividing lines.
-
-[SUBJECT] {CHARACTER_DESCRIPTION}
-
-[STYLE] Photorealistic, 8K resolution. Each panel has motivated lighting from a specific source, not generic "cinematic lighting". Dominant color temperature consistent across panels.
-
-[STORY] {STORY_DESCRIPTION}
-
-[PANELS]
-{PANEL_DESCRIPTIONS}
-
-[CONSTRAINTS] Do NOT change character appearance between panels. Maintain exact facial proportions, hairstyle, hair color, eye color, skin tone, and outfit from reference across ALL 9 panels.`
 
   // 电影导演级分镜 Gem 系统提示词（cinematic 模板专用 - trailer director + cinematographer + storyboard artist）
   private cinematicGemSystemPrompt: string = `<role>
@@ -2248,33 +2260,26 @@ ${styleConfig.additionalRules}
       return this.generateGeneric9GridPrompt(shots, layout, templatePrefix, templateSuffix, templateNegative)
     }
 
-    const panelPrompts = shots.map((shot, i) => 
-      `Panel ${i + 1} (${shot.shot_number}): ${shot.prompt_text}`
-    ).join('\n')
-
     const characterDescription = this.extractCharacterDescription(shots[0]?.prompt_text || '')
-
     const sceneInput = this.getElement<HTMLTextAreaElement>('directorSceneInput')
     const storyContext = sceneInput?.value.trim() || 'Sequential narrative based on reference image'
 
-    let comicPrompt = `${templatePrefix}[COMPOSITION] Single comic page, ${panelCount} panels in ${layout.rows}x${layout.cols} grid layout. Clear panel borders.
+    const panels: JsonPromptPanel[] = shots.map((shot, i) => ({
+      id: i + 1,
+      desc: this.cleanShotDescription(shot.prompt_text)
+    }))
 
-[SUBJECT] ${characterDescription}
-
-[STYLE] ${this.getArtStyleDescription()}
-
-[STORY] ${storyContext}
-
-[PANELS]
-${panelPrompts}
-
-[CONSTRAINTS] Each panel labeled '分镜X' top-left. No speech bubbles, no dialogue, no timecode. Maintain exact character appearance across all panels.${templateSuffix}`
-
-    if (templateNegative) {
-      comicPrompt += `\n\nNegative prompt (avoid these): ${templateNegative}`
+    const prompt: JsonPrompt = {
+      composition: `Single comic page, ${panelCount} panels in ${layout.rows}x${layout.cols} grid. Clear panel borders.`,
+      subject: characterDescription,
+      style: `${this.getArtStyleDescription()}${templateSuffix}`,
+      story: storyContext,
+      panels,
+      constraints: "Each panel labeled '分镜X' top-left. No speech bubbles, no dialogue, no timecode. Maintain exact character appearance across all panels.",
+      negative: templateNegative || undefined
     }
 
-    return comicPrompt
+    return this.buildJsonPrompt(prompt)
   }
 
   /**
@@ -2290,39 +2295,29 @@ ${panelPrompts}
   ): string {
     const ratio = this.currentRatio === 'auto' ? layout.ratio : this.currentRatio
     const cinematicTemplate = this.getCurrentTemplateData()
-    const prefix = templatePrefix ?? cinematicTemplate?.prefix ?? ''
     const suffix = templateSuffix ?? cinematicTemplate?.suffix ?? ''
     const negative = templateNegative ?? cinematicTemplate?.negative ?? ''
 
-    const panelDescriptions = shots.map((shot, i) => {
-      const description = shot.prompt_text
-        .replace(/'分镜\d+' in the top-left corner\.?\s*/gi, '')
-        .replace(/No timecode,?\s*no subtitles\.?\s*/gi, '')
-        .replace(/same character\s*[-—–]\s*maintain exact facial proportions and outfit from reference[,.]?\s*/gi, '')
-        .replace(/maintain exact facial proportions[^.]*\.\s*/gi, '')
-        .replace(/Cinematic (keyframe|Contact Sheet)[,.\s]*/gi, '')
-        .replace(/award-winning trailer storyboard panel[,.\s]*/gi, '')
-        .trim()
-      
-      return `Panel ${i + 1}: ${description}`
-    }).join('\n')
-
     const characterDescription = this.extractCharacterDescription(shots[0]?.prompt_text || '')
-
     const sceneInput = this.getElement<HTMLTextAreaElement>('directorSceneInput')
     const storyDescription = sceneInput?.value.trim() || 'Continuous cinematic sequence with clear narrative progression'
 
-    let prompt = `${prefix}${this.cinematicGridPromptTemplate
-      .replace('{RATIO}', ratio)
-      .replace('{STORY_DESCRIPTION}', storyDescription)
-      .replace('{PANEL_DESCRIPTIONS}', panelDescriptions)
-      .replace('{CHARACTER_DESCRIPTION}', characterDescription)}${suffix}`
+    const panels: JsonPromptPanel[] = shots.map((shot, i) => ({
+      id: i + 1,
+      desc: this.cleanShotDescription(shot.prompt_text)
+    }))
 
-    if (negative) {
-      prompt += `\n\nNegative prompt: ${negative}`
+    const prompt: JsonPrompt = {
+      composition: `Cinematic Contact Sheet, ONE master image, 3x3 storyboard grid. Aspect ratio: ${ratio}. Symmetrical grid, hard borders, clean white dividing lines.`,
+      subject: characterDescription,
+      style: `Photorealistic, 8K resolution${suffix}. Motivated lighting from specific sources. Dominant color temperature consistent across panels.`,
+      story: storyDescription,
+      panels,
+      constraints: 'Identical character across ALL 9 panels. Maintain exact facial proportions, hairstyle, hair color, eye color, skin tone, and outfit from reference.',
+      negative: negative || undefined
     }
 
-    return prompt
+    return this.buildJsonPrompt(prompt)
   }
 
   /**
@@ -2337,41 +2332,26 @@ ${panelPrompts}
     templateNegative: string
   ): string {
     const ratio = this.currentRatio === 'auto' ? layout.ratio : this.currentRatio
-
-    const panelDescriptions = shots.map((shot, i) => {
-      const description = shot.prompt_text
-        .replace(/'分镜\d+' in the top-left corner\.?\s*/gi, '')
-        .replace(/No timecode,?\s*no subtitles\.?\s*/gi, '')
-        .replace(/same character\s*[-—–]\s*maintain exact facial proportions and outfit from reference[,.]?\s*/gi, '')
-        .replace(/maintain exact facial proportions[^.]*\.\s*/gi, '')
-        .trim()
-      return `Panel ${i + 1}: ${description}`
-    }).join('\n')
-
     const characterDescription = this.extractCharacterDescription(shots[0]?.prompt_text || '')
-
     const sceneInput = this.getElement<HTMLTextAreaElement>('directorSceneInput')
     const storyDescription = sceneInput?.value.trim() || 'Continuous sequence with clear narrative progression'
 
-    let prompt = `${templatePrefix}[COMPOSITION] 3x3 grid storyboard, 9 equal panels.
-Aspect ratio: entire image ${ratio}, each panel also ${ratio}. Symmetrical grid, hard borders, clean dividing lines.
+    const panels: JsonPromptPanel[] = shots.map((shot, i) => ({
+      id: i + 1,
+      desc: this.cleanShotDescription(shot.prompt_text)
+    }))
 
-[SUBJECT] ${characterDescription}
-
-[STYLE] ${this.getArtStyleDescription()}
-
-[STORY] ${storyDescription}
-
-[PANELS]
-${panelDescriptions}
-
-[CONSTRAINTS] Maintain exact facial proportions, hairstyle, hair color, and outfit from reference across ALL panels.${templateSuffix}`
-
-    if (templateNegative) {
-      prompt += `\n\nNegative prompt: ${templateNegative}`
+    const prompt: JsonPrompt = {
+      composition: `3x3 grid storyboard, 9 equal panels. Aspect ratio: ${ratio}. Symmetrical grid, hard borders.`,
+      subject: characterDescription,
+      style: `${this.getArtStyleDescription()}${templateSuffix}`,
+      story: storyDescription,
+      panels,
+      constraints: 'Maintain exact facial proportions, hairstyle, hair color, and outfit from reference across ALL panels.',
+      negative: templateNegative || undefined
     }
 
-    return prompt
+    return this.buildJsonPrompt(prompt)
   }
 
   /**
@@ -2416,6 +2396,27 @@ ${panelDescriptions}
       .substring(0, 500)
 
     return section || null
+  }
+
+  /**
+   * 构建 JSON 格式的图片生成提示词
+   */
+  private buildJsonPrompt(prompt: JsonPrompt): string {
+    return JSON.stringify(prompt)
+  }
+
+  /**
+   * 从 Gem AI shot 描述中清理冗余标记，保留核心视觉描述
+   */
+  private cleanShotDescription(promptText: string): string {
+    return promptText
+      .replace(/'分镜\d+' in the top-left corner\.?\s*/gi, '')
+      .replace(/No timecode,?\s*no subtitles\.?\s*/gi, '')
+      .replace(/same character\s*[-—–]\s*maintain exact facial proportions and outfit from reference[,.]?\s*/gi, '')
+      .replace(/maintain exact facial proportions[^.]*\.\s*/gi, '')
+      .replace(/Cinematic (keyframe|Contact Sheet)[,.\s]*/gi, '')
+      .replace(/award-winning trailer storyboard panel[,.\s]*/gi, '')
+      .trim()
   }
 
   /**
@@ -2470,32 +2471,24 @@ ${panelDescriptions}
     const userDescription = sceneDescription || imageAnalysis
     const viewAngles = this.generateViewAngles(panelCount)
     
-    const panelPrompts: string[] = []
+    const panels: JsonPromptPanel[] = []
     for (let i = 0; i < panelCount; i++) {
-      panelPrompts.push(`Panel ${i + 1}: ${viewAngles[i]}, ${userDescription}`)
+      panels.push({ id: i + 1, desc: `${viewAngles[i]}, ${userDescription}` })
     }
 
     const characterAnchor = this.lastCharacterAnchor || ''
-    const subjectLine = characterAnchor
-      ? `\n[SUBJECT] ${characterAnchor}`
-      : ''
 
-    let comicPrompt = `${templatePrefix}[COMPOSITION] Single comic page, ${panelCount} panels in ${layout.rows}x${layout.cols} grid.
-${subjectLine}
-[STYLE] ${this.getArtStyleDescription()}
-
-[STORY] ${sceneDescription || imageAnalysis || 'Based on reference image'}
-
-[PANELS]
-${panelPrompts.join('\n')}
-
-[CONSTRAINTS] Each panel labeled '分镜{i+1}' top-left. No speech bubbles, no dialogue. Maintain exact character appearance from reference.${templateSuffix}`
-
-    if (templateNegative) {
-      comicPrompt += `\n\nNegative prompt (avoid these): ${templateNegative}`
+    const prompt: JsonPrompt = {
+      composition: `Single comic page, ${panelCount} panels in ${layout.rows}x${layout.cols} grid.`,
+      subject: characterAnchor || 'Based on reference image',
+      style: `${this.getArtStyleDescription()}${templateSuffix}`,
+      story: sceneDescription || imageAnalysis || 'Based on reference image',
+      panels,
+      constraints: "Each panel labeled top-left. No speech bubbles, no dialogue. Maintain exact character appearance from reference.",
+      negative: templateNegative || undefined
     }
 
-    return comicPrompt
+    return this.buildJsonPrompt(prompt)
   }
 
   /**
