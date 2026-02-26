@@ -389,12 +389,13 @@ Aspect ratio: entire image {RATIO}, each panel also {RATIO}. Symmetrical grid, h
 
 [SUBJECT] {CHARACTER_DESCRIPTION}
 
+[STYLE] Cinematic lighting, photorealistic, sequence photography, 8K resolution.
+
 [STORY] {STORY_DESCRIPTION}
 
 [PANELS]
 {PANEL_DESCRIPTIONS}
 
-[STYLE] Cinematic lighting, photorealistic, sequence photography, 8K resolution.
 [CONSTRAINTS] Do NOT change character appearance between panels. Maintain exact facial proportions, hairstyle, hair color, eye color, skin tone, and outfit from reference across ALL 9 panels.`
 
   // 电影导演级分镜 Gem 系统提示词（cinematic 模板专用 - trailer director + cinematographer + storyboard artist）
@@ -2195,11 +2196,16 @@ ${styleConfig.additionalRules}
 
     const characterDescription = this.extractCharacterDescription(shots[0]?.prompt_text || '')
 
+    const sceneInput = this.getElement<HTMLTextAreaElement>('directorSceneInput')
+    const storyContext = sceneInput?.value.trim() || 'Sequential narrative based on reference image'
+
     let comicPrompt = `${templatePrefix}[COMPOSITION] Single comic page, ${panelCount} panels in ${layout.rows}x${layout.cols} grid layout. Clear panel borders.
 
 [SUBJECT] ${characterDescription}
 
 [STYLE] ${this.getArtStyleDescription()}
+
+[STORY] ${storyContext}
 
 [PANELS]
 ${panelPrompts}
@@ -2580,7 +2586,7 @@ ${panelPrompts.join('\n')}
 
 关键标签（必须包含在每个 shot 中）:
 - Cinematic Contact Sheet, award-winning trailer storyboard
-- Same characters, same wardrobe, same environment, same lighting
+- Maintain exact facial proportions, wardrobe, environment, and lighting across all panels
 - Natural depth of field (deeper in wides, shallower in close-ups with bokeh)
 - Emotional progression: setup → build → turn → payoff`,
           additionalRules: `
