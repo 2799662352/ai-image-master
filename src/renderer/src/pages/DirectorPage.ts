@@ -2195,19 +2195,16 @@ ${styleConfig.additionalRules}
 
     const characterDescription = this.extractCharacterDescription(shots[0]?.prompt_text || '')
 
-    let comicPrompt = `${templatePrefix}Create a single comic page image with ${panelCount} panels arranged in a ${layout.rows}x${layout.cols} grid layout.
+    let comicPrompt = `${templatePrefix}[COMPOSITION] Single comic page, ${panelCount} panels in ${layout.rows}x${layout.cols} grid layout. Clear panel borders.
 
-Art Style: ${this.getArtStyleDescription()}
-Character Identity (same in ALL panels): ${characterDescription}
+[SUBJECT] ${characterDescription}
 
-Panel Descriptions (AI Generated):
+[STYLE] ${this.getArtStyleDescription()}
+
+[PANELS]
 ${panelPrompts}
 
-Important Instructions:
-- Each panel MUST have the corresponding '分镜X' label in the top-left corner
-- No speech bubbles, no dialogue text
-- No timecode, no subtitles
-- Clear panel borders with slight gaps between panels${templateSuffix}`
+[CONSTRAINTS] Each panel labeled '分镜X' top-left. No speech bubbles, no dialogue, no timecode. Maintain exact character appearance across all panels.${templateSuffix}`
 
     if (templateNegative) {
       comicPrompt += `\n\nNegative prompt (avoid these): ${templateNegative}`
