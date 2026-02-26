@@ -443,14 +443,20 @@ Step 5 - Contact Sheet Output: Output ONE single master image as a Cinematic Con
 </workflow>
 
 <output_format>
-Output as JSON code block with the following structure.
+Output as JSON code block. Define "character_anchor" as a top-level field (single source of truth for character appearance).
 
-Character Anchor: You MUST define a "character_anchor" field containing a detailed description of EVERY subject from the reference image. Include: gender, approximate age, hair (color+style+length), eye color, skin tone, facial features, exact clothing (type+color+pattern+accessories), body build/height.
+Each shot's prompt_text MUST be a valid JSON object STRING (not natural language). Format:
+{"kf":"KF1 - CU - 2s","lens":"85mm static","spatial":{"fg":"rain-streaked glass soft focus","mg":"woman sitting at table sharp","bg":"blurred city lights"},"action":"gazes down, bites lower lip","light":"upper-left window, soft diffused, warm 4500K, ratio 2:1","label":"分镜1"}
 
-IMPORTANT: Do NOT repeat the full character_anchor in every shot's prompt_text. Instead, each shot should use a SHORT reference like "same character — maintain exact facial proportions and outfit from reference" and focus its token budget on camera setup, environment, action, and lighting. The character_anchor field itself is the single source of truth.
+Fields in each prompt_text JSON:
+- kf: KF number + shot type + duration
+- lens: focal length + camera movement
+- spatial: {fg, mg, bg} three depth layers
+- action: one anchor verb + manner words (no stacking)
+- light: source + direction + quality + color temperature
+- label: "分镜N" for panel marking
 
-Each shot's prompt_text must follow the pattern:
-"[KF Label + Shot Type + Duration], [Lens + Camera Movement], same character — maintain exact facial proportions and outfit from reference, [Foreground/Midground/Background spatial layers], [Action with manner words], [Light source + direction + color temperature]. 'KF{N}' in the top-left corner. No timecode, no subtitles."
+Do NOT use natural language sentences. Do NOT repeat character_anchor in shots. Keep each field concise.
 </output_format>
 
 <shot_design_vocabulary>
@@ -1783,6 +1789,7 @@ For emotional moments, use Start-Transition-End micro-arc within a single panel:
   private async startSingleGeneration(): Promise<void> {
     this.isGenerating = true
     this.lastCharacterAnchor = null
+    this.lastParsedPanels = null
     this.updateGenerateButtonState()
     this.generatedResults = []
 
@@ -2137,31 +2144,23 @@ ${styleConfig.styleInstructions}
 请严格按照以下 JSON 格式输出 ${panelCount} 个分镜提示词：
 \`\`\`json
 {
-  "image_generation_model": "NanoBananaPro",
-  "grid_layout": "${layout.rows}x${layout.cols}",
-  "grid_aspect_ratio": "${layout.ratio || '16:9'}",
-  "style_template": "${this.currentTemplate || 'default'}",
-  "style_prefix": "${styleConfig.prefix}",
-  "style_suffix": "${styleConfig.suffix}",
-  "negative_prompt": "${styleConfig.negative}",
-  "character_anchor": "[从参考图提取的精确人物描述: 性别、年龄、发型(颜色+款式+长度)、瞳色、肤色、面部特征、精确服装(类型+颜色+图案+配饰)、体型。此字段为全局锚点，shot 中用 'same character — maintain exact facial proportions and outfit from reference' 即可]",
+  "character_anchor": "[精确人物描述: 性别、年龄、发型、瞳色、肤色、服装细节、体型]",
   "shots": [
     {
       "shot_number": "分镜1",
-      "prompt_text": "${styleConfig.shotPrefix}[Camera Setup], same character — maintain exact facial proportions and outfit from reference, [Scene + Action]${styleConfig.shotSuffix}. '分镜1' in the top-left corner. No timecode, no subtitles."
+      "prompt_text": "{\"kf\":\"KF1 - EWS - 3s\",\"lens\":\"24mm slow dolly in\",\"spatial\":{\"fg\":\"silhouette of doorframe\",\"mg\":\"figure walking in rain\",\"bg\":\"neon-lit street haze\"},\"action\":\"walks forward with slight lean against wind\",\"light\":\"overhead streetlamp hard warm 3200K ratio 4:1\",\"label\":\"分镜1\"}"
     }
-    // ... 共 ${panelCount} 个
   ]
 }
 \`\`\`
 
 重要：
-1. 所有 prompt_text 必须是英文
-2. 每个 prompt_text 必须包含 "'分镜X' in the top-left corner. No timecode, no subtitles."
-3. **【关键】必须定义 character_anchor 字段，包含从参考图提取的完整人物外观描述（发色、发型、瞳色、服装细节等）。如果参考图中有人物，此字段为【必填】。**
-4. **【重要】每个 shot 的 prompt_text 中不要重复完整 character_anchor 文本！用 "same character — maintain exact facial proportions and outfit from reference" 即可。把 token 预算留给镜头、环境和动作描述。**
-5. 禁止使用 Medium Shot、Long Shot、Close-up 等平庸描述
-6. 每个 shot 的 prompt_text 必须包含风格前缀和后缀标签
+1. prompt_text 必须是合法的 JSON 对象字符串（不是自然语言句子）
+2. 每个 prompt_text JSON 中必须包含 kf/lens/spatial/action/light/label 六个字段
+3. spatial 必须有 fg/mg/bg 三层空间描述
+4. action 用一个锚点动词+方式词，禁止堆叠多个动词
+5. light 必须指定光源+方向+质量+色温，禁止使用 "cinematic lighting" 等模糊词
+6. **character_anchor 为必填，但不要在 prompt_text 中重复角色描述**
 ${styleConfig.additionalRules}
 `
 
@@ -2202,11 +2201,9 @@ ${styleConfig.additionalRules}
     expectedCount: number
   ): Array<{ shot_number: string; prompt_text: string }> | null {
     try {
-      // 提取 JSON 代码块
       const jsonMatch = response.match(/```json\s*([\s\S]*?)\s*```/)
       let jsonStr = jsonMatch ? jsonMatch[1] : response
       
-      // 尝试找到 JSON 对象
       const jsonObjMatch = jsonStr.match(/\{[\s\S]*"shots"[\s\S]*\}/)
       if (jsonObjMatch) {
         jsonStr = jsonObjMatch[0]
@@ -2226,11 +2223,28 @@ ${styleConfig.additionalRules}
           const idx = shots.length + 1
           shots.push({
             shot_number: `分镜${idx}`,
-            prompt_text: `Full Body Shot, same character — maintain exact facial proportions and outfit from reference, neutral pose. '分镜${idx}' in the top-left corner. No timecode, no subtitles.`
+            prompt_text: JSON.stringify({ kf: `KF${idx} - FS - 2s`, lens: '50mm static', spatial: { fg: '', mg: 'character neutral pose', bg: 'reference environment' }, action: 'standing naturally', light: 'natural ambient light', label: `分镜${idx}` })
           })
         }
-        
-        console.log('[DirectorPage] 解析 JSON shots 成功:', shots)
+
+        // Parse each shot's prompt_text into structured JsonPromptPanel
+        this.lastParsedPanels = shots.map((shot: { shot_number: string; prompt_text: string }, i: number) => {
+          try {
+            const p = JSON.parse(shot.prompt_text)
+            return {
+              id: i + 1,
+              shot: p.kf || shot.shot_number,
+              lens: p.lens,
+              spatial: p.spatial,
+              action: p.action,
+              light: p.light
+            } as JsonPromptPanel
+          } catch {
+            return { id: i + 1, desc: this.cleanShotDescription(shot.prompt_text) } as JsonPromptPanel
+          }
+        })
+
+        console.log('[DirectorPage] 解析 JSON shots 成功:', shots.length, '个, 结构化panels:', this.lastParsedPanels?.filter(p => p.lens).length ?? 0, '个')
         return shots
       }
       
@@ -2264,18 +2278,18 @@ ${styleConfig.additionalRules}
     const sceneInput = this.getElement<HTMLTextAreaElement>('directorSceneInput')
     const storyContext = sceneInput?.value.trim() || 'Sequential narrative based on reference image'
 
-    const panels: JsonPromptPanel[] = shots.map((shot, i) => ({
+    const panels = this.lastParsedPanels || shots.map((shot, i) => ({
       id: i + 1,
       desc: this.cleanShotDescription(shot.prompt_text)
     }))
 
     const prompt: JsonPrompt = {
-      composition: `Single comic page, ${panelCount} panels in ${layout.rows}x${layout.cols} grid. Clear panel borders.`,
+      composition: `Single comic page, ${panelCount} panels in ${layout.rows}x${layout.cols} grid.`,
       subject: characterDescription,
       style: `${this.getArtStyleDescription()}${templateSuffix}`,
       story: storyContext,
       panels,
-      constraints: "Each panel labeled '分镜X' top-left. No speech bubbles, no dialogue, no timecode. Maintain exact character appearance across all panels.",
+      constraints: 'Identical character across all panels.',
       negative: templateNegative || undefined
     }
 
@@ -2302,7 +2316,7 @@ ${styleConfig.additionalRules}
     const sceneInput = this.getElement<HTMLTextAreaElement>('directorSceneInput')
     const storyDescription = sceneInput?.value.trim() || 'Continuous cinematic sequence with clear narrative progression'
 
-    const panels: JsonPromptPanel[] = shots.map((shot, i) => ({
+    const panels = this.lastParsedPanels || shots.map((shot, i) => ({
       id: i + 1,
       desc: this.cleanShotDescription(shot.prompt_text)
     }))
@@ -2310,10 +2324,10 @@ ${styleConfig.additionalRules}
     const prompt: JsonPrompt = {
       composition: `Cinematic Contact Sheet, ONE master image, 3x3 storyboard grid. Aspect ratio: ${ratio}. Symmetrical grid, hard borders, clean white dividing lines.`,
       subject: characterDescription,
-      style: `Photorealistic, 8K resolution${suffix}. Motivated lighting from specific sources. Dominant color temperature consistent across panels.`,
+      style: `Photorealistic, 8K resolution${suffix}. Motivated lighting from specific sources.`,
       story: storyDescription,
       panels,
-      constraints: 'Identical character across ALL 9 panels. Maintain exact facial proportions, hairstyle, hair color, eye color, skin tone, and outfit from reference.',
+      constraints: 'Identical character across ALL 9 panels.',
       negative: negative || undefined
     }
 
@@ -2336,7 +2350,7 @@ ${styleConfig.additionalRules}
     const sceneInput = this.getElement<HTMLTextAreaElement>('directorSceneInput')
     const storyDescription = sceneInput?.value.trim() || 'Continuous sequence with clear narrative progression'
 
-    const panels: JsonPromptPanel[] = shots.map((shot, i) => ({
+    const panels = this.lastParsedPanels || shots.map((shot, i) => ({
       id: i + 1,
       desc: this.cleanShotDescription(shot.prompt_text)
     }))
@@ -2347,7 +2361,7 @@ ${styleConfig.additionalRules}
       style: `${this.getArtStyleDescription()}${templateSuffix}`,
       story: storyDescription,
       panels,
-      constraints: 'Maintain exact facial proportions, hairstyle, hair color, and outfit from reference across ALL panels.',
+      constraints: 'Identical character across ALL panels.',
       negative: templateNegative || undefined
     }
 
@@ -2402,7 +2416,28 @@ ${styleConfig.additionalRules}
    * 构建 JSON 格式的图片生成提示词
    */
   private buildJsonPrompt(prompt: JsonPrompt): string {
-    return JSON.stringify(prompt)
+    const compact = {
+      c: prompt.composition,
+      s: prompt.subject,
+      st: prompt.style,
+      d: prompt.story,
+      p: prompt.panels.map(p => {
+        if (p.lens || p.spatial || p.action || p.light) {
+          return {
+            i: p.id,
+            ...(p.shot && { sh: p.shot }),
+            ...(p.lens && { l: p.lens }),
+            ...(p.spatial && { sp: p.spatial }),
+            ...(p.action && { a: p.action }),
+            ...(p.light && { li: p.light })
+          }
+        }
+        return { i: p.id, d: p.desc || '' }
+      }),
+      x: prompt.constraints,
+      ...(prompt.negative && { n: prompt.negative })
+    }
+    return JSON.stringify(compact)
   }
 
   /**
@@ -2452,8 +2487,9 @@ ${styleConfig.additionalRules}
     return this.lastGeneratedShots || null
   }
 
-  // 缓存最近生成的 shots 和角色锚点
+  // 缓存最近生成的 shots、解析后的 panels 和角色锚点
   private lastGeneratedShots: Array<{ shot_number: string; prompt_text: string }> | null = null
+  private lastParsedPanels: JsonPromptPanel[] | null = null
   private lastCharacterAnchor: string | null = null
 
   /**
