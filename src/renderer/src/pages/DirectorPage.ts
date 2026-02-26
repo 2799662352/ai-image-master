@@ -2149,6 +2149,10 @@ Output must be in English. Use concise descriptions suitable for image generatio
         })
         console.log('[DirectorPage] LangChain success:', shotsResponse.shots.length, 'shots')
 
+        if (shotsResponse.shots.length === 0) {
+          throw new Error('LangChain returned empty shots array')
+        }
+
         this.lastCharacterAnchor = shotsResponse.character_anchor
         this.lastShotsResponse = shotsResponse
         this.lastParsedPanels = shotsResponse.shots.map((shot, i) => ({
@@ -2161,7 +2165,6 @@ Output must be in English. Use concise descriptions suitable for image generatio
         }))
 
         const ratio = this.currentRatio === 'auto' ? layout.ratio : this.currentRatio
-        const characterDesc = this.extractCharacterDescription(shotsResponse.shots[0]?.kf || '')
         const sceneInput = this.getElement<HTMLTextAreaElement>('directorSceneInput')
         const storyCtx = sceneInput?.value.trim() || 'Continuous cinematic sequence'
 
@@ -2587,6 +2590,9 @@ ${styleConfig.additionalRules}
         if (s.micro_expression) parts.push(s.micro_expression)
         if (s.atmosphere) parts.push(s.atmosphere)
         if (s.body_physics) parts.push(s.body_physics)
+        if (s.color_grade) parts.push(`Color: ${s.color_grade.dominant}, accent ${s.color_grade.accent}`)
+        if (s.composition) parts.push(s.composition)
+        if (s.emotion_target) parts.push(`Emotion: ${s.emotion_target}`)
         return `${i + 1}. ${parts.filter(Boolean).join(', ')}`
       }
       // Priority 2: Use cached parsed panels (only if array lengths match)
