@@ -1,0 +1,858 @@
+﻿一个聚焦AI创意者的乌托邦
+加入终身成长计划
+AIGC教程
+FlowPix
+精选资源
+免费样机
+
+左亮
+
+首页
+ai工具推荐
+所有分类
+详情
+【提示词创作第三十二节】告别AI“塑料感”：3个底层，赋予画面电影级“氛围感”
+2周前
+AI提示词创作
+作者：Loki
+氛围感
+提示词
+教程
+文章目录
+方法一：控制明暗（Light & Contrast）—— 抛弃形容词，塑造物理骨架
+方法二：将冷暖色拆开——拒绝让AI做“色彩端水大师”
+方法三：控制虚实（Focus & Depth）—— 用焦段完成视觉叙事
+核心通用公式
+已解锁本课程
+前言：你对“氛围感”的误解，毁了90%的成图
+
+
+
+
+我发现很多创作者在使用 Nano Banana Pro、Midjourney 等顶级工具时，对  “氛围感”   有着致命的误解
+
+比如生成一张画面，你希望它更温暖一点，或者更有压抑感大多数人的第一反应是：
+
+
+
+
+直接在提示词里加上 Warm tone（暖色调）或者 Depressing vibe（压抑氛围）
+
+
+
+
+这是完全错误的指令逻辑！
+
+
+
+
+在AI的潜在空间（Latent Space）里，“氛围”不是一个可以被一键叠加的滤镜。
+
+
+
+
+真实世界的美学氛围，是由三个极其严谨的物理与视觉层面交织而成的：明暗（光）、冷暖（色）、虚实（焦段）
+
+
+
+
+（全网10万+观众看过的内容）
+
+
+
+
+如果你不把“氛围”拆解成这三个维度的具体指令，AI 就会用最平庸的“平均算法”来糊弄你。
+
+今天我们就从底层逻辑出发，教你如何用正确的提示词结构，赋予AI画面真正的灵魂。
+
+
+
+
+方法一：控制明暗（Light & Contrast）—— 抛弃形容词，塑造物理骨架
+
+
+
+
+1. 很多人最常犯的提示词误区：用“情绪形容词”代替“物理光”
+
+
+
+
+当新手想要给画面增加“压抑、孤独、深沉”这类氛围时，90%的人会在 Nano Banana Pro 或 Midjourney 里疯狂堆砌情绪类形容词
+
+
+他们试图用人类的共情语言去感动一段冷冰冰的代码
+
+
+
+
+【典型的新手完整错误提示词】：
+
+
+
+
+A portrait of a man sitting in a room, sad atmosphere, depressing dark vibe, gloomy mood, highly detailed, 8k, masterpiece. 
+
+(中文释义：一个男人坐在房间里的肖像，悲伤的氛围，压抑黑暗的感觉，阴沉的情绪，极其细节，8k，杰作。)
+
+
+
+
+（该提示词在nano banana下生成的画面）
+
+
+
+
+当你输入这串提示词，满怀期待地以为能得到一张充满哲学意味的压抑大片时，现实往往会给你泼一盆冷水
+
+
+
+
+2. 为什么会出现这种现象？
+
+
+
+
+为什么AI无法理解你写的 “压抑（Depressing）” ，只会把画面变灰？
+
+
+
+
+这背后是极其严密的算法与美学机制冲突：
+
+
+
+
+AI算法机制（降噪的“均值回归”）： 
+
+
+
+
+扩散模型（Diffusion Models）的底层逻辑是“从噪点中还原细节”。为了保证生成的画面“清晰、不出错”，AI 的默认算法有一种极其强烈的“保留细节强迫症”。
+
+
+
+
+
+
+
+
+
+
+当你输入 dark vibe 时，算法为了不让画面的暗部变成死黑，它会采取最偷懒的全局降维策略——把画面所有像素的 RGB 亮度值，平均地往下压低 30%。 
+
+
+
+
+
+
+
+
+
+
+（左图解析）：
+
+提示词中使用了 sad, dark, gloomy 等情绪形容词，AI 为了表现“黑暗”，降低了整体亮度，但没有创造出光影对比，导致画面发灰、平淡，缺乏张力。
+
+复制
+
+
+
+
+提示词思路： A portrait of a person sitting in a room, sad atmosphere, dark vibe, gloomy mood, flat lighting, low contrast, grey tones
+复制
+
+
+
+
+（右图解析）：
+
+提示词中使用了 chiaroscuro（明暗对照法）、single dramatic spotlight（单一戏剧性聚光灯）等物理描述。画面中大面积的暗部与一束强烈的光线形成鲜明对比，瞬间营造出深沉、压抑且极具电影感的氛围。
+复制
+
+
+
+
+提示词思路： Cinematic portrait of a person sitting in a dark room, strong chiaroscuro lighting, a single dramatic spotlight from the side illuminating only half the face, deep shadows covering most of the frame, high contrast.
+复制
+
+
+
+
+现实美学机制（没有对比，就没有情绪）：
+
+ 
+
+在真实世界的摄影和电影美学中，“暗”本身是不产生情绪的，“亮与暗的切割”才产生情绪。
+
+现实生活中的例子： 
+
+
+
+
+想象一个地下室，头顶亮着一根昏暗、老化的荧光灯管，照亮了整个房间。即使光线很暗，你走进去也只会觉得“这地方采光真差”，感到昏昏欲睡，毫无美感
+
+
+
+
+反转场景： 还是这个地下室。我们把荧光灯彻底砸碎（制造死黑）。然后在墙壁上凿出一个极小的洞，让一束极其锐利、刺眼的阳光像利剑一样劈进黑暗，仅仅照亮地下室中央的一把破木椅
+
+
+
+
+（古典油画中的明暗对照法）
+
+
+
+
+这一瞬间，“压抑、神圣、孤独、电影感”的氛围是不是立刻在你的头脑中炸开？这就是古典油画中的明暗对照法（Chiaroscuro）。情绪的落点，永远在光影交界处。
+
+
+
+
+3.正确的方法：像电影灯光师一样“制造深渊，吝啬光源”
+
+
+
+
+知道了底层逻辑，我们在写提示词时，就必须彻底抛弃 Sad/Depressing 这种无用的情绪词
+
+你必须用物理打光词（Lighting Setup），强制干预 AI 的“均值算法”，逼迫它制造死黑
+
+
+
+
+
+正确的提示词结构必须包含两点强硬指令：
+
+
+
+
+规定大面积的绝对阴影（强行关掉 AI 的全局漫反射灯）
+
+规定极其吝啬的明确光源（打上那一束戏剧性的光）
+
+
+
+
+【专业级完整提示词（重构上述案例）】：
+
+Cinematic portrait of a man sitting in a room. **80% of the image is submerged in heavy, deep pitch-black shadows (大面积绝对暗部). A single, sharp dramatic spotlight shines from above, illuminating only half of his face and the texture of his coat (极度吝啬的单一光源).** High contrast, chiaroscuro lighting, masterpiece, 8k. (中文释义：电影级肖像，一个男人坐在房间里。画面80%沉浸在沉重、深邃的死黑阴影中。一束锐利、戏剧性的聚光灯从上方射下，仅仅照亮了他半张脸和外套的纹理。 强对比，明暗对照法打光，杰作，8k。)
+复制
+
+
+
+
+（按照提示词nano banana 生成的画面）
+
+ AI 被迫关闭了全局光照。背景融化在深邃的高级黑色中，而那一束锐利的光精准地雕刻出男人的半张脸。
+
+此时，你不需要在提示词里写任何“悲伤”的字眼，观众一眼看过去，就能感受到那种深入骨髓的孤独与压抑。 
+
+因为你用物理光学，重塑了画面的情绪骨架。
+
+
+
+
+控制明暗的【物理打光公式】
+
+
+
+
+下次当你需要给画面定下一个深沉的情绪基调时，请停止输入形容词，直接套用这个底层公式：
+
+
+
+
+【大面积暗部描述】 + 【单一/极少数明确光源】 + 【强对比专属术语】
+
+
+
+
+大面积暗部描述： submerged in deep pitch-black shadows (沉浸在深邃死黑的阴影中) / surrounded by absolute darkness (被绝对的黑暗包围).
+复制
+
+明确光源描述： a single sharp spotlight (单束锐利聚光灯) / a dramatic rim light (戏剧性的轮廓光) / a narrow beam of light (一束狭窄的光线).
+复制
+
+强对比术语（触发AI电影打光引擎）： High contrast (高对比度), Chiaroscuro (明暗对照法/伦勃朗光).
+复制
+
+
+
+
+当你学会像灯光师一样给 AI 下指令，你的画面才算真正入门了“电影级氛围”。
+
+
+
+
+
+
+
+
+
+方法二：将冷暖色拆开——拒绝让AI做“色彩端水大师”
+
+
+
+
+1. 很多人最常犯的提示词误区：贪婪的“色彩堆砌”
+
+
+
+
+很多新手在想要给画面增加“丰富度”或“高级感”时，最容易犯的致命错误就是：
+
+在同一句提示词里，塞进所有能想到的颜色和光线。 
+
+他们有一种错觉：只要我把冷光、暖光、环境色全写上，AI 就能自动帮我调配出好莱坞级别的大片色彩。
+
+
+
+
+【典型的新手完整错误提示词】：
+
+A cinematic shot of a girl in a cafe, warm sunlight, cool blue ambient light, rich colors, atmospheric lighting, highly detailed, 8k. (中文释义：电影级镜头，一个女孩在咖啡馆，温暖的阳光，冷蓝色的环境光，丰富的色彩，氛围打光，极其细节，8k。)
+
+
+
+
+（提示词在nano banana 中生成的画面）
+
+
+
+
+满怀期待地输入这串提示词后，你得到的画面不仅不高级，反而会呈现出一种  “脏”：
+
+画面的色彩像是一块被打翻、且没有洗干净的调色盘。女孩的脸上既有一块突兀的黄光，暗部又泛着诡异的蓝光。
+
+整体画面的色彩纯度极低（发灰、发褐），这在美术上被称为“色彩浑浊（Color Pollution）”
+
+
+
+
+（色彩浑浊的经典案例）
+
+最致命的是：画面毫无情绪！！！！！！
+
+
+
+2. 为什么会出现这种现象？
+
+
+
+
+为什么AI会把好好的颜色画“脏”？这背后是人类美学常识的冲突：
+
+
+
+
+现实美学机制（色彩必须有绝对的“阶级”）： 
+
+在现实生活的专业摄影和电影调色（Color Grading）中，色彩是有统治阶级的，没有主次，就没有情绪。
+
+
+
+
+这个场景为什么美？因为它有 绝对的主色调（Key Color）——整个画面大部分的面积，都被温暖、刺眼的橙金色夕阳（暖色）所统治
+
+（现实中的夕阳下的咖啡馆）
+
+
+
+
+而室外的蓝天（冷色）去哪了？它作为辅色调（Fill Color），仅仅在边缘或者阴影里，呈现出微弱的冷蓝色反光。
+
+
+
+
+如果冷暖色真的是 50% 对 50% 平分秋色（比如房间左边放一个巨大的暖色小太阳，右边放一个同样亮度的冷蓝色医院无影灯），这绝对不叫氛围。
+
+
+
+
+再比如上面这个经典例子，这个案例展示了如何通过确立主色调和辅色调，避免色彩混乱，营造明确的氛围。
+
+
+
+
+左图解析：
+
+提示词中同时描述了暖色和冷色，但没有分清主次。AI 将这些颜色平均分配，导致画面色彩杂乱，没有统一的基调和情绪。
+
+
+
+
+提示词思路： 
+
+A street scene at night with warm streetlights and cool neon signs, many different colored lights mixing together without a dominant temperature, chaotic colors.
+复制
+
+
+
+
+右图解析：
+
+提示词中明确规定了 主色调 和 辅色调。大面积的冷色调营造了寒冷、潮湿的氛围，而一扇暖窗作为点缀，形成了鲜明的冷暖对比，使画面有了视觉中心和情绪落点。
+
+
+
+
+提示词思路：
+
+ A rainy street scene at night, dominated by cool blue tones from the ambient light, with a single warm orange light from a window creating a strong color contrast, moody atmosphere.
+复制
+
+
+
+
+3. 正确的方法：建立绝对的“色彩独裁”与“微弱点缀”
+
+
+
+
+知道了这个底层逻辑，我们在写提示词时，就必须强制剥夺 AI 的“极端色彩”行为。
+
+ 你必须像一个严苛的电影美术指导，用语言给颜色划分等级：
+
+
+
+
+谁是统治全图的情绪主色？谁是被极度打压、只能待在角落的微弱辅色？
+
+
+
+
+我们需要引入量化控制词汇，比如 dominated by（由...统治）、subtle/faint（微妙的/微弱的）
+
+
+
+
+【专业级完整提示词（重构上述案例）】：
+
+Retro film photography of a girl in a quiet cafe. **The entire scene is strictly dominated by a rich, warm golden hour palette (确立绝对主色调). Only the deepest shadows in the background contain a very subtle, faint cool teal reflection (极度降级的辅色调点缀).** Kodak Portra 400, cinematic color grading, masterpiece. (中文释义：复古胶片摄影，一个女孩在安静的咖啡馆。整个场景被浓郁、温暖的黄金时刻色调严格统治。仅仅在背景最深的阴影处，包含着极其微妙、微弱的冷青色反光。 柯达 Portra 400，电影级调色，杰作。)
+复制
+
+
+
+
+（提示词在nano banana 中生成的画面）
+
+ 画面的“温暖、怀旧”情绪瞬间被确立。而那一抹极其克制、只有10%的冷青色暗部反光，不仅没有弄脏画面，反而极大地拉开了画面的空间层次，形成了专业电影工业中最经典的 “橙青调色” 质感。
+
+
+
+
+这就是用算法实现的高级美学
+
+
+
+
+总结：控制冷暖色的【阶级控制公式】
+
+
+
+
+下次当你想要高级的色彩氛围时，停止罗列颜色，直接套用这个公式：
+
+
+
+
+【The entire scene is dominated by + 主色调/主情绪光】 + 【Only (特定极小区域) catch a subtle/faint + 辅色调/反光】
+
+主色调参考： dominated by warm amber light (被温暖的琥珀色光统治) / dominated by melancholic cool blue tone (被忧郁的冷蓝色调统治).
+复制
+
+辅色区域参考： Only the deepest shadows (仅在最深的阴影处) / Only the rim of the glass (仅在玻璃的边缘).
+复制
+
+微弱辅色参考： a faint cool teal reflection (微弱的冷青色反光) / a subtle warm orange glow (微妙的暖橙色光晕).
+复制
+
+
+
+
+只要你用这套语言逻辑规训了 AI 的权重分配，你的画面色彩将永远纯粹、高级、且直击人心。
+
+
+
+
+
+
+
+
+方法三：控制虚实（Focus & Depth）—— 用焦段完成视觉叙事
+
+
+
+
+1. 很多人最常犯的提示词误区：盲目追求“全屏高清”
+
+99%的新手都会掉进同一个陷阱
+
+
+
+
+他们认为：画面细节越多 = 质量越高 = 氛围越好
+
+
+
+
+于是，他们的提示词里永远挂着这串 “万能咒语” ： 
+
+
+
+
+highly detailed, ultra-detailed background, intricate details, sharp focus on everything, 8k, 16k, UHD.
+
+(中文释义：高度细节，超细节背景，错综复杂的细节，全图清晰聚焦，8k，16k，超高清。)
+
+
+
+
+【典型的新手完整错误提示词】：
+
+
+
+
+A lonely girl walking in a rainy city street at night, highly detailed buildings, sharp focus on rain drops, sharp focus on background, intricate neon signs, 8k, masterpiece.(中文释义：一个孤独的女孩走在雨夜的城市街道，高度细节的建筑，雨滴清晰，背景清晰，复杂的霓虹灯牌，8k，杰作。)
+
+
+
+
+（该提示词在nano banana 里的表现）
+
+
+
+
+当你要求 AI  “sharp focus on everything”  时，你亲手杀死了画面的氛围感
+
+
+
+
+你会发现，前景女孩的睫毛是清晰的，身边飘落的雨滴是清晰的，甚至街道尽头两公里外的一块广告牌也是清晰锐利的。
+
+同时因为没有   近大远小   的虚实变化，人物像是一个被剪下来贴在背景上的 “纸片人”
+
+
+
+
+因为当所有东西都重要时，就没有东西是重要的。
+
+
+
+
+ 这种图只适合做游戏场景美术，完全不具备电影的叙事氛围
+
+
+
+
+（如果你想做美术游戏场景的话这种风格确实有点意思）
+
+
+
+
+这其实又是一个“算法本能”与“人类视觉”的巨大冲突：
+
+
+
+
+AI算法机制（恐怖真空 Horror Vacui）： 
+
+扩散模型（Diffusion Models）的生成过程，是从一团随机噪声中“脑补”出有意义的像素。
+
+算法有一种“填充强迫症”。如果不加限制，AI 会试图在画面的每一个角落都填满可识别的纹理和细节。
+
+它不懂什么叫“留白”，也不懂什么叫“空气感”。
+
+只要你写了 detailed background，它就会恨不得把背景里每一块砖的纹理都给你算出来
+
+
+
+
+
+
+
+
+
+
+现实美学机制（人眼无法同时看清世界）：
+
+
+
+
+ 氛围感的物理本质，其实是光学缺陷。
+
+
+
+
+生理机制：
+
+ 人类的眼睛和摄影镜头一样，都有一个焦点平面（Focal Plane）。当你注视爱人的眼睛时，背后的世界必须是模糊的。这种模糊（Blur/Bokeh）不是因为看不清，而是因为你的注意力在这里。
+
+
+
+
+
+
+
+
+
+
+叙事机制： 
+
+氛围感往往产生于“看不清”的地方。清晰代表现实，模糊代表梦境、记忆或未知
+
+全屏清晰 = 毫无感情的监控摄像头视角。
+
+
+
+正确的方法：用“光学焦段”引导视线
+
+
+
+
+要让 AI 图有电影感，你必须学会做减法。
+
+
+
+
+我们需要引入摄影中的  光圈（Aperture）和 景深（Depth of Field）术语。
+
+
+
+
+【叙事方向 A：表现“内在的孤独”（主体实，环境虚）】 如果你想表达“世界与我无关”，就需要极浅的景深。
+
+
+
+
+【专业级完整提示词】：
+
+Cinematic shot of a lonely girl walking in rain. **Shot on 85mm lens, f/1.2 aperture (大光圈/人像镜头). Shallow depth of field (浅景深). The girl is in razor-sharp focus (主体极度清晰). The entire city background is completely blurred into abstract, cool blue bokeh (背景彻底虚化为抽象光斑).** Dreamy atmosphere. (中文释义：电影镜头，孤独女孩雨中行走。85mm镜头，f/1.2光圈。浅景深。女孩极度清晰。整个城市背景彻底虚化为抽象的冷蓝色光斑。梦幻氛围。)
+复制
+
+
+
+
+（该提示词在nano banana 中的表现）
+
+【叙事方向 B：表现“迷失与渺小”（环境实，主体虚/动）】 如果你想表达“我被世界淹没”，可以反其道而行之。
+
+
+
+
+【专业级完整提示词】：
+
+Wide angle shot, busy city street. **Deep depth of field (深景深/全焦). The imposing buildings and neon signs are sharp and overwhelming. The girl in the center has a slight motion blur (主体带有轻微动态模糊), blending into the crowd.** Sense of loss, time passing.(中文释义：广角镜头，繁忙街道。深景深。压迫感的建筑和霓虹灯清晰且令人窒息。中央的女孩带有轻微的动态模糊，融入人群。迷失感，时间流逝。)
+复制
+
+（该画面在nano banana 中的表现）
+
+
+
+
+
+错误方法（全焦/高细节）： 画面信息量爆炸，看久了眼睛累。没有重点，像一张信息图表，毫无情感波动。
+
+
+
+
+正确方法（控制虚实）：
+
+浅景深方案： 背景化作唯美的光斑，观众的视线被物理锁定在女孩的眼神上，瞬间产生强烈的代入感。
+
+动态模糊方案： 一种流动的、不安的情绪油然而生。
+
+这就是“虚实叙事”的力量——你决定了观众看什么，不看什么。
+
+
+
+
+总结：控制虚实的【焦段叙事公式】
+
+
+
+
+下次当你觉得画面太“干”、太“假”时，请检查一下背景是不是太清楚了。然后套用这个公式：
+
+
+
+
+【镜头/光圈参数】 + 【主体清晰度描述】 + 【背景虚化描述】
+
+
+
+
+镜头/光圈参数： Shot on 85mm f/1.2 (特写虚化神镜) / Macro lens (微距) / Tilt-shift (移轴/小人国感).
+复制
+
+主体描述： Subject in sharp focus (主体清晰) / Razor-sharp eyes (眼睛极度锐利).
+复制
+
+背景描述： Blurred background (背景模糊) / Creamy bokeh (奶油般焦外) / Motion blur (动态模糊).
+复制
+
+
+
+
+
+
+
+
+核心通用公式
+
+
+
+
+骨架：
+
+
+
+
+[媒介与主体区] + [虚实控制区] + [明暗控制区] + [冷暖色彩区] + [画质后缀]
+
+
+
+
+第一区：【媒介与主体】
+
+指令格式： [艺术形式/镜头] of [主体细节描述], [环境设定].
+
+替换词库库：
+
+写实摄影： Cinematic photography (电影摄影) / Commercial fashion editorial (商业时尚大片) / Macro product shot (微距产品图)
+复制
+
+艺术风格： Anime style, Makoto Shinkai aesthetic (新海诚式动漫风) / Surrealist summer fashion (超现实夏日时尚) / Wes Anderson style (韦斯·安德森风格)
+复制
+
+
+
+第二区：【虚实控制区】（决定画面的叙事与呼吸感）
+
+指令格式： Shot on [焦段参数]. The subject is [主体清晰度], while the background is [背景虚化状态].
+
+替换词库：
+
+要聚焦/孤独感（浅景深）： 85mm lens, f/1.2 aperture + background completely blurred into soft bokeh (背景彻底虚化为柔和光斑)
+复制
+
+要宏大/压迫感（深景深）： 14mm wide angle lens, f/16 + everything in sharp focus from foreground to background (从前到后一切清晰)
+复制
+
+要迷失/流动感（动态模糊）： Slow shutter speed + subject has intentional motion blur (主体带有刻意的动态模糊)
+复制
+
+
+
+
+第三区：【明暗控制区】（决定画面的光影骨架）
+
+指令格式： [暗部比例/环境光设定]. A [光源性质] illuminates [光线落点]. [对比度术语].
+
+替换词库：
+
+深沉/高级感（低调照明）： 80% submerged in deep shadows (80%沉浸在深阴影中) + a single dramatic spotlight (单束戏剧性聚光灯) + Chiaroscuro, High contrast (明暗对照，高对比)
+复制
+
+明亮/治愈感（高调照明）： Bathed in soft, diffused ambient light (沐浴在柔和漫反射环境光中) + bright window light illuminates the whole room (明亮窗户光照亮全屋) + High-key lighting, low contrast (高调照明，低对比)
+复制
+
+轮廓/神秘感（逆光）： Subject is silhouetted against the bright background (主体在明亮背景下形成剪影) + strong rim light (强烈的轮廓光)
+复制
+
+
+
+第四区：【冷暖色彩区】（决定画面的情绪基调）
+
+指令格式： The scene is strictly dominated by [主情绪色]. Only [极小区域] catch a subtle [辅色点缀].
+
+替换词库：
+
+胶片怀旧风： dominated by warm golden and amber palette (暖金色/琥珀色统治) + subtle cool teal reflections in shadows (阴影处微弱冷青色反光)
+复制
+
+清冷高级风： dominated by melancholic cool blue and cyan (冷蓝色/青色统治) + a faint warm tungsten glow on the skin (皮肤上微弱的暖白炽灯光晕)
+复制
+
+极简/莫兰迪风： dominated by desaturated pastel colors (低饱和粉彩色系统治) + a single pop of vibrant red (一抹鲜艳的红色点缀)
+复制
+
+当你用这套模板去跑图的时候，你会发现 AI 突然变得非常“听话”
+
+
+
+
+它不再胡乱填充细节，不再把颜色搅成一团泥水，也不再给你那种刺眼的平光。
+
+
+
+
+因为它被你用光学、色彩学、摄影学的底层框住了
+
+
+
+
+所谓的“氛围感”，从来都不是 AI 施展的魔法，而是你作为创作者，对画面明暗、冷暖、虚实的绝对掌控力。
+
+记住，不要再去背诵那些玄学的形容词了。把这套框架用熟，你就能成为掌控 AI 视觉的顶级导演。
+
+
+
+
+
+
+
+
+
+
+
+
+最新教程
+【电商服装】用Lovart对话流，一键复刻4款穿搭海报
+【提示词创作第三十四节】告别工具人：3招掌握AI视频导演思维
+【提示词创作第三十三节】3个维度彻底讲透镜头情绪匹配
+【提示词分享】Nano Banana Pro 提示词玩法分享
+【电商服装】Seedance 2.0 服装视频全攻略｜5种风格从0到1制作指南
+查看评论
+上一篇
+【电商服装】即梦Seedance2.0太强了！一张图生成丝滑变装视频
+点赞 15
+收藏 8
+下一篇
+【电商服装】Seedance 2.0 服装视频全攻略｜5种风格从0到1制作指南
+氛围感
+提示词
+教程
+评论区
+左亮
+0/500
+发表评论
+共 5 条评论
+用户56105
+很好，感谢博主😀 4天前 · 吉安市
+回复
+0
+用户95922
+很好，感谢博主 02-19 · 北京市
+回复
+0
+用户56105
+新年快乐 各位小伙伴😀 02-17 · 北京市
+回复
+0
+上超图书CSQ
+该讲的不讲清楚😅 02-16 · 新加坡
+回复
+0
+九乙言声～秋铭
+颜色之说，不敢苟同 02-15 · 北京市
+回复
+1
+
+Copyright©2014-2025 超级个体 All Rights Reserves. 浙ICP备15047023号-23
+
+隐私政策
+法律声明
+flowpixai

@@ -14,7 +14,35 @@ export const ShotSchema = z.object({
   }),
   action: z.string().describe('One anchor verb + manner words, no verb stacking'),
   light: z.string().describe('Source + direction + quality + color temperature'),
-  label: z.string().describe('Panel label like 分镜1')
+  label: z.string().describe('Panel label like 分镜1'),
+  micro_expression: z.string().optional().describe(
+    'Physiological micro-action sequence (NOT emotion adjectives). Format: Start state -> Transition action -> End micro-expression. ' +
+    'E.g. "maintains composure -> deep visible breath -> faint relieved smile slowly forms" or ' +
+    '"eyes glisten -> lower lip trembles -> gaze drops to floor". For wider shots use body posture instead.'
+  ),
+  color_grade: z.object({
+    dominant: z.string().describe('Primary color covering 80%+ of frame, with HEX code. E.g. "warm amber #CBBFA2"'),
+    accent: z.string().describe('Secondary color in small accent areas only. E.g. "cool teal #003333 in shadows"'),
+    texture: z.string().describe('Film stock / grading style. E.g. "bleach bypass, coarse grain, matte finish"')
+  }).optional().describe('Color grading with dominant/accent hierarchy (80/20 rule). Never mix warm and cool equally.'),
+  atmosphere: z.string().optional().describe(
+    'Atmospheric medium between camera and subject. E.g. "thick dust motes catching backlight", ' +
+    '"morning haze softening background 2 stops", "volumetric god rays through broken ceiling". ' +
+    'Never write "atmospheric" alone - specify the physical medium.'
+  ),
+  body_physics: z.string().optional().describe(
+    'Physical interaction between body and environment forces. E.g. "15-degree forward lean against wind, coat flaring behind", ' +
+    '"weight shifting to left foot on uneven ground", "chest heaving from exertion, steam from breath in cold air"'
+  ),
+  composition: z.string().optional().describe(
+    'Composition principle applied. E.g. "leading lines from train tracks converge on subject", ' +
+    '"natural frame through doorway arch", "negative space on right implying loneliness", ' +
+    '"rule of thirds with subject at left intersection point"'
+  ),
+  emotion_target: z.string().optional().describe(
+    'Target emotion this shot conveys to audience (for shot-emotion consistency check). ' +
+    'E.g. "isolation", "mounting tension", "quiet relief", "voyeuristic unease"'
+  )
 })
 
 export const ShotsResponseSchema = z.object({
@@ -149,7 +177,13 @@ ${input.additionalRules}`
         l: shot.lens,
         sp: shot.spatial,
         a: shot.action,
-        li: shot.light
+        li: shot.light,
+        ...(shot.micro_expression && { me: shot.micro_expression }),
+        ...(shot.color_grade && { cg: shot.color_grade }),
+        ...(shot.atmosphere && { atm: shot.atmosphere }),
+        ...(shot.body_physics && { bp: shot.body_physics }),
+        ...(shot.composition && { comp: shot.composition }),
+        ...(shot.emotion_target && { em: shot.emotion_target })
       })),
       x: constraints,
       ...(negative && { n: negative })
