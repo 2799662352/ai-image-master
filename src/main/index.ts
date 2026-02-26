@@ -263,8 +263,8 @@ function createWindow(): void {
       mainWindow?.webContents.reloadIgnoringCache()
       event.preventDefault()
     }
-    // F12 打开开发者工具（仅开发模式）
-    if (isDev && input.key === 'F12') {
+    // F12 打开开发者工具（所有模式可用，方便调试）
+    if (input.key === 'F12') {
       mainWindow?.webContents.toggleDevTools()
       event.preventDefault()
     }
@@ -424,7 +424,7 @@ function createWindow(): void {
       menuTemplate.push(
         { role: 'reload', label: '刷新' },
         { type: 'separator' },
-        { role: 'toggleDevTools', label: '开发者工具', visible: isDev }
+        { role: 'toggleDevTools', label: '开发者工具' }
       )
     }
 
