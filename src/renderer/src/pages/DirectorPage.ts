@@ -2641,10 +2641,6 @@ ${styleConfig.additionalRules}
         parts.push(s.light)
         if (s.micro_expression) parts.push(s.micro_expression)
         if (s.atmosphere) parts.push(s.atmosphere)
-        if (s.body_physics) parts.push(s.body_physics)
-        if (s.color_grade) parts.push(`Color: ${s.color_grade.dominant}, accent ${s.color_grade.accent}`)
-        if (s.composition) parts.push(s.composition)
-        if (s.emotion_target) parts.push(`Emotion: ${s.emotion_target}`)
         return `${i + 1}. ${parts.filter(Boolean).join(', ')}`
       }
       // Priority 2: Use cached parsed panels (only if array lengths match)
