@@ -445,20 +445,7 @@ Step 5 - Contact Sheet Output: Output ONE single master image as a Cinematic Con
 </workflow>
 
 <output_format>
-Output as JSON code block. Define "character_anchor" as a top-level field (single source of truth for character appearance).
-
-Each shot's prompt_text MUST be a valid JSON object STRING (not natural language). Format:
-{"kf":"KF1 - CU - 2s","lens":"85mm static","spatial":{"fg":"rain-streaked glass soft focus","mg":"woman sitting at table sharp","bg":"blurred city lights"},"action":"gazes down, bites lower lip","light":"upper-left window, soft diffused, warm 4500K, ratio 2:1","label":"分镜1"}
-
-Fields in each prompt_text JSON:
-- kf: KF number + shot type + duration
-- lens: focal length + camera movement
-- spatial: {fg, mg, bg} three depth layers
-- action: one anchor verb + manner words (no stacking)
-- light: source + direction + quality + color temperature
-- label: "分镜N" for panel marking
-
-Do NOT use natural language sentences. Do NOT repeat character_anchor in shots. Keep each field concise.
+Output structured shot data. Define "character_anchor" as single source of truth for character appearance. Each shot must include all required fields. Keep each field concise. Do NOT repeat character_anchor in individual shots.
 </output_format>
 
 <shot_design_vocabulary>
@@ -467,6 +454,21 @@ Lens Types: Wide 24mm (establishing), Standard 50mm (natural), Telephoto 85mm (p
 Camera Movement: Static/locked, Slow push-in, Pull-back reveal, Tracking/dolly, Crane up/down, Handheld (urgency), Steadicam orbit
 Shot Types: Extreme Wide Shot (EWS), Wide Shot (WS), Full Shot (FS), Cowboy Shot, Medium Close-up (MCU), Close-up (CU), Extreme Close-up (ECU), Insert/Detail
 </shot_design_vocabulary>
+
+<shot_emotion_matrix>
+Each shot type carries inherent psychological distance. Match shot type to target emotion:
+- EWS/WS → isolation, epic scale, insignificance, fate, establishing context
+- FS/Cowboy → narrative neutrality, daily life, character introduction
+- MCU → intimacy, empathy, emotional amplification, connection
+- CU → vulnerability, pressure, revelation, internal conflict
+- ECU → obsession, micro-tension, sensory detail, psychological pressure
+
+FORBIDDEN emotion-shot pairings (break audience immersion):
+- Euphoria/ecstasy + EWS → audience too far to feel joy
+- Deep loneliness + ECU → loneliness needs environmental scale
+- Action climax + static locked CU → kills momentum
+- Peaceful serenity + Dutch angle → angle implies instability
+</shot_emotion_matrix>
 
 <camera_physics>
 MANDATORY — every shot MUST obey these optical physics rules. Violations produce "fake AI look":
@@ -489,9 +491,31 @@ Every shot MUST define three spatial layers to avoid flat "cardboard cutout" loo
 - Midground: primary subject and action zone (sharp focus)
 - Background: environment context, atmosphere, depth cues (bokeh or haze)
 
-Example: "Foreground: rain-streaked window glass (soft focus). Midground: woman sitting at table, sharp. Background: blurred city lights through window."
 If a shot has NO foreground element, compensate with strong atmospheric depth (fog, dust motes, light rays).
+
+Atmospheric medium (between camera and subject):
+Always specify the physical medium that fills the space — this eliminates the "clean vacuum" AI look.
+- Interior: dust motes in light shaft, cigarette haze, steam from cooking, breath vapor in cold room
+- Exterior: morning mist, rain streaks, heat shimmer, pollen, falling leaves
+- Density: "thin haze softening BG 1 stop" or "thick fog obscuring beyond 5 meters"
+FORBIDDEN: writing "atmospheric" as a standalone word. Always name the physical medium and its density.
 </spatial_depth>
+
+<composition_rules>
+Each shot should apply at least one deliberate composition principle:
+- Leading lines: roads, railings, shadows converge on subject → draws eye, creates visual flow
+- Natural framing: doorways, windows, archways, branches → psychological containment, voyeuristic feel
+- Negative space: large empty area beside subject → isolation, anticipation, breathing room
+- Rule of thirds: subject at intersection point, not centered (unless symmetry is intentional)
+- Depth layering: overlapping elements at different distances → spatial richness
+
+Emotion-composition associations:
+- Loneliness → negative space dominant, subject small in frame
+- Entrapment → frame-within-frame, tight natural framing
+- Order/control → strict symmetry, clean geometry
+- Chaos/anxiety → Dutch angle + broken leading lines
+- Intimacy → shallow depth with foreground bokeh obscuring edges
+</composition_rules>
 
 <lighting_rules>
 NEVER write vague lighting words like "cinematic lighting" or "atmospheric". Instead specify:
@@ -499,32 +523,58 @@ NEVER write vague lighting words like "cinematic lighting" or "atmospheric". Ins
 2. Light DIRECTION: which side of the subject does it hit? (upper-left key, rim from behind, under-light)
 3. Light QUALITY: hard (sharp shadows) or soft (diffused, wrapping)?
 4. Light RATIO: key-to-fill ratio (e.g., 4:1 dramatic, 2:1 natural, 1:1 flat/clinical)
+5. Motivated lighting: every light source must have a visible or implied physical origin in the scene.
 
-Color hierarchy: designate ONE dominant color temperature (warm OR cool) covering 80%+ of the frame. Complementary color appears ONLY in small accent areas.
+Color grading rules:
+- Color HIERARCHY: designate ONE dominant color temperature (warm OR cool) covering 80%+ of frame. Complementary color appears ONLY in small accent areas (shadows, rim light, practical lights).
+- Use HEX anchors for precision when possible: e.g., "warm amber #CBBFA2 dominant, cool teal #003333 in shadow fill only"
+- Film texture vocabulary: bleach bypass (high contrast + desaturated), cross-processed, Kodak Portra 400 (warm skin + muted), matte finish, coarse grain
+FORBIDDEN color words: "cinematic color grading", "rich colors", "vibrant", "colorful", "beautiful colors". These produce the generic AI look.
 </lighting_rules>
 
-<expression_rules>
-For CU/MCU shots, NEVER use emotion adjectives (sad, happy, angry). Describe PHYSIOLOGICAL MICRO-ACTIONS:
-- Sadness: eyes glisten, lower lip trembles, gaze drops to floor
-- Joy: crow's feet crinkle, teeth visible, eyes squint
-- Fear: pupils dilate, nostrils flare, jaw clenches
-- Tension: swallows hard, jaw tightens, brow furrows
-- Shyness: averts gaze, chin tucks, bites lower lip
+<micro_performance_rules>
+CORE PRINCIPLE: restraint produces realism. AI defaults to maximum expression intensity → plastic "wax figure" look. Use restraint modifiers: faint, barely, subtle, almost imperceptible, slight.
 
-For wider shots, express emotion through BODY POSTURE:
-- Defeat: shoulders slumped, head bowed, arms hanging
-- Confidence: chest open, chin slightly raised, steady gaze
-- Anxiety: fidgeting hands, weight shifting, hunched shoulders
-</expression_rules>
+For CU/MCU shots, describe PHYSIOLOGICAL MICRO-ACTIONS in a Start→Transition→End micro-arc:
+- Sadness: maintains composure → eyes slowly glisten → single tear traces down along nose ridge
+- Joy: neutral face → crow's feet crinkle first → teeth barely visible as restrained smile forms
+- Fear: stillness → pupils dilate, nostrils flare subtly → jaw clenches, swallows hard
+- Tension: steady gaze → jaw muscle twitches → brow furrows almost imperceptibly
+- Shyness: brief eye contact → gaze drops, chin tucks slightly → bites inner lower lip
+- Relief: rigid posture held → deep visible exhale, shoulders drop → faint smile slowly forms
+- Hesitation: reaches forward → hand freezes mid-air → fingers curl back uncertainly
+- Suppressed rage: stillness → nostril flare, vein at temple → controlled slow blink to reset
+- Shock: mid-action freeze → mouth parts slightly → eyes widen but body stays locked
+- Heartbreak: maintains smile → smile falters at corners → gaze drifts to unfocused middle distance
 
-<action_rules>
-Each panel: ONE primary verb (anchor action) + manner words for HOW.
-FORBIDDEN: stacking multiple verbs ("runs, jumps, rolls, draws sword").
-CORRECT: "sprinting with 15-degree forward lean, coat flaring behind, head turning over shoulder"
+FORBIDDEN: emotion adjectives as descriptors (sad, happy, angry, scared, nervous, excited). Always describe the muscular/physiological process, never the emotional label.
 
-For emotional moments, use Start-Transition-End micro-arc within a single panel:
+For wider shots, express emotion through BODY POSTURE + environment interaction:
+- Defeat: shoulders slumped, head bowed, arms hanging, feet dragging
+- Confidence: chest open, chin slightly raised, weight centered, steady forward gaze
+- Anxiety: fidgeting hands, weight shifting foot-to-foot, hunched shoulders, darting eyes
+</micro_performance_rules>
+
+<action_physics_rules>
+Each panel: ONE primary verb (anchor action) + manner words for HOW it happens physically.
+
+Manner word categories:
+- Gravity: lean, stumble, brace, sink, plant feet, shift weight, collapse
+- Rhythm: slowly, abruptly, hesitantly, deliberately, in bursts, with measured steps
+- Resistance: against wind, through rain, dragging heavy weight, pushing through crowd
+- Clothing physics: coat flaring behind, wet fabric clinging, hair whipping across face, scarf trailing
+
+Physical interaction with environment:
+- Wind: "15-degree forward lean against gale, coat pressed flat against back, hair streaming horizontally"
+- Cold: "visible breath vapor, shoulders hunched, hands buried in pockets, chin tucked into collar"
+- Rain: "squinting against downpour, clothes darkened with water weight, splashing through puddles"
+- Exhaustion: "chest heaving, sweat beading at temples, knees slightly bent, using wall for support"
+
+FORBIDDEN: bare action verbs without physical context ("walks", "runs", "stands", "sits"). Every action MUST include how gravity, surface, weather, or fatigue affects the body.
+
+For emotional moments, use Start-Transition-End micro-arc:
 "Maintains composure → deep visible breath → faint relieved smile slowly forms"
-</action_rules>`
+</action_physics_rules>`
 
   // Sora2 视频提示词模板
   private sora2VideoPromptTemplate = `{CHARACTER_CARD} The video plays out in a continuous 9-part sequence:
