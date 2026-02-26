@@ -445,8 +445,60 @@ Step 5 - Contact Sheet Output: Output ONE single master image as a Cinematic Con
 </workflow>
 
 <output_format>
-Output structured shot data. Define "character_anchor" as single source of truth for character appearance. Each shot must include all required fields. Keep each field concise. Do NOT repeat character_anchor in individual shots.
+Output a 3-LAYER structured response:
+
+LAYER 1 — Scene (global context):
+- scene.d: Narrative arc in "A → B → C" format (setup → build → payoff)
+- scene.cap: Structured title "subject-action-environment"
+- scene.env: Environment summary (lighting/space/style)
+- scene.bgm: Sound design with 4 layers (base ambient + env sounds + action foley + melody/silence strategy)
+- scene.tension: Core dramatic tension driving the sequence
+
+LAYER 2 — Objects (persistent entities):
+- objs[]: Each key subject/prop with visual features, spatial position, physics type (rigid/articulated/cloth/fluid), cross-shot consistency anchors, and psychology externalization (how appearance reflects inner state)
+
+LAYER 3 — Shots (per-keyframe):
+- All fields from shot design rules below, PLUS:
+- seq: Sequence encoding showing connection to neighboring shots ("S3: match-cut from S2 → leads to S4 reaction")
+- alignment: 3-grain analysis (coarse: composition change, medium: action chain, fine: shadow/highlight micro-changes)
+- motion: Per-body-part intensity ("head:low-nod, arms:high-reaching, torso:medium-lean, legs:static")
+
+Also output "character_anchor" (single source of truth for main character appearance) and "notes" (cross-shot verification summary).
 </output_format>
+
+<scene_narrative_rules>
+Every sequence MUST have a clear emotional arc expressed in 3 beats:
+- Beat A (Setup): Establish spatial context, character state, dominant mood
+- Beat B (Build/Turn): Introduce change — action shift, emotional escalation, environmental disruption
+- Beat C (Payoff): Resolution or cliffhanger — the image viewer's eye journey must end with impact
+
+Core tension: Identify ONE driving conflict/question that sustains viewer attention across all shots.
+E.g. "she wants to speak but fear seals her lips" or "the object in his hand will change everything"
+
+Sound design (bgm) — specify all 4 layers:
+- Base: continuous ambient foundation (room tone, wind drone, silence)
+- Env: diegetic environment sounds (rain on glass, clock ticking, distant traffic)
+- Action: foley tied to character movement (fabric rustle, heel clicks, breath)
+- Melody: non-diegetic music or deliberate silence ("sparse piano emerges at Beat C", "complete silence until the slap")
+</scene_narrative_rules>
+
+<cross_shot_consistency>
+For EVERY persistent object/character, define invariant anchors:
+- Which visual features MUST remain identical across ALL shots (hair, outfit, scars, props)
+- Which features MAY change (expression, pose, lighting angle)
+- Physics type constrains motion: cloth drapes with gravity, hair follows head rotation, rigid objects maintain shape
+
+Sequence encoding (seq field):
+Each shot MUST describe its relationship to neighbors:
+- "S1: opening establishing → S2 motivated by character entering frame"
+- "S3: match-cut from S2 hand reaching → S4: reverse angle reaction"
+- "S5: time-jump, same location, lighting shifted to dusk"
+
+Multi-granularity alignment:
+- Coarse: How does the overall composition change from the previous shot? (e.g., "wide → close")
+- Medium: What is the action chain within this single shot? (e.g., "reaches forward → grasps → pulls back")
+- Fine: What micro-changes occur in occlusion, highlights, or shadows? (e.g., "shadow crosses face L-to-R as cloud passes")
+</cross_shot_consistency>
 
 <shot_design_vocabulary>
 Camera Angles: Eye-level, Low angle (heroic), High angle (vulnerable), Dutch angle (tension), Bird's eye, Worm's eye, Over-the-shoulder (OTS), POV
