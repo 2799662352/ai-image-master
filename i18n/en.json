@@ -769,6 +769,14 @@
       "illustration": {
         "name": "Illustration Style",
         "desc": "Beautiful illustration, rich details, artistic"
+      },
+      "cinematic": {
+        "name": "Cinematic Director",
+        "desc": "Award-winning trailer storyboard, reference image → cinematic keyframes, emotional arc (setup→build→turn→payoff), realistic DoF, 8K"
+      },
+      "theatrical": {
+        "name": "Theatrical Anime",
+        "desc": "Japanese theatrical anime style, cel shading, cinematic composition"
       }
     },
     "modes": {

@@ -21,7 +21,7 @@ export type GenerationMode = 'single' | 'multi'
 /**
  * 风格模板类型
  */
-export type StyleTemplateKey = 'anime' | 'manga' | 'movie' | 'webtoon' | 'comic' | 'illustration'
+export type StyleTemplateKey = 'anime' | 'manga' | 'movie' | 'webtoon' | 'comic' | 'illustration' | 'cinematic' | 'theatrical'
 
 /**
  * 风格模板
@@ -34,7 +34,12 @@ export interface StyleTemplate {
 }
 
 /**
- * 风格模板集合
+ * 内置风格模板集合 — 所有 StyleTemplateKey 必须有对应定义
+ */
+export type BuiltinStyleTemplates = Record<StyleTemplateKey, StyleTemplate>
+
+/**
+ * 风格模板集合（含自定义模板，key 为任意 string）
  */
 export interface StyleTemplates {
   [key: string]: StyleTemplate
@@ -101,7 +106,7 @@ export interface DirectorPageState extends PageState {
   layout: LayoutType
   ratio: string
   resolution: string
-  template: string | null
+  template: StyleTemplateKey | string | null
   imageCount: string
   sceneDescription: string
   multiScenePrompts: string
@@ -130,7 +135,8 @@ export class DirectorPage extends BasePage {
   private imageCount: number = 1
   private currentRatio: string = '3:2'
   private currentResolution: string = '2K'
-  private currentTemplate: string | null = 'theatrical'  // 默认使用剧场版动画风格
+  private currentTemplate: StyleTemplateKey | null = null
+  private currentCustomTemplateKey: string | null = null
   private currentMode: GenerationMode = 'single'
 
   // 生成结果
@@ -288,7 +294,7 @@ export class DirectorPage extends BasePage {
 )`
 
   // 风格模板库 - 名称将在 getTemplateDisplayName() 中国际化
-  private styleTemplates: StyleTemplates = {
+  private styleTemplates: BuiltinStyleTemplates = {
     anime: {
       name: 'anime', // i18n key: director.templates.styles.anime
       prefix: 'anime screencap, TV anime, storyboard panel, sequential storytelling, narrative composition, ',
@@ -326,10 +332,10 @@ export class DirectorPage extends BasePage {
       negative: 'blurry, lowres, bad anatomy, worst quality, bad quality, simple background'
     },
     cinematic: {
-      name: 'cinematic', // i18n key: director.templates.styles.cinematic  电影级九宫格
-      prefix: 'A precise 3x3 grid storyboard, split screen, comic book layout with 9 equal panels. Symmetrical grid, hard borders, clean white dividing lines. ',
-      suffix: ', Cinematic lighting, photorealistic, sequence photography, 8K resolution. Same characters, same outfit, same lighting across all 9 panels. No text, no speech bubbles',
-      negative: 'text, speech bubbles, dialogue, watermark, signature, blurry, low quality, inconsistent characters, different outfits, style change, irregular panels, asymmetric grid'
+      name: 'cinematic', // i18n key: director.templates.styles.cinematic  电影级九宫格（导演级分镜）
+      prefix: 'Cinematic Contact Sheet, award-winning trailer storyboard, precise grid layout with equal panels. Symmetrical grid, hard borders, clean white dividing lines. Each panel labeled with KF number + shot type + suggested duration. ',
+      suffix: ', Cinematic lighting, photorealistic, sequence photography, 8K resolution, natural depth of field, deeper DoF in wides shallower in close-ups with natural bokeh. Same characters, same wardrobe, same environment, same time-of-day lighting across all panels. No text, no speech bubbles. Emotional progression: setup to build to turn to payoff',
+      negative: 'text, speech bubbles, dialogue, watermark, signature, blurry, low quality, inconsistent characters, different outfits, style change, irregular panels, asymmetric grid, new characters not in reference, guessed identities, brand logos'
     },
     theatrical: {
       name: 'theatrical', // i18n key: director.templates.styles.theatrical  剧场版动画
@@ -339,7 +345,7 @@ export class DirectorPage extends BasePage {
     }
   }
 
-  private defaultStyleTemplates: StyleTemplates
+  private defaultStyleTemplates: BuiltinStyleTemplates
 
   // 布局配置 - 名称和描述将在 getLayoutDisplayName/Description() 中国际化
   private layouts: LayoutConfigs = {
@@ -373,11 +379,19 @@ export class DirectorPage extends BasePage {
     }
   }
 
-  // 电影级九宫格提示词模板（基于工作流优化）
-  private cinematicGridPromptTemplate = `A precise 3x3 grid storyboard, split screen, comic book layout with 9 equal panels.
-Aspect Ratio Constraint: The entire image is {RATIO}, and each of the 9 individual panels is also strictly {RATIO}.
-Layout: Symmetrical grid, hard borders, clean white dividing lines. No text, no speech bubbles.
-Consistency: Same characters, same outfit, same lighting across all 9 panels.
+  // 电影级九宫格提示词模板（导演级分镜 - 基于 trailer director + cinematographer + storyboard artist 工作流）
+  private cinematicGridPromptTemplate = `Cinematic Contact Sheet / Storyboard Grid. ONE single master image containing ALL keyframes.
+Aspect Ratio Constraint: The entire image is {RATIO}, and each individual panel is also strictly {RATIO}.
+Grid: Default 3x3. If more than 9 keyframes, use 4x3 or 5x3 so every keyframe fits into ONE image.
+Layout: Symmetrical grid, hard borders, clean white dividing lines. Each panel clearly labeled: KF number + shot type + suggested duration.
+
+Non-Negotiable Continuity Rules:
+- Strict continuity across ALL panels: same subjects, same wardrobe/appearance, same environment, same time-of-day and lighting style.
+- Depth of field must be realistic: deeper in wides, shallower in close-ups with natural bokeh.
+- Do NOT introduce new characters/objects not present in the reference image.
+
+Emotional Progression: setup → build → turn → payoff (10-20 second cinematic clip feel).
+
 Story Sequence: {STORY_DESCRIPTION}
 
 Panel Breakdown:
@@ -385,6 +399,50 @@ Panel Breakdown:
 
 Visual Style: Cinematic lighting, photorealistic, sequence photography, 8K resolution.
 Character Reference: {CHARACTER_DESCRIPTION}`
+
+  // 电影导演级分镜 Gem 系统提示词（cinematic 模板专用 - trailer director + cinematographer + storyboard artist）
+  private cinematicGemSystemPrompt: string = `<role>
+You are an award-winning trailer director + cinematographer + storyboard artist. Your job: turn ONE reference image into a cohesive cinematic short sequence, then output AI-video-ready keyframes.
+</role>
+
+<input>
+User provides: one reference image (image) and optional scene description.
+</input>
+
+<non-negotiable rules - continuity & truthfulness>
+1) First, analyze the full composition: identify ALL key subjects (person/group/vehicle/object/animal/props/environment elements) and describe spatial relationships and interactions.
+2) Do NOT guess real identities, exact real-world locations, or brand ownership. Stick to visible facts.
+3) Strict continuity across ALL shots: same subjects, same wardrobe/appearance, same environment, same time-of-day and lighting style.
+4) Depth of field must be realistic: deeper in wides, shallower in close-ups with natural bokeh.
+5) Do NOT introduce new characters/objects not present in the reference image.
+</non-negotiable rules>
+
+<goal>
+Expand the image into a 10–20 second cinematic clip with a clear theme and emotional progression (setup → build → turn → payoff).
+</goal>
+
+<workflow>
+Step 1 - Analyze: Identify all key subjects, spatial relationships, lighting conditions, and mood from the reference image.
+Step 2 - Plan: Design emotional arc (setup → build → turn → payoff) with shot progression.
+Step 3 - Shot Design: For each keyframe, specify camera angle, lens, movement, DoF, and duration.
+Step 4 - Continuity Check: Verify all subjects maintain identical appearance across all shots.
+Step 5 - Contact Sheet Output: Output ONE single master image as a Cinematic Contact Sheet / Storyboard Grid containing ALL keyframes.
+  - Default grid: 3x3. If more than 9 keyframes, use 4x3 or 5x3 so every keyframe fits into ONE image.
+  - Each panel must be clearly labeled: KF number + shot type + suggested duration.
+  - Strict continuity across ALL panels.
+</workflow>
+
+<output_format>
+Output as JSON code block with the following structure. Each shot's prompt_text must follow the pattern:
+"[KF Label + Shot Type + Duration], [Camera Setup + Lens + Movement], [Full Scene Description with all subjects from reference], [Lighting + DoF + Mood]. 'KF{N}' in the top-left corner. No timecode, no subtitles."
+</output_format>
+
+<shot_design_vocabulary>
+Camera Angles: Eye-level, Low angle (heroic), High angle (vulnerable), Dutch angle (tension), Bird's eye, Worm's eye, Over-the-shoulder (OTS), POV
+Lens Types: Wide 24mm (establishing), Standard 50mm (natural), Telephoto 85mm (portrait compression), Macro (detail), Anamorphic (cinematic)
+Camera Movement: Static/locked, Slow push-in, Pull-back reveal, Tracking/dolly, Crane up/down, Handheld (urgency), Steadicam orbit
+Shot Types: Extreme Wide Shot (EWS), Wide Shot (WS), Full Shot (FS), Cowboy Shot, Medium Close-up (MCU), Close-up (CU), Extreme Close-up (ECU), Insert/Detail
+</shot_design_vocabulary>`
 
   // Sora2 视频提示词模板
   private sora2VideoPromptTemplate = `{CHARACTER_CARD} The video plays out in a continuous 9-part sequence:
@@ -419,12 +477,13 @@ Character Reference: {CHARACTER_DESCRIPTION}`
    * 同步默认模板的 UI 显示
    */
   private syncDefaultTemplateUI(): void {
-    if (!this.currentTemplate) return
+    const activeKey = this.currentTemplate || this.currentCustomTemplateKey
+    if (!activeKey) return
 
-    const template = this.styleTemplates[this.currentTemplate] || this.customTemplates[this.currentTemplate]
+    const template = this.getCurrentTemplateData()
     if (!template) return
 
-    const displayName = this.getTemplateDisplayName(this.currentTemplate, template)
+    const displayName = this.getTemplateDisplayName(activeKey, template)
     const nameSpan = this.getElement<HTMLElement>('directorTemplateName')
     const clearBtn = this.getElement<HTMLElement>('directorClearTemplate')
 
@@ -436,7 +495,7 @@ Character Reference: {CHARACTER_DESCRIPTION}`
       clearBtn.classList.remove('hidden')
     }
 
-    console.log('[DirectorPage] 默认模板已设置:', this.currentTemplate, displayName)
+    console.log('[DirectorPage] 默认模板已设置:', activeKey, displayName)
   }
 
   /**
@@ -936,7 +995,7 @@ Character Reference: {CHARACTER_DESCRIPTION}`
 
       // 应用覆盖
       for (const key in this.templateOverrides) {
-        if (this.styleTemplates[key]) {
+        if (this.isBuiltinTemplate(key)) {
           this.styleTemplates[key] = { ...this.styleTemplates[key], ...this.templateOverrides[key] }
         }
       }
@@ -1008,7 +1067,7 @@ Character Reference: {CHARACTER_DESCRIPTION}`
    */
   private createTemplateCard(key: string, template: StyleTemplate, isBuiltin: boolean): HTMLElement {
     const card = document.createElement('div')
-    const isSelected = this.currentTemplate === key
+    const isSelected = this.currentTemplate === key || this.currentCustomTemplateKey === key
     const isModified = this.templateOverrides[key] !== undefined
 
     card.className = `template-card cursor-pointer border-2 ${
@@ -1123,10 +1182,16 @@ Character Reference: {CHARACTER_DESCRIPTION}`
    * 选择模板
    */
   selectTemplate(templateKey: string): void {
-    const template = this.styleTemplates[templateKey] || this.customTemplates[templateKey]
+    const template = this.styleTemplates[templateKey as StyleTemplateKey] || this.customTemplates[templateKey]
     if (!template) return
 
-    this.currentTemplate = templateKey
+    if (this.isBuiltinTemplate(templateKey)) {
+      this.currentTemplate = templateKey
+      this.currentCustomTemplateKey = null
+    } else {
+      this.currentTemplate = null
+      this.currentCustomTemplateKey = templateKey
+    }
     const displayName = this.getTemplateDisplayName(templateKey, template)
 
     const nameSpan = this.getElement<HTMLElement>('directorTemplateName')
@@ -1150,6 +1215,7 @@ Character Reference: {CHARACTER_DESCRIPTION}`
    */
   clearTemplate(): void {
     this.currentTemplate = null
+    this.currentCustomTemplateKey = null
 
     const nameSpan = this.getElement<HTMLElement>('directorTemplateName')
     const clearBtn = this.getElement<HTMLElement>('directorClearTemplate')
@@ -1912,9 +1978,7 @@ Output must be in English. Use concise descriptions suitable for image generatio
     let templateSuffix = ''
     let templateNegative = ''
     
-    const currentTemplateData = this.currentTemplate
-      ? (this.styleTemplates[this.currentTemplate] || this.customTemplates[this.currentTemplate])
-      : null
+    const currentTemplateData = this.getCurrentTemplateData()
     
     if (currentTemplateData) {
       templatePrefix = currentTemplateData.prefix || ''
@@ -2015,9 +2079,11 @@ ${styleConfig.styleInstructions}
 ${styleConfig.additionalRules}
 `
 
-    const fullPrompt = this.gemSystemPrompt + '\n\n' + userInput
+    const systemPrompt = this.getGemSystemPromptForTemplate()
+    const fullPrompt = systemPrompt + '\n\n' + userInput
 
-    console.log('[DirectorPage] 使用风格模板:', this.currentTemplate || 'default')
+    console.log('[DirectorPage] 使用风格模板:', this.currentTemplate || this.currentCustomTemplateKey || 'default')
+    console.log('[DirectorPage] 系统提示词长度:', systemPrompt.length, '字符')
     console.log('[DirectorPage] 风格配置:', styleConfig)
 
     return new Promise((resolve) => {
@@ -2096,9 +2162,12 @@ ${styleConfig.additionalRules}
     templateSuffix: string,
     templateNegative: string
   ): string {
-    // 对于 9 宫格，使用电影级提示词模板
+    // 9 宫格路径分流：cinematic → 导演分镜模板，其他 → 通用 9grid（保留比例约束，尊重用户风格）
     if (panelCount === 9 && this.currentLayout === '9grid') {
-      return this.generateCinematicGridPrompt(shots, layout)
+      if (this.currentTemplate === 'cinematic') {
+        return this.generateCinematicGridPrompt(shots, layout, templatePrefix, templateSuffix, templateNegative)
+      }
+      return this.generateGeneric9GridPrompt(shots, layout, templatePrefix, templateSuffix, templateNegative)
     }
 
     const panelPrompts = shots.map((shot, i) => 
@@ -2107,7 +2176,7 @@ ${styleConfig.additionalRules}
 
     let comicPrompt = `${templatePrefix}Create a single comic page image with ${panelCount} panels arranged in a ${layout.rows}x${layout.cols} grid layout.
 
-Art Style: Maintain consistent art style throughout all panels. Professional manga/comic quality.
+Art Style: ${this.getArtStyleDescription()}
 
 Panel Descriptions (AI Generated):
 ${panelPrompts}
@@ -2134,14 +2203,19 @@ Important Instructions:
    */
   private generateCinematicGridPrompt(
     shots: Array<{ shot_number: string; prompt_text: string }>,
-    layout: LayoutConfig
+    layout: LayoutConfig,
+    templatePrefix?: string,
+    templateSuffix?: string,
+    templateNegative?: string
   ): string {
     const ratio = this.currentRatio === 'auto' ? layout.ratio : this.currentRatio
-    
-    // 构建面板描述
+    const cinematicTemplate = this.getCurrentTemplateData()
+    const prefix = templatePrefix ?? cinematicTemplate?.prefix ?? ''
+    const suffix = templateSuffix ?? cinematicTemplate?.suffix ?? ''
+    const negative = templateNegative ?? cinematicTemplate?.negative ?? ''
+
     const panelDescriptions = shots.map((shot, i) => {
-      // 从 prompt_text 中提取镜头描述（去掉标记指令部分）
-      let description = shot.prompt_text
+      const description = shot.prompt_text
         .replace(/'分镜\d+' in the top-left corner\.?\s*/gi, '')
         .replace(/No timecode,?\s*no subtitles\.?\s*/gi, '')
         .trim()
@@ -2149,19 +2223,68 @@ Important Instructions:
       return `Panel ${i + 1}: ${description}`
     }).join('\n')
 
-    // 提取角色描述（从第一个 shot 中提取核心描述作为统一基准）
     const characterDescription = this.extractCharacterDescription(shots[0]?.prompt_text || '')
 
-    // 获取场景描述
     const sceneInput = this.getElement<HTMLTextAreaElement>('directorSceneInput')
     const storyDescription = sceneInput?.value.trim() || 'Continuous cinematic sequence with clear narrative progression'
 
-    // 使用电影级模板
-    return this.cinematicGridPromptTemplate
+    let prompt = `${prefix}${this.cinematicGridPromptTemplate
       .replace('{RATIO}', ratio)
       .replace('{STORY_DESCRIPTION}', storyDescription)
       .replace('{PANEL_DESCRIPTIONS}', panelDescriptions)
-      .replace('{CHARACTER_DESCRIPTION}', characterDescription)
+      .replace('{CHARACTER_DESCRIPTION}', characterDescription)}${suffix}`
+
+    if (negative) {
+      prompt += `\n\nNegative prompt: ${negative}`
+    }
+
+    return prompt
+  }
+
+  /**
+   * 通用 9 宫格提示词生成（非 cinematic 模板 + 9grid 布局）
+   * 保留 9 宫格比例约束和网格要求，但使用用户选择的风格 prefix/suffix/negative
+   */
+  private generateGeneric9GridPrompt(
+    shots: Array<{ shot_number: string; prompt_text: string }>,
+    layout: LayoutConfig,
+    templatePrefix: string,
+    templateSuffix: string,
+    templateNegative: string
+  ): string {
+    const ratio = this.currentRatio === 'auto' ? layout.ratio : this.currentRatio
+
+    const panelDescriptions = shots.map((shot, i) => {
+      const description = shot.prompt_text
+        .replace(/'分镜\d+' in the top-left corner\.?\s*/gi, '')
+        .replace(/No timecode,?\s*no subtitles\.?\s*/gi, '')
+        .trim()
+      return `Panel ${i + 1}: ${description}`
+    }).join('\n')
+
+    const characterDescription = this.extractCharacterDescription(shots[0]?.prompt_text || '')
+
+    const sceneInput = this.getElement<HTMLTextAreaElement>('directorSceneInput')
+    const storyDescription = sceneInput?.value.trim() || 'Continuous sequence with clear narrative progression'
+
+    let prompt = `${templatePrefix}A precise 3x3 grid storyboard with 9 equal panels.
+Aspect Ratio: The entire image is ${ratio}, each panel is also ${ratio}.
+Layout: Symmetrical grid, hard borders, clean dividing lines.
+
+Art Style: ${this.getArtStyleDescription()}
+
+Story Sequence: ${storyDescription}
+
+Panel Breakdown:
+${panelDescriptions}
+
+Character Consistency: ${characterDescription}${templateSuffix}`
+
+    if (templateNegative) {
+      prompt += `\n\nNegative prompt: ${templateNegative}`
+    }
+
+    return prompt
   }
 
   /**
@@ -2237,7 +2360,7 @@ Important Instructions:
 
     let comicPrompt = `${templatePrefix}Create a single comic page image with ${panelCount} panels arranged in a ${layout.rows}x${layout.cols} grid layout.
 
-Art Style: Maintain consistent art style throughout all panels. Professional manga/comic quality.
+Art Style: ${this.getArtStyleDescription()}
 
 Panel Descriptions:
 ${panelPrompts.join('\n')}
@@ -2265,6 +2388,68 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
   }
 
   /**
+   * 类型守卫：判断 key 是否为内置模板
+   */
+  private isBuiltinTemplate(key: string): key is StyleTemplateKey {
+    return key in this.styleTemplates
+  }
+
+  /**
+   * 获取当前选中模板的数据（兼容内置模板和自定义模板）
+   */
+  private getCurrentTemplateData(): StyleTemplate | null {
+    if (this.currentTemplate) return this.styleTemplates[this.currentTemplate]
+    if (this.currentCustomTemplateKey) return this.customTemplates[this.currentCustomTemplateKey] || null
+    return null
+  }
+
+  /**
+   * 根据当前模板选择对应的 Gem 系统提示词（exhaustive switch）
+   * cinematic 使用专用导演级提示词，其他模板使用北风诉苦通用提示词
+   */
+  private getGemSystemPromptForTemplate(): string {
+    switch (this.currentTemplate) {
+      case 'cinematic':
+        return this.cinematicGemSystemPrompt
+      case 'theatrical':
+      case 'anime':
+      case 'manga':
+      case 'movie':
+      case 'webtoon':
+      case 'comic':
+      case 'illustration':
+      case null:
+        return this.gemSystemPrompt
+      default: {
+        const _exhaustiveCheck: never = this.currentTemplate
+        console.warn('[DirectorPage] Unhandled template in getGemSystemPromptForTemplate:', _exhaustiveCheck)
+        return this.gemSystemPrompt
+      }
+    }
+  }
+
+  /**
+   * 根据当前选中的风格模板动态生成 Art Style 描述
+   * 避免硬编码特定风格，确保提示词与用户选择一致
+   */
+  private getArtStyleDescription(): string {
+    if (!this.currentTemplate) {
+      return 'Professional quality, consistent visual style throughout all panels.'
+    }
+    const styleMap: Record<StyleTemplateKey, string> = {
+      anime: 'Professional anime screencap quality with cel shading and TV anime coloring.',
+      manga: 'Professional manga quality with ink lines, screentone and dynamic composition.',
+      movie: 'Professional cinematic quality with film-grade lighting and depth of field.',
+      webtoon: 'Professional webtoon quality with clean lineart and vibrant full-color shading.',
+      comic: 'Professional comic book quality with bold lineart and high contrast halftone.',
+      illustration: 'Professional illustration quality with rich details and artistic lighting.',
+      cinematic: 'Award-winning trailer storyboard quality, cinematic contact sheet with photorealistic 8K keyframes, natural depth of field, emotional progression from setup through payoff.',
+      theatrical: 'Professional theatrical anime quality, 劇場版 level cel shading and cinematic composition.'
+    }
+    return styleMap[this.currentTemplate]
+  }
+
+  /**
    * 获取当前风格模板的 JSON shots 配置
    * 直接将风格参数集成到 AI 生成的 JSON 结构中
    */
@@ -2278,9 +2463,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
     additionalRules: string
   } {
     const template = this.currentTemplate
-    const templateData = template 
-      ? (this.styleTemplates[template] || this.customTemplates[template])
-      : null
+    const templateData = this.getCurrentTemplateData()
 
     // 默认配置
     const defaultConfig = {
@@ -2289,15 +2472,15 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
       negative: 'blurry, lowres, bad anatomy, worst quality, inconsistent style',
       shotPrefix: '',
       shotSuffix: '',
-      styleInstructions: '使用电影级分镜语言，保持角色和环境的一致性。',
+      styleInstructions: '保持角色外观和环境的一致性，使用专业的分镜构图。',
       additionalRules: ''
     }
 
-    if (!templateData) {
+    if (!templateData || !template) {
       return defaultConfig
     }
 
-    // 根据不同模板返回不同配置
+    // 根据不同模板返回不同配置（exhaustive switch on StyleTemplateKey）
     switch (template) {
       case 'theatrical':
         return {
@@ -2332,25 +2515,39 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
           prefix: templateData.prefix,
           suffix: templateData.suffix,
           negative: templateData.negative,
-          shotPrefix: 'Cinematic storyboard panel, ',
-          shotSuffix: ', photorealistic, sequence photography, 8K resolution',
+          shotPrefix: 'Cinematic keyframe, award-winning trailer storyboard panel, ',
+          shotSuffix: ', photorealistic, sequence photography, 8K resolution, natural depth of field',
           styleInstructions: `
-【电影级九宫格风格要求】
-- 生成精确的 3x3 网格分镜板 (split screen, comic book layout)
-- 分形几何原则：总图和单格比例必须完全一致
-- 对称网格，硬边框，干净的白色分隔线
-- 禁止文字、对话气泡
-- 所有 9 个面板必须保持角色、服装、光照的绝对一致
+【电影级导演分镜风格要求 - Trailer Director + Cinematographer + Storyboard Artist】
+
+你是一位获奖预告片导演 + 电影摄影师 + 分镜画师。你的任务：将参考图扩展为一个连贯的电影短片序列，输出 AI 视频就绪的关键帧。
+
+核心原则（不可违反）：
+1. 首先分析完整构图：识别所有关键主体（人物/群体/载具/物体/动物/道具/环境元素），描述空间关系和互动
+2. 禁止猜测真实身份、确切现实地点或品牌所有权，仅描述可见事实
+3. 严格连续性：所有分镜保持相同的主体、服装/外观、环境、时段和光照风格
+4. 景深必须真实：广角镜头景深更深，特写镜头景深更浅并带自然散景(bokeh)
+5. 禁止引入参考图中不存在的新角色/物体
+
+目标：将画面扩展为 10-20 秒的电影片段，具有清晰的情感递进 (setup → build → turn → payoff)
+
+输出要求 - 电影级 Contact Sheet：
+- 输出一张包含所有关键帧的单一主图（Cinematic Contact Sheet / Storyboard Grid）
+- 默认网格 3x3，超过 9 帧则使用 4x3 或 5x3
+- 每个面板必须清晰标注：KF编号 + 景别类型 + 建议时长
+- 所有面板之间严格保持连续性
 
 关键标签（必须包含在每个 shot 中）:
-- Symmetrical grid, hard borders
-- Same characters, same outfit, same lighting
-- Cinematic lighting, photorealistic
-- 8K resolution`,
+- Cinematic Contact Sheet, award-winning trailer storyboard
+- Same characters, same wardrobe, same environment, same lighting
+- Natural depth of field (deeper in wides, shallower in close-ups with bokeh)
+- Emotional progression: setup → build → turn → payoff`,
           additionalRules: `
-6. 【电影级专用】严格保持九宫格比例一致性
-7. 【电影级专用】禁止不规则面板(irregular panels)、不对称网格(asymmetric grid)
-8. 【电影级专用】每个面板必须有清晰的叙事承接关系`
+6. 【导演级专用】每个 shot 必须标注 KF 编号、景别类型和建议时长（如 "KF1 - Wide Establishing - 2s"）
+7. 【导演级专用】情感递进必须遵循 setup → build → turn → payoff 四幕结构
+8. 【导演级专用】景深规则：广角用深景深，特写用浅景深+自然散景，禁止全程统一景深
+9. 【导演级专用】禁止引入参考图中不存在的新角色或物体
+10. 【导演级专用】禁止猜测真实身份、品牌或地名，仅描述可见视觉元素`
         }
 
       case 'anime':
@@ -2386,16 +2583,44 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
           additionalRules: ''
         }
 
-      default:
+      case 'webtoon':
         return {
-          prefix: templateData.prefix || '',
-          suffix: templateData.suffix || defaultConfig.suffix,
-          negative: templateData.negative || defaultConfig.negative,
-          shotPrefix: '',
-          shotSuffix: '',
-          styleInstructions: defaultConfig.styleInstructions,
+          prefix: templateData.prefix,
+          suffix: templateData.suffix,
+          negative: templateData.negative,
+          shotPrefix: 'webtoon panel, full color, ',
+          shotSuffix: ', clean lineart, soft shading, vibrant colors',
+          styleInstructions: '使用韩式条漫风格，全彩柔和着色，清晰线条。',
           additionalRules: ''
         }
+
+      case 'comic':
+        return {
+          prefix: templateData.prefix,
+          suffix: templateData.suffix,
+          negative: templateData.negative,
+          shotPrefix: 'comic book panel, bold lineart, ',
+          shotSuffix: ', high contrast, halftone dots, dynamic composition',
+          styleInstructions: '使用美式漫画风格，粗线条，高对比度，半调网点。',
+          additionalRules: ''
+        }
+
+      case 'illustration':
+        return {
+          prefix: templateData.prefix,
+          suffix: templateData.suffix,
+          negative: templateData.negative,
+          shotPrefix: 'illustration, artistic, ',
+          shotSuffix: ', rich details, beautiful lighting, professional illustration',
+          styleInstructions: '使用精美插画风格，丰富细节，艺术光影。',
+          additionalRules: ''
+        }
+
+      default: {
+        const _exhaustiveCheck: never = template
+        console.warn('[DirectorPage] Unhandled template in getStyleConfigForJsonShots:', _exhaustiveCheck)
+        return defaultConfig
+      }
     }
   }
 
@@ -3341,7 +3566,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
       layout: this.currentLayout,
       ratio: this.currentRatio,
       resolution: this.currentResolution,
-      template: this.currentTemplate,
+      template: this.currentTemplate || this.currentCustomTemplateKey,
       imageCount: imageCountSlider?.value || '1',
       sceneDescription: sceneInput?.value || '',
       multiScenePrompts: multiSceneInput?.value || '',
@@ -3397,11 +3622,11 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
     if (state.referenceImages?.length) {
       // 恢复参考图并重新生成 ID
       this.referenceImages = state.referenceImages
-        .filter(img => img?.base64)
+        .filter((img): img is DirectorReferenceImage => !!img?.base64)
         .map((img, index) => ({
           ...img,
           id: img.id || Date.now() + index
-        })) as DirectorReferenceImage[]
+        }))
       this.updateReferenceImagesPreview()
     }
 
@@ -3810,7 +4035,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
       const template: StyleTemplate = { name, prefix, suffix, negative }
       
       if (this.editingTemplateKey) {
-        if (this.editingTemplateIsBuiltin) {
+        if (this.editingTemplateIsBuiltin && this.isBuiltinTemplate(this.editingTemplateKey)) {
           // 覆盖内置模板
           this.templateOverrides[this.editingTemplateKey] = template
           this.styleTemplates[this.editingTemplateKey] = template
@@ -3868,12 +4093,11 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
     if (!confirm(confirmMsg)) return
     
     try {
+      if (!this.editingTemplateKey || !this.isBuiltinTemplate(this.editingTemplateKey)) return
       const original = this.defaultStyleTemplates[this.editingTemplateKey]
       
       if (original) {
-        // 移除覆盖
         delete this.templateOverrides[this.editingTemplateKey]
-        // 恢复默认值
         this.styleTemplates[this.editingTemplateKey] = JSON.parse(JSON.stringify(original))
         
         this.saveTemplatesToStorage()
@@ -3922,7 +4146,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
       
       // 应用覆盖
       for (const key of Object.keys(this.templateOverrides)) {
-        if (this.styleTemplates[key]) {
+        if (this.isBuiltinTemplate(key)) {
           this.styleTemplates[key] = this.templateOverrides[key]
         }
       }
