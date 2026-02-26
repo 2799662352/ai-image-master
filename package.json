@@ -38,11 +38,15 @@
     "release": "npm run build:vite && electron-builder --publish always"
   },
   "dependencies": {
+    "@langchain/core": "^1.1.28",
+    "@langchain/google": "^0.1.2",
+    "@langchain/openai": "^1.2.10",
     "browser-image-compression": "^2.0.2",
     "choices.js": "^11.1.0",
     "electron-store": "^8.1.0",
     "electron-updater": "^6.7.3",
-    "jszip": "^3.10.1"
+    "jszip": "^3.10.1",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.0",

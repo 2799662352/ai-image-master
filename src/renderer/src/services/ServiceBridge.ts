@@ -8,6 +8,7 @@
  */
 
 import { getStorageBridge, StorageBridge } from './storage'
+import { LangChainDirectorService } from './LangChainDirectorService'
 import { getI18nService, I18nService } from './i18n'
 import { getApiService, ApiService } from './api'
 import { getR2StorageService, R2StorageService, initR2StorageGlobal } from './r2-storage'
@@ -175,7 +176,10 @@ export const SERVICE_KEYS = {
   UPDATE_NOTIFICATION: 'updateNotification',
   
   // V18 新增
-  PERFORMANCE_DASHBOARD: 'performanceDashboard'
+  PERFORMANCE_DASHBOARD: 'performanceDashboard',
+
+  // V19 新增 - LangChain AI 服务
+  LANGCHAIN_DIRECTOR: 'langchainDirector'
 } as const
 
 export type ServiceKey = typeof SERVICE_KEYS[keyof typeof SERVICE_KEYS]
@@ -979,6 +983,33 @@ export function initDirectorPage(app: AppInterface): DirectorPage {
   window.directorPageTS = page
   console.log('[ServiceBridge] ✓ DirectorPage (TS) 实例已创建')
   return page
+}
+
+/**
+ * 获取或创建 LangChain Director Service 实例（懒加载）
+ * 需要 visionApiKey 才能创建，否则返回 null
+ * 当 API key 变更时自动重建实例
+ */
+let _langchainDirectorInstance: LangChainDirectorService | null = null
+let _langchainCacheKey: string | null = null
+
+export function getLangChainDirectorService(): LangChainDirectorService | null {
+  const api = (window as any).aiImageAPI
+  const apiKey = api?.visionApiKey as string | undefined
+  if (!apiKey) return null
+
+  const site = api?.getCurrentSite?.()
+  const baseURL = site?.baseURL as string | undefined
+  if (!baseURL) return null
+
+  const cacheKey = `${apiKey}|${baseURL}`
+  if (!_langchainDirectorInstance || _langchainCacheKey !== cacheKey) {
+    _langchainDirectorInstance = new LangChainDirectorService({ apiKey, baseURL })
+    _langchainCacheKey = cacheKey
+    ServiceRegistry.register(SERVICE_KEYS.LANGCHAIN_DIRECTOR, _langchainDirectorInstance)
+    console.log('[ServiceBridge] ✓ LangChainDirectorService 实例已创建, baseURL:', baseURL)
+  }
+  return _langchainDirectorInstance
 }
 
 /**

@@ -5,6 +5,8 @@
  */
 
 import { BasePage, AppInterface, PageState } from './BasePage'
+import type { ShotsResponse } from '../services/LangChainDirectorService'
+import { getLangChainDirectorService } from '../services/ServiceBridge'
 
 // ==================== 类型定义 ====================
 
@@ -1790,6 +1792,7 @@ For emotional moments, use Start-Transition-End micro-arc within a single panel:
     this.isGenerating = true
     this.lastCharacterAnchor = null
     this.lastParsedPanels = null
+    this.lastShotsResponse = null
     this.updateGenerateButtonState()
     this.generatedResults = []
 
@@ -1871,6 +1874,8 @@ For emotional moments, use Start-Transition-End micro-arc within a single panel:
    */
   private async startMultiGeneration(): Promise<void> {
     this.lastCharacterAnchor = null
+    this.lastParsedPanels = null
+    this.lastShotsResponse = null
     const multiSceneInput = this.getElement<HTMLTextAreaElement>('directorMultiSceneInput')
     const prompts = this.parseMultiPrompts(multiSceneInput?.value || '')
 
@@ -2074,7 +2079,48 @@ Output must be in English. Use concise descriptions suitable for image generatio
       templateNegative = currentTemplateData.negative || ''
     }
 
-    // 尝试使用 Gem AI 生成 JSON 格式（需要有参考图片和 Vision API Key）
+    // 优先使用 LangChain 结构化输出
+    const langchainService = getLangChainDirectorService()
+    if (langchainService && this.referenceImages.length > 0) {
+      try {
+        console.log('[DirectorPage] Using LangChain structured output...')
+        const images = this.referenceImages.map(img => ({
+          base64: img.base64, mimeType: img.mimeType || 'image/jpeg'
+        }))
+        const styleConfig = this.getStyleConfigForJsonShots()
+        const shotsResponse = await langchainService.generateShots({
+          imageAnalysis, sceneDescription, panelCount,
+          layoutRows: layout.rows, layoutCols: layout.cols,
+          layoutRatio: layout.ratio || '16:9',
+          viewDistribution: this.calculateViewDistribution(panelCount),
+          styleInstructions: styleConfig.styleInstructions,
+          additionalRules: styleConfig.additionalRules,
+          images,
+          systemPrompt: this.getGemSystemPromptForTemplate()
+        })
+        console.log('[DirectorPage] LangChain success:', shotsResponse.shots.length, 'shots')
+
+        this.lastCharacterAnchor = shotsResponse.character_anchor
+        this.lastShotsResponse = shotsResponse
+        this.lastParsedPanels = shotsResponse.shots.map((shot, i) => ({
+          id: i + 1, shot: shot.kf, lens: shot.lens,
+          spatial: shot.spatial, action: shot.action, light: shot.light
+        }))
+        this.lastGeneratedShots = shotsResponse.shots.map((shot, i) => ({
+          shot_number: shot.label || `分镜${i + 1}`,
+          prompt_text: JSON.stringify(shot)
+        }))
+
+        return this.convertJsonShotsToPrompt(
+          this.lastGeneratedShots, panelCount, layout,
+          templatePrefix, templateSuffix, templateNegative
+        )
+      } catch (error) {
+        console.warn('[DirectorPage] LangChain failed, trying legacy path:', error)
+      }
+    }
+
+    // 回退: 使用旧版 Gem AI 生成 JSON 格式
     const api = this.getApi()
     if (this.referenceImages.length > 0 && api.visionApiKey) {
       try {
@@ -2082,7 +2128,6 @@ Output must be in English. Use concise descriptions suitable for image generatio
         const jsonShots = await this.generateJsonShots(imageAnalysis, sceneDescription, panelCount, layout)
         if (jsonShots && jsonShots.length > 0) {
           console.log('[DirectorPage] Gem AI 生成成功:', jsonShots.length, '个分镜')
-          // 缓存 shots 数据，用于生成视频提示词
           this.lastGeneratedShots = jsonShots
           return this.convertJsonShotsToPrompt(jsonShots, panelCount, layout, templatePrefix, templateSuffix, templateNegative)
         }
@@ -2464,13 +2509,32 @@ ${styleConfig.additionalRules}
     characterCard: string = ''
   ): string {
     const videoSequences = shots.map((shot, i) => {
-      // 提取镜头类型和描述
-      const shotText = shot.prompt_text
-        .replace(/'分镜\d+' in the top-left corner\.?\s*/gi, '')
-        .replace(/No timecode,?\s*no subtitles\.?\s*/gi, '')
-        .trim()
-      
-      return `${i + 1}. ${shotText}`
+      // Priority 1: Use LangChain structured response
+      const structuredShot = this.lastShotsResponse?.shots[i]
+      if (structuredShot) {
+        const parts = [structuredShot.kf, structuredShot.lens, structuredShot.action]
+        const sp = structuredShot.spatial
+        parts.push(`FG: ${sp.fg}, MG: ${sp.mg}, BG: ${sp.bg}`)
+        parts.push(structuredShot.light)
+        return `${i + 1}. ${parts.filter(Boolean).join(', ')}`
+      }
+      // Priority 2: Use cached parsed panels
+      const panel = this.lastParsedPanels?.[i]
+      if (panel?.lens && panel?.action) {
+        const parts = [panel.shot, panel.lens, panel.action]
+        if (panel.spatial) {
+          parts.push(`FG: ${panel.spatial.fg}, MG: ${panel.spatial.mg}, BG: ${panel.spatial.bg}`)
+        }
+        if (panel.light) parts.push(panel.light)
+        return `${i + 1}. ${parts.filter(Boolean).join(', ')}`
+      }
+      // Priority 3: Try JSON parse, then raw text
+      try {
+        const p = JSON.parse(shot.prompt_text)
+        return `${i + 1}. ${[p.kf, p.lens, p.action, p.light].filter(Boolean).join(', ')}`
+      } catch {
+        return `${i + 1}. ${shot.prompt_text.replace(/'分镜\d+'.*/gi, '').trim()}`
+      }
     }).join('\n')
 
     return this.sora2VideoPromptTemplate
@@ -2491,6 +2555,7 @@ ${styleConfig.additionalRules}
   private lastGeneratedShots: Array<{ shot_number: string; prompt_text: string }> | null = null
   private lastParsedPanels: JsonPromptPanel[] | null = null
   private lastCharacterAnchor: string | null = null
+  private lastShotsResponse: ShotsResponse | null = null
 
   /**
    * 模板方式生成提示词（回退模式）
