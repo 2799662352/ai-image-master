@@ -2311,7 +2311,7 @@ ${panelDescriptions}
     // When anchor exists, embed it ONCE here as the single authoritative definition.
     // Shots reference it via short tag to avoid 11x repetition that drowns layout instructions.
     if (this.lastCharacterAnchor) {
-      return `${this.lastCharacterAnchor}. All panels must depict this exact character.`
+      return `${this.lastCharacterAnchor}. Maintain exact facial proportions, hairstyle, hair color, eye color, skin tone, and outfit from reference in every panel.`
     }
 
     let description = promptText
