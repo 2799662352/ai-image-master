@@ -434,10 +434,10 @@ Output as JSON code block with the following structure.
 
 Character Anchor: You MUST define a "character_anchor" field containing a detailed description of EVERY subject from the reference image. Include: gender, approximate age, hair (color+style+length), eye color, skin tone, facial features, exact clothing (type+color+pattern+accessories), body build/height.
 
-IMPORTANT: Do NOT repeat the full character_anchor in every shot's prompt_text. Instead, each shot should use a SHORT reference like "same character as anchor" and focus its token budget on camera setup, environment, action, and lighting. The character_anchor field itself is the single source of truth.
+IMPORTANT: Do NOT repeat the full character_anchor in every shot's prompt_text. Instead, each shot should use a SHORT reference like "same character — maintain exact facial proportions and outfit from reference" and focus its token budget on camera setup, environment, action, and lighting. The character_anchor field itself is the single source of truth.
 
 Each shot's prompt_text must follow the pattern:
-"[KF Label + Shot Type + Duration], [Camera Setup + Lens + Movement], same character as anchor, [Environment + Action + Pose], [Lighting + DoF + Mood]. 'KF{N}' in the top-left corner. No timecode, no subtitles."
+"[KF Label + Shot Type + Duration], [Camera Setup + Lens + Movement], same character — maintain exact facial proportions and outfit from reference, [Environment + Action + Pose], [Lighting + DoF + Mood]. 'KF{N}' in the top-left corner. No timecode, no subtitles."
 </output_format>
 
 <shot_design_vocabulary>
@@ -2073,11 +2073,11 @@ ${styleConfig.styleInstructions}
   "style_prefix": "${styleConfig.prefix}",
   "style_suffix": "${styleConfig.suffix}",
   "negative_prompt": "${styleConfig.negative}",
-  "character_anchor": "[从参考图提取的精确人物描述: 性别、年龄、发型(颜色+款式+长度)、瞳色、肤色、面部特征、精确服装(类型+颜色+图案+配饰)、体型。此字段为全局锚点，shot 中用短引用 'same character as anchor' 即可，不要重复完整描述]",
+  "character_anchor": "[从参考图提取的精确人物描述: 性别、年龄、发型(颜色+款式+长度)、瞳色、肤色、面部特征、精确服装(类型+颜色+图案+配饰)、体型。此字段为全局锚点，shot 中用 'same character — maintain exact facial proportions and outfit from reference' 即可]",
   "shots": [
     {
       "shot_number": "分镜1",
-      "prompt_text": "${styleConfig.shotPrefix}[Camera Setup], same character as anchor, [Scene + Action]${styleConfig.shotSuffix}. '分镜1' in the top-left corner. No timecode, no subtitles."
+      "prompt_text": "${styleConfig.shotPrefix}[Camera Setup], same character — maintain exact facial proportions and outfit from reference, [Scene + Action]${styleConfig.shotSuffix}. '分镜1' in the top-left corner. No timecode, no subtitles."
     }
     // ... 共 ${panelCount} 个
   ]
@@ -2088,7 +2088,7 @@ ${styleConfig.styleInstructions}
 1. 所有 prompt_text 必须是英文
 2. 每个 prompt_text 必须包含 "'分镜X' in the top-left corner. No timecode, no subtitles."
 3. **【关键】必须定义 character_anchor 字段，包含从参考图提取的完整人物外观描述（发色、发型、瞳色、服装细节等）。如果参考图中有人物，此字段为【必填】。**
-4. **【重要】每个 shot 的 prompt_text 中不要重复完整 character_anchor 文本！用简短引用 "same character as anchor" 即可。把 token 预算留给镜头、环境和动作描述。**
+4. **【重要】每个 shot 的 prompt_text 中不要重复完整 character_anchor 文本！用 "same character — maintain exact facial proportions and outfit from reference" 即可。把 token 预算留给镜头、环境和动作描述。**
 5. 禁止使用 Medium Shot、Long Shot、Close-up 等平庸描述
 6. 每个 shot 的 prompt_text 必须包含风格前缀和后缀标签
 ${styleConfig.additionalRules}
@@ -2155,7 +2155,7 @@ ${styleConfig.additionalRules}
           const idx = shots.length + 1
           shots.push({
             shot_number: `分镜${idx}`,
-            prompt_text: `Full Body Shot, same character as anchor, neutral pose. '分镜${idx}' in the top-left corner. No timecode, no subtitles.`
+            prompt_text: `Full Body Shot, same character — maintain exact facial proportions and outfit from reference, neutral pose. '分镜${idx}' in the top-left corner. No timecode, no subtitles.`
           })
         }
         
@@ -2589,7 +2589,7 @@ ${panelPrompts.join('\n')}
 8. 【导演级专用】景深规则：广角用深景深，特写用浅景深+自然散景，禁止全程统一景深
 9. 【导演级专用】禁止引入参考图中不存在的新角色或物体
 10. 【导演级专用】禁止猜测真实身份、品牌或地名，仅描述可见视觉元素
-11. 【关键-角色锚点】必须定义 character_anchor 字段（发色+发型+瞳色+服装细节+体型），但 shot 中只需简短引用 "same character as anchor"，不要重复完整描述以节省 token`
+11. 【关键-角色锚点】必须定义 character_anchor 字段（发色+发型+瞳色+服装细节+体型），但 shot 中只需写 "same character — maintain exact facial proportions and outfit from reference"，不要重复完整描述`
         }
 
       case 'anime':
