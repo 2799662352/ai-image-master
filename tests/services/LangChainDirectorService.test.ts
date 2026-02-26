@@ -21,6 +21,27 @@ const NULL_FIELDS = {
   body_physics: null, composition: null, emotion_target: null
 } as const
 
+const SCENE_FIELDS = {
+  scene: {
+    d: 'setup → build → payoff',
+    cap: 'test-subject-action-env',
+    env: 'interior, warm light, neo-noir',
+    bgm: { base: 'ambient drone', env: 'rain', action: 'footsteps', melody: 'sparse piano' },
+    tension: 'test dramatic tension'
+  },
+  objs: [{
+    n: 'test character', f: 'black hair, red dress', s: 'MG center',
+    p: 'articulated biped', t: 'hair+dress invariant S1-S9', psych: null
+  }],
+  notes: null
+} as const
+
+const SHOT_SEQ_FIELDS = {
+  seq: 'S1: opening shot',
+  alignment: { coarse: 'establishing', medium: 'static', fine: 'no change' },
+  motion: null
+} as const
+
 beforeEach(() => {
   mockStructuredInvoke.mockReset()
   mockInvoke.mockReset()
@@ -40,7 +61,8 @@ describe('Zod Schema Validation', () => {
       atmosphere: 'thin dust motes',
       body_physics: null,
       composition: 'rule of thirds',
-      emotion_target: 'quiet relief'
+      emotion_target: 'quiet relief',
+      ...SHOT_SEQ_FIELDS
     }
     const result = ShotSchema.safeParse(validShot)
     expect(result.success).toBe(true)
@@ -53,8 +75,8 @@ describe('Zod Schema Validation', () => {
       action: 'gazes down',
       light: 'warm 4500K',
       label: '分镜1',
-      micro_expression: null, color_grade: null, atmosphere: null,
-      body_physics: null, composition: null, emotion_target: null
+      ...NULL_FIELDS,
+      ...SHOT_SEQ_FIELDS
     }
     const result = ShotSchema.safeParse(badShot)
     expect(result.success).toBe(false)
@@ -68,7 +90,8 @@ describe('Zod Schema Validation', () => {
       action: 'walks forward',
       light: 'natural ambient',
       label: '分镜1',
-      ...NULL_FIELDS
+      ...NULL_FIELDS,
+      ...SHOT_SEQ_FIELDS
     }
     const result = ShotSchema.safeParse(badShot)
     expect(result.success).toBe(false)
@@ -76,6 +99,7 @@ describe('Zod Schema Validation', () => {
 
   it('should validate a full ShotsResponse', () => {
     const response = {
+      ...SCENE_FIELDS,
       character_anchor: 'Young woman, black hair, blue eyes',
       shots: [
         {
@@ -85,8 +109,8 @@ describe('Zod Schema Validation', () => {
           action: 'gazes down',
           light: 'soft warm 4500K',
           label: '分镜1',
-          micro_expression: null, color_grade: null, atmosphere: null,
-          body_physics: null, composition: null, emotion_target: null
+          ...NULL_FIELDS,
+          ...SHOT_SEQ_FIELDS
         }
       ]
     }
@@ -106,7 +130,8 @@ describe('LangChainDirectorService', () => {
         action: 'gazes down',
         light: 'warm 4500K',
         label: '分镜1',
-        ...NULL_FIELDS
+        ...NULL_FIELDS,
+        ...SHOT_SEQ_FIELDS
       }
     ]
     const nl = service.shotsToNaturalLanguage(shots)
@@ -120,6 +145,7 @@ describe('LangChainDirectorService', () => {
   it('should build compact JSON prompt from ShotsResponse', () => {
     const service = new LangChainDirectorService({ apiKey: 'test-key', baseURL: 'https://api.test.com' })
     const shotsResponse = {
+      ...SCENE_FIELDS,
       character_anchor: 'Young woman, black hair',
       shots: [
         {
@@ -129,7 +155,8 @@ describe('LangChainDirectorService', () => {
           action: 'gazes down',
           light: 'warm 4500K',
           label: '分镜1',
-          ...NULL_FIELDS
+          ...NULL_FIELDS,
+          ...SHOT_SEQ_FIELDS
         }
       ]
     }
@@ -144,17 +171,22 @@ describe('LangChainDirectorService', () => {
     expect(parsed.s).toBe('Young woman, black hair')
     expect(parsed.p[0].l).toBe('85mm static')
     expect(parsed.p[0].sp.fg).toBe('glass')
+    expect(parsed.scene.d).toBe('setup → build → payoff')
+    expect(parsed.scene.bgm.base).toBe('ambient drone')
+    expect(parsed.objs[0].n).toBe('test character')
   })
 
   it('should include negative field in compact prompt when provided', () => {
     const service = new LangChainDirectorService({ apiKey: 'test-key', baseURL: 'https://api.test.com' })
     const shotsResponse = {
+      ...SCENE_FIELDS,
       character_anchor: 'Man with hat',
       shots: [{
         kf: 'KF1 - WS - 3s', lens: '24mm static',
         spatial: { fg: 'fence', mg: 'man', bg: 'mountains' },
         action: 'walks', light: 'daylight 5600K', label: '分镜1',
-        ...NULL_FIELDS
+        ...NULL_FIELDS,
+        ...SHOT_SEQ_FIELDS
       }]
     }
     const result = service.buildFinalPrompt(shotsResponse, 'comp', 'style', 'story', 'constraints', 'no blur, no text')
@@ -165,11 +197,13 @@ describe('LangChainDirectorService', () => {
   it('should omit negative field when not provided', () => {
     const service = new LangChainDirectorService({ apiKey: 'test-key', baseURL: 'https://api.test.com' })
     const shotsResponse = {
+      ...SCENE_FIELDS,
       character_anchor: 'Man',
       shots: [{
         kf: 'KF1', lens: '50mm', spatial: { fg: 'a', mg: 'b', bg: 'c' },
         action: 'stands', light: 'ambient', label: '分镜1',
-        ...NULL_FIELDS
+        ...NULL_FIELDS,
+        ...SHOT_SEQ_FIELDS
       }]
     }
     const result = service.buildFinalPrompt(shotsResponse, 'c', 's', 'd', 'x')
@@ -179,12 +213,14 @@ describe('LangChainDirectorService', () => {
 
   it('should call structuredLlm.invoke when generateShots is called', async () => {
     const mockResponse = {
+      ...SCENE_FIELDS,
       character_anchor: 'Test character',
       shots: [{
         kf: 'KF1 - CU - 2s', lens: '85mm static',
         spatial: { fg: 'fg', mg: 'mg', bg: 'bg' },
         action: 'walks', light: 'warm', label: '分镜1',
-        ...NULL_FIELDS
+        ...NULL_FIELDS,
+        ...SHOT_SEQ_FIELDS
       }]
     }
     mockStructuredInvoke.mockResolvedValue(mockResponse)
@@ -238,13 +274,21 @@ describe('LangChainDirectorService', () => {
 
 describe('Zod Schema Edge Cases', () => {
   it('should accept ShotsResponse with empty shots array', () => {
-    const response = { character_anchor: 'Someone', shots: [] }
+    const response = { ...SCENE_FIELDS, character_anchor: 'Someone', shots: [] }
     const result = ShotsResponseSchema.safeParse(response)
     expect(result.success).toBe(true)
   })
 
   it('should reject ShotsResponse missing character_anchor', () => {
-    const response = { shots: [{ kf: 'KF1', lens: '50mm', spatial: { fg: 'a', mg: 'b', bg: 'c' }, action: 'x', light: 'y', label: 'z', micro_expression: null, color_grade: null, atmosphere: null, body_physics: null, composition: null, emotion_target: null }] }
+    const response = {
+      ...SCENE_FIELDS,
+      shots: [{
+        kf: 'KF1', lens: '50mm', spatial: { fg: 'a', mg: 'b', bg: 'c' },
+        action: 'x', light: 'y', label: 'z',
+        ...NULL_FIELDS,
+        ...SHOT_SEQ_FIELDS
+      }]
+    }
     const result = ShotsResponseSchema.safeParse(response)
     expect(result.success).toBe(false)
   })
@@ -253,7 +297,8 @@ describe('Zod Schema Edge Cases', () => {
     const badShot = {
       kf: 1, lens: '85mm', spatial: { fg: 'a', mg: 'b', bg: 'c' },
       action: 'walks', light: 'ambient', label: '分镜1',
-      ...NULL_FIELDS
+      ...NULL_FIELDS,
+      ...SHOT_SEQ_FIELDS
     }
     const result = ShotSchema.safeParse(badShot)
     expect(result.success).toBe(false)
@@ -265,7 +310,8 @@ describe('Zod Schema Edge Cases', () => {
       action: 'walks', light: 'ambient', label: '分镜1',
       micro_expression: undefined,
       color_grade: null, atmosphere: null,
-      body_physics: null, composition: null, emotion_target: null
+      body_physics: null, composition: null, emotion_target: null,
+      ...SHOT_SEQ_FIELDS
     }
     const result = ShotSchema.safeParse(shot)
     expect(result.success).toBe(false)
@@ -281,7 +327,8 @@ describe('Zod Schema Edge Cases', () => {
       atmosphere: 'thin dust motes in backlight',
       body_physics: '15-degree lean against wind',
       composition: 'leading lines from railings',
-      emotion_target: 'quiet relief'
+      emotion_target: 'quiet relief',
+      ...SHOT_SEQ_FIELDS
     }
     const result = ShotSchema.safeParse(fullShot)
     expect(result.success).toBe(true)
@@ -292,6 +339,7 @@ describe('Optional fields integration', () => {
   it('should include optional fields in buildFinalPrompt compact output', () => {
     const service = new LangChainDirectorService({ apiKey: 'test-key', baseURL: 'https://api.test.com' })
     const shotsResponse = {
+      ...SCENE_FIELDS,
       character_anchor: 'Woman, black hair',
       shots: [{
         kf: 'KF1 - CU - 2s', lens: '85mm', spatial: { fg: 'a', mg: 'b', bg: 'c' },
@@ -301,7 +349,8 @@ describe('Optional fields integration', () => {
         atmosphere: 'dust motes',
         body_physics: 'leaning forward',
         composition: 'rule of thirds',
-        emotion_target: 'relief'
+        emotion_target: 'relief',
+        ...SHOT_SEQ_FIELDS
       }]
     }
     const result = service.buildFinalPrompt(shotsResponse, 'c', 's', 'd', 'x')
@@ -312,17 +361,21 @@ describe('Optional fields integration', () => {
     expect(parsed.p[0].bp).toBe('leaning forward')
     expect(parsed.p[0].comp).toBe('rule of thirds')
     expect(parsed.p[0].em).toBe('relief')
+    expect(parsed.scene.cap).toBe('test-subject-action-env')
+    expect(parsed.objs).toHaveLength(1)
   })
 
   it('should omit nullable fields from compact output when null', () => {
     const service = new LangChainDirectorService({ apiKey: 'test-key', baseURL: 'https://api.test.com' })
     const shotsResponse = {
+      ...SCENE_FIELDS,
       character_anchor: 'Man',
       shots: [{
         kf: 'KF1', lens: '50mm', spatial: { fg: 'a', mg: 'b', bg: 'c' },
         action: 'walks', light: 'ambient', label: '分镜1',
         micro_expression: null, color_grade: null, atmosphere: null,
-        body_physics: null, composition: null, emotion_target: null
+        body_physics: null, composition: null, emotion_target: null,
+        ...SHOT_SEQ_FIELDS
       }]
     }
     const result = service.buildFinalPrompt(shotsResponse, 'c', 's', 'd', 'x')
@@ -339,7 +392,8 @@ describe('Optional fields integration', () => {
       action: 'gazes', light: 'warm', label: '分镜1',
       micro_expression: 'composure -> smile',
       atmosphere: 'morning haze',
-      body_physics: 'leaning into wind'
+      body_physics: 'leaning into wind',
+      ...SHOT_SEQ_FIELDS
     }]
     const nl = service.shotsToNaturalLanguage(shots)
     expect(nl).toContain('composure -> smile')
