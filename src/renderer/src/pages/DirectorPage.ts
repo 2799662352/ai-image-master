@@ -439,10 +439,20 @@ Step 5 - Contact Sheet Output: Output ONE single master image as a Cinematic Con
 <output_format>
 Output as JSON code block with the following structure.
 
-CRITICAL - Character Anchor: Before writing shots, you MUST define a "character_anchor" field that contains a FIXED, detailed description of EVERY subject from the reference image. This EXACT text must be embedded verbatim in every shot's prompt_text to ensure identical character rendering. Include: gender, approximate age, hair (color+style+length), eye color, skin tone, facial features, exact clothing (type+color+pattern+accessories), body build/height. Do NOT paraphrase or vary this description across shots.
+CRITICAL — Base Prompt Anchoring (inspired by 北风诉苦 v1.1 methodology):
 
-Each shot's prompt_text must follow the pattern:
-"[KF Label + Shot Type + Duration], [Camera Setup + Lens + Movement], [CHARACTER_ANCHOR verbatim], [Environment + Action + Pose], [Lighting + DoF + Mood]. 'KF{N}' in the top-left corner. No timecode, no subtitles."
+Step A) Extract a "character_anchor" from the reference image. This is a FIXED, FROZEN description of ALL subjects: gender, age, hair (color+style+length), eye color, skin tone, facial features, exact clothing (type+color+pattern+accessories), body build, AND the environment/lighting. This text becomes [Base_Prompt] and is IMMUTABLE.
+
+Step B) Each shot's prompt_text MUST follow this strict 4-part formula:
+  [Camera_Setup] + [Base_Prompt] + [Quality_Tags] + [Marking_Instructions]
+
+Where:
+- [Camera_Setup] = "KF{N} - {Shot Type} - {Duration}, {Camera Angle}, {Lens}, {Movement}" — THIS IS THE ONLY PART THAT CHANGES BETWEEN SHOTS
+- [Base_Prompt] = the character_anchor text, copied VERBATIM with ZERO modifications — identical in ALL shots, word-for-word
+- [Quality_Tags] = "masterpiece, best quality, 8K, cinematic lighting, natural depth of field"
+- [Marking_Instructions] = "'分镜{N}' in the top-left corner. No timecode, no subtitles."
+
+ABSOLUTE RULE: The [Base_Prompt] portion must be CHARACTER-FOR-CHARACTER identical across all 9 shots. Do NOT rephrase, do NOT add action verbs, do NOT change adjective order. Copy-paste it exactly.
 </output_format>
 
 <shot_design_vocabulary>
@@ -2070,23 +2080,24 @@ ${styleConfig.styleInstructions}
   "style_prefix": "${styleConfig.prefix}",
   "style_suffix": "${styleConfig.suffix}",
   "negative_prompt": "${styleConfig.negative}",
-  "character_anchor": "[从参考图提取的精确人物描述: 性别、年龄、发型(颜色+款式+长度)、瞳色、肤色、面部特征、精确服装(类型+颜色+图案+配饰)、体型。此描述必须逐字嵌入每个 shot 的 prompt_text 中]",
+  "character_anchor": "[从参考图提取的完整冻结描述（Base_Prompt）: 人物外貌+服装+环境+光影，此文本在所有 shot 中逐字复制，零修改]",
   "shots": [
     {
       "shot_number": "分镜1",
-      "prompt_text": "${styleConfig.shotPrefix}[Camera Setup], [CHARACTER_ANCHOR verbatim], [Scene + Action]${styleConfig.shotSuffix}. '分镜1' in the top-left corner. No timecode, no subtitles."
+      "prompt_text": "${styleConfig.shotPrefix}KF1 - [Shot Type] - [Duration], [Camera Angle + Lens + Movement], [character_anchor 原封不动复制], ${styleConfig.shotSuffix}. '分镜1' in the top-left corner. No timecode, no subtitles."
     }
-    // ... 共 ${panelCount} 个
+    // ... 共 ${panelCount} 个，仅 Camera_Setup 部分变化，Base_Prompt 部分逐字相同
   ]
 }
 \`\`\`
 
-重要：
+重要（一致性绝对优先）：
 1. 所有 prompt_text 必须是英文
-2. 每个 prompt_text 必须包含 "'分镜X' in the top-left corner. No timecode, no subtitles."
-3. **【关键】必须先定义 character_anchor 字段，包含从参考图提取的完整人物外观描述（发色、发型、瞳色、服装细节等），然后在每个 shot 的 prompt_text 中原封不动地嵌入这段描述，禁止在不同 shot 之间变换措辞**
-4. 禁止使用 Medium Shot、Long Shot、Close-up 等平庸描述
-5. 每个 shot 的 prompt_text 必须包含风格前缀和后缀标签
+2. 每个 prompt_text 严格遵循 4 段式公式：[Camera_Setup] + [Base_Prompt] + [Quality_Tags] + [Marking_Instructions]
+3. **【一字不差】character_anchor（即 Base_Prompt）必须在所有 ${panelCount} 个 shot 中逐字逐句完全相同，禁止任何改写、换序、增删。只有 Camera_Setup 部分在不同 shot 间变化**
+4. 每个 prompt_text 必须包含 "'分镜X' in the top-left corner. No timecode, no subtitles."
+5. 禁止使用 Medium Shot、Long Shot、Close-up 等平庸描述
+6. 每个 shot 的 prompt_text 必须包含风格前缀和后缀标签
 ${styleConfig.additionalRules}
 `
 
@@ -2570,7 +2581,7 @@ ${sceneDescription || 'Based on reference image'}${templateSuffix}`
 8. 【导演级专用】景深规则：广角用深景深，特写用浅景深+自然散景，禁止全程统一景深
 9. 【导演级专用】禁止引入参考图中不存在的新角色或物体
 10. 【导演级专用】禁止猜测真实身份、品牌或地名，仅描述可见视觉元素
-11. 【关键-角色锚点】必须定义 character_anchor 字段，包含从参考图提取的精确人物描述（发色+发型+瞳色+服装细节+体型），然后在每个 shot 的 prompt_text 中逐字复制这段描述，严禁在不同 shot 间变换措辞`
+11. 【一字不差-Base_Prompt锚点】参照北风诉苦方法论：character_anchor = Base_Prompt，包含参考图中完整的人物+环境+光影描述。每个 shot 的 prompt_text 中 Base_Prompt 部分必须逐字逐句完全相同（copy-paste），仅 Camera_Setup 部分在不同 shot 间变化`
         }
 
       case 'anime':
