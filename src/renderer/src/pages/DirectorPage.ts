@@ -387,22 +387,16 @@ export class DirectorPage extends BasePage {
   private cinematicGridPromptTemplate = `Cinematic Contact Sheet / Storyboard Grid. ONE single master image containing ALL keyframes.
 Aspect Ratio Constraint: The entire image is {RATIO}, and each individual panel is also strictly {RATIO}.
 Grid: Default 3x3. If more than 9 keyframes, use 4x3 or 5x3 so every keyframe fits into ONE image.
-Layout: Symmetrical grid, hard borders, clean white dividing lines. Each panel clearly labeled: KF number + shot type + suggested duration.
+Layout: Symmetrical grid, hard borders, clean white dividing lines.
 
-Non-Negotiable Continuity Rules:
-- Strict continuity across ALL panels: same subjects, same wardrobe/appearance, same environment, same time-of-day and lighting style.
-- Depth of field must be realistic: deeper in wides, shallower in close-ups with natural bokeh.
-- Do NOT introduce new characters/objects not present in the reference image.
-
-Emotional Progression: setup → build → turn → payoff (10-20 second cinematic clip feel).
+Character Identity (MUST be identical in ALL 9 panels): {CHARACTER_DESCRIPTION}
 
 Story Sequence: {STORY_DESCRIPTION}
 
 Panel Breakdown:
 {PANEL_DESCRIPTIONS}
 
-Visual Style: Cinematic lighting, photorealistic, sequence photography, 8K resolution.
-Character Reference: {CHARACTER_DESCRIPTION}`
+Visual Style: Cinematic lighting, photorealistic, 8K resolution.`
 
   // 电影导演级分镜 Gem 系统提示词（cinematic 模板专用 - trailer director + cinematographer + storyboard artist）
   private cinematicGemSystemPrompt: string = `<role>
@@ -2201,9 +2195,12 @@ ${styleConfig.additionalRules}
       `Panel ${i + 1} (${shot.shot_number}): ${shot.prompt_text}`
     ).join('\n')
 
+    const characterDescription = this.extractCharacterDescription(shots[0]?.prompt_text || '')
+
     let comicPrompt = `${templatePrefix}Create a single comic page image with ${panelCount} panels arranged in a ${layout.rows}x${layout.cols} grid layout.
 
 Art Style: ${this.getArtStyleDescription()}
+Character Identity (same in ALL panels): ${characterDescription}
 
 Panel Descriptions (AI Generated):
 ${panelPrompts}
@@ -2212,10 +2209,7 @@ Important Instructions:
 - Each panel MUST have the corresponding '分镜X' label in the top-left corner
 - No speech bubbles, no dialogue text
 - No timecode, no subtitles
-- Consistent character appearance across all panels
-- Clear panel borders with slight gaps between panels
-- Cinematic lighting and composition
-- High detail and quality rendering${templateSuffix}`
+- Clear panel borders with slight gaps between panels${templateSuffix}`
 
     if (templateNegative) {
       comicPrompt += `\n\nNegative prompt (avoid these): ${templateNegative}`
@@ -2300,12 +2294,12 @@ Layout: Symmetrical grid, hard borders, clean dividing lines.
 
 Art Style: ${this.getArtStyleDescription()}
 
+Character Identity (MUST be identical in ALL 9 panels): ${characterDescription}
+
 Story Sequence: ${storyDescription}
 
 Panel Breakdown:
-${panelDescriptions}
-
-Character Consistency: ${characterDescription}${templateSuffix}`
+${panelDescriptions}${templateSuffix}`
 
     if (templateNegative) {
       prompt += `\n\nNegative prompt: ${templateNegative}`
@@ -2415,9 +2409,14 @@ Character Consistency: ${characterDescription}${templateSuffix}`
       panelPrompts.push(`Panel ${i + 1}: ${viewAngles[i]}, ${userDescription}`)
     }
 
+    const characterAnchor = this.lastCharacterAnchor || ''
+    const characterLine = characterAnchor
+      ? `\nCharacter Identity (same in ALL panels): ${characterAnchor}`
+      : ''
+
     let comicPrompt = `${templatePrefix}Create a single comic page image with ${panelCount} panels arranged in a ${layout.rows}x${layout.cols} grid layout.
 
-Art Style: ${this.getArtStyleDescription()}
+Art Style: ${this.getArtStyleDescription()}${characterLine}
 
 Panel Descriptions:
 ${panelPrompts.join('\n')}
@@ -2426,16 +2425,9 @@ Important Instructions:
 - Each panel should have '分镜{i+1}' label in the top-left corner
 - No speech bubbles, no dialogue text
 - No timecode, no subtitles
-- Consistent character appearance across all panels
 - Clear panel borders with slight gaps between panels
-- Cinematic lighting and composition
-- High detail and quality rendering
 
-Reference Image Analysis:
-${imageAnalysis}
-
-User Scene Description:
-${sceneDescription || 'Based on reference image'}${templateSuffix}`
+Scene Context: ${sceneDescription || imageAnalysis || 'Based on reference image'}${templateSuffix}`
 
     if (templateNegative) {
       comicPrompt += `\n\nNegative prompt (avoid these): ${templateNegative}`
