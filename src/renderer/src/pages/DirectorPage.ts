@@ -2164,6 +2164,7 @@ Output must be in English. Use concise descriptions suitable for image generatio
       templateSuffix = currentTemplateData.suffix || ''
       templateNegative = currentTemplateData.negative || ''
     }
+    console.log('[DirectorPage] 模板负面提示词:', templateNegative ? `"${templateNegative.substring(0, 50)}..."` : '(空/未启用)')
 
     // 优先使用 LangChain 结构化输出
     const langchainService = getLangChainDirectorService(this.visionModel)
@@ -4304,9 +4305,11 @@ ${styleConfig.additionalRules}
       if (suffixInput) suffixInput.value = template.suffix || ''
       if (negativeInput) negativeInput.value = template.negative || ''
 
-      const hasNegative = !!(template.negative?.trim())
+      const userEdited = isBuiltin ? !!(templateKey && this.templateOverrides[templateKey]) : true
+      const negativeOn = userEdited && !!(template.negative?.trim())
+
       if (negativeToggle) {
-        negativeToggle.checked = hasNegative
+        negativeToggle.checked = negativeOn
         negativeToggle.onchange = () => {
           const on = negativeToggle.checked
           if (negativeInput) { negativeInput.disabled = !on; negativeInput.classList.toggle('opacity-30', !on) }
@@ -4314,8 +4317,8 @@ ${styleConfig.additionalRules}
           if (on && negativeInput) negativeInput.focus()
         }
       }
-      if (negativeInput) { negativeInput.disabled = !hasNegative; negativeInput.classList.toggle('opacity-30', !hasNegative) }
-      if (negativeToggleLabel) negativeToggleLabel.textContent = hasNegative ? 'ON' : 'OFF'
+      if (negativeInput) { negativeInput.disabled = !negativeOn; negativeInput.classList.toggle('opacity-30', !negativeOn) }
+      if (negativeToggleLabel) negativeToggleLabel.textContent = negativeOn ? 'ON' : 'OFF'
 
       if (titleEl) titleEl.textContent = this.t('director.templates.editTemplate') || '编辑模板'
       
@@ -4474,10 +4477,9 @@ ${styleConfig.additionalRules}
 
         const negativeToggle = document.getElementById('templateEditorNegativeToggle') as HTMLInputElement
         const negativeToggleLabel = document.getElementById('negativeToggleLabel')
-        const hasNeg = !!(original.negative?.trim())
-        if (negativeToggle) negativeToggle.checked = hasNeg
-        if (negativeInput) { negativeInput.disabled = !hasNeg; negativeInput.classList.toggle('opacity-30', !hasNeg) }
-        if (negativeToggleLabel) negativeToggleLabel.textContent = hasNeg ? 'ON' : 'OFF'
+        if (negativeToggle) negativeToggle.checked = false
+        if (negativeInput) { negativeInput.disabled = true; negativeInput.classList.add('opacity-30') }
+        if (negativeToggleLabel) negativeToggleLabel.textContent = 'OFF'
         
         this.app.showToast?.(this.t('director.messages.restoredDefaults') || '已恢复默认值', 'success')
       }
