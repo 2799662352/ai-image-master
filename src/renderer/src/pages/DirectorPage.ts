@@ -2163,6 +2163,14 @@ Output must be in English. Use concise descriptions suitable for image generatio
       templatePrefix = currentTemplateData.prefix || ''
       templateSuffix = currentTemplateData.suffix || ''
       templateNegative = currentTemplateData.negative || ''
+
+      if (templateNegative && this.currentTemplate) {
+        const isBuiltin = BUILTIN_TEMPLATE_KEYS.has(this.currentTemplate)
+        const userEdited = isBuiltin ? !!(this.templateOverrides[this.currentTemplate]) : true
+        if (!userEdited) {
+          templateNegative = ''
+        }
+      }
     }
     console.log('[DirectorPage] 模板负面提示词:', templateNegative ? `"${templateNegative.substring(0, 50)}..."` : '(空/未启用)')
 
