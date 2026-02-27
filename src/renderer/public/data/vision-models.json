@@ -23,6 +23,17 @@
       "recommended": true
     },
     {
+      "id": "gemini-3-flash-preview",
+      "name": "Gemini 3 Flash",
+      "displayName": "Gemini 3 Flash",
+      "shortName": "Gemini 3 Flash",
+      "description": "Google Gemini 3 Flash 预览版，快速多模态理解",
+      "features": ["快速响应", "多模态", "性价比高"],
+      "price": "$0.1/$0.4 per 1M tokens",
+      "icon": "⚡",
+      "recommended": true
+    },
+    {
       "id": "gemini-2.5-flash-preview-09-2025",
       "name": "Gemini 2.5 Flash",
       "displayName": "Gemini 2.5 Flash",
