@@ -705,6 +705,11 @@
         "description": "Google 最新旗舰预览版，强大的多模态能力",
         "features": ["旗舰性能", "多图理解", "深度分析"]
       },
+      "gemini-3-flash-preview": {
+        "displayName": "Gemini 3 Flash Preview",
+        "description": "Gemini 3 轻量高速版，极致性价比的多模态理解",
+        "features": ["极速响应", "超高性价比", "多模态理解"]
+      },
       "gemini-2.5-flash-preview-09-2025": {
         "displayName": "Gemini 2.5 Flash",
         "description": "快速响应版本，性价比极高",

@@ -60,11 +60,13 @@ export default defineConfig({
               return 'vendor'
             }
             
-            // V17: 合并 core, services, feature-history 到同一 chunk
-            // 解决循环依赖警告: services -> core -> services, feature-history -> services -> feature-history
+            // V18: 合并 core, services, feature-history, DirectorPage, HistoryPage 到同一 chunk
+            // 解决循环依赖: ServiceBridge ↔ DirectorPage, HistoryPage ↔ features/history
             if (id.includes('src/renderer/src/core') || 
                 id.includes('src/renderer/src/services') ||
-                id.includes('src/renderer/src/features/history')) {
+                id.includes('src/renderer/src/features/history') ||
+                id.includes('src/renderer/src/pages/DirectorPage') ||
+                id.includes('src/renderer/src/pages/HistoryPage')) {
               return 'core-services'
             }
             if (id.includes('src/renderer/src/features/model-selector')) {
@@ -108,11 +110,9 @@ export default defineConfig({
             }
             
             // 页面模块 - 按页面拆分
+            // 注意: DirectorPage 和 HistoryPage 已合并到 core-services (见上方)
             if (id.includes('src/renderer/src/pages/GeneratePage')) {
               return 'page-generate'
-            }
-            if (id.includes('src/renderer/src/pages/HistoryPage')) {
-              return 'page-history'
             }
             if (id.includes('src/renderer/src/pages/BatchPage')) {
               return 'page-batch'
@@ -125,9 +125,6 @@ export default defineConfig({
             }
             if (id.includes('src/renderer/src/pages/UnderstandPage')) {
               return 'page-understand'
-            }
-            if (id.includes('src/renderer/src/pages/DirectorPage')) {
-              return 'page-director'
             }
             if (id.includes('src/renderer/src/pages/BasePage')) {
               return 'page-base'

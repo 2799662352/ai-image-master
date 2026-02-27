@@ -31,16 +31,14 @@ import { getEventManager, EventManager } from '../core/EventManager'
 import { getUpdateNotification, UpdateNotification } from '../features/updater'
 import { getPerformanceDashboard, PerformanceDashboard } from '../features/performance'
 import { formatFileSize, formatDate, formatRelativeTime, formatNumber, formatDuration } from '../utils'
-import {
-  GeneratePage, createGeneratePage, getGeneratePage,
-  HistoryPage, createHistoryPage, getHistoryPage,
-  BatchPage, createBatchPage, getBatchPage,
-  ComparePage, createComparePage, getComparePage,
-  PromptTemplates, createPromptTemplates, getPromptTemplates,
-  UnderstandPage, createUnderstandPage, getUnderstandPage,
-  DirectorPage, createDirectorPage, getDirectorPage,
-  type AppInterface
-} from '../pages'
+import type { AppInterface } from '../pages/BasePage'
+import { type GeneratePage, createGeneratePage, getGeneratePage } from '../pages/GeneratePage'
+import { type HistoryPage, createHistoryPage, getHistoryPage } from '../pages/HistoryPage'
+import { type BatchPage, createBatchPage, getBatchPage } from '../pages/BatchPage'
+import { type ComparePage, createComparePage, getComparePage } from '../pages/ComparePage'
+import { type PromptTemplates, createPromptTemplates, getPromptTemplates } from '../pages/PromptTemplates'
+import { type UnderstandPage, createUnderstandPage, getUnderstandPage } from '../pages/UnderstandPage'
+import { type DirectorPage, createDirectorPage, getDirectorPage } from '../pages/DirectorPage'
 
 // ========================================
 // V16.3 - ServiceRegistry: 集中式服务注册表

@@ -37,6 +37,7 @@ export interface StyleTemplate {
   prefix: string
   suffix: string
   negative: string
+  negativeEnabled?: boolean
 }
 
 /**
@@ -2164,12 +2165,8 @@ Output must be in English. Use concise descriptions suitable for image generatio
       templateSuffix = currentTemplateData.suffix || ''
       templateNegative = currentTemplateData.negative || ''
 
-      if (templateNegative && this.currentTemplate) {
-        const isBuiltin = BUILTIN_TEMPLATE_KEYS.has(this.currentTemplate)
-        const userEdited = isBuiltin ? !!(this.templateOverrides[this.currentTemplate]) : true
-        if (!userEdited) {
-          templateNegative = ''
-        }
+      if (templateNegative && !currentTemplateData.negativeEnabled) {
+        templateNegative = ''
       }
     }
     console.log('[DirectorPage] 模板负面提示词:', templateNegative ? `"${templateNegative.substring(0, 50)}..."` : '(空/未启用)')
@@ -2220,7 +2217,7 @@ Output must be in English. Use concise descriptions suitable for image generatio
           `${this.getArtStyleDescription()}${templateSuffix}`,
           storyCtx,
           `${shotsResponse.character_anchor}. Identical character across ALL ${panelCount} panels.`,
-          templateNegative || undefined
+          templateNegative
         )
         console.log('[DirectorPage] LangChain final prompt length:', finalPrompt.length, 'chars, with', shotsResponse.shots.filter(s => s.micro_expression).length, 'micro_expressions,', shotsResponse.shots.filter(s => s.color_grade).length, 'color_grades')
         return finalPrompt
@@ -2449,7 +2446,7 @@ ${styleConfig.additionalRules}
       story: storyContext,
       panels,
       constraints: 'Identical character across all panels.',
-      negative: templateNegative || undefined
+      negative: templateNegative
     }
 
     return this.buildJsonPrompt(prompt)
@@ -2487,7 +2484,7 @@ ${styleConfig.additionalRules}
       story: storyDescription,
       panels,
       constraints: 'Identical character across ALL 9 panels.',
-      negative: negative || undefined
+      negative: negative
     }
 
     return this.buildJsonPrompt(prompt)
@@ -2521,7 +2518,7 @@ ${styleConfig.additionalRules}
       story: storyDescription,
       panels,
       constraints: 'Identical character across ALL panels.',
-      negative: templateNegative || undefined
+      negative: templateNegative
     }
 
     return this.buildJsonPrompt(prompt)
@@ -2594,7 +2591,7 @@ ${styleConfig.additionalRules}
         return { i: p.id, d: p.desc || '' }
       }),
       x: prompt.constraints,
-      ...(prompt.negative && { n: prompt.negative })
+      ...(prompt.negative !== undefined && { n: prompt.negative })
     }
     return JSON.stringify(compact)
   }
@@ -2712,7 +2709,7 @@ ${styleConfig.additionalRules}
       story: sceneDescription || imageAnalysis || 'Based on reference image',
       panels,
       constraints: "Each panel labeled top-left. No speech bubbles, no dialogue. Maintain exact character appearance from reference.",
-      negative: templateNegative || undefined
+      negative: templateNegative
     }
 
     return this.buildJsonPrompt(prompt)
@@ -4313,8 +4310,9 @@ ${styleConfig.additionalRules}
       if (suffixInput) suffixInput.value = template.suffix || ''
       if (negativeInput) negativeInput.value = template.negative || ''
 
-      const userEdited = isBuiltin ? !!(templateKey && this.templateOverrides[templateKey]) : true
-      const negativeOn = userEdited && !!(template.negative?.trim())
+      const negativeOn = template.negativeEnabled !== undefined
+        ? template.negativeEnabled
+        : false
 
       if (negativeToggle) {
         negativeToggle.checked = negativeOn
@@ -4323,6 +4321,13 @@ ${styleConfig.additionalRules}
           if (negativeInput) { negativeInput.disabled = !on; negativeInput.classList.toggle('opacity-30', !on) }
           if (negativeToggleLabel) negativeToggleLabel.textContent = on ? 'ON' : 'OFF'
           if (on && negativeInput) negativeInput.focus()
+          if (templateKey && isBuiltin) {
+            const base = this.templateOverrides[templateKey] || { ...this.defaultStyleTemplates[templateKey] }
+            base.negativeEnabled = on
+            this.templateOverrides[templateKey] = base
+            this.styleTemplates[templateKey] = { ...this.styleTemplates[templateKey], negativeEnabled: on }
+            this.saveTemplatesToStorage()
+          }
         }
       }
       if (negativeInput) { negativeInput.disabled = !negativeOn; negativeInput.classList.toggle('opacity-30', !negativeOn) }
@@ -4394,7 +4399,8 @@ ${styleConfig.additionalRules}
     const name = nameInput?.value?.trim()
     const prefix = prefixInput?.value?.trim() || ''
     const suffix = suffixInput?.value?.trim() || ''
-    const negative = negativeToggle?.checked ? (negativeInput?.value?.trim() || '') : ''
+    const negativeEnabled = !!negativeToggle?.checked
+    const negative = negativeEnabled ? (negativeInput?.value?.trim() || '') : (negativeInput?.value?.trim() || '')
     
     if (!name) {
       this.app.showToast?.(this.t('director.messages.enterTemplateName') || '请填写模板名称', 'warning')
@@ -4402,7 +4408,7 @@ ${styleConfig.additionalRules}
     }
     
     try {
-      const template: StyleTemplate = { name, prefix, suffix, negative }
+      const template: StyleTemplate = { name, prefix, suffix, negative, negativeEnabled }
       
       if (this.editingTemplateKey) {
         if (this.editingTemplateIsBuiltin && this.isBuiltinTemplate(this.editingTemplateKey)) {

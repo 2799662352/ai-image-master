@@ -9,6 +9,10 @@
  * 使用方式:
  * - 静态导入: import { GeneratePage } from '@pages'
  * - 动态导入: const { HistoryPage } = await loadHistoryPage()
+ * 
+ * ⚠️ 注意: src/services/ 和 src/features/ 下的文件不应从此 barrel 导入，
+ * 应直接导入具体页面文件 (如 from '../pages/DirectorPage')，
+ * 以避免循环 chunk 依赖 (V18: ServiceBridge 已改为直接导入)
  */
 
 // Base - 所有页面都需要

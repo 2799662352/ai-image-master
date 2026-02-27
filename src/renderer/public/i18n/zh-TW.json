@@ -822,6 +822,15 @@
           "深度分析"
         ]
       },
+      "gemini-3-flash-preview": {
+        "displayName": "Gemini 3 Flash Preview",
+        "description": "Gemini 3 輕量高速版，極致性價比的多模態理解",
+        "features": [
+          "極速回應",
+          "超高性價比",
+          "多模態理解"
+        ]
+      },
       "gemini-2.5-flash-preview-09-2025": {
         "displayName": "Gemini 2.5 Flash",
         "description": "快速回應版本，性價比極高",

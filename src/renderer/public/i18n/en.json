@@ -696,6 +696,15 @@
           "Deep Analysis"
         ]
       },
+      "gemini-3-flash-preview": {
+        "displayName": "Gemini 3 Flash Preview",
+        "description": "Gemini 3 lightweight high-speed version, best cost-performance multimodal understanding",
+        "features": [
+          "Ultra-fast Response",
+          "Best Cost-performance",
+          "Multimodal Understanding"
+        ]
+      },
       "gemini-2.5-flash-preview-09-2025": {
         "displayName": "Gemini 2.5 Flash",
         "description": "Fast response version, extremely cost-effective",
