@@ -652,6 +652,10 @@
         "shortName": "Анализ Атрибутов",
         "description": "Глубокий анализ атрибутов товара, извлечение структурированной информации"
       },
+      "sora-storyboard": {
+        "name": "Раскадровка Sora",
+        "shortName": "Раскадр.Sora"
+      },
       "ocr-extract": {
         "name": "Извлечение OCR",
         "shortName": "Извлечение OCR",

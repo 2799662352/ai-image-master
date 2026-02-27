@@ -789,6 +789,10 @@
         "shortName": "屬性分析",
         "description": "深度分析商品屬性，提取結構化資訊"
       },
+      "sora-storyboard": {
+        "name": "Sora分鏡反推",
+        "shortName": "Sora分鏡"
+      },
       "ocr-extract": {
         "name": "OCR 提取",
         "shortName": "OCR 提取",

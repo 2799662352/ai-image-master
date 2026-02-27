@@ -663,6 +663,10 @@
         "shortName": "Attribute Analysis",
         "description": "Deep analysis of product attributes, extract structured information"
       },
+      "sora-storyboard": {
+        "name": "Sora Storyboard",
+        "shortName": "Sora Storyboard"
+      },
       "ocr-extract": {
         "name": "OCR Extract",
         "shortName": "OCR Extract",
