@@ -334,6 +334,7 @@
       "widescreen": "宽屏 16:9"
     },
     "resolutionOptions": {
+      "05k": "0.5K 低清 预览",
       "1k": "1K 标准",
       "2k": "2K 高清",
       "4k": "4K 超清"
@@ -645,7 +646,11 @@
       "imageCount": "({count})",
       "deleteImage": "删除图片",
       "addMore": "添加更多图片",
-      "maxImages": "最多上传 {max} 张图片"
+      "maxImages": "最多上传 {max} 张图片",
+      "contextToggle": "📋 剧本 / 附加要求"
+    },
+    "placeholders": {
+      "context": "补充说明、剧本大纲、角色设定、特殊要求..."
     },
     "uploadImage": "上传图片",
     "analyzing": "正在分析图片...",
@@ -679,6 +684,10 @@
         "name": "OCR 提取",
         "shortName": "OCR 提取",
         "description": "快速提取图片中的所有文字内容"
+      },
+      "sora-storyboard-pro": {
+        "name": "🎬 分镜反推 Pro",
+        "shortName": "分镜Pro"
       }
     },
     "visionModelData": {
@@ -788,9 +797,14 @@
       "portrait23": "竖版 2:3",
       "cinema": "影院 21:9 超宽屏",
       "landscape54": "横版 5:4 传统",
-      "portrait45": "竖版 4:5 社媒"
+      "portrait45": "竖版 4:5 社媒",
+      "ultrawide41": "超横版 4:1 横幅",
+      "ultratall14": "超竖版 1:4 长图",
+      "extremewide81": "极横版 8:1 横幅",
+      "extremetall18": "极竖版 1:8 信息图"
     },
     "resolutionOptions": {
+      "05k": "0.5K 低清 预览",
       "1k": "1K 标准",
       "2k": "2K 高清",
       "4k": "4K 超清"
@@ -1029,6 +1043,10 @@
     "processingImage": "正在处理图片..."
   },
   "models": {
+    "gemini-3.1-flash-image-preview": {
+      "name": "🍌 Nano Banana 2",
+      "displayName": "15s，gemini-3.1-flash-image-preview 谷歌原生端点请求，支持超多尺寸4K，$0.03/张🚀 官网低于2折"
+    },
     "gemini-3-pro-image-preview": {
       "name": "🍌 Nano Banana Pro",
       "displayName": "60s，gemini-3-pro-image-preview 谷歌原生端点请求，支持多尺寸4K，$0.05/张🔥 官网1/5价格"
@@ -1067,9 +1085,14 @@
     "5:4": { "label": "横版", "description": "传统", "full": "横版 5:4" },
     "4:5": { "label": "竖版", "description": "社媒", "full": "竖版 4:5" },
     "3:7": { "label": "超窄竖版", "description": "", "full": "超窄竖版 3:7" },
-    "7:3": { "label": "超宽横版", "description": "", "full": "超宽横版 7:3" }
+    "7:3": { "label": "超宽横版", "description": "", "full": "超宽横版 7:3" },
+    "4:1": { "label": "超横版", "description": "横幅", "full": "超横版 4:1" },
+    "1:4": { "label": "超竖版", "description": "长图", "full": "超竖版 1:4" },
+    "8:1": { "label": "极横版", "description": "横幅", "full": "极横版 8:1" },
+    "1:8": { "label": "极竖版", "description": "信息图", "full": "极竖版 1:8" }
   },
   "resolutions": {
+    "0.5K": { "label": "0.5K 低清", "description": "缩略图/预览" },
     "1K": { "label": "1K 标准", "description": "高效" },
     "2K": { "label": "2K 高清", "description": "稍慢速度", "descriptionAlt": "标准分辨率" },
     "4K": { "label": "4K 超清", "description": "印刷所需", "descriptionAlt": "超高分辨率" }

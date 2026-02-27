@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { ChatOpenAI } from '@langchain/openai'
+import { ChatGoogle } from '@langchain/google'
 import { HumanMessage, SystemMessage } from '@langchain/core/messages'
 
 // ==================== Zod Schemas ====================
@@ -89,17 +90,33 @@ export interface ShotGenInput {
 // ==================== Service ====================
 
 export class LangChainDirectorService {
-  private llm: ChatOpenAI
-  private structuredLlm: ReturnType<ChatOpenAI['withStructuredOutput']>
+  private llm: ChatOpenAI | ChatGoogle
+  private structuredLlm: any
 
   constructor(config: { apiKey: string; baseURL: string; model?: string }) {
-    this.llm = new ChatOpenAI({
-      model: config.model || 'gpt-4o',
-      apiKey: config.apiKey,
-      maxRetries: 2,
-      maxTokens: 8192,
-      configuration: { baseURL: `${config.baseURL.replace(/\/v1\/?$/, '')}/v1` }
-    })
+    const modelName = config.model || 'gpt-4o'
+    const isGemini = modelName.toLowerCase().includes('gemini')
+    const cleanBaseURL = config.baseURL.replace(/\/v1\/?$/, '')
+
+    if (isGemini) {
+      const hostname = cleanBaseURL.replace(/^https?:\/\//, '')
+      this.llm = new ChatGoogle({
+        model: modelName,
+        apiKey: config.apiKey,
+        endpoint: hostname,
+        maxOutputTokens: 8192,
+        maxRetries: 2
+      })
+    } else {
+      this.llm = new ChatOpenAI({
+        model: modelName,
+        apiKey: config.apiKey,
+        maxRetries: 2,
+        maxTokens: 8192,
+        configuration: { baseURL: `${cleanBaseURL}/v1` }
+      })
+    }
+
     this.structuredLlm = this.llm.withStructuredOutput(SceneResponseSchema)
   }
 

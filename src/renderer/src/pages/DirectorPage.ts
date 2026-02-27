@@ -2732,8 +2732,8 @@ ${styleConfig.additionalRules}
   private getGemSystemPromptForTemplate(): string {
     switch (this.currentTemplate) {
       case 'cinematic':
-        return this.cinematicGemSystemPrompt
       case 'theatrical':
+        return this.cinematicGemSystemPrompt
       case 'anime':
       case 'manga':
       case 'movie':

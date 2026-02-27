@@ -53,8 +53,10 @@ export interface AnalysisRole {
   shortName?: string
   icon: string
   prompt: string
+  promptFile?: string
   default?: boolean
   defaultModel?: string
+  contextPlaceholder?: string
 }
 
 /**
@@ -72,6 +74,7 @@ export interface UnderstandPageState extends PageState {
   currentRole: string | null
   isCustomPrompt: boolean
   uploadedImagesCount: number
+  contextText?: string
 }
 
 /**
@@ -263,6 +266,17 @@ export class UnderstandPage extends BasePage {
 
     // 自定义提示词按钮
     this.addEventListenerSafe('customPromptBtn', 'click', () => this.enableCustomPrompt())
+
+    // 附加上下文折叠/展开
+    this.addEventListenerSafe('understandContextToggle', 'click', () => {
+      const wrapper = document.getElementById('understandContextWrapper')
+      const arrow = document.getElementById('understandContextArrow')
+      if (wrapper && arrow) {
+        const isHidden = wrapper.classList.contains('hidden')
+        wrapper.classList.toggle('hidden')
+        arrow.textContent = isHidden ? '▼' : '▶'
+      }
+    })
   }
 
   /**
@@ -576,6 +590,7 @@ export class UnderstandPage extends BasePage {
 
     this.updateRoleButtonsStyle()
     this.updateRoleDisplay()
+    this.updateContextPlaceholder(role)
 
     console.log(`✅ 已切换到角色: ${role.name}`)
   }
@@ -588,7 +603,21 @@ export class UnderstandPage extends BasePage {
     if (!role) return
 
     const textarea = this.getElement<HTMLTextAreaElement>('understandPrompt')
-    if (textarea) {
+    if (!textarea) return
+
+    if (role.promptFile) {
+      textarea.value = '加载提示词中...'
+      fetch(`${role.promptFile}?v=${Date.now()}`)
+        .then(res => { if (!res.ok) throw new Error(`HTTP ${res.status}`); return res.text() })
+        .then(text => {
+          textarea.value = text
+          textarea.dispatchEvent(new Event('input', { bubbles: true }))
+        })
+        .catch(() => {
+          textarea.value = role.prompt || ''
+          textarea.dispatchEvent(new Event('input', { bubbles: true }))
+        })
+    } else {
       textarea.value = role.prompt
       textarea.dispatchEvent(new Event('input', { bubbles: true }))
     }
@@ -607,6 +636,7 @@ export class UnderstandPage extends BasePage {
     })
 
     this.updateRoleDisplay()
+    this.updateContextPlaceholder()
 
     const textarea = this.getElement<HTMLTextAreaElement>('understandPrompt')
     if (textarea) {
@@ -654,6 +684,26 @@ export class UnderstandPage extends BasePage {
         nameEl.textContent = '提问（可选）'
         if (hintEl) hintEl.textContent = '点击上方角色标签快速应用专业提示词'
       }
+    }
+  }
+
+  /**
+   * 更新附加上下文 placeholder（根据当前角色）
+   */
+  private updateContextPlaceholder(role?: AnalysisRole): void {
+    const contextEl = document.getElementById('understandContext') as HTMLTextAreaElement
+    if (!contextEl) return
+
+    if (role?.contextPlaceholder) {
+      contextEl.placeholder = role.contextPlaceholder
+      const wrapper = document.getElementById('understandContextWrapper')
+      const arrow = document.getElementById('understandContextArrow')
+      if (wrapper?.classList.contains('hidden')) {
+        wrapper.classList.remove('hidden')
+        if (arrow) arrow.textContent = '▼'
+      }
+    } else {
+      contextEl.placeholder = this.t('understand.placeholders.context') || '补充说明、剧本大纲、特殊要求...'
     }
   }
 
@@ -878,7 +928,13 @@ export class UnderstandPage extends BasePage {
 
     const promptInput = this.getElement<HTMLTextAreaElement>('understandPrompt')
     const prompt = promptInput ? promptInput.value.trim() : ''
-    const finalPrompt = prompt || '请详细分析这些图片的内容，包括场景、物体、人物、氛围等。'
+    let finalPrompt = prompt || '请详细分析这些图片的内容，包括场景、物体、人物、氛围等。'
+
+    const contextEl = document.getElementById('understandContext') as HTMLTextAreaElement
+    const contextText = contextEl?.value?.trim()
+    if (contextText) {
+      finalPrompt += `\n\n--- 用户附加要求 ---\n${contextText}`
+    }
 
     const modelToUse = this.customModelId || this.currentModel || 'gpt-5.2'
 
@@ -1118,11 +1174,13 @@ export class UnderstandPage extends BasePage {
    * 保存页面状态
    */
   saveState(): void {
+    const contextEl = document.getElementById('understandContext') as HTMLTextAreaElement
     const state: UnderstandPageState = {
       currentModel: this.currentModel,
       currentRole: this.currentRole,
       isCustomPrompt: this.isCustomPrompt,
-      uploadedImagesCount: this.uploadedImages.length
+      uploadedImagesCount: this.uploadedImages.length,
+      contextText: contextEl?.value || ''
     }
 
     const pageStateManager = (window as any).pageStateManager
@@ -1144,6 +1202,10 @@ export class UnderstandPage extends BasePage {
         if (state.currentModel) this.currentModel = state.currentModel
         if (state.currentRole) this.currentRole = state.currentRole
         this.isCustomPrompt = state.isCustomPrompt || false
+        if (state.contextText) {
+          const contextEl = document.getElementById('understandContext') as HTMLTextAreaElement
+          if (contextEl) contextEl.value = state.contextText
+        }
         console.log('图像理解状态已恢复:', state)
       }
     }
@@ -1189,11 +1251,13 @@ export class UnderstandPage extends BasePage {
    * 收集状态用于持久化
    */
   collectState(): UnderstandPageState {
+    const contextEl = document.getElementById('understandContext') as HTMLTextAreaElement
     return {
       currentModel: this.currentModel,
       currentRole: this.currentRole,
       isCustomPrompt: this.isCustomPrompt,
-      uploadedImagesCount: this.uploadedImages.length
+      uploadedImagesCount: this.uploadedImages.length,
+      contextText: contextEl?.value || ''
     }
   }
 
@@ -1204,6 +1268,10 @@ export class UnderstandPage extends BasePage {
     if (state.currentModel) this.currentModel = state.currentModel
     if (state.currentRole) this.currentRole = state.currentRole
     this.isCustomPrompt = state.isCustomPrompt || false
+    if (state.contextText) {
+      const contextEl = document.getElementById('understandContext') as HTMLTextAreaElement
+      if (contextEl) contextEl.value = state.contextText
+    }
   }
 
   /**

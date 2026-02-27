@@ -1714,6 +1714,7 @@
                         <div>
                             <label for="batchResolution" class="block text-white text-sm font-medium mb-2" data-i18n="batch.labels.resolution">清晰度</label>
                             <select id="batchResolution" name="batchResolution" aria-label="选择批量生成图片的清晰度" class="w-full px-3 py-2 bg-white bg-opacity-90 border border-white border-opacity-30 rounded-none focus:outline-none focus:ring-2 focus:ring-orange-400 focus:border-transparent text-gray-800 font-medium">
+                                <option value="0.5K" data-i18n="batch.resolutionOptions.05k">0.5K 低清 预览</option>
                                 <option value="1K" data-i18n="batch.resolutionOptions.1k">1K 标准</option>
                                 <option value="2K" selected data-i18n="batch.resolutionOptions.2k">2K 高清</option>
                                 <option value="4K" data-i18n="batch.resolutionOptions.4k">4K 超清</option>
@@ -2023,6 +2024,21 @@
                     <div class="mb-3">
                         <div class="flex flex-wrap gap-2" id="understandRoleSelector">
                             <!-- 角色标签将动态生成 -->
+                        </div>
+                    </div>
+
+                    <!-- 附加上下文/剧本输入 -->
+                    <div id="understandContextSection" class="mb-3">
+                        <button id="understandContextToggle" type="button"
+                            class="flex items-center gap-1.5 text-sm text-white opacity-50 hover:opacity-100 transition-opacity mb-2 group">
+                            <span id="understandContextArrow" class="text-xs transition-transform">▶</span>
+                            <span data-i18n="understand.labels.contextToggle">📋 剧本 / 附加要求</span>
+                        </button>
+                        <div id="understandContextWrapper" class="hidden">
+                            <textarea id="understandContext" rows="4"
+                                class="w-full p-3 rounded-none bg-[#09090B] border border-[#3F3F46] text-white placeholder-white placeholder-opacity-30 focus:border-opacity-50 focus:outline-none resize-y text-sm"
+                                data-i18n-attr="placeholder:understand.placeholders.context"
+                                placeholder="补充说明、剧本大纲、特殊要求..."></textarea>
                         </div>
                     </div>
 
@@ -2369,12 +2385,17 @@
                                 <option value="21:9" data-i18n="director.ratioOptions.cinema">影院 21:9 超宽屏</option>
                                 <option value="5:4" data-i18n="director.ratioOptions.landscape54">横版 5:4 传统</option>
                                 <option value="4:5" data-i18n="director.ratioOptions.portrait45">竖版 4:5 社媒</option>
+                                <option value="4:1" data-i18n="director.ratioOptions.ultrawide41">超横版 4:1 横幅</option>
+                                <option value="1:4" data-i18n="director.ratioOptions.ultratall14">超竖版 1:4 长图</option>
+                                <option value="8:1" data-i18n="director.ratioOptions.extremewide81">极横版 8:1 横幅</option>
+                                <option value="1:8" data-i18n="director.ratioOptions.extremetall18">极竖版 1:8 信息图</option>
                             </select>
                         </div>
                         <!-- 分辨率 -->
                         <div class="bg-[#27272A] rounded-none p-4">
                             <label class="block text-white text-sm font-medium mb-2" data-i18n="director.labels.resolution">清晰度</label>
                             <select id="directorResolution" class="w-full px-3 py-2 bg-white bg-opacity-90 border border-white border-opacity-30 rounded-none focus:outline-none focus:ring-2 focus:ring-purple-400 text-gray-800 font-medium">
+                                <option value="0.5K" data-i18n="director.resolutionOptions.05k">0.5K 低清 预览</option>
                                 <option value="1K" data-i18n="director.resolutionOptions.1k">1K 标准</option>
                                 <option value="2K" selected data-i18n="director.resolutionOptions.2k">2K 高清</option>
                                 <option value="4K" data-i18n="director.resolutionOptions.4k">4K 超清</option>

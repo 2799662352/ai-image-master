@@ -16,6 +16,14 @@ vi.mock('@langchain/openai', () => {
   return { ChatOpenAI: MockChatOpenAI }
 })
 
+vi.mock('@langchain/google', () => {
+  const MockChatGoogle = function () {
+    this.invoke = mockInvoke
+    this.withStructuredOutput = vi.fn().mockReturnValue({ invoke: mockStructuredInvoke })
+  }
+  return { ChatGoogle: MockChatGoogle }
+})
+
 const NULL_FIELDS = {
   micro_expression: null,
   color_grade: null,

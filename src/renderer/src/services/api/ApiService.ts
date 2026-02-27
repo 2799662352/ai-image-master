@@ -14,16 +14,29 @@ export interface ApiSite {
   isBuiltIn?: boolean
 }
 
+export interface ResolutionOption {
+  key: string
+  label: string
+  description?: string
+}
+
 export interface ModelConfig {
   name: string
   displayName: string
   time?: string
   isNew?: boolean
   baseURL?: string
-  apiType?: 'gemini-native' | 'openai' | 'flux'
+  apiType?: 'gemini-native' | 'openai' | 'flux-kontext' | 'image-generation'
   internalPrompt?: string
   ratios?: RatioOption[]
   capabilities?: ModelCapabilities
+  editURL?: string
+  sizeStrategy?: string
+  defaultParams?: Record<string, unknown>
+  responseFormats?: string[]
+  resolutions?: ResolutionOption[]
+  defaultResolution?: string
+  resolutionMap?: Record<string, Record<string, string>>
 }
 
 export interface RatioOption {
@@ -126,11 +139,70 @@ const BUILT_IN_SITES: Record<string, ApiSite> = {
 
 // 默认模型配置
 const DEFAULT_MODELS: Record<string, ModelConfig> = {
+  'gemini-3.1-flash-image-preview': {
+    name: '🍌 Nano Banana 2',
+    displayName: '15s，gemini-3.1-flash-image-preview 谷歌原生端点请求，支持超多尺寸4K，$0.03/张🚀 官网低于2折',
+    time: '15s',
+    isNew: true,
+    baseURL: 'https://b.apiyi.com/v1beta/models/gemini-3.1-flash-image-preview:generateContent',
+    apiType: 'gemini-native',
+    internalPrompt: '生成图片：',
+    ratios: [
+      { key: 'auto', label: '自适应', description: '智能' },
+      { key: '1:1', label: '方形 1:1', description: '常用' },
+      { key: '16:9', label: '横版 16:9', description: '宽屏' },
+      { key: '9:16', label: '竖版 9:16', description: '竖屏' },
+      { key: '4:3', label: '横版 4:3', description: '标准' },
+      { key: '3:4', label: '竖版 3:4', description: '标准' },
+      { key: '3:2', label: '横版 3:2', description: '经典' },
+      { key: '2:3', label: '竖版 2:3', description: '经典' },
+      { key: '21:9', label: '影院 21:9', description: '超宽屏' },
+      { key: '5:4', label: '横版 5:4', description: '传统' },
+      { key: '4:5', label: '竖版 4:5', description: '社媒' },
+      { key: '4:1', label: '超横版 4:1', description: '横幅' },
+      { key: '1:4', label: '超竖版 1:4', description: '长图' },
+      { key: '8:1', label: '极横版 8:1', description: '横幅' },
+      { key: '1:8', label: '极竖版 1:8', description: '信息图' }
+    ],
+    resolutions: [
+      { key: '0.5K', label: '0.5K 低清', description: '缩略图/预览' },
+      { key: '1K', label: '1K 标准', description: '高效' },
+      { key: '2K', label: '2K 高清', description: '稍慢速度' },
+      { key: '4K', label: '4K 超清', description: '印刷所需' }
+    ],
+    defaultResolution: '1K',
+    resolutionMap: {
+      '1:1':  { '0.5K': '512×512',   '1K': '1024×1024', '2K': '2048×2048', '4K': '4096×4096' },
+      '2:3':  { '0.5K': '424×632',   '1K': '848×1264',  '2K': '1696×2528', '4K': '3392×5056' },
+      '3:2':  { '0.5K': '632×424',   '1K': '1264×848',  '2K': '2528×1696', '4K': '5056×3392' },
+      '3:4':  { '0.5K': '448×600',   '1K': '896×1200',  '2K': '1792×2400', '4K': '3584×4800' },
+      '4:3':  { '0.5K': '600×448',   '1K': '1200×896',  '2K': '2400×1792', '4K': '4800×3584' },
+      '4:5':  { '0.5K': '464×576',   '1K': '928×1152',  '2K': '1856×2304', '4K': '3712×4608' },
+      '5:4':  { '0.5K': '576×464',   '1K': '1152×928',  '2K': '2304×1856', '4K': '4608×3712' },
+      '9:16': { '0.5K': '384×688',   '1K': '768×1376',  '2K': '1536×2752', '4K': '3072×5504' },
+      '16:9': { '0.5K': '688×384',   '1K': '1376×768',  '2K': '2752×1536', '4K': '5504×3072' },
+      '21:9': { '0.5K': '792×336',   '1K': '1584×672',  '2K': '3168×1344', '4K': '6336×2688' },
+      '4:1':  { '0.5K': '1024×256',  '1K': '2048×512',  '2K': '4096×1024', '4K': '8192×2048' },
+      '1:4':  { '0.5K': '256×1024',  '1K': '512×2048',  '2K': '1024×4096', '4K': '2048×8192' },
+      '8:1':  { '0.5K': '1448×182',  '1K': '2896×362',  '2K': '5792×724',  '4K': '11584×1448' },
+      '1:8':  { '0.5K': '182×1448',  '1K': '362×2896',  '2K': '724×5792',  '4K': '1448×11584' },
+      'auto': { '0.5K': '自适应', '1K': '自适应', '2K': '自适应', '4K': '自适应' }
+    },
+    capabilities: {
+      multipleImages: false,
+      customSize: true,
+      aspectRatioControl: true,
+      referenceImage: true,
+      imageEdit: true,
+      maxOutputs: 1,
+      resolutionControl: true
+    }
+  },
   'gemini-3-pro-image-preview': {
     name: '🍌 Nano Banana Pro',
     displayName: '60s，gemini-3-pro-image-preview 谷歌原生端点请求，支持多尺寸4K，$0.05/张🔥 官网1/5价格',
     time: '60s',
-    isNew: true,
+    isNew: false,
     baseURL: 'https://b.apiyi.com/v1beta/models/gemini-3-pro-image-preview:generateContent',
     apiType: 'gemini-native',
     internalPrompt: '生成图片：',
@@ -159,11 +231,11 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       '3:2': { '1K': '1264×848', '2K': '2528×1696', '4K': '5056×3392' },
       '3:4': { '1K': '896×1200', '2K': '1792×2400', '4K': '3584×4800' },
       '4:3': { '1K': '1200×896', '2K': '2400×1792', '4K': '4800×3584' },
-      '9:16': { '1K': '768×1360', '2K': '1536×2720', '4K': '3072×5440' },
-      '16:9': { '1K': '1360×768', '2K': '2720×1536', '4K': '5440×3072' },
-      '21:9': { '1K': '1536×656', '2K': '3072×1312', '4K': '6144×2624' },
-      '5:4': { '1K': '1136×912', '2K': '2272×1824', '4K': '4544×3648' },
-      '4:5': { '1K': '912×1136', '2K': '1824×2272', '4K': '3648×4544' },
+      '4:5': { '1K': '928×1152', '2K': '1856×2304', '4K': '3712×4608' },
+      '5:4': { '1K': '1152×928', '2K': '2304×1856', '4K': '4608×3712' },
+      '9:16': { '1K': '768×1376', '2K': '1536×2752', '4K': '3072×5504' },
+      '16:9': { '1K': '1376×768', '2K': '2752×1536', '4K': '5504×3072' },
+      '21:9': { '1K': '1584×672', '2K': '3168×1344', '4K': '6336×2688' },
       'auto': { '1K': '自适应', '2K': '自适应', '4K': '自适应' }
     },
     capabilities: {
@@ -172,6 +244,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       aspectRatioControl: true,
       referenceImage: true,
       imageEdit: true,
+      maxOutputs: 1,
       resolutionControl: true
     }
   },
@@ -206,11 +279,12 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   },
   'seedream-4-5-251128': {
     name: 'SeeDream 4.5',
-    displayName: '15s出图，即梦海外版seedream-4-5-251128，超清生图编辑，支持2K/4K分辨率，$0.045/张',
+    displayName: '15s出图，即梦海外版seedream-4-5-251128，超清生图编辑，支持2K/4K分辨率，支持URL与Base64输出, $0.045/张',
     time: '15s',
     isNew: true,
     baseURL: 'https://b.apiyi.com/v1/images/generations',
-    apiType: 'openai',
+    apiType: 'image-generation',
+    sizeStrategy: 'seedream',
     ratios: [
       { key: '1:1', label: '方形 1:1', description: '常用' },
       { key: '4:3', label: '横版 4:3', description: '标准' },
@@ -232,15 +306,24 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       '3:4': { '2K': '1728×2304', '4K': '3456×4608' },
       '16:9': { '2K': '2560×1440', '4K': '5120×2880' },
       '9:16': { '2K': '1440×2560', '4K': '2880×5120' },
-      '3:2': { '2K': '2400×1600', '4K': '4800×3200' },
-      '2:3': { '2K': '1600×2400', '4K': '3200×4800' },
-      '21:9': { '2K': '2560×1080', '4K': '5120×2160' }
+      '3:2': { '2K': '2496×1664', '4K': '4992×3328' },
+      '2:3': { '2K': '1664×2496', '4K': '3328×4992' },
+      '21:9': { '2K': '3024×1296', '4K': '6048×2592' }
     },
+    defaultParams: {
+      sequential_image_generation: 'disabled',
+      response_format: 'url',
+      size: '2K',
+      stream: false,
+      watermark: false
+    },
+    responseFormats: ['url', 'b64_json'],
     capabilities: {
       multipleImages: true,
       customSize: true,
       referenceImage: true,
       imageEdit: true,
+      maxOutputs: 2,
       resolutionControl: true
     }
   },
@@ -262,40 +345,60 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
     time: '15s',
     isNew: false,
     baseURL: 'https://b.apiyi.com/v1/images/generations',
-    apiType: 'flux',
+    editURL: 'https://b.apiyi.com/v1/images/edits',
+    apiType: 'flux-kontext',
     ratios: [
       { key: '1:1', label: '方形 1:1', description: '1024×1024' },
       { key: '2:3', label: '竖版 2:3', description: '832×1248' },
       { key: '3:2', label: '横版 3:2', description: '1248×832' },
       { key: '16:9', label: '宽屏 16:9', description: '1408×792' },
-      { key: '9:16', label: '竖屏 9:16', description: '792×1408' }
+      { key: '9:16', label: '竖屏 9:16', description: '792×1408' },
+      { key: '3:7', label: '超窄竖版 3:7', description: '662×1544' },
+      { key: '7:3', label: '超宽横版 7:3', description: '1544×662' }
     ],
+    defaultParams: {
+      response_format: 'url',
+      safety_tolerance: 6
+    },
+    responseFormats: ['url', 'b64_json'],
     capabilities: {
       multipleImages: false,
       customSize: true,
       referenceImage: true,
-      imageEdit: true
+      imageEdit: true,
+      maxOutputs: 1,
+      useExtraBody: true
     }
   },
   'flux-kontext-max': {
     name: 'Flux Kontext Max',
-    displayName: '15s出图，flux-kontext-max，提示词支持中文，超高质量图片编辑，$0.07/张',
+    displayName: '15s出图，flux-kontext-max，提示词支持中文，超高质量图片编辑。$0.07/张',
     time: '15s',
     isNew: false,
     baseURL: 'https://b.apiyi.com/v1/images/generations',
-    apiType: 'flux',
+    editURL: 'https://b.apiyi.com/v1/images/edits',
+    apiType: 'flux-kontext',
     ratios: [
       { key: '1:1', label: '方形 1:1', description: '1024×1024' },
       { key: '2:3', label: '竖版 2:3', description: '832×1248' },
       { key: '3:2', label: '横版 3:2', description: '1248×832' },
       { key: '16:9', label: '宽屏 16:9', description: '1408×792' },
-      { key: '9:16', label: '竖屏 9:16', description: '792×1408' }
+      { key: '9:16', label: '竖屏 9:16', description: '792×1408' },
+      { key: '3:7', label: '超窄竖版 3:7', description: '662×1544' },
+      { key: '7:3', label: '超宽横版 7:3', description: '1544×662' }
     ],
+    defaultParams: {
+      response_format: 'url',
+      safety_tolerance: 6
+    },
+    responseFormats: ['url', 'b64_json'],
     capabilities: {
       multipleImages: false,
       customSize: true,
       referenceImage: true,
-      imageEdit: true
+      imageEdit: true,
+      maxOutputs: 1,
+      useExtraBody: true
     }
   }
 }
@@ -356,7 +459,7 @@ export class ApiService {
       const result = await this.parseResponse(response, modelConfig)
       
       // 标记 Flux 图片为临时的
-      if (modelConfig.apiType === 'flux' && result.success) {
+      if (modelConfig.apiType === 'flux-kontext' && result.success) {
         result.isFluxTemporary = true
       }
 
@@ -898,7 +1001,7 @@ export class ApiService {
     }
 
     // Flux Kontext 格式
-    if (modelConfig.apiType === 'flux') {
+    if (modelConfig.apiType === 'flux-kontext') {
       return this.buildFluxPayload({
         prompt,
         model,
@@ -1086,7 +1189,8 @@ export class ApiService {
       '16:9': { '2K': '2560x1440', '4K': '5120x2880', '1K': '1376x768' },
       '9:16': { '2K': '1440x2560', '4K': '2880x5120', '1K': '768x1376' },
       '3:2': { '2K': '2496x1664', '4K': '4992x3328', '1K': '1264x848' },
-      '2:3': { '2K': '1664x2496', '4K': '3328x4992', '1K': '848x1264' }
+      '2:3': { '2K': '1664x2496', '4K': '3328x4992', '1K': '848x1264' },
+      '21:9': { '2K': '3024x1296', '4K': '6048x2592', '1K': '1584x672' }
     }
 
     const normalizedRatio = ratio || '1:1'

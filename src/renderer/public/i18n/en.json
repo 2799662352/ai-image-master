@@ -322,6 +322,7 @@
       "widescreen": "Widescreen 16:9"
     },
     "resolutionOptions": {
+      "05k": "0.5K Low Preview",
       "1k": "1K Standard",
       "2k": "2K HD",
       "4k": "4K Ultra HD"
@@ -628,7 +629,11 @@
       "imageCount": "({count})",
       "deleteImage": "Delete Image",
       "addMore": "Add More Images",
-      "maxImages": "Maximum {max} images allowed"
+      "maxImages": "Maximum {max} images allowed",
+      "contextToggle": "📋 Script / Additional Requirements"
+    },
+    "placeholders": {
+      "context": "Additional notes, script outline, character settings, requirements..."
     },
     "uploadImage": "Upload Image",
     "analyzing": "Analyzing image...",
@@ -662,6 +667,10 @@
         "name": "OCR Extract",
         "shortName": "OCR Extract",
         "description": "Quickly extract all text content from images"
+      },
+      "sora-storyboard-pro": {
+        "name": "🎬 Storyboard Pro",
+        "shortName": "StoryPro"
       }
     },
     "visionModelData": {
@@ -792,9 +801,14 @@
       "portrait23": "Portrait 2:3",
       "cinema": "Cinema 21:9 Ultra-wide",
       "landscape54": "Landscape 5:4 Classic",
-      "portrait45": "Portrait 4:5 Social"
+      "portrait45": "Portrait 4:5 Social",
+      "ultrawide41": "Ultra Wide 4:1 Banner",
+      "ultratall14": "Ultra Tall 1:4 Long Image",
+      "extremewide81": "Extreme Wide 8:1 Banner",
+      "extremetall18": "Extreme Tall 1:8 Infographic"
     },
     "resolutionOptions": {
+      "05k": "0.5K Low Preview",
       "1k": "1K Standard",
       "2k": "2K HD",
       "4k": "4K Ultra HD"
@@ -1033,6 +1047,10 @@
     "processingImage": "Processing image..."
   },
   "models": {
+    "gemini-3.1-flash-image-preview": {
+      "name": "🍌 Nano Banana 2",
+      "displayName": "15s, gemini-3.1-flash-image-preview Google native endpoint, supports many sizes up to 4K, $0.03/image 🚀 Less than 20% of official price"
+    },
     "gemini-3-pro-image-preview": {
       "name": "🍌 Nano Banana Pro",
       "displayName": "60s, gemini-3-pro-image-preview Google native endpoint, supports multi-size 4K, $0.05/image 🔥 1/5 official price"
@@ -1122,9 +1140,33 @@
       "label": "Ultra Landscape",
       "description": "",
       "full": "Ultra Landscape 7:3"
+    },
+    "4:1": {
+      "label": "Ultra Wide",
+      "description": "Banner",
+      "full": "Ultra Wide 4:1"
+    },
+    "1:4": {
+      "label": "Ultra Tall",
+      "description": "Long Image",
+      "full": "Ultra Tall 1:4"
+    },
+    "8:1": {
+      "label": "Extreme Wide",
+      "description": "Banner",
+      "full": "Extreme Wide 8:1"
+    },
+    "1:8": {
+      "label": "Extreme Tall",
+      "description": "Infographic",
+      "full": "Extreme Tall 1:8"
     }
   },
   "resolutions": {
+    "0.5K": {
+      "label": "0.5K Low",
+      "description": "Thumbnail/Preview"
+    },
     "1K": {
       "label": "1K Standard",
       "description": "Fast"

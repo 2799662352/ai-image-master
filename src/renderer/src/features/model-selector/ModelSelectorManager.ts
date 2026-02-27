@@ -306,7 +306,8 @@ export class ModelSelectorManager {
     console.log('🔄 切换模型到:', modelKey)
 
     const api = (window as any).aiImageAPI
-    if (api?.saveModel?.(modelKey)) {
+    const saved = api?.setModel?.(modelKey) ?? api?.saveModel?.(modelKey)
+    if (saved) {
       this.currentModelKey = modelKey
 
       // 同步两个选择器
@@ -319,6 +320,9 @@ export class ModelSelectorManager {
 
       const currentModel = api.getCurrentModel?.() as ModelConfig
       this.config.onModelChange?.(modelKey, currentModel)
+
+      // 重新渲染比例和分辨率按钮
+      this.updateUIForModel()
 
       if (this.config.showToast) {
         this.config.showToast(`已切换到模型: ${currentModel?.name || modelKey}`, 'success')
@@ -621,7 +625,7 @@ export class ModelSelectorManager {
       return false
     }
 
-    if (api.saveModel(modelKey)) {
+    if (api.setModel?.(modelKey) ?? api.saveModel?.(modelKey)) {
       // 同步选择器
       this.setCurrentModel(modelKey)
 

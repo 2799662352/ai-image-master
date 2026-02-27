@@ -422,6 +422,7 @@
       "widescreen": "寬屏 16:9"
     },
     "resolutionOptions": {
+      "05k": "0.5K 低清 預覽",
       "1k": "1K 標準",
       "2k": "2K 高清",
       "4k": "4K 超清"
@@ -754,7 +755,11 @@
       "imageCount": "({count})",
       "deleteImage": "刪除圖片",
       "addMore": "新增更多圖片",
-      "maxImages": "最多上傳 {max} 張圖片"
+      "maxImages": "最多上傳 {max} 張圖片",
+      "contextToggle": "📋 劇本 / 附加要求"
+    },
+    "placeholders": {
+      "context": "補充說明、劇本大綱、角色設定、特殊要求..."
     },
     "uploadImage": "上傳圖片",
     "analyzing": "正在分析圖片...",
@@ -788,6 +793,10 @@
         "name": "OCR 提取",
         "shortName": "OCR 提取",
         "description": "快速提取圖片中的所有文字內容"
+      },
+      "sora-storyboard-pro": {
+        "name": "🎬 分鏡反推 Pro",
+        "shortName": "分鏡Pro"
       }
     },
     "visionModelData": {
@@ -901,9 +910,14 @@
       "portrait23": "直版 2:3",
       "cinema": "影院 21:9 超寬屏",
       "landscape54": "橫版 5:4 傳統",
-      "portrait45": "直版 4:5 社媒"
+      "portrait45": "直版 4:5 社媒",
+      "ultrawide41": "超橫版 4:1 橫幅",
+      "ultratall14": "超豎版 1:4 長圖",
+      "extremewide81": "極橫版 8:1 橫幅",
+      "extremetall18": "極豎版 1:8 資訊圖"
     },
     "resolutionOptions": {
+      "05k": "0.5K 低清 預覽",
       "1k": "1K 標準",
       "2k": "2K 高清",
       "4k": "4K 超清"
@@ -1127,9 +1141,33 @@
       "label": "超寬橫版",
       "description": "",
       "full": "超寬橫版 7:3"
+    },
+    "4:1": {
+      "label": "超橫版",
+      "description": "橫幅",
+      "full": "超橫版 4:1"
+    },
+    "1:4": {
+      "label": "超豎版",
+      "description": "長圖",
+      "full": "超豎版 1:4"
+    },
+    "8:1": {
+      "label": "極橫版",
+      "description": "橫幅",
+      "full": "極橫版 8:1"
+    },
+    "1:8": {
+      "label": "極豎版",
+      "description": "資訊圖",
+      "full": "極豎版 1:8"
     }
   },
   "resolutions": {
+    "0.5K": {
+      "label": "0.5K 低清",
+      "description": "縮略圖/預覽"
+    },
     "1K": {
       "label": "1K 標準",
       "description": "高效"
@@ -1146,6 +1184,10 @@
     }
   },
   "models": {
+    "gemini-3.1-flash-image-preview": {
+      "name": "🍌 Nano Banana 2",
+      "displayName": "15s，gemini-3.1-flash-image-preview 谷歌原生端點請求，支援超多尺寸4K，$0.03/張🚀 官網低於2折"
+    },
     "gemini-3-pro-image-preview": {
       "name": "🍌 Nano Banana Pro",
       "displayName": "60s，gemini-3-pro-image-preview 谷歌原生端點請求，支援多尺寸4K，$0.05/張🔥 官網1/5價格"
