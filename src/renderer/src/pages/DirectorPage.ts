@@ -4295,11 +4295,28 @@ ${styleConfig.additionalRules}
     const deleteBtn = document.getElementById('templateEditorDeleteBtn')
     const resetBtn = document.getElementById('templateEditorResetBtn')
     
+    const negativeToggle = document.getElementById('templateEditorNegativeToggle') as HTMLInputElement
+    const negativeToggleLabel = document.getElementById('negativeToggleLabel')
+
     if (template) {
       if (nameInput) nameInput.value = template.name || ''
       if (prefixInput) prefixInput.value = template.prefix || ''
       if (suffixInput) suffixInput.value = template.suffix || ''
       if (negativeInput) negativeInput.value = template.negative || ''
+
+      const hasNegative = !!(template.negative?.trim())
+      if (negativeToggle) {
+        negativeToggle.checked = hasNegative
+        negativeToggle.onchange = () => {
+          const on = negativeToggle.checked
+          if (negativeInput) { negativeInput.disabled = !on; negativeInput.classList.toggle('opacity-30', !on) }
+          if (negativeToggleLabel) negativeToggleLabel.textContent = on ? 'ON' : 'OFF'
+          if (on && negativeInput) negativeInput.focus()
+        }
+      }
+      if (negativeInput) { negativeInput.disabled = !hasNegative; negativeInput.classList.toggle('opacity-30', !hasNegative) }
+      if (negativeToggleLabel) negativeToggleLabel.textContent = hasNegative ? 'ON' : 'OFF'
+
       if (titleEl) titleEl.textContent = this.t('director.templates.editTemplate') || '编辑模板'
       
       // 内置模板显示重置按钮，自定义模板显示删除按钮
@@ -4314,7 +4331,17 @@ ${styleConfig.additionalRules}
       if (nameInput) nameInput.value = ''
       if (prefixInput) prefixInput.value = ''
       if (suffixInput) suffixInput.value = ''
-      if (negativeInput) negativeInput.value = ''
+      if (negativeInput) { negativeInput.value = ''; negativeInput.disabled = true; negativeInput.classList.add('opacity-30') }
+      if (negativeToggle) {
+        negativeToggle.checked = false
+        negativeToggle.onchange = () => {
+          const on = negativeToggle.checked
+          if (negativeInput) { negativeInput.disabled = !on; negativeInput.classList.toggle('opacity-30', !on) }
+          if (negativeToggleLabel) negativeToggleLabel.textContent = on ? 'ON' : 'OFF'
+          if (on && negativeInput) negativeInput.focus()
+        }
+      }
+      if (negativeToggleLabel) negativeToggleLabel.textContent = 'OFF'
       if (titleEl) titleEl.textContent = this.t('director.templates.newTemplate') || '新建模板'
       deleteBtn?.classList.add('hidden')
       resetBtn?.classList.add('hidden')
@@ -4351,10 +4378,12 @@ ${styleConfig.additionalRules}
     const suffixInput = document.getElementById('templateEditorSuffix') as HTMLTextAreaElement
     const negativeInput = document.getElementById('templateEditorNegative') as HTMLTextAreaElement
     
+    const negativeToggle = document.getElementById('templateEditorNegativeToggle') as HTMLInputElement
+    
     const name = nameInput?.value?.trim()
     const prefix = prefixInput?.value?.trim() || ''
     const suffix = suffixInput?.value?.trim() || ''
-    const negative = negativeInput?.value?.trim() || ''
+    const negative = negativeToggle?.checked ? (negativeInput?.value?.trim() || '') : ''
     
     if (!name) {
       this.app.showToast?.(this.t('director.messages.enterTemplateName') || '请填写模板名称', 'warning')
@@ -4442,6 +4471,13 @@ ${styleConfig.additionalRules}
         if (prefixInput) prefixInput.value = original.prefix
         if (suffixInput) suffixInput.value = original.suffix
         if (negativeInput) negativeInput.value = original.negative
+
+        const negativeToggle = document.getElementById('templateEditorNegativeToggle') as HTMLInputElement
+        const negativeToggleLabel = document.getElementById('negativeToggleLabel')
+        const hasNeg = !!(original.negative?.trim())
+        if (negativeToggle) negativeToggle.checked = hasNeg
+        if (negativeInput) { negativeInput.disabled = !hasNeg; negativeInput.classList.toggle('opacity-30', !hasNeg) }
+        if (negativeToggleLabel) negativeToggleLabel.textContent = hasNeg ? 'ON' : 'OFF'
         
         this.app.showToast?.(this.t('director.messages.restoredDefaults') || '已恢复默认值', 'success')
       }

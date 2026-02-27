@@ -59,7 +59,7 @@
       "promptFile": "data/prompts/sora-storyboard-pro.md",
       "prompt": "",
       "default": true,
-      "defaultModel": "gemini-3-pro-preview",
+      "defaultModel": "gpt-5.2",
       "contextPlaceholder": "请输入剧本大纲、角色设定、风格要求、目标视频平台（可灵/即梦/Sora/Seedance）..."
     },
     {

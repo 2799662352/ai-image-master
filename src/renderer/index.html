@@ -2689,10 +2689,17 @@
                 
                 <!-- 负面提示词 -->
                 <div>
-                    <label class="flex items-center text-sm font-bold text-[#FAFAFA] mb-2 uppercase tracking-wide">
-                        <span class="w-6 h-6 rounded-none bg-[#EF4444] text-white flex items-center justify-center text-xs mr-2">4</span>
-                        <span data-i18n="director.templateEditor.negative">负面提示词 (Negative)</span>
-                    </label>
+                    <div class="flex items-center justify-between mb-2">
+                        <label class="flex items-center text-sm font-bold text-[#FAFAFA] uppercase tracking-wide">
+                            <span class="w-6 h-6 rounded-none bg-[#EF4444] text-white flex items-center justify-center text-xs mr-2">4</span>
+                            <span data-i18n="director.templateEditor.negative">负面提示词 (Negative)</span>
+                        </label>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="templateEditorNegativeToggle" class="sr-only peer">
+                            <div class="w-9 h-5 bg-[#3F3F46] rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#EF4444]"></div>
+                            <span class="ml-2 text-xs text-[#71717A]" id="negativeToggleLabel">OFF</span>
+                        </label>
+                    </div>
                     <textarea id="templateEditorNegative" rows="3"
                               class="w-full px-4 py-3 bg-[#27272A] border-2 border-[#3F3F46] rounded-none text-[#FAFAFA] font-mono text-sm placeholder-[#71717A] focus:outline-none focus:border-[#EF4444] transition-colors resize-none"
                               data-i18n-attr="placeholder:director.templateEditor.negativePlaceholder"

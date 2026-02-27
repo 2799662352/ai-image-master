@@ -188,6 +188,13 @@ export class UnderstandPage extends BasePage {
 
       this.renderRoleButtons()
       this.applyRolePrompt(this.currentRole)
+
+      const defaultRoleObj = this.roleConfig!.roles.find(r => r.id === this.currentRole)
+      if (defaultRoleObj?.defaultModel) {
+        this.currentModel = defaultRoleObj.defaultModel
+        this.updateCurrentModelDisplay()
+      }
+      this.updateContextPlaceholder(defaultRoleObj)
     } catch (error) {
       console.error('❌ 角色配置加载失败:', error)
       this.roleConfig = {
