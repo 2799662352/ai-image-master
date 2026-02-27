@@ -31,6 +31,7 @@ files:
   - "!**/playwright.config.*"
   - "!**/vitest.config.*"
   - "!**/*.md"
+  - "dist/renderer/data/prompts/**"
   - "!**/docs/**"
   - "!**/tests/**"
   - "!**/e2e/**"
