@@ -953,7 +953,7 @@ export class UnderstandPage extends BasePage {
       if (this.currentRole === 'sora-storyboard') {
         try {
           const { getLangChainStoryboardService } = await import('../services/ServiceBridge')
-          const storyboardService = getLangChainStoryboardService(modelToUse)
+          const storyboardService = await getLangChainStoryboardService(modelToUse)
           if (storyboardService) {
             console.log('[UnderstandPage] Using LangChain structured storyboard output...')
             const images = this.uploadedImages.map(img => ({

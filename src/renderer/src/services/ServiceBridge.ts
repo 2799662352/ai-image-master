@@ -9,7 +9,7 @@
 
 import { getStorageBridge, StorageBridge } from './storage'
 import { LangChainDirectorService } from './LangChainDirectorService'
-import { LangChainStoryboardService } from './LangChainStoryboardService'
+import type { LangChainStoryboardService } from './LangChainStoryboardService'
 import { getI18nService, I18nService } from './i18n'
 import { getApiService, ApiService } from './api'
 import { getR2StorageService, R2StorageService, initR2StorageGlobal } from './r2-storage'
@@ -1023,7 +1023,7 @@ export function getLangChainDirectorService(model?: string): LangChainDirectorSe
 let _langchainStoryboardInstance: LangChainStoryboardService | null = null
 let _storyboardCacheKey: string | null = null
 
-export function getLangChainStoryboardService(model?: string): LangChainStoryboardService | null {
+export async function getLangChainStoryboardService(model?: string): Promise<LangChainStoryboardService | null> {
   const api = (window as any).aiImageAPI
   const apiKey = api?.visionApiKey as string | undefined
   if (!apiKey) return null
@@ -1034,9 +1034,10 @@ export function getLangChainStoryboardService(model?: string): LangChainStoryboa
 
   const cacheKey = `storyboard|${apiKey}|${baseURL}|${model || ''}`
   if (!_langchainStoryboardInstance || _storyboardCacheKey !== cacheKey) {
-    _langchainStoryboardInstance = new LangChainStoryboardService({ apiKey, baseURL, model })
+    const { LangChainStoryboardService: Svc } = await import('./LangChainStoryboardService')
+    _langchainStoryboardInstance = new Svc({ apiKey, baseURL, model })
     _storyboardCacheKey = cacheKey
-    console.log('[ServiceBridge] ✓ LangChainStoryboardService 实例已创建, model:', model || 'default')
+    console.log('[ServiceBridge] ✓ LangChainStoryboardService 实例已创建 (动态加载), model:', model || 'default')
   }
   return _langchainStoryboardInstance
 }
