@@ -66,7 +66,7 @@ const PipelineState = Annotation.Root({
   }),
 })
 
-const RETRY_SCORE_THRESHOLD = 9
+const RETRY_SCORE_THRESHOLD = 10
 const MAX_RETRY_COUNT = 2
 
 export class StoryboardPipelineService {
