@@ -950,6 +950,33 @@ export class UnderstandPage extends BasePage {
     let fullResult = ''
 
     try {
+      if (this.currentRole === 'sora-storyboard') {
+        try {
+          const { getLangChainStoryboardService } = await import('../services/ServiceBridge')
+          const storyboardService = getLangChainStoryboardService(modelToUse)
+          if (storyboardService) {
+            console.log('[UnderstandPage] Using LangChain structured storyboard output...')
+            const images = this.uploadedImages.map(img => ({
+              base64: img.base64, mimeType: img.mimeType || 'image/jpeg'
+            }))
+            const rolePrompt = prompt || ''
+            const context = contextText || undefined
+
+            const result = await storyboardService.analyze({ images, rolePrompt, context })
+            const jsonOutput = storyboardService.toJSON(result)
+
+            fullResult = jsonOutput
+            this.appendResultChunk(jsonOutput)
+            this.onStreamComplete(jsonOutput, modelToUse)
+            this.showToast('LangChain 结构化分析完成！', 'success')
+            this.isAnalyzing = false
+            return
+          }
+        } catch (lcError: any) {
+          console.warn('[UnderstandPage] LangChain structured output failed, falling back to stream:', lcError.message)
+        }
+      }
+
       await api.analyzeImagesStream(
         this.uploadedImages,
         finalPrompt,
