@@ -28,6 +28,11 @@ export interface PipelineInput {
   panelCount?: number | 'auto'
 }
 
+/**
+ * Pipeline 进度事件。
+ * 正常 pass 完成时 data 为该 pass 的结果对象。
+ * 当 data.retry === true 时表示 prepareRetry 触发，UI 应切换到精修状态。
+ */
 export interface PipelineProgress {
   pass: 1 | 2 | 3 | 4
   label: string
@@ -60,6 +65,9 @@ const PipelineState = Annotation.Root({
     default: () => '',
   }),
 })
+
+const RETRY_SCORE_THRESHOLD = 9
+const MAX_RETRY_COUNT = 2
 
 export class StoryboardPipelineService {
   private llm: ChatOpenAI | ChatGoogle
@@ -118,8 +126,6 @@ export class StoryboardPipelineService {
 
     const buildImageMsg = (text: string) =>
       new HumanMessage({ content: buildImageContent(images, text) })
-    const buildTextMsg = (text: string) =>
-      new HumanMessage({ content: text })
 
     const hardRules = `Hard Rules:
 1. Physical lighting: 80% deep shadows + single rim light, never emotion adjectives
@@ -226,7 +232,7 @@ ${state.retryFeedback}
     }
 
     function shouldRetry(state: typeof PipelineState.State) {
-      if (state.report && state.report.score < 9 && state.retryCount < 2) {
+      if (state.report && state.report.score < RETRY_SCORE_THRESHOLD && state.retryCount < MAX_RETRY_COUNT) {
         return 'retry'
       }
       return 'done'
@@ -290,7 +296,14 @@ ${state.retryFeedback}
         collected.report = nodeOutput.report as ConsistencyReport
         if (onProgress) onProgress({ pass: 4, label: '一致性校验完成', data: collected.report })
       } else if (nodeName === 'prepareRetry') {
-        if (onProgress) onProgress({ pass: 3, label: '准备精修重试', data: { retry: true, retryCount: (nodeOutput as Record<string, unknown>).retryCount } })
+        if (onProgress) {
+          const retryData = nodeOutput as Record<string, unknown>
+          onProgress({
+            pass: 3,
+            label: '准备精修重试',
+            data: { retry: true, retryCount: retryData.retryCount }
+          })
+        }
       }
     }
 

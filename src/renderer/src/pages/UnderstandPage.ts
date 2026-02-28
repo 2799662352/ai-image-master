@@ -5,6 +5,7 @@
  */
 
 import { BasePage, AppInterface, PageState } from './BasePage'
+import type { PipelineProgress } from '../services/storyboard-pipeline/StoryboardPipelineService'
 
 /**
  * 上传的图片
@@ -1270,7 +1271,7 @@ export class UnderstandPage extends BasePage {
   /**
    * 处理管线各 Pass 完成的进度回调
    */
-  private onPipelineProgress(progress: { pass: number; label: string; data: any }): void {
+  private onPipelineProgress(progress: PipelineProgress): void {
     if (progress.data?.retry) {
       const pass3El = document.getElementById('pipelinePass3')
       if (pass3El) {
