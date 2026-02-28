@@ -16,7 +16,7 @@ export const StoryboardObjSchema = z.object({
   fx: z.nullable(z.string()).describe('特效: 风/烟/光/粒子,与act时间对齐. Null if none'),
   motive: z.string().describe('动机: 这个动作/道具外化了什么心理'),
   a: z.string().describe('多粒度: 粗(构图%)→中(动作链)→细(遮挡/高光delta)'),
-  m: z.record(z.string(), z.string()).describe('运动强度: 部位→角度°/位移cm/H-M-L')
+  m: z.string().describe('运动强度: 部位→角度°/位移cm/H-M-L. 格式: head:pan-R25°|M,torso:lean10°|L')
 })
 
 export const StoryboardTimelineEntrySchema = z.object({
@@ -31,14 +31,19 @@ export const StoryboardSceneSchema = z.object({
   cap: z.string().describe('结构化标题: 主体-动作-环境'),
   env: z.string().describe('环境: [mm]f/[stop]|光源+阴影%+对比|主色hex+点缀色hex|风格'),
   bgm: z.string().describe('4层声画对位: 层1(绑定S?)|层2(绑定S?)|层3(绑定S?)|层4'),
-  timeline: z.record(z.string(), StoryboardTimelineEntrySchema)
+  timeline: z.array(StoryboardTimelineEntrySchema.extend({
+    id: z.string().describe('镜头编号 e.g. S1, S2, S1-S3')
+  }))
 })
 
 export const StoryboardResponseSchema = z.object({
   scene: StoryboardSceneSchema,
   objs: z.array(StoryboardObjSchema),
-  seq: z.record(z.string(), z.string().describe('S[n]: 景别|动作|台词精华|心理→外化|运镜')),
-  cont: z.record(z.string(), z.string()).describe('跨镜头连续性锚点'),
+  seq: z.array(z.object({
+    id: z.string().describe('镜头编号 e.g. S1'),
+    desc: z.string().describe('景别|动作|台词精华|心理→外化|运镜')
+  })),
+  cont: z.string().describe('跨镜头连续性锚点,格式: S1-S2:锚点;S2-S3:锚点'),
   notes: z.string().describe('验证总结 + 节奏呼吸曲线: 总Xs(慢→渐快→急促→骤停)')
 })
 
