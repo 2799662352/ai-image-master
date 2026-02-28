@@ -9,6 +9,7 @@
 
 import { getStorageBridge, StorageBridge } from './storage'
 import { LangChainDirectorService } from './LangChainDirectorService'
+import { LangChainStoryboardService } from './LangChainStoryboardService'
 import { getI18nService, I18nService } from './i18n'
 import { getApiService, ApiService } from './api'
 import { getR2StorageService, R2StorageService, initR2StorageGlobal } from './r2-storage'
@@ -1019,10 +1020,10 @@ export function getLangChainDirectorService(model?: string): LangChainDirectorSe
 /**
  * 获取或创建 LangChain Storyboard Service 实例（懒加载）
  */
-let _langchainStoryboardInstance: import('./LangChainStoryboardService').LangChainStoryboardService | null = null
+let _langchainStoryboardInstance: LangChainStoryboardService | null = null
 let _storyboardCacheKey: string | null = null
 
-export function getLangChainStoryboardService(model?: string): import('./LangChainStoryboardService').LangChainStoryboardService | null {
+export function getLangChainStoryboardService(model?: string): LangChainStoryboardService | null {
   const api = (window as any).aiImageAPI
   const apiKey = api?.visionApiKey as string | undefined
   if (!apiKey) return null
@@ -1033,7 +1034,6 @@ export function getLangChainStoryboardService(model?: string): import('./LangCha
 
   const cacheKey = `storyboard|${apiKey}|${baseURL}|${model || ''}`
   if (!_langchainStoryboardInstance || _storyboardCacheKey !== cacheKey) {
-    const { LangChainStoryboardService } = require('./LangChainStoryboardService')
     _langchainStoryboardInstance = new LangChainStoryboardService({ apiKey, baseURL, model })
     _storyboardCacheKey = cacheKey
     console.log('[ServiceBridge] ✓ LangChainStoryboardService 实例已创建, model:', model || 'default')
