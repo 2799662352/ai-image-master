@@ -96,6 +96,10 @@ export class UnderstandPage extends BasePage {
   // 结果存储
   private lastResult: string = ''
 
+  // 分镜导入相关
+  private _lastStoryboardResult: any = null
+  private _lastAnalyzedImages: Array<{base64: string; mimeType: string}> = []
+
   // 调试标志
   private styleDebugLogged: boolean = false
 
@@ -432,7 +436,7 @@ export class UnderstandPage extends BasePage {
     const i18n = (window as any).i18n
 
     listContainer.innerHTML = this.modelConfig.models.map(model => {
-      const modelData = i18n?.t(`understand.visionModelData.${model.id}`) || {}
+      const modelData = i18n?.tObject?.('understand.visionModelData', model.id) || {}
       const displayName = modelData.displayName || model.shortName || model.displayName || model.name || model.id
       const description = modelData.description || model.description || ''
       const features = modelData.features || model.features || []
@@ -951,6 +955,41 @@ export class UnderstandPage extends BasePage {
 
     try {
       if (this.currentRole === 'sora-storyboard' || this.currentRole === 'sora-storyboard-pro') {
+        if (this.currentRole === 'sora-storyboard-pro') {
+          try {
+            const { getStoryboardPipelineService } = await import('../services/ServiceBridge')
+            const pipelineService = await getStoryboardPipelineService(modelToUse)
+            if (pipelineService) {
+              console.log('[UnderstandPage] Using 4-Pass storyboard pipeline...')
+              const images = this.uploadedImages.map(img => ({
+                base64: img.base64, mimeType: img.mimeType || 'image/jpeg'
+              }))
+              this.showPipelineProgress()
+
+              const result = await pipelineService.analyze(
+                images,
+                { rolePrompt: prompt || '', context: contextText || undefined },
+                (progress) => this.onPipelineProgress(progress)
+              )
+
+              const jsonOutput = JSON.stringify(result, null, 2)
+              fullResult = jsonOutput
+              this.appendResultChunk(jsonOutput)
+              this.onStreamComplete(jsonOutput, modelToUse)
+              this.showToast('4-Pass 分镜分析完成！', 'success')
+
+              this._lastStoryboardResult = result
+              this._lastAnalyzedImages = images
+              this.showImportToDirectorButton()
+
+              this.isAnalyzing = false
+              return
+            }
+          } catch (pipelineError: any) {
+            console.warn('[UnderstandPage] Pipeline failed, falling back to single-pass:', pipelineError.message)
+          }
+        }
+
         try {
           const { getLangChainStoryboardService } = await import('../services/ServiceBridge')
           const storyboardService = await getLangChainStoryboardService(modelToUse)
@@ -969,6 +1008,11 @@ export class UnderstandPage extends BasePage {
             this.appendResultChunk(jsonOutput)
             this.onStreamComplete(jsonOutput, modelToUse)
             this.showToast('LangChain 结构化分析完成！', 'success')
+
+            this._lastStoryboardResult = result
+            this._lastAnalyzedImages = images
+            this.showImportToDirectorButton()
+
             this.isAnalyzing = false
             return
           }
@@ -1141,6 +1185,140 @@ export class UnderstandPage extends BasePage {
 
     const model = this.modelConfig.models.find(m => m.id === modelId)
     return model ? (model.displayName || model.id) : modelId
+  }
+
+  /**
+   * 显示"导入到导演模式"按钮
+   */
+  private showImportToDirectorButton(): void {
+    const resultArea = this.getElement<HTMLElement>('understandResult')
+    if (!resultArea) return
+
+    const existingBtn = document.getElementById('importToDirectorBtn')
+    if (existingBtn) existingBtn.remove()
+
+    const btn = document.createElement('button')
+    btn.id = 'importToDirectorBtn'
+    btn.className = 'mt-4 px-6 py-3 bg-[#FCE300] text-black font-bold rounded-lg hover:bg-yellow-400 transition-colors flex items-center gap-2'
+    btn.innerHTML = '<i class="fas fa-film"></i> 导入到导演模式'
+    btn.onclick = () => this.importToDirector()
+    resultArea.appendChild(btn)
+  }
+
+  /**
+   * 将分镜数据导入导演模式
+   */
+  private async importToDirector(): Promise<void> {
+    if (!this._lastStoryboardResult) return
+
+    const { convertStoryboardToDirector } = await import('../services/StoryboardToDirectorAdapter')
+    const importData = convertStoryboardToDirector(
+      this._lastStoryboardResult,
+      this._lastAnalyzedImages[0]?.base64,
+      this._lastAnalyzedImages[0]?.mimeType
+    )
+
+    sessionStorage.setItem('director_import_data', JSON.stringify(importData))
+    this.app.switchTab('director')
+    this.showToast('已导入到导演模式', 'success')
+  }
+
+  /**
+   * 显示 4-Pass 管线进度 UI
+   */
+  private showPipelineProgress(): void {
+    const resultContainer = this.getElement<HTMLElement>('understandResult')
+    if (!resultContainer) return
+
+    const passes = [
+      { icon: '🎬', label: 'Pass 1: 场景分析' },
+      { icon: '👤', label: 'Pass 2: 角色提取' },
+      { icon: '🎥', label: 'Pass 3: 分镜生成' },
+      { icon: '✅', label: 'Pass 4: 一致性校验' }
+    ]
+
+    resultContainer.innerHTML = `
+      <div class="mb-4">
+        <h3 class="text-white text-lg font-semibold flex items-center mb-3">
+          <i class="fas fa-brain text-blue-400 mr-2 animate-pulse"></i>
+          4-Pass 分镜分析中...
+        </h3>
+        <div class="space-y-2" id="pipelineProgressBars">
+          ${passes.map((p, i) => `
+            <div class="flex items-center gap-3 text-sm" id="pipelinePass${i + 1}">
+              <span class="text-xl">${p.icon}</span>
+              <span class="text-white opacity-70">${p.label}</span>
+              <span class="ml-auto text-white opacity-30">等待中</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+      <div id="pipelineResultArea" class="text-white" style="min-height: 200px; line-height: 1.8; white-space: pre-wrap;"></div>
+    `
+
+    const firstPass = document.getElementById('pipelinePass1')
+    if (firstPass) {
+      const status = firstPass.querySelector('span:last-child')
+      if (status) {
+        status.textContent = '⏳ 进行中...'
+        status.classList.remove('opacity-30')
+        status.classList.add('text-yellow-400', 'animate-pulse')
+      }
+    }
+  }
+
+  /**
+   * 处理管线各 Pass 完成的进度回调
+   */
+  private onPipelineProgress(progress: { pass: number; label: string; data: any }): void {
+    if (progress.data?.retry) {
+      const pass3El = document.getElementById('pipelinePass3')
+      if (pass3El) {
+        const status = pass3El.querySelector('span:last-child')
+        if (status) {
+          status.textContent = '🔄 精修中...'
+          status.className = 'ml-auto text-orange-400 animate-pulse'
+        }
+      }
+      const pass4El = document.getElementById('pipelinePass4')
+      if (pass4El) {
+        const status = pass4El.querySelector('span:last-child')
+        if (status) {
+          status.textContent = '等待重检'
+          status.className = 'ml-auto text-white opacity-30'
+        }
+      }
+      return
+    }
+
+    const passEl = document.getElementById(`pipelinePass${progress.pass}`)
+    if (passEl) {
+      const statusEl = passEl.querySelector('span:last-child')
+      if (statusEl) {
+        statusEl.textContent = '✓ 完成'
+        statusEl.className = 'ml-auto text-green-400'
+      }
+    }
+
+    const resultArea = document.getElementById('pipelineResultArea')
+    if (resultArea) {
+      const summary = document.createElement('div')
+      summary.className = 'mb-3 p-3 bg-white bg-opacity-5 rounded-lg'
+      summary.innerHTML = `
+        <div class="text-sm text-blue-300 font-medium mb-1">${progress.label}</div>
+        <pre class="text-xs text-white opacity-70 overflow-auto max-h-40">${JSON.stringify(progress.data, null, 2)}</pre>
+      `
+      resultArea.appendChild(summary)
+    }
+
+    const nextPassEl = document.getElementById(`pipelinePass${progress.pass + 1}`)
+    if (nextPassEl) {
+      const nextStatus = nextPassEl.querySelector('span:last-child')
+      if (nextStatus) {
+        nextStatus.textContent = '⏳ 进行中...'
+        nextStatus.className = 'ml-auto text-yellow-400 animate-pulse'
+      }
+    }
   }
 
   /**
