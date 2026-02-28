@@ -950,7 +950,7 @@ export class UnderstandPage extends BasePage {
     let fullResult = ''
 
     try {
-      if (this.currentRole === 'sora-storyboard') {
+      if (this.currentRole === 'sora-storyboard' || this.currentRole === 'sora-storyboard-pro') {
         try {
           const { getLangChainStoryboardService } = await import('../services/ServiceBridge')
           const storyboardService = await getLangChainStoryboardService(modelToUse)
