@@ -1216,42 +1216,41 @@ export class UnderstandPage extends BasePage {
    * Pipeline 完成后展示 Tab 切换结果（格式化文本 / JSON）+ 复制 + 导入按钮
    */
   private showStoryboardResult(formattedText: string, jsonText: string): void {
-    const pipelineArea = document.getElementById('pipelineResultArea')
-    if (!pipelineArea) return
+    const resultArea = document.getElementById('pipelineResultArea')
+    if (!resultArea) return
 
     this._currentResultTab = 'formatted'
 
-    const existing = document.getElementById('storyboardResultSection')
-    if (existing) existing.remove()
+    const spinner = document.getElementById('pipelineSpinner')
+    if (spinner) { spinner.classList.remove('animate-pulse'); spinner.className = 'fas fa-check-circle text-green-400 mr-2' }
+    const title = document.getElementById('pipelineTitle')
+    if (title) title.textContent = '4-Pass 分镜分析完成'
 
-    const resultSection = document.createElement('div')
-    resultSection.id = 'storyboardResultSection'
-    resultSection.className = 'mt-6 pt-4 border-t border-white/10'
-    resultSection.innerHTML = `
-      <h3 class="text-white text-lg font-semibold flex items-center mb-3">
-        <i class="fas fa-scroll text-blue-400 mr-2"></i>
-        分镜数据
-      </h3>
-      <div class="flex gap-1 bg-[#1a1a2e] rounded-lg p-1 mb-3" id="storyboardTabs">
-        <button id="tabFormatted" class="${UnderstandPage.TAB_ACTIVE}" aria-label="格式化文本视图">
-          <i class="fas fa-align-left mr-1"></i> 格式化文本
-        </button>
-        <button id="tabJson" class="${UnderstandPage.TAB_INACTIVE}" aria-label="JSON数据视图">
-          <i class="fas fa-code mr-1"></i> JSON
-        </button>
-      </div>
-      <div id="storyboardContent" class="bg-[#0a0a1a] rounded-lg p-4 font-mono text-sm text-white/90 overflow-auto whitespace-pre-wrap" style="max-height: 500px; line-height: 1.6;">${this.escapeHtml(formattedText)}</div>
-      <div class="flex gap-2 mt-3">
-        <button id="copyResultBtn" class="px-4 py-2 bg-[#2a2a3e] hover:bg-[#3a3a4e] text-white rounded-md transition-colors duration-200 cursor-pointer focus:ring-2 focus:ring-blue-500 flex items-center gap-1" aria-label="复制当前内容到剪贴板">
-          <i class="fas fa-copy"></i> <span>复制</span>
-        </button>
-        <button id="importToDirectorBtn" class="px-6 py-3 bg-[#FCE300] text-black font-bold rounded-lg hover:bg-yellow-400 transition-colors duration-200 cursor-pointer flex items-center gap-2" aria-label="导入到导演模式">
-          <i class="fas fa-film"></i> 导入导演模式
-        </button>
+    resultArea.innerHTML = `
+      <div class="bg-[#27272A] rounded-none p-4">
+        <h3 class="text-white font-semibold flex items-center mb-3">
+          <i class="fas fa-scroll text-green-400 mr-2"></i>
+          分镜数据
+        </h3>
+        <div class="flex gap-1 bg-[#09090B] border border-[#3F3F46] rounded-none p-1 mb-3" id="storyboardTabs">
+          <button id="tabFormatted" class="${UnderstandPage.TAB_ACTIVE}" aria-label="格式化文本视图">
+            <i class="fas fa-align-left mr-1"></i> 格式化文本
+          </button>
+          <button id="tabJson" class="${UnderstandPage.TAB_INACTIVE}" aria-label="JSON数据视图">
+            <i class="fas fa-code mr-1"></i> JSON
+          </button>
+        </div>
+        <div id="storyboardContent" class="bg-[#09090B] border border-[#3F3F46] rounded-none p-4 font-mono text-sm text-white/90 overflow-auto whitespace-pre-wrap" style="max-height: 500px; line-height: 1.6;">${this.escapeHtml(formattedText)}</div>
+        <div class="flex gap-2 mt-3">
+          <button id="copyResultBtn" class="px-4 py-2 bg-[#09090B] border border-[#3F3F46] hover:bg-[#3F3F46] text-white rounded-none transition-colors duration-200 cursor-pointer flex items-center gap-1" aria-label="复制当前内容到剪贴板">
+            <i class="fas fa-copy"></i> <span>复制</span>
+          </button>
+          <button id="importToDirectorBtn" class="px-6 py-3 bg-[#FCE300] text-black font-bold rounded-none hover:bg-yellow-400 transition-colors duration-200 cursor-pointer flex items-center gap-2" aria-label="导入到导演模式">
+            <i class="fas fa-film"></i> 导入导演模式
+          </button>
+        </div>
       </div>
     `
-
-    pipelineArea.parentElement?.appendChild(resultSection)
 
     document.getElementById('tabFormatted')?.addEventListener('click', () => {
       this._currentResultTab = 'formatted'
@@ -1269,9 +1268,9 @@ export class UnderstandPage extends BasePage {
     })
   }
 
-  private static readonly TAB_BASE = 'px-4 py-2 rounded-md text-sm font-medium cursor-pointer transition-colors duration-200 focus:ring-2 focus:ring-blue-500'
-  private static readonly TAB_ACTIVE = `${UnderstandPage.TAB_BASE} bg-blue-600 text-white`
-  private static readonly TAB_INACTIVE = `${UnderstandPage.TAB_BASE} text-white/60 hover:text-white/80`
+  private static readonly TAB_BASE = 'px-4 py-2 rounded-none text-sm font-medium cursor-pointer transition-colors duration-200'
+  private static readonly TAB_ACTIVE = `${UnderstandPage.TAB_BASE} bg-[#FCE300] text-black font-bold`
+  private static readonly TAB_INACTIVE = `${UnderstandPage.TAB_BASE} text-white/60 hover:text-white/80 hover:bg-[#3F3F46]`
 
   private updateStoryboardTab(formattedText: string, jsonText: string): void {
     const content = document.getElementById('storyboardContent')
@@ -1342,22 +1341,24 @@ export class UnderstandPage extends BasePage {
     ]
 
     resultContainer.innerHTML = `
-      <div class="mb-4">
-        <h3 class="text-white text-lg font-semibold flex items-center mb-3">
-          <i class="fas fa-brain text-blue-400 mr-2 animate-pulse"></i>
-          4-Pass 分镜分析中...
-        </h3>
-        <div class="space-y-2" id="pipelineProgressBars">
-          ${passes.map((p, i) => `
-            <div class="flex items-center gap-3 text-sm" id="pipelinePass${i + 1}">
-              <span class="text-xl">${p.icon}</span>
-              <span class="text-white opacity-70">${p.label}</span>
-              <span class="ml-auto text-white opacity-30">等待中</span>
-            </div>
-          `).join('')}
+      <div class="space-y-4">
+        <div class="bg-[#27272A] rounded-none p-4" id="pipelineProgressCard">
+          <h3 class="text-white font-semibold flex items-center mb-3">
+            <i class="fas fa-brain text-blue-400 mr-2 animate-pulse" id="pipelineSpinner"></i>
+            <span id="pipelineTitle">4-Pass 分镜分析中...</span>
+          </h3>
+          <div class="space-y-2" id="pipelineProgressBars">
+            ${passes.map((p, i) => `
+              <div class="flex items-center gap-3 text-sm" id="pipelinePass${i + 1}">
+                <span class="text-xl">${p.icon}</span>
+                <span class="text-white opacity-70">${p.label}</span>
+                <span class="ml-auto text-white opacity-30">等待中</span>
+              </div>
+            `).join('')}
+          </div>
         </div>
+        <div id="pipelineResultArea"></div>
       </div>
-      <div id="pipelineResultArea" class="text-white" style="min-height: 200px; line-height: 1.8; white-space: pre-wrap;"></div>
     `
 
     const firstPass = document.getElementById('pipelinePass1')
