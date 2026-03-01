@@ -542,6 +542,52 @@ app.on('activate', () => {
 
 // ==================== IPC 处理 ====================
 
+// AI Skills 读写
+const builtinSkillsDir = app.isPackaged
+  ? path.join(process.resourcesPath, 'skills')
+  : path.resolve(__dirname, '../../skills')
+const userSkillsDir = path.join(app.getPath('userData'), 'skills')
+
+function readSkillsFromDir(dir: string): Record<string, string> {
+  const result: Record<string, string> = {}
+  if (!fs.existsSync(dir)) return result
+  const entries = fs.readdirSync(dir, { withFileTypes: true })
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    const skillFile = path.join(dir, entry.name, 'SKILL.md')
+    if (fs.existsSync(skillFile)) {
+      result[entry.name] = fs.readFileSync(skillFile, 'utf-8')
+    }
+  }
+  return result
+}
+
+ipcMain.handle('load-skills', async () => {
+  try {
+    const builtin = readSkillsFromDir(builtinSkillsDir)
+    const user = readSkillsFromDir(userSkillsDir)
+    return { ...builtin, ...user }
+  } catch (error: any) {
+    console.error('加载 Skills 失败:', error)
+    return {}
+  }
+})
+
+ipcMain.handle('save-skill', async (_event, skillName: string, content: string) => {
+  try {
+    if (!/^[a-zA-Z0-9_-]+$/.test(skillName)) {
+      return { success: false, error: 'Invalid skill name' }
+    }
+    const dir = path.join(userSkillsDir, skillName)
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'SKILL.md'), content, 'utf-8')
+    return { success: true }
+  } catch (error: any) {
+    console.error('保存 Skill 失败:', error)
+    return { success: false, error: error.message }
+  }
+})
+
 // 图片操作
 ipcMain.handle('save-image', async (_event, { base64Data, filename }: ImageSaveParams) => {
   try {

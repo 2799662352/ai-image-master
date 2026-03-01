@@ -11,7 +11,7 @@ import {
 } from './schemas'
 import { aggregateToStoryboardResponse } from './aggregate'
 import { sanitizeStoryboardResponse } from './sanitizer'
-import { buildRulesForPass, BUILTIN_SKILLS, type PromptSkill } from './prompt-skills'
+import { buildRulesForPass, BUILTIN_SKILLS, initSkills, type PromptSkill } from './prompt-skills'
 import type { StoryboardResponse } from '../LangChainStoryboardService'
 
 export interface ImageInput {
@@ -73,12 +73,19 @@ const PipelineState = Annotation.Root({
   }),
 })
 
-const RETRY_SCORE_THRESHOLD = 10
+const RETRY_SCORE_THRESHOLD = 9
 const MAX_RETRY_COUNT = 2
 
 export class StoryboardPipelineService {
   private llm: ChatOpenAI | ChatGoogle
   private skills: PromptSkill[]
+  private checkpointer = new MemorySaver()
+  private lastThreadId: string | null = null
+  private lastResult: {
+    scene?: SceneAnalysis
+    characters?: CharacterAnchor[]
+    shots?: ShotData[]
+  } | null = null
 
   constructor(config: PipelineConfig, skills?: PromptSkill[]) {
     this.skills = skills || BUILTIN_SKILLS
@@ -106,6 +113,14 @@ export class StoryboardPipelineService {
     }
   }
 
+  private buildPrevContextSummary(): string {
+    if (!this.lastResult) return ''
+    const sceneSummary = this.lastResult.scene?.d || ''
+    const charNames = this.lastResult.characters?.map(c => c.n).join(', ') || ''
+    const shotIds = this.lastResult.shots?.map(s => s.id).join(', ') || ''
+    return `\n\n--- 上一轮分析摘要(仅供参考,按需改进) ---\n叙事: ${sceneSummary}\n角色: [${charNames}]\n镜头: [${shotIds}]`
+  }
+
   private buildImageContent(images: ImageInput[], text: string) {
     const content: Array<
       | { type: 'text'; text: string }
@@ -125,6 +140,10 @@ export class StoryboardPipelineService {
     input: PipelineInput,
     onProgress?: (progress: PipelineProgress) => void
   ): Promise<StoryboardResponse> {
+    if (this.skills === BUILTIN_SKILLS) {
+      this.skills = await initSkills()
+    }
+
     const llm = this.llm
     const buildImageContent = this.buildImageContent.bind(this)
 
@@ -146,6 +165,8 @@ export class StoryboardPipelineService {
       ? `\n\n--- 分析指南(所有Pass共享) ---\n${input.rolePrompt}`
       : ''
 
+    const prevContext = this.buildPrevContextSummary()
+
     async function analyzeScene(_state: typeof PipelineState.State, config?: RunnableConfig) {
       let timelineHint = ''
       if (typeof input.panelCount === 'number') {
@@ -154,11 +175,13 @@ export class StoryboardPipelineService {
         timelineHint = '\n先观察图片：如果图片是多面板分镜图(如九宫格/六宫格)，数出面板数量作为镜头数。如果是单张场景图，根据剧本长度和场景复杂度自行决定(4-9个)。每段2-4秒。'
       }
 
+      const sceneRules = buildRulesForPass('scene', skills)
+      console.log(`[Pipeline] Scene system prompt: ${sceneRules.length} chars, preview: ${sceneRules.slice(0, 200)}...`)
       const systemMsg = new SystemMessage(
-        `你是专业电影分镜师和AI视频预生产专家。分析图片的场景环境，输出叙事弧线、环境参数、音乐设计和时间轴。${timelineHint}\n${buildRulesForPass('scene', skills)}`
+        `你是专业电影分镜师和AI视频预生产专家。分析图片的场景环境，输出叙事弧线、环境参数、音乐设计和时间轴。${timelineHint}\n${sceneRules}`
       )
       let userText = input.rolePrompt || '请分析这张图片的场景。'
-      userText += scriptContext
+      userText += scriptContext + prevContext
       const result = await sceneLlm.invoke([systemMsg, buildImageMsg(userText)], config)
       return { scene: result }
     }
@@ -171,7 +194,7 @@ export class StoryboardPipelineService {
 每个角色必须有跨镜头一致性锚点(发色/伤疤/服装纹理/道具)。
 每个角色必须有motive字段：基于剧本和画面，用一句话描述该角色在此场景中想要达成什么。\n${buildRulesForPass('character', skills, { sceneDescription: state.scene?.d })}`
       )
-      const userText = `场景分析结果:\n${sceneContext}${scriptContext}${domainKnowledge}\n\n请提取所有角色和关键物体，角色名从剧本中提取。`
+      const userText = `场景分析结果:\n${sceneContext}${scriptContext}${domainKnowledge}${prevContext}\n\n请提取所有角色和关键物体，角色名从剧本中提取。`
       const result = await characterLlm.invoke([systemMsg, buildImageMsg(userText)], config)
       return { characters: result.characters }
     }
@@ -224,7 +247,7 @@ ${state.retryFeedback}
 4. 物理参数是否自洽（对照原图验证光影/空间）
 5. 时间轴是否连贯
 6. 是否违反Hard Rules（如用了情绪形容词、缺少镜头参数、DOF与焦距矛盾等）
-输出连续性锚点、节奏总结和评分(1-10)。如发现角色名或台词与剧本不符，评分不超过5。\n${buildRulesForPass('verify', skills, { sceneDescription: state.scene?.d })}`
+输出连续性锚点、节奏总结和评分(1-10)。如发现角色名或台词与剧本不符，评分不超过5。\n${buildRulesForPass('verify', skills, { sceneDescription: state.scene?.d, characters: state.characters })}`
       )
       const result = await reportLlm.invoke([
         systemMsg, buildImageMsg(`请校验以下分镜数据的一致性:\n${allData}${scriptContext}${domainKnowledge}`)
@@ -233,9 +256,9 @@ ${state.retryFeedback}
     }
 
     function shouldRetry(state: typeof PipelineState.State) {
-      if (state.report && state.report.score < RETRY_SCORE_THRESHOLD && state.retryCount < MAX_RETRY_COUNT) {
-        return 'retry'
-      }
+      if (!state.report || state.retryCount >= MAX_RETRY_COUNT) return 'done'
+      if (state.report.score < RETRY_SCORE_THRESHOLD) return 'retry'
+      if (state.report.issues?.length && state.retryCount < 1) return 'retry'
       return 'done'
     }
 
@@ -270,9 +293,10 @@ ${state.retryFeedback}
         done: END
       })
       .addEdge('prepareRetry', 'generateShots')
-      .compile({ checkpointer: new MemorySaver() })
+      .compile({ checkpointer: this.checkpointer })
 
     const threadId = `storyboard-${Date.now()}`
+    this.lastThreadId = threadId
     const collected: {
       scene?: SceneAnalysis
       characters?: CharacterAnchor[]
@@ -314,6 +338,12 @@ ${state.retryFeedback}
 
     if (!collected.scene || !collected.characters || !collected.shots || !collected.report) {
       throw new Error('Pipeline incomplete: missing pass results')
+    }
+
+    this.lastResult = {
+      scene: collected.scene,
+      characters: collected.characters,
+      shots: collected.shots,
     }
 
     const raw = aggregateToStoryboardResponse(

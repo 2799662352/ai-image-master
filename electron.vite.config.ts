@@ -191,7 +191,8 @@ export default defineConfig({
         '@features': resolve(__dirname, 'src/renderer/src/features'),
         '@pages': resolve(__dirname, 'src/renderer/src/pages'),
         '@utils': resolve(__dirname, 'src/renderer/src/utils'),
-        '@types': resolve(__dirname, 'src/types')
+        '@types': resolve(__dirname, 'src/types'),
+        '@skills': resolve(__dirname, 'skills')
       }
     }
   }

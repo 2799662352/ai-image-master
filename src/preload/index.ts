@@ -79,6 +79,11 @@ const IPC_CHANNELS = {
   // 系统主题事件
   SYSTEM: {
     NATIVE_THEME_CHANGED: 'native-theme-changed'
+  },
+  // AI Skills
+  SKILLS: {
+    LOAD_ALL: 'load-skills',
+    SAVE: 'save-skill',
   }
 } as const
 
@@ -338,6 +343,13 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.removeAllListeners(channel)
     }
   },
+
+  // ============ AI Skills ============
+  loadSkills: () =>
+    safeInvoke<Record<string, string>>(IPC_CHANNELS.SKILLS.LOAD_ALL),
+
+  saveSkill: (skillName: string, content: string) =>
+    safeInvoke<IpcResponse>(IPC_CHANNELS.SKILLS.SAVE, skillName, content),
 
   // ============ 系统主题监听 ============
   onNativeThemeChanged: (callback: (data: { shouldUseDarkColors: boolean; prefersReducedTransparency: boolean }) => void) => {

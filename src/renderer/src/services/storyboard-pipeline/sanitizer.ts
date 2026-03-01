@@ -68,7 +68,7 @@ function sanitizeText(text: string): string {
  * 当检测到镜头涉及亲密/暴力内容时，附加艺术化回避指令。
  */
 function injectDodgeLayer(desc: string): string {
-  const intimacySignals = /亲密|交融|律动|压制|裸露|肌肤|bare skin|intimacy|rhythmic|restrain/i
+  const intimacySignals = /亲密|交融|律动|压制|裸露|肌肤|情欲|偷情|缠绵|bare skin|intimacy|rhythmic|restrain/i
   if (intimacySignals.test(desc)) {
     return `${desc} | ${DODGE_LAYERS.SHADOW_VEIL}, ${DODGE_LAYERS.DEPTH_BLUR}`
   }
