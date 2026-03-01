@@ -168,7 +168,8 @@ export class StoryboardPipelineService {
       const systemMsg = new SystemMessage(
         `你是专业电影分镜师。基于场景分析和剧本，提取所有角色/物体。
 关键：如果剧本提供了角色名（如人名条），必须使用剧本原名，禁止根据画面风格猜测角色身份。
-每个角色必须有跨镜头一致性锚点(发色/伤疤/服装纹理/道具)。\n${hardRules}`
+每个角色必须有跨镜头一致性锚点(发色/伤疤/服装纹理/道具)。
+每个角色必须有motive字段：基于剧本和画面，用一句话描述该角色在此场景中想要达成什么。\n${hardRules}`
       )
       const userText = `场景分析结果:\n${sceneContext}${scriptContext}${domainKnowledge}\n\n请提取所有角色和关键物体，角色名从剧本中提取。`
       const result = await characterLlm.invoke([systemMsg, buildImageMsg(userText)], config)

@@ -27,6 +27,7 @@ export const CharacterAnchorSchema = z.object({
   p: z.string().describe('物理类型: rigid/artic/fluid/cloth + 运动约束'),
   t: z.string().describe('跨镜头一致性锚点(发色/伤疤/服装纹理/道具)'),
   tc: z.string().describe('镜头衔接延续: S?→S?: 姿态/运动向量/视线方向'),
+  motive: z.string().describe('角色动机: 基于剧本,该角色在此场景中想要达成什么(一句话)'),
   m: z.string().describe('运动强度: head:pan-R25°|M, torso:lean10°|L, ...')
 })
 

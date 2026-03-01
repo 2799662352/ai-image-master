@@ -24,7 +24,7 @@ export function aggregateToStoryboardResponse(
       tc: c.tc,
       act: '',
       fx: null,
-      motive: '',
+      motive: c.motive,
       a: '',
       m: c.m
     })),
