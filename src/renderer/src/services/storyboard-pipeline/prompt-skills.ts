@@ -69,14 +69,29 @@ ${shotSummary}
 规则: 未被 retryFeedback 提及的镜头 → 原样保留，禁止修改。`
 }
 
-const AUDIO_RULES = `Audio Sync Rules (每个镜头必须有三层音频):
-A1. Score: 引用一个具体影视配乐作品作为风格锚点, 格式 "ref:Composer/Work → 乐器, 力度(pp-ff), 速度bpm, 张力值(0-10)"
+const AUDIO_RULES = `Audio Sync Rules (每个镜头必须有audio字段，含三层):
+A1. Score: 从下方参考库选一个作品作为风格锚点, 格式 "ref:Composer/Work → 乐器, 力度(pp-ff), 速度bpm, 张力值(0-10)"
 A2. SFX: 与画面动作帧级同步, 格式 "材质+动作+频率Hz+衰减s+空间定位"
 A3. Voice: 台词用物理参数描述声线, 格式 "基频Hz, 气声比%, 语速字/秒, 物理表现, 混响RT60"
 A4. 同步公式: score_bpm = 主体运动频率Hz × 60; 音量dB = 张力值 × 6 - 40
-A5. 每镜头只引用一个作曲家, 按情绪张力维度选择, 不堆砌
+A5. 每镜头只引用一个作曲家, 按场景情绪张力选择, 禁止堆砌多个
 A6. 声线禁止情绪形容词(sexy/angry/sad), 用物理参数(Hz/bpm/%)替代
-A7. 音频dodge: 呻吟→声带颤抖, 尖叫→频率突破3kHz, 喘息→呼吸频率加速`
+A7. 音频dodge: 呻吟→声带颤抖, 尖叫→频率突破3kHz, 喘息→呼吸频率加速
+
+Score参考库(按张力值选择):
+T0-1 静默: Sakamoto/Monster(2023) piano+silence | Takemitsu/Ran(1985) shakuhachi+wind
+T1-3 温柔: Britell/Moonlight(2016) chopped-strings+piano | Desplat/ShapeOfWater(2017) accordion-waltz | Hisaishi/BoyAndHeron(2023) piano+orchestra
+T3-5 不安: Levi/UnderTheSkin(2013) dissonant-tremolo | Stetson/Hereditary(2018) circular-sax | Lopatin/UncutGems(2019) synth-arpeggios
+T5-7 紧张: Gudnadottir/Chernobyl(2019) industrial-drone | Barrow/Annihilation(2018) mutating-guitar | ChenQigang/Banquet(2006) guqin+orchestra
+T7-8 对抗: Johannsson/Sicario(2015) low-strings+timpani | Zimmer/Dune(2021) chant+sub-bass | Umebayashi/FlyingDaggers(2004) pipa+strings | ZhaoJiping/RedLantern(1991) opera-percussion
+T8-9 爆发: Goransson/Oppenheimer(2023) violin-tremolo+electronics | Holkenborg/MadMax(2015) war-drums+brass | Sawano/AttackOnTitan(2017) choir+guitar | Kajiura/DemonSlayer(2020) japanese-strings+beats
+T9-10 崩塌: Greenwood/ThereWillBeBlood(2007) cluster→noise | Reznor/GoneGirl(2014) cold-synth | Mansell/RequiemForADream(2000) string-quartet-loop
+T回落 余韵: Richter/AdAstra(2019) synth-decay+slow-strings | Santaolalla/LastOfUs(2023) nylon-guitar+reverb
+
+东亚乐器: 古筝/二胡/笛箫/琵琶/编钟(中国) | 尺八/三味线/太鼓(日本)
+西方古典: 弦乐四重奏/钢琴/铜管/管风琴/合唱
+现代电影: 合成器/电子鼓/失真吉他/采样人声
+极简: 独奏钢琴/独奏大提琴/环境电子`
 
 export const BUILTIN_SKILLS: PromptSkill[] = [
   { id: 'core',       rules: CORE_RULES,         appliesTo: ['scene', 'character', 'shot', 'verify'], priority: 0 },
