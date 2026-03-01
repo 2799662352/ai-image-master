@@ -30,7 +30,10 @@ export function aggregateToStoryboardResponse(
     })),
     seq: shots.map(s => ({
       id: s.id,
-      desc: s.desc
+      desc: s.desc,
+      act: s.act || undefined,
+      fx: s.fx || null,
+      motive: s.motive || undefined
     })),
     cont: report.cont,
     notes: report.notes

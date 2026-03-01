@@ -1,6 +1,9 @@
 ---
 name: storyboard-prompt-engineering
 description: Use when optimizing prompts for AI video storyboard pipelines, implementing dodge layers for content filters, adding continuity locks for retry consistency, creating custom PromptSkill modules, or debugging prompt-related quality issues in multi-pass LangGraph pipelines. Triggers include "dodge layer", "filter bypass", "continuity lock", "prompt modular", "storyboard pipeline", "PromptSkill", "分镜提示词".
+metadata:
+  version: "1.1"
+  author: tecx
 ---
 
 # Storyboard Prompt Engineering
@@ -25,7 +28,21 @@ Pipeline (LangGraph StateGraph)
 └── Retry (score<10)  ← prepareRetry → continuity activates
 ```
 
-Post-process: `sanitizer.ts` applies regex replacement + dodge layer injection on final output.
+Post-process: `sanitizer.ts` applies regex replacement + dodge layer injection on final output (covers `desc`, `act`, `motive` in seq).
+
+## Output Schema (StoryboardResponse.seq)
+
+Each shot in `seq` contains:
+
+| Field | Type | Source |
+|-------|------|--------|
+| `id` | string | Pass 3 (shot generation) |
+| `desc` | string | 5-part: 景别\|动作\|台词\|心理→外化\|运镜 |
+| `act` | string? | 演出动作（纯动作，不含特效） |
+| `fx` | string\|null? | 特效：风/烟/光/粒子 |
+| `motive` | string? | 动机：这个动作外化了什么心理 |
+
+`act`/`fx`/`motive` are optional fields populated by the 4-Pass Pipeline's aggregate layer. The single-pass LangChain path only produces `{id, desc}`.
 
 ## PromptSkill Quick Reference
 

@@ -6,6 +6,7 @@
 
 import { BasePage, AppInterface, PageState } from './BasePage'
 import type { ShotsResponse } from '../services/LangChainDirectorService'
+import type { StoryboardResponse } from '../services/LangChainStoryboardService'
 import { getLangChainDirectorService } from '../services/ServiceBridge'
 
 // ==================== 类型定义 ====================
@@ -158,6 +159,7 @@ export interface DirectorPageState extends PageState {
 export class DirectorPage extends BasePage {
   // 参考图片
   private referenceImages: DirectorReferenceImage[] = []
+  private _importedStoryboardData: StoryboardResponse | null = null
   private maxReferenceImages: number = 8
 
   // 生成状态
@@ -2180,8 +2182,15 @@ Output must be in English. Use concise descriptions suitable for image generatio
           base64: img.base64, mimeType: img.mimeType || 'image/jpeg'
         }))
         const styleConfig = this.getStyleConfigForJsonShots()
+        let enrichedDescription = sceneDescription
+        if (this._importedStoryboardData) {
+          const sd = this._importedStoryboardData
+          const anchors = sd.objs.map(o => `[${o.n}] ${o.t}`).join('; ')
+          const timeline = sd.scene.timeline.map(t => `${t.id}(${t.dur},${t.tempo})`).join(' → ')
+          enrichedDescription += `\n\n[Pipeline Data] 环境: ${sd.scene.env} | 角色锚点: ${anchors} | 时间轴: ${timeline}`
+        }
         const shotsResponse = await langchainService.generateShots({
-          imageAnalysis, sceneDescription, panelCount,
+          imageAnalysis, sceneDescription: enrichedDescription, panelCount,
           layoutRows: layout.rows, layoutCols: layout.cols,
           layoutRatio: layout.ratio || '16:9',
           viewDistribution: this.calculateViewDistribution(panelCount),
@@ -2278,13 +2287,27 @@ Output must be in English. Use concise descriptions suitable for image generatio
     // 获取当前选中的风格模板
     const styleConfig = this.getStyleConfigForJsonShots()
 
-    // 构建完整的 Gem 提示词
+    let structuredContext = ''
+    if (this._importedStoryboardData) {
+      const sd = this._importedStoryboardData
+      const anchors = sd.objs.map(o => `[${o.n}] ${o.t}`).join('; ')
+      const timeline = sd.scene.timeline.map(t => `${t.id}(${t.dur},${t.tempo})`).join(' → ')
+      structuredContext = `
+## 结构化分镜数据（来自 4-Pass Pipeline）
+环境: ${sd.scene.env}
+音乐: ${sd.scene.bgm}
+角色锚点: ${anchors}
+时间轴: ${timeline}
+`
+    }
+
     const userInput = `
 ## 参考图分析结果
 ${imageAnalysis}
 
 ## 用户场景描述
 ${sceneDescription || '根据参考图生成连续的分镜画面'}
+${structuredContext}
 
 ## 布局要求
 - 分镜数量: ${panelCount}
@@ -4033,6 +4056,7 @@ ${styleConfig.additionalRules}
       }
       this.switchMode(this.currentMode)
       this.restoreResultsDisplay()
+      this.checkForImportData()
     }, { timeout: 1000 })
   }
 
@@ -4070,6 +4094,55 @@ ${styleConfig.additionalRules}
 
     if (emptyState) emptyState.classList.remove('hidden')
     if (grid) grid.classList.add('hidden')
+  }
+
+  /**
+   * 检查 sessionStorage 中是否有从图像理解页面导入的分镜数据
+   */
+  private checkForImportData(): void {
+    const importJson = sessionStorage.getItem('director_import_data')
+    if (!importJson) return
+
+    sessionStorage.removeItem('director_import_data')
+
+    try {
+      const data = JSON.parse(importJson)
+
+      const sceneInput = this.getElement<HTMLTextAreaElement>('directorSceneInput')
+      if (sceneInput && data.sceneDescription) {
+        sceneInput.value = data.sceneDescription
+        sceneInput.dispatchEvent(new Event('input', { bubbles: true }))
+      }
+
+      if (data.structuredData) {
+        this._importedStoryboardData = data.structuredData
+        console.log('[DirectorPage] 已缓存结构化分镜数据，角色:', data.structuredData.objs?.length, '镜头:', data.structuredData.seq?.length)
+      }
+
+      if (data.referenceImageBase64) {
+        this.addReferenceImageFromBase64(data.referenceImageBase64, data.referenceImageMimeType || 'image/jpeg')
+      }
+
+      this.showToast(this.t('director.messages.importSuccess') || '分镜数据已导入', 'success')
+      console.log('[DirectorPage] 已从图像理解页面导入分镜数据')
+    } catch (e) {
+      console.error('[DirectorPage] 导入数据解析失败:', e)
+    }
+  }
+
+  /**
+   * 从 base64 添加参考图（用于跨页面导入）
+   */
+  private addReferenceImageFromBase64(base64: string, mimeType: string): void {
+    if (this.referenceImages.length >= this.maxReferenceImages) return
+    this.referenceImages.push({
+      base64,
+      mimeType,
+      fileName: 'imported_from_understand.jpg',
+      fileSize: Math.round(base64.length * 0.75)
+    })
+    this.updateReferenceImagesPreview()
+    this.updateGenerateButtonState()
   }
 
   /**

@@ -59,6 +59,19 @@ const DODGE_LAYERS = {
 
 `injectDodgeLayer` detects intimacy signals via regex and appends `SHADOW_VEIL + DEPTH_BLUR` to shot `desc` field.
 
+## Sanitization Scope
+
+`sanitizeStoryboardResponse` processes the following fields:
+
+| Location | Fields sanitized |
+|----------|-----------------|
+| `scene` | `d`, `cap` |
+| `objs[]` | `f`, `act`, `motive` |
+| `seq[]` | `desc` (+ dodge injection), `act`, `motive` |
+| root | `notes` |
+
+`seq[].fx` is NOT sanitized (effects like "fog", "dust" are safe).
+
 ## Design Rationale
 
 The dual-layer approach was derived from analyzing the [Grok Imagine NSFW Bible](https://github.com/FineComputer14451/Grok-Imagine-NSFW-Bible) which uses:

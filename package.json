@@ -32,6 +32,7 @@
     "analyze": "electron-vite build -- --mode analyze",
     "analyze:report": "npx vite-bundle-visualizer",
     "perf:startup": "npx tsx scripts/measure-startup.ts",
+    "pipeline:test": "npx tsx scripts/run-pipeline-test.ts",
     "test:bench": "vitest bench",
     "test:bench:run": "vitest bench --run",
     "test:bench:ci": "vitest bench --run",
@@ -40,6 +41,7 @@
   "dependencies": {
     "@langchain/core": "^1.1.29",
     "@langchain/google": "^0.1.3",
+    "@langchain/langgraph": "^1.2.0",
     "@langchain/openai": "^1.2.10",
     "browser-image-compression": "^2.0.2",
     "choices.js": "^11.1.0",

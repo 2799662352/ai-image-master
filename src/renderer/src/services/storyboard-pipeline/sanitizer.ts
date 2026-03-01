@@ -99,6 +99,8 @@ export function sanitizeStoryboardResponse(response: StoryboardResponse): Storyb
     seq: response.seq.map(s => ({
       ...s,
       desc: injectDodgeLayer(sanitizeText(s.desc)),
+      act: s.act ? sanitizeText(s.act) : s.act,
+      motive: s.motive ? sanitizeText(s.motive) : s.motive,
     })),
     notes: sanitizeText(response.notes),
   }

@@ -100,6 +100,9 @@ export class UnderstandPage extends BasePage {
   // 分镜导入相关
   private _lastStoryboardResult: any = null
   private _lastAnalyzedImages: Array<{base64: string; mimeType: string}> = []
+  private _lastFormattedText: string = ''
+  private _lastJsonText: string = ''
+  private _currentResultTab: 'formatted' | 'json' = 'formatted'
 
   // 调试标志
   private styleDebugLogged: boolean = false
@@ -973,15 +976,18 @@ export class UnderstandPage extends BasePage {
                 (progress) => this.onPipelineProgress(progress)
               )
 
+              const { formatStoryboardText } = await import('../services/StoryboardToDirectorAdapter')
+              const formattedText = formatStoryboardText(result)
               const jsonOutput = JSON.stringify(result, null, 2)
               fullResult = jsonOutput
-              this.appendResultChunk(jsonOutput)
-              this.onStreamComplete(jsonOutput, modelToUse)
-              this.showToast('4-Pass 分镜分析完成！', 'success')
 
               this._lastStoryboardResult = result
               this._lastAnalyzedImages = images
-              this.showImportToDirectorButton()
+              this._lastFormattedText = formattedText
+              this._lastJsonText = jsonOutput
+              this.showStoryboardResult(formattedText, jsonOutput)
+              this.onStreamComplete(jsonOutput, modelToUse)
+              this.showToast('4-Pass 分镜分析完成！', 'success')
 
               this.isAnalyzing = false
               return
@@ -1189,7 +1195,7 @@ export class UnderstandPage extends BasePage {
   }
 
   /**
-   * 显示"导入到导演模式"按钮
+   * 显示"导入到导演模式"按钮（兼容非 pipeline 路径）
    */
   private showImportToDirectorButton(): void {
     const resultArea = this.getElement<HTMLElement>('understandResult')
@@ -1200,10 +1206,97 @@ export class UnderstandPage extends BasePage {
 
     const btn = document.createElement('button')
     btn.id = 'importToDirectorBtn'
-    btn.className = 'mt-4 px-6 py-3 bg-[#FCE300] text-black font-bold rounded-lg hover:bg-yellow-400 transition-colors flex items-center gap-2'
+    btn.className = 'mt-4 px-6 py-3 bg-[#FCE300] text-black font-bold rounded-lg hover:bg-yellow-400 transition-colors flex items-center gap-2 cursor-pointer'
     btn.innerHTML = '<i class="fas fa-film"></i> 导入到导演模式'
     btn.onclick = () => this.importToDirector()
     resultArea.appendChild(btn)
+  }
+
+  /**
+   * Pipeline 完成后展示 Tab 切换结果（格式化文本 / JSON）+ 复制 + 导入按钮
+   */
+  private showStoryboardResult(formattedText: string, jsonText: string): void {
+    const resultArea = document.getElementById('pipelineResultArea')
+    if (!resultArea) return
+
+    this._currentResultTab = 'formatted'
+
+    resultArea.innerHTML = `
+      <div class="mt-4">
+        <div class="flex gap-1 bg-[#1a1a2e] rounded-lg p-1 mb-3" id="storyboardTabs">
+          <button id="tabFormatted" class="${UnderstandPage.TAB_ACTIVE}" aria-label="格式化文本视图">
+            <i class="fas fa-align-left mr-1"></i> 格式化文本
+          </button>
+          <button id="tabJson" class="${UnderstandPage.TAB_INACTIVE}" aria-label="JSON数据视图">
+            <i class="fas fa-code mr-1"></i> JSON
+          </button>
+        </div>
+        <div id="storyboardContent" class="bg-[#0a0a1a] rounded-lg p-4 font-mono text-sm text-white/90 overflow-auto whitespace-pre-wrap" style="max-height: 500px; line-height: 1.6;">${this.escapeHtml(formattedText)}</div>
+        <div class="flex gap-2 mt-3">
+          <button id="copyResultBtn" class="px-4 py-2 bg-[#2a2a3e] hover:bg-[#3a3a4e] text-white rounded-md transition-colors duration-200 cursor-pointer focus:ring-2 focus:ring-blue-500 flex items-center gap-1" aria-label="复制当前内容到剪贴板">
+            <i class="fas fa-copy"></i> <span>复制</span>
+          </button>
+          <button id="importToDirectorBtn" class="px-6 py-3 bg-[#FCE300] text-black font-bold rounded-lg hover:bg-yellow-400 transition-colors duration-200 cursor-pointer flex items-center gap-2" aria-label="导入到导演模式">
+            <i class="fas fa-film"></i> 导入导演模式
+          </button>
+        </div>
+      </div>
+    `
+
+    document.getElementById('tabFormatted')?.addEventListener('click', () => {
+      this._currentResultTab = 'formatted'
+      this.updateStoryboardTab(formattedText, jsonText)
+    })
+    document.getElementById('tabJson')?.addEventListener('click', () => {
+      this._currentResultTab = 'json'
+      this.updateStoryboardTab(formattedText, jsonText)
+    })
+    document.getElementById('copyResultBtn')?.addEventListener('click', () => {
+      this.copyCurrentResult()
+    })
+    document.getElementById('importToDirectorBtn')?.addEventListener('click', () => {
+      this.importToDirector()
+    })
+  }
+
+  private static readonly TAB_BASE = 'px-4 py-2 rounded-md text-sm font-medium cursor-pointer transition-colors duration-200 focus:ring-2 focus:ring-blue-500'
+  private static readonly TAB_ACTIVE = `${UnderstandPage.TAB_BASE} bg-blue-600 text-white`
+  private static readonly TAB_INACTIVE = `${UnderstandPage.TAB_BASE} text-white/60 hover:text-white/80`
+
+  private updateStoryboardTab(formattedText: string, jsonText: string): void {
+    const content = document.getElementById('storyboardContent')
+    const tabF = document.getElementById('tabFormatted')
+    const tabJ = document.getElementById('tabJson')
+    if (!content || !tabF || !tabJ) return
+
+    const isFormatted = this._currentResultTab === 'formatted'
+    content.textContent = isFormatted ? formattedText : jsonText
+    tabF.className = isFormatted ? UnderstandPage.TAB_ACTIVE : UnderstandPage.TAB_INACTIVE
+    tabJ.className = isFormatted ? UnderstandPage.TAB_INACTIVE : UnderstandPage.TAB_ACTIVE
+  }
+
+  private async copyCurrentResult(): Promise<void> {
+    const text = this._currentResultTab === 'formatted'
+      ? this._lastFormattedText
+      : this._lastJsonText
+    if (!text) return
+
+    try {
+      await navigator.clipboard.writeText(text)
+      const btn = document.getElementById('copyResultBtn')
+      if (btn) {
+        const span = btn.querySelector('span')
+        const icon = btn.querySelector('i')
+        if (span) span.textContent = '已复制'
+        if (icon) { icon.className = 'fas fa-check'; icon.style.color = '#4ade80' }
+        setTimeout(() => {
+          if (span) span.textContent = '复制'
+          if (icon) { icon.className = 'fas fa-copy'; icon.style.color = '' }
+        }, 1500)
+      }
+    } catch {
+      this.showToast('复制失败', 'error')
+    }
   }
 
   /**
