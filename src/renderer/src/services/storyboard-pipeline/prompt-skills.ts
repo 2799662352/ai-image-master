@@ -110,9 +110,19 @@ export function buildRulesForPass(
   skills: PromptSkill[],
   state?: PipelineStateSlice
 ): string {
-  return skills
+  const matched = skills
     .filter(s => s.appliesTo.includes(pass))
     .sort((a, b) => a.priority - b.priority)
-    .map(s => typeof s.rules === 'function' ? s.rules(state || {}) : s.rules)
+
+  const ids = matched.map(s => s.id)
+  console.log(`[PromptSkill] Pass "${pass}" → ${ids.length} skills: [${ids.join(', ')}]`)
+
+  return matched
+    .map(s => {
+      const rules = typeof s.rules === 'function' ? s.rules(state || {}) : s.rules
+      if (!rules) return ''
+      return `[Skill:${s.id}]\n${rules}`
+    })
+    .filter(Boolean)
     .join('\n\n')
 }
