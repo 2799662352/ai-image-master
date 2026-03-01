@@ -998,6 +998,7 @@
       "maxUploadImages": "最多上传 {max} 张参考图",
       "uploadedImages": "已上传 {count} 张图片",
       "clearedAllReferenceImages": "已清空所有参考图",
+      "importSuccess": "分镜数据已导入",
       "templateSelected": "已选择「{name}」模板",
       "enterAtLeastOneScene": "请输入至少一个场景描述",
       "batchGenerateSuccess": "批量生成完成！成功 {success}/{total} 张",

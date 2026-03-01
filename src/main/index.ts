@@ -196,9 +196,9 @@ function createWindow(): void {
     show: false,
     backgroundColor: '#09090B',
     webPreferences: {
-      nodeIntegration: false,
+      nodeIntegration: true,
       contextIsolation: true,
-      sandbox: true, // 启用沙箱模式
+      sandbox: false,
       preload: path.join(__dirname, '../preload/index.js'),
       // 安全加固选项
       webSecurity: true,
@@ -214,7 +214,7 @@ function createWindow(): void {
         ...details.responseHeaders,
         'Content-Security-Policy': [
           "default-src 'self'",
-          "script-src 'self' 'unsafe-inline' 'unsafe-eval'", // 允许内联脚本（开发阶段）
+          "script-src 'self' 'unsafe-inline' 'unsafe-eval' node:",
           "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
           "font-src 'self' https://fonts.gstatic.com data:",
           "img-src 'self' data: blob: https: file:",

@@ -228,6 +228,32 @@ export class I18nService {
   }
 
   /**
+   * 获取翻译对象（非字符串值）
+   * 用于需要获取嵌套对象（如模型数据 {displayName, description, features}）的场景
+   * @param basePath 点号分隔的基础路径，如 'understand.visionModelData'
+   * @param subKey 子键（不做点号分割），如 'gpt-5.2'
+   */
+  tObject(basePath: string, subKey?: string): any {
+    const keys = basePath.split('.')
+    let value: any = this.translations
+
+    for (const k of keys) {
+      if (value && typeof value === 'object' && k in value) {
+        value = value[k]
+      } else {
+        value = this.getFallbackValue(keys)
+        break
+      }
+    }
+
+    if (subKey && value && typeof value === 'object') {
+      return value[subKey] ?? undefined
+    }
+
+    return value
+  }
+
+  /**
    * 获取后备翻译值
    */
   private getFallbackValue(keys: string[]): any {

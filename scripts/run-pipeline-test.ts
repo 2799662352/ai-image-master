@@ -39,6 +39,7 @@ async function main() {
   const apiKey = process.env.VISION_API_KEY
   const baseURL = process.env.VISION_BASE_URL
   const imagePath = process.argv[2]
+  const contextFile = process.argv[3] || process.env.VISION_CONTEXT_FILE
 
   if (!apiKey || !baseURL) {
     console.error(`
@@ -48,10 +49,7 @@ async function main() {
 
 示例:
   $env:VISION_API_KEY="sk-xxx"; $env:VISION_BASE_URL="https://api.openai.com"
-  npx tsx scripts/run-pipeline-test.ts
-
-  # 使用真实图片
-  npx tsx scripts/run-pipeline-test.ts ./test-image.png
+  npx tsx scripts/run-pipeline-test.ts [图片路径] [剧本文件路径]
 `)
     process.exit(1)
   }
@@ -65,6 +63,20 @@ async function main() {
     console.warn('[run-pipeline-test] 未提供图片，使用 1x1 占位图，输出质量可能有限')
   }
 
+  let context: string | undefined
+  if (contextFile) {
+    const resolved = path.resolve(process.cwd(), contextFile)
+    if (fs.existsSync(resolved)) {
+      context = fs.readFileSync(resolved, 'utf-8')
+      console.log(`[run-pipeline-test] 剧本文件: ${resolved} (${context.length} chars)`)
+    } else {
+      console.warn(`[run-pipeline-test] 剧本文件不存在: ${resolved}，忽略`)
+    }
+  }
+  if (!context && !imagePath) {
+    context = '（占位图测试，请基于极小画面合理推断）'
+  }
+
   const { StoryboardPipelineService } = await import(
     '../src/renderer/src/services/storyboard-pipeline/StoryboardPipelineService'
   )
@@ -76,17 +88,19 @@ async function main() {
   })
 
   console.log('[run-pipeline-test] 启动 4-Pass Pipeline...')
+  if (context) console.log(`[run-pipeline-test] 剧本预览: ${context.slice(0, 80)}...`)
   const start = Date.now()
 
-  const progressLog = (p: { pass: number; label: string }) => {
+  const progressLog = (p: { pass: number; label: string; data: any }) => {
     console.log(`  [Pass ${p.pass}] ${p.label}`)
+    if (p.data?.retry) console.log(`  [Retry] 第 ${p.data.retryCount} 次精修`)
   }
 
   const result = await service.analyze(
     images,
     {
       rolePrompt: '请分析这张分镜图，输出专业电影分镜格式。',
-      context: imagePath ? undefined : '（占位图测试，请基于极小画面合理推断）'
+      context
     },
     progressLog as any
   )
@@ -120,6 +134,40 @@ async function main() {
   console.log('角色数:', result.objs?.length ?? 0)
   console.log('镜头数:', result.seq?.length ?? 0)
   console.log('连续性:', result.cont?.slice(0, 100) + (result.cont && result.cont.length > 100 ? '...' : ''))
+
+  // audio 字段质量检查
+  console.log('\n--- Audio 字段检查 ---')
+  const seqWithAudio = result.seq?.filter((s: any) => s.audio && s.audio.length > 10) || []
+  console.log(`有 audio 的镜头: ${seqWithAudio.length}/${result.seq?.length ?? 0}`)
+  for (const s of seqWithAudio.slice(0, 3)) {
+    console.log(`  [${(s as any).id}] ${((s as any).audio as string).slice(0, 120)}...`)
+  }
+
+  // dodge/sanitizer 效果检查
+  console.log('\n--- Dodge/Sanitizer 检查 ---')
+  const allText = JSON.stringify(result)
+  const dodgeIndicators = ['artistic shadow', 'shallow DOF', 'SHADOW_VEIL', 'DEPTH_BLUR', 'contour', 'silhouette', '轮廓', '曲线']
+  const riskyWords = ['性交', '做爱', '插入', 'fucking', 'penetrat', 'naked', 'nude']
+  for (const d of dodgeIndicators) {
+    if (allText.includes(d)) console.log(`  ✓ dodge 痕迹: "${d}"`)
+  }
+  let riskyFound = false
+  for (const r of riskyWords) {
+    if (allText.toLowerCase().includes(r.toLowerCase())) {
+      console.log(`  ✗ 危险词泄漏: "${r}"`)
+      riskyFound = true
+    }
+  }
+  if (!riskyFound) console.log('  ✓ 无危险词泄漏')
+
+  // 角色名验证
+  console.log('\n--- 角色名验证 ---')
+  const expectedNames = ['翠娘', '卯生', '樱梅']
+  const objNames = result.objs?.map((o: any) => o.n) || []
+  for (const name of expectedNames) {
+    const found = objNames.some((n: string) => n.includes(name))
+    console.log(`  ${found ? '✓' : '✗'} 剧本角色 "${name}" ${found ? '已提取' : '未找到'}`)
+  }
 
   console.log('\n--- 完整 JSON ---')
   console.log(JSON.stringify(result, null, 2))

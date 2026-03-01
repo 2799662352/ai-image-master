@@ -184,6 +184,7 @@ export default defineConfig({
     // 解析别名
     resolve: {
       alias: {
+        'node:async_hooks': resolve(__dirname, 'src/renderer/src/shims/async-hooks-shim.ts'),
         '@': resolve(__dirname, 'src/renderer/src'),
         '@core': resolve(__dirname, 'src/renderer/src/core'),
         '@services': resolve(__dirname, 'src/renderer/src/services'),
