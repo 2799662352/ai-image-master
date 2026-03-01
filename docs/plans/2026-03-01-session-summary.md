@@ -99,11 +99,15 @@ Post-process: sanitizer.ts covers desc/act/motive/audio fields
 ## Test Configuration
 
 ```
-API Key: (REDACTED - use env var VISION_API_KEY)
-Base URL: https://api.apiyi.com
+API Key: (see environment variable VISION_API_KEY - NEVER commit keys)
+Base URL: (see environment variable VISION_BASE_URL)
 Models: gemini-3-flash-preview, gemini-3-pro-preview
 Test script: scripts/run-pipeline-test.ts
 NPM script: npm run pipeline:test
+
+Usage:
+  $env:VISION_API_KEY="your-key"; $env:VISION_BASE_URL="your-url"
+  npm run pipeline:test
 ```
 
 ## Next Steps

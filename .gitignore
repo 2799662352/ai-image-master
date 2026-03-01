@@ -29,10 +29,15 @@ Thumbs.db
 *.swp
 *.swo
 
-# Environment
+# Environment & Secrets
 .env
 .env.local
 .env.*.local
+*.pem
+*.key
+credentials.json
+**/secrets/
+**/auth*.json
 
 # Package manager locks (using npm)
 yarn.lock
