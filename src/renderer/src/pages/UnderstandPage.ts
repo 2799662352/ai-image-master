@@ -1242,7 +1242,7 @@ export class UnderstandPage extends BasePage {
         </div>
         <div id="storyboardContent" class="bg-[#09090B] border border-[#3F3F46] rounded-none p-4 font-mono text-sm text-white/90 overflow-auto whitespace-pre-wrap" style="max-height: 800px; line-height: 1.8;">${this.escapeHtml(formattedText)}</div>
         <div class="flex gap-2 mt-3">
-          <button id="copyResultBtn" class="px-4 py-2 bg-[#09090B] border border-[#3F3F46] hover:bg-[#3F3F46] text-white rounded-none transition-colors duration-200 cursor-pointer flex items-center gap-1" aria-label="复制当前内容到剪贴板">
+          <button id="pipelineCopyBtn" class="px-4 py-2 bg-[#09090B] border border-[#3F3F46] hover:bg-[#3F3F46] text-white rounded-none transition-colors duration-200 cursor-pointer flex items-center gap-1" aria-label="复制当前内容到剪贴板">
             <i class="fas fa-copy"></i> <span>复制</span>
           </button>
           <button id="importToDirectorBtn" class="px-6 py-3 bg-[#FCE300] text-black font-bold rounded-none hover:bg-yellow-400 transition-colors duration-200 cursor-pointer flex items-center gap-2" aria-label="导入到导演模式">
@@ -1260,7 +1260,7 @@ export class UnderstandPage extends BasePage {
       this._currentResultTab = 'json'
       this.updateStoryboardTab(formattedText, jsonText)
     })
-    document.getElementById('copyResultBtn')?.addEventListener('click', () => {
+    document.getElementById('pipelineCopyBtn')?.addEventListener('click', () => {
       this.copyCurrentResult()
     })
     document.getElementById('importToDirectorBtn')?.addEventListener('click', () => {
@@ -1290,9 +1290,8 @@ export class UnderstandPage extends BasePage {
       : this._lastJsonText
     if (!text) return
 
-    try {
-      await navigator.clipboard.writeText(text)
-      const btn = document.getElementById('copyResultBtn')
+    const showSuccess = () => {
+      const btn = document.getElementById('pipelineCopyBtn')
       if (btn) {
         const span = btn.querySelector('span')
         const icon = btn.querySelector('i')
@@ -1303,8 +1302,25 @@ export class UnderstandPage extends BasePage {
           if (icon) { icon.className = 'fas fa-copy'; icon.style.color = '' }
         }, 1500)
       }
+    }
+
+    try {
+      await navigator.clipboard.writeText(text)
+      showSuccess()
     } catch {
-      this.showToast('复制失败', 'error')
+      const textarea = document.createElement('textarea')
+      textarea.value = text
+      textarea.style.position = 'fixed'
+      textarea.style.opacity = '0'
+      document.body.appendChild(textarea)
+      textarea.select()
+      try {
+        document.execCommand('copy')
+        showSuccess()
+      } catch {
+        this.showToast('复制失败，请手动复制', 'error')
+      }
+      document.body.removeChild(textarea)
     }
   }
 
