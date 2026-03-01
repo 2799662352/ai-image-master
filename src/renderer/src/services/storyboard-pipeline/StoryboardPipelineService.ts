@@ -6,9 +6,12 @@ import type { RunnableConfig } from '@langchain/core/runnables'
 import {
   SceneAnalysisSchema, CharacterAnchorsSchema,
   ShotSequenceSchema, ConsistencyReportSchema,
-  type SceneAnalysis, type CharacterAnchor, type ShotData, type ConsistencyReport
+  type SceneAnalysis, type CharacterAnchor, type ShotData, type ConsistencyReport,
+  type PreviousShot
 } from './schemas'
 import { aggregateToStoryboardResponse } from './aggregate'
+import { sanitizeStoryboardResponse } from './sanitizer'
+import { buildRulesForPass, BUILTIN_SKILLS, type PromptSkill } from './prompt-skills'
 import type { StoryboardResponse } from '../LangChainStoryboardService'
 
 export interface ImageInput {
@@ -64,6 +67,10 @@ const PipelineState = Annotation.Root({
     reducer: (_, y) => y,
     default: () => '',
   }),
+  previousShots: Annotation<PreviousShot[] | null>({
+    reducer: (_, y) => y,
+    default: () => null,
+  }),
 })
 
 const RETRY_SCORE_THRESHOLD = 10
@@ -71,8 +78,10 @@ const MAX_RETRY_COUNT = 2
 
 export class StoryboardPipelineService {
   private llm: ChatOpenAI | ChatGoogle
+  private skills: PromptSkill[]
 
-  constructor(config: PipelineConfig) {
+  constructor(config: PipelineConfig, skills?: PromptSkill[]) {
+    this.skills = skills || BUILTIN_SKILLS
     const modelName = config.model || 'gemini-3-pro-preview'
     const isGemini = modelName.toLowerCase().includes('gemini')
     const cleanBaseURL = config.baseURL.replace(/\/v1\/?$/, '')
@@ -127,16 +136,7 @@ export class StoryboardPipelineService {
     const buildImageMsg = (text: string) =>
       new HumanMessage({ content: buildImageContent(images, text) })
 
-    const hardRules = `Hard Rules:
-1. Physical lighting: 80% deep shadows + single rim light, never emotion adjectives
-2. Color hierarchy: dominated by [key] + faint [accent], never equal warm+cool
-3. Lens: always [mm] f/[stop], never "8k/masterpiece"
-4. Mid-action snapshot: freeze at peak tension, never "then/after"
-5. Micro-expression: physiological (brow furrowed 2mm) not emotional (happy/sad)
-6. Z-axis mandatory: fg occluder / mg subject / bg environment
-7. 2-4s per shot, ONE core action
-8. If screenplay provides character names, USE THEM EXACTLY. Never guess from visual style.
-9. If screenplay provides dialogue, EXTRACT VERBATIM. Never fabricate lines.`
+    const skills = this.skills
 
     const scriptContext = input.context
       ? `\n\n--- 剧本原文(角色名和台词必须从此提取) ---\n${input.context}`
@@ -155,7 +155,7 @@ export class StoryboardPipelineService {
       }
 
       const systemMsg = new SystemMessage(
-        `你是专业电影分镜师和AI视频预生产专家。分析图片的场景环境，输出叙事弧线、环境参数、音乐设计和时间轴。${timelineHint}\n${hardRules}`
+        `你是专业电影分镜师和AI视频预生产专家。分析图片的场景环境，输出叙事弧线、环境参数、音乐设计和时间轴。${timelineHint}\n${buildRulesForPass('scene', skills)}`
       )
       let userText = input.rolePrompt || '请分析这张图片的场景。'
       userText += scriptContext
@@ -169,7 +169,7 @@ export class StoryboardPipelineService {
         `你是专业电影分镜师。基于场景分析和剧本，提取所有角色/物体。
 关键：如果剧本提供了角色名（如人名条），必须使用剧本原名，禁止根据画面风格猜测角色身份。
 每个角色必须有跨镜头一致性锚点(发色/伤疤/服装纹理/道具)。
-每个角色必须有motive字段：基于剧本和画面，用一句话描述该角色在此场景中想要达成什么。\n${hardRules}`
+每个角色必须有motive字段：基于剧本和画面，用一句话描述该角色在此场景中想要达成什么。\n${buildRulesForPass('character', skills)}`
       )
       const userText = `场景分析结果:\n${sceneContext}${scriptContext}${domainKnowledge}\n\n请提取所有角色和关键物体，角色名从剧本中提取。`
       const result = await characterLlm.invoke([systemMsg, buildImageMsg(userText)], config)
@@ -194,7 +194,7 @@ export class StoryboardPipelineService {
         `你是专业电影分镜师。基于场景和角色数据生成分镜序列。
 ${shotCountInstruction}
 每个镜头5段式: 景别|动作|台词精华|心理→外化|运镜。
-台词规则：从剧本原文中逐字提取台词，格式"台词..."(表演方式)。禁止编造台词。无台词标注(无台词)或描写非语言声效。\n${hardRules}`
+台词规则：从剧本原文中逐字提取台词，格式"台词..."(表演方式)。禁止编造台词。无台词标注(无台词)或描写非语言声效。\n${buildRulesForPass('shot', skills, { retryFeedback: state.retryFeedback, previousShots: state.previousShots, characters: state.characters })}`
       )
       let userText = `场景:\n${sceneContext}\n\n角色:\n${charContext}${scriptContext}${domainKnowledge}\n\n请生成分镜序列，台词从剧本原文提取。`
       if (state.retryFeedback) {
@@ -224,7 +224,7 @@ ${state.retryFeedback}
 4. 物理参数是否自洽（对照原图验证光影/空间）
 5. 时间轴是否连贯
 6. 是否违反Hard Rules（如用了情绪形容词、缺少镜头参数、DOF与焦距矛盾等）
-输出连续性锚点、节奏总结和评分(1-10)。如发现角色名或台词与剧本不符，评分不超过5。\n${hardRules}`
+输出连续性锚点、节奏总结和评分(1-10)。如发现角色名或台词与剧本不符，评分不超过5。\n${buildRulesForPass('verify', skills)}`
       )
       const result = await reportLlm.invoke([
         systemMsg, buildImageMsg(`请校验以下分镜数据的一致性:\n${allData}${scriptContext}${domainKnowledge}`)
@@ -243,9 +243,13 @@ ${state.retryFeedback}
       const feedback = state.report?.issues
         ?.map(i => `[${i.shotId}] ${i.field}: ${i.problem} → ${i.suggestion}`)
         .join('\n') || ''
+
+      const previousShots = state.shots?.map(s => ({ id: s.id, desc: s.desc })) || null
+
       return {
         retryFeedback: feedback,
         retryCount: state.retryCount + 1,
+        previousShots,
         shots: null,
         report: null
       }
@@ -312,8 +316,9 @@ ${state.retryFeedback}
       throw new Error('Pipeline incomplete: missing pass results')
     }
 
-    return aggregateToStoryboardResponse(
+    const raw = aggregateToStoryboardResponse(
       collected.scene, collected.characters, collected.shots, collected.report
     )
+    return sanitizeStoryboardResponse(raw)
   }
 }

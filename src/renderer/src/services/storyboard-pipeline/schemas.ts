@@ -70,3 +70,5 @@ export const ConsistencyReportSchema = z.object({
 })
 
 export type ConsistencyReport = z.infer<typeof ConsistencyReportSchema>
+
+export type PreviousShot = Pick<ShotData, 'id' | 'desc'>
