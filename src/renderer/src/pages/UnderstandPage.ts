@@ -1357,6 +1357,13 @@ export class UnderstandPage extends BasePage {
             `).join('')}
           </div>
         </div>
+        <div class="bg-[#27272A] rounded-none p-4 hidden" id="pipelinePassResults">
+          <h3 class="text-white font-semibold flex items-center mb-3">
+            <i class="fas fa-stream text-purple-400 mr-2"></i>
+            分析过程
+          </h3>
+          <div id="pipelinePassData" class="space-y-2"></div>
+        </div>
         <div id="pipelineResultArea"></div>
       </div>
     `
@@ -1405,15 +1412,17 @@ export class UnderstandPage extends BasePage {
       }
     }
 
-    const resultArea = document.getElementById('pipelineResultArea')
-    if (resultArea) {
+    const passResultsCard = document.getElementById('pipelinePassResults')
+    const passDataArea = document.getElementById('pipelinePassData')
+    if (passResultsCard && passDataArea) {
+      passResultsCard.classList.remove('hidden')
       const summary = document.createElement('div')
-      summary.className = 'mb-3 p-3 bg-white bg-opacity-5 rounded-lg'
+      summary.className = 'p-3 bg-[#09090B] border border-[#3F3F46] rounded-none'
       summary.innerHTML = `
         <div class="text-sm text-blue-300 font-medium mb-1">${progress.label}</div>
         <pre class="text-xs text-white opacity-70 overflow-auto max-h-40">${JSON.stringify(progress.data, null, 2)}</pre>
       `
-      resultArea.appendChild(summary)
+      passDataArea.appendChild(summary)
     }
 
     const nextPassEl = document.getElementById(`pipelinePass${progress.pass + 1}`)
