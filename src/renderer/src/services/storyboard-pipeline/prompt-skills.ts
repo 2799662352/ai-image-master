@@ -69,11 +69,21 @@ ${shotSummary}
 规则: 未被 retryFeedback 提及的镜头 → 原样保留，禁止修改。`
 }
 
+const AUDIO_RULES = `Audio Sync Rules (每个镜头必须有三层音频):
+A1. Score: 引用一个具体影视配乐作品作为风格锚点, 格式 "ref:Composer/Work → 乐器, 力度(pp-ff), 速度bpm, 张力值(0-10)"
+A2. SFX: 与画面动作帧级同步, 格式 "材质+动作+频率Hz+衰减s+空间定位"
+A3. Voice: 台词用物理参数描述声线, 格式 "基频Hz, 气声比%, 语速字/秒, 物理表现, 混响RT60"
+A4. 同步公式: score_bpm = 主体运动频率Hz × 60; 音量dB = 张力值 × 6 - 40
+A5. 每镜头只引用一个作曲家, 按情绪张力维度选择, 不堆砌
+A6. 声线禁止情绪形容词(sexy/angry/sad), 用物理参数(Hz/bpm/%)替代
+A7. 音频dodge: 呻吟→声带颤抖, 尖叫→频率突破3kHz, 喘息→呼吸频率加速`
+
 export const BUILTIN_SKILLS: PromptSkill[] = [
   { id: 'core',       rules: CORE_RULES,         appliesTo: ['scene', 'character', 'shot', 'verify'], priority: 0 },
   { id: 'dialogue',   rules: DIALOGUE_RULES,     appliesTo: ['shot', 'verify'],                      priority: 10 },
   { id: 'physics',    rules: PHYSICS_RULES,       appliesTo: ['character', 'shot'],                   priority: 10 },
   { id: 'style',      rules: STYLE_RULES,         appliesTo: ['scene'],                               priority: 10 },
+  { id: 'audio',      rules: AUDIO_RULES,         appliesTo: ['shot'],                                priority: 12 },
   { id: 'dodge',      rules: DODGE_RULES,         appliesTo: ['scene', 'character', 'shot', 'verify'], priority: 20 },
   { id: 'continuity', rules: buildContinuityLock, appliesTo: ['shot'],                                priority: 30 },
 ]

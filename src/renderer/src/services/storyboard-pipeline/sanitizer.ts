@@ -101,6 +101,7 @@ export function sanitizeStoryboardResponse(response: StoryboardResponse): Storyb
       desc: injectDodgeLayer(sanitizeText(s.desc)),
       act: s.act ? sanitizeText(s.act) : s.act,
       motive: s.motive ? sanitizeText(s.motive) : s.motive,
+      audio: s.audio ? sanitizeText(s.audio) : s.audio,
     })),
     notes: sanitizeText(response.notes),
   }

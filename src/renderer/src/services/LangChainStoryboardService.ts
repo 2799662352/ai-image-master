@@ -44,7 +44,8 @@ export const StoryboardResponseSchema = z.object({
     desc: z.string().describe('景别|动作|台词精华|心理→外化|运镜'),
     act: z.string().optional().describe('演出动作(纯动作,不含特效)'),
     fx: z.nullable(z.string()).optional().describe('特效: 风/烟/光/粒子. Null if none'),
-    motive: z.string().optional().describe('动机: 这个动作外化了什么心理')
+    motive: z.string().optional().describe('动机: 这个动作外化了什么心理'),
+    audio: z.string().optional().describe('三层音频: score | sfx | voice')
   })),
   cont: z.string().describe('跨镜头连续性锚点,格式: S1-S2:锚点;S2-S3:锚点'),
   notes: z.string().describe('验证总结 + 节奏呼吸曲线: 总Xs(慢→渐快→急促→骤停)')

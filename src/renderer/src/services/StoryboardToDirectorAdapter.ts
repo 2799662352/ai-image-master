@@ -40,6 +40,7 @@ export function formatStoryboardText(response: StoryboardResponse): string {
     if (shot.act) lines.push(`  演出: ${shot.act}`)
     if (shot.fx) lines.push(`  特效: ${shot.fx}`)
     if (shot.motive) lines.push(`  动机: ${shot.motive}`)
+    if (shot.audio) lines.push(`  音频: ${shot.audio}`)
   }
   lines.push('')
 

@@ -44,7 +44,8 @@ export const ShotSchema = z.object({
   desc: z.string().describe('5段式: 景别|动作|台词精华|心理→外化|运镜'),
   act: z.string().describe('演出动作(纯动作,不含特效)'),
   fx: z.nullable(z.string()).describe('特效: 风/烟/光/粒子. Null if none'),
-  motive: z.string().describe('动机: 这个动作外化了什么心理')
+  motive: z.string().describe('动机: 这个动作外化了什么心理'),
+  audio: z.string().optional().describe('三层音频: score(ref:Composer/Work→乐器,力度,bpm,张力) | sfx(材质+动作+Hz+衰减) | voice(基频Hz,气声比%,语速)')
 })
 
 export const ShotSequenceSchema = z.object({

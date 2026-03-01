@@ -33,7 +33,8 @@ export function aggregateToStoryboardResponse(
       desc: s.desc,
       act: s.act || undefined,
       fx: s.fx || null,
-      motive: s.motive || undefined
+      motive: s.motive || undefined,
+      audio: s.audio || undefined
     })),
     cont: report.cont,
     notes: report.notes
