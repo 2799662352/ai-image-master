@@ -6,6 +6,7 @@ export interface PipelineStateSlice {
   retryFeedback?: string
   previousShots?: Array<{ id: string; desc: string }> | null
   characters?: CharacterAnchor[] | null
+  sceneDescription?: string
 }
 
 export interface PromptSkill {
@@ -13,6 +14,7 @@ export interface PromptSkill {
   rules: string | ((state: PipelineStateSlice) => string)
   appliesTo: PassType[]
   priority: number
+  condition?: (state: PipelineStateSlice) => boolean
 }
 
 const CORE_RULES = `Core Rules:
@@ -77,7 +79,7 @@ A3. Voice: 台词用物理参数描述声线, 格式 "基频Hz, 气声比%, 语�
 选择方法(A1):
 1. 评估镜头情绪张力值(0-10): 0=完全静默, 3=温柔/不安, 5=紧张, 7=对抗, 9=爆发/崩塌, 回落=余韵
 2. 确定文化语境: 场景是东亚古典→选用该文化的作曲家; 现代/科幻→选现代电影配乐家; 不限定→选最匹配音色DNA的
-3. 从你的知识中选出一位作曲家的一部具体作品, 其音色DNA最接近该张力+语境
+3. 从你的知识中选出一位作曲家的一部具体作品 — 优先选择获得奥斯卡/金球奖/BAFTA提名的配乐, 或公认大师级作曲家的代表作, 其音色DNA最接近该张力+语境
 4. 每镜头只选一部作品, 且整个分镜序列中尽量不重复同一作曲家
 
 音色DNA选择标准(按张力维度):
@@ -101,7 +103,8 @@ export const BUILTIN_SKILLS: PromptSkill[] = [
   { id: 'physics',    rules: PHYSICS_RULES,       appliesTo: ['character', 'shot'],                   priority: 10 },
   { id: 'style',      rules: STYLE_RULES,         appliesTo: ['scene'],                               priority: 10 },
   { id: 'audio',      rules: AUDIO_RULES,         appliesTo: ['shot'],                                priority: 12 },
-  { id: 'dodge',      rules: DODGE_RULES,         appliesTo: ['scene', 'character', 'shot', 'verify'], priority: 20 },
+  { id: 'dodge',      rules: DODGE_RULES,         appliesTo: ['scene', 'character', 'shot', 'verify'], priority: 20,
+    condition: (state) => !state.sceneDescription || /亲密|缠绵|intimate|erotic|nude|裸|暴力|blood|violence|刑|杀|死|sensual|passion|flesh|肌肤|压制|restrain/.test(state.sceneDescription) },
   { id: 'continuity', rules: buildContinuityLock, appliesTo: ['shot'],                                priority: 30 },
 ]
 
@@ -112,6 +115,7 @@ export function buildRulesForPass(
 ): string {
   const matched = skills
     .filter(s => s.appliesTo.includes(pass))
+    .filter(s => !s.condition || s.condition(state || {}))
     .sort((a, b) => a.priority - b.priority)
 
   const ids = matched.map(s => s.id)

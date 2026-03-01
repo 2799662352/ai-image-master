@@ -169,7 +169,7 @@ export class StoryboardPipelineService {
         `你是专业电影分镜师。基于场景分析和剧本，提取所有角色/物体。
 关键：如果剧本提供了角色名（如人名条），必须使用剧本原名，禁止根据画面风格猜测角色身份。
 每个角色必须有跨镜头一致性锚点(发色/伤疤/服装纹理/道具)。
-每个角色必须有motive字段：基于剧本和画面，用一句话描述该角色在此场景中想要达成什么。\n${buildRulesForPass('character', skills)}`
+每个角色必须有motive字段：基于剧本和画面，用一句话描述该角色在此场景中想要达成什么。\n${buildRulesForPass('character', skills, { sceneDescription: state.scene?.d })}`
       )
       const userText = `场景分析结果:\n${sceneContext}${scriptContext}${domainKnowledge}\n\n请提取所有角色和关键物体，角色名从剧本中提取。`
       const result = await characterLlm.invoke([systemMsg, buildImageMsg(userText)], config)
@@ -194,7 +194,7 @@ export class StoryboardPipelineService {
         `你是专业电影分镜师。基于场景和角色数据生成分镜序列。
 ${shotCountInstruction}
 每个镜头5段式: 景别|动作|台词精华|心理→外化|运镜。
-台词规则：从剧本原文中逐字提取台词，格式"台词..."(表演方式)。禁止编造台词。无台词标注(无台词)或描写非语言声效。\n${buildRulesForPass('shot', skills, { retryFeedback: state.retryFeedback, previousShots: state.previousShots, characters: state.characters })}`
+台词规则：从剧本原文中逐字提取台词，格式"台词..."(表演方式)。禁止编造台词。无台词标注(无台词)或描写非语言声效。\n${buildRulesForPass('shot', skills, { retryFeedback: state.retryFeedback, previousShots: state.previousShots, characters: state.characters, sceneDescription: state.scene?.d })}`
       )
       let userText = `场景:\n${sceneContext}\n\n角色:\n${charContext}${scriptContext}${domainKnowledge}\n\n请生成分镜序列，台词从剧本原文提取。`
       if (state.retryFeedback) {
@@ -224,7 +224,7 @@ ${state.retryFeedback}
 4. 物理参数是否自洽（对照原图验证光影/空间）
 5. 时间轴是否连贯
 6. 是否违反Hard Rules（如用了情绪形容词、缺少镜头参数、DOF与焦距矛盾等）
-输出连续性锚点、节奏总结和评分(1-10)。如发现角色名或台词与剧本不符，评分不超过5。\n${buildRulesForPass('verify', skills)}`
+输出连续性锚点、节奏总结和评分(1-10)。如发现角色名或台词与剧本不符，评分不超过5。\n${buildRulesForPass('verify', skills, { sceneDescription: state.scene?.d })}`
       )
       const result = await reportLlm.invoke([
         systemMsg, buildImageMsg(`请校验以下分镜数据的一致性:\n${allData}${scriptContext}${domainKnowledge}`)
