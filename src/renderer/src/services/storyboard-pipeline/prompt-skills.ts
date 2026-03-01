@@ -16,11 +16,11 @@ export interface PromptSkill {
 }
 
 const CORE_RULES = `Core Rules:
-1. Physical lighting: 80% deep shadows + single rim light, never emotion adjectives
-2. Color hierarchy: dominated by [key] + faint [accent], never equal warm+cool
-3. Lens: always [mm] f/[stop], never "8k/masterpiece"
+1. Physical lighting: specify shadow percentage + light type based on scene mood, never emotion adjectives. Night/indoor→high shadow(60-90%)+rim/candle; Day/outdoor→low shadow(10-40%)+natural/fill
+2. Color hierarchy: dominated by [key hex] + faint [accent hex], never equal warm+cool. You decide the palette based on scene atmosphere
+3. Lens: always [mm] f/[stop] with specific values you choose for the shot, never "8k/masterpiece"
 4. Mid-action snapshot: freeze at peak tension, never "then/after"
-5. Micro-expression: physiological (brow furrowed 2mm) not emotional (happy/sad)
+5. Micro-expression: physiological with specific measurements (e.g. brow furrowed Xmm, pupil dilation Xmm — you decide the numbers based on intensity), never emotional labels (happy/sad)
 6. Z-axis mandatory: fg occluder / mg subject / bg environment
 7. 2-4s per shot, ONE core action`
 
