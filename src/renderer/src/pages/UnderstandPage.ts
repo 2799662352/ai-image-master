@@ -1216,32 +1216,42 @@ export class UnderstandPage extends BasePage {
    * Pipeline 完成后展示 Tab 切换结果（格式化文本 / JSON）+ 复制 + 导入按钮
    */
   private showStoryboardResult(formattedText: string, jsonText: string): void {
-    const resultArea = document.getElementById('pipelineResultArea')
-    if (!resultArea) return
+    const pipelineArea = document.getElementById('pipelineResultArea')
+    if (!pipelineArea) return
 
     this._currentResultTab = 'formatted'
 
-    resultArea.innerHTML = `
-      <div class="mt-4">
-        <div class="flex gap-1 bg-[#1a1a2e] rounded-lg p-1 mb-3" id="storyboardTabs">
-          <button id="tabFormatted" class="${UnderstandPage.TAB_ACTIVE}" aria-label="格式化文本视图">
-            <i class="fas fa-align-left mr-1"></i> 格式化文本
-          </button>
-          <button id="tabJson" class="${UnderstandPage.TAB_INACTIVE}" aria-label="JSON数据视图">
-            <i class="fas fa-code mr-1"></i> JSON
-          </button>
-        </div>
-        <div id="storyboardContent" class="bg-[#0a0a1a] rounded-lg p-4 font-mono text-sm text-white/90 overflow-auto whitespace-pre-wrap" style="max-height: 500px; line-height: 1.6;">${this.escapeHtml(formattedText)}</div>
-        <div class="flex gap-2 mt-3">
-          <button id="copyResultBtn" class="px-4 py-2 bg-[#2a2a3e] hover:bg-[#3a3a4e] text-white rounded-md transition-colors duration-200 cursor-pointer focus:ring-2 focus:ring-blue-500 flex items-center gap-1" aria-label="复制当前内容到剪贴板">
-            <i class="fas fa-copy"></i> <span>复制</span>
-          </button>
-          <button id="importToDirectorBtn" class="px-6 py-3 bg-[#FCE300] text-black font-bold rounded-lg hover:bg-yellow-400 transition-colors duration-200 cursor-pointer flex items-center gap-2" aria-label="导入到导演模式">
-            <i class="fas fa-film"></i> 导入导演模式
-          </button>
-        </div>
+    const existing = document.getElementById('storyboardResultSection')
+    if (existing) existing.remove()
+
+    const resultSection = document.createElement('div')
+    resultSection.id = 'storyboardResultSection'
+    resultSection.className = 'mt-6 pt-4 border-t border-white/10'
+    resultSection.innerHTML = `
+      <h3 class="text-white text-lg font-semibold flex items-center mb-3">
+        <i class="fas fa-scroll text-blue-400 mr-2"></i>
+        分镜数据
+      </h3>
+      <div class="flex gap-1 bg-[#1a1a2e] rounded-lg p-1 mb-3" id="storyboardTabs">
+        <button id="tabFormatted" class="${UnderstandPage.TAB_ACTIVE}" aria-label="格式化文本视图">
+          <i class="fas fa-align-left mr-1"></i> 格式化文本
+        </button>
+        <button id="tabJson" class="${UnderstandPage.TAB_INACTIVE}" aria-label="JSON数据视图">
+          <i class="fas fa-code mr-1"></i> JSON
+        </button>
+      </div>
+      <div id="storyboardContent" class="bg-[#0a0a1a] rounded-lg p-4 font-mono text-sm text-white/90 overflow-auto whitespace-pre-wrap" style="max-height: 500px; line-height: 1.6;">${this.escapeHtml(formattedText)}</div>
+      <div class="flex gap-2 mt-3">
+        <button id="copyResultBtn" class="px-4 py-2 bg-[#2a2a3e] hover:bg-[#3a3a4e] text-white rounded-md transition-colors duration-200 cursor-pointer focus:ring-2 focus:ring-blue-500 flex items-center gap-1" aria-label="复制当前内容到剪贴板">
+          <i class="fas fa-copy"></i> <span>复制</span>
+        </button>
+        <button id="importToDirectorBtn" class="px-6 py-3 bg-[#FCE300] text-black font-bold rounded-lg hover:bg-yellow-400 transition-colors duration-200 cursor-pointer flex items-center gap-2" aria-label="导入到导演模式">
+          <i class="fas fa-film"></i> 导入导演模式
+        </button>
       </div>
     `
+
+    pipelineArea.parentElement?.appendChild(resultSection)
 
     document.getElementById('tabFormatted')?.addEventListener('click', () => {
       this._currentResultTab = 'formatted'
