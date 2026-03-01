@@ -1240,7 +1240,7 @@ export class UnderstandPage extends BasePage {
             <i class="fas fa-code mr-1"></i> JSON
           </button>
         </div>
-        <div id="storyboardContent" class="bg-[#09090B] border border-[#3F3F46] rounded-none p-4 font-mono text-sm text-white/90 overflow-auto whitespace-pre-wrap" style="max-height: 500px; line-height: 1.6;">${this.escapeHtml(formattedText)}</div>
+        <div id="storyboardContent" class="bg-[#09090B] border border-[#3F3F46] rounded-none p-4 font-mono text-sm text-white/90 overflow-auto whitespace-pre-wrap" style="max-height: 800px; line-height: 1.8;">${this.escapeHtml(formattedText)}</div>
         <div class="flex gap-2 mt-3">
           <button id="copyResultBtn" class="px-4 py-2 bg-[#09090B] border border-[#3F3F46] hover:bg-[#3F3F46] text-white rounded-none transition-colors duration-200 cursor-pointer flex items-center gap-1" aria-label="复制当前内容到剪贴板">
             <i class="fas fa-copy"></i> <span>复制</span>
