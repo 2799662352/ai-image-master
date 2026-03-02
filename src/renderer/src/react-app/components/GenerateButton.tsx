@@ -13,8 +13,7 @@ export function GenerateButton({ onGenerate }: GenerateButtonProps) {
     <button
       onClick={onGenerate}
       disabled={disabled}
-      className="w-full py-3 rounded-lg font-bold uppercase text-sm tracking-wide transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-      style={{ backgroundColor: disabled ? '#a3a300' : '#FCE300', color: '#000' }}
+      className="w-full py-3 rounded-none bg-[#FCE300] text-black font-bold uppercase text-sm tracking-tighter transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-105 active:scale-95"
     >
       {isGenerating ? (
         <>

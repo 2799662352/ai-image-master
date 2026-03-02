@@ -35,6 +35,7 @@ export function DirectorApp() {
 
   return (
     <div className="relative z-10">
+      <div className="text-[12rem] font-black absolute -right-8 -top-8 opacity-[0.03] select-none pointer-events-none z-0 leading-none" aria-hidden="true">06</div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
         <div className="space-y-4">
           <ReferenceImageUpload />

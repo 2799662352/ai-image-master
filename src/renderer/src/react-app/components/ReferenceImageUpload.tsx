@@ -4,7 +4,11 @@ import { useDirectorStore } from '../stores/useDirectorStore'
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
-    reader.onload = () => resolve(reader.result as string)
+    reader.onload = () => {
+      const result = reader.result as string
+      const base64 = result.split(',')[1]
+      resolve(base64)
+    }
     reader.onerror = reject
     reader.readAsDataURL(file)
   })
@@ -55,20 +59,20 @@ export function ReferenceImageUpload() {
 
   if (referenceImages.length === 0) {
     return (
-      <div>
-        <label className="text-sm font-medium text-zinc-300 mb-2 block">
+      <div className="bg-[#27272A] rounded-none p-4">
+        <h3 className="text-white font-semibold flex items-center mb-3">
           <i className="fas fa-image mr-2 text-purple-400" />
           参考图片
-        </label>
+        </h3>
         <div
           onClick={() => fileInputRef.current?.click()}
           onDrop={handleDrop}
           onDragOver={handleDragOver}
-          className="border-2 border-dashed border-zinc-600 rounded-lg p-8 text-center cursor-pointer hover:border-purple-400 transition-colors"
+          className="border-2 border-dashed border-white border-opacity-30 rounded-none p-8 text-center cursor-pointer hover:border-purple-400 transition-colors"
         >
-          <i className="fas fa-cloud-upload-alt text-3xl text-zinc-500 mb-3" />
-          <p className="text-zinc-400 text-sm">点击或拖拽上传参考图片</p>
-          <p className="text-zinc-600 text-xs mt-1">最多 {MAX_IMAGES} 张</p>
+          <i className="fas fa-cloud-upload-alt text-3xl text-white opacity-30 mb-3" />
+          <p className="text-white opacity-50 text-sm">点击或拖拽上传参考图片</p>
+          <p className="text-white opacity-30 text-xs mt-1">最多 {MAX_IMAGES} 张</p>
         </div>
         <input
           ref={fileInputRef}
@@ -83,12 +87,12 @@ export function ReferenceImageUpload() {
   }
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-2">
-        <label className="text-sm font-medium text-zinc-300">
+    <div className="bg-[#27272A] rounded-none p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-white font-semibold flex items-center">
           <i className="fas fa-image mr-2 text-purple-400" />
           参考图片 ({referenceImages.length}/{MAX_IMAGES})
-        </label>
+        </h3>
         <div className="flex gap-2">
           {referenceImages.length < MAX_IMAGES && (
             <button
@@ -117,9 +121,9 @@ export function ReferenceImageUpload() {
         onDragOver={handleDragOver}
       >
         {referenceImages.map((img, idx) => (
-          <div key={idx} className="relative group aspect-square rounded-lg overflow-hidden bg-zinc-800">
+          <div key={idx} className="relative group aspect-square rounded-none overflow-hidden bg-[#27272A]">
             <img
-              src={img.data}
+              src={`data:${img.mimeType};base64,${img.data}`}
               alt={img.name}
               className="w-full h-full object-cover"
             />

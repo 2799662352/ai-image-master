@@ -22,7 +22,7 @@ const PASS_ICONS = [
 ]
 
 const STATUS_DISPLAY: Record<PassStatus, { text: string; color: string }> = {
-  pending: { text: '等待中', color: 'text-zinc-500' },
+  pending: { text: '等待中', color: 'text-white opacity-30' },
   running: { text: '⏳ 进行中', color: 'text-blue-400' },
   completed: { text: '✓ 完成', color: 'text-green-400' },
   retrying: { text: '🔄 精修中', color: 'text-yellow-400' },
@@ -84,11 +84,11 @@ export function GenerationProgress({ progress }: GenerationProgressProps) {
         <i className="fas fa-film text-2xl text-purple-400 animate-pulse" />
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-white truncate">{currentLabel}</p>
-          <p className="text-xs text-zinc-400 mt-0.5">步骤 {currentPass}/{totalPasses}</p>
+          <p className="text-xs text-white opacity-50 mt-0.5">步骤 {currentPass}/{totalPasses}</p>
         </div>
       </div>
 
-      <div className="h-2 bg-zinc-700 rounded-full overflow-hidden">
+      <div className="h-2 bg-white bg-opacity-20 rounded-full overflow-hidden">
         <div
           className="h-full rounded-full transition-all duration-500 ease-out"
           style={{
@@ -106,12 +106,14 @@ export function GenerationProgress({ progress }: GenerationProgressProps) {
           return (
             <div
               key={idx}
-              className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs transition-colors ${
-                isActive ? 'bg-zinc-600/50 ring-1 ring-blue-500/40' : 'bg-zinc-700/40'
+              className={`flex items-center gap-2 px-3 py-2 rounded-none text-xs transition-colors ${
+                isActive
+                  ? 'bg-white bg-opacity-5 border border-white border-opacity-10 ring-1 ring-blue-500/40'
+                  : 'bg-[#09090B] border border-[#3F3F46]'
               }`}
             >
-              <i className={`fas ${PASS_ICONS[idx]} ${isActive ? 'text-blue-400' : 'text-zinc-400'}`} />
-              <span className="text-zinc-300 truncate">{label}</span>
+              <i className={`fas ${PASS_ICONS[idx]} ${isActive ? 'text-blue-400' : 'text-white opacity-50'}`} />
+              <span className="text-white truncate">{label}</span>
               <span className={`ml-auto whitespace-nowrap ${display.color}`}>{display.text}</span>
             </div>
           )
@@ -119,19 +121,19 @@ export function GenerationProgress({ progress }: GenerationProgressProps) {
       </div>
 
       {passCards.length > 0 && (
-        <div className="space-y-2 pt-2 border-t border-zinc-700">
-          <p className="text-xs text-zinc-400 font-medium">阶段结果</p>
+        <div className="space-y-2 pt-2 border-t border-[#3F3F46]">
+          <p className="text-xs text-white opacity-50 font-medium">阶段结果</p>
           {passCards.map((card) => (
-            <div key={card.pass} className="bg-zinc-700/40 rounded-lg px-3 py-2 text-xs">
+            <div key={card.pass} className="bg-[#09090B] border border-[#3F3F46] rounded-none px-3 py-2 text-xs">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-zinc-200 font-medium">
+                <span className="text-white font-medium">
                   <i className={`fas ${PASS_ICONS[card.pass - 1] ?? 'fa-check'} mr-1.5 text-green-400`} />
                   {card.label}
                 </span>
-                <span className="text-zinc-500">{(card.elapsed / 1000).toFixed(1)}s</span>
+                <span className="text-white opacity-30">{(card.elapsed / 1000).toFixed(1)}s</span>
               </div>
               {card.summary && (
-                <p className="text-zinc-400 line-clamp-2">{card.summary}</p>
+                <p className="text-white opacity-50 line-clamp-2">{card.summary}</p>
               )}
             </div>
           ))}

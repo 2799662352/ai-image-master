@@ -37,16 +37,16 @@ export function ResultsGallery() {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <label className="text-sm font-medium text-zinc-300">
+        <h3 className="text-white font-semibold flex items-center">
           <i className="fas fa-images mr-2 text-green-400" />
           生成结果
-        </label>
-        <span className="text-xs text-zinc-400">
+        </h3>
+        <span className="text-xs text-white opacity-50">
           成功 {successResults.length}/{generatedResults.length} 张
         </span>
       </div>
 
-      <div className="relative group rounded-lg overflow-hidden bg-zinc-800">
+      <div className="relative group rounded-none overflow-hidden bg-[#27272A]">
         <img
           src={current.url}
           alt={`Result ${safeIndex + 1}`}
@@ -72,7 +72,7 @@ export function ResultsGallery() {
 
         <button
           onClick={() => downloadImage(current.url, `comic-panel-${safeIndex + 1}.png`)}
-          className="absolute bottom-2 right-2 px-3 py-1.5 bg-black/60 rounded-lg text-xs text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/80 flex items-center gap-1.5"
+          className="absolute bottom-2 right-2 px-3 py-1.5 bg-black/60 rounded-none text-xs text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/80 flex items-center gap-1.5"
         >
           <i className="fas fa-download" />
           下载
@@ -85,7 +85,7 @@ export function ResultsGallery() {
             <button
               key={idx}
               onClick={() => setCurrentIndex(idx)}
-              className={`flex-shrink-0 w-14 h-14 rounded-md overflow-hidden border-2 transition-all ${
+              className={`flex-shrink-0 w-14 h-14 rounded-none overflow-hidden border-2 transition-all ${
                 idx === safeIndex ? 'border-blue-400' : 'border-transparent opacity-60 hover:opacity-100'
               }`}
             >
