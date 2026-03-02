@@ -1,3 +1,93 @@
+# CATIMATION-Cyberpunk Master
+
+AI 图片生成桌面应用（Electron + React + LangChain/LangGraph）。
+
+## 项目简介
+
+本项目是一个基于 Electron 的 AI 创作工具，支持：
+
+- 文生图、参考图生成、批量生成
+- Director 多阶段管线生成（技能选择、场景分析、角色锚点、设计组装、一致性校验）
+- 本地桌面持久化与历史记录管理
+
+## 技术栈
+
+- Electron 28
+- React 19 + Zustand
+- Vite / electron-vite
+- TypeScript
+- LangChain + LangGraph
+- Vitest + Playwright
+
+## 环境要求
+
+- Node.js 18+（建议 20+）
+- npm 9+
+
+## 安装与启动
+
+```bash
+npm install
+npm run dev
+```
+
+常用命令：
+
+- `npm run dev`：开发模式（electron-vite）
+- `npm run start`：直接启动 Electron
+- `npm run preview`：预览构建产物
+- `npm run typecheck`：TypeScript 检查
+
+## 测试命令
+
+- `npm run test`：Vitest 交互
+- `npm run test:run`：Vitest 一次性执行
+- `npm run test:coverage`：覆盖率
+- `npm run test:e2e`：Playwright E2E
+
+## 打包与发布
+
+- `npm run build:vite`：构建 main/preload/renderer
+- `npm run build`：构建并打包
+- `npm run build:win`：Windows 包
+- `npm run build:dir`：仅输出 unpacked 目录
+- `npm run release`：发布流程（按仓库配置）
+
+## Skills 系统说明（重点）
+
+### 1) 内置 Skills
+
+- 内置技能位于仓库 `skills/` 目录。
+- 打包时通过 `extraResources` 一并带入应用资源目录。
+
+### 2) 用户自定义 Skills（打包后可扩展）
+
+应用支持运行时读取用户技能目录：
+
+- 目录：`app.getPath('userData')/skills/<skill-name>/SKILL.md`
+- 主进程通过 IPC `load-skills` / `save-skill` 读写
+- 渲染进程支持手动“刷新 Skills”重载缓存
+
+这意味着：打包后用户新增 skill 文件可生效（刷新后立即生效）。
+
+### 3) 合并策略
+
+- 最终技能集合 = 内置 skills + 用户 skills
+- 同名 `id` 冲突时：用户技能覆盖内置技能
+- 坏格式 skill 会被跳过，不中断主流程
+
+## 目录概览
+
+- `src/main`：Electron 主进程（窗口、IPC、文件系统）
+- `src/preload`：安全桥接（`contextBridge` + `ipcRenderer.invoke`）
+- `src/renderer`：前端与业务逻辑
+- `src/renderer/src/services/pipeline`：Director/Storyboard 管线
+- `skills`：内置技能定义（`SKILL.md`）
+
+## 许可证
+
+MIT
+
 # AI Image Master
 
 <div align="center">
