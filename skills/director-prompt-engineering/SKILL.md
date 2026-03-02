@@ -7,8 +7,8 @@ priority: 1
 
 PROMPT STRUCTURE — follow this order for every panel prompt:
 
-1. Subject + Action: "A young woman in a red coat reaches for a door handle"
-2. Character Anchor: paste full appearance description from character anchors (do NOT abbreviate)
+1. Subject + Action: "[char1] reaches for a door handle" (use character tags, not full descriptions)
+2. Character Reference: use [char1] [char2] tags defined in the global section (never inline full appearance per panel)
 3. Scene/Environment: location, weather, time of day
 4. Shot Type + Camera: "medium shot, eye-level, 50mm lens"
 5. Lighting: direction, quality, color temperature ("warm golden hour side-light from left")

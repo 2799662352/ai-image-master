@@ -49,6 +49,7 @@
     "electron-updater": "^6.7.3",
     "i18next": "^25.8.13",
     "jszip": "^3.10.1",
+    "langfuse-langchain": "^3.38.6",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-i18next": "^16.5.4",
@@ -78,6 +79,7 @@
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vite": "^7.3.1",
+    "vite-plugin-node-polyfills": "^0.25.0",
     "vitest": "^4.0.18"
   },
   "build": {

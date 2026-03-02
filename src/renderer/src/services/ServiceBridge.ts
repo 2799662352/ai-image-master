@@ -1096,7 +1096,7 @@ export async function getDirectorPipelineService(model?: string): Promise<import
     const { DirectorPipeline } = await import('./pipeline/DirectorPipeline')
     _directorPipelineInstance = new DirectorPipeline({ apiKey, baseURL, model: model || 'gemini-3-pro-preview' })
     _directorPipelineCacheKey = cacheKey
-    console.log('[ServiceBridge] ✓ DirectorPipeline created (4-5 Pass), model:', model || 'default')
+    console.log('[ServiceBridge] ✓ DirectorPipeline created (5-6 Pass, AI skill selection), model:', model || 'default')
   }
   return _directorPipelineInstance
 }

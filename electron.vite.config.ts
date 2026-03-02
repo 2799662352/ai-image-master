@@ -1,6 +1,7 @@
 import { defineConfig } from 'electron-vite'
 import { resolve } from 'path'
 import react from '@vitejs/plugin-react'
+// import { nodePolyfills } from 'vite-plugin-node-polyfills'
 
 // Bundle 分析器 (仅在 analyze 模式下启用)
 // 使用 npm run analyze 命令时，会生成 dist/stats.html 报告

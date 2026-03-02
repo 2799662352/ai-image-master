@@ -6,6 +6,11 @@
 // V18 - 延迟加载优化: 大型库按需加载
 // ========================================
 
+import { Buffer } from 'buffer'
+if (typeof globalThis.Buffer === 'undefined') {
+  ;(globalThis as any).Buffer = Buffer
+}
+
 // 导入 Tailwind CSS (已通过 PostCSS 处理)
 import './styles/index.css'
 

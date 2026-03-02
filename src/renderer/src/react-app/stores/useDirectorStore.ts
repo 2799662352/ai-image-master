@@ -8,7 +8,7 @@ export interface DirectorReferenceImage {
   name: string
 }
 
-export type LayoutType = '6grid' | '4grid' | '2closeup' | '9grid'
+export type LayoutType = '6grid' | '4grid' | '2closeup' | '9grid' | '16grid' | '25grid'
 export type GenerationMode = 'single' | 'multi'
 
 export interface GeneratedResult {
@@ -27,17 +27,33 @@ interface ImageSlice {
   clearReferenceImages: () => void
 }
 
+type ViewState = 'idle' | 'generating' | 'results'
+
+interface ProgressData {
+  pass: number
+  totalPasses: number
+  label: string
+  status: 'running' | 'completed' | 'retrying' | 'failed'
+  elapsed?: number
+  passData?: unknown
+  data?: unknown
+}
+
 interface GenerationSlice {
   isGenerating: boolean
   isProcessingFiles: boolean
   generatedResults: GeneratedResult[]
   lastAnalysisResult: string | null
   lastCharacterAnchor: string | null
+  viewState: ViewState
+  currentProgress: ProgressData | null
   setIsGenerating: (val: boolean) => void
   setIsProcessingFiles: (val: boolean) => void
   setGeneratedResults: (val: GeneratedResult[]) => void
   setLastAnalysisResult: (val: string | null) => void
   setLastCharacterAnchor: (val: string | null) => void
+  setViewState: (val: ViewState) => void
+  setCurrentProgress: (val: ProgressData | null) => void
 }
 
 interface ConfigSlice {
@@ -81,21 +97,23 @@ const initialImageState: Pick<ImageSlice, 'referenceImages'> = {
 
 const initialGenerationState: Pick<
   GenerationSlice,
-  'isGenerating' | 'isProcessingFiles' | 'generatedResults' | 'lastAnalysisResult' | 'lastCharacterAnchor'
+  'isGenerating' | 'isProcessingFiles' | 'generatedResults' | 'lastAnalysisResult' | 'lastCharacterAnchor' | 'viewState' | 'currentProgress'
 > = {
   isGenerating: false,
   isProcessingFiles: false,
   generatedResults: [],
   lastAnalysisResult: null,
   lastCharacterAnchor: null,
+  viewState: 'idle',
+  currentProgress: null,
 }
 
 const initialConfigState: Pick<
   ConfigSlice,
-  'currentLayout' | 'currentTemplate' | 'currentMode' | 'currentRatio' | 'currentResolution' | 'sceneDescription' | 'visionModel' | 'imageModel' | 'imageCount' | 'skipVerify'
+  'currentLayout' | 'currentTemplate' | 'currentMode' | 'currentRatio' | 'currentResolution' | 'sceneDescription' | 'multiSceneText' | 'visionModel' | 'imageModel' | 'imageCount' | 'skipVerify'
 > = {
   currentLayout: '6grid',
-  currentTemplate: null,
+  currentTemplate: 'cinematic',
   currentMode: 'single',
   currentRatio: '3:2',
   currentResolution: '2K',
@@ -130,6 +148,8 @@ const createGenerationSlice: StateCreator<DirectorStore, [], [], GenerationSlice
   setGeneratedResults: (val) => set({ generatedResults: val }),
   setLastAnalysisResult: (val) => set({ lastAnalysisResult: val }),
   setLastCharacterAnchor: (val) => set({ lastCharacterAnchor: val }),
+  setViewState: (val) => set({ viewState: val }),
+  setCurrentProgress: (val) => set({ currentProgress: val }),
 })
 
 const createConfigSlice: StateCreator<DirectorStore, [], [], ConfigSlice> = (set) => ({

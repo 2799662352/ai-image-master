@@ -29,6 +29,7 @@ export interface PipelineConfig {
 
 export interface PipelineSkill {
   id: string
+  description: string
   rules: string | ((context: Record<string, unknown>) => string)
   appliesTo: string[]
   priority: number

@@ -5,6 +5,8 @@ const LAYOUT_OPTIONS: { value: LayoutType; label: string; dims: string; cols: nu
   { value: '4grid', label: '四宫格', dims: '2×2', cols: 2, rows: 2 },
   { value: '6grid', label: '六宫格', dims: '2×3', cols: 2, rows: 3 },
   { value: '9grid', label: '九宫格', dims: '3×3', cols: 3, rows: 3 },
+  { value: '16grid', label: '十六宫格', dims: '4×4', cols: 4, rows: 4 },
+  { value: '25grid', label: '二十五宫格', dims: '5×5', cols: 5, rows: 5 },
 ]
 
 function GridPreview({ cols, rows }: { cols: number; rows: number }) {
@@ -30,7 +32,7 @@ export function LayoutSelector() {
         <i className="fas fa-th mr-2 text-blue-400" />
         布局选择
       </h3>
-      <div className="grid grid-cols-4 gap-2">
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
         {LAYOUT_OPTIONS.map((opt) => {
           const selected = currentLayout === opt.value
           return (

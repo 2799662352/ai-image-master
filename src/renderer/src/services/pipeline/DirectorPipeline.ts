@@ -8,6 +8,7 @@ import {
   CharacterAnchorSchema,
   DesignAndAssembleSchema,
   VerifySchema,
+  SkillSelectionSchema,
 } from './schemas/director-schemas'
 import type {
   PipelineConfig,
@@ -28,6 +29,9 @@ const stateSchema = z.object({
     id: z.number(),
     shot: z.string(),
     desc: z.string(),
+    lighting: z.string().default(''),
+    characterAction: z.string().default(''),
+    background: z.string().default(''),
   })).nullable().default(null),
   prompts: z.array(z.object({
     id: z.number(),
@@ -59,6 +63,7 @@ const stateSchema = z.object({
   resolution: z.string().default('2K'),
   currentImageCount: z.number().default(1),
   skipVerify: z.boolean().default(false),
+  activeSkills: z.array(z.string()).default([]),
 })
 
 export type DirectorState = z.infer<typeof stateSchema>
@@ -104,19 +109,36 @@ function extractVarsForVerify(state: DirectorState): Record<string, string> {
 
 function extractVarsForContactSheet(state: DirectorState): Record<string, string> {
   const prompts = state.prompts || []
-  const charAnchor = state.characters?.characters
-    ?.map((c: any) => c.anchor).join('. ') || ''
+  const characters = state.characters?.characters || []
+
+  const globalSection = [
+    `GLOBAL SCENE: ${state.scene?.env || '(unknown)'}`,
+    characters.length > 0 ? 'CHARACTER DEFINITIONS:' : '',
+    ...characters.map((c: any, i: number) => `  [char${i + 1}]: ${c.anchor}`),
+  ].filter(Boolean).join('\n')
+
+  const perShotSection = prompts
+    .map(p => `  Panel ${p.id}: [shot cut] ${p.prompt}`)
+    .join('\n')
 
   return {
     grid_rows: String(state.layout.rows),
     grid_cols: String(state.layout.cols),
     panel_count: String(state.layout.panelCount),
-    character_anchor_line: charAnchor
-      ? `Identical character across ALL panels: ${charAnchor}.`
-      : '',
+    global_section: globalSection,
+    character_anchor_line: characters.map((c: any) => c.anchor).join('. '),
     style_instructions: state.styleInstructions || '',
-    panel_descriptions: prompts.map(p => `Panel ${p.id}: ${p.prompt}`).join('\n'),
+    panel_descriptions: `${globalSection}\n\nSTORYBOARD GRID ${state.layout.rows}x${state.layout.cols}:\n${perShotSection}`,
   }
+}
+
+// ==================== Skill Menu ====================
+
+function buildSkillMenu(skills: PipelineSkill[]): string {
+  return skills
+    .filter(s => s.description)
+    .map(s => `- ${s.id}: ${s.description}`)
+    .join('\n')
 }
 
 // ==================== Pipeline ====================
@@ -137,6 +159,10 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
   private static formatSummary(nodeName: string, output: any): string {
     switch (nodeName) {
+      case 'selectSkills': {
+        const s = output?.selected
+        return s ? `已选择 ${s.length} 个 skills` : '(fallback: all)'
+      }
       case 'analyzeScene': {
         const s = output?.scene
         if (!s) return '(empty)'
@@ -201,14 +227,6 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
   buildGraph() {
     const self = this
 
-    let _llmInstance: ReturnType<typeof self.createLLM> | null = null
-    const getLLM = () => {
-      if (!_llmInstance) {
-        _llmInstance = self.createLLM()
-      }
-      return _llmInstance
-    }
-
     const writer = (config: any) => config?.writer
 
     function emitError(config: any, pass: number, label: string, nodeName: string, message: string, elapsed: number) {
@@ -225,7 +243,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     const analyzeSceneFn = async (state: DirectorState, config: any) => {
       const t0 = Date.now()
       try {
-        const structured = getLLM().withStructuredOutput(SceneAnalysisSchema)
+        const structured = self.createStructuredLLM(SceneAnalysisSchema)
         const systemPrompt = self.resolveSystemPrompt(
           'analyzeScene', {},
           state as Record<string, unknown>,
@@ -255,7 +273,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     const extractCharacterAnchorsFn = async (state: DirectorState, config: any) => {
       const t0 = Date.now()
       try {
-        const structured = getLLM().withStructuredOutput(CharacterAnchorSchema)
+        const structured = self.createStructuredLLM(CharacterAnchorSchema)
         const systemPrompt = self.resolveSystemPrompt(
           'extractCharacterAnchors', {},
           state as Record<string, unknown>,
@@ -281,11 +299,61 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       }
     }
 
+    // ===== Pass 0: 技能选择 (parallel with Pass 1+2) =====
+    const selectSkillsFn = async (state: DirectorState, config: any) => {
+      const t0 = Date.now()
+      try {
+        const allSkills = self.pipelineSkills
+        if (allSkills.length === 0) return { activeSkills: [] as string[] }
+
+        const structured = self.createStructuredLLM(SkillSelectionSchema)
+        const vars = {
+          scene_description: state.sceneDescription || '(none)',
+          style_instructions: state.styleInstructions || '(none)',
+          template: state.template || 'default',
+          has_images: state.inputImages.length > 0 ? 'yes' : 'no',
+          skill_menu: buildSkillMenu(allSkills),
+        }
+        const systemPrompt = self.resolveSystemPrompt(
+          'selectSkills', vars, {},
+          `You are a skill selector. Select relevant skills based on user input.\n\nAvailable:\n${vars.skill_menu}`,
+        )
+        // Skill selection is pure text classification — no images needed.
+        // Sending images caused 43-44s latency; text-only reduces this to ~2-3s.
+        const userContent: Array<any> = [{
+          type: 'text' as const,
+          text: `Scene: ${vars.scene_description}\nStyle: ${vars.style_instructions}\nTemplate: ${vars.template}\nHas reference images: ${vars.has_images}`,
+        }]
+        const result = await structured.invoke([
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userContent },
+        ])
+
+        const elapsed = Date.now() - t0
+        const validIds = new Set(allSkills.map(s => s.id))
+        const selected = result.selectedSkills.filter(id => validIds.has(id))
+        if (selected.length !== result.selectedSkills.length) {
+          console.warn(`[DirectorPipeline] selectSkills: filtered ${result.selectedSkills.length - selected.length} invalid skill IDs`)
+        }
+        console.log(`[DirectorPipeline] selectSkills: ${selected.length}/${allSkills.length} skills selected in ${elapsed}ms: [${selected.join(', ')}]`)
+        writer(config)?.({
+          type: 'pass_complete', pass: 0,
+          label: `技能选择完成 (${selected.length} skills, ${(elapsed / 1000).toFixed(1)}s)`,
+          elapsed,
+          passData: DirectorPipeline.buildPassCardData('selectSkills', { pass: 0, label: '技能选择' }, { selected, reasoning: result.reasoning }, elapsed),
+        })
+        return { activeSkills: selected }
+      } catch (err: unknown) {
+        console.warn('[DirectorPipeline] selectSkills failed, using all skills as fallback:', err instanceof Error ? err.message : String(err))
+        return { activeSkills: self.pipelineSkills.map(s => s.id) }
+      }
+    }
+
     // ===== Pass 3: 分镜设计 + 提示词组装 (merged, saves one LLM round-trip) =====
     const designAndAssembleFn = async (state: DirectorState, config: any) => {
       const t0 = Date.now()
       try {
-        const structured = getLLM().withStructuredOutput(DesignAndAssembleSchema)
+        const structured = self.createStructuredLLM(DesignAndAssembleSchema)
         const vars = extractVarsForDesignAndAssemble(state)
         const userDirective = state.sceneDescription
           ? `User's creative direction: "${state.sceneDescription}"\nYou MUST incorporate this direction into the panel designs. The panels should depict what the user described.`
@@ -295,16 +363,22 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           { ...state, retryFeedback: state.retryFeedback } as Record<string, unknown>,
           `You are a professional storyboard artist and prompt engineer. Design shots and write prompts for ${vars.panel_count} panels.\nScene: ${vars.scene_env}${userDirective ? `\n\n${userDirective}` : ''}`,
         )
-        const userMsg = state.sceneDescription
+        const userText = state.sceneDescription
           ? `根据用户意图"${state.sceneDescription}"，为 ${state.layout.panelCount} 个分镜设计镜头并生成图像提示词`
           : `为 ${state.layout.panelCount} 个分镜设计镜头并生成图像提示词`
+        const designContent: Array<any> = []
+        if (state.inputImages.length > 0) {
+          designContent.push(...BasePipeline.buildImageContent(state.inputImages, 'low'))
+        }
+        designContent.push({ type: 'text' as const, text: userText })
         const result = await structured.invoke([
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: userMsg },
+          { role: 'user', content: designContent },
         ])
 
         const panels = (result.panels || []).map((p: any) => ({
           id: p.id, shot: p.shot, desc: p.desc,
+          lighting: p.lighting || '', characterAction: p.characterAction || '', background: p.background || '',
         }))
         const prompts: AssembledPrompt[] = (result.panels || []).map((p: any) => ({
           id: p.id,
@@ -326,16 +400,24 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     const verifyConsistencyFn = async (state: DirectorState, config: any) => {
       const t0 = Date.now()
       try {
-        const structured = getLLM().withStructuredOutput(VerifySchema)
+        const structured = self.createStructuredLLM(VerifySchema)
         const vars = extractVarsForVerify(state)
         const systemPrompt = self.resolveSystemPrompt(
           'verifyConsistency', vars,
           state as Record<string, unknown>,
           `You are a continuity supervisor. Check panels for consistency.\nScene: ${vars.scene_env}`,
         )
+        const userContent: Array<any> = []
+        if (state.inputImages.length > 0) {
+          userContent.push(...BasePipeline.buildImageContent(state.inputImages, 'low'))
+        }
+        userContent.push({
+          type: 'text' as const,
+          text: `检查以下分镜的角色一致性、镜头连续性和叙事流畅度，给出评分和问题列表。\n\n分镜详情:\n${vars.panels_summary_short}`,
+        })
         const result = await structured.invoke([
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: '检查分镜的角色一致性、镜头连续性和叙事流畅度，给出评分和问题列表' },
+          { role: 'user', content: userContent },
         ])
         const elapsed = Date.now() - t0
         const passData = DirectorPipeline.buildPassCardData('verifyConsistency', { pass: 4, label: '一致性校验' }, { report: result }, elapsed)
@@ -439,14 +521,17 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
     // ===== Graph Assembly =====
     const graph = new StateGraph(stateSchema)
+      .addNode('selectSkills', selectSkillsFn)
       .addNode('analyzeScene', analyzeSceneFn)
       .addNode('extractCharacterAnchors', extractCharacterAnchorsFn)
       .addNode('designAndAssemble', designAndAssembleFn)
       .addNode('verifyConsistency', verifyConsistencyFn)
       .addNode('prepareRetry', prepareRetryFn)
       .addNode('generateImages', generateImagesFn)
+      .addEdge(START, 'selectSkills')
       .addEdge(START, 'analyzeScene')
       .addEdge(START, 'extractCharacterAnchors')
+      .addEdge('selectSkills', 'designAndAssemble')
       .addEdge('analyzeScene', 'designAndAssemble')
       .addEdge('extractCharacterAnchors', 'designAndAssemble')
       .addConditionalEdges('designAndAssemble', routeAfterDesign, {

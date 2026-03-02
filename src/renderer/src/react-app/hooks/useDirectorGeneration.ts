@@ -3,6 +3,23 @@ import { useDirectorStore } from '../stores/useDirectorStore'
 import { getStyleInstructions } from '../constants/templates'
 import type { PipelineProgress } from '@/services/pipeline/types'
 
+async function saveToHistory(
+  images: Array<{ url: string; prompt: string }>,
+  fallbackPrompt: string,
+  ratio: string,
+): Promise<void> {
+  if (images.length === 0) return
+  try {
+    const historyService = (window as any).historyDataServiceTS
+    if (!historyService?.addToHistory) return
+    const urls = images.map((img) => img.url)
+    const prompt = images[0]?.prompt || fallbackPrompt || '导演模式生成'
+    await historyService.addToHistory('generate-with-reference', prompt, urls, ratio)
+  } catch (e) {
+    console.warn('[Director] 历史记录保存失败:', e)
+  }
+}
+
 interface LayoutConfig {
   rows: number
   cols: number
@@ -14,6 +31,8 @@ const LAYOUT_MAP: Record<string, LayoutConfig> = {
   '4grid': { rows: 2, cols: 2, panelCount: 4 },
   '2closeup': { rows: 1, cols: 2, panelCount: 2 },
   '9grid': { rows: 3, cols: 3, panelCount: 9 },
+  '16grid': { rows: 4, cols: 4, panelCount: 16 },
+  '25grid': { rows: 5, cols: 5, panelCount: 25 },
 }
 
 const DEFAULT_LAYOUT: LayoutConfig = LAYOUT_MAP['6grid']
@@ -97,16 +116,16 @@ export function useDirectorGeneration() {
             const result = await executeSingle(
               pipeline, scenes[i], resolvedStyle, layoutConfig, onProgress,
             )
-            if (result.images) {
-              allResults.push(
-                ...result.images.map((img: any) => ({
-                  url: img.url,
-                  prompt: img.prompt,
-                  timestamp: Date.now(),
-                }))
-              )
+            if (result.images?.length) {
+              const mapped = result.images.map((img: any) => ({
+                url: img.url,
+                prompt: img.prompt,
+                timestamp: Date.now(),
+              }))
+              allResults.push(...mapped)
+              store.setGeneratedResults([...allResults])
+              await saveToHistory(mapped, scenes[i], currentRatio)
             }
-            store.setGeneratedResults([...allResults])
             if (result.scene) store.setLastAnalysisResult(JSON.stringify(result.scene))
             if (result.characters) store.setLastCharacterAnchor(JSON.stringify(result.characters))
           }
@@ -115,16 +134,17 @@ export function useDirectorGeneration() {
             pipeline, sceneDescription, resolvedStyle, layoutConfig, onProgress,
           )
 
-          store.setGeneratedResults(
-            result.images.map((img: any) => ({
-              url: img.url,
-              prompt: img.prompt,
-              timestamp: Date.now(),
-            }))
-          )
+          const mappedImages = (result.images ?? []).map((img: any) => ({
+            url: img.url,
+            prompt: img.prompt,
+            timestamp: Date.now(),
+          }))
+          store.setGeneratedResults(mappedImages)
 
           if (result.scene) store.setLastAnalysisResult(JSON.stringify(result.scene))
           if (result.characters) store.setLastCharacterAnchor(JSON.stringify(result.characters))
+
+          await saveToHistory(mappedImages, sceneDescription, currentRatio)
 
           return result
         }

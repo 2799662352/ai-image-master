@@ -8,10 +8,7 @@ priority: 2
 VISUAL CONTINUITY — same scene = same visual physics:
 
 Lighting:
-- Sun/key-light direction must be consistent across all panels in a scene
-- If panel 1 has left-side warm light, all subsequent panels keep left-side warm light
-- Shadow direction follows light source — never contradictory between adjacent panels
-- Indoor scenes: identify practical light sources (windows, lamps) and keep them consistent
+- See lighting-continuity skill for detailed rules. Key principle: same scene = same light direction and color temperature.
 
 Color & Tone:
 - Establish a scene color palette (2-3 dominant colors) and maintain it

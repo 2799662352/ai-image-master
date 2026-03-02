@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useCallback } from 'react'
 import { ReferenceImageUpload } from './components/ReferenceImageUpload'
 import { ModeSelector } from './components/ModeSelector'
 import { TemplateSelector } from './components/TemplateSelector'
@@ -11,16 +11,15 @@ import { GenerationProgress } from './components/GenerationProgress'
 import { ResultsGallery } from './components/ResultsGallery'
 import { useDirectorGeneration } from './hooks/useDirectorGeneration'
 import { useDirectorStore } from './stores/useDirectorStore'
-import type { PipelineProgress } from '../services/pipeline/types'
-
-type ViewState = 'idle' | 'generating' | 'results'
 
 export function DirectorApp() {
-  const [viewState, setViewState] = useState<ViewState>('idle')
-  const [currentProgress, setCurrentProgress] = useState<PipelineProgress | null>(null)
+  const viewState = useDirectorStore((s) => s.viewState)
+  const currentProgress = useDirectorStore((s) => s.currentProgress)
   const generatedResults = useDirectorStore((s) => s.generatedResults)
   const skipVerify = useDirectorStore((s) => s.skipVerify)
   const setSkipVerify = useDirectorStore((s) => s.setSkipVerify)
+  const setViewState = useDirectorStore((s) => s.setViewState)
+  const setCurrentProgress = useDirectorStore((s) => s.setCurrentProgress)
   const { startGeneration } = useDirectorGeneration()
 
   const handleGenerate = useCallback(async () => {
@@ -28,7 +27,7 @@ export function DirectorApp() {
     setCurrentProgress(null)
     try {
       await startGeneration((progress) => {
-        setCurrentProgress(progress)
+        setCurrentProgress(progress as any)
       })
       setViewState('results')
     } catch (error: any) {
@@ -37,7 +36,7 @@ export function DirectorApp() {
       const toast = (window as any).toastManagerTS ?? (window as any).toastManager
       toast?.show?.(error.message || '生成失败', 'error')
     }
-  }, [startGeneration])
+  }, [startGeneration, setViewState, setCurrentProgress])
 
   return (
     <div className="relative z-10">
@@ -80,7 +79,7 @@ export function DirectorApp() {
             </div>
           )}
           {viewState === 'generating' && (
-            <GenerationProgress progress={currentProgress} />
+            <GenerationProgress progress={currentProgress as any} />
           )}
           {(viewState === 'results' || generatedResults.length > 0) && viewState !== 'generating' && (
             <ResultsGallery />

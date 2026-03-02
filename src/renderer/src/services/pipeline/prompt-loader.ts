@@ -3,15 +3,22 @@ import type { PipelineSkill } from './types'
 
 // ==================== Build-time Eager Loading ====================
 
+// Vite docs confirm import.meta.glob supports resolve.alias paths.
+// @skills → <root>/skills, @config → <root>/config (see electron.vite.config.ts)
 const promptModules = import.meta.glob(
-  '/config/prompts/director/*.md',
+  '@config/prompts/director/*.md',
   { query: '?raw', import: 'default', eager: true }
 ) as Record<string, string>
 
 const skillModules = import.meta.glob(
-  '/skills/director-*/SKILL.md',
+  '@skills/director-*/SKILL.md',
   { query: '?raw', import: 'default', eager: true }
 ) as Record<string, string>
+
+if (import.meta.env.DEV) {
+  console.log(`[prompt-loader] promptModules: ${Object.keys(promptModules).length} files`, Object.keys(promptModules))
+  console.log(`[prompt-loader] skillModules: ${Object.keys(skillModules).length} files`, Object.keys(skillModules))
+}
 
 // ==================== Prompt Template Parser ====================
 
@@ -63,11 +70,12 @@ function parseSkillFromMarkdown(raw: string): PipelineSkill | null {
   const appliesToRaw = yaml.match(/^appliesTo:\s*\[([^\]]+)\]$/m)?.[1]
   if (!name || !appliesToRaw) return null
 
+  const description = yaml.match(/^description:\s*(.+)$/m)?.[1]?.trim() || ''
   const appliesTo = appliesToRaw.split(',').map(s => s.trim().replace(/^["']|["']$/g, ''))
   const priorityStr = yaml.match(/^priority:\s*(\d+)$/m)?.[1]
   const priority = priorityStr ? parseInt(priorityStr, 10) : 50
 
-  return { id: name, rules: body, appliesTo, priority }
+  return { id: name, description, rules: body, appliesTo, priority }
 }
 
 // ==================== Template Engine ====================

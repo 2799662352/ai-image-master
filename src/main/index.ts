@@ -301,9 +301,11 @@ function createWindow(): void {
     })
   })
 
-  // 加载页面 - 始终使用构建好的文件
-  // 如果需要热重载开发，请使用 electron-vite dev
-  mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
+  if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
+    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+  } else {
+    mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
+  }
   
   // 开发模式打开 DevTools
   if (isDev) {
