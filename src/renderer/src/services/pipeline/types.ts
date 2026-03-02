@@ -5,6 +5,7 @@ export interface PassCardData {
   passName: string
   label: string
   summary: string
+  appliedSkills: string[]
   raw: unknown
   elapsed: number
 }

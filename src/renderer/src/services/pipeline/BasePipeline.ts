@@ -40,7 +40,7 @@ export abstract class BasePipeline<TState, TResult> {
     this.sharedSkills.push(skill)
   }
 
-  getSkillsForPhase(phase: string, context: Record<string, unknown>): string {
+  private matchSkillsForPhase(phase: string, context: Record<string, unknown>): PipelineSkill[] {
     const activeSkills = (context as any)?.activeSkills as string[] | undefined
 
     const sharedMatched = this.sharedSkills
@@ -54,6 +54,14 @@ export abstract class BasePipeline<TState, TResult> {
 
     return [...sharedMatched, ...pipelineMatched]
       .sort((a, b) => a.priority - b.priority)
+  }
+
+  getSkillsForPhase(phase: string, context: Record<string, unknown>): string[] {
+    return this.matchSkillsForPhase(phase, context).map(s => s.id)
+  }
+
+  private getSkillRulesForPhase(phase: string, context: Record<string, unknown>): string {
+    return this.matchSkillsForPhase(phase, context)
       .map(s => {
         const rules = typeof s.rules === 'function' ? s.rules(context) : s.rules
         if (!rules) return ''
@@ -64,7 +72,7 @@ export abstract class BasePipeline<TState, TResult> {
   }
 
   buildSystemPrompt(passName: string, basePrompt: string, context: Record<string, unknown>): string {
-    const skills = this.getSkillsForPhase(passName, context)
+    const skills = this.getSkillRulesForPhase(passName, context)
     if (!skills) return basePrompt
     return `${basePrompt}\n\n--- 领域规则 ---\n${skills}`
   }

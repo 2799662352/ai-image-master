@@ -54,7 +54,7 @@ interface GenerationSlice {
   progressPercentage: number
   setIsGenerating: (val: boolean) => void
   setIsProcessingFiles: (val: boolean) => void
-  setGeneratedResults: (val: GeneratedResult[]) => void
+  setGeneratedResults: (val: GeneratedResult[] | ((prev: GeneratedResult[]) => GeneratedResult[])) => void
   setLastAnalysisResult: (val: string | null) => void
   setLastCharacterAnchor: (val: string | null) => void
   setViewState: (val: ViewState) => void
@@ -155,7 +155,12 @@ const createGenerationSlice: StateCreator<DirectorStore, [], [], GenerationSlice
   ...initialGenerationState,
   setIsGenerating: (val) => set({ isGenerating: val }),
   setIsProcessingFiles: (val) => set({ isProcessingFiles: val }),
-  setGeneratedResults: (val) => set({ generatedResults: val }),
+  setGeneratedResults: (val) =>
+    set((state) => ({
+      generatedResults: typeof val === 'function'
+        ? (val as (prev: GeneratedResult[]) => GeneratedResult[])(state.generatedResults)
+        : val,
+    })),
   setLastAnalysisResult: (val) => set({ lastAnalysisResult: val }),
   setLastCharacterAnchor: (val) => set({ lastCharacterAnchor: val }),
   setViewState: (val) => set({ viewState: val }),
