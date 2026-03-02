@@ -8,7 +8,7 @@
  */
 
 import { getStorageBridge, StorageBridge } from './storage'
-import { LangChainDirectorService } from './LangChainDirectorService'
+import type { LangChainDirectorService } from './LangChainDirectorService'
 import type { LangChainStoryboardService } from './LangChainStoryboardService'
 import { getI18nService, I18nService } from './i18n'
 import { getApiService, ApiService } from './api'
@@ -39,7 +39,8 @@ import { type BatchPage, createBatchPage, getBatchPage } from '../pages/BatchPag
 import { type ComparePage, createComparePage, getComparePage } from '../pages/ComparePage'
 import { type PromptTemplates, createPromptTemplates, getPromptTemplates } from '../pages/PromptTemplates'
 import { type UnderstandPage, createUnderstandPage, getUnderstandPage } from '../pages/UnderstandPage'
-import { type DirectorPage, createDirectorPage, getDirectorPage } from '../pages/DirectorPage'
+import { type DirectorPageV2 as DirectorPage, createDirectorPageV2 as createDirectorPage, getDirectorPageV2 as getDirectorPage } from '../pages/director'
+import { mountDirectorReact, unmountDirectorReact } from '../react-app/main'
 
 // ========================================
 // V16.3 - ServiceRegistry: 集中式服务注册表
@@ -272,6 +273,11 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
       tabManager.bindTabButtons()
       tabManager.initHashRouter()
       
+      tabManager.onTabChange((newTab: string, oldTab: string) => {
+        if (oldTab === 'director') unmountDirectorReact()
+        if (newTab === 'director') mountDirectorReact()
+      })
+
       window.tabManagerTS = tabManager
       ServiceRegistry.register(SERVICE_KEYS.TAB_MANAGER, tabManager)
       console.log('[ServiceBridge] ✓ TabManager (TS) 已就绪')
@@ -404,22 +410,25 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
 
         // KeyboardShortcuts - 键盘快捷键
         const keyboardShortcuts = createKeyboardShortcuts({
-          executeAction: () => {
-            // Ctrl/Cmd + Enter 执行当前页面的主要操作
+          getCurrentTab: () => {
             const tabManager = ServiceRegistry.get<any>(SERVICE_KEYS.TAB_MANAGER)
-            const currentTab = tabManager?.getCurrentTab()
-            if (currentTab === 'generate') {
-              ;(window as any).generatePageTS?.generateImage?.()
-            } else if (currentTab === 'batch') {
-              ;(window as any).batchPageTS?.startBatch?.()
-            }
+            return tabManager?.getCurrentTab() || 'generate'
           },
-          copyToClipboard: async (text: string) => {
-            await navigator.clipboard.writeText(text)
+          getPages: () => ({
+            generate: { generateImage: () => (window as any).generatePageTS?.generateImage?.() },
+            batch: { batchGenerate: () => (window as any).batchPageTS?.startBatch?.() }
+          }),
+          closeSettings: () => {
+            const el = document.getElementById('settingsModal')
+            if (el) el.classList.add('hidden')
           },
-          showToast: (msg: string, type: 'success' | 'error' | 'info') => {
-            const toast = ServiceRegistry.get<any>(SERVICE_KEYS.TOAST)
-            toast?.show(msg, type)
+          closeAbout: () => {
+            const el = document.getElementById('aboutModal')
+            if (el) el.classList.add('hidden')
+          },
+          closeActivity: () => {
+            const el = document.getElementById('activityModal')
+            if (el) el.classList.add('hidden')
           }
         })
         window.keyboardShortcutsTS = keyboardShortcuts
@@ -715,7 +724,8 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
 
       // 图片预加载
       preloadImages: (urls: string[]) => {
-        urls.forEach(url => {
+        const MAX_PRELOAD = 6
+        urls.slice(0, MAX_PRELOAD).forEach(url => {
           const img = new Image()
           img.src = url
         })
@@ -992,7 +1002,7 @@ export function initDirectorPage(app: AppInterface): DirectorPage {
 let _langchainDirectorInstance: LangChainDirectorService | null = null
 let _langchainCacheKey: string | null = null
 
-export function getLangChainDirectorService(model?: string): LangChainDirectorService | null {
+export async function getLangChainDirectorService(model?: string): Promise<LangChainDirectorService | null> {
   const api = (window as any).aiImageAPI
   const apiKey = api?.visionApiKey as string | undefined
   if (!apiKey) {
@@ -1009,10 +1019,11 @@ export function getLangChainDirectorService(model?: string): LangChainDirectorSe
 
   const cacheKey = `${apiKey}|${baseURL}|${model || ''}`
   if (!_langchainDirectorInstance || _langchainCacheKey !== cacheKey) {
-    _langchainDirectorInstance = new LangChainDirectorService({ apiKey, baseURL, model })
+    const { LangChainDirectorService: Svc } = await import('./LangChainDirectorService')
+    _langchainDirectorInstance = new Svc({ apiKey, baseURL, model })
     _langchainCacheKey = cacheKey
     ServiceRegistry.register(SERVICE_KEYS.LANGCHAIN_DIRECTOR, _langchainDirectorInstance)
-    console.log('[ServiceBridge] ✓ LangChainDirectorService 实例已创建, baseURL:', baseURL, 'model:', model || 'default')
+    console.log('[ServiceBridge] ✓ LangChainDirectorService 实例已创建 (动态加载), baseURL:', baseURL, 'model:', model || 'default')
   }
   return _langchainDirectorInstance
 }
@@ -1065,6 +1076,31 @@ export async function getStoryboardPipelineService(model?: string): Promise<impo
     console.log('[ServiceBridge] ✓ StoryboardPipelineService 实例已创建 (4-Pass), model:', model || 'default')
   }
   return _pipelineInstance
+}
+
+/**
+ * 获取或创建 Director Pipeline Service 实例（懒加载，6-Pass 管线）
+ */
+let _directorPipelineInstance: import('./pipeline/DirectorPipeline').DirectorPipeline | null = null
+let _directorPipelineCacheKey: string | null = null
+
+export async function getDirectorPipelineService(model?: string): Promise<import('./pipeline/DirectorPipeline').DirectorPipeline | null> {
+  const api = (window as any).aiImageAPI
+  const apiKey = api?.visionApiKey as string | undefined
+  if (!apiKey) return null
+
+  const site = api?.getCurrentSite?.()
+  const baseURL = site?.baseURL as string | undefined
+  if (!baseURL) return null
+
+  const cacheKey = `director-pipeline|${apiKey}|${baseURL}|${model || ''}`
+  if (!_directorPipelineInstance || _directorPipelineCacheKey !== cacheKey) {
+    const { DirectorPipeline } = await import('./pipeline/DirectorPipeline')
+    _directorPipelineInstance = new DirectorPipeline({ apiKey, baseURL, model: model || 'gemini-3-pro-preview' })
+    _directorPipelineCacheKey = cacheKey
+    console.log('[ServiceBridge] ✓ DirectorPipeline 实例已创建 (6-Pass), model:', model || 'default')
+  }
+  return _directorPipelineInstance
 }
 
 /**
@@ -1139,6 +1175,10 @@ declare global {
     modalFactoryTS?: ModalFactory
     keyboardShortcutsTS?: KeyboardShortcuts
     toastManagerTS?: ToastManager
+    updateNotificationTS?: UpdateNotification
+    UpdateNotificationTS?: typeof UpdateNotification
+    performanceDashboardTS?: PerformanceDashboard
+    PerformanceDashboardTS?: typeof PerformanceDashboard
     // Page factories
     createGeneratePageTS?: (app: AppInterface) => GeneratePage
     createHistoryPageTS?: (app: AppInterface) => HistoryPage
