@@ -164,6 +164,31 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     return getDirectorSkillsFromConfig()
   }
 
+  private async runWithConcurrency<T>(
+    count: number,
+    concurrency: number,
+    task: (index: number) => Promise<T>,
+  ): Promise<T[]> {
+    const total = Math.max(0, Math.floor(count))
+    if (total === 0) return []
+
+    const workerCount = Math.max(1, Math.min(Math.floor(concurrency) || 1, total))
+    const results: T[] = new Array(total)
+    let cursor = 0
+
+    const worker = async () => {
+      while (true) {
+        const index = cursor
+        cursor += 1
+        if (index >= total) break
+        results[index] = await task(index)
+      }
+    }
+
+    await Promise.allSettled(Array.from({ length: workerCount }, () => worker()))
+    return results
+  }
+
   private static formatSummary(nodeName: string, output: any): string {
     switch (nodeName) {
       case 'selectSkills': {
@@ -586,13 +611,14 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         const { getApiService } = await import('../api/ApiService')
         const apiService = getApiService()
         const prompts = state.prompts || []
+        const imageCount = state.currentImageCount || 1
 
         writer(config)?.({
           type: 'image_generating',
           pass: passNum,
           label: '图像生成中...',
           index: 0,
-          total: 1,
+          total: imageCount,
           prompt: 'Generating contact sheet...',
         })
 
@@ -610,40 +636,65 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
         const negativePrompt = prompts[0]?.negativePrompt ||
           'blurry, deformed, bad anatomy, watermark, signature, text, irregular panels, asymmetric grid'
+        const referenceImages = state.inputImages.map(img => `data:${img.mimeType};base64,${img.data}`)
+        const userConcurrency = Math.max(1, imageCount)
+        const results = await self.runWithConcurrency(
+          imageCount,
+          userConcurrency,
+          async (i) => {
+            try {
+              const result = await apiService.generateImage({
+                prompt: compositePrompt,
+                negativePrompt,
+                ratio: state.ratio,
+                resolution: state.resolution,
+                referenceImages,
+              })
 
-        const imageCount = state.currentImageCount || 1
-        const results: Array<{ id: number; url: string; prompt: string; error?: string }> = []
+              const url = result.success
+                ? (result.images?.[0] || result.urls?.[0] || '')
+                : ''
 
-        for (let i = 0; i < imageCount; i++) {
-          const result = await apiService.generateImage({
-            prompt: compositePrompt,
-            negativePrompt,
-            ratio: state.ratio,
-            resolution: state.resolution,
-            referenceImages: state.inputImages.map(img =>
-              `data:${img.mimeType};base64,${img.data}`
-            ),
-          })
+              const one = {
+                id: i + 1,
+                url,
+                prompt: compositePrompt,
+                error: result.success ? undefined : result.error,
+              }
 
-          const url = result.success
-            ? (result.images?.[0] || result.urls?.[0] || '')
-            : ''
+              writer(config)?.({
+                type: 'image_generated',
+                pass: passNum,
+                label: '图像生成中...',
+                index: i,
+                total: imageCount,
+                url,
+                prompt: compositePrompt,
+              })
 
-          results.push({
-            id: i + 1, url, prompt: compositePrompt,
-            error: result.success ? undefined : result.error,
-          })
+              return one
+            } catch (error: unknown) {
+              const one = {
+                id: i + 1,
+                url: '',
+                prompt: compositePrompt,
+                error: error instanceof Error ? error.message : String(error),
+              }
 
-          writer(config)?.({
-            type: 'image_generated',
-            pass: passNum,
-            label: '图像生成中...',
-            index: i,
-            total: imageCount,
-            url,
-            prompt: compositePrompt,
-          })
-        }
+              writer(config)?.({
+                type: 'image_generated',
+                pass: passNum,
+                label: '图像生成中...',
+                index: i,
+                total: imageCount,
+                url: '',
+                prompt: compositePrompt,
+              })
+
+              return one
+            }
+          },
+        )
 
         const elapsed = Date.now() - t0
         const passData = DirectorPipeline.buildPassCardData('generateImages', { pass: passNum, label: '图像生成' }, { images: results }, elapsed, appliedSkills)
