@@ -431,6 +431,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       }
 
       // --- Level 2: Simplified schema (just id + prompt) ---
+      let lastError = ''
       writer(config)?.({ type: 'pass_complete', pass: 3, label: '分镜格式降级重试...', elapsed: Date.now() - t0, passData: null })
       try {
         const simpleStructured = self.createStructuredLLM(SimplePanelSchema)
@@ -441,19 +442,22 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           emitSuccess(panels, prompts, 'L2-simple')
           return { panels, prompts }
         }
-        console.warn('[DirectorPipeline] L2 failed: SimplePanelSchema returned empty')
+        lastError = 'SimplePanelSchema returned empty panels array'
+        console.warn('[DirectorPipeline] L2 failed:', lastError)
       } catch (e: unknown) {
-        console.warn('[DirectorPipeline] L2 error:', e instanceof Error ? e.message : String(e))
+        lastError = e instanceof Error ? e.message : String(e)
+        console.warn('[DirectorPipeline] L2 error:', lastError)
       }
 
       // --- Level 3: Error feedback to LLM (LLM-recoverable pattern) ---
+      // Pass the actual error so LLM knows exactly what went wrong
       writer(config)?.({ type: 'pass_complete', pass: 3, label: '分镜 LLM 自修正重试...', elapsed: Date.now() - t0, passData: null })
       try {
         const llm = self.createLLM()
         const feedbackResult = await llm.invoke([
           ...messages,
-          { role: 'assistant' as const, content: 'I was unable to produce valid structured output in the required format.' },
-          { role: 'user' as const, content: `Your previous response could not be parsed. Please respond with ONLY a valid JSON object in this exact format, no markdown:\n{"panels":[{"id":1,"prompt":"..."},{"id":2,"prompt":"..."}]}\nGenerate ${state.layout.panelCount} panels.` },
+          { role: 'assistant' as const, content: `I attempted to generate panel data but the output failed validation. Error: ${lastError}` },
+          { role: 'user' as const, content: `Your previous response failed with error: "${lastError}"\n\nPlease fix this and respond with ONLY a valid JSON object (no markdown, no code fences), exactly like:\n{"panels":[{"id":1,"prompt":"detailed english image prompt here"},{"id":2,"prompt":"..."}]}\n\nYou must generate exactly ${state.layout.panelCount} panels. Each panel needs an "id" (number) and a "prompt" (detailed English image generation prompt string).` },
         ])
         const text = typeof feedbackResult.content === 'string' ? feedbackResult.content : ''
         const jsonMatch = text.match(/\{[\s\S]*"panels"\s*:\s*\[[\s\S]*\][\s\S]*\}/)
