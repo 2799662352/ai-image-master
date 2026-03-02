@@ -2,7 +2,7 @@ import { StateGraph, START, END } from '@langchain/langgraph'
 import { z } from 'zod'
 import { BasePipeline } from './BasePipeline'
 import { sharedSkills } from './director-skills'
-import { getPromptTemplate, renderTemplate, getDirectorSkillsFromConfig } from './prompt-loader'
+import { getPromptTemplate, renderTemplate, getDirectorSkillsFromConfig, initDirectorSkills } from './prompt-loader'
 import {
   SceneAnalysisSchema,
   CharacterAnchorSchema,
@@ -206,12 +206,14 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     passInfo: { pass: number; label: string },
     output: any,
     elapsed: number,
+    appliedSkills: string[] = [],
   ): PassCardData {
     return {
       pass: passInfo.pass,
       passName: nodeName,
       label: passInfo.label,
       summary: DirectorPipeline.formatSummary(nodeName, output),
+      appliedSkills,
       raw: output,
       elapsed,
     }
@@ -249,6 +251,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     const analyzeSceneFn = async (state: DirectorState, config: any) => {
       const t0 = Date.now()
       try {
+        const appliedSkills = self.getSkillsForPhase('analyzeScene', state as Record<string, unknown>)
         const structuredWithRaw = self.createStructuredLLMWithRaw(SceneAnalysisSchema)
         const systemPrompt = self.resolveSystemPrompt(
           'analyzeScene', {},
@@ -281,7 +284,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         }
 
         const elapsed = Date.now() - t0
-        const passData = DirectorPipeline.buildPassCardData('analyzeScene', { pass: 1, label: '场景分析' }, { scene }, elapsed)
+        const passData = DirectorPipeline.buildPassCardData('analyzeScene', { pass: 1, label: '场景分析' }, { scene }, elapsed, appliedSkills)
         writer(config)?.({ type: 'pass_complete', pass: 1, label: `场景分析完成 (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
         return { scene }
       } catch (err: unknown) {
@@ -294,6 +297,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     const extractCharacterAnchorsFn = async (state: DirectorState, config: any) => {
       const t0 = Date.now()
       try {
+        const appliedSkills = self.getSkillsForPhase('extractCharacterAnchors', state as Record<string, unknown>)
         const structuredWithRaw = self.createStructuredLLMWithRaw(CharacterAnchorSchema)
         const systemPrompt = self.resolveSystemPrompt(
           'extractCharacterAnchors', {},
@@ -329,7 +333,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         }
 
         const elapsed = Date.now() - t0
-        const passData = DirectorPipeline.buildPassCardData('extractCharacterAnchors', { pass: 2, label: '角色锚点提取' }, { characters }, elapsed)
+        const passData = DirectorPipeline.buildPassCardData('extractCharacterAnchors', { pass: 2, label: '角色锚点提取' }, { characters }, elapsed, appliedSkills)
         writer(config)?.({ type: 'pass_complete', pass: 2, label: `角色锚点提取完成 (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
         return { characters }
       } catch (err: unknown) {
@@ -342,6 +346,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     const selectSkillsFn = async (state: DirectorState, config: any) => {
       const t0 = Date.now()
       try {
+        const appliedSkills = self.getSkillsForPhase('selectSkills', state as Record<string, unknown>)
         const allSkills = self.pipelineSkills
         if (allSkills.length === 0) return { activeSkills: [] as string[] }
 
@@ -354,7 +359,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           skill_menu: buildSkillMenu(allSkills),
         }
         const systemPrompt = self.resolveSystemPrompt(
-          'selectSkills', vars, {},
+          'selectSkills', vars, state as Record<string, unknown>,
           `You are a skill selector. Select relevant skills based on user input.\n\nAvailable:\n${vars.skill_menu}`,
         )
         // Skill selection is pure text classification — no images needed.
@@ -379,7 +384,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           type: 'pass_complete', pass: 0,
           label: `技能选择完成 (${selected.length} skills, ${(elapsed / 1000).toFixed(1)}s)`,
           elapsed,
-          passData: DirectorPipeline.buildPassCardData('selectSkills', { pass: 0, label: '技能选择' }, { selected, reasoning: result.reasoning }, elapsed),
+          passData: DirectorPipeline.buildPassCardData('selectSkills', { pass: 0, label: '技能选择' }, { selected, reasoning: result.reasoning }, elapsed, selected),
         })
         return { activeSkills: selected }
       } catch (err: unknown) {
@@ -395,13 +400,15 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     //   L3: error feedback to LLM (+1 LLM call, LLM self-corrects)
     const designAndAssembleFn = async (state: DirectorState, config: any) => {
       const t0 = Date.now()
+      const skillContext = { ...state, retryFeedback: state.retryFeedback } as Record<string, unknown>
+      const appliedSkills = self.getSkillsForPhase('designAndAssemble', skillContext)
       const vars = extractVarsForDesignAndAssemble(state)
       const userDirective = state.sceneDescription
         ? `User's creative direction: "${state.sceneDescription}"\nYou MUST incorporate this direction into the panel designs.`
         : ''
       const systemPrompt = self.resolveSystemPrompt(
         'designAndAssemble', vars,
-        { ...state, retryFeedback: state.retryFeedback } as Record<string, unknown>,
+        skillContext,
         `You are a professional storyboard artist and prompt engineer. Design shots and write prompts for ${vars.panel_count} panels.\nScene: ${vars.scene_env}${userDirective ? `\n\n${userDirective}` : ''}`,
       )
       const userText = state.sceneDescription
@@ -433,7 +440,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
       const emitSuccess = (panels: any[], prompts: any[], level: string) => {
         const elapsed = Date.now() - t0
-        const passData = DirectorPipeline.buildPassCardData('designAndAssemble', { pass: 3, label: '分镜设计+提示词' }, { panels, prompts }, elapsed)
+        const passData = DirectorPipeline.buildPassCardData('designAndAssemble', { pass: 3, label: '分镜设计+提示词' }, { panels, prompts }, elapsed, appliedSkills)
         writer(config)?.({ type: 'pass_complete', pass: 3, label: `分镜+提示词完成 [${level}] (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
       }
 
@@ -519,6 +526,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     const verifyConsistencyFn = async (state: DirectorState, config: any) => {
       const t0 = Date.now()
       try {
+        const appliedSkills = self.getSkillsForPhase('verifyConsistency', state as Record<string, unknown>)
         const structured = self.createStructuredLLM(VerifySchema)
         const vars = extractVarsForVerify(state)
         const systemPrompt = self.resolveSystemPrompt(
@@ -543,7 +551,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         if (typeof result.ok !== 'boolean') result.ok = result.score >= 6
         if (!Array.isArray(result.issues)) result.issues = []
         const elapsed = Date.now() - t0
-        const passData = DirectorPipeline.buildPassCardData('verifyConsistency', { pass: 4, label: '一致性校验' }, { report: result }, elapsed)
+        const passData = DirectorPipeline.buildPassCardData('verifyConsistency', { pass: 4, label: '一致性校验' }, { report: result }, elapsed, appliedSkills)
         writer(config)?.({
           type: 'pass_complete', pass: 4,
           label: `一致性校验完成 (score: ${result.score}, ${(elapsed / 1000).toFixed(1)}s)`,
@@ -572,12 +580,20 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     const generateImagesFn = async (state: DirectorState, config: any) => {
       const t0 = Date.now()
       const passNum = state.skipVerify ? 4 : 5
+      const appliedSkills = self.getSkillsForPhase('generateImages', state as Record<string, unknown>)
       try {
         const { getApiService } = await import('../api/ApiService')
         const apiService = getApiService()
         const prompts = state.prompts || []
 
-        writer(config)?.({ type: 'image_generating', index: 0, total: 1, prompt: 'Generating contact sheet...' })
+        writer(config)?.({
+          type: 'image_generating',
+          pass: passNum,
+          label: '图像生成中...',
+          index: 0,
+          total: 1,
+          prompt: 'Generating contact sheet...',
+        })
 
         const vars = extractVarsForContactSheet(state)
         const tpl = getPromptTemplate('generateImages')
@@ -617,11 +633,19 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
             error: result.success ? undefined : result.error,
           })
 
-          writer(config)?.({ type: 'image_generated', index: i, total: imageCount, url })
+          writer(config)?.({
+            type: 'image_generated',
+            pass: passNum,
+            label: '图像生成中...',
+            index: i,
+            total: imageCount,
+            url,
+            prompt: compositePrompt,
+          })
         }
 
         const elapsed = Date.now() - t0
-        const passData = DirectorPipeline.buildPassCardData('generateImages', { pass: passNum, label: '图像生成' }, { images: results }, elapsed)
+        const passData = DirectorPipeline.buildPassCardData('generateImages', { pass: passNum, label: '图像生成' }, { images: results }, elapsed, appliedSkills)
         writer(config)?.({ type: 'pass_complete', pass: passNum, label: `图像生成完成 (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
         return { images: results }
       } catch (err: unknown) {
@@ -653,8 +677,8 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       .addNode('prepareRetry', prepareRetryFn)
       .addNode('generateImages', generateImagesFn)
       .addEdge(START, 'selectSkills')
-      .addEdge(START, 'analyzeScene')
-      .addEdge(START, 'extractCharacterAnchors')
+      .addEdge('selectSkills', 'analyzeScene')
+      .addEdge('selectSkills', 'extractCharacterAnchors')
       .addEdge('selectSkills', 'designAndAssemble')
       .addEdge('analyzeScene', 'designAndAssemble')
       .addEdge('extractCharacterAnchors', 'designAndAssemble')
@@ -692,6 +716,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     input: Partial<DirectorState>,
     onProgress?: (progress: PipelineProgress) => void
   ): Promise<DirectorResult> {
+    await initDirectorSkills()
     if (!this._graph) this.buildGraph()
     const skipVerify = (input as Partial<DirectorState>).skipVerify ?? false
     const totalPasses = skipVerify ? 4 : 5
@@ -702,12 +727,14 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     }
 
     const pipelineStart = Date.now()
+    let currentPass = 0
 
     const stream = await this._graph.stream(input, config)
     for await (const event of stream) {
       if (Array.isArray(event)) {
         const [mode, data] = event
         if (mode === 'custom' && data?.type === 'pass_complete') {
+          currentPass = typeof data.pass === 'number' ? data.pass : currentPass
           onProgress?.({
             pass: data.pass,
             totalPasses,
@@ -717,10 +744,12 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
             passData: data.passData,
           })
         } else if (mode === 'custom') {
+          const inferredPass = typeof data?.pass === 'number' ? data.pass : currentPass
+          currentPass = inferredPass
           onProgress?.({
-            pass: data?.pass || 0,
+            pass: inferredPass,
             totalPasses,
-            label: data?.label || '',
+            label: data?.label || '处理中...',
             status: 'running',
             data,
           })

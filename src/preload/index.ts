@@ -137,6 +137,9 @@ export interface ImportTemplatesResponse {
 
 export interface ElectronAPI {
   isElectron: boolean
+  // AI Skills
+  loadSkills: () => Promise<Record<string, string>>
+  saveSkill: (skillName: string, content: string) => Promise<IpcResponse>
   // 图片存储
   saveImage: (base64Data: string, filename: string) => Promise<SaveImageResponse>
   readImage: (filename: string) => Promise<string | null>

@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { ReferenceImageUpload } from './components/ReferenceImageUpload'
 import { ModeSelector } from './components/ModeSelector'
 import { TemplateSelector } from './components/TemplateSelector'
@@ -11,8 +11,11 @@ import { GenerationProgress } from './components/GenerationProgress'
 import { ResultsGallery } from './components/ResultsGallery'
 import { useDirectorGeneration } from './hooks/useDirectorGeneration'
 import { useDirectorStore } from './stores/useDirectorStore'
+import { getDirectorSkillsFromConfig, reloadDirectorSkills } from '../services/pipeline/prompt-loader'
 
 export function DirectorApp() {
+  const [isRefreshingSkills, setIsRefreshingSkills] = useState(false)
+  const isRefreshingSkillsRef = useRef(false)
   const viewState = useDirectorStore((s) => s.viewState)
   const generatedResults = useDirectorStore((s) => s.generatedResults)
   const skipVerify = useDirectorStore((s) => s.skipVerify)
@@ -20,14 +23,52 @@ export function DirectorApp() {
   const setViewState = useDirectorStore((s) => s.setViewState)
   const pushProgress = useDirectorStore((s) => s.pushProgress)
   const resetProgress = useDirectorStore((s) => s.resetProgress)
+  const setGeneratedResults = useDirectorStore((s) => s.setGeneratedResults)
   const { startGeneration } = useDirectorGeneration()
+
+  const handleRefreshSkills = useCallback(async () => {
+    if (isRefreshingSkillsRef.current) return
+    isRefreshingSkillsRef.current = true
+    setIsRefreshingSkills(true)
+    try {
+      await reloadDirectorSkills()
+      const count = getDirectorSkillsFromConfig().length
+      const toast = (window as any).toastManagerTS ?? (window as any).toastManager
+      toast?.show?.(`Skills 已刷新（${count}）`, 'success')
+    } catch (error: any) {
+      const toast = (window as any).toastManagerTS ?? (window as any).toastManager
+      toast?.show?.(error?.message || '刷新 Skills 失败', 'error')
+    } finally {
+      isRefreshingSkillsRef.current = false
+      setIsRefreshingSkills(false)
+    }
+  }, [])
 
   const handleGenerate = useCallback(async () => {
     setViewState('generating')
     resetProgress()
+    setGeneratedResults([])
     try {
       await startGeneration((progress) => {
         pushProgress(progress as any)
+
+        // 图像流式回调：单张成功后立即显示，无需等待整个 pipeline 结束
+        const evt = (progress as any)?.data
+        if (evt?.type === 'image_generated' && typeof evt.url === 'string' && evt.url) {
+          const store = useDirectorStore.getState()
+          store.setGeneratedResults((prev) => {
+            const exists = prev.some((r) => r.url === evt.url)
+            if (exists) return prev
+            return [
+              ...prev,
+              {
+                url: evt.url,
+                prompt: typeof evt.prompt === 'string' ? evt.prompt : '',
+                timestamp: Date.now(),
+              },
+            ]
+          })
+        }
       })
       setViewState('results')
     } catch (error: any) {
@@ -36,7 +77,7 @@ export function DirectorApp() {
       const toast = (window as any).toastManagerTS ?? (window as any).toastManager
       toast?.show?.(error.message || '生成失败', 'error')
     }
-  }, [startGeneration, setViewState, pushProgress, resetProgress])
+  }, [startGeneration, setViewState, pushProgress, resetProgress, setGeneratedResults])
 
   return (
     <div className="relative z-10">
@@ -57,6 +98,14 @@ export function DirectorApp() {
           <RatioResolutionSelector />
           <div className="flex items-center gap-3">
             <GenerateButton onGenerate={handleGenerate} />
+            <button
+              type="button"
+              onClick={handleRefreshSkills}
+              disabled={isRefreshingSkills}
+              className="py-3 px-4 rounded-none border border-[#3F3F46] text-xs text-white/85 hover:text-white hover:border-[#52525B] transition-colors shrink-0"
+            >
+              {isRefreshingSkills ? '刷新中...' : '刷新 Skills'}
+            </button>
             <label className="flex items-center gap-2 cursor-pointer select-none shrink-0">
               <input
                 type="checkbox"
@@ -78,8 +127,8 @@ export function DirectorApp() {
               </div>
             </div>
           )}
-          {viewState === 'generating' && (
-            <GenerationProgress />
+          {(viewState === 'generating' || viewState === 'results') && (
+            <GenerationProgress collapsed={viewState === 'results'} />
           )}
           {generatedResults.length > 0 && (
             <ResultsGallery />

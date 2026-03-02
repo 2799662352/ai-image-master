@@ -965,6 +965,24 @@ export function getDirectorPageAuto(): DirectorPage | null {
 }
 
 /**
+ * 读取用户技能（Electron IPC 封装）
+ */
+export async function loadSkillsFromElectron(): Promise<Record<string, string>> {
+  if (!window.electronAPI?.loadSkills) return {}
+  return window.electronAPI.loadSkills()
+}
+
+/**
+ * 保存用户技能（Electron IPC 封装）
+ */
+export async function saveSkillToElectron(skillName: string, content: string): Promise<{ success: boolean; error?: string }> {
+  if (!window.electronAPI?.saveSkill) {
+    return { success: false, error: 'Electron API unavailable' }
+  }
+  return window.electronAPI.saveSkill(skillName, content)
+}
+
+/**
  * 创建提示词模板实例并暴露到 window
  */
 export function initPromptTemplates(app: AppInterface): PromptTemplates {
