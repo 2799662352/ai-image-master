@@ -73,12 +73,11 @@ export default defineConfig({
               return 'react-director'
             }
             
-            // V18: 合并 core, services, feature-history, DirectorPage, HistoryPage 到同一 chunk
-            // 解决循环依赖: ServiceBridge ↔ DirectorPage, HistoryPage ↔ features/history
-            if (id.includes('src/renderer/src/core') || 
+            // V18: 合并 core, services, feature-history, HistoryPage 到同一 chunk
+            // Director 页面已迁移到 React (react-app/), 由 react-director chunk 处理
+            if (id.includes('src/renderer/src/core') ||
                 id.includes('src/renderer/src/services') ||
                 id.includes('src/renderer/src/features/history') ||
-                id.includes('src/renderer/src/pages/DirectorPage') ||
                 id.includes('src/renderer/src/pages/HistoryPage')) {
               return 'core-services'
             }
@@ -123,7 +122,7 @@ export default defineConfig({
             }
             
             // 页面模块 - 按页面拆分
-            // 注意: DirectorPage 和 HistoryPage 已合并到 core-services (见上方)
+            // 注意: HistoryPage 已合并到 core-services (见上方), Director 由 react-director chunk 处理
             if (id.includes('src/renderer/src/pages/GeneratePage')) {
               return 'page-generate'
             }
