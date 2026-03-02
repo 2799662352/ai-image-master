@@ -210,118 +210,138 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
     const writer = (config: any) => config?.writer
 
+    function emitError(config: any, pass: number, label: string, nodeName: string, message: string, elapsed: number) {
+      console.error(`[DirectorPipeline] Pass ${pass} (${nodeName}) failed: ${message}`)
+      writer(config)?.({
+        type: 'pass_complete', pass,
+        label: `${label}失败: ${message.slice(0, 80)}`,
+        elapsed,
+        passData: DirectorPipeline.buildPassCardData(nodeName, { pass, label }, { error: message }, elapsed),
+      })
+    }
+
     // ===== Pass 1: 场景分析 (parallel with Pass 2) =====
     const analyzeSceneFn = async (state: DirectorState, config: any) => {
       const t0 = Date.now()
-      const structured = getLLM().withStructuredOutput(SceneAnalysisSchema)
-      const systemPrompt = self.resolveSystemPrompt(
-        'analyzeScene', {},
-        state as Record<string, unknown>,
-        'You are an expert scene analyst. Analyze the provided images and describe the scene in structured detail.',
-      )
-      const result = await structured.invoke([
-        { role: 'system', content: systemPrompt },
-        {
-          role: 'user',
-          content: [
-            ...BasePipeline.buildImageContent(state.inputImages, 'high'),
-            { type: 'text' as const, text: state.sceneDescription || '分析这张图片的场景' },
-          ],
-        },
-      ])
-      const elapsed = Date.now() - t0
-      const passData = DirectorPipeline.buildPassCardData('analyzeScene', { pass: 1, label: '场景分析' }, { scene: result }, elapsed)
-      writer(config)?.({ type: 'pass_complete', pass: 1, label: `场景分析完成 (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
-      return { scene: result }
+      try {
+        const structured = getLLM().withStructuredOutput(SceneAnalysisSchema)
+        const systemPrompt = self.resolveSystemPrompt(
+          'analyzeScene', {},
+          state as Record<string, unknown>,
+          'You are an expert scene analyst. Analyze the provided images and describe the scene in structured detail.',
+        )
+        const result = await structured.invoke([
+          { role: 'system', content: systemPrompt },
+          {
+            role: 'user',
+            content: [
+              ...BasePipeline.buildImageContent(state.inputImages, 'high'),
+              { type: 'text' as const, text: state.sceneDescription || '分析这张图片的场景' },
+            ],
+          },
+        ])
+        const elapsed = Date.now() - t0
+        const passData = DirectorPipeline.buildPassCardData('analyzeScene', { pass: 1, label: '场景分析' }, { scene: result }, elapsed)
+        writer(config)?.({ type: 'pass_complete', pass: 1, label: `场景分析完成 (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
+        return { scene: result }
+      } catch (err: unknown) {
+        emitError(config, 1, '场景分析', 'analyzeScene', err instanceof Error ? err.message : String(err), Date.now() - t0)
+        return { scene: null }
+      }
     }
 
     // ===== Pass 2: 角色锚点提取 (parallel with Pass 1) =====
     const extractCharacterAnchorsFn = async (state: DirectorState, config: any) => {
       const t0 = Date.now()
-      const structured = getLLM().withStructuredOutput(CharacterAnchorSchema)
-      const systemPrompt = self.resolveSystemPrompt(
-        'extractCharacterAnchors', {},
-        state as Record<string, unknown>,
-        'You are a character consistency expert. Extract character anchors from the provided images for image generation consistency.',
-      )
-      const result = await structured.invoke([
-        { role: 'system', content: systemPrompt },
-        {
-          role: 'user',
-          content: [
-            ...BasePipeline.buildImageContent(state.inputImages, 'high'),
-            { type: 'text' as const, text: '提取所有角色的一致性锚点描述' },
-          ],
-        },
-      ])
-      const elapsed = Date.now() - t0
-      const passData = DirectorPipeline.buildPassCardData('extractCharacterAnchors', { pass: 2, label: '角色锚点提取' }, { characters: result }, elapsed)
-      writer(config)?.({ type: 'pass_complete', pass: 2, label: `角色锚点提取完成 (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
-      return { characters: result }
+      try {
+        const structured = getLLM().withStructuredOutput(CharacterAnchorSchema)
+        const systemPrompt = self.resolveSystemPrompt(
+          'extractCharacterAnchors', {},
+          state as Record<string, unknown>,
+          'You are a character consistency expert. Extract character anchors from the provided images for image generation consistency.',
+        )
+        const result = await structured.invoke([
+          { role: 'system', content: systemPrompt },
+          {
+            role: 'user',
+            content: [
+              ...BasePipeline.buildImageContent(state.inputImages, 'high'),
+              { type: 'text' as const, text: '提取所有角色的一致性锚点描述' },
+            ],
+          },
+        ])
+        const elapsed = Date.now() - t0
+        const passData = DirectorPipeline.buildPassCardData('extractCharacterAnchors', { pass: 2, label: '角色锚点提取' }, { characters: result }, elapsed)
+        writer(config)?.({ type: 'pass_complete', pass: 2, label: `角色锚点提取完成 (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
+        return { characters: result }
+      } catch (err: unknown) {
+        emitError(config, 2, '角色锚点', 'extractCharacterAnchors', err instanceof Error ? err.message : String(err), Date.now() - t0)
+        return { characters: null }
+      }
     }
 
     // ===== Pass 3: 分镜设计 + 提示词组装 (merged, saves one LLM round-trip) =====
     const designAndAssembleFn = async (state: DirectorState, config: any) => {
       const t0 = Date.now()
-      const structured = getLLM().withStructuredOutput(DesignAndAssembleSchema)
-      const vars = extractVarsForDesignAndAssemble(state)
-      const systemPrompt = self.resolveSystemPrompt(
-        'designAndAssemble', vars,
-        { ...state, retryFeedback: state.retryFeedback } as Record<string, unknown>,
-        `You are a professional storyboard artist and prompt engineer. Design shots and write prompts for ${vars.panel_count} panels.\nScene: ${vars.scene_env}`,
-      )
-      const result = await structured.invoke([
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: `为 ${state.layout.panelCount} 个分镜设计镜头并生成图像提示词` },
-      ])
+      try {
+        const structured = getLLM().withStructuredOutput(DesignAndAssembleSchema)
+        const vars = extractVarsForDesignAndAssemble(state)
+        const systemPrompt = self.resolveSystemPrompt(
+          'designAndAssemble', vars,
+          { ...state, retryFeedback: state.retryFeedback } as Record<string, unknown>,
+          `You are a professional storyboard artist and prompt engineer. Design shots and write prompts for ${vars.panel_count} panels.\nScene: ${vars.scene_env}`,
+        )
+        const result = await structured.invoke([
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: `为 ${state.layout.panelCount} 个分镜设计镜头并生成图像提示词` },
+        ])
 
-      const panels = (result.panels || []).map((p: any) => ({
-        id: p.id,
-        shot: p.shot,
-        desc: p.desc,
-      }))
+        const panels = (result.panels || []).map((p: any) => ({
+          id: p.id, shot: p.shot, desc: p.desc,
+        }))
+        const prompts: AssembledPrompt[] = (result.panels || []).map((p: any) => ({
+          id: p.id,
+          prompt: p.prompt,
+          negativePrompt: p.negativePrompt || 'blurry, deformed, bad anatomy, watermark, signature, text',
+        }))
 
-      const prompts: AssembledPrompt[] = (result.panels || []).map((p: any) => ({
-        id: p.id,
-        prompt: p.prompt,
-        negativePrompt: p.negativePrompt || 'blurry, deformed, bad anatomy, watermark, signature, text',
-      }))
-
-      const elapsed = Date.now() - t0
-      const passData = DirectorPipeline.buildPassCardData(
-        'designAndAssemble',
-        { pass: 3, label: '分镜设计+提示词' },
-        { panels, prompts },
-        elapsed,
-      )
-      writer(config)?.({ type: 'pass_complete', pass: 3, label: `分镜+提示词完成 (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
-      return { panels, prompts }
+        const elapsed = Date.now() - t0
+        const passData = DirectorPipeline.buildPassCardData('designAndAssemble', { pass: 3, label: '分镜设计+提示词' }, { panels, prompts }, elapsed)
+        writer(config)?.({ type: 'pass_complete', pass: 3, label: `分镜+提示词完成 (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
+        return { panels, prompts }
+      } catch (err: unknown) {
+        emitError(config, 3, '分镜+提示词', 'designAndAssemble', err instanceof Error ? err.message : String(err), Date.now() - t0)
+        return { panels: null, prompts: null }
+      }
     }
 
     // ===== Pass 4: 一致性校验 (skippable) =====
     const verifyConsistencyFn = async (state: DirectorState, config: any) => {
       const t0 = Date.now()
-      const structured = getLLM().withStructuredOutput(VerifySchema)
-      const vars = extractVarsForVerify(state)
-      const systemPrompt = self.resolveSystemPrompt(
-        'verifyConsistency', vars,
-        state as Record<string, unknown>,
-        `You are a continuity supervisor. Check panels for consistency.\nScene: ${vars.scene_env}`,
-      )
-      const result = await structured.invoke([
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: '检查分镜的角色一致性、镜头连续性和叙事流畅度，给出评分和问题列表' },
-      ])
-      const elapsed = Date.now() - t0
-      const passData = DirectorPipeline.buildPassCardData('verifyConsistency', { pass: 4, label: '一致性校验' }, { report: result }, elapsed)
-      writer(config)?.({
-        type: 'pass_complete',
-        pass: 4,
-        label: `一致性校验完成 (score: ${result.score}, ${(elapsed / 1000).toFixed(1)}s)`,
-        elapsed,
-        passData,
-      })
-      return { report: result }
+      try {
+        const structured = getLLM().withStructuredOutput(VerifySchema)
+        const vars = extractVarsForVerify(state)
+        const systemPrompt = self.resolveSystemPrompt(
+          'verifyConsistency', vars,
+          state as Record<string, unknown>,
+          `You are a continuity supervisor. Check panels for consistency.\nScene: ${vars.scene_env}`,
+        )
+        const result = await structured.invoke([
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: '检查分镜的角色一致性、镜头连续性和叙事流畅度，给出评分和问题列表' },
+        ])
+        const elapsed = Date.now() - t0
+        const passData = DirectorPipeline.buildPassCardData('verifyConsistency', { pass: 4, label: '一致性校验' }, { report: result }, elapsed)
+        writer(config)?.({
+          type: 'pass_complete', pass: 4,
+          label: `一致性校验完成 (score: ${result.score}, ${(elapsed / 1000).toFixed(1)}s)`,
+          elapsed, passData,
+        })
+        return { report: result }
+      } catch (err: unknown) {
+        emitError(config, 4, '一致性校验', 'verifyConsistency', err instanceof Error ? err.message : String(err), Date.now() - t0)
+        return { report: null }
+      }
     }
 
     // ===== Retry准备 =====
@@ -339,70 +359,63 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     // ===== Pass 5: Contact Sheet 图像生成 =====
     const generateImagesFn = async (state: DirectorState, config: any) => {
       const t0 = Date.now()
-      const { getApiService } = await import('../api/ApiService')
-      const apiService = getApiService()
-      const prompts = state.prompts || []
+      const passNum = state.skipVerify ? 4 : 5
+      try {
+        const { getApiService } = await import('../api/ApiService')
+        const apiService = getApiService()
+        const prompts = state.prompts || []
 
-      writer(config)?.({
-        type: 'image_generating',
-        index: 0,
-        total: 1,
-        prompt: 'Generating contact sheet...',
-      })
+        writer(config)?.({ type: 'image_generating', index: 0, total: 1, prompt: 'Generating contact sheet...' })
 
-      const vars = extractVarsForContactSheet(state)
-      const tpl = getPromptTemplate('generateImages')
-      const compositePrompt = tpl
-        ? renderTemplate(tpl.template, vars)
-        : [
-            `Cinematic Contact Sheet, ONE single master image, ${vars.grid_rows}x${vars.grid_cols} storyboard grid with ${vars.panel_count} panels.`,
-            'Symmetrical grid, hard borders, clean white dividing lines.',
-            vars.character_anchor_line,
-            vars.style_instructions,
-            `Panel descriptions:\n${vars.panel_descriptions}`,
-          ].filter(Boolean).join(' ')
+        const vars = extractVarsForContactSheet(state)
+        const tpl = getPromptTemplate('generateImages')
+        const compositePrompt = tpl
+          ? renderTemplate(tpl.template, vars)
+          : [
+              `Cinematic Contact Sheet, ONE single master image, ${vars.grid_rows}x${vars.grid_cols} storyboard grid with ${vars.panel_count} panels.`,
+              'Symmetrical grid, hard borders, clean white dividing lines.',
+              vars.character_anchor_line,
+              vars.style_instructions,
+              `Panel descriptions:\n${vars.panel_descriptions}`,
+            ].filter(Boolean).join(' ')
 
-      const negativePrompt = prompts[0]?.negativePrompt ||
-        'blurry, deformed, bad anatomy, watermark, signature, text, irregular panels, asymmetric grid'
+        const negativePrompt = prompts[0]?.negativePrompt ||
+          'blurry, deformed, bad anatomy, watermark, signature, text, irregular panels, asymmetric grid'
 
-      const imageCount = state.currentImageCount || 1
-      const results: Array<{ id: number; url: string; prompt: string; error?: string }> = []
+        const imageCount = state.currentImageCount || 1
+        const results: Array<{ id: number; url: string; prompt: string; error?: string }> = []
 
-      for (let i = 0; i < imageCount; i++) {
-        const result = await apiService.generateImage({
-          prompt: compositePrompt,
-          negativePrompt,
-          ratio: state.ratio,
-          resolution: state.resolution,
-          referenceImages: state.inputImages.map(img =>
-            `data:${img.mimeType};base64,${img.data}`
-          ),
-        })
+        for (let i = 0; i < imageCount; i++) {
+          const result = await apiService.generateImage({
+            prompt: compositePrompt,
+            negativePrompt,
+            ratio: state.ratio,
+            resolution: state.resolution,
+            referenceImages: state.inputImages.map(img =>
+              `data:${img.mimeType};base64,${img.data}`
+            ),
+          })
 
-        const url = result.success
-          ? (result.images?.[0] || result.urls?.[0] || '')
-          : ''
+          const url = result.success
+            ? (result.images?.[0] || result.urls?.[0] || '')
+            : ''
 
-        results.push({
-          id: i + 1,
-          url,
-          prompt: compositePrompt,
-          error: result.success ? undefined : result.error,
-        })
+          results.push({
+            id: i + 1, url, prompt: compositePrompt,
+            error: result.success ? undefined : result.error,
+          })
 
-        writer(config)?.({
-          type: 'image_generated',
-          index: i,
-          total: imageCount,
-          url,
-        })
+          writer(config)?.({ type: 'image_generated', index: i, total: imageCount, url })
+        }
+
+        const elapsed = Date.now() - t0
+        const passData = DirectorPipeline.buildPassCardData('generateImages', { pass: passNum, label: '图像生成' }, { images: results }, elapsed)
+        writer(config)?.({ type: 'pass_complete', pass: passNum, label: `图像生成完成 (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
+        return { images: results }
+      } catch (err: unknown) {
+        emitError(config, passNum, '图像生成', 'generateImages', err instanceof Error ? err.message : String(err), Date.now() - t0)
+        return { images: [] }
       }
-
-      const elapsed = Date.now() - t0
-      const passLabel = state.skipVerify ? 4 : 5
-      const passData = DirectorPipeline.buildPassCardData('generateImages', { pass: passLabel, label: '图像生成' }, { images: results }, elapsed)
-      writer(config)?.({ type: 'pass_complete', pass: passLabel, label: `图像生成完成 (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
-      return { images: results }
     }
 
     // ===== Routing =====
