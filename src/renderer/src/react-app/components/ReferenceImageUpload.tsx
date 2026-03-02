@@ -6,19 +6,24 @@ import { VisionModelSelector } from './VisionModelSelector'
 async function compressAndConvert(file: File): Promise<string> {
   const maxSizeMB = 2
   const maxDim = 2048
-
-  const imageCompression = (window as any).imageCompression
   let processed = file
 
-  if (typeof imageCompression === 'function' && file.size > maxSizeMB * 1024 * 1024) {
+  if (file.size > maxSizeMB * 1024 * 1024) {
     try {
-      processed = await imageCompression(file, {
-        maxSizeMB,
-        maxWidthOrHeight: maxDim,
-        useWebWorker: true,
-        libURL: './cdn/browser-image-compression/browser-image-compression.js',
-        fileType: file.type,
-      })
+      const getImageCompression = (window as any).getImageCompression
+      const imageCompression = typeof getImageCompression === 'function'
+        ? await getImageCompression()
+        : (window as any).imageCompression
+      if (typeof imageCompression === 'function') {
+        processed = await imageCompression(file, {
+          maxSizeMB,
+          maxWidthOrHeight: maxDim,
+          useWebWorker: true,
+          libURL: './cdn/browser-image-compression/browser-image-compression.js',
+          fileType: file.type,
+          initialQuality: 0.9,
+        })
+      }
     } catch {
       processed = file
     }

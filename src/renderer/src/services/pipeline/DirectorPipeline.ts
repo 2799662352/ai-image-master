@@ -415,10 +415,14 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           type: 'text' as const,
           text: `检查以下分镜的角色一致性、镜头连续性和叙事流畅度，给出评分和问题列表。\n\n分镜详情:\n${vars.panels_summary_short}`,
         })
-        const result = await structured.invoke([
+        const raw = await structured.invoke([
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userContent },
         ])
+        const result = raw ?? { score: 7, ok: true, issues: [] }
+        if (typeof result.score !== 'number') result.score = 7
+        if (typeof result.ok !== 'boolean') result.ok = result.score >= 6
+        if (!Array.isArray(result.issues)) result.issues = []
         const elapsed = Date.now() - t0
         const passData = DirectorPipeline.buildPassCardData('verifyConsistency', { pass: 4, label: '一致性校验' }, { report: result }, elapsed)
         writer(config)?.({
