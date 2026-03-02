@@ -149,26 +149,15 @@ export function ReferenceImageUpload() {
         <div className="flex items-center gap-3">
           <VisionModelSelector />
           <ExampleGallery />
-          <div className="flex gap-2">
-            {referenceImages.length < MAX_IMAGES && (
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="text-xs text-purple-400 hover:text-purple-300 transition-colors"
-              >
-                <i className="fas fa-plus mr-1" />
-                添加
-              </button>
-            )}
-            {referenceImages.length > 1 && (
-              <button
-                onClick={clearReferenceImages}
-                className="text-xs text-red-400 hover:text-red-300 transition-colors"
-              >
-                <i className="fas fa-trash mr-1" />
-                清空
-              </button>
-            )}
-          </div>
+          {referenceImages.length > 1 && (
+            <button
+              onClick={clearReferenceImages}
+              className="text-xs text-red-400 hover:text-red-300 transition-colors"
+            >
+              <i className="fas fa-trash mr-1" />
+              清空
+            </button>
+          )}
         </div>
       </div>
 
@@ -195,6 +184,15 @@ export function ReferenceImageUpload() {
             </button>
           </div>
         ))}
+        {referenceImages.length < MAX_IMAGES && (
+          <div
+            onClick={() => !isProcessing && fileInputRef.current?.click()}
+            className="aspect-square border-2 border-dashed border-white border-opacity-20 rounded-none flex flex-col items-center justify-center cursor-pointer hover:border-[#FCE300] hover:border-opacity-60 transition-all group"
+          >
+            <i className="fas fa-plus text-white opacity-30 group-hover:opacity-70 group-hover:text-[#FCE300] text-lg transition-all" />
+            <span className="text-white opacity-20 group-hover:opacity-50 text-xs mt-1.5 transition-all">添加</span>
+          </div>
+        )}
       </div>
 
       <input
