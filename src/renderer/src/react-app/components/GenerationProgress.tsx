@@ -31,6 +31,7 @@ interface GenerationProgressProps {
 }
 
 export function GenerationProgress({ progress }: GenerationProgressProps) {
+  const [viewingRaw, setViewingRaw] = useState<PassCardData | null>(null)
   const totalPasses = progress?.totalPasses ?? 5
   const passDefs = useMemo(
     () => totalPasses <= 4 ? PASS_DEFS_FAST : PASS_DEFS_FULL,
@@ -144,7 +145,17 @@ export function GenerationProgress({ progress }: GenerationProgressProps) {
                     <i className={`fas ${def?.icon ?? 'fa-check'} mr-1.5 text-green-400`} />
                     {card.label}
                   </span>
-                  <span className="text-white opacity-30">{(card.elapsed / 1000).toFixed(1)}s</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-white opacity-30">{(card.elapsed / 1000).toFixed(1)}s</span>
+                    {card.raw && (
+                      <button
+                        onClick={() => setViewingRaw(card)}
+                        className="text-blue-400 hover:text-blue-300 transition-colors"
+                      >
+                        查看完整数据 →
+                      </button>
+                    )}
+                  </div>
                 </div>
                 {card.summary && (
                   <p className="text-white opacity-50 line-clamp-2">{card.summary}</p>
@@ -152,6 +163,57 @@ export function GenerationProgress({ progress }: GenerationProgressProps) {
               </div>
             )
           })}
+        </div>
+      )}
+
+      {viewingRaw && (
+        <div
+          className="fixed inset-0 bg-black/80 z-[60000] flex items-center justify-center p-4"
+          onClick={() => setViewingRaw(null)}
+        >
+          <div
+            className="bg-[#09090B] border-2 border-[#3F3F46] rounded-none w-full max-w-2xl max-h-[80vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-6 py-4 border-b border-[#3F3F46] flex items-center justify-between">
+              <h3 className="text-white font-bold flex items-center">
+                <i className="fas fa-database mr-2 text-cyan-400" />
+                Pass {viewingRaw.pass}: {viewingRaw.label}
+              </h3>
+              <div className="flex items-center gap-3">
+                <span className="text-white opacity-30 text-xs">{(viewingRaw.elapsed / 1000).toFixed(1)}s</span>
+                <button onClick={() => setViewingRaw(null)} className="text-white opacity-50 hover:opacity-100">
+                  <i className="fas fa-times text-lg" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              <pre className="text-white opacity-70 text-xs font-mono whitespace-pre-wrap break-words leading-relaxed">
+                {JSON.stringify(viewingRaw.raw, null, 2)}
+              </pre>
+            </div>
+            <div className="px-6 py-3 border-t border-[#3F3F46] flex justify-end gap-2">
+              <button
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(JSON.stringify(viewingRaw.raw, null, 2))
+                    const toast = (window as any).toastManagerTS ?? (window as any).toastManager
+                    toast?.show?.('已复制到剪贴板', 'success')
+                  } catch { /* ignore */ }
+                }}
+                className="px-4 py-2 bg-[#27272A] border border-[#3F3F46] text-white rounded-none text-sm hover:bg-white hover:bg-opacity-5 transition-colors"
+              >
+                <i className="fas fa-copy mr-2" />
+                复制
+              </button>
+              <button
+                onClick={() => setViewingRaw(null)}
+                className="px-4 py-2 bg-[#FCE300] text-black font-bold rounded-none text-sm"
+              >
+                关闭
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
