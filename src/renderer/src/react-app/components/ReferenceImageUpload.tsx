@@ -3,16 +3,34 @@ import { useDirectorStore } from '../stores/useDirectorStore'
 import { ExampleGallery } from './ExampleGallery'
 import { VisionModelSelector } from './VisionModelSelector'
 
-function fileToBase64(file: File): Promise<string> {
+async function compressAndConvert(file: File): Promise<string> {
+  const maxSizeMB = 2
+  const maxDim = 2048
+
+  const imageCompression = (window as any).imageCompression
+  let processed = file
+
+  if (typeof imageCompression === 'function' && file.size > maxSizeMB * 1024 * 1024) {
+    try {
+      processed = await imageCompression(file, {
+        maxSizeMB,
+        maxWidthOrHeight: maxDim,
+        useWebWorker: true,
+        fileType: file.type,
+      })
+    } catch {
+      processed = file
+    }
+  }
+
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => {
       const result = reader.result as string
-      const base64 = result.split(',')[1]
-      resolve(base64)
+      resolve(result.split(',')[1])
     }
     reader.onerror = reject
-    reader.readAsDataURL(file)
+    reader.readAsDataURL(processed)
   })
 }
 
@@ -30,7 +48,7 @@ export function ReferenceImageUpload() {
       for (const file of Array.from(files)) {
         if (!file.type.startsWith('image/')) continue
         if (referenceImages.length >= MAX_IMAGES) break
-        const data = await fileToBase64(file)
+        const data = await compressAndConvert(file)
         addReferenceImage({ data, mimeType: file.type, name: file.name })
       }
     },
