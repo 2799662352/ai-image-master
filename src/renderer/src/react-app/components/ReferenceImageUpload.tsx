@@ -1,4 +1,4 @@
-import { useRef, useCallback, type DragEvent } from 'react'
+import { useRef, useCallback, useState, useTransition, type DragEvent } from 'react'
 import { useDirectorStore } from '../stores/useDirectorStore'
 import { ExampleGallery } from './ExampleGallery'
 import { VisionModelSelector } from './VisionModelSelector'
@@ -43,17 +43,33 @@ export function ReferenceImageUpload() {
   const removeReferenceImage = useDirectorStore((s) => s.removeReferenceImage)
   const clearReferenceImages = useDirectorStore((s) => s.clearReferenceImages)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [, startTransition] = useTransition()
 
   const processFiles = useCallback(
     async (files: FileList | File[]) => {
-      for (const file of Array.from(files)) {
-        if (!file.type.startsWith('image/')) continue
-        if (referenceImages.length >= MAX_IMAGES) break
-        const data = await compressAndConvert(file)
-        addReferenceImage({ data, mimeType: file.type, name: file.name })
+      const imageFiles = Array.from(files)
+        .filter((f) => f.type.startsWith('image/'))
+        .slice(0, MAX_IMAGES - useDirectorStore.getState().referenceImages.length)
+      if (imageFiles.length === 0) return
+
+      setIsProcessing(true)
+      try {
+        const results = await Promise.all(
+          imageFiles.map(async (file) => ({
+            data: await compressAndConvert(file),
+            mimeType: file.type,
+            name: file.name,
+          }))
+        )
+        startTransition(() => {
+          for (const img of results) addReferenceImage(img)
+        })
+      } finally {
+        setIsProcessing(false)
       }
     },
-    [referenceImages.length, addReferenceImage]
+    [addReferenceImage, startTransition]
   )
 
   const handleFileChange = useCallback(
@@ -92,14 +108,23 @@ export function ReferenceImageUpload() {
           </div>
         </div>
         <div
-          onClick={() => fileInputRef.current?.click()}
+          onClick={() => !isProcessing && fileInputRef.current?.click()}
           onDrop={handleDrop}
           onDragOver={handleDragOver}
-          className="border-2 border-dashed border-white border-opacity-30 rounded-none p-8 text-center cursor-pointer hover:border-purple-400 transition-colors"
+          className={`border-2 border-dashed border-white border-opacity-30 rounded-none p-8 text-center transition-colors ${isProcessing ? 'opacity-60 cursor-wait' : 'cursor-pointer hover:border-purple-400'}`}
         >
-          <i className="fas fa-cloud-upload-alt text-3xl text-white opacity-30 mb-3" />
-          <p className="text-white opacity-50 text-sm">点击或拖拽上传参考图片</p>
-          <p className="text-white opacity-30 text-xs mt-1">最多 {MAX_IMAGES} 张</p>
+          {isProcessing ? (
+            <>
+              <i className="fas fa-spinner fa-spin text-3xl text-purple-400 mb-3" />
+              <p className="text-white opacity-70 text-sm">正在压缩处理图片...</p>
+            </>
+          ) : (
+            <>
+              <i className="fas fa-cloud-upload-alt text-3xl text-white opacity-30 mb-3" />
+              <p className="text-white opacity-50 text-sm">点击或拖拽上传参考图片</p>
+              <p className="text-white opacity-30 text-xs mt-1">最多 {MAX_IMAGES} 张</p>
+            </>
+          )}
         </div>
         <input
           ref={fileInputRef}
