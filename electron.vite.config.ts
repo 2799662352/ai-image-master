@@ -1,5 +1,6 @@
 import { defineConfig } from 'electron-vite'
 import { resolve } from 'path'
+import react from '@vitejs/plugin-react'
 
 // Bundle 分析器 (仅在 analyze 模式下启用)
 // 使用 npm run analyze 命令时，会生成 dist/stats.html 报告
@@ -35,6 +36,7 @@ export default defineConfig({
   },
   renderer: {
     root: 'src/renderer',
+    plugins: [react()],
     build: {
       outDir: 'dist/renderer',
       // 目标为 Electron 的 Chromium 版本，启用现代 JS 特性
@@ -50,6 +52,12 @@ export default defineConfig({
           manualChunks: (id: string) => {
             // 第三方库打包到 vendor chunk
             if (id.includes('node_modules')) {
+              if (id.includes('react') || id.includes('react-dom') || id.includes('scheduler')) {
+                return 'vendor-react'
+              }
+              if (id.includes('zustand')) {
+                return 'vendor-zustand'
+              }
               if (id.includes('choices.js')) {
                 return 'vendor-choices'
               }
@@ -58,6 +66,11 @@ export default defineConfig({
               }
               // 其他 node_modules
               return 'vendor'
+            }
+            
+            // React Director app
+            if (id.includes('src/renderer/src/react-app')) {
+              return 'react-director'
             }
             
             // V18: 合并 core, services, feature-history, DirectorPage, HistoryPage 到同一 chunk
@@ -177,7 +190,7 @@ export default defineConfig({
     // 依赖优化
     optimizeDeps: {
       // 预构建这些依赖以加速冷启动
-      include: ['choices.js', 'jszip'],
+      include: ['choices.js', 'jszip', 'react', 'react-dom', 'zustand'],
       // 排除不需要预构建的依赖
       exclude: []
     },
@@ -192,6 +205,7 @@ export default defineConfig({
         '@pages': resolve(__dirname, 'src/renderer/src/pages'),
         '@utils': resolve(__dirname, 'src/renderer/src/utils'),
         '@types': resolve(__dirname, 'src/types'),
+        '@react': resolve(__dirname, 'src/renderer/src/react-app'),
         '@skills': resolve(__dirname, 'skills')
       }
     }

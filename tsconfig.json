@@ -44,7 +44,8 @@
     /* 其他选项 */
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "useDefineForClassFields": true
+    "useDefineForClassFields": true,
+    "jsx": "react-jsx"
   },
   "include": [
     "src/**/*",
