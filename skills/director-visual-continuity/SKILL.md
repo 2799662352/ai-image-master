@@ -1,7 +1,7 @@
 ---
 name: visual-continuity
 description: Use when verifying lighting, color, and spatial consistency across storyboard panels
-appliesTo: [verifyConsistency, designAndAssemble]
+appliesTo: [verifyConsistency]
 priority: 2
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: lighting-continuity
 description: Use when designing panels or verifying consistency to ensure lighting direction, color temperature, and HDR coherence across all shots in a scene
-appliesTo: [designAndAssemble, verifyConsistency]
+appliesTo: [analyzeScene, verifyConsistency]
 priority: 2
 ---
 
