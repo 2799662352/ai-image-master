@@ -47,6 +47,7 @@ interface ConfigSlice {
   currentRatio: string
   currentResolution: string
   sceneDescription: string
+  multiSceneText: string
   visionModel: string
   imageModel: string
   imageCount: number
@@ -56,6 +57,7 @@ interface ConfigSlice {
   setRatio: (val: string) => void
   setResolution: (val: string) => void
   setSceneDescription: (val: string) => void
+  setMultiSceneText: (val: string) => void
   setVisionModel: (val: string) => void
   setImageModel: (val: string) => void
   setImageCount: (val: number) => void
@@ -96,6 +98,7 @@ const initialConfigState: Pick<
   currentRatio: '3:2',
   currentResolution: '2K',
   sceneDescription: '',
+  multiSceneText: '',
   visionModel: '',
   imageModel: '',
   imageCount: 1,
@@ -134,6 +137,7 @@ const createConfigSlice: StateCreator<DirectorStore, [], [], ConfigSlice> = (set
   setRatio: (val) => set({ currentRatio: val }),
   setResolution: (val) => set({ currentResolution: val }),
   setSceneDescription: (val) => set({ sceneDescription: val }),
+  setMultiSceneText: (val) => set({ multiSceneText: val }),
   setVisionModel: (val) => set({ visionModel: val }),
   setImageModel: (val) => set({ imageModel: val }),
   setImageCount: (val) => set({ imageCount: val }),

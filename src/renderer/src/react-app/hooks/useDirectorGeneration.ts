@@ -42,15 +42,45 @@ export function useDirectorGeneration() {
   const sceneDescription = useDirectorStore((s) => s.sceneDescription)
   const currentLayout = useDirectorStore((s) => s.currentLayout)
   const currentTemplate = useDirectorStore((s) => s.currentTemplate)
+  const currentMode = useDirectorStore((s) => s.currentMode)
   const currentRatio = useDirectorStore((s) => s.currentRatio)
   const currentResolution = useDirectorStore((s) => s.currentResolution)
   const imageCount = useDirectorStore((s) => s.imageCount)
+  const multiSceneText = useDirectorStore((s) => s.multiSceneText)
 
   const canGenerate = referenceImages.length > 0 && !isGenerating
 
   const getLayoutConfig = useCallback((layout?: string): LayoutConfig => {
     return LAYOUT_MAP[layout ?? currentLayout] ?? DEFAULT_LAYOUT
   }, [currentLayout])
+
+  const executeSingle = useCallback(
+    async (
+      pipeline: any,
+      scene: string,
+      resolvedStyle: string,
+      layoutConfig: LayoutConfig,
+      onProgress?: (progress: PipelineProgress) => void,
+    ) => {
+      return pipeline.execute(
+        {
+          inputImages: referenceImages.map((img) => ({
+            data: img.data,
+            mimeType: img.mimeType,
+          })),
+          sceneDescription: scene,
+          layout: layoutConfig,
+          template: currentTemplate ?? '',
+          styleInstructions: resolvedStyle,
+          ratio: currentRatio,
+          resolution: currentResolution,
+          currentImageCount: imageCount,
+        },
+        onProgress,
+      )
+    },
+    [referenceImages, currentTemplate, currentRatio, currentResolution, imageCount],
+  )
 
   const startGeneration = useCallback(
     async (
@@ -70,42 +100,57 @@ export function useDirectorGeneration() {
         }
 
         const layoutConfig = getLayoutConfig(currentLayout)
-
         const resolvedStyle = styleInstructions || getStyleInstructions(currentTemplate)
 
-        const result = await pipeline.execute(
-          {
-            inputImages: referenceImages.map((img) => ({
-              data: img.data,
-              mimeType: img.mimeType,
-            })),
-            sceneDescription,
-            layout: layoutConfig,
-            template: currentTemplate ?? '',
-            styleInstructions: resolvedStyle,
-            ratio: currentRatio,
-            resolution: currentResolution,
-            currentImageCount: imageCount,
-          },
-          onProgress
-        )
+        if (currentMode === 'multi' && multiSceneText.trim()) {
+          const scenes = multiSceneText
+            .split(/\n\s*\n/)
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0)
 
-        store.setGeneratedResults(
-          result.images.map((img) => ({
-            url: img.url,
-            prompt: img.prompt,
-            timestamp: Date.now(),
-          }))
-        )
+          const allResults: Array<{ url: string; prompt: string; timestamp: number }> = []
 
-        if (result.scene) {
-          store.setLastAnalysisResult(JSON.stringify(result.scene))
+          for (let i = 0; i < scenes.length; i++) {
+            const result = await executeSingle(
+              pipeline, scenes[i], resolvedStyle, layoutConfig, onProgress,
+            )
+            if (result.images) {
+              allResults.push(
+                ...result.images.map((img: any) => ({
+                  url: img.url,
+                  prompt: img.prompt,
+                  timestamp: Date.now(),
+                }))
+              )
+            }
+            store.setGeneratedResults([...allResults])
+          }
+
+          if (allResults.length > 0) {
+            const lastResult = await executeSingle(
+              pipeline, scenes[scenes.length - 1], resolvedStyle, layoutConfig,
+            ).catch(() => null)
+            if (lastResult?.scene) store.setLastAnalysisResult(JSON.stringify(lastResult.scene))
+            if (lastResult?.characters) store.setLastCharacterAnchor(JSON.stringify(lastResult.characters))
+          }
+        } else {
+          const result = await executeSingle(
+            pipeline, sceneDescription, resolvedStyle, layoutConfig, onProgress,
+          )
+
+          store.setGeneratedResults(
+            result.images.map((img: any) => ({
+              url: img.url,
+              prompt: img.prompt,
+              timestamp: Date.now(),
+            }))
+          )
+
+          if (result.scene) store.setLastAnalysisResult(JSON.stringify(result.scene))
+          if (result.characters) store.setLastCharacterAnchor(JSON.stringify(result.characters))
+
+          return result
         }
-        if (result.characters) {
-          store.setLastCharacterAnchor(JSON.stringify(result.characters))
-        }
-
-        return result
       } finally {
         useDirectorStore.getState().setIsGenerating(false)
       }
@@ -114,12 +159,15 @@ export function useDirectorGeneration() {
       visionModel,
       referenceImages,
       sceneDescription,
+      currentMode,
+      multiSceneText,
       currentLayout,
       currentTemplate,
       currentRatio,
       currentResolution,
       imageCount,
       getLayoutConfig,
+      executeSingle,
     ]
   )
 
