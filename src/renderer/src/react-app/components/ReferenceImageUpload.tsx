@@ -1,5 +1,7 @@
 import { useRef, useCallback, type DragEvent } from 'react'
 import { useDirectorStore } from '../stores/useDirectorStore'
+import { ExampleGallery } from './ExampleGallery'
+import { VisionModelSelector } from './VisionModelSelector'
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -60,10 +62,16 @@ export function ReferenceImageUpload() {
   if (referenceImages.length === 0) {
     return (
       <div className="bg-[#27272A] rounded-none p-4">
-        <h3 className="text-white font-semibold flex items-center mb-3">
-          <i className="fas fa-image mr-2 text-purple-400" />
-          参考图片
-        </h3>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-white font-semibold flex items-center">
+            <i className="fas fa-image mr-2 text-purple-400" />
+            参考图片
+          </h3>
+          <div className="flex items-center gap-2">
+            <VisionModelSelector />
+            <ExampleGallery />
+          </div>
+        </div>
         <div
           onClick={() => fileInputRef.current?.click()}
           onDrop={handleDrop}
@@ -93,25 +101,29 @@ export function ReferenceImageUpload() {
           <i className="fas fa-image mr-2 text-purple-400" />
           参考图片 ({referenceImages.length}/{MAX_IMAGES})
         </h3>
-        <div className="flex gap-2">
-          {referenceImages.length < MAX_IMAGES && (
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="text-xs text-purple-400 hover:text-purple-300 transition-colors"
-            >
-              <i className="fas fa-plus mr-1" />
-              添加
-            </button>
-          )}
-          {referenceImages.length > 1 && (
-            <button
-              onClick={clearReferenceImages}
-              className="text-xs text-red-400 hover:text-red-300 transition-colors"
-            >
-              <i className="fas fa-trash mr-1" />
-              清空
-            </button>
-          )}
+        <div className="flex items-center gap-3">
+          <VisionModelSelector />
+          <ExampleGallery />
+          <div className="flex gap-2">
+            {referenceImages.length < MAX_IMAGES && (
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="text-xs text-purple-400 hover:text-purple-300 transition-colors"
+              >
+                <i className="fas fa-plus mr-1" />
+                添加
+              </button>
+            )}
+            {referenceImages.length > 1 && (
+              <button
+                onClick={clearReferenceImages}
+                className="text-xs text-red-400 hover:text-red-300 transition-colors"
+              >
+                <i className="fas fa-trash mr-1" />
+                清空
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
