@@ -54,7 +54,7 @@ export function useDirectorGeneration() {
 
         const result = await pipeline.execute(
           {
-            images: referenceImages.map((img) => ({
+            inputImages: referenceImages.map((img) => ({
               data: img.data,
               mimeType: img.mimeType,
             })),

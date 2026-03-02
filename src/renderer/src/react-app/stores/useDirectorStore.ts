@@ -49,6 +49,7 @@ interface ConfigSlice {
   sceneDescription: string
   visionModel: string
   imageModel: string
+  imageCount: number
   setLayout: (val: LayoutType) => void
   setTemplate: (val: string | null) => void
   setMode: (val: GenerationMode) => void
@@ -57,6 +58,7 @@ interface ConfigSlice {
   setSceneDescription: (val: string) => void
   setVisionModel: (val: string) => void
   setImageModel: (val: string) => void
+  setImageCount: (val: number) => void
 }
 
 interface ResetSlice {
@@ -86,7 +88,7 @@ const initialGenerationState: Pick<
 
 const initialConfigState: Pick<
   ConfigSlice,
-  'currentLayout' | 'currentTemplate' | 'currentMode' | 'currentRatio' | 'currentResolution' | 'sceneDescription' | 'visionModel' | 'imageModel'
+  'currentLayout' | 'currentTemplate' | 'currentMode' | 'currentRatio' | 'currentResolution' | 'sceneDescription' | 'visionModel' | 'imageModel' | 'imageCount'
 > = {
   currentLayout: '6grid',
   currentTemplate: null,
@@ -96,6 +98,7 @@ const initialConfigState: Pick<
   sceneDescription: '',
   visionModel: '',
   imageModel: '',
+  imageCount: 1,
 }
 
 // --- Slice creators ---
@@ -133,6 +136,7 @@ const createConfigSlice: StateCreator<DirectorStore, [], [], ConfigSlice> = (set
   setSceneDescription: (val) => set({ sceneDescription: val }),
   setVisionModel: (val) => set({ visionModel: val }),
   setImageModel: (val) => set({ imageModel: val }),
+  setImageCount: (val) => set({ imageCount: val }),
 })
 
 const createResetSlice: StateCreator<DirectorStore, [], [], ResetSlice> = (set) => ({

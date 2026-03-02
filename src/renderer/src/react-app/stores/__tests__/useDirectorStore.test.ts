@@ -87,4 +87,15 @@ describe('useDirectorStore', () => {
     expect(state.currentLayout).toBe('6grid')
     expect(state.isGenerating).toBe(false)
   })
+
+  it('should set imageCount', () => {
+    useDirectorStore.getState().setImageCount(5)
+    expect(useDirectorStore.getState().imageCount).toBe(5)
+  })
+
+  it('should reset imageCount to 1', () => {
+    useDirectorStore.getState().setImageCount(8)
+    useDirectorStore.getState().reset()
+    expect(useDirectorStore.getState().imageCount).toBe(1)
+  })
 })
