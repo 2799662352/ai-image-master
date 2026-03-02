@@ -78,7 +78,7 @@
       "recommended": false
     }
   ],
-  "defaultModel": "gemini-3-pro-preview",
+  "defaultModel": "gemini-3-flash-preview",
   "customModelEnabled": true,
   "customModelPlaceholder": "例如：gpt-4o"
 }

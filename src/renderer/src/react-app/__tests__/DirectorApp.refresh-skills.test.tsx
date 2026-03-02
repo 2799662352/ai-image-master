@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DirectorApp } from '../DirectorApp'
 import { reloadDirectorSkills } from '@/services/pipeline/prompt-loader'
+import { useDirectorStore } from '../stores/useDirectorStore'
 
 const startGenerationMock = vi.fn()
 
@@ -46,13 +47,24 @@ vi.mock('../hooks/useDirectorGeneration', () => ({
 vi.mock('@/services/pipeline/prompt-loader', () => ({
   reloadDirectorSkills: vi.fn(),
   getDirectorSkillsFromConfig: vi.fn(() => []),
+  getDirectorSkillLoadStats: vi.fn(() => ({
+    builtinCount: 17,
+    userCount: 1,
+    mergedCount: 17,
+    addedCount: 0,
+    overriddenCount: 1,
+  })),
 }))
 
 describe('DirectorApp refresh skills', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    useDirectorStore.getState().reset()
     startGenerationMock.mockResolvedValue(undefined)
     ;(reloadDirectorSkills as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(undefined)
+    ;(window as any).electronAPI = {
+      openSkillsFolder: vi.fn().mockResolvedValue({ success: true, path: 'C:/skills' }),
+    }
     ;(window as any).toastManagerTS = {
       show: vi.fn(),
     }
@@ -64,6 +76,11 @@ describe('DirectorApp refresh skills', () => {
   it('显示刷新 Skills 按钮', () => {
     render(<DirectorApp />)
     expect(screen.getByRole('button', { name: '刷新 Skills' })).toBeTruthy()
+  })
+
+  it('显示打开 Skills 文件夹按钮', () => {
+    render(<DirectorApp />)
+    expect(screen.getByRole('button', { name: '打开 Skills 文件夹' })).toBeTruthy()
   })
 
   it('点击后调用 reloadDirectorSkills', async () => {
@@ -110,7 +127,7 @@ describe('DirectorApp refresh skills', () => {
   })
 
   it('快速重复点击仅触发一次刷新', async () => {
-    let resolveReload: (() => void) | null = null
+    let resolveReload: (() => void) | undefined
     ;(reloadDirectorSkills as unknown as ReturnType<typeof vi.fn>).mockImplementation(
       () =>
         new Promise<void>((resolve) => {
@@ -127,6 +144,34 @@ describe('DirectorApp refresh skills', () => {
       expect(reloadDirectorSkills).toHaveBeenCalledTimes(1)
     })
 
-    resolveReload?.()
+    if (resolveReload) resolveReload()
+  })
+
+  it('点击打开 Skills 文件夹时调用 electronAPI 并提示成功', async () => {
+    render(<DirectorApp />)
+    fireEvent.click(screen.getByRole('button', { name: '打开 Skills 文件夹' }))
+
+    await waitFor(() => {
+      expect((window as any).electronAPI.openSkillsFolder).toHaveBeenCalledTimes(1)
+      expect((window as any).toastManagerTS.show).toHaveBeenCalledWith(
+        expect.stringContaining('已打开 Skills 文件夹'),
+        'success',
+      )
+    })
+  })
+
+  it('流式回调同 URL 不应被去重吞掉', async () => {
+    startGenerationMock.mockImplementation(async (onProgress?: (p: any) => void) => {
+      onProgress?.({ data: { type: 'image_generated', url: 'https://example.com/same.png', prompt: 'p1' } })
+      onProgress?.({ data: { type: 'image_generated', url: 'https://example.com/same.png', prompt: 'p2' } })
+    })
+
+    render(<DirectorApp />)
+    fireEvent.click(screen.getByRole('button', { name: 'Generate' }))
+
+    await waitFor(() => {
+      expect(startGenerationMock).toHaveBeenCalledTimes(1)
+      expect(useDirectorStore.getState().generatedResults.length).toBe(2)
+    })
   })
 })

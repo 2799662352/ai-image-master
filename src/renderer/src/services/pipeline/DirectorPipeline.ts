@@ -64,6 +64,7 @@ const stateSchema = z.object({
   resolution: z.string().default('2K'),
   currentImageCount: z.number().default(1),
   skipVerify: z.boolean().default(false),
+  scoreThreshold: z.number().min(0).max(10).default(SCORE_THRESHOLD),
   activeSkills: z.array(z.string()).default([]),
 })
 
@@ -150,7 +151,7 @@ function buildSkillMenu(skills: PipelineSkill[]): string {
 // ==================== Pipeline ====================
 
 export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult> {
-  private _graph: { stream: (input: unknown, config: unknown) => AsyncIterable<unknown> } | null = null
+  private _graph: any = null
 
   constructor(config: PipelineConfig) {
     super(config)
@@ -662,7 +663,10 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
     const routeVerify = (state: DirectorState): 'retry' | 'generate' => {
       if (!state.report || state.retryCount >= MAX_RETRIES) return 'generate'
-      if (state.report.score < SCORE_THRESHOLD) return 'retry'
+      const threshold = Number.isFinite(state.scoreThreshold)
+        ? Math.max(0, Math.min(10, Math.round(state.scoreThreshold)))
+        : SCORE_THRESHOLD
+      if (state.report.score < threshold) return 'retry'
       return 'generate'
     }
 
@@ -679,9 +683,8 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       .addEdge(START, 'selectSkills')
       .addEdge('selectSkills', 'analyzeScene')
       .addEdge('selectSkills', 'extractCharacterAnchors')
-      .addEdge('selectSkills', 'designAndAssemble')
-      .addEdge('analyzeScene', 'designAndAssemble')
-      .addEdge('extractCharacterAnchors', 'designAndAssemble')
+      // Ensure design waits for both analysis branches (fan-in join).
+      .addEdge(['analyzeScene', 'extractCharacterAnchors'], 'designAndAssemble')
       .addConditionalEdges('designAndAssemble', routeAfterDesign, {
         verify: 'verifyConsistency',
         generate: 'generateImages',
@@ -698,10 +701,20 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
   }
 
   assembleResult(state: DirectorState): DirectorResult {
+    const panels = state.panels
+      ? {
+          panels: state.panels.map((panel, index) => ({
+            ...panel,
+            prompt: state.prompts?.[index]?.prompt || '',
+            negativePrompt: state.prompts?.[index]?.negativePrompt || '',
+          })),
+        }
+      : null
+
     return {
       scene: state.scene,
       characters: state.characters,
-      panels: state.panels ? { panels: state.panels } : null,
+      panels,
       prompts: state.prompts || [],
       report: state.report,
       images: state.images || [],
@@ -728,8 +741,15 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
     const pipelineStart = Date.now()
     let currentPass = 0
+    const terminalPass = totalPasses
+    let shouldExitAfterTerminalPass = false
 
-    const stream = await this._graph.stream(input, config)
+    const compiledGraph = this._graph
+    if (!compiledGraph) {
+      throw new Error('Director graph is not initialized')
+    }
+
+    const stream = await compiledGraph.stream(input, config)
     for await (const event of stream) {
       if (Array.isArray(event)) {
         const [mode, data] = event
@@ -743,6 +763,14 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
             elapsed: data.elapsed,
             passData: data.passData,
           })
+          if (typeof data.pass === 'number' && data.pass >= terminalPass) {
+            shouldExitAfterTerminalPass = true
+            const terminalImages = data?.passData?.raw?.images
+            if (Array.isArray(terminalImages)) {
+              finalState = { ...finalState, images: terminalImages }
+              break
+            }
+          }
         } else if (mode === 'custom') {
           const inferredPass = typeof data?.pass === 'number' ? data.pass : currentPass
           currentPass = inferredPass
@@ -754,10 +782,22 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
             data,
           })
         } else if (mode === 'updates') {
-          const entries = Object.entries(data)
+          const updatesData = data && typeof data === 'object' ? data : {}
+          const entries = Object.entries(updatesData)
           if (entries.length > 0) {
             const [, output] = entries[0] as [string, any]
             finalState = { ...finalState, ...output }
+          }
+          const hasGenerateImagesOutput = Object.prototype.hasOwnProperty.call(updatesData, 'generateImages')
+          if (hasGenerateImagesOutput) {
+            const generateImagesOutput = (updatesData as any).generateImages
+            if (generateImagesOutput && typeof generateImagesOutput === 'object') {
+              finalState = { ...finalState, ...generateImagesOutput }
+            }
+            break
+          }
+          if (shouldExitAfterTerminalPass) {
+            break
           }
         }
       }

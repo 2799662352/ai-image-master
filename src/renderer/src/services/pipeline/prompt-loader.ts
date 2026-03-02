@@ -145,6 +145,15 @@ export function getAllPromptConfigs(): PromptConfig[] {
 let _builtinSkillCache: PipelineSkill[] | null = null
 let _skillCache: PipelineSkill[] | null = null
 let _skillInitPromise: Promise<void> | null = null
+let _lastSkillLoadStats: DirectorSkillLoadStats | null = null
+
+export interface DirectorSkillLoadStats {
+  builtinCount: number
+  userCount: number
+  mergedCount: number
+  addedCount: number
+  overriddenCount: number
+}
 
 function getBuiltinDirectorSkills(): PipelineSkill[] {
   if (_builtinSkillCache) return _builtinSkillCache
@@ -199,6 +208,20 @@ async function loadAndCacheDirectorSkills(): Promise<void> {
   const builtinSkills = getBuiltinDirectorSkills()
   const userSkills = await loadUserDirectorSkills()
   _skillCache = mergeDirectorSkills(builtinSkills, userSkills)
+  const builtinIds = new Set(builtinSkills.map((s) => s.id))
+  let overriddenCount = 0
+  let addedCount = 0
+  for (const skill of userSkills) {
+    if (builtinIds.has(skill.id)) overriddenCount += 1
+    else addedCount += 1
+  }
+  _lastSkillLoadStats = {
+    builtinCount: builtinSkills.length,
+    userCount: userSkills.length,
+    mergedCount: _skillCache.length,
+    addedCount,
+    overriddenCount,
+  }
 }
 
 export async function initDirectorSkills(): Promise<void> {
@@ -222,4 +245,16 @@ export async function reloadDirectorSkills(): Promise<void> {
 export function getDirectorSkillsFromConfig(): PipelineSkill[] {
   if (_skillCache) return [..._skillCache]
   return [...getBuiltinDirectorSkills()]
+}
+
+export function getDirectorSkillLoadStats(): DirectorSkillLoadStats {
+  if (_lastSkillLoadStats) return { ..._lastSkillLoadStats }
+  const builtinCount = getBuiltinDirectorSkills().length
+  return {
+    builtinCount,
+    userCount: 0,
+    mergedCount: builtinCount,
+    addedCount: 0,
+    overriddenCount: 0,
+  }
 }

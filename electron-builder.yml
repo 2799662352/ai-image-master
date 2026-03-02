@@ -1,23 +1,14 @@
-# electron-builder configuration
-# https://www.electron.build/configuration/configuration
-
 appId: com.catimation.cyberpunk-master
 productName: CATIMATION-Cyberpunk Master
 copyright: Copyright © 2024-2026 CATIMATION
 
-# Artifact naming pattern
-artifactName: ${productName}-${version}-${os}-${arch}.${ext}
-
-# Directory configuration
 directories:
   output: release
   buildResources: build
 
-# Files to include/exclude
 files:
   - dist/**/*
   - package.json
-  # Exclude development files
   - "!**/*.ts"
   - "!**/*.tsx"
   - "!**/*.map"
@@ -31,7 +22,6 @@ files:
   - "!**/playwright.config.*"
   - "!**/vitest.config.*"
   - "!**/*.md"
-  - "dist/renderer/data/prompts/**"
   - "!**/docs/**"
   - "!**/tests/**"
   - "!**/e2e/**"
@@ -39,36 +29,29 @@ files:
   - "!**/.vscode/**"
   - "!**/.cursor/**"
 
-# Resources to unpack from asar (for native modules or files that need direct access)
+extraResources:
+  - from: skills
+    to: skills
+    filter:
+      - "**/*.md"
+
 asarUnpack:
   - resources/**
 
-# ASAR archive settings
 asar: true
 compression: maximum
-
-# Remove scripts from package.json
 removePackageScripts: true
+npmRebuild: false
 
-# Windows configuration
 win:
   target:
     - target: nsis
       arch:
         - x64
-    - target: portable
-      arch:
-        - x64
   icon: build/icon.ico
   legalTrademarks: CATIMATION-Cyberpunk Master
-  # Code signing (uncomment when certificate is available)
-  # signingHashAlgorithms:
-  #   - sha256
-  # certificateSubjectName: "Your Company Name"
-  # timeStampServer: "http://timestamp.digicert.com"
   forceCodeSigning: false
 
-# NSIS installer configuration
 nsis:
   oneClick: false
   perMachine: false
@@ -83,17 +66,11 @@ nsis:
   installerLanguages:
     - zh_CN
     - en_US
-  language: "2052"  # Simplified Chinese
+  language: "2052"
   runAfterFinish: true
-  artifactName: ${productName}-${version}-Setup.${ext}
-  # Differential update support
+  artifactName: ${name}-${version}-setup.${ext}
   differentialPackage: true
 
-# Portable configuration
-portable:
-  artifactName: ${productName}-${version}-Portable.${ext}
-
-# macOS configuration
 mac:
   target:
     - dmg
@@ -105,22 +82,17 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
-  # Notarization (uncomment when credentials are available)
-  # notarize:
-  #   teamId: "YOUR_TEAM_ID"
   extendInfo:
-    NSCameraUsageDescription: "Application requests access to the device's camera."
-    NSMicrophoneUsageDescription: "Application requests access to the device's microphone."
-    NSDocumentsFolderUsageDescription: "Application requests access to the user's Documents folder."
-    NSDownloadsFolderUsageDescription: "Application requests access to the user's Downloads folder."
+    NSCameraUsageDescription: Application requests access to the device's camera.
+    NSMicrophoneUsageDescription: Application requests access to the device's microphone.
+    NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
+    NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
 
-# DMG configuration
 dmg:
   title: ${productName}
   icon: build/icon.png
   artifactName: ${productName}-${version}.${ext}
 
-# Linux configuration
 linux:
   target:
     - AppImage
@@ -131,11 +103,9 @@ linux:
   synopsis: AI图片生成桌面应用
   description: AI Image Generation Desktop Application with multi-model support
 
-# AppImage configuration
 appImage:
   artifactName: ${productName}-${version}.${ext}
 
-# Deb configuration
 deb:
   artifactName: ${productName}-${version}.${ext}
   depends:
@@ -143,15 +113,10 @@ deb:
     - libxtst6
     - libnss3
 
-# Auto-update configuration
 publish:
   provider: github
-  owner: 2799662352
+  owner: "2799662352"
   repo: ai-image-master
   releaseType: release
 
-# Generate update files for all channels
 generateUpdatesFilesForAllChannels: true
-
-# Don't rebuild native modules (they should be pre-built)
-npmRebuild: false

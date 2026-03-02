@@ -1,6 +1,6 @@
 {
   "name": "catimation-cyberpunk-master",
-  "version": "1.0.6",
+  "version": "2.0.5",
   "description": "CATIMATION-Cyberpunk Master - AI图片生成桌面应用",
   "main": "dist/main/index.js",
   "author": "CATIMATION",
@@ -81,25 +81,6 @@
     "vite": "^7.3.1",
     "vite-plugin-node-polyfills": "^0.25.0",
     "vitest": "^4.0.18"
-  },
-  "build": {
-    "files": [
-      "dist/**/*",
-      "src/renderer/index.html",
-      "src/renderer/cdn/**/*",
-      "src/renderer/lib/**/*",
-      "src/renderer/css/**/*",
-      "src/renderer/debug-helper.js"
-    ],
-    "extraResources": [
-      {
-        "from": "skills",
-        "to": "skills",
-        "filter": [
-          "**/*.md"
-        ]
-      }
-    ]
   },
   "repository": {
     "type": "git",

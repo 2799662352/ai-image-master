@@ -183,6 +183,7 @@ export interface ElectronAPI {
   isElectron: boolean
   loadSkills: () => Promise<Record<string, string>>
   saveSkill: (skillName: string, content: string) => Promise<{ success: boolean; error?: string }>
+  openSkillsFolder: () => Promise<{ success: boolean; path?: string; error?: string }>
   saveImage: (base64Data: string, filename: string) => Promise<{ success: boolean; path?: string; error?: string }>
   readImage: (filename: string) => Promise<string | null>
   deleteImage: (filename: string) => Promise<{ success: boolean }>

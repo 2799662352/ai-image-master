@@ -106,7 +106,9 @@ export class UpdateNotification {
     })
 
     // 有可用更新
-    electronAPI.on('updater:update-available', (_event: any, info: UpdateInfo) => {
+    electronAPI.on('updater:update-available', (...args: any[]) => {
+      const info = this.extractPayload<UpdateInfo>(args)
+      if (!info?.version) return
       this.status = 'available'
       this.updateInfo = info
       this.showUpdateAvailable(info.version, info.releaseNotes || null)
@@ -119,7 +121,9 @@ export class UpdateNotification {
     })
 
     // 下载进度
-    electronAPI.on('updater:download-progress', (_event: any, progress: DownloadProgress) => {
+    electronAPI.on('updater:download-progress', (...args: any[]) => {
+      const progress = this.extractPayload<DownloadProgress>(args)
+      if (!progress) return
       this.status = 'downloading'
       this.progress = progress
       if (this.config.showProgress && !this.config.silentDownload) {
@@ -128,21 +132,40 @@ export class UpdateNotification {
     })
 
     // 下载完成
-    electronAPI.on('updater:update-downloaded', (_event: any, info: { version: string }) => {
+    electronAPI.on('updater:update-downloaded', (...args: any[]) => {
+      const info = this.extractPayload<{ version: string }>(args)
+      if (!info?.version) return
       this.status = 'ready'
       this.showUpdateReady(info.version)
     })
 
     // 更新错误
-    electronAPI.on('updater:update-error', (_event: any, error: { message: string }) => {
+    electronAPI.on('updater:update-error', (...args: any[]) => {
+      const error = this.extractPayload<{ message?: string }>(args)
+      const message =
+        typeof error?.message === 'string' && error.message.trim()
+          ? error.message
+          : '未知更新错误'
       this.status = 'error'
-      this.showError(error.message)
+      this.showError(message)
     })
 
     // 下载重试
-    electronAPI.on('updater:download-retry', (_event: any, info: { attempt: number; maxRetries: number }) => {
+    electronAPI.on('updater:download-retry', (...args: any[]) => {
+      const info = this.extractPayload<{ attempt: number; maxRetries: number }>(args)
+      if (!info) return
       console.log(`[UpdateNotification] 下载重试 ${info.attempt}/${info.maxRetries}`)
     })
+  }
+
+  /**
+   * 兼容 preload 透传风格差异:
+   * - 旧风格: callback(payload)
+   * - 传统风格: callback(event, payload)
+   */
+  private extractPayload<T>(args: any[]): T | undefined {
+    if (args.length === 0) return undefined
+    return (args.length === 1 ? args[0] : args[1]) as T
   }
 
   /**

@@ -52,6 +52,7 @@ npm run dev
 - `npm run build:win`：Windows 包
 - `npm run build:dir`：仅输出 unpacked 目录
 - `npm run release`：发布流程（按仓库配置）
+- 打包实操文档：`docs/packaging-guide.md`
 
 ## Skills 系统说明（重点）
 

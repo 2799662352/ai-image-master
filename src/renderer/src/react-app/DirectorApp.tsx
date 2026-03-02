@@ -11,7 +11,7 @@ import { GenerationProgress } from './components/GenerationProgress'
 import { ResultsGallery } from './components/ResultsGallery'
 import { useDirectorGeneration } from './hooks/useDirectorGeneration'
 import { useDirectorStore } from './stores/useDirectorStore'
-import { getDirectorSkillsFromConfig, reloadDirectorSkills } from '../services/pipeline/prompt-loader'
+import { getDirectorSkillLoadStats, getDirectorSkillsFromConfig, reloadDirectorSkills } from '../services/pipeline/prompt-loader'
 
 export function DirectorApp() {
   const [isRefreshingSkills, setIsRefreshingSkills] = useState(false)
@@ -19,7 +19,9 @@ export function DirectorApp() {
   const viewState = useDirectorStore((s) => s.viewState)
   const generatedResults = useDirectorStore((s) => s.generatedResults)
   const skipVerify = useDirectorStore((s) => s.skipVerify)
+  const scoreThreshold = useDirectorStore((s) => s.scoreThreshold)
   const setSkipVerify = useDirectorStore((s) => s.setSkipVerify)
+  const setScoreThreshold = useDirectorStore((s) => s.setScoreThreshold)
   const setViewState = useDirectorStore((s) => s.setViewState)
   const pushProgress = useDirectorStore((s) => s.pushProgress)
   const resetProgress = useDirectorStore((s) => s.resetProgress)
@@ -33,14 +35,37 @@ export function DirectorApp() {
     try {
       await reloadDirectorSkills()
       const count = getDirectorSkillsFromConfig().length
+      const stats = getDirectorSkillLoadStats()
       const toast = (window as any).toastManagerTS ?? (window as any).toastManager
-      toast?.show?.(`Skills 已刷新（${count}）`, 'success')
+      toast?.show?.(
+        `Skills 已刷新（总数 ${count}，用户 ${stats.userCount}，新增 ${stats.addedCount}，覆盖 ${stats.overriddenCount}）`,
+        'success',
+      )
     } catch (error: any) {
       const toast = (window as any).toastManagerTS ?? (window as any).toastManager
       toast?.show?.(error?.message || '刷新 Skills 失败', 'error')
     } finally {
       isRefreshingSkillsRef.current = false
       setIsRefreshingSkills(false)
+    }
+  }, [])
+
+  const handleOpenSkillsFolder = useCallback(async () => {
+    try {
+      const api = (window as any).electronAPI
+      if (!api?.openSkillsFolder) {
+        throw new Error('当前环境不支持打开 Skills 文件夹')
+      }
+      const result = await api.openSkillsFolder()
+      if (!result?.success) {
+        throw new Error(result?.error || '打开 Skills 文件夹失败')
+      }
+      const toast = (window as any).toastManagerTS ?? (window as any).toastManager
+      const tip = result?.path ? `已打开 Skills 文件夹：${result.path}` : '已打开 Skills 文件夹'
+      toast?.show?.(tip, 'success')
+    } catch (error: any) {
+      const toast = (window as any).toastManagerTS ?? (window as any).toastManager
+      toast?.show?.(error?.message || '打开 Skills 文件夹失败', 'error')
     }
   }, [])
 
@@ -57,8 +82,6 @@ export function DirectorApp() {
         if (evt?.type === 'image_generated' && typeof evt.url === 'string' && evt.url) {
           const store = useDirectorStore.getState()
           store.setGeneratedResults((prev) => {
-            const exists = prev.some((r) => r.url === evt.url)
-            if (exists) return prev
             return [
               ...prev,
               {
@@ -106,6 +129,13 @@ export function DirectorApp() {
             >
               {isRefreshingSkills ? '刷新中...' : '刷新 Skills'}
             </button>
+            <button
+              type="button"
+              onClick={handleOpenSkillsFolder}
+              className="py-3 px-4 rounded-none border border-[#3F3F46] text-xs text-white/85 hover:text-white hover:border-[#52525B] transition-colors shrink-0"
+            >
+              打开 Skills 文件夹
+            </button>
             <label className="flex items-center gap-2 cursor-pointer select-none shrink-0">
               <input
                 type="checkbox"
@@ -117,6 +147,26 @@ export function DirectorApp() {
                 <i className="fas fa-bolt text-yellow-500 mr-1" />快速模式
               </span>
             </label>
+          </div>
+          <div className="border border-[#27272A] p-3">
+            <div className="flex items-center justify-between text-xs text-white/80 mb-2">
+              <span>一致性校验阈值</span>
+              <span className="text-yellow-400 font-semibold">{scoreThreshold}</span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={10}
+              step={1}
+              value={scoreThreshold}
+              onChange={(e) => setScoreThreshold(Number(e.target.value))}
+              className="w-full accent-yellow-500"
+              aria-label="一致性校验阈值"
+              disabled={skipVerify}
+            />
+            <div className="mt-1 text-[11px] text-white/50">
+              评分低于该值将触发重试（快速模式开启时跳过校验）
+            </div>
           </div>
 
           {viewState === 'idle' && generatedResults.length === 0 && (

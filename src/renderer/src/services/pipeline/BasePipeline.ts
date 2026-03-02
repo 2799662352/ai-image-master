@@ -24,11 +24,34 @@ export abstract class BasePipeline<TState, TResult> {
           secretKey,
           publicKey,
           baseUrl: baseUrl || 'https://cloud.langfuse.com',
+          // Renderer-side Langfuse media hashing can fail when crypto.createHash is unavailable.
+          // Mask embedded base64 media to keep tracing stable without noisy SDK errors.
+          mask: ({ data }: { data: unknown }) => this.maskLangfuseMediaPayload(data),
         })
       }
     } catch {
       // Langfuse is optional — silently skip if unavailable
     }
+  }
+
+  private maskLangfuseMediaPayload(data: unknown, depth = 0): unknown {
+    if (depth > 8) return '<max-depth>'
+    if (typeof data === 'string') {
+      if (data.startsWith('data:')) return '<media:data-uri>'
+      return data.replace(/data:[^;]+;base64,[A-Za-z0-9+/=]+/g, '<media:data-uri>')
+    }
+    if (Array.isArray(data)) {
+      return data.map((item) => this.maskLangfuseMediaPayload(item, depth + 1))
+    }
+    if (data && typeof data === 'object') {
+      const source = data as Record<string, unknown>
+      const output: Record<string, unknown> = {}
+      for (const [k, v] of Object.entries(source)) {
+        output[k] = this.maskLangfuseMediaPayload(v, depth + 1)
+      }
+      return output
+    }
+    return data
   }
 
   abstract get pipelineSkills(): PipelineSkill[]

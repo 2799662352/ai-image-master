@@ -1,6 +1,12 @@
 import { useState, useCallback } from 'react'
 import { useDirectorStore } from '../stores/useDirectorStore'
-import { BUILTIN_TEMPLATES, TEMPLATE_MAP, type TemplateData } from '../constants/templates'
+import {
+  BUILTIN_TEMPLATES,
+  TEMPLATE_MAP,
+  persistTemplateOverride,
+  resetTemplateOverride,
+  type TemplateData,
+} from '../constants/templates'
 
 interface EditorState {
   key: string
@@ -239,6 +245,7 @@ export function TemplateSelector() {
               {editor.isBuiltin && (
                 <button
                   onClick={() => {
+                    resetTemplateOverride(editor.key)
                     const orig = TEMPLATE_MAP[editor.key]
                     if (orig) setEditor({ ...editor, prefix: orig.prefix, suffix: orig.suffix, negative: orig.negative, negativeEnabled: orig.negativeEnabled ?? false })
                   }}
@@ -254,13 +261,12 @@ export function TemplateSelector() {
                 </button>
                 <button
                   onClick={() => {
-                    const t = TEMPLATE_MAP[editor.key]
-                    if (t) {
-                      t.prefix = editor.prefix
-                      t.suffix = editor.suffix
-                      t.negative = editor.negative
-                      t.negativeEnabled = editor.negativeEnabled
-                    }
+                    persistTemplateOverride(editor.key, {
+                      prefix: editor.prefix,
+                      suffix: editor.suffix,
+                      negative: editor.negative,
+                      negativeEnabled: editor.negativeEnabled,
+                    })
                     setEditor(null)
                     const toast = (window as any).toastManagerTS ?? (window as any).toastManager
                     toast?.show?.('模板已保存', 'success')

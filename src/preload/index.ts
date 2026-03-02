@@ -84,6 +84,7 @@ const IPC_CHANNELS = {
   SKILLS: {
     LOAD_ALL: 'load-skills',
     SAVE: 'save-skill',
+    OPEN_FOLDER: 'open-skills-folder',
   }
 } as const
 
@@ -140,6 +141,7 @@ export interface ElectronAPI {
   // AI Skills
   loadSkills: () => Promise<Record<string, string>>
   saveSkill: (skillName: string, content: string) => Promise<IpcResponse>
+  openSkillsFolder: () => Promise<IpcResponse<{ path: string }>>
   // 图片存储
   saveImage: (base64Data: string, filename: string) => Promise<SaveImageResponse>
   readImage: (filename: string) => Promise<string | null>
@@ -353,6 +355,9 @@ const electronAPI: ElectronAPI = {
 
   saveSkill: (skillName: string, content: string) =>
     safeInvoke<IpcResponse>(IPC_CHANNELS.SKILLS.SAVE, skillName, content),
+
+  openSkillsFolder: () =>
+    safeInvoke<IpcResponse<{ path: string }>>(IPC_CHANNELS.SKILLS.OPEN_FOLDER),
 
   // ============ 系统主题监听 ============
   onNativeThemeChanged: (callback: (data: { shouldUseDarkColors: boolean; prefersReducedTransparency: boolean }) => void) => {

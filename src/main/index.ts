@@ -566,6 +566,8 @@ function readSkillsFromDir(dir: string): Record<string, string> {
 
 ipcMain.handle('load-skills', async () => {
   try {
+    // Ensure user skills directory exists to improve discoverability.
+    fs.mkdirSync(userSkillsDir, { recursive: true })
     const builtin = readSkillsFromDir(builtinSkillsDir)
     const user = readSkillsFromDir(userSkillsDir)
     return { ...builtin, ...user }
@@ -587,6 +589,20 @@ ipcMain.handle('save-skill', async (_event, skillName: string, content: string) 
   } catch (error: any) {
     console.error('保存 Skill 失败:', error)
     return { success: false, error: error.message }
+  }
+})
+
+ipcMain.handle('open-skills-folder', async () => {
+  try {
+    fs.mkdirSync(userSkillsDir, { recursive: true })
+    const errorMessage = await shell.openPath(userSkillsDir)
+    if (errorMessage) {
+      return { success: false, error: errorMessage, path: userSkillsDir }
+    }
+    return { success: true, path: userSkillsDir }
+  } catch (error: any) {
+    console.error('打开 Skills 文件夹失败:', error)
+    return { success: false, error: error.message, path: userSkillsDir }
   }
 })
 

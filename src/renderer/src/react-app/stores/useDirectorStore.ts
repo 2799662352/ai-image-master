@@ -75,6 +75,7 @@ interface ConfigSlice {
   imageModel: string
   imageCount: number
   skipVerify: boolean
+  scoreThreshold: number
   setLayout: (val: LayoutType) => void
   setTemplate: (val: string | null) => void
   setMode: (val: GenerationMode) => void
@@ -86,6 +87,7 @@ interface ConfigSlice {
   setImageModel: (val: string) => void
   setImageCount: (val: number) => void
   setSkipVerify: (val: boolean) => void
+  setScoreThreshold: (val: number) => void
 }
 
 interface ResetSlice {
@@ -97,6 +99,73 @@ export type DirectorStore = ImageSlice & GenerationSlice & ConfigSlice & ResetSl
 // --- Initial values ---
 
 const MAX_REFERENCE_IMAGES = 8
+const DEFAULT_SCORE_THRESHOLD = 6
+const SCORE_THRESHOLD_STORAGE_KEY = 'director.score-threshold.v1'
+const DIRECTOR_VISION_MODEL_STORAGE_KEY = 'director.vision-model.v1'
+const DIRECTOR_RATIO_STORAGE_KEY = 'director.ratio.v1'
+const DEFAULT_DIRECTOR_RATIO = '16:9'
+
+function readScoreThreshold(): number {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return DEFAULT_SCORE_THRESHOLD
+    const raw = window.localStorage.getItem(SCORE_THRESHOLD_STORAGE_KEY)
+    if (!raw) return DEFAULT_SCORE_THRESHOLD
+    const parsed = Number(raw)
+    if (!Number.isFinite(parsed)) return DEFAULT_SCORE_THRESHOLD
+    return Math.max(0, Math.min(10, Math.round(parsed)))
+  } catch {
+    return DEFAULT_SCORE_THRESHOLD
+  }
+}
+
+function writeScoreThreshold(value: number): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return
+    window.localStorage.setItem(SCORE_THRESHOLD_STORAGE_KEY, String(value))
+  } catch {
+    // Best-effort persistence.
+  }
+}
+
+function readDirectorVisionModel(): string {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return ''
+    return window.localStorage.getItem(DIRECTOR_VISION_MODEL_STORAGE_KEY) || ''
+  } catch {
+    return ''
+  }
+}
+
+function writeDirectorVisionModel(value: string): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return
+    if (!value) {
+      window.localStorage.removeItem(DIRECTOR_VISION_MODEL_STORAGE_KEY)
+      return
+    }
+    window.localStorage.setItem(DIRECTOR_VISION_MODEL_STORAGE_KEY, value)
+  } catch {
+    // Best-effort persistence.
+  }
+}
+
+function readDirectorRatio(): string {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return DEFAULT_DIRECTOR_RATIO
+    return window.localStorage.getItem(DIRECTOR_RATIO_STORAGE_KEY) || DEFAULT_DIRECTOR_RATIO
+  } catch {
+    return DEFAULT_DIRECTOR_RATIO
+  }
+}
+
+function writeDirectorRatio(value: string): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return
+    window.localStorage.setItem(DIRECTOR_RATIO_STORAGE_KEY, value)
+  } catch {
+    // Best-effort persistence.
+  }
+}
 
 const initialImageState: Pick<ImageSlice, 'referenceImages'> = {
   referenceImages: [],
@@ -120,19 +189,20 @@ const initialGenerationState: Pick<
 
 const initialConfigState: Pick<
   ConfigSlice,
-  'currentLayout' | 'currentTemplate' | 'currentMode' | 'currentRatio' | 'currentResolution' | 'sceneDescription' | 'multiSceneText' | 'visionModel' | 'imageModel' | 'imageCount' | 'skipVerify'
+  'currentLayout' | 'currentTemplate' | 'currentMode' | 'currentRatio' | 'currentResolution' | 'sceneDescription' | 'multiSceneText' | 'visionModel' | 'imageModel' | 'imageCount' | 'skipVerify' | 'scoreThreshold'
 > = {
   currentLayout: '6grid',
   currentTemplate: 'cinematic',
   currentMode: 'single',
-  currentRatio: '3:2',
+  currentRatio: readDirectorRatio(),
   currentResolution: '2K',
   sceneDescription: '',
   multiSceneText: '',
-  visionModel: '',
+  visionModel: readDirectorVisionModel(),
   imageModel: '',
   imageCount: 1,
   skipVerify: false,
+  scoreThreshold: readScoreThreshold(),
 }
 
 // --- Slice creators ---
@@ -214,14 +284,25 @@ const createConfigSlice: StateCreator<DirectorStore, [], [], ConfigSlice> = (set
   setLayout: (val) => set({ currentLayout: val }),
   setTemplate: (val) => set({ currentTemplate: val }),
   setMode: (val) => set({ currentMode: val }),
-  setRatio: (val) => set({ currentRatio: val }),
+  setRatio: (val) => {
+    writeDirectorRatio(val)
+    set({ currentRatio: val })
+  },
   setResolution: (val) => set({ currentResolution: val }),
   setSceneDescription: (val) => set({ sceneDescription: val }),
   setMultiSceneText: (val) => set({ multiSceneText: val }),
-  setVisionModel: (val) => set({ visionModel: val }),
+  setVisionModel: (val) => {
+    writeDirectorVisionModel(val)
+    set({ visionModel: val })
+  },
   setImageModel: (val) => set({ imageModel: val }),
   setImageCount: (val) => set({ imageCount: val }),
   setSkipVerify: (val) => set({ skipVerify: val }),
+  setScoreThreshold: (val) => {
+    const next = Math.max(0, Math.min(10, Math.round(val)))
+    writeScoreThreshold(next)
+    set({ scoreThreshold: next })
+  },
 })
 
 const createResetSlice: StateCreator<DirectorStore, [], [], ResetSlice> = (set) => ({

@@ -49,6 +49,8 @@ export function useDirectorGeneration() {
   const currentResolution = useDirectorStore((s) => s.currentResolution)
   const imageCount = useDirectorStore((s) => s.imageCount)
   const multiSceneText = useDirectorStore((s) => s.multiSceneText)
+  const skipVerify = useDirectorStore((s) => s.skipVerify)
+  const scoreThreshold = useDirectorStore((s) => s.scoreThreshold)
 
   const canGenerate = referenceImages.length > 0 && !isGenerating
 
@@ -77,11 +79,13 @@ export function useDirectorGeneration() {
           ratio: currentRatio,
           resolution: currentResolution,
           currentImageCount: imageCount,
+          skipVerify,
+          scoreThreshold,
         },
         onProgress,
       )
     },
-    [referenceImages, currentTemplate, currentRatio, currentResolution, imageCount],
+    [referenceImages, currentTemplate, currentRatio, currentResolution, imageCount, skipVerify, scoreThreshold],
   )
 
   const startGeneration = useCallback(
@@ -124,7 +128,8 @@ export function useDirectorGeneration() {
               }))
               allResults.push(...mapped)
               store.setGeneratedResults([...allResults])
-              await saveToHistory(mapped, scenes[i], currentRatio)
+              // 历史记录保存不应阻塞主流程收尾；后台异步即可
+              void saveToHistory(mapped, scenes[i], currentRatio)
             }
             if (result.scene) store.setLastAnalysisResult(JSON.stringify(result.scene))
             if (result.characters) store.setLastCharacterAnchor(JSON.stringify(result.characters))
@@ -133,18 +138,26 @@ export function useDirectorGeneration() {
           const result = await executeSingle(
             pipeline, sceneDescription, resolvedStyle, layoutConfig, onProgress,
           )
-
           const mappedImages = (result.images ?? []).map((img: any) => ({
             url: img.url,
             prompt: img.prompt,
             timestamp: Date.now(),
           }))
-          store.setGeneratedResults(mappedImages)
+          store.setGeneratedResults((prev) => {
+            const prevSuccessCount = prev.filter((img) => Boolean(img.url)).length
+            const mappedSuccessCount = mappedImages.filter((img) => Boolean(img.url)).length
+            // 流式阶段可能已拿到更多成功图片，避免在收尾时被较少结果覆盖
+            if (prevSuccessCount > mappedSuccessCount) {
+              return prev
+            }
+            return mappedImages
+          })
 
           if (result.scene) store.setLastAnalysisResult(JSON.stringify(result.scene))
           if (result.characters) store.setLastCharacterAnchor(JSON.stringify(result.characters))
 
-          await saveToHistory(mappedImages, sceneDescription, currentRatio)
+          // 历史记录保存不应阻塞主流程收尾；后台异步即可
+          void saveToHistory(mappedImages, sceneDescription, currentRatio)
 
           return result
         }
@@ -163,6 +176,8 @@ export function useDirectorGeneration() {
       currentRatio,
       currentResolution,
       imageCount,
+      skipVerify,
+      scoreThreshold,
       getLayoutConfig,
       executeSingle,
     ]
