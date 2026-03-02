@@ -7,6 +7,7 @@ import {
   SceneAnalysisSchema,
   CharacterAnchorSchema,
   DesignAndAssembleSchema,
+  SimplePanelSchema,
   VerifySchema,
   SkillSelectionSchema,
 } from './schemas/director-schemas'
@@ -351,74 +352,127 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       }
     }
 
-    // ===== Pass 3: 分镜设计 + 提示词组装 (merged, saves one LLM round-trip) =====
-    // Uses includeRaw so we can extract data from raw text if structured parsing fails
+    // ===== Pass 3: 分镜设计 + 提示词组装 =====
+    // 3-level error recovery (LangChain best practice):
+    //   L1: includeRaw + regex extraction (0 extra LLM calls)
+    //   L2: SimplePanelSchema fallback (+1 LLM call, simpler schema = higher success)
+    //   L3: error feedback to LLM (+1 LLM call, LLM self-corrects)
     const designAndAssembleFn = async (state: DirectorState, config: any) => {
       const t0 = Date.now()
+      const vars = extractVarsForDesignAndAssemble(state)
+      const userDirective = state.sceneDescription
+        ? `User's creative direction: "${state.sceneDescription}"\nYou MUST incorporate this direction into the panel designs.`
+        : ''
+      const systemPrompt = self.resolveSystemPrompt(
+        'designAndAssemble', vars,
+        { ...state, retryFeedback: state.retryFeedback } as Record<string, unknown>,
+        `You are a professional storyboard artist and prompt engineer. Design shots and write prompts for ${vars.panel_count} panels.\nScene: ${vars.scene_env}${userDirective ? `\n\n${userDirective}` : ''}`,
+      )
+      const userText = state.sceneDescription
+        ? `根据用户意图"${state.sceneDescription}"，为 ${state.layout.panelCount} 个分镜设计镜头并生成图像提示词`
+        : `为 ${state.layout.panelCount} 个分镜设计镜头并生成图像提示词`
+      const designContent: Array<any> = []
+      if (state.inputImages.length > 0) {
+        designContent.push(...BasePipeline.buildImageContent(state.inputImages, 'low'))
+      }
+      designContent.push({ type: 'text' as const, text: userText })
+
+      const messages = [
+        { role: 'system' as const, content: systemPrompt },
+        { role: 'user' as const, content: designContent },
+      ]
+
+      const makePanelsAndPrompts = (rawPanels: any[]) => {
+        const panels = rawPanels.map((p: any) => ({
+          id: p.id, shot: p.shot || '', desc: p.desc || '',
+          lighting: p.lighting || '', characterAction: p.characterAction || '', background: p.background || '',
+        }))
+        const prompts: AssembledPrompt[] = rawPanels.map((p: any) => ({
+          id: p.id,
+          prompt: p.prompt || '',
+          negativePrompt: p.negativePrompt || 'blurry, deformed, bad anatomy, watermark, signature, text',
+        }))
+        return { panels, prompts }
+      }
+
+      const emitSuccess = (panels: any[], prompts: any[], level: string) => {
+        const elapsed = Date.now() - t0
+        const passData = DirectorPipeline.buildPassCardData('designAndAssemble', { pass: 3, label: '分镜设计+提示词' }, { panels, prompts }, elapsed)
+        writer(config)?.({ type: 'pass_complete', pass: 3, label: `分镜+提示词完成 [${level}] (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
+      }
+
+      // --- Level 1: Full schema with includeRaw + regex fallback ---
       try {
         const structuredWithRaw = self.createStructuredLLMWithRaw(DesignAndAssembleSchema)
-        const vars = extractVarsForDesignAndAssemble(state)
-        const userDirective = state.sceneDescription
-          ? `User's creative direction: "${state.sceneDescription}"\nYou MUST incorporate this direction into the panel designs. The panels should depict what the user described.`
-          : ''
-        const systemPrompt = self.resolveSystemPrompt(
-          'designAndAssemble', vars,
-          { ...state, retryFeedback: state.retryFeedback } as Record<string, unknown>,
-          `You are a professional storyboard artist and prompt engineer. Design shots and write prompts for ${vars.panel_count} panels.\nScene: ${vars.scene_env}${userDirective ? `\n\n${userDirective}` : ''}`,
-        )
-        const userText = state.sceneDescription
-          ? `根据用户意图"${state.sceneDescription}"，为 ${state.layout.panelCount} 个分镜设计镜头并生成图像提示词`
-          : `为 ${state.layout.panelCount} 个分镜设计镜头并生成图像提示词`
-        const designContent: Array<any> = []
-        if (state.inputImages.length > 0) {
-          designContent.push(...BasePipeline.buildImageContent(state.inputImages, 'low'))
-        }
-        designContent.push({ type: 'text' as const, text: userText })
-        const response = await structuredWithRaw.invoke([
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: designContent },
-        ])
+        const response = await structuredWithRaw.invoke(messages)
 
         let parsedPanels = (response as any)?.parsed?.panels
         if (!parsedPanels?.length) {
-          console.warn('[DirectorPipeline] Structured parsing failed, attempting raw text extraction')
           const rawText = typeof (response as any)?.raw?.content === 'string'
             ? (response as any).raw.content
             : JSON.stringify((response as any)?.raw?.content ?? '')
           try {
             const jsonMatch = rawText.match(/\{[\s\S]*"panels"\s*:\s*\[[\s\S]*\][\s\S]*\}/)
             if (jsonMatch) {
-              const fallbackParsed = JSON.parse(jsonMatch[0])
-              if (fallbackParsed?.panels?.length) {
-                parsedPanels = fallbackParsed.panels
-                console.log(`[DirectorPipeline] Raw text fallback: extracted ${parsedPanels.length} panels`)
-              }
+              const fallback = JSON.parse(jsonMatch[0])
+              if (fallback?.panels?.length) parsedPanels = fallback.panels
             }
-          } catch { /* JSON parse failed, will throw below */ }
+          } catch { /* regex extraction failed */ }
         }
 
-        if (!parsedPanels?.length) {
-          throw new Error('LLM returned empty or malformed response (no panels)')
+        if (parsedPanels?.length) {
+          const { panels, prompts } = makePanelsAndPrompts(parsedPanels)
+          emitSuccess(panels, prompts, 'L1')
+          return { panels, prompts }
         }
-
-        const panels = parsedPanels.map((p: any) => ({
-          id: p.id, shot: p.shot || '', desc: p.desc || '',
-          lighting: p.lighting || '', characterAction: p.characterAction || '', background: p.background || '',
-        }))
-        const prompts: AssembledPrompt[] = parsedPanels.map((p: any) => ({
-          id: p.id,
-          prompt: p.prompt || '',
-          negativePrompt: p.negativePrompt || 'blurry, deformed, bad anatomy, watermark, signature, text',
-        }))
-
-        const elapsed = Date.now() - t0
-        const passData = DirectorPipeline.buildPassCardData('designAndAssemble', { pass: 3, label: '分镜设计+提示词' }, { panels, prompts }, elapsed)
-        writer(config)?.({ type: 'pass_complete', pass: 3, label: `分镜+提示词完成 (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
-        return { panels, prompts }
-      } catch (err: unknown) {
-        emitError(config, 3, '分镜+提示词', 'designAndAssemble', err instanceof Error ? err.message : String(err), Date.now() - t0)
-        return { panels: null, prompts: null }
+        console.warn('[DirectorPipeline] L1 failed: full schema + raw extraction both empty')
+      } catch (e: unknown) {
+        console.warn('[DirectorPipeline] L1 error:', e instanceof Error ? e.message : String(e))
       }
+
+      // --- Level 2: Simplified schema (just id + prompt) ---
+      writer(config)?.({ type: 'pass_complete', pass: 3, label: '分镜格式降级重试...', elapsed: Date.now() - t0, passData: null })
+      try {
+        const simpleStructured = self.createStructuredLLM(SimplePanelSchema)
+        const simpleResult = await simpleStructured.invoke(messages)
+        if (simpleResult?.panels?.length) {
+          const { panels, prompts } = makePanelsAndPrompts(simpleResult.panels)
+          console.log(`[DirectorPipeline] L2 success: ${panels.length} panels via SimplePanelSchema`)
+          emitSuccess(panels, prompts, 'L2-simple')
+          return { panels, prompts }
+        }
+        console.warn('[DirectorPipeline] L2 failed: SimplePanelSchema returned empty')
+      } catch (e: unknown) {
+        console.warn('[DirectorPipeline] L2 error:', e instanceof Error ? e.message : String(e))
+      }
+
+      // --- Level 3: Error feedback to LLM (LLM-recoverable pattern) ---
+      writer(config)?.({ type: 'pass_complete', pass: 3, label: '分镜 LLM 自修正重试...', elapsed: Date.now() - t0, passData: null })
+      try {
+        const llm = self.createLLM()
+        const feedbackResult = await llm.invoke([
+          ...messages,
+          { role: 'assistant' as const, content: 'I was unable to produce valid structured output in the required format.' },
+          { role: 'user' as const, content: `Your previous response could not be parsed. Please respond with ONLY a valid JSON object in this exact format, no markdown:\n{"panels":[{"id":1,"prompt":"..."},{"id":2,"prompt":"..."}]}\nGenerate ${state.layout.panelCount} panels.` },
+        ])
+        const text = typeof feedbackResult.content === 'string' ? feedbackResult.content : ''
+        const jsonMatch = text.match(/\{[\s\S]*"panels"\s*:\s*\[[\s\S]*\][\s\S]*\}/)
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0])
+          if (parsed?.panels?.length) {
+            const { panels, prompts } = makePanelsAndPrompts(parsed.panels)
+            console.log(`[DirectorPipeline] L3 success: ${panels.length} panels via error feedback`)
+            emitSuccess(panels, prompts, 'L3-feedback')
+            return { panels, prompts }
+          }
+        }
+      } catch (e: unknown) {
+        console.warn('[DirectorPipeline] L3 error:', e instanceof Error ? e.message : String(e))
+      }
+
+      // --- All levels failed ---
+      emitError(config, 3, '分镜+提示词', 'designAndAssemble', 'All 3 recovery levels failed', Date.now() - t0)
+      return { panels: null, prompts: null }
     }
 
     // ===== Pass 4: 一致性校验 (skippable) =====

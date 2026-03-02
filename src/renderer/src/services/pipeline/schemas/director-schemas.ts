@@ -34,6 +34,15 @@ export const DesignAndAssembleSchema = z.object({
 
 export type DesignAndAssemble = z.infer<typeof DesignAndAssembleSchema>
 
+export const SimplePanelSchema = z.object({
+  panels: z.array(z.object({
+    id: z.number().describe('Panel number'),
+    prompt: z.string().describe('Full English image generation prompt'),
+  })),
+})
+
+export type SimplePanel = z.infer<typeof SimplePanelSchema>
+
 export const SkillSelectionSchema = z.object({
   selectedSkills: z.array(z.string()).describe('选中的 skill ID 列表'),
   reasoning: z.string().describe('选择理由，一句话说明为什么选这些 skills'),
