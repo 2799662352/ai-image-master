@@ -18,25 +18,6 @@ export const CharacterAnchorSchema = z.object({
 
 export type CharacterAnchors = z.infer<typeof CharacterAnchorSchema>
 
-export const PanelDesignSchema = z.object({
-  panels: z.array(z.object({
-    id: z.number().describe('分镜编号'),
-    shot: z.string().describe('景别+角度，如 medium eye-level, wide low-angle'),
-    desc: z.string().describe('主体动作+构图+光照，一句话'),
-  })),
-})
-
-export type PanelDesign = z.infer<typeof PanelDesignSchema>
-
-export const AssembledPromptsSchema = z.object({
-  prompts: z.array(z.object({
-    id: z.number().describe('分镜编号'),
-    prompt: z.string().describe('英文图像生成提示词'),
-    negativePrompt: z.string().describe('英文负向提示词'),
-  })),
-})
-
-export type AssembledPrompts = z.infer<typeof AssembledPromptsSchema>
 
 export const DesignAndAssembleSchema = z.object({
   panels: z.array(z.object({

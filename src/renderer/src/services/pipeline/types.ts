@@ -1,4 +1,4 @@
-import type { SceneAnalysis, CharacterAnchors, PanelDesign, VerifyReport } from './schemas/director-schemas'
+import type { SceneAnalysis, CharacterAnchors, DesignAndAssemble, VerifyReport } from './schemas/director-schemas'
 
 export interface PassCardData {
   pass: number
@@ -48,7 +48,7 @@ export interface DirectorInput {
 export interface DirectorResult {
   scene: SceneAnalysis | null
   characters: CharacterAnchors | null
-  panels: PanelDesign | null
+  panels: DesignAndAssemble | null
   prompts: AssembledPrompt[]
   report: VerifyReport | null
   images: GeneratedImage[]
