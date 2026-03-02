@@ -44,6 +44,7 @@ export function useDirectorGeneration() {
   const currentTemplate = useDirectorStore((s) => s.currentTemplate)
   const currentRatio = useDirectorStore((s) => s.currentRatio)
   const currentResolution = useDirectorStore((s) => s.currentResolution)
+  const imageCount = useDirectorStore((s) => s.imageCount)
 
   const canGenerate = referenceImages.length > 0 && !isGenerating
 
@@ -84,6 +85,7 @@ export function useDirectorGeneration() {
             styleInstructions: resolvedStyle,
             ratio: currentRatio,
             resolution: currentResolution,
+            currentImageCount: imageCount,
           },
           onProgress
         )
@@ -116,6 +118,7 @@ export function useDirectorGeneration() {
       currentTemplate,
       currentRatio,
       currentResolution,
+      imageCount,
       getLayoutConfig,
     ]
   )
