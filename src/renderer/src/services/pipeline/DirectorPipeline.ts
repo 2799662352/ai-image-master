@@ -121,7 +121,7 @@ function extractVarsForContactSheet(state: DirectorState): Record<string, string
 // ==================== Pipeline ====================
 
 export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult> {
-  private _graph: any = null
+  private _graph: { stream: (input: unknown, config: unknown) => AsyncIterable<unknown> } | null = null
 
   constructor(config: PipelineConfig) {
     super(config)
@@ -216,7 +216,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       const structured = getLLM().withStructuredOutput(SceneAnalysisSchema)
       const systemPrompt = self.resolveSystemPrompt(
         'analyzeScene', {},
-        state as any,
+        state as Record<string, unknown>,
         'You are an expert scene analyst. Analyze the provided images and describe the scene in structured detail.',
       )
       const result = await structured.invoke([
@@ -241,7 +241,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       const structured = getLLM().withStructuredOutput(CharacterAnchorSchema)
       const systemPrompt = self.resolveSystemPrompt(
         'extractCharacterAnchors', {},
-        state as any,
+        state as Record<string, unknown>,
         'You are a character consistency expert. Extract character anchors from the provided images for image generation consistency.',
       )
       const result = await structured.invoke([
@@ -267,7 +267,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       const vars = extractVarsForDesignAndAssemble(state)
       const systemPrompt = self.resolveSystemPrompt(
         'designAndAssemble', vars,
-        { ...state, retryFeedback: state.retryFeedback } as any,
+        { ...state, retryFeedback: state.retryFeedback } as Record<string, unknown>,
         `You are a professional storyboard artist and prompt engineer. Design shots and write prompts for ${vars.panel_count} panels.\nScene: ${vars.scene_env}`,
       )
       const result = await structured.invoke([
@@ -305,7 +305,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       const vars = extractVarsForVerify(state)
       const systemPrompt = self.resolveSystemPrompt(
         'verifyConsistency', vars,
-        state as any,
+        state as Record<string, unknown>,
         `You are a continuity supervisor. Check panels for consistency.\nScene: ${vars.scene_env}`,
       )
       const result = await structured.invoke([
@@ -464,7 +464,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     onProgress?: (progress: PipelineProgress) => void
   ): Promise<DirectorResult> {
     if (!this._graph) this.buildGraph()
-    const skipVerify = (input as any).skipVerify ?? false
+    const skipVerify = (input as Partial<DirectorState>).skipVerify ?? false
     const totalPasses = skipVerify ? 4 : 5
     let finalState: DirectorState = { ...input } as DirectorState
 
@@ -474,7 +474,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
     const pipelineStart = Date.now()
 
-    const stream = await this._graph.stream(input as any, config)
+    const stream = await this._graph.stream(input, config)
     for await (const event of stream) {
       if (Array.isArray(event)) {
         const [mode, data] = event
