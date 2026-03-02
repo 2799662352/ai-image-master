@@ -249,13 +249,13 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     const analyzeSceneFn = async (state: DirectorState, config: any) => {
       const t0 = Date.now()
       try {
-        const structured = self.createStructuredLLM(SceneAnalysisSchema)
+        const structuredWithRaw = self.createStructuredLLMWithRaw(SceneAnalysisSchema)
         const systemPrompt = self.resolveSystemPrompt(
           'analyzeScene', {},
           state as Record<string, unknown>,
           'You are an expert scene analyst. Analyze the provided images and describe the scene in structured detail.',
         )
-        const result = await structured.invoke([
+        const response = await structuredWithRaw.invoke([
           { role: 'system', content: systemPrompt },
           {
             role: 'user',
@@ -265,7 +265,21 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
             ],
           },
         ])
-        const scene = result ?? { env: '(unknown)', subjects: [], style: '', story: '' }
+
+        let scene = (response as any)?.parsed
+        if (!scene?.env) {
+          const rawText = typeof (response as any)?.raw?.content === 'string'
+            ? (response as any).raw.content : ''
+          try {
+            const match = rawText.match(/\{[\s\S]*"env"\s*:[\s\S]*\}/)
+            if (match) scene = JSON.parse(match[0])
+          } catch { /* fallback below */ }
+        }
+        if (!scene?.env) {
+          scene = { env: '(analysis failed)', subjects: [], style: '', story: '' }
+          console.warn('[DirectorPipeline] analyzeScene: structured + raw extraction both failed')
+        }
+
         const elapsed = Date.now() - t0
         const passData = DirectorPipeline.buildPassCardData('analyzeScene', { pass: 1, label: '场景分析' }, { scene }, elapsed)
         writer(config)?.({ type: 'pass_complete', pass: 1, label: `场景分析完成 (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
@@ -280,13 +294,13 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     const extractCharacterAnchorsFn = async (state: DirectorState, config: any) => {
       const t0 = Date.now()
       try {
-        const structured = self.createStructuredLLM(CharacterAnchorSchema)
+        const structuredWithRaw = self.createStructuredLLMWithRaw(CharacterAnchorSchema)
         const systemPrompt = self.resolveSystemPrompt(
           'extractCharacterAnchors', {},
           state as Record<string, unknown>,
           'You are a character consistency expert. Extract character anchors from the provided images for image generation consistency.',
         )
-        const result = await structured.invoke([
+        const response = await structuredWithRaw.invoke([
           { role: 'system', content: systemPrompt },
           {
             role: 'user',
@@ -296,7 +310,24 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
             ],
           },
         ])
-        const characters = result ?? { characters: [] }
+
+        let characters = (response as any)?.parsed
+        if (!characters?.characters?.length) {
+          const rawText = typeof (response as any)?.raw?.content === 'string'
+            ? (response as any).raw.content : ''
+          try {
+            const match = rawText.match(/\{[\s\S]*"characters"\s*:\s*\[[\s\S]*\][\s\S]*\}/)
+            if (match) {
+              const parsed = JSON.parse(match[0])
+              if (parsed?.characters?.length) characters = parsed
+            }
+          } catch { /* fallback below */ }
+        }
+        if (!characters?.characters?.length) {
+          characters = { characters: [] }
+          console.warn('[DirectorPipeline] extractCharacterAnchors: structured + raw extraction both failed')
+        }
+
         const elapsed = Date.now() - t0
         const passData = DirectorPipeline.buildPassCardData('extractCharacterAnchors', { pass: 2, label: '角色锚点提取' }, { characters }, elapsed)
         writer(config)?.({ type: 'pass_complete', pass: 2, label: `角色锚点提取完成 (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
