@@ -206,8 +206,10 @@ export default defineConfig({
         '@utils': resolve(__dirname, 'src/renderer/src/utils'),
         '@types': resolve(__dirname, 'src/types'),
         '@react': resolve(__dirname, 'src/renderer/src/react-app'),
-        '@skills': resolve(__dirname, 'skills')
+        '@skills': resolve(__dirname, 'skills'),
+        '@config': resolve(__dirname, 'config')
       }
-    }
+    },
+    assetsInclude: ['**/*.md']
   }
 })
