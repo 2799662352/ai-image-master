@@ -352,10 +352,11 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     }
 
     // ===== Pass 3: 分镜设计 + 提示词组装 (merged, saves one LLM round-trip) =====
+    // Uses includeRaw so we can extract data from raw text if structured parsing fails
     const designAndAssembleFn = async (state: DirectorState, config: any) => {
       const t0 = Date.now()
       try {
-        const structured = self.createStructuredLLM(DesignAndAssembleSchema)
+        const structuredWithRaw = self.createStructuredLLMWithRaw(DesignAndAssembleSchema)
         const vars = extractVarsForDesignAndAssemble(state)
         const userDirective = state.sceneDescription
           ? `User's creative direction: "${state.sceneDescription}"\nYou MUST incorporate this direction into the panel designs. The panels should depict what the user described.`
@@ -373,22 +374,40 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           designContent.push(...BasePipeline.buildImageContent(state.inputImages, 'low'))
         }
         designContent.push({ type: 'text' as const, text: userText })
-        const raw = await structured.invoke([
+        const response = await structuredWithRaw.invoke([
           { role: 'system', content: systemPrompt },
           { role: 'user', content: designContent },
         ])
-        if (!raw?.panels?.length) {
-          // Throw so retryPolicy can catch and retry automatically
+
+        let parsedPanels = (response as any)?.parsed?.panels
+        if (!parsedPanels?.length) {
+          console.warn('[DirectorPipeline] Structured parsing failed, attempting raw text extraction')
+          const rawText = typeof (response as any)?.raw?.content === 'string'
+            ? (response as any).raw.content
+            : JSON.stringify((response as any)?.raw?.content ?? '')
+          try {
+            const jsonMatch = rawText.match(/\{[\s\S]*"panels"\s*:\s*\[[\s\S]*\][\s\S]*\}/)
+            if (jsonMatch) {
+              const fallbackParsed = JSON.parse(jsonMatch[0])
+              if (fallbackParsed?.panels?.length) {
+                parsedPanels = fallbackParsed.panels
+                console.log(`[DirectorPipeline] Raw text fallback: extracted ${parsedPanels.length} panels`)
+              }
+            }
+          } catch { /* JSON parse failed, will throw below */ }
+        }
+
+        if (!parsedPanels?.length) {
           throw new Error('LLM returned empty or malformed response (no panels)')
         }
 
-        const panels = (raw.panels).map((p: any) => ({
-          id: p.id, shot: p.shot, desc: p.desc,
+        const panels = parsedPanels.map((p: any) => ({
+          id: p.id, shot: p.shot || '', desc: p.desc || '',
           lighting: p.lighting || '', characterAction: p.characterAction || '', background: p.background || '',
         }))
-        const prompts: AssembledPrompt[] = (raw.panels).map((p: any) => ({
+        const prompts: AssembledPrompt[] = parsedPanels.map((p: any) => ({
           id: p.id,
-          prompt: p.prompt,
+          prompt: p.prompt || '',
           negativePrompt: p.negativePrompt || 'blurry, deformed, bad anatomy, watermark, signature, text',
         }))
 
@@ -397,13 +416,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         writer(config)?.({ type: 'pass_complete', pass: 3, label: `分镜+提示词完成 (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
         return { panels, prompts }
       } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err)
-        const isRetryable = msg.includes('empty or malformed') || msg.includes('undefined')
-        if (isRetryable) {
-          // Re-throw for retryPolicy to handle
-          throw err
-        }
-        emitError(config, 3, '分镜+提示词', 'designAndAssemble', msg, Date.now() - t0)
+        emitError(config, 3, '分镜+提示词', 'designAndAssemble', err instanceof Error ? err.message : String(err), Date.now() - t0)
         return { panels: null, prompts: null }
       }
     }
@@ -541,7 +554,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       .addNode('selectSkills', selectSkillsFn)
       .addNode('analyzeScene', analyzeSceneFn, { retryPolicy: retryLLM })
       .addNode('extractCharacterAnchors', extractCharacterAnchorsFn, { retryPolicy: retryLLM })
-      .addNode('designAndAssemble', designAndAssembleFn, { retryPolicy: retryLLM })
+      .addNode('designAndAssemble', designAndAssembleFn)
       .addNode('verifyConsistency', verifyConsistencyFn)
       .addNode('prepareRetry', prepareRetryFn)
       .addNode('generateImages', generateImagesFn)

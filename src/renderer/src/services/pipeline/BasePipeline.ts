@@ -104,6 +104,15 @@ export abstract class BasePipeline<TState, TResult> {
     return llm.withStructuredOutput(schema)
   }
 
+  protected createStructuredLLMWithRaw<T extends z.ZodType>(schema: T, model?: string, maxTokens = 4096) {
+    const llm = this.createLLM(model, maxTokens)
+    const m = model || this.config.model
+    const opts = this.isGeminiModel(m)
+      ? { method: 'functionCalling' as const, includeRaw: true as const }
+      : { includeRaw: true as const }
+    return llm.withStructuredOutput(schema, opts)
+  }
+
   static buildImageContent(
     images: Array<{ data: string; mimeType: string }>,
     detail: 'low' | 'high' | 'auto' = 'auto',
