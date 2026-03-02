@@ -1,4 +1,4 @@
-import { useRef, useCallback, useState, useTransition, type DragEvent } from 'react'
+import { useRef, useCallback, useState, useTransition, type DragEvent, type MouseEvent } from 'react'
 import { useDirectorStore } from '../stores/useDirectorStore'
 import { ExampleGallery } from './ExampleGallery'
 import { VisionModelSelector } from './VisionModelSelector'
@@ -44,6 +44,7 @@ export function ReferenceImageUpload() {
   const clearReferenceImages = useDirectorStore((s) => s.clearReferenceImages)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isProcessing, setIsProcessing] = useState(false)
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null)
   const [, startTransition] = useTransition()
 
   const processFiles = useCallback(
@@ -177,14 +178,17 @@ export function ReferenceImageUpload() {
         onDragOver={handleDragOver}
       >
         {referenceImages.map((img, idx) => (
-          <div key={idx} className="relative group aspect-square rounded-none overflow-hidden bg-[#27272A]">
+          <div key={idx} className="relative group aspect-square rounded-none overflow-hidden bg-[#09090B] cursor-pointer" onClick={() => setPreviewIndex(idx)}>
             <img
               src={`data:${img.mimeType};base64,${img.data}`}
               alt={img.name}
               className="w-full h-full object-cover"
             />
+            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-center justify-center">
+              <i className="fas fa-search-plus text-white text-lg opacity-0 group-hover:opacity-100 transition-opacity" />
+            </div>
             <button
-              onClick={() => removeReferenceImage(idx)}
+              onClick={(e: MouseEvent) => { e.stopPropagation(); removeReferenceImage(idx) }}
               className="absolute top-1 right-1 w-5 h-5 bg-black/70 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-red-400 hover:text-red-300"
             >
               <i className="fas fa-times text-xs" />
@@ -201,6 +205,40 @@ export function ReferenceImageUpload() {
         className="hidden"
         onChange={handleFileChange}
       />
+
+      {previewIndex !== null && referenceImages[previewIndex] && (
+        <div
+          className="fixed inset-0 bg-black/90 z-[60000] flex items-center justify-center cursor-pointer"
+          onClick={() => setPreviewIndex(null)}
+        >
+          <img
+            src={`data:${referenceImages[previewIndex].mimeType};base64,${referenceImages[previewIndex].data}`}
+            alt="Preview"
+            className="max-w-[90vw] max-h-[90vh] object-contain"
+            onClick={(e: MouseEvent) => e.stopPropagation()}
+          />
+          <button
+            onClick={() => setPreviewIndex(null)}
+            className="absolute top-4 right-4 text-white text-3xl hover:text-gray-300"
+          >
+            <i className="fas fa-times" />
+          </button>
+          {referenceImages.length > 1 && (
+            <div className="absolute bottom-6 flex gap-3">
+              {previewIndex > 0 && (
+                <button onClick={(e: MouseEvent) => { e.stopPropagation(); setPreviewIndex(previewIndex - 1) }} className="px-3 py-2 bg-white/20 hover:bg-white/30 text-white rounded-none text-sm">
+                  <i className="fas fa-chevron-left mr-1" /> 上一张
+                </button>
+              )}
+              {previewIndex < referenceImages.length - 1 && (
+                <button onClick={(e: MouseEvent) => { e.stopPropagation(); setPreviewIndex(previewIndex + 1) }} className="px-3 py-2 bg-white/20 hover:bg-white/30 text-white rounded-none text-sm">
+                  下一张 <i className="fas fa-chevron-right ml-1" />
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

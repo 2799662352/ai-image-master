@@ -471,7 +471,7 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
       window.createComparePageTS = createComparePage
       window.createPromptTemplatesTS = createPromptTemplates
       window.createUnderstandPageTS = createUnderstandPage
-      window.createDirectorPageTS = createDirectorPage
+      window.createDirectorPageTS = (_app: AppInterface) => null as any
       window.getGeneratePageTS = getGeneratePage
       window.getHistoryPageTS = getHistoryPage
       window.getBatchPageTS = getBatchPage
@@ -529,7 +529,7 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
         createCompare: window.createComparePageTS!,
         createPromptTemplates: window.createPromptTemplatesTS!,
         createUnderstand: window.createUnderstandPageTS!,
-        createDirector: window.createDirectorPageTS!,
+        createDirector: (_app: AppInterface) => null as any,
         getGenerate: window.getGeneratePageTS!,
         getHistory: window.getHistoryPageTS!,
         getBatch: window.getBatchPageTS!,
@@ -958,10 +958,7 @@ export function getUnderstandPageAuto(): UnderstandPage | null {
  * 获取导演模式页面实例 (优先使用已创建的 TS 版本)
  */
 export function getDirectorPageAuto(): DirectorPage | null {
-  if (window.directorPageTS) {
-    return window.directorPageTS
-  }
-  return getDirectorPage()
+  return null
 }
 
 /**
@@ -987,11 +984,9 @@ export function initUnderstandPage(app: AppInterface): UnderstandPage {
 /**
  * 创建导演模式页面实例并暴露到 window
  */
-export function initDirectorPage(app: AppInterface): DirectorPage {
-  const page = createDirectorPage(app)
-  window.directorPageTS = page
-  console.log('[ServiceBridge] ✓ DirectorPage (TS) 实例已创建')
-  return page
+export function initDirectorPage(app: AppInterface): DirectorPage | null {
+  console.log('[ServiceBridge] Director page managed by React — skipping V2 init')
+  return null
 }
 
 /**
