@@ -78,6 +78,7 @@ function extractVarsForDesignAndAssemble(state: DirectorState): Record<string, s
 
   return {
     scene_env: state.scene?.env || '(none)',
+    scene_description: state.sceneDescription || '',
     character_anchors_detail: state.characters?.characters?.map((c: any) =>
       `${c.name}: ${c.anchor}`
     ).join('\n') || '(none)',
@@ -286,14 +287,20 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       try {
         const structured = getLLM().withStructuredOutput(DesignAndAssembleSchema)
         const vars = extractVarsForDesignAndAssemble(state)
+        const userDirective = state.sceneDescription
+          ? `User's creative direction: "${state.sceneDescription}"\nYou MUST incorporate this direction into the panel designs. The panels should depict what the user described.`
+          : ''
         const systemPrompt = self.resolveSystemPrompt(
           'designAndAssemble', vars,
           { ...state, retryFeedback: state.retryFeedback } as Record<string, unknown>,
-          `You are a professional storyboard artist and prompt engineer. Design shots and write prompts for ${vars.panel_count} panels.\nScene: ${vars.scene_env}`,
+          `You are a professional storyboard artist and prompt engineer. Design shots and write prompts for ${vars.panel_count} panels.\nScene: ${vars.scene_env}${userDirective ? `\n\n${userDirective}` : ''}`,
         )
+        const userMsg = state.sceneDescription
+          ? `根据用户意图"${state.sceneDescription}"，为 ${state.layout.panelCount} 个分镜设计镜头并生成图像提示词`
+          : `为 ${state.layout.panelCount} 个分镜设计镜头并生成图像提示词`
         const result = await structured.invoke([
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: `为 ${state.layout.panelCount} 个分镜设计镜头并生成图像提示词` },
+          { role: 'user', content: userMsg },
         ])
 
         const panels = (result.panels || []).map((p: any) => ({

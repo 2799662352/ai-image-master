@@ -471,7 +471,10 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
       window.createComparePageTS = createComparePage
       window.createPromptTemplatesTS = createPromptTemplates
       window.createUnderstandPageTS = createUnderstandPage
-      window.createDirectorPageTS = (_app: AppInterface) => null as any
+      window.createDirectorPageTS = (_app: AppInterface) => ({
+        init() {}, bindEvents() {}, saveState() {}, restoreState() { return Promise.resolve() },
+        onActivate() {}, onDeactivate() {}, destroy() {},
+      } as any)
       window.getGeneratePageTS = getGeneratePage
       window.getHistoryPageTS = getHistoryPage
       window.getBatchPageTS = getBatchPage
@@ -529,7 +532,7 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
         createCompare: window.createComparePageTS!,
         createPromptTemplates: window.createPromptTemplatesTS!,
         createUnderstand: window.createUnderstandPageTS!,
-        createDirector: (_app: AppInterface) => null as any,
+        createDirector: window.createDirectorPageTS!,
         getGenerate: window.getGeneratePageTS!,
         getHistory: window.getHistoryPageTS!,
         getBatch: window.getBatchPageTS!,
