@@ -47,14 +47,22 @@
     "choices.js": "^11.1.0",
     "electron-store": "^8.1.0",
     "electron-updater": "^6.7.3",
+    "i18next": "^25.8.13",
     "jszip": "^3.10.1",
-    "zod": "^4.3.6"
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-i18next": "^16.5.4",
+    "zod": "^4.3.6",
+    "zustand": "^5.0.11"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.0",
     "@tailwindcss/postcss": "^4.1.18",
     "@testing-library/dom": "^10.4.1",
     "@types/node": "^20.19.30",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.4",
     "@vitest/coverage-v8": "^4.0.18",
     "autoprefixer": "^10.4.23",
     "electron": "^28.0.0",
@@ -84,7 +92,9 @@
       {
         "from": "skills",
         "to": "skills",
-        "filter": ["**/*.md"]
+        "filter": [
+          "**/*.md"
+        ]
       }
     ]
   },
