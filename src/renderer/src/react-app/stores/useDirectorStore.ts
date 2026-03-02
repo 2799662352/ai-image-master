@@ -161,15 +161,17 @@ const createGenerationSlice: StateCreator<DirectorStore, [], [], GenerationSlice
   setViewState: (val) => set({ viewState: val }),
   setCurrentProgress: (val) => set({ currentProgress: val }),
   pushProgress: (progress) => set((state) => {
+    // UI shows pass 0 (selectSkills) through pass N, so total slots = totalPasses + 1
     const totalPasses = progress.totalPasses || 5
+    const slotCount = totalPasses + 1
     const statuses = [...state.passStatuses]
-    while (statuses.length < totalPasses) statuses.push('pending')
-    for (let i = 0; i < progress.pass - 1; i++) {
+    while (statuses.length < slotCount) statuses.push('pending')
+    for (let i = 0; i < progress.pass; i++) {
       if (i < statuses.length && (statuses[i] === 'pending' || statuses[i] === 'running')) {
         statuses[i] = 'completed'
       }
     }
-    const idx = progress.pass - 1
+    const idx = progress.pass
     if (idx >= 0 && idx < statuses.length) {
       statuses[idx] = progress.status === 'completed' ? 'completed'
         : progress.status === 'retrying' ? 'retrying'
@@ -177,11 +179,8 @@ const createGenerationSlice: StateCreator<DirectorStore, [], [], GenerationSlice
         : 'running'
     }
 
-    const base = ((progress.pass - 1) / totalPasses) * 100
-    const stepBonus = progress.status === 'completed'
-      ? (1 / totalPasses) * 100
-      : (0.5 / totalPasses) * 100
-    const pct = Math.min(Math.round(base + stepBonus), 100)
+    const completedCount = statuses.filter(s => s === 'completed').length
+    const pct = Math.min(Math.round((completedCount / slotCount) * 100), 100)
 
     let cards = state.passCards
     if (progress.passData) {

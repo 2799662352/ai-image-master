@@ -5,6 +5,7 @@ import { useDirectorStore } from '../stores/useDirectorStore'
 type PassStatus = 'pending' | 'running' | 'completed' | 'retrying' | 'failed'
 
 const PASS_DEFS_FULL = [
+  { label: '技能选择',     icon: 'fa-brain' },
   { label: '场景分析',     icon: 'fa-eye' },
   { label: '角色锚定',     icon: 'fa-user-tag' },
   { label: '分镜+Prompt', icon: 'fa-th-large' },
@@ -13,6 +14,7 @@ const PASS_DEFS_FULL = [
 ]
 
 const PASS_DEFS_FAST = [
+  { label: '技能选择',     icon: 'fa-brain' },
   { label: '场景分析',     icon: 'fa-eye' },
   { label: '角色锚定',     icon: 'fa-user-tag' },
   { label: '分镜+Prompt', icon: 'fa-th-large' },
@@ -34,11 +36,12 @@ export function GenerationProgress() {
   const percentage = useDirectorStore((s) => s.progressPercentage)
 
   const [viewingRaw, setViewingRaw] = useState<PassCardData | null>(null)
-  const totalPasses = progress?.totalPasses ?? 5
+  const pipelinePasses = progress?.totalPasses ?? 5
   const passDefs = useMemo(
-    () => totalPasses <= 4 ? PASS_DEFS_FAST : PASS_DEFS_FULL,
-    [totalPasses],
+    () => pipelinePasses <= 4 ? PASS_DEFS_FAST : PASS_DEFS_FULL,
+    [pipelinePasses],
   )
+  const totalSlots = passDefs.length
 
   const currentLabel = progress?.label ?? '准备中…'
   const currentPass = progress?.pass ?? 0
@@ -50,8 +53,8 @@ export function GenerationProgress() {
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-white truncate">{currentLabel}</p>
           <p className="text-xs text-white opacity-50 mt-0.5">
-            步骤 {currentPass}/{totalPasses}
-            {totalPasses <= 4 && <span className="ml-2 text-yellow-400/70">⚡ 快速</span>}
+            步骤 {currentPass}/{totalSlots}
+            {pipelinePasses <= 4 && <span className="ml-2 text-yellow-400/70">⚡ 快速</span>}
           </p>
         </div>
       </div>
@@ -61,14 +64,14 @@ export function GenerationProgress() {
           className="h-full rounded-full transition-all duration-500 ease-out"
           style={{
             width: `${percentage}%`,
-            background: totalPasses <= 4
+            background: pipelinePasses <= 4
               ? 'linear-gradient(90deg, #F59E0B, #EF4444)'
               : 'linear-gradient(90deg, #3B82F6, #8B5CF6)',
           }}
         />
       </div>
 
-      <div className={`grid gap-2 ${totalPasses <= 4 ? 'grid-cols-2' : 'grid-cols-2 sm:grid-cols-3'}`}>
+      <div className={`grid gap-2 ${totalSlots <= 5 ? 'grid-cols-2 sm:grid-cols-3' : 'grid-cols-2 sm:grid-cols-3'}`}>
         {passDefs.map((def, idx) => {
           const status: PassStatus = (passStatuses[idx] as PassStatus) ?? 'pending'
           const display = STATUS_DISPLAY[status]
@@ -94,7 +97,7 @@ export function GenerationProgress() {
         <div className="space-y-2 pt-2 border-t border-[#3F3F46]">
           <p className="text-xs text-white opacity-50 font-medium">阶段结果</p>
           {passCards.map((card) => {
-            const def = passDefs[card.pass - 1]
+            const def = passDefs[card.pass]
             return (
               <div key={card.pass} className="bg-[#09090B] border border-[#3F3F46] rounded-none px-3 py-2 text-xs">
                 <div className="flex items-center justify-between mb-1">
