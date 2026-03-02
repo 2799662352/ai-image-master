@@ -259,10 +259,11 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
             ],
           },
         ])
+        const scene = result ?? { env: '(unknown)', subjects: [], style: '', story: '' }
         const elapsed = Date.now() - t0
-        const passData = DirectorPipeline.buildPassCardData('analyzeScene', { pass: 1, label: '场景分析' }, { scene: result }, elapsed)
+        const passData = DirectorPipeline.buildPassCardData('analyzeScene', { pass: 1, label: '场景分析' }, { scene }, elapsed)
         writer(config)?.({ type: 'pass_complete', pass: 1, label: `场景分析完成 (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
-        return { scene: result }
+        return { scene }
       } catch (err: unknown) {
         emitError(config, 1, '场景分析', 'analyzeScene', err instanceof Error ? err.message : String(err), Date.now() - t0)
         return { scene: null }
@@ -289,10 +290,11 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
             ],
           },
         ])
+        const characters = result ?? { characters: [] }
         const elapsed = Date.now() - t0
-        const passData = DirectorPipeline.buildPassCardData('extractCharacterAnchors', { pass: 2, label: '角色锚点提取' }, { characters: result }, elapsed)
+        const passData = DirectorPipeline.buildPassCardData('extractCharacterAnchors', { pass: 2, label: '角色锚点提取' }, { characters }, elapsed)
         writer(config)?.({ type: 'pass_complete', pass: 2, label: `角色锚点提取完成 (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
-        return { characters: result }
+        return { characters }
       } catch (err: unknown) {
         emitError(config, 2, '角色锚点', 'extractCharacterAnchors', err instanceof Error ? err.message : String(err), Date.now() - t0)
         return { characters: null }
@@ -371,16 +373,19 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           designContent.push(...BasePipeline.buildImageContent(state.inputImages, 'low'))
         }
         designContent.push({ type: 'text' as const, text: userText })
-        const result = await structured.invoke([
+        const raw = await structured.invoke([
           { role: 'system', content: systemPrompt },
           { role: 'user', content: designContent },
         ])
+        if (!raw?.panels?.length) {
+          throw new Error('LLM returned empty or malformed response (no panels)')
+        }
 
-        const panels = (result.panels || []).map((p: any) => ({
+        const panels = (raw.panels || []).map((p: any) => ({
           id: p.id, shot: p.shot, desc: p.desc,
           lighting: p.lighting || '', characterAction: p.characterAction || '', background: p.background || '',
         }))
-        const prompts: AssembledPrompt[] = (result.panels || []).map((p: any) => ({
+        const prompts: AssembledPrompt[] = (raw.panels || []).map((p: any) => ({
           id: p.id,
           prompt: p.prompt,
           negativePrompt: p.negativePrompt || 'blurry, deformed, bad anatomy, watermark, signature, text',
