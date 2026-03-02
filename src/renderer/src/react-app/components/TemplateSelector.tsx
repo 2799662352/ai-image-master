@@ -1,26 +1,6 @@
 import { useState, useCallback } from 'react'
 import { useDirectorStore } from '../stores/useDirectorStore'
-
-interface StyleTemplate {
-  name: string
-  prefix: string
-  suffix: string
-  negative: string
-  negativeEnabled?: boolean
-}
-
-const BUILTIN_TEMPLATES: Record<string, StyleTemplate & { icon: string; displayName: string; desc: string }> = {
-  anime: { icon: '🎌', displayName: '日式动画', desc: 'TV anime 赛璐璐着色', name: 'anime', prefix: 'anime screencap, TV anime, storyboard panel, sequential storytelling, narrative composition, ', suffix: ', masterpiece, best quality, absurdres, very aesthetic, full color, anime cel shading, TV anime coloring', negative: 'blurry, lowres, upscaled, artistic error, film grain, scan artifacts, bad anatomy, worst quality', negativeEnabled: false },
-  manga: { icon: '📖', displayName: '黑白漫画', desc: '网点纸 + 动态线条', name: 'manga', prefix: 'manga panel, comic storyboard, sequential art, black and white manga, screentone, ', suffix: ', masterpiece, best quality, manga style, high contrast, dynamic lines, speech bubbles layout', negative: 'blurry, lowres, bad anatomy, worst quality, color, photorealistic, 3d render', negativeEnabled: false },
-  movie: { icon: '🎬', displayName: '电影分镜', desc: '电影级光影景深', name: 'movie', prefix: 'cinematic storyboard, film still, movie scene, cinematography, ', suffix: ', masterpiece, best quality, cinematic lighting, depth of field, widescreen, film grain, color grading', negative: 'anime, cartoon, illustration, bad anatomy, worst quality, low quality', negativeEnabled: false },
-  webtoon: { icon: '📱', displayName: '韩式条漫', desc: '全彩柔和竖版', name: 'webtoon', prefix: 'webtoon style, korean manhwa, full color comic, vertical scroll format, ', suffix: ', masterpiece, best quality, soft shading, clean lineart, vibrant colors, romantic atmosphere', negative: 'blurry, lowres, bad anatomy, worst quality, black and white, monochrome', negativeEnabled: false },
-  comic: { icon: '💥', displayName: '美漫风格', desc: '粗线条网点动作感', name: 'comic', prefix: 'american comic style, superhero comic, comic book panel, bold lineart, ', suffix: ', masterpiece, best quality, dynamic pose, strong contrast, halftone dots, action scene', negative: 'blurry, lowres, bad anatomy, worst quality, anime style, soft shading', negativeEnabled: false },
-  illustration: { icon: '🎨', displayName: '插画风格', desc: '精细艺术插画', name: 'illustration', prefix: 'illustration, detailed artwork, artistic composition, ', suffix: ', masterpiece, best quality, highly detailed, beautiful lighting, artistic, professional illustration', negative: 'blurry, lowres, bad anatomy, worst quality, bad quality, simple background', negativeEnabled: false },
-  cinematic: { icon: '🎥', displayName: '影院级写实', desc: '8K 写实自然景深', name: 'cinematic', prefix: 'Cinematic Contact Sheet, award-winning trailer storyboard, precise grid layout with equal panels. ', suffix: ', photorealistic, sequence photography, 8K resolution, natural depth of field', negative: 'text, speech bubbles, dialogue, watermark, blurry, low quality, inconsistent characters', negativeEnabled: false },
-  theatrical: { icon: '🎭', displayName: '剧场版动画', desc: '剧场版品质电影级', name: 'theatrical', prefix: '((劇場版クオリティのスクリーンショット:1.5)), ', suffix: ', 高品質, 8k, masterpiece, best quality, cinematic lighting, highly detailed', negative: '低品質, 作画崩壊, 実写, 3D, 異なる画風', negativeEnabled: false },
-}
-
-const TEMPLATE_KEYS = Object.keys(BUILTIN_TEMPLATES)
+import { BUILTIN_TEMPLATES, TEMPLATE_MAP, type TemplateData } from '../constants/templates'
 
 interface EditorState {
   key: string
@@ -38,7 +18,7 @@ export function TemplateSelector() {
   const [showModal, setShowModal] = useState(false)
   const [editor, setEditor] = useState<EditorState | null>(null)
 
-  const active = currentTemplate ? BUILTIN_TEMPLATES[currentTemplate] : null
+  const active = currentTemplate ? TEMPLATE_MAP[currentTemplate] : null
 
   const handleSelect = useCallback((key: string) => {
     setTemplate(key)
@@ -50,7 +30,7 @@ export function TemplateSelector() {
   }, [setTemplate])
 
   const openEditor = useCallback((key: string) => {
-    const t = BUILTIN_TEMPLATES[key]
+    const t = TEMPLATE_MAP[key]
     if (!t) return
     setEditor({
       key,
@@ -125,8 +105,8 @@ export function TemplateSelector() {
 
             <div className="flex-1 overflow-y-auto p-4">
               <div className="grid grid-cols-2 gap-3">
-                {TEMPLATE_KEYS.map((key) => {
-                  const t = BUILTIN_TEMPLATES[key]
+                {BUILTIN_TEMPLATES.map((t) => {
+                  const key = t.key
                   const selected = currentTemplate === key
                   return (
                     <div
@@ -259,8 +239,8 @@ export function TemplateSelector() {
               {editor.isBuiltin && (
                 <button
                   onClick={() => {
-                    const orig = BUILTIN_TEMPLATES[editor.key]
-                    setEditor({ ...editor, prefix: orig.prefix, suffix: orig.suffix, negative: orig.negative, negativeEnabled: orig.negativeEnabled ?? false })
+                    const orig = TEMPLATE_MAP[editor.key]
+                    if (orig) setEditor({ ...editor, prefix: orig.prefix, suffix: orig.suffix, negative: orig.negative, negativeEnabled: orig.negativeEnabled ?? false })
                   }}
                   className="text-white opacity-50 hover:opacity-100 text-xs transition-opacity"
                 >
@@ -274,7 +254,13 @@ export function TemplateSelector() {
                 </button>
                 <button
                   onClick={() => {
-                    BUILTIN_TEMPLATES[editor.key] = { ...BUILTIN_TEMPLATES[editor.key], prefix: editor.prefix, suffix: editor.suffix, negative: editor.negative, negativeEnabled: editor.negativeEnabled }
+                    const t = TEMPLATE_MAP[editor.key]
+                    if (t) {
+                      t.prefix = editor.prefix
+                      t.suffix = editor.suffix
+                      t.negative = editor.negative
+                      t.negativeEnabled = editor.negativeEnabled
+                    }
                     setEditor(null)
                     const toast = (window as any).toastManagerTS ?? (window as any).toastManager
                     toast?.show?.('模板已保存', 'success')

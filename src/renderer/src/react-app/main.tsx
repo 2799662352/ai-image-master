@@ -18,10 +18,14 @@ export function mountDirectorReact(): void {
       const store = useDirectorStore.getState()
       if (saved.currentLayout) store.setLayout(saved.currentLayout)
       if (saved.currentTemplate !== undefined) store.setTemplate(saved.currentTemplate)
+      if (saved.currentMode) store.setMode(saved.currentMode)
       if (saved.currentRatio) store.setRatio(saved.currentRatio)
       if (saved.currentResolution) store.setResolution(saved.currentResolution)
       if (saved.sceneDescription !== undefined) store.setSceneDescription(saved.sceneDescription)
+      if (saved.multiSceneText !== undefined) store.setMultiSceneText(saved.multiSceneText)
       if (saved.visionModel) store.setVisionModel(saved.visionModel)
+      if (saved.imageCount) store.setImageCount(saved.imageCount)
+      if (saved.skipVerify !== undefined) store.setSkipVerify(saved.skipVerify)
     }
   } catch (e) {
     console.warn('[React] Failed to restore director state:', e)
@@ -41,10 +45,14 @@ export function unmountDirectorReact(): void {
     pm?.saveState?.('director', {
       currentLayout: state.currentLayout,
       currentTemplate: state.currentTemplate,
+      currentMode: state.currentMode,
       currentRatio: state.currentRatio,
       currentResolution: state.currentResolution,
       sceneDescription: state.sceneDescription,
+      multiSceneText: state.multiSceneText,
       visionModel: state.visionModel,
+      imageCount: state.imageCount,
+      skipVerify: state.skipVerify,
     })
   } catch (e) {
     console.warn('[React] Failed to save director state:', e)
