@@ -19,6 +19,8 @@ export function DirectorApp() {
   const [viewState, setViewState] = useState<ViewState>('idle')
   const [currentProgress, setCurrentProgress] = useState<PipelineProgress | null>(null)
   const generatedResults = useDirectorStore((s) => s.generatedResults)
+  const skipVerify = useDirectorStore((s) => s.skipVerify)
+  const setSkipVerify = useDirectorStore((s) => s.setSkipVerify)
   const { startGeneration } = useDirectorGeneration()
 
   const handleGenerate = useCallback(async () => {
@@ -54,7 +56,20 @@ export function DirectorApp() {
           <LayoutSelector />
           <ImageCountSlider />
           <RatioResolutionSelector />
-          <GenerateButton onGenerate={handleGenerate} />
+          <div className="flex items-center gap-3">
+            <GenerateButton onGenerate={handleGenerate} />
+            <label className="flex items-center gap-2 cursor-pointer select-none shrink-0">
+              <input
+                type="checkbox"
+                checked={skipVerify}
+                onChange={(e) => setSkipVerify(e.target.checked)}
+                className="w-4 h-4 rounded border-[#3F3F46] bg-[#09090B] text-yellow-500 focus:ring-yellow-500/30"
+              />
+              <span className="text-xs text-white opacity-60 whitespace-nowrap">
+                <i className="fas fa-bolt text-yellow-500 mr-1" />快速模式
+              </span>
+            </label>
+          </div>
 
           {viewState === 'idle' && generatedResults.length === 0 && (
             <div className="bg-[#27272A] rounded-none p-6 flex items-center justify-center" style={{ minHeight: '200px' }}>

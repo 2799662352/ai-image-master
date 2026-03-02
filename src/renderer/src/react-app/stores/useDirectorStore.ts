@@ -51,6 +51,7 @@ interface ConfigSlice {
   visionModel: string
   imageModel: string
   imageCount: number
+  skipVerify: boolean
   setLayout: (val: LayoutType) => void
   setTemplate: (val: string | null) => void
   setMode: (val: GenerationMode) => void
@@ -61,6 +62,7 @@ interface ConfigSlice {
   setVisionModel: (val: string) => void
   setImageModel: (val: string) => void
   setImageCount: (val: number) => void
+  setSkipVerify: (val: boolean) => void
 }
 
 interface ResetSlice {
@@ -90,7 +92,7 @@ const initialGenerationState: Pick<
 
 const initialConfigState: Pick<
   ConfigSlice,
-  'currentLayout' | 'currentTemplate' | 'currentMode' | 'currentRatio' | 'currentResolution' | 'sceneDescription' | 'visionModel' | 'imageModel' | 'imageCount'
+  'currentLayout' | 'currentTemplate' | 'currentMode' | 'currentRatio' | 'currentResolution' | 'sceneDescription' | 'visionModel' | 'imageModel' | 'imageCount' | 'skipVerify'
 > = {
   currentLayout: '6grid',
   currentTemplate: null,
@@ -102,6 +104,7 @@ const initialConfigState: Pick<
   visionModel: '',
   imageModel: '',
   imageCount: 1,
+  skipVerify: false,
 }
 
 // --- Slice creators ---
@@ -141,6 +144,7 @@ const createConfigSlice: StateCreator<DirectorStore, [], [], ConfigSlice> = (set
   setVisionModel: (val) => set({ visionModel: val }),
   setImageModel: (val) => set({ imageModel: val }),
   setImageCount: (val) => set({ imageCount: val }),
+  setSkipVerify: (val) => set({ skipVerify: val }),
 })
 
 const createResetSlice: StateCreator<DirectorStore, [], [], ResetSlice> = (set) => ({

@@ -51,6 +51,7 @@ export abstract class BasePipeline<TState, TResult> {
     return new ChatOpenAI({
       model: m,
       apiKey: this.config.apiKey,
+      temperature: 0,
       maxRetries: 1,
       maxTokens,
       streamUsage: false,

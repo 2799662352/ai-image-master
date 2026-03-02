@@ -39,7 +39,7 @@ import { type BatchPage, createBatchPage, getBatchPage } from '../pages/BatchPag
 import { type ComparePage, createComparePage, getComparePage } from '../pages/ComparePage'
 import { type PromptTemplates, createPromptTemplates, getPromptTemplates } from '../pages/PromptTemplates'
 import { type UnderstandPage, createUnderstandPage, getUnderstandPage } from '../pages/UnderstandPage'
-import { type DirectorPageV2 as DirectorPage, createDirectorPageV2 as createDirectorPage, getDirectorPageV2 as getDirectorPage } from '../pages/director'
+type DirectorPage = any
 import { mountDirectorReact, unmountDirectorReact } from '../react-app/main'
 
 // ========================================
@@ -478,7 +478,7 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
       window.getComparePageTS = getComparePage
       window.getPromptTemplatesTS = getPromptTemplates
       window.getUnderstandPageTS = getUnderstandPage
-      window.getDirectorPageTS = getDirectorPage
+      window.getDirectorPageTS = () => null
       console.log('[ServiceBridge] ✓ Page factories (TS) 已就绪 (GeneratePage, HistoryPage, BatchPage, ComparePage, PromptTemplates, UnderstandPage, DirectorPage)')
     }
 
@@ -1074,7 +1074,7 @@ export async function getStoryboardPipelineService(model?: string): Promise<impo
 }
 
 /**
- * 获取或创建 Director Pipeline Service 实例（懒加载，6-Pass 管线）
+ * 获取或创建 Director Pipeline Service 实例（懒加载，4-5 Pass 管线）
  */
 let _directorPipelineInstance: import('./pipeline/DirectorPipeline').DirectorPipeline | null = null
 let _directorPipelineCacheKey: string | null = null
@@ -1093,7 +1093,7 @@ export async function getDirectorPipelineService(model?: string): Promise<import
     const { DirectorPipeline } = await import('./pipeline/DirectorPipeline')
     _directorPipelineInstance = new DirectorPipeline({ apiKey, baseURL, model: model || 'gemini-3-pro-preview' })
     _directorPipelineCacheKey = cacheKey
-    console.log('[ServiceBridge] ✓ DirectorPipeline 实例已创建 (6-Pass), model:', model || 'default')
+    console.log('[ServiceBridge] ✓ DirectorPipeline created (4-5 Pass), model:', model || 'default')
   }
   return _directorPipelineInstance
 }
