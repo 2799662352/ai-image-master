@@ -378,14 +378,15 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           { role: 'user', content: designContent },
         ])
         if (!raw?.panels?.length) {
+          // Throw so retryPolicy can catch and retry automatically
           throw new Error('LLM returned empty or malformed response (no panels)')
         }
 
-        const panels = (raw.panels || []).map((p: any) => ({
+        const panels = (raw.panels).map((p: any) => ({
           id: p.id, shot: p.shot, desc: p.desc,
           lighting: p.lighting || '', characterAction: p.characterAction || '', background: p.background || '',
         }))
-        const prompts: AssembledPrompt[] = (raw.panels || []).map((p: any) => ({
+        const prompts: AssembledPrompt[] = (raw.panels).map((p: any) => ({
           id: p.id,
           prompt: p.prompt,
           negativePrompt: p.negativePrompt || 'blurry, deformed, bad anatomy, watermark, signature, text',
@@ -396,7 +397,13 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         writer(config)?.({ type: 'pass_complete', pass: 3, label: `分镜+提示词完成 (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
         return { panels, prompts }
       } catch (err: unknown) {
-        emitError(config, 3, '分镜+提示词', 'designAndAssemble', err instanceof Error ? err.message : String(err), Date.now() - t0)
+        const msg = err instanceof Error ? err.message : String(err)
+        const isRetryable = msg.includes('empty or malformed') || msg.includes('undefined')
+        if (isRetryable) {
+          // Re-throw for retryPolicy to handle
+          throw err
+        }
+        emitError(config, 3, '分镜+提示词', 'designAndAssemble', msg, Date.now() - t0)
         return { panels: null, prompts: null }
       }
     }
@@ -529,11 +536,12 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     }
 
     // ===== Graph Assembly =====
+    const retryLLM = { maxAttempts: 2, initialInterval: 1.0 }
     const graph = new StateGraph(stateSchema)
       .addNode('selectSkills', selectSkillsFn)
-      .addNode('analyzeScene', analyzeSceneFn)
-      .addNode('extractCharacterAnchors', extractCharacterAnchorsFn)
-      .addNode('designAndAssemble', designAndAssembleFn)
+      .addNode('analyzeScene', analyzeSceneFn, { retryPolicy: retryLLM })
+      .addNode('extractCharacterAnchors', extractCharacterAnchorsFn, { retryPolicy: retryLLM })
+      .addNode('designAndAssemble', designAndAssembleFn, { retryPolicy: retryLLM })
       .addNode('verifyConsistency', verifyConsistencyFn)
       .addNode('prepareRetry', prepareRetryFn)
       .addNode('generateImages', generateImagesFn)
