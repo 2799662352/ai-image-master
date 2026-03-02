@@ -81,7 +81,7 @@ export function DirectorApp() {
           {viewState === 'generating' && (
             <GenerationProgress />
           )}
-          {(viewState === 'results' || generatedResults.length > 0) && viewState !== 'generating' && (
+          {generatedResults.length > 0 && (
             <ResultsGallery />
           )}
         </div>
