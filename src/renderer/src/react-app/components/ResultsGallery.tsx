@@ -10,6 +10,13 @@ function downloadImage(url: string, filename: string) {
   document.body.removeChild(a)
 }
 
+function openImageViewer(urls: string[], index: number) {
+  const viewer = (window as any).imageViewerTS
+  if (viewer?.open) {
+    viewer.open(urls, index)
+  }
+}
+
 function getGridCols(count: number): string {
   if (count <= 1) return 'grid-cols-1'
   if (count <= 4) return 'grid-cols-2'
@@ -31,8 +38,8 @@ export function ResultsGallery() {
   const [focusedIndex, setFocusedIndex] = useState(0)
 
   const successResults = generatedResults.filter((r) => !!r.url)
+  const allUrls = successResults.map((r) => r.url)
 
-  // 新一轮生成结果到来时重置状态
   useEffect(() => {
     setCurrentIndex(0)
     setGridOpen(false)
@@ -50,14 +57,6 @@ export function ResultsGallery() {
       })
     },
     [successResults.length]
-  )
-
-  const openGrid = useCallback(
-    (idx: number) => {
-      setFocusedIndex(idx)
-      setGridOpen(true)
-    },
-    []
   )
 
   useEffect(() => {
@@ -90,7 +89,7 @@ export function ResultsGallery() {
               {successResults.length}/{generatedResults.length} 张
             </span>
             <button
-              onClick={() => openGrid(safeIndex)}
+              onClick={() => { setFocusedIndex(safeIndex); setGridOpen(true) }}
               className="text-xs text-white opacity-40 hover:opacity-100 transition-opacity flex items-center gap-1.5 cursor-pointer"
             >
               <i className="fas fa-th" />
@@ -112,10 +111,10 @@ export function ResultsGallery() {
           </div>
         </div>
 
-        {/* 主图区 */}
+        {/* 主图区 — 点击用全局 ImageViewer 打开 */}
         <div
           className="relative group rounded-none overflow-hidden bg-[#27272A] cursor-pointer"
-          onClick={() => openGrid(safeIndex)}
+          onClick={() => openImageViewer(allUrls, safeIndex)}
         >
           <img
             src={current.url}
@@ -123,19 +122,16 @@ export function ResultsGallery() {
             className="w-full object-contain max-h-[380px]"
           />
 
-          {/* 放大镜 hover */}
           <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-all flex items-center justify-center pointer-events-none">
             <div className="w-12 h-12 bg-black/50 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-              <i className="fas fa-th text-white text-lg" />
+              <i className="fas fa-search-plus text-white text-lg" />
             </div>
           </div>
 
-          {/* 序号角标 */}
           <div className="absolute top-2 left-2 px-2 py-0.5 bg-black/60 text-white text-xs pointer-events-none select-none">
             {safeIndex + 1} / {successResults.length}
           </div>
 
-          {/* 翻页箭头 */}
           {successResults.length > 1 && (
             <>
               <button
@@ -153,7 +149,6 @@ export function ResultsGallery() {
             </>
           )}
 
-          {/* 下载当前图 */}
           <button
             onClick={(e) => {
               e.stopPropagation()
@@ -176,13 +171,16 @@ export function ResultsGallery() {
           </div>
         )}
 
-        {/* 缩略图网格（替代横向滚动条） */}
+        {/* 缩略图网格 — 点击用全局 ImageViewer 打开 */}
         {successResults.length > 1 && (
           <div className={`grid ${getThumbnailCols(successResults.length)} gap-1`}>
             {successResults.map((result, idx) => (
               <button
                 key={idx}
-                onClick={() => { setCurrentIndex(idx); openGrid(idx) }}
+                onClick={() => {
+                  setCurrentIndex(idx)
+                  openImageViewer(allUrls, idx)
+                }}
                 className={`relative aspect-video rounded-none overflow-hidden border-2 transition-all cursor-pointer ${
                   idx === safeIndex
                     ? 'border-blue-400'
@@ -199,13 +197,12 @@ export function ResultsGallery() {
         )}
       </div>
 
-      {/* ── 全屏网格 lightbox ── */}
+      {/* ── 全屏网格 lightbox（额外入口） ── */}
       {gridOpen && (
         <div
           className="fixed inset-0 bg-black z-[60000] flex flex-col"
           onClick={() => setGridOpen(false)}
         >
-          {/* 顶部关闭按钮 */}
           <button
             onClick={() => setGridOpen(false)}
             className="absolute top-3 right-3 z-10 w-9 h-9 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center text-white transition-colors cursor-pointer"
@@ -213,7 +210,6 @@ export function ResultsGallery() {
             <i className="fas fa-times text-lg" />
           </button>
 
-          {/* 图片网格 */}
           <div
             className={`flex-1 grid ${getGridCols(successResults.length)} gap-[1px]`}
             style={{ background: 'rgba(255,255,255,0.06)' }}
@@ -225,7 +221,10 @@ export function ResultsGallery() {
                 className={`relative overflow-hidden cursor-pointer group ${
                   idx === focusedIndex ? 'ring-2 ring-inset ring-[#FCE300]' : ''
                 }`}
-                onClick={() => setFocusedIndex(idx)}
+                onClick={() => {
+                  setGridOpen(false)
+                  openImageViewer(allUrls, idx)
+                }}
               >
                 <img
                   src={result.url}
@@ -234,12 +233,10 @@ export function ResultsGallery() {
                   draggable={false}
                 />
 
-                {/* 当前聚焦高亮 */}
                 {idx === focusedIndex && (
                   <div className="absolute inset-0 pointer-events-none" style={{ background: 'rgba(252,227,0,0.08)' }} />
                 )}
 
-                {/* Hover 操作层 */}
                 <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-end justify-between p-2 opacity-0 group-hover:opacity-100">
                   <span className="text-white text-xs bg-black/60 px-1.5 py-0.5">
                     {idx + 1}
@@ -258,7 +255,6 @@ export function ResultsGallery() {
             ))}
           </div>
 
-          {/* 底部信息栏 */}
           <div
             className="bg-black/80 border-t border-white/10 px-6 py-2.5 flex items-center gap-4"
             onClick={(e) => e.stopPropagation()}
