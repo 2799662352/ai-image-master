@@ -14,20 +14,20 @@ import { useDirectorStore } from './stores/useDirectorStore'
 
 export function DirectorApp() {
   const viewState = useDirectorStore((s) => s.viewState)
-  const currentProgress = useDirectorStore((s) => s.currentProgress)
   const generatedResults = useDirectorStore((s) => s.generatedResults)
   const skipVerify = useDirectorStore((s) => s.skipVerify)
   const setSkipVerify = useDirectorStore((s) => s.setSkipVerify)
   const setViewState = useDirectorStore((s) => s.setViewState)
-  const setCurrentProgress = useDirectorStore((s) => s.setCurrentProgress)
+  const pushProgress = useDirectorStore((s) => s.pushProgress)
+  const resetProgress = useDirectorStore((s) => s.resetProgress)
   const { startGeneration } = useDirectorGeneration()
 
   const handleGenerate = useCallback(async () => {
     setViewState('generating')
-    setCurrentProgress(null)
+    resetProgress()
     try {
       await startGeneration((progress) => {
-        setCurrentProgress(progress as any)
+        pushProgress(progress as any)
       })
       setViewState('results')
     } catch (error: any) {
@@ -36,7 +36,7 @@ export function DirectorApp() {
       const toast = (window as any).toastManagerTS ?? (window as any).toastManager
       toast?.show?.(error.message || '生成失败', 'error')
     }
-  }, [startGeneration, setViewState, setCurrentProgress])
+  }, [startGeneration, setViewState, pushProgress, resetProgress])
 
   return (
     <div className="relative z-10">
@@ -79,7 +79,7 @@ export function DirectorApp() {
             </div>
           )}
           {viewState === 'generating' && (
-            <GenerationProgress progress={currentProgress as any} />
+            <GenerationProgress />
           )}
           {(viewState === 'results' || generatedResults.length > 0) && viewState !== 'generating' && (
             <ResultsGallery />

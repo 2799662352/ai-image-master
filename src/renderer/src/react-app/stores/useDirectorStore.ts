@@ -39,6 +39,8 @@ interface ProgressData {
   data?: unknown
 }
 
+type PassStatus = 'pending' | 'running' | 'completed' | 'retrying' | 'failed'
+
 interface GenerationSlice {
   isGenerating: boolean
   isProcessingFiles: boolean
@@ -47,6 +49,9 @@ interface GenerationSlice {
   lastCharacterAnchor: string | null
   viewState: ViewState
   currentProgress: ProgressData | null
+  passStatuses: PassStatus[]
+  passCards: unknown[]
+  progressPercentage: number
   setIsGenerating: (val: boolean) => void
   setIsProcessingFiles: (val: boolean) => void
   setGeneratedResults: (val: GeneratedResult[]) => void
@@ -54,6 +59,8 @@ interface GenerationSlice {
   setLastCharacterAnchor: (val: string | null) => void
   setViewState: (val: ViewState) => void
   setCurrentProgress: (val: ProgressData | null) => void
+  pushProgress: (progress: ProgressData) => void
+  resetProgress: () => void
 }
 
 interface ConfigSlice {
@@ -97,7 +104,7 @@ const initialImageState: Pick<ImageSlice, 'referenceImages'> = {
 
 const initialGenerationState: Pick<
   GenerationSlice,
-  'isGenerating' | 'isProcessingFiles' | 'generatedResults' | 'lastAnalysisResult' | 'lastCharacterAnchor' | 'viewState' | 'currentProgress'
+  'isGenerating' | 'isProcessingFiles' | 'generatedResults' | 'lastAnalysisResult' | 'lastCharacterAnchor' | 'viewState' | 'currentProgress' | 'passStatuses' | 'passCards' | 'progressPercentage'
 > = {
   isGenerating: false,
   isProcessingFiles: false,
@@ -106,6 +113,9 @@ const initialGenerationState: Pick<
   lastCharacterAnchor: null,
   viewState: 'idle',
   currentProgress: null,
+  passStatuses: [],
+  passCards: [],
+  progressPercentage: 0,
 }
 
 const initialConfigState: Pick<
@@ -150,6 +160,49 @@ const createGenerationSlice: StateCreator<DirectorStore, [], [], GenerationSlice
   setLastCharacterAnchor: (val) => set({ lastCharacterAnchor: val }),
   setViewState: (val) => set({ viewState: val }),
   setCurrentProgress: (val) => set({ currentProgress: val }),
+  pushProgress: (progress) => set((state) => {
+    const totalPasses = progress.totalPasses || 5
+    const statuses = [...state.passStatuses]
+    while (statuses.length < totalPasses) statuses.push('pending')
+    for (let i = 0; i < progress.pass - 1; i++) {
+      if (i < statuses.length && (statuses[i] === 'pending' || statuses[i] === 'running')) {
+        statuses[i] = 'completed'
+      }
+    }
+    const idx = progress.pass - 1
+    if (idx >= 0 && idx < statuses.length) {
+      statuses[idx] = progress.status === 'completed' ? 'completed'
+        : progress.status === 'retrying' ? 'retrying'
+        : progress.status === 'failed' ? 'failed'
+        : 'running'
+    }
+
+    const base = ((progress.pass - 1) / totalPasses) * 100
+    const stepBonus = progress.status === 'completed'
+      ? (1 / totalPasses) * 100
+      : (0.5 / totalPasses) * 100
+    const pct = Math.min(Math.round(base + stepBonus), 100)
+
+    let cards = state.passCards
+    if (progress.passData) {
+      const pd = progress.passData as { pass: number }
+      const exists = (state.passCards as Array<{ pass: number }>).some((c) => c.pass === pd.pass)
+      if (!exists) cards = [...state.passCards, progress.passData]
+    }
+
+    return {
+      currentProgress: progress,
+      passStatuses: statuses,
+      passCards: cards,
+      progressPercentage: pct,
+    }
+  }),
+  resetProgress: () => set({
+    currentProgress: null,
+    passStatuses: [],
+    passCards: [],
+    progressPercentage: 0,
+  }),
 })
 
 const createConfigSlice: StateCreator<DirectorStore, [], [], ConfigSlice> = (set) => ({

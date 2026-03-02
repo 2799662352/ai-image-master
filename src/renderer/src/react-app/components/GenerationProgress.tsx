@@ -1,5 +1,6 @@
-import { useState, useEffect, useMemo } from 'react'
-import type { PipelineProgress, PassCardData } from '../../services/pipeline/types'
+import { useState, useMemo } from 'react'
+import type { PassCardData } from '../../services/pipeline/types'
+import { useDirectorStore } from '../stores/useDirectorStore'
 
 type PassStatus = 'pending' | 'running' | 'completed' | 'retrying' | 'failed'
 
@@ -26,62 +27,18 @@ const STATUS_DISPLAY: Record<PassStatus, { text: string; color: string }> = {
   failed:    { text: '✗ 失败',    color: 'text-red-400' },
 }
 
-interface GenerationProgressProps {
-  progress: PipelineProgress | null
-}
+export function GenerationProgress() {
+  const progress = useDirectorStore((s) => s.currentProgress)
+  const passStatuses = useDirectorStore((s) => s.passStatuses)
+  const passCards = useDirectorStore((s) => s.passCards) as PassCardData[]
+  const percentage = useDirectorStore((s) => s.progressPercentage)
 
-export function GenerationProgress({ progress }: GenerationProgressProps) {
   const [viewingRaw, setViewingRaw] = useState<PassCardData | null>(null)
   const totalPasses = progress?.totalPasses ?? 5
   const passDefs = useMemo(
     () => totalPasses <= 4 ? PASS_DEFS_FAST : PASS_DEFS_FULL,
     [totalPasses],
   )
-
-  const [passStatuses, setPassStatuses] = useState<PassStatus[]>(
-    () => Array(totalPasses).fill('pending') as PassStatus[]
-  )
-  const [passCards, setPassCards] = useState<PassCardData[]>([])
-  const [percentage, setPercentage] = useState(0)
-
-  useEffect(() => {
-    setPassStatuses(Array(totalPasses).fill('pending') as PassStatus[])
-  }, [totalPasses])
-
-  useEffect(() => {
-    if (!progress) return
-
-    setPassStatuses((prev) => {
-      const next = [...prev]
-      while (next.length < totalPasses) next.push('pending')
-      for (let i = 0; i < progress.pass - 1; i++) {
-        if (i < next.length && (next[i] === 'pending' || next[i] === 'running')) {
-          next[i] = 'completed'
-        }
-      }
-      const idx = progress.pass - 1
-      if (idx >= 0 && idx < next.length) {
-        next[idx] = progress.status === 'completed' ? 'completed'
-          : progress.status === 'retrying' ? 'retrying'
-          : progress.status === 'failed' ? 'failed'
-          : 'running'
-      }
-      return next
-    })
-
-    const base = ((progress.pass - 1) / totalPasses) * 100
-    const stepBonus = progress.status === 'completed'
-      ? (1 / totalPasses) * 100
-      : (0.5 / totalPasses) * 100
-    setPercentage(Math.min(Math.round(base + stepBonus), 100))
-
-    if (progress.passData) {
-      setPassCards((prev) => {
-        const exists = prev.some((c) => c.pass === progress.passData!.pass)
-        return exists ? prev : [...prev, progress.passData!]
-      })
-    }
-  }, [progress, totalPasses])
 
   const currentLabel = progress?.label ?? '准备中…'
   const currentPass = progress?.pass ?? 0
@@ -113,7 +70,7 @@ export function GenerationProgress({ progress }: GenerationProgressProps) {
 
       <div className={`grid gap-2 ${totalPasses <= 4 ? 'grid-cols-2' : 'grid-cols-2 sm:grid-cols-3'}`}>
         {passDefs.map((def, idx) => {
-          const status = passStatuses[idx] ?? 'pending'
+          const status: PassStatus = (passStatuses[idx] as PassStatus) ?? 'pending'
           const display = STATUS_DISPLAY[status]
           const isActive = status === 'running'
           return (
