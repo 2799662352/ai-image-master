@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useDirectorStore } from '../stores/useDirectorStore'
 
-export default function ModeSelector() {
+export function ModeSelector() {
   const currentMode = useDirectorStore((s) => s.currentMode)
   const setMode = useDirectorStore((s) => s.setMode)
   const [multiSceneText, setMultiSceneText] = useState('')

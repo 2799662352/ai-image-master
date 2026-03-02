@@ -1,6 +1,6 @@
 import { useDirectorStore } from '../stores/useDirectorStore'
 
-export default function ImageCountSlider() {
+export function ImageCountSlider() {
   const imageCount = useDirectorStore((s) => s.imageCount)
   const setImageCount = useDirectorStore((s) => s.setImageCount)
 

@@ -24,7 +24,7 @@ const RESOLUTION_OPTIONS = [
 const selectClass =
   'w-full px-3 py-2 bg-white bg-opacity-90 border border-white border-opacity-30 rounded-none text-gray-800 font-medium focus:outline-none focus:ring-2 focus:ring-purple-400'
 
-export default function RatioResolutionSelector() {
+export function RatioResolutionSelector() {
   const currentRatio = useDirectorStore((s) => s.currentRatio)
   const setRatio = useDirectorStore((s) => s.setRatio)
   const currentResolution = useDirectorStore((s) => s.currentResolution)
