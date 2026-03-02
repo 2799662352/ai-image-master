@@ -97,14 +97,19 @@ function extractVarsForDesignAndAssemble(state: DirectorState): Record<string, s
 }
 
 function extractVarsForVerify(state: DirectorState): Record<string, string> {
+  const characterAnchors = state.characters?.characters?.map((c: any) =>
+    `- ${c.name}: ${c.anchor}`
+  ).join('\n') || '(none)'
+
+  const panelDetails = state.panels?.map((p: any, i: number) => {
+    const prompt = state.prompts?.[i]?.prompt || ''
+    return `Panel ${p.id} [${p.shot}]: ${p.desc}${p.lighting ? ` | Light: ${p.lighting}` : ''}${prompt ? `\n  Prompt: ${prompt.slice(0, 200)}${prompt.length > 200 ? '...' : ''}` : ''}`
+  }).join('\n') || '(none)'
+
   return {
-    scene_env: state.scene?.env || '',
-    character_anchors_summary: state.characters?.characters?.map((c: any) =>
-      `${c.name}: ${c.anchor}`
-    ).join('; ') || '',
-    panels_summary_short: state.panels?.map((p: any) =>
-      `${p.id}: ${p.shot} - ${p.desc}`
-    ).join('; ') || '',
+    scene_env: state.scene?.env || '(unknown)',
+    character_anchors_summary: characterAnchors,
+    panels_summary_short: panelDetails,
   }
 }
 
@@ -496,7 +501,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         }
         userContent.push({
           type: 'text' as const,
-          text: `检查以下分镜的角色一致性、镜头连续性和叙事流畅度，给出评分和问题列表。\n\n分镜详情:\n${vars.panels_summary_short}`,
+          text: `Verify the following storyboard for consistency. Check all 4 dimensions (character, lighting, narrative, spatial) and score 0-10.\n\nScene: ${vars.scene_env}\n\nCharacter Anchors:\n${vars.character_anchors_summary}\n\nPanels:\n${vars.panels_summary_short}`,
         })
         const raw = await structured.invoke([
           { role: 'system', content: systemPrompt },
