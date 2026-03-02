@@ -16,6 +16,7 @@ async function compressAndConvert(file: File): Promise<string> {
         maxSizeMB,
         maxWidthOrHeight: maxDim,
         useWebWorker: true,
+        libURL: './cdn/browser-image-compression/browser-image-compression.js',
         fileType: file.type,
       })
     } catch {
