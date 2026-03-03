@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ReferenceImageUpload } from './components/ReferenceImageUpload'
 import { ModeSelector } from './components/ModeSelector'
 import { TemplateSelector } from './components/TemplateSelector'
@@ -13,10 +13,22 @@ import { useDirectorGeneration } from './hooks/useDirectorGeneration'
 import { useDirectorStore } from './stores/useDirectorStore'
 import { getDirectorSkillLoadStats, getDirectorSkillsFromConfig, reloadDirectorSkills } from '../services/pipeline/prompt-loader'
 
+function syncGlobalModelToStore(): void {
+  const api = (window as any).aiImageAPI
+  const model = api?.model || api?.currentModel || ''
+  if (model) useDirectorStore.getState().setVisionModel(model)
+}
+
 export function DirectorApp() {
   const [isRefreshingSkills, setIsRefreshingSkills] = useState(false)
   const isRefreshingSkillsRef = useRef(false)
   const viewState = useDirectorStore((s) => s.viewState)
+
+  useEffect(() => {
+    syncGlobalModelToStore()
+    const interval = setInterval(syncGlobalModelToStore, 2000)
+    return () => clearInterval(interval)
+  }, [])
   const generatedResults = useDirectorStore((s) => s.generatedResults)
   const skipVerify = useDirectorStore((s) => s.skipVerify)
   const scoreThreshold = useDirectorStore((s) => s.scoreThreshold)
