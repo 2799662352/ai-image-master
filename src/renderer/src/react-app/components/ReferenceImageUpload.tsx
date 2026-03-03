@@ -2,68 +2,7 @@ import { useRef, useCallback, useState, useTransition, type DragEvent, type Mous
 import { useDirectorStore } from '../stores/useDirectorStore'
 import { ExampleGallery } from './ExampleGallery'
 import { VisionModelSelector } from './VisionModelSelector'
-
-interface CompressResult {
-  base64: string
-  originalSize: number
-  finalSize: number
-  compressed: boolean
-}
-
-async function compressAndConvert(file: File): Promise<CompressResult> {
-  const maxSizeMB = 2
-  const maxDim = 2048
-  const originalSize = file.size
-  let processed = file
-  let compressed = false
-
-  if (file.size > maxSizeMB * 1024 * 1024) {
-    try {
-      const getImageCompression = (window as any).getImageCompression
-      const imageCompression = typeof getImageCompression === 'function'
-        ? await getImageCompression()
-        : (window as any).imageCompression
-      if (typeof imageCompression === 'function') {
-        const startTime = Date.now()
-        console.log(`🗜️ 压缩参考图: ${file.name}, 原大小: ${(file.size / (1024 * 1024)).toFixed(2)}MB`)
-        processed = await imageCompression(file, {
-          maxSizeMB,
-          maxWidthOrHeight: maxDim,
-          useWebWorker: true,
-          libURL: './cdn/browser-image-compression/browser-image-compression.js',
-          fileType: file.type,
-          initialQuality: 0.9,
-          alwaysKeepResolution: false,
-        })
-        compressed = true
-        const duration = ((Date.now() - startTime) / 1000).toFixed(1)
-        const ratio = ((1 - processed.size / file.size) * 100).toFixed(1)
-        console.log(
-          `✅ 压缩完成: ${file.name}\n` +
-          `   原大小: ${(file.size / (1024 * 1024)).toFixed(2)}MB\n` +
-          `   压缩后: ${(processed.size / (1024 * 1024)).toFixed(2)}MB\n` +
-          `   压缩率: ${ratio}%\n` +
-          `   ⏱️ 耗时: ${duration}秒`
-        )
-      }
-    } catch (e) {
-      console.warn(`[Director] 图片压缩失败，使用原图:`, e)
-      processed = file
-    }
-  }
-
-  const base64 = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      const result = reader.result as string
-      resolve(result.split(',')[1])
-    }
-    reader.onerror = reject
-    reader.readAsDataURL(processed)
-  })
-
-  return { base64, originalSize, finalSize: processed.size, compressed }
-}
+import { compressAndConvert } from '../../utils/image-compress'
 
 const MAX_IMAGES = 8
 

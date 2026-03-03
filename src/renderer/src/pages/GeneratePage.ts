@@ -5,6 +5,7 @@
  */
 
 import { BasePage, type AppInterface } from './BasePage'
+import { compressImage } from '../utils/image-compress'
 
 // Types
 export interface ReferenceImage {
@@ -761,53 +762,8 @@ export class GeneratePage extends BasePage {
   }
 
   private async compressImageIfNeeded(file: File): Promise<File> {
-    const MAX_SIZE_MB = 2
-    const fileSizeMB = file.size / (1024 * 1024)
-
-    if (fileSizeMB <= MAX_SIZE_MB) {
-      console.log(`文件 ${file.name} 大小为 ${fileSizeMB.toFixed(2)}MB，无需压缩`)
-      return file
-    }
-
     try {
-      // V18: 使用延迟加载获取 imageCompression
-      const getImageCompression = (window as any).getImageCompression
-      if (typeof getImageCompression !== 'function') {
-        console.warn('图片压缩库加载器未就绪，跳过压缩')
-        return file
-      }
-      
-      const imageCompression = await getImageCompression()
-      
-      const options = {
-        maxSizeMB: 2,
-        maxWidthOrHeight: 2048,
-        useWebWorker: true,
-        // 使用本地文件避免 CSP 限制（Worker 默认从 CDN 加载脚本会被阻止）
-        libURL: './cdn/browser-image-compression/browser-image-compression.js',
-        fileType: file.type,
-        initialQuality: 0.9,
-        alwaysKeepResolution: false
-      }
-
-      console.log(`⏩ 开始压缩文件: ${file.name}, 原大小: ${fileSizeMB.toFixed(2)}MB`)
-      const startTime = Date.now()
-
-      const compressedFile = await imageCompression(file, options)
-
-      const duration = ((Date.now() - startTime) / 1000).toFixed(1)
-      const compressedSizeMB = compressedFile.size / (1024 * 1024)
-      const compressionRatio = ((1 - compressedFile.size / file.size) * 100).toFixed(1)
-
-      console.log(
-        `✅ 压缩完成: ${file.name}\n` +
-        `   原大小: ${fileSizeMB.toFixed(2)}MB\n` +
-        `   压缩后: ${compressedSizeMB.toFixed(2)}MB\n` +
-        `   压缩率: ${compressionRatio}%\n` +
-        `   ⏱️ 耗时: ${duration}秒`
-      )
-
-      return compressedFile
+      return await compressImage(file)
     } catch (error: any) {
       console.error('图片压缩失败:', error)
       this.showToast(this.t('generate.messages.compressionFailed', { error: error.message }), 'warning')
