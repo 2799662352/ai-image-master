@@ -499,7 +499,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       const systemPrompt = self.resolveSystemPrompt(
         'designAndAssemble', vars,
         skillContext,
-        `You are a professional storyboard artist and prompt engineer. Design shots and write prompts for ${vars.panel_count} panels.\nScene: ${vars.scene_env}${userDirective ? `\n\n${userDirective}` : ''}`,
+        `You are an experienced film director, storyboard artist and prompt engineer. Design shots and write prompts for ${vars.panel_count} panels.\nScene: ${vars.scene_env}${userDirective ? `\n\n${userDirective}` : ''}`,
       )
       const userText = state.sceneDescription
         ? `【创意简报】"${state.sceneDescription}"\n\n围绕上述创意方向，发挥你作为专业导演的演出能力，为 ${state.layout.panelCount} 个分镜设计镜头并生成图像提示词。镜头设计、构图、光影、叙事节奏由你全权决定。`
