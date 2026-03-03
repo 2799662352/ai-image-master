@@ -42,4 +42,18 @@ describe('useDirectorGeneration', () => {
     const { result } = renderHook(() => useDirectorGeneration())
     expect(result.current.getLayoutConfig('unknown')).toEqual({ rows: 2, cols: 3, panelCount: 6 })
   })
+
+  it('should use portrait layout map when orientation is manually set to portrait', () => {
+    useDirectorStore.getState().setLayoutOrientation('portrait')
+    const { result } = renderHook(() => useDirectorGeneration())
+    expect(result.current.getLayoutConfig('6grid')).toEqual({ rows: 3, cols: 2, panelCount: 6 })
+    expect(result.current.getLayoutConfig('2closeup')).toEqual({ rows: 2, cols: 1, panelCount: 2 })
+  })
+
+  it('should keep portrait mapping when ratio becomes auto in auto mode', () => {
+    useDirectorStore.getState().setRatio('9:16')
+    useDirectorStore.getState().setRatio('auto')
+    const { result } = renderHook(() => useDirectorGeneration())
+    expect(result.current.getLayoutConfig('6grid')).toEqual({ rows: 3, cols: 2, panelCount: 6 })
+  })
 })

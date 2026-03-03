@@ -9,6 +9,7 @@ export interface DirectorReferenceImage {
 }
 
 export type LayoutType = '6grid' | '4grid' | '2closeup' | '9grid' | '16grid' | '25grid'
+export type LayoutOrientation = 'landscape' | 'portrait'
 export type GenerationMode = 'single' | 'multi'
 
 export interface GeneratedResult {
@@ -69,6 +70,8 @@ interface GenerationSlice {
 
 interface ConfigSlice {
   currentLayout: LayoutType
+  currentLayoutOrientation: LayoutOrientation
+  isLayoutOrientationAuto: boolean
   currentTemplate: string | null
   currentMode: GenerationMode
   currentRatio: string
@@ -81,6 +84,8 @@ interface ConfigSlice {
   skipVerify: boolean
   scoreThreshold: number
   setLayout: (val: LayoutType) => void
+  setLayoutOrientation: (val: LayoutOrientation) => void
+  setLayoutOrientationAuto: (val: boolean) => void
   setTemplate: (val: string | null) => void
   setMode: (val: GenerationMode) => void
   setRatio: (val: string) => void
@@ -107,7 +112,56 @@ const DEFAULT_SCORE_THRESHOLD = 6
 const SCORE_THRESHOLD_STORAGE_KEY = 'director.score-threshold.v1'
 const DIRECTOR_VISION_MODEL_STORAGE_KEY = 'director.vision-model.v1'
 const DIRECTOR_RATIO_STORAGE_KEY = 'director.ratio.v1'
+const DIRECTOR_LAYOUT_ORIENTATION_STORAGE_KEY = 'director.layout-orientation.v1'
+const DIRECTOR_LAYOUT_ORIENTATION_AUTO_STORAGE_KEY = 'director.layout-orientation-auto.v1'
 const DEFAULT_DIRECTOR_RATIO = '16:9'
+
+function getOrientationByRatio(ratio: string, fallback: LayoutOrientation = 'landscape'): LayoutOrientation {
+  const [w, h] = ratio.split(':').map(Number)
+  if (!Number.isFinite(w) || !Number.isFinite(h)) return fallback
+  return w < h ? 'portrait' : 'landscape'
+}
+
+function readLayoutOrientation(): LayoutOrientation | null {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return null
+    const raw = window.localStorage.getItem(DIRECTOR_LAYOUT_ORIENTATION_STORAGE_KEY)
+    if (raw === 'portrait' || raw === 'landscape') return raw
+    return null
+  } catch {
+    return null
+  }
+}
+
+function writeLayoutOrientation(value: LayoutOrientation): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return
+    window.localStorage.setItem(DIRECTOR_LAYOUT_ORIENTATION_STORAGE_KEY, value)
+  } catch {
+    // Best-effort persistence.
+  }
+}
+
+function readLayoutOrientationAuto(): boolean {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return true
+    const raw = window.localStorage.getItem(DIRECTOR_LAYOUT_ORIENTATION_AUTO_STORAGE_KEY)
+    if (raw === 'false') return false
+    if (raw === 'true') return true
+    return true
+  } catch {
+    return true
+  }
+}
+
+function writeLayoutOrientationAuto(value: boolean): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return
+    window.localStorage.setItem(DIRECTOR_LAYOUT_ORIENTATION_AUTO_STORAGE_KEY, String(value))
+  } catch {
+    // Best-effort persistence.
+  }
+}
 
 function readScoreThreshold(): number {
   try {
@@ -195,9 +249,11 @@ const initialGenerationState: Pick<
 
 const initialConfigState: Pick<
   ConfigSlice,
-  'currentLayout' | 'currentTemplate' | 'currentMode' | 'currentRatio' | 'currentResolution' | 'sceneDescription' | 'multiSceneText' | 'visionModel' | 'imageModel' | 'imageCount' | 'skipVerify' | 'scoreThreshold'
+  'currentLayout' | 'currentLayoutOrientation' | 'isLayoutOrientationAuto' | 'currentTemplate' | 'currentMode' | 'currentRatio' | 'currentResolution' | 'sceneDescription' | 'multiSceneText' | 'visionModel' | 'imageModel' | 'imageCount' | 'skipVerify' | 'scoreThreshold'
 > = {
   currentLayout: '6grid',
+  currentLayoutOrientation: readLayoutOrientation() || getOrientationByRatio(readDirectorRatio()),
+  isLayoutOrientationAuto: readLayoutOrientationAuto(),
   currentTemplate: 'cinematic',
   currentMode: 'single',
   currentRatio: readDirectorRatio(),
@@ -290,11 +346,39 @@ const createGenerationSlice: StateCreator<DirectorStore, [], [], GenerationSlice
 const createConfigSlice: StateCreator<DirectorStore, [], [], ConfigSlice> = (set) => ({
   ...initialConfigState,
   setLayout: (val) => set({ currentLayout: val }),
+  setLayoutOrientation: (val) => {
+    writeLayoutOrientation(val)
+    writeLayoutOrientationAuto(false)
+    set({
+      currentLayoutOrientation: val,
+      isLayoutOrientationAuto: false,
+    })
+  },
+  setLayoutOrientationAuto: (val) => set((state) => {
+    const nextOrientation = val
+      ? getOrientationByRatio(state.currentRatio, state.currentLayoutOrientation)
+      : state.currentLayoutOrientation
+    writeLayoutOrientationAuto(val)
+    writeLayoutOrientation(nextOrientation)
+    return {
+      isLayoutOrientationAuto: val,
+      currentLayoutOrientation: nextOrientation,
+    }
+  }),
   setTemplate: (val) => set({ currentTemplate: val }),
   setMode: (val) => set({ currentMode: val }),
   setRatio: (val) => {
     writeDirectorRatio(val)
-    set({ currentRatio: val })
+    set((state) => ({
+      currentRatio: val,
+      currentLayoutOrientation: (() => {
+        const nextOrientation = state.isLayoutOrientationAuto
+          ? getOrientationByRatio(val, state.currentLayoutOrientation)
+          : state.currentLayoutOrientation
+        writeLayoutOrientation(nextOrientation)
+        return nextOrientation
+      })(),
+    }))
   },
   setResolution: (val) => set({ currentResolution: val }),
   setSceneDescription: (val) => set({ sceneDescription: val }),

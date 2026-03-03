@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useDirectorStore } from '../useDirectorStore'
 
 describe('useDirectorStore', () => {
   beforeEach(() => {
+    window.localStorage.clear()
     useDirectorStore.getState().reset()
   })
 
@@ -11,9 +12,11 @@ describe('useDirectorStore', () => {
     expect(state.referenceImages).toEqual([])
     expect(state.isGenerating).toBe(false)
     expect(state.currentLayout).toBe('6grid')
-    expect(state.currentRatio).toBe('3:2')
+    expect(typeof state.currentRatio).toBe('string')
+    expect(['landscape', 'portrait']).toContain(state.currentLayoutOrientation)
+    expect(state.isLayoutOrientationAuto).toBe(true)
     expect(state.currentResolution).toBe('2K')
-    expect(state.currentTemplate).toBeNull()
+    expect(state.currentTemplate).toBe('cinematic')
     expect(state.visionModel).toBe('')
     expect(state.sceneDescription).toBe('')
   })
@@ -69,7 +72,53 @@ describe('useDirectorStore', () => {
     useDirectorStore.getState().setRatio('16:9')
     useDirectorStore.getState().setResolution('4K')
     expect(useDirectorStore.getState().currentRatio).toBe('16:9')
+    expect(useDirectorStore.getState().currentLayoutOrientation).toBe('landscape')
     expect(useDirectorStore.getState().currentResolution).toBe('4K')
+  })
+
+  it('should auto-switch orientation with ratio when auto mode is enabled', () => {
+    useDirectorStore.getState().setRatio('9:16')
+    expect(useDirectorStore.getState().currentLayoutOrientation).toBe('portrait')
+    useDirectorStore.getState().setRatio('16:9')
+    expect(useDirectorStore.getState().currentLayoutOrientation).toBe('landscape')
+  })
+
+  it('should keep current orientation when ratio becomes auto in auto mode', () => {
+    useDirectorStore.getState().setRatio('9:16')
+    expect(useDirectorStore.getState().currentLayoutOrientation).toBe('portrait')
+    useDirectorStore.getState().setRatio('auto')
+    expect(useDirectorStore.getState().currentLayoutOrientation).toBe('portrait')
+  })
+
+  it('should keep manual orientation override when ratio changes', () => {
+    useDirectorStore.getState().setLayoutOrientation('portrait')
+    useDirectorStore.getState().setRatio('16:9')
+    expect(useDirectorStore.getState().isLayoutOrientationAuto).toBe(false)
+    expect(useDirectorStore.getState().currentLayoutOrientation).toBe('portrait')
+  })
+
+  it('should restore auto orientation when setLayoutOrientationAuto(true)', () => {
+    useDirectorStore.getState().setLayoutOrientation('portrait')
+    useDirectorStore.getState().setRatio('16:9')
+    useDirectorStore.getState().setLayoutOrientationAuto(true)
+    expect(useDirectorStore.getState().isLayoutOrientationAuto).toBe(true)
+    expect(useDirectorStore.getState().currentLayoutOrientation).toBe('landscape')
+  })
+
+  it('should persist orientation and auto flag to localStorage', () => {
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+
+    useDirectorStore.getState().setLayoutOrientation('portrait')
+    expect(setItemSpy).toHaveBeenCalledWith('director.layout-orientation.v1', 'portrait')
+    expect(setItemSpy).toHaveBeenCalledWith('director.layout-orientation-auto.v1', 'false')
+
+    useDirectorStore.getState().setLayoutOrientationAuto(true)
+    expect(setItemSpy).toHaveBeenCalledWith('director.layout-orientation-auto.v1', 'true')
+
+    useDirectorStore.getState().setRatio('16:9')
+    expect(setItemSpy).toHaveBeenCalledWith('director.layout-orientation.v1', 'landscape')
+
+    setItemSpy.mockRestore()
   })
 
   it('should set scene description', () => {

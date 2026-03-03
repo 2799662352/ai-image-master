@@ -1,5 +1,7 @@
 import { useCallback } from 'react'
 import { useDirectorStore } from '../stores/useDirectorStore'
+import type { LayoutOrientation } from '../stores/useDirectorStore'
+import { useShallow } from 'zustand/react/shallow'
 import { getStyleInstructions } from '../constants/templates'
 import type { PipelineProgress } from '@/services/pipeline/types'
 
@@ -44,39 +46,51 @@ const PORTRAIT_LAYOUT_MAP: Record<string, LayoutConfig> = {
   '25grid': { rows: 5, cols: 5, panelCount: 25 },
 }
 
-function isPortraitRatio(ratio: string): boolean {
-  const parts = ratio.split(':').map(Number)
-  if (parts.length !== 2 || parts.some(isNaN)) return false
-  return parts[0] < parts[1]
-}
-
-function getLayoutMap(ratio: string): Record<string, LayoutConfig> {
-  return isPortraitRatio(ratio) ? PORTRAIT_LAYOUT_MAP : LANDSCAPE_LAYOUT_MAP
+function getLayoutMapByOrientation(orientation: LayoutOrientation): Record<string, LayoutConfig> {
+  return orientation === 'portrait' ? PORTRAIT_LAYOUT_MAP : LANDSCAPE_LAYOUT_MAP
 }
 
 const DEFAULT_LAYOUT: LayoutConfig = LANDSCAPE_LAYOUT_MAP['6grid']
 
 export function useDirectorGeneration() {
-  const referenceImages = useDirectorStore((s) => s.referenceImages)
-  const isGenerating = useDirectorStore((s) => s.isGenerating)
-  const visionModel = useDirectorStore((s) => s.visionModel)
-  const sceneDescription = useDirectorStore((s) => s.sceneDescription)
-  const currentLayout = useDirectorStore((s) => s.currentLayout)
-  const currentTemplate = useDirectorStore((s) => s.currentTemplate)
-  const currentMode = useDirectorStore((s) => s.currentMode)
-  const currentRatio = useDirectorStore((s) => s.currentRatio)
-  const currentResolution = useDirectorStore((s) => s.currentResolution)
-  const imageCount = useDirectorStore((s) => s.imageCount)
-  const multiSceneText = useDirectorStore((s) => s.multiSceneText)
-  const skipVerify = useDirectorStore((s) => s.skipVerify)
-  const scoreThreshold = useDirectorStore((s) => s.scoreThreshold)
+  const {
+    referenceImages,
+    isGenerating,
+    visionModel,
+    sceneDescription,
+    currentLayout,
+    currentTemplate,
+    currentMode,
+    currentRatio,
+    currentLayoutOrientation,
+    currentResolution,
+    imageCount,
+    multiSceneText,
+    skipVerify,
+    scoreThreshold,
+  } = useDirectorStore(useShallow((s) => ({
+    referenceImages: s.referenceImages,
+    isGenerating: s.isGenerating,
+    visionModel: s.visionModel,
+    sceneDescription: s.sceneDescription,
+    currentLayout: s.currentLayout,
+    currentTemplate: s.currentTemplate,
+    currentMode: s.currentMode,
+    currentRatio: s.currentRatio,
+    currentLayoutOrientation: s.currentLayoutOrientation,
+    currentResolution: s.currentResolution,
+    imageCount: s.imageCount,
+    multiSceneText: s.multiSceneText,
+    skipVerify: s.skipVerify,
+    scoreThreshold: s.scoreThreshold,
+  })))
 
   const canGenerate = referenceImages.length > 0 && !isGenerating
 
   const getLayoutConfig = useCallback((layout?: string): LayoutConfig => {
-    const map = getLayoutMap(currentRatio)
-    return map[layout ?? currentLayout] ?? DEFAULT_LAYOUT
-  }, [currentLayout, currentRatio])
+    const map = getLayoutMapByOrientation(currentLayoutOrientation)
+    return map[layout ?? currentLayout] ?? map['6grid'] ?? DEFAULT_LAYOUT
+  }, [currentLayout, currentLayoutOrientation])
 
   const executeSingle = useCallback(
     async (
@@ -216,6 +230,7 @@ export function useDirectorGeneration() {
       currentLayout,
       currentTemplate,
       currentRatio,
+      currentLayoutOrientation,
       currentResolution,
       imageCount,
       skipVerify,

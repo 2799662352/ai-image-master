@@ -1,13 +1,38 @@
-import { useDirectorStore, type LayoutType } from '../stores/useDirectorStore'
+import { useDirectorStore, type LayoutOrientation, type LayoutType } from '../stores/useDirectorStore'
 
-const LAYOUT_OPTIONS: { value: LayoutType; label: string; dims: string; cols: number; rows: number }[] = [
-  { value: '2closeup', label: '特写', dims: '1×2', cols: 1, rows: 2 },
-  { value: '4grid', label: '四宫格', dims: '2×2', cols: 2, rows: 2 },
-  { value: '6grid', label: '六宫格', dims: '2×3', cols: 2, rows: 3 },
-  { value: '9grid', label: '九宫格', dims: '3×3', cols: 3, rows: 3 },
-  { value: '16grid', label: '十六宫格', dims: '4×4', cols: 4, rows: 4 },
-  { value: '25grid', label: '二十五宫格', dims: '5×5', cols: 5, rows: 5 },
+const LAYOUT_OPTIONS: { value: LayoutType; label: string }[] = [
+  { value: '2closeup', label: '特写' },
+  { value: '4grid', label: '四宫格' },
+  { value: '6grid', label: '六宫格' },
+  { value: '9grid', label: '九宫格' },
+  { value: '16grid', label: '十六宫格' },
+  { value: '25grid', label: '二十五宫格' },
 ]
+
+const ORIENTATION_OPTIONS: { value: LayoutOrientation; label: string; icon: string }[] = [
+  { value: 'landscape', label: '横屏', icon: 'fas fa-arrows-alt-h' },
+  { value: 'portrait', label: '竖屏', icon: 'fas fa-arrows-alt-v' },
+]
+
+function getLayoutShape(layout: LayoutType, orientation: LayoutOrientation): { cols: number; rows: number } {
+  const isPortrait = orientation === 'portrait'
+  switch (layout) {
+    case '2closeup':
+      return isPortrait ? { cols: 1, rows: 2 } : { cols: 2, rows: 1 }
+    case '4grid':
+      return { cols: 2, rows: 2 }
+    case '6grid':
+      return isPortrait ? { cols: 2, rows: 3 } : { cols: 3, rows: 2 }
+    case '9grid':
+      return { cols: 3, rows: 3 }
+    case '16grid':
+      return { cols: 4, rows: 4 }
+    case '25grid':
+      return { cols: 5, rows: 5 }
+    default:
+      return isPortrait ? { cols: 2, rows: 3 } : { cols: 3, rows: 2 }
+  }
+}
 
 function GridPreview({ cols, rows }: { cols: number; rows: number }) {
   return (
@@ -24,7 +49,12 @@ function GridPreview({ cols, rows }: { cols: number; rows: number }) {
 
 export function LayoutSelector() {
   const currentLayout = useDirectorStore((s) => s.currentLayout)
+  const currentRatio = useDirectorStore((s) => s.currentRatio)
+  const currentLayoutOrientation = useDirectorStore((s) => s.currentLayoutOrientation)
+  const isLayoutOrientationAuto = useDirectorStore((s) => s.isLayoutOrientationAuto)
   const setLayout = useDirectorStore((s) => s.setLayout)
+  const setLayoutOrientation = useDirectorStore((s) => s.setLayoutOrientation)
+  const setLayoutOrientationAuto = useDirectorStore((s) => s.setLayoutOrientationAuto)
 
   return (
     <div className="bg-[#27272A] rounded-none p-4">
@@ -32,8 +62,47 @@ export function LayoutSelector() {
         <i className="fas fa-th mr-2 text-blue-400" />
         布局选择
       </h3>
+      <div className="mb-3">
+        <div className="grid grid-cols-2 gap-2">
+          {ORIENTATION_OPTIONS.map((opt) => {
+            const selected = currentLayoutOrientation === opt.value
+            return (
+              <button
+                key={opt.value}
+                onClick={() => setLayoutOrientation(opt.value)}
+                className={`px-3 py-2 text-sm rounded-none border transition-all ${
+                  selected
+                    ? 'bg-blue-500 bg-opacity-30 ring-2 ring-blue-400 border-blue-300'
+                    : 'bg-[#09090B] border-[#3F3F46] text-white hover:border-white hover:border-opacity-30'
+                }`}
+              >
+                <i className={`${opt.icon} mr-2`} />
+                {opt.label}
+              </button>
+            )
+          })}
+        </div>
+        <div className="mt-2 text-xs text-white/60 flex items-center justify-between">
+          <span>
+            {isLayoutOrientationAuto
+              ? (currentRatio === 'auto'
+                  ? '跟随比例：auto（保持当前方向）'
+                  : `跟随比例：${currentRatio}`)
+              : '手动覆盖方向中'}
+          </span>
+          {!isLayoutOrientationAuto && (
+            <button
+              onClick={() => setLayoutOrientationAuto(true)}
+              className="text-blue-300 hover:text-blue-200 transition-colors"
+            >
+              恢复跟随比例
+            </button>
+          )}
+        </div>
+      </div>
       <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
         {LAYOUT_OPTIONS.map((opt) => {
+          const shape = getLayoutShape(opt.value, currentLayoutOrientation)
           const selected = currentLayout === opt.value
           return (
             <button
@@ -45,8 +114,8 @@ export function LayoutSelector() {
                   : 'bg-[#09090B] border border-[#3F3F46] hover:border-white hover:border-opacity-30'
               }`}
             >
-              <GridPreview cols={opt.cols} rows={opt.rows} />
-              <div className="text-xs text-white opacity-50">{opt.dims}</div>
+              <GridPreview cols={shape.cols} rows={shape.rows} />
+              <div className="text-xs text-white opacity-50">{shape.cols}×{shape.rows}</div>
               <div className="text-xs text-white font-medium">{opt.label}</div>
             </button>
           )
