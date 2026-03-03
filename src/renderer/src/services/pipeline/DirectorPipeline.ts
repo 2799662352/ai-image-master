@@ -177,7 +177,7 @@ function extractVarsForContactSheet(state: DirectorState): Record<string, string
   )
 
   const userDirection = state.sceneDescription
-    ? `\n\nUSER'S CREATIVE DIRECTION (highest priority): "${state.sceneDescription}"`
+    ? `\n\nCREATIVE BRIEF (narrative context): "${state.sceneDescription}"`
     : ''
 
   return {
@@ -348,7 +348,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
             content: [
               ...BasePipeline.buildImageContent(state.inputImages, 'high'),
               { type: 'text' as const, text: state.sceneDescription
-                ? `【用户创意方向】${state.sceneDescription}\n\n请基于用户的创意方向分析参考图片。用户描述的场景意图优先于图片中的细节。`
+                ? `【导演创意简报】${state.sceneDescription}\n\n参考图片提供视觉基础（风格、人物、场景需保持一致），创意简报提供叙事方向。两者共同构成创作约束，请在此基础上进行专业场景分析。`
                 : '分析这张图片的场景' },
             ],
           },
@@ -490,10 +490,10 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       const vars = extractVarsForDesignAndAssemble(state)
       const userDirective = state.sceneDescription
         ? [
-            `## HIGHEST PRIORITY — User's Creative Direction (MUST FOLLOW)`,
+            `## Director's Creative Brief`,
             `"${state.sceneDescription}"`,
-            `This is the user's explicit creative intent. Every panel MUST directly serve this direction.`,
-            `If any AI-analyzed detail conflicts with the user's direction, the user's direction ALWAYS wins.`,
+            `This is the creative brief setting the theme and narrative direction. As the professional director, you have full authority over shot design, composition, lighting, pacing, and visual storytelling.`,
+            `Use the brief as your creative compass — not a shot-by-shot script. Elevate the vision with your cinematic expertise.`,
           ].join('\n')
         : ''
       const systemPrompt = self.resolveSystemPrompt(
@@ -502,7 +502,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         `You are a professional storyboard artist and prompt engineer. Design shots and write prompts for ${vars.panel_count} panels.\nScene: ${vars.scene_env}${userDirective ? `\n\n${userDirective}` : ''}`,
       )
       const userText = state.sceneDescription
-        ? `【最高优先级指令】用户明确要求："${state.sceneDescription}"\n\n请严格按照用户意图，为 ${state.layout.panelCount} 个分镜设计镜头并生成图像提示词。每个分镜都必须服务于用户描述的场景和叙事。`
+        ? `【创意简报】"${state.sceneDescription}"\n\n围绕上述创意方向，发挥你作为专业导演的演出能力，为 ${state.layout.panelCount} 个分镜设计镜头并生成图像提示词。镜头设计、构图、光影、叙事节奏由你全权决定。`
         : `为 ${state.layout.panelCount} 个分镜设计镜头并生成图像提示词`
       const designContent: Array<any> = []
       if (state.inputImages.length > 0) {
