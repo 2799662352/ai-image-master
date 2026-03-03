@@ -47,20 +47,24 @@ interface GenerationSlice {
   generatedResults: GeneratedResult[]
   lastAnalysisResult: string | null
   lastCharacterAnchor: string | null
+  lastPipelineState: Record<string, unknown> | null
   viewState: ViewState
   currentProgress: ProgressData | null
   passStatuses: PassStatus[]
   passCards: unknown[]
   progressPercentage: number
+  regenerateCount: number
   setIsGenerating: (val: boolean) => void
   setIsProcessingFiles: (val: boolean) => void
   setGeneratedResults: (val: GeneratedResult[] | ((prev: GeneratedResult[]) => GeneratedResult[])) => void
   setLastAnalysisResult: (val: string | null) => void
   setLastCharacterAnchor: (val: string | null) => void
+  setLastPipelineState: (val: Record<string, unknown> | null) => void
   setViewState: (val: ViewState) => void
   setCurrentProgress: (val: ProgressData | null) => void
   pushProgress: (progress: ProgressData) => void
   resetProgress: () => void
+  setRegenerateCount: (val: number) => void
 }
 
 interface ConfigSlice {
@@ -180,9 +184,11 @@ const initialGenerationState: Pick<
   generatedResults: [],
   lastAnalysisResult: null,
   lastCharacterAnchor: null,
+  lastPipelineState: null,
   viewState: 'idle',
   currentProgress: null,
   passStatuses: [],
+  regenerateCount: 2,
   passCards: [],
   progressPercentage: 0,
 }
@@ -233,7 +239,9 @@ const createGenerationSlice: StateCreator<DirectorStore, [], [], GenerationSlice
     })),
   setLastAnalysisResult: (val) => set({ lastAnalysisResult: val }),
   setLastCharacterAnchor: (val) => set({ lastCharacterAnchor: val }),
+  setLastPipelineState: (val) => set({ lastPipelineState: val }),
   setViewState: (val) => set({ viewState: val }),
+  setRegenerateCount: (val) => set({ regenerateCount: val }),
   setCurrentProgress: (val) => set({ currentProgress: val }),
   pushProgress: (progress) => set((state) => {
     // UI shows pass 0 (selectSkills) through pass N, so total slots = totalPasses + 1

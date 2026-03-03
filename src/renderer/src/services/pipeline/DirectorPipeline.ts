@@ -72,6 +72,14 @@ export type DirectorState = z.infer<typeof stateSchema>
 
 // ==================== Template Variable Extractors ====================
 
+function normalizePanels(input: unknown): Array<Record<string, unknown>> | null {
+  if (Array.isArray(input)) return input as Array<Record<string, unknown>>
+  if (input && typeof input === 'object' && Array.isArray((input as any).panels)) {
+    return (input as any).panels as Array<Record<string, unknown>>
+  }
+  return null
+}
+
 function extractVarsForDesignAndAssemble(state: DirectorState): Record<string, string> {
   let retryBlock = ''
   if (state.retryFeedback) {
@@ -98,11 +106,12 @@ function extractVarsForDesignAndAssemble(state: DirectorState): Record<string, s
 }
 
 function extractVarsForVerify(state: DirectorState): Record<string, string> {
+  const panelItems = normalizePanels((state as any).panels)
   const characterAnchors = state.characters?.characters?.map((c: any) =>
     `- ${c.name}: ${c.anchor}`
   ).join('\n') || '(none)'
 
-  const panelDetails = state.panels?.map((p: any, i: number) => {
+  const panelDetails = panelItems?.map((p: any, i: number) => {
     const prompt = state.prompts?.[i]?.prompt || ''
     return `Panel ${p.id} [${p.shot}]: ${p.desc}${p.lighting ? ` | Light: ${p.lighting}` : ''}${prompt ? `\n  Prompt: ${prompt.slice(0, 200)}${prompt.length > 200 ? '...' : ''}` : ''}`
   }).join('\n') || '(none)'
@@ -786,9 +795,11 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
   }
 
   assembleResult(state: DirectorState): DirectorResult {
-    const panels = state.panels
+    const panelItems = normalizePanels((state as any).panels)
+
+    const panels = panelItems
       ? {
-          panels: state.panels.map((panel, index) => ({
+          panels: panelItems.map((panel: any, index: number) => ({
             ...panel,
             prompt: state.prompts?.[index]?.prompt || '',
             negativePrompt: state.prompts?.[index]?.negativePrompt || '',
@@ -890,6 +901,97 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
     const totalElapsed = Date.now() - pipelineStart
     console.log(`[DirectorPipeline] 管线完成 (${totalPasses} passes)，总耗时 ${(totalElapsed / 1000).toFixed(1)}s`)
+    return this.postProcess(this.assembleResult(finalState))
+  }
+
+  /**
+   * 仅重新生成图片（跳过 pass 0-4，复用之前的分镜/角色/场景数据）
+   */
+  async regenerateImages(
+    previousState: Partial<DirectorState>,
+    imageCount: number,
+    onProgress?: (progress: PipelineProgress) => void
+  ): Promise<DirectorResult> {
+    await initDirectorSkills()
+
+    const { getApiService } = await import('../api/ApiService')
+    const apiService = getApiService()
+
+    const state = { ...previousState, currentImageCount: imageCount } as DirectorState
+    const prompts = state.prompts || []
+    const passNum = state.skipVerify ? 4 : 5
+    const appliedSkills = this.getSkillsForPhase('generateImages', state as Record<string, unknown>)
+
+    const t0 = Date.now()
+
+    onProgress?.({
+      pass: passNum,
+      totalPasses: passNum + 1,
+      label: `重新生成图片中 (0/${imageCount})...`,
+      status: 'running',
+    })
+
+    const vars = extractVarsForContactSheet(state)
+    const tpl = getPromptTemplate('generateImages')
+    const compositePrompt = tpl
+      ? renderTemplate(tpl.template, vars)
+      : [
+          `Cinematic Contact Sheet, ONE single master image, ${vars.grid_rows} rows x ${vars.grid_cols} columns storyboard grid, ${vars.panel_count} panels total.`,
+          `STRICT GRID: every panel EXACTLY ${vars.panel_ratio} (${vars.panel_orientation}), edge-to-edge, thin 1-2px dark dividers only.`,
+          'NO text, NO labels, NO captions, NO annotations, NO panel numbers.',
+          vars.character_anchor_line,
+          vars.style_instructions,
+          `Panel descriptions:\n${vars.panel_descriptions}`,
+        ].filter(Boolean).join(' ')
+
+    const negativePrompt = prompts[0]?.negativePrompt ||
+      'blurry, deformed, bad anatomy, watermark, signature, text, labels, captions, panel numbers, irregular panels, asymmetric grid, unequal panels'
+    const referenceImages = state.inputImages.map(img => `data:${img.mimeType};base64,${img.data}`)
+
+    const results = await this.runWithConcurrency(
+      imageCount,
+      Math.max(1, imageCount),
+      async (i) => {
+        try {
+          const result = await apiService.generateImage({
+            prompt: compositePrompt,
+            negativePrompt,
+            ratio: state.ratio,
+            resolution: state.resolution,
+            referenceImages,
+          })
+          const url = result.success
+            ? (result.images?.[0] || result.urls?.[0] || '')
+            : ''
+
+          onProgress?.({
+            pass: passNum,
+            totalPasses: passNum + 1,
+            label: `重新生成图片中 (${i + 1}/${imageCount})...`,
+            status: 'running',
+            data: { type: 'image_generated', index: i, total: imageCount, url, prompt: compositePrompt },
+          })
+
+          return { id: i + 1, url, prompt: compositePrompt, error: result.success ? undefined : result.error }
+        } catch (error) {
+          return { id: i + 1, url: '', prompt: compositePrompt, error: error instanceof Error ? error.message : String(error) }
+        }
+      },
+    )
+
+    const elapsed = Date.now() - t0
+    const passData = DirectorPipeline.buildPassCardData('generateImages', { pass: passNum, label: '重新生成图片' }, { images: results }, elapsed, appliedSkills)
+    onProgress?.({
+      pass: passNum,
+      totalPasses: passNum + 1,
+      label: `重新生成完成 (${(elapsed / 1000).toFixed(1)}s)`,
+      status: 'completed',
+      elapsed,
+      passData,
+    })
+
+    const finalState = { ...state, images: results }
+    console.log(`[DirectorPipeline] 重新生成图片完成，${imageCount} 张，耗时 ${(elapsed / 1000).toFixed(1)}s`)
     return this.postProcess(this.assembleResult(finalState))
   }
 }

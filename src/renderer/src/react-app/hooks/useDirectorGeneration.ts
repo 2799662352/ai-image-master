@@ -176,7 +176,29 @@ export function useDirectorGeneration() {
           if (result.scene) store.setLastAnalysisResult(JSON.stringify(result.scene))
           if (result.characters) store.setLastCharacterAnchor(JSON.stringify(result.characters))
 
-          // 历史记录保存不应阻塞主流程收尾；后台异步即可
+          const normalizedPanels = Array.isArray((result as any)?.panels)
+            ? (result as any).panels
+            : Array.isArray((result as any)?.panels?.panels)
+              ? (result as any).panels.panels
+              : null
+
+          store.setLastPipelineState({
+            inputImages: referenceImages.map((img) => ({ data: img.data, mimeType: img.mimeType })),
+            sceneDescription,
+            layout: layoutConfig,
+            template: currentTemplate ?? '',
+            styleInstructions: resolvedStyle,
+            ratio: currentRatio,
+            resolution: currentResolution,
+            skipVerify,
+            scoreThreshold,
+            scene: result.scene,
+            characters: result.characters,
+            panels: normalizedPanels,
+            prompts: result.prompts,
+            report: result.report,
+          })
+
           void saveToHistory(mappedImages, sceneDescription, currentRatio)
 
           return result
@@ -203,5 +225,48 @@ export function useDirectorGeneration() {
     ]
   )
 
-  return { canGenerate, isGenerating, startGeneration, getLayoutConfig }
+  const regenerateImages = useCallback(
+    async (
+      count: number,
+      onProgress?: (progress: PipelineProgress) => void,
+    ) => {
+      const store = useDirectorStore.getState()
+      const prevState = store.lastPipelineState
+      if (!prevState) {
+        throw new Error('没有可复用的分镜数据，请先完整生成一次')
+      }
+
+      store.setIsGenerating(true)
+      try {
+        const { getDirectorPipelineService } = await import(
+          '@/services/ServiceBridge'
+        )
+        const pipeline = await getDirectorPipelineService(visionModel)
+        if (!pipeline) {
+          throw new Error('Failed to initialize pipeline service')
+        }
+
+        const result = await pipeline.regenerateImages(prevState, count, onProgress)
+
+        const mappedImages = (result.images ?? []).map((img: any) => ({
+          url: img.url,
+          prompt: img.prompt,
+          timestamp: Date.now(),
+        }))
+
+        store.setGeneratedResults((prev) => [...prev, ...mappedImages])
+
+        void saveToHistory(mappedImages, String((prevState as any).sceneDescription || ''), currentRatio)
+
+        return result
+      } finally {
+        useDirectorStore.getState().setIsGenerating(false)
+      }
+    },
+    [visionModel, currentRatio],
+  )
+
+  const canRegenerate = useDirectorStore((s) => s.lastPipelineState !== null) && !isGenerating
+
+  return { canGenerate, canRegenerate, isGenerating, startGeneration, regenerateImages, getLayoutConfig }
 }

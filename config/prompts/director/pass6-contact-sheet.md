@@ -15,6 +15,7 @@ STRICT GRID GEOMETRY RULES:
 - NO margins, NO padding, NO header/footer area outside the grid.
 - NO text, NO labels, NO captions, NO annotations, NO panel numbers inside or outside the panels.
 - Each panel is a distinct camera shot — NO blending between panels.
+- MATCH the visual style of the reference images exactly (photorealistic stays photorealistic, anime stays anime).
 
 {{character_anchor_line}}
 {{style_instructions}}

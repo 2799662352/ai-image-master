@@ -1,5 +1,8 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useDirectorStore } from '../stores/useDirectorStore'
+import { useDirectorGeneration } from '../hooks/useDirectorGeneration'
+
+const REGEN_COUNT_OPTIONS = [1, 2, 3, 4, 5, 6, 8, 10]
 
 function downloadImage(url: string, filename: string) {
   const a = document.createElement('a')
@@ -33,18 +36,41 @@ function getThumbnailCols(count: number): string {
 
 export function ResultsGallery() {
   const generatedResults = useDirectorStore((s) => s.generatedResults)
+  const regenerateCount = useDirectorStore((s) => s.regenerateCount)
+  const setRegenerateCount = useDirectorStore((s) => s.setRegenerateCount)
+  const pushProgress = useDirectorStore((s) => s.pushProgress)
+  const { canRegenerate, isGenerating, regenerateImages } = useDirectorGeneration()
   const [currentIndex, setCurrentIndex] = useState(0)
   const [gridOpen, setGridOpen] = useState(false)
   const [focusedIndex, setFocusedIndex] = useState(0)
+  const [regenDropdownOpen, setRegenDropdownOpen] = useState(false)
+
+  const handleRegenerate = useCallback(async () => {
+    setRegenDropdownOpen(false)
+    try {
+      await regenerateImages(regenerateCount, (progress) => {
+        pushProgress(progress as any)
+      })
+    } catch (err) {
+      console.error('[ResultsGallery] 重新生图失败:', err)
+    }
+  }, [regenerateCount, regenerateImages, pushProgress])
 
   const successResults = generatedResults.filter((r) => !!r.url)
   const allUrls = successResults.map((r) => r.url)
+  const prevCountRef = useRef(successResults.length)
 
   useEffect(() => {
-    setCurrentIndex(0)
+    const prevCount = prevCountRef.current
+    prevCountRef.current = successResults.length
+    if (successResults.length > prevCount && prevCount > 0) {
+      setCurrentIndex(prevCount)
+    } else if (prevCount === 0) {
+      setCurrentIndex(0)
+    }
     setGridOpen(false)
     setFocusedIndex(0)
-  }, [generatedResults])
+  }, [successResults.length])
 
   const navigate = useCallback(
     (direction: 1 | -1) => {
@@ -107,6 +133,47 @@ export function ResultsGallery() {
                 <i className="fas fa-download" />
                 全部下载
               </button>
+            )}
+            {canRegenerate && (
+              <div className="relative">
+                <div className="flex items-center">
+                  <button
+                    onClick={handleRegenerate}
+                    disabled={isGenerating}
+                    className="text-xs text-black bg-[#FCE300] hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed px-3 py-1 flex items-center gap-1.5 cursor-pointer transition-all font-semibold"
+                  >
+                    <i className={`fas ${isGenerating ? 'fa-spinner fa-spin' : 'fa-redo'}`} />
+                    重新生图 ×{regenerateCount}
+                  </button>
+                  <button
+                    onClick={() => setRegenDropdownOpen(!regenDropdownOpen)}
+                    disabled={isGenerating}
+                    className="text-xs text-black bg-[#FCE300] hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed px-1.5 py-1 border-l border-black/20 cursor-pointer transition-all"
+                  >
+                    <i className="fas fa-caret-down" />
+                  </button>
+                </div>
+                {regenDropdownOpen && (
+                  <div className="absolute right-0 top-full mt-1 bg-[#27272A] border border-[#3F3F46] shadow-xl z-50 min-w-[120px]">
+                    <div className="px-3 py-1.5 text-[10px] text-white opacity-40 border-b border-[#3F3F46]">
+                      生成数量
+                    </div>
+                    {REGEN_COUNT_OPTIONS.map((n) => (
+                      <button
+                        key={n}
+                        onClick={() => { setRegenerateCount(n); setRegenDropdownOpen(false) }}
+                        className={`w-full text-left px-3 py-1.5 text-xs cursor-pointer transition-colors ${
+                          n === regenerateCount
+                            ? 'text-[#FCE300] bg-white/5'
+                            : 'text-white hover:bg-white/10'
+                        }`}
+                      >
+                        {n} 张
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>
