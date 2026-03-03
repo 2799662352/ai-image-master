@@ -22,6 +22,7 @@ files:
   - "!**/playwright.config.*"
   - "!**/vitest.config.*"
   - "!**/*.md"
+  - "dist/renderer/data/**/*.md"
   - "!**/docs/**"
   - "!**/tests/**"
   - "!**/e2e/**"
