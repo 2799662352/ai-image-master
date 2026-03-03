@@ -22,6 +22,7 @@ import type {
 
 const MAX_RETRIES = 1
 const SCORE_THRESHOLD = 6
+const MAX_ANALYSIS_RETRIES = 2
 
 const stateSchema = z.object({
   scene: SceneAnalysisSchema.nullable().default(null),
@@ -47,6 +48,7 @@ const stateSchema = z.object({
     error: z.string().optional(),
   })).nullable().default(null),
   retryCount: z.number().default(0),
+  analysisRetryCount: z.number().default(0),
   retryFeedback: z.string().default(''),
   inputImages: z.array(z.object({
     data: z.string(),
@@ -62,6 +64,7 @@ const stateSchema = z.object({
   styleInstructions: z.string().default(''),
   ratio: z.string().default('3:2'),
   resolution: z.string().default('2K'),
+  semanticOrientation: z.enum(['landscape', 'portrait']).default('landscape'),
   currentImageCount: z.number().default(1),
   skipVerify: z.boolean().default(false),
   scoreThreshold: z.number().min(0).max(10).default(SCORE_THRESHOLD),
@@ -137,6 +140,24 @@ function getPanelOrientation(ratio: string, rows: number, cols: number): { orien
   return { orientation, panelRatio }
 }
 
+export function getSemanticOrientationInstruction(semanticOrientation?: string): string {
+  if (semanticOrientation === 'portrait') {
+    return 'SEMANTIC ORIENTATION PRIORITY: all panels must use portrait (vertical) composition and framing.'
+  }
+  if (semanticOrientation === 'landscape') {
+    return 'SEMANTIC ORIENTATION PRIORITY: all panels must use landscape (horizontal) composition and framing.'
+  }
+  return 'SEMANTIC ORIENTATION PRIORITY: preserve horizontal composition unless user intent explicitly requests vertical framing.'
+}
+
+export function shouldRetryAnalysis(state: { scene: { env?: string } | null; characters: { characters?: unknown[] } | null; analysisRetryCount: number }): 'retry' | 'continue' | 'abort' {
+  const sceneOk = state.scene && state.scene.env && state.scene.env !== '(analysis failed)'
+  const charsOk = state.characters && Array.isArray(state.characters.characters)
+  if (sceneOk || charsOk) return 'continue'
+  if (state.analysisRetryCount >= MAX_ANALYSIS_RETRIES) return 'abort'
+  return 'retry'
+}
+
 function extractVarsForContactSheet(state: DirectorState): Record<string, string> {
   const prompts = state.prompts || []
   const characters = state.characters?.characters || []
@@ -166,6 +187,7 @@ function extractVarsForContactSheet(state: DirectorState): Record<string, string
     overall_ratio: state.ratio,
     panel_ratio: panelRatio,
     panel_orientation: orientation,
+    semantic_orientation_instruction: getSemanticOrientationInstruction(state.semanticOrientation),
     user_direction: userDirection,
     global_section: globalSection,
     character_anchor_line: characters.map((c: any) => c.anchor).join('. '),
@@ -644,6 +666,37 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       }
     }
 
+    // ===== Analysis Gate: 空数据拦截 =====
+    const validateAnalysisFn = (state: DirectorState) => {
+      console.log(`[DirectorPipeline] validateAnalysis: scene=${!!state.scene?.env}, chars=${!!state.characters?.characters?.length}, retries=${state.analysisRetryCount}`)
+      return {}
+    }
+
+    const prepareAnalysisRetryFn = (state: DirectorState, config: any) => {
+      const count = state.analysisRetryCount + 1
+      console.warn(`[DirectorPipeline] Analysis data empty, retrying (${count}/${MAX_ANALYSIS_RETRIES})...`)
+      writer(config)?.({
+        type: 'pass_complete', pass: 1,
+        label: `场景/角色数据为空，重试中 (${count}/${MAX_ANALYSIS_RETRIES})...`,
+        elapsed: 0, passData: null,
+      })
+      return { analysisRetryCount: count, scene: null, characters: null }
+    }
+
+    const abortPipelineFn = (_state: DirectorState, config: any) => {
+      const msg = '场景分析和角色锚点均失败（可能是网络问题），管线终止。请检查网络后重试。'
+      console.error(`[DirectorPipeline] ${msg}`)
+      writer(config)?.({
+        type: 'pass_complete', pass: 1,
+        label: msg, elapsed: 0, passData: null,
+      })
+      return { images: [] }
+    }
+
+    const routeAfterAnalysis = (state: DirectorState): 'continue' | 'retry' | 'abort' => {
+      return shouldRetryAnalysis(state)
+    }
+
     // ===== Pass 5: Contact Sheet 图像生成 =====
     const generateImagesFn = async (state: DirectorState, config: any) => {
       const t0 = Date.now()
@@ -671,6 +724,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           : [
               `Cinematic Contact Sheet, ONE single master image, ${vars.grid_rows} rows x ${vars.grid_cols} columns storyboard grid, ${vars.panel_count} panels total.`,
               `STRICT GRID: every panel EXACTLY ${vars.panel_ratio} (${vars.panel_orientation}), edge-to-edge, thin 1-2px dark dividers only.`,
+              vars.semantic_orientation_instruction,
               'NO text, NO labels, NO captions, NO annotations, NO panel numbers.',
               vars.character_anchor_line,
               vars.style_instructions,
@@ -770,6 +824,9 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       .addNode('selectSkills', selectSkillsFn)
       .addNode('analyzeScene', analyzeSceneFn, { retryPolicy: retryLLM })
       .addNode('extractCharacterAnchors', extractCharacterAnchorsFn, { retryPolicy: retryLLM })
+      .addNode('validateAnalysis', validateAnalysisFn)
+      .addNode('prepareAnalysisRetry', prepareAnalysisRetryFn)
+      .addNode('abortPipeline', abortPipelineFn)
       .addNode('designAndAssemble', designAndAssembleFn)
       .addNode('verifyConsistency', verifyConsistencyFn)
       .addNode('prepareRetry', prepareRetryFn)
@@ -777,8 +834,15 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       .addEdge(START, 'selectSkills')
       .addEdge('selectSkills', 'analyzeScene')
       .addEdge('selectSkills', 'extractCharacterAnchors')
-      // Ensure design waits for both analysis branches (fan-in join).
-      .addEdge(['analyzeScene', 'extractCharacterAnchors'], 'designAndAssemble')
+      .addEdge(['analyzeScene', 'extractCharacterAnchors'], 'validateAnalysis')
+      .addConditionalEdges('validateAnalysis', routeAfterAnalysis, {
+        continue: 'designAndAssemble',
+        retry: 'prepareAnalysisRetry',
+        abort: 'abortPipeline',
+      })
+      .addEdge('prepareAnalysisRetry', 'analyzeScene')
+      .addEdge('prepareAnalysisRetry', 'extractCharacterAnchors')
+      .addEdge('abortPipeline', END)
       .addConditionalEdges('designAndAssemble', routeAfterDesign, {
         verify: 'verifyConsistency',
         generate: 'generateImages',
@@ -938,6 +1002,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       : [
           `Cinematic Contact Sheet, ONE single master image, ${vars.grid_rows} rows x ${vars.grid_cols} columns storyboard grid, ${vars.panel_count} panels total.`,
           `STRICT GRID: every panel EXACTLY ${vars.panel_ratio} (${vars.panel_orientation}), edge-to-edge, thin 1-2px dark dividers only.`,
+          vars.semantic_orientation_instruction,
           'NO text, NO labels, NO captions, NO annotations, NO panel numbers.',
           vars.character_anchor_line,
           vars.style_instructions,

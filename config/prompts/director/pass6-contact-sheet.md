@@ -11,6 +11,7 @@ STRICT GRID GEOMETRY RULES:
 - The entire image uses {{overall_ratio}} aspect ratio.
 - The grid is divided into EXACTLY {{grid_rows}} equal rows and {{grid_cols}} equal columns.
 - Every panel MUST be EXACTLY the same size — each panel is {{panel_ratio}} ({{panel_orientation}}).
+- {{semantic_orientation_instruction}}
 - Panels fill the ENTIRE image edge-to-edge with only thin 1-2px dark dividing lines between them.
 - NO margins, NO padding, NO header/footer area outside the grid.
 - NO text, NO labels, NO captions, NO annotations, NO panel numbers inside or outside the panels.

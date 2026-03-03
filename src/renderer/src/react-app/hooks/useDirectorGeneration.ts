@@ -63,6 +63,7 @@ export function useDirectorGeneration() {
     currentMode,
     currentRatio,
     currentLayoutOrientation,
+    currentSemanticOrientation,
     currentResolution,
     imageCount,
     multiSceneText,
@@ -78,6 +79,7 @@ export function useDirectorGeneration() {
     currentMode: s.currentMode,
     currentRatio: s.currentRatio,
     currentLayoutOrientation: s.currentLayoutOrientation,
+    currentSemanticOrientation: s.currentSemanticOrientation,
     currentResolution: s.currentResolution,
     imageCount: s.imageCount,
     multiSceneText: s.multiSceneText,
@@ -110,6 +112,7 @@ export function useDirectorGeneration() {
           layout: layoutConfig,
           template: currentTemplate ?? '',
           styleInstructions: resolvedStyle,
+          semanticOrientation: currentSemanticOrientation,
           ratio: currentRatio,
           resolution: currentResolution,
           currentImageCount: imageCount,
@@ -119,7 +122,7 @@ export function useDirectorGeneration() {
         onProgress,
       )
     },
-    [referenceImages, currentTemplate, currentRatio, currentResolution, imageCount, skipVerify, scoreThreshold],
+    [referenceImages, currentTemplate, currentSemanticOrientation, currentRatio, currentResolution, imageCount, skipVerify, scoreThreshold],
   )
 
   const startGeneration = useCallback(
@@ -202,6 +205,7 @@ export function useDirectorGeneration() {
             layout: layoutConfig,
             template: currentTemplate ?? '',
             styleInstructions: resolvedStyle,
+            semanticOrientation: currentSemanticOrientation,
             ratio: currentRatio,
             resolution: currentResolution,
             skipVerify,
@@ -231,6 +235,7 @@ export function useDirectorGeneration() {
       currentTemplate,
       currentRatio,
       currentLayoutOrientation,
+      currentSemanticOrientation,
       currentResolution,
       imageCount,
       skipVerify,

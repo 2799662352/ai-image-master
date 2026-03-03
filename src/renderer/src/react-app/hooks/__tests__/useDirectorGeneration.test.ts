@@ -1,10 +1,28 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { renderHook } from '@testing-library/react'
 import { useDirectorGeneration } from '../useDirectorGeneration'
 import { useDirectorStore } from '../../stores/useDirectorStore'
 
+const executeMock = vi.fn()
+
+vi.mock('@/services/ServiceBridge', () => ({
+  getDirectorPipelineService: vi.fn(async () => ({
+    execute: executeMock,
+  })),
+}))
+
 describe('useDirectorGeneration', () => {
   beforeEach(() => {
+    executeMock.mockReset()
+    executeMock.mockResolvedValue({
+      images: [],
+      prompts: [],
+      panels: [],
+      scene: null,
+      characters: null,
+      report: null,
+    })
+    window.localStorage.clear()
     useDirectorStore.getState().reset()
   })
 
@@ -55,5 +73,18 @@ describe('useDirectorGeneration', () => {
     useDirectorStore.getState().setRatio('auto')
     const { result } = renderHook(() => useDirectorGeneration())
     expect(result.current.getLayoutConfig('6grid')).toEqual({ rows: 3, cols: 2, panelCount: 6 })
+  })
+
+  it('should pass semantic orientation into pipeline input', async () => {
+    const store = useDirectorStore.getState()
+    store.addReferenceImage({ data: 'test', mimeType: 'image/jpeg', name: 'test.jpg' })
+    store.setSemanticOrientation('portrait')
+
+    const { result } = renderHook(() => useDirectorGeneration())
+    await result.current.startGeneration()
+
+    expect(executeMock).toHaveBeenCalled()
+    const firstCallInput = executeMock.mock.calls[0]?.[0]
+    expect(firstCallInput?.semanticOrientation).toBe('portrait')
   })
 })

@@ -15,6 +15,8 @@ describe('useDirectorStore', () => {
     expect(typeof state.currentRatio).toBe('string')
     expect(['landscape', 'portrait']).toContain(state.currentLayoutOrientation)
     expect(state.isLayoutOrientationAuto).toBe(true)
+    expect(['landscape', 'portrait']).toContain(state.currentSemanticOrientation)
+    expect(state.isSemanticOrientationAuto).toBe(true)
     expect(state.currentResolution).toBe('2K')
     expect(state.currentTemplate).toBe('cinematic')
     expect(state.visionModel).toBe('')
@@ -79,15 +81,38 @@ describe('useDirectorStore', () => {
   it('should auto-switch orientation with ratio when auto mode is enabled', () => {
     useDirectorStore.getState().setRatio('9:16')
     expect(useDirectorStore.getState().currentLayoutOrientation).toBe('portrait')
+    expect(useDirectorStore.getState().currentSemanticOrientation).toBe('portrait')
     useDirectorStore.getState().setRatio('16:9')
     expect(useDirectorStore.getState().currentLayoutOrientation).toBe('landscape')
+    expect(useDirectorStore.getState().currentSemanticOrientation).toBe('landscape')
   })
 
   it('should keep current orientation when ratio becomes auto in auto mode', () => {
     useDirectorStore.getState().setRatio('9:16')
     expect(useDirectorStore.getState().currentLayoutOrientation).toBe('portrait')
+    expect(useDirectorStore.getState().currentSemanticOrientation).toBe('portrait')
     useDirectorStore.getState().setRatio('auto')
     expect(useDirectorStore.getState().currentLayoutOrientation).toBe('portrait')
+    expect(useDirectorStore.getState().currentSemanticOrientation).toBe('portrait')
+  })
+
+  it('should store semantic orientation separately from layout orientation', () => {
+    const store = useDirectorStore.getState()
+    store.setLayoutOrientation('landscape')
+    store.setSemanticOrientation('portrait')
+    expect(useDirectorStore.getState().currentLayoutOrientation).toBe('landscape')
+    expect(useDirectorStore.getState().currentSemanticOrientation).toBe('portrait')
+    expect(useDirectorStore.getState().isLayoutOrientationAuto).toBe(false)
+    expect(useDirectorStore.getState().isSemanticOrientationAuto).toBe(false)
+  })
+
+  it('should keep semantic orientation when semantic auto mode and ratio becomes auto', () => {
+    const store = useDirectorStore.getState()
+    store.setRatio('9:16')
+    store.setSemanticOrientation('portrait')
+    store.setSemanticOrientationAuto(true)
+    store.setRatio('auto')
+    expect(useDirectorStore.getState().currentSemanticOrientation).toBe('portrait')
   })
 
   it('should keep manual orientation override when ratio changes', () => {
@@ -117,6 +142,13 @@ describe('useDirectorStore', () => {
 
     useDirectorStore.getState().setRatio('16:9')
     expect(setItemSpy).toHaveBeenCalledWith('director.layout-orientation.v1', 'landscape')
+
+    useDirectorStore.getState().setSemanticOrientation('portrait')
+    expect(setItemSpy).toHaveBeenCalledWith('director.semantic-orientation.v1', 'portrait')
+    expect(setItemSpy).toHaveBeenCalledWith('director.semantic-orientation-auto.v1', 'false')
+
+    useDirectorStore.getState().setSemanticOrientationAuto(true)
+    expect(setItemSpy).toHaveBeenCalledWith('director.semantic-orientation-auto.v1', 'true')
 
     setItemSpy.mockRestore()
   })

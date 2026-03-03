@@ -72,6 +72,8 @@ interface ConfigSlice {
   currentLayout: LayoutType
   currentLayoutOrientation: LayoutOrientation
   isLayoutOrientationAuto: boolean
+  currentSemanticOrientation: LayoutOrientation
+  isSemanticOrientationAuto: boolean
   currentTemplate: string | null
   currentMode: GenerationMode
   currentRatio: string
@@ -86,6 +88,8 @@ interface ConfigSlice {
   setLayout: (val: LayoutType) => void
   setLayoutOrientation: (val: LayoutOrientation) => void
   setLayoutOrientationAuto: (val: boolean) => void
+  setSemanticOrientation: (val: LayoutOrientation) => void
+  setSemanticOrientationAuto: (val: boolean) => void
   setTemplate: (val: string | null) => void
   setMode: (val: GenerationMode) => void
   setRatio: (val: string) => void
@@ -114,6 +118,8 @@ const DIRECTOR_VISION_MODEL_STORAGE_KEY = 'director.vision-model.v1'
 const DIRECTOR_RATIO_STORAGE_KEY = 'director.ratio.v1'
 const DIRECTOR_LAYOUT_ORIENTATION_STORAGE_KEY = 'director.layout-orientation.v1'
 const DIRECTOR_LAYOUT_ORIENTATION_AUTO_STORAGE_KEY = 'director.layout-orientation-auto.v1'
+const DIRECTOR_SEMANTIC_ORIENTATION_STORAGE_KEY = 'director.semantic-orientation.v1'
+const DIRECTOR_SEMANTIC_ORIENTATION_AUTO_STORAGE_KEY = 'director.semantic-orientation-auto.v1'
 const DEFAULT_DIRECTOR_RATIO = '16:9'
 
 function getOrientationByRatio(ratio: string, fallback: LayoutOrientation = 'landscape'): LayoutOrientation {
@@ -151,6 +157,47 @@ function readLayoutOrientationAuto(): boolean {
     return true
   } catch {
     return true
+  }
+}
+
+function readSemanticOrientation(): LayoutOrientation | null {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return null
+    const raw = window.localStorage.getItem(DIRECTOR_SEMANTIC_ORIENTATION_STORAGE_KEY)
+    if (raw === 'portrait' || raw === 'landscape') return raw
+    return null
+  } catch {
+    return null
+  }
+}
+
+function writeSemanticOrientation(value: LayoutOrientation): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return
+    window.localStorage.setItem(DIRECTOR_SEMANTIC_ORIENTATION_STORAGE_KEY, value)
+  } catch {
+    // Best-effort persistence.
+  }
+}
+
+function readSemanticOrientationAuto(): boolean {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return true
+    const raw = window.localStorage.getItem(DIRECTOR_SEMANTIC_ORIENTATION_AUTO_STORAGE_KEY)
+    if (raw === 'false') return false
+    if (raw === 'true') return true
+    return true
+  } catch {
+    return true
+  }
+}
+
+function writeSemanticOrientationAuto(value: boolean): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return
+    window.localStorage.setItem(DIRECTOR_SEMANTIC_ORIENTATION_AUTO_STORAGE_KEY, String(value))
+  } catch {
+    // Best-effort persistence.
   }
 }
 
@@ -231,7 +278,7 @@ const initialImageState: Pick<ImageSlice, 'referenceImages'> = {
 
 const initialGenerationState: Pick<
   GenerationSlice,
-  'isGenerating' | 'isProcessingFiles' | 'generatedResults' | 'lastAnalysisResult' | 'lastCharacterAnchor' | 'viewState' | 'currentProgress' | 'passStatuses' | 'passCards' | 'progressPercentage'
+  'isGenerating' | 'isProcessingFiles' | 'generatedResults' | 'lastAnalysisResult' | 'lastCharacterAnchor' | 'lastPipelineState' | 'viewState' | 'currentProgress' | 'passStatuses' | 'passCards' | 'progressPercentage' | 'regenerateCount'
 > = {
   isGenerating: false,
   isProcessingFiles: false,
@@ -249,11 +296,13 @@ const initialGenerationState: Pick<
 
 const initialConfigState: Pick<
   ConfigSlice,
-  'currentLayout' | 'currentLayoutOrientation' | 'isLayoutOrientationAuto' | 'currentTemplate' | 'currentMode' | 'currentRatio' | 'currentResolution' | 'sceneDescription' | 'multiSceneText' | 'visionModel' | 'imageModel' | 'imageCount' | 'skipVerify' | 'scoreThreshold'
+  'currentLayout' | 'currentLayoutOrientation' | 'isLayoutOrientationAuto' | 'currentSemanticOrientation' | 'isSemanticOrientationAuto' | 'currentTemplate' | 'currentMode' | 'currentRatio' | 'currentResolution' | 'sceneDescription' | 'multiSceneText' | 'visionModel' | 'imageModel' | 'imageCount' | 'skipVerify' | 'scoreThreshold'
 > = {
   currentLayout: '6grid',
   currentLayoutOrientation: readLayoutOrientation() || getOrientationByRatio(readDirectorRatio()),
   isLayoutOrientationAuto: readLayoutOrientationAuto(),
+  currentSemanticOrientation: readSemanticOrientation() || getOrientationByRatio(readDirectorRatio()),
+  isSemanticOrientationAuto: readSemanticOrientationAuto(),
   currentTemplate: 'cinematic',
   currentMode: 'single',
   currentRatio: readDirectorRatio(),
@@ -365,6 +414,25 @@ const createConfigSlice: StateCreator<DirectorStore, [], [], ConfigSlice> = (set
       currentLayoutOrientation: nextOrientation,
     }
   }),
+  setSemanticOrientation: (val) => {
+    writeSemanticOrientation(val)
+    writeSemanticOrientationAuto(false)
+    set({
+      currentSemanticOrientation: val,
+      isSemanticOrientationAuto: false,
+    })
+  },
+  setSemanticOrientationAuto: (val) => set((state) => {
+    const nextOrientation = val
+      ? getOrientationByRatio(state.currentRatio, state.currentSemanticOrientation)
+      : state.currentSemanticOrientation
+    writeSemanticOrientationAuto(val)
+    writeSemanticOrientation(nextOrientation)
+    return {
+      isSemanticOrientationAuto: val,
+      currentSemanticOrientation: nextOrientation,
+    }
+  }),
   setTemplate: (val) => set({ currentTemplate: val }),
   setMode: (val) => set({ currentMode: val }),
   setRatio: (val) => {
@@ -376,6 +444,13 @@ const createConfigSlice: StateCreator<DirectorStore, [], [], ConfigSlice> = (set
           ? getOrientationByRatio(val, state.currentLayoutOrientation)
           : state.currentLayoutOrientation
         writeLayoutOrientation(nextOrientation)
+        return nextOrientation
+      })(),
+      currentSemanticOrientation: (() => {
+        const nextOrientation = state.isSemanticOrientationAuto
+          ? getOrientationByRatio(val, state.currentSemanticOrientation)
+          : state.currentSemanticOrientation
+        writeSemanticOrientation(nextOrientation)
         return nextOrientation
       })(),
     }))

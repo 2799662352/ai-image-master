@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DirectorPipeline } from '../DirectorPipeline'
+import { DirectorPipeline, getSemanticOrientationInstruction, shouldRetryAnalysis } from '../DirectorPipeline'
 import type { PipelineConfig } from '../types'
 
 describe('DirectorPipeline parallel generate helper', () => {
@@ -51,6 +51,41 @@ describe('DirectorPipeline parallel generate helper', () => {
     )
 
     expect(results).toEqual(['item-0', 'item-1', 'item-2', 'item-3'])
+  })
+
+  it('semantic orientation instruction should match selected orientation', () => {
+    expect(getSemanticOrientationInstruction('portrait')).toContain('portrait')
+    expect(getSemanticOrientationInstruction('landscape')).toContain('landscape')
+  })
+
+  it('semantic orientation instruction falls back gracefully for undefined', () => {
+    const result = getSemanticOrientationInstruction(undefined)
+    expect(result).toContain('SEMANTIC ORIENTATION PRIORITY')
+    expect(result).toContain('horizontal')
+  })
+
+  it('shouldRetryAnalysis returns retry when scene and characters are null', () => {
+    expect(shouldRetryAnalysis({ scene: null, characters: null, analysisRetryCount: 0 })).toBe('retry')
+  })
+
+  it('shouldRetryAnalysis returns continue when scene has data', () => {
+    expect(shouldRetryAnalysis({
+      scene: { env: 'forest', subjects: [], style: '', story: '' },
+      characters: { characters: [] },
+      analysisRetryCount: 0,
+    })).toBe('continue')
+  })
+
+  it('shouldRetryAnalysis returns abort when max retries exceeded', () => {
+    expect(shouldRetryAnalysis({ scene: null, characters: null, analysisRetryCount: 2 })).toBe('abort')
+  })
+
+  it('shouldRetryAnalysis returns continue when only characters have data', () => {
+    expect(shouldRetryAnalysis({
+      scene: null,
+      characters: { characters: [{ name: 'hero', anchor: 'red cape' }] },
+      analysisRetryCount: 0,
+    })).toBe('continue')
   })
 })
 

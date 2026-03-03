@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow'
 import { useDirectorStore, type LayoutOrientation, type LayoutType } from '../stores/useDirectorStore'
 
 const LAYOUT_OPTIONS: { value: LayoutType; label: string }[] = [
@@ -13,6 +14,8 @@ const ORIENTATION_OPTIONS: { value: LayoutOrientation; label: string; icon: stri
   { value: 'landscape', label: '横屏', icon: 'fas fa-arrows-alt-h' },
   { value: 'portrait', label: '竖屏', icon: 'fas fa-arrows-alt-v' },
 ]
+
+const SQUARE_LAYOUTS: LayoutType[] = ['4grid', '9grid', '16grid', '25grid']
 
 function getLayoutShape(layout: LayoutType, orientation: LayoutOrientation): { cols: number; rows: number } {
   const isPortrait = orientation === 'portrait'
@@ -48,13 +51,39 @@ function GridPreview({ cols, rows }: { cols: number; rows: number }) {
 }
 
 export function LayoutSelector() {
-  const currentLayout = useDirectorStore((s) => s.currentLayout)
-  const currentRatio = useDirectorStore((s) => s.currentRatio)
-  const currentLayoutOrientation = useDirectorStore((s) => s.currentLayoutOrientation)
-  const isLayoutOrientationAuto = useDirectorStore((s) => s.isLayoutOrientationAuto)
-  const setLayout = useDirectorStore((s) => s.setLayout)
-  const setLayoutOrientation = useDirectorStore((s) => s.setLayoutOrientation)
-  const setLayoutOrientationAuto = useDirectorStore((s) => s.setLayoutOrientationAuto)
+  const {
+    currentLayout,
+    currentRatio,
+    currentLayoutOrientation,
+    isLayoutOrientationAuto,
+    setLayout,
+    setLayoutOrientation,
+    setLayoutOrientationAuto,
+    setSemanticOrientation,
+    setSemanticOrientationAuto,
+  } = useDirectorStore(useShallow((s) => ({
+    currentLayout: s.currentLayout,
+    currentRatio: s.currentRatio,
+    currentLayoutOrientation: s.currentLayoutOrientation,
+    isLayoutOrientationAuto: s.isLayoutOrientationAuto,
+    setLayout: s.setLayout,
+    setLayoutOrientation: s.setLayoutOrientation,
+    setLayoutOrientationAuto: s.setLayoutOrientationAuto,
+    setSemanticOrientation: s.setSemanticOrientation,
+    setSemanticOrientationAuto: s.setSemanticOrientationAuto,
+  })))
+
+  const isSquare = SQUARE_LAYOUTS.includes(currentLayout)
+
+  const handleOrientationClick = (val: LayoutOrientation) => {
+    setLayoutOrientation(val)
+    setSemanticOrientation(val)
+  }
+
+  const handleRestoreAuto = () => {
+    setLayoutOrientationAuto(true)
+    setSemanticOrientationAuto(true)
+  }
 
   return (
     <div className="bg-[#27272A] rounded-none p-4">
@@ -69,7 +98,7 @@ export function LayoutSelector() {
             return (
               <button
                 key={opt.value}
-                onClick={() => setLayoutOrientation(opt.value)}
+                onClick={() => handleOrientationClick(opt.value)}
                 className={`px-3 py-2 text-sm rounded-none border transition-all ${
                   selected
                     ? 'bg-blue-500 bg-opacity-30 ring-2 ring-blue-400 border-blue-300'
@@ -92,13 +121,18 @@ export function LayoutSelector() {
           </span>
           {!isLayoutOrientationAuto && (
             <button
-              onClick={() => setLayoutOrientationAuto(true)}
+              onClick={handleRestoreAuto}
               className="text-blue-300 hover:text-blue-200 transition-colors"
             >
               恢复跟随比例
             </button>
           )}
         </div>
+        {isSquare && !isLayoutOrientationAuto && (
+          <div className="mt-1 text-xs text-yellow-400/80">
+            方向强制已应用（拓扑不变，语义约束生效）
+          </div>
+        )}
       </div>
       <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
         {LAYOUT_OPTIONS.map((opt) => {

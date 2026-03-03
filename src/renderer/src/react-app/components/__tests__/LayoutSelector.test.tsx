@@ -35,4 +35,50 @@ describe('LayoutSelector', () => {
     fireEvent.click(screen.getByRole('button', { name: '恢复跟随比例' }))
     expect(screen.getByText('跟随比例：16:9')).toBeTruthy()
   })
+
+  it('clicking orientation button drives both layout and semantic orientation', () => {
+    const store = useDirectorStore.getState()
+    store.setRatio('16:9')
+
+    render(<LayoutSelector />)
+    fireEvent.click(screen.getByRole('button', { name: /竖屏/ }))
+
+    const state = useDirectorStore.getState()
+    expect(state.currentLayoutOrientation).toBe('portrait')
+    expect(state.currentSemanticOrientation).toBe('portrait')
+  })
+
+  it('shows topology-unchanged hint for square grids', () => {
+    const store = useDirectorStore.getState()
+    store.setLayout('9grid')
+    store.setLayoutOrientation('portrait')
+
+    render(<LayoutSelector />)
+    expect(screen.getByText(/拓扑不变/)).toBeTruthy()
+  })
+
+  it('does not show topology-unchanged hint for non-square grids', () => {
+    const store = useDirectorStore.getState()
+    store.setLayout('6grid')
+    store.setLayoutOrientation('portrait')
+
+    render(<LayoutSelector />)
+    expect(screen.queryByText(/拓扑不变/)).toBeNull()
+  })
+
+  it('restoring auto mode restores both layout and semantic auto flags', () => {
+    const store = useDirectorStore.getState()
+    store.setRatio('16:9')
+    store.setLayoutOrientation('portrait')
+    store.setSemanticOrientation('portrait')
+
+    render(<LayoutSelector />)
+    fireEvent.click(screen.getByRole('button', { name: '恢复跟随比例' }))
+
+    const state = useDirectorStore.getState()
+    expect(state.isLayoutOrientationAuto).toBe(true)
+    expect(state.isSemanticOrientationAuto).toBe(true)
+    expect(state.currentLayoutOrientation).toBe('landscape')
+    expect(state.currentSemanticOrientation).toBe('landscape')
+  })
 })
