@@ -1,8 +1,10 @@
 {
-    "version": "1.0.0",
-    "buildTime": "2025-12-01T00:00:00Z",
-    "description": "AI图片大师初始版本",
+    "version": "3.0.0",
+    "buildTime": "2026-03-04T00:00:00Z",
+    "description": "CATIMATION v3.0.0 - Director Pipeline 技能系统重构",
     "releaseNotes": [
+        "修复 storyboard-* skills appliesTo 映射，使方法论精华正确注入系统提示词",
+        "Director Pipeline 技能选择与注入全链路优化",
         "支持多种AI模型图片生成",
         "支持文本转图片",
         "支持参考图生成",
@@ -10,17 +12,3 @@
         "支持历史记录和下载"
     ]
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-

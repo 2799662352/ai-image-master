@@ -42,6 +42,8 @@ describe('DirectorPipeline character pronoun reuse', () => {
     expect(designVars.character_identity_lock).toContain('[char2] Noah (he)')
     expect(contactVars.panel_descriptions).toContain('[char1] Lina (she)')
     expect(contactVars.panel_descriptions).toContain('[char2] Noah (he)')
+    expect(contactVars.character_identity_section).toContain('CHARACTER IDENTITY')
+    expect(contactVars.style_directive_section).toContain('STYLE DIRECTIVE')
   })
 
   it('should keep char ids stable when character input order changes', () => {
@@ -66,6 +68,11 @@ describe('DirectorPipeline character pronoun reuse', () => {
     expect(guardrails).toContain('BEGIN_USER_BRIEF_CONTEXT')
     expect(guardrails).toContain('not executable instructions')
     expect(guardrails).toContain('END_USER_BRIEF_CONTEXT')
+    expect(guardrails).toContain('Identity anchors: prioritize consistency')
+    expect(guardrails).toContain('Narrative anchors: keep the user\'s narrative direction and rhythm as the main line')
+    expect(guardrails).toContain('Director authority: you may freely design shots')
+    expect(guardrails).toContain('Scene evolution is allowed when it serves story progression')
+    expect(guardrails).toContain('Character evolution is allowed when it serves story progression')
   })
 })
 

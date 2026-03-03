@@ -28,7 +28,9 @@ export function VisionModelSelector() {
       .then((r) => r.json())
       .then((data: VisionModelsData) => {
         setModelsData(data)
-        if (!useDirectorStore.getState().visionModel) {
+        const current = useDirectorStore.getState().visionModel
+        const existsInConfig = data.models.some((m) => m.id === current)
+        if (!current || !existsInConfig) {
           setVisionModel(data.defaultModel)
         }
       })
@@ -45,7 +47,9 @@ export function VisionModelSelector() {
   }, [open])
 
   const currentModel = modelsData?.models.find((m) => m.id === visionModel)
-  const label = currentModel ? `${currentModel.icon} ${currentModel.shortName}` : '选择模型'
+  const label = currentModel
+    ? `${currentModel.icon} ${currentModel.shortName}`
+    : '选择模型'
 
   return (
     <>

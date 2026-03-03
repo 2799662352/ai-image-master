@@ -1,7 +1,7 @@
 ---
 name: storyboard-physics
 description: Use when character or shot output needs physical-only descriptions with motion vectors, muscle tension, and quantified micro-expressions
-appliesTo: [character, shot]
+appliesTo: [extractCharacterAnchors, designAndAssemble]
 priority: 10
 ---
 

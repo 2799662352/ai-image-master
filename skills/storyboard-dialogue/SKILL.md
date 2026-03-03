@@ -1,7 +1,7 @@
 ---
 name: storyboard-dialogue
 description: Use when screenplay provides character names or dialogue that must be extracted verbatim, never fabricated or guessed from visual style
-appliesTo: [shot, verify]
+appliesTo: [designAndAssemble, verifyConsistency]
 priority: 10
 ---
 

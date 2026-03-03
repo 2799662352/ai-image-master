@@ -82,6 +82,9 @@ export function ReferenceImageUpload() {
             参考图片
           </h3>
           <div className="flex items-center gap-2">
+            <span className="text-[11px] text-purple-300/90 whitespace-nowrap">
+              视觉模型(分析)
+            </span>
             <VisionModelSelector />
             <ExampleGallery />
           </div>
@@ -125,6 +128,9 @@ export function ReferenceImageUpload() {
           参考图片 ({referenceImages.length}/{MAX_IMAGES})
         </h3>
         <div className="flex items-center gap-3">
+          <span className="text-[11px] text-purple-300/90 whitespace-nowrap">
+            视觉模型(分析)
+          </span>
           <VisionModelSelector />
           <ExampleGallery />
           {referenceImages.length > 1 && (

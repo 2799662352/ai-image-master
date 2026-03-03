@@ -57,6 +57,7 @@ export function useDirectorGeneration() {
     referenceImages,
     isGenerating,
     visionModel,
+    imageModel,
     sceneDescription,
     currentLayout,
     currentTemplate,
@@ -73,6 +74,7 @@ export function useDirectorGeneration() {
     referenceImages: s.referenceImages,
     isGenerating: s.isGenerating,
     visionModel: s.visionModel,
+    imageModel: s.imageModel,
     sceneDescription: s.sceneDescription,
     currentLayout: s.currentLayout,
     currentTemplate: s.currentTemplate,
@@ -89,6 +91,22 @@ export function useDirectorGeneration() {
 
   const canGenerate = referenceImages.length > 0 && !isGenerating
 
+  const resolveVisionModel = useCallback((): string => {
+    const model = (visionModel || '').trim()
+    if (!model) {
+      throw new Error('未检测到视觉模型，请先在导演模式中选择“视觉模型(分析)”')
+    }
+    return model
+  }, [visionModel])
+
+  const resolveImageModel = useCallback((): string => {
+    const globalModel =
+      localStorage.getItem('current_model') ||
+      (window as any).modelSelectorManagerTS?.getCurrentModelKey?.() ||
+      ''
+    return globalModel || imageModel
+  }, [imageModel])
+
   const getLayoutConfig = useCallback((layout?: string): LayoutConfig => {
     const map = getLayoutMapByOrientation(currentLayoutOrientation)
     return map[layout ?? currentLayout] ?? map['6grid'] ?? DEFAULT_LAYOUT
@@ -100,6 +118,7 @@ export function useDirectorGeneration() {
       scene: string,
       resolvedStyle: string,
       layoutConfig: LayoutConfig,
+      drawingModel: string,
       onProgress?: (progress: PipelineProgress) => void,
     ) => {
       return pipeline.execute(
@@ -113,6 +132,7 @@ export function useDirectorGeneration() {
           template: currentTemplate ?? '',
           styleInstructions: resolvedStyle,
           semanticOrientation: currentSemanticOrientation,
+          imageModel: drawingModel,
           ratio: currentRatio,
           resolution: currentResolution,
           currentImageCount: imageCount,
@@ -134,10 +154,20 @@ export function useDirectorGeneration() {
       store.setIsGenerating(true)
 
       try {
+        const analysisModel = resolveVisionModel()
+        const drawingModel = resolveImageModel()
+        if (!drawingModel) {
+          throw new Error('未检测到绘图模型，请先在顶部模型选择器中选择生图模型')
+        }
+        if (analysisModel === drawingModel) {
+          throw new Error('视觉模型与绘图模型不能混用，请分别设置“视觉模型(分析)”与顶部“绘图模型(出图)”')
+        }
+        store.setImageModel(drawingModel)
+
         const { getDirectorPipelineService } = await import(
           '@/services/ServiceBridge'
         )
-        const pipeline = await getDirectorPipelineService(visionModel)
+        const pipeline = await getDirectorPipelineService(analysisModel)
         if (!pipeline) {
           throw new Error('Failed to initialize pipeline service')
         }
@@ -155,7 +185,7 @@ export function useDirectorGeneration() {
 
           for (let i = 0; i < scenes.length; i++) {
             const result = await executeSingle(
-              pipeline, scenes[i], resolvedStyle, layoutConfig, onProgress,
+              pipeline, scenes[i], resolvedStyle, layoutConfig, drawingModel, onProgress,
             )
             if (result.images?.length) {
               const mapped = result.images.map((img: any) => ({
@@ -173,7 +203,7 @@ export function useDirectorGeneration() {
           }
         } else {
           const result = await executeSingle(
-            pipeline, sceneDescription, resolvedStyle, layoutConfig, onProgress,
+            pipeline, sceneDescription, resolvedStyle, layoutConfig, drawingModel, onProgress,
           )
           const mappedImages = (result.images ?? []).map((img: any) => ({
             url: img.url,
@@ -206,6 +236,7 @@ export function useDirectorGeneration() {
             template: currentTemplate ?? '',
             styleInstructions: resolvedStyle,
             semanticOrientation: currentSemanticOrientation,
+            imageModel: drawingModel,
             ratio: currentRatio,
             resolution: currentResolution,
             skipVerify,
@@ -227,6 +258,7 @@ export function useDirectorGeneration() {
     },
     [
       visionModel,
+      imageModel,
       referenceImages,
       sceneDescription,
       currentMode,
@@ -242,6 +274,8 @@ export function useDirectorGeneration() {
       scoreThreshold,
       getLayoutConfig,
       executeSingle,
+      resolveVisionModel,
+      resolveImageModel,
     ]
   )
 
@@ -258,15 +292,29 @@ export function useDirectorGeneration() {
 
       store.setIsGenerating(true)
       try {
+        const analysisModel = resolveVisionModel()
+        const drawingModel = resolveImageModel()
+        if (!drawingModel) {
+          throw new Error('未检测到绘图模型，请先在顶部模型选择器中选择生图模型')
+        }
+        if (analysisModel === drawingModel) {
+          throw new Error('视觉模型与绘图模型不能混用，请分别设置“视觉模型(分析)”与顶部“绘图模型(出图)”')
+        }
+        store.setImageModel(drawingModel)
+
         const { getDirectorPipelineService } = await import(
           '@/services/ServiceBridge'
         )
-        const pipeline = await getDirectorPipelineService(visionModel)
+        const pipeline = await getDirectorPipelineService(analysisModel)
         if (!pipeline) {
           throw new Error('Failed to initialize pipeline service')
         }
 
-        const result = await pipeline.regenerateImages(prevState, count, onProgress)
+        const result = await pipeline.regenerateImages(
+          { ...prevState, imageModel: drawingModel },
+          count,
+          onProgress
+        )
 
         const mappedImages = (result.images ?? []).map((img: any) => ({
           url: img.url,
@@ -283,7 +331,7 @@ export function useDirectorGeneration() {
         useDirectorStore.getState().setIsGenerating(false)
       }
     },
-    [visionModel, currentRatio],
+    [currentRatio, resolveVisionModel, resolveImageModel],
   )
 
   const canRegenerate = useDirectorStore((s) => s.lastPipelineState !== null) && !isGenerating

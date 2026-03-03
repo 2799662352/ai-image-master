@@ -125,6 +125,11 @@ export function buildNarrativeRhythmGuardrails(sceneDescription: string): string
   return [
     '## Narrative Rhythm Guardrails',
     wrappedBrief,
+    'Identity anchors: prioritize consistency for face, hairstyle, outfit, primary color palette, and signature weapon/accessory.',
+    'Narrative anchors: keep the user\'s narrative direction and rhythm as the main line.',
+    'Director authority: you may freely design shots, composition, lighting, blocking, and pacing, as long as identity and narrative recognizability are preserved.',
+    'Scene evolution is allowed when it serves story progression and narrative rhythm.',
+    'Character evolution is allowed when it serves story progression, while identity anchors remain recognizable and aligned.',
     'Preserve the user\'s intended narrative rhythm and progression.',
     'Enhance cinematic expression without changing story direction.',
     'Optimize pacing through shot language, not by rewriting narrative intent.',
@@ -200,6 +205,53 @@ export function getSemanticOrientationInstruction(semanticOrientation?: string):
   return 'SEMANTIC ORIENTATION PRIORITY: preserve horizontal composition unless user intent explicitly requests vertical framing.'
 }
 
+type VerifyReportLike = {
+  score?: number
+  issues?: string[]
+  faceConsistency?: number
+  outfitConsistency?: number
+  weaponConsistency?: number
+  styleContinuity?: number
+}
+
+export function pickLowItems(report: VerifyReportLike | null | undefined, threshold: number): string[] {
+  if (!report) return []
+  const pairs: Array<[string, number | undefined]> = [
+    ['face consistency', report.faceConsistency],
+    ['outfit consistency', report.outfitConsistency],
+    ['weapon consistency', report.weaponConsistency],
+    ['style continuity', report.styleContinuity],
+  ]
+  return pairs
+    .filter(([, value]) => typeof value === 'number' && Number.isFinite(value) && value < threshold)
+    .map(([name]) => name)
+}
+
+export function pickAffectedPanels(report: VerifyReportLike | null | undefined): number[] {
+  const text = Array.isArray(report?.issues) ? report!.issues.join('\n') : ''
+  const ids = Array.from(text.matchAll(/panel\s*(\d+)/gi)).map((m) => Number(m[1]))
+  return Array.from(new Set(ids))
+    .filter((n) => Number.isInteger(n) && n > 0)
+    .sort((a, b) => a - b)
+}
+
+export function buildRetryFeedback(report: VerifyReportLike | null | undefined, threshold: number): string {
+  const lowItems = pickLowItems(report, threshold)
+  const affectedPanels = pickAffectedPanels(report)
+  const issuesText = Array.isArray(report?.issues) && report!.issues.length > 0
+    ? `\n\nReported issues:\n${report!.issues.join('\n')}`
+    : ''
+
+  if (lowItems.length === 0) {
+    return `Soft correction only. Keep character identity and narrative rhythm stable; apply minimal local fixes.${issuesText}`
+  }
+
+  const panelText = affectedPanels.length > 0
+    ? affectedPanels.join(', ')
+    : 'minimal local subset'
+  return `Soft correction only. Fix only: ${lowItems.join(', ')}. Affected panels: ${panelText}. Keep all other panels unchanged.${issuesText}`
+}
+
 export function shouldRetryAnalysis(state: { scene: { env?: string } | null; characters: { characters?: unknown[] } | null; analysisRetryCount: number }): 'retry' | 'continue' | 'abort' {
   const sceneOk = state.scene && state.scene.env && state.scene.env !== '(analysis failed)'
   const charsOk = state.characters && Array.isArray(state.characters.characters)
@@ -230,6 +282,12 @@ export function extractVarsForContactSheet(state: DirectorState): Record<string,
     ? `\n\nCREATIVE BRIEF (narrative context): "${state.sceneDescription}"`
     : ''
   const characterIdentityLockSummary = buildCharacterIdentityLock(characters)
+  const characterIdentitySection = characterIdentityLockSummary
+    ? `CHARACTER IDENTITY:\n${characterIdentityLockSummary}`
+    : ''
+  const styleDirectiveSection = state.styleInstructions?.trim()
+    ? `STYLE DIRECTIVE:\n${state.styleInstructions.trim()}`
+    : 'STYLE DIRECTIVE:\nMatch the visual style of the reference images and keep stylistic continuity across all panels.'
 
   return {
     grid_rows: String(state.layout.rows),
@@ -241,6 +299,8 @@ export function extractVarsForContactSheet(state: DirectorState): Record<string,
     semantic_orientation_instruction: getSemanticOrientationInstruction(state.semanticOrientation),
     user_direction: userDirection,
     character_identity_lock_summary: characterIdentityLockSummary,
+    character_identity_section: characterIdentitySection,
+    style_directive_section: styleDirectiveSection,
     global_section: globalSection,
     character_anchor_line: characters.map((c: any) => c.anchor).join('. '),
     style_instructions: state.styleInstructions || '',
@@ -400,8 +460,8 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
             content: [
               ...BasePipeline.buildImageContent(state.inputImages, 'high'),
               { type: 'text' as const, text: state.sceneDescription
-                ? `【导演创意简报】${state.sceneDescription}\n\n参考图片提供视觉基础（风格、人物、场景需保持一致），创意简报提供叙事方向。两者共同构成创作约束，请在此基础上进行专业场景分析。`
-                : '分析这张图片的场景' },
+                ? `DIRECTOR CREATIVE BRIEF:\n${state.sceneDescription}\n\nReference images define the visual foundation (style, character identity, and scene continuity), while the brief defines narrative direction.\n\nOutput language requirement:\n- Write env/style/story in clear English first.\n- You may append concise Japanese support notes in parentheses if helpful.\n- Keep subjects as short English bullet-like phrases.\n`
+                : 'Analyze this image scene. Output in English first; optional concise Japanese support in parentheses.' },
             ],
           },
         ])
@@ -447,7 +507,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
             role: 'user',
             content: [
               ...BasePipeline.buildImageContent(state.inputImages, 'high'),
-              { type: 'text' as const, text: '提取所有角色的一致性锚点描述' },
+              { type: 'text' as const, text: 'Extract character consistency anchors in English (optional concise Japanese notes in parentheses).' },
             ],
           },
         ])
@@ -557,7 +617,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         `You are an experienced film director, storyboard artist and prompt engineer. Design shots and write prompts for ${vars.panel_count} panels.\nScene: ${vars.scene_env}${characterIdentityLock ? `\n\n${characterIdentityLock}` : ''}${userDirective ? `\n\n${userDirective}` : ''}`,
       )
       const userText = state.sceneDescription
-        ? `【创意简报】"${state.sceneDescription}"\n\n围绕上述创意方向，发挥你作为专业导演的演出能力，为 ${state.layout.panelCount} 个分镜设计镜头并生成图像提示词。镜头设计、构图、光影、叙事节奏由你全权决定。`
+        ? `【创意简报】"${state.sceneDescription}"\n\n请基于该简报为 ${state.layout.panelCount} 个分镜设计镜头并生成图像提示词。\n人物身份锚点（脸、发型、服装、主配色、武器）应优先保持可识别一致；允许人物在故事推进中发生合理演进（情绪、姿态、受损、衣物动态）。\n场景可随叙事节奏推进自然变化，不需要所有分镜固定同一地点。\n叙事方向与节奏以用户简报为主线，可做电影化增强但不反转核心走向。\n每个分镜建议 1 个主动作（anchor action）+ 1~2 个从属动作（satellite actions），避免无因突变。\n导演可自主决定镜头、构图、光影、调度与节奏张弛。`
         : `为 ${state.layout.panelCount} 个分镜设计镜头并生成图像提示词`
       const designContent: Array<any> = []
       if (state.inputImages.length > 0) {
@@ -685,7 +745,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         }
         userContent.push({
           type: 'text' as const,
-          text: `Verify the following storyboard for consistency. Check all 4 dimensions (character, lighting, narrative, spatial) and score 0-10.\n\nScene: ${vars.scene_env}\n\nCharacter Anchors:\n${vars.character_anchors_summary}\n\nPanels:\n${vars.panels_summary_short}`,
+          text: `Verify the following storyboard for consistency. Use a two-layer rubric and score 0-10.\n- Hard consistency (required): identity anchors for face/outfit/weapon remain recognizable.\n- Soft consistency (evolution-allowed): story-driven character/scene evolution remains plausible and aligned with narrative rhythm.\n\nScene: ${vars.scene_env}\n\nCharacter Anchors:\n${vars.character_anchors_summary}\n\nPanels:\n${vars.panels_summary_short}`,
         })
         const raw = await structured.invoke([
           { role: 'system', content: systemPrompt },
@@ -711,7 +771,10 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
     // ===== Retry准备 =====
     const prepareRetryFn = (state: DirectorState) => {
-      const feedback = state.report?.issues?.join('\n') || ''
+      const threshold = Number.isFinite(state.scoreThreshold)
+        ? Math.max(0, Math.min(10, Math.round(state.scoreThreshold)))
+        : SCORE_THRESHOLD
+      const feedback = buildRetryFeedback(state.report as VerifyReportLike, threshold)
       return {
         retryFeedback: feedback,
         retryCount: state.retryCount + 1,
@@ -785,8 +848,8 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
               `STRICT GRID: every panel EXACTLY ${vars.panel_ratio} (${vars.panel_orientation}), edge-to-edge, thin 1-2px dark dividers only.`,
               vars.semantic_orientation_instruction,
               'NO text, NO labels, NO captions, NO annotations, NO panel numbers.',
-              vars.character_anchor_line,
-              vars.style_instructions,
+              vars.character_identity_section,
+              vars.style_directive_section,
               `Panel descriptions:\n${vars.panel_descriptions}`,
             ].filter(Boolean).join(' ')
 
@@ -874,7 +937,8 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       const threshold = Number.isFinite(state.scoreThreshold)
         ? Math.max(0, Math.min(10, Math.round(state.scoreThreshold)))
         : SCORE_THRESHOLD
-      if (state.report.score < threshold) return 'retry'
+      const hasLowSubScore = pickLowItems(state.report as VerifyReportLike, threshold).length > 0
+      if (state.report.score < threshold || hasLowSubScore) return 'retry'
       return 'generate'
     }
 
@@ -1068,8 +1132,8 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           `STRICT GRID: every panel EXACTLY ${vars.panel_ratio} (${vars.panel_orientation}), edge-to-edge, thin 1-2px dark dividers only.`,
           vars.semantic_orientation_instruction,
           'NO text, NO labels, NO captions, NO annotations, NO panel numbers.',
-          vars.character_anchor_line,
-          vars.style_instructions,
+          vars.character_identity_section,
+          vars.style_directive_section,
           `Panel descriptions:\n${vars.panel_descriptions}`,
         ].filter(Boolean).join(' ')
 

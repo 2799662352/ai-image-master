@@ -1,7 +1,7 @@
 ---
 name: storyboard-structure
 description: Use when generating storyboard shots requiring mid-action freeze, single-action discipline, and physiological micro-expression quantification
-appliesTo: [scene, character, shot, verify]
+appliesTo: [analyzeScene, extractCharacterAnchors, designAndAssemble, verifyConsistency]
 priority: 0
 ---
 

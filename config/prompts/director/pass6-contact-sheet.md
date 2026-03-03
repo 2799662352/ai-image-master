@@ -18,7 +18,7 @@ STRICT GRID GEOMETRY RULES:
 - Each panel is a distinct camera shot — NO blending between panels.
 - MATCH the visual style of the reference images exactly (photorealistic stays photorealistic, anime stays anime).
 
-{{character_anchor_line}}
-{{style_instructions}}
+{{character_identity_section}}
+{{style_directive_section}}
 Panel descriptions:
 {{panel_descriptions}}

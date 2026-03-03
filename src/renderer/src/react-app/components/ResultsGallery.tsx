@@ -37,6 +37,8 @@ function getThumbnailCols(count: number): string {
 export function ResultsGallery() {
   const generatedResults = useDirectorStore((s) => s.generatedResults)
   const regenerateCount = useDirectorStore((s) => s.regenerateCount)
+  const progressPercentage = useDirectorStore((s) => s.progressPercentage)
+  const currentProgress = useDirectorStore((s) => s.currentProgress)
   const setRegenerateCount = useDirectorStore((s) => s.setRegenerateCount)
   const pushProgress = useDirectorStore((s) => s.pushProgress)
   const { canRegenerate, isGenerating, regenerateImages } = useDirectorGeneration()
@@ -47,18 +49,42 @@ export function ResultsGallery() {
 
   const handleRegenerate = useCallback(async () => {
     setRegenDropdownOpen(false)
+    const toast = (window as any).toastManagerTS ?? (window as any).toastManager
+    toast?.show?.(`正在重新生图（目标 ${regenerateCount} 张）...`, 'info')
     try {
-      await regenerateImages(regenerateCount, (progress) => {
+      const result = await regenerateImages(regenerateCount, (progress) => {
         pushProgress(progress as any)
       })
+      const images = Array.isArray((result as any)?.images) ? (result as any).images : []
+      const successCount = images.filter((img: any) => Boolean(img?.url)).length
+      const failed = images.filter((img: any) => !img?.url)
+
+      if (successCount > 0) {
+        const failCount = Math.max(0, images.length - successCount)
+        toast?.show?.(
+          `重新生图完成：成功 ${successCount} 张${failCount > 0 ? `，失败 ${failCount} 张` : ''}`,
+          failCount > 0 ? 'info' : 'success'
+        )
+      } else {
+        const firstError = String(failed[0]?.error || '生图请求失败，请检查网络或更换绘图模型后重试')
+        toast?.show?.(`重新生图失败：${firstError}`, 'error')
+      }
     } catch (err) {
       console.error('[ResultsGallery] 重新生图失败:', err)
+      const toast = (window as any).toastManagerTS ?? (window as any).toastManager
+      toast?.show?.(
+        `重新生图失败：${err instanceof Error ? err.message : String(err)}`,
+        'error'
+      )
     }
   }, [regenerateCount, regenerateImages, pushProgress])
 
   const successResults = generatedResults.filter((r) => !!r.url)
+  const failedResults = generatedResults.filter((r) => !r.url)
   const allUrls = successResults.map((r) => r.url)
   const prevCountRef = useRef(successResults.length)
+  const progressLabel = currentProgress?.label || '正在生成中...'
+  const safeProgress = Math.max(3, Math.min(progressPercentage || 0, 99))
 
   useEffect(() => {
     const prevCount = prevCountRef.current
@@ -96,7 +122,128 @@ export function ResultsGallery() {
     return () => document.removeEventListener('keydown', handler)
   }, [gridOpen, successResults.length])
 
-  if (successResults.length === 0) return null
+  if (generatedResults.length === 0 && isGenerating) {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-white font-semibold flex items-center">
+            <i className="fas fa-images mr-2 text-green-400" />
+            生成结果
+          </h3>
+          <span className="text-xs text-[#FCE300] font-semibold flex items-center gap-1.5">
+            <i className="fas fa-spinner fa-spin" />
+            生成中
+          </span>
+        </div>
+
+        <div className="bg-[#27272A] rounded-none p-6 flex items-center justify-center border border-[#3F3F46]" style={{ minHeight: '220px' }}>
+          <div className="text-center text-white opacity-55">
+            <i className="fas fa-image text-4xl mb-3 opacity-35" />
+            <p className="text-sm">生成的图片将在这里显示</p>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="h-1.5 bg-white/10 overflow-hidden">
+            <div className="h-full bg-[#FCE300] transition-all duration-300" style={{ width: `${safeProgress}%` }} />
+          </div>
+          <div className="text-xs text-white/70 text-center">{progressLabel}</div>
+        </div>
+      </div>
+    )
+  }
+
+  if (successResults.length === 0) {
+    if (generatedResults.length === 0) return null
+    const firstError = String(failedResults[0]?.error || '生图请求失败，请稍后重试')
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-white font-semibold flex items-center">
+            <i className="fas fa-images mr-2 text-red-400" />
+            生成结果
+          </h3>
+          <div className="flex items-center gap-2">
+            {isGenerating && (
+              <span className="text-xs text-[#FCE300] font-semibold flex items-center gap-1.5">
+                <i className="fas fa-spinner fa-spin" />
+                生成中
+              </span>
+            )}
+            <span className="text-xs text-white opacity-50">
+              成功 0 / {generatedResults.length} 张
+            </span>
+          </div>
+        </div>
+
+        {isGenerating && (
+          <div className="space-y-2">
+            <div className="h-1.5 bg-white/10 overflow-hidden">
+              <div className="h-full bg-[#FCE300] transition-all duration-300" style={{ width: `${safeProgress}%` }} />
+            </div>
+            <div className="text-[11px] text-white/65">{progressLabel}</div>
+          </div>
+        )}
+
+        <div className="border border-red-500/40 bg-red-500/10 px-4 py-3">
+          <div className="text-sm text-red-300 font-semibold mb-1 flex items-center gap-2">
+            <i className="fas fa-exclamation-triangle" />
+            生图失败
+          </div>
+          <p className="text-xs text-white/75 leading-relaxed">
+            {firstError}
+          </p>
+          <p className="text-xs text-white/55 mt-2">
+            建议：先切换顶部“绘图模型(出图)”后，再点击“重新生图”。
+          </p>
+        </div>
+
+        <div className="flex items-center justify-end">
+          {canRegenerate && (
+            <div className="relative">
+              <div className="flex items-center">
+                <button
+                  onClick={handleRegenerate}
+                  disabled={isGenerating}
+                  className="text-xs text-black bg-[#FCE300] hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed px-3 py-1 flex items-center gap-1.5 cursor-pointer transition-all font-semibold"
+                >
+                  <i className={`fas ${isGenerating ? 'fa-spinner fa-spin' : 'fa-redo'}`} />
+                  {isGenerating ? '生成中...' : `重新生图 ×${regenerateCount}`}
+                </button>
+                <button
+                  onClick={() => setRegenDropdownOpen(!regenDropdownOpen)}
+                  disabled={isGenerating}
+                  className="text-xs text-black bg-[#FCE300] hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed px-1.5 py-1 border-l border-black/20 cursor-pointer transition-all"
+                >
+                  <i className="fas fa-caret-down" />
+                </button>
+              </div>
+              {regenDropdownOpen && (
+                <div className="absolute right-0 bottom-full mb-1 bg-[#27272A] border border-[#3F3F46] shadow-xl z-[70000] min-w-[120px] max-h-56 overflow-y-auto">
+                  <div className="px-3 py-1.5 text-[10px] text-white opacity-40 border-b border-[#3F3F46]">
+                    生成数量
+                  </div>
+                  {REGEN_COUNT_OPTIONS.map((n) => (
+                    <button
+                      key={n}
+                      onClick={() => { setRegenerateCount(n); setRegenDropdownOpen(false) }}
+                      className={`w-full text-left px-3 py-1.5 text-xs cursor-pointer transition-colors ${
+                        n === regenerateCount
+                          ? 'text-[#FCE300] bg-white/5'
+                          : 'text-white hover:bg-white/10'
+                      }`}
+                    >
+                      {n} 张
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   const safeIndex = Math.min(currentIndex, successResults.length - 1)
   const current = successResults[safeIndex]
@@ -111,6 +258,12 @@ export function ResultsGallery() {
             生成结果
           </h3>
           <div className="flex items-center gap-3">
+            {isGenerating && (
+              <span className="text-xs text-[#FCE300] font-semibold flex items-center gap-1.5">
+                <i className="fas fa-spinner fa-spin" />
+                生成中
+              </span>
+            )}
             <span className="text-xs text-white opacity-50">
               {successResults.length}/{generatedResults.length} 张
             </span>
@@ -143,7 +296,7 @@ export function ResultsGallery() {
                     className="text-xs text-black bg-[#FCE300] hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed px-3 py-1 flex items-center gap-1.5 cursor-pointer transition-all font-semibold"
                   >
                     <i className={`fas ${isGenerating ? 'fa-spinner fa-spin' : 'fa-redo'}`} />
-                    重新生图 ×{regenerateCount}
+                    {isGenerating ? '生成中...' : `重新生图 ×${regenerateCount}`}
                   </button>
                   <button
                     onClick={() => setRegenDropdownOpen(!regenDropdownOpen)}
@@ -154,7 +307,7 @@ export function ResultsGallery() {
                   </button>
                 </div>
                 {regenDropdownOpen && (
-                  <div className="absolute right-0 top-full mt-1 bg-[#27272A] border border-[#3F3F46] shadow-xl z-50 min-w-[120px]">
+                  <div className="absolute right-0 bottom-full mb-1 bg-[#27272A] border border-[#3F3F46] shadow-xl z-[70000] min-w-[120px] max-h-56 overflow-y-auto">
                     <div className="px-3 py-1.5 text-[10px] text-white opacity-40 border-b border-[#3F3F46]">
                       生成数量
                     </div>
@@ -177,6 +330,15 @@ export function ResultsGallery() {
             )}
           </div>
         </div>
+
+        {isGenerating && (
+          <div className="space-y-2">
+            <div className="h-1.5 bg-white/10 overflow-hidden">
+              <div className="h-full bg-[#FCE300] transition-all duration-300" style={{ width: `${safeProgress}%` }} />
+            </div>
+            <div className="text-[11px] text-white/65">{progressLabel}</div>
+          </div>
+        )}
 
         {/* 主图区 — 点击用全局 ImageViewer 打开 */}
         <div

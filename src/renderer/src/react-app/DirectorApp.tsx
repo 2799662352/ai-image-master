@@ -13,24 +13,10 @@ import { useDirectorGeneration } from './hooks/useDirectorGeneration'
 import { useDirectorStore } from './stores/useDirectorStore'
 import { getDirectorSkillLoadStats, getDirectorSkillsFromConfig, reloadDirectorSkills } from '../services/pipeline/prompt-loader'
 
-function syncGlobalModelToStore(): void {
-  const modelKey =
-    localStorage.getItem('current_model') ||
-    (window as any).modelSelectorManagerTS?.getCurrentModelKey?.() ||
-    ''
-  if (modelKey) useDirectorStore.getState().setVisionModel(modelKey)
-}
-
 export function DirectorApp() {
   const [isRefreshingSkills, setIsRefreshingSkills] = useState(false)
   const isRefreshingSkillsRef = useRef(false)
   const viewState = useDirectorStore((s) => s.viewState)
-
-  useEffect(() => {
-    syncGlobalModelToStore()
-    const interval = setInterval(syncGlobalModelToStore, 2000)
-    return () => clearInterval(interval)
-  }, [])
   const generatedResults = useDirectorStore((s) => s.generatedResults)
   const skipVerify = useDirectorStore((s) => s.skipVerify)
   const scoreThreshold = useDirectorStore((s) => s.scoreThreshold)
@@ -133,6 +119,9 @@ export function DirectorApp() {
           <LayoutSelector />
           <ImageCountSlider />
           <RatioResolutionSelector />
+          <div className="text-[11px] text-white/55">
+            绘图模型(出图)：跟随顶部全局模型，影响图片尺寸与清晰度能力
+          </div>
           <div className="flex items-center gap-3">
             <GenerateButton onGenerate={handleGenerate} />
             <button
@@ -194,7 +183,7 @@ export function DirectorApp() {
           {(viewState === 'generating' || viewState === 'results') && (
             <GenerationProgress collapsed={viewState === 'results'} />
           )}
-          {generatedResults.length > 0 && (
+          {(viewState === 'generating' || generatedResults.length > 0) && (
             <ResultsGallery />
           )}
         </div>
