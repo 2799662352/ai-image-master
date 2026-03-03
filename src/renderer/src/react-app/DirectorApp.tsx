@@ -14,9 +14,11 @@ import { useDirectorStore } from './stores/useDirectorStore'
 import { getDirectorSkillLoadStats, getDirectorSkillsFromConfig, reloadDirectorSkills } from '../services/pipeline/prompt-loader'
 
 function syncGlobalModelToStore(): void {
-  const api = (window as any).aiImageAPI
-  const model = api?.model || api?.currentModel || ''
-  if (model) useDirectorStore.getState().setVisionModel(model)
+  const modelKey =
+    localStorage.getItem('current_model') ||
+    (window as any).modelSelectorManagerTS?.getCurrentModelKey?.() ||
+    ''
+  if (modelKey) useDirectorStore.getState().setVisionModel(modelKey)
 }
 
 export function DirectorApp() {
