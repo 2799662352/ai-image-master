@@ -6,6 +6,8 @@ export interface DirectorReferenceImage {
   data: string
   mimeType: string
   name: string
+  fileSize?: number
+  compressed?: boolean
 }
 
 export type LayoutType = '6grid' | '4grid' | '2closeup' | '9grid' | '16grid' | '25grid'

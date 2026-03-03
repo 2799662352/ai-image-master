@@ -32,7 +32,13 @@ export function ReferenceImageUpload() {
         const results = await Promise.all(
           imageFiles.map(async (file) => {
             const r = await compressAndConvert(file)
-            return { data: r.base64, mimeType: file.type, name: file.name }
+            return {
+              data: r.base64,
+              mimeType: file.type,
+              name: file.name,
+              fileSize: r.originalSize,
+              compressed: r.compressed,
+            }
           })
         )
         startTransition(() => {
@@ -145,6 +151,12 @@ export function ReferenceImageUpload() {
               alt={img.name}
               className="w-full h-full object-cover"
             />
+            {img.fileSize && img.fileSize > 2 * 1024 * 1024 && (
+              <div className="absolute top-1 left-1 bg-orange-500 bg-opacity-90 text-white text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 pointer-events-none">
+                <i className="fas fa-compress-alt" />
+                <span>{(img.fileSize / (1024 * 1024)).toFixed(1)}MB</span>
+              </div>
+            )}
             <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all flex items-center justify-center">
               <i className="fas fa-search-plus text-white text-lg opacity-0 group-hover:opacity-100 transition-opacity" />
             </div>
