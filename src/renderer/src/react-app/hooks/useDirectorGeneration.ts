@@ -26,7 +26,7 @@ interface LayoutConfig {
   panelCount: number
 }
 
-const LAYOUT_MAP: Record<string, LayoutConfig> = {
+const LANDSCAPE_LAYOUT_MAP: Record<string, LayoutConfig> = {
   '6grid': { rows: 2, cols: 3, panelCount: 6 },
   '4grid': { rows: 2, cols: 2, panelCount: 4 },
   '2closeup': { rows: 1, cols: 2, panelCount: 2 },
@@ -35,7 +35,26 @@ const LAYOUT_MAP: Record<string, LayoutConfig> = {
   '25grid': { rows: 5, cols: 5, panelCount: 25 },
 }
 
-const DEFAULT_LAYOUT: LayoutConfig = LAYOUT_MAP['6grid']
+const PORTRAIT_LAYOUT_MAP: Record<string, LayoutConfig> = {
+  '6grid': { rows: 3, cols: 2, panelCount: 6 },
+  '4grid': { rows: 2, cols: 2, panelCount: 4 },
+  '2closeup': { rows: 2, cols: 1, panelCount: 2 },
+  '9grid': { rows: 3, cols: 3, panelCount: 9 },
+  '16grid': { rows: 4, cols: 4, panelCount: 16 },
+  '25grid': { rows: 5, cols: 5, panelCount: 25 },
+}
+
+function isPortraitRatio(ratio: string): boolean {
+  const parts = ratio.split(':').map(Number)
+  if (parts.length !== 2 || parts.some(isNaN)) return false
+  return parts[0] < parts[1]
+}
+
+function getLayoutMap(ratio: string): Record<string, LayoutConfig> {
+  return isPortraitRatio(ratio) ? PORTRAIT_LAYOUT_MAP : LANDSCAPE_LAYOUT_MAP
+}
+
+const DEFAULT_LAYOUT: LayoutConfig = LANDSCAPE_LAYOUT_MAP['6grid']
 
 export function useDirectorGeneration() {
   const referenceImages = useDirectorStore((s) => s.referenceImages)
@@ -55,8 +74,9 @@ export function useDirectorGeneration() {
   const canGenerate = referenceImages.length > 0 && !isGenerating
 
   const getLayoutConfig = useCallback((layout?: string): LayoutConfig => {
-    return LAYOUT_MAP[layout ?? currentLayout] ?? DEFAULT_LAYOUT
-  }, [currentLayout])
+    const map = getLayoutMap(currentRatio)
+    return map[layout ?? currentLayout] ?? DEFAULT_LAYOUT
+  }, [currentLayout, currentRatio])
 
   const executeSingle = useCallback(
     async (

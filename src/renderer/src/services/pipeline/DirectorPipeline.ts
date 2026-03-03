@@ -114,6 +114,20 @@ function extractVarsForVerify(state: DirectorState): Record<string, string> {
   }
 }
 
+function getPanelOrientation(ratio: string, rows: number, cols: number): { orientation: string; panelRatio: string } {
+  const parts = ratio.split(':').map(Number)
+  if (parts.length !== 2 || parts.some(isNaN)) return { orientation: 'square', panelRatio: '1:1' }
+  const [rw, rh] = parts
+  const pw = rw / cols
+  const ph = rh / rows
+  const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b))
+  const g = gcd(Math.round(pw * 100), Math.round(ph * 100))
+  const panelRatio = `${Math.round(pw * 100 / g)}:${Math.round(ph * 100 / g)}`
+  const aspect = pw / ph
+  const orientation = aspect > 1.05 ? 'landscape (horizontal)' : aspect < 0.95 ? 'portrait (vertical)' : 'square'
+  return { orientation, panelRatio }
+}
+
 function extractVarsForContactSheet(state: DirectorState): Record<string, string> {
   const prompts = state.prompts || []
   const characters = state.characters?.characters || []
@@ -128,14 +142,26 @@ function extractVarsForContactSheet(state: DirectorState): Record<string, string
     .map(p => `  Panel ${p.id}: [shot cut] ${p.prompt}`)
     .join('\n')
 
+  const { orientation, panelRatio } = getPanelOrientation(
+    state.ratio, state.layout.rows, state.layout.cols,
+  )
+
+  const userDirection = state.sceneDescription
+    ? `\n\nUSER'S CREATIVE DIRECTION (highest priority): "${state.sceneDescription}"`
+    : ''
+
   return {
     grid_rows: String(state.layout.rows),
     grid_cols: String(state.layout.cols),
     panel_count: String(state.layout.panelCount),
+    overall_ratio: state.ratio,
+    panel_ratio: panelRatio,
+    panel_orientation: orientation,
+    user_direction: userDirection,
     global_section: globalSection,
     character_anchor_line: characters.map((c: any) => c.anchor).join('. '),
     style_instructions: state.styleInstructions || '',
-    panel_descriptions: `${globalSection}\n\nSTORYBOARD GRID ${state.layout.rows}x${state.layout.cols}:\n${perShotSection}`,
+    panel_descriptions: `${globalSection}${userDirection}\n\nSTORYBOARD GRID ${state.layout.rows}x${state.layout.cols}:\n${perShotSection}`,
   }
 }
 
@@ -290,7 +316,9 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
             role: 'user',
             content: [
               ...BasePipeline.buildImageContent(state.inputImages, 'high'),
-              { type: 'text' as const, text: state.sceneDescription || '分析这张图片的场景' },
+              { type: 'text' as const, text: state.sceneDescription
+                ? `【用户创意方向】${state.sceneDescription}\n\n请基于用户的创意方向分析参考图片。用户描述的场景意图优先于图片中的细节。`
+                : '分析这张图片的场景' },
             ],
           },
         ])
@@ -430,7 +458,12 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       const appliedSkills = self.getSkillsForPhase('designAndAssemble', skillContext)
       const vars = extractVarsForDesignAndAssemble(state)
       const userDirective = state.sceneDescription
-        ? `User's creative direction: "${state.sceneDescription}"\nYou MUST incorporate this direction into the panel designs.`
+        ? [
+            `## HIGHEST PRIORITY — User's Creative Direction (MUST FOLLOW)`,
+            `"${state.sceneDescription}"`,
+            `This is the user's explicit creative intent. Every panel MUST directly serve this direction.`,
+            `If any AI-analyzed detail conflicts with the user's direction, the user's direction ALWAYS wins.`,
+          ].join('\n')
         : ''
       const systemPrompt = self.resolveSystemPrompt(
         'designAndAssemble', vars,
@@ -438,7 +471,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         `You are a professional storyboard artist and prompt engineer. Design shots and write prompts for ${vars.panel_count} panels.\nScene: ${vars.scene_env}${userDirective ? `\n\n${userDirective}` : ''}`,
       )
       const userText = state.sceneDescription
-        ? `根据用户意图"${state.sceneDescription}"，为 ${state.layout.panelCount} 个分镜设计镜头并生成图像提示词`
+        ? `【最高优先级指令】用户明确要求："${state.sceneDescription}"\n\n请严格按照用户意图，为 ${state.layout.panelCount} 个分镜设计镜头并生成图像提示词。每个分镜都必须服务于用户描述的场景和叙事。`
         : `为 ${state.layout.panelCount} 个分镜设计镜头并生成图像提示词`
       const designContent: Array<any> = []
       if (state.inputImages.length > 0) {
@@ -627,15 +660,16 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         const compositePrompt = tpl
           ? renderTemplate(tpl.template, vars)
           : [
-              `Cinematic Contact Sheet, ONE single master image, ${vars.grid_rows}x${vars.grid_cols} storyboard grid with ${vars.panel_count} panels.`,
-              'Symmetrical grid, hard borders, clean white dividing lines.',
+              `Cinematic Contact Sheet, ONE single master image, ${vars.grid_rows} rows x ${vars.grid_cols} columns storyboard grid, ${vars.panel_count} panels total.`,
+              `STRICT GRID: every panel EXACTLY ${vars.panel_ratio} (${vars.panel_orientation}), edge-to-edge, thin 1-2px dark dividers only.`,
+              'NO text, NO labels, NO captions, NO annotations, NO panel numbers.',
               vars.character_anchor_line,
               vars.style_instructions,
               `Panel descriptions:\n${vars.panel_descriptions}`,
             ].filter(Boolean).join(' ')
 
         const negativePrompt = prompts[0]?.negativePrompt ||
-          'blurry, deformed, bad anatomy, watermark, signature, text, irregular panels, asymmetric grid'
+          'blurry, deformed, bad anatomy, watermark, signature, text, labels, captions, panel numbers, irregular panels, asymmetric grid, unequal panels'
         const referenceImages = state.inputImages.map(img => `data:${img.mimeType};base64,${img.data}`)
         const userConcurrency = Math.max(1, imageCount)
         const results = await self.runWithConcurrency(
