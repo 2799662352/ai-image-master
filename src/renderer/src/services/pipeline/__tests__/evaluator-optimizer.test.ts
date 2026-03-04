@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildRetryFeedback, pickLowItems } from '../DirectorPipeline'
+import { buildRetryFeedback, pickLowItems, shouldRetryAnalysis } from '../DirectorPipeline'
 
 describe('Evaluator-Optimizer helpers', () => {
   it('buildRetryFeedback returns non-empty string for low-score report', () => {
@@ -19,5 +19,53 @@ describe('Evaluator-Optimizer helpers', () => {
   it('buildRetryFeedback returns fallback string for null report', () => {
     const feedback = buildRetryFeedback(null, 6)
     expect(feedback).toContain('Soft correction only')
+  })
+})
+
+describe('shouldRetryAnalysis routing', () => {
+  it('returns "continue" when scene is valid', () => {
+    const result = shouldRetryAnalysis({
+      scene: { env: 'forest clearing' },
+      characters: null,
+      analysisRetryCount: 0,
+    })
+    expect(result).toBe('continue')
+  })
+
+  it('returns "continue" when characters are valid', () => {
+    const result = shouldRetryAnalysis({
+      scene: null,
+      characters: { characters: [{ name: 'Hero' }] },
+      analysisRetryCount: 0,
+    })
+    expect(result).toBe('continue')
+  })
+
+  it('returns "retry" when both null and retries < max', () => {
+    const result = shouldRetryAnalysis({
+      scene: null,
+      characters: null,
+      analysisRetryCount: 0,
+    })
+    expect(result).toBe('retry')
+  })
+
+  it('returns "abort" when both null and retries >= max', () => {
+    const result = shouldRetryAnalysis({
+      scene: null,
+      characters: null,
+      analysisRetryCount: 2,
+    })
+    expect(result).toBe('abort')
+  })
+
+  it('returns "continue" when scene skipped via flag', () => {
+    const result = shouldRetryAnalysis({
+      scene: null,
+      characters: null,
+      analysisRetryCount: 0,
+      skipAnalyzeScene: true,
+    })
+    expect(result).toBe('continue')
   })
 })
