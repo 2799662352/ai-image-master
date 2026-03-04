@@ -497,7 +497,14 @@ export function codeVerify(state: DirectorState): z.infer<typeof VerifySchema> {
     lightingContinuity: true,
     narrativeFlow: true,
     spatialCoherence: true,
-    styleConsistency: stylePrefix ? (issues.some(i => i.toLowerCase().includes('style')) ? 5 : 10) : undefined,
+    styleConsistency: (() => {
+      if (!stylePrefix) return undefined
+      const styleIssueCount = prompts.filter(p => {
+        const firstToken = stylePrefix.split(',')[0].trim().toLowerCase()
+        return firstToken && !p.prompt.toLowerCase().includes(firstToken)
+      }).length
+      return styleIssueCount > 0 ? Math.max(1, 10 - styleIssueCount * 2) : 10
+    })(),
   }
 }
 

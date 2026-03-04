@@ -77,6 +77,38 @@ describe('codeVerify', () => {
     const result = codeVerify(makeState({ prompts: null }) as any)
     expect(result.ok).toBe(false)
   })
+
+  it('should not false-positive styleConsistency on hairstyle issues', () => {
+    const result = codeVerify({
+      characters: { characters: [{ name: 'Alice', anchor: 'blonde hair' }] },
+      prompts: [
+        { id: 1, prompt: 'Alice walking, photorealistic', negativePrompt: '' },
+        { id: 2, prompt: 'Alice running, photorealistic', negativePrompt: '' },
+      ],
+      layout: { rows: 1, cols: 2, panelCount: 2 },
+      template: 'cinematic',
+      styleInstructions: 'photorealistic',
+      styleAnchor: { medium: 'photorealistic', palette: [], paletteRatio: '', lightSource: '', shadowDepth: '', texture: '', colorTemperature: '', contrastLevel: '' },
+      styleConflicts: [],
+    } as any)
+    expect(result.styleConsistency).toBe(10)
+  })
+
+  it('should track style issues separately from character issues', () => {
+    const result = codeVerify({
+      characters: { characters: [] },
+      prompts: [
+        { id: 1, prompt: 'Alice walking, anime cel', negativePrompt: '' },
+      ],
+      layout: { rows: 1, cols: 1, panelCount: 1 },
+      template: 'cinematic',
+      styleInstructions: 'photorealistic',
+      styleAnchor: { medium: 'photorealistic', palette: [], paletteRatio: '', lightSource: '', shadowDepth: '', texture: '', colorTemperature: '', contrastLevel: '' },
+      styleConflicts: [],
+    } as any)
+    expect(result.styleConsistency).toBe(8)
+    expect(result.characterConsistency).toBe(true)
+  })
 })
 
 describe('routeAfterCodeVerify', () => {
