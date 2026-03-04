@@ -11,6 +11,8 @@ import {
   VerifySchema,
   SkillSelectionSchema,
 } from './schemas/director-schemas'
+import { StyleAnchorSchema, StyleConflictSchema } from './schemas/style-anchor-schema'
+import type { StyleAnchor, StyleConflict } from './schemas/style-anchor-schema'
 import type {
   PipelineConfig,
   PipelineSkill,
@@ -82,6 +84,8 @@ const stateSchema = z.object({
   skipVerify: z.boolean().default(false),
   skipAnalyzeScene: z.boolean().default(false),
   skipCharacterAnchors: z.boolean().default(false),
+  styleAnchor: StyleAnchorSchema.nullable().default(null),
+  styleConflicts: z.array(StyleConflictSchema).default([]),
   scoreThreshold: z.number().min(0).max(10).default(SCORE_THRESHOLD),
   activeSkills: z.array(z.string()).default([]),
 })
@@ -201,6 +205,34 @@ export function extractVarsForDesignAndAssemble(state: DirectorState): Record<st
     narrative_guardrails: buildNarrativeRhythmGuardrails(state.sceneDescription || ''),
     retry_block: retryBlock,
     previous_prompts_ref: previousPromptsRef,
+    style_authority_chain: (() => {
+      const anchor = (state as any).styleAnchor
+      if (!anchor) return ''
+      const conflicts: StyleConflict[] = (state as any).styleConflicts || []
+      const conflictsLog = conflicts.length > 0
+        ? conflicts.map((c: StyleConflict) => `  - ${c.field}: user wants "${c.userWants}" but image shows "${c.imageShows}" → using user choice`).join('\n')
+        : '  (none)'
+      return [
+        '## Style Authority Chain (BINDING)',
+        '',
+        '1. USER EXPLICIT STYLE (from Template/sceneDescription):',
+        `   ${state.styleInstructions || '(no template selected)'}`,
+        '',
+        '2. STYLE ANCHOR (from reference image analysis):',
+        `   Medium: ${anchor.medium}`,
+        `   Palette: ${anchor.palette.join(', ')} at ratio ${anchor.paletteRatio}`,
+        `   Lighting: ${anchor.lightSource}, shadow depth ${anchor.shadowDepth}`,
+        `   Texture: ${anchor.texture}`,
+        `   Color temperature: ${anchor.colorTemperature}`,
+        `   Contrast: ${anchor.contrastLevel}`,
+        '',
+        '3. CONFLICTS RESOLVED:',
+        conflictsLog,
+        '',
+        'EVERY panel prompt MUST include these style tokens for cross-panel consistency.',
+        'User explicit style takes priority over image analysis on conflicting fields.',
+      ].join('\n')
+    })(),
   }
 }
 
@@ -348,6 +380,19 @@ export function extractVarsForContactSheet(state: DirectorState): Record<string,
     character_identity_lock_summary: characterIdentityLockSummary,
     character_identity_section: characterIdentitySection,
     style_directive_section: styleDirectiveSection,
+    style_anchor_section: (() => {
+      const anchor = (state as any).styleAnchor
+      if (!anchor) return ''
+      return [
+        'STYLE ANCHOR (apply to ALL panels uniformly):',
+        `Medium: ${anchor.medium}`,
+        `Palette: ${anchor.palette?.join(', ')} at ratio ${anchor.paletteRatio}`,
+        `Lighting: ${anchor.lightSource}, shadow depth ${anchor.shadowDepth}`,
+        `Texture: ${anchor.texture}`,
+        `Color temperature: ${anchor.colorTemperature}`,
+        'DO NOT deviate from this style in any panel.',
+      ].join('\n')
+    })(),
     global_section: globalSection,
     character_anchor_line: characters.map((c: any) => c.anchor).join('. '),
     style_instructions: state.styleInstructions || '',
