@@ -1436,9 +1436,10 @@ export class UnderstandPage extends BasePage {
       passResultsCard.classList.remove('hidden')
       const summary = document.createElement('div')
       summary.className = 'p-3 bg-[#09090B] border border-[#3F3F46] rounded-none'
+      const displayData = progress.passData?.summary || progress.passData?.raw
       summary.innerHTML = `
         <div class="text-sm text-blue-300 font-medium mb-1">${progress.label}</div>
-        <pre class="text-xs text-white opacity-70 overflow-auto max-h-40">${JSON.stringify(progress.data, null, 2)}</pre>
+        <pre class="text-xs text-white opacity-70 overflow-auto max-h-40">${typeof displayData === 'string' ? displayData : JSON.stringify(displayData, null, 2)}</pre>
       `
       passDataArea.appendChild(summary)
     }
@@ -1446,7 +1447,7 @@ export class UnderstandPage extends BasePage {
     const nextPassEl = document.getElementById(`pipelinePass${progress.pass + 1}`)
     if (nextPassEl) {
       const nextStatus = nextPassEl.querySelector('span:last-child')
-      if (nextStatus) {
+      if (nextStatus && !nextStatus.textContent?.includes('完成')) {
         nextStatus.textContent = '⏳ 进行中...'
         nextStatus.className = 'ml-auto text-yellow-400 animate-pulse'
       }
