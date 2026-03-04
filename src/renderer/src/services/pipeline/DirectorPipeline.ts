@@ -578,6 +578,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     count: number,
     concurrency: number,
     task: (index: number) => Promise<T>,
+    signal?: AbortSignal,
   ): Promise<T[]> {
     const total = Math.max(0, Math.floor(count))
     if (total === 0) return []
@@ -588,6 +589,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
     const worker = async () => {
       while (true) {
+        if (signal?.aborted) break
         const index = cursor
         cursor += 1
         if (index >= total) break
@@ -1228,11 +1230,13 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
               vars.character_identity_section,
               vars.style_directive_section,
               vars.style_anchor_section,
-              `Panel descriptions:\n${vars.panel_descriptions}`,
+              vars.reference_image_role_rules,
+              `Panel descriptions:\n${vars.enhanced_panel_descriptions}`,
             ].filter(Boolean).join(' ')
 
-        const negativePrompt = prompts[0]?.negativePrompt ||
+        const baseNegative = prompts[0]?.negativePrompt ||
           'blurry, deformed, bad anatomy, watermark, signature, text, labels, captions, panel numbers, irregular panels, asymmetric grid, unequal panels'
+        const negativePrompt = buildAdaptiveNegativePrompt(baseNegative, state.template, (state as any).styleAnchor)
         const referenceImages = state.inputImages.map(img => `data:${img.mimeType};base64,${img.data}`)
         const userConcurrency = Math.max(1, imageCount)
         const results = await self.runWithConcurrency(
@@ -1517,11 +1521,13 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           vars.character_identity_section,
           vars.style_directive_section,
           vars.style_anchor_section,
-          `Panel descriptions:\n${vars.panel_descriptions}`,
+          vars.reference_image_role_rules,
+          `Panel descriptions:\n${vars.enhanced_panel_descriptions}`,
         ].filter(Boolean).join(' ')
 
-    const negativePrompt = prompts[0]?.negativePrompt ||
+    const baseNegative = prompts[0]?.negativePrompt ||
       'blurry, deformed, bad anatomy, watermark, signature, text, labels, captions, panel numbers, irregular panels, asymmetric grid, unequal panels'
+    const negativePrompt = buildAdaptiveNegativePrompt(baseNegative, state.template, (state as any).styleAnchor)
     const referenceImages = state.inputImages.map(img => `data:${img.mimeType};base64,${img.data}`)
 
     const results = await this.runWithConcurrency(
