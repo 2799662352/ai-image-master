@@ -1309,8 +1309,6 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       return {
         retryFeedback: feedback,
         retryCount: state.retryCount + 1,
-        prompts: null,
-        panels: null,
         report: null,
       }
     }
