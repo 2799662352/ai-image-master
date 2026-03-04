@@ -1,4 +1,4 @@
-import { StateGraph, START, END } from '@langchain/langgraph'
+import { StateGraph, START, END, MemorySaver } from '@langchain/langgraph'
 import { z } from 'zod'
 import { BasePipeline } from './BasePipeline'
 import { sharedSkills } from './director-skills'
@@ -20,6 +20,7 @@ import type {
   DirectorResult,
   AssembledPrompt,
   PassCardData,
+  PipelineExecuteOptions,
 } from './types'
 
 const MAX_RETRIES = 1
@@ -562,6 +563,10 @@ function buildSkillMenu(skills: PipelineSkill[]): string {
 
 export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult> {
   private _graph: any = null
+  private _graphBuilder: any = null
+  private _checkpointer: MemorySaver | null = null
+  _currentThreadId: string | null = null
+  _pauseRequested = false
 
   constructor(config: PipelineConfig) {
     super(config)
@@ -1362,7 +1367,9 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       .addEdge('prepareRetry', 'designAndAssemble')
       .addEdge('generateImages', END)
 
-    this._graph = graph.compile()
+    this._graphBuilder = graph
+    this._checkpointer = new MemorySaver()
+    this._graph = graph.compile({ checkpointer: this._checkpointer })
     return graph
   }
 
@@ -1397,16 +1404,26 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
   async execute(
     input: Partial<DirectorState>,
-    onProgress?: (progress: PipelineProgress) => void
+    onProgress?: (progress: PipelineProgress) => void,
+    options?: PipelineExecuteOptions,
   ): Promise<DirectorResult> {
     await initDirectorSkills()
     if (!this._graph) this.buildGraph()
+
+    this._checkpointer = new MemorySaver()
+    this._graph = this._graphBuilder!.compile({ checkpointer: this._checkpointer })
+    this._pauseRequested = false
+    const threadId = crypto.randomUUID()
+    this._currentThreadId = threadId
+
     const skipVerify = (input as Partial<DirectorState>).skipVerify ?? false
     const totalPasses = skipVerify ? 4 : 5
     let finalState: DirectorState = { ...input } as DirectorState
 
     const config: any = {
       streamMode: ['updates', 'custom'],
+      signal: options?.signal,
+      configurable: { thread_id: threadId },
     }
 
     const pipelineStart = Date.now()
@@ -1419,63 +1436,81 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       throw new Error('Director graph is not initialized')
     }
 
-    const stream = await compiledGraph.stream(input, config)
-    for await (const event of stream) {
-      if (Array.isArray(event)) {
-        const [mode, data] = event
-        if (mode === 'custom' && data?.type === 'pass_complete') {
-          currentPass = typeof data.pass === 'number' ? data.pass : currentPass
-          onProgress?.({
-            pass: data.pass,
-            totalPasses,
-            label: data.label,
-            status: 'completed',
-            elapsed: data.elapsed,
-            passData: data.passData,
-          })
-          if (typeof data.pass === 'number' && data.pass >= terminalPass) {
-            shouldExitAfterTerminalPass = true
-            const terminalImages = data?.passData?.raw?.images
-            if (Array.isArray(terminalImages)) {
-              finalState = { ...finalState, images: terminalImages }
+    try {
+      const stream = await compiledGraph.stream(input, config)
+      for await (const event of stream) {
+        if (Array.isArray(event)) {
+          const [mode, data] = event
+          if (mode === 'custom' && data?.type === 'paused') {
+            console.log(`[DirectorPipeline] 管线在 ${data.node} 处暂停`)
+            continue
+          }
+          if (mode === 'custom' && data?.type === 'pass_complete') {
+            currentPass = typeof data.pass === 'number' ? data.pass : currentPass
+            onProgress?.({
+              pass: data.pass,
+              totalPasses,
+              label: data.label,
+              status: 'completed',
+              elapsed: data.elapsed,
+              passData: data.passData,
+            })
+            if (typeof data.pass === 'number' && data.pass >= terminalPass) {
+              shouldExitAfterTerminalPass = true
+              const terminalImages = data?.passData?.raw?.images
+              if (Array.isArray(terminalImages)) {
+                finalState = { ...finalState, images: terminalImages }
+                break
+              }
+            }
+          } else if (mode === 'custom') {
+            const inferredPass = typeof data?.pass === 'number' ? data.pass : currentPass
+            currentPass = inferredPass
+            onProgress?.({
+              pass: inferredPass,
+              totalPasses,
+              label: data?.label || '处理中...',
+              status: 'running',
+              data,
+            })
+          } else if (mode === 'updates') {
+            const updatesData = data && typeof data === 'object' ? data : {}
+            const entries = Object.entries(updatesData)
+            if (entries.length > 0) {
+              const [, output] = entries[0] as [string, any]
+              finalState = { ...finalState, ...output }
+            }
+            const hasGenerateImagesOutput = Object.prototype.hasOwnProperty.call(updatesData, 'generateImages')
+            if (hasGenerateImagesOutput) {
+              const generateImagesOutput = (updatesData as any).generateImages
+              if (generateImagesOutput && typeof generateImagesOutput === 'object') {
+                finalState = { ...finalState, ...generateImagesOutput }
+              }
+              break
+            }
+            if (shouldExitAfterTerminalPass) {
               break
             }
           }
-        } else if (mode === 'custom') {
-          const inferredPass = typeof data?.pass === 'number' ? data.pass : currentPass
-          currentPass = inferredPass
-          onProgress?.({
-            pass: inferredPass,
-            totalPasses,
-            label: data?.label || '处理中...',
-            status: 'running',
-            data,
-          })
-        } else if (mode === 'updates') {
-          const updatesData = data && typeof data === 'object' ? data : {}
-          const entries = Object.entries(updatesData)
-          if (entries.length > 0) {
-            const [, output] = entries[0] as [string, any]
-            finalState = { ...finalState, ...output }
-          }
-          const hasGenerateImagesOutput = Object.prototype.hasOwnProperty.call(updatesData, 'generateImages')
-          if (hasGenerateImagesOutput) {
-            const generateImagesOutput = (updatesData as any).generateImages
-            if (generateImagesOutput && typeof generateImagesOutput === 'object') {
-              finalState = { ...finalState, ...generateImagesOutput }
-            }
-            break
-          }
-          if (shouldExitAfterTerminalPass) {
-            break
-          }
         }
       }
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        console.log('[DirectorPipeline] 管线已取消')
+        return this.postProcess(this.assembleResult(finalState))
+      }
+      throw err
     }
 
     const totalElapsed = Date.now() - pipelineStart
-    console.log(`[DirectorPipeline] 管线完成 (${totalPasses} passes)，总耗时 ${(totalElapsed / 1000).toFixed(1)}s`)
-    return this.postProcess(this.assembleResult(finalState))
+    if (this._pauseRequested) {
+      console.log(`[DirectorPipeline] 管线暂停 (${(totalElapsed / 1000).toFixed(1)}s)`)
+    } else {
+      console.log(`[DirectorPipeline] 管线完成 (${totalPasses} passes)，总耗时 ${(totalElapsed / 1000).toFixed(1)}s`)
+    }
+    const result = this.postProcess(this.assembleResult(finalState))
+    ;(result as any).__paused = this._pauseRequested
+    return result
   }
 
   /**

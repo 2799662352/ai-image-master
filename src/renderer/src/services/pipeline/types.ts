@@ -70,3 +70,13 @@ export interface GeneratedImage {
   url: string
   prompt: string
 }
+
+export interface PipelineExecuteOptions {
+  signal?: AbortSignal
+}
+
+export interface PipelineExecuteResult<T> {
+  result: T
+  paused: boolean
+  cancelled: boolean
+}
