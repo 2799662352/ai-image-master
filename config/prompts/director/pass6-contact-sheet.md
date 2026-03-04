@@ -20,5 +20,6 @@ STRICT GRID GEOMETRY RULES:
 
 {{character_identity_section}}
 {{style_directive_section}}
+{{style_anchor_section}}
 Panel descriptions:
 {{panel_descriptions}}

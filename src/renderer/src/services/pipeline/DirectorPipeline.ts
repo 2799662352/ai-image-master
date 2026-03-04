@@ -1130,6 +1130,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
               'NO text, NO labels, NO captions, NO annotations, NO panel numbers.',
               vars.character_identity_section,
               vars.style_directive_section,
+              vars.style_anchor_section,
               `Panel descriptions:\n${vars.panel_descriptions}`,
             ].filter(Boolean).join(' ')
 
@@ -1416,6 +1417,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           'NO text, NO labels, NO captions, NO annotations, NO panel numbers.',
           vars.character_identity_section,
           vars.style_directive_section,
+          vars.style_anchor_section,
           `Panel descriptions:\n${vars.panel_descriptions}`,
         ].filter(Boolean).join(' ')
 
