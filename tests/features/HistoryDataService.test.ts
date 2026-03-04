@@ -75,6 +75,7 @@ describe('HistoryDataService', () => {
         expect.any(Function)
       )
     })
+
   })
 
   describe('添加历史记录', () => {

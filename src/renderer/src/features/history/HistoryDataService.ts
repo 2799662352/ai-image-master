@@ -60,6 +60,9 @@ export class HistoryDataService {
     // 初始化底层 HistoryManager
     await this.historyManager.init(this.storageBridge, this.r2Storage)
 
+    // 恢复未完成的上传任务（例如应用重启后）
+    this.resumePendingUploads()
+
     // 初始化 R2 上传监听器
     this.initR2UploadListener()
 
@@ -70,6 +73,26 @@ export class HistoryDataService {
 
     this.initialized = true
     console.log('[HistoryDataService] 初始化完成')
+  }
+
+  /**
+   * 恢复未完成上传任务
+   */
+  private resumePendingUploads(): void {
+    const history = this.historyManager.getAll()
+    const pendingItems = history.filter((item) => {
+      const hasPendingPlaceholder = Array.isArray(item.urls) && item.urls.some((url) => url.startsWith('pending:'))
+      const hasRecoverableSource = Array.isArray(item.originalUrls) && item.originalUrls.length > 0
+      return item.uploading === true && hasPendingPlaceholder && hasRecoverableSource
+    })
+
+    if (pendingItems.length === 0) return
+
+    console.log(`[HistoryDataService] 检测到 ${pendingItems.length} 条未完成上传记录，开始恢复...`)
+    pendingItems.forEach((item) => {
+      // 不阻塞初始化流程，后台恢复上传
+      void this.uploadBase64ToR2(item as HistoryItem, item.originalUrls as string[])
+    })
   }
 
   /**

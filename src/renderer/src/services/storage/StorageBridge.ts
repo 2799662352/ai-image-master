@@ -173,8 +173,12 @@ export class StorageBridge {
           })
         }
         
-        // 清理临时字段 originalUrls（上传期间暂存的 base64）- 不应保存到磁盘
-        if (newItem.originalUrls) {
+        // 上传中的记录需要保留 originalUrls，便于应用重启后恢复上传
+        const shouldKeepOriginalUrls =
+          newItem.uploading === true &&
+          Array.isArray(newItem.originalUrls) &&
+          newItem.originalUrls.length > 0
+        if (!shouldKeepOriginalUrls && newItem.originalUrls) {
           delete newItem.originalUrls
         }
         
@@ -201,8 +205,12 @@ export class StorageBridge {
               url?.startsWith('data:image') && url.length > 1000 ? '[base64-removed]' : url
             )
           }
-          // 清理临时字段
-          if (newItem.originalUrls) {
+          // 上传中的记录需要保留 originalUrls，便于恢复上传
+          const shouldKeepOriginalUrls =
+            newItem.uploading === true &&
+            Array.isArray(newItem.originalUrls) &&
+            newItem.originalUrls.length > 0
+          if (!shouldKeepOriginalUrls && newItem.originalUrls) {
             delete newItem.originalUrls
           }
           return newItem

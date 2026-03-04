@@ -37,6 +37,16 @@ export interface StorageInfo {
   r2Enabled: boolean
 }
 
+export function resolveHistoryItemDisplayUrls(item: Pick<HistoryItem, 'urls' | 'originalUrls'>): string[] {
+  const directUrls = filterValidImageUrls(item.urls || [])
+  if (directUrls.length > 0) return directUrls
+
+  const hasPendingPlaceholder = (item.urls || []).some((url) => isPendingUrl(url))
+  if (!hasPendingPlaceholder) return []
+
+  return filterValidImageUrls(item.originalUrls || [])
+}
+
 export class HistoryPage extends BasePage {
   private storageInfoCache: StorageInfo | null = null
   private storageInfoCacheTime: number = 0
@@ -204,16 +214,16 @@ export class HistoryPage extends BasePage {
 
       switch (action) {
         case 'view':
-          this.viewImage(item.urls, 0)
+          this.viewImage(resolveHistoryItemDisplayUrls(item), 0)
           break
         case 'network-restricted':
           this.showNetworkRestrictedActions(item.urls, item.prompt)
           break
         case 'download-single':
-          this.downloadImage(item.urls[0])
+          this.downloadImage(resolveHistoryItemDisplayUrls(item)[0] || '')
           break
         case 'download-multiple':
-          this.downloadMultipleImages(item.urls, item.prompt)
+          this.downloadMultipleImages(resolveHistoryItemDisplayUrls(item), item.prompt)
           break
         case 'migrate':
           this.migrateToCloud(itemId)
@@ -525,6 +535,8 @@ export class HistoryPage extends BasePage {
     const isCloudStored = item.r2Storage === true
     const isUploading = item.uploading === true
     const hasPlaceholder = item.urls && item.urls.some((url) => isPendingUrl(url))
+    const displayUrls = resolveHistoryItemDisplayUrls(item)
+    const hasDisplayUrls = displayUrls.length > 0
 
     // 添加 data-history-id 用于动画定位
     historyCard.setAttribute('data-history-id', String(item.id))
@@ -551,7 +563,7 @@ export class HistoryPage extends BasePage {
     const imageCountText = item.urls.length > 1 ? `${item.urls.length}张` : ''
 
     // 获取缩略图 URL（排除无效 URL）
-    const thumbnailUrl = getFirstValidThumbnail(item.urls || [])
+    const thumbnailUrl = getFirstValidThumbnail(displayUrls)
 
     // 缩略图 HTML - 可点击预览
     const thumbnailHtml = thumbnailUrl 
@@ -634,7 +646,7 @@ export class HistoryPage extends BasePage {
       </div>
       <div class="flex items-center gap-1.5 flex-shrink-0">
         ${
-          item.urls.length > 0 && !hasPlaceholder
+          hasDisplayUrls
             ? `
             <button data-action="view" data-item-id="${item.id}" class="history-action-btn view-btn p-2 rounded-lg bg-white/5 hover:bg-cyan-500/20 text-white/70 hover:text-cyan-400" title="查看图片">
               <i class="fas fa-eye"></i>
@@ -644,7 +656,7 @@ export class HistoryPage extends BasePage {
                 ? `<button data-action="network-restricted" data-item-id="${item.id}" class="history-action-btn p-2 rounded-lg bg-orange-500/20 hover:bg-orange-500/30 text-orange-400" title="网络受限选项">
                     <i class="fas fa-link"></i>
                   </button>`
-                : item.urls.length === 1
+                : displayUrls.length === 1
                 ? `<button data-action="download-single" data-item-id="${item.id}" class="history-action-btn download-btn p-2 rounded-lg bg-white/5 hover:bg-green-500/20 text-white/70 hover:text-green-400" title="下载图片">
                     <i class="fas fa-download"></i>
                   </button>`
