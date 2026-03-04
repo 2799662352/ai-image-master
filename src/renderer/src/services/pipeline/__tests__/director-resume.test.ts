@@ -22,4 +22,10 @@ describe('DirectorPipeline resume', () => {
 
     await expect(pipeline.resume()).rejects.toThrow('没有可恢复的暂停状态')
   }, 15000)
+
+  it('resume should not hardcode totalPasses to 6', async () => {
+    const { DirectorPipeline } = await import('../DirectorPipeline')
+    const resumeSource = DirectorPipeline.prototype.resume.toString()
+    expect(resumeSource).not.toContain('|| 6')
+  }, 15000)
 })

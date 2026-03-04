@@ -236,6 +236,12 @@ export function useDirectorGeneration() {
               pipeline, scenes[i], resolvedStyle, layoutConfig, drawingModel, onProgress,
               abortController.signal,
             )
+
+            if (result.__paused) {
+              store.setGenerationStatus('paused')
+              return result
+            }
+
             if (result.images?.length) {
               const mapped = result.images.map((img: any) => ({
                 url: img.url,
@@ -255,6 +261,12 @@ export function useDirectorGeneration() {
             pipeline, sceneDescription, resolvedStyle, layoutConfig, drawingModel, onProgress,
             abortController.signal,
           )
+
+          if (result.__paused) {
+            store.setGenerationStatus('paused')
+            return result
+          }
+
           const mappedImages = (result.images ?? []).map((img: any) => ({
             url: img.url,
             prompt: img.prompt,
@@ -377,7 +389,7 @@ export function useDirectorGeneration() {
       try {
         const result = await pipeline.resume(onProgress, { signal: abortController.signal })
 
-        if ((result as any).__paused) {
+        if (result.__paused) {
           store.setGenerationStatus('paused')
           return result
         }
@@ -420,7 +432,11 @@ export function useDirectorGeneration() {
         throw new Error('没有可复用的分镜数据，请先完整生成一次')
       }
 
-      store.setIsGenerating(true)
+      store.setGenerationStatus('running')
+
+      const abortController = new AbortController()
+      abortControllerRef.current = abortController
+
       try {
         const analysisModel = resolveVisionModel()
         const drawingModel = resolveImageModel()
@@ -444,7 +460,7 @@ export function useDirectorGeneration() {
           { ...prevState, imageModel: drawingModel },
           count,
           onProgress,
-          { signal: abortControllerRef.current?.signal },
+          { signal: abortController.signal },
         )
 
         const mappedImages = (result.images ?? []).map((img: any) => ({
@@ -458,8 +474,17 @@ export function useDirectorGeneration() {
         void saveToHistory(mappedImages, String((prevState as any).sceneDescription || ''), currentRatio)
 
         return result
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          console.log('[Director] 重新生成已取消')
+          return
+        }
+        throw err
       } finally {
-        useDirectorStore.getState().setIsGenerating(false)
+        const s = useDirectorStore.getState()
+        if (s.generationStatus === 'running') {
+          s.setGenerationStatus('idle')
+        }
       }
     },
     [currentRatio, resolveVisionModel, resolveImageModel],

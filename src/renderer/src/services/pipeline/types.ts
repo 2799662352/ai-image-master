@@ -57,6 +57,8 @@ export interface DirectorResult {
   images: GeneratedImage[]
   styleAnchor: StyleAnchor | null
   styleConflicts: StyleConflict[]
+  __paused?: boolean
+  __cancelled?: boolean
 }
 
 export interface AssembledPrompt {
@@ -75,8 +77,3 @@ export interface PipelineExecuteOptions {
   signal?: AbortSignal
 }
 
-export interface PipelineExecuteResult<T> {
-  result: T
-  paused: boolean
-  cancelled: boolean
-}

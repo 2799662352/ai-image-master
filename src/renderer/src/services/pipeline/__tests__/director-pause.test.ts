@@ -39,6 +39,14 @@ describe('DirectorPipeline pause mechanism', () => {
     expect(pipeline.isPauseRequested).toBe(false)
   }, 15000)
 
+  it('extractStyleAnchorFn should be pausable (checkPauseAndInterrupt exists in node)', async () => {
+    const { DirectorPipeline } = await import('../DirectorPipeline')
+    const source = DirectorPipeline.prototype.buildGraph.toString()
+    const pauseChecks = (source.match(/checkPauseAndInterrupt/g) || []).length
+    // 1 definition + 6 call sites = 7
+    expect(pauseChecks).toBeGreaterThanOrEqual(7)
+  }, 15000)
+
   it('should expose currentThreadId after execute starts', async () => {
     const { DirectorPipeline } = await import('../DirectorPipeline')
     const pipeline = new DirectorPipeline({

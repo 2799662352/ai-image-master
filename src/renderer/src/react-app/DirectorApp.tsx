@@ -124,7 +124,11 @@ export function DirectorApp() {
           })
         }
       })
-      setViewState('results')
+
+      const currentStatus = useDirectorStore.getState().generationStatus
+      if (currentStatus !== 'paused') {
+        setViewState('results')
+      }
     } catch (error: any) {
       console.error('[DirectorApp] Generation failed:', error)
       setViewState('idle')

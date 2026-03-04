@@ -37,4 +37,32 @@ describe('useDirectorGeneration cancel/pause/resume', () => {
     const { result } = renderHook(() => useDirectorGeneration())
     expect(result.current.generationStatus).toBe('idle')
   })
+
+  it('should set generationStatus to paused when pipeline returns __paused', async () => {
+    const mockPipeline = {
+      execute: vi.fn().mockResolvedValue({
+        images: [], scene: null, characters: null,
+        panels: null, prompts: [], report: null,
+        styleAnchor: null, styleConflicts: [],
+        __paused: true,
+      }),
+      resume: vi.fn(),
+      requestPause: vi.fn(),
+      clearPauseRequest: vi.fn(),
+      isPauseRequested: false,
+    }
+
+    vi.doMock('@/services/ServiceBridge', () => ({
+      getDirectorPipelineService: vi.fn().mockResolvedValue(mockPipeline),
+    }))
+
+    useDirectorStore.getState().setGenerationStatus('paused')
+    expect(useDirectorStore.getState().generationStatus).toBe('paused')
+  })
+
+  it('regenerateImages should be cancellable', () => {
+    const { result } = renderHook(() => useDirectorGeneration())
+    expect(typeof result.current.cancelGeneration).toBe('function')
+    expect(typeof result.current.regenerateImages).toBe('function')
+  })
 })

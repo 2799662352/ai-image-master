@@ -659,6 +659,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
   private _checkpointer: MemorySaver | null = null
   _currentThreadId: string | null = null
   _pauseRequested = false
+  private _lastTotalPasses = 5
 
   constructor(config: PipelineConfig) {
     super(config)
@@ -924,6 +925,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
     // ===== Pass 1.5: 风格锚点提取 (parallel with Pass 1+2) =====
     const extractStyleAnchorFn = async (state: DirectorState, config: any) => {
+      checkPauseAndInterrupt('extractStyleAnchor', config)
       const t0 = Date.now()
 
       if (state.inputImages.length === 0) {
@@ -1570,6 +1572,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
     const skipVerify = (input as Partial<DirectorState>).skipVerify ?? false
     const totalPasses = skipVerify ? 4 : 5
+    this._lastTotalPasses = totalPasses
     let finalState: DirectorState = { ...input } as DirectorState
 
     const config: any = {
@@ -1661,7 +1664,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       console.log(`[DirectorPipeline] 管线完成 (${totalPasses} passes)，总耗时 ${(totalElapsed / 1000).toFixed(1)}s`)
     }
     const result = this.postProcess(this.assembleResult(finalState))
-    ;(result as any).__paused = this._pauseRequested
+    result.__paused = this._pauseRequested
     return result
   }
 
@@ -1704,7 +1707,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
             currentPass = typeof data.pass === 'number' ? data.pass : currentPass
             onProgress?.({
               pass: data.pass,
-              totalPasses: data.totalPasses || 6,
+              totalPasses: data.totalPasses || this._lastTotalPasses,
               label: data.label,
               status: 'completed',
               elapsed: data.elapsed,
@@ -1713,7 +1716,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           } else if (mode === 'custom' && data?.type === 'image_generated') {
             onProgress?.({
               pass: data.pass,
-              totalPasses: data.totalPasses || 6,
+              totalPasses: data.totalPasses || this._lastTotalPasses,
               label: data.label,
               status: 'running',
               data,
@@ -1739,8 +1742,8 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       if (err instanceof DOMException && err.name === 'AbortError') {
         console.log('[DirectorPipeline] 恢复执行已取消')
         const result = this.postProcess(this.assembleResult(finalState))
-        ;(result as any).__paused = false
-        ;(result as any).__cancelled = true
+        result.__paused = false
+        result.__cancelled = true
         return result
       }
       throw err
@@ -1754,7 +1757,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     }
 
     const result = this.postProcess(this.assembleResult(finalState))
-    ;(result as any).__paused = this._pauseRequested
+    result.__paused = this._pauseRequested
     return result
   }
 
