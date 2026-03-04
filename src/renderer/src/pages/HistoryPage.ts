@@ -8,6 +8,7 @@ import { BasePage, type AppInterface } from './BasePage'
 import { getHistoryManager } from '../features/history/HistoryManager'
 import { VirtualScroller } from '../core/VirtualScroller'
 import { isValidImageUrl, isPendingUrl, filterValidImageUrls, getFirstValidThumbnail } from '../utils/url-validator'
+import { getR2StorageService } from '../services/r2-storage'
 
 // Types
 export interface HistoryItem {
@@ -790,7 +791,7 @@ export class HistoryPage extends BasePage {
           const totalSizeKB = (totalSize / 1024).toFixed(2)
 
           // 检查 R2 存储是否可用
-          const r2Storage = (window as any).r2Storage
+          const r2Storage = getR2StorageService()
           const r2Enabled = r2Storage?.isAvailable?.() ?? false
 
           this.storageInfoCache = {
@@ -1250,7 +1251,7 @@ export class HistoryPage extends BasePage {
 
     try {
       // 删除云端图片（失败不影响本地删除）
-      const r2Storage = (window as any).r2Storage
+      const r2Storage = getR2StorageService()
       if (itemToDelete.r2Storage && r2Storage?.isAvailable?.()) {
         try {
           const r2Keys: string[] = []
@@ -1294,7 +1295,7 @@ export class HistoryPage extends BasePage {
       return
     }
 
-    const r2Storage = (window as any).r2Storage
+    const r2Storage = getR2StorageService()
     if (!r2Storage?.isAvailable?.()) {
       this.showToast(this.t('history.messages.cloudUnavailable'), 'error')
       return
@@ -1334,7 +1335,7 @@ export class HistoryPage extends BasePage {
   }
 
   async migrateAllToCloud(): Promise<void> {
-    const r2Storage = (window as any).r2Storage
+    const r2Storage = getR2StorageService()
     if (!r2Storage?.isAvailable?.()) {
       this.showToast('云存储服务不可用', 'error')
       return
@@ -1400,7 +1401,7 @@ export class HistoryPage extends BasePage {
       return
     }
 
-    const r2Storage = (window as any).r2Storage
+    const r2Storage = getR2StorageService()
     if (r2Storage?.isAvailable?.()) {
       try {
         const allR2Keys: string[] = []
