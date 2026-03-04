@@ -47,8 +47,11 @@ interface ProgressData {
 
 type PassStatus = 'pending' | 'running' | 'completed' | 'retrying' | 'failed'
 
+export type GenerationStatus = 'idle' | 'running' | 'paused'
+
 interface GenerationSlice {
   isGenerating: boolean
+  generationStatus: GenerationStatus
   isProcessingFiles: boolean
   generatedResults: GeneratedResult[]
   lastAnalysisResult: string | null
@@ -61,6 +64,7 @@ interface GenerationSlice {
   progressPercentage: number
   regenerateCount: number
   setIsGenerating: (val: boolean) => void
+  setGenerationStatus: (status: GenerationStatus) => void
   setIsProcessingFiles: (val: boolean) => void
   setGeneratedResults: (val: GeneratedResult[] | ((prev: GeneratedResult[]) => GeneratedResult[])) => void
   setLastAnalysisResult: (val: string | null) => void
@@ -377,9 +381,10 @@ const initialImageState: Pick<ImageSlice, 'referenceImages'> = {
 
 const initialGenerationState: Pick<
   GenerationSlice,
-  'isGenerating' | 'isProcessingFiles' | 'generatedResults' | 'lastAnalysisResult' | 'lastCharacterAnchor' | 'lastPipelineState' | 'viewState' | 'currentProgress' | 'passStatuses' | 'passCards' | 'progressPercentage' | 'regenerateCount'
+  'isGenerating' | 'generationStatus' | 'isProcessingFiles' | 'generatedResults' | 'lastAnalysisResult' | 'lastCharacterAnchor' | 'lastPipelineState' | 'viewState' | 'currentProgress' | 'passStatuses' | 'passCards' | 'progressPercentage' | 'regenerateCount'
 > = {
   isGenerating: false,
+  generationStatus: 'idle' as GenerationStatus,
   isProcessingFiles: false,
   generatedResults: [],
   lastAnalysisResult: null,
@@ -441,7 +446,14 @@ const createImageSlice: StateCreator<DirectorStore, [], [], ImageSlice> = (set) 
 
 const createGenerationSlice: StateCreator<DirectorStore, [], [], GenerationSlice> = (set) => ({
   ...initialGenerationState,
-  setIsGenerating: (val) => set({ isGenerating: val }),
+  setIsGenerating: (val) => set({
+    isGenerating: val,
+    generationStatus: val ? 'running' : 'idle',
+  }),
+  setGenerationStatus: (status) => set({
+    generationStatus: status,
+    isGenerating: status === 'running',
+  }),
   setIsProcessingFiles: (val) => set({ isProcessingFiles: val }),
   setGeneratedResults: (val) =>
     set((state) => ({
