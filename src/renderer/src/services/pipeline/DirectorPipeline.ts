@@ -207,7 +207,7 @@ export function extractVarsForDesignAndAssemble(state: DirectorState): Record<st
     retry_block: retryBlock,
     previous_prompts_ref: previousPromptsRef,
     style_authority_chain: (() => {
-      const anchor = (state as any).styleAnchor
+      const anchor = state.styleAnchor
       if (!anchor) return ''
       const conflicts: StyleConflict[] = (state as any).styleConflicts || []
       const conflictsLog = conflicts.length > 0
@@ -253,7 +253,7 @@ function extractVarsForVerify(state: DirectorState): Record<string, string> {
     character_anchors_summary: characterAnchors,
     panels_summary_short: panelDetails,
     style_anchor_summary: (() => {
-      const anchor = (state as any).styleAnchor
+      const anchor = state.styleAnchor
       if (!anchor) return '(no style anchor)'
       return `Medium: ${anchor.medium}, Palette: ${anchor.palette?.join(', ')}, Texture: ${anchor.texture}`
     })(),
@@ -448,7 +448,7 @@ export function codeVerify(state: DirectorState): z.infer<typeof VerifySchema> {
   const anchors = state.characters?.characters || []
   const prompts = state.prompts || []
   const stylePrefix = resolveStylePrefix(
-    (state as any).styleAnchor || null,
+    state.styleAnchor || null,
     state.template,
     state.styleInstructions,
   )
@@ -604,7 +604,7 @@ export function extractVarsForContactSheet(state: DirectorState): Record<string,
     character_identity_section: characterIdentitySection,
     style_directive_section: styleDirectiveSection,
     style_anchor_section: (() => {
-      const anchor = (state as any).styleAnchor
+      const anchor = state.styleAnchor
       if (!anchor) return ''
       return [
         'STYLE ANCHOR (apply to ALL panels uniformly):',
@@ -622,11 +622,11 @@ export function extractVarsForContactSheet(state: DirectorState): Record<string,
     panel_descriptions: `${globalSection}${userDirection}${characterIdentityLockSummary ? `\n\n${characterIdentityLockSummary}` : ''}\n\nSTORYBOARD GRID ${state.layout.rows}x${state.layout.cols}:\n${perShotSection}`,
     reference_image_role_rules: buildReferenceImageRoleRules(
       state.template,
-      !!(state as any).styleAnchor,
+      !!state.styleAnchor,
     ),
     enhanced_panel_descriptions: (() => {
       const stylePrefix = resolveStylePrefix(
-        (state as any).styleAnchor,
+        state.styleAnchor,
         state.template,
         state.styleInstructions,
       )
@@ -1374,7 +1374,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
         const baseNegative = prompts[0]?.negativePrompt ||
           'blurry, deformed, bad anatomy, watermark, signature, text, labels, captions, panel numbers, irregular panels, asymmetric grid, unequal panels'
-        const negativePrompt = buildAdaptiveNegativePrompt(baseNegative, state.template, (state as any).styleAnchor)
+        const negativePrompt = buildAdaptiveNegativePrompt(baseNegative, state.template, state.styleAnchor)
         const referenceImages = state.inputImages.map(img => `data:${img.mimeType};base64,${img.data}`)
         const userConcurrency = Math.max(1, imageCount)
         const results = await self.runWithConcurrency(
@@ -1808,7 +1808,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
     const baseNegative = prompts[0]?.negativePrompt ||
       'blurry, deformed, bad anatomy, watermark, signature, text, labels, captions, panel numbers, irregular panels, asymmetric grid, unequal panels'
-    const negativePrompt = buildAdaptiveNegativePrompt(baseNegative, state.template, (state as any).styleAnchor)
+    const negativePrompt = buildAdaptiveNegativePrompt(baseNegative, state.template, state.styleAnchor)
     const referenceImages = state.inputImages.map(img => `data:${img.mimeType};base64,${img.data}`)
 
     const results = await this.runWithConcurrency(
