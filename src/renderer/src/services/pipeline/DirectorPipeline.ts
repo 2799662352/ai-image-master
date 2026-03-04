@@ -386,7 +386,7 @@ const TEMPLATE_MEDIUM_MAP: Record<string, string> = {
   theatrical: 'theatrical anime film screenshot',
   webtoon: 'webtoon style, full color',
   comic: 'american comic style',
-  illustration: 'detailed illustration',
+  'anime-screencap': 'anime screencap, TV anime',
 }
 
 export function resolveStylePrefix(
@@ -406,7 +406,7 @@ const STYLE_EXCLUSION_MAP: Record<string, string[]> = {
   manga: ['photorealistic', 'real person', 'color', '3D render', 'anime coloring'],
   webtoon: ['photorealistic', 'real person', 'black and white', 'monochrome', '3D render'],
   comic: ['photorealistic', 'real person', 'anime', 'soft shading', '3D render'],
-  illustration: ['photorealistic', 'real person', 'anime screencap', '3D render'],
+  'anime-screencap': ['photorealistic', 'real person', 'photograph', 'live-action', '3D render', 'CGI'],
 }
 
 const MEDIUM_EXCLUSION_MAP: Record<string, string[]> = {
