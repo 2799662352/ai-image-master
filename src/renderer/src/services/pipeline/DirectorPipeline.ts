@@ -511,6 +511,11 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         if (!c?.characters?.length) return '(empty)'
         return `角色 ${c.characters.length} 个`
       }
+      case 'extractStyleAnchor': {
+        const a = output?.styleAnchor
+        if (!a) return output?.skipped ? '(skipped)' : '(empty)'
+        return `Medium: ${a.medium}, ${output?.conflicts?.length || 0} conflicts`
+      }
       case 'designAndAssemble': {
         const panels = output?.panels
         const prompts = output?.prompts
@@ -1216,6 +1221,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       .addNode('selectSkills', selectSkillsFn)
       .addNode('analyzeScene', analyzeSceneFn, { retryPolicy: retryLLM })
       .addNode('extractCharacterAnchors', extractCharacterAnchorsFn, { retryPolicy: retryLLM })
+      .addNode('extractStyleAnchor', extractStyleAnchorFn, { retryPolicy: retryLLM })
       .addNode('validateAnalysis', validateAnalysisFn)
       .addNode('prepareAnalysisRetry', prepareAnalysisRetryFn)
       .addNode('abortPipeline', abortPipelineFn)
@@ -1226,7 +1232,8 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       .addEdge(START, 'selectSkills')
       .addEdge('selectSkills', 'analyzeScene')
       .addEdge('selectSkills', 'extractCharacterAnchors')
-      .addEdge(['analyzeScene', 'extractCharacterAnchors'], 'validateAnalysis')
+      .addEdge('selectSkills', 'extractStyleAnchor')
+      .addEdge(['analyzeScene', 'extractCharacterAnchors', 'extractStyleAnchor'], 'validateAnalysis')
       .addConditionalEdges('validateAnalysis', routeAfterAnalysis, {
         continue: 'designAndAssemble',
         retry: 'prepareAnalysisRetry',
