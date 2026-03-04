@@ -1820,6 +1820,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           return { id: i + 1, url: '', prompt: compositePrompt, error: error instanceof Error ? error.message : String(error) }
         }
       },
+      options?.signal,
     )
 
     const elapsed = Date.now() - t0

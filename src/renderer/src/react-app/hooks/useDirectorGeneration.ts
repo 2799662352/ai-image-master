@@ -435,7 +435,8 @@ export function useDirectorGeneration() {
         const result = await pipeline.regenerateImages(
           { ...prevState, imageModel: drawingModel },
           count,
-          onProgress
+          onProgress,
+          { signal: abortControllerRef.current?.signal },
         )
 
         const mappedImages = (result.images ?? []).map((img: any) => ({
