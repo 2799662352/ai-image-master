@@ -5,7 +5,7 @@
  */
 
 import { BasePage, AppInterface, PageState } from './BasePage'
-import type { PipelineProgress } from '../services/storyboard-pipeline/StoryboardPipelineService'
+import type { PipelineProgress } from '../services/pipeline/types'
 
 /**
  * 上传的图片
@@ -965,14 +965,16 @@ export class UnderstandPage extends BasePage {
             const pipelineService = await getStoryboardPipelineService(modelToUse)
             if (pipelineService) {
               console.log('[UnderstandPage] Using 4-Pass storyboard pipeline...')
-              const images = this.uploadedImages.map(img => ({
-                base64: img.base64, mimeType: img.mimeType || 'image/jpeg'
+              const inputImages = this.uploadedImages.map(img => ({
+                data: img.base64, mimeType: img.mimeType || 'image/jpeg'
               }))
               this.showPipelineProgress()
 
-              const result = await pipelineService.analyze(
-                images,
-                { rolePrompt: prompt || '', context: contextText || undefined },
+              const result = await pipelineService.execute(
+                {
+                  inputImages,
+                  userContext: [prompt || '', contextText || ''].filter(Boolean).join('\n\n'),
+                },
                 (progress) => this.onPipelineProgress(progress)
               )
 
@@ -982,7 +984,7 @@ export class UnderstandPage extends BasePage {
               fullResult = jsonOutput
 
               this._lastStoryboardResult = result
-              this._lastAnalyzedImages = images
+              this._lastAnalyzedImages = inputImages.map(img => ({ base64: img.data, mimeType: img.mimeType }))
               this._lastFormattedText = formattedText
               this._lastJsonText = jsonOutput
               this.showStoryboardResult(formattedText, jsonOutput)
@@ -1399,7 +1401,7 @@ export class UnderstandPage extends BasePage {
    * 处理管线各 Pass 完成的进度回调
    */
   private onPipelineProgress(progress: PipelineProgress): void {
-    if (progress.data?.retry) {
+    if ((progress.data as any)?.retry) {
       const pass3El = document.getElementById('pipelinePass3')
       if (pass3El) {
         const status = pass3El.querySelector('span:last-child')

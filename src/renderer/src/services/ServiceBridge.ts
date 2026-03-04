@@ -1087,7 +1087,7 @@ export async function getStoryboardPipelineService(model?: string): Promise<impo
   const cacheKey = `pipeline|${apiKey}|${baseURL}|${model || ''}`
   if (!_pipelineInstance || _pipelineCacheKey !== cacheKey) {
     const { StoryboardProPipeline } = await import('./storyboard-pipeline/StoryboardProPipeline')
-    _pipelineInstance = new StoryboardProPipeline({ apiKey, baseURL, model })
+    _pipelineInstance = new StoryboardProPipeline({ apiKey, baseURL, model: model || 'gemini-3-pro-preview' })
     _pipelineCacheKey = cacheKey
     console.log('[ServiceBridge] ✓ StoryboardProPipeline v2 实例已创建 (4-Pass), model:', model || 'default')
   }
