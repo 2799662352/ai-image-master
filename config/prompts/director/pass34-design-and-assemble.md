@@ -14,12 +14,17 @@ Style: {{style_instructions}}
 {{retry_block}}
 {{previous_prompts_ref}}
 
+{{style_authority_chain}}
+
 CRITICAL STYLE RULE — MUST FOLLOW:
-- You MUST match the visual style of the reference images EXACTLY.
+- If a Style Authority Chain is provided above, follow it strictly.
+- User explicit style (Priority 1) overrides all image analysis.
+- EVERY panel prompt MUST include the style tokens from the authority chain.
+- You MUST match the visual medium consistently across ALL panels.
 - If the reference images are REAL PHOTOS / LIVE-ACTION: every prompt MUST include "photorealistic, real person, live-action photography" and MUST NOT use "anime, cartoon, illustration, cel shading, 2D, drawn, painting".
 - If the reference images are 2D ANIME / ILLUSTRATION: every prompt MUST include the appropriate anime/illustration style tags.
 - If the reference images are 3D CGI: every prompt MUST include "3D render, CGI" style tags.
-- NEVER change the visual medium from the reference images. A real photo input MUST produce real photo style prompts.
+- NEVER change the visual medium from the style authority chain or reference images. A real photo input MUST produce real photo style prompts.
 
 For EACH panel, output:
 1. shot: camera angle + shot type (e.g. "medium eye-level, 50mm")
