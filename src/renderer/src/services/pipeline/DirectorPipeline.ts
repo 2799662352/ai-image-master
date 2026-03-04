@@ -1179,11 +1179,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         if (!Array.isArray(result.issues)) result.issues = []
         const elapsed = Date.now() - t0
         const passData = DirectorPipeline.buildPassCardData('verifyConsistency', { pass: 5, label: '一致性校验' }, { report: result }, elapsed, appliedSkills)
-        writer(config)?.({
-          type: 'pass_complete', pass: 5,
-          label: `一致性校验完成 (score: ${result.score}, ${(elapsed / 1000).toFixed(1)}s)`,
-          elapsed, passData,
-        })
+
         const threshold = Number.isFinite(state.scoreThreshold)
           ? Math.max(0, Math.min(10, Math.round(state.scoreThreshold)))
           : SCORE_THRESHOLD
@@ -1192,6 +1188,11 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
         if (shouldReject && state.retryCount < MAX_RETRIES) {
           const feedback = buildRetryFeedback(result as VerifyReportLike, threshold)
+          writer(config)?.({
+            type: 'pass_complete', pass: 5,
+            label: `一致性校验不通过 (score: ${result.score}, 将重试) (${(elapsed / 1000).toFixed(1)}s)`,
+            elapsed, passData,
+          })
           return {
             report: result,
             retryFeedback: feedback,
@@ -1199,10 +1200,15 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           }
         }
 
+        writer(config)?.({
+          type: 'pass_complete', pass: 5,
+          label: `一致性校验完成 (score: ${result.score}, ${(elapsed / 1000).toFixed(1)}s)`,
+          elapsed, passData,
+        })
         return { report: result, retryFeedback: '' }
       } catch (err: unknown) {
         emitError(config, 5, '一致性校验', 'verifyConsistency', err instanceof Error ? err.message : String(err), Date.now() - t0)
-        return { report: null }
+        return { report: null, retryFeedback: '' }
       }
     }
 
@@ -1357,7 +1363,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     // ===== Routing: Evaluator-Optimizer pattern =====
     const routeAfterEvaluator = (state: DirectorState): 'generate' | 'designAndAssemble' => {
       if (!state.report) return 'generate'
-      if (state.retryFeedback) return 'designAndAssemble'
+      if (state.retryFeedback && state.retryCount <= MAX_RETRIES) return 'designAndAssemble'
       return 'generate'
     }
 
