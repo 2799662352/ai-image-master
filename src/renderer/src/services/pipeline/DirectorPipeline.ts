@@ -325,6 +325,51 @@ export function buildRetryFeedback(report: VerifyReportLike | null | undefined, 
   return `Soft correction only. Fix only: ${lowItems.join(', ')}. Affected panels: ${panelText}. Keep all other panels unchanged.${issuesText}`
 }
 
+const STYLE_KEYWORDS = [
+  'photorealistic', 'anime', 'watercolor', 'oil painting', 'sketch',
+  'cyberpunk', 'steampunk', 'noir', 'neon', 'pastel', 'vintage',
+  'monochrome', 'sepia', '3D', 'CGI', 'pixel art', 'cel shading',
+  'impressionist', 'minimalist', 'retro', 'futuristic',
+  '写实', '动漫', '水彩', '赛博朋克', '蒸汽朋克', '黑白', '复古',
+]
+
+function extractStyleHintsFromDescription(desc: string): string[] {
+  const lower = desc.toLowerCase()
+  return STYLE_KEYWORDS.filter(kw => lower.includes(kw.toLowerCase()))
+}
+
+export function buildStyleAuthorityPrompt(
+  templateKey: string,
+  styleInstructions: string,
+  sceneDescription: string,
+): string {
+  const hasTemplate = templateKey && templateKey !== 'default' && styleInstructions
+  const lines: string[] = []
+
+  if (hasTemplate) {
+    lines.push(
+      `USER EXPLICIT STYLE (Priority 1 — NON-NEGOTIABLE):`,
+      `Template: "${templateKey}"`,
+      `Style directive: ${styleInstructions}`,
+      `These style fields are locked by the user. Do NOT override with reference image analysis.`,
+    )
+  }
+
+  if (sceneDescription) {
+    const styleHints = extractStyleHintsFromDescription(sceneDescription)
+    if (styleHints.length > 0) {
+      lines.push(
+        '',
+        `USER NARRATIVE STYLE HINTS (Priority 2):`,
+        ...styleHints.map(h => `  - ${h}`),
+        `These hints complement the template but do not override it.`,
+      )
+    }
+  }
+
+  return lines.join('\n')
+}
+
 export function shouldRetryAnalysis(state: {
   scene: { env?: string } | null
   characters: { characters?: unknown[] } | null
@@ -646,6 +691,109 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       } catch (err: unknown) {
         emitError(config, 2, '角色锚点', 'extractCharacterAnchors', err instanceof Error ? err.message : String(err), Date.now() - t0)
         return { characters: null }
+      }
+    }
+
+    // ===== Pass 1.5: 风格锚点提取 (parallel with Pass 1+2) =====
+    const extractStyleAnchorFn = async (state: DirectorState, config: any) => {
+      const t0 = Date.now()
+
+      if (state.inputImages.length === 0) {
+        const elapsed = Date.now() - t0
+        const passData = DirectorPipeline.buildPassCardData('extractStyleAnchor', { pass: 1, label: '风格锚点' }, { styleAnchor: null, skipped: true }, elapsed)
+        writer(config)?.({ type: 'pass_complete', pass: 1, label: '风格锚点（无参考图，已跳过）', elapsed, passData })
+        return { styleAnchor: null, styleConflicts: [] }
+      }
+
+      try {
+        const appliedSkills = self.getSkillsForPhase('extractStyleAnchor', state as Record<string, unknown>)
+        const structuredWithRaw = self.createStructuredLLMWithRaw(
+          z.object({
+            styleAnchor: StyleAnchorSchema,
+            conflicts: z.array(StyleConflictSchema).default([]),
+          })
+        )
+
+        const userStyleContext = buildStyleAuthorityPrompt(
+          state.template,
+          state.styleInstructions,
+          state.sceneDescription,
+        )
+
+        const systemPrompt = self.resolveSystemPrompt(
+          'extractStyleAnchor', {},
+          state as Record<string, unknown>,
+          [
+            'You are a visual style analyst. Extract the VISUAL STYLE (not content) from the reference images.',
+            '',
+            'Output a structured style anchor covering: medium, palette (2-5 hex codes), paletteRatio, lightSource, shadowDepth, texture, colorTemperature, contrastLevel.',
+            '',
+            'IMPORTANT — User Style Authority:',
+            userStyleContext || '(No user style directive provided. Derive all fields from image analysis.)',
+            '',
+            'If the reference images show a DIFFERENT medium/style than what the user selected:',
+            '- Report the conflict in the "conflicts" array',
+            '- The final "medium" field MUST reflect the USER\'s choice, NOT the reference image',
+            '- Use the reference image ONLY for fields the user did NOT explicitly specify',
+          ].join('\n'),
+        )
+
+        const response = await structuredWithRaw.invoke([
+          { role: 'system', content: systemPrompt },
+          {
+            role: 'user',
+            content: [
+              ...BasePipeline.buildImageContent(
+                state.inputImages,
+                resolveVisionDetailByPass(state, 'analyzeScene'),
+              ),
+              { type: 'text' as const, text: 'Extract the visual style anchor from these reference images. Focus on style attributes only, not content.' },
+            ],
+          },
+        ])
+
+        let parsed = (response as any)?.parsed
+        if (!parsed?.styleAnchor?.medium) {
+          const rawText = typeof (response as any)?.raw?.content === 'string'
+            ? (response as any).raw.content : ''
+          try {
+            const match = rawText.match(/\{[\s\S]*"medium"\s*:[\s\S]*\}/)
+            if (match) {
+              const fallback = JSON.parse(match[0])
+              if (fallback?.medium) parsed = { styleAnchor: fallback, conflicts: [] }
+              else if (fallback?.styleAnchor?.medium) parsed = fallback
+            }
+          } catch { /* fallback below */ }
+        }
+
+        if (!parsed?.styleAnchor?.medium) {
+          console.warn('[DirectorPipeline] extractStyleAnchor: extraction failed, skipping')
+          const elapsed = Date.now() - t0
+          writer(config)?.({ type: 'pass_complete', pass: 1, label: '风格锚点（提取失败，已跳过）', elapsed, passData: null })
+          return { styleAnchor: null, styleConflicts: [] }
+        }
+
+        const elapsed = Date.now() - t0
+        const passData = DirectorPipeline.buildPassCardData(
+          'extractStyleAnchor', { pass: 1, label: '风格锚点' },
+          { styleAnchor: parsed.styleAnchor, conflicts: parsed.conflicts },
+          elapsed, appliedSkills,
+        )
+        writer(config)?.({
+          type: 'pass_complete', pass: 1,
+          label: `风格锚点提取完成 (${(elapsed / 1000).toFixed(1)}s)`,
+          elapsed, passData,
+        })
+
+        return {
+          styleAnchor: parsed.styleAnchor,
+          styleConflicts: parsed.conflicts || [],
+        }
+      } catch (err: unknown) {
+        console.warn('[DirectorPipeline] extractStyleAnchor failed:', err instanceof Error ? err.message : String(err))
+        const elapsed = Date.now() - t0
+        writer(config)?.({ type: 'pass_complete', pass: 1, label: '风格锚点（异常，已跳过）', elapsed, passData: null })
+        return { styleAnchor: null, styleConflicts: [] }
       }
     }
 

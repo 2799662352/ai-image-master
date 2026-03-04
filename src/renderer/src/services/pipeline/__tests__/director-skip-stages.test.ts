@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { shouldRetryAnalysis, extractVarsForDesignAndAssemble, extractVarsForContactSheet } from '../DirectorPipeline'
+import { shouldRetryAnalysis, extractVarsForDesignAndAssemble, extractVarsForContactSheet, buildStyleAuthorityPrompt } from '../DirectorPipeline'
 
 describe('DirectorPipeline skip stages', () => {
   describe('shouldRetryAnalysis with skip flags', () => {
@@ -126,5 +126,28 @@ describe('style anchor in extractVarsForContactSheet', () => {
     const vars = extractVarsForContactSheet(state as any)
     expect(vars.style_anchor_section).toContain('anime cel')
     expect(vars.style_anchor_section).toContain('cel shading')
+  })
+})
+
+describe('buildStyleAuthorityPrompt', () => {
+  it('should produce a prompt with user template priority when template is set', () => {
+    const result = buildStyleAuthorityPrompt(
+      'cinematic',
+      'Cinematic Contact Sheet, award-winning...',
+      'cyberpunk rain chase scene',
+    )
+    expect(result).toContain('cinematic')
+    expect(result).toContain('USER EXPLICIT')
+  })
+
+  it('should return empty when no template and no scene hints', () => {
+    const result = buildStyleAuthorityPrompt('default', '', '')
+    expect(result).toBe('')
+  })
+
+  it('should include narrative style hints from description', () => {
+    const result = buildStyleAuthorityPrompt('default', '', 'a noir cyberpunk scene in rain')
+    expect(result).toContain('noir')
+    expect(result).toContain('cyberpunk')
   })
 })
