@@ -1497,6 +1497,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     }
 
     try {
+      onProgress?.({ pass: 0, totalPasses, label: '准备中…', status: 'running' })
       const stream = await compiledGraph.stream(input, config)
       for await (const event of stream) {
         if (Array.isArray(event)) {
