@@ -1,4 +1,4 @@
-import { StateGraph, START, END, MemorySaver, interrupt } from '@langchain/langgraph'
+import { StateGraph, START, END, MemorySaver, interrupt, Command } from '@langchain/langgraph'
 import { z } from 'zod'
 import { BasePipeline } from './BasePipeline'
 import { sharedSkills } from './director-skills'
@@ -1536,6 +1536,99 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     } else {
       console.log(`[DirectorPipeline] 管线完成 (${totalPasses} passes)，总耗时 ${(totalElapsed / 1000).toFixed(1)}s`)
     }
+    const result = this.postProcess(this.assembleResult(finalState))
+    ;(result as any).__paused = this._pauseRequested
+    return result
+  }
+
+  async resume(
+    onProgress?: (progress: PipelineProgress) => void,
+    options?: PipelineExecuteOptions,
+  ): Promise<DirectorResult> {
+    if (!this._currentThreadId || !this._graph) {
+      throw new Error('没有可恢复的暂停状态')
+    }
+
+    this._pauseRequested = false
+
+    const config: any = {
+      streamMode: ['updates', 'custom'],
+      signal: options?.signal,
+      configurable: { thread_id: this._currentThreadId },
+    }
+
+    const pipelineStart = Date.now()
+    let finalState: DirectorState = {} as DirectorState
+    let currentPass = 0
+
+    try {
+      const stream = await this._graph.stream(
+        new Command({ resume: true }),
+        config,
+      )
+
+      for await (const event of stream) {
+        if (Array.isArray(event)) {
+          const [mode, data] = event
+
+          if (mode === 'custom' && data?.type === 'paused') {
+            console.log(`[DirectorPipeline] 管线在 ${data.node} 处再次暂停`)
+            continue
+          }
+
+          if (mode === 'custom' && data?.type === 'pass_complete') {
+            currentPass = typeof data.pass === 'number' ? data.pass : currentPass
+            onProgress?.({
+              pass: data.pass,
+              totalPasses: data.totalPasses || 6,
+              label: data.label,
+              status: 'completed',
+              elapsed: data.elapsed,
+              passData: data.passData,
+            })
+          } else if (mode === 'custom' && data?.type === 'image_generated') {
+            onProgress?.({
+              pass: data.pass,
+              totalPasses: data.totalPasses || 6,
+              label: data.label,
+              status: 'running',
+              data,
+            })
+          } else if (mode === 'updates') {
+            const updatesData = data
+            const entries = Object.entries(updatesData)
+            if (entries.length > 0) {
+              const [, output] = entries[0] as [string, any]
+              finalState = { ...finalState, ...output }
+            }
+            if (Object.prototype.hasOwnProperty.call(updatesData, 'generateImages')) {
+              const generateImagesOutput = (updatesData as any).generateImages
+              if (generateImagesOutput && typeof generateImagesOutput === 'object') {
+                finalState = { ...finalState, ...generateImagesOutput }
+              }
+              break
+            }
+          }
+        }
+      }
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        console.log('[DirectorPipeline] 恢复执行已取消')
+        const result = this.postProcess(this.assembleResult(finalState))
+        ;(result as any).__paused = false
+        ;(result as any).__cancelled = true
+        return result
+      }
+      throw err
+    }
+
+    const totalElapsed = Date.now() - pipelineStart
+    if (this._pauseRequested) {
+      console.log(`[DirectorPipeline] 管线在恢复后再次暂停 (${(totalElapsed / 1000).toFixed(1)}s)`)
+    } else {
+      console.log(`[DirectorPipeline] 管线恢复完成，耗时 ${(totalElapsed / 1000).toFixed(1)}s`)
+    }
+
     const result = this.postProcess(this.assembleResult(finalState))
     ;(result as any).__paused = this._pauseRequested
     return result
