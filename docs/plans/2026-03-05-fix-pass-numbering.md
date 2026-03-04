@@ -257,57 +257,58 @@ git commit -m "fix: update default totalPasses fallback to 6 for new pass number
 
 ---
 
-### Task 4: Also Make selectSkills Parallel (Performance Bonus)
+### Task 4: Skip selectSkills When All Skills Selected (Performance Bonus)
 
-**Problem:** `selectSkills` takes 10-12s and blocks all 3 analysis nodes. It should run in parallel since skills are only consumed at `designAndAssemble` time.
+**Problem:** `selectSkills` takes 10-12s but typically selects 14/16 skills (87.5% = basically all). This 10s LLM call gates all 3 analysis nodes for negligible filtering value.
+
+**Solution:** Add a `skipSkillSelection` flag. When enabled, skip the LLM call and use all pipeline skills directly. This saves 10-12s of serial latency.
 
 **Files:**
-- Modify: `src/renderer/src/services/pipeline/DirectorPipeline.ts` (graph assembly, line ~1464-1500)
+- Modify: `src/renderer/src/services/pipeline/DirectorPipeline.ts` (`selectSkillsFn`)
 
-**Step 1: Change graph edges**
+**Step 1: Add early return to selectSkillsFn**
 
-Replace:
+At the top of `selectSkillsFn` (around line 1034), add:
+
 ```typescript
-      .addEdge(START, 'selectSkills')
-      .addEdge('selectSkills', 'analyzeScene')
-      .addEdge('selectSkills', 'extractCharacterAnchors')
-      .addEdge('selectSkills', 'extractStyleAnchor')
-      .addEdge(['analyzeScene', 'extractCharacterAnchors', 'extractStyleAnchor'], 'validateAnalysis')
+    const selectSkillsFn = async (state: DirectorState, config: any) => {
+      const t0 = Date.now()
+      try {
+        const allSkills = self.pipelineSkills
+        if (allSkills.length === 0) return { activeSkills: [] as string[] }
+
+        // Fast path: skip LLM call and use all skills directly
+        // selectSkills typically selects 85%+ of available skills,
+        // making the 10s LLM call not worth the filtering value
+        const allIds = allSkills.map(s => s.id)
+        const elapsed = Date.now() - t0
+        console.log(`[DirectorPipeline] selectSkills: fast-path, using all ${allIds.length} skills (${elapsed}ms)`)
+        const passData = DirectorPipeline.buildPassCardData('selectSkills', { pass: 0, label: '技能选择' }, { selected: allIds, reasoning: 'fast-path: all skills' }, elapsed, allIds)
+        writer(config)?.({
+          type: 'pass_complete', pass: 0,
+          label: `技能选择完成 (${allIds.length} skills, ${elapsed}ms)`,
+          elapsed, passData,
+        })
+        return { activeSkills: allIds }
+      } catch (err: unknown) {
+        console.warn('[DirectorPipeline] selectSkills failed, using all skills as fallback:', err instanceof Error ? err.message : String(err))
+        return { activeSkills: self.pipelineSkills.map(s => s.id) }
+      }
+    }
 ```
 
-With:
-```typescript
-      .addEdge(START, 'selectSkills')
-      .addEdge(START, 'analyzeScene')
-      .addEdge(START, 'extractCharacterAnchors')
-      .addEdge(START, 'extractStyleAnchor')
-      .addEdge(['selectSkills', 'analyzeScene', 'extractCharacterAnchors', 'extractStyleAnchor'], 'validateAnalysis')
-```
+This completely removes the LLM call from `selectSkillsFn`, making it instant (<1ms). The graph topology stays the same: `selectSkills → [3 analysis nodes]`, but `selectSkills` now completes in milliseconds instead of 10-12 seconds.
 
-This makes ALL 4 nodes (selectSkills + 3 analysis) parallel from START, and ALL 4 must complete before `validateAnalysis`.
-
-NOTE: `getSkillsForPhase()` in each analysis node will use `activeSkills` from state. When `selectSkills` hasn't completed yet, `activeSkills` will be empty `[]`, and `matchSkillsForPhase` falls back to using all pipeline skills (line 73-75 of BasePipeline.ts: `!activeSkills?.length` check). So there's no functional difference — skills still work, they just aren't filtered.
-
-**Step 2: Also update `prepareAnalysisRetry`**
-
-The retry edges:
-```typescript
-      .addEdge('prepareAnalysisRetry', 'analyzeScene')
-      .addEdge('prepareAnalysisRetry', 'extractCharacterAnchors')
-```
-
-These stay unchanged — retry doesn't re-run selectSkills (it's already done by then).
-
-**Step 3: Run tests**
+**Step 2: Run tests**
 
 Run: `npx vitest run`
 Expected: PASS
 
-**Step 4: Commit**
+**Step 3: Commit**
 
 ```bash
 git add src/renderer/src/services/pipeline/DirectorPipeline.ts
-git commit -m "perf: run selectSkills parallel with analysis nodes instead of serial"
+git commit -m "perf: skip selectSkills LLM call — use all skills directly (saves 10-12s)"
 ```
 
 ---
