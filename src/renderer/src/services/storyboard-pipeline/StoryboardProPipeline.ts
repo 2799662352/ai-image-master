@@ -1,4 +1,4 @@
-import { StateGraph, START, END, MemorySaver } from '@langchain/langgraph'
+import { StateGraph, START, END, MemorySaver, interrupt, Command } from '@langchain/langgraph'
 import { z } from 'zod'
 import { BasePipeline } from '../pipeline/BasePipeline'
 import {
@@ -79,9 +79,27 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
   private _graphBuilder: any = null
   private _checkpointer: MemorySaver | null = null
   _currentThreadId: string | null = null
+  private _pauseRequested = false
+  private _lastTotalPasses = 4
 
   constructor(config: PipelineConfig) {
     super(config)
+  }
+
+  requestPause(): void {
+    this._pauseRequested = true
+  }
+
+  clearPauseRequest(): void {
+    this._pauseRequested = false
+  }
+
+  get isPauseRequested(): boolean {
+    return this._pauseRequested
+  }
+
+  get currentThreadId(): string | null {
+    return this._currentThreadId
   }
 
   get pipelineSkills(): PipelineSkill[] {
@@ -156,6 +174,13 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
 
     const writer = (config: any) => config?.writer
 
+    const checkPauseAndInterrupt = (nodeName: string, config: any) => {
+      if (self._pauseRequested) {
+        writer(config)?.({ type: 'paused', node: nodeName })
+        interrupt({ reason: 'user_pause', node: nodeName })
+      }
+    }
+
     function emitError(config: any, pass: number, label: string, nodeName: string, message: string, elapsed: number) {
       console.error(`[StoryboardProPipeline] Pass ${pass} (${nodeName}) failed: ${message}`)
       writer(config)?.({
@@ -168,6 +193,7 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
 
     // ===== Pass 1: 场景分解 (parallel with Pass 2) =====
     const sceneDecomposeFn = async (state: StoryboardState, config: any) => {
+      checkPauseAndInterrupt('sceneDecompose', config)
       const t0 = Date.now()
       try {
         const appliedSkills = self.getSkillsForPhase('sceneDecompose', state as Record<string, unknown>)
@@ -224,6 +250,7 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
 
     // ===== Pass 2: 角色/物体提取 (parallel with Pass 1) =====
     const characterExtractFn = async (state: StoryboardState, config: any) => {
+      checkPauseAndInterrupt('characterExtract', config)
       const t0 = Date.now()
       try {
         const appliedSkills = self.getSkillsForPhase('characterExtract', state as Record<string, unknown>)
@@ -284,6 +311,7 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
 
     // ===== Pass 3: 镜头设计 (L1/L2/L3 error recovery) =====
     const shotDesignFn = async (state: StoryboardState, config: any) => {
+      checkPauseAndInterrupt('shotDesign', config)
       const t0 = Date.now()
       const appliedSkills = self.getSkillsForPhase('shotDesign', state as Record<string, unknown>)
 
@@ -432,6 +460,7 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
 
     // ===== Pass 4b: 深度校验 (LLM text-only) =====
     const deepVerifyFn = async (state: StoryboardState, config: any) => {
+      checkPauseAndInterrupt('deepVerify', config)
       const t0 = Date.now()
       try {
         const appliedSkills = self.getSkillsForPhase('deepVerify', state as Record<string, unknown>)
@@ -584,9 +613,11 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
       this._graph = this._graphBuilder.compile({ checkpointer: this._checkpointer })
     }
 
+    this._pauseRequested = false
     const threadId = crypto.randomUUID()
     this._currentThreadId = threadId
     const totalPasses = 4
+    this._lastTotalPasses = totalPasses
     let finalState: StoryboardState = { ...input } as StoryboardState
 
     const config: any = {
@@ -608,6 +639,10 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
       for await (const event of stream) {
         if (Array.isArray(event)) {
           const [mode, data] = event
+          if (mode === 'custom' && data?.type === 'paused') {
+            console.log(`[StoryboardProPipeline] 管线在 ${data.node} 处暂停`)
+            continue
+          }
           if (mode === 'custom' && data?.type === 'pass_complete') {
             currentPass = typeof data.pass === 'number' ? data.pass : currentPass
             onProgress?.({
@@ -630,10 +665,10 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
             })
           } else if (mode === 'updates') {
             const updatesData = data && typeof data === 'object' ? data : {}
-            const entries = Object.entries(updatesData)
-            if (entries.length > 0) {
-              const [, output] = entries[0] as [string, any]
-              finalState = { ...finalState, ...output }
+            for (const [, output] of Object.entries(updatesData)) {
+              if (output && typeof output === 'object') {
+                finalState = { ...finalState, ...(output as any) }
+              }
             }
           }
         }
@@ -647,7 +682,101 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
     }
 
     const totalElapsed = Date.now() - pipelineStart
-    console.log(`[StoryboardProPipeline] 管线完成 (${totalPasses} passes)，总耗时 ${(totalElapsed / 1000).toFixed(1)}s`)
-    return this.postProcess(this.assembleResult(finalState))
+    if (this._pauseRequested) {
+      console.log(`[StoryboardProPipeline] 管线暂停 (${(totalElapsed / 1000).toFixed(1)}s)`)
+    } else {
+      console.log(`[StoryboardProPipeline] 管线完成 (${totalPasses} passes)，总耗时 ${(totalElapsed / 1000).toFixed(1)}s`)
+    }
+    const result = this.postProcess(this.assembleResult(finalState))
+    ;(result as any).__paused = this._pauseRequested
+    return result
+  }
+
+  async resume(
+    onProgress?: (progress: PipelineProgress) => void,
+    options?: PipelineExecuteOptions,
+  ): Promise<StoryboardResponse> {
+    if (!this._currentThreadId || !this._graph) {
+      throw new Error('没有可恢复的暂停状态')
+    }
+
+    this._pauseRequested = false
+
+    const config: any = {
+      streamMode: ['updates', 'custom'],
+      signal: options?.signal,
+      configurable: { thread_id: this._currentThreadId },
+    }
+
+    const pipelineStart = Date.now()
+    let finalState: StoryboardState = {} as StoryboardState
+    let currentPass = 0
+
+    try {
+      const stream = await this._graph.stream(
+        new Command({ resume: true }),
+        config,
+      )
+
+      for await (const event of stream) {
+        if (Array.isArray(event)) {
+          const [mode, data] = event
+
+          if (mode === 'custom' && data?.type === 'paused') {
+            console.log(`[StoryboardProPipeline] 管线在 ${data.node} 处再次暂停`)
+            continue
+          }
+
+          if (mode === 'custom' && data?.type === 'pass_complete') {
+            currentPass = typeof data.pass === 'number' ? data.pass : currentPass
+            onProgress?.({
+              pass: data.pass,
+              totalPasses: data.totalPasses || this._lastTotalPasses,
+              label: data.label,
+              status: 'completed',
+              elapsed: data.elapsed,
+              passData: data.passData,
+            })
+          } else if (mode === 'custom') {
+            const inferredPass = typeof data?.pass === 'number' ? data.pass : currentPass
+            currentPass = inferredPass
+            onProgress?.({
+              pass: inferredPass,
+              totalPasses: this._lastTotalPasses,
+              label: data?.label || '处理中...',
+              status: 'running',
+              data,
+            })
+          } else if (mode === 'updates') {
+            const updatesData = data
+            for (const [, output] of Object.entries(updatesData)) {
+              if (output && typeof output === 'object') {
+                finalState = { ...finalState, ...(output as any) }
+              }
+            }
+          }
+        }
+      }
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        console.log('[StoryboardProPipeline] 恢复执行已取消')
+        const result = this.postProcess(this.assembleResult(finalState))
+        ;(result as any).__paused = false
+        ;(result as any).__cancelled = true
+        return result
+      }
+      throw err
+    }
+
+    const totalElapsed = Date.now() - pipelineStart
+    if (this._pauseRequested) {
+      console.log(`[StoryboardProPipeline] 管线在恢复后再次暂停 (${(totalElapsed / 1000).toFixed(1)}s)`)
+    } else {
+      console.log(`[StoryboardProPipeline] 管线恢复完成，耗时 ${(totalElapsed / 1000).toFixed(1)}s`)
+    }
+
+    const result = this.postProcess(this.assembleResult(finalState))
+    ;(result as any).__paused = this._pauseRequested
+    return result
   }
 }
