@@ -480,11 +480,16 @@ export function codeVerify(state: DirectorState): z.infer<typeof VerifySchema> {
   }
 
   if (stylePrefix) {
-    const firstToken = stylePrefix.split(',')[0].trim().toLowerCase()
-    if (firstToken) {
-      const missingStyle = prompts.filter(p => !p.prompt.toLowerCase().includes(firstToken))
-      if (missingStyle.length > 0) {
-        issues.push(`Style token "${firstToken}" missing from ${missingStyle.length} panel(s)`)
+    const styleTokens = stylePrefix.toLowerCase()
+      .split(/[,\s()]+/)
+      .filter(t => t.length >= 4 && !['style', 'film', 'quality', 'best', 'with', 'very', 'high'].includes(t))
+    if (styleTokens.length > 0) {
+      const missingStyle = prompts.filter(p => {
+        const lower = p.prompt.toLowerCase()
+        return !styleTokens.some(t => lower.includes(t))
+      })
+      if (missingStyle.length > prompts.length / 2) {
+        issues.push(`Style token "${styleTokens[0]}" missing from ${missingStyle.length} panel(s)`)
         score -= 1
       }
     }
