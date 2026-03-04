@@ -1384,7 +1384,9 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       .addEdge('selectSkills', 'analyzeScene')
       .addEdge('selectSkills', 'extractCharacterAnchors')
       .addEdge('selectSkills', 'extractStyleAnchor')
-      .addEdge(['analyzeScene', 'extractCharacterAnchors', 'extractStyleAnchor'], 'validateAnalysis')
+      .addEdge('analyzeScene', 'validateAnalysis')
+      .addEdge('extractCharacterAnchors', 'validateAnalysis')
+      .addEdge('extractStyleAnchor', 'validateAnalysis')
       .addConditionalEdges('validateAnalysis', routeAfterAnalysis, {
         continue: 'designAndAssemble',
         retry: 'prepareAnalysisRetry',
