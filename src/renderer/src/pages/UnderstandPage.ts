@@ -1421,6 +1421,18 @@ export class UnderstandPage extends BasePage {
       return
     }
 
+    if (progress.status === 'running') {
+      const passEl = document.getElementById(`pipelinePass${progress.pass}`)
+      if (passEl) {
+        const statusEl = passEl.querySelector('span:last-child')
+        if (statusEl && !statusEl.textContent?.includes('完成')) {
+          statusEl.textContent = '⏳ 进行中...'
+          statusEl.className = 'ml-auto text-yellow-400 animate-pulse'
+        }
+      }
+      return
+    }
+
     const passEl = document.getElementById(`pipelinePass${progress.pass}`)
     if (passEl) {
       const statusEl = passEl.querySelector('span:last-child')
@@ -1432,11 +1444,11 @@ export class UnderstandPage extends BasePage {
 
     const passResultsCard = document.getElementById('pipelinePassResults')
     const passDataArea = document.getElementById('pipelinePassData')
-    if (passResultsCard && passDataArea) {
+    if (passResultsCard && passDataArea && progress.passData) {
       passResultsCard.classList.remove('hidden')
       const summary = document.createElement('div')
       summary.className = 'p-3 bg-[#09090B] border border-[#3F3F46] rounded-none'
-      const displayData = progress.passData?.summary || progress.passData?.raw
+      const displayData = progress.passData.summary || progress.passData.raw
       summary.innerHTML = `
         <div class="text-sm text-blue-300 font-medium mb-1">${progress.label}</div>
         <pre class="text-xs text-white opacity-70 overflow-auto max-h-40">${typeof displayData === 'string' ? displayData : JSON.stringify(displayData, null, 2)}</pre>
