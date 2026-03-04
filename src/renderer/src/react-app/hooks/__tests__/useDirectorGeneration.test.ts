@@ -89,4 +89,23 @@ describe('useDirectorGeneration', () => {
     const firstCallInput = executeMock.mock.calls[0]?.[0]
     expect(firstCallInput?.semanticOrientation).toBe('portrait')
   })
+
+  it('should pass per-pass vision detail settings into pipeline input', async () => {
+    const store = useDirectorStore.getState()
+    store.addReferenceImage({ data: 'test', mimeType: 'image/jpeg', name: 'test.jpg' })
+    store.setVisionDetailAnalyzeScene('low')
+    store.setVisionDetailCharacterAnchors('auto')
+    store.setVisionDetailDesignAssemble('high')
+    store.setVisionDetailVerifyConsistency('high')
+
+    const { result } = renderHook(() => useDirectorGeneration())
+    await result.current.startGeneration()
+
+    expect(executeMock).toHaveBeenCalled()
+    const firstCallInput = executeMock.mock.calls[0]?.[0]
+    expect(firstCallInput?.visionDetailAnalyzeScene).toBe('low')
+    expect(firstCallInput?.visionDetailCharacterAnchors).toBe('auto')
+    expect(firstCallInput?.visionDetailDesignAssemble).toBe('high')
+    expect(firstCallInput?.visionDetailVerifyConsistency).toBe('high')
+  })
 })

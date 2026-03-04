@@ -23,6 +23,14 @@ import type {
 const MAX_RETRIES = 1
 const SCORE_THRESHOLD = 6
 const MAX_ANALYSIS_RETRIES = 2
+const DEFAULT_VISION_DETAIL = {
+  analyzeScene: 'high',
+  extractCharacterAnchors: 'high',
+  designAndAssemble: 'low',
+  verifyConsistency: 'low',
+} as const
+
+type VisionDetail = 'low' | 'high' | 'auto'
 
 const stateSchema = z.object({
   scene: SceneAnalysisSchema.nullable().default(null),
@@ -67,6 +75,10 @@ const stateSchema = z.object({
   semanticOrientation: z.enum(['landscape', 'portrait']).default('landscape'),
   imageModel: z.string().default(''),
   currentImageCount: z.number().default(1),
+  visionDetailAnalyzeScene: z.enum(['low', 'high', 'auto']).default(DEFAULT_VISION_DETAIL.analyzeScene),
+  visionDetailCharacterAnchors: z.enum(['low', 'high', 'auto']).default(DEFAULT_VISION_DETAIL.extractCharacterAnchors),
+  visionDetailDesignAssemble: z.enum(['low', 'high', 'auto']).default(DEFAULT_VISION_DETAIL.designAndAssemble),
+  visionDetailVerifyConsistency: z.enum(['low', 'high', 'auto']).default(DEFAULT_VISION_DETAIL.verifyConsistency),
   skipVerify: z.boolean().default(false),
   scoreThreshold: z.number().min(0).max(10).default(SCORE_THRESHOLD),
   activeSkills: z.array(z.string()).default([]),
@@ -134,6 +146,33 @@ export function buildNarrativeRhythmGuardrails(sceneDescription: string): string
     'Enhance cinematic expression without changing story direction.',
     'Optimize pacing through shot language, not by rewriting narrative intent.',
   ].join('\n')
+}
+
+function normalizeVisionDetail(value: unknown, fallback: VisionDetail): VisionDetail {
+  return value === 'low' || value === 'high' || value === 'auto'
+    ? value
+    : fallback
+}
+
+export function resolveVisionDetailByPass(
+  state: Partial<DirectorState> | Record<string, unknown>,
+  pass: 'analyzeScene' | 'extractCharacterAnchors' | 'designAndAssemble' | 'verifyConsistency',
+): VisionDetail {
+  switch (pass) {
+    case 'analyzeScene':
+      return normalizeVisionDetail((state as any).visionDetailAnalyzeScene, DEFAULT_VISION_DETAIL.analyzeScene)
+    case 'extractCharacterAnchors':
+      return normalizeVisionDetail((state as any).visionDetailCharacterAnchors, DEFAULT_VISION_DETAIL.extractCharacterAnchors)
+    case 'designAndAssemble':
+      return normalizeVisionDetail(
+        (state as any).visionDetailDesignAssemble ?? (state as any).visionDetailDesignAndAssemble,
+        DEFAULT_VISION_DETAIL.designAndAssemble,
+      )
+    case 'verifyConsistency':
+      return normalizeVisionDetail((state as any).visionDetailVerifyConsistency, DEFAULT_VISION_DETAIL.verifyConsistency)
+    default:
+      return 'auto'
+  }
 }
 
 export function extractVarsForDesignAndAssemble(state: DirectorState): Record<string, string> {
@@ -458,7 +497,10 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           {
             role: 'user',
             content: [
-              ...BasePipeline.buildImageContent(state.inputImages, 'high'),
+              ...BasePipeline.buildImageContent(
+                state.inputImages,
+                resolveVisionDetailByPass(state, 'analyzeScene'),
+              ),
               { type: 'text' as const, text: state.sceneDescription
                 ? `DIRECTOR CREATIVE BRIEF:\n${state.sceneDescription}\n\nReference images define the visual foundation (style, character identity, and scene continuity), while the brief defines narrative direction.\n\nOutput language requirement:\n- Write env/style/story in clear English first.\n- You may append concise Japanese support notes in parentheses if helpful.\n- Keep subjects as short English bullet-like phrases.\n`
                 : 'Analyze this image scene. Output in English first; optional concise Japanese support in parentheses.' },
@@ -506,7 +548,10 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           {
             role: 'user',
             content: [
-              ...BasePipeline.buildImageContent(state.inputImages, 'high'),
+              ...BasePipeline.buildImageContent(
+                state.inputImages,
+                resolveVisionDetailByPass(state, 'extractCharacterAnchors'),
+              ),
               { type: 'text' as const, text: 'Extract character consistency anchors in English (optional concise Japanese notes in parentheses).' },
             ],
           },
@@ -621,7 +666,12 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         : `为 ${state.layout.panelCount} 个分镜设计镜头并生成图像提示词`
       const designContent: Array<any> = []
       if (state.inputImages.length > 0) {
-        designContent.push(...BasePipeline.buildImageContent(state.inputImages, 'low'))
+        designContent.push(
+          ...BasePipeline.buildImageContent(
+            state.inputImages,
+            resolveVisionDetailByPass(state, 'designAndAssemble'),
+          ),
+        )
       }
       designContent.push({ type: 'text' as const, text: userText })
 
@@ -741,7 +791,12 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         )
         const userContent: Array<any> = []
         if (state.inputImages.length > 0) {
-          userContent.push(...BasePipeline.buildImageContent(state.inputImages, 'low'))
+          userContent.push(
+            ...BasePipeline.buildImageContent(
+              state.inputImages,
+              resolveVisionDetailByPass(state, 'verifyConsistency'),
+            ),
+          )
         }
         userContent.push({
           type: 'text' as const,

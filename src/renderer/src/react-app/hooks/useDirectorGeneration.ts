@@ -70,6 +70,10 @@ export function useDirectorGeneration() {
     multiSceneText,
     skipVerify,
     scoreThreshold,
+    visionDetailAnalyzeScene,
+    visionDetailCharacterAnchors,
+    visionDetailDesignAssemble,
+    visionDetailVerifyConsistency,
   } = useDirectorStore(useShallow((s) => ({
     referenceImages: s.referenceImages,
     isGenerating: s.isGenerating,
@@ -87,6 +91,10 @@ export function useDirectorGeneration() {
     multiSceneText: s.multiSceneText,
     skipVerify: s.skipVerify,
     scoreThreshold: s.scoreThreshold,
+    visionDetailAnalyzeScene: s.visionDetailAnalyzeScene,
+    visionDetailCharacterAnchors: s.visionDetailCharacterAnchors,
+    visionDetailDesignAssemble: s.visionDetailDesignAssemble,
+    visionDetailVerifyConsistency: s.visionDetailVerifyConsistency,
   })))
 
   const canGenerate = referenceImages.length > 0 && !isGenerating
@@ -138,11 +146,28 @@ export function useDirectorGeneration() {
           currentImageCount: imageCount,
           skipVerify,
           scoreThreshold,
+          visionDetailAnalyzeScene,
+          visionDetailCharacterAnchors,
+          visionDetailDesignAssemble,
+          visionDetailVerifyConsistency,
         },
         onProgress,
       )
     },
-    [referenceImages, currentTemplate, currentSemanticOrientation, currentRatio, currentResolution, imageCount, skipVerify, scoreThreshold],
+    [
+      referenceImages,
+      currentTemplate,
+      currentSemanticOrientation,
+      currentRatio,
+      currentResolution,
+      imageCount,
+      skipVerify,
+      scoreThreshold,
+      visionDetailAnalyzeScene,
+      visionDetailCharacterAnchors,
+      visionDetailDesignAssemble,
+      visionDetailVerifyConsistency,
+    ],
   )
 
   const startGeneration = useCallback(
@@ -241,6 +266,10 @@ export function useDirectorGeneration() {
             resolution: currentResolution,
             skipVerify,
             scoreThreshold,
+            visionDetailAnalyzeScene,
+            visionDetailCharacterAnchors,
+            visionDetailDesignAssemble,
+            visionDetailVerifyConsistency,
             scene: result.scene,
             characters: result.characters,
             panels: normalizedPanels,
@@ -272,6 +301,10 @@ export function useDirectorGeneration() {
       imageCount,
       skipVerify,
       scoreThreshold,
+      visionDetailAnalyzeScene,
+      visionDetailCharacterAnchors,
+      visionDetailDesignAssemble,
+      visionDetailVerifyConsistency,
       getLayoutConfig,
       executeSingle,
       resolveVisionModel,

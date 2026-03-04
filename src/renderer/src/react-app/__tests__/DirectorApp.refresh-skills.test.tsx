@@ -174,4 +174,41 @@ describe('DirectorApp refresh skills', () => {
       expect(useDirectorStore.getState().generatedResults.length).toBe(2)
     })
   })
+
+  it('预设按钮应显示 aria-pressed 激活态', async () => {
+    render(<DirectorApp />)
+
+    const speedBtn = screen.getByRole('button', { name: '一键预设：省时' })
+    const qualityBtn = screen.getByRole('button', { name: '一键预设：质量' })
+
+    expect(speedBtn.getAttribute('aria-pressed')).toBe('true')
+    expect(qualityBtn.getAttribute('aria-pressed')).toBe('false')
+
+    fireEvent.click(qualityBtn)
+
+    await waitFor(() => {
+      expect(speedBtn.getAttribute('aria-pressed')).toBe('false')
+      expect(qualityBtn.getAttribute('aria-pressed')).toBe('true')
+    })
+  })
+
+  it('看图质量区块应支持折叠与展开', async () => {
+    render(<DirectorApp />)
+
+    const toggleBtn = screen.getByRole('button', { name: '收起看图质量设置' })
+    expect(toggleBtn.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByText('场景分析')).toBeTruthy()
+
+    fireEvent.click(toggleBtn)
+    await waitFor(() => {
+      const collapsedBtn = screen.getByRole('button', { name: '展开看图质量设置' })
+      expect(collapsedBtn.getAttribute('aria-expanded')).toBe('false')
+      expect(screen.queryByText('场景分析')).toBeNull()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '展开看图质量设置' }))
+    await waitFor(() => {
+      expect(screen.getByText('场景分析')).toBeTruthy()
+    })
+  })
 })

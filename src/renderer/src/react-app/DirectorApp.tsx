@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { ReferenceImageUpload } from './components/ReferenceImageUpload'
 import { ModeSelector } from './components/ModeSelector'
 import { TemplateSelector } from './components/TemplateSelector'
@@ -10,23 +10,50 @@ import { GenerateButton } from './components/GenerateButton'
 import { GenerationProgress } from './components/GenerationProgress'
 import { ResultsGallery } from './components/ResultsGallery'
 import { useDirectorGeneration } from './hooks/useDirectorGeneration'
-import { useDirectorStore } from './stores/useDirectorStore'
+import { detectVisionDetailPreset, useDirectorStore } from './stores/useDirectorStore'
 import { getDirectorSkillLoadStats, getDirectorSkillsFromConfig, reloadDirectorSkills } from '../services/pipeline/prompt-loader'
+
+const VISION_DETAIL_OPTIONS = [
+  { value: 'low', label: '低' },
+  { value: 'high', label: '高' },
+  { value: 'auto', label: '自动' },
+] as const
 
 export function DirectorApp() {
   const [isRefreshingSkills, setIsRefreshingSkills] = useState(false)
+  const [isVisionControlsCollapsed, setIsVisionControlsCollapsed] = useState(false)
   const isRefreshingSkillsRef = useRef(false)
   const viewState = useDirectorStore((s) => s.viewState)
   const generatedResults = useDirectorStore((s) => s.generatedResults)
   const skipVerify = useDirectorStore((s) => s.skipVerify)
   const scoreThreshold = useDirectorStore((s) => s.scoreThreshold)
+  const visionDetailAnalyzeScene = useDirectorStore((s) => s.visionDetailAnalyzeScene)
+  const visionDetailCharacterAnchors = useDirectorStore((s) => s.visionDetailCharacterAnchors)
+  const visionDetailDesignAssemble = useDirectorStore((s) => s.visionDetailDesignAssemble)
+  const visionDetailVerifyConsistency = useDirectorStore((s) => s.visionDetailVerifyConsistency)
   const setSkipVerify = useDirectorStore((s) => s.setSkipVerify)
   const setScoreThreshold = useDirectorStore((s) => s.setScoreThreshold)
+  const setVisionDetailAnalyzeScene = useDirectorStore((s) => s.setVisionDetailAnalyzeScene)
+  const setVisionDetailCharacterAnchors = useDirectorStore((s) => s.setVisionDetailCharacterAnchors)
+  const setVisionDetailDesignAssemble = useDirectorStore((s) => s.setVisionDetailDesignAssemble)
+  const setVisionDetailVerifyConsistency = useDirectorStore((s) => s.setVisionDetailVerifyConsistency)
+  const applyVisionDetailPreset = useDirectorStore((s) => s.applyVisionDetailPreset)
   const setViewState = useDirectorStore((s) => s.setViewState)
   const pushProgress = useDirectorStore((s) => s.pushProgress)
   const resetProgress = useDirectorStore((s) => s.resetProgress)
   const setGeneratedResults = useDirectorStore((s) => s.setGeneratedResults)
   const { startGeneration } = useDirectorGeneration()
+  const activePreset = useMemo(() => detectVisionDetailPreset({
+    visionDetailAnalyzeScene,
+    visionDetailCharacterAnchors,
+    visionDetailDesignAssemble,
+    visionDetailVerifyConsistency,
+  }), [
+    visionDetailAnalyzeScene,
+    visionDetailCharacterAnchors,
+    visionDetailDesignAssemble,
+    visionDetailVerifyConsistency,
+  ])
 
   const handleRefreshSkills = useCallback(async () => {
     if (isRefreshingSkillsRef.current) return
@@ -170,6 +197,99 @@ export function DirectorApp() {
             <div className="mt-1 text-[11px] text-white/50">
               评分低于该值将触发重试（快速模式开启时跳过校验）
             </div>
+          </div>
+
+          <div className="border border-[#27272A] p-3 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="text-xs text-white/80">看图质量（每阶段独立）</div>
+              <button
+                type="button"
+                aria-expanded={!isVisionControlsCollapsed}
+                aria-controls="director-vision-controls-body"
+                aria-label={isVisionControlsCollapsed ? '展开看图质量设置' : '收起看图质量设置'}
+                onClick={() => setIsVisionControlsCollapsed((v) => !v)}
+                className="px-2 py-1 text-[11px] border border-[#3F3F46] text-white/70 hover:text-white hover:bg-[#18181B] transition-colors cursor-pointer"
+              >
+                {isVisionControlsCollapsed ? '展开' : '收起'}
+              </button>
+            </div>
+
+            {!isVisionControlsCollapsed && (
+              <div id="director-vision-controls-body" className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => applyVisionDetailPreset('speed')}
+                    aria-pressed={activePreset === 'speed'}
+                    className={`px-2.5 py-1.5 text-[11px] border border-[#3F3F46] transition-colors cursor-pointer ${
+                      activePreset === 'speed'
+                        ? 'bg-yellow-500 text-black font-semibold'
+                        : 'bg-[#09090B] text-white/75 hover:text-white hover:bg-[#18181B]'
+                    }`}
+                  >
+                    一键预设：省时
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyVisionDetailPreset('balanced')}
+                    aria-pressed={activePreset === 'balanced'}
+                    className={`px-2.5 py-1.5 text-[11px] border border-[#3F3F46] transition-colors cursor-pointer ${
+                      activePreset === 'balanced'
+                        ? 'bg-yellow-500 text-black font-semibold'
+                        : 'bg-[#09090B] text-white/75 hover:text-white hover:bg-[#18181B]'
+                    }`}
+                  >
+                    一键预设：平衡
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyVisionDetailPreset('quality')}
+                    aria-pressed={activePreset === 'quality'}
+                    className={`px-2.5 py-1.5 text-[11px] border border-[#3F3F46] transition-colors cursor-pointer ${
+                      activePreset === 'quality'
+                        ? 'bg-yellow-500 text-black font-semibold'
+                        : 'bg-[#09090B] text-white/75 hover:text-white hover:bg-[#18181B]'
+                    }`}
+                  >
+                    一键预设：质量
+                  </button>
+                </div>
+
+                {[
+                  { key: 'analyze', label: '场景分析', value: visionDetailAnalyzeScene, onChange: setVisionDetailAnalyzeScene },
+                  { key: 'anchor', label: '角色锚定', value: visionDetailCharacterAnchors, onChange: setVisionDetailCharacterAnchors },
+                  { key: 'design', label: '分镜+Prompt', value: visionDetailDesignAssemble, onChange: setVisionDetailDesignAssemble },
+                  { key: 'verify', label: '一致性校验', value: visionDetailVerifyConsistency, onChange: setVisionDetailVerifyConsistency },
+                ].map((item) => (
+                  <div key={item.key} className="flex items-center justify-between gap-3">
+                    <span className="text-[11px] text-white/65 whitespace-nowrap">{item.label}</span>
+                    <div className="inline-flex border border-[#3F3F46]">
+                      {VISION_DETAIL_OPTIONS.map((option) => {
+                        const active = item.value === option.value
+                        return (
+                          <button
+                            key={`${item.key}-${option.value}`}
+                            type="button"
+                            onClick={() => item.onChange(option.value)}
+                            aria-pressed={active}
+                            className={`px-2.5 py-1.5 text-[11px] transition-colors cursor-pointer ${
+                              active
+                                ? 'bg-yellow-500 text-black font-semibold'
+                                : 'bg-[#09090B] text-white/70 hover:text-white hover:bg-[#18181B]'
+                            }`}
+                          >
+                            {option.label}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))}
+                <div className="text-[11px] text-white/45">
+                  建议：网络不稳时把“分镜+Prompt / 一致性校验”保持低，减少超时风险。
+                </div>
+              </div>
+            )}
           </div>
 
           {viewState === 'idle' && generatedResults.length === 0 && (

@@ -38,6 +38,8 @@ describe('useDirectorGeneration - non-blocking history save', () => {
     useDirectorStore.getState().setImageCount(2)
     useDirectorStore.getState().setSkipVerify(true)
     useDirectorStore.getState().setScoreThreshold(8)
+    useDirectorStore.getState().setVisionModel('gemini-vision-test')
+    useDirectorStore.getState().setImageModel('gemini-image-test')
 
     mockExecute.mockResolvedValue({
       images: [
