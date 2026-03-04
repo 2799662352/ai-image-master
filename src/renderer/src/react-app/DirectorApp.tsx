@@ -46,7 +46,7 @@ export function DirectorApp() {
   const pushProgress = useDirectorStore((s) => s.pushProgress)
   const resetProgress = useDirectorStore((s) => s.resetProgress)
   const setGeneratedResults = useDirectorStore((s) => s.setGeneratedResults)
-  const { startGeneration } = useDirectorGeneration()
+  const { startGeneration, cancelGeneration, pauseGeneration, resumeGeneration, generationStatus } = useDirectorGeneration()
   const activePreset = useMemo(() => detectVisionDetailPreset({
     visionDetailAnalyzeScene,
     visionDetailCharacterAnchors,
@@ -154,7 +154,22 @@ export function DirectorApp() {
             绘图模型(出图)：跟随顶部全局模型，影响图片尺寸与清晰度能力
           </div>
           <div className="flex items-center gap-3">
-            <GenerateButton onGenerate={handleGenerate} />
+            <GenerateButton
+              onGenerate={handleGenerate}
+              onCancel={cancelGeneration}
+              onPause={pauseGeneration}
+              onResume={() => resumeGeneration((progress) => {
+                pushProgress(progress as any)
+                const evt = (progress as any)?.data
+                if (evt?.type === 'image_generated' && typeof evt.url === 'string' && evt.url) {
+                  const store = useDirectorStore.getState()
+                  store.setGeneratedResults((prev) => [
+                    ...prev,
+                    { url: evt.url, prompt: typeof evt.prompt === 'string' ? evt.prompt : '', timestamp: Date.now() },
+                  ])
+                }
+              })}
+            />
             <button
               type="button"
               onClick={handleRefreshSkills}
@@ -328,6 +343,12 @@ export function DirectorApp() {
           )}
           {(viewState === 'generating' || viewState === 'results') && (
             <GenerationProgress collapsed={viewState === 'results'} />
+          )}
+          {generationStatus === 'paused' && (
+            <div className="text-amber-400 text-sm mt-2 flex items-center gap-2">
+              <i className="fas fa-pause-circle" />
+              已暂停 — 点击「继续」恢复生成
+            </div>
           )}
           {(viewState === 'generating' || generatedResults.length > 0) && (
             <ResultsGallery />
