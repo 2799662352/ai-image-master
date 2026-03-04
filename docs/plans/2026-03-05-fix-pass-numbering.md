@@ -257,63 +257,7 @@ git commit -m "fix: update default totalPasses fallback to 6 for new pass number
 
 ---
 
-### Task 4: Skip selectSkills When All Skills Selected (Performance Bonus)
-
-**Problem:** `selectSkills` takes 10-12s but typically selects 14/16 skills (87.5% = basically all). This 10s LLM call gates all 3 analysis nodes for negligible filtering value.
-
-**Solution:** Add a `skipSkillSelection` flag. When enabled, skip the LLM call and use all pipeline skills directly. This saves 10-12s of serial latency.
-
-**Files:**
-- Modify: `src/renderer/src/services/pipeline/DirectorPipeline.ts` (`selectSkillsFn`)
-
-**Step 1: Add early return to selectSkillsFn**
-
-At the top of `selectSkillsFn` (around line 1034), add:
-
-```typescript
-    const selectSkillsFn = async (state: DirectorState, config: any) => {
-      const t0 = Date.now()
-      try {
-        const allSkills = self.pipelineSkills
-        if (allSkills.length === 0) return { activeSkills: [] as string[] }
-
-        // Fast path: skip LLM call and use all skills directly
-        // selectSkills typically selects 85%+ of available skills,
-        // making the 10s LLM call not worth the filtering value
-        const allIds = allSkills.map(s => s.id)
-        const elapsed = Date.now() - t0
-        console.log(`[DirectorPipeline] selectSkills: fast-path, using all ${allIds.length} skills (${elapsed}ms)`)
-        const passData = DirectorPipeline.buildPassCardData('selectSkills', { pass: 0, label: '技能选择' }, { selected: allIds, reasoning: 'fast-path: all skills' }, elapsed, allIds)
-        writer(config)?.({
-          type: 'pass_complete', pass: 0,
-          label: `技能选择完成 (${allIds.length} skills, ${elapsed}ms)`,
-          elapsed, passData,
-        })
-        return { activeSkills: allIds }
-      } catch (err: unknown) {
-        console.warn('[DirectorPipeline] selectSkills failed, using all skills as fallback:', err instanceof Error ? err.message : String(err))
-        return { activeSkills: self.pipelineSkills.map(s => s.id) }
-      }
-    }
-```
-
-This completely removes the LLM call from `selectSkillsFn`, making it instant (<1ms). The graph topology stays the same: `selectSkills → [3 analysis nodes]`, but `selectSkills` now completes in milliseconds instead of 10-12 seconds.
-
-**Step 2: Run tests**
-
-Run: `npx vitest run`
-Expected: PASS
-
-**Step 3: Commit**
-
-```bash
-git add src/renderer/src/services/pipeline/DirectorPipeline.ts
-git commit -m "perf: skip selectSkills LLM call — use all skills directly (saves 10-12s)"
-```
-
----
-
-### Task 5: Integration Verification
+### Task 4: Integration Verification
 
 **Step 1: Run all tests**
 
