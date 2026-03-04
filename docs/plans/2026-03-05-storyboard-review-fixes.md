@@ -47,7 +47,33 @@ With:
 
 **Step 2: Apply same fix to DirectorPipeline**
 
-The same pattern exists in `DirectorPipeline.ts`. Find the equivalent `entries[0]` block in the `execute()` method and apply the same fix.
+The same pattern exists in `src/renderer/src/services/pipeline/DirectorPipeline.ts` at line ~1724-1730. Replace:
+
+```typescript
+          } else if (mode === 'updates') {
+            const updatesData = data
+            const entries = Object.entries(updatesData)
+            if (entries.length > 0) {
+              const [, output] = entries[0] as [string, any]
+              finalState = { ...finalState, ...output }
+            }
+            if (Object.prototype.hasOwnProperty.call(updatesData, 'generateImages')) {
+```
+
+With:
+
+```typescript
+          } else if (mode === 'updates') {
+            const updatesData = data
+            for (const [, output] of Object.entries(updatesData)) {
+              if (output && typeof output === 'object') {
+                finalState = { ...finalState, ...(output as any) }
+              }
+            }
+            if (Object.prototype.hasOwnProperty.call(updatesData, 'generateImages')) {
+```
+
+IMPORTANT: Keep the `generateImages` special handling block (lines 1731-1737) unchanged — it handles the terminal break for image generation.
 
 **Step 3: Run tests**
 
@@ -69,23 +95,8 @@ git commit -m "fix: merge all parallel node outputs in updates handler, not just
 
 **Files:**
 - Modify: `src/renderer/src/services/storyboard-pipeline/StoryboardProPipeline.ts` (line ~506-511)
-- Modify: `src/renderer/src/services/storyboard-pipeline/__tests__/storyboard-verify.test.ts`
 
-**Step 1: Write the failing test**
-
-Add to `storyboard-verify.test.ts` (or create a routing test section):
-
-```typescript
-describe('routeAfterCodeVerify safety', () => {
-  it('should route to deepVerify when report is null', () => {
-    // We test this logic conceptually — null report means codeVerify failed
-    // The fix is in StoryboardProPipeline.ts routeAfterCodeVerify
-    expect(true).toBe(true) // placeholder — actual routing is inline in buildGraph
-  })
-})
-```
-
-**Step 2: Fix the routing function**
+**Step 1: Fix the routing function**
 
 Replace:
 
@@ -109,12 +120,12 @@ With:
     }
 ```
 
-**Step 3: Run tests**
+**Step 2: Run tests**
 
 Run: `npx vitest run`
 Expected: PASS
 
-**Step 4: Commit**
+**Step 3: Commit**
 
 ```bash
 git add src/renderer/src/services/storyboard-pipeline/StoryboardProPipeline.ts
@@ -167,9 +178,11 @@ git commit -m "fix: return undefined for unchecked verify fields instead of misl
 
 Search for all `[\s\S]*` in regex patterns and replace with `[\s\S]*?` (non-greedy):
 
-- `match(/\{[\s\S]*"d"\s*:[\s\S]*\}/)` → `match(/\{[\s\S]*?"d"\s*:[\s\S]*?\}/)`
-- `match(/\{[\s\S]*"characters"\s*:[\s\S]*\}/)` → `match(/\{[\s\S]*?"characters"\s*:[\s\S]*?\}/)`
-- Similar patterns in shotDesign L1 fallback
+There are 3 regex patterns to fix:
+
+1. **sceneDecompose** (line ~206): `match(/\{[\s\S]*"d"\s*:[\s\S]*\}/)` → `match(/\{[\s\S]*?"d"\s*:[\s\S]*?\}/)`
+2. **characterExtract** (line ~263): `match(/\{[\s\S]*"objs"\s*:\s*\[[\s\S]*\][\s\S]*\}/)` → `match(/\{[\s\S]*?"objs"\s*:\s*\[[\s\S]*?\][\s\S]*?\}/)`
+3. **shotDesign L1 fallback**: Find the regex matching `"seq"` or `"panels"` and apply the same `*?` non-greedy conversion
 
 Note: Keep the outer `\{...\}` matching — we want the smallest valid JSON object, not the largest.
 
