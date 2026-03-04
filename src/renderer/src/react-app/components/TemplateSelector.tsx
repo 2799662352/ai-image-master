@@ -5,6 +5,10 @@ import {
   TEMPLATE_MAP,
   persistTemplateOverride,
   resetTemplateOverride,
+  addCustomTemplate,
+  deleteCustomTemplate,
+  updateCustomTemplate,
+  getAllTemplates,
   type TemplateData,
 } from '../constants/templates'
 
@@ -45,7 +49,7 @@ export function TemplateSelector() {
       suffix: t.suffix,
       negative: t.negative,
       negativeEnabled: t.negativeEnabled ?? false,
-      isBuiltin: true,
+      isBuiltin: !key.startsWith('custom-'),
     })
   }, [])
 
@@ -111,8 +115,9 @@ export function TemplateSelector() {
 
             <div className="flex-1 overflow-y-auto p-4">
               <div className="grid grid-cols-2 gap-3">
-                {BUILTIN_TEMPLATES.map((t) => {
+                {getAllTemplates().map((t) => {
                   const key = t.key
+                  const isCustom = key.startsWith('custom-')
                   const selected = currentTemplate === key
                   return (
                     <div
@@ -129,19 +134,36 @@ export function TemplateSelector() {
                           <h4 className="font-bold text-white flex items-center text-sm uppercase tracking-tight">
                             <span className="text-lg mr-2">{t.icon}</span>
                             {t.displayName}
-                            <span className="ml-2 text-xs text-white opacity-30">内置</span>
+                            <span className="ml-2 text-xs text-white opacity-30">
+                              {isCustom ? '自定义' : '内置'}
+                            </span>
                           </h4>
                           <p className="text-white opacity-40 text-xs mt-1 line-clamp-2">
                             {t.prefix.substring(0, 60)}...
                           </p>
                         </div>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); openEditor(key) }}
-                          className="w-8 h-8 bg-[#3F3F46] hover:bg-[#FCE300] text-white opacity-50 hover:text-black hover:opacity-100 rounded-none flex items-center justify-center transition-all ml-2 flex-shrink-0"
-                          title="编辑"
-                        >
-                          <i className="fas fa-edit text-sm" />
-                        </button>
+                        <div className="flex items-center gap-1 ml-2 flex-shrink-0">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); openEditor(key) }}
+                            className="w-8 h-8 bg-[#3F3F46] hover:bg-[#FCE300] text-white opacity-50 hover:text-black hover:opacity-100 rounded-none flex items-center justify-center transition-all"
+                            title="编辑"
+                          >
+                            <i className="fas fa-edit text-sm" />
+                          </button>
+                          {isCustom && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                deleteCustomTemplate(key)
+                                if (currentTemplate === key) setTemplate(null)
+                              }}
+                              className="w-8 h-8 bg-[#3F3F46] hover:bg-red-600 text-white opacity-50 hover:opacity-100 rounded-none flex items-center justify-center transition-all"
+                              title="删除"
+                            >
+                              <i className="fas fa-trash text-sm" />
+                            </button>
+                          )}
+                        </div>
                       </div>
                       {selected && (
                         <div className="flex items-center text-[#FCE300] text-xs mt-2">
@@ -159,12 +181,31 @@ export function TemplateSelector() {
               <span className="text-white opacity-30 text-xs">
                 {currentTemplate ? `已选: ${active?.displayName}` : '未选择模板'}
               </span>
-              <button
-                onClick={() => setShowModal(false)}
-                className="bg-[#FCE300] text-black font-bold px-4 py-2 rounded-none text-sm uppercase tracking-tighter hover:scale-105 transition-all"
-              >
-                确定
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    setEditor({
+                      key: '',
+                      name: '',
+                      prefix: '',
+                      suffix: '',
+                      negative: 'blurry, lowres, bad anatomy, worst quality',
+                      negativeEnabled: false,
+                      isBuiltin: false,
+                    })
+                  }}
+                  className="bg-[#3F3F46] hover:bg-[#52525B] text-white px-3 py-2 rounded-none text-sm transition-colors flex items-center gap-1"
+                >
+                  <i className="fas fa-plus" />
+                  新建模板
+                </button>
+                <button
+                  onClick={() => setShowModal(false)}
+                  className="bg-[#FCE300] text-black font-bold px-4 py-2 rounded-none text-sm uppercase tracking-tighter hover:scale-105 transition-all"
+                >
+                  确定
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -261,12 +302,35 @@ export function TemplateSelector() {
                 </button>
                 <button
                   onClick={() => {
-                    persistTemplateOverride(editor.key, {
-                      prefix: editor.prefix,
-                      suffix: editor.suffix,
-                      negative: editor.negative,
-                      negativeEnabled: editor.negativeEnabled,
-                    })
+                    if (editor.key && editor.key.startsWith('custom-')) {
+                      updateCustomTemplate(editor.key, {
+                        displayName: editor.name,
+                        desc: '',
+                        icon: '✏️',
+                        prefix: editor.prefix,
+                        suffix: editor.suffix,
+                        negative: editor.negative,
+                        negativeEnabled: editor.negativeEnabled,
+                      })
+                    } else if (editor.key) {
+                      persistTemplateOverride(editor.key, {
+                        prefix: editor.prefix,
+                        suffix: editor.suffix,
+                        negative: editor.negative,
+                        negativeEnabled: editor.negativeEnabled,
+                      })
+                    } else {
+                      const newKey = addCustomTemplate({
+                        displayName: editor.name || '自定义模板',
+                        desc: '',
+                        icon: '✏️',
+                        prefix: editor.prefix,
+                        suffix: editor.suffix,
+                        negative: editor.negative,
+                        negativeEnabled: editor.negativeEnabled,
+                      })
+                      setTemplate(newKey)
+                    }
                     setEditor(null)
                     const toast = (window as any).toastManagerTS ?? (window as any).toastManager
                     toast?.show?.('模板已保存', 'success')
