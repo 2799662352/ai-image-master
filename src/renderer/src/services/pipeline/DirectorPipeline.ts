@@ -1184,23 +1184,25 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           label: `一致性校验完成 (score: ${result.score}, ${(elapsed / 1000).toFixed(1)}s)`,
           elapsed, passData,
         })
-        return { report: result }
+        const threshold = Number.isFinite(state.scoreThreshold)
+          ? Math.max(0, Math.min(10, Math.round(state.scoreThreshold)))
+          : SCORE_THRESHOLD
+        const hasLowSubScore = pickLowItems(result as VerifyReportLike, threshold).length > 0
+        const shouldReject = result.score < threshold || hasLowSubScore
+
+        if (shouldReject && state.retryCount < MAX_RETRIES) {
+          const feedback = buildRetryFeedback(result as VerifyReportLike, threshold)
+          return {
+            report: result,
+            retryFeedback: feedback,
+            retryCount: state.retryCount + 1,
+          }
+        }
+
+        return { report: result, retryFeedback: '' }
       } catch (err: unknown) {
         emitError(config, 5, '一致性校验', 'verifyConsistency', err instanceof Error ? err.message : String(err), Date.now() - t0)
         return { report: null }
-      }
-    }
-
-    // ===== Evaluator-Optimizer: build feedback when rejecting =====
-    const buildFeedbackFn = (state: DirectorState) => {
-      const threshold = Number.isFinite(state.scoreThreshold)
-        ? Math.max(0, Math.min(10, Math.round(state.scoreThreshold)))
-        : SCORE_THRESHOLD
-      const feedback = buildRetryFeedback(state.report as VerifyReportLike, threshold)
-      return {
-        retryFeedback: feedback,
-        retryCount: state.retryCount + 1,
-        report: null,
       }
     }
 
@@ -1354,12 +1356,8 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
     // ===== Routing: Evaluator-Optimizer pattern =====
     const routeAfterEvaluator = (state: DirectorState): 'generate' | 'designAndAssemble' => {
-      if (!state.report || state.retryCount >= MAX_RETRIES) return 'generate'
-      const threshold = Number.isFinite(state.scoreThreshold)
-        ? Math.max(0, Math.min(10, Math.round(state.scoreThreshold)))
-        : SCORE_THRESHOLD
-      const hasLowSubScore = pickLowItems(state.report as VerifyReportLike, threshold).length > 0
-      if (state.report.score < threshold || hasLowSubScore) return 'designAndAssemble'
+      if (!state.report) return 'generate'
+      if (state.retryFeedback) return 'designAndAssemble'
       return 'generate'
     }
 
@@ -1375,7 +1373,6 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       .addNode('abortPipeline', abortPipelineFn)
       .addNode('designAndAssemble', designAndAssembleFn)
       .addNode('verifyConsistency', verifyConsistencyFn)
-      .addNode('buildFeedback', buildFeedbackFn)
       .addNode('generateImages', generateImagesFn)
       .addEdge(START, 'selectSkills')
       .addEdge('selectSkills', 'analyzeScene')
@@ -1399,9 +1396,8 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       })
       .addConditionalEdges('verifyConsistency', routeAfterEvaluator, {
         generate: 'generateImages',
-        designAndAssemble: 'buildFeedback',
+        designAndAssemble: 'designAndAssemble',
       })
-      .addEdge('buildFeedback', 'designAndAssemble')
       .addEdge('generateImages', END)
 
     this._graphBuilder = graph

@@ -1,0 +1,23 @@
+import { describe, it, expect } from 'vitest'
+import { buildRetryFeedback, pickLowItems } from '../DirectorPipeline'
+
+describe('Evaluator-Optimizer helpers', () => {
+  it('buildRetryFeedback returns non-empty string for low-score report', () => {
+    const report = { score: 3, issues: ['Character missing from panel 1'] }
+    const feedback = buildRetryFeedback(report, 6)
+    expect(feedback.length).toBeGreaterThan(0)
+    expect(feedback).toContain('Character missing')
+  })
+
+  it('pickLowItems finds sub-scores below threshold', () => {
+    const report = { score: 5, faceConsistency: 3, narrativeFlow: 8 }
+    const items = pickLowItems(report, 6)
+    expect(items).toContain('face consistency')
+    expect(items).not.toContain('narrative flow')
+  })
+
+  it('buildRetryFeedback returns fallback string for null report', () => {
+    const feedback = buildRetryFeedback(null, 6)
+    expect(feedback).toContain('Soft correction only')
+  })
+})
