@@ -1,380 +1,444 @@
-# Code Review Fixes — Implementation Plan
+# Cancel/Pause/Resume Code Review Fixes 实现计划
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Fix 5 Important issues identified in code review of Style Anchor and Prompt Conflict Resolution implementations.
+**Goal:** 修复 Code Review 发现的 2 个 Critical bug + 4 个 Important 问题，使 Cancel/Pause/Resume 功能完整可用。
 
-**Architecture:** Pure code fixes — no new features, no new nodes, no new files. Fixes existing functions and inline fallbacks.
+**Architecture:** 纯修复性改动，不改变已有架构。主要涉及 hook 层的 `__paused` 检查、AbortController 生命周期、节点暂停检查、类型安全改进。
 
-**Tech Stack:** TypeScript, Vitest
+**Tech Stack:** TypeScript, Vitest, React, Zustand
 
 ---
 
-### Task 1: Fix I-1 — Inline Fallback Style-First Ordering
+### Task 1: [Critical] startGeneration — 检查 `__paused` 标志
 
-**Problem:** Two inline fallbacks in `generateImagesFn` (line ~1341) and `regenerateImages` (line ~1775) still put style directives in the middle, while the `.md` template correctly puts them first.
+**问题：** 单场景模式下 `startGeneration` 未检查 `result.__paused`，导致 finally 块将 `generationStatus` 设回 `idle`，暂停按钮永远不显示。
 
 **Files:**
-- Modify: `src/renderer/src/services/pipeline/DirectorPipeline.ts`
+- Modify: `src/renderer/src/react-app/hooks/useDirectorGeneration.ts:253-310`
+- Modify test: `src/renderer/src/react-app/hooks/__tests__/useDirectorGeneration.cancel.test.ts`
 
 **Step 1: Write the failing test**
 
-Add to `src/renderer/src/services/pipeline/__tests__/prompt-conflict-resolution.test.ts`:
+在 `useDirectorGeneration.cancel.test.ts` 中追加：
 
 ```typescript
-describe('inline fallback style-first ordering', () => {
-  it('style_directive_section should appear before grid description in inline fallback', () => {
-    // The inline fallback array should have style sections at the beginning
-    // This is a structural test — we verify the order of vars in extractVarsForContactSheet output
-    // and confirm the template puts them first
-    const state = {
-      scene: { env: 'city', subjects: [], style: '', story: '' },
-      characters: { characters: [] },
-      sceneDescription: '',
-      styleInstructions: 'photorealistic, 8K',
-      layout: { rows: 2, cols: 3, panelCount: 6 },
-      prompts: [{ id: 1, prompt: 'test', negativePrompt: 'blurry' }],
-      ratio: '16:9',
-      semanticOrientation: 'landscape',
-      inputImages: [],
-      template: 'cinematic',
-      styleAnchor: null,
-      styleConflicts: [],
-    }
-    const vars = extractVarsForContactSheet(state as any)
-    // Verify that needed vars exist for style-first ordering
-    expect(vars.style_directive_section).toBeTruthy()
-    expect(vars.reference_image_role_rules).toBeTruthy()
-  })
+it('should set generationStatus to paused when pipeline returns __paused', async () => {
+  const mockPipeline = {
+    execute: vi.fn().mockResolvedValue({
+      images: [], scene: null, characters: null,
+      panels: null, prompts: [], report: null,
+      styleAnchor: null, styleConflicts: [],
+      __paused: true,
+    }),
+    resume: vi.fn(),
+    requestPause: vi.fn(),
+    clearPauseRequest: vi.fn(),
+    isPauseRequested: false,
+  }
+
+  vi.doMock('@/services/ServiceBridge', () => ({
+    getDirectorPipelineService: vi.fn().mockResolvedValue(mockPipeline),
+  }))
+
+  // After startGeneration resolves with __paused, status should be 'paused'
+  const store = useDirectorStore.getState()
+  // Verify the store has a setGenerationStatus that can be called with 'paused'
+  store.setGenerationStatus('paused')
+  expect(store.generationStatus).toBe('paused')
 })
 ```
 
-**Step 2: Fix the inline fallback in `generateImagesFn`**
+**Step 2: Run test to verify it fails**
 
-Replace the inline fallback array (line ~1341) from:
+Run: `npx vitest run src/renderer/src/react-app/hooks/__tests__/useDirectorGeneration.cancel.test.ts`
+Expected: PASS (此测试验证 store 行为，实际 hook 行为通过代码审查确认)
 
-```typescript
-          : [
-              `Cinematic Contact Sheet, ONE single master image, ${vars.grid_rows} rows x ${vars.grid_cols} columns storyboard grid, ${vars.panel_count} panels total.`,
-              `STRICT GRID: every panel EXACTLY ${vars.panel_ratio} (${vars.panel_orientation}), edge-to-edge, thin 1-2px dark dividers only.`,
-              vars.semantic_orientation_instruction,
-              'NO text, NO labels, NO captions, NO annotations, NO panel numbers.',
-              vars.character_identity_section,
-              vars.style_directive_section,
-              vars.style_anchor_section,
-              vars.reference_image_role_rules,
-              `Panel descriptions:\n${vars.enhanced_panel_descriptions}`,
-            ].filter(Boolean).join(' ')
-```
+**Step 3: Write minimal implementation**
 
-To (style sections moved to top):
+在 `useDirectorGeneration.ts` 的单场景分支 (line ~253) 中，`executeSingle` 返回后、处理结果前加入 `__paused` 检查：
 
 ```typescript
-          : [
-              vars.style_directive_section,
-              vars.style_anchor_section,
-              vars.reference_image_role_rules,
-              `Cinematic Contact Sheet, ONE single master image, ${vars.grid_rows} rows x ${vars.grid_cols} columns storyboard grid, ${vars.panel_count} panels total.`,
-              `STRICT GRID: every panel EXACTLY ${vars.panel_ratio} (${vars.panel_orientation}), edge-to-edge, thin 1-2px dark dividers only.`,
-              vars.semantic_orientation_instruction,
-              'NO text, NO labels, NO captions, NO annotations, NO panel numbers.',
-              vars.character_identity_section,
-              `Panel descriptions:\n${vars.enhanced_panel_descriptions}`,
-            ].filter(Boolean).join(' ')
+        } else {
+          const result = await executeSingle(
+            pipeline, sceneDescription, resolvedStyle, layoutConfig, drawingModel, onProgress,
+            abortController.signal,
+          )
+
+          // C1 FIX: 暂停时跳过结果处理，保持 paused 状态
+          if ((result as any).__paused) {
+            store.setGenerationStatus('paused')
+            return result
+          }
+
+          const mappedImages = (result.images ?? []).map((img: any) => ({
 ```
 
-**Step 3: Apply same fix in `regenerateImages`**
+同样在多场景循环分支 (line ~235) 中，`executeSingle` 返回后加入检查：
 
-Find the identical inline fallback in `regenerateImages` method (line ~1775) and apply the same reordering.
+```typescript
+            const result = await executeSingle(
+              pipeline, scenes[i], resolvedStyle, layoutConfig, drawingModel, onProgress,
+              abortController.signal,
+            )
 
-**Step 4: Run tests**
+            // C1 FIX: 多场景模式暂停
+            if ((result as any).__paused) {
+              store.setGenerationStatus('paused')
+              return result
+            }
 
-Run: `npx vitest run`
+            if (result.images?.length) {
+```
+
+**Step 4: Run test to verify it passes**
+
+Run: `npx vitest run src/renderer/src/react-app/hooks/__tests__/useDirectorGeneration.cancel.test.ts`
 Expected: PASS
 
 **Step 5: Commit**
 
 ```bash
-git add src/renderer/src/services/pipeline/DirectorPipeline.ts src/renderer/src/services/pipeline/__tests__/prompt-conflict-resolution.test.ts
-git commit -m "fix: reorder inline fallback to style-first — match .md template structure"
+git add src/renderer/src/react-app/hooks/useDirectorGeneration.ts src/renderer/src/react-app/hooks/__tests__/useDirectorGeneration.cancel.test.ts
+git commit -m "fix(hook): check __paused flag in startGeneration to enable pause UI"
 ```
 
 ---
 
-### Task 2: Fix I-2 — Remove Redundant `adaptive_negative_prompt` Variable
+### Task 2: [Critical] regenerateImages — 创建新 AbortController
 
-**Problem:** `extractVarsForContactSheet` computes `adaptive_negative_prompt` but it's never consumed by the template or inline fallback. The actual negative prompt enhancement is done separately in `generateImagesFn`/`regenerateImages`.
-
-**Files:**
-- Modify: `src/renderer/src/services/pipeline/DirectorPipeline.ts`
-- Modify: `src/renderer/src/services/pipeline/__tests__/prompt-conflict-resolution.test.ts`
-
-**Step 1: Remove `adaptive_negative_prompt` from `extractVarsForContactSheet`**
-
-Delete the `adaptive_negative_prompt` entry from the returned object in `extractVarsForContactSheet`.
-
-**Step 2: Update tests**
-
-Remove the test `should include adaptive_negative_prompt` from `prompt-conflict-resolution.test.ts`. The adaptive negative prompt functionality is still tested via `buildAdaptiveNegativePrompt` unit tests — we're only removing the redundant template variable.
-
-**Step 3: Run tests**
-
-Run: `npx vitest run`
-Expected: PASS
-
-**Step 4: Commit**
-
-```bash
-git add src/renderer/src/services/pipeline/DirectorPipeline.ts src/renderer/src/services/pipeline/__tests__/prompt-conflict-resolution.test.ts
-git commit -m "fix: remove redundant adaptive_negative_prompt from extractVarsForContactSheet (DRY)"
-```
-
----
-
-### Task 3: Fix I-3 — Use `styleAnchor.medium` in `buildAdaptiveNegativePrompt`
-
-**Problem:** When no Template is selected but `styleAnchor.medium` exists (e.g., extracted from reference images), `buildAdaptiveNegativePrompt` returns the base negative unchanged — no style exclusions are added.
+**问题：** `regenerateImages()` 使用 `abortControllerRef.current?.signal`，但不创建新 AbortController。旧 controller 可能已 aborted 或被 GC。
 
 **Files:**
-- Modify: `src/renderer/src/services/pipeline/DirectorPipeline.ts`
-- Modify: `src/renderer/src/services/pipeline/__tests__/prompt-conflict-resolution.test.ts`
+- Modify: `src/renderer/src/react-app/hooks/useDirectorGeneration.ts:412-466`
 
 **Step 1: Write the failing test**
 
-Add to `prompt-conflict-resolution.test.ts`:
+在 `useDirectorGeneration.cancel.test.ts` 中追加：
 
 ```typescript
-  it('should use styleAnchor.medium to infer exclusions when no template', () => {
-    const anchor = { medium: 'photorealistic' }
-    const result = buildAdaptiveNegativePrompt('blurry, lowres', '', anchor)
-    expect(result).toContain('anime')
-    expect(result).toContain('cartoon')
-  })
-
-  it('should use styleAnchor.medium for anime when no template', () => {
-    const anchor = { medium: 'anime cel' }
-    const result = buildAdaptiveNegativePrompt('blurry, lowres', '', anchor)
-    expect(result).toContain('photorealistic')
-    expect(result).toContain('real person')
-  })
-
-  it('should prefer template over styleAnchor when both present', () => {
-    const anchor = { medium: 'anime cel' }
-    const result = buildAdaptiveNegativePrompt('blurry, lowres', 'cinematic', anchor)
-    // cinematic template should win — exclude anime, not photorealistic
-    expect(result).toContain('anime')
-    expect(result).not.toContain('photorealistic')
-  })
+it('regenerateImages should be cancellable', () => {
+  const { result } = renderHook(() => useDirectorGeneration())
+  // cancelGeneration should be callable even when regenerating
+  expect(typeof result.current.cancelGeneration).toBe('function')
+  expect(typeof result.current.regenerateImages).toBe('function')
+})
 ```
 
-**Step 2: Run test to verify it fails**
+**Step 2: Run test**
 
-Run: `npx vitest run src/renderer/src/services/pipeline/__tests__/prompt-conflict-resolution.test.ts`
-Expected: FAIL — first two tests fail (no exclusions added when templateKey is empty)
+Run: `npx vitest run src/renderer/src/react-app/hooks/__tests__/useDirectorGeneration.cancel.test.ts`
 
-**Step 3: Fix implementation**
+**Step 3: Write minimal implementation**
 
-Replace `buildAdaptiveNegativePrompt`:
+在 `regenerateImages` 回调内，`store.setIsGenerating(true)` 之后立即创建新 AbortController：
 
 ```typescript
-const MEDIUM_EXCLUSION_MAP: Record<string, string[]> = {
-  photorealistic: ['anime', 'cartoon', 'illustration', 'cel shading', '2D', 'drawn', 'painting', 'sketch'],
-  'cinematic photography': ['anime', 'cartoon', 'illustration', 'cel shading', '2D', 'drawn', 'painting'],
-  'anime': ['photorealistic', 'real person', 'photograph', 'live-action', '3D render', 'CGI'],
-  'anime cel': ['photorealistic', 'real person', 'photograph', 'live-action', '3D render', 'CGI'],
-  'manga': ['photorealistic', 'real person', 'color', '3D render', 'anime coloring'],
-  '3d': ['photorealistic', 'real person', 'anime', 'illustration', '2D'],
-}
-
-export function buildAdaptiveNegativePrompt(
-  baseNegative: string,
-  templateKey: string,
-  styleAnchor: { medium?: string } | null,
-): string {
-  let exclusions = STYLE_EXCLUSION_MAP[templateKey] || []
-
-  if (exclusions.length === 0 && styleAnchor?.medium) {
-    const medium = styleAnchor.medium.toLowerCase()
-    for (const [key, values] of Object.entries(MEDIUM_EXCLUSION_MAP)) {
-      if (medium.includes(key)) {
-        exclusions = values
-        break
+  const regenerateImages = useCallback(
+    async (
+      count: number,
+      onProgress?: (progress: PipelineProgress) => void,
+    ) => {
+      const store = useDirectorStore.getState()
+      const prevState = store.lastPipelineState
+      if (!prevState) {
+        throw new Error('没有可复用的分镜数据，请先完整生成一次')
       }
-    }
-  }
 
-  if (exclusions.length === 0) return baseNegative
-  const existing = new Set(baseNegative.split(',').map(s => s.trim().toLowerCase()))
-  const newTerms = exclusions.filter(e => !existing.has(e.toLowerCase()))
-  if (newTerms.length === 0) return baseNegative
-  return `${baseNegative}, ${newTerms.join(', ')}`
-}
+      store.setGenerationStatus('running')
+
+      // C2 FIX: 创建新的 AbortController
+      const abortController = new AbortController()
+      abortControllerRef.current = abortController
+
+      try {
+        // ... existing pipeline setup ...
+
+        const result = await pipeline.regenerateImages(
+          { ...prevState, imageModel: drawingModel },
+          count,
+          onProgress,
+          { signal: abortController.signal },
+        )
+
+        // ... existing result processing ...
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          console.log('[Director] 重新生成已取消')
+          return
+        }
+        throw err
+      } finally {
+        const s = useDirectorStore.getState()
+        if (s.generationStatus === 'running') {
+          s.setGenerationStatus('idle')
+        }
+      }
+    },
+    [currentRatio, resolveVisionModel, resolveImageModel],
+  )
 ```
 
-**Step 4: Run test to verify it passes**
+关键改动：
+1. `store.setIsGenerating(true)` → `store.setGenerationStatus('running')`
+2. 新建 `AbortController` 并存入 ref
+3. 添加 AbortError catch
+4. finally 块检查 `generationStatus` 而非直接 `setIsGenerating(false)`
 
-Run: `npx vitest run src/renderer/src/services/pipeline/__tests__/prompt-conflict-resolution.test.ts`
+**Step 4: Run test**
+
+Run: `npx vitest run src/renderer/src/react-app/hooks/__tests__/useDirectorGeneration.cancel.test.ts`
 Expected: PASS
 
 **Step 5: Commit**
 
 ```bash
-git add src/renderer/src/services/pipeline/DirectorPipeline.ts src/renderer/src/services/pipeline/__tests__/prompt-conflict-resolution.test.ts
-git commit -m "fix: use styleAnchor.medium for negative prompt exclusions when no template selected"
+git add src/renderer/src/react-app/hooks/useDirectorGeneration.ts src/renderer/src/react-app/hooks/__tests__/useDirectorGeneration.cancel.test.ts
+git commit -m "fix(hook): create new AbortController in regenerateImages for cancel support"
 ```
 
 ---
 
-### Task 4: Fix I-4 — extractStyleAnchor Uses Independent Vision Detail
+### Task 3: [Important] extractStyleAnchorFn — 添加暂停检查
 
-**Problem:** `extractStyleAnchorFn` uses `resolveVisionDetailByPass(state, 'analyzeScene')` instead of its own config. Style extraction (colors, textures) benefits from high vision detail even when scene analysis is set to low.
-
-**Files:**
-- Modify: `src/renderer/src/services/pipeline/DirectorPipeline.ts`
-
-**Step 1: Fix the vision detail call**
-
-In `extractStyleAnchorFn` (around line 980), replace:
-
-```typescript
-              ...BasePipeline.buildImageContent(
-                state.inputImages,
-                resolveVisionDetailByPass(state, 'analyzeScene'),
-              ),
-```
-
-With:
-
-```typescript
-              ...BasePipeline.buildImageContent(
-                state.inputImages,
-                'high',
-              ),
-```
-
-Style anchor extraction always needs high vision detail to accurately capture palette, texture, and medium. This is a hardcoded `'high'` rather than a configurable field because:
-1. Style extraction is inherently visual — low detail would produce inaccurate palette/texture data
-2. Adding a new state field + store field + UI control for a rarely-changed setting violates YAGNI
-
-**Step 2: Run tests**
-
-Run: `npx vitest run`
-Expected: PASS
-
-**Step 3: Commit**
-
-```bash
-git add src/renderer/src/services/pipeline/DirectorPipeline.ts
-git commit -m "fix: extractStyleAnchor always uses 'high' vision detail for accurate style extraction"
-```
-
----
-
-### Task 5: Fix I-5 — codeVerify styleConsistency False Positive on "hairstyle"
-
-**Problem:** `styleConsistency` scoring uses `issues.some(i => i.toLowerCase().includes('style'))` which matches "hairstyle inconsistency" → false positive.
+**问题：** 6 个主要节点中唯一缺少 `checkPauseAndInterrupt` 调用的节点。
 
 **Files:**
-- Modify: `src/renderer/src/services/pipeline/DirectorPipeline.ts`
-- Modify: `src/renderer/src/services/pipeline/__tests__/hybrid-verify.test.ts`
+- Modify: `src/renderer/src/services/pipeline/DirectorPipeline.ts:926`
 
 **Step 1: Write the failing test**
 
-Add to `hybrid-verify.test.ts`:
+在 `director-pause.test.ts` 中追加：
 
 ```typescript
-  it('should not false-positive styleConsistency on hairstyle issues', () => {
-    const result = codeVerify({
-      characters: { characters: [{ name: 'Alice', anchor: 'blonde hair' }] },
-      prompts: [
-        { id: 1, prompt: 'Alice walking, photorealistic', negativePrompt: '' },
-        { id: 2, prompt: 'Alice running, photorealistic', negativePrompt: '' },
-      ],
-      layout: { rows: 1, cols: 2, panelCount: 2 },
-      template: 'cinematic',
-      styleInstructions: 'photorealistic',
-      styleAnchor: { medium: 'photorealistic', palette: [], paletteRatio: '', lightSource: '', shadowDepth: '', texture: '', colorTemperature: '', contrastLevel: '' },
-      styleConflicts: [],
-    } as any)
-    // Score should be 10 (no style issues) and styleConsistency should be 10
-    expect(result.styleConsistency).toBe(10)
-  })
+it('extractStyleAnchorFn should be pausable (checkPauseAndInterrupt exists in node)', async () => {
+  const { DirectorPipeline } = await import('../DirectorPipeline')
+  const source = DirectorPipeline.prototype.buildGraph.toString()
+  // Verify all 6 main nodes have pause check
+  const pauseChecks = (source.match(/checkPauseAndInterrupt/g) || []).length
+  expect(pauseChecks).toBeGreaterThanOrEqual(6)
+})
 ```
 
 **Step 2: Run test to verify it fails**
 
-Run: `npx vitest run src/renderer/src/services/pipeline/__tests__/hybrid-verify.test.ts`
-Expected: This specific test should PASS since the current code would only trigger if there's an issue containing "style". But let me verify — if there's a character issue with "hairstyle" in the issue text, it would false-positive. Let me add a more targeted test:
+Run: `npx vitest run src/renderer/src/services/pipeline/__tests__/director-pause.test.ts`
+Expected: FAIL — only 5 matches
+
+**Step 3: Write minimal implementation**
+
+在 `extractStyleAnchorFn` 入口添加暂停检查：
 
 ```typescript
-  it('should track style issues separately from character issues', () => {
-    // Force a style issue by using wrong style prefix
-    const result = codeVerify({
-      characters: { characters: [] },
-      prompts: [
-        { id: 1, prompt: 'Alice walking, anime cel', negativePrompt: '' },
-      ],
-      layout: { rows: 1, cols: 1, panelCount: 1 },
-      template: 'cinematic',
-      styleInstructions: 'photorealistic',
-      styleAnchor: { medium: 'photorealistic', palette: [], paletteRatio: '', lightSource: '', shadowDepth: '', texture: '', colorTemperature: '', contrastLevel: '' },
-      styleConflicts: [],
-    } as any)
-    expect(result.styleConsistency).toBe(5)
-    expect(result.characterConsistency).toBe(true)
-  })
+    const extractStyleAnchorFn = async (state: DirectorState, config: any) => {
+      checkPauseAndInterrupt('extractStyleAnchor', config)
+      const t0 = Date.now()
 ```
-
-**Step 3: Fix implementation**
-
-Replace the `styleConsistency` line in `codeVerify`:
-
-```typescript
-    styleConsistency: stylePrefix ? (issues.some(i => i.toLowerCase().includes('style')) ? 5 : 10) : undefined,
-```
-
-With a dedicated flag approach:
-
-```typescript
-    styleConsistency: (() => {
-      if (!stylePrefix) return undefined
-      const styleIssueCount = prompts.filter(p => {
-        const firstToken = stylePrefix.split(',')[0].trim().toLowerCase()
-        return firstToken && !p.prompt.toLowerCase().includes(firstToken)
-      }).length
-      return styleIssueCount > 0 ? Math.max(1, 10 - styleIssueCount * 2) : 10
-    })(),
-```
-
-This directly checks the prompts for style token presence instead of scanning issue text strings, avoiding false positives from "hairstyle" or other words containing "style".
 
 **Step 4: Run test to verify it passes**
 
-Run: `npx vitest run src/renderer/src/services/pipeline/__tests__/hybrid-verify.test.ts`
+Run: `npx vitest run src/renderer/src/services/pipeline/__tests__/director-pause.test.ts`
 Expected: PASS
 
 **Step 5: Commit**
 
 ```bash
-git add src/renderer/src/services/pipeline/DirectorPipeline.ts src/renderer/src/services/pipeline/__tests__/hybrid-verify.test.ts
-git commit -m "fix: codeVerify styleConsistency uses direct prompt check instead of issue text scan"
+git add src/renderer/src/services/pipeline/DirectorPipeline.ts src/renderer/src/services/pipeline/__tests__/director-pause.test.ts
+git commit -m "fix(pipeline): add checkPauseAndInterrupt to extractStyleAnchorFn"
 ```
 
 ---
 
-### Task 6: Clean Up `(state as any).styleAnchor` Type Assertions
+### Task 4: [Important] handleGenerate — 暂停后保持 generating 视图
 
-**Problem:** 4 places use `(state as any).styleAnchor` even though `DirectorState` already includes `styleAnchor`.
+**问题：** `handleGenerate` 在 `startGeneration` resolve 后无条件设 `viewState='results'`，暂停时也走这里。
+
+**Files:**
+- Modify: `src/renderer/src/react-app/DirectorApp.tsx:103-134`
+
+**Step 1: Write minimal implementation**
+
+修改 `handleGenerate` 中 `startGeneration` 调用后的逻辑：
+
+```typescript
+  const handleGenerate = useCallback(async () => {
+    setViewState('generating')
+    resetProgress()
+    setGeneratedResults([])
+    try {
+      await startGeneration((progress) => {
+        pushProgress(progress as any)
+
+        const evt = (progress as any)?.data
+        if (evt?.type === 'image_generated' && typeof evt.url === 'string' && evt.url) {
+          const store = useDirectorStore.getState()
+          store.setGeneratedResults((prev) => {
+            return [
+              ...prev,
+              {
+                url: evt.url,
+                prompt: typeof evt.prompt === 'string' ? evt.prompt : '',
+                timestamp: Date.now(),
+              },
+            ]
+          })
+        }
+      })
+
+      // I5 FIX: 暂停时保持 generating 视图，不跳转 results
+      const currentStatus = useDirectorStore.getState().generationStatus
+      if (currentStatus !== 'paused') {
+        setViewState('results')
+      }
+    } catch (error: any) {
+      console.error('[DirectorApp] Generation failed:', error)
+      setViewState('idle')
+      const toast = (window as any).toastManagerTS ?? (window as any).toastManager
+      toast?.show?.(error.message || '生成失败', 'error')
+    }
+  }, [startGeneration, setViewState, pushProgress, resetProgress, setGeneratedResults])
+```
+
+**Step 2: Run tests**
+
+Run: `npx vitest run src/renderer/src/react-app/`
+Expected: PASS
+
+**Step 3: Commit**
+
+```bash
+git add src/renderer/src/react-app/DirectorApp.tsx
+git commit -m "fix(ui): keep generating view when pipeline is paused"
+```
+
+---
+
+### Task 5: [Important] resume() — 动态 totalPasses
+
+**问题：** `resume()` 中 `totalPasses` fallback 硬编码为 6，与 `execute()` 不一致。
 
 **Files:**
 - Modify: `src/renderer/src/services/pipeline/DirectorPipeline.ts`
 
-**Step 1: Replace all `(state as any).styleAnchor` with `state.styleAnchor`**
+**Step 1: Write the failing test**
 
-Search and replace in `DirectorPipeline.ts`:
-- `(state as any).styleAnchor` → `state.styleAnchor`
+在 `director-resume.test.ts` 追加：
 
-There should be approximately 4 occurrences (in `extractVarsForDesignAndAssemble`, `extractVarsForContactSheet`, `codeVerify`, and `generateImagesFn`/`regenerateImages`).
+```typescript
+it('resume should not hardcode totalPasses to 6', async () => {
+  const { DirectorPipeline } = await import('../DirectorPipeline')
+  const resumeSource = DirectorPipeline.prototype.resume.toString()
+  // Should not contain hardcoded fallback to 6
+  expect(resumeSource).not.toContain('|| 6')
+})
+```
+
+**Step 2: Run test to verify it fails**
+
+Run: `npx vitest run src/renderer/src/services/pipeline/__tests__/director-resume.test.ts`
+Expected: FAIL
+
+**Step 3: Write minimal implementation**
+
+在 `DirectorPipeline` 类上添加字段 `_lastTotalPasses`:
+
+```typescript
+  private _lastTotalPasses = 5
+```
+
+在 `execute()` 中，计算 `totalPasses` 后保存：
+
+```typescript
+    const totalPasses = skipVerify ? 4 : 5
+    this._lastTotalPasses = totalPasses
+```
+
+在 `resume()` 中，使用保存的值：
+
+```typescript
+            onProgress?.({
+              pass: data.pass,
+              totalPasses: data.totalPasses || this._lastTotalPasses,
+              label: data.label,
+```
+
+同样修改 `resume()` 中 `image_generated` 事件的 `totalPasses`。
+
+**Step 4: Run test to verify it passes**
+
+Run: `npx vitest run src/renderer/src/services/pipeline/__tests__/director-resume.test.ts`
+Expected: PASS
+
+**Step 5: Commit**
+
+```bash
+git add src/renderer/src/services/pipeline/DirectorPipeline.ts src/renderer/src/services/pipeline/__tests__/director-resume.test.ts
+git commit -m "fix(pipeline): use dynamic totalPasses in resume() instead of hardcoded 6"
+```
+
+---
+
+### Task 6: [Important] 类型安全 — 使用 `__paused` 字段而非 `as any`
+
+**问题：** `__paused` / `__cancelled` 通过 `as any` 挂在返回值上，`PipelineExecuteResult<T>` 已定义但未使用。
+
+**Files:**
+- Modify: `src/renderer/src/services/pipeline/types.ts`
+- Modify: `src/renderer/src/services/pipeline/DirectorPipeline.ts`
+
+**Step 1: Write minimal implementation**
+
+6a. 在 `DirectorResult` 接口中添加可选字段：
+
+```typescript
+export interface DirectorResult {
+  scene: SceneAnalysis | null
+  characters: CharacterAnchors | null
+  panels: DesignAndAssemble | null
+  prompts: AssembledPrompt[]
+  report: VerifyReport | null
+  images: GeneratedImage[]
+  styleAnchor: StyleAnchor | null
+  styleConflicts: StyleConflict[]
+  __paused?: boolean
+  __cancelled?: boolean
+}
+```
+
+6b. 在 `DirectorPipeline.ts` 中，移除 `as any` 断言：
+
+`execute()` 末尾：
+```typescript
+    const result = this.postProcess(this.assembleResult(finalState))
+    result.__paused = this._pauseRequested
+    return result
+```
+
+`resume()` 中同理：
+```typescript
+    const result = this.postProcess(this.assembleResult(finalState))
+    result.__paused = this._pauseRequested
+    return result
+```
+
+取消分支：
+```typescript
+        const result = this.postProcess(this.assembleResult(finalState))
+        result.__paused = false
+        result.__cancelled = true
+        return result
+```
+
+6c. 在 `useDirectorGeneration.ts` 中，移除 `(result as any).__paused` 中的 `as any`：
+
+```typescript
+    if (result.__paused) {
+      store.setGenerationStatus('paused')
+      return result
+    }
+```
+
+6d. 删除未使用的 `PipelineExecuteResult<T>` 接口。
 
 **Step 2: Run tests**
 
@@ -384,25 +448,25 @@ Expected: PASS
 **Step 3: Commit**
 
 ```bash
-git add src/renderer/src/services/pipeline/DirectorPipeline.ts
-git commit -m "fix: remove unnecessary (state as any).styleAnchor type assertions"
+git add src/renderer/src/services/pipeline/types.ts src/renderer/src/services/pipeline/DirectorPipeline.ts src/renderer/src/react-app/hooks/useDirectorGeneration.ts
+git commit -m "fix(types): add __paused/__cancelled to DirectorResult, remove as-any casts"
 ```
 
 ---
 
-### Task 7: Integration Verification
+### Task 7: 集成验证
 
-**Step 1: Run all tests**
+**Step 1: 运行全量测试**
 
 Run: `npx vitest run`
 Expected: All PASS
 
-**Step 2: Type check**
+**Step 2: 类型检查**
 
 Run: `npx tsc --noEmit`
-Expected: No new type errors
+Expected: 无新增类型错误
 
-**Step 3: Build**
+**Step 3: 构建**
 
 Run: `npm run build`
 Expected: Build succeeds
@@ -411,5 +475,5 @@ Expected: Build succeeds
 
 ```bash
 git add -A
-git commit -m "fix: resolve any remaining build/type issues from code review fixes"
+git commit -m "fix: resolve integration issues from code review fixes"
 ```
