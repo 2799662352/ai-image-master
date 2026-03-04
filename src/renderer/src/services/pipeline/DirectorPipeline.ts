@@ -1307,8 +1307,8 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       }
     }
 
-    // ===== Retry准备 =====
-    const prepareRetryFn = (state: DirectorState) => {
+    // ===== Evaluator-Optimizer: build feedback when rejecting =====
+    const buildFeedbackFn = (state: DirectorState) => {
       const threshold = Number.isFinite(state.scoreThreshold)
         ? Math.max(0, Math.min(10, Math.round(state.scoreThreshold)))
         : SCORE_THRESHOLD
@@ -1468,14 +1468,14 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       }
     }
 
-    // ===== Routing =====
-    const routeVerify = (state: DirectorState): 'retry' | 'generate' => {
+    // ===== Routing: Evaluator-Optimizer pattern =====
+    const routeAfterEvaluator = (state: DirectorState): 'generate' | 'designAndAssemble' => {
       if (!state.report || state.retryCount >= MAX_RETRIES) return 'generate'
       const threshold = Number.isFinite(state.scoreThreshold)
         ? Math.max(0, Math.min(10, Math.round(state.scoreThreshold)))
         : SCORE_THRESHOLD
       const hasLowSubScore = pickLowItems(state.report as VerifyReportLike, threshold).length > 0
-      if (state.report.score < threshold || hasLowSubScore) return 'retry'
+      if (state.report.score < threshold || hasLowSubScore) return 'designAndAssemble'
       return 'generate'
     }
 
@@ -1492,7 +1492,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       .addNode('designAndAssemble', designAndAssembleFn)
       .addNode('codeVerify', codeVerifyNode)
       .addNode('verifyConsistency', verifyConsistencyFn)
-      .addNode('prepareRetry', prepareRetryFn)
+      .addNode('prepareRetry', buildFeedbackFn)
       .addNode('generateImages', generateImagesFn)
       .addEdge(START, 'selectSkills')
       .addEdge('selectSkills', 'analyzeScene')
@@ -1514,8 +1514,8 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         generate: 'generateImages',
         deepVerify: 'verifyConsistency',
       })
-      .addConditionalEdges('verifyConsistency', routeVerify, {
-        retry: 'prepareRetry',
+      .addConditionalEdges('verifyConsistency', routeAfterEvaluator, {
+        designAndAssemble: 'prepareRetry',
         generate: 'generateImages',
       })
       .addEdge('prepareRetry', 'designAndAssemble')
