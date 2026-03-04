@@ -103,3 +103,67 @@ export function getStyleInstructions(templateKey: string | null): string {
   if (!t) return ''
   return `${t.prefix}[SUBJECT]${t.suffix}`
 }
+
+const CUSTOM_TEMPLATES_STORAGE_KEY = 'director.custom-templates.v1'
+
+function readCustomTemplates(): TemplateData[] {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return []
+    const raw = window.localStorage.getItem(CUSTOM_TEMPLATES_STORAGE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed as TemplateData[]
+  } catch {
+    return []
+  }
+}
+
+function writeCustomTemplates(templates: TemplateData[]): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return
+    window.localStorage.setItem(CUSTOM_TEMPLATES_STORAGE_KEY, JSON.stringify(templates))
+  } catch {
+    // Best-effort persistence
+  }
+}
+
+export function getCustomTemplates(): TemplateData[] {
+  return readCustomTemplates()
+}
+
+export function addCustomTemplate(data: Omit<TemplateData, 'key'>): string {
+  const key = `custom-${Date.now()}`
+  const template: TemplateData = { ...data, key }
+
+  const customs = readCustomTemplates()
+  customs.push(template)
+  writeCustomTemplates(customs)
+
+  TEMPLATE_MAP[key] = { ...template }
+  return key
+}
+
+export function deleteCustomTemplate(key: string): void {
+  if (!key.startsWith('custom-')) return
+  const customs = readCustomTemplates().filter(t => t.key !== key)
+  writeCustomTemplates(customs)
+  delete TEMPLATE_MAP[key]
+}
+
+export function updateCustomTemplate(key: string, data: Omit<TemplateData, 'key'>): void {
+  if (!key.startsWith('custom-')) return
+  const customs = readCustomTemplates().map(t =>
+    t.key === key ? { ...data, key } : t
+  )
+  writeCustomTemplates(customs)
+  TEMPLATE_MAP[key] = { ...data, key }
+}
+
+export function getAllTemplates(): TemplateData[] {
+  return [...BUILTIN_TEMPLATES, ...readCustomTemplates()]
+}
+
+for (const t of readCustomTemplates()) {
+  TEMPLATE_MAP[t.key] = { ...t }
+}
