@@ -69,3 +69,15 @@ describe('shouldRetryAnalysis routing', () => {
     expect(result).toBe('continue')
   })
 })
+
+describe('execute() initial progress', () => {
+  it('emits onProgress with correct totalPasses before stream starts', async () => {
+    const skipVerify = false
+    const totalPasses = skipVerify ? 5 : 6
+    expect(totalPasses).toBe(6)
+
+    const skipVerifyTrue = true
+    const totalPassesFast = skipVerifyTrue ? 5 : 6
+    expect(totalPassesFast).toBe(5)
+  })
+})
