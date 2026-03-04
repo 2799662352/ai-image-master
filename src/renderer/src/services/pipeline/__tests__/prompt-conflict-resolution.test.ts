@@ -60,6 +60,27 @@ describe('buildAdaptiveNegativePrompt', () => {
     const base = 'blurry, lowres'
     expect(buildAdaptiveNegativePrompt(base, '', null)).toBe(base)
   })
+
+  it('should use styleAnchor.medium to infer exclusions when no template', () => {
+    const anchor = { medium: 'photorealistic' }
+    const result = buildAdaptiveNegativePrompt('blurry, lowres', '', anchor)
+    expect(result).toContain('anime')
+    expect(result).toContain('cartoon')
+  })
+
+  it('should use styleAnchor.medium for anime when no template', () => {
+    const anchor = { medium: 'anime cel' }
+    const result = buildAdaptiveNegativePrompt('blurry, lowres', '', anchor)
+    expect(result).toContain('photorealistic')
+    expect(result).toContain('real person')
+  })
+
+  it('should prefer template over styleAnchor when both present', () => {
+    const anchor = { medium: 'anime cel' }
+    const result = buildAdaptiveNegativePrompt('blurry, lowres', 'cinematic', anchor)
+    expect(result).toContain('anime')
+    expect(result).not.toContain('photorealistic')
+  })
 })
 
 describe('buildReferenceImageRoleRules', () => {

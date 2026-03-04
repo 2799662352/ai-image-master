@@ -409,12 +409,32 @@ const STYLE_EXCLUSION_MAP: Record<string, string[]> = {
   illustration: ['photorealistic', 'real person', 'anime screencap', '3D render'],
 }
 
+const MEDIUM_EXCLUSION_MAP: Record<string, string[]> = {
+  photorealistic: ['anime', 'cartoon', 'illustration', 'cel shading', '2D', 'drawn', 'painting', 'sketch'],
+  'cinematic photography': ['anime', 'cartoon', 'illustration', 'cel shading', '2D', 'drawn', 'painting'],
+  'anime': ['photorealistic', 'real person', 'photograph', 'live-action', '3D render', 'CGI'],
+  'anime cel': ['photorealistic', 'real person', 'photograph', 'live-action', '3D render', 'CGI'],
+  'manga': ['photorealistic', 'real person', 'color', '3D render', 'anime coloring'],
+  '3d': ['photorealistic', 'real person', 'anime', 'illustration', '2D'],
+}
+
 export function buildAdaptiveNegativePrompt(
   baseNegative: string,
   templateKey: string,
-  _styleAnchor: { medium?: string } | null,
+  styleAnchor: { medium?: string } | null,
 ): string {
-  const exclusions = STYLE_EXCLUSION_MAP[templateKey] || []
+  let exclusions = STYLE_EXCLUSION_MAP[templateKey] || []
+
+  if (exclusions.length === 0 && styleAnchor?.medium) {
+    const medium = styleAnchor.medium.toLowerCase()
+    for (const [key, values] of Object.entries(MEDIUM_EXCLUSION_MAP)) {
+      if (medium.includes(key)) {
+        exclusions = values
+        break
+      }
+    }
+  }
+
   if (exclusions.length === 0) return baseNegative
   const existing = new Set(baseNegative.split(',').map(s => s.trim().toLowerCase()))
   const newTerms = exclusions.filter(e => !existing.has(e.toLowerCase()))
