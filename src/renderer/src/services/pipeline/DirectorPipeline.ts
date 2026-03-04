@@ -377,6 +377,50 @@ export function buildStyleAuthorityPrompt(
   return lines.join('\n')
 }
 
+const TEMPLATE_MEDIUM_MAP: Record<string, string> = {
+  cinematic: 'photorealistic, cinematic photography',
+  movie: 'cinematic film still',
+  anime: 'anime screencap, TV anime',
+  manga: 'manga panel, black and white',
+  theatrical: 'theatrical anime film screenshot',
+  webtoon: 'webtoon style, full color',
+  comic: 'american comic style',
+  illustration: 'detailed illustration',
+}
+
+export function resolveStylePrefix(
+  styleAnchor: { medium?: string } | null,
+  templateKey: string,
+  _styleInstructions: string,
+): string {
+  if (styleAnchor?.medium) return styleAnchor.medium
+  return TEMPLATE_MEDIUM_MAP[templateKey] || ''
+}
+
+const STYLE_EXCLUSION_MAP: Record<string, string[]> = {
+  cinematic: ['anime', 'cartoon', 'illustration', 'cel shading', '2D', 'drawn', 'painting', 'sketch'],
+  movie: ['anime', 'cartoon', 'illustration', 'cel shading', '2D', 'drawn', 'painting'],
+  anime: ['photorealistic', 'real person', 'photograph', 'live-action', '3D render', 'CGI'],
+  theatrical: ['photorealistic', 'real person', 'photograph', 'live-action', '3D render'],
+  manga: ['photorealistic', 'real person', 'color', '3D render', 'anime coloring'],
+  webtoon: ['photorealistic', 'real person', 'black and white', 'monochrome', '3D render'],
+  comic: ['photorealistic', 'real person', 'anime', 'soft shading', '3D render'],
+  illustration: ['photorealistic', 'real person', 'anime screencap', '3D render'],
+}
+
+export function buildAdaptiveNegativePrompt(
+  baseNegative: string,
+  templateKey: string,
+  _styleAnchor: { medium?: string } | null,
+): string {
+  const exclusions = STYLE_EXCLUSION_MAP[templateKey] || []
+  if (exclusions.length === 0) return baseNegative
+  const existing = new Set(baseNegative.split(',').map(s => s.trim().toLowerCase()))
+  const newTerms = exclusions.filter(e => !existing.has(e.toLowerCase()))
+  if (newTerms.length === 0) return baseNegative
+  return `${baseNegative}, ${newTerms.join(', ')}`
+}
+
 export function shouldRetryAnalysis(state: {
   scene: { env?: string } | null
   characters: { characters?: unknown[] } | null
