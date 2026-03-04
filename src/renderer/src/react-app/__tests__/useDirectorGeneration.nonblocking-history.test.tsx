@@ -82,6 +82,7 @@ describe('useDirectorGeneration - non-blocking history save', () => {
         scoreThreshold: 8,
       }),
       undefined,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     )
   })
 })
