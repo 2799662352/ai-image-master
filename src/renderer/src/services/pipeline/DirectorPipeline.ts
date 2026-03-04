@@ -522,6 +522,30 @@ export function extractVarsForContactSheet(state: DirectorState): Record<string,
     character_anchor_line: characters.map((c: any) => c.anchor).join('. '),
     style_instructions: state.styleInstructions || '',
     panel_descriptions: `${globalSection}${userDirection}${characterIdentityLockSummary ? `\n\n${characterIdentityLockSummary}` : ''}\n\nSTORYBOARD GRID ${state.layout.rows}x${state.layout.cols}:\n${perShotSection}`,
+    reference_image_role_rules: buildReferenceImageRoleRules(
+      state.template,
+      !!(state as any).styleAnchor,
+    ),
+    enhanced_panel_descriptions: (() => {
+      const stylePrefix = resolveStylePrefix(
+        (state as any).styleAnchor,
+        state.template,
+        state.styleInstructions,
+      )
+      const enhanced = prompts.map(p => {
+        const base = p.prompt
+        const prefixed = stylePrefix && !base.toLowerCase().startsWith(stylePrefix.toLowerCase())
+          ? `${stylePrefix}, ${base}`
+          : base
+        return `  Panel ${p.id}: [shot cut] ${prefixed}`
+      }).join('\n')
+      return `${globalSection}${userDirection}${characterIdentityLockSummary ? `\n\n${characterIdentityLockSummary}` : ''}\n\nSTORYBOARD GRID ${state.layout.rows}x${state.layout.cols}:\n${enhanced}`
+    })(),
+    adaptive_negative_prompt: buildAdaptiveNegativePrompt(
+      prompts[0]?.negativePrompt || 'blurry, deformed, bad anatomy, watermark, signature, text, labels, captions, panel numbers, irregular panels, asymmetric grid, unequal panels',
+      state.template,
+      (state as any).styleAnchor,
+    ),
   }
 }
 
