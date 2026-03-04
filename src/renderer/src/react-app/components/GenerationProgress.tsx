@@ -10,7 +10,7 @@ const PASS_DEFS_FULL = [
   { label: '角色锚定',     icon: 'fa-user-tag' },
   { label: '风格锚点',     icon: 'fa-palette' },
   { label: '分镜+Prompt', icon: 'fa-th-large' },
-  { label: '质量校验',     icon: 'fa-check-double' },
+  { label: '一致性校验',   icon: 'fa-check-double' },
   { label: '图像生成',     icon: 'fa-image' },
 ]
 

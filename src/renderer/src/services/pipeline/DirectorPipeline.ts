@@ -649,11 +649,6 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         if (!panels?.length) return '(empty)'
         return `${panels.length} 个分镜 + ${prompts?.length || 0} 条提示词`
       }
-      case 'codeVerify': {
-        const r = output?.report
-        if (!r) return '(empty)'
-        return `快检 ${r.score}/10，${r.issues?.length || 0} 个问题`
-      }
       case 'verifyConsistency': {
         const r = output?.report
         if (!r) return '(empty)'
