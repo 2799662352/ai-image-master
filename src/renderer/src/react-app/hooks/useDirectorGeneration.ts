@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
 import { useDirectorStore } from '../stores/useDirectorStore'
 import type { LayoutOrientation } from '../stores/useDirectorStore'
 import { useShallow } from 'zustand/react/shallow'
@@ -53,9 +53,13 @@ function getLayoutMapByOrientation(orientation: LayoutOrientation): Record<strin
 const DEFAULT_LAYOUT: LayoutConfig = LANDSCAPE_LAYOUT_MAP['6grid']
 
 export function useDirectorGeneration() {
+  const abortControllerRef = useRef<AbortController | null>(null)
+  const pipelineRef = useRef<any>(null)
+
   const {
     referenceImages,
     isGenerating,
+    generationStatus,
     visionModel,
     imageModel,
     sceneDescription,
@@ -79,6 +83,7 @@ export function useDirectorGeneration() {
   } = useDirectorStore(useShallow((s) => ({
     referenceImages: s.referenceImages,
     isGenerating: s.isGenerating,
+    generationStatus: s.generationStatus,
     visionModel: s.visionModel,
     imageModel: s.imageModel,
     sceneDescription: s.sceneDescription,
@@ -184,7 +189,10 @@ export function useDirectorGeneration() {
       styleInstructions?: string
     ) => {
       const store = useDirectorStore.getState()
-      store.setIsGenerating(true)
+      store.setGenerationStatus('running')
+
+      const abortController = new AbortController()
+      abortControllerRef.current = abortController
 
       try {
         const analysisModel = resolveVisionModel()
@@ -204,6 +212,7 @@ export function useDirectorGeneration() {
         if (!pipeline) {
           throw new Error('Failed to initialize pipeline service')
         }
+        pipelineRef.current = pipeline
 
         const layoutConfig = getLayoutConfig(currentLayout)
         const resolvedStyle = styleInstructions || getStyleInstructions(currentTemplate)
@@ -291,8 +300,17 @@ export function useDirectorGeneration() {
 
           return result
         }
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          console.log('[Director] 生成已取消')
+          return
+        }
+        throw err
       } finally {
-        useDirectorStore.getState().setIsGenerating(false)
+        const s = useDirectorStore.getState()
+        if (s.generationStatus === 'running') {
+          s.setGenerationStatus('idle')
+        }
       }
     },
     [
@@ -322,6 +340,65 @@ export function useDirectorGeneration() {
       resolveVisionModel,
       resolveImageModel,
     ]
+  )
+
+  const cancelGeneration = useCallback(() => {
+    abortControllerRef.current?.abort()
+    pipelineRef.current?.clearPauseRequest?.()
+    useDirectorStore.getState().setGenerationStatus('idle')
+  }, [])
+
+  const pauseGeneration = useCallback(() => {
+    pipelineRef.current?.requestPause?.()
+  }, [])
+
+  const resumeGeneration = useCallback(
+    async (onProgress?: (progress: PipelineProgress) => void) => {
+      const pipeline = pipelineRef.current
+      if (!pipeline?.resume) {
+        console.warn('[Director] 无法恢复: pipeline 未初始化')
+        return
+      }
+
+      const store = useDirectorStore.getState()
+      store.setGenerationStatus('running')
+
+      const abortController = new AbortController()
+      abortControllerRef.current = abortController
+
+      try {
+        const result = await pipeline.resume(onProgress, { signal: abortController.signal })
+
+        if ((result as any).__paused) {
+          store.setGenerationStatus('paused')
+          return result
+        }
+
+        const mappedImages = (result.images ?? []).map((img: any) => ({
+          url: img.url,
+          prompt: img.prompt,
+          timestamp: Date.now(),
+        }))
+        store.setGeneratedResults(mappedImages)
+
+        if (result.scene) store.setLastAnalysisResult(JSON.stringify(result.scene))
+        if (result.characters) store.setLastCharacterAnchor(JSON.stringify(result.characters))
+
+        return result
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          console.log('[Director] 恢复已取消')
+          return
+        }
+        throw err
+      } finally {
+        const s = useDirectorStore.getState()
+        if (s.generationStatus === 'running') {
+          s.setGenerationStatus('idle')
+        }
+      }
+    },
+    [],
   )
 
   const regenerateImages = useCallback(
@@ -381,5 +458,16 @@ export function useDirectorGeneration() {
 
   const canRegenerate = useDirectorStore((s) => s.lastPipelineState !== null) && !isGenerating
 
-  return { canGenerate, canRegenerate, isGenerating, startGeneration, regenerateImages, getLayoutConfig }
+  return {
+    canGenerate,
+    canRegenerate,
+    isGenerating,
+    generationStatus,
+    startGeneration,
+    regenerateImages,
+    cancelGeneration,
+    pauseGeneration,
+    resumeGeneration,
+    getLayoutConfig,
+  }
 }
