@@ -463,14 +463,16 @@ export function codeVerify(state: DirectorState): z.infer<typeof VerifySchema> {
   }
 
   for (const anchor of anchors) {
-    const nameTokens = anchor.name.toLowerCase()
+    const fullName = anchor.name.toLowerCase()
+    const nameTokens = fullName
       .split(/[\s\-_]+/)
-      .filter(t => t.length >= 2 && !['the', 'a', 'an', 'of', 'in', 'on'].includes(t))
-    if (nameTokens.length === 0) continue
-    const missingPanels = prompts.filter(p => {
-      const lower = p.prompt.toLowerCase()
-      return !nameTokens.some(token => lower.includes(token))
-    })
+      .filter(t => t.length >= 3 && !['the', 'and', 'with'].includes(t))
+    const matchers = nameTokens.length > 0
+      ? nameTokens.map(t => new RegExp(`\\b${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i'))
+      : [new RegExp(fullName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')]
+    const missingPanels = prompts.filter(p =>
+      !matchers.some(rx => rx.test(p.prompt))
+    )
     if (missingPanels.length > prompts.length / 2) {
       issues.push(`Character "${anchor.name}" missing from ${missingPanels.length}/${prompts.length} panels`)
       score -= 2
