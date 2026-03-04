@@ -421,6 +421,35 @@ export function buildAdaptiveNegativePrompt(
   return `${baseNegative}, ${newTerms.join(', ')}`
 }
 
+export function buildReferenceImageRoleRules(
+  templateKey: string,
+  hasStyleAnchor: boolean,
+): string {
+  const hasExplicitStyle = templateKey && templateKey !== 'default' && templateKey !== ''
+
+  if (!hasExplicitStyle && !hasStyleAnchor) {
+    return [
+      'REFERENCE IMAGE GUIDELINES:',
+      '- Follow the visual style of the reference images and keep stylistic continuity across all panels.',
+      '- Maintain character identity consistency from reference images.',
+    ].join('\n')
+  }
+
+  return [
+    'REFERENCE IMAGE USAGE RULES (BINDING):',
+    '- From reference images, extract ONLY:',
+    '  ✓ Character identity: face structure, hairstyle, body proportions, outfit details',
+    '  ✓ Character props: weapons, accessories, distinctive items',
+    '  ✓ Scene spatial layout (if applicable to the story)',
+    '- From reference images, DO NOT extract:',
+    '  ✗ Rendering medium or art style (follow TEXT style directive instead)',
+    '  ✗ Color grading or palette (follow style anchor instead)',
+    '  ✗ Lighting setup (follow panel-specific lighting in prompts)',
+    '- If reference images conflict with the text style directive:',
+    '  → TEXT WINS. Always. No exceptions.',
+  ].join('\n')
+}
+
 export function shouldRetryAnalysis(state: {
   scene: { env?: string } | null
   characters: { characters?: unknown[] } | null

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveStylePrefix, buildAdaptiveNegativePrompt } from '../DirectorPipeline'
+import { resolveStylePrefix, buildAdaptiveNegativePrompt, buildReferenceImageRoleRules } from '../DirectorPipeline'
 
 describe('resolveStylePrefix', () => {
   it('should return styleAnchor medium when available', () => {
@@ -59,5 +59,25 @@ describe('buildAdaptiveNegativePrompt', () => {
   it('should return base unchanged for empty template', () => {
     const base = 'blurry, lowres'
     expect(buildAdaptiveNegativePrompt(base, '', null)).toBe(base)
+  })
+})
+
+describe('buildReferenceImageRoleRules', () => {
+  it('should return strict rules when template is set', () => {
+    const result = buildReferenceImageRoleRules('cinematic', true)
+    expect(result).toContain('DO NOT extract')
+    expect(result).toContain('TEXT WINS')
+    expect(result).toContain('Character identity')
+  })
+
+  it('should return relaxed rules when no template', () => {
+    const result = buildReferenceImageRoleRules('', false)
+    expect(result).toContain('reference images')
+    expect(result).not.toContain('TEXT WINS')
+  })
+
+  it('should return relaxed rules for default template', () => {
+    const result = buildReferenceImageRoleRules('default', false)
+    expect(result).not.toContain('TEXT WINS')
   })
 })
