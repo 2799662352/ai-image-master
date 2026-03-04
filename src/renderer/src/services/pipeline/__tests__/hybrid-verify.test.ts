@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { codeVerify } from '../DirectorPipeline'
+import { codeVerify, routeAfterCodeVerify } from '../DirectorPipeline'
 
 describe('codeVerify', () => {
   const makeState = (overrides: Record<string, unknown> = {}) => ({
@@ -76,5 +76,22 @@ describe('codeVerify', () => {
   it('should handle null prompts gracefully', () => {
     const result = codeVerify(makeState({ prompts: null }) as any)
     expect(result.ok).toBe(false)
+  })
+})
+
+describe('routeAfterCodeVerify', () => {
+  it('should route to generate when code verify passes', () => {
+    const state = { report: { score: 8, ok: true, issues: [] }, skipVerify: false, retryCount: 0 }
+    expect(routeAfterCodeVerify(state as any)).toBe('generate')
+  })
+
+  it('should route to deepVerify when code verify fails and skipVerify is false', () => {
+    const state = { report: { score: 4, ok: false, issues: ['problem'] }, skipVerify: false, retryCount: 0 }
+    expect(routeAfterCodeVerify(state as any)).toBe('deepVerify')
+  })
+
+  it('should route to generate when code verify fails but skipVerify is true', () => {
+    const state = { report: { score: 4, ok: false, issues: ['problem'] }, skipVerify: true, retryCount: 0 }
+    expect(routeAfterCodeVerify(state as any)).toBe('generate')
   })
 })

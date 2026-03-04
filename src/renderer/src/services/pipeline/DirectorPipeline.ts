@@ -481,6 +481,17 @@ export function codeVerify(state: DirectorState): z.infer<typeof VerifySchema> {
   }
 }
 
+export function routeAfterCodeVerify(state: DirectorState): 'generate' | 'deepVerify' {
+  const report = state.report
+  if (!report) return 'generate'
+  const threshold = Number.isFinite(state.scoreThreshold)
+    ? Math.max(0, Math.min(10, Math.round(state.scoreThreshold)))
+    : SCORE_THRESHOLD
+  if (report.score >= threshold && report.ok) return 'generate'
+  if (state.skipVerify) return 'generate'
+  return 'deepVerify'
+}
+
 export function buildReferenceImageRoleRules(
   templateKey: string,
   hasStyleAnchor: boolean,
@@ -691,6 +702,11 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         const prompts = output?.prompts
         if (!panels?.length) return '(empty)'
         return `${panels.length} 个分镜 + ${prompts?.length || 0} 条提示词`
+      }
+      case 'codeVerify': {
+        const r = output?.report
+        if (!r) return '(empty)'
+        return `快检 ${r.score}/10，${r.issues?.length || 0} 个问题`
       }
       case 'verifyConsistency': {
         const r = output?.report
@@ -1190,7 +1206,21 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       return { panels: null, prompts: null }
     }
 
-    // ===== Pass 4: 一致性校验 (skippable) =====
+    // ===== Pass 4a: 快速校验 (code-level) =====
+    const codeVerifyNode = (state: DirectorState, config: any) => {
+      const t0 = Date.now()
+      const result = codeVerify(state)
+      const elapsed = Date.now() - t0
+      const passData = DirectorPipeline.buildPassCardData('codeVerify', { pass: 4, label: '快速校验' }, { report: result }, elapsed)
+      writer(config)?.({
+        type: 'pass_complete', pass: 4,
+        label: `快速校验完成 (score: ${result.score}, ${elapsed}ms)`,
+        elapsed, passData,
+      })
+      return { report: result }
+    }
+
+    // ===== Pass 4b: 深度校验 (LLM text-only, skippable) =====
     const verifyConsistencyFn = async (state: DirectorState, config: any) => {
       checkPauseAndInterrupt('verifyConsistency', config)
       const t0 = Date.now()
@@ -1204,14 +1234,6 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           `You are a continuity supervisor. Check panels for consistency.\nScene: ${vars.scene_env}`,
         )
         const userContent: Array<any> = []
-        if (state.inputImages.length > 0) {
-          userContent.push(
-            ...BasePipeline.buildImageContent(
-              state.inputImages,
-              resolveVisionDetailByPass(state, 'verifyConsistency'),
-            ),
-          )
-        }
         userContent.push({
           type: 'text' as const,
           text: `Verify the following storyboard for consistency. Use a two-layer rubric and score 0-10.\n- Hard consistency (required): identity anchors for face/outfit/weapon remain recognizable.\n- Soft consistency (evolution-allowed): story-driven character/scene evolution remains plausible and aligned with narrative rhythm.\n\nScene: ${vars.scene_env}\n\nCharacter Anchors:\n${vars.character_anchors_summary}\n\nPanels:\n${vars.panels_summary_short}`,
@@ -1405,11 +1427,6 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     }
 
     // ===== Routing =====
-    const routeAfterDesign = (state: DirectorState): 'verify' | 'generate' => {
-      if (state.skipVerify) return 'generate'
-      return 'verify'
-    }
-
     const routeVerify = (state: DirectorState): 'retry' | 'generate' => {
       if (!state.report || state.retryCount >= MAX_RETRIES) return 'generate'
       const threshold = Number.isFinite(state.scoreThreshold)
@@ -1431,6 +1448,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       .addNode('prepareAnalysisRetry', prepareAnalysisRetryFn)
       .addNode('abortPipeline', abortPipelineFn)
       .addNode('designAndAssemble', designAndAssembleFn)
+      .addNode('codeVerify', codeVerifyNode)
       .addNode('verifyConsistency', verifyConsistencyFn)
       .addNode('prepareRetry', prepareRetryFn)
       .addNode('generateImages', generateImagesFn)
@@ -1447,9 +1465,12 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       .addEdge('prepareAnalysisRetry', 'analyzeScene')
       .addEdge('prepareAnalysisRetry', 'extractCharacterAnchors')
       .addEdge('abortPipeline', END)
-      .addConditionalEdges('designAndAssemble', routeAfterDesign, {
-        verify: 'verifyConsistency',
+      .addConditionalEdges('designAndAssemble', () => 'codeVerify' as const, {
+        codeVerify: 'codeVerify',
+      })
+      .addConditionalEdges('codeVerify', (state: DirectorState) => routeAfterCodeVerify(state), {
         generate: 'generateImages',
+        deepVerify: 'verifyConsistency',
       })
       .addConditionalEdges('verifyConsistency', routeVerify, {
         retry: 'prepareRetry',
@@ -1721,7 +1742,8 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
   async regenerateImages(
     previousState: Partial<DirectorState>,
     imageCount: number,
-    onProgress?: (progress: PipelineProgress) => void
+    onProgress?: (progress: PipelineProgress) => void,
+    options?: PipelineExecuteOptions,
   ): Promise<DirectorResult> {
     await initDirectorSkills()
 
@@ -1779,6 +1801,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
             ratio: state.ratio,
             resolution: state.resolution,
             referenceImages,
+            signal: options?.signal,
           })
           const url = result.success
             ? (result.images?.[0] || result.urls?.[0] || '')
