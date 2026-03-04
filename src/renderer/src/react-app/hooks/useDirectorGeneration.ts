@@ -137,6 +137,7 @@ export function useDirectorGeneration() {
       layoutConfig: LayoutConfig,
       drawingModel: string,
       onProgress?: (progress: PipelineProgress) => void,
+      signal?: AbortSignal,
     ) => {
       return pipeline.execute(
         {
@@ -163,6 +164,7 @@ export function useDirectorGeneration() {
           visionDetailVerifyConsistency,
         },
         onProgress,
+        { signal },
       )
     },
     [
@@ -226,8 +228,13 @@ export function useDirectorGeneration() {
           const allResults: Array<{ url: string; prompt: string; timestamp: number }> = []
 
           for (let i = 0; i < scenes.length; i++) {
+            if (abortController.signal.aborted) {
+              console.log(`[Director] 多场景模式: 已取消，跳过场景 ${i + 1}/${scenes.length}`)
+              break
+            }
             const result = await executeSingle(
               pipeline, scenes[i], resolvedStyle, layoutConfig, drawingModel, onProgress,
+              abortController.signal,
             )
             if (result.images?.length) {
               const mapped = result.images.map((img: any) => ({
@@ -246,6 +253,7 @@ export function useDirectorGeneration() {
         } else {
           const result = await executeSingle(
             pipeline, sceneDescription, resolvedStyle, layoutConfig, drawingModel, onProgress,
+            abortController.signal,
           )
           const mappedImages = (result.images ?? []).map((img: any) => ({
             url: img.url,
