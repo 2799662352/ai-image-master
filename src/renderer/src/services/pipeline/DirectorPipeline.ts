@@ -442,103 +442,6 @@ export function buildAdaptiveNegativePrompt(
   return `${baseNegative}, ${newTerms.join(', ')}`
 }
 
-export function codeVerify(state: DirectorState): z.infer<typeof VerifySchema> {
-  let score = 10
-  const issues: string[] = []
-  const anchors = state.characters?.characters || []
-  const prompts = state.prompts || []
-  const stylePrefix = resolveStylePrefix(
-    state.styleAnchor || null,
-    state.template,
-    state.styleInstructions,
-  )
-
-  if (prompts.length === 0) {
-    return { score: 0, ok: false, issues: ['No prompts generated'] }
-  }
-
-  if (prompts.length !== state.layout.panelCount) {
-    issues.push(`Expected ${state.layout.panelCount} panels, got ${prompts.length}`)
-    score -= 3
-  }
-
-  for (const anchor of anchors) {
-    const fullName = anchor.name.toLowerCase()
-    const nameTokens = fullName
-      .split(/[\s\-_]+/)
-      .filter(t => t.length >= 3 && !['the', 'and', 'with'].includes(t))
-    const matchers = nameTokens.length > 0
-      ? nameTokens.map(t => new RegExp(`\\b${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i'))
-      : [new RegExp(fullName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')]
-    const missingPanels = prompts.filter(p =>
-      !matchers.some(rx => rx.test(p.prompt))
-    )
-    if (missingPanels.length > prompts.length * 2 / 3) {
-      issues.push(`Character "${anchor.name}" absent from ${missingPanels.length}/${prompts.length} panels`)
-      score -= 2
-    }
-  }
-
-  if (stylePrefix) {
-    const styleTokens = stylePrefix.toLowerCase()
-      .split(/[,\s()]+/)
-      .filter(t => t.length >= 4 && !['style', 'film', 'quality', 'best', 'with', 'very', 'high'].includes(t))
-    if (styleTokens.length > 0) {
-      const missingStyle = prompts.filter(p => {
-        const lower = p.prompt.toLowerCase()
-        return !styleTokens.some(t => lower.includes(t))
-      })
-      if (missingStyle.length > prompts.length / 2) {
-        issues.push(`Style keyword "${styleTokens[0]}" absent from ${missingStyle.length} of ${prompts.length} prompts`)
-        score -= 1
-      }
-    }
-  }
-
-  const emptyPrompts = prompts.filter(p => !p.prompt.trim())
-  if (emptyPrompts.length > 0) {
-    issues.push(`${emptyPrompts.length} panel(s) have empty prompts`)
-    score -= 3
-  }
-
-  score = Math.max(0, score)
-  const threshold = Number.isFinite(state.scoreThreshold)
-    ? Math.max(0, Math.min(10, Math.round(state.scoreThreshold)))
-    : SCORE_THRESHOLD
-  return {
-    score,
-    ok: score >= threshold,
-    issues,
-    characterConsistency: !issues.some(i => i.includes('Character')),
-    lightingContinuity: undefined,
-    narrativeFlow: prompts.length > 0,
-    spatialCoherence: undefined,
-    styleConsistency: (() => {
-      if (!stylePrefix) return undefined
-      const tokens = stylePrefix.toLowerCase()
-        .split(/[,\s()]+/)
-        .filter(t => t.length >= 4 && !['style', 'film', 'quality', 'best', 'with', 'very', 'high'].includes(t))
-      if (tokens.length === 0) return 10
-      const missingCount = prompts.filter(p => {
-        const lower = p.prompt.toLowerCase()
-        return !tokens.some(t => lower.includes(t))
-      }).length
-      return missingCount > 0 ? Math.max(1, 10 - missingCount * 2) : 10
-    })(),
-  }
-}
-
-export function routeAfterCodeVerify(state: DirectorState): 'generate' | 'deepVerify' {
-  const report = state.report
-  if (!report) return 'generate'
-  const threshold = Number.isFinite(state.scoreThreshold)
-    ? Math.max(0, Math.min(10, Math.round(state.scoreThreshold)))
-    : SCORE_THRESHOLD
-  if (report.score >= threshold && report.ok) return 'generate'
-  if (state.skipVerify) return 'generate'
-  return 'deepVerify'
-}
-
 export function buildReferenceImageRoleRules(
   templateKey: string,
   hasStyleAnchor: boolean,
@@ -1250,21 +1153,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       return { panels: null, prompts: null }
     }
 
-    // ===== Pass 5a: 快速校验 (code-level) =====
-    const codeVerifyNode = (state: DirectorState, config: any) => {
-      const t0 = Date.now()
-      const result = codeVerify(state)
-      const elapsed = Date.now() - t0
-      const passData = DirectorPipeline.buildPassCardData('codeVerify', { pass: 5, label: '快速校验' }, { report: result }, elapsed)
-      writer(config)?.({
-        type: 'pass_complete', pass: 5,
-        label: `快速校验完成 (score: ${result.score}, ${elapsed}ms)`,
-        elapsed, passData,
-      })
-      return { report: result }
-    }
-
-    // ===== Pass 5b: 深度校验 (LLM text-only, skippable) =====
+    // ===== Pass 5: 一致性校验 (Evaluator) =====
     const verifyConsistencyFn = async (state: DirectorState, config: any) => {
       checkPauseAndInterrupt('verifyConsistency', config)
       const t0 = Date.now()
@@ -1479,7 +1368,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       return 'generate'
     }
 
-    // ===== Graph Assembly =====
+    // ===== Graph Assembly (Evaluator-Optimizer pattern) =====
     const retryLLM = { maxAttempts: 2, initialInterval: 1.0 }
     const graph = new StateGraph(stateSchema)
       .addNode('selectSkills', selectSkillsFn)
@@ -1490,9 +1379,8 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       .addNode('prepareAnalysisRetry', prepareAnalysisRetryFn)
       .addNode('abortPipeline', abortPipelineFn)
       .addNode('designAndAssemble', designAndAssembleFn)
-      .addNode('codeVerify', codeVerifyNode)
       .addNode('verifyConsistency', verifyConsistencyFn)
-      .addNode('prepareRetry', buildFeedbackFn)
+      .addNode('buildFeedback', buildFeedbackFn)
       .addNode('generateImages', generateImagesFn)
       .addEdge(START, 'selectSkills')
       .addEdge('selectSkills', 'analyzeScene')
@@ -1507,18 +1395,18 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       .addEdge('prepareAnalysisRetry', 'analyzeScene')
       .addEdge('prepareAnalysisRetry', 'extractCharacterAnchors')
       .addEdge('abortPipeline', END)
-      .addConditionalEdges('designAndAssemble', () => 'codeVerify' as const, {
-        codeVerify: 'codeVerify',
-      })
-      .addConditionalEdges('codeVerify', (state: DirectorState) => routeAfterCodeVerify(state), {
+      .addConditionalEdges('designAndAssemble', (state: DirectorState) => {
+        if (state.skipVerify) return 'generate'
+        return 'evaluate'
+      }, {
         generate: 'generateImages',
-        deepVerify: 'verifyConsistency',
+        evaluate: 'verifyConsistency',
       })
       .addConditionalEdges('verifyConsistency', routeAfterEvaluator, {
-        designAndAssemble: 'prepareRetry',
         generate: 'generateImages',
+        designAndAssemble: 'buildFeedback',
       })
-      .addEdge('prepareRetry', 'designAndAssemble')
+      .addEdge('buildFeedback', 'designAndAssemble')
       .addEdge('generateImages', END)
 
     this._graphBuilder = graph
