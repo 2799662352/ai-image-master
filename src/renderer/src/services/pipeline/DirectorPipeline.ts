@@ -473,8 +473,8 @@ export function codeVerify(state: DirectorState): z.infer<typeof VerifySchema> {
     const missingPanels = prompts.filter(p =>
       !matchers.some(rx => rx.test(p.prompt))
     )
-    if (missingPanels.length > prompts.length / 2) {
-      issues.push(`Character "${anchor.name}" missing from ${missingPanels.length}/${prompts.length} panels`)
+    if (missingPanels.length > prompts.length * 2 / 3) {
+      issues.push(`Character "${anchor.name}" absent from ${missingPanels.length}/${prompts.length} panels`)
       score -= 2
     }
   }
@@ -489,7 +489,7 @@ export function codeVerify(state: DirectorState): z.infer<typeof VerifySchema> {
         return !styleTokens.some(t => lower.includes(t))
       })
       if (missingStyle.length > prompts.length / 2) {
-        issues.push(`Style token "${styleTokens[0]}" missing from ${missingStyle.length} panel(s)`)
+        issues.push(`Style keyword "${styleTokens[0]}" absent from ${missingStyle.length} of ${prompts.length} prompts`)
         score -= 1
       }
     }
@@ -502,21 +502,28 @@ export function codeVerify(state: DirectorState): z.infer<typeof VerifySchema> {
   }
 
   score = Math.max(0, score)
+  const threshold = Number.isFinite(state.scoreThreshold)
+    ? Math.max(0, Math.min(10, Math.round(state.scoreThreshold)))
+    : SCORE_THRESHOLD
   return {
     score,
-    ok: score >= 6,
+    ok: score >= threshold,
     issues,
     characterConsistency: !issues.some(i => i.includes('Character')),
-    lightingContinuity: true,
-    narrativeFlow: true,
-    spatialCoherence: true,
+    lightingContinuity: undefined,
+    narrativeFlow: prompts.length > 0,
+    spatialCoherence: undefined,
     styleConsistency: (() => {
       if (!stylePrefix) return undefined
-      const styleIssueCount = prompts.filter(p => {
-        const firstToken = stylePrefix.split(',')[0].trim().toLowerCase()
-        return firstToken && !p.prompt.toLowerCase().includes(firstToken)
+      const tokens = stylePrefix.toLowerCase()
+        .split(/[,\s()]+/)
+        .filter(t => t.length >= 4 && !['style', 'film', 'quality', 'best', 'with', 'very', 'high'].includes(t))
+      if (tokens.length === 0) return 10
+      const missingCount = prompts.filter(p => {
+        const lower = p.prompt.toLowerCase()
+        return !tokens.some(t => lower.includes(t))
       }).length
-      return styleIssueCount > 0 ? Math.max(1, 10 - styleIssueCount * 2) : 10
+      return missingCount > 0 ? Math.max(1, 10 - missingCount * 2) : 10
     })(),
   }
 }
