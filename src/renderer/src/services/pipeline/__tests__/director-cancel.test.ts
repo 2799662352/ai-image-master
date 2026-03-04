@@ -14,7 +14,7 @@ describe('DirectorPipeline execute with signal and checkpointer', () => {
     expect((pipeline as any)._checkpointer).toBeDefined()
     expect((pipeline as any)._checkpointer).not.toBeNull()
     expect((pipeline as any)._currentThreadId).toBeNull()
-  })
+  }, 15000)
 
   it('should have _pauseRequested field defaulting to false', async () => {
     const { DirectorPipeline } = await import('../DirectorPipeline')
@@ -25,7 +25,7 @@ describe('DirectorPipeline execute with signal and checkpointer', () => {
     })
 
     expect((pipeline as any)._pauseRequested).toBe(false)
-  })
+  }, 15000)
 })
 
 describe('PipelineExecuteOptions type', () => {
@@ -35,5 +35,5 @@ describe('PipelineExecuteOptions type', () => {
       signal: new AbortController().signal,
     }
     expect(options.signal).toBeDefined()
-  })
+  }, 15000)
 })

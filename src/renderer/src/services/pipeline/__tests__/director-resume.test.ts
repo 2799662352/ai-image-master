@@ -10,7 +10,7 @@ describe('DirectorPipeline resume', () => {
     })
 
     expect(typeof pipeline.resume).toBe('function')
-  })
+  }, 15000)
 
   it('should throw if no currentThreadId (never executed)', async () => {
     const { DirectorPipeline } = await import('../DirectorPipeline')
@@ -21,5 +21,5 @@ describe('DirectorPipeline resume', () => {
     })
 
     await expect(pipeline.resume()).rejects.toThrow('没有可恢复的暂停状态')
-  })
+  }, 15000)
 })

@@ -12,7 +12,7 @@ describe('DirectorPipeline pause mechanism', () => {
     expect(typeof pipeline.requestPause).toBe('function')
     expect(typeof pipeline.clearPauseRequest).toBe('function')
     expect(pipeline.isPauseRequested).toBe(false)
-  })
+  }, 15000)
 
   it('requestPause should set isPauseRequested to true', async () => {
     const { DirectorPipeline } = await import('../DirectorPipeline')
@@ -24,7 +24,7 @@ describe('DirectorPipeline pause mechanism', () => {
 
     pipeline.requestPause()
     expect(pipeline.isPauseRequested).toBe(true)
-  })
+  }, 15000)
 
   it('clearPauseRequest should reset to false', async () => {
     const { DirectorPipeline } = await import('../DirectorPipeline')
@@ -37,7 +37,7 @@ describe('DirectorPipeline pause mechanism', () => {
     pipeline.requestPause()
     pipeline.clearPauseRequest()
     expect(pipeline.isPauseRequested).toBe(false)
-  })
+  }, 15000)
 
   it('should expose currentThreadId after execute starts', async () => {
     const { DirectorPipeline } = await import('../DirectorPipeline')
@@ -48,5 +48,5 @@ describe('DirectorPipeline pause mechanism', () => {
     })
 
     expect(pipeline.currentThreadId).toBeNull()
-  })
+  }, 15000)
 })

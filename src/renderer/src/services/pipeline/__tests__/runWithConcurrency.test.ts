@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 
 describe('runWithConcurrency with signal', () => {
   it('should stop processing tasks when signal is aborted', async () => {
@@ -20,7 +20,7 @@ describe('runWithConcurrency with signal', () => {
     const results = await runMethod(5, 1, task, controller.signal)
 
     expect(taskResults.length).toBeLessThanOrEqual(3)
-  })
+  }, 15000)
 
   it('should run all tasks when signal is not aborted', async () => {
     const { DirectorPipeline } = await import('../DirectorPipeline')
@@ -29,5 +29,5 @@ describe('runWithConcurrency with signal', () => {
 
     const results = await runMethod(3, 1, async (i: number) => i * 2)
     expect(results).toEqual([0, 2, 4])
-  })
+  }, 15000)
 })

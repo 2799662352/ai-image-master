@@ -720,21 +720,24 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           state as Record<string, unknown>,
           'You are an expert scene analyst. Analyze the provided images and describe the scene in structured detail.',
         )
-        const response = await structuredWithRaw.invoke([
-          { role: 'system', content: systemPrompt },
-          {
-            role: 'user',
-            content: [
-              ...BasePipeline.buildImageContent(
-                state.inputImages,
-                resolveVisionDetailByPass(state, 'analyzeScene'),
-              ),
-              { type: 'text' as const, text: state.sceneDescription
-                ? `DIRECTOR CREATIVE BRIEF:\n${state.sceneDescription}\n\nReference images define the visual foundation (style, character identity, and scene continuity), while the brief defines narrative direction.\n\nOutput language requirement:\n- Write env/style/story in clear English first.\n- You may append concise Japanese support notes in parentheses if helpful.\n- Keep subjects as short English bullet-like phrases.\n`
-                : 'Analyze this image scene. Output in English first; optional concise Japanese support in parentheses.' },
-            ],
-          },
-        ])
+        const response = await structuredWithRaw.invoke(
+          [
+            { role: 'system', content: systemPrompt },
+            {
+              role: 'user',
+              content: [
+                ...BasePipeline.buildImageContent(
+                  state.inputImages,
+                  resolveVisionDetailByPass(state, 'analyzeScene'),
+                ),
+                { type: 'text' as const, text: state.sceneDescription
+                  ? `DIRECTOR CREATIVE BRIEF:\n${state.sceneDescription}\n\nReference images define the visual foundation (style, character identity, and scene continuity), while the brief defines narrative direction.\n\nOutput language requirement:\n- Write env/style/story in clear English first.\n- You may append concise Japanese support notes in parentheses if helpful.\n- Keep subjects as short English bullet-like phrases.\n`
+                  : 'Analyze this image scene. Output in English first; optional concise Japanese support in parentheses.' },
+              ],
+            },
+          ],
+          { signal: config?.signal },
+        )
 
         let scene = (response as any)?.parsed
         if (!scene?.env) {
@@ -778,19 +781,22 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           state as Record<string, unknown>,
           'You are a character consistency expert. Extract character anchors from the provided images for image generation consistency.',
         )
-        const response = await structuredWithRaw.invoke([
-          { role: 'system', content: systemPrompt },
-          {
-            role: 'user',
-            content: [
-              ...BasePipeline.buildImageContent(
-                state.inputImages,
-                resolveVisionDetailByPass(state, 'extractCharacterAnchors'),
-              ),
-              { type: 'text' as const, text: 'Extract character consistency anchors in English (optional concise Japanese notes in parentheses).' },
-            ],
-          },
-        ])
+        const response = await structuredWithRaw.invoke(
+          [
+            { role: 'system', content: systemPrompt },
+            {
+              role: 'user',
+              content: [
+                ...BasePipeline.buildImageContent(
+                  state.inputImages,
+                  resolveVisionDetailByPass(state, 'extractCharacterAnchors'),
+                ),
+                { type: 'text' as const, text: 'Extract character consistency anchors in English (optional concise Japanese notes in parentheses).' },
+              ],
+            },
+          ],
+          { signal: config?.signal },
+        )
 
         let characters = (response as any)?.parsed
         if (!characters?.characters?.length) {
@@ -863,19 +869,22 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           ].join('\n'),
         )
 
-        const response = await structuredWithRaw.invoke([
-          { role: 'system', content: systemPrompt },
-          {
-            role: 'user',
-            content: [
-              ...BasePipeline.buildImageContent(
-                state.inputImages,
-                resolveVisionDetailByPass(state, 'analyzeScene'),
-              ),
-              { type: 'text' as const, text: 'Extract the visual style anchor from these reference images. Focus on style attributes only, not content.' },
-            ],
-          },
-        ])
+        const response = await structuredWithRaw.invoke(
+          [
+            { role: 'system', content: systemPrompt },
+            {
+              role: 'user',
+              content: [
+                ...BasePipeline.buildImageContent(
+                  state.inputImages,
+                  resolveVisionDetailByPass(state, 'analyzeScene'),
+                ),
+                { type: 'text' as const, text: 'Extract the visual style anchor from these reference images. Focus on style attributes only, not content.' },
+              ],
+            },
+          ],
+          { signal: config?.signal },
+        )
 
         let parsed = (response as any)?.parsed
         if (!parsed?.styleAnchor?.medium) {
@@ -948,10 +957,13 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           type: 'text' as const,
           text: `Scene: ${vars.scene_description}\nStyle: ${vars.style_instructions}\nTemplate: ${vars.template}\nHas reference images: ${vars.has_images}`,
         }]
-        const result = await structured.invoke([
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userContent },
-        ])
+        const result = await structured.invoke(
+          [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userContent },
+          ],
+          { signal: config?.signal },
+        )
 
         const elapsed = Date.now() - t0
         const validIds = new Set(allSkills.map(s => s.id))
@@ -1041,7 +1053,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       // --- Level 1: Full schema with includeRaw + regex fallback ---
       try {
         const structuredWithRaw = self.createStructuredLLMWithRaw(DesignAndAssembleSchema)
-        const response = await structuredWithRaw.invoke(messages)
+        const response = await structuredWithRaw.invoke(messages, { signal: config?.signal })
 
         let parsedPanels = (response as any)?.parsed?.panels
         if (!parsedPanels?.length) {
@@ -1072,7 +1084,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       writer(config)?.({ type: 'pass_complete', pass: 3, label: '分镜格式降级重试...', elapsed: Date.now() - t0, passData: null })
       try {
         const simpleStructured = self.createStructuredLLM(SimplePanelSchema)
-        const simpleResult = await simpleStructured.invoke(messages)
+        const simpleResult = await simpleStructured.invoke(messages, { signal: config?.signal })
         if (simpleResult?.panels?.length) {
           const { panels, prompts } = makePanelsAndPrompts(simpleResult.panels)
           console.log(`[DirectorPipeline] L2 success: ${panels.length} panels via SimplePanelSchema`)
@@ -1091,11 +1103,14 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       writer(config)?.({ type: 'pass_complete', pass: 3, label: '分镜 LLM 自修正重试...', elapsed: Date.now() - t0, passData: null })
       try {
         const llm = self.createLLM()
-        const feedbackResult = await llm.invoke([
-          ...messages,
-          { role: 'assistant' as const, content: `I attempted to generate panel data but the output failed validation. Error: ${lastError}` },
-          { role: 'user' as const, content: `Your previous response failed with error: "${lastError}"\n\nPlease fix this and respond with ONLY a valid JSON object (no markdown, no code fences), exactly like:\n{"panels":[{"id":1,"prompt":"detailed english image prompt here"},{"id":2,"prompt":"..."}]}\n\nYou must generate exactly ${state.layout.panelCount} panels. Each panel needs an "id" (number) and a "prompt" (detailed English image generation prompt string).` },
-        ])
+        const feedbackResult = await llm.invoke(
+          [
+            ...messages,
+            { role: 'assistant' as const, content: `I attempted to generate panel data but the output failed validation. Error: ${lastError}` },
+            { role: 'user' as const, content: `Your previous response failed with error: "${lastError}"\n\nPlease fix this and respond with ONLY a valid JSON object (no markdown, no code fences), exactly like:\n{"panels":[{"id":1,"prompt":"detailed english image prompt here"},{"id":2,"prompt":"..."}]}\n\nYou must generate exactly ${state.layout.panelCount} panels. Each panel needs an "id" (number) and a "prompt" (detailed English image generation prompt string).` },
+          ],
+          { signal: config?.signal },
+        )
         const text = typeof feedbackResult.content === 'string' ? feedbackResult.content : ''
         const jsonMatch = text.match(/\{[\s\S]*"panels"\s*:\s*\[[\s\S]*\][\s\S]*\}/)
         if (jsonMatch) {
@@ -1142,10 +1157,13 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           type: 'text' as const,
           text: `Verify the following storyboard for consistency. Use a two-layer rubric and score 0-10.\n- Hard consistency (required): identity anchors for face/outfit/weapon remain recognizable.\n- Soft consistency (evolution-allowed): story-driven character/scene evolution remains plausible and aligned with narrative rhythm.\n\nScene: ${vars.scene_env}\n\nCharacter Anchors:\n${vars.character_anchors_summary}\n\nPanels:\n${vars.panels_summary_short}`,
         })
-        const raw = await structured.invoke([
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userContent },
-        ])
+        const raw = await structured.invoke(
+          [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userContent },
+          ],
+          { signal: config?.signal },
+        )
         const result = raw ?? { score: 7, ok: true, issues: [] }
         if (typeof result.score !== 'number') result.score = 7
         if (typeof result.ok !== 'boolean') result.ok = result.score >= 6
@@ -1268,6 +1286,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
                 ratio: state.ratio,
                 resolution: state.resolution,
                 referenceImages,
+                signal: config?.signal,
               })
 
               const url = result.success
@@ -1313,6 +1332,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
               return one
             }
           },
+          config?.signal,
         )
 
         const elapsed = Date.now() - t0
@@ -1438,8 +1458,10 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     await initDirectorSkills()
     if (!this._graph) this.buildGraph()
 
-    this._checkpointer = new MemorySaver()
-    this._graph = this._graphBuilder!.compile({ checkpointer: this._checkpointer })
+    if (this._graphBuilder) {
+      this._checkpointer = new MemorySaver()
+      this._graph = this._graphBuilder.compile({ checkpointer: this._checkpointer })
+    }
     this._pauseRequested = false
     const threadId = crypto.randomUUID()
     this._currentThreadId = threadId
