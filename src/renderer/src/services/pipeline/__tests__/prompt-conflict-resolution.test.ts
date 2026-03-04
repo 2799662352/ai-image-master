@@ -126,3 +126,25 @@ describe('extractVarsForContactSheet conflict resolution vars', () => {
     expect(vars.adaptive_negative_prompt).toContain('cartoon')
   })
 })
+
+describe('inline fallback style-first ordering', () => {
+  it('style_directive_section should appear before grid description in inline fallback', () => {
+    const state = {
+      scene: { env: 'city', subjects: [], style: '', story: '' },
+      characters: { characters: [] },
+      sceneDescription: '',
+      styleInstructions: 'photorealistic, 8K',
+      layout: { rows: 2, cols: 3, panelCount: 6 },
+      prompts: [{ id: 1, prompt: 'test', negativePrompt: 'blurry' }],
+      ratio: '16:9',
+      semanticOrientation: 'landscape',
+      inputImages: [],
+      template: 'cinematic',
+      styleAnchor: null,
+      styleConflicts: [],
+    }
+    const vars = extractVarsForContactSheet(state as any)
+    expect(vars.style_directive_section).toBeTruthy()
+    expect(vars.reference_image_role_rules).toBeTruthy()
+  })
+})

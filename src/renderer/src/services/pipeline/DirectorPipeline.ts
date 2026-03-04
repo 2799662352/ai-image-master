@@ -1339,14 +1339,14 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         const compositePrompt = tpl
           ? renderTemplate(tpl.template, vars)
           : [
+              vars.style_directive_section,
+              vars.style_anchor_section,
+              vars.reference_image_role_rules,
               `Cinematic Contact Sheet, ONE single master image, ${vars.grid_rows} rows x ${vars.grid_cols} columns storyboard grid, ${vars.panel_count} panels total.`,
               `STRICT GRID: every panel EXACTLY ${vars.panel_ratio} (${vars.panel_orientation}), edge-to-edge, thin 1-2px dark dividers only.`,
               vars.semantic_orientation_instruction,
               'NO text, NO labels, NO captions, NO annotations, NO panel numbers.',
               vars.character_identity_section,
-              vars.style_directive_section,
-              vars.style_anchor_section,
-              vars.reference_image_role_rules,
               `Panel descriptions:\n${vars.enhanced_panel_descriptions}`,
             ].filter(Boolean).join(' ')
 
@@ -1773,14 +1773,14 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     const compositePrompt = tpl
       ? renderTemplate(tpl.template, vars)
       : [
+          vars.style_directive_section,
+          vars.style_anchor_section,
+          vars.reference_image_role_rules,
           `Cinematic Contact Sheet, ONE single master image, ${vars.grid_rows} rows x ${vars.grid_cols} columns storyboard grid, ${vars.panel_count} panels total.`,
           `STRICT GRID: every panel EXACTLY ${vars.panel_ratio} (${vars.panel_orientation}), edge-to-edge, thin 1-2px dark dividers only.`,
           vars.semantic_orientation_instruction,
           'NO text, NO labels, NO captions, NO annotations, NO panel numbers.',
           vars.character_identity_section,
-          vars.style_directive_section,
-          vars.style_anchor_section,
-          vars.reference_image_role_rules,
           `Panel descriptions:\n${vars.enhanced_panel_descriptions}`,
         ].filter(Boolean).join(' ')
 
