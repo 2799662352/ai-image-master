@@ -13,6 +13,9 @@ export interface DirectorReferenceImage {
 export type LayoutType = '6grid' | '4grid' | '2closeup' | '9grid' | '16grid' | '25grid'
 export type LayoutOrientation = 'landscape' | 'portrait'
 export type GenerationMode = 'single' | 'multi'
+export type VisionDetail = 'low' | 'high' | 'auto'
+export type VisionDetailPreset = 'speed' | 'quality' | 'balanced'
+export type VisionDetailPresetState = VisionDetailPreset | 'custom'
 
 export interface GeneratedResult {
   url: string
@@ -87,6 +90,10 @@ interface ConfigSlice {
   imageCount: number
   skipVerify: boolean
   scoreThreshold: number
+  visionDetailAnalyzeScene: VisionDetail
+  visionDetailCharacterAnchors: VisionDetail
+  visionDetailDesignAssemble: VisionDetail
+  visionDetailVerifyConsistency: VisionDetail
   setLayout: (val: LayoutType) => void
   setLayoutOrientation: (val: LayoutOrientation) => void
   setLayoutOrientationAuto: (val: boolean) => void
@@ -103,6 +110,11 @@ interface ConfigSlice {
   setImageCount: (val: number) => void
   setSkipVerify: (val: boolean) => void
   setScoreThreshold: (val: number) => void
+  setVisionDetailAnalyzeScene: (val: VisionDetail) => void
+  setVisionDetailCharacterAnchors: (val: VisionDetail) => void
+  setVisionDetailDesignAssemble: (val: VisionDetail) => void
+  setVisionDetailVerifyConsistency: (val: VisionDetail) => void
+  applyVisionDetailPreset: (preset: VisionDetailPreset) => void
 }
 
 interface ResetSlice {
@@ -122,6 +134,10 @@ const DIRECTOR_LAYOUT_ORIENTATION_STORAGE_KEY = 'director.layout-orientation.v1'
 const DIRECTOR_LAYOUT_ORIENTATION_AUTO_STORAGE_KEY = 'director.layout-orientation-auto.v1'
 const DIRECTOR_SEMANTIC_ORIENTATION_STORAGE_KEY = 'director.semantic-orientation.v1'
 const DIRECTOR_SEMANTIC_ORIENTATION_AUTO_STORAGE_KEY = 'director.semantic-orientation-auto.v1'
+const DIRECTOR_VISION_DETAIL_ANALYZE_SCENE_STORAGE_KEY = 'director.vision-detail.analyze-scene.v1'
+const DIRECTOR_VISION_DETAIL_CHARACTER_ANCHORS_STORAGE_KEY = 'director.vision-detail.character-anchors.v1'
+const DIRECTOR_VISION_DETAIL_DESIGN_ASSEMBLE_STORAGE_KEY = 'director.vision-detail.design-assemble.v1'
+const DIRECTOR_VISION_DETAIL_VERIFY_CONSISTENCY_STORAGE_KEY = 'director.vision-detail.verify-consistency.v1'
 const DEFAULT_DIRECTOR_RATIO = '16:9'
 
 function getOrientationByRatio(ratio: string, fallback: LayoutOrientation = 'landscape'): LayoutOrientation {
@@ -274,6 +290,63 @@ function writeDirectorRatio(value: string): void {
   }
 }
 
+function normalizeVisionDetail(value: string | null | undefined, fallback: VisionDetail): VisionDetail {
+  return value === 'low' || value === 'high' || value === 'auto'
+    ? value
+    : fallback
+}
+
+function readVisionDetail(storageKey: string, fallback: VisionDetail): VisionDetail {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return fallback
+    return normalizeVisionDetail(window.localStorage.getItem(storageKey), fallback)
+  } catch {
+    return fallback
+  }
+}
+
+function writeVisionDetail(storageKey: string, value: VisionDetail): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return
+    window.localStorage.setItem(storageKey, value)
+  } catch {
+    // Best-effort persistence.
+  }
+}
+
+export function detectVisionDetailPreset(config: {
+  visionDetailAnalyzeScene: VisionDetail
+  visionDetailCharacterAnchors: VisionDetail
+  visionDetailDesignAssemble: VisionDetail
+  visionDetailVerifyConsistency: VisionDetail
+}): VisionDetailPresetState {
+  if (
+    config.visionDetailAnalyzeScene === 'high' &&
+    config.visionDetailCharacterAnchors === 'high' &&
+    config.visionDetailDesignAssemble === 'low' &&
+    config.visionDetailVerifyConsistency === 'low'
+  ) {
+    return 'speed'
+  }
+  if (
+    config.visionDetailAnalyzeScene === 'high' &&
+    config.visionDetailCharacterAnchors === 'high' &&
+    config.visionDetailDesignAssemble === 'auto' &&
+    config.visionDetailVerifyConsistency === 'auto'
+  ) {
+    return 'balanced'
+  }
+  if (
+    config.visionDetailAnalyzeScene === 'high' &&
+    config.visionDetailCharacterAnchors === 'high' &&
+    config.visionDetailDesignAssemble === 'high' &&
+    config.visionDetailVerifyConsistency === 'high'
+  ) {
+    return 'quality'
+  }
+  return 'custom'
+}
+
 const initialImageState: Pick<ImageSlice, 'referenceImages'> = {
   referenceImages: [],
 }
@@ -296,10 +369,10 @@ const initialGenerationState: Pick<
   progressPercentage: 0,
 }
 
-const initialConfigState: Pick<
+const createInitialConfigState = (): Pick<
   ConfigSlice,
-  'currentLayout' | 'currentLayoutOrientation' | 'isLayoutOrientationAuto' | 'currentSemanticOrientation' | 'isSemanticOrientationAuto' | 'currentTemplate' | 'currentMode' | 'currentRatio' | 'currentResolution' | 'sceneDescription' | 'multiSceneText' | 'visionModel' | 'imageModel' | 'imageCount' | 'skipVerify' | 'scoreThreshold'
-> = {
+  'currentLayout' | 'currentLayoutOrientation' | 'isLayoutOrientationAuto' | 'currentSemanticOrientation' | 'isSemanticOrientationAuto' | 'currentTemplate' | 'currentMode' | 'currentRatio' | 'currentResolution' | 'sceneDescription' | 'multiSceneText' | 'visionModel' | 'imageModel' | 'imageCount' | 'skipVerify' | 'scoreThreshold' | 'visionDetailAnalyzeScene' | 'visionDetailCharacterAnchors' | 'visionDetailDesignAssemble' | 'visionDetailVerifyConsistency'
+> => ({
   currentLayout: '6grid',
   currentLayoutOrientation: readLayoutOrientation() || getOrientationByRatio(readDirectorRatio()),
   isLayoutOrientationAuto: readLayoutOrientationAuto(),
@@ -316,7 +389,13 @@ const initialConfigState: Pick<
   imageCount: 1,
   skipVerify: false,
   scoreThreshold: readScoreThreshold(),
-}
+  visionDetailAnalyzeScene: readVisionDetail(DIRECTOR_VISION_DETAIL_ANALYZE_SCENE_STORAGE_KEY, 'high'),
+  visionDetailCharacterAnchors: readVisionDetail(DIRECTOR_VISION_DETAIL_CHARACTER_ANCHORS_STORAGE_KEY, 'high'),
+  visionDetailDesignAssemble: readVisionDetail(DIRECTOR_VISION_DETAIL_DESIGN_ASSEMBLE_STORAGE_KEY, 'low'),
+  visionDetailVerifyConsistency: readVisionDetail(DIRECTOR_VISION_DETAIL_VERIFY_CONSISTENCY_STORAGE_KEY, 'low'),
+})
+
+const initialConfigState = createInitialConfigState()
 
 // --- Slice creators ---
 
@@ -472,6 +551,50 @@ const createConfigSlice: StateCreator<DirectorStore, [], [], ConfigSlice> = (set
     writeScoreThreshold(next)
     set({ scoreThreshold: next })
   },
+  setVisionDetailAnalyzeScene: (val) => {
+    writeVisionDetail(DIRECTOR_VISION_DETAIL_ANALYZE_SCENE_STORAGE_KEY, val)
+    set({ visionDetailAnalyzeScene: val })
+  },
+  setVisionDetailCharacterAnchors: (val) => {
+    writeVisionDetail(DIRECTOR_VISION_DETAIL_CHARACTER_ANCHORS_STORAGE_KEY, val)
+    set({ visionDetailCharacterAnchors: val })
+  },
+  setVisionDetailDesignAssemble: (val) => {
+    writeVisionDetail(DIRECTOR_VISION_DETAIL_DESIGN_ASSEMBLE_STORAGE_KEY, val)
+    set({ visionDetailDesignAssemble: val })
+  },
+  setVisionDetailVerifyConsistency: (val) => {
+    writeVisionDetail(DIRECTOR_VISION_DETAIL_VERIFY_CONSISTENCY_STORAGE_KEY, val)
+    set({ visionDetailVerifyConsistency: val })
+  },
+  applyVisionDetailPreset: (preset) => {
+    const next = preset === 'quality'
+      ? {
+          visionDetailAnalyzeScene: 'high' as VisionDetail,
+          visionDetailCharacterAnchors: 'high' as VisionDetail,
+          visionDetailDesignAssemble: 'high' as VisionDetail,
+          visionDetailVerifyConsistency: 'high' as VisionDetail,
+        }
+      : preset === 'balanced'
+        ? {
+            visionDetailAnalyzeScene: 'high' as VisionDetail,
+            visionDetailCharacterAnchors: 'high' as VisionDetail,
+            visionDetailDesignAssemble: 'auto' as VisionDetail,
+            visionDetailVerifyConsistency: 'auto' as VisionDetail,
+          }
+        : {
+            visionDetailAnalyzeScene: 'high' as VisionDetail,
+            visionDetailCharacterAnchors: 'high' as VisionDetail,
+            visionDetailDesignAssemble: 'low' as VisionDetail,
+            visionDetailVerifyConsistency: 'low' as VisionDetail,
+          }
+
+    writeVisionDetail(DIRECTOR_VISION_DETAIL_ANALYZE_SCENE_STORAGE_KEY, next.visionDetailAnalyzeScene)
+    writeVisionDetail(DIRECTOR_VISION_DETAIL_CHARACTER_ANCHORS_STORAGE_KEY, next.visionDetailCharacterAnchors)
+    writeVisionDetail(DIRECTOR_VISION_DETAIL_DESIGN_ASSEMBLE_STORAGE_KEY, next.visionDetailDesignAssemble)
+    writeVisionDetail(DIRECTOR_VISION_DETAIL_VERIFY_CONSISTENCY_STORAGE_KEY, next.visionDetailVerifyConsistency)
+    set(next)
+  },
 })
 
 const createResetSlice: StateCreator<DirectorStore, [], [], ResetSlice> = (set) => ({
@@ -479,7 +602,7 @@ const createResetSlice: StateCreator<DirectorStore, [], [], ResetSlice> = (set) 
     set({
       ...initialImageState,
       ...initialGenerationState,
-      ...initialConfigState,
+      ...createInitialConfigState(),
     }),
 })
 

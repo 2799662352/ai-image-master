@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const STORAGE_KEY = 'director.score-threshold.v1'
 const VISION_MODEL_KEY = 'director.vision-model.v1'
 const RATIO_KEY = 'director.ratio.v1'
+const DETAIL_ANALYZE_KEY = 'director.vision-detail.analyze-scene.v1'
+const DETAIL_VERIFY_KEY = 'director.vision-detail.verify-consistency.v1'
 
 describe('useDirectorStore scoreThreshold persistence', () => {
   beforeEach(() => {
@@ -45,5 +47,31 @@ describe('useDirectorStore scoreThreshold persistence', () => {
     vi.resetModules()
     const { useDirectorStore: reloadedStore } = await import('../useDirectorStore')
     expect(reloadedStore.getState().currentRatio).toBe('21:9')
+  })
+
+  it('vision detail controls persist and restore', async () => {
+    const { useDirectorStore } = await import('../useDirectorStore')
+    useDirectorStore.getState().setVisionDetailAnalyzeScene('auto')
+    useDirectorStore.getState().setVisionDetailVerifyConsistency('high')
+
+    expect(window.localStorage.getItem(DETAIL_ANALYZE_KEY)).toBe('auto')
+    expect(window.localStorage.getItem(DETAIL_VERIFY_KEY)).toBe('high')
+
+    vi.resetModules()
+    const { useDirectorStore: reloadedStore } = await import('../useDirectorStore')
+    expect(reloadedStore.getState().visionDetailAnalyzeScene).toBe('auto')
+    expect(reloadedStore.getState().visionDetailVerifyConsistency).toBe('high')
+  })
+
+  it('reset should re-read latest persisted vision detail values', async () => {
+    const { useDirectorStore } = await import('../useDirectorStore')
+    useDirectorStore.getState().setVisionDetailAnalyzeScene('low')
+    expect(useDirectorStore.getState().visionDetailAnalyzeScene).toBe('low')
+
+    useDirectorStore.getState().setVisionDetailAnalyzeScene('auto')
+    expect(window.localStorage.getItem(DETAIL_ANALYZE_KEY)).toBe('auto')
+
+    useDirectorStore.getState().reset()
+    expect(useDirectorStore.getState().visionDetailAnalyzeScene).toBe('auto')
   })
 })

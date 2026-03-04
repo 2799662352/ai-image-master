@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { useDirectorStore } from '../useDirectorStore'
+import { detectVisionDetailPreset, useDirectorStore } from '../useDirectorStore'
 
 describe('useDirectorStore', () => {
   beforeEach(() => {
@@ -21,6 +21,10 @@ describe('useDirectorStore', () => {
     expect(state.currentTemplate).toBe('cinematic')
     expect(state.visionModel).toBe('')
     expect(state.sceneDescription).toBe('')
+    expect(state.visionDetailAnalyzeScene).toBe('high')
+    expect(state.visionDetailCharacterAnchors).toBe('high')
+    expect(state.visionDetailDesignAssemble).toBe('low')
+    expect(state.visionDetailVerifyConsistency).toBe('low')
   })
 
   it('should add reference image', () => {
@@ -156,6 +160,83 @@ describe('useDirectorStore', () => {
   it('should set scene description', () => {
     useDirectorStore.getState().setSceneDescription('A cyberpunk city')
     expect(useDirectorStore.getState().sceneDescription).toBe('A cyberpunk city')
+  })
+
+  it('should set per-pass vision detail controls', () => {
+    const store = useDirectorStore.getState()
+    store.setVisionDetailAnalyzeScene('low')
+    store.setVisionDetailCharacterAnchors('auto')
+    store.setVisionDetailDesignAssemble('high')
+    store.setVisionDetailVerifyConsistency('high')
+
+    const state = useDirectorStore.getState()
+    expect(state.visionDetailAnalyzeScene).toBe('low')
+    expect(state.visionDetailCharacterAnchors).toBe('auto')
+    expect(state.visionDetailDesignAssemble).toBe('high')
+    expect(state.visionDetailVerifyConsistency).toBe('high')
+  })
+
+  it('should apply speed preset for unstable network', () => {
+    const store = useDirectorStore.getState()
+    store.applyVisionDetailPreset('speed')
+    const state = useDirectorStore.getState()
+
+    expect(state.visionDetailAnalyzeScene).toBe('high')
+    expect(state.visionDetailCharacterAnchors).toBe('high')
+    expect(state.visionDetailDesignAssemble).toBe('low')
+    expect(state.visionDetailVerifyConsistency).toBe('low')
+  })
+
+  it('should apply quality preset for strict analysis', () => {
+    const store = useDirectorStore.getState()
+    store.applyVisionDetailPreset('quality')
+    const state = useDirectorStore.getState()
+
+    expect(state.visionDetailAnalyzeScene).toBe('high')
+    expect(state.visionDetailCharacterAnchors).toBe('high')
+    expect(state.visionDetailDesignAssemble).toBe('high')
+    expect(state.visionDetailVerifyConsistency).toBe('high')
+  })
+
+  it('should apply balanced preset for mixed speed and quality', () => {
+    const store = useDirectorStore.getState()
+    store.applyVisionDetailPreset('balanced')
+    const state = useDirectorStore.getState()
+
+    expect(state.visionDetailAnalyzeScene).toBe('high')
+    expect(state.visionDetailCharacterAnchors).toBe('high')
+    expect(state.visionDetailDesignAssemble).toBe('auto')
+    expect(state.visionDetailVerifyConsistency).toBe('auto')
+  })
+
+  it('detectVisionDetailPreset should classify known presets and custom state', () => {
+    expect(detectVisionDetailPreset({
+      visionDetailAnalyzeScene: 'high',
+      visionDetailCharacterAnchors: 'high',
+      visionDetailDesignAssemble: 'low',
+      visionDetailVerifyConsistency: 'low',
+    })).toBe('speed')
+
+    expect(detectVisionDetailPreset({
+      visionDetailAnalyzeScene: 'high',
+      visionDetailCharacterAnchors: 'high',
+      visionDetailDesignAssemble: 'auto',
+      visionDetailVerifyConsistency: 'auto',
+    })).toBe('balanced')
+
+    expect(detectVisionDetailPreset({
+      visionDetailAnalyzeScene: 'high',
+      visionDetailCharacterAnchors: 'high',
+      visionDetailDesignAssemble: 'high',
+      visionDetailVerifyConsistency: 'high',
+    })).toBe('quality')
+
+    expect(detectVisionDetailPreset({
+      visionDetailAnalyzeScene: 'low',
+      visionDetailCharacterAnchors: 'high',
+      visionDetailDesignAssemble: 'high',
+      visionDetailVerifyConsistency: 'high',
+    })).toBe('custom')
   })
 
   it('should reset to initial state', () => {
