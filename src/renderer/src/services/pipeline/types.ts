@@ -1,4 +1,5 @@
 import type { SceneAnalysis, CharacterAnchors, DesignAndAssemble, VerifyReport } from './schemas/director-schemas'
+import type { StyleAnchor, StyleConflict } from './schemas/style-anchor-schema'
 
 export interface PassCardData {
   pass: number
@@ -54,6 +55,8 @@ export interface DirectorResult {
   prompts: AssembledPrompt[]
   report: VerifyReport | null
   images: GeneratedImage[]
+  styleAnchor: StyleAnchor | null
+  styleConflicts: StyleConflict[]
 }
 
 export interface AssembledPrompt {

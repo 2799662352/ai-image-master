@@ -1285,6 +1285,8 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       prompts: state.prompts || [],
       report: state.report,
       images: state.images || [],
+      styleAnchor: state.styleAnchor || null,
+      styleConflicts: state.styleConflicts || [],
     }
   }
 
