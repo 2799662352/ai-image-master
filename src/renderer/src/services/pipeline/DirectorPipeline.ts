@@ -80,6 +80,8 @@ const stateSchema = z.object({
   visionDetailDesignAssemble: z.enum(['low', 'high', 'auto']).default(DEFAULT_VISION_DETAIL.designAndAssemble),
   visionDetailVerifyConsistency: z.enum(['low', 'high', 'auto']).default(DEFAULT_VISION_DETAIL.verifyConsistency),
   skipVerify: z.boolean().default(false),
+  skipAnalyzeScene: z.boolean().default(false),
+  skipCharacterAnchors: z.boolean().default(false),
   scoreThreshold: z.number().min(0).max(10).default(SCORE_THRESHOLD),
   activeSkills: z.array(z.string()).default([]),
 })
@@ -291,9 +293,15 @@ export function buildRetryFeedback(report: VerifyReportLike | null | undefined, 
   return `Soft correction only. Fix only: ${lowItems.join(', ')}. Affected panels: ${panelText}. Keep all other panels unchanged.${issuesText}`
 }
 
-export function shouldRetryAnalysis(state: { scene: { env?: string } | null; characters: { characters?: unknown[] } | null; analysisRetryCount: number }): 'retry' | 'continue' | 'abort' {
-  const sceneOk = state.scene && state.scene.env && state.scene.env !== '(analysis failed)'
-  const charsOk = state.characters && Array.isArray(state.characters.characters)
+export function shouldRetryAnalysis(state: {
+  scene: { env?: string } | null
+  characters: { characters?: unknown[] } | null
+  analysisRetryCount: number
+  skipAnalyzeScene?: boolean
+  skipCharacterAnchors?: boolean
+}): 'retry' | 'continue' | 'abort' {
+  const sceneOk = (state.scene && state.scene.env && state.scene.env !== '(analysis failed)') || state.skipAnalyzeScene === true
+  const charsOk = (state.characters && Array.isArray(state.characters.characters)) || state.skipCharacterAnchors === true
   if (sceneOk || charsOk) return 'continue'
   if (state.analysisRetryCount >= MAX_ANALYSIS_RETRIES) return 'abort'
   return 'retry'
@@ -484,6 +492,12 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     // ===== Pass 1: 场景分析 (parallel with Pass 2) =====
     const analyzeSceneFn = async (state: DirectorState, config: any) => {
       const t0 = Date.now()
+      if (state.skipAnalyzeScene) {
+        const elapsed = Date.now() - t0
+        const passData = DirectorPipeline.buildPassCardData('analyzeScene', { pass: 1, label: '场景分析' }, { scene: null, skipped: true }, elapsed)
+        writer(config)?.({ type: 'pass_complete', pass: 1, label: '场景分析（已跳过）', elapsed, passData })
+        return { scene: null }
+      }
       try {
         const appliedSkills = self.getSkillsForPhase('analyzeScene', state as Record<string, unknown>)
         const structuredWithRaw = self.createStructuredLLMWithRaw(SceneAnalysisSchema)
@@ -535,6 +549,12 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     // ===== Pass 2: 角色锚点提取 (parallel with Pass 1) =====
     const extractCharacterAnchorsFn = async (state: DirectorState, config: any) => {
       const t0 = Date.now()
+      if (state.skipCharacterAnchors) {
+        const elapsed = Date.now() - t0
+        const passData = DirectorPipeline.buildPassCardData('extractCharacterAnchors', { pass: 2, label: '角色锚点提取' }, { characters: null, skipped: true }, elapsed)
+        writer(config)?.({ type: 'pass_complete', pass: 2, label: '角色锚点提取（已跳过）', elapsed, passData })
+        return { characters: null }
+      }
       try {
         const appliedSkills = self.getSkillsForPhase('extractCharacterAnchors', state as Record<string, unknown>)
         const structuredWithRaw = self.createStructuredLLMWithRaw(CharacterAnchorSchema)
