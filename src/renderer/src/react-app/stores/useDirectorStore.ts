@@ -89,6 +89,8 @@ interface ConfigSlice {
   imageModel: string
   imageCount: number
   skipVerify: boolean
+  skipAnalyzeScene: boolean
+  skipCharacterAnchors: boolean
   scoreThreshold: number
   visionDetailAnalyzeScene: VisionDetail
   visionDetailCharacterAnchors: VisionDetail
@@ -109,6 +111,8 @@ interface ConfigSlice {
   setImageModel: (val: string) => void
   setImageCount: (val: number) => void
   setSkipVerify: (val: boolean) => void
+  setSkipAnalyzeScene: (val: boolean) => void
+  setSkipCharacterAnchors: (val: boolean) => void
   setScoreThreshold: (val: number) => void
   setVisionDetailAnalyzeScene: (val: VisionDetail) => void
   setVisionDetailCharacterAnchors: (val: VisionDetail) => void
@@ -134,6 +138,8 @@ const DIRECTOR_LAYOUT_ORIENTATION_STORAGE_KEY = 'director.layout-orientation.v1'
 const DIRECTOR_LAYOUT_ORIENTATION_AUTO_STORAGE_KEY = 'director.layout-orientation-auto.v1'
 const DIRECTOR_SEMANTIC_ORIENTATION_STORAGE_KEY = 'director.semantic-orientation.v1'
 const DIRECTOR_SEMANTIC_ORIENTATION_AUTO_STORAGE_KEY = 'director.semantic-orientation-auto.v1'
+const DIRECTOR_SKIP_ANALYZE_SCENE_STORAGE_KEY = 'director.skip-analyze-scene.v1'
+const DIRECTOR_SKIP_CHARACTER_ANCHORS_STORAGE_KEY = 'director.skip-character-anchors.v1'
 const DIRECTOR_VISION_DETAIL_ANALYZE_SCENE_STORAGE_KEY = 'director.vision-detail.analyze-scene.v1'
 const DIRECTOR_VISION_DETAIL_CHARACTER_ANCHORS_STORAGE_KEY = 'director.vision-detail.character-anchors.v1'
 const DIRECTOR_VISION_DETAIL_DESIGN_ASSEMBLE_STORAGE_KEY = 'director.vision-detail.design-assemble.v1'
@@ -314,6 +320,24 @@ function writeVisionDetail(storageKey: string, value: VisionDetail): void {
   }
 }
 
+function readSkipFlag(storageKey: string): boolean {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return false
+    return window.localStorage.getItem(storageKey) === 'true'
+  } catch {
+    return false
+  }
+}
+
+function writeSkipFlag(storageKey: string, value: boolean): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return
+    window.localStorage.setItem(storageKey, String(value))
+  } catch {
+    // Best-effort persistence.
+  }
+}
+
 export function detectVisionDetailPreset(config: {
   visionDetailAnalyzeScene: VisionDetail
   visionDetailCharacterAnchors: VisionDetail
@@ -371,7 +395,7 @@ const initialGenerationState: Pick<
 
 const createInitialConfigState = (): Pick<
   ConfigSlice,
-  'currentLayout' | 'currentLayoutOrientation' | 'isLayoutOrientationAuto' | 'currentSemanticOrientation' | 'isSemanticOrientationAuto' | 'currentTemplate' | 'currentMode' | 'currentRatio' | 'currentResolution' | 'sceneDescription' | 'multiSceneText' | 'visionModel' | 'imageModel' | 'imageCount' | 'skipVerify' | 'scoreThreshold' | 'visionDetailAnalyzeScene' | 'visionDetailCharacterAnchors' | 'visionDetailDesignAssemble' | 'visionDetailVerifyConsistency'
+  'currentLayout' | 'currentLayoutOrientation' | 'isLayoutOrientationAuto' | 'currentSemanticOrientation' | 'isSemanticOrientationAuto' | 'currentTemplate' | 'currentMode' | 'currentRatio' | 'currentResolution' | 'sceneDescription' | 'multiSceneText' | 'visionModel' | 'imageModel' | 'imageCount' | 'skipVerify' | 'skipAnalyzeScene' | 'skipCharacterAnchors' | 'scoreThreshold' | 'visionDetailAnalyzeScene' | 'visionDetailCharacterAnchors' | 'visionDetailDesignAssemble' | 'visionDetailVerifyConsistency'
 > => ({
   currentLayout: '6grid',
   currentLayoutOrientation: readLayoutOrientation() || getOrientationByRatio(readDirectorRatio()),
@@ -388,6 +412,8 @@ const createInitialConfigState = (): Pick<
   imageModel: '',
   imageCount: 1,
   skipVerify: false,
+  skipAnalyzeScene: readSkipFlag(DIRECTOR_SKIP_ANALYZE_SCENE_STORAGE_KEY),
+  skipCharacterAnchors: readSkipFlag(DIRECTOR_SKIP_CHARACTER_ANCHORS_STORAGE_KEY),
   scoreThreshold: readScoreThreshold(),
   visionDetailAnalyzeScene: readVisionDetail(DIRECTOR_VISION_DETAIL_ANALYZE_SCENE_STORAGE_KEY, 'high'),
   visionDetailCharacterAnchors: readVisionDetail(DIRECTOR_VISION_DETAIL_CHARACTER_ANCHORS_STORAGE_KEY, 'high'),
@@ -546,6 +572,14 @@ const createConfigSlice: StateCreator<DirectorStore, [], [], ConfigSlice> = (set
   setImageModel: (val) => set({ imageModel: val }),
   setImageCount: (val) => set({ imageCount: val }),
   setSkipVerify: (val) => set({ skipVerify: val }),
+  setSkipAnalyzeScene: (val) => {
+    writeSkipFlag(DIRECTOR_SKIP_ANALYZE_SCENE_STORAGE_KEY, val)
+    set({ skipAnalyzeScene: val })
+  },
+  setSkipCharacterAnchors: (val) => {
+    writeSkipFlag(DIRECTOR_SKIP_CHARACTER_ANCHORS_STORAGE_KEY, val)
+    set({ skipCharacterAnchors: val })
+  },
   setScoreThreshold: (val) => {
     const next = Math.max(0, Math.min(10, Math.round(val)))
     writeScoreThreshold(next)
