@@ -422,6 +422,65 @@ export function buildAdaptiveNegativePrompt(
   return `${baseNegative}, ${newTerms.join(', ')}`
 }
 
+export function codeVerify(state: DirectorState): z.infer<typeof VerifySchema> {
+  let score = 10
+  const issues: string[] = []
+  const anchors = state.characters?.characters || []
+  const prompts = state.prompts || []
+  const stylePrefix = resolveStylePrefix(
+    (state as any).styleAnchor || null,
+    state.template,
+    state.styleInstructions,
+  )
+
+  if (prompts.length === 0) {
+    return { score: 0, ok: false, issues: ['No prompts generated'] }
+  }
+
+  if (prompts.length !== state.layout.panelCount) {
+    issues.push(`Expected ${state.layout.panelCount} panels, got ${prompts.length}`)
+    score -= 3
+  }
+
+  for (const anchor of anchors) {
+    const name = anchor.name.toLowerCase()
+    const missingPanels = prompts.filter(p => !p.prompt.toLowerCase().includes(name))
+    if (missingPanels.length > prompts.length / 2) {
+      issues.push(`Character "${anchor.name}" missing from ${missingPanels.length}/${prompts.length} panels`)
+      score -= 2
+    }
+  }
+
+  if (stylePrefix) {
+    const firstToken = stylePrefix.split(',')[0].trim().toLowerCase()
+    if (firstToken) {
+      const missingStyle = prompts.filter(p => !p.prompt.toLowerCase().includes(firstToken))
+      if (missingStyle.length > 0) {
+        issues.push(`Style token "${firstToken}" missing from ${missingStyle.length} panel(s)`)
+        score -= 1
+      }
+    }
+  }
+
+  const emptyPrompts = prompts.filter(p => !p.prompt.trim())
+  if (emptyPrompts.length > 0) {
+    issues.push(`${emptyPrompts.length} panel(s) have empty prompts`)
+    score -= 3
+  }
+
+  score = Math.max(0, score)
+  return {
+    score,
+    ok: score >= 6,
+    issues,
+    characterConsistency: !issues.some(i => i.includes('Character')),
+    lightingContinuity: true,
+    narrativeFlow: true,
+    spatialCoherence: true,
+    styleConsistency: stylePrefix ? (issues.some(i => i.toLowerCase().includes('style')) ? 5 : 10) : undefined,
+  }
+}
+
 export function buildReferenceImageRoleRules(
   templateKey: string,
   hasStyleAnchor: boolean,
