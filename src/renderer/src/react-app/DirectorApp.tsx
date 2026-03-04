@@ -37,6 +37,10 @@ export function DirectorApp() {
   const setVisionDetailCharacterAnchors = useDirectorStore((s) => s.setVisionDetailCharacterAnchors)
   const setVisionDetailDesignAssemble = useDirectorStore((s) => s.setVisionDetailDesignAssemble)
   const setVisionDetailVerifyConsistency = useDirectorStore((s) => s.setVisionDetailVerifyConsistency)
+  const skipAnalyzeScene = useDirectorStore((s) => s.skipAnalyzeScene)
+  const skipCharacterAnchors = useDirectorStore((s) => s.skipCharacterAnchors)
+  const setSkipAnalyzeScene = useDirectorStore((s) => s.setSkipAnalyzeScene)
+  const setSkipCharacterAnchors = useDirectorStore((s) => s.setSkipCharacterAnchors)
   const applyVisionDetailPreset = useDirectorStore((s) => s.applyVisionDetailPreset)
   const setViewState = useDirectorStore((s) => s.setViewState)
   const pushProgress = useDirectorStore((s) => s.pushProgress)
@@ -256,26 +260,48 @@ export function DirectorApp() {
                 </div>
 
                 {[
-                  { key: 'analyze', label: '场景分析', value: visionDetailAnalyzeScene, onChange: setVisionDetailAnalyzeScene },
-                  { key: 'anchor', label: '角色锚定', value: visionDetailCharacterAnchors, onChange: setVisionDetailCharacterAnchors },
-                  { key: 'design', label: '分镜+Prompt', value: visionDetailDesignAssemble, onChange: setVisionDetailDesignAssemble },
-                  { key: 'verify', label: '一致性校验', value: visionDetailVerifyConsistency, onChange: setVisionDetailVerifyConsistency },
+                  { key: 'analyze', label: '场景分析', value: visionDetailAnalyzeScene, onChange: setVisionDetailAnalyzeScene, skippable: true, skipped: skipAnalyzeScene, onToggleSkip: setSkipAnalyzeScene, skipLabel: '跳过场景分析' },
+                  { key: 'anchor', label: '角色锚定', value: visionDetailCharacterAnchors, onChange: setVisionDetailCharacterAnchors, skippable: true, skipped: skipCharacterAnchors, onToggleSkip: setSkipCharacterAnchors, skipLabel: '跳过角色锚定' },
+                  { key: 'design', label: '分镜+Prompt', value: visionDetailDesignAssemble, onChange: setVisionDetailDesignAssemble, skippable: false, skipped: false, onToggleSkip: undefined as ((v: boolean) => void) | undefined, skipLabel: '' },
+                  { key: 'verify', label: '一致性校验', value: visionDetailVerifyConsistency, onChange: setVisionDetailVerifyConsistency, skippable: true, skipped: skipVerify, onToggleSkip: setSkipVerify, skipLabel: '跳过一致性校验' },
                 ].map((item) => (
                   <div key={item.key} className="flex items-center justify-between gap-3">
-                    <span className="text-[11px] text-white/65 whitespace-nowrap">{item.label}</span>
+                    <div className="flex items-center gap-2 min-w-0">
+                      {item.skippable ? (
+                        <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                          <input
+                            type="checkbox"
+                            checked={!item.skipped}
+                            onChange={() => item.onToggleSkip?.(!item.skipped)}
+                            className="sr-only peer"
+                            aria-label={item.skipLabel}
+                          />
+                          <div className="w-7 h-4 bg-[#3F3F46] rounded-full peer peer-checked:bg-yellow-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:after:translate-x-3" />
+                        </label>
+                      ) : (
+                        <span className="text-[9px] text-white/35 w-7 text-center shrink-0">必需</span>
+                      )}
+                      <span className={`text-[11px] whitespace-nowrap ${item.skipped ? 'text-white/30 line-through' : 'text-white/65'}`}>
+                        {item.label}
+                      </span>
+                    </div>
                     <div className="inline-flex border border-[#3F3F46]">
                       {VISION_DETAIL_OPTIONS.map((option) => {
                         const active = item.value === option.value
+                        const disabled = item.skipped
                         return (
                           <button
                             key={`${item.key}-${option.value}`}
                             type="button"
-                            onClick={() => item.onChange(option.value)}
+                            onClick={() => !disabled && item.onChange(option.value)}
                             aria-pressed={active}
-                            className={`px-2.5 py-1.5 text-[11px] transition-colors cursor-pointer ${
-                              active
-                                ? 'bg-yellow-500 text-black font-semibold'
-                                : 'bg-[#09090B] text-white/70 hover:text-white hover:bg-[#18181B]'
+                            disabled={disabled}
+                            className={`px-2.5 py-1.5 text-[11px] transition-colors ${
+                              disabled
+                                ? 'bg-[#09090B] text-white/20 cursor-not-allowed'
+                                : active
+                                  ? 'bg-yellow-500 text-black font-semibold cursor-pointer'
+                                  : 'bg-[#09090B] text-white/70 hover:text-white hover:bg-[#18181B] cursor-pointer'
                             }`}
                           >
                             {option.label}
@@ -286,7 +312,7 @@ export function DirectorApp() {
                   </div>
                 ))}
                 <div className="text-[11px] text-white/45">
-                  建议：网络不稳时把“分镜+Prompt / 一致性校验”保持低，减少超时风险。
+                  建议：跳过阶段可加速生成，但会降低出图一致性。分镜+Prompt 为必需阶段不可跳过。
                 </div>
               </div>
             )}
