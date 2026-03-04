@@ -1070,12 +1070,12 @@ export async function getLangChainStoryboardService(model?: string): Promise<Lan
 }
 
 /**
- * 获取或创建 Storyboard Pipeline Service 实例（懒加载，4-Pass 管线）
+ * 获取或创建 Storyboard Pipeline Service 实例（懒加载，4-Pass 管线 v2）
  */
-let _pipelineInstance: import('./storyboard-pipeline/StoryboardPipelineService').StoryboardPipelineService | null = null
+let _pipelineInstance: import('./storyboard-pipeline/StoryboardProPipeline').StoryboardProPipeline | null = null
 let _pipelineCacheKey: string | null = null
 
-export async function getStoryboardPipelineService(model?: string): Promise<import('./storyboard-pipeline/StoryboardPipelineService').StoryboardPipelineService | null> {
+export async function getStoryboardPipelineService(model?: string): Promise<import('./storyboard-pipeline/StoryboardProPipeline').StoryboardProPipeline | null> {
   const api = (window as any).aiImageAPI
   const apiKey = api?.visionApiKey as string | undefined
   if (!apiKey) return null
@@ -1086,10 +1086,10 @@ export async function getStoryboardPipelineService(model?: string): Promise<impo
 
   const cacheKey = `pipeline|${apiKey}|${baseURL}|${model || ''}`
   if (!_pipelineInstance || _pipelineCacheKey !== cacheKey) {
-    const { StoryboardPipelineService: Svc } = await import('./storyboard-pipeline/StoryboardPipelineService')
-    _pipelineInstance = new Svc({ apiKey, baseURL, model })
+    const { StoryboardProPipeline } = await import('./storyboard-pipeline/StoryboardProPipeline')
+    _pipelineInstance = new StoryboardProPipeline({ apiKey, baseURL, model })
     _pipelineCacheKey = cacheKey
-    console.log('[ServiceBridge] ✓ StoryboardPipelineService 实例已创建 (4-Pass), model:', model || 'default')
+    console.log('[ServiceBridge] ✓ StoryboardProPipeline v2 实例已创建 (4-Pass), model:', model || 'default')
   }
   return _pipelineInstance
 }
