@@ -60,7 +60,7 @@ export function storyboardCodeVerify(state: StoryboardState): z.infer<typeof Ver
     issues,
     characterConsistency: !issues.some(i => i.includes('Character') || i.includes('character')),
     narrativeFlow: state.seq?.length > 0,
-    spatialCoherence: true,
-    lightingContinuity: true,
+    spatialCoherence: undefined,
+    lightingContinuity: undefined,
   }
 }

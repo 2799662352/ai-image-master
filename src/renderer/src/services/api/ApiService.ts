@@ -66,6 +66,7 @@ export interface GenerateImageParams {
   imageBase64?: string  // 编辑模式的图片
   negativePrompt?: string
   count?: number
+  signal?: AbortSignal
 }
 
 export interface GenerateResult {
@@ -426,7 +427,7 @@ export class ApiService {
    * 生成图片
    */
   async generateImage(params: GenerateImageParams): Promise<GenerateResult> {
-    const { prompt, model, ratio, resolution, referenceImages, imageBase64, count = 1 } = params
+    const { prompt, model, ratio, resolution, referenceImages, imageBase64, count = 1, signal } = params
 
     if (!this.apiKey) {
       return { success: false, error: '请先设置 API Key' }
@@ -451,7 +452,8 @@ export class ApiService {
           imageBase64,
           count,
           modelConfig,
-          site
+          site,
+          signal,
         }),
         { maxRetries: 1, retryDelay: 2000 }
       )
@@ -465,6 +467,9 @@ export class ApiService {
 
       return result
     } catch (error) {
+      if (signal?.aborted) {
+        return { success: false, error: '操作已取消' }
+      }
       console.error('生成图片失败:', error)
       return {
         success: false,
@@ -530,13 +535,12 @@ export class ApiService {
    * 判断错误是否可重试
    */
   private isRetryableError(error: any): boolean {
+    if (error.name === 'AbortError') {
+      return false
+    }
+
     // 网络错误可重试
     if (error.name === 'TypeError' && error.message.includes('fetch')) {
-      return true
-    }
-    
-    // 超时可重试
-    if (error.name === 'AbortError') {
       return true
     }
 
@@ -864,8 +868,9 @@ export class ApiService {
     count: number
     modelConfig: ModelConfig
     site: ApiSite
+    signal?: AbortSignal
   }): Promise<Response> {
-    const { prompt, model, ratio, resolution, referenceImages, imageBase64, modelConfig, site } = options
+    const { prompt, model, ratio, resolution, referenceImages, imageBase64, modelConfig, site, signal } = options
 
     // 构建请求 URL：用站点的域名替换模型 URL 中的域名
     const url = this.buildRequestUrl(modelConfig, site)
@@ -882,7 +887,7 @@ export class ApiService {
 
     // 检查是否需要 FormData (Flux with images)
     if (body.__isFluxKontextWithImage) {
-      return this.makeFluxFormDataRequest(url, body, site)
+      return this.makeFluxFormDataRequest(url, body, site, signal)
     }
 
     const headers: Record<string, string> = {
@@ -898,7 +903,8 @@ export class ApiService {
     return fetch(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      signal,
     })
   }
 
@@ -908,7 +914,8 @@ export class ApiService {
   private async makeFluxFormDataRequest(
     url: string,
     payload: any,
-    site: ApiSite
+    site: ApiSite,
+    signal?: AbortSignal,
   ): Promise<Response> {
     const formData = new FormData()
 
@@ -945,7 +952,8 @@ export class ApiService {
     return fetch(url, {
       method: 'POST',
       headers,
-      body: formData
+      body: formData,
+      signal,
     })
   }
 

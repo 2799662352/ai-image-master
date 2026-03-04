@@ -8,6 +8,7 @@ const PASS_DEFS_FULL = [
   { label: '技能选择',     icon: 'fa-brain' },
   { label: '场景分析',     icon: 'fa-eye' },
   { label: '角色锚定',     icon: 'fa-user-tag' },
+  { label: '风格锚点',     icon: 'fa-palette' },
   { label: '分镜+Prompt', icon: 'fa-th-large' },
   { label: '质量校验',     icon: 'fa-check-double' },
   { label: '图像生成',     icon: 'fa-image' },
@@ -17,6 +18,7 @@ const PASS_DEFS_FAST = [
   { label: '技能选择',     icon: 'fa-brain' },
   { label: '场景分析',     icon: 'fa-eye' },
   { label: '角色锚定',     icon: 'fa-user-tag' },
+  { label: '风格锚点',     icon: 'fa-palette' },
   { label: '分镜+Prompt', icon: 'fa-th-large' },
   { label: '图像生成',     icon: 'fa-image' },
 ]
@@ -85,7 +87,7 @@ export function GenerationProgress({ collapsed = false }: GenerationProgressProp
   const [viewingRaw, setViewingRaw] = useState<PassCardData | null>(null)
   const pipelinePasses = progress?.totalPasses ?? 5
   const passDefs = useMemo(
-    () => pipelinePasses <= 4 ? PASS_DEFS_FAST : PASS_DEFS_FULL,
+    () => pipelinePasses <= 5 ? PASS_DEFS_FAST : PASS_DEFS_FULL,
     [pipelinePasses],
   )
   const totalSlots = passDefs.length
@@ -133,7 +135,7 @@ export function GenerationProgress({ collapsed = false }: GenerationProgressProp
               <p className="text-sm font-medium text-white truncate">{currentLabel}</p>
               <p className="text-xs text-white opacity-50 mt-0.5">
                 步骤 {currentPass}/{totalSlots}
-                {pipelinePasses <= 4 && <span className="ml-2 text-yellow-400/70">⚡ 快速</span>}
+                {pipelinePasses <= 5 && <span className="ml-2 text-yellow-400/70">⚡ 快速</span>}
               </p>
             </div>
           </div>
@@ -143,7 +145,7 @@ export function GenerationProgress({ collapsed = false }: GenerationProgressProp
               className="h-full rounded-full transition-all duration-500 ease-out"
               style={{
                 width: `${percentage}%`,
-                background: pipelinePasses <= 4
+                background: pipelinePasses <= 5
                   ? 'linear-gradient(90deg, #F59E0B, #EF4444)'
                   : 'linear-gradient(90deg, #3B82F6, #8B5CF6)',
               }}

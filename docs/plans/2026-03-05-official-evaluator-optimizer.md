@@ -17,10 +17,12 @@
 designAndAssemble → codeVerify → [generateImages | verifyConsistency → [prepareRetry → designAndAssemble | generateImages]]
 ```
 
-### Target Graph (AFTER):
+### Target Graph (AFTER — pure 2-node official pattern):
 ```
-designAndAssemble → verifyConsistency → [generateImages | designAndAssemble (with feedback)]
+designAndAssemble (generator) → verifyConsistency (evaluator, writes feedback to state)
+  → [accepted: generateImages | rejected: designAndAssemble (reads feedback from state)]
 ```
+No intermediate buildFeedback node. Evaluator writes retryFeedback + retryCount directly to state.
 
 ### Pass Numbers (AFTER):
 ```

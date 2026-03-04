@@ -469,7 +469,7 @@ const createGenerationSlice: StateCreator<DirectorStore, [], [], GenerationSlice
   setCurrentProgress: (val) => set({ currentProgress: val }),
   pushProgress: (progress) => set((state) => {
     // UI shows pass 0 (selectSkills) through pass N, so total slots = totalPasses + 1
-    const totalPasses = progress.totalPasses || 5
+    const totalPasses = progress.totalPasses || 6
     const slotCount = totalPasses + 1
     const statuses = [...state.passStatuses]
     while (statuses.length < slotCount) statuses.push('pending')
