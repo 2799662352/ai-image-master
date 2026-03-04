@@ -967,7 +967,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
               content: [
                 ...BasePipeline.buildImageContent(
                   state.inputImages,
-                  resolveVisionDetailByPass(state, 'analyzeScene'),
+                  'high',
                 ),
                 { type: 'text' as const, text: 'Extract the visual style anchor from these reference images. Focus on style attributes only, not content.' },
               ],
