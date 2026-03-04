@@ -612,11 +612,6 @@ export function extractVarsForContactSheet(state: DirectorState): Record<string,
       }).join('\n')
       return `${globalSection}${userDirection}${characterIdentityLockSummary ? `\n\n${characterIdentityLockSummary}` : ''}\n\nSTORYBOARD GRID ${state.layout.rows}x${state.layout.cols}:\n${enhanced}`
     })(),
-    adaptive_negative_prompt: buildAdaptiveNegativePrompt(
-      prompts[0]?.negativePrompt || 'blurry, deformed, bad anatomy, watermark, signature, text, labels, captions, panel numbers, irregular panels, asymmetric grid, unequal panels',
-      state.template,
-      (state as any).styleAnchor,
-    ),
   }
 }
 

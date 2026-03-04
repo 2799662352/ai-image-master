@@ -120,11 +120,6 @@ describe('extractVarsForContactSheet conflict resolution vars', () => {
     expect(vars.enhanced_panel_descriptions).toContain('photorealistic, cinematic photography')
   })
 
-  it('should include adaptive_negative_prompt', () => {
-    const vars = extractVarsForContactSheet(makeState() as any)
-    expect(vars.adaptive_negative_prompt).toContain('anime')
-    expect(vars.adaptive_negative_prompt).toContain('cartoon')
-  })
 })
 
 describe('inline fallback style-first ordering', () => {
