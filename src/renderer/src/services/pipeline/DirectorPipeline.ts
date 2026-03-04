@@ -1,4 +1,4 @@
-import { StateGraph, START, END, MemorySaver } from '@langchain/langgraph'
+import { StateGraph, START, END, MemorySaver, interrupt } from '@langchain/langgraph'
 import { z } from 'zod'
 import { BasePipeline } from './BasePipeline'
 import { sharedSkills } from './director-skills'
@@ -685,6 +685,13 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
     const writer = (config: any) => config?.writer
 
+    const checkPauseAndInterrupt = (nodeName: string, config: any) => {
+      if (self._pauseRequested) {
+        writer(config)?.({ type: 'paused', node: nodeName })
+        interrupt({ reason: 'user_pause', node: nodeName })
+      }
+    }
+
     function emitError(config: any, pass: number, label: string, nodeName: string, message: string, elapsed: number) {
       console.error(`[DirectorPipeline] Pass ${pass} (${nodeName}) failed: ${message}`)
       writer(config)?.({
@@ -697,6 +704,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
     // ===== Pass 1: 场景分析 (parallel with Pass 2) =====
     const analyzeSceneFn = async (state: DirectorState, config: any) => {
+      checkPauseAndInterrupt('analyzeScene', config)
       const t0 = Date.now()
       if (state.skipAnalyzeScene) {
         const elapsed = Date.now() - t0
@@ -754,6 +762,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
     // ===== Pass 2: 角色锚点提取 (parallel with Pass 1) =====
     const extractCharacterAnchorsFn = async (state: DirectorState, config: any) => {
+      checkPauseAndInterrupt('extractCharacterAnchors', config)
       const t0 = Date.now()
       if (state.skipCharacterAnchors) {
         const elapsed = Date.now() - t0
@@ -970,6 +979,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     //   L2: SimplePanelSchema fallback (+1 LLM call, simpler schema = higher success)
     //   L3: error feedback to LLM (+1 LLM call, LLM self-corrects)
     const designAndAssembleFn = async (state: DirectorState, config: any) => {
+      checkPauseAndInterrupt('designAndAssemble', config)
       const t0 = Date.now()
       const skillContext = { ...state, retryFeedback: state.retryFeedback } as Record<string, unknown>
       const appliedSkills = self.getSkillsForPhase('designAndAssemble', skillContext)
@@ -1108,6 +1118,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
     // ===== Pass 4: 一致性校验 (skippable) =====
     const verifyConsistencyFn = async (state: DirectorState, config: any) => {
+      checkPauseAndInterrupt('verifyConsistency', config)
       const t0 = Date.now()
       try {
         const appliedSkills = self.getSkillsForPhase('verifyConsistency', state as Record<string, unknown>)
@@ -1201,6 +1212,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
     // ===== Pass 5: Contact Sheet 图像生成 =====
     const generateImagesFn = async (state: DirectorState, config: any) => {
+      checkPauseAndInterrupt('generateImages', config)
       const t0 = Date.now()
       const passNum = state.skipVerify ? 4 : 5
       const appliedSkills = self.getSkillsForPhase('generateImages', state as Record<string, unknown>)
@@ -1400,6 +1412,22 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
   postProcess(result: DirectorResult): DirectorResult {
     return result
+  }
+
+  requestPause(): void {
+    this._pauseRequested = true
+  }
+
+  clearPauseRequest(): void {
+    this._pauseRequested = false
+  }
+
+  get isPauseRequested(): boolean {
+    return this._pauseRequested
+  }
+
+  get currentThreadId(): string | null {
+    return this._currentThreadId
   }
 
   async execute(
