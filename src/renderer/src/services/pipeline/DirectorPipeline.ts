@@ -251,6 +251,11 @@ function extractVarsForVerify(state: DirectorState): Record<string, string> {
     scene_env: state.scene?.env || '(unknown)',
     character_anchors_summary: characterAnchors,
     panels_summary_short: panelDetails,
+    style_anchor_summary: (() => {
+      const anchor = (state as any).styleAnchor
+      if (!anchor) return '(no style anchor)'
+      return `Medium: ${anchor.medium}, Palette: ${anchor.palette?.join(', ')}, Texture: ${anchor.texture}`
+    })(),
   }
 }
 
@@ -285,6 +290,7 @@ type VerifyReportLike = {
   outfitConsistency?: number
   weaponConsistency?: number
   styleContinuity?: number
+  styleConsistency?: number
 }
 
 export function pickLowItems(report: VerifyReportLike | null | undefined, threshold: number): string[] {
@@ -294,6 +300,7 @@ export function pickLowItems(report: VerifyReportLike | null | undefined, thresh
     ['outfit consistency', report.outfitConsistency],
     ['weapon consistency', report.weaponConsistency],
     ['style continuity', report.styleContinuity],
+    ['style consistency', report.styleConsistency],
   ]
   return pairs
     .filter(([, value]) => typeof value === 'number' && Number.isFinite(value) && value < threshold)

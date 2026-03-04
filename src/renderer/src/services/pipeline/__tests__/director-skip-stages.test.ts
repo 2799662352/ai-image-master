@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { shouldRetryAnalysis, extractVarsForDesignAndAssemble, extractVarsForContactSheet, buildStyleAuthorityPrompt } from '../DirectorPipeline'
+import { shouldRetryAnalysis, extractVarsForDesignAndAssemble, extractVarsForContactSheet, buildStyleAuthorityPrompt, pickLowItems } from '../DirectorPipeline'
 
 describe('DirectorPipeline skip stages', () => {
   describe('shouldRetryAnalysis with skip flags', () => {
@@ -149,5 +149,33 @@ describe('buildStyleAuthorityPrompt', () => {
     const result = buildStyleAuthorityPrompt('default', '', 'a noir cyberpunk scene in rain')
     expect(result).toContain('noir')
     expect(result).toContain('cyberpunk')
+  })
+})
+
+describe('pickLowItems includes styleConsistency', () => {
+  it('should detect low styleConsistency', () => {
+    const report = {
+      score: 5,
+      faceConsistency: 8,
+      outfitConsistency: 7,
+      weaponConsistency: 9,
+      styleContinuity: 8,
+      styleConsistency: 3,
+    }
+    const low = pickLowItems(report as any, 6)
+    expect(low).toContain('style consistency')
+  })
+
+  it('should not flag styleConsistency when it is above threshold', () => {
+    const report = {
+      score: 8,
+      faceConsistency: 8,
+      outfitConsistency: 7,
+      weaponConsistency: 9,
+      styleContinuity: 8,
+      styleConsistency: 7,
+    }
+    const low = pickLowItems(report as any, 6)
+    expect(low).not.toContain('style consistency')
   })
 })

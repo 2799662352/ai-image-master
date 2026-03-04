@@ -38,9 +38,21 @@ Environment: {{scene_env}}
 - Flag if a room layout changes between panels
 - Flag if object scale is inconsistent (table waist-height in one panel, chest-height in another)
 
+### 5. Style Consistency
+- All panels must share the same rendering medium (all photorealistic OR all anime, never mixed)
+- Color temperature must not shift between panels unless motivated by time-of-day change
+- Texture quality (film grain, cel shading, etc.) must remain uniform
+- Flag if any panel prompt uses style keywords contradicting the style anchor
+- Style inconsistency: -3 per medium mismatch, -1 per color temperature drift
+
+## Style Anchor Reference
+{{style_anchor_summary}}
+
 ## Scoring
 - Start at 10, deduct points per issue found
 - Character inconsistency: -2 per occurrence
 - Lighting contradiction: -1 per occurrence
 - Narrative gap: -1 per occurrence
 - Spatial error: -1 per occurrence
+- Style medium mismatch: -3 per occurrence
+- Style color temperature drift: -1 per occurrence

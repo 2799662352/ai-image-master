@@ -58,6 +58,7 @@ export const VerifySchema = z.object({
   lightingContinuity: z.boolean().optional().describe('Light direction and color temperature are coherent across panels'),
   narrativeFlow: z.boolean().optional().describe('Story progresses logically with clear panel-to-panel transitions'),
   spatialCoherence: z.boolean().optional().describe('Background and spatial relationships are consistent'),
+  styleConsistency: z.number().optional().describe('All panels share the same rendering medium, color temperature, and texture quality'),
 })
 
 export type VerifyReport = z.infer<typeof VerifySchema>
