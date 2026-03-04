@@ -659,7 +659,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
   private _checkpointer: MemorySaver | null = null
   _currentThreadId: string | null = null
   _pauseRequested = false
-  private _lastTotalPasses = 5
+  private _lastTotalPasses = 6
 
   constructor(config: PipelineConfig) {
     super(config)
@@ -923,15 +923,15 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       }
     }
 
-    // ===== Pass 1.5: 风格锚点提取 (parallel with Pass 1+2) =====
+    // ===== Pass 3: 风格锚点提取 (parallel with Pass 1+2) =====
     const extractStyleAnchorFn = async (state: DirectorState, config: any) => {
       checkPauseAndInterrupt('extractStyleAnchor', config)
       const t0 = Date.now()
 
       if (state.inputImages.length === 0) {
         const elapsed = Date.now() - t0
-        const passData = DirectorPipeline.buildPassCardData('extractStyleAnchor', { pass: 1, label: '风格锚点' }, { styleAnchor: null, skipped: true }, elapsed)
-        writer(config)?.({ type: 'pass_complete', pass: 1, label: '风格锚点（无参考图，已跳过）', elapsed, passData })
+        const passData = DirectorPipeline.buildPassCardData('extractStyleAnchor', { pass: 3, label: '风格锚点' }, { styleAnchor: null, skipped: true }, elapsed)
+        writer(config)?.({ type: 'pass_complete', pass: 3, label: '风格锚点（无参考图，已跳过）', elapsed, passData })
         return { styleAnchor: null, styleConflicts: [] }
       }
 
@@ -1002,18 +1002,18 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         if (!parsed?.styleAnchor?.medium) {
           console.warn('[DirectorPipeline] extractStyleAnchor: extraction failed, skipping')
           const elapsed = Date.now() - t0
-          writer(config)?.({ type: 'pass_complete', pass: 1, label: '风格锚点（提取失败，已跳过）', elapsed, passData: null })
+          writer(config)?.({ type: 'pass_complete', pass: 3, label: '风格锚点（提取失败，已跳过）', elapsed, passData: null })
           return { styleAnchor: null, styleConflicts: [] }
         }
 
         const elapsed = Date.now() - t0
         const passData = DirectorPipeline.buildPassCardData(
-          'extractStyleAnchor', { pass: 1, label: '风格锚点' },
+          'extractStyleAnchor', { pass: 3, label: '风格锚点' },
           { styleAnchor: parsed.styleAnchor, conflicts: parsed.conflicts },
           elapsed, appliedSkills,
         )
         writer(config)?.({
-          type: 'pass_complete', pass: 1,
+          type: 'pass_complete', pass: 3,
           label: `风格锚点提取完成 (${(elapsed / 1000).toFixed(1)}s)`,
           elapsed, passData,
         })
@@ -1025,7 +1025,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       } catch (err: unknown) {
         console.warn('[DirectorPipeline] extractStyleAnchor failed:', err instanceof Error ? err.message : String(err))
         const elapsed = Date.now() - t0
-        writer(config)?.({ type: 'pass_complete', pass: 1, label: '风格锚点（异常，已跳过）', elapsed, passData: null })
+        writer(config)?.({ type: 'pass_complete', pass: 3, label: '风格锚点（异常，已跳过）', elapsed, passData: null })
         return { styleAnchor: null, styleConflicts: [] }
       }
     }
@@ -1084,7 +1084,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       }
     }
 
-    // ===== Pass 3: 分镜设计 + 提示词组装 =====
+    // ===== Pass 4: 分镜设计 + 提示词组装 =====
     // 3-level error recovery (LangChain best practice):
     //   L1: includeRaw + regex extraction (0 extra LLM calls)
     //   L2: SimplePanelSchema fallback (+1 LLM call, simpler schema = higher success)
@@ -1145,8 +1145,8 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
       const emitSuccess = (panels: any[], prompts: any[], level: string) => {
         const elapsed = Date.now() - t0
-        const passData = DirectorPipeline.buildPassCardData('designAndAssemble', { pass: 3, label: '分镜设计+提示词' }, { panels, prompts }, elapsed, appliedSkills)
-        writer(config)?.({ type: 'pass_complete', pass: 3, label: `分镜+提示词完成 [${level}] (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
+        const passData = DirectorPipeline.buildPassCardData('designAndAssemble', { pass: 4, label: '分镜设计+提示词' }, { panels, prompts }, elapsed, appliedSkills)
+        writer(config)?.({ type: 'pass_complete', pass: 4, label: `分镜+提示词完成 [${level}] (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
       }
 
       // --- Level 1: Full schema with includeRaw + regex fallback ---
@@ -1180,7 +1180,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
       // --- Level 2: Simplified schema (just id + prompt) ---
       let lastError = ''
-      writer(config)?.({ type: 'pass_complete', pass: 3, label: '分镜格式降级重试...', elapsed: Date.now() - t0, passData: null })
+      writer(config)?.({ type: 'pass_complete', pass: 4, label: '分镜格式降级重试...', elapsed: Date.now() - t0, passData: null })
       try {
         const simpleStructured = self.createStructuredLLM(SimplePanelSchema)
         const simpleResult = await simpleStructured.invoke(messages, { signal: config?.signal })
@@ -1199,7 +1199,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
       // --- Level 3: Error feedback to LLM (LLM-recoverable pattern) ---
       // Pass the actual error so LLM knows exactly what went wrong
-      writer(config)?.({ type: 'pass_complete', pass: 3, label: '分镜 LLM 自修正重试...', elapsed: Date.now() - t0, passData: null })
+      writer(config)?.({ type: 'pass_complete', pass: 4, label: '分镜 LLM 自修正重试...', elapsed: Date.now() - t0, passData: null })
       try {
         const llm = self.createLLM()
         const feedbackResult = await llm.invoke(
@@ -1226,25 +1226,25 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       }
 
       // --- All levels failed ---
-      emitError(config, 3, '分镜+提示词', 'designAndAssemble', 'All 3 recovery levels failed', Date.now() - t0)
+      emitError(config, 4, '分镜+提示词', 'designAndAssemble', 'All 3 recovery levels failed', Date.now() - t0)
       return { panels: null, prompts: null }
     }
 
-    // ===== Pass 4a: 快速校验 (code-level) =====
+    // ===== Pass 5a: 快速校验 (code-level) =====
     const codeVerifyNode = (state: DirectorState, config: any) => {
       const t0 = Date.now()
       const result = codeVerify(state)
       const elapsed = Date.now() - t0
-      const passData = DirectorPipeline.buildPassCardData('codeVerify', { pass: 4, label: '快速校验' }, { report: result }, elapsed)
+      const passData = DirectorPipeline.buildPassCardData('codeVerify', { pass: 5, label: '快速校验' }, { report: result }, elapsed)
       writer(config)?.({
-        type: 'pass_complete', pass: 4,
+        type: 'pass_complete', pass: 5,
         label: `快速校验完成 (score: ${result.score}, ${elapsed}ms)`,
         elapsed, passData,
       })
       return { report: result }
     }
 
-    // ===== Pass 4b: 深度校验 (LLM text-only, skippable) =====
+    // ===== Pass 5b: 深度校验 (LLM text-only, skippable) =====
     const verifyConsistencyFn = async (state: DirectorState, config: any) => {
       checkPauseAndInterrupt('verifyConsistency', config)
       const t0 = Date.now()
@@ -1274,15 +1274,15 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         if (typeof result.ok !== 'boolean') result.ok = result.score >= 6
         if (!Array.isArray(result.issues)) result.issues = []
         const elapsed = Date.now() - t0
-        const passData = DirectorPipeline.buildPassCardData('verifyConsistency', { pass: 4, label: '一致性校验' }, { report: result }, elapsed, appliedSkills)
+        const passData = DirectorPipeline.buildPassCardData('verifyConsistency', { pass: 5, label: '一致性校验' }, { report: result }, elapsed, appliedSkills)
         writer(config)?.({
-          type: 'pass_complete', pass: 4,
+          type: 'pass_complete', pass: 5,
           label: `一致性校验完成 (score: ${result.score}, ${(elapsed / 1000).toFixed(1)}s)`,
           elapsed, passData,
         })
         return { report: result }
       } catch (err: unknown) {
-        emitError(config, 4, '一致性校验', 'verifyConsistency', err instanceof Error ? err.message : String(err), Date.now() - t0)
+        emitError(config, 5, '一致性校验', 'verifyConsistency', err instanceof Error ? err.message : String(err), Date.now() - t0)
         return { report: null }
       }
     }
@@ -1333,11 +1333,11 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       return shouldRetryAnalysis(state)
     }
 
-    // ===== Pass 5: Contact Sheet 图像生成 =====
+    // ===== Pass 6: Contact Sheet 图像生成 =====
     const generateImagesFn = async (state: DirectorState, config: any) => {
       checkPauseAndInterrupt('generateImages', config)
       const t0 = Date.now()
-      const passNum = state.skipVerify ? 4 : 5
+      const passNum = state.skipVerify ? 5 : 6
       const appliedSkills = self.getSkillsForPhase('generateImages', state as Record<string, unknown>)
       try {
         const { getApiService } = await import('../api/ApiService')
@@ -1571,7 +1571,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     this._currentThreadId = threadId
 
     const skipVerify = (input as Partial<DirectorState>).skipVerify ?? false
-    const totalPasses = skipVerify ? 4 : 5
+    const totalPasses = skipVerify ? 5 : 6
     this._lastTotalPasses = totalPasses
     let finalState: DirectorState = { ...input } as DirectorState
 
@@ -1630,10 +1630,10 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
             })
           } else if (mode === 'updates') {
             const updatesData = data && typeof data === 'object' ? data : {}
-            const entries = Object.entries(updatesData)
-            if (entries.length > 0) {
-              const [, output] = entries[0] as [string, any]
-              finalState = { ...finalState, ...output }
+            for (const [, output] of Object.entries(updatesData)) {
+              if (output && typeof output === 'object') {
+                finalState = { ...finalState, ...(output as any) }
+              }
             }
             const hasGenerateImagesOutput = Object.prototype.hasOwnProperty.call(updatesData, 'generateImages')
             if (hasGenerateImagesOutput) {
@@ -1723,10 +1723,10 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
             })
           } else if (mode === 'updates') {
             const updatesData = data
-            const entries = Object.entries(updatesData)
-            if (entries.length > 0) {
-              const [, output] = entries[0] as [string, any]
-              finalState = { ...finalState, ...output }
+            for (const [, output] of Object.entries(updatesData)) {
+              if (output && typeof output === 'object') {
+                finalState = { ...finalState, ...(output as any) }
+              }
             }
             if (Object.prototype.hasOwnProperty.call(updatesData, 'generateImages')) {
               const generateImagesOutput = (updatesData as any).generateImages
@@ -1762,7 +1762,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
   }
 
   /**
-   * 仅重新生成图片（跳过 pass 0-4，复用之前的分镜/角色/场景数据）
+   * 仅重新生成图片（跳过 pass 0-5，复用之前的分镜/角色/场景数据）
    */
   async regenerateImages(
     previousState: Partial<DirectorState>,
@@ -1777,7 +1777,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
     const state = { ...previousState, currentImageCount: imageCount } as DirectorState
     const prompts = state.prompts || []
-    const passNum = state.skipVerify ? 4 : 5
+    const passNum = state.skipVerify ? 5 : 6
     const appliedSkills = this.getSkillsForPhase('generateImages', state as Record<string, unknown>)
     const drawingModel = state.imageModel?.trim()
     if (!drawingModel) {
