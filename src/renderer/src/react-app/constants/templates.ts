@@ -133,7 +133,7 @@ export function getCustomTemplates(): TemplateData[] {
 }
 
 export function addCustomTemplate(data: Omit<TemplateData, 'key'>): string {
-  const key = `custom-${Date.now()}`
+  const key = `custom-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
   const template: TemplateData = { ...data, key }
 
   const customs = readCustomTemplates()

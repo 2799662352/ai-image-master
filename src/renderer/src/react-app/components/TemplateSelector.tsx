@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useDirectorStore } from '../stores/useDirectorStore'
 import {
   BUILTIN_TEMPLATES,
@@ -27,8 +27,15 @@ export function TemplateSelector() {
   const setTemplate = useDirectorStore((s) => s.setTemplate)
   const [showModal, setShowModal] = useState(false)
   const [editor, setEditor] = useState<EditorState | null>(null)
+  const [listVersion, setListVersion] = useState(0)
 
   const active = currentTemplate ? TEMPLATE_MAP[currentTemplate] : null
+
+  useEffect(() => {
+    if (currentTemplate && !TEMPLATE_MAP[currentTemplate]) {
+      setTemplate(null)
+    }
+  }, [currentTemplate, setTemplate])
 
   const handleSelect = useCallback((key: string) => {
     setTemplate(key)
@@ -156,6 +163,7 @@ export function TemplateSelector() {
                                 e.stopPropagation()
                                 deleteCustomTemplate(key)
                                 if (currentTemplate === key) setTemplate(null)
+                                setListVersion(v => v + 1)
                               }}
                               className="w-8 h-8 bg-[#3F3F46] hover:bg-red-600 text-white opacity-50 hover:opacity-100 rounded-none flex items-center justify-center transition-all"
                               title="删除"
@@ -332,6 +340,7 @@ export function TemplateSelector() {
                       setTemplate(newKey)
                     }
                     setEditor(null)
+                    setListVersion(v => v + 1)
                     const toast = (window as any).toastManagerTS ?? (window as any).toastManager
                     toast?.show?.('模板已保存', 'success')
                   }}
