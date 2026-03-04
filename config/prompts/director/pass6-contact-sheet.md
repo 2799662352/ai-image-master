@@ -5,6 +5,10 @@ label: 图像生成
 type: image-prompt
 ---
 
+{{style_directive_section}}
+{{style_anchor_section}}
+{{reference_image_role_rules}}
+
 Cinematic Contact Sheet, ONE single master image, {{grid_rows}} rows x {{grid_cols}} columns storyboard grid, {{panel_count}} panels total.
 
 STRICT GRID GEOMETRY RULES:
@@ -16,10 +20,7 @@ STRICT GRID GEOMETRY RULES:
 - NO margins, NO padding, NO header/footer area outside the grid.
 - NO text, NO labels, NO captions, NO annotations, NO panel numbers inside or outside the panels.
 - Each panel is a distinct camera shot — NO blending between panels.
-- MATCH the visual style of the reference images exactly (photorealistic stays photorealistic, anime stays anime).
 
 {{character_identity_section}}
-{{style_directive_section}}
-{{style_anchor_section}}
 Panel descriptions:
-{{panel_descriptions}}
+{{enhanced_panel_descriptions}}
