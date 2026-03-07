@@ -292,16 +292,29 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
           console.warn('[StoryboardProPipeline] sceneDecompose L1 error:', e instanceof Error ? e.message : String(e))
         }
 
-        // --- L2: Simplified schema fallback ---
+        // --- L2: Simplified schema fallback with raw unwrap ---
         if (!scene?.d) {
           console.warn('[StoryboardProPipeline] sceneDecompose L1 failed, trying L2 SimpleSceneSchema')
           try {
-            const simpleStructured = self.createStructuredLLM(SimpleSceneSchema, undefined, 4096, 'jsonMode')
-            const simpleResult = await simpleStructured.invoke(userMessages, { signal: config?.signal })
+            const simpleWithRaw = self.createStructuredLLMWithRaw(SimpleSceneSchema, undefined, 4096, 'jsonMode')
+            const simpleResponse = await simpleWithRaw.invoke(userMessages, { signal: config?.signal })
+            let simpleResult = (simpleResponse as any)?.parsed
+            simpleResult = unwrapScene(simpleResult)
+
+            if (!simpleResult || typeof simpleResult.d !== 'string') {
+              const rawText = typeof (simpleResponse as any)?.raw?.content === 'string'
+                ? (simpleResponse as any).raw.content : ''
+              try {
+                let fallback = JSON.parse(rawText)
+                fallback = unwrapScene(fallback)
+                if (typeof fallback.d === 'string') simpleResult = fallback
+              } catch { /* give up */ }
+            }
+
             console.log('[StoryboardProPipeline] sceneDecompose L2 result:',
-              simpleResult ? `d="${simpleResult.d}" cap="${(simpleResult.cap || '').slice(0, 50)}"` : 'null')
+              simpleResult ? `d="${(simpleResult.d || '').slice(0, 60)}" cap="${(simpleResult.cap || '').slice(0, 50)}"` : 'null')
             if (simpleResult && typeof simpleResult.d === 'string') {
-              scene = { ...simpleResult, bgm: '', timeline: [] }
+              scene = { ...simpleResult, bgm: simpleResult.bgm || '', timeline: [] }
               console.log('[StoryboardProPipeline] sceneDecompose L2 success via SimpleSceneSchema')
             }
           } catch (e: unknown) {
