@@ -8,6 +8,7 @@ import {
 } from '../LangChainStoryboardService'
 import type { StoryboardResponse } from '../LangChainStoryboardService'
 import { VerifySchema } from '../pipeline/schemas/director-schemas'
+import { unwrapVerifyResult } from '../pipeline/DirectorPipeline'
 import type {
   PipelineConfig,
   PipelineSkill,
@@ -578,7 +579,7 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
       const t0 = Date.now()
       try {
         const appliedSkills = self.getSkillsForPhase('deepVerify', state as Record<string, unknown>)
-        const structured = self.createStructuredLLM(VerifySchema, undefined, 4096, 'jsonMode')
+        const structuredWithRaw = self.createStructuredLLMWithRaw(VerifySchema, undefined, 4096, 'jsonMode')
 
         const sceneSummary = state.scene
           ? `弧线: ${state.scene.d}\n环境: ${state.scene.env}`
@@ -601,7 +602,7 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
           state as Record<string, unknown>,
           `You are a continuity supervisor for storyboard production. Verify consistency.\nScene: ${sceneSummary}\nCharacters: ${characterSummary}\nShots:\n${shotsSummary}\nContinuity: ${state.cont}`,
         )
-        const raw = await structured.invoke(
+        const response = await structuredWithRaw.invoke(
           [
             { role: 'system', content: systemPrompt },
             {
@@ -611,7 +612,29 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
           ],
           { signal: config?.signal },
         )
-        const result = raw ?? { score: 7, ok: true, issues: [] }
+
+        let result = (response as any)?.parsed
+        if (!result || typeof result.score !== 'number') {
+          const unwrapped = unwrapVerifyResult(result)
+          if (unwrapped) {
+            result = unwrapped
+          } else {
+            const rawText = typeof (response as any)?.raw?.content === 'string'
+              ? (response as any).raw.content : ''
+            if (rawText) {
+              try {
+                const match = rawText.match(/\{[\s\S]*\}/)
+                if (match) {
+                  const parsed = JSON.parse(match[0])
+                  const extracted = unwrapVerifyResult(parsed)
+                  if (extracted) result = extracted
+                }
+              } catch { /* fallback below */ }
+            }
+          }
+        }
+
+        result = result ?? { score: 7, ok: true, issues: [] }
         if (typeof result.score !== 'number') result.score = 7
         if (typeof result.ok !== 'boolean') result.ok = result.score >= 6
         if (!Array.isArray(result.issues)) result.issues = []
