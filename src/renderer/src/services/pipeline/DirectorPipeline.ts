@@ -122,9 +122,12 @@ export function buildCharacterIdentityLock(characters: Array<{ name?: string; an
   stableEntries.sort((a, b) => a.stableKey.localeCompare(b.stableKey))
   const lines = stableEntries.map((entry, i) => `- [char${i + 1}] ${entry.name} (${entry.pronoun}): ${entry.anchor}`)
   return [
-    '## Character Identity Lock',
+    '## Character Identity Lock (BINDING)',
     ...lines,
-    'Identity continuity is mandatory across all panels; do not drift core appearance traits.',
+    'FIXED (MUST NOT change across panels): face structure, hairstyle, hair color, outfit design, signature accessories, eye color.',
+    'FLEXIBLE (MAY change for dramatic effect): pose, expression, action, lighting on character, camera angle, minor battle damage.',
+    'Reference image is the SINGLE SOURCE OF TRUTH for character identity.',
+    'Identity continuity is mandatory — viewers must recognize the same character in every panel.',
   ].join('\n')
 }
 
