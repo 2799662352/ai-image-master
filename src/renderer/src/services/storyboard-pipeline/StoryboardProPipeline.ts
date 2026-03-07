@@ -76,6 +76,7 @@ const stateSchema = z.object({
   cont: z.string().default(''),
   notes: z.string().default(''),
   report: VerifySchema.nullable().default(null),
+  analysisRetryCount: z.number().default(0),
   retryCount: z.number().default(0),
   retryFeedback: z.string().default(''),
   inputImages: z.array(z.object({
@@ -86,6 +87,20 @@ const stateSchema = z.object({
 })
 
 export type StoryboardState = z.infer<typeof stateSchema>
+
+const MAX_ANALYSIS_RETRIES = 2
+
+export function shouldRetryStoryboardAnalysis(state: {
+  scene: { d?: string } | null
+  objs: Array<{ n?: string }> | null
+  analysisRetryCount: number
+}): 'continue' | 'retry' | 'abort' {
+  const sceneOk = state.scene && state.scene.d && state.scene.d !== '(analysis failed)'
+  const objsOk = state.objs && state.objs.length > 0
+  if (sceneOk || objsOk) return 'continue'
+  if (state.analysisRetryCount >= MAX_ANALYSIS_RETRIES) return 'abort'
+  return 'retry'
+}
 
 // ==================== Pipeline ====================
 
@@ -590,6 +605,33 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
       }
     }
 
+    // ===== Analysis Gate Nodes =====
+    const validateAnalysisFn = (state: StoryboardState) => {
+      console.log(`[StoryboardProPipeline] validateAnalysis: scene=${!!state.scene?.d}, objs=${!!state.objs?.length}, retries=${state.analysisRetryCount}`)
+      return {}
+    }
+
+    const prepareAnalysisRetryFn = (state: StoryboardState, config: any) => {
+      const count = state.analysisRetryCount + 1
+      console.warn(`[StoryboardProPipeline] Analysis data empty, retrying (${count}/${MAX_ANALYSIS_RETRIES})...`)
+      writer(config)?.({
+        type: 'pass_complete', pass: 1,
+        label: `场景/角色数据为空，重试中 (${count}/${MAX_ANALYSIS_RETRIES})...`,
+        elapsed: 0, passData: null,
+      })
+      return { analysisRetryCount: count, scene: null, objs: null }
+    }
+
+    const abortPipelineFn = (_state: StoryboardState, config: any) => {
+      const msg = '场景分解和角色提取均失败，管线终止。请检查网络或换用更强的模型后重试。'
+      console.error(`[StoryboardProPipeline] ${msg}`)
+      writer(config)?.({
+        type: 'pass_complete', pass: 1,
+        label: msg, elapsed: 0, passData: null,
+      })
+      return { seq: null }
+    }
+
     // ===== Routing Functions =====
     const routeAfterCodeVerify = (state: StoryboardState): 'end' | 'deepVerify' => {
       const report = state.report
@@ -609,6 +651,9 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
     const graph = new StateGraph(stateSchema)
       .addNode('sceneDecompose', sceneDecomposeFn, { retryPolicy: retryLLM })
       .addNode('characterExtract', characterExtractFn, { retryPolicy: retryLLM })
+      .addNode('validateAnalysis', validateAnalysisFn)
+      .addNode('prepareAnalysisRetry', prepareAnalysisRetryFn)
+      .addNode('abortPipeline', abortPipelineFn)
       .addNode('shotDesign', shotDesignFn)
       .addNode('codeVerify', codeVerifyNode)
       .addNode('deepVerify', deepVerifyFn)
@@ -616,8 +661,22 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
       // START → parallel sceneDecompose + characterExtract
       .addEdge(START, 'sceneDecompose')
       .addEdge(START, 'characterExtract')
-      // Both converge → shotDesign
-      .addEdge(['sceneDecompose', 'characterExtract'], 'shotDesign')
+      // Both converge → validateAnalysis (gate before shotDesign)
+      .addEdge('sceneDecompose', 'validateAnalysis')
+      .addEdge('characterExtract', 'validateAnalysis')
+      // validateAnalysis → conditional: continue / retry / abort
+      .addConditionalEdges('validateAnalysis', (state: StoryboardState) => {
+        return shouldRetryStoryboardAnalysis(state)
+      }, {
+        continue: 'shotDesign',
+        retry: 'prepareAnalysisRetry',
+        abort: 'abortPipeline',
+      })
+      // prepareAnalysisRetry → retry both passes
+      .addEdge('prepareAnalysisRetry', 'sceneDecompose')
+      .addEdge('prepareAnalysisRetry', 'characterExtract')
+      // abortPipeline → END
+      .addEdge('abortPipeline', END)
       // shotDesign → codeVerify
       .addEdge('shotDesign', 'codeVerify')
       // codeVerify → conditional: end or deepVerify
