@@ -38,3 +38,34 @@ describe('Storyboard regex fallback patterns', () => {
     expect(parsed.cont).toBe('anchor')
   })
 })
+
+describe('unwrapScene helper', () => {
+  function unwrapScene(data: any): any {
+    if (data?.scene && typeof data.scene === 'object' && typeof data.scene.d === 'string') return data.scene
+    return data
+  }
+
+  it('returns scene data when nested inside scene key', () => {
+    const wrapped = { scene: { d: 'A→B→C', cap: 'test', env: 'outdoor' }, objs: [{ n: 'Alice' }] }
+    const result = unwrapScene(wrapped)
+    expect(result.d).toBe('A→B→C')
+    expect(result.cap).toBe('test')
+  })
+
+  it('returns data as-is when already flat', () => {
+    const flat = { d: 'A→B→C', cap: 'test', env: 'outdoor' }
+    const result = unwrapScene(flat)
+    expect(result.d).toBe('A→B→C')
+  })
+
+  it('returns data as-is when scene key has no d field', () => {
+    const weird = { scene: { something: 'else' }, d: 'root' }
+    const result = unwrapScene(weird)
+    expect(result.d).toBe('root')
+  })
+
+  it('returns null/undefined as-is', () => {
+    expect(unwrapScene(null)).toBeNull()
+    expect(unwrapScene(undefined)).toBeUndefined()
+  })
+})

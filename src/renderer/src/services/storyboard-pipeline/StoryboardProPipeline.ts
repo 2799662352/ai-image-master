@@ -110,6 +110,11 @@ export function shouldRetryStoryboardAnalysis(state: {
   return 'retry'
 }
 
+function unwrapScene(data: any): any {
+  if (data?.scene && typeof data.scene === 'object' && typeof data.scene.d === 'string') return data.scene
+  return data
+}
+
 // ==================== Pipeline ====================
 
 export class StoryboardProPipeline extends BasePipeline<StoryboardState, StoryboardResponse> {
@@ -263,6 +268,7 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
           const structuredWithRaw = self.createStructuredLLMWithRaw(FlatSceneSchema, undefined, 4096, 'jsonMode')
           const response = await structuredWithRaw.invoke(userMessages, { signal: config?.signal })
           scene = (response as any)?.parsed
+          scene = unwrapScene(scene)
           if (scene && typeof scene.d === 'string') {
             if (!scene.timeline) scene.timeline = []
           }
@@ -277,6 +283,7 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
               const match = rawText.match(/\{[\s\S]*"d"\s*:[\s\S]*\}/)
               if (match) {
                 scene = JSON.parse(match[0])
+                scene = unwrapScene(scene)
                 if (!scene.timeline) scene.timeline = []
               }
             } catch { /* L2 below */ }
