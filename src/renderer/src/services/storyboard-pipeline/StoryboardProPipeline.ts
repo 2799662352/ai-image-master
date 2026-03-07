@@ -229,7 +229,7 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
           const rawText = typeof (response as any)?.raw?.content === 'string'
             ? (response as any).raw.content : ''
           try {
-            const match = rawText.match(/\{[\s\S]*?"d"\s*:[\s\S]*?\}/)
+            const match = rawText.match(/\{[\s\S]*"d"\s*:[\s\S]*\}/)
             if (match) scene = JSON.parse(match[0])
           } catch { /* fallback below */ }
         }
@@ -287,7 +287,7 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
           const rawText = typeof (response as any)?.raw?.content === 'string'
             ? (response as any).raw.content : ''
           try {
-            const match = rawText.match(/\{[\s\S]*?"objs"\s*:\s*\[[\s\S]*?\][\s\S]*?\}/)
+            const match = rawText.match(/\{[\s\S]*"objs"\s*:\s*\[[\s\S]*\][\s\S]*\}/)
             if (match) {
               const fallback = JSON.parse(match[0])
               if (fallback?.objs?.length) parsed = fallback
@@ -372,7 +372,7 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
             ? (response as any).raw.content
             : JSON.stringify((response as any)?.raw?.content ?? '')
           try {
-            const jsonMatch = rawText.match(/\{[\s\S]*?"seq"\s*:\s*\[[\s\S]*?\][\s\S]*?\}/)
+            const jsonMatch = rawText.match(/\{[\s\S]*"seq"\s*:\s*\[[\s\S]*\][\s\S]*\}/)
             if (jsonMatch) {
               const fallback = JSON.parse(jsonMatch[0])
               if (fallback?.seq?.length) parsed = fallback
@@ -426,7 +426,7 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
           { signal: config?.signal },
         )
         const text = typeof feedbackResult.content === 'string' ? feedbackResult.content : ''
-        const jsonMatch = text.match(/\{[\s\S]*?"seq"\s*:\s*\[[\s\S]*?\][\s\S]*?\}/)
+        const jsonMatch = text.match(/\{[\s\S]*"seq"\s*:\s*\[[\s\S]*\][\s\S]*\}/)
         if (jsonMatch) {
           const parsed = JSON.parse(jsonMatch[0])
           if (parsed?.seq?.length) {
