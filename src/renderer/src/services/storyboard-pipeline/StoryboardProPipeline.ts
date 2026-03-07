@@ -271,9 +271,9 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
         if (!scene?.d) {
           console.warn('[StoryboardProPipeline] sceneDecompose L1 failed, trying L2 SimpleSceneSchema')
           try {
-            const simpleStructured = self.createStructuredLLM(SimpleSceneSchema)
+            const simpleStructured = self.createStructuredLLM(SimpleSceneSchema, undefined, 4096, 'jsonMode')
             const simpleResult = await simpleStructured.invoke(userMessages, { signal: config?.signal })
-            if (simpleResult?.d) {
+            if (simpleResult && typeof simpleResult.d === 'string') {
               scene = { ...simpleResult, bgm: '', timeline: [] }
               console.log('[StoryboardProPipeline] sceneDecompose L2 success via SimpleSceneSchema')
             }
@@ -351,7 +351,7 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
         if (!parsed?.objs?.length) {
           console.warn('[StoryboardProPipeline] characterExtract L1 failed, trying L2 SimpleObjArraySchema')
           try {
-            const simpleStructured = self.createStructuredLLM(SimpleObjArraySchema)
+            const simpleStructured = self.createStructuredLLM(SimpleObjArraySchema, undefined, 4096, 'jsonMode')
             const simpleResult = await simpleStructured.invoke(userMessages, { signal: config?.signal })
             if (simpleResult?.objs?.length) {
               parsed = {
