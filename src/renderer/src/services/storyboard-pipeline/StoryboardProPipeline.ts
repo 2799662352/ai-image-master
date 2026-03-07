@@ -267,8 +267,12 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
             if (!scene.timeline) scene.timeline = []
           }
           if (!scene || typeof scene.d !== 'string') {
-            const rawText = typeof (response as any)?.raw?.content === 'string'
-              ? (response as any).raw.content : ''
+            const rawContent = (response as any)?.raw?.content
+            const rawText = typeof rawContent === 'string' ? rawContent : ''
+            console.warn('[StoryboardProPipeline] sceneDecompose L1 parsed empty.',
+              'rawContent type:', typeof rawContent,
+              'rawText length:', rawText.length,
+              'preview:', rawText.slice(0, 300))
             try {
               const match = rawText.match(/\{[\s\S]*"d"\s*:[\s\S]*\}/)
               if (match) {
@@ -287,6 +291,8 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
           try {
             const simpleStructured = self.createStructuredLLM(SimpleSceneSchema, undefined, 4096, 'jsonMode')
             const simpleResult = await simpleStructured.invoke(userMessages, { signal: config?.signal })
+            console.log('[StoryboardProPipeline] sceneDecompose L2 result:',
+              simpleResult ? `d="${simpleResult.d}" cap="${(simpleResult.cap || '').slice(0, 50)}"` : 'null')
             if (simpleResult && typeof simpleResult.d === 'string') {
               scene = { ...simpleResult, bgm: '', timeline: [] }
               console.log('[StoryboardProPipeline] sceneDecompose L2 success via SimpleSceneSchema')
