@@ -50,6 +50,24 @@ describe('BasePipeline', () => {
     expect(pipeline.buildSystemPrompt('myPhase', 'base', { dark: true })).toContain('Dark mode rules')
   })
 
+  it('isGeminiModel correctly identifies Gemini models', () => {
+    const pipeline = new TestPipeline(config)
+    expect((pipeline as any).isGeminiModel('gemini-3-flash-preview')).toBe(true)
+    expect((pipeline as any).isGeminiModel('gemini-2.5-pro')).toBe(true)
+    expect((pipeline as any).isGeminiModel('gpt-4o')).toBe(false)
+    expect((pipeline as any).isGeminiModel('claude-3-opus')).toBe(false)
+  })
+
+  it('createStructuredLLM accepts methodOverride parameter', () => {
+    const pipeline = new TestPipeline({
+      model: 'gemini-3-flash-preview',
+      apiKey: 'test-key',
+      baseURL: 'http://localhost:8080',
+    })
+    expect((pipeline as any).isGeminiModel('gemini-3-flash-preview')).toBe(true)
+    expect((pipeline as any).isGeminiModel('gpt-4o')).toBe(false)
+  })
+
   it('buildImageContent returns correct format', () => {
     const content = BasePipeline.buildImageContent(
       [{ data: 'abc123', mimeType: 'image/png' }],

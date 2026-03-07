@@ -126,20 +126,34 @@ export abstract class BasePipeline<TState, TResult> {
     })
   }
 
-  protected createStructuredLLM<T extends z.ZodType>(schema: T, model?: string, maxTokens = 4096) {
+  protected createStructuredLLM<T extends z.ZodType>(
+    schema: T,
+    model?: string,
+    maxTokens = 4096,
+    methodOverride?: 'functionCalling' | 'jsonMode' | 'jsonSchema',
+  ) {
     const llm = this.createLLM(model, maxTokens)
     const m = model || this.config.model
-    if (this.isGeminiModel(m)) {
-      return llm.withStructuredOutput(schema, { method: 'functionCalling' })
+    const method = methodOverride
+      ?? (this.isGeminiModel(m) ? 'functionCalling' : undefined)
+    if (method) {
+      return llm.withStructuredOutput(schema, { method: method as any })
     }
     return llm.withStructuredOutput(schema)
   }
 
-  protected createStructuredLLMWithRaw<T extends z.ZodType>(schema: T, model?: string, maxTokens = 4096) {
+  protected createStructuredLLMWithRaw<T extends z.ZodType>(
+    schema: T,
+    model?: string,
+    maxTokens = 4096,
+    methodOverride?: 'functionCalling' | 'jsonMode' | 'jsonSchema',
+  ) {
     const llm = this.createLLM(model, maxTokens)
     const m = model || this.config.model
-    const opts = this.isGeminiModel(m)
-      ? { method: 'functionCalling' as const, includeRaw: true as const }
+    const method = methodOverride
+      ?? (this.isGeminiModel(m) ? 'functionCalling' : undefined)
+    const opts = method
+      ? { method: method as any, includeRaw: true as const }
       : { includeRaw: true as const }
     return llm.withStructuredOutput(schema, opts)
   }
