@@ -45,6 +45,21 @@ const SimpleShotDesignSchema = z.object({
   notes: z.string().default(''),
 })
 
+const SimpleSceneSchema = z.object({
+  d: z.string().describe('Narrative arc: A→B→C'),
+  cap: z.string().describe('Structured caption'),
+  env: z.string().describe('Environment description'),
+})
+
+const SimpleObjArraySchema = z.object({
+  objs: z.array(z.object({
+    n: z.string().describe('Character/object name'),
+    f: z.string().describe('Appearance features'),
+    t: z.string().describe('Cross-shot consistency anchor'),
+    act: z.string().describe('Action'),
+  })),
+})
+
 // ==================== State ====================
 
 const stateSchema = z.object({
