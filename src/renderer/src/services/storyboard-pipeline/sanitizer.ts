@@ -94,7 +94,7 @@ export function sanitizeStoryboardResponse(response: StoryboardResponse): Storyb
       ...obj,
       f: sanitizeText(obj.f),
       act: sanitizeText(obj.act),
-      motive: sanitizeText(obj.motive),
+      motive: obj.motive ? sanitizeText(obj.motive) : obj.motive,
     })),
     seq: response.seq.map(s => ({
       ...s,

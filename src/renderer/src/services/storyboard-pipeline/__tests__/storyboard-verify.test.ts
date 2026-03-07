@@ -43,4 +43,24 @@ describe('storyboardCodeVerify', () => {
     const result = storyboardCodeVerify({ scene: null, objs: [], seq: [], cont: '', notes: '' } as any)
     expect(result.ok).toBe(false)
   })
+
+  it('should handle L2-simplified objects (only n, f, t, act)', () => {
+    const result = storyboardCodeVerify(makeState({
+      objs: [{ n: 'Alice', f: 'blonde', t: 'hair anchor', act: 'walk' }],
+      seq: [{ id: 'S1', desc: 'Alice walks forward' }],
+    }) as any)
+    expect(result.score).toBeGreaterThanOrEqual(6)
+    expect(result.ok).toBe(true)
+  })
+
+  it('should not crash on objects without optional fields', () => {
+    const result = storyboardCodeVerify({
+      scene: { d: 'arc', env: 'outdoor' },
+      objs: [{ n: 'Bob' }],
+      seq: [{ id: 'S1', desc: 'Bob stands still' }],
+      cont: 'S1-S2: anchor',
+      notes: 'ok',
+    } as any)
+    expect(result.score).toBeGreaterThanOrEqual(4)
+  })
 })
