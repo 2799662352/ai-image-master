@@ -1189,7 +1189,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       const t0 = Date.now()
       try {
         const appliedSkills = self.getSkillsForPhase('verifyConsistency', state as Record<string, unknown>)
-        const structured = self.createStructuredLLM(VerifySchema, undefined, 4096, 'jsonMode')
+        const structuredWithRaw = self.createStructuredLLMWithRaw(VerifySchema, undefined, 4096, 'jsonMode')
         const vars = extractVarsForVerify(state)
         const systemPrompt = self.resolveSystemPrompt(
           'verifyConsistency', vars,
@@ -1201,14 +1201,36 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           type: 'text' as const,
           text: `Verify the following storyboard for consistency. Use a two-layer rubric and score 0-10.\n- Hard consistency (required): identity anchors for face/outfit/weapon remain recognizable.\n- Soft consistency (evolution-allowed): story-driven character/scene evolution remains plausible and aligned with narrative rhythm.\n\nScene: ${vars.scene_env}\n\nCharacter Anchors:\n${vars.character_anchors_summary}\n\nPanels:\n${vars.panels_summary_short}`,
         })
-        const raw = await structured.invoke(
+        const response = await structuredWithRaw.invoke(
           [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userContent },
           ],
           { signal: config?.signal },
         )
-        const result = raw ?? { score: 7, ok: true, issues: [] }
+
+        let result = (response as any)?.parsed
+        if (!result || typeof result.score !== 'number') {
+          const unwrapped = unwrapVerifyResult(result)
+          if (unwrapped) {
+            result = unwrapped
+          } else {
+            const rawText = typeof (response as any)?.raw?.content === 'string'
+              ? (response as any).raw.content : ''
+            if (rawText) {
+              try {
+                const match = rawText.match(/\{[\s\S]*\}/)
+                if (match) {
+                  const parsed = JSON.parse(match[0])
+                  const extracted = unwrapVerifyResult(parsed)
+                  if (extracted) result = extracted
+                }
+              } catch { /* fallback below */ }
+            }
+          }
+        }
+
+        result = result ?? { score: 7, ok: true, issues: [] }
         if (typeof result.score !== 'number') result.score = 7
         if (typeof result.ok !== 'boolean') result.ok = result.score >= 6
         if (!Array.isArray(result.issues)) result.issues = []
