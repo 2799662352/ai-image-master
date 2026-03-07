@@ -212,45 +212,64 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
       const t0 = Date.now()
       try {
         const appliedSkills = self.getSkillsForPhase('sceneDecompose', state as Record<string, unknown>)
-        const structuredWithRaw = self.createStructuredLLMWithRaw(StoryboardSceneSchema)
         const vars: Record<string, string> = { user_context: state.userContext || '' }
         const systemPrompt = self.resolveSystemPrompt(
           'sceneDecompose', vars,
           state as Record<string, unknown>,
           'You are a professional film storyboard analyst. Decompose the scene from the provided images. Output structured data covering: narrative arc (d), structured caption (cap), environment with lighting params (env), 4-layer sound design (bgm), and timeline with shots.',
         )
-        const response = await structuredWithRaw.invoke(
-          [
-            { role: 'system', content: systemPrompt },
-            {
-              role: 'user',
-              content: [
-                ...BasePipeline.buildImageContent(state.inputImages, 'high'),
-                {
-                  type: 'text' as const,
-                  text: state.userContext
-                    ? `参考素材如上。附加要求/剧本:\n${state.userContext}\n\n请分析场景结构。`
-                    : '请分析以上图片的场景结构。',
-                },
-              ],
-            },
-          ],
-          { signal: config?.signal },
-        )
+        const userMessages = [
+          { role: 'system' as const, content: systemPrompt },
+          {
+            role: 'user' as const,
+            content: [
+              ...BasePipeline.buildImageContent(state.inputImages, 'high'),
+              {
+                type: 'text' as const,
+                text: state.userContext
+                  ? `参考素材如上。附加要求/剧本:\n${state.userContext}\n\n请分析场景结构。`
+                  : '请分析以上图片的场景结构。',
+              },
+            ],
+          },
+        ]
 
-        // L1: structured parse + raw regex fallback
-        let scene = (response as any)?.parsed
-        if (!scene?.env && !scene?.d) {
-          const rawText = typeof (response as any)?.raw?.content === 'string'
-            ? (response as any).raw.content : ''
-          try {
-            const match = rawText.match(/\{[\s\S]*"d"\s*:[\s\S]*\}/)
-            if (match) scene = JSON.parse(match[0])
-          } catch { /* fallback below */ }
+        // --- L1: Full schema + jsonMode + includeRaw + greedy regex ---
+        let scene: any = null
+        try {
+          const structuredWithRaw = self.createStructuredLLMWithRaw(StoryboardSceneSchema, undefined, 4096, 'jsonMode')
+          const response = await structuredWithRaw.invoke(userMessages, { signal: config?.signal })
+          scene = (response as any)?.parsed
+          if (!scene?.env && !scene?.d) {
+            const rawText = typeof (response as any)?.raw?.content === 'string'
+              ? (response as any).raw.content : ''
+            try {
+              const match = rawText.match(/\{[\s\S]*"d"\s*:[\s\S]*\}/)
+              if (match) scene = JSON.parse(match[0])
+            } catch { /* L2 below */ }
+          }
+        } catch (e: unknown) {
+          console.warn('[StoryboardProPipeline] sceneDecompose L1 error:', e instanceof Error ? e.message : String(e))
         }
+
+        // --- L2: Simplified schema fallback ---
+        if (!scene?.d) {
+          console.warn('[StoryboardProPipeline] sceneDecompose L1 failed, trying L2 SimpleSceneSchema')
+          try {
+            const simpleStructured = self.createStructuredLLM(SimpleSceneSchema)
+            const simpleResult = await simpleStructured.invoke(userMessages, { signal: config?.signal })
+            if (simpleResult?.d) {
+              scene = { ...simpleResult, bgm: '', timeline: [] }
+              console.log('[StoryboardProPipeline] sceneDecompose L2 success via SimpleSceneSchema')
+            }
+          } catch (e: unknown) {
+            console.warn('[StoryboardProPipeline] sceneDecompose L2 error:', e instanceof Error ? e.message : String(e))
+          }
+        }
+
         if (!scene?.d) {
           scene = { d: '(analysis failed)', cap: '', env: '', bgm: '', timeline: [] }
-          console.warn('[StoryboardProPipeline] sceneDecompose: structured + raw extraction both failed')
+          console.warn('[StoryboardProPipeline] sceneDecompose: all extraction levels failed')
         }
 
         const elapsed = Date.now() - t0
@@ -269,49 +288,74 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
       const t0 = Date.now()
       try {
         const appliedSkills = self.getSkillsForPhase('characterExtract', state as Record<string, unknown>)
-        const ObjArraySchema = z.object({ objs: z.array(StoryboardObjSchema) })
-        const structuredWithRaw = self.createStructuredLLMWithRaw(ObjArraySchema)
         const vars: Record<string, string> = { user_context: state.userContext || '' }
         const systemPrompt = self.resolveSystemPrompt(
           'characterExtract', vars,
           state as Record<string, unknown>,
-          'You are a character analysis expert for storyboard production. Extract ALL characters and significant objects from the provided images with full 11-dimension schema (n, f, s, p, t, tc, act, fx, motive, a, m).',
+          'You are a character analysis expert for storyboard production. Extract ALL characters and significant objects from the provided images.',
         )
-        const response = await structuredWithRaw.invoke(
-          [
-            { role: 'system', content: systemPrompt },
-            {
-              role: 'user',
-              content: [
-                ...BasePipeline.buildImageContent(state.inputImages, 'high'),
-                {
-                  type: 'text' as const,
-                  text: state.userContext
-                    ? `参考素材如上。附加要求:\n${state.userContext}\n\n请提取所有角色和重要物体。`
-                    : '请提取以上图片中所有角色和重要物体。',
-                },
-              ],
-            },
-          ],
-          { signal: config?.signal },
-        )
+        const userMessages = [
+          { role: 'system' as const, content: systemPrompt },
+          {
+            role: 'user' as const,
+            content: [
+              ...BasePipeline.buildImageContent(state.inputImages, 'high'),
+              {
+                type: 'text' as const,
+                text: state.userContext
+                  ? `参考素材如上。附加要求:\n${state.userContext}\n\n请提取所有角色和重要物体。`
+                  : '请提取以上图片中所有角色和重要物体。',
+              },
+            ],
+          },
+        ]
 
-        // L1: structured parse + raw regex fallback
-        let parsed = (response as any)?.parsed
-        if (!parsed?.objs?.length) {
-          const rawText = typeof (response as any)?.raw?.content === 'string'
-            ? (response as any).raw.content : ''
-          try {
-            const match = rawText.match(/\{[\s\S]*"objs"\s*:\s*\[[\s\S]*\][\s\S]*\}/)
-            if (match) {
-              const fallback = JSON.parse(match[0])
-              if (fallback?.objs?.length) parsed = fallback
-            }
-          } catch { /* fallback below */ }
+        // --- L1: Full 11-field schema + jsonMode + includeRaw + greedy regex ---
+        let parsed: any = null
+        try {
+          const ObjArraySchema = z.object({ objs: z.array(StoryboardObjSchema) })
+          const structuredWithRaw = self.createStructuredLLMWithRaw(ObjArraySchema, undefined, 4096, 'jsonMode')
+          const response = await structuredWithRaw.invoke(userMessages, { signal: config?.signal })
+          parsed = (response as any)?.parsed
+          if (!parsed?.objs?.length) {
+            const rawText = typeof (response as any)?.raw?.content === 'string'
+              ? (response as any).raw.content : ''
+            try {
+              const match = rawText.match(/\{[\s\S]*"objs"\s*:\s*\[[\s\S]*\][\s\S]*\}/)
+              if (match) {
+                const fallback = JSON.parse(match[0])
+                if (fallback?.objs?.length) parsed = fallback
+              }
+            } catch { /* L2 below */ }
+          }
+        } catch (e: unknown) {
+          console.warn('[StoryboardProPipeline] characterExtract L1 error:', e instanceof Error ? e.message : String(e))
         }
+
+        // --- L2: Simplified 4-field schema fallback ---
+        if (!parsed?.objs?.length) {
+          console.warn('[StoryboardProPipeline] characterExtract L1 failed, trying L2 SimpleObjArraySchema')
+          try {
+            const simpleStructured = self.createStructuredLLM(SimpleObjArraySchema)
+            const simpleResult = await simpleStructured.invoke(userMessages, { signal: config?.signal })
+            if (simpleResult?.objs?.length) {
+              parsed = {
+                objs: simpleResult.objs.map((o: any) => ({
+                  n: o.n, f: o.f, t: o.t, act: o.act,
+                  s: 'fg|center|Z1', p: 'artic', tc: '', fx: null,
+                  motive: '', a: '', m: '',
+                })),
+              }
+              console.log(`[StoryboardProPipeline] characterExtract L2 success: ${parsed.objs.length} objs via SimpleObjArraySchema`)
+            }
+          } catch (e: unknown) {
+            console.warn('[StoryboardProPipeline] characterExtract L2 error:', e instanceof Error ? e.message : String(e))
+          }
+        }
+
         if (!parsed?.objs?.length) {
           parsed = { objs: [] }
-          console.warn('[StoryboardProPipeline] characterExtract: structured + raw extraction both failed')
+          console.warn('[StoryboardProPipeline] characterExtract: all extraction levels failed')
         }
 
         const elapsed = Date.now() - t0
