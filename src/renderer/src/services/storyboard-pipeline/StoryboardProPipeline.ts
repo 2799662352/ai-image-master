@@ -51,6 +51,14 @@ const SimpleSceneSchema = z.object({
   env: z.string().describe('Environment description'),
 })
 
+const FlatSceneSchema = z.object({
+  d: z.string().describe('Narrative arc: A(initial)→B(trigger)→C(end state)'),
+  cap: z.string().describe('Structured caption: subject-action-environment'),
+  env: z.string().describe('Environment: lighting, color palette, atmosphere'),
+  bgm: z.string().default('').describe('Sound design layers'),
+  shotCount: z.number().default(4).describe('Number of shots identified'),
+})
+
 const SimpleObjArraySchema = z.object({
   objs: z.array(z.object({
     n: z.string().describe('Character/object name'),
@@ -249,18 +257,24 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
           },
         ]
 
-        // --- L1: Full schema + jsonMode + includeRaw + greedy regex ---
+        // --- L1: Flat scene schema + jsonMode + includeRaw + greedy regex ---
         let scene: any = null
         try {
-          const structuredWithRaw = self.createStructuredLLMWithRaw(StoryboardSceneSchema, undefined, 4096, 'jsonMode')
+          const structuredWithRaw = self.createStructuredLLMWithRaw(FlatSceneSchema, undefined, 4096, 'jsonMode')
           const response = await structuredWithRaw.invoke(userMessages, { signal: config?.signal })
           scene = (response as any)?.parsed
-          if (!scene?.env && !scene?.d) {
+          if (scene && typeof scene.d === 'string') {
+            if (!scene.timeline) scene.timeline = []
+          }
+          if (!scene || typeof scene.d !== 'string') {
             const rawText = typeof (response as any)?.raw?.content === 'string'
               ? (response as any).raw.content : ''
             try {
               const match = rawText.match(/\{[\s\S]*"d"\s*:[\s\S]*\}/)
-              if (match) scene = JSON.parse(match[0])
+              if (match) {
+                scene = JSON.parse(match[0])
+                if (!scene.timeline) scene.timeline = []
+              }
             } catch { /* L2 below */ }
           }
         } catch (e: unknown) {
