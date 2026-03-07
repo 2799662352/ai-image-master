@@ -316,6 +316,41 @@ export function pickAffectedPanels(report: VerifyReportLike | null | undefined):
     .sort((a, b) => a - b)
 }
 
+export function unwrapVerifyResult(data: any): { score: number; ok: boolean; issues: string[] } | null {
+  if (!data || typeof data !== 'object') return null
+  if (typeof data.score === 'number' && typeof data.ok === 'boolean') return data
+
+  const inner = data.verification_result || data.result || data.verify || data.report
+  const source = inner || data
+
+  const score = typeof source.overall_score === 'number' ? source.overall_score
+    : typeof source.score === 'number' ? source.score : null
+  if (score === null) return null
+
+  const issues: string[] = []
+  if (Array.isArray(source.issues)) {
+    issues.push(...source.issues.filter((i: any) => typeof i === 'string'))
+  }
+  if (Array.isArray(source.deductions)) {
+    issues.push(...source.deductions.filter((i: any) => typeof i === 'string'))
+  }
+  if (source.dimensions && typeof source.dimensions === 'object') {
+    for (const dim of Object.values(source.dimensions) as any[]) {
+      if (Array.isArray(dim?.issues)) {
+        issues.push(...dim.issues.filter((i: any) => typeof i === 'string'))
+      }
+    }
+  }
+  if (source.panel_analysis && Array.isArray(source.panel_analysis)) {
+    for (const panel of source.panel_analysis) {
+      if (panel?.notes && panel.status !== 'OK') issues.push(`Panel ${panel.panel}: ${panel.notes}`)
+    }
+  }
+
+  const ok = source.status ? source.status !== 'FAIL' : score >= 6
+  return { score, ok, issues }
+}
+
 export function buildRetryFeedback(report: VerifyReportLike | null | undefined, threshold: number): string {
   const lowItems = pickLowItems(report, threshold)
   const affectedPanels = pickAffectedPanels(report)

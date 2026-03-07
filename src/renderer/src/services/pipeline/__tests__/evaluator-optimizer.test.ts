@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildRetryFeedback, pickLowItems, shouldRetryAnalysis } from '../DirectorPipeline'
+import { buildRetryFeedback, pickLowItems, shouldRetryAnalysis, unwrapVerifyResult } from '../DirectorPipeline'
 
 describe('Evaluator-Optimizer helpers', () => {
   it('buildRetryFeedback returns non-empty string for low-score report', () => {
@@ -79,5 +79,63 @@ describe('execute() initial progress', () => {
     const skipVerifyTrue = true
     const totalPassesFast = skipVerifyTrue ? 5 : 6
     expect(totalPassesFast).toBe(5)
+  })
+})
+
+describe('unwrapVerifyResult', () => {
+  it('returns data as-is when already in correct format', () => {
+    const data = { score: 8, ok: true, issues: ['minor issue'] }
+    const result = unwrapVerifyResult(data)
+    expect(result?.score).toBe(8)
+    expect(result?.ok).toBe(true)
+    expect(result?.issues).toEqual(['minor issue'])
+  })
+
+  it('extracts from verification_result wrapper', () => {
+    const data = {
+      verification_result: {
+        overall_score: 6,
+        status: 'FAIL',
+        deductions: ['-2: truncated prompts'],
+        dimensions: {
+          character_consistency: { score: 7, issues: ['anchors missing'] },
+          lighting: { score: 8, issues: [] },
+        },
+      },
+    }
+    const result = unwrapVerifyResult(data)
+    expect(result?.score).toBe(6)
+    expect(result?.ok).toBe(false)
+    expect(result?.issues).toContain('-2: truncated prompts')
+    expect(result?.issues).toContain('anchors missing')
+  })
+
+  it('extracts from flat overall_score format', () => {
+    const data = { overall_score: 9, status: 'PASS', issues: ['all good'] }
+    const result = unwrapVerifyResult(data)
+    expect(result?.score).toBe(9)
+    expect(result?.ok).toBe(true)
+  })
+
+  it('collects panel_analysis notes as issues', () => {
+    const data = {
+      verification_result: {
+        overall_score: 5,
+        status: 'FAIL',
+        panel_analysis: [
+          { panel: 1, status: 'INCOMPLETE', notes: 'Prompt truncated' },
+          { panel: 2, status: 'OK', notes: 'Fine' },
+        ],
+      },
+    }
+    const result = unwrapVerifyResult(data)
+    expect(result?.issues).toContain('Panel 1: Prompt truncated')
+    expect(result?.issues).not.toContain('Panel 2: Fine')
+  })
+
+  it('returns null for invalid data', () => {
+    expect(unwrapVerifyResult(null)).toBeNull()
+    expect(unwrapVerifyResult({})).toBeNull()
+    expect(unwrapVerifyResult({ foo: 'bar' })).toBeNull()
   })
 })
