@@ -1154,7 +1154,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       const t0 = Date.now()
       try {
         const appliedSkills = self.getSkillsForPhase('verifyConsistency', state as Record<string, unknown>)
-        const structured = self.createStructuredLLM(VerifySchema)
+        const structured = self.createStructuredLLM(VerifySchema, undefined, 4096, 'jsonMode')
         const vars = extractVarsForVerify(state)
         const systemPrompt = self.resolveSystemPrompt(
           'verifyConsistency', vars,
