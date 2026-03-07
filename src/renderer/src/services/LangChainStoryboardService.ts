@@ -8,15 +8,15 @@ import { HumanMessage, SystemMessage } from '@langchain/core/messages'
 export const StoryboardObjSchema = z.object({
   n: z.string().describe('角色/物体名'),
   f: z.string().describe('外观特征→心理动机映射(生理描述,禁用情绪标签)'),
-  s: z.string().describe('空间位置: fg/mg/bg|位置(L1/3,R2/3)|Z遮挡序'),
-  p: z.string().describe('物理类型: rigid/artic/fluid/cloth + 运动约束'),
+  s: z.string().optional().describe('空间位置: fg/mg/bg|位置(L1/3,R2/3)|Z遮挡序'),
+  p: z.string().optional().describe('物理类型: rigid/artic/fluid/cloth + 运动约束'),
   t: z.string().describe('跨镜头一致性锚点(发色/伤疤/服装纹理/道具)'),
-  tc: z.string().describe('镜头衔接延续: S?→S?: 姿态/运动向量/视线方向'),
+  tc: z.string().optional().describe('镜头衔接延续: S?→S?: 姿态/运动向量/视线方向'),
   act: z.string().describe('演出动作(纯动作,不含特效)'),
-  fx: z.nullable(z.string()).describe('特效: 风/烟/光/粒子,与act时间对齐. Null if none'),
-  motive: z.string().describe('动机: 这个动作/道具外化了什么心理'),
-  a: z.string().describe('多粒度: 粗(构图%)→中(动作链)→细(遮挡/高光delta)'),
-  m: z.string().describe('运动强度: 部位→角度°/位移cm/H-M-L. 格式: head:pan-R25°|M,torso:lean10°|L')
+  fx: z.string().nullable().optional().describe('特效: 风/烟/光/粒子,与act时间对齐. Null if none'),
+  motive: z.string().optional().describe('动机: 这个动作/道具外化了什么心理'),
+  a: z.string().optional().describe('多粒度: 粗(构图%)→中(动作链)→细(遮挡/高光delta)'),
+  m: z.string().optional().describe('运动强度: 部位→角度°/位移cm/H-M-L. 格式: head:pan-R25°|M,torso:lean10°|L'),
 })
 
 export const StoryboardTimelineEntrySchema = z.object({
