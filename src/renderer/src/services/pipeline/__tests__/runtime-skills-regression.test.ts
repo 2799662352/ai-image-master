@@ -65,8 +65,8 @@ describe('runtime skills regression matrix', () => {
     await loader.initDirectorSkills()
 
     const overridden = loader.getDirectorSkillsFromConfig().find((s) => s.id === 'cinematic-composition')
-    expect(typeof overridden?.rules).toBe('string')
-    expect(overridden?.rules).toContain('override-rules-from-user')
+    expect(overridden?._rawBody).toContain('override-rules-from-user')
+    expect(overridden?._bodyLoaded).toBe(false)
   })
 
   it('D: 坏格式 skill 被跳过且不中断流程', async () => {

@@ -36,6 +36,10 @@ export interface PipelineSkill {
   appliesTo: string[]
   priority: number
   condition?: (context: Record<string, unknown>) => boolean
+  /** Raw body text, loaded lazily on first match. Empty string means not yet loaded. */
+  _rawBody?: string
+  /** Whether body has been loaded into rules. */
+  _bodyLoaded?: boolean
 }
 
 export interface DirectorInput {

@@ -88,7 +88,15 @@ function parseSkillFromMarkdown(raw: string): PipelineSkill | null {
   const priorityStr = yaml.match(/^priority:\s*(\d+)$/m)?.[1]
   const priority = priorityStr ? parseInt(priorityStr, 10) : 50
 
-  return { id: name, description, rules: body, appliesTo, priority }
+  return {
+    id: name,
+    description,
+    rules: '',
+    appliesTo,
+    priority,
+    _rawBody: body,
+    _bodyLoaded: false,
+  }
 }
 
 // ==================== Template Engine ====================

@@ -86,6 +86,10 @@ export abstract class BasePipeline<TState, TResult> {
   private getSkillRulesForPhase(phase: string, context: Record<string, unknown>): string {
     return this.matchSkillsForPhase(phase, context)
       .map(s => {
+        if (s._bodyLoaded === false && s._rawBody) {
+          s.rules = s._rawBody
+          s._bodyLoaded = true
+        }
         const rules = typeof s.rules === 'function' ? s.rules(context) : s.rules
         if (!rules) return ''
         return `[Skill:${s.id}]\n${rules}`

@@ -36,8 +36,8 @@ describe('prompt-loader runtime skills', () => {
 
     const skill = getDirectorSkillsFromConfig().find(s => s.id === 'cinematic-composition')
     expect(skill).toBeDefined()
-    expect(typeof skill?.rules).toBe('string')
-    expect(skill?.rules).toContain('user override rules')
+    expect(skill?._rawBody).toContain('user override rules')
+    expect(skill?._bodyLoaded).toBe(false)
   })
 
   it('坏格式 skills 会被跳过', async () => {
@@ -81,11 +81,11 @@ describe('prompt-loader runtime skills', () => {
 
     await initDirectorSkills()
     const before = getDirectorSkillsFromConfig().find(s => s.id === 'cinematic-composition')
-    expect(before?.rules).toContain('rules-v1')
+    expect(before?._rawBody).toContain('rules-v1')
 
     await reloadDirectorSkills()
     const after = getDirectorSkillsFromConfig().find(s => s.id === 'cinematic-composition')
-    expect(after?.rules).toContain('rules-v2')
+    expect(after?._rawBody).toContain('rules-v2')
   })
 
   it('loadSkills 抛错时会回退到内置 skills', async () => {

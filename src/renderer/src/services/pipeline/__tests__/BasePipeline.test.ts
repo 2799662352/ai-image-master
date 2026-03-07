@@ -79,3 +79,61 @@ describe('BasePipeline', () => {
     expect(content[0].image_url.detail).toBe('high')
   })
 })
+
+describe('Progressive Disclosure', () => {
+  it('skill body is not loaded until first phase match', () => {
+    const pipeline = new TestPipeline(config)
+    pipeline.registerSharedSkill({
+      id: 'lazy-skill',
+      description: 'A lazy skill',
+      rules: '',
+      appliesTo: ['myPhase'],
+      priority: 1,
+      _rawBody: 'Lazy body content here',
+      _bodyLoaded: false,
+    })
+    const skillsBefore = (pipeline as any).sharedSkills
+    expect(skillsBefore[0].rules).toBe('')
+    expect(skillsBefore[0]._bodyLoaded).toBe(false)
+
+    const prompt = pipeline.buildSystemPrompt('myPhase', 'base', {})
+
+    expect(skillsBefore[0].rules).toBe('Lazy body content here')
+    expect(skillsBefore[0]._bodyLoaded).toBe(true)
+    expect(prompt).toContain('Lazy body content here')
+  })
+
+  it('unmatched skill body remains empty', () => {
+    const pipeline = new TestPipeline(config)
+    pipeline.registerSharedSkill({
+      id: 'unmatched-skill',
+      description: 'An unmatched skill',
+      rules: '',
+      appliesTo: ['otherPhase'],
+      priority: 1,
+      _rawBody: 'Should not appear',
+      _bodyLoaded: false,
+    })
+    const prompt = pipeline.buildSystemPrompt('myPhase', 'base', {})
+    const skills = (pipeline as any).sharedSkills
+    expect(skills[0].rules).toBe('')
+    expect(skills[0]._bodyLoaded).toBe(false)
+    expect(prompt).toBe('base')
+  })
+
+  it('already loaded skill body is not reloaded', () => {
+    const pipeline = new TestPipeline(config)
+    pipeline.registerSharedSkill({
+      id: 'preloaded',
+      description: 'Already loaded',
+      rules: 'Already loaded body',
+      appliesTo: ['myPhase'],
+      priority: 1,
+      _rawBody: 'Raw body that should not override',
+      _bodyLoaded: true,
+    })
+    const prompt = pipeline.buildSystemPrompt('myPhase', 'base', {})
+    expect(prompt).toContain('Already loaded body')
+    expect(prompt).not.toContain('Raw body that should not override')
+  })
+})
