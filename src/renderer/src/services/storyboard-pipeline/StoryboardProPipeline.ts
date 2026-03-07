@@ -558,7 +558,7 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
       const t0 = Date.now()
       try {
         const appliedSkills = self.getSkillsForPhase('deepVerify', state as Record<string, unknown>)
-        const structured = self.createStructuredLLM(VerifySchema)
+        const structured = self.createStructuredLLM(VerifySchema, undefined, 4096, 'jsonMode')
 
         const sceneSummary = state.scene
           ? `弧线: ${state.scene.d}\n环境: ${state.scene.env}`
