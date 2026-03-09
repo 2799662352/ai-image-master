@@ -1434,27 +1434,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         }
         console.warn('[DirectorPipeline] L1 failed: full schema + raw extraction both empty')
       } catch (e: unknown) {
-        const errMsg = e instanceof Error ? e.message : String(e)
-        console.warn('[DirectorPipeline] L1 error:', errMsg)
-
-        // Partial recovery: if output was truncated, try to extract whatever panels were completed
-        if (errMsg.includes('length limit') || errMsg.includes('Could not parse')) {
-          try {
-            const rawContent = (e as any)?.llmOutput?.content
-              || (e as any)?.response?.content
-              || (e as any)?.message?.content
-              || ''
-            if (rawContent) {
-              const partialPanels = extractPanelsFromUnknown(rawContent)
-              if (partialPanels?.length && partialPanels.length >= Math.floor(state.layout.panelCount * 0.5)) {
-                console.log(`[DirectorPipeline] L1 partial recovery: ${partialPanels.length}/${state.layout.panelCount} panels from truncated response`)
-                const { panels, prompts } = makePanelsAndPrompts(partialPanels)
-                emitSuccess(panels, prompts, 'L1-partial')
-                return { panels, prompts }
-              }
-            }
-          } catch { /* partial recovery failed, proceed to L2 */ }
-        }
+        console.warn('[DirectorPipeline] L1 error:', e instanceof Error ? e.message : String(e))
       }
 
       // --- Level 2: Simplified schema (just id + prompt) ---
