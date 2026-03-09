@@ -84,10 +84,9 @@ export class SkillsMiddleware {
   }
 
   wrapSystemPrompt(basePrompt: string, phase: string, context?: Record<string, unknown>): string {
-    const backend = new VirtualSkillsBackend(this.skills, phase, context)
-    if (backend.fileCount === 0) return basePrompt
-
     const matched = this.matchPhase(phase, context)
+    if (matched.length === 0) return basePrompt
+
     const listing = matched
       .map(s => `- /skills/${s.id}/SKILL.md: ${s.description}`)
       .join('\n')
