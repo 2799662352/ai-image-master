@@ -12,7 +12,11 @@ export type SceneAnalysis = z.infer<typeof SceneAnalysisSchema>
 export const CharacterAnchorSchema = z.object({
   characters: z.array(z.object({
     name: z.string().describe('Character name or identifier, English first.'),
-    anchor: z.string().describe('Consistency anchor in English first: appearance + outfit + signature traits for cross-shot identity stability.'),
+    anchor: z.string().describe('Full consistency anchor combining all fields below. If face/build/outfit/markers are provided, this is auto-generated.'),
+    face: z.string().optional().describe('Face details: skin tone, face shape, eye color, hair color + style + length.'),
+    build: z.string().optional().describe('Build: height relative to scene, body type (slim/athletic/heavy).'),
+    outfit: z.string().optional().describe('Outfit top-to-bottom: exact garments, colors, patterns, accessories.'),
+    markers: z.string().optional().describe('Unique markers: scars, tattoos, glasses, jewelry, props, weapons.'),
   })),
 })
 
@@ -23,11 +27,11 @@ export const DesignAndAssembleSchema = z.object({
   panels: z.array(z.object({
     id: z.number().describe('Panel number'),
     shot: z.string().describe('Shot type + angle + transition from previous panel, e.g. "cut to medium eye-level, 50mm"'),
-    desc: z.string().describe('Subject action + composition, one sentence'),
+    desc: z.string().describe('Subject action + composition using [char1] [char2] tags, one sentence'),
     lighting: z.string().describe('Key light direction + quality + color temperature, e.g. "warm side-light from left, soft, 3500K golden hour"'),
-    characterAction: z.string().describe('Character-specific actions + expressions + interactions with other characters'),
+    characterAction: z.string().describe('Per-character actions using [char1] [char2] tags: who does what, expressions, weapons, interactions. e.g. "[char1] swings folding fan defensively, [char2] lunges with sword"'),
     background: z.string().describe('Background continuity note: spatial relationship to previous panel'),
-    prompt: z.string().describe('Full English image generation prompt using [char1] [char2] tags for character references'),
+    prompt: z.string().describe('Full English image generation prompt. Use [char1] [char2] tags for character references as defined in the Character Identity Lock. Write detailed scene descriptions around the tags.'),
     negativePrompt: z.string().describe('English negative prompt for this panel'),
   })),
 })
@@ -62,3 +66,10 @@ export const VerifySchema = z.object({
 })
 
 export type VerifyReport = z.infer<typeof VerifySchema>
+
+export const SkillDiscoverySchema = z.object({
+  requestedSkills: z.array(z.string()).describe('List of skill IDs to read for this task'),
+  designPlan: z.string().default('').describe('Brief plan for how to approach the storyboard design based on available information'),
+})
+
+export type SkillDiscovery = z.infer<typeof SkillDiscoverySchema>

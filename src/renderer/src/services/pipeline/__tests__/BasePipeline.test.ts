@@ -137,3 +137,69 @@ describe('Progressive Disclosure', () => {
     expect(prompt).not.toContain('Raw body that should not override')
   })
 })
+
+describe('Skill Discovery (Progressive Disclosure)', () => {
+  it('buildSkillMenuPrompt returns menu with descriptions only', () => {
+    const pipeline = new TestPipeline(config)
+    pipeline.registerSharedSkill({
+      id: 'test-skill',
+      description: 'A test skill for anime quality',
+      rules: 'Full body content here',
+      appliesTo: ['myPhase'],
+      priority: 1,
+    })
+    const result = pipeline.buildSkillMenuPrompt('myPhase', 'base', {})
+    expect(result).toContain('test-skill: A test skill for anime quality')
+    expect(result).not.toContain('Full body content here')
+    expect(result).toContain('requestedSkills')
+  })
+
+  it('buildSkillMenuPrompt returns base prompt when no skills match', () => {
+    const pipeline = new TestPipeline(config)
+    const result = pipeline.buildSkillMenuPrompt('unknownPhase', 'base prompt', {})
+    expect(result).toBe('base prompt')
+  })
+
+  it('getSkillBodiesById loads only requested skills', () => {
+    const pipeline = new TestPipeline(config)
+    pipeline.registerSharedSkill({
+      id: 'skill-a',
+      description: 'Skill A',
+      rules: 'Body A',
+      appliesTo: ['myPhase'],
+      priority: 1,
+    })
+    pipeline.registerSharedSkill({
+      id: 'skill-b',
+      description: 'Skill B',
+      rules: 'Body B',
+      appliesTo: ['myPhase'],
+      priority: 2,
+    })
+    const result = pipeline.getSkillBodiesById(['skill-a'], 'myPhase', {})
+    expect(result).toContain('Body A')
+    expect(result).not.toContain('Body B')
+  })
+
+  it('getSkillBodiesById returns empty for unknown IDs', () => {
+    const pipeline = new TestPipeline(config)
+    const result = pipeline.getSkillBodiesById(['nonexistent'], 'myPhase', {})
+    expect(result).toBe('')
+  })
+
+  it('getSkillBodiesById triggers lazy loading for _rawBody', () => {
+    const pipeline = new TestPipeline(config)
+    pipeline.registerSharedSkill({
+      id: 'lazy-discovery',
+      description: 'Lazy skill',
+      rules: '',
+      appliesTo: ['myPhase'],
+      priority: 1,
+      _rawBody: 'Lazy loaded body via discovery',
+      _bodyLoaded: false,
+    })
+    const result = pipeline.getSkillBodiesById(['lazy-discovery'], 'myPhase', {})
+    expect(result).toContain('Lazy loaded body via discovery')
+    expect(result).toContain('[Skill:lazy-discovery]')
+  })
+})

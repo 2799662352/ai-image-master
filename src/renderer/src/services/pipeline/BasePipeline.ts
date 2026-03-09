@@ -63,7 +63,7 @@ export abstract class BasePipeline<TState, TResult> {
     this.sharedSkills.push(skill)
   }
 
-  private matchSkillsForPhase(phase: string, context: Record<string, unknown>): PipelineSkill[] {
+  protected matchSkillsForPhase(phase: string, context: Record<string, unknown>): PipelineSkill[] {
     const activeSkills = (context as any)?.activeSkills as string[] | undefined
 
     const sharedMatched = this.sharedSkills
@@ -83,7 +83,7 @@ export abstract class BasePipeline<TState, TResult> {
     return this.matchSkillsForPhase(phase, context).map(s => s.id)
   }
 
-  private getSkillRulesForPhase(phase: string, context: Record<string, unknown>): string {
+  protected getSkillRulesForPhase(phase: string, context: Record<string, unknown>): string {
     return this.matchSkillsForPhase(phase, context)
       .map(s => {
         if (s._bodyLoaded === false && s._rawBody) {
@@ -98,10 +98,44 @@ export abstract class BasePipeline<TState, TResult> {
       .join('\n\n')
   }
 
-  buildSystemPrompt(passName: string, basePrompt: string, context: Record<string, unknown>): string {
+  buildSystemPrompt(
+    passName: string,
+    basePrompt: string,
+    context: Record<string, unknown>,
+    options?: { skipSkillInjection?: boolean },
+  ): string {
+    if (options?.skipSkillInjection) return basePrompt
     const skills = this.getSkillRulesForPhase(passName, context)
     if (!skills) return basePrompt
     return `${basePrompt}\n\n--- 领域规则 ---\n${skills}`
+  }
+
+  buildSkillMenuPrompt(passName: string, basePrompt: string, context: Record<string, unknown>): string {
+    const matched = this.matchSkillsForPhase(passName, context)
+    if (matched.length === 0) return basePrompt
+
+    const menu = matched
+      .map(s => `- ${s.id}: ${s.description}`)
+      .join('\n')
+
+    return `${basePrompt}\n\n--- Available Skills (read only if relevant) ---\n${menu}\n\nIf any skills are relevant to this task, include their IDs in your requestedSkills list. You will receive the full skill content before generating the final output.`
+  }
+
+  getSkillBodiesById(ids: string[], passName: string, context: Record<string, unknown>): string {
+    const matched = this.matchSkillsForPhase(passName, context)
+    return matched
+      .filter(s => ids.includes(s.id))
+      .map(s => {
+        if (s._bodyLoaded === false && s._rawBody) {
+          s.rules = s._rawBody
+          s._bodyLoaded = true
+        }
+        const rules = typeof s.rules === 'function' ? s.rules(context) : s.rules
+        if (!rules) return ''
+        return `[Skill:${s.id}]\n${rules}`
+      })
+      .filter(Boolean)
+      .join('\n\n')
   }
 
   protected isGeminiModel(model: string): boolean {
@@ -139,7 +173,7 @@ export abstract class BasePipeline<TState, TResult> {
     const llm = this.createLLM(model, maxTokens)
     const m = model || this.config.model
     const method = methodOverride
-      ?? (this.isGeminiModel(m) ? 'functionCalling' : undefined)
+      ?? (this.isGeminiModel(m) ? 'jsonSchema' : undefined)
     if (method) {
       return llm.withStructuredOutput(schema, { method: method as any })
     }
@@ -155,7 +189,7 @@ export abstract class BasePipeline<TState, TResult> {
     const llm = this.createLLM(model, maxTokens)
     const m = model || this.config.model
     const method = methodOverride
-      ?? (this.isGeminiModel(m) ? 'functionCalling' : undefined)
+      ?? (this.isGeminiModel(m) ? 'jsonSchema' : undefined)
     const opts = method
       ? { method: method as any, includeRaw: true as const }
       : { includeRaw: true as const }

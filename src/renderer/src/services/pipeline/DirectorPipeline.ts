@@ -8,6 +8,7 @@ import {
   CharacterAnchorSchema,
   DesignAndAssembleSchema,
   SimplePanelSchema,
+  SkillDiscoverySchema,
   VerifySchema,
   SkillSelectionSchema,
 } from './schemas/director-schemas'
@@ -29,7 +30,7 @@ const MAX_ANALYSIS_RETRIES = 2
 const DEFAULT_VISION_DETAIL = {
   analyzeScene: 'high',
   extractCharacterAnchors: 'high',
-  designAndAssemble: 'low',
+  designAndAssemble: 'high',
   verifyConsistency: 'low',
 } as const
 
@@ -103,24 +104,40 @@ function normalizePanels(input: unknown): Array<Record<string, unknown>> | null 
   return null
 }
 
-export function buildCharacterIdentityLock(characters: Array<{ name?: string; anchor?: string }>): string {
+function normalizeCharKey(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, ' ').trim()
+}
+
+export function sortCharacters<T extends { name?: string; anchor?: string }>(characters: T[]): T[] {
+  return [...characters].sort((a, b) => {
+    const ka = normalizeCharKey(a.name || a.anchor || '')
+    const kb = normalizeCharKey(b.name || b.anchor || '')
+    return ka.localeCompare(kb)
+  })
+}
+
+export function buildCharacterIdentityLock(characters: Array<{ name?: string; anchor?: string; face?: string; build?: string; outfit?: string; markers?: string }>): string {
   if (!Array.isArray(characters) || characters.length === 0) return ''
-  const normalizeKey = (value: string) => value.toLowerCase().replace(/\s+/g, ' ').trim()
   const inferPronoun = (value: string): 'she' | 'he' | 'they' => {
     const normalized = value.toLowerCase()
     if (/[她]/.test(value) || /\b(she|her|hers)\b/.test(normalized)) return 'she'
     if (/[他]/.test(value) || /\b(he|him|his)\b/.test(normalized)) return 'he'
     return 'they'
   }
-  const stableEntries = characters.map((c, i) => {
+
+  const buildAnchorFromFields = (c: { face?: string; build?: string; outfit?: string; markers?: string; anchor?: string }): string => {
+    const fields = [c.face, c.build, c.outfit, c.markers].filter(Boolean)
+    if (fields.length >= 2) return fields.join('. ')
+    return c.anchor || '(no anchor)'
+  }
+
+  const sorted = sortCharacters(characters)
+  const lines = sorted.map((c, i) => {
     const name = c.name || `character-${i + 1}`
-    const anchor = c.anchor || '(no anchor)'
+    const anchor = buildAnchorFromFields(c)
     const pronoun = inferPronoun(`${name} ${anchor}`)
-    const stableKey = normalizeKey(c.name || c.anchor || `character-${i + 1}`)
-    return { stableKey, name, pronoun, anchor }
+    return `- [char${i + 1}] ${name} (${pronoun}): ${anchor}`
   })
-  stableEntries.sort((a, b) => a.stableKey.localeCompare(b.stableKey))
-  const lines = stableEntries.map((entry, i) => `- [char${i + 1}] ${entry.name} (${entry.pronoun}): ${entry.anchor}`)
   return [
     '## Character Identity Lock (BINDING)',
     ...lines,
@@ -156,6 +173,119 @@ export function buildNarrativeRhythmGuardrails(sceneDescription: string): string
     'Enhance cinematic expression without changing story direction.',
     'Optimize pacing through shot language, not by rewriting narrative intent.',
   ].join('\n')
+}
+
+export function buildDesignAndAssembleMessages(params: {
+  systemPrompt: string
+  userText: string
+  discoveredSkillRules: string
+  designContent: Array<any>
+}): Array<{ role: 'system' | 'assistant' | 'user'; content: any }> {
+  const messages: Array<{ role: 'system' | 'assistant' | 'user'; content: any }> = [
+    { role: 'system', content: params.systemPrompt },
+  ]
+
+  if (params.discoveredSkillRules) {
+    messages.push(
+      {
+        role: 'assistant',
+        content: `I've reviewed the available skills and will apply the following domain rules:\n\n${params.discoveredSkillRules}`,
+      },
+      {
+        role: 'user',
+        content: 'Good. Now apply these rules and generate the panel designs and prompts.',
+      },
+    )
+  }
+
+  messages.push({ role: 'user', content: params.designContent })
+  return messages
+}
+
+export function resolveDiscoveredSkillRules(params: {
+  requestedSkillIds: string[]
+  validSkillIds: string[]
+  passName: string
+  context: Record<string, unknown>
+  getSkillBodiesById: (
+    ids: string[],
+    passName: string,
+    context: Record<string, unknown>,
+  ) => string
+}): string {
+  const validIds = new Set(params.validSkillIds)
+  const requested = params.requestedSkillIds.filter(id => validIds.has(id))
+  if (requested.length === 0) return ''
+  return params.getSkillBodiesById(requested, params.passName, params.context)
+}
+
+export function extractTextFromUnknown(input: unknown): string {
+  if (typeof input === 'string') return input
+  if (Array.isArray(input)) {
+    return input
+      .map((item) => extractTextFromUnknown(item))
+      .filter(Boolean)
+      .join('\n')
+  }
+  if (input && typeof input === 'object') {
+    const record = input as Record<string, unknown>
+    if (typeof record.text === 'string') return record.text
+    if ('additional_kwargs' in record) return extractTextFromUnknown(record.additional_kwargs)
+    if ('tool_calls' in record) return extractTextFromUnknown(record.tool_calls)
+    if ('function' in record) return extractTextFromUnknown(record.function)
+    if ('arguments' in record) return extractTextFromUnknown(record.arguments)
+    if ('args' in record) return extractTextFromUnknown(record.args)
+    if ('input' in record) return extractTextFromUnknown(record.input)
+    if ('content' in record) return extractTextFromUnknown(record.content)
+    if ('raw' in record) return extractTextFromUnknown(record.raw)
+    if ('result' in record) return extractTextFromUnknown(record.result)
+    if (Array.isArray(record.panels)) return JSON.stringify({ panels: record.panels })
+  }
+  return ''
+}
+
+function tryParsePanelsCandidate(candidate: string): any[] | null {
+  try {
+    const parsed = JSON.parse(candidate)
+    return Array.isArray(parsed?.panels) ? parsed.panels : null
+  } catch {
+    return null
+  }
+}
+
+export function extractPanelsFromUnknown(input: unknown): any[] | null {
+  if (input && typeof input === 'object') {
+    const record = input as Record<string, unknown>
+    const raw = (record.raw ?? record) as Record<string, unknown>
+    const toolCalls = raw?.tool_calls
+    if (Array.isArray(toolCalls)) {
+      for (const tc of toolCalls as any[]) {
+        if (Array.isArray(tc?.args?.panels) && tc.args.panels.length > 0) {
+          return tc.args.panels
+        }
+      }
+    }
+  }
+
+  const text = extractTextFromUnknown(input)
+  if (!text) return null
+
+  const direct = tryParsePanelsCandidate(text)
+  if (direct) return direct
+
+  const fenced = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)]
+  for (const match of fenced) {
+    const parsed = tryParsePanelsCandidate(match[1].trim())
+    if (parsed) return parsed
+  }
+
+  const panelsMatches = text.match(/\{"panels"\s*:\s*\[[\s\S]*?\]\s*\}/g) || []
+  for (const candidate of panelsMatches) {
+    const parsed = tryParsePanelsCandidate(candidate)
+    if (parsed) return parsed
+  }
+
+  return null
 }
 
 function normalizeVisionDetail(value: unknown, fallback: VisionDetail): VisionDetail {
@@ -483,14 +613,27 @@ export function buildAdaptiveNegativePrompt(
 export function buildReferenceImageRoleRules(
   templateKey: string,
   hasStyleAnchor: boolean,
+  characters?: Array<{ name?: string; anchor?: string }>,
 ): string {
   const hasExplicitStyle = templateKey && templateKey !== 'default' && templateKey !== ''
+
+  const charBindingRules = characters?.length
+    ? [
+        'CHARACTER-REFERENCE BINDING (MANDATORY):',
+        '- The attached reference images define the GROUND TRUTH for character appearance.',
+        '- For EVERY panel, each character MUST match the reference image exactly:',
+        '  face shape, eye color, hairstyle, hair color, outfit, accessories.',
+        '- DO NOT invent new outfits or change hair color/style between panels.',
+        '- If a character appears in the reference image, reproduce their appearance faithfully.',
+      ]
+    : []
 
   if (!hasExplicitStyle && !hasStyleAnchor) {
     return [
       'REFERENCE IMAGE GUIDELINES:',
       '- Follow the visual style of the reference images and keep stylistic continuity across all panels.',
       '- Maintain character identity consistency from reference images.',
+      ...charBindingRules,
     ].join('\n')
   }
 
@@ -506,6 +649,7 @@ export function buildReferenceImageRoleRules(
     '  ✗ Lighting setup (follow panel-specific lighting in prompts)',
     '- If reference images conflict with the text style directive:',
     '  → TEXT WINS. Always. No exceptions.',
+    ...charBindingRules,
   ].join('\n')
 }
 
@@ -523,14 +667,32 @@ export function shouldRetryAnalysis(state: {
   return 'retry'
 }
 
+export function expandCharacterTags(
+  text: string,
+  characters: Array<{ name?: string; anchor?: string }>,
+): string {
+  if (!characters.length) return text
+  const sorted = sortCharacters(characters)
+  let result = text
+  sorted.forEach((c, i) => {
+    const name = c.name || `character-${i + 1}`
+    const anchor = c.anchor || ''
+    const tag = `[char${i + 1}]`
+    const replacement = `(${name}: ${anchor})`
+    result = result.split(tag).join(replacement)
+  })
+  return result
+}
+
 export function extractVarsForContactSheet(state: DirectorState): Record<string, string> {
   const prompts = state.prompts || []
   const characters = state.characters?.characters || []
 
+  const sortedChars = sortCharacters(characters)
   const globalSection = [
     `GLOBAL SCENE: ${state.scene?.env || '(unknown)'}`,
-    characters.length > 0 ? 'CHARACTER DEFINITIONS:' : '',
-    ...characters.map((c: any, i: number) => `  [char${i + 1}]: ${c.anchor}`),
+    sortedChars.length > 0 ? 'CHARACTER DEFINITIONS:' : '',
+    ...sortedChars.map((c: any, i: number) => `  [char${i + 1}]: ${c.anchor}`),
   ].filter(Boolean).join('\n')
 
   const perShotSection = prompts
@@ -584,6 +746,7 @@ export function extractVarsForContactSheet(state: DirectorState): Record<string,
     reference_image_role_rules: buildReferenceImageRoleRules(
       state.template,
       !!state.styleAnchor,
+      characters,
     ),
     enhanced_panel_descriptions: (() => {
       const stylePrefix = resolveStylePrefix(
@@ -591,8 +754,16 @@ export function extractVarsForContactSheet(state: DirectorState): Record<string,
         state.template,
         state.styleInstructions,
       )
+      const panels = state.panels || []
       const enhanced = prompts.map(p => {
-        const base = p.prompt
+        const panel = panels.find((pn: any) => pn.id === p.id)
+        const parts = [p.prompt]
+        if (panel?.characterAction) parts.push(panel.characterAction)
+        if (panel?.desc) parts.push(panel.desc)
+        if (panel?.shot) parts.push(panel.shot)
+        if (panel?.lighting) parts.push(panel.lighting)
+        const raw = parts.join('. ')
+        const base = expandCharacterTags(raw, characters)
         const prefixed = stylePrefix && !base.toLowerCase().startsWith(stylePrefix.toLowerCase())
           ? `${stylePrefix}, ${base}`
           : base
@@ -726,15 +897,16 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     vars: Record<string, string>,
     context: Record<string, unknown>,
     inlineFallback: string,
+    options?: { skipSkillInjection?: boolean },
   ): string {
     const tpl = getPromptTemplate(passName)
     const basePrompt = tpl
       ? renderTemplate(tpl.template, vars)
       : inlineFallback
-    return this.buildSystemPrompt(passName, basePrompt, context)
+    return this.buildSystemPrompt(passName, basePrompt, context, options)
   }
 
-  buildGraph() {
+  buildGraph(): any {
     const self = this
 
     const writer = (config: any) => config?.writer
@@ -1062,11 +1234,56 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
             narrativeGuardrails,
           ].join('\n')
         : ''
-      const systemPrompt = self.resolveSystemPrompt(
+      const baseSystemPrompt = self.resolveSystemPrompt(
         'designAndAssemble', vars,
         skillContext,
         `You are an experienced film director, storyboard artist and prompt engineer. Design shots and write prompts for ${vars.panel_count} panels.\nScene: ${vars.scene_env}${characterIdentityLock ? `\n\n${characterIdentityLock}` : ''}${userDirective ? `\n\n${userDirective}` : ''}`,
+        { skipSkillInjection: true },
       )
+      let discoveredSkillRules = ''
+      const matchedDiscoverableSkills = self.matchSkillsForPhase('designAndAssemble', skillContext)
+
+      if (matchedDiscoverableSkills.length > 0) {
+        try {
+          const discoveryPrompt = self.buildSkillMenuPrompt(
+            'designAndAssemble',
+            `You are an experienced film director. Before designing shots, review the available skills and select which ones are relevant to this task.\n\nScene: ${vars.scene_env}${characterIdentityLock ? `\n\n${characterIdentityLock}` : ''}`,
+            skillContext,
+          )
+          const discoveryLLM = self.createStructuredLLMWithRaw(SkillDiscoverySchema, undefined, 2048, 'jsonMode')
+          const discoveryResponse = await discoveryLLM.invoke(
+            [
+              { role: 'system' as const, content: discoveryPrompt },
+              { role: 'user' as const, content: `Task: Design ${state.layout.panelCount} storyboard panels.\nTemplate: ${state.template || 'default'}\nStyle: ${state.styleInstructions || '(none)'}\nScene: ${state.sceneDescription || '(none)'}\n\nWhich skills should I read to do this well? Respond with {"requestedSkills": ["id1", "id2"]}` },
+            ],
+            { signal: config?.signal },
+          )
+
+          let discoveryResult = (discoveryResponse as any)?.parsed
+          if (!discoveryResult?.requestedSkills) {
+            const rawText = typeof (discoveryResponse as any)?.raw?.content === 'string'
+              ? (discoveryResponse as any).raw.content
+              : ''
+            try {
+              let parsed = JSON.parse(rawText)
+              if (Array.isArray(parsed)) parsed = { requestedSkills: parsed }
+              if (parsed?.requestedSkills) discoveryResult = parsed
+            } catch { /* fallback below */ }
+          }
+
+          discoveredSkillRules = resolveDiscoveredSkillRules({
+            requestedSkillIds: discoveryResult?.requestedSkills || [],
+            validSkillIds: matchedDiscoverableSkills.map(s => s.id),
+            passName: 'designAndAssemble',
+            context: skillContext,
+            getSkillBodiesById: self.getSkillBodiesById.bind(self),
+          })
+        } catch (e: unknown) {
+          console.warn('[DirectorPipeline] Skill Discovery failed, skipping discovered skill injection:', e instanceof Error ? e.message : String(e))
+        }
+      }
+
+      const systemPrompt = baseSystemPrompt
       const userText = state.sceneDescription
         ? `【创意简报】"${state.sceneDescription}"\n\n请基于该简报为 ${state.layout.panelCount} 个分镜设计镜头并生成图像提示词。\n人物身份锚点（脸、发型、服装、主配色、武器）应优先保持可识别一致；允许人物在故事推进中发生合理演进（情绪、姿态、受损、衣物动态）。\n场景可随叙事节奏推进自然变化，不需要所有分镜固定同一地点。\n叙事方向与节奏以用户简报为主线，可做电影化增强但不反转核心走向。\n每个分镜建议 1 个主动作（anchor action）+ 1~2 个从属动作（satellite actions），避免无因突变。\n导演可自主决定镜头、构图、光影、调度与节奏张弛。`
         : `为 ${state.layout.panelCount} 个分镜设计镜头并生成图像提示词`
@@ -1081,10 +1298,12 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       }
       designContent.push({ type: 'text' as const, text: userText })
 
-      const messages = [
-        { role: 'system' as const, content: systemPrompt },
-        { role: 'user' as const, content: designContent },
-      ]
+      const messages = buildDesignAndAssembleMessages({
+        systemPrompt,
+        userText,
+        discoveredSkillRules,
+        designContent,
+      })
 
       const makePanelsAndPrompts = (rawPanels: any[]) => {
         const panels = rawPanels.map((p: any) => ({
@@ -1112,16 +1331,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
         let parsedPanels = (response as any)?.parsed?.panels
         if (!parsedPanels?.length) {
-          const rawText = typeof (response as any)?.raw?.content === 'string'
-            ? (response as any).raw.content
-            : JSON.stringify((response as any)?.raw?.content ?? '')
-          try {
-            const jsonMatch = rawText.match(/\{[\s\S]*"panels"\s*:\s*\[[\s\S]*\][\s\S]*\}/)
-            if (jsonMatch) {
-              const fallback = JSON.parse(jsonMatch[0])
-              if (fallback?.panels?.length) parsedPanels = fallback.panels
-            }
-          } catch { /* regex extraction failed */ }
+          parsedPanels = extractPanelsFromUnknown(response)
         }
 
         if (parsedPanels?.length) {
@@ -1166,16 +1376,12 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           ],
           { signal: config?.signal },
         )
-        const text = typeof feedbackResult.content === 'string' ? feedbackResult.content : ''
-        const jsonMatch = text.match(/\{[\s\S]*"panels"\s*:\s*\[[\s\S]*\][\s\S]*\}/)
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0])
-          if (parsed?.panels?.length) {
-            const { panels, prompts } = makePanelsAndPrompts(parsed.panels)
-            console.log(`[DirectorPipeline] L3 success: ${panels.length} panels via error feedback`)
-            emitSuccess(panels, prompts, 'L3-feedback')
-            return { panels, prompts }
-          }
+        const parsedPanels = extractPanelsFromUnknown(feedbackResult)
+        if (parsedPanels?.length) {
+          const { panels, prompts } = makePanelsAndPrompts(parsedPanels)
+          console.log(`[DirectorPipeline] L3 success: ${panels.length} panels via error feedback`)
+          emitSuccess(panels, prompts, 'L3-feedback')
+          return { panels, prompts }
         }
       } catch (e: unknown) {
         console.warn('[DirectorPipeline] L3 error:', e instanceof Error ? e.message : String(e))
