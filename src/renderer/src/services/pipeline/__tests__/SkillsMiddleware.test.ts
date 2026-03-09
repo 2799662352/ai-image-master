@@ -136,6 +136,19 @@ describe('VirtualSkillsBackend', () => {
     const content = backend.read('/skills/dynamic/SKILL.md')
     expect(content).toContain('Style: anime')
   })
+
+  it('escapes YAML-unsafe characters in frontmatter', () => {
+    const backend = new VirtualSkillsBackend(
+      [{ id: 'tricky', description: 'Rules: use "quotes" and\nnewlines', rules: 'body', appliesTo: ['design'], priority: 1 }],
+      'design',
+    )
+    const content = backend.read('/skills/tricky/SKILL.md')
+    expect(content).toContain('---')
+    expect(content).toContain('name: tricky')
+    expect(content).toContain('description:')
+    expect(content).not.toMatch(/description: Rules:/)
+    expect(content).toContain('body')
+  })
 })
 
 describe('SkillsMiddleware.createReadFileTool', () => {

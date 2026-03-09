@@ -2,6 +2,13 @@ import { tool } from '@langchain/core/tools'
 import { z } from 'zod'
 import type { PipelineSkill } from './types'
 
+function yamlEscape(value: string): string {
+  if (/[:\n"#{}[\],&*?|>!%@`]/.test(value)) {
+    return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')}"`
+  }
+  return value
+}
+
 export class VirtualSkillsBackend {
   private files: Map<string, string>
 
@@ -17,7 +24,7 @@ export class VirtualSkillsBackend {
         skill._bodyLoaded = true
       }
       const body = typeof skill.rules === 'function' ? skill.rules(context || {}) : skill.rules
-      this.files.set(`/skills/${skill.id}/SKILL.md`, `---\nname: ${skill.id}\ndescription: ${skill.description}\n---\n\n${body}`)
+      this.files.set(`/skills/${skill.id}/SKILL.md`, `---\nname: ${yamlEscape(skill.id)}\ndescription: ${yamlEscape(skill.description)}\n---\n\n${body}`)
     }
   }
 
