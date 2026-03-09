@@ -1406,32 +1406,16 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       if (allPhaseSkills.length > 0) {
         try {
           const skillsMw = new SkillsMW(allPhaseSkills)
-          const readFileTool = skillsMw.createReadFileTool('designAndAssemble', skillContext)
-
-          if (readFileTool) {
-            const discoveryLLM = self.createLLM(undefined, 2048).bindTools([readFileTool])
-            const discoveryResult = await runToolCallingLoop({
-              llm: discoveryLLM,
-              tools: [readFileTool],
-              messages: [
-                {
-                  role: 'system' as const,
-                  content: skillsMw.wrapSystemPrompt(
-                    `You are an experienced film director. Before designing shots, review the available skills and read any that are relevant.\n\nScene: ${vars.scene_env}${characterIdentityLock ? `\n\n${characterIdentityLock}` : ''}`,
-                    'designAndAssemble',
-                    skillContext,
-                  ),
-                },
-                {
-                  role: 'user' as const,
-                  content: `Task: Design ${state.layout.panelCount} storyboard panels.\nTemplate: ${state.template || 'default'}\nStyle: ${state.styleInstructions || '(none)'}\nScene: ${state.sceneDescription || '(none)'}\n\nRead any relevant skill files, then confirm you are ready.`,
-                },
-              ],
-              maxIterations: 3,
-              signal: config?.signal,
-            })
-            discoveredSkillRules = discoveryResult.loadedSkillBodies
-          }
+          const discoveryResult = await skillsMw.runSkillDiscovery({
+            llm: self.createLLM(undefined, 2048),
+            phase: 'designAndAssemble',
+            context: skillContext,
+            basePrompt: `You are an experienced film director. Before designing shots, review the available skills and read any that are relevant.\n\nScene: ${vars.scene_env}${characterIdentityLock ? `\n\n${characterIdentityLock}` : ''}`,
+            userMessage: `Task: Design ${state.layout.panelCount} storyboard panels.\nTemplate: ${state.template || 'default'}\nStyle: ${state.styleInstructions || '(none)'}\nScene: ${state.sceneDescription || '(none)'}\n\nRead any relevant skill files, then confirm you are ready.`,
+            maxIterations: 3,
+            signal: config?.signal,
+          })
+          discoveredSkillRules = discoveryResult.loadedSkillBodies
         } catch (e: unknown) {
           console.warn('[DirectorPipeline] Skill Discovery (read_file) failed:', e instanceof Error ? e.message : String(e))
         }
