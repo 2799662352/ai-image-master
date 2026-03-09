@@ -629,7 +629,8 @@ export function assembleCoherentPrompt(
 
   if (coreAction) {
     segments.push(coreAction)
-    if (desc && action && !action.includes(desc.slice(0, 20))) {
+    const descHasCharTags = /\[char\d+\]/.test(desc)
+    if (desc && action && !descHasCharTags && !action.includes(desc.slice(0, 20))) {
       segments.push(desc)
     }
     const promptIsRedundant = basePrompt

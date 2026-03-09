@@ -112,6 +112,26 @@ describe('assembleCoherentPrompt', () => {
     expect(result).toContain('midday sun')
     expect(result).toContain('sand dunes')
   })
+
+  it('skips desc when both desc and characterAction contain [charN] tags', () => {
+    const panel = {
+      shot: 'medium shot',
+      desc: '[char1] and [char2] face off in a courtyard',
+      lighting: 'warm golden hour',
+      characterAction: '[char1] lunges forward with a fan, [char2] blocks the strike',
+      background: 'stone courtyard',
+    }
+    const prompt = { prompt: 'Two warriors in a tense standoff' }
+
+    const result = assembleCoherentPrompt(panel, prompt)
+
+    const char1Count = (result.match(/\[char1\]/g) || []).length
+    const char2Count = (result.match(/\[char2\]/g) || []).length
+    expect(char1Count).toBe(1)
+    expect(char2Count).toBe(1)
+    expect(result).toContain('lunges forward')
+    expect(result).not.toContain('face off')
+  })
 })
 
 describe('full prompt assembly pipeline (assembleCoherentPrompt → expandCharacterTags)', () => {
