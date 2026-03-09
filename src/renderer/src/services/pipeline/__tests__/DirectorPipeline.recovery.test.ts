@@ -100,6 +100,20 @@ describe('expandCharacterTags', () => {
   })
 })
 
+describe('Pass 2 structured recovery', () => {
+  it('SimpleCharacterSchema accepts the minimal fields needed for anchor expansion', () => {
+    const result = SimpleCharacterSchema.parse({
+      characters: [
+        { name: 'Aria', anchor: 'long mint-green hair, dark teal military coat, white folding fan' },
+        { name: 'Kael', anchor: 'silver-white twin tails, navy blue sailor uniform, blue beret' },
+      ],
+    })
+    expect(result.characters).toHaveLength(2)
+    expect(result.characters[0].anchor).toContain('mint-green')
+    expect(result.characters[1].anchor).toContain('twin tails')
+  })
+})
+
 describe('L3 structured feedback design', () => {
   it('L3 error feedback message includes lastError and panelCount', () => {
     const lastError = 'SimplePanelSchema returned empty panels array'

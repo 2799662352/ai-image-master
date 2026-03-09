@@ -8,6 +8,7 @@ import {
   CharacterAnchorSchema,
   DesignAndAssembleSchema,
   SimplePanelSchema,
+  SimpleCharacterSchema,
   SkillDiscoverySchema,
   VerifySchema,
   SkillSelectionSchema,
@@ -1098,36 +1099,36 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
         let characters = (response as any)?.parsed
         if (!characters?.characters?.length) {
-          const rawText = typeof (response as any)?.raw?.content === 'string'
-            ? (response as any).raw.content : ''
+          console.warn('[DirectorPipeline] extractCharacterAnchors: structured parse returned empty, retrying with SimpleCharacterSchema')
           try {
-            const match = rawText.match(/\{[\s\S]*"characters"\s*:\s*\[[\s\S]*\][\s\S]*\}/)
-            if (match) {
-              const parsed = JSON.parse(match[0])
-              if (parsed?.characters?.length) characters = parsed
+            const simpleStructured = self.createStructuredLLM(SimpleCharacterSchema)
+            const simpleResult = await simpleStructured.invoke(
+              [
+                { role: 'system', content: systemPrompt },
+                {
+                  role: 'user',
+                  content: [
+                    ...BasePipeline.buildImageContent(
+                      state.inputImages,
+                      resolveVisionDetailByPass(state, 'extractCharacterAnchors'),
+                    ),
+                    { type: 'text' as const, text: 'Extract character consistency anchors. For each character provide a name and a single anchor phrase combining their most distinguishing visual features.' },
+                  ],
+                },
+              ],
+              { signal: config?.signal },
+            )
+            if (simpleResult?.characters?.length) {
+              characters = simpleResult
+              console.log(`[DirectorPipeline] extractCharacterAnchors: recovered ${characters.characters.length} characters via SimpleCharacterSchema`)
             }
-          } catch { /* full JSON parse failed, try extracting individual character objects from truncated response */ }
-          if (!characters?.characters?.length && rawText.includes('"name"')) {
-            try {
-              const charObjects: any[] = []
-              const charPattern = /\{\s*"name"\s*:\s*"[^"]+?"[\s\S]*?"anchor"\s*:\s*"[^"]*?"[^}]*\}/g
-              let m
-              while ((m = charPattern.exec(rawText)) !== null) {
-                try {
-                  const obj = JSON.parse(m[0])
-                  if (obj.name && obj.anchor) charObjects.push(obj)
-                } catch { /* skip incomplete object */ }
-              }
-              if (charObjects.length) {
-                characters = { characters: charObjects }
-                console.warn(`[DirectorPipeline] extractCharacterAnchors: recovered ${charObjects.length} characters from truncated response`)
-              }
-            } catch { /* regex extraction also failed */ }
+          } catch (retryErr: unknown) {
+            console.warn('[DirectorPipeline] extractCharacterAnchors retry error:', retryErr instanceof Error ? retryErr.message : String(retryErr))
           }
         }
         if (!characters?.characters?.length) {
           characters = { characters: [] }
-          console.warn('[DirectorPipeline] extractCharacterAnchors: structured + raw extraction both failed')
+          console.warn('[DirectorPipeline] extractCharacterAnchors: all extraction methods failed')
         }
 
         const elapsed = Date.now() - t0
