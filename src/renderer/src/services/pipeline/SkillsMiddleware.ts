@@ -1,19 +1,39 @@
 import type { PipelineSkill } from './types'
 
-/**
- * SkillsMiddleware — Deep Agents-aligned skill system.
- *
- * Implements the progressive disclosure pattern from LangChain's SkillsMiddleware:
- * 1. Init: reads skill frontmatter (id + description only)
- * 2. wrapSystemPrompt: injects skill menu (descriptions) into system prompt
- * 3. loadSkill: returns full skill body on-demand (LLM calls this)
- *
- * Extended with DirectorPipeline features:
- * - appliesTo: phase-based filtering (skills only appear in relevant passes)
- * - priority: ordering within a phase
- * - condition: dynamic context-based filtering
- * - _rawBody / _bodyLoaded: lazy body loading
- */
+export class VirtualSkillsBackend {
+  private files: Map<string, string>
+
+  constructor(skills: PipelineSkill[], phase: string, context?: Record<string, unknown>) {
+    this.files = new Map()
+    const matched = skills
+      .filter(s => s.appliesTo.includes(phase))
+      .filter(s => !s.condition || s.condition(context || {}))
+      .sort((a, b) => a.priority - b.priority)
+    for (const skill of matched) {
+      if (skill._bodyLoaded === false && skill._rawBody) {
+        skill.rules = skill._rawBody
+        skill._bodyLoaded = true
+      }
+      const body = typeof skill.rules === 'function' ? skill.rules(context || {}) : skill.rules
+      this.files.set(`/skills/${skill.id}/SKILL.md`, `---\nname: ${skill.id}\ndescription: ${skill.description}\n---\n\n${body}`)
+    }
+  }
+
+  read(filePath: string): string {
+    const content = this.files.get(filePath)
+    if (!content) return `Error: File '${filePath}' not found`
+    return content
+  }
+
+  ls(): string[] {
+    return [...this.files.keys()]
+  }
+
+  get fileCount(): number {
+    return this.files.size
+  }
+}
+
 export class SkillsMiddleware {
   readonly skills: PipelineSkill[]
 

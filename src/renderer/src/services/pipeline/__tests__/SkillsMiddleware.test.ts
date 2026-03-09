@@ -68,3 +68,70 @@ describe('SkillsMiddleware', () => {
     expect(wrapped).toBe('Base prompt.')
   })
 })
+
+describe('VirtualSkillsBackend', () => {
+  let VirtualSkillsBackend: any
+
+  beforeAll(async () => {
+    const mod = await import('../SkillsMiddleware')
+    VirtualSkillsBackend = mod.VirtualSkillsBackend
+  })
+
+  it('maps skills to /skills/{id}/SKILL.md paths', () => {
+    const backend = new VirtualSkillsBackend(
+      [{ id: 'lighting', description: 'Lighting rules', rules: 'Use rim light', appliesTo: ['design'], priority: 1 }],
+      'design',
+    )
+    const files = backend.ls()
+    expect(files).toEqual(['/skills/lighting/SKILL.md'])
+  })
+
+  it('read() returns SKILL.md content with frontmatter', () => {
+    const backend = new VirtualSkillsBackend(
+      [{ id: 'lighting', description: 'Lighting rules', rules: 'Use rim light', appliesTo: ['design'], priority: 1 }],
+      'design',
+    )
+    const content = backend.read('/skills/lighting/SKILL.md')
+    expect(content).toContain('---')
+    expect(content).toContain('name: lighting')
+    expect(content).toContain('description: Lighting rules')
+    expect(content).toContain('Use rim light')
+  })
+
+  it('read() returns error for unknown path', () => {
+    const backend = new VirtualSkillsBackend([], 'design')
+    const result = backend.read('/skills/nope/SKILL.md')
+    expect(result).toContain('not found')
+  })
+
+  it('filters by phase', () => {
+    const backend = new VirtualSkillsBackend(
+      [
+        { id: 'a', description: 'A', rules: 'body', appliesTo: ['design'], priority: 1 },
+        { id: 'b', description: 'B', rules: 'body', appliesTo: ['verify'], priority: 2 },
+      ],
+      'design',
+    )
+    expect(backend.ls()).toEqual(['/skills/a/SKILL.md'])
+    expect(backend.fileCount).toBe(1)
+  })
+
+  it('triggers lazy loading of _rawBody', () => {
+    const backend = new VirtualSkillsBackend(
+      [{ id: 'lazy', description: 'Lazy', rules: '', appliesTo: ['design'], priority: 1, _rawBody: 'Lazy body', _bodyLoaded: false }],
+      'design',
+    )
+    const content = backend.read('/skills/lazy/SKILL.md')
+    expect(content).toContain('Lazy body')
+  })
+
+  it('evaluates function rules with context', () => {
+    const backend = new VirtualSkillsBackend(
+      [{ id: 'dynamic', description: 'Dynamic', rules: (ctx: any) => `Style: ${ctx.style}`, appliesTo: ['design'], priority: 1 }],
+      'design',
+      { style: 'anime' },
+    )
+    const content = backend.read('/skills/dynamic/SKILL.md')
+    expect(content).toContain('Style: anime')
+  })
+})
