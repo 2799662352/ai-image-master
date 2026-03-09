@@ -47,6 +47,15 @@ export const SimplePanelSchema = z.object({
 
 export type SimplePanel = z.infer<typeof SimplePanelSchema>
 
+export const SimpleCharacterSchema = z.object({
+  characters: z.array(z.object({
+    name: z.string().describe('Character name or identifier'),
+    anchor: z.string().describe('Visual consistency anchor: distinguishing features in one phrase'),
+  })),
+})
+
+export type SimpleCharacter = z.infer<typeof SimpleCharacterSchema>
+
 export const SkillSelectionSchema = z.object({
   selectedSkills: z.array(z.string()).describe('选中的 skill ID 列表'),
   reasoning: z.string().describe('选择理由，一句话说明为什么选这些 skills'),
