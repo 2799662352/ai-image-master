@@ -105,6 +105,39 @@ export class SkillsMiddleware {
     return this.matchPhase(phase, context).map(s => s.id)
   }
 
+  async runSkillDiscovery(params: {
+    llm: { bindTools: (tools: any[]) => { invoke: (messages: any[], options?: any) => Promise<any> } }
+    phase: string
+    context?: Record<string, unknown>
+    basePrompt: string
+    userMessage: string
+    maxIterations?: number
+    signal?: AbortSignal
+  }): Promise<ToolCallingLoopResult> {
+    const readFileTool = this.createReadFileTool(params.phase, params.context)
+    if (!readFileTool) {
+      return { loadedSkillBodies: '', iterations: 0, messages: [] }
+    }
+
+    const boundLLM = params.llm.bindTools([readFileTool])
+    return runToolCallingLoop({
+      llm: boundLLM,
+      tools: [readFileTool],
+      messages: [
+        {
+          role: 'system' as const,
+          content: this.wrapSystemPrompt(params.basePrompt, params.phase, params.context),
+        },
+        {
+          role: 'user' as const,
+          content: params.userMessage,
+        },
+      ],
+      maxIterations: params.maxIterations ?? 3,
+      signal: params.signal,
+    })
+  }
+
   createReadFileTool(phase: string, context?: Record<string, unknown>) {
     const backend = new VirtualSkillsBackend(this.skills, phase, context)
     if (backend.fileCount === 0) return null

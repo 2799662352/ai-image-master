@@ -329,3 +329,53 @@ describe('runToolCallingLoop', () => {
     expect(toolMsg?.content).toContain('disk exploded')
   })
 })
+
+describe('SkillsMiddleware.runSkillDiscovery', () => {
+  let SkillsMiddleware: any
+
+  beforeAll(async () => {
+    const mod = await import('../SkillsMiddleware')
+    SkillsMiddleware = mod.SkillsMiddleware
+  })
+
+  it('returns loaded skill bodies via tool calling', async () => {
+    const mw = new SkillsMiddleware([
+      { id: 'a', description: 'Skill A', rules: 'Body A content', appliesTo: ['design'], priority: 1 },
+    ])
+    let callCount = 0
+    const fakeLLM = {
+      bindTools: () => ({
+        invoke: async () => {
+          callCount++
+          if (callCount === 1) {
+            return { tool_calls: [{ id: 'tc1', name: 'read_file', args: { file_path: '/skills/a/SKILL.md' } }] }
+          }
+          return { tool_calls: [] }
+        },
+      }),
+    }
+    const result = await mw.runSkillDiscovery({
+      llm: fakeLLM,
+      phase: 'design',
+      basePrompt: 'You are a director.',
+      userMessage: 'Design panels.',
+    })
+    expect(result.loadedSkillBodies).toContain('Body A content')
+    expect(result.iterations).toBeGreaterThan(0)
+  })
+
+  it('returns empty when no skills match phase', async () => {
+    const mw = new SkillsMiddleware([
+      { id: 'a', description: 'A', rules: 'body', appliesTo: ['verify'], priority: 1 },
+    ])
+    const fakeLLM = { bindTools: () => ({ invoke: async () => ({ tool_calls: [] }) }) }
+    const result = await mw.runSkillDiscovery({
+      llm: fakeLLM,
+      phase: 'design',
+      basePrompt: 'base',
+      userMessage: 'hello',
+    })
+    expect(result.loadedSkillBodies).toBe('')
+    expect(result.iterations).toBe(0)
+  })
+})
