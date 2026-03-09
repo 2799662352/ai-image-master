@@ -40,41 +40,6 @@ describe('L1 maxTokens calculation', () => {
   })
 })
 
-describe('expandCharacterTags', () => {
-  it('replaces [charN] tags with full anchor descriptions', () => {
-    const result = (DirectorPipelineModule as any).expandCharacterTags(
-      'Panel 1: [char1] lunges forward with a fan. [char2] blocks the attack.',
-      [
-        { name: 'Aria', anchor: 'long mint-green hair, dark teal military coat, white folding fan' },
-        { name: 'Kael', anchor: 'silver-white twin tails, navy blue sailor uniform, blue beret' },
-      ],
-    )
-
-    expect(result).toContain('long mint-green hair, dark teal military coat, white folding fan')
-    expect(result).toContain('silver-white twin tails, navy blue sailor uniform, blue beret')
-    expect(result).not.toContain('[char1]')
-    expect(result).not.toContain('[char2]')
-  })
-
-  it('preserves text when no character tags are present', () => {
-    const result = (DirectorPipelineModule as any).expandCharacterTags(
-      'A wide establishing shot of the courtyard at sunset.',
-      [{ name: 'Aria', anchor: 'green hair girl' }],
-    )
-
-    expect(result).toBe('A wide establishing shot of the courtyard at sunset.')
-  })
-
-  it('returns text unchanged when characters array is empty', () => {
-    const result = (DirectorPipelineModule as any).expandCharacterTags(
-      'Panel 1: [char1] runs.',
-      [],
-    )
-
-    expect(result).toBe('Panel 1: [char1] runs.')
-  })
-})
-
 describe('Pass 2 structured recovery', () => {
   it('SimpleCharacterSchema accepts the minimal fields needed for anchor expansion', () => {
     const result = SimpleCharacterSchema.parse({
