@@ -220,101 +220,6 @@ export function resolveDiscoveredSkillRules(params: {
   return params.getSkillBodiesById(requested, params.passName, params.context)
 }
 
-export function extractTextFromUnknown(input: unknown): string {
-  if (typeof input === 'string') return input
-  if (Array.isArray(input)) {
-    return input
-      .map((item) => extractTextFromUnknown(item))
-      .filter(Boolean)
-      .join('\n')
-  }
-  if (input && typeof input === 'object') {
-    const record = input as Record<string, unknown>
-    if (typeof record.text === 'string') return record.text
-    if ('additional_kwargs' in record) return extractTextFromUnknown(record.additional_kwargs)
-    if ('tool_calls' in record) return extractTextFromUnknown(record.tool_calls)
-    if ('function' in record) return extractTextFromUnknown(record.function)
-    if ('arguments' in record) return extractTextFromUnknown(record.arguments)
-    if ('args' in record) return extractTextFromUnknown(record.args)
-    if ('input' in record) return extractTextFromUnknown(record.input)
-    if ('content' in record) return extractTextFromUnknown(record.content)
-    if ('raw' in record) return extractTextFromUnknown(record.raw)
-    if ('result' in record) return extractTextFromUnknown(record.result)
-    if (Array.isArray(record.panels)) return JSON.stringify({ panels: record.panels })
-  }
-  return ''
-}
-
-function tryParsePanelsCandidate(candidate: string): any[] | null {
-  try {
-    const parsed = JSON.parse(candidate)
-    return Array.isArray(parsed?.panels) ? parsed.panels : null
-  } catch {
-    return null
-  }
-}
-
-export function extractPanelsFromUnknown(input: unknown): any[] | null {
-  if (input && typeof input === 'object') {
-    const record = input as Record<string, unknown>
-    const raw = (record.raw ?? record) as Record<string, unknown>
-    const toolCalls = raw?.tool_calls
-    if (Array.isArray(toolCalls)) {
-      for (const tc of toolCalls as any[]) {
-        if (Array.isArray(tc?.args?.panels) && tc.args.panels.length > 0) {
-          return tc.args.panels
-        }
-      }
-    }
-  }
-
-  const text = extractTextFromUnknown(input)
-  if (!text) return null
-
-  const direct = tryParsePanelsCandidate(text)
-  if (direct) return direct
-
-  const fenced = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)]
-  for (const match of fenced) {
-    const parsed = tryParsePanelsCandidate(match[1].trim())
-    if (parsed) return parsed
-  }
-
-  const panelsMatches = text.match(/\{"panels"\s*:\s*\[[\s\S]*?\]\s*\}/g) || []
-  for (const candidate of panelsMatches) {
-    const parsed = tryParsePanelsCandidate(candidate)
-    if (parsed) return parsed
-  }
-
-  // Last resort: extract individual panel objects from truncated JSON
-  const individualPanels = extractIndividualPanels(text)
-  if (individualPanels.length > 0) return individualPanels
-
-  return null
-}
-
-/**
- * Extracts individual complete panel objects from potentially truncated JSON.
- * When the LLM response hits maxTokens, the JSON is cut mid-object.
- * This extracts whatever complete panel objects exist before the truncation point.
- */
-export function extractIndividualPanels(text: string): any[] {
-  const panels: any[] = []
-  const panelPattern = /\{\s*"id"\s*:\s*(\d+)\s*,\s*"(?:shot|prompt)"[\s\S]*?\}/g
-  let match: RegExpExecArray | null
-  while ((match = panelPattern.exec(text)) !== null) {
-    try {
-      const obj = JSON.parse(match[0])
-      if (typeof obj.id === 'number' && (obj.prompt || obj.shot)) {
-        panels.push(obj)
-      }
-    } catch {
-      // incomplete object at the end of truncated text — skip
-    }
-  }
-  return panels
-}
-
 function normalizeVisionDetail(value: unknown, fallback: VisionDetail): VisionDetail {
   return value === 'low' || value === 'high' || value === 'auto'
     ? value
@@ -1414,7 +1319,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         writer(config)?.({ type: 'pass_complete', pass: 4, label: `分镜+提示词完成 [${level}] (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
       }
 
-      // --- Level 1: Full schema with includeRaw + regex fallback ---
+      // --- Level 1: Full schema with includeRaw ---
       // DesignAndAssembleSchema has 8 fields per panel; each averages ~80 tokens in JSON.
       // Default 4096 maxTokens truncates output for 6+ panels → "length limit was reached".
       const l1MaxTokens = Math.max(4096, state.layout.panelCount * 800 + 1024)
@@ -1423,17 +1328,13 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         console.log(`[DirectorPipeline] L1 maxTokens=${l1MaxTokens} for ${state.layout.panelCount} panels`)
         const response = await structuredWithRaw.invoke(messages, { signal: config?.signal })
 
-        let parsedPanels = (response as any)?.parsed?.panels
-        if (!parsedPanels?.length) {
-          parsedPanels = extractPanelsFromUnknown(response)
-        }
-
+        const parsedPanels = (response as any)?.parsed?.panels
         if (parsedPanels?.length) {
           const { panels, prompts } = makePanelsAndPrompts(parsedPanels)
           emitSuccess(panels, prompts, 'L1')
           return { panels, prompts }
         }
-        console.warn('[DirectorPipeline] L1 failed: full schema + raw extraction both empty')
+        console.warn('[DirectorPipeline] L1 structured parse returned empty, falling through to L2')
       } catch (e: unknown) {
         console.warn('[DirectorPipeline] L1 error:', e instanceof Error ? e.message : String(e))
       }

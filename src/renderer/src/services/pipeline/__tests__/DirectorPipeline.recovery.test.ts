@@ -12,31 +12,6 @@ describe('SimpleCharacterSchema', () => {
   })
 })
 
-describe('extractIndividualPanels', () => {
-  const extractIndividualPanels = DirectorPipelineModule.extractIndividualPanels
-
-  it('extracts complete panel objects from truncated JSON', () => {
-    const truncatedJson = `{"panels":[{"id":1,"shot":"wide shot","desc":"scene","lighting":"warm","characterAction":"[char1] walks","background":"city","prompt":"A wide shot of a city","negativePrompt":"blurry"},{"id":2,"shot":"close-up","desc":"face","lighting":"soft","characterAction":"[char1] smiles","background":"park","prompt":"A close-up in a park","negativePrompt":"noise"},{"id":3,"shot":"medium","desc":"duo`
-    const panels = extractIndividualPanels(truncatedJson)
-    expect(panels.length).toBe(2)
-    expect(panels[0].id).toBe(1)
-    expect(panels[1].id).toBe(2)
-  })
-
-  it('returns empty array for content with no valid panels', () => {
-    expect(extractIndividualPanels('random text without panels')).toEqual([])
-    expect(extractIndividualPanels('')).toEqual([])
-  })
-
-  it('extracts panels with just id and prompt fields', () => {
-    const text = `[{"id":1,"prompt":"dramatic scene"},{"id":2,"prompt":"action shot"},{"id":3,"prom`
-    const panels = extractIndividualPanels(text)
-    expect(panels.length).toBe(2)
-    expect(panels[0]).toEqual({ id: 1, prompt: 'dramatic scene' })
-    expect(panels[1]).toEqual({ id: 2, prompt: 'action shot' })
-  })
-})
-
 describe('L1 maxTokens calculation', () => {
   it('uses at least 4096 tokens for small panel counts', () => {
     const panelCount = 3
@@ -126,44 +101,3 @@ describe('L3 structured feedback design', () => {
   })
 })
 
-describe('DirectorPipeline recovery helpers', () => {
-  it('can recover panels from text blocks in non-string LLM content', () => {
-    const panels = (DirectorPipelineModule as any).extractPanelsFromUnknown({
-      raw: {
-        content: [
-          { type: 'text', text: '{"panels":[{"id":1,"prompt":"cinematic close-up"}]}' },
-        ],
-      },
-    })
-
-    expect(panels).toEqual([
-      { id: 1, prompt: 'cinematic close-up' },
-    ])
-  })
-
-  it('extracts the actual panels object instead of greedily matching the first brace block', () => {
-    const panels = (DirectorPipelineModule as any).extractPanelsFromUnknown(
-      'Example wrapper: {"note":"ignore this"}\nActual payload: {"panels":[{"id":1,"prompt":"wide establishing shot"}]}\nDone.',
-    )
-
-    expect(panels).toEqual([
-      { id: 1, prompt: 'wide establishing shot' },
-    ])
-  })
-
-  it('unwraps nested panel results returned by structured output adapters', () => {
-    const panels = (DirectorPipelineModule as any).extractPanelsFromUnknown({
-      result: {
-        panels: [
-          { id: 1, prompt: 'hero shot' },
-          { id: 2, prompt: 'reaction shot' },
-        ],
-      },
-    })
-
-    expect(panels).toEqual([
-      { id: 1, prompt: 'hero shot' },
-      { id: 2, prompt: 'reaction shot' },
-    ])
-  })
-})
