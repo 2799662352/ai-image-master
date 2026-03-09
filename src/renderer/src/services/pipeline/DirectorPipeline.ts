@@ -285,7 +285,33 @@ export function extractPanelsFromUnknown(input: unknown): any[] | null {
     if (parsed) return parsed
   }
 
+  // Last resort: extract individual panel objects from truncated JSON
+  const individualPanels = extractIndividualPanels(text)
+  if (individualPanels.length > 0) return individualPanels
+
   return null
+}
+
+/**
+ * Extracts individual complete panel objects from potentially truncated JSON.
+ * When the LLM response hits maxTokens, the JSON is cut mid-object.
+ * This extracts whatever complete panel objects exist before the truncation point.
+ */
+export function extractIndividualPanels(text: string): any[] {
+  const panels: any[] = []
+  const panelPattern = /\{\s*"id"\s*:\s*(\d+)\s*,\s*"(?:shot|prompt)"[\s\S]*?\}/g
+  let match: RegExpExecArray | null
+  while ((match = panelPattern.exec(text)) !== null) {
+    try {
+      const obj = JSON.parse(match[0])
+      if (typeof obj.id === 'number' && (obj.prompt || obj.shot)) {
+        panels.push(obj)
+      }
+    } catch {
+      // incomplete object at the end of truncated text — skip
+    }
+  }
+  return panels
 }
 
 function normalizeVisionDetail(value: unknown, fallback: VisionDetail): VisionDetail {
@@ -667,6 +693,55 @@ export function shouldRetryAnalysis(state: {
   return 'retry'
 }
 
+/**
+ * Assembles L1 structured fields into a coherent single-sentence prompt
+ * following Gemini's recommended narrative template:
+ *   [shot], [character actions with bound weapons/props], [scene context], [lighting]
+ *
+ * This replaces the old ". " concatenation that caused attribute cross-contamination
+ * when Gemini Image processed fragmented multi-segment prompts.
+ */
+export function assembleCoherentPrompt(
+  panel: { shot?: string; desc?: string; lighting?: string; characterAction?: string; background?: string },
+  prompt: { prompt: string },
+): string {
+  const shot = panel.shot?.trim() || ''
+  const action = panel.characterAction?.trim() || ''
+  const desc = panel.desc?.trim() || ''
+  const lighting = panel.lighting?.trim() || ''
+  const bg = panel.background?.trim() || ''
+  const basePrompt = prompt.prompt?.trim() || ''
+
+  if (!action && !desc && !shot && !lighting) {
+    return basePrompt
+  }
+
+  const coreAction = action || desc
+  const segments: string[] = []
+
+  if (shot) segments.push(shot)
+
+  if (coreAction) {
+    segments.push(coreAction)
+    if (desc && action && !action.includes(desc.slice(0, 20))) {
+      segments.push(desc)
+    }
+    const promptIsRedundant = basePrompt
+      && (coreAction.includes(basePrompt.slice(0, 30))
+        || basePrompt.includes(coreAction.slice(0, 30)))
+    if (basePrompt && !promptIsRedundant) {
+      segments.push(basePrompt)
+    }
+  } else {
+    segments.push(basePrompt)
+  }
+
+  if (bg) segments.push(bg)
+  if (lighting) segments.push(lighting)
+
+  return segments.join(', ')
+}
+
 export function expandCharacterTags(
   text: string,
   characters: Array<{ name?: string; anchor?: string }>,
@@ -757,12 +832,9 @@ export function extractVarsForContactSheet(state: DirectorState): Record<string,
       const panels = state.panels || []
       const enhanced = prompts.map(p => {
         const panel = panels.find((pn: any) => pn.id === p.id)
-        const parts = [p.prompt]
-        if (panel?.characterAction) parts.push(panel.characterAction)
-        if (panel?.desc) parts.push(panel.desc)
-        if (panel?.shot) parts.push(panel.shot)
-        if (panel?.lighting) parts.push(panel.lighting)
-        const raw = parts.join('. ')
+        const raw = panel
+          ? assembleCoherentPrompt(panel, p)
+          : p.prompt
         const base = expandCharacterTags(raw, characters)
         const prefixed = stylePrefix && !base.toLowerCase().startsWith(stylePrefix.toLowerCase())
           ? `${stylePrefix}, ${base}`
@@ -1017,7 +1089,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
                   state.inputImages,
                   resolveVisionDetailByPass(state, 'extractCharacterAnchors'),
                 ),
-                { type: 'text' as const, text: 'Extract character consistency anchors in English (optional concise Japanese notes in parentheses).' },
+                { type: 'text' as const, text: 'Extract character consistency anchors in English (optional concise Japanese notes in parentheses). Keep each field under 120 words. Focus on visually distinguishing features, not exhaustive inventories.' },
               ],
             },
           ],
@@ -1034,7 +1106,24 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
               const parsed = JSON.parse(match[0])
               if (parsed?.characters?.length) characters = parsed
             }
-          } catch { /* fallback below */ }
+          } catch { /* full JSON parse failed, try extracting individual character objects from truncated response */ }
+          if (!characters?.characters?.length && rawText.includes('"name"')) {
+            try {
+              const charObjects: any[] = []
+              const charPattern = /\{\s*"name"\s*:\s*"[^"]+?"[\s\S]*?"anchor"\s*:\s*"[^"]*?"[^}]*\}/g
+              let m
+              while ((m = charPattern.exec(rawText)) !== null) {
+                try {
+                  const obj = JSON.parse(m[0])
+                  if (obj.name && obj.anchor) charObjects.push(obj)
+                } catch { /* skip incomplete object */ }
+              }
+              if (charObjects.length) {
+                characters = { characters: charObjects }
+                console.warn(`[DirectorPipeline] extractCharacterAnchors: recovered ${charObjects.length} characters from truncated response`)
+              }
+            } catch { /* regex extraction also failed */ }
+          }
         }
         if (!characters?.characters?.length) {
           characters = { characters: [] }
@@ -1250,7 +1339,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
             `You are an experienced film director. Before designing shots, review the available skills and select which ones are relevant to this task.\n\nScene: ${vars.scene_env}${characterIdentityLock ? `\n\n${characterIdentityLock}` : ''}`,
             skillContext,
           )
-          const discoveryLLM = self.createStructuredLLMWithRaw(SkillDiscoverySchema, undefined, 2048, 'jsonMode')
+          const discoveryLLM = self.createStructuredLLMWithRaw(SkillDiscoverySchema, undefined, 2048)
           const discoveryResponse = await discoveryLLM.invoke(
             [
               { role: 'system' as const, content: discoveryPrompt },
@@ -1325,8 +1414,12 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       }
 
       // --- Level 1: Full schema with includeRaw + regex fallback ---
+      // DesignAndAssembleSchema has 8 fields per panel; each averages ~80 tokens in JSON.
+      // Default 4096 maxTokens truncates output for 6+ panels → "length limit was reached".
+      const l1MaxTokens = Math.max(4096, state.layout.panelCount * 800 + 1024)
       try {
-        const structuredWithRaw = self.createStructuredLLMWithRaw(DesignAndAssembleSchema)
+        const structuredWithRaw = self.createStructuredLLMWithRaw(DesignAndAssembleSchema, undefined, l1MaxTokens)
+        console.log(`[DirectorPipeline] L1 maxTokens=${l1MaxTokens} for ${state.layout.panelCount} panels`)
         const response = await structuredWithRaw.invoke(messages, { signal: config?.signal })
 
         let parsedPanels = (response as any)?.parsed?.panels
@@ -1341,7 +1434,27 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         }
         console.warn('[DirectorPipeline] L1 failed: full schema + raw extraction both empty')
       } catch (e: unknown) {
-        console.warn('[DirectorPipeline] L1 error:', e instanceof Error ? e.message : String(e))
+        const errMsg = e instanceof Error ? e.message : String(e)
+        console.warn('[DirectorPipeline] L1 error:', errMsg)
+
+        // Partial recovery: if output was truncated, try to extract whatever panels were completed
+        if (errMsg.includes('length limit') || errMsg.includes('Could not parse')) {
+          try {
+            const rawContent = (e as any)?.llmOutput?.content
+              || (e as any)?.response?.content
+              || (e as any)?.message?.content
+              || ''
+            if (rawContent) {
+              const partialPanels = extractPanelsFromUnknown(rawContent)
+              if (partialPanels?.length && partialPanels.length >= Math.floor(state.layout.panelCount * 0.5)) {
+                console.log(`[DirectorPipeline] L1 partial recovery: ${partialPanels.length}/${state.layout.panelCount} panels from truncated response`)
+                const { panels, prompts } = makePanelsAndPrompts(partialPanels)
+                emitSuccess(panels, prompts, 'L1-partial')
+                return { panels, prompts }
+              }
+            }
+          } catch { /* partial recovery failed, proceed to L2 */ }
+        }
       }
 
       // --- Level 2: Simplified schema (just id + prompt) ---
@@ -1363,23 +1476,21 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         console.warn('[DirectorPipeline] L2 error:', lastError)
       }
 
-      // --- Level 3: Error feedback to LLM (LLM-recoverable pattern) ---
-      // Pass the actual error so LLM knows exactly what went wrong
+      // --- Level 3: Error feedback + structured retry (LLM-recoverable pattern) ---
       writer(config)?.({ type: 'pass_complete', pass: 4, label: '分镜 LLM 自修正重试...', elapsed: Date.now() - t0, passData: null })
       try {
-        const llm = self.createLLM()
-        const feedbackResult = await llm.invoke(
+        const feedbackStructured = self.createStructuredLLM(SimplePanelSchema)
+        const feedbackResult = await feedbackStructured.invoke(
           [
             ...messages,
             { role: 'assistant' as const, content: `I attempted to generate panel data but the output failed validation. Error: ${lastError}` },
-            { role: 'user' as const, content: `Your previous response failed with error: "${lastError}"\n\nPlease fix this and respond with ONLY a valid JSON object (no markdown, no code fences), exactly like:\n{"panels":[{"id":1,"prompt":"detailed english image prompt here"},{"id":2,"prompt":"..."}]}\n\nYou must generate exactly ${state.layout.panelCount} panels. Each panel needs an "id" (number) and a "prompt" (detailed English image generation prompt string).` },
+            { role: 'user' as const, content: `Your previous response failed with error: "${lastError}"\n\nPlease fix this and respond with exactly ${state.layout.panelCount} panels. Each panel needs an "id" (number) and a "prompt" (detailed English image generation prompt).` },
           ],
           { signal: config?.signal },
         )
-        const parsedPanels = extractPanelsFromUnknown(feedbackResult)
-        if (parsedPanels?.length) {
-          const { panels, prompts } = makePanelsAndPrompts(parsedPanels)
-          console.log(`[DirectorPipeline] L3 success: ${panels.length} panels via error feedback`)
+        if (feedbackResult?.panels?.length) {
+          const { panels, prompts } = makePanelsAndPrompts(feedbackResult.panels)
+          console.log(`[DirectorPipeline] L3 success: ${panels.length} panels via structured error feedback`)
           emitSuccess(panels, prompts, 'L3-feedback')
           return { panels, prompts }
         }
@@ -1398,7 +1509,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       const t0 = Date.now()
       try {
         const appliedSkills = self.getSkillsForPhase('verifyConsistency', state as Record<string, unknown>)
-        const structuredWithRaw = self.createStructuredLLMWithRaw(VerifySchema, undefined, 4096, 'jsonMode')
+        const structuredWithRaw = self.createStructuredLLMWithRaw(VerifySchema)
         const vars = extractVarsForVerify(state)
         const systemPrompt = self.resolveSystemPrompt(
           'verifyConsistency', vars,

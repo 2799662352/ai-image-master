@@ -100,6 +100,18 @@ describe('expandCharacterTags', () => {
   })
 })
 
+describe('L3 structured feedback design', () => {
+  it('L3 error feedback message includes lastError and panelCount', () => {
+    const lastError = 'SimplePanelSchema returned empty panels array'
+    const panelCount = 6
+    const feedbackMsg = `Your previous response failed with error: "${lastError}"\n\nPlease fix this and respond with exactly ${panelCount} panels. Each panel needs an "id" (number) and a "prompt" (detailed English image generation prompt).`
+    expect(feedbackMsg).toContain(lastError)
+    expect(feedbackMsg).toContain(String(panelCount))
+    expect(feedbackMsg).not.toContain('JSON object')
+    expect(feedbackMsg).not.toContain('code fences')
+  })
+})
+
 describe('DirectorPipeline recovery helpers', () => {
   it('can recover panels from text blocks in non-string LLM content', () => {
     const panels = (DirectorPipelineModule as any).extractPanelsFromUnknown({
