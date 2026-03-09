@@ -1024,13 +1024,34 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         return { scene: null }
       }
       try {
-        const appliedSkills = self.getSkillsForPhase('analyzeScene', state as Record<string, unknown>)
+        const skillsMw = new SkillsMW(self.matchSkillsForPhase('analyzeScene', state as Record<string, unknown>))
+        const appliedSkills = skillsMw.getAllSkillIds('analyzeScene', state as Record<string, unknown>)
         const structuredWithRaw = self.createStructuredLLMWithRaw(SceneAnalysisSchema)
-        const systemPrompt = self.resolveSystemPrompt(
-          'analyzeScene', {},
-          state as Record<string, unknown>,
-          'You are an expert scene analyst. Analyze the provided images and describe the scene in structured detail.',
-        )
+
+        let discoveredSkillRules = ''
+        try {
+          const discoveryResult = await skillsMw.runSkillDiscovery({
+            llm: self.createLLM(undefined, 2048),
+            phase: 'analyzeScene',
+            context: state as Record<string, unknown>,
+            basePrompt: 'You are an expert scene analyst. Before analyzing, review available skills for relevant techniques.',
+            userMessage: 'Read any relevant skills for scene analysis, then confirm you are ready.',
+            maxIterations: 3,
+            signal: config?.signal,
+          })
+          discoveredSkillRules = discoveryResult.loadedSkillBodies
+        } catch (e: unknown) {
+          console.warn('[DirectorPipeline] Pass 1 skill discovery failed:', e instanceof Error ? e.message : String(e))
+        }
+
+        const tpl = getPromptTemplate('analyzeScene')
+        const basePrompt = tpl
+          ? renderTemplate(tpl.template, {})
+          : 'You are an expert scene analyst. Analyze the provided images and describe the scene in structured detail.'
+        const systemPrompt = discoveredSkillRules
+          ? `${basePrompt}\n\n--- Loaded Skills ---\n${discoveredSkillRules}`
+          : basePrompt
+
         const response = await structuredWithRaw.invoke(
           [
             { role: 'system', content: systemPrompt },
