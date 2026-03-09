@@ -542,6 +542,37 @@ export function buildAdaptiveNegativePrompt(
   return `${baseNegative}, ${newTerms.join(', ')}`
 }
 
+/**
+ * Convert style exclusion terms into positive-language constraints for Gemini Native.
+ * Gemini's API has no negative prompt support. Google recommends describing
+ * desired content positively rather than listing negations.
+ *
+ * Reuses STYLE_EXCLUSION_MAP / MEDIUM_EXCLUSION_MAP data but outputs natural
+ * language that Gemini's deep language understanding can process.
+ */
+export function buildSemanticExclusions(
+  templateKey: string,
+  styleAnchor: { medium?: string } | null,
+): string {
+  let exclusions = STYLE_EXCLUSION_MAP[templateKey] || []
+
+  if (exclusions.length === 0 && styleAnchor?.medium) {
+    const medium = styleAnchor.medium.toLowerCase()
+    for (const [key, values] of Object.entries(MEDIUM_EXCLUSION_MAP)) {
+      if (medium.includes(key)) {
+        exclusions = values
+        break
+      }
+    }
+  }
+
+  if (exclusions.length === 0) return ''
+
+  const baseConstraints = 'no watermarks, no signatures, no overlaid text, no panel labels, no captions'
+  const avoidList = exclusions.join(', ')
+  return `CONSTRAINTS: Strictly avoid: ${avoidList}. Also: ${baseConstraints}.`
+}
+
 export function buildReferenceImageRoleRules(
   templateKey: string,
   hasStyleAnchor: boolean,
