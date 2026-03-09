@@ -648,21 +648,64 @@ export function assembleCoherentPrompt(
   return segments.join(', ')
 }
 
+/**
+ * Expands [charN] tags into spatially-separated narrative clauses.
+ *
+ * Instead of "(Name: anchor)" which causes cross-attention bleed in diffusion
+ * models, this produces self-contained character descriptions with:
+ * - Spatial anchors (foreground left/right/center) for multi-character scenes
+ * - Inline appearance: "(anchor)" without name prefix
+ * - Action immediately following appearance (bound to same attention region)
+ * - Semicolons as soft token boundaries between characters
+ */
 export function expandCharacterTags(
   text: string,
   characters: Array<{ name?: string; anchor?: string }>,
 ): string {
   if (!characters.length) return text
   const sorted = sortCharacters(characters)
+
+  const tagsPresent = sorted.map((_, i) => `[char${i + 1}]`).filter(tag => text.includes(tag))
+  if (tagsPresent.length === 0) return text
+
+  const spatialAnchors = getSpatialAnchors(tagsPresent.length)
+
   let result = text
+  let spatialIdx = 0
   sorted.forEach((c, i) => {
-    const name = c.name || `character-${i + 1}`
-    const anchor = c.anchor || ''
     const tag = `[char${i + 1}]`
-    const replacement = `(${name}: ${anchor})`
-    result = result.split(tag).join(replacement)
+    if (!result.includes(tag)) return
+
+    const anchor = c.anchor || ''
+    const spatial = spatialAnchors[spatialIdx] || ''
+    spatialIdx++
+    const prefix = spatial ? `${spatial}, ` : ''
+    const descriptor = anchor
+      ? `${prefix}(${anchor})`
+      : prefix || tag
+
+    result = result.split(tag).join(descriptor)
   })
+
+  if (tagsPresent.length > 1) {
+    result = result.replace(/\.\s+/g, '; ')
+  }
+
   return result
+}
+
+function getSpatialAnchors(count: number): string[] {
+  if (count <= 1) return ['']
+  if (count === 2) return ['on the left', 'on the right']
+  if (count === 3) return ['on the left', 'in the center', 'on the right']
+  const anchors: string[] = []
+  for (let i = 0; i < count; i++) {
+    const pos = count <= 4
+      ? ['on the far left', 'on the center-left', 'on the center-right', 'on the far right'][i]
+      : `in position ${i + 1} from left`
+    anchors.push(pos)
+  }
+  return anchors
 }
 
 export function extractVarsForContactSheet(state: DirectorState): Record<string, string> {

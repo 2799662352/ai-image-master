@@ -89,6 +89,90 @@ describe('Pass 2 structured recovery', () => {
   })
 })
 
+describe('expandCharacterTags spatial binding', () => {
+  it('produces spatially-separated narrative instead of parenthetical notation', () => {
+    const result = (DirectorPipelineModule as any).expandCharacterTags(
+      '[char1] lunges forward with a fan. [char2] blocks the attack.',
+      [
+        { name: 'Aria', anchor: 'long mint-green hair, dark teal military coat, white folding fan' },
+        { name: 'Kael', anchor: 'silver-white twin tails, navy blue sailor uniform, blue beret' },
+      ],
+    )
+
+    // Must NOT use parenthetical format
+    expect(result).not.toContain('(Aria:')
+    expect(result).not.toContain('(Kael:')
+
+    // Must inline appearance into natural language
+    expect(result).toContain('mint-green hair')
+    expect(result).toContain('sailor uniform')
+
+    // Must preserve actions bound to the correct character
+    expect(result).toContain('lunges forward')
+    expect(result).toContain('blocks the attack')
+  })
+
+  it('uses semicolons to separate character clauses for token boundary', () => {
+    const result = (DirectorPipelineModule as any).expandCharacterTags(
+      '[char1] runs. [char2] jumps.',
+      [
+        { name: 'A', anchor: 'red hair' },
+        { name: 'B', anchor: 'blue hat' },
+      ],
+    )
+
+    expect(result).toContain(';')
+  })
+
+  it('handles single character without spatial prefix', () => {
+    const result = (DirectorPipelineModule as any).expandCharacterTags(
+      '[char1] stands in the rain.',
+      [{ name: 'Aria', anchor: 'long mint-green hair, dark teal military coat' }],
+    )
+
+    // Single character — no spatial direction needed
+    expect(result).not.toContain('(Aria:')
+    expect(result).toContain('mint-green hair')
+    expect(result).toContain('stands in the rain')
+  })
+
+  it('preserves text when no character tags are present', () => {
+    const result = (DirectorPipelineModule as any).expandCharacterTags(
+      'A wide establishing shot of the courtyard at sunset.',
+      [{ name: 'Aria', anchor: 'green hair girl' }],
+    )
+
+    expect(result).toBe('A wide establishing shot of the courtyard at sunset.')
+  })
+
+  it('returns text unchanged when characters array is empty', () => {
+    const result = (DirectorPipelineModule as any).expandCharacterTags(
+      'Panel 1: [char1] runs.',
+      [],
+    )
+
+    expect(result).toBe('Panel 1: [char1] runs.')
+  })
+
+  it('handles 3+ characters with spatial distribution', () => {
+    const result = (DirectorPipelineModule as any).expandCharacterTags(
+      '[char1] attacks. [char2] defends. [char3] watches.',
+      [
+        { name: 'A', anchor: 'red hair, sword' },
+        { name: 'B', anchor: 'blue armor, shield' },
+        { name: 'C', anchor: 'black cloak, glasses' },
+      ],
+    )
+
+    expect(result).not.toContain('(A:')
+    expect(result).not.toContain('(B:')
+    expect(result).not.toContain('(C:')
+    expect(result).toContain('red hair')
+    expect(result).toContain('blue armor')
+    expect(result).toContain('black cloak')
+  })
+})
+
 describe('L3 structured feedback design', () => {
   it('L3 error feedback message includes lastError and panelCount', () => {
     const lastError = 'SimplePanelSchema returned empty panels array'
