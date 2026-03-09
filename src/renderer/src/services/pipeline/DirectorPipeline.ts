@@ -1549,14 +1549,35 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       checkPauseAndInterrupt('verifyConsistency', config)
       const t0 = Date.now()
       try {
-        const appliedSkills = self.getSkillsForPhase('verifyConsistency', state as Record<string, unknown>)
+        const skillsMw = new SkillsMW(self.matchSkillsForPhase('verifyConsistency', state as Record<string, unknown>))
+        const appliedSkills = skillsMw.getAllSkillIds('verifyConsistency', state as Record<string, unknown>)
         const structuredWithRaw = self.createStructuredLLMWithRaw(VerifySchema)
         const vars = extractVarsForVerify(state)
-        const systemPrompt = self.resolveSystemPrompt(
-          'verifyConsistency', vars,
-          state as Record<string, unknown>,
-          `You are a continuity supervisor. Check panels for consistency.\nScene: ${vars.scene_env}`,
-        )
+
+        let discoveredSkillRules = ''
+        try {
+          const discoveryResult = await skillsMw.runSkillDiscovery({
+            llm: self.createLLM(undefined, 2048),
+            phase: 'verifyConsistency',
+            context: state as Record<string, unknown>,
+            basePrompt: 'You are a continuity supervisor. Before verifying, review available skills.',
+            userMessage: 'Read any relevant skills for consistency verification, then confirm you are ready.',
+            maxIterations: 3,
+            signal: config?.signal,
+          })
+          discoveredSkillRules = discoveryResult.loadedSkillBodies
+        } catch (e: unknown) {
+          console.warn('[DirectorPipeline] Pass 5 skill discovery failed:', e instanceof Error ? e.message : String(e))
+        }
+
+        const tpl = getPromptTemplate('verifyConsistency')
+        const basePrompt = tpl
+          ? renderTemplate(tpl.template, vars)
+          : `You are a continuity supervisor. Check panels for consistency.\nScene: ${vars.scene_env}`
+        const systemPrompt = discoveredSkillRules
+          ? `${basePrompt}\n\n--- Loaded Skills ---\n${discoveredSkillRules}`
+          : basePrompt
+
         const userContent: Array<any> = []
         userContent.push({
           type: 'text' as const,
