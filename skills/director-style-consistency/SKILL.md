@@ -1,7 +1,7 @@
 ---
 name: director-style-consistency
 description: Use when verifying or enforcing cross-panel style uniformity and resolving image-text style conflicts
-appliesTo: [extractStyleAnchor, verifyConsistency, designAndAssemble, generateImages]
+appliesTo: [taskPlanning, extractStyleAnchor, verifyConsistency, designAndAssemble, generateImages]
 priority: 5
 ---
 

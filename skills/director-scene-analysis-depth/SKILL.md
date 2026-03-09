@@ -1,7 +1,7 @@
 ---
 name: scene-analysis-depth
 description: Use when analyzing reference images to extract scene environment, atmosphere, lighting conditions, and spatial layout
-appliesTo: [analyzeScene]
+appliesTo: [taskPlanning, analyzeScene]
 priority: 1
 ---
 

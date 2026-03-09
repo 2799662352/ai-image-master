@@ -93,9 +93,11 @@ interface ConfigSlice {
   imageModel: string
   imageCount: number
   skipVerify: boolean
+  skipTaskPlanning: boolean
   skipAnalyzeScene: boolean
   skipCharacterAnchors: boolean
   scoreThreshold: number
+  visionDetailTaskPlanning: VisionDetail
   visionDetailAnalyzeScene: VisionDetail
   visionDetailCharacterAnchors: VisionDetail
   visionDetailDesignAssemble: VisionDetail
@@ -115,9 +117,11 @@ interface ConfigSlice {
   setImageModel: (val: string) => void
   setImageCount: (val: number) => void
   setSkipVerify: (val: boolean) => void
+  setSkipTaskPlanning: (val: boolean) => void
   setSkipAnalyzeScene: (val: boolean) => void
   setSkipCharacterAnchors: (val: boolean) => void
   setScoreThreshold: (val: number) => void
+  setVisionDetailTaskPlanning: (val: VisionDetail) => void
   setVisionDetailAnalyzeScene: (val: VisionDetail) => void
   setVisionDetailCharacterAnchors: (val: VisionDetail) => void
   setVisionDetailDesignAssemble: (val: VisionDetail) => void
@@ -142,6 +146,8 @@ const DIRECTOR_LAYOUT_ORIENTATION_STORAGE_KEY = 'director.layout-orientation.v1'
 const DIRECTOR_LAYOUT_ORIENTATION_AUTO_STORAGE_KEY = 'director.layout-orientation-auto.v1'
 const DIRECTOR_SEMANTIC_ORIENTATION_STORAGE_KEY = 'director.semantic-orientation.v1'
 const DIRECTOR_SEMANTIC_ORIENTATION_AUTO_STORAGE_KEY = 'director.semantic-orientation-auto.v1'
+const DIRECTOR_VISION_DETAIL_TASK_PLANNING_STORAGE_KEY = 'director.vision-detail.task-planning.v1'
+const DIRECTOR_SKIP_TASK_PLANNING_STORAGE_KEY = 'director.skip-task-planning.v1'
 const DIRECTOR_SKIP_ANALYZE_SCENE_STORAGE_KEY = 'director.skip-analyze-scene.v1'
 const DIRECTOR_SKIP_CHARACTER_ANCHORS_STORAGE_KEY = 'director.skip-character-anchors.v1'
 const DIRECTOR_VISION_DETAIL_ANALYZE_SCENE_STORAGE_KEY = 'director.vision-detail.analyze-scene.v1'
@@ -343,12 +349,14 @@ function writeSkipFlag(storageKey: string, value: boolean): void {
 }
 
 export function detectVisionDetailPreset(config: {
+  visionDetailTaskPlanning: VisionDetail
   visionDetailAnalyzeScene: VisionDetail
   visionDetailCharacterAnchors: VisionDetail
   visionDetailDesignAssemble: VisionDetail
   visionDetailVerifyConsistency: VisionDetail
 }): VisionDetailPresetState {
   if (
+    config.visionDetailTaskPlanning === 'low' &&
     config.visionDetailAnalyzeScene === 'high' &&
     config.visionDetailCharacterAnchors === 'high' &&
     config.visionDetailDesignAssemble === 'low' &&
@@ -357,6 +365,7 @@ export function detectVisionDetailPreset(config: {
     return 'speed'
   }
   if (
+    config.visionDetailTaskPlanning === 'low' &&
     config.visionDetailAnalyzeScene === 'high' &&
     config.visionDetailCharacterAnchors === 'high' &&
     config.visionDetailDesignAssemble === 'auto' &&
@@ -365,6 +374,7 @@ export function detectVisionDetailPreset(config: {
     return 'balanced'
   }
   if (
+    config.visionDetailTaskPlanning === 'high' &&
     config.visionDetailAnalyzeScene === 'high' &&
     config.visionDetailCharacterAnchors === 'high' &&
     config.visionDetailDesignAssemble === 'high' &&
@@ -400,7 +410,7 @@ const initialGenerationState: Pick<
 
 const createInitialConfigState = (): Pick<
   ConfigSlice,
-  'currentLayout' | 'currentLayoutOrientation' | 'isLayoutOrientationAuto' | 'currentSemanticOrientation' | 'isSemanticOrientationAuto' | 'currentTemplate' | 'currentMode' | 'currentRatio' | 'currentResolution' | 'sceneDescription' | 'multiSceneText' | 'visionModel' | 'imageModel' | 'imageCount' | 'skipVerify' | 'skipAnalyzeScene' | 'skipCharacterAnchors' | 'scoreThreshold' | 'visionDetailAnalyzeScene' | 'visionDetailCharacterAnchors' | 'visionDetailDesignAssemble' | 'visionDetailVerifyConsistency'
+  'currentLayout' | 'currentLayoutOrientation' | 'isLayoutOrientationAuto' | 'currentSemanticOrientation' | 'isSemanticOrientationAuto' | 'currentTemplate' | 'currentMode' | 'currentRatio' | 'currentResolution' | 'sceneDescription' | 'multiSceneText' | 'visionModel' | 'imageModel' | 'imageCount' | 'skipTaskPlanning' | 'skipVerify' | 'skipAnalyzeScene' | 'skipCharacterAnchors' | 'scoreThreshold' | 'visionDetailTaskPlanning' | 'visionDetailAnalyzeScene' | 'visionDetailCharacterAnchors' | 'visionDetailDesignAssemble' | 'visionDetailVerifyConsistency'
 > => ({
   currentLayout: '6grid',
   currentLayoutOrientation: readLayoutOrientation() || getOrientationByRatio(readDirectorRatio()),
@@ -417,9 +427,11 @@ const createInitialConfigState = (): Pick<
   imageModel: '',
   imageCount: 1,
   skipVerify: false,
+  skipTaskPlanning: readSkipFlag(DIRECTOR_SKIP_TASK_PLANNING_STORAGE_KEY),
   skipAnalyzeScene: readSkipFlag(DIRECTOR_SKIP_ANALYZE_SCENE_STORAGE_KEY),
   skipCharacterAnchors: readSkipFlag(DIRECTOR_SKIP_CHARACTER_ANCHORS_STORAGE_KEY),
   scoreThreshold: readScoreThreshold(),
+  visionDetailTaskPlanning: readVisionDetail(DIRECTOR_VISION_DETAIL_TASK_PLANNING_STORAGE_KEY, 'low'),
   visionDetailAnalyzeScene: readVisionDetail(DIRECTOR_VISION_DETAIL_ANALYZE_SCENE_STORAGE_KEY, 'high'),
   visionDetailCharacterAnchors: readVisionDetail(DIRECTOR_VISION_DETAIL_CHARACTER_ANCHORS_STORAGE_KEY, 'high'),
   visionDetailDesignAssemble: readVisionDetail(DIRECTOR_VISION_DETAIL_DESIGN_ASSEMBLE_STORAGE_KEY, 'low'),
@@ -584,6 +596,10 @@ const createConfigSlice: StateCreator<DirectorStore, [], [], ConfigSlice> = (set
   setImageModel: (val) => set({ imageModel: val }),
   setImageCount: (val) => set({ imageCount: val }),
   setSkipVerify: (val) => set({ skipVerify: val }),
+  setSkipTaskPlanning: (val) => {
+    writeSkipFlag(DIRECTOR_SKIP_TASK_PLANNING_STORAGE_KEY, val)
+    set({ skipTaskPlanning: val })
+  },
   setSkipAnalyzeScene: (val) => {
     writeSkipFlag(DIRECTOR_SKIP_ANALYZE_SCENE_STORAGE_KEY, val)
     set({ skipAnalyzeScene: val })
@@ -596,6 +612,10 @@ const createConfigSlice: StateCreator<DirectorStore, [], [], ConfigSlice> = (set
     const next = Math.max(0, Math.min(10, Math.round(val)))
     writeScoreThreshold(next)
     set({ scoreThreshold: next })
+  },
+  setVisionDetailTaskPlanning: (val) => {
+    writeVisionDetail(DIRECTOR_VISION_DETAIL_TASK_PLANNING_STORAGE_KEY, val)
+    set({ visionDetailTaskPlanning: val })
   },
   setVisionDetailAnalyzeScene: (val) => {
     writeVisionDetail(DIRECTOR_VISION_DETAIL_ANALYZE_SCENE_STORAGE_KEY, val)
@@ -616,6 +636,7 @@ const createConfigSlice: StateCreator<DirectorStore, [], [], ConfigSlice> = (set
   applyVisionDetailPreset: (preset) => {
     const next = preset === 'quality'
       ? {
+          visionDetailTaskPlanning: 'high' as VisionDetail,
           visionDetailAnalyzeScene: 'high' as VisionDetail,
           visionDetailCharacterAnchors: 'high' as VisionDetail,
           visionDetailDesignAssemble: 'high' as VisionDetail,
@@ -623,18 +644,21 @@ const createConfigSlice: StateCreator<DirectorStore, [], [], ConfigSlice> = (set
         }
       : preset === 'balanced'
         ? {
+            visionDetailTaskPlanning: 'low' as VisionDetail,
             visionDetailAnalyzeScene: 'high' as VisionDetail,
             visionDetailCharacterAnchors: 'high' as VisionDetail,
             visionDetailDesignAssemble: 'auto' as VisionDetail,
             visionDetailVerifyConsistency: 'auto' as VisionDetail,
           }
         : {
+            visionDetailTaskPlanning: 'low' as VisionDetail,
             visionDetailAnalyzeScene: 'high' as VisionDetail,
             visionDetailCharacterAnchors: 'high' as VisionDetail,
             visionDetailDesignAssemble: 'low' as VisionDetail,
             visionDetailVerifyConsistency: 'low' as VisionDetail,
           }
 
+    writeVisionDetail(DIRECTOR_VISION_DETAIL_TASK_PLANNING_STORAGE_KEY, next.visionDetailTaskPlanning)
     writeVisionDetail(DIRECTOR_VISION_DETAIL_ANALYZE_SCENE_STORAGE_KEY, next.visionDetailAnalyzeScene)
     writeVisionDetail(DIRECTOR_VISION_DETAIL_CHARACTER_ANCHORS_STORAGE_KEY, next.visionDetailCharacterAnchors)
     writeVisionDetail(DIRECTOR_VISION_DETAIL_DESIGN_ASSEMBLE_STORAGE_KEY, next.visionDetailDesignAssemble)

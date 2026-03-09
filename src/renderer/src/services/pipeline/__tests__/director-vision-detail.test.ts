@@ -5,7 +5,7 @@ describe('DirectorPipeline vision detail controls', () => {
   it('should keep current default quality per pass', () => {
     expect(resolveVisionDetailByPass({}, 'analyzeScene')).toBe('high')
     expect(resolveVisionDetailByPass({}, 'extractCharacterAnchors')).toBe('high')
-    expect(resolveVisionDetailByPass({}, 'designAndAssemble')).toBe('low')
+    expect(resolveVisionDetailByPass({}, 'designAndAssemble')).toBe('high')
     expect(resolveVisionDetailByPass({}, 'verifyConsistency')).toBe('low')
   })
 

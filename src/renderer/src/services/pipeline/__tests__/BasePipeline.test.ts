@@ -102,9 +102,9 @@ describe('BasePipeline', () => {
       expect((pipeline as any).resolveMaxTokens('gemini-3-flash-preview')).toBe(65536)
     })
 
-    it('returns 4096 for non-Gemini models by default', () => {
+    it('returns 65536 for all models by default', () => {
       const pipeline = new TestPipeline(config)
-      expect((pipeline as any).resolveMaxTokens('gpt-4o')).toBe(4096)
+      expect((pipeline as any).resolveMaxTokens('gpt-4o')).toBe(65536)
     })
 
     it('respects explicit value', () => {

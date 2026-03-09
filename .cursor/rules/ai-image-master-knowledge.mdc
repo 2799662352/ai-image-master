@@ -1,0 +1,122 @@
+# AI Image Master 项目知识库
+
+## 项目基本信息
+
+- **名称**: CATIMATION-Cyberpunk Master / AI Image Master
+- **版本**: v3.1.0
+- **路径**: `D:\tecx\text\temp-ai-image-master-source`
+- **备份**: `D:\tecx\text\temp-ai-image-master-source-backup` (旧版 JS)
+- **GitHub**: https://github.com/2799662352/ai-image-master
+- **许可**: MIT
+
+## 技术栈
+
+| 层级 | 技术 |
+|------|------|
+| 桌面框架 | Electron 28 |
+| 构建 | Vite 7 + electron-vite 5 |
+| 语言 | TypeScript 5.9 (strict) |
+| 前端 | React 19 + Zustand 5 |
+| 样式 | Tailwind CSS 3.4 |
+| AI 管线 | LangChain + LangGraph |
+| 云存储 | Cloudflare R2 |
+| 测试 | Vitest 4 + Playwright 1.58 |
+| 可观测性 | Langfuse (生产环境) |
+
+## 架构：Electron 三进程
+
+```
+主进程 (src/main/index.ts)
+  ├─ 窗口管理、IPC、文件系统、自动更新
+  │
+预加载 (src/preload/index.ts)
+  ├─ contextBridge 暴露安全 API
+  │
+渲染进程 (src/renderer/src/main.ts)
+  ├─ React 应用
+  ├─ 6 个页面: Generate, Director(计划中), Batch, Compare, History, Understand
+  ├─ ServiceBridge → API/Storage/Pipeline 服务
+  └─ TabManager 路由管理
+```
+
+## 核心功能模块
+
+### 1. 导演模式 (Director Pipeline)
+
+**核心文件**: `src/renderer/src/services/pipeline/DirectorPipeline.ts` (~1770行)
+
+LangGraph StateGraph 管线，6 个 Pass：
+
+| Pass | 名称 | 并行 | 说明 |
+|------|------|------|------|
+| 0 | selectSkills | 与1/2/3并行 | LLM 自动选择适用 skills |
+| 1 | analyzeScene | 与0/2/3并行 | Vision LLM 场景分析 |
+| 2 | extractCharacterAnchors | 与0/1/3并行 | 角色一致性锚点 |
+| 3 | extractStyleAnchor | 与0/1/2并行 | 风格锚点 (medium/palette/light) |
+| 4 | designAndAssemble | 顺序 | 分镜设计 + 3级错误恢复 |
+| 5 | verifyConsistency | 顺序 | Evaluator 打分，低分重试 Pass 4 |
+| 6 | generateImages | 顺序 | Contact Sheet 生成 |
+
+**关键设计模式**:
+- Evaluator-Optimizer: Pass 5 校验 → Pass 4 重试
+- Character Identity Lock: 跨分镜角色一致性
+- Style Authority Chain: 用户风格 > 参考图风格
+- 3 级错误恢复: includeRaw → SimplePanelSchema → LLM 自修正
+- 暂停/恢复: LangGraph interrupt + Command({resume:true})
+
+### 2. 图像理解模式 (UnderstandPage)
+
+**核心文件**: `src/renderer/src/pages/UnderstandPage.ts` (~1657行)
+
+AI 多模态图片分析，3 条路径：
+
+| 角色 | 路径 | 说明 |
+|------|------|------|
+| sora-storyboard-pro | StoryboardPipelineService | 4-Pass 管线 |
+| sora-storyboard | LangChainStoryboardService | 结构化输出 |
+| 其他 | api.analyzeImagesStream | 流式 Vision API |
+
+**角色预设**: 万物识别、商品标题、亚马逊五点、OCR、分镜反推等
+
+**桥梁**: 分镜结果可通过 StoryboardToDirectorAdapter 导入导演模式
+
+### 3. Skill 系统
+
+**位置**: `skills/` (内置) + `app.getPath('userData')/skills/` (用户)
+
+- 11 个 director skills (prompt-engineering, character-consistency 等)
+- 7 个 storyboard skills (audio, dialogue, visual 等)
+- 运行时由 LLM 在 Pass 0 智能选择
+
+## 关键服务
+
+| 服务 | 文件 | 职责 |
+|------|------|------|
+| ApiService | services/api/ApiService.ts | 图片生成 + 流式分析 |
+| R2StorageService | services/r2-storage/R2StorageService.ts | R2 云存储 |
+| ServiceBridge | services/ServiceBridge.ts | 工厂函数暴露到 window |
+| PageStateManager | services/PageStateManager.ts | 页面状态持久化 |
+
+## v3.1.0 变更记录
+
+| Commit | 内容 |
+|--------|------|
+| a7ab5f1 | P1+P4 safety: catch清空retryFeedback + MAX_RETRIES防御 |
+| 07daae2 | shouldRetryAnalysis 路由测试 (+5 tests) |
+| 0447f7f | 修复 3-way fan-in retry hang → individual edges |
+| bcef842 | totalPasses 计算验证测试 (+2 tests) |
+| 033280d | stream前发射onProgress修复UI步骤数 |
+| 675777a | R2Storage从window global迁移到service pattern |
+| 7636f01 | version bump to 3.1.0 |
+| 8761b6a | 4个实施计划文档 |
+
+全部 175 tests 通过。
+
+## 常用命令
+
+```bash
+npm run dev          # 开发模式
+npm run test:run     # 运行测试
+npm run build:win    # Windows 打包
+npm run pipeline:test # Pipeline 测试
+```

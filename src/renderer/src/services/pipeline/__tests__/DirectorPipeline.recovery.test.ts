@@ -1,14 +1,48 @@
 import { describe, expect, it } from 'vitest'
 import * as DirectorPipelineModule from '../DirectorPipeline'
-import { SimpleCharacterSchema } from '../schemas/director-schemas'
+import { CharacterAnchorSchema } from '../schemas/director-schemas'
 
-describe('SimpleCharacterSchema', () => {
-  it('accepts minimal character data', () => {
-    const result = SimpleCharacterSchema.parse({
-      characters: [{ name: 'Aria', anchor: 'green hair, teal coat' }],
+describe('CharacterAnchorSchema (5-field: name + anchor + face + outfit + markers)', () => {
+  it('accepts all 5 fields', () => {
+    const result = CharacterAnchorSchema.parse({
+      characters: [{
+        name: 'Aria',
+        anchor: 'pale skin, oval face, green eyes, long mint-green hair, dark teal military coat, white folding fan',
+        face: 'pale skin, oval face, green eyes, long mint-green hair',
+        outfit: 'dark teal military coat with gold buttons, black boots',
+        markers: 'white folding fan',
+      }],
     })
     expect(result.characters).toHaveLength(1)
     expect(result.characters[0].name).toBe('Aria')
+    expect(result.characters[0].anchor).toContain('mint-green')
+    expect(result.characters[0].face).toContain('mint-green')
+    expect(result.characters[0].outfit).toContain('teal')
+  })
+
+  it('accepts characters without markers (optional)', () => {
+    const result = CharacterAnchorSchema.parse({
+      characters: [{
+        name: 'Kael',
+        anchor: 'dark skin, sharp eyes, silver-white twin tails, navy blue sailor uniform',
+        face: 'dark skin, sharp eyes, silver-white twin tails',
+        outfit: 'navy blue sailor uniform',
+      }],
+    })
+    expect(result.characters).toHaveLength(1)
+    expect(result.characters[0].markers).toBeUndefined()
+  })
+
+  it('rejects characters missing anchor (required)', () => {
+    expect(() => CharacterAnchorSchema.parse({
+      characters: [{ name: 'Bad', face: 'brown eyes', outfit: 'red dress' }],
+    })).toThrow()
+  })
+
+  it('rejects characters missing face (required)', () => {
+    expect(() => CharacterAnchorSchema.parse({
+      characters: [{ name: 'Bad', anchor: 'some desc', outfit: 'red dress' }],
+    })).toThrow()
   })
 })
 
@@ -41,11 +75,11 @@ describe('L1 maxTokens calculation', () => {
 })
 
 describe('Pass 2 structured recovery', () => {
-  it('SimpleCharacterSchema accepts the minimal fields needed for anchor expansion', () => {
-    const result = SimpleCharacterSchema.parse({
+  it('CharacterAnchorSchema accepts structured fields for anchor expansion', () => {
+    const result = CharacterAnchorSchema.parse({
       characters: [
-        { name: 'Aria', anchor: 'long mint-green hair, dark teal military coat, white folding fan' },
-        { name: 'Kael', anchor: 'silver-white twin tails, navy blue sailor uniform, blue beret' },
+        { name: 'Aria', anchor: 'long mint-green hair, dark teal military coat, white folding fan', face: 'long mint-green hair', outfit: 'dark teal military coat', markers: 'white folding fan' },
+        { name: 'Kael', anchor: 'silver-white twin tails, navy blue sailor uniform, blue beret', face: 'silver-white twin tails', outfit: 'navy blue sailor uniform, blue beret' },
       ],
     })
     expect(result.characters).toHaveLength(2)
@@ -54,25 +88,28 @@ describe('Pass 2 structured recovery', () => {
   })
 })
 
-describe('expandCharacterTags spatial binding', () => {
-  it('produces spatially-separated narrative instead of parenthetical notation', () => {
+describe('expandCharacterTags natural language + spatial binding', () => {
+  it('produces natural-language descriptors instead of parenthetical notation', () => {
     const result = (DirectorPipelineModule as any).expandCharacterTags(
       '[char1] lunges forward with a fan. [char2] blocks the attack.',
       [
-        { name: 'Aria', anchor: 'long mint-green hair, dark teal military coat, white folding fan' },
-        { name: 'Kael', anchor: 'silver-white twin tails, navy blue sailor uniform, blue beret' },
+        { name: 'Aria', face: 'long mint-green hair', outfit: 'dark teal military coat', markers: 'white folding fan' },
+        { name: 'Kael', face: 'silver-white twin tails', outfit: 'navy blue sailor uniform, blue beret' },
       ],
     )
 
-    // Must NOT use parenthetical format
     expect(result).not.toContain('(Aria:')
     expect(result).not.toContain('(Kael:')
+    expect(result).not.toContain('(long mint-green')
+    expect(result).not.toContain('(silver-white')
 
-    // Must inline appearance into natural language
-    expect(result).toContain('mint-green hair')
-    expect(result).toContain('sailor uniform')
+    expect(result).toContain('a figure with long mint-green hair')
+    expect(result).toContain('wearing')
+    expect(result).toContain('a figure with silver-white twin tails')
 
-    // Must preserve actions bound to the correct character
+    expect(result).toContain('in the foreground left')
+    expect(result).toContain('in the foreground right')
+
     expect(result).toContain('lunges forward')
     expect(result).toContain('blocks the attack')
   })
@@ -81,8 +118,8 @@ describe('expandCharacterTags spatial binding', () => {
     const result = (DirectorPipelineModule as any).expandCharacterTags(
       '[char1] runs. [char2] jumps.',
       [
-        { name: 'A', anchor: 'red hair' },
-        { name: 'B', anchor: 'blue hat' },
+        { name: 'A', face: 'red hair', outfit: 'red armor' },
+        { name: 'B', face: 'blue eyes', outfit: 'blue hat' },
       ],
     )
 
@@ -92,19 +129,19 @@ describe('expandCharacterTags spatial binding', () => {
   it('handles single character without spatial prefix', () => {
     const result = (DirectorPipelineModule as any).expandCharacterTags(
       '[char1] stands in the rain.',
-      [{ name: 'Aria', anchor: 'long mint-green hair, dark teal military coat' }],
+      [{ name: 'Aria', face: 'long mint-green hair', outfit: 'dark teal military coat' }],
     )
 
-    // Single character — no spatial direction needed
     expect(result).not.toContain('(Aria:')
-    expect(result).toContain('mint-green hair')
+    expect(result).toContain('a figure with long mint-green hair')
+    expect(result).toContain('wearing dark teal military coat')
     expect(result).toContain('stands in the rain')
   })
 
   it('preserves text when no character tags are present', () => {
     const result = (DirectorPipelineModule as any).expandCharacterTags(
       'A wide establishing shot of the courtyard at sunset.',
-      [{ name: 'Aria', anchor: 'green hair girl' }],
+      [{ name: 'Aria', face: 'green hair', outfit: 'casual clothes' }],
     )
 
     expect(result).toBe('A wide establishing shot of the courtyard at sunset.')
@@ -119,22 +156,25 @@ describe('expandCharacterTags spatial binding', () => {
     expect(result).toBe('Panel 1: [char1] runs.')
   })
 
-  it('handles 3+ characters with spatial distribution', () => {
+  it('handles 3+ characters with foreground spatial distribution', () => {
     const result = (DirectorPipelineModule as any).expandCharacterTags(
       '[char1] attacks. [char2] defends. [char3] watches.',
       [
-        { name: 'A', anchor: 'red hair, sword' },
-        { name: 'B', anchor: 'blue armor, shield' },
-        { name: 'C', anchor: 'black cloak, glasses' },
+        { name: 'A', face: 'red hair', outfit: 'battle armor', markers: 'sword' },
+        { name: 'B', face: 'blue eyes', outfit: 'blue armor', markers: 'shield' },
+        { name: 'C', face: 'dark features', outfit: 'black cloak', markers: 'glasses' },
       ],
     )
 
     expect(result).not.toContain('(A:')
     expect(result).not.toContain('(B:')
     expect(result).not.toContain('(C:')
-    expect(result).toContain('red hair')
-    expect(result).toContain('blue armor')
-    expect(result).toContain('black cloak')
+    expect(result).toContain('a figure with red hair')
+    expect(result).toContain('a figure with blue eyes')
+    expect(result).toContain('a figure with dark features')
+    expect(result).toContain('in the foreground left')
+    expect(result).toContain('in the foreground center')
+    expect(result).toContain('in the foreground right')
   })
 })
 

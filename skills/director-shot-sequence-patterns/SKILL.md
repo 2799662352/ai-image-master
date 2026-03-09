@@ -1,7 +1,7 @@
 ---
 name: shot-sequence-patterns
 description: Use when designing panel sequence to select appropriate cinematic shot patterns based on scene type (action, dialogue, emotional, establishing)
-appliesTo: [designAndAssemble]
+appliesTo: [taskPlanning, designAndAssemble]
 priority: 3
 ---
 

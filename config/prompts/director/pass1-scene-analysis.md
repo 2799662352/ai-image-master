@@ -14,3 +14,9 @@ Focus on:
 - Narrative context: what story is this scene telling
 
 IMPORTANT: Accurately identifying the visual medium (photo vs illustration vs 3D) is critical — all downstream prompts will match this style.
+
+## REFERENCE IMAGE FIDELITY (BINDING)
+The attached reference images are the SINGLE SOURCE OF TRUTH.
+- Describe ONLY what is visually present. DO NOT hallucinate features not in the images.
+- If a detail is ambiguous, mark it as "(partially visible)" rather than guessing.
+- Character appearance, environmental details, and lighting MUST match the reference exactly.

@@ -8,10 +8,9 @@ import {
   CharacterAnchorSchema,
   DesignAndAssembleSchema,
   SimplePanelSchema,
-  SimpleCharacterSchema,
   VerifySchema,
 } from './schemas/director-schemas'
-import { SkillsMiddleware as SkillsMW, runToolCallingLoop } from './SkillsMiddleware'
+import { SkillsMiddleware as SkillsMW } from './SkillsMiddleware'
 import { StyleAnchorSchema, StyleConflictSchema } from './schemas/style-anchor-schema'
 import type { StyleAnchor, StyleConflict } from './schemas/style-anchor-schema'
 import type {
@@ -28,6 +27,7 @@ const MAX_RETRIES = 1
 const SCORE_THRESHOLD = 6
 const MAX_ANALYSIS_RETRIES = 2
 const DEFAULT_VISION_DETAIL = {
+  taskPlanning: 'low',
   analyzeScene: 'high',
   extractCharacterAnchors: 'high',
   designAndAssemble: 'high',
@@ -79,17 +79,19 @@ const stateSchema = z.object({
   semanticOrientation: z.enum(['landscape', 'portrait']).default('landscape'),
   imageModel: z.string().default(''),
   currentImageCount: z.number().default(1),
+  visionDetailTaskPlanning: z.enum(['low', 'high', 'auto']).default(DEFAULT_VISION_DETAIL.taskPlanning),
   visionDetailAnalyzeScene: z.enum(['low', 'high', 'auto']).default(DEFAULT_VISION_DETAIL.analyzeScene),
   visionDetailCharacterAnchors: z.enum(['low', 'high', 'auto']).default(DEFAULT_VISION_DETAIL.extractCharacterAnchors),
   visionDetailDesignAssemble: z.enum(['low', 'high', 'auto']).default(DEFAULT_VISION_DETAIL.designAndAssemble),
   visionDetailVerifyConsistency: z.enum(['low', 'high', 'auto']).default(DEFAULT_VISION_DETAIL.verifyConsistency),
+  skipTaskPlanning: z.boolean().default(false),
   skipVerify: z.boolean().default(false),
   skipAnalyzeScene: z.boolean().default(false),
   skipCharacterAnchors: z.boolean().default(false),
   styleAnchor: StyleAnchorSchema.nullable().default(null),
   styleConflicts: z.array(StyleConflictSchema).default([]),
   scoreThreshold: z.number().min(0).max(10).default(SCORE_THRESHOLD),
-  activeSkills: z.array(z.string()).default([]),
+  taskPlan: z.string().default(''),
 })
 
 export type DirectorState = z.infer<typeof stateSchema>
@@ -116,7 +118,55 @@ export function sortCharacters<T extends { name?: string; anchor?: string }>(cha
   })
 }
 
-export function buildCharacterIdentityLock(characters: Array<{ name?: string; anchor?: string; face?: string; build?: string; outfit?: string; markers?: string }>): string {
+export function buildReferenceImageFidelityMandate(
+  tier: 'analysis' | 'design' | 'verify',
+): string {
+  const header = '## REFERENCE IMAGE FIDELITY MANDATE (BINDING)'
+
+  if (tier === 'analysis') {
+    return [
+      header,
+      'The attached reference images are the SINGLE SOURCE OF TRUTH.',
+      '- Describe ONLY what is visually present in the images.',
+      '- DO NOT hallucinate, infer, or add features not visible in the reference.',
+      '- If a detail is ambiguous or occluded, mark it as "(partially visible)" rather than guessing.',
+      '- Character appearance MUST be extracted exactly as shown: hair color, eye color, outfit, accessories.',
+      '- Environmental details MUST match the reference: lighting direction, color palette, spatial layout.',
+    ].join('\n')
+  }
+
+  if (tier === 'design') {
+    return [
+      header,
+      'The reference images are the SINGLE SOURCE OF TRUTH for all character and scene identity.',
+      '- Every panel MUST reproduce character appearance exactly as shown in the reference images.',
+      '- DO NOT alter: face structure, hairstyle, hair color, eye color, outfit design, signature accessories.',
+      '- MAY vary: pose, expression, action, camera angle, lighting intensity (for dramatic effect).',
+      '- If a character appears in the reference, their visual identity is LOCKED — no creative reinterpretation.',
+      '- Scene elements visible in the reference (architecture, props, vegetation) MUST maintain visual continuity.',
+    ].join('\n')
+  }
+
+  // tier === 'verify'
+  return [
+    header,
+    'Verify all prompts against the reference images as ground truth.',
+    '- Any character description that contradicts the reference image is a CRITICAL error (deduction: -3).',
+    '- Hair color/style mismatch with reference: -2 per occurrence.',
+    '- Outfit or accessory deviation from reference: -2 per occurrence.',
+    '- Environmental element contradicting reference (e.g., indoor→outdoor): -2 per occurrence.',
+    '- Style medium mismatch (e.g., photo reference but anime prompt): -3 per occurrence.',
+    '- When in doubt, the reference image wins over any text description.',
+  ].join('\n')
+}
+
+export function buildAnchorFromFields(c: { face?: string; outfit?: string; markers?: string }): string {
+  const fields = [c.face, c.outfit, c.markers].filter(Boolean)
+  if (fields.length > 0) return fields.join('. ')
+  return '(no anchor)'
+}
+
+export function buildCharacterIdentityLock(characters: Array<{ name?: string; anchor?: string; face?: string; outfit?: string; markers?: string }>): string {
   if (!Array.isArray(characters) || characters.length === 0) return ''
   const inferPronoun = (value: string): 'she' | 'he' | 'they' => {
     const normalized = value.toLowerCase()
@@ -125,16 +175,10 @@ export function buildCharacterIdentityLock(characters: Array<{ name?: string; an
     return 'they'
   }
 
-  const buildAnchorFromFields = (c: { face?: string; build?: string; outfit?: string; markers?: string; anchor?: string }): string => {
-    const fields = [c.face, c.build, c.outfit, c.markers].filter(Boolean)
-    if (fields.length >= 2) return fields.join('. ')
-    return c.anchor || '(no anchor)'
-  }
-
   const sorted = sortCharacters(characters)
   const lines = sorted.map((c, i) => {
     const name = c.name || `character-${i + 1}`
-    const anchor = buildAnchorFromFields(c)
+    const anchor = c.anchor || buildAnchorFromFields(c)
     const pronoun = inferPronoun(`${name} ${anchor}`)
     return `- [char${i + 1}] ${name} (${pronoun}): ${anchor}`
   })
@@ -227,13 +271,17 @@ function normalizeVisionDetail(value: unknown, fallback: VisionDetail): VisionDe
 
 export function resolveVisionDetailByPass(
   state: Partial<DirectorState> | Record<string, unknown>,
-  pass: 'analyzeScene' | 'extractCharacterAnchors' | 'designAndAssemble' | 'verifyConsistency',
+  pass: 'taskPlanning' | 'analyzeScene' | 'extractCharacterAnchors' | 'extractStyleAnchor' | 'designAndAssemble' | 'verifyConsistency',
 ): VisionDetail {
   switch (pass) {
+    case 'taskPlanning':
+      return normalizeVisionDetail((state as any).visionDetailTaskPlanning, DEFAULT_VISION_DETAIL.taskPlanning)
     case 'analyzeScene':
       return normalizeVisionDetail((state as any).visionDetailAnalyzeScene, DEFAULT_VISION_DETAIL.analyzeScene)
     case 'extractCharacterAnchors':
       return normalizeVisionDetail((state as any).visionDetailCharacterAnchors, DEFAULT_VISION_DETAIL.extractCharacterAnchors)
+    case 'extractStyleAnchor':
+      return normalizeVisionDetail((state as any).visionDetailAnalyzeScene, DEFAULT_VISION_DETAIL.analyzeScene)
     case 'designAndAssemble':
       return normalizeVisionDetail(
         (state as any).visionDetailDesignAssemble ?? (state as any).visionDetailDesignAndAssemble,
@@ -653,45 +701,68 @@ export function assembleCoherentPrompt(
   }
 
   const coreAction = action || desc
-  const segments: string[] = []
 
-  if (shot) segments.push(shot)
+  const framingParts: string[] = []
+  if (shot) framingParts.push(shot)
 
+  const actionParts: string[] = []
   if (coreAction) {
-    segments.push(coreAction)
+    actionParts.push(coreAction)
     const descHasCharTags = /\[char\d+\]/.test(desc)
     if (desc && action && !descHasCharTags && !action.includes(desc.slice(0, 20))) {
-      segments.push(desc)
+      actionParts.push(desc)
     }
     const promptIsRedundant = basePrompt
       && (coreAction.includes(basePrompt.slice(0, 30))
         || basePrompt.includes(coreAction.slice(0, 30)))
     if (basePrompt && !promptIsRedundant) {
-      segments.push(basePrompt)
+      actionParts.push(basePrompt)
     }
   } else {
-    segments.push(basePrompt)
+    actionParts.push(basePrompt)
   }
 
-  if (bg) segments.push(bg)
-  if (lighting) segments.push(lighting)
+  const sceneParts: string[] = []
+  if (bg) sceneParts.push(bg)
+  if (lighting) sceneParts.push(lighting)
 
-  return segments.join(', ')
+  const framing = framingParts.join(', ')
+  const characters = actionParts.join(', ')
+  const scene = sceneParts.join(', ')
+
+  return [framing, characters, scene].filter(Boolean).join('.\n')
 }
 
 /**
- * Expands [charN] tags into spatially-separated narrative clauses.
+ * Convert a character's anchor (and optional structured fields) into a
+ * natural-language descriptor for diffusion prompt embedding.
  *
- * Instead of "(Name: anchor)" which causes cross-attention bleed in diffusion
- * models, this produces self-contained character descriptions with:
- * - Spatial anchors (foreground left/right/center) for multi-character scenes
- * - Inline appearance: "(anchor)" without name prefix
- * - Action immediately following appearance (bound to same attention region)
- * - Semicolons as soft token boundaries between characters
+ * Structured fields (face, outfit, markers) produce higher quality output.
+ * When only the flat `anchor` string is available, heuristically splits
+ * on commas: first part → "a figure with {trait}", remaining → "wearing {rest}".
+ */
+export function buildNaturalDescriptor(
+  char: { face?: string; outfit?: string; markers?: string },
+): string {
+  const parts: string[] = []
+  parts.push(char.face ? `a figure with ${char.face.trim()}` : 'a figure')
+  if (char.outfit) parts.push(`wearing ${char.outfit.trim()}`)
+  if (char.markers) parts.push(`carrying ${char.markers.trim()}`)
+  return parts.join(', ')
+}
+
+/**
+ * Expands [charN] tags into spatially-separated natural-language clauses.
+ *
+ * Each character becomes a self-contained phrase:
+ *   "in the foreground left, a figure with {hair} wearing {outfit} {action}"
+ *
+ * Semicolons + newlines between characters reduce cross-attention bleed
+ * in diffusion models by creating hard token boundaries.
  */
 export function expandCharacterTags(
   text: string,
-  characters: Array<{ name?: string; anchor?: string }>,
+  characters: Array<{ name?: string; face?: string; outfit?: string; markers?: string }>,
 ): string {
   if (!characters.length) return text
   const sorted = sortCharacters(characters)
@@ -707,19 +778,19 @@ export function expandCharacterTags(
     const tag = `[char${i + 1}]`
     if (!result.includes(tag)) return
 
-    const anchor = c.anchor || ''
+    const descriptor = buildNaturalDescriptor(c)
     const spatial = spatialAnchors[spatialIdx] || ''
     spatialIdx++
-    const prefix = spatial ? `${spatial}, ` : ''
-    const descriptor = anchor
-      ? `${prefix}(${anchor})`
-      : prefix || tag
 
-    result = result.split(tag).join(descriptor)
+    const replacement = descriptor
+      ? spatial ? `${spatial}, ${descriptor}` : descriptor
+      : spatial || tag
+
+    result = result.split(tag).join(replacement)
   })
 
   if (tagsPresent.length > 1) {
-    result = result.replace(/\.\s+/g, '; ')
+    result = result.replace(/\.\s+/g, ';\n')
   }
 
   return result
@@ -727,12 +798,12 @@ export function expandCharacterTags(
 
 function getSpatialAnchors(count: number): string[] {
   if (count <= 1) return ['']
-  if (count === 2) return ['on the left', 'on the right']
-  if (count === 3) return ['on the left', 'in the center', 'on the right']
+  if (count === 2) return ['in the foreground left', 'in the foreground right']
+  if (count === 3) return ['in the foreground left', 'in the foreground center', 'in the foreground right']
   const anchors: string[] = []
   for (let i = 0; i < count; i++) {
     const pos = count <= 4
-      ? ['on the far left', 'on the center-left', 'on the center-right', 'on the far right'][i]
+      ? ['in the far left', 'in the center-left', 'in the center-right', 'in the far right'][i]
       : `in position ${i + 1} from left`
     anchors.push(pos)
   }
@@ -830,44 +901,6 @@ export function extractVarsForContactSheet(state: DirectorState): Record<string,
   }
 }
 
-// ==================== Skill Menu ====================
-
-function buildSkillMenu(skills: PipelineSkill[]): string {
-  return skills
-    .filter(s => s.description)
-    .map(s => `- ${s.id}: ${s.description}`)
-    .join('\n')
-}
-
-function extractSelectedSkillIds(
-  loopResult: { loadedSkillBodies: string; messages: any[] },
-  allSkills: PipelineSkill[],
-): string[] {
-  const validIds = new Set(allSkills.map(s => s.id))
-  const selected = new Set<string>()
-
-  for (const msg of loopResult.messages) {
-    if (msg.role === 'tool' && msg.tool_call_id) {
-      const content = typeof msg.content === 'string' ? msg.content : ''
-      if (content.startsWith('Error:')) continue
-      const nameMatch = content.match(/^---\nname:\s*"?([^"\n]+)"?/m)
-      if (nameMatch && validIds.has(nameMatch[1])) {
-        selected.add(nameMatch[1])
-      }
-    }
-  }
-
-  if (selected.size === 0 && loopResult.loadedSkillBodies) {
-    for (const skill of allSkills) {
-      if (loopResult.loadedSkillBodies.includes(`name: ${skill.id}`)) {
-        selected.add(skill.id)
-      }
-    }
-  }
-
-  return [...selected]
-}
-
 // ==================== Pipeline ====================
 
 export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult> {
@@ -918,9 +951,9 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
   private static formatSummary(nodeName: string, output: any): string {
     switch (nodeName) {
-      case 'selectSkills': {
-        const s = output?.selected
-        return s ? `已选择 ${s.length} 个 skills` : '(fallback: all)'
+      case 'taskPlanning': {
+        const plan = output?.planText
+        return plan ? plan.slice(0, 200) : '(no plan)'
       }
       case 'analyzeScene': {
         const s = output?.scene
@@ -1031,7 +1064,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         let discoveredSkillRules = ''
         try {
           const discoveryResult = await skillsMw.runSkillDiscovery({
-            llm: self.createLLM(undefined, 2048),
+            llm: self.createLLM(),
             phase: 'analyzeScene',
             context: state as Record<string, unknown>,
             basePrompt: 'You are an expert scene analyst. Before analyzing, review available skills for relevant techniques.',
@@ -1047,10 +1080,11 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         const tpl = getPromptTemplate('analyzeScene')
         const basePrompt = tpl
           ? renderTemplate(tpl.template, {})
-          : 'You are an expert scene analyst. Analyze the provided images and describe the scene in structured detail.'
-        const systemPrompt = discoveredSkillRules
+          : 'You are an expert scene analyst. Analyze the provided images and describe the scene in structured detail.\n\nREFERENCE IMAGE FIDELITY: The attached images are the SINGLE SOURCE OF TRUTH. Describe ONLY what is visually present. DO NOT hallucinate features not in the images.'
+        const systemPromptBase = discoveredSkillRules
           ? `${basePrompt}\n\n--- Loaded Skills ---\n${discoveredSkillRules}`
           : basePrompt
+        const systemPrompt = self.injectTaskPlan(systemPromptBase, state.taskPlan)
 
         const response = await structuredWithRaw.invoke(
           [
@@ -1062,9 +1096,15 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
                   state.inputImages,
                   resolveVisionDetailByPass(state, 'analyzeScene'),
                 ),
-                { type: 'text' as const, text: state.sceneDescription
-                  ? `DIRECTOR CREATIVE BRIEF:\n${state.sceneDescription}\n\nReference images define the visual foundation (style, character identity, and scene continuity), while the brief defines narrative direction.\n\nOutput language requirement:\n- Write env/style/story in clear English first.\n- You may append concise Japanese support notes in parentheses if helpful.\n- Keep subjects as short English bullet-like phrases.\n`
-                  : 'Analyze this image scene. Output in English first; optional concise Japanese support in parentheses.' },
+                { type: 'text' as const, text: (() => {
+                  const parts: string[] = []
+                  if (state.taskPlan) parts.push(`DIRECTOR'S PLAN (use as context):\n${state.taskPlan}`)
+                  if (state.sceneDescription) parts.push(`DIRECTOR CREATIVE BRIEF:\n${state.sceneDescription}`)
+                  parts.push(parts.length > 0
+                    ? 'Based on the director\'s context above AND the reference images, analyze the scene. Reference images define the visual foundation (style, character identity, and scene continuity), while the brief defines narrative direction.\n\nOutput in clear English first. Keep subjects as short English bullet-like phrases.'
+                    : 'Analyze this image scene. The reference images are ground truth — describe only what is visible. Output in English first.')
+                  return parts.join('\n\n')
+                })() },
               ],
             },
           ],
@@ -1113,7 +1153,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         let discoveredSkillRules = ''
         try {
           const discoveryResult = await skillsMw.runSkillDiscovery({
-            llm: self.createLLM(undefined, 2048),
+            llm: self.createLLM(),
             phase: 'extractCharacterAnchors',
             context: state as Record<string, unknown>,
             basePrompt: 'You are a character consistency expert. Before extracting anchors, review available skills.',
@@ -1129,10 +1169,11 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         const tpl = getPromptTemplate('extractCharacterAnchors')
         const basePrompt = tpl
           ? renderTemplate(tpl.template, {})
-          : 'You are a character consistency expert. Extract character anchors from the provided images for image generation consistency.'
-        const systemPrompt = discoveredSkillRules
+          : 'You are a character consistency expert. Extract character anchors from the provided images for image generation consistency.\n\nREFERENCE IMAGE FIDELITY: The attached images are the SINGLE SOURCE OF TRUTH. Extract ONLY what is visually present. DO NOT hallucinate features not visible in the reference.'
+        const systemPromptBase = discoveredSkillRules
           ? `${basePrompt}\n\n--- Loaded Skills ---\n${discoveredSkillRules}`
           : basePrompt
+        const systemPrompt = self.injectTaskPlan(systemPromptBase, state.taskPlan)
 
         const response = await structuredWithRaw.invoke(
           [
@@ -1144,7 +1185,9 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
                   state.inputImages,
                   resolveVisionDetailByPass(state, 'extractCharacterAnchors'),
                 ),
-                { type: 'text' as const, text: 'Extract character consistency anchors in English (optional concise Japanese notes in parentheses). Keep each field under 120 words. Focus on visually distinguishing features, not exhaustive inventories.' },
+                { type: 'text' as const, text: state.taskPlan
+                  ? `DIRECTOR'S PLAN (use as context for extraction priority):\n${state.taskPlan}\n\nBased on the director's plan above AND the reference images, extract character consistency anchors in English. Focus on visually distinguishing features, not exhaustive inventories.`
+                  : 'Extract character consistency anchors in English. Focus on visually distinguishing features, not exhaustive inventories.' },
               ],
             },
           ],
@@ -1153,36 +1196,22 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
         let characters = (response as any)?.parsed
         if (!characters?.characters?.length) {
-          console.warn('[DirectorPipeline] extractCharacterAnchors: structured parse returned empty, retrying with SimpleCharacterSchema')
+          const rawText = typeof (response as any)?.raw?.content === 'string'
+            ? (response as any).raw.content : ''
           try {
-            const simpleStructured = self.createStructuredLLM(SimpleCharacterSchema)
-            const simpleResult = await simpleStructured.invoke(
-              [
-                { role: 'system', content: systemPrompt },
-                {
-                  role: 'user',
-                  content: [
-                    ...BasePipeline.buildImageContent(
-                      state.inputImages,
-                      resolveVisionDetailByPass(state, 'extractCharacterAnchors'),
-                    ),
-                    { type: 'text' as const, text: 'Extract character consistency anchors. For each character provide a name and a single anchor phrase combining their most distinguishing visual features.' },
-                  ],
-                },
-              ],
-              { signal: config?.signal },
-            )
-            if (simpleResult?.characters?.length) {
-              characters = simpleResult
-              console.log(`[DirectorPipeline] extractCharacterAnchors: recovered ${characters.characters.length} characters via SimpleCharacterSchema`)
+            const match = rawText.match(/\{[\s\S]*"characters"\s*:\s*\[[\s\S]*\]\s*\}/)
+            if (match) {
+              const fallback = JSON.parse(match[0])
+              if (fallback?.characters?.length) {
+                characters = fallback
+                console.log(`[DirectorPipeline] extractCharacterAnchors: recovered ${characters.characters.length} characters via raw extraction`)
+              }
             }
-          } catch (retryErr: unknown) {
-            console.warn('[DirectorPipeline] extractCharacterAnchors retry error:', retryErr instanceof Error ? retryErr.message : String(retryErr))
-          }
+          } catch { /* regex fallback failed */ }
         }
         if (!characters?.characters?.length) {
           characters = { characters: [] }
-          console.warn('[DirectorPipeline] extractCharacterAnchors: all extraction methods failed')
+          console.warn('[DirectorPipeline] extractCharacterAnchors: extraction failed, continuing with empty')
         }
 
         const elapsed = Date.now() - t0
@@ -1220,7 +1249,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         let discoveredSkillRules = ''
         try {
           const discoveryResult = await skillsMw.runSkillDiscovery({
-            llm: self.createLLM(undefined, 2048),
+            llm: self.createLLM(),
             phase: 'extractStyleAnchor',
             context: state as Record<string, unknown>,
             basePrompt: 'You are a visual style analyst. Before extracting style, review available skills.',
@@ -1253,9 +1282,10 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           '- Use the reference image ONLY for fields the user did NOT explicitly specify',
         ].join('\n')
         const basePrompt = tpl ? renderTemplate(tpl.template, {}) : fallback
-        const systemPrompt = discoveredSkillRules
+        const systemPromptBase = discoveredSkillRules
           ? `${basePrompt}\n\n--- Loaded Skills ---\n${discoveredSkillRules}`
           : basePrompt
+        const systemPrompt = self.injectTaskPlan(systemPromptBase, state.taskPlan)
 
         const response = await structuredWithRaw.invoke(
           [
@@ -1265,9 +1295,11 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
               content: [
                 ...BasePipeline.buildImageContent(
                   state.inputImages,
-                  'high',
+                  resolveVisionDetailByPass(state, 'extractStyleAnchor'),
                 ),
-                { type: 'text' as const, text: 'Extract the visual style anchor from these reference images. Focus on style attributes only, not content.' },
+                { type: 'text' as const, text: state.taskPlan
+                  ? `DIRECTOR'S PLAN (use as context for style direction):\n${state.taskPlan}\n\nBased on the director's plan above AND the reference images, extract the visual style anchor in English. Focus on style attributes only, not content.`
+                  : 'Extract the visual style anchor from these reference images in English. Focus on style attributes only, not content.' },
               ],
             },
           ],
@@ -1319,56 +1351,95 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       }
     }
 
-    // ===== Pass 0: 技能选择 (parallel with Pass 1+2) =====
-    const selectSkillsFn = async (state: DirectorState, config: any) => {
+    // ===== Pass 0: AI 导演规划 (看图 + 文本 → 结构化规划) =====
+    const taskPlanningFn = async (state: DirectorState, config: any) => {
       const t0 = Date.now()
       try {
-        const allSkills = self.pipelineSkills
-        if (allSkills.length === 0) return { activeSkills: [] as string[] }
+        const skillsMw = new SkillsMW(self.matchSkillsForPhase('taskPlanning', state as Record<string, unknown>))
+        const appliedSkills = skillsMw.getAllSkillIds('taskPlanning', state as Record<string, unknown>)
 
-        const skillsMw = new SkillsMW(allSkills)
-        const readFileTool = skillsMw.createReadFileTool('selectSkills', state as Record<string, unknown>)
-
-        if (!readFileTool) {
-          return { activeSkills: allSkills.map(s => s.id) }
+        let discoveredSkillRules = ''
+        try {
+          const discoveryResult = await skillsMw.runSkillDiscovery({
+            llm: self.createLLM(),
+            phase: 'taskPlanning',
+            context: state as Record<string, unknown>,
+            basePrompt: 'You are an experienced film director. Before planning, review available skills for relevant techniques.',
+            userMessage: 'Read any relevant skills for director planning, then confirm you are ready.',
+            maxIterations: 3,
+            signal: config?.signal,
+          })
+          discoveredSkillRules = discoveryResult.loadedSkillBodies
+        } catch (e: unknown) {
+          console.warn('[DirectorPipeline] Pass 0 skill discovery failed:', e instanceof Error ? e.message : String(e))
         }
 
-        const discoveryLLM = self.createLLM(undefined, 2048).bindTools([readFileTool])
-        const discoveryResult = await runToolCallingLoop({
-          llm: discoveryLLM,
-          tools: [readFileTool],
-          messages: [
-            {
-              role: 'system' as const,
-              content: skillsMw.wrapSystemPrompt(
-                'You are a skill selector. Review the available skills and read any that might be relevant to this task. Only read skills that match the scene, style, and template.',
-                'selectSkills',
-                state as Record<string, unknown>,
-              ),
-            },
-            {
-              role: 'user' as const,
-              content: `Scene: ${state.sceneDescription || '(none)'}\nStyle: ${state.styleInstructions || '(none)'}\nTemplate: ${state.template || 'default'}\nHas reference images: ${state.inputImages.length > 0 ? 'yes' : 'no'}\n\nRead any relevant skill files. After reading, confirm which skills you selected.`,
-            },
-          ],
-          maxIterations: 5,
-          signal: config?.signal,
+        const tpl = getPromptTemplate('taskPlanning')
+        const basePrompt = tpl
+          ? renderTemplate(tpl.template, {})
+          : 'You are an experienced film director planning a storyboard shoot. You analyze reference images and creative briefs to create specific, actionable shooting plans. Your plan will guide scene analysis, character anchoring, style extraction, panel design, and consistency verification.'
+        const systemPrompt = discoveredSkillRules
+          ? `${basePrompt}\n\n--- Loaded Skills ---\n${discoveredSkillRules}`
+          : basePrompt
+
+        const llm = self.createLLM()
+        const userContent: Array<any> = []
+
+        if (state.inputImages.length > 0) {
+          userContent.push(
+            ...BasePipeline.buildImageContent(state.inputImages, 'low'),
+          )
+        }
+
+        userContent.push({
+          type: 'text' as const,
+          text: [
+            `Creative brief: ${state.sceneDescription || '(free creation)'}`,
+            `Style: ${state.styleInstructions || '(extract from reference images)'}`,
+            `Template: ${state.template || 'default'}`,
+            `Panels: ${state.layout?.panelCount || 4}`,
+            '',
+            'Based on the reference images and the brief above, create the director\'s shooting plan following the system prompt structure.',
+          ].join('\n'),
         })
 
-        const selected = extractSelectedSkillIds(discoveryResult, allSkills)
+        const response = await llm.invoke(
+          [
+            { role: 'system' as const, content: systemPrompt },
+            { role: 'user' as const, content: userContent },
+          ],
+          { signal: config?.signal },
+        )
+
+        const planText = typeof response.content === 'string'
+          ? response.content
+          : JSON.stringify(response.content)
 
         const elapsed = Date.now() - t0
-        console.log(`[DirectorPipeline] selectSkills: ${selected.length}/${allSkills.length} skills selected in ${elapsed}ms: [${selected.join(', ')}]`)
+        console.log(`[DirectorPipeline] taskPlanning: ${elapsed}ms, plan: ${planText.slice(0, 100)}...`)
         writer(config)?.({
           type: 'pass_complete', pass: 0,
-          label: `技能选择完成 (${selected.length} skills, ${(elapsed / 1000).toFixed(1)}s)`,
+          label: `导演规划完成 (${(elapsed / 1000).toFixed(1)}s)`,
           elapsed,
-          passData: DirectorPipeline.buildPassCardData('selectSkills', { pass: 0, label: '技能选择' }, { selected, reasoning: 'read_file tool calling' }, elapsed, selected),
+          passData: DirectorPipeline.buildPassCardData(
+            'taskPlanning',
+            { pass: 0, label: '导演规划' },
+            { planText },
+            elapsed,
+            appliedSkills,
+          ),
         })
-        return { activeSkills: selected }
+        return { taskPlan: planText }
       } catch (err: unknown) {
-        console.warn('[DirectorPipeline] selectSkills failed, using all skills as fallback:', err instanceof Error ? err.message : String(err))
-        return { activeSkills: self.pipelineSkills.map(s => s.id) }
+        console.warn('[DirectorPipeline] taskPlanning failed:', err instanceof Error ? err.message : String(err))
+        const elapsed = Date.now() - t0
+        writer(config)?.({
+          type: 'pass_complete', pass: 0,
+          label: `导演规划完成 (${(elapsed / 1000).toFixed(1)}s)`,
+          elapsed,
+          passData: DirectorPipeline.buildPassCardData('taskPlanning', { pass: 0, label: '导演规划' }, { planText: '(规划跳过)' }, elapsed, []),
+        })
+        return { taskPlan: '' }
       }
     }
 
@@ -1407,7 +1478,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         try {
           const skillsMw = new SkillsMW(allPhaseSkills)
           const discoveryResult = await skillsMw.runSkillDiscovery({
-            llm: self.createLLM(undefined, 2048),
+            llm: self.createLLM(),
             phase: 'designAndAssemble',
             context: skillContext,
             basePrompt: `You are an experienced film director. Before designing shots, review the available skills and read any that are relevant.\n\nScene: ${vars.scene_env}${characterIdentityLock ? `\n\n${characterIdentityLock}` : ''}`,
@@ -1421,10 +1492,21 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         }
       }
 
-      const systemPrompt = baseSystemPrompt
-      const userText = state.sceneDescription
-        ? `【创意简报】"${state.sceneDescription}"\n\n请基于该简报为 ${state.layout.panelCount} 个分镜设计镜头并生成图像提示词。\n人物身份锚点（脸、发型、服装、主配色、武器）应优先保持可识别一致；允许人物在故事推进中发生合理演进（情绪、姿态、受损、衣物动态）。\n场景可随叙事节奏推进自然变化，不需要所有分镜固定同一地点。\n叙事方向与节奏以用户简报为主线，可做电影化增强但不反转核心走向。\n每个分镜建议 1 个主动作（anchor action）+ 1~2 个从属动作（satellite actions），避免无因突变。\n导演可自主决定镜头、构图、光影、调度与节奏张弛。`
-        : `为 ${state.layout.panelCount} 个分镜设计镜头并生成图像提示词`
+      const systemPrompt = self.injectTaskPlan(baseSystemPrompt, state.taskPlan)
+      const userText = (() => {
+        const parts: string[] = []
+        if (state.taskPlan) parts.push(`DIRECTOR'S PLAN (follow this as your shooting blueprint):\n${state.taskPlan}`)
+        if (state.sceneDescription) parts.push(`CREATIVE BRIEF: "${state.sceneDescription}"`)
+        parts.push([
+          `Design ${state.layout.panelCount} storyboard panels with shot design and image generation prompts.`,
+          'Character identity anchors (face, hairstyle, outfit, primary colors, weapons) MUST remain recognizably consistent across panels.',
+          'Characters MAY evolve naturally through the story (emotion, pose, battle damage, clothing dynamics).',
+          'Scenes MAY transition with narrative pacing — not all panels need to share the same location.',
+          'Each panel: 1 anchor action + 1-2 satellite actions. Avoid unmotivated sudden changes.',
+          'The director has full authority over shot design, composition, lighting, staging, and pacing.',
+        ].join('\n'))
+        return parts.join('\n\n')
+      })()
       const designContent: Array<any> = []
       if (state.inputImages.length > 0) {
         designContent.push(
@@ -1463,12 +1545,8 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       }
 
       // --- Level 1: Full schema with includeRaw ---
-      // DesignAndAssembleSchema has 8 fields per panel; each averages ~80 tokens in JSON.
-      // Default 4096 maxTokens truncates output for 6+ panels → "length limit was reached".
-      const l1MaxTokens = Math.max(4096, state.layout.panelCount * 800 + 1024)
       try {
-        const structuredWithRaw = self.createStructuredLLMWithRaw(DesignAndAssembleSchema, undefined, l1MaxTokens)
-        console.log(`[DirectorPipeline] L1 maxTokens=${l1MaxTokens} for ${state.layout.panelCount} panels`)
+        const structuredWithRaw = self.createStructuredLLMWithRaw(DesignAndAssembleSchema)
         const response = await structuredWithRaw.invoke(messages, { signal: config?.signal })
 
         const parsedPanels = (response as any)?.parsed?.panels
@@ -1541,7 +1619,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         let discoveredSkillRules = ''
         try {
           const discoveryResult = await skillsMw.runSkillDiscovery({
-            llm: self.createLLM(undefined, 2048),
+            llm: self.createLLM(),
             phase: 'verifyConsistency',
             context: state as Record<string, unknown>,
             basePrompt: 'You are a continuity supervisor. Before verifying, review available skills.',
@@ -1558,9 +1636,10 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         const basePrompt = tpl
           ? renderTemplate(tpl.template, vars)
           : `You are a continuity supervisor. Check panels for consistency.\nScene: ${vars.scene_env}`
-        const systemPrompt = discoveredSkillRules
+        const systemPromptBase = discoveredSkillRules
           ? `${basePrompt}\n\n--- Loaded Skills ---\n${discoveredSkillRules}`
           : basePrompt
+        const systemPrompt = self.injectTaskPlan(systemPromptBase, state.taskPlan)
 
         const userContent: Array<any> = []
         userContent.push({
@@ -1801,7 +1880,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     // ===== Graph Assembly (Evaluator-Optimizer pattern) =====
     const retryLLM = { maxAttempts: 2, initialInterval: 1.0 }
     const graph = new StateGraph(stateSchema)
-      .addNode('selectSkills', selectSkillsFn)
+      .addNode('taskPlanning', taskPlanningFn)
       .addNode('analyzeScene', analyzeSceneFn, { retryPolicy: retryLLM })
       .addNode('extractCharacterAnchors', extractCharacterAnchorsFn, { retryPolicy: retryLLM })
       .addNode('extractStyleAnchor', extractStyleAnchorFn, { retryPolicy: retryLLM })
@@ -1811,10 +1890,10 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       .addNode('designAndAssemble', designAndAssembleFn)
       .addNode('verifyConsistency', verifyConsistencyFn)
       .addNode('generateImages', generateImagesFn)
-      .addEdge(START, 'selectSkills')
-      .addEdge('selectSkills', 'analyzeScene')
-      .addEdge('selectSkills', 'extractCharacterAnchors')
-      .addEdge('selectSkills', 'extractStyleAnchor')
+      .addEdge(START, 'taskPlanning')
+      .addEdge('taskPlanning', 'analyzeScene')
+      .addEdge('taskPlanning', 'extractCharacterAnchors')
+      .addEdge('taskPlanning', 'extractStyleAnchor')
       .addEdge('analyzeScene', 'validateAnalysis')
       .addEdge('extractCharacterAnchors', 'validateAnalysis')
       .addEdge('extractStyleAnchor', 'validateAnalysis')

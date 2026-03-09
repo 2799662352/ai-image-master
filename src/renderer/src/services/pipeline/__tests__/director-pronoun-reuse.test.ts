@@ -9,8 +9,8 @@ import {
 describe('DirectorPipeline character pronoun reuse', () => {
   it('buildCharacterIdentityLock should assign stable char ids with pronouns', () => {
     const lock = buildCharacterIdentityLock([
-      { name: 'Lina', anchor: 'young woman, short black hair, she wears red jacket' },
-      { name: 'Noah', anchor: 'male detective, white coat, he has silver glasses' },
+      { name: 'Lina', face: 'young woman, short black hair, she has brown eyes', outfit: 'red jacket, black skirt' },
+      { name: 'Noah', face: 'male detective, he has sharp features', outfit: 'white coat, silver glasses' },
     ])
 
     expect(lock).toContain('[char1] Lina (she)')
@@ -23,8 +23,8 @@ describe('DirectorPipeline character pronoun reuse', () => {
       sceneDescription: '前慢后快，先压抑后释放',
       characters: {
         characters: [
-          { name: 'Lina', anchor: 'young woman, short black hair, she wears red jacket' },
-          { name: 'Noah', anchor: 'male detective, white coat, he has silver glasses' },
+          { name: 'Lina', face: 'young woman, short black hair, she has brown eyes', outfit: 'red jacket, black skirt' },
+          { name: 'Noah', face: 'male detective, he has sharp features', outfit: 'white coat, silver glasses' },
         ],
       },
       layout: { rows: 2, cols: 3, panelCount: 6 },
@@ -48,12 +48,12 @@ describe('DirectorPipeline character pronoun reuse', () => {
 
   it('should keep char ids stable when character input order changes', () => {
     const ordered = buildCharacterIdentityLock([
-      { name: 'Lina', anchor: 'young woman, short black hair, she wears red jacket' },
-      { name: 'Noah', anchor: 'male detective, white coat, he has silver glasses' },
+      { name: 'Lina', face: 'young woman, short black hair, she has brown eyes', outfit: 'red jacket, black skirt' },
+      { name: 'Noah', face: 'male detective, he has sharp features', outfit: 'white coat, silver glasses' },
     ])
     const reversed = buildCharacterIdentityLock([
-      { name: 'Noah', anchor: 'male detective, white coat, he has silver glasses' },
-      { name: 'Lina', anchor: 'young woman, short black hair, she wears red jacket' },
+      { name: 'Noah', face: 'male detective, he has sharp features', outfit: 'white coat, silver glasses' },
+      { name: 'Lina', face: 'young woman, short black hair, she has brown eyes', outfit: 'red jacket, black skirt' },
     ])
 
     // regardless of extraction order, same identities should map to same char ids

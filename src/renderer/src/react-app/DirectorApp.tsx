@@ -27,18 +27,22 @@ export function DirectorApp() {
   const generatedResults = useDirectorStore((s) => s.generatedResults)
   const skipVerify = useDirectorStore((s) => s.skipVerify)
   const scoreThreshold = useDirectorStore((s) => s.scoreThreshold)
+  const visionDetailTaskPlanning = useDirectorStore((s) => s.visionDetailTaskPlanning)
   const visionDetailAnalyzeScene = useDirectorStore((s) => s.visionDetailAnalyzeScene)
   const visionDetailCharacterAnchors = useDirectorStore((s) => s.visionDetailCharacterAnchors)
   const visionDetailDesignAssemble = useDirectorStore((s) => s.visionDetailDesignAssemble)
   const visionDetailVerifyConsistency = useDirectorStore((s) => s.visionDetailVerifyConsistency)
   const setSkipVerify = useDirectorStore((s) => s.setSkipVerify)
   const setScoreThreshold = useDirectorStore((s) => s.setScoreThreshold)
+  const setVisionDetailTaskPlanning = useDirectorStore((s) => s.setVisionDetailTaskPlanning)
   const setVisionDetailAnalyzeScene = useDirectorStore((s) => s.setVisionDetailAnalyzeScene)
   const setVisionDetailCharacterAnchors = useDirectorStore((s) => s.setVisionDetailCharacterAnchors)
   const setVisionDetailDesignAssemble = useDirectorStore((s) => s.setVisionDetailDesignAssemble)
   const setVisionDetailVerifyConsistency = useDirectorStore((s) => s.setVisionDetailVerifyConsistency)
+  const skipTaskPlanning = useDirectorStore((s) => s.skipTaskPlanning)
   const skipAnalyzeScene = useDirectorStore((s) => s.skipAnalyzeScene)
   const skipCharacterAnchors = useDirectorStore((s) => s.skipCharacterAnchors)
+  const setSkipTaskPlanning = useDirectorStore((s) => s.setSkipTaskPlanning)
   const setSkipAnalyzeScene = useDirectorStore((s) => s.setSkipAnalyzeScene)
   const setSkipCharacterAnchors = useDirectorStore((s) => s.setSkipCharacterAnchors)
   const applyVisionDetailPreset = useDirectorStore((s) => s.applyVisionDetailPreset)
@@ -48,11 +52,13 @@ export function DirectorApp() {
   const setGeneratedResults = useDirectorStore((s) => s.setGeneratedResults)
   const { startGeneration, cancelGeneration, pauseGeneration, resumeGeneration, generationStatus } = useDirectorGeneration()
   const activePreset = useMemo(() => detectVisionDetailPreset({
+    visionDetailTaskPlanning,
     visionDetailAnalyzeScene,
     visionDetailCharacterAnchors,
     visionDetailDesignAssemble,
     visionDetailVerifyConsistency,
   }), [
+    visionDetailTaskPlanning,
     visionDetailAnalyzeScene,
     visionDetailCharacterAnchors,
     visionDetailDesignAssemble,
@@ -279,8 +285,10 @@ export function DirectorApp() {
                 </div>
 
                 {[
+                  { key: 'planning', label: '导演规划', value: visionDetailTaskPlanning, onChange: setVisionDetailTaskPlanning, skippable: true, skipped: skipTaskPlanning, onToggleSkip: setSkipTaskPlanning, skipLabel: '跳过导演规划' },
                   { key: 'analyze', label: '场景分析', value: visionDetailAnalyzeScene, onChange: setVisionDetailAnalyzeScene, skippable: true, skipped: skipAnalyzeScene, onToggleSkip: setSkipAnalyzeScene, skipLabel: '跳过场景分析' },
                   { key: 'anchor', label: '角色锚定', value: visionDetailCharacterAnchors, onChange: setVisionDetailCharacterAnchors, skippable: true, skipped: skipCharacterAnchors, onToggleSkip: setSkipCharacterAnchors, skipLabel: '跳过角色锚定' },
+                  { key: 'style', label: '风格锚点', value: visionDetailAnalyzeScene, onChange: setVisionDetailAnalyzeScene, skippable: false, skipped: false, onToggleSkip: undefined as ((v: boolean) => void) | undefined, skipLabel: '' },
                   { key: 'design', label: '分镜+Prompt', value: visionDetailDesignAssemble, onChange: setVisionDetailDesignAssemble, skippable: false, skipped: false, onToggleSkip: undefined as ((v: boolean) => void) | undefined, skipLabel: '' },
                   { key: 'verify', label: '一致性校验', value: visionDetailVerifyConsistency, onChange: setVisionDetailVerifyConsistency, skippable: true, skipped: skipVerify, onToggleSkip: setSkipVerify, skipLabel: '跳过一致性校验' },
                 ].map((item) => (

@@ -8,7 +8,6 @@ import {
 } from '../LangChainStoryboardService'
 import type { StoryboardResponse } from '../LangChainStoryboardService'
 import { VerifySchema } from '../pipeline/schemas/director-schemas'
-import { unwrapVerifyResult } from '../pipeline/DirectorPipeline'
 import type {
   PipelineConfig,
   PipelineSkill,
@@ -19,22 +18,19 @@ import type {
 import { storyboardCodeVerify } from './storyboard-verify'
 import { getStoryboardPromptTemplate, renderTemplate, getStoryboardSkills } from './storyboard-prompt-loader'
 
-const MAX_RETRIES = 1
-const SCORE_THRESHOLD = 6
-
 // ==================== Schemas ====================
 
 const ShotDesignOutputSchema = z.object({
   seq: z.array(z.object({
-    id: z.string().describe('镜头编号 e.g. S1'),
-    desc: z.string().describe('景别|动作|台词精华|心理→外化|运镜'),
-    act: z.string().optional().describe('演出动作'),
-    fx: z.nullable(z.string()).optional().describe('特效'),
-    motive: z.string().optional().describe('动机'),
-    audio: z.string().optional().describe('三层音频'),
+    id: z.string().describe('Shot number e.g. S1, S2'),
+    desc: z.string().describe('Shot type, character action, key dialogue, camera movement'),
+    act: z.string().optional().describe('Performance action: what the character physically does'),
+    fx: z.nullable(z.string()).optional().describe('Visual effects: wind, smoke, light, particles. Null if none'),
+    motive: z.string().optional().describe('Character motivation: what psychological state drives this action'),
+    audio: z.string().optional().describe('Audio layers: score, SFX, voice'),
   })),
-  cont: z.string().describe('跨镜头连续性锚点'),
-  notes: z.string().describe('验证总结 + 节奏呼吸曲线'),
+  cont: z.string().describe('Cross-shot continuity anchors: what visual elements must stay consistent between shots'),
+  notes: z.string().describe('Verification summary and pacing rhythm curve'),
 })
 
 const SimpleShotDesignSchema = z.object({
@@ -46,26 +42,34 @@ const SimpleShotDesignSchema = z.object({
   notes: z.string().default(''),
 })
 
-const SimpleSceneSchema = z.object({
-  d: z.string().describe('Narrative arc: A→B→C'),
-  cap: z.string().describe('Structured caption'),
-  env: z.string().describe('Environment description'),
-})
-
 const FlatSceneSchema = z.object({
-  d: z.string().describe('Narrative arc: A(initial)→B(trigger)→C(end state)'),
-  cap: z.string().describe('Structured caption: subject-action-environment'),
-  env: z.string().describe('Environment: lighting, color palette, atmosphere'),
-  bgm: z.string().default('').describe('Sound design layers'),
-  shotCount: z.number().default(4).describe('Number of shots identified'),
+  d: z.string().describe('Narrative arc: A(initial state) → B(trigger event) → C(end state)'),
+  cap: z.string().describe('Structured caption: subject performing action in environment'),
+  env: z.string().describe('Environment description: lighting direction, color palette, atmosphere, weather'),
+  bgm: z.string().default('').describe('Sound design layers: ambient, music, SFX, voice'),
+  shotCount: z.number().default(4).describe('Number of distinct shots identified in the scene'),
 })
 
 const SimpleObjArraySchema = z.object({
   objs: z.array(z.object({
-    n: z.string().describe('Character/object name'),
-    f: z.string().describe('Appearance features'),
-    t: z.string().describe('Cross-shot consistency anchor'),
-    act: z.string().describe('Action'),
+    n: z.string().describe('Character or object name'),
+    f: z.string().describe('Visual appearance: hair, face, outfit, distinguishing features'),
+    t: z.string().describe('Cross-shot consistency anchor: features that must remain identical across all shots'),
+    act: z.string().describe('Current action: what the character is doing in the scene'),
+  })),
+})
+
+const AnalyzeOutputSchema = z.object({
+  scene: z.object({
+    d: z.string().describe('Narrative arc: A(initial state) → B(trigger event) → C(end state)'),
+    cap: z.string().describe('Structured caption: subject performing action in environment'),
+    env: z.string().describe('Environment description: lighting direction, color palette, atmosphere, weather'),
+  }),
+  objs: z.array(z.object({
+    n: z.string().describe('Character or object name'),
+    f: z.string().describe('Visual appearance: hair, face, outfit, distinguishing features'),
+    t: z.string().describe('Cross-shot consistency anchor: features that must remain identical across all shots'),
+    act: z.string().describe('Current action: what the character is doing in the scene'),
   })),
 })
 
@@ -85,30 +89,24 @@ const stateSchema = z.object({
   cont: z.string().default(''),
   notes: z.string().default(''),
   report: VerifySchema.nullable().default(null),
-  analysisRetryCount: z.number().default(0),
-  retryCount: z.number().default(0),
-  retryFeedback: z.string().default(''),
   inputImages: z.array(z.object({
     data: z.string(),
     mimeType: z.string(),
   })).default([]),
   userContext: z.string().default(''),
+  taskPlan: z.string().default(''),
 })
 
 export type StoryboardState = z.infer<typeof stateSchema>
 
-const MAX_ANALYSIS_RETRIES = 2
-
 export function shouldRetryStoryboardAnalysis(state: {
   scene: { d?: string } | null
   objs: Array<{ n?: string }> | null
-  analysisRetryCount: number
-}): 'continue' | 'retry' | 'abort' {
+}): 'continue' | 'abort' {
   const sceneOk = state.scene && state.scene.d && state.scene.d !== '(analysis failed)'
   const objsOk = state.objs && state.objs.length > 0
   if (sceneOk || objsOk) return 'continue'
-  if (state.analysisRetryCount >= MAX_ANALYSIS_RETRIES) return 'abort'
-  return 'retry'
+  return 'abort'
 }
 
 function unwrapScene(data: any): any {
@@ -124,7 +122,7 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
   private _checkpointer: MemorySaver | null = null
   _currentThreadId: string | null = null
   private _pauseRequested = false
-  private _lastTotalPasses = 4
+  private _lastTotalPasses = 3
 
   constructor(config: PipelineConfig) {
     super(config)
@@ -152,6 +150,13 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
 
   private static formatSummary(nodeName: string, output: any): string {
     switch (nodeName) {
+      case 'analyze': {
+        const s = output?.scene
+        const objs = output?.objs
+        const scenePart = s?.d ? `弧线: ${s.d.slice(0, 30)}` : '(场景缺失)'
+        const charPart = objs?.length ? `${objs.length} 个角色` : '(无角色)'
+        return `${scenePart}，${charPart}`
+      }
       case 'sceneDecompose': {
         const s = output?.scene
         if (!s) return '(empty)'
@@ -235,18 +240,84 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
       })
     }
 
-    // ===== Pass 1: 场景分解 (parallel with Pass 2) =====
-    const sceneDecomposeFn = async (state: StoryboardState, config: any) => {
-      checkPauseAndInterrupt('sceneDecompose', config)
+    // ===== Pass 0: 快速规划 (text-only, NO images) =====
+    const taskPlanningFn = async (state: StoryboardState, config: any) => {
+      const t0 = Date.now()
+      try {
+        const llm = self.createLLM()
+
+        const userText = [
+          `Context: ${state.userContext || '(free creation)'}`,
+          '',
+          'Create a brief storyboard plan in English covering:',
+          '1. Scene setting — core environment and atmosphere',
+          '2. Key characters — who appears, distinguishing visual features',
+          '3. Visual style — medium (photo/anime/3D), palette, lighting mood',
+          '4. Narrative arc — how the story flows across shots',
+          'Keep the plan under 150 words.',
+        ].join('\n')
+
+        const response = await llm.invoke(
+          [
+            {
+              role: 'system' as const,
+              content: 'You are a professional storyboard director. Create a brief shooting plan. Write in English only.',
+            },
+            { role: 'user' as const, content: userText },
+          ],
+          { signal: config?.signal },
+        )
+
+        const planText = typeof response.content === 'string'
+          ? response.content
+          : JSON.stringify(response.content)
+
+        const elapsed = Date.now() - t0
+        console.log(`[StoryboardProPipeline] taskPlanning: ${elapsed}ms`)
+        writer(config)?.({
+          type: 'pass_complete', pass: 0,
+          label: `规划完成 (${(elapsed / 1000).toFixed(1)}s)`,
+          elapsed,
+          passData: StoryboardProPipeline.buildPassCardData('taskPlanning', { pass: 0, label: '规划' }, { planText }, elapsed),
+        })
+        return { taskPlan: planText }
+      } catch (err: unknown) {
+        console.warn('[StoryboardProPipeline] taskPlanning failed:', err instanceof Error ? err.message : String(err))
+        const elapsed = Date.now() - t0
+        writer(config)?.({
+          type: 'pass_complete', pass: 0,
+          label: `规划完成 (${(elapsed / 1000).toFixed(1)}s)`,
+          elapsed,
+          passData: StoryboardProPipeline.buildPassCardData('taskPlanning', { pass: 0, label: '规划' }, { planText: '' }, elapsed),
+        })
+        return { taskPlan: '' }
+      }
+    }
+
+    // ===== Pass 1: 场景+角色分析 (merged single LLM call) =====
+    const analyzeFn = async (state: StoryboardState, config: any) => {
+      checkPauseAndInterrupt('analyze', config)
       const t0 = Date.now()
       try {
         const appliedSkills = self.getSkillsForPhase('sceneDecompose', state as Record<string, unknown>)
-        const vars: Record<string, string> = { user_context: state.userContext || '' }
+        const vars: Record<string, string> = {
+          user_context: state.userContext || '',
+          task_plan: state.taskPlan || '',
+        }
         const systemPrompt = self.resolveSystemPrompt(
           'sceneDecompose', vars,
           state as Record<string, unknown>,
-          'You are a professional film storyboard analyst. Decompose the scene from the provided images. Output structured data covering: narrative arc (d), structured caption (cap), environment with lighting params (env), 4-layer sound design (bgm), and timeline with shots.',
+          [
+            'You are a professional film storyboard analyst. From the provided images, output TWO things in a single structured response:',
+            '1. SCENE: narrative arc (d), structured caption (cap), environment (env)',
+            '2. CHARACTERS: extract ALL characters and significant objects with name (n), appearance (f), consistency anchor (t), current action (act)',
+            '',
+            'REFERENCE IMAGE FIDELITY: The attached images are the SINGLE SOURCE OF TRUTH. Describe ONLY what is visually present. DO NOT hallucinate.',
+            'Write in English.',
+            state.taskPlan ? `\nDIRECTOR PLAN (use as guidance):\n${state.taskPlan}` : '',
+          ].filter(Boolean).join('\n'),
         )
+
         const userMessages = [
           { role: 'system' as const, content: systemPrompt },
           {
@@ -255,172 +326,69 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
               ...BasePipeline.buildImageContent(state.inputImages, 'high'),
               {
                 type: 'text' as const,
-                text: state.userContext
-                  ? `参考素材如上。附加要求/剧本:\n${state.userContext}\n\n请分析场景结构。`
-                  : '请分析以上图片的场景结构。',
+                text: state.taskPlan
+                  ? `STORYBOARD PLAN:\n${state.taskPlan}\n\nBased on the plan above AND the reference images, analyze the scene structure and extract all characters.${state.userContext ? `\nAdditional context: ${state.userContext}` : ''}`
+                  : `Analyze the scene structure and extract all characters from the images above.${state.userContext ? `\nAdditional context: ${state.userContext}` : ''}`,
               },
             ],
           },
         ]
 
-        // --- L1: Flat scene schema + jsonMode + includeRaw + greedy regex ---
         let scene: any = null
+        let objs: any[] = []
+
         try {
-          const structuredWithRaw = self.createStructuredLLMWithRaw(FlatSceneSchema, undefined, 4096, 'jsonMode')
+          const structuredWithRaw = self.createStructuredLLMWithRaw(AnalyzeOutputSchema)
           const response = await structuredWithRaw.invoke(userMessages, { signal: config?.signal })
-          scene = (response as any)?.parsed
-          scene = unwrapScene(scene)
-          if (scene && typeof scene.d === 'string') {
+          const parsed = (response as any)?.parsed
+
+          if (parsed?.scene?.d) {
+            scene = parsed.scene
             if (!scene.timeline) scene.timeline = []
           }
-          if (!scene || typeof scene.d !== 'string') {
-            const rawContent = (response as any)?.raw?.content
-            const rawText = typeof rawContent === 'string' ? rawContent : ''
-            console.warn('[StoryboardProPipeline] sceneDecompose L1 parsed empty.',
-              'rawContent type:', typeof rawContent,
-              'rawText length:', rawText.length,
-              'preview:', rawText.slice(0, 300))
+          if (parsed?.objs?.length) {
+            objs = parsed.objs
+          }
+
+          if ((!scene?.d || !objs.length) && (response as any)?.raw?.content) {
+            const rawText = typeof (response as any).raw.content === 'string'
+              ? (response as any).raw.content : ''
             try {
-              const match = rawText.match(/\{[\s\S]*"d"\s*:[\s\S]*\}/)
+              const match = rawText.match(/\{[\s\S]*"scene"\s*:[\s\S]*"objs"\s*:[\s\S]*\}/)
               if (match) {
-                scene = JSON.parse(match[0])
-                scene = unwrapScene(scene)
-                if (!scene.timeline) scene.timeline = []
+                const fallback = JSON.parse(match[0])
+                if (!scene?.d && fallback?.scene?.d) {
+                  scene = fallback.scene
+                  if (!scene.timeline) scene.timeline = []
+                }
+                if (!objs.length && fallback?.objs?.length) {
+                  objs = fallback.objs
+                }
               }
-            } catch { /* L2 below */ }
+            } catch { /* regex fallback failed */ }
           }
         } catch (e: unknown) {
-          console.warn('[StoryboardProPipeline] sceneDecompose L1 error:', e instanceof Error ? e.message : String(e))
-        }
-
-        // --- L2: Simplified schema fallback with raw unwrap ---
-        if (!scene?.d) {
-          console.warn('[StoryboardProPipeline] sceneDecompose L1 failed, trying L2 SimpleSceneSchema')
-          try {
-            const simpleWithRaw = self.createStructuredLLMWithRaw(SimpleSceneSchema, undefined, 4096, 'jsonMode')
-            const simpleResponse = await simpleWithRaw.invoke(userMessages, { signal: config?.signal })
-            let simpleResult = (simpleResponse as any)?.parsed
-            simpleResult = unwrapScene(simpleResult)
-
-            if (!simpleResult || typeof simpleResult.d !== 'string') {
-              const rawText = typeof (simpleResponse as any)?.raw?.content === 'string'
-                ? (simpleResponse as any).raw.content : ''
-              try {
-                let fallback = JSON.parse(rawText)
-                fallback = unwrapScene(fallback)
-                if (typeof fallback.d === 'string') simpleResult = fallback
-              } catch { /* give up */ }
-            }
-
-            console.log('[StoryboardProPipeline] sceneDecompose L2 result:',
-              simpleResult ? `d="${(simpleResult.d || '').slice(0, 60)}" cap="${(simpleResult.cap || '').slice(0, 50)}"` : 'null')
-            if (simpleResult && typeof simpleResult.d === 'string') {
-              scene = { ...simpleResult, bgm: simpleResult.bgm || '', timeline: [] }
-              console.log('[StoryboardProPipeline] sceneDecompose L2 success via SimpleSceneSchema')
-            }
-          } catch (e: unknown) {
-            console.warn('[StoryboardProPipeline] sceneDecompose L2 error:', e instanceof Error ? e.message : String(e))
-          }
+          console.warn('[StoryboardProPipeline] analyze L1 error:', e instanceof Error ? e.message : String(e))
         }
 
         if (!scene?.d) {
           scene = { d: '(analysis failed)', cap: '', env: '', bgm: '', timeline: [] }
-          console.warn('[StoryboardProPipeline] sceneDecompose: all extraction levels failed')
+          console.warn('[StoryboardProPipeline] analyze: scene extraction failed')
         }
+
+        const paddedObjs = objs.map((o: any) => ({
+          n: o.n || '', f: o.f || '', t: o.t || '', act: o.act || '',
+          s: o.s || 'fg|center|Z1', p: o.p || 'artic', tc: o.tc || '',
+          fx: o.fx ?? null, motive: o.motive || '', a: o.a || '', m: o.m || '',
+        }))
 
         const elapsed = Date.now() - t0
-        const passData = StoryboardProPipeline.buildPassCardData('sceneDecompose', { pass: 1, label: '场景分解' }, { scene }, elapsed, appliedSkills)
-        writer(config)?.({ type: 'pass_complete', pass: 1, label: `场景分解完成 (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
-        return { scene }
+        const passData = StoryboardProPipeline.buildPassCardData('analyze', { pass: 1, label: '场景+角色分析' }, { scene, objs: paddedObjs }, elapsed, appliedSkills)
+        writer(config)?.({ type: 'pass_complete', pass: 1, label: `场景+角色分析完成 (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
+        return { scene, objs: paddedObjs }
       } catch (err: unknown) {
-        emitError(config, 1, '场景分解', 'sceneDecompose', err instanceof Error ? err.message : String(err), Date.now() - t0)
-        return { scene: null }
-      }
-    }
-
-    // ===== Pass 2: 角色/物体提取 (parallel with Pass 1) =====
-    const characterExtractFn = async (state: StoryboardState, config: any) => {
-      checkPauseAndInterrupt('characterExtract', config)
-      const t0 = Date.now()
-      try {
-        const appliedSkills = self.getSkillsForPhase('characterExtract', state as Record<string, unknown>)
-        const vars: Record<string, string> = { user_context: state.userContext || '' }
-        const systemPrompt = self.resolveSystemPrompt(
-          'characterExtract', vars,
-          state as Record<string, unknown>,
-          'You are a character analysis expert for storyboard production. Extract ALL characters and significant objects from the provided images.',
-        )
-        const userMessages = [
-          { role: 'system' as const, content: systemPrompt },
-          {
-            role: 'user' as const,
-            content: [
-              ...BasePipeline.buildImageContent(state.inputImages, 'high'),
-              {
-                type: 'text' as const,
-                text: state.userContext
-                  ? `参考素材如上。附加要求:\n${state.userContext}\n\n请提取所有角色和重要物体。`
-                  : '请提取以上图片中所有角色和重要物体。',
-              },
-            ],
-          },
-        ]
-
-        // --- L1: Full 11-field schema + jsonMode + includeRaw + greedy regex ---
-        let parsed: any = null
-        try {
-          const ObjArraySchema = z.object({ objs: z.array(StoryboardObjSchema) })
-          const structuredWithRaw = self.createStructuredLLMWithRaw(ObjArraySchema, undefined, 4096, 'jsonMode')
-          const response = await structuredWithRaw.invoke(userMessages, { signal: config?.signal })
-          parsed = (response as any)?.parsed
-          if (!parsed?.objs?.length) {
-            const rawText = typeof (response as any)?.raw?.content === 'string'
-              ? (response as any).raw.content : ''
-            try {
-              const match = rawText.match(/\{[\s\S]*"objs"\s*:\s*\[[\s\S]*\][\s\S]*\}/)
-              if (match) {
-                const fallback = JSON.parse(match[0])
-                if (fallback?.objs?.length) parsed = fallback
-              }
-            } catch { /* L2 below */ }
-          }
-        } catch (e: unknown) {
-          console.warn('[StoryboardProPipeline] characterExtract L1 error:', e instanceof Error ? e.message : String(e))
-        }
-
-        // --- L2: Simplified 4-field schema fallback ---
-        if (!parsed?.objs?.length) {
-          console.warn('[StoryboardProPipeline] characterExtract L1 failed, trying L2 SimpleObjArraySchema')
-          try {
-            const simpleStructured = self.createStructuredLLM(SimpleObjArraySchema, undefined, 4096, 'jsonMode')
-            const simpleResult = await simpleStructured.invoke(userMessages, { signal: config?.signal })
-            if (simpleResult?.objs?.length) {
-              parsed = {
-                objs: simpleResult.objs.map((o: any) => ({
-                  n: o.n, f: o.f, t: o.t, act: o.act,
-                  s: 'fg|center|Z1', p: 'artic', tc: '', fx: null,
-                  motive: '', a: '', m: '',
-                })),
-              }
-              console.log(`[StoryboardProPipeline] characterExtract L2 success: ${parsed.objs.length} objs via SimpleObjArraySchema`)
-            }
-          } catch (e: unknown) {
-            console.warn('[StoryboardProPipeline] characterExtract L2 error:', e instanceof Error ? e.message : String(e))
-          }
-        }
-
-        if (!parsed?.objs?.length) {
-          parsed = { objs: [] }
-          console.warn('[StoryboardProPipeline] characterExtract: all extraction levels failed')
-        }
-
-        const elapsed = Date.now() - t0
-        const passData = StoryboardProPipeline.buildPassCardData('characterExtract', { pass: 2, label: '角色提取' }, { objs: parsed.objs }, elapsed, appliedSkills)
-        writer(config)?.({ type: 'pass_complete', pass: 2, label: `角色提取完成 (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
-        return { objs: parsed.objs }
-      } catch (err: unknown) {
-        emitError(config, 2, '角色提取', 'characterExtract', err instanceof Error ? err.message : String(err), Date.now() - t0)
-        return { objs: null }
+        emitError(config, 1, '场景+角色分析', 'analyze', err instanceof Error ? err.message : String(err), Date.now() - t0)
+        return { scene: null, objs: null }
       }
     }
 
@@ -437,43 +405,43 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
         ? state.objs.map(o => `${o.n}: ${o.t} [${o.act}]`).join('\n')
         : '(角色数据缺失)'
 
-      let retryBlock = ''
-      if (state.retryFeedback) {
-        retryBlock = `\n\n--- 校验反馈 (增量修正) ---\n${state.retryFeedback}\n\n仅修正反馈中提到的问题，其他镜头保持不变。`
-      }
-
       const vars: Record<string, string> = {
         scene_summary: sceneSummary,
         character_summary: characterSummary,
-        retry_block: retryBlock,
         user_context: state.userContext || '',
+        task_plan: state.taskPlan || '',
       }
       const systemPrompt = self.resolveSystemPrompt(
         'shotDesign', vars,
         state as Record<string, unknown>,
-        `You are a professional film director designing a shot sequence.\n\nScene:\n${sceneSummary}\n\nCharacters:\n${characterSummary}${retryBlock}\n\nDesign shots with id, desc, act, fx, motive, audio. Also provide cont (cross-shot continuity) and notes (verification summary).\n\n${state.userContext || ''}`,
+        [
+          `You are a professional film director designing a shot sequence.`,
+          ``,
+          `Scene:\n${sceneSummary}`,
+          ``,
+          `Characters:\n${characterSummary}`,
+          state.taskPlan ? `\nDIRECTOR PLAN (use as guidance):\n${state.taskPlan}` : '',
+          `\nDesign shots with id, desc, act, fx, motive, audio. Also provide cont (cross-shot continuity) and notes (verification summary).`,
+          state.userContext ? `\n${state.userContext}` : '',
+        ].filter(Boolean).join('\n'),
       )
 
-      const userContent: Array<any> = []
-      if (state.inputImages.length > 0) {
-        userContent.push(...BasePipeline.buildImageContent(state.inputImages, 'low'))
-      }
-      userContent.push({
-        type: 'text' as const,
-        text: state.userContext
-          ? `基于以上场景和角色分析，结合参考素材，设计完整的镜头序列。\n附加要求: ${state.userContext}`
-          : '基于以上场景和角色分析，设计完整的镜头序列。',
-      })
+      const userText = (() => {
+        const parts: string[] = []
+        if (state.taskPlan) parts.push(`STORYBOARD PLAN:\n${state.taskPlan}`)
+        parts.push(`Based on the scene and character analysis above, design a complete shot sequence.${state.userContext ? `\nAdditional context: ${state.userContext}` : ''}`)
+        return parts.join('\n\n')
+      })()
 
       const messages = [
         { role: 'system' as const, content: systemPrompt },
-        { role: 'user' as const, content: userContent },
+        { role: 'user' as const, content: userText },
       ]
 
       const emitSuccess = (seq: any[], cont: string, notes: string, level: string) => {
         const elapsed = Date.now() - t0
-        const passData = StoryboardProPipeline.buildPassCardData('shotDesign', { pass: 3, label: '镜头设计' }, { seq, cont, notes }, elapsed, appliedSkills)
-        writer(config)?.({ type: 'pass_complete', pass: 3, label: `镜头设计完成 [${level}] (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
+        const passData = StoryboardProPipeline.buildPassCardData('shotDesign', { pass: 2, label: '镜头设计' }, { seq, cont, notes }, elapsed, appliedSkills)
+        writer(config)?.({ type: 'pass_complete', pass: 2, label: `镜头设计完成 [${level}] (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
       }
 
       // --- Level 1: Full schema with includeRaw + regex fallback ---
@@ -506,7 +474,7 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
 
       // --- Level 2: Simplified schema (just id + desc) ---
       let lastError = ''
-      writer(config)?.({ type: 'pass_complete', pass: 3, label: '镜头设计格式降级重试...', elapsed: Date.now() - t0, passData: null })
+      writer(config)?.({ type: 'pass_complete', pass: 2, label: '镜头设计格式降级重试...', elapsed: Date.now() - t0, passData: null })
       try {
         const simpleStructured = self.createStructuredLLM(SimpleShotDesignSchema)
         const simpleResult = await simpleStructured.invoke(messages, { signal: config?.signal })
@@ -522,238 +490,37 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
         console.warn('[StoryboardProPipeline] L2 error:', lastError)
       }
 
-      // --- Level 3: Error feedback to LLM (self-correction) ---
-      writer(config)?.({ type: 'pass_complete', pass: 3, label: '镜头设计 LLM 自修正重试...', elapsed: Date.now() - t0, passData: null })
-      try {
-        const llm = self.createLLM()
-        const feedbackResult = await llm.invoke(
-          [
-            ...messages,
-            {
-              role: 'assistant' as const,
-              content: `I attempted to generate shot sequence data but the output failed validation. Error: ${lastError}`,
-            },
-            {
-              role: 'user' as const,
-              content: `Your previous response failed with error: "${lastError}"\n\nPlease fix this and respond with ONLY a valid JSON object (no markdown, no code fences), exactly like:\n{"seq":[{"id":"S1","desc":"full shot description here"},{"id":"S2","desc":"..."}],"cont":"S1-S2:anchor;S2-S3:anchor","notes":"verification summary"}\n\nEach shot needs an "id" (string like S1, S2) and a "desc" (detailed shot description).`,
-            },
-          ],
-          { signal: config?.signal },
-        )
-        const text = typeof feedbackResult.content === 'string' ? feedbackResult.content : ''
-        const jsonMatch = text.match(/\{[\s\S]*"seq"\s*:\s*\[[\s\S]*\][\s\S]*\}/)
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0])
-          if (parsed?.seq?.length) {
-            console.log(`[StoryboardProPipeline] L3 success: ${parsed.seq.length} shots via error feedback`)
-            emitSuccess(parsed.seq, parsed.cont || '', parsed.notes || '', 'L3-feedback')
-            return { seq: parsed.seq, cont: parsed.cont || '', notes: parsed.notes || '' }
-          }
-        }
-      } catch (e: unknown) {
-        console.warn('[StoryboardProPipeline] L3 error:', e instanceof Error ? e.message : String(e))
-      }
-
       // --- All levels failed ---
-      emitError(config, 3, '镜头设计', 'shotDesign', 'All 3 recovery levels failed', Date.now() - t0)
+      emitError(config, 2, '镜头设计', 'shotDesign', 'L1 and L2 recovery both failed', Date.now() - t0)
       return { seq: null, cont: '', notes: '' }
     }
 
-    // ===== Pass 4a: 快速校验 (code-level, instant) =====
+    // ===== Pass 3: 快速校验 (code-level, instant) =====
     const codeVerifyNode = (state: StoryboardState, config: any) => {
       const t0 = Date.now()
       const result = storyboardCodeVerify(state as any)
       const elapsed = Date.now() - t0
-      const passData = StoryboardProPipeline.buildPassCardData('codeVerify', { pass: 4, label: '快速校验' }, { report: result }, elapsed)
+      const passData = StoryboardProPipeline.buildPassCardData('codeVerify', { pass: 3, label: '快速校验' }, { report: result }, elapsed)
       writer(config)?.({
-        type: 'pass_complete', pass: 4,
+        type: 'pass_complete', pass: 3,
         label: `快速校验完成 (score: ${result.score}, ${elapsed}ms)`,
         elapsed, passData,
       })
       return { report: result }
     }
 
-    // ===== Pass 4b: 深度校验 (LLM text-only) =====
-    const deepVerifyFn = async (state: StoryboardState, config: any) => {
-      checkPauseAndInterrupt('deepVerify', config)
-      const t0 = Date.now()
-      try {
-        const appliedSkills = self.getSkillsForPhase('deepVerify', state as Record<string, unknown>)
-        const structuredWithRaw = self.createStructuredLLMWithRaw(VerifySchema, undefined, 4096, 'jsonMode')
-
-        const sceneSummary = state.scene
-          ? `弧线: ${state.scene.d}\n环境: ${state.scene.env}`
-          : '(缺失)'
-        const characterSummary = state.objs?.length
-          ? state.objs.map(o => `${o.n}: ${o.t}`).join('; ')
-          : '(缺失)'
-        const shotsSummary = state.seq?.length
-          ? state.seq.map(s => `${s.id}: ${s.desc}`).join('\n')
-          : '(缺失)'
-
-        const vars: Record<string, string> = {
-          scene_summary: sceneSummary,
-          character_summary: characterSummary,
-          shots_summary: shotsSummary,
-          continuity: state.cont || '(缺失)',
-        }
-        const systemPrompt = self.resolveSystemPrompt(
-          'deepVerify', vars,
-          state as Record<string, unknown>,
-          `You are a continuity supervisor for storyboard production. Verify consistency.\nScene: ${sceneSummary}\nCharacters: ${characterSummary}\nShots:\n${shotsSummary}\nContinuity: ${state.cont}`,
-        )
-        const response = await structuredWithRaw.invoke(
-          [
-            { role: 'system', content: systemPrompt },
-            {
-              role: 'user',
-              content: `Verify the storyboard for consistency. Check: character anchors, spatial continuity, timeline coherence, narrative arc, motion continuity. Score 0-10.`,
-            },
-          ],
-          { signal: config?.signal },
-        )
-
-        let result = (response as any)?.parsed
-        if (!result || typeof result.score !== 'number') {
-          const unwrapped = unwrapVerifyResult(result)
-          if (unwrapped) {
-            result = unwrapped
-          } else {
-            const rawText = typeof (response as any)?.raw?.content === 'string'
-              ? (response as any).raw.content : ''
-            if (rawText) {
-              try {
-                const match = rawText.match(/\{[\s\S]*\}/)
-                if (match) {
-                  const parsed = JSON.parse(match[0])
-                  const extracted = unwrapVerifyResult(parsed)
-                  if (extracted) result = extracted
-                }
-              } catch { /* fallback below */ }
-            }
-          }
-        }
-
-        result = result ?? { score: 7, ok: true, issues: [] }
-        if (typeof result.score !== 'number') result.score = 7
-        if (typeof result.ok !== 'boolean') result.ok = result.score >= 6
-        if (!Array.isArray(result.issues)) result.issues = []
-
-        const elapsed = Date.now() - t0
-        const passData = StoryboardProPipeline.buildPassCardData('deepVerify', { pass: 4, label: '深度校验' }, { report: result }, elapsed, appliedSkills)
-        writer(config)?.({
-          type: 'pass_complete', pass: 4,
-          label: `深度校验完成 (score: ${result.score}, ${(elapsed / 1000).toFixed(1)}s)`,
-          elapsed, passData,
-        })
-        return { report: result }
-      } catch (err: unknown) {
-        emitError(config, 4, '深度校验', 'deepVerify', err instanceof Error ? err.message : String(err), Date.now() - t0)
-        return { report: null }
-      }
-    }
-
-    // ===== Retry 准备 =====
-    const prepareRetryFn = (state: StoryboardState) => {
-      const feedback = Array.isArray(state.report?.issues) && state.report!.issues.length > 0
-        ? `校验分数: ${state.report!.score}/10\n问题:\n${state.report!.issues.join('\n')}`
-        : `校验分数: ${state.report?.score ?? '?'}/10，进行软修正。`
-      return {
-        retryFeedback: feedback,
-        retryCount: state.retryCount + 1,
-        seq: null,
-        cont: '',
-        notes: '',
-        report: null,
-      }
-    }
-
-    // ===== Analysis Gate Nodes =====
-    const validateAnalysisFn = (state: StoryboardState) => {
-      console.log(`[StoryboardProPipeline] validateAnalysis: scene=${!!state.scene?.d}, objs=${!!state.objs?.length}, retries=${state.analysisRetryCount}`)
-      return {}
-    }
-
-    const prepareAnalysisRetryFn = (state: StoryboardState, config: any) => {
-      const count = state.analysisRetryCount + 1
-      console.warn(`[StoryboardProPipeline] Analysis data empty, retrying (${count}/${MAX_ANALYSIS_RETRIES})...`)
-      writer(config)?.({
-        type: 'pass_complete', pass: 1,
-        label: `场景/角色数据为空，重试中 (${count}/${MAX_ANALYSIS_RETRIES})...`,
-        elapsed: 0, passData: null,
-      })
-      return { analysisRetryCount: count, scene: null, objs: null }
-    }
-
-    const abortPipelineFn = (_state: StoryboardState, config: any) => {
-      const msg = '场景分解和角色提取均失败，管线终止。请检查网络或换用更强的模型后重试。'
-      console.error(`[StoryboardProPipeline] ${msg}`)
-      writer(config)?.({
-        type: 'pass_complete', pass: 1,
-        label: msg, elapsed: 0, passData: null,
-      })
-      return { seq: null }
-    }
-
-    // ===== Routing Functions =====
-    const routeAfterCodeVerify = (state: StoryboardState): 'end' | 'deepVerify' => {
-      const report = state.report
-      if (!report) return 'deepVerify'
-      if (report.score >= SCORE_THRESHOLD && report.ok) return 'end'
-      return 'deepVerify'
-    }
-
-    const routeAfterDeepVerify = (state: StoryboardState): 'retry' | 'end' => {
-      if (!state.report || state.retryCount >= MAX_RETRIES) return 'end'
-      if (state.report.score < SCORE_THRESHOLD) return 'retry'
-      return 'end'
-    }
-
     // ===== Graph Assembly =====
-    const retryLLM = { maxAttempts: 2, initialInterval: 1.0 }
+    // taskPlanning → analyze → shotDesign → codeVerify → END
     const graph = new StateGraph(stateSchema)
-      .addNode('sceneDecompose', sceneDecomposeFn, { retryPolicy: retryLLM })
-      .addNode('characterExtract', characterExtractFn, { retryPolicy: retryLLM })
-      .addNode('validateAnalysis', validateAnalysisFn)
-      .addNode('prepareAnalysisRetry', prepareAnalysisRetryFn)
-      .addNode('abortPipeline', abortPipelineFn)
+      .addNode('taskPlanning', taskPlanningFn)
+      .addNode('analyze', analyzeFn)
       .addNode('shotDesign', shotDesignFn)
       .addNode('codeVerify', codeVerifyNode)
-      .addNode('deepVerify', deepVerifyFn)
-      .addNode('prepareRetry', prepareRetryFn)
-      // START → parallel sceneDecompose + characterExtract
-      .addEdge(START, 'sceneDecompose')
-      .addEdge(START, 'characterExtract')
-      // Both converge → validateAnalysis (gate before shotDesign)
-      .addEdge('sceneDecompose', 'validateAnalysis')
-      .addEdge('characterExtract', 'validateAnalysis')
-      // validateAnalysis → conditional: continue / retry / abort
-      .addConditionalEdges('validateAnalysis', (state: StoryboardState) => {
-        return shouldRetryStoryboardAnalysis(state)
-      }, {
-        continue: 'shotDesign',
-        retry: 'prepareAnalysisRetry',
-        abort: 'abortPipeline',
-      })
-      // prepareAnalysisRetry → retry both passes
-      .addEdge('prepareAnalysisRetry', 'sceneDecompose')
-      .addEdge('prepareAnalysisRetry', 'characterExtract')
-      // abortPipeline → END
-      .addEdge('abortPipeline', END)
-      // shotDesign → codeVerify
+      .addEdge(START, 'taskPlanning')
+      .addEdge('taskPlanning', 'analyze')
+      .addEdge('analyze', 'shotDesign')
       .addEdge('shotDesign', 'codeVerify')
-      // codeVerify → conditional: end or deepVerify
-      .addConditionalEdges('codeVerify', routeAfterCodeVerify, {
-        end: END,
-        deepVerify: 'deepVerify',
-      })
-      // deepVerify → conditional: end or retry
-      .addConditionalEdges('deepVerify', routeAfterDeepVerify, {
-        retry: 'prepareRetry',
-        end: END,
-      })
-      // prepareRetry → shotDesign (loop back)
-      .addEdge('prepareRetry', 'shotDesign')
+      .addEdge('codeVerify', END)
 
     this._graphBuilder = graph
     this._checkpointer = new MemorySaver()
@@ -797,7 +564,7 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
     this._pauseRequested = false
     const threadId = crypto.randomUUID()
     this._currentThreadId = threadId
-    const totalPasses = 4
+    const totalPasses = 3
     this._lastTotalPasses = totalPasses
     let finalState: StoryboardState = { ...input } as StoryboardState
 

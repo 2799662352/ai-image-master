@@ -5,7 +5,7 @@ import { useDirectorStore } from '../stores/useDirectorStore'
 type PassStatus = 'pending' | 'running' | 'completed' | 'retrying' | 'failed'
 
 const PASS_DEFS_FULL = [
-  { label: '技能选择',     icon: 'fa-brain' },
+  { label: '导演规划',     icon: 'fa-tasks' },
   { label: '场景分析',     icon: 'fa-eye' },
   { label: '角色锚定',     icon: 'fa-user-tag' },
   { label: '风格锚点',     icon: 'fa-palette' },
@@ -15,7 +15,7 @@ const PASS_DEFS_FULL = [
 ]
 
 const PASS_DEFS_FAST = [
-  { label: '技能选择',     icon: 'fa-brain' },
+  { label: '导演规划',     icon: 'fa-tasks' },
   { label: '场景分析',     icon: 'fa-eye' },
   { label: '角色锚定',     icon: 'fa-user-tag' },
   { label: '风格锚点',     icon: 'fa-palette' },

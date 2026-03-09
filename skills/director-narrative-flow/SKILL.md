@@ -1,7 +1,7 @@
 ---
 name: narrative-flow
 description: Use when designing panel sequence or verifying storyboard narrative coherence and shot transitions
-appliesTo: [designAndAssemble, verifyConsistency]
+appliesTo: [taskPlanning, designAndAssemble, verifyConsistency]
 priority: 2
 ---
 

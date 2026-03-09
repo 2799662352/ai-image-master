@@ -1,7 +1,7 @@
 ---
 name: character-consistency
 description: Use when extracting character anchors or verifying cross-panel consistency for the same characters
-appliesTo: [extractCharacterAnchors, verifyConsistency]
+appliesTo: [taskPlanning, extractCharacterAnchors, verifyConsistency]
 priority: 1
 ---
 

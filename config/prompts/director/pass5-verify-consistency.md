@@ -48,6 +48,13 @@ Environment: {{scene_env}}
 ## Style Anchor Reference
 {{style_anchor_summary}}
 
+### 6. Reference Image Fidelity
+- Compare character descriptions in prompts against the CHARACTER ANCHORS extracted from reference images
+- The reference image is ground truth — any deviation from extracted anchors is a fidelity violation
+- Flag if a character's hair color/style in a prompt contradicts the anchor
+- Flag if outfit details are altered or omitted compared to the anchor
+- Flag if unique markers (weapons, glasses, scars) are missing or changed
+
 ## Scoring
 - Start at 10, deduct points per issue found
 - Character inconsistency: -2 per occurrence
@@ -56,3 +63,5 @@ Environment: {{scene_env}}
 - Spatial error: -1 per occurrence
 - Style medium mismatch: -3 per occurrence
 - Style color temperature drift: -1 per occurrence
+- Reference fidelity violation (character): -2 per occurrence
+- Reference fidelity violation (environment): -1 per occurrence

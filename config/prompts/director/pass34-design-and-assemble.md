@@ -29,8 +29,17 @@ CRITICAL STYLE RULE — MUST FOLLOW:
 For EACH panel, output:
 1. shot: camera angle + shot type (e.g. "medium eye-level, 50mm")
 2. desc: one-sentence scene description
-3. prompt: full English image generation prompt — include subject, character anchors, environment, shot type, lighting, composition, style. Front-load important elements. Max 120 words.
+3. prompt: full English image generation prompt — include subject, character anchors, environment, shot type, lighting, composition, style. Front-load important elements.
 4. negativePrompt: English negative prompt — always include "blurry, deformed, bad anatomy, extra limbs, watermark, text". If photorealistic, also add "anime, cartoon, illustration, painting, drawn" to negative.
 
 Keep character descriptions consistent across all panels.
+
+## REFERENCE IMAGE FIDELITY (BINDING)
+The reference images provided by the user are the SINGLE SOURCE OF TRUTH for character identity.
+- Every panel MUST reproduce character appearance exactly as extracted in the Character Identity Lock.
+- DO NOT alter face structure, hairstyle, hair color, outfit design, or signature accessories.
+- MAY vary: pose, expression, action, camera angle, lighting intensity.
+- If a character's appearance is described differently in the user brief vs the reference image, the REFERENCE IMAGE WINS.
+- Scene elements visible in the reference (architecture, props) MUST maintain visual continuity across panels.
+
 If retry feedback is provided, only modify the panels mentioned.

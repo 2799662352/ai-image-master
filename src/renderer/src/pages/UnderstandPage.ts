@@ -964,7 +964,7 @@ export class UnderstandPage extends BasePage {
             const { getStoryboardPipelineService } = await import('../services/ServiceBridge')
             const pipelineService = await getStoryboardPipelineService(modelToUse)
             if (pipelineService) {
-              console.log('[UnderstandPage] Using 4-Pass storyboard pipeline...')
+              console.log('[UnderstandPage] Using storyboard pro pipeline...')
               const inputImages = this.uploadedImages.map(img => ({
                 data: img.base64, mimeType: img.mimeType || 'image/jpeg'
               }))
@@ -989,7 +989,7 @@ export class UnderstandPage extends BasePage {
               this._lastJsonText = jsonOutput
               this.showStoryboardResult(formattedText, jsonOutput)
               this.onStreamComplete(jsonOutput, modelToUse)
-              this.showToast('4-Pass 分镜分析完成！', 'success')
+              this.showToast('分镜分析完成！', 'success')
 
               this.isAnalyzing = false
               return
@@ -1226,7 +1226,7 @@ export class UnderstandPage extends BasePage {
     const spinner = document.getElementById('pipelineSpinner')
     if (spinner) { spinner.classList.remove('animate-pulse'); spinner.className = 'fas fa-check-circle text-green-400 mr-2' }
     const title = document.getElementById('pipelineTitle')
-    if (title) title.textContent = '4-Pass 分镜分析完成'
+    if (title) title.textContent = '分镜分析完成'
 
     resultArea.innerHTML = `
       <div class="bg-[#27272A] rounded-none p-4">
@@ -1352,10 +1352,10 @@ export class UnderstandPage extends BasePage {
     if (!resultContainer) return
 
     const passes = [
-      { icon: '🎬', label: 'Pass 1: 场景分析' },
-      { icon: '👤', label: 'Pass 2: 角色提取' },
-      { icon: '🎥', label: 'Pass 3: 分镜生成' },
-      { icon: '✅', label: 'Pass 4: 一致性校验' }
+      { icon: '📋', label: 'Pass 0: 导演规划' },
+      { icon: '🔍', label: 'Pass 1: 场景+角色分析' },
+      { icon: '🎥', label: 'Pass 2: 分镜生成' },
+      { icon: '✅', label: 'Pass 3: 快速校验' },
     ]
 
     resultContainer.innerHTML = `
@@ -1363,11 +1363,11 @@ export class UnderstandPage extends BasePage {
         <div class="bg-[#27272A] rounded-none p-4" id="pipelineProgressCard">
           <h3 class="text-white font-semibold flex items-center mb-3">
             <i class="fas fa-brain text-blue-400 mr-2 animate-pulse" id="pipelineSpinner"></i>
-            <span id="pipelineTitle">4-Pass 分镜分析中...</span>
+            <span id="pipelineTitle">分镜分析中...</span>
           </h3>
           <div class="space-y-2" id="pipelineProgressBars">
             ${passes.map((p, i) => `
-              <div class="flex items-center gap-3 text-sm" id="pipelinePass${i + 1}">
+              <div class="flex items-center gap-3 text-sm" id="pipelinePass${i}">
                 <span class="text-xl">${p.icon}</span>
                 <span class="text-white opacity-70">${p.label}</span>
                 <span class="ml-auto text-white opacity-30">等待中</span>
@@ -1386,7 +1386,7 @@ export class UnderstandPage extends BasePage {
       </div>
     `
 
-    const firstPass = document.getElementById('pipelinePass1')
+    const firstPass = document.getElementById('pipelinePass0')
     if (firstPass) {
       const status = firstPass.querySelector('span:last-child')
       if (status) {
@@ -1401,26 +1401,6 @@ export class UnderstandPage extends BasePage {
    * 处理管线各 Pass 完成的进度回调
    */
   private onPipelineProgress(progress: PipelineProgress): void {
-    if ((progress.data as any)?.retry) {
-      const pass3El = document.getElementById('pipelinePass3')
-      if (pass3El) {
-        const status = pass3El.querySelector('span:last-child')
-        if (status) {
-          status.textContent = '🔄 精修中...'
-          status.className = 'ml-auto text-orange-400 animate-pulse'
-        }
-      }
-      const pass4El = document.getElementById('pipelinePass4')
-      if (pass4El) {
-        const status = pass4El.querySelector('span:last-child')
-        if (status) {
-          status.textContent = '等待重检'
-          status.className = 'ml-auto text-white opacity-30'
-        }
-      }
-      return
-    }
-
     if (progress.status === 'running') {
       const passEl = document.getElementById(`pipelinePass${progress.pass}`)
       if (passEl) {
@@ -1449,9 +1429,14 @@ export class UnderstandPage extends BasePage {
       const summary = document.createElement('div')
       summary.className = 'p-3 bg-[#09090B] border border-[#3F3F46] rounded-none'
       const displayData = progress.passData.summary || progress.passData.raw
+      const issuesList = progress.passData.raw?.report?.issues
+      const issuesHtml = Array.isArray(issuesList) && issuesList.length > 0
+        ? `<ul class="mt-2 text-xs text-amber-300/80 list-disc pl-4">${issuesList.map((issue: string) => `<li>${this.escapeHtml(typeof issue === 'string' ? issue : JSON.stringify(issue))}</li>`).join('')}</ul>`
+        : ''
       summary.innerHTML = `
         <div class="text-sm text-blue-300 font-medium mb-1">${progress.label}</div>
-        <pre class="text-xs text-white opacity-70 overflow-auto max-h-40">${typeof displayData === 'string' ? displayData : JSON.stringify(displayData, null, 2)}</pre>
+        <pre class="text-xs text-white opacity-70 overflow-auto max-h-40">${typeof displayData === 'string' ? this.escapeHtml(displayData) : JSON.stringify(displayData, null, 2)}</pre>
+        ${issuesHtml}
       `
       passDataArea.appendChild(summary)
     }

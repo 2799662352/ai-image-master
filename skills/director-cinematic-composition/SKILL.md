@@ -1,7 +1,7 @@
 ---
 name: cinematic-composition
 description: Use when designing panel shots, camera angles, or analyzing scene composition in multi-panel storyboards
-appliesTo: [analyzeScene]
+appliesTo: [taskPlanning, analyzeScene]
 priority: 1
 ---
 

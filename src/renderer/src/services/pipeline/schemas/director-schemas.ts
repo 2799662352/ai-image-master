@@ -12,11 +12,10 @@ export type SceneAnalysis = z.infer<typeof SceneAnalysisSchema>
 export const CharacterAnchorSchema = z.object({
   characters: z.array(z.object({
     name: z.string().describe('Character name or identifier, English first.'),
-    anchor: z.string().describe('Full consistency anchor combining all fields below. If face/build/outfit/markers are provided, this is auto-generated.'),
-    face: z.string().optional().describe('Face details: skin tone, face shape, eye color, hair color + style + length.'),
-    build: z.string().optional().describe('Build: height relative to scene, body type (slim/athletic/heavy).'),
-    outfit: z.string().optional().describe('Outfit top-to-bottom: exact garments, colors, patterns, accessories.'),
-    markers: z.string().optional().describe('Unique markers: scars, tattoos, glasses, jewelry, props, weapons.'),
+    anchor: z.string().describe('Full visual consistency anchor combining face + outfit + markers into one paragraph.'),
+    face: z.string().describe('Hair color + style + length, eye color, skin tone, face shape.'),
+    outfit: z.string().describe('Clothing top-to-bottom with exact colors, patterns, and accessories.'),
+    markers: z.string().optional().describe('Props, weapons, scars, tattoos, glasses, jewelry. Omit if none.'),
   })),
 })
 
@@ -41,20 +40,18 @@ export type DesignAndAssemble = z.infer<typeof DesignAndAssembleSchema>
 export const SimplePanelSchema = z.object({
   panels: z.array(z.object({
     id: z.number().describe('Panel number'),
+    shot: z.string().optional().describe('Shot type + angle'),
+    desc: z.string().optional().describe('Subject action + composition'),
+    lighting: z.string().optional().describe('Key light direction + quality + color temperature'),
+    characterAction: z.string().optional().describe('Per-character actions'),
+    background: z.string().optional().describe('Background continuity note'),
     prompt: z.string().describe('Full English image generation prompt'),
+    negativePrompt: z.string().optional().describe('English negative prompt'),
   })),
 })
 
 export type SimplePanel = z.infer<typeof SimplePanelSchema>
 
-export const SimpleCharacterSchema = z.object({
-  characters: z.array(z.object({
-    name: z.string().describe('Character name or identifier'),
-    anchor: z.string().describe('Visual consistency anchor: distinguishing features in one phrase'),
-  })),
-})
-
-export type SimpleCharacter = z.infer<typeof SimpleCharacterSchema>
 
 export const SkillSelectionSchema = z.object({
   selectedSkills: z.array(z.string()).describe('选中的 skill ID 列表'),

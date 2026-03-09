@@ -70,15 +70,12 @@ export abstract class BasePipeline<TState, TResult> {
   }
 
   protected matchSkillsForPhase(phase: string, context: Record<string, unknown>): PipelineSkill[] {
-    const activeSkills = (context as any)?.activeSkills as string[] | undefined
-
     const sharedMatched = this.sharedSkills
       .filter(s => s.appliesTo.includes(phase))
       .filter(s => !s.condition || s.condition(context))
 
     const pipelineMatched = this.pipelineSkills
       .filter(s => s.appliesTo.includes(phase))
-      .filter(s => !activeSkills?.length || activeSkills.includes(s.id))
       .filter(s => !s.condition || s.condition(context))
 
     return [...sharedMatched, ...pipelineMatched]
@@ -133,6 +130,11 @@ export abstract class BasePipeline<TState, TResult> {
     return new SkillsMiddleware(allSkills)
   }
 
+  protected injectTaskPlan(prompt: string, taskPlan?: string): string {
+    if (!taskPlan) return prompt
+    return `${prompt}\n\n## Director's Task Plan\n\nFollow this plan while executing your task:\n${taskPlan}`
+  }
+
   protected isGeminiModel(model: string): boolean {
     return model.toLowerCase().includes('gemini')
   }
@@ -163,8 +165,7 @@ export abstract class BasePipeline<TState, TResult> {
 
   protected resolveMaxTokens(model: string, explicit?: number): number {
     if (explicit !== undefined) return explicit
-    if (this.isGeminiModel(model)) return 65536
-    return 4096
+    return 65536
   }
 
   protected createLLM(model?: string, maxTokens?: number) {

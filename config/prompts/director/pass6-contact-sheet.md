@@ -22,6 +22,12 @@ STRICT GRID GEOMETRY RULES:
 - Each panel is a distinct camera shot — NO blending between panels.
 
 {{character_identity_section}}
+
+REFERENCE IMAGE FIDELITY (BINDING):
+- Characters MUST look identical to the reference images in EVERY panel.
+- DO NOT reinterpret or stylize characters beyond what is shown in the reference.
+- Face, hair, outfit, accessories are LOCKED to the reference — no creative deviation.
+
 Panel descriptions:
 {{enhanced_panel_descriptions}}
 {{semantic_exclusions}}
