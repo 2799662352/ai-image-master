@@ -192,3 +192,101 @@ describe('SkillsMiddleware.createReadFileTool', () => {
     expect(t.description).toContain('/skills/y/SKILL.md')
   })
 })
+
+describe('runToolCallingLoop', () => {
+  let runToolCallingLoop: any
+
+  beforeAll(async () => {
+    const mod = await import('../SkillsMiddleware')
+    runToolCallingLoop = mod.runToolCallingLoop
+  })
+
+  it('collects tool call results as loadedSkillBodies', async () => {
+    const fakeTool = {
+      name: 'read_file',
+      invoke: async (args: any) => `Content of ${args.file_path}`,
+    }
+    let callCount = 0
+    const fakeLLM = {
+      invoke: async () => {
+        callCount++
+        if (callCount === 1) {
+          return {
+            tool_calls: [{ id: 'tc1', name: 'read_file', args: { file_path: '/skills/a/SKILL.md' } }],
+          }
+        }
+        return { tool_calls: [] }
+      },
+    }
+    const result = await runToolCallingLoop({
+      llm: fakeLLM,
+      tools: [fakeTool],
+      messages: [{ role: 'user', content: 'hello' }],
+    })
+    expect(result.loadedSkillBodies).toContain('Content of /skills/a/SKILL.md')
+    expect(result.iterations).toBe(2)
+  })
+
+  it('respects maxIterations', async () => {
+    const fakeTool = {
+      name: 'read_file',
+      invoke: async () => 'body',
+    }
+    const fakeLLM = {
+      invoke: async () => ({
+        tool_calls: [{ id: 'tc1', name: 'read_file', args: { file_path: '/a' } }],
+      }),
+    }
+    const result = await runToolCallingLoop({
+      llm: fakeLLM,
+      tools: [fakeTool],
+      messages: [],
+      maxIterations: 2,
+    })
+    expect(result.iterations).toBe(2)
+  })
+
+  it('filters out Error: results from loadedSkillBodies', async () => {
+    const fakeTool = {
+      name: 'read_file',
+      invoke: async () => "Error: File '/bad' not found",
+    }
+    let callCount = 0
+    const fakeLLM = {
+      invoke: async () => {
+        callCount++
+        if (callCount === 1) {
+          return { tool_calls: [{ id: 'tc1', name: 'read_file', args: { file_path: '/bad' } }] }
+        }
+        return { tool_calls: [] }
+      },
+    }
+    const result = await runToolCallingLoop({
+      llm: fakeLLM,
+      tools: [fakeTool],
+      messages: [],
+    })
+    expect(result.loadedSkillBodies).toBe('')
+  })
+
+  it('handles unknown tool gracefully', async () => {
+    const fakeTool = { name: 'read_file', invoke: async () => 'body' }
+    let callCount = 0
+    const fakeLLM = {
+      invoke: async () => {
+        callCount++
+        if (callCount === 1) {
+          return { tool_calls: [{ id: 'tc1', name: 'unknown_tool', args: {} }] }
+        }
+        return { tool_calls: [] }
+      },
+    }
+    const result = await runToolCallingLoop({
+      llm: fakeLLM,
+      tools: [fakeTool],
+      messages: [],
+    })
+    expect(result.iterations).toBe(2)
+    expect(result.loadedSkillBodies).toBe('')
+  })
+})

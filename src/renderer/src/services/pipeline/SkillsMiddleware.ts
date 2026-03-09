@@ -116,3 +116,49 @@ export class SkillsMiddleware {
     )
   }
 }
+
+export interface ToolCallingLoopResult {
+  loadedSkillBodies: string
+  iterations: number
+  messages: any[]
+}
+
+export async function runToolCallingLoop(params: {
+  llm: { invoke: (messages: any[], options?: any) => Promise<any> }
+  tools: Array<{ name: string; invoke: (args: any) => Promise<string> }>
+  messages: any[]
+  maxIterations?: number
+  signal?: AbortSignal
+}): Promise<ToolCallingLoopResult> {
+  const { llm, tools, messages, maxIterations = 5, signal } = params
+  const toolMap = new Map(tools.map(t => [t.name, t]))
+  const collectedBodies: string[] = []
+  const conversation = [...messages]
+  let iterations = 0
+
+  while (iterations < maxIterations) {
+    iterations++
+    const response = await llm.invoke(conversation, { signal })
+    const toolCalls: Array<{ id: string; name: string; args: any }> = response.tool_calls || []
+    if (toolCalls.length === 0) break
+
+    conversation.push(response)
+
+    for (const tc of toolCalls) {
+      const matched = toolMap.get(tc.name)
+      if (!matched) {
+        conversation.push({ role: 'tool', content: `Unknown tool: ${tc.name}`, tool_call_id: tc.id })
+        continue
+      }
+      const result = await matched.invoke(tc.args)
+      collectedBodies.push(result)
+      conversation.push({ role: 'tool', content: result, tool_call_id: tc.id })
+    }
+  }
+
+  return {
+    loadedSkillBodies: collectedBodies.filter(b => !b.startsWith('Error:')).join('\n\n'),
+    iterations,
+    messages: conversation,
+  }
+}
