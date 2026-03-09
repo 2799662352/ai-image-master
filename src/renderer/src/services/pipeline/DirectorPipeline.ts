@@ -1208,7 +1208,8 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       }
 
       try {
-        const appliedSkills = self.getSkillsForPhase('extractStyleAnchor', state as Record<string, unknown>)
+        const skillsMw = new SkillsMW(self.matchSkillsForPhase('extractStyleAnchor', state as Record<string, unknown>))
+        const appliedSkills = skillsMw.getAllSkillIds('extractStyleAnchor', state as Record<string, unknown>)
         const structuredWithRaw = self.createStructuredLLMWithRaw(
           z.object({
             styleAnchor: StyleAnchorSchema,
@@ -1216,29 +1217,45 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           })
         )
 
+        let discoveredSkillRules = ''
+        try {
+          const discoveryResult = await skillsMw.runSkillDiscovery({
+            llm: self.createLLM(undefined, 2048),
+            phase: 'extractStyleAnchor',
+            context: state as Record<string, unknown>,
+            basePrompt: 'You are a visual style analyst. Before extracting style, review available skills.',
+            userMessage: 'Read any relevant skills for style analysis, then confirm you are ready.',
+            maxIterations: 3,
+            signal: config?.signal,
+          })
+          discoveredSkillRules = discoveryResult.loadedSkillBodies
+        } catch (e: unknown) {
+          console.warn('[DirectorPipeline] Pass 3 skill discovery failed:', e instanceof Error ? e.message : String(e))
+        }
+
         const userStyleContext = buildStyleAuthorityPrompt(
           state.template,
           state.styleInstructions,
           state.sceneDescription,
         )
-
-        const systemPrompt = self.resolveSystemPrompt(
-          'extractStyleAnchor', {},
-          state as Record<string, unknown>,
-          [
-            'You are a visual style analyst. Extract the VISUAL STYLE (not content) from the reference images.',
-            '',
-            'Output a structured style anchor covering: medium, palette (2-5 hex codes), paletteRatio, lightSource, shadowDepth, texture, colorTemperature, contrastLevel.',
-            '',
-            'IMPORTANT — User Style Authority:',
-            userStyleContext || '(No user style directive provided. Derive all fields from image analysis.)',
-            '',
-            'If the reference images show a DIFFERENT medium/style than what the user selected:',
-            '- Report the conflict in the "conflicts" array',
-            '- The final "medium" field MUST reflect the USER\'s choice, NOT the reference image',
-            '- Use the reference image ONLY for fields the user did NOT explicitly specify',
-          ].join('\n'),
-        )
+        const tpl = getPromptTemplate('extractStyleAnchor')
+        const fallback = [
+          'You are a visual style analyst. Extract the VISUAL STYLE (not content) from the reference images.',
+          '',
+          'Output a structured style anchor covering: medium, palette (2-5 hex codes), paletteRatio, lightSource, shadowDepth, texture, colorTemperature, contrastLevel.',
+          '',
+          'IMPORTANT — User Style Authority:',
+          userStyleContext || '(No user style directive provided. Derive all fields from image analysis.)',
+          '',
+          'If the reference images show a DIFFERENT medium/style than what the user selected:',
+          '- Report the conflict in the "conflicts" array',
+          '- The final "medium" field MUST reflect the USER\'s choice, NOT the reference image',
+          '- Use the reference image ONLY for fields the user did NOT explicitly specify',
+        ].join('\n')
+        const basePrompt = tpl ? renderTemplate(tpl.template, {}) : fallback
+        const systemPrompt = discoveredSkillRules
+          ? `${basePrompt}\n\n--- Loaded Skills ---\n${discoveredSkillRules}`
+          : basePrompt
 
         const response = await structuredWithRaw.invoke(
           [
