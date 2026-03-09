@@ -9,10 +9,10 @@ import {
   DesignAndAssembleSchema,
   SimplePanelSchema,
   SimpleCharacterSchema,
-  SkillDiscoverySchema,
   VerifySchema,
   SkillSelectionSchema,
 } from './schemas/director-schemas'
+import { SkillsMiddleware as SkillsMW, runToolCallingLoop } from './SkillsMiddleware'
 import { StyleAnchorSchema, StyleConflictSchema } from './schemas/style-anchor-schema'
 import type { StyleAnchor, StyleConflict } from './schemas/style-anchor-schema'
 import type {
@@ -1315,45 +1315,39 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         { skipSkillInjection: true },
       )
       let discoveredSkillRules = ''
-      const matchedDiscoverableSkills = self.matchSkillsForPhase('designAndAssemble', skillContext)
+      const allPhaseSkills = self.matchSkillsForPhase('designAndAssemble', skillContext)
 
-      if (matchedDiscoverableSkills.length > 0) {
+      if (allPhaseSkills.length > 0) {
         try {
-          const discoveryPrompt = self.buildSkillMenuPrompt(
-            'designAndAssemble',
-            `You are an experienced film director. Before designing shots, review the available skills and select which ones are relevant to this task.\n\nScene: ${vars.scene_env}${characterIdentityLock ? `\n\n${characterIdentityLock}` : ''}`,
-            skillContext,
-          )
-          const discoveryLLM = self.createStructuredLLMWithRaw(SkillDiscoverySchema, undefined, 2048)
-          const discoveryResponse = await discoveryLLM.invoke(
-            [
-              { role: 'system' as const, content: discoveryPrompt },
-              { role: 'user' as const, content: `Task: Design ${state.layout.panelCount} storyboard panels.\nTemplate: ${state.template || 'default'}\nStyle: ${state.styleInstructions || '(none)'}\nScene: ${state.sceneDescription || '(none)'}\n\nWhich skills should I read to do this well? Respond with {"requestedSkills": ["id1", "id2"]}` },
-            ],
-            { signal: config?.signal },
-          )
+          const skillsMw = new SkillsMW(allPhaseSkills)
+          const readFileTool = skillsMw.createReadFileTool('designAndAssemble', skillContext)
 
-          let discoveryResult = (discoveryResponse as any)?.parsed
-          if (!discoveryResult?.requestedSkills) {
-            const rawText = typeof (discoveryResponse as any)?.raw?.content === 'string'
-              ? (discoveryResponse as any).raw.content
-              : ''
-            try {
-              let parsed = JSON.parse(rawText)
-              if (Array.isArray(parsed)) parsed = { requestedSkills: parsed }
-              if (parsed?.requestedSkills) discoveryResult = parsed
-            } catch { /* fallback below */ }
+          if (readFileTool) {
+            const discoveryLLM = self.createLLM(undefined, 2048).bindTools([readFileTool])
+            const discoveryResult = await runToolCallingLoop({
+              llm: discoveryLLM,
+              tools: [readFileTool],
+              messages: [
+                {
+                  role: 'system' as const,
+                  content: skillsMw.wrapSystemPrompt(
+                    `You are an experienced film director. Before designing shots, review the available skills and read any that are relevant.\n\nScene: ${vars.scene_env}${characterIdentityLock ? `\n\n${characterIdentityLock}` : ''}`,
+                    'designAndAssemble',
+                    skillContext,
+                  ),
+                },
+                {
+                  role: 'user' as const,
+                  content: `Task: Design ${state.layout.panelCount} storyboard panels.\nTemplate: ${state.template || 'default'}\nStyle: ${state.styleInstructions || '(none)'}\nScene: ${state.sceneDescription || '(none)'}\n\nRead any relevant skill files, then confirm you are ready.`,
+                },
+              ],
+              maxIterations: 3,
+              signal: config?.signal,
+            })
+            discoveredSkillRules = discoveryResult.loadedSkillBodies
           }
-
-          discoveredSkillRules = resolveDiscoveredSkillRules({
-            requestedSkillIds: discoveryResult?.requestedSkills || [],
-            validSkillIds: matchedDiscoverableSkills.map(s => s.id),
-            passName: 'designAndAssemble',
-            context: skillContext,
-            getSkillBodiesById: self.getSkillBodiesById.bind(self),
-          })
         } catch (e: unknown) {
-          console.warn('[DirectorPipeline] Skill Discovery failed, skipping discovered skill injection:', e instanceof Error ? e.message : String(e))
+          console.warn('[DirectorPipeline] Skill Discovery (read_file) failed:', e instanceof Error ? e.message : String(e))
         }
       }
 
