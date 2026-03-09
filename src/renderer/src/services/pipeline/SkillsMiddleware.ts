@@ -84,9 +84,15 @@ export class SkillsMiddleware {
   }
 
   wrapSystemPrompt(basePrompt: string, phase: string, context?: Record<string, unknown>): string {
-    const menu = this.buildSkillMenu(phase, context)
-    if (!menu) return basePrompt
-    return `${basePrompt}\n\n## Available Skills (use loadSkill to read full content)\n${menu}\n\nIf any skills are relevant, include their IDs in your requestedSkills list. You will receive the full skill content before generating the final output.`
+    const backend = new VirtualSkillsBackend(this.skills, phase, context)
+    if (backend.fileCount === 0) return basePrompt
+
+    const matched = this.matchPhase(phase, context)
+    const listing = matched
+      .map(s => `- /skills/${s.id}/SKILL.md: ${s.description}`)
+      .join('\n')
+
+    return `${basePrompt}\n\n## Skills System\n\nThe following skills are available. When a task matches a skill's description, use the read_file tool to read the full SKILL.md and follow its instructions.\n\nAvailable skills:\n${listing}`
   }
 
   getAllSkillIds(phase: string, context?: Record<string, unknown>): string[] {

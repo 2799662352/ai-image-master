@@ -49,15 +49,17 @@ describe('SkillsMiddleware', () => {
     expect(result).toContain('Lazy body')
   })
 
-  it('wrapSystemPrompt appends skill menu for phase', () => {
+  it('wrapSystemPrompt injects Skills System section', () => {
     const mw = new SkillsMiddleware([
       { id: 'a', description: 'Skill A desc', rules: 'body', appliesTo: ['design'], priority: 1 },
     ])
     const wrapped = mw.wrapSystemPrompt('You are a director.', 'design')
     expect(wrapped).toContain('You are a director.')
-    expect(wrapped).toContain('Available Skills')
-    expect(wrapped).toContain('a: Skill A desc')
-    expect(wrapped).toContain('loadSkill')
+    expect(wrapped).toContain('## Skills System')
+    expect(wrapped).toContain('read_file')
+    expect(wrapped).toContain('/skills/a/SKILL.md: Skill A desc')
+    expect(wrapped).not.toContain('loadSkill')
+    expect(wrapped).not.toContain('requestedSkills')
   })
 
   it('wrapSystemPrompt returns base prompt when no skills match', () => {
