@@ -10,7 +10,6 @@ import {
   SimplePanelSchema,
   SimpleCharacterSchema,
   VerifySchema,
-  SkillSelectionSchema,
 } from './schemas/director-schemas'
 import { SkillsMiddleware as SkillsMW, runToolCallingLoop } from './SkillsMiddleware'
 import { StyleAnchorSchema, StyleConflictSchema } from './schemas/style-anchor-schema'
@@ -840,6 +839,35 @@ function buildSkillMenu(skills: PipelineSkill[]): string {
     .join('\n')
 }
 
+function extractSelectedSkillIds(
+  loopResult: { loadedSkillBodies: string; messages: any[] },
+  allSkills: PipelineSkill[],
+): string[] {
+  const validIds = new Set(allSkills.map(s => s.id))
+  const selected = new Set<string>()
+
+  for (const msg of loopResult.messages) {
+    if (msg.role === 'tool' && msg.tool_call_id) {
+      const content = typeof msg.content === 'string' ? msg.content : ''
+      if (content.startsWith('Error:')) continue
+      const nameMatch = content.match(/^---\nname:\s*"?([^"\n]+)"?/m)
+      if (nameMatch && validIds.has(nameMatch[1])) {
+        selected.add(nameMatch[1])
+      }
+    }
+  }
+
+  if (selected.size === 0 && loopResult.loadedSkillBodies) {
+    for (const skill of allSkills) {
+      if (loopResult.loadedSkillBodies.includes(`name: ${skill.id}`)) {
+        selected.add(skill.id)
+      }
+    }
+  }
+
+  return [...selected]
+}
+
 // ==================== Pipeline ====================
 
 export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult> {
@@ -1236,48 +1264,47 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     const selectSkillsFn = async (state: DirectorState, config: any) => {
       const t0 = Date.now()
       try {
-        const appliedSkills = self.getSkillsForPhase('selectSkills', state as Record<string, unknown>)
         const allSkills = self.pipelineSkills
         if (allSkills.length === 0) return { activeSkills: [] as string[] }
 
-        const structured = self.createStructuredLLM(SkillSelectionSchema)
-        const vars = {
-          scene_description: state.sceneDescription || '(none)',
-          style_instructions: state.styleInstructions || '(none)',
-          template: state.template || 'default',
-          has_images: state.inputImages.length > 0 ? 'yes' : 'no',
-          skill_menu: buildSkillMenu(allSkills),
+        const skillsMw = new SkillsMW(allSkills)
+        const readFileTool = skillsMw.createReadFileTool('selectSkills', state as Record<string, unknown>)
+
+        if (!readFileTool) {
+          return { activeSkills: allSkills.map(s => s.id) }
         }
-        const systemPrompt = self.resolveSystemPrompt(
-          'selectSkills', vars, state as Record<string, unknown>,
-          `You are a skill selector. Select relevant skills based on user input.\n\nAvailable:\n${vars.skill_menu}`,
-        )
-        // Skill selection is pure text classification — no images needed.
-        // Sending images caused 43-44s latency; text-only reduces this to ~2-3s.
-        const userContent: Array<any> = [{
-          type: 'text' as const,
-          text: `Scene: ${vars.scene_description}\nStyle: ${vars.style_instructions}\nTemplate: ${vars.template}\nHas reference images: ${vars.has_images}`,
-        }]
-        const result = await structured.invoke(
-          [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userContent },
+
+        const discoveryLLM = self.createLLM(undefined, 2048).bindTools([readFileTool])
+        const discoveryResult = await runToolCallingLoop({
+          llm: discoveryLLM,
+          tools: [readFileTool],
+          messages: [
+            {
+              role: 'system' as const,
+              content: skillsMw.wrapSystemPrompt(
+                'You are a skill selector. Review the available skills and read any that might be relevant to this task. Only read skills that match the scene, style, and template.',
+                'selectSkills',
+                state as Record<string, unknown>,
+              ),
+            },
+            {
+              role: 'user' as const,
+              content: `Scene: ${state.sceneDescription || '(none)'}\nStyle: ${state.styleInstructions || '(none)'}\nTemplate: ${state.template || 'default'}\nHas reference images: ${state.inputImages.length > 0 ? 'yes' : 'no'}\n\nRead any relevant skill files. After reading, confirm which skills you selected.`,
+            },
           ],
-          { signal: config?.signal },
-        )
+          maxIterations: 5,
+          signal: config?.signal,
+        })
+
+        const selected = extractSelectedSkillIds(discoveryResult, allSkills)
 
         const elapsed = Date.now() - t0
-        const validIds = new Set(allSkills.map(s => s.id))
-        const selected = result.selectedSkills.filter(id => validIds.has(id))
-        if (selected.length !== result.selectedSkills.length) {
-          console.warn(`[DirectorPipeline] selectSkills: filtered ${result.selectedSkills.length - selected.length} invalid skill IDs`)
-        }
         console.log(`[DirectorPipeline] selectSkills: ${selected.length}/${allSkills.length} skills selected in ${elapsed}ms: [${selected.join(', ')}]`)
         writer(config)?.({
           type: 'pass_complete', pass: 0,
           label: `技能选择完成 (${selected.length} skills, ${(elapsed / 1000).toFixed(1)}s)`,
           elapsed,
-          passData: DirectorPipeline.buildPassCardData('selectSkills', { pass: 0, label: '技能选择' }, { selected, reasoning: result.reasoning }, elapsed, selected),
+          passData: DirectorPipeline.buildPassCardData('selectSkills', { pass: 0, label: '技能选择' }, { selected, reasoning: 'read_file tool calling' }, elapsed, selected),
         })
         return { activeSkills: selected }
       } catch (err: unknown) {
