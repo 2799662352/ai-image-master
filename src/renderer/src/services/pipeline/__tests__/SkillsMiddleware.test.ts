@@ -289,4 +289,30 @@ describe('runToolCallingLoop', () => {
     expect(result.iterations).toBe(2)
     expect(result.loadedSkillBodies).toBe('')
   })
+
+  it('catches tool invoke errors and continues', async () => {
+    const fakeTool = {
+      name: 'read_file',
+      invoke: async () => { throw new Error('disk exploded') },
+    }
+    let callCount = 0
+    const fakeLLM = {
+      invoke: async () => {
+        callCount++
+        if (callCount === 1) {
+          return { tool_calls: [{ id: 'tc1', name: 'read_file', args: { file_path: '/a' } }] }
+        }
+        return { tool_calls: [] }
+      },
+    }
+    const result = await runToolCallingLoop({
+      llm: fakeLLM,
+      tools: [fakeTool],
+      messages: [],
+    })
+    expect(result.iterations).toBe(2)
+    expect(result.loadedSkillBodies).toBe('')
+    const toolMsg = result.messages.find((m: any) => m.role === 'tool' && m.tool_call_id === 'tc1')
+    expect(toolMsg?.content).toContain('disk exploded')
+  })
 })

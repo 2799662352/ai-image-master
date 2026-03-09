@@ -149,9 +149,14 @@ export async function runToolCallingLoop(params: {
         conversation.push({ role: 'tool', content: `Unknown tool: ${tc.name}`, tool_call_id: tc.id })
         continue
       }
-      const result = await matched.invoke(tc.args)
-      collectedBodies.push(result)
-      conversation.push({ role: 'tool', content: result, tool_call_id: tc.id })
+      try {
+        const result = await matched.invoke(tc.args)
+        collectedBodies.push(result)
+        conversation.push({ role: 'tool', content: result, tool_call_id: tc.id })
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err)
+        conversation.push({ role: 'tool', content: `Error: ${msg}`, tool_call_id: tc.id })
+      }
     }
   }
 
