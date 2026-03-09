@@ -3,6 +3,7 @@ import { vi } from 'vitest'
 vi.mock('@langchain/google', () => ({
   ChatGoogleGenerativeAI: vi.fn().mockImplementation(() => ({
     withStructuredOutput: vi.fn().mockReturnThis(),
+    bindTools: vi.fn().mockReturnThis(),
     invoke: vi.fn(),
   })),
 }))
@@ -10,6 +11,7 @@ vi.mock('@langchain/google', () => ({
 vi.mock('@langchain/openai', () => ({
   ChatOpenAI: vi.fn().mockImplementation(() => ({
     withStructuredOutput: vi.fn().mockReturnThis(),
+    bindTools: vi.fn().mockReturnThis(),
     invoke: vi.fn(),
   })),
 }))

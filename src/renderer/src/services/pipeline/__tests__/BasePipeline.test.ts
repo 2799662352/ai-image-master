@@ -68,6 +68,51 @@ describe('BasePipeline', () => {
     expect((pipeline as any).isGeminiModel('gpt-4o')).toBe(false)
   })
 
+  describe('resolveStructuredOutputMethod', () => {
+    it('returns jsonSchema for Gemini models', () => {
+      const pipeline = new TestPipeline({ model: 'gemini-3-flash-preview', apiKey: 'k', baseURL: 'http://localhost' })
+      expect((pipeline as any).resolveStructuredOutputMethod('gemini-3-flash-preview')).toBe('jsonSchema')
+      expect((pipeline as any).resolveStructuredOutputMethod('gemini-2.5-pro')).toBe('jsonSchema')
+    })
+
+    it('returns jsonSchema for OpenAI gpt-4o+ models', () => {
+      const pipeline = new TestPipeline(config)
+      expect((pipeline as any).resolveStructuredOutputMethod('gpt-4o')).toBe('jsonSchema')
+      expect((pipeline as any).resolveStructuredOutputMethod('gpt-4o-mini')).toBe('jsonSchema')
+      expect((pipeline as any).resolveStructuredOutputMethod('gpt-4.1')).toBe('jsonSchema')
+      expect((pipeline as any).resolveStructuredOutputMethod('o3-mini')).toBe('jsonSchema')
+    })
+
+    it('returns undefined for older/unknown models (LangChain default = functionCalling)', () => {
+      const pipeline = new TestPipeline(config)
+      expect((pipeline as any).resolveStructuredOutputMethod('gpt-3.5-turbo')).toBeUndefined()
+      expect((pipeline as any).resolveStructuredOutputMethod('claude-3-opus')).toBeUndefined()
+    })
+
+    it('respects explicit override', () => {
+      const pipeline = new TestPipeline(config)
+      expect((pipeline as any).resolveStructuredOutputMethod('gemini-3-flash-preview', 'functionCalling')).toBe('functionCalling')
+      expect((pipeline as any).resolveStructuredOutputMethod('gpt-3.5-turbo', 'jsonSchema')).toBe('jsonSchema')
+    })
+  })
+
+  describe('resolveMaxTokens', () => {
+    it('returns 65536 for Gemini models by default', () => {
+      const pipeline = new TestPipeline({ model: 'gemini-3-flash-preview', apiKey: 'k', baseURL: 'http://localhost' })
+      expect((pipeline as any).resolveMaxTokens('gemini-3-flash-preview')).toBe(65536)
+    })
+
+    it('returns 4096 for non-Gemini models by default', () => {
+      const pipeline = new TestPipeline(config)
+      expect((pipeline as any).resolveMaxTokens('gpt-4o')).toBe(4096)
+    })
+
+    it('respects explicit value', () => {
+      const pipeline = new TestPipeline(config)
+      expect((pipeline as any).resolveMaxTokens('gemini-3-flash-preview', 8192)).toBe(8192)
+    })
+  })
+
   it('buildImageContent returns correct format', () => {
     const content = BasePipeline.buildImageContent(
       [{ data: 'abc123', mimeType: 'image/png' }],
@@ -149,9 +194,10 @@ describe('Skill Discovery (Progressive Disclosure)', () => {
       priority: 1,
     })
     const result = pipeline.buildSkillMenuPrompt('myPhase', 'base', {})
-    expect(result).toContain('test-skill: A test skill for anime quality')
+    expect(result).toContain('/skills/test-skill/SKILL.md: A test skill for anime quality')
     expect(result).not.toContain('Full body content here')
-    expect(result).toContain('requestedSkills')
+    expect(result).toContain('## Skills System')
+    expect(result).toContain('read_file')
   })
 
   it('buildSkillMenuPrompt returns base prompt when no skills match', () => {
