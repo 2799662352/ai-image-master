@@ -1106,13 +1106,34 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         return { characters: null }
       }
       try {
-        const appliedSkills = self.getSkillsForPhase('extractCharacterAnchors', state as Record<string, unknown>)
+        const skillsMw = new SkillsMW(self.matchSkillsForPhase('extractCharacterAnchors', state as Record<string, unknown>))
+        const appliedSkills = skillsMw.getAllSkillIds('extractCharacterAnchors', state as Record<string, unknown>)
         const structuredWithRaw = self.createStructuredLLMWithRaw(CharacterAnchorSchema)
-        const systemPrompt = self.resolveSystemPrompt(
-          'extractCharacterAnchors', {},
-          state as Record<string, unknown>,
-          'You are a character consistency expert. Extract character anchors from the provided images for image generation consistency.',
-        )
+
+        let discoveredSkillRules = ''
+        try {
+          const discoveryResult = await skillsMw.runSkillDiscovery({
+            llm: self.createLLM(undefined, 2048),
+            phase: 'extractCharacterAnchors',
+            context: state as Record<string, unknown>,
+            basePrompt: 'You are a character consistency expert. Before extracting anchors, review available skills.',
+            userMessage: 'Read any relevant skills for character anchor extraction, then confirm you are ready.',
+            maxIterations: 3,
+            signal: config?.signal,
+          })
+          discoveredSkillRules = discoveryResult.loadedSkillBodies
+        } catch (e: unknown) {
+          console.warn('[DirectorPipeline] Pass 2 skill discovery failed:', e instanceof Error ? e.message : String(e))
+        }
+
+        const tpl = getPromptTemplate('extractCharacterAnchors')
+        const basePrompt = tpl
+          ? renderTemplate(tpl.template, {})
+          : 'You are a character consistency expert. Extract character anchors from the provided images for image generation consistency.'
+        const systemPrompt = discoveredSkillRules
+          ? `${basePrompt}\n\n--- Loaded Skills ---\n${discoveredSkillRules}`
+          : basePrompt
+
         const response = await structuredWithRaw.invoke(
           [
             { role: 'system', content: systemPrompt },
