@@ -135,3 +135,58 @@ describe('VirtualSkillsBackend', () => {
     expect(content).toContain('Style: anime')
   })
 })
+
+describe('SkillsMiddleware.createReadFileTool', () => {
+  let SkillsMiddleware: any
+
+  beforeAll(async () => {
+    const mod = await import('../SkillsMiddleware')
+    SkillsMiddleware = mod.SkillsMiddleware
+  })
+
+  it('returns a tool named read_file', () => {
+    const mw = new SkillsMiddleware([
+      { id: 'a', description: 'A desc', rules: 'body A', appliesTo: ['design'], priority: 1 },
+    ])
+    const tool = mw.createReadFileTool('design')
+    expect(tool).not.toBeNull()
+    expect(tool.name).toBe('read_file')
+  })
+
+  it('tool.invoke returns SKILL.md content', async () => {
+    const mw = new SkillsMiddleware([
+      { id: 'a', description: 'A desc', rules: 'body A', appliesTo: ['design'], priority: 1 },
+    ])
+    const t = mw.createReadFileTool('design')
+    const result = await t.invoke({ file_path: '/skills/a/SKILL.md' })
+    expect(result).toContain('name: a')
+    expect(result).toContain('body A')
+  })
+
+  it('tool.invoke returns error for bad path', async () => {
+    const mw = new SkillsMiddleware([
+      { id: 'a', description: 'A desc', rules: 'body A', appliesTo: ['design'], priority: 1 },
+    ])
+    const t = mw.createReadFileTool('design')
+    const result = await t.invoke({ file_path: '/skills/nope/SKILL.md' })
+    expect(result).toContain('not found')
+  })
+
+  it('returns null when no skills match phase', () => {
+    const mw = new SkillsMiddleware([
+      { id: 'a', description: 'A', rules: 'body', appliesTo: ['verify'], priority: 1 },
+    ])
+    const tool = mw.createReadFileTool('design')
+    expect(tool).toBeNull()
+  })
+
+  it('tool description lists available file paths', () => {
+    const mw = new SkillsMiddleware([
+      { id: 'x', description: 'X', rules: 'body', appliesTo: ['design'], priority: 1 },
+      { id: 'y', description: 'Y', rules: 'body', appliesTo: ['design'], priority: 2 },
+    ])
+    const t = mw.createReadFileTool('design')
+    expect(t.description).toContain('/skills/x/SKILL.md')
+    expect(t.description).toContain('/skills/y/SKILL.md')
+  })
+})

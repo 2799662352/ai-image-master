@@ -1,3 +1,5 @@
+import { tool } from '@langchain/core/tools'
+import { z } from 'zod'
 import type { PipelineSkill } from './types'
 
 export class VirtualSkillsBackend {
@@ -89,5 +91,22 @@ export class SkillsMiddleware {
 
   getAllSkillIds(phase: string, context?: Record<string, unknown>): string[] {
     return this.matchPhase(phase, context).map(s => s.id)
+  }
+
+  createReadFileTool(phase: string, context?: Record<string, unknown>) {
+    const backend = new VirtualSkillsBackend(this.skills, phase, context)
+    if (backend.fileCount === 0) return null
+
+    const paths = backend.ls()
+    return tool(
+      async ({ file_path }: { file_path: string }) => backend.read(file_path),
+      {
+        name: 'read_file',
+        description: `Read a file from the skills filesystem. Available skill files:\n${paths.join('\n')}`,
+        schema: z.object({
+          file_path: z.string().describe('Absolute path to the skill file, e.g. /skills/my-skill/SKILL.md'),
+        }),
+      },
+    )
   }
 }
