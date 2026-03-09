@@ -24,3 +24,4 @@ STRICT GRID GEOMETRY RULES:
 {{character_identity_section}}
 Panel descriptions:
 {{enhanced_panel_descriptions}}
+{{semantic_exclusions}}
