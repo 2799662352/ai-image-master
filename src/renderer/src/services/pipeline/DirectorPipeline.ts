@@ -824,6 +824,10 @@ export function extractVarsForContactSheet(state: DirectorState): Record<string,
       }).join('\n')
       return `${globalSection}${userDirection}${characterIdentityLockSummary ? `\n\n${characterIdentityLockSummary}` : ''}\n\nSTORYBOARD GRID ${state.layout.rows}x${state.layout.cols}:\n${enhanced}`
     })(),
+    semantic_exclusions: buildSemanticExclusions(
+      state.template,
+      state.styleAnchor,
+    ),
   }
 }
 
@@ -1618,6 +1622,14 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
               `Panel descriptions:\n${vars.enhanced_panel_descriptions}`,
             ].filter(Boolean).join(' ')
 
+        const isGeminiDrawing = drawingModel.toLowerCase().includes('gemini')
+        const semanticExclusions = isGeminiDrawing
+          ? buildSemanticExclusions(state.template, state.styleAnchor)
+          : ''
+        const finalPrompt = semanticExclusions
+          ? `${compositePrompt}\n\n${semanticExclusions}`
+          : compositePrompt
+
         const baseNegative = prompts[0]?.negativePrompt ||
           'blurry, deformed, bad anatomy, watermark, signature, text, labels, captions, panel numbers, irregular panels, asymmetric grid, unequal panels'
         const negativePrompt = buildAdaptiveNegativePrompt(baseNegative, state.template, state.styleAnchor)
@@ -1629,7 +1641,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           async (i) => {
             try {
               const result = await apiService.generateImage({
-                prompt: compositePrompt,
+                prompt: finalPrompt,
                 model: drawingModel,
                 negativePrompt,
                 ratio: state.ratio,
@@ -2049,6 +2061,14 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           `Panel descriptions:\n${vars.enhanced_panel_descriptions}`,
         ].filter(Boolean).join(' ')
 
+    const isGeminiDrawing = drawingModel.toLowerCase().includes('gemini')
+    const semanticExclusions = isGeminiDrawing
+      ? buildSemanticExclusions(state.template, state.styleAnchor)
+      : ''
+    const finalPrompt = semanticExclusions
+      ? `${compositePrompt}\n\n${semanticExclusions}`
+      : compositePrompt
+
     const baseNegative = prompts[0]?.negativePrompt ||
       'blurry, deformed, bad anatomy, watermark, signature, text, labels, captions, panel numbers, irregular panels, asymmetric grid, unequal panels'
     const negativePrompt = buildAdaptiveNegativePrompt(baseNegative, state.template, state.styleAnchor)
@@ -2060,7 +2080,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       async (i) => {
         try {
           const result = await apiService.generateImage({
-            prompt: compositePrompt,
+            prompt: finalPrompt,
             model: drawingModel,
             negativePrompt,
             ratio: state.ratio,
