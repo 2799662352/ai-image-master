@@ -1,18 +1,12 @@
 {
-    "version": "3.2.0",
-    "buildTime": "2026-03-10T00:00:00Z",
-    "description": "CATIMATION v3.2.0 - 分镜Pro极速优化 + 导演管线增强",
+    "version": "3.7.0",
+    "buildTime": "2026-03-11T00:00:00Z",
+    "description": "CATIMATION v3.7.0",
     "releaseNotes": [
-        "分镜Pro管线优化：6-8次LLM调用压缩至3次，速度提升5-10倍",
-        "合并场景分析+角色提取为单次调用，高精度看图",
-        "规划和分镜设计改为纯文本调用，去掉多余图片传输",
-        "移除深度校验和所有重试循环，保留本地快速校验",
-        "taskPlan系统+用户双重注入，提升下游Pass质量",
-        "UI改为4-Pass布局，展示校验问题详情",
-        "修复BasePipeline和导演视觉精度测试",
-        "导演模式：技能读取迁移至read_file工具调用",
-        "导演模式：Pass 2角色锚定5字段结构化",
-        "导演模式：自然语言角色标签+空间绑定",
-        "导演模式：L1连贯提示词组装"
+        "图像理解分镜：引入 Deep Agents Subagent 架构（StoryboardDeepAgentPipeline）",
+        "各分析阶段独立上下文隔离，防止 context 污染",
+        "charMerge 升级模糊匹配（fuzzy keyword overlap），解决角色名称漂移问题",
+        "新旧 Pipeline 并存，通过 useDeepAgentPipeline flag 切换",
+        "修复 charMerge 精确匹配丢失角色数据的 Critical bug"
     ]
 }

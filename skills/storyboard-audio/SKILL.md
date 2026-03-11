@@ -1,7 +1,7 @@
 ---
 name: storyboard-audio
 description: Use when shot output needs three-layer audio design with real film score references, frame-synced SFX, and physics-based voice parameters
-appliesTo: [designAndAssemble]
+appliesTo: [designAndAssemble, shotDesign]
 priority: 12
 ---
 

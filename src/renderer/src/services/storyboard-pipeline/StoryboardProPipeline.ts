@@ -50,26 +50,31 @@ const FlatSceneSchema = z.object({
   shotCount: z.number().default(4).describe('Number of distinct shots identified in the scene'),
 })
 
-const SimpleObjArraySchema = z.object({
+const CharIdentitySchema = z.object({
   objs: z.array(z.object({
     n: z.string().describe('Character or object name'),
     f: z.string().describe('Visual appearance: hair, face, outfit, distinguishing features'),
     t: z.string().describe('Cross-shot consistency anchor: features that must remain identical across all shots'),
-    act: z.string().describe('Current action: what the character is doing in the scene'),
   })),
 })
 
-const AnalyzeOutputSchema = z.object({
-  scene: z.object({
-    d: z.string().describe('Narrative arc: A(initial state) → B(trigger event) → C(end state)'),
-    cap: z.string().describe('Structured caption: subject performing action in environment'),
-    env: z.string().describe('Environment description: lighting direction, color palette, atmosphere, weather'),
-  }),
+const CharSpatialSchema = z.object({
   objs: z.array(z.object({
-    n: z.string().describe('Character or object name'),
-    f: z.string().describe('Visual appearance: hair, face, outfit, distinguishing features'),
-    t: z.string().describe('Cross-shot consistency anchor: features that must remain identical across all shots'),
-    act: z.string().describe('Current action: what the character is doing in the scene'),
+    n: z.string().describe('Character name (must match identity anchor)'),
+    s: z.string().describe('Spatial position: fg/mg/bg | horizontal (L1/3, center, R2/3) | Z-occlusion order'),
+    p: z.string().describe('Physical type: rigid/artic/fluid/cloth + motion constraints'),
+    a: z.string().describe('Multi-granularity: coarse (composition %) → medium (action chain) → fine (occlusion/highlight delta)'),
+    m: z.string().describe('Motion intensity per body part: rotation°/displacement cm/H-M-L. Format: head:pan-R25°|M,torso:lean10°|L'),
+  })),
+})
+
+const CharNarrativeSchema = z.object({
+  objs: z.array(z.object({
+    n: z.string().describe('Character name (must match identity anchor)'),
+    act: z.string().describe('Performance action: pure physical action, no visual effects'),
+    fx: z.nullable(z.string()).describe('Visual effects: wind, smoke, light, particles aligned with action timing. Null if none'),
+    motive: z.string().describe('Psychological externalization: what inner state this action/prop reveals'),
+    tc: z.string().describe('Transition continuity: pose change, motion vector, gaze direction between shots'),
   })),
 })
 
@@ -92,6 +97,25 @@ const stateSchema = z.object({
   inputImages: z.array(z.object({
     data: z.string(),
     mimeType: z.string(),
+  })).default([]),
+  charAnchors: z.array(z.object({
+    n: z.string(),
+    f: z.string(),
+    t: z.string(),
+  })).default([]),
+  charSpatialData: z.array(z.object({
+    n: z.string(),
+    s: z.string().default(''),
+    p: z.string().default(''),
+    a: z.string().default(''),
+    m: z.string().default(''),
+  })).default([]),
+  charNarrativeData: z.array(z.object({
+    n: z.string(),
+    act: z.string().default(''),
+    fx: z.nullable(z.string()).default(null),
+    motive: z.string().default(''),
+    tc: z.string().default(''),
   })).default([]),
   userContext: z.string().default(''),
   taskPlan: z.string().default(''),
@@ -162,10 +186,25 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
         if (!s) return '(empty)'
         return `场景弧线: ${(s.d || '?').slice(0, 40)}，环境: ${(s.env || '?').slice(0, 30)}`
       }
-      case 'characterExtract': {
+      case 'charIdentity': {
         const objs = output?.objs
         if (!objs?.length) return '(empty)'
         return `提取 ${objs.length} 个角色/物体`
+      }
+      case 'charSpatial': {
+        const objs = output?.objs
+        if (!objs?.length) return '(empty)'
+        return `${objs.length} 个角色空间/运动`
+      }
+      case 'charNarrative': {
+        const objs = output?.objs
+        if (!objs?.length) return '(empty)'
+        return `${objs.length} 个角色动作/叙事`
+      }
+      case 'charMerge': {
+        const objs = output?.objs
+        if (!objs?.length) return '(empty)'
+        return `合并 ${objs.length} 个角色 (11字段)`
       }
       case 'shotDesign': {
         const seq = output?.seq
@@ -257,13 +296,18 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
           'Keep the plan under 150 words.',
         ].join('\n')
 
+        const userContent: any[] = [
+          ...BasePipeline.buildImageContent(state.inputImages, 'low'),
+          { type: 'text' as const, text: userText },
+        ]
+
         const response = await llm.invoke(
           [
             {
               role: 'system' as const,
-              content: 'You are a professional storyboard director. Create a brief shooting plan. Write in English only.',
+              content: 'You are a professional storyboard director. Create a brief shooting plan based on the provided reference images. Write in English only.',
             },
-            { role: 'user' as const, content: userText },
+            { role: 'user' as const, content: userContent },
           ],
           { signal: config?.signal },
         )
@@ -294,31 +338,108 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
       }
     }
 
-    // ===== Pass 1: 场景+角色分析 (merged single LLM call) =====
-    const analyzeFn = async (state: StoryboardState, config: any) => {
-      checkPauseAndInterrupt('analyze', config)
+    // ===== Pass 1a: 场景分析 (parallel with characterExtract) =====
+    const sceneDecomposeFn = async (state: StoryboardState, config: any) => {
+      checkPauseAndInterrupt('sceneDecompose', config)
       const t0 = Date.now()
       try {
         const appliedSkills = self.getSkillsForPhase('sceneDecompose', state as Record<string, unknown>)
-        const vars: Record<string, string> = {
-          user_context: state.userContext || '',
-          task_plan: state.taskPlan || '',
-        }
+        const vars: Record<string, string> = { user_context: state.userContext || '' }
         const systemPrompt = self.resolveSystemPrompt(
           'sceneDecompose', vars,
           state as Record<string, unknown>,
           [
-            'You are a professional film storyboard analyst. From the provided images, output TWO things in a single structured response:',
-            '1. SCENE: narrative arc (d), structured caption (cap), environment (env)',
-            '2. CHARACTERS: extract ALL characters and significant objects with name (n), appearance (f), consistency anchor (t), current action (act)',
+            'You are a professional film storyboard scene analyst.',
+            'From the provided images, extract the SCENE structure:',
+            '- d: Narrative arc in format A(initial state) → B(trigger event) → C(end state)',
+            '- cap: Structured caption (subject performing action in environment)',
+            '- env: Environment description (lighting direction, color palette, atmosphere, weather)',
             '',
             'REFERENCE IMAGE FIDELITY: The attached images are the SINGLE SOURCE OF TRUTH. Describe ONLY what is visually present. DO NOT hallucinate.',
             'Write in English.',
-            state.taskPlan ? `\nDIRECTOR PLAN (use as guidance):\n${state.taskPlan}` : '',
-          ].filter(Boolean).join('\n'),
+          ].join('\n'),
         )
 
-        const userMessages = [
+        const messages = [
+          { role: 'system' as const, content: systemPrompt },
+          {
+            role: 'user' as const,
+            content: [
+              ...BasePipeline.buildImageContent(state.inputImages, 'low'),
+              {
+                type: 'text' as const,
+                text: [
+                  'Analyze the scene structure from the images above.',
+                  state.taskPlan ? `\nDIRECTOR PLAN (use as guidance for scene focus):\n${state.taskPlan}` : '',
+                  state.userContext ? `\nAdditional context: ${state.userContext}` : '',
+                ].filter(Boolean).join(''),
+              },
+            ],
+          },
+        ]
+
+        let scene: any = null
+        try {
+          const structuredWithRaw = self.createStructuredLLMWithRaw(FlatSceneSchema)
+          const response = await structuredWithRaw.invoke(messages, { signal: config?.signal })
+          const parsed = (response as any)?.parsed
+          if (parsed?.d) {
+            scene = parsed
+            if (!scene.timeline) scene.timeline = []
+          }
+          if (!scene?.d && (response as any)?.raw?.content) {
+            const rawText = typeof (response as any).raw.content === 'string' ? (response as any).raw.content : ''
+            try {
+              const match = rawText.match(/\{[\s\S]*"d"\s*:[\s\S]*\}/)
+              if (match) {
+                const fallback = JSON.parse(match[0])
+                if (fallback?.d) { scene = fallback; if (!scene.timeline) scene.timeline = [] }
+              }
+            } catch { /* regex fallback failed */ }
+          }
+        } catch (e: unknown) {
+          console.warn('[StoryboardProPipeline] sceneDecompose error:', e instanceof Error ? e.message : String(e))
+        }
+
+        if (!scene?.d) {
+          scene = { d: '(analysis failed)', cap: '', env: '', bgm: '', timeline: [] }
+          console.warn('[StoryboardProPipeline] sceneDecompose: extraction failed')
+        }
+
+        const elapsed = Date.now() - t0
+        const passData = StoryboardProPipeline.buildPassCardData('sceneDecompose', { pass: 1, label: '场景分析' }, { scene }, elapsed, appliedSkills)
+        writer(config)?.({ type: 'pass_complete', pass: 1, label: `场景分析完成 (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
+        return { scene }
+      } catch (err: unknown) {
+        emitError(config, 1, '场景分析', 'sceneDecompose', err instanceof Error ? err.message : String(err), Date.now() - t0)
+        return { scene: null }
+      }
+    }
+
+    // ===== Pass 2: 身份锚点提取 (Phase 1 of character extraction) =====
+    const charIdentityFn = async (state: StoryboardState, config: any) => {
+      checkPauseAndInterrupt('charIdentity', config)
+      const t0 = Date.now()
+      try {
+        const appliedSkills = self.getSkillsForPhase('charIdentity', state as Record<string, unknown>)
+        const vars: Record<string, string> = { user_context: state.userContext || '' }
+        const systemPrompt = self.resolveSystemPrompt(
+          'charIdentity', vars,
+          state as Record<string, unknown>,
+          [
+            'You are a professional character analyst for film storyboards.',
+            'From the provided images, extract ALL characters and significant objects.',
+            'For each, provide ONLY identity anchors:',
+            '- n: Character or object name',
+            '- f: Visual appearance (hair, face, outfit, distinguishing features)',
+            '- t: Cross-shot consistency anchor (features that MUST remain identical across all shots)',
+            '',
+            'REFERENCE IMAGE FIDELITY: The attached images are the SINGLE SOURCE OF TRUTH. Describe ONLY what is visually present.',
+            'Write in English.',
+          ].join('\n'),
+        )
+
+        const messages = [
           { role: 'system' as const, content: systemPrompt },
           {
             role: 'user' as const,
@@ -326,73 +447,250 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
               ...BasePipeline.buildImageContent(state.inputImages, 'high'),
               {
                 type: 'text' as const,
-                text: state.taskPlan
-                  ? `STORYBOARD PLAN:\n${state.taskPlan}\n\nBased on the plan above AND the reference images, analyze the scene structure and extract all characters.${state.userContext ? `\nAdditional context: ${state.userContext}` : ''}`
-                  : `Analyze the scene structure and extract all characters from the images above.${state.userContext ? `\nAdditional context: ${state.userContext}` : ''}`,
+                text: [
+                  'Extract identity anchors for all characters and significant objects from the images above.',
+                  state.taskPlan ? `\nDIRECTOR PLAN (use as guidance):\n${state.taskPlan}` : '',
+                  state.userContext ? `\nAdditional context: ${state.userContext}` : '',
+                ].filter(Boolean).join(''),
               },
             ],
           },
         ]
 
-        let scene: any = null
         let objs: any[] = []
-
         try {
-          const structuredWithRaw = self.createStructuredLLMWithRaw(AnalyzeOutputSchema)
-          const response = await structuredWithRaw.invoke(userMessages, { signal: config?.signal })
+          const structuredWithRaw = self.createStructuredLLMWithRaw(CharIdentitySchema)
+          const response = await structuredWithRaw.invoke(messages, { signal: config?.signal })
           const parsed = (response as any)?.parsed
-
-          if (parsed?.scene?.d) {
-            scene = parsed.scene
-            if (!scene.timeline) scene.timeline = []
-          }
-          if (parsed?.objs?.length) {
-            objs = parsed.objs
-          }
-
-          if ((!scene?.d || !objs.length) && (response as any)?.raw?.content) {
-            const rawText = typeof (response as any).raw.content === 'string'
-              ? (response as any).raw.content : ''
+          if (parsed?.objs?.length) objs = parsed.objs
+          if (!objs.length && (response as any)?.raw?.content) {
+            const rawText = typeof (response as any).raw.content === 'string' ? (response as any).raw.content : ''
             try {
-              const match = rawText.match(/\{[\s\S]*"scene"\s*:[\s\S]*"objs"\s*:[\s\S]*\}/)
+              const match = rawText.match(/\{[\s\S]*"objs"\s*:\s*\[[\s\S]*\]\s*\}/)
               if (match) {
                 const fallback = JSON.parse(match[0])
-                if (!scene?.d && fallback?.scene?.d) {
-                  scene = fallback.scene
-                  if (!scene.timeline) scene.timeline = []
-                }
-                if (!objs.length && fallback?.objs?.length) {
-                  objs = fallback.objs
-                }
+                if (fallback?.objs?.length) objs = fallback.objs
               }
             } catch { /* regex fallback failed */ }
           }
         } catch (e: unknown) {
-          console.warn('[StoryboardProPipeline] analyze L1 error:', e instanceof Error ? e.message : String(e))
+          console.warn('[StoryboardProPipeline] charIdentity error:', e instanceof Error ? e.message : String(e))
         }
 
-        if (!scene?.d) {
-          scene = { d: '(analysis failed)', cap: '', env: '', bgm: '', timeline: [] }
-          console.warn('[StoryboardProPipeline] analyze: scene extraction failed')
-        }
-
-        const paddedObjs = objs.map((o: any) => ({
-          n: o.n || '', f: o.f || '', t: o.t || '', act: o.act || '',
-          s: o.s || 'fg|center|Z1', p: o.p || 'artic', tc: o.tc || '',
-          fx: o.fx ?? null, motive: o.motive || '', a: o.a || '', m: o.m || '',
-        }))
-
+        const anchors = objs.map((o: any) => ({ n: o.n || '', f: o.f || '', t: o.t || '' }))
         const elapsed = Date.now() - t0
-        const passData = StoryboardProPipeline.buildPassCardData('analyze', { pass: 1, label: '场景+角色分析' }, { scene, objs: paddedObjs }, elapsed, appliedSkills)
-        writer(config)?.({ type: 'pass_complete', pass: 1, label: `场景+角色分析完成 (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
-        return { scene, objs: paddedObjs }
+        const passData = StoryboardProPipeline.buildPassCardData('charIdentity', { pass: 2, label: '身份锚点' }, { objs: anchors }, elapsed, appliedSkills)
+        writer(config)?.({ type: 'pass_complete', pass: 2, label: `身份锚点完成 (${anchors.length} 角色, ${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
+        return { charAnchors: anchors }
       } catch (err: unknown) {
-        emitError(config, 1, '场景+角色分析', 'analyze', err instanceof Error ? err.message : String(err), Date.now() - t0)
-        return { scene: null, objs: null }
+        emitError(config, 2, '身份锚点', 'charIdentity', err instanceof Error ? err.message : String(err), Date.now() - t0)
+        return { charAnchors: [] }
       }
     }
 
-    // ===== Pass 3: 镜头设计 (L1/L2/L3 error recovery) =====
+    // ===== Pass 3a: 空间/物理/运动 (Phase 2, parallel with charNarrative) =====
+    const charSpatialFn = async (state: StoryboardState, config: any) => {
+      checkPauseAndInterrupt('charSpatial', config)
+      const t0 = Date.now()
+      try {
+        const appliedSkills = self.getSkillsForPhase('charSpatial', state as Record<string, unknown>)
+        const anchorList = state.charAnchors.map((a: any) => `- ${a.n}: ${a.f}`).join('\n')
+        const systemPrompt = self.resolveSystemPrompt(
+          'charSpatial', {},
+          state as Record<string, unknown>,
+          [
+            'You are a spatial and motion analyst for film storyboards.',
+            'Given the character list below, describe spatial and physical properties for EACH character:',
+            '- s: Spatial position (fg/mg/bg | horizontal position | Z-occlusion order)',
+            '- p: Physical type (rigid/artic/fluid/cloth + motion constraints)',
+            '- a: Multi-granularity (coarse composition % → medium action chain → fine occlusion/highlight delta)',
+            '- m: Motion intensity per body part (rotation°/displacement cm/H-M-L)',
+            '',
+            `KNOWN CHARACTERS:\n${anchorList}`,
+            '',
+            'Output MUST use the exact character names from the list above. Write in English.',
+          ].join('\n'),
+        )
+
+        const messages = [
+          { role: 'system' as const, content: systemPrompt },
+          {
+            role: 'user' as const,
+            content: [
+              ...BasePipeline.buildImageContent(state.inputImages, 'low'),
+              {
+                type: 'text' as const,
+                text: `Character names you MUST use exactly as written:\n${state.charAnchors.map((a: any) => `"${a.n}"`).join(', ')}\n\nDescribe spatial position, physical type, multi-granularity detail, and motion intensity for each character.`,
+              },
+            ],
+          },
+        ]
+
+        let objs: any[] = []
+        try {
+          const structuredWithRaw = self.createStructuredLLMWithRaw(CharSpatialSchema)
+          const response = await structuredWithRaw.invoke(messages, { signal: config?.signal })
+          const parsed = (response as any)?.parsed
+          if (parsed?.objs?.length) objs = parsed.objs
+          if (!objs.length && (response as any)?.raw?.content) {
+            const rawText = typeof (response as any).raw.content === 'string' ? (response as any).raw.content : ''
+            try {
+              const match = rawText.match(/\{[\s\S]*"objs"\s*:\s*\[[\s\S]*\]\s*\}/)
+              if (match) {
+                const fallback = JSON.parse(match[0])
+                if (fallback?.objs?.length) objs = fallback.objs
+              }
+            } catch { /* regex fallback failed */ }
+          }
+        } catch (e: unknown) {
+          console.warn('[StoryboardProPipeline] charSpatial error:', e instanceof Error ? e.message : String(e))
+        }
+
+        const spatialData = objs.map((o: any) => ({
+          n: o.n || '', s: o.s || '', p: o.p || '', a: o.a || '', m: o.m || '',
+        }))
+        const elapsed = Date.now() - t0
+        const passData = StoryboardProPipeline.buildPassCardData('charSpatial', { pass: 3, label: '空间/运动' }, { objs: spatialData }, elapsed, appliedSkills)
+        writer(config)?.({ type: 'pass_complete', pass: 3, label: `空间/运动完成 (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
+        return { charSpatialData: spatialData }
+      } catch (err: unknown) {
+        emitError(config, 3, '空间/运动', 'charSpatial', err instanceof Error ? err.message : String(err), Date.now() - t0)
+        return { charSpatialData: [] }
+      }
+    }
+
+    // ===== Pass 3b: 动作/叙事/动机 (Phase 2, parallel with charSpatial) =====
+    const charNarrativeFn = async (state: StoryboardState, config: any) => {
+      checkPauseAndInterrupt('charNarrative', config)
+      const t0 = Date.now()
+      try {
+        const appliedSkills = self.getSkillsForPhase('charNarrative', state as Record<string, unknown>)
+        const anchorList = state.charAnchors.map((a: any) => `- ${a.n}: ${a.f}`).join('\n')
+        const systemPrompt = self.resolveSystemPrompt(
+          'charNarrative', {},
+          state as Record<string, unknown>,
+          [
+            'You are a narrative and performance analyst for film storyboards.',
+            'Given the character list below, describe actions and narrative properties for EACH character:',
+            '- act: Performance action (pure physical action, no visual effects)',
+            '- fx: Visual effects (wind, smoke, light, particles aligned with action timing; null if none)',
+            '- motive: Psychological externalization (what inner state this action/prop reveals)',
+            '- tc: Transition continuity (pose change, motion vector, gaze direction between shots)',
+            '',
+            `KNOWN CHARACTERS:\n${anchorList}`,
+            '',
+            'Output MUST use the exact character names from the list above. Write in English.',
+          ].join('\n'),
+        )
+
+        const messages = [
+          { role: 'system' as const, content: systemPrompt },
+          {
+            role: 'user' as const,
+            content: [
+              ...BasePipeline.buildImageContent(state.inputImages, 'high'),
+              {
+                type: 'text' as const,
+                text: `Character names you MUST use exactly as written:\n${state.charAnchors.map((a: any) => `"${a.n}"`).join(', ')}\n\nDescribe performance actions, visual effects, psychological motivation, and transition continuity for each character.`,
+              },
+            ],
+          },
+        ]
+
+        let objs: any[] = []
+        try {
+          const structuredWithRaw = self.createStructuredLLMWithRaw(CharNarrativeSchema)
+          const response = await structuredWithRaw.invoke(messages, { signal: config?.signal })
+          const parsed = (response as any)?.parsed
+          if (parsed?.objs?.length) objs = parsed.objs
+          if (!objs.length && (response as any)?.raw?.content) {
+            const rawText = typeof (response as any).raw.content === 'string' ? (response as any).raw.content : ''
+            try {
+              const match = rawText.match(/\{[\s\S]*"objs"\s*:\s*\[[\s\S]*\]\s*\}/)
+              if (match) {
+                const fallback = JSON.parse(match[0])
+                if (fallback?.objs?.length) objs = fallback.objs
+              }
+            } catch { /* regex fallback failed */ }
+          }
+        } catch (e: unknown) {
+          console.warn('[StoryboardProPipeline] charNarrative error:', e instanceof Error ? e.message : String(e))
+        }
+
+        const narrativeData = objs.map((o: any) => ({
+          n: o.n || '', act: o.act || '', fx: o.fx ?? null, motive: o.motive || '', tc: o.tc || '',
+        }))
+        const elapsed = Date.now() - t0
+        const passData = StoryboardProPipeline.buildPassCardData('charNarrative', { pass: 4, label: '动作/叙事' }, { objs: narrativeData }, elapsed, appliedSkills)
+        writer(config)?.({ type: 'pass_complete', pass: 4, label: `动作/叙事完成 (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
+        return { charNarrativeData: narrativeData }
+      } catch (err: unknown) {
+        emitError(config, 4, '动作/叙事', 'charNarrative', err instanceof Error ? err.message : String(err), Date.now() - t0)
+        return { charNarrativeData: [] }
+      }
+    }
+
+    // ===== Pass 5: 角色合并 (code-only, no LLM) =====
+    const charMergeFn = (state: StoryboardState, config: any) => {
+      const t0 = Date.now()
+      const normalize = (s: string) => s.trim().toLowerCase()
+
+      // Fuzzy lookup: exact → substring → shared keyword (any significant word overlap)
+      const fuzzyGet = (map: Map<string, any>, anchorKey: string) => {
+        const exact = map.get(anchorKey)
+        if (exact) return exact
+        // substring containment
+        for (const [k, v] of map.entries()) {
+          if (k.includes(anchorKey) || anchorKey.includes(k)) return v
+        }
+        // keyword overlap: share at least one non-trivial word (>2 chars)
+        const stopWords = new Set(['the', 'a', 'an', 'and', 'of', 'in', 'on', 'at'])
+        const anchorWords = new Set(anchorKey.split(/\s+/).filter(w => w.length > 2 && !stopWords.has(w)))
+        for (const [k, v] of map.entries()) {
+          const candidateWords = k.split(/\s+/).filter(w => w.length > 2 && !stopWords.has(w))
+          if (candidateWords.some(w => anchorWords.has(w))) return v
+        }
+        return null
+      }
+
+      const spatialMap = new Map(state.charSpatialData.map((o: any) => [normalize(o.n), o]))
+      const narrativeMap = new Map(state.charNarrativeData.map((o: any) => [normalize(o.n), o]))
+
+      const mergedObjs = state.charAnchors.map((anchor: any) => {
+        const key = normalize(anchor.n)
+        const sp = fuzzyGet(spatialMap, key) || {}
+        const nr = fuzzyGet(narrativeMap, key) || {}
+        spatialMap.delete(key)
+        narrativeMap.delete(key)
+        return {
+          n: anchor.n,
+          f: anchor.f,
+          t: anchor.t,
+          s: (sp as any).s || 'fg|center|Z1',
+          p: (sp as any).p || 'artic',
+          a: (sp as any).a || '',
+          m: (sp as any).m || '',
+          act: (nr as any).act || '',
+          fx: (nr as any).fx ?? null,
+          motive: (nr as any).motive || '',
+          tc: (nr as any).tc || '',
+        }
+      })
+
+      if (spatialMap.size > 0) {
+        console.warn(`[charMerge] Unmatched spatial entries: ${[...spatialMap.keys()].join(', ')}`)
+      }
+      if (narrativeMap.size > 0) {
+        console.warn(`[charMerge] Unmatched narrative entries: ${[...narrativeMap.keys()].join(', ')}`)
+      }
+
+      const elapsed = Date.now() - t0
+      const passData = StoryboardProPipeline.buildPassCardData('charMerge', { pass: 5, label: '角色合并' }, { objs: mergedObjs }, elapsed)
+      writer(config)?.({ type: 'pass_complete', pass: 5, label: `角色合并完成 (${mergedObjs.length} 角色, ${elapsed}ms)`, elapsed, passData })
+      return { objs: mergedObjs }
+    }
+
+    // ===== Pass 6: 镜头设计 (L1/L2/L3 error recovery) =====
     const shotDesignFn = async (state: StoryboardState, config: any) => {
       checkPauseAndInterrupt('shotDesign', config)
       const t0 = Date.now()
@@ -440,8 +738,8 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
 
       const emitSuccess = (seq: any[], cont: string, notes: string, level: string) => {
         const elapsed = Date.now() - t0
-        const passData = StoryboardProPipeline.buildPassCardData('shotDesign', { pass: 2, label: '镜头设计' }, { seq, cont, notes }, elapsed, appliedSkills)
-        writer(config)?.({ type: 'pass_complete', pass: 2, label: `镜头设计完成 [${level}] (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
+        const passData = StoryboardProPipeline.buildPassCardData('shotDesign', { pass: 6, label: '镜头设计' }, { seq, cont, notes }, elapsed, appliedSkills)
+        writer(config)?.({ type: 'pass_complete', pass: 6, label: `镜头设计完成 [${level}] (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
       }
 
       // --- Level 1: Full schema with includeRaw + regex fallback ---
@@ -474,7 +772,7 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
 
       // --- Level 2: Simplified schema (just id + desc) ---
       let lastError = ''
-      writer(config)?.({ type: 'pass_complete', pass: 2, label: '镜头设计格式降级重试...', elapsed: Date.now() - t0, passData: null })
+      writer(config)?.({ type: 'pass_complete', pass: 6, label: '镜头设计格式降级重试...', elapsed: Date.now() - t0, passData: null })
       try {
         const simpleStructured = self.createStructuredLLM(SimpleShotDesignSchema)
         const simpleResult = await simpleStructured.invoke(messages, { signal: config?.signal })
@@ -491,18 +789,18 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
       }
 
       // --- All levels failed ---
-      emitError(config, 2, '镜头设计', 'shotDesign', 'L1 and L2 recovery both failed', Date.now() - t0)
+      emitError(config, 6, '镜头设计', 'shotDesign', 'L1 and L2 recovery both failed', Date.now() - t0)
       return { seq: null, cont: '', notes: '' }
     }
 
-    // ===== Pass 3: 快速校验 (code-level, instant) =====
+    // ===== Pass 7: 快速校验 (code-level, instant) =====
     const codeVerifyNode = (state: StoryboardState, config: any) => {
       const t0 = Date.now()
       const result = storyboardCodeVerify(state as any)
       const elapsed = Date.now() - t0
-      const passData = StoryboardProPipeline.buildPassCardData('codeVerify', { pass: 3, label: '快速校验' }, { report: result }, elapsed)
+      const passData = StoryboardProPipeline.buildPassCardData('codeVerify', { pass: 7, label: '快速校验' }, { report: result }, elapsed)
       writer(config)?.({
-        type: 'pass_complete', pass: 3,
+        type: 'pass_complete', pass: 7,
         label: `快速校验完成 (score: ${result.score}, ${elapsed}ms)`,
         elapsed, passData,
       })
@@ -510,15 +808,28 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
     }
 
     // ===== Graph Assembly =====
-    // taskPlanning → analyze → shotDesign → codeVerify → END
+    //                          ┌→ sceneDecompose ───────────────────────┐
+    // [START] → taskPlanning ──┤                                       ├→ shotDesign → codeVerify → END
+    //                          └→ charIdentity ──┬→ charSpatial ──┐    │
+    //                                            └→ charNarrative ┼→ charMerge ─┘
     const graph = new StateGraph(stateSchema)
       .addNode('taskPlanning', taskPlanningFn)
-      .addNode('analyze', analyzeFn)
+      .addNode('sceneDecompose', sceneDecomposeFn)
+      .addNode('charIdentity', charIdentityFn)
+      .addNode('charSpatial', charSpatialFn)
+      .addNode('charNarrative', charNarrativeFn)
+      .addNode('charMerge', charMergeFn)
       .addNode('shotDesign', shotDesignFn)
       .addNode('codeVerify', codeVerifyNode)
       .addEdge(START, 'taskPlanning')
-      .addEdge('taskPlanning', 'analyze')
-      .addEdge('analyze', 'shotDesign')
+      .addEdge('taskPlanning', 'sceneDecompose')
+      .addEdge('taskPlanning', 'charIdentity')
+      .addEdge('charIdentity', 'charSpatial')
+      .addEdge('charIdentity', 'charNarrative')
+      .addEdge('charSpatial', 'charMerge')
+      .addEdge('charNarrative', 'charMerge')
+      .addEdge('sceneDecompose', 'shotDesign')
+      .addEdge('charMerge', 'shotDesign')
       .addEdge('shotDesign', 'codeVerify')
       .addEdge('codeVerify', END)
 
@@ -564,7 +875,7 @@ export class StoryboardProPipeline extends BasePipeline<StoryboardState, Storybo
     this._pauseRequested = false
     const threadId = crypto.randomUUID()
     this._currentThreadId = threadId
-    const totalPasses = 3
+    const totalPasses = 8
     this._lastTotalPasses = totalPasses
     let finalState: StoryboardState = { ...input } as StoryboardState
 

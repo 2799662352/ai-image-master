@@ -1,7 +1,7 @@
 ---
 name: storyboard-style
 description: Use when scene analysis needs color palette ratios, light source specification, and shadow depth percentages
-appliesTo: [analyzeScene]
+appliesTo: [analyzeScene, sceneDecompose]
 priority: 10
 ---
 

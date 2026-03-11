@@ -137,12 +137,12 @@ describe('buildStyleAuthorityPrompt', () => {
       'cyberpunk rain chase scene',
     )
     expect(result).toContain('cinematic')
-    expect(result).toContain('USER EXPLICIT')
+    expect(result).toContain('USER FORCED STYLE')
   })
 
-  it('should return empty when no template and no scene hints', () => {
+  it('should return director authority text when no template and no scene hints', () => {
     const result = buildStyleAuthorityPrompt('default', '', '')
-    expect(result).toBe('')
+    expect(result).toContain('director has full authority over art style')
   })
 
   it('should include narrative style hints from description', () => {

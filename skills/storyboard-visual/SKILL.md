@@ -1,7 +1,7 @@
 ---
 name: storyboard-visual
 description: Use when scene or shot output needs physical lighting parameters, color hierarchy, lens specification, and Z-axis depth composition
-appliesTo: [analyzeScene, designAndAssemble]
+appliesTo: [analyzeScene, designAndAssemble, sceneDecompose, shotDesign]
 priority: 1
 ---
 

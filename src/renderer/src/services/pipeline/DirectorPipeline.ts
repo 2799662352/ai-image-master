@@ -185,10 +185,18 @@ export function buildCharacterIdentityLock(characters: Array<{ name?: string; an
   return [
     '## Character Identity Lock (BINDING)',
     ...lines,
-    'FIXED (MUST NOT change across panels): face structure, hairstyle, hair color, outfit design, signature accessories, eye color.',
-    'FLEXIBLE (MAY change for dramatic effect): pose, expression, action, lighting on character, camera angle, minor battle damage.',
+    '',
+    'IMMUTABLE (user-owned, MUST NOT change across panels):',
+    '  face structure, hairstyle, hair color, eye color, outfit design, signature accessories, body proportions.',
+    '  These belong to the USER. Reproduce them faithfully from the reference image. Zero tolerance for drift.',
+    '',
+    'DIRECTOR-OWNED (AI decides freely for cinematic quality):',
+    '  pose, expression, action, staging, composition, lighting angle, camera angle, depth of field, battle damage, weather effects.',
+    '  The director has full authority here — choose whatever best serves the story and visual impact.',
+    '',
     'Reference image is the SINGLE SOURCE OF TRUTH for character identity.',
     'Identity continuity is mandatory — viewers must recognize the same character in every panel.',
+    'When in doubt: character appearance follows the reference image; everything else follows the director\'s vision.',
   ].join('\n')
 }
 
@@ -208,14 +216,16 @@ export function buildNarrativeRhythmGuardrails(sceneDescription: string): string
   return [
     '## Narrative Rhythm Guardrails',
     wrappedBrief,
-    'Identity anchors: prioritize consistency for face, hairstyle, outfit, primary color palette, and signature weapon/accessory.',
-    'Narrative anchors: keep the user\'s narrative direction and rhythm as the main line.',
-    'Director authority: you may freely design shots, composition, lighting, blocking, and pacing, as long as identity and narrative recognizability are preserved.',
-    'Scene evolution is allowed when it serves story progression and narrative rhythm.',
-    'Character evolution is allowed when it serves story progression, while identity anchors remain recognizable and aligned.',
-    'Preserve the user\'s intended narrative rhythm and progression.',
-    'Enhance cinematic expression without changing story direction.',
-    'Optimize pacing through shot language, not by rewriting narrative intent.',
+    '',
+    'USER OWNS: character appearance (face, hair, outfit, accessories) and narrative direction.',
+    'DIRECTOR OWNS: shot design, composition, lighting, staging, blocking, pacing, camera work, and art style.',
+    '',
+    'Rules:',
+    '- Character identity anchors are IMMUTABLE — reproduce them exactly from reference images.',
+    '- Narrative direction follows the user\'s brief — do not rewrite the story.',
+    '- Everything else is the director\'s creative domain — optimize freely for cinematic impact.',
+    '- Scene evolution and character emotional progression are encouraged when they serve the story.',
+    '- Art style is the director\'s choice UNLESS the user explicitly selected a style template (in which case, honor it).',
   ].join('\n')
 }
 
@@ -503,10 +513,15 @@ export function buildStyleAuthorityPrompt(
 
   if (hasTemplate) {
     lines.push(
-      `USER EXPLICIT STYLE (Priority 1 — NON-NEGOTIABLE):`,
+      `USER FORCED STYLE (user explicitly selected — NON-NEGOTIABLE):`,
       `Template: "${templateKey}"`,
       `Style directive: ${styleInstructions}`,
-      `These style fields are locked by the user. Do NOT override with reference image analysis.`,
+      `The user has explicitly chosen this style. Honor it exactly. Do NOT override with reference image analysis or your own preference.`,
+    )
+  } else {
+    lines.push(
+      `ART STYLE: No user-forced style template. The director has full authority over art style.`,
+      `Choose the style that best serves the story and visual impact. You may reference the input images for style cues, or propose your own.`,
     )
   }
 
@@ -515,9 +530,11 @@ export function buildStyleAuthorityPrompt(
     if (styleHints.length > 0) {
       lines.push(
         '',
-        `USER NARRATIVE STYLE HINTS (Priority 2):`,
+        `USER STYLE HINTS (from narrative description, Priority 2):`,
         ...styleHints.map(h => `  - ${h}`),
-        `These hints complement the template but do not override it.`,
+        hasTemplate
+          ? `These hints complement the user-forced template but do not override it.`
+          : `These hints inform the director's style choice but are not binding.`,
       )
     }
   }
@@ -1351,36 +1368,14 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       }
     }
 
-    // ===== Pass 0: AI 导演规划 (看图 + 文本 → 结构化规划) =====
+    // ===== Pass 0: AI 导演规划 (看图 + 文本 → 结构化规划, 不使用 skill) =====
     const taskPlanningFn = async (state: DirectorState, config: any) => {
       const t0 = Date.now()
       try {
-        const skillsMw = new SkillsMW(self.matchSkillsForPhase('taskPlanning', state as Record<string, unknown>))
-        const appliedSkills = skillsMw.getAllSkillIds('taskPlanning', state as Record<string, unknown>)
-
-        let discoveredSkillRules = ''
-        try {
-          const discoveryResult = await skillsMw.runSkillDiscovery({
-            llm: self.createLLM(),
-            phase: 'taskPlanning',
-            context: state as Record<string, unknown>,
-            basePrompt: 'You are an experienced film director. Before planning, review available skills for relevant techniques.',
-            userMessage: 'Read any relevant skills for director planning, then confirm you are ready.',
-            maxIterations: 3,
-            signal: config?.signal,
-          })
-          discoveredSkillRules = discoveryResult.loadedSkillBodies
-        } catch (e: unknown) {
-          console.warn('[DirectorPipeline] Pass 0 skill discovery failed:', e instanceof Error ? e.message : String(e))
-        }
-
         const tpl = getPromptTemplate('taskPlanning')
-        const basePrompt = tpl
+        const systemPrompt = tpl
           ? renderTemplate(tpl.template, {})
           : 'You are an experienced film director planning a storyboard shoot. You analyze reference images and creative briefs to create specific, actionable shooting plans. Your plan will guide scene analysis, character anchoring, style extraction, panel design, and consistency verification.'
-        const systemPrompt = discoveredSkillRules
-          ? `${basePrompt}\n\n--- Loaded Skills ---\n${discoveredSkillRules}`
-          : basePrompt
 
         const llm = self.createLLM()
         const userContent: Array<any> = []
@@ -1426,7 +1421,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
             { pass: 0, label: '导演规划' },
             { planText },
             elapsed,
-            appliedSkills,
+            [],
           ),
         })
         return { taskPlan: planText }
@@ -1492,19 +1487,27 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         }
       }
 
-      const systemPrompt = self.injectTaskPlan(baseSystemPrompt, state.taskPlan)
+      const systemPrompt = baseSystemPrompt
       const userText = (() => {
         const parts: string[] = []
-        if (state.taskPlan) parts.push(`DIRECTOR'S PLAN (follow this as your shooting blueprint):\n${state.taskPlan}`)
-        if (state.sceneDescription) parts.push(`CREATIVE BRIEF: "${state.sceneDescription}"`)
+
         parts.push([
           `Design ${state.layout.panelCount} storyboard panels with shot design and image generation prompts.`,
-          'Character identity anchors (face, hairstyle, outfit, primary colors, weapons) MUST remain recognizably consistent across panels.',
-          'Characters MAY evolve naturally through the story (emotion, pose, battle damage, clothing dynamics).',
-          'Scenes MAY transition with narrative pacing — not all panels need to share the same location.',
-          'Each panel: 1 anchor action + 1-2 satellite actions. Avoid unmotivated sudden changes.',
-          'The director has full authority over shot design, composition, lighting, staging, and pacing.',
+          '',
+          'CHARACTER IDENTITY (user-owned — reproduce exactly):',
+          '  Face, hairstyle, hair color, eye color, outfit, accessories, body proportions — copy from reference image with zero drift.',
+          '',
+          'DIRECTING & ART STYLE (director-owned — your professional judgment):',
+          '  Shot design, composition, lighting, staging, pacing, camera angle, color grading, art style — optimize freely.',
+          '  Characters MAY evolve emotionally (expression, pose, battle damage) to serve the story.',
+          '  Scenes MAY transition with narrative pacing — not all panels need the same location.',
+          '  Each panel: 1 anchor action + 1-2 satellite actions. Avoid unmotivated sudden changes.',
         ].join('\n'))
+
+        if (state.sceneDescription) parts.push(`CREATIVE BRIEF: "${state.sceneDescription}"`)
+
+        if (state.taskPlan) parts.push(`DIRECTOR'S PLAN (supplementary context — defer to the analysis results in the system prompt for character/style/scene details):\n${state.taskPlan}`)
+
         return parts.join('\n\n')
       })()
       const designContent: Array<any> = []

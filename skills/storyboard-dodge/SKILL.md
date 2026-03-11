@@ -1,7 +1,7 @@
 ---
 name: storyboard-dodge
 description: Use when output text may contain explicit anatomical terms, graphic violence, or nudity that needs artistic obfuscation via contour, physics, and shadow techniques
-appliesTo: [analyzeScene, extractCharacterAnchors, designAndAssemble, verifyConsistency]
+appliesTo: [analyzeScene, extractCharacterAnchors, designAndAssemble, verifyConsistency, sceneDecompose, characterExtract, shotDesign, charIdentity, charSpatial, charNarrative]
 priority: 20
 ---
 

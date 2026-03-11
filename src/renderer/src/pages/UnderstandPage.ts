@@ -1353,9 +1353,13 @@ export class UnderstandPage extends BasePage {
 
     const passes = [
       { icon: '📋', label: 'Pass 0: 导演规划' },
-      { icon: '🔍', label: 'Pass 1: 场景+角色分析' },
-      { icon: '🎥', label: 'Pass 2: 分镜生成' },
-      { icon: '✅', label: 'Pass 3: 快速校验' },
+      { icon: '🏞️', label: 'Pass 1: 场景分析' },
+      { icon: '🪪', label: 'Pass 2: 身份锚点' },
+      { icon: '📐', label: 'Pass 3: 空间/运动' },
+      { icon: '🎭', label: 'Pass 4: 动作/叙事' },
+      { icon: '🔗', label: 'Pass 5: 角色合并' },
+      { icon: '🎥', label: 'Pass 6: 分镜生成' },
+      { icon: '✅', label: 'Pass 7: 快速校验' },
     ]
 
     resultContainer.innerHTML = `
@@ -1441,12 +1445,25 @@ export class UnderstandPage extends BasePage {
       passDataArea.appendChild(summary)
     }
 
-    const nextPassEl = document.getElementById(`pipelinePass${progress.pass + 1}`)
-    if (nextPassEl) {
-      const nextStatus = nextPassEl.querySelector('span:last-child')
-      if (nextStatus && !nextStatus.textContent?.includes('完成')) {
-        nextStatus.textContent = '⏳ 进行中...'
-        nextStatus.className = 'ml-auto text-yellow-400 animate-pulse'
+    const nextMap: Record<number, number[]> = {
+      0: [1, 2],
+      1: [],
+      2: [3, 4],
+      3: [],
+      4: [5],
+      5: [6],
+      6: [7],
+      7: [],
+    }
+    const nextIds = nextMap[progress.pass] ?? [progress.pass + 1]
+    for (const nid of nextIds) {
+      const nextPassEl = document.getElementById(`pipelinePass${nid}`)
+      if (nextPassEl) {
+        const nextStatus = nextPassEl.querySelector('span:last-child')
+        if (nextStatus && !nextStatus.textContent?.includes('完成')) {
+          nextStatus.textContent = '⏳ 进行中...'
+          nextStatus.className = 'ml-auto text-yellow-400 animate-pulse'
+        }
       }
     }
   }
