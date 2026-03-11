@@ -105,3 +105,19 @@ export function getStoryboardSkills(): PipelineSkill[] {
   _skillCache = skills.sort((a, b) => a.priority - b.priority)
   return [..._skillCache]
 }
+
+/**
+ * Convert loaded storyboard skills into Deep Agents StateBackend seed files.
+ * Each skill becomes `/skills/{id}/SKILL.md` with proper YAML frontmatter.
+ */
+export function buildSkillSeedFiles(): Record<string, { content: string }> {
+  const skills = getStoryboardSkills()
+  const files: Record<string, { content: string }> = {}
+  for (const skill of skills) {
+    const body = skill._rawBody || (typeof skill.rules === 'string' ? skill.rules : '')
+    files[`/skills/${skill.id}/SKILL.md`] = {
+      content: `---\nname: ${skill.id}\ndescription: ${skill.description}\nappliesTo: [${skill.appliesTo.join(', ')}]\npriority: ${skill.priority}\n---\n\n${body}`,
+    }
+  }
+  return files
+}
