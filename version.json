@@ -1,12 +1,6 @@
 {
-    "version": "3.7.0",
+    "version": "3.7.1",
     "buildTime": "2026-03-11T00:00:00Z",
-    "description": "CATIMATION v3.7.0",
-    "releaseNotes": [
-        "图像理解分镜：引入 Deep Agents Subagent 架构（StoryboardDeepAgentPipeline）",
-        "各分析阶段独立上下文隔离，防止 context 污染",
-        "charMerge 升级模糊匹配（fuzzy keyword overlap），解决角色名称漂移问题",
-        "新旧 Pipeline 并存，通过 useDeepAgentPipeline flag 切换",
-        "修复 charMerge 精确匹配丢失角色数据的 Critical bug"
-    ]
+    "description": "CATIMATION v3.7.1",
+    "releaseNotes": "Fix V3 pipeline image support: subagents use view_images tool instead of broken read_file. Extract charMergeSubAgent to standalone module. Fix StateBackend content:string[] parsing. Fix shallow merge of files in streaming state."
 }

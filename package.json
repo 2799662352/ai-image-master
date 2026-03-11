@@ -1,6 +1,6 @@
 {
   "name": "catimation-cyberpunk-master",
-  "version": "3.6.0",
+  "version": "3.7.1",
   "description": "CATIMATION-Cyberpunk Master - AI图片生成桌面应用",
   "main": "dist/main/index.js",
   "author": "CATIMATION",
@@ -45,6 +45,7 @@
     "@langchain/openai": "^1.2.10",
     "browser-image-compression": "^2.0.2",
     "choices.js": "^11.1.0",
+    "deepagents": "^1.8.2",
     "electron-store": "^8.1.0",
     "electron-updater": "^6.7.3",
     "i18next": "^25.8.13",
