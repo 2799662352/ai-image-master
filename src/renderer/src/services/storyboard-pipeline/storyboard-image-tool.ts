@@ -1,5 +1,3 @@
-import { tool } from '@langchain/core/tools'
-import { z } from 'zod'
 import { BasePipeline } from '../pipeline/BasePipeline'
 
 export interface ImageInput {
@@ -7,24 +5,57 @@ export interface ImageInput {
   mimeType: string
 }
 
-export function createViewImagesTool(images: ImageInput[]) {
-  return tool(
-    async () => {
-      if (!images.length) return 'No images available for analysis.'
-      const blocks = BasePipeline.buildImageContent(images, 'high')
-      const summary = images.map((img, i) =>
-        `[Image ${i}] ${img.mimeType} (${Math.round(img.data.length * 0.75 / 1024)}KB)`
+type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string; detail: string } }
+
+/**
+ * Middleware that injects reference images into the subagent's first
+ * HumanMessage as multimodal content blocks.
+ *
+ * Why: @langchain/openai's converter strips image_url from tool responses
+ * (only "user" role supports multi-modal). So images must travel via the
+ * HumanMessage, not via a tool return value.
+ */
+export function createImageInjectionMiddleware(images: ImageInput[]) {
+  if (!images.length) return null
+
+  let injected = false
+  const nodeRequire = (globalThis as any).require || (window as any).require
+  const { createMiddleware } = nodeRequire('langchain')
+  const { HumanMessage } = nodeRequire('@langchain/core/messages')
+
+  return createMiddleware({
+    name: 'ImageInjectionMiddleware',
+    wrapModelCall(request: any, handler: any) {
+      if (injected) return handler(request)
+      injected = true
+
+      const imageBlocks = BasePipeline.buildImageContent(images, 'auto')
+      const summary = images.map((img: ImageInput, i: number) =>
+        `[Image ${i}] ${img.mimeType} (${Math.round(img.data.length * 0.75 / 1024)}KB)`,
       ).join('\n')
-      return JSON.stringify({
-        description: `${images.length} reference image(s) available for visual analysis.`,
-        summary,
-        images: blocks,
+
+      const newMessages = request.messages.map((msg: any) => {
+        if (msg instanceof HumanMessage || msg?._getType?.() === 'human') {
+          const textContent = typeof msg.content === 'string'
+            ? msg.content
+            : Array.isArray(msg.content)
+              ? msg.content.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n')
+              : String(msg.content)
+
+          const blocks: ContentBlock[] = [
+            { type: 'text', text: `${textContent}\n\n${images.length} reference image(s):\n${summary}` },
+            ...imageBlocks,
+          ]
+
+          console.log(`[ImageInjection] Injecting ${imageBlocks.length} image(s) into HumanMessage (${Math.round(images.reduce((s, img) => s + img.data.length, 0) * 0.75 / 1024)}KB total)`)
+          return new HumanMessage({ content: blocks })
+        }
+        return msg
       })
+
+      return handler({ ...request, messages: newMessages })
     },
-    {
-      name: 'view_images',
-      description: 'View all reference images for visual analysis. Returns multimodal image content. Call this FIRST before any analysis. No parameters needed.',
-      schema: z.object({}),
-    },
-  )
+  })
 }

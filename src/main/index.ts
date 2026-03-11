@@ -197,7 +197,7 @@ function createWindow(): void {
     backgroundColor: '#09090B',
     webPreferences: {
       nodeIntegration: true,
-      contextIsolation: true,
+      contextIsolation: false,
       sandbox: false,
       preload: path.join(__dirname, '../preload/index.js'),
       // 安全加固选项

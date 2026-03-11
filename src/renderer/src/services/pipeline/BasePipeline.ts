@@ -179,14 +179,14 @@ export abstract class BasePipeline<TState, TResult> {
       model: m,
       apiKey: this.config.apiKey,
       temperature: 0,
-      maxRetries: 1,
+      maxRetries: 10,
       maxTokens: resolved,
       streamUsage: false,
-      timeout: 120000,
+      timeout: 180000,
       callbacks,
       configuration: {
         baseURL,
-        timeout: 120000,
+        timeout: 180000,
       },
     })
   }

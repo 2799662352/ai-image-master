@@ -656,14 +656,13 @@
         "name": "Раскадровка Sora",
         "shortName": "Раскадр.Sora"
       },
-      "ocr-extract": {
-        "name": "Извлечение OCR",
-        "shortName": "Извлечение OCR",
-        "description": "Быстрое извлечение всего текстового содержимого из изображения"
-      },
       "sora-storyboard-pro": {
         "name": "🎬 Раскадровка Pro",
         "shortName": "Раскадр.Pro"
+      },
+      "storyboard-quick": {
+        "name": "🎥 Раскадр. Быстрый",
+        "shortName": "Раскадр.Быстр."
       }
     },
     "visionModelData": {

@@ -667,14 +667,13 @@
         "name": "Sora Storyboard",
         "shortName": "Sora Storyboard"
       },
-      "ocr-extract": {
-        "name": "OCR Extract",
-        "shortName": "OCR Extract",
-        "description": "Quickly extract all text content from images"
-      },
       "sora-storyboard-pro": {
         "name": "🎬 Storyboard Pro",
         "shortName": "StoryPro"
+      },
+      "storyboard-quick": {
+        "name": "🎥 Storyboard Quick",
+        "shortName": "StoryQuick"
       }
     },
     "visionModelData": {

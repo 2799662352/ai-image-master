@@ -684,14 +684,13 @@
         "name": "Sora分镜反推",
         "shortName": "Sora分镜"
       },
-      "ocr-extract": {
-        "name": "OCR 提取",
-        "shortName": "OCR 提取",
-        "description": "快速提取图片中的所有文字内容"
-      },
       "sora-storyboard-pro": {
         "name": "🎬 分镜反推 Pro",
         "shortName": "分镜Pro"
+      },
+      "storyboard-quick": {
+        "name": "🎥 分镜Pro快速",
+        "shortName": "分镜Pro快速"
       }
     },
     "visionModelData": {

@@ -7,7 +7,7 @@
 // ✅ safeOn 函数验证通道是否在允许列表中
 // ✅ 所有方法使用 ipcRenderer.invoke 进行请求-响应通信
 //
-import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron'
+import { ipcRenderer, IpcRendererEvent } from 'electron'
 
 // ==================== IPC 通道常量 ====================
 // 集中管理所有 IPC 通道，便于类型检查和维护
@@ -396,8 +396,9 @@ const electronAPI: ElectronAPI = {
 }
 
 // ==================== 暴露 API 到渲染进程 ====================
+// contextIsolation: false — 直接赋值 window（contextBridge 在此模式下不可用）
 
-contextBridge.exposeInMainWorld('electronAPI', electronAPI)
+;(window as any).electronAPI = electronAPI
 
 console.log('Electron preload 已加载，electronAPI 可用')
 

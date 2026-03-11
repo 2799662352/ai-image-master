@@ -48,6 +48,7 @@ export default defineConfig({
         input: {
           index: resolve(__dirname, 'src/renderer/index.html')
         },
+        external: ['deepagents'],
         output: {
           // 代码分割配置
           manualChunks: (id: string) => {
@@ -189,15 +190,29 @@ export default defineConfig({
     },
     // 依赖优化
     optimizeDeps: {
-      // 预构建这些依赖以加速冷启动
       include: ['choices.js', 'jszip', 'react', 'react-dom', 'zustand'],
-      // 排除不需要预构建的依赖
-      exclude: []
+      exclude: [],
+      esbuildOptions: {
+        plugins: [{
+          name: 'electron-node-builtins',
+          setup(build: any) {
+            const builtins = /^(fs|fs\/promises|path|os|child_process|crypto|stream|util|events|net|http|https|zlib|url|buffer|tls|assert|querystring)$/
+            build.onResolve({ filter: builtins }, (args: any) => ({
+              path: args.path, namespace: 'electron-require',
+            }))
+            build.onLoad({ filter: /.*/, namespace: 'electron-require' }, (args: any) => ({
+              contents: `module.exports = require('${args.path}')`,
+              loader: 'js',
+            }))
+          },
+        }],
+      },
     },
     // 解析别名
     resolve: {
       alias: {
         'node:async_hooks': resolve(__dirname, 'src/renderer/src/shims/async-hooks-shim.ts'),
+        'langfuse-langchain': resolve(__dirname, 'src/renderer/src/shims/langfuse-noop.ts'),
         '@': resolve(__dirname, 'src/renderer/src'),
         '@core': resolve(__dirname, 'src/renderer/src/core'),
         '@services': resolve(__dirname, 'src/renderer/src/services'),

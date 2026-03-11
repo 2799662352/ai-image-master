@@ -1,4 +1,4 @@
-import { createDeepAgent, type SubAgent } from 'deepagents'
+import { getCreateDeepAgent } from '../../shims/deepagents-bridge'
 import { MemorySaver } from '@langchain/langgraph'
 import { z } from 'zod'
 import { tool } from '@langchain/core/tools'
@@ -12,43 +12,40 @@ import type {
 import type { StoryboardResponse } from '../LangChainStoryboardService'
 import { getStoryboardSkills } from './storyboard-prompt-loader'
 import { mergeCharactersFromJSON, verifyStoryboardFromJSON } from './storyboard-tools'
-import { createViewImagesTool, type ImageInput } from './storyboard-image-tool'
+import { createImageInjectionMiddleware, type ImageInput } from './storyboard-image-tool'
 
 const ORCHESTRATOR_PROMPT = `You are a professional storyboard analysis orchestrator.
+You coordinate specialized subagents to produce a complete storyboard from reference images.
 
-You coordinate multiple specialized analysis subagents to produce a complete storyboard from reference images.
+## SPEED RULES
+- Do NOT call write_todos. The plan is fixed below.
+- Call multiple tools IN PARALLEL within the same turn wherever indicated.
+- Minimize your own text output between tool calls.
 
-## Workflow (FOLLOW THIS ORDER STRICTLY)
+## Workflow — call multiple tools PER TURN
 
-1. **Plan**: Use write_todos to create the task list:
-   - Analyze scene structure
-   - Extract character identity anchors
-   - Analyze character spatial properties
-   - Analyze character narrative properties
-   - Merge character data
-   - Design shot sequence
-   - Verify storyboard
+**Turn 1** — CALL BOTH IN PARALLEL (no dependencies between them):
+  task(subagent_type="scene-analyzer", description="Analyze scene structure from reference images. Call view_images() first. Write JSON to /shared/scene.json.")
+  task(subagent_type="char-identity", description="Extract character identities from reference images. Call view_images() first. Write JSON {objs:[{n,f,t}]} to /shared/char-anchors.json.")
 
-2. **Scene Analysis**: task(subagent_type="scene-analyzer", description="Analyze scene structure from reference images")
+**Turn 2** — CALL BOTH IN PARALLEL (both read char-anchors.json, independent of each other):
+  task(subagent_type="char-spatial", description="Analyze spatial properties. Read /shared/char-anchors.json for character list, then call view_images(). Write JSON to /shared/char-spatial.json.")
+  task(subagent_type="char-narrative", description="Analyze narrative properties. Read /shared/char-anchors.json for character list, then call view_images(). Write JSON to /shared/char-narrative.json.")
 
-3. **Character Identity**: task(subagent_type="char-identity", description="Extract character identities from reference images")
+**Turn 3** — Read the 3 character files and call merge_characters:
+  First read_file /shared/char-anchors.json, /shared/char-spatial.json, /shared/char-narrative.json
+  Then call merge_characters(anchorsJSON=..., spatialJSON=..., narrativeJSON=...)
 
-4. **Character Spatial + Narrative** (in sequence):
-   - task(subagent_type="char-spatial", description="Analyze spatial properties. Read /shared/char-anchors.json for character list.")
-   - task(subagent_type="char-narrative", description="Analyze narrative properties. Read /shared/char-anchors.json for character list.")
+**Turn 4** — Shot design:
+  task(subagent_type="shot-designer", description="Design shot sequence. Read /shared/scene.json and /shared/merged-chars.json. Write JSON to /shared/shots.json.")
 
-5. **Merge**: Call merge_characters tool with the JSON from read_file on /shared/char-anchors.json, /shared/char-spatial.json, /shared/char-narrative.json
-
-6. **Shot Design**: task(subagent_type="shot-designer", description="Design shot sequence. Read /shared/scene.json and /shared/merged-chars.json.")
-
-7. **Verify**: Call verify_storyboard with data from /shared/scene.json, /shared/merged-chars.json, /shared/shots.json
-
-8. **Write final result** to /final-result.json
+**Turn 5** — Verify:
+  Read /shared/scene.json, /shared/merged-chars.json, /shared/shots.json
+  Call verify_storyboard(sceneJSON=..., mergedCharsJSON=..., shotsJSON=...)
 
 ## Rules
 - Each subagent writes results to /shared/ as JSON files
-- Subagents that need images have a view_images tool — they call it to see the images
-- Update todo status after each step
+- Subagents that need images have a view_images tool — they call it themselves
 - If a subagent fails, retry ONCE with simplified instructions
 - All analysis must be in English
 `
@@ -68,36 +65,34 @@ export class StoryboardDeepAgentV3Pipeline extends BasePipeline<any, StoryboardR
     return this.createLLM()
   }
 
-  private buildSubagents(images: ImageInput[]): SubAgent[] {
-    const viewTool = createViewImagesTool(images)
-
+  private buildSubagents(_images: ImageInput[]): any[] {
     return [
       {
         name: 'scene-analyzer',
         description: 'Analyzes scene structure from reference images: narrative arc (A→B→C), environment, atmosphere, lighting',
         systemPrompt: [
           'You are a professional film storyboard scene analyst.',
-          'Call view_images() FIRST to see the reference images.',
+          'The reference images are already provided in your conversation.',
           'Extract: d (narrative arc A→B→C), cap (structured caption), env (environment description), bgm (sound design).',
           'Write result as JSON to /shared/scene.json.',
           'Return a brief summary of your analysis.',
           'REFERENCE IMAGE FIDELITY: Describe ONLY what is visually present. DO NOT hallucinate.',
           'Write in English.',
         ].join('\n'),
-        tools: [viewTool],
+        tools: [],
       },
       {
         name: 'char-identity',
         description: 'Extracts character identity anchors from images: name, visual appearance, cross-shot consistency features',
         systemPrompt: [
           'You are a professional character analyst for film storyboards.',
-          'Call view_images() FIRST to see the reference images.',
+          'The reference images are already provided in your conversation.',
           'For each character/object: n (name), f (visual appearance), t (cross-shot consistency anchor).',
           'Write result as JSON {objs: [{n,f,t}]} to /shared/char-anchors.json.',
           'Return summary: how many characters found and their names.',
           'Write in English.',
         ].join('\n'),
-        tools: [viewTool],
+        tools: [],
       },
       {
         name: 'char-spatial',
@@ -105,13 +100,13 @@ export class StoryboardDeepAgentV3Pipeline extends BasePipeline<any, StoryboardR
         systemPrompt: [
           'You are a spatial and motion analyst for film storyboards.',
           'First read /shared/char-anchors.json to get the character list.',
-          'Then call view_images() to see the reference images.',
+          'The reference images are already provided in your conversation.',
           'For each character: n (exact name from anchors), s (spatial position), p (physical type), a (multi-granularity), m (motion intensity).',
           'CRITICAL: Use EXACT character names from char-anchors.json.',
           'Write result as JSON {objs: [{n,s,p,a,m}]} to /shared/char-spatial.json.',
           'Write in English.',
         ].join('\n'),
-        tools: [viewTool],
+        tools: [],
       },
       {
         name: 'char-narrative',
@@ -119,13 +114,13 @@ export class StoryboardDeepAgentV3Pipeline extends BasePipeline<any, StoryboardR
         systemPrompt: [
           'You are a narrative and performance analyst for film storyboards.',
           'First read /shared/char-anchors.json to get the character list.',
-          'Then call view_images() to see the reference images.',
+          'The reference images are already provided in your conversation.',
           'For each character: n (exact name from anchors), act (physical action), fx (visual effects or null), motive (psychological state), tc (transition continuity).',
           'CRITICAL: Use EXACT character names from char-anchors.json.',
           'Write result as JSON {objs: [{n,act,fx,motive,tc}]} to /shared/char-narrative.json.',
           'Write in English.',
         ].join('\n'),
-        tools: [viewTool],
+        tools: [],
       },
       {
         name: 'shot-designer',
@@ -177,6 +172,9 @@ export class StoryboardDeepAgentV3Pipeline extends BasePipeline<any, StoryboardR
       },
     )
 
+    const createDeepAgent = getCreateDeepAgent()
+    const imageMiddleware = createImageInjectionMiddleware(images)
+    const middleware = imageMiddleware ? [imageMiddleware] : []
     this._agent = createDeepAgent({
       name: 'storyboard-orchestrator',
       model,
@@ -184,6 +182,7 @@ export class StoryboardDeepAgentV3Pipeline extends BasePipeline<any, StoryboardR
       subagents,
       systemPrompt: ORCHESTRATOR_PROMPT,
       checkpointer: new MemorySaver(),
+      middleware,
     })
 
     return this._agent
@@ -252,17 +251,26 @@ export class StoryboardDeepAgentV3Pipeline extends BasePipeline<any, StoryboardR
     const userMessage = [
       'Analyze the following images and generate a complete storyboard.',
       input.userContext ? `Additional context: ${input.userContext}` : '',
-      `Total ${images.length} reference image(s). Subagents have a view_images tool to see them.`,
+      `Total ${images.length} reference image(s). Images are injected into subagent conversations via middleware.`,
     ].filter(Boolean).join('\n')
 
     const threadId = crypto.randomUUID()
     const totalPasses = 8
     let currentPass = 0
+    const completedPasses = new Set<number>()
 
     const emitProgress = (pass: number, label: string, status: 'running' | 'completed' = 'completed') => {
-      currentPass = pass
+      if (status === 'completed') {
+        completedPasses.add(pass)
+        if (pass >= currentPass) currentPass = pass + 1
+      } else if (status === 'running') {
+        if (completedPasses.has(pass)) return
+        if (pass >= currentPass) currentPass = pass
+      }
       onProgress?.({ pass, totalPasses, label, status })
     }
+
+    emitProgress(0, '导演规划', 'running')
 
     try {
       const stream = await agent.stream(
@@ -279,12 +287,28 @@ export class StoryboardDeepAgentV3Pipeline extends BasePipeline<any, StoryboardR
 
       let finalState: any = {}
 
+      const SUBAGENT_PASS_MAP: Record<string, { pass: number; runLabel: string; doneLabel: string }> = {
+        'scene-analyzer': { pass: 1, runLabel: '场景分析中...', doneLabel: '场景分析完成' },
+        'scene': { pass: 1, runLabel: '场景分析中...', doneLabel: '场景分析完成' },
+        'char-identity': { pass: 2, runLabel: '身份锚点提取中...', doneLabel: '身份锚点完成' },
+        'identity': { pass: 2, runLabel: '身份锚点提取中...', doneLabel: '身份锚点完成' },
+        'char-spatial': { pass: 3, runLabel: '空间/运动分析中...', doneLabel: '空间/运动完成' },
+        'spatial': { pass: 3, runLabel: '空间/运动分析中...', doneLabel: '空间/运动完成' },
+        'char-narrative': { pass: 4, runLabel: '动作/叙事分析中...', doneLabel: '动作/叙事完成' },
+        'narrative': { pass: 4, runLabel: '动作/叙事分析中...', doneLabel: '动作/叙事完成' },
+        'shot-designer': { pass: 6, runLabel: '镜头设计中...', doneLabel: '镜头设计完成' },
+        'shot': { pass: 6, runLabel: '镜头设计中...', doneLabel: '镜头设计完成' },
+      }
+
+      const resolveSubagentPass = (text: string): { pass: number; runLabel: string; doneLabel: string } | null => {
+        for (const [key, info] of Object.entries(SUBAGENT_PASS_MAP)) {
+          if (text.includes(key)) return info
+        }
+        return null
+      }
+
       for await (const chunk of stream) {
         const [ns, data] = Array.isArray(chunk) ? chunk : [[], chunk]
-
-        if (Array.isArray(ns) && ns.length > 0) {
-          emitProgress(currentPass, `Subagent executing...`, 'running')
-        }
 
         if (data && typeof data === 'object') {
           for (const [nodeName, nodeData] of Object.entries(data as Record<string, any>)) {
@@ -300,18 +324,32 @@ export class StoryboardDeepAgentV3Pipeline extends BasePipeline<any, StoryboardR
               }
             }
 
+            if (nodeName === 'agent' && (nodeData as any)?.messages) {
+              for (const msg of (nodeData as any).messages) {
+                const toolCalls = msg?.tool_calls || msg?.additional_kwargs?.tool_calls || []
+                for (const tc of toolCalls) {
+                  const fnName = tc?.function?.name || tc?.name || ''
+                  if (fnName === 'task') {
+                    if (!completedPasses.has(0)) emitProgress(0, '规划完成')
+                    const args = typeof tc.args === 'string' ? tc.args : JSON.stringify(tc.args || tc?.function?.arguments || '')
+                    const info = resolveSubagentPass(args)
+                    if (info) emitProgress(info.pass, info.runLabel, 'running')
+                  }
+                }
+              }
+            }
+
             if (nodeName === 'tools' && (nodeData as any)?.messages) {
               for (const msg of (nodeData as any).messages || []) {
                 if (msg?.name === 'write_todos') {
                   emitProgress(0, '规划完成')
                 } else if (msg?.name === 'task') {
+                  if (!completedPasses.has(0)) emitProgress(0, '规划完成')
                   const content = typeof msg.content === 'string' ? msg.content : ''
-                  if (content.includes('scene')) emitProgress(1, '场景分析完成')
-                  else if (content.includes('identity') || content.includes('char-identity'))
-                    emitProgress(2, '身份锚点完成')
-                  else if (content.includes('spatial')) emitProgress(3, '空间/运动完成')
-                  else if (content.includes('narrative')) emitProgress(4, '动作/叙事完成')
-                  else if (content.includes('shot')) emitProgress(6, '镜头设计完成')
+                  const info = resolveSubagentPass(content)
+                  if (info) {
+                    emitProgress(info.pass, info.doneLabel)
+                  }
                 } else if (msg?.name === 'merge_characters') {
                   emitProgress(5, '角色合并完成')
                 } else if (msg?.name === 'verify_storyboard') {

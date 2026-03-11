@@ -102,7 +102,12 @@ export class UnderstandPage extends BasePage {
   private _lastAnalyzedImages: Array<{base64: string; mimeType: string}> = []
   private _lastFormattedText: string = ''
   private _lastJsonText: string = ''
+  private _lastStoryboardTaskKey: string = ''
   private _currentResultTab: 'formatted' | 'json' = 'formatted'
+
+  // React storyboard mount
+  private _storyboardReactMounted = false
+  private _analysisAbortController: AbortController | null = null
 
   // 调试标志
   private styleDebugLogged: boolean = false
@@ -568,9 +573,9 @@ export class UnderstandPage extends BasePage {
       }
 
       const i18n = (window as any).i18n
-      const roleShortName = i18n
-        ? (i18n.t(`understand.roleData.${role.id}.shortName`) || role.shortName || role.name)
-        : (role.shortName || role.name)
+      const i18nKey = `understand.roleData.${role.id}.shortName`
+      const i18nVal = i18n?.t(i18nKey)
+      const roleShortName = (i18nVal && i18nVal !== i18nKey) ? i18nVal : (role.shortName || role.name)
 
       button.innerHTML = `
         <span class="mr-1">${role.icon}</span>
@@ -934,11 +939,16 @@ export class UnderstandPage extends BasePage {
     }
 
     if (this.isAnalyzing) {
-      this.showToast('正在分析中，请稍候...', 'warning')
-      return
+      if (this._analysisAbortController) {
+        this._analysisAbortController.abort()
+        this._analysisAbortController = null
+      }
+      this.showToast('已取消上一个分析，重新开始...', 'info')
     }
 
     this.isAnalyzing = true
+    this._analysisAbortController = new AbortController()
+    const currentAbortSignal = this._analysisAbortController.signal
     this.styleDebugLogged = false
 
     const promptInput = this.getElement<HTMLTextAreaElement>('understandPrompt')
@@ -958,44 +968,121 @@ export class UnderstandPage extends BasePage {
     let fullResult = ''
 
     try {
-      if (this.currentRole === 'sora-storyboard' || this.currentRole === 'sora-storyboard-pro') {
+      if (this.currentRole === 'sora-storyboard' || this.currentRole === 'sora-storyboard-pro' || this.currentRole === 'storyboard-quick') {
+        if (this.currentRole === 'storyboard-quick') {
+          try {
+            const { getLangChainStoryboardService } = await import('../services/ServiceBridge')
+            const storyboardService = await getLangChainStoryboardService(modelToUse)
+            if (storyboardService) {
+              console.log('[UnderstandPage] Using storyboard-quick (single-pass + skills)...')
+              const images = this.uploadedImages.map(img => ({
+                base64: img.base64, mimeType: img.mimeType || 'image/jpeg'
+              }))
+              const rolePrompt = prompt || ''
+
+              let skillContext = ''
+              try {
+                const { getStoryboardSkills } = await import('../services/storyboard-pipeline/storyboard-prompt-loader')
+                const skills = getStoryboardSkills()
+                if (skills.length > 0) {
+                  const skillTexts = skills
+                    .filter(s => s._rawBody)
+                    .map(s => `### ${s.id}\n${s._rawBody}`)
+                  skillContext = `\n\n--- Professional Skills Reference ---\n${skillTexts.join('\n\n')}`
+                  console.log(`[UnderstandPage] Loaded ${skills.length} skills for storyboard-quick`)
+                }
+              } catch (skillErr) {
+                console.warn('[UnderstandPage] Skills loading skipped:', skillErr)
+              }
+
+              const combinedContext = [contextText || '', skillContext].filter(Boolean).join('\n\n')
+
+              const result = await storyboardService.analyze({
+                images, rolePrompt, context: combinedContext || undefined, signal: currentAbortSignal,
+              })
+
+              if (currentAbortSignal.aborted) return
+
+              const jsonOutput = storyboardService.toJSON(result)
+
+              fullResult = jsonOutput
+              this.lastResult = jsonOutput
+
+              this._lastStoryboardResult = result
+              this._lastAnalyzedImages = images
+
+              const { formatStoryboardText } = await import('../services/StoryboardToDirectorAdapter')
+              const formattedText = formatStoryboardText(result)
+              this._lastFormattedText = formattedText
+              this._lastJsonText = jsonOutput
+
+              this.showStoryboardResult(formattedText, jsonOutput)
+              this.showToast('分镜Pro快速分析完成！', 'success')
+
+              this.isAnalyzing = false
+              return
+            }
+          } catch (quickError: any) {
+            if (quickError?.name === 'AbortError' || currentAbortSignal.aborted) {
+              console.log('[UnderstandPage] storyboard-quick aborted')
+              return
+            }
+            console.error('[UnderstandPage] storyboard-quick failed, falling back to stream:', quickError.message)
+          }
+        }
         if (this.currentRole === 'sora-storyboard-pro') {
           try {
             const { getStoryboardPipelineService } = await import('../services/ServiceBridge')
             const pipelineService = await getStoryboardPipelineService(modelToUse)
             if (pipelineService) {
               console.log('[UnderstandPage] Using storyboard pro pipeline...')
+              this._lastStoryboardTaskKey = this.getCurrentStoryboardTaskKey()
               const inputImages = this.uploadedImages.map(img => ({
                 data: img.base64, mimeType: img.mimeType || 'image/jpeg'
               }))
-              this.showPipelineProgress()
 
-              const result = await pipelineService.execute(
-                {
-                  inputImages,
-                  userContext: [prompt || '', contextText || ''].filter(Boolean).join('\n\n'),
-                },
-                (progress) => this.onPipelineProgress(progress)
-              )
+              // --- 原有 DOM UI ---
+              const resultContainer = this.getElement<HTMLElement>('understandResult')
+              if (resultContainer) {
+                this.unmountStoryboardReactIfNeeded()
+                this.showPipelineProgress()
 
-              const { formatStoryboardText } = await import('../services/StoryboardToDirectorAdapter')
-              const formattedText = formatStoryboardText(result)
-              const jsonOutput = JSON.stringify(result, null, 2)
-              fullResult = jsonOutput
+                try {
+                  const result = await pipelineService.execute(
+                    {
+                      inputImages,
+                      userContext: [prompt || '', contextText || ''].filter(Boolean).join('\n\n'),
+                    },
+                    (progress: PipelineProgress) => this.onPipelineProgress(progress),
+                    { signal: currentAbortSignal },
+                  )
 
-              this._lastStoryboardResult = result
-              this._lastAnalyzedImages = inputImages.map(img => ({ base64: img.data, mimeType: img.mimeType }))
-              this._lastFormattedText = formattedText
-              this._lastJsonText = jsonOutput
-              this.showStoryboardResult(formattedText, jsonOutput)
-              this.onStreamComplete(jsonOutput, modelToUse)
-              this.showToast('分镜分析完成！', 'success')
+                  const { formatStoryboardText } = await import('../services/StoryboardToDirectorAdapter')
+                  const formattedText = formatStoryboardText(result)
+                  const jsonOutput = JSON.stringify(result, null, 2)
 
-              this.isAnalyzing = false
-              return
+                  this._lastStoryboardResult = result
+                  this._lastAnalyzedImages = inputImages.map(img => ({ base64: img.data, mimeType: img.mimeType }))
+                  this._lastFormattedText = formattedText
+                  this._lastJsonText = jsonOutput
+                  this.lastResult = jsonOutput
+
+                  this.showStoryboardResult(formattedText, jsonOutput)
+                  this.showToast('分镜分析完成！', 'success')
+                } catch (err: any) {
+                  if (err?.name === 'AbortError') {
+                    this.showToast('分析已取消', 'warning')
+                  } else {
+                    throw err
+                  }
+                }
+
+                this.isAnalyzing = false
+                return
+              }
             }
           } catch (pipelineError: any) {
-            console.warn('[UnderstandPage] Pipeline failed, falling back to single-pass:', pipelineError.message)
+            console.error('[UnderstandPage] ⚠️ V4 Pipeline failed, falling back to single-pass:', pipelineError.message, pipelineError)
           }
         }
 
@@ -1010,7 +1097,10 @@ export class UnderstandPage extends BasePage {
             const rolePrompt = prompt || ''
             const context = contextText || undefined
 
-            const result = await storyboardService.analyze({ images, rolePrompt, context })
+            const result = await storyboardService.analyze({ images, rolePrompt, context, signal: currentAbortSignal })
+
+            if (currentAbortSignal.aborted) return
+
             const jsonOutput = storyboardService.toJSON(result)
 
             fullResult = jsonOutput
@@ -1052,6 +1142,10 @@ export class UnderstandPage extends BasePage {
         }
       )
     } catch (error: any) {
+      if (error?.name === 'AbortError' || currentAbortSignal.aborted) {
+        console.log('[UnderstandPage] Analysis aborted')
+        return
+      }
       console.error('图像分析失败:', error)
       this.showError(error.message || '分析失败，请重试')
       this.isAnalyzing = false
@@ -1218,8 +1312,13 @@ export class UnderstandPage extends BasePage {
    * Pipeline 完成后展示 Tab 切换结果（格式化文本 / JSON）+ 复制 + 导入按钮
    */
   private showStoryboardResult(formattedText: string, jsonText: string): void {
-    const resultArea = document.getElementById('pipelineResultArea')
-    if (!resultArea) return
+    let resultArea = document.getElementById('pipelineResultArea')
+    if (!resultArea) {
+      const container = this.getElement<HTMLElement>('understandResult')
+      if (!container) return
+      container.innerHTML = '<div id="pipelineResultArea"></div>'
+      resultArea = document.getElementById('pipelineResultArea')!
+    }
 
     this._currentResultTab = 'formatted'
 
@@ -1433,7 +1532,7 @@ export class UnderstandPage extends BasePage {
       const summary = document.createElement('div')
       summary.className = 'p-3 bg-[#09090B] border border-[#3F3F46] rounded-none'
       const displayData = progress.passData.summary || progress.passData.raw
-      const issuesList = progress.passData.raw?.report?.issues
+      const issuesList = (progress.passData.raw as any)?.report?.issues
       const issuesHtml = Array.isArray(issuesList) && issuesList.length > 0
         ? `<ul class="mt-2 text-xs text-amber-300/80 list-disc pl-4">${issuesList.map((issue: string) => `<li>${this.escapeHtml(typeof issue === 'string' ? issue : JSON.stringify(issue))}</li>`).join('')}</ul>`
         : ''
@@ -1593,6 +1692,72 @@ export class UnderstandPage extends BasePage {
   onDeactivate(): void {
     console.log('图像理解页面已停用')
     this.saveState()
+    this.unmountStoryboardReactIfNeeded()
+  }
+
+  private async mountStoryboardReactInResult(reset: boolean): Promise<void> {
+    const resultContainer = this.getElement<HTMLElement>('understandResult')
+    if (!resultContainer) return
+
+    resultContainer.innerHTML = '<div id="storyboard-react-root"></div>'
+    const { mountStoryboardReact } = await import('../react-app/understand/main')
+    const reactRoot = document.getElementById('storyboard-react-root')
+    if (!reactRoot) return
+
+    mountStoryboardReact(reactRoot, { reset })
+    this._storyboardReactMounted = true
+  }
+
+  private isStoryboardRole(role: string | null = this.currentRole): boolean {
+    return role === 'sora-storyboard' || role === 'sora-storyboard-pro' || role === 'storyboard-quick'
+  }
+
+  private getCurrentStoryboardTaskKey(): string {
+    const contextEl = document.getElementById('understandContext') as HTMLTextAreaElement | null
+    const model = this.customModelId || this.currentModel || ''
+    const images = this.uploadedImages.map(img => ({
+      name: img.fileName,
+      size: img.fileSize,
+      mimeType: img.mimeType,
+      compressed: img.compressed,
+    }))
+
+    return JSON.stringify({
+      role: this.currentRole,
+      model,
+      context: contextEl?.value || '',
+      images,
+    })
+  }
+
+  private async remountStoryboardReactIfNeeded(): Promise<void> {
+    if (this._storyboardReactMounted) return
+    if (!this.isStoryboardRole()) return
+
+    const { useStoryboardStore } = await import('../react-app/understand/main')
+    const state = useStoryboardStore.getState()
+    const sameStoryboardTask = this._lastStoryboardTaskKey !== '' &&
+      this._lastStoryboardTaskKey === this.getCurrentStoryboardTaskKey()
+    const hasStoryboardState = sameStoryboardTask && (
+      state.analysisStatus !== 'idle' ||
+      !!state.formattedText ||
+      !!state.jsonText ||
+      !!state.storyboardResult ||
+      !!this._lastStoryboardResult
+    )
+
+    if (!hasStoryboardState) return
+
+    await this.mountStoryboardReactInResult(false)
+  }
+
+  private unmountStoryboardReactIfNeeded(): void {
+    if (this._storyboardReactMounted) {
+      import('../react-app/understand/main').then(({ unmountStoryboardReact }) => {
+        unmountStoryboardReact()
+      })
+      this._storyboardReactMounted = false
+    }
   }
 
   /**
@@ -1638,6 +1803,7 @@ export class UnderstandPage extends BasePage {
    */
   destroy(): void {
     this.saveState()
+    this.unmountStoryboardReactIfNeeded()
     this.uploadedImages = []
     super.destroy()
   }

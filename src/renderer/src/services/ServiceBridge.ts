@@ -1071,15 +1071,26 @@ export async function getLangChainStoryboardService(model?: string): Promise<Lan
 
 /**
  * 获取或创建 Storyboard Pipeline Service 实例（懒加载，8-Pass 管线）
- * 支持 useDeepAgentPipeline flag 切换新旧架构
+ * 支持 useDeepAgentPipeline / useDeepAgentV3 flag 切换架构
  */
-let _pipelineInstance: import('./storyboard-pipeline/StoryboardProPipeline').StoryboardProPipeline | import('./storyboard-pipeline/StoryboardDeepAgentPipeline').StoryboardDeepAgentPipeline | null = null
+let _pipelineInstance:
+  | import('./storyboard-pipeline/StoryboardV4Pipeline').StoryboardV4Pipeline
+  | import('./storyboard-pipeline/StoryboardProPipeline').StoryboardProPipeline
+  | import('./storyboard-pipeline/StoryboardDeepAgentPipeline').StoryboardDeepAgentPipeline
+  | import('./storyboard-pipeline/StoryboardDeepAgentV3Pipeline').StoryboardDeepAgentV3Pipeline
+  | null = null
 let _pipelineCacheKey: string | null = null
 
 export async function getStoryboardPipelineService(
   model?: string,
-  opts?: { useDeepAgentPipeline?: boolean },
-): Promise<import('./storyboard-pipeline/StoryboardProPipeline').StoryboardProPipeline | import('./storyboard-pipeline/StoryboardDeepAgentPipeline').StoryboardDeepAgentPipeline | null> {
+  opts?: { useDeepAgentPipeline?: boolean; useDeepAgentV3?: boolean; useV4?: boolean },
+): Promise<
+  | import('./storyboard-pipeline/StoryboardV4Pipeline').StoryboardV4Pipeline
+  | import('./storyboard-pipeline/StoryboardProPipeline').StoryboardProPipeline
+  | import('./storyboard-pipeline/StoryboardDeepAgentPipeline').StoryboardDeepAgentPipeline
+  | import('./storyboard-pipeline/StoryboardDeepAgentV3Pipeline').StoryboardDeepAgentV3Pipeline
+  | null
+> {
   const api = (window as any).aiImageAPI
   const apiKey = api?.visionApiKey as string | undefined
   if (!apiKey) return null
@@ -1088,11 +1099,20 @@ export async function getStoryboardPipelineService(
   const baseURL = site?.baseURL as string | undefined
   if (!baseURL) return null
 
+  const useV4 = opts?.useV4 ?? true
+  const useV3 = opts?.useDeepAgentV3 ?? false
   const useDeep = opts?.useDeepAgentPipeline ?? false
-  const cacheKey = `pipeline|${apiKey}|${baseURL}|${model || ''}|${useDeep ? 'deep' : 'pro'}`
+  const variant = useV4 ? 'v4' : useV3 ? 'v3' : useDeep ? 'deep' : 'pro'
+  const cacheKey = `pipeline|${apiKey}|${baseURL}|${model || ''}|${variant}`
   if (!_pipelineInstance || _pipelineCacheKey !== cacheKey) {
-    const pipelineConfig = { apiKey, baseURL, model: model || 'gemini-3-pro-preview' }
-    if (useDeep) {
+    const pipelineConfig = { apiKey, baseURL, model: model || 'gemini-3-flash-preview' }
+    if (useV4) {
+      const { StoryboardV4Pipeline } = await import('./storyboard-pipeline/StoryboardV4Pipeline')
+      _pipelineInstance = new StoryboardV4Pipeline(pipelineConfig)
+    } else if (useV3) {
+      const { StoryboardDeepAgentV3Pipeline } = await import('./storyboard-pipeline/StoryboardDeepAgentV3Pipeline')
+      _pipelineInstance = new StoryboardDeepAgentV3Pipeline(pipelineConfig)
+    } else if (useDeep) {
       const { StoryboardDeepAgentPipeline } = await import('./storyboard-pipeline/StoryboardDeepAgentPipeline')
       _pipelineInstance = new StoryboardDeepAgentPipeline(pipelineConfig)
     } else {
@@ -1100,7 +1120,7 @@ export async function getStoryboardPipelineService(
       _pipelineInstance = new StoryboardProPipeline(pipelineConfig)
     }
     _pipelineCacheKey = cacheKey
-    console.log(`[ServiceBridge] ✓ Storyboard Pipeline 实例已创建 (${useDeep ? 'DeepAgent' : 'StoryboardPro v2'} 8-Pass), model:`, model || 'default')
+    console.log(`[ServiceBridge] ✓ Pipeline: ${variant}, model:`, model || 'default')
   }
   return _pipelineInstance
 }
