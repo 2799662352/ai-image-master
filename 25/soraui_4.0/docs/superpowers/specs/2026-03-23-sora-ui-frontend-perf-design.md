@@ -20,9 +20,7 @@ Sora UI (`sora-ui`) 前端 Web 应用在持续使用 1-2 小时后出现明显�
 - Zustand 5（状态管理，带 persist 中间件）
 - SSE（EventSource，实时任务更新）
 - localStorage（taskTokenManager 持久化）
-- 腾讯云 COS（已接入，`cosCompressionService.ts` + `assetStorageService.ts`，S3 兼容 API）
-- Cloudflare R2（已接入，`r2StorageService.ts`，Presigned URL 模式，支持 `THUMBNAIL` sourceType）
-- 后端已有 `POST /api/r2/migrate/batch` 接口支持 base64 批量迁移到云端
+- 腾讯云 COS（已接入，`cosCompressionService.ts` + `assetStorageService.ts`，S3 兼容 API，base64 直传 + 自动压缩）
 
 ## 根因分析
 
@@ -99,22 +97,28 @@ localStorage 写入改为 debounced write-back：
 - `taskTokenManager.ts` — 新增 `scheduleSave()` 方法（1 秒 debounce）
 - 保留任务完成/取消时的立即写入
 
-#### P0-2: `thumbnailBase64` 迁移到云端存储（COS/R2）
+#### P0-2: `thumbnailBase64` 迁移到腾讯云 COS
 
-**原理：** 缩略图从 localStorage 内联 base64 改为上传到云端，token 中只存 URL。
+**原理：** 缩略图从 localStorage 内联 base64 改为上传到腾讯云 COS，token 中只存 URL。
 
 **已有基础设施（无需新建后端接口）：**
-- `cosCompressionService.ts` — 腾讯云 COS，S3 兼容 API，base64 直传 + 自动压缩
-- `assetStorageService.ts` — 资产存储服务，`parseBase64()` + `PutObjectCommand` 直传
-- `r2StorageService.ts` — Cloudflare R2，Presigned URL 模式
-- `POST /api/r2/migrate/batch` — 已有批量迁移接口，接受 `{ localId, base64Data, sourceType: 'THUMBNAIL' }`
+- `cosCompressionService.ts` — 腾讯云 COS，S3 兼容 API，`PutObjectCommand` 直传
+- `assetStorageService.ts` — `parseBase64()` 解析 base64 为 Buffer + MIME，直传 COS
+- COS 桶：`map-tiles-bucket-1345773498`，区域 `ap-guangzhou`，Presigned URL 有效期 7 天
+- 环境变量：`COS_REGION`、`COS_BUCKET`、`COS_SECRET_ID`、`COS_SECRET_KEY`（已配置）
 
 **改动范围：**
 
-新建缩略图时（Remix、参考图生成时）：
-- 生成 base64 缩略图后，调用 `POST /api/r2/migrate/batch`（单条）上传到 R2/COS
-- 将返回的 `publicUrl` 存入 token 的 `thumbnailUrl` 字段（新字段，替代 `thumbnailBase64`）
+后端新增一个轻量路由（复用 `assetStorageService` 逻辑）：
+- `POST /api/cos/thumbnail` — 接受 `{ taskId, base64Data }`，上传到 COS `thumbnails/{userId}/{taskId}.jpg`
+- 返回 `{ url: 'https://{bucket}.cos.{region}.myqcloud.com/thumbnails/...' }`
+- 复用 `parseBase64()` + `PutObjectCommand`，约 15 行代码
+
+前端 — 新建缩略图时（Remix、参考图生成时）：
+- 生成 base64 缩略图后，调用 `POST /api/cos/thumbnail` 上传到 COS
+- 将返回的 URL 存入 token 的 `thumbnailUrl` 字段（新字段，替代 `thumbnailBase64`）
 - 内存 `thumbnailCache` 继续作为热缓存（避免重复网络请求）
+- 上传失败时降级为不存缩略图（不阻塞主流程）
 
 `extractToken()` 修改：
 - 不再复制 `thumbnailBase64` 到 token
@@ -129,13 +133,14 @@ UI 层修改：
 - 都没有时显示灰色占位符
 
 **首次部署迁移：** `taskTokenManager.recoverTasks()` 中增加一次性迁移：
-1. 读取 tokens，检测含 `thumbnailBase64` 的条目
-2. 后台批量调用 `/api/r2/migrate/batch` 上传到云端
+1. 读取 tokens，筛选含 `thumbnailBase64` 的条目
+2. 后台批量调用 `POST /api/cos/thumbnail` 上传到腾讯云 COS
 3. 将返回的 URL 写入 `thumbnailUrl`，strip `thumbnailBase64`
 4. 重写 localStorage
+5. 迁移在后台静默执行，不阻塞首屏渲染
 
 **效果：** token 体积从 ~50KB/条 降到 ~1KB/条。localStorage 从 25MB 降到 500KB。
-刷新后缩略图仍可显示（通过 `thumbnailUrl` 从 COS/R2 加载）。
+刷新后缩略图仍可显示（通过 `thumbnailUrl` 从腾讯云 COS 加载，浏览器自动缓存）。
 
 #### P0-3: Zustand selector 修复
 
@@ -194,7 +199,7 @@ App.tsx 中的 60 秒 URL 检查器和 5 分钟自动保存，在 `document.hidd
 ## 关键决策
 
 1. **写入防抖而非取消写入** — 保证数据最终一致性，关键状态立即持久化
-2. **缩略图直接上 COS/R2** — 后端已有完整的上传/迁移 API，无需新建接口，一步到位
+2. **缩略图直接上腾讯云 COS** — 后端已有 COS S3 兼容 API 集成，复用现有逻辑
 3. **使用 Zustand selector/useShallow 而非重构 store** — 最小改动，遵循官方推荐
 4. **P0 每个修复点独立可验证** — 逐个实施，每个都能量化效果
 
