@@ -116,15 +116,16 @@ localStorage 写入改为 debounced write-back：
 **改动范围：**
 
 后端新增一个轻量路由（复用 `assetStorageService` 逻辑）：
-- `POST /api/cos/thumbnail` — 接受 `{ taskId, base64Data }`，上传到 COS `thumbnails/{userId}/{taskId}.jpg`
-- 返回 `{ url: 'https://{bucket}.cos.{region}.myqcloud.com/thumbnails/...' }`
+- `POST /api/cos/thumbnail` — 接受 `{ taskId, base64Data }`，用 `uploadAsset()` 直传原图到 COS
+- 返回 `{ url: 'https://{bucket}.cos.{region}.myqcloud.com/thumbnails/...', thumbnailUrl: '...?imageMogr2/thumbnail/200x200' }`
 - 复用 `parseBase64()` + `PutObjectCommand`，约 15 行代码
 
 前端 — 新建缩略图时（Remix、参考图生成时）：
-- 生成 base64 缩略图后，调用 `POST /api/cos/thumbnail` 上传到 COS
-- 将返回的 URL 存入 token 的 `thumbnailUrl` 字段（新字段，替代 `thumbnailBase64`）
+- 直接将参考图原图 base64 发送到后端（不再前端 Canvas 缩略），由 COS `imageMogr2` 自动生成缩略图
+- 将返回的 `thumbnailUrl`（含 `?imageMogr2/thumbnail/200x200` 参数）存入 token
 - 内存 `thumbnailCache` 继续作为热缓存（避免重复网络请求）
 - 上传失败时降级为不存缩略图（不阻塞主流程）
+- 前端删除 App.tsx 第 2112-2130 行的 Canvas 缩略图生成代码
 
 `extractToken()` 修改：
 - 不再复制 `thumbnailBase64` 到 token
