@@ -37,16 +37,21 @@ SSE event → App.tsx onTaskUpdate → taskTokenManager.updateTask()
                               写入 localStorage
 ```
 
-token 数组中嵌有 `thumbnailBase64`（每条 25-50KB）。500 条记录 ≈ 25MB JSON。
-SSE 每秒推送 2-3 次 = **每秒 50-75MB JSON 序列化阻塞主线程**。
+token 数组中部分条目嵌有 `thumbnailBase64`（Remix 参考图缩略图，每条 25-50KB）。
+不含 thumbnailBase64 时：500 条 × ~1KB ≈ 500KB；含 50 条 Remix 缩略图时：≈ 2-3MB。
+SSE 每秒推送 2-3 次 = **每秒数 MB JSON 序列化阻塞主线程**。
 
 随着任务积累，序列化开销线性增长，这就是"用久了变卡"的直接原因。
 
 ### #2 `thumbnailBase64` 嵌入 token 放大序列化开销
 
 `TaskToken` 接口（`taskToken.ts` 第 78 行）包含 `thumbnailBase64?: string`。
-`extractToken()` 会将每个任务的 base64 缩略图复制到 token 中并持久化到 localStorage。
-这使得每次 `taskTokenManager` 的读写操作都包含大量无用的 base64 数据。
+这个字段是 **Remix 任务的参考图缩略图**（用户上传参考图后，Canvas 缩小到 200px 宽导出的 JPEG base64）。
+**只有带参考图的 Remix 任务才有此字段**，不是所有任务都有。
+
+但含有此字段的 token 体积会从 ~1KB 膨胀到 25-50KB（一张 200px JPEG 的 base64 约 25-50KB）。
+如果用户频繁使用 Remix，localStorage 中的 token 体积会显著增大。
+即使只有 50 条 Remix 任务含 thumbnailBase64，也会增加 1-2.5MB 的序列化开销。
 
 ### #3 Zustand 无 selector 订阅导致级联重渲染
 
@@ -139,8 +144,8 @@ UI 层修改：
 4. 重写 localStorage
 5. 迁移在后台静默执行，不阻塞首屏渲染
 
-**效果：** token 体积从 ~50KB/条 降到 ~1KB/条。localStorage 从 25MB 降到 500KB。
-刷新后缩略图仍可显示（通过 `thumbnailUrl` 从腾讯云 COS 加载，浏览器自动缓存）。
+**效果：** 含缩略图的 Remix token 从 ~50KB/条 降到 ~1KB/条。localStorage 整体回到 500KB 级别。
+刷新后 Remix 参考图缩略图仍可显示（通过 `thumbnailUrl` 从腾讯云 COS 加载，浏览器自动缓存）。
 
 #### P0-3: Zustand selector 修复
 
