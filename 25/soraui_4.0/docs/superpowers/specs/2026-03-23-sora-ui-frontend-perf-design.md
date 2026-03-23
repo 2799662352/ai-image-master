@@ -98,18 +98,19 @@ localStorage 写入改为 debounced write-back：
 如果用户在多个标签页打开，以最后活跃标签页的写入为准（last-writer-wins）。
 
 **改动范围：**
-- `App.tsx` — SSE `onTaskUpdate` 中移除 `taskTokenManager.updateTask()` 调用（生成中状态）
-- `taskTokenManager.ts` — 新增 `scheduleSave()` 方法（1 秒 debounce）
-- 保留任务完成/取消时的立即写入
+- `App.tsx` — SSE `onTaskUpdate` 中移除第 416 行 `taskTokenManager.updateTask()` 调用（生成中状态）
+- `App.tsx` — `setTaskTokens` updater 返回新数组时，调用 `taskTokenManager.scheduleSave(newTokens)`
+- `taskTokenManager.ts` — 新增 `scheduleSave(tokens)` 方法（1 秒 debounce，合并多次调用）
+- 保留任务完成/取消时的立即写入（第 385 行）
 
 #### P0-2: `thumbnailBase64` 迁移到腾讯云 COS
 
 **原理：** 缩略图从 localStorage 内联 base64 改为上传到腾讯云 COS，token 中只存 URL。
 
 **已有基础设施（无需新建后端接口）：**
-- `cosCompressionService.ts` — 腾讯云 COS，S3 兼容 API，`PutObjectCommand` 直传
-- `assetStorageService.ts` — `parseBase64()` 解析 base64 为 Buffer + MIME，直传 COS
-- COS 桶：`map-tiles-bucket-1345773498`，区域 `ap-guangzhou`，Presigned URL 有效期 7 天
+- `assetStorageService.ts` — `parseBase64()` 解析 base64 为 Buffer + MIME，`uploadAsset()` 直传 COS 并返回**公开永久 URL**（非 presigned，不过期）
+- `buildThumbnailUrl()` — COS 数据万象 imageMogr2 缩略图能力（可选优化）
+- COS 桶：`map-tiles-bucket-1345773498`，区域 `ap-guangzhou`，公开读访问
 - 环境变量：`COS_REGION`、`COS_BUCKET`、`COS_SECRET_ID`、`COS_SECRET_KEY`（已配置）
 
 **改动范围：**
@@ -183,7 +184,7 @@ UI 层修改：
 #### P1-3: 无用代码移除
 
 - `useMemoryLifecycle` — 从 VideoHistory 中移除调用（或删除整个 hook）
-- 生产环境禁用 `useMemoryMonitor` 的 30 秒 setInterval
+- `useMemoryMonitor` — 确认未被任何组件引用，可从 `useMemoryLifecycle.ts` 中删除这个未使用的导出
 
 #### P1-4: 定时器 + Page Visibility API
 
