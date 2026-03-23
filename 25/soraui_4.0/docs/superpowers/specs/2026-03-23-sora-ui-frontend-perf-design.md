@@ -20,7 +20,9 @@ Sora UI (`sora-ui`) 前端 Web 应用在持续使用 1-2 小时后出现明显�
 - Zustand 5（状态管理，带 persist 中间件）
 - SSE（EventSource，实时任务更新）
 - localStorage（taskTokenManager 持久化）
-- 腾讯云 COS 桶可用（未接入）
+- 腾讯云 COS（已接入，`cosCompressionService.ts` + `assetStorageService.ts`，S3 兼容 API）
+- Cloudflare R2（已接入，`r2StorageService.ts`，Presigned URL 模式，支持 `THUMBNAIL` sourceType）
+- 后端已有 `POST /api/r2/migrate/batch` 接口支持 base64 批量迁移到云端
 
 ## 根因分析
 
@@ -97,28 +99,43 @@ localStorage 写入改为 debounced write-back：
 - `taskTokenManager.ts` — 新增 `scheduleSave()` 方法（1 秒 debounce）
 - 保留任务完成/取消时的立即写入
 
-#### P0-2: `thumbnailBase64` 从 localStorage token 中移除
+#### P0-2: `thumbnailBase64` 迁移到云端存储（COS/R2）
 
-**原理：** 缩略图只保留在内存 `thumbnailCache`（已有 LRU 缓存，上限 100）。
-localStorage 中的 token 不再包含 `thumbnailBase64` 字段。
+**原理：** 缩略图从 localStorage 内联 base64 改为上传到云端，token 中只存 URL。
+
+**已有基础设施（无需新建后端接口）：**
+- `cosCompressionService.ts` — 腾讯云 COS，S3 兼容 API，base64 直传 + 自动压缩
+- `assetStorageService.ts` — 资产存储服务，`parseBase64()` + `PutObjectCommand` 直传
+- `r2StorageService.ts` — Cloudflare R2，Presigned URL 模式
+- `POST /api/r2/migrate/batch` — 已有批量迁移接口，接受 `{ localId, base64Data, sourceType: 'THUMBNAIL' }`
 
 **改动范围：**
-- `extractToken()` — 不再复制 `thumbnailBase64` 到 token
-- `taskTokenManager.saveTasks()` — 写入前 strip `thumbnailBase64`
-- UI 层读取缩略图改为从 `thumbnailCache.get(taskId)` 获取
 
-**效果：** token 体积从 ~50KB/条 降到 ~1KB/条。500 条从 25MB 降到 500KB。
-序列化开销降低 98%。
+新建缩略图时（Remix、参考图生成时）：
+- 生成 base64 缩略图后，调用 `POST /api/r2/migrate/batch`（单条）上传到 R2/COS
+- 将返回的 `publicUrl` 存入 token 的 `thumbnailUrl` 字段（新字段，替代 `thumbnailBase64`）
+- 内存 `thumbnailCache` 继续作为热缓存（避免重复网络请求）
 
-**刷新后缩略图行为：** 刷新页面后内存 LRU 缓存清空，缩略图显示为占位符（灰色图标）。
-这是可接受的降级 — 缩略图仅用于参考图预览，不影响核心功能（视频播放、任务管理）。
-用户点击任务时仍可从完整任务数据中重新加载参考图。
+`extractToken()` 修改：
+- 不再复制 `thumbnailBase64` 到 token
+- 新增 `thumbnailUrl` 字段传递
 
-**首次部署迁移：** `taskTokenManager.recoverTasks()` 中增加一次性 strip 逻辑：
-读取 tokens 后如果检测到 `thumbnailBase64` 字段，将其移入内存 `thumbnailCache` 并立即重写
-localStorage（不含 thumbnailBase64）。只在首次加载执行一次。
+`taskTokenManager.saveTasks()` 修改：
+- 写入 localStorage 前 strip `thumbnailBase64` 字段
 
-**未来路线：** 第二阶段接入腾讯云 COS，生成任务时上传缩略图获取 URL，token 中存 `thumbnailUrl` 替代 base64。
+UI 层修改：
+- 优先用 `thumbnailUrl`（`<img src={thumbnailUrl}>`，浏览器自动缓存）
+- 其次用 `thumbnailCache.get(taskId)`（内存热缓存）
+- 都没有时显示灰色占位符
+
+**首次部署迁移：** `taskTokenManager.recoverTasks()` 中增加一次性迁移：
+1. 读取 tokens，检测含 `thumbnailBase64` 的条目
+2. 后台批量调用 `/api/r2/migrate/batch` 上传到云端
+3. 将返回的 URL 写入 `thumbnailUrl`，strip `thumbnailBase64`
+4. 重写 localStorage
+
+**效果：** token 体积从 ~50KB/条 降到 ~1KB/条。localStorage 从 25MB 降到 500KB。
+刷新后缩略图仍可显示（通过 `thumbnailUrl` 从 COS/R2 加载）。
 
 #### P0-3: Zustand selector 修复
 
@@ -165,13 +182,7 @@ App.tsx 中的 60 秒 URL 检查器和 5 分钟自动保存，在 `document.hidd
 
 ### P2 — 持久化数据优化
 
-#### P2-1: 腾讯云 COS 集成（缩略图）
-
-在后端新增 COS 上传接口。前端生成任务时将缩略图上传到 COS，
-token 中存 `thumbnailUrl`（COS URL）替代 base64。
-浏览器用 `<img src={thumbnailUrl}>` 懒加载，自带缓存。
-
-#### P2-2: `getAllHistoryFlat()` 按需加载
+#### P2-1: `getAllHistoryFlat()` 按需加载
 
 将启动时/登录时的全量加载改为从 `taskTokens` + 按需 `getTaskById()` 获取。
 影响 3 处一次性调用（启动清理、登录同步、任务恢复）。
@@ -183,7 +194,7 @@ token 中存 `thumbnailUrl`（COS URL）替代 base64。
 ## 关键决策
 
 1. **写入防抖而非取消写入** — 保证数据最终一致性，关键状态立即持久化
-2. **先从 localStorage 移除 thumbnailBase64，COS 后续再接** — 分两步降低风险
+2. **缩略图直接上 COS/R2** — 后端已有完整的上传/迁移 API，无需新建接口，一步到位
 3. **使用 Zustand selector/useShallow 而非重构 store** — 最小改动，遵循官方推荐
 4. **P0 每个修复点独立可验证** — 逐个实施，每个都能量化效果
 
