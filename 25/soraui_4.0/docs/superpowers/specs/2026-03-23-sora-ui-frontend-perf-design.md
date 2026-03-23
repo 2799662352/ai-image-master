@@ -87,6 +87,10 @@ localStorage 写入改为 debounced write-back：
 - 1 秒 debounce 后批量写入 localStorage
 - 任务完成/失败/取消时立即写入（关键状态不丢失）
 - `beforeunload` 时同步写入（已有）
+- 进程崩溃/OOM kill 最多丢失最近 1 秒的 generating 中间状态（可接受，SSE 重连后恢复）
+
+**多标签页策略：** 当前产品为单标签页使用模式。不增加跨标签页同步机制（YAGNI）。
+如果用户在多个标签页打开，以最后活跃标签页的写入为准（last-writer-wins）。
 
 **改动范围：**
 - `App.tsx` — SSE `onTaskUpdate` 中移除 `taskTokenManager.updateTask()` 调用（生成中状态）
@@ -106,6 +110,14 @@ localStorage 中的 token 不再包含 `thumbnailBase64` 字段。
 **效果：** token 体积从 ~50KB/条 降到 ~1KB/条。500 条从 25MB 降到 500KB。
 序列化开销降低 98%。
 
+**刷新后缩略图行为：** 刷新页面后内存 LRU 缓存清空，缩略图显示为占位符（灰色图标）。
+这是可接受的降级 — 缩略图仅用于参考图预览，不影响核心功能（视频播放、任务管理）。
+用户点击任务时仍可从完整任务数据中重新加载参考图。
+
+**首次部署迁移：** `taskTokenManager.recoverTasks()` 中增加一次性 strip 逻辑：
+读取 tokens 后如果检测到 `thumbnailBase64` 字段，将其移入内存 `thumbnailCache` 并立即重写
+localStorage（不含 thumbnailBase64）。只在首次加载执行一次。
+
 **未来路线：** 第二阶段接入腾讯云 COS，生成任务时上传缩略图获取 URL，token 中存 `thumbnailUrl` 替代 base64。
 
 #### P0-3: Zustand selector 修复
@@ -117,14 +129,24 @@ localStorage 中的 token 不再包含 `thumbnailBase64` 字段。
 
 #### P0-4: SSE `setTaskTokens` 变化检测
 
-在 `setTaskTokens` updater 函数中，找到匹配任务后，比较关键字段（status、progress、video_url、image_url）是否真的发生了变化。无变化时 `return prev`。
+在 `setTaskTokens` updater 函数中，找到匹配任务后，比较以下字段是否有实际变化：
+
+- `status` — 严格相等 (`===`)
+- `progress` — 严格相等
+- `video_url` — 严格相等
+- `image_url` — 严格相等
+- `error` — 严格相等
+
+如果以上 5 个字段全部无变化，直接 `return prev`。不比较其他字段（如 referenceImageUrls 数组），
+避免引用比较陷阱。这 5 个字段覆盖了所有影响 UI 渲染的关键状态。
 
 ### P1 — 资源泄漏修复
 
 #### P1-1: Set/Ref 清理
 
 - `recoveredTasksRef` — 当无 `generating` 任务时 `clear()`
-- `processedEventsRef` — 超过 100 时直接 `clear()`（旧事件不可能重复）
+- `processedEventsRef` — 改为 Map<string, number>（key→时间戳），超过 100 条时删除 5 分钟前的旧条目。
+  不做无条件 `clear()`，因为 SSE 重连后服务端可能重放近期事件，需要保留近期事件 ID 用于去重。
 - `observedIdsRef` / `loadedImagesRef` — 组件卸载时 `clear()`
 
 #### P1-2: 重复 Ctrl+S 监听器
@@ -167,11 +189,30 @@ token 中存 `thumbnailUrl`（COS URL）替代 base64。
 
 ## 验证方式
 
-每个 P0 修复实施后，用以下方式验证：
-1. Chrome DevTools Performance 面板录制 5 分钟 SSE 活动期间的 CPU 占用
-2. Chrome DevTools Memory 面板观察 heap size 增长曲线
-3. `performance.measureUserAgentSpecificMemory()` 测量总内存（web.dev 推荐）
-4. localStorage 体积对比（DevTools Application 面板）
+### 基线指标（修复前先测量）
+
+| 指标 | 测量方法 | 预期修复前值 |
+|------|---------|------------|
+| localStorage `taskRecovery` 体积 | DevTools Application → Local Storage | ≥ 5MB (500条含 thumbnail) |
+| 5 分钟 SSE 活跃期 Long Task (>50ms) 次数 | DevTools Performance 面板录制 | 高频出现 |
+| JS Heap 2 小时增长量 | DevTools Memory → Heap snapshot 对比 | 持续增长 |
+| SSE 更新时主线程阻塞时长 | Performance 面板单个 task 追踪 | 50-200ms/次 |
+
+### 修复后验收标准
+
+| 指标 | 通过条件 |
+|------|---------|
+| localStorage `taskRecovery` 体积 | < 500KB (500条不含 thumbnail) |
+| 5 分钟 SSE 活跃期 Long Task 次数 | 减少 80%+ |
+| JS Heap 2 小时增长量 | < 10MB 增长（排除浏览器自身开销） |
+| SSE 更新时主线程阻塞时长 | < 5ms/次 |
+
+### 测试环境
+
+- 同一台机器、同一浏览器版本
+- 预填充 500 条历史任务
+- 模拟 SSE 推送（每秒 2-3 条 taskUpdate 事件）
+- 持续运行 2 小时后测量
 
 ## 不做的事情（YAGNI）
 
