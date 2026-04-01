@@ -33,9 +33,10 @@ topic: sora-ui-media-editor-ux
 - **使用 `@dnd-kit/react` 和 `@dnd-kit/helpers`**：作为拖拽排序的基础库，因其 Hooks API 与现有组件契合度高，且支持复杂的 Stacking Context（层叠上下文）下的拖拽。
 - **拆分 `SortableMediaItem` 组件**：将单个可拖拽的媒体卡片抽离为独立组件，保持 `JimengStyleEditor` 的代码清晰，遵循单一职责原则。
 - **底部工具栏统一入口**：将"上传/素材库/人像库"的入口统一移至底部工具栏最左侧的 `+` 按钮，无论当前是否有媒体，均可一键呼出添加菜单。
-- **无上限的堆叠展示**：移除 `slice(0, 6)` 限制，利用 CSS 变量和展开动画，让所有媒体在 hover 时平铺可见，并在此状态下直接支持拖拽排序。
-- **右键上下文菜单（Context Menu）切换角色**：为了不破坏卡片的视觉整洁度，将"设为首帧/尾帧"等角色切换操作放入卡片的右键菜单中。
-- **Popover 网格化**：将 `jm-media-list` 改为 `display: grid; grid-template-columns: repeat(4, 64px);`，避免横向无尽滚动。
+- **全局拖拽响应（解决空状态拖拽问题）**：当左侧堆叠区为空时，整个 `JimengStyleEditor` 容器（或输入框区域）作为 Drop Zone，用户拖入文件时高亮提示，松手即上传。
+- **无上限的堆叠展示与性能保护**：移除 `slice(0, 6)` 限制，但在视觉上最多只展开前 20 张卡片（防止 DOM 过多导致动画卡顿），超出的在 Popover 中管理。
+- **右键上下文菜单（Context Menu）切换角色**：将"设为首帧/尾帧"等角色切换操作放入卡片的右键菜单中。切换为首/尾帧后，该媒体会自动移入对应的专属槽位（`jm-fl-panel`），从参考堆叠中消失，状态一目了然。
+- **Popover 网格化与删除**：将 `jm-media-list` 改为 `display: grid; grid-template-columns: repeat(4, 64px);`。Popover 内的每张卡片右上角保留原有的 `X` 删除按钮，纯粹作为媒体管理面板。
 
 ## UI/UX Pro Max 设计规范 (Applied)
 - **交互反馈**：所有可点击元素必须包含 `cursor-pointer`。Hover 状态采用平滑过渡（`transition: all 0.2s ease`）。
