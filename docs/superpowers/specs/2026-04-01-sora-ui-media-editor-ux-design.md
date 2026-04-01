@@ -30,23 +30,29 @@ topic: sora-ui-media-editor-ux-v2
 
 ### 1. 堆叠态（折叠）
 
-卡片使用伪随机旋转角，基于 index 产生不均匀的散牌效果：
+卡片使用伪随机旋转和偏移，基于 index 产生不均匀的散牌效果：
 
 ```
-角度计算: rotation = ((index * 7 + 3) % 11 - 5) * 1.5
-  → index 0: -3°
-  → index 1: 7.5°
-  → index 2: -1.5°
-  → index 3: 4.5°  ...每张都不同
+旋转: rotation = ((index * 7 + 3) % 11 - 5) * 1.5
+  → index 0: -3°, index 1: 7.5°, index 2: -1.5°, index 3: 4.5°
+
+水平偏移: tx = ((index * 5 + 2) % 7 - 3) * 1.5
+  → index 0: 1.5px, index 1: 0px, index 2: -1.5px, index 3: 4.5px
+
+垂直偏移: ty = ((index * 3 + 1) % 5 - 2) * 1.5
+  → index 0: 0px, index 1: -1.5px, index 2: 1.5px, index 3: 0px
 ```
 
-偏移量也使用类似方式计算，避免规律感。
+公式确保相同 index 始终渲染一致。折叠态最多渲染前 **20** 张卡片的堆叠层（视觉上只看到最上面几张），超过 20 张显示 `+N` badge。
 
 ### 2. 展开态（hover 堆叠区域）
 
-hover `.jm-media-trigger` 时，所有卡片平铺为一行：
+hover `.jm-media-trigger` 时，**所有**卡片平铺为一行（移除原 `slice(0, 6)` 限制）：
 - 旋转归零 `rotate(0deg)`
 - 水平排列 `left: calc(index * 54px)`
+- 容器宽度 `calc(allMedia.length * 54px + 70px)`（含末尾 `+` 卡片）
+- `max-width: none`，允许超出触发 `jm-editor-top` 的 flex 布局自适应
+- 如果卡片数量过多导致超宽，容器设置 `overflow-x: auto` 允许横滚（但预期日常 <10 张，不会触发）
 - 最后追加一个 `+` 卡片（与媒体卡同尺寸 60x80px），虚线边框
 
 每张媒体卡片 hover 时：
@@ -86,24 +92,46 @@ Popover 竖排 3 个选项，每个高 40px，总高度固定。无横滚、无�
 | 删除按钮出现 | opacity + scale | `0.15s ease` |
 | hover 卡片 | box-shadow 加深 | `0.2s ease` |
 
+## Interaction Matrix
+
+| 触发元素 | 动作 | 结果 |
+|----------|------|------|
+| 空状态虚线框 (`jm-empty-box`) | click | 打开添加 Popover（上传/素材库/人像库） |
+| 折叠态右下角小 `+` (`jm-stack-plus`) | click + `stopPropagation` | 打开添加 Popover |
+| 堆叠区域 (`jm-media-trigger`) | hover | 卡片展开平铺 |
+| 展开态单张卡片 | click | 预览该媒体（图片大图、视频封面） |
+| 展开态单张卡片 | hover | 左上角显示 `X` 删除按钮 |
+| 展开态 `X` 按钮 | click + `stopPropagation` | 删除该媒体，调用 `removeMedia()` |
+| 展开态末尾 `+` 卡片 | click + `stopPropagation` | 打开添加 Popover |
+| 底部 `+` pill | click | 打开添加 Popover（`placement="topLeft"`） |
+| 添加 Popover 内选项 | click 上传/素材库/人像库 | 执行对应操作，**成功后自动关闭 Popover** |
+
+**`text2video` 模式**：顶部无媒体区，底部 `+` pill 隐藏（`text2video` 不需要媒体参考）。
+
+**`first_frame` / `first_last_frame` 模式**：使用现有 `jm-fl-panel`，不受本次改动影响。底部 `+` pill 也隐藏。
+
+底部 `+` pill 仅在以下模式显示：`reference_images`、`multimodal_ref`、`edit_video`、`extend_video`。
+
 ## Key Decisions
 
 - **不引入 @dnd-kit** — 本次只做"展开+删除+添加"的体验优化，拖拽排序作为 Phase 2 单独设计。YAGNI 原则，避免过度工程化。
-- **Popover 只做添加** — 所有管理操作在展开态完成。Popover 回归轻量。
+- **Popover 只做添加** — 所有管理操作（删除、预览）在展开态完成。Popover 回归轻量，成功添加后自动关闭。
 - **`+` 卡片内联在展开态** — 不需要额外的浮动按钮，`+` 就是最后一张卡片，点击触发 Popover。
+- **折叠态小 `+` 保留** — 折叠态右下角的小 `+` 圆按钮保留，与展开态末尾的 `+` 卡片是同一个 Popover 的不同触发点。
 - **伪随机旋转而非真随机** — 使用确定性公式（基于 index），保证每次渲染视觉一致。
 - **X 在左上角** — 参照即梦设计，左上角比右上角更不容易误触（因为卡片展开方向是向右）。
-- **保留 `jm-stack-plus` 小圆按钮** — 折叠态右下角的小 `+` 仍然保留，作为折叠态的视觉提示。
+- **图片替换 (drag-replace) 移至 Phase 2** — 当前 Popover 内的拖拽替换功能随网格移除而消失，在 Phase 2 的拖拽排序中一并实现。
 
 ## Scope
 
-| 范围内 | 范围外 |
+| 范围内 | 范围外 (Phase 2) |
 |--------|--------|
-| Popover 内容精简 | 拖拽排序 (Phase 2) |
-| 展开态删除按钮 | 右键角色切换 (Phase 2) |
-| 伪随机旋转角度 | 外部文件拖入上传 (Phase 2) |
-| 底部 + pill 按钮 | 触屏长按支持 (Phase 2) |
-| 展开/折叠弹性动画 | 首帧/尾帧模式改动 |
+| Popover 内容精简为纯添加 | 拖拽排序 (@dnd-kit) |
+| 展开态删除按钮（左上角 X） | 右键角色切换（首帧/尾帧） |
+| 伪随机旋转角度 + 偏移 | 外部文件拖入上传 |
+| 底部 + pill 按钮 | 触屏长按支持 |
+| 展开/折叠弹性动画 | 图片拖拽替换 (drag-replace) |
+| 展开态显示全部卡片（无6张限制） | 首帧/尾帧模式改动 |
 
 ## Files to Modify
 
