@@ -254,57 +254,18 @@ Replace from the outer `<Popover` (line 611) through its closing `</Popover>` (l
 - Delete button uses `stopPropagation` on both `onClick` and `onPointerDown` to avoid triggering preview or Popover.
 - `draggable={false}` on images prevents native drag interfering with future @dnd-kit work.
 
-- [ ] **Step 2: Add CSS for `.jm-stack-delete`**
+- [ ] **Step 2: Verify JSX structure**
 
-Add after `.jm-stack-plus` block in CSS:
+Expected: No syntax errors after replacement. The JSX is complete and self-contained with all opening/closing tags balanced.
 
-```css
-/* Delete button on expanded stack cards — top-left */
-.jm-stack-delete {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 18px;
-  height: 18px;
-  background: rgba(0, 0, 0, 0.55);
-  border-radius: 50%;
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 9px;
-  cursor: pointer;
-  border: none;
-  opacity: 0;
-  transform: scale(0.8);
-  transition: opacity 0.15s ease, transform 0.15s ease;
-  z-index: 2;
-  pointer-events: none;
-}
-
-.jm-media-trigger:hover .jm-stack-layer:hover .jm-stack-delete {
-  opacity: 1;
-  transform: scale(1);
-  pointer-events: auto;
-}
-
-.jm-stack-delete:hover {
-  background: rgba(220, 38, 38, 0.8);
-}
-```
-
-The selector `.jm-media-trigger:hover .jm-stack-layer:hover .jm-stack-delete` ensures the delete button only shows when: (1) stack is expanded (trigger hovered), AND (2) specific card is hovered.
-
-- [ ] **Step 3: Verify**
-
-Expected: Hover the stack → cards expand. Hover a single card → X appears at top-left. Click X → card deleted.
-
-- [ ] **Step 4: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
-git add 25/soraui_4.0/sora-ui/src/components/JimengStyleEditor.tsx 25/soraui_4.0/sora-ui/src/components/JimengStyleEditor.css
-git commit -m "feat: add delete buttons to expanded stack cards"
+git add 25/soraui_4.0/sora-ui/src/components/JimengStyleEditor.tsx
+git commit -m "feat: restructure stack — delete buttons, + card, detach outer Popover"
 ```
+
+> **Note:** All CSS for this task (`.jm-stack-delete`, `.jm-stack-add-card`, expanded width) is added in Task 4. This commit will have unstyled elements until Task 4 is applied.
 
 ---
 
@@ -406,7 +367,9 @@ Add after the `.jm-stack-plus` block:
 }
 ```
 
-The `overflow-x: auto` ensures horizontal scroll when card count exceeds available space (per spec §2). `overflow-y: visible` prevents clipping of delete buttons and Popover.
+The `overflow-x: auto` ensures horizontal scroll when card count exceeds available space (per spec §2).
+
+> **CSS note:** Setting `overflow-x: auto` causes `overflow-y: visible` to be computed as `overflow-y: auto` per CSS spec. This is safe because: (1) delete buttons are positioned *within* card bounds (top: 2px, left: 2px), so they won't be clipped; (2) Ant Design Popovers render via portal to `<body>`, so they're outside the overflow context entirely.
 
 - [ ] **Step 4: Hide folded `jm-stack-plus` when expanded, show `+` card instead**
 
