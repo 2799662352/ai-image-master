@@ -25,7 +25,7 @@ DndContext (全局，已有，保留 onDragStart/End/Cancel props)
 1. **Transform 直出**: `CSS.Transform.toString(transform)` 直接写入 style，不经过 CSS 变量中转
 2. **隐藏策略**: 拖拽时原位 `opacity: 0` 完全隐藏，不是半透明
 3. **Transition 控制**: 无活跃拖拽时 `transition: 'none'`，只有拖拽进行中才启用 transition
-4. **事件集中**: 使用 `useDndMonitor({ onDragStart, onDragMove, onDragEnd })` 替代 DndContext props
+4. **事件集中**: 即梦使用 `useDndMonitor` 集中事件（其 DndContext 在全局渲染）。**本项目**因 `DndContext` 是条件渲染的，改为保留 `DndContext` props 方式
 5. **Overlay 渲染**: 从 `data.renderDragOverlay` 读取渲染函数，clone 去掉删除按钮
 6. **disabled 对象形式**: `disabled: { draggable: boolean, droppable: boolean }`
 7. **缓动曲线**: `cubic-bezier(0.4, 0, 0.2, 1)` (Material Design 标准)
