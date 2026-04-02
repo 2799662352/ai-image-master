@@ -16,14 +16,16 @@ Phase 1 plan: `docs/superpowers/plans/2026-04-01-sora-ui-media-editor-ux.md`
 
 | 已有 | 状态 |
 |------|------|
-| `@dnd-kit/core`, `@dnd-kit/sortable`, `@dnd-kit/utilities` | 已安装 (package.json) |
-| `SortableMediaItem.tsx` | 已创建 (Plan Task 1 已提交) |
+| `@dnd-kit/core` ^6.3.1, `@dnd-kit/sortable` ^10.0.0, `@dnd-kit/utilities` ^3.2.2 | 已安装 (legacy API: `DndContext` + `SortableContext`) |
+| `SortableMediaItem.tsx` | 已创建，使用 `useSortable({attributes, listeners, setNodeRef, transform, transition})`，包含 `data: {type: 'media', media}` 和 `<img draggable={false}>` |
 | 底部 `+` pill 按钮 | 已实现 (line 913-925) |
 | hover 展开 + 删除 + 倾斜角 + 时长 + 缩略图 | 已实现 (Phase 1) |
 | `DndContext` 集成到 `JimengStyleEditor` | **未实现** |
 | 展开态拖拽排序 | **未实现** |
 | 全局拖拽上传 | **未实现** |
 | 右键角色切换 | **未实现** |
+
+> **API 版本说明**：Context7 文档显示 @dnd-kit 有新版 `@dnd-kit/react` + `DragDropProvider` API。本项目使用 legacy API（`@dnd-kit/core` + `@dnd-kit/sortable`），迁移到新 API 不在 Phase 2 范围内。
 
 ## 设计决策
 
@@ -32,8 +34,16 @@ Phase 1 plan: `docs/superpowers/plans/2026-04-01-sora-ui-media-editor-ux.md`
 保持现有 hover 展开交互不变。拖拽开始时给 `.jm-media-trigger` 加 `.is-dragging` class 锁定展开态，拖拽结束后移除。
 
 - `PointerSensor` 设置 `activationConstraint.distance: 8`，区分点击/拖拽
-- `KeyboardSensor` 支持键盘无障碍排序
+- `KeyboardSensor` 配合 `sortableKeyboardCoordinates` 作为 `coordinateGetter`，匹配水平排序策略
 - 拖拽期间 hover 离开不会触发折叠
+
+Sensors 初始化：
+```typescript
+const sensors = useSensors(
+  useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+  useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+);
+```
 
 **否决方案:**
 - A (纯锁定): 概念不如 C 清晰，缺少 distance 门槛
@@ -116,16 +126,17 @@ id = `${type}-${url的最后16字符}`
 
 ### 2. 拖拽排序逻辑 (`handleDragEnd`)
 
-```
-handleDragEnd(event):
+```typescript
+// Legacy API: onDragEnd 接收 { active, over } 参数
+handleDragEnd({ active, over }):
   1. 清除 activeId + 移除 .is-dragging（无论如何都执行）
   2. if (!over || active.id === over.id) → return（拖回原位 / 取消）
-  3. 查找 active 和 over 在 allMedia 中的元素
+  3. 通过 active.data.current.media 和 over.data.current.media 获取媒体元素
   4. if (activeMedia.type !== overMedia.type) → return（跨类型不排序）
-  5. 在对应的类型数组中执行 arrayMove：
-     - 图片: setArkImagesWithRoles(arrayMove(prev, oldIdx, newIdx))
-     - 视频: setArkVideosWithRoles(arrayMove(prev, oldIdx, newIdx))
-     - 音频: setArkAudiosWithRoles(arrayMove(prev, oldIdx, newIdx))
+  5. 在对应的类型数组中用 originalIndex 定位，执行 arrayMove：
+     - 图片: setArkImagesWithRoles(prev => arrayMove(prev, oldIdx, newIdx))
+     - 视频: setArkVideosWithRoles(prev => arrayMove(prev, oldIdx, newIdx))
+     - 音频: setArkAudiosWithRoles(prev => arrayMove(prev, oldIdx, newIdx))
 
 handleDragCancel():
   清除 activeId + 移除 .is-dragging（与 dragEnd 失败路径相同）
@@ -184,16 +195,24 @@ onDrop:      dragCounter = 0 → 移除 .drag-over → 处理文件
 
 ### 6. `SortableMediaItem` 组件更新
 
-现有组件基本完整，需要小幅更新：
+现有组件使用 legacy API（`useSortable` 返回 `{attributes, listeners, setNodeRef, transform, transition, isDragging}`），基本完整。需要以下更新：
 
-| 属性 | 用途 |
+| 改动 | 说明 |
 |------|------|
-| `disabled` | 折叠态禁用拖拽 |
-| `duration` | 视频/音频时长显示 |
-| `label` | 音频标签 ("音频1" 等) |
-| `thumbnailUrl` | 优先使用 COS 缩略图 |
+| 新增 `disabled` prop，转发给 `useSortable({ id, disabled, data })` | 当前 `useSortable` 调用未接受 `disabled` 参数 |
+| `UnifiedMedia` 扩展 `duration?` 和 `label?` 字段 | 支持视频/音频时长和标签显示 |
+| 显示 `duration` badge（`mm:ss` 格式） | 视频/音频卡片右下角 |
+| 使用 `media.displayUrl`（COS 缩略图）优先渲染 | 已实现（line 126），无需改动 |
+| 使用 `media.url`（高清）作为预览源 | 已实现（line 96），无需改动 |
 
 `UnifiedMedia` 类型移至 `types/index.ts` 共享，`SortableMediaItem` 和 `JimengStyleEditor` 共同导入。
+
+**已就位的功能（无需改动）**：
+- `<img draggable={false}>` 防止浏览器原生拖拽 (line 126, 129)
+- 删除按钮 `onPointerDown` 阻断拖拽 (line 140)
+- `data: { type: 'media', media }` 附加到 `useSortable` (line 35)
+- 右键角色切换 Dropdown (line 148-157)
+- 触摸端长按菜单 (line 73-84)
 
 ### 7. 数据模型微调
 
