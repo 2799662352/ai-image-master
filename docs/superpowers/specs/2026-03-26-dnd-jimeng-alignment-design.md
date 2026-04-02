@@ -1,7 +1,7 @@
 # DnD 即梦对齐改造设计
 
 > 日期: 2026-03-26
-> 状态: Draft
+> 状态: Reviewed
 > 涉及文件: `SortableMediaItem.tsx`, `JimengStyleEditor.tsx`, `JimengStyleEditor.css`
 
 ## 背景
@@ -13,11 +13,11 @@
 ### 组件架构
 
 ```
-DndContext (全局，已有)
-  └─ SortContainer (useDndMonitor 集中事件)
-       └─ SortableContext (items, strategy)
-            └─ SortableItem (useSortable + 直出 transform)
-                 └─ ReferenceCard (业务 UI)
+DndContext (全局，已有，保留 onDragStart/End/Cancel props)
+  └─ SortableContext (items, strategy=horizontalListSortingStrategy)
+       └─ SortableItem wrapper div (useSortable + 直出 transform)  ← dnd-kit 定位层
+            └─ .jm-stack-layer (CSS transform 堆叠/展开)          ← 业务 UI 层
+  └─ DragOverlay (从 activeDragData.renderDragOverlay 渲染)
 ```
 
 ### 即梦关键实现细节
@@ -33,111 +33,125 @@ DndContext (全局，已有)
 
 ## 改造方案
 
-### 改造 1: SortableMediaItem.tsx — Transform 直出
+### 改造 1: SortableMediaItem.tsx — 两层 DOM + Transform 直出
 
-**去掉** CSS 变量 `--dnd-tx`/`--dnd-ty` 中转，改为即梦模式：
+**问题**: 当前单层 DOM 上同时承载 dnd-kit 的 `transform: translate3d(x,y,0)` 和 CSS 的 `transform: rotate() translateX()` 堆叠定位，两者冲突。
 
-```typescript
-// Before
-const style = {
-  ...customStyle,
-  '--dnd-tx': transform ? `${Math.round(transform.x)}px` : '0px',
-  '--dnd-ty': transform ? `${Math.round(transform.y)}px` : '0px',
-  ...(isOverlay ? { transform: CSS.Transform.toString(transform) } : {}),
-  transition: isOverlay ? undefined : transition,
-  opacity: isDragging && !isOverlay ? 0.3 : 1,
-};
-
-// After (即梦模式)
-const style = {
-  ...customStyle,
-  transform: CSS.Transform.toString(transform),
-  transition: activeId ? transition : 'none',
-  opacity: isDragging ? 0 : 1,
-  width: '100%',
-  height: '100%',
-};
-```
-
-**注意**: 因为我们的堆叠定位使用 CSS `transform`（rotate, translateX 等），而 `@dnd-kit` 的 `CSS.Transform.toString()` 也会设置 `transform`，两者会冲突。
-
-**解决方案**: SortableMediaItem 只包一层 `<div>` 作为 dnd-kit 的定位层，内部的 `.jm-stack-layer` 继续用 CSS transform 控制堆叠/展开。这正是即梦的做法 — 他们的 sortable wrapper 是一层透明 div（`width:100%, height:100%`），实际卡片样式在子元素上。
+**解决方案**: 拆为两层 DOM（即梦做法）：
 
 ```
-<div ref={setNodeRef} style={dndStyle} {...attributes} {...listeners}>  ← dnd-kit 控制层
-  <div className="jm-stack-layer" style={stackStyle}>                    ← CSS 堆叠/展开层
+<div ref={setNodeRef} style={wrapperStyle} {...attributes} {...listeners}>  ← dnd-kit 定位层
+  <div className="jm-media-item jm-stack-layer" style={stackStyle}>         ← CSS 堆叠/展开层
     <img ... />
     <button className="jm-stack-delete" ... />
   </div>
 </div>
 ```
 
-### 改造 2: JimengStyleEditor.tsx — useDndMonitor 集中事件
-
-**去掉** `DndContext` 上的 `onDragStart`/`onDragEnd` props。
-
-**新增** 组件内 `useDndMonitor` hook：
+**外层 wrapper 样式**（dnd-kit 控制）：
 
 ```typescript
-useDndMonitor({
-  onDragStart({ active }) {
-    setActiveId(active.id as string);
-    mediaTriggerRef.current?.classList.add('is-dragging');
-  },
-  onDragMove({ active }) {
-    // 可选：拖出容器时 overlay 变半透明
-    // const dragRect = active.rect.current.translated;
-    // const containerRect = editorRef.current?.getBoundingClientRect();
-    // if (dragRect && containerRect && !intersects(dragRect, containerRect)) {
-    //   overlayRef.current?.style.opacity = '0.5';
-    // }
-  },
-  onDragEnd({ active, over }) {
-    setActiveId(null);
-    mediaTriggerRef.current?.classList.remove('is-dragging');
-    if (!over || active.id === over.id) return;
+const { active } = useDndContext();  // 获取当前拖拽状态，解决 activeId 来源问题
 
-    const activeMedia = active.data.current?.media as UnifiedMedia | undefined;
-    const overMedia = over.data.current?.media as UnifiedMedia | undefined;
-    if (!activeMedia || !overMedia || activeMedia.type !== overMedia.type) return;
-
-    const oldIdx = activeMedia.originalIndex;
-    const newIdx = overMedia.originalIndex;
-    if (oldIdx === newIdx) return;
-
-    if (activeMedia.type === 'image') setArkImagesWithRoles(prev => arrayMove(prev, oldIdx, newIdx));
-    else if (activeMedia.type === 'video') setArkVideosWithRoles(prev => arrayMove(prev, oldIdx, newIdx));
-    else if (activeMedia.type === 'audio') setArkAudiosWithRoles(prev => arrayMove(prev, oldIdx, newIdx));
-  },
-});
+const wrapperStyle: React.CSSProperties = {
+  transform: transform ? CSS.Transform.toString(transform) : undefined,  // null guard
+  transition: active?.id ? transition : 'none',  // 无拖拽时关闭 transition
+  opacity: isDragging ? 0 : 1,                    // 拖拽时完全隐藏
+  // 外层不设 width/height — 由 position:absolute + 内层 .jm-stack-layer 的 72x90px 撑开
+  position: 'absolute',
+  top: 0,
+  left: 0,
+};
 ```
 
-### 改造 3: DragOverlay — renderDragOverlay 模式
+**关键细节**:
+- `activeId` 来源: 通过 `useDndContext()` 获取 `active`，而非新增 prop。`useDndContext()` 在 `DndContext` 子树内有效。
+- null guard: `transform ? CSS.Transform.toString(transform) : undefined` 防止空值。
+- 外层 wrapper 需要 `position: absolute; top: 0; left: 0` 保持和现有 `.jm-stack-layer` 相同的定位上下文（`.jm-stack-container` 是 `position: relative`）。
 
-**现在**: `DragOverlay` 内部硬编码渲染 `SortableMediaItem`。
+### 改造 2: JimengStyleEditor.tsx — 事件处理改造
 
-**改为**: 从 `active.data.current.renderDragOverlay` 读取渲染函数：
+**方案选择**: 保留 `DndContext` 的 `onDragStart`/`onDragEnd`/`onDragCancel` props（不迁移到 `useDndMonitor`）。
+
+**原因**: `useDndMonitor` 必须在 `DndContext` provider 子树内调用。当前 `DndContext` 只在 `allMedia.length > 0` 时才渲染，且只包裹堆叠区子树，不是整个编辑器。将 monitor 放在 `JimengStyleEditor` 顶层会违反 context 约束。保留 DndContext props 是最简方案。
+
+**改动**:
 
 ```typescript
-// SortableMediaItem 中设置 data
-useSortable({
-  id,
-  data: {
-    type: 'media',
-    media,
-    renderDragOverlay: () => (
-      <div className="jm-media-item jm-drag-overlay">
-        {/* 渲染媒体内容，但不渲染删除按钮 */}
-      </div>
-    ),
-  },
-});
+<DndContext
+  sensors={sensors}
+  collisionDetection={closestCenter}
+  onDragStart={handleDragStart}
+  onDragEnd={handleDragEnd}
+  onDragCancel={handleDragCancel}  // ← 新增：处理 Escape / 指针取消
+>
 
-// JimengStyleEditor 中读取
-<DragOverlay>
-  {activeId && activeMedia?.data?.current?.renderDragOverlay?.()}
+// handleDragStart — 不变
+const handleDragStart = useCallback((event: DragStartEvent) => {
+  setActiveId(event.active.id as string);
+  setActiveDragData(event.active.data.current);  // ← 新增：保存 data 供 DragOverlay 使用
+  mediaTriggerRef.current?.classList.add('is-dragging');
+}, []);
+
+// handleDragEnd — 逻辑不变，已使用 originalIndex
+const handleDragEnd = useCallback((event: DragEndEvent) => {
+  setActiveId(null);
+  setActiveDragData(null);
+  mediaTriggerRef.current?.classList.remove('is-dragging');
+  // ... arrayMove 逻辑不变
+}, [setArkImagesWithRoles, setArkVideosWithRoles, setArkAudiosWithRoles]);
+
+// handleDragCancel — 新增
+const handleDragCancel = useCallback(() => {
+  setActiveId(null);
+  setActiveDragData(null);
+  mediaTriggerRef.current?.classList.remove('is-dragging');
+}, []);
+```
+
+### 改造 3: DragOverlay — 从 onDragStart 保存的 data 渲染
+
+**现在**: `DragOverlay` 内部硬编码渲染 `SortableMediaItem` with `isOverlay={true}`。
+
+**改为**: 在 `onDragStart` 时保存 `active.data.current`，在 `DragOverlay` 中用 `activeDragData` 渲染。
+
+```typescript
+// 新增 state
+const [activeDragData, setActiveDragData] = useState<Record<string, any> | null>(null);
+
+// onDragStart 时保存
+setActiveDragData(event.active.data.current);
+
+// DragOverlay 中读取 renderDragOverlay
+<DragOverlay dropAnimation={null}>
+  {activeId && activeDragData?.renderDragOverlay
+    ? activeDragData.renderDragOverlay()
+    : null}
 </DragOverlay>
 ```
+
+**SortableMediaItem 中设置 renderDragOverlay**:
+
+```typescript
+// 使用 useCallback 保持稳定引用
+const renderOverlay = useCallback(() => (
+  <div className="jm-media-item jm-drag-overlay" style={{ width: 72, height: 90 }}>
+    {/* 渲染媒体内容，不渲染删除按钮 */}
+    {media.type === 'image' && <img src={media.displayUrl || media.url} alt="参考" draggable={false} />}
+    {media.type === 'video' && (media.thumbnail ? <img src={media.thumbnail} ... /> : <VideoCameraOutlined />)}
+    {media.type === 'audio' && <AudioOutlined />}
+    {media.duration != null && <span className="jm-media-item-duration">{formatDuration(media.duration)}</span>}
+  </div>
+), [media]);
+
+useSortable({
+  id,
+  disabled: { draggable: !!disabled, droppable: false },
+  data: { type: 'media', media, renderDragOverlay: renderOverlay },
+});
+```
+
+**注意**: `renderDragOverlay` 用 `useCallback` 包裹，避免每次渲染重建。Overlay 渲染时不包含删除按钮和 Dropdown（和即梦一致）。
 
 ### 改造 4: CSS — 去掉 --dnd-tx/ty，新增微交互
 
@@ -204,37 +218,71 @@ useSortable({
 }
 ```
 
-### 改造 5: SortableMediaItem 结构重组
+### 改造 5: SortableMediaItem + Ant Design Dropdown 集成
 
-将 `SortableMediaItem` 拆分为两层：
-
-- **外层**: dnd-kit wrapper（`ref={setNodeRef}`, `style={dndStyle}`，`...attributes`, `...listeners`）
-- **内层**: `.jm-stack-layer`（CSS transform 堆叠/展开动画）
-
-这样 dnd-kit 的 `transform: translate3d(x, y, 0)` 和 CSS 的 `transform: rotate() translateX()` 在不同 DOM 层上，不再冲突。
+拆分为两层后，Dropdown 的挂载需要调整：
 
 ```tsx
 export const SortableMediaItem = ({ ... }) => {
-  const { setNodeRef, attributes, listeners, transform, transition, isDragging } = useSortable({ ... });
+  const { active } = useDndContext();
+  const { setNodeRef, attributes, listeners, transform, transition, isDragging } = useSortable({
+    id,
+    disabled: { draggable: !!disabled, droppable: false },
+    data: { type: 'media', media, renderDragOverlay: renderOverlay },
+  });
 
   const wrapperStyle: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition: activeId ? transition : 'none',
+    transform: transform ? CSS.Transform.toString(transform) : undefined,
+    transition: active?.id ? transition : 'none',
     opacity: isDragging ? 0 : 1,
+    position: 'absolute',
+    top: 0,
+    left: 0,
   };
 
-  return (
-    <div ref={setNodeRef} style={wrapperStyle} {...attributes} {...listeners}>
-      <div
-        className={`jm-media-item jm-stack-layer`}
-        style={stackStyle}  // --stack-rotate, --expand-left, etc.
-      >
-        {/* 媒体内容 + 删除按钮 */}
-      </div>
+  const innerContent = (
+    <div
+      className={`jm-media-item ${isStackMode ? 'jm-stack-layer' : ''}`}
+      style={customStyle}  // --stack-rotate, --expand-left, etc.
+    >
+      {/* 媒体内容 + 删除按钮 */}
     </div>
   );
+
+  // Dropdown 包在外层 wrapper 外面，这样右键菜单不被 dnd listeners 干扰
+  const wrapped = (
+    <div ref={setNodeRef} style={wrapperStyle} {...attributes} {...listeners}>
+      {innerContent}
+    </div>
+  );
+
+  return media.type === 'image' ? (
+    <Dropdown menu={...} trigger={['contextMenu']}>
+      {wrapped}
+    </Dropdown>
+  ) : wrapped;
 };
 ```
+
+**注意**: Dropdown 包在 dnd wrapper 外面。`onPointerDown` stopPropagation 在删除按钮上仍然需要，防止点删除时触发拖拽。
+
+### 改造 6: CSS `.is-dragging` 状态清理
+
+去掉 `--dnd-tx/ty` 后，`.is-dragging` 状态下的 `.jm-stack-layer` transform 规则也要更新：
+
+```css
+/* Before */
+.jm-media-trigger.is-dragging .jm-stack-layer {
+  transform: translate(var(--dnd-tx, 0px), var(--dnd-ty, 0px)) translateX(var(--expand-left)) rotate(var(--stack-rotate)) translate(0, 0);
+}
+
+/* After — 外层 wrapper 已经处理 dnd 位移 */
+.jm-media-trigger.is-dragging .jm-stack-layer {
+  transform: translateX(var(--expand-left)) rotate(var(--stack-rotate));
+}
+```
+
+确保所有引用 `--dnd-tx`/`--dnd-ty` 的选择器都清理干净。
 
 ## 不变的部分
 
@@ -249,8 +297,10 @@ export const SortableMediaItem = ({ ... }) => {
 
 1. 拖拽排序在展开状态下流畅工作，其他 item 有平滑的磁力位移动画
 2. 拖拽时原位完全隐藏（opacity: 0）
-3. DragOverlay 跟随鼠标，无删除按钮
+3. DragOverlay 跟随鼠标，无删除按钮，dropAnimation 设为 null
 4. hover 卡片上浮+放大，press 缩小
-5. 堆叠/展开的 CSS 动画使用 Material Design 缓动
-6. 无 transform 冲突导致的视觉错位
-7. 现有功能（上传、预览、角色切换、文本编辑）不受影响
+5. 堆叠/展开的 CSS 动画使用 Material Design 缓动 `cubic-bezier(0.4, 0, 0.2, 1)`
+6. 无 transform 冲突导致的视觉错位（两层 DOM 隔离）
+7. Escape 键 / 指针取消能正确清理状态（`onDragCancel`）
+8. 右键菜单（Dropdown）在拖拽 wrapper 外层，不受 dnd listeners 干扰
+9. 现有功能（上传、预览、角色切换、文本编辑）不受影响
