@@ -434,7 +434,7 @@ const handleDragCancel = useCallback(() => {
 
 - [ ] **Step 4: Wrap stack area with DndContext + SortableContext**
 
-Replace the current `.jm-stack-container` block (~lines 677-741) with:
+Replace the current `.jm-stack-container` block (~lines 677-741) with the following. Note: this block is inside the `allMedia.length > 0` branch of the existing ternary (line 660: `allMedia.length === 0 ? <Popover>... : <stack>`), so `DndContext` only renders when there are items — matching the spec:
 
 ```tsx
 <DndContext
@@ -573,9 +573,11 @@ git commit -m "feat: integrate DndContext + SortableContext for drag-and-drop so
 }
 ```
 
-- [ ] **Step 3: Verify no CSS typos**
+- [ ] **Step 3: Verify CSS class names match JSX**
 
-Open the CSS file and verify class names match the JSX.
+Open the CSS file and verify: `.jm-drag-overlay` matches `SortableMediaItem` `isOverlay` class, `.jm-media-item-duration` matches the `<span>` rendered in `SortableMediaItem`.
+
+> **Note:** CSS-only task — compile check deferred to Task 6 Step 5 which runs `npx tsc --noEmit` after both CSS + TSX changes.
 
 - [ ] **Step 4: Commit**
 
@@ -592,12 +594,14 @@ git commit -m "feat: add is-dragging lock and DragOverlay CSS"
 - Modify: `src/components/JimengStyleEditor.tsx:617-618`
 - Modify: `src/components/JimengStyleEditor.css`
 
-- [ ] **Step 1: Add drag counter ref and handlers**
+- [ ] **Step 1: Add drag counter ref, upload ref, and handlers**
 
 After existing refs (~line 108):
 
 ```typescript
 const dragCounterRef = useRef(0);
+const handleUnifiedUploadRef = useRef(handleUnifiedUpload);
+handleUnifiedUploadRef.current = handleUnifiedUpload;
 
 const handleContainerDragEnter = useCallback((e: React.DragEvent) => {
   e.preventDefault();
@@ -624,9 +628,9 @@ const handleContainerDrop = useCallback((e: React.DragEvent) => {
   e.currentTarget.classList.remove('drag-over');
   const file = e.dataTransfer.files[0];
   if (file) {
-    handleUnifiedUpload(file);
+    handleUnifiedUploadRef.current(file);
   }
-}, [handleUnifiedUpload]);
+}, []);
 ```
 
 - [ ] **Step 2: Attach events to `.jm-editor-container`**
@@ -643,23 +647,7 @@ Update the container div (~line 618):
 >
 ```
 
-- [ ] **Step 3: Stabilize `handleUnifiedUpload` reference**
-
-`handleUnifiedUpload` is currently a plain `async` function (not memoized). Store in a ref to avoid re-creating `handleContainerDrop` every render:
-
-```typescript
-const handleUnifiedUploadRef = useRef(handleUnifiedUpload);
-handleUnifiedUploadRef.current = handleUnifiedUpload;
-
-// Then in handleContainerDrop, use:
-const file = e.dataTransfer.files[0];
-if (file) {
-  handleUnifiedUploadRef.current(file);
-}
-// deps: [] (no dependency on handleUnifiedUpload)
-```
-
-- [ ] **Step 4: Add `.drag-over` CSS**
+- [ ] **Step 3: Add `.drag-over` CSS**
 
 ```css
 .jm-editor-container.drag-over {
@@ -669,11 +657,11 @@ if (file) {
 }
 ```
 
-- [ ] **Step 5: Verify build compiles**
+- [ ] **Step 4: Verify build compiles**
 
 Run: `cd 25/soraui_4.0/sora-ui && npx tsc --noEmit`
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add src/components/JimengStyleEditor.tsx src/components/JimengStyleEditor.css
