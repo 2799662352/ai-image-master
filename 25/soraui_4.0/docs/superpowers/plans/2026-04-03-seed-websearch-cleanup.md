@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-04-03-seed-websearch-cleanup-design.md`
 
+**Working directory:** All commands (`cd`, `git add`, `npx`) assume CWD is `25/soraui_4.0/` unless otherwise noted.
+
 ---
 
 ## File Map
@@ -30,9 +32,23 @@
 **Files:**
 - Modify: `sora-ui-backend/src/controllers/volcengineArkRelayController.ts:490-499`
 
-- [ ] **Step 1: Add seed to Seedance 2.0 metadata object**
+- [ ] **Step 1: Fix pre-existing paste error on line 147**
 
-In `sora-ui-backend/src/controllers/volcengineArkRelayController.ts`, find the `isSeedance2` block at line 490. After line 495 (`if (webSearch) metadata.tools = ...`), add:
+In `sora-ui-backend/src/controllers/volcengineArkRelayController.ts`, find line 147:
+
+```typescript
+          externalTaskId,https://www.volcengine.com/docs/82379/2291680?lang=zh#46d77653
+```
+
+Replace with:
+
+```typescript
+          externalTaskId,
+```
+
+- [ ] **Step 2: Add seed to Seedance 2.0 metadata object**
+
+In the same file, find the `isSeedance2` block at line 490. After line 495 (`if (webSearch) metadata.tools = ...`), add:
 
 ```typescript
 if (seed !== undefined && seed !== null && seed !== -1) {
@@ -40,7 +56,7 @@ if (seed !== undefined && seed !== null && seed !== -1) {
 }
 ```
 
-- [ ] **Step 2: Add seed to the metadata log**
+- [ ] **Step 3: Add seed to the metadata log**
 
 On line 498, the existing log prints `generate_audio` and `tools`. Add `seed: metadata.seed` to the log object:
 
@@ -52,16 +68,16 @@ console.log('[Volcengine Ark Relay] 🔧 2.0 metadata 参数:', {
 });
 ```
 
-- [ ] **Step 3: Verify TypeScript compiles**
+- [ ] **Step 4: Verify TypeScript compiles**
 
 Run: `cd sora-ui-backend && npx tsc --noEmit`
 Expected: No new errors
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add sora-ui-backend/src/controllers/volcengineArkRelayController.ts
-git commit -m "feat(backend): forward seed param to Seedance 2.0 metadata"
+git commit -m "feat(backend): forward seed param to Seedance 2.0 metadata, fix line 147 paste error"
 ```
 
 ---
@@ -142,7 +158,17 @@ Find line 905 (`arkWebSearch: isSeedance2 ? arkWebSearch : undefined,`). After i
 arkSeed: isSeedance2 && arkSeed !== undefined ? arkSeed : undefined,
 ```
 
-- [ ] **Step 3: Pass arkSeed props to JimengStyleEditor**
+- [ ] **Step 3: Add arkSeed to handleGenerate dependency array**
+
+Find the `handleGenerate` `useCallback` dependency array (line ~1482). It ends with `arkRatio, arkDuration, arkResolution]);`. Add `arkSeed` to the array:
+
+```typescript
+arkRatio, arkDuration, arkResolution, arkSeed]);
+```
+
+Without this, the memoized `handleGenerate` closure would capture a stale `arkSeed` value.
+
+- [ ] **Step 4: Pass arkSeed props to JimengStyleEditor**
 
 Find the `<JimengStyleEditor` JSX block (line ~2060). After line 2080 (`arkWebSearch={arkWebSearch}` / `setArkWebSearch={setArkWebSearch}`), add:
 
@@ -151,17 +177,9 @@ arkSeed={arkSeed}
 setArkSeed={setArkSeed}
 ```
 
-- [ ] **Step 4: Verify TypeScript compiles**
+- [ ] **Step 5: Do NOT commit yet**
 
-Run: `cd sora-ui && npx tsc --noEmit`
-Expected: Errors about JimengStyleEditorProps not accepting `arkSeed`/`setArkSeed` — this is expected, fixed in Task 5.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add sora-ui/src/components/VideoGenerator.tsx
-git commit -m "feat(VideoGenerator): add arkSeed state, props, and request body"
-```
+Task 4 changes `VideoGenerator.tsx` which passes `arkSeed`/`setArkSeed` props to `JimengStyleEditor`, but the editor's type interface hasn't been updated yet (that's Task 5). **Commit both Task 4 and Task 5 together** after Task 5 is complete to keep every commit compilable.
 
 ---
 
@@ -267,11 +285,11 @@ Expected: No new errors
 Use `ReadLints` on `sora-ui/src/components/JimengStyleEditor.tsx`
 Expected: No new lint errors
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 8: Commit Task 4 + Task 5 together**
 
 ```bash
-git add sora-ui/src/components/JimengStyleEditor.tsx
-git commit -m "feat(JimengStyleEditor): add seed pill, unrestrict web search toggle"
+git add sora-ui/src/components/VideoGenerator.tsx sora-ui/src/components/JimengStyleEditor.tsx
+git commit -m "feat: add seed pill UI, unrestrict web search, wire arkSeed state"
 ```
 
 ---
@@ -367,7 +385,7 @@ git commit -m "feat(backend): save requestedSeed on create, capture actualSeed o
 
 - [ ] **Step 1: Add seed Descriptions.Item to task detail**
 
-In `BackendTaskList.tsx`, find line 1580 (`</Descriptions.Item>` closing the `upstreamTaskId` item). After it (before line 1581 `<Descriptions.Item label="状态">`), add:
+In `BackendTaskList.tsx`, find the closing of the `upstreamTaskId` block (line ~1579-1580, `</Descriptions.Item>` then `)}` closing the conditional). After line 1580 (before `<Descriptions.Item label="状态">` on line 1581), add:
 
 ```tsx
 {(() => {
@@ -432,23 +450,6 @@ Use `ReadLints` on:
 
 Expected: No new lint errors
 
-- [ ] **Step 5: Fix pre-existing paste error (line 147)**
+- [ ] **Step 5: Final check complete**
 
-In `sora-ui-backend/src/controllers/volcengineArkRelayController.ts`, find line 147:
-
-```typescript
-externalTaskId,https://www.volcengine.com/docs/82379/2291680?lang=zh#46d77653
-```
-
-Replace with:
-
-```typescript
-externalTaskId,
-```
-
-- [ ] **Step 6: Final commit**
-
-```bash
-git add -A
-git commit -m "chore: fix pre-existing paste error in polling code, verify all changes"
-```
+All modules verified. No additional commit needed unless lint/compile issues were found above.
