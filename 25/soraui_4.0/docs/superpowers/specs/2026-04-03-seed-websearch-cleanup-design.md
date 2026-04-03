@@ -14,7 +14,7 @@
 | 1 | P2 | 后端不转发 `seed` 参数到 Seedance 2.0 API | 用户无法复现特定生成结果 |
 | 2 | P2 | 前端没有 seed 输入 UI | 用户无法设定 seed 值 |
 | 3 | P2 | 联网搜索开关被限制为 `text2video` 模式 | 图生视频等模式下无法启用联网搜索 |
-| 4 | P3 | `VideoGenerator.tsx` 含 ~100 行 `{false && ...}` 死代码 | 代码噪音，影响可维护性 |
+| 4 | P3 | `VideoGenerator.tsx` 含 5 个 `{false && ...}` 死代码块 (~650 行) | 代码噪音，影响可维护性 |
 
 ---
 
@@ -46,6 +46,8 @@ if (seed !== undefined && seed !== null && seed !== -1) {
 ```
 
 不传 seed 或传 -1 时，API 自动随机生成。`seed=0` 是有效值，应转发。
+
+> **注意**: Seedance 1.x 分支（line 389）使用 `if (seed && seed > 0)`，导致 `seed=0` 被跳过。这是一个已知的小 bug，但不在本次修复范围——1.x 模型使用率低，修复风险收益不对等。
 
 ### 文件变更
 
@@ -88,12 +90,69 @@ if (seed !== undefined && seed !== null && seed !== -1) {
 </span>
 ```
 
-**数据流**:
+**显示逻辑** (避免 `seed=0` 被当作 falsy):
 
-1. `VideoGenerator.tsx` 新增 `const [arkSeed, setArkSeed] = useState<number | undefined>(undefined)`
-2. 通过 props 传给 `JimengStyleEditor`：`arkSeed`, `setArkSeed`
-3. `VideoGenerator.tsx` 发送请求时，将 `arkSeed` 写入请求体
-4. `volcengine-ark.ts` 已有 `seed: arkConfig.seed`，只需确保 `arkSeed` 覆盖/合并到 `arkConfig`
+```tsx
+{arkSeed !== undefined ? `🎲 ${arkSeed}` : '🎲 随机'}
+```
+
+**JSX 插入位置**: 沿用 duration pill 的 `Popover` 模式（lines 1125-1150），在 `{isSeedance2 && (...)}` 块内、audio toggle 之前插入。
+
+**Before** (`JimengStyleEditor.tsx:1152-1155`):
+
+```tsx
+{isSeedance2 && (
+  <>
+    <div className="jm-toggle-pill" title="有声视频">
+```
+
+**After**:
+
+```tsx
+{isSeedance2 && (
+  <>
+    <Popover
+      content={
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <InputNumber
+            min={0} max={4294967295} step={1} precision={0}
+            placeholder="留空=随机"
+            value={arkSeed}
+            onChange={(v) => setArkSeed(v ?? undefined)}
+            style={{ width: 160 }}
+          />
+          <span style={{ fontSize: 11, color: '#9ca3af' }}>固定值→类似结果</span>
+        </div>
+      }
+      trigger="click" placement="top" arrow={false}
+    >
+      <div className="jm-pill">
+        <span style={{ fontSize: 14 }}>🎲</span>
+        <span>{arkSeed !== undefined ? arkSeed : '随机'}</span>
+      </div>
+    </Popover>
+    <div className="jm-toggle-pill" title="有声视频">
+```
+
+**数据流（端到端）**:
+
+1. **State**: `VideoGenerator.tsx` 新增 `const [arkSeed, setArkSeed] = useState<number | undefined>(undefined)`
+2. **Props**: 传给 `JimengStyleEditor`：`arkSeed={arkSeed}`, `setArkSeed={setArkSeed}`
+3. **Request 写入**: `VideoGenerator.tsx:904` 附近新增一行：
+   ```typescript
+   arkSeed: isSeedance2 && arkSeed !== undefined ? arkSeed : undefined,
+   ```
+4. **SoraRequest 类型**: `types/index.ts:89` 附近新增字段：
+   ```typescript
+   arkSeed?: number;
+   ```
+5. **API 层合并**: `volcengine-ark.ts:78` 修改 seed 来源：
+   ```typescript
+   // Before:
+   seed: arkConfig.seed,
+   // After:
+   seed: request.arkSeed !== undefined ? request.arkSeed : arkConfig.seed,
+   ```
 
 **Props 新增**:
 
@@ -107,8 +166,10 @@ interface JimengStyleEditorProps {
 
 ### 文件变更
 
-- **Modify**: `sora-ui/src/components/JimengStyleEditor.tsx` — 新增 props, 新增 seed pill (~20 行)
-- **Modify**: `sora-ui/src/components/VideoGenerator.tsx` — 新增 state, 传 props, 请求体写入
+- **Modify**: `sora-ui/src/types/index.ts:89` — 新增 `arkSeed?: number` 字段
+- **Modify**: `sora-ui/src/api/volcengine-ark.ts:78` — seed 来源从 `arkConfig.seed` 改为 `request.arkSeed ?? arkConfig.seed`
+- **Modify**: `sora-ui/src/components/JimengStyleEditor.tsx` — 新增 props, 新增 seed Popover pill (~20 行)
+- **Modify**: `sora-ui/src/components/VideoGenerator.tsx` — 新增 state, 传 props, 请求体写入 arkSeed
 
 ---
 
@@ -168,19 +229,25 @@ interface JimengStyleEditorProps {
 
 ### 问题
 
-`VideoGenerator.tsx:2811-2912` 含 3 个被 `{false && ...}` 包裹的旧版上传 UI 块（已被 `JimengStyleEditor` 完全替代）：
+`VideoGenerator.tsx` 含 **5 个** 被 `{false && ...}` 包裹的旧版 UI 块（全部已被 `JimengStyleEditor` 替代），共约 **650 行**死代码：
 
-1. **Lines 2811-2865**: 旧版参考视频上传卡片 (~55 行)
-2. **Lines 2867-2907**: 旧版参考音频上传卡片 (~40 行)
-3. **Lines 2912-~2960**: 旧版多模态参考图片上传 (~48 行)
+| # | 行范围 | 内容 | 约行数 |
+|---|--------|------|--------|
+| 1 | 2311-2516 | 旧版模式选择器卡片 | ~205 |
+| 2 | 2518-2809 | 旧版图片上传区域 | ~291 |
+| 3 | 2811-2865 | 旧版参考视频上传卡片 | ~55 |
+| 4 | 2867-2907 | 旧版参考音频上传卡片 | ~40 |
+| 5 | 2911-2963 | 旧版多模态参考图片上传 | ~52 |
 
 ### 修复
 
-直接删除这 3 个 `{false && ...}` 块及其间的注释。保留 line 2909 的单行注释 `{/* ⏩ 延长视频模式提示 */}` 如果有后续内容引用。
+直接删除全部 5 个 `{false && ...}` 块及其前置注释行。保留 line 2909 的 `{/* ⏩ 延长视频模式提示 */}` 注释（仅当有后续内容引用时）。
+
+删除后 `VideoGenerator.tsx` 将减少约 650 行，从 ~3300 行降至 ~2650 行。
 
 ### 文件变更
 
-- **Modify**: `sora-ui/src/components/VideoGenerator.tsx:2811-~2960` — 删除 ~100+ 行死代码
+- **Modify**: `sora-ui/src/components/VideoGenerator.tsx:2311-2963` — 删除 5 个 `{false && ...}` 死代码块 (~650 行)
 
 ---
 
