@@ -167,7 +167,7 @@ interface JimengStyleEditorProps {
 ### 文件变更
 
 - **Modify**: `sora-ui/src/types/index.ts:89` — 新增 `arkSeed?: number` 字段
-- **Modify**: `sora-ui/src/api/volcengine-ark.ts:78` — seed 来源从 `arkConfig.seed` 改为 `request.arkSeed ?? arkConfig.seed`
+- **Modify**: `sora-ui/src/api/volcengine-ark.ts:78` — seed 来源改为 `request.arkSeed !== undefined ? request.arkSeed : arkConfig.seed`
 - **Modify**: `sora-ui/src/components/JimengStyleEditor.tsx` — 新增 props, 新增 seed Popover pill (~20 行)
 - **Modify**: `sora-ui/src/components/VideoGenerator.tsx` — 新增 state, 传 props, 请求体写入 arkSeed
 
@@ -225,6 +225,47 @@ interface JimengStyleEditorProps {
 
 ---
 
+## 模块 2 + 3 合并后的最终 JSX
+
+模块 2 和模块 3 都修改 `{isSeedance2 && (...)}` 块。实施顺序：**先 Module 2（插入 seed Popover），再 Module 3（去掉 web search 的 text2video 条件）**。最终结果：
+
+```tsx
+{isSeedance2 && (
+  <>
+    <Popover
+      content={
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <InputNumber
+            min={0} max={4294967295} step={1} precision={0}
+            placeholder="留空=随机"
+            value={arkSeed}
+            onChange={(v) => setArkSeed(v ?? undefined)}
+            style={{ width: 160 }}
+          />
+          <span style={{ fontSize: 11, color: '#9ca3af' }}>固定值→类似结果</span>
+        </div>
+      }
+      trigger="click" placement="top" arrow={false}
+    >
+      <div className="jm-pill">
+        <span style={{ fontSize: 14 }}>🎲</span>
+        <span>{arkSeed !== undefined ? arkSeed : '随机'}</span>
+      </div>
+    </Popover>
+    <div className="jm-toggle-pill" title="有声视频">
+      <span style={{ fontSize: 14 }}>🔊</span>
+      <Switch checked={arkGenerateAudio} onChange={setArkGenerateAudio} size="small" />
+    </div>
+    <div className="jm-toggle-pill" title="联网搜索">
+      <span style={{ fontSize: 14 }}>🌐</span>
+      <Switch checked={arkWebSearch} onChange={setArkWebSearch} size="small" />
+    </div>
+  </>
+)}
+```
+
+---
+
 ## 模块 4: 前端 — 死代码清理
 
 ### 问题
@@ -241,7 +282,7 @@ interface JimengStyleEditorProps {
 
 ### 修复
 
-直接删除全部 5 个 `{false && ...}` 块及其前置注释行。保留 line 2909 的 `{/* ⏩ 延长视频模式提示 */}` 注释（仅当有后续内容引用时）。
+直接删除全部 5 个 `{false && ...}` 块及其前置注释行（行号含前置注释）。Line 2909 的 `{/* ⏩ 延长视频模式提示 */}` 注释已无对应 UI，一并删除。
 
 删除后 `VideoGenerator.tsx` 将减少约 650 行，从 ~3300 行降至 ~2650 行。
 
