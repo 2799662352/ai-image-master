@@ -314,17 +314,18 @@ const taskMetadata: Record<string, any> = {
 
 **后端（轮询成功时捕获 API 返回的 seed）**:
 
-在 polling 成功分支（line ~159-169，`usageMetadata` 构建处），新增：
+官方[查询视频生成任务 API](https://www.volcengine.com/docs/82379/1521309) 的响应中，`seed` 是**顶层字段**（与 `ratio`、`duration`、`resolution` 同级），描述为"本次请求使用的种子整数值"。示例响应：`"seed": 10`。
+
+由于本项目通过 newapi 中继，`seed` 可能出现在 `response.data.seed` 或 `response.data.metadata?.seed`。在 polling 成功分支（line ~159-169，`usageMetadata` 构建处），新增：
 
 ```typescript
-if (response.data.seed !== undefined) {
-  usageMetadata.actualSeed = response.data.seed;
-} else if (response.data.metadata?.seed !== undefined) {
-  usageMetadata.actualSeed = response.data.metadata.seed;
+const actualSeed = response.data.seed ?? response.data.metadata?.seed;
+if (actualSeed !== undefined) {
+  usageMetadata.actualSeed = Number(actualSeed);
 }
 ```
 
-如果 API 不返回 seed，`actualSeed` 为空，前端回退显示 `requestedSeed`。
+`actualSeed` 是 API 实际使用的 seed（无论用户是否指定），用户随机生成时也能获得。
 
 **前端（历史详情展示）**:
 
