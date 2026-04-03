@@ -165,6 +165,8 @@ interface JimengStyleEditorProps {
 }
 ```
 
+**Model 切换时重置 seed**: 在 `handleModelChange` 回调（line ~189，`resetMedia()` 之后）新增一行 `setArkSeed(undefined)`，防止切换到非 Seedance 模型后再切回时残留旧 seed 值。
+
 ### 文件变更
 
 - **Modify**: `sora-ui/src/types/index.ts:89` — 新增 `arkSeed?: number` 字段
@@ -287,6 +289,8 @@ interface JimengStyleEditorProps {
 
 删除后 `VideoGenerator.tsx` 将减少约 650 行，从 ~3300 行降至 ~2650 行。
 
+> **注意**: 删除死代码块后，部分导入（如 `CloudUploadOutlined`、`Alert`、`Card` 等）和局部变量可能变为未引用。验证步骤中的 TypeScript 编译和 Lint 检查会报告这些，需一并清除。
+
 ### 文件变更
 
 - **Modify**: `sora-ui/src/components/VideoGenerator.tsx:2311-2963` — 删除 5 个 `{false && ...}` 死代码块 (~650 行)
@@ -303,20 +307,19 @@ interface JimengStyleEditorProps {
 
 **后端（创建任务时保存发送的 seed）**:
 
-在 `volcengineArkRelayController.ts` 创建 `videoTask` 时，将发送的 seed 值存入 task metadata：
+在 `volcengineArkRelayController.ts` 的 `prisma.videoTask.create()` metadata 对象内（line ~549，`webSearch` 之后），新增一行：
 
 ```typescript
-const taskMetadata: Record<string, any> = {
-  // ... existing fields
-  requestedSeed: seed !== undefined && seed !== null && seed !== -1 ? Number(seed) : undefined,
-};
+requestedSeed: seed !== undefined && seed !== null && seed !== -1 ? Number(seed) : undefined,
 ```
+
+`seed` 来自 `req.body` 解构（line 305），前端通过 `volcengine-ark.ts:78` 的 `seed` 字段传入。
 
 **后端（轮询成功时捕获 API 返回的 seed）**:
 
 官方[查询视频生成任务 API](https://www.volcengine.com/docs/82379/1521309) 的响应中，`seed` 是**顶层字段**（与 `ratio`、`duration`、`resolution` 同级），描述为"本次请求使用的种子整数值"。示例响应：`"seed": 10`。
 
-由于本项目通过 newapi 中继，`seed` 可能出现在 `response.data.seed` 或 `response.data.metadata?.seed`。在 polling 成功分支（line ~159-169，`usageMetadata` 构建处），新增：
+由于本项目通过 newapi 中继，`seed` 可能出现在 `response.data.seed` 或 `response.data.metadata?.seed`。在 polling 成功分支（line ~169，`usageMetadata` 构建处，`upstreamTaskId` 之后），新增：
 
 ```typescript
 const actualSeed = response.data.seed ?? response.data.metadata?.seed;
@@ -325,26 +328,38 @@ if (actualSeed !== undefined) {
 }
 ```
 
-`actualSeed` 是 API 实际使用的 seed（无论用户是否指定），用户随机生成时也能获得。
+> **注意**: newapi 中继可能不转发 `seed` 字段。首次部署后应通过日志验证 `response.data` 是否包含 `seed`。在 `usageMetadata` 构建完成后添加：`console.log('[Volcengine Ark Polling] 🔍 seed echo:', { actualSeed, rawSeed: response.data.seed, metaSeed: response.data.metadata?.seed });` 用于初期验证，确认后可删除。
 
-**前端（历史详情展示）**:
+`actualSeed` 是 API 实际使用的 seed（无论用户是否指定），用户随机生成时也能获得。若 newapi 不返回此字段，回退显示 `requestedSeed`。
 
-在 `VideoDetailModal.tsx` 或视频历史卡片中，当 metadata 含 `actualSeed` 或 `requestedSeed` 时，显示一个可点击复制的 seed 标签：
+**前端（任务详情抽屉展示）**:
+
+在 `BackendTaskList.tsx` 的任务详情 `<Descriptions>` 中（line ~1580，`upstreamTaskId` 之后），新增一个 `Descriptions.Item`：
 
 ```tsx
-{seedValue !== undefined && (
-  <span className="seed-tag" onClick={() => navigator.clipboard.writeText(String(seedValue))}>
-    🎲 {seedValue}
-  </span>
-)}
+{(() => {
+  const meta = selectedTask.metadata as any;
+  const seedValue = meta?.actualSeed ?? meta?.requestedSeed;
+  return seedValue !== undefined ? (
+    <Descriptions.Item label="Seed">
+      <Text copyable style={{ fontFamily: 'monospace' }}>🎲 {seedValue}</Text>
+      {meta?.actualSeed !== undefined && meta?.requestedSeed === undefined && (
+        <Tag color="blue" style={{ marginLeft: 8 }}>随机</Tag>
+      )}
+    </Descriptions.Item>
+  ) : null;
+})()}
 ```
 
-其中 `seedValue = metadata.actualSeed ?? metadata.requestedSeed`。
+- `actualSeed` 优先（API 实际使用的值）
+- `requestedSeed` 回退（用户手动指定的值）
+- 如果 `actualSeed` 存在但 `requestedSeed` 为空，显示"随机"标签
 
 ### 文件变更
 
-- **Modify**: `sora-ui-backend/src/controllers/volcengineArkRelayController.ts` — 创建任务时存 `requestedSeed`，轮询时存 `actualSeed`
-- **Modify**: `sora-ui/src/components/VideoDetailModal.tsx` — 显示 seed 标签（可点击复制）
+- **Modify**: `sora-ui-backend/src/controllers/volcengineArkRelayController.ts:549` — 创建任务时存 `requestedSeed`
+- **Modify**: `sora-ui-backend/src/controllers/volcengineArkRelayController.ts:169` — 轮询成功时存 `actualSeed`（含验证日志）
+- **Modify**: `sora-ui/src/components/TaskList/BackendTaskList.tsx:1580` — 任务详情中显示 seed（可复制）
 
 ---
 
