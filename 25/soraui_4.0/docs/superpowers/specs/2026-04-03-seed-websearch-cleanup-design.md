@@ -15,6 +15,7 @@
 | 2 | P2 | 前端没有 seed 输入 UI | 用户无法设定 seed 值 |
 | 3 | P2 | 联网搜索开关被限制为 `text2video` 模式 | 图生视频等模式下无法启用联网搜索 |
 | 4 | P3 | `VideoGenerator.tsx` 含 5 个 `{false && ...}` 死代码块 (~650 行) | 代码噪音，影响可维护性 |
+| 5 | P2 | 生成完成后无法看到使用的 seed 值 | 用户无法复现随机生成的好结果 |
 
 ---
 
@@ -292,11 +293,64 @@ interface JimengStyleEditorProps {
 
 ---
 
+## 模块 5: Seed 回显（后端存储 + 前端展示）
+
+### 问题
+
+用户生成视频后无法看到使用的 seed 值。如果用户不指定 seed（随机生成），就无法复现喜欢的结果。
+
+### 设计
+
+**后端（创建任务时保存发送的 seed）**:
+
+在 `volcengineArkRelayController.ts` 创建 `videoTask` 时，将发送的 seed 值存入 task metadata：
+
+```typescript
+const taskMetadata: Record<string, any> = {
+  // ... existing fields
+  requestedSeed: seed !== undefined && seed !== null && seed !== -1 ? Number(seed) : undefined,
+};
+```
+
+**后端（轮询成功时捕获 API 返回的 seed）**:
+
+在 polling 成功分支（line ~159-169，`usageMetadata` 构建处），新增：
+
+```typescript
+if (response.data.seed !== undefined) {
+  usageMetadata.actualSeed = response.data.seed;
+} else if (response.data.metadata?.seed !== undefined) {
+  usageMetadata.actualSeed = response.data.metadata.seed;
+}
+```
+
+如果 API 不返回 seed，`actualSeed` 为空，前端回退显示 `requestedSeed`。
+
+**前端（历史详情展示）**:
+
+在 `VideoDetailModal.tsx` 或视频历史卡片中，当 metadata 含 `actualSeed` 或 `requestedSeed` 时，显示一个可点击复制的 seed 标签：
+
+```tsx
+{seedValue !== undefined && (
+  <span className="seed-tag" onClick={() => navigator.clipboard.writeText(String(seedValue))}>
+    🎲 {seedValue}
+  </span>
+)}
+```
+
+其中 `seedValue = metadata.actualSeed ?? metadata.requestedSeed`。
+
+### 文件变更
+
+- **Modify**: `sora-ui-backend/src/controllers/volcengineArkRelayController.ts` — 创建任务时存 `requestedSeed`，轮询时存 `actualSeed`
+- **Modify**: `sora-ui/src/components/VideoDetailModal.tsx` — 显示 seed 标签（可点击复制）
+
+---
+
 ## 不做的事情 (YAGNI)
 
 - 不添加后端 seed 校验（API 自身校验）
 - 不清理后端 43 条 `console.log`（调试价值 > 清洁度，未来迁移到分级 logger）
-- 不增加 seed 回显功能（需轮询 API 获取实际使用的 seed，复杂度高收益低）
 - 不修改 `apiConfigs` 存储结构
 - 不转发 `watermark`、`return_last_frame` 等低优先级参数（默认值已满足需求）
 
@@ -304,12 +358,15 @@ interface JimengStyleEditorProps {
 
 ## 验证标准
 
+> **注意**: `isSeedance2` 检查为 `arkModel?.includes('seedance-2-0')`，同时匹配 Seedance 2.0 和 Seedance 2.0 fast。以下"Seedance 2.0 系列"指两者。
+
 1. **TypeScript 编译**: `npx tsc --noEmit` 无新增错误
 2. **Vite 构建**: `npx vite build` 成功
 3. **Lint**: `ReadLints` 无新增错误
 4. **功能验证**:
-   - Seed pill 在 Seedance 2.0 模式下显示，非 Seedance 2.0 模式下隐藏
-   - Seed 为空时 pill 显示"🎲 随机"，有值时显示"🎲 {value}"
-   - 联网搜索开关在所有 Seedance 2.0 模式下可见
+   - Seed pill 在 Seedance 2.0 系列（含 fast）模式下显示，其他模型下隐藏
+   - Seed 为空时 pill 显示"🎲 随机"，有值时显示"🎲 {value}"（seed=0 正确显示）
+   - 联网搜索开关在 Seedance 2.0 系列所有视频模式下可见
    - 删除死代码后页面功能不受影响
    - 后端正确将 seed 写入 Seedance 2.0 metadata（日志可验证）
+   - 视频详情中显示 seed 值（如有），可点击复制
