@@ -58,6 +58,7 @@ export class ModelSelectorManager {
   private config: ModelSelectorManagerConfig
   private initialized = false
   private currentModelKey = ''
+  private switching = false
 
   private readonly DEFAULT_RATIOS: RatioOption[] = [
     { key: '1:1', label: '正方形', description: '1:1' },
@@ -103,6 +104,14 @@ export class ModelSelectorManager {
       const api = (window as any).aiImageAPI
       const models = api?.getAllModels?.() || {}
       this.currentModelKey = api?.model || ''
+
+      if (this.currentModelKey && !models[this.currentModelKey]) {
+        const foundKey = Object.keys(models).find(k => models[k].name === this.currentModelKey)
+        if (foundKey) {
+          console.warn('⚠️ api.model returned name instead of key, auto-correcting:', this.currentModelKey, '→', foundKey)
+          this.currentModelKey = foundKey
+        }
+      }
 
       console.log('📊 当前模型:', this.currentModelKey, '所有模型数:', Object.keys(models).length)
 
@@ -274,28 +283,14 @@ export class ModelSelectorManager {
    */
   private bindSelectorEvents(selectElement: HTMLSelectElement, prefix: string): void {
     const handleChoice = (event: CustomEvent) => {
-      console.log(`${prefix} Choices choice 事件触发:`, event)
-
-      if (event.detail?.choice?.value) {
-        const selectedModel = event.detail.choice.value
-        console.log(`${prefix} 模型已切换:`, selectedModel)
-        this.handleModelSwitch(selectedModel)
-      }
-    }
-
-    const handleChange = (event: Event) => {
-      const target = event.target as HTMLSelectElement
-      console.log(`${prefix} change 事件触发, value:`, target.value)
-
-      if (target.value) {
-        console.log(`${prefix} 通过 change 事件切换模型:`, target.value)
-        this.handleModelSwitch(target.value)
+      const value = event.detail?.choice?.value
+      if (value) {
+        console.log(`${prefix} 模型已切换:`, value)
+        this.handleModelSwitch(value)
       }
     }
 
     selectElement.addEventListener('choice', handleChoice as EventListener)
-    selectElement.addEventListener('change', handleChange)
-
     console.log(`✅ ${prefix} 事件监听器已绑定`)
   }
 
@@ -303,34 +298,39 @@ export class ModelSelectorManager {
    * 处理模型切换
    */
   private handleModelSwitch(modelKey: string): void {
-    console.log('🔄 切换模型到:', modelKey)
+    if (this.switching || modelKey === this.currentModelKey) return
+    this.switching = true
 
-    const api = (window as any).aiImageAPI
-    const saved = api?.setModel?.(modelKey) ?? api?.saveModel?.(modelKey)
-    if (saved) {
-      this.currentModelKey = modelKey
+    try {
+      console.log('🔄 切换模型到:', modelKey)
 
-      // 同步两个选择器
-      if (this.desktopChoice) {
-        this.desktopChoice.setChoiceByValue(modelKey)
+      const api = (window as any).aiImageAPI
+      const saved = api?.setModel?.(modelKey) ?? api?.saveModel?.(modelKey)
+      if (saved) {
+        this.currentModelKey = modelKey
+
+        if (this.desktopChoice) {
+          this.desktopChoice.setChoiceByValue(modelKey)
+        }
+        if (this.mobileChoice) {
+          this.mobileChoice.setChoiceByValue(modelKey)
+        }
+
+        const currentModel = api.getCurrentModel?.() as ModelConfig
+        this.config.onModelChange?.(modelKey, currentModel)
+
+        this.updateUIForModel()
+
+        if (this.config.showToast) {
+          this.config.showToast(`已切换到模型: ${currentModel?.name || modelKey}`, 'success')
+        }
+
+        console.log('✅ 模型切换完成')
+      } else {
+        this.config.showToast?.('模型切换失败', 'error')
       }
-      if (this.mobileChoice) {
-        this.mobileChoice.setChoiceByValue(modelKey)
-      }
-
-      const currentModel = api.getCurrentModel?.() as ModelConfig
-      this.config.onModelChange?.(modelKey, currentModel)
-
-      // 重新渲染比例和分辨率按钮
-      this.updateUIForModel()
-
-      if (this.config.showToast) {
-        this.config.showToast(`已切换到模型: ${currentModel?.name || modelKey}`, 'success')
-      }
-
-      console.log('✅ 模型切换完成')
-    } else {
-      this.config.showToast?.('模型切换失败', 'error')
+    } finally {
+      this.switching = false
     }
   }
 
@@ -577,9 +577,10 @@ export class ModelSelectorManager {
       const message = 'Seedream 模型支持一次生成多张，每张按单价计费（最多 15 张）。如需批量多图，请分批提交任务。'
 
       if (!hint) {
-        hint = document.createElement('button')
-        hint.id = 'batchCountHint'
-        hint.type = 'button'
+        const btn = document.createElement('button')
+        btn.id = 'batchCountHint'
+        btn.type = 'button'
+        hint = btn
         hint.className = 'ml-2 w-4 h-4 flex items-center justify-center text-orange-200 hover:text-orange-100 transition-colors'
         hint.innerHTML = `<i class="fas fa-question-circle"></i>`
         hint.title = message
@@ -667,6 +668,14 @@ export class ModelSelectorManager {
     const api = (window as any).aiImageAPI
     const models = api?.getAllModels?.() || {}
     this.currentModelKey = api?.model || ''
+
+    if (this.currentModelKey && !models[this.currentModelKey]) {
+      const foundKey = Object.keys(models).find(k => models[k].name === this.currentModelKey)
+      if (foundKey) {
+        console.warn('⚠️ refresh: api.model returned name instead of key, auto-correcting:', this.currentModelKey, '→', foundKey)
+        this.currentModelKey = foundKey
+      }
+    }
 
     const desktopSelector = document.getElementById('modelSelector') as HTMLSelectElement | null
     const mobileSelector = document.getElementById('modelSelectorMobile') as HTMLSelectElement | null

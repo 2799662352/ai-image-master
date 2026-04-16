@@ -578,7 +578,7 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
       getCurrentModel: () => apiService.getCurrentModel(),
       getAllModels: () => apiService.getAllModels(),
       setModel: (key: string) => apiService.setModel(key),
-      get model() { return apiService.getCurrentModel()?.name },
+      get model() { return apiService.getModelKey() },
 
       // 图片生成
       generateImage: (params: any) => apiService.generateImage(params),

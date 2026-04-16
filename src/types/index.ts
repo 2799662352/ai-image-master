@@ -83,6 +83,7 @@ export interface ModelCapabilities {
   referenceImage: boolean
   imageEdit: boolean
   intelligentResize?: boolean
+  resolutionControl?: boolean
 }
 
 export interface AIModel {

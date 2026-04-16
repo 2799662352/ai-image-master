@@ -1330,6 +1330,13 @@ export class ApiService {
   }
 
   /**
+   * 获取当前模型 key
+   */
+  getModelKey(): string {
+    return this.currentModel
+  }
+
+  /**
    * 保存 API Key
    */
   saveApiKey(key: string): boolean {
