@@ -1,5 +1,6 @@
 import { Suspense } from 'react'
 import { useTabStore, type TabName } from '../stores'
+import { TabBar } from '../components/TabBar'
 import {
   GeneratePage,
   BatchPage,
@@ -36,7 +37,7 @@ export function AppLayout() {
 
   return (
     <div className="flex flex-col h-screen bg-cyberpunk-black text-white font-exo">
-      {/* TabBar will be inserted here in Task 11 */}
+      <TabBar />
       <main className="flex-1 overflow-auto">
         <Suspense fallback={<PageFallback />}>
           <ActivePage />
