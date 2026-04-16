@@ -1,0 +1,1 @@
+export { DialogModal } from './Dialog'
