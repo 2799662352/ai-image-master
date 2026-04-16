@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CATIMATION - AI Image Master</title>
+    <style>
+        html, body { margin: 0; padding: 0; background-color: #09090B; }
+        #loadingContainer {
+            position: fixed; inset: 0; background: #09090B; z-index: 99999;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .loader-spinner {
+            width: 48px; height: 48px;
+            border: 3px solid rgba(252, 227, 0, 0.2);
+            border-top-color: #FCE300;
+            border-radius: 50%; animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+    <link rel="icon" href="assets/favicon.ico" />
+</head>
+<body class="bg-[#09090B] text-white">
+    <div id="loadingContainer">
+        <div class="loader-spinner"></div>
+    </div>
+    <div id="root"></div>
+    <script type="module" src="./src/main.tsx"></script>
+</body>
+</html>
