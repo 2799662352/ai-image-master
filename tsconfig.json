@@ -40,6 +40,7 @@
       "@preload/*": ["./src/preload/*"],
       "@renderer/*": ["./src/renderer/src/*"]
     },
+    "ignoreDeprecations": "6.0",
     
     /* 其他选项 */
     "skipLibCheck": true,
