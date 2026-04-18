@@ -1,52 +1,35 @@
-import { useState, useEffect, useCallback } from 'react'
-import { useToastStore } from '../stores'
-
-interface HistoryItem {
-  id: number
-  type: string
-  prompt: string
-  urls: string[]
-  timestamp: string
-  model?: string
-}
+import { useEffect, useMemo } from 'react'
+import { useToastStore, useHistoryStore } from '../stores'
+import { useHistory } from '../hooks/useHistory'
 
 export default function HistoryPage() {
+  const history = useHistory()
   const addToast = useToastStore((s) => s.addToast)
-  const [items, setItems] = useState<HistoryItem[]>([])
-  const [loading, setLoading] = useState(true)
-  const [searchQuery, setSearchQuery] = useState('')
+
+  const items = useHistoryStore((s) => s.items)
+  const searchQuery = useHistoryStore((s) => s.searchQuery)
+  const error = useHistoryStore((s) => s.error)
+
+  const { setSearchQuery, loadHistory, deleteItem } = useHistoryStore.getState()
 
   useEffect(() => {
-    loadHistory()
+    loadHistory(history)
   }, [])
 
-  const loadHistory = useCallback(async () => {
-    setLoading(true)
-    try {
-      const api = (window as any).aiImageAPI
-      const history = await api?.getHistory?.()
-      setItems(Array.isArray(history) ? history : [])
-    } catch {
-      addToast({ message: '加载历史记录失败', type: 'error' })
-    } finally {
-      setLoading(false)
-    }
-  }, [addToast])
+  useEffect(() => {
+    if (error) addToast({ message: error, type: 'error' })
+  }, [error])
 
-  const handleDelete = useCallback(async (id: number) => {
-    try {
-      const api = (window as any).aiImageAPI
-      await api?.deleteHistoryItem?.(id)
-      setItems((prev) => prev.filter((i) => i.id !== id))
-      addToast({ message: '已删除', type: 'success' })
-    } catch {
-      addToast({ message: '删除失败', type: 'error' })
-    }
-  }, [addToast])
+  const filtered = useMemo(() => {
+    if (!searchQuery) return items
+    const q = searchQuery.toLowerCase()
+    return items.filter((i) => i.prompt.toLowerCase().includes(q))
+  }, [items, searchQuery])
 
-  const filtered = searchQuery
-    ? items.filter((i) => i.prompt.toLowerCase().includes(searchQuery.toLowerCase()))
-    : items
+  const handleDelete = (id: number) => {
+    deleteItem(id, history)
+    addToast({ message: '已删除', type: 'success' })
+  }
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">
@@ -63,11 +46,7 @@ export default function HistoryPage() {
         className="w-full px-4 py-2 bg-zinc-800 border-2 border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-cyberpunk-yellow"
       />
 
-      {loading ? (
-        <div className="flex justify-center py-12">
-          <div className="w-8 h-8 border-2 border-cyberpunk-yellow border-t-transparent rounded-full animate-spin" />
-        </div>
-      ) : filtered.length === 0 ? (
+      {filtered.length === 0 ? (
         <div className="text-center py-12 text-zinc-600">暂无历史记录</div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
