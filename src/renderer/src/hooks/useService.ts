@@ -1,6 +1,6 @@
 import { useSyncExternalStore, useCallback } from 'react'
 import { ServiceRegistry, SERVICE_KEYS } from '../services/ServiceBridge'
-import type { ApiService } from '../services/api'
+import type { ApiService, ApiSite, GenerateImageParams, GenerateResult } from '../services/api'
 import type { StorageBridge } from '../services/storage'
 import type { I18nService } from '../services/i18n'
 import type { R2StorageService } from '../services/r2-storage'
@@ -51,4 +51,35 @@ export function useTranslation() {
     [i18n]
   )
   return { t: translate, i18n }
+}
+
+export interface ApiActions {
+  generateImage(params: GenerateImageParams): Promise<GenerateResult>
+  testConnection(apiKey: string): Promise<boolean>
+  saveApiKey(key: string): boolean
+  saveVisionApiKey(key: string): boolean
+  getAllSites(): Record<string, ApiSite>
+  setSite(key: string): boolean
+  getStoredApiKey(siteKey?: string): string | null
+  getStoredVisionApiKey(siteKey?: string): string | null
+  getCurrentSite(): ApiSite | undefined
+  getSiteConfig(key: string): ApiSite | undefined
+  readonly currentSiteKey: string
+}
+
+export function useApi(): ApiActions {
+  const api = useApiService()
+  return {
+    generateImage: (p) => api.generateImage(p),
+    testConnection: (k) => api.testConnection(k),
+    saveApiKey: (k) => api.saveApiKey(k),
+    saveVisionApiKey: (k) => api.saveVisionApiKey(k),
+    getAllSites: () => api.getAllSites(),
+    setSite: (k) => api.setSite(k),
+    getStoredApiKey: (k) => api.getStoredApiKey(k),
+    getStoredVisionApiKey: (k) => api.getStoredVisionApiKey(k),
+    getCurrentSite: () => api.getCurrentSite(),
+    getSiteConfig: (k) => api.getAllSites()[k],
+    get currentSiteKey() { return api.currentSiteKey },
+  }
 }
