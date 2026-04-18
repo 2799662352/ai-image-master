@@ -48,17 +48,19 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         loadError: null,
       })
     } catch (err) {
-      set({ loadError: (err as Error).message })
+      set({ loadError: err instanceof Error ? err.message : String(err) })
     }
   },
 
   switchSite: (key, api) => {
     api.setSite(key)
     const storedKey = api.getStoredApiKey(key)
+    const storedVisionKey = api.getStoredVisionApiKey(key)
     const siteConfig = api.getSiteConfig(key)
     set({
       activeSiteKey: key,
       apiKey: storedKey || siteConfig?.defaultApiKey || '',
+      visionApiKey: storedVisionKey || '',
       connectionStatus: 'idle',
     })
   },

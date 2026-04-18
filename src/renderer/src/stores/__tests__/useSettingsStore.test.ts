@@ -94,6 +94,7 @@ describe('useSettingsStore', () => {
 
       const api = createMockApi({
         getStoredApiKey: vi.fn().mockReturnValue('key-b'),
+        getStoredVisionApiKey: vi.fn().mockReturnValue('vision-b'),
         getSiteConfig: vi.fn().mockReturnValue({ name: 'B', baseURL: 'https://b.com' }),
       })
 
@@ -101,6 +102,7 @@ describe('useSettingsStore', () => {
 
       expect(useSettingsStore.getState().activeSiteKey).toBe('b')
       expect(useSettingsStore.getState().apiKey).toBe('key-b')
+      expect(useSettingsStore.getState().visionApiKey).toBe('vision-b')
       expect(api.setSite).toHaveBeenCalledWith('b')
     })
   })
