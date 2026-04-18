@@ -4,6 +4,8 @@
  * 处理站点选择、自定义站点的 CRUD 操作和设置模态框
  */
 
+import { mountSettingsReact, unmountSettingsReact } from '../../react-app/main'
+
 declare const i18n: any
 
 export interface SiteConfig {
@@ -42,6 +44,7 @@ export class SiteManager {
 
   /**
    * 渲染站点卡片
+   * @deprecated replaced by React SettingsPage SiteGrid component
    */
   renderSiteCards(): void {
     const container = document.getElementById('siteCardsContainer')
@@ -339,40 +342,21 @@ export class SiteManager {
     if (!modal) return
 
     modal.classList.remove('hidden')
-    this.renderSiteCards()
-
-    // 加载当前站点的 API Key
-    const api = (window as any).aiImageAPI
-    if (api) {
-      const apiKeyInput = document.getElementById('apiKeyInput') as HTMLInputElement | null
-      const storedKey = api.getStoredApiKey(api.currentSite)
-      const site = api.getCurrentSite()
-      if (apiKeyInput) {
-        apiKeyInput.value = storedKey || site?.defaultApiKey || ''
-      }
-
-      // 加载图像理解 API Key
-      const visionApiKeyInput = document.getElementById('visionApiKeyInput') as HTMLInputElement | null
-      const visionKey = api.getStoredVisionApiKey()
-      if (visionApiKeyInput) {
-        visionApiKeyInput.value = visionKey || ''
-      }
-    }
-
-    // 更新模态框内的翻译
-    this.updateModalI18n()
+    mountSettingsReact()
   }
 
   /**
    * 关闭设置模态框
    */
   closeSettingsModal(): void {
+    unmountSettingsReact()
     const modal = document.getElementById('settingsModal')
     if (modal) modal.classList.add('hidden')
   }
 
   /**
    * 保存 API Key（公共方法）
+   * @deprecated replaced by React SettingsPage handleSave
    */
   async saveApiKeyPublic(): Promise<boolean> {
     const apiKeyInput = document.getElementById('apiKeyInput') as HTMLInputElement | null
@@ -497,9 +481,7 @@ export class SiteManager {
     const closeSettings = document.getElementById('closeSettings')
     const settingsModal = document.getElementById('settingsModal')
 
-    const closeSettingsModal = () => {
-      if (settingsModal) settingsModal.classList.add('hidden')
-    }
+    const closeSettingsModal = () => this.closeSettingsModal()
 
     if (closeSettingsX) closeSettingsX.addEventListener('click', closeSettingsModal)
     if (closeSettings) closeSettings.addEventListener('click', closeSettingsModal)
@@ -543,6 +525,8 @@ export class SiteManager {
 
     // "如何获取 API Key" 折叠展开
     this.initHowToGetToggle()
+
+    window.addEventListener('settings-saved', () => this.closeSettingsModal())
   }
 
   /**

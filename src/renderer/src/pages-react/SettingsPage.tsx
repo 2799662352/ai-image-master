@@ -40,6 +40,9 @@ export default function SettingsPage() {
     try {
       await saveAll(api)
       addToast({ message: '配置已保存', type: 'success' })
+      const vanillaApi = (window as any).aiImageAPI
+      vanillaApi?.updateApiStatus?.()
+      window.dispatchEvent(new CustomEvent('settings-saved'))
     } catch {
       addToast({ message: '保存失败', type: 'error' })
     }
@@ -48,11 +51,7 @@ export default function SettingsPage() {
   const isTesting = connectionStatus === 'testing'
 
   return (
-    <div className="max-w-2xl mx-auto p-6 space-y-8">
-      <h1 className="text-2xl font-orbitron text-cyberpunk-yellow flex items-center gap-2">
-        <span>{'\u2699\uFE0F'}</span> API 设置
-      </h1>
-
+    <div className="p-6 space-y-6">
       {loadError && (
         <div className="p-3 bg-red-900/30 border border-red-700 text-red-300 text-sm rounded">
           加载失败: {loadError}

@@ -1,8 +1,10 @@
 import { createRoot, Root } from 'react-dom/client'
 import { DirectorApp } from './DirectorApp'
 import { useDirectorStore } from './stores/useDirectorStore'
+import SettingsPage from '../pages-react/SettingsPage'
 
 let root: Root | null = null
+let settingsRoot: Root | null = null
 
 export function mountDirectorReact(): void {
   const container = document.getElementById('director-react-root')
@@ -62,5 +64,26 @@ export function unmountDirectorReact(): void {
     root.unmount()
     root = null
     console.log('[React] DirectorApp unmounted')
+  }
+}
+
+export function mountSettingsReact(): void {
+  const container = document.getElementById('settings-react-root')
+  if (!container) {
+    console.warn('[React] settings-react-root not found')
+    return
+  }
+  if (!settingsRoot) {
+    settingsRoot = createRoot(container)
+  }
+  settingsRoot.render(<SettingsPage />)
+  console.log('[React] SettingsPage mounted')
+}
+
+export function unmountSettingsReact(): void {
+  if (settingsRoot) {
+    settingsRoot.unmount()
+    settingsRoot = null
+    console.log('[React] SettingsPage unmounted')
   }
 }
