@@ -15,6 +15,7 @@ export default function SettingsPage() {
   const visionApiKey = useSettingsStore((s) => s.visionApiKey)
   const connectionStatus = useSettingsStore((s) => s.connectionStatus)
   const saving = useSettingsStore((s) => s.saving)
+  const loadError = useSettingsStore((s) => s.loadError)
 
   const { switchSite, setApiKey, setVisionApiKey, testConnection, saveAll, loadFromService } =
     useSettingsStore.getState()
@@ -51,6 +52,12 @@ export default function SettingsPage() {
       <h1 className="text-2xl font-orbitron text-cyberpunk-yellow flex items-center gap-2">
         <span>{'\u2699\uFE0F'}</span> API 设置
       </h1>
+
+      {loadError && (
+        <div className="p-3 bg-red-900/30 border border-red-700 text-red-300 text-sm rounded">
+          加载失败: {loadError}
+        </div>
+      )}
 
       <section className="space-y-3">
         <div className="flex items-center gap-2">
