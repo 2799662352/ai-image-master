@@ -1318,6 +1318,28 @@ export class ApiService {
   }
 
   /**
+   * 测试 API 连接
+   * @param apiKey - 要测试的 API Key
+   * @returns true if the API responds successfully
+   */
+  async testConnection(apiKey: string): Promise<boolean> {
+    const site = this.apiSites[this.currentSite]
+    if (!site) return false
+
+    try {
+      const response = await fetch(`${site.baseURL}/v1/models`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+      })
+      return response.ok
+    } catch {
+      return false
+    }
+  }
+
+  /**
    * 切换模型
    */
   setModel(modelKey: string): boolean {
