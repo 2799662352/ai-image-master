@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { subscribeWithSelector } from 'zustand/middleware'
 
 const VALID_TABS = [
   'generate',
@@ -19,14 +20,15 @@ interface TabState {
   switchTab: (tab: string) => void
 }
 
-export const useTabStore = create<TabState>((set, get) => ({
-  activeTab: 'generate',
-  previousTab: null,
-  switchTab: (tab: string) => {
-    if (!VALID_TABS.includes(tab as TabName)) return
-    const prev = get().activeTab
-    if (prev === tab) return
-    set({ activeTab: tab as TabName, previousTab: prev })
-    window.location.hash = tab
-  },
-}))
+export const useTabStore = create<TabState>()(
+  subscribeWithSelector((set, get) => ({
+    activeTab: 'generate',
+    previousTab: null,
+    switchTab: (tab: string) => {
+      if (!VALID_TABS.includes(tab as TabName)) return
+      const prev = get().activeTab
+      if (prev === tab) return
+      set({ activeTab: tab as TabName, previousTab: prev })
+    },
+  }))
+)

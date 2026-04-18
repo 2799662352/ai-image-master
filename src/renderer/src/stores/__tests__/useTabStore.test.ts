@@ -25,4 +25,22 @@ describe('useTabStore', () => {
     useTabStore.getState().switchTab('generate')
     expect(useTabStore.getState().previousTab).toBeNull()
   })
+
+  it('supports subscribe with selector', () => {
+    const calls: string[] = []
+    const unsub = useTabStore.subscribe(
+      (state) => state.activeTab,
+      (tab) => calls.push(tab)
+    )
+
+    useTabStore.getState().switchTab('history')
+    expect(calls).toEqual(['history'])
+
+    useTabStore.getState().switchTab('settings')
+    expect(calls).toEqual(['history', 'settings'])
+
+    unsub()
+    useTabStore.getState().switchTab('generate')
+    expect(calls).toEqual(['history', 'settings'])
+  })
 })
