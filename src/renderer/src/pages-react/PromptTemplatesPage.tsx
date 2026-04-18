@@ -1,36 +1,37 @@
-import { useState, useEffect, useCallback } from 'react'
-import { useToastStore } from '../stores'
-
-interface Template {
-  id: string
-  name: string
-  prompt: string
-  category: string
-  tags?: string[]
-}
+import { useEffect, useMemo, useCallback } from 'react'
+import { useToastStore, useTemplatesStore } from '../stores'
+import { useTemplates } from '../hooks/useTemplates'
+import type { Template } from '../hooks/useTemplates'
 
 export default function PromptTemplatesPage() {
+  const templatesSvc = useTemplates()
   const addToast = useToastStore((s) => s.addToast)
-  const [templates, setTemplates] = useState<Template[]>([])
-  const [searchQuery, setSearchQuery] = useState('')
-  const [activeCategory, setActiveCategory] = useState('all')
+
+  const templates = useTemplatesStore((s) => s.templates)
+  const searchQuery = useTemplatesStore((s) => s.searchQuery)
+  const activeCategory = useTemplatesStore((s) => s.activeCategory)
+
+  const { loadTemplates, setSearchQuery, setActiveCategory } = useTemplatesStore.getState()
 
   useEffect(() => {
-    const api = (window as any).aiImageAPI
-    const stored = api?.getPromptTemplates?.()
-    if (Array.isArray(stored)) setTemplates(stored)
+    loadTemplates(templatesSvc)
   }, [])
 
-  const categories = ['all', ...new Set(templates.map((t) => t.category))]
+  const categories = useMemo(
+    () => ['all', ...new Set(templates.map((t) => t.category))],
+    [templates]
+  )
 
-  const filtered = templates.filter((t) => {
-    const matchCategory = activeCategory === 'all' || t.category === activeCategory
-    const matchSearch =
-      !searchQuery ||
-      t.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      t.prompt.toLowerCase().includes(searchQuery.toLowerCase())
-    return matchCategory && matchSearch
-  })
+  const filtered = useMemo(() => {
+    return templates.filter((t) => {
+      const matchCategory = activeCategory === 'all' || t.category === activeCategory
+      const matchSearch =
+        !searchQuery ||
+        t.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        t.prompt.toLowerCase().includes(searchQuery.toLowerCase())
+      return matchCategory && matchSearch
+    })
+  }, [templates, activeCategory, searchQuery])
 
   const handleUse = useCallback(
     (template: Template) => {
@@ -44,7 +45,6 @@ export default function PromptTemplatesPage() {
     <div className="p-6 max-w-4xl mx-auto space-y-6">
       <h1 className="text-2xl font-orbitron text-cyberpunk-yellow">📝 提示词模板</h1>
 
-      {/* Search */}
       <input
         value={searchQuery}
         onChange={(e) => setSearchQuery(e.target.value)}
@@ -52,7 +52,6 @@ export default function PromptTemplatesPage() {
         className="w-full px-4 py-2 bg-zinc-800 border-2 border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-cyberpunk-yellow"
       />
 
-      {/* Categories */}
       <div className="flex flex-wrap gap-2">
         {categories.map((cat) => (
           <button
@@ -69,7 +68,6 @@ export default function PromptTemplatesPage() {
         ))}
       </div>
 
-      {/* Template grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {filtered.map((t) => (
           <div
