@@ -304,7 +304,7 @@ function createWindow(): void {
   if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../renderer/index-react.html'))
+    mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
   }
   
   // 开发模式打开 DevTools

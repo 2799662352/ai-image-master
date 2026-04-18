@@ -63,7 +63,7 @@ export default defineConfig({
       cssCodeSplit: true,
       rollupOptions: {
         input: {
-          index: resolve(__dirname, 'src/renderer/index-react.html')
+          index: resolve(__dirname, 'src/renderer/index.html')
         },
         external: ['deepagents'],
         output: {
@@ -76,6 +76,9 @@ export default defineConfig({
               }
               if (id.includes('zustand')) {
                 return 'vendor-zustand'
+              }
+              if (id.includes('choices.js')) {
+                return 'vendor-choices'
               }
               if (id.includes('jszip')) {
                 return 'vendor-jszip'
@@ -188,17 +191,15 @@ export default defineConfig({
       // 预热关键模块以加速 HMR (路径相对于 renderer root: src/renderer)
       warmup: {
         clientFiles: [
-          './src/main.tsx',
+          './src/main.ts',
           './src/services/ServiceBridge.ts',
-          './src/App.tsx',
-          './src/stores/index.ts',
-          './src/pages-react/index.ts'
+          './src/core/AppBootstrap.ts'
         ]
       }
     },
     // 依赖优化
     optimizeDeps: {
-      include: ['jszip', 'react', 'react-dom', 'zustand', 'react-select'],
+      include: ['choices.js', 'jszip', 'react', 'react-dom', 'zustand', 'react-select'],
       exclude: [],
       esbuildOptions: {
         plugins: [{
