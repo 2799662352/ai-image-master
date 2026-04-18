@@ -1,39 +1,34 @@
-import { useState, useCallback } from 'react'
-import Select, { type SingleValue, type StylesConfig } from 'react-select'
-import { useModelStore, useToastStore } from '../stores'
-
-interface ModelOption {
-  value: string
-  label: string
-}
-
-const selectStyles: StylesConfig<ModelOption, false> = {
-  control: (base) => ({ ...base, backgroundColor: '#27272A', borderColor: '#3F3F46', minHeight: 36 }),
-  singleValue: (base) => ({ ...base, color: '#FCE300' }),
-  menu: (base) => ({ ...base, backgroundColor: '#27272A', border: '1px solid #3F3F46' }),
-  option: (base, s) => ({
-    ...base,
-    backgroundColor: s.isFocused ? 'rgba(252,227,0,0.1)' : 'transparent',
-    color: s.isSelected ? '#FCE300' : '#e5e7eb',
-  }),
-  input: (base) => ({ ...base, color: '#e5e7eb' }),
-}
+import { useEffect, useMemo } from 'react'
+import { useModelStore, useToastStore, useCompareStore } from '../stores'
+import { useApi } from '../hooks/useService'
+import { ModelPairSelector } from './compare/ModelPairSelector'
 
 export default function ComparePage() {
+  const api = useApi()
   const models = useModelStore((s) => s.models)
   const addToast = useToastStore((s) => s.addToast)
 
-  const options: ModelOption[] = Object.entries(models).map(([k, v]) => ({ value: k, label: v.name }))
+  const leftModelKey = useCompareStore((s) => s.leftModelKey)
+  const rightModelKey = useCompareStore((s) => s.rightModelKey)
+  const prompt = useCompareStore((s) => s.prompt)
+  const comparing = useCompareStore((s) => s.comparing)
+  const leftResult = useCompareStore((s) => s.leftResult)
+  const rightResult = useCompareStore((s) => s.rightResult)
+  const error = useCompareStore((s) => s.error)
 
-  const [leftModel, setLeftModel] = useState<ModelOption | null>(null)
-  const [rightModel, setRightModel] = useState<ModelOption | null>(null)
-  const [prompt, setPrompt] = useState('')
-  const [comparing, setComparing] = useState(false)
-  const [leftResult, setLeftResult] = useState<string | null>(null)
-  const [rightResult, setRightResult] = useState<string | null>(null)
+  const { setLeftModel, setRightModel, setPrompt, compare } = useCompareStore.getState()
 
-  const handleCompare = useCallback(async () => {
-    if (!leftModel || !rightModel) {
+  const options = useMemo(
+    () => Object.entries(models).map(([k, v]) => ({ value: k, label: v.name })),
+    [models]
+  )
+
+  useEffect(() => {
+    if (error) addToast({ message: error, type: 'error' })
+  }, [error])
+
+  const handleCompare = async () => {
+    if (!leftModelKey || !rightModelKey) {
       addToast({ message: '请选择两个模型', type: 'warning' })
       return
     }
@@ -41,51 +36,21 @@ export default function ComparePage() {
       addToast({ message: '请输入提示词', type: 'warning' })
       return
     }
-    setComparing(true)
-    setLeftResult(null)
-    setRightResult(null)
-    try {
-      const api = (window as any).aiImageAPI
-      const [left, right] = await Promise.allSettled([
-        api?.generateWithModel?.(leftModel.value, prompt),
-        api?.generateWithModel?.(rightModel.value, prompt),
-      ])
-      if (left.status === 'fulfilled' && left.value?.urls?.[0]) setLeftResult(left.value.urls[0])
-      if (right.status === 'fulfilled' && right.value?.urls?.[0]) setRightResult(right.value.urls[0])
-      addToast({ message: '对比生成完成', type: 'success' })
-    } catch {
-      addToast({ message: '对比生成失败', type: 'error' })
-    } finally {
-      setComparing(false)
-    }
-  }, [leftModel, rightModel, prompt, addToast])
+    await compare(api)
+    addToast({ message: '对比生成完成', type: 'success' })
+  }
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">
       <h1 className="text-2xl font-orbitron text-cyberpunk-yellow">🔍 模型对比</h1>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="text-sm text-gray-400 mb-1 block">左侧模型</label>
-          <Select<ModelOption>
-            value={leftModel}
-            onChange={(v: SingleValue<ModelOption>) => setLeftModel(v)}
-            options={options}
-            styles={selectStyles}
-            placeholder="选择模型..."
-          />
-        </div>
-        <div>
-          <label className="text-sm text-gray-400 mb-1 block">右侧模型</label>
-          <Select<ModelOption>
-            value={rightModel}
-            onChange={(v: SingleValue<ModelOption>) => setRightModel(v)}
-            options={options}
-            styles={selectStyles}
-            placeholder="选择模型..."
-          />
-        </div>
-      </div>
+      <ModelPairSelector
+        options={options}
+        leftValue={leftModelKey}
+        rightValue={rightModelKey}
+        onLeftChange={setLeftModel}
+        onRightChange={setRightModel}
+      />
 
       <textarea
         value={prompt}
@@ -108,14 +73,18 @@ export default function ComparePage() {
           {leftResult ? (
             <img src={leftResult} alt="Left" className="max-w-full max-h-[500px] object-contain" />
           ) : (
-            <span className="text-zinc-600">{leftModel?.label ?? '左侧结果'}</span>
+            <span className="text-zinc-600">
+              {leftModelKey ? options.find((o) => o.value === leftModelKey)?.label ?? '左侧结果' : '左侧结果'}
+            </span>
           )}
         </div>
         <div className="bg-zinc-900 border-2 border-zinc-700 flex items-center justify-center">
           {rightResult ? (
             <img src={rightResult} alt="Right" className="max-w-full max-h-[500px] object-contain" />
           ) : (
-            <span className="text-zinc-600">{rightModel?.label ?? '右侧结果'}</span>
+            <span className="text-zinc-600">
+              {rightModelKey ? options.find((o) => o.value === rightModelKey)?.label ?? '右侧结果' : '右侧结果'}
+            </span>
           )}
         </div>
       </div>
