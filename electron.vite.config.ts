@@ -60,9 +60,6 @@ export default defineConfig({
               if (id.includes('zustand')) {
                 return 'vendor-zustand'
               }
-              if (id.includes('choices.js')) {
-                return 'vendor-choices'
-              }
               if (id.includes('jszip')) {
                 return 'vendor-jszip'
               }
@@ -119,10 +116,6 @@ export default defineConfig({
             if (id.includes('src/renderer/src/features/language')) {
               return 'feature-language'
             }
-            if (id.includes('src/renderer/src/features/accessibility')) {
-              return 'feature-accessibility'
-            }
-            
             // 页面模块 - 按页面拆分
             // 注意: HistoryPage 已合并到 core-services (见上方), Director 由 react-director chunk 处理
             if (id.includes('src/renderer/src/pages/GeneratePage')) {
@@ -178,19 +171,17 @@ export default defineConfig({
       // 预热关键模块以加速 HMR (路径相对于 renderer root: src/renderer)
       warmup: {
         clientFiles: [
-          './src/main.ts',
+          './src/main.tsx',
           './src/services/ServiceBridge.ts',
-          './src/pages/GeneratePage.ts',
-          './src/pages/BasePage.ts',
-          './src/features/history/index.ts',
-          './src/features/model-selector/index.ts',
-          './src/features/toast/index.ts'
+          './src/App.tsx',
+          './src/stores/index.ts',
+          './src/pages-react/index.ts'
         ]
       }
     },
     // 依赖优化
     optimizeDeps: {
-      include: ['choices.js', 'jszip', 'react', 'react-dom', 'zustand'],
+      include: ['jszip', 'react', 'react-dom', 'zustand', 'react-select'],
       exclude: [],
       esbuildOptions: {
         plugins: [{
