@@ -1,6 +1,6 @@
 import { useSyncExternalStore, useCallback } from 'react'
 import { ServiceRegistry, SERVICE_KEYS } from '../services/ServiceBridge'
-import type { ApiService, ApiSite, GenerateImageParams, GenerateResult } from '../services/api'
+import type { ApiService, ApiSite, GenerateImageParams, GenerateResult, VisionParams, VisionResult } from '../services/api'
 import type { StorageBridge } from '../services/storage'
 import type { I18nService } from '../services/i18n'
 import type { R2StorageService } from '../services/r2-storage'
@@ -55,6 +55,7 @@ export function useTranslation() {
 
 export interface ApiActions {
   generateImage(params: GenerateImageParams): Promise<GenerateResult>
+  understandImage(params: VisionParams): Promise<VisionResult>
   testConnection(apiKey: string): Promise<boolean>
   saveApiKey(key: string): boolean
   saveVisionApiKey(key: string): boolean
@@ -71,6 +72,7 @@ export function useApi(): ApiActions {
   const api = useApiService()
   return {
     generateImage: (p) => api.generateImage(p),
+    understandImage: (p) => api.understandImage(p),
     testConnection: (k) => api.testConnection(k),
     saveApiKey: (k) => api.saveApiKey(k),
     saveVisionApiKey: (k) => api.saveVisionApiKey(k),

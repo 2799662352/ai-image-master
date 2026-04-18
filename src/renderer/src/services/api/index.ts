@@ -13,5 +13,7 @@ export type {
   RatioOption,
   ModelCapabilities,
   GenerateImageParams,
-  GenerateResult
+  GenerateResult,
+  VisionParams,
+  VisionResult
 } from './ApiService'
