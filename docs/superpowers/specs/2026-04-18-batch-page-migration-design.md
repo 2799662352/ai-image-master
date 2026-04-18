@@ -6,6 +6,21 @@
 
 SettingsPage 迁移验证了 playbook 模式（独立 store + `useApi()` facade + 子组件拆分 + 测试）。本 spec 将该模式批量应用到剩余 6 个页面，完成后 React 应用中零 `window as any` 调用。
 
+## 当前状态审计
+
+现有 `pages-react/` 中的 6 个页面均为 UI-only 存根，调用的 API 方法名与实际 `ServiceBridge` 桥接对象不匹配，**所有页面当前都无法正常工作**。本次迁移同时修复这些断裂的集成。
+
+| 页面 | 当前调用 | 桥接实际方法 | 状态 |
+|------|----------|-------------|------|
+| GeneratePage | `api?.generate?.(...)` | `generateImage(params)` | 方法名不匹配 |
+| BatchPage | `api?.generate?.(...)` | `generateImage(params)` | 方法名不匹配 |
+| ComparePage | `api?.generateWithModel?.(model, prompt)` | 不存在 | 方法不存在 |
+| HistoryPage | `api?.getHistory?.()` / `api?.deleteHistoryItem?.(id)` | 不在 `aiImageAPI` 上 | 方法不存在 |
+| UnderstandPage | `api?.analyzeImage?.(...)` | `understandImage(params)` | 方法名不匹配 |
+| PromptTemplatesPage | `api?.getPromptTemplates?.()` | 不在 `aiImageAPI` 上 | 方法不存在 |
+
+迁移后，所有调用都通过 typed hooks（`useApi()` / `useHistory()` / `useTemplates()`）路由到正确的实现。
+
 ## 不做什么
 
 - 不切换 Vite 入口（留给下一个 spec）
@@ -24,7 +39,15 @@ SettingsPage 迁移验证了 playbook 模式（独立 store + `useApi()` facade 
 understandImage(params: VisionParams): Promise<VisionResult>
 ```
 
-委托给 `ApiService.understandImage()`。
+需同时更新 `ApiActions` 接口和 `useApi()` 函数体：
+
+```typescript
+// ApiActions 接口新增
+understandImage(params: VisionParams): Promise<VisionResult>
+
+// useApi() 函数体新增
+understandImage: (p) => api.understandImage(p),
+```
 
 ### 1.2 新建 `useHistory()` hook
 
@@ -79,10 +102,13 @@ export function useTemplates(): TemplateActions
 每页一个独立 Zustand store，遵循 SettingsPage 已验证的模式：
 - 类型安全的 state + actions 接口
 - Actions 接收服务实例参数（`ApiActions` / `HistoryActions` / `TemplateActions`），不直接调用 React hooks
-- 每个 store 导出 `initialState` 常量以便测试 reset
+- **新增约定**：每个 store 导出 `initialState` 常量以便测试 reset（改进原 SettingsStore 测试中硬编码初始值的做法）。实施完成后回补 `useSettingsStore` 使其一致
 - 异步 action 内部管理 loading/error 状态转换
 - 使用原子选择器 `useStore(s => s.field)` 消费
 - 派生数据（过滤、计数）不放 store 里，用 `useMemo` 在组件层计算
+- 所有异步 action 统一错误提取：`err instanceof Error ? err.message : String(err)`
+- 输入校验（空 prompt、未选模型）保留在组件层用 toast 提示，store action 假定输入有效
+- `GenerateResult` 返回值读取：优先 `result.urls`，fallback `result.images`（`result.urls ?? result.images ?? []`）
 
 ### 2.1 `useGenerateStore`
 
@@ -133,7 +159,16 @@ interface BatchState {
 }
 ```
 
-修复原代码的 `let nextId = 1` 问题，改用 `crypto.randomUUID()`。`runBatch` 内部顺序处理 pending 项，逐条使用不可变更新转换状态。
+修复原代码的 `let nextId = 1` 问题，改用 `crypto.randomUUID()`。`runBatch` 内部顺序处理 pending 项，**必须从 `set` 回调参数读取最新 state**（避免闭包过期引用）：
+
+```typescript
+// 正确模式 — 从回调参数获取最新 items
+set(state => ({
+  items: state.items.map(i =>
+    i.id === item.id ? { ...i, status: 'generating' } : i
+  )
+}))
+```
 
 ### 2.3 `useCompareStore`
 
@@ -156,7 +191,7 @@ interface CompareState {
 }
 ```
 
-`compare` 内部用 `Promise.allSettled` 并行调用 `api.generateImage({model: leftModelKey, prompt})` 和 `api.generateImage({model: rightModelKey, prompt})`。
+`compare` 内部用 `Promise.allSettled` 并行调用 `api.generateImage({model: leftModelKey, prompt})` 和 `api.generateImage({model: rightModelKey, prompt})`。`ratio` 参数有意省略（使用 API 默认值，对比关注模型差异而非尺寸）。注意：当前页面调用的 `generateWithModel(model, prompt)` 方法不存在于桥接层，本次迁移修正为 `generateImage({model, prompt})`。组件层需在 react-select `ModelOption` 对象和 store 的 `string | null` key 之间做转换。
 
 ### 2.4 `useHistoryStore`
 
@@ -165,7 +200,6 @@ interface CompareState {
 ```typescript
 interface HistoryState {
   items: HistoryItem[]
-  loading: boolean
   searchQuery: string
   error: string | null
 
@@ -175,7 +209,7 @@ interface HistoryState {
 }
 ```
 
-Action 接收 `HistoryActions`（来自 `useHistory()` hook）。过滤逻辑在组件中用 `useMemo` 计算。
+Action 接收 `HistoryActions`（来自 `useHistory()` hook）。`loadHistory` 和 `deleteItem` 都是同步操作（localStorage），因此不需要 `loading` 状态。过滤逻辑在组件中用 `useMemo` 计算。
 
 ### 2.5 `useUnderstandStore`
 
@@ -195,7 +229,7 @@ interface UnderstandState {
 }
 ```
 
-`analyze` 调用 `api.understandImage({images: [imageUrl], prompt: question})`。
+`analyze` 调用 `api.understandImage({images: [imageUrl], prompt: question})`。成功时读取 `result.content`（`VisionResult` 的正确字段）写入 `analysisResult`。注意：当前页面错误地读取 `.text`（undefined），本次迁移修正此问题。
 
 ### 2.6 `useTemplatesStore`
 
@@ -233,7 +267,7 @@ Playbook 规则：页面文件 ≤ 200 行，超过则提取子组件。子组�
 
 ### ComparePage 样式修复
 
-移除 ComparePage 内联的 `selectStyles`（21 行），替换为 `import { darkSelectStyles } from '../../styles/selectTheme'`。
+移除 ComparePage 内联的 `selectStyles`（21 行），替换为 `import { darkSelectStyles } from '../../styles/selectTheme'`。注意 `darkSelectStyles` 是泛型函数，使用时需调用：`styles={darkSelectStyles<ModelOption>()}`。
 
 ## 4. 测试策略
 
@@ -260,7 +294,7 @@ Playbook 规则：页面文件 ≤ 200 行，超过则提取子组件。子组�
 ## 5. 成功标准
 
 1. `pages-react/` 目录下零 `(window as any)` 调用
-2. 6 个新 store 全部创建且从 `stores/index.ts` barrel 导出
+2. 6 个新 store 及其公共接口类型（`BatchItem`、`HistoryItem`、`Template` 等）全部从 `stores/index.ts` barrel 导出
 3. `useApi()` 新增 `understandImage` 方法
 4. `useHistory()` 和 `useTemplates()` 两个新 hook 创建完成
 5. 所有 store + hook 单元测试通过（Vitest green）
@@ -270,6 +304,7 @@ Playbook 规则：页面文件 ≤ 200 行，超过则提取子组件。子组�
 
 ## 6. 未来改进（不在本 spec 范围）
 
+- 回补 `useSettingsStore` 导出 `initialState` 常量，与新 store 约定一致
 - BatchPage 任务取消/中断（AbortController）
 - 组件渲染测试基础设施搭建
 - Vite 入口切换到 `index-react.html`
