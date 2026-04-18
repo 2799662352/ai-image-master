@@ -14,12 +14,10 @@ interface ToastState {
   clearAll: () => void
 }
 
-let toastId = 0
-
 export const useToastStore = create<ToastState>((set) => ({
   toasts: [],
   addToast: (toast) => {
-    const id = String(++toastId)
+    const id = crypto.randomUUID()
     set((s) => ({ toasts: [...s.toasts, { ...toast, id }] }))
     const duration = toast.duration ?? 3000
     if (duration > 0) {

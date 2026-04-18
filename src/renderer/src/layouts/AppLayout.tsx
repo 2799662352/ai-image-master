@@ -1,4 +1,4 @@
-import { Suspense } from 'react'
+import { Suspense, useEffect } from 'react'
 import { useTabStore, type TabName } from '../stores'
 import { TabBar } from '../components/TabBar'
 import {
@@ -34,6 +34,19 @@ function PageFallback() {
 export function AppLayout() {
   const activeTab = useTabStore((s) => s.activeTab)
   const ActivePage = PAGE_MAP[activeTab]
+
+  useEffect(() => {
+    const unsub = useTabStore.subscribe(
+      (state) => state.activeTab,
+      (tab) => { window.location.hash = tab }
+    )
+    return unsub
+  }, [])
+
+  useEffect(() => {
+    const hash = window.location.hash.slice(1)
+    if (hash) useTabStore.getState().switchTab(hash)
+  }, [])
 
   return (
     <div className="flex flex-col h-screen bg-cyberpunk-black text-white font-exo">
