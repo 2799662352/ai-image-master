@@ -1,5 +1,6 @@
 import { defineConfig } from 'electron-vite'
 import { resolve } from 'path'
+import { builtinModules } from 'module'
 import react from '@vitejs/plugin-react'
 // import { nodePolyfills } from 'vite-plugin-node-polyfills'
 
@@ -12,7 +13,6 @@ export default defineConfig({
   main: {
     build: {
       outDir: 'dist/main',
-      // Node.js 环境优化
       target: 'node18',
       minify: isProd,
       rollupOptions: {
@@ -22,14 +22,18 @@ export default defineConfig({
         output: {
           format: 'cjs',
           entryFileNames: '[name].js'
-        }
+        },
+        external: [
+          'electron',
+          /^electron\/.+/,
+          ...builtinModules.flatMap(m => [m, `node:${m}`])
+        ]
       }
     }
   },
   preload: {
     build: {
       outDir: 'dist/preload',
-      // Preload 脚本运行在 Node 环境
       target: 'node18',
       minify: isProd,
       rollupOptions: {
@@ -39,7 +43,12 @@ export default defineConfig({
         output: {
           format: 'cjs',
           entryFileNames: '[name].js'
-        }
+        },
+        external: [
+          'electron',
+          /^electron\/.+/,
+          ...builtinModules.flatMap(m => [m, `node:${m}`])
+        ]
       }
     }
   },
