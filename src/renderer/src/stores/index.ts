@@ -10,3 +10,5 @@ export { useDialogStore } from './useDialogStore'
 export type { DialogConfig } from './useDialogStore'
 
 export { useModelStore } from './useModelStore'
+
+export { useSettingsStore } from './useSettingsStore'
