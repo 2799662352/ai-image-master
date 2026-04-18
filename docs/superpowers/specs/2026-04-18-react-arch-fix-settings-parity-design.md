@@ -77,7 +77,10 @@ export interface ApiActions {
 
 export function useApi(): ApiActions {
   const api = useApiService()
-  return useMemo(() => ({
+  // ApiService 是 singleton，通过 ServiceRegistry 注册一次后引用不变。
+  // 不需要 useMemo — api 引用始终稳定，直接委托调用即可。
+  // 方法通过 api 实例的可变内部状态访问最新数据。
+  return {
     generate: (p) => api.generate(p),
     testConnection: (k) => api.testConnection(k),
     saveApiKey: (k) => api.saveApiKey(k),
@@ -88,7 +91,7 @@ export function useApi(): ApiActions {
     getCurrentSite: () => api.getCurrentSite(),
     getSiteConfig: (k) => api.getSiteConfig(k),
     get currentSite() { return api.currentSite },
-  }), [api])
+  }
 }
 ```
 
@@ -133,13 +136,36 @@ export function darkSelectStyles<T>(): StylesConfig<T> {
 
 所有 react-select 使用点（`ModelSelector`、`ComparePage` 等）统一引用 `darkSelectStyles<OptionType>()`。
 
+**实现注意：** 上面的硬编码 hex 色值来自 Tailwind zinc/yellow 调色板。实现时如项目已配置 CSS custom properties（如 `var(--color-cyberpunk-yellow)`），应优先使用 CSS 变量以保持主题一致性。若项目暂无 CSS 变量体系，当前硬编码方案可接受，后续统一主题时再替换。
+
 ### 4.3 Tab Store Hash 副作用修复
 
 **文件**: `src/renderer/src/stores/useTabStore.ts`（修改）, `src/renderer/src/layouts/AppLayout.tsx`（修改）
 
-从 `switchTab` action 中删除 `window.location.hash = tab`。
+**关键：** Zustand v5 的原生 `subscribe` 只接受 `(listener)` 一个参数。要使用 selector 形式的 `subscribe(selector, callback)`，必须用 `subscribeWithSelector` middleware 包裹 store。
 
-在 `AppLayout.tsx` 中用 Zustand v5 的 `subscribe` with selector 订阅 hash 同步：
+**Step 1: 给 useTabStore 添加 `subscribeWithSelector` middleware：**
+
+```typescript
+import { create } from 'zustand'
+import { subscribeWithSelector } from 'zustand/middleware'
+
+export const useTabStore = create<TabState>()(
+  subscribeWithSelector((set, get) => ({
+    activeTab: 'generate',
+    previousTab: null,
+    switchTab: (tab: string) => {
+      if (!VALID_TABS.includes(tab as TabName)) return
+      const prev = get().activeTab
+      if (prev === tab) return
+      set({ activeTab: tab as TabName, previousTab: prev })
+      // 不在这里写 window.location.hash — 副作用移到组件层
+    },
+  }))
+)
+```
+
+**Step 2: 在 `AppLayout.tsx` 中用 selector 订阅 hash 同步：**
 
 ```typescript
 useEffect(() => {
@@ -151,7 +177,7 @@ useEffect(() => {
 }, [])
 ```
 
-同时在 `AppLayout` mount 时读取 `window.location.hash` 恢复 tab 状态：
+**Step 3: mount 时从 hash 恢复 tab 状态：**
 
 ```typescript
 useEffect(() => {
@@ -191,7 +217,7 @@ interface SettingsState {
   connectionStatus: 'idle' | 'testing' | 'success' | 'error'
   saving: boolean
 
-  loadFromService: (api: ApiActions) => void
+  loadFromService: (api: ApiActions) => Promise<void>
   switchSite: (key: string, api: ApiActions) => void
   setApiKey: (key: string) => void
   setVisionApiKey: (key: string) => void
@@ -202,10 +228,12 @@ interface SettingsState {
 
 **设计决策：**
 
-- **Actions 接收 `api` 参数**而非内部调用 hook — Zustand actions 在 store 创建时绑定，不能在内部调用 React hooks。所以 actions 接受 `ApiActions` 作为参数，由组件传入。
-- **Store 只管 UI 状态** — `sites`/`apiKeys` 从 service 加载后缓存在 store，用户修改时更新 store，点"保存"时 `saveAll` 调用 `api.saveApiKey()` 持久化。
+- **Actions 接收 `api` 参数**而非内部调用 hook — Zustand actions 在 store 创建时绑定，不能在内部调用 React hooks。所以 actions 接受 `ApiActions` 作为参数，由组件传入。选择此模式而非替代方案（store factory 注入、actions 内部 `ServiceRegistry.getRequired()` 懒解析）的原因是：参数传递使 mock 注入最简单，store 测试无需依赖 `ServiceRegistry` 全局状态。
+- **Store 只管 UI 状态** — `sites`/`apiKeys` 从 service 加载后缓存在 store，用户修改时更新 store，点"保存"时 `saveAll` 调用 `api.saveApiKey()` 持久化。其中 `apiKeys: Record<string, string>` 在 `loadFromService` 时一次性加载所有站点的 key，使切换站点时能即时显示已存 key，无需再次调用 service。
 - **`connectionStatus` 状态机** — `idle → testing → success|error`。UI 根据此状态显示按钮文字和颜色。
-- **不使用 `persist` middleware** — 设置数据已由 Electron Store 持久化（通过 ApiService），无需 Zustand 双重持久化。
+- **`loadFromService` 错误处理** — 函数签名改为 async，内部 try/catch，失败时 set `connectionStatus: 'error'` 并通过 toast 通知用户。
+- **不使用 `persist` middleware** — 设置数据已由 Electron Store 持久化（通过 ApiService），如果加 persist 会引入旧代码路径修改设置后 Zustand 缓存 stale 的问题。保持 Electron Store 为单一数据源，每次 mount 时从 service 加载最新数据。
+- **Selector 使用规范** — 组件中使用 atomic selector：`const sites = useSettingsStore(s => s.sites)` 而非解构整个 store，避免不相关字段变化导致的无谓重渲染。
 
 ### 5.2 SettingsPage 组件结构
 
@@ -242,16 +270,21 @@ pages-react/
    - `switchSite` 更新 `activeSiteKey` 和当前 `apiKey`
    - `testConnection` 正确转换 `connectionStatus` 状态
    - `saveAll` 调用 api 方法并处理异常
+   - `loadFromService` 网络异常时 set `connectionStatus: 'error'`
+   - `testConnection` 当 key 为空时的行为
+   - `loadFromService` 当 service 不可用时的降级
    - Mock `ApiActions` 接口
 
-2. **`SettingsPage.test.tsx`** — 组件渲染测试
+2. **`SettingsPage.test.tsx`** — 组件渲染测试（使用 `@testing-library/user-event`）
    - 站点卡片正确渲染
    - 点击卡片切换 active 状态
-   - API Key 输入和显隐切换
+   - API Key 输入和显隐切换（`userEvent.type` + `userEvent.click`）
    - 按钮在 testing/saving 时 disabled
+   - 错误状态 UI 反馈
 
 3. **集成测试** — 完整流程
    - 选站点 → 输入 key → 测试连接 → 保存
+   - 选站点 → 测试连接失败 → 错误提示
 
 ### 5.4 数据流
 
@@ -311,7 +344,7 @@ ServiceRegistry → Electron IPC → main process → Electron Store
 
 ## 8. 技术参考
 
-- **Zustand v5.0.12**: `persist` middleware with `partialize`, `subscribe` with selector, `createJSONStorage`
+- **Zustand v5.0.12**: `subscribeWithSelector` middleware（`subscribe(selector, callback)` 必须）, `persist` middleware with `partialize`, `createJSONStorage`
 - **React 19.2.5**: `useSyncExternalStore` for external stores, `useTransition` for async state
 - **react-select 5.10.2**: `StylesConfig<T>` typed styles, controlled value with `onChange`
 - **Context7 文档拉取时间**: 2026-04-18
