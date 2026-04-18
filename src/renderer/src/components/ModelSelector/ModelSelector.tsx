@@ -1,5 +1,6 @@
-import Select, { type SingleValue, type StylesConfig } from 'react-select'
+import Select, { type SingleValue } from 'react-select'
 import { useModelStore } from '../../stores'
+import { darkSelectStyles } from '../../styles/selectTheme'
 
 interface ModelOption {
   value: string
@@ -7,25 +8,7 @@ interface ModelOption {
   isNew?: boolean
 }
 
-const selectStyles: StylesConfig<ModelOption, false> = {
-  control: (base) => ({
-    ...base,
-    backgroundColor: '#1a1a2e',
-    borderColor: 'rgba(252, 227, 0, 0.3)',
-    minHeight: 36,
-    '&:hover': { borderColor: '#FCE300' },
-  }),
-  singleValue: (base) => ({ ...base, color: '#FCE300' }),
-  menu: (base) => ({ ...base, backgroundColor: '#1a1a2e', border: '1px solid rgba(252, 227, 0, 0.3)' }),
-  option: (base, state) => ({
-    ...base,
-    backgroundColor: state.isFocused ? 'rgba(252, 227, 0, 0.1)' : 'transparent',
-    color: state.isSelected ? '#FCE300' : '#e5e7eb',
-    '&:active': { backgroundColor: 'rgba(252, 227, 0, 0.2)' },
-  }),
-  input: (base) => ({ ...base, color: '#e5e7eb' }),
-  placeholder: (base) => ({ ...base, color: '#6b7280' }),
-}
+const selectStyles = darkSelectStyles<ModelOption>()
 
 export function ModelSelector() {
   const { currentModelKey, models, switchModel } = useModelStore()
