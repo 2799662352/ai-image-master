@@ -35,11 +35,12 @@ export const useCompareStore = create<CompareState>((set, get) => ({
 
   compare: async (api) => {
     const { leftModelKey, rightModelKey, prompt } = get()
+    if (!leftModelKey || !rightModelKey) return
     set({ comparing: true, leftResult: null, rightResult: null, error: null })
 
     const [leftSettled, rightSettled] = await Promise.allSettled([
-      api.generateImage({ model: leftModelKey!, prompt }),
-      api.generateImage({ model: rightModelKey!, prompt }),
+      api.generateImage({ model: leftModelKey, prompt }),
+      api.generateImage({ model: rightModelKey, prompt }),
     ])
 
     const leftUrl =
@@ -51,6 +52,7 @@ export const useCompareStore = create<CompareState>((set, get) => ({
         ? (rightSettled.value.urls?.[0] ?? rightSettled.value.images?.[0] ?? null)
         : null
 
-    set({ leftResult: leftUrl, rightResult: rightUrl, comparing: false })
+    const error = !leftUrl && !rightUrl ? '两个模型均生成失败' : null
+    set({ leftResult: leftUrl, rightResult: rightUrl, comparing: false, error })
   },
 }))

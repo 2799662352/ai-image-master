@@ -28,7 +28,9 @@ export default function HistoryPage() {
 
   const handleDelete = (id: number) => {
     deleteItem(id, history)
-    addToast({ message: '已删除', type: 'success' })
+    if (!useHistoryStore.getState().error) {
+      addToast({ message: '已删除', type: 'success' })
+    }
   }
 
   return (

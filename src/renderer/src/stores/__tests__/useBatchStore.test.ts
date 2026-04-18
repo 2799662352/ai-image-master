@@ -25,7 +25,7 @@ const originalRandomUUID = crypto.randomUUID.bind(crypto)
 
 describe('useBatchStore', () => {
   beforeEach(() => {
-    useBatchStore.setState({ ...initialState, items: [] })
+    useBatchStore.setState({ ...initialState })
     uuidCounter = 0
     vi.spyOn(crypto, 'randomUUID').mockImplementation(() => `uuid-${++uuidCounter}`)
   })

@@ -37,7 +37,10 @@ export default function ComparePage() {
       return
     }
     await compare(api)
-    addToast({ message: '对比生成完成', type: 'success' })
+    const { leftResult, rightResult } = useCompareStore.getState()
+    if (leftResult || rightResult) {
+      addToast({ message: '对比生成完成', type: 'success' })
+    }
   }
 
   return (

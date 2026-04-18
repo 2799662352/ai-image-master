@@ -19,7 +19,7 @@ const sampleItems: HistoryItem[] = [
 
 describe('useHistoryStore', () => {
   beforeEach(() => {
-    useHistoryStore.setState({ ...initialState, items: [] })
+    useHistoryStore.setState({ ...initialState })
   })
 
   it('has correct initial state', () => {

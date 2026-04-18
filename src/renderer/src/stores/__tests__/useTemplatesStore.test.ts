@@ -19,7 +19,7 @@ const sampleTemplates: Template[] = [
 
 describe('useTemplatesStore', () => {
   beforeEach(() => {
-    useTemplatesStore.setState({ ...initialState, templates: [] })
+    useTemplatesStore.setState({ ...initialState })
   })
 
   it('has correct initial state', () => {

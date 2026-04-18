@@ -96,7 +96,7 @@ describe('useCompareStore', () => {
       expect(state.comparing).toBe(false)
     })
 
-    it('handles both failing', async () => {
+    it('handles both failing and sets error', async () => {
       useCompareStore.setState({
         leftModelKey: 'a',
         rightModelKey: 'b',
@@ -113,6 +113,13 @@ describe('useCompareStore', () => {
       expect(state.leftResult).toBeNull()
       expect(state.rightResult).toBeNull()
       expect(state.comparing).toBe(false)
+      expect(state.error).toBe('两个模型均生成失败')
+    })
+
+    it('returns early without models selected', async () => {
+      const api = createMockApi()
+      await useCompareStore.getState().compare(api)
+      expect(api.generateImage).not.toHaveBeenCalled()
     })
 
     it('falls back to images field', async () => {
