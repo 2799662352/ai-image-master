@@ -46,7 +46,7 @@ export default defineConfig({
       cssCodeSplit: true,
       rollupOptions: {
         input: {
-          index: resolve(__dirname, 'src/renderer/index.html')
+          index: resolve(__dirname, 'src/renderer/index-react.html')
         },
         external: ['deepagents'],
         output: {
