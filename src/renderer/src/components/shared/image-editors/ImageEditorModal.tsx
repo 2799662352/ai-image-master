@@ -1,5 +1,6 @@
-import { lazy, Suspense, Component, useState, type ReactNode } from 'react'
+import { lazy, Suspense, Component, useState, useCallback, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { withRefPrefix } from './prompts'
 
 const MultiAngleEditor = lazy(() => import('./MultiAngleEditor'))
 const LightEditor = lazy(() => import('./LightEditor'))
@@ -40,6 +41,21 @@ export default function ImageEditorModal({
 }: Props) {
   const isPunk = theme === 'punk'
   const [currentUrl, setCurrentUrl] = useState(imageUrl)
+
+  // 仅当提供 imageChoices (多参考图场景) 时才加前缀 【@图片N】;
+  // 从结果网格 hover 打开 modal 不传 imageChoices, 保持裸 prompt.
+  const wrappedInject = useCallback(
+    (raw: string) => {
+      if (!imageChoices || imageChoices.length === 0) {
+        onInjectPrompt(raw)
+        return
+      }
+      const idx = imageChoices.findIndex((c) => c.url === currentUrl)
+      const refIndex = idx >= 0 ? idx + 1 : 1
+      onInjectPrompt(withRefPrefix(raw, refIndex))
+    },
+    [imageChoices, currentUrl, onInjectPrompt],
+  )
 
   const overlayStyle: React.CSSProperties = {
     position: 'fixed',
@@ -141,13 +157,13 @@ export default function ImageEditorModal({
             {editorType === 'angle' ? (
               <MultiAngleEditor
                 imageUrl={currentUrl}
-                onInjectPrompt={onInjectPrompt}
+                onInjectPrompt={wrappedInject}
                 onClose={onClose}
               />
             ) : (
               <LightEditor
                 imageUrl={currentUrl}
-                onInjectPrompt={onInjectPrompt}
+                onInjectPrompt={wrappedInject}
                 onClose={onClose}
               />
             )}

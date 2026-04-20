@@ -69,3 +69,14 @@ export function buildLightingPrompt(
   parts.push('Keep the same subject, composition, and background. Only change the lighting.')
   return parts.join(' ')
 }
+
+/**
+ * 在 prompt 前加上参考图指代前缀.
+ * 约定: `【@图片N】` 是给下游模型看的视觉标记, 后端不解析.
+ * @param prompt 编辑器生成的裸 prompt
+ * @param refIndex 1-based, refImages 数组里的绝对位置
+ */
+export function withRefPrefix(prompt: string, refIndex: number): string {
+  const n = refIndex > 0 ? refIndex : 1
+  return `Based on reference image 【@图片${n}】 ${prompt}`
+}
