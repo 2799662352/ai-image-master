@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useToastStore } from '../stores'
 import { useSettingsStore } from '../stores/useSettingsStore'
+import { useUIPrefsStore } from '../stores/useUIPrefsStore'
 import { useApi } from '../hooks/useService'
 import { SiteGrid } from './settings/SiteGrid'
 import { ApiKeyInput } from './settings/ApiKeyInput'
@@ -49,6 +50,8 @@ export default function SettingsPage() {
   }
 
   const isTesting = connectionStatus === 'testing'
+  const toolbarEnabled = useUIPrefsStore((s) => s.imageEditorToolbar.enabled)
+  const setToolbarEnabled = useUIPrefsStore((s) => s.setImageEditorToolbar)
 
   return (
     <div className="p-6 space-y-6">
@@ -113,6 +116,36 @@ export default function SettingsPage() {
           {saving ? '保存中...' : '\u2705 保存配置'}
         </button>
       </div>
+
+      <section className="space-y-3 pt-4 border-t border-zinc-700">
+        <div className="flex items-center gap-2">
+          <span className="w-6 h-6 bg-cyberpunk-yellow text-cyberpunk-black flex items-center justify-center text-sm font-bold">
+            ⚙
+          </span>
+          <span className="font-bold text-white uppercase tracking-tight">界面偏好</span>
+        </div>
+        <label className="flex items-center justify-between gap-4 cursor-pointer">
+          <div>
+            <div className="text-sm text-white font-medium">图片编辑工具条</div>
+            <div className="text-xs text-zinc-500">悬停图片时显示"多角度"和"打光"提示词助手按钮</div>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={toolbarEnabled}
+            onClick={() => setToolbarEnabled(!toolbarEnabled)}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+              toolbarEnabled ? 'bg-cyberpunk-yellow' : 'bg-zinc-600'
+            }`}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                toolbarEnabled ? 'translate-x-6' : 'translate-x-1'
+              }`}
+            />
+          </button>
+        </label>
+      </section>
     </div>
   )
 }
