@@ -154,6 +154,10 @@ function createWindow() {
         return { action: 'deny' };
     });
 
+    // 🖱️ 图片右键菜单（图片另存为 / 复制地址 / 在浏览器中打开）
+    const { attachImageContextMenu } = require('./image-context-menu');
+    attachImageContextMenu(mainWindow.webContents);
+
     // ⚡ 性能优化：等待渲染完成后再显示窗口
     mainWindow.once('ready-to-show', () => {
         console.log(`[Performance] Ready to show: ${Date.now() - startTime}ms`);
