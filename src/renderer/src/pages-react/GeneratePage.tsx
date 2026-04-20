@@ -1,13 +1,13 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useMemo } from 'react'
 import { useModelStore, useToastStore, useGenerateStore } from '../stores'
-import { useUIPrefsStore } from '../stores/useUIPrefsStore'
 import { useApi } from '../hooks/useService'
 import { ModelSelector } from '../components/ModelSelector'
 import { RatioSelector } from './generate/RatioSelector'
 import { ReferenceImageList } from './generate/ReferenceImageList'
 import { ResultGrid } from './generate/ResultGrid'
-import ImageEditorModal from '../components/shared/image-editors/ImageEditorModal'
-import '../components/shared/image-editors/image-editors.css'
+import type { MediaRef } from '../components/shared/media-tokens/types'
+import { useTokenAutocomplete, TokenAutocomplete, MentionChips } from '../components/shared/media-tokens'
+import '../components/shared/media-tokens/media-tokens.css'
 
 export default function GeneratePage() {
   const api = useApi()
@@ -26,7 +26,25 @@ export default function GeneratePage() {
     useGenerateStore.getState()
 
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const currentModel = models[currentModelKey]
+
+  const genMediaRefs = useMemo<MediaRef[]>(
+    () => referenceImages.map((url, i) => ({
+      index: i + 1,
+      type: 'image' as const,
+      url,
+      label: `图片${i + 1}`,
+    })),
+    [referenceImages],
+  )
+
+  const ac = useTokenAutocomplete({
+    mediaRefs: genMediaRefs,
+    textareaRef,
+    value: prompt,
+    onValueChange: setPrompt,
+  })
 
   useEffect(() => {
     if (error) addToast({ message: error, type: 'error' })
@@ -48,19 +66,6 @@ export default function GeneratePage() {
       addToast({ message: `生成完成 (${urls.length} 张)`, type: 'success' })
     }
   }
-
-  // ---- image editor ----
-  const [editorState, setEditorState] = useState<{ url: string; type: 'angle' | 'light' } | null>(null)
-  const toolbarEnabled = useUIPrefsStore((s) => s.imageEditorToolbar.enabled)
-
-  const injectPrompt = useCallback((p: string) => {
-    const cur = useGenerateStore.getState().prompt
-    setPrompt(cur + '\n' + p)
-  }, [setPrompt])
-
-  const openEditor = useCallback((url: string, type: 'angle' | 'light') => {
-    setEditorState({ url, type })
-  }, [])
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
@@ -87,33 +92,28 @@ export default function GeneratePage() {
         </div>
       )}
 
-      <textarea
-        value={prompt}
-        onChange={(e) => setPrompt(e.target.value)}
-        placeholder="描述你想要生成的图片..."
-        rows={4}
-        className="w-full px-4 py-3 bg-zinc-800 border-2 border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-cyberpunk-yellow resize-none"
-      />
-
-      {toolbarEnabled && (
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-zinc-500">提示词助手:</span>
-          <button
-            type="button"
-            onClick={() => openEditor('', 'angle')}
-            className="px-3 py-1 text-xs font-bold bg-zinc-700 hover:bg-zinc-600 text-white rounded-md transition-colors"
-          >
-            多角度
-          </button>
-          <button
-            type="button"
-            onClick={() => openEditor('', 'light')}
-            className="px-3 py-1 text-xs font-bold bg-zinc-700 hover:bg-zinc-600 text-white rounded-md transition-colors"
-          >
-            打光
-          </button>
-        </div>
-      )}
+      <div className="relative">
+        <textarea
+          ref={textareaRef}
+          value={prompt}
+          onChange={ac.handleChange}
+          onKeyDown={ac.handleKeyDown}
+          placeholder="描述你想要生成的图片... 输入 @ 引用参考图"
+          rows={4}
+          className="w-full px-4 py-3 bg-zinc-800 border-2 border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-cyberpunk-yellow resize-none"
+        />
+        <TokenAutocomplete
+          visible={ac.visible}
+          suggestions={ac.suggestions}
+          selectedIndex={ac.selectedIndex}
+          position={ac.position}
+          theme="default"
+          onSelect={ac.selectToken}
+          onClose={ac.handleClose}
+          onHover={ac.handleHover}
+        />
+        <MentionChips value={prompt} mediaRefs={genMediaRefs} theme="default" onValueChange={setPrompt} />
+      </div>
 
       <RatioSelector value={ratio} onChange={setRatio} />
 
@@ -132,18 +132,7 @@ export default function GeneratePage() {
         {generating ? '生成中...' : '开始生成'}
       </button>
 
-      <ResultGrid urls={resultUrls} onOpenEditor={openEditor} />
-
-      {editorState && (
-        <ImageEditorModal
-          key={editorState.type}
-          editorType={editorState.type}
-          imageUrl={editorState.url}
-          theme="default"
-          onInjectPrompt={injectPrompt}
-          onClose={() => setEditorState(null)}
-        />
-      )}
+      <ResultGrid urls={resultUrls} />
     </div>
   )
 }

@@ -1,191 +1,82 @@
-import { useState, useCallback, useRef } from 'react'
-import { useModelStore, useToastStore } from '../stores'
-import { useUIPrefsStore } from '../stores/useUIPrefsStore'
-import { useApi } from '../hooks/useService'
-import { ModelSelector } from '../components/ModelSelector'
-import ImageEditToolbar from '../components/shared/image-editors/ImageEditToolbar'
-import ImageEditorModal from '../components/shared/image-editors/ImageEditorModal'
-import '../components/shared/image-editors/image-editors.css'
+import { useState, useRef, useMemo, useCallback } from 'react'
+import type { MediaRef } from '../components/shared/media-tokens/types'
+import { useTokenAutocomplete, TokenAutocomplete, MentionChips } from '../components/shared/media-tokens'
+import { ReferenceImageList } from './generate/ReferenceImageList'
+import '../components/shared/media-tokens/media-tokens.css'
 
 export default function DirectorPage() {
-  const api = useApi()
-  const currentModelKey = useModelStore((s) => s.currentModelKey)
-  const addToast = useToastStore((s) => s.addToast)
-  const toolbarEnabled = useUIPrefsStore((s) => s.imageEditorToolbar.enabled)
-
   const [prompt, setPrompt] = useState('')
-  const [refImages, setRefImages] = useState<string[]>([])
-  const [resultUrls, setResultUrls] = useState<string[]>([])
-  const [generating, setGenerating] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
+  const [refs, setRefs] = useState<string[]>([])
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const [editorState, setEditorState] = useState<{ url: string; type: 'angle' | 'light' } | null>(null)
+  const mediaRefs = useMemo<MediaRef[]>(
+    () => refs.map((url, i) => ({
+      index: i + 1,
+      type: 'image' as const,
+      url,
+      label: `图片${i + 1}`,
+    })),
+    [refs],
+  )
 
-  const injectPrompt = useCallback((p: string) => {
-    setPrompt((cur) => cur + '\n' + p)
-  }, [])
+  const ac = useTokenAutocomplete({
+    mediaRefs,
+    textareaRef,
+    value: prompt,
+    onValueChange: setPrompt,
+  })
 
-  const openEditor = useCallback((url: string, type: 'angle' | 'light') => {
-    setEditorState({ url, type })
-  }, [])
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
     if (!files) return
     Array.from(files).forEach((file) => {
       const reader = new FileReader()
       reader.onload = () => {
-        if (typeof reader.result === 'string') setRefImages((prev) => [...prev, reader.result as string])
+        if (typeof reader.result === 'string') setRefs((p) => [...p, reader.result as string])
       }
       reader.readAsDataURL(file)
     })
-  }
+  }, [])
 
-  const handleGenerate = async () => {
-    if (!prompt.trim()) {
-      addToast({ message: '请输入提示词', type: 'warning' })
-      return
-    }
-    if (!currentModelKey) {
-      addToast({ message: '请先选择模型', type: 'warning' })
-      return
-    }
-    setGenerating(true)
-    setResultUrls([])
-    try {
-      const result = await api.generateImage({
-        prompt,
-        ratio: '1:1',
-        model: currentModelKey,
-        referenceImages: refImages.length > 0 ? refImages : undefined,
-      })
-      const urls = result.urls ?? result.images ?? []
-      setResultUrls(urls)
-      if (urls.length > 0) addToast({ message: `生成完成 (${urls.length} 张)`, type: 'success' })
-    } catch (err) {
-      addToast({ message: `生成失败: ${err instanceof Error ? err.message : String(err)}`, type: 'error' })
-    } finally {
-      setGenerating(false)
-    }
-  }
+  const removeRef = useCallback((index: number) => {
+    setRefs((p) => p.filter((_, i) => i !== index))
+  }, [])
 
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-orbitron text-cyberpunk-yellow">Director 测试区</h1>
-        <ModelSelector />
-      </div>
+    <div className="p-6 max-w-3xl mx-auto space-y-6">
+      <h1 className="text-2xl font-orbitron text-cyberpunk-yellow">Director — @参考图 Test</h1>
+      <p className="text-sm text-zinc-500">上传参考图后在 textarea 中输入 @ 测试 autocomplete + chips</p>
 
-      <p className="text-xs text-zinc-500">
-        上传参考图 → 使用编辑器构建提示词 → 点击生成
-      </p>
-
-      {/* Reference images */}
-      <div className="space-y-2">
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-zinc-400">参考图</span>
-          <button
-            type="button"
-            onClick={() => fileRef.current?.click()}
-            className="px-3 py-1 text-xs font-bold bg-zinc-700 hover:bg-zinc-600 text-white rounded-md transition-colors"
-          >
-            + 上传
-          </button>
-          {refImages.length > 0 && (
-            <button
-              type="button"
-              onClick={() => setRefImages([])}
-              className="px-3 py-1 text-xs font-bold bg-zinc-800 hover:bg-zinc-700 text-zinc-400 rounded-md transition-colors"
-            >
-              清空
-            </button>
-          )}
-        </div>
-        <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFileUpload} />
-        {refImages.length > 0 && (
-          <div className="flex gap-2 flex-wrap">
-            {refImages.map((img, i) => (
-              <div key={i} className="group relative w-20 h-20 border border-zinc-700 bg-zinc-900 overflow-hidden">
-                <img src={img} alt={`ref ${i + 1}`} className="w-full h-full object-cover" />
-                <button
-                  type="button"
-                  onClick={() => setRefImages((prev) => prev.filter((_, idx) => idx !== i))}
-                  className="absolute top-0 right-0 w-5 h-5 bg-red-600 text-white text-xs font-bold opacity-0 group-hover:opacity-100 transition-opacity"
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Prompt textarea */}
-      <textarea
-        value={prompt}
-        onChange={(e) => setPrompt(e.target.value)}
-        placeholder="描述你想要生成的图片..."
-        rows={5}
-        className="w-full px-4 py-3 bg-zinc-800 border-2 border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-cyberpunk-yellow resize-none"
+      <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFileUpload} />
+      <ReferenceImageList
+        images={refs}
+        onRemove={removeRef}
+        onAdd={() => fileInputRef.current?.click()}
       />
 
-      {/* Editor buttons */}
-      {toolbarEnabled && (
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-zinc-500">提示词助手:</span>
-          <button
-            type="button"
-            onClick={() => openEditor(refImages[0] ?? '', 'angle')}
-            className="px-3 py-1 text-xs font-bold bg-zinc-700 hover:bg-zinc-600 text-white rounded-md transition-colors"
-          >
-            多角度
-          </button>
-          <button
-            type="button"
-            onClick={() => openEditor(refImages[0] ?? '', 'light')}
-            className="px-3 py-1 text-xs font-bold bg-zinc-700 hover:bg-zinc-600 text-white rounded-md transition-colors"
-          >
-            打光
-          </button>
-        </div>
-      )}
-
-      {/* Generate */}
-      <button
-        onClick={handleGenerate}
-        disabled={generating}
-        className="w-full py-3 bg-cyberpunk-yellow text-cyberpunk-black font-bold text-lg uppercase tracking-tight hover:opacity-90 transition-all disabled:opacity-50"
-      >
-        {generating ? '生成中...' : '开始生成'}
-      </button>
-
-      {/* Result grid */}
-      {resultUrls.length > 0 && (
-        <div className="grid grid-cols-2 gap-4">
-          {resultUrls.map((url, i) => (
-            <div key={i} className="group relative bg-zinc-900 border-2 border-zinc-700 overflow-hidden">
-              <ImageEditToolbar
-                theme="default"
-                imageUrl={url}
-                onOpenEditor={(type) => openEditor(url, type)}
-              />
-              <img src={url} alt={`Result ${i + 1}`} className="w-full object-contain" />
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Editor modal */}
-      {editorState && (
-        <ImageEditorModal
-          key={editorState.type}
-          editorType={editorState.type}
-          imageUrl={editorState.url}
-          theme="default"
-          onInjectPrompt={injectPrompt}
-          onClose={() => setEditorState(null)}
+      <div className="relative">
+        <textarea
+          ref={textareaRef}
+          value={prompt}
+          onChange={ac.handleChange}
+          onKeyDown={ac.handleKeyDown}
+          placeholder="输入提示词... 键入 @ 引用参考图"
+          rows={5}
+          className="w-full px-4 py-3 bg-zinc-800 border-2 border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-cyberpunk-yellow resize-none"
         />
-      )}
+        <TokenAutocomplete
+          visible={ac.visible}
+          suggestions={ac.suggestions}
+          selectedIndex={ac.selectedIndex}
+          position={ac.position}
+          theme="default"
+          onSelect={ac.selectToken}
+          onClose={ac.handleClose}
+          onHover={ac.handleHover}
+        />
+        <MentionChips value={prompt} mediaRefs={mediaRefs} theme="default" onValueChange={setPrompt} />
+      </div>
     </div>
   )
 }
