@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react'
+import { useMemo, useState, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useModelStore, useToastStore, useBatchStore } from '../stores'
 import { useApi } from '../hooks/useService'
@@ -15,6 +15,7 @@ import PunkRefDrop from './batch-punk/PunkRefDrop'
 import PunkActionBar from './batch-punk/PunkActionBar'
 import PunkResultGrid from './batch-punk/PunkResultGrid'
 import PunkPromptHelperBar from './batch-punk/PunkPromptHelperBar'
+import type { MediaRef } from '../components/shared/media-tokens/types'
 import { PunkBudgetReceipt } from './batch-punk/PunkBudgetReceipt'
 import { extractPriceFromModel } from '../utils/model-price'
 
@@ -135,6 +136,16 @@ export default function BatchPage() {
   const unitPrice = useMemo(() => extractPriceFromModel(modelConfig), [modelConfig])
   const receiptCount = mode === 'card' ? cardCount : perPromptCount
   const modelDisplayName = modelConfig?.name || currentModelKey || '未知模型'
+
+  const batchMediaRefs = useMemo<MediaRef[]>(
+    () => refImages.map((r, i) => ({
+      index: i + 1,
+      type: 'image' as const,
+      url: r.base64,
+      label: r.fileName || `图片${i + 1}`,
+    })),
+    [refImages],
+  )
 
   // 模型切换后, 如果当前 ratio/resolution 不在选项里, 自动归位
   useEffect(() => {
@@ -261,6 +272,7 @@ export default function BatchPage() {
               count={cardCount}
               onPromptChange={setCardPrompt}
               onCountChange={setCardCount}
+              mediaRefs={batchMediaRefs}
             />
           ) : (
             <PunkPromptMulti
@@ -268,6 +280,7 @@ export default function BatchPage() {
               onChange={setMultiText}
               perPromptCount={perPromptCount}
               onPerPromptCountChange={setPerPromptCount}
+              mediaRefs={batchMediaRefs}
             />
           )}
         </section>

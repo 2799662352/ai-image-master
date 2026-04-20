@@ -18,6 +18,7 @@ interface Return {
   handleKeyDown: (e: React.KeyboardEvent) => void
   handleClose: () => void
   handleHover: (index: number) => void
+  selectToken: (ref: MediaRef) => void
 }
 
 const AT_VALID_BEFORE = /[\s\n\r】）})\]」』]/
@@ -259,5 +260,6 @@ export function useTokenAutocomplete({
     handleKeyDown,
     handleClose,
     handleHover,
+    selectToken,
   }
 }
