@@ -1,3 +1,5 @@
+import { makeToken } from '../media-tokens/types'
+
 const AZIMUTH_MAP: Record<number, string> = {
   0: 'from the front',
   45: 'from the front-right at a 45-degree angle',
@@ -78,5 +80,5 @@ export function buildLightingPrompt(
  */
 export function withRefPrefix(prompt: string, refIndex: number): string {
   const n = refIndex > 0 ? refIndex : 1
-  return `Based on reference image 【@图片${n}】 ${prompt}`
+  return `Based on reference image ${makeToken(n)} ${prompt}`
 }
