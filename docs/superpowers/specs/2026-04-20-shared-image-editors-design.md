@@ -43,12 +43,17 @@ src/renderer/src/components/shared/image-editors/
 ├── LightEditor.tsx             # 同上
 ├── ThreeGlobe.tsx              # Three.js 3D 地球仪 (lazy)
 ├── ThreeLightScene.tsx         # Three.js 灯光场景 (lazy)
+├── orbitGlobeShared.ts         # Three.js 共享场景构建器（球壳/网格/snap 点）
 ├── prompts.ts                  # buildCameraPrompt / buildLightingPrompt 纯函数
 ├── ImageEditToolbar.tsx        # hover 浮动工具条 (theme: 'punk' | 'default')
 └── ImageEditorModal.tsx        # 弹窗外壳 (theme prop)
 ```
 
 **不再需要 `image-edit-service.ts`** — 没有 API 调用层。
+
+> **关键依赖：** `ThreeGlobe.tsx` 和 `ThreeLightScene.tsx` 都 import
+> `orbitGlobeShared.ts`（≈200 行，含球壳着色器、网格线、snap 点生成器）。
+> 漏搬此文件两个 3D 组件无法编译。
 
 ### 3.2 数据流
 
@@ -187,10 +192,28 @@ src/renderer/src/stores/useUIPrefsStore.ts
 
 ## 6. Three.js 保留策略
 
-- `ThreeGlobe.tsx` 和 `ThreeLightScene.tsx` 原样复制（无改动）
-- `React.lazy` + `<Suspense>` 包裹
-- Modal 打开时挂载，关闭时卸载
+- `ThreeGlobe.tsx`、`ThreeLightScene.tsx`、`orbitGlobeShared.ts` 三文件原样复制
+- 两个组件均用 `React.lazy` + `<Suspense>` 包裹
 - 依赖：`three ^0.183.2` + `@types/three`
+
+### 6.1 多张图片纹理切换
+
+结果 grid 有多张图片，每张 hover 都有工具条。用户可能连续在不同图片上打开编辑器。
+
+**问题：** 两个 Three.js 组件加载 `imageUrl` 纹理的方式不同：
+- `ThreeGlobe`：`useEffect([imageUrl])` — 独立 effect，prop 变更就重新加载。安全。
+- `ThreeLightScene`：只在初始 mount 的 `useEffect` 里加载，**无 `[imageUrl]` 依赖**。如果不 unmount 直接换 imageUrl，纹理不会更新。
+
+**解法：`ImageEditorModal` 必须用 `key={imageUrl}` 或在关闭时卸载子树。**
+推荐用 `key`：`<ImageEditorModal key={activeImageUrl} ... />`。imageUrl 变 → React 销毁旧实例 → 创建新实例 → 两个 Three.js 组件重新 mount → 正确加载新纹理。
+
+### 6.2 WebGL 上下文与内存
+
+- 浏览器 WebGL 上下文上限约 8-16 个。频繁开关 Modal 必须确保 renderer 正确 dispose。
+- 源组件在 useEffect cleanup 中已有 `renderer.dispose()`。移植时验证此逻辑完整。
+- Batch 结果常为 data: URL (base64, 数 MB)。Three.js `new Image()` + `Texture` 会在 GPU 额外占一份。
+- **Modal 关闭/key 变更时必须：** `texture.dispose()` → `renderer.dispose()` → DOM 中移除 canvas。
+- 源组件已有此 cleanup，移植时保留并验证不丢步骤。
 
 ---
 
@@ -207,6 +230,7 @@ src/renderer/src/stores/useUIPrefsStore.ts
 | 改 `handleApply` → 调 `onInjectPrompt(promptText)` | 核心变化 |
 | 保留 `buildCameraPrompt` / `buildLightingPrompt` 调用 | 构造 prompt 的核心逻辑 |
 | 保留 Three.js `<ThreeGlobe>` / `<ThreeLightScene>` | 3D 预览完整保留 |
+| 保留 `orbitGlobeShared.ts` 全部导入 | Three.js 球壳/网格/snap 共享模块 |
 | 保留所有滑杆/预设/方向按钮 UI | 参数选择 UI 完整保留 |
 | 新增底部 prompt 预览区 | 显示当前构造的英文 prompt（只读 textarea） |
 | 新增 [注入 Prompt] 按钮 | 替换原来的 [生成] 按钮 |
@@ -214,6 +238,7 @@ src/renderer/src/stores/useUIPrefsStore.ts
 | `nodrag nopan` class → 删除 | React Flow 画布才需要的防拖拽属性 |
 | `onPointerDown stopPropagation` → 删除 | 同上 |
 | 导入路径 `@/lib/...` → 相对路径 `./prompts` | Electron + Vite 路径 |
+| 导入路径 `./orbitGlobeShared` | 保持同目录相对引用 |
 
 ---
 
@@ -248,6 +273,7 @@ src/renderer/src/stores/useUIPrefsStore.ts
 - [ ] `src/renderer/src/components/shared/image-editors/LightEditor.tsx`
 - [ ] `src/renderer/src/components/shared/image-editors/ThreeGlobe.tsx`
 - [ ] `src/renderer/src/components/shared/image-editors/ThreeLightScene.tsx`
+- [ ] `src/renderer/src/components/shared/image-editors/orbitGlobeShared.ts`
 - [ ] `src/renderer/src/components/shared/image-editors/prompts.ts`
 - [ ] `src/renderer/src/components/shared/image-editors/ImageEditToolbar.tsx`
 - [ ] `src/renderer/src/components/shared/image-editors/ImageEditorModal.tsx`
