@@ -1,14 +1,11 @@
-import { useState } from 'react'
 import type { BatchItem } from '../../stores/useBatchStore'
-import { useBatchStore } from '../../stores/useBatchStore'
 import ImageEditToolbar from '../../components/shared/image-editors/ImageEditToolbar'
-import ImageEditorModal from '../../components/shared/image-editors/ImageEditorModal'
-import '../../components/shared/image-editors/image-editors.css'
 
 interface Props {
   items: BatchItem[]
   onRemove: (id: string) => void
   onPreview?: (url: string) => void
+  onOpenEditor?: (url: string, type: 'angle' | 'light') => void
 }
 
 /**
@@ -314,15 +311,7 @@ function ResultCard({
 /**
  * PunkResultGrid - 任务卡片网格 + 全局 spin keyframe
  */
-export default function PunkResultGrid({ items, onRemove, onPreview }: Props) {
-  const [editorState, setEditorState] = useState<{ url: string; type: 'angle' | 'light' } | null>(null)
-
-  const injectPrompt = (p: string) => {
-    const { mode, cardPrompt, multiText, setCardPrompt, setMultiText } = useBatchStore.getState()
-    if (mode === 'card') setCardPrompt(cardPrompt + '\n' + p)
-    else setMultiText(multiText + '\n' + p)
-  }
-
+export default function PunkResultGrid({ items, onRemove, onPreview, onOpenEditor }: Props) {
   if (items.length === 0) {
     return (
       <div
@@ -379,21 +368,11 @@ export default function PunkResultGrid({ items, onRemove, onPreview }: Props) {
               index={idx}
               onRemove={onRemove}
               onPreview={onPreview}
-              onOpenEditor={(url, type) => setEditorState({ url, type })}
+              onOpenEditor={(url, type) => onOpenEditor?.(url, type)}
             />
           ))}
         </div>
       </div>
-      {editorState && (
-        <ImageEditorModal
-          key={editorState.type}
-          editorType={editorState.type}
-          imageUrl={editorState.url}
-          theme="punk"
-          onInjectPrompt={injectPrompt}
-          onClose={() => setEditorState(null)}
-        />
-      )}
     </>
   )
 }

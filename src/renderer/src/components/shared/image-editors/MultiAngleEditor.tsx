@@ -1,4 +1,4 @@
-import { memo, useState, useCallback, useRef, type ReactNode, lazy, Suspense } from "react";
+import { memo, useState, useCallback, useMemo, useRef, type ReactNode, lazy, Suspense } from "react";
 import { buildCameraPrompt } from "./prompts";
 
 const ThreeGlobe = lazy(() => import("./ThreeGlobe").then((m) => ({ default: m.ThreeGlobe })));
@@ -40,7 +40,10 @@ function MultiAngleEditorInner({ onInjectPrompt, onClose, imageUrl }: MultiAngle
   const [promptCopied, setPromptCopied] = useState(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const cameraPromptText = buildCameraPrompt(horizontal, vertical, zoom);
+  const cameraPromptText = useMemo(
+    () => buildCameraPrompt(horizontal, vertical, zoom),
+    [horizontal, vertical, zoom],
+  );
 
   const applyPreset = useCallback((i: number) => {
     setActivePreset(i);

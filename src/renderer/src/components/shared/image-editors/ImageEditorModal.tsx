@@ -1,4 +1,4 @@
-import { lazy, Suspense, Component, type ReactNode } from 'react'
+import { lazy, Suspense, Component, useEffect, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
 const MultiAngleEditor = lazy(() => import('./MultiAngleEditor'))
@@ -10,6 +10,9 @@ class WebGLErrorBoundary extends Component<
 > {
   state = { hasError: false }
   static getDerivedStateFromError() { return { hasError: true } }
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.warn('[WebGL ErrorBoundary]', error.message, info.componentStack)
+  }
   render() {
     return this.state.hasError ? this.props.fallback : this.props.children
   }
@@ -30,6 +33,14 @@ export default function ImageEditorModal({
   onInjectPrompt,
   onClose,
 }: Props) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
   const isPunk = theme === 'punk'
 
   const overlayStyle: React.CSSProperties = {
