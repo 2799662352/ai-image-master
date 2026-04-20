@@ -1,7 +1,7 @@
 # Shared Image Editors — Design Spec
 
 **Date:** 2026-04-20  
-**Status:** Draft v2 — awaiting user review  
+**Status:** Draft v3 — post code-review fixes  
 **Scope:** Phase 1 of 3 (全量功能，分三期接入)
 
 ---
@@ -45,6 +45,7 @@ src/renderer/src/components/shared/image-editors/
 ├── ThreeLightScene.tsx         # Three.js 灯光场景 (lazy)
 ├── orbitGlobeShared.ts         # Three.js 共享场景构建器（球壳/网格/snap 点）
 ├── prompts.ts                  # buildCameraPrompt / buildLightingPrompt 纯函数
+├── image-editors.css           # angle-slider 自定义滑杆样式（从源项目提取）
 ├── ImageEditToolbar.tsx        # hover 浮动工具条 (theme: 'punk' | 'default')
 └── ImageEditorModal.tsx        # 弹窗外壳 (theme prop)
 ```
@@ -73,9 +74,9 @@ src/renderer/src/components/shared/image-editors/
                       │     │
                       │     └─► 宿主页收到 promptText
                       │           │
-                      │           ├── #batch: useBatchStore.getState().setPrompt(
-                      │           │     currentPrompt + '\n' + promptText
-                      │           │   )
+                      │           ├── #batch: 根据 mode 分支
+                      │           │     mode === 'card' → setCardPrompt(cardPrompt + '\n' + promptText)
+                      │           │     mode === 'multi' → setMultiText(multiText + '\n' + promptText)
                       │           │
                       │           ├── #generate: useGenerateStore.getState().setPrompt(
                       │           │     currentPrompt + '\n' + promptText
@@ -129,6 +130,7 @@ src/renderer/src/stores/useUIPrefsStore.ts
 - Zustand store + `persist` middleware（localStorage，key: `ui-prefs`）
 - 字段：`imageEditorToolbar: { enabled: boolean }`，默认 `true`
 - 三个页面的工具条统一受此开关控制
+- **注意：** 这是项目中首个使用 `zustand/middleware` persist 的 store。现有 store 均无持久化。import `persist` from `zustand/middleware`。
 
 ---
 
@@ -138,7 +140,14 @@ src/renderer/src/stores/useUIPrefsStore.ts
 
 - 每个结果图卡片外层加 `group` 类
 - hover 显示 `<ImageEditToolbar theme="punk" imageUrl={url} onInjectPrompt={injectFn} />`
-- `injectFn` = `(p) => useBatchStore.getState().setPrompt(current + '\n' + p)`
+- `injectFn` = 根据当前 `mode` 分支：
+  ```typescript
+  (p) => {
+    const { mode, cardPrompt, multiText, setCardPrompt, setMultiText } = useBatchStore.getState()
+    if (mode === 'card') setCardPrompt(cardPrompt + '\n' + p)
+    else setMultiText(multiText + '\n' + p)
+  }
+  ```
 - 工具条定位：`absolute top-1 left-1/2 -translate-x-1/2 z-20`
 - 点击后 Modal 打开，用户调参 → [注入 Prompt] → prompt 自动出现在 batch 页的输入框里
 - 用户如常点"生成"跑现有 batch workflow
@@ -213,7 +222,8 @@ src/renderer/src/stores/useUIPrefsStore.ts
 - 源组件在 useEffect cleanup 中已有 `renderer.dispose()`。移植时验证此逻辑完整。
 - Batch 结果常为 data: URL (base64, 数 MB)。Three.js `new Image()` + `Texture` 会在 GPU 额外占一份。
 - **Modal 关闭/key 变更时必须：** `texture.dispose()` → `renderer.dispose()` → DOM 中移除 canvas。
-- 源组件已有此 cleanup，移植时保留并验证不丢步骤。
+- `ThreeGlobe` 在 `useEffect([imageUrl])` 中有 `mat.map.dispose()`（换图时清理旧纹理），但 mount 级 cleanup **缺少最后一帧的 texture dispose**。移植时补上。
+- `ThreeLightScene` 的 cleanup 只有 `renderer.dispose()`，**完全没有 `texture.dispose()`**。移植时必须补：在 cleanup return 中遍历 `scene.traverse` 释放所有 texture。
 
 ---
 
@@ -221,24 +231,66 @@ src/renderer/src/stores/useUIPrefsStore.ts
 
 从源项目到 Electron 项目，每个编辑器需要的改动：
 
+### 7.1 两个编辑器共通改动
+
 | 改动点 | 说明 |
 |--------|------|
 | 删 `"use client"` | Electron + Vite 不需要 |
-| 删 `import { generateCameraAngleEdit } from "@/lib/camera-angle-api"` | 不再调 API |
-| 删 `handleGenerate` 里的 API 调用 | 整个异步生图逻辑移除 |
-| 删 `resultImage` / `generating` / `genError` state | 无需弹窗内生图结果 |
-| 改 `handleApply` → 调 `onInjectPrompt(promptText)` | 核心变化 |
-| 保留 `buildCameraPrompt` / `buildLightingPrompt` 调用 | 构造 prompt 的核心逻辑 |
-| 保留 Three.js `<ThreeGlobe>` / `<ThreeLightScene>` | 3D 预览完整保留 |
-| 保留 `orbitGlobeShared.ts` 全部导入 | Three.js 球壳/网格/snap 共享模块 |
-| 保留所有滑杆/预设/方向按钮 UI | 参数选择 UI 完整保留 |
-| 新增底部 prompt 预览区 | 显示当前构造的英文 prompt（只读 textarea） |
-| 新增 [注入 Prompt] 按钮 | 替换原来的 [生成] 按钮 |
-| 保留 [复制 Prompt] 按钮 | 源项目已有，保留 |
 | `nodrag nopan` class → 删除 | React Flow 画布才需要的防拖拽属性 |
 | `onPointerDown stopPropagation` → 删除 | 同上 |
 | 导入路径 `@/lib/...` → 相对路径 `./prompts` | Electron + Vite 路径 |
 | 导入路径 `./orbitGlobeShared` | 保持同目录相对引用 |
+| 删 cost indicator（⚡1 / ⚡14 能量）| B 模式无 API 调用，无能量消耗 |
+| 新增底部 prompt 预览区 | 显示当前构造的英文 prompt（只读 textarea） |
+| 新增 [注入 Prompt] 按钮 | 替换原来的 [生成] 按钮 |
+| 保留 [复制 Prompt] 按钮 | 源项目已有，保留 |
+| 保留 Three.js 3D 预览 | `<ThreeGlobe>` / `<ThreeLightScene>` 完整保留 |
+| 保留 `orbitGlobeShared.ts` 全部导入 | Three.js 球壳/网格/snap 共享模块 |
+| 保留所有滑杆/预设/方向按钮 UI | 参数选择 UI 完整保留 |
+
+### 7.2 MultiAngleEditor 独有改动
+
+| 改动点 | 说明 |
+|--------|------|
+| 删 `import { generateCameraAngleEdit } from "@/lib/camera-angle-api"` | 不再调 API |
+| 删 `handleGenerate` 里的 API 调用 | 整个异步生图逻辑移除 |
+| 删 `resultImage` / `generating` / `genError` state | 无需弹窗内生图结果 |
+| 删结果预览 JSX 区块（显示 spinner/error/缩略图）| 对应 state 已删 |
+| 改 `handleApply` → 调 `onInjectPrompt(buildCameraPrompt(h, v, z))` | `onApply` 替换为 `onInjectPrompt` |
+
+### 7.3 LightEditor 独有改动（注意：比 MultiAngle 改动量更大）
+
+源码中 LightEditor 的 `handleApply` 只传出 raw 参数对象（`{ brightness, color, direction, smartMode, rimLight }`），**从不调用 `buildLightingPrompt`**。移植时需要**新增 prompt 构造逻辑**：
+
+| 改动点 | 说明 |
+|--------|------|
+| 新增 `import { buildLightingPrompt } from './prompts'` | 源项目中此函数在 `camera-angle-api.ts`，LightEditor 从未引用 |
+| 新增 prompt 实时计算 | `const lightPrompt = useMemo(() => buildLightingPrompt(direction, brightness, color, rimLight), [direction, brightness, color, rimLight])` |
+| 新增 prompt 预览区 + [注入/复制] 按钮 | MultiAngleEditor 已有此 UI 模式，LightEditor 需补齐 |
+| 改 `handleApply` → 调 `onInjectPrompt(lightPrompt)` | 替换原来的 raw 对象回调 |
+| 删 `onApply` prop | 改为统一的 `onInjectPrompt: (prompt: string) => void` |
+| 删 `smartMode` toggle | B 模式下无 API 可"自动优化"，此开关无意义。列入 YAGNI |
+| 删 cost indicator（⚡14 能量）| 同共通改动 |
+
+### 7.4 `buildLightingPrompt` 颜色描述优化
+
+源码中 `buildLightingPrompt` 把 hex 值直接写进英文 prompt（如 "a #ffe4c4 light"），对 LLM 不友好。移植时在 `prompts.ts` 中新增 hex → 英文描述映射：
+
+```typescript
+const HEX_TO_NAME: Record<string, string> = {
+  '#ffe4c4': 'warm golden',
+  '#fff8e7': 'natural daylight',
+  '#ffffff': 'neutral white',
+  '#e0f0ff': 'cool blue',
+  '#ffe0ec': 'soft pink',
+}
+
+function colorName(hex: string): string {
+  return HEX_TO_NAME[hex.toLowerCase()] ?? hex
+}
+```
+
+在 `buildLightingPrompt` 中用 `colorName(color)` 替换原始 hex。
 
 ---
 
@@ -251,6 +303,9 @@ src/renderer/src/stores/useUIPrefsStore.ts
 - 多张批量编辑
 - 编辑历史 / undo-redo
 - 分页级别的工具条开关
+- `smartMode` toggle（LightEditor 的"智能模式"在 B 模式下无 API 可优化，删除）
+- Prompt 国际化（输出始终为英文，不做中文/多语言切换）
+- 编辑器内键盘快捷键
 
 ---
 
@@ -277,10 +332,12 @@ src/renderer/src/stores/useUIPrefsStore.ts
 - [ ] `src/renderer/src/components/shared/image-editors/prompts.ts`
 - [ ] `src/renderer/src/components/shared/image-editors/ImageEditToolbar.tsx`
 - [ ] `src/renderer/src/components/shared/image-editors/ImageEditorModal.tsx`
+- [ ] `src/renderer/src/components/shared/image-editors/image-editors.css` — angle-slider 滑杆样式（从源项目 globals.css 提取）
 - [ ] `src/renderer/src/stores/useUIPrefsStore.ts`
 
 修改文件：
 - [ ] `src/renderer/src/pages-react/batch-punk/PunkResultGrid.tsx` — 加工具条 hover 层
 - [ ] `src/renderer/src/pages-react/BatchPage.tsx` — 传 `onInjectPrompt` 到 PunkResultGrid
 - [ ] `src/renderer/src/pages-react/SettingsPage.tsx` — 加"界面偏好"分区
-- [ ] `package.json` — 检查并添加 `three`
+- [ ] `src/renderer/src/stores/index.ts` — re-export `useUIPrefsStore`
+- [ ] `package.json` — 添加 `three` (dependencies) + `@types/three` (devDependencies)
