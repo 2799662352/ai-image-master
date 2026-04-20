@@ -1,137 +1,129 @@
 # Shared Image Editors — Design Spec
 
 **Date:** 2026-04-20  
-**Status:** Draft — awaiting user review  
+**Status:** Draft v2 — awaiting user review  
 **Scope:** Phase 1 of 3 (全量功能，分三期接入)
 
 ---
 
-## 1. Problem Statement
+## 1. What These Editors Actually Are
 
-`ai-website-cloner-template` 包含两个高质量编辑器（多角度 + 打光），内置 Three.js 3D 预览和完整的参数 UI，但它们依赖硬编码 API key，且被绑定在 React Flow 画布节点内。
+源项目的两个编辑器本质是**可视化 prompt 构造器**，不是图像处理工具：
 
-`temp-ai-image-master-source`（Electron 应用）拥有成熟的生图 workflow（serviceBridge → API → 结果 store），三个页面（batch / generate / director）的结果图缺乏后处理工具。
+| 层 | 做了什么 |
+|---|---|
+| **UI 层** | 滑杆、方向按钮、预设、色温选择 — 高质量交互体验 |
+| **Three.js 层** | 纯前端 3D 预览（地球仪贴图/灯光场景），帮用户直观理解参数含义。不参与生图。 |
+| **Prompt 层** | `buildCameraPrompt(h, v, z)` → 一句英文描述，如 "Rotate the camera to view this subject from the front, at eye level, at a medium distance." |
+| **API 层（源项目）** | 把 prompt + 原图发给 Gemini。**我们不搬这层。** |
 
-**目标：** 把两个编辑器作为"辅助工具"植入三个页面，生图走现有 serviceBridge pipeline，不重复造轮子。用户可在设置中开关工具条。
+**目标：** 把编辑器作为**提示词辅助工具**植入三个页面。用户调好参数 → 编辑器把构造好的英文 prompt **注入到宿主页的 prompt 输入框** → 用户可以继续编辑 → 用现有"生成"按钮走现有 workflow。
 
 ---
 
-## 2. What We Are Building
+## 2. Design Decision: Prompt 辅助模式（B 模式）
 
-### 2.1 共享模块（新建目录）
+编辑器**不**直接调 API，**不**自行生成图片。它只输出一段 prompt 字符串。
 
-```
-src/renderer/src/components/shared/image-editors/
-├── MultiAngleEditor.tsx        # 移植自 ai-website-cloner-template（剥掉 "use client" / Next.js 路径）
-├── LightEditor.tsx             # 同上
-├── ThreeGlobe.tsx              # Three.js 3D 地球仪（lazy import，原样移植）
-├── ThreeLightScene.tsx         # Three.js 灯光场景（lazy import，原样移植）
-├── prompts.ts                  # buildCameraPrompt / buildLightingPrompt 纯函数（完整移植，无改动）
-├── image-edit-service.ts       # 替换硬编码 API → 调 window.serviceBridge
-├── ImageEditToolbar.tsx        # 浮动工具条（theme: 'punk' | 'default'）
-└── ImageEditorModal.tsx        # 弹窗外壳（theme prop 透传）
-```
-
-### 2.2 UI 偏好 Store（新建）
-
-```
-src/renderer/src/stores/useUIPrefsStore.ts
-```
-
-- Zustand store，**纯 localStorage 持久化**（不走 serviceBridge，轻量）  
-- 初始字段：`imageEditorToolbar: { enabled: boolean }`，默认 `true`
-
-### 2.3 现有文件改动
-
-| 文件 | 改动 |
-|------|------|
-| `useGenerateStore.ts` | 新增 `appendResult(url: string): void` action（push 到 `resultUrls`）|
-| `useBatchStore.ts` | 新增 `appendResult(url: string): void` action（push 到结果列表） |
-| `generate/ResultGrid.tsx` | 接收 `onEditImage?: (url, index) => void` callback，hover 层加工具条 |
-| `batch-punk/PunkResultGrid.tsx` | 同上，punk 主题 |
-| `SettingsPage.tsx` | 新增"界面偏好"分区，包含图片编辑工具条开关 toggle |
-| `DirectorPage.tsx` | 替换占位 stub → 渲染参考图上传 + 编辑器测试区块（default 主题） |
-| `package.json` | 新增 `"three": "^0.183.2"`（如果尚未存在）|
+为什么选 B 而不选 A（即时生成）或 C（A+B）：
+- 生图走现有 pipeline = 自动复用 API key、模型选择、频率限制、历史记录
+- 用户保持对最终 prompt 的完全控制权（可以编辑/追加/删掉再来）
+- 无需 `image-edit-service.ts`、无需 `appendResult`、无需 store 改动 → 大幅简化
+- 编辑器是纯 UI 组件，零网络依赖，测试容易
 
 ---
 
 ## 3. Architecture
 
-### 3.1 数据流
+### 3.1 共享模块
+
+```
+src/renderer/src/components/shared/image-editors/
+├── MultiAngleEditor.tsx        # 移植（剥 "use client" / Next.js 路径）
+├── LightEditor.tsx             # 同上
+├── ThreeGlobe.tsx              # Three.js 3D 地球仪 (lazy)
+├── ThreeLightScene.tsx         # Three.js 灯光场景 (lazy)
+├── prompts.ts                  # buildCameraPrompt / buildLightingPrompt 纯函数
+├── ImageEditToolbar.tsx        # hover 浮动工具条 (theme: 'punk' | 'default')
+└── ImageEditorModal.tsx        # 弹窗外壳 (theme prop)
+```
+
+**不再需要 `image-edit-service.ts`** — 没有 API 调用层。
+
+### 3.2 数据流
 
 ```
 图片卡片 hover
-  └─► [工具条已开] → ImageEditToolbar 浮现（多角度 / 打光 按钮）
+  └─► [工具条已开] → ImageEditToolbar 浮现 [多角度] [打光]
        │
-       └─► 用户点击 → ImageEditorModal 打开 (MultiAngleEditor | LightEditor)
+       └─► 点击 → ImageEditorModal 打开 (MultiAngleEditor | LightEditor)
                 │
-                ├── Three.js 3D 实时预览（仅前端，无网络）
-                ├── 用户调参（滑杆 / 方向选择 / 预设）
+                ├── Three.js 3D 实时预览（纯前端，零网络）
+                ├── 用户调参（滑杆/方向选择/预设）
+                ├── 实时预览 prompt 文本（编辑器底部显示当前英文 prompt）
                 │
-                └── 点击 [生成] → image-edit-service.generate(imageUrl, params)
+                └── 点击 [注入 Prompt]
                       │
-                      └─► window.serviceBridge.generateImageWithReference(
-                              prompt,          // buildCameraPrompt/buildLightingPrompt 生成
-                              [imageUrl],      // 原图 data URL 或 https URL
-                              ratio,           // 取宿主页当前 ratio（默认 '1:1'）
-                              1,               // 单次 1 张
-                              resolution       // 取宿主页当前 resolution（可选）
-                            )
-                            │
-                            └─► 返回 urls[]
-                                  │
-                                  ├── store.appendResult(urls[0])  ← 辅助进现有 workflow
-                                  └── 弹窗内也展示预览（可另存/复制）
+                      ├── 调 onInjectPrompt(promptText) 回调
+                      │     │
+                      │     └─► 宿主页收到 promptText
+                      │           │
+                      │           ├── #batch: useBatchStore.getState().setPrompt(
+                      │           │     currentPrompt + '\n' + promptText
+                      │           │   )
+                      │           │
+                      │           ├── #generate: useGenerateStore.getState().setPrompt(
+                      │           │     currentPrompt + '\n' + promptText
+                      │           │   )
+                      │           │
+                      │           └── #director: setLocalPrompt(
+                      │                 currentPrompt + '\n' + promptText
+                      │               )
+                      │
+                      └── 关闭 Modal（或保持打开让用户继续调参 → 再次注入）
 ```
 
-### 3.2 theme 规格
+注入策略：**追加到现有 prompt 末尾**（用 `\n` 换行分隔），不覆盖用户已写的内容。
+
+### 3.3 Editor 输出接口
+
+两个编辑器都通过 `onInjectPrompt` 回调输出，签名统一：
+
+```typescript
+interface EditorProps {
+  imageUrl?: string           // 当前选中图片 URL（给 Three.js 贴图用）
+  onInjectPrompt: (prompt: string) => void  // 注入 prompt 到宿主页
+  onClose: () => void
+}
+```
+
+编辑器内部调用 `prompts.ts` 的纯函数构造 prompt：
+
+```typescript
+// prompts.ts — 完整移植，零改动
+export function buildCameraPrompt(horizontal: number, vertical: number, distance: number): string
+export function buildLightingPrompt(direction: string, brightness: number, color: string, rimLight: boolean): string
+```
+
+### 3.4 theme 规格
 
 | 属性 | `punk`（#batch）| `default`（#generate / #director）|
 |------|----------------|----------------------------------|
 | 工具条背景 | `var(--punk-cream)` + 粗黑描边 | `bg-zinc-800 border border-zinc-600` |
 | 工具条按钮 | `p-sticker` 风格 | `rounded-md bg-zinc-700 hover:bg-zinc-600` |
 | 弹窗外壳 | `var(--punk-bg)` + `6px` 偏移硬投影 | `bg-zinc-900 rounded-xl shadow-2xl` |
-| 内部 Editor panel | 中性浅灰（源项目原配色，两套 theme 共用） | 同左 |
-| 动画 | `duration-100 ease-out` | `duration-150 ease-out` |
+| 内部 Editor panel | 中性深灰（源项目原配色，两套 theme 共用） | 同左 |
+| [注入 Prompt] 按钮 | `var(--punk-pink)` 底 + 粗描边 | `bg-blue-600 hover:bg-blue-500 rounded-lg` |
 
-### 3.3 image-edit-service.ts 接口
+### 3.5 UI 偏好 Store
 
-```typescript
-export interface ImageEditParams {
-  type: 'camera' | 'light'
-  imageUrl: string
-  // camera
-  horizontal?: number
-  vertical?: number
-  zoom?: number
-  // light
-  direction?: string
-  brightness?: number
-  color?: string
-  rimLight?: boolean
-  smartMode?: boolean
-  // context
-  ratio?: string
-  resolution?: string | null
-}
-
-export interface ImageEditResult {
-  success: boolean
-  imageUrl?: string
-  prompt: string
-  error?: string
-}
-
-export async function generateImageEdit(
-  params: ImageEditParams,
-  signal?: AbortSignal
-): Promise<ImageEditResult>
+```
+src/renderer/src/stores/useUIPrefsStore.ts
 ```
 
-内部：
-1. 根据 `type` 调 `buildCameraPrompt` 或 `buildLightingPrompt` 得到 prompt
-2. 调 `window.serviceBridge.generateImageWithReference(prompt, [imageUrl], ratio, 1, resolution)`
-3. 返回统一的 `ImageEditResult`（不再有任何硬编码 key/URL）
+- Zustand store + `persist` middleware（localStorage，key: `ui-prefs`）
+- 字段：`imageEditorToolbar: { enabled: boolean }`，默认 `true`
+- 三个页面的工具条统一受此开关控制
 
 ---
 
@@ -139,89 +131,117 @@ export async function generateImageEdit(
 
 ### 4.1 #batch — PunkResultGrid
 
-- 每个 `ResultCard` 外层加 `group` 类
-- hover 时渲染 `<ImageEditToolbar theme="punk" imageUrl={url} onApply={appendResult} />`
-- 工具条定位：`absolute top-1 left-1/2 -translate-x-1/2 z-20`（不遮盖已有的下载/删除按钮）
+- 每个结果图卡片外层加 `group` 类
+- hover 显示 `<ImageEditToolbar theme="punk" imageUrl={url} onInjectPrompt={injectFn} />`
+- `injectFn` = `(p) => useBatchStore.getState().setPrompt(current + '\n' + p)`
+- 工具条定位：`absolute top-1 left-1/2 -translate-x-1/2 z-20`
+- 点击后 Modal 打开，用户调参 → [注入 Prompt] → prompt 自动出现在 batch 页的输入框里
+- 用户如常点"生成"跑现有 batch workflow
 
 ### 4.2 #generate — ResultGrid
 
-- `ResultGrid` 改为接受 `onEditImage?: (url: string) => void` prop
-- `GeneratePage` 传入：`onEditImage={(url) => useGenerateStore.getState().appendResult(url)}`
-- 工具条定位同上，`default` 主题
+- `ResultGrid` 改为接受 `onInjectPrompt?: (prompt: string) => void` prop
+- `GeneratePage` 传入：`(p) => useGenerateStore.getState().setPrompt(current + '\n' + p)`
+- 工具条 `default` 主题
+- 用户如常点"生成"跑现有 generate workflow
 
 ### 4.3 #director — DirectorPage
 
-替换 stub，渲染以下区块（仅本期，不是完整 Director 功能）：
+替换 stub，渲染测试区块：
 
 ```
 ┌─────────────────────────────────────────────┐
 │  Director 工作台 [beta]                       │
 │  ─────────────────────────────────────────  │
-│  上传参考图  [点击/拖拽]                        │
+│  参考图  [点击/拖拽上传]                        │
+│  [缩略图，hover 带工具条]                       │
 │                                             │
-│  [已上传图片缩略图，hover 带工具条]              │
+│  提示词  [textarea，编辑器注入到这里]            │
+│  [生成] 按钮 → serviceBridge                  │
 │                                             │
-│  生成结果                                    │
-│  [结果图 grid，hover 带工具条，可继续迭代]       │
+│  生成结果  [grid，hover 也可继续工具条迭代]      │
 └─────────────────────────────────────────────┘
 ```
 
-- 独立 local state（`useState`），不复用 batch/generate store（独立，避免污染）
-- 生成走 `serviceBridge.generateImageWithReference`（同编辑器服务层）
+- 独立 local state（`useState`），prompt 和结果不污染 batch/generate store
+- 生成按钮调 `serviceBridge.generateImageWithReference(prompt, [imageUrl])`
 - theme = `default`
 
 ---
 
 ## 5. Settings Toggle
 
-`SettingsPage` 新增"界面偏好"分区（放在现有内容之后）：
+`SettingsPage` 新增"界面偏好"分区：
 
 ```
 界面偏好
 ──────────
 图片编辑工具条    [ON/OFF toggle]
-悬停图片时显示"多角度"和"打光"快捷按钮
+悬停图片时显示"多角度"和"打光"提示词助手按钮
 ```
 
 - 读写 `useUIPrefsStore.imageEditorToolbar.enabled`
-- localStorage key: `ui-prefs`（Zustand `persist` middleware，`sessionStorage` 不够持久用 `localStorage`）
-- 所有三个页面的工具条统一受此开关控制（一刀切，不分页分控）
+- 一刀切，不分页分控
 
 ---
 
 ## 6. Three.js 保留策略
 
-- `ThreeGlobe.tsx` 和 `ThreeLightScene.tsx` **原样复制**（无改动）
-- 两者均用 `React.lazy` + `<Suspense fallback={<div>加载 3D…</div>}>` 包裹
-- 只在 Modal 打开时挂载，关闭时卸载（避免常驻内存）
-- 如果 `three` 已在 Electron 项目 `package.json` 中存在则跳过安装，否则 `npm install three@^0.183.2 @types/three`
+- `ThreeGlobe.tsx` 和 `ThreeLightScene.tsx` 原样复制（无改动）
+- `React.lazy` + `<Suspense>` 包裹
+- Modal 打开时挂载，关闭时卸载
+- 依赖：`three ^0.183.2` + `@types/three`
 
 ---
 
-## 7. What We Are NOT Building (YAGNI)
+## 7. Editor 移植改动清单
 
-- React Flow 画布 / NodeShell / ImageNode / CustomEdge / LeftSidebar
-- 多张批量编辑（一次只编辑一张）
+从源项目到 Electron 项目，每个编辑器需要的改动：
+
+| 改动点 | 说明 |
+|--------|------|
+| 删 `"use client"` | Electron + Vite 不需要 |
+| 删 `import { generateCameraAngleEdit } from "@/lib/camera-angle-api"` | 不再调 API |
+| 删 `handleGenerate` 里的 API 调用 | 整个异步生图逻辑移除 |
+| 删 `resultImage` / `generating` / `genError` state | 无需弹窗内生图结果 |
+| 改 `handleApply` → 调 `onInjectPrompt(promptText)` | 核心变化 |
+| 保留 `buildCameraPrompt` / `buildLightingPrompt` 调用 | 构造 prompt 的核心逻辑 |
+| 保留 Three.js `<ThreeGlobe>` / `<ThreeLightScene>` | 3D 预览完整保留 |
+| 保留所有滑杆/预设/方向按钮 UI | 参数选择 UI 完整保留 |
+| 新增底部 prompt 预览区 | 显示当前构造的英文 prompt（只读 textarea） |
+| 新增 [注入 Prompt] 按钮 | 替换原来的 [生成] 按钮 |
+| 保留 [复制 Prompt] 按钮 | 源项目已有，保留 |
+| `nodrag nopan` class → 删除 | React Flow 画布才需要的防拖拽属性 |
+| `onPointerDown stopPropagation` → 删除 | 同上 |
+| 导入路径 `@/lib/...` → 相对路径 `./prompts` | Electron + Vite 路径 |
+
+---
+
+## 8. What We Are NOT Building (YAGNI)
+
+- React Flow 画布 / NodeShell / ImageNode
+- 编辑器内直接调 API 生图（B 模式，仅 prompt 注入）
+- `image-edit-service.ts`（不需要了）
+- `appendResult` store action（不需要了 — prompt 注入后用户自己点生成）
+- 多张批量编辑
 - 编辑历史 / undo-redo
-- 完整 Director 页功能（仅测试区块）
-- 分页级别的工具条开关（只有全局一个开关）
-- SmartMode 对 Director 页的特殊处理（本期等同于普通生成）
+- 分页级别的工具条开关
 
 ---
 
-## 8. Phases
+## 9. Phases
 
 | 期 | 内容 | 交付标准 |
 |----|------|----------|
-| **Phase 1（本 spec）** | 共享模块 + `#batch` 接入（punk 主题）+ 设置开关 | hover 工具条可见；两个编辑器可开/调参/生图；生成结果 append 到 batch 结果 grid；设置开关可关闭工具条 |
+| **Phase 1（本 spec）** | 共享模块 + `#batch` 接入（punk 主题）+ 设置开关 | hover 工具条可见；两个编辑器可开/调参/3D 预览；[注入 Prompt] 把 prompt 写入 batch 输入框；设置开关可关闭工具条 |
 | Phase 2 | `#generate` 接入（default 主题）+ `ResultGrid` 改造 | 同上，但在 generate 页 |
-| Phase 3 | `#director` 测试区块（default 主题）| director 页不再是 stub；可上传参考图 + 用编辑器生图 |
+| Phase 3 | `#director` 测试区块（default 主题）| director 页不再是 stub；可上传参考图 + 编辑器注入 prompt + 生成 |
 
 **本次实现计划（plan）只涵盖 Phase 1。**
 
 ---
 
-## 9. File Checklist (Phase 1)
+## 10. File Checklist (Phase 1)
 
 新建文件：
 - [ ] `src/renderer/src/components/shared/image-editors/MultiAngleEditor.tsx`
@@ -229,19 +249,12 @@ export async function generateImageEdit(
 - [ ] `src/renderer/src/components/shared/image-editors/ThreeGlobe.tsx`
 - [ ] `src/renderer/src/components/shared/image-editors/ThreeLightScene.tsx`
 - [ ] `src/renderer/src/components/shared/image-editors/prompts.ts`
-- [ ] `src/renderer/src/components/shared/image-editors/image-edit-service.ts`
 - [ ] `src/renderer/src/components/shared/image-editors/ImageEditToolbar.tsx`
 - [ ] `src/renderer/src/components/shared/image-editors/ImageEditorModal.tsx`
 - [ ] `src/renderer/src/stores/useUIPrefsStore.ts`
 
 修改文件：
-- [ ] `src/renderer/src/stores/useBatchStore.ts` — 新增 `appendResult`
-- [ ] `src/renderer/src/pages-react/batch-punk/PunkResultGrid.tsx` — 加工具条
-- [ ] `src/renderer/src/pages-react/SettingsPage.tsx` — 加 UI 偏好分区
+- [ ] `src/renderer/src/pages-react/batch-punk/PunkResultGrid.tsx` — 加工具条 hover 层
+- [ ] `src/renderer/src/pages-react/BatchPage.tsx` — 传 `onInjectPrompt` 到 PunkResultGrid
+- [ ] `src/renderer/src/pages-react/SettingsPage.tsx` — 加"界面偏好"分区
 - [ ] `package.json` — 检查并添加 `three`
-
----
-
-## 10. Open Questions
-
-없음（all resolved during brainstorming）。
