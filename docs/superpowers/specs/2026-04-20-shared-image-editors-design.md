@@ -1,7 +1,7 @@
 # Shared Image Editors — Design Spec
 
 **Date:** 2026-04-20  
-**Status:** Draft v3 — post code-review fixes  
+**Status:** Draft v4 — post library-docs-verified code-review  
 **Scope:** Phase 1 of 3 (全量功能，分三期接入)
 
 ---
@@ -127,10 +127,41 @@ export function buildLightingPrompt(direction: string, brightness: number, color
 src/renderer/src/stores/useUIPrefsStore.ts
 ```
 
-- Zustand store + `persist` middleware（localStorage，key: `ui-prefs`）
-- 字段：`imageEditorToolbar: { enabled: boolean }`，默认 `true`
+Zustand store + `persist` middleware（localStorage，key: `ui-prefs`）。
+
+**参考实现（基于 Zustand 官方文档）：**
+
+```typescript
+import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
+
+interface UIPrefsState {
+  imageEditorToolbar: { enabled: boolean }
+  setImageEditorToolbar: (enabled: boolean) => void
+}
+
+export const useUIPrefsStore = create<UIPrefsState>()(  // 注意 () 是 TS 中间件必须的柯里化
+  persist(
+    (set) => ({
+      imageEditorToolbar: { enabled: true },
+      setImageEditorToolbar: (enabled) =>
+        set({ imageEditorToolbar: { enabled } }),
+    }),
+    {
+      name: 'ui-prefs',
+      partialize: (state) => ({ imageEditorToolbar: state.imageEditorToolbar }),
+      version: 1,
+    },
+  ),
+)
+```
+
+关键点：
+- **`partialize`** — 只持久化数据字段，不序列化 action 函数，避免 localStorage 膨胀
+- **`version: 1`** — 未来增加偏好字段时可用 `migrate` 做 schema 迁移
+- **`create<T>()(persist(...))`** — TypeScript 柯里化写法，漏掉 `()` 会报类型错误
 - 三个页面的工具条统一受此开关控制
-- **注意：** 这是项目中首个使用 `zustand/middleware` persist 的 store。现有 store 均无持久化。import `persist` from `zustand/middleware`。
+- **注意：** 这是项目中首个使用 persist 的 store。现有 store 均无持久化。
 
 ---
 
@@ -211,19 +242,103 @@ src/renderer/src/stores/useUIPrefsStore.ts
 
 **问题：** 两个 Three.js 组件加载 `imageUrl` 纹理的方式不同：
 - `ThreeGlobe`：`useEffect([imageUrl])` — 独立 effect，prop 变更就重新加载。安全。
-- `ThreeLightScene`：只在初始 mount 的 `useEffect` 里加载，**无 `[imageUrl]` 依赖**。如果不 unmount 直接换 imageUrl，纹理不会更新。
+- `ThreeLightScene`：只在初始 mount 的 `useEffect` 里加载，**无 `[imageUrl]` 依赖**。
 
-**解法：`ImageEditorModal` 必须用 `key={imageUrl}` 或在关闭时卸载子树。**
-推荐用 `key`：`<ImageEditorModal key={activeImageUrl} ... />`。imageUrl 变 → React 销毁旧实例 → 创建新实例 → 两个 Three.js 组件重新 mount → 正确加载新纹理。
+**~~原方案（已废弃）：~~ `key={imageUrl}` 强制 remount**  
+经 Three.js 官方文档 + react-three-fiber issue #2655 验证，此方案**不可行**：
+- Chromium WebGL 上下文上限 ~8-16 个，`renderer.dispose()` 只是标记丢失，**不保证同步回收**
+- Electron renderer process 永不 reload，用户开关编辑器 20+ 次将耗尽上下文
+- 每次 remount 创建新 `WebGLRenderer`，旧 context GC 回收不确定
 
-### 6.2 WebGL 上下文与内存
+**正确方案：给 `ThreeLightScene` 补 `useEffect([imageUrl])`（与 ThreeGlobe 对齐）**
 
-- 浏览器 WebGL 上下文上限约 8-16 个。频繁开关 Modal 必须确保 renderer 正确 dispose。
-- 源组件在 useEffect cleanup 中已有 `renderer.dispose()`。移植时验证此逻辑完整。
-- Batch 结果常为 data: URL (base64, 数 MB)。Three.js `new Image()` + `Texture` 会在 GPU 额外占一份。
-- **Modal 关闭/key 变更时必须：** `texture.dispose()` → `renderer.dispose()` → DOM 中移除 canvas。
-- `ThreeGlobe` 在 `useEffect([imageUrl])` 中有 `mat.map.dispose()`（换图时清理旧纹理），但 mount 级 cleanup **缺少最后一帧的 texture dispose**。移植时补上。
-- `ThreeLightScene` 的 cleanup 只有 `renderer.dispose()`，**完全没有 `texture.dispose()`**。移植时必须补：在 cleanup return 中遍历 `scene.traverse` 释放所有 texture。
+移植时在 `ThreeLightScene.tsx` 新增一个独立 effect：
+
+```typescript
+useEffect(() => {
+  const s = sceneRef.current;
+  if (!s) return;
+  const mat = s.target.material as THREE.MeshBasicMaterial;
+
+  if (imageUrl) {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      if (!sceneRef.current) return;
+      if (mat.map) mat.map.dispose();
+      const tex = new THREE.Texture(img);
+      tex.needsUpdate = true;
+      tex.colorSpace = THREE.SRGBColorSpace;
+      mat.map = tex;
+      mat.needsUpdate = true;
+      const aspect = img.width / img.height;
+      if (aspect > 1) s.target.scale.set(1, 1 / aspect, 1);
+      else s.target.scale.set(aspect, 1, 1);
+    };
+    img.src = imageUrl;
+  } else {
+    if (mat.map) { mat.map.dispose(); mat.map = null; }
+    mat.needsUpdate = true;
+  }
+}, [imageUrl]);
+```
+
+**不再需要 `key={imageUrl}`。** Modal 保持挂载，只通过 prop 传递新 imageUrl → Three.js 内部更新纹理 → 零 WebGL context 创建销毁。
+
+对于 MultiAngle vs Light 编辑器切换：使用 `key={editorType}`（仅 2 个值 "angle" | "light"），这是安全的低频切换。
+
+### 6.2 WebGL 资源清理（基于 Three.js 官方文档）
+
+Three.js **不会**自动清理 GPU 资源。`orbitGlobeShared.ts` 创建了大量 GPU 对象：
+- 1 个 SphereGeometry(6.06, 64, 64) + ShaderMaterial（球壳）
+- ~12 个 BufferGeometry + LineBasicMaterial（网格线）
+- 50+ 个 SphereGeometry(0.1, 12, 12) + ShaderMaterial（snap 点）
+
+加上两个编辑器自身的几何体（Plane/Cone/Cylinder/Torus/Box/Circle/Edges）和材质，
+每个编辑器实例涉及 **~130 个几何体 + ~65 个材质**。
+
+**必须新增 `disposeScene()` 工具函数**（放在 `orbitGlobeShared.ts` 或独立 `dispose.ts`）：
+
+```typescript
+export function disposeScene(scene: THREE.Scene): void {
+  scene.traverse((object) => {
+    if ('geometry' in object && (object as any).geometry) {
+      (object as any).geometry.dispose();
+    }
+    if ('material' in object) {
+      const materials = Array.isArray((object as any).material)
+        ? (object as any).material
+        : [(object as any).material];
+      for (const mat of materials) {
+        if (!mat) continue;
+        mat.map?.dispose();
+        mat.dispose();
+      }
+    }
+  });
+}
+```
+
+**两个 Three.js 组件的 cleanup return 统一为：**
+
+```typescript
+return () => {
+  cancelAnimationFrame(state.frameId);
+  // ... event listener cleanup ...
+  state.subjectMat.map?.dispose();    // ThreeGlobe: 最后一帧纹理
+  // 或 (targetMat as MeshBasicMaterial).map?.dispose();  // ThreeLightScene
+  disposeScene(state.scene);           // 全量几何体+材质+贴图
+  state.renderer.dispose();            // WebGL context
+  if (canvas.parentNode === el) el.removeChild(canvas);
+  sceneRef.current = null;
+};
+```
+
+**内存注意：** Batch 结果常为 data: URL (base64, 数 MB)。经 `new Image()` → `THREE.Texture` 路径，
+同一张图占 3 份内存（JS 字符串 + 解码 ImageBitmap + GPU 纹理）。上述 cleanup 确保 Modal 关闭时全部释放。
+
+**Error Boundary 建议：** Electron 环境可能关闭硬件加速。在 `React.lazy` + `<Suspense>` 外层再包一层
+`<ErrorBoundary>`，WebGL 初始化失败时显示降级 UI 而非白屏。
 
 ---
 
@@ -272,6 +387,14 @@ src/renderer/src/stores/useUIPrefsStore.ts
 | 删 `smartMode` toggle | B 模式下无 API 可"自动优化"，此开关无意义。列入 YAGNI |
 | 删 cost indicator（⚡14 能量）| 同共通改动 |
 
+### 7.3b ThreeLightScene 独有改动
+
+| 改动点 | 说明 |
+|--------|------|
+| **新增 `useEffect([imageUrl])`** | 与 ThreeGlobe 对齐，支持 prop 级纹理切换（见 Section 6.1 完整代码） |
+| 新增 mount cleanup 中 `disposeScene(scene)` | 见 Section 6.2 的 `disposeScene()` 工具函数 |
+| 新增 mount cleanup 中 `targetMat.map?.dispose()` | 最后一帧纹理在 disposeScene 前单独释放 |
+
 ### 7.4 `buildLightingPrompt` 颜色描述优化
 
 源码中 `buildLightingPrompt` 把 hex 值直接写进英文 prompt（如 "a #ffe4c4 light"），对 LLM 不友好。移植时在 `prompts.ts` 中新增 hex → 英文描述映射：
@@ -281,15 +404,36 @@ const HEX_TO_NAME: Record<string, string> = {
   '#ffe4c4': 'warm golden',
   '#fff8e7': 'natural daylight',
   '#ffffff': 'neutral white',
-  '#e0f0ff': 'cool blue',
-  '#ffe0ec': 'soft pink',
+  '#d4e4ff': 'cool white',
+  '#b4c7ff': 'cool blue',
+  '#ffd6e8': 'soft pink',
 }
 
 function colorName(hex: string): string {
-  return HEX_TO_NAME[hex.toLowerCase()] ?? hex
+  const known = HEX_TO_NAME[hex.toLowerCase()];
+  if (known) return known;
+  // 自定义颜色：基于 HSL 色相转英文描述
+  const r = parseInt(hex.slice(1,3), 16), g = parseInt(hex.slice(3,5), 16), b = parseInt(hex.slice(5,7), 16);
+  const max = Math.max(r,g,b), min = Math.min(r,g,b);
+  const l = (max + min) / 510;
+  if (max === min) return l > 0.85 ? 'bright white' : 'neutral gray';
+  let h = 0;
+  const d = max - min;
+  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) * 60;
+  else if (max === g) h = ((b - r) / d + 2) * 60;
+  else h = ((r - g) / d + 4) * 60;
+  if (h < 30) return 'warm red';
+  if (h < 60) return 'warm orange';
+  if (h < 90) return 'warm yellow';
+  if (h < 150) return 'green';
+  if (h < 210) return 'cyan';
+  if (h < 270) return 'blue';
+  if (h < 330) return 'purple';
+  return 'warm red';
 }
 ```
 
+覆盖源项目 `COLOR_PRESETS` 全部 6 种预设 + 自定义颜色选择器的 fallback（HSL 色相映射）。
 在 `buildLightingPrompt` 中用 `colorName(color)` 替换原始 hex。
 
 ---
