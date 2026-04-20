@@ -2,38 +2,69 @@
 
 .mt-popup {
   position: fixed;
-  min-width: 180px;
-  max-width: 300px;
-  max-height: 240px;
+  min-width: 220px;
+  max-width: 320px;
+  max-height: 260px;
   overflow-y: auto;
   z-index: 10000;
-  padding: 4px 0;
+  padding: 0;
+}
+
+.mt-popup-header {
+  padding: 6px 12px 4px;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  user-select: none;
 }
 
 .mt-popup-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
+  gap: 10px;
+  padding: 7px 12px;
   cursor: pointer;
   font-size: 13px;
-  font-weight: 600;
-  transition: background 80ms ease;
+  font-weight: 700;
+  transition: background 60ms ease, color 60ms ease;
 }
 
 .mt-popup-thumb {
-  width: 26px;
-  height: 26px;
+  width: 32px;
+  height: 32px;
   object-fit: cover;
   flex-shrink: 0;
 }
 
-.mt-popup-empty {
-  padding: 10px 14px;
-  font-size: 12px;
+.mt-popup-item-label {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.mt-popup-item-name {
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mt-popup-item-sub {
+  font-size: 10px;
   font-weight: 600;
-  opacity: 0.7;
+  opacity: 0.6;
+  letter-spacing: 0.04em;
+}
+
+.mt-popup-empty {
+  padding: 14px 16px;
+  font-size: 11px;
+  font-weight: 800;
   text-align: center;
+  letter-spacing: 0.06em;
 }
 
 /* ===== MentionChips ===== */
@@ -48,12 +79,12 @@
 .mt-chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   padding: 3px 8px 3px 3px;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 800;
   cursor: default;
-  transition: transform 120ms ease, box-shadow 120ms ease;
+  transition: transform 100ms ease, box-shadow 100ms ease;
 }
 
 .mt-chip:hover {
@@ -61,21 +92,29 @@
 }
 
 .mt-chip-thumb {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   object-fit: cover;
   flex-shrink: 0;
+}
+
+.mt-chip-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
 }
 
 .mt-chip-remove {
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 13px;
+  font-weight: 900;
   line-height: 1;
-  padding: 2px;
-  opacity: 0.55;
-  transition: opacity 120ms ease;
+  padding: 0 2px;
+  opacity: 0.5;
+  transition: opacity 100ms ease, color 100ms ease;
 }
 
 .mt-chip-remove:hover {
@@ -83,51 +122,95 @@
 }
 
 .mt-chip--dimmed {
-  opacity: 0.5;
-  filter: grayscale(0.6);
+  opacity: 0.45;
+  filter: grayscale(0.7);
 }
 
-/* ===== Punk theme ===== */
+/* ===== Punk theme — Persona 5 × Dohna Dohna zine ===== */
 
 .mt-theme-punk .mt-popup {
-  background: var(--punk-cream);
-  border: 3px solid var(--punk-black);
-  box-shadow: 4px 4px 0 var(--punk-pink);
+  background: var(--punk-cream, #f5eedc);
+  border: 3px solid var(--punk-black, #1a1a1a);
+  box-shadow: 5px 5px 0 var(--punk-pink, #c0466a);
+  transform: rotate(-0.5deg);
+}
+
+.mt-theme-punk .mt-popup-header {
+  color: var(--punk-cream, #f5eedc);
+  background: var(--punk-black, #1a1a1a);
+  font-family: var(--punk-font-mono, 'JetBrains Mono', monospace);
+  border-bottom: 2px solid var(--punk-black, #1a1a1a);
 }
 
 .mt-theme-punk .mt-popup-item {
-  color: var(--punk-black);
+  color: var(--punk-black, #1a1a1a);
+  font-family: var(--punk-font-mono, 'JetBrains Mono', monospace);
+  border-bottom: 1px dashed var(--punk-cream-dim, #e0d6bd);
+}
+
+.mt-theme-punk .mt-popup-item:last-child {
+  border-bottom: none;
 }
 
 .mt-theme-punk .mt-popup-item[data-focused='true'] {
-  background: var(--punk-toxic);
-  color: var(--punk-black);
+  background: var(--punk-pink, #c0466a);
+  color: var(--punk-cream, #f5eedc);
+}
+
+.mt-theme-punk .mt-popup-item[data-focused='true'] .mt-popup-item-sub {
+  opacity: 0.8;
+  color: var(--punk-cream, #f5eedc);
 }
 
 .mt-theme-punk .mt-popup-thumb {
-  border: 2px solid var(--punk-black);
+  border: 2px solid var(--punk-black, #1a1a1a);
+  box-shadow: 2px 2px 0 var(--punk-pink, #c0466a);
+}
+
+.mt-theme-punk .mt-popup-item[data-focused='true'] .mt-popup-thumb {
+  box-shadow: 2px 2px 0 var(--punk-cream, #f5eedc);
 }
 
 .mt-theme-punk .mt-popup-empty {
-  color: var(--punk-black);
+  color: var(--punk-black, #1a1a1a);
+  font-family: var(--punk-font-mono, 'JetBrains Mono', monospace);
+  text-transform: uppercase;
 }
 
 .mt-theme-punk .mt-chip {
-  background: var(--punk-cream);
-  border: 1.5px solid var(--punk-black);
-  box-shadow: 2px 2px 0 var(--punk-pink);
-  color: var(--punk-black);
+  background: var(--punk-cream, #f5eedc);
+  border: 2px solid var(--punk-black, #1a1a1a);
+  box-shadow: 3px 3px 0 var(--punk-pink, #c0466a);
+  color: var(--punk-black, #1a1a1a);
   font-family: var(--punk-font-mono, 'JetBrains Mono', monospace);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
+}
+
+.mt-theme-punk .mt-chip:nth-child(odd) {
+  transform: rotate(-0.8deg);
+}
+
+.mt-theme-punk .mt-chip:nth-child(even) {
+  transform: rotate(0.6deg);
+}
+
+.mt-theme-punk .mt-chip:hover {
+  transform: translateY(-2px) rotate(0deg) !important;
+  box-shadow: 4px 4px 0 var(--punk-pink, #c0466a);
 }
 
 .mt-theme-punk .mt-chip-thumb {
-  border: 1.5px solid var(--punk-black);
+  border: 2px solid var(--punk-black, #1a1a1a);
 }
 
 .mt-theme-punk .mt-chip-remove {
-  color: var(--punk-black);
+  color: var(--punk-pink-deep, #8e2b4a);
+  font-family: var(--punk-font-mono, 'JetBrains Mono', monospace);
+}
+
+.mt-theme-punk .mt-chip-remove:hover {
+  color: var(--punk-red, #8b2432);
 }
 
 /* ===== Default (dark) theme ===== */
@@ -136,11 +219,18 @@
   background: #18181b;
   border: 1px solid #3f3f46;
   border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+.mt-theme-default .mt-popup-header {
+  color: #71717a;
+  border-bottom: 1px solid #27272a;
 }
 
 .mt-theme-default .mt-popup-item {
   color: #d4d4d8;
+  border-radius: 4px;
+  margin: 2px 4px;
 }
 
 .mt-theme-default .mt-popup-item[data-focused='true'] {
@@ -171,4 +261,8 @@
 
 .mt-theme-default .mt-chip-remove {
   color: #a1a1aa;
+}
+
+.mt-theme-default .mt-chip-remove:hover {
+  color: #ef4444;
 }

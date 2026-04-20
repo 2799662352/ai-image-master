@@ -38,12 +38,14 @@ function getCaretCoordinates(
   ] as const
   for (const p of props) (div.style as any)[p] = (style as any)[p]
   div.style.position = 'absolute'
+  div.style.top = '0px'
+  div.style.left = '0px'
   div.style.visibility = 'hidden'
   div.style.whiteSpace = 'pre-wrap'
   div.style.wordWrap = 'break-word'
   div.style.overflow = 'hidden'
   div.style.width = el.clientWidth + 'px'
-  div.style.height = el.clientHeight + 'px'
+  div.style.height = 'auto'
 
   const text = textOverride ?? el.value
   div.textContent = text.substring(0, pos)
@@ -53,12 +55,12 @@ function getCaretCoordinates(
   document.body.appendChild(div)
 
   const spanRect = span.getBoundingClientRect()
-  const elRect = el.getBoundingClientRect()
+  const divRect = div.getBoundingClientRect()
   document.body.removeChild(div)
 
   return {
-    top: spanRect.top - elRect.top + el.scrollTop,
-    left: spanRect.left - elRect.left + el.scrollLeft,
+    top: spanRect.top - divRect.top,
+    left: spanRect.left - divRect.left,
   }
 }
 
@@ -135,7 +137,6 @@ export function useTokenAutocomplete({
   const handleChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     let text = e.target.value
     let cursor = e.target.selectionStart ?? text.length
-
     // auto-spacing: if @ preceded by non-whitespace/non-punctuation, insert space
     if (cursor >= 2 && text[cursor - 1] === '@') {
       const prev = text[cursor - 2]
@@ -163,10 +164,11 @@ export function useTokenAutocomplete({
 
     const caret = getCaretCoordinates(el, det.atPos, text)
     const elRect = el.getBoundingClientRect()
-    setPosition({
-      top: elRect.top + caret.top + 25,
-      left: elRect.left + caret.left,
-    })
+    const pos = {
+      top: elRect.top + caret.top - el.scrollTop + 25,
+      left: elRect.left + caret.left - el.scrollLeft,
+    }
+    setPosition(pos)
 
     clearTimeout(timerRef.current)
     timerRef.current = setTimeout(() => filterSuggestions(cleanPrefix), 80)

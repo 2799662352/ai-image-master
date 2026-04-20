@@ -11,6 +11,7 @@ interface Props {
 
 export default function MentionChips({ value, mediaRefs, theme, onValueChange }: Props) {
   const themeClass = `mt-theme-${theme}`
+  const isPunk = theme === 'punk'
 
   const tokens = useMemo(() => {
     const found: { n: number; raw: string }[] = []
@@ -43,9 +44,11 @@ export default function MentionChips({ value, mediaRefs, theme, onValueChange }:
               {ref?.url ? (
                 <img src={ref.url} alt="" className="mt-chip-thumb" />
               ) : (
-                <span className="mt-chip-thumb" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13 }}>📷</span>
+                <span className="mt-chip-thumb" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, background: isPunk ? 'var(--punk-cream-dim)' : '#3f3f46' }}>📷</span>
               )}
-              <span>{ref?.label || `图片${n}`}</span>
+              <span className="mt-chip-label">
+                {isPunk ? `@${ref?.label || `图片${n}`}` : (ref?.label || `图片${n}`)}
+              </span>
               <button
                 type="button"
                 className="mt-chip-remove"
