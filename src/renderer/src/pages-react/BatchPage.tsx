@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useModelStore, useToastStore, useBatchStore } from '../stores'
 import { useApi } from '../hooks/useService'
@@ -14,10 +14,9 @@ import PunkConfigGrid, {
 import PunkRefDrop from './batch-punk/PunkRefDrop'
 import PunkActionBar from './batch-punk/PunkActionBar'
 import PunkResultGrid from './batch-punk/PunkResultGrid'
+import PunkPromptHelperBar from './batch-punk/PunkPromptHelperBar'
 import { PunkBudgetReceipt } from './batch-punk/PunkBudgetReceipt'
 import { extractPriceFromModel } from '../utils/model-price'
-import ImageEditorModal from '../components/shared/image-editors/ImageEditorModal'
-import '../components/shared/image-editors/image-editors.css'
 
 const FALLBACK_RATIOS: RatioOption[] = [
   { key: 'auto', label: '自适应', description: '智能' },
@@ -219,19 +218,6 @@ export default function BatchPage() {
     }
   }
 
-  // ---- image editor modal (shared between mode-switcher + result grid) ----
-  const [editorState, setEditorState] = useState<{ url: string; type: 'angle' | 'light' } | null>(null)
-
-  const injectPrompt = useCallback((p: string) => {
-    const { mode: m, cardPrompt: cp, multiText: mt, setCardPrompt: scp, setMultiText: smt } = useBatchStore.getState()
-    if (m === 'card') scp(cp + '\n' + p)
-    else smt(mt + '\n' + p)
-  }, [])
-
-  const openEditor = useCallback((url: string, type: 'angle' | 'light') => {
-    setEditorState({ url, type })
-  }, [])
-
   return (
     <PunkShell>
       <PunkHeader
@@ -254,9 +240,21 @@ export default function BatchPage() {
         }}
         className="punk-batch-grid"
       >
-        {/* ===== 左栏:模式 + 提示词输入 ===== */}
+        {/* ===== 左栏:模式 + 视觉辅助 + 提示词输入 ===== */}
         <section>
-          <PunkModeSwitcher mode={mode} onChange={setMode} onOpenEditor={(type) => openEditor('', type)} />
+          <PunkModeSwitcher mode={mode} onChange={setMode} />
+          <PunkPromptHelperBar
+            refImages={refImages}
+            onInject={(text) => {
+              const cur = useBatchStore.getState()
+              const sep = (s: string) => (s && !s.endsWith('\n') ? '\n\n' : '')
+              if (cur.mode === 'card') {
+                cur.setCardPrompt(cur.cardPrompt + sep(cur.cardPrompt) + text)
+              } else {
+                cur.setMultiText(cur.multiText + sep(cur.multiText) + text)
+              }
+            }}
+          />
           {mode === 'card' ? (
             <PunkPromptCard
               prompt={cardPrompt}
@@ -321,20 +319,7 @@ export default function BatchPage() {
         items={items}
         onRemove={removeItem}
         onPreview={(url) => setPreviewUrl(url)}
-        onOpenEditor={openEditor}
       />
-
-      {/* ===== 图片编辑器 modal (page-level, shared by mode-switcher + result grid) ===== */}
-      {editorState && (
-        <ImageEditorModal
-          key={editorState.type}
-          editorType={editorState.type}
-          imageUrl={editorState.url}
-          theme="punk"
-          onInjectPrompt={injectPrompt}
-          onClose={() => setEditorState(null)}
-        />
-      )}
 
       {/* ===== 极简预览 modal (portal 出去, 避开 stacking 干扰) ===== */}
       {previewUrl && createPortal(

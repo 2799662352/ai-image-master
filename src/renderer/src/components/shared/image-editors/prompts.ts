@@ -54,40 +54,6 @@ const LIGHT_DIR_MAP: Record<string, string> = {
   back: 'from behind',
 }
 
-const HEX_TO_NAME: Record<string, string> = {
-  '#ffe4c4': 'warm golden',
-  '#fff8e7': 'natural daylight',
-  '#ffffff': 'neutral white',
-  '#d4e4ff': 'cool white',
-  '#b4c7ff': 'cool blue',
-  '#ffd6e8': 'soft pink',
-}
-
-function colorName(hex: string): string {
-  const known = HEX_TO_NAME[hex.toLowerCase()]
-  if (known) return known
-  const r = parseInt(hex.slice(1, 3), 16)
-  const g = parseInt(hex.slice(3, 5), 16)
-  const b = parseInt(hex.slice(5, 7), 16)
-  const max = Math.max(r, g, b)
-  const min = Math.min(r, g, b)
-  const l = (max + min) / 510
-  if (max === min) return l > 0.85 ? 'bright white' : 'neutral gray'
-  let h = 0
-  const d = max - min
-  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) * 60
-  else if (max === g) h = ((b - r) / d + 2) * 60
-  else h = ((r - g) / d + 4) * 60
-  if (h < 30) return 'warm red'
-  if (h < 60) return 'warm orange'
-  if (h < 90) return 'warm yellow'
-  if (h < 150) return 'green'
-  if (h < 210) return 'cyan'
-  if (h < 270) return 'blue'
-  if (h < 330) return 'purple'
-  return 'warm red'
-}
-
 export function buildLightingPrompt(
   direction: string,
   brightness: number,
@@ -97,7 +63,7 @@ export function buildLightingPrompt(
   const dirDesc = LIGHT_DIR_MAP[direction] || `from the ${direction}`
   const intensityPct = Math.round(brightness * 25)
   const parts = [
-    `Relight this image with a ${colorName(color)} light source ${dirDesc} at ${intensityPct}% intensity.`,
+    `Relight this image with a ${color} light source ${dirDesc} at ${intensityPct}% intensity.`,
   ]
   if (rimLight) parts.push('Add a subtle rim light to separate the subject from the background.')
   parts.push('Keep the same subject, composition, and background. Only change the lighting.')
