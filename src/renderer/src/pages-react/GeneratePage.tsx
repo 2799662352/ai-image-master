@@ -1,10 +1,13 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { useModelStore, useToastStore, useGenerateStore } from '../stores'
+import { useUIPrefsStore } from '../stores/useUIPrefsStore'
 import { useApi } from '../hooks/useService'
 import { ModelSelector } from '../components/ModelSelector'
 import { RatioSelector } from './generate/RatioSelector'
 import { ReferenceImageList } from './generate/ReferenceImageList'
 import { ResultGrid } from './generate/ResultGrid'
+import ImageEditorModal from '../components/shared/image-editors/ImageEditorModal'
+import '../components/shared/image-editors/image-editors.css'
 
 export default function GeneratePage() {
   const api = useApi()
@@ -46,6 +49,19 @@ export default function GeneratePage() {
     }
   }
 
+  // ---- image editor ----
+  const [editorState, setEditorState] = useState<{ url: string; type: 'angle' | 'light' } | null>(null)
+  const toolbarEnabled = useUIPrefsStore((s) => s.imageEditorToolbar.enabled)
+
+  const injectPrompt = useCallback((p: string) => {
+    const cur = useGenerateStore.getState().prompt
+    setPrompt(cur + '\n' + p)
+  }, [setPrompt])
+
+  const openEditor = useCallback((url: string, type: 'angle' | 'light') => {
+    setEditorState({ url, type })
+  }, [])
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
     if (!files) return
@@ -79,6 +95,26 @@ export default function GeneratePage() {
         className="w-full px-4 py-3 bg-zinc-800 border-2 border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-cyberpunk-yellow resize-none"
       />
 
+      {toolbarEnabled && (
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-zinc-500">提示词助手:</span>
+          <button
+            type="button"
+            onClick={() => openEditor('', 'angle')}
+            className="px-3 py-1 text-xs font-bold bg-zinc-700 hover:bg-zinc-600 text-white rounded-md transition-colors"
+          >
+            多角度
+          </button>
+          <button
+            type="button"
+            onClick={() => openEditor('', 'light')}
+            className="px-3 py-1 text-xs font-bold bg-zinc-700 hover:bg-zinc-600 text-white rounded-md transition-colors"
+          >
+            打光
+          </button>
+        </div>
+      )}
+
       <RatioSelector value={ratio} onChange={setRatio} />
 
       <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFileUpload} />
@@ -96,7 +132,18 @@ export default function GeneratePage() {
         {generating ? '生成中...' : '开始生成'}
       </button>
 
-      <ResultGrid urls={resultUrls} />
+      <ResultGrid urls={resultUrls} onOpenEditor={openEditor} />
+
+      {editorState && (
+        <ImageEditorModal
+          key={editorState.type}
+          editorType={editorState.type}
+          imageUrl={editorState.url}
+          theme="default"
+          onInjectPrompt={injectPrompt}
+          onClose={() => setEditorState(null)}
+        />
+      )}
     </div>
   )
 }
