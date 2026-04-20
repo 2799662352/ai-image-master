@@ -30,3 +30,5 @@ export type { UnderstandState } from './useUnderstandStore'
 
 export { useTemplatesStore } from './useTemplatesStore'
 export type { TemplatesState } from './useTemplatesStore'
+
+export { useUIPrefsStore } from './useUIPrefsStore'
