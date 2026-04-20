@@ -1,0 +1,41 @@
+/* Multi-angle / light editor slider thumb */
+.angle-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: white;
+  cursor: pointer;
+  border: 2px solid #36b5f0;
+  box-shadow:
+    0 0 0 2px rgba(54, 181, 240, 0.15),
+    0 1px 4px rgba(0, 0, 0, 0.4);
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+.angle-slider:hover::-webkit-slider-thumb,
+.angle-slider:focus-visible::-webkit-slider-thumb {
+  box-shadow:
+    0 0 0 4px rgba(54, 181, 240, 0.22),
+    0 1px 6px rgba(0, 0, 0, 0.5);
+  transform: scale(1.05);
+}
+.angle-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: white;
+  cursor: pointer;
+  border: 2px solid #36b5f0;
+  box-shadow:
+    0 0 0 2px rgba(54, 181, 240, 0.15),
+    0 1px 4px rgba(0, 0, 0, 0.4);
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+.angle-slider:hover::-moz-range-thumb,
+.angle-slider:focus-visible::-moz-range-thumb {
+  box-shadow:
+    0 0 0 4px rgba(54, 181, 240, 0.22),
+    0 1px 6px rgba(0, 0, 0, 0.5);
+  transform: scale(1.05);
+}
