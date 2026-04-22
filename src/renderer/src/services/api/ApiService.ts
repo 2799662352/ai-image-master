@@ -594,9 +594,12 @@ export class ApiService {
       return '网络连接失败，请检查网络设置'
     }
 
-    // 超时
-    if (message.includes('timeout') || error.name === 'AbortError') {
-      return '请求超时，请稍后重试'
+    // 超时（AbortSignal.timeout 抛出 TimeoutError，用户取消抛出 AbortError）
+    if (message.includes('timeout') || error.name === 'TimeoutError') {
+      return '请求超时（120s），图片生成可能需要较长时间，请稍后重试'
+    }
+    if (error.name === 'AbortError') {
+      return '操作已取消'
     }
 
     // API Key 错误
@@ -896,14 +899,18 @@ export class ApiService {
   }): Promise<Response> {
     const { prompt, model, ratio, resolution, referenceImages, imageBase64, modelConfig, site, signal } = options
 
-    // gpt-image-2-all: 专用 Images API 路径
+    // gpt-image-2-all: 专用 Images API 路径（文档要求 120s 超时）
     if (model === 'gpt-image-2-all') {
       const imageSources = imageBase64 ? [imageBase64] : (referenceImages || [])
       const hasImages = imageSources.length > 0
+      const timeoutSignal = AbortSignal.timeout(120_000)
+      const combined = signal
+        ? AbortSignal.any([signal, timeoutSignal])
+        : timeoutSignal
 
       if (hasImages) {
         const editUrl = this.buildRequestUrl(modelConfig, site, 'edit')
-        return this.makeGptImage2AllFormDataRequest(editUrl, prompt, imageSources, site, signal)
+        return this.makeGptImage2AllFormDataRequest(editUrl, prompt, imageSources, site, combined)
       } else {
         const genUrl = this.buildRequestUrl(modelConfig, site)
         const body = this.buildGptImage2AllJsonPayload(prompt)
@@ -917,7 +924,7 @@ export class ApiService {
           method: 'POST',
           headers,
           body: JSON.stringify(body),
-          signal,
+          signal: combined,
         })
       }
     }
@@ -1035,7 +1042,7 @@ export class ApiService {
 
     let appendedCount = 0
     for (let i = 0; i < imageSources.length; i++) {
-      const blob = await this.convertToBlob(imageSources[i])
+      const blob = await this.convertToBlob(imageSources[i], i)
       if (blob) {
         formData.append('image[]', blob, `image${i}.png`)
         appendedCount++
@@ -1043,7 +1050,7 @@ export class ApiService {
     }
 
     if (appendedCount === 0) {
-      throw new Error('参考图转换失败：所有图片均无法转为 Blob，请检查图片格式')
+      throw new Error(`参考图转换失败：${imageSources.length} 张图片均无法转为 Blob，请检查图片格式（支持 png/jpg/webp）`)
     }
 
     const headers: Record<string, string> = {}
@@ -1064,10 +1071,14 @@ export class ApiService {
   /**
    * 将图片源转换为 Blob
    */
-  private async convertToBlob(source: string | any): Promise<Blob | null> {
+  private async convertToBlob(source: string | any, index?: number): Promise<Blob | null> {
+    const tag = index !== undefined ? `[图${index + 1}]` : ''
     try {
       const normalized = this.normalizeImageSource(source)
-      if (!normalized) return null
+      if (!normalized) {
+        console.warn(`convertToBlob${tag}: 无法标准化图片源`)
+        return null
+      }
 
       if (normalized.startsWith('data:image/')) {
         const response = await fetch(normalized)
@@ -1076,12 +1087,17 @@ export class ApiService {
       
       if (normalized.startsWith('http')) {
         const response = await fetch(normalized, { mode: 'cors' })
+        if (!response.ok) {
+          console.warn(`convertToBlob${tag}: HTTP ${response.status} — ${normalized.substring(0, 80)}`)
+          return null
+        }
         return response.blob()
       }
 
+      console.warn(`convertToBlob${tag}: 不支持的源类型 — ${normalized.substring(0, 30)}`)
       return null
     } catch (error) {
-      console.error('转换图片为 Blob 失败:', error)
+      console.error(`convertToBlob${tag}: 转换失败:`, error)
       return null
     }
   }
@@ -1351,9 +1367,19 @@ export class ApiService {
   private parseResponse(response: Response, _modelConfig: ModelConfig): Promise<GenerateResult> {
     return response.json().then(data => {
       if (!response.ok) {
+        const apiMsg = data.error?.message
+        let friendlyMsg: string
+        switch (response.status) {
+          case 401: friendlyMsg = 'API Key 无效或已过期'; break
+          case 429: friendlyMsg = apiMsg?.includes('insufficient') || apiMsg?.includes('额度')
+            ? '账户额度不足，请充值后重试'
+            : '请求过于频繁，请稍后重试'; break
+          case 500: friendlyMsg = '服务端内部错误，请稍后重试'; break
+          default: friendlyMsg = apiMsg || `API 错误: ${response.status}`
+        }
         return {
           success: false,
-          error: data.error?.message || `API 错误: ${response.status}`,
+          error: friendlyMsg,
           rawResponse: data
         }
       }
