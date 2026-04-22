@@ -190,15 +190,19 @@ async function createThumbnail(dataUrl: string): Promise<string> {
   return new Promise((resolve) => {
     const img = new Image()
     img.onload = () => {
-      const canvas = document.createElement('canvas')
-      const MAX = 200
-      let w = img.width, h = img.height
-      if (w > h) { h = Math.round((h / w) * MAX); w = MAX }
-      else { w = Math.round((w / h) * MAX); h = MAX }
-      canvas.width = w
-      canvas.height = h
-      canvas.getContext('2d')!.drawImage(img, 0, 0, w, h)
-      resolve(canvas.toDataURL('image/jpeg', 0.7))
+      try {
+        const canvas = document.createElement('canvas')
+        const MAX = 200
+        let w = img.width, h = img.height
+        if (w > h) { h = Math.round((h / w) * MAX); w = MAX }
+        else { w = Math.round((w / h) * MAX); h = MAX }
+        canvas.width = w
+        canvas.height = h
+        canvas.getContext('2d')!.drawImage(img, 0, 0, w, h)
+        resolve(canvas.toDataURL('image/jpeg', 0.7))
+      } catch {
+        resolve('')
+      }
     }
     img.onerror = () => resolve('')
     img.src = dataUrl
