@@ -46,6 +46,7 @@
     "@tanstack/react-virtual": "^3.13.23",
     "browser-image-compression": "^2.0.2",
     "choices.js": "^11.1.0",
+    "cos-nodejs-sdk-v5": "^2.15.4",
     "electron-store": "^8.1.0",
     "electron-updater": "^6.7.3",
     "i18next": "^25.8.13",
@@ -58,6 +59,7 @@
     "react-masonry-css": "^1.0.16",
     "react-select": "^5.10.2",
     "react-syntax-highlighter": "^16.1.1",
+    "tencentcloud-sdk-nodejs-mps": "^4.1.218",
     "three": "^0.184.0",
     "zod": "^4.3.6",
     "zustand": "^5.0.12"

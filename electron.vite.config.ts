@@ -26,6 +26,8 @@ export default defineConfig({
         external: [
           'electron',
           /^electron\/.+/,
+          'cos-nodejs-sdk-v5',
+          'tencentcloud-sdk-nodejs-mps',
           ...builtinModules.flatMap(m => [m, `node:${m}`])
         ]
       }
