@@ -1,26 +1,32 @@
-import { getCredentials } from './config'
+import { getCredentials, onCredentialsInvalidated } from './config'
 import type { SplitConfig, SplitResult } from '../../../types/storyboardSplit'
 import { getPresignedUrl } from './cosClient'
 
 let MpsClientClass: any = null
+let mpsInstance: any = null
+
+onCredentialsInvalidated(() => { mpsInstance = null })
 
 function getMpsClient() {
-  const creds = getCredentials()
-  if (!MpsClientClass) {
-    const sdk = require('tencentcloud-sdk-nodejs-mps')
-    MpsClientClass = sdk.mps.v20190612.Client
+  if (!mpsInstance) {
+    const creds = getCredentials()
+    if (!MpsClientClass) {
+      const sdk = require('tencentcloud-sdk-nodejs-mps')
+      MpsClientClass = sdk.mps.v20190612.Client
+    }
+    mpsInstance = new MpsClientClass({
+      credential: {
+        secretId: creds.secretId,
+        secretKey: creds.secretKey,
+      },
+      region: creds.region,
+      profile: {
+        signMethod: 'TC3-HMAC-SHA256',
+        httpProfile: { reqMethod: 'POST', reqTimeout: 30 },
+      },
+    })
   }
-  return new MpsClientClass({
-    credential: {
-      secretId: creds.secretId,
-      secretKey: creds.secretKey,
-    },
-    region: creds.region,
-    profile: {
-      signMethod: 'TC3-HMAC-SHA256',
-      httpProfile: { reqMethod: 'POST', reqTimeout: 30 },
-    },
-  })
+  return mpsInstance
 }
 
 export async function submitProcessImage(
