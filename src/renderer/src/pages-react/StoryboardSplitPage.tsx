@@ -52,16 +52,14 @@ export default function StoryboardSplitPage() {
         finishTask(d.taskId, d.results)
         const task = useSplitSessionStore.getState().tasks.find((t) => t.id === d.taskId)
         if (task) {
-          createThumbnail(task.imageDataUrl || '').then((thumb) => {
-            pushHistory({
-              id: task.id,
-              filename: task.filename,
-              thumbnailDataUrl: thumb,
-              config: task.config,
-              results: d.results,
-              createdAt: task.createdAt,
-              finishedAt: Date.now(),
-            })
+          pushHistory({
+            id: task.id,
+            filename: task.filename,
+            thumbnailDataUrl: task.thumbnailDataUrl || '',
+            config: task.config,
+            results: d.results,
+            createdAt: task.createdAt,
+            finishedAt: Date.now(),
           })
         }
       } else if (channel === 'storyboard-split:failed') {
@@ -79,11 +77,13 @@ export default function StoryboardSplitPage() {
     async (files: File[]) => {
       for (const file of files) {
         const dataUrl = await readFileAsDataUrl(file)
+        const thumb = await createThumbnail(dataUrl)
         const taskId = crypto.randomUUID()
         const task: SplitTask = {
           id: taskId,
           filename: file.name,
           imageDataUrl: dataUrl,
+          thumbnailDataUrl: thumb,
           status: 'pending',
           progress: 0,
           config: { ...defaultConfig },
@@ -145,7 +145,11 @@ export default function StoryboardSplitPage() {
 
         <DefaultsBar config={defaultConfig} onChange={updateDefaultConfig} />
 
-        <Dropzone disabled={!hasCredentials} onFiles={handleFiles} />
+        <Dropzone
+          disabled={!hasCredentials}
+          onFiles={handleFiles}
+          onReject={(reason) => addToast({ message: reason, type: 'warning' })}
+        />
 
         {tasks.length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

@@ -6,21 +6,28 @@ const MAX_SIZE = 10 * 1024 * 1024
 interface DropzoneProps {
   disabled?: boolean
   onFiles: (files: File[]) => void
+  onReject?: (reason: string) => void
 }
 
-export function Dropzone({ disabled, onFiles }: DropzoneProps) {
+export function Dropzone({ disabled, onFiles, onReject }: DropzoneProps) {
   const [dragOver, setDragOver] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const validate = useCallback((files: FileList | File[]): File[] => {
     const valid: File[] = []
+    let rejectedType = 0
+    let rejectedSize = 0
     for (const f of Array.from(files)) {
-      if (!ACCEPTED_TYPES.includes(f.type)) continue
-      if (f.size > MAX_SIZE) continue
+      if (!ACCEPTED_TYPES.includes(f.type)) { rejectedType++; continue }
+      if (f.size > MAX_SIZE) { rejectedSize++; continue }
       valid.push(f)
     }
+    if (onReject) {
+      if (rejectedType > 0) onReject(`${rejectedType} 个文件格式不支持（仅 JPG/PNG/WebP）`)
+      if (rejectedSize > 0) onReject(`${rejectedSize} 个文件超过 10MB 限制`)
+    }
     return valid
-  }, [])
+  }, [onReject])
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {

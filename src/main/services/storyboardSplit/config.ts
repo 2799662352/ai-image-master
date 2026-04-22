@@ -17,6 +17,7 @@ function getCredentialStore() {
     credentialStore = new Store({
       name: 'tencent-credentials',
       encryptionKey: 'tencent-cred-v1',
+      encryptionAlgorithm: 'aes-256-gcm',
       defaults: {
         secretId: '',
         secretKey: '',

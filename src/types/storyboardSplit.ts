@@ -29,6 +29,7 @@ export interface SplitTask {
   id: string
   filename: string
   imageDataUrl: string
+  thumbnailDataUrl?: string
   status: SplitTaskStatus
   progress: number
   stage?: SplitStage

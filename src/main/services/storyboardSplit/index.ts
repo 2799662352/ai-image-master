@@ -18,7 +18,7 @@ import type { BrowserWindow } from 'electron'
 
 const MAX_CONCURRENT = 4
 const activeTasks = new Map<string, { abortSignal: { aborted: boolean } }>()
-const queue: Array<{ payload: SplitSubmitPayload; resolve: (v: any) => void }> = []
+const queue: Array<{ payload: SplitSubmitPayload; resolve: () => void; reject: (err: any) => void }> = []
 
 let mainWindowRef: BrowserWindow | null = null
 
@@ -47,7 +47,7 @@ function sendFailed(data: SplitFailedEvent) {
 function dequeue() {
   while (activeTasks.size < MAX_CONCURRENT && queue.length > 0) {
     const item = queue.shift()!
-    item.resolve(runTask(item.payload))
+    runTask(item.payload).then(() => item.resolve()).catch((err) => item.reject(err))
   }
 }
 
@@ -103,10 +103,9 @@ export async function submitSplit(payload: SplitSubmitPayload) {
   try {
     if (activeTasks.size >= MAX_CONCURRENT) {
       sendProgress({ taskId: payload.taskId, status: 'queued', progress: 0, stage: 'uploading-cos' })
-      await new Promise<void>((resolve) => {
-        queue.push({ payload, resolve: () => resolve() })
+      await new Promise<void>((resolve, reject) => {
+        queue.push({ payload, resolve, reject })
       })
-      await runTask(payload)
     } else {
       await runTask(payload)
     }
