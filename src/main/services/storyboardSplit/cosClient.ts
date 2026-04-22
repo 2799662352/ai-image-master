@@ -77,3 +77,23 @@ export function getPresignedUrl(key: string, expireSeconds: number): Promise<str
     )
   })
 }
+
+export async function deleteObjects(cosPaths: string[]): Promise<void> {
+  if (!cosPaths.length) return
+  const cos = getCosInstance()
+  const { Bucket, Region } = getBucketAndRegion()
+  await new Promise<void>((resolve, reject) => {
+    cos.deleteMultipleObject({
+      Bucket,
+      Region,
+      Objects: cosPaths.map((key) => ({ Key: key })),
+      Quiet: true,
+    }, (err: any, data: any) => {
+      if (err) return reject(err)
+      if (data?.Error?.length) {
+        console.warn('[COS] partial delete failures:', data.Error)
+      }
+      resolve()
+    })
+  })
+}

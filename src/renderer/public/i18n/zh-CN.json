@@ -1068,6 +1068,10 @@
       "name": "SeeDream 4.5",
       "displayName": "15s出图，即梦海外版seedream-4-5-251128，超清生图编辑，支持2K/4K分辨率，支持URL与Base64输出, $0.045/张"
     },
+    "gpt-image-2-all": {
+      "name": "GPT Image 2 All",
+      "displayName": "30s，GPT图像生成，文生图/图片编辑/多图融合，文字还原度高，中文友好，$0.03/张🔥"
+    },
     "sora_image": {
       "name": "Sora_image",
       "displayName": "90s出图，Sora网页版出图， 同名 gpt-4o-image，价格最便宜~！$0.01/张【荐】"

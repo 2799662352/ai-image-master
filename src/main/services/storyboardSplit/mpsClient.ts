@@ -68,20 +68,36 @@ export async function submitProcessImage(
 
 const SEVEN_DAYS_S = 7 * 24 * 60 * 60
 
+export interface PollResult {
+  results: SplitResult[]
+  rows: number
+  cols: number
+}
+
+function inferGrid(total: number): { rows: number; cols: number } {
+  if (total <= 1) return { rows: 1, cols: 1 }
+  const cols = Math.ceil(Math.sqrt(total))
+  const rows = Math.ceil(total / cols)
+  return { rows, cols }
+}
+
 export async function pollUntilFinish(
   taskId: string,
   onProgress: (attempt: number, maxAttempts: number) => void,
   abortSignal: { aborted: boolean },
-  intervalMs = 2000,
-  maxAttempts = 60
-): Promise<SplitResult[]> {
+  maxDurationMs = 10 * 60 * 1000
+): Promise<PollResult> {
   const client = getMpsClient()
+  const deadline = Date.now() + maxDurationMs
+  let attempt = 0
+  const estimatedAttempts = 120
 
-  for (let i = 0; i < maxAttempts; i++) {
+  while (Date.now() < deadline) {
     if (abortSignal.aborted) throw new Error('Task cancelled')
 
     const resp = await client.DescribeImageTaskDetail({ TaskId: taskId })
-    onProgress(i, maxAttempts)
+    attempt++
+    onProgress(attempt, estimatedAttempts)
 
     if (resp.Status === 'FINISH') {
       if (resp.ErrCode && resp.ErrCode !== 0) {
@@ -103,7 +119,8 @@ export async function pollUntilFinish(
           }
         })
       )
-      return results
+      const { rows, cols } = inferGrid(results.length)
+      return { results, rows, cols }
     }
 
     if (resp.Status === 'FAIL' || (resp.ErrCode && resp.ErrCode !== 0)) {
@@ -112,8 +129,9 @@ export async function pollUntilFinish(
       throw err
     }
 
-    await new Promise((r) => setTimeout(r, intervalMs))
+    const interval = attempt <= 10 ? 2000 : attempt <= 30 ? 3000 : 5000
+    await new Promise((r) => setTimeout(r, interval))
   }
 
-  throw new Error('轮询超时，MPS 任务未在 2 分钟内完成')
+  throw new Error(`轮询超时，MPS 任务未在 ${Math.round(maxDurationMs / 60000)} 分钟内完成`)
 }

@@ -1413,6 +1413,11 @@
                     <span class="text-base whitespace-nowrap desktop-text font-bold" data-i18n="nav.director">导演模式</span>
                     <span class="text-sm whitespace-nowrap mobile-text" data-i18n="nav.directorShort">导演</span>
                 </button>
+                <button class="tab-btn flex-1 px-4 md:px-8 py-3 text-center font-medium transition-all duration-300 flex items-center justify-center space-x-1 md:space-x-2 whitespace-nowrap" data-tab="storyboardSplit">
+                    <i class="fas fa-th text-sm"></i>
+                    <span class="text-base whitespace-nowrap desktop-text font-bold">宫格拆图</span>
+                    <span class="text-sm whitespace-nowrap mobile-text">拆图</span>
+                </button>
             </div>
         </div>
 
@@ -2158,6 +2163,11 @@
         <div id="directorPanel" class="tab-panel bg-[#09090B] border border-[#3F3F46] rounded-none p-4 md:p-6 hidden relative overflow-hidden">
             <!-- Director page rendered by React -->
             <div id="director-react-root"></div>
+        </div>
+
+        <!-- 宫格拆图面板 -->
+        <div id="storyboardSplitPanel" class="tab-panel bg-[#09090B] border border-[#3F3F46] rounded-none p-4 md:p-6 hidden relative overflow-hidden">
+            <div id="storyboard-split-react-root"></div>
         </div>
 
     </main> <!-- 主要内容区域结束 -->

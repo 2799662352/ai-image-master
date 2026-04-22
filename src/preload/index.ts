@@ -101,6 +101,7 @@ const IPC_CHANNELS = {
     GET_CONFIG: 'storyboard-split:get-config',
     SET_CREDENTIALS: 'storyboard-split:set-credentials',
     SET_DEFAULTS: 'storyboard-split:set-defaults',
+    DELETE_REMOTE: 'storyboard-split:delete-remote',
   },
   STORYBOARD_SPLIT_EVENTS: [
     'storyboard-split:progress',
@@ -216,6 +217,7 @@ export interface ElectronAPI {
   storyboardSplitGetConfig: () => Promise<{ success: boolean; defaults: SplitConfig; credentials: CredentialState }>
   storyboardSplitSetCredentials: (creds: { secretId: string; secretKey: string; bucket: string; region: string }) => Promise<{ success: boolean }>
   storyboardSplitSetDefaults: (config: SplitConfig) => Promise<{ success: boolean }>
+  storyboardSplitDeleteRemote: (cosPaths: string[]) => Promise<{ success: boolean; error?: string }>
   onStoryboardSplitEvent: (callback: (channel: string, data: SplitProgressEvent | SplitFinishedEvent | SplitFailedEvent) => void) => void
   removeStoryboardSplitListeners: () => void
   // 通用事件监听（用于更新等事件）
@@ -412,6 +414,9 @@ const electronAPI: ElectronAPI = {
 
   storyboardSplitSetDefaults: (config: any) =>
     safeInvoke(IPC_CHANNELS.STORYBOARD_SPLIT.SET_DEFAULTS, config),
+
+  storyboardSplitDeleteRemote: (cosPaths: string[]) =>
+    safeInvoke(IPC_CHANNELS.STORYBOARD_SPLIT.DELETE_REMOTE, cosPaths),
 
   onStoryboardSplitEvent: (callback: (channel: string, data: any) => void) => {
     for (const ch of IPC_CHANNELS.STORYBOARD_SPLIT_EVENTS) {

@@ -1,4 +1,4 @@
-import { uploadOriginal, getPresignedUrl } from './cosClient'
+import { uploadOriginal, getPresignedUrl, deleteObjects } from './cosClient'
 import { submitProcessImage, pollUntilFinish } from './mpsClient'
 import {
   getCredentials,
@@ -73,7 +73,7 @@ async function runTask(payload: SplitSubmitPayload): Promise<{ success: true; mp
     const mpsTaskId = await submitProcessImage(inputUrl, payload.config, outputDir)
     sendProgress({ taskId: payload.taskId, status: 'processing', progress: 40, stage: 'polling-mps' })
 
-    const results = await pollUntilFinish(
+    const { results, rows, cols } = await pollUntilFinish(
       mpsTaskId,
       (attempt, max) => {
         const progress = 40 + Math.round((attempt / max) * 50)
@@ -82,7 +82,7 @@ async function runTask(payload: SplitSubmitPayload): Promise<{ success: true; mp
       abortSignal
     )
 
-    sendFinished({ taskId: payload.taskId, results })
+    sendFinished({ taskId: payload.taskId, results, inputCosKey: cosKey, rows, cols })
     return { success: true, mpsTaskId }
   } catch (err: any) {
     const errorCode = err.code || ''
@@ -156,4 +156,15 @@ export function setCredentialsFromUI(creds: { secretId: string; secretKey: strin
 export function setDefaultsFromUI(config: SplitConfig) {
   setDefaultConfig(config)
   return { success: true }
+}
+
+export async function deleteRemoteObjects(cosPaths: string[]) {
+  if (!cosPaths.length) return { success: true }
+  try {
+    await deleteObjects(cosPaths)
+    return { success: true }
+  } catch (err: any) {
+    console.warn('[SplitService] COS delete failed:', err.message)
+    return { success: false, error: err.message }
+  }
 }

@@ -145,6 +145,25 @@ const BUILT_IN_SITES: Record<string, ApiSite> = {
 
 // 默认模型配置
 const DEFAULT_MODELS: Record<string, ModelConfig> = {
+  'gpt-image-2-all': {
+    name: 'GPT Image 2 All',
+    displayName: '30s，GPT图像生成，文生图/图片编辑/多图融合，文字还原度高，中文友好，$0.03/张🔥',
+    price: 0.03,
+    time: '30s',
+    isNew: true,
+    baseURL: 'https://b.apiyi.com/v1/images/generations',
+    editURL: 'https://b.apiyi.com/v1/images/edits',
+    apiType: 'openai',
+    sizeStrategy: 'prompt',
+    capabilities: {
+      multipleImages: false,
+      customSize: false,
+      aspectRatioControl: false,
+      referenceImage: true,
+      imageEdit: true,
+      maxOutputs: 1
+    }
+  },
   'gemini-3.1-flash-image-preview': {
     name: '🍌 Nano Banana 2',
     displayName: '15s，gemini-3.1-flash-image-preview 谷歌原生端点请求，支持超多尺寸4K，$0.03/张🚀 官网低于2折',
@@ -333,25 +352,6 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       imageEdit: true,
       maxOutputs: 2,
       resolutionControl: true
-    }
-  },
-  'gpt-image-2-all': {
-    name: 'GPT Image 2 All',
-    displayName: '30s，GPT图像生成，文生图/图片编辑/多图融合，文字还原度高，中文友好，$0.03/张🔥',
-    price: 0.03,
-    time: '30s',
-    isNew: true,
-    baseURL: 'https://b.apiyi.com/v1/images/generations',
-    editURL: 'https://b.apiyi.com/v1/images/edits',
-    apiType: 'openai',
-    sizeStrategy: 'prompt',
-    capabilities: {
-      multipleImages: false,
-      customSize: false,
-      aspectRatioControl: false,
-      referenceImage: true,
-      imageEdit: true,
-      maxOutputs: 1
     }
   },
   'sora_image': {

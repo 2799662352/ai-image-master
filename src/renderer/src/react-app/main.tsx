@@ -5,6 +5,7 @@ import { useDirectorStore } from './stores/useDirectorStore'
 import SettingsPage from '../pages-react/SettingsPage'
 import HistoryPage from '../pages-react/HistoryPage'
 import BatchPage from '../pages-react/BatchPage'
+import StoryboardSplitPage from '../pages-react/StoryboardSplitPage'
 import { ToastContainer } from '../components/Toast'
 import { GenerateTokenBridge } from './components/GenerateTokenBridge'
 
@@ -12,6 +13,7 @@ let root: Root | null = null
 let settingsRoot: Root | null = null
 let historyRoot: Root | null = null
 let batchRoot: Root | null = null
+let storyboardSplitRoot: Root | null = null
 let toastRoot: Root | null = null
 let generateTokenRoot: Root | null = null
 
@@ -177,6 +179,31 @@ export function unmountGenerateTokenBridge(): void {
     generateTokenRoot.unmount()
     generateTokenRoot = null
     console.log('[React] GenerateTokenBridge unmounted')
+  }
+}
+
+export function mountStoryboardSplitReact(): void {
+  const container = document.getElementById('storyboard-split-react-root')
+  if (!container) {
+    console.warn('[React] storyboard-split-react-root not found')
+    return
+  }
+  if (!storyboardSplitRoot) {
+    storyboardSplitRoot = createRoot(container)
+    storyboardSplitRoot.render(
+      <Suspense fallback={null}>
+        <StoryboardSplitPage />
+      </Suspense>
+    )
+    console.log('[React] StoryboardSplitPage mounted (first time)')
+  }
+  container.style.display = ''
+}
+
+export function unmountStoryboardSplitReact(): void {
+  const container = document.getElementById('storyboard-split-react-root')
+  if (container) {
+    container.style.display = 'none'
   }
 }
 

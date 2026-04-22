@@ -23,8 +23,8 @@ export function Dropzone({ disabled, onFiles, onReject }: DropzoneProps) {
       valid.push(f)
     }
     if (onReject) {
-      if (rejectedType > 0) onReject(`${rejectedType} 个文件格式不支持（仅 JPG/PNG/WebP）`)
-      if (rejectedSize > 0) onReject(`${rejectedSize} 个文件超过 10MB 限制`)
+      if (rejectedType > 0) onReject(`${rejectedType} 個ファイル形式不対応 (JPG/PNG/WebP のみ)`)
+      if (rejectedSize > 0) onReject(`${rejectedSize} 個ファイル超過 10MB`)
     }
     return valid
   }, [onReject])
@@ -66,9 +66,9 @@ export function Dropzone({ disabled, onFiles, onReject }: DropzoneProps) {
       onPaste={handlePaste}
       onClick={() => !disabled && inputRef.current?.click()}
       className={`
-        relative border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors
-        ${disabled ? 'opacity-50 cursor-not-allowed border-zinc-700' : ''}
-        ${dragOver ? 'border-cyberpunk-yellow bg-cyberpunk-yellow/5' : 'border-zinc-600 hover:border-zinc-500'}
+        d-neon-frame d-clip-corner-br relative p-8 text-center cursor-pointer transition-colors
+        ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
+        ${dragOver ? 'border-[color:var(--donor-cyan)] bg-[color:var(--donor-cyan)]/5' : ''}
       `}
     >
       <input
@@ -85,9 +85,13 @@ export function Dropzone({ disabled, onFiles, onReject }: DropzoneProps) {
           e.target.value = ''
         }}
       />
-      <div className="text-3xl mb-2">🧩</div>
-      <p className="text-white font-medium">拖拽、粘贴或点击选择宫格图片</p>
-      <p className="text-xs text-zinc-500 mt-1">支持 JPG / PNG / WebP，单张 ≤ 10MB</p>
+      <div className="d-mono text-[color:var(--donor-cyan)] text-3xl mb-2">⊞</div>
+      <p className="d-mono text-[color:var(--donor-ink)] text-[13px] tracking-widest uppercase">
+        DROP / PASTE / CLICK
+      </p>
+      <p className="d-mono text-[10px] text-[color:var(--donor-ink-mute)] mt-1 tracking-widest">
+        JPG / PNG / WebP · ≤ 10MB
+      </p>
     </div>
   )
 }

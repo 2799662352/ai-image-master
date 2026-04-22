@@ -11,6 +11,7 @@ import {
   setCredentialsFromUI,
   setDefaultsFromUI,
   setMainWindow as setSplitMainWindow,
+  deleteRemoteObjects,
 } from './services/storyboardSplit'
 
 // 检测开发模式：通过命令行参数或环境变量
@@ -1074,4 +1075,8 @@ ipcMain.handle('storyboard-split:set-credentials', async (_event, creds) => {
 
 ipcMain.handle('storyboard-split:set-defaults', async (_event, config) => {
   return setDefaultsFromUI(config)
+})
+
+ipcMain.handle('storyboard-split:delete-remote', async (_event, cosPaths: string[]) => {
+  return deleteRemoteObjects(cosPaths)
 })

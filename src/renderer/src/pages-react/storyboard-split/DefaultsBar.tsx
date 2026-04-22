@@ -10,23 +10,24 @@ export function DefaultsBar({ config, onChange }: DefaultsBarProps) {
   const [expanded, setExpanded] = useState(false)
 
   return (
-    <div className="bg-zinc-900/50 border border-zinc-700 rounded-lg">
+    <div className="d-neon-frame">
       <button
+        type="button"
         onClick={() => setExpanded(!expanded)}
-        className="w-full px-4 py-2 flex items-center justify-between text-sm text-zinc-400 hover:text-white transition-colors"
+        className="w-full px-4 py-2 flex items-center justify-between d-mono text-[11px] text-[color:var(--donor-ink-dim)] hover:text-[color:var(--donor-cyan)] transition-colors tracking-widest uppercase"
       >
-        <span>⚙️ 高级参数</span>
-        <span className="text-xs">{expanded ? '▲ 收起' : '▼ 展开'}</span>
+        <span>⚙ PARAMS // パラメータ</span>
+        <span>{expanded ? '▲' : '▼'}</span>
       </button>
 
       {expanded && (
-        <div className="px-4 pb-3 space-y-3 border-t border-zinc-700/50">
+        <div className="px-4 pb-3 space-y-3 border-t border-[color:var(--donor-magenta-dim)]">
           <label className="flex items-center justify-between mt-3">
-            <span className="text-sm text-zinc-300">拆分模式</span>
+            <span className="d-mono text-[11px] text-[color:var(--donor-ink)]">拆分模式</span>
             <select
               value={config.modelSamplingAuraFlow}
               onChange={(e) => onChange({ ...config, modelSamplingAuraFlow: parseFloat(e.target.value) })}
-              className="bg-zinc-800 border border-zinc-600 text-white text-sm px-3 py-1.5 rounded"
+              className="bg-[color:var(--donor-bg-1)] border border-[color:var(--donor-magenta-dim)] text-[color:var(--donor-ink)] d-mono text-[11px] px-3 py-1.5"
             >
               <option value={0.1}>AI 分镜 (0.1)</option>
               <option value={1.0}>漫画分镜 (1.0)</option>
@@ -34,7 +35,7 @@ export function DefaultsBar({ config, onChange }: DefaultsBarProps) {
           </label>
 
           <label className="flex items-center justify-between">
-            <span className="text-sm text-zinc-300">仅拆第 N 张（留空拆全部）</span>
+            <span className="d-mono text-[11px] text-[color:var(--donor-ink)]">仅拆第 N 张 (空=全部)</span>
             <input
               type="number"
               min={0}
@@ -46,8 +47,8 @@ export function DefaultsBar({ config, onChange }: DefaultsBarProps) {
                   processIndex: val === '' ? undefined : parseInt(val, 10),
                 })
               }}
-              placeholder="全部"
-              className="w-20 bg-zinc-800 border border-zinc-600 text-white text-sm px-2 py-1.5 rounded text-center"
+              placeholder="ALL"
+              className="w-20 bg-[color:var(--donor-bg-1)] border border-[color:var(--donor-magenta-dim)] text-[color:var(--donor-ink)] d-mono text-[11px] px-2 py-1.5 text-center"
             />
           </label>
         </div>

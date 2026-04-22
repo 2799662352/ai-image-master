@@ -1,40 +1,55 @@
 import React, { useEffect, useCallback } from 'react'
 import { useSplitSessionStore, useSplitPersistStore, useToastStore } from '../stores'
-import type { SplitTask, SplitProgressEvent, SplitFinishedEvent, SplitFailedEvent } from '../../../types/storyboardSplit'
-import { Dropzone } from './storyboard-split/Dropzone'
+import type {
+  SplitTask,
+  SplitProgressEvent,
+  SplitFinishedEvent,
+  SplitFailedEvent,
+  CredentialState,
+} from '../../../types/storyboardSplit'
+import DonorShell from '../components/donor/DonorShell'
+import SplitHeader from './storyboard-split/SplitHeader'
 import { DefaultsBar } from './storyboard-split/DefaultsBar'
-import { TaskCard } from './storyboard-split/TaskCard'
+import { Dropzone } from './storyboard-split/Dropzone'
+import ActiveQueue from './storyboard-split/ActiveQueue'
+import ResultsGrid from './storyboard-split/ResultsGrid'
+import SplitPreview from './storyboard-split/SplitPreview'
 import { HistoryDrawer } from './storyboard-split/HistoryDrawer'
 
 const api = (window as any).electronAPI
 
 export default function StoryboardSplitPage() {
-  const tasks = useSplitSessionStore((s) => s.tasks)
-  const drawerOpen = useSplitSessionStore((s) => s.drawerOpen)
+  const activeTasks = useSplitSessionStore((s) => s.activeTasks)
+  const recentlyFinished = useSplitSessionStore((s) => s.recentlyFinished)
+  const selectedHistoryId = useSplitSessionStore((s) => s.selectedHistoryId)
   const addTask = useSplitSessionStore((s) => s.addTask)
-  const removeTask = useSplitSessionStore((s) => s.removeTask)
+  const removeActiveTask = useSplitSessionStore((s) => s.removeActiveTask)
   const updateTaskProgress = useSplitSessionStore((s) => s.updateTaskProgress)
-  const finishTask = useSplitSessionStore((s) => s.finishTask)
   const failTask = useSplitSessionStore((s) => s.failTask)
   const cancelTaskInStore = useSplitSessionStore((s) => s.cancelTask)
   const clearImageData = useSplitSessionStore((s) => s.clearImageData)
-  const reopenHistory = useSplitSessionStore((s) => s.reopenHistory)
-  const toggleDrawer = useSplitSessionStore((s) => s.toggleDrawer)
+  const setRecentlyFinished = useSplitSessionStore((s) => s.setRecentlyFinished)
+  const setSelectedHistoryId = useSplitSessionStore((s) => s.setSelectedHistoryId)
+  const setPreviewIndex = useSplitSessionStore((s) => s.setPreviewIndex)
 
   const history = useSplitPersistStore((s) => s.history)
   const defaultConfig = useSplitPersistStore((s) => s.defaultConfig)
+  const gridCols = useSplitPersistStore((s) => s.gridCols)
+  const historyDrawerOpen = useSplitPersistStore((s) => s.historyDrawerOpen)
   const pushHistory = useSplitPersistStore((s) => s.pushHistory)
   const removeHistory = useSplitPersistStore((s) => s.removeHistory)
   const updateDefaultConfig = useSplitPersistStore((s) => s.updateDefaultConfig)
+  const setGridCols = useSplitPersistStore((s) => s.setGridCols)
+  const toggleHistoryDrawer = useSplitPersistStore((s) => s.toggleHistoryDrawer)
 
   const addToast = useToastStore((s) => s.addToast)
 
-  const [hasCredentials, setHasCredentials] = React.useState(true)
+  const [credentialState, setCredentialState] = React.useState<CredentialState | null>(null)
 
   useEffect(() => {
     api?.storyboardSplitGetConfig?.().then((res: any) => {
       if (res?.success) {
-        setHasCredentials(res.credentials?.hasCredentials ?? false)
+        setCredentialState(res.credentials ?? null)
       }
     })
   }, [])
@@ -43,15 +58,18 @@ export default function StoryboardSplitPage() {
     if (!api?.onStoryboardSplitEvent) return
 
     api.onStoryboardSplitEvent((channel: string, data: any) => {
+      const session = useSplitSessionStore.getState()
+      const persist = useSplitPersistStore.getState()
+      const toast = useToastStore.getState()
+
       if (channel === 'storyboard-split:progress') {
         const d = data as SplitProgressEvent
-        updateTaskProgress(d.taskId, d.status, d.progress, d.stage)
+        session.updateTaskProgress(d.taskId, d.status, d.progress, d.stage)
       } else if (channel === 'storyboard-split:finished') {
         const d = data as SplitFinishedEvent
-        finishTask(d.taskId, d.results)
-        const task = useSplitSessionStore.getState().tasks.find((t) => t.id === d.taskId)
+        const task = session.activeTasks.find((t) => t.id === d.taskId)
         if (task) {
-          pushHistory({
+          persist.pushHistory({
             id: task.id,
             filename: task.filename,
             thumbnailDataUrl: task.thumbnailDataUrl || '',
@@ -59,11 +77,20 @@ export default function StoryboardSplitPage() {
             results: d.results,
             createdAt: task.createdAt,
             finishedAt: Date.now(),
+            coverUrl: d.results[0]?.url,
+            inputCosKey: d.inputCosKey,
+            rows: d.rows,
+            cols: d.cols,
           })
+          session.removeActiveTask(d.taskId)
+          session.setRecentlyFinished(task.id)
+          setTimeout(() => useSplitSessionStore.getState().setRecentlyFinished(null), 3000)
+          toast.addToast({ message: '完成 / DONE', type: 'success' })
         }
       } else if (channel === 'storyboard-split:failed') {
         const d = data as SplitFailedEvent
-        failTask(d.taskId, d.error, d.errorCode)
+        session.failTask(d.taskId, d.error, d.errorCode)
+        toast.addToast({ message: d.error || '拆图失败 / FAILED', type: 'error' })
       }
     })
 
@@ -97,8 +124,8 @@ export default function StoryboardSplitPage() {
           config: task.config,
         }).then((res: any) => {
           if (res && !res.success) {
-            failTask(taskId, res.error || '提交失败', res.errorCode)
-            addToast({ message: res.error || '拆图任务提交失败', type: 'error' })
+            failTask(taskId, res.error || '提交失敗', res.errorCode)
+            addToast({ message: res.error || '拆図タスク提出失敗', type: 'error' })
           }
           clearImageData(taskId)
         })
@@ -115,64 +142,102 @@ export default function StoryboardSplitPage() {
     [cancelTaskInStore]
   )
 
-  const handleRetry = useCallback(
-    (taskId: string) => {
-      addToast({ message: '重试需重新选择原图', type: 'info' })
-      removeTask(taskId)
+  const handlePreview = useCallback(
+    (id: string) => {
+      setPreviewIndex(0)
+      setSelectedHistoryId(id)
     },
-    [removeTask, addToast]
+    [setSelectedHistoryId, setPreviewIndex]
   )
 
+  const handleDelete = useCallback(
+    (id: string) => {
+      const item = useSplitPersistStore.getState().history.find((h) => h.id === id)
+      removeHistory(id)
+      if (useSplitSessionStore.getState().selectedHistoryId === id) setSelectedHistoryId(null)
+      if (item) {
+        const cosPaths = item.results.map((r) => r.cosPath)
+        if (item.inputCosKey) cosPaths.push(item.inputCosKey)
+        api?.storyboardSplitDeleteRemote?.(cosPaths)?.catch(console.warn)
+      }
+      addToast({ message: '削除しました / DELETED', type: 'success' })
+    },
+    [removeHistory, setSelectedHistoryId, addToast]
+  )
+
+  const previewItem = selectedHistoryId
+    ? history.find((h) => h.id === selectedHistoryId) ?? null
+    : null
+
   return (
-    <div className="flex h-full">
-      <div className="flex-1 p-6 space-y-4 overflow-y-auto">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-orbitron text-cyberpunk-yellow">🧩 宫格拆图</h1>
-          <button
-            onClick={toggleDrawer}
-            className="text-sm px-3 py-1.5 bg-zinc-800 text-zinc-300 border border-zinc-700 rounded hover:bg-zinc-700 transition-colors"
-          >
-            📜 历史 ({history.length})
-          </button>
+    <DonorShell>
+      <div
+        aria-hidden="true"
+        className="pointer-events-none select-none d-mono font-black leading-none"
+        style={{
+          position: 'absolute',
+          right: '12px',
+          top: '-8px',
+          fontSize: '180px',
+          opacity: 0.08,
+          color: 'var(--donor-cyan)',
+          zIndex: 1,
+        }}
+      >
+        07
+      </div>
+
+      <SplitHeader
+        credentialState={credentialState}
+        gridCols={gridCols}
+        historyCount={history.length}
+        onGridColsChange={setGridCols}
+        onToggleHistory={toggleHistoryDrawer}
+      />
+
+      {credentialState && !credentialState.hasCredentials && (
+        <div className="d-neon-frame p-3 mb-4 d-mono text-[11px] text-[color:var(--donor-red)] tracking-widest">
+          ⚠ NO_CREDENTIALS — 設定ページで腾讯云キーを配置してください
         </div>
+      )}
 
-        {!hasCredentials && (
-          <div className="p-3 bg-red-900/30 border border-red-700 text-red-300 text-sm rounded">
-            ⚠️ 未配置腾讯云密钥，请到 <strong>设置</strong> 页面配置后使用
-          </div>
-        )}
-
+      <div className="space-y-4">
         <DefaultsBar config={defaultConfig} onChange={updateDefaultConfig} />
 
         <Dropzone
-          disabled={!hasCredentials}
+          disabled={credentialState !== null && !credentialState.hasCredentials}
           onFiles={handleFiles}
           onReject={(reason) => addToast({ message: reason, type: 'warning' })}
         />
 
-        {tasks.length > 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {tasks.map((task) => (
-              <TaskCard
-                key={task.id}
-                task={task}
-                onCancel={handleCancel}
-                onRetry={handleRetry}
-                onRemove={removeTask}
-              />
-            ))}
-          </div>
-        )}
+        <ActiveQueue tasks={activeTasks} onCancel={handleCancel} />
+
+        <ResultsGrid
+          items={history}
+          gridCols={gridCols}
+          highlightId={recentlyFinished}
+          onPreview={handlePreview}
+          onDelete={handleDelete}
+        />
       </div>
 
+      <footer className="mt-6 pt-3 border-t border-[color:var(--donor-magenta-dim)] d-mono text-[10px] text-[color:var(--donor-ink-mute)] flex items-center justify-between flex-wrap gap-2">
+        <span>// GRID_SPLIT_v2.0 — active {activeTasks.length} / archive {history.length}</span>
+        <span className="d-neon-text-c">[ EOF ]</span>
+      </footer>
+
+      {previewItem && (
+        <SplitPreview item={previewItem} onClose={() => setSelectedHistoryId(null)} />
+      )}
+
       <HistoryDrawer
-        open={drawerOpen}
+        open={historyDrawerOpen}
         history={history}
-        onClose={toggleDrawer}
-        onReopen={reopenHistory}
-        onDelete={removeHistory}
+        onClose={toggleHistoryDrawer}
+        onPreview={handlePreview}
+        onDelete={handleDelete}
       />
-    </div>
+    </DonorShell>
   )
 }
 

@@ -1075,6 +1075,10 @@
       "name": "SeeDream 4.5",
       "displayName": "15s generation, SeeDream overseas version seedream-4-5-251128, ultra-clear generation and editing, supports 2K/4K resolution, URL and Base64 output, $0.045/image"
     },
+    "gpt-image-2-all": {
+      "name": "GPT Image 2 All",
+      "displayName": "30s, GPT image generation, text-to-image/editing/multi-image fusion, high text accuracy, Chinese-friendly, $0.03/image🔥"
+    },
     "sora_image": {
       "name": "Sora_image",
       "displayName": "90s generation, Sora web version, same as gpt-4o-image, cheapest price! $0.01/image [Recommended]"

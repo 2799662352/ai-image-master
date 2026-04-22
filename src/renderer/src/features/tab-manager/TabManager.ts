@@ -32,7 +32,8 @@ export class TabManager {
     'compare',
     'history',
     'understand',
-    'director'
+    'director',
+    'storyboardSplit'
   ]
 
   constructor(config: TabManagerConfig = {}) {

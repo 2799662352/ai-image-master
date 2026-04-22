@@ -1212,6 +1212,10 @@
       "name": "SeeDream 4.5",
       "displayName": "15s出圖，即夢海外版seedream-4-5-251128，超清生圖編輯，支援2K/4K解析度，支援URL與Base64輸出, $0.045/張"
     },
+    "gpt-image-2-all": {
+      "name": "GPT Image 2 All",
+      "displayName": "30s，GPT圖像生成，文生圖/圖片編輯/多圖融合，文字還原度高，中文友好，$0.03/張🔥"
+    },
     "sora_image": {
       "name": "Sora_image",
       "displayName": "90s出圖，Sora網頁版出圖， 同名 gpt-4o-image，價格最便宜~！$0.01/張【薦】"

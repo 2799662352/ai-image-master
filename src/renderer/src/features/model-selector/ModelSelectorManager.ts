@@ -26,6 +26,7 @@ export interface ModelConfig {
   displayName: string
   time?: string
   isNew?: boolean
+  sizeStrategy?: string
   capabilities?: ModelCapabilities
   ratios?: RatioOption[]
   resolutions?: ResolutionOption[]
@@ -351,6 +352,14 @@ export class ModelSelectorManager {
     const ratioContainer = document.getElementById('ratioButtons')
     if (!ratioContainer) return
 
+    // sizeStrategy === 'prompt' 时隐藏比例选择器
+    const wrapper = ratioContainer.parentElement
+    if (modelConfig.sizeStrategy === 'prompt') {
+      if (wrapper) wrapper.classList.add('hidden')
+      return
+    }
+    if (wrapper) wrapper.classList.remove('hidden')
+
     const ratios = Array.isArray(modelConfig.ratios) && modelConfig.ratios.length > 0
       ? modelConfig.ratios
       : this.config.defaultRatios!
@@ -607,6 +616,33 @@ export class ModelSelectorManager {
   }
 
   /**
+   * sizeStrategy === 'prompt' 时显示尺寸提示
+   */
+  setupPromptSizeHint(modelConfig: ModelConfig): void {
+    const isPromptSize = modelConfig?.sizeStrategy === 'prompt'
+    let hint = document.getElementById('promptSizeHint')
+
+    if (isPromptSize) {
+      if (!hint) {
+        hint = document.createElement('div')
+        hint.id = 'promptSizeHint'
+        hint.className = 'mt-3 p-3 rounded-lg bg-emerald-500 bg-opacity-15 border border-emerald-300 border-opacity-40 text-emerald-50 text-xs md:text-sm flex items-start gap-2'
+        hint.innerHTML = `
+          <i class="fas fa-info-circle mt-0.5 flex-shrink-0"></i>
+          <span>该模型尺寸自适应，无需单独选择。如需指定具体尺寸，请在提示词里描述，例如："横版 16:9 电影画幅"、"竖版 9:16 手机海报"、"1024×1024 方图"。</span>
+        `
+        const ratioContainer = document.getElementById('ratioButtons')?.parentElement
+        if (ratioContainer) {
+          ratioContainer.after(hint)
+        }
+      }
+      hint.classList.remove('hidden')
+    } else if (hint) {
+      hint.classList.add('hidden')
+    }
+  }
+
+  /**
    * 设置当前选中的模型
    */
   setCurrentModel(modelKey: string): void {
@@ -799,6 +835,7 @@ export class ModelSelectorManager {
     this.renderRatioOptions(currentModel, page)
     this.renderResolutionOptions(currentModel, page)
     this.setupSeedreamCountHint(currentModel)
+    this.setupPromptSizeHint(currentModel)
     this.renderBatchRatioOptions(currentModel, page)
 
     page?.updateFinalResolutionDisplay?.()

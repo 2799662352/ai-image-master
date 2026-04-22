@@ -58,6 +58,10 @@ export interface SplitHistoryItem {
   results: SplitResult[]
   createdAt: number
   finishedAt: number
+  coverUrl?: string
+  inputCosKey?: string
+  rows?: number
+  cols?: number
 }
 
 export interface CredentialState {
@@ -85,6 +89,9 @@ export interface SplitProgressEvent {
 export interface SplitFinishedEvent {
   taskId: string
   results: SplitResult[]
+  inputCosKey?: string
+  rows?: number
+  cols?: number
 }
 
 export interface SplitFailedEvent {
