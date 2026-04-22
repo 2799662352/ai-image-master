@@ -106,6 +106,12 @@ export async function pollUntilFinish(
       return results
     }
 
+    if (resp.Status === 'FAIL' || (resp.ErrCode && resp.ErrCode !== 0)) {
+      const err: any = new Error(resp.ErrMsg || resp.Message || `MPS task failed: ${resp.Status}`)
+      err.code = String(resp.ErrCode || '')
+      throw err
+    }
+
     await new Promise((r) => setTimeout(r, intervalMs))
   }
 

@@ -62,7 +62,7 @@ export interface SplitHistoryItem {
 
 export interface CredentialState {
   hasCredentials: boolean
-  credentialSource: 'env' | 'store' | 'none'
+  credentialSource: 'env' | 'store' | 'builtin' | 'none'
   secretIdMasked?: string
   bucket?: string
   region?: string

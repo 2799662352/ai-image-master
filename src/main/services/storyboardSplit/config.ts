@@ -67,7 +67,7 @@ export function getCredentialState(): CredentialState {
   let id = ''
   if (storeId) { source = 'store'; id = storeId }
   else if (envId) { source = 'env'; id = envId }
-  else if (BUILTIN_CREDENTIALS.secretId) { source = 'env'; id = BUILTIN_CREDENTIALS.secretId }
+  else if (BUILTIN_CREDENTIALS.secretId) { source = 'builtin'; id = BUILTIN_CREDENTIALS.secretId }
 
   return {
     hasCredentials: !!id,
