@@ -50,7 +50,7 @@ import {
   mountGlobalToast,
   mountGenerateTokenBridge,
 } from '../react-app/main'
-import { useModelStore } from '../stores/useModelStore'
+import { useModelStore, type ModelInfo } from '../stores/useModelStore'
 
 // ========================================
 // V16.3 - ServiceRegistry: 集中式服务注册表
@@ -291,6 +291,12 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
         if (oldTab === 'batch') unmountBatchReact()
         if (newTab === 'batch') mountBatchReact()
       })
+
+      // 在 React mount 之前同步模型列表到 store（消除首帧 race condition）
+      try {
+        const allModels = apiService.getAllModels()
+        useModelStore.getState().setModels(allModels as unknown as Record<string, ModelInfo>)
+      } catch { /* 非关键路径，静默降级 */ }
 
       mountGlobalToast()
       mountGenerateTokenBridge()
@@ -774,15 +780,6 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
       }
     }
     console.log('[ServiceBridge] ✓ window.aiImageAPI 兼容接口已创建')
-
-    // 同步模型列表到 React store（含 sizeStrategy 等完整配置）
-    try {
-      const allModels = apiService.getAllModels()
-      useModelStore.getState().setModels(allModels as any)
-      console.log('[ServiceBridge] ✓ 模型列表已同步到 useModelStore')
-    } catch (e) {
-      console.warn('[ServiceBridge] 模型同步到 useModelStore 失败:', e)
-    }
 
     window.__serviceBridgeInitialized = true
     console.log(`[ServiceBridge] 服务桥接初始化完成: ${(performance.now() - startTime).toFixed(1)}ms`)

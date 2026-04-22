@@ -1,8 +1,8 @@
 import { create } from 'zustand'
 
-interface ModelInfo {
+export interface ModelInfo {
   name: string
-  capabilities: Record<string, unknown>
+  capabilities?: Record<string, unknown>
   [key: string]: unknown
 }
 
