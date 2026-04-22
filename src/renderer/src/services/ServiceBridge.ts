@@ -777,7 +777,6 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
 
     // 同步模型列表到 React store（含 sizeStrategy 等完整配置）
     try {
-      const { useModelStore } = await import('../stores/useModelStore')
       const allModels = apiService.getAllModels()
       useModelStore.getState().setModels(allModels as any)
       console.log('[ServiceBridge] ✓ 模型列表已同步到 useModelStore')
