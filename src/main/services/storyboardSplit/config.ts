@@ -37,10 +37,10 @@ function getCredentialStore() {
 }
 
 const BUILTIN_CREDENTIALS: Credentials = {
-  secretId: 'AKIDF3h9Y5UgiZr9FRSGsHWfktyxoldYItJX',
-  secretKey: 'CJCtMbT8aprhKjy0qTQJ9pLjwzueIpBM',
-  bucket: 'map-tiles-bucket-1345773498',
-  region: 'ap-guangzhou',
+  secretId: process.env.COS_SECRET_ID ?? '',
+  secretKey: process.env.COS_SECRET_KEY ?? '',
+  bucket: process.env.COS_BUCKET ?? 'map-tiles-bucket-1345773498',
+  region: process.env.COS_REGION ?? 'ap-guangzhou',
 }
 
 export function getCredentials(): Credentials {
