@@ -28,6 +28,7 @@ export default function GeneratePage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const currentModel = models[currentModelKey]
+  const isSizeInPrompt = (currentModel as any)?.sizeStrategy === 'prompt'
 
   const genMediaRefs = useMemo<MediaRef[]>(
     () => referenceImages.map((url, i) => ({
@@ -115,7 +116,7 @@ export default function GeneratePage() {
         <MentionChips value={prompt} mediaRefs={genMediaRefs} theme="default" onValueChange={setPrompt} />
       </div>
 
-      <RatioSelector value={ratio} onChange={setRatio} />
+      <RatioSelector value={ratio} onChange={setRatio} hidden={isSizeInPrompt} />
 
       <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFileUpload} />
       <ReferenceImageList
