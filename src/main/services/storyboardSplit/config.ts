@@ -36,6 +36,13 @@ function getCredentialStore() {
   return credentialStore
 }
 
+const BUILTIN_CREDENTIALS: Credentials = {
+  secretId: 'AKIDF3h9Y5UgiZr9FRSGsHWfktyxoldYItJX',
+  secretKey: 'CJCtMbT8aprhKjy0qTQJ9pLjwzueIpBM',
+  bucket: 'map-tiles-bucket-1345773498',
+  region: 'ap-guangzhou',
+}
+
 export function getCredentials(): Credentials {
   const store = getCredentialStore()
   const storeId = store.get('secretId') || ''
@@ -44,10 +51,10 @@ export function getCredentials(): Credentials {
   const storeRegion = store.get('region') || ''
 
   return {
-    secretId: storeId || process.env.COS_SECRET_ID || '',
-    secretKey: storeKey || process.env.COS_SECRET_KEY || '',
-    bucket: storeBucket || process.env.COS_BUCKET || process.env.COS_BUCKET_NAME || '',
-    region: storeRegion || process.env.COS_REGION || 'ap-guangzhou',
+    secretId: storeId || process.env.COS_SECRET_ID || BUILTIN_CREDENTIALS.secretId,
+    secretKey: storeKey || process.env.COS_SECRET_KEY || BUILTIN_CREDENTIALS.secretKey,
+    bucket: storeBucket || process.env.COS_BUCKET || process.env.COS_BUCKET_NAME || BUILTIN_CREDENTIALS.bucket,
+    region: storeRegion || process.env.COS_REGION || BUILTIN_CREDENTIALS.region,
   }
 }
 
@@ -60,6 +67,7 @@ export function getCredentialState(): CredentialState {
   let id = ''
   if (storeId) { source = 'store'; id = storeId }
   else if (envId) { source = 'env'; id = envId }
+  else if (BUILTIN_CREDENTIALS.secretId) { source = 'env'; id = BUILTIN_CREDENTIALS.secretId }
 
   return {
     hasCredentials: !!id,
