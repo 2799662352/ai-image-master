@@ -47,6 +47,8 @@ import {
   unmountHistoryReact,
   mountBatchReact,
   unmountBatchReact,
+  mountStoryboardSplitReact,
+  unmountStoryboardSplitReact,
   mountGlobalToast,
   mountGenerateTokenBridge,
 } from '../react-app/main'
@@ -290,6 +292,8 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
         if (newTab === 'history') mountHistoryReact()
         if (oldTab === 'batch') unmountBatchReact()
         if (newTab === 'batch') mountBatchReact()
+        if (oldTab === 'storyboardSplit') unmountStoryboardSplitReact()
+        if (newTab === 'storyboardSplit') mountStoryboardSplitReact()
       })
 
       // 在 React mount 之前同步模型列表到 store（消除首帧 race condition）
@@ -314,6 +318,9 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
 
       mountBatchReact()
       if (activeTab !== 'batch') unmountBatchReact()
+
+      mountStoryboardSplitReact()
+      if (activeTab !== 'storyboardSplit') unmountStoryboardSplitReact()
 
       window.tabManagerTS = tabManager
       ServiceRegistry.register(SERVICE_KEYS.TAB_MANAGER, tabManager)
@@ -625,8 +632,13 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
       setModel: (key: string) => apiService.setModel(key),
       get model() { return apiService.getModelKey() },
 
-      // 图片生成
-      generateImage: (params: any) => apiService.generateImage(params),
+      // 图片生成（兼容旧位置参数调用: generateImage(prompt, ratio, count, resolution)）
+      generateImage: (promptOrParams: any, ratio?: string, count?: number, resolution?: string) => {
+        if (typeof promptOrParams === 'string') {
+          return apiService.generateImage({ prompt: promptOrParams, ratio, count, resolution })
+        }
+        return apiService.generateImage(promptOrParams)
+      },
       generateImageWithReference: (prompt: string, referenceImages: any[], ratio?: string, count?: number, resolution?: string) => 
         apiService.generateImageWithReference(prompt, referenceImages, ratio || '1:1', count || 1, resolution),
       getModelCapabilities: (modelKey?: string) => apiService.getModelCapabilities(modelKey),
