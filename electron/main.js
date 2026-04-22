@@ -132,7 +132,7 @@ function createWindow() {
                     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com",
                     "font-src 'self' https://fonts.gstatic.com data:",
                     "img-src 'self' data: blob: https: file:",
-                    "connect-src 'self' https: wss:",
+                    "connect-src 'self' https: wss: data:",
                     "media-src 'self' data: blob:",
                     "frame-src 'none'"
                 ].join('; ')

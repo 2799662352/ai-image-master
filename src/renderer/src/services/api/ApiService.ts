@@ -1087,17 +1087,8 @@ export class ApiService {
       }
 
       if (normalized.startsWith('data:image/')) {
-        const commaIdx = normalized.indexOf(',')
-        if (commaIdx === -1) {
-          console.warn(`convertToBlob${tag}: data URL 格式异常，缺少逗号分隔符`)
-          return null
-        }
-        const mimeMatch = normalized.substring(0, commaIdx).match(/data:(image\/[^;]+)/)
-        const mime = mimeMatch?.[1] || 'image/png'
-        const raw = atob(normalized.substring(commaIdx + 1))
-        const bytes = new Uint8Array(raw.length)
-        for (let j = 0; j < raw.length; j++) bytes[j] = raw.charCodeAt(j)
-        return new Blob([bytes], { type: mime })
+        const resp = await fetch(normalized)
+        return resp.blob()
       }
       
       if (normalized.startsWith('http')) {

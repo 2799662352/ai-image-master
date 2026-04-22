@@ -227,7 +227,7 @@ function createWindow(): void {
           "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
           "font-src 'self' https://fonts.gstatic.com data:",
           "img-src 'self' data: blob: https: file:",
-          "connect-src 'self' https: wss: http://175.178.198.17:*",
+          "connect-src 'self' https: wss: data: http://175.178.198.17:*",
           "media-src 'self' data: blob:",
           "worker-src 'self' blob:", // 允许 Web Worker 从 blob URL 创建（图片压缩库需要）
           "frame-src 'none'"
