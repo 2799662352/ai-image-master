@@ -43,6 +43,9 @@ export const useSplitPersistStore = create<SplitPersistState>()(
     {
       name: 'storyboard-split-storage',
       version: 1,
+      migrate: (persisted: any, version: number) => {
+        return persisted
+      },
       partialize: (state) => ({
         history: state.history.slice(0, MAX_HISTORY),
         defaultConfig: state.defaultConfig,
