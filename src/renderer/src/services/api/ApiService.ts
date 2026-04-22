@@ -561,7 +561,7 @@ export class ApiService {
    * 判断错误是否可重试
    */
   private isRetryableError(error: any): boolean {
-    if (error.name === 'AbortError') {
+    if (error.name === 'AbortError' || error.name === 'TimeoutError') {
       return false
     }
 
@@ -903,14 +903,10 @@ export class ApiService {
     if (model === 'gpt-image-2-all') {
       const imageSources = imageBase64 ? [imageBase64] : (referenceImages || [])
       const hasImages = imageSources.length > 0
-      const timeoutSignal = AbortSignal.timeout(120_000)
-      const combined = signal
-        ? AbortSignal.any([signal, timeoutSignal])
-        : timeoutSignal
 
       if (hasImages) {
         const editUrl = this.buildRequestUrl(modelConfig, site, 'edit')
-        return this.makeGptImage2AllFormDataRequest(editUrl, prompt, imageSources, site, combined)
+        return this.makeGptImage2AllFormDataRequest(editUrl, prompt, imageSources, site, signal)
       } else {
         const genUrl = this.buildRequestUrl(modelConfig, site)
         const body = this.buildGptImage2AllJsonPayload(prompt)
@@ -920,11 +916,15 @@ export class ApiService {
         } else {
           headers['x-api-key'] = this.apiKey!
         }
+        const timeoutSignal = AbortSignal.timeout(120_000)
+        const fetchSignal = signal
+          ? AbortSignal.any([signal, timeoutSignal])
+          : timeoutSignal
         return fetch(genUrl, {
           method: 'POST',
           headers,
           body: JSON.stringify(body),
-          signal: combined,
+          signal: fetchSignal,
         })
       }
     }
@@ -1033,7 +1033,7 @@ export class ApiService {
     prompt: string,
     imageSources: string[],
     site: ApiSite,
-    signal?: AbortSignal,
+    userSignal?: AbortSignal,
   ): Promise<Response> {
     const formData = new FormData()
     formData.append('model', 'gpt-image-2-all')
@@ -1059,6 +1059,12 @@ export class ApiService {
     } else {
       headers['x-api-key'] = this.apiKey!
     }
+
+    // 120s 超时从 fetch 发起时开始计时（不含 blob 转换耗时）
+    const timeoutSignal = AbortSignal.timeout(120_000)
+    const signal = userSignal
+      ? AbortSignal.any([userSignal, timeoutSignal])
+      : timeoutSignal
 
     return fetch(url, {
       method: 'POST',
@@ -1371,6 +1377,7 @@ export class ApiService {
         let friendlyMsg: string
         switch (response.status) {
           case 401: friendlyMsg = 'API Key 无效或已过期'; break
+          case 402: friendlyMsg = '账户余额不足，请充值后重试'; break
           case 429: friendlyMsg = apiMsg?.includes('insufficient') || apiMsg?.includes('额度')
             ? '账户额度不足，请充值后重试'
             : '请求过于频繁，请稍后重试'; break
