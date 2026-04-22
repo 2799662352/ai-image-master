@@ -37,6 +37,11 @@ export interface ModelConfig {
   resolutions?: ResolutionOption[]
   defaultResolution?: string
   resolutionMap?: Record<string, Record<string, string>>
+  /**
+   * 单张出图实际价格(USD)。优先级高于从 displayName 文本里抠取的旧值。
+   * 不填时收据组件会回退到 displayName 中 `$X.XX/张` 的兜底解析。
+   */
+  price?: number
 }
 
 export interface RatioOption {
@@ -123,9 +128,9 @@ const BUILT_IN_SITES: Record<string, ApiSite> = {
     isBuiltIn: true
   },
   'antigravity': {
-    name: '反重力 API',
-    baseURL: 'https://api.antigravity.ai',
-    description: '反重力 AI 服务',
+    name: 'Miau API',
+    baseURL: 'http://175.178.198.17:3000',
+    description: 'Miau API 服务',
     authType: 'bearer',
     isBuiltIn: true
   },
@@ -143,6 +148,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   'gemini-3.1-flash-image-preview': {
     name: '🍌 Nano Banana 2',
     displayName: '15s，gemini-3.1-flash-image-preview 谷歌原生端点请求，支持超多尺寸4K，$0.03/张🚀 官网低于2折',
+    price: 0.06,
     time: '15s',
     isNew: true,
     baseURL: 'https://b.apiyi.com/v1beta/models/gemini-3.1-flash-image-preview:generateContent',
@@ -202,6 +208,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   'gemini-3-pro-image-preview': {
     name: '🍌 Nano Banana Pro',
     displayName: '60s，gemini-3-pro-image-preview 谷歌原生端点请求，支持多尺寸4K，$0.05/张🔥 官网1/5价格',
+    price: 0.09,
     time: '60s',
     isNew: false,
     baseURL: 'https://b.apiyi.com/v1beta/models/gemini-3-pro-image-preview:generateContent',
@@ -1348,6 +1355,7 @@ export class ApiService {
     }
     this.currentModel = modelKey
     this.saveStoredModel(modelKey)
+    window.dispatchEvent(new CustomEvent('model-changed', { detail: { modelKey } }))
     return true
   }
 

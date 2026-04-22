@@ -1,0 +1,344 @@
+/* donor-theme.css
+ * 「ドーナドーナ」风 · 霓虹赛博朋克 / 反乌托邦地下组织主题
+ * Scoped 到 .donor-theme 作用域,不污染其他页面
+ * 规范:品红 × 青 双色霓虹;切角+双层边框;扫描线+噪点+硬边发光;hover 反色
+ * 尊重 prefers-reduced-motion: 关闭 glitch/scanlines/grain 动画
+ */
+
+.donor-theme {
+  /* ===== Color Tokens ===== */
+  --donor-bg-0: #0a0510;        /* 主深紫黑 */
+  --donor-bg-1: #14081c;        /* 次层 */
+  --donor-bg-2: #1a0a1f;        /* 面板底 */
+  --donor-ink: #f6e9ff;         /* 文本主色 */
+  --donor-ink-dim: #a28ab0;     /* 次要文本 */
+  --donor-ink-mute: #6b5477;    /* 弱化文本 */
+
+  --donor-magenta: #ff2d7a;     /* 灵魂色 - 品红 */
+  --donor-magenta-2: #ff3a8c;   /* 亮品红 */
+  --donor-magenta-dim: #ff2d7a33; /* 品红弱化 */
+  --donor-cyan: #00e5ff;        /* 科技青 */
+  --donor-cyan-2: #3df;         /* 亮青 */
+  --donor-cyan-dim: #00e5ff33;  /* 青弱化 */
+  --donor-green: #8fff4a;       /* 毒绿 - 成功/数据流 */
+  --donor-red: #ff2d4a;         /* 失败/告警 */
+  --donor-amber: #ffb200;       /* 上传中/等待 */
+
+  --donor-border-outer: rgba(0, 229, 255, 0.65);
+  --donor-border-inner: var(--donor-magenta);
+  --donor-noise-divider: rgba(246, 233, 255, 0.12);
+
+  /* ===== Font Stacks ===== */
+  --donor-font-jp: 'DotGothic16', 'Orbitron', 'Noto Sans SC', system-ui, sans-serif;
+  --donor-font-mono: 'Share Tech Mono', 'JetBrains Mono', ui-monospace, monospace;
+
+  font-family: var(--donor-font-jp);
+  color: var(--donor-ink);
+  background: var(--donor-bg-0);
+  position: relative;
+  /* ensure stacking context for ::before overlays */
+  isolation: isolate;
+}
+
+/* ===== Noise Grain Overlay (低透明度颗粒) ===== */
+.donor-theme::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.18 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  opacity: 0.35;
+  mix-blend-mode: overlay;
+}
+
+/* ===== Scanlines Overlay (12px 水平扫描线) ===== */
+.donor-theme::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0px,
+    transparent 10px,
+    rgba(255, 45, 122, 0.08) 11px,
+    rgba(0, 229, 255, 0.06) 12px
+  );
+  mix-blend-mode: screen;
+}
+
+/* ensure actual content sits above overlays
+ * 注意:
+ * - 用 :not(.donor-portal-modal) 排除 portal 出去的 modal 根,否则 fixed 会被覆盖成 relative,导致弹窗被布局到底部
+ * - 用 :not(.absolute):not(.fixed) 排除显式定位的子元素,否则 Tailwind 的 .absolute/.fixed 会被覆盖成 relative,
+ *   装饰元素就不再脱离文档流,会撑出大片空白
+ */
+.donor-theme > *:not(.donor-portal-modal):not(.absolute):not(.fixed) {
+  position: relative;
+  z-index: 3;
+}
+
+/* ===== Utility Blocks ===== */
+
+/* 切角面板 - 像贴片式电子标签 */
+.donor-theme .d-clip-tag {
+  clip-path: polygon(
+    0 0,
+    calc(100% - 14px) 0,
+    100% 14px,
+    100% 100%,
+    14px 100%,
+    0 calc(100% - 14px)
+  );
+}
+
+.donor-theme .d-clip-corner-tl {
+  clip-path: polygon(12px 0, 100% 0, 100% 100%, 0 100%, 0 12px);
+}
+
+.donor-theme .d-clip-corner-br {
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%);
+}
+
+.donor-theme .d-clip-parallelogram {
+  clip-path: polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%);
+}
+
+/* 双层边框 - 外层青色细发光 + 内层品红粗描边 */
+.donor-theme .d-neon-frame {
+  position: relative;
+  border: 2px solid var(--donor-border-inner);
+  box-shadow:
+    0 0 0 1px var(--donor-border-outer),
+    0 0 12px -2px rgba(0, 229, 255, 0.45),
+    0 0 24px -4px rgba(255, 45, 122, 0.35),
+    inset 0 0 0 1px rgba(255, 45, 122, 0.12);
+  background-color: var(--donor-bg-2);
+}
+
+.donor-theme .d-neon-frame--soft {
+  border-color: rgba(255, 45, 122, 0.55);
+  box-shadow:
+    0 0 0 1px rgba(0, 229, 255, 0.35),
+    0 0 10px -3px rgba(0, 229, 255, 0.3);
+}
+
+/* 硬边霓虹发光 (不是柔光) */
+.donor-theme .d-neon-text-m {
+  color: var(--donor-magenta);
+  text-shadow:
+    0 0 1px var(--donor-magenta),
+    0 0 6px rgba(255, 45, 122, 0.7),
+    0 0 18px rgba(255, 45, 122, 0.4);
+}
+
+.donor-theme .d-neon-text-c {
+  color: var(--donor-cyan);
+  text-shadow:
+    0 0 1px var(--donor-cyan),
+    0 0 6px rgba(0, 229, 255, 0.7),
+    0 0 18px rgba(0, 229, 255, 0.35);
+}
+
+/* 色散大标题 - 品红填充 + 青色偏移副本 */
+.donor-theme .d-chromatic {
+  position: relative;
+  color: var(--donor-magenta);
+  letter-spacing: 0.02em;
+}
+.donor-theme .d-chromatic::before,
+.donor-theme .d-chromatic::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.donor-theme .d-chromatic::before {
+  color: var(--donor-cyan);
+  transform: translate(-1.5px, 0);
+  mix-blend-mode: screen;
+  opacity: 0.85;
+}
+.donor-theme .d-chromatic::after {
+  color: var(--donor-magenta-2);
+  transform: translate(1.5px, 0);
+  mix-blend-mode: screen;
+  opacity: 0.8;
+}
+
+/* Hover 反色 (黑底品红字 → 品红底黑字) - 生硬、黑市终端感 */
+.donor-theme .d-hover-invert {
+  background-color: transparent;
+  color: var(--donor-magenta);
+  border: 1px solid var(--donor-magenta);
+  transition: background-color 120ms steps(3, end), color 80ms step-end;
+  cursor: pointer;
+}
+.donor-theme .d-hover-invert:hover {
+  background-color: var(--donor-magenta);
+  color: var(--donor-bg-0);
+}
+.donor-theme .d-hover-invert-cyan {
+  background-color: transparent;
+  color: var(--donor-cyan);
+  border: 1px solid var(--donor-cyan);
+  transition: background-color 120ms steps(3, end), color 80ms step-end;
+  cursor: pointer;
+}
+.donor-theme .d-hover-invert-cyan:hover {
+  background-color: var(--donor-cyan);
+  color: var(--donor-bg-0);
+}
+
+/* 等宽 mono + 前导符号 */
+.donor-theme .d-mono {
+  font-family: var(--donor-font-mono);
+  letter-spacing: 0.04em;
+}
+
+/* Terminal 光标闪烁 + 三角箭头 */
+.donor-theme .d-caret::after {
+  content: '_';
+  display: inline-block;
+  margin-left: 2px;
+  color: var(--donor-cyan);
+  animation: d-blink 1s steps(2, end) infinite;
+}
+.donor-theme .d-arrow::before {
+  content: '▶';
+  margin-right: 6px;
+  color: var(--donor-magenta);
+  animation: d-blink 1.4s steps(2, end) infinite;
+}
+
+/* Kinetic 数字 / HUD 装饰 */
+.donor-theme .d-hud-digit {
+  font-family: var(--donor-font-mono);
+  color: var(--donor-cyan);
+  text-shadow: 0 0 4px rgba(0, 229, 255, 0.55);
+  letter-spacing: 0.08em;
+}
+
+/* 双语标签:日文+英文缩写 */
+.donor-theme .d-bi-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--donor-font-jp);
+}
+.donor-theme .d-bi-label > em {
+  font-style: normal;
+  font-family: var(--donor-font-mono);
+  font-size: 0.7em;
+  color: var(--donor-cyan);
+  opacity: 0.8;
+  letter-spacing: 0.1em;
+}
+
+/* 状态贴纸 - 卡片角标 */
+.donor-theme .d-status-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  font-family: var(--donor-font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border: 1px solid currentColor;
+  clip-path: polygon(6px 0, 100% 0, calc(100% - 6px) 100%, 0 100%);
+}
+.donor-theme .d-status-tag--ok {
+  color: var(--donor-green);
+}
+.donor-theme .d-status-tag--pending {
+  color: var(--donor-amber);
+}
+.donor-theme .d-status-tag--fail {
+  color: var(--donor-red);
+  animation: d-pulse 1.2s ease-in-out infinite;
+}
+.donor-theme .d-status-tag--local {
+  color: var(--donor-cyan);
+}
+
+/* Glitch - 短暂 RGB 分裂 + 横向切片错位 */
+.donor-theme .d-glitch {
+  animation: d-glitch 320ms steps(6, end) 1;
+}
+
+/* Loading 扫描光带 */
+.donor-theme .d-scan-bar {
+  position: relative;
+  overflow: hidden;
+}
+.donor-theme .d-scan-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(0, 229, 255, 0.0) 30%,
+    rgba(0, 229, 255, 0.4) 50%,
+    rgba(0, 229, 255, 0.0) 70%,
+    transparent 100%
+  );
+  animation: d-scan 2.1s linear infinite;
+  mix-blend-mode: screen;
+}
+
+/* Focus ring (keyboard a11y) */
+.donor-theme :focus-visible {
+  outline: 2px solid var(--donor-cyan);
+  outline-offset: 2px;
+}
+
+/* Selection */
+.donor-theme ::selection {
+  background: var(--donor-magenta);
+  color: var(--donor-bg-0);
+}
+
+/* ===== Keyframes ===== */
+@keyframes d-blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+@keyframes d-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+@keyframes d-scan {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+@keyframes d-glitch {
+  0%   { transform: translate(0); filter: none; }
+  20%  { transform: translate(-2px, 1px); filter: hue-rotate(8deg); }
+  40%  { transform: translate(2px, -1px); filter: hue-rotate(-8deg); }
+  60%  { transform: translate(-1px, 0); }
+  80%  { transform: translate(1px, 0); }
+  100% { transform: translate(0); filter: none; }
+}
+
+/* ===== Reduced Motion - 尊重系统偏好 ===== */
+@media (prefers-reduced-motion: reduce) {
+  .donor-theme::before,
+  .donor-theme::after {
+    display: none; /* 关闭噪点+扫描线 overlay(纯装饰) */
+  }
+  .donor-theme .d-caret::after,
+  .donor-theme .d-arrow::before,
+  .donor-theme .d-status-tag--fail,
+  .donor-theme .d-scan-bar::after,
+  .donor-theme .d-glitch {
+    animation: none !important;
+  }
+}

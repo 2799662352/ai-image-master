@@ -223,7 +223,7 @@ export class GeneratePage extends BasePage {
         // 点击预览触发器，不处理（由 preview handler 处理）
         return
       }
-      if (target.closest('.relative.bg-white.bg-opacity-10')) {
+      if (target.closest('.relative.bg-white\\/10')) {
         console.log('点击了已上传的图片，已禁用点击上传功能')
         return
       }
@@ -271,12 +271,12 @@ export class GeneratePage extends BasePage {
 
     referenceImageArea.addEventListener('dragenter', (e: DragEvent) => {
       e.preventDefault()
-      referenceImageArea.classList.add('border-opacity-70', 'bg-white', 'bg-opacity-5')
+      referenceImageArea.classList.add('border-white/70', 'bg-white/5')
     })
 
     referenceImageArea.addEventListener('dragleave', (e: DragEvent) => {
       e.preventDefault()
-      referenceImageArea.classList.remove('border-opacity-70', 'bg-white', 'bg-opacity-5')
+      referenceImageArea.classList.remove('border-white/70', 'bg-white/5')
     })
 
     referenceImageArea.addEventListener('dragover', (e: DragEvent) => {
@@ -285,7 +285,7 @@ export class GeneratePage extends BasePage {
 
     referenceImageArea.addEventListener('drop', (e: DragEvent) => {
       e.preventDefault()
-      referenceImageArea.classList.remove('border-opacity-70', 'bg-white', 'bg-opacity-5')
+      referenceImageArea.classList.remove('border-white/70', 'bg-white/5')
 
       const files = Array.from(e.dataTransfer?.files || [])
       if (files.length > 0) {
@@ -802,7 +802,7 @@ export class GeneratePage extends BasePage {
 
       this.referenceImages.forEach((imageData, index) => {
         const imageItem = document.createElement('div')
-        imageItem.className = 'relative bg-white bg-opacity-10 rounded-lg p-2 group'
+        imageItem.className = 'relative bg-white/10 rounded-lg p-2 group'
         const mimeType = (imageData.mimeType || 'image/jpeg').toLowerCase()
         const imageUrl = `data:${mimeType};base64,${imageData.base64}`
         imageItem.innerHTML = `
@@ -816,7 +816,7 @@ export class GeneratePage extends BasePage {
               </div>
             </div>
             ${imageData.needsCompression ? `
-              <div class="absolute top-1 left-1 bg-orange-500 bg-opacity-90 text-white text-xs px-2 py-0.5 rounded flex items-center space-x-1 pointer-events-none">
+              <div class="absolute top-1 left-1 bg-orange-500/90 text-white text-xs px-2 py-0.5 rounded flex items-center space-x-1 pointer-events-none">
                 <i class="fas fa-compress-alt"></i>
                 <span>${(imageData.fileSize / (1024 * 1024)).toFixed(1)}MB</span>
               </div>
@@ -834,7 +834,7 @@ export class GeneratePage extends BasePage {
       // 添加"添加更多"按钮
       if (this.referenceImages.length < this.maxReferenceImages) {
         const addButton = document.createElement('div')
-        addButton.className = 'border-2 border-dashed border-white border-opacity-30 hover:border-opacity-50 rounded-lg p-2 cursor-pointer transition-all flex items-center justify-center aspect-square group'
+        addButton.className = 'border-2 border-dashed border-white/30 hover:border-white/50 rounded-lg p-2 cursor-pointer transition-all flex items-center justify-center aspect-square group'
         addButton.setAttribute('data-dynamic-add-button', 'true')
         addButton.innerHTML = `
           <div class="text-center">
@@ -914,8 +914,8 @@ export class GeneratePage extends BasePage {
     
     // 使用 ImageViewer 预览
     const imageViewer = (window as any).imageViewerTS
-    if (imageViewer?.view) {
-      imageViewer.view(urls, index)
+    if (imageViewer?.open) {
+      imageViewer.open(urls, index)
     } else if ((this.app as any).viewImage) {
       ;(this.app as any).viewImage(urls, index)
     }
@@ -960,22 +960,25 @@ export class GeneratePage extends BasePage {
       img.alt = '生成的图片'
 
       const uploadIndicator = document.createElement('div')
-      uploadIndicator.className = 'upload-indicator uploading absolute top-2 right-2 bg-black bg-opacity-50 rounded-full p-2 text-white'
+      uploadIndicator.className = 'upload-indicator uploading absolute top-2 right-2 bg-black/50 rounded-full p-2 text-white'
       uploadIndicator.innerHTML = '<i class="fas fa-cloud-upload-alt fa-spin"></i>'
       uploadIndicator.title = this.t('generate.labels.uploadIndicatorTooltip')
 
       const overlay = document.createElement('div')
-      overlay.className = 'absolute inset-0 bg-black bg-opacity-50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center space-x-2'
+      overlay.className = 'absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center space-x-2'
 
       const downloadBtn = document.createElement('button')
-      downloadBtn.className = 'bg-white bg-opacity-20 hover:bg-opacity-30 text-white p-2 rounded-lg transition-all'
+      downloadBtn.className = 'bg-white/20 hover:bg-white/30 text-white p-2 rounded-lg transition-all'
       downloadBtn.innerHTML = '<i class="fas fa-download"></i>'
       downloadBtn.onclick = () => (this.app as any).downloadImage?.(urls[0])
 
       const viewBtn = document.createElement('button')
-      viewBtn.className = 'bg-white bg-opacity-20 hover:bg-opacity-30 text-white p-2 rounded-lg transition-all'
+      viewBtn.className = 'bg-white/20 hover:bg-white/30 text-white p-2 rounded-lg transition-all'
       viewBtn.innerHTML = '<i class="fas fa-expand"></i>'
-      viewBtn.onclick = () => (window as any).imageViewerTS?.view?.(urls, 0) || (this.app as any).viewImage?.(urls, 0)
+      viewBtn.onclick = () => {
+        const viewer = (window as any).imageViewerTS
+        if (viewer?.open) { viewer.open(urls, 0) } else { ;(this.app as any).viewImage?.(urls, 0) }
+      }
 
       overlay.appendChild(downloadBtn)
       overlay.appendChild(viewBtn)
@@ -990,7 +993,7 @@ export class GeneratePage extends BasePage {
 
       urls.forEach((url, index) => {
         const imageContainer = document.createElement('div')
-        imageContainer.className = 'relative group bg-white bg-opacity-5 rounded-lg p-2 result-item'
+        imageContainer.className = 'relative group bg-white/5 rounded-lg p-2 result-item'
         imageContainer.style.zIndex = '1'
 
         const img = document.createElement('img')
@@ -999,22 +1002,25 @@ export class GeneratePage extends BasePage {
         img.alt = `生成的图片 ${index + 1}`
 
         const uploadIndicator = document.createElement('div')
-        uploadIndicator.className = 'upload-indicator uploading absolute top-3 right-3 bg-black bg-opacity-50 rounded-full p-1.5 text-white text-xs'
+        uploadIndicator.className = 'upload-indicator uploading absolute top-3 right-3 bg-black/50 rounded-full p-1.5 text-white text-xs'
         uploadIndicator.innerHTML = '<i class="fas fa-cloud-upload-alt fa-spin"></i>'
         uploadIndicator.title = this.t('generate.labels.uploadIndicatorTooltip')
 
         const overlay = document.createElement('div')
-        overlay.className = 'absolute inset-2 bg-black bg-opacity-50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center space-x-2 rounded-lg'
+        overlay.className = 'absolute inset-2 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center space-x-2 rounded-lg'
 
         const downloadBtn = document.createElement('button')
-        downloadBtn.className = 'bg-white bg-opacity-20 hover:bg-opacity-30 text-white p-2 rounded-lg transition-all'
+        downloadBtn.className = 'bg-white/20 hover:bg-white/30 text-white p-2 rounded-lg transition-all'
         downloadBtn.innerHTML = '<i class="fas fa-download"></i>'
         downloadBtn.onclick = () => (this.app as any).downloadImage?.(url)
 
         const viewBtn = document.createElement('button')
-        viewBtn.className = 'bg-white bg-opacity-20 hover:bg-opacity-30 text-white p-2 rounded-lg transition-all'
+        viewBtn.className = 'bg-white/20 hover:bg-white/30 text-white p-2 rounded-lg transition-all'
         viewBtn.innerHTML = '<i class="fas fa-expand"></i>'
-        viewBtn.onclick = () => (window as any).imageViewerTS?.view?.(urls, index) || (this.app as any).viewImage?.(urls, index)
+        viewBtn.onclick = () => {
+          const viewer = (window as any).imageViewerTS
+          if (viewer?.open) { viewer.open(urls, index) } else { ;(this.app as any).viewImage?.(urls, index) }
+        }
 
         overlay.appendChild(downloadBtn)
         overlay.appendChild(viewBtn)
@@ -1039,8 +1045,8 @@ export class GeneratePage extends BasePage {
 
     container.innerHTML = `
       <div class="text-center text-white">
-        <div class="bg-red-500 bg-opacity-20 rounded-lg p-6 border border-red-400 border-opacity-30">
-          <div class="bg-red-500 bg-opacity-30 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
+        <div class="bg-red-500/20 rounded-lg p-6 border border-red-400/30">
+          <div class="bg-red-500/30 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
             <i class="fas fa-exclamation-triangle text-2xl text-red-200"></i>
           </div>
           <h3 class="text-lg font-semibold text-red-200 mb-2">${errorInfo.title}</h3>
@@ -1152,13 +1158,13 @@ export class GeneratePage extends BasePage {
 
     this.referenceImages.forEach((imageData, index) => {
       const imageDiv = document.createElement('div')
-      imageDiv.className = 'relative group bg-white bg-opacity-5 rounded-lg p-2'
+      imageDiv.className = 'relative group bg-white/5 rounded-lg p-2'
       const mimeType = (imageData.mimeType || 'image/jpeg').toLowerCase()
       imageDiv.innerHTML = `
         <img src="data:${mimeType};base64,${imageData.base64}"
              class="w-full h-auto rounded-lg"
              alt="${this.t('generate.labels.referenceImageLabel', { index: index + 1 })}">
-        <div class="absolute top-2 left-2 bg-black bg-opacity-70 text-white text-xs px-2 py-1 rounded">
+        <div class="absolute top-2 left-2 bg-black/70 text-white text-xs px-2 py-1 rounded">
           ${this.t('generate.labels.referenceImageLabel', { index: index + 1 })}
         </div>
       `
@@ -1185,13 +1191,13 @@ export class GeneratePage extends BasePage {
     } else {
       this.referenceImages.forEach((imageData, index) => {
         const imageDiv = document.createElement('div')
-        imageDiv.className = 'relative bg-white bg-opacity-5 rounded-lg p-1'
+        imageDiv.className = 'relative bg-white/5 rounded-lg p-1'
         const mimeType = (imageData.mimeType || 'image/jpeg').toLowerCase()
         imageDiv.innerHTML = `
           <img src="data:${mimeType};base64,${imageData.base64}"
                class="w-full h-32 object-cover rounded-lg"
                alt="${this.t('generate.labels.referenceImageLabel', { index: index + 1 })}">
-          <div class="absolute top-1 left-1 bg-black bg-opacity-70 text-white text-xs px-1 py-0.5 rounded">
+          <div class="absolute top-1 left-1 bg-black/70 text-white text-xs px-1 py-0.5 rounded">
             ${this.t('generate.labels.referenceImageLabel', { index: index + 1 })}
           </div>
         `
@@ -1202,12 +1208,12 @@ export class GeneratePage extends BasePage {
     if (this.lastGeneratedUrls && this.lastGeneratedUrls.length > 0) {
       this.lastGeneratedUrls.forEach((url, index) => {
         const imageDiv = document.createElement('div')
-        imageDiv.className = 'relative group bg-white bg-opacity-5 rounded-lg p-1'
+        imageDiv.className = 'relative group bg-white/5 rounded-lg p-1'
         imageDiv.innerHTML = `
           <img src="${url}"
                class="w-full h-32 object-cover rounded-lg"
                alt="${this.t('generate.labels.generateResultLabel', { index: index + 1 })}">
-          <div class="absolute top-1 left-1 bg-black bg-opacity-70 text-white text-xs px-1 py-0.5 rounded">
+          <div class="absolute top-1 left-1 bg-black/70 text-white text-xs px-1 py-0.5 rounded">
             ${this.t('generate.labels.generateResultLabel', { index: index + 1 })}
           </div>
         `
@@ -1389,7 +1395,6 @@ export class GeneratePage extends BasePage {
   // ==================== 页面生命周期 ====================
 
   onActivate(): void {
-    console.log(this.t('generate.messages.pageActivated'))
     this.updateReferenceImageLimitDisplay()
 
     const doRestore = async (): Promise<void> => {
@@ -1411,7 +1416,6 @@ export class GeneratePage extends BasePage {
 
   onDeactivate(): void {
     this.saveCurrentStateImmediate()
-    console.log(this.t('generate.messages.pageDeactivated'))
 
     if (this.r2UploadListener) {
       window.removeEventListener('r2UploadComplete', this.r2UploadListener as EventListener)

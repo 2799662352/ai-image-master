@@ -42,9 +42,11 @@ export function DirectorApp() {
   const skipTaskPlanning = useDirectorStore((s) => s.skipTaskPlanning)
   const skipAnalyzeScene = useDirectorStore((s) => s.skipAnalyzeScene)
   const skipCharacterAnchors = useDirectorStore((s) => s.skipCharacterAnchors)
+  const enableCreativePreplanner = useDirectorStore((s) => s.enableCreativePreplanner)
   const setSkipTaskPlanning = useDirectorStore((s) => s.setSkipTaskPlanning)
   const setSkipAnalyzeScene = useDirectorStore((s) => s.setSkipAnalyzeScene)
   const setSkipCharacterAnchors = useDirectorStore((s) => s.setSkipCharacterAnchors)
+  const setEnableCreativePreplanner = useDirectorStore((s) => s.setEnableCreativePreplanner)
   const applyVisionDetailPreset = useDirectorStore((s) => s.applyVisionDetailPreset)
   const setViewState = useDirectorStore((s) => s.setViewState)
   const pushProgress = useDirectorStore((s) => s.pushProgress)
@@ -282,6 +284,26 @@ export function DirectorApp() {
                   >
                     一键预设：质量
                   </button>
+                </div>
+
+                <div className="flex items-center justify-between gap-3 py-2 border-b border-[#3F3F46]/50">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <input
+                      type="checkbox"
+                      checked={enableCreativePreplanner}
+                      onChange={(e) => setEnableCreativePreplanner(e.target.checked)}
+                      className="w-3.5 h-3.5 accent-emerald-500 cursor-pointer"
+                    />
+                    <span className="text-[11px] text-white/90 whitespace-nowrap">
+                      Deep Agent 创意规划
+                    </span>
+                    <span className="text-[10px] text-white/40">
+                      (用 AI 理解模糊 brief → 结构化创意方向)
+                    </span>
+                  </div>
+                  {enableCreativePreplanner && (
+                    <span className="text-[10px] text-emerald-400 font-mono">ON</span>
+                  )}
                 </div>
 
                 {[

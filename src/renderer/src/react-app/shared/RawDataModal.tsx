@@ -67,7 +67,7 @@ export function RawDataModal({ card, onClose }: RawDataModalProps) {
         <div className="px-6 py-3 border-t border-[#3F3F46] flex justify-end gap-2">
           <button
             onClick={async () => { try { await navigator.clipboard.writeText(JSON.stringify(sanitizedRaw, null, 2)); const toast = (window as any).toastManagerTS ?? (window as any).toastManager; toast?.show?.('已复制到剪贴板', 'success') } catch { /* ignore */ } }}
-            className="px-4 py-2 bg-[#27272A] border border-[#3F3F46] text-white rounded-none text-sm hover:bg-white hover:bg-opacity-5 transition-colors"
+            className="px-4 py-2 bg-[#27272A] border border-[#3F3F46] text-white rounded-none text-sm hover:bg-white/5 transition-colors"
           >
             <i className="fas fa-copy mr-2" />复制
           </button>

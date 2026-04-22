@@ -1,11 +1,14 @@
+import { useState } from 'react'
 import type { BatchItem } from '../../stores/useBatchStore'
+import { useBatchStore } from '../../stores/useBatchStore'
 import ImageEditToolbar from '../../components/shared/image-editors/ImageEditToolbar'
+import ImageEditorModal from '../../components/shared/image-editors/ImageEditorModal'
+import '../../components/shared/image-editors/image-editors.css'
 
 interface Props {
   items: BatchItem[]
   onRemove: (id: string) => void
   onPreview?: (url: string) => void
-  onOpenEditor?: (url: string, type: 'angle' | 'light') => void
 }
 
 /**
@@ -240,14 +243,32 @@ function ResultCard({
               position: 'absolute',
               inset: 0,
               display: 'flex',
+              flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
               color: 'var(--punk-cream)',
-              fontSize: 48,
-              fontWeight: 900,
+              gap: 4,
+              padding: 8,
             }}
           >
-            ✗
+            <span style={{ fontSize: 36, fontWeight: 900 }}>✗</span>
+            <span
+              className="p-mono"
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                textAlign: 'center',
+                lineHeight: 1.3,
+                opacity: 0.85,
+                display: '-webkit-box',
+                WebkitLineClamp: 3,
+                WebkitBoxOrient: 'vertical',
+                overflow: 'hidden',
+                wordBreak: 'break-word',
+              }}
+            >
+              {item.error || 'FAILED'}
+            </span>
           </div>
         )}
         {/* 漫画式角章 */}
@@ -290,12 +311,12 @@ function ResultCard({
         {item.prompt}
       </p>
 
-      {item.error && (
+      {item.error && !isFail && (
         <p
           className="p-mono"
           style={{
             fontSize: 10,
-            color: isFail ? 'var(--punk-cream)' : 'var(--punk-red)',
+            color: 'var(--punk-red)',
             fontWeight: 900,
             margin: 0,
             wordBreak: 'break-word',
@@ -311,7 +332,18 @@ function ResultCard({
 /**
  * PunkResultGrid - 任务卡片网格 + 全局 spin keyframe
  */
-export default function PunkResultGrid({ items, onRemove, onPreview, onOpenEditor }: Props) {
+export default function PunkResultGrid({ items, onRemove, onPreview }: Props) {
+  const [editorState, setEditorState] = useState<{ url: string; type: 'angle' | 'light' } | null>(null)
+
+  const injectPrompt = (p: string) => {
+    const { mode, cardPrompt, multiText, setCardPrompt, setMultiText } = useBatchStore.getState()
+    if (mode === 'card') setCardPrompt(cardPrompt + '\n' + p)
+    else setMultiText(multiText + '\n' + p)
+  }
+
+  const failedItems = items.filter((i) => i.status === 'error')
+  const doneItems = items.filter((i) => i.status === 'done')
+
   if (items.length === 0) {
     return (
       <div
@@ -351,8 +383,37 @@ export default function PunkResultGrid({ items, onRemove, onPreview, onOpenEdito
           className="p-callout p-tilt-l-3"
           style={{ display: 'inline-block', marginBottom: 12, fontSize: 13 }}
         >
-          // RESULTS // {items.length} TASKS //
+          // RESULTS // {items.length} TASKS // OK {doneItems.length} · ERR {failedItems.length} //
         </div>
+
+        {failedItems.length > 0 && (
+          <div
+            style={{
+              marginBottom: 16,
+              padding: '10px 14px',
+              background: 'var(--punk-red)',
+              border: '4px solid var(--punk-black)',
+              boxShadow: '5px 5px 0 var(--punk-cream)',
+            }}
+          >
+            <div className="p-display" style={{ fontSize: 14, color: 'var(--punk-cream)', marginBottom: 4 }}>
+              ⚠ {failedItems.length} 项生成失败
+            </div>
+            <p
+              className="p-mono"
+              style={{ fontSize: 11, color: 'var(--punk-cream)', opacity: 0.85, margin: 0, lineHeight: 1.4 }}
+            >
+              {failedItems[0]?.error || '生成请求失败'}
+              {failedItems.length > 1 && ` (+${failedItems.length - 1} more)`}
+            </p>
+            <p
+              className="p-mono"
+              style={{ fontSize: 10, color: 'var(--punk-cream)', opacity: 0.6, margin: '6px 0 0', lineHeight: 1.3 }}
+            >
+              建议：检查网络连接，或在顶部切换绘图模型后重新生成
+            </p>
+          </div>
+        )}
         <div
           className="p-scroll"
           style={{
@@ -368,11 +429,21 @@ export default function PunkResultGrid({ items, onRemove, onPreview, onOpenEdito
               index={idx}
               onRemove={onRemove}
               onPreview={onPreview}
-              onOpenEditor={(url, type) => onOpenEditor?.(url, type)}
+              onOpenEditor={(url, type) => setEditorState({ url, type })}
             />
           ))}
         </div>
       </div>
+      {editorState && (
+        <ImageEditorModal
+          key={editorState.type}
+          editorType={editorState.type}
+          imageUrl={editorState.url}
+          theme="punk"
+          onInjectPrompt={injectPrompt}
+          onClose={() => setEditorState(null)}
+        />
+      )}
     </>
   )
 }

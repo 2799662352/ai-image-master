@@ -1,5 +1,6 @@
 import { memo, useState, useCallback, useMemo, useRef, lazy, Suspense, type ReactNode } from "react";
 import { buildLightingPrompt } from "./prompts";
+import type { LightAngle, LightTarget } from "./ThreeLightScene";
 
 const ThreeLightScene = lazy(() => import("./ThreeLightScene").then((m) => ({ default: m.ThreeLightScene })));
 
@@ -37,26 +38,48 @@ interface LightEditorProps {
   onInjectPrompt: (prompt: string) => void;
   onClose: () => void;
   imageUrl?: string;
+  /** 视觉主题. punk = ドーナドーナ × P5 拼贴; default = 暗色 SaaS. 默认 default. */
+  theme?: "punk" | "default";
 }
 
-function LightEditorInner({ onInjectPrompt, onClose, imageUrl }: LightEditorProps) {
+function LightEditorInner({ onInjectPrompt, onClose, imageUrl, theme = "default" }: LightEditorProps) {
+  const isPunk = theme === "punk";
   const [brightness, setBrightness] = useState(2);
   const [color, setColor] = useState("#ffe4c4");
   const [direction, setDirection] = useState<LightDirection>("front");
+  const [customAngle, setCustomAngle] = useState<LightAngle | null>(null);
   const [rimLight, setRimLight] = useState(false);
   const [viewMode, setViewMode] = useState<"perspective" | "front">("perspective");
+  // 磁吸到预设 —— 默认关. 开启后拖完松手若在 18° 内会自动吸到最近的 6 向预设,
+  // 自由角度会跳回预设标签(如 "front"). 关时保留任意自由 (az, el).
+  const [snapToPreset, setSnapToPreset] = useState(false);
   const [promptCopied, setPromptCopied] = useState(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const lightPrompt = useMemo(
-    () => buildLightingPrompt(direction, brightness, color, rimLight),
-    [direction, brightness, color, rimLight],
+    () => buildLightingPrompt(customAngle ?? direction, brightness, color, rimLight),
+    [customAngle, direction, brightness, color, rimLight],
   );
+
+  const handleLightChange = useCallback((target: LightTarget) => {
+    if (target.type === "preset") {
+      setDirection(target.key);
+      setCustomAngle(null);
+    } else {
+      setCustomAngle({ az: target.az, el: target.el });
+    }
+  }, []);
+
+  const handlePresetClick = useCallback((key: LightDirection) => {
+    setDirection(key);
+    setCustomAngle(null);
+  }, []);
 
   const resetParams = useCallback(() => {
     setBrightness(2);
     setColor("#ffe4c4");
     setDirection("front");
+    setCustomAngle(null);
     setRimLight(false);
   }, []);
 
@@ -79,6 +102,423 @@ function LightEditorInner({ onInjectPrompt, onClose, imageUrl }: LightEditorProp
   const brightnessPct = BRIGHTNESS_LABELS[brightness] ?? `${brightness * 25}`;
   const sliderPct = (brightness / 4) * 100;
 
+  // ====================================================================
+  // PUNK 分支 — ドーナドーナ × P5 拼贴风
+  // ====================================================================
+  if (isPunk) {
+    return (
+      <div
+        className="flex w-full flex-col"
+        style={{
+          background: "var(--punk-cream)",
+          border: "3px solid var(--punk-black)",
+          boxShadow: "4px 4px 0 var(--punk-black)",
+          padding: "14px 14px 12px",
+          gap: 10,
+          fontFamily: "var(--punk-font-display)",
+          color: "var(--punk-black)",
+        }}
+      >
+        {/* Header */}
+        <header
+          className="flex items-center"
+          style={{ gap: 12, paddingBottom: 8, borderBottom: "2px dashed var(--punk-black)" }}
+        >
+          <div
+            style={{
+              background: "var(--punk-black)",
+              color: "var(--punk-pink)",
+              padding: "4px 10px",
+              fontFamily: "var(--punk-font-display)",
+              fontWeight: 900,
+              fontSize: 18,
+              letterSpacing: "-0.02em",
+              textTransform: "uppercase",
+              transform: "rotate(-1.5deg)",
+              boxShadow: "3px 3px 0 var(--punk-pink)",
+            }}
+          >
+            打光 / LIGHTING
+          </div>
+          <span className="p-hazard-tape" style={{ transform: "rotate(2deg)" }} aria-hidden>
+            RELIGHT · BETA
+          </span>
+          <div className="flex-1" />
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="关闭"
+            title="关闭"
+            style={{
+              width: 28,
+              height: 28,
+              background: "var(--punk-black)",
+              color: "var(--punk-cream)",
+              border: "2px solid var(--punk-black)",
+              boxShadow: "2px 2px 0 var(--punk-pink)",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              transition: "transform 120ms, box-shadow 120ms",
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLElement).style.transform = "translate(-1px,-1px)";
+              (e.currentTarget as HTMLElement).style.boxShadow = "3px 3px 0 var(--punk-pink)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLElement).style.transform = "none";
+              (e.currentTarget as HTMLElement).style.boxShadow = "2px 2px 0 var(--punk-pink)";
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </header>
+
+        {/* Body */}
+        <div className="flex items-start" style={{ gap: 12 }}>
+          {/* 3D Scene */}
+          <div
+            className="relative shrink-0"
+            style={{
+              width: 210,
+              border: "3px solid var(--punk-black)",
+              background: "var(--punk-cream)",
+              boxShadow: "4px 4px 0 var(--punk-black)",
+            }}
+          >
+            <span
+              className="p-hazard-tape"
+              style={{ position: "absolute", top: -8, left: -6, zIndex: 2, transform: "rotate(-4deg)", fontSize: 9 }}
+              aria-hidden
+            >
+              PREVIEW
+            </span>
+            <div
+              className="flex items-center"
+              style={{ gap: 6, padding: "6px 6px 4px", background: "var(--punk-cream-dim)", borderBottom: "2px solid var(--punk-black)" }}
+            >
+              <PunkModeTab label="透视" active={viewMode === "perspective"} onClick={() => setViewMode("perspective")} />
+              <PunkModeTab label="正面" active={viewMode === "front"} onClick={() => setViewMode("front")} />
+            </div>
+            <div className="flex items-center justify-center overflow-hidden" style={{ width: 204, height: 240, background: "var(--punk-cream)" }}>
+              <Suspense fallback={<div className="flex h-full w-full items-center justify-center"><span className="p-mono" style={{ fontSize: 11, color: "var(--punk-pink-deep)" }}>LOADING 3D…</span></div>}>
+                <ThreeLightScene
+                  direction={direction}
+                  customAngle={customAngle}
+                  brightness={brightness}
+                  color={color}
+                  viewMode={viewMode}
+                  width={204}
+                  height={240}
+                  imageUrl={imageUrl}
+                  onLightChange={handleLightChange}
+                  snapToPreset={snapToPreset}
+                />
+              </Suspense>
+            </div>
+          </div>
+
+          {/* Controls */}
+          <div className="flex min-w-0 flex-1 flex-col" style={{ gap: 10, minHeight: 288 }}>
+            <PunkSectionLabel>光源 / SOURCE</PunkSectionLabel>
+
+            {/* Brightness */}
+            <div className="flex flex-col" style={{ gap: 4 }}>
+              <div className="flex items-center" style={{ gap: 8 }}>
+                <span className="p-display p-upper" style={{ width: 52, flexShrink: 0, fontSize: 12 }}>亮度</span>
+                <PunkInfoIcon title="控制光源的整体强度。0% 几乎无光，100% 为最亮。" />
+                <input
+                  type="range"
+                  min={0}
+                  max={4}
+                  step={1}
+                  value={brightness}
+                  onChange={(e) => setBrightness(Number(e.target.value))}
+                  className="p-range min-w-0 flex-1"
+                  style={{
+                    background: `linear-gradient(to right,
+                      var(--punk-pink) 0%,
+                      var(--punk-pink-deep) ${sliderPct}%,
+                      var(--punk-cream) ${sliderPct}%,
+                      var(--punk-cream) 100%)`,
+                  }}
+                />
+                <span
+                  className="p-mono"
+                  style={{
+                    minWidth: 52,
+                    flexShrink: 0,
+                    textAlign: "center",
+                    fontSize: 12,
+                    padding: "2px 6px",
+                    background: "var(--punk-cream)",
+                    color: "var(--punk-black)",
+                    border: "2px solid var(--punk-black)",
+                    fontWeight: 700,
+                  }}
+                >
+                  {brightnessPct}%
+                </span>
+              </div>
+              <div className="flex items-center" style={{ paddingLeft: 68, paddingRight: 66 }}>
+                <div className="flex min-w-0 flex-1 items-center justify-between">
+                  {BRIGHTNESS_TICKS.map((t, i) => {
+                    const active = i === brightness;
+                    return (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => setBrightness(i)}
+                        className="p-mono"
+                        style={{
+                          fontSize: 9,
+                          fontWeight: active ? 900 : 700,
+                          letterSpacing: "0.04em",
+                          color: active ? "var(--punk-pink-deep)" : "var(--punk-black)",
+                          opacity: active ? 1 : 0.55,
+                          background: "transparent",
+                          border: "none",
+                          cursor: "pointer",
+                          padding: 0,
+                          textDecoration: active ? "underline 2px var(--punk-pink)" : "none",
+                          textUnderlineOffset: 3,
+                        }}
+                        title={`亮度:${t}(${i * 25}%)`}
+                      >
+                        {t}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Color */}
+            <div className="flex items-center" style={{ gap: 8 }}>
+              <span className="p-display p-upper" style={{ width: 52, flexShrink: 0, fontSize: 12 }}>颜色</span>
+              <PunkInfoIcon title="光源色温。暖色(橙黄)适合温馨场景，冷色(蓝白)适合科技/清爽场景。" />
+              <button
+                type="button"
+                className="relative flex items-center justify-center overflow-hidden"
+                style={{
+                  height: 24,
+                  width: 36,
+                  border: "2px solid var(--punk-black)",
+                  boxShadow: "2px 2px 0 var(--punk-black)",
+                  cursor: "pointer",
+                  background: color,
+                }}
+                title={`自定义颜色 ${color}`}
+                aria-label="自定义颜色"
+              >
+                <input
+                  type="color"
+                  value={color}
+                  onChange={(e) => setColor(e.target.value)}
+                  className="absolute inset-0 cursor-pointer opacity-0"
+                />
+              </button>
+              <div className="flex items-center" style={{ gap: 6 }}>
+                {COLOR_PRESETS.map((p) => {
+                  const active = color.toLowerCase() === p.hex.toLowerCase();
+                  return (
+                    <button
+                      key={p.hex}
+                      type="button"
+                      onClick={() => setColor(p.hex)}
+                      style={{
+                        position: "relative",
+                        width: 22,
+                        height: 22,
+                        background: p.hex,
+                        border: active ? "3px solid var(--punk-black)" : "2px solid var(--punk-black)",
+                        boxShadow: active ? "3px 3px 0 var(--punk-pink)" : "1.5px 1.5px 0 var(--punk-black)",
+                        transform: active ? "translate(-1px,-1px)" : "none",
+                        cursor: "pointer",
+                        transition: "transform 100ms, box-shadow 100ms",
+                      }}
+                      title={`${p.label}(${p.hex})`}
+                      aria-label={p.label}
+                      aria-pressed={active}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Direction */}
+            <div className="flex flex-col" style={{ gap: 6 }}>
+              <div className="flex items-center" style={{ gap: 8 }}>
+                <span className="p-display p-upper" style={{ fontSize: 12 }}>主光源方向</span>
+                {customAngle && (
+                  <span
+                    className="p-mono"
+                    style={{
+                      fontSize: 9,
+                      padding: "1px 6px",
+                      background: "var(--punk-toxic)",
+                      color: "var(--punk-black)",
+                      border: "2px solid var(--punk-black)",
+                      letterSpacing: "0.04em",
+                      fontWeight: 900,
+                    }}
+                    title={`方位 ${Math.round(customAngle.az)}° / 仰角 ${Math.round(customAngle.el)}° (拖灯泡自定义)`}
+                  >
+                    FREE {Math.round(customAngle.az)}° / {Math.round(customAngle.el)}°
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-3" style={{ gap: 6 }}>
+                {DIRECTIONS.map((d) => {
+                  const active = direction === d.key && !customAngle;
+                  return (
+                    <button
+                      key={d.key}
+                      type="button"
+                      onClick={() => handlePresetClick(d.key)}
+                      className="flex select-none items-center justify-center"
+                      style={{
+                        gap: 5,
+                        padding: "7px 0",
+                        border: "2px solid var(--punk-black)",
+                        background: active ? "var(--punk-black)" : "var(--punk-cream)",
+                        color: active ? "var(--punk-pink)" : "var(--punk-black)",
+                        boxShadow: active ? "3px 3px 0 var(--punk-pink)" : "2px 2px 0 var(--punk-black)",
+                        transform: active ? "translate(-1px,-1px)" : "none",
+                        fontFamily: "var(--punk-font-display)",
+                        fontWeight: 900,
+                        fontSize: 12,
+                        letterSpacing: "-0.01em",
+                        textTransform: "uppercase",
+                        cursor: "pointer",
+                        transition: "transform 100ms, box-shadow 100ms, background 100ms",
+                      }}
+                      aria-pressed={active}
+                    >
+                      <span className="flex h-3 w-3 shrink-0 items-center justify-center" aria-hidden>
+                        <d.Icon />
+                      </span>
+                      {d.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Rim Light */}
+            <PunkSectionLabel>辅助 / RIM</PunkSectionLabel>
+            <div className="flex items-center" style={{ gap: 8 }}>
+              <span className="p-display p-upper" style={{ fontSize: 12 }}>轮廓光</span>
+              <PunkInfoIcon title="在主体边缘添加一层补光,让人物或物体与背景更好地分离。" />
+              <div className="flex-1" />
+              <PunkToggle checked={rimLight} onChange={setRimLight} />
+            </div>
+
+            {/* 磁吸到预设 —— 默认关. 统一控制 light / camera 两种 drag 的松手磁吸. */}
+            <div className="flex items-center" style={{ gap: 8, marginTop: 6 }}>
+              <span className="p-display p-upper" style={{ fontSize: 12 }}>磁吸</span>
+              <PunkInfoIcon title={"关（默认）：停在你松手的位置，自由 X°/Y° 一直是自由。\n开：若 ≤18° 内自动吸到最近预设，跳回预设标签（如 from the front）。"} />
+              <div className="flex-1" />
+              <PunkToggle checked={snapToPreset} onChange={setSnapToPreset} />
+            </div>
+          </div>
+        </div>
+
+        {/* Prompt preview */}
+        <PunkSectionLabel>提示词 / PROMPT</PunkSectionLabel>
+        <button
+          type="button"
+          onClick={handleCopyPrompt}
+          title="点击复制打光提示词"
+          className="flex w-full min-w-0 items-start text-left"
+          style={{
+            gap: 8,
+            padding: "8px 10px",
+            background: "var(--punk-black)",
+            color: "var(--punk-cream)",
+            border: "2px solid var(--punk-black)",
+            boxShadow: "3px 3px 0 var(--punk-pink)",
+            cursor: "pointer",
+            transition: "transform 120ms, box-shadow 120ms",
+          }}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLElement).style.transform = "translate(-2px,-2px)";
+            (e.currentTarget as HTMLElement).style.boxShadow = "5px 5px 0 var(--punk-pink)";
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLElement).style.transform = "none";
+            (e.currentTarget as HTMLElement).style.boxShadow = "3px 3px 0 var(--punk-pink)";
+          }}
+        >
+          <span className="p-hazard-tape" style={{ flexShrink: 0, fontSize: 9, padding: "2px 6px" }} aria-hidden>
+            PROMPT
+          </span>
+          <span
+            className="p-mono min-w-0 flex-1"
+            style={{ fontSize: 11, lineHeight: 1.5, color: "var(--punk-cream)", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" }}
+            title={lightPrompt}
+          >
+            {lightPrompt}
+          </span>
+          <span
+            className="p-mono"
+            style={{
+              flexShrink: 0,
+              fontSize: 10,
+              padding: "2px 6px",
+              background: promptCopied ? "var(--punk-toxic)" : "var(--punk-cream)",
+              color: "var(--punk-black)",
+              border: "1.5px solid var(--punk-black)",
+              letterSpacing: "0.04em",
+              whiteSpace: "nowrap",
+            }}
+            aria-live="polite"
+          >
+            {promptCopied ? "COPIED" : "COPY"}
+          </span>
+        </button>
+
+        {/* Footer */}
+        <footer
+          className="flex items-center"
+          style={{ gap: 10, paddingTop: 8, borderTop: "2px dashed var(--punk-black)", minHeight: 44 }}
+        >
+          <button
+            type="button"
+            onClick={resetParams}
+            className="p-btn"
+            style={{
+              fontSize: 12,
+              padding: "6px 12px",
+              borderWidth: 2,
+              background: "var(--punk-cream)",
+              color: "var(--punk-black)",
+              boxShadow: "3px 3px 0 var(--punk-black)",
+            }}
+          >
+            <ResetIcon />
+            <span>重置</span>
+          </button>
+          <div className="flex-1" />
+          <button
+            type="button"
+            onClick={handleInject}
+            className="p-btn p-btn--pink"
+            style={{ fontSize: 14, padding: "8px 18px" }}
+          >
+            ★ 注入 PROMPT
+          </button>
+        </footer>
+      </div>
+    );
+  }
+
+  // ====================================================================
+  // DEFAULT 分支 — 保留原有暗色 SaaS 视觉
+  // ====================================================================
   return (
     <div
       className="flex w-full flex-col"
@@ -130,12 +570,15 @@ function LightEditorInner({ onInjectPrompt, onClose, imageUrl }: LightEditorProp
             <Suspense fallback={<div className="flex h-full w-full items-center justify-center"><span className="text-xs text-white/50">加载 3D 预览...</span></div>}>
               <ThreeLightScene
                 direction={direction}
+                customAngle={customAngle}
                 brightness={brightness}
                 color={color}
                 viewMode={viewMode}
                 width={198}
                 height={240}
                 imageUrl={imageUrl}
+                onLightChange={handleLightChange}
+                snapToPreset={snapToPreset}
               />
             </Suspense>
           </div>
@@ -246,15 +689,26 @@ function LightEditorInner({ onInjectPrompt, onClose, imageUrl }: LightEditorProp
 
             {/* Direction */}
             <div className="mt-1 flex flex-col gap-1.5">
-              <span className="text-[12px] text-[rgb(145,145,145)]">主光源方向</span>
+              <div className="flex items-center gap-2">
+                <span className="text-[12px] text-[rgb(145,145,145)]">主光源方向</span>
+                {customAngle && (
+                  <span
+                    className="rounded px-1.5 py-0.5 text-[9px] font-medium tracking-[0.06em] text-[#7bc6f0]"
+                    style={{ background: "rgba(54, 181, 240, 0.12)", border: "1px solid rgba(54, 181, 240, 0.3)" }}
+                    title={`方位 ${Math.round(customAngle.az)}° / 仰角 ${Math.round(customAngle.el)}° (拖灯泡自定义)`}
+                  >
+                    自由 {Math.round(customAngle.az)}° / {Math.round(customAngle.el)}°
+                  </span>
+                )}
+              </div>
               <div className="grid grid-cols-3 gap-1.5">
                 {DIRECTIONS.map((d) => {
-                  const active = direction === d.key;
+                  const active = direction === d.key && !customAngle;
                   return (
                     <button
                       key={d.key}
                       type="button"
-                      onClick={() => setDirection(d.key)}
+                      onClick={() => handlePresetClick(d.key)}
                       className="flex select-none items-center justify-center gap-1 whitespace-nowrap text-center text-[12px] transition-colors"
                       style={{
                         padding: "6px 0",
@@ -300,6 +754,12 @@ function LightEditorInner({ onInjectPrompt, onClose, imageUrl }: LightEditorProp
               <InfoIcon title="在主体边缘添加一层补光，让人物或物体与背景更好地分离。" />
               <div className="flex-1" />
               <ToggleSwitch checked={rimLight} onChange={setRimLight} />
+            </div>
+            <div className="flex items-center gap-2 px-1 py-0.5">
+              <span className="text-[12px] text-[rgb(145,145,145)]">磁吸</span>
+              <InfoIcon title={"关（默认）：停在你松手的位置，自由 X°/Y° 一直是自由。\n开：若 ≤18° 内自动吸到最近预设，跳回预设标签（如 from the front）。"} />
+              <div className="flex-1" />
+              <ToggleSwitch checked={snapToPreset} onChange={setSnapToPreset} />
             </div>
           </section>
         </div>
@@ -516,5 +976,137 @@ function DirBackIcon() {
       <line x1="8" y1="8" x2="16" y2="16" />
       <line x1="16" y1="8" x2="8" y2="16" />
     </svg>
+  );
+}
+
+/* ========== Punk helper components ========== */
+
+function PunkSectionLabel({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex items-center" style={{ gap: 8 }}>
+      <span
+        className="p-mono p-upper"
+        style={{
+          background: "var(--punk-black)",
+          color: "var(--punk-cream)",
+          padding: "2px 8px",
+          fontSize: 10,
+          letterSpacing: "0.1em",
+          fontWeight: 900,
+        }}
+      >
+        {children}
+      </span>
+      <div
+        style={{
+          flex: 1,
+          height: 3,
+          background:
+            "repeating-linear-gradient(90deg, var(--punk-black) 0 6px, transparent 6px 10px)",
+        }}
+      />
+    </div>
+  );
+}
+
+function PunkModeTab({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className="p-tab"
+      style={{
+        padding: "3px 12px",
+        fontSize: 11,
+        letterSpacing: "-0.01em",
+        cursor: "pointer",
+        ...(active
+          ? {
+              background: "var(--punk-black)",
+              color: "var(--punk-pink)",
+              boxShadow: "3px 3px 0 var(--punk-cream)",
+              transform: "translate(-2px,-2px) rotate(-1deg)",
+            }
+          : {}),
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+function PunkToggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className="p-mono p-upper"
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 0,
+        padding: 0,
+        border: "2px solid var(--punk-black)",
+        boxShadow: "2px 2px 0 var(--punk-black)",
+        background: "var(--punk-cream)",
+        fontSize: 10,
+        fontWeight: 900,
+        letterSpacing: "0.08em",
+        cursor: "pointer",
+        overflow: "hidden",
+      }}
+    >
+      <span
+        style={{
+          padding: "3px 9px",
+          background: checked ? "var(--punk-cream)" : "var(--punk-black)",
+          color: checked ? "var(--punk-pink-deep)" : "var(--punk-cream)",
+          transition: "background 100ms, color 100ms",
+        }}
+      >
+        OFF
+      </span>
+      <span style={{ width: 2, alignSelf: "stretch", background: "var(--punk-black)" }} />
+      <span
+        style={{
+          padding: "3px 9px",
+          background: checked ? "var(--punk-pink)" : "var(--punk-cream)",
+          color: checked ? "var(--punk-black)" : "var(--punk-pink-deep)",
+          transition: "background 100ms, color 100ms",
+        }}
+      >
+        ON
+      </span>
+    </button>
+  );
+}
+
+function PunkInfoIcon({ title }: { title?: string }) {
+  return (
+    <span
+      className="p-mono"
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 14,
+        height: 14,
+        background: "var(--punk-cream-dim)",
+        color: "var(--punk-black)",
+        border: "1.5px solid var(--punk-black)",
+        fontSize: 9,
+        fontWeight: 900,
+        cursor: "help",
+        flexShrink: 0,
+      }}
+      title={title}
+      aria-label={title}
+      role="img"
+    >
+      ?
+    </span>
   );
 }

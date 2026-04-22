@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import DonorPreview from '../DonorPreview'
 import type { DonorItemView } from '../../../hooks/useHistoryData'
 
@@ -26,7 +26,15 @@ describe('DonorPreview', () => {
     expect(screen.getByRole('button', { name: /SAVE\.IMG/i })).toBeTruthy()
   })
 
-  it('clicking SAVE.IMG triggers anchor download with current image url and indexed filename', () => {
+  it('clicking SAVE.IMG triggers anchor download via fetch→blob flow', async () => {
+    const fakeBlobUrl = 'blob:http://localhost/fake-blob'
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      blob: () => Promise.resolve(new Blob(['fake'], { type: 'image/png' })),
+    } as Response)
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue(fakeBlobUrl)
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+
     const created: HTMLAnchorElement[] = []
     const origCreate = document.createElement.bind(document)
     vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
@@ -38,10 +46,12 @@ describe('DonorPreview', () => {
     render(<DonorPreview item={mockItem} startIndex={0} onClose={() => {}} />)
     fireEvent.click(screen.getByRole('button', { name: /SAVE\.IMG/i }))
 
-    const anchor = created.find((a) => a.download)
-    expect(anchor).toBeDefined()
-    expect(anchor!.href).toContain('https://example.com/img-a.png')
-    expect(anchor!.download).toBe('donor-571019-1.png')
+    await waitFor(() => {
+      const anchor = created.find((a) => a.download)
+      expect(anchor).toBeDefined()
+      expect(anchor!.href).toBe(fakeBlobUrl)
+      expect(anchor!.download).toBe('donor-571019-1.png')
+    })
   })
 
   it('SAVE.IMG button is hidden when no image url', () => {

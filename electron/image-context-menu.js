@@ -59,7 +59,7 @@ async function saveDataUrl(parentWindow, srcURL, suggested) {
   await fs.promises.writeFile(result.filePath, Buffer.from(base64, 'base64'))
 }
 
-async function saveHttpUrl(parentWindow, webContents, srcURL, suggested) {
+async function saveHttpUrl(parentWindow, _webContents, srcURL, suggested) {
   const defaultPath = path.join(app.getPath('downloads'), defaultFilenameFor(srcURL, suggested))
   const result = await dialog.showSaveDialog(parentWindow, {
     title: '图片另存为',
@@ -68,17 +68,11 @@ async function saveHttpUrl(parentWindow, webContents, srcURL, suggested) {
   })
   if (result.canceled || !result.filePath) return
 
-  const session = webContents.session
-  const onWillDownload = (_event, item) => {
-    item.setSavePath(result.filePath)
-  }
-  session.once('will-download', onWillDownload)
-  try {
-    webContents.downloadURL(srcURL)
-  } catch (err) {
-    session.removeListener('will-download', onWillDownload)
-    console.error('[image-context-menu] downloadURL failed:', err)
-  }
+  const { net } = require('electron')
+  const res = await net.fetch(srcURL)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const arrayBuf = await res.arrayBuffer()
+  await fs.promises.writeFile(result.filePath, Buffer.from(arrayBuf))
 }
 
 function buildMenu({ parentWindow, webContents, params }) {

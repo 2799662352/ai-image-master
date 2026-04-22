@@ -322,19 +322,19 @@ export class UnderstandPage extends BasePage {
     imageArea.addEventListener('dragover', (e: DragEvent) => {
       e.preventDefault()
       e.stopPropagation()
-      imageArea.classList.add('border-opacity-70', 'bg-white', 'bg-opacity-5')
+      imageArea.classList.add('border-white/70', 'bg-white/5')
     })
 
     imageArea.addEventListener('dragleave', (e: DragEvent) => {
       e.preventDefault()
       e.stopPropagation()
-      imageArea.classList.remove('border-opacity-70', 'bg-white', 'bg-opacity-5')
+      imageArea.classList.remove('border-white/70', 'bg-white/5')
     })
 
     imageArea.addEventListener('drop', (e: DragEvent) => {
       e.preventDefault()
       e.stopPropagation()
-      imageArea.classList.remove('border-opacity-70', 'bg-white', 'bg-opacity-5')
+      imageArea.classList.remove('border-white/70', 'bg-white/5')
 
       const files = Array.from(e.dataTransfer?.files || []).filter(file =>
         file.type.startsWith('image/')
@@ -567,9 +567,9 @@ export class UnderstandPage extends BasePage {
       button.dataset.roleId = role.id
 
       if (role.id === this.currentRole) {
-        button.classList.add('bg-white', 'bg-opacity-20', 'text-white', 'font-medium')
+        button.classList.add('bg-white/20', 'text-white', 'font-medium')
       } else {
-        button.classList.add('bg-white', 'bg-opacity-5', 'text-white', 'opacity-70', 'hover:opacity-100', 'hover:bg-opacity-10')
+        button.classList.add('bg-white/5', 'text-white', 'opacity-70', 'hover:opacity-100', 'hover:bg-white/10')
       }
 
       const i18n = (window as any).i18n
@@ -651,8 +651,8 @@ export class UnderstandPage extends BasePage {
 
     const roleButtons = document.querySelectorAll('.role-btn')
     roleButtons.forEach(btn => {
-      btn.classList.remove('bg-white', 'bg-opacity-20', 'font-medium')
-      btn.classList.add('bg-white', 'bg-opacity-5', 'opacity-70', 'hover:opacity-100', 'hover:bg-opacity-10')
+      btn.classList.remove('bg-white/20', 'font-medium')
+      btn.classList.add('bg-white/5', 'opacity-70', 'hover:opacity-100', 'hover:bg-white/10')
     })
 
     this.updateRoleDisplay()
@@ -674,11 +674,11 @@ export class UnderstandPage extends BasePage {
     roleButtons.forEach(btn => {
       const roleId = btn.dataset.roleId
       if (roleId === this.currentRole && !this.isCustomPrompt) {
-        btn.classList.remove('bg-opacity-5', 'opacity-70', 'hover:opacity-100', 'hover:bg-opacity-10')
-        btn.classList.add('bg-white', 'bg-opacity-20', 'font-medium')
+        btn.classList.remove('bg-white/5', 'opacity-70', 'hover:opacity-100', 'hover:bg-white/10')
+        btn.classList.add('bg-white/20', 'font-medium')
       } else {
-        btn.classList.remove('bg-white', 'bg-opacity-20', 'font-medium')
-        btn.classList.add('bg-white', 'bg-opacity-5', 'opacity-70', 'hover:opacity-100', 'hover:bg-opacity-10')
+        btn.classList.remove('bg-white/20', 'font-medium')
+        btn.classList.add('bg-white/5', 'opacity-70', 'hover:opacity-100', 'hover:bg-white/10')
       }
     })
   }
@@ -884,7 +884,7 @@ export class UnderstandPage extends BasePage {
                   data-index="${index}">
             <i class="fas fa-times text-sm"></i>
           </button>
-          <div class="absolute bottom-0 left-0 right-0 bg-black bg-opacity-70 text-white text-xs p-1.5 rounded-b-lg truncate">
+          <div class="absolute bottom-0 left-0 right-0 bg-black/70 text-white text-xs p-1.5 rounded-b-lg truncate">
             ${img.fileName}
           </div>
         </div>

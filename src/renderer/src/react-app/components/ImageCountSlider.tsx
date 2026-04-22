@@ -20,7 +20,7 @@ export function ImageCountSlider() {
         max={10}
         value={imageCount}
         onChange={(e) => setImageCount(Number(e.target.value))}
-        className="w-full h-2 bg-white bg-opacity-20 rounded-none appearance-none cursor-pointer"
+        className="w-full h-2 bg-white/20 rounded-none appearance-none cursor-pointer"
       />
 
       <div className="flex justify-between mt-2">

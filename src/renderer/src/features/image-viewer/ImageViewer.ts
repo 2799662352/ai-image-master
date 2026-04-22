@@ -25,14 +25,15 @@ export class ImageViewer {
    * 打开图片查看器
    */
   open(urls: string | string[], startIndex = 0): void {
-    // 转换为数组
+    // 关闭已存在的模态框，防止重复打开导致孤儿 DOM
+    if (this.modal) {
+      this.close()
+    }
+
     this.urls = typeof urls === 'string' ? [urls] : [...urls]
     this.currentIndex = startIndex
 
-    // 创建模态框
     this.createModal()
-
-    // 绑定键盘事件
     this.bindKeyboardEvents()
 
     // 预加载图片
@@ -57,7 +58,7 @@ export class ImageViewer {
    */
   private createModal(): void {
     this.modal = document.createElement('div')
-    this.modal.className = 'fixed inset-0 bg-black bg-opacity-90 z-[50000] flex items-center justify-center p-4'
+    this.modal.className = 'fixed inset-0 bg-black/90 z-[50000] flex items-center justify-center p-4'
     this.modal.innerHTML = this.getModalHTML()
 
     // 绑定事件
@@ -82,34 +83,34 @@ export class ImageViewer {
         
         <!-- 控制按钮 -->
         <div class="absolute top-4 right-4 flex space-x-2">
-          <div class="image-counter bg-black bg-opacity-50 text-white px-3 py-1 rounded-full text-sm">
+          <div class="image-counter bg-black/50 text-white px-3 py-1 rounded-full text-sm">
             ${hasMultiple ? `${this.currentIndex + 1} / ${this.urls.length}` : ''}
           </div>
-          <button class="download-btn bg-black bg-opacity-50 hover:bg-opacity-70 text-white p-2 rounded-full transition-all" title="下载图片">
+          <button class="download-btn bg-black/50 hover:bg-black/70 text-white p-2 rounded-full transition-all" title="下载图片">
             <i class="fas fa-download"></i>
           </button>
           ${hasMultiple ? `
-            <button class="batch-download-btn bg-black bg-opacity-50 hover:bg-opacity-70 text-white p-2 rounded-full transition-all" title="批量下载">
+            <button class="batch-download-btn bg-black/50 hover:bg-black/70 text-white p-2 rounded-full transition-all" title="批量下载">
               <i class="fas fa-file-archive"></i>
             </button>
           ` : ''}
-          <button class="close-btn bg-black bg-opacity-50 hover:bg-opacity-70 text-white p-2 rounded-full transition-all">
+          <button class="close-btn bg-black/50 hover:bg-black/70 text-white p-2 rounded-full transition-all">
             <i class="fas fa-times"></i>
           </button>
         </div>
         
         <!-- 帮助提示 -->
-        <div class="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-black bg-opacity-70 text-white text-sm px-4 py-2 rounded-full opacity-75">
+        <div class="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-black/70 text-white text-sm px-4 py-2 rounded-full opacity-75">
           <i class="fas fa-info-circle mr-1"></i>
           提示：右键图片可选择"图片另存为"下载
         </div>
         
         <!-- 左右切换按钮 -->
         ${hasMultiple ? `
-          <button class="prev-btn absolute left-4 top-1/2 transform -translate-y-1/2 bg-black bg-opacity-50 hover:bg-opacity-70 text-white p-3 rounded-full transition-all">
+          <button class="prev-btn absolute left-4 top-1/2 transform -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white p-3 rounded-full transition-all">
             <i class="fas fa-chevron-left"></i>
           </button>
-          <button class="next-btn absolute right-4 top-1/2 transform -translate-y-1/2 bg-black bg-opacity-50 hover:bg-opacity-70 text-white p-3 rounded-full transition-all">
+          <button class="next-btn absolute right-4 top-1/2 transform -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white p-3 rounded-full transition-all">
             <i class="fas fa-chevron-right"></i>
           </button>
         ` : ''}

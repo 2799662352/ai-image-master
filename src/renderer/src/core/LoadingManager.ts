@@ -108,7 +108,7 @@ export class LoadingManager {
     if (!overlay) {
       overlay = document.createElement('div')
       overlay.id = 'loading-overlay'
-      overlay.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9999]'
+      overlay.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-[9999]'
       overlay.setAttribute('role', 'alert')
       overlay.setAttribute('aria-busy', 'true')
       overlay.innerHTML = `

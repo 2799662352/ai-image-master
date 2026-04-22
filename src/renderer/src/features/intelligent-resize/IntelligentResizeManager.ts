@@ -91,7 +91,7 @@ export class IntelligentResizeManager {
 
     // 创建智能尺寸提示元素
     const hint = document.createElement('div')
-    hint.className = 'intelligent-resize-hint mt-2 p-3 bg-orange-100 bg-opacity-20 rounded-lg border border-orange-300 border-opacity-30'
+    hint.className = 'intelligent-resize-hint mt-2 p-3 bg-orange-100/20 rounded-lg border border-orange-300/30'
 
     // 检查是否有参考图
     const generatePage = this.pages?.generate || (window as any).generatePage
@@ -180,7 +180,7 @@ export class IntelligentResizeManager {
               <i class="fas fa-magic mr-2"></i>
               <span class="font-medium">智能遵循原图比例</span>
             </div>
-            <div class="bg-orange-100 bg-opacity-10 rounded p-2 text-xs">
+            <div class="bg-orange-100/10 rounded p-2 text-xs">
               <div class="flex justify-between items-center">
                 <span>原图尺寸:</span>
                 <span class="font-mono">${originalWidth} × ${originalHeight}px ${ratioText}</span>
@@ -332,7 +332,7 @@ export class IntelligentResizeManager {
               <i class="fas fa-magic mr-2"></i>
               <span class="font-medium">智能遵循参考图</span>
             </div>
-            <div class="bg-orange-100 bg-opacity-10 rounded p-2 text-xs">
+            <div class="bg-orange-100/10 rounded p-2 text-xs">
               <div class="flex justify-between items-center">
                 <span>参考图尺寸:</span>
                 <span class="font-mono">${originalWidth} × ${originalHeight}px ${ratioText}</span>

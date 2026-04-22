@@ -9,7 +9,7 @@ export function ProgressBar({ percentage, variant = 'default' }: ProgressBarProp
     : 'linear-gradient(90deg, #3B82F6, #8B5CF6)'
 
   return (
-    <div className="h-2 bg-white bg-opacity-20 rounded-full overflow-hidden">
+    <div className="h-2 bg-white/20 rounded-full overflow-hidden">
       <div
         className="h-full rounded-full transition-all duration-500 ease-out"
         style={{ width: `${percentage}%`, background: gradient }}

@@ -356,7 +356,7 @@ export class ComparePage extends BasePage {
     commonRatios.forEach((ratio, index) => {
       const button = document.createElement('button')
       button.className =
-        'ratio-btn px-3 py-2 rounded-md text-sm font-medium transition-all bg-white bg-opacity-15 text-white hover:bg-opacity-25'
+        'ratio-btn px-3 py-2 rounded-md text-sm font-medium transition-all bg-white/15 text-white hover:bg-white/25'
       button.dataset.ratio = ratio.key
 
       const i18n = (window as any).i18n
@@ -571,7 +571,7 @@ export class ComparePage extends BasePage {
 
     if (this.referenceImages.length === 0) {
       area.className =
-        'border-2 border-dashed border-white border-opacity-20 rounded-md p-4 cursor-pointer hover:border-opacity-30 transition-all min-h-[120px] flex items-center justify-center'
+        'border-2 border-dashed border-white/20 rounded-md p-4 cursor-pointer hover:border-white/30 transition-all min-h-[120px] flex items-center justify-center'
       area.innerHTML = `
         <div id="compareReferenceUploadPrompt" class="space-y-2 text-center">
           <i class="fas fa-cloud-upload-alt text-2xl text-white opacity-50"></i>
@@ -582,13 +582,13 @@ export class ComparePage extends BasePage {
       return
     }
 
-    area.className = 'border-2 border-dashed border-white border-opacity-20 rounded-md p-4'
+    area.className = 'border-2 border-dashed border-white/20 rounded-md p-4'
     area.innerHTML = `
       <div class="grid grid-cols-3 gap-2">
         ${this.referenceImages
           .map(
             (img, index) => `
-          <div class="relative bg-white bg-opacity-10 rounded-lg p-2 group">
+          <div class="relative bg-white/10 rounded-lg p-2 group">
             <div class="relative">
               <img src="${img.dataUrl}"
                    class="w-full aspect-square object-cover rounded-lg"
@@ -608,7 +608,7 @@ export class ComparePage extends BasePage {
           this.referenceImages.length < this.maxReferenceImages
             ? `
           <div onclick="window.comparePageTS.triggerFileSelection()"
-               class="border-2 border-dashed border-white border-opacity-30 hover:border-opacity-50
+               class="border-2 border-dashed border-white/30 hover:border-white/50
                       rounded-lg p-2 cursor-pointer transition-all flex items-center justify-center
                       aspect-square group">
             <div class="text-center">
@@ -865,15 +865,15 @@ export class ComparePage extends BasePage {
 
     resultContainer.innerHTML = `
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div class="bg-white bg-opacity-10 rounded-xl p-6 animate-pulse">
-          <div class="aspect-square bg-white bg-opacity-20 rounded-lg mb-4"></div>
-          <div class="h-4 bg-white bg-opacity-20 rounded w-3/4 mb-2"></div>
-          <div class="h-4 bg-white bg-opacity-20 rounded w-1/2"></div>
+        <div class="bg-white/10 rounded-xl p-6 animate-pulse">
+          <div class="aspect-square bg-white/20 rounded-lg mb-4"></div>
+          <div class="h-4 bg-white/20 rounded w-3/4 mb-2"></div>
+          <div class="h-4 bg-white/20 rounded w-1/2"></div>
         </div>
-        <div class="bg-white bg-opacity-10 rounded-xl p-6 animate-pulse">
-          <div class="aspect-square bg-white bg-opacity-20 rounded-lg mb-4"></div>
-          <div class="h-4 bg-white bg-opacity-20 rounded w-3/4 mb-2"></div>
-          <div class="h-4 bg-white bg-opacity-20 rounded w-1/2"></div>
+        <div class="bg-white/10 rounded-xl p-6 animate-pulse">
+          <div class="aspect-square bg-white/20 rounded-lg mb-4"></div>
+          <div class="h-4 bg-white/20 rounded w-3/4 mb-2"></div>
+          <div class="h-4 bg-white/20 rounded w-1/2"></div>
         </div>
       </div>
       <div class="text-center mt-6">
@@ -958,12 +958,12 @@ export class ComparePage extends BasePage {
       }
 
       return `
-        <div class="bg-white bg-opacity-10 rounded-xl p-6 border-2 ${borderColor} border-opacity-30">
+        <div class="bg-white/10 rounded-xl p-6 border-2 ${borderColor}/30">
           <h3 class="text-white font-bold mb-4 flex items-center">
             <span class="inline-block w-2 h-2 ${isLeft ? 'bg-blue-500' : 'bg-green-500'} rounded-full mr-2"></span>
             ${model?.name || modelKey}
           </h3>
-          <div class="aspect-square bg-red-500 bg-opacity-20 rounded-lg flex items-center justify-center">
+          <div class="aspect-square bg-red-500/20 rounded-lg flex items-center justify-center">
             <div class="text-center p-4">
               <i class="fas fa-exclamation-triangle text-4xl text-red-400 mb-4"></i>
               <p class="text-white opacity-70">${this.t('compare.labels.generateFailed')}</p>
@@ -978,8 +978,8 @@ export class ComparePage extends BasePage {
     const imageUrl = result.value.urls?.[0] || result.value.url || ''
 
     return `
-      <div class="bg-white bg-opacity-10 rounded-xl p-6 border-2 ${borderColor} border-opacity-30
-                  hover:border-opacity-50 transition-all">
+      <div class="bg-white/10 rounded-xl p-6 border-2 ${borderColor}/30
+                  hover:${borderColor}/50 transition-all">
         <h3 class="text-white font-bold mb-4 flex items-center justify-between">
           <span class="flex items-center">
             <span class="inline-block w-2 h-2 ${isLeft ? 'bg-blue-500' : 'bg-green-500'} rounded-full mr-2"></span>
@@ -992,16 +992,16 @@ export class ComparePage extends BasePage {
                alt="${model?.name || modelKey} ${this.t('compare.labels.generationResult')}"
                class="w-full h-full object-contain cursor-pointer hover:scale-105 transition-transform"
                data-action="view-image" data-urls='["${imageUrl}"]' data-index="0">
-          <div class="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30
+          <div class="absolute inset-0 bg-black/0 group-hover:bg-black/30
                       transition-all flex items-center justify-center opacity-0 group-hover:opacity-100">
             <button data-action="view-image" data-urls='["${imageUrl}"]' data-index="0"
-                    class="bg-white bg-opacity-20 backdrop-blur-sm text-white px-4 py-2 rounded-lg
-                           hover:bg-opacity-30 transition-all mr-2">
+                    class="bg-white/20 backdrop-blur-sm text-white px-4 py-2 rounded-lg
+                           hover:bg-white/30 transition-all mr-2">
               <i class="fas fa-search-plus mr-2"></i>${this.t('compare.buttons.view')}
             </button>
             <button data-action="download-image" data-url="${imageUrl}"
-                    class="bg-white bg-opacity-20 backdrop-blur-sm text-white px-4 py-2 rounded-lg
-                           hover:bg-opacity-30 transition-all">
+                    class="bg-white/20 backdrop-blur-sm text-white px-4 py-2 rounded-lg
+                           hover:bg-white/30 transition-all">
               <i class="fas fa-download mr-2"></i>${this.t('compare.buttons.download')}
             </button>
           </div>

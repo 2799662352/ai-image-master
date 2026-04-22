@@ -74,7 +74,7 @@ export default function BatchPage() {
     setMode, setCardPrompt, setCardCount, setMultiText,
     setRatio, setResolution, setPerPromptCount, setConcurrency,
     addRefImage, removeRefImage, clearRefImages,
-    addItem, removeItem, clearAll, runBatch,
+    addItem, removeItem, clearAll, runBatch, cancelBatch,
   } = useBatchStore.getState()
 
   // ---- 派生计数 ----
@@ -179,6 +179,11 @@ export default function BatchPage() {
     addToast({ message: '队列已清空', type: 'info' })
   }
 
+  const handleCancel = () => {
+    cancelBatch()
+    addToast({ message: '批量生成已取消', type: 'warning' })
+  }
+
   const handleGenerate = async () => {
     if (!currentModelKey) {
       addToast({ message: '请先在顶部选择模型', type: 'warning' })
@@ -216,11 +221,17 @@ export default function BatchPage() {
       })
       const finalState = useBatchStore.getState()
       const ok = finalState.items.filter((i) => i.status === 'done').length
-      const err = finalState.items.filter((i) => i.status === 'error').length
-      addToast({
-        message: `批量完成: 成功 ${ok} / 失败 ${err}`,
-        type: err > 0 ? 'warning' : 'success',
-      })
+      const errItems = finalState.items.filter((i) => i.status === 'error')
+      if (errItems.length === 0) {
+        addToast({ message: `批量完成: 全部 ${ok} 张成功`, type: 'success' })
+      } else {
+        const firstErr = errItems[0]?.error || '生成失败'
+        addToast({
+          message: `批量完成: 成功 ${ok} / 失败 ${errItems.length} — ${firstErr}`,
+          type: errItems.length > 0 && ok === 0 ? 'error' : 'warning',
+          duration: 6000,
+        })
+      }
     } catch (e) {
       addToast({
         message: `批量执行异常: ${e instanceof Error ? e.message : String(e)}`,
@@ -317,6 +328,7 @@ export default function BatchPage() {
         pendingCount={stats.pending}
         willEnqueue={willEnqueue}
         onGenerate={handleGenerate}
+        onCancel={handleCancel}
         leftSlot={
           <PunkBudgetReceipt
             modelName={modelDisplayName}

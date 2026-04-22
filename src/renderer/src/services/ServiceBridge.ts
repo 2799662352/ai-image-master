@@ -40,7 +40,17 @@ import { type ComparePage, createComparePage, getComparePage } from '../pages/Co
 import { type PromptTemplates, createPromptTemplates, getPromptTemplates } from '../pages/PromptTemplates'
 import { type UnderstandPage, createUnderstandPage, getUnderstandPage } from '../pages/UnderstandPage'
 type DirectorPage = any
-import { mountDirectorReact, unmountDirectorReact } from '../react-app/main'
+import {
+  mountDirectorReact,
+  unmountDirectorReact,
+  mountHistoryReact,
+  unmountHistoryReact,
+  mountBatchReact,
+  unmountBatchReact,
+  mountGlobalToast,
+  mountGenerateTokenBridge,
+} from '../react-app/main'
+import { useModelStore } from '../stores/useModelStore'
 
 // ========================================
 // V16.3 - ServiceRegistry: 集中式服务注册表
@@ -276,14 +286,39 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
       tabManager.onTabChange((newTab: string, oldTab: string) => {
         if (oldTab === 'director') unmountDirectorReact()
         if (newTab === 'director') mountDirectorReact()
+        if (oldTab === 'history') unmountHistoryReact()
+        if (newTab === 'history') mountHistoryReact()
+        if (oldTab === 'batch') unmountBatchReact()
+        if (newTab === 'batch') mountBatchReact()
       })
+
+      mountGlobalToast()
+      mountGenerateTokenBridge()
+
+      // 预 mount 所有 React 页 (只渲染一次),非活跃的先 display:none
+      // 后续切 tab 只切可见性,零卡顿
+      const activeTab = (() => {
+        try {
+          return document.querySelector('.tab-btn.active')?.getAttribute('data-tab') || ''
+        } catch { return '' }
+      })()
+
+      mountHistoryReact()
+      if (activeTab !== 'history') unmountHistoryReact()
+
+      mountBatchReact()
+      if (activeTab !== 'batch') unmountBatchReact()
 
       window.tabManagerTS = tabManager
       ServiceRegistry.register(SERVICE_KEYS.TAB_MANAGER, tabManager)
       console.log('[ServiceBridge] ✓ TabManager (TS) 已就绪')
 
       // ModelSelectorManager - 生成页面必需
-      const modelSelectorManager = getModelSelectorManager()
+      const modelSelectorManager = getModelSelectorManager({
+        onModelChange: (modelKey: string) => {
+          useModelStore.getState().switchModel(modelKey)
+        },
+      })
       window.modelSelectorManagerTS = modelSelectorManager
       ServiceRegistry.register(SERVICE_KEYS.MODEL_SELECTOR, modelSelectorManager)
       console.log('[ServiceBridge] ✓ ModelSelectorManager (TS) 已就绪')
@@ -397,8 +432,12 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
         window.updateNotificationTS = updateNotification
         window.UpdateNotificationTS = UpdateNotification
         ServiceRegistry.register(SERVICE_KEYS.UPDATE_NOTIFICATION, updateNotification)
-        // 初始化更新通知
         updateNotification.init()
+
+        for (const id of ['checkUpdateBtnFooter', 'checkUpdateBtnNav']) {
+          const btn = document.getElementById(id)
+          if (btn) btn.addEventListener('click', () => updateNotification.checkForUpdates())
+        }
 
         // V18: PerformanceDashboard - 性能监控面板
         const performanceDashboard = getPerformanceDashboard()
@@ -1133,21 +1172,65 @@ let _directorPipelineCacheKey: string | null = null
 
 export async function getDirectorPipelineService(model?: string): Promise<import('./pipeline/DirectorPipeline').DirectorPipeline | null> {
   const api = (window as any).aiImageAPI
-  const apiKey = api?.visionApiKey as string | undefined
-  if (!apiKey) return null
+  let apiKey = api?.visionApiKey as string | undefined
+
+  // visionApiKey 可能在站点切换后尚未同步，重试一次
+  if (!apiKey) {
+    await new Promise((r) => setTimeout(r, 300))
+    apiKey = api?.visionApiKey as string | undefined
+  }
+  if (!apiKey) {
+    console.warn('[ServiceBridge] DirectorPipeline 不可用: 请在设置中配置 Vision API Key')
+    return null
+  }
 
   const site = api?.getCurrentSite?.()
   const baseURL = site?.baseURL as string | undefined
-  if (!baseURL) return null
+  if (!baseURL) {
+    console.warn('[ServiceBridge] DirectorPipeline 不可用: 当前站点无 baseURL')
+    return null
+  }
 
   const cacheKey = `director-pipeline|${apiKey}|${baseURL}|${model || ''}`
   if (!_directorPipelineInstance || _directorPipelineCacheKey !== cacheKey) {
+    patchLangChainAsyncLocalStorage()
     const { DirectorPipeline } = await import('./pipeline/DirectorPipeline')
     _directorPipelineInstance = new DirectorPipeline({ apiKey, baseURL, model: model || 'gemini-3-pro-preview' })
     _directorPipelineCacheKey = cacheKey
     console.log('[ServiceBridge] ✓ DirectorPipeline created (5-6 Pass, AI skill selection), model:', model || 'default')
   }
   return _directorPipelineInstance
+}
+
+/**
+ * Electron 41+ 的原生 AsyncLocalStorage 使用 AsyncContextFrame (C++ 堆对象),
+ * 在渲染进程中调用 getStore() 会导致 V8 级别崩溃。
+ * 在 LangGraph import 之前抢先注入一个安全的 polyfill 到全局 slot,
+ * 阻止 LangGraph 的 initializeAsyncLocalStorageSingleton() 注入真实实例。
+ */
+let _alsPatched = false
+function patchLangChainAsyncLocalStorage(): void {
+  if (_alsPatched) return
+  _alsPatched = true
+
+  const key = Symbol.for('ls:tracing_async_local_storage')
+  if (globalThis[key] !== undefined) return
+
+  const polyfill = {
+    _store: undefined as any,
+    getStore() { return this._store },
+    run(store: any, callback: (...args: any[]) => any, ...args: any[]) {
+      const prev = this._store
+      this._store = store
+      try { return callback(...args) }
+      finally { this._store = prev }
+    },
+    enterWith(store: any) { this._store = store },
+    disable() { this._store = undefined },
+  }
+
+  ;(globalThis as any)[key] = polyfill
+  console.log('[ServiceBridge] AsyncLocalStorage polyfill injected (Electron renderer V8 safety)')
 }
 
 /**

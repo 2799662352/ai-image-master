@@ -5,6 +5,7 @@
  */
 
 import { BasePage, type AppInterface } from './BasePage'
+import { extractPriceFromModel } from '../utils/model-price'
 
 // Types
 export type BatchMode = 'card' | 'multi'
@@ -70,6 +71,13 @@ export class BatchPage extends BasePage {
   }
 
   init(): void {
+    // 守护:如果存在 batch-react-root,说明 React 已接管(donor-punk 主题),
+    // vanilla 的事件绑定全部 skip,避免双向冲突
+    if (typeof document !== 'undefined' && document.getElementById('batch-react-root')) {
+      console.log('[BatchPage.ts] 检测到 batch-react-root,跳过 vanilla 初始化(React 接管)')
+      this.isInitialized = true
+      return
+    }
     this.bindEvents()
     this.bindStateAutoSave()
     this.isInitialized = true
@@ -244,7 +252,7 @@ export class BatchPage extends BasePage {
         console.log('点击了批量动态添加更多按钮，跳过主区域处理')
         return
       }
-      if (target.closest('.relative.bg-white.bg-opacity-10')) {
+      if (target.closest('.relative.bg-white\\/10')) {
         console.log('点击了已上传的批量图片，已禁用点击上传功能')
         return
       }
@@ -293,12 +301,12 @@ export class BatchPage extends BasePage {
 
     batchReferenceImageArea.addEventListener('dragenter', (e: DragEvent) => {
       e.preventDefault()
-      batchReferenceImageArea.classList.add('border-opacity-70', 'bg-white', 'bg-opacity-5')
+      batchReferenceImageArea.classList.add('border-white/70', 'bg-white/5')
     })
 
     batchReferenceImageArea.addEventListener('dragleave', (e: DragEvent) => {
       e.preventDefault()
-      batchReferenceImageArea.classList.remove('border-opacity-70', 'bg-white', 'bg-opacity-5')
+      batchReferenceImageArea.classList.remove('border-white/70', 'bg-white/5')
     })
 
     batchReferenceImageArea.addEventListener('dragover', (e: DragEvent) => {
@@ -307,7 +315,7 @@ export class BatchPage extends BasePage {
 
     batchReferenceImageArea.addEventListener('drop', (e: DragEvent) => {
       e.preventDefault()
-      batchReferenceImageArea.classList.remove('border-opacity-70', 'bg-white', 'bg-opacity-5')
+      batchReferenceImageArea.classList.remove('border-white/70', 'bg-white/5')
 
       const files = Array.from(e.dataTransfer?.files || [])
       if (files.length > 0) {
@@ -677,7 +685,7 @@ export class BatchPage extends BasePage {
 
       this.batchReferenceImages.forEach((imageData, index) => {
         const imageItem = document.createElement('div')
-        imageItem.className = 'relative bg-white bg-opacity-10 rounded-lg p-2 group'
+        imageItem.className = 'relative bg-white/10 rounded-lg p-2 group'
         const mimeType = (imageData.mimeType || 'image/jpeg').toLowerCase()
         const imageUrl = `data:${mimeType};base64,${imageData.base64}`
         const altText = this.t('batch.labels.referenceImageAlt', { index: index + 1 })
@@ -707,7 +715,7 @@ export class BatchPage extends BasePage {
       if (this.batchReferenceImages.length < this.maxReferenceImages) {
         const addButton = document.createElement('div')
         addButton.className =
-          'border-2 border-dashed border-white border-opacity-30 hover:border-opacity-50 rounded-lg p-2 cursor-pointer transition-all flex items-center justify-center aspect-square group'
+          'border-2 border-dashed border-white/30 hover:border-white/50 rounded-lg p-2 cursor-pointer transition-all flex items-center justify-center aspect-square group'
         addButton.setAttribute('data-dynamic-add-button', 'true')
         const addMoreText = this.t('batch.buttons.addMoreReference')
         addButton.innerHTML = `
@@ -761,8 +769,8 @@ export class BatchPage extends BasePage {
     
     // 使用 ImageViewer 预览
     const imageViewer = (window as any).imageViewerTS
-    if (imageViewer?.view) {
-      imageViewer.view(urls, index)
+    if (imageViewer?.open) {
+      imageViewer.open(urls, index)
     } else if ((this.app as any).viewImage) {
       ;(this.app as any).viewImage(urls, index)
     }
@@ -802,7 +810,7 @@ export class BatchPage extends BasePage {
       }
       if (multiModeLabel) {
         multiModeLabel.className =
-          'flex items-center cursor-pointer px-4 py-3 bg-white bg-opacity-10 hover:bg-opacity-20 rounded-lg text-white transition-all'
+          'flex items-center cursor-pointer px-4 py-3 bg-white/10 hover:bg-white/20 rounded-lg text-white transition-all'
       }
 
       this.updateCardCostEstimate()
@@ -812,7 +820,7 @@ export class BatchPage extends BasePage {
 
       if (cardModeLabel) {
         cardModeLabel.className =
-          'flex items-center cursor-pointer px-4 py-3 bg-white bg-opacity-10 hover:bg-opacity-20 rounded-lg text-white transition-all'
+          'flex items-center cursor-pointer px-4 py-3 bg-white/10 hover:bg-white/20 rounded-lg text-white transition-all'
       }
       if (multiModeLabel) {
         multiModeLabel.className =
@@ -856,8 +864,7 @@ export class BatchPage extends BasePage {
   }
 
   private extractPriceFromModel(model: any): number {
-    const match = model.displayName?.match(/\$([0-9.]+)\/张/)
-    return match ? parseFloat(match[1]) : 0
+    return extractPriceFromModel(model)
   }
 
   // ==================== 抽卡模式 ====================
@@ -1105,14 +1112,14 @@ export class BatchPage extends BasePage {
     this.currentBatchResults[result.index] = result
 
     const resultCard = document.createElement('div')
-    resultCard.className = 'bg-white bg-opacity-5 rounded-lg p-4 animate-fade-in'
+    resultCard.className = 'bg-white/5 rounded-lg p-4 animate-fade-in'
     resultCard.dataset.index = String(result.index)
 
     if (result.success && result.urls && result.urls.length > 0) {
       const imagesText = this.t('batch.labels.imageCount', { count: result.urls.length })
       const imageCountBadge =
         result.urls.length > 1
-          ? `<div class="absolute top-2 left-2 bg-black bg-opacity-70 text-white text-xs px-2 py-1 rounded-full">${imagesText}</div>`
+          ? `<div class="absolute top-2 left-2 bg-black/70 text-white text-xs px-2 py-1 rounded-full">${imagesText}</div>`
           : ''
       const downloadText = this.t('batch.buttons.download')
       const batchDownloadText = this.t('batch.buttons.batchDownload')
@@ -1124,21 +1131,21 @@ export class BatchPage extends BasePage {
         <div class="relative group">
           <img src="${result.urls[0]}" alt="${batchAltText}" class="w-full h-32 object-cover rounded-lg mb-2" loading="lazy">
           ${imageCountBadge}
-          <div class="absolute inset-0 bg-black bg-opacity-50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center space-x-2">
+          <div class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center space-x-2">
             ${
               result.urls.length === 1
                 ? `
-              <button data-action="download-image" data-url="${result.urls[0]}" class="bg-white bg-opacity-20 hover:bg-opacity-30 text-white p-2 rounded-lg transition-all" title="${downloadText}">
+              <button data-action="download-image" data-url="${result.urls[0]}" class="bg-white/20 hover:bg-white/30 text-white p-2 rounded-lg transition-all" title="${downloadText}">
                 <i class="fas fa-download"></i>
               </button>
             `
                 : `
-              <button data-action="batch-download" data-urls='${JSON.stringify(result.urls)}' data-prompt="${result.prompt.replace(/"/g, '&quot;')}" class="bg-white bg-opacity-20 hover:bg-opacity-30 text-white p-2 rounded-lg transition-all" title="${batchDownloadText}">
+              <button data-action="batch-download" data-urls='${JSON.stringify(result.urls)}' data-prompt="${result.prompt.replace(/"/g, '&quot;')}" class="bg-white/20 hover:bg-white/30 text-white p-2 rounded-lg transition-all" title="${batchDownloadText}">
                 <i class="fas fa-file-archive"></i>
               </button>
             `
             }
-            <button data-action="view-image" data-urls='${JSON.stringify(result.urls)}' data-index="0" class="bg-white bg-opacity-20 hover:bg-opacity-30 text-white p-2 rounded-lg transition-all" title="${viewText}">
+            <button data-action="view-image" data-urls='${JSON.stringify(result.urls)}' data-index="0" class="bg-white/20 hover:bg-white/30 text-white p-2 rounded-lg transition-all" title="${viewText}">
               <i class="fas fa-expand"></i>
             </button>
           </div>
@@ -1158,12 +1165,12 @@ export class BatchPage extends BasePage {
       const errorContextText = this.t('batch.labels.batchItemError', { index: result.index + 1 })
 
       resultCard.innerHTML = `
-        <div class="h-32 bg-red-500 bg-opacity-20 rounded-lg flex items-center justify-center mb-2 relative">
+        <div class="h-32 bg-red-500/20 rounded-lg flex items-center justify-center mb-2 relative">
           <i class="fas fa-exclamation-triangle text-red-400"></i>
           <div class="absolute top-1 right-1 text-gray-400 text-xs">#${result.index + 1}</div>
         </div>
         <p class="text-white text-xs truncate mb-2">${result.prompt}</p>
-        <div class="bg-red-600 bg-opacity-20 rounded p-2 mb-2">
+        <div class="bg-red-600/20 rounded p-2 mb-2">
           <p class="text-red-300 text-xs font-medium">${errorInfo.title}</p>
           <p class="text-red-400 text-xs opacity-90">${errorInfo.message.substring(0, 50)}${errorInfo.message.length > 50 ? '...' : ''}</p>
         </div>
@@ -1294,7 +1301,7 @@ export class BatchPage extends BasePage {
 
   private showDownloadHelpDialog(urls: string[], prompt: string): void {
     const modal = document.createElement('div')
-    modal.className = 'fixed inset-0 bg-black bg-opacity-50 z-[50000] flex items-center justify-center p-4'
+    modal.className = 'fixed inset-0 bg-black/50 z-[50000] flex items-center justify-center p-4'
     const helpTitle = this.t('batch.downloadHelp.title')
     const helpWarning = this.t('batch.downloadHelp.warning')
     const helpInstructions = this.t('batch.downloadHelp.instructions')

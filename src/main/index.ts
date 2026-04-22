@@ -1,5 +1,5 @@
 // src/main/index.ts - Electron 主进程 (TypeScript)
-import { app, BrowserWindow, ipcMain, dialog, Menu, shell, nativeTheme } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, Menu, shell, nativeTheme, net, clipboard } from 'electron'
 import * as path from 'path'
 import * as fs from 'fs'
 import { getAutoUpdaterInstance } from './updater'
@@ -218,7 +218,7 @@ function createWindow(): void {
           "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
           "font-src 'self' https://fonts.gstatic.com data:",
           "img-src 'self' data: blob: https: file:",
-          "connect-src 'self' https: wss:",
+          "connect-src 'self' https: wss: http://175.178.198.17:*",
           "media-src 'self' data: blob:",
           "worker-src 'self' blob:", // 允许 Web Worker 从 blob URL 创建（图片压缩库需要）
           "frame-src 'none'"
@@ -320,87 +320,102 @@ function createWindow(): void {
   mainWindow.webContents.on('context-menu', (_event, params) => {
     const menuTemplate: Electron.MenuItemConstructorOptions[] = []
 
-    // 图片右键菜单
-    if (params.mediaType === 'image' && params.srcURL) {
-      menuTemplate.push(
-        {
-          label: '保存图片',
-          click: () => {
-            // 获取文件扩展名
-            const url = params.srcURL
-            let ext = '.png'
-            if (url.includes('.jpg') || url.includes('.jpeg') || url.startsWith('data:image/jpeg')) {
-              ext = '.jpg'
-            } else if (url.includes('.webp') || url.startsWith('data:image/webp')) {
-              ext = '.webp'
-            } else if (url.includes('.gif') || url.startsWith('data:image/gif')) {
-              ext = '.gif'
-            }
+    const isImage = params.mediaType === 'image'
+    const hasSrc = !!params.srcURL
+    const hasContent = params.hasImageContents
 
-            dialog.showSaveDialog(mainWindow!, {
-              title: '保存图片',
-              defaultPath: `image_${Date.now()}${ext}`,
+    if (isImage && (hasSrc || hasContent)) {
+      const resolveImageUrl = async (): Promise<string | null> => {
+        if (params.srcURL) return params.srcURL
+        try {
+          return await mainWindow!.webContents.executeJavaScript(
+            `(function(){var e=document.elementFromPoint(${params.x},${params.y});` +
+            `if(e&&e.tagName==='IMG'&&e.src)return e.src;return null})()`
+          )
+        } catch { return null }
+      }
+
+      menuTemplate.push({
+        label: '图片另存为…',
+        click: async () => {
+          try {
+            const url = await resolveImageUrl()
+            if (!url) throw new Error('Could not retrieve image URL')
+
+            const isDataUri = url.startsWith('data:')
+            let ext = '.png'
+            if (url.includes('.jpg') || url.includes('.jpeg') || url.startsWith('data:image/jpeg')) ext = '.jpg'
+            else if (url.includes('.webp') || url.startsWith('data:image/webp')) ext = '.webp'
+            else if (url.includes('.gif') || url.startsWith('data:image/gif')) ext = '.gif'
+
+            const defaultName = params.suggestedFilename || `image_${Date.now()}${ext}`
+            const result = await dialog.showSaveDialog(mainWindow!, {
+              title: '图片另存为',
+              defaultPath: path.join(app.getPath('downloads'), defaultName),
               filters: [
-                { name: '图片文件', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }
+                { name: '图片文件', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] },
+                { name: '所有文件', extensions: ['*'] }
               ]
-            }).then(async (result) => {
-              if (!result.canceled && result.filePath) {
-                try {
-                  if (url.startsWith('data:')) {
-                    // base64 图片
-                    const base64Data = url.replace(/^data:image\/\w+;base64,/, '')
-                    fs.writeFileSync(result.filePath, Buffer.from(base64Data, 'base64'))
-                  } else {
-                    // 网络图片 - 使用 webContents.downloadURL
-                    mainWindow?.webContents.downloadURL(url)
-                  }
-                } catch (error) {
-                  console.error('保存图片失败:', error)
-                }
-              }
             })
-          }
-        },
-        {
-          label: '复制图片',
-          click: () => {
-            mainWindow?.webContents.copyImageAt(params.x, params.y)
-          }
-        },
-        {
-          label: '在浏览器中打开',
-          click: () => {
-            if (params.srcURL && !params.srcURL.startsWith('data:')) {
-              shell.openExternal(params.srcURL)
+            if (result.canceled || !result.filePath) return
+
+            if (isDataUri) {
+              const base64Data = url.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '')
+              await fs.promises.writeFile(result.filePath, Buffer.from(base64Data, 'base64'))
+            } else {
+              const res = await net.fetch(url)
+              if (!res.ok) throw new Error(`HTTP ${res.status}`)
+              const arrayBuf = await res.arrayBuffer()
+              await fs.promises.writeFile(result.filePath, Buffer.from(arrayBuf))
             }
-          },
-          enabled: !params.srcURL.startsWith('data:')
-        },
-        { type: 'separator' }
-      )
+          } catch (error) {
+            console.error('[context-menu] 保存图片失败:', error)
+          }
+        }
+      })
+
+      menuTemplate.push({
+        label: '复制图片',
+        click: () => {
+          mainWindow?.webContents.copyImageAt(params.x, params.y)
+        }
+      })
+
+      const directUrl = params.srcURL
+      const isHttpUri = directUrl && /^https?:\/\//i.test(directUrl)
+      if (isHttpUri) {
+        menuTemplate.push({
+          label: '复制图片地址',
+          click: () => {
+            clipboard.writeText(directUrl)
+          }
+        })
+        menuTemplate.push({ type: 'separator' })
+        menuTemplate.push({
+          label: '在浏览器中打开',
+          click: () => shell.openExternal(directUrl)
+        })
+      }
+
+      menuTemplate.push({ type: 'separator' })
     }
 
-    // 链接右键菜单
     if (params.linkURL) {
       menuTemplate.push(
         {
           label: '复制链接',
           click: () => {
-            const { clipboard } = require('electron')
             clipboard.writeText(params.linkURL)
           }
         },
         {
           label: '在浏览器中打开',
-          click: () => {
-            shell.openExternal(params.linkURL)
-          }
+          click: () => shell.openExternal(params.linkURL)
         },
         { type: 'separator' }
       )
     }
 
-    // 文本选择右键菜单
     if (params.selectionText) {
       menuTemplate.push(
         { role: 'copy', label: '复制' },
@@ -408,7 +423,6 @@ function createWindow(): void {
       )
     }
 
-    // 可编辑区域右键菜单
     if (params.isEditable) {
       menuTemplate.push(
         { role: 'undo', label: '撤销' },
@@ -421,7 +435,6 @@ function createWindow(): void {
       )
     }
 
-    // 通用菜单项
     if (menuTemplate.length === 0) {
       menuTemplate.push(
         { role: 'reload', label: '刷新' },
@@ -430,32 +443,10 @@ function createWindow(): void {
       )
     }
 
-    // 显示菜单
     if (menuTemplate.length > 0) {
       const menu = Menu.buildFromTemplate(menuTemplate)
       menu.popup()
     }
-  })
-
-  // 下载处理 - 让用户选择保存位置
-  mainWindow.webContents.session.on('will-download', (_event, item, _webContents) => {
-    // 弹出保存对话框让用户选择位置
-    const suggestedName = item.getFilename() || `download_${Date.now()}.png`
-    
-    dialog.showSaveDialog(mainWindow!, {
-      title: '保存图片',
-      defaultPath: suggestedName,
-      filters: [
-        { name: '图片文件', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] },
-        { name: '所有文件', extensions: ['*'] }
-      ]
-    }).then((result) => {
-      if (!result.canceled && result.filePath) {
-        item.setSavePath(result.filePath)
-      } else {
-        item.cancel()
-      }
-    })
   })
 
   mainWindow.on('closed', () => {

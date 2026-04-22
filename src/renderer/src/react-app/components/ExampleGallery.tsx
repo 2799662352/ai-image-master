@@ -131,7 +131,7 @@ export function ExampleGallery() {
                       isSelected
                         ? 'border-[#FCE300]'
                         : canSelect
-                          ? 'border-transparent hover:border-white hover:border-opacity-30'
+                          ? 'border-transparent hover:border-white/30'
                           : 'border-transparent opacity-40 cursor-not-allowed'
                     }`}
                   >

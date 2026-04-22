@@ -2,6 +2,12 @@
 
 @import "tailwindcss";
 
+/* Page-scoped theme: 「ドーナドーナ」风 (品红×青 霓虹赛博朋克),仅作用于 .donor-theme 容器 */
+@import "./donor-theme.css";
+
+/* Page-scoped theme: 「ドーナドーナ × Persona 5」朋克拼贴,仅作用于 .donor-punk 容器 */
+@import "./donor-punk.css";
+
 /* Tailwind v4 CSS-first theme (replaces tailwind.config.js) */
 @theme {
   --color-cyberpunk-yellow: #FCE300;

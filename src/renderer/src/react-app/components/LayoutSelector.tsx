@@ -101,8 +101,8 @@ export function LayoutSelector() {
                 onClick={() => handleOrientationClick(opt.value)}
                 className={`px-3 py-2 text-sm rounded-none border transition-all ${
                   selected
-                    ? 'bg-blue-500 bg-opacity-30 ring-2 ring-blue-400 border-blue-300'
-                    : 'bg-[#09090B] border-[#3F3F46] text-white hover:border-white hover:border-opacity-30'
+                    ? 'bg-blue-500/30 ring-2 ring-blue-400 border-blue-300'
+                    : 'bg-[#09090B] border-[#3F3F46] text-white hover:border-white/30'
                 }`}
               >
                 <i className={`${opt.icon} mr-2`} />
@@ -144,8 +144,8 @@ export function LayoutSelector() {
               onClick={() => setLayout(opt.value)}
               className={`p-3 rounded-none text-center transition-all ${
                 selected
-                  ? 'bg-blue-500 bg-opacity-30 ring-2 ring-blue-400'
-                  : 'bg-[#09090B] border border-[#3F3F46] hover:border-white hover:border-opacity-30'
+                  ? 'bg-blue-500/30 ring-2 ring-blue-400'
+                  : 'bg-[#09090B] border border-[#3F3F46] hover:border-white/30'
               }`}
             >
               <GridPreview cols={shape.cols} rows={shape.rows} />

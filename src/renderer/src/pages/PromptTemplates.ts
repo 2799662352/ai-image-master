@@ -296,8 +296,8 @@ export class PromptTemplates extends BasePage {
              alt="${template.title}"
              class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
              onerror="this.src='${fallbackImage}'">
-        <div class="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all flex items-center justify-center">
-          <div class="bg-white bg-opacity-90 px-3 py-1 rounded-lg opacity-0 group-hover:opacity-100 transition-all transform translate-y-2 group-hover:translate-y-0">
+        <div class="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-all flex items-center justify-center">
+          <div class="bg-white/90 px-3 py-1 rounded-lg opacity-0 group-hover:opacity-100 transition-all transform translate-y-2 group-hover:translate-y-0">
             <span class="text-sm font-medium text-gray-800">${this.t('promptTemplates.clickToUse') || '点击使用'}</span>
           </div>
         </div>

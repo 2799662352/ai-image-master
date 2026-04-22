@@ -67,12 +67,14 @@ export default function ImageEditorModal({
     background: 'rgba(0,0,0,0.6)',
   }
 
+  // NOTE: 加 `donor-punk` 让 portal 内部也能解析 `var(--punk-*)` 以及 `.p-*` 工具类;
+  // `.donor-punk` 自带 `overflow: hidden`, 通过 inline style 把滚动行为还原成 auto.
   const panelClass = isPunk
-    ? 'border-3 border-[var(--punk-black)] bg-[var(--punk-bg)]'
+    ? 'donor-punk border-3 border-[var(--punk-black)] bg-[var(--punk-bg)]'
     : 'bg-zinc-900 rounded-xl shadow-2xl border border-zinc-700'
 
   const panelStyle: React.CSSProperties = isPunk
-    ? { boxShadow: '6px 6px 0px var(--punk-black)' }
+    ? { boxShadow: '6px 6px 0px var(--punk-black)', overflow: 'auto' }
     : {}
 
   const fallbackUI = (
@@ -157,12 +159,14 @@ export default function ImageEditorModal({
             {editorType === 'angle' ? (
               <MultiAngleEditor
                 imageUrl={currentUrl}
+                theme={theme}
                 onInjectPrompt={wrappedInject}
                 onClose={onClose}
               />
             ) : (
               <LightEditor
                 imageUrl={currentUrl}
+                theme={theme}
                 onInjectPrompt={wrappedInject}
                 onClose={onClose}
               />

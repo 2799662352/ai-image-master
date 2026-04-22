@@ -61,7 +61,7 @@ export class NetworkDiagnosticsModal {
     const accessibleUrls = allUrls.filter(url => !inaccessibleUrls.includes(url))
     
     const modal = document.createElement('div')
-    modal.className = 'fixed inset-0 bg-black bg-opacity-70 z-[60000] flex items-center justify-center p-4'
+    modal.className = 'fixed inset-0 bg-black/70 z-[60000] flex items-center justify-center p-4'
     modal.setAttribute('role', 'dialog')
     modal.setAttribute('aria-modal', 'true')
     modal.setAttribute('aria-labelledby', 'network-restricted-title')

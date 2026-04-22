@@ -96,6 +96,7 @@ interface ConfigSlice {
   skipTaskPlanning: boolean
   skipAnalyzeScene: boolean
   skipCharacterAnchors: boolean
+  enableCreativePreplanner: boolean
   scoreThreshold: number
   visionDetailTaskPlanning: VisionDetail
   visionDetailAnalyzeScene: VisionDetail
@@ -120,6 +121,7 @@ interface ConfigSlice {
   setSkipTaskPlanning: (val: boolean) => void
   setSkipAnalyzeScene: (val: boolean) => void
   setSkipCharacterAnchors: (val: boolean) => void
+  setEnableCreativePreplanner: (val: boolean) => void
   setScoreThreshold: (val: number) => void
   setVisionDetailTaskPlanning: (val: VisionDetail) => void
   setVisionDetailAnalyzeScene: (val: VisionDetail) => void
@@ -410,7 +412,7 @@ const initialGenerationState: Pick<
 
 const createInitialConfigState = (): Pick<
   ConfigSlice,
-  'currentLayout' | 'currentLayoutOrientation' | 'isLayoutOrientationAuto' | 'currentSemanticOrientation' | 'isSemanticOrientationAuto' | 'currentTemplate' | 'currentMode' | 'currentRatio' | 'currentResolution' | 'sceneDescription' | 'multiSceneText' | 'visionModel' | 'imageModel' | 'imageCount' | 'skipTaskPlanning' | 'skipVerify' | 'skipAnalyzeScene' | 'skipCharacterAnchors' | 'scoreThreshold' | 'visionDetailTaskPlanning' | 'visionDetailAnalyzeScene' | 'visionDetailCharacterAnchors' | 'visionDetailDesignAssemble' | 'visionDetailVerifyConsistency'
+  'currentLayout' | 'currentLayoutOrientation' | 'isLayoutOrientationAuto' | 'currentSemanticOrientation' | 'isSemanticOrientationAuto' | 'currentTemplate' | 'currentMode' | 'currentRatio' | 'currentResolution' | 'sceneDescription' | 'multiSceneText' | 'visionModel' | 'imageModel' | 'imageCount' | 'skipTaskPlanning' | 'skipVerify' | 'skipAnalyzeScene' | 'skipCharacterAnchors' | 'enableCreativePreplanner' | 'scoreThreshold' | 'visionDetailTaskPlanning' | 'visionDetailAnalyzeScene' | 'visionDetailCharacterAnchors' | 'visionDetailDesignAssemble' | 'visionDetailVerifyConsistency'
 > => ({
   currentLayout: '6grid',
   currentLayoutOrientation: readLayoutOrientation() || getOrientationByRatio(readDirectorRatio()),
@@ -430,6 +432,7 @@ const createInitialConfigState = (): Pick<
   skipTaskPlanning: readSkipFlag(DIRECTOR_SKIP_TASK_PLANNING_STORAGE_KEY),
   skipAnalyzeScene: readSkipFlag(DIRECTOR_SKIP_ANALYZE_SCENE_STORAGE_KEY),
   skipCharacterAnchors: readSkipFlag(DIRECTOR_SKIP_CHARACTER_ANCHORS_STORAGE_KEY),
+  enableCreativePreplanner: readSkipFlag('director.enable-creative-preplanner.v1'),
   scoreThreshold: readScoreThreshold(),
   visionDetailTaskPlanning: readVisionDetail(DIRECTOR_VISION_DETAIL_TASK_PLANNING_STORAGE_KEY, 'low'),
   visionDetailAnalyzeScene: readVisionDetail(DIRECTOR_VISION_DETAIL_ANALYZE_SCENE_STORAGE_KEY, 'high'),
@@ -607,6 +610,10 @@ const createConfigSlice: StateCreator<DirectorStore, [], [], ConfigSlice> = (set
   setSkipCharacterAnchors: (val) => {
     writeSkipFlag(DIRECTOR_SKIP_CHARACTER_ANCHORS_STORAGE_KEY, val)
     set({ skipCharacterAnchors: val })
+  },
+  setEnableCreativePreplanner: (val) => {
+    writeSkipFlag('director.enable-creative-preplanner.v1', val)
+    set({ enableCreativePreplanner: val })
   },
   setScoreThreshold: (val) => {
     const next = Math.max(0, Math.min(10, Math.round(val)))

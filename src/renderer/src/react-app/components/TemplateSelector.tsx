@@ -100,7 +100,7 @@ export function TemplateSelector() {
 
       {showModal && (
         <div
-          className="fixed inset-0 bg-[#09090B] bg-opacity-90 z-[50000] flex items-center justify-center p-4"
+          className="fixed inset-0 bg-[#09090B]/90 z-[50000] flex items-center justify-center p-4"
           onClick={() => setShowModal(false)}
         >
           <div
@@ -131,7 +131,7 @@ export function TemplateSelector() {
                       key={key}
                       className={`relative group border-2 rounded-none p-4 transition-all cursor-pointer ${
                         selected
-                          ? 'border-[#FCE300] bg-[#FCE300] bg-opacity-10'
+                          ? 'border-[#FCE300] bg-[#FCE300]/10'
                           : 'border-[#3F3F46] bg-[#27272A] hover:border-[#FCE300]'
                       }`}
                       onClick={() => handleSelect(key)}
@@ -221,7 +221,7 @@ export function TemplateSelector() {
 
       {editor && (
         <div
-          className="fixed inset-0 bg-[#09090B] bg-opacity-90 z-[50001] flex items-center justify-center p-4"
+          className="fixed inset-0 bg-[#09090B]/90 z-[50001] flex items-center justify-center p-4"
           onClick={() => setEditor(null)}
         >
           <div

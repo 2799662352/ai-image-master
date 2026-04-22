@@ -715,6 +715,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@300;400;500;600;700&family=Orbitron:wght@400;500;600;700;800;900&family=Noto+Sans+SC:wght@500;700;900&display=swap" rel="stylesheet">
+    <!-- Donor theme 字体 - DotGothic16 (日文黑体) + Share Tech Mono (等宽数字) -->
+    <link href="https://fonts.googleapis.com/css2?family=DotGothic16&family=Share+Tech+Mono&display=swap" rel="stylesheet">
     
     <!-- user-select 样式已移至 css/base.css，避免重复定义 -->
     <link rel="stylesheet" href="cdn/font-awesome/css/all.min.css">
@@ -820,6 +822,10 @@
                         title="API设置" data-i18n-attr="title:nav.settingsTitle">
                     <i class="fas fa-cog"></i>
                     <span class="hidden lg:inline" data-i18n="common.settings">设置</span>
+                </button>
+                <button id="checkUpdateBtnNav" class="relative flex items-center space-x-1 lg:space-x-2 bg-[#27272A] border-2 border-[#3F3F46] hover:bg-[#ff2d7a] hover:text-black hover:border-[#ff2d7a] px-3 lg:px-4 py-2 rounded-none transition-all z-50 cursor-pointer" title="检查更新">
+                    <i class="fas fa-sync-alt"></i>
+                    <span class="hidden lg:inline">更新</span>
                 </button>
                 <!-- 语言切换器 -->
                 <div class="relative">
@@ -1466,8 +1472,9 @@
                                 <span data-i18n="generate.templates">提示词模板</span>
                             </button>
                         </div>
-                        <textarea id="promptInput" rows="4" data-i18n-attr="placeholder:generate.promptPlaceholder" placeholder="例如: 一只可爱的小猫咪坐在花园里，油画风格，高清，细节丰富"
+                        <textarea id="promptInput" rows="4" data-i18n-attr="placeholder:generate.promptPlaceholder" placeholder="例如: 一只可爱的小猫咪坐在花园里，油画风格，高清，细节丰富。输入 @ 引用参考图"
                                   class="w-full px-3 py-2 bg-[#27272A] border-2 border-[#3F3F46] rounded-none text-[#FAFAFA] placeholder-[#A1A1AA] focus:outline-none focus:border-[#FCE300] resize-none"></textarea>
+                        <div id="generate-token-mount"></div>
                     </div>
 
                     <div class="flex space-x-3">
@@ -1599,9 +1606,13 @@
 
 
         <!-- 批量生成面板 -->
-        <div id="batchPanel" class="tab-panel bg-[#09090B] border border-[#3F3F46] rounded-none p-4 md:p-6 hidden relative overflow-hidden">
-            <!-- Kinetic Typography - 装饰性背景数字 -->
-            <div class="text-massive absolute -right-8 -top-8 opacity-[0.03] select-none pointer-events-none z-0" aria-hidden="true">02</div>
+        <!-- 批量生成面板 - React 接管(donor-punk 主题),旧 vanilla DOM 保留为隐藏占位以兼容 BatchPage.ts 的事件绑定 -->
+        <div id="batchPanel" class="tab-panel hidden relative p-0 bg-transparent border-0">
+            <!-- React 挂载点 -->
+            <div id="batch-react-root"></div>
+            <!-- Legacy vanilla DOM:保留所有 ID 让 BatchPage.ts 的 querySelector/addEventListener 不报错;
+                 但用 hidden + aria-hidden 让用户看不到它,实际交互全走 React -->
+            <div id="batchPanelLegacy" class="hidden" aria-hidden="true">
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 mb-6 relative z-10">
                 <!-- 左侧：批量提示词输入 -->
                 <div class="space-y-6">
@@ -1840,6 +1851,7 @@
                     </div>
                 </div>
             </div>
+            </div><!-- /batchPanelLegacy -->
         </div>
 
         <!-- 模型对比面板 -->
@@ -1951,25 +1963,14 @@
             </div>
         </div>
 
-        <!-- 历史记录面板 -->
-        <div id="historyPanel" class="tab-panel bg-[#09090B] border border-[#3F3F46] rounded-none p-4 md:p-6 hidden relative">
-            <!-- Kinetic Typography - 装饰性背景数字 -->
-            <div class="text-massive absolute -right-8 -top-8 opacity-[0.03] select-none pointer-events-none z-0" aria-hidden="true">04</div>
-            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4 relative z-10">
-                <h3 class="text-white text-xl font-bold" data-i18n="history.title">历史记录</h3>
-                <button type="button" id="clearHistory" class="bg-red-500 hover:bg-red-600 text-white py-2 px-4 rounded-none transition-colors">
-                    <i class="fas fa-trash mr-2"></i>
-                    <span class="hidden sm:inline" data-i18n="history.clearHistory">清空记录</span>
-                    <span class="sm:hidden" data-i18n="common.clear">清空</span>
-                </button>
-            </div>
-
-
-            <div id="historyList" class="space-y-4">
-                <div class="text-center text-white opacity-50 py-8">
-                    <i class="fas fa-history text-4xl mb-4"></i>
-                    <p>暂无历史记录</p>
-                </div>
+        <!-- 历史记录面板 - React 接管,旧 DOM 保留为隐藏占位以兼容 vanilla HistoryPage.ts 的事件绑定 -->
+        <div id="historyPanel" class="tab-panel hidden relative p-0 bg-transparent border-0">
+            <!-- React 挂载点 -->
+            <div id="history-react-root"></div>
+            <!-- Legacy 占位 (vanilla HistoryPage.ts 会 querySelector,保留不影响) -->
+            <div class="hidden" aria-hidden="true">
+                <button type="button" id="clearHistory"></button>
+                <div id="historyList"></div>
             </div>
         </div>
 
@@ -2474,6 +2475,12 @@
                                     <span class="group-hover:underline" data-i18n="common.about">关于CATIMATION</span>
                                 </button>
                             </li>
+                            <li>
+                                <button type="button" id="checkUpdateBtnFooter" class="text-white text-sm opacity-80 hover:opacity-100 hover:text-[#ff2d7a] transition-all inline-flex items-center group w-full text-left" style="font-family: 'JetBrains Mono', monospace; letter-spacing: 0.05em;">
+                                    <i class="fas fa-sync-alt mr-2 text-xs"></i>
+                                    <span class="group-hover:underline">[SYS.UPDATE // CHECK]</span>
+                                </button>
+                            </li>
                         </ul>
                     </div>
                 </div>
@@ -2749,6 +2756,8 @@
             </div>
         </div>
     </div>
+    <!-- Global React Toast root — always mounted, above all modals -->
+    <div id="global-toast-root"></div>
     <script type="module" src="./src/main.ts"></script>`n</body>
 </html> 
 

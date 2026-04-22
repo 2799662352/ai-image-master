@@ -89,8 +89,8 @@ export function VisionModelSelector() {
                       setVisionModel(model.id)
                       setOpen(false)
                     }}
-                    className={`bg-[#09090B] border rounded-none p-4 cursor-pointer hover:bg-white hover:bg-opacity-5 transition-all ${
-                      selected ? 'border-blue-500 bg-blue-500 bg-opacity-10' : 'border-[#3F3F46]'
+                    className={`bg-[#09090B] border rounded-none p-4 cursor-pointer hover:bg-white/5 transition-all ${
+                      selected ? 'border-blue-500 bg-blue-500/10' : 'border-[#3F3F46]'
                     }`}
                   >
                     <div className="flex items-start gap-3">

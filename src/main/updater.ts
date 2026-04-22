@@ -5,7 +5,7 @@ import { BrowserWindow, ipcMain, app } from 'electron'
 export type UpdateProvider = 'github' | 'generic' | 's3'
 
 /** V17: 发布渠道类型 */
-export type ReleaseChannel = 'stable' | 'beta' | 'alpha'
+export type ReleaseChannel = 'latest' | 'stable' | 'beta' | 'alpha'
 
 export interface UpdaterConfig {
   /** 更新源类型 */
@@ -32,7 +32,7 @@ export interface UpdaterConfig {
   maxRetries?: number
   /** 重试延迟 (毫秒) */
   retryDelay?: number
-  /** V17: 发布渠道 (stable/beta/alpha) */
+  /** V17: 发布渠道 (latest/stable/beta/alpha) */
   channel?: ReleaseChannel
 }
 
@@ -63,12 +63,12 @@ export class AutoUpdater {
   constructor(config: UpdaterConfig = {}) {
     this.config = {
       provider: 'github',
-      autoDownload: false,
+      autoDownload: true,
       allowPrerelease: false,
       allowDowngrade: false,
       maxRetries: 3,
       retryDelay: 2000,
-      channel: 'stable',
+      channel: 'latest',
       ...config
     }
 
@@ -87,7 +87,7 @@ export class AutoUpdater {
     autoUpdater.autoRunAppAfterInstall = true
     
     // V17: 渠道配置 - beta/alpha 渠道自动允许预发布版本
-    const channel = this.config.channel ?? 'stable'
+    const channel = this.config.channel ?? 'latest'
     if (channel === 'beta' || channel === 'alpha') {
       autoUpdater.allowPrerelease = true
       autoUpdater.allowDowngrade = this.config.allowDowngrade ?? true // beta 渠道允许降级到 stable
@@ -101,6 +101,15 @@ export class AutoUpdater {
 
     // 配置 provider
     this.setFeedURL()
+
+    // GitHub provider 需要手动指定旧版 blockmap 的下载地址才能启用差分更新
+    // electron-updater 默认从 latest release 取 blockmap，但 GitHub 的旧 release 地址不同
+    if (this.config.provider === 'github' && this.config.owner && this.config.repo) {
+      const currentVersion = app.getVersion()
+      autoUpdater.previousBlockmapBaseUrlOverride =
+        `https://github.com/${this.config.owner}/${this.config.repo}/releases/download/v${currentVersion}/`
+      console.log(`[AutoUpdater] 差分更新已配置, previousBlockmap → v${currentVersion}`)
+    }
 
     // 配置认证 token (用于私有仓库)
     if (this.config.token) {
@@ -227,7 +236,8 @@ export class AutoUpdater {
         releaseDate: info.releaseDate,
         releaseNotes: this.formatReleaseNotes(info.releaseNotes),
         files: info.files,
-        sha512: info.sha512
+        sha512: info.sha512,
+        autoDownload: this.config.autoDownload ?? false
       })
       this.isCheckingUpdate = false
     })
@@ -245,7 +255,9 @@ export class AutoUpdater {
     // 下载进度
     autoUpdater.on('download-progress', (progress: ProgressInfo) => {
       const percent = progress.percent
-      console.log(`[AutoUpdater] 下载进度: ${percent.toFixed(2)}%`)
+      const totalMB = (progress.total / 1024 / 1024).toFixed(1)
+      const speedKB = (progress.bytesPerSecond / 1024).toFixed(0)
+      console.log(`[AutoUpdater] 下载进度: ${percent.toFixed(1)}% | ${totalMB}MB total | ${speedKB}KB/s`)
 
       // 计算预估剩余时间
       let eta: number | undefined
@@ -269,6 +281,7 @@ export class AutoUpdater {
     // 下载完成
     autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
       console.log('[AutoUpdater] 更新下载完成:', info.version)
+      const downloadTime = this.downloadStartTime ? Date.now() - this.downloadStartTime : undefined
       this.isDownloading = false
       this.downloadRetryCount = 0
       this.downloadStartTime = null
@@ -276,7 +289,7 @@ export class AutoUpdater {
       this.sendToRenderer('update-downloaded', {
         version: info.version,
         releaseNotes: this.formatReleaseNotes(info.releaseNotes),
-        downloadTime: this.downloadStartTime ? Date.now() - this.downloadStartTime : undefined
+        downloadTime
       })
     })
   }
@@ -324,77 +337,47 @@ export class AutoUpdater {
       this.downloadStartTime = Date.now()
       await autoUpdater.downloadUpdate()
     } catch (error) {
-      // 错误会在 'error' 事件中处理
       console.error('[AutoUpdater] 下载异常:', error)
+      throw error
+    }
+  }
+
+  private async handleDownload(): Promise<UpdateResult> {
+    try {
+      if (this.isDownloading) {
+        return { success: false, error: '正在下载更新中...' }
+      }
+      this.isDownloading = true
+      this.downloadRetryCount = 0
+      await this.downloadUpdateInternal()
+      return { success: true }
+    } catch (error: any) {
+      console.error('[AutoUpdater] 下载更新失败:', error)
+      this.isDownloading = false
+      return { success: false, error: error.message }
+    }
+  }
+
+  private handleInstall(): UpdateResult {
+    try {
+      autoUpdater.quitAndInstall(false, true)
+      return { success: true }
+    } catch (error: any) {
+      return { success: false, error: error.message }
     }
   }
 
   private setupIPC(): void {
-    // 检查更新
-    ipcMain.handle('updater:check', async (): Promise<UpdateResult> => {
-      try {
-        if (this.isCheckingUpdate) {
-          return { success: false, error: '正在检查更新中...' }
-        }
-        await autoUpdater.checkForUpdates()
-        return { success: true }
-      } catch (error: any) {
-        console.error('[AutoUpdater] 检查更新失败:', error)
-        return { success: false, error: error.message }
-      }
-    })
+    ipcMain.handle('updater:check', () => this.checkForUpdates())
+    ipcMain.handle('updater:download', () => this.handleDownload())
+    ipcMain.handle('updater:install', () => this.handleInstall())
+    ipcMain.handle('updater:getVersion', () => app.getVersion())
 
-    // 兼容旧的 IPC 通道名
-    ipcMain.handle('check-for-update', async () => {
-      return ipcMain.emit('updater:check')
-    })
-
-    // 开始下载更新
-    ipcMain.handle('updater:download', async (): Promise<UpdateResult> => {
-      try {
-        if (this.isDownloading) {
-          return { success: false, error: '正在下载更新中...' }
-        }
-        this.isDownloading = true
-        this.downloadRetryCount = 0
-        await this.downloadUpdateInternal()
-        return { success: true }
-      } catch (error: any) {
-        console.error('[AutoUpdater] 下载更新失败:', error)
-        this.isDownloading = false
-        return { success: false, error: error.message }
-      }
-    })
-
-    // 兼容旧的 IPC 通道名
-    ipcMain.handle('download-update', async () => {
-      return ipcMain.emit('updater:download')
-    })
-
-    // 安装更新并重启
-    ipcMain.handle('updater:install', (): UpdateResult => {
-      try {
-        autoUpdater.quitAndInstall(false, true)
-        return { success: true }
-      } catch (error: any) {
-        return { success: false, error: error.message }
-      }
-    })
-
-    // 兼容旧的 IPC 通道名
-    ipcMain.handle('install-update', () => {
-      return ipcMain.emit('updater:install')
-    })
-
-    // 获取当前版本
-    ipcMain.handle('updater:getVersion', (): string => {
-      return app.getVersion()
-    })
-
-    // 兼容旧的 IPC 通道名
-    ipcMain.handle('get-app-version', () => {
-      return app.getVersion()
-    })
+    // preload 仍用这些旧通道名
+    ipcMain.handle('check-for-update', () => this.checkForUpdates())
+    ipcMain.handle('download-update', () => this.handleDownload())
+    ipcMain.handle('install-update', () => this.handleInstall())
+    ipcMain.handle('get-app-version', () => app.getVersion())
 
     // 获取更新器状态
     ipcMain.handle('updater:getStatus', () => {
@@ -413,11 +396,15 @@ export class AutoUpdater {
 
     // V17: 获取当前发布渠道
     ipcMain.handle('updater:getChannel', (): ReleaseChannel => {
-      return this.config.channel ?? 'stable'
+      return this.config.channel ?? 'latest'
     })
 
     // V17: 设置发布渠道
+    const VALID_CHANNELS: ReleaseChannel[] = ['latest', 'stable', 'beta', 'alpha']
     ipcMain.handle('updater:setChannel', (_event, channel: ReleaseChannel) => {
+      if (!VALID_CHANNELS.includes(channel)) {
+        return { success: false, error: `Invalid channel: ${channel}` }
+      }
       this.updateConfig({ channel })
       return { success: true, channel }
     })

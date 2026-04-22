@@ -242,8 +242,8 @@ export class HistoryPage extends BasePage {
     if (validUrls.length === 0) return
     
     const imageViewer = (window as any).imageViewerTS
-    if (imageViewer?.view) {
-      imageViewer.view(validUrls, Math.min(index, validUrls.length - 1))
+    if (imageViewer?.open) {
+      imageViewer.open(validUrls, Math.min(index, validUrls.length - 1))
     } else if ((this.app as any).viewImage) {
       ;(this.app as any).viewImage(validUrls, Math.min(index, validUrls.length - 1))
     }
@@ -275,22 +275,22 @@ export class HistoryPage extends BasePage {
 
     const skeletonCount = 6
     const skeletons = Array(skeletonCount).fill(0).map((_, index) => `
-      <div class="history-skeleton bg-white bg-opacity-5 rounded-lg p-4 flex items-center space-x-4"
+      <div class="history-skeleton bg-white/5 rounded-lg p-4 flex items-center space-x-4"
            style="animation-delay: ${index * 100}ms">
         <div class="flex-shrink-0">
-          <div class="w-10 h-10 bg-white bg-opacity-10 rounded-lg skeleton-pulse"></div>
+          <div class="w-10 h-10 bg-white/10 rounded-lg skeleton-pulse"></div>
         </div>
         <div class="flex-1 min-w-0 space-y-2">
-          <div class="h-4 bg-white bg-opacity-10 rounded w-3/4 skeleton-pulse"></div>
+          <div class="h-4 bg-white/10 rounded w-3/4 skeleton-pulse"></div>
           <div class="flex space-x-2">
-            <div class="h-3 bg-white bg-opacity-10 rounded w-16 skeleton-pulse"></div>
-            <div class="h-3 bg-white bg-opacity-10 rounded w-24 skeleton-pulse"></div>
+            <div class="h-3 bg-white/10 rounded w-16 skeleton-pulse"></div>
+            <div class="h-3 bg-white/10 rounded w-24 skeleton-pulse"></div>
           </div>
         </div>
         <div class="flex-shrink-0 flex space-x-2">
-          <div class="w-8 h-8 bg-white bg-opacity-10 rounded-lg skeleton-pulse"></div>
-          <div class="w-8 h-8 bg-white bg-opacity-10 rounded-lg skeleton-pulse"></div>
-          <div class="w-8 h-8 bg-white bg-opacity-10 rounded-lg skeleton-pulse"></div>
+          <div class="w-8 h-8 bg-white/10 rounded-lg skeleton-pulse"></div>
+          <div class="w-8 h-8 bg-white/10 rounded-lg skeleton-pulse"></div>
+          <div class="w-8 h-8 bg-white/10 rounded-lg skeleton-pulse"></div>
         </div>
       </div>
     `).join('')
@@ -306,6 +306,12 @@ export class HistoryPage extends BasePage {
   }
 
   loadPanel(): void {
+    // React 接管时 (存在 #history-react-root) 直接短路,由 React 版渲染
+    if (document.getElementById('history-react-root')) {
+      this.isLoading = false
+      return
+    }
+
     const historyList = this.getElement('historyList')
     if (!historyList) return
 
@@ -846,8 +852,8 @@ export class HistoryPage extends BasePage {
     return `
       <!-- 主状态栏 -->
       <div class="bg-gradient-to-r ${
-        storageInfo.r2Enabled ? 'from-blue-600 to-purple-600' : 'from-gray-600 to-gray-700'
-      } bg-opacity-20 rounded-lg p-3 mb-3">
+        storageInfo.r2Enabled ? 'from-blue-600/20 to-purple-600/20' : 'from-gray-600/20 to-gray-700/20'
+      } rounded-lg p-3 mb-3">
         <div class="flex items-center justify-between">
           <div class="flex items-center space-x-2">
             <span class="text-lg">${storageInfo.r2Enabled ? '🔐' : '💾'}</span>
@@ -872,7 +878,7 @@ export class HistoryPage extends BasePage {
           storageInfo.r2Enabled
             ? `
             <!-- 隐私保护 -->
-            <div class="bg-blue-500 bg-opacity-10 rounded-lg p-2.5 border border-blue-400 border-opacity-20">
+            <div class="bg-blue-500/10 rounded-lg p-2.5 border border-blue-400/20">
               <div class="flex items-start space-x-2">
                 <i class="fas fa-shield-alt text-blue-400 mt-0.5"></i>
                 <div>
@@ -883,7 +889,7 @@ export class HistoryPage extends BasePage {
             </div>
 
             <!-- 智能存储 -->
-            <div class="bg-green-500 bg-opacity-10 rounded-lg p-2.5 border border-green-400 border-opacity-20">
+            <div class="bg-green-500/10 rounded-lg p-2.5 border border-green-400/20">
               <div class="flex items-start space-x-2">
                 <i class="fas fa-cloud text-green-400 mt-0.5"></i>
                 <div>
@@ -894,7 +900,7 @@ export class HistoryPage extends BasePage {
             </div>
 
             <!-- 同步管理 -->
-            <div class="bg-yellow-500 bg-opacity-10 rounded-lg p-2.5 border border-yellow-400 border-opacity-20">
+            <div class="bg-yellow-500/10 rounded-lg p-2.5 border border-yellow-400/20">
               <div class="flex items-start space-x-2">
                 <i class="fas fa-sync-alt text-yellow-400 mt-0.5"></i>
                 <div>
@@ -905,7 +911,7 @@ export class HistoryPage extends BasePage {
             </div>
 
             <!-- 有效期限 -->
-            <div class="bg-gray-500 bg-opacity-10 rounded-lg p-2.5 border border-gray-400 border-opacity-20">
+            <div class="bg-gray-500/10 rounded-lg p-2.5 border border-gray-400/20">
               <div class="flex items-start space-x-2">
                 <i class="fas fa-clock text-gray-400 mt-0.5"></i>
                 <div>
@@ -917,7 +923,7 @@ export class HistoryPage extends BasePage {
           `
             : `
             <!-- 本地存储警告 -->
-            <div class="bg-yellow-500 bg-opacity-10 rounded-lg p-2.5 border border-yellow-400 border-opacity-20 col-span-2">
+            <div class="bg-yellow-500/10 rounded-lg p-2.5 border border-yellow-400/20 col-span-2">
               <div class="flex items-start space-x-2">
                 <i class="fas fa-exclamation-triangle text-yellow-400 mt-0.5"></i>
                 <div>
@@ -930,7 +936,7 @@ export class HistoryPage extends BasePage {
               usagePercentNum > 50
                 ? `
               <!-- 建议配置云端存储 -->
-              <div class="bg-orange-500 bg-opacity-10 rounded-lg p-2.5 border border-orange-400 border-opacity-20 col-span-2">
+              <div class="bg-orange-500/10 rounded-lg p-2.5 border border-orange-400/20 col-span-2">
                 <div class="flex items-start space-x-2">
                   <i class="fas fa-info-circle text-orange-400 mt-0.5"></i>
                   <div>
@@ -964,7 +970,7 @@ export class HistoryPage extends BasePage {
         isElectron
           ? `
           <!-- 清理缓存按钮（仅 Electron 模式显示） -->
-          <div class="text-center border-t border-gray-600 border-opacity-30 pt-3 mt-2">
+          <div class="text-center border-t border-gray-600/30 pt-3 mt-2">
             <button onclick="window.historyPageTS?.clearWebCache()"
                     id="clearWebCacheBtn"
                     class="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white text-xs px-4 py-2 rounded-lg transition-all shadow-lg transform hover:scale-105">
@@ -1020,7 +1026,7 @@ export class HistoryPage extends BasePage {
 
   private showDownloadHelpDialog(urls: string[]): void {
     const modal = document.createElement('div')
-    modal.className = 'fixed inset-0 bg-black bg-opacity-50 z-[50000] flex items-center justify-center p-4'
+    modal.className = 'fixed inset-0 bg-black/50 z-[50000] flex items-center justify-center p-4'
     modal.innerHTML = `
       <div class="bg-white rounded-xl p-6 w-full max-w-md mx-4">
         <h3 class="text-xl font-bold mb-4 text-gray-800">
@@ -1068,7 +1074,7 @@ export class HistoryPage extends BasePage {
 
   showNetworkRestrictedActions(urls: string[], prompt: string): void {
     const modal = document.createElement('div')
-    modal.className = 'fixed inset-0 bg-black bg-opacity-70 z-[50000] flex items-center justify-center p-4'
+    modal.className = 'fixed inset-0 bg-black/70 z-[50000] flex items-center justify-center p-4'
 
     modal.innerHTML = `
       <div class="bg-white rounded-xl w-full max-w-2xl mx-4 max-h-[80vh] overflow-y-auto">

@@ -66,6 +66,11 @@ Menu.setApplicationMenu(null);
 app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
 app.commandLine.appendSwitch('disable-gpu-program-cache');
 
+// 🧠 导演模式并行 LLM 调用（3 路 fan-out + skillDiscovery）会在 renderer
+//    中同时持有多份 base64 图片的 JSON 请求体，容易击穿默认 4 GB 堆上限。
+//    放宽到 8 GB，给 LangGraph state 复制 + MemorySaver checkpoint 留足空间。
+app.commandLine.appendSwitch('js-flags', '--max-old-space-size=8192');
+
 // 数据存储目录 - 延迟到 app ready 后初始化
 let userDataPath;
 let imagesDir;
@@ -175,6 +180,14 @@ function createWindow() {
     // 在主窗口加载完成后记录
     mainWindow.webContents.on('did-finish-load', () => {
         console.log(`[Performance] Page loaded: ${Date.now() - startTime}ms`);
+    });
+
+    // 🛡️ renderer 进程崩溃恢复（OOM / V8 crash）
+    mainWindow.webContents.on('render-process-gone', (_event, details) => {
+        console.error('[Main] Renderer process gone:', details.reason, details.exitCode);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.reload();
+        }
     });
 
     mainWindow.on('closed', () => {

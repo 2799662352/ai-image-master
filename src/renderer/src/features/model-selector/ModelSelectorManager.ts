@@ -113,15 +113,12 @@ export class ModelSelectorManager {
         }
       }
 
-      console.log('📊 当前模型:', this.currentModelKey, '所有模型数:', Object.keys(models).length)
-
       this.initDesktopSelector(desktopSelector, models, this.currentModelKey)
       this.initMobileSelector(mobileSelector, models, this.currentModelKey)
 
       this.initialized = true
       console.log('✅ 模型选择器初始化完成')
       
-      // 初始化时更新比例和分辨率选项
       this.updateUIForModel()
     } catch (error) {
       console.error('❌ 模型选择器初始化失败:', error)
@@ -283,14 +280,22 @@ export class ModelSelectorManager {
    */
   private bindSelectorEvents(selectElement: HTMLSelectElement, prefix: string): void {
     const handleChoice = (event: CustomEvent) => {
-      const value = event.detail?.choice?.value
+      const value = event.detail?.value ?? event.detail?.choice?.value
       if (value) {
         console.log(`${prefix} 模型已切换:`, value)
         this.handleModelSwitch(value)
       }
     }
 
+    const handleChange = (event: Event) => {
+      const target = event.target as HTMLSelectElement
+      if (target.value && target.value !== this.currentModelKey) {
+        this.handleModelSwitch(target.value)
+      }
+    }
+
     selectElement.addEventListener('choice', handleChoice as EventListener)
+    selectElement.addEventListener('change', handleChange)
     console.log(`✅ ${prefix} 事件监听器已绑定`)
   }
 
@@ -319,15 +324,20 @@ export class ModelSelectorManager {
         const currentModel = api.getCurrentModel?.() as ModelConfig
         this.config.onModelChange?.(modelKey, currentModel)
 
-        this.updateUIForModel()
+        const w = window as any
+        const generatePage = w.generatePage as PageReference | undefined
+        this.updateUIForModel(generatePage)
 
-        if (this.config.showToast) {
-          this.config.showToast(`已切换到模型: ${currentModel?.name || modelKey}`, 'success')
-        }
+        const batchPage = w.batchPage as { onModelChanged?: () => void } | undefined
+        batchPage?.onModelChanged?.()
+
+        const showToast = this.config.showToast ?? w.toastManagerTS?.show?.bind(w.toastManagerTS)
+        showToast?.(`已切换到模型: ${currentModel?.name || modelKey}`, 'success')
 
         console.log('✅ 模型切换完成')
       } else {
-        this.config.showToast?.('模型切换失败', 'error')
+        const showToast = this.config.showToast ?? (window as any).toastManagerTS?.show?.bind((window as any).toastManagerTS)
+        showToast?.('模型切换失败', 'error')
       }
     } finally {
       this.switching = false
@@ -339,9 +349,7 @@ export class ModelSelectorManager {
    */
   renderRatioOptions(modelConfig: ModelConfig, page?: PageReference): void {
     const ratioContainer = document.getElementById('ratioButtons')
-    if (!ratioContainer) {
-      return
-    }
+    if (!ratioContainer) return
 
     const ratios = Array.isArray(modelConfig.ratios) && modelConfig.ratios.length > 0
       ? modelConfig.ratios
@@ -780,6 +788,7 @@ export class ModelSelectorManager {
    */
   updateUIForModel(page?: PageReference): void {
     const api = (window as any).aiImageAPI
+    const modelKey = api?.getModelKey?.() || api?.model || 'unknown'
     const currentModel = api?.getCurrentModel?.() as ModelConfig
 
     if (!currentModel) {
@@ -787,19 +796,11 @@ export class ModelSelectorManager {
       return
     }
 
-    // 更新比例选项
     this.renderRatioOptions(currentModel, page)
-
-    // 更新分辨率选项
     this.renderResolutionOptions(currentModel, page)
-
-    // 设置 Seedream 提示
     this.setupSeedreamCountHint(currentModel)
-
-    // 更新批量比例选项
     this.renderBatchRatioOptions(currentModel, page)
 
-    // 更新页面显示
     page?.updateFinalResolutionDisplay?.()
     page?.updateReferenceImageLimitDisplay?.()
     page?.updateReferenceImagesPreview?.()

@@ -219,7 +219,7 @@ export class UIComponents {
     error.innerHTML = `
       <i class="fas fa-exclamation-triangle text-4xl text-red-400 mb-4"></i>
       <p class="text-white opacity-70 mb-4">${this.escapeHtml(message)}</p>
-      <div class="text-sm text-white opacity-60 bg-white bg-opacity-10 rounded-lg p-3 mt-2">
+      <div class="text-sm text-white opacity-60 bg-white/10 rounded-lg p-3 mt-2">
         <i class="fas fa-info-circle mr-1"></i>
         请检查提示词内容，修改后重新点击生成按钮
       </div>
@@ -232,13 +232,13 @@ export class UIComponents {
    */
   createImageCard(url: string, title: string = '', actions: ImageCardAction[] = []): HTMLDivElement {
     const card = document.createElement('div')
-    card.className = 'bg-white bg-opacity-5 rounded-lg overflow-hidden'
+    card.className = 'bg-white/5 rounded-lg overflow-hidden'
 
     const actionsHtml = actions
       .map(
         (action) => `
         <button onclick="${this.escapeHtml(action.onclick)}" 
-                class="bg-white bg-opacity-20 hover:bg-opacity-30 text-white p-2 rounded-lg transition-all" 
+                class="bg-white/20 hover:bg-white/30 text-white p-2 rounded-lg transition-all" 
                 title="${this.escapeHtml(action.title)}">
           <i class="fas fa-${this.escapeHtml(action.icon)}"></i>
         </button>
@@ -249,7 +249,7 @@ export class UIComponents {
     card.innerHTML = `
       <div class="relative group">
         <img src="${this.escapeHtml(url)}" alt="${this.escapeHtml(title)}" class="w-full h-48 object-cover">
-        <div class="absolute inset-0 bg-black bg-opacity-50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center space-x-2">
+        <div class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center space-x-2">
           ${actionsHtml}
         </div>
       </div>
@@ -269,7 +269,7 @@ export class UIComponents {
     const safePercentage = Math.max(0, Math.min(100, percentage))
 
     progressContainer.innerHTML = `
-      <div class="bg-white bg-opacity-20 rounded-full h-2 mb-2">
+      <div class="bg-white/20 rounded-full h-2 mb-2">
         <div class="bg-gradient-to-r from-purple-500 to-pink-500 h-2 rounded-full transition-all duration-300" 
              style="width: ${safePercentage}%"></div>
       </div>
@@ -288,7 +288,7 @@ export class UIComponents {
     onCancel: (() => void) | null = null
   ): HTMLDivElement {
     const dialog = document.createElement('div')
-    dialog.className = 'fixed inset-0 bg-black bg-opacity-50 z-[50000] flex items-center justify-center p-4'
+    dialog.className = 'fixed inset-0 bg-black/50 z-[50000] flex items-center justify-center p-4'
 
     dialog.innerHTML = `
       <div class="bg-white rounded-xl p-6 max-w-sm w-full">
@@ -340,7 +340,7 @@ export class UIComponents {
     onCancel: (() => void) | null = null
   ): HTMLDivElement {
     const dialog = document.createElement('div')
-    dialog.className = 'fixed inset-0 bg-black bg-opacity-50 z-[50000] flex items-center justify-center p-4'
+    dialog.className = 'fixed inset-0 bg-black/50 z-[50000] flex items-center justify-center p-4'
 
     dialog.innerHTML = `
       <div class="bg-white rounded-xl p-6 max-w-sm w-full">
@@ -403,7 +403,7 @@ export class UIComponents {
    */
   createImageGallery(images: GalleryImage[]): HTMLDivElement {
     const gallery = document.createElement('div')
-    gallery.className = 'fixed inset-0 bg-black bg-opacity-90 z-[50000] flex items-center justify-center p-4'
+    gallery.className = 'fixed inset-0 bg-black/90 z-[50000] flex items-center justify-center p-4'
 
     let currentIndex = 0
 
@@ -434,7 +434,7 @@ export class UIComponents {
               : ''
           }
           <div class="absolute bottom-4 right-4 flex space-x-2">
-            <button class="download-btn bg-white bg-opacity-20 hover:bg-opacity-30 text-white p-2 rounded-lg transition-all">
+            <button class="download-btn bg-white/20 hover:bg-white/30 text-white p-2 rounded-lg transition-all">
               <i class="fas fa-download"></i>
             </button>
           </div>

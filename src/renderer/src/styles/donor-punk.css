@@ -1,0 +1,760 @@
+/*
+ * donor-punk.css
+ * --------------------------------------------------------------------
+ * "ドーナドーナ × Persona 5" 朋克拼贴主题 — Noir (护眼低饱和版)
+ * page-scoped at .donor-punk
+ *
+ * 设计语言 (v2 护眼):
+ *   - 主背景改为暖米黄旧纸 #ebe4d2 (取代霓虹品红,长看不累眼)
+ *   - 粉色降饱和: 霓虹 #ff2d7a → 胭脂玫瑰 #c0466a (仍保留朋克气质)
+ *   - 黑色柔化: 纯黑 #000 → 炭黑 #1a1a1a (文字不刺眼)
+ *   - 所有高饱和色 (黄/青/毒绿/大红) 全面降饱和, 靠对比度而非亮度刷存在感
+ *   - 保留: 倾斜拼贴、厚描边、撕纸边、硬投影、汉字 stamp、halftone 点阵
+ *   - 去除: 霓虹感、高亮刺眼过饱和
+ *
+ * 重要: 不写 .donor-punk > * { position:relative }, 避免覆盖 Tailwind 定位
+ * --------------------------------------------------------------------
+ */
+
+/* ===================================================================
+   1. Design Tokens (Noir palette — 低饱和护眼版)
+   =================================================================== */
+.donor-punk {
+  /* 颜色铁律 (低饱和朋克) */
+  --punk-pink: #c0466a;          /* 胭脂玫瑰 — 朋克灵魂色 (低饱和) */
+  --punk-pink-deep: #8e2b4a;     /* 酒红阴影/按压态 */
+  --punk-pink-soft: #e9b4c4;     /* 粉雾, 半色调过渡用 */
+  --punk-black: #1a1a1a;         /* 炭黑 — 文字/描边 (不刺眼) */
+  --punk-cream: #f5eedc;         /* 旧纸米白 — 贴纸底 */
+  --punk-cream-dim: #e0d6bd;     /* 阴影侧/暗贴纸 */
+  --punk-cyan: #4a8c9a;          /* 雾青 — 数据点缀 < 5% */
+  --punk-toxic: #9aa93e;         /* 苔绿勘亭 — 降饱和 */
+  --punk-yellow: #d4a847;        /* 芥末黄 — 危险带条纹 (不刺眼) */
+  --punk-red: #8b2432;           /* 牛血红 — 勘亭红印 */
+
+  /* 页面背景 — 暖米黄旧纸底 (取代原霓虹品红主色铺底) */
+  --punk-bg: #ebe4d2;            /* 报纸/卡其旧纸, 长时间看不累眼 */
+
+  /* 字体 */
+  --punk-font-jp: 'Noto Sans SC', 'Noto Serif SC', 'Yu Gothic',
+                  'Hiragino Sans', sans-serif;
+  --punk-font-display: 'Bebas Neue', 'Oswald', 'Anton', 'Inter',
+                       'Helvetica Neue', sans-serif;
+  --punk-font-mono: 'JetBrains Mono', 'IBM Plex Mono', 'Share Tech Mono',
+                    monospace;
+
+  /* 间距/尺寸 */
+  --punk-stroke: 3px;            /* 标准粗描边 */
+  --punk-stroke-thick: 5px;      /* 主标题/按钮 */
+  --punk-shadow-offset: 6px;     /* 偏移黑投影 (无模糊) */
+
+  /* 字色/底色 */
+  color: var(--punk-black);
+  font-family: var(--punk-font-display);
+  position: relative;
+  isolation: isolate;            /* 创建独立 stacking context */
+  background: var(--punk-bg);    /* 旧纸底色, 替代原铺底粉 */
+  overflow: hidden;              /* 撕边/星爆超出不影响布局 */
+}
+
+/* ===================================================================
+   3. 字体 utility (字体大、压扁、粗、斜)
+   =================================================================== */
+.donor-punk .p-jp        { font-family: var(--punk-font-jp); font-weight: 900; }
+.donor-punk .p-display   { font-family: var(--punk-font-display); font-weight: 900;
+                           letter-spacing: -0.02em; }
+.donor-punk .p-mono      { font-family: var(--punk-font-mono); font-weight: 700;
+                           font-variant-numeric: tabular-nums; letter-spacing: 0; }
+.donor-punk .p-italic    { font-style: italic; }
+.donor-punk .p-condensed { font-stretch: 75%; transform: scaleX(0.85);
+                           transform-origin: left center; }
+.donor-punk .p-upper     { text-transform: uppercase; }
+
+/* 大型装饰汉字 stamp (悪/危/夜/組) */
+.donor-punk .p-kanji-stamp {
+  font-family: var(--punk-font-jp);
+  font-weight: 900;
+  color: var(--punk-black);
+  -webkit-text-stroke: 2px var(--punk-black);
+  text-shadow: 4px 4px 0 var(--punk-pink-deep);
+  line-height: 0.85;
+  letter-spacing: -0.05em;
+  user-select: none;
+}
+
+/* ===================================================================
+   4. 倾斜拼贴 utility
+   =================================================================== */
+.donor-punk .p-tilt-l-2  { transform: rotate(-2deg); }
+.donor-punk .p-tilt-l-3  { transform: rotate(-3deg); }
+.donor-punk .p-tilt-l-5  { transform: rotate(-5deg); }
+.donor-punk .p-tilt-l-7  { transform: rotate(-7deg); }
+.donor-punk .p-tilt-r-2  { transform: rotate(2deg); }
+.donor-punk .p-tilt-r-3  { transform: rotate(3deg); }
+.donor-punk .p-tilt-r-5  { transform: rotate(5deg); }
+.donor-punk .p-tilt-r-7  { transform: rotate(7deg); }
+
+/* ===================================================================
+   5. 贴纸 (sticker) 样式 — 厚黑描边 + 偏移黑投影 (硬阴影, 无模糊)
+   =================================================================== */
+.donor-punk .p-sticker {
+  position: relative;
+  background: var(--punk-cream);
+  border: var(--punk-stroke) solid var(--punk-black);
+  box-shadow: var(--punk-shadow-offset) var(--punk-shadow-offset) 0
+              var(--punk-black);
+  padding: 0.75rem 1rem;
+}
+
+.donor-punk .p-sticker--pink {
+  background: var(--punk-pink);
+  color: var(--punk-cream);
+}
+
+.donor-punk .p-sticker--black {
+  background: var(--punk-black);
+  color: var(--punk-cream);
+  box-shadow: var(--punk-shadow-offset) var(--punk-shadow-offset) 0
+              var(--punk-pink);
+}
+
+.donor-punk .p-sticker--cyan {
+  background: var(--punk-cyan);
+  color: var(--punk-black);
+}
+
+/* 撕纸边 (锯齿 clip-path 模拟手撕) */
+.donor-punk .p-torn {
+  clip-path: polygon(
+    0% 4%, 5% 0%, 12% 3%, 22% 0%, 33% 4%, 45% 1%, 58% 5%, 70% 0%, 82% 3%,
+    93% 0%, 100% 5%,
+    100% 95%, 95% 100%, 88% 96%, 78% 100%, 67% 95%, 55% 99%, 42% 95%,
+    30% 100%, 18% 96%, 8% 100%, 0% 95%
+  );
+}
+
+/* 切角 (P5 风格) */
+.donor-punk .p-clip-tl  { clip-path: polygon(20px 0, 100% 0, 100% 100%, 0 100%, 0 20px); }
+.donor-punk .p-clip-br  { clip-path: polygon(0 0, 100% 0, 100% calc(100% - 20px),
+                                              calc(100% - 20px) 100%, 0 100%); }
+.donor-punk .p-clip-zig {
+  clip-path: polygon(0 0, 100% 0, 95% 50%, 100% 100%, 0 100%, 5% 50%);
+}
+
+/* ===================================================================
+   6. 危险带 (黄黑斜条)
+   =================================================================== */
+.donor-punk .p-hazard {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--punk-yellow) 0 18px,
+    var(--punk-black) 18px 36px
+  );
+  border-top: var(--punk-stroke) solid var(--punk-black);
+  border-bottom: var(--punk-stroke) solid var(--punk-black);
+}
+
+.donor-punk .p-hazard-tape {
+  /* 一段贴在角落的胶带 */
+  background: var(--punk-yellow);
+  border: 2px solid var(--punk-black);
+  padding: 0.15rem 0.6rem;
+  font-family: var(--punk-font-mono);
+  font-weight: 900;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+/* ===================================================================
+   7. 勘亭 (hanko) 红章
+   =================================================================== */
+.donor-punk .p-hanko {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  border: 4px solid var(--punk-red);
+  background: transparent;
+  color: var(--punk-red);
+  font-family: var(--punk-font-jp);
+  font-weight: 900;
+  font-size: 28px;
+  letter-spacing: -0.05em;
+  transform: rotate(-12deg);
+  opacity: 0.85;
+  /* 油墨晕染感 */
+  filter:
+    drop-shadow(0 0 0.5px rgba(230, 0, 35, 0.4))
+    contrast(1.1);
+}
+
+.donor-punk .p-hanko--toxic {
+  border-color: var(--punk-toxic);
+  color: var(--punk-toxic);
+}
+
+/* ===================================================================
+   8. 漫画式星爆 / flash burst
+   =================================================================== */
+.donor-punk .p-burst {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 110px;
+  height: 110px;
+  background: var(--punk-pink);
+  color: var(--punk-cream);
+  font-family: var(--punk-font-display);
+  font-weight: 900;
+  font-size: 1rem;
+  text-transform: uppercase;
+  letter-spacing: -0.02em;
+  text-align: center;
+  /* 12 角星 */
+  clip-path: polygon(
+    50% 0%, 58% 18%, 79% 12%, 71% 32%, 95% 30%, 79% 45%,
+    100% 55%, 79% 60%, 95% 75%, 71% 73%, 79% 92%, 58% 82%,
+    50% 100%, 42% 82%, 21% 92%, 29% 73%, 5% 75%, 21% 60%,
+    0% 55%, 21% 45%, 5% 30%, 29% 32%, 21% 12%, 42% 18%
+  );
+  border: 2px solid var(--punk-black);
+}
+
+/* ===================================================================
+   9. 心形 ♥ (手绘感)
+   =================================================================== */
+.donor-punk .p-heart {
+  display: inline-block;
+  color: var(--punk-pink);
+  text-shadow:
+    1.5px 1.5px 0 var(--punk-black),
+    -1.5px 1.5px 0 var(--punk-black),
+    1.5px -1.5px 0 var(--punk-black),
+    -1.5px -1.5px 0 var(--punk-black);
+  font-size: 1.2em;
+  transform: rotate(-8deg);
+}
+
+/* ===================================================================
+   10. 速度条/卷边 callout (语音气泡)
+   =================================================================== */
+.donor-punk .p-callout {
+  position: relative;
+  background: var(--punk-cream);
+  border: var(--punk-stroke) solid var(--punk-black);
+  padding: 0.6rem 1rem;
+  font-family: var(--punk-font-display);
+  font-weight: 900;
+  text-transform: uppercase;
+}
+.donor-punk .p-callout::after {
+  content: '';
+  position: absolute;
+  bottom: -14px;
+  left: 24px;
+  width: 0;
+  height: 0;
+  border-left: 14px solid transparent;
+  border-right: 0;
+  border-top: 14px solid var(--punk-black);
+}
+.donor-punk .p-callout::before {
+  content: '';
+  position: absolute;
+  bottom: -8px;
+  left: 27px;
+  width: 0;
+  height: 0;
+  border-left: 9px solid transparent;
+  border-right: 0;
+  border-top: 9px solid var(--punk-cream);
+  z-index: 1;
+}
+
+/* ===================================================================
+   11. 按钮 (punk-btn): 黑底白字 → hover 反色
+   =================================================================== */
+.donor-punk .p-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  background: var(--punk-black);
+  color: var(--punk-cream);
+  border: var(--punk-stroke-thick) solid var(--punk-black);
+  box-shadow: 6px 6px 0 var(--punk-cream);
+  font-family: var(--punk-font-display);
+  font-weight: 900;
+  font-size: 1rem;
+  letter-spacing: -0.02em;
+  text-transform: uppercase;
+  padding: 0.7rem 1.4rem;
+  cursor: pointer;
+  transition: transform 120ms ease-out, box-shadow 120ms ease-out;
+  user-select: none;
+}
+.donor-punk .p-btn:hover {
+  background: var(--punk-cream);
+  color: var(--punk-black);
+  transform: translate(-2px, -2px);
+  box-shadow: 8px 8px 0 var(--punk-pink-deep);
+}
+.donor-punk .p-btn:active {
+  transform: translate(4px, 4px);
+  box-shadow: 0 0 0 var(--punk-cream);
+}
+.donor-punk .p-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  filter: grayscale(0.6);
+}
+
+.donor-punk .p-btn--pink {
+  background: var(--punk-pink);
+  color: var(--punk-black);
+  box-shadow: 6px 6px 0 var(--punk-black);
+}
+.donor-punk .p-btn--pink:hover {
+  background: var(--punk-cream);
+  color: var(--punk-pink-deep);
+  box-shadow: 8px 8px 0 var(--punk-black);
+}
+
+.donor-punk .p-btn--xl {
+  font-size: 1.5rem;
+  padding: 1.1rem 2rem;
+  border-width: 6px;
+}
+
+/* ===================================================================
+   12. 输入框 (punk-input): 米白底 + 厚黑描边
+   =================================================================== */
+.donor-punk .p-input,
+.donor-punk .p-textarea,
+.donor-punk .p-select {
+  display: block;
+  width: 100%;
+  background: var(--punk-cream);
+  color: var(--punk-black);
+  border: var(--punk-stroke) solid var(--punk-black);
+  box-shadow: 4px 4px 0 var(--punk-black);
+  padding: 0.55rem 0.8rem;
+  font-family: var(--punk-font-display);
+  font-weight: 700;
+  font-size: 1rem;
+  line-height: 1.4;
+  outline: none;
+  transition: box-shadow 100ms ease-out;
+}
+.donor-punk .p-textarea {
+  font-family: var(--punk-font-mono);
+  font-weight: 500;
+  resize: vertical;
+}
+.donor-punk .p-input:focus,
+.donor-punk .p-textarea:focus,
+.donor-punk .p-select:focus {
+  box-shadow: 4px 4px 0 var(--punk-pink), 4px 4px 0 4px var(--punk-black);
+  background: #fffbef;
+}
+.donor-punk .p-input::placeholder,
+.donor-punk .p-textarea::placeholder {
+  color: rgba(0, 0, 0, 0.4);
+  font-weight: 500;
+}
+.donor-punk .p-select {
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--punk-black) 50%),
+    linear-gradient(-45deg, transparent 50%, var(--punk-black) 50%);
+  background-position: calc(100% - 18px) 50%, calc(100% - 12px) 50%;
+  background-size: 6px 6px;
+  background-repeat: no-repeat;
+  padding-right: 2rem;
+  cursor: pointer;
+}
+
+/* ===================================================================
+   13. 滑块 (punk-range)
+   =================================================================== */
+.donor-punk .p-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 14px;
+  background: var(--punk-cream);
+  border: 2px solid var(--punk-black);
+  outline: none;
+  cursor: pointer;
+}
+.donor-punk .p-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 28px;
+  height: 28px;
+  background: var(--punk-pink);
+  border: 3px solid var(--punk-black);
+  cursor: pointer;
+  margin-top: -8px;
+  box-shadow: 2px 2px 0 var(--punk-black);
+}
+.donor-punk .p-range::-moz-range-thumb {
+  width: 28px;
+  height: 28px;
+  background: var(--punk-pink);
+  border: 3px solid var(--punk-black);
+  cursor: pointer;
+  box-shadow: 2px 2px 0 var(--punk-black);
+}
+
+/* ===================================================================
+   14. Tab / 模式切换标签
+   =================================================================== */
+.donor-punk .p-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: var(--punk-cream);
+  color: var(--punk-black);
+  border: var(--punk-stroke) solid var(--punk-black);
+  padding: 0.5rem 1rem;
+  font-family: var(--punk-font-display);
+  font-weight: 900;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 100ms;
+  user-select: none;
+}
+.donor-punk .p-tab:hover {
+  background: var(--punk-pink-soft);
+}
+.donor-punk .p-tab--active {
+  background: var(--punk-black);
+  color: var(--punk-pink);
+  box-shadow: 4px 4px 0 var(--punk-cream);
+  transform: translate(-2px, -2px);
+}
+
+/* ===================================================================
+   15. 进度条 (punk-progress) — 撕裂感
+   =================================================================== */
+.donor-punk .p-progress {
+  position: relative;
+  height: 28px;
+  background: var(--punk-cream);
+  border: var(--punk-stroke) solid var(--punk-black);
+  box-shadow: 4px 4px 0 var(--punk-black);
+  overflow: hidden;
+}
+.donor-punk .p-progress__bar {
+  height: 100%;
+  background:
+    repeating-linear-gradient(
+      -45deg,
+      var(--punk-pink) 0 14px,
+      var(--punk-pink-deep) 14px 28px
+    );
+  transition: width 220ms ease-out;
+  border-right: var(--punk-stroke) solid var(--punk-black);
+}
+
+/* ===================================================================
+   16. 通用文字描边 (street stencil)
+   =================================================================== */
+.donor-punk .p-stencil {
+  -webkit-text-stroke: 2px var(--punk-black);
+  color: var(--punk-cream);
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: -0.02em;
+}
+
+/* ===================================================================
+   17. 状态徽章 (用于结果卡)
+   =================================================================== */
+.donor-punk .p-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem 0.55rem;
+  font-family: var(--punk-font-mono);
+  font-weight: 900;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border: 2px solid var(--punk-black);
+}
+.donor-punk .p-badge--ok    { background: var(--punk-toxic);   color: var(--punk-black); }
+.donor-punk .p-badge--err   { background: var(--punk-red);     color: var(--punk-cream); }
+.donor-punk .p-badge--run   { background: var(--punk-cyan);    color: var(--punk-black); }
+.donor-punk .p-badge--wait  { background: var(--punk-cream);   color: var(--punk-black); }
+
+/* ===================================================================
+   18. 角标小工具 — 漫画式 ★
+   =================================================================== */
+.donor-punk .p-star {
+  display: inline-block;
+  color: var(--punk-pink);
+  text-shadow:
+    1.5px 1.5px 0 var(--punk-black),
+    -1.5px 1.5px 0 var(--punk-black),
+    1.5px -1.5px 0 var(--punk-black),
+    -1.5px -1.5px 0 var(--punk-black);
+  font-size: 1.1em;
+}
+
+/* ===================================================================
+   19. Reduced motion: 关掉所有 transform 倾斜 + 过渡
+   =================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  .donor-punk *,
+  .donor-punk *::before,
+  .donor-punk *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+  .donor-punk [class*='p-tilt-'] {
+    transform: none !important;
+  }
+}
+
+/* ===================================================================
+   20. 焦点可见 (a11y)
+   =================================================================== */
+.donor-punk :focus-visible {
+  outline: 4px solid var(--punk-cyan);
+  outline-offset: 3px;
+}
+
+/* ===================================================================
+   21. 滚动条 (punk 版)
+   =================================================================== */
+.donor-punk .p-scroll::-webkit-scrollbar {
+  width: 14px;
+  height: 14px;
+}
+.donor-punk .p-scroll::-webkit-scrollbar-track {
+  background: var(--punk-cream);
+  border: 2px solid var(--punk-black);
+}
+.donor-punk .p-scroll::-webkit-scrollbar-thumb {
+  background: var(--punk-pink);
+  border: 2px solid var(--punk-black);
+}
+
+/* ===================================================================
+   22. 压缩占位卡 (Pending Card) - hazard tape 条纹 + 旋转 spinner
+   =================================================================== */
+@keyframes punk-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes punk-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+.donor-punk .p-spin {
+  animation: punk-spin 0.9s linear infinite;
+  display: inline-block;
+}
+.donor-punk .p-pulse {
+  animation: punk-pulse 1.1s ease-in-out infinite;
+}
+.donor-punk .p-pending-card {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  border: 3px solid var(--punk-black);
+  background-color: var(--punk-cream);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--punk-black) 0,
+    var(--punk-black) 10px,
+    var(--punk-pink) 10px,
+    var(--punk-pink) 20px
+  );
+  box-shadow: 3px 3px 0 var(--punk-black);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.donor-punk .p-pending-card-inner {
+  background: var(--punk-cream);
+  border: 2px solid var(--punk-black);
+  padding: 6px 4px;
+  width: calc(100% - 12px);
+  text-align: center;
+}
+@media (prefers-reduced-motion: reduce) {
+  .donor-punk .p-spin,
+  .donor-punk .p-pulse {
+    animation: none !important;
+  }
+}
+
+/* ===================================================================
+   23. 收据贴片 (Budget Receipt) - 热敏小票造型, 锯齿撕边
+   =================================================================== */
+@keyframes punk-receipt-pop {
+  0% {
+    transform: rotate(-1.5deg) scale(0.96);
+  }
+  60% {
+    transform: rotate(-1.5deg) scale(1.04);
+  }
+  100% {
+    transform: rotate(-1.5deg) scale(1);
+  }
+}
+.donor-punk .p-receipt {
+  position: relative;
+  background: var(--punk-cream);
+  color: var(--punk-black);
+  padding: 14px 16px 16px;
+  min-width: 200px;
+  max-width: 260px;
+  /* 左右粗实线 + 上下虚线撕痕,模拟热敏小票而不依赖 mask */
+  border-top: 3px dashed var(--punk-black);
+  border-bottom: 3px dashed var(--punk-black);
+  border-left: 3px solid var(--punk-black);
+  border-right: 3px solid var(--punk-black);
+  box-shadow: 4px 4px 0 var(--punk-black);
+  transform: rotate(-1.5deg);
+  font-family: var(--punk-font-mono);
+}
+/* 顶部一道小色带,加强小票感 */
+.donor-punk .p-receipt::before {
+  content: '';
+  position: absolute;
+  left: -3px;
+  right: -3px;
+  top: -3px;
+  height: 6px;
+  background: repeating-linear-gradient(
+    90deg,
+    var(--punk-pink) 0 8px,
+    var(--punk-black) 8px 12px
+  );
+  pointer-events: none;
+}
+.donor-punk .p-receipt-head {
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  color: var(--punk-pink-deep);
+  border-bottom: 1.5px dashed var(--punk-black);
+  padding-bottom: 4px;
+  margin-bottom: 6px;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.donor-punk .p-receipt-model {
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  margin-bottom: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.donor-punk .p-receipt-total {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 4px;
+  border-top: 1.5px solid var(--punk-black);
+  padding-top: 6px;
+}
+.donor-punk .p-receipt-total-num {
+  font-family: var(--punk-font-display);
+  font-weight: 900;
+  font-size: 28px;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  color: var(--punk-black);
+}
+.donor-punk .p-receipt-total-unit {
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  color: var(--punk-pink-deep);
+}
+.donor-punk .p-receipt-breakdown {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--punk-black);
+  opacity: 0.85;
+}
+.donor-punk .p-receipt-breakdown .p-x {
+  color: var(--punk-pink-deep);
+  font-weight: 900;
+  margin: 0 3px;
+}
+.donor-punk .p-receipt-bump {
+  animation: punk-receipt-pop 0.28s ease-out;
+}
+.donor-punk .p-receipt-unknown .p-receipt-total-num {
+  color: var(--punk-pink-deep);
+  opacity: 0.6;
+}
+/* 收据右上角的红色 hanko 印章 - 替代之前飘在远处的 DO IT 角标 */
+.donor-punk .p-receipt-stamp {
+  position: absolute;
+  top: -10px;
+  right: -14px;
+  width: 56px;
+  height: 56px;
+  border: 2.5px solid var(--punk-red);
+  border-radius: 50%;
+  background: rgba(245, 238, 220, 0.92);
+  color: var(--punk-red);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  transform: rotate(8deg);
+  font-family: var(--punk-font-jp);
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  /* 双圈印章质感 */
+  box-shadow:
+    inset 0 0 0 1.5px var(--punk-cream),
+    inset 0 0 0 3px var(--punk-red);
+  /* 朱泥斑驳:对比度+轻微挤压 */
+  filter: contrast(1.05) saturate(1.1);
+  z-index: 5;
+  pointer-events: none;
+  /* 略微透明,有"盖印"的轻浮感 */
+  opacity: 0.95;
+}
+.donor-punk .p-receipt-stamp__big {
+  font-size: 16px;
+  line-height: 1;
+}
+.donor-punk .p-receipt-stamp__small {
+  font-size: 7px;
+  font-family: var(--punk-font-mono);
+  letter-spacing: 0.12em;
+  line-height: 1;
+  margin-top: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .donor-punk .p-receipt-bump {
+    animation: none !important;
+  }
+}

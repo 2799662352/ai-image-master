@@ -76,6 +76,7 @@ export function useDirectorGeneration() {
     skipTaskPlanning,
     skipAnalyzeScene,
     skipCharacterAnchors,
+    enableCreativePreplanner,
     scoreThreshold,
     visionDetailTaskPlanning,
     visionDetailAnalyzeScene,
@@ -102,6 +103,7 @@ export function useDirectorGeneration() {
     skipTaskPlanning: s.skipTaskPlanning,
     skipAnalyzeScene: s.skipAnalyzeScene,
     skipCharacterAnchors: s.skipCharacterAnchors,
+    enableCreativePreplanner: s.enableCreativePreplanner,
     scoreThreshold: s.scoreThreshold,
     visionDetailTaskPlanning: s.visionDetailTaskPlanning,
     visionDetailAnalyzeScene: s.visionDetailAnalyzeScene,
@@ -162,6 +164,7 @@ export function useDirectorGeneration() {
           skipTaskPlanning,
           skipAnalyzeScene,
           skipCharacterAnchors,
+          enableCreativePreplanner,
           scoreThreshold,
           visionDetailTaskPlanning,
           visionDetailAnalyzeScene,
@@ -184,6 +187,7 @@ export function useDirectorGeneration() {
       skipTaskPlanning,
       skipAnalyzeScene,
       skipCharacterAnchors,
+      enableCreativePreplanner,
       scoreThreshold,
       visionDetailTaskPlanning,
       visionDetailAnalyzeScene,
@@ -220,7 +224,7 @@ export function useDirectorGeneration() {
         )
         const pipeline = await getDirectorPipelineService(analysisModel)
         if (!pipeline) {
-          throw new Error('Failed to initialize pipeline service')
+          throw new Error('导演模式初始化失败: 请确认已在「设置 → Vision API Key」中正确填写 API Key，且当前站点有效')
         }
         pipelineRef.current = pipeline
 
@@ -313,6 +317,7 @@ export function useDirectorGeneration() {
             skipTaskPlanning,
             skipAnalyzeScene,
             skipCharacterAnchors,
+            enableCreativePreplanner,
             scoreThreshold,
             visionDetailTaskPlanning,
             visionDetailAnalyzeScene,
@@ -361,6 +366,7 @@ export function useDirectorGeneration() {
       skipTaskPlanning,
       skipAnalyzeScene,
       skipCharacterAnchors,
+      enableCreativePreplanner,
       scoreThreshold,
       visionDetailTaskPlanning,
       visionDetailAnalyzeScene,
@@ -465,7 +471,7 @@ export function useDirectorGeneration() {
         )
         const pipeline = await getDirectorPipelineService(analysisModel)
         if (!pipeline) {
-          throw new Error('Failed to initialize pipeline service')
+          throw new Error('导演模式初始化失败: 请确认已在「设置 → Vision API Key」中正确填写 API Key，且当前站点有效')
         }
 
         const result = await pipeline.regenerateImages(

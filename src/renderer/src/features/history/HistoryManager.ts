@@ -77,10 +77,14 @@ export class HistoryManager {
 
       this.initialized = true
       console.log(`[HistoryManager] 初始化完成，已加载 ${this.history.length} 条记录`)
+      // 通知所有订阅者(React useHistoryData 等)数据已就位
+      // 修复:重启后 #history 页因 init 不广播而停留在空列表,直到用户生成新记录才一次性出现全部
+      this.notifyChange('init')
     } catch (error) {
       console.error('[HistoryManager] 初始化失败:', error)
       this.history = []
       this.initialized = true
+      this.notifyChange('init')
     }
   }
 

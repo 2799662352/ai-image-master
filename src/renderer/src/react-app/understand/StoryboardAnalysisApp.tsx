@@ -101,7 +101,7 @@ export function StoryboardAnalysisApp() {
               const card = passCards.find(c => c.pass === idx)
               const elapsedStr = card ? `${(card.elapsed / 1000).toFixed(1)}s` : ''
               return (
-                <div key={idx} className={`flex items-center gap-2 px-3 py-2 rounded-none text-xs transition-colors ${isActive ? 'bg-white bg-opacity-5 border border-white border-opacity-10 ring-1 ring-blue-500/40' : 'bg-[#09090B] border border-[#3F3F46]'}`}>
+                <div key={idx} className={`flex items-center gap-2 px-3 py-2 rounded-none text-xs transition-colors ${isActive ? 'bg-white/5 border border-white/10 ring-1 ring-blue-500/40' : 'bg-[#09090B] border border-[#3F3F46]'}`}>
                   <i className={`fas ${def.icon} ${isActive ? 'text-blue-400' : 'text-white opacity-50'}`} />
                   <span className="text-white truncate">{def.label}</span>
                   {elapsedStr && <span className="text-white/30 text-[10px]">{elapsedStr}</span>}

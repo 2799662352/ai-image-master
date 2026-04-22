@@ -56,13 +56,86 @@ const LIGHT_DIR_MAP: Record<string, string> = {
   back: 'from behind',
 }
 
+/** 8-way horizontal label from azimuth (0=front, 90=right, 180=back, 270=left). */
+function azimuthLabel(az: number): string {
+  const a = ((az % 360) + 360) % 360
+  const zones: { max: number; label: string }[] = [
+    { max: 22.5, label: 'front' },
+    { max: 67.5, label: 'front-right' },
+    { max: 112.5, label: 'right' },
+    { max: 157.5, label: 'back-right' },
+    { max: 202.5, label: 'back' },
+    { max: 247.5, label: 'back-left' },
+    { max: 292.5, label: 'left' },
+    { max: 337.5, label: 'front-left' },
+    { max: 360, label: 'front' },
+  ]
+  return zones.find((z) => a <= z.max)!.label
+}
+
+/**
+ * Build a natural-language direction phrase from a free (azimuth, elevation).
+ * Poles (|el| > 70) render without horizontal qualifier; moderate elevations
+ * combine 'upper/lower' with the 8-way horizontal label.
+ */
+function freeAngleDesc(az: number, el: number): string {
+  if (el > 70) return 'from directly overhead'
+  if (el < -70) return 'from directly below'
+
+  const horiz = azimuthLabel(az)
+  const vert =
+    el >= 30 ? 'upper'
+    : el <= -30 ? 'lower'
+    : ''
+
+  // "front" + vert 'upper' → "from the upper-front" reads awkwardly; prefer
+  // "from above and in front" style for cardinal horizontals with a vert modifier.
+  if (vert && (horiz === 'front' || horiz === 'back' || horiz === 'left' || horiz === 'right')) {
+    const side =
+      horiz === 'front' ? 'in front'
+      : horiz === 'back' ? 'behind'
+      : `to the ${horiz}`
+    return vert === 'upper' ? `from above and ${side}` : `from below and ${side}`
+  }
+  if (vert) {
+    return `from the ${vert}-${horiz}`
+  }
+  // Level, no vertical modifier
+  if (horiz === 'front') return 'from the front'
+  if (horiz === 'back') return 'from behind'
+  return `from the ${horiz}`
+}
+
+export type LightingInput = string | { az: number; el: number }
+
+/**
+ * 把 [0,360) 的方位角转成 [-180,180] 有符号显示, 与编辑器滑块的视觉约定一致.
+ * 例: 355° -> -5°, 10° -> 10°, 200° -> -160°.
+ */
+function signedAz(az: number): number {
+  const a = ((az % 360) + 360) % 360
+  return a > 180 ? a - 360 : a
+}
+
 export function buildLightingPrompt(
-  direction: string,
+  input: LightingInput,
   brightness: number,
   color: string,
   rimLight: boolean,
 ): string {
-  const dirDesc = LIGHT_DIR_MAP[direction] || `from the ${direction}`
+  let dirDesc: string
+  if (typeof input === 'string') {
+    // 预设路径: 纯预设标签, 无数字后缀 —— 磁吸开且 onUp 落回预设时走这里.
+    dirDesc = LIGHT_DIR_MAP[input] || `from the ${input}`
+  } else {
+    // 自由角度路径: 描述短语 + 显式度数后缀. 度数让用户视觉上一眼能区分
+    // "真正的自由拖拽结果" 和 "吸回预设的结果", 避免 az≈0 时 prompt 与 'front'
+    // 预设完全同字, 造成"磁吸没关"的错觉.
+    const az = Math.round(signedAz(input.az))
+    const el = Math.round(input.el)
+    dirDesc = `${freeAngleDesc(input.az, input.el)} (azimuth ${az}°, elevation ${el}°)`
+  }
+
   const intensityPct = Math.round(brightness * 25)
   const parts = [
     `Relight this image with a ${color} light source ${dirDesc} at ${intensityPct}% intensity.`,

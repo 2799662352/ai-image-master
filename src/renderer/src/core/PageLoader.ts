@@ -229,7 +229,7 @@ export class PageLoader {
     if (panel.querySelector('.page-loading-indicator')) return
 
     const indicator = document.createElement('div')
-    indicator.className = 'page-loading-indicator fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[9999]'
+    indicator.className = 'page-loading-indicator fixed inset-0 bg-black/50 flex items-center justify-center z-[9999]'
     indicator.innerHTML = `
       <div class="bg-white rounded-lg p-6 shadow-xl flex items-center space-x-4">
         <div class="animate-spin rounded-full h-8 w-8 border-4 border-blue-500 border-t-transparent"></div>

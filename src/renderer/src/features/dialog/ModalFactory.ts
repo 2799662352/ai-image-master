@@ -36,7 +36,7 @@ export class ModalFactory {
    */
   create(config: ModalConfig): HTMLElement {
     const modal = document.createElement('div')
-    modal.className = 'fixed inset-0 bg-black bg-opacity-70 z-[60000] flex items-center justify-center p-4'
+    modal.className = 'fixed inset-0 bg-black/70 z-[60000] flex items-center justify-center p-4'
     modal.setAttribute('role', 'dialog')
     modal.setAttribute('aria-modal', 'true')
 
@@ -69,7 +69,7 @@ export class ModalFactory {
         <div class="${bgColors[config.type]} border-b px-6 py-4 rounded-t-xl">
           <div class="flex items-center justify-between">
             <div class="flex items-center space-x-3">
-              <div class="bg-white bg-opacity-50 rounded-full p-2">
+              <div class="bg-white/50 rounded-full p-2">
                 <i class="fas ${icons[config.type]} ${iconColors[config.type]} text-xl"></i>
               </div>
               <div>
@@ -109,7 +109,7 @@ export class ModalFactory {
    */
   createNetworkRestrictedModal(config: NetworkRestrictedConfig): HTMLElement {
     const modal = document.createElement('div')
-    modal.className = 'fixed inset-0 bg-black bg-opacity-70 z-[60000] flex items-center justify-center p-4'
+    modal.className = 'fixed inset-0 bg-black/70 z-[60000] flex items-center justify-center p-4'
     modal.setAttribute('role', 'dialog')
     modal.setAttribute('aria-modal', 'true')
 

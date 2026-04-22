@@ -1,8 +1,9 @@
-import { StateGraph, START, END, MemorySaver, interrupt, Command } from '@langchain/langgraph'
+import { StateGraph, StateSchema, UntrackedValue, START, END, MemorySaver, interrupt, Command } from '@langchain/langgraph'
 import { z } from 'zod'
 import { BasePipeline } from './BasePipeline'
 import { sharedSkills } from './director-skills'
 import { getPromptTemplate, renderTemplate, getDirectorSkillsFromConfig, initDirectorSkills } from './prompt-loader'
+import { CreativePreplanner, mergeCreativeDirection } from './CreativePreplanner'
 import {
   SceneAnalysisSchema,
   CharacterAnchorSchema,
@@ -36,7 +37,7 @@ const DEFAULT_VISION_DETAIL = {
 
 type VisionDetail = 'low' | 'high' | 'auto'
 
-const stateSchema = z.object({
+const stateSchema = new StateSchema({
   scene: SceneAnalysisSchema.nullable().default(null),
   characters: CharacterAnchorSchema.nullable().default(null),
   panels: z.array(z.object({
@@ -62,10 +63,13 @@ const stateSchema = z.object({
   retryCount: z.number().default(0),
   analysisRetryCount: z.number().default(0),
   retryFeedback: z.string().default(''),
-  inputImages: z.array(z.object({
-    data: z.string(),
-    mimeType: z.string(),
-  })).default([]),
+  // UntrackedValue: base64 图片不进 checkpoint，不参与并行 fan-out 深拷贝，
+  // 避免 3 路 parallel nodes 导致的 V8 OOM crash。
+  // Resume 时由 pipeline 实例变量 `_cachedInputImages` 补充。
+  inputImages: new UntrackedValue(
+    z.array(z.object({ data: z.string(), mimeType: z.string() })).default([]),
+    { guard: false },
+  ),
   sceneDescription: z.string().default(''),
   layout: z.object({
     rows: z.number(),
@@ -92,9 +96,51 @@ const stateSchema = z.object({
   styleConflicts: z.array(StyleConflictSchema).default([]),
   scoreThreshold: z.number().min(0).max(10).default(SCORE_THRESHOLD),
   taskPlan: z.string().default(''),
+  enableCreativePreplanner: z.boolean().default(false),
+  creativeDirection: z.string().default(''),
 })
 
-export type DirectorState = z.infer<typeof stateSchema>
+/**
+ * DirectorState 手动定义以保持与 UntrackedValue 的兼容性。
+ * `inputImages` 标记为可选：UntrackedValue resume 后为 undefined。
+ */
+export interface DirectorState {
+  [key: string]: unknown
+  scene: z.infer<typeof SceneAnalysisSchema> | null
+  characters: z.infer<typeof CharacterAnchorSchema> | null
+  panels: Array<{ id: number; shot: string; desc: string; lighting: string; characterAction: string; background: string }> | null
+  prompts: Array<{ id: number; prompt: string; negativePrompt: string }> | null
+  report: z.infer<typeof VerifySchema> | null
+  images: Array<{ id: number; url: string; prompt: string; error?: string }> | null
+  retryCount: number
+  analysisRetryCount: number
+  retryFeedback: string
+  inputImages: Array<{ data: string; mimeType: string }>
+  sceneDescription: string
+  layout: { rows: number; cols: number; panelCount: number }
+  template: string
+  styleInstructions: string
+  ratio: string
+  resolution: string
+  semanticOrientation: 'landscape' | 'portrait'
+  imageModel: string
+  currentImageCount: number
+  visionDetailTaskPlanning: VisionDetail
+  visionDetailAnalyzeScene: VisionDetail
+  visionDetailCharacterAnchors: VisionDetail
+  visionDetailDesignAssemble: VisionDetail
+  visionDetailVerifyConsistency: VisionDetail
+  skipTaskPlanning: boolean
+  skipVerify: boolean
+  skipAnalyzeScene: boolean
+  skipCharacterAnchors: boolean
+  styleAnchor: z.infer<typeof StyleAnchorSchema> | null
+  styleConflicts: Array<z.infer<typeof StyleConflictSchema>>
+  scoreThreshold: number
+  taskPlan: string
+  enableCreativePreplanner: boolean
+  creativeDirection: string
+}
 
 // ==================== Template Variable Extractors ====================
 
@@ -927,6 +973,12 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
   _currentThreadId: string | null = null
   _pauseRequested = false
   private _lastTotalPasses = 6
+  /**
+   * 图片 base64 备份缓存。
+   * state.inputImages 已声明为 UntrackedValue（不进 checkpoint），
+   * 但 resume 后该字段会重置为 undefined。此实例变量作为回退源。
+   */
+  _cachedInputImages: Array<{ data: string; mimeType: string }> = []
 
   constructor(config: PipelineConfig) {
     super(config)
@@ -1044,6 +1096,10 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
   buildGraph(): any {
     const self = this
 
+    /** UntrackedValue 在 resume 后为 undefined，回退到实例缓存 */
+    const getImages = (state: DirectorState) =>
+      (state.inputImages?.length ? state.inputImages : self._cachedInputImages)
+
     const writer = (config: any) => config?.writer
 
     const checkPauseAndInterrupt = (nodeName: string, config: any) => {
@@ -1110,7 +1166,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
               role: 'user',
               content: [
                 ...BasePipeline.buildImageContent(
-                  state.inputImages,
+                  getImages(state),
                   resolveVisionDetailByPass(state, 'analyzeScene'),
                 ),
                 { type: 'text' as const, text: (() => {
@@ -1199,7 +1255,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
               role: 'user',
               content: [
                 ...BasePipeline.buildImageContent(
-                  state.inputImages,
+                  getImages(state),
                   resolveVisionDetailByPass(state, 'extractCharacterAnchors'),
                 ),
                 { type: 'text' as const, text: state.taskPlan
@@ -1246,7 +1302,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       checkPauseAndInterrupt('extractStyleAnchor', config)
       const t0 = Date.now()
 
-      if (state.inputImages.length === 0) {
+      if (getImages(state).length === 0) {
         const elapsed = Date.now() - t0
         const passData = DirectorPipeline.buildPassCardData('extractStyleAnchor', { pass: 3, label: '风格锚点' }, { styleAnchor: null, skipped: true }, elapsed)
         writer(config)?.({ type: 'pass_complete', pass: 3, label: '风格锚点（无参考图，已跳过）', elapsed, passData })
@@ -1311,7 +1367,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
               role: 'user',
               content: [
                 ...BasePipeline.buildImageContent(
-                  state.inputImages,
+                  getImages(state),
                   resolveVisionDetailByPass(state, 'extractStyleAnchor'),
                 ),
                 { type: 'text' as const, text: state.taskPlan
@@ -1380,9 +1436,9 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         const llm = self.createLLM()
         const userContent: Array<any> = []
 
-        if (state.inputImages.length > 0) {
+        if (getImages(state).length > 0) {
           userContent.push(
-            ...BasePipeline.buildImageContent(state.inputImages, 'low'),
+            ...BasePipeline.buildImageContent(getImages(state), 'low'),
           )
         }
 
@@ -1511,10 +1567,10 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         return parts.join('\n\n')
       })()
       const designContent: Array<any> = []
-      if (state.inputImages.length > 0) {
+      if (getImages(state).length > 0) {
         designContent.push(
           ...BasePipeline.buildImageContent(
-            state.inputImages,
+            getImages(state),
             resolveVisionDetailByPass(state, 'designAndAssemble'),
           ),
         )
@@ -1744,8 +1800,8 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       return { images: [] }
     }
 
-    const routeAfterAnalysis = (state: DirectorState): 'continue' | 'retry' | 'abort' => {
-      return shouldRetryAnalysis(state)
+    const routeAfterAnalysis = (state: any): 'continue' | 'retry' | 'abort' => {
+      return shouldRetryAnalysis(state as DirectorState)
     }
 
     // ===== Pass 6: Contact Sheet 图像生成 =====
@@ -1800,7 +1856,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         const baseNegative = prompts[0]?.negativePrompt ||
           'blurry, deformed, bad anatomy, watermark, signature, text, labels, captions, panel numbers, irregular panels, asymmetric grid, unequal panels'
         const negativePrompt = buildAdaptiveNegativePrompt(baseNegative, state.template, state.styleAnchor)
-        const referenceImages = state.inputImages.map(img => `data:${img.mimeType};base64,${img.data}`)
+        const referenceImages = getImages(state).map(img => `data:${img.mimeType};base64,${img.data}`)
         const userConcurrency = Math.max(1, imageCount)
         const results = await self.runWithConcurrency(
           imageCount,
@@ -1874,7 +1930,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     }
 
     // ===== Routing: Evaluator-Optimizer pattern =====
-    const routeAfterEvaluator = (state: DirectorState): 'generate' | 'designAndAssemble' => {
+    const routeAfterEvaluator = (state: any): 'generate' | 'designAndAssemble' => {
       if (!state.report) return 'generate'
       if (state.retryFeedback && state.retryCount <= MAX_RETRIES) return 'designAndAssemble'
       return 'generate'
@@ -1908,7 +1964,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       .addEdge('prepareAnalysisRetry', 'analyzeScene')
       .addEdge('prepareAnalysisRetry', 'extractCharacterAnchors')
       .addEdge('abortPipeline', END)
-      .addConditionalEdges('designAndAssemble', (state: DirectorState) => {
+      .addConditionalEdges('designAndAssemble', (state: any) => {
         if (state.skipVerify) return 'generate'
         return 'evaluate'
       }, {
@@ -1988,10 +2044,41 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     const threadId = crypto.randomUUID()
     this._currentThreadId = threadId
 
-    const skipVerify = (input as Partial<DirectorState>).skipVerify ?? false
+    // 缓存图片到实例，作为 UntrackedValue resume 时的补充源
+    this._cachedInputImages = (input.inputImages ?? []).slice()
+
+    // ===== Deep Agent 创意前规划（可选） =====
+    let enrichedInput = { ...input }
+    if (input.enableCreativePreplanner && input.sceneDescription?.trim()) {
+      onProgress?.({ pass: -1, totalPasses: 0, label: 'AI 创意理解中…', status: 'running' })
+      try {
+        const preplanner = new CreativePreplanner(this.createLLM())
+        const preResult = await preplanner.plan({
+          userBrief: input.sceneDescription || '',
+          styleInstructions: input.styleInstructions,
+          template: input.template,
+          panelCount: input.layout?.panelCount,
+          hasReferenceImages: (input.inputImages?.length ?? 0) > 0,
+        })
+        if (preResult.success && preResult.direction) {
+          const merged = mergeCreativeDirection(
+            { sceneDescription: input.sceneDescription, styleInstructions: input.styleInstructions },
+            preResult.direction,
+          )
+          enrichedInput.sceneDescription = merged.sceneDescription
+          enrichedInput.styleInstructions = merged.styleInstructions
+          enrichedInput.creativeDirection = JSON.stringify(preResult.direction)
+          console.log(`[DirectorPipeline] CreativePreplanner enriched brief (${preResult.elapsed}ms)`)
+        }
+      } catch (err: unknown) {
+        console.warn('[DirectorPipeline] CreativePreplanner skipped:', err instanceof Error ? err.message : String(err))
+      }
+    }
+
+    const skipVerify = (enrichedInput as Partial<DirectorState>).skipVerify ?? false
     const totalPasses = skipVerify ? 5 : 6
     this._lastTotalPasses = totalPasses
-    let finalState: DirectorState = { ...input } as DirectorState
+    let finalState: DirectorState = { ...enrichedInput } as DirectorState
 
     const config: any = {
       streamMode: ['updates', 'custom'],
@@ -2011,7 +2098,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
 
     try {
       onProgress?.({ pass: 0, totalPasses, label: '准备中…', status: 'running' })
-      const stream = await compiledGraph.stream(input, config)
+      const stream = await compiledGraph.stream(enrichedInput, config)
       for await (const event of stream) {
         if (Array.isArray(event)) {
           const [mode, data] = event
@@ -2194,6 +2281,11 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     const { getApiService } = await import('../api/ApiService')
     const apiService = getApiService()
 
+    // regenerateImages 不走 graph，但也需要从 previousState 中恢复图片缓存
+    if (previousState.inputImages?.length) {
+      this._cachedInputImages = previousState.inputImages.slice()
+    }
+
     const state = { ...previousState, currentImageCount: imageCount } as DirectorState
     const prompts = state.prompts || []
     const passNum = state.skipVerify ? 5 : 6
@@ -2239,7 +2331,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     const baseNegative = prompts[0]?.negativePrompt ||
       'blurry, deformed, bad anatomy, watermark, signature, text, labels, captions, panel numbers, irregular panels, asymmetric grid, unequal panels'
     const negativePrompt = buildAdaptiveNegativePrompt(baseNegative, state.template, state.styleAnchor)
-    const referenceImages = state.inputImages.map(img => `data:${img.mimeType};base64,${img.data}`)
+    const referenceImages = this._cachedInputImages.map(img => `data:${img.mimeType};base64,${img.data}`)
 
     const results = await this.runWithConcurrency(
       imageCount,

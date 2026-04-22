@@ -71,7 +71,7 @@ export class ErrorHandler {
     const errorInfo: ErrorInfo = api?.formatDetailedError?.(error) || this.formatBasicError(error)
     
     const modal = document.createElement('div')
-    modal.className = 'fixed inset-0 bg-black bg-opacity-70 z-[60000] flex items-center justify-center p-4'
+    modal.className = 'fixed inset-0 bg-black/70 z-[60000] flex items-center justify-center p-4'
     
     modal.innerHTML = this.generateErrorModalHTML(errorInfo, context)
 
@@ -483,7 +483,7 @@ export class ErrorHandler {
     const showToast = this.config.showToast || ((msg: string) => console.log(msg))
     
     const modal = document.createElement('div')
-    modal.className = 'fixed inset-0 bg-black bg-opacity-70 z-[60000] flex items-center justify-center p-4'
+    modal.className = 'fixed inset-0 bg-black/70 z-[60000] flex items-center justify-center p-4'
     
     const getStatusIcon = (status: boolean | null): string => {
       if (status === true) return '<i class="fas fa-check-circle text-green-500"></i>'

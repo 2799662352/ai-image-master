@@ -106,7 +106,7 @@ export function GenerationProgress({ collapsed = false }: GenerationProgressProp
                 key={idx}
                 className={`flex items-center gap-2 px-3 py-2 rounded-none text-xs transition-colors ${
                   isActive
-                    ? 'bg-white bg-opacity-5 border border-white border-opacity-10 ring-1 ring-blue-500/40'
+                    ? 'bg-white/5 border border-white/10 ring-1 ring-blue-500/40'
                     : 'bg-[#09090B] border border-[#3F3F46]'
                 }`}
               >

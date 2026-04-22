@@ -164,7 +164,7 @@ export interface ToolCallingLoopResult {
 
 export async function runToolCallingLoop(params: {
   llm: { invoke: (messages: any[], options?: any) => Promise<any> }
-  tools: Array<{ name: string; invoke: (args: any) => Promise<string> }>
+  tools: Array<{ name: string; invoke: (args: any) => Promise<any> }>
   messages: any[]
   maxIterations?: number
   signal?: AbortSignal

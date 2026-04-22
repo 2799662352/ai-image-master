@@ -38,16 +38,32 @@ export default function DonorPreview({ item, startIndex, onClose }: Props) {
     }
   }
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!url) return
     const shortId = String(item.id).slice(-6).toLowerCase()
     const filename = `donor-${shortId}-${idx + 1}.png`
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
+    try {
+      const res = await fetch(url, { mode: 'cors' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const blob = await res.blob()
+      const objUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = objUrl
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(objUrl), 1000)
+    } catch {
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      a.target = '_blank'
+      a.rel = 'noreferrer'
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+    }
   }
 
   return createPortal(

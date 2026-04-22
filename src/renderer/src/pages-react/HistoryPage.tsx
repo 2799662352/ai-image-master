@@ -1,85 +1,151 @@
-import { useEffect, useMemo } from 'react'
-import { useToastStore, useHistoryStore } from '../stores'
-import { useHistory } from '../hooks/useHistory'
+/**
+ * HistoryPage (React 版) - 「ドーナドーナ」风 霓虹赛博朋克主题
+ * 接 HistoryDataService(真数据源),完整替代 vanilla pages/HistoryPage.ts
+ */
+
+import { useMemo, useState, useCallback } from 'react'
+import { useHistoryData, type DonorItemView } from '../hooks/useHistoryData'
+import DonorShell from '../components/donor/DonorShell'
+import DonorHeader from '../components/donor/DonorHeader'
+import DonorFilterBar, { type SortMode, type StatusFilter } from '../components/donor/DonorFilterBar'
+import DonorCard from '../components/donor/DonorCard'
+import DonorEmpty from '../components/donor/DonorEmpty'
+import DonorPreview from '../components/donor/DonorPreview'
+import DonorStorageModal from '../components/donor/DonorStorageModal'
+import { useToastStore } from '../stores'
 
 export default function HistoryPage() {
-  const history = useHistory()
+  const { items, stats, delete: deleteItem, clear } = useHistoryData()
   const addToast = useToastStore((s) => s.addToast)
 
-  const items = useHistoryStore((s) => s.items)
-  const searchQuery = useHistoryStore((s) => s.searchQuery)
-  const error = useHistoryStore((s) => s.error)
+  const [query, setQuery] = useState('')
+  const [model, setModel] = useState('')
+  const [status, setStatus] = useState<StatusFilter>('all')
+  const [sort, setSort] = useState<SortMode>('newest')
 
-  const { setSearchQuery, loadHistory, deleteItem } = useHistoryStore.getState()
+  const [preview, setPreview] = useState<{ item: DonorItemView; index: number } | null>(null)
+  const [storageOpen, setStorageOpen] = useState(false)
 
-  useEffect(() => {
-    loadHistory(history)
+  /** 唯一模型列表 */
+  const models = useMemo(() => {
+    const set = new Set<string>()
+    for (const it of items) if (it.model) set.add(it.model)
+    return Array.from(set).sort()
+  }, [items])
+
+  /** 过滤 + 排序 */
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    let list = items.filter((it) => {
+      if (q && !(it.prompt?.toLowerCase().includes(q) || String(it.model || '').toLowerCase().includes(q))) {
+        return false
+      }
+      if (model && it.model !== model) return false
+      if (status !== 'all' && it.status !== status) return false
+      return true
+    })
+    list = [...list].sort((a, b) => {
+      const ta = a.timestamp ? new Date(a.timestamp).getTime() : Number(a.id) || 0
+      const tb = b.timestamp ? new Date(b.timestamp).getTime() : Number(b.id) || 0
+      return sort === 'newest' ? tb - ta : ta - tb
+    })
+    return list
+  }, [items, query, model, status, sort])
+
+  const handleDelete = useCallback(
+    async (id: number | string) => {
+      const ok = await deleteItem(id)
+      addToast({
+        type: ok ? 'success' : 'error',
+        message: ok ? '已删除 / DELETED' : '删除失败 / FAILED',
+      })
+    },
+    [deleteItem, addToast]
+  )
+
+  const handleClear = useCallback(async () => {
+    if (items.length === 0) return
+    if (!window.confirm(`确认清空全部 ${items.length} 条记录? / WIPE ALL (${items.length})?`)) return
+    const n = await clear()
+    addToast({ type: 'success', message: `已清空 ${n} 条 / WIPED ${n}` })
+  }, [items.length, clear, addToast])
+
+  const handlePreview = useCallback((item: DonorItemView, index: number) => {
+    if (item.displayUrls.length === 0) return
+    setPreview({ item, index })
   }, [])
 
-  useEffect(() => {
-    if (error) addToast({ message: error, type: 'error' })
-  }, [error])
-
-  const filtered = useMemo(() => {
-    if (!searchQuery) return items
-    const q = searchQuery.toLowerCase()
-    return items.filter((i) => i.prompt.toLowerCase().includes(q))
-  }, [items, searchQuery])
-
-  const handleDelete = (id: number) => {
-    deleteItem(id, history)
-    if (!useHistoryStore.getState().error) {
-      addToast({ message: '已删除', type: 'success' })
-    }
-  }
-
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-orbitron text-cyberpunk-yellow">📜 生成历史</h1>
-        <span className="text-sm text-zinc-500">{items.length} 条记录</span>
+    <DonorShell>
+      {/* 背景装饰大字
+       * 注意:必须用 inline style 强制 position:absolute,
+       * 否则会被 .donor-theme > *:not(.donor-portal-modal){position:relative} 规则覆盖,
+       * 导致 180px 高度变成流式占位,把整个 Header 顶下去 ~180px */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none select-none d-mono font-black leading-none"
+        style={{
+          position: 'absolute',
+          right: '12px',
+          top: '-8px',
+          fontSize: '180px',
+          opacity: 0.08,
+          color: 'var(--donor-magenta)',
+          zIndex: 1,
+        }}
+      >
+        04
       </div>
 
-      <input
-        type="text"
-        value={searchQuery}
-        onChange={(e) => setSearchQuery(e.target.value)}
-        placeholder="搜索提示词..."
-        className="w-full px-4 py-2 bg-zinc-800 border-2 border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-cyberpunk-yellow"
+      <DonorHeader
+        total={stats.total}
+        cloud={stats.cloud}
+        local={stats.local}
+        failed={stats.failed}
+        uploading={stats.uploading}
+        onOpenStorage={() => setStorageOpen(true)}
+        onClear={handleClear}
+      />
+
+      <DonorFilterBar
+        query={query}
+        onQueryChange={setQuery}
+        model={model}
+        onModelChange={setModel}
+        models={models}
+        status={status}
+        onStatusChange={setStatus}
+        sort={sort}
+        onSortChange={setSort}
+        matchedCount={filtered.length}
+        totalCount={stats.total}
       />
 
       {filtered.length === 0 ? (
-        <div className="text-center py-12 text-zinc-600">暂无历史记录</div>
+        <DonorEmpty hasFilter={stats.total > 0} />
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filtered.map((item) => (
-            <div
-              key={item.id}
-              className="bg-zinc-900 border-2 border-zinc-700 p-4 space-y-3 hover:border-zinc-500 transition-colors"
-            >
-              {item.urls?.[0] && (
-                <img
-                  src={item.urls[0]}
-                  alt={item.prompt}
-                  className="w-full h-40 object-cover bg-zinc-800"
-                  loading="lazy"
-                />
-              )}
-              <p className="text-sm text-gray-300 line-clamp-2">{item.prompt}</p>
-              <div className="flex items-center justify-between text-xs text-zinc-500">
-                <span>{item.model ?? '未知模型'}</span>
-                <span>{new Date(item.timestamp).toLocaleDateString()}</span>
-              </div>
-              <button
-                onClick={() => handleDelete(item.id)}
-                className="text-xs text-red-400 hover:text-red-300"
-              >
-                删除
-              </button>
-            </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          {filtered.map((it) => (
+            <DonorCard key={it.id} item={it} onDelete={handleDelete} onPreview={handlePreview} />
           ))}
         </div>
       )}
-    </div>
+
+      {/* 底部 HUD 装饰条 */}
+      <footer className="mt-6 pt-3 border-t border-[color:var(--donor-magenta-dim)] d-mono text-[10px] text-[color:var(--donor-ink-mute)] flex items-center justify-between flex-wrap gap-2">
+        <span>
+          // DONOR_ARCHIVE_v1.0 — buffer_size {stats.total.toString().padStart(4, '0')} / integrity OK
+        </span>
+        <span className="d-neon-text-c">[ EOF ]</span>
+      </footer>
+
+      {preview && <DonorPreview item={preview.item} startIndex={preview.index} onClose={() => setPreview(null)} />}
+      {storageOpen && (
+        <DonorStorageModal
+          onClose={() => setStorageOpen(false)}
+          onSaved={() => addToast({ type: 'success', message: '存储配置已保存 / CFG SAVED' })}
+        />
+      )}
+    </DonorShell>
   )
 }

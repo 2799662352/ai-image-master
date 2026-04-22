@@ -93,7 +93,7 @@ export function ReferenceImageUpload() {
           onClick={() => !isProcessing && fileInputRef.current?.click()}
           onDrop={handleDrop}
           onDragOver={handleDragOver}
-          className={`border-2 border-dashed border-white border-opacity-30 rounded-none p-8 text-center transition-colors ${isProcessing ? 'opacity-60 cursor-wait' : 'cursor-pointer hover:border-purple-400'}`}
+          className={`border-2 border-dashed border-white/30 rounded-none p-8 text-center transition-colors ${isProcessing ? 'opacity-60 cursor-wait' : 'cursor-pointer hover:border-purple-400'}`}
         >
           {isProcessing ? (
             <>
@@ -158,7 +158,7 @@ export function ReferenceImageUpload() {
               className="w-full h-full object-cover"
             />
             {img.fileSize && img.fileSize > 2 * 1024 * 1024 && (
-              <div className="absolute top-1 left-1 bg-orange-500 bg-opacity-90 text-white text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 pointer-events-none">
+              <div className="absolute top-1 left-1 bg-orange-500/90 text-white text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 pointer-events-none">
                 <i className="fas fa-compress-alt" />
                 <span>{(img.fileSize / (1024 * 1024)).toFixed(1)}MB</span>
               </div>
@@ -177,7 +177,7 @@ export function ReferenceImageUpload() {
         {referenceImages.length < MAX_IMAGES && (
           <div
             onClick={() => !isProcessing && fileInputRef.current?.click()}
-            className="aspect-square border-2 border-dashed border-white border-opacity-20 rounded-none flex flex-col items-center justify-center cursor-pointer hover:border-[#FCE300] hover:border-opacity-60 transition-all group"
+            className="aspect-square border-2 border-dashed border-white/20 rounded-none flex flex-col items-center justify-center cursor-pointer hover:border-[#FCE300]/60 transition-all group"
           >
             <i className="fas fa-plus text-white opacity-30 group-hover:opacity-70 group-hover:text-[#FCE300] text-lg transition-all" />
             <span className="text-white opacity-20 group-hover:opacity-50 text-xs mt-1.5 transition-all">添加</span>

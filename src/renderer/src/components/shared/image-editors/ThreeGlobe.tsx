@@ -50,6 +50,9 @@ function ThreeGlobeInner({
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.setClearColor(0x1a1a1a, 1);
     el.appendChild(renderer.domElement);
 
@@ -127,6 +130,7 @@ function ThreeGlobeInner({
     );
     body.add(bodyEdges);
 
+    cameraIndicator.scale.setScalar(1.6);
     scene.add(cameraIndicator);
 
     const state = {
