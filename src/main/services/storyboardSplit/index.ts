@@ -134,7 +134,10 @@ export function cancelAllActiveTasks() {
     task.abortSignal.aborted = true
   }
   activeTasks.clear()
-  queue.length = 0
+  while (queue.length > 0) {
+    const item = queue.shift()!
+    item.reject(new Error('All tasks cancelled'))
+  }
 }
 
 export function getConfig() {
