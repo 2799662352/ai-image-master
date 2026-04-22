@@ -1,10 +1,95 @@
-import { useEffect } from 'react'
+import React, { useEffect } from 'react'
 import { useToastStore } from '../stores'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { useUIPrefsStore } from '../stores/useUIPrefsStore'
 import { useApi } from '../hooks/useService'
 import { SiteGrid } from './settings/SiteGrid'
 import { ApiKeyInput } from './settings/ApiKeyInput'
+
+function TencentCloudSection() {
+  const addToast = useToastStore((s) => s.addToast)
+  const [secretId, setSecretId] = React.useState('')
+  const [secretKey, setSecretKey] = React.useState('')
+  const [bucket, setBucket] = React.useState('')
+  const [region, setRegion] = React.useState('ap-guangzhou')
+  const [source, setSource] = React.useState('')
+  const [saving, setSaving] = React.useState(false)
+
+  const api = (window as any).electronAPI
+
+  React.useEffect(() => {
+    api?.storyboardSplitGetConfig?.().then((res: any) => {
+      if (res?.success && res.credentials) {
+        setSource(res.credentials.credentialSource || 'none')
+        setBucket(res.credentials.bucket || '')
+        setRegion(res.credentials.region || 'ap-guangzhou')
+      }
+    })
+  }, [])
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const res = await api?.storyboardSplitSetCredentials?.({ secretId, secretKey, bucket, region })
+      if (res?.success) {
+        addToast({ message: '腾讯云配置已保存', type: 'success' })
+        setSecretId('')
+        setSecretKey('')
+      } else {
+        addToast({ message: res?.error || '保存失败', type: 'error' })
+      }
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <section className="space-y-3 pt-4 border-t border-zinc-700">
+      <div className="flex items-center gap-2">
+        <span className="w-6 h-6 bg-cyberpunk-yellow text-cyberpunk-black flex items-center justify-center text-sm font-bold">☁</span>
+        <span className="font-bold text-white uppercase tracking-tight">腾讯云 COS / MPS</span>
+        {source && source !== 'none' && (
+          <span className="text-xs text-green-400">({source === 'env' ? '.env 已配置' : '已保存'})</span>
+        )}
+      </div>
+      <p className="text-xs text-zinc-500">用于宫格拆图功能。留空则使用 .env 环境变量。</p>
+      <div className="grid grid-cols-2 gap-3">
+        <input
+          value={secretId}
+          onChange={(e) => setSecretId(e.target.value)}
+          placeholder="SecretId"
+          className="bg-zinc-800 border border-zinc-600 text-white text-sm px-3 py-2 rounded"
+        />
+        <input
+          type="password"
+          value={secretKey}
+          onChange={(e) => setSecretKey(e.target.value)}
+          placeholder="SecretKey"
+          className="bg-zinc-800 border border-zinc-600 text-white text-sm px-3 py-2 rounded"
+        />
+        <input
+          value={bucket}
+          onChange={(e) => setBucket(e.target.value)}
+          placeholder="Bucket（含 APPID 后缀）"
+          className="bg-zinc-800 border border-zinc-600 text-white text-sm px-3 py-2 rounded"
+        />
+        <input
+          value={region}
+          onChange={(e) => setRegion(e.target.value)}
+          placeholder="Region"
+          className="bg-zinc-800 border border-zinc-600 text-white text-sm px-3 py-2 rounded"
+        />
+      </div>
+      <button
+        onClick={handleSave}
+        disabled={saving}
+        className="w-full py-2 bg-cyberpunk-yellow hover:opacity-90 text-cyberpunk-black font-bold text-sm uppercase tracking-tight transition-all disabled:opacity-50 rounded"
+      >
+        {saving ? '保存中...' : '💾 保存腾讯云配置'}
+      </button>
+    </section>
+  )
+}
 
 export default function SettingsPage() {
   const api = useApi()
@@ -146,6 +231,8 @@ export default function SettingsPage() {
           </button>
         </label>
       </section>
+
+      <TencentCloudSection />
     </div>
   )
 }
