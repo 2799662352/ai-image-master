@@ -3,6 +3,15 @@ import { app, BrowserWindow, ipcMain, dialog, Menu, shell, nativeTheme, net, cli
 import * as path from 'path'
 import * as fs from 'fs'
 import { getAutoUpdaterInstance } from './updater'
+import {
+  submitSplit,
+  cancelTask,
+  cancelAllActiveTasks,
+  getConfig as getSplitConfig,
+  setCredentialsFromUI,
+  setDefaultsFromUI,
+  setMainWindow as setSplitMainWindow,
+} from './services/storyboardSplit'
 
 // 检测开发模式：通过命令行参数或环境变量
 const isDev = process.argv.includes('--dev') || process.env.NODE_ENV === 'development'
@@ -467,6 +476,8 @@ app.whenReady().then(async () => {
   // 关键路径：创建窗口
   createWindow()
 
+  if (mainWindow) setSplitMainWindow(mainWindow)
+
   // 非关键路径：延迟初始化
   deferNonCriticalInit()
 })
@@ -522,6 +533,7 @@ function deferNonCriticalInit(): void {
 }
 
 app.on('window-all-closed', () => {
+  cancelAllActiveTasks()
   if (process.platform !== 'darwin') {
     app.quit()
   }
@@ -1040,4 +1052,26 @@ ipcMain.handle('clear-app-cache', async () => {
     console.error('清理缓存失败:', error)
     return { success: false, error: error.message }
   }
+})
+
+// ==================== 宫格拆图 IPC ====================
+
+ipcMain.handle('storyboard-split:submit', async (_event, payload) => {
+  return submitSplit(payload)
+})
+
+ipcMain.handle('storyboard-split:cancel', async (_event, { taskId }) => {
+  return cancelTask(taskId)
+})
+
+ipcMain.handle('storyboard-split:get-config', async () => {
+  return getSplitConfig()
+})
+
+ipcMain.handle('storyboard-split:set-credentials', async (_event, creds) => {
+  return setCredentialsFromUI(creds)
+})
+
+ipcMain.handle('storyboard-split:set-defaults', async (_event, config) => {
+  return setDefaultsFromUI(config)
 })

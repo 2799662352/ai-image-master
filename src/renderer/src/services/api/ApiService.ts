@@ -335,6 +335,25 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       resolutionControl: true
     }
   },
+  'gpt-image-2-all': {
+    name: 'GPT Image 2 All',
+    displayName: '30s，GPT图像生成，文生图/图片编辑/多图融合，文字还原度高，中文友好，$0.03/张🔥',
+    price: 0.03,
+    time: '30s',
+    isNew: true,
+    baseURL: 'https://b.apiyi.com/v1/images/generations',
+    editURL: 'https://b.apiyi.com/v1/images/edits',
+    apiType: 'openai',
+    sizeStrategy: 'prompt',
+    capabilities: {
+      multipleImages: false,
+      customSize: false,
+      aspectRatioControl: false,
+      referenceImage: true,
+      imageEdit: true,
+      maxOutputs: 1
+    }
+  },
   'sora_image': {
     name: 'Sora Image',
     displayName: '90s出图，Sora网页版出图，同名 gpt-4o-image，价格最便宜~！$0.01/张【荐】',
@@ -840,25 +859,23 @@ export class ApiService {
   /**
    * 构建请求 URL：用站点的域名替换模型 URL 中的域名
    */
-  private buildRequestUrl(modelConfig: ModelConfig, site: ApiSite): string {
-    // 如果模型没有指定 baseURL，使用站点默认路径
-    if (!modelConfig.baseURL) {
+  private buildRequestUrl(modelConfig: ModelConfig, site: ApiSite, urlType?: 'base' | 'edit'): string {
+    const sourceUrl = (urlType === 'edit' && modelConfig.editURL)
+      ? modelConfig.editURL
+      : modelConfig.baseURL
+
+    if (!sourceUrl) {
       return `${site.baseURL}/v1/chat/completions`
     }
 
-    // 解析模型的 baseURL，提取路径部分
     try {
-      const modelUrl = new URL(modelConfig.baseURL)
+      const modelUrl = new URL(sourceUrl)
       const siteUrl = new URL(site.baseURL)
-      
-      // 用站点的域名替换模型 URL 的域名
       modelUrl.protocol = siteUrl.protocol
       modelUrl.host = siteUrl.host
-      
       return modelUrl.toString()
     } catch {
-      // URL 解析失败，直接返回模型的 baseURL
-      return modelConfig.baseURL
+      return sourceUrl
     }
   }
 
@@ -878,6 +895,32 @@ export class ApiService {
     signal?: AbortSignal
   }): Promise<Response> {
     const { prompt, model, ratio, resolution, referenceImages, imageBase64, modelConfig, site, signal } = options
+
+    // gpt-image-2-all: 专用 Images API 路径
+    if (model === 'gpt-image-2-all') {
+      const imageSources = imageBase64 ? [imageBase64] : (referenceImages || [])
+      const hasImages = imageSources.length > 0
+
+      if (hasImages) {
+        const editUrl = this.buildRequestUrl(modelConfig, site, 'edit')
+        return this.makeGptImage2AllFormDataRequest(editUrl, prompt, imageSources, site, signal)
+      } else {
+        const genUrl = this.buildRequestUrl(modelConfig, site)
+        const body = this.buildGptImage2AllJsonPayload(prompt)
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+        if (site.authType === 'bearer') {
+          headers['Authorization'] = `Bearer ${this.apiKey}`
+        } else {
+          headers['x-api-key'] = this.apiKey!
+        }
+        return fetch(genUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+          signal,
+        })
+      }
+    }
 
     // 构建请求 URL：用站点的域名替换模型 URL 中的域名
     const url = this.buildRequestUrl(modelConfig, site)
@@ -946,6 +989,54 @@ export class ApiService {
       const blob = await this.convertToBlob(imageSource)
       if (blob) {
         formData.append('image', blob, 'image.jpg')
+      }
+    }
+
+    const headers: Record<string, string> = {}
+    if (site.authType === 'bearer') {
+      headers['Authorization'] = `Bearer ${this.apiKey}`
+    } else {
+      headers['x-api-key'] = this.apiKey!
+    }
+
+    return fetch(url, {
+      method: 'POST',
+      headers,
+      body: formData,
+      signal,
+    })
+  }
+
+  /**
+   * gpt-image-2-all 文生图 JSON payload（无参考图）
+   */
+  private buildGptImage2AllJsonPayload(prompt: string): object {
+    return {
+      model: 'gpt-image-2-all',
+      prompt,
+      response_format: 'b64_json'
+    }
+  }
+
+  /**
+   * gpt-image-2-all 图片编辑 FormData 请求（有参考图）
+   */
+  private async makeGptImage2AllFormDataRequest(
+    url: string,
+    prompt: string,
+    imageSources: string[],
+    site: ApiSite,
+    signal?: AbortSignal,
+  ): Promise<Response> {
+    const formData = new FormData()
+    formData.append('model', 'gpt-image-2-all')
+    formData.append('prompt', prompt)
+    formData.append('response_format', 'b64_json')
+
+    for (let i = 0; i < imageSources.length; i++) {
+      const blob = await this.convertToBlob(imageSources[i])
+      if (blob) {
+        formData.append('image[]', blob, `image${i}.png`)
       }
     }
 
@@ -1300,11 +1391,32 @@ export class ApiService {
       }
     }
 
-    // OpenAI 格式
+    // OpenAI Images 格式 (data[].url / data[].b64_json)
     if (data.data) {
       for (const item of data.data) {
         if (item.url) images.push(item.url)
-        if (item.b64_json) images.push(`data:image/png;base64,${item.b64_json}`)
+        if (item.b64_json) {
+          const b64 = item.b64_json
+          images.push(b64.startsWith('data:') ? b64 : `data:image/png;base64,${b64}`)
+        }
+      }
+    }
+
+    // Chat Completions 格式 (gpt-image-2-all, sora_image 等)
+    // 图片 URL 嵌入在 choices[].message.content 的 markdown 文本中
+    if (data.choices && images.length === 0) {
+      for (const choice of data.choices) {
+        const content = choice.message?.content
+        if (typeof content === 'string') {
+          const urlMatches = content.match(/https?:\/\/[^\s)"\]]+\.(?:png|jpg|jpeg|webp|gif)/gi)
+          if (urlMatches) {
+            images.push(...urlMatches)
+          }
+          const dataUrlMatches = content.match(/data:image\/[^\s)"\]]+/gi)
+          if (dataUrlMatches) {
+            images.push(...dataUrlMatches)
+          }
+        }
       }
     }
 
@@ -1384,6 +1496,13 @@ export class ApiService {
    */
   getCurrentModel(): ModelConfig | undefined {
     return this.models[this.currentModel]
+  }
+
+  /**
+   * 按 key 获取模型配置（UI 层用于读取 capabilities）
+   */
+  getModelConfig(key: string): ModelConfig | undefined {
+    return this.models[key]
   }
 
   /**
