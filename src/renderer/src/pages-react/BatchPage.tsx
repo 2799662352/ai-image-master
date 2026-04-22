@@ -43,6 +43,7 @@ interface ModelConfigSnapshot {
   resolutions?: ResolutionOption[]
   defaultResolution?: string
   capabilities?: { resolutionControl?: boolean }
+  sizeStrategy?: string
 }
 
 /**
@@ -128,7 +129,7 @@ export default function BatchPage() {
   }, [modelConfig])
 
   const sizeHidden = useMemo(() => {
-    return (modelConfig as any)?.sizeStrategy === 'prompt'
+    return modelConfig?.sizeStrategy === 'prompt'
   }, [modelConfig])
 
   const resolutionOptions = useMemo<ResolutionOption[]>(() => {

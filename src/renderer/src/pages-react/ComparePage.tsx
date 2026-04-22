@@ -25,14 +25,12 @@ export default function ComparePage() {
 
   const leftIsSizeInPrompt = useMemo(() => {
     if (!leftModelKey) return false
-    const m = models[leftModelKey] as any
-    return m?.sizeStrategy === 'prompt'
+    return models[leftModelKey]?.sizeStrategy === 'prompt'
   }, [models, leftModelKey])
 
   const rightIsSizeInPrompt = useMemo(() => {
     if (!rightModelKey) return false
-    const m = models[rightModelKey] as any
-    return m?.sizeStrategy === 'prompt'
+    return models[rightModelKey]?.sizeStrategy === 'prompt'
   }, [models, rightModelKey])
 
   const showSizeHint = leftIsSizeInPrompt || rightIsSizeInPrompt

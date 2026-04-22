@@ -3,6 +3,7 @@ import { create } from 'zustand'
 export interface ModelInfo {
   name: string
   capabilities?: Record<string, unknown>
+  sizeStrategy?: string
   [key: string]: unknown
 }
 

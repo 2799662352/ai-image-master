@@ -28,7 +28,7 @@ export default function GeneratePage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const currentModel = models[currentModelKey]
-  const isSizeInPrompt = (currentModel as any)?.sizeStrategy === 'prompt'
+  const isSizeInPrompt = currentModel?.sizeStrategy === 'prompt'
 
   const genMediaRefs = useMemo<MediaRef[]>(
     () => referenceImages.map((url, i) => ({
