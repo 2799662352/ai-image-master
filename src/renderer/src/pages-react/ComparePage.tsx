@@ -23,6 +23,20 @@ export default function ComparePage() {
     [models]
   )
 
+  const leftIsSizeInPrompt = useMemo(() => {
+    if (!leftModelKey) return false
+    const m = models[leftModelKey] as any
+    return m?.sizeStrategy === 'prompt'
+  }, [models, leftModelKey])
+
+  const rightIsSizeInPrompt = useMemo(() => {
+    if (!rightModelKey) return false
+    const m = models[rightModelKey] as any
+    return m?.sizeStrategy === 'prompt'
+  }, [models, rightModelKey])
+
+  const showSizeHint = leftIsSizeInPrompt || rightIsSizeInPrompt
+
   useEffect(() => {
     if (error) addToast({ message: error, type: 'error' })
   }, [error])
@@ -54,6 +68,17 @@ export default function ComparePage() {
         onLeftChange={setLeftModel}
         onRightChange={setRightModel}
       />
+
+      {showSizeHint && (
+        <div className="px-4 py-2 bg-zinc-800/60 border-2 border-zinc-700 text-sm text-zinc-400">
+          <span className="text-cyberpunk-yellow font-bold">⚡</span>
+          <span className="ml-2">
+            {leftIsSizeInPrompt && rightIsSizeInPrompt
+              ? '两侧模型均为尺寸自适应，如需指定尺寸请在提示词中描述'
+              : `${leftIsSizeInPrompt ? '左侧' : '右侧'}模型尺寸自适应，如需指定尺寸请在提示词中描述`}
+          </span>
+        </div>
+      )}
 
       <textarea
         value={prompt}
