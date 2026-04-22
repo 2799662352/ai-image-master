@@ -122,7 +122,10 @@ export function cancelTask(taskId: string) {
     activeTasks.delete(taskId)
   }
   const queueIdx = queue.findIndex((q) => q.payload.taskId === taskId)
-  if (queueIdx >= 0) queue.splice(queueIdx, 1)
+  if (queueIdx >= 0) {
+    const [removed] = queue.splice(queueIdx, 1)
+    removed.reject(new Error('Task cancelled'))
+  }
   return { success: true }
 }
 

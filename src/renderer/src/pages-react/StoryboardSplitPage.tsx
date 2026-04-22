@@ -35,7 +35,6 @@ export default function StoryboardSplitPage() {
     api?.storyboardSplitGetConfig?.().then((res: any) => {
       if (res?.success) {
         setHasCredentials(res.credentials?.hasCredentials ?? false)
-        if (res.defaults) updateDefaultConfig(res.defaults)
       }
     })
   }, [])
@@ -178,9 +177,10 @@ export default function StoryboardSplitPage() {
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => resolve(reader.result as string)
+    reader.onerror = () => reject(new Error('Failed to read file'))
     reader.readAsDataURL(file)
   })
 }

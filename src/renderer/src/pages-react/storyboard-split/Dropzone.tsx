@@ -43,17 +43,19 @@ export function Dropzone({ disabled, onFiles, onReject }: DropzoneProps) {
   const handlePaste = useCallback(
     (e: React.ClipboardEvent) => {
       if (disabled) return
-      const items = e.clipboardData.items
       const files: File[] = []
-      for (const item of Array.from(items)) {
-        if (item.kind === 'file' && ACCEPTED_TYPES.includes(item.type)) {
+      for (const item of Array.from(e.clipboardData.items)) {
+        if (item.kind === 'file') {
           const f = item.getAsFile()
-          if (f && f.size <= MAX_SIZE) files.push(f)
+          if (f) files.push(f)
         }
       }
-      if (files.length) onFiles(files)
+      if (files.length) {
+        const valid = validate(files)
+        if (valid.length) onFiles(valid)
+      }
     },
-    [disabled, onFiles]
+    [disabled, onFiles, validate]
   )
 
   return (
