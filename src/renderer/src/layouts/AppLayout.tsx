@@ -10,6 +10,7 @@ import {
   SettingsPage,
   DirectorPage,
   PromptTemplatesPage,
+  StoryboardSplitPage,
 } from '../pages-react'
 
 const PAGE_MAP: Record<TabName, React.LazyExoticComponent<() => React.JSX.Element>> = {
@@ -21,6 +22,7 @@ const PAGE_MAP: Record<TabName, React.LazyExoticComponent<() => React.JSX.Elemen
   settings: SettingsPage,
   director: DirectorPage,
   promptTemplates: PromptTemplatesPage,
+  storyboardSplit: StoryboardSplitPage,
 }
 
 function PageFallback() {

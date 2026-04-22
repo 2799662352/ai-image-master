@@ -13,6 +13,7 @@ const TABS: TabDef[] = [
   { key: 'history', label: '历史', icon: '📜' },
   { key: 'understand', label: '理解', icon: '🧠' },
   { key: 'director', label: '导演', icon: '🎬' },
+  { key: 'storyboardSplit', label: '拆图', icon: '🧩' },
   { key: 'promptTemplates', label: '模板', icon: '📝' },
   { key: 'settings', label: '设置', icon: '⚙️' },
 ]

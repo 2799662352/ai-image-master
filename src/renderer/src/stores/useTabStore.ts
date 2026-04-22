@@ -8,8 +8,9 @@ const VALID_TABS = [
   'history',
   'understand',
   'director',
-  'settings',
+  'storyboardSplit',
   'promptTemplates',
+  'settings',
 ] as const
 
 export type TabName = (typeof VALID_TABS)[number]
