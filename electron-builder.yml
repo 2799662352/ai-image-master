@@ -115,9 +115,13 @@ deb:
     - libnss3
 
 publish:
-  provider: github
-  owner: "2799662352"
-  repo: ai-image-master
-  releaseType: release
+  - provider: generic
+    url: https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/
+    channel: latest
+    useMultipleRangeRequest: true
+  - provider: github
+    owner: "2799662352"
+    repo: ai-image-master
+    releaseType: release
 
 generateUpdatesFilesForAllChannels: true

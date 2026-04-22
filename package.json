@@ -36,7 +36,9 @@
     "test:bench": "vitest bench",
     "test:bench:run": "vitest bench --run",
     "test:bench:ci": "vitest bench --run",
-    "release": "npm run build:vite && electron-builder --publish always"
+    "release": "npm run build:vite && electron-builder --publish always",
+    "upload:cos": "node scripts/upload-cos.js",
+    "release:cn": "npm run build:win && node scripts/upload-cos.js"
   },
   "dependencies": {
     "@langchain/core": "^1.1.40",
