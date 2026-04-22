@@ -1,16 +1,22 @@
-import { getCredentials } from './config'
+import { getCredentials, onCredentialsInvalidated } from './config'
 
 let COS: any = null
+let cosInstance: any = null
+
+onCredentialsInvalidated(() => { cosInstance = null })
 
 function getCosInstance() {
-  const creds = getCredentials()
-  if (!COS) COS = require('cos-nodejs-sdk-v5')
-  return new COS({
-    SecretId: creds.secretId,
-    SecretKey: creds.secretKey,
-    Protocol: 'https:',
-    Timeout: 120000,
-  })
+  if (!cosInstance) {
+    const creds = getCredentials()
+    if (!COS) COS = require('cos-nodejs-sdk-v5')
+    cosInstance = new COS({
+      SecretId: creds.secretId,
+      SecretKey: creds.secretKey,
+      Protocol: 'https:',
+      Timeout: 120000,
+    })
+  }
+  return cosInstance
 }
 
 function getBucketAndRegion() {

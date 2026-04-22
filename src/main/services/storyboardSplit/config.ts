@@ -1,6 +1,13 @@
 import type { SplitConfig, CredentialState } from '../../../types/storyboardSplit'
 import { DEFAULT_SPLIT_CONFIG } from '../../../types/storyboardSplit'
 
+type InvalidateCallback = () => void
+const invalidateCallbacks: InvalidateCallback[] = []
+
+export function onCredentialsInvalidated(cb: InvalidateCallback): void {
+  invalidateCallbacks.push(cb)
+}
+
 let Store: any
 let credentialStore: any = null
 
@@ -69,6 +76,7 @@ export function setCredentials(creds: Partial<Credentials>): void {
   if (creds.secretKey !== undefined) store.set('secretKey', creds.secretKey)
   if (creds.bucket !== undefined) store.set('bucket', creds.bucket)
   if (creds.region !== undefined) store.set('region', creds.region)
+  invalidateCallbacks.forEach((cb) => cb())
 }
 
 let defaultConfig: SplitConfig = { ...DEFAULT_SPLIT_CONFIG }
