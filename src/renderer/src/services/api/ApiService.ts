@@ -1033,11 +1033,17 @@ export class ApiService {
     formData.append('prompt', prompt)
     formData.append('response_format', 'b64_json')
 
+    let appendedCount = 0
     for (let i = 0; i < imageSources.length; i++) {
       const blob = await this.convertToBlob(imageSources[i])
       if (blob) {
         formData.append('image[]', blob, `image${i}.png`)
+        appendedCount++
       }
+    }
+
+    if (appendedCount === 0) {
+      throw new Error('参考图转换失败：所有图片均无法转为 Blob，请检查图片格式')
     }
 
     const headers: Record<string, string> = {}

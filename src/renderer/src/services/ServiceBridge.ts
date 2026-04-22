@@ -775,6 +775,16 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
     }
     console.log('[ServiceBridge] ✓ window.aiImageAPI 兼容接口已创建')
 
+    // 同步模型列表到 React store（含 sizeStrategy 等完整配置）
+    try {
+      const { useModelStore } = await import('../stores/useModelStore')
+      const allModels = apiService.getAllModels()
+      useModelStore.getState().setModels(allModels as any)
+      console.log('[ServiceBridge] ✓ 模型列表已同步到 useModelStore')
+    } catch (e) {
+      console.warn('[ServiceBridge] 模型同步到 useModelStore 失败:', e)
+    }
+
     window.__serviceBridgeInitialized = true
     console.log(`[ServiceBridge] 服务桥接初始化完成: ${(performance.now() - startTime).toFixed(1)}ms`)
 
