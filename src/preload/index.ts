@@ -8,6 +8,14 @@
 // ✅ 所有方法使用 ipcRenderer.invoke 进行请求-响应通信
 //
 import { ipcRenderer, IpcRendererEvent } from 'electron'
+import type {
+  SplitSubmitPayload,
+  SplitConfig,
+  SplitProgressEvent,
+  SplitFinishedEvent,
+  SplitFailedEvent,
+  CredentialState,
+} from '../types/storyboardSplit'
 
 // ==================== IPC 通道常量 ====================
 // 集中管理所有 IPC 通道，便于类型检查和维护
@@ -203,12 +211,12 @@ export interface ElectronAPI {
   onNativeThemeChanged: (callback: (data: { shouldUseDarkColors: boolean; prefersReducedTransparency: boolean }) => void) => void
   removeNativeThemeListener: () => void
   // 宫格拆图
-  storyboardSplitSubmit: (payload: any) => Promise<any>
-  storyboardSplitCancel: (taskId: string) => Promise<any>
-  storyboardSplitGetConfig: () => Promise<any>
-  storyboardSplitSetCredentials: (creds: any) => Promise<any>
-  storyboardSplitSetDefaults: (config: any) => Promise<any>
-  onStoryboardSplitEvent: (callback: (channel: string, data: any) => void) => void
+  storyboardSplitSubmit: (payload: SplitSubmitPayload) => Promise<{ success: boolean; error?: string; errorCode?: string }>
+  storyboardSplitCancel: (taskId: string) => Promise<{ success: boolean }>
+  storyboardSplitGetConfig: () => Promise<{ success: boolean; defaults: SplitConfig; credentials: CredentialState }>
+  storyboardSplitSetCredentials: (creds: { secretId: string; secretKey: string; bucket: string; region: string }) => Promise<{ success: boolean }>
+  storyboardSplitSetDefaults: (config: SplitConfig) => Promise<{ success: boolean }>
+  onStoryboardSplitEvent: (callback: (channel: string, data: SplitProgressEvent | SplitFinishedEvent | SplitFailedEvent) => void) => void
   removeStoryboardSplitListeners: () => void
   // 通用事件监听（用于更新等事件）
   on: (channel: string, callback: (...args: any[]) => void) => void
