@@ -36,12 +36,23 @@ function getCredentialStore() {
   return credentialStore
 }
 
-const BUILTIN_CREDENTIALS: Credentials = {
-  secretId: 'AKIDF3h9Y5UgiZr9FRSGsHWfktyxoldYItJX',
-  secretKey: 'CJCtMbT8aprhKjy0qTQJ9pLjwzueIpBM',
-  bucket: 'map-tiles-bucket-1345773498',
-  region: 'ap-guangzhou',
+function loadBuiltinCredentials(): Credentials {
+  const empty: Credentials = { secretId: '', secretKey: '', bucket: '', region: 'ap-guangzhou' }
+  try {
+    const { app } = require('electron')
+    const path = require('path')
+    const fs = require('fs')
+    const credPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'cos-credentials.json')
+      : path.resolve(__dirname, '../../../../cos-credentials.json')
+    if (fs.existsSync(credPath)) {
+      return { ...empty, ...JSON.parse(fs.readFileSync(credPath, 'utf-8')) }
+    }
+  } catch {}
+  return empty
 }
+
+const BUILTIN_CREDENTIALS: Credentials = loadBuiltinCredentials()
 
 export function getCredentials(): Credentials {
   const store = getCredentialStore()

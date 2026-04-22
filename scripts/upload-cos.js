@@ -29,11 +29,16 @@ const pkg = require(path.resolve(__dirname, '..', 'package.json'))
 const version = pkg.version
 const releaseDir = path.resolve(__dirname, '..', 'release')
 
-const files = [
+const allFiles = [
   `catimation-cyberpunk-master-${version}-setup.exe`,
   `catimation-cyberpunk-master-${version}-setup.exe.blockmap`,
   'latest.yml',
 ]
+
+const onlySmall = process.argv.includes('--small')
+const files = onlySmall
+  ? allFiles.filter((f) => !f.endsWith('.exe'))
+  : allFiles
 
 async function upload(fileName) {
   const filePath = path.join(releaseDir, fileName)
@@ -54,13 +59,21 @@ async function upload(fileName) {
         Region,
         Key: COS_PREFIX + fileName,
         FilePath: filePath,
+        SliceSize: 1024 * 1024 * 5,
         onProgress(info) {
           const pct = (info.percent * 100).toFixed(1)
           const speed = (info.speed / 1024 / 1024).toFixed(1)
           process.stdout.write(`\r  ${pct}%  ${speed} MB/s`)
         },
       },
-      (err, data) => (err ? reject(err) : resolve(data))
+      (err, data) => {
+        if (err) {
+          console.error(`\n✗ 上传失败：`, JSON.stringify(err, null, 2))
+          reject(err)
+        } else {
+          resolve(data)
+        }
+      }
     )
   })
 

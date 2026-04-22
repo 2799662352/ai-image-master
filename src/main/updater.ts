@@ -34,6 +34,8 @@ export interface UpdaterConfig {
   retryDelay?: number
   /** V17: 发布渠道 (latest/stable/beta/alpha) */
   channel?: ReleaseChannel
+  /** 备用更新源（主源失败时自动切换） */
+  fallback?: Partial<UpdaterConfig>
 }
 
 export interface UpdateProgress {
@@ -59,6 +61,7 @@ export class AutoUpdater {
   private config: UpdaterConfig
   private downloadRetryCount = 0
   private downloadStartTime: number | null = null
+  private usingFallback = false
 
   constructor(config: UpdaterConfig = {}) {
     this.config = {
@@ -204,6 +207,15 @@ export class AutoUpdater {
         setTimeout(() => {
           this.downloadUpdateInternal()
         }, this.config.retryDelay ?? 2000)
+        return
+      }
+
+      if (!this.isDownloading && !this.usingFallback && this.config.fallback) {
+        console.log(`[AutoUpdater] 主源 ${this.config.provider} 检查失败，切换到备用源...`)
+        this.usingFallback = true
+        this.switchProvider(this.config.fallback)
+        this.isCheckingUpdate = false
+        setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 1000)
         return
       }
 
@@ -490,6 +502,15 @@ export class AutoUpdater {
    */
   isDownloadingUpdate(): boolean {
     return this.isDownloading
+  }
+
+  /**
+   * 运行时切换更新源（用于 COS → GitHub fallback）
+   */
+  switchProvider(newConfig: Partial<UpdaterConfig>): void {
+    Object.assign(this.config, newConfig)
+    this.setFeedURL()
+    console.log(`[AutoUpdater] 已切换 provider → ${this.config.provider}`)
   }
 }
 

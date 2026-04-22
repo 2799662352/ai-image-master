@@ -511,13 +511,17 @@ function deferNonCriticalInit(): void {
       // 检查窗口是否仍然有效
       if (currentWindow && !currentWindow.isDestroyed()) {
         // 使用 getAutoUpdaterInstance() 获取已初始化的实例
-        const autoUpdater = getAutoUpdaterInstance({
-          provider: 'github',
-          owner: '2799662352',
-          repo: 'ai-image-master'
+        const updater = getAutoUpdaterInstance({
+          provider: 'generic',
+          url: 'https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/',
+          fallback: {
+            provider: 'github',
+            owner: '2799662352',
+            repo: 'ai-image-master'
+          }
         })
-        autoUpdater.setMainWindow(currentWindow)
-        autoUpdater.checkForUpdatesOnStartup(0)
+        updater.setMainWindow(currentWindow)
+        updater.checkForUpdatesOnStartup(0)
         console.log(`[Performance] Auto-updater initialized: ${Date.now() - startTime}ms`)
       }
     }, 15000)

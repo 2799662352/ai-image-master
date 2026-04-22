@@ -35,6 +35,8 @@ extraResources:
     to: skills
     filter:
       - "**/*.md"
+  - from: cos-credentials.json
+    to: cos-credentials.json
 
 asarUnpack:
   - resources/**
