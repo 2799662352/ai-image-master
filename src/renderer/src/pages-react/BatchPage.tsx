@@ -127,6 +127,10 @@ export default function BatchPage() {
     )
   }, [modelConfig])
 
+  const sizeHidden = useMemo(() => {
+    return (modelConfig as any)?.sizeStrategy === 'prompt'
+  }, [modelConfig])
+
   const resolutionOptions = useMemo<ResolutionOption[]>(() => {
     if (supportsResolution && modelConfig?.resolutions) return modelConfig.resolutions
     return FALLBACK_RESOLUTIONS
@@ -308,6 +312,7 @@ export default function BatchPage() {
             onRatioChange={setRatio}
             onResolutionChange={setResolution}
             onConcurrencyChange={setConcurrency}
+            sizeHidden={sizeHidden}
           />
           <PunkRefDrop
             images={refImages}

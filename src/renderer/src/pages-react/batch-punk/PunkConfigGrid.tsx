@@ -20,6 +20,7 @@ interface Props {
   onRatioChange: (s: string) => void
   onResolutionChange: (s: string) => void
   onConcurrencyChange: (n: number) => void
+  sizeHidden?: boolean
 }
 
 function formatOption(opt: RatioOption | ResolutionOption): string {
@@ -41,6 +42,7 @@ export default function PunkConfigGrid({
   onRatioChange,
   onResolutionChange,
   onConcurrencyChange,
+  sizeHidden,
 }: Props) {
   return (
     <div
@@ -51,65 +53,81 @@ export default function PunkConfigGrid({
         marginBottom: 20,
       }}
     >
-      {/* RATIO */}
-      <div
-        className="p-sticker"
-        style={{ background: 'var(--punk-cream)', padding: '0.8rem 1rem' }}
-      >
-        <div className="p-display" style={{ fontSize: 12, marginBottom: 6, opacity: 0.85 }}>
-          // RATIO 比例
-        </div>
-        <select
-          value={ratio}
-          onChange={(e) => onRatioChange(e.target.value)}
-          className="p-select"
-          aria-label="尺寸比例"
+      {sizeHidden ? (
+        <div
+          className="p-sticker"
+          style={{ background: 'var(--punk-cream)', padding: '0.8rem 1rem', gridColumn: 'span 2' }}
         >
-          {ratioOptions.map((r) => (
-            <option key={r.key} value={r.key}>{formatOption(r)}</option>
-          ))}
-        </select>
-      </div>
-
-      {/* RESOLUTION */}
-      <div
-        className="p-sticker p-tilt-r-2"
-        style={{ background: 'var(--punk-cream)', padding: '0.8rem 1rem' }}
-      >
-        <div className="p-display" style={{ fontSize: 12, marginBottom: 6, opacity: 0.85 }}>
-          // RES 清晰度
-        </div>
-        {supportsResolution ? (
-          <select
-            value={resolution}
-            onChange={(e) => onResolutionChange(e.target.value)}
-            className="p-select"
-            aria-label="清晰度"
-          >
-            {resolutionOptions.map((r) => (
-              <option key={r.key} value={r.key}>{formatOption(r)}</option>
-            ))}
-          </select>
-        ) : (
-          <div
-            className="p-mono"
-            style={{
-              padding: '0.5rem 0.6rem',
-              background: 'var(--punk-black)',
-              color: 'var(--punk-cream)',
-              fontSize: 11,
-              fontWeight: 900,
-              border: '2px solid var(--punk-black)',
-              opacity: 0.85,
-            }}
-            aria-label="当前模型不支持清晰度切换"
-          >
-            // MODEL DEFAULT (该模型不支持切换)
+          <div className="p-display" style={{ fontSize: 12, marginBottom: 6, opacity: 0.85 }}>
+            // SIZE 尺寸
           </div>
-        )}
-      </div>
+          <div className="p-mono" style={{ fontSize: 11, fontWeight: 700, opacity: 0.75 }}>
+            ⚡ 该模型尺寸自适应，如需指定请在提示词中描述（如"横版16:9"）
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* RATIO */}
+          <div
+            className="p-sticker"
+            style={{ background: 'var(--punk-cream)', padding: '0.8rem 1rem' }}
+          >
+            <div className="p-display" style={{ fontSize: 12, marginBottom: 6, opacity: 0.85 }}>
+              // RATIO 比例
+            </div>
+            <select
+              value={ratio}
+              onChange={(e) => onRatioChange(e.target.value)}
+              className="p-select"
+              aria-label="尺寸比例"
+            >
+              {ratioOptions.map((r) => (
+                <option key={r.key} value={r.key}>{formatOption(r)}</option>
+              ))}
+            </select>
+          </div>
 
-      {/* CONCURRENCY */}
+          {/* RESOLUTION */}
+          <div
+            className="p-sticker p-tilt-r-2"
+            style={{ background: 'var(--punk-cream)', padding: '0.8rem 1rem' }}
+          >
+            <div className="p-display" style={{ fontSize: 12, marginBottom: 6, opacity: 0.85 }}>
+              // RES 清晰度
+            </div>
+            {supportsResolution ? (
+              <select
+                value={resolution}
+                onChange={(e) => onResolutionChange(e.target.value)}
+                className="p-select"
+                aria-label="清晰度"
+              >
+                {resolutionOptions.map((r) => (
+                  <option key={r.key} value={r.key}>{formatOption(r)}</option>
+                ))}
+              </select>
+            ) : (
+              <div
+                className="p-mono"
+                style={{
+                  padding: '0.5rem 0.6rem',
+                  background: 'var(--punk-black)',
+                  color: 'var(--punk-cream)',
+                  fontSize: 11,
+                  fontWeight: 900,
+                  border: '2px solid var(--punk-black)',
+                  opacity: 0.85,
+                }}
+                aria-label="当前模型不支持清晰度切换"
+              >
+                // MODEL DEFAULT (该模型不支持切换)
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* CONCURRENCY — always visible */}
       <div
         className="p-sticker p-tilt-l-2"
         style={{
