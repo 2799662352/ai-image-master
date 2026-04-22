@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback } from 'react'
+import React, { useEffect, useCallback, useState } from 'react'
 import { useSplitSessionStore, useSplitPersistStore, useToastStore } from '../stores'
 import type {
   SplitTask,
@@ -196,9 +196,11 @@ export default function StoryboardSplitPage() {
       />
 
       {credentialState && !credentialState.hasCredentials && (
-        <div className="d-neon-frame p-3 mb-4 d-mono text-[11px] text-[color:var(--donor-red)] tracking-widest">
-          ⚠ NO_CREDENTIALS — 設定ページで腾讯云キーを配置してください
-        </div>
+        <CredentialSetupPanel
+          onSaved={(creds) => {
+            setCredentialState({ hasCredentials: true, credentialSource: 'store', secretIdMasked: creds.secretId.slice(0, 4) + '****', bucket: creds.bucket, region: creds.region })
+          }}
+        />
       )}
 
       <div className="space-y-4">
@@ -238,6 +240,103 @@ export default function StoryboardSplitPage() {
         onDelete={handleDelete}
       />
     </DonorShell>
+  )
+}
+
+function CredentialSetupPanel({ onSaved }: { onSaved: (creds: { secretId: string; secretKey: string; bucket: string; region: string }) => void }) {
+  const [secretId, setSecretId] = useState('')
+  const [secretKey, setSecretKey] = useState('')
+  const [bucket, setBucket] = useState('map-tiles-bucket-1345773498')
+  const [region, setRegion] = useState('ap-guangzhou')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  const handleSave = async () => {
+    if (!secretId.trim() || !secretKey.trim()) {
+      setError('SecretId 和 SecretKey 不能为空')
+      return
+    }
+    setSaving(true)
+    setError('')
+    try {
+      const res = await api?.storyboardSplitSetCredentials?.({ secretId: secretId.trim(), secretKey: secretKey.trim(), bucket: bucket.trim(), region: region.trim() })
+      if (res?.success) {
+        onSaved({ secretId: secretId.trim(), secretKey: secretKey.trim(), bucket: bucket.trim(), region: region.trim() })
+      } else {
+        setError('保存失败，请重试')
+      }
+    } catch {
+      setError('保存失败，请检查网络')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="d-neon-frame p-6 mb-4" style={{ borderColor: 'var(--donor-red)' }}>
+      <div className="d-mono text-sm text-[color:var(--donor-red)] tracking-widest mb-4 flex items-center gap-2">
+        <span style={{ fontSize: '18px' }}>⚠</span>
+        <span>未配置腾讯云密钥 — 宫格拆图需要腾讯云 COS/MPS 服务</span>
+      </div>
+
+      <div className="text-[color:var(--donor-ink-dim)] text-xs mb-4 leading-relaxed">
+        请前往
+        <a href="https://console.cloud.tencent.com/cam/capi" target="_blank" rel="noopener noreferrer" className="text-[color:var(--donor-cyan)] underline mx-1">腾讯云控制台 → 访问管理 → API密钥</a>
+        获取 SecretId 和 SecretKey，然后在下方填入：
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+        <div>
+          <label className="d-mono text-[10px] text-[color:var(--donor-ink-mute)] tracking-widest block mb-1">SECRET_ID *</label>
+          <input
+            type="text"
+            value={secretId}
+            onChange={(e) => setSecretId(e.target.value)}
+            placeholder="AKIDxxxxxxxxxxxxxxxx"
+            className="w-full px-3 py-2 bg-[color:var(--donor-bg-0)] border border-[color:var(--donor-magenta-dim)] text-[color:var(--donor-ink)] d-mono text-xs focus:outline-none focus:border-[color:var(--donor-cyan)]"
+          />
+        </div>
+        <div>
+          <label className="d-mono text-[10px] text-[color:var(--donor-ink-mute)] tracking-widest block mb-1">SECRET_KEY *</label>
+          <input
+            type="password"
+            value={secretKey}
+            onChange={(e) => setSecretKey(e.target.value)}
+            placeholder="xxxxxxxxxxxxxxxxxxxxxxxx"
+            className="w-full px-3 py-2 bg-[color:var(--donor-bg-0)] border border-[color:var(--donor-magenta-dim)] text-[color:var(--donor-ink)] d-mono text-xs focus:outline-none focus:border-[color:var(--donor-cyan)]"
+          />
+        </div>
+        <div>
+          <label className="d-mono text-[10px] text-[color:var(--donor-ink-mute)] tracking-widest block mb-1">BUCKET</label>
+          <input
+            type="text"
+            value={bucket}
+            onChange={(e) => setBucket(e.target.value)}
+            className="w-full px-3 py-2 bg-[color:var(--donor-bg-0)] border border-[color:var(--donor-magenta-dim)] text-[color:var(--donor-ink)] d-mono text-xs focus:outline-none focus:border-[color:var(--donor-cyan)]"
+          />
+        </div>
+        <div>
+          <label className="d-mono text-[10px] text-[color:var(--donor-ink-mute)] tracking-widest block mb-1">REGION</label>
+          <input
+            type="text"
+            value={region}
+            onChange={(e) => setRegion(e.target.value)}
+            className="w-full px-3 py-2 bg-[color:var(--donor-bg-0)] border border-[color:var(--donor-magenta-dim)] text-[color:var(--donor-ink)] d-mono text-xs focus:outline-none focus:border-[color:var(--donor-cyan)]"
+          />
+        </div>
+      </div>
+
+      {error && <div className="d-mono text-[11px] text-[color:var(--donor-red)] mb-3">{error}</div>}
+
+      <button
+        type="button"
+        onClick={handleSave}
+        disabled={saving}
+        className="d-mono text-xs tracking-widest uppercase px-6 py-2 border border-[color:var(--donor-cyan)] text-[color:var(--donor-cyan)] hover:bg-[color:var(--donor-cyan)] hover:text-[color:var(--donor-bg-0)] transition-colors disabled:opacity-50"
+      >
+        {saving ? 'SAVING...' : '[ SAVE & ACTIVATE ]'}
+      </button>
+    </div>
   )
 }
 
