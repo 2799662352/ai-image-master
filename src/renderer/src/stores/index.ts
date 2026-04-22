@@ -32,3 +32,6 @@ export { useTemplatesStore } from './useTemplatesStore'
 export type { TemplatesState } from './useTemplatesStore'
 
 export { useUIPrefsStore } from './useUIPrefsStore'
+
+export { useSplitSessionStore } from './useSplitSessionStore'
+export { useSplitPersistStore } from './useSplitPersistStore'

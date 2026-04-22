@@ -85,7 +85,20 @@ const IPC_CHANNELS = {
     LOAD_ALL: 'load-skills',
     SAVE: 'save-skill',
     OPEN_FOLDER: 'open-skills-folder',
-  }
+  },
+  // 宫格拆图
+  STORYBOARD_SPLIT: {
+    SUBMIT: 'storyboard-split:submit',
+    CANCEL: 'storyboard-split:cancel',
+    GET_CONFIG: 'storyboard-split:get-config',
+    SET_CREDENTIALS: 'storyboard-split:set-credentials',
+    SET_DEFAULTS: 'storyboard-split:set-defaults',
+  },
+  STORYBOARD_SPLIT_EVENTS: [
+    'storyboard-split:progress',
+    'storyboard-split:finished',
+    'storyboard-split:failed',
+  ] as const,
 } as const
 
 // ==================== 类型定义 ====================
@@ -189,6 +202,14 @@ export interface ElectronAPI {
   // 系统主题监听
   onNativeThemeChanged: (callback: (data: { shouldUseDarkColors: boolean; prefersReducedTransparency: boolean }) => void) => void
   removeNativeThemeListener: () => void
+  // 宫格拆图
+  storyboardSplitSubmit: (payload: any) => Promise<any>
+  storyboardSplitCancel: (taskId: string) => Promise<any>
+  storyboardSplitGetConfig: () => Promise<any>
+  storyboardSplitSetCredentials: (creds: any) => Promise<any>
+  storyboardSplitSetDefaults: (config: any) => Promise<any>
+  onStoryboardSplitEvent: (callback: (channel: string, data: any) => void) => void
+  removeStoryboardSplitListeners: () => void
   // 通用事件监听（用于更新等事件）
   on: (channel: string, callback: (...args: any[]) => void) => void
   off: (channel: string) => void
@@ -368,13 +389,42 @@ const electronAPI: ElectronAPI = {
     ipcRenderer.removeAllListeners(IPC_CHANNELS.SYSTEM.NATIVE_THEME_CHANGED)
   },
 
+  // ============ 宫格拆图 ============
+  storyboardSplitSubmit: (payload: any) =>
+    safeInvoke(IPC_CHANNELS.STORYBOARD_SPLIT.SUBMIT, payload),
+
+  storyboardSplitCancel: (taskId: string) =>
+    safeInvoke(IPC_CHANNELS.STORYBOARD_SPLIT.CANCEL, { taskId }),
+
+  storyboardSplitGetConfig: () =>
+    safeInvoke(IPC_CHANNELS.STORYBOARD_SPLIT.GET_CONFIG),
+
+  storyboardSplitSetCredentials: (creds: any) =>
+    safeInvoke(IPC_CHANNELS.STORYBOARD_SPLIT.SET_CREDENTIALS, creds),
+
+  storyboardSplitSetDefaults: (config: any) =>
+    safeInvoke(IPC_CHANNELS.STORYBOARD_SPLIT.SET_DEFAULTS, config),
+
+  onStoryboardSplitEvent: (callback: (channel: string, data: any) => void) => {
+    for (const ch of IPC_CHANNELS.STORYBOARD_SPLIT_EVENTS) {
+      ipcRenderer.on(ch, (_event: IpcRendererEvent, data: any) => callback(ch, data))
+    }
+  },
+
+  removeStoryboardSplitListeners: () => {
+    for (const ch of IPC_CHANNELS.STORYBOARD_SPLIT_EVENTS) {
+      ipcRenderer.removeAllListeners(ch)
+    }
+  },
+
   // ============ 通用事件监听 ============
   // 允许的通道：更新事件 + 系统事件
   on: (channel: string, callback: (...args: any[]) => void) => {
     const allowedChannels = [
       ...IPC_CHANNELS.UPDATE_EVENTS,
       IPC_CHANNELS.SYSTEM.NATIVE_THEME_CHANGED,
-      'updater:download-retry' // 额外的更新重试事件
+      'updater:download-retry',
+      ...IPC_CHANNELS.STORYBOARD_SPLIT_EVENTS,
     ]
     if (allowedChannels.includes(channel)) {
       ipcRenderer.on(channel, (_event: IpcRendererEvent, ...args: any[]) => callback(...args))
@@ -387,7 +437,8 @@ const electronAPI: ElectronAPI = {
     const allowedChannels = [
       ...IPC_CHANNELS.UPDATE_EVENTS,
       IPC_CHANNELS.SYSTEM.NATIVE_THEME_CHANGED,
-      'updater:download-retry'
+      'updater:download-retry',
+      ...IPC_CHANNELS.STORYBOARD_SPLIT_EVENTS,
     ]
     if (allowedChannels.includes(channel)) {
       ipcRenderer.removeAllListeners(channel)
