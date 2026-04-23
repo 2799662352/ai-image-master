@@ -245,7 +245,6 @@ export class RatioResolutionManager {
       return
     }
     
-    // 检查模型是否支持分辨率控制
     if (!modelConfig.capabilities?.resolutionControl || !modelConfig.resolutions) {
       container.classList.add('hidden')
       return
@@ -254,11 +253,20 @@ export class RatioResolutionManager {
     container.classList.remove('hidden')
     
     const resolutions = modelConfig.resolutions
+    const isQualityMode = resolutions.some(r => ['low', 'medium', 'high'].includes(r.key))
+
+    const label = container.querySelector('label')
+    if (label) {
+      label.textContent = isQualityMode ? '图片质量' : '图片分辨率'
+    }
+
+    const finalDisplay = document.getElementById('finalResolutionDisplay')
+    if (finalDisplay) {
+      finalDisplay.classList.toggle('hidden', isQualityMode)
+    }
     
-    // 读取保存的分辨率
     let currentResolution = this.loadSavedResolution()
     
-    // 如果没有保存或不在可用列表中，使用默认值
     if (!currentResolution || !resolutions.some(r => r.key === currentResolution)) {
       currentResolution = modelConfig.defaultResolution || resolutions[0].key
     }
@@ -270,14 +278,12 @@ export class RatioResolutionManager {
     
     buttonsContainer.innerHTML = ''
     
-    // 创建按钮
     resolutions.forEach(resolution => {
       const button = this.createResolutionButton(resolution, resolution.key === currentResolution)
       button.addEventListener('click', () => this.selectResolution(resolution.key, page))
       buttonsContainer.appendChild(button)
     })
     
-    // 触发初始选择
     page?.selectResolution?.(currentResolution)
     page?.updateFinalResolutionDisplay?.()
   }

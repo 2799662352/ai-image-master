@@ -147,38 +147,32 @@ const BUILT_IN_SITES: Record<string, ApiSite> = {
 const DEFAULT_MODELS: Record<string, ModelConfig> = {
   'gpt-image-2': {
     name: 'GPT Image 2',
-    displayName: '120s，OpenAI官方旗舰生图，精确size/quality控制，支持4K+mask重绘，按token计费🔥',
-    price: 0.053,
-    time: '120s',
+    displayName: '60-360s，OpenAI官方旗舰，按token计费 low$0.006/med$0.053/high$0.211，精确size/quality控制，4K+mask重绘🔥',
+    price: 0.006,
+    time: '60-360s',
     isNew: true,
     baseURL: 'https://b.apiyi.com/v1/images/generations',
     editURL: 'https://b.apiyi.com/v1/images/edits',
     apiType: 'openai',
     sizeStrategy: 'size-param',
     ratios: [
-      { key: 'auto', label: '自适应', description: '模型决定' },
-      { key: '1:1', label: '方形 1:1', description: '常用' },
-      { key: '3:2', label: '横版 3:2', description: '经典' },
-      { key: '2:3', label: '竖版 2:3', description: '经典' },
-      { key: '16:9', label: '横版 16:9', description: '宽屏2K' },
-      { key: '9:16', label: '竖版 9:16', description: '4K竖版' }
+      { key: 'auto', label: '自适应 auto', description: '智能' },
+      { key: '1024x1024', label: '方形 1:1', description: '1024×1024' },
+      { key: '1536x1024', label: '横版 3:2', description: '1536×1024' },
+      { key: '1024x1536', label: '竖版 2:3', description: '1024×1536' },
+      { key: '2048x2048', label: '2K 方形 1:1', description: '2048×2048' },
+      { key: '2048x1152', label: '2K 横版 16:9', description: '2048×1152' },
+      { key: '3840x2160', label: '4K 横版 16:9', description: '3840×2160' },
+      { key: '2160x3840', label: '4K 竖版 9:16', description: '2160×3840' }
     ],
     resolutions: [
-      { key: '1K', label: '1K 标准', description: 'low ~$0.006' },
-      { key: '2K', label: '2K 高清', description: 'medium ~$0.05' },
-      { key: '4K', label: '4K 超清', description: 'high ~$0.2' }
+      { key: 'auto', label: '自动', description: '智能选择' },
+      { key: 'low', label: '低', description: '草图 1K $0.006' },
+      { key: 'medium', label: '中', description: '均衡 1K $0.053' },
+      { key: 'high', label: '高', description: '精细 1K $0.211' }
     ],
-    defaultResolution: '1K',
-    resolutionMap: {
-      '1:1':  { '1K': '1024×1024', '2K': '2048×2048', '4K': '3840×3840' },
-      '3:2':  { '1K': '1536×1024', '2K': '2048×1376', '4K': '3840×2560' },
-      '2:3':  { '1K': '1024×1536', '2K': '1376×2048', '4K': '2560×3840' },
-      '16:9': { '1K': '1536×1024', '2K': '2048×1152', '4K': '3840×2160' },
-      '9:16': { '1K': '1024×1536', '2K': '1152×2048', '4K': '2160×3840' },
-      'auto': { '1K': 'auto', '2K': 'auto', '4K': 'auto' }
-    },
+    defaultResolution: 'auto',
     defaultParams: {
-      quality: 'auto',
       output_format: 'png'
     },
     capabilities: {
@@ -642,7 +636,7 @@ export class ApiService {
 
     // 超时（AbortSignal.timeout 抛出 TimeoutError，用户取消抛出 AbortError）
     if (message.includes('timeout') || error.name === 'TimeoutError') {
-      return '请求超时（120s），图片生成可能需要较长时间，请稍后重试'
+      return '请求超时，图片生成可能需要较长时间（高画质/4K最长可达5分钟），请稍后重试'
     }
     if (error.name === 'AbortError') {
       return '操作已取消'
@@ -954,10 +948,12 @@ export class ApiService {
 
       if (hasImages) {
         const editUrl = this.buildRequestUrl(modelConfig, site, 'edit')
-        return this.makeGptImage2FormDataRequest(editUrl, model, prompt, imageSources, site, signal, timeoutMs, isOfficial ? this.resolveGptImage2Size(ratio, resolution) : undefined)
+        return this.makeGptImage2FormDataRequest(editUrl, model, prompt, imageSources, site, signal, timeoutMs, isOfficial ? this.resolveGptImage2Size(ratio) : undefined, isOfficial ? this.resolveGptImage2Quality(resolution) : undefined)
       } else {
         const genUrl = this.buildRequestUrl(modelConfig, site)
-        const body = this.buildGptImage2JsonPayload(model, prompt, isOfficial ? this.resolveGptImage2Size(ratio, resolution) : undefined, isOfficial ? this.resolveGptImage2Quality(resolution) : undefined)
+        const body = this.buildGptImage2JsonPayload(model, prompt, isOfficial ? this.resolveGptImage2Size(ratio) : undefined, isOfficial ? this.resolveGptImage2Quality(resolution) : undefined)
+        console.log('[GPT-Image-2] request URL:', genUrl)
+        console.log('[GPT-Image-2] request body:', JSON.stringify(body, null, 2))
         const headers: Record<string, string> = { 'Content-Type': 'application/json' }
         if (site.authType === 'bearer') {
           headers['Authorization'] = `Bearer ${this.apiKey}`
@@ -968,12 +964,17 @@ export class ApiService {
         const fetchSignal = signal
           ? AbortSignal.any([signal, timeoutSignal])
           : timeoutSignal
-        return fetch(genUrl, {
+        const resp = await fetch(genUrl, {
           method: 'POST',
           headers,
           body: JSON.stringify(body),
           signal: fetchSignal,
         })
+        if (!resp.ok) {
+          const errText = await resp.clone().text()
+          console.error('[GPT-Image-2] 400 response:', resp.status, errText)
+        }
+        return resp
       }
     }
 
@@ -1067,40 +1068,37 @@ export class ApiService {
    * 官转(gpt-image-2)支持 size/quality 参数；官逆(gpt-image-2-all)不支持
    */
   private buildGptImage2JsonPayload(model: string, prompt: string, size?: string, quality?: string): object {
-    const payload: Record<string, unknown> = {
-      model,
-      prompt,
-      response_format: 'b64_json',
-      n: 1
+    const isOfficial = model === 'gpt-image-2'
+    const payload: Record<string, unknown> = { model, prompt }
+    if (isOfficial) {
+      if (size && size !== 'auto') payload.size = size
+      if (quality) payload.quality = quality
+      const cfg = this.getModelConfig(model)
+      if (cfg?.defaultParams?.output_format) {
+        payload.output_format = cfg.defaultParams.output_format
+      }
+    } else {
+      payload.response_format = 'b64_json'
     }
-    if (size && size !== 'auto') payload.size = size
-    if (quality) payload.quality = quality
     return payload
   }
 
   /**
-   * gpt-image-2 官转：根据 ratio + resolution 解析为 API size 参数（如 "2048x1152"）
+   * gpt-image-2 官转：ratio key 就是 API size 参数（如 "1024x1024"、"3840x2160"）
    */
-  private resolveGptImage2Size(ratio?: string, resolution?: string): string | undefined {
+  private resolveGptImage2Size(ratio?: string): string | undefined {
     if (!ratio || ratio === 'auto') return undefined
-    const model = this.getModelConfig('gpt-image-2')
-    if (!model?.resolutionMap) return undefined
-    const resKey = resolution || model.defaultResolution || '1K'
-    const sizeStr = model.resolutionMap[ratio]?.[resKey]
-    if (!sizeStr || sizeStr === 'auto' || sizeStr === '自适应') return undefined
-    return sizeStr.replace('×', 'x')
+    if (ratio.includes('x')) return ratio
+    return undefined
   }
 
   /**
-   * gpt-image-2 官转：根据分辨率挡位映射 quality 参数
+   * gpt-image-2 官转：resolution 下拉框直接映射 quality 参数（auto/low/medium/high）
    */
-  private resolveGptImage2Quality(resolution?: string): string {
-    switch (resolution) {
-      case '4K': return 'high'
-      case '2K': return 'medium'
-      case '1K': return 'low'
-      default: return 'auto'
-    }
+  private resolveGptImage2Quality(resolution?: string): string | undefined {
+    if (!resolution || resolution === 'auto') return undefined
+    if (['low', 'medium', 'high'].includes(resolution)) return resolution
+    return undefined
   }
 
   /**
@@ -1116,12 +1114,15 @@ export class ApiService {
     userSignal?: AbortSignal,
     timeoutMs = 120_000,
     size?: string,
+    quality?: string,
   ): Promise<Response> {
+    const isOfficial = model === 'gpt-image-2'
     const formData = new FormData()
     formData.append('model', model)
     formData.append('prompt', prompt)
-    formData.append('response_format', 'b64_json')
-    if (size && size !== 'auto') formData.append('size', size)
+    if (!isOfficial) formData.append('response_format', 'b64_json')
+    if (isOfficial && size && size !== 'auto') formData.append('size', size)
+    if (isOfficial && quality) formData.append('quality', quality)
 
     let appendedCount = 0
     for (let i = 0; i < imageSources.length; i++) {

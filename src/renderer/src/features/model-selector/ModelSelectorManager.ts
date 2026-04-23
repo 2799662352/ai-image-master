@@ -439,7 +439,6 @@ export class ModelSelectorManager {
       return
     }
 
-    // 检查模型是否支持分辨率控制
     if (!modelConfig.capabilities?.resolutionControl || !modelConfig.resolutions) {
       resolutionContainer.classList.add('hidden')
       return
@@ -448,8 +447,18 @@ export class ModelSelectorManager {
     resolutionContainer.classList.remove('hidden')
 
     const resolutions = modelConfig.resolutions
+    const isQualityMode = resolutions.some(r => ['low', 'medium', 'high'].includes(r.key))
 
-    // 从 localStorage 读取保存的分辨率
+    const label = resolutionContainer.querySelector('label')
+    if (label) {
+      label.textContent = isQualityMode ? '图片质量' : '图片分辨率'
+    }
+
+    const finalDisplay = document.getElementById('finalResolutionDisplay')
+    if (finalDisplay) {
+      finalDisplay.classList.toggle('hidden', isQualityMode)
+    }
+
     let currentResolution: string | null = null
     try {
       currentResolution = localStorage.getItem('gemini_resolution')
@@ -457,7 +466,6 @@ export class ModelSelectorManager {
       console.error('读取分辨率设置失败')
     }
 
-    // 如果没有保存的分辨率或不在可用列表中，使用默认值
     if (!currentResolution || !resolutions.some(res => res.key === currentResolution)) {
       currentResolution = modelConfig.defaultResolution || resolutions[0].key
     }
@@ -476,17 +484,17 @@ export class ModelSelectorManager {
         resolution.key === currentResolution ? 'active' : ''
       }`
 
-      const { label, subtitle } = this.getResolutionLabel(resolution)
+      const { label: lbl, subtitle } = this.getResolutionLabel(resolution)
 
       if (subtitle) {
-        button.title = `${label} · ${subtitle}`
+        button.title = `${lbl} · ${subtitle}`
       } else {
-        button.title = label
+        button.title = lbl
       }
 
       button.innerHTML = `
         <div class="flex flex-col md:flex-row items-center justify-center space-y-0.5 md:space-y-0 md:space-x-1">
-          <span>${label}</span>
+          <span>${lbl}</span>
           ${subtitle ? `<span class="text-[11px] opacity-70 md:text-xs">${subtitle}</span>` : ''}
         </div>
       `
