@@ -7,6 +7,7 @@ interface SettingsState {
   activeSiteKey: string
   apiKey: string
   visionApiKey: string
+  localPort: string
   connectionStatus: 'idle' | 'testing' | 'success' | 'error'
   saving: boolean
   loadError: string | null
@@ -15,6 +16,7 @@ interface SettingsState {
   switchSite: (key: string, api: ApiActions) => void
   setApiKey: (key: string) => void
   setVisionApiKey: (key: string) => void
+  setLocalPort: (port: string, api: ApiActions) => void
   testConnection: (api: ApiActions) => Promise<boolean>
   saveAll: (api: ApiActions) => Promise<void>
 }
@@ -24,6 +26,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   activeSiteKey: '',
   apiKey: '',
   visionApiKey: '',
+  localPort: '3000',
   connectionStatus: 'idle',
   saving: false,
   loadError: null,
@@ -44,6 +47,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         activeSiteKey: currentKey,
         apiKey,
         visionApiKey: visionKey || '',
+        localPort: api.getLocalPort(),
         connectionStatus: 'idle',
         loadError: null,
       })
@@ -68,6 +72,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setApiKey: (key) => set({ apiKey: key }),
 
   setVisionApiKey: (key) => set({ visionApiKey: key }),
+
+  setLocalPort: (port, api) => {
+    api.setLocalPort(port)
+    const sites = api.getAllSites()
+    set({ localPort: port, sites })
+  },
 
   testConnection: async (api) => {
     set({ connectionStatus: 'testing' })

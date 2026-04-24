@@ -136,8 +136,8 @@ const BUILT_IN_SITES: Record<string, ApiSite> = {
   },
   'local': {
     name: '本地服务',
-    baseURL: 'http://localhost:8080',
-    description: '本地部署的 API 服务',
+    baseURL: `http://127.0.0.1:${localStorage.getItem('ai_image_local_port') || '3000'}`,
+    description: '本地部署 API 服务',
     authType: 'bearer',
     isBuiltIn: true
   }
@@ -1646,6 +1646,15 @@ export class ApiService {
    */
   getAllSites(): Record<string, ApiSite> {
     return { ...this.apiSites }
+  }
+
+  getLocalPort(): string {
+    return localStorage.getItem('ai_image_local_port') || '3000'
+  }
+
+  setLocalPort(port: string): void {
+    localStorage.setItem('ai_image_local_port', port)
+    this.apiSites['local'].baseURL = `http://127.0.0.1:${port}`
   }
 
   // 存储相关方法

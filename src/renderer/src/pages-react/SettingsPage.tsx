@@ -99,11 +99,12 @@ export default function SettingsPage() {
   const activeSiteKey = useSettingsStore((s) => s.activeSiteKey)
   const apiKey = useSettingsStore((s) => s.apiKey)
   const visionApiKey = useSettingsStore((s) => s.visionApiKey)
+  const localPort = useSettingsStore((s) => s.localPort)
   const connectionStatus = useSettingsStore((s) => s.connectionStatus)
   const saving = useSettingsStore((s) => s.saving)
   const loadError = useSettingsStore((s) => s.loadError)
 
-  const { switchSite, setApiKey, setVisionApiKey, testConnection, saveAll, loadFromService } =
+  const { switchSite, setApiKey, setVisionApiKey, setLocalPort, testConnection, saveAll, loadFromService } =
     useSettingsStore.getState()
 
   useEffect(() => {
@@ -158,6 +159,27 @@ export default function SettingsPage() {
           activeSiteKey={activeSiteKey}
           onSelect={(key) => switchSite(key, api)}
         />
+        {activeSiteKey === 'local' && (
+          <div className="flex items-center gap-3 mt-3">
+            <span className="text-sm text-zinc-400 whitespace-nowrap">服务端口</span>
+            <input
+              type="number"
+              min={1}
+              max={65535}
+              value={localPort}
+              onChange={(e) => {
+                const v = e.target.value
+                if (/^\d*$/.test(v)) setLocalPort(v, api)
+              }}
+              placeholder="3000"
+              className="w-28 px-3 py-2 bg-zinc-800 border-2 border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-cyberpunk-yellow text-sm"
+              style={{ MozAppearance: 'textfield' } as React.CSSProperties}
+            />
+            <span className="text-xs text-zinc-500">
+              当前: http://127.0.0.1:{localPort || '3000'}
+            </span>
+          </div>
+        )}
       </section>
 
       <section className="space-y-3">

@@ -65,6 +65,8 @@ export interface ApiActions {
   getStoredVisionApiKey(siteKey?: string): string | null
   getCurrentSite(): ApiSite | undefined
   getSiteConfig(key: string): ApiSite | undefined
+  getLocalPort(): string
+  setLocalPort(port: string): void
   readonly currentSiteKey: string
 }
 
@@ -82,6 +84,8 @@ export function useApi(): ApiActions {
     getStoredVisionApiKey: (k) => api.getStoredVisionApiKey(k),
     getCurrentSite: () => api.getCurrentSite(),
     getSiteConfig: (k) => api.getAllSites()[k],
+    getLocalPort: () => api.getLocalPort(),
+    setLocalPort: (p) => api.setLocalPort(p),
     get currentSiteKey() { return api.currentSiteKey },
   }
 }
