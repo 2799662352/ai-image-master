@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 import type { ApiActions } from '../hooks/useService'
+import { useTemplateStore } from '../react-app/stores/useTemplateStore'
+import { composePromptWithTemplate } from '../react-app/constants/templates'
 
 export interface GenerateState {
   prompt: string
@@ -42,8 +44,10 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
     set({ generating: true, error: null, resultUrls: [] })
     try {
       const { prompt, ratio, referenceImages } = get()
+      const templateKey = useTemplateStore.getState().getSelection('generate')
+      const finalPrompt = composePromptWithTemplate(templateKey, prompt)
       const result = await api.generateImage({
-        prompt,
+        prompt: finalPrompt,
         ratio,
         model: modelKey,
         referenceImages: referenceImages.length > 0 ? referenceImages : undefined,

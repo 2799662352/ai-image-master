@@ -18,6 +18,7 @@ import PunkPromptHelperBar from './batch-punk/PunkPromptHelperBar'
 import type { MediaRef } from '../components/shared/media-tokens/types'
 import { PunkBudgetReceipt } from './batch-punk/PunkBudgetReceipt'
 import { extractPriceFromModel } from '../utils/model-price'
+import { TemplateInline } from '../react-app/components/TemplateInline'
 
 const FALLBACK_RATIOS: RatioOption[] = [
   { key: 'auto', label: '自适应', description: '智能' },
@@ -267,9 +268,12 @@ export default function BatchPage() {
         }}
         className="punk-batch-grid"
       >
-        {/* ===== 左栏:模式 + 视觉辅助 + 提示词输入 ===== */}
+        {/* ===== 左栏:模式 + 风格模板 + 视觉辅助 + 提示词输入 ===== */}
         <section>
           <PunkModeSwitcher mode={mode} onChange={setMode} />
+          <div style={{ marginBottom: 12 }}>
+            <TemplateInline context="batch" />
+          </div>
           <PunkPromptHelperBar
             refImages={refImages}
             onInject={(text) => {

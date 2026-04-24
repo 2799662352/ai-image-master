@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 import type { ApiActions } from '../hooks/useService'
+import { useTemplateStore } from '../react-app/stores/useTemplateStore'
+import { composePromptWithTemplate } from '../react-app/constants/templates'
 
 export type BatchMode = 'card' | 'multi'
 
@@ -156,8 +158,10 @@ export const useBatchStore = create<BatchState>((set, get) => ({
         }))
 
         try {
+          const templateKey = useTemplateStore.getState().getSelection('batch')
+          const finalPrompt = composePromptWithTemplate(templateKey, item.prompt)
           const result = await api.generateImage({
-            prompt: item.prompt,
+            prompt: finalPrompt,
             model: modelKey,
             ratio: ratio !== 'auto' ? ratio : undefined,
             resolution,

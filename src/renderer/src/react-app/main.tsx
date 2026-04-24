@@ -8,6 +8,7 @@ import BatchPage from '../pages-react/BatchPage'
 import StoryboardSplitPage from '../pages-react/StoryboardSplitPage'
 import { ToastContainer } from '../components/Toast'
 import { GenerateTokenBridge } from './components/GenerateTokenBridge'
+import { TemplateInline } from './components/TemplateInline'
 
 let root: Root | null = null
 let settingsRoot: Root | null = null
@@ -16,6 +17,7 @@ let batchRoot: Root | null = null
 let storyboardSplitRoot: Root | null = null
 let toastRoot: Root | null = null
 let generateTokenRoot: Root | null = null
+let generateTemplateRoot: Root | null = null
 
 export function mountDirectorReact(): void {
   const container = document.getElementById('director-react-root')
@@ -179,6 +181,27 @@ export function unmountGenerateTokenBridge(): void {
     generateTokenRoot.unmount()
     generateTokenRoot = null
     console.log('[React] GenerateTokenBridge unmounted')
+  }
+}
+
+export function mountGenerateTemplateInline(): void {
+  const container = document.getElementById('generate-template-mount')
+  if (!container) {
+    console.warn('[React] generate-template-mount not found')
+    return
+  }
+  if (!generateTemplateRoot) {
+    generateTemplateRoot = createRoot(container)
+    generateTemplateRoot.render(<TemplateInline context="generate" />)
+    console.log('[React] GenerateTemplateInline mounted')
+  }
+}
+
+export function unmountGenerateTemplateInline(): void {
+  if (generateTemplateRoot) {
+    generateTemplateRoot.unmount()
+    generateTemplateRoot = null
+    console.log('[React] GenerateTemplateInline unmounted')
   }
 }
 

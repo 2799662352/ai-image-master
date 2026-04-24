@@ -51,6 +51,7 @@ import {
   unmountStoryboardSplitReact,
   mountGlobalToast,
   mountGenerateTokenBridge,
+  mountGenerateTemplateInline,
 } from '../react-app/main'
 import { useModelStore, type ModelInfo } from '../stores/useModelStore'
 
@@ -304,6 +305,7 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
 
       mountGlobalToast()
       mountGenerateTokenBridge()
+      mountGenerateTemplateInline()
 
       // 预 mount 所有 React 页 (只渲染一次),非活跃的先 display:none
       // 后续切 tab 只切可见性,零卡顿

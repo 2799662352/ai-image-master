@@ -334,6 +334,7 @@ function ResultCard({
  */
 export default function PunkResultGrid({ items, onRemove, onPreview }: Props) {
   const [editorState, setEditorState] = useState<{ url: string; type: 'angle' | 'light' } | null>(null)
+  const [reversed, setReversed] = useState(true)
 
   const injectPrompt = (p: string) => {
     const { mode, cardPrompt, multiText, setCardPrompt, setMultiText } = useBatchStore.getState()
@@ -343,6 +344,7 @@ export default function PunkResultGrid({ items, onRemove, onPreview }: Props) {
 
   const failedItems = items.filter((i) => i.status === 'error')
   const doneItems = items.filter((i) => i.status === 'done')
+  const displayItems = reversed ? [...items].reverse() : items
 
   if (items.length === 0) {
     return (
@@ -379,11 +381,30 @@ export default function PunkResultGrid({ items, onRemove, onPreview }: Props) {
         }
       `}</style>
       <div style={{ marginTop: 22, position: 'relative' }}>
-        <div
-          className="p-callout p-tilt-l-3"
-          style={{ display: 'inline-block', marginBottom: 12, fontSize: 13 }}
-        >
-          // RESULTS // {items.length} TASKS // OK {doneItems.length} · ERR {failedItems.length} //
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+          <div
+            className="p-callout p-tilt-l-3"
+            style={{ display: 'inline-block', fontSize: 13 }}
+          >
+            // RESULTS // {items.length} TASKS // OK {doneItems.length} · ERR {failedItems.length} //
+          </div>
+          <button
+            type="button"
+            onClick={() => setReversed((v) => !v)}
+            className="p-mono"
+            style={{
+              fontSize: 11,
+              fontWeight: 900,
+              padding: '3px 10px',
+              border: '2px solid var(--punk-black)',
+              background: reversed ? 'var(--punk-pink)' : 'var(--punk-cream)',
+              color: reversed ? 'var(--punk-cream)' : 'var(--punk-black)',
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {reversed ? '↑ 新→旧' : '↓ 旧→新'}
+          </button>
         </div>
 
         {failedItems.length > 0 && (
@@ -422,16 +443,19 @@ export default function PunkResultGrid({ items, onRemove, onPreview }: Props) {
             gap: 16,
           }}
         >
-          {items.map((item, idx) => (
-            <ResultCard
-              key={item.id}
-              item={item}
-              index={idx}
-              onRemove={onRemove}
-              onPreview={onPreview}
-              onOpenEditor={(url, type) => setEditorState({ url, type })}
-            />
-          ))}
+          {displayItems.map((item) => {
+            const origIdx = items.indexOf(item)
+            return (
+              <ResultCard
+                key={item.id}
+                item={item}
+                index={origIdx}
+                onRemove={onRemove}
+                onPreview={onPreview}
+                onOpenEditor={(url, type) => setEditorState({ url, type })}
+              />
+            )
+          })}
         </div>
       </div>
       {editorState && (

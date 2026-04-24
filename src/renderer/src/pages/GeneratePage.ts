@@ -6,6 +6,8 @@
 
 import { BasePage, type AppInterface } from './BasePage'
 import { compressImage } from '../utils/image-compress'
+import { useTemplateStore } from '../react-app/stores/useTemplateStore'
+import { composePromptWithTemplate } from '../react-app/constants/templates'
 
 // Types
 export interface ReferenceImage {
@@ -683,11 +685,14 @@ export class GeneratePage extends BasePage {
         }
       }
 
+      const templateKey = useTemplateStore.getState().getSelection('generate')
+      const finalPrompt = composePromptWithTemplate(templateKey, prompt)
+
       if (this.referenceImages.length > 0) {
         const preparedImages = await this.prepareReferenceImagesForGeneration()
-        result = await api.generateImageWithReference(prompt, preparedImages, this.currentRatio, generateCount, resolution)
+        result = await api.generateImageWithReference(finalPrompt, preparedImages, this.currentRatio, generateCount, resolution)
       } else {
-        result = await api.generateImage(prompt, this.currentRatio, generateCount, resolution)
+        result = await api.generateImage(finalPrompt, this.currentRatio, generateCount, resolution)
       }
 
       if (result.success && result.images && result.images.length > 0) {
