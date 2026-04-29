@@ -9,7 +9,7 @@ export interface Credentials {
 
 export interface CredentialState {
   hasCredentials: boolean
-  credentialSource: 'store' | 'env' | 'builtin' | 'none'
+  credentialSource: 'store' | 'memory' | 'env' | 'builtin' | 'none'
   secretIdMasked?: string
   bucket?: string
   region?: string
