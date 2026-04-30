@@ -9,12 +9,9 @@ const SEVEN_DAYS_MS = SEVEN_DAYS_S * 1000
 const POLL_TIMEOUT_FLOOR_MS = 60 * 60 * 1000          // 60 minutes
 const POLL_DURATION_MULTIPLIER = 4                    // poll budget = max(floor, duration * 4)
 
-const POLL_INTERVAL_FAST_MS = 5_000                   // first 6 polls
-const POLL_INTERVAL_MED_MS = 10_000                   // next 30 polls
-const POLL_INTERVAL_SLOW_MS = 15_000                  // thereafter
-
-const FAST_THRESHOLD = 6
-const MED_THRESHOLD = 36
+const POLL_INITIAL_MS = 5_000
+const POLL_BACKOFF_FACTOR = 1.4
+const POLL_CAP_MS = 60_000
 
 export interface EraseJobInput {
   taskId: string
@@ -94,10 +91,11 @@ export function calculatePollDeadline(durationSeconds: number, nowMs: number): n
   return nowMs + Math.max(POLL_TIMEOUT_FLOOR_MS, dynamicMs)
 }
 
-function pollIntervalMs(attempt: number): number {
-  if (attempt <= FAST_THRESHOLD) return POLL_INTERVAL_FAST_MS
-  if (attempt <= MED_THRESHOLD) return POLL_INTERVAL_MED_MS
-  return POLL_INTERVAL_SLOW_MS
+export function pollIntervalMs(attempt: number): number {
+  return Math.min(
+    POLL_CAP_MS,
+    Math.round(POLL_INITIAL_MS * Math.pow(POLL_BACKOFF_FACTOR, attempt - 1)),
+  )
 }
 
 function isTemplateNotFoundError(err: any): boolean {

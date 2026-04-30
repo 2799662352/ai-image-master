@@ -336,3 +336,35 @@ describe('smartErase/runner.runEraseJob', () => {
     expect(result.outputCosKey.startsWith('/')).toBe(false)
   })
 })
+
+describe('pollIntervalMs (exponential backoff)', () => {
+  it('attempt 1 → 5000ms', async () => {
+    const { pollIntervalMs } = await import('../runner')
+    expect(pollIntervalMs(1)).toBe(5000)
+  })
+
+  it('attempt 2 → 7000ms', async () => {
+    const { pollIntervalMs } = await import('../runner')
+    expect(pollIntervalMs(2)).toBe(7000)
+  })
+
+  it('attempt 3 → 9800ms', async () => {
+    const { pollIntervalMs } = await import('../runner')
+    expect(pollIntervalMs(3)).toBe(9800)
+  })
+
+  it('attempt 5 → 19208ms', async () => {
+    const { pollIntervalMs } = await import('../runner')
+    expect(pollIntervalMs(5)).toBe(19208)
+  })
+
+  it('attempt 10 → 60000ms (cap)', async () => {
+    const { pollIntervalMs } = await import('../runner')
+    expect(pollIntervalMs(10)).toBe(60000)
+  })
+
+  it('attempt 20 → still 60000ms (cap holds)', async () => {
+    const { pollIntervalMs } = await import('../runner')
+    expect(pollIntervalMs(20)).toBe(60000)
+  })
+})
