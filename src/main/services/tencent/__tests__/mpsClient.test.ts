@@ -3,8 +3,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 const mpsClientCtor = vi.fn(function (_opts: any) { return { ProcessImage: vi.fn(), ProcessMedia: vi.fn() } })
+// NOTE: package sets __esModule: true and exports only `mps` (no default).
+// Mock must mirror that shape — providing a `default` would mask import-shape regressions.
 vi.mock('tencentcloud-sdk-nodejs-mps', () => ({
-  default: { mps: { v20190612: { Client: mpsClientCtor } } },
+  __esModule: true,
   mps: { v20190612: { Client: mpsClientCtor } },
 }))
 
