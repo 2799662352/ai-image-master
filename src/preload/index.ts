@@ -7,7 +7,7 @@
 // ✅ safeOn 函数验证通道是否在允许列表中
 // ✅ 所有方法使用 ipcRenderer.invoke 进行请求-响应通信
 //
-import { ipcRenderer, IpcRendererEvent } from 'electron'
+import { ipcRenderer, IpcRendererEvent, webUtils } from 'electron'
 import type {
   SplitSubmitPayload,
   SplitConfig,
@@ -16,6 +16,14 @@ import type {
   SplitFailedEvent,
   CredentialState,
 } from '../types/storyboardSplit'
+import type {
+  EraseSubmitPayload,
+  EraseConfig,
+  EraseProgressEvent,
+  EraseFinishedEvent,
+  EraseFailedEvent,
+  EraseProbeResult,
+} from '../types/smartErase'
 
 // ==================== IPC 通道常量 ====================
 // 集中管理所有 IPC 通道，便于类型检查和维护
@@ -107,6 +115,20 @@ const IPC_CHANNELS = {
     'storyboard-split:progress',
     'storyboard-split:finished',
     'storyboard-split:failed',
+  ] as const,
+  // 智能去字幕
+  SMART_ERASE: {
+    PROBE_BATCH: 'smart-erase:probe-batch',
+    SUBMIT: 'smart-erase:submit',
+    CANCEL: 'smart-erase:cancel',
+    GET_CONFIG: 'smart-erase:get-config',
+    SET_CREDENTIALS: 'smart-erase:set-credentials',
+    DELETE_REMOTE: 'smart-erase:delete-remote',
+  },
+  SMART_ERASE_EVENTS: [
+    'erase:progress',
+    'erase:finished',
+    'erase:failed',
   ] as const,
 } as const
 
@@ -220,6 +242,17 @@ export interface ElectronAPI {
   storyboardSplitDeleteRemote: (cosPaths: string[]) => Promise<{ success: boolean; error?: string }>
   onStoryboardSplitEvent: (callback: (channel: string, data: SplitProgressEvent | SplitFinishedEvent | SplitFailedEvent) => void) => void
   removeStoryboardSplitListeners: () => void
+  // 智能去字幕
+  smartEraseProbeBatch: (paths: string[]) => Promise<EraseProbeResult[]>
+  smartEraseSubmit: (payload: EraseSubmitPayload) => Promise<{ success: boolean; taskId?: string; error?: string; errorCode?: string }>
+  smartEraseCancel: (taskId: string) => Promise<{ success: boolean }>
+  smartEraseGetConfig: () => Promise<{ success: boolean; defaults: EraseConfig; credentials: { hasCredentials: boolean; secretId?: string; bucket?: string; region?: string } }>
+  smartEraseSetCredentials: (creds: { secretId: string; secretKey: string; bucket: string; region: string }) => Promise<{ success: boolean }>
+  smartEraseDeleteRemote: (cosPaths: string[]) => Promise<{ success: boolean; error?: string }>
+  onSmartEraseEvent: (callback: (channel: string, data: EraseProgressEvent | EraseFinishedEvent | EraseFailedEvent) => void) => void
+  removeSmartEraseListeners: () => void
+  // 文件路径访问（合成 File 对象返回 ""，非 File 对象抛异常被吞掉返回 ""）
+  getFilePath: (file: File) => string
   // 通用事件监听（用于更新等事件）
   on: (channel: string, callback: (...args: any[]) => void) => void
   off: (channel: string) => void
@@ -430,6 +463,44 @@ const electronAPI: ElectronAPI = {
     }
   },
 
+  // ============ 智能去字幕 ============
+  smartEraseProbeBatch: (paths: string[]) =>
+    safeInvoke(IPC_CHANNELS.SMART_ERASE.PROBE_BATCH, paths),
+
+  smartEraseSubmit: (payload: EraseSubmitPayload) =>
+    safeInvoke(IPC_CHANNELS.SMART_ERASE.SUBMIT, payload),
+
+  smartEraseCancel: (taskId: string) =>
+    safeInvoke(IPC_CHANNELS.SMART_ERASE.CANCEL, { taskId }),
+
+  smartEraseGetConfig: () =>
+    safeInvoke(IPC_CHANNELS.SMART_ERASE.GET_CONFIG),
+
+  smartEraseSetCredentials: (creds) =>
+    safeInvoke(IPC_CHANNELS.SMART_ERASE.SET_CREDENTIALS, creds),
+
+  smartEraseDeleteRemote: (cosPaths: string[]) =>
+    safeInvoke(IPC_CHANNELS.SMART_ERASE.DELETE_REMOTE, cosPaths),
+
+  onSmartEraseEvent: (callback) => {
+    for (const ch of IPC_CHANNELS.SMART_ERASE_EVENTS) {
+      ipcRenderer.on(ch, (_event: IpcRendererEvent, data: any) => callback(ch, data))
+    }
+  },
+
+  removeSmartEraseListeners: () => {
+    for (const ch of IPC_CHANNELS.SMART_ERASE_EVENTS) {
+      ipcRenderer.removeAllListeners(ch)
+    }
+  },
+
+  // 包裹 try/catch 是因为 webUtils.getPathForFile 在传入非 File 对象时会抛异常
+  // （而合成 File 只是返回 ""，二者必须区分但对调用方都视作 FILE_PATH_UNAVAILABLE）
+  getFilePath: (file: File): string => {
+    try { return webUtils.getPathForFile(file) }
+    catch { return '' }
+  },
+
   // ============ 通用事件监听 ============
   // 允许的通道：更新事件 + 系统事件
   on: (channel: string, callback: (...args: any[]) => void) => {
@@ -438,6 +509,7 @@ const electronAPI: ElectronAPI = {
       IPC_CHANNELS.SYSTEM.NATIVE_THEME_CHANGED,
       'updater:download-retry',
       ...IPC_CHANNELS.STORYBOARD_SPLIT_EVENTS,
+      ...IPC_CHANNELS.SMART_ERASE_EVENTS,
     ]
     if (allowedChannels.includes(channel)) {
       ipcRenderer.on(channel, (_event: IpcRendererEvent, ...args: any[]) => callback(...args))
@@ -452,6 +524,7 @@ const electronAPI: ElectronAPI = {
       IPC_CHANNELS.SYSTEM.NATIVE_THEME_CHANGED,
       'updater:download-retry',
       ...IPC_CHANNELS.STORYBOARD_SPLIT_EVENTS,
+      ...IPC_CHANNELS.SMART_ERASE_EVENTS,
     ]
     if (allowedChannels.includes(channel)) {
       ipcRenderer.removeAllListeners(channel)
