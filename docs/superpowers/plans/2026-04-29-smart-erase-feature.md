@@ -101,52 +101,361 @@ The final task (Task 8) runs an **end-to-end matrix** that includes both feature
 
 ### Task 1 — Types, IPC contract, preload, dependencies
 
-**Goal:** Stand up the type contract and surface area (no runtime logic). This is the cheapest change; lets every later task type-check against the same shapes.
+**Goal:** Stand up the type contract and IPC surface (no runtime logic in main process). Subsequent tasks compile against these shapes.
 
-**Files NEW:**
-- `src/types/smartErase.ts` — copy directly from spec §5.1; verify field names match spec character-for-character.
+**Files:**
+- Create: `src/types/smartErase.ts`
+- Modify: `src/preload/index.ts`
+- Modify: `package.json`
 
-**Files MODIFIED:**
-- `src/preload/index.ts` — surgically add:
-  - In `IPC_CHANNELS`: a new `SMART_ERASE` block (mirroring `STORYBOARD_SPLIT` block at lines 97–105) and `SMART_ERASE_EVENTS` array (mirroring lines 106–110).
-  - In `ElectronAPI` interface: 8 new methods + `getFilePath(file: File): string`.
-  - In `electronAPI` const: implementations using `safeInvoke` and `ipcRenderer.on` + the `webUtils.getPathForFile` import from `electron`.
-  - In `on` and `off` allowedChannels arrays: append `...IPC_CHANNELS.SMART_ERASE_EVENTS`.
-- `package.json` — add deps **and a `build.asarUnpack` entry**:
-  - `ffmpeg-static` (binary path provider for ffmpeg)
-  - `ffprobe-static` (binary path provider for ffprobe)
-  - `idb-keyval` (renderer-side IndexedDB wrapper)
-  - `build.asarUnpack`: `["**/node_modules/ffmpeg-static/**", "**/node_modules/ffprobe-static/**"]` — **MANDATORY**: native binaries inside `app.asar` cannot be executed by `child_process.spawn` in production builds; they must live under `app.asar.unpacked/`. If `package.json.build.asarUnpack` already exists, append; do not replace.
+**Files NOT to touch:** `src/main/services/tencent/*`, `src/main/services/storyboardSplit/*`, `src/main/index.ts`, `src/renderer/**`, anything else.
 
-**Implementation notes:**
-- `getFilePath`: in preload, `import { webUtils } from 'electron'`. Wrap defensively because `webUtils.getPathForFile` **throws when passed a non-File object** (per Electron docs); only synthetic File objects return `""`. Required shape:
+**Tests that must stay green throughout:** `src/main/services/tencent/__tests__/{credentials,jobQueue,cosClient,mpsClient}.test.ts` (26).
+
+---
+
+#### Step 1.1 — Install runtime deps
+
+- [ ] **Run:**
+  ```bash
+  npm install --save ffmpeg-static@^5 ffprobe-static@^3 idb-keyval@^6
+  ```
+- [ ] **Verify package shapes locally** (regression-protection rule §0.2 — mocks must mirror real shape):
+  ```bash
+  node -e "console.log('ffmpeg-static:', typeof require('ffmpeg-static')); console.log('ffprobe-static:', typeof require('ffprobe-static'), '.path:', typeof require('ffprobe-static').path); console.log('idb-keyval:', typeof require('idb-keyval').get)"
+  ```
+  **Expected:**
+  ```
+  ffmpeg-static: string
+  ffprobe-static: object .path: string
+  idb-keyval: function
+  ```
+  If any line differs, STOP and update the plan — the package shape changed and Tasks 2/3/8 mocks would be wrong.
+- [ ] **Verify tencent tests still green:**
+  ```bash
+  npm run test:run -- src/main/services/tencent/
+  ```
+  **Expected:** `Test Files  4 passed (4)` and `Tests  26 passed (26)`.
+
+#### Step 1.2 — Add `build.asarUnpack` config
+
+The `ffmpeg-static` / `ffprobe-static` binaries cannot be executed from inside `app.asar` (verified Context7: electron-builder packages everything into asar by default). **The current `package.json` has NO top-level `"build"` object** (only a `"build"` script entry; electron-builder is running on defaults). Therefore Task 1 must CREATE the config block.
+
+- [ ] **Re-verify** `package.json` has no top-level `"build"` key (only the `"scripts"` `"build"` entry). If you find a real `"build"` config block, STOP and amend the plan — the merge strategy changes.
+- [ ] **Add** a new top-level `"build"` object in `package.json`, placed AFTER `"main"` and BEFORE `"scripts"` (alphabetical-ish ordering keeps the diff readable). Insert exactly:
+  ```jsonc
+  "build": {
+    "asarUnpack": [
+      "**/node_modules/ffmpeg-static/**",
+      "**/node_modules/ffprobe-static/**"
+    ]
+  },
+  ```
+  ⚠️ Mind the trailing comma on the closing brace if `"main"` already has one (it does — line 5 ends with `","`). Add a comma after `}` of `"build"` so `"scripts"` parses.
+- [ ] **Verify JSON is still valid:**
+  ```bash
+  node -e "console.log('OK', !!require('./package.json').build.asarUnpack[0])"
+  ```
+  **Expected:** `OK true`.
+- [ ] **Verify diff:**
+  ```bash
+  git diff package.json
+  ```
+  **Expected:** additions to `dependencies` (3 entries from Step 1.1) PLUS new `"build"` block. Zero deletions.
+
+#### Step 1.3 — Create `src/types/smartErase.ts`
+
+- [ ] **Create file** with exactly the following content (literal copy from spec §5.1, verified character-for-character against `docs/specs/2026-04-29-smart-erase-feature-design.md` lines 152–229):
   ```ts
-  getFilePath: (file: File): string => {
-    try { return webUtils.getPathForFile(file) } catch { return '' }
+  export interface EraseConfig {
+    mode: 'definition'              // ScheduleId deferred to Phase 2
+    definitionId: number            // default 303 = 系统预设·去字幕-至尊版
+    autoCleanupRemoteAfterDays: number
+  }
+
+  export const DEFAULT_ERASE_CONFIG: EraseConfig = {
+    mode: 'definition',
+    definitionId: 303,
+    autoCleanupRemoteAfterDays: 7,
+  }
+
+  export interface EraseSubmitPayload {
+    filePath: string                // absolute local path from webUtils.getPathForFile
+    filename: string
+    fileSize: number
+    durationSeconds: number         // from ffprobe
+  }
+
+  export interface EraseProbeResult {
+    filePath: string
+    filename: string
+    fileSize: number
+    durationSeconds: number
+    warning?: 'FILE_PATH_UNAVAILABLE' | 'FILE_NOT_LOCAL' | 'PROBE_FAILED'
+  }
+
+  export interface EraseTask {
+    id: string
+    filename: string
+    fileSize: number
+    durationSeconds: number
+    status: 'queued-upload' | 'uploading' | 'queued-process' | 'submitting' | 'processing' | 'finished' | 'failed' | 'cancelled'
+    uploadProgress?: number         // 0-100
+    mpsTaskId?: string
+    startedAt: number
+    finishedAt?: number
+    errorCode?: string
+    errorMessage?: string
+  }
+
+  export interface EraseHistoryItem {
+    id: string
+    filename: string
+    fileSize: number
+    durationSeconds: number
+    videoUrl: string                // COS presigned, 7 days
+    videoExpiresAt: number
+    posterDataUrl: string           // local ffmpeg base64 jpeg, ~10 KB; never expires
+    outputCosKey: string
+    inputCosKey: string
+    originalFilePath: string        // for side-by-side compare; may not exist anymore — UI handles missing gracefully
+    createdAt: number
+  }
+
+  export interface EraseProgressEvent {
+    taskId: string
+    status: EraseTask['status']
+    uploadProgress?: number
+    mpsTaskId?: string
+  }
+
+  export interface EraseFinishedEvent {
+    taskId: string
+    videoUrl: string
+    videoExpiresAt: number
+    outputCosKey: string
+    inputCosKey: string
+  }
+
+  export interface EraseFailedEvent {
+    taskId: string
+    errorCode: string               // SCREAMING_SNAKE_CASE; see spec §8
+    errorMessage: string
+    stage: 'probe' | 'upload' | 'submit' | 'poll' | 'output' | 'unknown'
   }
   ```
-  Both empty-string and exception cases must be handled by the renderer as `FILE_PATH_UNAVAILABLE`.
-- The `onSmartEraseEvent` callback signature should match the existing `onStoryboardSplitEvent` (channel name + data) so the React hook pattern carries over.
-- **Do not** delete or rename `STORYBOARD_SPLIT` constants. Use `git diff src/preload/index.ts` to verify only additions exist.
-
-**TDD test plan:** Type-only task, no runtime tests. Build acceptance is the test.
-
-**Regression Protection:**
-- **Files NOT to touch**: anything outside the 3 files listed above. In particular, `src/main/services/**/*` is forbidden in this task.
-- **Smoke after task**:
+- [ ] **Verify:**
   ```bash
-  npm install                                    # picks up new deps
-  npm run build                                   # full build (main + preload + renderer)
-  npm run test:run -- src/main/services/tencent/  # 26 tests must stay green
+  npx tsc --noEmit
   ```
-- **Tests that must stay green**: `tencent/__tests__/{credentials,jobQueue,cosClient,mpsClient}.test.ts` (26).
-- **Manual smoke**: `npm run dev`, drop one image into 宫格拆图, confirm it still completes. Capture console.
+  **Expected:** exit 0, no errors involving `smartErase.ts`. (Pre-existing errors in unrelated files are OK as long as no new ones appear.)
 
-**Acceptance criteria:**
-- TypeScript build passes.
-- `window.electronAPI.smartEraseSubmit` typechecks (verify in any `.ts` file under renderer; can use a throwaway `void window.electronAPI.smartEraseSubmit(...)`).
-- `window.electronAPI.getFilePath(new File([], "x"))` returns `""` at runtime (manual smoke in DevTools console).
-- 26 tencent unit tests still green; storyboardSplit drop-image still works.
+#### Step 1.4 — Add `SMART_ERASE` to `IPC_CHANNELS` in preload
+
+`src/preload/index.ts` currently has a `STORYBOARD_SPLIT` block at lines ~97–110. Mirror it for smart-erase.
+
+- [ ] **Add `webUtils` to imports** at the top of the file (currently only `ipcRenderer, IpcRendererEvent` are imported from electron). Change line 10 from:
+  ```ts
+  import { ipcRenderer, IpcRendererEvent } from 'electron'
+  ```
+  to:
+  ```ts
+  import { ipcRenderer, IpcRendererEvent, webUtils } from 'electron'
+  ```
+- [ ] **Add type imports** at the import block (after the existing `from '../types/storyboardSplit'` import). Append a new import statement:
+  ```ts
+  import type {
+    EraseSubmitPayload,
+    EraseConfig,
+    EraseProgressEvent,
+    EraseFinishedEvent,
+    EraseFailedEvent,
+    EraseProbeResult,
+  } from '../types/smartErase'
+  ```
+- [ ] **Inside `IPC_CHANNELS`**, immediately after the `STORYBOARD_SPLIT_EVENTS` closing bracket and BEFORE the trailing `} as const`, insert:
+  ```ts
+    // 智能去字幕
+    SMART_ERASE: {
+      PROBE_BATCH: 'smart-erase:probe-batch',
+      SUBMIT: 'smart-erase:submit',
+      CANCEL: 'smart-erase:cancel',
+      GET_CONFIG: 'smart-erase:get-config',
+      SET_CREDENTIALS: 'smart-erase:set-credentials',
+      DELETE_REMOTE: 'smart-erase:delete-remote',
+    },
+    SMART_ERASE_EVENTS: [
+      'erase:progress',
+      'erase:finished',
+      'erase:failed',
+    ] as const,
+  ```
+  ⚠️ Channel names match spec §6 exactly: outgoing channels prefixed `smart-erase:`, incoming events prefixed `erase:` (different prefix is intentional — incoming events use the shorter name for renderer-side consistency with existing `onStoryboardSplitEvent` callback channel pattern).
+- [ ] **Verify diff is additive only:**
+  ```bash
+  git diff src/preload/index.ts
+  ```
+  **Expected:** zero deletions, only additions in the lines reviewed above.
+
+#### Step 1.5 — Add 9 methods to `ElectronAPI` interface
+
+- [ ] In `src/preload/index.ts`, find the `// 宫格拆图` block in the `ElectronAPI` interface (currently around lines 214–222). Immediately after `removeStoryboardSplitListeners: () => void` and before `// 通用事件监听`, insert:
+  ```ts
+    // 智能去字幕
+    smartEraseProbeBatch: (paths: string[]) => Promise<EraseProbeResult[]>
+    smartEraseSubmit: (payload: EraseSubmitPayload) => Promise<{ success: boolean; taskId?: string; error?: string; errorCode?: string }>
+    smartEraseCancel: (taskId: string) => Promise<{ success: boolean }>
+    smartEraseGetConfig: () => Promise<{ success: boolean; defaults: EraseConfig; credentials: { hasCredentials: boolean; secretId?: string; bucket?: string; region?: string } }>
+    smartEraseSetCredentials: (creds: { secretId: string; secretKey: string; bucket: string; region: string }) => Promise<{ success: boolean }>
+    smartEraseDeleteRemote: (cosPaths: string[]) => Promise<{ success: boolean; error?: string }>
+    onSmartEraseEvent: (callback: (channel: string, data: EraseProgressEvent | EraseFinishedEvent | EraseFailedEvent) => void) => void
+    removeSmartEraseListeners: () => void
+    // 文件路径访问（合成 File 对象返回 ""，非 File 对象抛异常被吞掉返回 ""）
+    getFilePath: (file: File) => string
+  ```
+- [ ] **Verify TypeScript:**
+  ```bash
+  npx tsc --noEmit
+  ```
+  **Expected:** exit 0 (no error about missing implementations yet — types are declarations only).
+
+#### Step 1.6 — Implement `electronAPI` methods
+
+- [ ] In the `electronAPI: ElectronAPI = { ... }` literal, find the `removeStoryboardSplitListeners` block (around lines 427–431). Immediately after that and BEFORE the `// ============ 通用事件监听 ============` comment, insert:
+  ```ts
+    // ============ 智能去字幕 ============
+    smartEraseProbeBatch: (paths: string[]) =>
+      safeInvoke(IPC_CHANNELS.SMART_ERASE.PROBE_BATCH, paths),
+
+    smartEraseSubmit: (payload: EraseSubmitPayload) =>
+      safeInvoke(IPC_CHANNELS.SMART_ERASE.SUBMIT, payload),
+
+    smartEraseCancel: (taskId: string) =>
+      safeInvoke(IPC_CHANNELS.SMART_ERASE.CANCEL, { taskId }),
+
+    smartEraseGetConfig: () =>
+      safeInvoke(IPC_CHANNELS.SMART_ERASE.GET_CONFIG),
+
+    smartEraseSetCredentials: (creds) =>
+      safeInvoke(IPC_CHANNELS.SMART_ERASE.SET_CREDENTIALS, creds),
+
+    smartEraseDeleteRemote: (cosPaths: string[]) =>
+      safeInvoke(IPC_CHANNELS.SMART_ERASE.DELETE_REMOTE, cosPaths),
+
+    onSmartEraseEvent: (callback) => {
+      for (const ch of IPC_CHANNELS.SMART_ERASE_EVENTS) {
+        ipcRenderer.on(ch, (_event: IpcRendererEvent, data: any) => callback(ch, data))
+      }
+    },
+
+    removeSmartEraseListeners: () => {
+      for (const ch of IPC_CHANNELS.SMART_ERASE_EVENTS) {
+        ipcRenderer.removeAllListeners(ch)
+      }
+    },
+
+    // 包裹 try/catch 是因为 webUtils.getPathForFile 在传入非 File 对象时会抛异常
+    // （而合成 File 只是返回 ""，二者必须区分但对调用方都视作 FILE_PATH_UNAVAILABLE）
+    getFilePath: (file: File): string => {
+      try { return webUtils.getPathForFile(file) }
+      catch { return '' }
+    },
+  ```
+- [ ] **Verify build:**
+  ```bash
+  npm run build:vite
+  ```
+  **Expected:** Vite build succeeds for main, preload, renderer; preload `out/preload/index.js` exists. (If a TypeScript error fires for `getFilePath` arg type, double-check spelling against Step 1.5's interface signature.)
+
+#### Step 1.7 — Append events to `on`/`off` allowedChannels
+
+- [ ] In the `on:` method body (around line 436), the existing `allowedChannels` array is:
+  ```ts
+  const allowedChannels = [
+    ...IPC_CHANNELS.UPDATE_EVENTS,
+    IPC_CHANNELS.SYSTEM.NATIVE_THEME_CHANGED,
+    'updater:download-retry',
+    ...IPC_CHANNELS.STORYBOARD_SPLIT_EVENTS,
+  ]
+  ```
+  Append `...IPC_CHANNELS.SMART_ERASE_EVENTS,` as the last entry. Result:
+  ```ts
+  const allowedChannels = [
+    ...IPC_CHANNELS.UPDATE_EVENTS,
+    IPC_CHANNELS.SYSTEM.NATIVE_THEME_CHANGED,
+    'updater:download-retry',
+    ...IPC_CHANNELS.STORYBOARD_SPLIT_EVENTS,
+    ...IPC_CHANNELS.SMART_ERASE_EVENTS,
+  ]
+  ```
+- [ ] **Repeat for the `off:` method body** (around line 450). Same change.
+- [ ] **Verify diff is exactly two single-line additions:**
+  ```bash
+  git diff src/preload/index.ts | grep -E "^\+" | grep -v "^\+\+\+"
+  ```
+  Count of `+...IPC_CHANNELS.SMART_ERASE_EVENTS,` lines should be exactly **2** (one for `on`, one for `off`).
+
+#### Step 1.8 — Full smoke
+
+- [ ] **Build full app:**
+  ```bash
+  npm run build
+  ```
+  **Expected:** exit 0; `out/preload/index.js` and `out/main/index.js` and renderer bundle all produced.
+- [ ] **Run all unit tests:**
+  ```bash
+  npm run test:run
+  ```
+  **Expected:** the same `26 passed` total as before Task 1 started, no new failures, no new tests yet (Task 2 adds the first new tests).
+- [ ] **Manual dev smoke (regression-protection §0.5 — MANDATORY):**
+  ```bash
+  npm run dev
+  ```
+  - Wait for the app window to open.
+  - Click into the **宫格拆图** tab.
+  - Drop one 9-grid jpg/png from disk.
+  - **Confirm:** image uploads to COS, MPS task submits, polling progresses, 9 split images render.
+  - Open settings drawer; confirm credential state still shows correctly.
+  - In the dev DevTools console (Ctrl+Shift+I), run:
+    ```js
+    window.electronAPI.getFilePath(new File([], "synthetic.txt"))
+    ```
+    **Expected:** returns `""` (string, no exception).
+  - Run also:
+    ```js
+    typeof window.electronAPI.smartEraseSubmit
+    ```
+    **Expected:** `"function"`.
+  - Quit the app via the close button. Watch dev terminal — must NOT see `Cannot read properties of undefined` or any `cancelAllActive*` errors.
+- [ ] **Paste the dev terminal output** (from `[Performance] App ready` to app quit) into the PR description for review.
+
+#### Step 1.9 — Commit
+
+- [ ] **Stage and commit:**
+  ```bash
+  git add src/types/smartErase.ts src/preload/index.ts package.json package-lock.json
+  git status   # verify exactly these 4 files staged, nothing else
+  git commit -m "feat(smart-erase): types + IPC contract + preload + deps (Task 1/8)
+
+  Add type definitions, 6 IPC channels (smart-erase:*), 3 event channels
+  (erase:*), 9 preload API methods including getFilePath() wrapping
+  webUtils.getPathForFile defensively. Add ffmpeg-static, ffprobe-static,
+  idb-keyval deps and asarUnpack patterns so binaries are executable in
+  packaged builds.
+
+  Pure additive: storyboardSplit IPC and runtime untouched. Manual smoke:
+  9-grid split still works, electronAPI.getFilePath(synthetic File) returns
+  '' as documented.
+
+  Refs: docs/superpowers/plans/2026-04-29-smart-erase-feature.md Task 1"
+  ```
+
+**Acceptance criteria for Task 1:**
+- All 9 step checkboxes ticked above.
+- Diff scope: exactly 4 files (`src/types/smartErase.ts` new + `src/preload/index.ts` modified + `package.json` modified + `package-lock.json` modified). No other files touched.
+- 26 tencent unit tests still green.
+- Manual storyboardSplit smoke succeeded; dev terminal output pasted in PR.
+- `window.electronAPI.smartEraseSubmit` typechecks and is a function at runtime; `window.electronAPI.getFilePath(synthetic File)` returns `""`.
 
 ---
 
