@@ -35,3 +35,7 @@ export { useUIPrefsStore } from './useUIPrefsStore'
 
 export { useSplitSessionStore } from './useSplitSessionStore'
 export { useSplitPersistStore } from './useSplitPersistStore'
+
+export { useEraseSessionStore } from './useEraseSessionStore'
+export type { EraseSessionTask } from './useEraseSessionStore'
+export { useErasePersistStore } from './useErasePersistStore'
