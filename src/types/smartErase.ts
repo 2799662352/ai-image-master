@@ -15,6 +15,7 @@ export interface EraseSubmitPayload {
   filename: string
   fileSize: number
   durationSeconds: number         // from ffprobe
+  // NOTE: no per-task config override; reads from useErasePersistStore.defaultConfig at submit time
 }
 
 export interface EraseProbeResult {
