@@ -2,6 +2,8 @@ import { useEraseSessionStore } from '../../stores/useEraseSessionStore'
 import { useErasePersistStore } from '../../stores/useErasePersistStore'
 import type { EraseHistoryItem } from '../../../../types/smartErase'
 
+const api = (window as any).electronAPI
+
 /**
  * Right-side drawer showing recent processed videos. Critical: gates rendering
  * on `_hasHydrated` to avoid showing the empty default before idb-keyval
@@ -17,6 +19,31 @@ export function EraseHistoryDrawer() {
 
   const selectedId = useEraseSessionStore((s) => s.selectedHistoryId)
   const setSelectedHistoryId = useEraseSessionStore((s) => s.setSelectedHistoryId)
+
+  // I1 fix: best-effort remote cleanup whenever the user removes a history
+  // entry, so storage doesn't leak before the autoCleanupRemoteAfterDays
+  // sweeper catches up. Mirrors storyboard-split's handleDelete pattern.
+  const removeWithRemote = (item: EraseHistoryItem) => {
+    const cosKeys = [item.outputCosKey, item.inputCosKey].filter(Boolean) as string[]
+    if (cosKeys.length > 0) {
+      api?.smartEraseDeleteRemote?.(cosKeys)?.catch((err: unknown) => {
+        console.warn('[smart-erase] remote delete failed:', err)
+      })
+    }
+    removeHistory(item.id)
+  }
+
+  const clearAllWithRemote = () => {
+    const allKeys = history
+      .flatMap((h) => [h.outputCosKey, h.inputCosKey])
+      .filter(Boolean) as string[]
+    if (allKeys.length > 0) {
+      api?.smartEraseDeleteRemote?.(allKeys)?.catch((err: unknown) => {
+        console.warn('[smart-erase] remote delete failed:', err)
+      })
+    }
+    clearHistory()
+  }
 
   return (
     <>
@@ -70,14 +97,14 @@ export function EraseHistoryDrawer() {
                         setSelectedHistoryId(h.id)
                         toggle()
                       }}
-                      onRemove={(id) => removeHistory(id)}
+                      onRemove={(item) => removeWithRemote(item)}
                     />
                   ))}
                 </ul>
                 <button
                   type="button"
                   onClick={() => {
-                    if (confirm('确认清空全部历史？(本地数据，不影响云端)')) clearHistory()
+                    if (confirm('确认清空全部历史？(同时尝试删除云端文件)')) clearAllWithRemote()
                   }}
                   className="d-mono text-[10px] tracking-widest mt-4 px-3 py-1.5 border border-[color:var(--donor-red)]/60 text-[color:var(--donor-red)]/80 hover:bg-[color:var(--donor-red)]/10 w-full"
                 >
@@ -101,7 +128,7 @@ function HistoryRow({
   item: EraseHistoryItem
   selected: boolean
   onSelect: () => void
-  onRemove: (id: string) => void
+  onRemove: (item: EraseHistoryItem) => void
 }) {
   const expired = item.videoExpiresAt > 0 && item.videoExpiresAt < Date.now()
   return (
@@ -141,7 +168,7 @@ function HistoryRow({
         type="button"
         onClick={(e) => {
           e.stopPropagation()
-          onRemove(item.id)
+          onRemove(item)
         }}
         className="d-mono text-[9px] text-[color:var(--donor-ink-dim)] hover:text-[color:var(--donor-red)] flex-shrink-0"
         title="移除"

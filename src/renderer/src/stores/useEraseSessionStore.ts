@@ -6,11 +6,13 @@ import type { EraseTask, EraseProbeResult } from '../../../types/smartErase'
  * (filePath for side-by-side compare, local poster) that don't belong in
  * the IPC contract because they're produced/consumed entirely in the
  * renderer or returned synchronously from submitErase.
+ *
+ * Failure messaging uses EraseTask's existing `errorMessage` + `errorCode`
+ * fields — no renderer-only error field, to keep one source of truth.
  */
 export interface EraseSessionTask extends EraseTask {
   filePath: string         // local absolute path; '' if not available (synthetic File)
   posterDataUrl: string    // base64 jpeg returned from submit IPC
-  error?: string           // human-readable failure message
 }
 
 interface EraseSessionState {
@@ -30,7 +32,7 @@ interface EraseSessionState {
     uploadProgress?: number,
     mpsTaskId?: string,
   ) => void
-  failTask: (taskId: string, error: string, errorCode?: string) => void
+  failTask: (taskId: string, errorMessage: string, errorCode?: string) => void
   cancelTask: (taskId: string) => void
 
   setRecentlyFinished: (id: string | null) => void
@@ -66,11 +68,11 @@ export const useEraseSessionStore = create<EraseSessionState>()((set) => ({
       ),
     })),
 
-  failTask: (taskId, error, errorCode) =>
+  failTask: (taskId, errorMessage, errorCode) =>
     set((s) => ({
       activeTasks: s.activeTasks.map((t) =>
         t.id === taskId
-          ? { ...t, status: 'failed' as const, error, errorCode }
+          ? { ...t, status: 'failed' as const, errorMessage, errorCode }
           : t,
       ),
     })),

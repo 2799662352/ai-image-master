@@ -239,8 +239,8 @@ function createWindow(): void {
           "font-src 'self' https://fonts.gstatic.com data:",
           "img-src 'self' data: blob: https: file:",
           "connect-src 'self' https: wss: data: http://175.178.198.17:* http://127.0.0.1:* http://localhost:*",
-          // allow COS HTTPS presigned URLs for smart erase video playback
-          "media-src 'self' data: blob: https:",
+          // allow COS HTTPS presigned URLs (smart erase output) and file:// (compare-with-original)
+          "media-src 'self' data: blob: https: file:",
           "worker-src 'self' blob:", // 允许 Web Worker 从 blob URL 创建（图片压缩库需要）
           "frame-src 'none'"
         ].join('; ')

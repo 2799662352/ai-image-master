@@ -3,17 +3,21 @@ import { useEraseSessionStore } from '../../stores/useEraseSessionStore'
 import { useErasePersistStore } from '../../stores/useErasePersistStore'
 import { useToastStore } from '../../stores'
 
+const api = (window as any).electronAPI
+
 /**
  * Renders the currently selected history item's processed video. Defaults to
  * single-pane; when `originalFilePath` is present, a "对比 / COMPARE" toggle
  * shows the local original alongside.
  *
- * The local original is loaded with `file://` — Electron's main process CSP
- * already allows `media-src 'self' data: blob: https:`, but `file://` is
- * served by Electron's protocol handler in renderer context, so a `<video>`
- * pointing at it works without further CSP relaxation. If the file has been
- * moved/deleted since processing, `<video>` fires `onError` and we silently
- * fall back to "原视频不可用".
+ * The local original is loaded with `file://`. CSP `media-src` includes
+ * `file:` (set in src/main/index.ts), and Electron's renderer can resolve
+ * absolute file URLs in production (`webSecurity: true` allows them when the
+ * page itself is served from `file://`). In dev mode the renderer is at
+ * `http://localhost:5173` and `file://` access works via the same CSP.
+ *
+ * If the source file has been moved/deleted since processing, `<video>` fires
+ * `onError` and we silently fall back to single-pane (compare button hides).
  */
 export function EraseResultPanel() {
   const selectedId = useEraseSessionStore((s) => s.selectedHistoryId)
@@ -48,9 +52,22 @@ export function EraseResultPanel() {
   }
 
   const handleDownload = () => {
+    // I2 fix: <a download> is ignored by browsers for cross-origin URLs unless
+    // the server sends Content-Disposition: attachment. COS supports a query
+    // override that forces this on the response, so we append it to the
+    // presigned URL. Per Tencent COS docs, the signature already covers the
+    // full URL minus this header-override family, so adding it does NOT
+    // invalidate the signature.
+    const downloadName = item.filename.replace(/\.[^.]+$/, '') + '_erased.mp4'
+    const sep = item.videoUrl.includes('?') ? '&' : '?'
+    const downloadUrl =
+      item.videoUrl +
+      sep +
+      'response-content-disposition=' +
+      encodeURIComponent(`attachment; filename="${downloadName}"`)
     const a = document.createElement('a')
-    a.href = item.videoUrl
-    a.download = item.filename.replace(/\.[^.]+$/, '') + '_erased.mp4'
+    a.href = downloadUrl
+    a.download = downloadName
     a.target = '_blank'
     a.rel = 'noopener'
     document.body.appendChild(a)
@@ -59,6 +76,15 @@ export function EraseResultPanel() {
   }
 
   const handleRemove = () => {
+    // I1 fix: also delete COS objects so removing history reclaims storage,
+    // matching storyboard-split's behaviour. Best-effort — failure is logged
+    // but doesn't block the local removal.
+    const cosKeys = [item.outputCosKey, item.inputCosKey].filter(Boolean) as string[]
+    if (cosKeys.length > 0) {
+      api?.smartEraseDeleteRemote?.(cosKeys)?.catch((err: unknown) => {
+        console.warn('[smart-erase] remote delete failed:', err)
+      })
+    }
     removeHistory(item.id)
     setSelectedHistoryId(null)
   }
