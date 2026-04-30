@@ -120,17 +120,17 @@ The final task (Task 8) runs an **end-to-end matrix** that includes both feature
   ```bash
   npm install --save ffmpeg-static@^5 ffprobe-static@^3 idb-keyval@^6
   ```
-- [ ] **Verify package shapes locally** (regression-protection rule §0.2 — mocks must mirror real shape):
+- [ ] **Verify package shapes locally** (regression-protection rule §0.2 — mocks must mirror real shape; check the FULL surface we depend on, not just one symbol, otherwise we're blind to partial-shape regressions):
   ```bash
-  node -e "console.log('ffmpeg-static:', typeof require('ffmpeg-static')); console.log('ffprobe-static:', typeof require('ffprobe-static'), '.path:', typeof require('ffprobe-static').path); console.log('idb-keyval:', typeof require('idb-keyval').get)"
+  node -e "console.log('ffmpeg-static:', typeof require('ffmpeg-static')); const fp=require('ffprobe-static'); console.log('ffprobe-static keys:', Object.keys(fp), '.path:', typeof fp.path); const idb=require('idb-keyval'); console.log('idb-keyval keys:', Object.keys(idb).filter(k=>['get','set','del','clear','update','keys'].includes(k)).sort())"
   ```
-  **Expected:**
+  **Expected (verbatim — Task 8 mocks, persist store, and reaper depend on all of these):**
   ```
   ffmpeg-static: string
-  ffprobe-static: object .path: string
-  idb-keyval: function
+  ffprobe-static keys: [ 'path' ] .path: string
+  idb-keyval keys: [ 'clear', 'del', 'get', 'keys', 'set', 'update' ]
   ```
-  If any line differs, STOP and update the plan — the package shape changed and Tasks 2/3/8 mocks would be wrong.
+  If any line differs (missing methods, different return type, extra/missing keys), STOP and update the plan — the package shape changed and Tasks 2/3/8 mocks would be wrong.
 - [ ] **Verify tencent tests still green:**
   ```bash
   npm run test:run -- src/main/services/tencent/
