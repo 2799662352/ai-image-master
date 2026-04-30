@@ -5,7 +5,8 @@ import { useToastStore } from '../stores'
 import DonorShell from '../components/donor/DonorShell'
 import { EraseUploader } from './smart-erase/EraseUploader'
 import { EraseQueue } from './smart-erase/EraseQueue'
-import { EraseResultPanel } from './smart-erase/EraseResultPanel'
+import { EraseResultGrid } from './smart-erase/EraseResultGrid'
+import { EraseResultModal } from './smart-erase/EraseResultModal'
 import { EraseHistoryDrawer } from './smart-erase/EraseHistoryDrawer'
 import { useEraseEvents } from './smart-erase/useEraseEvents'
 
@@ -92,7 +93,8 @@ export default function SmartErasePage() {
       <div className="space-y-4 relative" style={{ zIndex: 2 }}>
         <EraseUploader disabled={credentialsBlocked} />
         <EraseQueue />
-        <EraseResultPanel />
+        <EraseResultGrid />
+        <EraseResultModal />
       </div>
 
       <footer className="mt-6 pt-3 border-t border-[color:var(--donor-magenta-dim)] d-mono text-[10px] text-[color:var(--donor-ink-mute)] flex items-center justify-between flex-wrap gap-2">

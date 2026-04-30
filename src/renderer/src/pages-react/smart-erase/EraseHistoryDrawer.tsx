@@ -18,7 +18,7 @@ export function EraseHistoryDrawer() {
   const removeHistory = useErasePersistStore((s) => s.removeHistory)
 
   const selectedId = useEraseSessionStore((s) => s.selectedHistoryId)
-  const setSelectedHistoryId = useEraseSessionStore((s) => s.setSelectedHistoryId)
+  const setModalItemId = useEraseSessionStore((s) => s.setModalItemId)
 
   // I1 fix: best-effort remote cleanup whenever the user removes a history
   // entry, so storage doesn't leak before the autoCleanupRemoteAfterDays
@@ -94,7 +94,7 @@ export function EraseHistoryDrawer() {
                       item={h}
                       selected={h.id === selectedId}
                       onSelect={() => {
-                        setSelectedHistoryId(h.id)
+                        setModalItemId(h.id)
                         toggle()
                       }}
                       onRemove={(item) => removeWithRemote(item)}
