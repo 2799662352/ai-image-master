@@ -64,13 +64,7 @@ export interface SplitHistoryItem {
   cols?: number
 }
 
-export interface CredentialState {
-  hasCredentials: boolean
-  credentialSource: 'env' | 'store' | 'builtin' | 'none'
-  secretIdMasked?: string
-  bucket?: string
-  region?: string
-}
+export type { CredentialState } from '../main/services/tencent/types'
 
 export interface SplitSubmitPayload {
   taskId: string

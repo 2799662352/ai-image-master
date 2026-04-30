@@ -1,12 +1,14 @@
-import { uploadOriginal, getPresignedUrl, deleteObjects } from './cosClient'
-import { submitProcessImage, pollUntilFinish } from './mpsClient'
+// src/main/services/storyboardSplit/index.ts
+
+import { JobQueue } from '../tencent/jobQueue'
 import {
   getCredentials,
   getCredentialState,
   setCredentials,
-  getDefaultConfig,
-  setDefaultConfig,
-} from './config'
+} from '../tencent/credentials'
+import { deleteObjects } from '../tencent/cosClient'
+import { runImageJob } from './runner'
+import type { ImageJobInput, ImageJobOutput } from './runner'
 import type {
   SplitConfig,
   SplitSubmitPayload,
@@ -14,11 +16,10 @@ import type {
   SplitFinishedEvent,
   SplitFailedEvent,
 } from '../../../types/storyboardSplit'
+import { DEFAULT_SPLIT_CONFIG } from '../../../types/storyboardSplit'
 import type { BrowserWindow } from 'electron'
 
 const MAX_CONCURRENT = 4
-const activeTasks = new Map<string, { abortSignal: { aborted: boolean } }>()
-const queue: Array<{ payload: SplitSubmitPayload; resolve: () => void; reject: (err: any) => void }> = []
 
 let mainWindowRef: BrowserWindow | null = null
 
@@ -32,67 +33,53 @@ function safeSend(channel: string, data: any) {
   }
 }
 
-function sendProgress(data: SplitProgressEvent) {
-  safeSend('storyboard-split:progress', data)
+let defaultConfig: SplitConfig = { ...DEFAULT_SPLIT_CONFIG }
+
+export function getDefaultConfig(): SplitConfig {
+  return { ...defaultConfig }
 }
 
-function sendFinished(data: SplitFinishedEvent) {
-  safeSend('storyboard-split:finished', data)
+export function setDefaultConfig(config: SplitConfig): void {
+  defaultConfig = { ...config }
 }
 
-function sendFailed(data: SplitFailedEvent) {
-  safeSend('storyboard-split:failed', data)
-}
-
-function dequeue() {
-  while (activeTasks.size < MAX_CONCURRENT && queue.length > 0) {
-    const item = queue.shift()!
-    runTask(item.payload).then(() => item.resolve()).catch((err) => item.reject(err))
-  }
-}
-
-async function runTask(payload: SplitSubmitPayload): Promise<{ success: true; mpsTaskId: string }> {
-  const abortSignal = { aborted: false }
-  activeTasks.set(payload.taskId, { abortSignal })
-
-  try {
-    sendProgress({ taskId: payload.taskId, status: 'uploading', progress: 5, stage: 'uploading-cos' })
-
-    const base64 = payload.base64Data.replace(/^data:image\/\w+;base64,/, '')
-    const buffer = Buffer.from(base64, 'base64')
-    const ext = payload.filename.split('.').pop()?.toLowerCase() || 'jpg'
-
-    const cosKey = await uploadOriginal(payload.taskId, buffer, ext)
-    sendProgress({ taskId: payload.taskId, status: 'uploading', progress: 30, stage: 'uploading-cos' })
-
-    if (abortSignal.aborted) throw new Error('Task cancelled')
-
-    sendProgress({ taskId: payload.taskId, status: 'submitted', progress: 35, stage: 'submitting-mps' })
-    const inputUrl = await getPresignedUrl(cosKey, 86400)
-    const outputDir = `/storyboard-split/${payload.taskId}/output/`
-    const mpsTaskId = await submitProcessImage(inputUrl, payload.config, outputDir)
-    sendProgress({ taskId: payload.taskId, status: 'processing', progress: 40, stage: 'polling-mps' })
-
-    const { results, rows, cols } = await pollUntilFinish(
-      mpsTaskId,
-      (attempt, max) => {
-        const progress = 40 + Math.round((attempt / max) * 50)
-        sendProgress({ taskId: payload.taskId, status: 'processing', progress, stage: 'polling-mps' })
-      },
-      abortSignal
-    )
-
-    sendFinished({ taskId: payload.taskId, results, inputCosKey: cosKey, rows, cols })
-    return { success: true, mpsTaskId }
-  } catch (err: any) {
-    const errorCode = err.code || ''
-    sendFailed({ taskId: payload.taskId, error: err.message, errorCode })
-    throw err
-  } finally {
-    activeTasks.delete(payload.taskId)
-    dequeue()
-  }
-}
+const queue = new JobQueue<ImageJobInput, ImageJobOutput>({
+  name: 'storyboard-split',
+  maxConcurrent: MAX_CONCURRENT,
+  runner: runImageJob,
+  events: {
+    onProgress: (job, patch) => {
+      const progressEvent: SplitProgressEvent = {
+        taskId: job.taskId,
+        status: patch.stage === 'submitting-mps' ? 'submitted'
+              : patch.stage === 'polling-mps' ? 'processing'
+              : 'uploading',
+        progress: patch.progress,
+        stage: patch.stage as any,
+      }
+      safeSend('storyboard-split:progress', progressEvent)
+    },
+    onFinished: (job, result) => {
+      const finishedEvent: SplitFinishedEvent = {
+        taskId: job.taskId,
+        results: result.results,
+        inputCosKey: result.inputCosKey,
+        rows: result.rows,
+        cols: result.cols,
+      }
+      safeSend('storyboard-split:finished', finishedEvent)
+    },
+    onFailed: (job, error) => {
+      const failedEvent: SplitFailedEvent = {
+        taskId: job.taskId,
+        error: error.message,
+        errorCode: (error as any).code,
+      }
+      safeSend('storyboard-split:failed', failedEvent)
+    },
+  },
+  getJobId: (job) => job.taskId,
+})
 
 export async function submitSplit(payload: SplitSubmitPayload) {
   const creds = getCredentials()
@@ -100,15 +87,25 @@ export async function submitSplit(payload: SplitSubmitPayload) {
     return { success: false, error: '未配置腾讯云密钥', errorCode: 'NO_CREDENTIALS' }
   }
 
+  const base64 = payload.base64Data.replace(/^data:image\/\w+;base64,/, '')
+  const buffer = Buffer.from(base64, 'base64')
+
+  if (queue.getActiveCount() >= MAX_CONCURRENT) {
+    safeSend('storyboard-split:progress', {
+      taskId: payload.taskId,
+      status: 'queued',
+      progress: 0,
+      stage: 'uploading-cos',
+    } as SplitProgressEvent)
+  }
+
   try {
-    if (activeTasks.size >= MAX_CONCURRENT) {
-      sendProgress({ taskId: payload.taskId, status: 'queued', progress: 0, stage: 'uploading-cos' })
-      await new Promise<void>((resolve, reject) => {
-        queue.push({ payload, resolve, reject })
-      })
-    } else {
-      await runTask(payload)
-    }
+    await queue.enqueue({
+      taskId: payload.taskId,
+      buffer,
+      filename: payload.filename,
+      config: payload.config,
+    })
     return { success: true }
   } catch (err: any) {
     return { success: false, error: err.message, errorCode: err.code || '' }
@@ -116,28 +113,12 @@ export async function submitSplit(payload: SplitSubmitPayload) {
 }
 
 export function cancelTask(taskId: string) {
-  const task = activeTasks.get(taskId)
-  if (task) {
-    task.abortSignal.aborted = true
-    activeTasks.delete(taskId)
-  }
-  const queueIdx = queue.findIndex((q) => q.payload.taskId === taskId)
-  if (queueIdx >= 0) {
-    const [removed] = queue.splice(queueIdx, 1)
-    removed.reject(new Error('Task cancelled'))
-  }
+  queue.cancel(taskId)
   return { success: true }
 }
 
 export function cancelAllActiveTasks() {
-  for (const [, task] of activeTasks) {
-    task.abortSignal.aborted = true
-  }
-  activeTasks.clear()
-  while (queue.length > 0) {
-    const item = queue.shift()!
-    item.reject(new Error('All tasks cancelled'))
-  }
+  queue.cancelAll()
 }
 
 export function getConfig() {
