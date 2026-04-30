@@ -5,6 +5,7 @@ import ffprobeStatic from 'ffprobe-static'
 import type { EraseProbeResult } from '../../../types/smartErase'
 
 const PROBE_CONCURRENCY = 4
+const PROBE_TIMEOUT_MS = 30_000
 
 /**
  * `ffprobe-static` exports `{ path }` (NOT a bare string — differs from
@@ -48,8 +49,17 @@ function probeOne(filePath: string): Promise<EraseProbeResult> {
     })
   }
 
+  // Resolve binary OUTSIDE the Promise executor so a missing-binary scenario
+  // returns a per-file PROBE_FAILED rather than rejecting the whole batch.
+  // (Plan §Task 3 review I-2: graceful degradation contract.)
+  let bin: string
+  try { bin = resolveFfprobePath() }
+  catch {
+    return Promise.resolve({ filePath, filename, fileSize, durationSeconds: 0, warning: 'PROBE_FAILED' })
+  }
+
   return new Promise<EraseProbeResult>((resolve) => {
-    const child = spawn(resolveFfprobePath(), [
+    const child = spawn(bin, [
       '-v', 'error',
       '-show_entries', 'format=duration',
       '-of', 'json',
@@ -59,12 +69,24 @@ function probeOne(filePath: string): Promise<EraseProbeResult> {
     const stdoutChunks: Buffer[] = []
     let settled = false
 
+    // Watchdog: a hung ffprobe (e.g. Windows OneDrive cloud-only file where
+    // statSync passes but the byte read blocks on download) would otherwise
+    // tie up a worker slot indefinitely and stall Task 8's cost dialog.
+    // Mirrors posterGen's POSTER_TIMEOUT pattern.
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      try { child.kill('SIGKILL') } catch { /* ignore */ }
+      resolve({ filePath, filename, fileSize, durationSeconds: 0, warning: 'PROBE_FAILED' })
+    }, PROBE_TIMEOUT_MS)
+
     child.stdout?.on('data', (c: Buffer) => { stdoutChunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)) })
     child.stderr?.on('data', () => { /* swallow; we map any failure to PROBE_FAILED */ })
 
     const settleFailed = () => {
       if (settled) return
       settled = true
+      clearTimeout(timer)
       resolve({ filePath, filename, fileSize, durationSeconds: 0, warning: 'PROBE_FAILED' })
     }
 
@@ -78,6 +100,7 @@ function probeOne(filePath: string): Promise<EraseProbeResult> {
         const num = Number(raw)
         if (!Number.isFinite(num) || num < 0) { settleFailed(); return }
         settled = true
+        clearTimeout(timer)
         resolve({ filePath, filename, fileSize, durationSeconds: num })
       } catch {
         settleFailed()

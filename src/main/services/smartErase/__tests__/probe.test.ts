@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { EventEmitter } from 'node:events'
 import * as path from 'node:path'
 
@@ -52,6 +52,10 @@ describe('smartErase/probe.probeBatch', () => {
     vi.resetModules()
     spawnMock.mockReset()
     statSyncMock.mockReset()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('returns [] for empty input without spawning', async () => {
@@ -149,7 +153,32 @@ describe('smartErase/probe.probeBatch', () => {
     expect(results).toHaveLength(10)
     expect(results.every((r) => r.warning === undefined)).toBe(true)
     expect(spawnMock).toHaveBeenCalledTimes(10)
-    expect(peak).toBeLessThanOrEqual(4)
-    expect(peak).toBeGreaterThan(1)
+    // Tighter than the plan's "≤ 4" — a future bump to PROBE_CONCURRENCY MUST
+    // fail this assertion. The 4 workers spin up synchronously before any
+    // microtask drains, so peak === 4 is deterministic given 10 paths.
+    expect(peak).toBe(4)
+  })
+
+  it('flags PROBE_FAILED and SIGKILLs the process when ffprobe hangs past 30s', async () => {
+    vi.useFakeTimers()
+    statSyncMock.mockReturnValueOnce({ size: 1024 })
+    const child = makeFakeChild()
+    spawnMock.mockReturnValueOnce(child)
+
+    const { probeBatch } = await import('../probe')
+    const promise = probeBatch(['/videos/onedrive-cloud-only.mp4'])
+
+    promise.catch(() => {})
+
+    // Advance a bit shy of timeout — must NOT have killed yet.
+    await vi.advanceTimersByTimeAsync(29_000)
+    expect(child.kill).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(2_000)
+
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL')
+    const [r] = await promise
+    expect(r.warning).toBe('PROBE_FAILED')
+    expect(r.fileSize).toBe(1024)
   })
 })
