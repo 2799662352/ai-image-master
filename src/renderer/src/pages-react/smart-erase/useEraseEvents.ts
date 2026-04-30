@@ -1,3 +1,8 @@
+// CRITICAL: do not move this hook out of SmartErasePage — see spec §A3.
+// The current mount strategy (display:none toggle in react-app/main.tsx:238-260)
+// guarantees this component never unmounts on tab switch. Moving to an unmount-
+// based router would silently lose erase:finished events and pin the progress
+// bar at 95% forever.
 import { useEffect } from 'react'
 import { useEraseSessionStore } from '../../stores/useEraseSessionStore'
 import { useErasePersistStore } from '../../stores/useErasePersistStore'
@@ -10,11 +15,6 @@ import type {
 
 const api = (window as any).electronAPI
 
-/**
- * Single subscription to the main-process smart-erase event stream. Routes
- * each event to the right store + toast. Mount once at the top of the
- * SmartErase page tree (cleanup removes all listeners on unmount).
- */
 export function useEraseEvents(): void {
   useEffect(() => {
     if (!api?.onSmartEraseEvent) return
@@ -26,20 +26,25 @@ export function useEraseEvents(): void {
 
       if (channel === 'erase:progress') {
         const d = data as EraseProgressEvent
-        session.updateTaskStatus(d.taskId, d.status, d.uploadProgress, d.mpsTaskId)
+        const prev = session.activeTasks.find((t) => t.id === d.taskId)
+        const patch: Partial<typeof prev & {}> = {
+          uploadProgress: d.uploadProgress,
+          mpsTaskId: d.mpsTaskId,
+        }
+        if (d.status === 'processing' && prev?.status !== 'processing') {
+          patch.processingStartedAt = Date.now()
+        }
+        session.updateTaskStatus(d.taskId, d.status, patch)
+
         if (d.status === 'cancelled') {
-          // Cancellation comes through as a progress event; UI also wants to
-          // remove the row + toast. Failure path uses erase:failed instead.
           session.removeActiveTask(d.taskId)
           toast.addToast({ message: '已取消 / CANCELLED', type: 'info' })
         }
       } else if (channel === 'erase:finished') {
         const d = data as EraseFinishedEvent
         const task = session.activeTasks.find((t) => t.id === d.taskId)
-        if (!task) {
-          // Task was probably cancelled+removed in a race; ignore the late finish.
-          return
-        }
+        if (!task) return
+
         persist.pushHistory({
           id: task.id,
           filename: task.filename,
@@ -52,10 +57,11 @@ export function useEraseEvents(): void {
           inputCosKey: d.inputCosKey,
           originalFilePath: task.filePath ?? '',
           createdAt: task.startedAt,
+          mpsTaskId: task.mpsTaskId,
+          finishedAt: Date.now(),
         })
         session.removeActiveTask(d.taskId)
         session.setRecentlyFinished(task.id)
-        // Highlight ring for 3s (matches storyboard-split's UX).
         setTimeout(() => {
           useEraseSessionStore.getState().setRecentlyFinished(null)
         }, 3000)
