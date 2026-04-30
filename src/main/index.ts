@@ -13,6 +13,16 @@ import {
   setMainWindow as setSplitMainWindow,
   deleteRemoteObjects,
 } from './services/storyboardSplit'
+import {
+  submitErase,
+  cancelEraseTask,
+  cancelAllActiveSmartEraseTasks,
+  getEraseConfig,
+  setEraseCredentialsFromUI,
+  deleteEraseRemoteObjects,
+  probeBatch as probeEraseBatch,
+  setMainWindow as setEraseMainWindow,
+} from './services/smartErase'
 
 // 检测开发模式：通过命令行参数或环境变量
 const isDev = process.argv.includes('--dev') || process.env.NODE_ENV === 'development'
@@ -229,7 +239,8 @@ function createWindow(): void {
           "font-src 'self' https://fonts.gstatic.com data:",
           "img-src 'self' data: blob: https: file:",
           "connect-src 'self' https: wss: data: http://175.178.198.17:* http://127.0.0.1:* http://localhost:*",
-          "media-src 'self' data: blob:",
+          // allow COS HTTPS presigned URLs for smart erase video playback
+          "media-src 'self' data: blob: https:",
           "worker-src 'self' blob:", // 允许 Web Worker 从 blob URL 创建（图片压缩库需要）
           "frame-src 'none'"
         ].join('; ')
@@ -478,6 +489,7 @@ app.whenReady().then(async () => {
   createWindow()
 
   if (mainWindow) setSplitMainWindow(mainWindow)
+  if (mainWindow) setEraseMainWindow(mainWindow)
 
   // 非关键路径：延迟初始化
   deferNonCriticalInit()
@@ -539,6 +551,7 @@ function deferNonCriticalInit(): void {
 
 app.on('window-all-closed', () => {
   cancelAllActiveTasks()
+  cancelAllActiveSmartEraseTasks()
   if (process.platform !== 'darwin') {
     app.quit()
   }
@@ -1083,4 +1096,30 @@ ipcMain.handle('storyboard-split:set-defaults', async (_event, config) => {
 
 ipcMain.handle('storyboard-split:delete-remote', async (_event, cosPaths: string[]) => {
   return deleteRemoteObjects(cosPaths)
+})
+
+// ==================== 智能去字幕 IPC ====================
+
+ipcMain.handle('smart-erase:probe-batch', async (_event, paths: string[]) => {
+  return probeEraseBatch(paths)
+})
+
+ipcMain.handle('smart-erase:submit', async (_event, payload) => {
+  return submitErase(payload)
+})
+
+ipcMain.handle('smart-erase:cancel', async (_event, { taskId }: { taskId: string }) => {
+  return cancelEraseTask(taskId)
+})
+
+ipcMain.handle('smart-erase:get-config', async () => {
+  return getEraseConfig()
+})
+
+ipcMain.handle('smart-erase:set-credentials', async (_event, creds) => {
+  return setEraseCredentialsFromUI(creds)
+})
+
+ipcMain.handle('smart-erase:delete-remote', async (_event, keys: string[]) => {
+  return deleteEraseRemoteObjects(keys)
 })
