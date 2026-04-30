@@ -62,22 +62,20 @@ export function EraseResultModal() {
     }
   }
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     if (expired) { addToast({ message: 'URL 已过期', type: 'error' }); return }
     const downloadName = item.filename.replace(/\.[^.]+$/, '') + '_erased.mp4'
-    const sep = item.videoUrl.includes('?') ? '&' : '?'
-    const downloadUrl =
-      item.videoUrl + sep +
-      'response-content-disposition=' +
-      encodeURIComponent(`attachment; filename="${downloadName}"`)
-    const a = document.createElement('a')
-    a.href = downloadUrl
-    a.download = downloadName
-    a.target = '_blank'
-    a.rel = 'noopener'
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
+    try {
+      const res = await api?.smartEraseDownloadFile?.(item.videoUrl, downloadName)
+      if (res?.canceled) return
+      if (res?.success) {
+        addToast({ message: '下载完成', type: 'success' })
+      } else {
+        addToast({ message: res?.error || '下载失败', type: 'error' })
+      }
+    } catch {
+      addToast({ message: '下载失败', type: 'error' })
+    }
   }
 
   const handleRemove = () => {

@@ -124,6 +124,7 @@ const IPC_CHANNELS = {
     GET_CONFIG: 'smart-erase:get-config',
     SET_CREDENTIALS: 'smart-erase:set-credentials',
     DELETE_REMOTE: 'smart-erase:delete-remote',
+    DOWNLOAD_FILE: 'smart-erase:download-file',
   },
   SMART_ERASE_EVENTS: [
     'erase:progress',
@@ -249,6 +250,7 @@ export interface ElectronAPI {
   smartEraseGetConfig: () => Promise<{ success: boolean; defaults: EraseConfig; credentials: { hasCredentials: boolean; secretId?: string; bucket?: string; region?: string } }>
   smartEraseSetCredentials: (creds: { secretId: string; secretKey: string; bucket: string; region: string }) => Promise<{ success: boolean }>
   smartEraseDeleteRemote: (cosPaths: string[]) => Promise<{ success: boolean; error?: string }>
+  smartEraseDownloadFile: (url: string, suggestedName: string) => Promise<{ success: boolean; path?: string; canceled?: boolean; error?: string }>
   onSmartEraseEvent: (callback: (channel: string, data: EraseProgressEvent | EraseFinishedEvent | EraseFailedEvent) => void) => void
   removeSmartEraseListeners: () => void
   // 文件路径访问（合成 File 对象返回 ""，非 File 对象抛异常被吞掉返回 ""）
@@ -481,6 +483,9 @@ const electronAPI: ElectronAPI = {
 
   smartEraseDeleteRemote: (cosPaths: string[]) =>
     safeInvoke(IPC_CHANNELS.SMART_ERASE.DELETE_REMOTE, cosPaths),
+
+  smartEraseDownloadFile: (url: string, suggestedName: string) =>
+    safeInvoke(IPC_CHANNELS.SMART_ERASE.DOWNLOAD_FILE, { url, suggestedName }),
 
   onSmartEraseEvent: (callback) => {
     for (const ch of IPC_CHANNELS.SMART_ERASE_EVENTS) {

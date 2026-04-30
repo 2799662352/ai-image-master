@@ -1123,3 +1123,27 @@ ipcMain.handle('smart-erase:set-credentials', async (_event, creds) => {
 ipcMain.handle('smart-erase:delete-remote', async (_event, keys: string[]) => {
   return deleteEraseRemoteObjects(keys)
 })
+
+ipcMain.handle('smart-erase:download-file', async (_event, { url, suggestedName }: { url: string; suggestedName: string }) => {
+  try {
+    if (!mainWindow) return { success: false, error: 'No window' }
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: '保存去字幕视频',
+      defaultPath: path.join(app.getPath('downloads'), suggestedName),
+      filters: [
+        { name: '视频文件', extensions: ['mp4'] },
+        { name: '所有文件', extensions: ['*'] },
+      ],
+    })
+    if (result.canceled || !result.filePath) return { success: false, canceled: true }
+
+    const res = await net.fetch(url)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const buf = await res.arrayBuffer()
+    await fs.promises.writeFile(result.filePath, Buffer.from(buf))
+    return { success: true, path: result.filePath }
+  } catch (error: any) {
+    console.error('[smart-erase] download failed:', error)
+    return { success: false, error: error.message }
+  }
+})
