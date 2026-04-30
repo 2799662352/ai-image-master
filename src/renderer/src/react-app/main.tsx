@@ -6,6 +6,7 @@ import SettingsPage from '../pages-react/SettingsPage'
 import HistoryPage from '../pages-react/HistoryPage'
 import BatchPage from '../pages-react/BatchPage'
 import StoryboardSplitPage from '../pages-react/StoryboardSplitPage'
+import SmartErasePage from '../pages-react/SmartErasePage'
 import { ToastContainer } from '../components/Toast'
 import { GenerateTokenBridge } from './components/GenerateTokenBridge'
 import { TemplateInline } from './components/TemplateInline'
@@ -15,6 +16,7 @@ let settingsRoot: Root | null = null
 let historyRoot: Root | null = null
 let batchRoot: Root | null = null
 let storyboardSplitRoot: Root | null = null
+let smartEraseRoot: Root | null = null
 let toastRoot: Root | null = null
 let generateTokenRoot: Root | null = null
 let generateTemplateRoot: Root | null = null
@@ -225,6 +227,34 @@ export function mountStoryboardSplitReact(): void {
 
 export function unmountStoryboardSplitReact(): void {
   const container = document.getElementById('storyboard-split-react-root')
+  if (container) {
+    container.style.display = 'none'
+  }
+}
+
+/**
+ * SmartErasePage 同样只渲染一次，之后切 tab 只切 display 可见性。
+ */
+export function mountSmartEraseReact(): void {
+  const container = document.getElementById('smart-erase-react-root')
+  if (!container) {
+    console.warn('[React] smart-erase-react-root not found')
+    return
+  }
+  if (!smartEraseRoot) {
+    smartEraseRoot = createRoot(container)
+    smartEraseRoot.render(
+      <Suspense fallback={null}>
+        <SmartErasePage />
+      </Suspense>
+    )
+    console.log('[React] SmartErasePage mounted (first time)')
+  }
+  container.style.display = ''
+}
+
+export function unmountSmartEraseReact(): void {
+  const container = document.getElementById('smart-erase-react-root')
   if (container) {
     container.style.display = 'none'
   }

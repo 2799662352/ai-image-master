@@ -33,7 +33,8 @@ export class TabManager {
     'history',
     'understand',
     'director',
-    'storyboardSplit'
+    'storyboardSplit',
+    'smartErase'
   ]
 
   constructor(config: TabManagerConfig = {}) {

@@ -49,6 +49,8 @@ import {
   unmountBatchReact,
   mountStoryboardSplitReact,
   unmountStoryboardSplitReact,
+  mountSmartEraseReact,
+  unmountSmartEraseReact,
   mountGlobalToast,
   mountGenerateTokenBridge,
   mountGenerateTemplateInline,
@@ -295,6 +297,8 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
         if (newTab === 'batch') mountBatchReact()
         if (oldTab === 'storyboardSplit') unmountStoryboardSplitReact()
         if (newTab === 'storyboardSplit') mountStoryboardSplitReact()
+        if (oldTab === 'smartErase') unmountSmartEraseReact()
+        if (newTab === 'smartErase') mountSmartEraseReact()
       })
 
       // 在 React mount 之前同步模型列表到 store（消除首帧 race condition）
@@ -323,6 +327,9 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
 
       mountStoryboardSplitReact()
       if (activeTab !== 'storyboardSplit') unmountStoryboardSplitReact()
+
+      mountSmartEraseReact()
+      if (activeTab !== 'smartErase') unmountSmartEraseReact()
 
       window.tabManagerTS = tabManager
       ServiceRegistry.register(SERVICE_KEYS.TAB_MANAGER, tabManager)
