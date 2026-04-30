@@ -55,10 +55,17 @@ function makeError(code: string, message: string, stage: string): Error {
  * Pure: total time we'll wait for MPS to finish, given the source video length.
  * Floor = 60min so a 5s clip still has reasonable headroom; multiplier = 4
  * matches Tencent's empirical "smart-erase processes at ~0.25× realtime" guidance.
- * Exported for direct unit testing — see runner.test.ts tests 11+12.
+ *
+ * Defensive: a non-finite or negative durationSeconds (probe failed and renderer
+ * still submitted, or future-spec manual override) falls back to the floor
+ * rather than producing NaN deadline (which would make `Date.now() < deadline`
+ * permanently false and POLL_TIMEOUT immediately, shadowing the real failure).
+ *
+ * Exported for direct unit testing — see runner.test.ts tests 11+12+16.
  */
 export function calculatePollDeadline(durationSeconds: number, nowMs: number): number {
-  const dynamicMs = durationSeconds * POLL_DURATION_MULTIPLIER * 1000
+  const safe = Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : 0
+  const dynamicMs = safe * POLL_DURATION_MULTIPLIER * 1000
   return nowMs + Math.max(POLL_TIMEOUT_FLOOR_MS, dynamicMs)
 }
 
@@ -196,7 +203,10 @@ export async function runEraseJob(
     if (result.Status === 'SUCCESS') {
       const path: string | undefined = result.Output?.Path
       if (!path) throw makeError('OUTPUT_NOT_FOUND', 'SUCCESS but no Output.Path', 'output')
-      const outputCosKey = path.replace(/^\//, '')
+      // Strip ALL leading slashes — MPS occasionally returns '//<bucket-rel-path>'
+      // and getPresignedUrl on such a key produces an over-encoded URL the
+      // browser refuses to play. Single-slash strip would miss this case.
+      const outputCosKey = path.replace(/^\/+/, '')
       const videoUrl = await getPresignedUrl({ key: outputCosKey, expireSeconds: SEVEN_DAYS_S })
       return {
         videoUrl,

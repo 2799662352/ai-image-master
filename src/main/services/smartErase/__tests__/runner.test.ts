@@ -317,4 +317,22 @@ describe('smartErase/runner.runEraseJob', () => {
       code: 'TEMPLATE_NOT_FOUND',
     })
   })
+
+  it('Test 16: NaN/Infinity/negative durationSeconds → calculatePollDeadline falls back to 60-min floor (not NaN)', async () => {
+    const { calculatePollDeadline } = await import('../runner')
+    const now = 1_000_000
+    expect(calculatePollDeadline(NaN, now) - now).toBe(60 * 60 * 1000)
+    expect(calculatePollDeadline(Infinity, now) - now).toBe(60 * 60 * 1000)
+    expect(calculatePollDeadline(-50, now) - now).toBe(60 * 60 * 1000)
+    expect(calculatePollDeadline(0, now) - now).toBe(60 * 60 * 1000)
+  })
+
+  it('Test 17: Output.Path with multiple leading slashes is fully stripped', async () => {
+    describeTaskDetailMock.mockResolvedValueOnce(buildFinishSuccess('//smart-erase/abc/output.mp4'))
+
+    const { runEraseJob } = await import('../runner')
+    const result = await runEraseJob(freshJob(), new AbortController().signal)
+    expect(result.outputCosKey).toBe('smart-erase/abc/output.mp4')
+    expect(result.outputCosKey.startsWith('/')).toBe(false)
+  })
 })
