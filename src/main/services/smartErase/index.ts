@@ -114,6 +114,20 @@ const uploadQueue = new JobQueue<UploadPhaseInput, UploadPhaseOutput>({
       const meta = taskRegistry.get(job.taskId)
       if (!meta) return
       const isCancel = err.code === 'TASK_CANCELLED'
+      if (!isCancel) {
+        // Surface the unwrapped error stack so TLS / DNS / proxy / cred
+        // failures show up in the dev terminal — the IPC payload only
+        // carries err.message, which strips the cause chain.
+        console.error('[smart-erase] upload phase failed', {
+          taskId: job.taskId,
+          filename: meta.payload.filename,
+          errCode: err?.code,
+          errMessage: err?.message,
+          innerCode: (err as any)?.error?.code ?? (err as any)?.cause?.code,
+          innerMessage: (err as any)?.error?.message ?? (err as any)?.cause?.message,
+          stack: typeof err?.stack === 'string' ? err.stack.split('\n').slice(0, 6).join('\n') : undefined,
+        })
+      }
       meta.phase = isCancel ? 'cancelled' : 'failed'
       if (isCancel) {
         safeSend('erase:progress', {
@@ -169,6 +183,18 @@ const processQueue = new JobQueue<ProcessPhaseInput, ProcessPhaseOutput>({
       const meta = taskRegistry.get(job.taskId)
       if (!meta) return
       const isCancel = err.code === 'TASK_CANCELLED'
+      if (!isCancel) {
+        console.error('[smart-erase] process phase failed', {
+          taskId: job.taskId,
+          filename: meta.payload.filename,
+          mpsTaskId: meta.mpsTaskId,
+          errCode: err?.code,
+          errMessage: err?.message,
+          innerCode: (err as any)?.error?.code ?? (err as any)?.cause?.code,
+          innerMessage: (err as any)?.error?.message ?? (err as any)?.cause?.message,
+          stack: typeof err?.stack === 'string' ? err.stack.split('\n').slice(0, 6).join('\n') : undefined,
+        })
+      }
       // Cancel mid-processing: MPS task already submitted; route to reaper
       // for best-effort COS cleanup once MPS finishes.
       if (isCancel && meta.mpsTaskId && meta.inputCosKey) {

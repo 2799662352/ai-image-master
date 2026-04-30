@@ -33,6 +33,25 @@ function getBucketAndRegion() {
   return { Bucket: creds.bucket, Region: creds.region }
 }
 
+// Keep all reject-path logging in one place so we can flip the verbosity
+// switch in one spot once we're confident in the deployed network setup.
+// Captures the COS SDK error envelope (err.code/statusCode/RequestId) AND
+// the inner Node.js error chain (err.error?.code, err.error?.message,
+// err.cause?.message) — TLS / DNS / proxy failures only show the real
+// reason on the inner error.
+function logCosError(op: string, err: any, ctx: Record<string, unknown> = {}) {
+  console.error(`[cosClient] ${op} FAILED`, {
+    ...ctx,
+    code: err?.code,
+    statusCode: err?.statusCode,
+    requestId: err?.headers?.['x-cos-request-id'] ?? err?.RequestId,
+    message: err?.message,
+    innerCode: err?.error?.code ?? err?.cause?.code,
+    innerMessage: err?.error?.message ?? err?.cause?.message,
+    stack: typeof err?.stack === 'string' ? err.stack.split('\n').slice(0, 6).join('\n') : undefined,
+  })
+}
+
 export interface UploadBufferOptions {
   key: string
   body: Buffer
@@ -45,7 +64,14 @@ export async function uploadBuffer(opts: UploadBufferOptions): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     cos.putObject(
       { Bucket, Region, Key: opts.key, Body: opts.body, ContentType: opts.contentType },
-      (err: any) => (err ? reject(err) : resolve()),
+      (err: any) => {
+        if (err) {
+          logCosError('uploadBuffer', err, { Bucket, Region, Key: opts.key })
+          reject(err)
+          return
+        }
+        resolve()
+      },
     )
   })
 }
@@ -79,7 +105,14 @@ export async function uploadStream(opts: UploadStreamOptions): Promise<void> {
         onProgress: opts.onProgress,
         onTaskReady: opts.onTaskReady,
       },
-      (err: any) => (err ? reject(err) : resolve()),
+      (err: any) => {
+        if (err) {
+          logCosError('uploadStream', err, { Bucket, Region, Key: opts.key, filePath: opts.filePath })
+          reject(err)
+          return
+        }
+        resolve()
+      },
     )
   })
 }
@@ -115,7 +148,14 @@ export function getPresignedUrl(opts: GetPresignedUrlOptions): Promise<string> {
         Expires: opts.expireSeconds,
         Query: opts.query,
       },
-      (err: any, data: any) => (err ? reject(err) : resolve(data.Url)),
+      (err: any, data: any) => {
+        if (err) {
+          logCosError('getPresignedUrl', err, { Bucket, Region, Key: opts.key })
+          reject(err)
+          return
+        }
+        resolve(data.Url)
+      },
     )
   })
 }
