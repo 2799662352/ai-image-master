@@ -643,9 +643,18 @@ The shared `tencent/*` layer and `storyboardSplit` are untouched throughout this
 
 ## 7. Open verification items inherited from spec §16
 
-1. Real-account `Definition: 303` smoke — run during Task 4 once credentials are in dev env. If it fails with `TEMPLATE_NOT_FOUND`, surface the manual copy-template fallback before Task 8 ships.
+1. ✅ **RESOLVED 2026-04-30**: Definition 303 = "去字幕-至尊版" / 系统预设 — confirmed in Tencent Cloud console at `console.cloud.tencent.com/mps/templates/intel?tab=erase`. Last updated by Tencent 2026-04-17. The `TEMPLATE_NOT_FOUND` fallback path stays in spec §11 as a defensive measure for future Tencent-side template removal.
 2. ffprobe latency on 5 GB file (Task 3 — measure during dev, decide if probe needs to be deferred to background after enqueueing).
 3. `<video>` with 7-day COS presigned URL (Task 8 manual E2E — verify Range request behavior; if scrubbing is broken, document as known limitation).
 4. `ffmpeg-static` install size impact on packaged app (Task 1 — note bundle size before/after; if > 50 MB increase, ask user before merging).
+
+## 8. Service preconditions (resolved 2026-04-30, recorded for future reference)
+
+Before Task 8 E2E can run, the user's Tencent Cloud account needs:
+
+- ✅ **MPS service activated** — verified `console.cloud.tencent.com/mps/index` shows "👏 你好，欢迎使用媒体处理服务" (was previously redirecting to `/state/unactivated`).
+- ✅ **MPS-to-COS service role authorized** — verified the dashboard's 服务角色授权 panel shows green "✓ COS已授权". This is the CAM role that lets `ProcessMedia` read input from / write output to the user's COS bucket; without it, tasks fail with permission errors.
+- ⚠️ Account balance: 0 用量 / 0 元 as of activation; user is on **日结计费** (next-day-12pm-to-6pm settlement). At Task 8 E2E time, recommend running scenarios #2 and #6 first (1 small file ≤30s) and waiting one billing cycle to read actual cost before stress-running the full matrix.
+- ⚠️ Resource pack: not purchased yet. For personal-use rate (the user's stated context), pay-as-you-go is fine; revisit if monthly usage exceeds the resource-pack break-even point.
 
 These are flagged for the implementer to surface in PR description, not gate the merge unless they reveal a deal-breaker.
