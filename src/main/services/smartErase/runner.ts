@@ -44,6 +44,31 @@ export interface RunnerEvents {
   onProgress?: (patch: RunnerProgressPatch) => void
 }
 
+// Phase-split inputs/outputs (added in Task 6 to support dual-queue composer
+// without duplicating ~80 lines of upload/poll logic). The monolithic
+// runEraseJob below remains exported for tests + any single-shot callers.
+export interface UploadPhaseInput {
+  taskId: string
+  filePath: string
+  filename: string
+}
+export interface UploadPhaseOutput {
+  inputCosKey: string
+}
+export interface ProcessPhaseInput {
+  taskId: string
+  filename: string
+  durationSeconds: number
+  config: EraseConfig
+  inputCosKey: string
+}
+export interface ProcessPhaseOutput {
+  videoUrl: string
+  videoExpiresAt: number
+  outputCosKey: string
+  mpsTaskId: string
+}
+
 function makeError(code: string, message: string, stage: string): Error {
   const err: any = new Error(message)
   err.code = code
@@ -84,17 +109,24 @@ function isTemplateNotFoundError(err: any): boolean {
   return code.includes('Definition') || code.includes('Template')
 }
 
-export async function runEraseJob(
-  job: EraseJobInput,
+/**
+ * Phase 1 (upload only). The shared cosClient API doesn't natively accept
+ * AbortSignal — it exposes cancelUpload(cosTaskId) and surfaces the cosTaskId
+ * via onTaskReady. We bridge the two so external aborts during the multipart
+ * upload propagate cleanly.
+ *
+ * Caller is responsible for the post-upload signal.aborted check (see
+ * runEraseJob below). runUpload itself does NOT throw on abort-after-resolve
+ * because the dual-queue composer (Task 6) needs to hand off to the next
+ * queue regardless and let that queue's runner observe the abort.
+ */
+export async function runUpload(
+  job: UploadPhaseInput,
   signal: AbortSignal,
-  events: RunnerEvents = {},
-): Promise<EraseJobOutput> {
+  events: { onProgress?: (p: { stage: 'uploading'; uploadProgress?: number }) => void } = {},
+): Promise<UploadPhaseOutput> {
   const inputCosKey = `smart-erase/${job.taskId}/input/${job.filename}`
 
-  // ─── Stage 1: stream upload ────────────────────────────────────────────────
-  // The shared cosClient API doesn't natively accept AbortSignal — it exposes
-  // cancelUpload(cosTaskId) and surfaces the cosTaskId via onTaskReady. Bridge
-  // the two so external aborts during the multipart upload propagate cleanly.
   let cosTaskId: string | null = null
   const onAbortDuringUpload = () => {
     if (cosTaskId) cancelUpload(cosTaskId)
@@ -115,9 +147,18 @@ export async function runEraseJob(
     signal.removeEventListener('abort', onAbortDuringUpload)
   }
 
-  if (signal.aborted) throw makeError('TASK_CANCELLED', 'Cancelled after upload', 'upload')
+  return { inputCosKey }
+}
 
-  // ─── Stage 2: submit ProcessMedia ──────────────────────────────────────────
+/**
+ * Phase 2+3 (submit ProcessMedia + poll DescribeTaskDetail). Pre-condition:
+ * the input is already uploaded to inputCosKey.
+ */
+export async function runProcessAndPoll(
+  job: ProcessPhaseInput,
+  signal: AbortSignal,
+  events: { onProgress?: (p: { stage: 'submitting' | 'processing'; mpsTaskId?: string }) => void } = {},
+): Promise<ProcessPhaseOutput> {
   events.onProgress?.({ stage: 'submitting' })
   const creds = getCredentials()
   const client = getMpsClient()
@@ -127,7 +168,7 @@ export async function runEraseJob(
     const resp = await client.ProcessMedia({
       InputInfo: {
         Type: 'COS',
-        CosInputInfo: { Bucket: creds.bucket, Region: creds.region, Object: '/' + inputCosKey },
+        CosInputInfo: { Bucket: creds.bucket, Region: creds.region, Object: '/' + job.inputCosKey },
       },
       OutputStorage: {
         Type: 'COS',
@@ -153,7 +194,6 @@ export async function runEraseJob(
 
   events.onProgress?.({ stage: 'processing', mpsTaskId })
 
-  // ─── Stage 3: poll DescribeTaskDetail ──────────────────────────────────────
   const startedAt = Date.now()
   const deadline = calculatePollDeadline(job.durationSeconds, startedAt)
   let attempt = 0
@@ -176,9 +216,6 @@ export async function runEraseJob(
     const wf = taskResp?.WorkflowTask
     if (!wf) throw makeError('OUTPUT_NOT_FOUND', 'FINISH but no WorkflowTask', 'poll')
 
-    // Source-level failure (corrupt media, COS unreachable, signature error, ...).
-    // Check BEFORE accessing SmartEraseTaskResult — per plan §Task 4 test 4,
-    // ErrCode != 0 may co-occur with a missing SmartEraseTaskResult.
     if (typeof wf.ErrCode === 'number' && wf.ErrCode !== 0) {
       throw makeError('MPS_SOURCE_ERROR', `${wf.ErrCode}: ${wf.Message ?? ''}`, 'poll')
     }
@@ -186,43 +223,27 @@ export async function runEraseJob(
     const result = wf.SmartEraseTaskResult
     if (!result) throw makeError('OUTPUT_NOT_FOUND', 'FINISH but no SmartEraseTaskResult', 'poll')
 
-    // Defensive: per the typedef, SmartEraseTaskResult.Status can still be
-    // 'PROCESSING' even when the wrapper Status reads 'FINISH'. Treat as
-    // "keep polling" rather than throwing UNKNOWN_ERROR.
     if (result.Status === 'PROCESSING') {
       await new Promise<void>((resolve) => setTimeout(resolve, pollIntervalMs(attempt)))
       continue
     }
     if (result.Status === 'FAIL') {
-      throw makeError(
-        'MPS_TASK_FAILED',
-        `${result.ErrCodeExt ?? ''}: ${result.Message ?? ''}`,
-        'poll',
-      )
+      throw makeError('MPS_TASK_FAILED', `${result.ErrCodeExt ?? ''}: ${result.Message ?? ''}`, 'poll')
     }
     if (result.Status === 'SUCCESS') {
       const path: string | undefined = result.Output?.Path
       if (!path) throw makeError('OUTPUT_NOT_FOUND', 'SUCCESS but no Output.Path', 'output')
-      // Strip ALL leading slashes — MPS occasionally returns '//<bucket-rel-path>'
-      // and getPresignedUrl on such a key produces an over-encoded URL the
-      // browser refuses to play. Single-slash strip would miss this case.
       const outputCosKey = path.replace(/^\/+/, '')
       const videoUrl = await getPresignedUrl({ key: outputCosKey, expireSeconds: SEVEN_DAYS_S })
       return {
         videoUrl,
         videoExpiresAt: Date.now() + SEVEN_DAYS_MS,
         outputCosKey,
-        inputCosKey,
-        posterDataUrl: job.posterDataUrl,
         mpsTaskId,
       }
     }
 
-    throw makeError(
-      'UNKNOWN_ERROR',
-      `Unexpected SmartEraseTaskResult.Status=${result.Status}`,
-      'poll',
-    )
+    throw makeError('UNKNOWN_ERROR', `Unexpected SmartEraseTaskResult.Status=${result.Status}`, 'poll')
   }
 
   throw makeError(
@@ -230,4 +251,42 @@ export async function runEraseJob(
     `MPS task ${mpsTaskId} did not finish within ${Math.round((deadline - startedAt) / 60000)} minutes`,
     'poll',
   )
+}
+
+/**
+ * Single-shot orchestrator. Composer (Task 6) does NOT use this — it calls
+ * runUpload + runProcessAndPoll separately to enable the dual-queue
+ * architecture. Kept for unit-testability and as a documentation of the
+ * full flow.
+ */
+export async function runEraseJob(
+  job: EraseJobInput,
+  signal: AbortSignal,
+  events: RunnerEvents = {},
+): Promise<EraseJobOutput> {
+  const { inputCosKey } = await runUpload(
+    { taskId: job.taskId, filePath: job.filePath, filename: job.filename },
+    signal,
+    events as any,
+  )
+
+  if (signal.aborted) throw makeError('TASK_CANCELLED', 'Cancelled after upload', 'upload')
+
+  const result = await runProcessAndPoll(
+    {
+      taskId: job.taskId,
+      filename: job.filename,
+      durationSeconds: job.durationSeconds,
+      config: job.config,
+      inputCosKey,
+    },
+    signal,
+    events as any,
+  )
+
+  return {
+    ...result,
+    inputCosKey,
+    posterDataUrl: job.posterDataUrl,
+  }
 }
