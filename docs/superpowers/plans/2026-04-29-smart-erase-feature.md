@@ -18,7 +18,8 @@ The refactor surfaced a real production regression that took ~2 weeks of work gr
 3. **Type-safety on imports**: prefer named imports over `import X from 'pkg'` for any package whose CJS exports do not include an explicit `default`. When uncertain, run the smoke test in rule 2.
 4. **`as any` is debt**: every `(x as any).y.z` chain must be either justified in the same file or refactored into a typed adapter. Each one is a candidate undefined-crash site.
 5. **Build smoke is not enough**: after any task touches `src/main/index.ts` or `src/preload/index.ts`, the implementer must launch `npm run dev`, drive the existing `storyboardSplit` flow end-to-end (drop image → see split result), and paste the dev console output into the review.
-6. **Regression checklist runs every task**: see §3.
+6. **Dependency API surface verification**: tasks that depend on the shared `tencent/*` layer (Task 4 runner, Task 6 composer) must, before writing the call site, paste the **current exported signatures** they consume from the trunk into the PR description. If a future trunk PR changes those signatures, this paper trail makes the breakage obvious.
+7. **Regression checklist runs every task**: see §3.
 
 ---
 
@@ -111,13 +112,20 @@ The final task (Task 8) runs an **end-to-end matrix** that includes both feature
   - In `ElectronAPI` interface: 8 new methods + `getFilePath(file: File): string`.
   - In `electronAPI` const: implementations using `safeInvoke` and `ipcRenderer.on` + the `webUtils.getPathForFile` import from `electron`.
   - In `on` and `off` allowedChannels arrays: append `...IPC_CHANNELS.SMART_ERASE_EVENTS`.
-- `package.json` — add deps:
+- `package.json` — add deps **and a `build.asarUnpack` entry**:
   - `ffmpeg-static` (binary path provider for ffmpeg)
   - `ffprobe-static` (binary path provider for ffprobe)
   - `idb-keyval` (renderer-side IndexedDB wrapper)
+  - `build.asarUnpack`: `["**/node_modules/ffmpeg-static/**", "**/node_modules/ffprobe-static/**"]` — **MANDATORY**: native binaries inside `app.asar` cannot be executed by `child_process.spawn` in production builds; they must live under `app.asar.unpacked/`. If `package.json.build.asarUnpack` already exists, append; do not replace.
 
 **Implementation notes:**
-- `getFilePath`: in preload, `import { webUtils } from 'electron'`; expose `getFilePath: (file: File) => webUtils.getPathForFile(file)`. Returns `""` for synthetic File objects (e.g., browser drag-from-tab) — **do not** throw.
+- `getFilePath`: in preload, `import { webUtils } from 'electron'`. Wrap defensively because `webUtils.getPathForFile` **throws when passed a non-File object** (per Electron docs); only synthetic File objects return `""`. Required shape:
+  ```ts
+  getFilePath: (file: File): string => {
+    try { return webUtils.getPathForFile(file) } catch { return '' }
+  }
+  ```
+  Both empty-string and exception cases must be handled by the renderer as `FILE_PATH_UNAVAILABLE`.
 - The `onSmartEraseEvent` callback signature should match the existing `onStoryboardSplitEvent` (channel name + data) so the React hook pattern carries over.
 - **Do not** delete or rename `STORYBOARD_SPLIT` constants. Use `git diff src/preload/index.ts` to verify only additions exist.
 
@@ -151,7 +159,15 @@ The final task (Task 8) runs an **end-to-end matrix** that includes both feature
 - `src/main/services/smartErase/__tests__/posterGen.test.ts`
 
 **Implementation notes:**
-- Use `ffmpeg-static` (resolves to a binary path at runtime). Spawn:
+- Use `ffmpeg-static` (resolves to a binary path at runtime).
+- **Production-build path patch (MANDATORY)** — `require('ffmpeg-static')` returns a string that, in a packaged app, points inside `app.asar`. `child_process.spawn` cannot exec inside asar. Compose the runtime path as:
+  ```ts
+  import ffmpegStatic from 'ffmpeg-static'
+  const ffmpegPath = (ffmpegStatic ?? '').replace('app.asar', 'app.asar.unpacked')
+  if (!ffmpegPath) throw new Error('ffmpeg-static binary not found')
+  ```
+  Same pattern applies to `ffprobe-static.path` in Task 3. The `asarUnpack` config from Task 1 makes the `.unpacked` directory exist; this string replace makes the path resolve to it.
+- Spawn:
   ```ts
   spawn(ffmpegPath, ['-ss', '0.5', '-i', videoPath, '-frames:v', '1', '-vf', 'scale=320:-1', '-f', 'mjpeg', 'pipe:1'])
   ```
@@ -193,6 +209,13 @@ Mock `child_process.spawn` via `vi.mock`; use a fake EventEmitter that yields `s
 - `src/main/services/smartErase/__tests__/probe.test.ts`
 
 **Implementation notes:**
+- Resolve the binary path the same way as ffmpeg in Task 2:
+  ```ts
+  import ffprobeStatic from 'ffprobe-static'
+  const ffprobePath = (ffprobeStatic.path ?? '').replace('app.asar', 'app.asar.unpacked')
+  if (!ffprobePath) throw new Error('ffprobe-static binary not found')
+  ```
+  Note: `ffprobe-static` exports `{ path }`, not the bare string (different from `ffmpeg-static`). Verify with `node -e "console.log(require('ffprobe-static'))"` before coding.
 - Single-file probe: `spawn(ffprobePath, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'json', filePath])`. Parse JSON from stdout.
 - Local-readability check before ffprobe: `fs.statSync(path)` + read first byte. If either throws or hangs >2s, return `{ warning: 'FILE_NOT_LOCAL' }`.
 - Empty path string → `{ warning: 'FILE_PATH_UNAVAILABLE' }`.
@@ -250,54 +273,107 @@ export interface EraseJobOutput {
 Pipeline (each step emits `events.onProgress`):
 1. `inputCosKey = 'smart-erase/${taskId}/input/${filename}'`
 2. `uploadStream({ key, filePath, signal, onTaskReady, onProgress })` — capture COS taskId in `onTaskReady` so external `cancelUpload(cosTaskId)` can abort it (see spec §8.1).
-3. `ProcessMedia({ InputInfo: { Type: 'COS', CosInputInfo: {...} }, MediaProcessTask: { SmartEraseTaskSet: [{ Definition: config.definitionId }] }, OutputDir: '/smart-erase/${taskId}/output/', OutputStorage: { Type: 'COS', CosOutputStorage: { Bucket, Region } } })` — capture `resp.MediaProcessTask` ... actually wait, **verify the MPS response field name here**. Spec §5.2 says `WorkflowTask.SmartEraseTaskResult`. The `ProcessMedia` response wraps `TaskId`, `TaskType`, etc. **Implementer must read the SDK typedef at `node_modules/tencentcloud-sdk-nodejs-mps/tencentcloud/services/mps/v20190612/mps_models.d.ts`** before writing this and confirm the polling shape.
-4. Polling loop: 5s × 6 → 10s × 30 → 15s thereafter. Each iteration:
-   - `DescribeTaskDetail({ TaskId })` → `resp`.
-   - If `resp.Status` is `'WAITING' | 'PROCESSING'` → continue.
-   - If `resp.Status === 'FINISH'`:
-     - `result = resp.WorkflowTask?.SmartEraseTaskResult` (per spec §5.2)
-     - If `!result` → throw `OUTPUT_NOT_FOUND`.
-     - If `result.Status === 'FAIL'` → throw `MPS_TASK_FAILED` with `${result.ErrCodeExt}: ${result.Message}`.
-     - If `result.Status === 'SUCCESS'`:
-       - `path = result.Output?.Path` → if missing throw `OUTPUT_NOT_FOUND`.
-       - `outputCosKey = path.replace(/^\//, '')` — strip leading slash.
-       - `videoUrl = await getPresignedUrl({ key: outputCosKey, expireSeconds: 7 * 86400 })`
-       - return `{ videoUrl, videoExpiresAt: now + 7d, outputCosKey, inputCosKey, posterDataUrl, mpsTaskId }`.
+3. **Submit `ProcessMedia` — exact shape verified against SDK typedef `mps_models.d.ts:9383` (ProcessMediaRequest), `:7430` (SmartEraseTaskInput):**
+   ```ts
+   const resp = await client.ProcessMedia({
+     InputInfo: {
+       Type: 'COS',
+       CosInputInfo: { Bucket: creds.bucket, Region: creds.region, Object: '/' + inputCosKey },
+     },
+     OutputStorage: { Type: 'COS', CosOutputStorage: { Bucket: creds.bucket, Region: creds.region } },
+     OutputDir: `/smart-erase/${taskId}/output/`,
+     SmartEraseTask: { Definition: config.definitionId },        // ← TOP-LEVEL field, single object
+   })
+   const mpsTaskId = resp.TaskId
+   ```
+
+   ⚠️ **Common pitfall the spec §3 prose hinted at but is easy to mis-read:** `SmartEraseTask` is a **sibling** of `MediaProcessTask` inside `ProcessMediaRequest`, NOT nested inside it. It is also NOT a `*Set` array (unlike `TranscodeTaskSet` etc. inside `MediaProcessTaskInput`). Single object, single Definition.
+
+4. **Polling loop — exact shape verified against `mps_models.d.ts:18403` (DescribeTaskDetailResponse), `:22483` (WorkflowTask), `:15545` (SmartEraseTaskResult), `:15433` (AiAnalysisTaskDelLogoOutput).**
+
+   Cadence: 5s × 6 → 10s × 30 → 15s thereafter. Each iteration:
+   ```ts
+   const resp = await client.DescribeTaskDetail({ TaskId: mpsTaskId })
+
+   // Top-level Status: 'WAITING' | 'PROCESSING' | 'FINISH'
+   if (resp.Status === 'WAITING' || resp.Status === 'PROCESSING') continue
+
+   if (resp.Status !== 'FINISH') throw err('UNKNOWN_ERROR', `Unexpected resp.Status=${resp.Status}`, 'poll')
+
+   const wf = resp.WorkflowTask
+   if (!wf) throw err('OUTPUT_NOT_FOUND', 'FINISH but no WorkflowTask', 'poll')
+
+   // Source-level failure (corrupt media, COS unreachable, etc.) — wf.ErrCode is number, 0 = ok
+   if (typeof wf.ErrCode === 'number' && wf.ErrCode !== 0) {
+     throw err('MPS_SOURCE_ERROR', `${wf.ErrCode}: ${wf.Message ?? ''}`, 'poll')
+   }
+
+   const result = wf.SmartEraseTaskResult                          // single object, NOT array
+   if (!result) throw err('OUTPUT_NOT_FOUND', 'FINISH but no SmartEraseTaskResult', 'poll')
+
+   if (result.Status === 'PROCESSING') continue                    // possible per typedef line 15549
+   if (result.Status === 'FAIL') {
+     throw err('MPS_TASK_FAILED', `${result.ErrCodeExt ?? ''}: ${result.Message ?? ''}`, 'poll')
+   }
+   if (result.Status === 'SUCCESS') {
+     const path = result.Output?.Path                              // Output is AiAnalysisTaskDelLogoOutput
+     if (!path) throw err('OUTPUT_NOT_FOUND', 'SUCCESS but no Output.Path', 'output')
+     const outputCosKey = path.replace(/^\//, '')                  // strip leading slash
+     const videoUrl = await getPresignedUrl({ key: outputCosKey, expireSeconds: 7 * 86400 })
+     return { videoUrl, videoExpiresAt: Date.now() + 7 * 86400 * 1000, outputCosKey, inputCosKey, posterDataUrl, mpsTaskId }
+   }
+   throw err('UNKNOWN_ERROR', `Unexpected SmartEraseTaskResult.Status=${result.Status}`, 'poll')
+   ```
+
 5. Timeout: `max(60min, durationSeconds * 4 * 1000)`. On expiry throw `POLL_TIMEOUT`.
+
+**New error code added:** `MPS_SOURCE_ERROR` (source-level error per `WorkflowTask.ErrCode != 0`, distinct from `MPS_TASK_FAILED` per `SmartEraseTaskResult.Status === 'FAIL'`). Update spec §8 error table when implementing.
 
 **TDD test plan (write tests FIRST):**
 Mock `cosClient.uploadStream`, `cosClient.getPresignedUrl`, `mpsClient.getMpsClient` (returns `{ ProcessMedia, DescribeTaskDetail }` mocks). Each test:
 
-- Test 1: happy path → uploadStream called once with key matching pattern, ProcessMedia called once with `Definition: 303`, polling sees one PROCESSING then one FINISH+SUCCESS, output URL returned with leading slash stripped.
+- Test 1: happy path → uploadStream called once with key matching pattern; ProcessMedia called once with `SmartEraseTask: { Definition: 303 }` AT TOP LEVEL (not inside MediaProcessTask); polling sees one PROCESSING then one FINISH+SUCCESS; output URL returned with leading slash stripped.
 - Test 2: `Output.Path = '/smart-erase/abc/output.mp4'` → `outputCosKey = 'smart-erase/abc/output.mp4'` (no leading slash).
 - Test 3: poll returns `WorkflowTask.SmartEraseTaskResult.Status === 'FAIL'` with `ErrCodeExt='X'`, `Message='msg'` → throws Error with code `MPS_TASK_FAILED` and message containing `X: msg`.
-- Test 4: `Status === 'FINISH'` but `WorkflowTask.SmartEraseTaskResult` is missing → throws `OUTPUT_NOT_FOUND`.
-- Test 5: `Status === 'FINISH'`, `result.Status === 'SUCCESS'`, but `Output.Path` is `''` → throws `OUTPUT_NOT_FOUND`.
-- Test 6: `Status === 'FINISH'`, `result.Status === 'SUCCESS'`, but `result.Output` is undefined → throws `OUTPUT_NOT_FOUND`.
-- Test 7: dynamic timeout: 90-min source → timeout = `90 * 60 * 4 * 1000` ms (≈6h), not the 60-min floor. (Test by injecting a fake clock; verify the deadline math, do NOT actually wait 6 hours).
-- Test 8: 5-min source → timeout = 60-min floor (`5*60*4*1000 = 1.2M ms < 60min = 3.6M ms`).
-- Test 9: `signal.aborted` after upload → throws `TASK_CANCELLED` BEFORE calling `ProcessMedia`.
-- Test 10: `signal.aborted` mid-poll → throws `TASK_CANCELLED`; no further `DescribeTaskDetail` calls happen.
-- Test 11: `ProcessMedia` rejects with `{ code: 'InvalidParameterValue.Definition' }` → throws `TEMPLATE_NOT_FOUND`.
+- Test 4: poll returns `WorkflowTask.ErrCode = 1234` with `Message='source corrupt'` (source-level failure) → throws `MPS_SOURCE_ERROR` with `1234: source corrupt`. **`SmartEraseTaskResult` may or may not exist in this case; ErrCode check happens FIRST.**
+- Test 5: `Status === 'FINISH'` but `WorkflowTask` is missing entirely → throws `OUTPUT_NOT_FOUND`.
+- Test 6: `Status === 'FINISH'` + `WorkflowTask.ErrCode = 0` + `SmartEraseTaskResult` missing → throws `OUTPUT_NOT_FOUND`.
+- Test 7: `Status === 'FINISH'`, `result.Status === 'SUCCESS'`, but `Output.Path` is `''` → throws `OUTPUT_NOT_FOUND`.
+- Test 8: `Status === 'FINISH'`, `result.Status === 'SUCCESS'`, but `result.Output` is undefined → throws `OUTPUT_NOT_FOUND`.
+- Test 9: top-level `resp.Status === 'WAITING'` → continues polling (does not throw).
+- Test 10: `SmartEraseTaskResult.Status === 'PROCESSING'` even though `resp.Status === 'FINISH'` → continues polling. (Per typedef: SmartEraseTaskResult.Status has values `PROCESSING | SUCCESS | FAIL`; defensively handle the unusual case where the wrapper says FINISH but the inner task says still processing.)
+- Test 11: dynamic timeout: 90-min source → timeout = `90 * 60 * 4 * 1000` ms (≈6h), not the 60-min floor. (Test by injecting a fake clock; verify the deadline math, do NOT actually wait 6 hours).
+- Test 12: 5-min source → timeout = 60-min floor (`5*60*4*1000 = 1.2M ms < 60min = 3.6M ms`).
+- Test 13: `signal.aborted` after upload → throws `TASK_CANCELLED` BEFORE calling `ProcessMedia`.
+- Test 14: `signal.aborted` mid-poll → throws `TASK_CANCELLED`; no further `DescribeTaskDetail` calls happen.
+- Test 15: `ProcessMedia` rejects with `{ code: 'InvalidParameterValue.Definition' }` → throws `TEMPLATE_NOT_FOUND`.
 
 **MPS SDK shape verification (MANDATORY — direct reference to lessons learned §0):**
 
-Before writing the runner, the implementer must paste this output into the PR description:
+Already done by the planner; results documented here so the implementer can refer to them rather than re-deriving:
 
-```bash
-node -e "const m = require('tencentcloud-sdk-nodejs-mps'); console.log('mps:', typeof m.mps); console.log('Client:', typeof m.mps?.v20190612?.Client); const C = m.mps.v20190612.Client; console.log('ProcessMedia:', typeof C.prototype.ProcessMedia); console.log('DescribeTaskDetail:', typeof C.prototype.DescribeTaskDetail);"
-```
+| Check | Result | typedef line |
+|---|---|---|
+| `require('tencentcloud-sdk-nodejs-mps').mps` | `object` | — |
+| `mps.v20190612.Client` | `function` | — |
+| `Client.prototype.ProcessMedia` | `function` | — |
+| `Client.prototype.DescribeTaskDetail` | `function` | — |
+| `ProcessMediaRequest.SmartEraseTask` field | `SmartEraseTaskInput?` (single) | `mps_models.d.ts:9436` |
+| `SmartEraseTaskInput.Definition` | `number?` | `mps_models.d.ts:7434` |
+| `DescribeTaskDetailResponse.WorkflowTask` | `WorkflowTask?` | `mps_models.d.ts:18436` |
+| `WorkflowTask.SmartEraseTaskResult` | `SmartEraseTaskResult?` (single, NOT array) | `mps_models.d.ts:22542` |
+| `SmartEraseTaskResult.Status` | `'PROCESSING' \| 'SUCCESS' \| 'FAIL'` | `mps_models.d.ts:15549` |
+| `SmartEraseTaskResult.Output` | `AiAnalysisTaskDelLogoOutput?` (NOT custom shape) | `mps_models.d.ts:15567` |
+| `AiAnalysisTaskDelLogoOutput.Path` | `string?` (with leading `/`) | `mps_models.d.ts:15437` |
 
-Expected: all four `function`/`object`. If any is `undefined`, **stop the task** and ping the planner — the SDK shape is wrong and the rest of the runner won't work.
-
-Also paste `grep -n "SmartEraseTaskResult\|WorkflowTask\|DescribeTaskDetail" node_modules/tencentcloud-sdk-nodejs-mps/tencentcloud/services/mps/v20190612/mps_models.d.ts | head -30` so the response navigation is grounded in the actual SDK types, not on the spec's prose.
+The implementer should re-run the first 4 rows once locally before starting (single `node -e ...` line) to guard against the dependency being upgraded between planning and implementation. The other rows are stable across SDK 4.1.x.
 
 **Regression Protection:**
 - **Files NOT to touch**: anything in `tencent/`, `storyboardSplit/`, or other smartErase files (only `runner.ts` and its test in this task).
 - **Smoke**: `npm run test:run -- src/main/services/`.
 - **Tests stay green**: all 26 tencent + 5 posterGen + 6 probe = 37 unit tests.
 
-**Acceptance criteria:** 11 unit tests pass; SDK shape verification output is in PR description.
+**Acceptance criteria:** 15 unit tests pass; SDK shape verification re-run pasted in PR description.
 
 ---
 
@@ -345,11 +421,16 @@ Also paste `grep -n "SmartEraseTaskResult\|WorkflowTask\|DescribeTaskDetail" nod
 - `src/main/services/smartErase/__tests__/index.test.ts` (integration test using mocked runner + reaper).
 
 **Implementation notes:**
-- **Two JobQueue instances**, hand-off via in-process state:
+- **Use TWO JobQueue instances** with in-process hand-off:
   - `uploadQueue = new JobQueue({ maxConcurrent: 3, runner: runUploadOnly, ... })`
   - `processQueue = new JobQueue({ maxConcurrent: 40, runner: runProcessOnly, ... })`
-  - **OR** simpler: single JobQueue with maxConcurrent: 40, but use a per-task semaphore inside the runner gating only the upload phase. Pick one and document the choice in the PR.
-  - Default recommendation: **single JobQueue + upload semaphore**, fewer moving parts; but be clear about which the implementer chose.
+  - On `runUploadOnly` resolve: enqueue into `processQueue` with `{ inputCosKey, mpsTaskId? }` carried over.
+  - **Why not single queue + semaphore?** A task in the runner holds a worker slot for both phases. With single `maxConcurrent: 40`, all 40 slots can enter upload phase first (semaphore lets through 3 actively, 37 awaiting the semaphore) — but those 37 awaiters still occupy queue slots and block any new submissions. Dual queues separate the bookkeeping cleanly: upload waits do not back-pressure new submissions, and the process queue is never starved.
+  - **State machine**: `task.phase: 'queued-upload' | 'uploading' | 'queued-process' | 'processing' | 'done' | 'failed' | 'cancelled'`. Cancel routes:
+    - cancel during `queued-upload` / `uploading` → uploadQueue cancels, never enters processQueue.
+    - cancel during `queued-process` → processQueue cancels, no MPS submission yet.
+    - cancel during `processing` → MPS task already submitted: route to `reaper.trackForReaping(mpsTaskId, inputCosKey)` and remove from `processQueue` active set.
+- **Active-task accounting**: `getActiveCount()` should sum BOTH queues plus reaper size for accurate UI counters.
 - IPC handler for `smart-erase:probe-batch` calls `probeBatch` from `probe.ts`; this is synchronous-ish (no JobQueue), happens at drop time before any submit.
 - `submitErase`: generates posterDataUrl (calls `posterGen`), then enqueues. If poster fails, still enqueue with empty posterDataUrl (poster is non-essential).
 - Cancel during `processing` calls `reaper.trackForReaping(mpsTaskId, inputCosKey)` and removes from active set.
@@ -405,6 +486,8 @@ Mock `runner` and `reaper` via `vi.mock`. Do NOT exercise the real runner here (
    - After: `"media-src 'self' data: blob: https:"`
 
    Add inline comment: `// allow COS HTTPS presigned URLs for smart erase video playback`.
+
+   **Do NOT touch `connect-src`** — current value already includes `https:` (line 231), which is what `<video src="https://...">` actually uses for the byte-range fetches. If you find yourself editing `connect-src` you've gone too far; back out.
 4. After `setSplitMainWindow(currentWindow)` (around line 523, mirroring updater.setMainWindow), add `setEraseMainWindow(currentWindow)` on the next line.
 5. In `window-all-closed` hook (around line 541): change the existing single call to:
    ```ts
@@ -486,10 +569,23 @@ This is intentionally one big task (vs. splitting into 3) because the components
 - **Cost confirm dialog**: when `probeResults.totalDuration > 60min` OR `count > 10`, show a modal before calling `smart-erase:submit`. User clicks "继续" → submit; "取消" → no-op.
 - **Side-by-side compare**: two `<video>` elements with synced `currentTime`; if `originalFilePath` doesn't exist (`fs.existsSync` via a new `electronAPI.fileExists`?), show "原视频不可用" placeholder instead. **Avoid** adding a new IPC; instead, attempt to set `<video src="file://...">` and listen for `onerror` to fall back.
 - **History persistence**: `useErasePersistStore` MUST use `idb-keyval`, NOT `localStorage`. Verify by checking that `localStorage` is not mentioned in the file.
+- **Async hydration handling (CRITICAL — idb-keyval is async, unlike localStorage)** — zustand's `persist` middleware loads asynchronously when storage is async. Until hydration finishes, `useErasePersistStore.getState()` returns the schema defaults (empty `history`, default `config`). Two consequences the implementer MUST handle:
+  1. **`HistoryDrawer` reads must be gated.** Show a one-line "加载历史中…" placeholder until `useErasePersistStore.persist.hasHydrated() === true`. Pattern (per zustand docs, https://zustand.docs.pmnd.rs/integrations/persisting-store-data#how-can-i-check-if-my-store-has-been-hydrated):
+     ```ts
+     const hydrated = useErasePersistStore(s => s._hasHydrated) // see store wiring below
+     if (!hydrated) return <LoadingPlaceholder />
+     ```
+  2. **`config` reads at submit time must wait for hydration**, otherwise the user's persisted `definitionId` (e.g. a custom template they set in settings on a prior run) will be silently overridden by `DEFAULT_ERASE_CONFIG` on first launch. The Uploader's submit button should be disabled-with-spinner until `hasHydrated()` is true.
+  
+  Wire the `_hasHydrated` flag inside `useErasePersistStore` per zustand docs — define `_hasHydrated: false` in initial state and set it true in `onRehydrateStorage`'s returned callback. **Test it** in the renderer unit tests (Test 3 below).
+- **Atomic history mutations** — all history mutations go ONLY through the zustand store actions (`pushHistory`, `removeHistory`, `clearHistory`). Never call `idb-keyval`'s `set('erase-history', …)` directly from outside the store. (idb-keyval docs explicitly warn that direct get-then-set is racy; `update()` is the atomic primitive, but using zustand's single-writer model sidesteps the concern entirely.)
 
 **TDD test plan:** Renderer testing in this codebase is uneven; existing storyboardSplit components have minimal unit coverage. Match that level — **don't over-invest**. Specifically:
 - `useEraseSessionStore`: 2 tests (set/get task patch, removeTask).
-- `useErasePersistStore`: 2 tests (pushHistory caps at 50, removeHistory removes by id). Mock `idb-keyval` with `vi.mock`.
+- `useErasePersistStore`: 3 tests:
+  1. `pushHistory` caps at 50 (mock `idb-keyval` with `vi.mock`).
+  2. `removeHistory` removes by id.
+  3. `_hasHydrated` is `false` initially, becomes `true` after `onRehydrateStorage` callback fires (simulate rehydrate via `useErasePersistStore.persist.rehydrate()` — see zustand docs).
 - One Uploader smoke: dropping a synthetic File with no path → expect a `FILE_PATH_UNAVAILABLE` toast (spy on `window.electronAPI.getFilePath` returning `""`).
 
 That's it for renderer unit tests. Heavy lifting is in manual E2E.
@@ -508,7 +604,8 @@ That's it for renderer unit tests. Heavy lifting is in manual E2E.
 | 8 | Wrong credentials | `INVALID_CREDENTIALS` → settings auto-open | ⬜ |
 | 9 | Definition: 999999 (nonexistent) | `TEMPLATE_NOT_FOUND` toast + manual fallback link | ⬜ |
 | 10 | Switch tabs mid-task | Background processing continues; events still dispatched | ⬜ |
-| 11 | App restart | History preserved (idb-keyval); reaping queue NOT preserved | ⬜ |
+| 11 | App restart | History preserved (idb-keyval); reaping queue NOT preserved; HistoryDrawer briefly shows "加载历史中…" then populates | ⬜ |
+| 11b | Drop a file IMMEDIATELY after launch (before hydration completes) | Uploader is disabled with spinner until hydrate finishes; persisted `definitionId` (NOT default 303) is used at submit | ⬜ |
 | 12 | Side-by-side with original moved/deleted | "原视频不可用" placeholder; processed still plays | ⬜ |
 | 13 | Window closed during upload | `cancelAllActiveSmartEraseTasks` flushes; uploads abort | ⬜ |
 | 14 | After all of above: re-run scenario #1 | Storyboard split STILL works (no creeping regression) | ⬜ |
