@@ -26,6 +26,7 @@ function probeOne(filePath: string): Promise<EraseProbeResult> {
   const filename = filePath ? path.basename(filePath) : ''
 
   if (!filePath) {
+    console.warn('[probe] empty filePath')
     return Promise.resolve({
       filePath: '',
       filename: '',
@@ -39,7 +40,8 @@ function probeOne(filePath: string): Promise<EraseProbeResult> {
   try {
     const st = statSync(filePath)
     fileSize = Number(st.size ?? 0)
-  } catch {
+  } catch (err: any) {
+    console.warn('[probe] statSync failed:', filePath, err?.code, err?.message)
     return Promise.resolve({
       filePath,
       filename,
@@ -54,9 +56,11 @@ function probeOne(filePath: string): Promise<EraseProbeResult> {
   // (Plan §Task 3 review I-2: graceful degradation contract.)
   let bin: string
   try { bin = resolveFfprobePath() }
-  catch {
+  catch (err: any) {
+    console.warn('[probe] resolveFfprobePath threw:', err?.message)
     return Promise.resolve({ filePath, filename, fileSize, durationSeconds: 0, warning: 'PROBE_FAILED' })
   }
+  console.log('[probe] spawn', { bin, filePath, fileSize })
 
   return new Promise<EraseProbeResult>((resolve) => {
     const child = spawn(bin, [
@@ -67,6 +71,7 @@ function probeOne(filePath: string): Promise<EraseProbeResult> {
     ])
 
     const stdoutChunks: Buffer[] = []
+    const stderrChunks: Buffer[] = []
     let settled = false
 
     // Watchdog: a hung ffprobe (e.g. Windows OneDrive cloud-only file where
@@ -76,34 +81,41 @@ function probeOne(filePath: string): Promise<EraseProbeResult> {
     const timer = setTimeout(() => {
       if (settled) return
       settled = true
+      console.warn('[probe] timeout after', PROBE_TIMEOUT_MS, 'ms', filePath)
       try { child.kill('SIGKILL') } catch { /* ignore */ }
       resolve({ filePath, filename, fileSize, durationSeconds: 0, warning: 'PROBE_FAILED' })
     }, PROBE_TIMEOUT_MS)
 
     child.stdout?.on('data', (c: Buffer) => { stdoutChunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)) })
-    child.stderr?.on('data', () => { /* swallow; we map any failure to PROBE_FAILED */ })
+    child.stderr?.on('data', (c: Buffer) => { stderrChunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)) })
 
-    const settleFailed = () => {
+    const settleFailed = (reason: string, extra?: Record<string, unknown>) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      const stderr = Buffer.concat(stderrChunks).toString('utf8').trim().slice(0, 500)
+      const stdout = Buffer.concat(stdoutChunks).toString('utf8').trim().slice(0, 500)
+      console.warn('[probe] FAILED', { reason, filePath, fileSize, stderr, stdout, ...extra })
       resolve({ filePath, filename, fileSize, durationSeconds: 0, warning: 'PROBE_FAILED' })
     }
 
-    child.on('error', settleFailed)
+    child.on('error', (err) => settleFailed('spawn-error', { errCode: (err as any)?.code, errMessage: err?.message }))
     child.on('close', (code: number | null) => {
       if (settled) return
-      if (code !== 0) { settleFailed(); return }
+      if (code !== 0) { settleFailed('non-zero-exit', { code }); return }
       try {
         const parsed = JSON.parse(Buffer.concat(stdoutChunks).toString('utf8')) as FormatProbeJson
         const raw = parsed?.format?.duration
         const num = Number(raw)
-        if (!Number.isFinite(num) || num < 0) { settleFailed(); return }
+        if (!Number.isFinite(num) || num < 0) {
+          settleFailed('invalid-duration', { raw, num })
+          return
+        }
         settled = true
         clearTimeout(timer)
         resolve({ filePath, filename, fileSize, durationSeconds: num })
-      } catch {
-        settleFailed()
+      } catch (err: any) {
+        settleFailed('json-parse-failed', { errMessage: err?.message })
       }
     })
   })
