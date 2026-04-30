@@ -244,7 +244,7 @@ export interface ElectronAPI {
   removeStoryboardSplitListeners: () => void
   // 智能去字幕
   smartEraseProbeBatch: (paths: string[]) => Promise<EraseProbeResult[]>
-  smartEraseSubmit: (payload: EraseSubmitPayload) => Promise<{ success: boolean; taskId?: string; error?: string; errorCode?: string }>
+  smartEraseSubmit: (payload: EraseSubmitPayload) => Promise<{ success: boolean; taskId?: string; posterDataUrl?: string; error?: string; errorCode?: string }>
   smartEraseCancel: (taskId: string) => Promise<{ success: boolean }>
   smartEraseGetConfig: () => Promise<{ success: boolean; defaults: EraseConfig; credentials: { hasCredentials: boolean; secretId?: string; bucket?: string; region?: string } }>
   smartEraseSetCredentials: (creds: { secretId: string; secretKey: string; bucket: string; region: string }) => Promise<{ success: boolean }>

@@ -9,6 +9,7 @@ const VALID_TABS = [
   'understand',
   'director',
   'storyboardSplit',
+  'smartErase',
   'promptTemplates',
   'settings',
 ] as const
