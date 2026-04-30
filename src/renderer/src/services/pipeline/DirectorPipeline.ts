@@ -1617,18 +1617,49 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         writer(config)?.({ type: 'pass_complete', pass: 4, label: `分镜+提示词完成 [${level}] (${(elapsed / 1000).toFixed(1)}s)`, elapsed, passData })
       }
 
-      // --- Level 1: Full schema with includeRaw ---
+      // --- Level 1: Full schema with includeRaw + raw-text regex recovery ---
       try {
         const structuredWithRaw = self.createStructuredLLMWithRaw(DesignAndAssembleSchema)
         const response = await structuredWithRaw.invoke(messages, { signal: config?.signal })
 
-        const parsedPanels = (response as any)?.parsed?.panels
+        let parsedPanels = (response as any)?.parsed?.panels
+        let recoveryLevel: 'L1' | 'L1-raw' = 'L1'
+
+        if (!parsedPanels?.length) {
+          const rawText = typeof (response as any)?.raw?.content === 'string'
+            ? (response as any).raw.content : ''
+          if (rawText) {
+            try {
+              const cleaned = rawText
+                .replace(/^```(?:json)?\s*\n?/m, '')
+                .replace(/\n?```\s*$/m, '')
+                .trim()
+              const match = cleaned.match(/\{[\s\S]*"panels"\s*:\s*\[[\s\S]*?\]\s*\}/)
+              if (match) {
+                const fallback = JSON.parse(match[0])
+                if (Array.isArray(fallback?.panels) && fallback.panels.length > 0) {
+                  parsedPanels = fallback.panels
+                  recoveryLevel = 'L1-raw'
+                  console.log(`[DirectorPipeline] L1 recovered ${parsedPanels.length} panels via raw extraction`)
+                }
+              }
+            } catch (parseErr: unknown) {
+              console.warn('[DirectorPipeline] L1 raw regex parse failed:',
+                parseErr instanceof Error ? parseErr.message : String(parseErr))
+            }
+          }
+        }
+
         if (parsedPanels?.length) {
           const { panels, prompts } = makePanelsAndPrompts(parsedPanels)
-          emitSuccess(panels, prompts, 'L1')
+          emitSuccess(panels, prompts, recoveryLevel)
           return { panels, prompts }
         }
-        console.warn('[DirectorPipeline] L1 structured parse returned empty, falling through to L2')
+
+        const rawSample = typeof (response as any)?.raw?.content === 'string'
+          ? (response as any).raw.content.slice(0, 300)
+          : '(no raw content)'
+        console.warn('[DirectorPipeline] L1 structured parse returned empty, falling through to L2. Raw sample:', rawSample)
       } catch (e: unknown) {
         console.warn('[DirectorPipeline] L1 error:', e instanceof Error ? e.message : String(e))
       }
