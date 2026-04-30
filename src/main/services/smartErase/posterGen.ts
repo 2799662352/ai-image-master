@@ -11,7 +11,10 @@ const POSTER_TIMEOUT_MS = 5_000
  * already on disk so the replace is a no-op.
  */
 function resolveFfmpegPath(): string {
-  const raw = (ffmpegStatic ?? '') as unknown as string
+  const raw = ffmpegStatic ?? ''
+  // Prefix `POSTER_FAILED:` so Task 8's renderer can use a single
+  // startsWith('POSTER_FAILED') catch (intentional change vs the plan's
+  // bare message, applied to all error sources in this module).
   if (!raw) throw new Error('POSTER_FAILED: ffmpeg-static binary not found')
   return raw.replace('app.asar', 'app.asar.unpacked')
 }
