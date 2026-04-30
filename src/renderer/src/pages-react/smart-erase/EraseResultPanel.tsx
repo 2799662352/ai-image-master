@@ -120,7 +120,7 @@ export function EraseResultPanel() {
               key={`orig-${item.id}`}
               src={`file:///${item.originalFilePath.replace(/\\/g, '/')}`}
               controls
-              className="w-full bg-black"
+              className="w-full max-h-[60vh] object-contain mx-auto bg-black"
               onError={() => setOriginalErrored(true)}
             />
           </div>
@@ -136,7 +136,7 @@ export function EraseResultPanel() {
             src={item.videoUrl}
             poster={item.posterDataUrl || undefined}
             controls
-            className="w-full bg-black"
+            className="w-full max-h-[60vh] object-contain mx-auto bg-black"
           />
         </div>
       </div>

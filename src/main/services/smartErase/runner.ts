@@ -140,7 +140,13 @@ export async function runUpload(
       filePath: job.filePath,
       onTaskReady: (id: string) => { cosTaskId = id },
       onProgress: (info: any) => {
-        events.onProgress?.({ stage: 'uploading', uploadProgress: info?.percent })
+        // cos-nodejs-sdk-v5 emits info.percent as a 0-1 fraction; the public
+        // EraseTask.uploadProgress contract is 0-100 integer (see types/
+        // smartErase.ts:35 + EraseQueue.tsx renders it as `${value}%`).
+        // Convert at the source so every consumer sees the canonical scale.
+        const raw = Number(info?.percent)
+        const pct = Number.isFinite(raw) ? Math.max(0, Math.min(100, Math.round(raw * 100))) : undefined
+        events.onProgress?.({ stage: 'uploading', uploadProgress: pct })
       },
     })
   } finally {
