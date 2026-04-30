@@ -20,7 +20,6 @@ import {
   getEraseConfig,
   setEraseCredentialsFromUI,
   deleteEraseRemoteObjects,
-  probeBatch as probeEraseBatch,
   setMainWindow as setEraseMainWindow,
 } from './services/smartErase'
 
@@ -1100,9 +1099,7 @@ ipcMain.handle('storyboard-split:delete-remote', async (_event, cosPaths: string
 
 // ==================== 智能去字幕 IPC ====================
 
-ipcMain.handle('smart-erase:probe-batch', async (_event, paths: string[]) => {
-  return probeEraseBatch(paths)
-})
+// probe-batch IPC removed — probing now in renderer via HTML5 <video>
 
 ipcMain.handle('smart-erase:submit', async (_event, payload) => {
   return submitErase(payload)

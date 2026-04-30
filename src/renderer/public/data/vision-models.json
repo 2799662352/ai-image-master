@@ -23,6 +23,17 @@
       "recommended": true
     },
     {
+      "id": "gemini-3-flash-preview-thinking",
+      "name": "Gemini 3 Flash Thinking",
+      "displayName": "Gemini 3 Flash Thinking",
+      "shortName": "G3 Flash Think",
+      "description": "Gemini 3 Flash 思考增强版，推理深度更强",
+      "features": ["深度推理", "思维链", "多模态理解"],
+      "price": "$0.15/$0.6 per 1M tokens",
+      "icon": "🤔",
+      "recommended": true
+    },
+    {
       "id": "gemini-3-flash-preview",
       "name": "Gemini 3 Flash Preview",
       "displayName": "Gemini 3 Flash Preview",
@@ -34,15 +45,48 @@
       "recommended": true
     },
     {
-      "id": "gemini-2.5-flash-preview-09-2025",
-      "name": "Gemini 2.5 Flash",
-      "displayName": "Gemini 2.5 Flash",
-      "shortName": "Gemini 2.5",
-      "description": "快速响应版本，性价比极高",
-      "features": ["极速响应", "性价比高", "推理模式"],
-      "price": "$0.3/$2.4 per 1M tokens",
-      "icon": "⚡",
+      "id": "gpt-5.4-mini",
+      "name": "GPT-5.4 Mini",
+      "displayName": "GPT-5.4 Mini",
+      "shortName": "GPT-5.4 Mini",
+      "description": "GPT-5.4 轻量版，平衡速度与准确性",
+      "features": ["轻量高效", "快速响应", "视觉理解"],
+      "price": "$0.1/$0.4 per 1M tokens",
+      "icon": "🔥",
       "recommended": true
+    },
+    {
+      "id": "gpt-5.4-nano",
+      "name": "GPT-5.4 Nano",
+      "displayName": "GPT-5.4 Nano",
+      "shortName": "GPT-5.4 Nano",
+      "description": "超轻量纳米模型，极致速度与最低成本",
+      "features": ["极速响应", "超低成本", "视觉理解"],
+      "price": "$0.05/$0.2 per 1M tokens",
+      "icon": "🔬",
+      "recommended": false
+    },
+    {
+      "id": "gemini-3.1-flash-lite-preview",
+      "name": "Gemini 3.1 Flash Lite",
+      "displayName": "Gemini 3.1 Flash Lite",
+      "shortName": "G3.1 Flash Lite",
+      "description": "Gemini 3.1 超轻量版，极致速度与最低成本",
+      "features": ["超轻量", "极速响应", "超低成本"],
+      "price": "$0.02/$0.08 per 1M tokens",
+      "icon": "💨",
+      "recommended": false
+    },
+    {
+      "id": "claude-haiku-4-5-20251001",
+      "name": "Claude Haiku 4.5",
+      "displayName": "Claude Haiku 4.5",
+      "shortName": "Haiku 4.5",
+      "description": "Anthropic 轻量模型，快速且精准",
+      "features": ["速度快", "成本优", "细节描述"],
+      "price": "$1/$5 per 1M tokens",
+      "icon": "🧠",
+      "recommended": false
     },
     {
       "id": "gpt-5-mini",
@@ -56,14 +100,14 @@
       "recommended": false
     },
     {
-      "id": "claude-haiku-4-5-20251001",
-      "name": "Claude Haiku 4.5",
-      "displayName": "Claude Haiku 4.5",
-      "shortName": "Haiku 4.5",
-      "description": "Anthropic 轻量模型，快速且精准",
-      "features": ["速度快", "成本优", "细节描述"],
-      "price": "$1/$5 per 1M tokens",
-      "icon": "🧠",
+      "id": "gemini-2.5-flash-preview-09-2025",
+      "name": "Gemini 2.5 Flash",
+      "displayName": "Gemini 2.5 Flash",
+      "shortName": "Gemini 2.5",
+      "description": "快速响应版本，性价比极高",
+      "features": ["极速响应", "性价比高", "推理模式"],
+      "price": "$0.3/$2.4 per 1M tokens",
+      "icon": "⚡",
       "recommended": false
     },
     {

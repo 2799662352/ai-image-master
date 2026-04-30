@@ -27,25 +27,31 @@ export function DirectorApp() {
   const generatedResults = useDirectorStore((s) => s.generatedResults)
   const skipVerify = useDirectorStore((s) => s.skipVerify)
   const scoreThreshold = useDirectorStore((s) => s.scoreThreshold)
+  const maxRetries = useDirectorStore((s) => s.maxRetries)
   const visionDetailTaskPlanning = useDirectorStore((s) => s.visionDetailTaskPlanning)
   const visionDetailAnalyzeScene = useDirectorStore((s) => s.visionDetailAnalyzeScene)
   const visionDetailCharacterAnchors = useDirectorStore((s) => s.visionDetailCharacterAnchors)
+  const visionDetailExtractStyleAnchor = useDirectorStore((s) => s.visionDetailExtractStyleAnchor)
   const visionDetailDesignAssemble = useDirectorStore((s) => s.visionDetailDesignAssemble)
   const visionDetailVerifyConsistency = useDirectorStore((s) => s.visionDetailVerifyConsistency)
   const setSkipVerify = useDirectorStore((s) => s.setSkipVerify)
   const setScoreThreshold = useDirectorStore((s) => s.setScoreThreshold)
+  const setMaxRetries = useDirectorStore((s) => s.setMaxRetries)
   const setVisionDetailTaskPlanning = useDirectorStore((s) => s.setVisionDetailTaskPlanning)
   const setVisionDetailAnalyzeScene = useDirectorStore((s) => s.setVisionDetailAnalyzeScene)
   const setVisionDetailCharacterAnchors = useDirectorStore((s) => s.setVisionDetailCharacterAnchors)
+  const setVisionDetailExtractStyleAnchor = useDirectorStore((s) => s.setVisionDetailExtractStyleAnchor)
   const setVisionDetailDesignAssemble = useDirectorStore((s) => s.setVisionDetailDesignAssemble)
   const setVisionDetailVerifyConsistency = useDirectorStore((s) => s.setVisionDetailVerifyConsistency)
   const skipTaskPlanning = useDirectorStore((s) => s.skipTaskPlanning)
   const skipAnalyzeScene = useDirectorStore((s) => s.skipAnalyzeScene)
   const skipCharacterAnchors = useDirectorStore((s) => s.skipCharacterAnchors)
+  const skipStyleAnchor = useDirectorStore((s) => s.skipStyleAnchor)
   const enableCreativePreplanner = useDirectorStore((s) => s.enableCreativePreplanner)
   const setSkipTaskPlanning = useDirectorStore((s) => s.setSkipTaskPlanning)
   const setSkipAnalyzeScene = useDirectorStore((s) => s.setSkipAnalyzeScene)
   const setSkipCharacterAnchors = useDirectorStore((s) => s.setSkipCharacterAnchors)
+  const setSkipStyleAnchor = useDirectorStore((s) => s.setSkipStyleAnchor)
   const setEnableCreativePreplanner = useDirectorStore((s) => s.setEnableCreativePreplanner)
   const applyVisionDetailPreset = useDirectorStore((s) => s.applyVisionDetailPreset)
   const setViewState = useDirectorStore((s) => s.setViewState)
@@ -57,12 +63,14 @@ export function DirectorApp() {
     visionDetailTaskPlanning,
     visionDetailAnalyzeScene,
     visionDetailCharacterAnchors,
+    visionDetailExtractStyleAnchor,
     visionDetailDesignAssemble,
     visionDetailVerifyConsistency,
   }), [
     visionDetailTaskPlanning,
     visionDetailAnalyzeScene,
     visionDetailCharacterAnchors,
+    visionDetailExtractStyleAnchor,
     visionDetailDesignAssemble,
     visionDetailVerifyConsistency,
   ])
@@ -228,6 +236,24 @@ export function DirectorApp() {
             <div className="mt-1 text-[11px] text-white/50">
               评分低于该值将触发重试（快速模式开启时跳过校验）
             </div>
+            <div className="flex items-center justify-between text-xs text-white/80 mt-3 mb-2">
+              <span>最大重试次数</span>
+              <span className="text-yellow-400 font-semibold">{maxRetries === 0 ? '不重试' : maxRetries}</span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={5}
+              step={1}
+              value={maxRetries}
+              onChange={(e) => setMaxRetries(Number(e.target.value))}
+              className="w-full accent-yellow-500"
+              aria-label="最大重试次数"
+              disabled={skipVerify}
+            />
+            <div className="mt-1 text-[11px] text-white/50">
+              校验不通过时重新优化分镜的最大次数（0 = 不重试）
+            </div>
           </div>
 
           <div className="border border-[#27272A] p-3 space-y-3">
@@ -310,7 +336,7 @@ export function DirectorApp() {
                   { key: 'planning', label: '导演规划', value: visionDetailTaskPlanning, onChange: setVisionDetailTaskPlanning, skippable: true, skipped: skipTaskPlanning, onToggleSkip: setSkipTaskPlanning, skipLabel: '跳过导演规划' },
                   { key: 'analyze', label: '场景分析', value: visionDetailAnalyzeScene, onChange: setVisionDetailAnalyzeScene, skippable: true, skipped: skipAnalyzeScene, onToggleSkip: setSkipAnalyzeScene, skipLabel: '跳过场景分析' },
                   { key: 'anchor', label: '角色锚定', value: visionDetailCharacterAnchors, onChange: setVisionDetailCharacterAnchors, skippable: true, skipped: skipCharacterAnchors, onToggleSkip: setSkipCharacterAnchors, skipLabel: '跳过角色锚定' },
-                  { key: 'style', label: '风格锚点', value: visionDetailAnalyzeScene, onChange: setVisionDetailAnalyzeScene, skippable: false, skipped: false, onToggleSkip: undefined as ((v: boolean) => void) | undefined, skipLabel: '' },
+                  { key: 'style', label: '风格锚点', value: visionDetailExtractStyleAnchor, onChange: setVisionDetailExtractStyleAnchor, skippable: true, skipped: skipStyleAnchor, onToggleSkip: setSkipStyleAnchor, skipLabel: '跳过风格锚点' },
                   { key: 'design', label: '分镜+Prompt', value: visionDetailDesignAssemble, onChange: setVisionDetailDesignAssemble, skippable: false, skipped: false, onToggleSkip: undefined as ((v: boolean) => void) | undefined, skipLabel: '' },
                   { key: 'verify', label: '一致性校验', value: visionDetailVerifyConsistency, onChange: setVisionDetailVerifyConsistency, skippable: true, skipped: skipVerify, onToggleSkip: setSkipVerify, skipLabel: '跳过一致性校验' },
                 ].map((item) => (
@@ -361,7 +387,7 @@ export function DirectorApp() {
                   </div>
                 ))}
                 <div className="text-[11px] text-white/45">
-                  建议：跳过阶段可加速生成，但会降低出图一致性。分镜+Prompt 为必需阶段不可跳过。
+                  建议：跳过阶段可加速生成，但会降低出图一致性。分镜+Prompt 为核心阶段不可跳过。
                 </div>
               </div>
             )}

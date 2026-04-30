@@ -118,7 +118,6 @@ const IPC_CHANNELS = {
   ] as const,
   // 智能去字幕
   SMART_ERASE: {
-    PROBE_BATCH: 'smart-erase:probe-batch',
     SUBMIT: 'smart-erase:submit',
     CANCEL: 'smart-erase:cancel',
     GET_CONFIG: 'smart-erase:get-config',
@@ -244,7 +243,6 @@ export interface ElectronAPI {
   onStoryboardSplitEvent: (callback: (channel: string, data: SplitProgressEvent | SplitFinishedEvent | SplitFailedEvent) => void) => void
   removeStoryboardSplitListeners: () => void
   // 智能去字幕
-  smartEraseProbeBatch: (paths: string[]) => Promise<EraseProbeResult[]>
   smartEraseSubmit: (payload: EraseSubmitPayload) => Promise<{ success: boolean; taskId?: string; posterDataUrl?: string; error?: string; errorCode?: string }>
   smartEraseCancel: (taskId: string) => Promise<{ success: boolean }>
   smartEraseGetConfig: () => Promise<{ success: boolean; defaults: EraseConfig; credentials: { hasCredentials: boolean; secretId?: string; bucket?: string; region?: string } }>
@@ -466,9 +464,6 @@ const electronAPI: ElectronAPI = {
   },
 
   // ============ 智能去字幕 ============
-  smartEraseProbeBatch: (paths: string[]) =>
-    safeInvoke(IPC_CHANNELS.SMART_ERASE.PROBE_BATCH, paths),
-
   smartEraseSubmit: (payload: EraseSubmitPayload) =>
     safeInvoke(IPC_CHANNELS.SMART_ERASE.SUBMIT, payload),
 

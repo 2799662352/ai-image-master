@@ -24,13 +24,14 @@ import type {
   PipelineExecuteOptions,
 } from './types'
 
-const MAX_RETRIES = 1
+const DEFAULT_MAX_RETRIES = 1
 const SCORE_THRESHOLD = 6
 const MAX_ANALYSIS_RETRIES = 2
 const DEFAULT_VISION_DETAIL = {
   taskPlanning: 'low',
   analyzeScene: 'high',
   extractCharacterAnchors: 'high',
+  extractStyleAnchor: 'high',
   designAndAssemble: 'high',
   verifyConsistency: 'low',
 } as const
@@ -86,15 +87,18 @@ const stateSchema = new StateSchema({
   visionDetailTaskPlanning: z.enum(['low', 'high', 'auto']).default(DEFAULT_VISION_DETAIL.taskPlanning),
   visionDetailAnalyzeScene: z.enum(['low', 'high', 'auto']).default(DEFAULT_VISION_DETAIL.analyzeScene),
   visionDetailCharacterAnchors: z.enum(['low', 'high', 'auto']).default(DEFAULT_VISION_DETAIL.extractCharacterAnchors),
+  visionDetailExtractStyleAnchor: z.enum(['low', 'high', 'auto']).default(DEFAULT_VISION_DETAIL.extractStyleAnchor),
   visionDetailDesignAssemble: z.enum(['low', 'high', 'auto']).default(DEFAULT_VISION_DETAIL.designAndAssemble),
   visionDetailVerifyConsistency: z.enum(['low', 'high', 'auto']).default(DEFAULT_VISION_DETAIL.verifyConsistency),
   skipTaskPlanning: z.boolean().default(false),
   skipVerify: z.boolean().default(false),
   skipAnalyzeScene: z.boolean().default(false),
   skipCharacterAnchors: z.boolean().default(false),
+  skipStyleAnchor: z.boolean().default(false),
   styleAnchor: StyleAnchorSchema.nullable().default(null),
   styleConflicts: z.array(StyleConflictSchema).default([]),
   scoreThreshold: z.number().min(0).max(10).default(SCORE_THRESHOLD),
+  maxRetries: z.number().min(0).max(5).default(DEFAULT_MAX_RETRIES),
   taskPlan: z.string().default(''),
   enableCreativePreplanner: z.boolean().default(false),
   creativeDirection: z.string().default(''),
@@ -128,15 +132,18 @@ export interface DirectorState {
   visionDetailTaskPlanning: VisionDetail
   visionDetailAnalyzeScene: VisionDetail
   visionDetailCharacterAnchors: VisionDetail
+  visionDetailExtractStyleAnchor: VisionDetail
   visionDetailDesignAssemble: VisionDetail
   visionDetailVerifyConsistency: VisionDetail
   skipTaskPlanning: boolean
   skipVerify: boolean
   skipAnalyzeScene: boolean
   skipCharacterAnchors: boolean
+  skipStyleAnchor: boolean
   styleAnchor: z.infer<typeof StyleAnchorSchema> | null
   styleConflicts: Array<z.infer<typeof StyleConflictSchema>>
   scoreThreshold: number
+  maxRetries: number
   taskPlan: string
   enableCreativePreplanner: boolean
   creativeDirection: string
@@ -337,7 +344,7 @@ export function resolveVisionDetailByPass(
     case 'extractCharacterAnchors':
       return normalizeVisionDetail((state as any).visionDetailCharacterAnchors, DEFAULT_VISION_DETAIL.extractCharacterAnchors)
     case 'extractStyleAnchor':
-      return normalizeVisionDetail((state as any).visionDetailAnalyzeScene, DEFAULT_VISION_DETAIL.analyzeScene)
+      return normalizeVisionDetail((state as any).visionDetailExtractStyleAnchor, DEFAULT_VISION_DETAIL.extractStyleAnchor)
     case 'designAndAssemble':
       return normalizeVisionDetail(
         (state as any).visionDetailDesignAssemble ?? (state as any).visionDetailDesignAndAssemble,
@@ -1302,6 +1309,13 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
       checkPauseAndInterrupt('extractStyleAnchor', config)
       const t0 = Date.now()
 
+      if (state.skipStyleAnchor) {
+        const elapsed = Date.now() - t0
+        const passData = DirectorPipeline.buildPassCardData('extractStyleAnchor', { pass: 3, label: '风格锚点' }, { styleAnchor: null, skipped: true }, elapsed)
+        writer(config)?.({ type: 'pass_complete', pass: 3, label: '风格锚点（用户跳过）', elapsed, passData })
+        return { styleAnchor: null, styleConflicts: [] }
+      }
+
       if (getImages(state).length === 0) {
         const elapsed = Date.now() - t0
         const passData = DirectorPipeline.buildPassCardData('extractStyleAnchor', { pass: 3, label: '风格锚点' }, { styleAnchor: null, skipped: true }, elapsed)
@@ -1747,7 +1761,8 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         const hasLowSubScore = pickLowItems(result as VerifyReportLike, threshold).length > 0
         const shouldReject = result.score < threshold || hasLowSubScore
 
-        if (shouldReject && state.retryCount < MAX_RETRIES) {
+        const effectiveMaxRetries = Number.isFinite(state.maxRetries) ? Math.max(0, state.maxRetries) : DEFAULT_MAX_RETRIES
+        if (shouldReject && state.retryCount < effectiveMaxRetries) {
           const feedback = buildRetryFeedback(result as VerifyReportLike, threshold)
           writer(config)?.({
             type: 'pass_complete', pass: 5,
@@ -1932,7 +1947,8 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
     // ===== Routing: Evaluator-Optimizer pattern =====
     const routeAfterEvaluator = (state: any): 'generate' | 'designAndAssemble' => {
       if (!state.report) return 'generate'
-      if (state.retryFeedback && state.retryCount <= MAX_RETRIES) return 'designAndAssemble'
+      const effectiveMax = Number.isFinite(state.maxRetries) ? Math.max(0, state.maxRetries) : DEFAULT_MAX_RETRIES
+      if (state.retryFeedback && state.retryCount <= effectiveMax) return 'designAndAssemble'
       return 'generate'
     }
 

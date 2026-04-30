@@ -3,6 +3,7 @@ import { useEraseSessionStore, type EraseSessionTask } from '../../stores/useEra
 import { useErasePersistStore } from '../../stores/useErasePersistStore'
 import { useToastStore } from '../../stores'
 import type { EraseProbeResult } from '../../../../types/smartErase'
+import { probeVideoFiles, generatePosterFromFile } from './probeVideoFiles'
 
 const ACCEPTED_TYPES = ['video/mp4', 'video/quicktime', 'video/webm', 'video/x-matroska', 'video/avi']
 const ACCEPTED_EXT_RE = /\.(mp4|mov|webm|mkv|avi)$/i
@@ -69,7 +70,7 @@ export function EraseUploader({ disabled }: EraseUploaderProps) {
   )
 
   const submitAll = useCallback(
-    async (probes: EraseProbeResult[]) => {
+    async (probes: EraseProbeResult[], fileMap: Map<string, File>) => {
       for (const probe of probes) {
         if (probe.warning) {
           addToast({
@@ -79,11 +80,18 @@ export function EraseUploader({ disabled }: EraseUploaderProps) {
           continue
         }
         try {
+          let posterDataUrl = ''
+          const file = fileMap.get(probe.filePath)
+          if (file) {
+            try { posterDataUrl = await generatePosterFromFile(file) } catch { /* best-effort */ }
+          }
+
           const ret = await api?.smartEraseSubmit?.({
             filePath: probe.filePath,
             filename: probe.filename,
             fileSize: probe.fileSize,
             durationSeconds: probe.durationSeconds,
+            posterDataUrl,
           })
           if (!ret?.success) {
             addToast({
@@ -92,8 +100,6 @@ export function EraseUploader({ disabled }: EraseUploaderProps) {
             })
             continue
           }
-          // Optimistically register so the UI shows the task before the
-          // first progress event arrives.
           const sessionTask: EraseSessionTask = {
             id: ret.taskId,
             filename: probe.filename,
@@ -102,7 +108,7 @@ export function EraseUploader({ disabled }: EraseUploaderProps) {
             status: 'queued-upload',
             startedAt: Date.now(),
             filePath: probe.filePath,
-            posterDataUrl: ret.posterDataUrl ?? '',
+            posterDataUrl: ret.posterDataUrl ?? posterDataUrl,
           }
           addTask(sessionTask)
         } catch (err: any) {
@@ -113,6 +119,8 @@ export function EraseUploader({ disabled }: EraseUploaderProps) {
     [addTask, addToast],
   )
 
+  const fileMapRef = useRef<Map<string, File>>(new Map())
+
   const handleFiles = useCallback(
     async (files: File[]) => {
       if (!hydrated) {
@@ -121,21 +129,16 @@ export function EraseUploader({ disabled }: EraseUploaderProps) {
       }
       setBusy(true)
       try {
-        const paths: string[] = []
-        for (const f of files) {
-          const p: string = api?.getFilePath?.(f) ?? ''
-          if (!p) {
-            addToast({ message: `${f.name}: 无法获取本地路径，跳过`, type: 'warning' })
-            continue
-          }
-          paths.push(p)
-        }
-        if (paths.length === 0) return
-
-        const probes: EraseProbeResult[] = (await api?.smartEraseProbeBatch?.(paths)) ?? []
+        const probes = await probeVideoFiles(files)
         if (probes.length === 0) return
 
-        // Cost guard
+        const fMap = new Map<string, File>()
+        for (const f of files) {
+          const p: string = api?.getFilePath?.(f) ?? ''
+          if (p) fMap.set(p, f)
+        }
+        fileMapRef.current = fMap
+
         const usableProbes = probes.filter((p) => !p.warning)
         const totalDuration = usableProbes.reduce((sum, p) => sum + (p.durationSeconds || 0), 0)
         if (usableProbes.length > COST_GUARD_COUNT || totalDuration > COST_GUARD_DURATION_S) {
@@ -144,7 +147,7 @@ export function EraseUploader({ disabled }: EraseUploaderProps) {
           return
         }
 
-        await submitAll(probes)
+        await submitAll(probes, fMap)
       } finally {
         setBusy(false)
       }
@@ -156,9 +159,10 @@ export function EraseUploader({ disabled }: EraseUploaderProps) {
     setShowCostConfirm(false)
     setBusy(true)
     try {
-      await submitAll(pendingProbes)
+      await submitAll(pendingProbes, fileMapRef.current)
     } finally {
       setPendingProbes([])
+      fileMapRef.current = new Map()
       setBusy(false)
     }
   }, [pendingProbes, setShowCostConfirm, setPendingProbes, submitAll])
@@ -267,7 +271,7 @@ export function EraseUploader({ disabled }: EraseUploaderProps) {
   )
 }
 
-function labelForWarning(warning: NonNullable<EraseProbeResult['warning']>): string {
+function labelForWarning(warning: string): string {
   switch (warning) {
     case 'FILE_PATH_UNAVAILABLE':
       return '无法获取本地路径'
@@ -275,6 +279,8 @@ function labelForWarning(warning: NonNullable<EraseProbeResult['warning']>): str
       return '文件不在本地'
     case 'PROBE_FAILED':
       return '元数据探测失败'
+    default:
+      return warning
   }
 }
 

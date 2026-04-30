@@ -5,6 +5,7 @@ import TokenAutocomplete from '../../components/shared/media-tokens/TokenAutocom
 import MentionChips from '../../components/shared/media-tokens/MentionChips'
 import type { MediaRef } from '../../components/shared/media-tokens/types'
 import '../../components/shared/media-tokens/media-tokens.css'
+import { DirectorPromptHelperBar } from './DirectorPromptHelperBar'
 
 export function SceneInput() {
   const sceneDescription = useDirectorStore((s) => s.sceneDescription)
@@ -46,6 +47,7 @@ export function SceneInput() {
         <i className="fas fa-pen-fancy mr-2 text-purple-400" />
         场景描述
       </h3>
+      <DirectorPromptHelperBar />
       <textarea
         ref={textareaRef}
         value={sceneDescription}

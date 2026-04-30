@@ -14,8 +14,8 @@ export interface EraseSubmitPayload {
   filePath: string                // absolute local path from webUtils.getPathForFile
   filename: string
   fileSize: number
-  durationSeconds: number         // from ffprobe
-  // NOTE: no per-task config override; reads from useErasePersistStore.defaultConfig at submit time
+  durationSeconds: number         // from renderer <video> metadata
+  posterDataUrl?: string          // renderer-generated thumbnail via <canvas>
 }
 
 export interface EraseProbeResult {
@@ -23,7 +23,7 @@ export interface EraseProbeResult {
   filename: string
   fileSize: number
   durationSeconds: number
-  warning?: 'FILE_PATH_UNAVAILABLE' | 'FILE_NOT_LOCAL' | 'PROBE_FAILED'
+  warning?: 'FILE_PATH_UNAVAILABLE' | 'FILE_NOT_LOCAL' | 'PROBE_FAILED' | string
 }
 
 export interface EraseTask {

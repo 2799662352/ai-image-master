@@ -9,8 +9,7 @@ import {
   type ProcessPhaseInput,
   type ProcessPhaseOutput,
 } from './runner'
-import { generatePosterDataUrl } from './posterGen'
-import { probeBatch } from './probe'
+// posterGen and probe replaced by renderer-side HTML5 <video>+<canvas>
 import { trackForReaping } from './reaper'
 import { DEFAULT_ERASE_CONFIG } from '../../../types/smartErase'
 import type {
@@ -262,14 +261,7 @@ export async function submitErase(
     return { success: false, error: '未配置腾讯云密钥', errorCode: 'NO_CREDENTIALS' }
   }
 
-  // Poster is best-effort — a missing poster degrades the history thumbnail
-  // experience but should not block submission.
-  let posterDataUrl = ''
-  try {
-    posterDataUrl = await generatePosterDataUrl(payload.filePath)
-  } catch (err: any) {
-    console.warn('[smart-erase] poster generation failed:', err?.message ?? err)
-  }
+  const posterDataUrl = payload.posterDataUrl ?? ''
 
   const taskId = `erase-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
   taskRegistry.set(taskId, {
@@ -330,4 +322,4 @@ export async function deleteEraseRemoteObjects(
   }
 }
 
-export { probeBatch }
+// probeBatch removed — probing now handled in renderer via HTML5 <video>

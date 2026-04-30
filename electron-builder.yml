@@ -8,6 +8,7 @@ directories:
 
 files:
   - dist/**/*
+  - "!dist/win-unpacked/**"
   - package.json
   - "!**/*.ts"
   - "!**/*.tsx"

@@ -4,7 +4,7 @@ export const SceneAnalysisSchema = z.object({
   env: z.string().describe('Scene environment in English first: location + time + atmosphere + weather. Optional concise Japanese notes in parentheses.'),
   subjects: z.array(z.string()).describe('Main subjects list, short English phrases first.'),
   style: z.string().describe('Visual style in English first: medium + art style + palette + lighting + mood. Optional concise Japanese notes in parentheses.'),
-  story: z.string().optional().describe('Narrative context in English first. Optional concise Japanese notes in parentheses.'),
+  story: z.string().describe('Narrative context in English first. Optional concise Japanese notes in parentheses. Empty string if not applicable.'),
 })
 
 export type SceneAnalysis = z.infer<typeof SceneAnalysisSchema>
@@ -15,7 +15,7 @@ export const CharacterAnchorSchema = z.object({
     anchor: z.string().describe('Full visual consistency anchor combining face + outfit + markers into one paragraph.'),
     face: z.string().describe('Hair color + style + length, eye color, skin tone, face shape.'),
     outfit: z.string().describe('Clothing top-to-bottom with exact colors, patterns, and accessories.'),
-    markers: z.string().optional().describe('Props, weapons, scars, tattoos, glasses, jewelry. Omit if none.'),
+    markers: z.string().describe('Props, weapons, scars, tattoos, glasses, jewelry. Empty string if none.'),
   })),
 })
 
@@ -40,13 +40,13 @@ export type DesignAndAssemble = z.infer<typeof DesignAndAssembleSchema>
 export const SimplePanelSchema = z.object({
   panels: z.array(z.object({
     id: z.number().describe('Panel number'),
-    shot: z.string().optional().describe('Shot type + angle'),
-    desc: z.string().optional().describe('Subject action + composition'),
-    lighting: z.string().optional().describe('Key light direction + quality + color temperature'),
-    characterAction: z.string().optional().describe('Per-character actions'),
-    background: z.string().optional().describe('Background continuity note'),
+    shot: z.string().describe('Shot type + angle'),
+    desc: z.string().describe('Subject action + composition'),
+    lighting: z.string().describe('Key light direction + quality + color temperature'),
+    characterAction: z.string().describe('Per-character actions'),
+    background: z.string().describe('Background continuity note'),
     prompt: z.string().describe('Full English image generation prompt'),
-    negativePrompt: z.string().optional().describe('English negative prompt'),
+    negativePrompt: z.string().describe('English negative prompt'),
   })),
 })
 
@@ -64,18 +64,18 @@ export const VerifySchema = z.object({
   score: z.number().describe('一致性评分 0-10'),
   ok: z.boolean().describe('是否通过'),
   issues: z.array(z.string()).describe('问题列表，每项一句话'),
-  characterConsistency: z.boolean().optional().describe('All panels maintain consistent character appearance'),
-  lightingContinuity: z.boolean().optional().describe('Light direction and color temperature are coherent across panels'),
-  narrativeFlow: z.boolean().optional().describe('Story progresses logically with clear panel-to-panel transitions'),
-  spatialCoherence: z.boolean().optional().describe('Background and spatial relationships are consistent'),
-  styleConsistency: z.number().optional().describe('All panels share the same rendering medium, color temperature, and texture quality'),
+  characterConsistency: z.boolean().describe('All panels maintain consistent character appearance'),
+  lightingContinuity: z.boolean().describe('Light direction and color temperature are coherent across panels'),
+  narrativeFlow: z.boolean().describe('Story progresses logically with clear panel-to-panel transitions'),
+  spatialCoherence: z.boolean().describe('Background and spatial relationships are consistent'),
+  styleConsistency: z.number().describe('All panels share the same rendering medium, color temperature, and texture quality. Score 0-10.'),
 })
 
 export type VerifyReport = z.infer<typeof VerifySchema>
 
 export const SkillDiscoverySchema = z.object({
   requestedSkills: z.array(z.string()).describe('List of skill IDs to read for this task'),
-  designPlan: z.string().default('').describe('Brief plan for how to approach the storyboard design based on available information'),
+  designPlan: z.string().describe('Brief plan for how to approach the storyboard design based on available information'),
 })
 
 export type SkillDiscovery = z.infer<typeof SkillDiscoverySchema>

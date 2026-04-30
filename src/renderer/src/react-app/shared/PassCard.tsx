@@ -14,6 +14,10 @@ export function PassCard({ card, icon = 'fa-check' }: PassCardProps) {
 
   const hasSummary = !!card.summary && card.summary !== card.label
 
+  const verifyReport = card.passName === 'verifyConsistency' ? (card.raw as any)?.report : null
+  const verifyIssues: string[] = verifyReport?.issues ?? []
+  const verifyOk = verifyReport?.ok ?? (verifyReport ? verifyReport.score >= 6 : null)
+
   return (
     <>
       <div className="bg-[#09090B] border border-[#3F3F46] rounded-none px-3 py-2 text-xs">
@@ -22,8 +26,13 @@ export function PassCard({ card, icon = 'fa-check' }: PassCardProps) {
           onClick={() => { if (hasSummary) setExpanded(v => !v) }}
         >
           <span className="text-white font-medium flex items-center gap-1.5">
-            <i className={`fas ${icon} text-green-400`} />
+            <i className={`fas ${icon} ${verifyOk === false ? 'text-yellow-400' : 'text-green-400'}`} />
             {card.label}
+            {verifyOk !== null && (
+              <span className={`ml-1 ${verifyOk ? 'text-green-400' : 'text-yellow-400'}`}>
+                {verifyOk ? '通过' : '未通过'}
+              </span>
+            )}
             {hasSummary && <i className={`fas fa-chevron-${expanded ? 'up' : 'down'} text-white/20 text-[9px] ml-1`} />}
           </span>
           <div className="flex items-center gap-2">
@@ -35,6 +44,14 @@ export function PassCard({ card, icon = 'fa-check' }: PassCardProps) {
             )}
           </div>
         </div>
+
+        {verifyReport && !expanded && (
+          <div className="mt-1.5 text-white/50">
+            评分 {verifyReport.score}/10
+            {verifyIssues.length > 0 && <span className="ml-2 text-yellow-400/70">{verifyIssues.length} 个问题</span>}
+          </div>
+        )}
+
         {expanded && (
           <>
             <div className="flex flex-wrap gap-1 mt-1.5 mb-1.5">
@@ -42,6 +59,35 @@ export function PassCard({ card, icon = 'fa-check' }: PassCardProps) {
             </div>
             {hasSummary && (
               <p className="text-white opacity-50 whitespace-pre-wrap leading-relaxed max-h-60 overflow-auto">{card.summary}</p>
+            )}
+            {verifyIssues.length > 0 && (
+              <div className="mt-2 space-y-1">
+                <p className="text-yellow-400/80 font-medium">问题反馈：</p>
+                <ul className="list-disc list-inside space-y-0.5 text-white/60">
+                  {verifyIssues.map((issue, i) => (
+                    <li key={i}>{issue}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {verifyReport && (
+              <div className="flex flex-wrap gap-2 mt-2">
+                {[
+                  { label: '角色一致', ok: verifyReport.characterConsistency },
+                  { label: '光影连贯', ok: verifyReport.lightingContinuity },
+                  { label: '叙事流畅', ok: verifyReport.narrativeFlow },
+                  { label: '空间连贯', ok: verifyReport.spatialCoherence },
+                ].map(({ label, ok }) => (
+                  <span key={label} className={`px-1.5 py-0.5 rounded-sm border ${ok ? 'border-green-700/50 text-green-400/80' : 'border-red-700/50 text-red-400/80'}`}>
+                    {ok ? '✓' : '✗'} {label}
+                  </span>
+                ))}
+                {typeof verifyReport.styleConsistency === 'number' && (
+                  <span className={`px-1.5 py-0.5 rounded-sm border ${verifyReport.styleConsistency >= 6 ? 'border-green-700/50 text-green-400/80' : 'border-red-700/50 text-red-400/80'}`}>
+                    风格 {verifyReport.styleConsistency}/10
+                  </span>
+                )}
+              </div>
             )}
           </>
         )}

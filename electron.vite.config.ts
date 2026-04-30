@@ -28,13 +28,6 @@ export default defineConfig({
           /^electron\/.+/,
           'cos-nodejs-sdk-v5',
           'tencentcloud-sdk-nodejs-mps',
-          // ffprobe-static / ffmpeg-static MUST be externalised: their index.js
-          // computes the binary path with __dirname relative to node_modules.
-          // If bundled, __dirname points at dist/main/ and the path resolves
-          // to dist/main/bin/.../ffprobe.exe which does not exist —
-          // every smartErase probe fails with ENOENT under PROBE_FAILED.
-          'ffprobe-static',
-          'ffmpeg-static',
           ...builtinModules.flatMap(m => [m, `node:${m}`])
         ]
       }

@@ -96,11 +96,14 @@ interface ConfigSlice {
   skipTaskPlanning: boolean
   skipAnalyzeScene: boolean
   skipCharacterAnchors: boolean
+  skipStyleAnchor: boolean
   enableCreativePreplanner: boolean
   scoreThreshold: number
+  maxRetries: number
   visionDetailTaskPlanning: VisionDetail
   visionDetailAnalyzeScene: VisionDetail
   visionDetailCharacterAnchors: VisionDetail
+  visionDetailExtractStyleAnchor: VisionDetail
   visionDetailDesignAssemble: VisionDetail
   visionDetailVerifyConsistency: VisionDetail
   setLayout: (val: LayoutType) => void
@@ -121,11 +124,14 @@ interface ConfigSlice {
   setSkipTaskPlanning: (val: boolean) => void
   setSkipAnalyzeScene: (val: boolean) => void
   setSkipCharacterAnchors: (val: boolean) => void
+  setSkipStyleAnchor: (val: boolean) => void
   setEnableCreativePreplanner: (val: boolean) => void
   setScoreThreshold: (val: number) => void
+  setMaxRetries: (val: number) => void
   setVisionDetailTaskPlanning: (val: VisionDetail) => void
   setVisionDetailAnalyzeScene: (val: VisionDetail) => void
   setVisionDetailCharacterAnchors: (val: VisionDetail) => void
+  setVisionDetailExtractStyleAnchor: (val: VisionDetail) => void
   setVisionDetailDesignAssemble: (val: VisionDetail) => void
   setVisionDetailVerifyConsistency: (val: VisionDetail) => void
   applyVisionDetailPreset: (preset: VisionDetailPreset) => void
@@ -141,7 +147,9 @@ export type DirectorStore = ImageSlice & GenerationSlice & ConfigSlice & ResetSl
 
 const MAX_REFERENCE_IMAGES = 8
 const DEFAULT_SCORE_THRESHOLD = 6
+const DEFAULT_MAX_RETRIES = 1
 const SCORE_THRESHOLD_STORAGE_KEY = 'director.score-threshold.v1'
+const MAX_RETRIES_STORAGE_KEY = 'director.max-retries.v1'
 const DIRECTOR_VISION_MODEL_STORAGE_KEY = 'director.vision-model.v1'
 const DIRECTOR_RATIO_STORAGE_KEY = 'director.ratio.v1'
 const DIRECTOR_LAYOUT_ORIENTATION_STORAGE_KEY = 'director.layout-orientation.v1'
@@ -152,8 +160,10 @@ const DIRECTOR_VISION_DETAIL_TASK_PLANNING_STORAGE_KEY = 'director.vision-detail
 const DIRECTOR_SKIP_TASK_PLANNING_STORAGE_KEY = 'director.skip-task-planning.v1'
 const DIRECTOR_SKIP_ANALYZE_SCENE_STORAGE_KEY = 'director.skip-analyze-scene.v1'
 const DIRECTOR_SKIP_CHARACTER_ANCHORS_STORAGE_KEY = 'director.skip-character-anchors.v1'
+const DIRECTOR_SKIP_STYLE_ANCHOR_STORAGE_KEY = 'director.skip-style-anchor.v1'
 const DIRECTOR_VISION_DETAIL_ANALYZE_SCENE_STORAGE_KEY = 'director.vision-detail.analyze-scene.v1'
 const DIRECTOR_VISION_DETAIL_CHARACTER_ANCHORS_STORAGE_KEY = 'director.vision-detail.character-anchors.v1'
+const DIRECTOR_VISION_DETAIL_EXTRACT_STYLE_ANCHOR_STORAGE_KEY = 'director.vision-detail.extract-style-anchor.v1'
 const DIRECTOR_VISION_DETAIL_DESIGN_ASSEMBLE_STORAGE_KEY = 'director.vision-detail.design-assemble.v1'
 const DIRECTOR_VISION_DETAIL_VERIFY_CONSISTENCY_STORAGE_KEY = 'director.vision-detail.verify-consistency.v1'
 const DEFAULT_DIRECTOR_RATIO = '16:9'
@@ -268,6 +278,28 @@ function writeScoreThreshold(value: number): void {
   }
 }
 
+function readMaxRetries(): number {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return DEFAULT_MAX_RETRIES
+    const raw = window.localStorage.getItem(MAX_RETRIES_STORAGE_KEY)
+    if (!raw) return DEFAULT_MAX_RETRIES
+    const parsed = Number(raw)
+    if (!Number.isFinite(parsed)) return DEFAULT_MAX_RETRIES
+    return Math.max(0, Math.min(5, Math.round(parsed)))
+  } catch {
+    return DEFAULT_MAX_RETRIES
+  }
+}
+
+function writeMaxRetries(value: number): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return
+    window.localStorage.setItem(MAX_RETRIES_STORAGE_KEY, String(value))
+  } catch {
+    // Best-effort persistence.
+  }
+}
+
 function readDirectorVisionModel(): string {
   try {
     if (typeof window === 'undefined' || !window.localStorage) return ''
@@ -354,6 +386,7 @@ export function detectVisionDetailPreset(config: {
   visionDetailTaskPlanning: VisionDetail
   visionDetailAnalyzeScene: VisionDetail
   visionDetailCharacterAnchors: VisionDetail
+  visionDetailExtractStyleAnchor: VisionDetail
   visionDetailDesignAssemble: VisionDetail
   visionDetailVerifyConsistency: VisionDetail
 }): VisionDetailPresetState {
@@ -361,6 +394,7 @@ export function detectVisionDetailPreset(config: {
     config.visionDetailTaskPlanning === 'low' &&
     config.visionDetailAnalyzeScene === 'high' &&
     config.visionDetailCharacterAnchors === 'high' &&
+    config.visionDetailExtractStyleAnchor === 'high' &&
     config.visionDetailDesignAssemble === 'low' &&
     config.visionDetailVerifyConsistency === 'low'
   ) {
@@ -370,6 +404,7 @@ export function detectVisionDetailPreset(config: {
     config.visionDetailTaskPlanning === 'low' &&
     config.visionDetailAnalyzeScene === 'high' &&
     config.visionDetailCharacterAnchors === 'high' &&
+    config.visionDetailExtractStyleAnchor === 'high' &&
     config.visionDetailDesignAssemble === 'auto' &&
     config.visionDetailVerifyConsistency === 'auto'
   ) {
@@ -379,6 +414,7 @@ export function detectVisionDetailPreset(config: {
     config.visionDetailTaskPlanning === 'high' &&
     config.visionDetailAnalyzeScene === 'high' &&
     config.visionDetailCharacterAnchors === 'high' &&
+    config.visionDetailExtractStyleAnchor === 'high' &&
     config.visionDetailDesignAssemble === 'high' &&
     config.visionDetailVerifyConsistency === 'high'
   ) {
@@ -412,7 +448,7 @@ const initialGenerationState: Pick<
 
 const createInitialConfigState = (): Pick<
   ConfigSlice,
-  'currentLayout' | 'currentLayoutOrientation' | 'isLayoutOrientationAuto' | 'currentSemanticOrientation' | 'isSemanticOrientationAuto' | 'currentTemplate' | 'currentMode' | 'currentRatio' | 'currentResolution' | 'sceneDescription' | 'multiSceneText' | 'visionModel' | 'imageModel' | 'imageCount' | 'skipTaskPlanning' | 'skipVerify' | 'skipAnalyzeScene' | 'skipCharacterAnchors' | 'enableCreativePreplanner' | 'scoreThreshold' | 'visionDetailTaskPlanning' | 'visionDetailAnalyzeScene' | 'visionDetailCharacterAnchors' | 'visionDetailDesignAssemble' | 'visionDetailVerifyConsistency'
+  'currentLayout' | 'currentLayoutOrientation' | 'isLayoutOrientationAuto' | 'currentSemanticOrientation' | 'isSemanticOrientationAuto' | 'currentTemplate' | 'currentMode' | 'currentRatio' | 'currentResolution' | 'sceneDescription' | 'multiSceneText' | 'visionModel' | 'imageModel' | 'imageCount' | 'skipTaskPlanning' | 'skipVerify' | 'skipAnalyzeScene' | 'skipCharacterAnchors' | 'skipStyleAnchor' | 'enableCreativePreplanner' | 'scoreThreshold' | 'maxRetries' | 'visionDetailTaskPlanning' | 'visionDetailAnalyzeScene' | 'visionDetailCharacterAnchors' | 'visionDetailExtractStyleAnchor' | 'visionDetailDesignAssemble' | 'visionDetailVerifyConsistency'
 > => ({
   currentLayout: '6grid',
   currentLayoutOrientation: readLayoutOrientation() || getOrientationByRatio(readDirectorRatio()),
@@ -432,11 +468,14 @@ const createInitialConfigState = (): Pick<
   skipTaskPlanning: readSkipFlag(DIRECTOR_SKIP_TASK_PLANNING_STORAGE_KEY),
   skipAnalyzeScene: readSkipFlag(DIRECTOR_SKIP_ANALYZE_SCENE_STORAGE_KEY),
   skipCharacterAnchors: readSkipFlag(DIRECTOR_SKIP_CHARACTER_ANCHORS_STORAGE_KEY),
+  skipStyleAnchor: readSkipFlag(DIRECTOR_SKIP_STYLE_ANCHOR_STORAGE_KEY),
   enableCreativePreplanner: readSkipFlag('director.enable-creative-preplanner.v1'),
   scoreThreshold: readScoreThreshold(),
+  maxRetries: readMaxRetries(),
   visionDetailTaskPlanning: readVisionDetail(DIRECTOR_VISION_DETAIL_TASK_PLANNING_STORAGE_KEY, 'low'),
   visionDetailAnalyzeScene: readVisionDetail(DIRECTOR_VISION_DETAIL_ANALYZE_SCENE_STORAGE_KEY, 'high'),
   visionDetailCharacterAnchors: readVisionDetail(DIRECTOR_VISION_DETAIL_CHARACTER_ANCHORS_STORAGE_KEY, 'high'),
+  visionDetailExtractStyleAnchor: readVisionDetail(DIRECTOR_VISION_DETAIL_EXTRACT_STYLE_ANCHOR_STORAGE_KEY, 'high'),
   visionDetailDesignAssemble: readVisionDetail(DIRECTOR_VISION_DETAIL_DESIGN_ASSEMBLE_STORAGE_KEY, 'low'),
   visionDetailVerifyConsistency: readVisionDetail(DIRECTOR_VISION_DETAIL_VERIFY_CONSISTENCY_STORAGE_KEY, 'low'),
 })
@@ -507,8 +546,13 @@ const createGenerationSlice: StateCreator<DirectorStore, [], [], GenerationSlice
     let cards = state.passCards
     if (progress.passData) {
       const pd = progress.passData as { pass: number }
-      const exists = (state.passCards as Array<{ pass: number }>).some((c) => c.pass === pd.pass)
-      if (!exists) cards = [...state.passCards, progress.passData]
+      const existingIdx = (state.passCards as Array<{ pass: number }>).findIndex((c) => c.pass === pd.pass)
+      if (existingIdx >= 0) {
+        cards = [...state.passCards]
+        ;(cards as any[])[existingIdx] = progress.passData
+      } else {
+        cards = [...state.passCards, progress.passData]
+      }
     }
 
     return {
@@ -611,6 +655,10 @@ const createConfigSlice: StateCreator<DirectorStore, [], [], ConfigSlice> = (set
     writeSkipFlag(DIRECTOR_SKIP_CHARACTER_ANCHORS_STORAGE_KEY, val)
     set({ skipCharacterAnchors: val })
   },
+  setSkipStyleAnchor: (val) => {
+    writeSkipFlag(DIRECTOR_SKIP_STYLE_ANCHOR_STORAGE_KEY, val)
+    set({ skipStyleAnchor: val })
+  },
   setEnableCreativePreplanner: (val) => {
     writeSkipFlag('director.enable-creative-preplanner.v1', val)
     set({ enableCreativePreplanner: val })
@@ -619,6 +667,11 @@ const createConfigSlice: StateCreator<DirectorStore, [], [], ConfigSlice> = (set
     const next = Math.max(0, Math.min(10, Math.round(val)))
     writeScoreThreshold(next)
     set({ scoreThreshold: next })
+  },
+  setMaxRetries: (val) => {
+    const next = Math.max(0, Math.min(5, Math.round(val)))
+    writeMaxRetries(next)
+    set({ maxRetries: next })
   },
   setVisionDetailTaskPlanning: (val) => {
     writeVisionDetail(DIRECTOR_VISION_DETAIL_TASK_PLANNING_STORAGE_KEY, val)
@@ -631,6 +684,10 @@ const createConfigSlice: StateCreator<DirectorStore, [], [], ConfigSlice> = (set
   setVisionDetailCharacterAnchors: (val) => {
     writeVisionDetail(DIRECTOR_VISION_DETAIL_CHARACTER_ANCHORS_STORAGE_KEY, val)
     set({ visionDetailCharacterAnchors: val })
+  },
+  setVisionDetailExtractStyleAnchor: (val) => {
+    writeVisionDetail(DIRECTOR_VISION_DETAIL_EXTRACT_STYLE_ANCHOR_STORAGE_KEY, val)
+    set({ visionDetailExtractStyleAnchor: val })
   },
   setVisionDetailDesignAssemble: (val) => {
     writeVisionDetail(DIRECTOR_VISION_DETAIL_DESIGN_ASSEMBLE_STORAGE_KEY, val)
@@ -646,6 +703,7 @@ const createConfigSlice: StateCreator<DirectorStore, [], [], ConfigSlice> = (set
           visionDetailTaskPlanning: 'high' as VisionDetail,
           visionDetailAnalyzeScene: 'high' as VisionDetail,
           visionDetailCharacterAnchors: 'high' as VisionDetail,
+          visionDetailExtractStyleAnchor: 'high' as VisionDetail,
           visionDetailDesignAssemble: 'high' as VisionDetail,
           visionDetailVerifyConsistency: 'high' as VisionDetail,
         }
@@ -654,6 +712,7 @@ const createConfigSlice: StateCreator<DirectorStore, [], [], ConfigSlice> = (set
             visionDetailTaskPlanning: 'low' as VisionDetail,
             visionDetailAnalyzeScene: 'high' as VisionDetail,
             visionDetailCharacterAnchors: 'high' as VisionDetail,
+            visionDetailExtractStyleAnchor: 'high' as VisionDetail,
             visionDetailDesignAssemble: 'auto' as VisionDetail,
             visionDetailVerifyConsistency: 'auto' as VisionDetail,
           }
@@ -661,6 +720,7 @@ const createConfigSlice: StateCreator<DirectorStore, [], [], ConfigSlice> = (set
             visionDetailTaskPlanning: 'low' as VisionDetail,
             visionDetailAnalyzeScene: 'high' as VisionDetail,
             visionDetailCharacterAnchors: 'high' as VisionDetail,
+            visionDetailExtractStyleAnchor: 'high' as VisionDetail,
             visionDetailDesignAssemble: 'low' as VisionDetail,
             visionDetailVerifyConsistency: 'low' as VisionDetail,
           }
@@ -668,6 +728,7 @@ const createConfigSlice: StateCreator<DirectorStore, [], [], ConfigSlice> = (set
     writeVisionDetail(DIRECTOR_VISION_DETAIL_TASK_PLANNING_STORAGE_KEY, next.visionDetailTaskPlanning)
     writeVisionDetail(DIRECTOR_VISION_DETAIL_ANALYZE_SCENE_STORAGE_KEY, next.visionDetailAnalyzeScene)
     writeVisionDetail(DIRECTOR_VISION_DETAIL_CHARACTER_ANCHORS_STORAGE_KEY, next.visionDetailCharacterAnchors)
+    writeVisionDetail(DIRECTOR_VISION_DETAIL_EXTRACT_STYLE_ANCHOR_STORAGE_KEY, next.visionDetailExtractStyleAnchor)
     writeVisionDetail(DIRECTOR_VISION_DETAIL_DESIGN_ASSEMBLE_STORAGE_KEY, next.visionDetailDesignAssemble)
     writeVisionDetail(DIRECTOR_VISION_DETAIL_VERIFY_CONSISTENCY_STORAGE_KEY, next.visionDetailVerifyConsistency)
     set(next)
