@@ -98,7 +98,7 @@ export const useErasePersistStore = create<EraseAccess>()(
     }),
     {
       name: 'smart-erase-storage',
-      version: 1,
+      version: 2,
       storage: createJSONStorage(() => createIdbStorage()),
       partialize: (state) => ({
         history: state.history.slice(0, MAX_HISTORY),

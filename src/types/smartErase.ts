@@ -38,6 +38,7 @@ export interface EraseTask {
   finishedAt?: number
   errorCode?: string
   errorMessage?: string
+  processingStartedAt?: number   // ms; set by renderer when status → 'processing'
 }
 
 export interface EraseHistoryItem {
@@ -52,6 +53,8 @@ export interface EraseHistoryItem {
   inputCosKey: string
   originalFilePath: string        // for side-by-side compare; may not exist anymore — UI handles missing gracefully
   createdAt: number
+  mpsTaskId?: string
+  finishedAt?: number
 }
 
 export interface EraseProgressEvent {
