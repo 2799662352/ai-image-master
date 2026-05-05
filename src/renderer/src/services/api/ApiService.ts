@@ -204,6 +204,61 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       maxOutputs: 1
     }
   },
+  'gpt-image-2-vip': {
+    name: 'GPT Image 2 VIP',
+    displayName: '90s，gpt-image-2-vip Codex 官逆，支持 size 参数，10 比例 × 1K/2K/4K，$0.03/张🔥 限时特价',
+    price: 0.03,
+    time: '90s',
+    isNew: true,
+    baseURL: 'https://b.apiyi.com/v1/images/generations',
+    editURL: 'https://b.apiyi.com/v1/images/edits',
+    apiType: 'openai',
+    sizeStrategy: 'gpt-image-2-vip',
+    ratios: [
+      { key: 'auto', label: '自适应', description: '智能' },
+      { key: '1:1', label: '方形 1:1', description: '常用' },
+      { key: '16:9', label: '横版 16:9', description: '宽屏' },
+      { key: '9:16', label: '竖版 9:16', description: '竖屏' },
+      { key: '4:3', label: '横版 4:3', description: '标准' },
+      { key: '3:4', label: '竖版 3:4', description: '标准' },
+      { key: '3:2', label: '横版 3:2', description: '经典' },
+      { key: '2:3', label: '竖版 2:3', description: '经典' },
+      { key: '21:9', label: '影院 21:9', description: '超宽屏' },
+      { key: '5:4', label: '横版 5:4', description: '传统' },
+      { key: '4:5', label: '竖版 4:5', description: '社媒' }
+    ],
+    resolutions: [
+      { key: '1K', label: '1K 标准', description: '高效' },
+      { key: '2K', label: '2K 高清', description: '稍慢速度' },
+      { key: '4K', label: '4K 超清', description: '印刷所需' }
+    ],
+    defaultResolution: '1K',
+    resolutionMap: {
+      '1:1':  { '1K': '1024×1024', '2K': '2048×2048', '4K': '4096×4096' },
+      '2:3':  { '1K': '848×1264',  '2K': '1696×2528', '4K': '3392×5056' },
+      '3:2':  { '1K': '1264×848',  '2K': '2528×1696', '4K': '5056×3392' },
+      '3:4':  { '1K': '896×1200',  '2K': '1792×2400', '4K': '3584×4800' },
+      '4:3':  { '1K': '1200×896',  '2K': '2400×1792', '4K': '4800×3584' },
+      '4:5':  { '1K': '928×1152',  '2K': '1856×2304', '4K': '3712×4608' },
+      '5:4':  { '1K': '1152×928',  '2K': '2304×1856', '4K': '4608×3712' },
+      '9:16': { '1K': '768×1376',  '2K': '1536×2752', '4K': '3072×5504' },
+      '16:9': { '1K': '1376×768',  '2K': '2752×1536', '4K': '5504×3072' },
+      '21:9': { '1K': '1584×672',  '2K': '3168×1344', '4K': '6336×2688' },
+      'auto': { '1K': '自适应',     '2K': '自适应',     '4K': '自适应' }
+    },
+    defaultParams: {
+      output_format: 'png'
+    },
+    capabilities: {
+      multipleImages: false,
+      customSize: true,
+      aspectRatioControl: true,
+      referenceImage: true,
+      imageEdit: true,
+      maxOutputs: 1,
+      resolutionControl: true
+    }
+  },
   'gemini-3.1-flash-image-preview': {
     name: '🍌 Nano Banana 2',
     displayName: '15s，gemini-3.1-flash-image-preview 谷歌原生端点请求，支持超多尺寸4K，$0.03/张🚀 官网低于2折',
@@ -939,19 +994,29 @@ export class ApiService {
   }): Promise<Response> {
     const { prompt, model, ratio, resolution, referenceImages, imageBase64, modelConfig, site, signal } = options
 
-    // gpt-image-2 / gpt-image-2-all: 专用 Images API 路径
-    if (model === 'gpt-image-2-all' || model === 'gpt-image-2') {
+    // gpt-image-2 / gpt-image-2-all / gpt-image-2-vip: 专用 Images API 路径
+    if (model === 'gpt-image-2-all' || model === 'gpt-image-2' || model === 'gpt-image-2-vip') {
       const imageSources = imageBase64 ? [imageBase64] : (referenceImages || [])
       const hasImages = imageSources.length > 0
       const isOfficial = model === 'gpt-image-2'
-      const timeoutMs = isOfficial ? 360_000 : 120_000
+      const isVip = model === 'gpt-image-2-vip'
+      const timeoutMs = isOfficial ? 360_000 : isVip ? 180_000 : 120_000
+
+      // size 解析：官转直接用 ratio key（如 "1024x1024"），VIP 走 resolutionMap，官逆不发 size
+      const resolvedSize = isOfficial
+        ? this.resolveGptImage2Size(ratio)
+        : isVip
+          ? this.resolveGptImage2VipSize(modelConfig, ratio, resolution)
+          : undefined
+      // quality 仅官转支持
+      const resolvedQuality = isOfficial ? this.resolveGptImage2Quality(resolution) : undefined
 
       if (hasImages) {
         const editUrl = this.buildRequestUrl(modelConfig, site, 'edit')
-        return this.makeGptImage2FormDataRequest(editUrl, model, prompt, imageSources, site, signal, timeoutMs, isOfficial ? this.resolveGptImage2Size(ratio) : undefined, isOfficial ? this.resolveGptImage2Quality(resolution) : undefined)
+        return this.makeGptImage2FormDataRequest(editUrl, model, prompt, imageSources, site, signal, timeoutMs, resolvedSize, resolvedQuality)
       } else {
         const genUrl = this.buildRequestUrl(modelConfig, site)
-        const body = this.buildGptImage2JsonPayload(model, prompt, isOfficial ? this.resolveGptImage2Size(ratio) : undefined, isOfficial ? this.resolveGptImage2Quality(resolution) : undefined)
+        const body = this.buildGptImage2JsonPayload(model, prompt, resolvedSize, resolvedQuality)
         console.log('[GPT-Image-2] request URL:', genUrl)
         console.log('[GPT-Image-2] request body:', JSON.stringify(body, null, 2))
         const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -1065,14 +1130,17 @@ export class ApiService {
 
   /**
    * gpt-image-2 系列：文生图 JSON payload（无参考图）
-   * 官转(gpt-image-2)支持 size/quality 参数；官逆(gpt-image-2-all)不支持
+   * - gpt-image-2 (官转)：支持 size/quality 参数
+   * - gpt-image-2-vip (Codex 官逆)：仅支持 size 参数，不支持 quality
+   * - gpt-image-2-all (官逆)：均不支持，回 b64_json
    */
   private buildGptImage2JsonPayload(model: string, prompt: string, size?: string, quality?: string): object {
     const isOfficial = model === 'gpt-image-2'
+    const isVip = model === 'gpt-image-2-vip'
     const payload: Record<string, unknown> = { model, prompt }
-    if (isOfficial) {
+    if (isOfficial || isVip) {
       if (size && size !== 'auto') payload.size = size
-      if (quality) payload.quality = quality
+      if (isOfficial && quality) payload.quality = quality
       const cfg = this.getModelConfig(model)
       if (cfg?.defaultParams?.output_format) {
         payload.output_format = cfg.defaultParams.output_format
@@ -1093,6 +1161,26 @@ export class ApiService {
   }
 
   /**
+   * gpt-image-2-vip：通过 resolutionMap[ratio][resolution] 解析像素尺寸。
+   * 内部存储用 Unicode "×"，发到 API 时统一转成 ASCII "x"（OpenAI size 参数约定）。
+   * 比例为 'auto' 或落到 '自适应' 时返回 undefined（不发 size，由后端自决）。
+   */
+  private resolveGptImage2VipSize(
+    modelConfig: ModelConfig | undefined,
+    ratio?: string,
+    resolution?: string,
+  ): string | undefined {
+    if (!ratio || ratio === 'auto') return undefined
+    const map = modelConfig?.resolutionMap
+    if (!map || !map[ratio]) return undefined
+    const resKey = resolution || modelConfig?.defaultResolution || '1K'
+    const cell = map[ratio][resKey]
+    if (!cell) return undefined
+    if (cell === '自适应' || cell === 'auto') return undefined
+    return cell.replace('×', 'x')
+  }
+
+  /**
    * gpt-image-2 官转：resolution 下拉框直接映射 quality 参数（auto/low/medium/high）
    */
   private resolveGptImage2Quality(resolution?: string): string | undefined {
@@ -1103,7 +1191,9 @@ export class ApiService {
 
   /**
    * gpt-image-2 系列：图片编辑 FormData 请求（有参考图）
-   * 官转(gpt-image-2)额外支持 size/quality，超时 360s；官逆 120s
+   * - gpt-image-2 (官转)：额外支持 size/quality，超时 360s
+   * - gpt-image-2-vip (Codex 官逆)：仅 size，超时 180s
+   * - gpt-image-2-all (官逆)：均不支持，回 b64_json，超时 120s
    */
   private async makeGptImage2FormDataRequest(
     url: string,
@@ -1117,11 +1207,13 @@ export class ApiService {
     quality?: string,
   ): Promise<Response> {
     const isOfficial = model === 'gpt-image-2'
+    const isVip = model === 'gpt-image-2-vip'
+    const acceptsSize = isOfficial || isVip
     const formData = new FormData()
     formData.append('model', model)
     formData.append('prompt', prompt)
-    if (!isOfficial) formData.append('response_format', 'b64_json')
-    if (isOfficial && size && size !== 'auto') formData.append('size', size)
+    if (!acceptsSize) formData.append('response_format', 'b64_json')
+    if (acceptsSize && size && size !== 'auto') formData.append('size', size)
     if (isOfficial && quality) formData.append('quality', quality)
 
     let appendedCount = 0
