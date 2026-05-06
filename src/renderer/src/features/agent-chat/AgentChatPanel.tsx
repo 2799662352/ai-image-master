@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { ArtifactGrid } from './ArtifactGrid'
 import { AttachmentChips } from './AttachmentChips'
 import { MentionInput } from './MentionInput'
 import { MessageBubble } from './MessageBubble'
@@ -16,10 +17,12 @@ type AgentEventApi = {
 export function AgentChatPanel() {
   const isOpen = useAgentChatStore((state) => state.isOpen)
   const messages = useAgentChatStore((state) => state.messages)
+  const artifacts = useAgentChatStore((state) => state.artifacts)
   const reasoning = useAgentChatStore((state) => state.reasoning)
   const toolEvents = useAgentChatStore((state) => state.toolEvents)
   const error = useAgentChatStore((state) => state.error)
   const applyEvent = useAgentChatStore((state) => state.applyEvent)
+  const setError = useAgentChatStore((state) => state.setError)
 
   useEffect(() => {
     const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
@@ -57,6 +60,7 @@ export function AgentChatPanel() {
         {messages.map((message) => (
           <MessageBubble key={message.id} message={message} />
         ))}
+        <ArtifactGrid artifacts={artifacts} onError={setError} />
         <ReasoningPanel reasoning={reasoning} />
         {toolEvents.slice(-6).map((tool) => (
           <ToolCallCard key={`${tool.id}-${tool.status}`} tool={tool} />

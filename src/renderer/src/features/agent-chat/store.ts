@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type {
   AgentAttachmentInput,
+  AgentArtifact,
   AgentCancelPayload,
   AgentSendMessagePayload,
   AgentStreamEvent,
@@ -19,6 +20,7 @@ interface AgentChatState {
   threadId?: string
   input: string
   attachments: AgentAttachmentInput[]
+  artifacts: AgentArtifact[]
   messages: AgentChatMessage[]
   reasoning: string
   toolEvents: AgentChatToolEvent[]
@@ -26,6 +28,7 @@ interface AgentChatState {
   error?: string
   toggle: () => void
   setInput: (input: string) => void
+  setError: (error?: string) => void
   addAttachment: (attachment: AgentAttachmentInput) => void
   removeAttachment: (name: string) => void
   send: () => Promise<void>
@@ -47,12 +50,14 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   isOpen: false,
   input: '',
   attachments: [],
+  artifacts: [],
   messages: [],
   reasoning: '',
   toolEvents: [],
   isRunning: false,
   toggle: () => set((state) => ({ isOpen: !state.isOpen })),
   setInput: (input) => set({ input }),
+  setError: (error) => set({ error }),
   addAttachment: (attachment) => set((state) => ({ attachments: [...state.attachments, attachment] })),
   removeAttachment: (name) => set((state) => ({
     attachments: state.attachments.filter((item) => item.name !== name),
@@ -66,6 +71,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     set((current) => ({
       input: '',
       attachments: [],
+      artifacts: [],
       error: undefined,
       reasoning: '',
       toolEvents: [],
@@ -134,6 +140,10 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
 
     if ((event.type === 'tool_call_start' || event.type === 'tool_call_end') && event.tool) {
       set((state) => ({ toolEvents: [...state.toolEvents, event.tool!] }))
+    }
+
+    if (event.type === 'artifact_created' && event.artifact) {
+      set((state) => ({ artifacts: [...state.artifacts, event.artifact!] }))
     }
 
     if (event.type === 'error') {
