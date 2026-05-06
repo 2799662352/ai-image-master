@@ -26,12 +26,12 @@ topic: codex-agent-integration
 
 | 本期新增 | 状态 |
 |---|---|
-| Codex CLI 二进制随应用打包（per-platform） | 未实现 |
-| Electron 主进程 AgentManager（管理 Codex CLI 子进程） | 未实现 |
-| 内嵌 MCP server 暴露 CATIMATION 工具 | 未实现 |
+| Codex CLI 二进制随应用打包（per-platform，0.128.0 fork） | 未实现 |
+| Electron 主进程 AgentManager（spawn `codex app-server`，WS JSON-RPC） | 未实现 |
+| 内嵌 MCP server 暴露 CATIMATION 工具（SDK v1.x 拆包：server / node / express） | 未实现 |
 | AgentChatPanel（侧边抽屉，React） | 未实现 |
 | 文件上传 / 多图引用 / 双击预览 | 未实现 |
-| Postgres / PGlite 双模式持久化（Prisma schema） | 未实现 |
+| Postgres / PGlite 双模式持久化（Prisma + `@electric-sql/pglite-socket`） | 未实现 |
 | Codex 配置注入（`~/.codex/config.toml` 写入 catimation MCP server） | 未实现 |
 
 ## 核心决策
@@ -40,24 +40,25 @@ topic: codex-agent-integration
 
 **问题**：CATIMATION 既要满足"零依赖即用"的桌面应用预期，又要兼容 Sora 平台的统一计费/进程池。
 
-**决策**：本期只做本地嵌入（方案 C）。把 Codex CLI 二进制随应用打包，主进程直接 spawn 子进程，stdin/stdout JSONL 通信。后续追加 codex-gateway 联网通道（方案 A）作为可选增强，不在本 spec 范围。
+**决策**：本期只做本地嵌入（方案 C）。把 Codex CLI 二进制随应用打包，主进程 spawn `codex app-server`（实验性 JSON-RPC over WebSocket 协议模式），通过 localhost WebSocket 驱动 agent loop。后续追加 codex-gateway 联网通道（方案 A）作为可选增强，不在本 spec 范围。
 
 **理由**：
 - 桌面应用首次启动必须能跑，不能依赖远端服务
 - Codex CLI 已经成熟（80k stars，主分支 0.128.0），直接复用比自己造 agent loop 划算
 - 联网通道是后续优化，接口层（`IAgentBackend`）预留扩展点即可
 
-### 决策 2：MCP-native 工具协议
+### 决策 2：MCP-native 工具协议（v1.x SDK 拆包）
 
 **问题**：CATIMATION 暴露给 agent 的工具用什么协议？
 
-**决策**：直接走 MCP，不造自定义 JSON 协议。
+**决策**：直接走 MCP，不造自定义 JSON 协议。用 v1.x 拆包 SDK：`@modelcontextprotocol/server` + `@modelcontextprotocol/node` + `@modelcontextprotocol/express`。
 
 **理由**：
 - Codex 的 `rmcp-client` 原生支持 MCP（stdio / streamable HTTP）
-- 用 `@modelcontextprotocol/sdk` 官方 SDK，协议、序列化、错误处理都现成
+- v1.x SDK 拆包后职责更清晰：协议、Node 传输、Express 中间件分离
+- `createMcpExpressApp()` 中间件自带 DNS rebinding 防护，比手搓 Express 更安全
 - 同一个 MCP server 未来可以暴露给 Claude Desktop / Cursor / 其他 Codex 实例
-- 把 stdio 换成 HTTP 就能远程化，无缝过渡到方案 A
+- 把 `127.0.0.1` 换成 `0.0.0.0` 就能远程化，无缝过渡到方案 A
 
 ### 决策 3：满血权限，不做沙箱
 
@@ -82,8 +83,8 @@ topic: codex-agent-integration
 
 **理由**：
 - SQLite 与 Sora 平台 Postgres 体系不一致（用户原话："SQLite 太搞笑了"）
-- PGlite 提供完整 Postgres 14 协议 + ~3MB 体积 + 嵌入式
-- 同一套 Prisma schema 跨两种模式无差异，迁移零成本
+- PGlite 提供完整 Postgres 协议 + ~3MB gzipped + 嵌入式（WASM 单进程）
+- 通过 `@electric-sql/pglite-socket` 在 Electron 主进程内启动 `PGLiteSocketServer`，绑 localhost TCP / Unix socket，Prisma 用普通 `postgresql://` 连接，与 sora-postgres 完全无差异
 
 ### 决策 5：复用 sora-ui 的 AgentChat 组件模式
 
@@ -119,12 +120,12 @@ topic: codex-agent-integration
 │  ┌─ Main Process ───────────────────────────────────────┐   │
 │  │                                                       │   │
 │  │  ┌─ AgentManager ──────────────────┐                 │   │
-│  │  │  • spawn / restart Codex CLI    │                 │   │
-│  │  │  • stdin/stdout JSONL bridge    │                 │   │
-│  │  │  • lifecycle / health check      │                 │   │
+│  │  │  • spawn `codex app-server`      │                 │   │
+│  │  │  • WS JSON-RPC client (ws lib)   │                 │   │
+│  │  │  • thread/turn 生命周期         │                 │   │
 │  │  │  • IAgentBackend interface       │                 │   │
 │  │  └────────────┬────────────────────┘                 │   │
-│  │               │ stdin/stdout JSONL                    │   │
+│  │               │ WebSocket JSON-RPC localhost          │   │
 │  │               ▼                                        │   │
 │  │  ┌─ Codex CLI 子进程 (bundled binary) ────────────┐  │   │
 │  │  │  ~/.codex/config.toml:                          │  │   │
@@ -136,8 +137,9 @@ topic: codex-agent-integration
 │  │               │ MCP (rmcp-client → HTTP localhost)     │   │
 │  │               ▼                                        │   │
 │  │  ┌─ CATIMATION MCP Server (in-process, HTTP) ──────┐  │   │
-│  │  │  @modelcontextprotocol/sdk                      │  │   │
-│  │  │  StreamableHTTPServerTransport                   │  │   │
+│  │  │  @modelcontextprotocol/{server,node,express}     │  │   │
+│  │  │  NodeStreamableHTTPServerTransport               │  │   │
+│  │  │  createMcpExpressApp() — DNS rebind 防护         │  │   │
 │  │  │  bind 127.0.0.1:7842 (localhost-only)            │  │   │
 │  │  │                                                  │  │   │
 │  │  │  Tools:                                          │  │   │
@@ -156,9 +158,13 @@ topic: codex-agent-integration
 │  │  │  ↓ 实现层调用 ServiceRegistry.get(...)            │  │   │
 │  │  └──────────────────────────────────────────────────┘  │   │
 │  │                                                         │   │
-│  │  ┌─ Prisma Client (PGlite or sora-postgres) ─────┐   │   │
-│  │  │  AgentThread / AgentMessage / AgentToolCall    │   │   │
-│  │  │  AgentArtifact / AgentAttachment               │   │   │
+│  │  ┌─ Prisma Client ────────────────────────────────┐   │   │
+│  │  │  postgresql:// URL                             │   │   │
+│  │  │   ├─ sora-postgres (容器)                      │   │   │
+│  │  │   └─ PGLiteSocketServer @ 127.0.0.1:5433       │   │   │
+│  │  │      └─ PGlite WASM (userData/pgdata)          │   │   │
+│  │  │  Models: AgentThread / Message / ToolCall /     │   │   │
+│  │  │          Artifact / Attachment                  │   │   │
 │  │  └────────────────────────────────────────────────┘   │   │
 │  └─────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────┘
@@ -168,9 +174,17 @@ topic: codex-agent-integration
 
 #### `src/main/agent/AgentManager.ts`
 
-负责 Codex CLI 子进程的全生命周期。
+负责 Codex CLI 子进程的全生命周期。Codex 0.128.0 fork 实际有的协议子命令（来自 `codex-rs/cli/src/main.rs::Subcommand`）：
+- `codex app-server` — [实验性] JSON-RPC over WebSocket，方法 `thread/start` `turn/start` `item/agentMessage/delta` `turn/completed` 等
+- `codex mcp-server` — Codex 自身作为 MCP server（stdio）
+- `codex exec` — 非交互单次执行
+
+选 `app-server`：流式 reasoning/turn 输出、双向 JSON-RPC 控制（取消/中断），与 Codex SDK 路径一致。
 
 ```typescript
+import WebSocket from 'ws';
+import { spawn, ChildProcess } from 'node:child_process';
+
 interface IAgentBackend {
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -181,68 +195,102 @@ interface IAgentBackend {
 
 class CodexLocalBackend implements IAgentBackend {
   private process: ChildProcess | null = null;
+  private ws: WebSocket | null = null;
   private restartCount = 0;
   private readonly maxRestarts = 3;
+  private rpcId = 0;
+  private pending = new Map<number, (r: any) => void>();
 
   async start() {
     const binPath = resolveCodexBinary();
-    // 用 codex 的 protocol 模式（JSONL stdin/stdout），与 @openai/codex-sdk 对齐
-    // 实际命令在实施阶段确认（codex proto / codex exec --json，取决于 fork 0.128.0 的 CLI）
-    this.process = spawn(binPath, ['proto'], {
+    const port = await pickFreePort();
+    this.process = spawn(binPath, ['app-server', 'serve', '--listen', `ws://127.0.0.1:${port}`], {
       env: this.buildEnv(),
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe'], // stdout/stderr 写日志文件
     });
     this.process.on('exit', this.handleExit.bind(this));
+    this.ws = await this.connectWs(`ws://127.0.0.1:${port}`);
+    await this.rpc('initialize', { clientName: 'catimation' });
   }
 
-  async *send(threadId: string, input: AgentInput) {
-    this.process!.stdin.write(JSON.stringify({ type: 'user_input', threadId, ...input }) + '\n');
-    for await (const line of readLines(this.process!.stdout)) {
-      yield JSON.parse(line) as AgentEvent;
+  async *send(threadId: string, input: AgentInput): AsyncIterable<AgentEvent> {
+    if (!threadId) {
+      const r = await this.rpc('thread/start', { model: input.model, cwd: input.cwd });
+      threadId = r.thread.id;
     }
+    const turnId = await this.rpc('turn/start', { threadId, input: input.items });
+    // 同时监听 notifications：item/agentMessage/delta、item/toolCall/*、turn/completed
+    for await (const evt of this.notificationStream(turnId)) yield evt;
+  }
+
+  async cancel(threadId: string) {
+    await this.rpc('turn/cancel', { threadId });
+  }
+
+  private async rpc<T = any>(method: string, params: any): Promise<T> {
+    const id = ++this.rpcId;
+    return new Promise<T>((resolve) => {
+      this.pending.set(id, resolve);
+      this.ws!.send(JSON.stringify({ jsonrpc: '2.0', id, method, params }));
+    });
   }
 }
 ```
 
-后续加 `CodexGatewayBackend implements IAgentBackend` 即可切换通道。
+后续加 `CodexGatewayBackend implements IAgentBackend` 即可切换到 codex-gateway WebSocket。
 
 #### `src/main/mcp/server.ts`
 
 MCP server 入口，跑在 Electron 主进程内（同进程，无子进程），通过 HTTP localhost-only 暴露给 Codex CLI 子进程。Codex 用 `rmcp-client` 的 streamable HTTP transport 连接。
 
+用 MCP TypeScript SDK v1.x（拆包后的 `@modelcontextprotocol/server` + `@modelcontextprotocol/node` + `@modelcontextprotocol/express`）。`createMcpExpressApp()` 中间件自带 DNS rebinding 防护。
+
 ```typescript
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import express from 'express';
-import { randomBytes } from 'crypto';
+import { randomUUID, randomBytes } from 'node:crypto';
+import { McpServer, isInitializeRequest } from '@modelcontextprotocol/server';
+import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node';
+import { createMcpExpressApp } from '@modelcontextprotocol/express';
 
 const MCP_PORT = 7842;
 const TOKEN = randomBytes(32).toString('hex'); // 启动时生成，写入 ~/.codex/config.toml
 
 export async function startMcpServer() {
-  const server = new Server(
-    { name: 'catimation', version: app.getVersion() },
-    { capabilities: { tools: {}, resources: {} } }
-  );
+  const server = new McpServer({ name: 'catimation', version: app.getVersion() });
 
   registerImageTools(server);
   registerDataTools(server);
   registerUITools(server);
   registerResources(server);
 
-  const app = express();
-  app.use((req, res, next) => {
+  const expressApp = createMcpExpressApp(); // 自带 DNS rebinding 防护
+  expressApp.use((req, res, next) => {
     if (req.headers['x-catimation-token'] !== TOKEN) {
       return res.status(401).send('unauthorized');
     }
     next();
   });
 
-  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => randomBytes(16).toString('hex') });
-  app.all('/mcp', (req, res) => transport.handleRequest(req, res, req.body));
-  await server.connect(transport);
+  const transports = new Map<string, NodeStreamableHTTPServerTransport>();
 
-  app.listen(MCP_PORT, '127.0.0.1');
+  expressApp.post('/mcp', async (req, res) => {
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
+
+    if (sessionId && transports.has(sessionId)) {
+      await transports.get(sessionId)!.handleRequest(req, res, req.body);
+    } else if (!sessionId && isInitializeRequest(req.body)) {
+      const transport = new NodeStreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID(),
+        onsessioninitialized: (sid) => transports.set(sid, transport),
+      });
+      transport.onclose = () => transport.sessionId && transports.delete(transport.sessionId);
+      await server.connect(transport);
+      await transport.handleRequest(req, res, req.body);
+    } else {
+      res.status(400).json({ error: 'Invalid request' });
+    }
+  });
+
+  expressApp.listen(MCP_PORT, '127.0.0.1');
 }
 ```
 
@@ -312,21 +360,39 @@ class AttachmentService {
 数据库连接策略 — Postgres 或 PGlite。
 
 ```typescript
+import { PGlite } from '@electric-sql/pglite';
+import { PGLiteSocketServer } from '@electric-sql/pglite-socket';
+
 async function resolveDatabaseUrl(): Promise<string> {
-  // 1. 用户设置里的远程 URL
+  // 1. 用户设置里的远程 URL（首选 sora-postgres）
   const userConfig = await loadUserSetting('agent.databaseUrl');
   if (userConfig && await canConnect(userConfig)) return userConfig;
 
-  // 2. 检测本地 sora-postgres
+  // 2. 自动检测本地 sora-postgres（与 docker-compose.local.yml 对齐）
   const localSora = 'postgresql://sorauser:sora_password_2024@localhost:5432/soraui';
   if (await canConnect(localSora)) return localSora;
 
-  // 3. 启动 PGlite
-  return await startPGlite(path.join(app.getPath('userData'), 'pgdata'));
+  // 3. 嵌入式 PGlite — 通过 socket server 暴露 Postgres wire protocol
+  return await startEmbeddedPGlite();
+}
+
+async function startEmbeddedPGlite(): Promise<string> {
+  const dataDir = path.join(app.getPath('userData'), 'pgdata');
+  const db = await PGlite.create(dataDir);
+  const port = await pickFreePort(); // 默认尝试 5433，被占用则递增
+  const server = new PGLiteSocketServer({ db, port, host: '127.0.0.1' });
+  await server.start();
+  // 进程退出时优雅关闭
+  app.on('before-quit', async () => { await server.stop(); await db.close(); });
+  return `postgresql://postgres:postgres@127.0.0.1:${port}/postgres`;
 }
 ```
 
-PGlite 作为 npm 包 `@electric-sql/pglite` 引入。Prisma 通过其内置的 PGlite 适配器（`@prisma/adapter-pglite`）直接连接，无需暴露 socket。
+**关键设计：**
+- PGlite 是 WASM 单进程库，不能跨 Electron window 共享 → **所有 DB 访问统一经主进程**，渲染进程通过 IPC 调用
+- `@electric-sql/pglite-socket` 包提供 `PGLiteSocketServer`，把 PGlite 实例暴露成标准 Postgres TCP 服务
+- 之后 Prisma 用普通 `postgresql://` URL 连接，与 sora-postgres 路径完全无差异，schema/migration 零改动
+- 数据目录 `userData/pgdata` 跟随用户配置走，应用卸载时清理
 
 ### 渲染进程模块
 
@@ -358,18 +424,19 @@ User 输入 → AgentChatPanel.send()
   → IPC: agent:send_message { threadId, content, attachments }
     → AttachmentService 落地附件
     → AgentManager 注入应用上下文 (currentPage, selection)
-    → 写 stdin → Codex CLI: {"type":"user_input", "items":[...]}
+    → WS RPC → codex app-server: turn/start { threadId, input: [...] }
       → Codex agent loop:
-        ├─ reasoning_delta → stdout
-        ├─ tool_call: catimation.generate_image
-        │  └─ MCP request → CATIMATION MCP server
+        ├─ item/reasoning/delta            → WS notification
+        ├─ item/agentMessage/delta         → WS notification (流式文本)
+        ├─ item/toolCall/start (catimation.generate_image)
+        │  └─ MCP HTTP → CATIMATION MCP server
         │     └─ ApiService.generate() → R2 upload
         │     ← MCP response (image URI as resource)
-        ├─ tool_call: catimation.batch_process → task_id
-        ├─ tool_call: catimation.query_task_status (轮询)
-        └─ message: "已完成"
-    ← JSONL stdout events
-  → AgentManager event loop:
+        ├─ item/toolCall/end
+        ├─ item/toolCall/start (catimation.batch_process) → task_id
+        ├─ item/toolCall/start (catimation.query_task_status, 轮询)
+        └─ turn/completed { turnId, status }
+  → AgentManager 事件循环:
     → IPC broadcast → Renderer
     → Prisma persist (thread, message, tool_call, artifact)
   → Renderer Zustand store updates → 增量渲染
@@ -441,16 +508,19 @@ model AgentAttachment {
 
 ## 关键事件类型
 
+事件名对齐 codex `app-server` JSON-RPC notifications，AgentManager 透传到 IPC。
+
 | 事件 | 来源 | UI 反应 |
 |------|------|--------|
-| `reasoning_delta` | Codex stdout | ReasoningPanel 流式追加 |
-| `message_delta` | Codex stdout | MessageBubble 流式追加文本 |
-| `tool_call_start` | Codex stdout | ToolCallCard 出现 spinner |
-| `tool_call_end` | Codex stdout | ToolCallCard 显示结果 |
-| `artifact_created` | MCP server → IPC | ArtifactGrid 添加缩略图 |
-| `task_progress` | 异步任务 | ToolCallCard 进度条更新 |
+| `item/reasoning/delta` | Codex WS notification | ReasoningPanel 流式追加 |
+| `item/agentMessage/delta` | Codex WS notification | MessageBubble 流式追加文本 |
+| `item/toolCall/start` | Codex WS notification | ToolCallCard 出现 spinner |
+| `item/toolCall/end` | Codex WS notification | ToolCallCard 显示结果 |
+| `turn/completed` | Codex WS notification | 当前 turn 收尾 |
+| `artifact_created` | MCP server → 主进程 IPC | ArtifactGrid 添加缩略图 |
+| `task_progress` | 异步任务（query_task_status 工具产出） | ToolCallCard 进度条更新 |
 | `error` | 任意层 | ErrorBubble 显示，附 retry 按钮 |
-| `cancelled` | 用户中断 | 标记当前 turn 为已中断 |
+| `cancelled` | 用户中断（`turn/cancel` RPC） | 标记当前 turn 为已中断 |
 
 ## 错误处理（4 层策略）
 
@@ -470,8 +540,8 @@ model AgentAttachment {
 - 业务错误（quota 不足等）直接返回给 agent
 
 **Layer 4：用户中断**
-- "停止"按钮 → IPC `agent:cancel` → SIGINT
-- Codex 优雅停止当前 turn，保留已完成 artifact
+- "停止"按钮 → IPC `agent:cancel` → WS RPC `turn/cancel { threadId }`
+- Codex 优雅停止当前 turn，保留已完成 artifact（不杀进程，保持长连接）
 - UI 显示"已中断"标记
 
 ## 资源限制
@@ -517,8 +587,8 @@ extraResources: [
 
 | 层 | 工具 | 关键测试 |
 |----|------|---------|
-| 单元 | Vitest | AgentManager 进程生命周期、McpServer 工具实现、AttachmentService |
-| 集成 | Vitest + 真实 Codex CLI | MCP 工具完整调用链、SSE 事件解析、Prisma 持久化 |
+| 单元 | Vitest | AgentManager 进程生命周期 + WS JSON-RPC 编解码、McpServer 工具实现、AttachmentService、PGLiteSocketServer 启停 |
+| 集成 | Vitest + 真实 Codex CLI | `codex app-server` 完整 thread/turn 链路、MCP 工具完整调用链、Prisma 在 PGlite + sora-postgres 双模式下持久化 |
 | MCP 协议 | `@modelcontextprotocol/inspector` | 用 inspector 直连本地 HTTP server 验证 tools/resources（带 token header） |
 | E2E | Playwright Electron | 完整流程：发消息→工具调用→渲染→双击预览→重生成 |
 | 性能 | Vitest bench | 长对话 100+ 消息渲染 < 100ms / 工具启动延迟 < 200ms |
@@ -623,8 +693,9 @@ temp-ai-image-master-source/
 
 | 风险 | 缓解 |
 |---|---|
-| Codex CLI 0.128.0 协议字段变更 | 启动时 `codex --version` 校验，每次升级版本走 PR review |
-| MCP SDK 版本碎片（client/server 不兼容） | 锁版本，CI 跑 inspector fixture |
-| PGlite 性能极限（万级消息） | 监控查询时间，超阈值提示用户切到 sora-postgres |
+| Codex `app-server` 仍标记 [experimental]，协议字段可能变更 | 启动时 `codex --version` + 协议握手校验，锁定 fork commit；每次升级走 PR review |
+| MCP SDK v1.x 拆包后客户端/服务端版本不齐 | `package.json` 同时锁 `@modelcontextprotocol/server` `@modelcontextprotocol/node` `@modelcontextprotocol/express` 版本，CI 跑 inspector fixture |
+| PGlite 是 WASM **单进程** —— 多 Electron window 不能共享同一实例 | 所有 DB 访问统一经主进程，渲染进程通过 IPC 调用；架构层强制约束 |
+| PGlite 性能极限（十万级消息） | 监控查询时间，超阈值提示用户切到 sora-postgres |
 | Codex 二进制体积让安装包变大 | 安装包 ~80MB → ~110MB，可接受（同类 IDE 都更大） |
 | 用户 ChatGPT 账户 token 失效 | UI 检测到 401 → 弹重新登录 |
