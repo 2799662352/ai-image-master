@@ -681,10 +681,75 @@ temp-ai-image-master-source/
 | **M7：测试 + 文档** | 3 天 | E2E、性能、用户文档 |
 | **总计** | **~20 天** | 单人节奏 |
 
+## FastAPI + FastMCP Hybrid Extension（后续扩展）
+
+FastAPI + FastMCP 不替换本地 MVP 主链路。它作为后续扩展层，用来承接 Python AI pipeline、平台远程工具、sora-ai-backend 能力复用。
+
+### 为什么不放在本地 MVP 主链路
+
+CATIMATION 的核心业务能力在 Electron 主进程内：`ServiceRegistry`、`appServices`、`ApiService`、`HistoryDataService`、页面导航与 ImageViewer 反控。如果本地核心 MCP server 改成 Python FastMCP，需要再加一层桥：
+
+```
+Codex
+  → FastMCP Python sidecar
+    → HTTP / IPC bridge
+      → Electron Main
+        → ServiceRegistry / ApiService
+```
+
+这会引入额外的 Python runtime / venv / 依赖打包、跨进程生命周期、日志与错误传播复杂度。对本地桌面 MVP 来说，TS MCP server 直接跑在 Electron 主进程内更短、更稳：
+
+```
+Codex
+  → TS MCP in Electron Main
+    → ServiceRegistry / ApiService
+```
+
+### FastAPI + FastMCP 适合的边界
+
+| 场景 | 是否适合 FastAPI + FastMCP | 理由 |
+|---|---|---|
+| 直接调 CATIMATION 内存态服务 | 不适合 | 需要访问 Electron 主进程对象，Python 只能绕桥 |
+| 本地聊天面板 MVP | 不适合 | 增加第三类进程（Node/Electron + Codex + Python） |
+| sora-ai-backend 的 Python AI 能力 | 适合 | FastAPI / LangChain / Python 模型生态已存在 |
+| OCR、CV、embedding、RAG、LangGraph pipeline | 适合 | Python 工具链更成熟 |
+| 平台模式远程 MCP tools | 适合 | 可通过 HTTP transport 暴露给 codex-gateway / sora 平台 |
+| 多服务统一审计、限流、鉴权 | 适合 | FastAPI 中间件体系更适合平台治理 |
+
+### 后续形态
+
+后续平台增强可以新增一个 `catimation-python-tools` 服务：
+
+```text
+sora platform / codex-gateway
+  → FastAPI + FastMCP (/mcp)
+    ├─ cv.analyze_image
+    ├─ ocr.extract_text
+    ├─ rag.search_project_knowledge
+    ├─ langgraph.run_director_pipeline
+    └─ sora_ai_backend.invoke_workflow
+```
+
+本地 CATIMATION 也可以选择性启动 Python sidecar，但只用于重 Python 工具，不承担核心 CATIMATION 工具注册：
+
+```text
+Electron Main TS MCP
+  ├─ native CATIMATION tools（本地 MVP 主链路）
+  └─ proxy_python_tool → FastMCP sidecar（可选）
+```
+
+### 实施原则
+
+- **本地 MVP**：只实现 Electron 主进程 TS MCP server，确保安装包和运行链路可控。
+- **Python-heavy tools**：后续用 FastAPI + FastMCP 承接，不把 Python 引入 MVP 阻塞路径。
+- **平台模式**：FastMCP 服务优先部署在 sora-ai-backend / codex-gateway 旁边，而不是塞进桌面应用。
+- **统一协议**：无论 TS MCP 还是 FastMCP，都对外暴露 MCP HTTP transport，Codex 只认 MCP tools，不关心底层语言。
+
 ## 后续 Backlog（不在本 spec）
 
 - **方案 A 联网通道**：实现 `CodexGatewayBackend implements IAgentBackend`，连接 codex-gateway WebSocket
 - **MCP server 对外暴露**：把 HTTP transport 从 `127.0.0.1` 改为 `0.0.0.0` + 强鉴权，让 Cursor / Claude Desktop 等远程客户端也能用 CATIMATION 工具
+- **FastAPI + FastMCP 扩展层**：为 Python AI pipeline / sora-ai-backend 能力新增远程 MCP tools，不进入本地 MVP 主链路
 - **并行多 agent**：多 thread 同时跑，画布式管理
 - **嵌入式浏览器**：让 agent 能可视化操作 web 页面
 - **语音输入**：whisper.cpp 本地语音识别
