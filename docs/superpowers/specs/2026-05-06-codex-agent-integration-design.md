@@ -155,7 +155,7 @@ topic: codex-agent-integration
 │  │  │   • catimation://template/<id>                   │  │   │
 │  │  │   • catimation://upload/<sha256>                 │  │   │
 │  │  │                                                  │  │   │
-│  │  │  ↓ 实现层调用 ServiceRegistry.get(...)            │  │   │
+│  │  │  ↓ ToolRouter: main-native 或 renderer IPC         │  │   │
 │  │  └──────────────────────────────────────────────────┘  │   │
 │  │                                                         │   │
 │  │  ┌─ Prisma Client ────────────────────────────────┐   │   │
@@ -304,10 +304,15 @@ export async function startMcpServer() {
 - 自定义 token header 防本机其他进程误调
 - 端口 7842 默认（可在设置里改）
 
-每个工具实现层是薄包装，参数校验后调 `appServices.get(SERVICE_KEYS.X).method(...)`。
+每个工具实现层是薄包装，参数校验后走 `ToolRouter`：
+
+- **main-native tools**：文件系统、附件缓存、PGlite/Prisma、smart erase、storyboard split 等主进程已有服务，直接在 main process 执行。
+- **renderer service tools**：`ApiService`、`HistoryDataService`、`ImageViewer`、`TabManager` 等目前注册在 renderer 的 `ServiceRegistry`，不能被 main process 直接访问。MCP server 通过 `webContents.send('agent:tool-request', ...)` 发给 renderer，renderer 的 `AgentToolExecutor` 调 `ServiceRegistry.getRequired(...)` 执行后用 `ipcRenderer.send('agent:tool-response', ...)` 回传。
+
+这避免把 renderer services 强行搬到 main，也保持本地 MCP server 仍然只绑定在 Electron 主进程。
 
 **UI 反控工具的特殊处理：**
-`navigate_page`、`open_image_viewer`、`update_settings` 这类需要影响渲染进程的工具，MCP server 通过主进程的 `webContents.send('agent:ui-command', ...)` IPC 通知渲染进程执行。渲染进程在 `agent-chat/store.ts` 注册 listener，dispatch 到对应的 React 组件 / Zustand action。
+`navigate_page`、`open_image_viewer`、`update_settings` 这类需要影响渲染进程的工具，也走同一个 renderer tool request/response 通道。渲染进程在 `agent-chat/AgentToolExecutor.ts` 注册 listener，dispatch 到对应的 `ServiceRegistry` 服务、React 组件或 Zustand action。
 
 #### Codex 配置注入
 
@@ -687,14 +692,15 @@ FastAPI + FastMCP 不替换本地 MVP 主链路。它作为后续扩展层，用
 
 ### 为什么不放在本地 MVP 主链路
 
-CATIMATION 的核心业务能力在 Electron 主进程内：`ServiceRegistry`、`appServices`、`ApiService`、`HistoryDataService`、页面导航与 ImageViewer 反控。如果本地核心 MCP server 改成 Python FastMCP，需要再加一层桥：
+CATIMATION 的核心业务能力横跨 Electron 主进程与 renderer：主进程持有文件系统、附件缓存、PGlite/Prisma、smart erase 等能力；renderer 持有 `ServiceRegistry`、`ApiService`、`HistoryDataService`、页面导航与 ImageViewer 反控。如果本地核心 MCP server 改成 Python FastMCP，需要再加一层桥：
 
 ```
 Codex
   → FastMCP Python sidecar
     → HTTP / IPC bridge
       → Electron Main
-        → ServiceRegistry / ApiService
+        → renderer IPC
+          → ServiceRegistry / ApiService
 ```
 
 这会引入额外的 Python runtime / venv / 依赖打包、跨进程生命周期、日志与错误传播复杂度。对本地桌面 MVP 来说，TS MCP server 直接跑在 Electron 主进程内更短、更稳：
@@ -702,7 +708,8 @@ Codex
 ```
 Codex
   → TS MCP in Electron Main
-    → ServiceRegistry / ApiService
+    ├─ main-native tools
+    └─ renderer IPC → ServiceRegistry / ApiService
 ```
 
 ### FastAPI + FastMCP 适合的边界
