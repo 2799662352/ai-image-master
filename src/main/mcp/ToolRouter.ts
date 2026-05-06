@@ -13,7 +13,11 @@ export class ToolRouter {
   private mainHandlers = new Map<string, MainToolHandler>()
   private pending = new Map<string, PendingRendererTool>()
 
-  constructor(private readonly win: BrowserWindow) {}
+  constructor(private win: BrowserWindow) {}
+
+  setWindow(win: BrowserWindow): void {
+    this.win = win
+  }
 
   registerMain(name: string, handler: MainToolHandler): void {
     this.mainHandlers.set(name, handler)

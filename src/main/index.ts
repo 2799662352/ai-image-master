@@ -22,6 +22,12 @@ import {
   deleteEraseRemoteObjects,
   setMainWindow as setEraseMainWindow,
 } from './services/smartErase'
+import { AgentManager } from './agent/AgentManager'
+import { getPrisma, shutdownDatabase } from './agent/db'
+import { registerAgentIpc } from './agent/ipc'
+import { ThreadStore } from './agent/ThreadStore'
+import { startCatimationMcpServer } from './mcp/server'
+import type { McpRuntime } from './mcp/server'
 
 // 检测开发模式：通过命令行参数或环境变量
 const isDev = process.argv.includes('--dev') || process.env.NODE_ENV === 'development'
@@ -175,6 +181,11 @@ let imagesDir: string
 let historyFile: string
 let customGalleryPath: string | null = null
 let mainWindow: BrowserWindow | null = null
+let agentManager: AgentManager | null = null
+let agentMcpRuntime: McpRuntime | null = null
+let agentIpcRegistered = false
+let agentRuntimeCleanedUp = false
+let isQuittingAfterAgentCleanup = false
 
 function initPaths(): void {
   userDataPath = app.getPath('userData')
@@ -474,6 +485,39 @@ function createWindow(): void {
   })
 }
 
+async function initAgentRuntime(win: BrowserWindow): Promise<void> {
+  if (agentManager && agentMcpRuntime) {
+    agentManager.setWindow(win)
+    agentMcpRuntime.router.setWindow(win)
+    return
+  }
+
+  const prisma = await getPrisma()
+  const threadStore = new ThreadStore(prisma)
+  agentMcpRuntime = await startCatimationMcpServer(win)
+  agentManager = new AgentManager(win, threadStore)
+  if (!agentIpcRegistered) {
+    registerAgentIpc(agentManager, agentMcpRuntime.router)
+    agentIpcRegistered = true
+  }
+
+  try {
+    await agentManager.start()
+  } catch (error) {
+    console.error('[AgentRuntime] Codex backend init failed:', error)
+  }
+}
+
+async function cleanupAgentRuntime(): Promise<void> {
+  if (agentRuntimeCleanedUp) return
+  agentRuntimeCleanedUp = true
+  try {
+    await agentManager?.stop()
+  } finally {
+    await shutdownDatabase()
+  }
+}
+
 // App 生命周期
 app.whenReady().then(async () => {
   console.log(`[Performance] App ready: ${Date.now() - startTime}ms`)
@@ -489,6 +533,11 @@ app.whenReady().then(async () => {
 
   if (mainWindow) setSplitMainWindow(mainWindow)
   if (mainWindow) setEraseMainWindow(mainWindow)
+  if (mainWindow) {
+    void initAgentRuntime(mainWindow).catch((error) => {
+      console.error('[AgentRuntime] init failed:', error)
+    })
+  }
 
   // 非关键路径：延迟初始化
   deferNonCriticalInit()
@@ -560,6 +609,20 @@ app.on('activate', () => {
   if (mainWindow === null) {
     createWindow()
   }
+})
+
+app.on('before-quit', (event) => {
+  if (isQuittingAfterAgentCleanup) return
+
+  event.preventDefault()
+  void cleanupAgentRuntime()
+    .catch((error) => {
+      console.error('[AgentRuntime] cleanup failed:', error)
+    })
+    .finally(() => {
+      isQuittingAfterAgentCleanup = true
+      app.quit()
+    })
 })
 
 // ==================== IPC 处理 ====================

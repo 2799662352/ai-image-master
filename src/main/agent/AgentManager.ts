@@ -7,8 +7,12 @@ import type { AgentInput, IAgentBackend } from './types'
 export class AgentManager {
   private backend: IAgentBackend
 
-  constructor(private readonly win: BrowserWindow, private readonly store: ThreadStore) {
+  constructor(private win: BrowserWindow, private readonly store: ThreadStore) {
     this.backend = new CodexLocalBackend()
+  }
+
+  setWindow(win: BrowserWindow): void {
+    this.win = win
   }
 
   async start(): Promise<void> {
@@ -48,8 +52,17 @@ export class AgentManager {
     await this.backend.cancel(threadId)
   }
 
+  async listThreads() {
+    return this.store.listThreads()
+  }
+
+  async loadThread(threadId: string) {
+    return this.store.loadThread(threadId)
+  }
+
   private async forwardEvents(threadId: string, input: AgentInput): Promise<void> {
     for await (const event of this.backend.send(threadId, input)) {
+      if (this.win.isDestroyed()) return
       this.win.webContents.send('agent:event', event)
     }
   }
