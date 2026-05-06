@@ -1,13 +1,19 @@
 import { CodexLocalBackend } from './CodexLocalBackend'
 import type { BrowserWindow } from 'electron'
+import { pathToFileURL } from 'node:url'
 import type { AgentSendMessagePayload } from '../../types/agent'
+import type { AttachmentService } from './AttachmentService'
 import type { ThreadStore } from './ThreadStore'
 import type { AgentInput, IAgentBackend } from './types'
 
 export class AgentManager {
   private backend: IAgentBackend
 
-  constructor(private win: BrowserWindow, private readonly store: ThreadStore) {
+  constructor(
+    private win: BrowserWindow,
+    private readonly store: ThreadStore,
+    private readonly attachments: AttachmentService,
+  ) {
     this.backend = new CodexLocalBackend()
   }
 
@@ -30,12 +36,19 @@ export class AgentManager {
           title: payload.content.slice(0, 40) || 'New Agent Thread',
           model: 'gpt-5.4',
         })
+    const savedAttachments = await this.attachments.ingest(thread.id, payload.attachments ?? [])
+    const items: AgentInput['items'] = [
+      { type: 'text', text: payload.content },
+      ...savedAttachments
+        .filter((item) => item.mime.startsWith('image/'))
+        .map((item) => ({ type: 'image' as const, imageUrl: pathToFileURL(item.localPath).toString() })),
+    ]
 
     const input: AgentInput = {
       ...payload,
       model: 'gpt-5.4',
       cwd: process.cwd(),
-      items: [{ type: 'text', text: payload.content }],
+      items,
     }
 
     void this.forwardEvents(thread.id, input).catch((error: unknown) => {

@@ -23,6 +23,7 @@ import {
   setMainWindow as setEraseMainWindow,
 } from './services/smartErase'
 import { AgentManager } from './agent/AgentManager'
+import { AttachmentService } from './agent/AttachmentService'
 import { getPrisma, shutdownDatabase } from './agent/db'
 import { registerAgentIpc } from './agent/ipc'
 import { ThreadStore } from './agent/ThreadStore'
@@ -494,8 +495,13 @@ async function initAgentRuntime(win: BrowserWindow): Promise<void> {
 
   const prisma = await getPrisma()
   const threadStore = new ThreadStore(prisma)
+  const attachmentService = new AttachmentService(prisma)
   agentMcpRuntime = await startCatimationMcpServer(win)
-  agentManager = new AgentManager(win, threadStore)
+  agentManager = new AgentManager(win, threadStore, attachmentService)
+  void attachmentService.cleanup().catch((error) => {
+    console.warn('[AgentRuntime] attachment cleanup failed:', error)
+  })
+
   if (!agentIpcRegistered) {
     registerAgentIpc(agentManager, agentMcpRuntime.router)
     agentIpcRegistered = true
