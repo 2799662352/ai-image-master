@@ -37,7 +37,7 @@ extraResources:
     filter:
       - "**/*.md"
   - from: resources/codex/${platform}-${arch}
-    to: codex
+    to: codex/${platform}-${arch}
     filter:
       - "codex*"
   - from: resources/skills
