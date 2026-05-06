@@ -2,7 +2,7 @@ import { app } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
 import WebSocket from 'ws'
 import { createAgentLogStream } from './logger'
-import { resolveCodexBinary } from './paths'
+import { getCodexResourceRoot, resolveCodexBinary } from './paths'
 import { pickFreePort } from './ports'
 import type { AgentStreamEvent } from '../../types/agent'
 import type { AgentInput, IAgentBackend, JsonRpcMessage } from './types'
@@ -21,7 +21,12 @@ export class CodexLocalBackend implements IAgentBackend {
 
   async start(): Promise<void> {
     const port = await pickFreePort(4222)
-    const bin = resolveCodexBinary(process.resourcesPath || app.getAppPath())
+    const resourceRoot = getCodexResourceRoot({
+      appPath: app.getAppPath(),
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+    })
+    const bin = resolveCodexBinary(resourceRoot)
     const log = createAgentLogStream('codex')
     this.proc = spawn(bin, ['app-server', 'serve', '--listen', `ws://127.0.0.1:${port}`], {
       stdio: ['ignore', 'pipe', 'pipe'],

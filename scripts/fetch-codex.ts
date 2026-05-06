@@ -66,7 +66,8 @@ async function fetchJson<T>(url: string): Promise<T> {
   })
 
   if (!response.ok) {
-    throw new Error(`GitHub request failed: ${response.status} ${response.statusText} (${url})`)
+    const rateLimitHint = response.status === 403 ? ' Set GITHUB_TOKEN to avoid GitHub API rate limits.' : ''
+    throw new Error(`GitHub request failed: ${response.status} ${response.statusText} (${url}).${rateLimitHint}`)
   }
 
   return await response.json() as T
