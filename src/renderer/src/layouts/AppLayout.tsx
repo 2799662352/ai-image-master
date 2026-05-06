@@ -1,6 +1,7 @@
 import { Suspense, useEffect } from 'react'
 import { useTabStore, type TabName } from '../stores'
 import { TabBar } from '../components/TabBar'
+import { mountAgentToolExecutor } from '../features/agent-chat'
 import {
   GeneratePage,
   BatchPage,
@@ -50,6 +51,10 @@ export function AppLayout() {
   useEffect(() => {
     const hash = window.location.hash.slice(1)
     if (hash) useTabStore.getState().switchTab(hash)
+  }, [])
+
+  useEffect(() => {
+    return mountAgentToolExecutor()
   }, [])
 
   return (
