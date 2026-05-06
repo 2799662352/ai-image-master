@@ -51,6 +51,7 @@ import { getAppBootstrap, initAppBootstrapGlobal } from './core/AppBootstrap'
 
 // V16.1.2 - 导入 IntroVideoController (替代 index.html 内联脚本)
 import { initIntroVideo } from './features/intro-video'
+import { mountAgentChatRuntime } from './features/agent-chat'
 
 console.log('🚀 CATIMATION-Cyberpunk Master 渲染进程启动')
 
@@ -113,6 +114,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
       const appBootstrap = initAppBootstrapGlobal()
       await appBootstrap.bootstrap()
+      mountAgentChatRuntime()
       console.log('[main.ts] ✅ AppBootstrap 启动完成')
       
       // 隐藏加载容器，显示应用
