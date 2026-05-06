@@ -1,0 +1,56 @@
+import { CodexLocalBackend } from './CodexLocalBackend'
+import type { BrowserWindow } from 'electron'
+import type { AgentSendMessagePayload } from '../../types/agent'
+import type { ThreadStore } from './ThreadStore'
+import type { AgentInput, IAgentBackend } from './types'
+
+export class AgentManager {
+  private backend: IAgentBackend
+
+  constructor(private readonly win: BrowserWindow, private readonly store: ThreadStore) {
+    this.backend = new CodexLocalBackend()
+  }
+
+  async start(): Promise<void> {
+    await this.backend.start()
+  }
+
+  async stop(): Promise<void> {
+    await this.backend.stop()
+  }
+
+  async sendMessage(payload: AgentSendMessagePayload): Promise<{ threadId: string }> {
+    const thread = payload.threadId
+      ? { id: payload.threadId }
+      : await this.store.createThread({
+          title: payload.content.slice(0, 40) || 'New Agent Thread',
+          model: 'gpt-5.4',
+        })
+
+    const input: AgentInput = {
+      ...payload,
+      model: 'gpt-5.4',
+      cwd: process.cwd(),
+      items: [{ type: 'text', text: payload.content }],
+    }
+
+    void this.forwardEvents(thread.id, input).catch((error: unknown) => {
+      this.win.webContents.send('agent:event', {
+        type: 'error',
+        threadId: thread.id,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    })
+    return { threadId: thread.id }
+  }
+
+  async cancel(threadId: string): Promise<void> {
+    await this.backend.cancel(threadId)
+  }
+
+  private async forwardEvents(threadId: string, input: AgentInput): Promise<void> {
+    for await (const event of this.backend.send(threadId, input)) {
+      this.win.webContents.send('agent:event', event)
+    }
+  }
+}
