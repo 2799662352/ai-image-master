@@ -24,6 +24,14 @@ import type {
   EraseFailedEvent,
   EraseProbeResult,
 } from '../types/smartErase'
+import type {
+  AgentCancelPayload,
+  AgentSendMessagePayload,
+  AgentStreamEvent,
+  AgentThreadSummary,
+  AgentToolRequest,
+  AgentToolResponse,
+} from '../types/agent'
 
 // ==================== IPC 通道常量 ====================
 // 集中管理所有 IPC 通道，便于类型检查和维护
@@ -130,6 +138,19 @@ const IPC_CHANNELS = {
     'erase:finished',
     'erase:failed',
   ] as const,
+  // Codex Agent
+  AGENT: {
+    SEND_MESSAGE: 'agent:send-message',
+    CANCEL: 'agent:cancel',
+    LIST_THREADS: 'agent:list-threads',
+    LOAD_THREAD: 'agent:load-thread',
+    UPLOAD_ATTACHMENTS: 'agent:upload-attachments',
+    TOOL_RESPONSE: 'agent:tool-response',
+  },
+  AGENT_EVENTS: [
+    'agent:event',
+    'agent:tool-request',
+  ] as const,
 } as const
 
 // ==================== 类型定义 ====================
@@ -186,6 +207,16 @@ export interface ElectronAPI {
   loadSkills: () => Promise<Record<string, string>>
   saveSkill: (skillName: string, content: string) => Promise<IpcResponse>
   openSkillsFolder: () => Promise<IpcResponse<{ path: string }>>
+  // Codex Agent
+  agent: {
+    sendMessage: (payload: AgentSendMessagePayload) => Promise<{ threadId: string }>
+    cancel: (payload: AgentCancelPayload) => Promise<IpcResponse>
+    listThreads: () => Promise<AgentThreadSummary[]>
+    loadThread: (threadId: string) => Promise<unknown>
+    onEvent: (handler: (event: AgentStreamEvent) => void) => () => void
+    onToolRequest: (handler: (request: AgentToolRequest) => void) => () => void
+    sendToolResponse: (response: AgentToolResponse) => void
+  }
   // 图片存储
   saveImage: (base64Data: string, filename: string) => Promise<SaveImageResponse>
   readImage: (filename: string) => Promise<string | null>
@@ -283,6 +314,21 @@ function safeOn(
   }
   console.warn(`[Preload] 不允许监听的通道: ${channel}`)
   return false
+}
+
+function safeOnWithCleanup<T>(
+  channel: string,
+  callback: (data: T) => void,
+  allowedChannels: readonly string[]
+): () => void {
+  if (!allowedChannels.includes(channel)) {
+    console.warn(`[Preload] 不允许监听的通道: ${channel}`)
+    return () => {}
+  }
+
+  const listener = (_event: IpcRendererEvent, data: T): void => callback(data)
+  ipcRenderer.on(channel, listener)
+  return () => ipcRenderer.removeListener(channel, listener)
 }
 
 // ==================== 创建 Electron API ====================
@@ -422,6 +468,31 @@ const electronAPI: ElectronAPI = {
 
   openSkillsFolder: () =>
     safeInvoke<IpcResponse<{ path: string }>>(IPC_CHANNELS.SKILLS.OPEN_FOLDER),
+
+  // ============ Codex Agent ============
+  agent: {
+    sendMessage: (payload: AgentSendMessagePayload) =>
+      safeInvoke<{ threadId: string }>(IPC_CHANNELS.AGENT.SEND_MESSAGE, payload),
+
+    cancel: (payload: AgentCancelPayload) =>
+      safeInvoke<IpcResponse>(IPC_CHANNELS.AGENT.CANCEL, payload),
+
+    listThreads: () =>
+      safeInvoke<AgentThreadSummary[]>(IPC_CHANNELS.AGENT.LIST_THREADS),
+
+    loadThread: (threadId: string) =>
+      safeInvoke<unknown>(IPC_CHANNELS.AGENT.LOAD_THREAD, threadId),
+
+    onEvent: (handler: (event: AgentStreamEvent) => void) =>
+      safeOnWithCleanup<AgentStreamEvent>(IPC_CHANNELS.AGENT_EVENTS[0], handler, IPC_CHANNELS.AGENT_EVENTS),
+
+    onToolRequest: (handler: (request: AgentToolRequest) => void) =>
+      safeOnWithCleanup<AgentToolRequest>(IPC_CHANNELS.AGENT_EVENTS[1], handler, IPC_CHANNELS.AGENT_EVENTS),
+
+    sendToolResponse: (response: AgentToolResponse) => {
+      ipcRenderer.send(IPC_CHANNELS.AGENT.TOOL_RESPONSE, response)
+    },
+  },
 
   // ============ 系统主题监听 ============
   onNativeThemeChanged: (callback: (data: { shouldUseDarkColors: boolean; prefersReducedTransparency: boolean }) => void) => {
