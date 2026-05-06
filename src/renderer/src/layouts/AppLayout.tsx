@@ -1,7 +1,7 @@
 import { Suspense, useEffect } from 'react'
 import { useTabStore, type TabName } from '../stores'
 import { TabBar } from '../components/TabBar'
-import { mountAgentToolExecutor } from '../features/agent-chat'
+import { AgentChatPanel, mountAgentToolExecutor, useAgentChatStore } from '../features/agent-chat'
 import {
   GeneratePage,
   BatchPage,
@@ -57,6 +57,17 @@ export function AppLayout() {
     return mountAgentToolExecutor()
   }, [])
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'a') {
+        event.preventDefault()
+        useAgentChatStore.getState().toggle()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
   return (
     <div className="flex flex-col h-screen bg-cyberpunk-black text-white font-exo">
       <TabBar />
@@ -65,6 +76,7 @@ export function AppLayout() {
           <ActivePage />
         </Suspense>
       </main>
+      <AgentChatPanel />
     </div>
   )
 }
