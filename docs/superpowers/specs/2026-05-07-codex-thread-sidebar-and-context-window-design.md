@@ -31,7 +31,7 @@ Make the Codex agent chat panel feel like a real persistent multi-thread surface
 1. User has used the panel for a few weeks. Postgres-backed `AgentThread` table holds 12 threads.
 2. User restarts the app.
 3. Panel opens → previously the panel was blank ("重启后历史对话记录丢失"). **Now**: store calls `agent.listThreads()` on mount, picks the latest thread, calls `switchThread(latest.id)`, and the panel renders the full history.
-4. User clicks the new sidebar toggle in the panel header → a 240px sidebar slides in to the **left** of the chat (between main app and chat panel).
+4. User clicks the new sidebar toggle in the panel header → a 240px sidebar slides in to the **right** of the chat (between the chat panel and the screen edge), matching the Cursor reference layout.
 5. Sidebar shows:
    - Top: `+ New chat` button with a dimmed `⌘P` hint.
    - Sections: `Today`, `Yesterday`, `Last 7 Days`, `Older` (only sections with at least one thread render).
@@ -112,20 +112,20 @@ Edge cases:
 
 New file: `src/renderer/src/features/agent-chat/ThreadSidebar.tsx`. Sibling of `AgentChatPanel`. Mounted unconditionally inside `AgentChatPanel.tsx` so it shares the panel's open state.
 
-Layout (with both shown, matching the user's reference Cursor sidebar):
+Layout (matching the user's reference Cursor sidebar — sidebar pins to the screen edge, chat panel sits to its left):
 
 ```
-                            ┌─────────────┬───────────────────────┐
-                            │             │                       │
-[main app content area]     │  sidebar    │   chat panel          │
-                            │  240px      │   420-720px           │
-                            │             │                       │
-                            └─────────────┴───────────────────────┘
-                            ↑ left edge: right - (chat width + sidebar width)
-                                                                  ↑ right edge: 0
+                            ┌───────────────────────┬─────────────┐
+                            │                       │             │
+[main app content area]     │   chat panel          │  sidebar    │
+                            │   420-720px           │  240px      │
+                            │                       │             │
+                            └───────────────────────┴─────────────┘
+                            ↑ chat-panel right edge:               ↑ sidebar right edge: 0
+                              sidebarOpen ? sidebarWidth : RAIL_WIDTH
 ```
 
-Both `ThreadSidebar` and `AgentChatPanel` are `position: fixed`. Their `right` offsets are computed from a single `panelWidth + sidebarWidth` reduce in the store, so they slot together with no gap.
+Both `ThreadSidebar` and `AgentChatPanel` are `position: fixed`. The **sidebar** pins to `right: 0` and is therefore always attached to the screen edge (matching Cursor's layout). The **chat panel**'s `right` becomes `sidebarOpen ? sidebarWidth : RAIL_WIDTH` (24 when collapsed). When the sidebar collapses to its 24px rail with just an expand chevron, the chat panel slides outward by `sidebarWidth - 24px` to reclaim the freed space — both transitions driven by the same `sidebarOpen` state, so they animate together (or hard-cut, per spec).
 
 State (added to existing `useAgentChatStore`):
 
@@ -144,9 +144,9 @@ deleteThread: (id: string) => Promise<void>
 `ThreadSidebar` renders:
 
 ```
-<aside fixed right=panelWidth top=0 width=sidebarWidth>
+<aside fixed right=0 top=0 width=sidebarWidth>             // pinned to screen edge
   <header> ⌘P toggle / +New chat </header>
-  <ResizableHandle side="left" />   // mirror of the chat panel's right-side handle
+  <ResizableHandle side="left" />                          // drag handle on the inner edge
   <nav scrollable>
     {grouped.map(group => (
       <Group title={group.label}>
@@ -156,6 +156,8 @@ deleteThread: (id: string) => Promise<void>
   </nav>
 </aside>
 ```
+
+`AgentChatPanel`'s outer `<aside>` keeps its existing `position: fixed` but now reads `right` from `sidebarOpen ? sidebarWidth : RAIL_WIDTH` instead of the hard-coded `right-0` Tailwind class. Drag-resizing the chat panel is unchanged (it grows leftward into the main app).
 
 `ThreadRow`:
 
@@ -354,13 +356,14 @@ Estimated diff size: ~700 LOC production + ~400 LOC tests.
 - **Risk: `bootstrap()` race with `Cmd+P` palette.** If user opens Cmd+P during boot, both code paths might call `switchThread`. Mitigation: `switchThread` is already idempotent for the same id; for different ids, the user's later click wins because async IPC resolves in submit order.
 - **Risk: 200K context window too generous for some models.** Codex would happily try to send 180K tokens before compacting; the apiyi gateway might reject earlier. Empirical check during smoke test #7. If it fails, we lower the constant in `codexLaunch.ts` AND `agent.ts` together (single source of truth via shared constant).
 - **Risk: title generation still doesn't fire after fixes.** Becomes the next debug pass. Spec scoped to NOT solve it preemptively; we observe and decide.
-- **Risk: sidebar pushes chat panel off-screen on small monitors.** Default sidebar (240) + min panel (360) = 600px reserved on the right. If user's monitor is ≤ 800px wide and they collapse the main app, this is fine. Mitigation: sidebar can be collapsed independently — falls back to existing Cmd+P.
+- **Risk: sidebar + chat panel together eat too much screen on small monitors.** Default sidebar (240) + min chat panel (360) = 600px reserved on the right edge. On a ≤ 800px monitor that leaves the main app only ~200px wide, which is unusable. Mitigation: sidebar collapses independently to a 24px rail; with sidebar collapsed the right-edge footprint becomes 24 + 360 = 384px (matches today's experience modulo the rail). Cmd+P still works as the no-sidebar power-user fallback.
 - **Risk: `lastMessageAt` is null on legacy threads.** `ensureSchema.alignSchema` already backfills it from `updatedAt`. No additional migration.
 
 ## Open Questions for User Review (before writing-plans)
 
-1. **Sidebar position.** Spec puts sidebar to the **left** of chat panel (between main app and chat). Cursor's screenshot shows sidebar to the **right** of chat (further from main app). The latter requires the chat panel to detach from `right-0` and slide left — significant CSS surgery. Spec stays with "left of chat" as default; user can override.
-2. **`Cmd+B` shortcut.** Borrowed from VS Code's "Toggle Side Bar". Confirm this doesn't collide with anything else in the host shell.
-3. **Inline rename vs. modal rename.** Spec uses inline (double-click thread title or pick "Rename" from `⋯` menu, then a text input replaces the title in-place). Modal would be one extra component but more discoverable. Inline default; user can override.
-4. **Delete confirmation.** Spec uses a small inline confirm (`Delete? [Cancel] [Delete]` replacing the row temporarily). Could be a modal instead. Inline default.
-5. **Auto-refresh frequency.** Spec debounces 500ms after each `turn_completed`. Could be longer (1-2s) if it feels too aggressive. 500ms default.
+(Sidebar position resolved: pinned to `right: 0`, matching the Cursor reference layout. Chat panel slides leftward on toggle.)
+
+1. **`Cmd+B` shortcut.** Borrowed from VS Code's "Toggle Side Bar". Confirm this doesn't collide with anything else in the host shell.
+2. **Inline rename vs. modal rename.** Spec uses inline (double-click thread title or pick "Rename" from `⋯` menu, then a text input replaces the title in-place). Modal would be one extra component but more discoverable. Inline default; user can override.
+3. **Delete confirmation.** Spec uses a small inline confirm (`Delete? [Cancel] [Delete]` replacing the row temporarily). Could be a modal instead. Inline default.
+4. **Auto-refresh frequency.** Spec debounces 500ms after each `turn_completed`. Could be longer (1-2s) if it feels too aggressive. 500ms default.
