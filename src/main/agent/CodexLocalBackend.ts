@@ -20,15 +20,26 @@ export interface CodexLocalBackendOptions {
    * process is created and `isHealthy` only inspects the WS state.
    */
   wsUrl?: string
+  /**
+   * Resource directory containing the bundled `codex/<platform>-<arch>/`
+   * subtree. When set (and `wsUrl` is NOT set), `start()` skips the Electron
+   * `app.getAppPath()` lookup and uses this path directly. Used by the
+   * standalone probe script and any future non-Electron contexts (CI smoke
+   * tests, etc.) that need to exercise the backend end-to-end without
+   * running inside Electron.
+   */
+  resourceRoot?: string
 }
 
 export class CodexLocalBackend implements IAgentBackend {
   private proc: ChildProcess | null = null
   private client: CodexProtocolClient | null = null
   private readonly wsUrlOverride: string | undefined
+  private readonly resourceRootOverride: string | undefined
 
   constructor(options: CodexLocalBackendOptions = {}) {
     this.wsUrlOverride = options.wsUrl
+    this.resourceRootOverride = options.resourceRoot
   }
 
   async start(): Promise<void> {
@@ -44,13 +55,15 @@ export class CodexLocalBackend implements IAgentBackend {
 
     const port = await pickFreePort(4222)
     const listenUrl = `ws://127.0.0.1:${port}`
-    const resourceRoot = getCodexResourceRoot({
+    const resourceRoot = this.resourceRootOverride ?? getCodexResourceRoot({
       appPath: app.getAppPath(),
       isPackaged: app.isPackaged,
       resourcesPath: process.resourcesPath,
     })
     const bin = resolveCodexBinary(resourceRoot)
-    const log = createAgentLogStream('codex')
+    const log: NodeJS.WritableStream = this.resourceRootOverride
+      ? process.stderr
+      : createAgentLogStream('codex')
     const recentOutput = new RingBuffer(STARTUP_LOG_TAIL)
     const captureOutput = (chunk: Buffer | string): void => {
       const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8')

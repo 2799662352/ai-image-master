@@ -35,6 +35,7 @@
     "perf:startup": "npx tsx scripts/measure-startup.ts",
     "pipeline:test": "npx tsx scripts/run-pipeline-test.ts",
     "codex:fetch": "tsx scripts/fetch-codex.ts",
+    "codex:probe": "tsx scripts/probe-codex.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:validate": "prisma validate",
