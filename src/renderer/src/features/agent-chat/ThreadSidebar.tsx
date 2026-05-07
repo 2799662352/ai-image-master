@@ -22,7 +22,7 @@ export function ThreadSidebar(): JSX.Element | null {
   const threadId = useAgentChatStore((s) => s.threadId)
   const newThread = useAgentChatStore((s) => s.newThread)
   const switchThread = useAgentChatStore((s) => s.switchThread)
-  const renameActiveThread = useAgentChatStore((s) => s.renameActiveThread)
+  const renameThread = useAgentChatStore((s) => s.renameThread)
   const deleteThread = useAgentChatStore((s) => s.deleteThread)
   const toggleSidebar = useAgentChatStore((s) => s.toggleSidebar)
 
@@ -59,7 +59,7 @@ export function ThreadSidebar(): JSX.Element | null {
               activeThreadId={threadId}
               isRunning={isRunning}
               onSwitch={switchThread}
-              onRename={renameActiveThread}
+              onRename={renameThread}
               onDelete={deleteThread}
             />
           ))
@@ -85,7 +85,7 @@ interface ThreadGroupSectionProps {
   activeThreadId: string | undefined
   isRunning: boolean
   onSwitch: (id: string) => Promise<void> | void
-  onRename: (title: string) => Promise<void>
+  onRename: (id: string, title: string) => Promise<void>
   onDelete: (id: string) => Promise<void>
 }
 
@@ -117,7 +117,7 @@ interface ThreadRowProps {
   active: boolean
   isRunning: boolean
   onSwitch: (id: string) => Promise<void> | void
-  onRename: (title: string) => Promise<void>
+  onRename: (id: string, title: string) => Promise<void>
   onDelete: (id: string) => Promise<void>
 }
 
@@ -140,11 +140,7 @@ function ThreadRow(props: ThreadRowProps): JSX.Element {
     const next = draftTitle.trim()
     setMode('idle')
     if (!next || next === props.thread.title) return
-    if (!props.active) {
-      // Renaming a non-active thread — switch to it first so renameActiveThread targets it.
-      await props.onSwitch(props.thread.id)
-    }
-    await props.onRename(next)
+    await props.onRename(props.thread.id, next)
   }, [draftTitle, props])
 
   return (

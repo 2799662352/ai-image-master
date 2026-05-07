@@ -166,7 +166,7 @@ interface AgentChatState {
   refreshThreadList: () => Promise<void>
   toggleSidebar: () => void
   setSidebarWidth: (width: number) => void
-  renameActiveThread: (title: string) => Promise<void>
+  renameThread: (threadId: string, title: string) => Promise<void>
   deleteThread: (threadId: string) => Promise<void>
 }
 
@@ -554,21 +554,23 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   },
 
   bootstrap: async () => {
-    if (get().bootstrapped) return
-    set({ bootstrapped: true, threadListLoading: true })
+    if (get().bootstrapped || get().threadListLoading) return
+    set({ threadListLoading: true })
     const agent = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.agent
     if (!agent?.listThreads) {
-      set({ threadListLoading: false })
+      set({ threadListLoading: false, bootstrapped: true })
       return
     }
     try {
       const list = await agent.listThreads()
-      set({ threadList: list })
+      set({ threadList: list, bootstrapped: true })
       const top = list[0]
       if (top && agent.openThread) {
         await get().switchThread(top.id)
       }
     } catch (err) {
+      // Leave `bootstrapped` false so a follow-up open can retry; surface the
+      // failure on the panel so the user knows why the list is empty.
       set({ error: err instanceof Error ? err.message : String(err) })
     } finally {
       set({ threadListLoading: false })
@@ -598,14 +600,12 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     set({ sidebarWidth: clamped })
   },
 
-  renameActiveThread: async (title) => {
-    const id = get().threadId
-    if (!id) return
+  renameThread: async (threadId, title) => {
     const trimmed = title.trim()
-    if (trimmed.length === 0) return
+    if (!threadId || trimmed.length === 0) return
     const agent = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.agent
     if (!agent?.renameThread) return
-    await agent.renameThread(id, trimmed)
+    await agent.renameThread(threadId, trimmed)
     await get().refreshThreadList()
   },
 
