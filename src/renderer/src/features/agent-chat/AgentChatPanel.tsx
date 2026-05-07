@@ -1,10 +1,8 @@
 import { useEffect } from 'react'
-import { ArtifactGrid } from './ArtifactGrid'
 import { AttachmentChips } from './AttachmentChips'
 import { MentionInput } from './MentionInput'
 import { MessageBubble } from './MessageBubble'
-import { ReasoningPanel } from './ReasoningPanel'
-import { ToolCallCard } from './ToolCallCard'
+import { ResizableHandle } from './ResizableHandle'
 import { useAgentChatStore } from './store'
 import type { AgentStreamEvent } from '../../../../types/agent'
 
@@ -17,12 +15,10 @@ type AgentEventApi = {
 export function AgentChatPanel() {
   const isOpen = useAgentChatStore((state) => state.isOpen)
   const messages = useAgentChatStore((state) => state.messages)
-  const artifacts = useAgentChatStore((state) => state.artifacts)
-  const reasoning = useAgentChatStore((state) => state.reasoning)
-  const toolEvents = useAgentChatStore((state) => state.toolEvents)
   const error = useAgentChatStore((state) => state.error)
   const applyEvent = useAgentChatStore((state) => state.applyEvent)
-  const setError = useAgentChatStore((state) => state.setError)
+  const panelWidth = useAgentChatStore((state) => state.panelWidth)
+  const setPanelWidth = useAgentChatStore((state) => state.setPanelWidth)
 
   useEffect(() => {
     const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
@@ -33,7 +29,15 @@ export function AgentChatPanel() {
   if (!isOpen) return null
 
   return (
-    <aside className="fixed right-0 top-0 z-[40000] flex h-screen w-[420px] flex-col border-l border-cyan-400/25 bg-zinc-950/95 text-white shadow-[-24px_0_80px_rgba(34,211,238,0.16)] backdrop-blur">
+    <aside
+      className="fixed right-0 top-0 z-[40000] flex h-screen flex-col border-l border-cyan-400/25 bg-zinc-950/95 text-white shadow-[-24px_0_80px_rgba(34,211,238,0.16)] backdrop-blur relative"
+      style={{ width: panelWidth }}
+    >
+      <ResizableHandle
+        panelRight={typeof window !== 'undefined' ? window.innerWidth : 0}
+        onResize={(width) => setPanelWidth(width)}
+        onResizeEnd={() => {}}
+      />
       <header className="border-b border-cyan-400/20 px-4 py-3">
         <div className="flex items-center justify-between">
           <div>
@@ -59,11 +63,6 @@ export function AgentChatPanel() {
         ) : null}
         {messages.map((message) => (
           <MessageBubble key={message.id} message={message} />
-        ))}
-        <ArtifactGrid artifacts={artifacts} onError={setError} />
-        <ReasoningPanel reasoning={reasoning} />
-        {toolEvents.slice(-6).map((tool) => (
-          <ToolCallCard key={`${tool.id}-${tool.status}`} tool={tool} />
         ))}
         {error ? (
           <div className="mt-3 rounded-xl border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-100">
