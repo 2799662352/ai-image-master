@@ -1,30 +1,30 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { JSX } from 'react'
 import type { AgentThreadSummary } from '../../../../types/agent'
+import { ChatBubbleIcon, MoreIcon, PencilIcon, PlusIcon, TrashIcon } from './icons'
 import { formatRelativeTime, groupThreadsByRecency, type ThreadGroup } from './relativeTime'
 import { useAgentChatStore } from './store'
 
-const RAIL_WIDTH = 24
-
 /**
- * Right-edge thread sidebar. Pinned to `right: 0` so it always sits on the
- * screen edge — the chat panel is responsible for offsetting its own `right`
- * by `sidebarWidth` (or RAIL_WIDTH when collapsed) to make room.
+ * Right-edge thread sidebar. Pinned to `right: 0` so it sits flush against the
+ * screen edge — the chat panel offsets its own `right` by `sidebarWidth` to
+ * make room. When `sidebarOpen` is false the component returns null and the
+ * panel slides over to `right: 0` for a true full collapse (no rail residue).
  *
- * Renders nothing at all when `sidebarOpen` is false; the parent can show a
- * 24px rail with an expand button instead.
+ * Owned by AgentChatPanel: it is only mounted while the panel itself is open,
+ * so closing the panel takes the sidebar with it.
  */
 export function ThreadSidebar(): JSX.Element | null {
   const sidebarOpen = useAgentChatStore((s) => s.sidebarOpen)
   const sidebarWidth = useAgentChatStore((s) => s.sidebarWidth)
   const threadList = useAgentChatStore((s) => s.threadList)
+  const threadListLoading = useAgentChatStore((s) => s.threadListLoading)
   const isRunning = useAgentChatStore((s) => s.isRunning)
   const threadId = useAgentChatStore((s) => s.threadId)
   const newThread = useAgentChatStore((s) => s.newThread)
   const switchThread = useAgentChatStore((s) => s.switchThread)
   const renameThread = useAgentChatStore((s) => s.renameThread)
   const deleteThread = useAgentChatStore((s) => s.deleteThread)
-  const toggleSidebar = useAgentChatStore((s) => s.toggleSidebar)
 
   const groups: ThreadGroup[] = useMemo(() => groupThreadsByRecency(threadList), [threadList])
 
@@ -33,24 +33,30 @@ export function ThreadSidebar(): JSX.Element | null {
   return (
     <aside
       data-testid="thread-sidebar"
+      aria-label="Conversation threads"
       className="fixed top-0 right-0 z-[40000] flex h-screen flex-col border-l border-zinc-800/80 bg-zinc-950/95 text-zinc-200 backdrop-blur"
       style={{ width: sidebarWidth }}
     >
-      <header className="flex items-center justify-between border-b border-zinc-800/80 px-3 py-2">
-        <span className="text-[10px] uppercase tracking-[0.32em] text-cyan-300/70">Threads</span>
+      <header className="flex items-center justify-between gap-2 border-b border-zinc-800/80 px-3 py-2.5">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.32em] text-cyan-300/70">
+          Threads
+        </span>
         <button
           type="button"
           onClick={() => newThread()}
-          className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[11px] text-cyan-100 hover:border-cyan-300/60 hover:bg-cyan-400/20"
+          className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-cyan-400/30 bg-cyan-400/10 px-2 py-1 text-[11px] font-medium text-cyan-100 transition-colors duration-200 hover:border-cyan-300/60 hover:bg-cyan-400/20"
           title="Start a new chat"
         >
-          + New chat
+          <PlusIcon className="h-3.5 w-3.5" />
+          New chat
         </button>
       </header>
 
       <div className="flex-1 overflow-y-auto">
-        {groups.length === 0 ? (
-          <p className="px-3 py-6 text-center text-[11px] text-zinc-500">No threads yet.</p>
+        {threadListLoading && groups.length === 0 ? (
+          <ThreadListSkeleton />
+        ) : groups.length === 0 ? (
+          <EmptyThreadList />
         ) : (
           groups.map((group) => (
             <ThreadGroupSection
@@ -65,18 +71,29 @@ export function ThreadSidebar(): JSX.Element | null {
           ))
         )}
       </div>
-
-      <footer className="border-t border-zinc-800/80 px-3 py-2">
-        <button
-          type="button"
-          onClick={() => toggleSidebar()}
-          className="text-[10px] text-zinc-500 hover:text-zinc-200"
-          aria-label="Collapse sidebar"
-        >
-          ▶ collapse ({RAIL_WIDTH}px rail)
-        </button>
-      </footer>
     </aside>
+  )
+}
+
+function EmptyThreadList(): JSX.Element {
+  return (
+    <div className="flex flex-col items-center gap-2 px-4 py-10 text-center">
+      <ChatBubbleIcon className="h-7 w-7 text-zinc-600" />
+      <p className="text-[12px] text-zinc-400">No threads yet.</p>
+      <p className="text-[11px] leading-relaxed text-zinc-500">
+        Start a new chat to ask the agent anything.
+      </p>
+    </div>
+  )
+}
+
+function ThreadListSkeleton(): JSX.Element {
+  return (
+    <div className="space-y-1.5 px-2 pt-3">
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="h-7 animate-pulse rounded-md bg-zinc-800/60" />
+      ))}
+    </div>
   )
 }
 
@@ -92,7 +109,7 @@ interface ThreadGroupSectionProps {
 function ThreadGroupSection(props: ThreadGroupSectionProps): JSX.Element {
   return (
     <section>
-      <h3 className="px-3 pt-3 pb-1 text-[10px] uppercase tracking-[0.24em] text-zinc-500">
+      <h3 className="px-3 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-500">
         {props.group.label}
       </h3>
       <ul className="px-1 pb-2">
@@ -127,13 +144,14 @@ function ThreadRow(props: ThreadRowProps): JSX.Element {
   const [mode, setMode] = useState<RowMode>('idle')
   const [draftTitle, setDraftTitle] = useState(props.thread.title)
   const inputRef = useRef<HTMLInputElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
 
   const disabled = props.isRunning && !props.active
 
   const startRename = useCallback(() => {
     setDraftTitle(props.thread.title)
     setMode('rename')
-    requestAnimationFrame(() => inputRef.current?.focus())
+    requestAnimationFrame(() => inputRef.current?.select())
   }, [props.thread.title])
 
   const commitRename = useCallback(async () => {
@@ -143,36 +161,58 @@ function ThreadRow(props: ThreadRowProps): JSX.Element {
     await props.onRename(props.thread.id, next)
   }, [draftTitle, props])
 
-  return (
-    <li className="group relative">
-      {mode === 'rename' ? (
-        <div className="flex items-center gap-1 px-2 py-1.5">
-          <input
-            ref={inputRef}
-            aria-label="Rename thread"
-            value={draftTitle}
-            onChange={(e) => setDraftTitle(e.target.value)}
-            onBlur={commitRename}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                void commitRename()
-              } else if (e.key === 'Escape') {
-                e.preventDefault()
-                setMode('idle')
-              }
-            }}
-            className="w-full rounded border border-cyan-400/40 bg-black/40 px-2 py-1 text-[12px] text-zinc-100 outline-none"
-          />
-        </div>
-      ) : mode === 'confirm-delete' ? (
-        <div className="flex items-center justify-between gap-1 px-2 py-1.5 text-[11px] text-red-200">
-          <span className="truncate">Delete &quot;{props.thread.title}&quot;?</span>
-          <span className="flex items-center gap-1">
+  // Close the popover menu on outside click — using mousedown so we close
+  // before any other onClick on the page fires (matches ContextPopover's
+  // approach and avoids the re-open race we hit on the token meter).
+  useEffect(() => {
+    if (mode !== 'menu') return undefined
+    function onMouseDown(e: MouseEvent): void {
+      const target = e.target as Node | null
+      if (menuRef.current && target && !menuRef.current.contains(target)) {
+        setMode('idle')
+      }
+    }
+    document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+  }, [mode])
+
+  if (mode === 'rename') {
+    return (
+      <li className="px-1">
+        <input
+          ref={inputRef}
+          aria-label="Rename thread"
+          value={draftTitle}
+          onChange={(e) => setDraftTitle(e.target.value)}
+          onBlur={commitRename}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              void commitRename()
+            } else if (e.key === 'Escape') {
+              e.preventDefault()
+              setMode('idle')
+            }
+          }}
+          className="w-full rounded-md border border-cyan-400/40 bg-black/60 px-2 py-1.5 text-[12px] text-zinc-100 outline-none ring-2 ring-cyan-400/20 focus:border-cyan-300 focus:ring-cyan-400/40"
+          autoFocus
+        />
+      </li>
+    )
+  }
+
+  if (mode === 'confirm-delete') {
+    return (
+      <li className="px-1">
+        <div className="flex items-center justify-between gap-2 rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1.5 text-[11px] text-red-100">
+          <span className="truncate" title={props.thread.title}>
+            Delete &quot;{props.thread.title}&quot;?
+          </span>
+          <span className="flex shrink-0 items-center gap-1">
             <button
               type="button"
               onClick={() => setMode('idle')}
-              className="rounded px-1.5 py-0.5 text-zinc-300 hover:bg-zinc-800/60"
+              className="cursor-pointer rounded px-2 py-0.5 text-zinc-300 transition-colors hover:bg-zinc-800/60"
             >
               Cancel
             </button>
@@ -182,73 +222,95 @@ function ThreadRow(props: ThreadRowProps): JSX.Element {
                 setMode('idle')
                 await props.onDelete(props.thread.id)
               }}
-              className="rounded bg-red-500/20 px-1.5 py-0.5 text-red-100 hover:bg-red-500/40"
+              className="cursor-pointer rounded bg-red-500/30 px-2 py-0.5 font-medium text-red-50 transition-colors hover:bg-red-500/50"
             >
               Delete
             </button>
           </span>
         </div>
-      ) : (
-        <div className="flex items-center">
+      </li>
+    )
+  }
+
+  return (
+    <li className="group relative px-1">
+      <div
+        className={[
+          'flex items-stretch overflow-hidden rounded-md transition-colors duration-150',
+          props.active ? 'bg-cyan-500/10' : 'hover:bg-zinc-800/60',
+        ].join(' ')}
+      >
+        <span
+          aria-hidden="true"
+          className={[
+            'w-[3px] shrink-0 rounded-full transition-colors duration-200',
+            props.active ? 'bg-cyan-400' : 'bg-transparent',
+          ].join(' ')}
+        />
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => {
+            if (props.active) return
+            void props.onSwitch(props.thread.id)
+          }}
+          onDoubleClick={() => startRename()}
+          title={props.thread.title}
+          className={[
+            'flex flex-1 items-center justify-between gap-2 px-2 py-1.5 text-left text-[12px] transition-colors',
+            props.active ? 'text-cyan-100' : 'text-zinc-200',
+            disabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer',
+          ].join(' ')}
+        >
+          <span className="truncate">{props.thread.title}</span>
+          <span className="shrink-0 text-[10px] text-zinc-500">
+            {formatRelativeTime(props.thread.lastMessageAt)}
+          </span>
+        </button>
+        <button
+          type="button"
+          data-testid={`thread-menu-${props.thread.id}`}
+          aria-label={`Thread actions for ${props.thread.title}`}
+          aria-haspopup="menu"
+          aria-expanded={mode === 'menu'}
+          onClick={(e) => {
+            e.stopPropagation()
+            setMode((m) => (m === 'menu' ? 'idle' : 'menu'))
+          }}
+          className="flex w-7 cursor-pointer items-center justify-center text-zinc-500 opacity-0 transition-opacity duration-150 hover:text-zinc-100 group-hover:opacity-100 aria-expanded:opacity-100"
+        >
+          <MoreIcon className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      {mode === 'menu' ? (
+        <div
+          ref={menuRef}
+          role="menu"
+          className="absolute right-2 top-full z-10 mt-1 min-w-[140px] overflow-hidden rounded-md border border-zinc-800 bg-zinc-950/98 py-1 text-[12px] text-zinc-200 shadow-2xl ring-1 ring-black/40"
+        >
           <button
+            role="menuitem"
             type="button"
-            disabled={disabled}
             onClick={() => {
-              if (props.active) return
-              void props.onSwitch(props.thread.id)
+              setMode('idle')
+              startRename()
             }}
-            onDoubleClick={() => startRename()}
-            title={props.thread.title}
-            className={[
-              'flex flex-1 items-center justify-between gap-2 px-2 py-1.5 text-left text-[12px] transition',
-              props.active ? 'bg-cyan-500/10 text-cyan-100' : 'text-zinc-200 hover:bg-zinc-800/60',
-              disabled ? 'cursor-not-allowed opacity-40' : '',
-              props.active ? 'border-l-2 border-cyan-400' : '',
-            ].join(' ')}
+            className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-zinc-800/60"
           >
-            <span className="truncate">{props.thread.title}</span>
-            <span className="shrink-0 text-[10px] text-zinc-500">
-              {formatRelativeTime(props.thread.lastMessageAt)}
-            </span>
+            <PencilIcon className="h-3.5 w-3.5" />
+            Rename
           </button>
           <button
+            role="menuitem"
             type="button"
-            data-testid={`thread-menu-${props.thread.id}`}
-            aria-label={`Thread actions for ${props.thread.title}`}
-            onClick={() => setMode((m) => (m === 'menu' ? 'idle' : 'menu'))}
-            className="px-1.5 text-zinc-500 hover:text-zinc-200"
+            onClick={() => setMode('confirm-delete')}
+            className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-red-300 transition-colors hover:bg-red-500/15"
           >
-            ⋯
+            <TrashIcon className="h-3.5 w-3.5" />
+            Delete
           </button>
-          {mode === 'menu' ? (
-            <div
-              role="menu"
-              className="absolute right-1 top-full z-10 mt-1 min-w-[120px] rounded border border-zinc-800 bg-zinc-950/95 py-1 text-[12px] text-zinc-200 shadow-xl"
-              onMouseLeave={() => setMode('idle')}
-            >
-              <button
-                role="menuitem"
-                type="button"
-                onClick={() => {
-                  setMode('idle')
-                  startRename()
-                }}
-                className="block w-full px-3 py-1.5 text-left hover:bg-zinc-800/60"
-              >
-                Rename
-              </button>
-              <button
-                role="menuitem"
-                type="button"
-                onClick={() => setMode('confirm-delete')}
-                className="block w-full px-3 py-1.5 text-left text-red-300 hover:bg-zinc-800/60"
-              >
-                Delete
-              </button>
-            </div>
-          ) : null}
         </div>
-      )}
+      ) : null}
     </li>
   )
 }

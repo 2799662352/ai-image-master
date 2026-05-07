@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { AttachmentChips } from './AttachmentChips'
+import { CloseIcon, PanelCollapseRightIcon, PanelExpandLeftIcon } from './icons'
 import { Lightbox } from './Lightbox'
 import { MentionInput } from './MentionInput'
 import { MessageBubble } from './MessageBubble'
@@ -15,8 +16,6 @@ type AgentEventApi = {
     onEvent: (handler: (event: AgentStreamEvent) => void) => () => void
   }
 }
-
-const SIDEBAR_RAIL_WIDTH = 24
 
 export function AgentChatPanel() {
   const isOpen = useAgentChatStore((state) => state.isOpen)
@@ -44,8 +43,10 @@ export function AgentChatPanel() {
     void bootstrap()
   }, [isOpen, bootstrap])
 
-  // Cmd/Ctrl+B → toggle sidebar.
+  // Cmd/Ctrl+B → toggle sidebar (only when panel is open, otherwise we'd be
+  // stealing a global shortcut from the rest of the app for no reason).
   useEffect(() => {
+    if (!isOpen) return undefined
     function onKeyDown(e: KeyboardEvent): void {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {
         e.preventDefault()
@@ -54,81 +55,97 @@ export function AgentChatPanel() {
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [toggleSidebar])
+  }, [isOpen, toggleSidebar])
 
-  const panelRightOffset = sidebarOpen ? sidebarWidth : SIDEBAR_RAIL_WIDTH
+  // Sidebar lives inside the panel: when the panel is collapsed the entire
+  // right-edge stack disappears, and when the sidebar is collapsed the chat
+  // panel slides flush against the right edge (no 24px rail residue).
+  const panelRightOffset = sidebarOpen ? sidebarWidth : 0
+
+  if (!isOpen) {
+    return (
+      <>
+        <Lightbox />
+        <ThreadCommandPalette />
+      </>
+    )
+  }
 
   return (
     <>
-      {isOpen ? (
-        <aside
-          data-testid="agent-chat-panel"
-          // NOTE: do NOT add `relative` here. Tailwind's `.relative` is defined
-          // after `.fixed` in the generated stylesheet, so when both classes
-          // appear together `position: relative` wins the cascade — the panel
-          // then leaves viewport-pinned mode, flows to the document tail, and
-          // ends up rendered at the bottom of the page (regression "又跑下面去了").
-          className="fixed top-0 z-[40000] flex h-screen flex-col border-l border-cyan-400/25 bg-zinc-950/95 text-white shadow-[-24px_0_80px_rgba(34,211,238,0.16)] backdrop-blur"
-          style={{ width: panelWidth, right: panelRightOffset }}
-        >
-          <ResizableHandle
-            panelRight={
-              typeof window !== 'undefined' ? window.innerWidth - panelRightOffset : 0
-            }
-            onResize={(width) => setPanelWidth(width)}
-            onResizeEnd={() => {}}
-          />
-          <header className="border-b border-cyan-400/20 px-4 py-3">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-[10px] uppercase tracking-[0.32em] text-cyan-300/70">local codex</p>
-                <h2 className="text-sm font-semibold text-cyan-50">CATIMATION Agent</h2>
-              </div>
-              <div className="flex items-center gap-2">
-                <TokenUsageMeter usage={tokenUsage} />
-                <button
-                  type="button"
-                  aria-label={sidebarOpen ? 'Hide thread sidebar' : 'Show thread sidebar'}
-                  title={sidebarOpen ? 'Hide threads (Cmd/Ctrl+B)' : 'Show threads (Cmd/Ctrl+B)'}
-                  onClick={() => toggleSidebar()}
-                  className="rounded-full border border-zinc-700 px-2 py-1 text-zinc-400 hover:border-cyan-300/50 hover:text-cyan-100"
-                >
-                  {sidebarOpen ? '⇥' : '⇤'}
-                </button>
-                <button
-                  className="rounded-full border border-zinc-700 px-2 py-1 text-zinc-400 hover:border-cyan-300/50 hover:text-cyan-100"
-                  onClick={() => useAgentChatStore.getState().toggle()}
-                  type="button"
-                >
-                  x
-                </button>
-              </div>
+      <aside
+        data-testid="agent-chat-panel"
+        // NOTE: do NOT add `relative` here. Tailwind's `.relative` is defined
+        // after `.fixed` in the generated stylesheet, so when both classes
+        // appear together `position: relative` wins the cascade — the panel
+        // then leaves viewport-pinned mode, flows to the document tail, and
+        // ends up rendered at the bottom of the page (regression "又跑下面去了").
+        className="fixed top-0 z-[40000] flex h-screen flex-col border-l border-cyan-400/25 bg-zinc-950/95 text-white shadow-[-24px_0_80px_rgba(34,211,238,0.16)] backdrop-blur transition-[right] duration-200 ease-out"
+        style={{ width: panelWidth, right: panelRightOffset }}
+      >
+        <ResizableHandle
+          panelRight={
+            typeof window !== 'undefined' ? window.innerWidth - panelRightOffset : 0
+          }
+          onResize={(width) => setPanelWidth(width)}
+          onResizeEnd={() => {}}
+        />
+        <header className="border-b border-cyan-400/20 px-4 py-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[10px] uppercase tracking-[0.32em] text-cyan-300/70">local codex</p>
+              <h2 className="truncate text-sm font-semibold text-cyan-50">CATIMATION Agent</h2>
             </div>
-          </header>
-
-          <div className="flex-1 overflow-y-auto px-4 py-4">
-            {messages.length === 0 ? (
-              <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/5 p-4 text-sm text-zinc-300">
-                Tell the agent what to create or inspect. It can call CATIMATION tools and use local Codex
-                capabilities.
-              </div>
-            ) : null}
-            {messages.map((message) => (
-              <MessageBubble key={message.id} message={message} />
-            ))}
-            {error ? (
-              <div className="mt-3 rounded-xl border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-100">
-                {error}
-              </div>
-            ) : null}
+            <div className="flex items-center gap-1.5">
+              <TokenUsageMeter usage={tokenUsage} />
+              <button
+                type="button"
+                aria-label={sidebarOpen ? 'Hide thread sidebar' : 'Show thread sidebar'}
+                title={sidebarOpen ? 'Hide threads (Ctrl/Cmd+B)' : 'Show threads (Ctrl/Cmd+B)'}
+                onClick={() => toggleSidebar()}
+                className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border border-zinc-700/60 bg-zinc-900/60 text-zinc-400 transition-colors duration-200 hover:border-cyan-300/50 hover:bg-cyan-400/10 hover:text-cyan-100"
+              >
+                {sidebarOpen ? (
+                  <PanelCollapseRightIcon className="h-4 w-4" />
+                ) : (
+                  <PanelExpandLeftIcon className="h-4 w-4" />
+                )}
+              </button>
+              <button
+                type="button"
+                aria-label="Close agent chat"
+                title="Close (Esc)"
+                onClick={() => useAgentChatStore.getState().toggle()}
+                className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border border-zinc-700/60 bg-zinc-900/60 text-zinc-400 transition-colors duration-200 hover:border-red-400/50 hover:bg-red-500/10 hover:text-red-200"
+              >
+                <CloseIcon className="h-4 w-4" />
+              </button>
+            </div>
           </div>
+        </header>
 
-          <footer className="border-t border-cyan-400/20 p-3">
-            <AttachmentChips />
-            <MentionInput />
-          </footer>
-        </aside>
-      ) : null}
+        <div className="flex-1 overflow-y-auto px-4 py-4">
+          {messages.length === 0 ? (
+            <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/5 p-4 text-sm text-zinc-300">
+              Tell the agent what to create or inspect. It can call CATIMATION tools and use local Codex
+              capabilities.
+            </div>
+          ) : null}
+          {messages.map((message) => (
+            <MessageBubble key={message.id} message={message} />
+          ))}
+          {error ? (
+            <div className="mt-3 rounded-xl border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-100">
+              {error}
+            </div>
+          ) : null}
+        </div>
+
+        <footer className="border-t border-cyan-400/20 p-3">
+          <AttachmentChips />
+          <MentionInput />
+        </footer>
+      </aside>
       <ThreadSidebar />
       <Lightbox />
       <ThreadCommandPalette />
