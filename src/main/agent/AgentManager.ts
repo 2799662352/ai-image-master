@@ -26,6 +26,11 @@ export interface AgentManagerOptions {
    * present and not destroyed).
    */
   eventSink?: (event: AgentStreamEvent) => void
+  /**
+   * Test seam for injecting a fake backend. When omitted, a real
+   * `CodexLocalBackend` is constructed.
+   */
+  backend?: IAgentBackend
 }
 
 export class AgentManager {
@@ -36,6 +41,15 @@ export class AgentManager {
   private readonly eventSink: ((event: AgentStreamEvent) => void) | undefined
   private readonly codexApiKeyPath: string
   private codexApiKey = ''
+  /**
+   * Maps our DB thread row id (a Prisma CUID like `cm6abc...`) to the
+   * Codex-protocol thread id (a UUID like `urn:uuid:...` returned by
+   * `thread/start`). Codex's app-server validates wire ids as UUIDs, so we
+   * must never leak DB cuids into `turn/start`. Mapping is in-memory only;
+   * an app restart resets it (acceptable for MVP, since Codex itself doesn't
+   * resume threads across app-server lifetimes).
+   */
+  private readonly codexThreadIdByDbThreadId = new Map<string, string>()
 
   constructor(opts: AgentManagerOptions) {
     this.win = opts.win
@@ -44,7 +58,7 @@ export class AgentManager {
     this.eventSink = opts.eventSink
     this.codexApiKeyPath = path.join(opts.userDataDir, CODEX_API_KEY_FILE)
     this.loadCodexApiKey()
-    this.backend = new CodexLocalBackend({ getApiKey: () => this.codexApiKey })
+    this.backend = opts.backend ?? new CodexLocalBackend({ getApiKey: () => this.codexApiKey })
   }
 
   setWindow(win: BrowserWindow): void {
@@ -147,7 +161,8 @@ export class AgentManager {
   }
 
   async cancel(threadId: string): Promise<void> {
-    await this.backend.cancel(threadId)
+    const codexThreadId = this.codexThreadIdByDbThreadId.get(threadId)
+    await this.backend.cancel(codexThreadId ?? threadId)
   }
 
   async listThreads() {
@@ -180,10 +195,16 @@ export class AgentManager {
     win.webContents.send('agent:event', event)
   }
 
-  private async forwardEvents(threadId: string, input: AgentInput): Promise<void> {
-    for await (const event of this.backend.send(threadId, input)) {
+  private async forwardEvents(dbThreadId: string, input: AgentInput): Promise<void> {
+    const codexThreadId = this.codexThreadIdByDbThreadId.get(dbThreadId)
+    for await (const event of this.backend.send(codexThreadId, input)) {
+      if (event.type === 'thread_created' && event.threadId) {
+        this.codexThreadIdByDbThreadId.set(dbThreadId, event.threadId)
+      }
       if (!this.eventSink && this.win?.isDestroyed()) return
-      this.emitEvent(event)
+      // Renderer's chat store filters events by its DB threadId. Always rewrite
+      // so codex-side UUIDs never leak into the UI layer.
+      this.emitEvent({ ...event, threadId: dbThreadId })
     }
   }
 }

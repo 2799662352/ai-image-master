@@ -3,7 +3,41 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { AgentManager } from '../AgentManager'
+import type { AgentInput, IAgentBackend } from '../types'
 import type { AgentStreamEvent } from '../../../types/agent'
+
+interface BackendCall {
+  threadId: string | undefined
+  input: AgentInput
+}
+
+function makeStubBackend(
+  scriptPerCall: Array<AgentStreamEvent[]>,
+): IAgentBackend & { calls: BackendCall[]; cancelCalls: string[] } {
+  const calls: BackendCall[] = []
+  const cancelCalls: string[] = []
+  const backend = {
+    calls,
+    cancelCalls,
+    async start() {},
+    async stop() {},
+    isHealthy() { return true },
+    async cancel(threadId: string) { cancelCalls.push(threadId) },
+    async *send(threadId: string | undefined, input: AgentInput) {
+      const idx = calls.length
+      calls.push({ threadId, input })
+      const events = scriptPerCall[idx] ?? []
+      for (const e of events) yield e
+    },
+  } satisfies IAgentBackend & { calls: BackendCall[]; cancelCalls: string[] }
+  return backend
+}
+
+function flushMicrotasks(times = 5): Promise<void> {
+  let p: Promise<void> = Promise.resolve()
+  for (let i = 0; i < times; i++) p = p.then(() => undefined)
+  return p
+}
 
 let tmpDir: string
 
@@ -137,5 +171,139 @@ describe('AgentManager sendMessage empty-key gate', () => {
 
     expect(createCalls).toBe(0)
     expect(ingestCalls).toBe(0)
+  })
+})
+
+describe('AgentManager codex thread id mapping (regression: invalid thread id)', () => {
+  // Codex's app-server requires that thread ids passed to turn/start are UUIDs
+  // it itself generated via thread/start. Our DB row ids are CUIDs and must
+  // never leak into the wire protocol. AgentManager is responsible for the
+  // translation in both directions.
+  const CODEX_UUID = '11111111-2222-3333-4444-555555555555'
+
+  beforeEach(async () => {
+    await fs.writeFile(
+      path.join(tmpDir, 'codex-agent.json'),
+      JSON.stringify({ openaiApiKey: 'sk-test' }),
+      'utf8',
+    )
+  })
+
+  it('passes undefined to backend.send on first turn (lets backend create codex thread)', async () => {
+    const events: AgentStreamEvent[] = []
+    const fakeStore = {
+      createThread: async () => ({ id: 'cm-db-id-1' }),
+    } as any
+    const fakeAttachments = { ingest: async () => [] } as any
+    const backend = makeStubBackend([
+      [
+        { type: 'thread_created', threadId: CODEX_UUID },
+        { type: 'turn_completed', threadId: CODEX_UUID, turnId: 't1' },
+      ],
+    ])
+
+    const mgr = new AgentManager({
+      userDataDir: tmpDir,
+      store: fakeStore,
+      attachments: fakeAttachments,
+      eventSink: (e) => events.push(e),
+      backend,
+    })
+
+    await mgr.sendMessage({ content: 'hi', attachments: [] })
+    await flushMicrotasks(20)
+
+    expect(backend.calls).toHaveLength(1)
+    expect(backend.calls[0].threadId).toBeUndefined()
+  })
+
+  it('rewrites event.threadId from codex UUID to DB cuid before forwarding to renderer', async () => {
+    const events: AgentStreamEvent[] = []
+    const fakeStore = {
+      createThread: async () => ({ id: 'cm-db-id-2' }),
+    } as any
+    const fakeAttachments = { ingest: async () => [] } as any
+    const backend = makeStubBackend([
+      [
+        { type: 'thread_created', threadId: CODEX_UUID },
+        { type: 'message_delta', threadId: CODEX_UUID, turnId: 't1', delta: 'hello' },
+        { type: 'turn_completed', threadId: CODEX_UUID, turnId: 't1' },
+      ],
+    ])
+
+    const mgr = new AgentManager({
+      userDataDir: tmpDir,
+      store: fakeStore,
+      attachments: fakeAttachments,
+      eventSink: (e) => events.push(e),
+      backend,
+    })
+
+    await mgr.sendMessage({ content: 'hi', attachments: [] })
+    await flushMicrotasks(20)
+
+    expect(events).toHaveLength(3)
+    for (const e of events) expect(e.threadId).toBe('cm-db-id-2')
+  })
+
+  it('on a second sendMessage with same DB threadId, passes the cached codex UUID to backend.send', async () => {
+    const events: AgentStreamEvent[] = []
+    const fakeStore = {
+      createThread: async () => ({ id: 'cm-db-id-3' }),
+    } as any
+    const fakeAttachments = { ingest: async () => [] } as any
+    const backend = makeStubBackend([
+      [
+        { type: 'thread_created', threadId: CODEX_UUID },
+        { type: 'turn_completed', threadId: CODEX_UUID, turnId: 't1' },
+      ],
+      [{ type: 'turn_completed', threadId: CODEX_UUID, turnId: 't2' }],
+    ])
+
+    const mgr = new AgentManager({
+      userDataDir: tmpDir,
+      store: fakeStore,
+      attachments: fakeAttachments,
+      eventSink: (e) => events.push(e),
+      backend,
+    })
+
+    const r1 = await mgr.sendMessage({ content: 'first', attachments: [] })
+    await flushMicrotasks(20)
+    expect(r1.threadId).toBe('cm-db-id-3')
+    expect(backend.calls[0].threadId).toBeUndefined()
+
+    await mgr.sendMessage({ threadId: 'cm-db-id-3', content: 'second', attachments: [] })
+    await flushMicrotasks(20)
+
+    expect(backend.calls).toHaveLength(2)
+    expect(backend.calls[1].threadId).toBe(CODEX_UUID)
+  })
+
+  it('cancel(dbThreadId) translates to backend.cancel(codexThreadId) when mapping exists', async () => {
+    const fakeStore = {
+      createThread: async () => ({ id: 'cm-db-id-4' }),
+    } as any
+    const fakeAttachments = { ingest: async () => [] } as any
+    const backend = makeStubBackend([
+      [
+        { type: 'thread_created', threadId: CODEX_UUID },
+        { type: 'turn_completed', threadId: CODEX_UUID, turnId: 't1' },
+      ],
+    ])
+
+    const mgr = new AgentManager({
+      userDataDir: tmpDir,
+      store: fakeStore,
+      attachments: fakeAttachments,
+      eventSink: () => {},
+      backend,
+    })
+
+    await mgr.sendMessage({ content: 'first', attachments: [] })
+    await flushMicrotasks(20)
+
+    await mgr.cancel('cm-db-id-4')
+    expect(backend.cancelCalls).toEqual([CODEX_UUID])
   })
 })
