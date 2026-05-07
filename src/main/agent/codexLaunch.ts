@@ -31,6 +31,15 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     '--listen', url,
     '-c', 'approval_policy="never"',
     '-c', 'sandbox_mode="danger-full-access"',
+    // Codex 0.128 `app-server` registers the native Responses `web_search`
+    // tool by default (TUI gates it behind `--search`, app-server does not).
+    // Most third-party OpenAI-compatible gateways — including API易/apiyi —
+    // proxy the Responses endpoint but only honor `function`/`custom` tool
+    // types and reject `tools[i].type="web_search"` with a 400. Disabling it
+    // here keeps the tools array compatible across providers; users who run
+    // against the real OpenAI Responses endpoint can re-enable per-launch
+    // via `-c tools.web_search=true`.
+    '-c', 'tools.web_search=false',
   ]
 
   const provider = options?.provider
