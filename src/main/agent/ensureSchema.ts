@@ -14,6 +14,8 @@ CREATE TABLE "AgentThread" (
     "id" TEXT NOT NULL,
     "title" TEXT NOT NULL,
     "model" TEXT NOT NULL,
+    "manualTitle" BOOLEAN NOT NULL DEFAULT false,
+    "lastMessageAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -25,7 +27,7 @@ CREATE TABLE "AgentMessage" (
     "id" TEXT NOT NULL,
     "threadId" TEXT NOT NULL,
     "role" TEXT NOT NULL,
-    "contentJson" JSONB NOT NULL,
+    "items" JSONB NOT NULL DEFAULT '[]',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "AgentMessage_pkey" PRIMARY KEY ("id")
@@ -72,6 +74,9 @@ CREATE TABLE "AgentAttachment" (
 );
 
 -- CreateIndex
+CREATE INDEX "AgentThread_lastMessageAt_idx" ON "AgentThread"("lastMessageAt" DESC);
+
+-- CreateIndex
 CREATE INDEX "AgentMessage_threadId_createdAt_idx" ON "AgentMessage"("threadId", "createdAt");
 
 -- AddForeignKey
@@ -87,12 +92,64 @@ ALTER TABLE "AgentArtifact" ADD CONSTRAINT "AgentArtifact_threadId_fkey" FOREIGN
 ALTER TABLE "AgentAttachment" ADD CONSTRAINT "AgentAttachment_threadId_fkey" FOREIGN KEY ("threadId") REFERENCES "AgentThread"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 `
 
+// Idempotent migrations that align an existing-but-stale schema with current
+// `prisma/schema.prisma`. Each statement is a no-op when already applied so
+// they can run on every boot without losing data. Add new entries here when
+// schema.prisma changes — fresh DBs get the columns from INIT_SQL above,
+// existing user DBs pick them up here.
+const ALIGN_SCHEMA_SQL: readonly string[] = [
+  `ALTER TABLE "AgentThread" ADD COLUMN IF NOT EXISTS "manualTitle" BOOLEAN NOT NULL DEFAULT false`,
+  `ALTER TABLE "AgentThread" ADD COLUMN IF NOT EXISTS "lastMessageAt" TIMESTAMP(3)`,
+  `CREATE INDEX IF NOT EXISTS "AgentThread_lastMessageAt_idx" ON "AgentThread"("lastMessageAt" DESC)`,
+  `ALTER TABLE "AgentMessage" ADD COLUMN IF NOT EXISTS "items" JSONB NOT NULL DEFAULT '[]'`,
+] as const
+
+// Returns true when AgentMessage has the legacy `contentJson` column but not
+// the current `items` column — caller should rename rather than drop.
+const RENAME_PROBE_SQL = `
+  SELECT
+    EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'AgentMessage' AND column_name = 'contentJson'
+    ) AS has_old,
+    EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'AgentMessage' AND column_name = 'items'
+    ) AS has_new
+`
+
+interface QueryRunner {
+  query: (sql: string) => Promise<{ rows: Array<{ has_old?: boolean; has_new?: boolean }> }>
+}
+
+async function alignSchema(runner: QueryRunner): Promise<void> {
+  // Rename BEFORE add-column so legacy contentJson data survives the upgrade.
+  // If we add `items` first, the rename probe sees `has_new=true` and skips
+  // the rename, silently dropping the legacy column's data on a later cleanup.
+  const probe = await runner.query(RENAME_PROBE_SQL)
+  const row = probe.rows[0]
+  if (row?.has_old && !row?.has_new) {
+    await runner.query(`ALTER TABLE "AgentMessage" RENAME COLUMN "contentJson" TO "items"`)
+  }
+  for (const sql of ALIGN_SCHEMA_SQL) {
+    await runner.query(sql)
+  }
+}
+
 export async function ensureSchema(db: PGlite): Promise<void> {
   const result = await db.query<{ oid: string | null }>(
     `SELECT to_regclass('"AgentThread"') as oid`,
   )
-  if (result.rows[0]?.oid) return
-  await db.exec(INIT_SQL)
+  if (!result.rows[0]?.oid) {
+    await db.exec(INIT_SQL)
+    return
+  }
+  await alignSchema({
+    query: async (sql) => {
+      const r = await db.query<{ has_old?: boolean; has_new?: boolean }>(sql)
+      return { rows: r.rows }
+    },
+  })
 }
 
 // Variant that works against ANY Postgres-compatible URL — embedded PGlite
@@ -106,8 +163,16 @@ export async function ensureSchemaViaConnection(connectionString: string): Promi
     const probe = await client.query<{ oid: string | null }>(
       `SELECT to_regclass('"AgentThread"') as oid`,
     )
-    if (probe.rows[0]?.oid) return
-    await client.query(INIT_SQL)
+    if (!probe.rows[0]?.oid) {
+      await client.query(INIT_SQL)
+      return
+    }
+    await alignSchema({
+      query: async (sql) => {
+        const r = await client.query<{ has_old?: boolean; has_new?: boolean }>(sql)
+        return { rows: r.rows }
+      },
+    })
   } finally {
     await client.end()
   }
