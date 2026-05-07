@@ -57,6 +57,17 @@ export type ItemDeltaPatch =
   | { kind: 'appendText'; field: 'content' | 'stdout' | 'stderr'; text: string }
   | { kind: 'mergeFields'; fields: Record<string, unknown> }
 
+export interface AgentTokenUsageDelta {
+  /** Per-turn input tokens. */
+  inputTokens: number
+  /** Per-turn output tokens. */
+  outputTokens: number
+  /** Per-turn reasoning tokens (subset of output). */
+  reasoningTokens?: number
+  /** Per-turn cached input tokens. */
+  cachedInputTokens?: number
+}
+
 export interface AgentTokenUsage {
   /** Cumulative input tokens consumed in this thread. */
   inputTokens: number
@@ -74,6 +85,14 @@ export interface AgentTokenUsage {
    * `inputTokens + outputTokens` if the gateway doesn't report it explicitly.
    */
   contextUsage?: number
+  /**
+   * Per-turn delta from Codex's `tokenUsage.last` slice. Cumulative fields
+   * above describe the whole thread; `last` describes only the most-recent
+   * turn so the popover can render "Last turn: +1.3K / +234". Omitted when
+   * the gateway didn't send a `last` slice or when the slice carried only
+   * zeroes (treated as "no signal" — we never fabricate per-turn data).
+   */
+  last?: AgentTokenUsageDelta
 }
 
 export interface AgentStreamEventBase {

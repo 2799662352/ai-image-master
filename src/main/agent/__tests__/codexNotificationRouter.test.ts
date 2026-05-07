@@ -560,7 +560,11 @@ describe('CodexNotificationRouter', () => {
           },
         },
       })
-      expect(event).toEqual({
+      // `toMatchObject` instead of `toEqual` because Task A added the
+      // `usage.last` field — the cumulative-extraction test doesn't care about
+      // `last` (a separate test asserts that), but `toEqual` would now fail
+      // due to the extra property.
+      expect(event).toMatchObject({
         type: 'token_usage_updated',
         threadId: 't',
         turnId: 'u',
@@ -584,6 +588,67 @@ describe('CodexNotificationRouter', () => {
       expect(event).toMatchObject({
         type: 'token_usage_updated',
         usage: { inputTokens: 100, outputTokens: 50 },
+      })
+    })
+
+    it('captures tokenUsage.last as usage.last when both are present', () => {
+      const router = new CodexNotificationRouter()
+      const event = router.route('thread/tokenUsage/updated', {
+        threadId: 't',
+        turnId: 'u',
+        tokenUsage: {
+          total: { inputTokens: 12508, outputTokens: 308, cachedInputTokens: 8000, reasoningOutputTokens: 256 },
+          last: { inputTokens: 200, outputTokens: 50, reasoningOutputTokens: 30, cachedInputTokens: 100 },
+        },
+      })
+      expect(event).toMatchObject({
+        type: 'token_usage_updated',
+        usage: {
+          inputTokens: 12508,
+          last: {
+            inputTokens: 200,
+            outputTokens: 50,
+            reasoningTokens: 30,
+            cachedInputTokens: 100,
+          },
+        },
+      })
+    })
+
+    it('omits usage.last when tokenUsage.last is missing', () => {
+      const router = new CodexNotificationRouter()
+      const event = router.route('thread/tokenUsage/updated', {
+        threadId: 't',
+        tokenUsage: { total: { inputTokens: 100, outputTokens: 50 } },
+      })
+      expect(event).toMatchObject({ type: 'token_usage_updated' })
+      expect((event as { usage: { last?: unknown } }).usage.last).toBeUndefined()
+    })
+
+    it('omits usage.last when tokenUsage.last has all-zero input/output (no signal)', () => {
+      const router = new CodexNotificationRouter()
+      const event = router.route('thread/tokenUsage/updated', {
+        threadId: 't',
+        tokenUsage: {
+          total: { inputTokens: 100, outputTokens: 50 },
+          last: { inputTokens: 0, outputTokens: 0 },
+        },
+      })
+      expect((event as { usage: { last?: unknown } }).usage.last).toBeUndefined()
+    })
+
+    it('handles snake_case aliases inside tokenUsage.last', () => {
+      const router = new CodexNotificationRouter()
+      const event = router.route('thread/tokenUsage/updated', {
+        threadId: 't',
+        tokenUsage: {
+          total: { inputTokens: 1000, outputTokens: 500 },
+          last: { input_tokens: 80, output_tokens: 30, cache_read_input_tokens: 40 },
+        },
+      })
+      expect(event).toMatchObject({
+        type: 'token_usage_updated',
+        usage: { last: { inputTokens: 80, outputTokens: 30, cachedInputTokens: 40 } },
       })
     })
   })

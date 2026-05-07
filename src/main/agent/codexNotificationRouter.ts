@@ -1,4 +1,4 @@
-import type { AgentStreamEvent, AgentTokenUsage } from '../../types/agent'
+import type { AgentStreamEvent, AgentTokenUsage, AgentTokenUsageDelta } from '../../types/agent'
 import { parseChange } from '../../shared/diffUtils'
 
 /**
@@ -194,7 +194,41 @@ function extractTokenUsage(params: Record<string, unknown>): AgentTokenUsage | n
     ?? readNumber(params.context_usage)
     ?? readNumber((params.tokenUsage as Record<string, unknown> | undefined)?.contextUsage)
   if (contextUsage != null) usage.contextUsage = contextUsage
+
+  const last = extractLastDelta(params)
+  if (last) usage.last = last
   return usage
+}
+
+/**
+ * Read `tokenUsage.last` (per-turn delta). Returns `undefined` when the slice
+ * is missing OR when both input/output are zero — we'd rather hide the
+ * "Last turn" popover line than show "+0 / +0" noise. Mirrors the field
+ * aliasing in `extractTokenUsage` so apiyi / OpenRouter snake_case still works.
+ */
+function extractLastDelta(params: Record<string, unknown>): AgentTokenUsageDelta | undefined {
+  const tu = params.tokenUsage as Record<string, unknown> | undefined
+  const last = tu?.last as Record<string, unknown> | undefined
+  if (!last || typeof last !== 'object') return undefined
+  const inputTokens =
+    readNumber(last.inputTokens) ?? readNumber(last.input_tokens) ?? readNumber(last.prompt_tokens) ?? 0
+  const outputTokens =
+    readNumber(last.outputTokens) ?? readNumber(last.output_tokens) ?? readNumber(last.completion_tokens) ?? 0
+  if (inputTokens === 0 && outputTokens === 0) return undefined
+
+  const delta: AgentTokenUsageDelta = { inputTokens, outputTokens }
+  const reasoningTokens =
+    readNumber(last.reasoningTokens)
+    ?? readNumber(last.reasoning_tokens)
+    ?? readNumber(last.reasoningOutputTokens)
+    ?? readNumber(last.reasoning_output_tokens)
+  if (reasoningTokens != null) delta.reasoningTokens = reasoningTokens
+  const cachedInputTokens =
+    readNumber(last.cachedInputTokens)
+    ?? readNumber(last.cached_input_tokens)
+    ?? readNumber(last.cache_read_input_tokens)
+  if (cachedInputTokens != null) delta.cachedInputTokens = cachedInputTokens
+  return delta
 }
 
 /**
