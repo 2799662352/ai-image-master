@@ -12,12 +12,12 @@ type GitHubRelease = {
   assets: GitHubReleaseAsset[]
 }
 
-const GITHUB_OWNER = '2799662352'
-const GITHUB_REPO = 'codex'
+const GITHUB_OWNER = process.env.CODEX_GITHUB_OWNER ?? 'openai'
+const GITHUB_REPO = process.env.CODEX_GITHUB_REPO ?? 'codex'
 const DEFAULT_CODEX_VERSION = '0.128.0'
 
 const codexVersion = process.env.CODEX_CLI_VERSION ?? DEFAULT_CODEX_VERSION
-const releaseTag = process.env.CODEX_RELEASE_TAG ?? `v${codexVersion}`
+const releaseTag = process.env.CODEX_RELEASE_TAG
 const targets = (process.env.CODEX_TARGETS ?? `${process.platform}-${process.arch}`)
   .split(',')
   .map((target) => target.trim())
@@ -73,6 +73,29 @@ async function fetchJson<T>(url: string): Promise<T> {
   return await response.json() as T
 }
 
+async function fetchRelease(): Promise<{ release: GitHubRelease, tag: string }> {
+  const tags = releaseTag
+    ? [releaseTag]
+    : [`rust-v${codexVersion}`, `v${codexVersion}`, codexVersion]
+
+  let lastError: unknown
+  for (const tag of tags) {
+    try {
+      return {
+        release: await fetchJson<GitHubRelease>(
+          `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/tags/${tag}`,
+        ),
+        tag,
+      }
+    } catch (error) {
+      lastError = error
+    }
+  }
+
+  const message = lastError instanceof Error ? lastError.message : String(lastError)
+  throw new Error(`Could not find Codex release for ${GITHUB_OWNER}/${GITHUB_REPO}. Tried tags: ${tags.join(', ')}. ${message}`)
+}
+
 async function fetchBytes(url: string): Promise<Buffer> {
   const response = await fetch(url, {
     headers: getGitHubHeaders(),
@@ -101,10 +124,19 @@ function getGitHubHeaders(): Record<string, string> {
 
 function findAssetForTarget(release: GitHubRelease, target: string): GitHubReleaseAsset {
   const aliases = getTargetAliases(target)
-  const asset = release.assets.find((candidate) => {
+  const candidates = release.assets.filter((candidate) => {
     const lowerName = candidate.name.toLowerCase()
-    return lowerName.includes('codex') && aliases.some((alias) => lowerName.includes(alias.toLowerCase()))
+    return lowerName.includes('codex')
+      && !lowerName.includes('codex-app-server')
+      && !lowerName.includes('sigstore')
+      && aliases.some((alias) => lowerName.includes(alias.toLowerCase()))
   })
+  const asset = candidates.sort((left, right) => {
+    const leftKind = getArchiveKind(left.name)
+    const rightKind = getArchiveKind(right.name)
+    if (leftKind !== rightKind) return leftKind === 'raw' ? -1 : 1
+    return left.name.length - right.name.length
+  })[0]
 
   if (!asset) {
     const availableAssets = release.assets.map((candidate) => candidate.name).join(', ') || '<none>'
@@ -156,14 +188,13 @@ async function main(): Promise<void> {
     throw new Error('No Codex targets requested. Set CODEX_TARGETS to a comma-separated platform-arch list.')
   }
 
-  const release = await fetchJson<GitHubRelease>(
-    `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/tags/${releaseTag}`,
-  )
+  const { release, tag } = await fetchRelease()
 
   for (const target of targets) {
     const asset = findAssetForTarget(release, target)
     await writeCodexBinary(target, asset)
   }
+  console.log(`Fetched Codex release ${tag} from ${GITHUB_OWNER}/${GITHUB_REPO}`)
 }
 
 main().catch((error: unknown) => {
