@@ -64,6 +64,13 @@ export class ThreadStore {
     })
   }
 
+  async renameThreadIfNotManual(threadId: string, title: string): Promise<void> {
+    await this.prisma.agentThread.updateMany({
+      where: { id: threadId, manualTitle: false },
+      data: { title },
+    })
+  }
+
   async deleteThread(threadId: string): Promise<void> {
     await this.prisma.agentThread.delete({ where: { id: threadId } })
   }

@@ -7,6 +7,7 @@ import type { AgentSendMessagePayload, AgentStreamEvent } from '../../types/agen
 import type { AttachmentService } from './AttachmentService'
 import type { ThreadStore } from './ThreadStore'
 import type { AgentInput, IAgentBackend } from './types'
+import { ThreadTitleSummarizer } from './ThreadTitleSummarizer'
 
 const CODEX_API_KEY_FILE = 'codex-agent.json'
 const EMPTY_KEY_ERROR = '请在设置页填写 Codex Agent API Key'
@@ -57,6 +58,8 @@ export class AgentManager {
   private readonly eventSink: ((event: AgentStreamEvent) => void) | undefined
   private readonly codexApiKeyPath: string
   private codexApiKey = ''
+  private summarizer?: ThreadTitleSummarizer
+  private readonly firstTurnDoneByThread = new Map<string, boolean>()
   /**
    * Maps our DB thread row id (a Prisma CUID like `cm6abc...`) to the
    * Codex-protocol thread id (a UUID like `urn:uuid:...` returned by
@@ -78,6 +81,9 @@ export class AgentManager {
       getApiKey: () => this.codexApiKey,
       provider: DEFAULT_PROVIDER,
     })
+    if (this.store) {
+      this.summarizer = new ThreadTitleSummarizer(this.store, this.backend, DEFAULT_AGENT_MODEL)
+    }
   }
 
   setWindow(win: BrowserWindow): void {
@@ -241,6 +247,14 @@ export class AgentManager {
       // Renderer's chat store filters events by its DB threadId. Always rewrite
       // so codex-side UUIDs never leak into the UI layer.
       this.emitEvent({ ...event, threadId: dbThreadId })
+      if (event.type === 'turn_completed') {
+        if (dbThreadId && !this.firstTurnDoneByThread.get(dbThreadId)) {
+          this.firstTurnDoneByThread.set(dbThreadId, true)
+          this.summarizer?.maybeSummarize(dbThreadId).catch((err: unknown) => {
+            console.warn('[AgentManager] thread title summarization failed:', err)
+          })
+        }
+      }
     }
   }
 }
