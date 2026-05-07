@@ -30,4 +30,45 @@ describe('buildCodexLaunchArgs', () => {
     const args = buildCodexLaunchArgs()
     expect(args).not.toContain('serve')
   })
+
+  it('configures the active provider via -c overrides when provider config is given', () => {
+    const args = buildCodexLaunchArgs({
+      provider: {
+        id: 'apiyi',
+        name: 'API Yi',
+        baseUrl: 'https://api.apiyi.com/v1',
+        envKey: 'OPENAI_API_KEY',
+      },
+    })
+
+    // Top-level model_provider must point to our custom id
+    expect(pairs(args)).toContainEqual(['-c', 'model_provider="apiyi"'])
+    // Provider table must carry name, base_url, env_key
+    expect(pairs(args)).toContainEqual(['-c', 'model_providers.apiyi.name="API Yi"'])
+    expect(pairs(args)).toContainEqual(['-c', 'model_providers.apiyi.base_url="https://api.apiyi.com/v1"'])
+    expect(pairs(args)).toContainEqual(['-c', 'model_providers.apiyi.env_key="OPENAI_API_KEY"'])
+    // We must NOT set wire_api (defaults to "responses", which is the only
+    // supported value in Codex 0.128) and must NOT set supports_websockets
+    // (defaults to false for custom providers, which we want — apiyi proxies
+    // the Responses HTTP API, not the wss:// path).
+    const flat = args.join(' ')
+    expect(flat).not.toContain('wire_api')
+    expect(flat).not.toContain('supports_websockets')
+  })
+
+  it('omits provider overrides when no provider config is supplied', () => {
+    const args = buildCodexLaunchArgs()
+    const flat = args.join(' ')
+    expect(flat).not.toContain('model_provider')
+    expect(flat).not.toContain('model_providers.')
+  })
 })
+
+// ts-ignore-next: helper for config pair assertions
+function pairs(args: string[]): Array<[string, string]> {
+  const out: Array<[string, string]> = []
+  for (let i = 0; i < args.length - 1; i++) {
+    if (args[i] === '-c') out.push(['-c', args[i + 1]])
+  }
+  return out
+}

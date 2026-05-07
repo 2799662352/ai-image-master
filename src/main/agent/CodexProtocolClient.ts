@@ -4,6 +4,7 @@
 
 import WebSocket from 'ws'
 import { connectWithRetry } from './connectWithRetry'
+import { CodexNotificationRouter } from './codexNotificationRouter'
 import { mapUserInput } from './codexUserInput'
 import {
   isServerNotification,
@@ -46,25 +47,16 @@ export interface CodexProtocolClientOptions {
   onLog?: (line: string) => void
 }
 
+/**
+ * Stateless notification mapping kept around for backwards-compat with any
+ * external callers (re-exported from CodexLocalBackend). New code should
+ * prefer constructing a {@link CodexNotificationRouter} per session — it adds
+ * `item/completed`-agentMessage fallback and delta dedup.
+ *
+ * @deprecated Prefer `new CodexNotificationRouter().route(method, params)`.
+ */
 export function mapServerNotification(method: string, params: any): AgentStreamEvent | null {
-  switch (method) {
-    case 'item/agentMessage/delta':
-      return { type: 'message_delta', threadId: params.threadId, turnId: params.turnId, delta: params.delta }
-    case 'item/reasoning/textDelta':
-    case 'item/reasoning/summaryTextDelta':
-      return { type: 'reasoning_delta', threadId: params.threadId, turnId: params.turnId, delta: params.delta }
-    case 'turn/completed':
-      return { type: 'turn_completed', threadId: params.threadId, turnId: params.turn?.id }
-    case 'error':
-      return {
-        type: 'error',
-        threadId: params.threadId,
-        turnId: params.turnId,
-        error: params.error?.message ?? 'codex error',
-      }
-    default:
-      return null
-  }
+  return new CodexNotificationRouter().route(method, params ?? {})
 }
 
 export class CodexProtocolClient {
@@ -73,6 +65,7 @@ export class CodexProtocolClient {
   private pending = new Map<number, PendingRpc>()
   private queues = new Map<string, TurnQueue>()
   private turnIdByThread = new Map<string, string>()
+  private readonly notificationRouter = new CodexNotificationRouter()
   // Notifications received before their per-turn queue was created. We can
   // race the server's first delta against our turn/start response handling, so
   // we hold them here and drain them when the queue is registered.
@@ -263,9 +256,12 @@ export class CodexProtocolClient {
   }
 
   private routeNotification(method: string, params: Record<string, any>): void {
-    const event = mapServerNotification(method, params)
+    const event = this.notificationRouter.route(method, params)
     if (!event) {
-      this.options.onLog?.(`[codex] unhandled notification: ${method}`)
+      // Don't spam the codex log with 'unhandled notification' for the dozens
+      // of bookkeeping notifications we intentionally ignore (thread/started,
+      // item/started, warning, etc). The router is the source of truth: if
+      // it returns null, that's a deliberate drop.
       return
     }
     const threadId = event.threadId

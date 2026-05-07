@@ -11,6 +11,22 @@ import type { AgentInput, IAgentBackend } from './types'
 const CODEX_API_KEY_FILE = 'codex-agent.json'
 const EMPTY_KEY_ERROR = '请在设置页填写 Codex Agent API Key'
 
+/**
+ * Default Codex provider config. Points at API易 (apiyi), an
+ * OpenAI-compatible Responses API gateway. Hardcoded for MVP — eventually we
+ * should expose this via the same settings page that hosts the API key.
+ *
+ * `gpt-4.1-mini` is a model APIYI documents as supported on the Responses
+ * endpoint. Codex's older default `gpt-5.4` does not exist there.
+ */
+const DEFAULT_AGENT_MODEL = 'gpt-4.1-mini'
+const DEFAULT_PROVIDER = {
+  id: 'apiyi',
+  name: 'API Yi',
+  baseUrl: 'https://api.apiyi.com/v1',
+  envKey: 'OPENAI_API_KEY',
+} as const
+
 export interface AgentManagerOptions {
   /** Directory used to persist the Codex API key JSON. Inject in tests. */
   userDataDir: string
@@ -58,7 +74,10 @@ export class AgentManager {
     this.eventSink = opts.eventSink
     this.codexApiKeyPath = path.join(opts.userDataDir, CODEX_API_KEY_FILE)
     this.loadCodexApiKey()
-    this.backend = opts.backend ?? new CodexLocalBackend({ getApiKey: () => this.codexApiKey })
+    this.backend = opts.backend ?? new CodexLocalBackend({
+      getApiKey: () => this.codexApiKey,
+      provider: DEFAULT_PROVIDER,
+    })
   }
 
   setWindow(win: BrowserWindow): void {
@@ -97,6 +116,7 @@ export class AgentManager {
     const backend = new CodexLocalBackend({
       getApiKey: () => this.codexApiKey,
       connectTimeoutMs: 8_000,
+      provider: DEFAULT_PROVIDER,
     })
     const TEST_TIMEOUT_MS = 15_000
 
@@ -133,7 +153,7 @@ export class AgentManager {
       ? { id: payload.threadId }
       : await this.store.createThread({
           title: payload.content.slice(0, 40) || 'New Agent Thread',
-          model: 'gpt-5.4',
+          model: DEFAULT_AGENT_MODEL,
         })
     const savedAttachments = await this.attachments.ingest(thread.id, payload.attachments ?? [])
     const items: AgentInput['items'] = [
@@ -145,7 +165,7 @@ export class AgentManager {
 
     const input: AgentInput = {
       ...payload,
-      model: 'gpt-5.4',
+      model: DEFAULT_AGENT_MODEL,
       cwd: process.cwd(),
       items,
     }

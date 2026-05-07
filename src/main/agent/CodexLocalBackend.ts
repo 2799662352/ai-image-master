@@ -1,6 +1,6 @@
 import { app } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { buildCodexLaunchArgs } from './codexLaunch'
+import { buildCodexLaunchArgs, type CodexProviderConfig } from './codexLaunch'
 import { CodexProtocolClient, mapServerNotification } from './CodexProtocolClient'
 import { createAgentLogStream } from './logger'
 import { getCodexResourceRoot, resolveCodexBinary } from './paths'
@@ -50,6 +50,14 @@ export interface CodexLocalBackendOptions {
    * unreachable spawn fails fast without affecting the wsUrl branch.
    */
   connectTimeoutMs?: number
+  /**
+   * Custom OpenAI-compatible provider config. Forwarded to
+   * `buildCodexLaunchArgs` so the spawned `codex app-server` connects to the
+   * configured `base_url` (e.g. API易) instead of `api.openai.com`. When
+   * omitted, Codex uses its built-in `openai` provider — which requires a
+   * direct OpenAI key.
+   */
+  provider?: CodexProviderConfig
 }
 
 /**
@@ -113,7 +121,7 @@ export class CodexLocalBackend implements IAgentBackend {
     const apiKey = this.options.getApiKey?.()
     const env = buildCodexSpawnEnv(process.env, apiKey)
     const spawnFactory = this.options.spawnFactory ?? spawn
-    const proc = spawnFactory(bin, buildCodexLaunchArgs({ listenUrl }), {
+    const proc = spawnFactory(bin, buildCodexLaunchArgs({ listenUrl, provider: this.options.provider }), {
       stdio: ['ignore', 'pipe', 'pipe'],
       env,
     })
