@@ -59,4 +59,7 @@ lQLPKIIzYQI-*.png
 柏拉图api.md
 docs/prompt-research/superi-auth.json
 resources/codex/
+docs/codex-app-server/
+docs/codex-app-server.schema.json
+docs/codex-app-server.ts
 .worktrees/
