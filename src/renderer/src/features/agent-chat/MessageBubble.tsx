@@ -1,7 +1,13 @@
 import type { Message } from '../../../../types/agent-timeline'
 import { TimelineItemRenderer } from './TimelineItemRenderer'
 
-export function MessageBubble({ message }: { message: Message }) {
+export function MessageBubble({
+  message,
+  onImageDoubleClick,
+}: {
+  message: Message
+  onImageDoubleClick?: (attachmentId: string) => void
+}) {
   const isUser = message.role === 'user'
 
   return (
@@ -15,7 +21,11 @@ export function MessageBubble({ message }: { message: Message }) {
         ].join(' ')}
       >
         {message.items.map((item) => (
-          <TimelineItemRenderer key={item.id} item={item} />
+          <TimelineItemRenderer
+            key={item.id}
+            item={item}
+            onImageDoubleClick={onImageDoubleClick}
+          />
         ))}
         {message.items.length === 0 && (
           <span className="text-sm text-zinc-500 italic">Empty message</span>
