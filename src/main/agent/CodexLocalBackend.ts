@@ -1,26 +1,49 @@
 import { app } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
-import WebSocket from 'ws'
+import { buildCodexLaunchArgs } from './codexLaunch'
+import { CodexProtocolClient, mapServerNotification } from './CodexProtocolClient'
 import { createAgentLogStream } from './logger'
 import { getCodexResourceRoot, resolveCodexBinary } from './paths'
 import { pickFreePort } from './ports'
 import type { AgentStreamEvent } from '../../types/agent'
-import type { AgentInput, IAgentBackend, JsonRpcMessage } from './types'
+import type { AgentInput, IAgentBackend } from './types'
 
-type PendingRpc = {
-  resolve: (value: unknown) => void
-  reject: (error: Error) => void
+export { mapServerNotification }
+
+const KILL_GRACE_MS = 2_000
+const STARTUP_LOG_TAIL = 8_000
+
+export interface CodexLocalBackendOptions {
+  /**
+   * Override to bypass the spawn step and connect to an existing WebSocket
+   * (used by tests against a fake `codex app-server`). When set, no child
+   * process is created and `isHealthy` only inspects the WS state.
+   */
+  wsUrl?: string
 }
 
 export class CodexLocalBackend implements IAgentBackend {
   private proc: ChildProcess | null = null
-  private ws: WebSocket | null = null
-  private rpcId = 0
-  private pending = new Map<number, PendingRpc>()
-  private events: AgentStreamEvent[] = []
+  private client: CodexProtocolClient | null = null
+  private readonly wsUrlOverride: string | undefined
+
+  constructor(options: CodexLocalBackendOptions = {}) {
+    this.wsUrlOverride = options.wsUrl
+  }
 
   async start(): Promise<void> {
+    if (this.wsUrlOverride) {
+      this.client = new CodexProtocolClient({
+        url: this.wsUrlOverride,
+        clientInfo: { name: 'catimation', version: '0.0.0' },
+        connectTimeoutMs: 5_000,
+      })
+      await this.client.start()
+      return
+    }
+
     const port = await pickFreePort(4222)
+    const listenUrl = `ws://127.0.0.1:${port}`
     const resourceRoot = getCodexResourceRoot({
       appPath: app.getAppPath(),
       isPackaged: app.isPackaged,
@@ -28,149 +51,134 @@ export class CodexLocalBackend implements IAgentBackend {
     })
     const bin = resolveCodexBinary(resourceRoot)
     const log = createAgentLogStream('codex')
-    this.proc = spawn(bin, ['app-server', 'serve', '--listen', `ws://127.0.0.1:${port}`], {
+    const recentOutput = new RingBuffer(STARTUP_LOG_TAIL)
+    const captureOutput = (chunk: Buffer | string): void => {
+      const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8')
+      recentOutput.push(text)
+    }
+
+    const proc = spawn(bin, buildCodexLaunchArgs({ listenUrl }), {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env },
     })
-    this.proc.stdout?.pipe(log)
-    this.proc.stderr?.pipe(log)
-    this.proc.once('error', (error) => {
-      log.write(`[codex process error] ${error.message}\n`)
-      this.rejectPending(error)
-    })
-    this.proc.on('exit', () => {
-      this.ws?.close()
-      this.ws = null
-    })
+    this.proc = proc
 
-    this.ws = await this.connect(`ws://127.0.0.1:${port}`)
-    this.ws.on('message', (data) => this.handleMessage(String(data)))
-    await this.rpc('initialize', { clientName: 'catimation' })
+    proc.stdout?.on('data', captureOutput)
+    proc.stderr?.on('data', captureOutput)
+    proc.stdout?.pipe(log, { end: false })
+    proc.stderr?.pipe(log, { end: false })
+
+    let startupPhase = true
+    const earlyExit = new Promise<never>((_, reject) => {
+      proc.once('error', (error) => {
+        log.write(`[codex process error] ${error.message}\n`)
+        if (startupPhase) reject(new Error(`Codex spawn failed: ${error.message}`))
+      })
+      proc.once('exit', (code, signal) => {
+        log.write(`[codex exited] code=${code} signal=${signal ?? ''}\n`)
+        if (startupPhase) {
+          const tail = recentOutput.read().slice(-STARTUP_LOG_TAIL)
+          reject(new Error(
+            `Codex exited before initialize completed (code=${code} signal=${signal ?? 'none'})` +
+              (tail ? `\n--- recent output ---\n${tail}` : ''),
+          ))
+        } else if (this.client) {
+          this.client.stop().catch(() => { /* ignore */ })
+        }
+      })
+    })
+    earlyExit.catch(() => { /* swallow when startupPhase=false */ })
+
+    const client = new CodexProtocolClient({
+      url: listenUrl,
+      clientInfo: { name: 'catimation', version: '0.0.0' },
+      onLog: (line) => log.write(line + '\n'),
+    })
+    this.client = client
+
+    try {
+      await Promise.race([client.start(), earlyExit])
+    } catch (error) {
+      startupPhase = false
+      const failed = this.client
+      this.client = null
+      await failed?.stop().catch(() => { /* ignore */ })
+      await this.killProcess()
+      throw error
+    } finally {
+      startupPhase = false
+    }
   }
 
   async stop(): Promise<void> {
-    this.ws?.close()
-    this.proc?.kill()
-    this.ws = null
-    this.proc = null
-    this.rejectPending(new Error('Codex backend stopped'))
+    const client = this.client
+    this.client = null
+    if (client) {
+      await client.stop().catch(() => { /* ignore */ })
+    }
+    await this.killProcess()
   }
 
-  async *send(threadId: string | undefined, input: AgentInput): AsyncIterable<AgentStreamEvent> {
-    const actualThreadId = threadId ?? await this.createThread(input)
-    const response = await this.rpc<{ turn: { id: string } }>('turn/start', {
-      threadId: actualThreadId,
-      input: input.items,
-    })
-    const turnId = response.turn.id
-
-    while (true) {
-      const event = await this.nextEvent(actualThreadId, turnId)
-      yield event
-      if (event.type === 'turn_completed' || event.type === 'error' || event.type === 'cancelled') return
+  send(threadId: string | undefined, input: AgentInput): AsyncIterable<AgentStreamEvent> {
+    if (!this.client) {
+      throw new Error('CodexLocalBackend.send called before start')
     }
+    return this.client.send(threadId, input)
   }
 
   async cancel(threadId: string): Promise<void> {
-    await this.rpc('turn/cancel', { threadId })
+    if (!this.client) return
+    await this.client.cancel(threadId)
   }
 
   isHealthy(): boolean {
-    return this.proc !== null && this.ws?.readyState === WebSocket.OPEN
+    if (!this.client?.isOpen()) return false
+    if (this.wsUrlOverride) return true
+    return this.proc !== null && this.proc.exitCode === null
   }
 
-  private async createThread(input: AgentInput): Promise<string> {
-    const response = await this.rpc<{ thread: { id: string } }>('thread/start', {
-      model: input.model,
-      cwd: input.cwd,
-    })
-    return response.thread.id
-  }
+  private async killProcess(): Promise<void> {
+    const proc = this.proc
+    this.proc = null
+    if (!proc) return
+    if (proc.exitCode !== null) return
 
-  private rpc<T>(method: string, params: unknown): Promise<T> {
-    const id = ++this.rpcId
-    const payload: JsonRpcMessage = { jsonrpc: '2.0', id, method, params }
-
-    return new Promise<T>((resolve, reject) => {
-      if (this.ws?.readyState !== WebSocket.OPEN) {
-        reject(new Error('Codex websocket is not connected'))
-        return
+    await new Promise<void>((resolve) => {
+      let settled = false
+      const finish = (): void => {
+        if (settled) return
+        settled = true
+        resolve()
       }
+      proc.once('exit', finish)
 
-      this.pending.set(id, {
-        resolve: (value) => resolve(value as T),
-        reject,
-      })
-      this.ws.send(JSON.stringify(payload), (error) => {
-        if (!error) return
-        this.pending.delete(id)
-        reject(error)
-      })
+      try { proc.kill('SIGTERM') } catch { /* already dead */ }
+
+      const killTimer = setTimeout(() => {
+        if (proc.exitCode !== null) return
+        try { proc.kill('SIGKILL') } catch { /* already dead */ }
+      }, KILL_GRACE_MS)
+      killTimer.unref?.()
     })
   }
+}
 
-  private handleMessage(raw: string): void {
-    const msg = JSON.parse(raw) as JsonRpcMessage
-    if (msg.id !== undefined && this.pending.has(msg.id)) {
-      const pending = this.pending.get(msg.id)!
-      this.pending.delete(msg.id)
-      msg.error ? pending.reject(new Error(msg.error.message)) : pending.resolve(msg.result)
-      return
-    }
+class RingBuffer {
+  private chunks: string[] = []
+  private size = 0
 
-    if (msg.method) this.events.push(this.normalizeNotification(msg))
-  }
+  constructor(private readonly maxSize: number) {}
 
-  private normalizeNotification(msg: JsonRpcMessage): AgentStreamEvent {
-    const params = (msg.params ?? {}) as Record<string, any>
-    if (msg.method === 'item/agentMessage/delta') {
-      return { type: 'message_delta', threadId: params.threadId, turnId: params.turnId, delta: params.delta }
-    }
-    if (msg.method === 'item/reasoning/delta') {
-      return { type: 'reasoning_delta', threadId: params.threadId, turnId: params.turnId, delta: params.delta }
-    }
-    if (msg.method === 'turn/completed') {
-      return { type: 'turn_completed', threadId: params.threadId, turnId: params.turnId }
-    }
-
-    return {
-      type: 'tool_call_start',
-      threadId: params.threadId,
-      turnId: params.turnId,
-      tool: {
-        id: params.itemId ?? crypto.randomUUID(),
-        name: msg.method ?? 'unknown',
-        status: 'running',
-      },
+  push(text: string): void {
+    this.chunks.push(text)
+    this.size += text.length
+    while (this.size > this.maxSize && this.chunks.length > 1) {
+      const dropped = this.chunks.shift()!
+      this.size -= dropped.length
     }
   }
 
-  private nextEvent(threadId: string, turnId: string): Promise<AgentStreamEvent> {
-    return new Promise((resolve) => {
-      const timer = setInterval(() => {
-        const index = this.events.findIndex((event) => {
-          return event.threadId === threadId && (!event.turnId || event.turnId === turnId)
-        })
-        if (index >= 0) {
-          clearInterval(timer)
-          resolve(this.events.splice(index, 1)[0])
-        }
-      }, 25)
-    })
-  }
-
-  private connect(url: string): Promise<WebSocket> {
-    return new Promise((resolve, reject) => {
-      const ws = new WebSocket(url)
-      ws.once('open', () => resolve(ws))
-      ws.once('error', reject)
-    })
-  }
-
-  private rejectPending(error: Error): void {
-    for (const pending of this.pending.values()) {
-      pending.reject(error)
-    }
-    this.pending.clear()
+  read(): string {
+    return this.chunks.join('')
   }
 }
