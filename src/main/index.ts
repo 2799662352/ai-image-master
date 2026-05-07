@@ -733,6 +733,21 @@ ipcMain.handle('shell:save-as', async (_event, payload: { uri: string; suggested
   }
 })
 
+ipcMain.handle('agent:open-thread', async (_event, threadId: string) => {
+  if (!agentManager) throw new Error('Agent runtime not initialized')
+  return agentManager.openThread(threadId)
+})
+
+ipcMain.handle('agent:rename-thread', async (_event, threadId: string, title: string) => {
+  if (!agentManager) throw new Error('Agent runtime not initialized')
+  await agentManager.renameThread(threadId, title)
+})
+
+ipcMain.handle('agent:delete-thread', async (_event, threadId: string) => {
+  if (!agentManager) throw new Error('Agent runtime not initialized')
+  await agentManager.deleteThread(threadId)
+})
+
 // 图片操作
 ipcMain.handle('save-image', async (_event, { base64Data, filename }: ImageSaveParams) => {
   try {

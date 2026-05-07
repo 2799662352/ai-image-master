@@ -196,6 +196,21 @@ export class AgentManager {
     return this.store.loadThread(threadId)
   }
 
+  async openThread(threadId: string) {
+    if (!this.store) throw new Error('AgentManager.openThread called without store')
+    return this.store.openThread(threadId)
+  }
+
+  async renameThread(threadId: string, title: string): Promise<void> {
+    if (!this.store) throw new Error('AgentManager.renameThread called without store')
+    return this.store.renameThread(threadId, title)
+  }
+
+  async deleteThread(threadId: string): Promise<void> {
+    if (!this.store) throw new Error('AgentManager.deleteThread called without store')
+    return this.store.deleteThread(threadId)
+  }
+
   private loadCodexApiKey(): void {
     try {
       const raw = readFileSync(this.codexApiKeyPath, 'utf8')

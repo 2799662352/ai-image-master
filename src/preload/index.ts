@@ -149,6 +149,9 @@ const IPC_CHANNELS = {
     TOOL_RESPONSE: 'agent:tool-response',
     SET_API_KEY: 'agent:set-api-key',
     TEST_CONNECTION: 'agent:test-connection',
+    OPEN_THREAD: 'agent:open-thread',
+    RENAME_THREAD: 'agent:rename-thread',
+    DELETE_THREAD: 'agent:delete-thread',
   },
   AGENT_EVENTS: [
     'agent:event',
@@ -221,6 +224,9 @@ export interface ElectronAPI {
     cancel: (payload: AgentCancelPayload) => Promise<IpcResponse>
     listThreads: () => Promise<AgentThreadSummary[]>
     loadThread: (threadId: string) => Promise<unknown>
+    openThread: (threadId: string) => Promise<unknown>
+    renameThread: (threadId: string, title: string) => Promise<void>
+    deleteThread: (threadId: string) => Promise<void>
     onEvent: (handler: (event: AgentStreamEvent) => void) => () => void
     onToolRequest: (handler: (request: AgentToolRequest) => void) => () => void
     sendToolResponse: (response: AgentToolResponse) => void
@@ -497,6 +503,15 @@ const electronAPI: ElectronAPI = {
 
     loadThread: (threadId: string) =>
       safeInvoke<unknown>(IPC_CHANNELS.AGENT.LOAD_THREAD, threadId),
+
+    openThread: (threadId: string) =>
+      safeInvoke<unknown>(IPC_CHANNELS.AGENT.OPEN_THREAD, threadId),
+
+    renameThread: (threadId: string, title: string) =>
+      safeInvoke<void>(IPC_CHANNELS.AGENT.RENAME_THREAD, threadId, title),
+
+    deleteThread: (threadId: string) =>
+      safeInvoke<void>(IPC_CHANNELS.AGENT.DELETE_THREAD, threadId),
 
     onEvent: (handler: (event: AgentStreamEvent) => void) =>
       safeOnWithCleanup<AgentStreamEvent>(IPC_CHANNELS.AGENT_EVENTS[0], handler, IPC_CHANNELS.AGENT_EVENTS),

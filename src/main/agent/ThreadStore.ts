@@ -47,4 +47,31 @@ export class ThreadStore {
       },
     })
   }
+
+  async openThread(threadId: string) {
+    return this.prisma.agentThread.findUnique({
+      where: { id: threadId },
+      include: {
+        messages: { orderBy: { createdAt: 'asc' } },
+      },
+    })
+  }
+
+  async renameThread(threadId: string, title: string): Promise<void> {
+    await this.prisma.agentThread.update({
+      where: { id: threadId },
+      data: { title, manualTitle: true },
+    })
+  }
+
+  async deleteThread(threadId: string): Promise<void> {
+    await this.prisma.agentThread.delete({ where: { id: threadId } })
+  }
+
+  async updateLastMessageAt(threadId: string): Promise<void> {
+    await this.prisma.agentThread.update({
+      where: { id: threadId },
+      data: { lastMessageAt: new Date() },
+    })
+  }
 }

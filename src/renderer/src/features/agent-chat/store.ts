@@ -83,6 +83,8 @@ interface AgentChatState {
   removeAttachment: (name: string) => void
   send: () => Promise<void>
   cancel: () => Promise<void>
+  newThread: () => void
+  switchThread: (threadId: string) => Promise<void>
   applyEvent: (event: AgentStreamEvent) => void
 }
 
@@ -268,6 +270,60 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         isRunning: false,
       })
     }
+  },
+  newThread: () =>
+    set({
+      threadId: undefined,
+      messages: [],
+      isRunning: false,
+      error: undefined,
+    }),
+  switchThread: async (threadId: string) => {
+    const agent = (window as Window & { electronAPI?: { agent?: { openThread?: (id: string) => Promise<unknown> } } })
+      .electronAPI?.agent
+    if (!agent?.openThread) return
+    const thread = await agent.openThread(threadId)
+    if (!thread || typeof thread !== 'object') return
+
+    const rawMessages = (thread as { messages?: unknown }).messages
+    const messages: Message[] = Array.isArray(rawMessages)
+      ? rawMessages.map((row: unknown) => {
+          const r = row as {
+            id: string
+            role: string
+            items: string | unknown[] | null
+            createdAt?: string | Date
+          }
+          let parsedItems: unknown = r.items
+          if (typeof parsedItems === 'string') {
+            try {
+              parsedItems = JSON.parse(parsedItems)
+            } catch {
+              parsedItems = []
+            }
+          }
+          const role: Message['role'] =
+            r.role === 'user' || r.role === 'assistant' ? r.role : 'assistant'
+          return {
+            id: r.id,
+            role,
+            items: Array.isArray(parsedItems) ? (parsedItems as TimelineItem[]) : [],
+            createdAt:
+              typeof r.createdAt === 'string'
+                ? Date.parse(r.createdAt)
+                : r.createdAt instanceof Date
+                  ? r.createdAt.getTime()
+                  : Date.now(),
+          }
+        })
+      : []
+
+    set({
+      threadId,
+      messages,
+      isRunning: false,
+      error: undefined,
+    })
   },
   applyEvent: (event) => {
     const activeThreadId = get().threadId
