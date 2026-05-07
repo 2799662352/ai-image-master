@@ -1,4 +1,5 @@
 import type { TimelineItem } from '../../../../types/agent-timeline'
+import { FileEditCard } from './cards/FileEditCard'
 import { ReasoningCard } from './cards/ReasoningCard'
 import { ShellCard } from './cards/ShellCard'
 import { TextCard } from './cards/TextCard'
@@ -12,6 +13,7 @@ export function TimelineItemRenderer({ item }: { item: TimelineItem }) {
     case 'shell':
       return <ShellCard item={item} />
     case 'fileEdit':
+      return <FileEditCard item={item} />
     case 'attachment':
     case 'artifact':
       return (
