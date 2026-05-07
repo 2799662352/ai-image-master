@@ -25,6 +25,7 @@ import type {
   EraseProbeResult,
 } from '../types/smartErase'
 import type {
+  AgentApiResult,
   AgentCancelPayload,
   AgentSendMessagePayload,
   AgentStreamEvent,
@@ -146,6 +147,8 @@ const IPC_CHANNELS = {
     LOAD_THREAD: 'agent:load-thread',
     UPLOAD_ATTACHMENTS: 'agent:upload-attachments',
     TOOL_RESPONSE: 'agent:tool-response',
+    SET_API_KEY: 'agent:set-api-key',
+    TEST_CONNECTION: 'agent:test-connection',
   },
   AGENT_EVENTS: [
     'agent:event',
@@ -216,6 +219,8 @@ export interface ElectronAPI {
     onEvent: (handler: (event: AgentStreamEvent) => void) => () => void
     onToolRequest: (handler: (request: AgentToolRequest) => void) => () => void
     sendToolResponse: (response: AgentToolResponse) => void
+    setApiKey: (key: string) => Promise<AgentApiResult>
+    testConnection: () => Promise<AgentApiResult>
   }
   // 图片存储
   saveImage: (base64Data: string, filename: string) => Promise<SaveImageResponse>
@@ -492,6 +497,12 @@ const electronAPI: ElectronAPI = {
     sendToolResponse: (response: AgentToolResponse) => {
       ipcRenderer.send(IPC_CHANNELS.AGENT.TOOL_RESPONSE, response)
     },
+
+    setApiKey: (key: string) =>
+      safeInvoke<AgentApiResult>(IPC_CHANNELS.AGENT.SET_API_KEY, key),
+
+    testConnection: () =>
+      safeInvoke<AgentApiResult>(IPC_CHANNELS.AGENT.TEST_CONNECTION),
   },
 
   // ============ 系统主题监听 ============

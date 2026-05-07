@@ -76,3 +76,14 @@ export interface AgentToolResponse {
   result?: unknown
   error?: string
 }
+
+/**
+ * Shape returned by the renderer-facing agent IPC calls that don't have a
+ * domain-specific payload (`agent:set-api-key`, `agent:test-connection`).
+ * Kept narrow on purpose — main and preload both import this so their
+ * signatures stay in lock-step.
+ */
+export interface AgentApiResult {
+  ok: boolean
+  error?: string
+}

@@ -11,5 +11,14 @@ export function registerAgentIpc(manager: AgentManager, router: ToolRouter): voi
   })
   ipcMain.handle('agent:list-threads', () => manager.listThreads())
   ipcMain.handle('agent:load-thread', (_event, threadId: string) => manager.loadThread(threadId))
+  ipcMain.handle('agent:set-api-key', async (_event, key: unknown) => {
+    try {
+      await manager.setCodexApiKey(typeof key === 'string' ? key : '')
+      return { ok: true as const }
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+  ipcMain.handle('agent:test-connection', () => manager.testConnection())
   ipcMain.on('agent:tool-response', (_event, response: AgentToolResponse) => router.handleRendererResponse(response))
 }

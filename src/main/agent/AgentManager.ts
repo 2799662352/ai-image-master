@@ -71,6 +71,39 @@ export class AgentManager {
     await this.backend.stop()
   }
 
+  async testConnection(): Promise<{ ok: boolean; error?: string }> {
+    if (!this.codexApiKey) {
+      return { ok: false, error: '请先填写 API Key' }
+    }
+    // Build a fresh, isolated backend so we never disturb the long-lived one.
+    // Re-uses the production resourceRoot resolution path inside CodexLocalBackend
+    // (app.getAppPath / process.resourcesPath) — the only thing we tighten is
+    // the connect timeout so a misconfigured key fails fast instead of waiting
+    // the full production budget.
+    const backend = new CodexLocalBackend({
+      getApiKey: () => this.codexApiKey,
+      connectTimeoutMs: 8_000,
+    })
+    const TEST_TIMEOUT_MS = 15_000
+
+    let timer: NodeJS.Timeout | undefined
+    try {
+      await Promise.race([
+        backend.start(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('Test connection timeout')), TEST_TIMEOUT_MS)
+          timer.unref?.()
+        }),
+      ])
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    } finally {
+      if (timer) clearTimeout(timer)
+      await backend.stop().catch(() => { /* ignore */ })
+    }
+  }
+
   async sendMessage(payload: AgentSendMessagePayload): Promise<{ threadId: string }> {
     if (!this.codexApiKey) {
       const threadId = payload.threadId ?? 'pending'
