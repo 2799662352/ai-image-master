@@ -118,9 +118,9 @@ describe('useAgentChatStore selected model', () => {
   })
 
   it('persists setSelectedModel to localStorage', () => {
-    useAgentChatStore.getState().setSelectedModel('o3-pro')
-    expect(useAgentChatStore.getState().selectedModelId).toBe('o3-pro')
-    expect(localStorage.getItem('catimation.agent.selectedModel')).toBe('o3-pro')
+    useAgentChatStore.getState().setSelectedModel('gpt-5.5-xhigh')
+    expect(useAgentChatStore.getState().selectedModelId).toBe('gpt-5.5-xhigh')
+    expect(localStorage.getItem('catimation.agent.selectedModel')).toBe('gpt-5.5-xhigh')
   })
 
   it('forwards selectedModelId via send → electronAPI.agent.sendMessage', async () => {

@@ -326,7 +326,7 @@ describe('AgentManager codex thread id mapping (regression: invalid thread id)',
     await mgr.sendMessage({ content: 'hi', attachments: [] })
     await flushMicrotasks(20)
 
-    expect(backend.calls[0].input.model).toBe('gpt-4.1-mini')
+    expect(backend.calls[0].input.model).toBe('gpt-5.5')
   })
 
   it('cancel(dbThreadId) translates to backend.cancel(codexThreadId) when mapping exists', async () => {

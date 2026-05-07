@@ -17,10 +17,14 @@ const EMPTY_KEY_ERROR = '请在设置页填写 Codex Agent API Key'
  * OpenAI-compatible Responses API gateway. Hardcoded for MVP — eventually we
  * should expose this via the same settings page that hosts the API key.
  *
- * `gpt-4.1-mini` is a model APIYI documents as supported on the Responses
- * endpoint. Codex's older default `gpt-5.4` does not exist there.
+ * `gpt-5.5` is the default — it ships full Responses-API tool support
+ * including the native `web_search` tool that Codex 0.128 `app-server`
+ * registers by default. `gpt-4.1-mini` was the previous default but rejected
+ * `tools[i].type='web_search'` with a 400 invalid_value through this
+ * gateway. Keep this in sync with the renderer-side `DEFAULT_MODEL_ID`
+ * in `src/renderer/src/features/agent-chat/models.ts`.
  */
-const DEFAULT_AGENT_MODEL = 'gpt-4.1-mini'
+const DEFAULT_AGENT_MODEL = 'gpt-5.5'
 const DEFAULT_PROVIDER = {
   id: 'apiyi',
   name: 'API Yi',

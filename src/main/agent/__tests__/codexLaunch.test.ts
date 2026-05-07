@@ -10,7 +10,6 @@ describe('buildCodexLaunchArgs', () => {
       '--listen', DEFAULT_LISTEN_URL,
       '-c', 'approval_policy="never"',
       '-c', 'sandbox_mode="danger-full-access"',
-      '-c', 'tools.web_search=false',
     ])
   })
 
@@ -21,31 +20,10 @@ describe('buildCodexLaunchArgs', () => {
       '--listen', 'ws://127.0.0.1:9999',
       '-c', 'approval_policy="never"',
       '-c', 'sandbox_mode="danger-full-access"',
-      '-c', 'tools.web_search=false',
     ])
     const listenIdx = args.indexOf('--listen')
     const firstConfigIdx = args.indexOf('-c')
     expect(firstConfigIdx).toBeGreaterThan(listenIdx)
-  })
-
-  // Regression: Codex 0.128 `app-server` registers the native Responses
-  // `web_search` tool by default. Most third-party OpenAI-compatible
-  // gateways (apiyi etc.) reject `tools[i].type="web_search"` with a 400
-  // ("Supported values: 'function' and 'custom'"). The launch args must
-  // explicitly disable it so the tools array stays portable across providers.
-  it('disables tools.web_search by default to keep tools portable across providers', () => {
-    const baseline = buildCodexLaunchArgs()
-    expect(pairs(baseline)).toContainEqual(['-c', 'tools.web_search=false'])
-
-    const withProvider = buildCodexLaunchArgs({
-      provider: {
-        id: 'apiyi',
-        name: 'API Yi',
-        baseUrl: 'https://api.apiyi.com/v1',
-        envKey: 'OPENAI_API_KEY',
-      },
-    })
-    expect(pairs(withProvider)).toContainEqual(['-c', 'tools.web_search=false'])
   })
 
   it('does not include the legacy `serve` subcommand', () => {
