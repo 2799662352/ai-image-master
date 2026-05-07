@@ -1,6 +1,5 @@
 import { CodexLocalBackend } from './CodexLocalBackend'
 import type { BrowserWindow } from 'electron'
-import { pathToFileURL } from 'node:url'
 import type { AgentSendMessagePayload } from '../../types/agent'
 import type { AttachmentService } from './AttachmentService'
 import type { ThreadStore } from './ThreadStore'
@@ -41,7 +40,7 @@ export class AgentManager {
       { type: 'text', text: payload.content },
       ...savedAttachments
         .filter((item) => item.mime.startsWith('image/'))
-        .map((item) => ({ type: 'image' as const, imageUrl: pathToFileURL(item.localPath).toString() })),
+        .map((item) => ({ type: 'localImage' as const, path: item.localPath })),
     ]
 
     const input: AgentInput = {

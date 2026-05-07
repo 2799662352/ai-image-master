@@ -3,7 +3,11 @@ import type { AgentSendMessagePayload, AgentStreamEvent } from '../../types/agen
 export interface AgentInput extends AgentSendMessagePayload {
   model: string
   cwd: string
-  items: Array<{ type: 'text'; text: string } | { type: 'image'; imageUrl: string }>
+  items: Array<
+    | { type: 'text'; text: string }
+    | { type: 'localImage'; path: string }
+    | { type: 'image'; url: string }
+  >
 }
 
 export interface IAgentBackend {
