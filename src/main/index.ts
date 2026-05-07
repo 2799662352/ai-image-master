@@ -497,7 +497,12 @@ async function initAgentRuntime(win: BrowserWindow): Promise<void> {
   const threadStore = new ThreadStore(prisma)
   const attachmentService = new AttachmentService(prisma)
   agentMcpRuntime = await startCatimationMcpServer(win)
-  agentManager = new AgentManager(win, threadStore, attachmentService)
+  agentManager = new AgentManager({
+    userDataDir: app.getPath('userData'),
+    win,
+    store: threadStore,
+    attachments: attachmentService,
+  })
   void attachmentService.cleanup().catch((error) => {
     console.warn('[AgentRuntime] attachment cleanup failed:', error)
   })
