@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { AgentTokenUsage } from '../../../../types/agent'
 import { ContextPopover } from './ContextPopover'
 
@@ -10,6 +10,15 @@ import { ContextPopover } from './ContextPopover'
  */
 export function TokenUsageMeter({ usage }: { usage?: AgentTokenUsage }) {
   const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+
+  // When the active thread switches we may briefly transition usage→undefined
+  // and then back. Without this reset, `open` would leak across threads and
+  // the popover would auto-reappear on the new thread's first usage event.
+  useEffect(() => {
+    if (!usage) setOpen(false)
+  }, [usage])
+
   if (!usage) return null
 
   const used = usage.contextUsage ?? usage.inputTokens + usage.outputTokens
@@ -32,6 +41,7 @@ export function TokenUsageMeter({ usage }: { usage?: AgentTokenUsage }) {
   return (
     <div className="relative">
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="dialog"
@@ -66,7 +76,9 @@ export function TokenUsageMeter({ usage }: { usage?: AgentTokenUsage }) {
         )}
         <span className={`font-mono ${tone.text}`}>{pct != null ? `${pct}%` : label}</span>
       </button>
-      {open ? <ContextPopover usage={usage} onClose={() => setOpen(false)} /> : null}
+      {open ? (
+        <ContextPopover usage={usage} onClose={() => setOpen(false)} triggerRef={triggerRef} />
+      ) : null}
     </div>
   )
 }

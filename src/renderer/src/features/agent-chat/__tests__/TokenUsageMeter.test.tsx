@@ -10,6 +10,17 @@ const sampleUsage: AgentTokenUsage = {
   contextWindow: 100_000,
 }
 
+/**
+ * Browsers fire mousedown then click on a real click. RTL's `fireEvent.click`
+ * skips mousedown, so it can't catch races between the popover's document-level
+ * mousedown listener and the trigger's onClick. This helper replays the real
+ * sequence so we exercise the actual user-event timing.
+ */
+function realClick(el: Element) {
+  fireEvent.mouseDown(el)
+  fireEvent.click(el)
+}
+
 describe('TokenUsageMeter', () => {
   afterEach(() => cleanup())
 
@@ -43,6 +54,27 @@ describe('TokenUsageMeter', () => {
     fireEvent.click(btn)
     expect(screen.queryByRole('dialog')).toBeTruthy()
     fireEvent.click(btn)
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('still toggles closed when click fires the full mousedown→click sequence (regression: trigger-vs-outside-click race)', () => {
+    render(<TokenUsageMeter usage={sampleUsage} />)
+    const btn = screen.getByRole('button', { name: /context/i })
+    realClick(btn)
+    expect(screen.queryByRole('dialog')).toBeTruthy()
+    realClick(btn)
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('resets open=false when usage transitions to undefined and back (regression: thread switch)', () => {
+    const { rerender } = render(<TokenUsageMeter usage={sampleUsage} />)
+    fireEvent.click(screen.getByRole('button', { name: /context/i }))
+    expect(screen.queryByRole('dialog')).toBeTruthy()
+
+    rerender(<TokenUsageMeter usage={undefined} />)
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    rerender(<TokenUsageMeter usage={sampleUsage} />)
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 })

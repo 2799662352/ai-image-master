@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import type { RefObject } from 'react'
 import type { AgentTokenUsage, AgentTokenUsageDelta } from '../../../../types/agent'
 import type { ContextSegments, Segment } from './tokenSegments'
 import { buildContextSegments } from './tokenSegments'
@@ -6,6 +7,14 @@ import { buildContextSegments } from './tokenSegments'
 interface ContextPopoverProps {
   usage: AgentTokenUsage
   onClose: () => void
+  /**
+   * Optional ref to the element that opened this popover. When mousedown lands
+   * on the trigger, we treat it as "inside" so a click on the trigger doesn't
+   * race the trigger's onClick: mousedown would otherwise fire `onClose()`
+   * (setting open=false) and then click would toggle it back to true,
+   * leaving the popover stuck open.
+   */
+  triggerRef?: RefObject<HTMLElement | null>
 }
 
 /**
@@ -19,7 +28,7 @@ interface ContextPopoverProps {
  * The Tab key is unbound — focus management piggybacks on the parent panel's
  * existing keyboard model (no focus trap; the popover is read-only).
  */
-export function ContextPopover({ usage, onClose }: ContextPopoverProps) {
+export function ContextPopover({ usage, onClose, triggerRef }: ContextPopoverProps) {
   const ref = useRef<HTMLDivElement | null>(null)
   const ctx = buildContextSegments(usage)
 
@@ -28,7 +37,10 @@ export function ContextPopover({ usage, onClose }: ContextPopoverProps) {
       if (e.key === 'Escape') onClose()
     }
     const onMouseDown = (e: MouseEvent) => {
-      if (ref.current && e.target instanceof Node && !ref.current.contains(e.target)) onClose()
+      if (!(e.target instanceof Node)) return
+      if (ref.current?.contains(e.target)) return
+      if (triggerRef?.current?.contains(e.target)) return
+      onClose()
     }
     document.addEventListener('keydown', onKey)
     document.addEventListener('mousedown', onMouseDown)
@@ -36,7 +48,7 @@ export function ContextPopover({ usage, onClose }: ContextPopoverProps) {
       document.removeEventListener('keydown', onKey)
       document.removeEventListener('mousedown', onMouseDown)
     }
-  }, [onClose])
+  }, [onClose, triggerRef])
 
   return (
     <div
