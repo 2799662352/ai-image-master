@@ -1,3 +1,5 @@
+import type { TimelineItem } from './agent-timeline'
+
 export type AgentRole = 'user' | 'assistant' | 'system' | 'tool'
 export type AgentToolStatus = 'pending' | 'running' | 'success' | 'error' | 'cancelled'
 export type AgentArtifactType = 'image' | 'file' | 'link'
@@ -51,24 +53,23 @@ export interface AgentToolEvent {
   error?: string
 }
 
-export interface AgentStreamEvent {
-  type:
-    | 'thread_created'
-    | 'message_delta'
-    | 'reasoning_delta'
-    | 'tool_call_start'
-    | 'tool_call_end'
-    | 'artifact_created'
-    | 'turn_completed'
-    | 'error'
-    | 'cancelled'
+export type ItemDeltaPatch =
+  | { kind: 'appendText'; field: 'content' | 'stdout' | 'stderr'; text: string }
+  | { kind: 'mergeFields'; fields: Record<string, unknown> }
+
+export interface AgentStreamEventBase {
   threadId: string
   turnId?: string
-  delta?: string
-  tool?: AgentToolEvent
-  artifact?: AgentArtifact
-  error?: string
 }
+
+export type AgentStreamEvent =
+  | (AgentStreamEventBase & { type: 'thread_created' })
+  | (AgentStreamEventBase & { type: 'item_started'; itemId: string; itemType: TimelineItem['type']; payload: Record<string, unknown> })
+  | (AgentStreamEventBase & { type: 'item_delta'; itemId: string; itemType: TimelineItem['type']; patch: ItemDeltaPatch })
+  | (AgentStreamEventBase & { type: 'item_completed'; itemId: string; itemType: TimelineItem['type']; final: Record<string, unknown> })
+  | (AgentStreamEventBase & { type: 'turn_completed' })
+  | (AgentStreamEventBase & { type: 'error'; error: string })
+  | (AgentStreamEventBase & { type: 'cancelled' })
 
 export interface AgentToolRequest {
   id: string

@@ -1,52 +1,137 @@
 import type { AgentStreamEvent } from '../../types/agent'
+import { parseChange } from '../../shared/diffUtils'
 
-/**
- * Codex `app-server` emits a long list of notifications during a turn (see
- * {@link https://github.com/openai/codex generated `ServerNotification` union}).
- * Most are bookkeeping/observability and don't map onto our renderer event
- * stream, so we silently drop them. The ones that DO matter are translated
- * here.
- *
- * One subtlety: when the model produces text, Codex usually sends a stream of
- * `item/agentMessage/delta` chunks AND a final `item/completed` carrying the
- * same `agentMessage` item with the full `text`. We must NOT emit a
- * `message_delta` from both — that doubles the message in the renderer.
- *
- * Strategy: track each `itemId` that produced a streaming delta. On
- * `item/completed` for an `agentMessage`:
- *   - If we already streamed deltas for that itemId → drop (renderer already
- *     has the full text accumulated).
- *   - Otherwise → emit a single `message_delta` with the full `text` as a
- *     fallback for non-streaming providers.
- *
- * Pure functions / per-instance state make this trivial to test without
- * spinning up a WebSocket.
- */
 export class CodexNotificationRouter {
   private readonly streamedDeltaItemIds = new Set<string>()
 
   route(method: string, params: Record<string, any>): AgentStreamEvent | null {
     switch (method) {
+      case 'item/started': {
+        const item = params.item as { type?: string; id?: string; command?: string; cwd?: string } | undefined
+        if (!item?.type || !item?.id) return null
+        switch (item.type) {
+          case 'agentMessage':
+            return {
+              type: 'item_started',
+              threadId: params.threadId,
+              itemId: item.id,
+              itemType: 'text',
+              payload: {},
+            }
+          case 'reasoning':
+            return {
+              type: 'item_started',
+              threadId: params.threadId,
+              itemId: item.id,
+              itemType: 'reasoning',
+              payload: {},
+            }
+          case 'commandExecution':
+            return {
+              type: 'item_started',
+              threadId: params.threadId,
+              itemId: item.id,
+              itemType: 'shell',
+              payload: {
+                ...(item.command != null ? { command: item.command } : {}),
+                ...(item.cwd != null ? { cwd: item.cwd } : {}),
+              },
+            }
+          case 'fileChange':
+            return {
+              type: 'item_started',
+              threadId: params.threadId,
+              itemId: item.id,
+              itemType: 'fileEdit',
+              payload: {},
+            }
+          default:
+            return null
+        }
+      }
+
       case 'item/agentMessage/delta': {
-        if (typeof params.itemId === 'string' && params.itemId.length > 0) {
-          this.streamedDeltaItemIds.add(params.itemId)
+        const itemId = params.itemId as string | undefined
+        if (typeof itemId === 'string' && itemId.length > 0) {
+          this.streamedDeltaItemIds.add(itemId)
         }
         return {
-          type: 'message_delta',
+          type: 'item_delta',
           threadId: params.threadId,
-          turnId: params.turnId,
-          delta: params.delta ?? '',
+          itemId: itemId ?? '',
+          itemType: 'text',
+          patch: { kind: 'appendText', field: 'content', text: params.delta ?? '' },
         }
       }
 
       case 'item/reasoning/textDelta':
       case 'item/reasoning/summaryTextDelta':
         return {
-          type: 'reasoning_delta',
+          type: 'item_delta',
           threadId: params.threadId,
-          turnId: params.turnId,
-          delta: params.delta ?? '',
+          itemId: params.itemId ?? '',
+          itemType: 'reasoning',
+          patch: { kind: 'appendText', field: 'content', text: params.delta ?? '' },
         }
+
+      case 'item/commandExecution/output': {
+        const field = params.stream === 'stderr' ? 'stderr' : 'stdout'
+        return {
+          type: 'item_delta',
+          threadId: params.threadId,
+          itemId: params.itemId ?? '',
+          itemType: 'shell',
+          patch: { kind: 'appendText', field, text: params.data ?? '' },
+        }
+      }
+
+      case 'item/completed': {
+        const item = params.item as Record<string, any> | undefined
+        if (!item?.type || !item?.id) return null
+
+        switch (item.type) {
+          case 'agentMessage': {
+            if (this.streamedDeltaItemIds.has(item.id)) return null
+            if (typeof item.text !== 'string' || item.text.length === 0) return null
+            return {
+              type: 'item_delta',
+              threadId: params.threadId,
+              itemId: item.id,
+              itemType: 'text',
+              patch: { kind: 'appendText', field: 'content', text: item.text },
+            }
+          }
+          case 'commandExecution':
+            return {
+              type: 'item_completed',
+              threadId: params.threadId,
+              itemId: item.id,
+              itemType: 'shell',
+              final: { exitCode: item.exitCode },
+            }
+          case 'fileChange': {
+            const rawChanges = Array.isArray(item.changes) ? item.changes : []
+            const changes = rawChanges.map(parseChange)
+            return {
+              type: 'item_completed',
+              threadId: params.threadId,
+              itemId: item.id,
+              itemType: 'fileEdit',
+              final: { changes },
+            }
+          }
+          case 'reasoning':
+            return {
+              type: 'item_completed',
+              threadId: params.threadId,
+              itemId: item.id,
+              itemType: 'reasoning',
+              final: {},
+            }
+          default:
+            return null
+        }
+      }
 
       case 'turn/completed':
         return {
@@ -59,25 +144,8 @@ export class CodexNotificationRouter {
         return {
           type: 'error',
           threadId: params.threadId,
-          turnId: params.turnId,
           error: params.error?.message ?? 'codex error',
         }
-
-      case 'item/completed': {
-        const item = params.item as { type?: string; id?: string; text?: string } | undefined
-        if (!item || item.type !== 'agentMessage') return null
-        if (typeof item.id === 'string' && this.streamedDeltaItemIds.has(item.id)) {
-          // Already streamed — renderer has accumulated the same text.
-          return null
-        }
-        if (typeof item.text !== 'string' || item.text.length === 0) return null
-        return {
-          type: 'message_delta',
-          threadId: params.threadId,
-          turnId: params.turnId,
-          delta: item.text,
-        }
-      }
 
       default:
         return null
