@@ -34,6 +34,17 @@ export interface AgentThreadSummary {
   title: string
   createdAt: string
   updatedAt: string
+  /**
+   * ISO timestamp of the most recent persisted message in the thread.
+   * Drives sidebar grouping ("Today" / "Yesterday" / etc). Optional because
+   * a brand-new empty thread has none yet.
+   */
+  lastMessageAt?: string | null
+  /**
+   * `true` once the user manually renamed the thread. Sidebar uses this to
+   * skip auto-title summarization side-effects and to show a small "✎" hint.
+   */
+  manualTitle?: boolean
 }
 
 export interface AgentArtifact {

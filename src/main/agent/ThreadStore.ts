@@ -8,7 +8,12 @@ export class ThreadStore {
   }
 
   async listThreads() {
-    return this.prisma.agentThread.findMany({ orderBy: { updatedAt: 'desc' } })
+    // Order by lastMessageAt so empty threads (no messages yet) sink to the
+    // bottom; fall back to updatedAt for rows whose lastMessageAt is still
+    // null (Prisma sorts nulls to the end of `desc` by default).
+    return this.prisma.agentThread.findMany({
+      orderBy: [{ lastMessageAt: 'desc' }, { updatedAt: 'desc' }],
+    })
   }
 
   async addMessage(input: { threadId: string; role: string; items: Prisma.InputJsonValue }) {

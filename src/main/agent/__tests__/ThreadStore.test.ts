@@ -22,3 +22,36 @@ describe('ThreadStore', () => {
     })
   })
 })
+
+describe('ThreadStore.listThreads', () => {
+  it('orders by lastMessageAt desc then updatedAt desc, and surfaces lastMessageAt + manualTitle', async () => {
+    const fakeRows = [
+      {
+        id: 't1',
+        title: 'First',
+        createdAt: new Date('2026-05-01T00:00:00Z'),
+        updatedAt: new Date('2026-05-07T10:00:00Z'),
+        lastMessageAt: new Date('2026-05-07T10:00:00Z'),
+        manualTitle: false,
+      },
+    ]
+    const findMany = vi.fn().mockResolvedValue(fakeRows)
+    const prisma = {
+      agentThread: { findMany },
+      agentMessage: { create: vi.fn() },
+      agentToolCall: { create: vi.fn() },
+      agentArtifact: { create: vi.fn() },
+    } as any
+    const store = new ThreadStore(prisma)
+    const result = await store.listThreads()
+    expect(findMany).toHaveBeenCalledWith({
+      orderBy: [{ lastMessageAt: 'desc' }, { updatedAt: 'desc' }],
+    })
+    expect(result[0]).toMatchObject({
+      id: 't1',
+      title: 'First',
+      lastMessageAt: fakeRows[0].lastMessageAt,
+      manualTitle: false,
+    })
+  })
+})
