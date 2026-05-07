@@ -25,4 +25,9 @@ describe('buildCodexLaunchArgs', () => {
     const firstConfigIdx = args.indexOf('-c')
     expect(firstConfigIdx).toBeGreaterThan(listenIdx)
   })
+
+  it('does not include the legacy `serve` subcommand', () => {
+    const args = buildCodexLaunchArgs()
+    expect(args).not.toContain('serve')
+  })
 })
