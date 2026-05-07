@@ -36,6 +36,8 @@ type TurnQueue = {
   closed: boolean
 }
 
+type OrphanNotification = { event: AgentStreamEvent; turnId: string }
+
 const ORPHAN_BUFFER_LIMIT = 1024
 
 export interface CodexProtocolClientOptions {
@@ -69,7 +71,7 @@ export class CodexProtocolClient {
   // Notifications received before their per-turn queue was created. We can
   // race the server's first delta against our turn/start response handling, so
   // we hold them here and drain them when the queue is registered.
-  private orphanEvents: AgentStreamEvent[] = []
+  private orphanEvents: OrphanNotification[] = []
   private readonly rpcTimeoutMs: number
   private readonly connectTimeoutMs: number
   private readonly connectIntervalMs: number
@@ -265,7 +267,10 @@ export class CodexProtocolClient {
       return
     }
     const threadId = event.threadId
-    const turnId = event.turnId ?? (threadId ? this.turnIdByThread.get(threadId) : undefined)
+    const turnId =
+      event.turnId
+      ?? (typeof params.turnId === 'string' ? params.turnId : undefined)
+      ?? (threadId ? this.turnIdByThread.get(threadId) : undefined)
     if (!threadId || !turnId) return
     const queue = this.queues.get(queueKey(threadId, turnId))
     if (queue) {
@@ -275,18 +280,18 @@ export class CodexProtocolClient {
     // Server began streaming before send()'s `await this.rpc('turn/start', ...)`
     // had a chance to register the per-turn queue. Buffer until it appears.
     if (this.orphanEvents.length < ORPHAN_BUFFER_LIMIT) {
-      this.orphanEvents.push({ ...event, turnId })
+      this.orphanEvents.push({ event, turnId })
     }
   }
 
   private drainOrphansInto(threadId: string, turnId: string, queue: TurnQueue): void {
     if (this.orphanEvents.length === 0) return
-    const remaining: AgentStreamEvent[] = []
-    for (const event of this.orphanEvents) {
-      if (event.threadId === threadId && event.turnId === turnId) {
-        this.pushEventToQueue(queue, event)
+    const remaining: OrphanNotification[] = []
+    for (const orphan of this.orphanEvents) {
+      if (orphan.event.threadId === threadId && orphan.turnId === turnId) {
+        this.pushEventToQueue(queue, orphan.event)
       } else {
-        remaining.push(event)
+        remaining.push(orphan)
       }
     }
     this.orphanEvents = remaining

@@ -95,22 +95,40 @@ const baseInput: AgentInput = {
 }
 
 describe('mapServerNotification', () => {
-  it('maps item/agentMessage/delta to message_delta', () => {
+  it('maps item/agentMessage/delta to item_delta', () => {
     expect(
       mapServerNotification('item/agentMessage/delta', { threadId: 't', turnId: 'u', itemId: 'i', delta: 'hi' }),
-    ).toEqual({ type: 'message_delta', threadId: 't', turnId: 'u', delta: 'hi' })
+    ).toEqual({
+      type: 'item_delta',
+      threadId: 't',
+      itemId: 'i',
+      itemType: 'text',
+      patch: { kind: 'appendText', field: 'content', text: 'hi' },
+    })
   })
 
-  it('maps item/reasoning/textDelta to reasoning_delta', () => {
+  it('maps item/reasoning/textDelta to item_delta (reasoning)', () => {
     expect(
-      mapServerNotification('item/reasoning/textDelta', { threadId: 't', turnId: 'u', delta: 'r' }),
-    ).toEqual({ type: 'reasoning_delta', threadId: 't', turnId: 'u', delta: 'r' })
+      mapServerNotification('item/reasoning/textDelta', { threadId: 't', turnId: 'u', itemId: 'r', delta: 'r' }),
+    ).toEqual({
+      type: 'item_delta',
+      threadId: 't',
+      itemId: 'r',
+      itemType: 'reasoning',
+      patch: { kind: 'appendText', field: 'content', text: 'r' },
+    })
   })
 
-  it('also maps item/reasoning/summaryTextDelta to reasoning_delta', () => {
+  it('also maps item/reasoning/summaryTextDelta to item_delta (reasoning)', () => {
     expect(
-      mapServerNotification('item/reasoning/summaryTextDelta', { threadId: 't', turnId: 'u', delta: 's' }),
-    ).toEqual({ type: 'reasoning_delta', threadId: 't', turnId: 'u', delta: 's' })
+      mapServerNotification('item/reasoning/summaryTextDelta', { threadId: 't', turnId: 'u', itemId: 'r', delta: 's' }),
+    ).toEqual({
+      type: 'item_delta',
+      threadId: 't',
+      itemId: 'r',
+      itemType: 'reasoning',
+      patch: { kind: 'appendText', field: 'content', text: 's' },
+    })
   })
 
   it('maps turn/completed using turn.id for turnId', () => {
@@ -122,7 +140,7 @@ describe('mapServerNotification', () => {
   it('maps error notifications to error events', () => {
     expect(
       mapServerNotification('error', { error: { message: 'kaboom' }, willRetry: false, threadId: 't', turnId: 'u' }),
-    ).toEqual({ type: 'error', threadId: 't', turnId: 'u', error: 'kaboom' })
+    ).toEqual({ type: 'error', threadId: 't', error: 'kaboom' })
   })
 
   it('returns null for notifications we do not consume', () => {
@@ -157,9 +175,27 @@ describe('CodexLocalBackend (with a fake codex app-server)', () => {
 
     expect(events).toEqual([
       { type: 'thread_created', threadId: 'fake-thread' },
-      { type: 'message_delta', threadId: 'fake-thread', turnId: 'fake-turn', delta: 'hel' },
-      { type: 'message_delta', threadId: 'fake-thread', turnId: 'fake-turn', delta: 'lo' },
-      { type: 'reasoning_delta', threadId: 'fake-thread', turnId: 'fake-turn', delta: 'thinking' },
+      {
+        type: 'item_delta',
+        threadId: 'fake-thread',
+        itemId: 'i1',
+        itemType: 'text',
+        patch: { kind: 'appendText', field: 'content', text: 'hel' },
+      },
+      {
+        type: 'item_delta',
+        threadId: 'fake-thread',
+        itemId: 'i1',
+        itemType: 'text',
+        patch: { kind: 'appendText', field: 'content', text: 'lo' },
+      },
+      {
+        type: 'item_delta',
+        threadId: 'fake-thread',
+        itemId: 'i2',
+        itemType: 'reasoning',
+        patch: { kind: 'appendText', field: 'content', text: 'thinking' },
+      },
       { type: 'turn_completed', threadId: 'fake-thread', turnId: 'fake-turn' },
     ])
 
@@ -182,7 +218,13 @@ describe('CodexLocalBackend (with a fake codex app-server)', () => {
     const methodsCalled = server.receivedFromClient.map((m) => m.method)
     expect(methodsCalled).not.toContain('thread/start')
     expect(events.find((e) => e.type === 'thread_created')).toBeUndefined()
-    expect(events[0]).toEqual({ type: 'message_delta', threadId: 'fake-thread', turnId: 'fake-turn', delta: 'hel' })
+    expect(events[0]).toEqual({
+      type: 'item_delta',
+      threadId: 'fake-thread',
+      itemId: 'i1',
+      itemType: 'text',
+      patch: { kind: 'appendText', field: 'content', text: 'hel' },
+    })
     expect(events[events.length - 1]).toEqual({ type: 'turn_completed', threadId: 'fake-thread', turnId: 'fake-turn' })
   })
 
