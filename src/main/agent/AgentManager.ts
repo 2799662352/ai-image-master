@@ -149,11 +149,12 @@ export class AgentManager {
       throw new Error('AgentManager.sendMessage called without store/attachments')
     }
 
+    const model = payload.model?.trim() || DEFAULT_AGENT_MODEL
     const thread = payload.threadId
       ? { id: payload.threadId }
       : await this.store.createThread({
           title: payload.content.slice(0, 40) || 'New Agent Thread',
-          model: DEFAULT_AGENT_MODEL,
+          model,
         })
     const savedAttachments = await this.attachments.ingest(thread.id, payload.attachments ?? [])
     const items: AgentInput['items'] = [
@@ -165,7 +166,7 @@ export class AgentManager {
 
     const input: AgentInput = {
       ...payload,
-      model: DEFAULT_AGENT_MODEL,
+      model,
       cwd: process.cwd(),
       items,
     }

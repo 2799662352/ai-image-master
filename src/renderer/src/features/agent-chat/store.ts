@@ -6,7 +6,28 @@ import type {
   AgentSendMessagePayload,
   AgentStreamEvent,
 } from '../../../../types/agent'
+import { AGENT_MODELS, DEFAULT_MODEL_ID } from './models'
 import type { AgentChatMessage, AgentChatToolEvent } from './types'
+
+const SELECTED_MODEL_STORAGE_KEY = 'catimation.agent.selectedModel'
+
+function readPersistedModelId(): string {
+  try {
+    const raw = globalThis.localStorage?.getItem(SELECTED_MODEL_STORAGE_KEY)
+    if (!raw) return DEFAULT_MODEL_ID
+    return AGENT_MODELS.some((m) => m.id === raw) ? raw : DEFAULT_MODEL_ID
+  } catch {
+    return DEFAULT_MODEL_ID
+  }
+}
+
+function persistModelId(id: string): void {
+  try {
+    globalThis.localStorage?.setItem(SELECTED_MODEL_STORAGE_KEY, id)
+  } catch {
+    // localStorage unavailable (SSR / sandbox); silently ignore.
+  }
+}
 
 type AgentElectronApi = {
   agent?: {
@@ -26,9 +47,11 @@ interface AgentChatState {
   toolEvents: AgentChatToolEvent[]
   isRunning: boolean
   error?: string
+  selectedModelId: string
   toggle: () => void
   setInput: (input: string) => void
   setError: (error?: string) => void
+  setSelectedModel: (modelId: string) => void
   addAttachment: (attachment: AgentAttachmentInput) => void
   removeAttachment: (name: string) => void
   send: () => Promise<void>
@@ -55,9 +78,15 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   reasoning: '',
   toolEvents: [],
   isRunning: false,
+  selectedModelId: readPersistedModelId(),
   toggle: () => set((state) => ({ isOpen: !state.isOpen })),
   setInput: (input) => set({ input }),
   setError: (error) => set({ error }),
+  setSelectedModel: (modelId) => {
+    if (!AGENT_MODELS.some((m) => m.id === modelId)) return
+    persistModelId(modelId)
+    set({ selectedModelId: modelId })
+  },
   addAttachment: (attachment) => set((state) => ({ attachments: [...state.attachments, attachment] })),
   removeAttachment: (name) => set((state) => ({
     attachments: state.attachments.filter((item) => item.name !== name),
@@ -68,6 +97,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     if (!content || state.isRunning) return
 
     const attachments = state.attachments
+    const modelId = state.selectedModelId
     set((current) => ({
       input: '',
       attachments: [],
@@ -85,6 +115,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         content,
         attachments,
         currentPage: window.location.hash.slice(1),
+        model: modelId,
       })
       set({ threadId: result.threadId })
     } catch (error) {

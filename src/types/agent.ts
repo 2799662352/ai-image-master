@@ -15,6 +15,12 @@ export interface AgentSendMessagePayload {
   content: string
   attachments: AgentAttachmentInput[]
   currentPage?: string
+  /**
+   * Caller-selected model id (e.g. `gpt-4.1`, `o4-mini`). When omitted the
+   * main process falls back to its default. Forwarded to Codex's `turn/start`
+   * via `AgentManager.sendMessage`.
+   */
+  model?: string
 }
 
 export interface AgentCancelPayload {

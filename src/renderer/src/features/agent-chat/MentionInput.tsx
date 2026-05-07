@@ -1,3 +1,4 @@
+import { ModelPicker } from './ModelPicker'
 import { useAgentChatStore } from './store'
 
 const MAX_ATTACHMENTS = 20
@@ -72,8 +73,13 @@ export function MentionInput() {
         />
       </label>
       <div className="mt-2 flex items-center gap-2">
+        <span className="rounded-md border border-zinc-700/80 bg-zinc-900/70 px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-cyan-300/80">
+          Agent
+        </span>
+        <ModelPicker disabled={isRunning} />
+        <div className="flex-1" />
         <button
-          className="flex-1 rounded-xl bg-cyan-300 px-3 py-2 text-sm font-bold text-zinc-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+          className="rounded-xl bg-cyan-300 px-4 py-2 text-sm font-bold text-zinc-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
           disabled={isRunning || input.trim().length === 0}
           type="submit"
         >

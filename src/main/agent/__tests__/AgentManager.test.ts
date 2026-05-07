@@ -280,6 +280,55 @@ describe('AgentManager codex thread id mapping (regression: invalid thread id)',
     expect(backend.calls[1].threadId).toBe(CODEX_UUID)
   })
 
+  it('forwards payload.model through to backend.send when caller selects a model', async () => {
+    const fakeStore = {
+      createThread: async (args: { model: string }) => ({ id: 'cm-db-id-5', _model: args.model }),
+    } as any
+    const fakeAttachments = { ingest: async () => [] } as any
+    const backend = makeStubBackend([
+      [
+        { type: 'thread_created', threadId: CODEX_UUID },
+        { type: 'turn_completed', threadId: CODEX_UUID, turnId: 't1' },
+      ],
+    ])
+    const mgr = new AgentManager({
+      userDataDir: tmpDir,
+      store: fakeStore,
+      attachments: fakeAttachments,
+      eventSink: () => {},
+      backend,
+    })
+
+    await mgr.sendMessage({ content: 'hi', attachments: [], model: 'o3-pro' })
+    await flushMicrotasks(20)
+
+    expect(backend.calls).toHaveLength(1)
+    expect(backend.calls[0].input.model).toBe('o3-pro')
+  })
+
+  it('falls back to default model when payload omits model', async () => {
+    const fakeStore = { createThread: async () => ({ id: 'cm-db-id-6' }) } as any
+    const fakeAttachments = { ingest: async () => [] } as any
+    const backend = makeStubBackend([
+      [
+        { type: 'thread_created', threadId: CODEX_UUID },
+        { type: 'turn_completed', threadId: CODEX_UUID, turnId: 't1' },
+      ],
+    ])
+    const mgr = new AgentManager({
+      userDataDir: tmpDir,
+      store: fakeStore,
+      attachments: fakeAttachments,
+      eventSink: () => {},
+      backend,
+    })
+
+    await mgr.sendMessage({ content: 'hi', attachments: [] })
+    await flushMicrotasks(20)
+
+    expect(backend.calls[0].input.model).toBe('gpt-4.1-mini')
+  })
+
   it('cancel(dbThreadId) translates to backend.cancel(codexThreadId) when mapping exists', async () => {
     const fakeStore = {
       createThread: async () => ({ id: 'cm-db-id-4' }),
