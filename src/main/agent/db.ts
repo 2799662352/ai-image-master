@@ -5,6 +5,7 @@ import { PrismaClient } from '@prisma/client'
 import { PrismaPg } from '@prisma/adapter-pg'
 import net from 'node:net'
 import path from 'node:path'
+import { ensureSchema } from './ensureSchema'
 
 let prisma: PrismaClient | null = null
 let pgliteServer: PGLiteSocketServer | null = null
@@ -46,6 +47,7 @@ export async function startEmbeddedPGlite(): Promise<string> {
 
   const dataDir = path.join(app.getPath('userData'), 'pgdata')
   pgliteDb = await PGlite.create(dataDir)
+  await ensureSchema(pgliteDb)
   pgliteServer = new PGLiteSocketServer({ db: pgliteDb, host: '127.0.0.1', port: 5433 })
   await pgliteServer.start()
   return 'postgresql://postgres:postgres@127.0.0.1:5433/postgres'

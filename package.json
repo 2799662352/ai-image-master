@@ -38,6 +38,7 @@
     "codex:probe": "tsx scripts/probe-codex.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate:dev": "prisma migrate dev",
+    "agent:init-sql": "prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script --output prisma/init.sql",
     "prisma:validate": "prisma validate",
     "test:bench": "vitest bench",
     "test:bench:run": "vitest bench --run",
