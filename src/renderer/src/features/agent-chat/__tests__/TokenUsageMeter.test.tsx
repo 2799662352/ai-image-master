@@ -77,4 +77,10 @@ describe('TokenUsageMeter', () => {
     rerender(<TokenUsageMeter usage={sampleUsage} />)
     expect(screen.queryByRole('dialog')).toBeNull()
   })
+
+  it('renders a percent using DEFAULT_MODEL_CONTEXT_WINDOW when usage.contextWindow is missing', () => {
+    render(<TokenUsageMeter usage={{ inputTokens: 50_000, outputTokens: 50_000 }} />)
+    // 100_000 / 200_000 = 50%
+    expect(screen.getByRole('button').textContent).toContain('50%')
+  })
 })

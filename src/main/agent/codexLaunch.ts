@@ -48,6 +48,13 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     // since this is a local dev/agent surface.
     '-c', 'show_raw_agent_reasoning=true',
     '-c', 'model_reasoning_summary="auto"',
+    // Tell Codex the model's hard context limit so its tokenUsage
+    // notifications carry `contextWindow`, and so it auto-compacts before
+    // running into a wall. 200K matches GPT-5.5 / GPT-5.4 on apiyi; the
+    // auto_compact threshold is 90% of that, the documented Codex default
+    // ratio. See https://developers.openai.com/codex/config-advanced.
+    '-c', 'model_context_window=200000',
+    '-c', 'model_auto_compact_token_limit=180000',
   ]
 
   const provider = options?.provider

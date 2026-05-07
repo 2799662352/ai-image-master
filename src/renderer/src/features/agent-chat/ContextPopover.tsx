@@ -15,6 +15,14 @@ interface ContextPopoverProps {
    * leaving the popover stuck open.
    */
   triggerRef?: RefObject<HTMLElement | null>
+  /**
+   * Used as the percent-full denominator when `usage.contextWindow` is
+   * not reported by Codex. Forwarded to `buildContextSegments` so the
+   * popover's `% Full` line stays meaningful even on early turns. When
+   * omitted, the popover preserves its previous "no window → no pctFull"
+   * behaviour.
+   */
+  fallbackContextWindow?: number
 }
 
 /**
@@ -28,9 +36,9 @@ interface ContextPopoverProps {
  * The Tab key is unbound — focus management piggybacks on the parent panel's
  * existing keyboard model (no focus trap; the popover is read-only).
  */
-export function ContextPopover({ usage, onClose, triggerRef }: ContextPopoverProps) {
+export function ContextPopover({ usage, onClose, triggerRef, fallbackContextWindow }: ContextPopoverProps) {
   const ref = useRef<HTMLDivElement | null>(null)
-  const ctx = buildContextSegments(usage)
+  const ctx = buildContextSegments(usage, { fallbackContextWindow })
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

@@ -39,7 +39,21 @@ export interface ContextSegments {
  * paint a negative region and totals would lie. We clamp non-negatively so
  * `total === sum(segments)` always holds.
  */
-export function buildContextSegments(usage: AgentTokenUsage): ContextSegments {
+export interface BuildContextSegmentsOptions {
+  /**
+   * Used as the percent-full denominator when `usage.contextWindow` is
+   * not reported by the gateway. Pass `DEFAULT_MODEL_CONTEXT_WINDOW`
+   * from `contextWindowDefaults.ts`. Optional — when omitted, `pctFull`
+   * stays undefined unless `usage.contextWindow` is set, preserving the
+   * old behaviour for callers that don't care about the fallback.
+   */
+  fallbackContextWindow?: number
+}
+
+export function buildContextSegments(
+  usage: AgentTokenUsage,
+  options: BuildContextSegmentsOptions = {},
+): ContextSegments {
   const input = Math.max(0, usage.inputTokens ?? 0)
   const output = Math.max(0, usage.outputTokens ?? 0)
   const cachedRaw = Math.max(0, usage.cachedInputTokens ?? 0)
@@ -57,8 +71,14 @@ export function buildContextSegments(usage: AgentTokenUsage): ContextSegments {
     { key: 'output', label: 'Output', color: '#22d3ee', tokens: visibleOutput },
   ]
   const total = segments.reduce((acc, s) => acc + s.tokens, 0)
-  const windowTokens =
+
+  const reportedWindow =
     typeof usage.contextWindow === 'number' && usage.contextWindow > 0 ? usage.contextWindow : undefined
+  const fallbackWindow =
+    typeof options.fallbackContextWindow === 'number' && options.fallbackContextWindow > 0
+      ? options.fallbackContextWindow
+      : undefined
+  const windowTokens = reportedWindow ?? fallbackWindow
   const pctFull = windowTokens != null ? Math.round((100 * total) / windowTokens) : undefined
 
   return { segments, total, windowTokens, pctFull }

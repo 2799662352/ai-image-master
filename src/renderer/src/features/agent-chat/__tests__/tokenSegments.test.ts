@@ -91,4 +91,22 @@ describe('buildContextSegments', () => {
     expect(result.total).toBe(sum)
     expect(result.total).toBe(6_000)
   })
+
+  it('uses fallbackContextWindow when usage.contextWindow is missing', () => {
+    const result = buildContextSegments(
+      { inputTokens: 50_000, outputTokens: 50_000 },
+      { fallbackContextWindow: 200_000 },
+    )
+    expect(result.windowTokens).toBe(200_000)
+    expect(result.pctFull).toBe(50)
+  })
+
+  it('prefers usage.contextWindow over fallbackContextWindow', () => {
+    const result = buildContextSegments(
+      { inputTokens: 25_000, outputTokens: 25_000, contextWindow: 100_000 },
+      { fallbackContextWindow: 200_000 },
+    )
+    expect(result.windowTokens).toBe(100_000)
+    expect(result.pctFull).toBe(50)
+  })
 })

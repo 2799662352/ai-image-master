@@ -17,6 +17,8 @@ describe('buildCodexLaunchArgs', () => {
       // even when reasoningOutputTokens > 0.
       '-c', 'show_raw_agent_reasoning=true',
       '-c', 'model_reasoning_summary="auto"',
+      '-c', 'model_context_window=200000',
+      '-c', 'model_auto_compact_token_limit=180000',
     ])
   })
 
@@ -29,6 +31,8 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'sandbox_mode="danger-full-access"',
       '-c', 'show_raw_agent_reasoning=true',
       '-c', 'model_reasoning_summary="auto"',
+      '-c', 'model_context_window=200000',
+      '-c', 'model_auto_compact_token_limit=180000',
     ])
     const listenIdx = args.indexOf('--listen')
     const firstConfigIdx = args.indexOf('-c')
@@ -73,6 +77,12 @@ describe('buildCodexLaunchArgs', () => {
     const flat = args.join(' ')
     expect(flat).not.toContain('model_provider')
     expect(flat).not.toContain('model_providers.')
+  })
+
+  it('passes model_context_window and model_auto_compact_token_limit so Codex auto-compacts', () => {
+    const args = buildCodexLaunchArgs()
+    expect(args).toContain('model_context_window=200000')
+    expect(args).toContain('model_auto_compact_token_limit=180000')
   })
 })
 

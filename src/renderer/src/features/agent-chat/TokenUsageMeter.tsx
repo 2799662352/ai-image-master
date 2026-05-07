@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AgentTokenUsage } from '../../../../types/agent'
+import { DEFAULT_MODEL_CONTEXT_WINDOW } from './contextWindowDefaults'
 import { ContextPopover } from './ContextPopover'
 
 /**
@@ -22,8 +23,14 @@ export function TokenUsageMeter({ usage }: { usage?: AgentTokenUsage }) {
   if (!usage) return null
 
   const used = usage.contextUsage ?? usage.inputTokens + usage.outputTokens
-  const window = usage.contextWindow
-  const ratio = window != null && window > 0 ? Math.min(1, Math.max(0, used / window)) : null
+  // Fallback so the donut + percent render even when a gateway omits
+  // contextWindow on early turns. Codex 0.128+ should always report it
+  // once `model_context_window` is in effect (see codexLaunch.ts).
+  const window =
+    typeof usage.contextWindow === 'number' && usage.contextWindow > 0
+      ? usage.contextWindow
+      : DEFAULT_MODEL_CONTEXT_WINDOW
+  const ratio = window > 0 ? Math.min(1, Math.max(0, used / window)) : null
   const pct = ratio != null ? Math.round(ratio * 100) : null
 
   const radius = 8
@@ -77,7 +84,12 @@ export function TokenUsageMeter({ usage }: { usage?: AgentTokenUsage }) {
         <span className={`font-mono ${tone.text}`}>{pct != null ? `${pct}%` : label}</span>
       </button>
       {open ? (
-        <ContextPopover usage={usage} onClose={() => setOpen(false)} triggerRef={triggerRef} />
+        <ContextPopover
+          usage={usage}
+          onClose={() => setOpen(false)}
+          triggerRef={triggerRef}
+          fallbackContextWindow={DEFAULT_MODEL_CONTEXT_WINDOW}
+        />
       ) : null}
     </div>
   )
