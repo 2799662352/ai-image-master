@@ -5,6 +5,7 @@ import { MentionInput } from './MentionInput'
 import { MessageBubble } from './MessageBubble'
 import { ResizableHandle } from './ResizableHandle'
 import { ThreadCommandPalette } from './ThreadCommandPalette'
+import { ThreadSidebar } from './ThreadSidebar'
 import { TokenUsageMeter } from './TokenUsageMeter'
 import { useAgentChatStore } from './store'
 import type { AgentStreamEvent } from '../../../../types/agent'
@@ -15,6 +16,8 @@ type AgentEventApi = {
   }
 }
 
+const SIDEBAR_RAIL_WIDTH = 24
+
 export function AgentChatPanel() {
   const isOpen = useAgentChatStore((state) => state.isOpen)
   const messages = useAgentChatStore((state) => state.messages)
@@ -23,6 +26,10 @@ export function AgentChatPanel() {
   const panelWidth = useAgentChatStore((state) => state.panelWidth)
   const setPanelWidth = useAgentChatStore((state) => state.setPanelWidth)
   const tokenUsage = useAgentChatStore((state) => state.tokenUsage)
+  const sidebarOpen = useAgentChatStore((state) => state.sidebarOpen)
+  const sidebarWidth = useAgentChatStore((state) => state.sidebarWidth)
+  const toggleSidebar = useAgentChatStore((state) => state.toggleSidebar)
+  const bootstrap = useAgentChatStore((state) => state.bootstrap)
 
   useEffect(() => {
     if (!isOpen) return undefined
@@ -31,20 +38,43 @@ export function AgentChatPanel() {
     return agent.onEvent(applyEvent)
   }, [applyEvent, isOpen])
 
+  // Restore the most recent thread + thread list on first open.
+  useEffect(() => {
+    if (!isOpen) return
+    void bootstrap()
+  }, [isOpen, bootstrap])
+
+  // Cmd/Ctrl+B → toggle sidebar.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent): void {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') {
+        e.preventDefault()
+        toggleSidebar()
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [toggleSidebar])
+
+  const panelRightOffset = sidebarOpen ? sidebarWidth : SIDEBAR_RAIL_WIDTH
+
   return (
     <>
       {isOpen ? (
         <aside
+          data-testid="agent-chat-panel"
           // NOTE: do NOT add `relative` here. Tailwind's `.relative` is defined
           // after `.fixed` in the generated stylesheet, so when both classes
           // appear together `position: relative` wins the cascade — the panel
           // then leaves viewport-pinned mode, flows to the document tail, and
           // ends up rendered at the bottom of the page (regression "又跑下面去了").
-          className="fixed right-0 top-0 z-[40000] flex h-screen flex-col border-l border-cyan-400/25 bg-zinc-950/95 text-white shadow-[-24px_0_80px_rgba(34,211,238,0.16)] backdrop-blur"
-          style={{ width: panelWidth }}
+          className="fixed top-0 z-[40000] flex h-screen flex-col border-l border-cyan-400/25 bg-zinc-950/95 text-white shadow-[-24px_0_80px_rgba(34,211,238,0.16)] backdrop-blur"
+          style={{ width: panelWidth, right: panelRightOffset }}
         >
           <ResizableHandle
-            panelRight={typeof window !== 'undefined' ? window.innerWidth : 0}
+            panelRight={
+              typeof window !== 'undefined' ? window.innerWidth - panelRightOffset : 0
+            }
             onResize={(width) => setPanelWidth(width)}
             onResizeEnd={() => {}}
           />
@@ -56,6 +86,15 @@ export function AgentChatPanel() {
               </div>
               <div className="flex items-center gap-2">
                 <TokenUsageMeter usage={tokenUsage} />
+                <button
+                  type="button"
+                  aria-label={sidebarOpen ? 'Hide thread sidebar' : 'Show thread sidebar'}
+                  title={sidebarOpen ? 'Hide threads (Cmd/Ctrl+B)' : 'Show threads (Cmd/Ctrl+B)'}
+                  onClick={() => toggleSidebar()}
+                  className="rounded-full border border-zinc-700 px-2 py-1 text-zinc-400 hover:border-cyan-300/50 hover:text-cyan-100"
+                >
+                  {sidebarOpen ? '⇥' : '⇤'}
+                </button>
                 <button
                   className="rounded-full border border-zinc-700 px-2 py-1 text-zinc-400 hover:border-cyan-300/50 hover:text-cyan-100"
                   onClick={() => useAgentChatStore.getState().toggle()}
@@ -90,6 +129,7 @@ export function AgentChatPanel() {
           </footer>
         </aside>
       ) : null}
+      <ThreadSidebar />
       <Lightbox />
       <ThreadCommandPalette />
     </>
