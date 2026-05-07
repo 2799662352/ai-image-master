@@ -1,12 +1,16 @@
-import type { AttachmentItem } from '../../../../../types/agent-timeline'
+import type { AttachmentItem, AttachmentRef } from '../../../../../types/agent-timeline'
+import { useAgentChatStore } from '../store'
 
-export function AttachmentCard({
-  item,
-  onImageDoubleClick,
-}: {
-  item: AttachmentItem
-  onImageDoubleClick?: (attachmentId: string) => void
-}) {
+export function AttachmentCard({ item }: { item: AttachmentItem }) {
+  const openPreview = useAgentChatStore((s) => s.openPreview)
+  const images = item.attachments.filter((ref): ref is AttachmentRef => ref.kind === 'image')
+
+  const handleDoubleClick = (id: string): void => {
+    const startIndex = images.findIndex((ref) => ref.id === id)
+    if (startIndex < 0) return
+    openPreview(images, startIndex)
+  }
+
   return (
     <div className="my-1 flex flex-wrap gap-2">
       {item.attachments.map((ref) =>
@@ -15,7 +19,7 @@ export function AttachmentCard({
             key={ref.id}
             src={ref.thumbnailUri ?? ref.uri}
             alt={ref.name}
-            onDoubleClick={() => onImageDoubleClick?.(ref.id)}
+            onDoubleClick={() => handleDoubleClick(ref.id)}
             className="h-16 w-16 rounded border border-zinc-700/50 object-cover cursor-pointer hover:border-cyan-400/50"
             title={ref.name}
           />

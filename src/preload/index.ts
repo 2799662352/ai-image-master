@@ -154,6 +154,11 @@ const IPC_CHANNELS = {
     'agent:event',
     'agent:tool-request',
   ] as const,
+  // Shell helpers (clipboard / save dialog)
+  SHELL: {
+    COPY_IMAGE: 'shell:copy-image',
+    SAVE_AS: 'shell:save-as',
+  },
 } as const
 
 // ==================== 类型定义 ====================
@@ -221,6 +226,11 @@ export interface ElectronAPI {
     sendToolResponse: (response: AgentToolResponse) => void
     setApiKey: (key: string) => Promise<AgentApiResult>
     testConnection: () => Promise<AgentApiResult>
+  }
+  // Shell helpers (clipboard / save dialog)
+  shell: {
+    copyImage: (uri: string) => Promise<IpcResponse>
+    saveAs: (uri: string, suggestedName: string) => Promise<IpcResponse>
   }
   // 图片存储
   saveImage: (base64Data: string, filename: string) => Promise<SaveImageResponse>
@@ -503,6 +513,14 @@ const electronAPI: ElectronAPI = {
 
     testConnection: () =>
       safeInvoke<AgentApiResult>(IPC_CHANNELS.AGENT.TEST_CONNECTION),
+  },
+
+  // ============ Shell helpers (clipboard / save dialog) ============
+  shell: {
+    copyImage: (uri: string) =>
+      safeInvoke<IpcResponse>(IPC_CHANNELS.SHELL.COPY_IMAGE, uri),
+    saveAs: (uri: string, suggestedName: string) =>
+      safeInvoke<IpcResponse>(IPC_CHANNELS.SHELL.SAVE_AS, { uri, suggestedName }),
   },
 
   // ============ 系统主题监听 ============

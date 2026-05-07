@@ -1,12 +1,16 @@
-import type { ArtifactItem } from '../../../../../types/agent-timeline'
+import type { ArtifactItem, AttachmentRef } from '../../../../../types/agent-timeline'
+import { useAgentChatStore } from '../store'
 
-export function ArtifactCard({
-  item,
-  onImageDoubleClick,
-}: {
-  item: ArtifactItem
-  onImageDoubleClick?: (artifactId: string) => void
-}) {
+export function ArtifactCard({ item }: { item: ArtifactItem }) {
+  const openPreview = useAgentChatStore((s) => s.openPreview)
+  const images = item.artifacts.filter((ref): ref is AttachmentRef => ref.kind === 'image')
+
+  const handleDoubleClick = (id: string): void => {
+    const startIndex = images.findIndex((ref) => ref.id === id)
+    if (startIndex < 0) return
+    openPreview(images, startIndex)
+  }
+
   return (
     <div className="my-1 flex flex-wrap gap-2">
       {item.artifacts.map((ref) =>
@@ -15,7 +19,7 @@ export function ArtifactCard({
             key={ref.id}
             src={ref.thumbnailUri ?? ref.uri}
             alt={ref.name}
-            onDoubleClick={() => onImageDoubleClick?.(ref.id)}
+            onDoubleClick={() => handleDoubleClick(ref.id)}
             className="h-20 w-20 rounded border border-cyan-400/25 object-cover cursor-pointer hover:border-cyan-300/50"
             title={ref.name}
           />

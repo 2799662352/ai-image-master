@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { AttachmentChips } from './AttachmentChips'
+import { Lightbox } from './Lightbox'
 import { MentionInput } from './MentionInput'
 import { MessageBubble } from './MessageBubble'
 import { ResizableHandle } from './ResizableHandle'
@@ -29,10 +30,11 @@ export function AgentChatPanel() {
   if (!isOpen) return null
 
   return (
-    <aside
-      className="fixed right-0 top-0 z-[40000] flex h-screen flex-col border-l border-cyan-400/25 bg-zinc-950/95 text-white shadow-[-24px_0_80px_rgba(34,211,238,0.16)] backdrop-blur relative"
-      style={{ width: panelWidth }}
-    >
+    <>
+      <aside
+        className="fixed right-0 top-0 z-[40000] flex h-screen flex-col border-l border-cyan-400/25 bg-zinc-950/95 text-white shadow-[-24px_0_80px_rgba(34,211,238,0.16)] backdrop-blur relative"
+        style={{ width: panelWidth }}
+      >
       <ResizableHandle
         panelRight={typeof window !== 'undefined' ? window.innerWidth : 0}
         onResize={(width) => setPanelWidth(width)}
@@ -75,6 +77,8 @@ export function AgentChatPanel() {
         <AttachmentChips />
         <MentionInput />
       </footer>
-    </aside>
+      </aside>
+      <Lightbox />
+    </>
   )
 }

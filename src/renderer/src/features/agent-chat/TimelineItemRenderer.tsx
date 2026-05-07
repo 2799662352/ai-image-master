@@ -6,13 +6,7 @@ import { ReasoningCard } from './cards/ReasoningCard'
 import { ShellCard } from './cards/ShellCard'
 import { TextCard } from './cards/TextCard'
 
-export function TimelineItemRenderer({
-  item,
-  onImageDoubleClick,
-}: {
-  item: TimelineItem
-  onImageDoubleClick?: (attachmentId: string) => void
-}) {
+export function TimelineItemRenderer({ item }: { item: TimelineItem }) {
   switch (item.type) {
     case 'text':
       return <TextCard item={item} />
@@ -23,9 +17,9 @@ export function TimelineItemRenderer({
     case 'fileEdit':
       return <FileEditCard item={item} />
     case 'attachment':
-      return <AttachmentCard item={item} onImageDoubleClick={onImageDoubleClick} />
+      return <AttachmentCard item={item} />
     case 'artifact':
-      return <ArtifactCard item={item} onImageDoubleClick={onImageDoubleClick} />
+      return <ArtifactCard item={item} />
     default: {
       const _exhaustive: never = item
       void _exhaustive

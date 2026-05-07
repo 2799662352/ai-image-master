@@ -1,7 +1,8 @@
 // src/main/index.ts - Electron 主进程 (TypeScript)
-import { app, BrowserWindow, ipcMain, dialog, Menu, shell, nativeTheme, net, clipboard } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, Menu, shell, nativeTheme, net, clipboard, nativeImage } from 'electron'
 import * as path from 'path'
 import * as fs from 'fs'
+import { fileURLToPath } from 'node:url'
 import { getAutoUpdaterInstance } from './updater'
 import {
   submitSplit,
@@ -697,6 +698,38 @@ ipcMain.handle('open-skills-folder', async () => {
   } catch (error: any) {
     console.error('打开 Skills 文件夹失败:', error)
     return { success: false, error: error.message, path: userSkillsDir }
+  }
+})
+
+// Shell helpers (clipboard / save dialog) — used by the Codex Agent Lightbox.
+ipcMain.handle('shell:copy-image', async (_event, uri: string) => {
+  try {
+    const filePath = uri.startsWith('file://') ? fileURLToPath(uri) : uri
+    const img = nativeImage.createFromPath(filePath)
+    if (img.isEmpty()) {
+      return { success: false, error: 'unable to load image' }
+    }
+    clipboard.writeImage(img)
+    return { success: true }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) }
+  }
+})
+
+ipcMain.handle('shell:save-as', async (_event, payload: { uri: string; suggestedName: string }) => {
+  try {
+    const { uri, suggestedName } = payload
+    const filePath = uri.startsWith('file://') ? fileURLToPath(uri) : uri
+    const result = await dialog.showSaveDialog({
+      defaultPath: suggestedName || path.basename(filePath),
+    })
+    if (result.canceled || !result.filePath) {
+      return { success: true, canceled: true }
+    }
+    await fs.promises.copyFile(filePath, result.filePath)
+    return { success: true, path: result.filePath }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) }
   }
 })
 

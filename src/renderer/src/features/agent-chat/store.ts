@@ -53,6 +53,12 @@ type AgentElectronApi = {
   }
 }
 
+interface PreviewState {
+  open: boolean
+  images: AttachmentRef[]
+  index: number
+}
+
 interface AgentChatState {
   isOpen: boolean
   threadId?: string
@@ -64,9 +70,11 @@ interface AgentChatState {
   messages: Message[]
   panelWidth: number
   setPanelWidth: (width: number) => void
-  preview?: { uri: string; name?: string; mime?: string }
-  openPreview: (preview: { uri: string; name?: string; mime?: string }) => void
+  preview: PreviewState
+  openPreview: (images: AttachmentRef[], startIndex: number) => void
   closePreview: () => void
+  nextPreview: () => void
+  prevPreview: () => void
   toggle: () => void
   setInput: (input: string) => void
   setError: (error?: string) => void
@@ -156,9 +164,24 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   isRunning: false,
   selectedModelId: readPersistedModelId(),
   panelWidth: readPersistedPanelWidth(),
-  preview: undefined,
-  openPreview: (preview) => set({ preview }),
-  closePreview: () => set({ preview: undefined }),
+  preview: { open: false, images: [], index: 0 },
+  openPreview: (images, startIndex) =>
+    set({
+      preview: {
+        open: true,
+        images,
+        index: Math.max(0, Math.min(startIndex, images.length - 1)),
+      },
+    }),
+  closePreview: () => set((s) => ({ preview: { ...s.preview, open: false } })),
+  nextPreview: () =>
+    set((s) => ({
+      preview: { ...s.preview, index: Math.min(s.preview.index + 1, s.preview.images.length - 1) },
+    })),
+  prevPreview: () =>
+    set((s) => ({
+      preview: { ...s.preview, index: Math.max(s.preview.index - 1, 0) },
+    })),
   setPanelWidth: (width) => {
     const clamped = Math.min(PANEL_WIDTH_MAX, Math.max(PANEL_WIDTH_MIN, width))
     try {
