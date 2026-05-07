@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest'
+import { EventEmitter } from 'node:events'
 import type { AddressInfo } from 'node:net'
+import { PassThrough } from 'node:stream'
 import WebSocket, { WebSocketServer } from 'ws'
-import { CodexLocalBackend, mapServerNotification } from '../CodexLocalBackend'
+import { buildCodexSpawnEnv, CodexLocalBackend, mapServerNotification } from '../CodexLocalBackend'
 import type { AgentStreamEvent } from '../../../types/agent'
 import type { AgentInput } from '../types'
 
@@ -229,5 +231,65 @@ describe('CodexLocalBackend (with a fake codex app-server)', () => {
     expect(reply).toBeDefined()
     expect(reply).toMatchObject({ jsonrpc: '2.0', id: 999 })
     expect(reply.result !== undefined || reply.error !== undefined).toBe(true)
+  })
+})
+
+describe('buildCodexSpawnEnv', () => {
+  it('sets OPENAI_API_KEY when apiKey is non-empty', () => {
+    const env = buildCodexSpawnEnv({ FOO: 'bar' } as NodeJS.ProcessEnv, 'sk-test-123')
+    expect(env.OPENAI_API_KEY).toBe('sk-test-123')
+    expect(env.FOO).toBe('bar')
+  })
+
+  it('omits OPENAI_API_KEY when apiKey is an empty string and strips any pre-existing value', () => {
+    const env = buildCodexSpawnEnv(
+      { FOO: 'bar', OPENAI_API_KEY: 'leftover' } as NodeJS.ProcessEnv,
+      '',
+    )
+    expect(env.OPENAI_API_KEY).toBeUndefined()
+    expect(env.FOO).toBe('bar')
+  })
+
+  it('omits OPENAI_API_KEY when apiKey is undefined and strips any pre-existing value', () => {
+    const env = buildCodexSpawnEnv(
+      { FOO: 'bar', OPENAI_API_KEY: 'leftover' } as NodeJS.ProcessEnv,
+      undefined,
+    )
+    expect(env.OPENAI_API_KEY).toBeUndefined()
+    expect(env.FOO).toBe('bar')
+  })
+})
+
+describe('CodexLocalBackend spawn env injection', () => {
+  function makeFakeChildProc(): any {
+    const proc = new EventEmitter() as any
+    proc.stdout = new PassThrough()
+    proc.stderr = new PassThrough()
+    let exitCode: number | null = null
+    proc.kill = (): boolean => {
+      if (exitCode !== null) return false
+      exitCode = 0
+      setImmediate(() => proc.emit('exit', 0, null))
+      return true
+    }
+    Object.defineProperty(proc, 'exitCode', { get: () => exitCode })
+    return proc
+  }
+
+  it('passes OPENAI_API_KEY to spawn when getApiKey returns a value', async () => {
+    let captured: NodeJS.ProcessEnv | undefined
+    const fakeProc = makeFakeChildProc()
+    const backend = new CodexLocalBackend({
+      resourceRoot: '/tmp/codex-fake-root',
+      getApiKey: () => 'sk-itest',
+      spawnFactory: ((_bin: string, _args: string[], opts: any) => {
+        captured = opts?.env
+        return fakeProc
+      }) as any,
+      connectTimeoutMs: 100,
+    })
+    await expect(backend.start()).rejects.toThrow()
+    expect(captured?.OPENAI_API_KEY).toBe('sk-itest')
+    await backend.stop()
   })
 })

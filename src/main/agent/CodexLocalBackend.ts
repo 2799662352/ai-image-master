@@ -12,6 +12,7 @@ export { mapServerNotification }
 
 const KILL_GRACE_MS = 2_000
 const STARTUP_LOG_TAIL = 8_000
+const DEFAULT_SPAWN_CONNECT_TIMEOUT_MS = 10_000
 
 export interface CodexLocalBackendOptions {
   /**
@@ -29,15 +30,54 @@ export interface CodexLocalBackendOptions {
    * running inside Electron.
    */
   resourceRoot?: string
+  /**
+   * Resolves the user's OpenAI API key at spawn time. When it returns a
+   * non-empty trimmed string, the value is forwarded to the spawned `codex`
+   * binary via `OPENAI_API_KEY`. When it returns `undefined`/empty, no
+   * `OPENAI_API_KEY` is forwarded — even if it exists in the parent process
+   * env — so callers can rely on an explicit key path.
+   */
+  getApiKey?: () => string | undefined
+  /**
+   * Test seam for the `child_process.spawn` call in the spawn-mode branch.
+   * Defaults to Node's `spawn`. Tests inject a stub that records the call
+   * (notably the `env` arg) and returns an `EventEmitter`-shaped child.
+   */
+  spawnFactory?: typeof spawn
+  /**
+   * Connect timeout forwarded to `CodexProtocolClient` in the spawn-mode
+   * branch. Defaults to 10s in production. Tests can shrink this so an
+   * unreachable spawn fails fast without affecting the wsUrl branch.
+   */
+  connectTimeoutMs?: number
+}
+
+/**
+ * Build the env passed to the spawned `codex` binary. Pulls every var from
+ * `baseEnv` and only sets `OPENAI_API_KEY` when `apiKey` has a non-empty
+ * trimmed value; otherwise it strips any pre-existing `OPENAI_API_KEY` so
+ * the spawned process cannot accidentally inherit a stale key.
+ */
+export function buildCodexSpawnEnv(
+  baseEnv: NodeJS.ProcessEnv,
+  apiKey: string | undefined,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...baseEnv }
+  const trimmed = apiKey?.trim() ?? ''
+  if (trimmed) env.OPENAI_API_KEY = trimmed
+  else delete env.OPENAI_API_KEY
+  return env
 }
 
 export class CodexLocalBackend implements IAgentBackend {
   private proc: ChildProcess | null = null
   private client: CodexProtocolClient | null = null
+  private readonly options: CodexLocalBackendOptions
   private readonly wsUrlOverride: string | undefined
   private readonly resourceRootOverride: string | undefined
 
   constructor(options: CodexLocalBackendOptions = {}) {
+    this.options = options
     this.wsUrlOverride = options.wsUrl
     this.resourceRootOverride = options.resourceRoot
   }
@@ -70,9 +110,12 @@ export class CodexLocalBackend implements IAgentBackend {
       recentOutput.push(text)
     }
 
-    const proc = spawn(bin, buildCodexLaunchArgs({ listenUrl }), {
+    const apiKey = this.options.getApiKey?.()
+    const env = buildCodexSpawnEnv(process.env, apiKey)
+    const spawnFactory = this.options.spawnFactory ?? spawn
+    const proc = spawnFactory(bin, buildCodexLaunchArgs({ listenUrl }), {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env },
+      env,
     })
     this.proc = proc
 
@@ -105,6 +148,7 @@ export class CodexLocalBackend implements IAgentBackend {
     const client = new CodexProtocolClient({
       url: listenUrl,
       clientInfo: { name: 'catimation', version: '0.0.0' },
+      connectTimeoutMs: this.options.connectTimeoutMs ?? DEFAULT_SPAWN_CONNECT_TIMEOUT_MS,
       onLog: (line) => log.write(line + '\n'),
     })
     this.client = client
