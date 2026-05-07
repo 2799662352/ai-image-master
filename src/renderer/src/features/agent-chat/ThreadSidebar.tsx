@@ -17,6 +17,7 @@ import { useAgentChatStore } from './store'
 export function ThreadSidebar(): JSX.Element | null {
   const sidebarOpen = useAgentChatStore((s) => s.sidebarOpen)
   const sidebarWidth = useAgentChatStore((s) => s.sidebarWidth)
+  const setSidebarWidth = useAgentChatStore((s) => s.setSidebarWidth)
   const threadList = useAgentChatStore((s) => s.threadList)
   const threadListLoading = useAgentChatStore((s) => s.threadListLoading)
   const isRunning = useAgentChatStore((s) => s.isRunning)
@@ -28,6 +29,33 @@ export function ThreadSidebar(): JSX.Element | null {
 
   const groups: ThreadGroup[] = useMemo(() => groupThreadsByRecency(threadList), [threadList])
 
+  // Drag the left edge to resize. The store action clamps to [200, 360] and
+  // persists to localStorage for us — we just need to translate cursor X into
+  // a width relative to the right edge.
+  const onResizePointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      e.preventDefault()
+      const prevUserSelect = document.body.style.userSelect
+      const prevCursor = document.body.style.cursor
+      document.body.style.userSelect = 'none'
+      document.body.style.cursor = 'ew-resize'
+
+      function onMove(ev: PointerEvent): void {
+        const next = window.innerWidth - ev.clientX
+        setSidebarWidth(next)
+      }
+      function onUp(): void {
+        document.body.style.userSelect = prevUserSelect
+        document.body.style.cursor = prevCursor
+        document.removeEventListener('pointermove', onMove)
+        document.removeEventListener('pointerup', onUp)
+      }
+      document.addEventListener('pointermove', onMove)
+      document.addEventListener('pointerup', onUp)
+    },
+    [setSidebarWidth],
+  )
+
   if (!sidebarOpen) return null
 
   return (
@@ -37,6 +65,14 @@ export function ThreadSidebar(): JSX.Element | null {
       className="fixed top-0 right-0 z-[40000] flex h-screen flex-col border-l border-zinc-800/80 bg-zinc-950/95 text-zinc-200 backdrop-blur"
       style={{ width: sidebarWidth }}
     >
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize sidebar"
+        onPointerDown={onResizePointerDown}
+        className="absolute left-0 top-0 z-10 h-full w-1 cursor-ew-resize hover:bg-cyan-400/40 active:bg-cyan-400/60"
+        data-testid="thread-sidebar-resize"
+      />
       <header className="flex items-center justify-between gap-2 border-b border-zinc-800/80 px-3 py-2.5">
         <span className="text-[10px] font-semibold uppercase tracking-[0.32em] text-cyan-300/70">
           Threads

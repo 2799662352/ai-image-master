@@ -107,4 +107,33 @@ describe('ThreadSidebar', () => {
     const { container } = render(<ThreadSidebar />)
     expect(container.firstChild).toBeNull()
   })
+
+  it('exposes a left-edge resize separator that updates sidebarWidth via setSidebarWidth (with clamp)', () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: 1600 })
+    render(<ThreadSidebar />)
+    const handle = screen.getByTestId('thread-sidebar-resize') as HTMLElement
+    expect(handle.getAttribute('aria-orientation')).toBe('vertical')
+
+    // pointermove/up are attached to document by the component, so dispatch
+    // PointerEvent there directly (RTL fireEvent can't take `window`).
+    function move(clientX: number): void {
+      document.dispatchEvent(
+        new PointerEvent('pointermove', { bubbles: true, cancelable: true, clientX }),
+      )
+    }
+    function up(): void {
+      document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true }))
+    }
+
+    fireEvent.pointerDown(handle, { clientX: 1360 })
+    move(1320) // width = 1600 - 1320 = 280, in [200, 360]
+    up()
+    expect(useAgentChatStore.getState().sidebarWidth).toBe(280)
+
+    // Drag past max — clamped to 360.
+    fireEvent.pointerDown(handle, { clientX: 1360 })
+    move(1000)
+    up()
+    expect(useAgentChatStore.getState().sidebarWidth).toBe(360)
+  })
 })
