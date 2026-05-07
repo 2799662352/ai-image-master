@@ -1,4 +1,5 @@
 import type { PGlite } from '@electric-sql/pglite'
+import { Client as PgClient } from 'pg'
 
 // Auto-generated DDL from prisma/schema.prisma.
 // To regenerate after schema changes, run:
@@ -92,4 +93,22 @@ export async function ensureSchema(db: PGlite): Promise<void> {
   )
   if (result.rows[0]?.oid) return
   await db.exec(INIT_SQL)
+}
+
+// Variant that works against ANY Postgres-compatible URL — embedded PGlite
+// (via its socket server on 5433) or a real external Postgres (e.g. 5432).
+// Uses node-postgres' simple query protocol so the multi-statement INIT_SQL
+// runs as a single round-trip without splitting.
+export async function ensureSchemaViaConnection(connectionString: string): Promise<void> {
+  const client = new PgClient({ connectionString })
+  await client.connect()
+  try {
+    const probe = await client.query<{ oid: string | null }>(
+      `SELECT to_regclass('"AgentThread"') as oid`,
+    )
+    if (probe.rows[0]?.oid) return
+    await client.query(INIT_SQL)
+  } finally {
+    await client.end()
+  }
 }
