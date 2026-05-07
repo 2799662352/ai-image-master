@@ -6,6 +6,8 @@ CREATE TABLE "AgentThread" (
     "id" TEXT NOT NULL,
     "title" TEXT NOT NULL,
     "model" TEXT NOT NULL,
+    "manualTitle" BOOLEAN NOT NULL DEFAULT false,
+    "lastMessageAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -17,7 +19,7 @@ CREATE TABLE "AgentMessage" (
     "id" TEXT NOT NULL,
     "threadId" TEXT NOT NULL,
     "role" TEXT NOT NULL,
-    "contentJson" JSONB NOT NULL,
+    "items" JSONB NOT NULL DEFAULT '[]',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "AgentMessage_pkey" PRIMARY KEY ("id")
@@ -62,6 +64,9 @@ CREATE TABLE "AgentAttachment" (
 
     CONSTRAINT "AgentAttachment_pkey" PRIMARY KEY ("id")
 );
+
+-- CreateIndex
+CREATE INDEX "AgentThread_lastMessageAt_idx" ON "AgentThread"("lastMessageAt" DESC);
 
 -- CreateIndex
 CREATE INDEX "AgentMessage_threadId_createdAt_idx" ON "AgentMessage"("threadId", "createdAt");

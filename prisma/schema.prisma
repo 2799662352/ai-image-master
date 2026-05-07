@@ -7,24 +7,28 @@ datasource db {
 }
 
 model AgentThread {
-  id          String            @id @default(cuid())
-  title       String
-  model       String
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
-  messages    AgentMessage[]
-  artifacts   AgentArtifact[]
-  attachments AgentAttachment[]
+  id            String            @id @default(cuid())
+  title         String
+  model         String
+  manualTitle   Boolean           @default(false)
+  lastMessageAt DateTime?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  messages      AgentMessage[]
+  artifacts     AgentArtifact[]
+  attachments   AgentAttachment[]
+
+  @@index([lastMessageAt(sort: Desc)])
 }
 
 model AgentMessage {
-  id          String          @id @default(cuid())
-  threadId    String
-  role        String
-  contentJson Json
-  createdAt   DateTime        @default(now())
-  thread      AgentThread     @relation(fields: [threadId], references: [id], onDelete: Cascade)
-  toolCalls   AgentToolCall[]
+  id        String          @id @default(cuid())
+  threadId  String
+  role      String
+  items     Json            @default("[]")
+  createdAt DateTime        @default(now())
+  thread    AgentThread     @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  toolCalls AgentToolCall[]
 
   @@index([threadId, createdAt])
 }
