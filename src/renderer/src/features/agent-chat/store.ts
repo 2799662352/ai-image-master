@@ -4,6 +4,7 @@ import type {
   AgentCancelPayload,
   AgentSendMessagePayload,
   AgentStreamEvent,
+  AgentThreadSummary,
   AgentTokenUsage,
   ItemDeltaPatch,
 } from '../../../../types/agent'
@@ -16,6 +17,23 @@ const PANEL_WIDTH_STORAGE_KEY = 'catimation.agent.panelWidth'
 const PANEL_WIDTH_DEFAULT = 420
 const PANEL_WIDTH_MIN = 360
 const PANEL_WIDTH_MAX = 720
+
+const SIDEBAR_OPEN_STORAGE_KEY = 'catimation.agent.sidebarOpen'
+const SIDEBAR_WIDTH_STORAGE_KEY = 'catimation.agent.sidebarWidth'
+const SIDEBAR_WIDTH_DEFAULT = 240
+const SIDEBAR_WIDTH_MIN = 200
+const SIDEBAR_WIDTH_MAX = 360
+const SIDEBAR_OPEN_DEFAULT = true
+const THREAD_LIST_REFRESH_DEBOUNCE_MS = 500
+
+let threadListRefreshTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleThreadListRefresh(run: () => void): void {
+  if (threadListRefreshTimer) clearTimeout(threadListRefreshTimer)
+  threadListRefreshTimer = setTimeout(() => {
+    threadListRefreshTimer = null
+    run()
+  }, THREAD_LIST_REFRESH_DEBOUNCE_MS)
+}
 
 function readPersistedModelId(): string {
   try {
@@ -47,10 +65,52 @@ function readPersistedPanelWidth(): number {
   }
 }
 
+function readPersistedSidebarOpen(): boolean {
+  try {
+    const raw = globalThis.localStorage?.getItem(SIDEBAR_OPEN_STORAGE_KEY)
+    if (raw == null) return SIDEBAR_OPEN_DEFAULT
+    return raw === 'true'
+  } catch {
+    return SIDEBAR_OPEN_DEFAULT
+  }
+}
+
+function readPersistedSidebarWidth(): number {
+  try {
+    const raw = globalThis.localStorage?.getItem(SIDEBAR_WIDTH_STORAGE_KEY)
+    if (!raw) return SIDEBAR_WIDTH_DEFAULT
+    const n = parseInt(raw, 10)
+    if (Number.isNaN(n) || n < SIDEBAR_WIDTH_MIN || n > SIDEBAR_WIDTH_MAX) return SIDEBAR_WIDTH_DEFAULT
+    return n
+  } catch {
+    return SIDEBAR_WIDTH_DEFAULT
+  }
+}
+
+function persistSidebarOpen(open: boolean): void {
+  try {
+    globalThis.localStorage?.setItem(SIDEBAR_OPEN_STORAGE_KEY, String(open))
+  } catch {
+    /* localStorage unavailable; silently ignore */
+  }
+}
+
+function persistSidebarWidth(w: number): void {
+  try {
+    globalThis.localStorage?.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(w))
+  } catch {
+    /* localStorage unavailable; silently ignore */
+  }
+}
+
 type AgentElectronApi = {
   agent?: {
     sendMessage: (payload: AgentSendMessagePayload) => Promise<{ threadId: string }>
     cancel: (payload: AgentCancelPayload) => Promise<unknown>
+    listThreads?: () => Promise<AgentThreadSummary[]>
+    openThread?: (id: string) => Promise<unknown>
+    renameThread?: (id: string, title: string) => Promise<void>
+    deleteThread?: (id: string) => Promise<void>
   }
 }
 
@@ -94,6 +154,20 @@ interface AgentChatState {
   newThread: () => void
   switchThread: (threadId: string) => Promise<void>
   applyEvent: (event: AgentStreamEvent) => void
+
+  // ----- Sidebar / thread list -----
+  sidebarOpen: boolean
+  sidebarWidth: number
+  threadList: AgentThreadSummary[]
+  threadListLoading: boolean
+  bootstrapped: boolean
+
+  bootstrap: () => Promise<void>
+  refreshThreadList: () => Promise<void>
+  toggleSidebar: () => void
+  setSidebarWidth: (width: number) => void
+  renameActiveThread: (title: string) => Promise<void>
+  deleteThread: (threadId: string) => Promise<void>
 }
 
 function createId(): string {
@@ -221,6 +295,11 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   selectedModelId: readPersistedModelId(),
   panelWidth: readPersistedPanelWidth(),
   tokenUsage: undefined,
+  sidebarOpen: readPersistedSidebarOpen(),
+  sidebarWidth: readPersistedSidebarWidth(),
+  threadList: [],
+  threadListLoading: false,
+  bootstrapped: false,
   preview: { open: false, images: [], index: 0 },
   openPreview: (images, startIndex) => {
     if (images.length === 0) return
@@ -451,6 +530,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       }
       case 'turn_completed':
         set({ isRunning: false })
+        scheduleThreadListRefresh(() => void get().refreshThreadList())
         break
       case 'token_usage_updated':
         // Just overwrite — Codex sends cumulative counts. The header meter
@@ -471,6 +551,73 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         break
       }
     }
+  },
+
+  bootstrap: async () => {
+    if (get().bootstrapped) return
+    set({ bootstrapped: true, threadListLoading: true })
+    const agent = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.agent
+    if (!agent?.listThreads) {
+      set({ threadListLoading: false })
+      return
+    }
+    try {
+      const list = await agent.listThreads()
+      set({ threadList: list })
+      const top = list[0]
+      if (top && agent.openThread) {
+        await get().switchThread(top.id)
+      }
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : String(err) })
+    } finally {
+      set({ threadListLoading: false })
+    }
+  },
+
+  refreshThreadList: async () => {
+    const agent = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.agent
+    if (!agent?.listThreads) return
+    try {
+      const list = await agent.listThreads()
+      set({ threadList: list })
+    } catch {
+      /* swallow refresh errors — stale list is preferable to a banner */
+    }
+  },
+
+  toggleSidebar: () => {
+    const next = !get().sidebarOpen
+    persistSidebarOpen(next)
+    set({ sidebarOpen: next })
+  },
+
+  setSidebarWidth: (width) => {
+    const clamped = Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, Math.round(width)))
+    persistSidebarWidth(clamped)
+    set({ sidebarWidth: clamped })
+  },
+
+  renameActiveThread: async (title) => {
+    const id = get().threadId
+    if (!id) return
+    const trimmed = title.trim()
+    if (trimmed.length === 0) return
+    const agent = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.agent
+    if (!agent?.renameThread) return
+    await agent.renameThread(id, trimmed)
+    await get().refreshThreadList()
+  },
+
+  deleteThread: async (threadId) => {
+    const agent = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.agent
+    if (!agent?.deleteThread) return
+    await agent.deleteThread(threadId)
+    if (get().threadId === threadId) {
+      // Drop into the empty-thread state and let the user pick another row.
+      set({ threadId: undefined, messages: [], tokenUsage: undefined, error: undefined, isRunning: false })
+    }
+    await get().refreshThreadList()
   },
 }))
 
