@@ -197,28 +197,29 @@ Each message holds at most ~20 items, so O(n) scans are fine — no need for a s
 
 ### 4.4 Persistence
 
-Postgres `AgentMessage` adds a JSONB column:
+The existing `AgentMessage.contentJson` JSONB column is **renamed** to `items` (it has no production writers yet — confirmed via codebase search — so renaming is safe and avoids a redundant column). The new shape stored in this column is `TimelineItem[]`.
 
-```sql
-ALTER TABLE "AgentMessage" ADD COLUMN "items" JSONB NOT NULL DEFAULT '[]';
+Prisma migration:
 
--- Migrate existing rows into a single TextItem
-UPDATE "AgentMessage"
-SET "items" = jsonb_build_array(
-  jsonb_build_object(
-    'type', 'text',
-    'id', id,
-    'startedAt', extract(epoch from "createdAt") * 1000,
-    'content', content
-  )
-)
-WHERE jsonb_array_length("items") = 0 AND content IS NOT NULL;
+```prisma
+model AgentMessage {
+  id        String          @id @default(cuid())
+  threadId  String
+  role      String
+  items     Json            @default("[]")     // renamed from contentJson; shape: TimelineItem[]
+  createdAt DateTime        @default(now())
+  thread    AgentThread     @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  toolCalls AgentToolCall[]
+
+  @@index([threadId, createdAt])
+}
 ```
 
-The legacy `content` column is retained as a read-only fallback / search index.
+Generated SQL: `ALTER TABLE "AgentMessage" RENAME COLUMN "contentJson" TO "items";` plus a default-clause adjustment.
 
-**Read path:** prefer `items`; fall back to wrapping `content` only if `items` is empty.
-**Write path:** on `turn/completed`, overwrite `items` with the current message's array. Mid-stream state isn't persisted — if Electron crashes mid-turn, the unfinished message is lost (acceptable: no thread is "saved" until the turn completes anyway).
+**Write path:** on `turn/completed`, the AgentManager serializes the in-memory message's `items` array and stores it in the column. Mid-stream state isn't persisted — if Electron crashes mid-turn, the unfinished message is lost (acceptable: no thread is "saved" until the turn completes anyway).
+
+**Read path:** `loadThread` deserializes `items` directly. Existing rows in the column (if any) currently have arbitrary shape; the deserializer treats anything that isn't an array as `[]` and the row renders as empty (no production data is at risk because no writer exists yet).
 
 **Why JSONB, not a separate `AgentMessageItem` table:**
 
