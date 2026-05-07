@@ -992,6 +992,19 @@ The complete store code should be ~180 lines. The `applyEvent` switch cases:
 - `turn_completed` → `isRunning = false`
 - `error` → `error = event.error, isRunning = false`
 
+**Important — empty itemId fallback:** Codex may emit `item/reasoning/textDelta` notifications without a stable `itemId`. If `event.itemId` is falsy/empty, the store must synthesize a deterministic fallback ID using the item type and `turnId` (e.g. `reasoning-${turnId}` or `text-${turnId}`) so repeated deltas upsert into the same item rather than creating new ones each time.
+
+**Item factory map:** When `item_started` arrives for an unknown item, the factory creates an empty item of the matching type:
+
+| itemType | factory output |
+|----------|---------------|
+| `text` | `{ type: 'text', id, startedAt, content: '' }` |
+| `reasoning` | `{ type: 'reasoning', id, startedAt, content: '' }` |
+| `shell` | `{ type: 'shell', id, startedAt, command: payload.command ?? '', cwd: payload.cwd, stdout: '', stderr: '' }` |
+| `fileEdit` | `{ type: 'fileEdit', id, startedAt, changes: [], totalAdded: 0, totalRemoved: 0 }` |
+
+If `item_delta` or `item_completed` arrives before `item_started` (out-of-order delivery), the factory is invoked at delta time using the same map — the upsert helper handles this transparently.
+
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `npx vitest run src/renderer/src/features/agent-chat/__tests__/store.test.ts`
