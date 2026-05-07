@@ -140,11 +140,12 @@ function applyItemPatch(item: TimelineItem, patch: ItemDeltaPatch): TimelineItem
     }
     return item
   }
-  return { ...item, ...patch.fields } as TimelineItem
+  // type: item.type reaffirmation guards the discriminant from patch.fields.
+  return { ...item, ...patch.fields, type: item.type } as typeof item
 }
 
 function applyItemCompleted(item: TimelineItem, final: Record<string, unknown>): TimelineItem {
-  return { ...item, ...final, endedAt: Date.now() } as TimelineItem
+  return { ...item, ...final, type: item.type, endedAt: Date.now() } as typeof item
 }
 
 export const useAgentChatStore = create<AgentChatState>((set, get) => ({
@@ -303,6 +304,12 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       case 'cancelled':
         set({ isRunning: false })
         break
+      default: {
+        // exhaustiveness: every AgentStreamEvent variant must be handled above.
+        const _exhaustive: never = event
+        void _exhaustive
+        break
+      }
     }
   },
 }))
