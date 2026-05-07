@@ -11,6 +11,11 @@ export function registerAgentIpc(manager: AgentManager, router: ToolRouter): voi
   })
   ipcMain.handle('agent:list-threads', () => manager.listThreads())
   ipcMain.handle('agent:load-thread', (_event, threadId: string) => manager.loadThread(threadId))
+  ipcMain.handle('agent:open-thread', (_event, threadId: string) => manager.openThread(threadId))
+  ipcMain.handle('agent:rename-thread', (_event, threadId: string, title: string) =>
+    manager.renameThread(threadId, title),
+  )
+  ipcMain.handle('agent:delete-thread', (_event, threadId: string) => manager.deleteThread(threadId))
   ipcMain.handle('agent:set-api-key', async (_event, key: unknown) => {
     try {
       await manager.setCodexApiKey(typeof key === 'string' ? key : '')
