@@ -7,6 +7,7 @@ interface SettingsState {
   activeSiteKey: string
   apiKey: string
   visionApiKey: string
+  codexApiKey: string
   localPort: string
   connectionStatus: 'idle' | 'testing' | 'success' | 'error'
   saving: boolean
@@ -16,16 +17,20 @@ interface SettingsState {
   switchSite: (key: string, api: ApiActions) => void
   setApiKey: (key: string) => void
   setVisionApiKey: (key: string) => void
+  setCodexApiKey: (key: string) => void
   setLocalPort: (port: string, api: ApiActions) => void
   testConnection: (api: ApiActions) => Promise<boolean>
   saveAll: (api: ApiActions) => Promise<void>
 }
+
+const CODEX_API_KEY_STORAGE_KEY = 'codex_api_key'
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   sites: {},
   activeSiteKey: '',
   apiKey: '',
   visionApiKey: '',
+  codexApiKey: '',
   localPort: '3000',
   connectionStatus: 'idle',
   saving: false,
@@ -41,12 +46,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       const apiKey = storedKey || currentSite?.defaultApiKey || ''
 
       const visionKey = api.getStoredVisionApiKey(currentKey)
+      const codexKey = localStorage.getItem(CODEX_API_KEY_STORAGE_KEY) ?? ''
 
       set({
         sites,
         activeSiteKey: currentKey,
         apiKey,
         visionApiKey: visionKey || '',
+        codexApiKey: codexKey,
         localPort: api.getLocalPort(),
         connectionStatus: 'idle',
         loadError: null,
@@ -73,6 +80,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   setVisionApiKey: (key) => set({ visionApiKey: key }),
 
+  setCodexApiKey: (key) => set({ codexApiKey: key.trim() }),
+
   setLocalPort: (port, api) => {
     api.setLocalPort(port)
     const sites = api.getAllSites()
@@ -96,6 +105,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     try {
       api.saveApiKey(get().apiKey)
       api.saveVisionApiKey(get().visionApiKey)
+      localStorage.setItem(CODEX_API_KEY_STORAGE_KEY, get().codexApiKey)
     } finally {
       set({ saving: false })
     }
