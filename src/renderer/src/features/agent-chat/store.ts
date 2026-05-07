@@ -1,15 +1,20 @@
 import { create } from 'zustand'
 import type {
   AgentAttachmentInput,
-  AgentArtifact,
   AgentCancelPayload,
   AgentSendMessagePayload,
   AgentStreamEvent,
+  ItemDeltaPatch,
 } from '../../../../types/agent'
+import type { AttachmentRef, Message, TimelineItem } from '../../../../types/agent-timeline'
+import { upsertItemInLastMessage } from '../../../../types/agent-timeline'
 import { AGENT_MODELS, DEFAULT_MODEL_ID } from './models'
-import type { AgentChatMessage, AgentChatToolEvent } from './types'
 
 const SELECTED_MODEL_STORAGE_KEY = 'catimation.agent.selectedModel'
+const PANEL_WIDTH_STORAGE_KEY = 'catimation.agent.panelWidth'
+const PANEL_WIDTH_DEFAULT = 420
+const PANEL_WIDTH_MIN = 360
+const PANEL_WIDTH_MAX = 720
 
 function readPersistedModelId(): string {
   try {
@@ -29,6 +34,18 @@ function persistModelId(id: string): void {
   }
 }
 
+function readPersistedPanelWidth(): number {
+  try {
+    const raw = globalThis.localStorage?.getItem(PANEL_WIDTH_STORAGE_KEY)
+    if (!raw) return PANEL_WIDTH_DEFAULT
+    const n = parseInt(raw, 10)
+    if (Number.isNaN(n) || n < PANEL_WIDTH_MIN || n > PANEL_WIDTH_MAX) return PANEL_WIDTH_DEFAULT
+    return n
+  } catch {
+    return PANEL_WIDTH_DEFAULT
+  }
+}
+
 type AgentElectronApi = {
   agent?: {
     sendMessage: (payload: AgentSendMessagePayload) => Promise<{ threadId: string }>
@@ -41,13 +58,15 @@ interface AgentChatState {
   threadId?: string
   input: string
   attachments: AgentAttachmentInput[]
-  artifacts: AgentArtifact[]
-  messages: AgentChatMessage[]
-  reasoning: string
-  toolEvents: AgentChatToolEvent[]
   isRunning: boolean
   error?: string
   selectedModelId: string
+  messages: Message[]
+  panelWidth: number
+  setPanelWidth: (width: number) => void
+  preview?: { uri: string; name?: string; mime?: string }
+  openPreview: (preview: { uri: string; name?: string; mime?: string }) => void
+  closePreview: () => void
   toggle: () => void
   setInput: (input: string) => void
   setError: (error?: string) => void
@@ -69,16 +88,85 @@ function getAgentApi(): NonNullable<AgentElectronApi['agent']> {
   return agent
 }
 
+function resolveItemId(event: { itemId: string; itemType: TimelineItem['type']; turnId?: string }): string {
+  if (event.itemId && event.itemId.length > 0) return event.itemId
+  return `${event.itemType}-${event.turnId ?? 'no-turn'}`
+}
+
+function createItemFromStarted(itemType: TimelineItem['type'], itemId: string, payload: Record<string, unknown>): TimelineItem {
+  const now = Date.now()
+  switch (itemType) {
+    case 'text':
+      return { type: 'text', id: itemId, startedAt: now, content: '' }
+    case 'reasoning':
+      return { type: 'reasoning', id: itemId, startedAt: now, content: '' }
+    case 'shell':
+      return {
+        type: 'shell',
+        id: itemId,
+        startedAt: now,
+        command: typeof payload.command === 'string' ? payload.command : '',
+        cwd: typeof payload.cwd === 'string' ? payload.cwd : undefined,
+        stdout: '',
+        stderr: '',
+      }
+    case 'fileEdit':
+      return { type: 'fileEdit', id: itemId, startedAt: now, changes: [], totalAdded: 0, totalRemoved: 0 }
+    case 'attachment':
+      return { type: 'attachment', id: itemId, startedAt: now, attachments: [] }
+    case 'artifact':
+      return { type: 'artifact', id: itemId, startedAt: now, artifacts: [] }
+  }
+}
+
+function ensureAssistantMessage(messages: Message[]): Message[] {
+  const last = messages[messages.length - 1]
+  if (last?.role === 'assistant') return messages
+  const newMsg: Message = { id: createId(), role: 'assistant', createdAt: Date.now(), items: [] }
+  return [...messages, newMsg]
+}
+
+function applyItemPatch(item: TimelineItem, patch: ItemDeltaPatch): TimelineItem {
+  if (patch.kind === 'appendText') {
+    const { field, text } = patch
+    if (field === 'content') {
+      if (item.type === 'text' || item.type === 'reasoning') {
+        return { ...item, content: item.content + text }
+      }
+      return item
+    }
+    if (item.type === 'shell' && (field === 'stdout' || field === 'stderr')) {
+      return { ...item, [field]: item[field] + text }
+    }
+    return item
+  }
+  return { ...item, ...patch.fields } as TimelineItem
+}
+
+function applyItemCompleted(item: TimelineItem, final: Record<string, unknown>): TimelineItem {
+  return { ...item, ...final, endedAt: Date.now() } as TimelineItem
+}
+
 export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   isOpen: false,
   input: '',
   attachments: [],
-  artifacts: [],
   messages: [],
-  reasoning: '',
-  toolEvents: [],
   isRunning: false,
   selectedModelId: readPersistedModelId(),
+  panelWidth: readPersistedPanelWidth(),
+  preview: undefined,
+  openPreview: (preview) => set({ preview }),
+  closePreview: () => set({ preview: undefined }),
+  setPanelWidth: (width) => {
+    const clamped = Math.min(PANEL_WIDTH_MAX, Math.max(PANEL_WIDTH_MIN, width))
+    try {
+      globalThis.localStorage?.setItem(PANEL_WIDTH_STORAGE_KEY, String(clamped))
+    } catch {
+      // localStorage unavailable (SSR / sandbox); silently ignore.
+    }
+    set({ panelWidth: clamped })
+  },
   toggle: () => set((state) => ({ isOpen: !state.isOpen })),
   setInput: (input) => set({ input }),
   setError: (error) => set({ error }),
@@ -94,19 +182,35 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   send: async () => {
     const state = get()
     const content = state.input.trim()
-    if (!content || state.isRunning) return
-
     const attachments = state.attachments
+    if (state.isRunning) return
+    if (!content && attachments.length === 0) return
+
     const modelId = state.selectedModelId
+    const now = Date.now()
+    const items: TimelineItem[] = []
+    if (attachments.length > 0) {
+      const refs: AttachmentRef[] = attachments.map((a) => ({
+        id: createId(),
+        kind: a.mime.startsWith('image/') ? 'image' : 'file',
+        name: a.name,
+        mime: a.mime,
+        size: a.size,
+        uri: a.path ?? '',
+      }))
+      items.push({ type: 'attachment', id: createId(), startedAt: now, attachments: refs })
+    }
+    if (content.length > 0) {
+      items.push({ type: 'text', id: createId(), startedAt: now, content })
+    }
+    const userMsg: Message = { id: createId(), role: 'user', createdAt: now, items }
+
     set((current) => ({
       input: '',
       attachments: [],
-      artifacts: [],
       error: undefined,
-      reasoning: '',
-      toolEvents: [],
       isRunning: true,
-      messages: [...current.messages, { id: createId(), role: 'user', content }],
+      messages: [...current.messages, userMsg],
     }))
 
     try {
@@ -145,46 +249,63 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     const activeThreadId = get().threadId
     if (activeThreadId && event.threadId !== activeThreadId) return
 
-    if (event.type === 'message_delta') {
-      set((state) => {
-        const last = state.messages[state.messages.length - 1]
-        if (last?.role === 'assistant') {
-          return {
-            messages: [
-              ...state.messages.slice(0, -1),
-              { ...last, content: last.content + (event.delta ?? '') },
-            ],
-          }
-        }
-        return {
-          messages: [
-            ...state.messages,
-            { id: createId(), role: 'assistant', content: event.delta ?? '' },
-          ],
-        }
-      })
-    }
-
-    if (event.type === 'reasoning_delta') {
-      set((state) => ({ reasoning: state.reasoning + (event.delta ?? '') }))
-    }
-
-    if ((event.type === 'tool_call_start' || event.type === 'tool_call_end') && event.tool) {
-      set((state) => ({ toolEvents: [...state.toolEvents, event.tool!] }))
-    }
-
-    if (event.type === 'artifact_created' && event.artifact) {
-      set((state) => ({ artifacts: [...state.artifacts, event.artifact!] }))
-    }
-
-    if (event.type === 'error') {
-      set({ error: event.error ?? 'Agent failed', isRunning: false })
-    }
-
-    if (event.type === 'turn_completed' || event.type === 'cancelled') {
-      set({ isRunning: false })
+    switch (event.type) {
+      case 'thread_created':
+        break
+      case 'item_started': {
+        const itemId = resolveItemId(event)
+        set((state) => {
+          const msgs = ensureAssistantMessage(state.messages)
+          const next = upsertItemInLastMessage(
+            msgs,
+            itemId,
+            () => createItemFromStarted(event.itemType, itemId, event.payload),
+            (item) => item,
+          )
+          return { messages: next }
+        })
+        break
+      }
+      case 'item_delta': {
+        const itemId = resolveItemId(event)
+        set((state) => {
+          const msgs = ensureAssistantMessage(state.messages)
+          const next = upsertItemInLastMessage(
+            msgs,
+            itemId,
+            () => createItemFromStarted(event.itemType, itemId, {}),
+            (item) => applyItemPatch(item, event.patch),
+          )
+          return { messages: next }
+        })
+        break
+      }
+      case 'item_completed': {
+        const itemId = resolveItemId(event)
+        set((state) => {
+          const msgs = ensureAssistantMessage(state.messages)
+          const next = upsertItemInLastMessage(
+            msgs,
+            itemId,
+            () => createItemFromStarted(event.itemType, itemId, {}),
+            (item) => applyItemCompleted(item, event.final),
+          )
+          return { messages: next }
+        })
+        break
+      }
+      case 'turn_completed':
+        set({ isRunning: false })
+        break
+      case 'error':
+        set({ error: event.error, isRunning: false })
+        break
+      case 'cancelled':
+        set({ isRunning: false })
+        break
     }
   },
 }))
 
-export type { AgentChatState, AgentChatMessage }
+export type { AgentChatState }
+export type { AgentChatMessage } from './types'
