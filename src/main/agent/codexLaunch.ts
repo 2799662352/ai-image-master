@@ -5,12 +5,20 @@ export const DEFAULT_LISTEN_URL = 'ws://127.0.0.1:7345'
  * `app-server`'s `-c` overrides so the spawned Codex talks to a third-party
  * OpenAI-compatible gateway (e.g. API易) instead of `api.openai.com`.
  *
- * We deliberately omit `wire_api` and `supports_websockets`:
- * - `wire_api` defaults to `"responses"` in Codex 0.128 (and that is the only
- *   supported value: `"chat"` was removed). Setting it explicitly is noise.
- * - `supports_websockets` defaults to `false` for custom providers, which is
- *   what we want — most third-party gateways proxy the Responses HTTP API but
- *   NOT the `wss://api.openai.com/v1/responses` WebSocket transport.
+ * We MUST pin `wire_api="responses"` for custom OpenAI-compatible gateways:
+ * after openai/codex#13592 (shipped in 0.128) Codex *prefers* websocket
+ * transport (`responses_websocket`) when `wire_api` is unset, and it falls
+ * through to the hard-coded `wss://api.openai.com/v1/responses` endpoint —
+ * NOT the gateway's `base_url`. With an apiyi/openrouter/etc. key that hits
+ * `wss://api.openai.com` it loops on `401 Unauthorized` and surfaces as
+ * "Reconnecting...N/5" warnings in the UI.
+ *
+ * Apiyi documents the plain HTTP `/v1/responses` endpoint
+ * (https://docs.apiyi.com/api-capabilities/openai-responses), so `wire_api =
+ * "responses"` is the correct value.
+ *
+ * The legacy `supports_websockets` field was removed by openai/codex#13592 —
+ * we never set it.
  */
 export interface CodexProviderConfig {
   id: string
@@ -31,6 +39,15 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     '--listen', url,
     '-c', 'approval_policy="never"',
     '-c', 'sandbox_mode="danger-full-access"',
+    // Surface chain-of-thought to the chat panel. Codex 0.128's defaults
+    // are tuned for `codex exec` / CI logs (raw reasoning hidden, summaries
+    // optional), which leaves our "Thought" card permanently empty even
+    // when `tokenUsage.reasoningOutputTokens > 0`. Both flags are documented
+    // at https://developers.openai.com/codex/config-advanced — we accept the
+    // tradeoff that raw reasoning may include sensitive scratchpad content
+    // since this is a local dev/agent surface.
+    '-c', 'show_raw_agent_reasoning=true',
+    '-c', 'model_reasoning_summary="auto"',
   ]
 
   const provider = options?.provider
@@ -41,6 +58,8 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
       '-c', `model_providers.${id}.name="${provider.name}"`,
       '-c', `model_providers.${id}.base_url="${provider.baseUrl}"`,
       '-c', `model_providers.${id}.env_key="${provider.envKey}"`,
+      // See `CodexProviderConfig` above for why this is mandatory.
+      '-c', `model_providers.${id}.wire_api="responses"`,
     )
   }
 

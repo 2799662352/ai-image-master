@@ -189,9 +189,18 @@ describe('AgentManager codex thread id mapping (regression: invalid thread id)',
     )
   })
 
+  // Shared no-op persistence hooks. Real flow requires addMessage +
+  // updateLastMessageAt to exist on the store; tests that don't care about
+  // persistence still need them defined to avoid "is not a function" crashes.
+  const persistStubs = {
+    addMessage: async () => ({ id: 'msg-stub' }),
+    updateLastMessageAt: async () => undefined,
+  }
+
   it('passes undefined to backend.send on first turn (lets backend create codex thread)', async () => {
     const events: AgentStreamEvent[] = []
     const fakeStore = {
+      ...persistStubs,
       createThread: async () => ({ id: 'cm-db-id-1' }),
     } as any
     const fakeAttachments = { ingest: async () => [] } as any
@@ -220,6 +229,7 @@ describe('AgentManager codex thread id mapping (regression: invalid thread id)',
   it('rewrites event.threadId from codex UUID to DB cuid before forwarding to renderer', async () => {
     const events: AgentStreamEvent[] = []
     const fakeStore = {
+      ...persistStubs,
       createThread: async () => ({ id: 'cm-db-id-2' }),
     } as any
     const fakeAttachments = { ingest: async () => [] } as any
@@ -249,6 +259,7 @@ describe('AgentManager codex thread id mapping (regression: invalid thread id)',
   it('on a second sendMessage with same DB threadId, passes the cached codex UUID to backend.send', async () => {
     const events: AgentStreamEvent[] = []
     const fakeStore = {
+      ...persistStubs,
       createThread: async () => ({ id: 'cm-db-id-3' }),
     } as any
     const fakeAttachments = { ingest: async () => [] } as any
@@ -282,6 +293,7 @@ describe('AgentManager codex thread id mapping (regression: invalid thread id)',
 
   it('forwards payload.model through to backend.send when caller selects a model', async () => {
     const fakeStore = {
+      ...persistStubs,
       createThread: async (args: { model: string }) => ({ id: 'cm-db-id-5', _model: args.model }),
     } as any
     const fakeAttachments = { ingest: async () => [] } as any
@@ -307,7 +319,7 @@ describe('AgentManager codex thread id mapping (regression: invalid thread id)',
   })
 
   it('falls back to default model when payload omits model', async () => {
-    const fakeStore = { createThread: async () => ({ id: 'cm-db-id-6' }) } as any
+    const fakeStore = { ...persistStubs, createThread: async () => ({ id: 'cm-db-id-6' }) } as any
     const fakeAttachments = { ingest: async () => [] } as any
     const backend = makeStubBackend([
       [
@@ -329,8 +341,229 @@ describe('AgentManager codex thread id mapping (regression: invalid thread id)',
     expect(backend.calls[0].input.model).toBe('gpt-5.5')
   })
 
+  it('persists user message immediately and assistant message on turn_completed (regression: empty thread history)', async () => {
+    // Before this test was added, AgentManager.forwardEvents only forwarded
+    // stream events to the renderer and never called store.addMessage. That
+    // meant: (a) restarting the app showed no chat history because
+    // AgentMessage rows didn't exist, and (b) ThreadTitleSummarizer's
+    // `messages.length < 2` gate always tripped so threads kept the
+    // 40-char content fallback as their title.
+    const addMessageCalls: Array<{ threadId: string; role: string; items: unknown }> = []
+    const lastMessageAtCalls: string[] = []
+    const fakeStore = {
+      createThread: async () => ({ id: 'cm-persist-1' }),
+      addMessage: async (args: { threadId: string; role: string; items: unknown }) => {
+        addMessageCalls.push(args)
+        return { id: `m-${addMessageCalls.length}` }
+      },
+      updateLastMessageAt: async (threadId: string) => {
+        lastMessageAtCalls.push(threadId)
+      },
+    } as any
+    const fakeAttachments = { ingest: async () => [] } as any
+
+    const backend = makeStubBackend([
+      [
+        { type: 'thread_created', threadId: CODEX_UUID },
+        { type: 'item_started', threadId: CODEX_UUID, turnId: 't1', itemId: 'a-1', itemType: 'text', payload: {} },
+        { type: 'item_delta', threadId: CODEX_UUID, turnId: 't1', itemId: 'a-1', itemType: 'text',
+          patch: { kind: 'appendText', field: 'content', text: 'hello ' } },
+        { type: 'item_delta', threadId: CODEX_UUID, turnId: 't1', itemId: 'a-1', itemType: 'text',
+          patch: { kind: 'appendText', field: 'content', text: 'world' } },
+        { type: 'item_completed', threadId: CODEX_UUID, turnId: 't1', itemId: 'a-1', itemType: 'text', final: {} },
+        { type: 'turn_completed', threadId: CODEX_UUID, turnId: 't1' },
+      ],
+    ])
+
+    const mgr = new AgentManager({
+      userDataDir: tmpDir,
+      store: fakeStore,
+      attachments: fakeAttachments,
+      eventSink: () => {},
+      backend,
+    })
+
+    await mgr.sendMessage({ content: 'hi there', attachments: [] })
+    await flushMicrotasks(40)
+
+    // First addMessage = the user turn (synchronous part of sendMessage).
+    expect(addMessageCalls.length).toBeGreaterThanOrEqual(2)
+    const userCall = addMessageCalls[0]
+    expect(userCall).toMatchObject({ threadId: 'cm-persist-1', role: 'user' })
+    expect(Array.isArray(userCall.items)).toBe(true)
+    const userItems = userCall.items as Array<{ type: string; content?: string }>
+    expect(userItems.find((i) => i.type === 'text')).toMatchObject({ type: 'text', content: 'hi there' })
+
+    // Second addMessage = the assistant turn (accumulated from streamed deltas
+    // and flushed on turn_completed).
+    const asstCall = addMessageCalls[1]
+    expect(asstCall).toMatchObject({ threadId: 'cm-persist-1', role: 'assistant' })
+    const asstItems = asstCall.items as Array<{ type: string; content?: string; endedAt?: number }>
+    const asstText = asstItems.find((i) => i.type === 'text')
+    expect(asstText?.content).toBe('hello world')
+    expect(asstText?.endedAt).toBeGreaterThan(0)
+
+    // updateLastMessageAt should be bumped after each persisted message.
+    expect(lastMessageAtCalls).toEqual(['cm-persist-1', 'cm-persist-1'])
+  })
+
+  it('persists assistant turn even when there is no streamed text item', async () => {
+    // Tool-only or empty turns: the assistant accumulator may be empty after
+    // streaming. We must NOT write a zero-item AgentMessage row, otherwise
+    // the timeline shows a phantom blank assistant bubble after restart.
+    const addMessageCalls: Array<{ role: string }> = []
+    const fakeStore = {
+      createThread: async () => ({ id: 'cm-persist-2' }),
+      addMessage: async (args: { threadId: string; role: string; items: unknown }) => {
+        addMessageCalls.push(args)
+        return { id: 'm-x' }
+      },
+      updateLastMessageAt: async () => undefined,
+    } as any
+    const fakeAttachments = { ingest: async () => [] } as any
+    const backend = makeStubBackend([
+      [
+        { type: 'thread_created', threadId: CODEX_UUID },
+        { type: 'turn_completed', threadId: CODEX_UUID, turnId: 't1' },
+      ],
+    ])
+    const mgr = new AgentManager({
+      userDataDir: tmpDir,
+      store: fakeStore,
+      attachments: fakeAttachments,
+      eventSink: () => {},
+      backend,
+    })
+
+    await mgr.sendMessage({ content: 'hi', attachments: [] })
+    await flushMicrotasks(40)
+
+    // Exactly one addMessage call (the user one). No assistant row.
+    expect(addMessageCalls.map((c) => c.role)).toEqual(['user'])
+  })
+
+  // The user uploads files via the renderer file picker, which only gives us
+  // a buffer (no real path on disk visible to the agent). AttachmentService
+  // writes that buffer to `userData/agent/uploads/<sha>.<ext>` and returns
+  // an AgentAttachment row with `localPath`. Pre-fix `sendMessage` only
+  // forwarded `localImage` items to the backend AND never told the agent
+  // those paths in the prompt — so when the user asked "where is this
+  // file?" the agent had to guess (and guessed `C:\Program Files\...`,
+  // wasting tokens on shell tries). Fix: prepend a one-shot "[Attached
+  // files at these local paths:]" block to the text item we send to the
+  // backend, listing every uploaded file's localPath, original name, mime,
+  // and size. This is the ONLY place the agent learns about non-image
+  // attachments — they are never sent as protocol items.
+  it('injects the localPath of every attachment (image AND non-image) into the prompt sent to the backend', async () => {
+    const fakeStore = {
+      ...persistStubs,
+      createThread: async () => ({ id: 'cm-db-id-att' }),
+    } as any
+    const fakeAttachments = {
+      ingest: async () => [
+        {
+          id: 'att-1',
+          threadId: 'cm-db-id-att',
+          originalName: 'photo.png',
+          localPath: 'C:/uploads/abc.png',
+          mime: 'image/png',
+          size: 1234,
+          uploadedAt: new Date(),
+        },
+        {
+          id: 'att-2',
+          threadId: 'cm-db-id-att',
+          originalName: 'notes.txt',
+          localPath: 'C:/uploads/def.txt',
+          mime: 'text/plain',
+          size: 5678,
+          uploadedAt: new Date(),
+        },
+      ],
+    } as any
+    const backend = makeStubBackend([
+      [
+        { type: 'thread_created', threadId: CODEX_UUID },
+        { type: 'turn_completed', threadId: CODEX_UUID, turnId: 't1' },
+      ],
+    ])
+
+    const mgr = new AgentManager({
+      userDataDir: tmpDir,
+      store: fakeStore,
+      attachments: fakeAttachments,
+      eventSink: () => {},
+      backend,
+    })
+
+    await mgr.sendMessage({
+      content: '这个文件地址在哪里',
+      attachments: [
+        { name: 'photo.png', mime: 'image/png', buffer: new Uint8Array([1, 2, 3]).buffer },
+        { name: 'notes.txt', mime: 'text/plain', buffer: new Uint8Array([4, 5, 6]).buffer },
+      ],
+    })
+    await flushMicrotasks(20)
+
+    expect(backend.calls).toHaveLength(1)
+    const items = backend.calls[0].input.items
+    const textItem = items.find((i) => i.type === 'text') as { type: 'text'; text: string }
+    expect(textItem).toBeDefined()
+    // The agent must see BOTH paths verbatim — that's the whole point.
+    expect(textItem.text).toContain('C:/uploads/abc.png')
+    expect(textItem.text).toContain('C:/uploads/def.txt')
+    // Original filename should be there too so the agent can refer to files
+    // by the user-meaningful name when responding.
+    expect(textItem.text).toContain('photo.png')
+    expect(textItem.text).toContain('notes.txt')
+    // The original user prompt must still be present (we wrap it, not
+    // replace it).
+    expect(textItem.text).toContain('这个文件地址在哪里')
+    // Image still travels as a localImage protocol item so the model can
+    // actually see its pixels (text-prompt path-only is not enough for
+    // images). Non-images do NOT — they live only in the preamble.
+    const localImagePaths = items
+      .filter((i): i is Extract<typeof i, { type: 'localImage' }> => i.type === 'localImage')
+      .map((i) => i.path)
+    expect(localImagePaths).toEqual(['C:/uploads/abc.png'])
+  })
+
+  it('does not add an attachments preamble when there are no attachments', async () => {
+    const fakeStore = {
+      ...persistStubs,
+      createThread: async () => ({ id: 'cm-db-id-noatt' }),
+    } as any
+    const fakeAttachments = { ingest: async () => [] } as any
+    const backend = makeStubBackend([
+      [
+        { type: 'thread_created', threadId: CODEX_UUID },
+        { type: 'turn_completed', threadId: CODEX_UUID, turnId: 't1' },
+      ],
+    ])
+
+    const mgr = new AgentManager({
+      userDataDir: tmpDir,
+      store: fakeStore,
+      attachments: fakeAttachments,
+      eventSink: () => {},
+      backend,
+    })
+
+    await mgr.sendMessage({ content: 'plain question', attachments: [] })
+    await flushMicrotasks(20)
+
+    const textItem = backend.calls[0].input.items.find((i) => i.type === 'text') as {
+      type: 'text'
+      text: string
+    }
+    // Without attachments we keep the user's prompt EXACTLY as typed — no
+    // surprise preamble bytes inflating their input tokens.
+    expect(textItem.text).toBe('plain question')
+  })
+
   it('cancel(dbThreadId) translates to backend.cancel(codexThreadId) when mapping exists', async () => {
     const fakeStore = {
+      ...persistStubs,
       createThread: async () => ({ id: 'cm-db-id-4' }),
     } as any
     const fakeAttachments = { ingest: async () => [] } as any

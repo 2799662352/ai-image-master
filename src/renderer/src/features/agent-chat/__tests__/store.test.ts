@@ -91,6 +91,76 @@ describe('useAgentChatStore — timeline items', () => {
     })
     expect(useAgentChatStore.getState().messages).toHaveLength(0)
   })
+
+  // Regression for "工具调用信息 / mcp 调用信息 / 文档读取信息 没显示":
+  // any unrecognized item.type must surface as an `activity` card so the
+  // user sees evidence of tool / MCP / web-search / file-read activity.
+  it('item_started for activity creates a generic activity item with kind/label/detail', () => {
+    useAgentChatStore.getState().applyEvent({
+      type: 'item_started',
+      threadId: 'thread-1',
+      itemId: 'mcp-1',
+      itemType: 'activity',
+      payload: { kind: 'mcpToolCall', label: 'mcp:context7/docs.fetch', detail: '{"q":"react"}', status: 'running' },
+    })
+    expect(lastMsg()!.items[0]).toMatchObject({
+      type: 'activity',
+      kind: 'mcpToolCall',
+      label: 'mcp:context7/docs.fetch',
+      detail: '{"q":"react"}',
+      status: 'running',
+    })
+  })
+
+  it('item_completed flips activity status from running to success and stamps endedAt', () => {
+    useAgentChatStore.getState().applyEvent({
+      type: 'item_started',
+      threadId: 'thread-1',
+      itemId: 'mcp-1',
+      itemType: 'activity',
+      payload: { kind: 'mcpToolCall', label: 'mcp:fs/read', status: 'running' },
+    })
+    useAgentChatStore.getState().applyEvent({
+      type: 'item_completed',
+      threadId: 'thread-1',
+      itemId: 'mcp-1',
+      itemType: 'activity',
+      final: { kind: 'mcpToolCall', status: 'success' },
+    })
+    const item = lastMsg()!.items[0]
+    expect(item).toMatchObject({ type: 'activity', status: 'success' })
+    expect(item.endedAt).toBeGreaterThan(0)
+  })
+
+  // Regression for "甚至没有个圈圈展示上下文压缩进度": Codex emits
+  // `thread/tokenUsage/updated` notifications that we used to drop. They now
+  // populate state.tokenUsage so the header donut can render.
+  it('token_usage_updated stores cumulative usage on state', () => {
+    useAgentChatStore.getState().applyEvent({
+      type: 'token_usage_updated',
+      threadId: 'thread-1',
+      usage: {
+        inputTokens: 1000,
+        outputTokens: 200,
+        contextWindow: 200_000,
+        contextUsage: 1200,
+      },
+    })
+    expect(useAgentChatStore.getState().tokenUsage).toEqual({
+      inputTokens: 1000,
+      outputTokens: 200,
+      contextWindow: 200_000,
+      contextUsage: 1200,
+    })
+  })
+
+  it('newThread resets tokenUsage so the meter clears between conversations', () => {
+    useAgentChatStore.setState({
+      tokenUsage: { inputTokens: 1, outputTokens: 1, contextWindow: 1000, contextUsage: 2 },
+    })
+    useAgentChatStore.getState().newThread()
+    expect(useAgentChatStore.getState().tokenUsage).toBeUndefined()
+  })
 })
 
 describe('useAgentChatStore — panelWidth', () => {
@@ -147,5 +217,89 @@ describe('useAgentChatStore selected model', () => {
       content: 'hello',
       model: 'gpt-4o',
     })
+  })
+})
+
+describe('useAgentChatStore — attachment URI synthesis (regression: empty src)', () => {
+  // Repros the bug where MentionInput → addAttachment passes `buffer` (no
+  // `path`), and send() previously wrote `uri: a.path ?? ''`, causing
+  // `<img src="">` and the React "An empty string was passed to the src
+  // attribute" warning. The fix is buildAttachmentUri (blob URL fallback)
+  // plus a 'image' → 'file' kind downgrade when no usable URI is available.
+  beforeEach(() => localStorage.clear())
+  afterEach(() => localStorage.clear())
+
+  it('builds a non-empty blob URL for buffer-only image attachments', async () => {
+    const created: string[] = []
+    const realCreate = URL.createObjectURL
+    URL.createObjectURL = vi.fn(() => {
+      const u = `blob:test/${created.length}`
+      created.push(u)
+      return u
+    }) as typeof URL.createObjectURL
+
+    const sendMessage = vi.fn().mockResolvedValue({ threadId: 'tx' })
+    ;(window as any).electronAPI = {
+      agent: { sendMessage, cancel: vi.fn() },
+    }
+
+    try {
+      useAgentChatStore.setState({
+        threadId: undefined,
+        input: 'hi',
+        messages: [],
+        isRunning: false,
+        attachments: [
+          { name: 'pic.png', mime: 'image/png', size: 4, buffer: new Uint8Array([1, 2, 3, 4]).buffer },
+        ],
+      })
+
+      await useAgentChatStore.getState().send()
+
+      const userMsg = useAgentChatStore.getState().messages[0]
+      expect(userMsg?.role).toBe('user')
+      const att = userMsg?.items.find((i) => i.type === 'attachment')
+      expect(att && att.type === 'attachment').toBe(true)
+      if (att?.type === 'attachment') {
+        expect(att.attachments).toHaveLength(1)
+        expect(att.attachments[0].kind).toBe('image')
+        expect(att.attachments[0].uri).toMatch(/^blob:/)
+        expect(att.attachments[0].uri.length).toBeGreaterThan(0)
+      }
+      expect(created.length).toBe(1)
+    } finally {
+      URL.createObjectURL = realCreate
+    }
+  })
+
+  it('downgrades to file kind (no <img>) when neither buffer nor path is available', async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ threadId: 'tx' })
+    ;(window as any).electronAPI = {
+      agent: { sendMessage, cancel: vi.fn() },
+    }
+
+    useAgentChatStore.setState({
+      threadId: undefined,
+      input: 'hi',
+      messages: [],
+      isRunning: false,
+      attachments: [
+        // No buffer, no path: the renderer can't load anything meaningful
+        // for this row, so we MUST NOT claim it's an image.
+        { name: 'broken.png', mime: 'image/png', size: 0 },
+      ],
+    })
+
+    await useAgentChatStore.getState().send()
+
+    const att = useAgentChatStore
+      .getState()
+      .messages[0]?.items.find((i) => i.type === 'attachment')
+    if (att?.type === 'attachment') {
+      expect(att.attachments[0].kind).toBe('file')
+      expect(att.attachments[0].uri).toBe('')
+    } else {
+      throw new Error('expected an attachment item')
+    }
   })
 })

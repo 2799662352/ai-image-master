@@ -11,7 +11,7 @@ export class ThreadStore {
     return this.prisma.agentThread.findMany({ orderBy: { updatedAt: 'desc' } })
   }
 
-  async addMessage(input: { threadId: string; role: string; contentJson: Prisma.InputJsonValue }) {
+  async addMessage(input: { threadId: string; role: string; items: Prisma.InputJsonValue }) {
     return this.prisma.agentMessage.create({ data: input })
   }
 

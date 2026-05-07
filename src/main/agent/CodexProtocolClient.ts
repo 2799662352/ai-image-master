@@ -68,6 +68,18 @@ export class CodexProtocolClient {
   private queues = new Map<string, TurnQueue>()
   private turnIdByThread = new Map<string, string>()
   private readonly notificationRouter = new CodexNotificationRouter()
+  // Methods we've already logged-once as "unhandled" so dev sessions see the
+  // shape of the upstream notification stream without flooding (e.g.
+  // `item/agentMessage/delta` would otherwise log thousands of times). Crucial
+  // for diagnosing missing UI features — pre-fix we silently dropped notifs.
+  private readonly unhandledMethodsLogged = new Set<string>()
+  // (method, item.type) pairs we've already dumped the FULL params for, so we
+  // see the *exact wire shape* of every distinct item-bearing notification at
+  // most once per session. Required because `unhandled notification` only logs
+  // a 200-char preview, which truncates reasoning summary/content arrays right
+  // when we need to see them most. Compare against `unhandledMethodsLogged`,
+  // which keys on method only and skips successfully-routed notifs entirely.
+  private readonly fullDumpedKeys = new Set<string>()
   // Notifications received before their per-turn queue was created. We can
   // race the server's first delta against our turn/start response handling, so
   // we hold them here and drain them when the queue is registered.
@@ -258,12 +270,41 @@ export class CodexProtocolClient {
   }
 
   private routeNotification(method: string, params: Record<string, any>): void {
+    // Diagnostic: dump full params the first time we see each
+    // `(method, item.type)` pair. Apiyi, OpenRouter and other gateways
+    // sometimes drift on reasoning/content payload shape; without seeing the
+    // raw JSON we end up guessing where the text lives. This logs at most
+    // ~30-50 lines per session (one per distinct item type per item method).
+    const itemType =
+      typeof params?.item?.type === 'string' ? (params.item.type as string) : null
+    const dumpKey = itemType ? `${method}#${itemType}` : method
+    if ((method.startsWith('item/') || method === 'turn/completed') && !this.fullDumpedKeys.has(dumpKey)) {
+      this.fullDumpedKeys.add(dumpKey)
+      let json: string
+      try {
+        json = JSON.stringify(params)
+      } catch {
+        json = '<unserializable>'
+      }
+      this.options.onLog?.(`[codex trace] ${dumpKey} ${json.slice(0, 4000)}`)
+    }
+
     const event = this.notificationRouter.route(method, params)
     if (!event) {
-      // Don't spam the codex log with 'unhandled notification' for the dozens
-      // of bookkeeping notifications we intentionally ignore (thread/started,
-      // item/started, warning, etc). The router is the source of truth: if
-      // it returns null, that's a deliberate drop.
+      // Log each unhandled method once per session so we can diagnose missing
+      // UI features without flooding the log. Examples that legitimately drop:
+      // thread/started, turn/started, warning, item/fileChange/outputDelta.
+      // If a NEW method (e.g. an undocumented mcp progress notification) shows
+      // up here, this single line points us at exactly what to add.
+      if (!this.unhandledMethodsLogged.has(method)) {
+        this.unhandledMethodsLogged.add(method)
+        const peek = peekParams(params)
+        this.options.onLog?.(
+          peek.length > 0
+            ? `[codex] unhandled notification (logged once): ${method} ${peek}`
+            : `[codex] unhandled notification (logged once): ${method}`,
+        )
+      }
       return
     }
     const threadId = event.threadId
@@ -354,4 +395,31 @@ function queueKey(threadId: string, turnId: string): string {
 
 function stringifyError(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * Compact one-line preview of a notification's params for the unhandled-method
+ * log line. Strips long fields (`text`, `delta`, `data`) to a length cap so the
+ * log doesn't explode for streaming notifications. Best-effort only; falls
+ * back to an empty string if the payload can't be JSON-stringified.
+ */
+function peekParams(params: Record<string, any>): string {
+  try {
+    const safe: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(params)) {
+      if (typeof v === 'string') {
+        safe[k] = v.length > 80 ? `${v.slice(0, 79)}…` : v
+      } else if (v && typeof v === 'object' && 'type' in (v as Record<string, unknown>)) {
+        // Keep just the discriminant so we can see the item shape without
+        // the full body when it's an `item` payload.
+        safe[k] = { type: (v as { type?: unknown }).type, id: (v as { id?: unknown }).id }
+      } else {
+        safe[k] = v
+      }
+    }
+    const s = JSON.stringify(safe)
+    return s.length > 240 ? `${s.slice(0, 239)}…` : s
+  } catch {
+    return ''
+  }
 }

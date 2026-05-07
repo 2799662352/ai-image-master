@@ -1,4 +1,5 @@
 import type { TimelineItem } from '../../../../types/agent-timeline'
+import { ActivityCard } from './cards/ActivityCard'
 import { AttachmentCard } from './cards/AttachmentCard'
 import { ArtifactCard } from './cards/ArtifactCard'
 import { FileEditCard } from './cards/FileEditCard'
@@ -20,6 +21,8 @@ export function TimelineItemRenderer({ item }: { item: TimelineItem }) {
       return <AttachmentCard item={item} />
     case 'artifact':
       return <ArtifactCard item={item} />
+    case 'activity':
+      return <ActivityCard item={item} />
     default: {
       const _exhaustive: never = item
       void _exhaustive

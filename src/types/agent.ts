@@ -57,6 +57,25 @@ export type ItemDeltaPatch =
   | { kind: 'appendText'; field: 'content' | 'stdout' | 'stderr'; text: string }
   | { kind: 'mergeFields'; fields: Record<string, unknown> }
 
+export interface AgentTokenUsage {
+  /** Cumulative input tokens consumed in this thread. */
+  inputTokens: number
+  /** Cumulative output tokens emitted in this thread. */
+  outputTokens: number
+  /** Cumulative reasoning tokens (subset of output for reasoning-capable models). */
+  reasoningTokens?: number
+  /** Cached input tokens for this turn (provider-side prompt caching). */
+  cachedInputTokens?: number
+  /** Hard context window for the active model, in tokens. Optional because some gateways omit it. */
+  contextWindow?: number
+  /**
+   * Tokens currently considered "in the prompt" — used to drive the context
+   * usage meter and signal when Codex will compact. Falls back to
+   * `inputTokens + outputTokens` if the gateway doesn't report it explicitly.
+   */
+  contextUsage?: number
+}
+
 export interface AgentStreamEventBase {
   threadId: string
   turnId?: string
@@ -68,6 +87,7 @@ export type AgentStreamEvent =
   | (AgentStreamEventBase & { type: 'item_delta'; itemId: string; itemType: TimelineItem['type']; patch: ItemDeltaPatch })
   | (AgentStreamEventBase & { type: 'item_completed'; itemId: string; itemType: TimelineItem['type']; final: Record<string, unknown> })
   | (AgentStreamEventBase & { type: 'turn_completed' })
+  | (AgentStreamEventBase & { type: 'token_usage_updated'; usage: AgentTokenUsage })
   | (AgentStreamEventBase & { type: 'error'; error: string })
   | (AgentStreamEventBase & { type: 'cancelled' })
 

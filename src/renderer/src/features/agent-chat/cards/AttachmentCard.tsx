@@ -1,9 +1,15 @@
 import type { AttachmentItem, AttachmentRef } from '../../../../../types/agent-timeline'
 import { useAgentChatStore } from '../store'
 
+function isRenderableImage(ref: AttachmentRef): boolean {
+  if (ref.kind !== 'image') return false
+  const uri = ref.thumbnailUri ?? ref.uri
+  return typeof uri === 'string' && uri.length > 0
+}
+
 export function AttachmentCard({ item }: { item: AttachmentItem }) {
   const openPreview = useAgentChatStore((s) => s.openPreview)
-  const images = item.attachments.filter((ref): ref is AttachmentRef => ref.kind === 'image')
+  const images = item.attachments.filter(isRenderableImage)
 
   const handleDoubleClick = (id: string): void => {
     const startIndex = images.findIndex((ref) => ref.id === id)
@@ -14,7 +20,7 @@ export function AttachmentCard({ item }: { item: AttachmentItem }) {
   return (
     <div className="my-1 flex flex-wrap gap-2">
       {item.attachments.map((ref) =>
-        ref.kind === 'image' ? (
+        isRenderableImage(ref) ? (
           <img
             key={ref.id}
             src={ref.thumbnailUri ?? ref.uri}

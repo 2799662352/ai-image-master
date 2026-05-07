@@ -4,6 +4,7 @@ import type {
   AgentCancelPayload,
   AgentSendMessagePayload,
   AgentStreamEvent,
+  AgentTokenUsage,
   ItemDeltaPatch,
 } from '../../../../types/agent'
 import type { AttachmentRef, Message, TimelineItem } from '../../../../types/agent-timeline'
@@ -69,6 +70,13 @@ interface AgentChatState {
   selectedModelId: string
   messages: Message[]
   panelWidth: number
+  /**
+   * Latest cumulative token usage reported by the codex `app-server` for the
+   * active thread. `undefined` until the first `thread/tokenUsage/updated`
+   * arrives. Drives the header context-usage meter (covers the regression
+   * "甚至没有个圈圈展示上下文压缩进度").
+   */
+  tokenUsage?: AgentTokenUsage
   setPanelWidth: (width: number) => void
   preview: PreviewState
   openPreview: (images: AttachmentRef[], startIndex: number) => void
@@ -90,6 +98,36 @@ interface AgentChatState {
 
 function createId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+/**
+ * Build a renderer-loadable URI for an attachment so `<img src>` is never
+ * an empty string (which both triggers the React "empty src" warning and
+ * causes the browser to refetch the page).
+ *
+ * - `buffer` (the common path: `<input type=file>` flow) becomes a blob URL
+ *   we can hand straight to the DOM. The blob keeps the bytes alive until
+ *   the document unloads or the URL is revoked, which is plenty for an
+ *   in-flight chat turn.
+ * - `path` (Electron drag-drop with file path exposed) is kept as a
+ *   non-empty fallback even though most Electron renderers can't load
+ *   `D:\...` directly without a custom protocol; downgrading kind handles
+ *   the visual fallback.
+ * - When neither is usable we return undefined so the caller can downgrade
+ *   to a 'file' chip instead of rendering a broken `<img>`.
+ */
+function buildAttachmentUri(a: AgentAttachmentInput): string | undefined {
+  const blobCtor = globalThis.Blob
+  const urlCtor = globalThis.URL
+  if (a.buffer && blobCtor && typeof urlCtor?.createObjectURL === 'function') {
+    try {
+      return urlCtor.createObjectURL(new blobCtor([a.buffer], { type: a.mime || 'application/octet-stream' }))
+    } catch {
+      // Fall through to path / undefined.
+    }
+  }
+  if (typeof a.path === 'string' && a.path.length > 0) return a.path
+  return undefined
 }
 
 function getAgentApi(): NonNullable<AgentElectronApi['agent']> {
@@ -126,6 +164,22 @@ function createItemFromStarted(itemType: TimelineItem['type'], itemId: string, p
       return { type: 'attachment', id: itemId, startedAt: now, attachments: [] }
     case 'artifact':
       return { type: 'artifact', id: itemId, startedAt: now, artifacts: [] }
+    case 'activity': {
+      const status = payload.status
+      const safeStatus =
+        status === 'running' || status === 'success' || status === 'error' || status === 'cancelled'
+          ? status
+          : 'running'
+      return {
+        type: 'activity',
+        id: itemId,
+        startedAt: now,
+        kind: typeof payload.kind === 'string' ? payload.kind : 'activity',
+        ...(typeof payload.label === 'string' ? { label: payload.label } : {}),
+        ...(typeof payload.detail === 'string' ? { detail: payload.detail } : {}),
+        status: safeStatus,
+      }
+    }
   }
 }
 
@@ -166,6 +220,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   isRunning: false,
   selectedModelId: readPersistedModelId(),
   panelWidth: readPersistedPanelWidth(),
+  tokenUsage: undefined,
   preview: { open: false, images: [], index: 0 },
   openPreview: (images, startIndex) => {
     if (images.length === 0) return
@@ -224,14 +279,22 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     const now = Date.now()
     const items: TimelineItem[] = []
     if (attachments.length > 0) {
-      const refs: AttachmentRef[] = attachments.map((a) => ({
-        id: createId(),
-        kind: a.mime.startsWith('image/') ? 'image' : 'file',
-        name: a.name,
-        mime: a.mime,
-        size: a.size,
-        uri: a.path ?? '',
-      }))
+      const refs: AttachmentRef[] = attachments.map((a) => {
+        const uri = buildAttachmentUri(a)
+        const isImage = a.mime.startsWith('image/')
+        // Only claim 'image' when we actually have something the renderer can
+        // load — otherwise downgrade to 'file' so the card renders a 📄 chip
+        // instead of `<img src="">`.
+        const kind: AttachmentRef['kind'] = isImage && typeof uri === 'string' && uri.length > 0 ? 'image' : 'file'
+        return {
+          id: createId(),
+          kind,
+          name: a.name,
+          mime: a.mime,
+          size: a.size,
+          uri: uri ?? '',
+        }
+      })
       items.push({ type: 'attachment', id: createId(), startedAt: now, attachments: refs })
     }
     if (content.length > 0) {
@@ -285,6 +348,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       messages: [],
       isRunning: false,
       error: undefined,
+      tokenUsage: undefined,
     }),
   switchThread: async (threadId: string) => {
     const agent = (window as Window & { electronAPI?: { agent?: { openThread?: (id: string) => Promise<unknown> } } })
@@ -331,6 +395,9 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       messages,
       isRunning: false,
       error: undefined,
+      // Token usage is per-thread; reset until the next
+      // thread/tokenUsage/updated arrives.
+      tokenUsage: undefined,
     })
   },
   applyEvent: (event) => {
@@ -384,6 +451,12 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       }
       case 'turn_completed':
         set({ isRunning: false })
+        break
+      case 'token_usage_updated':
+        // Just overwrite — Codex sends cumulative counts. The header meter
+        // reads `tokenUsage.contextUsage / contextWindow` if both are
+        // present, otherwise falls back to inputTokens+outputTokens.
+        set({ tokenUsage: event.usage })
         break
       case 'error':
         set({ error: event.error, isRunning: false })

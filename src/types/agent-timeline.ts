@@ -58,6 +58,29 @@ export interface ArtifactItem extends BaseItem {
   artifacts: AttachmentRef[]
 }
 
+/**
+ * Catch-all card for any Codex `item/*` notification we don't have a bespoke
+ * renderer for yet. Critical: if we drop unknown item types silently the user
+ * sees a black hole during turns that include MCP tool calls, web searches,
+ * file reads, plan updates, context compactions, etc. Pre-MVP we showed
+ * absolutely none of those.
+ *
+ * `kind` is the raw Codex `item.type` value (e.g. `mcpToolCall`, `webSearch`,
+ * `contextCompaction`) so the renderer can pick an icon + label per kind.
+ * `label` and `detail` are short single-line strings extracted from the
+ * notification payload (e.g. `mcp.fetch`, `query="..."`); both are optional.
+ * `status` mirrors any payload-level status (`running`, `success`, `error`,
+ * etc.). When the item completes without an explicit status we set it to
+ * `success` if no error was attached.
+ */
+export interface ActivityItem extends BaseItem {
+  type: 'activity'
+  kind: string
+  label?: string
+  detail?: string
+  status?: 'running' | 'success' | 'error' | 'cancelled'
+}
+
 export type TimelineItem =
   | TextItem
   | ReasoningItem
@@ -65,6 +88,7 @@ export type TimelineItem =
   | FileEditItem
   | AttachmentItem
   | ArtifactItem
+  | ActivityItem
 
 export interface Message {
   id: string

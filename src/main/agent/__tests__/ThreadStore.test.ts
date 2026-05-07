@@ -15,8 +15,10 @@ describe('ThreadStore', () => {
     } as any
     const store = new ThreadStore(prisma)
     const thread = await store.createThread({ title: 'Test', model: 'gpt-5.4' })
-    await store.addMessage({ threadId: thread.id, role: 'user', contentJson: { text: 'hello' } })
+    await store.addMessage({ threadId: thread.id, role: 'user', items: [{ type: 'text', text: 'hello' }] })
     expect(prisma.agentThread.create).toHaveBeenCalledWith({ data: { title: 'Test', model: 'gpt-5.4' } })
-    expect(prisma.agentMessage.create).toHaveBeenCalledWith({ data: { threadId: 'thread_1', role: 'user', contentJson: { text: 'hello' } } })
+    expect(prisma.agentMessage.create).toHaveBeenCalledWith({
+      data: { threadId: 'thread_1', role: 'user', items: [{ type: 'text', text: 'hello' }] },
+    })
   })
 })

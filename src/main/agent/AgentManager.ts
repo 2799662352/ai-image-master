@@ -1,9 +1,11 @@
+import crypto from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { CodexLocalBackend } from './CodexLocalBackend'
 import type { BrowserWindow } from 'electron'
-import type { AgentSendMessagePayload, AgentStreamEvent } from '../../types/agent'
+import type { AgentSendMessagePayload, AgentStreamEvent, ItemDeltaPatch } from '../../types/agent'
+import type { AttachmentRef, TimelineItem } from '../../types/agent-timeline'
 import type { AttachmentService } from './AttachmentService'
 import type { ThreadStore } from './ThreadStore'
 import type { AgentInput, IAgentBackend } from './types'
@@ -31,6 +33,47 @@ const DEFAULT_PROVIDER = {
   baseUrl: 'https://api.apiyi.com/v1',
   envKey: 'OPENAI_API_KEY',
 } as const
+
+/**
+ * Subset of `AgentAttachment` (Prisma row) we need to format the prompt
+ * preamble. Declared as a structural shape so tests don't have to drag in
+ * the full Prisma type — the runtime data has the same field names.
+ */
+interface PromptAttachment {
+  originalName: string
+  localPath: string
+  mime: string
+  size: number
+}
+
+/**
+ * Prepend a one-shot "[Attached files at these local paths:]" block to the
+ * user's prompt when there are attachments. Without this the agent has no
+ * idea where the uploaded files live (the renderer file-picker only gives
+ * us a buffer; the on-disk path under `userData/agent/uploads/<sha>.<ext>`
+ * is invisible to the model unless we say it explicitly).
+ *
+ * Behaviour:
+ *  - Empty attachment list → returns `content` unchanged (no surprise
+ *    bytes inflating input tokens for trivial messages).
+ *  - With attachments → prepends a compact, machine-readable list with
+ *    `localPath`, mime, size, and original name for each, then a blank
+ *    line, then the original user content. Order matches the order the
+ *    renderer sent the attachments in.
+ *
+ * Exported for unit tests and so a future `tools/list_attachments` MCP
+ * shim can reuse the same formatting if we ever add one.
+ */
+export function buildPromptWithAttachments(
+  content: string,
+  attachments: ReadonlyArray<PromptAttachment>,
+): string {
+  if (attachments.length === 0) return content
+  const lines = attachments.map(
+    (a) => `- ${a.localPath}  (${a.mime}, ${a.size} bytes, original: ${a.originalName})`,
+  )
+  return `[Attached files at these local paths:\n${lines.join('\n')}]\n\n${content}`
+}
 
 export interface AgentManagerOptions {
   /** Directory used to persist the Codex API key JSON. Inject in tests. */
@@ -167,12 +210,39 @@ export class AgentManager {
           model,
         })
     const savedAttachments = await this.attachments.ingest(thread.id, payload.attachments ?? [])
+    // Anchor every attachment's on-disk localPath into the agent's text
+    // prompt. The renderer file-picker only gives us a buffer — without
+    // this preamble the model can't `cat`/`read_file`/etc. the attachment
+    // because it has no path to anchor to. Image bytes ALSO travel via
+    // `localImage` for vision models, but listing the path here is what
+    // lets the agent's filesystem tools touch the same file. See
+    // AgentManager.test.ts > "injects the localPath of every attachment".
+    const promptText = buildPromptWithAttachments(payload.content, savedAttachments)
     const items: AgentInput['items'] = [
-      { type: 'text', text: payload.content },
+      { type: 'text', text: promptText },
       ...savedAttachments
         .filter((item) => item.mime.startsWith('image/'))
         .map((item) => ({ type: 'localImage' as const, path: item.localPath })),
     ]
+
+    // Persist the user turn before kicking off the backend so that:
+    //   1) After an app restart `switchThread` actually has chat history to load
+    //      (regression: AgentMessage rows were never written before this change).
+    //   2) `ThreadTitleSummarizer.maybeSummarize` can read both a user and an
+    //      assistant message later — its gate `messages.length < 2` was the
+    //      reason auto-titles never appeared in the thread switcher.
+    const userTimelineItems = this.buildUserTimelineItems(payload.content, savedAttachments)
+    if (userTimelineItems.length > 0) {
+      // Same JSON round-trip as the assistant path: TimelineItem is a tagged
+      // union and Prisma's InputJsonValue rejects it at compile time even
+      // though the runtime shape is pure JSON.
+      const userJsonItems = JSON.parse(JSON.stringify(userTimelineItems)) as Parameters<
+        ThreadStore['addMessage']
+      >[0]['items']
+      await this.store.addMessage({ threadId: thread.id, role: 'user', items: userJsonItems })
+      // best-effort: failing to bump lastMessageAt should not block the turn
+      await this.store.updateLastMessageAt(thread.id).catch(() => undefined)
+    }
 
     const input: AgentInput = {
       ...payload,
@@ -189,6 +259,39 @@ export class AgentManager {
       })
     })
     return { threadId: thread.id }
+  }
+
+  private buildUserTimelineItems(
+    content: string,
+    savedAttachments: ReadonlyArray<{
+      id: string
+      originalName: string
+      localPath: string
+      mime: string
+      size: number
+    }>,
+  ): TimelineItem[] {
+    const now = Date.now()
+    const out: TimelineItem[] = []
+    const text = content.trim()
+    if (text.length > 0) {
+      out.push({ type: 'text', id: createTimelineId(), startedAt: now, content: text })
+    }
+    if (savedAttachments.length > 0) {
+      const refs: AttachmentRef[] = savedAttachments.map((a) => ({
+        id: a.id ?? createTimelineId(),
+        // Keep canonical `localPath` as `uri` so a future custom protocol
+        // handler (e.g. `agent-attachment://<id>`) can resolve historical
+        // attachments back into renderable URLs without another DB round-trip.
+        kind: a.mime.startsWith('image/') ? 'image' : 'file',
+        name: a.originalName,
+        mime: a.mime,
+        size: a.size,
+        uri: a.localPath,
+      }))
+      out.push({ type: 'attachment', id: createTimelineId(), startedAt: now, attachments: refs })
+    }
+    return out
   }
 
   async cancel(threadId: string): Promise<void> {
@@ -243,6 +346,11 @@ export class AgentManager {
 
   private async forwardEvents(dbThreadId: string, input: AgentInput): Promise<void> {
     const codexThreadId = this.codexThreadIdByDbThreadId.get(dbThreadId)
+    // Accumulate the assistant turn's timeline items in main-process memory so
+    // we can write a single AgentMessage row at turn_completed time. Mirrors
+    // (a tiny subset of) the renderer's `applyEvent` reducer; kept inline to
+    // avoid a circular renderer→main import.
+    let assistantItems: TimelineItem[] = []
     for await (const event of this.backend.send(codexThreadId, input)) {
       if (event.type === 'thread_created' && event.threadId) {
         this.codexThreadIdByDbThreadId.set(dbThreadId, event.threadId)
@@ -251,7 +359,34 @@ export class AgentManager {
       // Renderer's chat store filters events by its DB threadId. Always rewrite
       // so codex-side UUIDs never leak into the UI layer.
       this.emitEvent({ ...event, threadId: dbThreadId })
+
+      assistantItems = applyAssistantEvent(assistantItems, event)
+
       if (event.type === 'turn_completed') {
+        if (this.store && assistantItems.length > 0) {
+          try {
+            // TimelineItem is a discriminated union; Prisma's InputJsonValue
+            // doesn't accept tagged unions directly even though the runtime
+            // payload is plain JSON. A round-trip through JSON.parse forces
+            // the structural shape Prisma expects without losing information.
+            const jsonItems = JSON.parse(JSON.stringify(assistantItems)) as Parameters<
+              ThreadStore['addMessage']
+            >[0]['items']
+            await this.store.addMessage({
+              threadId: dbThreadId,
+              role: 'assistant',
+              items: jsonItems,
+            })
+            await this.store.updateLastMessageAt(dbThreadId).catch(() => undefined)
+          } catch (err) {
+            console.warn('[AgentManager] failed to persist assistant message:', err)
+          }
+        }
+        // Reset accumulator for any subsequent turns on this same generator.
+        // (Practically the iterator ends after turn_completed, but keep this
+        // defensive in case backend yields multi-turn streams later.)
+        assistantItems = []
+
         if (dbThreadId && !this.firstTurnDoneByThread.get(dbThreadId)) {
           this.firstTurnDoneByThread.set(dbThreadId, true)
           this.summarizer?.maybeSummarize(dbThreadId).catch((err: unknown) => {
@@ -261,4 +396,113 @@ export class AgentManager {
       }
     }
   }
+}
+
+function createTimelineId(): string {
+  return crypto.randomUUID()
+}
+
+/**
+ * Reducer mirroring the renderer's `store.applyEvent` for assistant items.
+ * Used by `forwardEvents` to accumulate the streamed turn into a single
+ * `AgentMessage` row written on `turn_completed`.
+ *
+ * Only handles the assistant-side item events (item_started / item_delta /
+ * item_completed). Returns the original array for unrelated event types so
+ * the caller can stay in a simple reassignment pattern.
+ */
+function applyAssistantEvent(
+  items: TimelineItem[],
+  event: AgentStreamEvent,
+): TimelineItem[] {
+  if (event.type !== 'item_started' && event.type !== 'item_delta' && event.type !== 'item_completed') {
+    return items
+  }
+  const idx = items.findIndex((i) => i.id === event.itemId)
+  switch (event.type) {
+    case 'item_started': {
+      if (idx >= 0) return items
+      const created = createItemFromStarted(event.itemType, event.itemId, event.payload)
+      return [...items, created]
+    }
+    case 'item_delta': {
+      if (idx < 0) {
+        const seeded = createItemFromStarted(event.itemType, event.itemId, {})
+        return [...items, applyItemPatch(seeded, event.patch)]
+      }
+      const next = items.slice()
+      next[idx] = applyItemPatch(next[idx], event.patch)
+      return next
+    }
+    case 'item_completed': {
+      if (idx < 0) {
+        const seeded = createItemFromStarted(event.itemType, event.itemId, {})
+        const merged = { ...seeded, ...event.final, type: seeded.type, endedAt: Date.now() } as TimelineItem
+        return [...items, merged]
+      }
+      const next = items.slice()
+      const cur = next[idx]
+      next[idx] = { ...cur, ...event.final, type: cur.type, endedAt: Date.now() } as TimelineItem
+      return next
+    }
+  }
+}
+
+function createItemFromStarted(
+  itemType: TimelineItem['type'],
+  itemId: string,
+  payload: Record<string, unknown>,
+): TimelineItem {
+  const now = Date.now()
+  switch (itemType) {
+    case 'text':
+      return { type: 'text', id: itemId, startedAt: now, content: '' }
+    case 'reasoning':
+      return { type: 'reasoning', id: itemId, startedAt: now, content: '' }
+    case 'shell':
+      return {
+        type: 'shell',
+        id: itemId,
+        startedAt: now,
+        command: typeof payload.command === 'string' ? payload.command : '',
+        cwd: typeof payload.cwd === 'string' ? payload.cwd : undefined,
+        stdout: '',
+        stderr: '',
+      }
+    case 'fileEdit':
+      return { type: 'fileEdit', id: itemId, startedAt: now, changes: [], totalAdded: 0, totalRemoved: 0 }
+    case 'attachment':
+      return { type: 'attachment', id: itemId, startedAt: now, attachments: [] }
+    case 'artifact':
+      return { type: 'artifact', id: itemId, startedAt: now, artifacts: [] }
+    case 'activity': {
+      const status = payload.status
+      const safeStatus =
+        status === 'running' || status === 'success' || status === 'error' || status === 'cancelled'
+          ? status
+          : 'running'
+      return {
+        type: 'activity',
+        id: itemId,
+        startedAt: now,
+        kind: typeof payload.kind === 'string' ? payload.kind : 'activity',
+        ...(typeof payload.label === 'string' ? { label: payload.label } : {}),
+        ...(typeof payload.detail === 'string' ? { detail: payload.detail } : {}),
+        status: safeStatus,
+      }
+    }
+  }
+}
+
+function applyItemPatch(item: TimelineItem, patch: ItemDeltaPatch): TimelineItem {
+  if (patch.kind === 'appendText') {
+    if (patch.field === 'content' && (item.type === 'text' || item.type === 'reasoning')) {
+      return { ...item, content: item.content + patch.text }
+    }
+    if (item.type === 'shell' && (patch.field === 'stdout' || patch.field === 'stderr')) {
+      return { ...item, [patch.field]: item[patch.field] + patch.text }
+    }
+    return item
+  }
+  return { ...item, ...patch.fields, type: item.type } as TimelineItem
 }

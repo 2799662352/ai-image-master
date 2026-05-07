@@ -5,6 +5,7 @@ import { MentionInput } from './MentionInput'
 import { MessageBubble } from './MessageBubble'
 import { ResizableHandle } from './ResizableHandle'
 import { ThreadCommandPalette } from './ThreadCommandPalette'
+import { TokenUsageMeter } from './TokenUsageMeter'
 import { useAgentChatStore } from './store'
 import type { AgentStreamEvent } from '../../../../types/agent'
 
@@ -21,6 +22,7 @@ export function AgentChatPanel() {
   const applyEvent = useAgentChatStore((state) => state.applyEvent)
   const panelWidth = useAgentChatStore((state) => state.panelWidth)
   const setPanelWidth = useAgentChatStore((state) => state.setPanelWidth)
+  const tokenUsage = useAgentChatStore((state) => state.tokenUsage)
 
   useEffect(() => {
     if (!isOpen) return undefined
@@ -33,7 +35,12 @@ export function AgentChatPanel() {
     <>
       {isOpen ? (
         <aside
-          className="fixed right-0 top-0 z-[40000] flex h-screen flex-col border-l border-cyan-400/25 bg-zinc-950/95 text-white shadow-[-24px_0_80px_rgba(34,211,238,0.16)] backdrop-blur relative"
+          // NOTE: do NOT add `relative` here. Tailwind's `.relative` is defined
+          // after `.fixed` in the generated stylesheet, so when both classes
+          // appear together `position: relative` wins the cascade — the panel
+          // then leaves viewport-pinned mode, flows to the document tail, and
+          // ends up rendered at the bottom of the page (regression "又跑下面去了").
+          className="fixed right-0 top-0 z-[40000] flex h-screen flex-col border-l border-cyan-400/25 bg-zinc-950/95 text-white shadow-[-24px_0_80px_rgba(34,211,238,0.16)] backdrop-blur"
           style={{ width: panelWidth }}
         >
           <ResizableHandle
@@ -42,18 +49,21 @@ export function AgentChatPanel() {
             onResizeEnd={() => {}}
           />
           <header className="border-b border-cyan-400/20 px-4 py-3">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-[10px] uppercase tracking-[0.32em] text-cyan-300/70">local codex</p>
                 <h2 className="text-sm font-semibold text-cyan-50">CATIMATION Agent</h2>
               </div>
-              <button
-                className="rounded-full border border-zinc-700 px-2 py-1 text-zinc-400 hover:border-cyan-300/50 hover:text-cyan-100"
-                onClick={() => useAgentChatStore.getState().toggle()}
-                type="button"
-              >
-                x
-              </button>
+              <div className="flex items-center gap-2">
+                <TokenUsageMeter usage={tokenUsage} />
+                <button
+                  className="rounded-full border border-zinc-700 px-2 py-1 text-zinc-400 hover:border-cyan-300/50 hover:text-cyan-100"
+                  onClick={() => useAgentChatStore.getState().toggle()}
+                  type="button"
+                >
+                  x
+                </button>
+              </div>
             </div>
           </header>
 

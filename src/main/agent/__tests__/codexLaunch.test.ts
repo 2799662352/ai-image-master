@@ -10,6 +10,13 @@ describe('buildCodexLaunchArgs', () => {
       '--listen', DEFAULT_LISTEN_URL,
       '-c', 'approval_policy="never"',
       '-c', 'sandbox_mode="danger-full-access"',
+      // Codex defaults to suppressing raw reasoning ("show_raw_agent_reasoning=false")
+      // and only emits a summary when the model returns one. For our local
+      // chat panel we WANT to surface reasoning so the "Thought" card has
+      // something to show — without these two knobs the card stays empty
+      // even when reasoningOutputTokens > 0.
+      '-c', 'show_raw_agent_reasoning=true',
+      '-c', 'model_reasoning_summary="auto"',
     ])
   })
 
@@ -20,6 +27,8 @@ describe('buildCodexLaunchArgs', () => {
       '--listen', 'ws://127.0.0.1:9999',
       '-c', 'approval_policy="never"',
       '-c', 'sandbox_mode="danger-full-access"',
+      '-c', 'show_raw_agent_reasoning=true',
+      '-c', 'model_reasoning_summary="auto"',
     ])
     const listenIdx = args.indexOf('--listen')
     const firstConfigIdx = args.indexOf('-c')
@@ -47,12 +56,15 @@ describe('buildCodexLaunchArgs', () => {
     expect(pairs(args)).toContainEqual(['-c', 'model_providers.apiyi.name="API Yi"'])
     expect(pairs(args)).toContainEqual(['-c', 'model_providers.apiyi.base_url="https://api.apiyi.com/v1"'])
     expect(pairs(args)).toContainEqual(['-c', 'model_providers.apiyi.env_key="OPENAI_API_KEY"'])
-    // We must NOT set wire_api (defaults to "responses", which is the only
-    // supported value in Codex 0.128) and must NOT set supports_websockets
-    // (defaults to false for custom providers, which we want — apiyi proxies
-    // the Responses HTTP API, not the wss:// path).
+    // CRITICAL: must explicitly pin `wire_api="responses"`. Codex 0.128 (after
+    // openai/codex#13592) prefers `responses_websocket` for custom providers
+    // and falls through to `wss://api.openai.com/v1/responses`, returning
+    // 401 + a "Reconnecting...N/5" warning loop. We need plain HTTP Responses
+    // API which apiyi actually proxies (https://docs.apiyi.com/api-capabilities/openai-responses).
+    expect(pairs(args)).toContainEqual(['-c', 'model_providers.apiyi.wire_api="responses"'])
+    // The deprecated `supports_websockets` field was removed in 0.128 — never
+    // set it; passing it would just be noise.
     const flat = args.join(' ')
-    expect(flat).not.toContain('wire_api')
     expect(flat).not.toContain('supports_websockets')
   })
 

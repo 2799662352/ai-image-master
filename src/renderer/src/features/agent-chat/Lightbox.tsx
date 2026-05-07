@@ -34,6 +34,10 @@ export function Lightbox() {
 
   const current = preview.images[preview.index]
   if (!current) return null
+  // Defensive: AttachmentCard already filters non-renderable images out of
+  // `preview.images`, but if a malformed entry slips in we'd otherwise
+  // render `<img src="">` and trigger React's empty-src warning.
+  if (typeof current.uri !== 'string' || current.uri.length === 0) return null
 
   return (
     <div
