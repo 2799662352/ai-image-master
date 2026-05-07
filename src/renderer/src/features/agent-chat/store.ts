@@ -167,23 +167,31 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   selectedModelId: readPersistedModelId(),
   panelWidth: readPersistedPanelWidth(),
   preview: { open: false, images: [], index: 0 },
-  openPreview: (images, startIndex) =>
+  openPreview: (images, startIndex) => {
+    if (images.length === 0) return
     set({
       preview: {
         open: true,
         images,
         index: Math.max(0, Math.min(startIndex, images.length - 1)),
       },
-    }),
+    })
+  },
   closePreview: () => set((s) => ({ preview: { ...s.preview, open: false } })),
   nextPreview: () =>
-    set((s) => ({
-      preview: { ...s.preview, index: Math.min(s.preview.index + 1, s.preview.images.length - 1) },
-    })),
+    set((s) => {
+      if (s.preview.images.length === 0) return {}
+      return {
+        preview: { ...s.preview, index: Math.min(s.preview.index + 1, s.preview.images.length - 1) },
+      }
+    }),
   prevPreview: () =>
-    set((s) => ({
-      preview: { ...s.preview, index: Math.max(s.preview.index - 1, 0) },
-    })),
+    set((s) => {
+      if (s.preview.images.length === 0) return {}
+      return {
+        preview: { ...s.preview, index: Math.max(s.preview.index - 1, 0) },
+      }
+    }),
   setPanelWidth: (width) => {
     const clamped = Math.min(PANEL_WIDTH_MAX, Math.max(PANEL_WIDTH_MIN, width))
     try {
