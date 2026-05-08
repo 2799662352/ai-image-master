@@ -256,3 +256,50 @@ export async function saveMcp(
   await atomicWriteFile(target, serialized)
   return { ok: true, id: `${input.scope}:${input.name}`, warnings: [] }
 }
+
+async function rewriteScope(
+  paths: CodexWorkspacePaths,
+  scope: CodexConfigScope,
+  mutate: (servers: Record<string, Record<string, unknown>>) => void,
+): Promise<{ ok: boolean; error?: string }> {
+  const target = scope === 'personal' ? paths.personalConfigToml : paths.workspaceConfigToml
+  const raw = await readFileOrEmpty(target)
+  let document: Record<string, unknown> = {}
+  if (raw.trim()) {
+    try {
+      document = parseToml(raw) as Record<string, unknown>
+    } catch (err) {
+      return { ok: false, error: `existing TOML parse error: ${(err as Error).message}` }
+    }
+  }
+  const servers = (
+    document.mcp_servers && typeof document.mcp_servers === 'object'
+      ? document.mcp_servers
+      : {}
+  ) as Record<string, Record<string, unknown>>
+  mutate(servers)
+  if (Object.keys(servers).length === 0) delete document.mcp_servers
+  else document.mcp_servers = servers
+  await atomicWriteFile(target, iarnaToml.stringify(document as iarnaToml.JsonMap))
+  return { ok: true }
+}
+
+export async function deleteMcp(paths: CodexWorkspacePaths, id: string) {
+  const [scope, ...rest] = id.split(':')
+  const name = rest.join(':')
+  if (scope !== 'personal' && scope !== 'workspace') return { ok: false, error: 'bad scope' }
+  return rewriteScope(paths, scope, (servers) => {
+    delete servers[name]
+  })
+}
+
+export async function setMcpEnabled(paths: CodexWorkspacePaths, id: string, enabled: boolean) {
+  const [scope, ...rest] = id.split(':')
+  const name = rest.join(':')
+  if (scope !== 'personal' && scope !== 'workspace') return { ok: false, error: 'bad scope' }
+  return rewriteScope(paths, scope, (servers) => {
+    if (!servers[name]) return
+    if (enabled) delete servers[name].enabled
+    else servers[name].enabled = false
+  })
+}
