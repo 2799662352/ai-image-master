@@ -32,7 +32,14 @@ import type {
   AgentThreadSummary,
   AgentToolRequest,
   AgentToolResponse,
+  CodexApprovalRequest,
+  CodexApprovalResponse,
+  CodexMcpSummary,
+  CodexSessionConfig,
   CodexSessionStatus,
+  CodexSkillsSummary,
+  CodexThreadDetail,
+  CodexThreadSummary,
 } from '../types/agent'
 
 // ==================== IPC 通道常量 ====================
@@ -151,7 +158,14 @@ const IPC_CHANNELS = {
     SET_API_KEY: 'agent:set-api-key',
     TEST_CONNECTION: 'agent:test-connection',
     GET_SESSION_STATUS: 'agent:get-session-status',
+    SET_SESSION_CONFIG: 'agent:set-session-config',
     SET_ALLOWED_ROOTS: 'agent:set-allowed-roots',
+    RESPOND_APPROVAL: 'agent:respond-approval',
+    GET_MCP_SUMMARY: 'agent:get-mcp-summary',
+    GET_SKILLS_SUMMARY: 'agent:get-skills-summary',
+    LIST_CODEX_THREADS: 'agent:list-codex-threads',
+    READ_CODEX_THREAD: 'agent:read-codex-thread',
+    FORK_CODEX_THREAD: 'agent:fork-codex-thread',
     OPEN_THREAD: 'agent:open-thread',
     RENAME_THREAD: 'agent:rename-thread',
     DELETE_THREAD: 'agent:delete-thread',
@@ -159,6 +173,7 @@ const IPC_CHANNELS = {
   AGENT_EVENTS: [
     'agent:event',
     'agent:tool-request',
+    'agent:approval-request',
   ] as const,
   // Shell helpers (clipboard / save dialog)
   SHELL: {
@@ -265,11 +280,19 @@ export interface ElectronAPI {
     deleteThread: (threadId: string) => Promise<void>
     onEvent: (handler: (event: AgentStreamEvent) => void) => () => void
     onToolRequest: (handler: (request: AgentToolRequest) => void) => () => void
+    onApprovalRequest: (handler: (request: CodexApprovalRequest) => void) => () => void
     sendToolResponse: (response: AgentToolResponse) => void
+    respondApproval: (response: CodexApprovalResponse) => Promise<AgentApiResult>
     setApiKey: (key: string) => Promise<AgentApiResult>
     testConnection: () => Promise<AgentApiResult>
     getSessionStatus: () => Promise<CodexSessionStatus>
+    setSessionConfig: (patch: Partial<CodexSessionConfig>) => Promise<CodexSessionStatus>
     setAllowedRoots: (roots: string[]) => Promise<string[]>
+    getMcpSummary: () => Promise<CodexMcpSummary>
+    getSkillsSummary: () => Promise<CodexSkillsSummary>
+    listCodexThreads: () => Promise<CodexThreadSummary[]>
+    readCodexThread: (threadId: string) => Promise<CodexThreadDetail>
+    forkCodexThread: (threadId: string) => Promise<CodexThreadSummary>
   }
   // Shell helpers (clipboard / save dialog)
   shell: {
@@ -572,9 +595,15 @@ const electronAPI: ElectronAPI = {
     onToolRequest: (handler: (request: AgentToolRequest) => void) =>
       safeOnWithCleanup<AgentToolRequest>(IPC_CHANNELS.AGENT_EVENTS[1], handler, IPC_CHANNELS.AGENT_EVENTS),
 
+    onApprovalRequest: (handler: (request: CodexApprovalRequest) => void) =>
+      safeOnWithCleanup<CodexApprovalRequest>(IPC_CHANNELS.AGENT_EVENTS[2], handler, IPC_CHANNELS.AGENT_EVENTS),
+
     sendToolResponse: (response: AgentToolResponse) => {
       ipcRenderer.send(IPC_CHANNELS.AGENT.TOOL_RESPONSE, response)
     },
+
+    respondApproval: (response: CodexApprovalResponse) =>
+      safeInvoke<AgentApiResult>(IPC_CHANNELS.AGENT.RESPOND_APPROVAL, response),
 
     setApiKey: (key: string) =>
       safeInvoke<AgentApiResult>(IPC_CHANNELS.AGENT.SET_API_KEY, key),
@@ -585,8 +614,26 @@ const electronAPI: ElectronAPI = {
     getSessionStatus: () =>
       safeInvoke<CodexSessionStatus>(IPC_CHANNELS.AGENT.GET_SESSION_STATUS),
 
+    setSessionConfig: (patch: Partial<CodexSessionConfig>) =>
+      safeInvoke<CodexSessionStatus>(IPC_CHANNELS.AGENT.SET_SESSION_CONFIG, patch),
+
     setAllowedRoots: (roots: string[]) =>
       safeInvoke<string[]>(IPC_CHANNELS.AGENT.SET_ALLOWED_ROOTS, roots),
+
+    getMcpSummary: () =>
+      safeInvoke<CodexMcpSummary>(IPC_CHANNELS.AGENT.GET_MCP_SUMMARY),
+
+    getSkillsSummary: () =>
+      safeInvoke<CodexSkillsSummary>(IPC_CHANNELS.AGENT.GET_SKILLS_SUMMARY),
+
+    listCodexThreads: () =>
+      safeInvoke<CodexThreadSummary[]>(IPC_CHANNELS.AGENT.LIST_CODEX_THREADS),
+
+    readCodexThread: (threadId: string) =>
+      safeInvoke<CodexThreadDetail>(IPC_CHANNELS.AGENT.READ_CODEX_THREAD, threadId),
+
+    forkCodexThread: (threadId: string) =>
+      safeInvoke<CodexThreadSummary>(IPC_CHANNELS.AGENT.FORK_CODEX_THREAD, threadId),
   },
 
   // ============ Shell helpers (clipboard / save dialog) ============

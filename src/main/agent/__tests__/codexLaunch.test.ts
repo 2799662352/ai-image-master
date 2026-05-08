@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { buildCodexLaunchArgs, DEFAULT_LISTEN_URL } from '../codexLaunch'
+import {
+  buildCodexLaunchArgs,
+  DEFAULT_CODEX_SESSION_CONFIG,
+  DEFAULT_LISTEN_URL,
+  resolveCodexSessionConfig,
+} from '../codexLaunch'
 
 describe('buildCodexLaunchArgs', () => {
   it('uses app-server with the default listen URL and safe defaults', () => {
@@ -10,7 +15,7 @@ describe('buildCodexLaunchArgs', () => {
       '--listen', DEFAULT_LISTEN_URL,
       '-c', 'approval_policy="on-request"',
       '-c', 'sandbox_mode="workspace-write"',
-      '-c', 'tools.web_search=true',
+      '-c', 'web_search="cached"',
       // Codex defaults to suppressing raw reasoning ("show_raw_agent_reasoning=false")
       // and only emits a summary when the model returns one. For our local
       // chat panel we WANT to surface reasoning so the "Thought" card has
@@ -32,7 +37,7 @@ describe('buildCodexLaunchArgs', () => {
       '--listen', 'ws://127.0.0.1:9999',
       '-c', 'approval_policy="on-request"',
       '-c', 'sandbox_mode="workspace-write"',
-      '-c', 'tools.web_search=true',
+      '-c', 'web_search="cached"',
       '-c', 'show_raw_agent_reasoning=true',
       '-c', 'model_reasoning_summary="auto"',
       '-c', 'model_context_window=200000',
@@ -92,12 +97,12 @@ describe('buildCodexLaunchArgs', () => {
   it('accepts explicit unsafe overrides via sessionConfig', () => {
     const args = buildCodexLaunchArgs({
       listenUrl: 'ws://127.0.0.1:1234',
-      sessionConfig: { approvalPolicy: 'never', sandboxMode: 'danger-full-access', webSearch: false },
+      sessionConfig: { approvalPolicy: 'never', sandboxMode: 'danger-full-access', webSearch: 'disabled' },
     })
 
     expect(args).toContain('approval_policy="never"')
     expect(args).toContain('sandbox_mode="danger-full-access"')
-    expect(args).toContain('tools.web_search=false')
+    expect(args).toContain('web_search="disabled"')
   })
 
   it('forwards writableRoots as --add-dir flags', () => {
@@ -108,6 +113,26 @@ describe('buildCodexLaunchArgs', () => {
     const idx = args.indexOf('--add-dir')
     expect(idx).toBeGreaterThanOrEqual(0)
     expect(args[idx + 1]).toBe('D:/repo/sub')
+  })
+
+  it('resolves default writableRoots without sharing the default array', () => {
+    const resolved = resolveCodexSessionConfig()
+
+    DEFAULT_CODEX_SESSION_CONFIG.writableRoots.push('D:/later-default-root')
+    try {
+      expect(resolved.writableRoots).toEqual([])
+    } finally {
+      DEFAULT_CODEX_SESSION_CONFIG.writableRoots.pop()
+    }
+  })
+
+  it('resolves custom writableRoots without sharing the caller array', () => {
+    const writableRoots = ['D:/repo/sub']
+    const resolved = resolveCodexSessionConfig({ writableRoots })
+
+    writableRoots.push('D:/later-caller-root')
+
+    expect(resolved.writableRoots).toEqual(['D:/repo/sub'])
   })
 
   it('uses appendProviderArgs to attach provider config when supplied', () => {

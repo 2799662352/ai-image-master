@@ -43,6 +43,13 @@ interface FakeManager {
   loadThread: ReturnType<typeof vi.fn>
   setCodexApiKey: ReturnType<typeof vi.fn>
   testConnection: ReturnType<typeof vi.fn>
+  getSessionStatus: ReturnType<typeof vi.fn>
+  setSessionConfigPatch: ReturnType<typeof vi.fn>
+  setAllowedRoots: ReturnType<typeof vi.fn>
+  respondToApprovalResponse: ReturnType<typeof vi.fn>
+  listCodexThreads: ReturnType<typeof vi.fn>
+  readCodexThread: ReturnType<typeof vi.fn>
+  forkCodexThread: ReturnType<typeof vi.fn>
 }
 
 function makeManager(): FakeManager {
@@ -56,6 +63,13 @@ function makeManager(): FakeManager {
     loadThread: vi.fn(),
     setCodexApiKey: vi.fn(),
     testConnection: vi.fn(),
+    getSessionStatus: vi.fn(),
+    setSessionConfigPatch: vi.fn(),
+    setAllowedRoots: vi.fn(),
+    respondToApprovalResponse: vi.fn().mockResolvedValue({ ok: true }),
+    listCodexThreads: vi.fn().mockResolvedValue([]),
+    readCodexThread: vi.fn().mockResolvedValue({ id: 'codex-1' }),
+    forkCodexThread: vi.fn().mockResolvedValue({ id: 'codex-fork-1' }),
   }
 }
 
@@ -119,5 +133,48 @@ describe('registerAgentIpc thread management handlers', () => {
 
     expect(get('agent:open-thread')).toBeTypeOf('function')
     expect(listenerCount('agent:tool-response')).toBe(1)
+  })
+
+  it('validates and forwards approval responses', async () => {
+    const handler = get('agent:respond-approval')
+    expect(handler).toBeTypeOf('function')
+
+    await handler!({}, { id: '41', approved: false, message: 'not now' })
+
+    expect(manager.respondToApprovalResponse).toHaveBeenCalledWith({
+      id: '41',
+      approved: false,
+      message: 'not now',
+    })
+  })
+
+  it('rejects invalid approval responses', async () => {
+    const handler = get('agent:respond-approval')
+    expect(handler).toBeTypeOf('function')
+
+    await expect(handler!({}, { id: '', approved: true })).rejects.toThrow(/id/)
+    expect(manager.respondToApprovalResponse).not.toHaveBeenCalled()
+  })
+
+  it('registers agent:list-codex-threads and forwards to manager', async () => {
+    const handler = get('agent:list-codex-threads')
+    expect(handler).toBeTypeOf('function')
+    await handler!({})
+    expect(manager.listCodexThreads).toHaveBeenCalled()
+  })
+
+  it('validates and forwards codex thread read/fork ids', async () => {
+    const readHandler = get('agent:read-codex-thread')
+    const forkHandler = get('agent:fork-codex-thread')
+    expect(readHandler).toBeTypeOf('function')
+    expect(forkHandler).toBeTypeOf('function')
+
+    await readHandler!({}, 'codex-1')
+    await forkHandler!({}, 'codex-1')
+
+    expect(manager.readCodexThread).toHaveBeenCalledWith('codex-1')
+    expect(manager.forkCodexThread).toHaveBeenCalledWith('codex-1')
+    await expect(readHandler!({}, '')).rejects.toThrow(/non-empty/)
+    await expect(forkHandler!({}, '   ')).rejects.toThrow(/non-empty/)
   })
 })

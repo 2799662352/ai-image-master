@@ -5,6 +5,8 @@ import { useAgentChatStore } from '../store'
 
 const fakeAgent = {
   listThreads: vi.fn(),
+  listCodexThreads: vi.fn(),
+  forkCodexThread: vi.fn(),
   openThread: vi.fn(),
   renameThread: vi.fn(),
   deleteThread: vi.fn(),
@@ -25,6 +27,13 @@ beforeEach(() => {
   fakeAgent.renameThread.mockResolvedValue(undefined)
   fakeAgent.deleteThread.mockResolvedValue(undefined)
   fakeAgent.listThreads.mockResolvedValue([])
+  fakeAgent.listCodexThreads.mockResolvedValue([])
+  fakeAgent.forkCodexThread.mockResolvedValue({
+    id: 'codex-fork-1',
+    title: 'Forked session',
+    createdAt: '',
+    updatedAt: '',
+  })
   fakeAgent.openThread.mockResolvedValue({ id: 'today-1', messages: [] })
   useAgentChatStore.setState({
     threadId: 'today-1',
@@ -47,6 +56,16 @@ beforeEach(() => {
     sidebarOpen: true,
     sidebarWidth: 240,
     isRunning: false,
+    codexThreadList: [
+      {
+        id: 'codex-1',
+        title: 'Codex native session',
+        createdAt: '2026-05-08T01:00:00Z',
+        updatedAt: '2026-05-08T01:10:00Z',
+        cwd: 'D:/repo',
+        model: 'gpt-5.5',
+      },
+    ],
   })
 })
 
@@ -67,6 +86,18 @@ describe('ThreadSidebar', () => {
     expect(screen.getByText('Older')).toBeTruthy()
     expect(screen.getByText('Today thread')).toBeTruthy()
     expect(screen.getByText('Older thread')).toBeTruthy()
+  })
+
+  it('renders Codex sessions separately with a fork action', async () => {
+    render(<ThreadSidebar />)
+    expect(screen.getByText('Codex Sessions')).toBeTruthy()
+    expect(screen.getByText('Codex native session')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: /fork codex session codex native session/i }))
+    await flush()
+
+    expect(fakeAgent.forkCodexThread).toHaveBeenCalledWith('codex-1')
+    expect(fakeAgent.listCodexThreads).toHaveBeenCalled()
   })
 
   it('clicking + New chat resets to the empty thread', () => {

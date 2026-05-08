@@ -4,6 +4,7 @@
 
 import WebSocket from 'ws'
 import { connectWithRetry } from './connectWithRetry'
+import { resolveCodexSessionConfig } from './codexLaunch'
 import { CodexNotificationRouter } from './codexNotificationRouter'
 import { mapUserInput } from './codexUserInput'
 import {
@@ -11,16 +12,25 @@ import {
   isServerRequest,
   type ClientInfo,
   type ServerMessage,
+  type ThreadStartParams,
   type ThreadStartResponse,
   type TurnStartResponse,
 } from './codexProtocol'
-import type { AgentStreamEvent } from '../../types/agent'
+import type {
+  AgentStreamEvent,
+  CodexApprovalRequest,
+  CodexApprovalResponse,
+  CodexSessionConfig,
+  CodexThreadDetail,
+  CodexThreadSummary,
+} from '../../types/agent'
 import type { AgentInput } from './types'
 
 const DEFAULT_RPC_TIMEOUT_MS = 30_000
 const DEFAULT_CONNECT_TIMEOUT_MS = 10_000
 const DEFAULT_CONNECT_INTERVAL_MS = 100
 const CANCEL_GRACE_MS = 2_000
+const DEFAULT_APPROVAL_TIMEOUT_MS = 5 * 60_000
 
 type PendingRpc = {
   resolve: (value: unknown) => void
@@ -38,15 +48,23 @@ type TurnQueue = {
 
 type OrphanNotification = { event: AgentStreamEvent; turnId: string }
 
+type PendingServerRequest = {
+  wireId: number
+  timer: ReturnType<typeof setTimeout>
+}
+
 const ORPHAN_BUFFER_LIMIT = 1024
 
 export interface CodexProtocolClientOptions {
   url: string
   clientInfo: ClientInfo
+  sessionConfig?: Partial<CodexSessionConfig>
   connectTimeoutMs?: number
   connectIntervalMs?: number
   rpcTimeoutMs?: number
+  approvalTimeoutMs?: number
   onLog?: (line: string) => void
+  onApprovalRequest?: (request: CodexApprovalRequest) => void
 }
 
 /**
@@ -85,13 +103,18 @@ export class CodexProtocolClient {
   // we hold them here and drain them when the queue is registered.
   private orphanEvents: OrphanNotification[] = []
   private readonly rpcTimeoutMs: number
+  private readonly approvalTimeoutMs: number
   private readonly connectTimeoutMs: number
   private readonly connectIntervalMs: number
+  private sessionConfig: CodexSessionConfig
+  private pendingServerRequests = new Map<string, PendingServerRequest>()
 
   constructor(private readonly options: CodexProtocolClientOptions) {
     this.rpcTimeoutMs = options.rpcTimeoutMs ?? DEFAULT_RPC_TIMEOUT_MS
+    this.approvalTimeoutMs = options.approvalTimeoutMs ?? DEFAULT_APPROVAL_TIMEOUT_MS
     this.connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS
     this.connectIntervalMs = options.connectIntervalMs ?? DEFAULT_CONNECT_INTERVAL_MS
+    this.sessionConfig = resolveCodexSessionConfig(options.sessionConfig)
   }
 
   async start(): Promise<void> {
@@ -102,23 +125,37 @@ export class CodexProtocolClient {
     })
 
     this.ws.on('message', (data) => this.handleRaw(String(data)))
-    this.ws.on('close', () => this.failAllQueues(new Error('codex websocket closed')))
+    this.ws.on('close', () => {
+      this.failAllQueues(new Error('codex websocket closed'))
+      this.rejectPending(new Error('codex websocket closed'))
+      this.clearPendingServerRequests()
+    })
 
     await this.rpc('initialize', { clientInfo: this.options.clientInfo, capabilities: null })
   }
 
   async stop(): Promise<void> {
     const ws = this.ws
-    this.ws = null
     if (ws && ws.readyState === WebSocket.OPEN) {
+      this.denyAllServerRequests('Codex protocol client stopped')
       try { ws.close() } catch { /* ignore */ }
     }
+    this.ws = null
     this.failAllQueues(new Error('Codex protocol client stopped'))
     this.rejectPending(new Error('Codex protocol client stopped'))
+    this.clearPendingServerRequests()
   }
 
   isOpen(): boolean {
     return this.ws?.readyState === WebSocket.OPEN
+  }
+
+  setSessionConfig(patch: Partial<CodexSessionConfig>): void {
+    this.sessionConfig = resolveCodexSessionConfig({
+      ...this.sessionConfig,
+      ...patch,
+      writableRoots: patch.writableRoots ? [...patch.writableRoots] : [...this.sessionConfig.writableRoots],
+    })
   }
 
   async *send(threadId: string | undefined, input: AgentInput): AsyncIterable<AgentStreamEvent> {
@@ -175,6 +212,32 @@ export class CodexProtocolClient {
     grace.unref?.()
   }
 
+  async listThreads(): Promise<CodexThreadSummary[]> {
+    const response = await this.rpc<unknown>('thread/list', {})
+    return normalizeThreadList(response)
+  }
+
+  async readThread(threadId: string): Promise<CodexThreadDetail> {
+    const response = await this.rpc<unknown>('thread/read', { threadId })
+    return normalizeThreadDetail(response)
+  }
+
+  async forkThread(threadId: string): Promise<CodexThreadSummary> {
+    const response = await this.rpc<unknown>('thread/fork', { threadId })
+    return normalizeThreadSummary(extractThreadRecord(response))
+  }
+
+  respondToServerRequest(response: CodexApprovalResponse): void {
+    const pending = this.pendingServerRequests.get(response.id)
+    if (!pending) throw new Error(`No pending Codex server request for id ${response.id}`)
+    this.pendingServerRequests.delete(response.id)
+    clearTimeout(pending.timer)
+    this.sendServerRequestResponse(pending.wireId, {
+      approved: response.approved,
+      ...(response.message ? { message: response.message } : {}),
+    })
+  }
+
   private openOnce(url: string): Promise<WebSocket> {
     return new Promise<WebSocket>((resolve, reject) => {
       const ws = new WebSocket(url)
@@ -201,12 +264,19 @@ export class CodexProtocolClient {
     })
   }
 
-  private threadStartParams(input: AgentInput): Record<string, unknown> {
+  private threadStartParams(input: AgentInput): ThreadStartParams {
+    const sessionConfig = this.sessionConfig
     return {
       model: input.model,
       cwd: input.cwd,
-      sandbox: 'danger-full-access',
-      approvalPolicy: 'never',
+      sandbox: sessionConfig.sandboxMode,
+      approvalPolicy: sessionConfig.approvalPolicy,
+      config: {
+        web_search: sessionConfig.webSearch,
+        sandbox_workspace_write: {
+          writable_roots: sessionConfig.writableRoots,
+        },
+      },
     }
   }
 
@@ -254,7 +324,7 @@ export class CodexProtocolClient {
 
     if (isServerRequest(msg)) {
       this.options.onLog?.(`[codex] server request: ${msg.method} (id=${msg.id})`)
-      this.respondToServerRequest(msg.id)
+      this.queueServerRequest(msg)
       return
     }
 
@@ -263,10 +333,57 @@ export class CodexProtocolClient {
     }
   }
 
-  private respondToServerRequest(id: number): void {
+  private queueServerRequest(msg: { id: number; method: string; params?: unknown }): void {
+    const id = String(msg.id)
+    if (this.pendingServerRequests.has(id)) {
+      this.sendServerRequestResponse(msg.id, {
+        approved: false,
+        message: 'duplicate approval request id',
+      })
+      return
+    }
+
+    const params = toRecord(msg.params)
+    const timer = setTimeout(() => {
+      const pending = this.pendingServerRequests.get(id)
+      if (!pending) return
+      this.pendingServerRequests.delete(id)
+      this.sendServerRequestResponse(pending.wireId, {
+        approved: false,
+        message: 'approval request timed out',
+      })
+    }, this.approvalTimeoutMs)
+    timer.unref?.()
+    this.pendingServerRequests.set(id, { wireId: msg.id, timer })
+
+    this.options.onApprovalRequest?.({
+      id,
+      threadId: typeof params.threadId === 'string' ? params.threadId : undefined,
+      method: msg.method,
+      params,
+      createdAt: new Date().toISOString(),
+    })
+  }
+
+  private sendServerRequestResponse(id: number, result: { approved: boolean; message?: string }): void {
     if (this.ws?.readyState !== WebSocket.OPEN) return
-    const payload = { jsonrpc: '2.0' as const, id, result: {} }
+    const payload = { jsonrpc: '2.0' as const, id, result }
     this.ws.send(JSON.stringify(payload))
+  }
+
+  private denyAllServerRequests(message: string): void {
+    for (const [id, pending] of this.pendingServerRequests) {
+      this.pendingServerRequests.delete(id)
+      clearTimeout(pending.timer)
+      this.sendServerRequestResponse(pending.wireId, { approved: false, message })
+    }
+  }
+
+  private clearPendingServerRequests(): void {
+    for (const pending of this.pendingServerRequests.values()) {
+      clearTimeout(pending.timer)
+    }
+    this.pendingServerRequests.clear()
   }
 
   private routeNotification(method: string, params: Record<string, any>): void {
@@ -395,6 +512,64 @@ function queueKey(threadId: string, turnId: string): string {
 
 function stringifyError(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function toRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  return value as Record<string, unknown>
+}
+
+function normalizeThreadList(value: unknown): CodexThreadSummary[] {
+  const record = toRecord(value)
+  const rawThreads = Array.isArray(record.threads)
+    ? record.threads
+    : Array.isArray(record.items)
+      ? record.items
+      : Array.isArray(value)
+        ? value
+        : []
+  return rawThreads
+    .map((item) => normalizeOptionalThreadSummary(item))
+    .filter((item): item is CodexThreadSummary => item !== null)
+}
+
+function normalizeThreadDetail(value: unknown): CodexThreadDetail {
+  return normalizeThreadSummary(extractThreadRecord(value))
+}
+
+function extractThreadRecord(value: unknown): Record<string, unknown> {
+  const record = toRecord(value)
+  return toRecord(record.thread ?? value)
+}
+
+function normalizeOptionalThreadSummary(value: unknown): CodexThreadSummary | null {
+  const record = toRecord(value)
+  const id = stringField(record, 'id')
+  if (!id) return null
+  return normalizeThreadSummary(record)
+}
+
+function normalizeThreadSummary(record: Record<string, unknown>): CodexThreadSummary {
+  const id = stringField(record, 'id')
+  if (!id) throw new Error('Codex thread response missing id')
+  const title = stringField(record, 'title') ?? stringField(record, 'preview') ?? 'Untitled Codex session'
+  const createdAt = stringField(record, 'createdAt') ?? stringField(record, 'created_at') ?? ''
+  const updatedAt = stringField(record, 'updatedAt') ?? stringField(record, 'updated_at') ?? createdAt
+  const cwd = stringField(record, 'cwd')
+  const model = stringField(record, 'model')
+  return {
+    id,
+    title,
+    createdAt,
+    updatedAt,
+    ...(cwd ? { cwd } : {}),
+    ...(model ? { model } : {}),
+  }
+}
+
+function stringField(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key]
+  return typeof value === 'string' ? value : undefined
 }
 
 /**

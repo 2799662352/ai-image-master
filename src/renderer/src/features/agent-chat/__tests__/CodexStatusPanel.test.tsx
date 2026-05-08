@@ -15,11 +15,12 @@ describe('CodexStatusPanel', () => {
       model: 'gpt-5.5',
       sandboxMode: 'workspace-write',
       approvalPolicy: 'on-request',
-      webSearch: true,
+      webSearch: 'cached',
       writableRoots: [],
     }} />)
     expect(screen.getByText(/Codex gpt-5.5/i)).toBeTruthy()
     expect(screen.getByText(/workspace-write/i)).toBeTruthy()
+    expect(screen.getByText(/search cached/i)).toBeTruthy()
   })
 
   it('flags unsafe sandbox and approval', () => {
@@ -27,7 +28,7 @@ describe('CodexStatusPanel', () => {
       model: 'gpt-5.5',
       sandboxMode: 'danger-full-access',
       approvalPolicy: 'never',
-      webSearch: false,
+      webSearch: 'disabled',
       writableRoots: ['D:/repo'],
     }} />)
     expect(container.querySelector('[class*="amber"]')).toBeTruthy()

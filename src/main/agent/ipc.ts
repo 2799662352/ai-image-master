@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import type { AgentToolResponse } from '../../types/agent'
+import type { AgentToolResponse, CodexApprovalResponse } from '../../types/agent'
 import type { ToolRouter } from '../mcp/ToolRouter'
 import type { AgentManager } from './AgentManager'
 
@@ -14,7 +14,14 @@ const AGENT_HANDLE_CHANNELS = [
   'agent:set-api-key',
   'agent:test-connection',
   'agent:get-session-status',
+  'agent:set-session-config',
   'agent:set-allowed-roots',
+  'agent:respond-approval',
+  'agent:get-mcp-summary',
+  'agent:get-skills-summary',
+  'agent:list-codex-threads',
+  'agent:read-codex-thread',
+  'agent:fork-codex-thread',
 ]
 
 export function registerAgentIpc(manager: AgentManager, router: ToolRouter): void {
@@ -45,6 +52,47 @@ export function registerAgentIpc(manager: AgentManager, router: ToolRouter): voi
   })
   ipcMain.handle('agent:test-connection', () => manager.testConnection())
   ipcMain.handle('agent:get-session-status', () => manager.getSessionStatus())
+  ipcMain.handle('agent:set-session-config', (_event, patch: unknown) => manager.setSessionConfigPatch(patch))
   ipcMain.handle('agent:set-allowed-roots', (_event, roots: unknown) => manager.setAllowedRoots(roots))
+  ipcMain.handle('agent:respond-approval', async (_event, payload: unknown) =>
+    manager.respondToApprovalResponse(validateApprovalResponse(payload)),
+  )
+  ipcMain.handle('agent:get-mcp-summary', () => manager.getMcpSummary())
+  ipcMain.handle('agent:get-skills-summary', () => manager.getSkillsSummary())
+  ipcMain.handle('agent:list-codex-threads', () => manager.listCodexThreads())
+  ipcMain.handle('agent:read-codex-thread', async (_event, threadId: unknown) =>
+    manager.readCodexThread(validateThreadId(threadId)),
+  )
+  ipcMain.handle('agent:fork-codex-thread', async (_event, threadId: unknown) =>
+    manager.forkCodexThread(validateThreadId(threadId)),
+  )
   ipcMain.on('agent:tool-response', (_event, response: AgentToolResponse) => router.handleRendererResponse(response))
+}
+
+function validateApprovalResponse(payload: unknown): CodexApprovalResponse {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('Invalid approval response payload')
+  }
+  const input = payload as Record<string, unknown>
+  if (typeof input.id !== 'string' || input.id.trim().length === 0) {
+    throw new Error('Approval response id must be a non-empty string')
+  }
+  if (typeof input.approved !== 'boolean') {
+    throw new Error('Approval response approved must be a boolean')
+  }
+  if (input.message !== undefined && typeof input.message !== 'string') {
+    throw new Error('Approval response message must be a string')
+  }
+  return {
+    id: input.id,
+    approved: input.approved,
+    ...(typeof input.message === 'string' && input.message.length > 0 ? { message: input.message } : {}),
+  }
+}
+
+function validateThreadId(value: unknown): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error('Codex thread id must be a non-empty string')
+  }
+  return value
 }

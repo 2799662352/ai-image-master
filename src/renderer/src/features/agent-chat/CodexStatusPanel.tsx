@@ -18,7 +18,7 @@ export function CodexStatusPanel({ status }: { status?: CodexSessionStatus }) {
     >
       <div className="font-medium">Codex {status.model}</div>
       <div className="mt-0.5 opacity-80">
-        {status.sandboxMode} · {status.approvalPolicy} · search {status.webSearch ? 'on' : 'off'}
+        {status.sandboxMode} · {status.approvalPolicy} · search {status.webSearch}
       </div>
       {status.writableRoots.length > 0 ? (
         <div className="mt-0.5 truncate opacity-60">{status.writableRoots.length} root(s)</div>

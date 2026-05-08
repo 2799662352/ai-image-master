@@ -1,4 +1,11 @@
-import type { AgentSendMessagePayload, AgentStreamEvent } from '../../types/agent'
+import type {
+  AgentSendMessagePayload,
+  AgentStreamEvent,
+  CodexApprovalResponse,
+  CodexSessionConfig,
+  CodexThreadDetail,
+  CodexThreadSummary,
+} from '../../types/agent'
 
 export interface AgentInput extends AgentSendMessagePayload {
   model: string
@@ -16,6 +23,11 @@ export interface IAgentBackend {
   send(threadId: string | undefined, input: AgentInput): AsyncIterable<AgentStreamEvent>
   cancel(threadId: string): Promise<void>
   isHealthy(): boolean
+  setSessionConfig?(patch: Partial<CodexSessionConfig>): void
+  respondToApprovalResponse?(response: CodexApprovalResponse): Promise<void> | void
+  listThreads?(): Promise<CodexThreadSummary[]>
+  readThread?(threadId: string): Promise<CodexThreadDetail>
+  forkThread?(threadId: string): Promise<CodexThreadSummary>
 }
 
 export interface JsonRpcMessage {

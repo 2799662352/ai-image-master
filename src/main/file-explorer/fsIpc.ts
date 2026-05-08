@@ -59,22 +59,35 @@ function hasTraversalSegment(p: string): boolean {
   return p.split(/[\\/]/).some((segment) => segment === '..')
 }
 
-function isInsideAllowedRoot(target: string): boolean {
-  const resolved = path.resolve(target)
-  return resolveAllowedRoots().some((root) => {
-    const rel = path.relative(root, resolved)
+async function realpathIfExists(p: string): Promise<string | undefined> {
+  try {
+    return await fs.realpath(p)
+  } catch (err) {
+    if (isNodeError(err) && err.code === 'ENOENT') return undefined
+    throw err
+  }
+}
+
+async function isInsideAllowedRoot(realTarget: string): Promise<boolean> {
+  const realRoots = await Promise.all(resolveAllowedRoots().map((root) => realpathIfExists(root)))
+  return realRoots.filter((root): root is string => typeof root === 'string').some((root) => {
+    const rel = path.relative(root, realTarget)
     return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))
   })
 }
 
-function assertContained(p: string): void {
-  if (hasTraversalSegment(p) || !isInsideAllowedRoot(p)) {
+async function assertContained(p: string): Promise<void> {
+  if (hasTraversalSegment(p)) {
+    throw new Error('fs path outside allowed roots')
+  }
+  const realTarget = await realpathIfExists(p) ?? await realpathIfExists(path.dirname(p))
+  if (!realTarget || !(await isInsideAllowedRoot(realTarget))) {
     throw new Error('fs path outside allowed roots')
   }
 }
 
 export async function handleReadText(p: string): Promise<{ content: string; mtime: number }> {
-  assertContained(p)
+  await assertContained(p)
   const stat = await fs.stat(p)
   if (!stat.isFile()) throw new Error(`${p} is not a file`)
   if (stat.size > TEXT_READ_LIMIT) throw new Error(`File too large for inline edit (${stat.size} bytes)`)
@@ -83,14 +96,14 @@ export async function handleReadText(p: string): Promise<{ content: string; mtim
 }
 
 export async function handleWriteText(args: { path: string; content: string }): Promise<{ mtime: number }> {
-  assertContained(args.path)
+  await assertContained(args.path)
   await fs.writeFile(args.path, args.content, 'utf-8')
   const stat = await fs.stat(args.path)
   return { mtime: stat.mtimeMs }
 }
 
 export async function handleListDir(p: string): Promise<FileNodeIpc[]> {
-  assertContained(p)
+  await assertContained(p)
   const entries = await fs.readdir(p, { withFileTypes: true })
   return entries
     .filter((e) => e.name !== '.git')
@@ -112,13 +125,17 @@ export async function handleStat(p: string): Promise<
   | { ok: false; reason: string }
 > {
   try {
-    assertContained(p)
+    await assertContained(p)
     const s = await fs.stat(p)
     if (!s.isFile()) return { ok: false, reason: 'not a file' }
     return { ok: true, size: s.size, mime: mimeFromExt(p), mtime: s.mtimeMs }
   } catch (err) {
     return { ok: false, reason: String(err) }
   }
+}
+
+function isNodeError(err: unknown): err is NodeJS.ErrnoException {
+  return err instanceof Error && 'code' in err
 }
 
 export async function handlePickFolder(): Promise<string | null> {

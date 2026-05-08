@@ -8,18 +8,29 @@ import { ResizableHandle } from './ResizableHandle'
 import { ThreadCommandPalette } from './ThreadCommandPalette'
 import { ThreadSidebar } from './ThreadSidebar'
 import { TokenUsageMeter } from './TokenUsageMeter'
+import { CodexApprovalPrompt } from './CodexApprovalPrompt'
+import { CodexMcpPanel } from './CodexMcpPanel'
+import { CodexPermissionsPanel } from './CodexPermissionsPanel'
+import { CodexSkillsPanel } from './CodexSkillsPanel'
 import { CodexStatusPanel } from './CodexStatusPanel'
 import { findModel } from './models'
 import { useAgentChatStore } from './store'
 import { FileExplorerPanel } from '../file-explorer/FileExplorerPanel'
 import { useFileExplorerStore } from '../file-explorer/store'
 import { FileTreeIcon } from '../file-explorer/icons'
-import type { AgentStreamEvent, CodexSessionStatus } from '../../../../types/agent'
+import type {
+  AgentStreamEvent,
+  CodexApprovalRequest,
+  CodexSessionConfig,
+  CodexSessionStatus,
+} from '../../../../types/agent'
 
 type AgentEventApi = {
   agent?: {
     onEvent: (handler: (event: AgentStreamEvent) => void) => () => void
+    onApprovalRequest?: (handler: (request: CodexApprovalRequest) => void) => () => void
     getSessionStatus?: () => Promise<CodexSessionStatus>
+    setSessionConfig?: (patch: Partial<CodexSessionConfig>) => Promise<CodexSessionStatus>
   }
 }
 
@@ -28,6 +39,10 @@ export function AgentChatPanel() {
   const messages = useAgentChatStore((state) => state.messages)
   const error = useAgentChatStore((state) => state.error)
   const applyEvent = useAgentChatStore((state) => state.applyEvent)
+  const addApprovalRequest = useAgentChatStore((state) => state.addApprovalRequest)
+  const pendingApprovals = useAgentChatStore((state) => state.pendingApprovals)
+  const respondToApproval = useAgentChatStore((state) => state.respondToApproval)
+  const setError = useAgentChatStore((state) => state.setError)
   const panelWidth = useAgentChatStore((state) => state.panelWidth)
   const setPanelWidth = useAgentChatStore((state) => state.setPanelWidth)
   const tokenUsage = useAgentChatStore((state) => state.tokenUsage)
@@ -48,6 +63,11 @@ export function AgentChatPanel() {
     return agent.onEvent(applyEvent)
   }, [applyEvent, isOpen])
 
+  useEffect(() => {
+    const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
+    return agent?.onApprovalRequest?.(addApprovalRequest)
+  }, [addApprovalRequest])
+
   // Restore the most recent thread + thread list on first open.
   useEffect(() => {
     if (!isOpen) return
@@ -59,6 +79,21 @@ export function AgentChatPanel() {
     const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
     void agent?.getSessionStatus?.().then(setCodexStatus).catch(() => undefined)
   }, [isOpen])
+
+  async function applySessionConfig(patch: Partial<CodexSessionConfig>): Promise<void> {
+    const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
+    if (!agent?.setSessionConfig) {
+      setError('Electron agent permissions API is unavailable')
+      return
+    }
+    try {
+      const nextStatus = await agent.setSessionConfig(patch)
+      setCodexStatus(nextStatus)
+      setError(undefined)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
 
   // Cmd/Ctrl+B → toggle sidebar (only when panel is open, otherwise we'd be
   // stealing a global shortcut from the rest of the app for no reason).
@@ -173,9 +208,25 @@ export function AgentChatPanel() {
               </button>
             </div>
           </div>
+          <CodexPermissionsPanel status={codexStatus} onApply={applySessionConfig} />
+          <div className="mt-3 grid gap-3 xl:grid-cols-2">
+            <CodexMcpPanel />
+            <CodexSkillsPanel />
+          </div>
         </header>
 
         <div className="flex-1 overflow-y-auto px-4 py-4">
+          {pendingApprovals.length > 0 ? (
+            <div className="mb-3 space-y-3">
+              {pendingApprovals.map((request) => (
+                <CodexApprovalPrompt
+                  key={request.id}
+                  request={request}
+                  onRespond={(response) => respondToApproval(response)}
+                />
+              ))}
+            </div>
+          ) : null}
           {messages.length === 0 ? (
             <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/5 p-4 text-sm text-zinc-300">
               Tell the agent what to create or inspect. It can call CATIMATION tools and use local Codex

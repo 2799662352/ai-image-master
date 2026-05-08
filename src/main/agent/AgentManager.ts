@@ -1,15 +1,26 @@
 import crypto from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { promises as fs } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
+import { dialog } from 'electron'
 import { CodexLocalBackend } from './CodexLocalBackend'
 import { DEFAULT_CODEX_SESSION_CONFIG } from './codexLaunch'
+import { discoverCodexSkills, readMcpSummary } from './codexConfigDiscovery'
+import { mapReferencesToInputItems } from './codexUserInput'
+import { validateSessionConfigPatch } from './sessionConfigValidation'
 import type { BrowserWindow } from 'electron'
 import type {
   AgentSendMessagePayload,
   AgentStreamEvent,
+  CodexApprovalRequest,
+  CodexApprovalResponse,
+  CodexMcpSummary,
   CodexSessionConfig,
   CodexSessionStatus,
+  CodexSkillsSummary,
+  CodexThreadDetail,
+  CodexThreadSummary,
   ItemDeltaPatch,
 } from '../../types/agent'
 import type { AttachmentRef, TimelineItem } from '../../types/agent-timeline'
@@ -83,6 +94,35 @@ export function buildPromptWithAttachments(
   return `[Attached files at these local paths:\n${lines.join('\n')}]\n\n${content}`
 }
 
+function buildPromptWithReferenceMentions(content: string, mentions: readonly string[]): string {
+  if (mentions.length === 0) return content
+  return `[Referenced files at these local paths:\n- ${mentions.join('\n- ')}]\n\n${content}`
+}
+
+function mapDuplicateAttachmentReferencesToUploadedPaths(
+  items: AgentInput['items'],
+  attachmentInputs: ReadonlyArray<AgentSendMessagePayload['attachments'][number]>,
+  savedAttachments: ReadonlyArray<PromptAttachment>,
+): AgentInput['items'] {
+  const uploadedPathByOriginalPath = new Map<string, string>()
+  attachmentInputs.forEach((attachment, index) => {
+    if (!attachment.path) return
+    const saved = savedAttachments[index]
+    if (!saved || !saved.mime.startsWith('image/')) return
+    if (attachment.name !== saved.originalName || attachment.mime !== saved.mime) return
+    uploadedPathByOriginalPath.set(path.resolve(attachment.path), saved.localPath)
+  })
+
+  if (uploadedPathByOriginalPath.size === 0) return items
+  return items.map((item) => {
+    if (item.type !== 'localImage') return item
+    return {
+      ...item,
+      path: uploadedPathByOriginalPath.get(path.resolve(item.path)) ?? item.path,
+    }
+  })
+}
+
 export interface AgentManagerOptions {
   /** Directory used to persist the Codex API key JSON. Inject in tests. */
   userDataDir: string
@@ -115,6 +155,7 @@ export class AgentManager {
   private codexApiKey = ''
   private summarizer?: ThreadTitleSummarizer
   private sessionConfig: CodexSessionConfig = { ...DEFAULT_CODEX_SESSION_CONFIG }
+  private allowedRoots: string[] = [...DEFAULT_CODEX_SESSION_CONFIG.writableRoots]
   private readonly firstTurnDoneByThread = new Map<string, boolean>()
   /**
    * Maps our DB thread row id (a Prisma CUID like `cm6abc...`) to the
@@ -137,6 +178,7 @@ export class AgentManager {
       getApiKey: () => this.codexApiKey,
       provider: DEFAULT_PROVIDER,
       sessionConfig: this.sessionConfig,
+      onApprovalRequest: (request) => this.emitApprovalRequest(request),
     })
     if (this.store) {
       this.summarizer = new ThreadTitleSummarizer(this.store, this.backend, DEFAULT_AGENT_MODEL)
@@ -175,9 +217,23 @@ export class AgentManager {
       }
     }
 
-    this.sessionConfig = { ...this.sessionConfig, writableRoots: validated }
+    this.allowedRoots = [...validated]
+    this.sessionConfig = { ...this.sessionConfig, writableRoots: [...validated] }
+    this.backend.setSessionConfig?.({ writableRoots: [...validated] })
     setFsAllowedRoots(validated)
     return [...validated]
+  }
+
+  async setSessionConfigPatch(input: unknown): Promise<CodexSessionStatus> {
+    const patch = validateSessionConfigPatch(input, this.allowedRoots)
+    await this.confirmUnsafeSessionConfigChange(patch)
+    this.sessionConfig = {
+      ...this.sessionConfig,
+      ...patch,
+      writableRoots: patch.writableRoots ? [...patch.writableRoots] : [...this.sessionConfig.writableRoots],
+    }
+    this.backend.setSessionConfig?.(patch)
+    return this.getSessionStatus()
   }
 
   getSessionStatus(model: string = DEFAULT_AGENT_MODEL): CodexSessionStatus {
@@ -188,6 +244,17 @@ export class AgentManager {
       webSearch: this.sessionConfig.webSearch,
       writableRoots: [...this.sessionConfig.writableRoots],
     }
+  }
+
+  async getMcpSummary(): Promise<CodexMcpSummary> {
+    return readMcpSummary(path.join(os.homedir(), '.codex', 'config.toml'))
+  }
+
+  async getSkillsSummary(): Promise<CodexSkillsSummary> {
+    return discoverCodexSkills({
+      cwd: this.sessionConfig.writableRoots[0] ?? process.cwd(),
+      home: os.homedir(),
+    })
   }
 
   async start(): Promise<void> {
@@ -244,6 +311,7 @@ export class AgentManager {
       throw new Error('AgentManager.sendMessage called without store/attachments')
     }
 
+    const referenceMapping = await mapReferencesToInputItems(payload.references, this.allowedRoots)
     const model = payload.model?.trim() || DEFAULT_AGENT_MODEL
     const thread = payload.threadId
       ? { id: payload.threadId }
@@ -251,7 +319,8 @@ export class AgentManager {
           title: payload.content.slice(0, 40) || 'New Agent Thread',
           model,
         })
-    const savedAttachments = await this.attachments.ingest(thread.id, payload.attachments ?? [])
+    const attachmentInputs = payload.attachments ?? []
+    const savedAttachments = await this.attachments.ingest(thread.id, attachmentInputs)
     // Anchor every attachment's on-disk localPath into the agent's text
     // prompt. The renderer file-picker only gives us a buffer — without
     // this preamble the model can't `cat`/`read_file`/etc. the attachment
@@ -259,11 +328,31 @@ export class AgentManager {
     // `localImage` for vision models, but listing the path here is what
     // lets the agent's filesystem tools touch the same file. See
     // AgentManager.test.ts > "injects the localPath of every attachment".
-    const promptText = buildPromptWithAttachments(payload.content, savedAttachments)
+    const promptText = buildPromptWithReferenceMentions(
+      buildPromptWithAttachments(payload.content, savedAttachments),
+      referenceMapping.textMentions,
+    )
+    const referenceItems = mapDuplicateAttachmentReferencesToUploadedPaths(
+      referenceMapping.items,
+      attachmentInputs,
+      savedAttachments,
+    )
+    const localImagePaths = new Set(
+      referenceItems
+        .filter((item): item is Extract<typeof item, { type: 'localImage' }> => item.type === 'localImage')
+        .map((item) => path.resolve(item.path)),
+    )
     const items: AgentInput['items'] = [
       { type: 'text', text: promptText },
+      ...referenceItems,
       ...savedAttachments
         .filter((item) => item.mime.startsWith('image/'))
+        .filter((item) => {
+          const resolved = path.resolve(item.localPath)
+          if (localImagePaths.has(resolved)) return false
+          localImagePaths.add(resolved)
+          return true
+        })
         .map((item) => ({ type: 'localImage' as const, path: item.localPath })),
     ]
 
@@ -338,9 +427,45 @@ export class AgentManager {
     await this.backend.cancel(codexThreadId ?? threadId)
   }
 
+  async respondToApprovalResponse(response: CodexApprovalResponse): Promise<{ ok: boolean; error?: string }> {
+    if (!this.backend.respondToApprovalResponse) {
+      return { ok: false, error: 'Codex approval response API is unavailable' }
+    }
+    try {
+      await this.backend.respondToApprovalResponse(response)
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
   async listThreads() {
     if (!this.store) throw new Error('AgentManager.listThreads called without store')
     return this.store.listThreads()
+  }
+
+  async listCodexThreads(): Promise<CodexThreadSummary[]> {
+    if (!this.backend.isHealthy() || !this.backend.listThreads) return []
+    try {
+      return await this.backend.listThreads()
+    } catch (err) {
+      console.warn('[AgentManager] failed to list Codex threads:', err)
+      return []
+    }
+  }
+
+  async readCodexThread(threadId: string): Promise<CodexThreadDetail> {
+    const id = validateCodexThreadId(threadId)
+    if (!this.backend.isHealthy()) throw new Error('Codex backend is not healthy')
+    if (!this.backend.readThread) throw new Error('Codex thread read API is unavailable')
+    return this.backend.readThread(id)
+  }
+
+  async forkCodexThread(threadId: string): Promise<CodexThreadSummary> {
+    const id = validateCodexThreadId(threadId)
+    if (!this.backend.isHealthy()) throw new Error('Codex backend is not healthy')
+    if (!this.backend.forkThread) throw new Error('Codex thread fork API is unavailable')
+    return this.backend.forkThread(id)
   }
 
   async loadThread(threadId: string) {
@@ -373,6 +498,43 @@ export class AgentManager {
     }
   }
 
+  private async confirmUnsafeSessionConfigChange(patch: Partial<CodexSessionConfig>): Promise<void> {
+    const unsafeChanges: string[] = []
+    if (
+      patch.sandboxMode === 'danger-full-access' &&
+      this.sessionConfig.sandboxMode !== 'danger-full-access'
+    ) {
+      unsafeChanges.push('danger-full-access sandbox')
+    }
+    if (
+      patch.approvalPolicy === 'never' &&
+      this.sessionConfig.approvalPolicy !== 'never'
+    ) {
+      unsafeChanges.push('never approval policy')
+    }
+    if (patch.webSearch === 'live' && this.sessionConfig.webSearch !== 'live') {
+      unsafeChanges.push('live web search')
+    }
+    if (unsafeChanges.length === 0) return
+
+    const win = this.win && !this.win.isDestroyed() ? this.win : undefined
+    const options = {
+      type: 'warning' as const,
+      buttons: ['Apply', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      title: 'Confirm Codex permissions',
+      message: 'Apply unsafe Codex session permissions?',
+      detail: `This change enables: ${unsafeChanges.join(', ')}.`,
+    }
+    const result = win
+      ? await dialog.showMessageBox(win, options)
+      : await dialog.showMessageBox(options)
+    if (result.response !== 0) {
+      throw new Error('session config change cancelled')
+    }
+  }
+
   private emitEvent(event: AgentStreamEvent): void {
     if (this.eventSink) {
       this.eventSink(event)
@@ -381,6 +543,19 @@ export class AgentManager {
     const win = this.win
     if (!win || win.isDestroyed()) return
     win.webContents.send('agent:event', event)
+  }
+
+  private emitApprovalRequest(request: CodexApprovalRequest): void {
+    const win = this.win
+    if (!win || win.isDestroyed()) return
+
+    const dbThreadId = request.threadId
+      ? findDbThreadId(this.codexThreadIdByDbThreadId, request.threadId)
+      : undefined
+    win.webContents.send('agent:approval-request', {
+      ...request,
+      ...(dbThreadId ? { threadId: dbThreadId } : {}),
+    })
   }
 
   private async forwardEvents(dbThreadId: string, input: AgentInput): Promise<void> {
@@ -439,6 +614,20 @@ export class AgentManager {
 
 function createTimelineId(): string {
   return crypto.randomUUID()
+}
+
+function findDbThreadId(map: Map<string, string>, codexThreadId: string): string | undefined {
+  for (const [dbThreadId, value] of map) {
+    if (value === codexThreadId) return dbThreadId
+  }
+  return undefined
+}
+
+function validateCodexThreadId(threadId: string): string {
+  if (typeof threadId !== 'string' || threadId.trim().length === 0) {
+    throw new Error('Codex thread id must be a non-empty string')
+  }
+  return threadId
 }
 
 /**

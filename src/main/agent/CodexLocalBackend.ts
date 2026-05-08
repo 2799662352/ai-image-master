@@ -1,11 +1,18 @@
 import { app } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { buildCodexLaunchArgs, type CodexProviderConfig } from './codexLaunch'
+import { buildCodexLaunchArgs, resolveCodexSessionConfig, type CodexProviderConfig } from './codexLaunch'
 import { CodexProtocolClient, mapServerNotification } from './CodexProtocolClient'
 import { createAgentLogStream } from './logger'
 import { getCodexResourceRoot, resolveCodexBinary } from './paths'
 import { pickFreePort } from './ports'
-import type { AgentStreamEvent, CodexSessionConfig } from '../../types/agent'
+import type {
+  AgentStreamEvent,
+  CodexApprovalRequest,
+  CodexApprovalResponse,
+  CodexSessionConfig,
+  CodexThreadDetail,
+  CodexThreadSummary,
+} from '../../types/agent'
 import type { AgentInput, IAgentBackend } from './types'
 
 export { mapServerNotification }
@@ -59,6 +66,7 @@ export interface CodexLocalBackendOptions {
    */
   provider?: CodexProviderConfig
   sessionConfig?: Partial<CodexSessionConfig>
+  onApprovalRequest?: (request: CodexApprovalRequest) => void
 }
 
 /**
@@ -84,11 +92,13 @@ export class CodexLocalBackend implements IAgentBackend {
   private readonly options: CodexLocalBackendOptions
   private readonly wsUrlOverride: string | undefined
   private readonly resourceRootOverride: string | undefined
+  private sessionConfig: CodexSessionConfig
 
   constructor(options: CodexLocalBackendOptions = {}) {
     this.options = options
     this.wsUrlOverride = options.wsUrl
     this.resourceRootOverride = options.resourceRoot
+    this.sessionConfig = resolveCodexSessionConfig(options.sessionConfig)
   }
 
   async start(): Promise<void> {
@@ -96,7 +106,9 @@ export class CodexLocalBackend implements IAgentBackend {
       this.client = new CodexProtocolClient({
         url: this.wsUrlOverride,
         clientInfo: { name: 'catimation', version: '0.0.0' },
+        sessionConfig: this.sessionConfig,
         connectTimeoutMs: 5_000,
+        onApprovalRequest: this.options.onApprovalRequest,
       })
       await this.client.start()
       return
@@ -127,7 +139,7 @@ export class CodexLocalBackend implements IAgentBackend {
       buildCodexLaunchArgs({
         listenUrl,
         provider: this.options.provider,
-        sessionConfig: this.options.sessionConfig,
+        sessionConfig: this.sessionConfig,
       }),
       {
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -165,8 +177,10 @@ export class CodexLocalBackend implements IAgentBackend {
     const client = new CodexProtocolClient({
       url: listenUrl,
       clientInfo: { name: 'catimation', version: '0.0.0' },
+      sessionConfig: this.sessionConfig,
       connectTimeoutMs: this.options.connectTimeoutMs ?? DEFAULT_SPAWN_CONNECT_TIMEOUT_MS,
       onLog: (line) => log.write(line + '\n'),
+      onApprovalRequest: this.options.onApprovalRequest,
     })
     this.client = client
 
@@ -205,10 +219,39 @@ export class CodexLocalBackend implements IAgentBackend {
     await this.client.cancel(threadId)
   }
 
+  async listThreads(): Promise<CodexThreadSummary[]> {
+    if (!this.client) throw new Error('CodexLocalBackend.listThreads called before start')
+    return this.client.listThreads()
+  }
+
+  async readThread(threadId: string): Promise<CodexThreadDetail> {
+    if (!this.client) throw new Error('CodexLocalBackend.readThread called before start')
+    return this.client.readThread(threadId)
+  }
+
+  async forkThread(threadId: string): Promise<CodexThreadSummary> {
+    if (!this.client) throw new Error('CodexLocalBackend.forkThread called before start')
+    return this.client.forkThread(threadId)
+  }
+
+  respondToApprovalResponse(response: CodexApprovalResponse): void {
+    if (!this.client) throw new Error('CodexLocalBackend.respondToApprovalResponse called before start')
+    this.client.respondToServerRequest(response)
+  }
+
   isHealthy(): boolean {
     if (!this.client?.isOpen()) return false
     if (this.wsUrlOverride) return true
     return this.proc !== null && this.proc.exitCode === null
+  }
+
+  setSessionConfig(patch: Partial<CodexSessionConfig>): void {
+    this.sessionConfig = resolveCodexSessionConfig({
+      ...this.sessionConfig,
+      ...patch,
+      writableRoots: patch.writableRoots ? [...patch.writableRoots] : [...this.sessionConfig.writableRoots],
+    })
+    this.client?.setSessionConfig(patch)
   }
 
   private async killProcess(): Promise<void> {

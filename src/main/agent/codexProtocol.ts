@@ -1,3 +1,9 @@
+import type {
+  CodexApprovalPolicy,
+  CodexSandboxMode,
+  CodexWebSearchMode,
+} from '../../types/agent'
+
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [k: string]: JsonValue }
 
 export interface JsonRpcResponse { jsonrpc: '2.0'; id: number; result?: unknown; error?: { code: number; message: string } }
@@ -21,7 +27,19 @@ export interface InitializeResponse { userAgent: string; codexHome: string; plat
 export interface Thread { id: string; preview: string; cwd: string }
 export interface Turn { id: string; status: string }
 
-export interface ThreadStartParams { model?: string; modelProvider?: string; cwd?: string; sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access'; approvalPolicy?: 'untrusted' | 'on-failure' | 'on-request' | 'never' }
+export interface ThreadStartParams {
+  model?: string
+  modelProvider?: string
+  cwd?: string
+  sandbox?: CodexSandboxMode
+  approvalPolicy?: CodexApprovalPolicy
+  config?: {
+    web_search: CodexWebSearchMode
+    sandbox_workspace_write: {
+      writable_roots: string[]
+    }
+  }
+}
 export interface ThreadStartResponse { thread: Thread }
 
 export type CodexUserInput =

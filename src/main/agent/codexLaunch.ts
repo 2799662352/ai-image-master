@@ -2,6 +2,7 @@ import type {
   CodexApprovalPolicy,
   CodexSandboxMode,
   CodexSessionConfig,
+  CodexWebSearchMode,
 } from '../../types/agent'
 
 export const DEFAULT_LISTEN_URL = 'ws://127.0.0.1:7345'
@@ -9,7 +10,7 @@ export const DEFAULT_LISTEN_URL = 'ws://127.0.0.1:7345'
 export const DEFAULT_CODEX_SESSION_CONFIG: CodexSessionConfig = {
   approvalPolicy: 'on-request',
   sandboxMode: 'workspace-write',
-  webSearch: true,
+  webSearch: 'cached',
   writableRoots: [],
 }
 
@@ -50,12 +51,12 @@ function quote(value: string): string {
   return JSON.stringify(value)
 }
 
-function resolveSessionConfig(input?: Partial<CodexSessionConfig>): CodexSessionConfig {
+export function resolveCodexSessionConfig(input?: Partial<CodexSessionConfig>): CodexSessionConfig {
   return {
     approvalPolicy: (input?.approvalPolicy ?? DEFAULT_CODEX_SESSION_CONFIG.approvalPolicy) as CodexApprovalPolicy,
     sandboxMode: (input?.sandboxMode ?? DEFAULT_CODEX_SESSION_CONFIG.sandboxMode) as CodexSandboxMode,
-    webSearch: input?.webSearch ?? DEFAULT_CODEX_SESSION_CONFIG.webSearch,
-    writableRoots: input?.writableRoots ?? DEFAULT_CODEX_SESSION_CONFIG.writableRoots,
+    webSearch: (input?.webSearch ?? DEFAULT_CODEX_SESSION_CONFIG.webSearch) as CodexWebSearchMode,
+    writableRoots: [...(input?.writableRoots ?? DEFAULT_CODEX_SESSION_CONFIG.writableRoots)],
   }
 }
 
@@ -78,13 +79,13 @@ export function appendProviderArgs(
 
 export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
   const url = options?.listenUrl ?? DEFAULT_LISTEN_URL
-  const sessionConfig = resolveSessionConfig(options?.sessionConfig)
+  const sessionConfig = resolveCodexSessionConfig(options?.sessionConfig)
   const args: string[] = [
     'app-server',
     '--listen', url,
     '-c', `approval_policy=${quote(sessionConfig.approvalPolicy)}`,
     '-c', `sandbox_mode=${quote(sessionConfig.sandboxMode)}`,
-    '-c', `tools.web_search=${sessionConfig.webSearch ? 'true' : 'false'}`,
+    '-c', `web_search=${quote(sessionConfig.webSearch)}`,
     // Surface chain-of-thought to the chat panel. Codex 0.128's defaults
     // are tuned for `codex exec` / CI logs (raw reasoning hidden, summaries
     // optional), which leaves our "Thought" card permanently empty even

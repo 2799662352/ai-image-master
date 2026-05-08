@@ -50,6 +50,19 @@ describe('handleReadText', () => {
     }
   })
 
+  it('rejects symlinks that resolve outside allowed roots', async () => {
+    const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), 'fsipc-outside-link-'))
+    const outside = path.join(outsideDir, 'secret.txt')
+    const link = path.join(dir, 'linked-outside')
+    await fs.writeFile(outside, 'secret', 'utf-8')
+    try {
+      await fs.symlink(outsideDir, link, process.platform === 'win32' ? 'junction' : 'dir')
+      await expect(handleReadText(path.join(link, 'secret.txt'))).rejects.toThrow(/outside allowed roots/i)
+    } finally {
+      await fs.rm(outsideDir, { recursive: true, force: true })
+    }
+  })
+
   it('rejects traversal segments before resolving the path', async () => {
     const f = path.join(dir, 'a.txt')
     await fs.writeFile(f, 'hello', 'utf-8')
@@ -65,6 +78,22 @@ describe('handleWriteText', () => {
     const r = await handleWriteText({ path: f, content: 'world' })
     expect(r.mtime).toBeGreaterThan(0)
     expect(await fs.readFile(f, 'utf-8')).toBe('world')
+  })
+
+  it('rejects writes through symlinks that resolve outside allowed roots', async () => {
+    const outsideDir = await fs.mkdtemp(path.join(os.tmpdir(), 'fsipc-outside-write-link-'))
+    const outside = path.join(outsideDir, 'secret.txt')
+    const link = path.join(dir, 'linked-outside')
+    await fs.writeFile(outside, 'secret', 'utf-8')
+    try {
+      await fs.symlink(outsideDir, link, process.platform === 'win32' ? 'junction' : 'dir')
+      await expect(handleWriteText({ path: path.join(link, 'secret.txt'), content: 'leak' })).rejects.toThrow(
+        /outside allowed roots/i,
+      )
+      expect(await fs.readFile(outside, 'utf-8')).toBe('secret')
+    } finally {
+      await fs.rm(outsideDir, { recursive: true, force: true })
+    }
   })
 })
 

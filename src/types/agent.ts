@@ -1,4 +1,5 @@
 import type { TimelineItem } from './agent-timeline'
+import type { AgentReference } from './agent-reference'
 
 export type AgentRole = 'user' | 'assistant' | 'system' | 'tool'
 export type AgentToolStatus = 'pending' | 'running' | 'success' | 'error' | 'cancelled'
@@ -16,6 +17,7 @@ export interface AgentSendMessagePayload {
   threadId?: string
   content: string
   attachments: AgentAttachmentInput[]
+  references?: AgentReference[]
   currentPage?: string
   /**
    * Caller-selected model id (e.g. `gpt-4.1`, `o4-mini`). When omitted the
@@ -26,12 +28,13 @@ export interface AgentSendMessagePayload {
 }
 
 export type CodexSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
-export type CodexApprovalPolicy = 'untrusted' | 'on-failure' | 'on-request' | 'never'
+export type CodexApprovalPolicy = 'untrusted' | 'on-request' | 'never'
+export type CodexWebSearchMode = 'cached' | 'live' | 'disabled'
 
 export interface CodexSessionConfig {
   sandboxMode: CodexSandboxMode
   approvalPolicy: CodexApprovalPolicy
-  webSearch: boolean
+  webSearch: CodexWebSearchMode
   writableRoots: string[]
 }
 
@@ -39,8 +42,61 @@ export interface CodexSessionStatus {
   model: string
   sandboxMode: CodexSandboxMode
   approvalPolicy: CodexApprovalPolicy
-  webSearch: boolean
+  webSearch: CodexWebSearchMode
   writableRoots: string[]
+}
+
+export interface CodexApprovalRequest {
+  id: string
+  threadId?: string
+  method: string
+  params: Record<string, unknown>
+  createdAt: string
+}
+
+export interface CodexApprovalResponse {
+  id: string
+  approved: boolean
+  message?: string
+}
+
+export interface CodexThreadSummary {
+  id: string
+  title: string
+  createdAt: string
+  updatedAt: string
+  cwd?: string
+  model?: string
+}
+
+export interface CodexThreadDetail extends CodexThreadSummary {}
+
+export interface CodexMcpServerSummary {
+  name: string
+  transport: string
+  enabled: boolean
+  required: boolean
+  command?: string
+  url?: string
+}
+
+export interface CodexMcpSummary {
+  servers: CodexMcpServerSummary[]
+  warnings: string[]
+}
+
+export type CodexSkillScope = 'workspace' | 'home'
+
+export interface CodexSkillSummary {
+  name: string
+  scope: CodexSkillScope
+  description: string
+  path: string
+}
+
+export interface CodexSkillsSummary {
+  skills: CodexSkillSummary[]
+  warnings: string[]
 }
 
 export interface AgentCancelPayload {

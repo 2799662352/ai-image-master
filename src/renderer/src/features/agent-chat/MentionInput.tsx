@@ -26,7 +26,7 @@ export function MentionInput() {
   const setInput = useAgentChatStore((state) => state.setInput)
   const setError = useAgentChatStore((state) => state.setError)
   const addAttachment = useAgentChatStore((state) => state.addAttachment)
-  const removeAttachment = useAgentChatStore((state) => state.removeAttachment)
+  const removeAttachmentForReference = useAgentChatStore((state) => state.removeAttachmentForReference)
   const pendingReferences = useAgentChatStore((state) => state.pendingReferences)
   const addPendingReference = useAgentChatStore((state) => state.addPendingReference)
   const removePendingReference = useAgentChatStore((state) => state.removePendingReference)
@@ -115,7 +115,7 @@ export function MentionInput() {
               reference={reference}
               onRemove={() => {
                 removePendingReference(reference.id)
-                removeAttachment(reference.label)
+                removeAttachmentForReference(reference)
               }}
             />
           ))}

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { JSX } from 'react'
-import type { AgentThreadSummary } from '../../../../types/agent'
+import type { AgentThreadSummary, CodexThreadSummary } from '../../../../types/agent'
 import { ChatBubbleIcon, MoreIcon, PencilIcon, PlusIcon, TrashIcon } from './icons'
 import { formatRelativeTime, groupThreadsByRecency, type ThreadGroup } from './relativeTime'
 import { useAgentChatStore } from './store'
@@ -20,12 +20,15 @@ export function ThreadSidebar(): JSX.Element | null {
   const setSidebarWidth = useAgentChatStore((s) => s.setSidebarWidth)
   const threadList = useAgentChatStore((s) => s.threadList)
   const threadListLoading = useAgentChatStore((s) => s.threadListLoading)
+  const codexThreadList = useAgentChatStore((s) => s.codexThreadList)
+  const codexThreadListLoading = useAgentChatStore((s) => s.codexThreadListLoading)
   const isRunning = useAgentChatStore((s) => s.isRunning)
   const threadId = useAgentChatStore((s) => s.threadId)
   const newThread = useAgentChatStore((s) => s.newThread)
   const switchThread = useAgentChatStore((s) => s.switchThread)
   const renameThread = useAgentChatStore((s) => s.renameThread)
   const deleteThread = useAgentChatStore((s) => s.deleteThread)
+  const forkCodexThread = useAgentChatStore((s) => s.forkCodexThread)
 
   const groups: ThreadGroup[] = useMemo(() => groupThreadsByRecency(threadList), [threadList])
 
@@ -89,23 +92,30 @@ export function ThreadSidebar(): JSX.Element | null {
       </header>
 
       <div className="flex-1 overflow-y-auto">
-        {threadListLoading && groups.length === 0 ? (
-          <ThreadListSkeleton />
-        ) : groups.length === 0 ? (
-          <EmptyThreadList />
-        ) : (
-          groups.map((group) => (
-            <ThreadGroupSection
-              key={group.label}
-              group={group}
-              activeThreadId={threadId}
-              isRunning={isRunning}
-              onSwitch={switchThread}
-              onRename={renameThread}
-              onDelete={deleteThread}
-            />
-          ))
-        )}
+        <div>
+          {threadListLoading && groups.length === 0 ? (
+            <ThreadListSkeleton />
+          ) : groups.length === 0 ? (
+            <EmptyThreadList />
+          ) : (
+            groups.map((group) => (
+              <ThreadGroupSection
+                key={group.label}
+                group={group}
+                activeThreadId={threadId}
+                isRunning={isRunning}
+                onSwitch={switchThread}
+                onRename={renameThread}
+                onDelete={deleteThread}
+              />
+            ))
+          )}
+        </div>
+        <CodexSessionsSection
+          sessions={codexThreadList}
+          loading={codexThreadListLoading}
+          onFork={forkCodexThread}
+        />
       </div>
     </aside>
   )
@@ -130,6 +140,54 @@ function ThreadListSkeleton(): JSX.Element {
         <div key={i} className="h-7 animate-pulse rounded-md bg-zinc-800/60" />
       ))}
     </div>
+  )
+}
+
+interface CodexSessionsSectionProps {
+  sessions: CodexThreadSummary[]
+  loading: boolean
+  onFork: (threadId: string) => Promise<void> | void
+}
+
+function CodexSessionsSection(props: CodexSessionsSectionProps): JSX.Element | null {
+  if (!props.loading && props.sessions.length === 0) return null
+  return (
+    <section className="border-t border-zinc-800/80 py-2">
+      <h3 className="px-3 pt-1 pb-1 text-[10px] font-semibold uppercase tracking-[0.24em] text-zinc-500">
+        Codex Sessions
+      </h3>
+      {props.loading && props.sessions.length === 0 ? (
+        <div className="px-3 py-2 text-[11px] text-zinc-500">Loading Codex sessions...</div>
+      ) : (
+        <ul className="space-y-1 px-2">
+          {props.sessions.map((session) => (
+            <li
+              key={session.id}
+              className="rounded-md border border-zinc-800/70 bg-black/20 px-2 py-1.5"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate text-[12px] text-zinc-200" title={session.title}>
+                    {session.title}
+                  </div>
+                  <div className="truncate text-[10px] text-zinc-500" title={session.cwd ?? session.model ?? ''}>
+                    {session.cwd ?? session.model ?? 'Codex-owned history'}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  aria-label={`Fork Codex session ${session.title}`}
+                  onClick={() => void props.onFork(session.id)}
+                  className="shrink-0 cursor-pointer rounded border border-cyan-400/20 px-2 py-0.5 text-[11px] text-cyan-100 transition-colors hover:border-cyan-300/50 hover:bg-cyan-400/10"
+                >
+                  Fork
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   )
 }
 

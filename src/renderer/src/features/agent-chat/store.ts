@@ -2,10 +2,14 @@ import { create } from 'zustand'
 import type {
   AgentAttachmentInput,
   AgentCancelPayload,
+  AgentApiResult,
   AgentSendMessagePayload,
   AgentStreamEvent,
   AgentThreadSummary,
   AgentTokenUsage,
+  CodexApprovalRequest,
+  CodexApprovalResponse,
+  CodexThreadSummary,
   ItemDeltaPatch,
 } from '../../../../types/agent'
 import type { AgentReference } from '../../../../types/agent-reference'
@@ -110,6 +114,9 @@ type AgentElectronApi = {
     openThread?: (id: string) => Promise<unknown>
     renameThread?: (id: string, title: string) => Promise<void>
     deleteThread?: (id: string) => Promise<void>
+    respondApproval?: (response: CodexApprovalResponse) => Promise<AgentApiResult>
+    listCodexThreads?: () => Promise<CodexThreadSummary[]>
+    forkCodexThread?: (threadId: string) => Promise<CodexThreadSummary>
   }
 }
 
@@ -125,6 +132,7 @@ interface AgentChatState {
   input: string
   attachments: AgentAttachmentInput[]
   pendingReferences: AgentReference[]
+  pendingApprovals: CodexApprovalRequest[]
   isRunning: boolean
   error?: string
   selectedModelId: string
@@ -149,9 +157,13 @@ interface AgentChatState {
   setSelectedModel: (modelId: string) => void
   addAttachment: (attachment: AgentAttachmentInput) => void
   removeAttachment: (name: string) => void
+  removeAttachmentForReference: (reference: AgentReference) => void
   addPendingReference: (reference: AgentReference) => void
   removePendingReference: (referenceId: string) => void
   clearPendingReferences: () => void
+  addApprovalRequest: (request: CodexApprovalRequest) => void
+  removeApprovalRequest: (id: string) => void
+  respondToApproval: (response: CodexApprovalResponse) => Promise<void>
   send: () => Promise<void>
   cancel: () => Promise<void>
   newThread: () => void
@@ -163,10 +175,14 @@ interface AgentChatState {
   sidebarWidth: number
   threadList: AgentThreadSummary[]
   threadListLoading: boolean
+  codexThreadList: CodexThreadSummary[]
+  codexThreadListLoading: boolean
   bootstrapped: boolean
 
   bootstrap: () => Promise<void>
   refreshThreadList: () => Promise<void>
+  refreshCodexThreadList: () => Promise<void>
+  forkCodexThread: (threadId: string) => Promise<void>
   toggleSidebar: () => void
   setSidebarWidth: (width: number) => void
   renameThread: (threadId: string, title: string) => Promise<void>
@@ -205,6 +221,10 @@ function buildAttachmentUri(a: AgentAttachmentInput): string | undefined {
   }
   if (typeof a.path === 'string' && a.path.length > 0) return a.path
   return undefined
+}
+
+function normalizeReferencePath(value: string): string {
+  return value.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
 }
 
 function getAgentApi(): NonNullable<AgentElectronApi['agent']> {
@@ -294,6 +314,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   input: '',
   attachments: [],
   pendingReferences: [],
+  pendingApprovals: [],
   messages: [],
   isRunning: false,
   selectedModelId: readPersistedModelId(),
@@ -303,6 +324,8 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   sidebarWidth: readPersistedSidebarWidth(),
   threadList: [],
   threadListLoading: false,
+  codexThreadList: [],
+  codexThreadListLoading: false,
   bootstrapped: false,
   preview: { open: false, images: [], index: 0 },
   openPreview: (images, startIndex) => {
@@ -351,6 +374,16 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   removeAttachment: (name) => set((state) => ({
     attachments: state.attachments.filter((item) => item.name !== name),
   })),
+  removeAttachmentForReference: (reference) =>
+    set((state) => {
+      if (reference.source.kind !== 'localPath') {
+        return { attachments: state.attachments.filter((item) => item.name !== reference.label) }
+      }
+      const referencePath = normalizeReferencePath(reference.source.path)
+      const index = state.attachments.findIndex((item) => item.path != null && normalizeReferencePath(item.path) === referencePath)
+      if (index < 0) return {}
+      return { attachments: state.attachments.filter((_, itemIndex) => itemIndex !== index) }
+    }),
   addPendingReference: (reference) =>
     set((state) => ({
       pendingReferences: state.pendingReferences.some((item) => item.id === reference.id)
@@ -362,12 +395,40 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       pendingReferences: state.pendingReferences.filter((item) => item.id !== referenceId),
     })),
   clearPendingReferences: () => set({ pendingReferences: [] }),
+  addApprovalRequest: (request) =>
+    set((state) => ({
+      pendingApprovals: state.pendingApprovals.some((item) => item.id === request.id)
+        ? state.pendingApprovals
+        : [...state.pendingApprovals, request],
+    })),
+  removeApprovalRequest: (id) =>
+    set((state) => ({
+      pendingApprovals: state.pendingApprovals.filter((item) => item.id !== id),
+    })),
+  respondToApproval: async (response) => {
+    const agent = getAgentApi()
+    if (!agent.respondApproval) {
+      set({ error: 'Electron approval API is unavailable' })
+      return
+    }
+    try {
+      const result = await agent.respondApproval(response)
+      if (!result.ok) throw new Error(result.error ?? 'Approval response failed')
+      set((state) => ({
+        pendingApprovals: state.pendingApprovals.filter((item) => item.id !== response.id),
+        error: undefined,
+      }))
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : String(error) })
+    }
+  },
   send: async () => {
     const state = get()
     const content = state.input.trim()
     const attachments = state.attachments
+    const references = state.pendingReferences
     if (state.isRunning) return
-    if (!content && attachments.length === 0) return
+    if (!content && attachments.length === 0 && references.length === 0) return
 
     const modelId = state.selectedModelId
     const now = Date.now()
@@ -399,7 +460,6 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     set((current) => ({
       input: '',
       attachments: [],
-      pendingReferences: [],
       error: undefined,
       isRunning: true,
       messages: [...current.messages, userMsg],
@@ -410,6 +470,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         threadId: state.threadId,
         content,
         attachments,
+        references,
         currentPage: window.location.hash.slice(1),
         model: modelId,
       })
@@ -449,6 +510,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       isRunning: false,
       error: undefined,
       tokenUsage: undefined,
+      pendingApprovals: [],
     }),
   switchThread: async (threadId: string) => {
     const agent = (window as Window & { electronAPI?: { agent?: { openThread?: (id: string) => Promise<unknown> } } })
@@ -498,6 +560,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       // Token usage is per-thread; reset until the next
       // thread/tokenUsage/updated arrives.
       tokenUsage: undefined,
+      pendingApprovals: [],
     })
   },
   applyEvent: (event) => {
@@ -585,6 +648,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     try {
       const list = await agent.listThreads()
       set({ threadList: list, bootstrapped: true })
+      void get().refreshCodexThreadList()
       const top = list[0]
       if (top && agent.openThread) {
         await get().switchThread(top.id)
@@ -606,6 +670,37 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       set({ threadList: list })
     } catch {
       /* swallow refresh errors — stale list is preferable to a banner */
+    }
+  },
+
+  refreshCodexThreadList: async () => {
+    const agent = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.agent
+    if (!agent?.listCodexThreads) {
+      set({ codexThreadList: [], codexThreadListLoading: false })
+      return
+    }
+    set({ codexThreadListLoading: true })
+    try {
+      const list = await agent.listCodexThreads()
+      set({ codexThreadList: list })
+    } catch {
+      set({ codexThreadList: [] })
+    } finally {
+      set({ codexThreadListLoading: false })
+    }
+  },
+
+  forkCodexThread: async (threadId) => {
+    const agent = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.agent
+    if (!agent?.forkCodexThread) {
+      set({ error: 'Electron Codex thread fork API is unavailable' })
+      return
+    }
+    try {
+      await agent.forkCodexThread(threadId)
+      await get().refreshCodexThreadList()
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : String(error) })
     }
   },
 
@@ -636,7 +731,14 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     await agent.deleteThread(threadId)
     if (get().threadId === threadId) {
       // Drop into the empty-thread state and let the user pick another row.
-      set({ threadId: undefined, messages: [], tokenUsage: undefined, error: undefined, isRunning: false })
+      set({
+        threadId: undefined,
+        messages: [],
+        tokenUsage: undefined,
+        error: undefined,
+        isRunning: false,
+        pendingApprovals: [],
+      })
     }
     await get().refreshThreadList()
   },

@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net'
 import { PassThrough } from 'node:stream'
 import WebSocket, { WebSocketServer } from 'ws'
 import { buildCodexSpawnEnv, CodexLocalBackend, mapServerNotification } from '../CodexLocalBackend'
-import type { AgentStreamEvent } from '../../../types/agent'
+import type { AgentStreamEvent, CodexApprovalRequest } from '../../../types/agent'
 import type { AgentInput } from '../types'
 
 interface FakeServerOptions {
@@ -256,23 +256,44 @@ describe('CodexLocalBackend (with a fake codex app-server)', () => {
     expect(events.find((e) => e.type === 'turn_completed')).toBeDefined()
   })
 
-  it('replies to server-initiated requests with a JSON-RPC response', async () => {
+  it('surfaces server-initiated requests and waits for an explicit approval response', async () => {
+    const approvals: CodexApprovalRequest[] = []
     server = await startFakeServer()
-    backend = new CodexLocalBackend({ wsUrl: server.url })
+    backend = new CodexLocalBackend({
+      wsUrl: server.url,
+      onApprovalRequest: (request) => approvals.push(request),
+    })
     await backend.start()
 
-    server.pushServerRequest(999, 'applyPatchApproval', {})
+    server.pushServerRequest(999, 'applyPatchApproval', { reason: 'edit file' })
 
     const deadline = Date.now() + 1000
-    let reply: any | undefined
     while (Date.now() < deadline) {
+      if (approvals.length > 0) break
+      await new Promise((r) => setTimeout(r, 10))
+    }
+    expect(approvals).toHaveLength(1)
+    expect(approvals[0]).toMatchObject({
+      id: '999',
+      method: 'applyPatchApproval',
+      params: { reason: 'edit file' },
+    })
+    expect(server.receivedFromClient.find((m) => m && m.id === 999 && m.method === undefined)).toBeUndefined()
+
+    backend.respondToApprovalResponse({ id: '999', approved: false, message: 'not allowed' })
+
+    let reply: any | undefined
+    const replyDeadline = Date.now() + 1000
+    while (Date.now() < replyDeadline) {
       reply = server.receivedFromClient.find((m) => m && m.id === 999 && m.method === undefined)
       if (reply) break
       await new Promise((r) => setTimeout(r, 10))
     }
-    expect(reply).toBeDefined()
-    expect(reply).toMatchObject({ jsonrpc: '2.0', id: 999 })
-    expect(reply.result !== undefined || reply.error !== undefined).toBe(true)
+    expect(reply).toEqual({
+      jsonrpc: '2.0',
+      id: 999,
+      result: { approved: false, message: 'not allowed' },
+    })
   })
 })
 
