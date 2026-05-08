@@ -2,14 +2,30 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => {
   const handlers = new Map<string, (...args: unknown[]) => unknown>()
+  const listeners = new Map<string, Set<unknown>>()
   return {
     ipcMain: {
       handle: (channel: string, handler: (...args: unknown[]) => unknown) => {
+        if (handlers.has(channel)) throw new Error(`Attempted to register a second handler for '${channel}'`)
         handlers.set(channel, handler)
       },
-      on: (_channel: string, _handler: unknown) => undefined,
+      removeHandler: (channel: string) => {
+        handlers.delete(channel)
+      },
+      on: (channel: string, handler: unknown) => {
+        const set = listeners.get(channel) ?? new Set<unknown>()
+        set.add(handler)
+        listeners.set(channel, set)
+      },
+      removeAllListeners: (channel: string) => {
+        listeners.delete(channel)
+      },
       __getHandler: (channel: string) => handlers.get(channel),
-      __reset: () => handlers.clear(),
+      __listenerCount: (channel: string) => listeners.get(channel)?.size ?? 0,
+      __reset: () => {
+        handlers.clear()
+        listeners.clear()
+      },
     },
   }
 })
@@ -53,6 +69,10 @@ const get = (channel: string): ((...args: unknown[]) => unknown) | undefined => 
   ).__getHandler(channel)
 }
 
+const listenerCount = (channel: string): number => {
+  return (ipcMain as unknown as { __listenerCount: (c: string) => number }).__listenerCount(channel)
+}
+
 describe('registerAgentIpc thread management handlers', () => {
   let manager: FakeManager
 
@@ -88,5 +108,16 @@ describe('registerAgentIpc thread management handlers', () => {
     expect(handler).toBeTypeOf('function')
     await handler!({}, 'thread-abc')
     expect(manager.deleteThread).toHaveBeenCalledWith('thread-abc')
+  })
+
+  it('can be registered again after an Electron dev reload', () => {
+    const nextManager = makeManager()
+    registerAgentIpc(
+      nextManager as unknown as Parameters<typeof registerAgentIpc>[0],
+      router as unknown as Parameters<typeof registerAgentIpc>[1],
+    )
+
+    expect(get('agent:open-thread')).toBeTypeOf('function')
+    expect(listenerCount('agent:tool-response')).toBe(1)
   })
 })

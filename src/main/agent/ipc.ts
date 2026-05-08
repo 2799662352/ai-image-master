@@ -3,7 +3,24 @@ import type { AgentToolResponse } from '../../types/agent'
 import type { ToolRouter } from '../mcp/ToolRouter'
 import type { AgentManager } from './AgentManager'
 
+const AGENT_HANDLE_CHANNELS = [
+  'agent:send-message',
+  'agent:cancel',
+  'agent:list-threads',
+  'agent:load-thread',
+  'agent:open-thread',
+  'agent:rename-thread',
+  'agent:delete-thread',
+  'agent:set-api-key',
+  'agent:test-connection',
+]
+
 export function registerAgentIpc(manager: AgentManager, router: ToolRouter): void {
+  for (const channel of AGENT_HANDLE_CHANNELS) {
+    ipcMain.removeHandler(channel)
+  }
+  ipcMain.removeAllListeners('agent:tool-response')
+
   ipcMain.handle('agent:send-message', (_event, payload) => manager.sendMessage(payload))
   ipcMain.handle('agent:cancel', async (_event, payload) => {
     await manager.cancel(payload.threadId)
