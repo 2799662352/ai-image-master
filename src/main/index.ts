@@ -28,6 +28,7 @@ import { AttachmentService } from './agent/AttachmentService'
 import { getPrisma, shutdownDatabase } from './agent/db'
 import { registerAgentIpc } from './agent/ipc'
 import { ThreadStore } from './agent/ThreadStore'
+import { registerAttachmentsTreeIpc } from './file-explorer/AttachmentTreeProvider'
 import { registerFsIpc } from './file-explorer/fsIpc'
 import { registerLocalFileScheme, installLocalFileHandler } from './file-explorer/protocolHandler'
 import { registerFsWatcherIpc, disposeAll as disposeFsWatchers } from './file-explorer/fsWatcher'
@@ -540,6 +541,7 @@ app.whenReady().then(async () => {
   console.log(`[Performance] App ready: ${Date.now() - startTime}ms`)
   installLocalFileHandler()
   registerFsIpc()
+  registerAttachmentsTreeIpc(getPrisma)
   registerFsWatcherIpc()
 
   // 关键路径：仅初始化必要的路径和目录

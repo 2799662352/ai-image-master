@@ -172,6 +172,9 @@ const IPC_CHANNELS = {
     WATCH_STOP: 'fs:watch-stop',
     WATCH_EVENT: 'fs:watch-event',
   },
+  ATTACHMENTS: {
+    LIST_TREE: 'attachments:list-tree',
+  },
 } as const
 
 // ==================== 类型定义 ====================
@@ -271,6 +274,9 @@ export interface ElectronAPI {
     watchStart: (p: string) => Promise<void>
     watchStop: (p: string) => Promise<void>
     onWatchEvent: (cb: (e: FileExplorerWatchEvent) => void) => () => void
+  }
+  attachments: {
+    listTree: () => Promise<FileExplorerNode[]>
   }
   // 图片存储
   saveImage: (base64Data: string, filename: string) => Promise<SaveImageResponse>
@@ -592,6 +598,11 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.on(IPC_CHANNELS.FILE_EXPLORER.WATCH_EVENT, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.FILE_EXPLORER.WATCH_EVENT, handler)
     },
+  },
+
+  attachments: {
+    listTree: () =>
+      safeInvoke<FileExplorerNode[]>(IPC_CHANNELS.ATTACHMENTS.LIST_TREE),
   },
 
   // ============ 系统主题监听 ============
