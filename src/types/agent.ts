@@ -218,3 +218,67 @@ export interface AgentApiResult {
   ok: boolean
   error?: string
 }
+
+export type CodexConfigScope = 'personal' | 'workspace'
+
+export interface CodexMcpServerInput {
+  id?: string
+  name: string
+  scope: CodexConfigScope
+  enabled: boolean
+  command: string
+  args: string[]
+  env: Array<{ key: string; value: string }>
+  description?: string
+}
+
+export interface CodexMcpServerListItem {
+  id: string
+  name: string
+  scope: CodexConfigScope
+  enabled: boolean
+  command: string
+  argsSummary: string
+  envKeysRedacted: string[]
+  description?: string
+  lastModifiedIso: string
+  provenance: 'manual' | 'clipboard' | 'imported'
+  warnings: string[]
+}
+
+export interface CodexSkillInput {
+  id?: string
+  name: string
+  scope: CodexConfigScope
+  description: string
+  whenToUse: string
+  instructions: string
+}
+
+export interface CodexSkillListItem {
+  id: string
+  name: string
+  scope: CodexConfigScope
+  path: string
+  description?: string
+  warnings: string[]
+}
+
+export interface CodexAuditLogEntry {
+  tsIso: string
+  action: 'mcp.save' | 'mcp.delete' | 'mcp.set-enabled' | 'skill.save' | 'skill.delete' | 'codex.restart'
+  scope?: CodexConfigScope
+  name?: string
+  provenance?: 'manual' | 'clipboard' | 'imported'
+  ok: boolean
+  error?: string
+}
+
+export interface CodexWorkspacePaths {
+  personalConfigToml: string
+  personalSkillsRoot: string
+  workspaceConfigToml: string
+  workspaceSkillsRoot: string
+  runtimeConfigToml: string
+  auditLogPath: string
+}
