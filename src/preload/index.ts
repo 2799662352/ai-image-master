@@ -162,6 +162,16 @@ const IPC_CHANNELS = {
     COPY_IMAGE: 'shell:copy-image',
     SAVE_AS: 'shell:save-as',
   },
+  FILE_EXPLORER: {
+    READ_TEXT: 'fs:read-text',
+    WRITE_TEXT: 'fs:write-text',
+    LIST_DIR: 'fs:list-dir',
+    STAT: 'fs:stat',
+    PICK_FOLDER: 'workspace:pick-folder',
+    WATCH_START: 'fs:watch-start',
+    WATCH_STOP: 'fs:watch-stop',
+    WATCH_EVENT: 'fs:watch-event',
+  },
 } as const
 
 // ==================== 类型定义 ====================
@@ -212,6 +222,20 @@ export interface ImportTemplatesResponse {
   error?: string
 }
 
+export type FileExplorerWatchEvent = { type: 'change' | 'unlink'; path: string; mtime?: number }
+
+export type FileExplorerNode = {
+  path: string
+  name: string
+  kind: 'file' | 'dir'
+  source: 'workspace' | 'attachments'
+  childrenLoaded: false
+}
+
+export type FileExplorerStat =
+  | { ok: true; size: number; mime: string; mtime: number }
+  | { ok: false; reason: string }
+
 export interface ElectronAPI {
   isElectron: boolean
   // AI Skills
@@ -237,6 +261,16 @@ export interface ElectronAPI {
   shell: {
     copyImage: (uri: string) => Promise<IpcResponse>
     saveAs: (uri: string, suggestedName: string) => Promise<IpcResponse>
+  }
+  fs: {
+    readText: (p: string) => Promise<{ content: string; mtime: number }>
+    writeText: (p: string, content: string) => Promise<{ mtime: number }>
+    listDir: (p: string) => Promise<FileExplorerNode[]>
+    stat: (p: string) => Promise<FileExplorerStat>
+    pickFolder: () => Promise<string | null>
+    watchStart: (p: string) => Promise<void>
+    watchStop: (p: string) => Promise<void>
+    onWatchEvent: (cb: (e: FileExplorerWatchEvent) => void) => () => void
   }
   // 图片存储
   saveImage: (base64Data: string, filename: string) => Promise<SaveImageResponse>
@@ -536,6 +570,28 @@ const electronAPI: ElectronAPI = {
       safeInvoke<IpcResponse>(IPC_CHANNELS.SHELL.COPY_IMAGE, uri),
     saveAs: (uri: string, suggestedName: string) =>
       safeInvoke<IpcResponse>(IPC_CHANNELS.SHELL.SAVE_AS, { uri, suggestedName }),
+  },
+
+  fs: {
+    readText: (p: string) =>
+      safeInvoke<{ content: string; mtime: number }>(IPC_CHANNELS.FILE_EXPLORER.READ_TEXT, p),
+    writeText: (p: string, content: string) =>
+      safeInvoke<{ mtime: number }>(IPC_CHANNELS.FILE_EXPLORER.WRITE_TEXT, { path: p, content }),
+    listDir: (p: string) =>
+      safeInvoke<FileExplorerNode[]>(IPC_CHANNELS.FILE_EXPLORER.LIST_DIR, p),
+    stat: (p: string) =>
+      safeInvoke<FileExplorerStat>(IPC_CHANNELS.FILE_EXPLORER.STAT, p),
+    pickFolder: () =>
+      safeInvoke<string | null>(IPC_CHANNELS.FILE_EXPLORER.PICK_FOLDER),
+    watchStart: (p: string) =>
+      safeInvoke<void>(IPC_CHANNELS.FILE_EXPLORER.WATCH_START, p),
+    watchStop: (p: string) =>
+      safeInvoke<void>(IPC_CHANNELS.FILE_EXPLORER.WATCH_STOP, p),
+    onWatchEvent: (cb: (e: FileExplorerWatchEvent) => void) => {
+      const handler = (_evt: IpcRendererEvent, e: FileExplorerWatchEvent): void => cb(e)
+      ipcRenderer.on(IPC_CHANNELS.FILE_EXPLORER.WATCH_EVENT, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.FILE_EXPLORER.WATCH_EVENT, handler)
+    },
   },
 
   // ============ 系统主题监听 ============

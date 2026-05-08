@@ -28,7 +28,9 @@ import { AttachmentService } from './agent/AttachmentService'
 import { getPrisma, shutdownDatabase } from './agent/db'
 import { registerAgentIpc } from './agent/ipc'
 import { ThreadStore } from './agent/ThreadStore'
+import { registerFsIpc } from './file-explorer/fsIpc'
 import { registerLocalFileScheme, installLocalFileHandler } from './file-explorer/protocolHandler'
+import { registerFsWatcherIpc, disposeAll as disposeFsWatchers } from './file-explorer/fsWatcher'
 import { startCatimationMcpServer } from './mcp/server'
 import type { McpRuntime } from './mcp/server'
 
@@ -537,6 +539,8 @@ async function cleanupAgentRuntime(): Promise<void> {
 app.whenReady().then(async () => {
   console.log(`[Performance] App ready: ${Date.now() - startTime}ms`)
   installLocalFileHandler()
+  registerFsIpc()
+  registerFsWatcherIpc()
 
   // 关键路径：仅初始化必要的路径和目录
   initPaths()
@@ -628,6 +632,7 @@ app.on('activate', () => {
 })
 
 app.on('before-quit', (event) => {
+  disposeFsWatchers()
   if (isQuittingAfterAgentCleanup) return
 
   event.preventDefault()
