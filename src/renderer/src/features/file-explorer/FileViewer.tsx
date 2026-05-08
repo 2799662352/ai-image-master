@@ -3,13 +3,16 @@ import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror'
 import { EditorView, keymap } from '@codemirror/view'
 import type { Extension } from '@codemirror/state'
 import { useFileExplorerStore } from './store'
-import { buildLangExtension } from './lang'
+import { buildLangExtension, pathToLangShort } from './lang'
+import { serializeQuoteDrag } from './dragHelpers'
+import { SelectionFloatingBar } from './SelectionFloatingBar'
 import type { FileTab } from './types'
 
 export function FileViewer({ tab }: { tab: FileTab }) {
   const editorRef = useRef<ReactCodeMirrorRef>(null)
   const { saveActiveTab, setTabState } = useFileExplorerStore()
   const [langExt, setLangExt] = useState<Extension | null>(null)
+  const [view, setView] = useState<EditorView | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -21,6 +24,36 @@ export function FileViewer({ tab }: { tab: FileTab }) {
     }
   }, [tab.path])
 
+  const sendSelectionToChat = (editorView: EditorView): boolean => {
+    const sel = editorView.state.selection.main
+    if (sel.empty) return false
+    const text = editorView.state.sliceDoc(sel.from, sel.to)
+    const fromLine = editorView.state.doc.lineAt(sel.from).number
+    const toLine = editorView.state.doc.lineAt(sel.to).number
+    const lang = pathToLangShort(tab.path)
+    const quote = '```' + lang + ':' + fromLine + '-' + toLine + ':' + tab.path + '\n' + text + '\n```'
+    useFileExplorerStore.getState().appendToChatInput(quote)
+    return true
+  }
+
+  const selectionDragHandler = useMemo(
+    () =>
+      EditorView.domEventHandlers({
+        dragstart: (event, editorView) => {
+          const sel = editorView.state.selection.main
+          if (sel.empty) return false
+          const text = editorView.state.sliceDoc(sel.from, sel.to)
+          const fromLine = editorView.state.doc.lineAt(sel.from).number
+          const toLine = editorView.state.doc.lineAt(sel.to).number
+          const lang = pathToLangShort(tab.path)
+          const quote = '```' + lang + ':' + fromLine + '-' + toLine + ':' + tab.path + '\n' + text + '\n```'
+          if (event.dataTransfer) serializeQuoteDrag(event.dataTransfer, quote)
+          return false
+        },
+      }),
+    [tab.path],
+  )
+
   const extensions = useMemo<Extension[]>(() => {
     const exts: Extension[] = [
       keymap.of([
@@ -31,12 +64,17 @@ export function FileViewer({ tab }: { tab: FileTab }) {
             return true
           },
         },
+        {
+          key: 'Mod-l',
+          run: (editorView) => sendSelectionToChat(editorView),
+        },
       ]),
+      selectionDragHandler,
       EditorView.lineWrapping,
     ]
     if (langExt) exts.push(langExt)
     return exts
-  }, [langExt, saveActiveTab])
+  }, [langExt, saveActiveTab, selectionDragHandler, tab.path])
 
   useEffect(() => {
     const view = editorRef.current?.view
@@ -57,7 +95,8 @@ export function FileViewer({ tab }: { tab: FileTab }) {
       <CodeMirror
         ref={editorRef}
         value={tab.state ? tab.state.doc.toString() : tab.diskContent}
-        onCreateEditor={(_view, state) => {
+        onCreateEditor={(createdView, state) => {
+          setView(createdView)
           if (!tab.state) setTabState(tab.id, state)
         }}
         onUpdate={(viewUpdate) => {
@@ -69,6 +108,7 @@ export function FileViewer({ tab }: { tab: FileTab }) {
         theme="dark"
         basicSetup={{ lineNumbers: true, foldGutter: true, highlightActiveLine: true }}
       />
+      <SelectionFloatingBar view={view} onSend={() => view && sendSelectionToChat(view)} />
     </div>
   )
 }

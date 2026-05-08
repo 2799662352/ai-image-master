@@ -1,9 +1,21 @@
+import { useEffect } from 'react'
 import { ModelPicker } from './ModelPicker'
 import { useAgentChatStore } from './store'
+import { parseFileDrop, parseQuoteDrop } from '../file-explorer/dragHelpers'
+import { useFileExplorerStore } from '../file-explorer/store'
 
 const MAX_ATTACHMENTS = 20
 const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024
 const MAX_TOTAL_ATTACHMENT_BYTES = 250 * 1024 * 1024
+
+type FileExplorerApi = {
+  fs?: {
+    stat: (p: string) => Promise<
+      | { ok: true; size: number; mime: string; mtime: number }
+      | { ok: false; reason?: string }
+    >
+  }
+}
 
 export function MentionInput() {
   const input = useAgentChatStore((state) => state.input)
@@ -14,6 +26,18 @@ export function MentionInput() {
   const addAttachment = useAgentChatStore((state) => state.addAttachment)
   const send = useAgentChatStore((state) => state.send)
   const cancel = useAgentChatStore((state) => state.cancel)
+  const pendingChatInsert = useFileExplorerStore((state) => state.pendingChatInsert)
+  const consumePendingChatInsert = useFileExplorerStore((state) => state.consumePendingChatInsert)
+
+  function appendInput(text: string): void {
+    setInput(input ? `${input}\n${text}` : text)
+  }
+
+  useEffect(() => {
+    if (pendingChatInsert == null) return
+    const pending = consumePendingChatInsert()
+    if (pending != null) appendInput(pending)
+  }, [pendingChatInsert, consumePendingChatInsert])
 
   async function onFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? [])
@@ -41,8 +65,37 @@ export function MentionInput() {
     event.target.value = ''
   }
 
+  async function onDrop(event: React.DragEvent): Promise<void> {
+    event.preventDefault()
+    const quote = parseQuoteDrop(event.dataTransfer)
+    if (quote) {
+      appendInput(quote)
+      return
+    }
+
+    const filePath = parseFileDrop(event.dataTransfer)
+    if (!filePath) return
+    const fsApi = (window as Window & { electronAPI?: FileExplorerApi }).electronAPI?.fs
+    if (!fsApi) return
+    const stat = await fsApi.stat(filePath)
+    if (!stat.ok || stat.size > MAX_ATTACHMENT_BYTES) {
+      setError(`Skipped ${filePath} because it exceeds attachment limits or is unavailable.`)
+      return
+    }
+    const name = filePath.split(/[\\/]/).pop() ?? filePath
+    addAttachment({
+      name,
+      mime: stat.mime || 'application/octet-stream',
+      size: stat.size,
+      path: filePath,
+    })
+    appendInput(`[file:${name}]`)
+  }
+
   return (
     <form
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={(event) => void onDrop(event)}
       onSubmit={(event) => {
         event.preventDefault()
         void send()
