@@ -280,14 +280,11 @@ export class AgentManager {
     if (savedAttachments.length > 0) {
       const refs: AttachmentRef[] = savedAttachments.map((a) => ({
         id: a.id ?? createTimelineId(),
-        // Keep canonical `localPath` as `uri` so a future custom protocol
-        // handler (e.g. `agent-attachment://<id>`) can resolve historical
-        // attachments back into renderable URLs without another DB round-trip.
         kind: a.mime.startsWith('image/') ? 'image' : 'file',
         name: a.originalName,
         mime: a.mime,
         size: a.size,
-        uri: a.localPath,
+        uri: 'local-file:///' + a.localPath.replace(/\\/g, '/'),
       }))
       out.push({ type: 'attachment', id: createTimelineId(), startedAt: now, attachments: refs })
     }

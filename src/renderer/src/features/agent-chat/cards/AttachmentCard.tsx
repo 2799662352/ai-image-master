@@ -1,4 +1,5 @@
 import type { AttachmentItem, AttachmentRef } from '../../../../../types/agent-timeline'
+import { toRenderableUri } from '../../file-explorer/uri'
 import { useAgentChatStore } from '../store'
 
 function isRenderableImage(ref: AttachmentRef): boolean {
@@ -14,7 +15,14 @@ export function AttachmentCard({ item }: { item: AttachmentItem }) {
   const handleDoubleClick = (id: string): void => {
     const startIndex = images.findIndex((ref) => ref.id === id)
     if (startIndex < 0) return
-    openPreview(images, startIndex)
+    openPreview(
+      images.map((ref) => ({
+        ...ref,
+        uri: toRenderableUri(ref.uri),
+        thumbnailUri: ref.thumbnailUri ? toRenderableUri(ref.thumbnailUri) : undefined,
+      })),
+      startIndex,
+    )
   }
 
   return (
@@ -23,7 +31,7 @@ export function AttachmentCard({ item }: { item: AttachmentItem }) {
         isRenderableImage(ref) ? (
           <img
             key={ref.id}
-            src={ref.thumbnailUri ?? ref.uri}
+            src={toRenderableUri(ref.thumbnailUri ?? ref.uri)}
             alt={ref.name}
             onDoubleClick={() => handleDoubleClick(ref.id)}
             className="h-16 w-16 rounded border border-zinc-700/50 object-cover cursor-pointer hover:border-cyan-400/50"

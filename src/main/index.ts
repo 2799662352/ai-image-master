@@ -28,6 +28,7 @@ import { AttachmentService } from './agent/AttachmentService'
 import { getPrisma, shutdownDatabase } from './agent/db'
 import { registerAgentIpc } from './agent/ipc'
 import { ThreadStore } from './agent/ThreadStore'
+import { registerLocalFileScheme, installLocalFileHandler } from './file-explorer/protocolHandler'
 import { startCatimationMcpServer } from './mcp/server'
 import type { McpRuntime } from './mcp/server'
 
@@ -128,6 +129,8 @@ app.commandLine.appendSwitch('disable-gpu-program-cache')
 if (isDev) {
   app.commandLine.appendSwitch('disable-http-cache')
 }
+
+registerLocalFileScheme()
 
 /**
  * 清理可能损坏的 Chromium 缓存目录
@@ -249,7 +252,7 @@ function createWindow(): void {
           "script-src 'self' 'unsafe-inline' 'unsafe-eval' node: https://cdn.jsdelivr.net",
           "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
           "font-src 'self' https://fonts.gstatic.com data:",
-          "img-src 'self' data: blob: https: file:",
+          "img-src 'self' data: blob: https: file: local-file:",
           "connect-src 'self' https: wss: data: http://175.178.198.17:* http://127.0.0.1:* http://localhost:*",
           // allow COS HTTPS presigned URLs (smart erase output) and file:// (compare-with-original)
           "media-src 'self' data: blob: https: file:",
@@ -533,6 +536,7 @@ async function cleanupAgentRuntime(): Promise<void> {
 // App 生命周期
 app.whenReady().then(async () => {
   console.log(`[Performance] App ready: ${Date.now() - startTime}ms`)
+  installLocalFileHandler()
 
   // 关键路径：仅初始化必要的路径和目录
   initPaths()

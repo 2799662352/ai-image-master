@@ -1,4 +1,5 @@
 import { useEffect, useCallback } from 'react'
+import { toRenderableUri } from '../file-explorer/uri'
 import { useAgentChatStore } from './store'
 
 export function Lightbox() {
@@ -57,7 +58,7 @@ export function Lightbox() {
         </button>
       </div>
       <img
-        src={current.uri}
+        src={toRenderableUri(current.uri)}
         alt={current.name}
         className="max-h-[80vh] max-w-[90vw] object-contain"
         onClick={(e) => {
