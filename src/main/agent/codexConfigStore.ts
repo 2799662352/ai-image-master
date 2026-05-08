@@ -4,6 +4,7 @@ import { parse as parseToml } from 'toml'
 import type {
   CodexAuditLogEntry,
   CodexConfigScope,
+  CodexMcpServerInput,
   CodexMcpServerListItem,
   CodexWorkspacePaths,
 } from '../../types/agent'
@@ -163,4 +164,32 @@ export async function listMcp(paths: CodexWorkspacePaths): Promise<CodexMcpServe
     )
   }
   return items.sort((a, b) => a.name.localeCompare(b.name))
+}
+
+export async function getMcpDetail(
+  paths: CodexWorkspacePaths,
+  id: string,
+): Promise<CodexMcpServerInput | null> {
+  const [scope, ...rest] = id.split(':')
+  const name = rest.join(':')
+  if (scope !== 'personal' && scope !== 'workspace') return null
+  const target = scope === 'personal' ? paths.personalConfigToml : paths.workspaceConfigToml
+  const raw = await readFileOrEmpty(target)
+  const servers = parseMcpServers(raw)
+  const entry = servers[name]
+  if (!entry) return null
+  const env =
+    entry.env && typeof entry.env === 'object' && !Array.isArray(entry.env)
+      ? (entry.env as Record<string, unknown>)
+      : {}
+  return {
+    id,
+    name,
+    scope,
+    enabled: entry.enabled === false ? false : true,
+    command: typeof entry.command === 'string' ? entry.command : '',
+    args: Array.isArray(entry.args) ? (entry.args as unknown[]).map(String) : [],
+    env: Object.entries(env).map(([key, value]) => ({ key, value: String(value ?? '') })),
+    description: typeof entry.description === 'string' ? entry.description : undefined,
+  }
 }
