@@ -6,6 +6,7 @@ import { FileTabStrip } from './FileTabStrip'
 import { FileViewer } from './FileViewer'
 import { ImageViewer } from './ImageViewer'
 import { BinaryViewer } from './BinaryViewer'
+import { ConflictModal } from './ConflictModal'
 
 function ActiveViewer() {
   const { tabs, activeTabId } = useFileExplorerStore()
@@ -95,6 +96,7 @@ export function FileExplorerPanel({ rightOffset }: { rightOffset: number }) {
           </div>
         </div>
       </div>
+      <ConflictModal />
     </div>
   )
 }

@@ -56,6 +56,39 @@ type Actions = {
   consumePendingChatInsert: () => string | null
 }
 
+let unsubscribeWatch: (() => void) | null = null
+
+function ensureWatchSubscription(getState: () => State & Actions): void {
+  if (unsubscribeWatch || typeof window === 'undefined') return
+  const api = (window as Window & { electronAPI?: ElectronFileApi }).electronAPI
+  if (!api) return
+  const fsApiWithEvents = api.fs as ElectronFileApi['fs'] & {
+    onWatchEvent?: (cb: (event: { type: 'change' | 'unlink'; path: string; mtime?: number }) => void) => () => void
+  }
+  unsubscribeWatch = fsApiWithEvents.onWatchEvent?.(async (event) => {
+    const tab = getState().tabs.find((t) => t.path === event.path)
+    if (!tab) return
+    if (event.type === 'unlink') {
+      useFileExplorerStore.setState({
+        conflict: { tabId: tab.id, diskContent: '', show: 'modal' },
+      })
+      return
+    }
+    const r = await api.fs.readText(event.path)
+    if (!tab.dirty) {
+      useFileExplorerStore.setState((s) => ({
+        tabs: s.tabs.map((t) =>
+          t.id === tab.id ? { ...t, diskContent: r.content, diskMtime: r.mtime, state: null } : t,
+        ),
+      }))
+    } else {
+      useFileExplorerStore.setState({
+        conflict: { tabId: tab.id, diskContent: r.content, show: 'modal' },
+      })
+    }
+  }) ?? null
+}
+
 function readStorage(key: string): string | null {
   try {
     return globalThis.localStorage?.getItem(key) ?? null
@@ -190,6 +223,7 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
       dirty: false,
     }
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: id }))
+    ensureWatchSubscription(get)
   },
 
   closeTab: (tabId) => {
