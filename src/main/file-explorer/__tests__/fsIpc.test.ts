@@ -2,13 +2,22 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { handleReadText, handleWriteText, handleListDir, handleStat, TEXT_READ_LIMIT } from '../fsIpc'
+import {
+  handleReadText,
+  handleWriteText,
+  handleListDir,
+  handleStat,
+  setFsAllowedRoots,
+  TEXT_READ_LIMIT,
+} from '../fsIpc'
 
 let dir: string
 beforeEach(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), 'fsipc-'))
+  setFsAllowedRoots([dir])
 })
 afterEach(async () => {
+  setFsAllowedRoots([])
   await fs.rm(dir, { recursive: true, force: true })
 })
 
@@ -29,6 +38,24 @@ describe('handleReadText', () => {
 
   it('rejects directories', async () => {
     await expect(handleReadText(dir)).rejects.toThrow(/not a file/i)
+  })
+
+  it('rejects paths outside allowed roots', async () => {
+    const outside = path.join(os.tmpdir(), `fsipc-outside-${Date.now()}.txt`)
+    await fs.writeFile(outside, 'secret', 'utf-8')
+    try {
+      await expect(handleReadText(outside)).rejects.toThrow(/outside allowed roots/i)
+    } finally {
+      await fs.rm(outside, { force: true })
+    }
+  })
+
+  it('rejects traversal segments before resolving the path', async () => {
+    const f = path.join(dir, 'a.txt')
+    await fs.writeFile(f, 'hello', 'utf-8')
+    await expect(handleReadText(`${dir}${path.sep}nested${path.sep}..${path.sep}a.txt`)).rejects.toThrow(
+      /outside allowed roots/i,
+    )
   })
 })
 

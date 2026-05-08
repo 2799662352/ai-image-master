@@ -32,6 +32,7 @@ import type {
   AgentThreadSummary,
   AgentToolRequest,
   AgentToolResponse,
+  CodexSessionStatus,
 } from '../types/agent'
 
 // ==================== IPC 通道常量 ====================
@@ -149,6 +150,8 @@ const IPC_CHANNELS = {
     TOOL_RESPONSE: 'agent:tool-response',
     SET_API_KEY: 'agent:set-api-key',
     TEST_CONNECTION: 'agent:test-connection',
+    GET_SESSION_STATUS: 'agent:get-session-status',
+    SET_ALLOWED_ROOTS: 'agent:set-allowed-roots',
     OPEN_THREAD: 'agent:open-thread',
     RENAME_THREAD: 'agent:rename-thread',
     DELETE_THREAD: 'agent:delete-thread',
@@ -162,6 +165,7 @@ const IPC_CHANNELS = {
     COPY_IMAGE: 'shell:copy-image',
     SAVE_AS: 'shell:save-as',
     SHOW_ITEM_IN_FOLDER: 'shell:show-item-in-folder',
+    OPEN_EXTERNAL: 'shell:open-external',
   },
   FILE_EXPLORER: {
     READ_TEXT: 'fs:read-text',
@@ -226,7 +230,11 @@ export interface ImportTemplatesResponse {
   error?: string
 }
 
-export type FileExplorerWatchEvent = { type: 'change' | 'unlink'; path: string; mtime?: number }
+export type FileExplorerWatchEvent = {
+  type: 'add' | 'addDir' | 'change' | 'unlink' | 'unlinkDir'
+  path: string
+  mtime?: number
+}
 
 export type FileExplorerNode = {
   path: string
@@ -260,12 +268,15 @@ export interface ElectronAPI {
     sendToolResponse: (response: AgentToolResponse) => void
     setApiKey: (key: string) => Promise<AgentApiResult>
     testConnection: () => Promise<AgentApiResult>
+    getSessionStatus: () => Promise<CodexSessionStatus>
+    setAllowedRoots: (roots: string[]) => Promise<string[]>
   }
   // Shell helpers (clipboard / save dialog)
   shell: {
     copyImage: (uri: string) => Promise<IpcResponse>
     saveAs: (uri: string, suggestedName: string) => Promise<IpcResponse>
     showItemInFolder: (p: string) => Promise<void>
+    openExternal: (url: string) => Promise<IpcResponse>
   }
   fs: {
     readText: (p: string) => Promise<{ content: string; mtime: number }>
@@ -570,6 +581,12 @@ const electronAPI: ElectronAPI = {
 
     testConnection: () =>
       safeInvoke<AgentApiResult>(IPC_CHANNELS.AGENT.TEST_CONNECTION),
+
+    getSessionStatus: () =>
+      safeInvoke<CodexSessionStatus>(IPC_CHANNELS.AGENT.GET_SESSION_STATUS),
+
+    setAllowedRoots: (roots: string[]) =>
+      safeInvoke<string[]>(IPC_CHANNELS.AGENT.SET_ALLOWED_ROOTS, roots),
   },
 
   // ============ Shell helpers (clipboard / save dialog) ============
@@ -580,6 +597,8 @@ const electronAPI: ElectronAPI = {
       safeInvoke<IpcResponse>(IPC_CHANNELS.SHELL.SAVE_AS, { uri, suggestedName }),
     showItemInFolder: (p: string) =>
       safeInvoke<void>(IPC_CHANNELS.SHELL.SHOW_ITEM_IN_FOLDER, p),
+    openExternal: (url: string) =>
+      safeInvoke<IpcResponse>(IPC_CHANNELS.SHELL.OPEN_EXTERNAL, url),
   },
 
   fs: {

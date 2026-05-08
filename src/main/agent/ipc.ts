@@ -13,6 +13,8 @@ const AGENT_HANDLE_CHANNELS = [
   'agent:delete-thread',
   'agent:set-api-key',
   'agent:test-connection',
+  'agent:get-session-status',
+  'agent:set-allowed-roots',
 ]
 
 export function registerAgentIpc(manager: AgentManager, router: ToolRouter): void {
@@ -42,5 +44,7 @@ export function registerAgentIpc(manager: AgentManager, router: ToolRouter): voi
     }
   })
   ipcMain.handle('agent:test-connection', () => manager.testConnection())
+  ipcMain.handle('agent:get-session-status', () => manager.getSessionStatus())
+  ipcMain.handle('agent:set-allowed-roots', (_event, roots: unknown) => manager.setAllowedRoots(roots))
   ipcMain.on('agent:tool-response', (_event, response: AgentToolResponse) => router.handleRendererResponse(response))
 }

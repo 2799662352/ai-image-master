@@ -16,6 +16,7 @@ const fakeAgent = {
   sendToolResponse: vi.fn(),
   setApiKey: vi.fn(),
   testConnection: vi.fn(),
+  getSessionStatus: vi.fn(),
 }
 
 beforeEach(() => {
@@ -28,6 +29,13 @@ beforeEach(() => {
   }
   fakeAgent.listThreads.mockResolvedValue([])
   fakeAgent.openThread.mockResolvedValue({ id: 't1', messages: [] })
+  fakeAgent.getSessionStatus.mockResolvedValue({
+    model: 'gpt-5.5',
+    sandboxMode: 'workspace-write',
+    approvalPolicy: 'on-request',
+    webSearch: true,
+    writableRoots: [],
+  })
   useAgentChatStore.setState({
     isOpen: true,
     messages: [],
@@ -77,5 +85,16 @@ describe('AgentChatPanel + sidebar integration', () => {
     const btn = screen.getByRole('button', { name: /thread sidebar/i })
     fireEvent.click(btn)
     expect(useAgentChatStore.getState().sidebarOpen).toBe(false)
+  })
+
+  it('CodexStatusPanel reflects the renderer-selected model label, not the main-process default', async () => {
+    useAgentChatStore.setState({ selectedModelId: 'gpt-5.4-nano' })
+
+    render(<AgentChatPanel />)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(screen.getByText(/Codex GPT-5\.4 Nano/i)).toBeTruthy()
+    expect(screen.queryByText(/Codex gpt-5\.5/i)).toBeNull()
   })
 })

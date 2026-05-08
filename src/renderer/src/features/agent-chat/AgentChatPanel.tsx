@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { AttachmentChips } from './AttachmentChips'
 import { CloseIcon, PanelCollapseRightIcon, PanelExpandLeftIcon } from './icons'
 import { Lightbox } from './Lightbox'
@@ -8,15 +8,18 @@ import { ResizableHandle } from './ResizableHandle'
 import { ThreadCommandPalette } from './ThreadCommandPalette'
 import { ThreadSidebar } from './ThreadSidebar'
 import { TokenUsageMeter } from './TokenUsageMeter'
+import { CodexStatusPanel } from './CodexStatusPanel'
+import { findModel } from './models'
 import { useAgentChatStore } from './store'
 import { FileExplorerPanel } from '../file-explorer/FileExplorerPanel'
 import { useFileExplorerStore } from '../file-explorer/store'
 import { FileTreeIcon } from '../file-explorer/icons'
-import type { AgentStreamEvent } from '../../../../types/agent'
+import type { AgentStreamEvent, CodexSessionStatus } from '../../../../types/agent'
 
 type AgentEventApi = {
   agent?: {
     onEvent: (handler: (event: AgentStreamEvent) => void) => () => void
+    getSessionStatus?: () => Promise<CodexSessionStatus>
   }
 }
 
@@ -32,9 +35,11 @@ export function AgentChatPanel() {
   const sidebarWidth = useAgentChatStore((state) => state.sidebarWidth)
   const toggleSidebar = useAgentChatStore((state) => state.toggleSidebar)
   const bootstrap = useAgentChatStore((state) => state.bootstrap)
+  const selectedModelId = useAgentChatStore((state) => state.selectedModelId)
   const fxOpen = useFileExplorerStore((state) => state.fxOpen)
   const toggleFx = useFileExplorerStore((state) => state.toggleFx)
   const setFxOpen = useFileExplorerStore((state) => state.setFxOpen)
+  const [codexStatus, setCodexStatus] = useState<CodexSessionStatus | undefined>(undefined)
 
   useEffect(() => {
     if (!isOpen) return undefined
@@ -48,6 +53,12 @@ export function AgentChatPanel() {
     if (!isOpen) return
     void bootstrap()
   }, [isOpen, bootstrap])
+
+  useEffect(() => {
+    if (!isOpen) return
+    const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
+    void agent?.getSessionStatus?.().then(setCodexStatus).catch(() => undefined)
+  }, [isOpen])
 
   // Cmd/Ctrl+B → toggle sidebar (only when panel is open, otherwise we'd be
   // stealing a global shortcut from the rest of the app for no reason).
@@ -111,6 +122,20 @@ export function AgentChatPanel() {
               <h2 className="truncate text-sm font-semibold text-cyan-50">CATIMATION Agent</h2>
             </div>
             <div className="flex items-center gap-1.5">
+              <CodexStatusPanel
+                status={
+                  codexStatus
+                    ? {
+                        ...codexStatus,
+                        // Display the renderer-selected model so the panel
+                        // matches what ModelPicker is actually sending. The
+                        // main-process default is just a fallback for the
+                        // label format.
+                        model: findModel(selectedModelId)?.label ?? selectedModelId,
+                      }
+                    : undefined
+                }
+              />
               <TokenUsageMeter usage={tokenUsage} />
               <button
                 type="button"

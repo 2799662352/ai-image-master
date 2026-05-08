@@ -25,6 +25,24 @@ export interface AgentSendMessagePayload {
   model?: string
 }
 
+export type CodexSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
+export type CodexApprovalPolicy = 'untrusted' | 'on-failure' | 'on-request' | 'never'
+
+export interface CodexSessionConfig {
+  sandboxMode: CodexSandboxMode
+  approvalPolicy: CodexApprovalPolicy
+  webSearch: boolean
+  writableRoots: string[]
+}
+
+export interface CodexSessionStatus {
+  model: string
+  sandboxMode: CodexSandboxMode
+  approvalPolicy: CodexApprovalPolicy
+  webSearch: boolean
+  writableRoots: string[]
+}
+
 export interface AgentCancelPayload {
   threadId: string
 }

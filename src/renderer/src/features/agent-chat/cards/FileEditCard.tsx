@@ -1,10 +1,14 @@
 import { useState } from 'react'
 import type { FileEditItem } from '../../../../../types/agent-timeline'
+import { useFileExplorerStore } from '../../file-explorer/store'
+import { referencesFromTimelineItem } from '../references/referenceUtils'
 import { FileDiffBlock } from './FileDiffBlock'
 
 export function FileEditCard({ item }: { item: FileEditItem }) {
   const isRunning = !item.endedAt
   const [expanded, setExpanded] = useState(false)
+  const openReference = useFileExplorerStore((state) => state.openReference)
+  const references = referencesFromTimelineItem(item)
 
   const summary =
     item.changes.length === 1
@@ -31,6 +35,20 @@ export function FileEditCard({ item }: { item: FileEditItem }) {
           ))}
         </div>
       )}
+      {references.length > 0 ? (
+        <div className="mt-1 flex flex-wrap gap-1">
+          {references.map((reference) => (
+            <button
+              key={reference.id}
+              type="button"
+              onClick={() => void openReference(reference)}
+              className="rounded border border-cyan-500/30 px-2 py-0.5 text-[10px] text-cyan-200 hover:bg-cyan-500/10"
+            >
+              Open diff
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   )
 }

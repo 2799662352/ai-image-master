@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import type { ActivityItem } from '../../../../../types/agent-timeline'
+import { useFileExplorerStore } from '../../file-explorer/store'
+import { referencesFromTimelineItem } from '../references/referenceUtils'
 
 /**
  * Catch-all card rendered for any Codex `item.type` we don't yet have a
@@ -17,6 +19,8 @@ export function ActivityCard({ item }: { item: ActivityItem }) {
   const isRunning = status === 'running'
   const hasDetail = typeof item.detail === 'string' && item.detail.length > 0
   const [expanded, setExpanded] = useState(false)
+  const openReference = useFileExplorerStore((state) => state.openReference)
+  const references = referencesFromTimelineItem(item)
 
   const icon = pickIcon(item.kind)
   const accent = pickAccent(status)
@@ -48,6 +52,20 @@ export function ActivityCard({ item }: { item: ActivityItem }) {
       {expanded && hasDetail ? (
         <div className="mt-1 max-h-[200px] overflow-y-auto rounded border border-zinc-800/60 bg-zinc-950/50 px-2 py-1.5 font-mono text-[11px] leading-relaxed text-zinc-400 whitespace-pre-wrap break-all">
           {item.detail}
+        </div>
+      ) : null}
+      {references.length > 0 ? (
+        <div className="mt-1 flex flex-wrap gap-1">
+          {references.map((reference) => (
+            <button
+              key={reference.id}
+              type="button"
+              onClick={() => void openReference(reference)}
+              className="rounded border border-cyan-500/30 px-2 py-0.5 text-[10px] text-cyan-200 hover:bg-cyan-500/10"
+            >
+              Open details
+            </button>
+          ))}
         </div>
       ) : null}
     </div>

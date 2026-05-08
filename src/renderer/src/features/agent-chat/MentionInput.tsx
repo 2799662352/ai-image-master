@@ -1,5 +1,7 @@
 import { useEffect } from 'react'
 import { ModelPicker } from './ModelPicker'
+import { ReferenceChip } from './references/ReferenceChip'
+import { makeFileReference } from './references/referenceUtils'
 import { useAgentChatStore } from './store'
 import { parseFileDrop, parseQuoteDrop } from '../file-explorer/dragHelpers'
 import { useFileExplorerStore } from '../file-explorer/store'
@@ -24,6 +26,10 @@ export function MentionInput() {
   const setInput = useAgentChatStore((state) => state.setInput)
   const setError = useAgentChatStore((state) => state.setError)
   const addAttachment = useAgentChatStore((state) => state.addAttachment)
+  const removeAttachment = useAgentChatStore((state) => state.removeAttachment)
+  const pendingReferences = useAgentChatStore((state) => state.pendingReferences)
+  const addPendingReference = useAgentChatStore((state) => state.addPendingReference)
+  const removePendingReference = useAgentChatStore((state) => state.removePendingReference)
   const send = useAgentChatStore((state) => state.send)
   const cancel = useAgentChatStore((state) => state.cancel)
   const pendingChatInsert = useFileExplorerStore((state) => state.pendingChatInsert)
@@ -89,7 +95,7 @@ export function MentionInput() {
       size: stat.size,
       path: filePath,
     })
-    appendInput(`[file:${name}]`)
+    addPendingReference(makeFileReference({ path: filePath, name, mime: stat.mime || undefined }))
   }
 
   return (
@@ -101,6 +107,20 @@ export function MentionInput() {
         void send()
       }}
     >
+      {pendingReferences.length > 0 ? (
+        <div className="mb-2 flex flex-wrap gap-1">
+          {pendingReferences.map((reference) => (
+            <ReferenceChip
+              key={reference.id}
+              reference={reference}
+              onRemove={() => {
+                removePendingReference(reference.id)
+                removeAttachment(reference.label)
+              }}
+            />
+          ))}
+        </div>
+      ) : null}
       <textarea
         className="h-24 w-full resize-none rounded-xl border border-cyan-400/25 bg-black/40 p-3 text-sm text-cyan-50 outline-none placeholder:text-zinc-500 focus:border-cyan-300/60"
         disabled={isRunning}

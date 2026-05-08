@@ -3,13 +3,21 @@ import { readFileSync } from 'node:fs'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { CodexLocalBackend } from './CodexLocalBackend'
+import { DEFAULT_CODEX_SESSION_CONFIG } from './codexLaunch'
 import type { BrowserWindow } from 'electron'
-import type { AgentSendMessagePayload, AgentStreamEvent, ItemDeltaPatch } from '../../types/agent'
+import type {
+  AgentSendMessagePayload,
+  AgentStreamEvent,
+  CodexSessionConfig,
+  CodexSessionStatus,
+  ItemDeltaPatch,
+} from '../../types/agent'
 import type { AttachmentRef, TimelineItem } from '../../types/agent-timeline'
 import type { AttachmentService } from './AttachmentService'
 import type { ThreadStore } from './ThreadStore'
 import type { AgentInput, IAgentBackend } from './types'
 import { ThreadTitleSummarizer } from './ThreadTitleSummarizer'
+import { setFsAllowedRoots } from '../file-explorer/fsIpc'
 
 const CODEX_API_KEY_FILE = 'codex-agent.json'
 const EMPTY_KEY_ERROR = '请在设置页填写 Codex Agent API Key'
@@ -106,6 +114,7 @@ export class AgentManager {
   private readonly codexApiKeyPath: string
   private codexApiKey = ''
   private summarizer?: ThreadTitleSummarizer
+  private sessionConfig: CodexSessionConfig = { ...DEFAULT_CODEX_SESSION_CONFIG }
   private readonly firstTurnDoneByThread = new Map<string, boolean>()
   /**
    * Maps our DB thread row id (a Prisma CUID like `cm6abc...`) to the
@@ -127,6 +136,7 @@ export class AgentManager {
     this.backend = opts.backend ?? new CodexLocalBackend({
       getApiKey: () => this.codexApiKey,
       provider: DEFAULT_PROVIDER,
+      sessionConfig: this.sessionConfig,
     })
     if (this.store) {
       this.summarizer = new ThreadTitleSummarizer(this.store, this.backend, DEFAULT_AGENT_MODEL)
@@ -147,6 +157,37 @@ export class AgentManager {
     await fs.writeFile(tmpPath, JSON.stringify({ openaiApiKey: trimmed }), 'utf8')
     await fs.rename(tmpPath, this.codexApiKeyPath)
     this.codexApiKey = trimmed
+  }
+
+  async setAllowedRoots(roots: unknown): Promise<string[]> {
+    if (!Array.isArray(roots)) return [...this.sessionConfig.writableRoots]
+
+    const validated: string[] = []
+    for (const candidate of roots) {
+      if (typeof candidate !== 'string') continue
+      const resolved = path.resolve(candidate)
+      if (!path.isAbsolute(resolved)) continue
+      try {
+        const stat = await fs.stat(resolved)
+        if (stat.isDirectory()) validated.push(resolved)
+      } catch {
+        // Ignore stale workspace roots.
+      }
+    }
+
+    this.sessionConfig = { ...this.sessionConfig, writableRoots: validated }
+    setFsAllowedRoots(validated)
+    return [...validated]
+  }
+
+  getSessionStatus(model: string = DEFAULT_AGENT_MODEL): CodexSessionStatus {
+    return {
+      model,
+      sandboxMode: this.sessionConfig.sandboxMode,
+      approvalPolicy: this.sessionConfig.approvalPolicy,
+      webSearch: this.sessionConfig.webSearch,
+      writableRoots: [...this.sessionConfig.writableRoots],
+    }
   }
 
   async start(): Promise<void> {
@@ -170,6 +211,7 @@ export class AgentManager {
       getApiKey: () => this.codexApiKey,
       connectTimeoutMs: 8_000,
       provider: DEFAULT_PROVIDER,
+      sessionConfig: this.sessionConfig,
     })
     const TEST_TIMEOUT_MS = 15_000
 
@@ -247,7 +289,7 @@ export class AgentManager {
     const input: AgentInput = {
       ...payload,
       model,
-      cwd: process.cwd(),
+      cwd: this.sessionConfig.writableRoots[0] ?? process.cwd(),
       items,
     }
 

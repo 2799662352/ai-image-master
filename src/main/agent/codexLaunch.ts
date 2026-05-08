@@ -1,4 +1,17 @@
+import type {
+  CodexApprovalPolicy,
+  CodexSandboxMode,
+  CodexSessionConfig,
+} from '../../types/agent'
+
 export const DEFAULT_LISTEN_URL = 'ws://127.0.0.1:7345'
+
+export const DEFAULT_CODEX_SESSION_CONFIG: CodexSessionConfig = {
+  approvalPolicy: 'on-request',
+  sandboxMode: 'workspace-write',
+  webSearch: true,
+  writableRoots: [],
+}
 
 /**
  * Custom Codex model_provider config. When passed, we wire it through the
@@ -30,15 +43,48 @@ export interface CodexProviderConfig {
 export interface CodexLaunchOptions {
   listenUrl?: string
   provider?: CodexProviderConfig
+  sessionConfig?: Partial<CodexSessionConfig>
+}
+
+function quote(value: string): string {
+  return JSON.stringify(value)
+}
+
+function resolveSessionConfig(input?: Partial<CodexSessionConfig>): CodexSessionConfig {
+  return {
+    approvalPolicy: (input?.approvalPolicy ?? DEFAULT_CODEX_SESSION_CONFIG.approvalPolicy) as CodexApprovalPolicy,
+    sandboxMode: (input?.sandboxMode ?? DEFAULT_CODEX_SESSION_CONFIG.sandboxMode) as CodexSandboxMode,
+    webSearch: input?.webSearch ?? DEFAULT_CODEX_SESSION_CONFIG.webSearch,
+    writableRoots: input?.writableRoots ?? DEFAULT_CODEX_SESSION_CONFIG.writableRoots,
+  }
+}
+
+export function appendProviderArgs(
+  args: string[],
+  provider?: CodexProviderConfig,
+): string[] {
+  if (!provider) return args
+  const id = provider.id
+  args.push(
+    '-c', `model_provider="${id}"`,
+    '-c', `model_providers.${id}.name="${provider.name}"`,
+    '-c', `model_providers.${id}.base_url="${provider.baseUrl}"`,
+    '-c', `model_providers.${id}.env_key="${provider.envKey}"`,
+    // See `CodexProviderConfig` above for why this is mandatory.
+    '-c', `model_providers.${id}.wire_api="responses"`,
+  )
+  return args
 }
 
 export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
   const url = options?.listenUrl ?? DEFAULT_LISTEN_URL
+  const sessionConfig = resolveSessionConfig(options?.sessionConfig)
   const args: string[] = [
     'app-server',
     '--listen', url,
-    '-c', 'approval_policy="never"',
-    '-c', 'sandbox_mode="danger-full-access"',
+    '-c', `approval_policy=${quote(sessionConfig.approvalPolicy)}`,
+    '-c', `sandbox_mode=${quote(sessionConfig.sandboxMode)}`,
+    '-c', `tools.web_search=${sessionConfig.webSearch ? 'true' : 'false'}`,
     // Surface chain-of-thought to the chat panel. Codex 0.128's defaults
     // are tuned for `codex exec` / CI logs (raw reasoning hidden, summaries
     // optional), which leaves our "Thought" card permanently empty even
@@ -57,18 +103,9 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     '-c', 'model_auto_compact_token_limit=180000',
   ]
 
-  const provider = options?.provider
-  if (provider) {
-    const id = provider.id
-    args.push(
-      '-c', `model_provider="${id}"`,
-      '-c', `model_providers.${id}.name="${provider.name}"`,
-      '-c', `model_providers.${id}.base_url="${provider.baseUrl}"`,
-      '-c', `model_providers.${id}.env_key="${provider.envKey}"`,
-      // See `CodexProviderConfig` above for why this is mandatory.
-      '-c', `model_providers.${id}.wire_api="responses"`,
-    )
+  for (const root of sessionConfig.writableRoots) {
+    args.push('--add-dir', root)
   }
 
-  return args
+  return appendProviderArgs(args, options?.provider)
 }

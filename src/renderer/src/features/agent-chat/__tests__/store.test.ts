@@ -85,6 +85,21 @@ describe('useAgentChatStore — timeline items', () => {
     expect(useAgentChatStore.getState().isRunning).toBe(false)
   })
 
+  it('turn_completed schedules repeated thread-list refreshes for async title updates', async () => {
+    vi.useFakeTimers()
+    const listThreads = vi.fn().mockResolvedValue([])
+    ;(window as any).electronAPI = { agent: { listThreads } }
+    try {
+      useAgentChatStore.getState().applyEvent({ type: 'turn_completed', threadId: 'thread-1' })
+      await vi.advanceTimersByTimeAsync(500)
+      await vi.advanceTimersByTimeAsync(2_000)
+      await vi.advanceTimersByTimeAsync(6_000)
+      expect(listThreads).toHaveBeenCalledTimes(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('ignores events from stale threads', () => {
     useAgentChatStore.getState().applyEvent({
       type: 'item_started', threadId: 'other-thread', itemId: 'x', itemType: 'text', payload: {},

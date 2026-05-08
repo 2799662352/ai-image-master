@@ -7,6 +7,7 @@ import { FileViewer } from './FileViewer'
 import { ImageViewer } from './ImageViewer'
 import { BinaryViewer } from './BinaryViewer'
 import { ConflictModal } from './ConflictModal'
+import { ReferencePreview } from './ReferencePreview'
 
 function ActiveViewer() {
   const { tabs, activeTabId } = useFileExplorerStore()
@@ -27,6 +28,8 @@ function ActiveViewer() {
       return <embed src={`local-file:///${tab.path.replace(/\\/g, '/')}`} type="application/pdf" className="h-full w-full" />
     case 'binary':
       return <BinaryViewer tab={tab} />
+    case 'reference':
+      return tab.reference ? <ReferencePreview reference={tab.reference} /> : null
   }
 }
 

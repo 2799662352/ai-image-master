@@ -5,7 +5,7 @@ import { CodexProtocolClient, mapServerNotification } from './CodexProtocolClien
 import { createAgentLogStream } from './logger'
 import { getCodexResourceRoot, resolveCodexBinary } from './paths'
 import { pickFreePort } from './ports'
-import type { AgentStreamEvent } from '../../types/agent'
+import type { AgentStreamEvent, CodexSessionConfig } from '../../types/agent'
 import type { AgentInput, IAgentBackend } from './types'
 
 export { mapServerNotification }
@@ -58,6 +58,7 @@ export interface CodexLocalBackendOptions {
    * direct OpenAI key.
    */
   provider?: CodexProviderConfig
+  sessionConfig?: Partial<CodexSessionConfig>
 }
 
 /**
@@ -121,10 +122,18 @@ export class CodexLocalBackend implements IAgentBackend {
     const apiKey = this.options.getApiKey?.()
     const env = buildCodexSpawnEnv(process.env, apiKey)
     const spawnFactory = this.options.spawnFactory ?? spawn
-    const proc = spawnFactory(bin, buildCodexLaunchArgs({ listenUrl, provider: this.options.provider }), {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env,
-    })
+    const proc = spawnFactory(
+      bin,
+      buildCodexLaunchArgs({
+        listenUrl,
+        provider: this.options.provider,
+        sessionConfig: this.options.sessionConfig,
+      }),
+      {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env,
+      },
+    )
     this.proc = proc
 
     proc.stdout?.on('data', captureOutput)

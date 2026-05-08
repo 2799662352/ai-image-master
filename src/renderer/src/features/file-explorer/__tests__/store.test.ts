@@ -2,6 +2,9 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useFileExplorerStore } from '../store'
 
 const electronAPI = {
+  agent: {
+    setAllowedRoots: vi.fn(),
+  },
   fs: {
     readText: vi.fn(),
     writeText: vi.fn(),
@@ -23,6 +26,7 @@ beforeEach(() => {
   Object.values(electronAPI.fs).forEach((m) => {
     if ('mockReset' in m) m.mockReset()
   })
+  electronAPI.agent.setAllowedRoots.mockReset()
   electronAPI.attachments.listTree.mockReset()
   useFileExplorerStore.setState(useFileExplorerStore.getInitialState(), true)
 })
@@ -55,6 +59,37 @@ describe('useFileExplorerStore', () => {
     expect(s.activeTabId).toBe(s.tabs[0].id)
   })
 
+  it('pickWorkspaceFolder appends multiple workspace roots and removeWorkspaceFolder removes one', async () => {
+    electronAPI.fs.pickFolder.mockResolvedValueOnce('D:/one').mockResolvedValueOnce('D:/two')
+    electronAPI.fs.listDir.mockResolvedValue([])
+    electronAPI.agent.setAllowedRoots.mockResolvedValue([])
+
+    await useFileExplorerStore.getState().pickWorkspaceFolder()
+    await useFileExplorerStore.getState().pickWorkspaceFolder()
+
+    expect(useFileExplorerStore.getState().workspaceTree.map((n) => n.path)).toEqual(['D:/one', 'D:/two'])
+    useFileExplorerStore.getState().removeWorkspaceFolder('D:/one')
+    expect(useFileExplorerStore.getState().workspaceTree.map((n) => n.path)).toEqual(['D:/two'])
+  })
+
+  it('syncs picked workspace roots before listing the new folder', async () => {
+    const calls: string[] = []
+    electronAPI.fs.pickFolder.mockResolvedValueOnce('D:/picked')
+    electronAPI.agent.setAllowedRoots.mockImplementation(async () => {
+      calls.push('setAllowedRoots')
+      return ['D:/picked']
+    })
+    electronAPI.fs.listDir.mockImplementation(async () => {
+      calls.push('listDir')
+      return []
+    })
+
+    await useFileExplorerStore.getState().pickWorkspaceFolder()
+
+    expect(calls.slice(0, 2)).toEqual(['setAllowedRoots', 'listDir'])
+    expect(electronAPI.agent.setAllowedRoots).toHaveBeenCalledWith(['D:/picked'])
+  })
+
   it('openTab on already-open path activates existing tab without re-reading', async () => {
     electronAPI.fs.readText.mockResolvedValue({ content: 'one', mtime: 1 })
     electronAPI.fs.stat.mockResolvedValue({ ok: true, size: 3, mime: 'text/plain', mtime: 1 })
@@ -72,9 +107,34 @@ describe('useFileExplorerStore', () => {
     electronAPI.fs.watchStop.mockResolvedValue(undefined)
     await useFileExplorerStore.getState().openTab('D:/y.ts', 'workspace')
     const tabId = useFileExplorerStore.getState().tabs[0].id
-    useFileExplorerStore.getState().closeTab(tabId)
+    await useFileExplorerStore.getState().closeTab(tabId)
     expect(useFileExplorerStore.getState().tabs.length).toBe(0)
     expect(electronAPI.fs.watchStop).toHaveBeenCalledWith('D:/y.ts')
+  })
+
+  it('closeTab blocks dirty text tabs until caller chooses save or discard', async () => {
+    electronAPI.fs.readText.mockResolvedValue({ content: 'before', mtime: 1 })
+    electronAPI.fs.stat.mockResolvedValue({ ok: true, size: 6, mime: 'text/plain', mtime: 1 })
+    electronAPI.fs.watchStart.mockResolvedValue(undefined)
+    electronAPI.fs.watchStop.mockResolvedValue(undefined)
+    electronAPI.fs.writeText.mockResolvedValue({ mtime: 2 })
+    await useFileExplorerStore.getState().openTab('D:/dirty.ts', 'workspace')
+    const tab = useFileExplorerStore.getState().tabs[0]
+    useFileExplorerStore.setState((s) => ({
+      tabs: s.tabs.map((t) => ({ ...t, dirty: true, state: null })),
+    }))
+    useFileExplorerStore.getState().setActiveDoc('after')
+
+    const blocked = await useFileExplorerStore.getState().closeTab(tab.id)
+
+    expect(blocked).toBe(false)
+    expect(electronAPI.fs.writeText).not.toHaveBeenCalled()
+    expect(useFileExplorerStore.getState().tabs).toHaveLength(1)
+
+    const closed = await useFileExplorerStore.getState().closeTab(tab.id, { saveDirty: true })
+    expect(closed).toBe(true)
+    expect(electronAPI.fs.writeText).toHaveBeenCalledWith('D:/dirty.ts', 'after')
+    expect(useFileExplorerStore.getState().tabs).toHaveLength(0)
   })
 
   it('saveActiveTab writes content and clears dirty', async () => {

@@ -8,6 +8,7 @@ import type {
   AgentTokenUsage,
   ItemDeltaPatch,
 } from '../../../../types/agent'
+import type { AgentReference } from '../../../../types/agent-reference'
 import type { AttachmentRef, Message, TimelineItem } from '../../../../types/agent-timeline'
 import { upsertItemInLastMessage } from '../../../../types/agent-timeline'
 import { AGENT_MODELS, DEFAULT_MODEL_ID } from './models'
@@ -25,15 +26,12 @@ const SIDEBAR_WIDTH_DEFAULT = 240
 const SIDEBAR_WIDTH_MIN = 200
 const SIDEBAR_WIDTH_MAX = 360
 const SIDEBAR_OPEN_DEFAULT = true
-const THREAD_LIST_REFRESH_DEBOUNCE_MS = 500
+const THREAD_LIST_TITLE_REFRESH_DELAYS_MS = [500, 2_500, 8_500] as const
 
-let threadListRefreshTimer: ReturnType<typeof setTimeout> | null = null
-function scheduleThreadListRefresh(run: () => void): void {
-  if (threadListRefreshTimer) clearTimeout(threadListRefreshTimer)
-  threadListRefreshTimer = setTimeout(() => {
-    threadListRefreshTimer = null
-    run()
-  }, THREAD_LIST_REFRESH_DEBOUNCE_MS)
+function scheduleThreadListTitleRefreshes(run: () => void): void {
+  for (const delay of THREAD_LIST_TITLE_REFRESH_DELAYS_MS) {
+    setTimeout(run, delay)
+  }
 }
 
 function readPersistedModelId(): string {
@@ -126,6 +124,7 @@ interface AgentChatState {
   threadId?: string
   input: string
   attachments: AgentAttachmentInput[]
+  pendingReferences: AgentReference[]
   isRunning: boolean
   error?: string
   selectedModelId: string
@@ -150,6 +149,9 @@ interface AgentChatState {
   setSelectedModel: (modelId: string) => void
   addAttachment: (attachment: AgentAttachmentInput) => void
   removeAttachment: (name: string) => void
+  addPendingReference: (reference: AgentReference) => void
+  removePendingReference: (referenceId: string) => void
+  clearPendingReferences: () => void
   send: () => Promise<void>
   cancel: () => Promise<void>
   newThread: () => void
@@ -291,6 +293,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   isOpen: false,
   input: '',
   attachments: [],
+  pendingReferences: [],
   messages: [],
   isRunning: false,
   selectedModelId: readPersistedModelId(),
@@ -348,6 +351,17 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   removeAttachment: (name) => set((state) => ({
     attachments: state.attachments.filter((item) => item.name !== name),
   })),
+  addPendingReference: (reference) =>
+    set((state) => ({
+      pendingReferences: state.pendingReferences.some((item) => item.id === reference.id)
+        ? state.pendingReferences
+        : [...state.pendingReferences, reference],
+    })),
+  removePendingReference: (referenceId) =>
+    set((state) => ({
+      pendingReferences: state.pendingReferences.filter((item) => item.id !== referenceId),
+    })),
+  clearPendingReferences: () => set({ pendingReferences: [] }),
   send: async () => {
     const state = get()
     const content = state.input.trim()
@@ -385,6 +399,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     set((current) => ({
       input: '',
       attachments: [],
+      pendingReferences: [],
       error: undefined,
       isRunning: true,
       messages: [...current.messages, userMsg],
@@ -399,11 +414,15 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         model: modelId,
       })
       set({ threadId: result.threadId })
+      // PHASE-1-INVARIANT: pendingReferences are renderer-only chips. Do not
+      // add them to AgentSendMessagePayload until the Phase 2 payload contract lands.
+      get().clearPendingReferences()
       void useFileExplorerStore.getState().refreshAttachmentsTree().catch(() => undefined)
     } catch (error) {
       set((current) => ({
         input: content,
         attachments,
+        pendingReferences: state.pendingReferences,
         isRunning: false,
         error: error instanceof Error ? error.message : String(error),
         messages: current.messages.slice(0, -1),
@@ -532,7 +551,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       }
       case 'turn_completed':
         set({ isRunning: false })
-        scheduleThreadListRefresh(() => void get().refreshThreadList())
+        scheduleThreadListTitleRefreshes(() => void get().refreshThreadList())
         break
       case 'token_usage_updated':
         // Just overwrite — Codex sends cumulative counts. The header meter

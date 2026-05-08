@@ -1,10 +1,14 @@
 import { useState } from 'react'
 import type { ShellItem } from '../../../../../types/agent-timeline'
+import { useFileExplorerStore } from '../../file-explorer/store'
+import { primaryReferenceFromTimelineItem } from '../references/referenceUtils'
 
 export function ShellCard({ item }: { item: ShellItem }) {
   const isRunning = !item.endedAt
   const [expanded, setExpanded] = useState(isRunning)
   const failed = item.exitCode != null && item.exitCode !== 0
+  const openReference = useFileExplorerStore((state) => state.openReference)
+  const reference = primaryReferenceFromTimelineItem(item)
 
   return (
     <div className="my-1">
@@ -29,6 +33,17 @@ export function ShellCard({ item }: { item: ShellItem }) {
         )}
         <span className="text-[9px]">{expanded ? '▾' : '▸'}</span>
       </button>
+      {reference ? (
+        <div className="mt-1 flex flex-wrap gap-1">
+          <button
+            type="button"
+            onClick={() => void openReference(reference)}
+            className="rounded border border-cyan-500/30 px-2 py-0.5 text-[10px] text-cyan-200 hover:bg-cyan-500/10"
+          >
+            Open output
+          </button>
+        </div>
+      ) : null}
       {expanded && (
         <div className="mt-1 max-h-[400px] overflow-y-auto rounded border border-zinc-800/60 bg-zinc-950/50 p-2 font-mono text-[11px] leading-relaxed">
           {item.stdout && <pre className="text-zinc-300 whitespace-pre-wrap">{item.stdout}</pre>}

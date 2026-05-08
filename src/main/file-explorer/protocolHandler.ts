@@ -37,8 +37,17 @@ export function registerLocalFileScheme(): void {
   ])
 }
 
+export function isAllowedLocalFileFetchSite(site: string | null): boolean {
+  return site == null || site === 'same-origin' || site === 'none'
+}
+
 export function installLocalFileHandler(): void {
   protocol.handle('local-file', async (request) => {
+    const site = request.headers.get('Sec-Fetch-Site')
+    if (!isAllowedLocalFileFetchSite(site)) {
+      return new Response('Forbidden: cross-origin', { status: 403 })
+    }
+
     const r = resolveOsPathFromRequest(request.url)
     if (!r.ok) {
       return new Response(`Forbidden: ${r.reason}`, { status: r.reason === 'traversal' ? 403 : 400 })

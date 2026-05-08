@@ -260,7 +260,7 @@ function createWindow(): void {
           // allow COS HTTPS presigned URLs (smart erase output) and file:// (compare-with-original)
           "media-src 'self' data: blob: https: file:",
           "worker-src 'self' blob:", // 允许 Web Worker 从 blob URL 创建（图片压缩库需要）
-          "frame-src 'none'"
+          "frame-src https:"
         ].join('; ')
       }
     })
@@ -746,6 +746,24 @@ ipcMain.handle('shell:save-as', async (_event, payload: { uri: string; suggested
 
 ipcMain.handle('shell:show-item-in-folder', async (_event, filePath: string) => {
   shell.showItemInFolder(filePath)
+})
+
+function validateExternalUrlMain(input: string): { ok: true; url: string } | { ok: false } {
+  try {
+    const parsed = new URL(input)
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return { ok: false }
+    return { ok: true, url: parsed.toString() }
+  } catch {
+    return { ok: false }
+  }
+}
+
+ipcMain.handle('shell:open-external', async (_event, raw: unknown) => {
+  if (typeof raw !== 'string') return { success: false, error: 'invalid_url' }
+  const validated = validateExternalUrlMain(raw)
+  if (!validated.ok) return { success: false, error: 'unsafe_scheme' }
+  await shell.openExternal(validated.url)
+  return { success: true }
 })
 
 ipcMain.handle('agent:open-thread', async (_event, threadId: string) => {

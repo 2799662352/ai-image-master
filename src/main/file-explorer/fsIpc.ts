@@ -1,8 +1,14 @@
-import { ipcMain, dialog } from 'electron'
+import { app, ipcMain, dialog } from 'electron'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 
 export const TEXT_READ_LIMIT = 10 * 1024 * 1024
+
+let allowedRoots: string[] | null = null
+
+export function setFsAllowedRoots(roots: string[]): void {
+  allowedRoots = roots.map((root) => path.resolve(root))
+}
 
 export type FileNodeIpc = {
   path: string
@@ -41,7 +47,34 @@ function mimeFromExt(name: string): string {
   return MIME_BY_EXT[ext] ?? 'application/octet-stream'
 }
 
+function resolveAllowedRoots(): string[] {
+  const roots = [...(allowedRoots ?? [])]
+  if (typeof app?.getPath === 'function') {
+    roots.push(path.resolve(app.getPath('userData'), 'agent', 'uploads'))
+  }
+  return roots
+}
+
+function hasTraversalSegment(p: string): boolean {
+  return p.split(/[\\/]/).some((segment) => segment === '..')
+}
+
+function isInsideAllowedRoot(target: string): boolean {
+  const resolved = path.resolve(target)
+  return resolveAllowedRoots().some((root) => {
+    const rel = path.relative(root, resolved)
+    return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))
+  })
+}
+
+function assertContained(p: string): void {
+  if (hasTraversalSegment(p) || !isInsideAllowedRoot(p)) {
+    throw new Error('fs path outside allowed roots')
+  }
+}
+
 export async function handleReadText(p: string): Promise<{ content: string; mtime: number }> {
+  assertContained(p)
   const stat = await fs.stat(p)
   if (!stat.isFile()) throw new Error(`${p} is not a file`)
   if (stat.size > TEXT_READ_LIMIT) throw new Error(`File too large for inline edit (${stat.size} bytes)`)
@@ -50,12 +83,14 @@ export async function handleReadText(p: string): Promise<{ content: string; mtim
 }
 
 export async function handleWriteText(args: { path: string; content: string }): Promise<{ mtime: number }> {
+  assertContained(args.path)
   await fs.writeFile(args.path, args.content, 'utf-8')
   const stat = await fs.stat(args.path)
   return { mtime: stat.mtimeMs }
 }
 
 export async function handleListDir(p: string): Promise<FileNodeIpc[]> {
+  assertContained(p)
   const entries = await fs.readdir(p, { withFileTypes: true })
   return entries
     .filter((e) => e.name !== '.git')
@@ -77,6 +112,7 @@ export async function handleStat(p: string): Promise<
   | { ok: false; reason: string }
 > {
   try {
+    assertContained(p)
     const s = await fs.stat(p)
     if (!s.isFile()) return { ok: false, reason: 'not a file' }
     return { ok: true, size: s.size, mime: mimeFromExt(p), mtime: s.mtimeMs }

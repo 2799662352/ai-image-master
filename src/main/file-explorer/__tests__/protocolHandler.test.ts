@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveOsPathFromRequest } from '../protocolHandler'
+import { isAllowedLocalFileFetchSite, resolveOsPathFromRequest } from '../protocolHandler'
 
 describe('protocolHandler.resolveOsPathFromRequest', () => {
   it('extracts Windows drive path from local-file:///D:/x/y.png', () => {
@@ -29,5 +29,15 @@ describe('protocolHandler.resolveOsPathFromRequest', () => {
     const r = resolveOsPathFromRequest('local-file:///D:/with%20space/x.png', 'win32')
     expect(r.ok).toBe(true)
     if (r.ok) expect(r.path).toBe('D:\\with space\\x.png')
+  })
+})
+
+describe('protocolHandler.isAllowedLocalFileFetchSite', () => {
+  it.each([null, 'same-origin', 'none'])('allows %s', (site) => {
+    expect(isAllowedLocalFileFetchSite(site)).toBe(true)
+  })
+
+  it.each(['cross-site', 'same-site'])('rejects %s', (site) => {
+    expect(isAllowedLocalFileFetchSite(site)).toBe(false)
   })
 })

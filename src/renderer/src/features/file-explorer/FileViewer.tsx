@@ -3,10 +3,11 @@ import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror'
 import { EditorView, keymap } from '@codemirror/view'
 import type { Extension } from '@codemirror/state'
 import { useFileExplorerStore } from './store'
-import { buildLangExtension, pathToLangShort } from './lang'
+import { buildLangExtension } from './lang'
 import { serializeQuoteDrag } from './dragHelpers'
 import { SelectionFloatingBar } from './SelectionFloatingBar'
 import type { FileTab } from './types'
+import { formatSelectionForChat } from './selectionToChat'
 
 export function FileViewer({ tab }: { tab: FileTab }) {
   const editorRef = useRef<ReactCodeMirrorRef>(null)
@@ -30,8 +31,7 @@ export function FileViewer({ tab }: { tab: FileTab }) {
     const text = editorView.state.sliceDoc(sel.from, sel.to)
     const fromLine = editorView.state.doc.lineAt(sel.from).number
     const toLine = editorView.state.doc.lineAt(sel.to).number
-    const lang = pathToLangShort(tab.path)
-    const quote = '```' + lang + ':' + fromLine + '-' + toLine + ':' + tab.path + '\n' + text + '\n```'
+    const quote = formatSelectionForChat({ path: tab.path, fromLine, toLine, text })
     useFileExplorerStore.getState().appendToChatInput(quote)
     return true
   }
@@ -45,8 +45,7 @@ export function FileViewer({ tab }: { tab: FileTab }) {
           const text = editorView.state.sliceDoc(sel.from, sel.to)
           const fromLine = editorView.state.doc.lineAt(sel.from).number
           const toLine = editorView.state.doc.lineAt(sel.to).number
-          const lang = pathToLangShort(tab.path)
-          const quote = '```' + lang + ':' + fromLine + '-' + toLine + ':' + tab.path + '\n' + text + '\n```'
+          const quote = formatSelectionForChat({ path: tab.path, fromLine, toLine, text })
           if (event.dataTransfer) serializeQuoteDrag(event.dataTransfer, quote)
           return false
         },

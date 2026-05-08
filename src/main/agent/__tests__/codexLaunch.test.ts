@@ -2,14 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { buildCodexLaunchArgs, DEFAULT_LISTEN_URL } from '../codexLaunch'
 
 describe('buildCodexLaunchArgs', () => {
-  it('uses app-server with the default listen URL and unrestricted defaults', () => {
+  it('uses app-server with the default listen URL and safe defaults', () => {
     const args = buildCodexLaunchArgs()
     expect(DEFAULT_LISTEN_URL).toBe('ws://127.0.0.1:7345')
     expect(args).toEqual([
       'app-server',
       '--listen', DEFAULT_LISTEN_URL,
-      '-c', 'approval_policy="never"',
-      '-c', 'sandbox_mode="danger-full-access"',
+      '-c', 'approval_policy="on-request"',
+      '-c', 'sandbox_mode="workspace-write"',
+      '-c', 'tools.web_search=true',
       // Codex defaults to suppressing raw reasoning ("show_raw_agent_reasoning=false")
       // and only emits a summary when the model returns one. For our local
       // chat panel we WANT to surface reasoning so the "Thought" card has
@@ -20,15 +21,18 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'model_context_window=200000',
       '-c', 'model_auto_compact_token_limit=180000',
     ])
+    expect(args).not.toContain('approval_policy="never"')
+    expect(args).not.toContain('sandbox_mode="danger-full-access"')
   })
 
-  it('respects a custom listen URL while keeping the permissive overrides after --listen', () => {
+  it('respects a custom listen URL while keeping the config overrides after --listen', () => {
     const args = buildCodexLaunchArgs({ listenUrl: 'ws://127.0.0.1:9999' })
     expect(args).toEqual([
       'app-server',
       '--listen', 'ws://127.0.0.1:9999',
-      '-c', 'approval_policy="never"',
-      '-c', 'sandbox_mode="danger-full-access"',
+      '-c', 'approval_policy="on-request"',
+      '-c', 'sandbox_mode="workspace-write"',
+      '-c', 'tools.web_search=true',
       '-c', 'show_raw_agent_reasoning=true',
       '-c', 'model_reasoning_summary="auto"',
       '-c', 'model_context_window=200000',
@@ -83,6 +87,38 @@ describe('buildCodexLaunchArgs', () => {
     const args = buildCodexLaunchArgs()
     expect(args).toContain('model_context_window=200000')
     expect(args).toContain('model_auto_compact_token_limit=180000')
+  })
+
+  it('accepts explicit unsafe overrides via sessionConfig', () => {
+    const args = buildCodexLaunchArgs({
+      listenUrl: 'ws://127.0.0.1:1234',
+      sessionConfig: { approvalPolicy: 'never', sandboxMode: 'danger-full-access', webSearch: false },
+    })
+
+    expect(args).toContain('approval_policy="never"')
+    expect(args).toContain('sandbox_mode="danger-full-access"')
+    expect(args).toContain('tools.web_search=false')
+  })
+
+  it('forwards writableRoots as --add-dir flags', () => {
+    const args = buildCodexLaunchArgs({
+      listenUrl: 'ws://127.0.0.1:1234',
+      sessionConfig: { writableRoots: ['D:/repo/sub'] },
+    })
+    const idx = args.indexOf('--add-dir')
+    expect(idx).toBeGreaterThanOrEqual(0)
+    expect(args[idx + 1]).toBe('D:/repo/sub')
+  })
+
+  it('uses appendProviderArgs to attach provider config when supplied', () => {
+    const args = buildCodexLaunchArgs({
+      listenUrl: 'ws://127.0.0.1:1234',
+      provider: { id: 'apiyi', name: 'API Yi', baseUrl: 'https://api.apiyi.com/v1', envKey: 'OPENAI_API_KEY' },
+    })
+
+    expect(args).toContain('model_provider="apiyi"')
+    expect(args).toContain('model_providers.apiyi.base_url="https://api.apiyi.com/v1"')
+    expect(args).toContain('model_providers.apiyi.wire_api="responses"')
   })
 })
 

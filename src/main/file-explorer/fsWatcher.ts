@@ -1,7 +1,7 @@
 import chokidar, { type FSWatcher } from 'chokidar'
 import { ipcMain, BrowserWindow } from 'electron'
 
-export type WatchEvent = { type: 'change' | 'unlink'; path: string; mtime?: number }
+export type WatchEvent = { type: 'add' | 'addDir' | 'change' | 'unlink' | 'unlinkDir'; path: string; mtime?: number }
 
 let watcher: FSWatcher | null = null
 const watched = new Set<string>()
@@ -15,8 +15,11 @@ function ensureWatcher(): FSWatcher {
     atomic: true,
     ignoreInitial: true,
   })
+  watcher.on('add', (p) => emit({ type: 'add', path: p, mtime: Date.now() }))
+  watcher.on('addDir', (p) => emit({ type: 'addDir', path: p, mtime: Date.now() }))
   watcher.on('change', (p) => emit({ type: 'change', path: p, mtime: Date.now() }))
   watcher.on('unlink', (p) => emit({ type: 'unlink', path: p }))
+  watcher.on('unlinkDir', (p) => emit({ type: 'unlinkDir', path: p }))
   return watcher
 }
 

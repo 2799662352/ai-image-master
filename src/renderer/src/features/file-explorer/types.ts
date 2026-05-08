@@ -1,4 +1,5 @@
 import type { EditorState } from '@codemirror/state'
+import type { AgentReference } from '../../../../types/agent-reference'
 
 export type FileSource = 'workspace' | 'attachments'
 
@@ -13,7 +14,7 @@ export type FileNode = {
   children?: FileNode[]
 }
 
-export type FileTabKind = 'text' | 'image' | 'pdf' | 'binary'
+export type FileTabKind = 'text' | 'image' | 'pdf' | 'binary' | 'reference'
 
 export type FileTab = {
   id: string
@@ -25,8 +26,14 @@ export type FileTab = {
   diskContent: string
   diskMtime: number
   dirty: boolean
+  /**
+   * Synthetic reference tabs keep `path` empty so file watcher events cannot
+   * accidentally match them as real filesystem tabs.
+   */
+  referenceKey?: string
+  reference?: AgentReference
 }
 
-export type WatchEvent = { type: 'change' | 'unlink'; path: string; mtime?: number }
+export type WatchEvent = { type: 'add' | 'addDir' | 'change' | 'unlink' | 'unlinkDir'; path: string; mtime?: number }
 
 export type Conflict = { tabId: string; diskContent: string; show: 'modal' | 'merge' } | null

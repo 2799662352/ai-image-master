@@ -46,4 +46,19 @@ describe('FileTree', () => {
     fireEvent.click(await screen.findByText(/Open folder…/i))
     expect(await screen.findByText('proj')).toBeTruthy()
   })
+
+  it('renders an add-folder action and can remove workspace roots', async () => {
+    useFileExplorerStore.setState({
+      workspaceRoot: 'D:/proj',
+      workspaceTree: [
+        { path: 'D:/proj', name: 'proj', kind: 'dir', source: 'workspace', childrenLoaded: true, children: [] },
+      ],
+    })
+
+    render(<FileTree />)
+
+    expect(screen.getByText(/Add folder…/i)).toBeTruthy()
+    fireEvent.click(screen.getByLabelText('Remove folder proj'))
+    expect(useFileExplorerStore.getState().workspaceTree).toEqual([])
+  })
 })

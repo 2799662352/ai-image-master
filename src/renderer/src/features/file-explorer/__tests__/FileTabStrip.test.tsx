@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest'
-import { render, screen, fireEvent, cleanup } from '@testing-library/react'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react'
 import { FileTabStrip } from '../FileTabStrip'
 import { useFileExplorerStore } from '../store'
 
@@ -40,5 +40,53 @@ describe('FileTabStrip', () => {
     render(<FileTabStrip />)
     fireEvent.click(screen.getByLabelText('Close x.ts'))
     expect(useFileExplorerStore.getState().tabs.length).toBe(0)
+  })
+
+  it('asks before closing a dirty tab', async () => {
+    const closeTab = vi.fn().mockResolvedValue(true)
+    useFileExplorerStore.setState({
+      tabs: [{ id: 't1', path: 'D:/x.ts', name: 'x.ts', source: 'workspace', kind: 'text', state: null, diskContent: 'a', diskMtime: 0, dirty: true }],
+      activeTabId: 't1',
+      closeTab,
+    })
+    render(<FileTabStrip />)
+
+    fireEvent.click(screen.getByLabelText('Close x.ts'))
+
+    expect(screen.getByRole('dialog', { name: 'Save changes to x.ts?' })).toBeTruthy()
+    expect(closeTab).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByText('Cancel'))
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('can close a dirty tab by saving or discarding from the prompt', async () => {
+    const closeTab = vi.fn().mockResolvedValue(true)
+    useFileExplorerStore.setState({
+      tabs: [{ id: 't1', path: 'D:/x.ts', name: 'x.ts', source: 'workspace', kind: 'text', state: null, diskContent: 'a', diskMtime: 0, dirty: true }],
+      activeTabId: 't1',
+      closeTab,
+    })
+    render(<FileTabStrip />)
+
+    fireEvent.click(screen.getByLabelText('Close x.ts'))
+    fireEvent.click(within(screen.getByRole('dialog')).getByText('Save'))
+    await waitFor(() => expect(closeTab).toHaveBeenCalledWith('t1', { saveDirty: true }))
+
+    fireEvent.click(screen.getByLabelText('Close x.ts'))
+    fireEvent.click(within(screen.getByRole('dialog')).getByText("Don't Save"))
+    await waitFor(() => expect(closeTab).toHaveBeenCalledWith('t1', { saveDirty: false }))
+  })
+
+  it('shows an explicit save button for dirty tabs', async () => {
+    const saveTab = vi.fn().mockResolvedValue(undefined)
+    useFileExplorerStore.setState({
+      tabs: [{ id: 't1', path: 'D:/x.ts', name: 'x.ts', source: 'workspace', kind: 'text', state: null, diskContent: 'a', diskMtime: 0, dirty: true }],
+      activeTabId: 't1',
+      saveTab,
+    })
+    render(<FileTabStrip />)
+    fireEvent.click(screen.getByLabelText('Save x.ts'))
+    expect(saveTab).toHaveBeenCalledWith('t1')
   })
 })
