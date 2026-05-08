@@ -161,6 +161,7 @@ const IPC_CHANNELS = {
   SHELL: {
     COPY_IMAGE: 'shell:copy-image',
     SAVE_AS: 'shell:save-as',
+    SHOW_ITEM_IN_FOLDER: 'shell:show-item-in-folder',
   },
   FILE_EXPLORER: {
     READ_TEXT: 'fs:read-text',
@@ -264,6 +265,7 @@ export interface ElectronAPI {
   shell: {
     copyImage: (uri: string) => Promise<IpcResponse>
     saveAs: (uri: string, suggestedName: string) => Promise<IpcResponse>
+    showItemInFolder: (p: string) => Promise<void>
   }
   fs: {
     readText: (p: string) => Promise<{ content: string; mtime: number }>
@@ -576,6 +578,8 @@ const electronAPI: ElectronAPI = {
       safeInvoke<IpcResponse>(IPC_CHANNELS.SHELL.COPY_IMAGE, uri),
     saveAs: (uri: string, suggestedName: string) =>
       safeInvoke<IpcResponse>(IPC_CHANNELS.SHELL.SAVE_AS, { uri, suggestedName }),
+    showItemInFolder: (p: string) =>
+      safeInvoke<void>(IPC_CHANNELS.SHELL.SHOW_ITEM_IN_FOLDER, p),
   },
 
   fs: {

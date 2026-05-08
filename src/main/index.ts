@@ -744,6 +744,10 @@ ipcMain.handle('shell:save-as', async (_event, payload: { uri: string; suggested
   }
 })
 
+ipcMain.handle('shell:show-item-in-folder', async (_event, filePath: string) => {
+  shell.showItemInFolder(filePath)
+})
+
 ipcMain.handle('agent:open-thread', async (_event, threadId: string) => {
   if (!agentManager) throw new Error('Agent runtime not initialized')
   return agentManager.openThread(threadId)

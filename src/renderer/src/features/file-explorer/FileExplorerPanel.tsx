@@ -2,6 +2,32 @@ import { useRef, useEffect, useState } from 'react'
 import { useFileExplorerStore } from './store'
 import { FileTree } from './FileTree'
 import { FileTreeIcon, CloseIcon } from './icons'
+import { FileTabStrip } from './FileTabStrip'
+import { FileViewer } from './FileViewer'
+import { ImageViewer } from './ImageViewer'
+import { BinaryViewer } from './BinaryViewer'
+
+function ActiveViewer() {
+  const { tabs, activeTabId } = useFileExplorerStore()
+  const tab = tabs.find((t) => t.id === activeTabId)
+  if (!tab) {
+    return (
+      <div className="flex h-full items-center justify-center text-xs text-cyan-300/30">
+        Open a file to begin
+      </div>
+    )
+  }
+  switch (tab.kind) {
+    case 'text':
+      return <FileViewer tab={tab} />
+    case 'image':
+      return <ImageViewer tab={tab} />
+    case 'pdf':
+      return <embed src={`local-file:///${tab.path.replace(/\\/g, '/')}`} type="application/pdf" className="h-full w-full" />
+    case 'binary':
+      return <BinaryViewer tab={tab} />
+  }
+}
 
 export function FileExplorerPanel({ rightOffset }: { rightOffset: number }) {
   const { fxOpen, fxTreeWidth, setFxTreeWidth, setFxOpen } = useFileExplorerStore()
@@ -62,9 +88,10 @@ export function FileExplorerPanel({ rightOffset }: { rightOffset: number }) {
           className="w-1 cursor-col-resize hover:bg-cyan-400/30"
         />
 
-        <div className="min-w-0 flex-1 overflow-auto bg-black/40">
-          <div className="flex h-full items-center justify-center text-xs text-cyan-300/30">
-            Open a file to begin
+        <div className="flex min-w-0 flex-1 flex-col">
+          <FileTabStrip />
+          <div className="min-h-0 flex-1 overflow-auto bg-black/40">
+            <ActiveViewer />
           </div>
         </div>
       </div>

@@ -195,7 +195,13 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
   closeTab: (tabId) => {
     const tab = get().tabs.find((t) => t.id === tabId)
     if (!tab) return
-    if (tab.kind === 'text') void getApi().fs.watchStop(tab.path)
+    if (tab.kind === 'text') {
+      try {
+        void getApi().fs.watchStop(tab.path)
+      } catch {
+        // Renderer tests and browser-like previews may not have the Electron API.
+      }
+    }
     set((s) => {
       const tabs = s.tabs.filter((t) => t.id !== tabId)
       const activeTabId = s.activeTabId === tabId ? (tabs[0]?.id ?? null) : s.activeTabId
