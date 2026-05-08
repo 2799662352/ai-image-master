@@ -9,6 +9,9 @@ import { ThreadCommandPalette } from './ThreadCommandPalette'
 import { ThreadSidebar } from './ThreadSidebar'
 import { TokenUsageMeter } from './TokenUsageMeter'
 import { useAgentChatStore } from './store'
+import { FileExplorerPanel } from '../file-explorer/FileExplorerPanel'
+import { useFileExplorerStore } from '../file-explorer/store'
+import { FileTreeIcon } from '../file-explorer/icons'
 import type { AgentStreamEvent } from '../../../../types/agent'
 
 type AgentEventApi = {
@@ -29,6 +32,9 @@ export function AgentChatPanel() {
   const sidebarWidth = useAgentChatStore((state) => state.sidebarWidth)
   const toggleSidebar = useAgentChatStore((state) => state.toggleSidebar)
   const bootstrap = useAgentChatStore((state) => state.bootstrap)
+  const fxOpen = useFileExplorerStore((state) => state.fxOpen)
+  const toggleFx = useFileExplorerStore((state) => state.toggleFx)
+  const setFxOpen = useFileExplorerStore((state) => state.setFxOpen)
 
   useEffect(() => {
     if (!isOpen) return undefined
@@ -52,10 +58,18 @@ export function AgentChatPanel() {
         e.preventDefault()
         toggleSidebar()
       }
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'i') {
+        e.preventDefault()
+        toggleFx()
+      }
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [isOpen, toggleSidebar])
+  }, [isOpen, toggleFx, toggleSidebar])
+
+  useEffect(() => {
+    if (!isOpen && fxOpen) setFxOpen(false)
+  }, [isOpen, fxOpen, setFxOpen])
 
   // Sidebar lives inside the panel: when the panel is collapsed the entire
   // right-edge stack disappears, and when the sidebar is collapsed the chat
@@ -98,6 +112,18 @@ export function AgentChatPanel() {
             </div>
             <div className="flex items-center gap-1.5">
               <TokenUsageMeter usage={tokenUsage} />
+              <button
+                type="button"
+                aria-label={fxOpen ? 'Hide files' : 'Show files'}
+                title={`${fxOpen ? 'Hide' : 'Show'} files (Ctrl/Cmd+Shift+I)`}
+                onClick={() => toggleFx()}
+                className={
+                  'inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border border-zinc-700/60 bg-zinc-900/60 transition-colors duration-200 hover:border-cyan-300/50 hover:bg-cyan-400/10 hover:text-cyan-100 ' +
+                  (fxOpen ? 'text-cyan-100' : 'text-zinc-400')
+                }
+              >
+                <FileTreeIcon className="h-4 w-4" />
+              </button>
               <button
                 type="button"
                 aria-label={sidebarOpen ? 'Hide thread sidebar' : 'Show thread sidebar'}
@@ -146,6 +172,7 @@ export function AgentChatPanel() {
           <MentionInput />
         </footer>
       </aside>
+      <FileExplorerPanel rightOffset={panelWidth + (sidebarOpen ? sidebarWidth : 0)} />
       <ThreadSidebar />
       <Lightbox />
       <ThreadCommandPalette />
