@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { parse as parseToml } from 'toml'
+import * as iarnaToml from '@iarna/toml'
 import type {
   CodexAuditLogEntry,
   CodexConfigScope,
@@ -192,4 +193,66 @@ export async function getMcpDetail(
     env: Object.entries(env).map(([key, value]) => ({ key, value: String(value ?? '') })),
     description: typeof entry.description === 'string' ? entry.description : undefined,
   }
+}
+
+const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/
+
+function validateName(name: string): string | null {
+  if (!name) return 'name is required'
+  if (name.includes('\0')) return 'name must not contain NUL'
+  if (name.includes('/') || name.includes('\\')) return 'name must not contain path separators'
+  if (name === '.' || name === '..') return 'name must not be a relative path'
+  if (!NAME_RE.test(name)) return 'name must match [A-Za-z0-9][A-Za-z0-9_.-]{0,63}'
+  return null
+}
+
+export interface SaveMcpResult {
+  ok: boolean
+  id?: string
+  error?: string
+  warnings: string[]
+}
+
+export async function saveMcp(
+  paths: CodexWorkspacePaths,
+  input: CodexMcpServerInput,
+): Promise<SaveMcpResult> {
+  const nameError = validateName(input.name)
+  if (nameError) return { ok: false, error: nameError, warnings: [] }
+  const target = input.scope === 'personal' ? paths.personalConfigToml : paths.workspaceConfigToml
+  const raw = await readFileOrEmpty(target)
+  let document: Record<string, unknown> = {}
+  if (raw.trim()) {
+    try {
+      document = parseToml(raw) as Record<string, unknown>
+    } catch (err) {
+      return {
+        ok: false,
+        error: `existing TOML parse error: ${(err as Error).message}`,
+        warnings: [],
+      }
+    }
+  }
+  const servers = (
+    document.mcp_servers && typeof document.mcp_servers === 'object'
+      ? document.mcp_servers
+      : {}
+  ) as Record<string, Record<string, unknown>>
+  const envObject: Record<string, string> = {}
+  for (const { key, value } of input.env) {
+    if (!key) continue
+    envObject[key] = value
+  }
+  const entry: Record<string, unknown> = {
+    command: input.command,
+    args: input.args,
+  }
+  if (Object.keys(envObject).length > 0) entry.env = envObject
+  if (input.description) entry.description = input.description
+  if (input.enabled === false) entry.enabled = false
+  servers[input.name] = entry
+  document.mcp_servers = servers
+  const serialized = iarnaToml.stringify(document as iarnaToml.JsonMap)
+  await atomicWriteFile(target, serialized)
+  return { ok: true, id: `${input.scope}:${input.name}`, warnings: [] }
 }
