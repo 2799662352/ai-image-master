@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtemp, rm, mkdir, readFile } from 'node:fs/promises'
+import { mkdtemp, rm, mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { saveMcp, listMcp, resolveWorkspacePaths } from '../codexConfigStore'
@@ -64,5 +64,55 @@ describe('saveMcp', () => {
     await saveMcp(paths, baseInput({ command: 'new' }))
     const detail = (await listMcp(paths)).find((s) => s.name === 'github')!
     expect(detail.command).toBe('new')
+  })
+
+  it('preserves unrelated TOML keys and sibling MCP entries when saving', async () => {
+    const paths = await setup()
+    await mkdir(path.dirname(paths.personalConfigToml), { recursive: true })
+    const original =
+      'model = "gpt-5"\n' +
+      '\n' +
+      '[mcp_servers.other]\n' +
+      'command = "cat"\n' +
+      'args = []\n'
+    await writeFile(paths.personalConfigToml, original, 'utf8')
+
+    const result = await saveMcp(paths, baseInput({}))
+    expect(result.ok).toBe(true)
+
+    const onDisk = await readFile(paths.personalConfigToml, 'utf8')
+    expect(onDisk).toContain('model')
+    expect(onDisk).toContain('"gpt-5"')
+    expect(onDisk).toContain('[mcp_servers.other]')
+    expect(onDisk).toContain('[mcp_servers.github]')
+
+    const names = (await listMcp(paths)).map((s) => s.name).sort()
+    expect(names).toEqual(['github', 'other'])
+  })
+
+  it('returns ok:false when existing TOML is invalid and leaves the file untouched', async () => {
+    const paths = await setup()
+    await mkdir(path.dirname(paths.personalConfigToml), { recursive: true })
+    const invalid = 'this is = =not toml'
+    await writeFile(paths.personalConfigToml, invalid, 'utf8')
+
+    const result = await saveMcp(paths, baseInput({}))
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('TOML parse error')
+
+    const onDisk = await readFile(paths.personalConfigToml, 'utf8')
+    expect(onDisk).toBe(invalid)
+  })
+
+  it('round-trips enabled: false to disk and back through listMcp', async () => {
+    const paths = await setup()
+    const result = await saveMcp(paths, baseInput({ enabled: false }))
+    expect(result.ok).toBe(true)
+
+    const onDisk = await readFile(paths.personalConfigToml, 'utf8')
+    expect(onDisk).toContain('enabled = false')
+
+    const entry = (await listMcp(paths)).find((s) => s.name === 'github')!
+    expect(entry.enabled).toBe(false)
   })
 })
