@@ -11,6 +11,7 @@ import type {
 import type { AttachmentRef, Message, TimelineItem } from '../../../../types/agent-timeline'
 import { upsertItemInLastMessage } from '../../../../types/agent-timeline'
 import { AGENT_MODELS, DEFAULT_MODEL_ID } from './models'
+import { useFileExplorerStore } from '../file-explorer/store'
 
 const SELECTED_MODEL_STORAGE_KEY = 'catimation.agent.selectedModel'
 const PANEL_WIDTH_STORAGE_KEY = 'catimation.agent.panelWidth'
@@ -398,6 +399,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         model: modelId,
       })
       set({ threadId: result.threadId })
+      void useFileExplorerStore.getState().refreshAttachmentsTree().catch(() => undefined)
     } catch (error) {
       set((current) => ({
         input: content,
