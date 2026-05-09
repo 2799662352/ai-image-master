@@ -44,6 +44,7 @@ export function McpEditor({
   const [error, setError] = useState<string | null>(null)
   const mountedRef = useRef(false)
   const closeTimerRef = useRef<number | undefined>()
+  const editingExisting = mode !== 'new'
 
   useEffect(() => {
     mountedRef.current = true
@@ -155,15 +156,17 @@ export function McpEditor({
           <Field label="Name">
             <input
               value={input.name}
+              disabled={editingExisting}
               onChange={(event) => setInput({ ...input, name: event.target.value })}
-              className="rounded border border-zinc-800 bg-zinc-950 px-2 py-1 font-mono text-sm text-zinc-100"
+              className="rounded border border-zinc-800 bg-zinc-950 px-2 py-1 font-mono text-sm text-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
             />
           </Field>
           <Field label="Scope">
             <select
               value={input.scope}
+              disabled={editingExisting}
               onChange={(event) => setInput({ ...input, scope: event.target.value as CodexConfigScope })}
-              className="rounded border border-zinc-800 bg-zinc-950 px-2 py-1 text-sm text-zinc-100"
+              className="rounded border border-zinc-800 bg-zinc-950 px-2 py-1 text-sm text-zinc-100 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <option value="personal">Personal (~/.codex)</option>
               <option value="workspace">Workspace (.codex)</option>
