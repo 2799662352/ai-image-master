@@ -434,6 +434,131 @@ describe('CodexNotificationRouter', () => {
       })
     })
 
+    it('uses streamed fallback text when completed unifiedDiff is null', () => {
+      const router = new CodexNotificationRouter()
+
+      router.route('item/fileChange/outputDelta', {
+        threadId: 'thread-1',
+        itemId: 'file-1',
+        delta: '@@\n-old\n+new\n',
+      })
+
+      expect(
+        router.route('item/completed', {
+          threadId: 'thread-1',
+          item: {
+            id: 'file-1',
+            type: 'fileChange',
+            changes: [{ path: 'src/a.ts', kind: 'edit', unifiedDiff: null }],
+          },
+        }),
+      ).toMatchObject({
+        final: {
+          changes: [
+            {
+              path: 'src/a.ts',
+              diff: '@@\n-old\n+new\n',
+              added: 1,
+              removed: 1,
+            },
+          ],
+        },
+      })
+    })
+
+    it('isolates streamed fallback diffs by thread and item id', () => {
+      const router = new CodexNotificationRouter()
+
+      router.route('item/fileChange/outputDelta', {
+        threadId: 'thread-a',
+        itemId: 'file-1',
+        delta: '@@\n-a\n+b\n',
+      })
+
+      expect(
+        router.route('item/completed', {
+          threadId: 'thread-b',
+          item: {
+            id: 'file-1',
+            type: 'fileChange',
+            changes: [{ path: 'src/b.ts', kind: 'edit' }],
+          },
+        }),
+      ).toMatchObject({
+        final: {
+          changes: [
+            {
+              path: 'src/b.ts',
+              diff: '',
+              added: 0,
+              removed: 0,
+            },
+          ],
+        },
+      })
+
+      expect(
+        router.route('item/completed', {
+          threadId: 'thread-a',
+          item: {
+            id: 'file-1',
+            type: 'fileChange',
+            changes: [{ path: 'src/a.ts', kind: 'edit' }],
+          },
+        }),
+      ).toMatchObject({
+        final: {
+          changes: [
+            {
+              path: 'src/a.ts',
+              diff: '@@\n-a\n+b\n',
+              added: 1,
+              removed: 1,
+            },
+          ],
+        },
+      })
+    })
+
+    it('clears abandoned streamed fallback text when the thread turn completes', () => {
+      const router = new CodexNotificationRouter()
+
+      router.route('item/fileChange/outputDelta', {
+        threadId: 'thread-1',
+        itemId: 'file-1',
+        delta: '@@\n-old\n+new\n',
+      })
+
+      expect(
+        router.route('turn/completed', {
+          threadId: 'thread-1',
+          turn: { id: 'turn-1' },
+        }),
+      ).toMatchObject({ type: 'turn_completed' })
+
+      expect(
+        router.route('item/completed', {
+          threadId: 'thread-1',
+          item: {
+            id: 'file-1',
+            type: 'fileChange',
+            changes: [{ path: 'src/a.ts', kind: 'edit' }],
+          },
+        }),
+      ).toMatchObject({
+        final: {
+          changes: [
+            {
+              path: 'src/a.ts',
+              diff: '',
+              added: 0,
+              removed: 0,
+            },
+          ],
+        },
+      })
+    })
+
     it('does not attach streamed fallback diff to an arbitrary change when multiple changes are present', () => {
       const router = new CodexNotificationRouter()
 
@@ -672,6 +797,31 @@ describe('CodexNotificationRouter', () => {
         itemId: 'r-3',
         itemType: 'reasoning',
         final: {},
+      })
+    })
+
+    it('scopes reasoning delta suppression by thread and item id', () => {
+      const router = new CodexNotificationRouter()
+      router.route('item/reasoning/summaryTextDelta', {
+        threadId: 'thread-a', turnId: 'u', itemId: 'r-3', delta: 'partial ',
+      })
+
+      const event = router.route('item/completed', {
+        threadId: 'thread-b',
+        turnId: 'u',
+        item: {
+          type: 'reasoning',
+          id: 'r-3',
+          summary: [{ type: 'summary_text', text: 'thread b full reasoning' }],
+          content: [],
+        },
+      })
+      expect(event).toEqual({
+        type: 'item_delta',
+        threadId: 'thread-b',
+        itemId: 'r-3',
+        itemType: 'reasoning',
+        patch: { kind: 'appendText', field: 'content', text: 'thread b full reasoning' },
       })
     })
 

@@ -145,8 +145,17 @@ function readNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
-function lacksUnifiedDiffField(change: unknown): boolean {
-  return !!change && typeof change === 'object' && !Object.prototype.hasOwnProperty.call(change, 'unifiedDiff')
+function lacksStringUnifiedDiff(change: unknown): boolean {
+  if (!change || typeof change !== 'object') return false
+  const unifiedDiff = (change as { unifiedDiff?: unknown }).unifiedDiff
+  return typeof unifiedDiff !== 'string'
+}
+
+function itemStateKey(threadId: unknown, itemId: unknown): string | null {
+  return typeof threadId === 'string' && threadId.length > 0
+    && typeof itemId === 'string' && itemId.length > 0
+    ? `${threadId}\u0000${itemId}`
+    : null
 }
 
 /**
@@ -273,6 +282,20 @@ export class CodexNotificationRouter {
   private readonly streamedReasoningItemIds = new Set<string>()
   private readonly fileChangeOutputByItemId = new Map<string, string>()
 
+  private clearThreadState(threadId: unknown): void {
+    if (typeof threadId !== 'string' || threadId.length === 0) return
+    const prefix = `${threadId}\u0000`
+    for (const key of this.streamedDeltaItemIds) {
+      if (key.startsWith(prefix)) this.streamedDeltaItemIds.delete(key)
+    }
+    for (const key of this.streamedReasoningItemIds) {
+      if (key.startsWith(prefix)) this.streamedReasoningItemIds.delete(key)
+    }
+    for (const key of this.fileChangeOutputByItemId.keys()) {
+      if (key.startsWith(prefix)) this.fileChangeOutputByItemId.delete(key)
+    }
+  }
+
   route(method: string, params: Record<string, any>): AgentStreamEvent | null {
     switch (method) {
       case 'item/started': {
@@ -347,9 +370,8 @@ export class CodexNotificationRouter {
 
       case 'item/agentMessage/delta': {
         const itemId = params.itemId as string | undefined
-        if (typeof itemId === 'string' && itemId.length > 0) {
-          this.streamedDeltaItemIds.add(itemId)
-        }
+        const key = itemStateKey(params.threadId, itemId)
+        if (key) this.streamedDeltaItemIds.add(key)
         return {
           type: 'item_delta',
           threadId: params.threadId,
@@ -362,9 +384,8 @@ export class CodexNotificationRouter {
       case 'item/reasoning/textDelta':
       case 'item/reasoning/summaryTextDelta': {
         const itemId = params.itemId as string | undefined
-        if (typeof itemId === 'string' && itemId.length > 0) {
-          this.streamedReasoningItemIds.add(itemId)
-        }
+        const key = itemStateKey(params.threadId, itemId)
+        if (key) this.streamedReasoningItemIds.add(key)
         return {
           type: 'item_delta',
           threadId: params.threadId,
@@ -414,7 +435,8 @@ export class CodexNotificationRouter {
               ? params.data
               : ''
         if (typeof itemId === 'string' && itemId.length > 0 && text.length > 0) {
-          this.fileChangeOutputByItemId.set(itemId, `${this.fileChangeOutputByItemId.get(itemId) ?? ''}${text}`)
+          const key = itemStateKey(params.threadId, itemId)
+          if (key) this.fileChangeOutputByItemId.set(key, `${this.fileChangeOutputByItemId.get(key) ?? ''}${text}`)
         }
         return null
       }
@@ -446,7 +468,11 @@ export class CodexNotificationRouter {
             // can't sneak through the activity fallback.
             return null
           case 'agentMessage': {
-            if (this.streamedDeltaItemIds.has(item.id)) return null
+            const key = itemStateKey(params.threadId, item.id)
+            if (key && this.streamedDeltaItemIds.has(key)) {
+              this.streamedDeltaItemIds.delete(key)
+              return null
+            }
             if (typeof item.text !== 'string' || item.text.length === 0) return null
             return {
               type: 'item_delta',
@@ -466,8 +492,9 @@ export class CodexNotificationRouter {
             }
           case 'fileChange': {
             const rawChanges = Array.isArray(item.changes) ? item.changes : []
-            const fallbackDiff = this.fileChangeOutputByItemId.get(item.id)
-            this.fileChangeOutputByItemId.delete(item.id)
+            const key = itemStateKey(params.threadId, item.id)
+            const fallbackDiff = key ? this.fileChangeOutputByItemId.get(key) : undefined
+            if (key) this.fileChangeOutputByItemId.delete(key)
             const fallbackRawChanges =
               rawChanges.length === 0 && fallbackDiff && typeof item.path === 'string' && item.path.length > 0
                 ? [{ path: item.path, kind: 'edit' }]
@@ -476,7 +503,7 @@ export class CodexNotificationRouter {
             // intentionally loose at the wire level since gateways drift.
             const changes = (fallbackRawChanges as Parameters<typeof parseChange>[0][]).map(parseChange)
             const canUseFallbackDiff =
-              fallbackRawChanges.length === 1 && lacksUnifiedDiffField(fallbackRawChanges[0])
+              fallbackRawChanges.length === 1 && lacksStringUnifiedDiff(fallbackRawChanges[0])
             if (fallbackDiff && canUseFallbackDiff && changes.length === 1 && changes[0].diff.length === 0) {
               const { added, removed } = countDiffLines(fallbackDiff)
               changes[0].diff = fallbackDiff
@@ -496,7 +523,9 @@ export class CodexNotificationRouter {
             // this in the wild) but the final payload does carry the summary
             // / content text, splice it onto the card so "Thought" isn't an
             // empty pill.
-            if (!this.streamedReasoningItemIds.has(item.id)) {
+            const key = itemStateKey(params.threadId, item.id)
+            const hasStreamedReasoning = key ? this.streamedReasoningItemIds.has(key) : false
+            if (!hasStreamedReasoning) {
               const text = extractReasoningText(item)
               if (text.length > 0) {
                 return {
@@ -508,6 +537,7 @@ export class CodexNotificationRouter {
                 }
               }
             }
+            if (key) this.streamedReasoningItemIds.delete(key)
             return {
               type: 'item_completed',
               threadId: params.threadId,
@@ -552,6 +582,7 @@ export class CodexNotificationRouter {
       }
 
       case 'turn/completed':
+        this.clearThreadState(params.threadId)
         return {
           type: 'turn_completed',
           threadId: params.threadId,
