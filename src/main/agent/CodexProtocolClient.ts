@@ -150,6 +150,10 @@ export class CodexProtocolClient {
     return this.ws?.readyState === WebSocket.OPEN
   }
 
+  hasActiveTurns(): boolean {
+    return this.queues.size > 0
+  }
+
   setSessionConfig(patch: Partial<CodexSessionConfig>): void {
     this.sessionConfig = resolveCodexSessionConfig({
       ...this.sessionConfig,

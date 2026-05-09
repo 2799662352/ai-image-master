@@ -1,9 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { EventEmitter } from 'node:events'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import type { AddressInfo } from 'node:net'
+import os from 'node:os'
+import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import WebSocket, { WebSocketServer } from 'ws'
 import { buildCodexSpawnEnv, CodexLocalBackend, mapServerNotification } from '../CodexLocalBackend'
+import { resolveWorkspacePaths } from '../codexConfigStore'
 import type { AgentStreamEvent, CodexApprovalRequest } from '../../../types/agent'
 import type { AgentInput } from '../types'
 
@@ -92,6 +96,25 @@ const baseInput: AgentInput = {
   model: 'gpt-5.4',
   cwd: '/tmp',
   items: [{ type: 'text', text: 'hi' }],
+}
+
+async function createWorkspacePaths() {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'codex-restart-'))
+  const home = path.join(tmp, 'home')
+  const cwd = path.join(tmp, 'workspace')
+  await mkdir(path.join(home, '.codex'), { recursive: true })
+  await mkdir(path.join(cwd, '.codex'), { recursive: true })
+  await writeFile(
+    path.join(home, '.codex', 'config.toml'),
+    '[mcp_servers.foo]\ncommand = "personal"\nargs = []\n',
+    'utf8',
+  )
+  await writeFile(
+    path.join(cwd, '.codex', 'workspace-mcp.toml'),
+    '[mcp_servers.foo]\ncommand = "workspace"\nargs = []\n',
+    'utf8',
+  )
+  return { tmp, paths: resolveWorkspacePaths({ home, cwd, userData: tmp }) }
 }
 
 describe('mapServerNotification', () => {
@@ -254,6 +277,62 @@ describe('CodexLocalBackend (with a fake codex app-server)', () => {
     expect(interruptCall).toBeDefined()
     expect(interruptCall.params).toEqual({ threadId: 'fake-thread', turnId: 'fake-turn' })
     expect(events.find((e) => e.type === 'turn_completed')).toBeDefined()
+  })
+
+  it('defers restart while an active turn is running without closing the stream', async () => {
+    const workspace = await createWorkspacePaths()
+    try {
+      server = await startFakeServer({ autoCompleteTurn: false })
+      backend = new CodexLocalBackend({ wsUrl: server.url })
+      await backend.start()
+
+      const events: AgentStreamEvent[] = []
+      const consumer = (async () => {
+        for await (const event of backend!.send(undefined, baseInput)) {
+          events.push(event)
+        }
+      })()
+
+      const deadline = Date.now() + 2000
+      while (Date.now() < deadline) {
+        if (server.receivedFromClient.some((m) => m.method === 'turn/start')) break
+        await new Promise((r) => setTimeout(r, 10))
+      }
+      expect(server.receivedFromClient.some((m) => m.method === 'turn/start')).toBe(true)
+
+      const socketBeforeRestart = server.socket()
+      await backend.restartCodex(workspace.paths)
+
+      expect(backend.isConfigDirty()).toBe(true)
+      expect(server.socket()).toBe(socketBeforeRestart)
+      expect(socketBeforeRestart?.readyState).toBe(WebSocket.OPEN)
+      expect(server.receivedFromClient.filter((m) => m.method === 'initialize')).toHaveLength(1)
+      expect(events.find((e) => e.type === 'error' || e.type === 'cancelled')).toBeUndefined()
+
+      server.pushNotification('item/agentMessage/delta', {
+        threadId: 'fake-thread',
+        turnId: 'fake-turn',
+        itemId: 'i1',
+        delta: 'still running',
+      })
+      server.pushNotification('turn/completed', {
+        threadId: 'fake-thread',
+        turn: { id: 'fake-turn', status: 'completed' },
+      })
+      await consumer
+
+      expect(events).toContainEqual({
+        type: 'item_delta',
+        threadId: 'fake-thread',
+        itemId: 'i1',
+        itemType: 'text',
+        patch: { kind: 'appendText', field: 'content', text: 'still running' },
+      })
+      expect(events).toContainEqual({ type: 'turn_completed', threadId: 'fake-thread', turnId: 'fake-turn' })
+      expect(events.find((e) => e.type === 'error' || e.type === 'cancelled')).toBeUndefined()
+    } finally {
+      await rm(workspace.tmp, { recursive: true, force: true })
+    }
   })
 
   it('surfaces server-initiated requests and waits for an explicit approval response', async () => {

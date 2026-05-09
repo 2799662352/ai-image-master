@@ -239,6 +239,8 @@ export class CodexLocalBackend implements IAgentBackend {
     this.codexHome = path.dirname(paths.runtimeConfigToml)
     this.configDirty = true
 
+    if (this.client?.hasActiveTurns()) return
+
     await this.stop()
     await this.start()
     this.configDirty = false
