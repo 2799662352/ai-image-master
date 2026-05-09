@@ -109,14 +109,16 @@ async function readFileOrEmpty(filePath: string): Promise<string> {
 }
 
 async function realpathOrParent(p: string): Promise<string> {
-  try {
-    return await fs.realpath(p)
-  } catch {
-    const parent = path.dirname(p)
+  const unresolvedParts: string[] = []
+  let current = p
+  while (true) {
     try {
-      return path.join(await fs.realpath(parent), path.basename(p))
+      return path.join(await fs.realpath(current), ...unresolvedParts.reverse())
     } catch {
-      return p
+      const parent = path.dirname(current)
+      if (parent === current) return p
+      unresolvedParts.push(path.basename(current))
+      current = parent
     }
   }
 }
@@ -614,7 +616,6 @@ export async function saveSkill(
   const dir = path.join(root, input.name)
   const file = path.join(dir, 'SKILL.md')
   try {
-    await fs.mkdir(dir, { recursive: true })
     try {
       await assertInsideRoot(file, root)
     } catch (err) {
@@ -628,6 +629,7 @@ export async function saveSkill(
       })
       return { ok: false, error: errorMessage(err) }
     }
+    await fs.mkdir(dir, { recursive: true })
     await atomicWriteFile(file, buildSkillFile(input))
   } catch (err) {
     await appendMutationAudit(paths, {
