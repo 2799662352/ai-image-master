@@ -78,6 +78,7 @@ export interface CodexProtocolClientOptions {
   approvalTimeoutMs?: number
   onLog?: (line: string) => void
   onApprovalRequest?: (request: CodexApprovalRequest) => void
+  onMcpNotification?: (event: AgentStreamEvent) => void
 }
 
 /**
@@ -481,9 +482,8 @@ export class CodexProtocolClient {
       }
       return
     }
-    // MCP global notifications (no threadId/turnId) — will be forwarded via
-    // IPC in Task 9; for now, silently drop them from the per-turn queue path.
     if (event.type === 'mcp_status_updated' || event.type === 'mcp_oauth_completed') {
+      this.options.onMcpNotification?.(event)
       return
     }
     const threadId = event.threadId

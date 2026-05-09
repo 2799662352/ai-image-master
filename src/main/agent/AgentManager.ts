@@ -197,6 +197,11 @@ export class AgentManager {
       provider: DEFAULT_PROVIDER,
       sessionConfig: this.sessionConfig,
       onApprovalRequest: (request) => this.emitApprovalRequest(request),
+      onMcpNotification: (event) => {
+        const win = this.win
+        if (!win || win.isDestroyed()) return
+        win.webContents.send('agent:mcp-status', event)
+      },
     })
     if (this.store) {
       this.summarizer = new ThreadTitleSummarizer(this.store, this.backend, DEFAULT_AGENT_MODEL)

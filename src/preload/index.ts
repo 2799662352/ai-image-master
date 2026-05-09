@@ -197,6 +197,7 @@ const IPC_CHANNELS = {
     'agent:tool-request',
     'agent:approval-request',
   ] as const,
+  AGENT_MCP_EVENTS: ['agent:mcp-status'] as const,
   // Shell helpers (clipboard / save dialog)
   SHELL: {
     COPY_IMAGE: 'shell:copy-image',
@@ -332,6 +333,7 @@ export interface ElectronAPI {
     reloadMcpServers: () => Promise<{ ok: boolean; error?: string }>
     mcpOAuthLogin: (name: string) => Promise<{ ok: boolean; error?: string; authorization_url?: string }>
     readConfig: () => Promise<{ ok: boolean; error?: string; config?: unknown }>
+    onMcpStatus: (handler: (event: any) => void) => () => void
   }
   // Shell helpers (clipboard / save dialog)
   shell: {
@@ -724,6 +726,9 @@ const electronAPI: ElectronAPI = {
 
     readConfig: () =>
       safeInvoke<{ ok: boolean; error?: string; config?: unknown }>(IPC_CHANNELS.AGENT.MCP_READ_CONFIG),
+
+    onMcpStatus: (handler: (event: any) => void) =>
+      safeOnWithCleanup<any>('agent:mcp-status', handler, IPC_CHANNELS.AGENT_MCP_EVENTS),
   },
 
   // ============ Shell helpers (clipboard / save dialog) ============

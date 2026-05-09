@@ -72,6 +72,7 @@ export interface CodexLocalBackendOptions {
   provider?: CodexProviderConfig
   sessionConfig?: Partial<CodexSessionConfig>
   onApprovalRequest?: (request: CodexApprovalRequest) => void
+  onMcpNotification?: (event: AgentStreamEvent) => void
 }
 
 type SpawnedCodexClient = {
@@ -142,6 +143,7 @@ export class CodexLocalBackend implements IAgentBackend {
       sessionConfig: this.sessionConfig,
       connectTimeoutMs: 5_000,
       onApprovalRequest: this.options.onApprovalRequest,
+      onMcpNotification: this.options.onMcpNotification,
     })
     await client.start()
     return client
@@ -214,6 +216,7 @@ export class CodexLocalBackend implements IAgentBackend {
       connectTimeoutMs: this.options.connectTimeoutMs ?? DEFAULT_SPAWN_CONNECT_TIMEOUT_MS,
       onLog: (line) => log.write(line + '\n'),
       onApprovalRequest: this.options.onApprovalRequest,
+      onMcpNotification: this.options.onMcpNotification,
     })
 
     try {

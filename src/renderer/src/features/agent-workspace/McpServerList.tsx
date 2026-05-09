@@ -16,11 +16,23 @@ export function McpServerList({ onOpenEditor, onOpenImport }: McpServerListProps
   const fetchServers = useMcpStore((s) => s.fetchServers)
   const toggleEnabled = useMcpStore((s) => s.toggleEnabled)
   const deleteServer = useMcpStore((s) => s.deleteServer)
+  const updateStatus = useMcpStore((s) => s.updateStatus)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
 
   useEffect(() => {
     fetchServers()
   }, [fetchServers])
+
+  useEffect(() => {
+    const api = (window as any).electronAPI?.agent
+    if (!api?.onMcpStatus) return
+    const cleanup = api.onMcpStatus((event: any) => {
+      if (event.type === 'mcp_status_updated') {
+        updateStatus(event.name, event.status, event.error ?? null)
+      }
+    })
+    return () => { cleanup?.() }
+  }, [updateStatus])
 
   const handleDelete = useCallback(
     async (name: string) => {
