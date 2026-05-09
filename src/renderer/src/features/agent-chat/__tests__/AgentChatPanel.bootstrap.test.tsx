@@ -139,25 +139,14 @@ describe('AgentChatPanel + sidebar integration', () => {
     expect(screen.queryByText(/Codex gpt-5\.5/i)).toBeNull()
   })
 
-  it('applies session config changes through preload and refreshes status', async () => {
-    fakeAgent.setSessionConfig.mockResolvedValue({
-      model: 'gpt-5.5',
-      sandboxMode: 'read-only',
-      approvalPolicy: 'on-request',
-      webSearch: 'cached',
-      writableRoots: [],
-    })
-
+  it('shows a compact Codex status strip instead of inline permission controls', async () => {
     render(<AgentChatPanel />)
     await Promise.resolve()
     await Promise.resolve()
 
-    fireEvent.click(await screen.findByRole('radio', { name: 'read-only' }))
-    fireEvent.click(screen.getByRole('button', { name: /apply permissions/i }))
-    await Promise.resolve()
-
-    expect(fakeAgent.setSessionConfig).toHaveBeenCalledWith({ sandboxMode: 'read-only' })
-    expect(screen.getByText(/read-only/i)).toBeTruthy()
+    expect(screen.getByText(/Codex · workspace-write · on-request · cached/i)).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Open Agent Workspace/i })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /apply permissions/i })).toBeNull()
   })
 
   it('renders approval requests from subscription and removes them after approval response succeeds', async () => {
