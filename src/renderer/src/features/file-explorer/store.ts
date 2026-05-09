@@ -378,10 +378,11 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
         reference.openBehavior === 'image' ||
         reference.openBehavior === 'pdf')
     ) {
+      const localPath = reference.source.path
       try {
-        await get().openTab(reference.source.path, 'workspace')
+        await get().openTab(localPath, 'workspace')
         const openedTab = get().tabs.find(
-          (tab) => tab.kind !== 'reference' && tab.path === reference.source.path,
+          (tab) => tab.kind !== 'reference' && tab.path === localPath,
         )
         if (openedTab && get().activeTabId === openedTab.id) {
           set({ fxOpen: true })
