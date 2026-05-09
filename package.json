@@ -5,7 +5,8 @@
   "main": "dist/main/index.js",
   "author": "CATIMATION",
   "license": "MIT",
-  "codexCliVersion": "0.128.0",
+  "codexCliVersion": "0.130.0",
+  "dockerMcpGatewayVersion": "0.42.1",
   "scripts": {
     "dev": "electron-vite dev",
     "dev:static": "electron . --dev",
@@ -35,6 +36,7 @@
     "perf:startup": "npx tsx scripts/measure-startup.ts",
     "pipeline:test": "npx tsx scripts/run-pipeline-test.ts",
     "codex:fetch": "tsx scripts/fetch-codex.ts",
+    "docker-mcp:fetch": "tsx scripts/fetch-docker-mcp.ts",
     "codex:probe": "tsx scripts/probe-codex.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate:dev": "prisma migrate dev",
