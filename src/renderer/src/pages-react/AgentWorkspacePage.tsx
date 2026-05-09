@@ -1,6 +1,7 @@
 import React from 'react'
 
 import { AgentWorkspaceNav } from '../features/agent-workspace/AgentWorkspaceNav'
+import { McpSection } from '../features/agent-workspace/McpSection'
 import { OverviewSection } from '../features/agent-workspace/OverviewSection'
 import { PermissionsSection } from '../features/agent-workspace/PermissionsSection'
 import { useAgentWorkspaceStore } from '../features/agent-workspace/useAgentWorkspaceStore'
@@ -22,7 +23,11 @@ export default function AgentWorkspacePage(): React.JSX.Element {
             <PermissionsSection />
           </div>
         )}
-        {section === 'mcp' && <div data-testid="section-mcp">MCP placeholder</div>}
+        {section === 'mcp' && (
+          <div data-testid="section-mcp">
+            <McpSection />
+          </div>
+        )}
         {section === 'skills' && <div data-testid="section-skills">Skills placeholder</div>}
         {section === 'threads' && <div data-testid="section-threads">Threads placeholder</div>}
         {section === 'logs' && <div data-testid="section-logs">Logs placeholder</div>}
