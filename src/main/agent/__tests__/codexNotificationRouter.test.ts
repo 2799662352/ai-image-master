@@ -258,10 +258,24 @@ describe('CodexNotificationRouter', () => {
           ],
         },
       })
-      expect(event).toMatchObject({
+      expect(event).toEqual({
         type: 'item_completed',
+        threadId: 't',
         itemId: 'fc-1',
         itemType: 'fileEdit',
+        final: {
+          changes: [
+            {
+              path: 'src/foo.ts',
+              operation: 'edit',
+              diff: '@@ -1,1 +1,2 @@\n-old\n+new1\n+new2',
+              added: 2,
+              removed: 1,
+            },
+          ],
+          totalAdded: 2,
+          totalRemoved: 1,
+        },
       })
     })
   })
@@ -768,11 +782,11 @@ describe('CodexNotificationRouter', () => {
         },
       })
       expect(event).toEqual({
-        type: 'item_delta',
+        type: 'item_completed',
         threadId: 't',
         itemId: 'r-2',
         itemType: 'reasoning',
-        patch: { kind: 'appendText', field: 'content', text: 'Plan: do A then B.' },
+        final: { content: 'Plan: do A then B.' },
       })
     })
 
@@ -817,11 +831,11 @@ describe('CodexNotificationRouter', () => {
         },
       })
       expect(event).toEqual({
-        type: 'item_delta',
+        type: 'item_completed',
         threadId: 'thread-b',
         itemId: 'r-3',
         itemType: 'reasoning',
-        patch: { kind: 'appendText', field: 'content', text: 'thread b full reasoning' },
+        final: { content: 'thread b full reasoning' },
       })
     })
 

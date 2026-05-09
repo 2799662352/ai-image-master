@@ -510,12 +510,14 @@ export class CodexNotificationRouter {
               changes[0].added = added
               changes[0].removed = removed
             }
+            const totalAdded = changes.reduce((sum, change) => sum + change.added, 0)
+            const totalRemoved = changes.reduce((sum, change) => sum + change.removed, 0)
             return {
               type: 'item_completed',
               threadId: params.threadId,
               itemId: item.id,
               itemType: 'fileEdit',
-              final: { changes },
+              final: { changes, totalAdded, totalRemoved },
             }
           }
           case 'reasoning': {
@@ -529,11 +531,11 @@ export class CodexNotificationRouter {
               const text = extractReasoningText(item)
               if (text.length > 0) {
                 return {
-                  type: 'item_delta',
+                  type: 'item_completed',
                   threadId: params.threadId,
                   itemId: item.id,
                   itemType: 'reasoning',
-                  patch: { kind: 'appendText', field: 'content', text },
+                  final: { content: text },
                 }
               }
             }
