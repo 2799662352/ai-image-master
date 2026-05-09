@@ -2,11 +2,14 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { parse as parseToml } from 'toml'
 import * as iarnaToml from '@iarna/toml'
+import YAML from 'yaml'
 import type {
   CodexAuditLogEntry,
   CodexConfigScope,
   CodexMcpServerInput,
   CodexMcpServerListItem,
+  CodexSkillInput,
+  CodexSkillListItem,
   CodexWorkspacePaths,
 } from '../../types/agent'
 
@@ -302,4 +305,120 @@ export async function setMcpEnabled(paths: CodexWorkspacePaths, id: string, enab
     if (enabled) delete servers[name].enabled
     else servers[name].enabled = false
   })
+}
+
+// ---------------------------------------------------------------------------
+// Skill CRUD
+// ---------------------------------------------------------------------------
+
+const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/
+
+interface ParsedFrontmatter {
+  description?: string
+  whenToUse?: string
+  name?: string
+  body: string
+}
+
+function parseFrontmatter(raw: string): ParsedFrontmatter {
+  const m = raw.match(FRONTMATTER_RE)
+  if (!m) return { body: raw }
+  let parsed: Record<string, unknown> = {}
+  try { parsed = (YAML.parse(m[1]) ?? {}) as Record<string, unknown> } catch { /* malformed */ }
+  return {
+    name: typeof parsed.name === 'string' ? parsed.name : undefined,
+    description: typeof parsed.description === 'string' ? parsed.description : undefined,
+    whenToUse: typeof parsed.whenToUse === 'string' ? parsed.whenToUse : undefined,
+    body: m[2],
+  }
+}
+
+function buildSkillFile(input: CodexSkillInput): string {
+  const fm: Record<string, string> = { name: input.name }
+  if (input.description) fm.description = input.description
+  if (input.whenToUse) fm.whenToUse = input.whenToUse
+  const yaml = YAML.stringify(fm).trimEnd()
+  return `---\n${yaml}\n---\n${input.instructions}\n`
+}
+
+async function listSkillsInRoot(
+  root: string,
+  scope: CodexConfigScope,
+): Promise<CodexSkillListItem[]> {
+  const entries: CodexSkillListItem[] = []
+  let dirents: import('node:fs').Dirent[]
+  try { dirents = await fs.readdir(root, { withFileTypes: true }) } catch { return [] }
+  for (const d of dirents) {
+    if (!d.isDirectory()) continue
+    const skillPath = path.join(root, d.name, 'SKILL.md')
+    let raw: string
+    try { raw = await fs.readFile(skillPath, 'utf8') } catch { continue }
+    const fm = parseFrontmatter(raw)
+    entries.push({
+      id: `${scope}:${d.name}`,
+      name: fm.name ?? d.name,
+      scope,
+      path: skillPath,
+      description: fm.description,
+      warnings: [],
+    })
+  }
+  return entries
+}
+
+export async function listSkills(paths: CodexWorkspacePaths): Promise<CodexSkillListItem[]> {
+  const [personal, workspace] = await Promise.all([
+    listSkillsInRoot(paths.personalSkillsRoot, 'personal'),
+    listSkillsInRoot(paths.workspaceSkillsRoot, 'workspace'),
+  ])
+  return [...personal, ...workspace].sort((a, b) => a.name.localeCompare(b.name))
+}
+
+export async function getSkillDetail(
+  paths: CodexWorkspacePaths,
+  id: string,
+): Promise<CodexSkillInput | null> {
+  const [scope, ...rest] = id.split(':')
+  const name = rest.join(':')
+  if (scope !== 'personal' && scope !== 'workspace') return null
+  const root = scope === 'personal' ? paths.personalSkillsRoot : paths.workspaceSkillsRoot
+  const filePath = path.join(root, name, 'SKILL.md')
+  let raw: string
+  try { raw = await fs.readFile(filePath, 'utf8') } catch { return null }
+  const fm = parseFrontmatter(raw)
+  return {
+    id,
+    name: fm.name ?? name,
+    scope,
+    description: fm.description ?? '',
+    whenToUse: fm.whenToUse ?? '',
+    instructions: fm.body.trimStart(),
+  }
+}
+
+export async function saveSkill(
+  paths: CodexWorkspacePaths,
+  input: CodexSkillInput,
+): Promise<{ ok: boolean; id?: string; error?: string }> {
+  const err = validateName(input.name)
+  if (err) return { ok: false, error: err }
+  const root = input.scope === 'personal' ? paths.personalSkillsRoot : paths.workspaceSkillsRoot
+  const dir = path.join(root, input.name)
+  const file = path.join(dir, 'SKILL.md')
+  await fs.mkdir(dir, { recursive: true })
+  await atomicWriteFile(file, buildSkillFile(input))
+  return { ok: true, id: `${input.scope}:${input.name}` }
+}
+
+export async function deleteSkill(
+  paths: CodexWorkspacePaths,
+  id: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const [scope, ...rest] = id.split(':')
+  const name = rest.join(':')
+  if (scope !== 'personal' && scope !== 'workspace') return { ok: false, error: 'bad scope' }
+  const root = scope === 'personal' ? paths.personalSkillsRoot : paths.workspaceSkillsRoot
+  const dir = path.join(root, name)
+  await fs.rm(dir, { recursive: true, force: true })
+  return { ok: true }
 }
