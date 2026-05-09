@@ -247,7 +247,20 @@ export async function saveMcp(
     return { ok: false, error: nameError, warnings: [] }
   }
   const target = input.scope === 'personal' ? paths.personalConfigToml : paths.workspaceConfigToml
-  const raw = await readFileOrEmpty(target)
+  let raw: string
+  try {
+    raw = await readFileOrEmpty(target)
+  } catch (err) {
+    await appendMutationAudit(paths, {
+      action: 'mcp.save',
+      scope: input.scope,
+      name: input.name,
+      provenance: 'manual',
+      ok: false,
+      error: errorMessage(err),
+    })
+    throw err
+  }
   let document: Record<string, unknown> = {}
   if (raw.trim()) {
     try {

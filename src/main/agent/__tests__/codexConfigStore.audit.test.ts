@@ -22,4 +22,29 @@ describe('audit log', () => {
     expect(log.map((e) => e.action)).toEqual(['mcp.save', 'mcp.delete'])
     expect(log[0]).toMatchObject({ scope: 'personal', name: 'g', ok: true })
   })
+
+  it('audits save read failures before rethrowing', async () => {
+    const home = path.join(tmp, 'h'); const cwd = path.join(tmp, 'p')
+    await mkdir(home, { recursive: true }); await mkdir(cwd, { recursive: true })
+    const paths = resolveWorkspacePaths({ home, cwd, userData: tmp })
+    await mkdir(path.dirname(paths.personalConfigToml), { recursive: true })
+    await mkdir(paths.personalConfigToml)
+
+    await expect(saveMcp(paths, {
+      name: 'broken-read', scope: 'personal', enabled: true,
+      command: 'x', args: [], env: [],
+    })).rejects.toThrow()
+
+    const log = await readAuditLog(paths.auditLogPath)
+    expect(log).toHaveLength(1)
+    expect(log[0]).toMatchObject({
+      action: 'mcp.save',
+      scope: 'personal',
+      name: 'broken-read',
+      provenance: 'manual',
+      ok: false,
+    })
+    expect(log[0].error).toEqual(expect.any(String))
+    expect(log[0].error).not.toHaveLength(0)
+  })
 })
