@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type React from 'react'
+import * as iarnaToml from '@iarna/toml'
+import { parse as parseToml } from 'toml'
 
 import type { AgentApiResult, CodexConfigScope, CodexMcpServerInput } from '../../../../types/agent'
 
@@ -39,6 +41,7 @@ export function McpEditor({
 }: McpEditorProps): React.JSX.Element {
   const [input, setInput] = useState<CodexMcpServerInput>(emptyInput)
   const [view, setView] = useState<'form' | 'raw'>('form')
+  const [rawText, setRawText] = useState('')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -98,11 +101,17 @@ export function McpEditor({
       return
     }
 
+    const inputToSave = view === 'raw' ? rawTextToInput(rawText, input) : input
+    if (!inputToSave) {
+      setError('Invalid TOML fragment.')
+      return
+    }
+
     setSaving(true)
     setError(null)
     setSaved(false)
     try {
-      const result = await api.saveMcp(input)
+      const result = await api.saveMcp(inputToSave)
       if (!mountedRef.current) {
         return
       }
@@ -130,14 +139,36 @@ export function McpEditor({
     }
   }
 
+  function showRaw(): void {
+    setError(null)
+    setRawText(inputToTomlFragment(input))
+    setView('raw')
+  }
+
+  function showForm(): void {
+    if (view === 'form') {
+      return
+    }
+
+    const nextInput = rawTextToInput(rawText, input)
+    if (!nextInput) {
+      setError('Invalid TOML fragment.')
+      return
+    }
+
+    setError(null)
+    setInput(nextInput)
+    setView('form')
+  }
+
   return (
     <div className="space-y-3 rounded-xl border border-cyan-400/15 bg-zinc-950/70 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex gap-2">
-          <button type="button" className={tabClassName(view === 'form')} onClick={() => setView('form')}>
+          <button type="button" className={tabClassName(view === 'form')} onClick={showForm}>
             Form
           </button>
-          <button type="button" className={tabClassName(view === 'raw')} onClick={() => setView('raw')}>
+          <button type="button" className={tabClassName(view === 'raw')} onClick={showRaw}>
             Raw
           </button>
         </div>
@@ -190,9 +221,12 @@ export function McpEditor({
           </Field>
         </div>
       ) : (
-        <div className="rounded-md border border-zinc-800 bg-zinc-950 p-3 text-sm text-zinc-500">
-          Raw mode lands in Task 23.
-        </div>
+        <textarea
+          data-testid="mcp-raw-editor"
+          value={rawText}
+          onChange={(event) => setRawText(event.target.value)}
+          className="h-64 w-full rounded border border-zinc-800 bg-zinc-950 p-2 font-mono text-xs text-zinc-100"
+        />
       )}
 
       <div className="max-w-2xl rounded border border-zinc-800/70 bg-zinc-950 p-2 font-mono text-xs text-zinc-300">
@@ -322,4 +356,87 @@ function getMcpEditorApi() {
 
 function errorMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason)
+}
+
+function inputToTomlFragment(input: CodexMcpServerInput): string {
+  const env = Object.fromEntries(input.env.filter((row) => row.key).map((row) => [row.key, row.value]))
+  const entry: Record<string, unknown> = {
+    command: input.command,
+    args: input.args,
+  }
+  if (Object.keys(env).length > 0) {
+    entry.env = env
+  }
+  if (input.enabled === false) {
+    entry.enabled = false
+  }
+  if (input.description) {
+    entry.description = input.description
+  }
+
+  return iarnaToml.stringify({
+    mcp_servers: {
+      [input.name || 'unnamed']: entry,
+    },
+  })
+}
+
+function rawTextToInput(text: string, currentInput: CodexMcpServerInput): CodexMcpServerInput | null {
+  const parsed = parseTomlFragment(text)
+  if (!parsed) {
+    return null
+  }
+
+  if (currentInput.id) {
+    return {
+      ...parsed,
+      id: currentInput.id,
+      name: currentInput.name,
+      scope: currentInput.scope,
+    }
+  }
+
+  return {
+    ...parsed,
+    scope: currentInput.scope,
+  }
+}
+
+function parseTomlFragment(text: string): Omit<CodexMcpServerInput, 'scope'> | null {
+  let parsed: unknown
+  try {
+    parsed = parseToml(text)
+  } catch {
+    return null
+  }
+
+  if (!parsed || typeof parsed !== 'object') {
+    return null
+  }
+
+  const root = (parsed as { mcp_servers?: unknown }).mcp_servers
+  if (!root || typeof root !== 'object') {
+    return null
+  }
+
+  const [name, value] = Object.entries(root as Record<string, unknown>)[0] ?? []
+  if (!name || !value || typeof value !== 'object') {
+    return null
+  }
+
+  const server = value as Record<string, unknown>
+  return {
+    name,
+    enabled: server.enabled === false ? false : true,
+    command: typeof server.command === 'string' ? server.command : '',
+    args: Array.isArray(server.args) ? server.args.map(String) : [],
+    env:
+      server.env && typeof server.env === 'object'
+        ? Object.entries(server.env as Record<string, unknown>).map(([key, envValue]) => ({
+            key,
+            value: String(envValue ?? ''),
+          }))
+        : [],
+    description: typeof server.description === 'string' ? server.description : undefined,
+  }
 }
