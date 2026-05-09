@@ -21,14 +21,24 @@ export type EvidenceSummary = {
   hasReference: boolean
 }
 
+function assertNever(value: never): never {
+  throw new Error(`Unhandled timeline item: ${JSON.stringify(value)}`)
+}
+
 export function isEvidenceItem(item: TimelineItem): boolean {
-  return (
-    item.type === 'shell' ||
-    item.type === 'fileEdit' ||
-    item.type === 'activity' ||
-    item.type === 'artifact' ||
-    item.type === 'attachment'
-  )
+  switch (item.type) {
+    case 'shell':
+    case 'fileEdit':
+    case 'activity':
+    case 'artifact':
+    case 'attachment':
+      return true
+    case 'text':
+    case 'reasoning':
+      return false
+    default:
+      return assertNever(item)
+  }
 }
 
 export function groupTimelineItemsForChat(items: TimelineItem[]): ChatRenderGroup[] {
@@ -148,5 +158,7 @@ export function getEvidenceSummary(item: TimelineItem): EvidenceSummary {
         hasDetails: false,
         hasReference: false,
       }
+    default:
+      return assertNever(item)
   }
 }

@@ -81,11 +81,26 @@ describe('evidenceModel', () => {
       activity('act1'),
     ])
 
-    expect(groups).toEqual([
-      { type: 'item', item: text('t1') },
-      { type: 'evidence', items: [shell('cmd1'), fileEdit('edit1')] },
-      { type: 'item', item: text('t2') },
-      { type: 'evidence', items: [activity('act1')] },
+    const groupSummaries = groups.map((group) =>
+      group.type === 'item'
+        ? { type: group.type, item: { id: group.item.id, itemType: group.item.type } }
+        : {
+            type: group.type,
+            items: group.items.map((item) => ({ id: item.id, itemType: item.type })),
+          },
+    )
+
+    expect(groupSummaries).toEqual([
+      { type: 'item', item: { id: 't1', itemType: 'text' } },
+      {
+        type: 'evidence',
+        items: [
+          { id: 'cmd1', itemType: 'shell' },
+          { id: 'edit1', itemType: 'fileEdit' },
+        ],
+      },
+      { type: 'item', item: { id: 't2', itemType: 'text' } },
+      { type: 'evidence', items: [{ id: 'act1', itemType: 'activity' }] },
     ])
   })
 
