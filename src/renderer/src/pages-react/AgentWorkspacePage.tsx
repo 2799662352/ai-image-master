@@ -4,7 +4,9 @@ import { AgentWorkspaceNav } from '../features/agent-workspace/AgentWorkspaceNav
 import { McpSection } from '../features/agent-workspace/McpSection'
 import { OverviewSection } from '../features/agent-workspace/OverviewSection'
 import { PermissionsSection } from '../features/agent-workspace/PermissionsSection'
+import { SkillsSection } from '../features/agent-workspace/SkillsSection'
 import { useAgentWorkspaceStore } from '../features/agent-workspace/useAgentWorkspaceStore'
+import { useAgentChatStore } from '../features/agent-chat/store'
 
 export default function AgentWorkspacePage(): React.JSX.Element {
   const section = useAgentWorkspaceStore((state) => state.section)
@@ -28,10 +30,20 @@ export default function AgentWorkspacePage(): React.JSX.Element {
             <McpSection />
           </div>
         )}
-        {section === 'skills' && <div data-testid="section-skills">Skills placeholder</div>}
+        {section === 'skills' && (
+          <div data-testid="section-skills">
+            <SkillsSection insertIntoChat={insertIntoChat} />
+          </div>
+        )}
         {section === 'threads' && <div data-testid="section-threads">Threads placeholder</div>}
         {section === 'logs' && <div data-testid="section-logs">Logs placeholder</div>}
       </main>
     </div>
   )
+}
+
+function insertIntoChat(text: string): void {
+  const { input, setInput } = useAgentChatStore.getState()
+  const nextInput = input.trimEnd()
+  setInput(nextInput ? `${nextInput} ${text}` : text)
 }
