@@ -266,6 +266,122 @@ describe('CodexNotificationRouter', () => {
     })
   })
 
+  describe('CodexNotificationRouter file change diffs', () => {
+    it('preserves file-change output deltas when completed changes omit unifiedDiff', () => {
+      const router = new CodexNotificationRouter()
+
+      expect(
+        router.route('item/started', {
+          threadId: 'thread-1',
+          item: { id: 'file-1', type: 'fileChange' },
+        }),
+      ).toMatchObject({
+        type: 'item_started',
+        itemId: 'file-1',
+        itemType: 'fileEdit',
+      })
+
+      expect(
+        router.route('item/fileChange/outputDelta', {
+          threadId: 'thread-1',
+          itemId: 'file-1',
+          delta: '@@\n-old\n+new\n',
+        }),
+      ).toBeNull()
+
+      expect(
+        router.route('item/completed', {
+          threadId: 'thread-1',
+          item: {
+            id: 'file-1',
+            type: 'fileChange',
+            changes: [{ path: 'src/a.ts', kind: 'edit' }],
+          },
+        }),
+      ).toMatchObject({
+        type: 'item_completed',
+        itemId: 'file-1',
+        itemType: 'fileEdit',
+        final: {
+          changes: [
+            {
+              path: 'src/a.ts',
+              operation: 'edit',
+              diff: '@@\n-old\n+new\n',
+              added: 1,
+              removed: 1,
+            },
+          ],
+        },
+      })
+    })
+
+    it('prefers structured completed unifiedDiff over streamed fallback text', () => {
+      const router = new CodexNotificationRouter()
+
+      router.route('item/fileChange/outputDelta', {
+        threadId: 'thread-1',
+        itemId: 'file-1',
+        delta: 'fallback text',
+      })
+
+      expect(
+        router.route('item/completed', {
+          threadId: 'thread-1',
+          item: {
+            id: 'file-1',
+            type: 'fileChange',
+            changes: [{ path: 'src/a.ts', kind: 'edit', unifiedDiff: '@@\n-a\n+b\n' }],
+          },
+        }),
+      ).toMatchObject({
+        final: {
+          changes: [
+            {
+              path: 'src/a.ts',
+              diff: '@@\n-a\n+b\n',
+              added: 1,
+              removed: 1,
+            },
+          ],
+        },
+      })
+    })
+
+    it('creates a fallback file change from item.path when completed changes are missing', () => {
+      const router = new CodexNotificationRouter()
+
+      router.route('item/fileChange/outputDelta', {
+        threadId: 'thread-1',
+        itemId: 'file-1',
+        delta: '@@\n-old\n+new\n',
+      })
+
+      expect(
+        router.route('item/completed', {
+          threadId: 'thread-1',
+          item: {
+            id: 'file-1',
+            type: 'fileChange',
+            path: 'src/fallback.ts',
+          },
+        }),
+      ).toMatchObject({
+        final: {
+          changes: [
+            {
+              path: 'src/fallback.ts',
+              operation: 'edit',
+              diff: '@@\n-old\n+new\n',
+              added: 1,
+              removed: 1,
+            },
+          ],
+        },
+      })
+    })
+  })
+
   describe('reasoning completion', () => {
     it('emits item_completed for reasoning items with no summary/content', () => {
       const router = new CodexNotificationRouter()
