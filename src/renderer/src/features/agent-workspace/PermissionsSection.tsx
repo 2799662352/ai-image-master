@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import type { CodexSessionConfig, CodexSessionStatus } from '../../../../types/agent'
 import { CodexPermissionsPanel } from '../agent-chat/CodexPermissionsPanel'
@@ -13,32 +13,33 @@ type PermissionsApi = {
 export function PermissionsSection() {
   const [status, setStatus] = useState<CodexSessionStatus>()
   const [error, setError] = useState<string>()
+  const mountedRef = useRef(false)
 
   useEffect(() => {
-    let alive = true
+    mountedRef.current = true
 
     async function loadStatus(): Promise<void> {
       const api = getPermissionsApi()
       if (!api?.getSessionStatus || !api.setSessionConfig) {
-        if (alive) setError('Codex permissions API is unavailable.')
+        if (mountedRef.current) setError('Codex permissions API is unavailable.')
         return
       }
 
       try {
         const nextStatus = await api.getSessionStatus()
-        if (alive) {
+        if (mountedRef.current) {
           setStatus(nextStatus)
           setError(undefined)
         }
       } catch (reason) {
-        if (alive) setError(errorMessage(reason))
+        if (mountedRef.current) setError(errorMessage(reason))
       }
     }
 
     void loadStatus()
 
     return () => {
-      alive = false
+      mountedRef.current = false
     }
   }, [])
 
@@ -51,10 +52,13 @@ export function PermissionsSection() {
 
     try {
       const nextStatus = await api.setSessionConfig(patch)
-      setStatus(nextStatus ?? (await api.getSessionStatus()))
-      setError(undefined)
+      const resolvedStatus = nextStatus ?? (await api.getSessionStatus())
+      if (mountedRef.current) {
+        setStatus(resolvedStatus)
+        setError(undefined)
+      }
     } catch (reason) {
-      setError(errorMessage(reason))
+      if (mountedRef.current) setError(errorMessage(reason))
     }
   }
 
@@ -66,7 +70,7 @@ export function PermissionsSection() {
     )
   }
 
-  if (error) {
+  if (!status && error) {
     return (
       <section className="rounded-xl border border-amber-400/30 bg-amber-500/10 p-4 text-sm text-amber-100">
         {error}
@@ -74,7 +78,16 @@ export function PermissionsSection() {
     )
   }
 
-  return <CodexPermissionsPanel status={status} onApply={applyPermissions} />
+  return (
+    <>
+      {error ? (
+        <section className="mb-3 rounded-xl border border-amber-400/30 bg-amber-500/10 p-4 text-sm text-amber-100">
+          {error}
+        </section>
+      ) : null}
+      <CodexPermissionsPanel status={status} onApply={applyPermissions} />
+    </>
+  )
 }
 
 function getPermissionsApi() {

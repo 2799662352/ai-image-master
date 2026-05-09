@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { PermissionsSection } from '../PermissionsSection'
@@ -33,5 +33,28 @@ describe('PermissionsSection', () => {
     expect(await screen.findByText(/Sandbox/i)).toBeTruthy()
     expect(screen.getByText('workspace-write')).toBeTruthy()
     expect(screen.getByText('on-request')).toBeTruthy()
+  })
+
+  it('keeps permission controls visible when applying a config change fails', async () => {
+    Object.defineProperty(window, 'electronAPI', {
+      configurable: true,
+      value: {
+        agent: {
+          getSessionStatus: vi.fn().mockResolvedValue(status),
+          setSessionConfig: vi.fn().mockRejectedValue(new Error('session config change cancelled')),
+        },
+      },
+    })
+
+    render(<PermissionsSection />)
+
+    expect(await screen.findByText(/Sandbox/i)).toBeTruthy()
+
+    fireEvent.click(screen.getByText('danger-full-access'))
+    fireEvent.click(screen.getByText('Apply permissions'))
+
+    expect(await screen.findByText('session config change cancelled')).toBeTruthy()
+    expect(screen.getByText(/Sandbox/i)).toBeTruthy()
+    expect(screen.getByText('Apply permissions')).toBeTruthy()
   })
 })
