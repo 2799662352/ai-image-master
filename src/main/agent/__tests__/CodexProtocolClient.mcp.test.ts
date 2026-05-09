@@ -51,7 +51,7 @@ describe('CodexProtocolClient MCP methods', () => {
     server.close()
   })
 
-  it('listMcpServers sends mcpServerStatus/list with detail:full and parses {data,nextCursor}', async () => {
+  it('listMcpServers sends mcpServerStatus/list with detail:toolsAndAuthOnly and parses {data,nextCursor}', async () => {
     server.setResponder((msg: any) => {
       if (msg.method === 'mcpServerStatus/list') {
         // Pinned by openai/codex/codex-rs/app-server-protocol/schema/typescript/v2/
@@ -70,8 +70,9 @@ describe('CodexProtocolClient MCP methods', () => {
     expect(result.data[0].name).toBe('test-server')
     expect(result.data[0].authStatus).toBe('unsupported')
     expect(result.nextCursor).toBeNull()
+    // Default to lightweight detail per codex PR #16831 — avoids slow resource probing.
     const sent = server.messages.find((m: any) => m.method === 'mcpServerStatus/list') as any
-    expect(sent.params.detail).toBe('full')
+    expect(sent.params.detail).toBe('toolsAndAuthOnly')
   })
 
   it('batchWriteConfig sends config/batchWrite with edits', async () => {

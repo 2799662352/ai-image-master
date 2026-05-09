@@ -47,6 +47,15 @@ describe('useMcpStore', () => {
     expect(state.servers[0].tools[0].name).toBe('search_code')
   })
 
+  it('fetchServers requests detail:"toolsAndAuthOnly" to avoid slow resource probing (codex PR #16831)', async () => {
+    mockApi.listMcpServersRpc.mockResolvedValue({ ok: true, data: { mcpServers: [] } })
+    mockApi.readConfig.mockResolvedValue({ ok: true, config: { mcp_servers: {} } })
+
+    await useMcpStore.getState().fetchServers()
+
+    expect(mockApi.listMcpServersRpc).toHaveBeenCalledWith({ detail: 'toolsAndAuthOnly' })
+  })
+
   it('fetchServers falls back to config-only when listMcpServersRpc fails', async () => {
     mockApi.listMcpServersRpc.mockResolvedValue({ ok: false, error: 'rpc died' })
     mockApi.readConfig.mockResolvedValue({
@@ -85,7 +94,7 @@ describe('useMcpStore', () => {
       mockApi.listMcpServersRpc.mockImplementation(() => new Promise(() => {}))
       mockApi.readConfig.mockImplementation(() => new Promise(() => {}))
       const promise = useMcpStore.getState().fetchServers()
-      await vi.advanceTimersByTimeAsync(15_000)
+      await vi.advanceTimersByTimeAsync(25_000)
       await promise
       const state = useMcpStore.getState()
       expect(state.loading).toBe(false)

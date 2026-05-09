@@ -179,9 +179,14 @@ export const useMcpStore = create<McpStore>((set, get) => ({
 
     // Run both calls in parallel but tolerate either failing/hanging. If only
     // config succeeds we still render cards (without live tools / auth status).
-    const TIMEOUT_MS = 8_000
+    //
+    // detail:"toolsAndAuthOnly" avoids Codex's slow resource/template probing
+    // path that can take 10s+ when remote HTTP MCPs are configured. See codex
+    // PR #16831 (issue #16244) — `"full"` rebuilds the entire inventory and
+    // also probes auth on disabled remote servers (issue #16971).
+    const TIMEOUT_MS = 20_000
     const [statusResult, configResult] = await Promise.allSettled([
-      withTimeout(api.listMcpServersRpc({ detail: 'full' }), TIMEOUT_MS, 'listMcpServersRpc'),
+      withTimeout(api.listMcpServersRpc({ detail: 'toolsAndAuthOnly' }), TIMEOUT_MS, 'listMcpServersRpc'),
       withTimeout(api.readConfig(), TIMEOUT_MS, 'readConfig'),
     ])
 

@@ -1,8 +1,9 @@
 ---
 name: deep-agents-core
-description: "INVOKE THIS SKILL when building ANY Deep Agents application. Covers create_deep_agent(), harness architecture, SKILL.md format, and configuration options."
+description: INVOKE THIS SKILL when building ANY Deep Agents application. Covers
+  create_deep_agent(), harness architecture, SKILL.md format, and configuration
+  options.
 ---
-
 <overview>
 Deep Agents are an opinionated agent framework built on LangChain/LangGraph with built-in middleware:
 
@@ -495,3 +496,4 @@ agent = create_deep_agent(
 ```
 </python>
 </fix-subagent-skills>
+

@@ -269,8 +269,15 @@ export class CodexProtocolClient {
 
   // ─── MCP Management RPC ───────────────────────────────────────────────
 
-  async listMcpServers(params?: { detail?: string; limit?: number; cursor?: string }): Promise<McpServerStatusListResponse> {
-    return this.rpc<McpServerStatusListResponse>('mcpServerStatus/list', params ?? { detail: 'full' })
+  async listMcpServers(
+    params?: { detail?: 'full' | 'toolsAndAuthOnly'; limit?: number; cursor?: string },
+  ): Promise<McpServerStatusListResponse> {
+    // Default to the lightweight detail mode (codex PR #16831). `full` rebuilds
+    // the entire inventory and probes resources/templates which can take 10s+.
+    return this.rpc<McpServerStatusListResponse>(
+      'mcpServerStatus/list',
+      params ?? { detail: 'toolsAndAuthOnly' },
+    )
   }
 
   async batchWriteConfig(edits: Array<{ keyPath: string; value: unknown; mergeStrategy?: string }>, reloadUserConfig = true): Promise<void> {
