@@ -1,4 +1,4 @@
-import { Suspense, useEffect } from 'react'
+import { Suspense, useEffect, type ComponentType, type LazyExoticComponent } from 'react'
 import { useTabStore, type TabName } from '../stores'
 import { TabBar } from '../components/TabBar'
 import { AgentChatPanel, mountAgentToolExecutor, useAgentChatStore } from '../features/agent-chat'
@@ -16,7 +16,7 @@ import {
   AgentWorkspacePage,
 } from '../pages-react'
 
-const PAGE_MAP: Record<TabName, React.LazyExoticComponent<() => React.JSX.Element>> = {
+const PAGE_MAP: Record<TabName, LazyExoticComponent<ComponentType>> = {
   generate: GeneratePage,
   batch: BatchPage,
   compare: ComparePage,
