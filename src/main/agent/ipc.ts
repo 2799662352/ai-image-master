@@ -33,6 +33,12 @@ const AGENT_HANDLE_CHANNELS = [
   'agent:list-codex-threads',
   'agent:read-codex-thread',
   'agent:fork-codex-thread',
+  'agent:mcp-list-servers',
+  'agent:mcp-batch-write',
+  'agent:mcp-write-value',
+  'agent:mcp-reload',
+  'agent:mcp-oauth-login',
+  'agent:mcp-read-config',
 ]
 
 export function registerAgentIpc(manager: AgentManager, router: ToolRouter): void {
@@ -114,6 +120,12 @@ export function registerAgentIpc(manager: AgentManager, router: ToolRouter): voi
   ipcMain.handle('agent:fork-codex-thread', async (_event, threadId: unknown) =>
     manager.forkCodexThread(validateThreadId(threadId)),
   )
+  ipcMain.handle('agent:mcp-list-servers', (_event, params?: unknown) => manager.listMcpServersRpc(params))
+  ipcMain.handle('agent:mcp-batch-write', (_event, edits: unknown[], reload?: boolean) => manager.batchWriteConfigRpc(edits, reload))
+  ipcMain.handle('agent:mcp-write-value', (_event, keyPath: string, value: unknown) => manager.writeConfigValueRpc(keyPath, value))
+  ipcMain.handle('agent:mcp-reload', () => manager.reloadMcpServersRpc())
+  ipcMain.handle('agent:mcp-oauth-login', (_event, name: string) => manager.mcpOAuthLoginRpc(name))
+  ipcMain.handle('agent:mcp-read-config', () => manager.readConfigRpc())
   ipcMain.on('agent:tool-response', (_event, response: AgentToolResponse) => router.handleRendererResponse(response))
 }
 

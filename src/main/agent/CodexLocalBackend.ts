@@ -338,6 +338,36 @@ export class CodexLocalBackend implements IAgentBackend {
     this.client?.setSessionConfig(patch)
   }
 
+  async listMcpServers(params?: unknown): Promise<unknown> {
+    if (!this.client) throw new Error('CodexLocalBackend.listMcpServers called before start')
+    return this.client.listMcpServers(params as any)
+  }
+
+  async batchWriteConfig(edits: unknown[], reloadUserConfig?: boolean): Promise<void> {
+    if (!this.client) throw new Error('CodexLocalBackend.batchWriteConfig called before start')
+    await this.client.batchWriteConfig(edits as any[], reloadUserConfig)
+  }
+
+  async writeConfigValue(keyPath: string, value: unknown): Promise<void> {
+    if (!this.client) throw new Error('CodexLocalBackend.writeConfigValue called before start')
+    await this.client.writeConfigValue(keyPath, value)
+  }
+
+  async readConfig(): Promise<{ config: Record<string, unknown> }> {
+    if (!this.client) throw new Error('CodexLocalBackend.readConfig called before start')
+    return this.client.readConfig()
+  }
+
+  async reloadMcpServers(): Promise<void> {
+    if (!this.client) throw new Error('CodexLocalBackend.reloadMcpServers called before start')
+    await this.client.reloadMcpServers()
+  }
+
+  async mcpOAuthLogin(name: string): Promise<{ authorization_url: string }> {
+    if (!this.client) throw new Error('CodexLocalBackend.mcpOAuthLogin called before start')
+    return this.client.mcpOAuthLogin(name)
+  }
+
   private async killProcessInstance(proc: ChildProcess | null): Promise<void> {
     if (!proc) return
     if (proc.exitCode !== null) return

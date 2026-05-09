@@ -31,6 +31,14 @@ export interface IAgentBackend {
   forkThread?(threadId: string): Promise<CodexThreadSummary>
   applyConfigChange?(paths: CodexWorkspacePaths): Promise<void>
   restartCodex?(paths: CodexWorkspacePaths): Promise<void>
+
+  // MCP Management (via Codex app-server RPC)
+  listMcpServers?(params?: unknown): Promise<unknown>
+  batchWriteConfig?(edits: unknown[], reloadUserConfig?: boolean): Promise<void>
+  writeConfigValue?(keyPath: string, value: unknown): Promise<void>
+  readConfig?(): Promise<{ config: Record<string, unknown> }>
+  reloadMcpServers?(): Promise<void>
+  mcpOAuthLogin?(name: string): Promise<{ authorization_url: string }>
 }
 
 export interface JsonRpcMessage {

@@ -344,6 +344,66 @@ export class AgentManager {
     return this.backend.restartCodex(this.workspacePaths())
   }
 
+  async listMcpServersRpc(params?: unknown): Promise<{ ok: boolean; error?: string; data?: unknown }> {
+    try {
+      if (!this.backend.listMcpServers) throw new Error('MCP list API unavailable')
+      const result = await this.backend.listMcpServers(params)
+      return { ok: true, data: result }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  async batchWriteConfigRpc(edits: unknown[], reload?: boolean): Promise<{ ok: boolean; error?: string }> {
+    try {
+      if (!this.backend.batchWriteConfig) throw new Error('MCP batch write API unavailable')
+      await this.backend.batchWriteConfig(edits, reload)
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  async writeConfigValueRpc(keyPath: string, value: unknown): Promise<{ ok: boolean; error?: string }> {
+    try {
+      if (!this.backend.writeConfigValue) throw new Error('MCP write value API unavailable')
+      await this.backend.writeConfigValue(keyPath, value)
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  async readConfigRpc(): Promise<{ ok: boolean; error?: string; config?: unknown }> {
+    try {
+      if (!this.backend.readConfig) throw new Error('MCP read config API unavailable')
+      const result = await this.backend.readConfig()
+      return { ok: true, config: result?.config }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  async reloadMcpServersRpc(): Promise<{ ok: boolean; error?: string }> {
+    try {
+      if (!this.backend.reloadMcpServers) throw new Error('MCP reload API unavailable')
+      await this.backend.reloadMcpServers()
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  async mcpOAuthLoginRpc(name: string): Promise<{ ok: boolean; error?: string; authorization_url?: string }> {
+    try {
+      if (!this.backend.mcpOAuthLogin) throw new Error('MCP OAuth API unavailable')
+      const result = await this.backend.mcpOAuthLogin(name)
+      return { ok: true, authorization_url: result?.authorization_url }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
   async start(): Promise<void> {
     await this.backend.start()
   }
@@ -646,54 +706,76 @@ export class AgentManager {
   }
 
   private async forwardEvents(dbThreadId: string, input: AgentInput): Promise<void> {
-    const codexThreadId = this.codexThreadIdByDbThreadId.get(dbThreadId)
-    // Accumulate the assistant turn's timeline items in main-process memory so
-    // we can write a single AgentMessage row at turn_completed time. Mirrors
-    // (a tiny subset of) the renderer's `applyEvent` reducer; kept inline to
-    // avoid a circular renderer→main import.
-    let assistantItems: TimelineItem[] = []
-    for await (const event of this.backend.send(codexThreadId, input)) {
-      if (event.type === 'thread_created' && event.threadId) {
-        this.codexThreadIdByDbThreadId.set(dbThreadId, event.threadId)
-      }
-      if (!this.eventSink && this.win?.isDestroyed()) return
-      // Renderer's chat store filters events by its DB threadId. Always rewrite
-      // so codex-side UUIDs never leak into the UI layer.
-      this.emitEvent({ ...event, threadId: dbThreadId })
+    let canRetryEncryptedThread = true
 
-      assistantItems = applyAssistantEvent(assistantItems, event)
+    while (true) {
+      const codexThreadId = this.codexThreadIdByDbThreadId.get(dbThreadId)
+      // Accumulate the assistant turn's timeline items in main-process memory so
+      // we can write a single AgentMessage row at turn_completed time. Mirrors
+      // (a tiny subset of) the renderer's `applyEvent` reducer; kept inline to
+      // avoid a circular renderer→main import.
+      let assistantItems: TimelineItem[] = []
+      try {
+        for await (const event of this.backend.send(codexThreadId, input)) {
+          if (event.type === 'thread_created' && event.threadId) {
+            this.codexThreadIdByDbThreadId.set(dbThreadId, event.threadId)
+          }
+          if (event.type === 'error' && canRetryEncryptedThread && isInvalidEncryptedContentError(event.error)) {
+            canRetryEncryptedThread = false
+            this.codexThreadIdByDbThreadId.delete(dbThreadId)
+            break
+          }
+          if (!this.eventSink && this.win?.isDestroyed()) return
+          // Renderer's chat store filters events by its DB threadId. Always rewrite
+          // so codex-side UUIDs never leak into the UI layer.
+          this.emitEvent({ ...event, threadId: dbThreadId })
 
-      if (event.type === 'turn_completed') {
-        if (this.store && assistantItems.length > 0) {
-          try {
-            // TimelineItem is a discriminated union; Prisma's InputJsonValue
-            // doesn't accept tagged unions directly even though the runtime
-            // payload is plain JSON. A round-trip through JSON.parse forces
-            // the structural shape Prisma expects without losing information.
-            const jsonItems = JSON.parse(JSON.stringify(assistantItems)) as Parameters<
-              ThreadStore['addMessage']
-            >[0]['items']
-            await this.store.addMessage({
-              threadId: dbThreadId,
-              role: 'assistant',
-              items: jsonItems,
-            })
-            await this.store.updateLastMessageAt(dbThreadId).catch(() => undefined)
-          } catch (err) {
-            console.warn('[AgentManager] failed to persist assistant message:', err)
+          assistantItems = applyAssistantEvent(assistantItems, event)
+
+          if (event.type === 'turn_completed') {
+            if (this.store && assistantItems.length > 0) {
+              try {
+                // TimelineItem is a discriminated union; Prisma's InputJsonValue
+                // doesn't accept tagged unions directly even though the runtime
+                // payload is plain JSON. A round-trip through JSON.parse forces
+                // the structural shape Prisma expects without losing information.
+                const jsonItems = JSON.parse(JSON.stringify(assistantItems)) as Parameters<
+                  ThreadStore['addMessage']
+                >[0]['items']
+                await this.store.addMessage({
+                  threadId: dbThreadId,
+                  role: 'assistant',
+                  items: jsonItems,
+                })
+                await this.store.updateLastMessageAt(dbThreadId).catch(() => undefined)
+              } catch (err) {
+                console.warn('[AgentManager] failed to persist assistant message:', err)
+              }
+            }
+            // Reset accumulator for any subsequent turns on this same generator.
+            // (Practically the iterator ends after turn_completed, but keep this
+            // defensive in case backend yields multi-turn streams later.)
+            assistantItems = []
+
+            if (dbThreadId && !this.firstTurnDoneByThread.get(dbThreadId)) {
+              this.firstTurnDoneByThread.set(dbThreadId, true)
+              this.summarizer?.maybeSummarize(dbThreadId).catch((err: unknown) => {
+                console.warn('[AgentManager] thread title summarization failed:', err)
+              })
+            }
           }
         }
-        // Reset accumulator for any subsequent turns on this same generator.
-        // (Practically the iterator ends after turn_completed, but keep this
-        // defensive in case backend yields multi-turn streams later.)
-        assistantItems = []
-
-        if (dbThreadId && !this.firstTurnDoneByThread.get(dbThreadId)) {
-          this.firstTurnDoneByThread.set(dbThreadId, true)
-          this.summarizer?.maybeSummarize(dbThreadId).catch((err: unknown) => {
-            console.warn('[AgentManager] thread title summarization failed:', err)
-          })
+        if (!canRetryEncryptedThread && !this.codexThreadIdByDbThreadId.has(dbThreadId)) {
+          continue
         }
+        return
+      } catch (error) {
+        if (codexThreadId && canRetryEncryptedThread && isInvalidEncryptedContentError(error)) {
+          canRetryEncryptedThread = false
+          this.codexThreadIdByDbThreadId.delete(dbThreadId)
+          continue
+        }
+        throw error
       }
     }
   }
@@ -715,6 +797,11 @@ function validateCodexThreadId(threadId: string): string {
     throw new Error('Codex thread id must be a non-empty string')
   }
   return threadId
+}
+
+function isInvalidEncryptedContentError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.includes('invalid_encrypted_content') || message.includes('Encrypted content could not be decrypted')
 }
 
 /**

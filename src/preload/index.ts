@@ -182,6 +182,12 @@ const IPC_CHANNELS = {
     LIST_CODEX_THREADS: 'agent:list-codex-threads',
     READ_CODEX_THREAD: 'agent:read-codex-thread',
     FORK_CODEX_THREAD: 'agent:fork-codex-thread',
+    MCP_LIST_SERVERS: 'agent:mcp-list-servers',
+    MCP_BATCH_WRITE: 'agent:mcp-batch-write',
+    MCP_WRITE_VALUE: 'agent:mcp-write-value',
+    MCP_RELOAD: 'agent:mcp-reload',
+    MCP_OAUTH_LOGIN: 'agent:mcp-oauth-login',
+    MCP_READ_CONFIG: 'agent:mcp-read-config',
     OPEN_THREAD: 'agent:open-thread',
     RENAME_THREAD: 'agent:rename-thread',
     DELETE_THREAD: 'agent:delete-thread',
@@ -320,6 +326,12 @@ export interface ElectronAPI {
     listCodexThreads: () => Promise<CodexThreadSummary[]>
     readCodexThread: (threadId: string) => Promise<CodexThreadDetail>
     forkCodexThread: (threadId: string) => Promise<CodexThreadSummary>
+    listMcpServersRpc: (params?: unknown) => Promise<{ ok: boolean; error?: string; data?: unknown }>
+    batchWriteConfig: (edits: unknown[], reload?: boolean) => Promise<{ ok: boolean; error?: string }>
+    writeConfigValue: (keyPath: string, value: unknown) => Promise<{ ok: boolean; error?: string }>
+    reloadMcpServers: () => Promise<{ ok: boolean; error?: string }>
+    mcpOAuthLogin: (name: string) => Promise<{ ok: boolean; error?: string; authorization_url?: string }>
+    readConfig: () => Promise<{ ok: boolean; error?: string; config?: unknown }>
   }
   // Shell helpers (clipboard / save dialog)
   shell: {
@@ -694,6 +706,24 @@ const electronAPI: ElectronAPI = {
 
     forkCodexThread: (threadId: string) =>
       safeInvoke<CodexThreadSummary>(IPC_CHANNELS.AGENT.FORK_CODEX_THREAD, threadId),
+
+    listMcpServersRpc: (params?: unknown) =>
+      safeInvoke<{ ok: boolean; error?: string; data?: unknown }>(IPC_CHANNELS.AGENT.MCP_LIST_SERVERS, params),
+
+    batchWriteConfig: (edits: unknown[], reload?: boolean) =>
+      safeInvoke<{ ok: boolean; error?: string }>(IPC_CHANNELS.AGENT.MCP_BATCH_WRITE, edits, reload),
+
+    writeConfigValue: (keyPath: string, value: unknown) =>
+      safeInvoke<{ ok: boolean; error?: string }>(IPC_CHANNELS.AGENT.MCP_WRITE_VALUE, keyPath, value),
+
+    reloadMcpServers: () =>
+      safeInvoke<{ ok: boolean; error?: string }>(IPC_CHANNELS.AGENT.MCP_RELOAD),
+
+    mcpOAuthLogin: (name: string) =>
+      safeInvoke<{ ok: boolean; error?: string; authorization_url?: string }>(IPC_CHANNELS.AGENT.MCP_OAUTH_LOGIN, name),
+
+    readConfig: () =>
+      safeInvoke<{ ok: boolean; error?: string; config?: unknown }>(IPC_CHANNELS.AGENT.MCP_READ_CONFIG),
   },
 
   // ============ Shell helpers (clipboard / save dialog) ============
