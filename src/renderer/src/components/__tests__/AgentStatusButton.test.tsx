@@ -16,7 +16,10 @@ describe('AgentStatusButton', () => {
   it('renders compact pill with sandbox and approval', () => {
     render(<AgentStatusButton />)
 
-    expect(screen.getByTestId('agent-status-button').textContent).toMatch(/Codex/)
+    const button = screen.getByTestId('agent-status-button')
+    expect(button.textContent).toMatch(/Codex/)
+    expect(button.textContent).toContain('workspace-write')
+    expect(button.textContent).toContain('on-request')
   })
 
   it('opens chat panel on click', () => {
