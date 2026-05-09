@@ -93,8 +93,8 @@ const attachmentItem = (): TimelineItem => ({
   ],
 })
 
-function renderStack(items: TimelineItem[]): void {
-  render(<EvidenceStack items={items} />)
+function renderStack(items: TimelineItem[]): ReturnType<typeof render> {
+  return render(<EvidenceStack items={items} />)
 }
 
 function advanceClickDelay(): void {
@@ -139,6 +139,7 @@ describe('EvidenceStack', () => {
 
     const chip = screen.getByRole('button', { name: /cmd npm run test/i })
     fireEvent.click(chip)
+    fireEvent.click(chip)
     fireEvent.doubleClick(chip)
     advanceClickDelay()
 
@@ -146,6 +147,19 @@ describe('EvidenceStack', () => {
     expect(openReference.mock.calls[0]?.[0]).toMatchObject({ openBehavior: 'shellOutput' })
     expect(screen.queryByText('Command')).toBeNull()
     expect(screen.queryByText('ok')).toBeNull()
+  })
+
+  it('clears pending single-click expansion when unmounted', () => {
+    const { unmount } = renderStack([shellItem()])
+
+    fireEvent.click(screen.getByRole('button', { name: /cmd npm run test/i }))
+    expect(vi.getTimerCount()).toBe(1)
+
+    unmount()
+    expect(vi.getTimerCount()).toBe(0)
+
+    advanceClickDelay()
+    expect(screen.queryByText('Command')).toBeNull()
   })
 
   it('supports Enter to expand and modifier Enter to open the reference', () => {
@@ -174,6 +188,22 @@ describe('EvidenceStack', () => {
     expect(openReference.mock.calls[0]?.[0]).toMatchObject({ openBehavior: 'shellOutput' })
   })
 
+  it('keeps inline details visible when opening the panel fails', async () => {
+    openReference.mockRejectedValueOnce(new Error('panel unavailable'))
+    renderStack([shellItem()])
+
+    fireEvent.click(screen.getByRole('button', { name: /cmd npm run test/i }))
+    advanceClickDelay()
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Open in panel' }))
+    })
+
+    expect(screen.getByText('Could not open reference in panel.')).toBeTruthy()
+    expect(screen.getByText('Command')).toBeTruthy()
+    expect(screen.getByText('ok')).toBeTruthy()
+  })
+
   it('shows a fallback when a file changed without a diff', () => {
     renderStack([
       fileEditItem({
@@ -196,14 +226,20 @@ describe('EvidenceStack', () => {
     expect(screen.getByText('No output')).toBeTruthy()
   })
 
-  it('does not expand activity items without detail', () => {
+  it('renders activity items without detail or reference as inert chips', () => {
     renderStack([activityItem({ detail: undefined })])
 
-    const chip = screen.getByRole('button', { name: /mcp mcp:read_file success/i })
+    expect(screen.queryByRole('button', { name: /mcp mcp:read_file success/i })).toBeNull()
+
+    const chip = screen.getByText('mcp:read_file').closest('span')
+    expect(chip).toBeTruthy()
+    if (!chip) return
     expect(within(chip).queryByText('Expand')).toBeNull()
     fireEvent.click(chip)
+    fireEvent.keyDown(chip, { key: 'Enter' })
     advanceClickDelay()
 
     expect(screen.queryByText('Open in panel')).toBeNull()
+    expect(screen.queryByText('{"path":"src/App.tsx"}')).toBeNull()
   })
 })

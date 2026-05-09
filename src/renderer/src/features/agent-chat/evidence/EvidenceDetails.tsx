@@ -11,20 +11,26 @@ import { FileDiffBlock } from '../cards/FileDiffBlock'
 type EvidenceDetailsProps = {
   item: TimelineItem
   reference: AgentReference | null
+  openError: boolean
   onOpenReference: (reference: AgentReference) => void
 }
 
-export function EvidenceDetails({ item, reference, onOpenReference }: EvidenceDetailsProps) {
+export function EvidenceDetails({ item, reference, openError, onOpenReference }: EvidenceDetailsProps) {
   return (
     <div className="mt-1 rounded-lg border border-zinc-800/80 bg-zinc-950/70 p-2 text-xs text-zinc-300">
       {reference ? (
-        <button
-          type="button"
-          onClick={() => onOpenReference(reference)}
-          className="mb-2 rounded border border-cyan-500/40 px-2 py-1 text-[11px] font-medium text-cyan-200 hover:bg-cyan-500/10 focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 focus-visible:outline-none"
-        >
-          Open in panel
-        </button>
+        <div className="mb-2 flex flex-col items-start gap-1">
+          <button
+            type="button"
+            onClick={() => onOpenReference(reference)}
+            className="rounded border border-cyan-500/40 px-2 py-1 text-[11px] font-medium text-cyan-200 hover:bg-cyan-500/10 focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 focus-visible:outline-none"
+          >
+            Open in panel
+          </button>
+          {openError ? (
+            <div className="text-[11px] text-amber-300">Could not open reference in panel.</div>
+          ) : null}
+        </div>
       ) : null}
       {renderDetails(item)}
     </div>
@@ -75,11 +81,14 @@ function ShellDetails({ item }: { item: ShellItem }) {
 function FileEditDetails({ item }: { item: FileEditItem }) {
   return (
     <div>
-      {item.changes.map((change) =>
+      {item.changes.map((change, index) =>
         change.diff.trim().length > 0 ? (
-          <FileDiffBlock key={change.path} change={change} />
+          <FileDiffBlock key={`${change.operation}:${change.path}:${index}`} change={change} />
         ) : (
-          <div key={change.path} className="mb-2 rounded border border-zinc-800/70 bg-zinc-950 p-2">
+          <div
+            key={`${change.operation}:${change.path}:${index}`}
+            className="mb-2 rounded border border-zinc-800/70 bg-zinc-950 p-2"
+          >
             <div className="mb-1 font-mono text-[11px] text-zinc-200">{change.path}</div>
             <div className="text-[11px] text-zinc-500">File changed, but no diff was provided.</div>
           </div>
