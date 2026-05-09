@@ -9,19 +9,17 @@ import { ThreadCommandPalette } from './ThreadCommandPalette'
 import { ThreadSidebar } from './ThreadSidebar'
 import { TokenUsageMeter } from './TokenUsageMeter'
 import { CodexApprovalPrompt } from './CodexApprovalPrompt'
-import { CodexMcpPanel } from './CodexMcpPanel'
-import { CodexPermissionsPanel } from './CodexPermissionsPanel'
-import { CodexSkillsPanel } from './CodexSkillsPanel'
 import { CodexStatusPanel } from './CodexStatusPanel'
 import { findModel } from './models'
 import { useAgentChatStore } from './store'
+import { useAgentWorkspaceStore } from '../agent-workspace/useAgentWorkspaceStore'
 import { FileExplorerPanel } from '../file-explorer/FileExplorerPanel'
 import { useFileExplorerStore } from '../file-explorer/store'
 import { FileTreeIcon } from '../file-explorer/icons'
+import { useTabStore } from '../../stores/useTabStore'
 import type {
   AgentStreamEvent,
   CodexApprovalRequest,
-  CodexSessionConfig,
   CodexSessionStatus,
 } from '../../../../types/agent'
 
@@ -30,7 +28,7 @@ type AgentEventApi = {
     onEvent: (handler: (event: AgentStreamEvent) => void) => () => void
     onApprovalRequest?: (handler: (request: CodexApprovalRequest) => void) => () => void
     getSessionStatus?: () => Promise<CodexSessionStatus>
-    setSessionConfig?: (patch: Partial<CodexSessionConfig>) => Promise<CodexSessionStatus>
+    restartCodex?: () => Promise<{ ok: boolean; error?: string }>
   }
 }
 
@@ -55,6 +53,7 @@ export function AgentChatPanel() {
   const toggleFx = useFileExplorerStore((state) => state.toggleFx)
   const setFxOpen = useFileExplorerStore((state) => state.setFxOpen)
   const [codexStatus, setCodexStatus] = useState<CodexSessionStatus | undefined>(undefined)
+  const configDirty = useAgentWorkspaceStore((state) => state.configDirty)
 
   useEffect(() => {
     if (!isOpen) return undefined
@@ -80,15 +79,20 @@ export function AgentChatPanel() {
     void agent?.getSessionStatus?.().then(setCodexStatus).catch(() => undefined)
   }, [isOpen])
 
-  async function applySessionConfig(patch: Partial<CodexSessionConfig>): Promise<void> {
+  async function restartCodex(): Promise<void> {
     const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
-    if (!agent?.setSessionConfig) {
-      setError('Electron agent permissions API is unavailable')
+    if (!agent?.restartCodex) {
+      setError('Electron agent restart API is unavailable')
       return
     }
     try {
-      const nextStatus = await agent.setSessionConfig(patch)
-      setCodexStatus(nextStatus)
+      const result = await agent.restartCodex()
+      if (!result.ok) {
+        setError(result.error ?? 'Failed to restart Codex')
+        return
+      }
+      useAgentWorkspaceStore.getState().setConfigDirty(false)
+      void agent.getSessionStatus?.().then(setCodexStatus).catch(() => undefined)
       setError(undefined)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -208,11 +212,30 @@ export function AgentChatPanel() {
               </button>
             </div>
           </div>
-          <CodexPermissionsPanel status={codexStatus} onApply={applySessionConfig} />
-          <div className="mt-3 grid gap-3 xl:grid-cols-2">
-            <CodexMcpPanel />
-            <CodexSkillsPanel />
+          <div className="mt-2 flex items-center justify-between gap-3 font-mono text-xs text-zinc-400">
+            <span>
+              {`Codex · ${codexStatus?.sandboxMode ?? '?'} · ${codexStatus?.approvalPolicy ?? '?'} · ${codexStatus?.webSearch ?? '?'}`}
+            </span>
+            <button
+              type="button"
+              onClick={() => useTabStore.getState().switchTab('agentWorkspace')}
+              className="cursor-pointer text-cyan-300 hover:text-cyan-100"
+            >
+              Open Agent Workspace
+            </button>
           </div>
+          {configDirty ? (
+            <div className="mt-2 flex items-center justify-between gap-3 rounded-md border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">
+              <span>Codex config changed - restart to apply</span>
+              <button
+                type="button"
+                onClick={() => void restartCodex()}
+                className="cursor-pointer text-amber-200 underline"
+              >
+                Restart Codex
+              </button>
+            </div>
+          ) : null}
         </header>
 
         <div className="flex-1 overflow-y-auto px-4 py-4">
