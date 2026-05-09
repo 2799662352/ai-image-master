@@ -40,6 +40,10 @@ extraResources:
     to: codex/${platform}-${arch}
     filter:
       - "codex*"
+  - from: resources/docker-mcp/${platform}-${arch}
+    to: docker-mcp/${platform}-${arch}
+    filter:
+      - "docker-mcp*"
   - from: resources/skills
     to: skills
     filter:
