@@ -89,10 +89,14 @@ async function appendMutationAudit(
   paths: CodexWorkspacePaths,
   entry: Omit<CodexAuditLogEntry, 'tsIso'>,
 ): Promise<void> {
-  await appendAuditLog(paths.auditLogPath, {
-    tsIso: new Date().toISOString(),
-    ...entry,
-  })
+  try {
+    await appendAuditLog(paths.auditLogPath, {
+      tsIso: new Date().toISOString(),
+      ...entry,
+    })
+  } catch {
+    // Audit logging is best-effort and must not affect mutation semantics.
+  }
 }
 
 async function readFileOrEmpty(filePath: string): Promise<string> {
