@@ -153,6 +153,7 @@ interface AgentChatState {
   prevPreview: () => void
   toggle: () => void
   setInput: (input: string) => void
+  appendInputText: (text: string) => void
   setError: (error?: string) => void
   setSelectedModel: (modelId: string) => void
   addAttachment: (attachment: AgentAttachmentInput) => void
@@ -364,6 +365,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   },
   toggle: () => set((state) => ({ isOpen: !state.isOpen })),
   setInput: (input) => set({ input }),
+  appendInputText: (text) => set((state) => ({ input: state.input + text })),
   setError: (error) => set({ error }),
   setSelectedModel: (modelId) => {
     if (!AGENT_MODELS.some((m) => m.id === modelId)) return
