@@ -35,8 +35,6 @@ import type {
   CodexApprovalRequest,
   CodexApprovalResponse,
   CodexAuditLogEntry,
-  CodexMcpServerInput,
-  CodexMcpServerListItem,
   CodexMcpSummary,
   CodexSessionConfig,
   CodexSessionStatus,
@@ -168,11 +166,6 @@ const IPC_CHANNELS = {
     RESPOND_APPROVAL: 'agent:respond-approval',
     GET_MCP_SUMMARY: 'agent:get-mcp-summary',
     GET_SKILLS_SUMMARY: 'agent:get-skills-summary',
-    LIST_MCP: 'agent:list-mcp',
-    GET_MCP_DETAIL: 'agent:get-mcp-detail',
-    SAVE_MCP: 'agent:save-mcp',
-    DELETE_MCP: 'agent:delete-mcp',
-    SET_MCP_ENABLED: 'agent:set-mcp-enabled',
     LIST_SKILLS: 'agent:list-skills',
     GET_SKILL_DETAIL: 'agent:get-skill-detail',
     SAVE_SKILL: 'agent:save-skill',
@@ -313,11 +306,6 @@ export interface ElectronAPI {
     setAllowedRoots: (roots: string[]) => Promise<string[]>
     getMcpSummary: () => Promise<CodexMcpSummary>
     getSkillsSummary: () => Promise<CodexSkillsSummary>
-    listMcp: () => Promise<CodexMcpServerListItem[]>
-    getMcpDetail: (id: string) => Promise<CodexMcpServerInput | null>
-    saveMcp: (input: CodexMcpServerInput) => Promise<AgentApiResult & { id?: string; warnings?: string[] }>
-    deleteMcp: (id: string) => Promise<AgentApiResult>
-    setMcpEnabled: (id: string, enabled: boolean) => Promise<AgentApiResult>
     listSkills: () => Promise<CodexSkillListItem[]>
     getSkillDetail: (id: string) => Promise<CodexSkillInput | null>
     saveSkill: (input: CodexSkillInput) => Promise<AgentApiResult & { id?: string }>
@@ -666,21 +654,6 @@ const electronAPI: ElectronAPI = {
 
     getSkillsSummary: () =>
       safeInvoke<CodexSkillsSummary>(IPC_CHANNELS.AGENT.GET_SKILLS_SUMMARY),
-
-    listMcp: () =>
-      safeInvoke<CodexMcpServerListItem[]>(IPC_CHANNELS.AGENT.LIST_MCP),
-
-    getMcpDetail: (id: string) =>
-      safeInvoke<CodexMcpServerInput | null>(IPC_CHANNELS.AGENT.GET_MCP_DETAIL, id),
-
-    saveMcp: (input: CodexMcpServerInput) =>
-      safeInvoke<AgentApiResult & { id?: string; warnings?: string[] }>(IPC_CHANNELS.AGENT.SAVE_MCP, input),
-
-    deleteMcp: (id: string) =>
-      safeInvoke<AgentApiResult>(IPC_CHANNELS.AGENT.DELETE_MCP, id),
-
-    setMcpEnabled: (id: string, enabled: boolean) =>
-      safeInvoke<AgentApiResult>(IPC_CHANNELS.AGENT.SET_MCP_ENABLED, { id, enabled }),
 
     listSkills: () =>
       safeInvoke<CodexSkillListItem[]>(IPC_CHANNELS.AGENT.LIST_SKILLS),

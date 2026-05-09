@@ -64,75 +64,15 @@ afterEach(async () => {
 })
 
 describe('AgentManager workspace surface', () => {
-  it('exposes MCP, skill, log, and restart methods through the manager', () => {
+  it('exposes skill, log, and restart methods through the manager', () => {
     const mgr = new AgentManager({ userDataDir: tmpDir, backend: makeStubBackend() })
 
-    expect(typeof (mgr as any).listMcp).toBe('function')
-    expect(typeof (mgr as any).getMcpDetail).toBe('function')
-    expect(typeof (mgr as any).saveMcp).toBe('function')
-    expect(typeof (mgr as any).deleteMcp).toBe('function')
-    expect(typeof (mgr as any).setMcpEnabled).toBe('function')
     expect(typeof (mgr as any).listSkills).toBe('function')
     expect(typeof (mgr as any).getSkillDetail).toBe('function')
     expect(typeof (mgr as any).saveSkill).toBe('function')
     expect(typeof (mgr as any).deleteSkill).toBe('function')
     expect(typeof (mgr as any).getWorkspaceLogs).toBe('function')
     expect(typeof (mgr as any).restartCodex).toBe('function')
-  })
-
-  it('saveMcp writes workspace MCP under the allowed root and refreshes backend config with injected user data paths', async () => {
-    const { mgr, backend, workspace } = await makeManager()
-
-    const result = await mgr.saveMcp({
-      scope: 'workspace',
-      name: 'playwright',
-      enabled: true,
-      command: 'npx',
-      args: ['@playwright/mcp@latest'],
-      env: [],
-      description: 'Browser automation',
-    })
-
-    expect(result).toMatchObject({ ok: true, id: 'workspace:playwright' })
-    const workspaceMcpPath = path.join(workspace, '.codex', 'workspace-mcp.toml')
-    await expect(fs.readFile(workspaceMcpPath, 'utf8')).resolves.toContain('command = "npx"')
-    expect(backend.applyCalls).toHaveLength(1)
-    expectWorkspacePaths(backend.applyCalls[0], workspace)
-  })
-
-  it('failed saveMcp returns an error and does not refresh backend config', async () => {
-    const { mgr, backend } = await makeManager()
-
-    const result = await mgr.saveMcp({
-      scope: 'workspace',
-      name: '../bad',
-      enabled: true,
-      command: 'npx',
-      args: [],
-      env: [],
-      description: '',
-    })
-
-    expect(result).toMatchObject({ ok: false })
-    expect(backend.applyCalls).toHaveLength(0)
-  })
-
-  it('successful saveMcp throws a capability error when backend config refresh is unavailable', async () => {
-    const { mgr, workspace } = await makeManager(makeStubBackend({ applyConfigChange: false }))
-
-    await expect(mgr.saveMcp({
-      scope: 'workspace',
-      name: 'filesystem',
-      enabled: true,
-      command: 'node',
-      args: ['server.js'],
-      env: [],
-      description: '',
-    })).rejects.toThrow('Codex config refresh API is unavailable')
-
-    await expect(
-      fs.readFile(path.join(workspace, '.codex', 'workspace-mcp.toml'), 'utf8'),
-    ).resolves.toContain('command = "node"')
   })
 
   it('saveSkill writes workspace skills under the allowed root and does not refresh backend config', async () => {

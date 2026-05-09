@@ -10,7 +10,7 @@ type CodexRuntimeStatus = {
 type AgentWorkspaceOverviewApi = {
   agent?: {
     getSessionStatus?: () => Promise<CodexRuntimeStatus>
-    listMcp?: () => Promise<unknown[]>
+    getMcpSummary?: () => Promise<{ servers?: unknown[] }>
     listSkills?: () => Promise<unknown[]>
   }
 }
@@ -40,7 +40,7 @@ export function OverviewSection() {
     async function loadOverview(): Promise<void> {
       const [sessionResult, mcpResult, skillsResult] = await Promise.allSettled([
         api?.getSessionStatus?.() ?? Promise.reject(new Error('Codex runtime status API is unavailable')),
-        api?.listMcp?.() ?? Promise.reject(new Error('Codex MCP list API is unavailable')),
+        api?.getMcpSummary?.() ?? Promise.reject(new Error('Codex MCP summary API is unavailable')),
         api?.listSkills?.() ?? Promise.reject(new Error('Codex skills list API is unavailable')),
       ])
 
@@ -48,7 +48,8 @@ export function OverviewSection() {
 
       const warnings: string[] = []
       const runtime = sessionResult.status === 'fulfilled' ? sessionResult.value : undefined
-      const mcp = mcpResult.status === 'fulfilled' && Array.isArray(mcpResult.value) ? mcpResult.value : []
+      const mcpSummary = mcpResult.status === 'fulfilled' && mcpResult.value ? mcpResult.value : { servers: [] }
+      const mcp = Array.isArray(mcpSummary.servers) ? mcpSummary.servers : []
       const skills =
         skillsResult.status === 'fulfilled' && Array.isArray(skillsResult.value) ? skillsResult.value : []
 

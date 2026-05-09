@@ -19,11 +19,6 @@ const AGENT_HANDLE_CHANNELS = [
   'agent:respond-approval',
   'agent:get-mcp-summary',
   'agent:get-skills-summary',
-  'agent:list-mcp',
-  'agent:get-mcp-detail',
-  'agent:save-mcp',
-  'agent:delete-mcp',
-  'agent:set-mcp-enabled',
   'agent:list-skills',
   'agent:get-skill-detail',
   'agent:save-skill',
@@ -76,22 +71,6 @@ export function registerAgentIpc(manager: AgentManager, router: ToolRouter): voi
   )
   ipcMain.handle('agent:get-mcp-summary', () => manager.getMcpSummary())
   ipcMain.handle('agent:get-skills-summary', () => manager.getSkillsSummary())
-  ipcMain.handle('agent:list-mcp', () => handleWorkspaceRequest(() => manager.listMcp()))
-  ipcMain.handle('agent:get-mcp-detail', (_event, id: unknown) =>
-    handleWorkspaceRequest(() => manager.getMcpDetail(validateWorkspaceId(id, 'MCP server id'))),
-  )
-  ipcMain.handle('agent:save-mcp', (_event, input: unknown) =>
-    handleWorkspaceRequest(() => manager.saveMcp(input as Parameters<AgentManager['saveMcp']>[0])),
-  )
-  ipcMain.handle('agent:delete-mcp', (_event, id: unknown) =>
-    handleWorkspaceRequest(() => manager.deleteMcp(validateWorkspaceId(id, 'MCP server id'))),
-  )
-  ipcMain.handle('agent:set-mcp-enabled', (_event, payload: unknown) =>
-    handleWorkspaceRequest(() => {
-      const { id, enabled } = validateSetMcpEnabledPayload(payload)
-      return manager.setMcpEnabled(id, enabled)
-    }),
-  )
   ipcMain.handle('agent:list-skills', () => handleWorkspaceRequest(() => manager.listSkills()))
   ipcMain.handle('agent:get-skill-detail', (_event, id: unknown) =>
     handleWorkspaceRequest(() => manager.getSkillDetail(validateWorkspaceId(id, 'Skill id'))),
@@ -144,18 +123,6 @@ function validateWorkspaceId(value: unknown, label: string): string {
     throw new Error(`${label} must be a non-empty string`)
   }
   return value
-}
-
-function validateSetMcpEnabledPayload(payload: unknown): { id: string; enabled: boolean } {
-  if (!payload || typeof payload !== 'object') {
-    throw new Error('MCP enabled payload must be an object')
-  }
-  const input = payload as Record<string, unknown>
-  const id = validateWorkspaceId(input.id, 'MCP server id')
-  if (typeof input.enabled !== 'boolean') {
-    throw new Error('MCP enabled state must be a boolean')
-  }
-  return { id, enabled: input.enabled }
 }
 
 function validateApprovalResponse(payload: unknown): CodexApprovalResponse {

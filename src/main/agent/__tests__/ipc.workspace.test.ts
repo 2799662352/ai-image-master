@@ -38,11 +38,6 @@ import { ipcMain } from 'electron'
 import { registerAgentIpc } from '../ipc'
 
 const WORKSPACE_CHANNELS = [
-  'agent:list-mcp',
-  'agent:get-mcp-detail',
-  'agent:save-mcp',
-  'agent:delete-mcp',
-  'agent:set-mcp-enabled',
   'agent:list-skills',
   'agent:get-skill-detail',
   'agent:save-skill',
@@ -52,11 +47,6 @@ const WORKSPACE_CHANNELS = [
 ]
 
 interface FakeManager {
-  listMcp: ReturnType<typeof vi.fn>
-  getMcpDetail: ReturnType<typeof vi.fn>
-  saveMcp: ReturnType<typeof vi.fn>
-  deleteMcp: ReturnType<typeof vi.fn>
-  setMcpEnabled: ReturnType<typeof vi.fn>
   listSkills: ReturnType<typeof vi.fn>
   getSkillDetail: ReturnType<typeof vi.fn>
   saveSkill: ReturnType<typeof vi.fn>
@@ -67,11 +57,6 @@ interface FakeManager {
 
 function makeManager(): FakeManager {
   return {
-    listMcp: vi.fn().mockResolvedValue([]),
-    getMcpDetail: vi.fn().mockResolvedValue({ id: 'mcp-1' }),
-    saveMcp: vi.fn().mockResolvedValue({ ok: true, id: 'mcp-1' }),
-    deleteMcp: vi.fn().mockResolvedValue({ ok: true }),
-    setMcpEnabled: vi.fn().mockResolvedValue({ ok: true }),
     listSkills: vi.fn().mockResolvedValue([]),
     getSkillDetail: vi.fn().mockResolvedValue({ id: 'skill-1' }),
     saveSkill: vi.fn().mockResolvedValue({ ok: true, id: 'skill-1' }),
@@ -115,36 +100,8 @@ describe('agent IPC workspace handlers', () => {
     vi.clearAllMocks()
   })
 
-  it('registers MCP, skill, log, and restart channels', () => {
+  it('registers skill, log, and restart channels', () => {
     expect(channels()).toEqual(expect.arrayContaining(WORKSPACE_CHANNELS))
-  })
-
-  it('forwards agent:save-mcp input and returns the manager result', async () => {
-    const handler = get('agent:save-mcp')
-    const input = { id: 'mcp-1', command: 'npx', args: ['example-server'] }
-    const result = { ok: true, id: 'mcp-1' }
-    manager.saveMcp.mockResolvedValueOnce(result)
-
-    await expect(handler!({}, input)).resolves.toBe(result)
-
-    expect(manager.saveMcp).toHaveBeenCalledWith(input)
-  })
-
-  it('validates and forwards agent:set-mcp-enabled payloads', async () => {
-    const handler = get('agent:set-mcp-enabled')
-
-    await expect(handler!({}, { id: 'mcp-1', enabled: false })).resolves.toEqual({ ok: true })
-    await expect(handler!({}, { id: '', enabled: false })).resolves.toEqual({
-      ok: false,
-      error: 'MCP server id must be a non-empty string',
-    })
-    await expect(handler!({}, { id: 'mcp-1', enabled: 'false' })).resolves.toEqual({
-      ok: false,
-      error: 'MCP enabled state must be a boolean',
-    })
-
-    expect(manager.setMcpEnabled).toHaveBeenCalledTimes(1)
-    expect(manager.setMcpEnabled).toHaveBeenCalledWith('mcp-1', false)
   })
 
   it('returns a success envelope when agent:restart-codex resolves', async () => {
@@ -170,7 +127,7 @@ describe('agent IPC workspace handlers', () => {
       router as unknown as Parameters<typeof registerAgentIpc>[1],
     )
 
-    expect(get('agent:save-mcp')).toBeTypeOf('function')
+    expect(get('agent:save-skill')).toBeTypeOf('function')
     expect(removedHandlers()).toEqual(expect.arrayContaining(WORKSPACE_CHANNELS))
   })
 })

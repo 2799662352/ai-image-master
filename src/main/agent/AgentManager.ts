@@ -7,17 +7,12 @@ import { dialog } from 'electron'
 import { CodexLocalBackend } from './CodexLocalBackend'
 import { DEFAULT_CODEX_SESSION_CONFIG } from './codexLaunch'
 import {
-  deleteMcp,
   deleteSkill,
-  getMcpDetail,
   getSkillDetail,
-  listMcp,
   listSkills,
   readAuditLog,
   resolveWorkspacePaths,
-  saveMcp,
   saveSkill,
-  setMcpEnabled,
 } from './codexConfigStore'
 import { discoverCodexSkills, readMcpSummary } from './codexConfigDiscovery'
 import { mapReferencesToInputItems } from './codexUserInput'
@@ -28,7 +23,6 @@ import type {
   AgentStreamEvent,
   CodexApprovalRequest,
   CodexApprovalResponse,
-  CodexMcpServerInput,
   CodexMcpSummary,
   CodexSessionConfig,
   CodexSessionStatus,
@@ -293,35 +287,6 @@ export class AgentManager {
       cwd: this.sessionConfig.writableRoots[0] ?? process.cwd(),
       home: os.homedir(),
     })
-  }
-
-  async listMcp() {
-    return listMcp(this.workspacePaths())
-  }
-
-  async getMcpDetail(id: string) {
-    return getMcpDetail(this.workspacePaths(), id)
-  }
-
-  async saveMcp(input: CodexMcpServerInput) {
-    const paths = this.workspacePaths()
-    const result = await saveMcp(paths, input)
-    if (result.ok) await this.applyMcpConfigChange(paths)
-    return result
-  }
-
-  async deleteMcp(id: string) {
-    const paths = this.workspacePaths()
-    const result = await deleteMcp(paths, id)
-    if (result.ok) await this.applyMcpConfigChange(paths)
-    return result
-  }
-
-  async setMcpEnabled(id: string, enabled: boolean) {
-    const paths = this.workspacePaths()
-    const result = await setMcpEnabled(paths, id, enabled)
-    if (result.ok) await this.applyMcpConfigChange(paths)
-    return result
   }
 
   async listSkills() {

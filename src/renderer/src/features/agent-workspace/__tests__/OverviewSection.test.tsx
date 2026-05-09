@@ -16,12 +16,12 @@ describe('OverviewSection', () => {
       value: {
         agent: {
           getSessionStatus: vi.fn().mockResolvedValue({
-            sandboxMode: 'workspace-write',
-            approvalPolicy: 'on-request',
-            webSearch: 'cached',
+            sandboxMode: 'danger-full-access',
+            approvalPolicy: 'never',
+            webSearch: 'live',
             writableRoots: ['/a', '/b'],
           }),
-          listMcp: vi.fn().mockResolvedValue([{ name: 'a' }, { name: 'b' }]),
+          getMcpSummary: vi.fn().mockResolvedValue({ servers: [{ name: 'a' }, { name: 'b' }] }),
           listSkills: vi.fn().mockResolvedValue([{ name: 'x' }]),
         },
       },
@@ -29,9 +29,9 @@ describe('OverviewSection', () => {
 
     render(<OverviewSection />)
 
-    expect(await screen.findByText('workspace-write')).toBeTruthy()
-    expect(screen.getByText('on-request')).toBeTruthy()
-    expect(screen.getByText('cached')).toBeTruthy()
+    expect(await screen.findByText('danger-full-access')).toBeTruthy()
+    expect(screen.getByText('never')).toBeTruthy()
+    expect(screen.getByText('live')).toBeTruthy()
     expect(screen.getByText('2 writable roots')).toBeTruthy()
     expect(screen.getByText('2 MCP servers')).toBeTruthy()
     expect(screen.getByText('1 skill')).toBeTruthy()
