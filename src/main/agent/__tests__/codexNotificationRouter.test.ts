@@ -402,6 +402,38 @@ describe('CodexNotificationRouter', () => {
       })
     })
 
+    it('preserves explicit empty completed unifiedDiff over streamed fallback text', () => {
+      const router = new CodexNotificationRouter()
+
+      router.route('item/fileChange/outputDelta', {
+        threadId: 'thread-1',
+        itemId: 'file-1',
+        delta: '@@\n-old\n+new\n',
+      })
+
+      expect(
+        router.route('item/completed', {
+          threadId: 'thread-1',
+          item: {
+            id: 'file-1',
+            type: 'fileChange',
+            changes: [{ path: 'src/a.ts', kind: 'edit', unifiedDiff: '' }],
+          },
+        }),
+      ).toMatchObject({
+        final: {
+          changes: [
+            {
+              path: 'src/a.ts',
+              diff: '',
+              added: 0,
+              removed: 0,
+            },
+          ],
+        },
+      })
+    })
+
     it('does not attach streamed fallback diff to an arbitrary change when multiple changes are present', () => {
       const router = new CodexNotificationRouter()
 

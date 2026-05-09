@@ -145,6 +145,10 @@ function readNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
+function lacksUnifiedDiffField(change: unknown): boolean {
+  return !!change && typeof change === 'object' && !Object.prototype.hasOwnProperty.call(change, 'unifiedDiff')
+}
+
 /**
  * Coerce the various shapes Codex / OpenAI Responses API gateways use for
  * token-usage payloads into our normalized `AgentTokenUsage` shape. Returns
@@ -471,7 +475,9 @@ export class CodexNotificationRouter {
             // parseChange asserts the runtime shape; the array element type is
             // intentionally loose at the wire level since gateways drift.
             const changes = (fallbackRawChanges as Parameters<typeof parseChange>[0][]).map(parseChange)
-            if (fallbackDiff && changes.length === 1 && changes[0].diff.length === 0) {
+            const canUseFallbackDiff =
+              fallbackRawChanges.length === 1 && lacksUnifiedDiffField(fallbackRawChanges[0])
+            if (fallbackDiff && canUseFallbackDiff && changes.length === 1 && changes[0].diff.length === 0) {
               const { added, removed } = countDiffLines(fallbackDiff)
               changes[0].diff = fallbackDiff
               changes[0].added = added
