@@ -99,7 +99,14 @@ export function registerAgentIpc(manager: AgentManager, router: ToolRouter): voi
   ipcMain.handle('agent:get-workspace-logs', (_event, opts: unknown) =>
     handleWorkspaceRequest(() => manager.getWorkspaceLogs(opts as Parameters<AgentManager['getWorkspaceLogs']>[0])),
   )
-  ipcMain.handle('agent:restart-codex', () => handleWorkspaceRequest(() => manager.restartCodex()))
+  ipcMain.handle('agent:restart-codex', async () => {
+    try {
+      await manager.restartCodex()
+      return { ok: true as const }
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
   ipcMain.handle('agent:list-codex-threads', () => manager.listCodexThreads())
   ipcMain.handle('agent:read-codex-thread', async (_event, threadId: unknown) =>
     manager.readCodexThread(validateThreadId(threadId)),

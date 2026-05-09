@@ -37,6 +37,20 @@ vi.mock('electron', () => {
 import { ipcMain } from 'electron'
 import { registerAgentIpc } from '../ipc'
 
+const WORKSPACE_CHANNELS = [
+  'agent:list-mcp',
+  'agent:get-mcp-detail',
+  'agent:save-mcp',
+  'agent:delete-mcp',
+  'agent:set-mcp-enabled',
+  'agent:list-skills',
+  'agent:get-skill-detail',
+  'agent:save-skill',
+  'agent:delete-skill',
+  'agent:get-workspace-logs',
+  'agent:restart-codex',
+]
+
 interface FakeManager {
   listMcp: ReturnType<typeof vi.fn>
   getMcpDetail: ReturnType<typeof vi.fn>
@@ -63,7 +77,7 @@ function makeManager(): FakeManager {
     saveSkill: vi.fn().mockResolvedValue({ ok: true, id: 'skill-1' }),
     deleteSkill: vi.fn().mockResolvedValue({ ok: true }),
     getWorkspaceLogs: vi.fn().mockResolvedValue([]),
-    restartCodex: vi.fn().mockResolvedValue({ ok: true }),
+    restartCodex: vi.fn().mockResolvedValue(undefined),
   }
 }
 
@@ -102,19 +116,7 @@ describe('agent IPC workspace handlers', () => {
   })
 
   it('registers MCP, skill, log, and restart channels', () => {
-    expect(channels()).toEqual(expect.arrayContaining([
-      'agent:list-mcp',
-      'agent:get-mcp-detail',
-      'agent:save-mcp',
-      'agent:delete-mcp',
-      'agent:set-mcp-enabled',
-      'agent:list-skills',
-      'agent:get-skill-detail',
-      'agent:save-skill',
-      'agent:delete-skill',
-      'agent:get-workspace-logs',
-      'agent:restart-codex',
-    ]))
+    expect(channels()).toEqual(expect.arrayContaining(WORKSPACE_CHANNELS))
   })
 
   it('forwards agent:save-mcp input and returns the manager result', async () => {
@@ -145,6 +147,14 @@ describe('agent IPC workspace handlers', () => {
     expect(manager.setMcpEnabled).toHaveBeenCalledWith('mcp-1', false)
   })
 
+  it('returns a success envelope when agent:restart-codex resolves', async () => {
+    const handler = get('agent:restart-codex')
+
+    await expect(handler!({})).resolves.toEqual({ ok: true })
+
+    expect(manager.restartCodex).toHaveBeenCalledOnce()
+  })
+
   it('returns an error envelope when agent:restart-codex throws', async () => {
     const handler = get('agent:restart-codex')
     manager.restartCodex.mockRejectedValueOnce(new Error('restart failed'))
@@ -161,6 +171,6 @@ describe('agent IPC workspace handlers', () => {
     )
 
     expect(get('agent:save-mcp')).toBeTypeOf('function')
-    expect(removedHandlers()).toContain('agent:save-mcp')
+    expect(removedHandlers()).toEqual(expect.arrayContaining(WORKSPACE_CHANNELS))
   })
 })
