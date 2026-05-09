@@ -13,6 +13,7 @@ import {
   PromptTemplatesPage,
   StoryboardSplitPage,
   SmartErasePage,
+  AgentWorkspacePage,
 } from '../pages-react'
 
 const PAGE_MAP: Record<TabName, React.LazyExoticComponent<() => React.JSX.Element>> = {
@@ -24,6 +25,7 @@ const PAGE_MAP: Record<TabName, React.LazyExoticComponent<() => React.JSX.Elemen
   settings: SettingsPage,
   director: DirectorPage,
   promptTemplates: PromptTemplatesPage,
+  agentWorkspace: AgentWorkspacePage,
   storyboardSplit: StoryboardSplitPage,
   smartErase: SmartErasePage,
 }

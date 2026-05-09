@@ -11,6 +11,7 @@ export const VALID_TABS = [
   'storyboardSplit',
   'smartErase',
   'promptTemplates',
+  'agentWorkspace',
   'settings',
 ] as const
 
