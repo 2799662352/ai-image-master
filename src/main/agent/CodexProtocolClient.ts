@@ -26,6 +26,19 @@ import type {
 } from '../../types/agent'
 import type { AgentInput } from './types'
 
+export interface McpServerStatusEntry {
+  name: string
+  tools: Record<string, { description?: string; inputSchema?: unknown }>
+  resources: Array<{ uri: string; name?: string; description?: string }>
+  resource_templates: Array<{ uriTemplate: string; name?: string }>
+  auth_status: string
+}
+
+export interface McpServerStatusListResponse {
+  mcpServers: McpServerStatusEntry[]
+  pagination?: { nextCursor?: string }
+}
+
 const DEFAULT_RPC_TIMEOUT_MS = 30_000
 const DEFAULT_CONNECT_TIMEOUT_MS = 10_000
 const DEFAULT_CONNECT_INTERVAL_MS = 100
@@ -239,6 +252,36 @@ export class CodexProtocolClient {
   async forkThread(threadId: string): Promise<CodexThreadSummary> {
     const response = await this.rpc<unknown>('thread/fork', { threadId })
     return normalizeThreadSummary(extractThreadRecord(response))
+  }
+
+  // ─── MCP Management RPC ───────────────────────────────────────────────
+
+  async listMcpServers(params?: { detail?: string; limit?: number; cursor?: string }): Promise<McpServerStatusListResponse> {
+    return this.rpc<McpServerStatusListResponse>('mcpServerStatus/list', params ?? { detail: 'full' })
+  }
+
+  async batchWriteConfig(edits: Array<{ keyPath: string; value: unknown; mergeStrategy?: string }>, reloadUserConfig = true): Promise<void> {
+    await this.rpc('config/batchWrite', { edits, reloadUserConfig })
+  }
+
+  async writeConfigValue(keyPath: string, value: unknown): Promise<void> {
+    await this.rpc('config/value/write', { keyPath, value })
+  }
+
+  async readConfig(): Promise<{ config: Record<string, unknown> }> {
+    return this.rpc('config/read', {})
+  }
+
+  async reloadMcpServers(): Promise<void> {
+    await this.rpc('config/mcpServer/reload', {})
+  }
+
+  async mcpOAuthLogin(name: string, scopes?: string[]): Promise<{ authorization_url: string }> {
+    return this.rpc('mcpServer/oauth/login', { name, ...(scopes ? { scopes } : {}) })
+  }
+
+  async mcpToolCall(params: { threadId?: string; server: string; tool: string; arguments?: unknown }): Promise<unknown> {
+    return this.rpc('mcpServer/tool/call', params)
   }
 
   respondToServerRequest(response: CodexApprovalResponse): void {
