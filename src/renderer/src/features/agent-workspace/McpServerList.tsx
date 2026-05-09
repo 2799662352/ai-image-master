@@ -16,6 +16,9 @@ export function McpServerList({ onOpenEditor, onOpenImport }: McpServerListProps
   const loading = useMcpStore((s) => s.loading)
   const error = useMcpStore((s) => s.error)
   const loggingIn = useMcpStore((s) => s.loggingIn)
+  const hasFetchedOnce = useMcpStore((s) => s.hasFetchedOnce)
+  const syncing = useMcpStore((s) => s.syncing)
+  const syncError = useMcpStore((s) => s.syncError)
   const fetchServers = useMcpStore((s) => s.fetchServers)
   const toggleEnabled = useMcpStore((s) => s.toggleEnabled)
   const deleteServer = useMcpStore((s) => s.deleteServer)
@@ -26,8 +29,12 @@ export function McpServerList({ onOpenEditor, onOpenImport }: McpServerListProps
   useMcpAutoGatewayFix()
 
   useEffect(() => {
-    fetchServers()
-  }, [fetchServers])
+    // Only auto-fetch if we have never loaded yet — keeps state when the user
+    // navigates away and returns. Manual refresh is still available below.
+    if (!hasFetchedOnce) {
+      fetchServers()
+    }
+  }, [fetchServers, hasFetchedOnce])
 
   useEffect(() => {
     const api = (window as any).electronAPI?.agent
@@ -92,8 +99,20 @@ export function McpServerList({ onOpenEditor, onOpenImport }: McpServerListProps
       <AutoFixToast />
       {/* Header with action buttons */}
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-medium text-zinc-200">MCP 服务器 ({servers.length})</h2>
+        <h2 className="flex items-center gap-2 text-sm font-medium text-zinc-200">
+          <span>MCP 服务器 ({servers.length})</span>
+          {syncing && <span className="text-[11px] text-zinc-500">同步中...</span>}
+        </h2>
         <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => fetchServers()}
+            disabled={syncing}
+            className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
+            title="刷新状态"
+          >
+            刷新
+          </button>
           <button
             type="button"
             onClick={onOpenImport}
@@ -110,6 +129,12 @@ export function McpServerList({ onOpenEditor, onOpenImport }: McpServerListProps
           </button>
         </div>
       </div>
+
+      {syncError && (
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
+          实时状态同步失败：{syncError}（已显示配置中的服务器，可点击「刷新」重试）
+        </div>
+      )}
 
       {/* Server cards */}
       {servers.length === 0 ? (

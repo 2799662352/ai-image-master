@@ -15,6 +15,7 @@ self.MonacoEnvironment = {
 loader.config({ monaco })
 
 import { mcpConfigSchema } from './mcpSchemaJson'
+import { stripNullDeep } from './mcpConfigSanitizer'
 import { useMcpStore } from './useMcpStore'
 
 interface McpJsonEditorProps {
@@ -90,7 +91,7 @@ export function McpJsonEditor({ serverName, onClose }: McpJsonEditorProps): Reac
 
       const edits = Object.entries(parsed).map(([name, config]) => ({
         keyPath: `mcp_servers.${name}`,
-        value: config,
+        value: stripNullDeep(config),
         mergeStrategy: 'replace',
       }))
 

@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
 import type React from 'react'
 
+import { stripNullDeep } from './mcpConfigSanitizer'
 import { useMcpStore } from './useMcpStore'
 
 interface ParsedServer {
@@ -94,7 +95,7 @@ export function BulkImportModal({ onClose }: BulkImportModalProps): React.JSX.El
     try {
       const edits = servers
         .filter((s) => selected.has(s.name))
-        .map((s) => ({ keyPath: `mcp_servers.${s.name}`, value: s.config, mergeStrategy: 'replace' }))
+        .map((s) => ({ keyPath: `mcp_servers.${s.name}`, value: stripNullDeep(s.config), mergeStrategy: 'replace' }))
 
       if (edits.length === 0) {
         setImportError('请至少选择一个服务器')

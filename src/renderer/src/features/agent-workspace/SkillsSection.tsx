@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type React from 'react'
 
 import type { AgentApiResult, CodexSkillListItem } from '../../../../types/agent'
+import { SkillEditor } from './SkillEditor'
 
 type SkillsApi = {
   agent?: {
@@ -116,9 +117,13 @@ export function SkillsSection({ insertIntoChat }: SkillsSectionProps): React.JSX
       </div>
 
       {editing ? (
-        <div className="rounded-xl border border-cyan-400/15 bg-zinc-950/70 p-4 text-sm text-zinc-400">
-          Skill editor lands in Task 26.
-        </div>
+        <SkillEditor
+          mode={editing}
+          onClose={() => {
+            setEditing(null)
+            void loadItems()
+          }}
+        />
       ) : null}
 
       {error ? (

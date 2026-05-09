@@ -18,7 +18,7 @@ const { useMcpStore } = await import('../useMcpStore')
 
 describe('useMcpStore', () => {
   beforeEach(() => {
-    useMcpStore.setState({ servers: [], loading: false, error: null })
+    useMcpStore.setState({ servers: [], loading: false, error: null, hasFetchedOnce: false, syncing: false })
     vi.clearAllMocks()
   })
 
@@ -45,6 +45,54 @@ describe('useMcpStore', () => {
     expect(state.servers[0].name).toBe('github')
     expect(state.servers[0].tools).toHaveLength(1)
     expect(state.servers[0].tools[0].name).toBe('search_code')
+  })
+
+  it('fetchServers falls back to config-only when listMcpServersRpc fails', async () => {
+    mockApi.listMcpServersRpc.mockResolvedValue({ ok: false, error: 'rpc died' })
+    mockApi.readConfig.mockResolvedValue({
+      ok: true,
+      config: { mcp_servers: { local: { command: 'node', args: ['s.js'] } } },
+    })
+
+    await useMcpStore.getState().fetchServers()
+    const state = useMcpStore.getState()
+    expect(state.servers).toHaveLength(1)
+    expect(state.servers[0].name).toBe('local')
+    expect(state.loading).toBe(false)
+    expect(state.syncError).toBe('rpc died')
+  })
+
+  it('fetchServers does NOT set loading on subsequent calls (uses syncing instead)', async () => {
+    mockApi.listMcpServersRpc.mockResolvedValue({ ok: true, data: { mcpServers: [] } })
+    mockApi.readConfig.mockResolvedValue({ ok: true, config: { mcp_servers: {} } })
+
+    await useMcpStore.getState().fetchServers()
+    expect(useMcpStore.getState().hasFetchedOnce).toBe(true)
+    expect(useMcpStore.getState().loading).toBe(false)
+
+    let observedLoading: boolean | null = null
+    mockApi.listMcpServersRpc.mockImplementationOnce(async () => {
+      observedLoading = useMcpStore.getState().loading
+      return { ok: true, data: { mcpServers: [] } }
+    })
+    await useMcpStore.getState().fetchServers()
+    expect(observedLoading).toBe(false)
+  })
+
+  it('fetchServers does not block forever when RPC hangs (timeout)', async () => {
+    vi.useFakeTimers()
+    try {
+      mockApi.listMcpServersRpc.mockImplementation(() => new Promise(() => {}))
+      mockApi.readConfig.mockImplementation(() => new Promise(() => {}))
+      const promise = useMcpStore.getState().fetchServers()
+      await vi.advanceTimersByTimeAsync(15_000)
+      await promise
+      const state = useMcpStore.getState()
+      expect(state.loading).toBe(false)
+      expect(state.syncError).toMatch(/timeout|超时/i)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('updateStatus updates a server status in-place', () => {

@@ -25,6 +25,9 @@ interface McpStore {
   loading: boolean
   error: string | null
   loggingIn: string | null
+  hasFetchedOnce: boolean
+  syncing: boolean
+  syncError: string | null
   fetchServers: () => Promise<void>
   updateStatus: (name: string, status: string, error: string | null) => void
   toggleEnabled: (name: string, enabled: boolean) => Promise<void>
@@ -38,6 +41,66 @@ interface McpStore {
   lastConvertedFingerprint: string | null
 }
 
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timeout after ${ms}ms`)), ms)
+    p.then(
+      (v) => {
+        clearTimeout(timer)
+        resolve(v)
+      },
+      (err) => {
+        clearTimeout(timer)
+        reject(err)
+      },
+    )
+  })
+}
+
+function buildServersFromConfig(
+  configMap: Record<string, any>,
+  liveServers: any[] = [],
+): McpServerCard[] {
+  const live = new Map<string, any>(liveServers.map((s: any) => [s.name, s]))
+  const names = new Set<string>([...Object.keys(configMap), ...liveServers.map((s: any) => s.name)])
+  return Array.from(names).map((name) => {
+    const configEntry = configMap[name]
+    const liveEntry = live.get(name)
+    const isBuiltin = !configEntry
+    const tools: McpTool[] = Object.entries(liveEntry?.tools ?? {}).map(([n, meta]: [string, any]) => ({
+      name: n,
+      description: meta?.description,
+      disabled: false,
+    }))
+    let type: 'stdio' | 'http' = 'stdio'
+    let command: string | undefined
+    let url: string | undefined
+    let args: string[] | undefined
+    if (configEntry) {
+      if (configEntry.url) {
+        type = 'http'
+        url = configEntry.url
+      } else {
+        command = configEntry.command
+        args = configEntry.args
+      }
+    }
+    return {
+      name,
+      type,
+      command,
+      url,
+      args,
+      enabled: configEntry?.enabled !== false,
+      status: 'unknown' as const,
+      error: null,
+      tools,
+      authStatus: liveEntry?.auth_status,
+      isBuiltin,
+    }
+  })
+}
+
 function getApi() {
   return (window as any).electronAPI?.agent
 }
@@ -47,6 +110,9 @@ export const useMcpStore = create<McpStore>((set, get) => ({
   loading: false,
   error: null,
   loggingIn: null,
+  hasFetchedOnce: false,
+  syncing: false,
+  syncError: null,
   lastAutoFix: null,
   lastConvertedFingerprint: null,
 
@@ -98,70 +164,61 @@ export const useMcpStore = create<McpStore>((set, get) => ({
   },
 
   async fetchServers() {
-    set({ loading: true, error: null })
+    const isFirstFetch = !get().hasFetchedOnce
+    if (isFirstFetch) {
+      set({ loading: true, error: null, syncError: null })
+    } else {
+      set({ syncing: true, syncError: null })
+    }
+
     const api = getApi()
-    if (!api?.listMcpServersRpc) {
-      set({ loading: false, error: 'MCP API 不可用' })
+    if (!api?.listMcpServersRpc || !api?.readConfig) {
+      set({ loading: false, syncing: false, error: 'MCP API 不可用', hasFetchedOnce: true })
       return
     }
 
-    try {
-      const [statusRes, configRes] = await Promise.all([
-        api.listMcpServersRpc({ detail: 'full' }),
-        api.readConfig(),
-      ])
+    // Run both calls in parallel but tolerate either failing/hanging. If only
+    // config succeeds we still render cards (without live tools / auth status).
+    const TIMEOUT_MS = 8_000
+    const [statusResult, configResult] = await Promise.allSettled([
+      withTimeout(api.listMcpServersRpc({ detail: 'full' }), TIMEOUT_MS, 'listMcpServersRpc'),
+      withTimeout(api.readConfig(), TIMEOUT_MS, 'readConfig'),
+    ])
 
-      if (!statusRes.ok) {
-        set({ loading: false, error: statusRes.error ?? '获取 MCP 状态失败' })
-        return
-      }
+    let liveServers: any[] = []
+    let configMap: Record<string, any> = {}
+    let syncError: string | null = null
 
-      const mcpServers = statusRes.data?.mcpServers ?? []
-      const configuredServers: Record<string, any> = configRes?.config?.mcp_servers ?? {}
-
-      const servers: McpServerCard[] = mcpServers.map((s: any) => {
-        const configEntry = configuredServers[s.name]
-        const isBuiltin = !configEntry
-        const tools: McpTool[] = Object.entries(s.tools ?? {}).map(([name, meta]: [string, any]) => ({
-          name,
-          description: meta?.description,
-          disabled: false,
-        }))
-
-        let type: 'stdio' | 'http' = 'stdio'
-        let command: string | undefined
-        let url: string | undefined
-        let args: string[] | undefined
-
-        if (configEntry) {
-          if (configEntry.url) {
-            type = 'http'
-            url = configEntry.url
-          } else {
-            command = configEntry.command
-            args = configEntry.args
-          }
-        }
-
-        return {
-          name: s.name,
-          type,
-          command,
-          url,
-          args,
-          enabled: configEntry?.enabled !== false,
-          status: 'unknown' as const,
-          error: null,
-          tools,
-          authStatus: s.auth_status,
-          isBuiltin,
-        }
-      })
-
-      set({ servers, loading: false })
-    } catch (err) {
-      set({ loading: false, error: err instanceof Error ? err.message : String(err) })
+    if (statusResult.status === 'fulfilled' && statusResult.value?.ok) {
+      liveServers = statusResult.value.data?.mcpServers ?? []
+    } else {
+      const reason =
+        statusResult.status === 'rejected'
+          ? statusResult.reason instanceof Error
+            ? statusResult.reason.message
+            : String(statusResult.reason)
+          : statusResult.value?.error ?? '获取 MCP 状态失败'
+      syncError = reason
     }
+
+    if (configResult.status === 'fulfilled' && configResult.value?.ok !== false) {
+      configMap = (configResult.value as any)?.config?.mcp_servers ?? {}
+    } else if (configResult.status === 'rejected') {
+      const reason = configResult.reason instanceof Error ? configResult.reason.message : String(configResult.reason)
+      // If both failed, surface the harder error (config) as primary
+      if (!syncError) syncError = reason
+      else syncError = `${syncError}; readConfig: ${reason}`
+    }
+
+    const servers = buildServersFromConfig(configMap, liveServers)
+    set({
+      servers,
+      loading: false,
+      syncing: false,
+      syncError,
+      error: null,
+      hasFetchedOnce: true,
+    })
   },
 
   updateStatus(name, status, error) {
