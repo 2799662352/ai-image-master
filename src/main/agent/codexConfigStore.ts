@@ -81,6 +81,20 @@ export async function readAuditLog(
   return filtered
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+async function appendMutationAudit(
+  paths: CodexWorkspacePaths,
+  entry: Omit<CodexAuditLogEntry, 'tsIso'>,
+): Promise<void> {
+  await appendAuditLog(paths.auditLogPath, {
+    tsIso: new Date().toISOString(),
+    ...entry,
+  })
+}
+
 async function readFileOrEmpty(filePath: string): Promise<string> {
   try {
     return await fs.readFile(filePath, 'utf8')
@@ -221,7 +235,17 @@ export async function saveMcp(
   input: CodexMcpServerInput,
 ): Promise<SaveMcpResult> {
   const nameError = validateName(input.name)
-  if (nameError) return { ok: false, error: nameError, warnings: [] }
+  if (nameError) {
+    await appendMutationAudit(paths, {
+      action: 'mcp.save',
+      scope: input.scope,
+      name: input.name,
+      provenance: 'manual',
+      ok: false,
+      error: nameError,
+    })
+    return { ok: false, error: nameError, warnings: [] }
+  }
   const target = input.scope === 'personal' ? paths.personalConfigToml : paths.workspaceConfigToml
   const raw = await readFileOrEmpty(target)
   let document: Record<string, unknown> = {}
@@ -229,9 +253,18 @@ export async function saveMcp(
     try {
       document = parseToml(raw) as Record<string, unknown>
     } catch (err) {
+      const error = `existing TOML parse error: ${errorMessage(err)}`
+      await appendMutationAudit(paths, {
+        action: 'mcp.save',
+        scope: input.scope,
+        name: input.name,
+        provenance: 'manual',
+        ok: false,
+        error,
+      })
       return {
         ok: false,
-        error: `existing TOML parse error: ${(err as Error).message}`,
+        error,
         warnings: [],
       }
     }
@@ -256,7 +289,26 @@ export async function saveMcp(
   servers[input.name] = entry
   document.mcp_servers = servers
   const serialized = iarnaToml.stringify(document as iarnaToml.JsonMap)
-  await atomicWriteFile(target, serialized)
+  try {
+    await atomicWriteFile(target, serialized)
+  } catch (err) {
+    await appendMutationAudit(paths, {
+      action: 'mcp.save',
+      scope: input.scope,
+      name: input.name,
+      provenance: 'manual',
+      ok: false,
+      error: errorMessage(err),
+    })
+    throw err
+  }
+  await appendMutationAudit(paths, {
+    action: 'mcp.save',
+    scope: input.scope,
+    name: input.name,
+    provenance: 'manual',
+    ok: true,
+  })
   return { ok: true, id: `${input.scope}:${input.name}`, warnings: [] }
 }
 
@@ -290,21 +342,77 @@ async function rewriteScope(
 export async function deleteMcp(paths: CodexWorkspacePaths, id: string) {
   const [scope, ...rest] = id.split(':')
   const name = rest.join(':')
-  if (scope !== 'personal' && scope !== 'workspace') return { ok: false, error: 'bad scope' }
-  return rewriteScope(paths, scope, (servers) => {
-    delete servers[name]
+  if (scope !== 'personal' && scope !== 'workspace') {
+    await appendMutationAudit(paths, {
+      action: 'mcp.delete',
+      name,
+      ok: false,
+      error: 'bad scope',
+    })
+    return { ok: false, error: 'bad scope' }
+  }
+  let result: { ok: boolean; error?: string }
+  try {
+    result = await rewriteScope(paths, scope, (servers) => {
+      delete servers[name]
+    })
+  } catch (err) {
+    await appendMutationAudit(paths, {
+      action: 'mcp.delete',
+      scope,
+      name,
+      ok: false,
+      error: errorMessage(err),
+    })
+    throw err
+  }
+  await appendMutationAudit(paths, {
+    action: 'mcp.delete',
+    scope,
+    name,
+    ok: result.ok,
+    ...(result.error ? { error: result.error } : {}),
   })
+  return result
 }
 
 export async function setMcpEnabled(paths: CodexWorkspacePaths, id: string, enabled: boolean) {
   const [scope, ...rest] = id.split(':')
   const name = rest.join(':')
-  if (scope !== 'personal' && scope !== 'workspace') return { ok: false, error: 'bad scope' }
-  return rewriteScope(paths, scope, (servers) => {
-    if (!servers[name]) return
-    if (enabled) delete servers[name].enabled
-    else servers[name].enabled = false
+  if (scope !== 'personal' && scope !== 'workspace') {
+    await appendMutationAudit(paths, {
+      action: 'mcp.set-enabled',
+      name,
+      ok: false,
+      error: 'bad scope',
+    })
+    return { ok: false, error: 'bad scope' }
+  }
+  let result: { ok: boolean; error?: string }
+  try {
+    result = await rewriteScope(paths, scope, (servers) => {
+      if (!servers[name]) return
+      if (enabled) delete servers[name].enabled
+      else servers[name].enabled = false
+    })
+  } catch (err) {
+    await appendMutationAudit(paths, {
+      action: 'mcp.set-enabled',
+      scope,
+      name,
+      ok: false,
+      error: errorMessage(err),
+    })
+    throw err
+  }
+  await appendMutationAudit(paths, {
+    action: 'mcp.set-enabled',
+    scope,
+    name,
+    ok: result.ok,
+    ...(result.error ? { error: result.error } : {}),
   })
+  return result
 }
 
 // ---------------------------------------------------------------------------
@@ -324,7 +432,11 @@ function parseFrontmatter(raw: string): ParsedFrontmatter {
   const m = raw.match(FRONTMATTER_RE)
   if (!m) return { body: raw }
   let parsed: Record<string, unknown> = {}
-  try { parsed = (YAML.parse(m[1]) ?? {}) as Record<string, unknown> } catch { /* malformed */ }
+  try {
+    parsed = (YAML.parse(m[1]) ?? {}) as Record<string, unknown>
+  } catch {
+    // Malformed frontmatter should not hide the skill body.
+  }
   return {
     name: typeof parsed.name === 'string' ? parsed.name : undefined,
     description: typeof parsed.description === 'string' ? parsed.description : undefined,
@@ -347,12 +459,20 @@ async function listSkillsInRoot(
 ): Promise<CodexSkillListItem[]> {
   const entries: CodexSkillListItem[] = []
   let dirents: import('node:fs').Dirent[]
-  try { dirents = await fs.readdir(root, { withFileTypes: true }) } catch { return [] }
+  try {
+    dirents = await fs.readdir(root, { withFileTypes: true })
+  } catch {
+    return []
+  }
   for (const d of dirents) {
     if (!d.isDirectory()) continue
     const skillPath = path.join(root, d.name, 'SKILL.md')
     let raw: string
-    try { raw = await fs.readFile(skillPath, 'utf8') } catch { continue }
+    try {
+      raw = await fs.readFile(skillPath, 'utf8')
+    } catch {
+      continue
+    }
     const fm = parseFrontmatter(raw)
     entries.push({
       id: `${scope}:${d.name}`,
@@ -384,7 +504,11 @@ export async function getSkillDetail(
   const root = scope === 'personal' ? paths.personalSkillsRoot : paths.workspaceSkillsRoot
   const filePath = path.join(root, name, 'SKILL.md')
   let raw: string
-  try { raw = await fs.readFile(filePath, 'utf8') } catch { return null }
+  try {
+    raw = await fs.readFile(filePath, 'utf8')
+  } catch {
+    return null
+  }
   const fm = parseFrontmatter(raw)
   return {
     id,
@@ -401,12 +525,41 @@ export async function saveSkill(
   input: CodexSkillInput,
 ): Promise<{ ok: boolean; id?: string; error?: string }> {
   const err = validateName(input.name)
-  if (err) return { ok: false, error: err }
+  if (err) {
+    await appendMutationAudit(paths, {
+      action: 'skill.save',
+      scope: input.scope,
+      name: input.name,
+      provenance: 'manual',
+      ok: false,
+      error: err,
+    })
+    return { ok: false, error: err }
+  }
   const root = input.scope === 'personal' ? paths.personalSkillsRoot : paths.workspaceSkillsRoot
   const dir = path.join(root, input.name)
   const file = path.join(dir, 'SKILL.md')
-  await fs.mkdir(dir, { recursive: true })
-  await atomicWriteFile(file, buildSkillFile(input))
+  try {
+    await fs.mkdir(dir, { recursive: true })
+    await atomicWriteFile(file, buildSkillFile(input))
+  } catch (err) {
+    await appendMutationAudit(paths, {
+      action: 'skill.save',
+      scope: input.scope,
+      name: input.name,
+      provenance: 'manual',
+      ok: false,
+      error: errorMessage(err),
+    })
+    throw err
+  }
+  await appendMutationAudit(paths, {
+    action: 'skill.save',
+    scope: input.scope,
+    name: input.name,
+    provenance: 'manual',
+    ok: true,
+  })
   return { ok: true, id: `${input.scope}:${input.name}` }
 }
 
@@ -416,9 +569,34 @@ export async function deleteSkill(
 ): Promise<{ ok: boolean; error?: string }> {
   const [scope, ...rest] = id.split(':')
   const name = rest.join(':')
-  if (scope !== 'personal' && scope !== 'workspace') return { ok: false, error: 'bad scope' }
+  if (scope !== 'personal' && scope !== 'workspace') {
+    await appendMutationAudit(paths, {
+      action: 'skill.delete',
+      name,
+      ok: false,
+      error: 'bad scope',
+    })
+    return { ok: false, error: 'bad scope' }
+  }
   const root = scope === 'personal' ? paths.personalSkillsRoot : paths.workspaceSkillsRoot
   const dir = path.join(root, name)
-  await fs.rm(dir, { recursive: true, force: true })
+  try {
+    await fs.rm(dir, { recursive: true, force: true })
+  } catch (err) {
+    await appendMutationAudit(paths, {
+      action: 'skill.delete',
+      scope,
+      name,
+      ok: false,
+      error: errorMessage(err),
+    })
+    throw err
+  }
+  await appendMutationAudit(paths, {
+    action: 'skill.delete',
+    scope,
+    name,
+    ok: true,
+  })
   return { ok: true }
 }
