@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import type React from 'react'
 
+import { AutoFixToast } from './AutoFixToast'
 import { McpServerCard } from './McpServerCard'
+import { useMcpAutoGatewayFix } from './useMcpAutoGatewayFix'
 import { useMcpStore } from './useMcpStore'
 
 interface McpServerListProps {
@@ -18,6 +20,8 @@ export function McpServerList({ onOpenEditor, onOpenImport }: McpServerListProps
   const deleteServer = useMcpStore((s) => s.deleteServer)
   const updateStatus = useMcpStore((s) => s.updateStatus)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+
+  useMcpAutoGatewayFix()
 
   useEffect(() => {
     fetchServers()
@@ -76,6 +80,7 @@ export function McpServerList({ onOpenEditor, onOpenImport }: McpServerListProps
 
   return (
     <div className="flex flex-col gap-4">
+      <AutoFixToast />
       {/* Header with action buttons */}
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-medium text-zinc-200">MCP 服务器 ({servers.length})</h2>
