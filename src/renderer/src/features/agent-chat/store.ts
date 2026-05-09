@@ -593,7 +593,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
           const next = upsertItemInLastMessage(
             msgs,
             itemId,
-            () => createItemFromStarted(event.itemType, itemId, {}),
+            () => applyItemPatch(createItemFromStarted(event.itemType, itemId, {}), event.patch),
             (item) => applyItemPatch(item, event.patch),
           )
           return { messages: next }
