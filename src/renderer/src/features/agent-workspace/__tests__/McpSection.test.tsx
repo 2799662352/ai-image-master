@@ -26,6 +26,16 @@ function installAgentApi(items: CodexMcpServerListItem[]) {
   const api = {
     listMcp: vi.fn().mockResolvedValue(items),
     deleteMcp: vi.fn().mockResolvedValue({ ok: true }),
+    getMcpDetail: vi.fn().mockResolvedValue({
+      id: 'personal:a',
+      name: 'a',
+      scope: 'personal',
+      enabled: true,
+      command: 'node',
+      args: [],
+      env: [],
+      description: '',
+    }),
     setMcpEnabled: vi.fn().mockResolvedValue({ ok: true }),
     restartCodex: vi.fn().mockResolvedValue({ ok: true }),
   }
@@ -95,6 +105,17 @@ describe('McpSection', () => {
 
     expect(await screen.findByText('No MCP servers yet.')).toBeTruthy()
     expect(api.deleteMcp).toHaveBeenCalledWith('a')
+  })
+
+  it('opens an existing MCP server in the editor', async () => {
+    const api = installAgentApi([mcpFixture({ id: 'personal:a', name: 'a' })])
+
+    render(<McpSection />)
+
+    fireEvent.click(await screen.findByLabelText('Edit a'))
+
+    expect(await screen.findByLabelText('Command')).toBeTruthy()
+    expect(api.getMcpDetail).toHaveBeenCalledWith('personal:a')
   })
 
   it('ignores a stale list response when a newer load resolves first', async () => {

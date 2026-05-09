@@ -207,6 +207,7 @@ export function McpSection(): React.JSX.Element {
             confirmDelete={confirmDelete}
             onConfirmDelete={setConfirmDelete}
             onDelete={deleteServer}
+            onEdit={setEditing}
             onToggle={toggleServer}
             actionsDisabled={mutationInFlight}
           />
@@ -216,6 +217,7 @@ export function McpSection(): React.JSX.Element {
             confirmDelete={confirmDelete}
             onConfirmDelete={setConfirmDelete}
             onDelete={deleteServer}
+            onEdit={setEditing}
             onToggle={toggleServer}
             actionsDisabled={mutationInFlight}
           />
@@ -231,6 +233,7 @@ function McpGroup({
   confirmDelete,
   onConfirmDelete,
   onDelete,
+  onEdit,
   onToggle,
   actionsDisabled,
 }: {
@@ -239,6 +242,7 @@ function McpGroup({
   confirmDelete: string | null
   onConfirmDelete: (id: string | null) => void
   onDelete: (id: string) => Promise<void>
+  onEdit: (id: string) => void
   onToggle: (item: CodexMcpServerListItem) => Promise<void>
   actionsDisabled: boolean
 }): React.JSX.Element {
@@ -275,6 +279,15 @@ function McpGroup({
                     className="cursor-pointer rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition-colors duration-200 hover:border-cyan-400/40 hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {item.enabled ? 'Disable' : 'Enable'}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Edit ${item.name}`}
+                    disabled={actionsDisabled}
+                    onClick={() => onEdit(item.id)}
+                    className="cursor-pointer rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition-colors duration-200 hover:border-cyan-400/40 hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Edit
                   </button>
                   <button
                     type="button"
