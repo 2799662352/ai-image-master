@@ -33,12 +33,41 @@ const activity = (id: string): TimelineItem => ({
   detail: '{"path":"src/a.ts"}',
   status: 'success',
 })
+const activityWithKind = (id: string, kind: string): TimelineItem => ({
+  ...activity(id),
+  kind,
+  label: kind,
+})
+const attachmentRef = {
+  id: 'ref',
+  kind: 'file' as const,
+  name: 'a.txt',
+  mime: 'text/plain',
+  size: 1,
+  uri: 'local-file:/src/a.txt',
+}
+const artifact = (id: string): TimelineItem => ({
+  type: 'artifact',
+  id,
+  startedAt: 1,
+  endedAt: 2,
+  artifacts: [attachmentRef],
+})
+const attachment = (id: string): TimelineItem => ({
+  type: 'attachment',
+  id,
+  startedAt: 1,
+  endedAt: 2,
+  attachments: [attachmentRef],
+})
 
 describe('evidenceModel', () => {
   it('classifies tool-like items as evidence and text/reasoning as narrative', () => {
     expect(isEvidenceItem(shell('cmd'))).toBe(true)
     expect(isEvidenceItem(fileEdit('edit'))).toBe(true)
     expect(isEvidenceItem(activity('act'))).toBe(true)
+    expect(isEvidenceItem(artifact('artifact'))).toBe(true)
+    expect(isEvidenceItem(attachment('attachment'))).toBe(true)
     expect(isEvidenceItem(text('t'))).toBe(false)
     expect(isEvidenceItem(reasoning('r'))).toBe(false)
   })
@@ -67,6 +96,7 @@ describe('evidenceModel', () => {
       meta: 'success · exit 0',
       status: 'success',
       hasDetails: true,
+      hasReference: true,
     })
     expect(getEvidenceSummary(fileEdit('edit'))).toMatchObject({
       kind: 'file',
@@ -80,6 +110,18 @@ describe('evidenceModel', () => {
       label: 'mcp:fs/read',
       status: 'success',
       hasDetails: true,
+    })
+    expect(getEvidenceSummary(activityWithKind('web', 'webSearch'))).toMatchObject({
+      kind: 'web',
+      label: 'webSearch',
+    })
+    expect(getEvidenceSummary(activityWithKind('ctx', 'contextCompaction'))).toMatchObject({
+      kind: 'ctx',
+      label: 'contextCompaction',
+    })
+    expect(getEvidenceSummary(activityWithKind('unknown', 'unknownTool'))).toMatchObject({
+      kind: 'tool',
+      label: 'unknownTool',
     })
   })
 })
