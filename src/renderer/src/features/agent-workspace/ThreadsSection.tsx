@@ -127,7 +127,7 @@ export function ThreadsSection(): React.JSX.Element {
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
                     <h3 className="text-base font-semibold text-zinc-100">{thread.title || thread.id}</h3>
-                    <p className="mt-1 text-xs text-zinc-500">{thread.updatedAtIso || 'No updated time'}</p>
+                    <p className="mt-1 text-xs text-zinc-500">{thread.updatedAt || 'No updated time'}</p>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <button
@@ -158,10 +158,10 @@ export function ThreadsSection(): React.JSX.Element {
           <div className="mt-3 space-y-3">
             <div>
               <div className="text-sm font-semibold text-zinc-100">{detail.title || detail.id}</div>
-              <div className="text-xs text-zinc-500">{detail.updatedAtIso}</div>
+              <div className="text-xs text-zinc-500">{detail.updatedAt}</div>
             </div>
             <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-lg border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-300">
-              {JSON.stringify(detail.messages ?? [], null, 2)}
+              {JSON.stringify(detail, null, 2)}
             </pre>
           </div>
         ) : (

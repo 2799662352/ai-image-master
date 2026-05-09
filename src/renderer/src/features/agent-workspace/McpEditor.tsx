@@ -56,7 +56,7 @@ export function McpEditor({
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const mountedRef = useRef(false)
-  const closeTimerRef = useRef<number | undefined>()
+  const closeTimerRef = useRef<number | undefined>(undefined)
   const editingExisting = mode !== 'new'
   const riskyArgs = detectRisky(input)
 
@@ -405,7 +405,7 @@ function inputToTomlFragment(input: CodexMcpServerInput): string {
     mcp_servers: {
       [input.name || 'unnamed']: entry,
     },
-  })
+  } as Parameters<typeof iarnaToml.stringify>[0])
 }
 
 function rawTextToInput(text: string, currentInput: CodexMcpServerInput): CodexMcpServerInput | null {
