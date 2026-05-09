@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type React from 'react'
 
 import type { AgentApiResult, CodexConfigScope, CodexMcpServerInput } from '../../../../types/agent'
@@ -13,6 +13,10 @@ type McpEditorApi = {
 type McpEditorProps = {
   mode: 'new' | string
   onClose: () => void
+  onSaved?: () => void
+  actionsDisabled?: boolean
+  onBeforeSave?: () => boolean
+  onAfterSave?: () => void
 }
 
 const emptyInput: CodexMcpServerInput = {
@@ -25,12 +29,32 @@ const emptyInput: CodexMcpServerInput = {
   description: '',
 }
 
-export function McpEditor({ mode, onClose }: McpEditorProps): React.JSX.Element {
+export function McpEditor({
+  mode,
+  onClose,
+  onSaved,
+  actionsDisabled = false,
+  onBeforeSave,
+  onAfterSave,
+}: McpEditorProps): React.JSX.Element {
   const [input, setInput] = useState<CodexMcpServerInput>(emptyInput)
   const [view, setView] = useState<'form' | 'raw'>('form')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const mountedRef = useRef(false)
+  const closeTimerRef = useRef<number | undefined>()
+
+  useEffect(() => {
+    mountedRef.current = true
+
+    return () => {
+      mountedRef.current = false
+      if (closeTimerRef.current !== undefined) {
+        window.clearTimeout(closeTimerRef.current)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     if (mode === 'new') {
@@ -69,23 +93,39 @@ export function McpEditor({ mode, onClose }: McpEditorProps): React.JSX.Element 
       setError('Codex MCP API is unavailable.')
       return
     }
+    if (actionsDisabled || (onBeforeSave && !onBeforeSave())) {
+      return
+    }
 
     setSaving(true)
     setError(null)
     setSaved(false)
     try {
       const result = await api.saveMcp(input)
+      if (!mountedRef.current) {
+        return
+      }
       if (!result?.ok) {
         setError(result?.error ?? 'Save failed.')
         return
       }
 
       setSaved(true)
-      onClose()
+      const closeAfterSave = onSaved ?? onClose
+      closeTimerRef.current = window.setTimeout(() => {
+        if (mountedRef.current) {
+          closeAfterSave()
+        }
+      }, 200)
     } catch (reason) {
-      setError(errorMessage(reason))
+      if (mountedRef.current) {
+        setError(errorMessage(reason))
+      }
     } finally {
-      setSaving(false)
+      onAfterSave?.()
+      if (mountedRef.current) {
+        setSaving(false)
+      }
     }
   }
 
@@ -103,6 +143,7 @@ export function McpEditor({ mode, onClose }: McpEditorProps): React.JSX.Element 
         <button
           type="button"
           onClick={onClose}
+          disabled={saving}
           className="cursor-pointer rounded-md px-2 py-1 text-sm text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
         >
           Close
@@ -160,7 +201,7 @@ export function McpEditor({ mode, onClose }: McpEditorProps): React.JSX.Element 
       <div className="flex items-center gap-2">
         <button
           type="button"
-          disabled={saving}
+          disabled={saving || actionsDisabled}
           onClick={() => void handleSave()}
           className="cursor-pointer rounded-md bg-cyan-500 px-3 py-1.5 text-sm font-medium text-zinc-950 hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
         >

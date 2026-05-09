@@ -36,6 +36,7 @@ function installAgentApi(items: CodexMcpServerListItem[]) {
       env: [],
       description: '',
     }),
+    saveMcp: vi.fn().mockResolvedValue({ ok: true, id: 'personal:a' }),
     setMcpEnabled: vi.fn().mockResolvedValue({ ok: true }),
     restartCodex: vi.fn().mockResolvedValue({ ok: true }),
   }
@@ -160,6 +161,27 @@ describe('McpSection', () => {
 
     expect(api.setMcpEnabled).toHaveBeenCalledTimes(1)
     expect((toggleButton as HTMLButtonElement).disabled).toBe(true)
+
+    await act(async () => {
+      toggleResult.resolve({ ok: true })
+    })
+  })
+
+  it('disables editor save while another MCP mutation is in flight', async () => {
+    const toggleResult = deferred<{ ok: true }>()
+    const api = installAgentApi([mcpFixture({ id: 'a', name: 'a' })])
+    api.setMcpEnabled.mockReturnValue(toggleResult.promise)
+
+    render(<McpSection />)
+
+    fireEvent.click(await screen.findByText('New MCP Server'))
+    fireEvent.click(screen.getByLabelText('Disable a'))
+
+    const saveButton = await screen.findByText('Save')
+    await waitFor(() => expect((saveButton as HTMLButtonElement).disabled).toBe(true))
+    fireEvent.click(saveButton)
+
+    expect(api.saveMcp).not.toHaveBeenCalled()
 
     await act(async () => {
       toggleResult.resolve({ ok: true })

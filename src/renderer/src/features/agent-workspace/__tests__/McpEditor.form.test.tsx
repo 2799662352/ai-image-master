@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { McpEditor } from '../McpEditor'
@@ -27,6 +27,6 @@ describe('McpEditor form mode', () => {
     expect(saveMcp).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'demo', command: 'node', scope: 'personal' }),
     )
-    expect(onClose).toHaveBeenCalled()
+    await waitFor(() => expect(onClose).toHaveBeenCalled())
   })
 })

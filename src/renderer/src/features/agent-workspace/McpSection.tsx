@@ -171,8 +171,9 @@ export function McpSection(): React.JSX.Element {
         </div>
         <button
           type="button"
+          disabled={mutationInFlight}
           onClick={() => setEditing('new')}
-          className="cursor-pointer rounded-md border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-100 transition-colors duration-200 hover:bg-cyan-500/20"
+          className="cursor-pointer rounded-md border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-100 transition-colors duration-200 hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-50"
         >
           New MCP Server
         </button>
@@ -183,9 +184,15 @@ export function McpSection(): React.JSX.Element {
           mode={editing}
           onClose={() => {
             setEditing(null)
+          }}
+          onSaved={() => {
+            setEditing(null)
             setConfigDirty(true)
             void loadItems()
           }}
+          actionsDisabled={mutationInFlight}
+          onBeforeSave={startMutation}
+          onAfterSave={finishMutation}
         />
       ) : null}
 
