@@ -1,5 +1,5 @@
 import type { AgentStreamEvent, AgentTokenUsage, AgentTokenUsageDelta } from '../../types/agent'
-import { parseChange } from '../../shared/diffUtils'
+import { countDiffLines, parseChange } from '../../shared/diffUtils'
 
 /**
  * Loose shape for the `item` payload Codex sends inside `item/started` and
@@ -267,6 +267,7 @@ function pickUsageCounter(params: Record<string, unknown>): Record<string, unkno
 export class CodexNotificationRouter {
   private readonly streamedDeltaItemIds = new Set<string>()
   private readonly streamedReasoningItemIds = new Set<string>()
+  private readonly fileChangeOutputByItemId = new Map<string, string>()
 
   route(method: string, params: Record<string, any>): AgentStreamEvent | null {
     switch (method) {
@@ -400,10 +401,19 @@ export class CodexNotificationRouter {
         }
       }
 
-      case 'item/fileChange/outputDelta':
-        // The diff renders at item/completed; partial deltas would only
-        // produce flicker. Drop silently — this is a known no-op.
+      case 'item/fileChange/outputDelta': {
+        const itemId = params.itemId as string | undefined
+        const text =
+          typeof params.delta === 'string'
+            ? params.delta
+            : typeof params.data === 'string'
+              ? params.data
+              : ''
+        if (typeof itemId === 'string' && itemId.length > 0 && text.length > 0) {
+          this.fileChangeOutputByItemId.set(itemId, `${this.fileChangeOutputByItemId.get(itemId) ?? ''}${text}`)
+        }
         return null
+      }
 
       case 'item/plan/delta': {
         // No bespoke plan card yet. Surface the latest delta on the generic
@@ -452,9 +462,22 @@ export class CodexNotificationRouter {
             }
           case 'fileChange': {
             const rawChanges = Array.isArray(item.changes) ? item.changes : []
+            const fallbackDiff = this.fileChangeOutputByItemId.get(item.id)
+            this.fileChangeOutputByItemId.delete(item.id)
+            const fallbackRawChanges =
+              rawChanges.length === 0 && fallbackDiff ? [{ path: item.path, kind: 'edit' }] : rawChanges
             // parseChange asserts the runtime shape; the array element type is
             // intentionally loose at the wire level since gateways drift.
-            const changes = (rawChanges as Parameters<typeof parseChange>[0][]).map(parseChange)
+            const changes = (fallbackRawChanges as Parameters<typeof parseChange>[0][]).map(parseChange)
+            if (fallbackDiff) {
+              const emptyDiffChange = changes.find((change) => change.diff.length === 0)
+              if (emptyDiffChange) {
+                const { added, removed } = countDiffLines(fallbackDiff)
+                emptyDiffChange.diff = fallbackDiff
+                emptyDiffChange.added = added
+                emptyDiffChange.removed = removed
+              }
+            }
             return {
               type: 'item_completed',
               threadId: params.threadId,
