@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type React from 'react'
 
+import { McpJsonEditor } from './McpJsonEditor'
 import { McpServerList } from './McpServerList'
 
 export function McpSection(): React.JSX.Element {
@@ -14,23 +15,11 @@ export function McpSection(): React.JSX.Element {
         onOpenImport={() => setImportOpen(true)}
       />
 
-      {/* McpJsonEditor and BulkImportModal will be wired in Tasks 7 & 8 */}
       {editorTarget && (
-        <div className="rounded-lg border border-zinc-700 bg-zinc-900/80 p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-zinc-300">
-              {editorTarget === '__new__' ? '新增 MCP 服务器' : `编辑: ${editorTarget}`}
-            </span>
-            <button
-              type="button"
-              onClick={() => setEditorTarget(null)}
-              className="text-xs text-zinc-500 hover:text-zinc-300"
-            >
-              关闭
-            </button>
-          </div>
-          <p className="mt-2 text-xs text-zinc-500">Monaco JSON 编辑器将在 Task 7 中实现。</p>
-        </div>
+        <McpJsonEditor
+          serverName={editorTarget}
+          onClose={() => setEditorTarget(null)}
+        />
       )}
 
       {importOpen && (
