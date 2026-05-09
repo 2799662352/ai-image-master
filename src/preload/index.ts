@@ -34,9 +34,14 @@ import type {
   AgentToolResponse,
   CodexApprovalRequest,
   CodexApprovalResponse,
+  CodexAuditLogEntry,
+  CodexMcpServerInput,
+  CodexMcpServerListItem,
   CodexMcpSummary,
   CodexSessionConfig,
   CodexSessionStatus,
+  CodexSkillInput,
+  CodexSkillListItem,
   CodexSkillsSummary,
   CodexThreadDetail,
   CodexThreadSummary,
@@ -163,6 +168,17 @@ const IPC_CHANNELS = {
     RESPOND_APPROVAL: 'agent:respond-approval',
     GET_MCP_SUMMARY: 'agent:get-mcp-summary',
     GET_SKILLS_SUMMARY: 'agent:get-skills-summary',
+    LIST_MCP: 'agent:list-mcp',
+    GET_MCP_DETAIL: 'agent:get-mcp-detail',
+    SAVE_MCP: 'agent:save-mcp',
+    DELETE_MCP: 'agent:delete-mcp',
+    SET_MCP_ENABLED: 'agent:set-mcp-enabled',
+    LIST_SKILLS: 'agent:list-skills',
+    GET_SKILL_DETAIL: 'agent:get-skill-detail',
+    SAVE_SKILL: 'agent:save-skill',
+    DELETE_SKILL: 'agent:delete-skill',
+    GET_WORKSPACE_LOGS: 'agent:get-workspace-logs',
+    RESTART_CODEX: 'agent:restart-codex',
     LIST_CODEX_THREADS: 'agent:list-codex-threads',
     READ_CODEX_THREAD: 'agent:read-codex-thread',
     FORK_CODEX_THREAD: 'agent:fork-codex-thread',
@@ -290,6 +306,17 @@ export interface ElectronAPI {
     setAllowedRoots: (roots: string[]) => Promise<string[]>
     getMcpSummary: () => Promise<CodexMcpSummary>
     getSkillsSummary: () => Promise<CodexSkillsSummary>
+    listMcp: () => Promise<CodexMcpServerListItem[]>
+    getMcpDetail: (id: string) => Promise<CodexMcpServerInput | null>
+    saveMcp: (input: CodexMcpServerInput) => Promise<AgentApiResult & { id?: string; warnings?: string[] }>
+    deleteMcp: (id: string) => Promise<AgentApiResult>
+    setMcpEnabled: (id: string, enabled: boolean) => Promise<AgentApiResult>
+    listSkills: () => Promise<CodexSkillListItem[]>
+    getSkillDetail: (id: string) => Promise<CodexSkillInput | null>
+    saveSkill: (input: CodexSkillInput) => Promise<AgentApiResult & { id?: string }>
+    deleteSkill: (id: string) => Promise<AgentApiResult>
+    getWorkspaceLogs: (opts?: { limit?: number; sinceIso?: string }) => Promise<CodexAuditLogEntry[]>
+    restartCodex: () => Promise<AgentApiResult>
     listCodexThreads: () => Promise<CodexThreadSummary[]>
     readCodexThread: (threadId: string) => Promise<CodexThreadDetail>
     forkCodexThread: (threadId: string) => Promise<CodexThreadSummary>
@@ -625,6 +652,39 @@ const electronAPI: ElectronAPI = {
 
     getSkillsSummary: () =>
       safeInvoke<CodexSkillsSummary>(IPC_CHANNELS.AGENT.GET_SKILLS_SUMMARY),
+
+    listMcp: () =>
+      safeInvoke<CodexMcpServerListItem[]>(IPC_CHANNELS.AGENT.LIST_MCP),
+
+    getMcpDetail: (id: string) =>
+      safeInvoke<CodexMcpServerInput | null>(IPC_CHANNELS.AGENT.GET_MCP_DETAIL, id),
+
+    saveMcp: (input: CodexMcpServerInput) =>
+      safeInvoke<AgentApiResult & { id?: string; warnings?: string[] }>(IPC_CHANNELS.AGENT.SAVE_MCP, input),
+
+    deleteMcp: (id: string) =>
+      safeInvoke<AgentApiResult>(IPC_CHANNELS.AGENT.DELETE_MCP, id),
+
+    setMcpEnabled: (id: string, enabled: boolean) =>
+      safeInvoke<AgentApiResult>(IPC_CHANNELS.AGENT.SET_MCP_ENABLED, { id, enabled }),
+
+    listSkills: () =>
+      safeInvoke<CodexSkillListItem[]>(IPC_CHANNELS.AGENT.LIST_SKILLS),
+
+    getSkillDetail: (id: string) =>
+      safeInvoke<CodexSkillInput | null>(IPC_CHANNELS.AGENT.GET_SKILL_DETAIL, id),
+
+    saveSkill: (input: CodexSkillInput) =>
+      safeInvoke<AgentApiResult & { id?: string }>(IPC_CHANNELS.AGENT.SAVE_SKILL, input),
+
+    deleteSkill: (id: string) =>
+      safeInvoke<AgentApiResult>(IPC_CHANNELS.AGENT.DELETE_SKILL, id),
+
+    getWorkspaceLogs: (opts?: { limit?: number; sinceIso?: string }) =>
+      safeInvoke<CodexAuditLogEntry[]>(IPC_CHANNELS.AGENT.GET_WORKSPACE_LOGS, opts),
+
+    restartCodex: () =>
+      safeInvoke<AgentApiResult>(IPC_CHANNELS.AGENT.RESTART_CODEX),
 
     listCodexThreads: () =>
       safeInvoke<CodexThreadSummary[]>(IPC_CHANNELS.AGENT.LIST_CODEX_THREADS),
