@@ -108,6 +108,7 @@ export class CodexProtocolClient {
   private readonly connectIntervalMs: number
   private sessionConfig: CodexSessionConfig
   private pendingServerRequests = new Map<string, PendingServerRequest>()
+  private activeSends = 0
 
   constructor(private readonly options: CodexProtocolClientOptions) {
     this.rpcTimeoutMs = options.rpcTimeoutMs ?? DEFAULT_RPC_TIMEOUT_MS
@@ -154,6 +155,10 @@ export class CodexProtocolClient {
     return this.queues.size > 0
   }
 
+  hasInFlightWork(): boolean {
+    return this.activeSends > 0 || this.hasActiveTurns()
+  }
+
   setSessionConfig(patch: Partial<CodexSessionConfig>): void {
     this.sessionConfig = resolveCodexSessionConfig({
       ...this.sessionConfig,
@@ -163,37 +168,42 @@ export class CodexProtocolClient {
   }
 
   async *send(threadId: string | undefined, input: AgentInput): AsyncIterable<AgentStreamEvent> {
-    let actualThreadId = threadId
-    if (!actualThreadId) {
-      const response = await this.rpc<ThreadStartResponse>('thread/start', this.threadStartParams(input))
-      actualThreadId = response.thread.id
-      yield { type: 'thread_created', threadId: actualThreadId }
-    }
-
-    const turnResponse = await this.rpc<TurnStartResponse>('turn/start', {
-      threadId: actualThreadId,
-      input: mapUserInput(input.items),
-    })
-    const turnId = turnResponse.turn.id
-    this.turnIdByThread.set(actualThreadId, turnId)
-
-    const key = queueKey(actualThreadId, turnId)
-    const queue: TurnQueue = { threadId: actualThreadId, turnId, buffer: [], closed: false }
-    this.queues.set(key, queue)
-    this.drainOrphansInto(actualThreadId, turnId, queue)
-
+    this.activeSends += 1
     try {
-      while (true) {
-        const event = await this.takeEvent(queue)
-        yield event
-        if (event.type === 'turn_completed' || event.type === 'error' || event.type === 'cancelled') return
+      let actualThreadId = threadId
+      if (!actualThreadId) {
+        const response = await this.rpc<ThreadStartResponse>('thread/start', this.threadStartParams(input))
+        actualThreadId = response.thread.id
+        yield { type: 'thread_created', threadId: actualThreadId }
+      }
+
+      const turnResponse = await this.rpc<TurnStartResponse>('turn/start', {
+        threadId: actualThreadId,
+        input: mapUserInput(input.items),
+      })
+      const turnId = turnResponse.turn.id
+      this.turnIdByThread.set(actualThreadId, turnId)
+
+      const key = queueKey(actualThreadId, turnId)
+      const queue: TurnQueue = { threadId: actualThreadId, turnId, buffer: [], closed: false }
+      this.queues.set(key, queue)
+      this.drainOrphansInto(actualThreadId, turnId, queue)
+
+      try {
+        while (true) {
+          const event = await this.takeEvent(queue)
+          yield event
+          if (event.type === 'turn_completed' || event.type === 'error' || event.type === 'cancelled') return
+        }
+      } finally {
+        queue.closed = true
+        this.queues.delete(key)
+        if (this.turnIdByThread.get(actualThreadId) === turnId) {
+          this.turnIdByThread.delete(actualThreadId)
+        }
       }
     } finally {
-      queue.closed = true
-      this.queues.delete(key)
-      if (this.turnIdByThread.get(actualThreadId) === turnId) {
-        this.turnIdByThread.delete(actualThreadId)
-      }
+      this.activeSends -= 1
     }
   }
 

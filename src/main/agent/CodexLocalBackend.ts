@@ -74,6 +74,11 @@ export interface CodexLocalBackendOptions {
   onApprovalRequest?: (request: CodexApprovalRequest) => void
 }
 
+type SpawnedCodexClient = {
+  proc: ChildProcess
+  client: CodexProtocolClient
+}
+
 /**
  * Build the env passed to the spawned `codex` binary. Pulls every var from
  * `baseEnv` and only sets `OPENAI_API_KEY` when `apiKey` has a non-empty
@@ -121,17 +126,28 @@ export class CodexLocalBackend implements IAgentBackend {
 
   async start(): Promise<void> {
     if (this.wsUrlOverride) {
-      this.client = new CodexProtocolClient({
-        url: this.wsUrlOverride,
-        clientInfo: { name: 'catimation', version: '0.0.0' },
-        sessionConfig: this.sessionConfig,
-        connectTimeoutMs: 5_000,
-        onApprovalRequest: this.options.onApprovalRequest,
-      })
-      await this.client.start()
+      this.client = await this.startWsClient(this.wsUrlOverride)
       return
     }
 
+    const started = await this.startSpawnedClient()
+    this.proc = started.proc
+    this.client = started.client
+  }
+
+  private async startWsClient(url: string): Promise<CodexProtocolClient> {
+    const client = new CodexProtocolClient({
+      url,
+      clientInfo: { name: 'catimation', version: '0.0.0' },
+      sessionConfig: this.sessionConfig,
+      connectTimeoutMs: 5_000,
+      onApprovalRequest: this.options.onApprovalRequest,
+    })
+    await client.start()
+    return client
+  }
+
+  private async startSpawnedClient(): Promise<SpawnedCodexClient> {
     const port = await pickFreePort(4222)
     const listenUrl = `ws://127.0.0.1:${port}`
     const resourceRoot = this.resourceRootOverride ?? getCodexResourceRoot({
@@ -164,7 +180,6 @@ export class CodexLocalBackend implements IAgentBackend {
         env,
       },
     )
-    this.proc = proc
 
     proc.stdout?.on('data', captureOutput)
     proc.stderr?.on('data', captureOutput)
@@ -185,8 +200,8 @@ export class CodexLocalBackend implements IAgentBackend {
             `Codex exited before initialize completed (code=${code} signal=${signal ?? 'none'})` +
               (tail ? `\n--- recent output ---\n${tail}` : ''),
           ))
-        } else if (this.client) {
-          this.client.stop().catch(() => { /* ignore */ })
+        } else {
+          client.stop().catch(() => { /* ignore */ })
         }
       })
     })
@@ -200,29 +215,29 @@ export class CodexLocalBackend implements IAgentBackend {
       onLog: (line) => log.write(line + '\n'),
       onApprovalRequest: this.options.onApprovalRequest,
     })
-    this.client = client
 
     try {
       await Promise.race([client.start(), earlyExit])
     } catch (error) {
       startupPhase = false
-      const failed = this.client
-      this.client = null
-      await failed?.stop().catch(() => { /* ignore */ })
-      await this.killProcess()
+      await client.stop().catch(() => { /* ignore */ })
+      await this.killProcessInstance(proc)
       throw error
     } finally {
       startupPhase = false
     }
+    return { proc, client }
   }
 
   async stop(): Promise<void> {
     const client = this.client
+    const proc = this.proc
     this.client = null
+    this.proc = null
     if (client) {
       await client.stop().catch(() => { /* ignore */ })
     }
-    await this.killProcess()
+    await this.killProcessInstance(proc)
   }
 
   async applyConfigChange(paths: CodexWorkspacePaths): Promise<void> {
@@ -239,12 +254,32 @@ export class CodexLocalBackend implements IAgentBackend {
     this.codexHome = path.dirname(paths.runtimeConfigToml)
     this.configDirty = true
 
-    if (this.client?.hasActiveTurns()) return
+    if (this.client?.hasInFlightWork()) return
 
-    await this.stop()
-    await this.start()
+    if (this.wsUrlOverride) {
+      await this.stop()
+      await this.start()
+      this.configDirty = false
+      await this.auditRestart(paths)
+      return
+    }
+
+    const oldClient = this.client
+    const oldProc = this.proc
+    const replacement = await this.startSpawnedClient()
+    this.proc = replacement.proc
+    this.client = replacement.client
+
+    if (oldClient) {
+      await oldClient.stop().catch(() => { /* ignore */ })
+    }
+    await this.killProcessInstance(oldProc)
     this.configDirty = false
 
+    await this.auditRestart(paths)
+  }
+
+  private async auditRestart(paths: CodexWorkspacePaths): Promise<void> {
     try {
       await appendAuditLog(paths.auditLogPath, {
         tsIso: new Date().toISOString(),
@@ -303,9 +338,7 @@ export class CodexLocalBackend implements IAgentBackend {
     this.client?.setSessionConfig(patch)
   }
 
-  private async killProcess(): Promise<void> {
-    const proc = this.proc
-    this.proc = null
+  private async killProcessInstance(proc: ChildProcess | null): Promise<void> {
     if (!proc) return
     if (proc.exitCode !== null) return
 

@@ -13,6 +13,7 @@ import type { AgentInput } from '../types'
 
 interface FakeServerOptions {
   autoCompleteTurn?: boolean
+  delayTurnStartMs?: number
 }
 
 interface FakeServer {
@@ -32,6 +33,7 @@ async function startFakeServer(opts: FakeServerOptions = {}): Promise<FakeServer
   const received: any[] = []
   let activeSocket: WebSocket | null = null
   const autoComplete = opts.autoCompleteTurn ?? true
+  const delayTurnStartMs = opts.delayTurnStartMs ?? 0
 
   const fake: FakeServer = {
     url,
@@ -65,18 +67,22 @@ async function startFakeServer(opts: FakeServerOptions = {}): Promise<FakeServer
           result: { thread: { id: 'fake-thread', preview: '', cwd: '/' } },
         }))
       } else if (msg.method === 'turn/start' && msg.id !== undefined) {
-        ws.send(JSON.stringify({
-          jsonrpc: '2.0', id: msg.id,
-          result: { turn: { id: 'fake-turn', status: 'running' } },
-        }))
-        if (autoComplete) {
-          setImmediate(() => {
-            fake.pushNotification('item/agentMessage/delta', { threadId: 'fake-thread', turnId: 'fake-turn', itemId: 'i1', delta: 'hel' })
-            fake.pushNotification('item/agentMessage/delta', { threadId: 'fake-thread', turnId: 'fake-turn', itemId: 'i1', delta: 'lo' })
-            fake.pushNotification('item/reasoning/textDelta', { threadId: 'fake-thread', turnId: 'fake-turn', itemId: 'i2', delta: 'thinking' })
-            fake.pushNotification('turn/completed', { threadId: 'fake-thread', turn: { id: 'fake-turn', status: 'completed' } })
-          })
+        const sendTurnStart = () => {
+          ws.send(JSON.stringify({
+            jsonrpc: '2.0', id: msg.id,
+            result: { turn: { id: 'fake-turn', status: 'running' } },
+          }))
+          if (autoComplete) {
+            setImmediate(() => {
+              fake.pushNotification('item/agentMessage/delta', { threadId: 'fake-thread', turnId: 'fake-turn', itemId: 'i1', delta: 'hel' })
+              fake.pushNotification('item/agentMessage/delta', { threadId: 'fake-thread', turnId: 'fake-turn', itemId: 'i1', delta: 'lo' })
+              fake.pushNotification('item/reasoning/textDelta', { threadId: 'fake-thread', turnId: 'fake-turn', itemId: 'i2', delta: 'thinking' })
+              fake.pushNotification('turn/completed', { threadId: 'fake-thread', turn: { id: 'fake-turn', status: 'completed' } })
+            })
+          }
         }
+        if (delayTurnStartMs > 0) setTimeout(sendTurnStart, delayTurnStartMs)
+        else sendTurnStart()
       } else if (msg.method === 'turn/interrupt' && msg.id !== undefined) {
         ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {} }))
         setImmediate(() => {
@@ -335,6 +341,45 @@ describe('CodexLocalBackend (with a fake codex app-server)', () => {
     }
   })
 
+  it('defers restart while turn/start is still pending without closing the stream', async () => {
+    const workspace = await createWorkspacePaths()
+    try {
+      server = await startFakeServer({ delayTurnStartMs: 100 })
+      backend = new CodexLocalBackend({ wsUrl: server.url })
+      await backend.start()
+
+      const events: AgentStreamEvent[] = []
+      const consumer = (async () => {
+        for await (const event of backend!.send(undefined, baseInput)) {
+          events.push(event)
+        }
+      })()
+
+      const deadline = Date.now() + 2000
+      while (Date.now() < deadline) {
+        if (server.receivedFromClient.some((m) => m.method === 'turn/start')) break
+        await new Promise((r) => setTimeout(r, 10))
+      }
+      expect(server.receivedFromClient.some((m) => m.method === 'turn/start')).toBe(true)
+
+      const socketBeforeRestart = server.socket()
+      await backend.restartCodex(workspace.paths)
+
+      expect(backend.isConfigDirty()).toBe(true)
+      expect(server.socket()).toBe(socketBeforeRestart)
+      expect(socketBeforeRestart?.readyState).toBe(WebSocket.OPEN)
+      expect(server.receivedFromClient.filter((m) => m.method === 'initialize')).toHaveLength(1)
+
+      await consumer
+
+      expect(events).toContainEqual({ type: 'thread_created', threadId: 'fake-thread' })
+      expect(events).toContainEqual({ type: 'turn_completed', threadId: 'fake-thread', turnId: 'fake-turn' })
+      expect(events.find((e) => e.type === 'error' || e.type === 'cancelled')).toBeUndefined()
+    } finally {
+      await rm(workspace.tmp, { recursive: true, force: true })
+    }
+  })
+
   it('surfaces server-initiated requests and waits for an explicit approval response', async () => {
     const approvals: CodexApprovalRequest[] = []
     server = await startFakeServer()
@@ -424,6 +469,34 @@ describe('CodexLocalBackend spawn env injection', () => {
     return proc
   }
 
+  function makeFakeCodexServerChildProc(args: string[]): any {
+    const proc = makeFakeChildProc()
+    const listenUrl = args[args.indexOf('--listen') + 1]
+    const parsed = new URL(listenUrl)
+    const wss = new WebSocketServer({ host: parsed.hostname, port: Number(parsed.port) })
+
+    wss.on('connection', (ws) => {
+      ws.on('message', (data) => {
+        const msg = JSON.parse(String(data))
+        if (msg.method === 'initialize' && msg.id !== undefined) {
+          ws.send(JSON.stringify({
+            jsonrpc: '2.0',
+            id: msg.id,
+            result: { userAgent: 'fake', codexHome: '/tmp', platformFamily: 'unix', platformOs: 'linux' },
+          }))
+        }
+      })
+    })
+
+    const originalKill = proc.kill
+    proc.kill = (signal?: NodeJS.Signals): boolean => {
+      try { wss.close() } catch { /* ignore */ }
+      return originalKill(signal)
+    }
+
+    return proc
+  }
+
   it('passes OPENAI_API_KEY to spawn when getApiKey returns a value', async () => {
     let captured: NodeJS.ProcessEnv | undefined
     const fakeProc = makeFakeChildProc()
@@ -439,5 +512,70 @@ describe('CodexLocalBackend spawn env injection', () => {
     await expect(backend.start()).rejects.toThrow()
     expect(captured?.OPENAI_API_KEY).toBe('sk-itest')
     await backend.stop()
+  })
+
+  it('restarts with CODEX_HOME and only kills the old process after replacement starts', async () => {
+    const workspace = await createWorkspacePaths()
+    const spawned: any[] = []
+    const envs: NodeJS.ProcessEnv[] = []
+    const backend = new CodexLocalBackend({
+      resourceRoot: '/tmp/codex-fake-root',
+      spawnFactory: ((_bin: string, args: string[], opts: any) => {
+        envs.push(opts?.env)
+        const proc = makeFakeCodexServerChildProc(args)
+        spawned.push(proc)
+        return proc
+      }) as any,
+      connectTimeoutMs: 500,
+    })
+
+    try {
+      await backend.start()
+      expect(backend.isHealthy()).toBe(true)
+
+      await backend.restartCodex(workspace.paths)
+
+      expect(envs).toHaveLength(2)
+      expect(envs[1].CODEX_HOME).toBe(path.dirname(workspace.paths.runtimeConfigToml))
+      expect(spawned[0].exitCode).toBe(0)
+      expect(spawned[1].exitCode).toBeNull()
+      expect(backend.isHealthy()).toBe(true)
+      expect(backend.isConfigDirty()).toBe(false)
+    } finally {
+      await backend.stop()
+      await rm(workspace.tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the old spawned backend running when replacement startup fails', async () => {
+    const workspace = await createWorkspacePaths()
+    const spawned: any[] = []
+    const backend = new CodexLocalBackend({
+      resourceRoot: '/tmp/codex-fake-root',
+      spawnFactory: ((_bin: string, args: string[]) => {
+        const proc = spawned.length === 0
+          ? makeFakeCodexServerChildProc(args)
+          : makeFakeChildProc()
+        spawned.push(proc)
+        return proc
+      }) as any,
+      connectTimeoutMs: 50,
+    })
+
+    try {
+      await backend.start()
+      expect(backend.isHealthy()).toBe(true)
+
+      await expect(backend.restartCodex(workspace.paths)).rejects.toThrow(/connectWithRetry timed out/)
+
+      expect(spawned).toHaveLength(2)
+      expect(spawned[0].exitCode).toBeNull()
+      expect(spawned[1].exitCode).toBe(0)
+      expect(backend.isHealthy()).toBe(true)
+      expect(backend.isConfigDirty()).toBe(true)
+    } finally {
+      await backend.stop()
+      await rm(workspace.tmp, { recursive: true, force: true })
+    }
   })
 })
