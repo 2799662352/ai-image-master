@@ -218,7 +218,10 @@ export function AgentChatPanel() {
             </span>
             <button
               type="button"
-              onClick={() => useTabStore.getState().switchTab('agentWorkspace')}
+              onClick={() => {
+                useTabStore.getState().switchTab('agentWorkspace')
+                useAgentChatStore.setState({ isOpen: false })
+              }}
               className="cursor-pointer text-cyan-300 hover:text-cyan-100"
             >
               Open Agent Workspace

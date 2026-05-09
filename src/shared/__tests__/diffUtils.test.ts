@@ -29,6 +29,10 @@ describe('countDiffLines', () => {
     expect(countDiffLines('')).toEqual({ added: 0, removed: 0 })
   })
 
+  it('returns zeros for missing diff input from provider events', () => {
+    expect(countDiffLines(undefined as unknown as string)).toEqual({ added: 0, removed: 0 })
+  })
+
   it('handles a create-only diff (all additions)', () => {
     const diff = [
       '@@ -0,0 +1,3 @@',
@@ -82,5 +86,20 @@ describe('parseChange', () => {
       unifiedDiff: '@@ -1,1 +1,1 @@\n-a\n+b',
     })
     expect(result.operation).toBe('edit')
+  })
+
+  it('does not throw when Codex omits unifiedDiff for a file change', () => {
+    const result = parseChange({
+      path: 'x.ts',
+      kind: 'modify',
+    } as Parameters<typeof parseChange>[0])
+
+    expect(result).toEqual({
+      path: 'x.ts',
+      operation: 'edit',
+      diff: '',
+      added: 0,
+      removed: 0,
+    })
   })
 })

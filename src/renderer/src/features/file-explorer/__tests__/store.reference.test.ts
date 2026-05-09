@@ -48,11 +48,20 @@ describe('file explorer reference tabs', () => {
   })
 
   it('delegates local-path file references to openTab so FileViewer is reused', async () => {
-    const openTab = vi.fn(async () => undefined)
+    const openTab = vi.fn(async () => {
+      const id = 'tab-from-openTab'
+      useFileExplorerStore.setState((s) => ({
+        tabs: [...s.tabs, { id, path: 'D:/repo/src/main.ts', name: 'main.ts', source: 'workspace' as const, kind: 'text' as const, state: null, diskContent: '', diskMtime: 0, dirty: false }],
+        activeTabId: id,
+      }))
+    })
     useFileExplorerStore.setState({ openTab } as never)
     await useFileExplorerStore.getState().openReference(fileRef)
     expect(openTab).toHaveBeenCalledWith('D:/repo/src/main.ts', 'workspace')
-    expect(useFileExplorerStore.getState().tabs).toHaveLength(0)
+    const state = useFileExplorerStore.getState()
+    expect(state.tabs).toHaveLength(1)
+    expect(state.tabs[0].kind).toBe('text')
+    expect(state.tabs[0].referenceKey).toBeUndefined()
   })
 
   it('blocks watcher matching from picking up reference tabs by path collision', async () => {

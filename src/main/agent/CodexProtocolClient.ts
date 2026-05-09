@@ -26,17 +26,28 @@ import type {
 } from '../../types/agent'
 import type { AgentInput } from './types'
 
+/**
+ * Mirrors `McpServerStatus` from Codex's generated TS schema at
+ * `codex-rs/app-server-protocol/schema/typescript/v2/McpServerStatus.ts`.
+ * Field names are camelCase on the wire: `authStatus`, `resourceTemplates`.
+ */
 export interface McpServerStatusEntry {
   name: string
   tools: Record<string, { description?: string; inputSchema?: unknown }>
   resources: Array<{ uri: string; name?: string; description?: string }>
-  resource_templates: Array<{ uriTemplate: string; name?: string }>
-  auth_status: string
+  resourceTemplates: Array<{ uriTemplate: string; name?: string }>
+  authStatus: string
 }
 
+/**
+ * Mirrors `ListMcpServerStatusResponse` from Codex's generated TS schema at
+ * `codex-rs/app-server-protocol/schema/typescript/v2/ListMcpServerStatusResponse.ts`.
+ * The list lives under `data` (NOT `mcpServers`) and pagination uses the
+ * top-level `nextCursor: string | null` cursor.
+ */
 export interface McpServerStatusListResponse {
-  mcpServers: McpServerStatusEntry[]
-  pagination?: { nextCursor?: string }
+  data: McpServerStatusEntry[]
+  nextCursor: string | null
 }
 
 const DEFAULT_RPC_TIMEOUT_MS = 30_000
@@ -147,6 +158,7 @@ export class CodexProtocolClient {
     })
 
     await this.rpc('initialize', { clientInfo: this.options.clientInfo, capabilities: null })
+    this.notify('initialized', {})
   }
 
   async stop(): Promise<void> {
@@ -336,6 +348,12 @@ export class CodexProtocolClient {
         },
       },
     }
+  }
+
+  private notify(method: string, params: unknown): void {
+    if (this.ws?.readyState !== WebSocket.OPEN) return
+    const payload = { jsonrpc: '2.0' as const, method, params }
+    this.ws.send(JSON.stringify(payload))
   }
 
   private rpc<T>(method: string, params: unknown): Promise<T> {

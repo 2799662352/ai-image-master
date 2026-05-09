@@ -1,9 +1,10 @@
 import type { FileChange } from '../types/agent-timeline'
 
-export function countDiffLines(diff: string): { added: number; removed: number } {
+export function countDiffLines(diff: unknown): { added: number; removed: number } {
   let added = 0
   let removed = 0
-  for (const line of diff.split('\n')) {
+  const text = typeof diff === 'string' ? diff : ''
+  for (const line of text.split('\n')) {
     if (line.startsWith('+++') || line.startsWith('---')) continue
     if (line.startsWith('@@')) continue
     if (line.startsWith('+')) added++
@@ -13,15 +14,17 @@ export function countDiffLines(diff: string): { added: number; removed: number }
 }
 
 export function parseChange(raw: {
-  path: string
-  kind: string
-  unifiedDiff: string
+  path?: unknown
+  kind?: unknown
+  unifiedDiff?: unknown
 }): FileChange {
-  const { added, removed } = countDiffLines(raw.unifiedDiff)
+  const diff = typeof raw.unifiedDiff === 'string' ? raw.unifiedDiff : ''
+  const kind = typeof raw.kind === 'string' ? raw.kind : ''
+  const { added, removed } = countDiffLines(diff)
   return {
-    path: raw.path,
-    operation: raw.kind === 'create' ? 'create' : raw.kind === 'delete' ? 'delete' : 'edit',
-    diff: raw.unifiedDiff,
+    path: typeof raw.path === 'string' && raw.path.length > 0 ? raw.path : 'unknown',
+    operation: kind === 'create' ? 'create' : kind === 'delete' ? 'delete' : 'edit',
+    diff,
     added,
     removed,
   }

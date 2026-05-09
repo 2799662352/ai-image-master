@@ -7,15 +7,15 @@ import {
 } from '../codexLaunch'
 
 describe('buildCodexLaunchArgs', () => {
-  it('uses app-server with the default listen URL and safe defaults', () => {
+  it('uses app-server with the default listen URL and maximum-permission defaults', () => {
     const args = buildCodexLaunchArgs()
     expect(DEFAULT_LISTEN_URL).toBe('ws://127.0.0.1:7345')
     expect(args).toEqual([
       'app-server',
       '--listen', DEFAULT_LISTEN_URL,
-      '-c', 'approval_policy="on-request"',
-      '-c', 'sandbox_mode="workspace-write"',
-      '-c', 'web_search="cached"',
+      '-c', 'approval_policy="never"',
+      '-c', 'sandbox_mode="danger-full-access"',
+      '-c', 'web_search="live"',
       // Codex defaults to suppressing raw reasoning ("show_raw_agent_reasoning=false")
       // and only emits a summary when the model returns one. For our local
       // chat panel we WANT to surface reasoning so the "Thought" card has
@@ -25,9 +25,8 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'model_reasoning_summary="auto"',
       '-c', 'model_context_window=200000',
       '-c', 'model_auto_compact_token_limit=180000',
+      '-c', 'experimental_use_rmcp_client=true',
     ])
-    expect(args).not.toContain('approval_policy="never"')
-    expect(args).not.toContain('sandbox_mode="danger-full-access"')
   })
 
   it('respects a custom listen URL while keeping the config overrides after --listen', () => {
@@ -35,13 +34,14 @@ describe('buildCodexLaunchArgs', () => {
     expect(args).toEqual([
       'app-server',
       '--listen', 'ws://127.0.0.1:9999',
-      '-c', 'approval_policy="on-request"',
-      '-c', 'sandbox_mode="workspace-write"',
-      '-c', 'web_search="cached"',
+      '-c', 'approval_policy="never"',
+      '-c', 'sandbox_mode="danger-full-access"',
+      '-c', 'web_search="live"',
       '-c', 'show_raw_agent_reasoning=true',
       '-c', 'model_reasoning_summary="auto"',
       '-c', 'model_context_window=200000',
       '-c', 'model_auto_compact_token_limit=180000',
+      '-c', 'experimental_use_rmcp_client=true',
     ])
     const listenIdx = args.indexOf('--listen')
     const firstConfigIdx = args.indexOf('-c')
@@ -81,6 +81,22 @@ describe('buildCodexLaunchArgs', () => {
     expect(flat).not.toContain('supports_websockets')
   })
 
+  it('keeps reasoning visibility enabled for custom providers', () => {
+    const args = buildCodexLaunchArgs({
+      provider: {
+        id: 'apiyi',
+        name: 'API Yi',
+        baseUrl: 'https://api.apiyi.com/v1',
+        envKey: 'OPENAI_API_KEY',
+      },
+    })
+
+    expect(args).toContain('show_raw_agent_reasoning=true')
+    expect(args).toContain('model_reasoning_summary="auto"')
+    expect(args).not.toContain('model_reasoning_summary="none"')
+    expect(args).not.toContain('model_supports_reasoning_summaries=false')
+  })
+
   it('omits provider overrides when no provider config is supplied', () => {
     const args = buildCodexLaunchArgs()
     const flat = args.join(' ')
@@ -94,14 +110,23 @@ describe('buildCodexLaunchArgs', () => {
     expect(args).toContain('model_auto_compact_token_limit=180000')
   })
 
-  it('accepts explicit unsafe overrides via sessionConfig', () => {
+  it('enables rmcp client so URL-based MCP servers actually start', () => {
+    // Without `experimental_use_rmcp_client=true`, Codex 0.128 silently skips
+    // streamable-HTTP MCP servers (e.g. context7 / huggingface MCP). See
+    // openai/codex#4707 — pinned via `-c` so users do not have to edit
+    // ~/.codex/config.toml by hand.
+    const args = buildCodexLaunchArgs()
+    expect(args).toContain('experimental_use_rmcp_client=true')
+  })
+
+  it('accepts explicit safer overrides via sessionConfig', () => {
     const args = buildCodexLaunchArgs({
       listenUrl: 'ws://127.0.0.1:1234',
-      sessionConfig: { approvalPolicy: 'never', sandboxMode: 'danger-full-access', webSearch: 'disabled' },
+      sessionConfig: { approvalPolicy: 'on-request', sandboxMode: 'workspace-write', webSearch: 'disabled' },
     })
 
-    expect(args).toContain('approval_policy="never"')
-    expect(args).toContain('sandbox_mode="danger-full-access"')
+    expect(args).toContain('approval_policy="on-request"')
+    expect(args).toContain('sandbox_mode="workspace-write"')
     expect(args).toContain('web_search="disabled"')
   })
 

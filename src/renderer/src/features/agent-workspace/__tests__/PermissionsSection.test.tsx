@@ -4,6 +4,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PermissionsSection } from '../PermissionsSection'
 
 const status = {
+  sandboxMode: 'danger-full-access',
+  approvalPolicy: 'never',
+  webSearch: 'live',
+  writableRoots: [],
+}
+
+const safeStatus = {
   sandboxMode: 'workspace-write',
   approvalPolicy: 'on-request',
   webSearch: 'cached',
@@ -31,8 +38,8 @@ describe('PermissionsSection', () => {
     render(<PermissionsSection />)
 
     expect(await screen.findByText(/Sandbox/i)).toBeTruthy()
-    expect(screen.getByText('workspace-write')).toBeTruthy()
-    expect(screen.getByText('on-request')).toBeTruthy()
+    expect(screen.getByText('danger-full-access')).toBeTruthy()
+    expect(screen.getByText('never')).toBeTruthy()
   })
 
   it('keeps permission controls visible when applying a config change fails', async () => {
@@ -40,7 +47,7 @@ describe('PermissionsSection', () => {
       configurable: true,
       value: {
         agent: {
-          getSessionStatus: vi.fn().mockResolvedValue(status),
+          getSessionStatus: vi.fn().mockResolvedValue(safeStatus),
           setSessionConfig: vi.fn().mockRejectedValue(new Error('session config change cancelled')),
         },
       },

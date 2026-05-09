@@ -8,9 +8,9 @@ import type {
 export const DEFAULT_LISTEN_URL = 'ws://127.0.0.1:7345'
 
 export const DEFAULT_CODEX_SESSION_CONFIG: CodexSessionConfig = {
-  approvalPolicy: 'on-request',
-  sandboxMode: 'workspace-write',
-  webSearch: 'cached',
+  approvalPolicy: 'never',
+  sandboxMode: 'danger-full-access',
+  webSearch: 'live',
   writableRoots: [],
 }
 
@@ -102,6 +102,15 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     // ratio. See https://developers.openai.com/codex/config-advanced.
     '-c', 'model_context_window=200000',
     '-c', 'model_auto_compact_token_limit=180000',
+    // Enable rmcp transport so URL-based MCP servers (e.g.
+    // `[mcp_servers.context7] url = "https://mcp.context7.com/mcp"`) are
+    // actually started. With Codex 0.128, omitting this flag silently skips
+    // streamable-HTTP servers without surfacing an error. See
+    // openai/codex#4707 — every workaround in that thread sets it at the top
+    // of `config.toml`. We pin it via `-c` instead so users don't have to
+    // edit any file by hand. OAuth login and tool-call surfaces both require
+    // this client on the server side.
+    '-c', 'experimental_use_rmcp_client=true',
   ]
 
   for (const root of sessionConfig.writableRoots) {

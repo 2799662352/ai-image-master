@@ -45,9 +45,9 @@ export function CodexPermissionsPanel({ status, onApply }: CodexPermissionsPanel
 
   const changed = Object.keys(patch).length > 0
   const unsafe =
-    draft.sandboxMode === 'danger-full-access' ||
-    draft.approvalPolicy === 'never' ||
-    draft.webSearch === 'live'
+    patch.sandboxMode === 'danger-full-access' ||
+    patch.approvalPolicy === 'never' ||
+    patch.webSearch === 'live'
 
   async function apply(): Promise<void> {
     if (!changed) return

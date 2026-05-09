@@ -102,6 +102,9 @@ export default defineConfig({
               if (id.includes('jszip')) {
                 return 'vendor-jszip'
               }
+              if (id.includes('monaco-editor')) {
+                return 'vendor-monaco'
+              }
               // 其他 node_modules
               return 'vendor'
             }
@@ -218,7 +221,7 @@ export default defineConfig({
     },
     // 依赖优化
     optimizeDeps: {
-      include: ['choices.js', 'jszip', 'react', 'react-dom', 'zustand', 'react-select'],
+      include: ['choices.js', 'jszip', 'react', 'react-dom', 'zustand', 'react-select', 'monaco-editor'],
       exclude: [],
       esbuildOptions: {
         plugins: [{

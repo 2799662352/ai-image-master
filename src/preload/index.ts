@@ -181,6 +181,10 @@ const IPC_CHANNELS = {
     MCP_RELOAD: 'agent:mcp-reload',
     MCP_OAUTH_LOGIN: 'agent:mcp-oauth-login',
     MCP_READ_CONFIG: 'agent:mcp-read-config',
+    DOCKER_GW_CHECK: 'agent:docker-gw-check',
+    DOCKER_GW_FIX: 'agent:docker-gw-fix',
+    DOCKER_GW_STATUS: 'agent:docker-gw-status',
+    DOCKER_GW_STOP: 'agent:docker-gw-stop',
     OPEN_THREAD: 'agent:open-thread',
     RENAME_THREAD: 'agent:rename-thread',
     DELETE_THREAD: 'agent:delete-thread',
@@ -321,6 +325,15 @@ export interface ElectronAPI {
     reloadMcpServers: () => Promise<{ ok: boolean; error?: string }>
     mcpOAuthLogin: (name: string) => Promise<{ ok: boolean; error?: string; authorization_url?: string }>
     readConfig: () => Promise<{ ok: boolean; error?: string; config?: unknown }>
+    dockerGatewayCheck: () => Promise<{ installed: boolean; version?: string; error?: string }>
+    dockerGatewayFix: (opts?: { port?: number }) => Promise<{
+      ok: boolean
+      error?: string
+      converted?: string[]
+      gatewayPort?: number
+    }>
+    dockerGatewayStatus: () => Promise<{ running: boolean; port: number | null; pid: number | null; profile: string | null }>
+    dockerGatewayStop: () => Promise<{ ok: boolean; error?: string }>
     onMcpStatus: (handler: (event: any) => void) => () => void
   }
   // Shell helpers (clipboard / save dialog)
@@ -699,6 +712,23 @@ const electronAPI: ElectronAPI = {
 
     readConfig: () =>
       safeInvoke<{ ok: boolean; error?: string; config?: unknown }>(IPC_CHANNELS.AGENT.MCP_READ_CONFIG),
+
+    dockerGatewayCheck: () =>
+      safeInvoke<{ installed: boolean; version?: string; error?: string }>(IPC_CHANNELS.AGENT.DOCKER_GW_CHECK),
+
+    dockerGatewayFix: (opts?: { port?: number }) =>
+      safeInvoke<{ ok: boolean; error?: string; converted?: string[]; gatewayPort?: number }>(
+        IPC_CHANNELS.AGENT.DOCKER_GW_FIX,
+        opts,
+      ),
+
+    dockerGatewayStatus: () =>
+      safeInvoke<{ running: boolean; port: number | null; pid: number | null; profile: string | null }>(
+        IPC_CHANNELS.AGENT.DOCKER_GW_STATUS,
+      ),
+
+    dockerGatewayStop: () =>
+      safeInvoke<{ ok: boolean; error?: string }>(IPC_CHANNELS.AGENT.DOCKER_GW_STOP),
 
     onMcpStatus: (handler: (event: any) => void) =>
       safeOnWithCleanup<any>('agent:mcp-status', handler, IPC_CHANNELS.AGENT_MCP_EVENTS),

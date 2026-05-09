@@ -51,16 +51,25 @@ describe('CodexProtocolClient MCP methods', () => {
     server.close()
   })
 
-  it('listMcpServers sends mcpServerStatus/list with detail:full', async () => {
+  it('listMcpServers sends mcpServerStatus/list with detail:full and parses {data,nextCursor}', async () => {
     server.setResponder((msg: any) => {
       if (msg.method === 'mcpServerStatus/list') {
-        return { mcpServers: [{ name: 'test-server', tools: {}, resources: [], resource_templates: [], auth_status: 'unsupported' }] }
+        // Pinned by openai/codex/codex-rs/app-server-protocol/schema/typescript/v2/
+        // ListMcpServerStatusResponse.ts -- list lives under `data` (camelCase fields)
+        return {
+          data: [
+            { name: 'test-server', tools: {}, resources: [], resourceTemplates: [], authStatus: 'unsupported' },
+          ],
+          nextCursor: null,
+        }
       }
       return {}
     })
     const result = await client.listMcpServers()
-    expect(result.mcpServers).toHaveLength(1)
-    expect(result.mcpServers[0].name).toBe('test-server')
+    expect(result.data).toHaveLength(1)
+    expect(result.data[0].name).toBe('test-server')
+    expect(result.data[0].authStatus).toBe('unsupported')
+    expect(result.nextCursor).toBeNull()
     const sent = server.messages.find((m: any) => m.method === 'mcpServerStatus/list') as any
     expect(sent.params.detail).toBe('full')
   })

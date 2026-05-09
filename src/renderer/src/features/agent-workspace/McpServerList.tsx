@@ -15,10 +15,12 @@ export function McpServerList({ onOpenEditor, onOpenImport }: McpServerListProps
   const servers = useMcpStore((s) => s.servers)
   const loading = useMcpStore((s) => s.loading)
   const error = useMcpStore((s) => s.error)
+  const loggingIn = useMcpStore((s) => s.loggingIn)
   const fetchServers = useMcpStore((s) => s.fetchServers)
   const toggleEnabled = useMcpStore((s) => s.toggleEnabled)
   const deleteServer = useMcpStore((s) => s.deleteServer)
   const updateStatus = useMcpStore((s) => s.updateStatus)
+  const startOAuthLogin = useMcpStore((s) => s.startOAuthLogin)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
 
   useMcpAutoGatewayFix()
@@ -55,6 +57,13 @@ export function McpServerList({ onOpenEditor, onOpenImport }: McpServerListProps
       await toggleEnabled(name, enabled)
     },
     [toggleEnabled],
+  )
+
+  const handleLogin = useCallback(
+    (name: string) => {
+      startOAuthLogin(name)
+    },
+    [startOAuthLogin],
   )
 
   if (loading) {
@@ -113,9 +122,11 @@ export function McpServerList({ onOpenEditor, onOpenImport }: McpServerListProps
             <McpServerCard
               key={server.name}
               server={server}
+              loggingIn={loggingIn === server.name}
               onEdit={onOpenEditor}
               onDelete={handleDelete}
               onToggle={handleToggle}
+              onLogin={handleLogin}
             />
           ))}
         </div>

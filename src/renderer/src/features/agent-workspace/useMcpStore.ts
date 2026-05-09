@@ -24,12 +24,14 @@ interface McpStore {
   servers: McpServerCard[]
   loading: boolean
   error: string | null
+  loggingIn: string | null
   fetchServers: () => Promise<void>
   updateStatus: (name: string, status: string, error: string | null) => void
   toggleEnabled: (name: string, enabled: boolean) => Promise<void>
   deleteServer: (name: string) => Promise<void>
   disableTool: (serverName: string, toolName: string) => Promise<void>
   enableTool: (serverName: string, toolName: string) => Promise<void>
+  startOAuthLogin: (name: string) => Promise<void>
   lastAutoFix: { count: number; port: number; ts: number } | null
   setLastAutoFix: (v: McpStore['lastAutoFix']) => void
   dismissLastAutoFix: () => void
@@ -44,6 +46,7 @@ export const useMcpStore = create<McpStore>((set, get) => ({
   servers: [],
   loading: false,
   error: null,
+  loggingIn: null,
   lastAutoFix: null,
   lastConvertedFingerprint: null,
 
@@ -60,6 +63,38 @@ export const useMcpStore = create<McpStore>((set, get) => ({
 
   dismissLastAutoFix() {
     set({ lastAutoFix: null })
+  },
+
+  async startOAuthLogin(name) {
+    const api = getApi()
+    if (!api?.mcpOAuthLogin) return
+    set({ loggingIn: name })
+    set((state) => ({
+      servers: state.servers.map((s) => (s.name === name ? { ...s, error: null } : s)),
+    }))
+    try {
+      const res = await api.mcpOAuthLogin(name)
+      if (res?.authorization_url) {
+        const shell = (window as any).electronAPI?.shell
+        if (shell?.openExternal) {
+          await shell.openExternal(res.authorization_url)
+        } else {
+          set((state) => ({
+            servers: state.servers.map((s) =>
+              s.name === name ? { ...s, error: `无法打开浏览器，请手动访问：${res.authorization_url}` } : s,
+            ),
+          }))
+        }
+      }
+    } catch (err) {
+      set((state) => ({
+        servers: state.servers.map((s) =>
+          s.name === name ? { ...s, error: err instanceof Error ? err.message : String(err) } : s,
+        ),
+      }))
+    } finally {
+      set({ loggingIn: null })
+    }
   },
 
   async fetchServers() {

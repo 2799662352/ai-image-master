@@ -34,7 +34,8 @@ export class TabManager {
     'understand',
     'director',
     'storyboardSplit',
-    'smartErase'
+    'smartErase',
+    'agentWorkspace'
   ]
 
   constructor(config: TabManagerConfig = {}) {
@@ -178,6 +179,8 @@ export class TabManager {
   /**
    * 激活页面
    */
+  private static readonly REACT_MANAGED_TABS = new Set(['agentWorkspace', 'director'])
+
   private activatePage(tabName: string): void {
     const page = this.pages[tabName]
     if (page && typeof page.onActivate === 'function') {
@@ -187,7 +190,7 @@ export class TabManager {
       } catch (error) {
         console.error(`页面 ${tabName} 激活失败:`, error)
       }
-    } else {
+    } else if (!TabManager.REACT_MANAGED_TABS.has(tabName)) {
       console.warn(`⚠️ 页面 ${tabName} 未找到或未完全初始化`)
     }
   }

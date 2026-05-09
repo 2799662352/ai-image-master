@@ -1,6 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type React from 'react'
-import Editor, { type OnMount } from '@monaco-editor/react'
+import Editor, { loader, type OnMount } from '@monaco-editor/react'
+import * as monaco from 'monaco-editor'
+import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
+import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker'
+
+self.MonacoEnvironment = {
+  getWorker(_: unknown, label: string) {
+    if (label === 'json') return new jsonWorker()
+    return new editorWorker()
+  },
+}
+
+loader.config({ monaco })
 
 import { mcpConfigSchema } from './mcpSchemaJson'
 import { useMcpStore } from './useMcpStore'
@@ -79,6 +91,7 @@ export function McpJsonEditor({ serverName, onClose }: McpJsonEditorProps): Reac
       const edits = Object.entries(parsed).map(([name, config]) => ({
         keyPath: `mcp_servers.${name}`,
         value: config,
+        mergeStrategy: 'replace',
       }))
 
       const res = await api.batchWriteConfig(edits, true)

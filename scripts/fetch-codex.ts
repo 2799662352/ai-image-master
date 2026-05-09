@@ -14,7 +14,7 @@ type GitHubRelease = {
 
 const GITHUB_OWNER = process.env.CODEX_GITHUB_OWNER ?? 'openai'
 const GITHUB_REPO = process.env.CODEX_GITHUB_REPO ?? 'codex'
-const DEFAULT_CODEX_VERSION = '0.128.0'
+const DEFAULT_CODEX_VERSION = '0.130.0'
 
 const codexVersion = process.env.CODEX_CLI_VERSION ?? DEFAULT_CODEX_VERSION
 const releaseTag = process.env.CODEX_RELEASE_TAG

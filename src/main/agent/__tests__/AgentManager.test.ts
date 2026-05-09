@@ -12,7 +12,7 @@ interface BackendCall {
 }
 
 function makeStubBackend(
-  scriptPerCall: Array<AgentStreamEvent[]>,
+  scriptPerCall: Array<AgentStreamEvent[] | Error>,
 ): IAgentBackend & { calls: BackendCall[]; cancelCalls: string[] } {
   const calls: BackendCall[] = []
   const cancelCalls: string[] = []
@@ -27,6 +27,7 @@ function makeStubBackend(
       const idx = calls.length
       calls.push({ threadId, input })
       const events = scriptPerCall[idx] ?? []
+      if (events instanceof Error) throw events
       for (const e of events) yield e
     },
   } satisfies IAgentBackend & { calls: BackendCall[]; cancelCalls: string[] }
@@ -50,6 +51,17 @@ afterEach(async () => {
 })
 
 describe('AgentManager codex api key', () => {
+  it('reports maximum-permission Codex defaults in session status', () => {
+    const mgr = new AgentManager({ userDataDir: tmpDir })
+
+    expect(mgr.getSessionStatus()).toMatchObject({
+      sandboxMode: 'danger-full-access',
+      approvalPolicy: 'never',
+      webSearch: 'live',
+      writableRoots: [],
+    })
+  })
+
   it('returns empty string when codex-agent.json is absent', () => {
     const mgr = new AgentManager({ userDataDir: tmpDir })
     expect(mgr.getCodexApiKey()).toBe('')
@@ -289,6 +301,87 @@ describe('AgentManager codex thread id mapping (regression: invalid thread id)',
 
     expect(backend.calls).toHaveLength(2)
     expect(backend.calls[1].threadId).toBe(CODEX_UUID)
+  })
+
+  it('retries on a new Codex thread when cached thread encryption is rejected', async () => {
+    const events: AgentStreamEvent[] = []
+    const fakeStore = {
+      ...persistStubs,
+      createThread: async () => ({ id: 'cm-db-id-recover' }),
+    } as any
+    const fakeAttachments = { ingest: async () => [] } as any
+    const recoveredUuid = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    const backend = makeStubBackend([
+      [
+        { type: 'thread_created', threadId: CODEX_UUID },
+        { type: 'turn_completed', threadId: CODEX_UUID, turnId: 't1' },
+      ],
+      new Error('{"error":{"code":"invalid_encrypted_content","message":"encrypted content could not be decrypted"}}'),
+      [
+        { type: 'thread_created', threadId: recoveredUuid },
+        { type: 'turn_completed', threadId: recoveredUuid, turnId: 't2' },
+      ],
+    ])
+
+    const mgr = new AgentManager({
+      userDataDir: tmpDir,
+      store: fakeStore,
+      attachments: fakeAttachments,
+      eventSink: (e) => events.push(e),
+      backend,
+    })
+
+    await mgr.sendMessage({ content: 'first', attachments: [] })
+    await flushMicrotasks(20)
+    await mgr.sendMessage({ threadId: 'cm-db-id-recover', content: 'second', attachments: [] })
+    await flushMicrotasks(30)
+
+    expect(backend.calls).toHaveLength(3)
+    expect(backend.calls[1].threadId).toBe(CODEX_UUID)
+    expect(backend.calls[2].threadId).toBeUndefined()
+    expect(events.filter((event) => event.type === 'error')).toHaveLength(0)
+  })
+
+  it('retries when encrypted content rejection arrives as a streamed error event', async () => {
+    const events: AgentStreamEvent[] = []
+    const fakeStore = {
+      ...persistStubs,
+      createThread: async () => ({ id: 'cm-db-id-stream-error' }),
+    } as any
+    const fakeAttachments = { ingest: async () => [] } as any
+    const recoveredUuid = 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff'
+    const backend = makeStubBackend([
+      [
+        { type: 'thread_created', threadId: CODEX_UUID },
+        {
+          type: 'error',
+          threadId: CODEX_UUID,
+          turnId: 't1',
+          error: '{"error":{"code":"invalid_encrypted_content","message":"encrypted content could not be decrypted"}}',
+        },
+      ],
+      [
+        { type: 'thread_created', threadId: recoveredUuid },
+        { type: 'turn_completed', threadId: recoveredUuid, turnId: 't2' },
+      ],
+    ])
+
+    const mgr = new AgentManager({
+      userDataDir: tmpDir,
+      store: fakeStore,
+      attachments: fakeAttachments,
+      eventSink: (e) => events.push(e),
+      backend,
+    })
+
+    await mgr.sendMessage({ content: 'first', attachments: [] })
+    await flushMicrotasks(30)
+
+    expect(backend.calls).toHaveLength(2)
+    expect(backend.calls[0].threadId).toBeUndefined()
+    expect(backend.calls[1].threadId).toBeUndefined()
+    expect(events.filter((event) => event.type === 'error')).toHaveLength(0)
+    expect(events).toContainEqual({ type: 'turn_completed', threadId: 'cm-db-id-stream-error', turnId: 't2' })
   })
 
   it('forwards payload.model through to backend.send when caller selects a model', async () => {

@@ -4,14 +4,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useAgentWorkspaceStore } from '../../agent-workspace/useAgentWorkspaceStore'
 import { AgentChatPanel } from '../AgentChatPanel'
 import { useAgentChatStore } from '../store'
+import { useTabStore } from '../../../stores/useTabStore'
 
 const fakeAgent = {
   onEvent: vi.fn(() => () => undefined),
   onApprovalRequest: vi.fn(() => () => undefined),
   getSessionStatus: vi.fn().mockResolvedValue({
     model: 'codex-test',
-    sandboxMode: 'workspace-write',
-    approvalPolicy: 'on-request',
+    sandboxMode: 'danger-full-access',
+    approvalPolicy: 'never',
     webSearch: 'live',
     writableRoots: [],
   }),
@@ -25,6 +26,7 @@ afterEach(() => {
   Reflect.deleteProperty(window, 'electronAPI')
   useAgentChatStore.setState({ isOpen: false, messages: [], pendingApprovals: [], error: undefined })
   useAgentWorkspaceStore.setState({ section: 'overview', configDirty: false })
+  useTabStore.setState({ activeTab: 'home' })
   vi.clearAllMocks()
 })
 
@@ -50,6 +52,15 @@ describe('AgentChatPanel slim-down', () => {
     renderOpenPanel()
 
     expect(screen.getByText(/Open Agent Workspace/i)).toBeTruthy()
+  })
+
+  it('opens the Agent Workspace tab and closes the chat overlay', () => {
+    renderOpenPanel()
+
+    fireEvent.click(screen.getByText(/Open Agent Workspace/i))
+
+    expect(useTabStore.getState().activeTab).toBe('agentWorkspace')
+    expect(useAgentChatStore.getState().isOpen).toBe(false)
   })
 
   it('restarts Codex from the config dirty banner', async () => {

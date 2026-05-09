@@ -531,6 +531,14 @@ async function cleanupAgentRuntime(): Promise<void> {
   agentRuntimeCleanedUp = true
   try {
     await agentManager?.stop()
+    // Don't leak the docker mcp gateway sidecar on app quit. Best-effort
+    // since the user may have already killed `docker` independently.
+    try {
+      const { getDockerMcpGatewayService } = await import('./agent/dockerMcpGateway')
+      await getDockerMcpGatewayService().stop()
+    } catch (err) {
+      console.warn('[AgentRuntime] dockerMcpGateway cleanup failed:', err)
+    }
   } finally {
     await shutdownDatabase()
   }

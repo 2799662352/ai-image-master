@@ -83,7 +83,7 @@ describe('useMcpStore', () => {
     mockApi.readConfig.mockResolvedValue({ ok: true, config: { mcp_servers: {} } })
     await useMcpStore.getState().deleteServer('github')
     expect(mockApi.batchWriteConfig).toHaveBeenCalledWith(
-      [{ keyPath: 'mcp_servers.github', value: null }],
+      [{ keyPath: 'mcp_servers.github', value: null, mergeStrategy: 'replace' }],
       true,
     )
   })

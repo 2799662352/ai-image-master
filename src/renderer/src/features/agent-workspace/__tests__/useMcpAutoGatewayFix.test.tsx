@@ -22,7 +22,7 @@ describe('useMcpAutoGatewayFix', () => {
     vi.resetAllMocks()
     mockApi.dockerGatewayFix = mockDockerGatewayFix
     useMcpStore.setState({
-      servers: [], loading: false, error: null, loggingIn: null,
+      servers: [], loading: false, error: null,
       syncing: false, syncError: null,
       lastAutoFix: null, lastConvertedFingerprint: null,
     })

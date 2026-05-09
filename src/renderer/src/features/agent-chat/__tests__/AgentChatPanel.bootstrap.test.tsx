@@ -45,9 +45,9 @@ beforeEach(() => {
   fakeAgent.respondApproval.mockResolvedValue({ ok: true })
   fakeAgent.getSessionStatus.mockResolvedValue({
     model: 'gpt-5.5',
-    sandboxMode: 'workspace-write',
-    approvalPolicy: 'on-request',
-    webSearch: 'cached',
+    sandboxMode: 'danger-full-access',
+    approvalPolicy: 'never',
+    webSearch: 'live',
     writableRoots: [],
   })
   useAgentChatStore.setState({
@@ -144,7 +144,7 @@ describe('AgentChatPanel + sidebar integration', () => {
     await Promise.resolve()
     await Promise.resolve()
 
-    expect(screen.getByText(/Codex · workspace-write · on-request · cached/i)).toBeTruthy()
+    expect(screen.getByText(/Codex · danger-full-access · never · live/i)).toBeTruthy()
     expect(screen.getByRole('button', { name: /Open Agent Workspace/i })).toBeTruthy()
     expect(screen.queryByRole('button', { name: /apply permissions/i })).toBeNull()
   })

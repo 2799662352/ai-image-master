@@ -86,9 +86,11 @@ function ensureWatchSubscription(getState: () => State & Actions): void {
       return
     }
     if (event.type === 'unlink') {
-      useFileExplorerStore.setState({
-        conflict: { tabId: tab.id, diskContent: '', show: 'modal' },
-      })
+      useFileExplorerStore.setState((s) => ({
+        tabs: s.tabs.filter((t) => t.id !== tab.id),
+        activeTabId: s.activeTabId === tab.id ? (s.tabs.find((t) => t.id !== tab.id)?.id ?? null) : s.activeTabId,
+        conflict: null,
+      }))
       await refreshWorkspaceRootsForEvent(event, getState)
       return
     }
@@ -97,17 +99,14 @@ function ensureWatchSubscription(getState: () => State & Actions): void {
       return
     }
     const r = await api.fs.readText(event.path)
-    if (!tab.dirty) {
-      useFileExplorerStore.setState((s) => ({
-        tabs: s.tabs.map((t) =>
-          t.id === tab.id ? { ...t, diskContent: r.content, diskMtime: r.mtime, state: null } : t,
-        ),
-      }))
-    } else {
-      useFileExplorerStore.setState({
-        conflict: { tabId: tab.id, diskContent: r.content, show: 'modal' },
-      })
-    }
+    const currentTab = getState().tabs.find((t) => t.id === tab.id)
+    if (!currentTab) return
+    useFileExplorerStore.setState((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === currentTab.id ? { ...t, diskContent: r.content, diskMtime: r.mtime, dirty: false, state: null } : t,
+      ),
+      conflict: null,
+    }))
     await refreshWorkspaceRootsForEvent(event, getState)
   }) ?? null
 }

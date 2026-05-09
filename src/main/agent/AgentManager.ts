@@ -6,6 +6,14 @@ import path from 'node:path'
 import { dialog } from 'electron'
 import { CodexLocalBackend } from './CodexLocalBackend'
 import { DEFAULT_CODEX_SESSION_CONFIG } from './codexLaunch'
+import { getDockerMcpGatewayService, type CheckInstalledResult, type GatewayStatus } from './dockerMcpGateway'
+import {
+  GATEWAY_DEFAULT_PORT,
+  GATEWAY_PROFILE_NAME,
+  GATEWAY_SERVER_NAME,
+  buildGatewayConfigEntry,
+  selectDockerStdioEntries,
+} from './dockerMcpFix'
 import {
   deleteSkill,
   getSkillDetail,
@@ -370,6 +378,118 @@ export class AgentManager {
       const result = await this.backend.mcpOAuthLogin(name)
       return { ok: true, authorization_url: result?.authorization_url }
     } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  // ---- Docker MCP Gateway workaround for Codex bug #19425 ----
+  // See ./dockerMcpGateway.ts for the full rationale. Renderer calls
+  // `dockerGatewayCheck` to gate the "Fix" button, then `dockerGatewayFix`
+  // to actually convert + start. Status/stop are exposed for diagnostics.
+
+  async dockerGatewayCheckRpc(): Promise<CheckInstalledResult> {
+    return getDockerMcpGatewayService().checkInstalled()
+  }
+
+  async dockerGatewayStatusRpc(): Promise<GatewayStatus> {
+    return getDockerMcpGatewayService().getStatus()
+  }
+
+  async dockerGatewayStopRpc(): Promise<{ ok: boolean; error?: string }> {
+    try {
+      await getDockerMcpGatewayService().stop()
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  /**
+   * One-shot orchestration for the renderer's "一键修复" button. Choreography:
+   *   1. Verify `docker mcp` is installed.
+   *   2. Read current Codex config; pick out docker-run-based MCP entries.
+   *   3. Build a fresh gateway profile containing those images.
+   *   4. Spawn the gateway in HTTP/SSE mode on `port` (or default 8811).
+   *   5. Replace the docker entries in `mcp_servers` with a single
+   *      `[mcp_servers.docker_gw] url = "http://127.0.0.1:<port>/sse"` entry,
+   *      then ask Codex to reload its MCP layer.
+   *
+   * Idempotent — running it again rebuilds the profile from the current set
+   * and restarts the gateway. Failures partway through leave config alone:
+   * we only mutate `mcp_servers` once we have a healthy gateway.
+   */
+  async dockerGatewayFixRpc(opts?: { port?: number }): Promise<{
+    ok: boolean
+    error?: string
+    converted?: string[]
+    gatewayPort?: number
+  }> {
+    const port = opts?.port ?? GATEWAY_DEFAULT_PORT
+    const svc = getDockerMcpGatewayService()
+    try {
+      const check = await svc.checkInstalled()
+      if (!check.installed) {
+        return {
+          ok: false,
+          error: check.error ?? 'docker mcp 未安装。请先安装 Docker Desktop 4.59+ 或手动安装 docker-mcp CLI plugin。',
+        }
+      }
+
+      if (!this.backend.readConfig) throw new Error('MCP read config API unavailable')
+      if (!this.backend.batchWriteConfig) throw new Error('MCP batch write API unavailable')
+      const cfg = await this.backend.readConfig()
+      const mcpServers = (cfg?.config as any)?.mcp_servers ?? {}
+      const dockerEntries = selectDockerStdioEntries(mcpServers)
+      if (dockerEntries.length === 0) {
+        return { ok: false, error: '没有找到需要修复的 docker MCP 服务器。' }
+      }
+
+      // Build a fresh profile from the current docker entries. We always
+      // rebuild rather than diff -- profile lifetime is owned by us, so
+      // rebuilding is cheap and avoids stale entries from previous runs.
+      const images = Array.from(new Set(dockerEntries.map((e) => e.image)))
+      await svc.addServersToProfile(GATEWAY_PROFILE_NAME, images).catch((err) => {
+        // Profile may already exist from a previous run -- we don't have
+        // a non-destructive update path in `docker mcp` yet, so surface
+        // the error so the user can manually clean up. (Future: probe
+        // first via `docker mcp profile show` and `profile remove`.)
+        if (/already exists/i.test(err?.message ?? '')) {
+          throw new Error(
+            `Docker MCP profile "${GATEWAY_PROFILE_NAME}" 已存在。请先在终端运行 ` +
+            `\`docker mcp profile remove ${GATEWAY_PROFILE_NAME}\` 后重试。`,
+          )
+        }
+        throw err
+      })
+
+      // Spawn (or restart) the gateway. `start` stops the previous
+      // instance first so this is safe to call repeatedly.
+      const status = await svc.start({ port, profile: GATEWAY_PROFILE_NAME })
+
+      // Now mutate config: remove every docker-run server we converted,
+      // and add the single URL entry. We use `mergeStrategy: 'replace'`
+      // for both so we don't leave half-merged entries behind.
+      const edits = dockerEntries.map((e) => ({
+        keyPath: `mcp_servers.${e.name}`,
+        value: null,
+        mergeStrategy: 'replace' as const,
+      }))
+      edits.push({
+        keyPath: `mcp_servers.${GATEWAY_SERVER_NAME}`,
+        value: buildGatewayConfigEntry(port) as any,
+        mergeStrategy: 'replace' as const,
+      })
+      await this.backend.batchWriteConfig(edits, true)
+
+      return {
+        ok: true,
+        converted: dockerEntries.map((e) => e.name),
+        gatewayPort: status.port ?? port,
+      }
+    } catch (err) {
+      // Best-effort: if we already started the gateway but the config
+      // write blew up, leave the gateway running -- the user can still
+      // wire it up manually, and `dockerGatewayStop` is exposed.
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
   }

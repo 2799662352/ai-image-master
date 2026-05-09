@@ -34,6 +34,10 @@ const AGENT_HANDLE_CHANNELS = [
   'agent:mcp-reload',
   'agent:mcp-oauth-login',
   'agent:mcp-read-config',
+  'agent:docker-gw-check',
+  'agent:docker-gw-fix',
+  'agent:docker-gw-status',
+  'agent:docker-gw-stop',
 ]
 
 export function registerAgentIpc(manager: AgentManager, router: ToolRouter): void {
@@ -105,6 +109,10 @@ export function registerAgentIpc(manager: AgentManager, router: ToolRouter): voi
   ipcMain.handle('agent:mcp-reload', () => manager.reloadMcpServersRpc())
   ipcMain.handle('agent:mcp-oauth-login', (_event, name: string) => manager.mcpOAuthLoginRpc(name))
   ipcMain.handle('agent:mcp-read-config', () => manager.readConfigRpc())
+  ipcMain.handle('agent:docker-gw-check', () => manager.dockerGatewayCheckRpc())
+  ipcMain.handle('agent:docker-gw-fix', (_event, opts?: { port?: number }) => manager.dockerGatewayFixRpc(opts))
+  ipcMain.handle('agent:docker-gw-status', () => manager.dockerGatewayStatusRpc())
+  ipcMain.handle('agent:docker-gw-stop', () => manager.dockerGatewayStopRpc())
   ipcMain.on('agent:tool-response', (_event, response: AgentToolResponse) => router.handleRendererResponse(response))
 }
 
