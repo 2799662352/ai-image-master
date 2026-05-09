@@ -187,4 +187,22 @@ describe('McpSection', () => {
       toggleResult.resolve({ ok: true })
     })
   })
+
+  it('refreshes after save even if the editor closes during the saved delay', async () => {
+    const api = installAgentApi([mcpFixture({ id: 'a', name: 'a' })])
+    api.listMcp.mockResolvedValueOnce([mcpFixture({ id: 'a', name: 'a' })]).mockResolvedValueOnce([])
+
+    render(<McpSection />)
+
+    fireEvent.click(await screen.findByText('New MCP Server'))
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'a' } })
+    fireEvent.change(screen.getByLabelText('Command'), { target: { value: 'node' } })
+    fireEvent.click(screen.getByText('Save'))
+
+    expect(await screen.findByText('Saved')).toBeTruthy()
+    fireEvent.click(screen.getByText('Close'))
+
+    await waitFor(() => expect(api.listMcp).toHaveBeenCalledTimes(2))
+    expect(await screen.findByText('No MCP servers yet.')).toBeTruthy()
+  })
 })

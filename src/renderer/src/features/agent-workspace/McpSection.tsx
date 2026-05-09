@@ -186,7 +186,6 @@ export function McpSection(): React.JSX.Element {
             setEditing(null)
           }}
           onSaved={() => {
-            setEditing(null)
             setConfigDirty(true)
             void loadItems()
           }}

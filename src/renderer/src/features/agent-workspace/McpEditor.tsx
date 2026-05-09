@@ -111,10 +111,10 @@ export function McpEditor({
       }
 
       setSaved(true)
-      const closeAfterSave = onSaved ?? onClose
+      onSaved?.()
       closeTimerRef.current = window.setTimeout(() => {
         if (mountedRef.current) {
-          closeAfterSave()
+          onClose()
         }
       }, 200)
     } catch (reason) {
