@@ -443,6 +443,84 @@ describe('CodexNotificationRouter', () => {
         },
       })
     })
+
+    it('does not invent a file change when fallback text has no completed changes or item path', () => {
+      const router = new CodexNotificationRouter()
+
+      router.route('item/fileChange/outputDelta', {
+        threadId: 'thread-1',
+        itemId: 'file-1',
+        delta: '@@\n-old\n+new\n',
+      })
+
+      expect(
+        router.route('item/completed', {
+          threadId: 'thread-1',
+          item: {
+            id: 'file-1',
+            type: 'fileChange',
+          },
+        }),
+      ).toMatchObject({
+        final: {
+          changes: [],
+        },
+      })
+    })
+
+    it('clears streamed fallback text after item/completed so it does not leak into later completions', () => {
+      const router = new CodexNotificationRouter()
+
+      router.route('item/fileChange/outputDelta', {
+        threadId: 'thread-1',
+        itemId: 'file-1',
+        delta: '@@\n-old\n+new\n',
+      })
+
+      expect(
+        router.route('item/completed', {
+          threadId: 'thread-1',
+          item: {
+            id: 'file-1',
+            type: 'fileChange',
+            changes: [{ path: 'src/a.ts', kind: 'edit' }],
+          },
+        }),
+      ).toMatchObject({
+        final: {
+          changes: [
+            {
+              path: 'src/a.ts',
+              diff: '@@\n-old\n+new\n',
+              added: 1,
+              removed: 1,
+            },
+          ],
+        },
+      })
+
+      expect(
+        router.route('item/completed', {
+          threadId: 'thread-1',
+          item: {
+            id: 'file-1',
+            type: 'fileChange',
+            changes: [{ path: 'src/a.ts', kind: 'edit' }],
+          },
+        }),
+      ).toMatchObject({
+        final: {
+          changes: [
+            {
+              path: 'src/a.ts',
+              diff: '',
+              added: 0,
+              removed: 0,
+            },
+          ],
+        },
+      })
+    })
   })
 
   describe('reasoning completion', () => {
