@@ -1,6 +1,7 @@
 import { Bot } from 'lucide-react'
 
 import { useTabStore, type TabName } from '../../stores'
+import { AgentStatusButton } from '../AgentStatusButton'
 
 interface TabDef {
   key: TabName
@@ -21,10 +22,6 @@ const TABS: TabDef[] = [
   { key: 'agentWorkspace', label: 'Agent Workspace', icon: 'agent' },
   { key: 'settings', label: '设置', icon: '⚙️' },
 ]
-
-function AgentStatusButton() {
-  return <div data-testid="agent-status-button" />
-}
 
 export function TabBar() {
   const activeTab = useTabStore((s) => s.activeTab)
@@ -48,7 +45,7 @@ export function TabBar() {
             `}
           >
             {tab.key === 'agentWorkspace' ? (
-              <Bot className="h-4 w-4" />
+              <Bot className="h-4 w-4" aria-hidden="true" />
             ) : (
               <span>{tab.icon}</span>
             )}
