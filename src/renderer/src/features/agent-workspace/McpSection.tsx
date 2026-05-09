@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type React from 'react'
 
 import type { AgentApiResult, CodexMcpServerListItem } from '../../../../types/agent'
+import { McpEditor } from './McpEditor'
 import { useAgentWorkspaceStore } from './useAgentWorkspaceStore'
 
 type McpApi = {
@@ -13,7 +14,7 @@ type McpApi = {
   }
 }
 
-type EditingState = 'new' | null
+type EditingState = 'new' | string | null
 
 export function McpSection(): React.JSX.Element {
   const [items, setItems] = useState<CodexMcpServerListItem[]>([])
@@ -177,10 +178,15 @@ export function McpSection(): React.JSX.Element {
         </button>
       </div>
 
-      {editing === 'new' ? (
-        <div className="rounded-xl border border-cyan-400/15 bg-zinc-950/70 p-4 text-sm text-zinc-400">
-          MCP server editor coming next.
-        </div>
+      {editing ? (
+        <McpEditor
+          mode={editing}
+          onClose={() => {
+            setEditing(null)
+            setConfigDirty(true)
+            void loadItems()
+          }}
+        />
       ) : null}
 
       {error ? (
