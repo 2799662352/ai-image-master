@@ -321,6 +321,12 @@ describe('buildCodexSpawnEnv', () => {
     expect(env.OPENAI_API_KEY).toBeUndefined()
     expect(env.FOO).toBe('bar')
   })
+
+  it('sets CODEX_HOME when codexHome is provided', () => {
+    const env = buildCodexSpawnEnv({ FOO: 'bar' } as NodeJS.ProcessEnv, undefined, '/tmp/runtime-home')
+    expect(env.CODEX_HOME).toBe('/tmp/runtime-home')
+    expect(env.FOO).toBe('bar')
+  })
 })
 
 describe('CodexLocalBackend spawn env injection', () => {

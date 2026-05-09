@@ -1,6 +1,10 @@
 import { app } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
 import { buildCodexLaunchArgs, resolveCodexSessionConfig, type CodexProviderConfig } from './codexLaunch'
+import { mergeCodexConfigs } from './codexConfigMerge'
+import { appendAuditLog, atomicWriteFile } from './codexConfigStore'
 import { CodexProtocolClient, mapServerNotification } from './CodexProtocolClient'
 import { createAgentLogStream } from './logger'
 import { getCodexResourceRoot, resolveCodexBinary } from './paths'
@@ -12,6 +16,7 @@ import type {
   CodexSessionConfig,
   CodexThreadDetail,
   CodexThreadSummary,
+  CodexWorkspacePaths,
 } from '../../types/agent'
 import type { AgentInput, IAgentBackend } from './types'
 
@@ -78,12 +83,23 @@ export interface CodexLocalBackendOptions {
 export function buildCodexSpawnEnv(
   baseEnv: NodeJS.ProcessEnv,
   apiKey: string | undefined,
+  codexHome?: string,
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...baseEnv }
   const trimmed = apiKey?.trim() ?? ''
   if (trimmed) env.OPENAI_API_KEY = trimmed
   else delete env.OPENAI_API_KEY
+  if (codexHome) env.CODEX_HOME = codexHome
   return env
+}
+
+export async function rebuildRuntimeConfig(paths: CodexWorkspacePaths): Promise<void> {
+  const [personal, workspace] = await Promise.all([
+    fs.readFile(paths.personalConfigToml, 'utf8').catch(() => ''),
+    fs.readFile(paths.workspaceConfigToml, 'utf8').catch(() => ''),
+  ])
+  const merged = mergeCodexConfigs({ personalToml: personal, workspaceToml: workspace })
+  await atomicWriteFile(paths.runtimeConfigToml, merged)
 }
 
 export class CodexLocalBackend implements IAgentBackend {
@@ -93,6 +109,8 @@ export class CodexLocalBackend implements IAgentBackend {
   private readonly wsUrlOverride: string | undefined
   private readonly resourceRootOverride: string | undefined
   private sessionConfig: CodexSessionConfig
+  private configDirty = false
+  private codexHome: string | undefined
 
   constructor(options: CodexLocalBackendOptions = {}) {
     this.options = options
@@ -132,7 +150,7 @@ export class CodexLocalBackend implements IAgentBackend {
     }
 
     const apiKey = this.options.getApiKey?.()
-    const env = buildCodexSpawnEnv(process.env, apiKey)
+    const env = buildCodexSpawnEnv(process.env, apiKey, this.codexHome)
     const spawnFactory = this.options.spawnFactory ?? spawn
     const proc = spawnFactory(
       bin,
@@ -205,6 +223,35 @@ export class CodexLocalBackend implements IAgentBackend {
       await client.stop().catch(() => { /* ignore */ })
     }
     await this.killProcess()
+  }
+
+  async applyConfigChange(paths: CodexWorkspacePaths): Promise<void> {
+    await rebuildRuntimeConfig(paths)
+    this.configDirty = true
+  }
+
+  isConfigDirty(): boolean {
+    return this.configDirty
+  }
+
+  async restartCodex(paths: CodexWorkspacePaths): Promise<void> {
+    await rebuildRuntimeConfig(paths)
+    this.codexHome = path.dirname(paths.runtimeConfigToml)
+    this.configDirty = true
+
+    await this.stop()
+    await this.start()
+    this.configDirty = false
+
+    try {
+      await appendAuditLog(paths.auditLogPath, {
+        tsIso: new Date().toISOString(),
+        action: 'codex.restart',
+        ok: true,
+      })
+    } catch {
+      // Audit logging is best-effort and must not block a local restart.
+    }
   }
 
   send(threadId: string | undefined, input: AgentInput): AsyncIterable<AgentStreamEvent> {
