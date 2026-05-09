@@ -307,6 +307,17 @@ function applyItemPatch(item: TimelineItem, patch: ItemDeltaPatch): TimelineItem
 }
 
 function applyItemCompleted(item: TimelineItem, final: Record<string, unknown>): TimelineItem {
+  if (item.type === 'text') {
+    const { content, text, ...metadata } = final
+    const finalContent = typeof content === 'string' && content.length > 0
+      ? content
+      : typeof text === 'string' && text.length > 0
+        ? text
+        : item.content
+
+    return { ...item, ...metadata, content: finalContent, type: item.type, endedAt: Date.now() }
+  }
+
   return { ...item, ...final, type: item.type, endedAt: Date.now() } as typeof item
 }
 
@@ -607,7 +618,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
           const next = upsertItemInLastMessage(
             msgs,
             itemId,
-            () => createItemFromStarted(event.itemType, itemId, {}),
+            () => applyItemCompleted(createItemFromStarted(event.itemType, itemId, {}), event.final),
             (item) => applyItemCompleted(item, event.final),
           )
           return { messages: next }

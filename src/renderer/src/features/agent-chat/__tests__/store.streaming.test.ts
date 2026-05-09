@@ -81,4 +81,54 @@ describe('agent chat store streaming text', () => {
     expect(completedItem.content).toBe('streamed')
     expect(completedItem.endedAt).toEqual(expect.any(Number))
   })
+
+  it('keeps streamed text when completion has an empty final content field', () => {
+    applyEvent({
+      type: 'item_delta',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      itemId: 'text-1',
+      itemType: 'text',
+      patch: { kind: 'appendText', field: 'content', text: 'streamed' },
+    })
+
+    applyEvent({
+      type: 'item_completed',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      itemId: 'text-1',
+      itemType: 'text',
+      final: { content: '' },
+    })
+
+    expect(currentTextItem().content).toBe('streamed')
+  })
+
+  it('creates text from completion final content without a prior delta', () => {
+    applyEvent({
+      type: 'item_completed',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      itemId: 'text-1',
+      itemType: 'text',
+      final: { content: 'completed text' },
+    })
+
+    const completedItem = currentTextItem()
+    expect(completedItem.content).toBe('completed text')
+    expect(completedItem.endedAt).toEqual(expect.any(Number))
+  })
+
+  it('normalizes completion final text when content is absent', () => {
+    applyEvent({
+      type: 'item_completed',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      itemId: 'text-1',
+      itemType: 'text',
+      final: { text: 'completed text' },
+    })
+
+    expect(currentTextItem().content).toBe('completed text')
+  })
 })
