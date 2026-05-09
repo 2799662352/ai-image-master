@@ -194,6 +194,8 @@ export type AgentStreamEvent =
   | (AgentStreamEventBase & { type: 'token_usage_updated'; usage: AgentTokenUsage })
   | (AgentStreamEventBase & { type: 'error'; error: string })
   | (AgentStreamEventBase & { type: 'cancelled' })
+  | { type: 'mcp_status_updated'; name: string; status: string; error: string | null }
+  | { type: 'mcp_oauth_completed'; name: string; success: boolean; error: string | null }
 
 export interface AgentToolRequest {
   id: string

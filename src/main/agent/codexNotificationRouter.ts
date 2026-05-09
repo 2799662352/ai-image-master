@@ -598,6 +598,22 @@ export class CodexNotificationRouter {
           error: params.error?.message ?? 'codex error',
         }
 
+      case 'mcpServer/startupStatus/updated':
+        return {
+          type: 'mcp_status_updated' as const,
+          name: params.name as string,
+          status: params.status as string,
+          error: (params.error as string) ?? null,
+        }
+
+      case 'mcpServer/oauthLogin/completed':
+        return {
+          type: 'mcp_oauth_completed' as const,
+          name: params.name as string,
+          success: params.success as boolean,
+          error: (params.error as string) ?? null,
+        }
+
       default:
         return null
     }
