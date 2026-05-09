@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { app, dialog } from 'electron'
+import { dialog } from 'electron'
 import { CodexLocalBackend } from './CodexLocalBackend'
 import { DEFAULT_CODEX_SESSION_CONFIG } from './codexLaunch'
 import {
@@ -167,6 +167,7 @@ export class AgentManager {
   private readonly store: ThreadStore | undefined
   private readonly attachments: AttachmentService | undefined
   private readonly eventSink: ((event: AgentStreamEvent) => void) | undefined
+  private readonly userDataDir: string
   private readonly codexApiKeyPath: string
   private codexApiKey = ''
   private summarizer?: ThreadTitleSummarizer
@@ -188,6 +189,7 @@ export class AgentManager {
     this.store = opts.store
     this.attachments = opts.attachments
     this.eventSink = opts.eventSink
+    this.userDataDir = opts.userDataDir
     this.codexApiKeyPath = path.join(opts.userDataDir, CODEX_API_KEY_FILE)
     this.loadCodexApiKey()
     this.backend = opts.backend ?? new CodexLocalBackend({
@@ -204,9 +206,16 @@ export class AgentManager {
   private workspacePaths(): CodexWorkspacePaths {
     return resolveWorkspacePaths({
       home: os.homedir(),
-      cwd: process.cwd(),
-      userData: app.getPath('userData'),
+      cwd: this.sessionConfig.writableRoots[0] ?? process.cwd(),
+      userData: this.userDataDir,
     })
+  }
+
+  private async applyMcpConfigChange(paths: CodexWorkspacePaths): Promise<void> {
+    if (!this.backend.applyConfigChange) {
+      throw new Error('Codex config refresh API is unavailable')
+    }
+    await this.backend.applyConfigChange(paths)
   }
 
   setWindow(win: BrowserWindow): void {
@@ -292,21 +301,21 @@ export class AgentManager {
   async saveMcp(input: CodexMcpServerInput) {
     const paths = this.workspacePaths()
     const result = await saveMcp(paths, input)
-    if (result.ok) await this.backend.applyConfigChange?.(paths)
+    if (result.ok) await this.applyMcpConfigChange(paths)
     return result
   }
 
   async deleteMcp(id: string) {
     const paths = this.workspacePaths()
     const result = await deleteMcp(paths, id)
-    if (result.ok) await this.backend.applyConfigChange?.(paths)
+    if (result.ok) await this.applyMcpConfigChange(paths)
     return result
   }
 
   async setMcpEnabled(id: string, enabled: boolean) {
     const paths = this.workspacePaths()
     const result = await setMcpEnabled(paths, id, enabled)
-    if (result.ok) await this.backend.applyConfigChange?.(paths)
+    if (result.ok) await this.applyMcpConfigChange(paths)
     return result
   }
 
