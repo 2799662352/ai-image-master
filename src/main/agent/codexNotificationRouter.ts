@@ -465,18 +465,17 @@ export class CodexNotificationRouter {
             const fallbackDiff = this.fileChangeOutputByItemId.get(item.id)
             this.fileChangeOutputByItemId.delete(item.id)
             const fallbackRawChanges =
-              rawChanges.length === 0 && fallbackDiff ? [{ path: item.path, kind: 'edit' }] : rawChanges
+              rawChanges.length === 0 && fallbackDiff && typeof item.path === 'string' && item.path.length > 0
+                ? [{ path: item.path, kind: 'edit' }]
+                : rawChanges
             // parseChange asserts the runtime shape; the array element type is
             // intentionally loose at the wire level since gateways drift.
             const changes = (fallbackRawChanges as Parameters<typeof parseChange>[0][]).map(parseChange)
-            if (fallbackDiff) {
-              const emptyDiffChange = changes.find((change) => change.diff.length === 0)
-              if (emptyDiffChange) {
-                const { added, removed } = countDiffLines(fallbackDiff)
-                emptyDiffChange.diff = fallbackDiff
-                emptyDiffChange.added = added
-                emptyDiffChange.removed = removed
-              }
+            if (fallbackDiff && changes.length === 1 && changes[0].diff.length === 0) {
+              const { added, removed } = countDiffLines(fallbackDiff)
+              changes[0].diff = fallbackDiff
+              changes[0].added = added
+              changes[0].removed = removed
             }
             return {
               type: 'item_completed',

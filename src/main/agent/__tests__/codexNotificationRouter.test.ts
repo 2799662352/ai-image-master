@@ -348,6 +348,69 @@ describe('CodexNotificationRouter', () => {
       })
     })
 
+    it('does not attach streamed fallback diff to an arbitrary change when multiple changes are present', () => {
+      const router = new CodexNotificationRouter()
+
+      router.route('item/fileChange/outputDelta', {
+        threadId: 'thread-1',
+        itemId: 'file-1',
+        delta: '@@\n-old\n+new\n',
+      })
+
+      const event = router.route('item/completed', {
+        threadId: 'thread-1',
+        item: {
+          id: 'file-1',
+          type: 'fileChange',
+          changes: [
+            { path: 'src/a.ts', kind: 'edit' },
+            { path: 'src/b.ts', kind: 'edit' },
+          ],
+        },
+      })
+
+      expect(event).toMatchObject({
+        final: {
+          changes: [
+            { path: 'src/a.ts', diff: '', added: 0, removed: 0 },
+            { path: 'src/b.ts', diff: '', added: 0, removed: 0 },
+          ],
+        },
+      })
+    })
+
+    it('stores file-change output fallback text from params.data', () => {
+      const router = new CodexNotificationRouter()
+
+      router.route('item/fileChange/outputDelta', {
+        threadId: 'thread-1',
+        itemId: 'file-1',
+        data: '@@\n-old\n+new\n',
+      })
+
+      expect(
+        router.route('item/completed', {
+          threadId: 'thread-1',
+          item: {
+            id: 'file-1',
+            type: 'fileChange',
+            changes: [{ path: 'src/a.ts', kind: 'edit' }],
+          },
+        }),
+      ).toMatchObject({
+        final: {
+          changes: [
+            {
+              path: 'src/a.ts',
+              diff: '@@\n-old\n+new\n',
+              added: 1,
+              removed: 1,
+            },
+          ],
+        },
+      })
+    })
+
     it('creates a fallback file change from item.path when completed changes are missing', () => {
       const router = new CodexNotificationRouter()
 
