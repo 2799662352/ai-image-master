@@ -1,4 +1,5 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { StrictMode } from 'react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { CodexMcpServerListItem } from '../../../../../types/agent'
@@ -37,6 +38,17 @@ function installAgentApi(items: CodexMcpServerListItem[]) {
   })
 
   return api
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve
+    reject = promiseReject
+  })
+
+  return { promise, resolve, reject }
 }
 
 afterEach(() => {
@@ -83,5 +95,53 @@ describe('McpSection', () => {
 
     expect(await screen.findByText('No MCP servers yet.')).toBeTruthy()
     expect(api.deleteMcp).toHaveBeenCalledWith('a')
+  })
+
+  it('ignores a stale list response when a newer load resolves first', async () => {
+    const firstLoad = deferred<CodexMcpServerListItem[]>()
+    const secondLoad = deferred<CodexMcpServerListItem[]>()
+    const api = installAgentApi([])
+    api.listMcp.mockReset()
+    api.listMcp.mockReturnValueOnce(firstLoad.promise).mockReturnValueOnce(secondLoad.promise)
+
+    render(
+      <StrictMode>
+        <McpSection />
+      </StrictMode>,
+    )
+
+    await waitFor(() => expect(api.listMcp).toHaveBeenCalledTimes(2))
+
+    await act(async () => {
+      secondLoad.resolve([mcpFixture({ id: 'newer', name: 'newer' })])
+    })
+
+    expect(await screen.findByText('newer')).toBeTruthy()
+
+    await act(async () => {
+      firstLoad.resolve([mcpFixture({ id: 'stale', name: 'stale' })])
+    })
+
+    expect(screen.getByText('newer')).toBeTruthy()
+    expect(screen.queryByText('stale')).toBeNull()
+  })
+
+  it('prevents overlapping MCP mutations while an action is in flight', async () => {
+    const toggleResult = deferred<{ ok: true }>()
+    const api = installAgentApi([mcpFixture({ id: 'a', name: 'a' })])
+    api.setMcpEnabled.mockReturnValue(toggleResult.promise)
+
+    render(<McpSection />)
+
+    const toggleButton = await screen.findByLabelText('Disable a')
+    fireEvent.click(toggleButton)
+    fireEvent.click(toggleButton)
+
+    expect(api.setMcpEnabled).toHaveBeenCalledTimes(1)
+    expect((toggleButton as HTMLButtonElement).disabled).toBe(true)
+
+    await act(async () => {
+      toggleResult.resolve({ ok: true })
+    })
   })
 })

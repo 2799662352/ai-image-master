@@ -21,13 +21,19 @@ export function McpSection(): React.JSX.Element {
   const [error, setError] = useState<string>()
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   const [editing, setEditing] = useState<EditingState>(null)
+  const [mutationInFlight, setMutationInFlight] = useState(false)
   const mountedRef = useRef(false)
+  const loadRequestIdRef = useRef(0)
+  const mutationInFlightRef = useRef(false)
   const setConfigDirty = useAgentWorkspaceStore((state) => state.setConfigDirty)
 
   const loadItems = useCallback(async () => {
+    const requestId = loadRequestIdRef.current + 1
+    loadRequestIdRef.current = requestId
+    const canUpdate = () => mountedRef.current && requestId === loadRequestIdRef.current
     const api = getMcpApi()
     if (!api?.listMcp) {
-      if (mountedRef.current) {
+      if (canUpdate()) {
         setError('Codex MCP API is unavailable.')
         setLoading(false)
       }
@@ -36,13 +42,13 @@ export function McpSection(): React.JSX.Element {
 
     try {
       const nextItems = await api.listMcp()
-      if (mountedRef.current) {
+      if (canUpdate()) {
         setItems(nextItems)
         setError(undefined)
         setLoading(false)
       }
     } catch (reason) {
-      if (mountedRef.current) {
+      if (canUpdate()) {
         setError(errorMessage(reason))
         setLoading(false)
       }
@@ -58,15 +64,42 @@ export function McpSection(): React.JSX.Element {
     }
   }, [loadItems])
 
+  function startMutation(): boolean {
+    if (mutationInFlightRef.current) {
+      return false
+    }
+
+    mutationInFlightRef.current = true
+    if (mountedRef.current) {
+      setMutationInFlight(true)
+    }
+    return true
+  }
+
+  function finishMutation(): void {
+    mutationInFlightRef.current = false
+    if (mountedRef.current) {
+      setMutationInFlight(false)
+    }
+  }
+
   async function deleteServer(id: string): Promise<void> {
     const api = getMcpApi()
     if (!api?.deleteMcp) {
-      setError('Codex MCP API is unavailable.')
+      if (mountedRef.current) {
+        setError('Codex MCP API is unavailable.')
+      }
+      return
+    }
+    if (!startMutation()) {
       return
     }
 
     try {
       const result = await api.deleteMcp(id)
+      if (!mountedRef.current) {
+        return
+      }
       if (!result.ok) {
         setError(result.error ?? 'Failed to delete MCP server.')
         return
@@ -76,19 +109,31 @@ export function McpSection(): React.JSX.Element {
       setConfigDirty(true)
       await loadItems()
     } catch (reason) {
-      setError(errorMessage(reason))
+      if (mountedRef.current) {
+        setError(errorMessage(reason))
+      }
+    } finally {
+      finishMutation()
     }
   }
 
   async function toggleServer(item: CodexMcpServerListItem): Promise<void> {
     const api = getMcpApi()
     if (!api?.setMcpEnabled) {
-      setError('Codex MCP API is unavailable.')
+      if (mountedRef.current) {
+        setError('Codex MCP API is unavailable.')
+      }
+      return
+    }
+    if (!startMutation()) {
       return
     }
 
     try {
       const result = await api.setMcpEnabled(item.id, !item.enabled)
+      if (!mountedRef.current) {
+        return
+      }
       if (!result.ok) {
         setError(result.error ?? 'Failed to update MCP server.')
         return
@@ -97,7 +142,11 @@ export function McpSection(): React.JSX.Element {
       setConfigDirty(true)
       await loadItems()
     } catch (reason) {
-      setError(errorMessage(reason))
+      if (mountedRef.current) {
+        setError(errorMessage(reason))
+      }
+    } finally {
+      finishMutation()
     }
   }
 
@@ -153,6 +202,7 @@ export function McpSection(): React.JSX.Element {
             onConfirmDelete={setConfirmDelete}
             onDelete={deleteServer}
             onToggle={toggleServer}
+            actionsDisabled={mutationInFlight}
           />
           <McpGroup
             title="Workspace (<projectRoot>/.codex)"
@@ -161,6 +211,7 @@ export function McpSection(): React.JSX.Element {
             onConfirmDelete={setConfirmDelete}
             onDelete={deleteServer}
             onToggle={toggleServer}
+            actionsDisabled={mutationInFlight}
           />
         </>
       )}
@@ -175,6 +226,7 @@ function McpGroup({
   onConfirmDelete,
   onDelete,
   onToggle,
+  actionsDisabled,
 }: {
   title: string
   items: CodexMcpServerListItem[]
@@ -182,6 +234,7 @@ function McpGroup({
   onConfirmDelete: (id: string | null) => void
   onDelete: (id: string) => Promise<void>
   onToggle: (item: CodexMcpServerListItem) => Promise<void>
+  actionsDisabled: boolean
 }): React.JSX.Element {
   return (
     <section className="space-y-3">
@@ -211,16 +264,18 @@ function McpGroup({
                   <button
                     type="button"
                     aria-label={`${item.enabled ? 'Disable' : 'Enable'} ${item.name}`}
+                    disabled={actionsDisabled}
                     onClick={() => void onToggle(item)}
-                    className="cursor-pointer rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition-colors duration-200 hover:border-cyan-400/40 hover:text-cyan-100"
+                    className="cursor-pointer rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition-colors duration-200 hover:border-cyan-400/40 hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {item.enabled ? 'Disable' : 'Enable'}
                   </button>
                   <button
                     type="button"
                     aria-label={`Delete ${item.name}`}
+                    disabled={actionsDisabled}
                     onClick={() => onConfirmDelete(item.id)}
-                    className="cursor-pointer rounded-md border border-rose-400/30 px-3 py-1.5 text-sm text-rose-200 transition-colors duration-200 hover:bg-rose-500/10"
+                    className="cursor-pointer rounded-md border border-rose-400/30 px-3 py-1.5 text-sm text-rose-200 transition-colors duration-200 hover:bg-rose-500/10 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Delete
                   </button>
@@ -253,15 +308,17 @@ function McpGroup({
                   <span>Delete {item.name}?</span>
                   <button
                     type="button"
+                    disabled={actionsDisabled}
                     onClick={() => void onDelete(item.id)}
-                    className="cursor-pointer rounded-md bg-rose-500/20 px-2 py-1 text-rose-50 hover:bg-rose-500/30"
+                    className="cursor-pointer rounded-md bg-rose-500/20 px-2 py-1 text-rose-50 hover:bg-rose-500/30 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Confirm delete
                   </button>
                   <button
                     type="button"
+                    disabled={actionsDisabled}
                     onClick={() => onConfirmDelete(null)}
-                    className="cursor-pointer rounded-md px-2 py-1 text-zinc-300 hover:bg-zinc-800"
+                    className="cursor-pointer rounded-md px-2 py-1 text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Cancel
                   </button>
