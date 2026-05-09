@@ -61,4 +61,29 @@ describe('openReference', () => {
       name: 'a.md',
     })
   })
+
+  it('falls back to reference details when a local file reference cannot be opened', async () => {
+    vi.mocked(window.electronAPI.fs.stat).mockResolvedValue({ ok: false })
+    const reference: AgentReference = {
+      id: `file:${filePath}`,
+      type: 'file',
+      label: 'a.md',
+      source: { kind: 'localPath', path: filePath },
+      status: 'ready',
+      openBehavior: 'markdown',
+    }
+
+    await useFileExplorerStore.getState().openReference(reference)
+
+    const state = useFileExplorerStore.getState()
+    expect(state.fxOpen).toBe(true)
+    expect(state.activeTabId).toBeTruthy()
+    expect(state.tabs).toHaveLength(1)
+    expect(state.tabs[0]).toMatchObject({
+      kind: 'reference',
+      name: 'a.md',
+      referenceKey: reference.id,
+      reference,
+    })
+  })
 })

@@ -378,10 +378,19 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
         reference.openBehavior === 'image' ||
         reference.openBehavior === 'pdf')
     ) {
-      set({ fxOpen: true })
-      writeStorage(FX_OPEN_KEY, '1')
-      await get().openTab(reference.source.path, 'workspace')
-      return
+      try {
+        await get().openTab(reference.source.path, 'workspace')
+        const openedTab = get().tabs.find(
+          (tab) => tab.kind !== 'reference' && tab.path === reference.source.path,
+        )
+        if (openedTab && get().activeTabId === openedTab.id) {
+          set({ fxOpen: true })
+          writeStorage(FX_OPEN_KEY, '1')
+          return
+        }
+      } catch {
+        // Fall through to the reference tab so the panel still shows useful details.
+      }
     }
 
     const existing = get().tabs.find((t) => t.referenceKey === reference.id)
