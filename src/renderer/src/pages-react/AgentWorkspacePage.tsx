@@ -1,6 +1,7 @@
 import React from 'react'
 
 import { AgentWorkspaceNav } from '../features/agent-workspace/AgentWorkspaceNav'
+import { OverviewSection } from '../features/agent-workspace/OverviewSection'
 import { useAgentWorkspaceStore } from '../features/agent-workspace/useAgentWorkspaceStore'
 
 export default function AgentWorkspacePage(): React.JSX.Element {
@@ -10,7 +11,11 @@ export default function AgentWorkspacePage(): React.JSX.Element {
     <div className="flex h-full w-full bg-slate-950 font-mono text-slate-100">
       <AgentWorkspaceNav />
       <main className="flex-1 overflow-y-auto p-6">
-        {section === 'overview' && <div data-testid="section-overview">Overview placeholder</div>}
+        {section === 'overview' && (
+          <div data-testid="section-overview">
+            <OverviewSection />
+          </div>
+        )}
         {section === 'permissions' && (
           <div data-testid="section-permissions">Permissions placeholder</div>
         )}
