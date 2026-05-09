@@ -31,6 +31,16 @@ const emptyInput: CodexMcpServerInput = {
   description: '',
 }
 
+const RISKY_PATTERNS: Array<{ re: RegExp; label: string }> = [
+  { re: /--privileged\b/, label: '--privileged' },
+  { re: /--network=host\b/, label: '--network=host' },
+  { re: /-v\s*\/:|--mount\s+type=bind,src=\//, label: 'host root mount' },
+  { re: /\bsudo\b/, label: 'sudo' },
+  { re: /\brm\s+-rf\s+\/(\s|$)/, label: 'rm -rf /' },
+  { re: /\b(bash|sh)\s+-c\b/, label: 'shell -c' },
+  { re: /\beval\b/, label: 'eval' },
+]
+
 export function McpEditor({
   mode,
   onClose,
@@ -48,6 +58,7 @@ export function McpEditor({
   const mountedRef = useRef(false)
   const closeTimerRef = useRef<number | undefined>()
   const editingExisting = mode !== 'new'
+  const riskyArgs = detectRisky(input)
 
   useEffect(() => {
     mountedRef.current = true
@@ -229,6 +240,12 @@ export function McpEditor({
         />
       )}
 
+      {riskyArgs.length > 0 ? (
+        <div className="rounded border border-yellow-400/40 bg-yellow-400/10 p-2 text-xs text-yellow-200">
+          Risky args detected: {riskyArgs.join(', ')} - save is allowed but Codex will run with these privileges.
+        </div>
+      ) : null}
+
       <div className="max-w-2xl rounded border border-zinc-800/70 bg-zinc-950 p-2 font-mono text-xs text-zinc-300">
         {`${input.command} ${input.args.join(' ')}`.trim() || '<command preview>'} env=
         {input.env.map((row) => row.key).filter(Boolean).join(',')}
@@ -257,6 +274,7 @@ function ArgsEditor({ args, onChange }: { args: string[]; onChange: (args: strin
       {args.map((arg, index) => (
         <div key={index} className="flex gap-2">
           <input
+            aria-label={`Arg ${index + 1}`}
             value={arg}
             onChange={(event) => {
               const next = [...args]
@@ -267,6 +285,7 @@ function ArgsEditor({ args, onChange }: { args: string[]; onChange: (args: strin
           />
           <button
             type="button"
+            aria-label={`Remove arg ${index + 1}`}
             onClick={() => onChange(args.filter((_, itemIndex) => itemIndex !== index))}
             className="cursor-pointer text-sm text-zinc-400 hover:text-zinc-200"
           >
@@ -294,6 +313,7 @@ function EnvEditor({
       {env.map((row, index) => (
         <div key={index} className="flex gap-2">
           <input
+            aria-label={`Env key ${index + 1}`}
             placeholder="KEY"
             value={row.key}
             onChange={(event) => {
@@ -304,6 +324,7 @@ function EnvEditor({
             className="w-1/3 rounded border border-zinc-800 bg-zinc-950 px-2 py-1 font-mono text-sm text-zinc-100"
           />
           <input
+            aria-label={`Env value ${index + 1}`}
             type="password"
             placeholder="value (hidden)"
             value={row.value}
@@ -316,6 +337,7 @@ function EnvEditor({
           />
           <button
             type="button"
+            aria-label={`Remove env ${index + 1}`}
             onClick={() => onChange(env.filter((_, itemIndex) => itemIndex !== index))}
             className="cursor-pointer text-sm text-zinc-400 hover:text-zinc-200"
           >
@@ -356,6 +378,11 @@ function getMcpEditorApi() {
 
 function errorMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason)
+}
+
+function detectRisky(input: CodexMcpServerInput): string[] {
+  const haystack = [input.command, ...input.args].join(' ')
+  return RISKY_PATTERNS.filter((pattern) => pattern.re.test(haystack)).map((pattern) => pattern.label)
 }
 
 function inputToTomlFragment(input: CodexMcpServerInput): string {
