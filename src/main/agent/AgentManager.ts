@@ -3,9 +3,22 @@ import { readFileSync } from 'node:fs'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { dialog } from 'electron'
+import { app, dialog } from 'electron'
 import { CodexLocalBackend } from './CodexLocalBackend'
 import { DEFAULT_CODEX_SESSION_CONFIG } from './codexLaunch'
+import {
+  deleteMcp,
+  deleteSkill,
+  getMcpDetail,
+  getSkillDetail,
+  listMcp,
+  listSkills,
+  readAuditLog,
+  resolveWorkspacePaths,
+  saveMcp,
+  saveSkill,
+  setMcpEnabled,
+} from './codexConfigStore'
 import { discoverCodexSkills, readMcpSummary } from './codexConfigDiscovery'
 import { mapReferencesToInputItems } from './codexUserInput'
 import { validateSessionConfigPatch } from './sessionConfigValidation'
@@ -15,12 +28,15 @@ import type {
   AgentStreamEvent,
   CodexApprovalRequest,
   CodexApprovalResponse,
+  CodexMcpServerInput,
   CodexMcpSummary,
   CodexSessionConfig,
   CodexSessionStatus,
+  CodexSkillInput,
   CodexSkillsSummary,
   CodexThreadDetail,
   CodexThreadSummary,
+  CodexWorkspacePaths,
   ItemDeltaPatch,
 } from '../../types/agent'
 import type { AttachmentRef, TimelineItem } from '../../types/agent-timeline'
@@ -185,6 +201,14 @@ export class AgentManager {
     }
   }
 
+  private workspacePaths(): CodexWorkspacePaths {
+    return resolveWorkspacePaths({
+      home: os.homedir(),
+      cwd: process.cwd(),
+      userData: app.getPath('userData'),
+    })
+  }
+
   setWindow(win: BrowserWindow): void {
     this.win = win
   }
@@ -255,6 +279,60 @@ export class AgentManager {
       cwd: this.sessionConfig.writableRoots[0] ?? process.cwd(),
       home: os.homedir(),
     })
+  }
+
+  async listMcp() {
+    return listMcp(this.workspacePaths())
+  }
+
+  async getMcpDetail(id: string) {
+    return getMcpDetail(this.workspacePaths(), id)
+  }
+
+  async saveMcp(input: CodexMcpServerInput) {
+    const paths = this.workspacePaths()
+    const result = await saveMcp(paths, input)
+    if (result.ok) await this.backend.applyConfigChange?.(paths)
+    return result
+  }
+
+  async deleteMcp(id: string) {
+    const paths = this.workspacePaths()
+    const result = await deleteMcp(paths, id)
+    if (result.ok) await this.backend.applyConfigChange?.(paths)
+    return result
+  }
+
+  async setMcpEnabled(id: string, enabled: boolean) {
+    const paths = this.workspacePaths()
+    const result = await setMcpEnabled(paths, id, enabled)
+    if (result.ok) await this.backend.applyConfigChange?.(paths)
+    return result
+  }
+
+  async listSkills() {
+    return listSkills(this.workspacePaths())
+  }
+
+  async getSkillDetail(id: string) {
+    return getSkillDetail(this.workspacePaths(), id)
+  }
+
+  async saveSkill(input: CodexSkillInput) {
+    return saveSkill(this.workspacePaths(), input)
+  }
+
+  async deleteSkill(id: string) {
+    return deleteSkill(this.workspacePaths(), id)
+  }
+
+  async getWorkspaceLogs(opts?: { limit?: number; sinceIso?: string }) {
+    return readAuditLog(this.workspacePaths().auditLogPath, opts ?? {})
+  }
+
+  async restartCodex() {
+    if (!this.backend.restartCodex) throw new Error('Codex restart API is unavailable')
+    return this.backend.restartCodex(this.workspacePaths())
   }
 
   async start(): Promise<void> {

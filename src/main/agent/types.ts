@@ -5,6 +5,7 @@ import type {
   CodexSessionConfig,
   CodexThreadDetail,
   CodexThreadSummary,
+  CodexWorkspacePaths,
 } from '../../types/agent'
 
 export interface AgentInput extends AgentSendMessagePayload {
@@ -28,6 +29,8 @@ export interface IAgentBackend {
   listThreads?(): Promise<CodexThreadSummary[]>
   readThread?(threadId: string): Promise<CodexThreadDetail>
   forkThread?(threadId: string): Promise<CodexThreadSummary>
+  applyConfigChange?(paths: CodexWorkspacePaths): Promise<void>
+  restartCodex?(paths: CodexWorkspacePaths): Promise<void>
 }
 
 export interface JsonRpcMessage {
