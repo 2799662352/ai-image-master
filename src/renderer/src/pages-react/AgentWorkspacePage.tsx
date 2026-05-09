@@ -5,6 +5,7 @@ import { McpSection } from '../features/agent-workspace/McpSection'
 import { OverviewSection } from '../features/agent-workspace/OverviewSection'
 import { PermissionsSection } from '../features/agent-workspace/PermissionsSection'
 import { SkillsSection } from '../features/agent-workspace/SkillsSection'
+import { ThreadsSection } from '../features/agent-workspace/ThreadsSection'
 import { useAgentWorkspaceStore } from '../features/agent-workspace/useAgentWorkspaceStore'
 import { useAgentChatStore } from '../features/agent-chat/store'
 
@@ -35,7 +36,11 @@ export default function AgentWorkspacePage(): React.JSX.Element {
             <SkillsSection insertIntoChat={insertIntoChat} />
           </div>
         )}
-        {section === 'threads' && <div data-testid="section-threads">Threads placeholder</div>}
+        {section === 'threads' && (
+          <div data-testid="section-threads">
+            <ThreadsSection />
+          </div>
+        )}
         {section === 'logs' && <div data-testid="section-logs">Logs placeholder</div>}
       </main>
     </div>
