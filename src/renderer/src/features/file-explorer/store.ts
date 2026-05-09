@@ -378,6 +378,8 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
         reference.openBehavior === 'image' ||
         reference.openBehavior === 'pdf')
     ) {
+      set({ fxOpen: true })
+      writeStorage(FX_OPEN_KEY, '1')
       await get().openTab(reference.source.path, 'workspace')
       return
     }
