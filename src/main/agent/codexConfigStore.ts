@@ -108,6 +108,37 @@ async function readFileOrEmpty(filePath: string): Promise<string> {
   }
 }
 
+async function realpathOrParent(p: string): Promise<string> {
+  try {
+    return await fs.realpath(p)
+  } catch {
+    const parent = path.dirname(p)
+    try {
+      return path.join(await fs.realpath(parent), path.basename(p))
+    } catch {
+      return p
+    }
+  }
+}
+
+async function realpathAnchoredAtLeaf(p: string): Promise<string> {
+  const parent = path.dirname(p)
+  try {
+    return path.join(await fs.realpath(parent), path.basename(p))
+  } catch {
+    return p
+  }
+}
+
+async function assertInsideRoot(target: string, root: string): Promise<void> {
+  const rRoot = await realpathAnchoredAtLeaf(root)
+  const rTarget = await realpathOrParent(target)
+  const rel = path.relative(rRoot, rTarget)
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new Error(`path is outside allowed root: ${target}`)
+  }
+}
+
 function parseMcpServers(raw: string): Record<string, Record<string, unknown>> {
   if (!raw.trim()) return {}
   let parsed: unknown
@@ -306,6 +337,23 @@ export async function saveMcp(
   servers[input.name] = entry
   document.mcp_servers = servers
   const serialized = iarnaToml.stringify(document as iarnaToml.JsonMap)
+  const rootForScope =
+    input.scope === 'personal'
+      ? path.dirname(paths.personalConfigToml)
+      : path.dirname(paths.workspaceConfigToml)
+  try {
+    await assertInsideRoot(target, rootForScope)
+  } catch (err) {
+    await appendMutationAudit(paths, {
+      action: 'mcp.save',
+      scope: input.scope,
+      name: input.name,
+      provenance: 'manual',
+      ok: false,
+      error: errorMessage(err),
+    })
+    return { ok: false, error: errorMessage(err), warnings: [] }
+  }
   try {
     await atomicWriteFile(target, serialized)
   } catch (err) {
@@ -335,6 +383,15 @@ async function rewriteScope(
   mutate: (servers: Record<string, Record<string, unknown>>) => void,
 ): Promise<{ ok: boolean; error?: string }> {
   const target = scope === 'personal' ? paths.personalConfigToml : paths.workspaceConfigToml
+  const rootForScope =
+    scope === 'personal'
+      ? path.dirname(paths.personalConfigToml)
+      : path.dirname(paths.workspaceConfigToml)
+  try {
+    await assertInsideRoot(target, rootForScope)
+  } catch (err) {
+    return { ok: false, error: errorMessage(err) }
+  }
   const raw = await readFileOrEmpty(target)
   let document: Record<string, unknown> = {}
   if (raw.trim()) {
@@ -558,6 +615,19 @@ export async function saveSkill(
   const file = path.join(dir, 'SKILL.md')
   try {
     await fs.mkdir(dir, { recursive: true })
+    try {
+      await assertInsideRoot(file, root)
+    } catch (err) {
+      await appendMutationAudit(paths, {
+        action: 'skill.save',
+        scope: input.scope,
+        name: input.name,
+        provenance: 'manual',
+        ok: false,
+        error: errorMessage(err),
+      })
+      return { ok: false, error: errorMessage(err) }
+    }
     await atomicWriteFile(file, buildSkillFile(input))
   } catch (err) {
     await appendMutationAudit(paths, {
@@ -598,6 +668,18 @@ export async function deleteSkill(
   const root = scope === 'personal' ? paths.personalSkillsRoot : paths.workspaceSkillsRoot
   const dir = path.join(root, name)
   try {
+    try {
+      await assertInsideRoot(dir, root)
+    } catch (err) {
+      await appendMutationAudit(paths, {
+        action: 'skill.delete',
+        scope,
+        name,
+        ok: false,
+        error: errorMessage(err),
+      })
+      return { ok: false, error: errorMessage(err) }
+    }
     await fs.rm(dir, { recursive: true, force: true })
   } catch (err) {
     await appendMutationAudit(paths, {
