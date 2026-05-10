@@ -3,7 +3,6 @@ import type React from 'react'
 
 import { AutoFixToast } from './AutoFixToast'
 import { McpServerCard } from './McpServerCard'
-import { useMcpAutoGatewayFix } from './useMcpAutoGatewayFix'
 import { useMcpStore } from './useMcpStore'
 
 interface McpServerListProps {
@@ -22,30 +21,18 @@ export function McpServerList({ onOpenEditor, onOpenImport }: McpServerListProps
   const fetchServers = useMcpStore((s) => s.fetchServers)
   const toggleEnabled = useMcpStore((s) => s.toggleEnabled)
   const deleteServer = useMcpStore((s) => s.deleteServer)
-  const updateStatus = useMcpStore((s) => s.updateStatus)
   const startOAuthLogin = useMcpStore((s) => s.startOAuthLogin)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
-
-  useMcpAutoGatewayFix()
 
   useEffect(() => {
     // Only auto-fetch if we have never loaded yet — keeps state when the user
     // navigates away and returns. Manual refresh is still available below.
+    // The store's module-level IPC listener already routes status updates;
+    // we no longer wire one in this component.
     if (!hasFetchedOnce) {
       fetchServers()
     }
   }, [fetchServers, hasFetchedOnce])
-
-  useEffect(() => {
-    const api = (window as any).electronAPI?.agent
-    if (!api?.onMcpStatus) return
-    const cleanup = api.onMcpStatus((event: any) => {
-      if (event.type === 'mcp_status_updated') {
-        updateStatus(event.name, event.status, event.error ?? null)
-      }
-    })
-    return () => { cleanup?.() }
-  }, [updateStatus])
 
   const handleDelete = useCallback(
     async (name: string) => {
@@ -106,10 +93,12 @@ export function McpServerList({ onOpenEditor, onOpenImport }: McpServerListProps
         <div className="flex gap-2">
           <button
             type="button"
-            onClick={() => fetchServers()}
+            onClick={() => {
+              void fetchServers()
+            }}
             disabled={syncing}
             className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
-            title="刷新状态"
+            title="重新读取配置 + 刷新工具列表"
           >
             刷新
           </button>
@@ -132,7 +121,7 @@ export function McpServerList({ onOpenEditor, onOpenImport }: McpServerListProps
 
       {syncError && (
         <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
-          实时状态同步失败：{syncError}（已显示配置中的服务器，可点击「刷新」重试）
+          工具列表同步失败：{syncError}（状态点不受影响，可点「刷新」重试）
         </div>
       )}
 

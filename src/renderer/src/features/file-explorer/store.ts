@@ -25,9 +25,24 @@ type ElectronFileApi = {
     pickFolder: () => Promise<string | null>
     watchStart: (p: string) => Promise<void>
     watchStop: (p: string) => Promise<void>
+    trash?: (p: string) => Promise<{ ok: true } | { ok: false; reason: string }>
+    rename?: (oldPath: string, newName: string) => Promise<{ ok: true; newPath: string } | { ok: false; reason: string }>
+    createFile?: (parentDir: string, name: string) => Promise<{ ok: true; path: string } | { ok: false; reason: string }>
+    createFolder?: (parentDir: string, name: string) => Promise<{ ok: true; path: string } | { ok: false; reason: string }>
+    copy?: (sources: string[], destDir: string) => Promise<{ ok: true; written: string[] } | { ok: false; reason: string }>
+    move?: (sources: string[], destDir: string) => Promise<{ ok: true; written: string[] } | { ok: false; reason: string }>
+    openInTerminal?: (p: string) => Promise<{ ok: true } | { ok: false; reason: string }>
   }
   attachments: { listTree: () => Promise<FileNode[]> }
 }
+
+export type SelectMode = 'replace' | 'toggle' | 'range'
+export type Clipboard = { mode: 'copy' | 'cut'; paths: string[] } | null
+export type PendingNewNode = {
+  parentPath: string
+  source: FileSource
+  kind: 'file' | 'dir'
+} | null
 
 type FileWatchEvent = {
   type: 'add' | 'addDir' | 'change' | 'unlink' | 'unlinkDir'
@@ -46,6 +61,10 @@ type State = {
   activeTabId: string | null
   conflict: Conflict
   pendingChatInsert: string | null
+  selectedPaths: string[]
+  lastSelectedPath: string | null
+  clipboard: Clipboard
+  pendingNewNode: PendingNewNode
 }
 
 type Actions = {
@@ -66,8 +85,26 @@ type Actions = {
   setActiveDoc: (doc: string) => void
   setTabState: (tabId: string, state: EditorState) => void
   applyExternalChange: (tabId: string, choice: 'mine' | 'disk') => Promise<void>
+  requestApplyExternalContent: (filePath: string, content: string) => Promise<{ ok: boolean; reason?: string }>
   appendToChatInput: (text: string) => void
   consumePendingChatInsert: () => string | null
+  trashFile: (path: string) => Promise<{ ok: true } | { ok: false; reason: string }>
+  renameFile: (oldPath: string, newName: string) => Promise<{ ok: true; newPath: string } | { ok: false; reason: string }>
+  selectNode: (path: string, mode: SelectMode) => void
+  clearSelection: () => void
+  setSelectedPaths: (paths: string[]) => void
+  selectAllVisible: (visiblePaths: string[]) => void
+  copySelectionToClipboard: () => void
+  cutSelectionToClipboard: () => void
+  copyPathToOsClipboard: (paths: string[], relative: boolean) => Promise<void>
+  pasteIntoDir: (destDir: string) => Promise<{ ok: boolean; reason?: string }>
+  startNewNode: (parentPath: string, kind: 'file' | 'dir', source: FileSource) => Promise<void>
+  commitNewNode: (name: string) => Promise<{ ok: boolean; reason?: string }>
+  cancelNewNode: () => void
+  openInTerminal: (path: string) => Promise<void>
+  trashSelection: () => Promise<void>
+  compareSelection: () => Promise<{ ok: boolean; reason?: string }>
+  collectVisiblePaths: () => string[]
 }
 
 let unsubscribeWatch: (() => void) | null = null
@@ -212,6 +249,10 @@ function makeInitialState(): State {
     activeTabId: null,
     conflict: null,
     pendingChatInsert: null,
+    selectedPaths: [],
+    lastSelectedPath: null,
+    clipboard: null,
+    pendingNewNode: null,
   }
 }
 
@@ -484,6 +525,23 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
     const conflict = get().conflict
     if (!conflict || conflict.tabId !== tabId) return
     if (choice === 'disk') {
+      // For `source: 'apply'` we additionally need to PERSIST the AI content
+      // to disk — applyExternalChange's original semantics only mutated the
+      // in-memory tab. Without writing, "Apply" appears to work but a reload
+      // would discard the AI version.
+      if (conflict.source === 'apply') {
+        const tab = get().tabs.find((t) => t.id === tabId)
+        if (tab) {
+          const api = getApi()
+          if (api.fs.writeText) {
+            const res = await api.fs.writeText(tab.path, conflict.diskContent)
+            if (!res.ok) {
+              // Preserve conflict so the user can retry
+              return
+            }
+          }
+        }
+      }
       set((s) => ({
         tabs: s.tabs.map((t) =>
           t.id === tabId ? { ...t, diskContent: conflict.diskContent, dirty: false, state: null } : t,
@@ -495,6 +553,41 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
     set({ conflict: null })
   },
 
+  /**
+   * Apply an AI-suggested file content (e.g. a fenced code block in chat) by
+   * surfacing the existing ConflictModal flow with `source: 'apply'`.
+   *
+   * Behavior:
+   * 1. Open the file as a tab if not already (read-only path through openTab).
+   * 2. Set `conflict = { tabId, diskContent: AI content, source: 'apply' }`.
+   * 3. ConflictModal swaps button labels to Cancel / Apply / Show diff and
+   *    `applyExternalChange(tabId, 'disk')` writes the AI content to disk.
+   *
+   * Returns `{ ok: false }` only if we couldn't open the file (e.g. unknown
+   * source/path); the user-facing decision still happens in the modal.
+   */
+  requestApplyExternalContent: async (filePath, content) => {
+    if (!filePath) return { ok: false, reason: 'missing path' }
+    // Try to find an existing tab; otherwise open one
+    let tab = get().tabs.find((t) => t.path === filePath)
+    if (!tab) {
+      const sourceGuess = inferSource(get().workspaceTree, filePath)
+      await get().openTab(filePath, sourceGuess)
+      tab = get().tabs.find((t) => t.path === filePath)
+      if (!tab) return { ok: false, reason: 'tab not found after open' }
+    }
+    set({
+      activeTabId: tab.id,
+      conflict: {
+        tabId: tab.id,
+        diskContent: content,
+        show: 'modal',
+        source: 'apply',
+      },
+    })
+    return { ok: true }
+  },
+
   appendToChatInput: (text) => set({ pendingChatInsert: text }),
 
   consumePendingChatInsert: () => {
@@ -502,12 +595,292 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
     set({ pendingChatInsert: null })
     return v
   },
+
+  trashFile: async (p) => {
+    const api = getApi()
+    if (!api.fs.trash) return { ok: false, reason: 'trash API not available' }
+    const res = await api.fs.trash(p)
+    if (!res.ok) return res
+    set((s) => ({
+      workspaceTree: removeFromTree(s.workspaceTree, p),
+      attachmentsTree: removeFromTree(s.attachmentsTree, p),
+      tabs: s.tabs.filter((t) => t.path !== p),
+      activeTabId: s.tabs.find((t) => t.path === p)?.id === s.activeTabId
+        ? s.tabs.find((t) => t.path !== p)?.id ?? null
+        : s.activeTabId,
+    }))
+    return { ok: true }
+  },
+
+  renameFile: async (oldPath, newName) => {
+    const api = getApi()
+    if (!api.fs.rename) return { ok: false, reason: 'rename API not available' }
+    const res = await api.fs.rename(oldPath, newName)
+    if (!res.ok) return res
+    set((s) => ({
+      workspaceTree: renameInTree(s.workspaceTree, oldPath, res.newPath, newName),
+      attachmentsTree: renameInTree(s.attachmentsTree, oldPath, res.newPath, newName),
+      tabs: s.tabs.map((t) =>
+        t.path === oldPath ? { ...t, path: res.newPath, name: newName } : t,
+      ),
+    }))
+    return res
+  },
+
+  selectNode: (path, mode) => {
+    set((s) => {
+      if (mode === 'replace') {
+        return { selectedPaths: [path], lastSelectedPath: path }
+      }
+      if (mode === 'toggle') {
+        const exists = s.selectedPaths.includes(path)
+        const next = exists ? s.selectedPaths.filter((p) => p !== path) : [...s.selectedPaths, path]
+        return { selectedPaths: next, lastSelectedPath: path }
+      }
+      // range: select from lastSelectedPath to path within visible flat order
+      const visible = collectVisibleFlat(s.workspaceTree).concat(collectVisibleFlat(s.attachmentsTree))
+      const anchor = s.lastSelectedPath ?? path
+      const a = visible.indexOf(anchor)
+      const b = visible.indexOf(path)
+      if (a < 0 || b < 0) return { selectedPaths: [path], lastSelectedPath: path }
+      const [lo, hi] = a < b ? [a, b] : [b, a]
+      const range = visible.slice(lo, hi + 1)
+      return { selectedPaths: range, lastSelectedPath: path }
+    })
+  },
+
+  clearSelection: () => set({ selectedPaths: [], lastSelectedPath: null }),
+
+  setSelectedPaths: (paths) => set({ selectedPaths: paths, lastSelectedPath: paths[paths.length - 1] ?? null }),
+
+  selectAllVisible: (visiblePaths) => set({ selectedPaths: visiblePaths, lastSelectedPath: visiblePaths[visiblePaths.length - 1] ?? null }),
+
+  collectVisiblePaths: () => {
+    const s = get()
+    return collectVisibleFlat(s.workspaceTree).concat(collectVisibleFlat(s.attachmentsTree))
+  },
+
+  copySelectionToClipboard: () => {
+    const s = get()
+    if (s.selectedPaths.length === 0) return
+    set({ clipboard: { mode: 'copy', paths: [...s.selectedPaths] } })
+    void writeToOsClipboard(s.selectedPaths)
+  },
+
+  cutSelectionToClipboard: () => {
+    const s = get()
+    if (s.selectedPaths.length === 0) return
+    set({ clipboard: { mode: 'cut', paths: [...s.selectedPaths] } })
+    void writeToOsClipboard(s.selectedPaths)
+  },
+
+  copyPathToOsClipboard: async (paths, relative) => {
+    if (paths.length === 0) return
+    const root = get().workspaceRoot ?? ''
+    const text = paths
+      .map((p) => (relative && root ? toRelative(root, p) : p))
+      .join('\n')
+    await writeTextToOsClipboard(text)
+  },
+
+  pasteIntoDir: async (destDir) => {
+    const api = getApi()
+    const cb = get().clipboard
+    if (!cb || cb.paths.length === 0) return { ok: false, reason: 'clipboard empty' }
+    if (cb.mode === 'copy') {
+      if (!api.fs.copy) return { ok: false, reason: 'copy API not available' }
+      const res = await api.fs.copy(cb.paths, destDir)
+      if (!res.ok) return res
+    } else {
+      if (!api.fs.move) return { ok: false, reason: 'move API not available' }
+      const res = await api.fs.move(cb.paths, destDir)
+      if (!res.ok) return res
+      // 剪切后清空剪贴板
+      set({ clipboard: null })
+    }
+    // 刷新目标目录
+    const source = inferSource(get().workspaceTree, destDir)
+    await get().expandDir(destDir, source)
+    return { ok: true }
+  },
+
+  startNewNode: async (parentPath, kind, source) => {
+    // 确保父目录在树中是展开的
+    const parentNode = findNodeInTrees(get().workspaceTree, get().attachmentsTree, parentPath)
+    if (parentNode && parentNode.kind === 'dir' && !parentNode.childrenLoaded) {
+      await get().expandDir(parentPath, source)
+    }
+    set({ pendingNewNode: { parentPath, kind, source } })
+  },
+
+  commitNewNode: async (name) => {
+    const api = getApi()
+    const pending = get().pendingNewNode
+    if (!pending) return { ok: false, reason: 'no pending new node' }
+    if (!name.trim()) {
+      set({ pendingNewNode: null })
+      return { ok: false, reason: 'empty name' }
+    }
+    const fn = pending.kind === 'file' ? api.fs.createFile : api.fs.createFolder
+    if (!fn) {
+      set({ pendingNewNode: null })
+      return { ok: false, reason: 'create API not available' }
+    }
+    const res = await fn(pending.parentPath, name.trim())
+    set({ pendingNewNode: null })
+    if (!res.ok) return res
+    await get().expandDir(pending.parentPath, pending.source)
+    set({ selectedPaths: [res.path], lastSelectedPath: res.path })
+    return { ok: true }
+  },
+
+  cancelNewNode: () => set({ pendingNewNode: null }),
+
+  openInTerminal: async (p) => {
+    const api = getApi()
+    if (!api.fs.openInTerminal) return
+    await api.fs.openInTerminal(p)
+  },
+
+  trashSelection: async () => {
+    const paths = [...get().selectedPaths]
+    if (paths.length === 0) return
+    const api = getApi()
+    if (!api.fs.trash) return
+    for (const p of paths) {
+      const res = await api.fs.trash(p)
+      if (!res.ok) continue
+      set((s) => ({
+        workspaceTree: removeFromTree(s.workspaceTree, p),
+        attachmentsTree: removeFromTree(s.attachmentsTree, p),
+        tabs: s.tabs.filter((t) => t.path !== p),
+      }))
+    }
+    set({ selectedPaths: [], lastSelectedPath: null })
+  },
+
+  compareSelection: async () => {
+    const paths = [...get().selectedPaths]
+    if (paths.length !== 2) {
+      return { ok: false, reason: '请选择两个文件后再比较' }
+    }
+    const [leftPath, rightPath] = paths
+    const api = getApi()
+    if (!api.fs.readText) {
+      return { ok: false, reason: '不支持读取文本' }
+    }
+    const [leftRes, rightRes] = await Promise.all([
+      api.fs.readText(leftPath),
+      api.fs.readText(rightPath),
+    ])
+    if (!leftRes.ok) return { ok: false, reason: `读取左侧失败: ${leftRes.reason}` }
+    if (!rightRes.ok) return { ok: false, reason: `读取右侧失败: ${rightRes.reason}` }
+
+    const leftName = leftPath.split(/[\\/]/).pop() ?? leftPath
+    const rightName = rightPath.split(/[\\/]/).pop() ?? rightPath
+    const id = `compare:${leftPath}::${rightPath}`
+    const tab: FileTab = {
+      id,
+      path: '',
+      name: `${leftName} ↔ ${rightName}`,
+      source: 'workspace',
+      kind: 'compare',
+      state: null,
+      diskContent: '',
+      diskMtime: 0,
+      dirty: false,
+      compare: {
+        left: leftPath,
+        right: rightPath,
+        leftContent: leftRes.text,
+        rightContent: rightRes.text,
+      },
+    }
+    set((s) => {
+      const existing = s.tabs.findIndex((t) => t.id === id)
+      const tabs = existing >= 0
+        ? s.tabs.map((t, i) => (i === existing ? tab : t))
+        : [...s.tabs, tab]
+      return { tabs, activeTabId: id }
+    })
+    return { ok: true }
+  },
 }))
+
+// 辅助：将一个工作区根的绝对路径转成相对路径
+function toRelative(root: string, p: string): string {
+  if (!p.startsWith(root)) return p
+  const rel = p.slice(root.length).replace(/^[\\/]+/, '')
+  return rel || '.'
+}
+
+// 辅助：扁平化收集所有当前展开的可见节点路径（按 DFS 顺序）
+function collectVisibleFlat(tree: FileNode[]): string[] {
+  const out: string[] = []
+  const walk = (nodes: FileNode[]): void => {
+    for (const n of nodes) {
+      out.push(n.path)
+      if (n.kind === 'dir' && n.childrenLoaded && n.children) walk(n.children)
+    }
+  }
+  walk(tree)
+  return out
+}
+
+function findNodeInTrees(a: FileNode[], b: FileNode[], target: string): FileNode | null {
+  return findNode(a, target) ?? findNode(b, target)
+}
+
+function findNode(tree: FileNode[], target: string): FileNode | null {
+  for (const n of tree) {
+    if (n.path === target) return n
+    if (n.children) {
+      const inner = findNode(n.children, target)
+      if (inner) return inner
+    }
+  }
+  return null
+}
+
+function inferSource(workspace: FileNode[], path: string): FileSource {
+  const inWs = !!findNode(workspace, path)
+  return inWs ? 'workspace' : 'attachments'
+}
+
+async function writeToOsClipboard(paths: string[]): Promise<void> {
+  await writeTextToOsClipboard(paths.join('\n'))
+}
+
+async function writeTextToOsClipboard(text: string): Promise<void> {
+  if (typeof navigator !== 'undefined' && navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      // 静默失败：内部状态仍然有效
+    }
+  }
+}
 
 function replaceChildren(tree: FileNode[], targetPath: string, children: FileNode[]): FileNode[] {
   return tree.map((n) => {
     if (n.path === targetPath) return { ...n, childrenLoaded: true, children }
     if (n.children) return { ...n, children: replaceChildren(n.children, targetPath, children) }
+    return n
+  })
+}
+
+function removeFromTree(tree: FileNode[], targetPath: string): FileNode[] {
+  return tree
+    .filter((n) => n.path !== targetPath)
+    .map((n) =>
+      n.children ? { ...n, children: removeFromTree(n.children, targetPath) } : n,
+    )
+}
+
+function renameInTree(tree: FileNode[], oldPath: string, newPath: string, newName: string): FileNode[] {
+  return tree.map((n) => {
+    if (n.path === oldPath) return { ...n, path: newPath, name: newName }
+    if (n.children) return { ...n, children: renameInTree(n.children, oldPath, newPath, newName) }
     return n
   })
 }

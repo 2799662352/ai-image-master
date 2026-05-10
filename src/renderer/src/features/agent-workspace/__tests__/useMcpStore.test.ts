@@ -7,10 +7,12 @@ const mockApi = {
   reloadMcpServers: vi.fn(),
   mcpOAuthLogin: vi.fn(),
   readConfig: vi.fn(),
+  getMcpStatusSnapshot: vi.fn().mockResolvedValue({ ok: true, snapshot: {} }),
+  onMcpStatus: vi.fn().mockReturnValue(() => undefined),
 }
 
 vi.stubGlobal('window', {
-  electronAPI: { agent: mockApi },
+  electronAPI: { agent: mockApi, shell: { openExternal: vi.fn() } },
 })
 
 // Import AFTER stubbing window
@@ -18,90 +20,228 @@ const { useMcpStore } = await import('../useMcpStore')
 
 describe('useMcpStore', () => {
   beforeEach(() => {
-    useMcpStore.setState({ servers: [], loading: false, error: null, hasFetchedOnce: false, syncing: false })
+    useMcpStore.setState({
+      servers: [],
+      loading: false,
+      error: null,
+      hasFetchedOnce: false,
+      syncing: false,
+      syncError: null,
+      liveStatusByName: {},
+    })
     vi.clearAllMocks()
+    mockApi.getMcpStatusSnapshot.mockResolvedValue({ ok: true, snapshot: {} })
+    mockApi.onMcpStatus.mockReturnValue(() => undefined)
+    ;(window as any).electronAPI.shell.openExternal.mockResolvedValue({ success: true })
   })
 
-  it('fetchServers populates server list from RPC response', async () => {
+  it('fetchServers does NOT block on listMcpServersRpc — paints from config alone', async () => {
+    // Simulate listMcpServersRpc hanging forever (real-world: 11 servers, codex stalls on tools/list)
+    mockApi.listMcpServersRpc.mockImplementation(() => new Promise(() => {}))
+    mockApi.readConfig.mockResolvedValue({
+      ok: true,
+      config: { mcp_servers: { a: { command: 'x' }, b: { command: 'y' } } },
+    })
+
+    await useMcpStore.getState().fetchServers()
+    const state = useMcpStore.getState()
+    expect(state.servers.map((s) => s.name).sort()).toEqual(['a', 'b'])
+    expect(state.loading).toBe(false)
+    // Tools sync is fired but does NOT block — no timeout error visible
+    expect(state.syncError).toBeNull()
+  })
+
+  it('fetchServers fires syncTools in background with detail:"toolsAndAuthOnly"', async () => {
+    let resolveList: (v: any) => void = () => undefined
+    mockApi.listMcpServersRpc.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveList = resolve
+        }),
+    )
+    mockApi.readConfig.mockResolvedValue({ ok: true, config: { mcp_servers: { gh: { command: 'docker' } } } })
+
+    await useMcpStore.getState().fetchServers()
+    expect(mockApi.listMcpServersRpc).toHaveBeenCalledWith({ detail: 'toolsAndAuthOnly' })
+    expect(useMcpStore.getState().syncing).toBe(true)
+
+    resolveList({
+      ok: true,
+      data: [
+        { name: 'gh', tools: { search: { description: 'd' } }, resources: [], resourceTemplates: [], authStatus: 'unsupported' },
+      ],
+    })
+    await new Promise((r) => setTimeout(r, 0))
+    const state = useMcpStore.getState()
+    expect(state.syncing).toBe(false)
+    expect(state.servers[0].tools).toHaveLength(1)
+    expect(state.servers[0].status).toBe('ready')
+  })
+
+  it('syncTools supports older { data: { mcpServers } } response shape as a fallback', async () => {
+    mockApi.listMcpServersRpc.mockResolvedValue({
+      ok: true,
+      data: { mcpServers: [{ name: 'legacy', tools: { t: {} }, authStatus: 'unsupported' }] },
+    })
+    useMcpStore.setState({
+      servers: [{ name: 'legacy', type: 'stdio', command: 'node', enabled: true, status: 'starting', error: null, tools: [], isBuiltin: false }],
+    })
+
+    await useMcpStore.getState().syncTools()
+
+    expect(useMcpStore.getState().servers[0].status).toBe('ready')
+  })
+
+  it('syncTools unwraps IPC response shape { ok, data: { data: [...] } } from AgentManager', async () => {
     mockApi.listMcpServersRpc.mockResolvedValue({
       ok: true,
       data: {
-        mcpServers: [
+        data: [{ name: 'wrapped', tools: { t: {} }, authStatus: 'unsupported' }],
+        nextCursor: null,
+      },
+    })
+    useMcpStore.setState({
+      servers: [
+        {
+          name: 'wrapped',
+          type: 'stdio',
+          command: 'node',
+          enabled: true,
+          status: 'starting',
+          error: null,
+          tools: [],
+          isBuiltin: false,
+        },
+      ],
+    })
+
+    await useMcpStore.getState().syncTools()
+
+    expect(useMcpStore.getState().servers[0]).toMatchObject({
+      status: 'ready',
+      tools: [{ name: 't', disabled: false }],
+    })
+  })
+
+  it('syncTools marks notLoggedIn servers as failed so they do not stay yellow', async () => {
+    mockApi.listMcpServersRpc.mockResolvedValue({
+      ok: true,
+      data: [{ name: 'hf', tools: {}, authStatus: 'notLoggedIn' }],
+    })
+    useMcpStore.setState({
+      servers: [{ name: 'hf', type: 'http', url: 'https://huggingface.co/mcp', enabled: true, status: 'starting', error: null, tools: [], isBuiltin: false }],
+    })
+
+    await useMcpStore.getState().syncTools()
+
+    expect(useMcpStore.getState().servers[0]).toMatchObject({
+      status: 'failed',
+      error: '需要登录',
+      authStatus: 'notLoggedIn',
+    })
+  })
+
+  it('syncTools accepts Codex tool arrays with descriptions', async () => {
+    mockApi.listMcpServersRpc.mockResolvedValue({
+      ok: true,
+      data: {
+        data: [
           {
-            name: 'github',
-            tools: { search_code: { description: 'Search code' } },
-            resources: [],
-            resource_templates: [],
-            auth_status: 'unsupported',
+            name: 'array-tools',
+            tools: [{ name: 'search', description: 'Search things' }],
+            authStatus: 'unsupported',
           },
         ],
       },
     })
-    mockApi.readConfig.mockResolvedValue({ ok: true, config: { mcp_servers: { github: { command: 'docker', args: ['run'] } } } })
+    useMcpStore.setState({
+      servers: [
+        {
+          name: 'array-tools',
+          type: 'stdio',
+          command: 'node',
+          enabled: true,
+          status: 'starting',
+          error: null,
+          tools: [],
+          isBuiltin: false,
+        },
+      ],
+    })
 
-    await useMcpStore.getState().fetchServers()
-    const state = useMcpStore.getState()
-    expect(state.servers).toHaveLength(1)
-    expect(state.servers[0].name).toBe('github')
-    expect(state.servers[0].tools).toHaveLength(1)
-    expect(state.servers[0].tools[0].name).toBe('search_code')
+    await useMcpStore.getState().syncTools()
+
+    expect(useMcpStore.getState().servers[0].tools).toEqual([
+      { name: 'search', description: 'Search things', disabled: false },
+    ])
   })
 
-  it('fetchServers requests detail:"toolsAndAuthOnly" to avoid slow resource probing (codex PR #16831)', async () => {
-    mockApi.listMcpServersRpc.mockResolvedValue({ ok: true, data: { mcpServers: [] } })
-    mockApi.readConfig.mockResolvedValue({ ok: true, config: { mcp_servers: {} } })
+  it('startOAuthLogin opens camelCase authorizationUrl values', async () => {
+    mockApi.mcpOAuthLogin.mockResolvedValue({ ok: true, authorizationUrl: 'https://auth.example.com/login' })
+    useMcpStore.setState({
+      servers: [
+        { name: 'hf', type: 'http', url: 'https://huggingface.co/mcp', enabled: true, status: 'failed', error: '需要登录', tools: [], authStatus: 'notLoggedIn', isBuiltin: false },
+      ],
+    })
 
-    await useMcpStore.getState().fetchServers()
+    await useMcpStore.getState().startOAuthLogin('hf')
 
-    expect(mockApi.listMcpServersRpc).toHaveBeenCalledWith({ detail: 'toolsAndAuthOnly' })
+    expect((window as any).electronAPI.shell.openExternal).toHaveBeenCalledWith('https://auth.example.com/login')
+    expect(useMcpStore.getState().servers[0].error).toBeNull()
   })
 
-  it('fetchServers falls back to config-only when listMcpServersRpc fails', async () => {
-    mockApi.listMcpServersRpc.mockResolvedValue({ ok: false, error: 'rpc died' })
+  it('startOAuthLogin surfaces browser open failures with the manual URL', async () => {
+    mockApi.mcpOAuthLogin.mockResolvedValue({ ok: true, authorization_url: 'https://auth.example.com/login' })
+    ;(window as any).electronAPI.shell.openExternal.mockResolvedValue({ success: false, error: 'unsafe_scheme' })
+    useMcpStore.setState({
+      servers: [
+        { name: 'hf', type: 'http', url: 'https://huggingface.co/mcp', enabled: true, status: 'failed', error: '需要登录', tools: [], authStatus: 'notLoggedIn', isBuiltin: false },
+      ],
+    })
+
+    await useMcpStore.getState().startOAuthLogin('hf')
+
+    expect(useMcpStore.getState().servers[0].error).toContain('https://auth.example.com/login')
+  })
+
+  it('configured-enabled servers default to "starting" until a status notification arrives', async () => {
+    mockApi.listMcpServersRpc.mockImplementation(() => new Promise(() => {}))
     mockApi.readConfig.mockResolvedValue({
       ok: true,
-      config: { mcp_servers: { local: { command: 'node', args: ['s.js'] } } },
+      config: { mcp_servers: { active: { command: 'x' }, off: { command: 'y', enabled: false } } },
     })
+
+    await useMcpStore.getState().fetchServers()
+    const byName = Object.fromEntries(useMcpStore.getState().servers.map((s) => [s.name, s]))
+    expect(byName.active.status).toBe('starting')
+    expect(byName.off.status).toBe('cancelled')
+  })
+
+  it('liveStatusByName overrides default status when set (e.g. from notifications)', async () => {
+    useMcpStore.setState({
+      liveStatusByName: { gh: { status: 'ready', error: null }, broken: { status: 'failed', error: 'boom' } },
+    })
+    mockApi.listMcpServersRpc.mockImplementation(() => new Promise(() => {}))
+    mockApi.readConfig.mockResolvedValue({
+      ok: true,
+      config: { mcp_servers: { gh: { command: 'x' }, broken: { command: 'y' } } },
+    })
+
+    await useMcpStore.getState().fetchServers()
+    const byName = Object.fromEntries(useMcpStore.getState().servers.map((s) => [s.name, s]))
+    expect(byName.gh.status).toBe('ready')
+    expect(byName.broken.status).toBe('failed')
+    expect(byName.broken.error).toBe('boom')
+  })
+
+  it('readConfig failure surfaces as fatal error (cannot render anything)', async () => {
+    mockApi.readConfig.mockResolvedValue({ ok: false, error: 'config dead' })
+    mockApi.listMcpServersRpc.mockImplementation(() => new Promise(() => {}))
 
     await useMcpStore.getState().fetchServers()
     const state = useMcpStore.getState()
-    expect(state.servers).toHaveLength(1)
-    expect(state.servers[0].name).toBe('local')
+    expect(state.error).toBe('config dead')
     expect(state.loading).toBe(false)
-    expect(state.syncError).toBe('rpc died')
-  })
-
-  it('fetchServers does NOT set loading on subsequent calls (uses syncing instead)', async () => {
-    mockApi.listMcpServersRpc.mockResolvedValue({ ok: true, data: { mcpServers: [] } })
-    mockApi.readConfig.mockResolvedValue({ ok: true, config: { mcp_servers: {} } })
-
-    await useMcpStore.getState().fetchServers()
-    expect(useMcpStore.getState().hasFetchedOnce).toBe(true)
-    expect(useMcpStore.getState().loading).toBe(false)
-
-    let observedLoading: boolean | null = null
-    mockApi.listMcpServersRpc.mockImplementationOnce(async () => {
-      observedLoading = useMcpStore.getState().loading
-      return { ok: true, data: { mcpServers: [] } }
-    })
-    await useMcpStore.getState().fetchServers()
-    expect(observedLoading).toBe(false)
-  })
-
-  it('fetchServers does not block forever when RPC hangs (timeout)', async () => {
-    vi.useFakeTimers()
-    try {
-      mockApi.listMcpServersRpc.mockImplementation(() => new Promise(() => {}))
-      mockApi.readConfig.mockImplementation(() => new Promise(() => {}))
-      const promise = useMcpStore.getState().fetchServers()
-      await vi.advanceTimersByTimeAsync(25_000)
-      await promise
-      const state = useMcpStore.getState()
-      expect(state.loading).toBe(false)
-      expect(state.syncError).toMatch(/timeout|超时/i)
-    } finally {
-      vi.useRealTimers()
-    }
   })
 
   it('updateStatus updates a server status in-place', () => {

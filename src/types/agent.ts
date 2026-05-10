@@ -13,6 +13,11 @@ export interface AgentAttachmentInput {
   buffer?: ArrayBuffer
 }
 
+export interface AgentSkillRef {
+  name: string
+  path: string
+}
+
 export interface AgentSendMessagePayload {
   threadId?: string
   content: string
@@ -25,6 +30,15 @@ export interface AgentSendMessagePayload {
    * via `AgentManager.sendMessage`.
    */
   model?: string
+  /**
+   * Skills explicitly invoked via `$skill-name` tokens in `content`. When the
+   * renderer can resolve the path locally (e.g. via `getSkillsSummary`) it
+   * forwards `{ name, path }` here so the main process can attach a `skill`
+   * input item to the codex turn — per the codex app-server README this is
+   * what makes Codex inject full skill instructions instead of letting the
+   * model resolve `$name` itself (which adds latency).
+   */
+  skills?: AgentSkillRef[]
 }
 
 export type CodexSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
@@ -185,6 +199,35 @@ export interface AgentStreamEventBase {
   turnId?: string
 }
 
+/**
+ * Lightweight notice surfaced by the chat panel. Used for:
+ *   - `configWarning` (codex emits when config has invalid keys, etc.)
+ *   - `deprecationNotice` (warns about removed/renamed RPCs)
+ *   - `modelRerouted` (codex routed gpt-5 → gpt-4-turbo behind the scenes)
+ *   - `hookStarted` / `hookCompleted` (extension hooks lifecycle pulse)
+ *   - `autoApprovalReview` (auto-approver inspecting an action; informational)
+ */
+export type AgentNoticeKind =
+  | 'configWarning'
+  | 'deprecation'
+  | 'modelRerouted'
+  | 'hookStarted'
+  | 'hookCompleted'
+  | 'autoApprovalReview'
+  | 'autoApprovalReviewCompleted'
+
+export interface AgentNotice {
+  /** Stable id so the renderer can dedupe identical notices. */
+  id: string
+  kind: AgentNoticeKind
+  level: 'info' | 'warning'
+  message: string
+  /** Optional thread scope; thread-less notices apply globally. */
+  threadId?: string
+  /** Source-specific structured details for the UI to render extras (e.g. fromModel/toModel). */
+  details?: Record<string, unknown>
+}
+
 export type AgentStreamEvent =
   | (AgentStreamEventBase & { type: 'thread_created' })
   | (AgentStreamEventBase & { type: 'item_started'; itemId: string; itemType: TimelineItem['type']; payload: Record<string, unknown> })
@@ -196,6 +239,8 @@ export type AgentStreamEvent =
   | (AgentStreamEventBase & { type: 'cancelled' })
   | { type: 'mcp_status_updated'; name: string; status: string; error: string | null }
   | { type: 'mcp_oauth_completed'; name: string; success: boolean; error: string | null }
+  | { type: 'skills_changed' }
+  | { type: 'notice'; notice: AgentNotice }
 
 export interface AgentToolRequest {
   id: string

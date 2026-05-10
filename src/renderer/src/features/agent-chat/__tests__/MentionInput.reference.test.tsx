@@ -52,7 +52,7 @@ describe('MentionInput reference chips', () => {
 
     const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
     const dt = makeDataTransfer()
-    serializeFileDrag(dt, 'D:/repo/main.ts')
+    serializeFileDrag(dt, ['D:/repo/main.ts'])
     fireEvent.drop(textarea, { dataTransfer: dt })
 
     await new Promise((resolve) => setTimeout(resolve, 0))
@@ -60,6 +60,23 @@ describe('MentionInput reference chips', () => {
     expect(textarea.value).not.toContain('[file:main.ts]')
     expect(screen.getByText('main.ts')).toBeTruthy()
     expect(screen.getByText('file')).toBeTruthy()
+  })
+
+  it('drops multiple selected files in one go and creates one chip per file', async () => {
+    render(<MentionInput />)
+    const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
+    const dt = makeDataTransfer()
+    serializeFileDrag(dt, [
+      'D:/repo/a.ts',
+      'D:/repo/b.ts',
+      'D:/repo/c.ts',
+    ])
+    fireEvent.drop(textarea, { dataTransfer: dt })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const paths = useAgentChatStore.getState().attachments.map((a) => a.path)
+    expect(paths).toEqual(['D:/repo/a.ts', 'D:/repo/b.ts', 'D:/repo/c.ts'])
+    expect(useAgentChatStore.getState().pendingReferences.length).toBe(3)
   })
 
   it('still inserts pure markdown for code-selection drops', async () => {
@@ -81,7 +98,7 @@ describe('MentionInput reference chips', () => {
 
     const textarea = screen.getByRole('textbox')
     const dt = makeDataTransfer()
-    serializeFileDrag(dt, 'D:/repo/main.ts')
+    serializeFileDrag(dt, ['D:/repo/main.ts'])
     fireEvent.drop(textarea, { dataTransfer: dt })
     await new Promise((resolve) => setTimeout(resolve, 0))
 
@@ -100,10 +117,10 @@ describe('MentionInput reference chips', () => {
 
     const textarea = screen.getByRole('textbox')
     const first = makeDataTransfer()
-    serializeFileDrag(first, 'D:/repo/a/main.ts')
+    serializeFileDrag(first, ['D:/repo/a/main.ts'])
     fireEvent.drop(textarea, { dataTransfer: first })
     const second = makeDataTransfer()
-    serializeFileDrag(second, 'D:/repo/b/main.ts')
+    serializeFileDrag(second, ['D:/repo/b/main.ts'])
     fireEvent.drop(textarea, { dataTransfer: second })
     await new Promise((resolve) => setTimeout(resolve, 0))
 
@@ -152,7 +169,7 @@ describe('MentionInput reference chips', () => {
 
     const textarea = screen.getByRole('textbox')
     const dt = makeDataTransfer()
-    serializeFileDrag(dt, 'D:/repo/cat.png')
+    serializeFileDrag(dt, ['D:/repo/cat.png'])
     getTestElectronAPI().fs.stat.mockResolvedValueOnce({
       ok: true,
       size: 12,
@@ -181,7 +198,7 @@ describe('MentionInput reference chips', () => {
 
     const textarea = screen.getByRole('textbox')
     const dt = makeDataTransfer()
-    serializeFileDrag(dt, 'D:/repo/cat.png')
+    serializeFileDrag(dt, ['D:/repo/cat.png'])
     fireEvent.drop(textarea, { dataTransfer: dt })
     await new Promise((resolve) => setTimeout(resolve, 0))
 

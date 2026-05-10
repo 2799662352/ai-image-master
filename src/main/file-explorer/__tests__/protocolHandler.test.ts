@@ -8,6 +8,18 @@ describe('protocolHandler.resolveOsPathFromRequest', () => {
     if (r.ok) expect(r.path).toBe('D:\\x\\y.png')
   })
 
+  it('extracts Windows drive path from Chromium-normalized local-file://d/x/y.png', () => {
+    const r = resolveOsPathFromRequest('local-file://d/x/y.png', 'win32')
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.path).toBe('D:\\x\\y.png')
+  })
+
+  it('extracts Windows drive path from encoded local-file:///D%3A/x/y.png', () => {
+    const r = resolveOsPathFromRequest('local-file:///D%3A/x/y.png', 'win32')
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.path).toBe('D:\\x\\y.png')
+  })
+
   it('extracts POSIX path from local-file:////home/u/x.png', () => {
     const r = resolveOsPathFromRequest('local-file:////home/u/x.png', 'linux')
     expect(r.ok).toBe(true)

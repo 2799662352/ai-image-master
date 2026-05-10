@@ -33,17 +33,24 @@ export function ToolChip({ serverName, toolName, description, disabled }: ToolCh
 
   return (
     <>
-      <span
-        onContextMenu={handleContextMenu}
-        title={description ?? toolName}
-        className={
-          'inline-flex cursor-context-menu items-center rounded-full px-2 py-0.5 text-xs transition-colors ' +
-          (disabled
-            ? 'bg-zinc-800/40 text-zinc-500 line-through'
-            : 'bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20')
-        }
-      >
-        {toolName}
+      <span className="group relative inline-flex">
+        <span
+          onContextMenu={handleContextMenu}
+          title={description ?? toolName}
+          className={
+            'inline-flex cursor-context-menu items-center rounded-full px-2 py-0.5 text-xs transition-colors ' +
+            (disabled
+              ? 'bg-zinc-800/40 text-zinc-500 line-through'
+              : 'bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20')
+          }
+        >
+          {toolName}
+        </span>
+        {description && (
+          <span className="pointer-events-none absolute left-0 top-full z-30 mt-1 hidden w-72 rounded-md border border-zinc-700 bg-zinc-950 p-2 text-xs leading-relaxed text-zinc-300 shadow-xl group-hover:block">
+            {description}
+          </span>
+        )}
       </span>
 
       {menuOpen && (

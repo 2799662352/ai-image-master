@@ -44,6 +44,7 @@ const WORKSPACE_CHANNELS = [
   'agent:delete-skill',
   'agent:get-workspace-logs',
   'agent:restart-codex',
+  'agent:mcp-status-snapshot',
 ]
 
 interface FakeManager {
@@ -53,6 +54,7 @@ interface FakeManager {
   deleteSkill: ReturnType<typeof vi.fn>
   getWorkspaceLogs: ReturnType<typeof vi.fn>
   restartCodex: ReturnType<typeof vi.fn>
+  getMcpStatusSnapshotRpc: ReturnType<typeof vi.fn>
 }
 
 function makeManager(): FakeManager {
@@ -63,6 +65,7 @@ function makeManager(): FakeManager {
     deleteSkill: vi.fn().mockResolvedValue({ ok: true }),
     getWorkspaceLogs: vi.fn().mockResolvedValue([]),
     restartCodex: vi.fn().mockResolvedValue(undefined),
+    getMcpStatusSnapshotRpc: vi.fn().mockReturnValue({ ok: true, snapshot: {} }),
   }
 }
 

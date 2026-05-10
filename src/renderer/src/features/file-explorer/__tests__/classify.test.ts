@@ -6,6 +6,21 @@ describe('classify', () => {
     expect(classify('a.PNG', 100)).toBe('image')
   })
 
+  it('classifies avif and ico as images', () => {
+    expect(classify('a.avif', 100)).toBe('image')
+    expect(classify('favicon.ico', 100)).toBe('image')
+  })
+
+  it('classifies video files as video', () => {
+    expect(classify('clip.mp4', 100)).toBe('video')
+    expect(classify('clip.webm', 100)).toBe('video')
+    expect(classify('clip.mov', 100)).toBe('video')
+  })
+
+  it('uses mime when given to classify video', () => {
+    expect(classify('weirdname', 100, 'video/mp4')).toBe('video')
+  })
+
   it('classifies pdf as pdf', () => {
     expect(classify('a.pdf', 100)).toBe('pdf')
   })

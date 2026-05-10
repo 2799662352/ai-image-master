@@ -257,8 +257,9 @@ function createWindow(): void {
           "font-src 'self' https://fonts.gstatic.com data:",
           "img-src 'self' data: blob: https: file: local-file:",
           "connect-src 'self' https: wss: data: http://175.178.198.17:* http://127.0.0.1:* http://localhost:*",
-          // allow COS HTTPS presigned URLs (smart erase output) and file:// (compare-with-original)
-          "media-src 'self' data: blob: https: file:",
+            // allow COS HTTPS presigned URLs (smart erase output), file:// (compare-with-original),
+            // and local-file:// for the file-explorer video previewer.
+            "media-src 'self' data: blob: https: file: local-file:",
           "worker-src 'self' blob:", // 允许 Web Worker 从 blob URL 创建（图片压缩库需要）
           "frame-src https:"
         ].join('; ')
@@ -356,7 +357,19 @@ function createWindow(): void {
   })
 
   // 右键菜单 - 支持图片保存
-  mainWindow.webContents.on('context-menu', (_event, params) => {
+  mainWindow.webContents.on('context-menu', async (_event, params) => {
+    // File Explorer 面板内的右键由 React 自定义菜单处理；
+    // 主进程跳过原生 fallback，避免「刷新 / 开发者工具」漏出覆盖到自定义菜单上方。
+    try {
+      const inFileExplorer = await mainWindow!.webContents.executeJavaScript(
+        `(() => { const el = document.elementFromPoint(${params.x}, ${params.y}); return !!(el && el.closest && el.closest('[data-file-explorer-root]')); })()`,
+        true,
+      )
+      if (inFileExplorer) return
+    } catch {
+      // executeJavaScript 失败时退回到默认行为
+    }
+
     const menuTemplate: Electron.MenuItemConstructorOptions[] = []
 
     const isImage = params.mediaType === 'image'

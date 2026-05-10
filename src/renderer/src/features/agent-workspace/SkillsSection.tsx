@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type React from 'react'
 
 import type { AgentApiResult, CodexSkillListItem } from '../../../../types/agent'
+import { useAgentChatStore } from '../agent-chat/store'
 import { SkillEditor } from './SkillEditor'
 
 type SkillsApi = {
@@ -9,6 +10,7 @@ type SkillsApi = {
     listSkills?: () => Promise<CodexSkillListItem[]>
     deleteSkill?: (id: string) => Promise<AgentApiResult>
   }
+  openSkillsFolder?: () => Promise<AgentApiResult & { path?: string }>
 }
 
 type SkillsSectionProps = {
@@ -23,6 +25,8 @@ export function SkillsSection({ insertIntoChat }: SkillsSectionProps): React.JSX
   const [error, setError] = useState<string>()
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   const [editing, setEditing] = useState<EditingState>(null)
+  const [folderMessage, setFolderMessage] = useState<string | null>(null)
+  const appendInputText = useAgentChatStore((state) => state.appendInputText)
   const mountedRef = useRef(false)
   const loadRequestIdRef = useRef(0)
 
@@ -89,6 +93,28 @@ export function SkillsSection({ insertIntoChat }: SkillsSectionProps): React.JSX
     }
   }
 
+  function handleInsert(name: string): void {
+    const mention = `/${name} `
+    appendInputText(mention)
+    insertIntoChat(mention)
+  }
+
+  async function openSkillsFolder(): Promise<void> {
+    const electron = getElectronApi()
+    if (!electron?.openSkillsFolder) {
+      setFolderMessage('打开 Skills 文件夹 API 不可用。')
+      return
+    }
+
+    const result = await electron.openSkillsFolder()
+    const ok = (result as { success?: boolean; ok?: boolean }).success ?? (result as { ok?: boolean }).ok
+    if (ok) {
+      setFolderMessage(result.path ? `已打开：${result.path}` : '已打开 Skills 文件夹。')
+      return
+    }
+    setFolderMessage((result as { error?: string }).error ?? '打开 Skills 文件夹失败。')
+  }
+
   const personalItems = items.filter((item) => item.scope === 'personal')
   const workspaceItems = items.filter((item) => item.scope === 'workspace')
 
@@ -107,14 +133,29 @@ export function SkillsSection({ insertIntoChat }: SkillsSectionProps): React.JSX
           <h2 className="text-lg font-semibold text-cyan-100">Skills</h2>
           <p className="mt-1 text-sm text-zinc-500">Manage Codex skills and insert skill mentions into chat.</p>
         </div>
-        <button
-          type="button"
-          onClick={() => setEditing('new')}
-          className="cursor-pointer rounded-md border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-100 transition-colors duration-200 hover:bg-cyan-500/20"
-        >
-          New Skill
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => void openSkillsFolder()}
+            className="cursor-pointer rounded-md border border-zinc-700 px-3 py-2 text-sm text-zinc-200 transition-colors duration-200 hover:border-cyan-400/40 hover:text-cyan-100"
+          >
+            打开 Skills 文件夹
+          </button>
+          <button
+            type="button"
+            onClick={() => setEditing('new')}
+            className="cursor-pointer rounded-md border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-100 transition-colors duration-200 hover:bg-cyan-500/20"
+          >
+            New Skill
+          </button>
+        </div>
       </div>
+
+      {folderMessage ? (
+        <div className="rounded-xl border border-cyan-400/20 bg-cyan-500/10 p-3 text-sm text-cyan-100">
+          {folderMessage}
+        </div>
+      ) : null}
 
       {editing ? (
         <SkillEditor
@@ -145,7 +186,7 @@ export function SkillsSection({ insertIntoChat }: SkillsSectionProps): React.JSX
             onConfirmDelete={setConfirmDelete}
             onDelete={deleteSkill}
             onEdit={setEditing}
-            onInsert={(name) => insertIntoChat(`/${name}`)}
+            onInsert={handleInsert}
           />
           <SkillGroup
             title="Personal (~/.agents)"
@@ -154,7 +195,7 @@ export function SkillsSection({ insertIntoChat }: SkillsSectionProps): React.JSX
             onConfirmDelete={setConfirmDelete}
             onDelete={deleteSkill}
             onEdit={setEditing}
-            onInsert={(name) => insertIntoChat(`/${name}`)}
+            onInsert={handleInsert}
           />
         </>
       )}
@@ -260,6 +301,10 @@ function SkillGroup({
 
 function getSkillsApi() {
   return (window as Window & { electronAPI?: SkillsApi }).electronAPI?.agent
+}
+
+function getElectronApi() {
+  return (window as Window & { electronAPI?: SkillsApi }).electronAPI
 }
 
 function errorMessage(reason: unknown): string {

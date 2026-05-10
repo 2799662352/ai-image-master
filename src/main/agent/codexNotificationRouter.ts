@@ -93,6 +93,35 @@ function summarizeActivity(item: CodexItem): { label?: string; detail?: string }
   }
 }
 
+/**
+ * Mirrors Codex's `update_plan` / `todo_write` tool payload from
+ * codex-rs/protocol/src/plan_tool.rs:
+ *
+ *   { plan: [{ step: string, status: "pending" | "in_progress" | "completed" }] }
+ *
+ * Codex invariant: at most one step is `in_progress`. Older gateways may use
+ * `text` instead of `step`, so we accept either; everything else we drop.
+ */
+function extractPlanSteps(
+  item: CodexItem,
+): { text: string; status: 'pending' | 'in_progress' | 'completed' }[] | undefined {
+  const raw = Array.isArray(item.plan) ? item.plan : null
+  if (!raw) return undefined
+  const out: { text: string; status: 'pending' | 'in_progress' | 'completed' }[] = []
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue
+    const o = entry as Record<string, unknown>
+    const text =
+      typeof o.step === 'string' ? o.step : typeof o.text === 'string' ? o.text : null
+    if (!text) continue
+    const rawStatus = typeof o.status === 'string' ? o.status : ''
+    const status: 'pending' | 'in_progress' | 'completed' =
+      rawStatus === 'completed' ? 'completed' : rawStatus === 'in_progress' ? 'in_progress' : 'pending'
+    out.push({ text, status })
+  }
+  return out.length > 0 ? out : undefined
+}
+
 function statusFromItem(item: CodexItem): 'running' | 'success' | 'error' | 'cancelled' | undefined {
   const s = typeof item.status === 'string' ? item.status.toLowerCase() : null
   if (!s) return undefined
@@ -352,6 +381,7 @@ export class CodexNotificationRouter {
             // pre-fix router silently dropped all of these, which is exactly
             // why the user couldn't see tool calls / MCP / file reads.
             const { label, detail } = summarizeActivity(item)
+            const steps = item.type === 'plan' ? extractPlanSteps(item) : undefined
             return {
               type: 'item_started',
               threadId: params.threadId,
@@ -361,6 +391,7 @@ export class CodexNotificationRouter {
                 kind: item.type,
                 ...(label != null ? { label } : {}),
                 ...(detail != null ? { detail } : {}),
+                ...(steps != null ? { steps } : {}),
                 status: statusFromItem(item) ?? 'running',
               },
             }
@@ -555,6 +586,7 @@ export class CodexNotificationRouter {
             const { label, detail } = summarizeActivity(item)
             const explicitError =
               typeof item.error === 'string' && item.error.length > 0 ? item.error : undefined
+            const steps = item.type === 'plan' ? extractPlanSteps(item) : undefined
             return {
               type: 'item_completed',
               threadId: params.threadId,
@@ -564,6 +596,7 @@ export class CodexNotificationRouter {
                 kind: item.type,
                 ...(label != null ? { label } : {}),
                 ...(detail != null ? { detail } : {}),
+                ...(steps != null ? { steps } : {}),
                 status: statusFromItem(item) ?? (explicitError ? 'error' : 'success'),
                 ...(explicitError ? { error: explicitError } : {}),
               },
@@ -613,6 +646,130 @@ export class CodexNotificationRouter {
           success: params.success as boolean,
           error: (params.error as string) ?? null,
         }
+
+      // Skill catalog drift on disk (user added/removed a SKILL.md). Renderer
+      // should refetch its `availableSkills` cache so the `$` popup picks up
+      // changes without a panel reload.
+      case 'skills/changed':
+        return { type: 'skills_changed' }
+
+      // Codex global config warning — surface as a banner so the user knows
+      // their `~/.codex/config.toml` has invalid keys, etc.
+      case 'configWarning': {
+        const message = typeof params?.message === 'string' ? params.message : 'Codex config warning'
+        return {
+          type: 'notice',
+          notice: {
+            id: `configWarning:${message.slice(0, 64)}:${Date.now()}`,
+            kind: 'configWarning',
+            level: 'warning',
+            message,
+          },
+        }
+      }
+
+      // A removed/renamed RPC or feature was used. Codex sends this once per
+      // session — we render it as a warning banner.
+      case 'deprecationNotice': {
+        const message = typeof params?.message === 'string' ? params.message : 'Codex deprecation notice'
+        return {
+          type: 'notice',
+          notice: {
+            id: `deprecation:${message.slice(0, 64)}:${Date.now()}`,
+            kind: 'deprecation',
+            level: 'warning',
+            message,
+          },
+        }
+      }
+
+      // Codex re-routed the requested model (e.g. quota / rate limit / unsupported
+      // tool). Banner-level info — the user paid for X, got Y, they need to know.
+      case 'model/rerouted': {
+        const from = typeof params?.from === 'string' ? params.from : 'requested model'
+        const to = typeof params?.to === 'string' ? params.to : 'fallback model'
+        const reason = typeof params?.reason === 'string' ? params.reason : null
+        const message = reason
+          ? `Routed from ${from} to ${to} (${reason}).`
+          : `Routed from ${from} to ${to}.`
+        return {
+          type: 'notice',
+          notice: {
+            id: `modelRerouted:${from}->${to}:${Date.now()}`,
+            kind: 'modelRerouted',
+            level: 'info',
+            message,
+            details: { from, to, ...(reason ? { reason } : {}) },
+          },
+        }
+      }
+
+      case 'hook/started': {
+        const hookName = typeof params?.hookName === 'string' ? params.hookName : 'hook'
+        return {
+          type: 'notice',
+          notice: {
+            id: `hookStarted:${hookName}:${Date.now()}`,
+            kind: 'hookStarted',
+            level: 'info',
+            message: `Running hook: ${hookName}`,
+            threadId: typeof params?.threadId === 'string' ? params.threadId : undefined,
+            details: { hookName },
+          },
+        }
+      }
+
+      case 'hook/completed': {
+        const hookName = typeof params?.hookName === 'string' ? params.hookName : 'hook'
+        const success = params?.success === true
+        return {
+          type: 'notice',
+          notice: {
+            id: `hookCompleted:${hookName}:${Date.now()}`,
+            kind: 'hookCompleted',
+            level: 'info',
+            message: success ? `Hook done: ${hookName}` : `Hook failed: ${hookName}`,
+            threadId: typeof params?.threadId === 'string' ? params.threadId : undefined,
+            details: { hookName, success },
+          },
+        }
+      }
+
+      // The auto-approver is silently inspecting a request before deciding.
+      // Visible as a tiny info pill so the user understands why a 1-2 second
+      // pause appears between an action and its execution.
+      case 'item/autoApprovalReview/started': {
+        const itemId = typeof params?.itemId === 'string' ? params.itemId : 'item'
+        return {
+          type: 'notice',
+          notice: {
+            id: `autoApprovalReview:${itemId}:${Date.now()}`,
+            kind: 'autoApprovalReview',
+            level: 'info',
+            message: `Auto-approval review started${itemId ? ` for ${itemId}` : ''}`,
+            threadId: typeof params?.threadId === 'string' ? params.threadId : undefined,
+            details: { itemId },
+          },
+        }
+      }
+
+      case 'item/autoApprovalReview/completed': {
+        const itemId = typeof params?.itemId === 'string' ? params.itemId : 'item'
+        const approved = params?.approved === true
+        return {
+          type: 'notice',
+          notice: {
+            id: `autoApprovalReviewCompleted:${itemId}:${Date.now()}`,
+            kind: 'autoApprovalReviewCompleted',
+            level: 'info',
+            message: approved
+              ? `Auto-approved${itemId ? ` ${itemId}` : ''}`
+              : `Auto-approval rejected${itemId ? ` for ${itemId}` : ''}`,
+            threadId: typeof params?.threadId === 'string' ? params.threadId : undefined,
+            details: { itemId, approved },
+          },
+        }
+      }
 
       default:
         return null

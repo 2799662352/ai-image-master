@@ -10,10 +10,29 @@ function makeDataTransfer(): DataTransfer {
 }
 
 describe('drag helpers', () => {
-  it('round-trips a file path through serialize/parse', () => {
+  it('round-trips a single file path through serialize/parse', () => {
     const dt = makeDataTransfer()
-    serializeFileDrag(dt, 'D:\\foo\\bar.ts')
-    expect(parseFileDrop(dt)).toBe('D:\\foo\\bar.ts')
+    serializeFileDrag(dt, ['D:\\foo\\bar.ts'])
+    expect(parseFileDrop(dt)).toEqual(['D:\\foo\\bar.ts'])
+  })
+
+  it('round-trips multiple file paths in original order', () => {
+    const dt = makeDataTransfer()
+    const paths = ['D:\\a.ts', 'D:\\sub\\b.ts', 'D:\\c.png']
+    serializeFileDrag(dt, paths)
+    expect(parseFileDrop(dt)).toEqual(paths)
+  })
+
+  it('writes a newline-joined text/plain fallback', () => {
+    const dt = makeDataTransfer()
+    serializeFileDrag(dt, ['D:\\a.ts', 'D:\\b.ts'])
+    expect(dt.getData('text/plain')).toBe('D:\\a.ts\nD:\\b.ts')
+  })
+
+  it('serializeFileDrag with empty array is a no-op', () => {
+    const dt = makeDataTransfer()
+    serializeFileDrag(dt, [])
+    expect(parseFileDrop(dt)).toEqual([])
   })
 
   it('round-trips a quote block', () => {
@@ -23,9 +42,9 @@ describe('drag helpers', () => {
     expect(parseQuoteDrop(dt)).toBe(q)
   })
 
-  it('parseFileDrop returns null when no path payload', () => {
+  it('parseFileDrop returns empty array when no path payload', () => {
     const dt = makeDataTransfer()
-    expect(parseFileDrop(dt)).toBeNull()
+    expect(parseFileDrop(dt)).toEqual([])
   })
 
   it('parseQuoteDrop returns null when no quote payload', () => {

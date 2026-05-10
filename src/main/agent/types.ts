@@ -15,6 +15,7 @@ export interface AgentInput extends AgentSendMessagePayload {
     | { type: 'text'; text: string }
     | { type: 'localImage'; path: string }
     | { type: 'image'; url: string }
+    | { type: 'skill'; name: string; path: string }
   >
 }
 

@@ -14,7 +14,7 @@ export type FileNode = {
   children?: FileNode[]
 }
 
-export type FileTabKind = 'text' | 'image' | 'pdf' | 'binary' | 'reference'
+export type FileTabKind = 'text' | 'image' | 'video' | 'pdf' | 'binary' | 'reference' | 'compare'
 
 export type FileTab = {
   id: string
@@ -32,8 +32,22 @@ export type FileTab = {
    */
   referenceKey?: string
   reference?: AgentReference
+  /**
+   * For `kind === 'compare'`: the two file paths being compared.
+   */
+  compare?: { left: string; right: string; leftContent: string; rightContent: string }
 }
 
 export type WatchEvent = { type: 'add' | 'addDir' | 'change' | 'unlink' | 'unlinkDir'; path: string; mtime?: number }
 
-export type Conflict = { tabId: string; diskContent: string; show: 'modal' | 'merge' } | null
+/**
+ * `source` distinguishes:
+ * - `'watcher'` (default, omitted): disk changed under the user's feet
+ *   while they had unsaved edits — UI offers "Keep yours" / "Use disk".
+ * - `'apply'`: the user clicked **Apply** on an AI-emitted code block;
+ *   `diskContent` is the AI's proposed content. UI swaps to
+ *   "Cancel" / "Apply" / "Show diff".
+ */
+export type Conflict =
+  | { tabId: string; diskContent: string; show: 'modal' | 'merge'; source?: 'watcher' | 'apply' }
+  | null

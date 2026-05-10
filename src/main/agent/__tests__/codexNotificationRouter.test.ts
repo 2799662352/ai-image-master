@@ -1159,4 +1159,174 @@ describe('CodexNotificationRouter', () => {
       })
     })
   })
+
+  describe('plan steps', () => {
+    it('extracts steps[] with normalised statuses on item/started', () => {
+      const router = new CodexNotificationRouter()
+      const event = router.route('item/started', {
+        threadId: 't',
+        item: {
+          id: 'plan-1',
+          type: 'plan',
+          plan: [
+            { step: 'Read source', status: 'completed' },
+            { step: 'Write fix', status: 'in_progress' },
+            { step: 'Run tests', status: 'pending' },
+          ],
+        },
+      })
+      expect(event).toMatchObject({
+        type: 'item_started',
+        itemType: 'activity',
+        payload: {
+          kind: 'plan',
+          steps: [
+            { text: 'Read source', status: 'completed' },
+            { text: 'Write fix', status: 'in_progress' },
+            { text: 'Run tests', status: 'pending' },
+          ],
+        },
+      })
+    })
+
+    it('accepts `text` as a fallback for `step` (older Codex builds)', () => {
+      const router = new CodexNotificationRouter()
+      const event = router.route('item/started', {
+        threadId: 't',
+        item: {
+          id: 'plan-1',
+          type: 'plan',
+          plan: [{ text: 'A', status: 'completed' }],
+        },
+      })
+      expect(event).toMatchObject({
+        payload: { steps: [{ text: 'A', status: 'completed' }] },
+      })
+    })
+
+    it('falls back to pending for non-canonical statuses and drops invalid entries', () => {
+      // Codex's protocol only emits the three canonical statuses
+      // (`pending` / `in_progress` / `completed`). Anything else is gateway
+      // garbage — we keep the entry but show it as pending so the user still
+      // sees the step text.
+      const router = new CodexNotificationRouter()
+      const event = router.route('item/started', {
+        threadId: 't',
+        item: {
+          id: 'plan-1',
+          type: 'plan',
+          plan: [
+            { step: 'good', status: 'wat' },
+            null,
+            { step: 'no-status' },
+            { status: 'completed' }, // missing text → dropped
+          ],
+        },
+      })
+      expect((event as { payload: { steps: unknown } }).payload.steps).toEqual([
+        { text: 'good', status: 'pending' },
+        { text: 'no-status', status: 'pending' },
+      ])
+    })
+
+    it('passes steps through item/completed too', () => {
+      const router = new CodexNotificationRouter()
+      const event = router.route('item/completed', {
+        threadId: 't',
+        item: {
+          id: 'plan-1',
+          type: 'plan',
+          plan: [{ step: 'A', status: 'completed' }],
+        },
+      })
+      expect(event).toMatchObject({
+        type: 'item_completed',
+        itemType: 'activity',
+        final: { steps: [{ text: 'A', status: 'completed' }] },
+      })
+    })
+  })
+
+  // ---------------------------------------------------------------------
+  // Codex app-server protocol notifications we should pass through to the
+  // renderer rather than silently drop. References:
+  //   - codex-rs/app-server/README.md (notifications section)
+  //   - codex-rs/app-server-protocol/src/protocol.rs
+  // ---------------------------------------------------------------------
+  describe('extra protocol notifications (skills, hooks, deprecation, etc.)', () => {
+    it('routes skills/changed to a `skills_changed` stream event (no payload)', () => {
+      const router = new CodexNotificationRouter()
+      expect(router.route('skills/changed', {})).toEqual({ type: 'skills_changed' })
+    })
+
+    it('routes configWarning to a warning notice', () => {
+      const router = new CodexNotificationRouter()
+      const ev = router.route('configWarning', { message: 'missing key model_provider' })
+      expect(ev).toMatchObject({
+        type: 'notice',
+        notice: { kind: 'configWarning', level: 'warning', message: 'missing key model_provider' },
+      })
+    })
+
+    it('routes deprecationNotice to a warning notice', () => {
+      const router = new CodexNotificationRouter()
+      const ev = router.route('deprecationNotice', { message: 'custom_prompts has been removed' })
+      expect(ev).toMatchObject({
+        type: 'notice',
+        notice: { kind: 'deprecation', level: 'warning', message: 'custom_prompts has been removed' },
+      })
+    })
+
+    it('routes model/rerouted with from/to in details', () => {
+      const router = new CodexNotificationRouter()
+      const ev = router.route('model/rerouted', { from: 'gpt-5', to: 'gpt-4-turbo', reason: 'rate-limit' })
+      expect(ev).toMatchObject({
+        type: 'notice',
+        notice: { kind: 'modelRerouted', level: 'info', details: { from: 'gpt-5', to: 'gpt-4-turbo', reason: 'rate-limit' } },
+      })
+      // Surface a humane message that the chat banner can display directly.
+      expect((ev as { notice: { message: string } }).notice.message).toContain('gpt-5')
+      expect((ev as { notice: { message: string } }).notice.message).toContain('gpt-4-turbo')
+    })
+
+    it('routes hook/started and hook/completed as info notices', () => {
+      const router = new CodexNotificationRouter()
+      const started = router.route('hook/started', { hookName: 'pre-commit', threadId: 't' })
+      expect(started).toMatchObject({
+        type: 'notice',
+        notice: { kind: 'hookStarted', level: 'info', threadId: 't', message: expect.stringContaining('pre-commit') },
+      })
+      const completed = router.route('hook/completed', { hookName: 'pre-commit', threadId: 't', success: true })
+      expect(completed).toMatchObject({
+        type: 'notice',
+        notice: { kind: 'hookCompleted', level: 'info', threadId: 't' },
+      })
+    })
+
+    it('routes item/autoApprovalReview/started and /completed as info notices', () => {
+      const router = new CodexNotificationRouter()
+      const start = router.route('item/autoApprovalReview/started', {
+        threadId: 't',
+        itemId: 'shell-1',
+      })
+      expect(start).toMatchObject({
+        type: 'notice',
+        notice: { kind: 'autoApprovalReview', level: 'info', threadId: 't' },
+      })
+      const done = router.route('item/autoApprovalReview/completed', {
+        threadId: 't',
+        itemId: 'shell-1',
+        approved: true,
+      })
+      expect(done).toMatchObject({
+        type: 'notice',
+        notice: { kind: 'autoApprovalReviewCompleted', level: 'info', threadId: 't' },
+      })
+    })
+
+    it('returns null for unknown methods (default case)', () => {
+      const router = new CodexNotificationRouter()
+      expect(router.route('totally/unknown/method', {})).toBeNull()
+    })
+  })
 })

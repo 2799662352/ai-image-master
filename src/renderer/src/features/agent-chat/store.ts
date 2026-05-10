@@ -3,17 +3,20 @@ import type {
   AgentAttachmentInput,
   AgentCancelPayload,
   AgentApiResult,
+  AgentNotice,
   AgentSendMessagePayload,
   AgentStreamEvent,
   AgentThreadSummary,
   AgentTokenUsage,
   CodexApprovalRequest,
   CodexApprovalResponse,
+  CodexSkillSummary,
+  CodexSkillsSummary,
   CodexThreadSummary,
   ItemDeltaPatch,
 } from '../../../../types/agent'
 import type { AgentReference } from '../../../../types/agent-reference'
-import type { AttachmentRef, Message, TimelineItem } from '../../../../types/agent-timeline'
+import type { AttachmentRef, Message, PlanStep, TimelineItem } from '../../../../types/agent-timeline'
 import { upsertItemInLastMessage } from '../../../../types/agent-timeline'
 import { AGENT_MODELS, DEFAULT_MODEL_ID } from './models'
 import { useFileExplorerStore } from '../file-explorer/store'
@@ -117,13 +120,50 @@ type AgentElectronApi = {
     respondApproval?: (response: CodexApprovalResponse) => Promise<AgentApiResult>
     listCodexThreads?: () => Promise<CodexThreadSummary[]>
     forkCodexThread?: (threadId: string) => Promise<CodexThreadSummary>
+    getSkillsSummary?: () => Promise<CodexSkillsSummary>
   }
+}
+
+/**
+ * Extract `$skill-name` tokens from a chat input. Mirrors the codex
+ * app-server marker syntax — `$name` must be at the start of input or
+ * preceded by whitespace, and runs until the next non-`[\w-]` character.
+ * Requires the first char to be alpha/underscore so dollar amounts like
+ * `$42` and shell exits like `$0` are not mistakenly forwarded as skills.
+ *
+ * Example: in `"please use $skill-creator and $compactor now"` we extract
+ * `["skill-creator", "compactor"]`. Used by `send()` to attach
+ * `{type:"skill", name, path}` input items to the codex turn.
+ */
+export function extractSkillTokens(text: string): string[] {
+  const out: string[] = []
+  const re = /(?:^|\s)\$([A-Za-z_][\w-]*)/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    out.push(m[1])
+  }
+  return out
 }
 
 interface PreviewState {
   open: boolean
   images: AttachmentRef[]
   index: number
+}
+
+/**
+ * One stashed exchange: the user message and every assistant message
+ * that ran in response to it. `originalIndex` is where the user message
+ * sat in `messages` at the time of rewind so a subsequent restore can
+ * splice the slice back into roughly its original spot.
+ */
+export interface RewoundTurn {
+  id: string
+  rewoundAt: number
+  originalIndex: number
+  messages: Message[]
+  /** First-line preview of the user message (used by the drawer). */
+  preview: string
 }
 
 interface AgentChatState {
@@ -133,6 +173,40 @@ interface AgentChatState {
   attachments: AgentAttachmentInput[]
   pendingReferences: AgentReference[]
   pendingApprovals: CodexApprovalRequest[]
+  /**
+   * Transient notices surfaced from codex `app-server` notifications:
+   * configWarning, deprecationNotice, model rerouting, hook lifecycle, and
+   * auto-approval review pulses. Newest first. UI renders dismissible
+   * banners; warnings stick around, info notices auto-fade.
+   */
+  notices: AgentNotice[]
+  /**
+   * When set, the user is editing a previous message in place. The full
+   * `MentionInput` composer is rendered at the message's position (the
+   * footer composer is hidden) so the edit UI is *literally* the same
+   * component / chrome / model picker / Send button — just relocated.
+   * Mirrors Cursor's "edit & rerun" UX.
+   */
+  editingMessageId?: string
+  /**
+   * Snapshot of the bottom composer's `input` / `attachments` /
+   * `pendingReferences` taken when the user enters edit mode, so cancelling
+   * the edit restores their in-flight draft instead of nuking it.
+   */
+  draftBackup?: {
+    input: string
+    attachments: AgentAttachmentInput[]
+    pendingReferences: AgentReference[]
+  }
+  /**
+   * Stash of "rewound" turns (a user message + every assistant message
+   * that followed it, up to but not including the next user message).
+   * Each entry preserves the slice plus the index it occupied in
+   * `messages` so a later restore can splice it back in place. The drawer
+   * UI renders these as one-line clickable rows above the bottom composer.
+   * Newest first.
+   */
+  rewoundTurns: RewoundTurn[]
   isRunning: boolean
   error?: string
   selectedModelId: string
@@ -164,8 +238,39 @@ interface AgentChatState {
   clearPendingReferences: () => void
   addApprovalRequest: (request: CodexApprovalRequest) => void
   removeApprovalRequest: (id: string) => void
+  pushNotice: (notice: AgentNotice) => void
+  dismissNotice: (id: string) => void
   respondToApproval: (response: CodexApprovalResponse) => Promise<void>
   send: () => Promise<void>
+  /**
+   * Enter edit mode for a previous user message. Backs up any in-flight
+   * draft, then seeds the global `input` with the message's text so the
+   * inline composer (rendered by `AgentChatPanel`) lights up with the
+   * exact same chrome as the bottom one.
+   */
+  startEditMessage: (messageId: string) => void
+  /** Exit edit mode without resending; restores the saved draft. */
+  cancelEditMessage: () => void
+  /**
+   * Truncate the conversation up to the message being edited and submit
+   * the current `input` / `attachments` as a fresh turn. Returns when the
+   * underlying `send()` resolves.
+   */
+  submitEditMessage: () => Promise<void>
+  deleteMessage: (messageId: string) => void
+  /**
+   * Rewind ("回收") the turn rooted at `messageId`: pull the user message
+   * and every assistant message that follows it (up to but not including
+   * the next user message) out of the timeline and into `rewoundTurns`.
+   * Used by the per-message ↶ button.
+   */
+  rewindMessageTurn: (messageId: string) => void
+  /** Splice a stashed turn back into the timeline (and remove it from the drawer). */
+  restoreRewoundTurn: (turnId: string) => void
+  /** Permanently drop every entry in the drawer. */
+  clearRewoundTurns: () => void
+  /** Restore every stashed turn in one go. */
+  restoreAllRewoundTurns: () => void
   cancel: () => Promise<void>
   newThread: () => void
   switchThread: (threadId: string) => Promise<void>
@@ -179,6 +284,15 @@ interface AgentChatState {
   codexThreadList: CodexThreadSummary[]
   codexThreadListLoading: boolean
   bootstrapped: boolean
+
+  /**
+   * Skills available for `$skill-name` invocation. Loaded once on bootstrap
+   * via `getSkillsSummary`; consumed by `send()` to attach `skill` input
+   * items and by `MentionInput` to drive the `$` trigger popup. Empty array
+   * is fine — callers fall back to letting Codex resolve names itself.
+   */
+  availableSkills: CodexSkillSummary[]
+  loadAvailableSkills: () => Promise<void>
 
   bootstrap: () => Promise<void>
   refreshThreadList: () => Promise<void>
@@ -268,6 +382,7 @@ function createItemFromStarted(itemType: TimelineItem['type'], itemId: string, p
         status === 'running' || status === 'success' || status === 'error' || status === 'cancelled'
           ? status
           : 'running'
+      const steps = sanitizePlanSteps(payload.steps)
       return {
         type: 'activity',
         id: itemId,
@@ -275,10 +390,35 @@ function createItemFromStarted(itemType: TimelineItem['type'], itemId: string, p
         kind: typeof payload.kind === 'string' ? payload.kind : 'activity',
         ...(typeof payload.label === 'string' ? { label: payload.label } : {}),
         ...(typeof payload.detail === 'string' ? { detail: payload.detail } : {}),
+        ...(steps != null ? { steps } : {}),
         status: safeStatus,
       }
     }
   }
+}
+
+/**
+ * Defensive runtime check for `payload.steps`. The patch payload is typed as
+ * `Record<string, unknown>` because gateways occasionally rename / reshape
+ * the wire format under our feet — without this guard, a bogus value (e.g.
+ * `[null, "foo"]`) would land directly on the ActivityItem and crash the
+ * PlanCard renderer when it iterates `step.text`.
+ */
+function sanitizePlanSteps(value: unknown): PlanStep[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const out: PlanStep[] = []
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object') continue
+    const o = entry as Record<string, unknown>
+    if (typeof o.text !== 'string') continue
+    const status = o.status
+    const validStatus: PlanStep['status'] =
+      status === 'completed' || status === 'in_progress' || status === 'pending'
+        ? status
+        : 'pending'
+    out.push({ text: o.text, status: validStatus })
+  }
+  return out.length > 0 ? out : undefined
 }
 
 function ensureAssistantMessage(messages: Message[]): Message[] {
@@ -327,6 +467,8 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   attachments: [],
   pendingReferences: [],
   pendingApprovals: [],
+  notices: [],
+  rewoundTurns: [],
   messages: [],
   isRunning: false,
   selectedModelId: readPersistedModelId(),
@@ -339,6 +481,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   codexThreadList: [],
   codexThreadListLoading: false,
   bootstrapped: false,
+  availableSkills: [],
   preview: { open: false, images: [], index: 0 },
   openPreview: (images, startIndex) => {
     if (images.length === 0) return
@@ -418,6 +561,16 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     set((state) => ({
       pendingApprovals: state.pendingApprovals.filter((item) => item.id !== id),
     })),
+  pushNotice: (notice) =>
+    set((state) => {
+      // Dedupe by id; keep newest 8 — older ones drop off the bottom.
+      const filtered = state.notices.filter((existing) => existing.id !== notice.id)
+      return { notices: [notice, ...filtered].slice(0, 8) }
+    }),
+  dismissNotice: (id) =>
+    set((state) => ({
+      notices: state.notices.filter((notice) => notice.id !== id),
+    })),
   respondToApproval: async (response) => {
     const agent = getAgentApi()
     if (!agent.respondApproval) {
@@ -478,6 +631,19 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       messages: [...current.messages, userMsg],
     }))
 
+    // Resolve `$skill-name` markers to {name, path} so codex injects the
+    // SKILL.md instructions instead of letting the model resolve names
+    // itself. Unresolved tokens (skill cache miss) still travel as text —
+    // codex's fallback path will handle them with extra latency.
+    const tokens = extractSkillTokens(content)
+    const known = new Map(state.availableSkills.map((s) => [s.name, s.path]))
+    const skills = Array.from(new Set(tokens))
+      .map((name) => {
+        const path = known.get(name)
+        return path ? { name, path } : null
+      })
+      .filter((s): s is { name: string; path: string } => s !== null)
+
     try {
       const result = await getAgentApi().sendMessage({
         threadId: state.threadId,
@@ -486,6 +652,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         references,
         currentPage: window.location.hash.slice(1),
         model: modelId,
+        skills: skills.length > 0 ? skills : undefined,
       })
       set({ threadId: result.threadId })
       // PHASE-1-INVARIANT: pendingReferences are renderer-only chips. Do not
@@ -502,6 +669,156 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         messages: current.messages.slice(0, -1),
       }))
     }
+  },
+  startEditMessage: (messageId: string) => {
+    const state = get()
+    if (state.isRunning) return
+    if (state.editingMessageId === messageId) return
+
+    const target = state.messages.find((m) => m.id === messageId)
+    if (!target) return
+    if (target.role !== 'user') return
+
+    const text = target.items
+      .filter((item): item is import('../../../../types/agent-timeline').TextItem => item.type === 'text')
+      .map((item) => item.content)
+      .join('\n')
+
+    set({
+      editingMessageId: messageId,
+      // Save the bottom composer's draft so cancelling restores it.
+      draftBackup: state.editingMessageId
+        ? state.draftBackup
+        : {
+            input: state.input,
+            attachments: state.attachments,
+            pendingReferences: state.pendingReferences,
+          },
+      input: text,
+      // Attachments aren't rehydratable from AttachmentRef (uri may be a
+      // revoked blob), so we start with a clean slate. The user can drag
+      // files back in if needed — mirrors Cursor's behaviour.
+      attachments: [],
+      pendingReferences: [],
+      error: undefined,
+    })
+  },
+  cancelEditMessage: () => {
+    const state = get()
+    if (!state.editingMessageId) return
+    const backup = state.draftBackup
+    set({
+      editingMessageId: undefined,
+      draftBackup: undefined,
+      input: backup?.input ?? '',
+      attachments: backup?.attachments ?? [],
+      pendingReferences: backup?.pendingReferences ?? [],
+    })
+  },
+  submitEditMessage: async () => {
+    const state = get()
+    const editingId = state.editingMessageId
+    if (!editingId || state.isRunning) return
+
+    const idx = state.messages.findIndex((m) => m.id === editingId)
+    if (idx === -1) {
+      // Stale edit target — bail out cleanly.
+      set({ editingMessageId: undefined, draftBackup: undefined })
+      return
+    }
+
+    set({
+      messages: state.messages.slice(0, idx),
+      editingMessageId: undefined,
+      draftBackup: undefined,
+    })
+
+    await get().send()
+  },
+  deleteMessage: (messageId: string) => {
+    set((current) => ({
+      messages: current.messages.filter((m) => m.id !== messageId),
+    }))
+  },
+  rewindMessageTurn: (messageId: string) => {
+    const state = get()
+    const startIdx = state.messages.findIndex((m) => m.id === messageId)
+    if (startIdx === -1) return
+    const target = state.messages[startIdx]
+    if (target.role !== 'user') return
+
+    // Walk forward until the next user message: that whole slice is "this round".
+    let endIdx = state.messages.length
+    for (let i = startIdx + 1; i < state.messages.length; i += 1) {
+      if (state.messages[i].role === 'user') {
+        endIdx = i
+        break
+      }
+    }
+    const slice = state.messages.slice(startIdx, endIdx)
+    if (slice.length === 0) return
+
+    // First non-empty text content for the drawer preview. We strip newlines
+    // so the row stays single-line even if the message was multi-line.
+    const previewSource = slice[0].items
+      .filter(
+        (item): item is import('../../../../types/agent-timeline').TextItem =>
+          item.type === 'text',
+      )
+      .map((item) => item.content)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    const preview = previewSource.length > 0 ? previewSource : '(empty message)'
+
+    const turn: RewoundTurn = {
+      id: createId(),
+      rewoundAt: Date.now(),
+      originalIndex: startIdx,
+      messages: slice,
+      preview,
+    }
+
+    set((current) => ({
+      messages: [...current.messages.slice(0, startIdx), ...current.messages.slice(endIdx)],
+      rewoundTurns: [turn, ...current.rewoundTurns],
+      // If the user was editing a message inside the rewound slice, drop
+      // the edit state so the bottom composer reappears cleanly.
+      ...(current.editingMessageId &&
+      slice.some((m) => m.id === current.editingMessageId)
+        ? { editingMessageId: undefined, draftBackup: undefined }
+        : {}),
+    }))
+  },
+  restoreRewoundTurn: (turnId: string) => {
+    const state = get()
+    const turn = state.rewoundTurns.find((t) => t.id === turnId)
+    if (!turn) return
+    // Clamp so we never splice past the end after other actions reshaped
+    // the timeline (deletes, more rewinds, new turns, etc.).
+    const insertAt = Math.min(turn.originalIndex, state.messages.length)
+    set({
+      messages: [
+        ...state.messages.slice(0, insertAt),
+        ...turn.messages,
+        ...state.messages.slice(insertAt),
+      ],
+      rewoundTurns: state.rewoundTurns.filter((t) => t.id !== turnId),
+    })
+  },
+  clearRewoundTurns: () => set({ rewoundTurns: [] }),
+  restoreAllRewoundTurns: () => {
+    const state = get()
+    if (state.rewoundTurns.length === 0) return
+    // Restore in chronological order (oldest first) so each splice's
+    // originalIndex still makes sense relative to a growing timeline.
+    const ordered = [...state.rewoundTurns].sort((a, b) => a.rewoundAt - b.rewoundAt)
+    let messages = state.messages
+    for (const turn of ordered) {
+      const insertAt = Math.min(turn.originalIndex, messages.length)
+      messages = [...messages.slice(0, insertAt), ...turn.messages, ...messages.slice(insertAt)]
+    }
+    set({ messages, rewoundTurns: [] })
   },
   cancel: async () => {
     const threadId = get().threadId
@@ -524,6 +841,9 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       error: undefined,
       tokenUsage: undefined,
       pendingApprovals: [],
+      rewoundTurns: [],
+      editingMessageId: undefined,
+      draftBackup: undefined,
     }),
   switchThread: async (threadId: string) => {
     const agent = (window as Window & { electronAPI?: { agent?: { openThread?: (id: string) => Promise<unknown> } } })
@@ -577,8 +897,29 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     })
   },
   applyEvent: (event) => {
+    // Two new global events bypass the thread guard: `skills_changed` is
+    // workspace-wide, and `notice` may or may not have a threadId. The
+    // existing `mcp_*` events already lack threadId and rely on the same
+    // bypass-by-shape: the guard only fires when a threadId is present.
+    if (event.type === 'skills_changed') {
+      void get().loadAvailableSkills()
+      return
+    }
+    if (event.type === 'notice') {
+      const activeThreadId = get().threadId
+      if (event.notice.threadId && activeThreadId && event.notice.threadId !== activeThreadId) return
+      get().pushNotice(event.notice)
+      return
+    }
+
     const activeThreadId = get().threadId
-    if (activeThreadId && event.threadId !== activeThreadId) return
+    if (
+      activeThreadId &&
+      'threadId' in event &&
+      typeof event.threadId === 'string' &&
+      event.threadId !== activeThreadId
+    )
+      return
 
     switch (event.type) {
       case 'thread_created':
@@ -650,6 +991,18 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     }
   },
 
+  loadAvailableSkills: async () => {
+    const agent = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.agent
+    if (!agent?.getSkillsSummary) return
+    try {
+      const summary = await agent.getSkillsSummary()
+      set({ availableSkills: summary.skills })
+    } catch {
+      // Skills are an optional convenience — keep the previous cache rather
+      // than burning a banner on the chat panel for a transient IPC failure.
+    }
+  },
+
   bootstrap: async () => {
     if (get().bootstrapped || get().threadListLoading) return
     set({ threadListLoading: true })
@@ -662,6 +1015,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       const list = await agent.listThreads()
       set({ threadList: list, bootstrapped: true })
       void get().refreshCodexThreadList()
+      void get().loadAvailableSkills()
       const top = list[0]
       if (top && agent.openThread) {
         await get().switchThread(top.id)

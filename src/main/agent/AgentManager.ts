@@ -186,6 +186,15 @@ export class AgentManager {
    */
   private readonly codexThreadIdByDbThreadId = new Map<string, string>()
 
+  /**
+   * Latest status emitted per MCP server name. Populated by
+   * `mcp_status_updated` notifications from codex. The renderer pulls this
+   * snapshot via `getMcpStatusSnapshotRpc` on subscribe, so dots stay correct
+   * even when notifications fired before the MCP page mounted (or before the
+   * renderer subscribed at all).
+   */
+  private readonly mcpStatusByName = new Map<string, { status: string; error: string | null }>()
+
   constructor(opts: AgentManagerOptions) {
     this.win = opts.win
     this.store = opts.store
@@ -199,15 +208,50 @@ export class AgentManager {
       provider: DEFAULT_PROVIDER,
       sessionConfig: this.sessionConfig,
       onApprovalRequest: (request) => this.emitApprovalRequest(request),
-      onMcpNotification: (event) => {
-        const win = this.win
-        if (!win || win.isDestroyed()) return
-        win.webContents.send('agent:mcp-status', event)
-      },
+      onMcpNotification: (event) => this.handleMcpNotification(event),
     })
     if (this.store) {
       this.summarizer = new ThreadTitleSummarizer(this.store, this.backend, DEFAULT_AGENT_MODEL)
     }
+  }
+
+  /**
+   * Test seam: when callers inject a custom backend via `opts.backend` they
+   * miss the `onMcpNotification` plumbing the default factory wires. Calling
+   * this method lets a test re-attach the same handler to the injected
+   * backend's `onMcpNotification` registration hook.
+   */
+  attachMcpNotificationHandler(): void {
+    const b = this.backend as { onMcpNotification?: (handler: (e: AgentStreamEvent) => void) => void }
+    if (typeof b.onMcpNotification === 'function') {
+      b.onMcpNotification((event) => this.handleMcpNotification(event))
+    }
+  }
+
+  private handleMcpNotification(event: AgentStreamEvent): void {
+    if (event && (event as any).type === 'mcp_status_updated') {
+      const e = event as any
+      if (typeof e.name === 'string') {
+        this.mcpStatusByName.set(e.name, {
+          status: String(e.status ?? 'unknown'),
+          error: e.error ?? null,
+        })
+      }
+    }
+    const win = this.win
+    if (!win || win.isDestroyed()) return
+    win.webContents.send('agent:mcp-status', event)
+  }
+
+  getMcpStatusSnapshotRpc(): {
+    ok: true
+    snapshot: Record<string, { status: string; error: string | null }>
+  } {
+    const snapshot: Record<string, { status: string; error: string | null }> = {}
+    for (const [name, value] of this.mcpStatusByName) {
+      snapshot[name] = { status: value.status, error: value.error }
+    }
+    return { ok: true, snapshot }
   }
 
   private workspacePaths(): CodexWorkspacePaths {
@@ -579,8 +623,15 @@ export class AgentManager {
         .filter((item): item is Extract<typeof item, { type: 'localImage' }> => item.type === 'localImage')
         .map((item) => path.resolve(item.path)),
     )
+    const skillItems: AgentInput['items'] = (payload.skills ?? [])
+      // Defensive dedupe — if the renderer detected `$foo $foo` we still want
+      // a single `skill` input item, otherwise codex injects the SKILL.md
+      // instructions twice and burns tokens.
+      .filter((skill, idx, arr) => arr.findIndex((s) => s.name === skill.name) === idx)
+      .map((skill) => ({ type: 'skill' as const, name: skill.name, path: skill.path }))
     const items: AgentInput['items'] = [
       { type: 'text', text: promptText },
+      ...skillItems,
       ...referenceItems,
       ...savedAttachments
         .filter((item) => item.mime.startsWith('image/'))

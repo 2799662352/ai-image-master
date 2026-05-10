@@ -46,6 +46,13 @@ export type CodexUserInput =
   | { type: 'text'; text: string; text_elements: [] }
   | { type: 'image'; url: string }
   | { type: 'localImage'; path: string }
+  /**
+   * Skill invocation: codex app-server reads `name` + `path` and injects the
+   * full SKILL.md instructions for the model. Per README:
+   *   "If you omit the `skill` item, the model will still parse the `$ `
+   *   marker and try to locate the skill, which can add latency."
+   */
+  | { type: 'skill'; name: string; path: string }
 
 export interface TurnStartParams { threadId: string; input: CodexUserInput[] }
 export interface TurnStartResponse { turn: Turn }

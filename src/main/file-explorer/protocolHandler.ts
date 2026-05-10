@@ -19,6 +19,9 @@ export function resolveOsPathFromRequest(url: string, platform: NodeJS.Platform 
   }
   let osPath = decodeURIComponent(parsed.pathname)
   if (platform === 'win32' && /^\/[A-Za-z]:/.test(osPath)) osPath = osPath.slice(1)
+  if (platform === 'win32' && /^[A-Za-z]$/.test(parsed.hostname) && !/^[A-Za-z]:[\\/]/.test(osPath)) {
+    osPath = `${parsed.hostname.toUpperCase()}:${osPath}`
+  }
   const normalize = platform === 'win32' ? path.win32.normalize : path.posix.normalize
   const normalized = normalize(osPath)
   return { ok: true, path: normalized }

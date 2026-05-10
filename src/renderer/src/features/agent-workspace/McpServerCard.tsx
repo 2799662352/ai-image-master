@@ -100,6 +100,11 @@ export function McpServerCard({
           ))}
         </div>
       )}
+      {server.status === 'ready' && server.tools.length === 0 && (
+        <p className="mt-2 text-xs text-amber-300/80">
+          服务器已连接，但未返回工具。Docker MCP Gateway 通常需要 Docker Desktop 运行，并在 Docker MCP Toolkit 中启用至少一个 server。
+        </p>
+      )}
 
       {/* Action row: login button (when needed), edit, delete */}
       <div className="mt-3 flex items-center gap-2">

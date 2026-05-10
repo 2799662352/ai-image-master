@@ -181,6 +181,7 @@ const IPC_CHANNELS = {
     MCP_RELOAD: 'agent:mcp-reload',
     MCP_OAUTH_LOGIN: 'agent:mcp-oauth-login',
     MCP_READ_CONFIG: 'agent:mcp-read-config',
+    MCP_STATUS_SNAPSHOT: 'agent:mcp-status-snapshot',
     DOCKER_GW_CHECK: 'agent:docker-gw-check',
     DOCKER_GW_FIX: 'agent:docker-gw-fix',
     DOCKER_GW_STATUS: 'agent:docker-gw-status',
@@ -204,9 +205,17 @@ const IPC_CHANNELS = {
   },
   FILE_EXPLORER: {
     READ_TEXT: 'fs:read-text',
+    READ_BINARY: 'fs:read-binary',
     WRITE_TEXT: 'fs:write-text',
     LIST_DIR: 'fs:list-dir',
     STAT: 'fs:stat',
+    TRASH: 'fs:trash',
+    RENAME: 'fs:rename',
+    CREATE_FILE: 'fs:create-file',
+    CREATE_FOLDER: 'fs:create-folder',
+    COPY: 'fs:copy',
+    MOVE: 'fs:move',
+    OPEN_IN_TERMINAL: 'fs:open-in-terminal',
     PICK_FOLDER: 'workspace:pick-folder',
     WATCH_START: 'fs:watch-start',
     WATCH_STOP: 'fs:watch-stop',
@@ -325,6 +334,11 @@ export interface ElectronAPI {
     reloadMcpServers: () => Promise<{ ok: boolean; error?: string }>
     mcpOAuthLogin: (name: string) => Promise<{ ok: boolean; error?: string; authorization_url?: string }>
     readConfig: () => Promise<{ ok: boolean; error?: string; config?: unknown }>
+    getMcpStatusSnapshot: () => Promise<{
+      ok: boolean
+      snapshot?: Record<string, { status: string; error: string | null }>
+      error?: string
+    }>
     dockerGatewayCheck: () => Promise<{ installed: boolean; version?: string; error?: string }>
     dockerGatewayFix: (opts?: { port?: number }) => Promise<{
       ok: boolean
@@ -345,9 +359,17 @@ export interface ElectronAPI {
   }
   fs: {
     readText: (p: string) => Promise<{ content: string; mtime: number }>
+    readBinary: (p: string) => Promise<{ ok: true; base64: string; mime: string } | { ok: false; reason: string }>
     writeText: (p: string, content: string) => Promise<{ mtime: number }>
     listDir: (p: string) => Promise<FileExplorerNode[]>
     stat: (p: string) => Promise<FileExplorerStat>
+    trash: (p: string) => Promise<{ ok: true } | { ok: false; reason: string }>
+    rename: (oldPath: string, newName: string) => Promise<{ ok: true; newPath: string } | { ok: false; reason: string }>
+    createFile: (parentDir: string, name: string) => Promise<{ ok: true; path: string } | { ok: false; reason: string }>
+    createFolder: (parentDir: string, name: string) => Promise<{ ok: true; path: string } | { ok: false; reason: string }>
+    copy: (sources: string[], destDir: string) => Promise<{ ok: true; written: string[] } | { ok: false; reason: string }>
+    move: (sources: string[], destDir: string) => Promise<{ ok: true; written: string[] } | { ok: false; reason: string }>
+    openInTerminal: (p: string) => Promise<{ ok: true } | { ok: false; reason: string }>
     pickFolder: () => Promise<string | null>
     watchStart: (p: string) => Promise<void>
     watchStop: (p: string) => Promise<void>
@@ -732,6 +754,13 @@ const electronAPI: ElectronAPI = {
 
     onMcpStatus: (handler: (event: any) => void) =>
       safeOnWithCleanup<any>('agent:mcp-status', handler, IPC_CHANNELS.AGENT_MCP_EVENTS),
+
+    getMcpStatusSnapshot: () =>
+      safeInvoke<{
+        ok: boolean
+        snapshot?: Record<string, { status: string; error: string | null }>
+        error?: string
+      }>(IPC_CHANNELS.AGENT.MCP_STATUS_SNAPSHOT),
   },
 
   // ============ Shell helpers (clipboard / save dialog) ============
@@ -749,12 +778,46 @@ const electronAPI: ElectronAPI = {
   fs: {
     readText: (p: string) =>
       safeInvoke<{ content: string; mtime: number }>(IPC_CHANNELS.FILE_EXPLORER.READ_TEXT, p),
+    readBinary: (p: string) =>
+      safeInvoke<{ ok: true; base64: string; mime: string } | { ok: false; reason: string }>(IPC_CHANNELS.FILE_EXPLORER.READ_BINARY, p),
     writeText: (p: string, content: string) =>
       safeInvoke<{ mtime: number }>(IPC_CHANNELS.FILE_EXPLORER.WRITE_TEXT, { path: p, content }),
     listDir: (p: string) =>
       safeInvoke<FileExplorerNode[]>(IPC_CHANNELS.FILE_EXPLORER.LIST_DIR, p),
     stat: (p: string) =>
       safeInvoke<FileExplorerStat>(IPC_CHANNELS.FILE_EXPLORER.STAT, p),
+    trash: (p: string) =>
+      safeInvoke<{ ok: true } | { ok: false; reason: string }>(IPC_CHANNELS.FILE_EXPLORER.TRASH, p),
+    rename: (oldPath: string, newName: string) =>
+      safeInvoke<{ ok: true; newPath: string } | { ok: false; reason: string }>(
+        IPC_CHANNELS.FILE_EXPLORER.RENAME,
+        { oldPath, newName },
+      ),
+    createFile: (parentDir: string, name: string) =>
+      safeInvoke<{ ok: true; path: string } | { ok: false; reason: string }>(
+        IPC_CHANNELS.FILE_EXPLORER.CREATE_FILE,
+        { parentDir, name },
+      ),
+    createFolder: (parentDir: string, name: string) =>
+      safeInvoke<{ ok: true; path: string } | { ok: false; reason: string }>(
+        IPC_CHANNELS.FILE_EXPLORER.CREATE_FOLDER,
+        { parentDir, name },
+      ),
+    copy: (sources: string[], destDir: string) =>
+      safeInvoke<{ ok: true; written: string[] } | { ok: false; reason: string }>(
+        IPC_CHANNELS.FILE_EXPLORER.COPY,
+        { sources, destDir },
+      ),
+    move: (sources: string[], destDir: string) =>
+      safeInvoke<{ ok: true; written: string[] } | { ok: false; reason: string }>(
+        IPC_CHANNELS.FILE_EXPLORER.MOVE,
+        { sources, destDir },
+      ),
+    openInTerminal: (p: string) =>
+      safeInvoke<{ ok: true } | { ok: false; reason: string }>(
+        IPC_CHANNELS.FILE_EXPLORER.OPEN_IN_TERMINAL,
+        p,
+      ),
     pickFolder: () =>
       safeInvoke<string | null>(IPC_CHANNELS.FILE_EXPLORER.PICK_FOLDER),
     watchStart: (p: string) =>

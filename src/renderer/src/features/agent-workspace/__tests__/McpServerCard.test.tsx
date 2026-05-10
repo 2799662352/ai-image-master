@@ -122,4 +122,32 @@ describe('McpServerCard', () => {
     expect(screen.getByText(/#19425/)).toBeTruthy()
     expect(screen.getByText(/gateway/)).toBeTruthy()
   })
+
+  it('explains ready servers that return no tools', () => {
+    render(
+      <McpServerCard
+        server={makeServer({ name: 'mcp-docker', status: 'ready', tools: [] })}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggle={vi.fn()}
+        onLogin={vi.fn()}
+      />,
+    )
+    expect(screen.getByText(/服务器已连接，但未返回工具/)).toBeTruthy()
+  })
+
+  it('renders tool descriptions in the DOM for hover help', () => {
+    render(
+      <McpServerCard
+        server={makeServer({
+          tools: [{ name: 'search', description: 'Search repositories' }],
+        })}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggle={vi.fn()}
+        onLogin={vi.fn()}
+      />,
+    )
+    expect(screen.getByText('Search repositories')).toBeTruthy()
+  })
 })

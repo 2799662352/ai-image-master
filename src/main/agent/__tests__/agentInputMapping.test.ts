@@ -38,4 +38,15 @@ describe('mapUserInput (AgentInput.items -> CodexUserInput[])', () => {
       { type: 'image', url: 'https://example.com/dog.png' },
     ])
   })
+
+  it('maps a skill item with name + path verbatim (codex app-server $skill protocol)', () => {
+    // Per codex-rs/app-server README:
+    //   { "type": "skill", "name": "skill-creator", "path": "/Users/me/.codex/skills/skill-creator/SKILL.md" }
+    const items: AgentInput['items'] = [
+      { type: 'skill', name: 'skill-creator', path: '/Users/me/.codex/skills/skill-creator/SKILL.md' },
+    ]
+    expect(mapUserInput(items)).toEqual([
+      { type: 'skill', name: 'skill-creator', path: '/Users/me/.codex/skills/skill-creator/SKILL.md' },
+    ])
+  })
 })

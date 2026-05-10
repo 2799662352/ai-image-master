@@ -1,11 +1,13 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { useAgentChatStore } from '../../agent-chat/store'
 import { SkillsSection } from '../SkillsSection'
 
 afterEach(() => {
   cleanup()
   Reflect.deleteProperty(window, 'electronAPI')
+  useAgentChatStore.setState(useAgentChatStore.getInitialState(), true)
   vi.restoreAllMocks()
 })
 
@@ -46,7 +48,29 @@ describe('SkillsSection', () => {
 
     fireEvent.click(screen.getAllByText('Insert')[0])
 
-    expect(insertText).toHaveBeenCalledWith(expect.stringContaining('demo'))
+    expect(insertText).toHaveBeenCalledWith('/demo ')
+    expect(useAgentChatStore.getState().input).toBe('/demo ')
+  })
+
+  it('opens the skills folder from the toolbar', async () => {
+    const openSkillsFolder = vi.fn().mockResolvedValue({ success: true, path: 'D:/repo/.agents/skills' })
+    Object.defineProperty(window, 'electronAPI', {
+      configurable: true,
+      value: {
+        openSkillsFolder,
+        agent: {
+          listSkills: vi.fn().mockResolvedValue([]),
+          deleteSkill: vi.fn(),
+        },
+      },
+    })
+
+    render(<SkillsSection insertIntoChat={vi.fn()} />)
+    expect(await screen.findByText('No skills yet.')).toBeTruthy()
+    fireEvent.click(screen.getByText('打开 Skills 文件夹'))
+
+    expect(openSkillsFolder).toHaveBeenCalled()
+    expect(await screen.findByText(/D:\/repo\/\.agents\/skills/)).toBeTruthy()
   })
 
   it('opens the SkillEditor form when "New Skill" is clicked', async () => {

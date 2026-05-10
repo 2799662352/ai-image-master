@@ -33,6 +33,8 @@ export function mapUserInput(items: AgentInput['items']): CodexUserInput[] {
         return { type: 'localImage', path: item.path }
       case 'image':
         return { type: 'image', url: item.url }
+      case 'skill':
+        return { type: 'skill', name: item.name, path: item.path }
     }
   })
 }

@@ -73,12 +73,31 @@ export interface ArtifactItem extends BaseItem {
  * etc.). When the item completes without an explicit status we set it to
  * `success` if no error was attached.
  */
+/**
+ * Mirrors Codex's `StepStatus` enum from
+ * codex-rs/protocol/src/plan_tool.rs — three states, no more.
+ * Codex's invariant: at most one step is `in_progress` at any time.
+ */
+export type PlanStepStatus = 'pending' | 'in_progress' | 'completed'
+
+export interface PlanStep {
+  text: string
+  status: PlanStepStatus
+}
+
 export interface ActivityItem extends BaseItem {
   type: 'activity'
   kind: string
   label?: string
   detail?: string
   status?: 'running' | 'success' | 'error' | 'cancelled'
+  /**
+   * Set when `kind === 'plan'`. The renderer swaps the generic activity pill
+   * for a real to-do list with per-step status dots. We keep it on
+   * `ActivityItem` (rather than introducing a new TimelineItem type) so the
+   * Evidence Stack grouping logic doesn't need to know about plans.
+   */
+  steps?: PlanStep[]
 }
 
 export type TimelineItem =
