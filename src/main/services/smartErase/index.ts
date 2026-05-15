@@ -160,6 +160,13 @@ const processQueue = new JobQueue<ProcessPhaseInput, ProcessPhaseOutput>({
           taskId: job.taskId,
           status: p.stage === 'submitting' ? 'submitting' : 'processing',
           mpsTaskId: p.mpsTaskId,
+          // Real Tencent progress + the curated detail snapshot. Both
+          // are optional — they're absent on the initial 'submitting'
+          // emit (before any DescribeTaskDetail poll) and present on
+          // every subsequent 'processing' emit. Renderer falls back to
+          // the exponential estimate when mpsProgress is undefined.
+          mpsProgress: p.mpsProgress,
+          taskDetail: p.taskDetail,
         } satisfies EraseProgressEvent)
       },
     })

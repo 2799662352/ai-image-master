@@ -1,11 +1,21 @@
 import { uploadStream, getPresignedUrl, cancelUpload } from '../tencent/cosClient'
 import { getMpsClient } from '../tencent/mpsClient'
 import { getCredentials } from '../tencent/credentials'
-import type { EraseConfig } from '../../../types/smartErase'
+import type { EraseConfig, EraseTaskDetailSnapshot } from '../../../types/smartErase'
+
+// Re-export so existing callers (and unit tests) keep working without
+// importing from `types/`. The canonical shape lives in types/smartErase.ts
+// so renderer + main share one declaration.
+export type { EraseTaskDetailSnapshot }
 
 const SEVEN_DAYS_S = 7 * 24 * 60 * 60
 const SEVEN_DAYS_MS = SEVEN_DAYS_S * 1000
 
+// Historical poll-timeout knobs. Production code no longer enforces a
+// deadline — the runtime loop in `runProcessAndPoll` polls until terminal
+// status or user cancel, matching user feedback "我不需要超时失败" (2026-05-15).
+// These constants remain only for `calculatePollDeadline`, which is kept
+// exported for back-compat with existing unit tests (Tests 11/12/16).
 const POLL_TIMEOUT_FLOOR_MS = 60 * 60 * 1000          // 60 minutes
 const POLL_DURATION_MULTIPLIER = 4                    // poll budget = max(floor, duration * 4)
 
@@ -35,6 +45,10 @@ export interface RunnerProgressPatch {
   stage: 'uploading' | 'submitting' | 'processing'
   uploadProgress?: number
   mpsTaskId?: string
+  /** Real MPS progress reported by Tencent (0–100). Absent until first poll. */
+  mpsProgress?: number
+  /** Latest curated task detail snapshot; refreshed on every poll. */
+  taskDetail?: EraseTaskDetailSnapshot
 }
 
 export interface RunnerEvents {
@@ -74,21 +88,55 @@ function makeError(code: string, message: string, stage: string): Error {
 }
 
 /**
- * Pure: total time we'll wait for MPS to finish, given the source video length.
- * Floor = 60min so a 5s clip still has reasonable headroom; multiplier = 4
- * matches Tencent's empirical "smart-erase processes at ~0.25× realtime" guidance.
+ * @deprecated As of 2026-05-15, `runProcessAndPoll` no longer enforces a
+ * finite poll deadline — user feedback was that long uploads / MPS queue
+ * backups should not turn into POLL_TIMEOUT failures. The function is
+ * preserved here only because external callers and existing unit tests
+ * (runner.test.ts Tests 11/12/16) still exercise its math; new code
+ * should not call it.
  *
- * Defensive: a non-finite or negative durationSeconds (probe failed and renderer
- * still submitted, or future-spec manual override) falls back to the floor
- * rather than producing NaN deadline (which would make `Date.now() < deadline`
- * permanently false and POLL_TIMEOUT immediately, shadowing the real failure).
- *
- * Exported for direct unit testing — see runner.test.ts tests 11+12+16.
+ * Pure: total time we'd wait for MPS to finish, given the source video
+ * length. Floor = 60min so a 5s clip still has reasonable headroom;
+ * multiplier = 4 matches Tencent's empirical "smart-erase processes at
+ * ~0.25× realtime" guidance. Non-finite / negative `durationSeconds`
+ * falls back to the floor.
  */
 export function calculatePollDeadline(durationSeconds: number, nowMs: number): number {
   const safe = Number.isFinite(durationSeconds) && durationSeconds > 0 ? durationSeconds : 0
   const dynamicMs = safe * POLL_DURATION_MULTIPLIER * 1000
   return nowMs + Math.max(POLL_TIMEOUT_FLOOR_MS, dynamicMs)
+}
+
+/**
+ * Curate a `DescribeTaskDetail` response down to the fields the UI cares
+ * about. Pure + exported so the renderer-side detail panel can be unit
+ * tested against the same shape we transmit over IPC. `taskResp` is
+ * typed loosely (`any`) because the Tencent SDK's union types span many
+ * task types and would force a noisy cast at every call site.
+ */
+export function summarizeTaskDetail(taskResp: any, nowMs: number = Date.now()): EraseTaskDetailSnapshot {
+  const wf = taskResp?.WorkflowTask
+  const result = wf?.SmartEraseTaskResult
+  const progressRaw = Number(result?.Progress)
+  const progress = Number.isFinite(progressRaw)
+    ? Math.max(0, Math.min(100, Math.round(progressRaw)))
+    : undefined
+  const path: string | undefined = typeof result?.Output?.Path === 'string'
+    ? result.Output.Path
+    : undefined
+  return {
+    workflowStatus: typeof taskResp?.Status === 'string' ? taskResp.Status : undefined,
+    smartEraseStatus: typeof result?.Status === 'string' ? result.Status : undefined,
+    progress,
+    workflowErrCode: typeof wf?.ErrCode === 'number' ? wf.ErrCode : undefined,
+    workflowMessage: typeof wf?.Message === 'string' ? wf.Message : undefined,
+    errCodeExt: typeof result?.ErrCodeExt === 'string' && result.ErrCodeExt ? result.ErrCodeExt : undefined,
+    message: typeof result?.Message === 'string' && result.Message ? result.Message : undefined,
+    beginProcessTime: typeof result?.BeginProcessTime === 'string' ? result.BeginProcessTime : undefined,
+    finishTime: typeof result?.FinishTime === 'string' ? result.FinishTime : undefined,
+    outputPath: path,
+    fetchedAt: nowMs,
+  }
 }
 
 export function pollIntervalMs(attempt: number): number {
@@ -198,15 +246,35 @@ export async function runProcessAndPoll(
 
   events.onProgress?.({ stage: 'processing', mpsTaskId })
 
-  const startedAt = Date.now()
-  const deadline = calculatePollDeadline(job.durationSeconds, startedAt)
   let attempt = 0
 
-  while (Date.now() < deadline) {
+  // Infinite poll loop. The only exits are:
+  //   1. signal.aborted     → TASK_CANCELLED  (user pressed × in the queue)
+  //   2. result.Status='SUCCESS' → return cleanly
+  //   3. result.Status='FAIL' / wf.ErrCode !== 0 → MPS_TASK_FAILED / MPS_SOURCE_ERROR
+  //   4. Other terminal states surfaced as UNKNOWN_ERROR
+  //
+  // We previously enforced a `max(60min, duration×4)` deadline that fired
+  // POLL_TIMEOUT — but for short clips it forced 60min ceiling regardless,
+  // which the user said was wrong (2026-05-15 feedback: "我不需要超时失败").
+  // Tencent's task table will show the real status as long as it's pending,
+  // and the user can always cancel manually if something is truly stuck.
+  while (true) {
     if (signal.aborted) throw makeError('TASK_CANCELLED', 'Cancelled during poll', 'poll')
 
     attempt++
     const taskResp = await client.DescribeTaskDetail({ TaskId: mpsTaskId })
+    const detail = summarizeTaskDetail(taskResp)
+
+    // Always emit the latest detail snapshot so the renderer's "查看详情"
+    // panel and progress bar see fresh data on every poll — including
+    // during WAITING (no SmartEraseTaskResult yet but parent Status is set).
+    events.onProgress?.({
+      stage: 'processing',
+      mpsTaskId,
+      mpsProgress: detail.progress,
+      taskDetail: detail,
+    })
 
     const topStatus = taskResp?.Status
     if (topStatus === 'WAITING' || topStatus === 'PROCESSING') {
@@ -249,12 +317,6 @@ export async function runProcessAndPoll(
 
     throw makeError('UNKNOWN_ERROR', `Unexpected SmartEraseTaskResult.Status=${result.Status}`, 'poll')
   }
-
-  throw makeError(
-    'POLL_TIMEOUT',
-    `MPS task ${mpsTaskId} did not finish within ${Math.round((deadline - startedAt) / 60000)} minutes`,
-    'poll',
-  )
 }
 
 /**
