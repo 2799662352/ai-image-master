@@ -1,4 +1,4 @@
-import { Suspense } from 'react'
+import { Suspense, lazy } from 'react'
 import { createRoot, Root } from 'react-dom/client'
 import { DirectorApp } from './DirectorApp'
 import { useDirectorStore } from './stores/useDirectorStore'
@@ -11,12 +11,15 @@ import { ToastContainer } from '../components/Toast'
 import { GenerateTokenBridge } from './components/GenerateTokenBridge'
 import { TemplateInline } from './components/TemplateInline'
 
+const AgentWorkspacePage = lazy(() => import('../pages-react/AgentWorkspacePage'))
+
 let root: Root | null = null
 let settingsRoot: Root | null = null
 let historyRoot: Root | null = null
 let batchRoot: Root | null = null
 let storyboardSplitRoot: Root | null = null
 let smartEraseRoot: Root | null = null
+let agentWorkspaceRoot: Root | null = null
 let toastRoot: Root | null = null
 let generateTokenRoot: Root | null = null
 let generateTemplateRoot: Root | null = null
@@ -255,6 +258,31 @@ export function mountSmartEraseReact(): void {
 
 export function unmountSmartEraseReact(): void {
   const container = document.getElementById('smart-erase-react-root')
+  if (container) {
+    container.style.display = 'none'
+  }
+}
+
+export function mountAgentWorkspaceReact(): void {
+  const container = document.getElementById('agent-workspace-react-root')
+  if (!container) {
+    console.warn('[React] agent-workspace-react-root not found')
+    return
+  }
+  if (!agentWorkspaceRoot) {
+    agentWorkspaceRoot = createRoot(container)
+    agentWorkspaceRoot.render(
+      <Suspense fallback={null}>
+        <AgentWorkspacePage />
+      </Suspense>
+    )
+    console.log('[React] AgentWorkspacePage mounted (first time)')
+  }
+  container.style.display = ''
+}
+
+export function unmountAgentWorkspaceReact(): void {
+  const container = document.getElementById('agent-workspace-react-root')
   if (container) {
     container.style.display = 'none'
   }

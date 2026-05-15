@@ -17,6 +17,9 @@ function createMockApi(overrides: Partial<ApiActions> = {}): ApiActions {
     getStoredVisionApiKey: vi.fn().mockReturnValue(null),
     getCurrentSite: vi.fn().mockReturnValue({ name: 'API易 B站', baseURL: 'https://b.apiyi.com', description: '推荐', authType: 'bearer', isBuiltIn: true }),
     getSiteConfig: vi.fn().mockReturnValue(null),
+    getLocalPort: vi.fn().mockReturnValue('3000'),
+    setLocalPort: vi.fn(),
+    understandImage: vi.fn(),
     currentSiteKey: 'b-apiyi',
     ...overrides,
   }
@@ -29,6 +32,7 @@ describe('useSettingsStore', () => {
       activeSiteKey: '',
       apiKey: '',
       visionApiKey: '',
+      codexApiKey: '',
       connectionStatus: 'idle',
       saving: false,
       loadError: null,
@@ -166,6 +170,37 @@ describe('useSettingsStore', () => {
 
       expect(savingDuringCall).toBe(true)
       expect(useSettingsStore.getState().saving).toBe(false)
+    })
+  })
+
+  describe('codexApiKey', () => {
+    beforeEach(() => {
+      localStorage.clear()
+      useSettingsStore.setState({ codexApiKey: '' })
+    })
+
+    it('loads codexApiKey from localStorage on loadFromService', async () => {
+      localStorage.setItem('codex_api_key', 'sk-stored')
+      const api = createMockApi()
+
+      await useSettingsStore.getState().loadFromService(api)
+
+      expect(useSettingsStore.getState().codexApiKey).toBe('sk-stored')
+    })
+
+    it('setCodexApiKey trims and updates the store', () => {
+      useSettingsStore.getState().setCodexApiKey('  sk-new  ')
+
+      expect(useSettingsStore.getState().codexApiKey).toBe('sk-new')
+    })
+
+    it('saveAll writes codexApiKey to localStorage', async () => {
+      useSettingsStore.setState({ codexApiKey: 'sk-toSave' })
+      const api = createMockApi()
+
+      await useSettingsStore.getState().saveAll(api)
+
+      expect(localStorage.getItem('codex_api_key')).toBe('sk-toSave')
     })
   })
 })

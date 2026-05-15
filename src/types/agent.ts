@@ -1,0 +1,331 @@
+import type { TimelineItem } from './agent-timeline'
+import type { AgentReference } from './agent-reference'
+
+export type AgentRole = 'user' | 'assistant' | 'system' | 'tool'
+export type AgentToolStatus = 'pending' | 'running' | 'success' | 'error' | 'cancelled'
+export type AgentArtifactType = 'image' | 'file' | 'link'
+
+export interface AgentAttachmentInput {
+  name: string
+  mime: string
+  size: number
+  path?: string
+  buffer?: ArrayBuffer
+}
+
+export interface AgentSkillRef {
+  name: string
+  path: string
+}
+
+export interface AgentSendMessagePayload {
+  threadId?: string
+  content: string
+  attachments: AgentAttachmentInput[]
+  references?: AgentReference[]
+  currentPage?: string
+  /**
+   * Caller-selected model id (e.g. `gpt-4.1`, `o4-mini`). When omitted the
+   * main process falls back to its default. Forwarded to Codex's `turn/start`
+   * via `AgentManager.sendMessage`.
+   */
+  model?: string
+  /**
+   * Skills explicitly invoked via `$skill-name` tokens in `content`. When the
+   * renderer can resolve the path locally (e.g. via `getSkillsSummary`) it
+   * forwards `{ name, path }` here so the main process can attach a `skill`
+   * input item to the codex turn — per the codex app-server README this is
+   * what makes Codex inject full skill instructions instead of letting the
+   * model resolve `$name` itself (which adds latency).
+   */
+  skills?: AgentSkillRef[]
+}
+
+export type CodexSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
+export type CodexApprovalPolicy = 'untrusted' | 'on-request' | 'never'
+export type CodexWebSearchMode = 'cached' | 'live' | 'disabled'
+
+export interface CodexSessionConfig {
+  sandboxMode: CodexSandboxMode
+  approvalPolicy: CodexApprovalPolicy
+  webSearch: CodexWebSearchMode
+  writableRoots: string[]
+}
+
+export interface CodexSessionStatus {
+  model: string
+  sandboxMode: CodexSandboxMode
+  approvalPolicy: CodexApprovalPolicy
+  webSearch: CodexWebSearchMode
+  writableRoots: string[]
+}
+
+export interface CodexApprovalRequest {
+  id: string
+  threadId?: string
+  method: string
+  params: Record<string, unknown>
+  createdAt: string
+}
+
+export interface CodexApprovalResponse {
+  id: string
+  approved: boolean
+  message?: string
+}
+
+export interface CodexThreadSummary {
+  id: string
+  title: string
+  createdAt: string
+  updatedAt: string
+  cwd?: string
+  model?: string
+}
+
+export interface CodexThreadDetail extends CodexThreadSummary {}
+
+export interface CodexMcpServerSummary {
+  name: string
+  transport: string
+  enabled: boolean
+  required: boolean
+  command?: string
+  url?: string
+}
+
+export interface CodexMcpSummary {
+  servers: CodexMcpServerSummary[]
+  warnings: string[]
+}
+
+export type CodexSkillScope = 'workspace' | 'home'
+
+export interface CodexSkillSummary {
+  name: string
+  scope: CodexSkillScope
+  description: string
+  path: string
+}
+
+export interface CodexSkillsSummary {
+  skills: CodexSkillSummary[]
+  warnings: string[]
+}
+
+export interface AgentCancelPayload {
+  threadId: string
+}
+
+export interface AgentThreadSummary {
+  id: string
+  title: string
+  createdAt: string
+  updatedAt: string
+  /**
+   * ISO timestamp of the most recent persisted message in the thread.
+   * Drives sidebar grouping ("Today" / "Yesterday" / etc). Optional because
+   * a brand-new empty thread has none yet.
+   */
+  lastMessageAt?: string | null
+  /**
+   * `true` once the user manually renamed the thread. Sidebar uses this to
+   * skip auto-title summarization side-effects and to show a small "✎" hint.
+   */
+  manualTitle?: boolean
+}
+
+export interface AgentArtifact {
+  id: string
+  type: AgentArtifactType
+  uri: string
+  metadata: Record<string, unknown>
+  createdAt: string
+}
+
+export interface AgentToolEvent {
+  id: string
+  name: string
+  status: AgentToolStatus
+  params?: Record<string, unknown>
+  result?: Record<string, unknown>
+  error?: string
+}
+
+export type ItemDeltaPatch =
+  | { kind: 'appendText'; field: 'content' | 'stdout' | 'stderr'; text: string }
+  | { kind: 'mergeFields'; fields: Record<string, unknown> }
+
+export interface AgentTokenUsageDelta {
+  /** Per-turn input tokens. */
+  inputTokens: number
+  /** Per-turn output tokens. */
+  outputTokens: number
+  /** Per-turn reasoning tokens (subset of output). */
+  reasoningTokens?: number
+  /** Per-turn cached input tokens. */
+  cachedInputTokens?: number
+}
+
+export interface AgentTokenUsage {
+  /** Cumulative input tokens consumed in this thread. */
+  inputTokens: number
+  /** Cumulative output tokens emitted in this thread. */
+  outputTokens: number
+  /** Cumulative reasoning tokens (subset of output for reasoning-capable models). */
+  reasoningTokens?: number
+  /** Cached input tokens for this turn (provider-side prompt caching). */
+  cachedInputTokens?: number
+  /** Hard context window for the active model, in tokens. Optional because some gateways omit it. */
+  contextWindow?: number
+  /**
+   * Tokens currently considered "in the prompt" — used to drive the context
+   * usage meter and signal when Codex will compact. Falls back to
+   * `inputTokens + outputTokens` if the gateway doesn't report it explicitly.
+   */
+  contextUsage?: number
+  /**
+   * Per-turn delta from Codex's `tokenUsage.last` slice. Cumulative fields
+   * above describe the whole thread; `last` describes only the most-recent
+   * turn so the popover can render "Last turn: +1.3K / +234". Omitted when
+   * the gateway didn't send a `last` slice or when the slice carried only
+   * zeroes (treated as "no signal" — we never fabricate per-turn data).
+   */
+  last?: AgentTokenUsageDelta
+}
+
+export interface AgentStreamEventBase {
+  threadId: string
+  turnId?: string
+}
+
+/**
+ * Lightweight notice surfaced by the chat panel. Used for:
+ *   - `configWarning` (codex emits when config has invalid keys, etc.)
+ *   - `deprecationNotice` (warns about removed/renamed RPCs)
+ *   - `modelRerouted` (codex routed gpt-5 → gpt-4-turbo behind the scenes)
+ *   - `hookStarted` / `hookCompleted` (extension hooks lifecycle pulse)
+ *   - `autoApprovalReview` (auto-approver inspecting an action; informational)
+ */
+export type AgentNoticeKind =
+  | 'configWarning'
+  | 'deprecation'
+  | 'modelRerouted'
+  | 'hookStarted'
+  | 'hookCompleted'
+  | 'autoApprovalReview'
+  | 'autoApprovalReviewCompleted'
+
+export interface AgentNotice {
+  /** Stable id so the renderer can dedupe identical notices. */
+  id: string
+  kind: AgentNoticeKind
+  level: 'info' | 'warning'
+  message: string
+  /** Optional thread scope; thread-less notices apply globally. */
+  threadId?: string
+  /** Source-specific structured details for the UI to render extras (e.g. fromModel/toModel). */
+  details?: Record<string, unknown>
+}
+
+export type AgentStreamEvent =
+  | (AgentStreamEventBase & { type: 'thread_created' })
+  | (AgentStreamEventBase & { type: 'item_started'; itemId: string; itemType: TimelineItem['type']; payload: Record<string, unknown> })
+  | (AgentStreamEventBase & { type: 'item_delta'; itemId: string; itemType: TimelineItem['type']; patch: ItemDeltaPatch })
+  | (AgentStreamEventBase & { type: 'item_completed'; itemId: string; itemType: TimelineItem['type']; final: Record<string, unknown> })
+  | (AgentStreamEventBase & { type: 'turn_completed' })
+  | (AgentStreamEventBase & { type: 'token_usage_updated'; usage: AgentTokenUsage })
+  | (AgentStreamEventBase & { type: 'error'; error: string })
+  | (AgentStreamEventBase & { type: 'cancelled' })
+  | { type: 'mcp_status_updated'; name: string; status: string; error: string | null }
+  | { type: 'mcp_oauth_completed'; name: string; success: boolean; error: string | null }
+  | { type: 'skills_changed' }
+  | { type: 'notice'; notice: AgentNotice }
+
+export interface AgentToolRequest {
+  id: string
+  toolName: string
+  params: Record<string, unknown>
+}
+
+export interface AgentToolResponse {
+  id: string
+  ok: boolean
+  result?: unknown
+  error?: string
+}
+
+/**
+ * Shape returned by the renderer-facing agent IPC calls that don't have a
+ * domain-specific payload (`agent:set-api-key`, `agent:test-connection`).
+ * Kept narrow on purpose — main and preload both import this so their
+ * signatures stay in lock-step.
+ */
+export interface AgentApiResult {
+  ok: boolean
+  error?: string
+}
+
+export type CodexConfigScope = 'personal' | 'workspace'
+
+export interface CodexMcpServerInput {
+  id?: string
+  name: string
+  scope: CodexConfigScope
+  enabled: boolean
+  command: string
+  args: string[]
+  env: Array<{ key: string; value: string }>
+  description?: string
+}
+
+export interface CodexMcpServerListItem {
+  id: string
+  name: string
+  scope: CodexConfigScope
+  enabled: boolean
+  command: string
+  argsSummary: string
+  envKeysRedacted: string[]
+  description?: string
+  lastModifiedIso: string
+  provenance: 'manual' | 'clipboard' | 'imported'
+  warnings: string[]
+}
+
+export interface CodexSkillInput {
+  id?: string
+  name: string
+  scope: CodexConfigScope
+  description: string
+  whenToUse: string
+  instructions: string
+}
+
+export interface CodexSkillListItem {
+  id: string
+  name: string
+  scope: CodexConfigScope
+  path: string
+  description?: string
+  warnings: string[]
+}
+
+export interface CodexAuditLogEntry {
+  tsIso: string
+  action: 'mcp.save' | 'mcp.delete' | 'mcp.set-enabled' | 'skill.save' | 'skill.delete' | 'codex.restart'
+  scope?: CodexConfigScope
+  name?: string
+  provenance?: 'manual' | 'clipboard' | 'imported'
+  ok: boolean
+  error?: string
+}
+
+export interface CodexWorkspacePaths {
+  personalConfigToml: string
+  personalSkillsRoot: string
+  workspaceConfigToml: string
+  workspaceSkillsRoot: string
+  runtimeConfigToml: string
+  auditLogPath: string
+}

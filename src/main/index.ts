@@ -1,7 +1,8 @@
 // src/main/index.ts - Electron 主进程 (TypeScript)
-import { app, BrowserWindow, ipcMain, dialog, Menu, shell, nativeTheme, net, clipboard } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, Menu, shell, nativeTheme, net, clipboard, nativeImage } from 'electron'
 import * as path from 'path'
 import * as fs from 'fs'
+import { fileURLToPath } from 'node:url'
 import { getAutoUpdaterInstance } from './updater'
 import {
   submitSplit,
@@ -22,6 +23,17 @@ import {
   deleteEraseRemoteObjects,
   setMainWindow as setEraseMainWindow,
 } from './services/smartErase'
+import { AgentManager } from './agent/AgentManager'
+import { AttachmentService } from './agent/AttachmentService'
+import { getPrisma, shutdownDatabase } from './agent/db'
+import { registerAgentIpc } from './agent/ipc'
+import { ThreadStore } from './agent/ThreadStore'
+import { registerAttachmentsTreeIpc } from './file-explorer/AttachmentTreeProvider'
+import { registerFsIpc } from './file-explorer/fsIpc'
+import { registerLocalFileScheme, installLocalFileHandler } from './file-explorer/protocolHandler'
+import { registerFsWatcherIpc, disposeAll as disposeFsWatchers } from './file-explorer/fsWatcher'
+import { startCatimationMcpServer } from './mcp/server'
+import type { McpRuntime } from './mcp/server'
 
 // 检测开发模式：通过命令行参数或环境变量
 const isDev = process.argv.includes('--dev') || process.env.NODE_ENV === 'development'
@@ -121,6 +133,8 @@ if (isDev) {
   app.commandLine.appendSwitch('disable-http-cache')
 }
 
+registerLocalFileScheme()
+
 /**
  * 清理可能损坏的 Chromium 缓存目录
  * 解决 Windows 上常见的缓存锁定/权限问题
@@ -175,6 +189,11 @@ let imagesDir: string
 let historyFile: string
 let customGalleryPath: string | null = null
 let mainWindow: BrowserWindow | null = null
+let agentManager: AgentManager | null = null
+let agentMcpRuntime: McpRuntime | null = null
+let agentIpcRegistered = false
+let agentRuntimeCleanedUp = false
+let isQuittingAfterAgentCleanup = false
 
 function initPaths(): void {
   userDataPath = app.getPath('userData')
@@ -236,12 +255,13 @@ function createWindow(): void {
           "script-src 'self' 'unsafe-inline' 'unsafe-eval' node: https://cdn.jsdelivr.net",
           "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
           "font-src 'self' https://fonts.gstatic.com data:",
-          "img-src 'self' data: blob: https: file:",
+          "img-src 'self' data: blob: https: file: local-file:",
           "connect-src 'self' https: wss: data: http://175.178.198.17:* http://127.0.0.1:* http://localhost:*",
-          // allow COS HTTPS presigned URLs (smart erase output) and file:// (compare-with-original)
-          "media-src 'self' data: blob: https: file:",
+            // allow COS HTTPS presigned URLs (smart erase output), file:// (compare-with-original),
+            // and local-file:// for the file-explorer video previewer.
+            "media-src 'self' data: blob: https: file: local-file:",
           "worker-src 'self' blob:", // 允许 Web Worker 从 blob URL 创建（图片压缩库需要）
-          "frame-src 'none'"
+          "frame-src https:"
         ].join('; ')
       }
     })
@@ -337,7 +357,19 @@ function createWindow(): void {
   })
 
   // 右键菜单 - 支持图片保存
-  mainWindow.webContents.on('context-menu', (_event, params) => {
+  mainWindow.webContents.on('context-menu', async (_event, params) => {
+    // File Explorer 面板内的右键由 React 自定义菜单处理；
+    // 主进程跳过原生 fallback，避免「刷新 / 开发者工具」漏出覆盖到自定义菜单上方。
+    try {
+      const inFileExplorer = await mainWindow!.webContents.executeJavaScript(
+        `(() => { const el = document.elementFromPoint(${params.x}, ${params.y}); return !!(el && el.closest && el.closest('[data-file-explorer-root]')); })()`,
+        true,
+      )
+      if (inFileExplorer) return
+    } catch {
+      // executeJavaScript 失败时退回到默认行为
+    }
+
     const menuTemplate: Electron.MenuItemConstructorOptions[] = []
 
     const isImage = params.mediaType === 'image'
@@ -474,9 +506,64 @@ function createWindow(): void {
   })
 }
 
+async function initAgentRuntime(win: BrowserWindow): Promise<void> {
+  if (agentManager && agentMcpRuntime) {
+    agentManager.setWindow(win)
+    agentMcpRuntime.router.setWindow(win)
+    return
+  }
+
+  const prisma = await getPrisma()
+  const threadStore = new ThreadStore(prisma)
+  const attachmentService = new AttachmentService(prisma)
+  agentMcpRuntime = await startCatimationMcpServer(win)
+  agentManager = new AgentManager({
+    userDataDir: app.getPath('userData'),
+    win,
+    store: threadStore,
+    attachments: attachmentService,
+  })
+  void attachmentService.cleanup().catch((error) => {
+    console.warn('[AgentRuntime] attachment cleanup failed:', error)
+  })
+
+  if (!agentIpcRegistered) {
+    registerAgentIpc(agentManager, agentMcpRuntime.router)
+    agentIpcRegistered = true
+  }
+
+  try {
+    await agentManager.start()
+  } catch (error) {
+    console.error('[AgentRuntime] Codex backend init failed:', error)
+  }
+}
+
+async function cleanupAgentRuntime(): Promise<void> {
+  if (agentRuntimeCleanedUp) return
+  agentRuntimeCleanedUp = true
+  try {
+    await agentManager?.stop()
+    // Don't leak the docker mcp gateway sidecar on app quit. Best-effort
+    // since the user may have already killed `docker` independently.
+    try {
+      const { getDockerMcpGatewayService } = await import('./agent/dockerMcpGateway')
+      await getDockerMcpGatewayService().stop()
+    } catch (err) {
+      console.warn('[AgentRuntime] dockerMcpGateway cleanup failed:', err)
+    }
+  } finally {
+    await shutdownDatabase()
+  }
+}
+
 // App 生命周期
 app.whenReady().then(async () => {
   console.log(`[Performance] App ready: ${Date.now() - startTime}ms`)
+  installLocalFileHandler()
+  registerFsIpc()
+  registerAttachmentsTreeIpc(getPrisma)
+  registerFsWatcherIpc()
 
   // 关键路径：仅初始化必要的路径和目录
   initPaths()
@@ -489,6 +576,11 @@ app.whenReady().then(async () => {
 
   if (mainWindow) setSplitMainWindow(mainWindow)
   if (mainWindow) setEraseMainWindow(mainWindow)
+  if (mainWindow) {
+    void initAgentRuntime(mainWindow).catch((error) => {
+      console.error('[AgentRuntime] init failed:', error)
+    })
+  }
 
   // 非关键路径：延迟初始化
   deferNonCriticalInit()
@@ -562,6 +654,21 @@ app.on('activate', () => {
   }
 })
 
+app.on('before-quit', (event) => {
+  disposeFsWatchers()
+  if (isQuittingAfterAgentCleanup) return
+
+  event.preventDefault()
+  void cleanupAgentRuntime()
+    .catch((error) => {
+      console.error('[AgentRuntime] cleanup failed:', error)
+    })
+    .finally(() => {
+      isQuittingAfterAgentCleanup = true
+      app.quit()
+    })
+})
+
 // ==================== IPC 处理 ====================
 
 // AI Skills 读写
@@ -624,6 +731,75 @@ ipcMain.handle('open-skills-folder', async () => {
     console.error('打开 Skills 文件夹失败:', error)
     return { success: false, error: error.message, path: userSkillsDir }
   }
+})
+
+// Shell helpers (clipboard / save dialog) — used by the Codex Agent Lightbox.
+ipcMain.handle('shell:copy-image', async (_event, uri: string) => {
+  try {
+    const filePath = uri.startsWith('file://') ? fileURLToPath(uri) : uri
+    const img = nativeImage.createFromPath(filePath)
+    if (img.isEmpty()) {
+      return { success: false, error: 'unable to load image' }
+    }
+    clipboard.writeImage(img)
+    return { success: true }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) }
+  }
+})
+
+ipcMain.handle('shell:save-as', async (_event, payload: { uri: string; suggestedName: string }) => {
+  try {
+    const { uri, suggestedName } = payload
+    const filePath = uri.startsWith('file://') ? fileURLToPath(uri) : uri
+    const result = await dialog.showSaveDialog({
+      defaultPath: suggestedName || path.basename(filePath),
+    })
+    if (result.canceled || !result.filePath) {
+      return { success: true, canceled: true }
+    }
+    await fs.promises.copyFile(filePath, result.filePath)
+    return { success: true, path: result.filePath }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) }
+  }
+})
+
+ipcMain.handle('shell:show-item-in-folder', async (_event, filePath: string) => {
+  shell.showItemInFolder(filePath)
+})
+
+function validateExternalUrlMain(input: string): { ok: true; url: string } | { ok: false } {
+  try {
+    const parsed = new URL(input)
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return { ok: false }
+    return { ok: true, url: parsed.toString() }
+  } catch {
+    return { ok: false }
+  }
+}
+
+ipcMain.handle('shell:open-external', async (_event, raw: unknown) => {
+  if (typeof raw !== 'string') return { success: false, error: 'invalid_url' }
+  const validated = validateExternalUrlMain(raw)
+  if (!validated.ok) return { success: false, error: 'unsafe_scheme' }
+  await shell.openExternal(validated.url)
+  return { success: true }
+})
+
+ipcMain.handle('agent:open-thread', async (_event, threadId: string) => {
+  if (!agentManager) throw new Error('Agent runtime not initialized')
+  return agentManager.openThread(threadId)
+})
+
+ipcMain.handle('agent:rename-thread', async (_event, threadId: string, title: string) => {
+  if (!agentManager) throw new Error('Agent runtime not initialized')
+  await agentManager.renameThread(threadId, title)
+})
+
+ipcMain.handle('agent:delete-thread', async (_event, threadId: string) => {
+  if (!agentManager) throw new Error('Agent runtime not initialized')
+  await agentManager.deleteThread(threadId)
 })
 
 // 图片操作

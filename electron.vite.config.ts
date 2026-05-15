@@ -28,6 +28,23 @@ export default defineConfig({
           /^electron\/.+/,
           'cos-nodejs-sdk-v5',
           'tencentcloud-sdk-nodejs-mps',
+          // PGlite ships native asset siblings to its bundled JS:
+          //   - dist/pglite.data  (~5 MB Postgres data dir tarball)
+          //   - dist/pglite.wasm  (Postgres compiled to wasm)
+          //   - dist/initdb.wasm  (initdb bootstrap)
+          //   - dist/{nodefs,opfs-ahp}.js  (filesystem backends)
+          // The library locates these via `new URL('./pglite.data', import.meta.url)`
+          // which resolves relative to the JS file at runtime. When rolldown
+          // inlines PGlite into our `dist/main/chunks/chunk-…js`, the relative
+          // lookup goes to `dist/main/pglite.data` — which we never copied
+          // there, so PGlite.create() throws ENOENT and AgentRuntime.init()
+          // never registers the `agent:send-message` IPC handler. Keeping
+          // these packages as runtime `require()`s sidesteps the asset-copy
+          // problem entirely: at runtime they resolve back into
+          // `node_modules/@electric-sql/pglite/dist/`, where the binaries
+          // already live.
+          '@electric-sql/pglite',
+          '@electric-sql/pglite-socket',
           ...builtinModules.flatMap(m => [m, `node:${m}`])
         ]
       }
@@ -84,6 +101,9 @@ export default defineConfig({
               }
               if (id.includes('jszip')) {
                 return 'vendor-jszip'
+              }
+              if (id.includes('monaco-editor')) {
+                return 'vendor-monaco'
               }
               // 其他 node_modules
               return 'vendor'
@@ -201,7 +221,7 @@ export default defineConfig({
     },
     // 依赖优化
     optimizeDeps: {
-      include: ['choices.js', 'jszip', 'react', 'react-dom', 'zustand', 'react-select'],
+      include: ['choices.js', 'jszip', 'react', 'react-dom', 'zustand', 'react-select', 'monaco-editor'],
       exclude: [],
       esbuildOptions: {
         plugins: [{

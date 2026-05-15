@@ -1,0 +1,32 @@
+import type { TimelineItem } from '../../../../types/agent-timeline'
+import { ActivityCard } from './cards/ActivityCard'
+import { AttachmentCard } from './cards/AttachmentCard'
+import { ArtifactCard } from './cards/ArtifactCard'
+import { FileEditCard } from './cards/FileEditCard'
+import { ReasoningCard } from './cards/ReasoningCard'
+import { ShellCard } from './cards/ShellCard'
+import { TextCard } from './cards/TextCard'
+
+export function TimelineItemRenderer({ item }: { item: TimelineItem }) {
+  switch (item.type) {
+    case 'text':
+      return <TextCard item={item} />
+    case 'reasoning':
+      return <ReasoningCard item={item} />
+    case 'shell':
+      return <ShellCard item={item} />
+    case 'fileEdit':
+      return <FileEditCard item={item} />
+    case 'attachment':
+      return <AttachmentCard item={item} />
+    case 'artifact':
+      return <ArtifactCard item={item} />
+    case 'activity':
+      return <ActivityCard item={item} />
+    default: {
+      const _exhaustive: never = item
+      void _exhaustive
+      return null
+    }
+  }
+}

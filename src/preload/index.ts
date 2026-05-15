@@ -24,6 +24,26 @@ import type {
   EraseFailedEvent,
   EraseProbeResult,
 } from '../types/smartErase'
+import type {
+  AgentApiResult,
+  AgentCancelPayload,
+  AgentSendMessagePayload,
+  AgentStreamEvent,
+  AgentThreadSummary,
+  AgentToolRequest,
+  AgentToolResponse,
+  CodexApprovalRequest,
+  CodexApprovalResponse,
+  CodexAuditLogEntry,
+  CodexMcpSummary,
+  CodexSessionConfig,
+  CodexSessionStatus,
+  CodexSkillInput,
+  CodexSkillListItem,
+  CodexSkillsSummary,
+  CodexThreadDetail,
+  CodexThreadSummary,
+} from '../types/agent'
 
 // ==================== IPC 通道常量 ====================
 // 集中管理所有 IPC 通道，便于类型检查和维护
@@ -130,6 +150,80 @@ const IPC_CHANNELS = {
     'erase:finished',
     'erase:failed',
   ] as const,
+  // Codex Agent
+  AGENT: {
+    SEND_MESSAGE: 'agent:send-message',
+    CANCEL: 'agent:cancel',
+    LIST_THREADS: 'agent:list-threads',
+    LOAD_THREAD: 'agent:load-thread',
+    UPLOAD_ATTACHMENTS: 'agent:upload-attachments',
+    TOOL_RESPONSE: 'agent:tool-response',
+    SET_API_KEY: 'agent:set-api-key',
+    TEST_CONNECTION: 'agent:test-connection',
+    GET_SESSION_STATUS: 'agent:get-session-status',
+    SET_SESSION_CONFIG: 'agent:set-session-config',
+    SET_ALLOWED_ROOTS: 'agent:set-allowed-roots',
+    RESPOND_APPROVAL: 'agent:respond-approval',
+    GET_MCP_SUMMARY: 'agent:get-mcp-summary',
+    GET_SKILLS_SUMMARY: 'agent:get-skills-summary',
+    LIST_SKILLS: 'agent:list-skills',
+    GET_SKILL_DETAIL: 'agent:get-skill-detail',
+    SAVE_SKILL: 'agent:save-skill',
+    DELETE_SKILL: 'agent:delete-skill',
+    GET_WORKSPACE_LOGS: 'agent:get-workspace-logs',
+    RESTART_CODEX: 'agent:restart-codex',
+    LIST_CODEX_THREADS: 'agent:list-codex-threads',
+    READ_CODEX_THREAD: 'agent:read-codex-thread',
+    FORK_CODEX_THREAD: 'agent:fork-codex-thread',
+    MCP_LIST_SERVERS: 'agent:mcp-list-servers',
+    MCP_BATCH_WRITE: 'agent:mcp-batch-write',
+    MCP_WRITE_VALUE: 'agent:mcp-write-value',
+    MCP_RELOAD: 'agent:mcp-reload',
+    MCP_OAUTH_LOGIN: 'agent:mcp-oauth-login',
+    MCP_READ_CONFIG: 'agent:mcp-read-config',
+    MCP_STATUS_SNAPSHOT: 'agent:mcp-status-snapshot',
+    DOCKER_GW_CHECK: 'agent:docker-gw-check',
+    DOCKER_GW_FIX: 'agent:docker-gw-fix',
+    DOCKER_GW_STATUS: 'agent:docker-gw-status',
+    DOCKER_GW_STOP: 'agent:docker-gw-stop',
+    OPEN_THREAD: 'agent:open-thread',
+    RENAME_THREAD: 'agent:rename-thread',
+    DELETE_THREAD: 'agent:delete-thread',
+  },
+  AGENT_EVENTS: [
+    'agent:event',
+    'agent:tool-request',
+    'agent:approval-request',
+  ] as const,
+  AGENT_MCP_EVENTS: ['agent:mcp-status'] as const,
+  // Shell helpers (clipboard / save dialog)
+  SHELL: {
+    COPY_IMAGE: 'shell:copy-image',
+    SAVE_AS: 'shell:save-as',
+    SHOW_ITEM_IN_FOLDER: 'shell:show-item-in-folder',
+    OPEN_EXTERNAL: 'shell:open-external',
+  },
+  FILE_EXPLORER: {
+    READ_TEXT: 'fs:read-text',
+    READ_BINARY: 'fs:read-binary',
+    WRITE_TEXT: 'fs:write-text',
+    LIST_DIR: 'fs:list-dir',
+    STAT: 'fs:stat',
+    TRASH: 'fs:trash',
+    RENAME: 'fs:rename',
+    CREATE_FILE: 'fs:create-file',
+    CREATE_FOLDER: 'fs:create-folder',
+    COPY: 'fs:copy',
+    MOVE: 'fs:move',
+    OPEN_IN_TERMINAL: 'fs:open-in-terminal',
+    PICK_FOLDER: 'workspace:pick-folder',
+    WATCH_START: 'fs:watch-start',
+    WATCH_STOP: 'fs:watch-stop',
+    WATCH_EVENT: 'fs:watch-event',
+  },
+  ATTACHMENTS: {
+    LIST_TREE: 'attachments:list-tree',
+  },
 } as const
 
 // ==================== 类型定义 ====================
@@ -180,12 +274,110 @@ export interface ImportTemplatesResponse {
   error?: string
 }
 
+export type FileExplorerWatchEvent = {
+  type: 'add' | 'addDir' | 'change' | 'unlink' | 'unlinkDir'
+  path: string
+  mtime?: number
+}
+
+export type FileExplorerNode = {
+  path: string
+  name: string
+  kind: 'file' | 'dir'
+  source: 'workspace' | 'attachments'
+  childrenLoaded: false
+}
+
+export type FileExplorerStat =
+  | { ok: true; size: number; mime: string; mtime: number }
+  | { ok: false; reason: string }
+
 export interface ElectronAPI {
   isElectron: boolean
   // AI Skills
   loadSkills: () => Promise<Record<string, string>>
   saveSkill: (skillName: string, content: string) => Promise<IpcResponse>
   openSkillsFolder: () => Promise<IpcResponse<{ path: string }>>
+  // Codex Agent
+  agent: {
+    sendMessage: (payload: AgentSendMessagePayload) => Promise<{ threadId: string }>
+    cancel: (payload: AgentCancelPayload) => Promise<IpcResponse>
+    listThreads: () => Promise<AgentThreadSummary[]>
+    loadThread: (threadId: string) => Promise<unknown>
+    openThread: (threadId: string) => Promise<unknown>
+    renameThread: (threadId: string, title: string) => Promise<void>
+    deleteThread: (threadId: string) => Promise<void>
+    onEvent: (handler: (event: AgentStreamEvent) => void) => () => void
+    onToolRequest: (handler: (request: AgentToolRequest) => void) => () => void
+    onApprovalRequest: (handler: (request: CodexApprovalRequest) => void) => () => void
+    sendToolResponse: (response: AgentToolResponse) => void
+    respondApproval: (response: CodexApprovalResponse) => Promise<AgentApiResult>
+    setApiKey: (key: string) => Promise<AgentApiResult>
+    testConnection: () => Promise<AgentApiResult>
+    getSessionStatus: () => Promise<CodexSessionStatus>
+    setSessionConfig: (patch: Partial<CodexSessionConfig>) => Promise<CodexSessionStatus>
+    setAllowedRoots: (roots: string[]) => Promise<string[]>
+    getMcpSummary: () => Promise<CodexMcpSummary>
+    getSkillsSummary: () => Promise<CodexSkillsSummary>
+    listSkills: () => Promise<CodexSkillListItem[]>
+    getSkillDetail: (id: string) => Promise<CodexSkillInput | null>
+    saveSkill: (input: CodexSkillInput) => Promise<AgentApiResult & { id?: string }>
+    deleteSkill: (id: string) => Promise<AgentApiResult>
+    getWorkspaceLogs: (opts?: { limit?: number; sinceIso?: string }) => Promise<CodexAuditLogEntry[]>
+    restartCodex: () => Promise<AgentApiResult>
+    listCodexThreads: () => Promise<CodexThreadSummary[]>
+    readCodexThread: (threadId: string) => Promise<CodexThreadDetail>
+    forkCodexThread: (threadId: string) => Promise<CodexThreadSummary>
+    listMcpServersRpc: (params?: unknown) => Promise<{ ok: boolean; error?: string; data?: unknown }>
+    batchWriteConfig: (edits: unknown[], reload?: boolean) => Promise<{ ok: boolean; error?: string }>
+    writeConfigValue: (keyPath: string, value: unknown) => Promise<{ ok: boolean; error?: string }>
+    reloadMcpServers: () => Promise<{ ok: boolean; error?: string }>
+    mcpOAuthLogin: (name: string) => Promise<{ ok: boolean; error?: string; authorization_url?: string }>
+    readConfig: () => Promise<{ ok: boolean; error?: string; config?: unknown }>
+    getMcpStatusSnapshot: () => Promise<{
+      ok: boolean
+      snapshot?: Record<string, { status: string; error: string | null }>
+      error?: string
+    }>
+    dockerGatewayCheck: () => Promise<{ installed: boolean; version?: string; error?: string }>
+    dockerGatewayFix: (opts?: { port?: number }) => Promise<{
+      ok: boolean
+      error?: string
+      converted?: string[]
+      gatewayPort?: number
+    }>
+    dockerGatewayStatus: () => Promise<{ running: boolean; port: number | null; pid: number | null; profile: string | null }>
+    dockerGatewayStop: () => Promise<{ ok: boolean; error?: string }>
+    onMcpStatus: (handler: (event: any) => void) => () => void
+  }
+  // Shell helpers (clipboard / save dialog)
+  shell: {
+    copyImage: (uri: string) => Promise<IpcResponse>
+    saveAs: (uri: string, suggestedName: string) => Promise<IpcResponse>
+    showItemInFolder: (p: string) => Promise<void>
+    openExternal: (url: string) => Promise<IpcResponse>
+  }
+  fs: {
+    readText: (p: string) => Promise<{ content: string; mtime: number }>
+    readBinary: (p: string) => Promise<{ ok: true; base64: string; mime: string } | { ok: false; reason: string }>
+    writeText: (p: string, content: string) => Promise<{ mtime: number }>
+    listDir: (p: string) => Promise<FileExplorerNode[]>
+    stat: (p: string) => Promise<FileExplorerStat>
+    trash: (p: string) => Promise<{ ok: true } | { ok: false; reason: string }>
+    rename: (oldPath: string, newName: string) => Promise<{ ok: true; newPath: string } | { ok: false; reason: string }>
+    createFile: (parentDir: string, name: string) => Promise<{ ok: true; path: string } | { ok: false; reason: string }>
+    createFolder: (parentDir: string, name: string) => Promise<{ ok: true; path: string } | { ok: false; reason: string }>
+    copy: (sources: string[], destDir: string) => Promise<{ ok: true; written: string[] } | { ok: false; reason: string }>
+    move: (sources: string[], destDir: string) => Promise<{ ok: true; written: string[] } | { ok: false; reason: string }>
+    openInTerminal: (p: string) => Promise<{ ok: true } | { ok: false; reason: string }>
+    pickFolder: () => Promise<string | null>
+    watchStart: (p: string) => Promise<void>
+    watchStop: (p: string) => Promise<void>
+    onWatchEvent: (cb: (e: FileExplorerWatchEvent) => void) => () => void
+  }
+  attachments: {
+    listTree: () => Promise<FileExplorerNode[]>
+  }
   // 图片存储
   saveImage: (base64Data: string, filename: string) => Promise<SaveImageResponse>
   readImage: (filename: string) => Promise<string | null>
@@ -283,6 +475,21 @@ function safeOn(
   }
   console.warn(`[Preload] 不允许监听的通道: ${channel}`)
   return false
+}
+
+function safeOnWithCleanup<T>(
+  channel: string,
+  callback: (data: T) => void,
+  allowedChannels: readonly string[]
+): () => void {
+  if (!allowedChannels.includes(channel)) {
+    console.warn(`[Preload] 不允许监听的通道: ${channel}`)
+    return () => {}
+  }
+
+  const listener = (_event: IpcRendererEvent, data: T): void => callback(data)
+  ipcRenderer.on(channel, listener)
+  return () => ipcRenderer.removeListener(channel, listener)
 }
 
 // ==================== 创建 Electron API ====================
@@ -422,6 +629,212 @@ const electronAPI: ElectronAPI = {
 
   openSkillsFolder: () =>
     safeInvoke<IpcResponse<{ path: string }>>(IPC_CHANNELS.SKILLS.OPEN_FOLDER),
+
+  // ============ Codex Agent ============
+  agent: {
+    sendMessage: (payload: AgentSendMessagePayload) =>
+      safeInvoke<{ threadId: string }>(IPC_CHANNELS.AGENT.SEND_MESSAGE, payload),
+
+    cancel: (payload: AgentCancelPayload) =>
+      safeInvoke<IpcResponse>(IPC_CHANNELS.AGENT.CANCEL, payload),
+
+    listThreads: () =>
+      safeInvoke<AgentThreadSummary[]>(IPC_CHANNELS.AGENT.LIST_THREADS),
+
+    loadThread: (threadId: string) =>
+      safeInvoke<unknown>(IPC_CHANNELS.AGENT.LOAD_THREAD, threadId),
+
+    openThread: (threadId: string) =>
+      safeInvoke<unknown>(IPC_CHANNELS.AGENT.OPEN_THREAD, threadId),
+
+    renameThread: (threadId: string, title: string) =>
+      safeInvoke<void>(IPC_CHANNELS.AGENT.RENAME_THREAD, threadId, title),
+
+    deleteThread: (threadId: string) =>
+      safeInvoke<void>(IPC_CHANNELS.AGENT.DELETE_THREAD, threadId),
+
+    onEvent: (handler: (event: AgentStreamEvent) => void) =>
+      safeOnWithCleanup<AgentStreamEvent>(IPC_CHANNELS.AGENT_EVENTS[0], handler, IPC_CHANNELS.AGENT_EVENTS),
+
+    onToolRequest: (handler: (request: AgentToolRequest) => void) =>
+      safeOnWithCleanup<AgentToolRequest>(IPC_CHANNELS.AGENT_EVENTS[1], handler, IPC_CHANNELS.AGENT_EVENTS),
+
+    onApprovalRequest: (handler: (request: CodexApprovalRequest) => void) =>
+      safeOnWithCleanup<CodexApprovalRequest>(IPC_CHANNELS.AGENT_EVENTS[2], handler, IPC_CHANNELS.AGENT_EVENTS),
+
+    sendToolResponse: (response: AgentToolResponse) => {
+      ipcRenderer.send(IPC_CHANNELS.AGENT.TOOL_RESPONSE, response)
+    },
+
+    respondApproval: (response: CodexApprovalResponse) =>
+      safeInvoke<AgentApiResult>(IPC_CHANNELS.AGENT.RESPOND_APPROVAL, response),
+
+    setApiKey: (key: string) =>
+      safeInvoke<AgentApiResult>(IPC_CHANNELS.AGENT.SET_API_KEY, key),
+
+    testConnection: () =>
+      safeInvoke<AgentApiResult>(IPC_CHANNELS.AGENT.TEST_CONNECTION),
+
+    getSessionStatus: () =>
+      safeInvoke<CodexSessionStatus>(IPC_CHANNELS.AGENT.GET_SESSION_STATUS),
+
+    setSessionConfig: (patch: Partial<CodexSessionConfig>) =>
+      safeInvoke<CodexSessionStatus>(IPC_CHANNELS.AGENT.SET_SESSION_CONFIG, patch),
+
+    setAllowedRoots: (roots: string[]) =>
+      safeInvoke<string[]>(IPC_CHANNELS.AGENT.SET_ALLOWED_ROOTS, roots),
+
+    getMcpSummary: () =>
+      safeInvoke<CodexMcpSummary>(IPC_CHANNELS.AGENT.GET_MCP_SUMMARY),
+
+    getSkillsSummary: () =>
+      safeInvoke<CodexSkillsSummary>(IPC_CHANNELS.AGENT.GET_SKILLS_SUMMARY),
+
+    listSkills: () =>
+      safeInvoke<CodexSkillListItem[]>(IPC_CHANNELS.AGENT.LIST_SKILLS),
+
+    getSkillDetail: (id: string) =>
+      safeInvoke<CodexSkillInput | null>(IPC_CHANNELS.AGENT.GET_SKILL_DETAIL, id),
+
+    saveSkill: (input: CodexSkillInput) =>
+      safeInvoke<AgentApiResult & { id?: string }>(IPC_CHANNELS.AGENT.SAVE_SKILL, input),
+
+    deleteSkill: (id: string) =>
+      safeInvoke<AgentApiResult>(IPC_CHANNELS.AGENT.DELETE_SKILL, id),
+
+    getWorkspaceLogs: (opts?: { limit?: number; sinceIso?: string }) =>
+      safeInvoke<CodexAuditLogEntry[]>(IPC_CHANNELS.AGENT.GET_WORKSPACE_LOGS, opts),
+
+    restartCodex: () =>
+      safeInvoke<AgentApiResult>(IPC_CHANNELS.AGENT.RESTART_CODEX),
+
+    listCodexThreads: () =>
+      safeInvoke<CodexThreadSummary[]>(IPC_CHANNELS.AGENT.LIST_CODEX_THREADS),
+
+    readCodexThread: (threadId: string) =>
+      safeInvoke<CodexThreadDetail>(IPC_CHANNELS.AGENT.READ_CODEX_THREAD, threadId),
+
+    forkCodexThread: (threadId: string) =>
+      safeInvoke<CodexThreadSummary>(IPC_CHANNELS.AGENT.FORK_CODEX_THREAD, threadId),
+
+    listMcpServersRpc: (params?: unknown) =>
+      safeInvoke<{ ok: boolean; error?: string; data?: unknown }>(IPC_CHANNELS.AGENT.MCP_LIST_SERVERS, params),
+
+    batchWriteConfig: (edits: unknown[], reload?: boolean) =>
+      safeInvoke<{ ok: boolean; error?: string }>(IPC_CHANNELS.AGENT.MCP_BATCH_WRITE, edits, reload),
+
+    writeConfigValue: (keyPath: string, value: unknown) =>
+      safeInvoke<{ ok: boolean; error?: string }>(IPC_CHANNELS.AGENT.MCP_WRITE_VALUE, keyPath, value),
+
+    reloadMcpServers: () =>
+      safeInvoke<{ ok: boolean; error?: string }>(IPC_CHANNELS.AGENT.MCP_RELOAD),
+
+    mcpOAuthLogin: (name: string) =>
+      safeInvoke<{ ok: boolean; error?: string; authorization_url?: string }>(IPC_CHANNELS.AGENT.MCP_OAUTH_LOGIN, name),
+
+    readConfig: () =>
+      safeInvoke<{ ok: boolean; error?: string; config?: unknown }>(IPC_CHANNELS.AGENT.MCP_READ_CONFIG),
+
+    dockerGatewayCheck: () =>
+      safeInvoke<{ installed: boolean; version?: string; error?: string }>(IPC_CHANNELS.AGENT.DOCKER_GW_CHECK),
+
+    dockerGatewayFix: (opts?: { port?: number }) =>
+      safeInvoke<{ ok: boolean; error?: string; converted?: string[]; gatewayPort?: number }>(
+        IPC_CHANNELS.AGENT.DOCKER_GW_FIX,
+        opts,
+      ),
+
+    dockerGatewayStatus: () =>
+      safeInvoke<{ running: boolean; port: number | null; pid: number | null; profile: string | null }>(
+        IPC_CHANNELS.AGENT.DOCKER_GW_STATUS,
+      ),
+
+    dockerGatewayStop: () =>
+      safeInvoke<{ ok: boolean; error?: string }>(IPC_CHANNELS.AGENT.DOCKER_GW_STOP),
+
+    onMcpStatus: (handler: (event: any) => void) =>
+      safeOnWithCleanup<any>('agent:mcp-status', handler, IPC_CHANNELS.AGENT_MCP_EVENTS),
+
+    getMcpStatusSnapshot: () =>
+      safeInvoke<{
+        ok: boolean
+        snapshot?: Record<string, { status: string; error: string | null }>
+        error?: string
+      }>(IPC_CHANNELS.AGENT.MCP_STATUS_SNAPSHOT),
+  },
+
+  // ============ Shell helpers (clipboard / save dialog) ============
+  shell: {
+    copyImage: (uri: string) =>
+      safeInvoke<IpcResponse>(IPC_CHANNELS.SHELL.COPY_IMAGE, uri),
+    saveAs: (uri: string, suggestedName: string) =>
+      safeInvoke<IpcResponse>(IPC_CHANNELS.SHELL.SAVE_AS, { uri, suggestedName }),
+    showItemInFolder: (p: string) =>
+      safeInvoke<void>(IPC_CHANNELS.SHELL.SHOW_ITEM_IN_FOLDER, p),
+    openExternal: (url: string) =>
+      safeInvoke<IpcResponse>(IPC_CHANNELS.SHELL.OPEN_EXTERNAL, url),
+  },
+
+  fs: {
+    readText: (p: string) =>
+      safeInvoke<{ content: string; mtime: number }>(IPC_CHANNELS.FILE_EXPLORER.READ_TEXT, p),
+    readBinary: (p: string) =>
+      safeInvoke<{ ok: true; base64: string; mime: string } | { ok: false; reason: string }>(IPC_CHANNELS.FILE_EXPLORER.READ_BINARY, p),
+    writeText: (p: string, content: string) =>
+      safeInvoke<{ mtime: number }>(IPC_CHANNELS.FILE_EXPLORER.WRITE_TEXT, { path: p, content }),
+    listDir: (p: string) =>
+      safeInvoke<FileExplorerNode[]>(IPC_CHANNELS.FILE_EXPLORER.LIST_DIR, p),
+    stat: (p: string) =>
+      safeInvoke<FileExplorerStat>(IPC_CHANNELS.FILE_EXPLORER.STAT, p),
+    trash: (p: string) =>
+      safeInvoke<{ ok: true } | { ok: false; reason: string }>(IPC_CHANNELS.FILE_EXPLORER.TRASH, p),
+    rename: (oldPath: string, newName: string) =>
+      safeInvoke<{ ok: true; newPath: string } | { ok: false; reason: string }>(
+        IPC_CHANNELS.FILE_EXPLORER.RENAME,
+        { oldPath, newName },
+      ),
+    createFile: (parentDir: string, name: string) =>
+      safeInvoke<{ ok: true; path: string } | { ok: false; reason: string }>(
+        IPC_CHANNELS.FILE_EXPLORER.CREATE_FILE,
+        { parentDir, name },
+      ),
+    createFolder: (parentDir: string, name: string) =>
+      safeInvoke<{ ok: true; path: string } | { ok: false; reason: string }>(
+        IPC_CHANNELS.FILE_EXPLORER.CREATE_FOLDER,
+        { parentDir, name },
+      ),
+    copy: (sources: string[], destDir: string) =>
+      safeInvoke<{ ok: true; written: string[] } | { ok: false; reason: string }>(
+        IPC_CHANNELS.FILE_EXPLORER.COPY,
+        { sources, destDir },
+      ),
+    move: (sources: string[], destDir: string) =>
+      safeInvoke<{ ok: true; written: string[] } | { ok: false; reason: string }>(
+        IPC_CHANNELS.FILE_EXPLORER.MOVE,
+        { sources, destDir },
+      ),
+    openInTerminal: (p: string) =>
+      safeInvoke<{ ok: true } | { ok: false; reason: string }>(
+        IPC_CHANNELS.FILE_EXPLORER.OPEN_IN_TERMINAL,
+        p,
+      ),
+    pickFolder: () =>
+      safeInvoke<string | null>(IPC_CHANNELS.FILE_EXPLORER.PICK_FOLDER),
+    watchStart: (p: string) =>
+      safeInvoke<void>(IPC_CHANNELS.FILE_EXPLORER.WATCH_START, p),
+    watchStop: (p: string) =>
+      safeInvoke<void>(IPC_CHANNELS.FILE_EXPLORER.WATCH_STOP, p),
+    onWatchEvent: (cb: (e: FileExplorerWatchEvent) => void) => {
+      const handler = (_evt: IpcRendererEvent, e: FileExplorerWatchEvent): void => cb(e)
+      ipcRenderer.on(IPC_CHANNELS.FILE_EXPLORER.WATCH_EVENT, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.FILE_EXPLORER.WATCH_EVENT, handler)
+    },
+  },
+
+  attachments: {
+    listTree: () =>
+      safeInvoke<FileExplorerNode[]>(IPC_CHANNELS.ATTACHMENTS.LIST_TREE),
+  },
 
   // ============ 系统主题监听 ============
   onNativeThemeChanged: (callback: (data: { shouldUseDarkColors: boolean; prefersReducedTransparency: boolean }) => void) => {

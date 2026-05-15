@@ -36,9 +36,22 @@ extraResources:
     to: skills
     filter:
       - "**/*.md"
+  - from: resources/codex/${platform}-${arch}
+    to: codex/${platform}-${arch}
+    filter:
+      - "codex*"
+  - from: resources/docker-mcp/${platform}-${arch}
+    to: docker-mcp/${platform}-${arch}
+    filter:
+      - "docker-mcp*"
+  - from: resources/skills
+    to: skills
+    filter:
+      - "**/*"
 
 asarUnpack:
   - resources/**
+  - "**/node_modules/@electric-sql/pglite/**"
 
 asar: true
 compression: maximum

@@ -1,6 +1,7 @@
-import { Suspense, useEffect } from 'react'
+import { Suspense, useEffect, type ComponentType, type LazyExoticComponent } from 'react'
 import { useTabStore, type TabName } from '../stores'
 import { TabBar } from '../components/TabBar'
+import { AgentChatPanel, mountAgentToolExecutor, useAgentChatStore } from '../features/agent-chat'
 import {
   GeneratePage,
   BatchPage,
@@ -12,9 +13,10 @@ import {
   PromptTemplatesPage,
   StoryboardSplitPage,
   SmartErasePage,
+  AgentWorkspacePage,
 } from '../pages-react'
 
-const PAGE_MAP: Record<TabName, React.LazyExoticComponent<() => React.JSX.Element>> = {
+const PAGE_MAP: Record<TabName, LazyExoticComponent<ComponentType>> = {
   generate: GeneratePage,
   batch: BatchPage,
   compare: ComparePage,
@@ -23,6 +25,7 @@ const PAGE_MAP: Record<TabName, React.LazyExoticComponent<() => React.JSX.Elemen
   settings: SettingsPage,
   director: DirectorPage,
   promptTemplates: PromptTemplatesPage,
+  agentWorkspace: AgentWorkspacePage,
   storyboardSplit: StoryboardSplitPage,
   smartErase: SmartErasePage,
 }
@@ -52,6 +55,21 @@ export function AppLayout() {
     if (hash) useTabStore.getState().switchTab(hash)
   }, [])
 
+  useEffect(() => {
+    return mountAgentToolExecutor()
+  }, [])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'a') {
+        event.preventDefault()
+        useAgentChatStore.getState().toggle()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
   return (
     <div className="flex flex-col h-screen bg-cyberpunk-black text-white font-exo">
       <TabBar />
@@ -60,6 +78,7 @@ export function AppLayout() {
           <ActivePage />
         </Suspense>
       </main>
+      <AgentChatPanel />
     </div>
   )
 }

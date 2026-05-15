@@ -99,13 +99,24 @@ export default function SettingsPage() {
   const activeSiteKey = useSettingsStore((s) => s.activeSiteKey)
   const apiKey = useSettingsStore((s) => s.apiKey)
   const visionApiKey = useSettingsStore((s) => s.visionApiKey)
+  const codexApiKey = useSettingsStore((s) => s.codexApiKey)
   const localPort = useSettingsStore((s) => s.localPort)
   const connectionStatus = useSettingsStore((s) => s.connectionStatus)
   const saving = useSettingsStore((s) => s.saving)
   const loadError = useSettingsStore((s) => s.loadError)
 
-  const { switchSite, setApiKey, setVisionApiKey, setLocalPort, testConnection, saveAll, loadFromService } =
-    useSettingsStore.getState()
+  const {
+    switchSite,
+    setApiKey,
+    setVisionApiKey,
+    setCodexApiKey,
+    setLocalPort,
+    testConnection,
+    saveAll,
+    loadFromService,
+  } = useSettingsStore.getState()
+
+  const [testingCodex, setTestingCodex] = React.useState(false)
 
   useEffect(() => {
     loadFromService(api)
@@ -123,9 +134,31 @@ export default function SettingsPage() {
     })
   }
 
+  const handleTestCodex = async () => {
+    setTestingCodex(true)
+    try {
+      const electronAPI = (window as any).electronAPI
+      const result = await electronAPI?.agent?.testConnection?.()
+      if (result?.ok) {
+        addToast({ message: 'Codex 连接成功', type: 'success' })
+      } else {
+        addToast({ message: `Codex 连接失败: ${result?.error ?? '未知错误'}`, type: 'error' })
+      }
+    } catch (e: any) {
+      addToast({ message: `Codex 连接失败: ${e?.message ?? String(e)}`, type: 'error' })
+    } finally {
+      setTestingCodex(false)
+    }
+  }
+
   const handleSave = async () => {
     try {
       await saveAll(api)
+      try {
+        await (window as any).electronAPI?.agent?.setApiKey?.(codexApiKey)
+      } catch (err) {
+        console.warn('failed to push codex key to main:', err)
+      }
       addToast({ message: '配置已保存', type: 'success' })
       const vanillaApi = (window as any).aiImageAPI
       vanillaApi?.updateApiStatus?.()
@@ -223,6 +256,30 @@ export default function SettingsPage() {
           {saving ? '保存中...' : '\u2705 保存配置'}
         </button>
       </div>
+
+      <section className="space-y-3 pt-4 border-t border-zinc-700">
+        <div className="flex items-center gap-2">
+          <span className="w-6 h-6 bg-cyberpunk-yellow text-cyberpunk-black flex items-center justify-center text-sm font-bold">
+            🤖
+          </span>
+          <span className="font-bold text-white uppercase tracking-tight">CODEX AGENT API KEY</span>
+        </div>
+        <p className="text-xs text-zinc-500">
+          用于 AI Agent (Ctrl+Shift+A)。需要 OpenAI 直连 sk- key
+        </p>
+        <ApiKeyInput
+          value={codexApiKey}
+          onChange={setCodexApiKey}
+          placeholder="sk-..."
+        />
+        <button
+          onClick={handleTestCodex}
+          disabled={!codexApiKey.trim() || testingCodex}
+          className="w-full py-2 px-4 bg-zinc-800 border-2 border-zinc-700 hover:bg-zinc-700 text-white font-bold uppercase tracking-tight transition-colors disabled:opacity-50"
+        >
+          {testingCodex ? '测试中...' : '🔌 测试 Codex 连接'}
+        </button>
+      </section>
 
       <section className="space-y-3 pt-4 border-t border-zinc-700">
         <div className="flex items-center gap-2">

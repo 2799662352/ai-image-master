@@ -51,11 +51,14 @@ import {
   unmountStoryboardSplitReact,
   mountSmartEraseReact,
   unmountSmartEraseReact,
+  mountAgentWorkspaceReact,
+  unmountAgentWorkspaceReact,
   mountGlobalToast,
   mountGenerateTokenBridge,
   mountGenerateTemplateInline,
 } from '../react-app/main'
 import { useModelStore, type ModelInfo } from '../stores/useModelStore'
+import { useTabStore } from '../stores/useTabStore'
 
 // ========================================
 // V16.3 - ServiceRegistry: 集中式服务注册表
@@ -299,6 +302,8 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
         if (newTab === 'storyboardSplit') mountStoryboardSplitReact()
         if (oldTab === 'smartErase') unmountSmartEraseReact()
         if (newTab === 'smartErase') mountSmartEraseReact()
+        if (oldTab === 'agentWorkspace') unmountAgentWorkspaceReact()
+        if (newTab === 'agentWorkspace') mountAgentWorkspaceReact()
       })
 
       // 在 React mount 之前同步模型列表到 store（消除首帧 race condition）
@@ -331,8 +336,27 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
       mountSmartEraseReact()
       if (activeTab !== 'smartErase') unmountSmartEraseReact()
 
+      mountAgentWorkspaceReact()
+      if (activeTab !== 'agentWorkspace') unmountAgentWorkspaceReact()
+
       window.tabManagerTS = tabManager
       ServiceRegistry.register(SERVICE_KEYS.TAB_MANAGER, tabManager)
+
+      useTabStore.subscribe(
+        (state) => state.activeTab,
+        (tab) => {
+          if (tabManager.getCurrentTab() !== tab) {
+            tabManager.switchTab(tab)
+          }
+        }
+      )
+
+      tabManager.onTabChange((newTab: string) => {
+        if (useTabStore.getState().activeTab !== newTab) {
+          useTabStore.getState().switchTab(newTab)
+        }
+      })
+
       console.log('[ServiceBridge] ✓ TabManager (TS) 已就绪')
 
       // ModelSelectorManager - 生成页面必需

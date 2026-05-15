@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { subscribeWithSelector } from 'zustand/middleware'
 
-const VALID_TABS = [
+export const VALID_TABS = [
   'generate',
   'batch',
   'compare',
@@ -11,10 +11,15 @@ const VALID_TABS = [
   'storyboardSplit',
   'smartErase',
   'promptTemplates',
+  'agentWorkspace',
   'settings',
 ] as const
 
 export type TabName = (typeof VALID_TABS)[number]
+
+export function isTabName(tab: string): tab is TabName {
+  return VALID_TABS.includes(tab as TabName)
+}
 
 interface TabState {
   activeTab: TabName
@@ -27,7 +32,7 @@ export const useTabStore = create<TabState>()(
     activeTab: 'generate',
     previousTab: null,
     switchTab: (tab: string) => {
-      if (!VALID_TABS.includes(tab as TabName)) return
+      if (!isTabName(tab)) return
       const prev = get().activeTab
       if (prev === tab) return
       set({ activeTab: tab as TabName, previousTab: prev })

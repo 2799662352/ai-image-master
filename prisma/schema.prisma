@@ -1,0 +1,68 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model AgentThread {
+  id            String            @id @default(cuid())
+  title         String
+  model         String
+  manualTitle   Boolean           @default(false)
+  lastMessageAt DateTime?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  messages      AgentMessage[]
+  artifacts     AgentArtifact[]
+  attachments   AgentAttachment[]
+
+  @@index([lastMessageAt(sort: Desc)])
+}
+
+model AgentMessage {
+  id        String          @id @default(cuid())
+  threadId  String
+  role      String
+  items     Json            @default("[]")
+  createdAt DateTime        @default(now())
+  thread    AgentThread     @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  toolCalls AgentToolCall[]
+
+  @@index([threadId, createdAt])
+}
+
+model AgentToolCall {
+  id         String       @id @default(cuid())
+  messageId  String
+  toolName   String
+  paramsJson Json
+  resultJson Json?
+  status     String
+  durationMs Int?
+  createdAt  DateTime     @default(now())
+  message    AgentMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+}
+
+model AgentArtifact {
+  id        String      @id @default(cuid())
+  threadId  String
+  messageId String?
+  type      String
+  uri       String
+  metadata  Json
+  createdAt DateTime    @default(now())
+  thread    AgentThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+}
+
+model AgentAttachment {
+  id           String      @id @default(cuid())
+  threadId     String
+  originalName String
+  localPath    String
+  mime         String
+  size         Int
+  uploadedAt   DateTime    @default(now())
+  thread       AgentThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+}
