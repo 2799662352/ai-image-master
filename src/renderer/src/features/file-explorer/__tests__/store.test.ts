@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { useFileExplorerStore } from '../store'
+import { useFileExplorerStore, __resetSubscriptionsForTesting } from '../store'
+
+let attachmentsChangedHandlers: Array<() => void> = []
 
 const electronAPI = {
   agent: {
@@ -15,7 +17,15 @@ const electronAPI = {
     watchStop: vi.fn(),
     onWatchEvent: vi.fn(() => () => undefined),
   },
-  attachments: { listTree: vi.fn() },
+  attachments: {
+    listTree: vi.fn(),
+    onChanged: vi.fn((cb: () => void) => {
+      attachmentsChangedHandlers.push(cb)
+      return () => {
+        attachmentsChangedHandlers = attachmentsChangedHandlers.filter((h) => h !== cb)
+      }
+    }),
+  },
 }
 
 beforeEach(() => {
@@ -28,6 +38,9 @@ beforeEach(() => {
   })
   electronAPI.agent.setAllowedRoots.mockReset()
   electronAPI.attachments.listTree.mockReset()
+  electronAPI.attachments.onChanged.mockClear()
+  attachmentsChangedHandlers = []
+  __resetSubscriptionsForTesting()
   useFileExplorerStore.setState(useFileExplorerStore.getInitialState(), true)
 })
 
@@ -155,5 +168,62 @@ describe('useFileExplorerStore', () => {
   it('appendToChatInput stores pending text for chat consumer', () => {
     useFileExplorerStore.getState().appendToChatInput('\n[file:foo.ts]')
     expect(useFileExplorerStore.getState().pendingChatInsert).toBe('\n[file:foo.ts]')
+  })
+
+  it('ensureSubscriptions wires attachments.onChanged and re-fetches the tree on push events', async () => {
+    // Regression: ATTACHMENTS panel stayed stale after AttachmentService
+    // ingested a new chat upload because nothing pushed an invalidation to
+    // the renderer. ensureSubscriptions must subscribe to the IPC channel
+    // and refresh the tree via the existing listTree pull when a change
+    // event fires. We use a 200ms trailing-edge debounce; the test waits
+    // through that gate before asserting the second fetch.
+    electronAPI.attachments.listTree
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { path: '/uploads/new.md', name: 'new.md', kind: 'file', source: 'attachments', childrenLoaded: false },
+      ])
+
+    useFileExplorerStore.getState().ensureSubscriptions()
+    await useFileExplorerStore.getState().refreshAttachmentsTree()
+    expect(electronAPI.attachments.listTree).toHaveBeenCalledTimes(1)
+
+    // Simulate main → renderer push (AttachmentService.emit('attachment-added')
+    // → webContents.send('attachments:changed'))
+    expect(attachmentsChangedHandlers).toHaveLength(1)
+    attachmentsChangedHandlers[0]?.()
+
+    // Debounce window: wait it out + a small grace tick.
+    await new Promise((resolve) => setTimeout(resolve, 250))
+
+    expect(electronAPI.attachments.listTree).toHaveBeenCalledTimes(2)
+    const tree = useFileExplorerStore.getState().attachmentsTree
+    expect(tree[0]?.children?.[0]?.name).toBe('new.md')
+  })
+
+  it('ensureSubscriptions collapses bursts of attachments:changed into a single refetch', async () => {
+    // Sequential ingest of N files fires N IPC events. Without debounce the
+    // panel would re-query Prisma + readdir N times in a row; with debounce
+    // we coalesce into one final refresh.
+    electronAPI.attachments.listTree.mockResolvedValue([])
+
+    useFileExplorerStore.getState().ensureSubscriptions()
+    expect(attachmentsChangedHandlers).toHaveLength(1)
+
+    const fire = attachmentsChangedHandlers[0]!
+    fire()
+    fire()
+    fire()
+    fire()
+    fire()
+
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    expect(electronAPI.attachments.listTree).toHaveBeenCalledTimes(1)
+  })
+
+  it('ensureSubscriptions is idempotent — calling twice does not double-subscribe', () => {
+    useFileExplorerStore.getState().ensureSubscriptions()
+    useFileExplorerStore.getState().ensureSubscriptions()
+    useFileExplorerStore.getState().ensureSubscriptions()
+    expect(electronAPI.attachments.onChanged).toHaveBeenCalledTimes(1)
   })
 })

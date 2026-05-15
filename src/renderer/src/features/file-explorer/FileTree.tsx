@@ -27,6 +27,7 @@ export function FileTree() {
   const pickWorkspaceFolder = useFileExplorerStore((s) => s.pickWorkspaceFolder)
   const removeWorkspaceFolder = useFileExplorerStore((s) => s.removeWorkspaceFolder)
   const refreshAttachmentsTree = useFileExplorerStore((s) => s.refreshAttachmentsTree)
+  const ensureSubscriptions = useFileExplorerStore((s) => s.ensureSubscriptions)
   const startNewNode = useFileExplorerStore((s) => s.startNewNode)
   const commitNewNode = useFileExplorerStore((s) => s.commitNewNode)
   const cancelNewNode = useFileExplorerStore((s) => s.cancelNewNode)
@@ -35,8 +36,13 @@ export function FileTree() {
   const clipboard = useFileExplorerStore((s) => s.clipboard)
 
   useEffect(() => {
+    // First-paint pull. After this, the live attachments:changed IPC bridge
+    // (set up by ensureSubscriptions) keeps the panel in sync. Without that
+    // bridge the panel froze on whatever was visible at mount and never
+    // reflected new chat uploads — the bug being fixed here.
+    ensureSubscriptions()
     void refreshAttachmentsTree()
-  }, [refreshAttachmentsTree])
+  }, [ensureSubscriptions, refreshAttachmentsTree])
 
   useEffect(() => {
     if (workspaceRoot && workspaceTree.length === 0) void loadWorkspaceFolders()

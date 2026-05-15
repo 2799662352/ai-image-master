@@ -28,7 +28,8 @@ import { AttachmentService } from './agent/AttachmentService'
 import { consumeStartupNotice, getPrisma, shutdownDatabase } from './agent/db'
 import { registerAgentIpc } from './agent/ipc'
 import { ThreadStore } from './agent/ThreadStore'
-import { registerAttachmentsTreeIpc } from './file-explorer/AttachmentTreeProvider'
+import { registerAttachmentsTreeIpc, wireAttachmentBroadcast } from './file-explorer/AttachmentTreeProvider'
+import { AttachmentDirWatcher } from './file-explorer/AttachmentDirWatcher'
 import { registerFsIpc } from './file-explorer/fsIpc'
 import { registerLocalFileScheme, installLocalFileHandler } from './file-explorer/protocolHandler'
 import { registerFsWatcherIpc, disposeAll as disposeFsWatchers } from './file-explorer/fsWatcher'
@@ -191,6 +192,7 @@ let customGalleryPath: string | null = null
 let mainWindow: BrowserWindow | null = null
 let agentManager: AgentManager | null = null
 let agentMcpRuntime: McpRuntime | null = null
+let attachmentDirWatcher: AttachmentDirWatcher | null = null
 let agentRuntimeCleanedUp = false
 let isQuittingAfterAgentCleanup = false
 
@@ -566,6 +568,27 @@ async function initAgentRuntime(win: BrowserWindow): Promise<void> {
     const prisma = await getPrisma()
     const threadStore = new ThreadStore(prisma)
     const attachmentService = new AttachmentService(prisma)
+    // Defense-in-depth invalidation for the renderer ATTACHMENTS panel
+    // (mirrors VSCode's parcelWatcher.ts pattern of "watcher emits, consumer
+    // pulls"):
+    //   (A) Synchronous in-process success signal — fires the instant a chat
+    //       upload's DB row + disk file both exist. AttachmentService.emit
+    //       → wireAttachmentBroadcast → BrowserWindow.send.
+    //   (B) Native FS watcher on the uploads directory — catches external
+    //       writes (manual drag-in, backup restore, concurrent processes) that
+    //       (A) can't observe. 75ms trailing aggregator collapses the
+    //       tmp-then-rename burst into a single renderer broadcast.
+    // Either path alone closes the original bug; both together also keep the
+    // panel correct when the FS watcher is degraded (macOS seatbelt, EACCES).
+    wireAttachmentBroadcast(attachmentService)
+    const uploadsDir = path.join(app.getPath('userData'), 'agent', 'uploads')
+    attachmentDirWatcher = new AttachmentDirWatcher(uploadsDir)
+    // Fire-and-forget: start() resolves once @parcel/watcher.subscribe finishes
+    // its async native handshake. The watcher gracefully degrades on failure
+    // (AttachmentService.emit is the in-process fallback), and downstream
+    // initAgentRuntime steps don't depend on the watcher being live, so we
+    // don't block the boot path.
+    void attachmentDirWatcher.start()
     agentMcpRuntime = await startCatimationMcpServer(win)
     if (!agentMcpRuntime) {
       console.warn(
@@ -631,6 +654,8 @@ async function cleanupAgentRuntime(): Promise<void> {
   if (agentRuntimeCleanedUp) return
   agentRuntimeCleanedUp = true
   try {
+    await attachmentDirWatcher?.dispose()
+    attachmentDirWatcher = null
     await agentManager?.stop()
     // Don't leak the docker mcp gateway sidecar on app quit. Best-effort
     // since the user may have already killed `docker` independently.

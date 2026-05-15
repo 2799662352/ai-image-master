@@ -184,6 +184,55 @@ describe('AttachmentService (streaming ingest)', () => {
     statSpy.mockRestore()
   })
 
+  it('emits attachment-added after each successful ingest so the file panel can refresh', async () => {
+    // Regression: ATTACHMENTS panel stayed stale after Codex chat ingested a
+    // new file because the service had no success-signal. We now emit
+    // 'attachment-added' once per saved row, mirroring 'attachment-error' on
+    // the failure side. AttachmentTreeProvider's broadcast wires this through
+    // to the renderer as `attachments:changed` IPC.
+    const { AttachmentService } = await import('../AttachmentService')
+    const prisma = makePrismaStub()
+    const service = new AttachmentService(prisma as never)
+
+    const added: Array<{ saved: { originalName: string; localPath: string } }> = []
+    service.on('attachment-added', (e: { saved: { originalName: string; localPath: string } }) => added.push(e))
+
+    const aPath = path.join(tmpDir, 'a.txt')
+    const bPath = path.join(tmpDir, 'b.txt')
+    await fs.writeFile(aPath, 'AAA')
+    await fs.writeFile(bPath, 'BBB')
+
+    const out = await service.ingest('thread-G', [
+      { name: 'a.txt', mime: 'text/plain', size: 3, path: aPath },
+      { name: 'b.txt', mime: 'text/plain', size: 3, path: bPath },
+    ])
+
+    expect(out).toHaveLength(2)
+    expect(added).toHaveLength(2)
+    expect(added.map((e) => e.saved.originalName)).toEqual(['a.txt', 'b.txt'])
+    // The emitted localPath must match what ingest() returned — otherwise the
+    // renderer can't correlate IPC events with rendered rows.
+    expect(added[0].saved.localPath).toBe(out[0].localPath)
+  })
+
+  it('does NOT emit attachment-added when ingest fails (size cap, missing file, etc.)', async () => {
+    const { AttachmentService } = await import('../AttachmentService')
+    const prisma = makePrismaStub()
+    const service = new AttachmentService(prisma as never)
+
+    const added: unknown[] = []
+    const errors: unknown[] = []
+    service.on('attachment-added', (e) => added.push(e))
+    service.on('attachment-error', (e) => errors.push(e))
+
+    await service.ingest('thread-H', [
+      { name: 'missing.txt', mime: 'text/plain', size: 0, path: path.join(tmpDir, 'does-not-exist.txt') },
+    ])
+
+    expect(added).toHaveLength(0)
+    expect(errors).toHaveLength(1)
+  })
+
   it('keeps the event loop responsive while ingesting multiple large files', async () => {
     const { AttachmentService } = await import('../AttachmentService')
     const prisma = makePrismaStub()

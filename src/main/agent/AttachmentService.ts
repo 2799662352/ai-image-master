@@ -28,6 +28,10 @@ export interface SavedAttachment {
   uploadedAt: Date
 }
 
+export interface AttachmentAddedEvent {
+  saved: SavedAttachment
+}
+
 /**
  * Ingest user attachments without blocking the Electron main thread.
  *
@@ -147,7 +151,7 @@ export class AttachmentService extends EventEmitter {
       if (!existsCheck) throw renameErr
     }
 
-    return this.prisma.agentAttachment.create({
+    const saved = await this.prisma.agentAttachment.create({
       data: {
         threadId,
         originalName: attachment.name,
@@ -156,6 +160,12 @@ export class AttachmentService extends EventEmitter {
         size: declaredSize,
       },
     })
+    // Success signal: AttachmentTreeProvider.wireAttachmentBroadcast subscribes
+    // to this and pushes `attachments:changed` over IPC so the renderer's
+    // ATTACHMENTS panel refreshes without polling. Mirrors the 'attachment-error'
+    // contract on the failure side.
+    this.emit('attachment-added', { saved } satisfies AttachmentAddedEvent)
+    return saved
   }
 
   async cleanup(cutoffMs = 7 * 24 * 60 * 60 * 1000): Promise<number> {

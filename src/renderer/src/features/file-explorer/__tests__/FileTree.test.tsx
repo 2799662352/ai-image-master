@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen, fireEvent, cleanup } from '@testing-library/react'
 import { FileTree } from '../FileTree'
-import { useFileExplorerStore } from '../store'
+import { useFileExplorerStore, __resetSubscriptionsForTesting } from '../store'
 
 const electronAPI = {
   fs: {
@@ -14,7 +14,10 @@ const electronAPI = {
     watchStop: vi.fn(),
     onWatchEvent: vi.fn(() => () => undefined),
   },
-  attachments: { listTree: vi.fn() },
+  attachments: {
+    listTree: vi.fn(),
+    onChanged: vi.fn(() => () => undefined),
+  },
 }
 
 beforeEach(() => {
@@ -24,8 +27,10 @@ beforeEach(() => {
     configurable: true,
   })
   electronAPI.attachments.listTree.mockReset().mockResolvedValue([])
+  electronAPI.attachments.onChanged.mockClear()
   electronAPI.fs.pickFolder.mockReset()
   electronAPI.fs.listDir.mockReset()
+  __resetSubscriptionsForTesting()
   useFileExplorerStore.setState(useFileExplorerStore.getInitialState(), true)
 })
 

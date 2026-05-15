@@ -60,6 +60,14 @@ export default defineConfig({
           // already live.
           '@electric-sql/pglite',
           '@electric-sql/pglite-socket',
+          // @parcel/watcher is a native C++ addon (prebuilt .node binaries
+          // shipped per-platform via optionalDependencies — same engine
+          // VSCode uses for its file watcher). Bundling it through rolldown
+          // would strip the binary lookup; keep it as a runtime require so
+          // resolution lands in node_modules/@parcel/watcher-<platform>-<arch>/
+          // where electron-builder unpacks it from asar.
+          '@parcel/watcher',
+          /^@parcel\/watcher-/,
           ...builtinModules.flatMap(m => [m, `node:${m}`])
         ]
       }

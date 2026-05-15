@@ -60,6 +60,12 @@ extraResources:
 asarUnpack:
   - resources/**
   - "**/node_modules/@electric-sql/pglite/**"
+  # Native C++ addon — required at runtime by AttachmentDirWatcher. The
+  # `@parcel/watcher-<platform>-<arch>` prebuilt binary packages each contain
+  # a `.node` file that node-loader can only dlopen() from a real file path,
+  # so they must live outside the asar. The wildcard `watcher*` catches the
+  # wrapper package AND every platform-specific binary subpackage.
+  - "**/node_modules/@parcel/watcher*/**"
 
 asar: true
 compression: maximum

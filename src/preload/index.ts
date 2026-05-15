@@ -223,6 +223,7 @@ const IPC_CHANNELS = {
   },
   ATTACHMENTS: {
     LIST_TREE: 'attachments:list-tree',
+    CHANGED: 'attachments:changed',
   },
 } as const
 
@@ -377,6 +378,7 @@ export interface ElectronAPI {
   }
   attachments: {
     listTree: () => Promise<FileExplorerNode[]>
+    onChanged: (cb: () => void) => () => void
   }
   // 图片存储
   saveImage: (base64Data: string, filename: string) => Promise<SaveImageResponse>
@@ -834,6 +836,11 @@ const electronAPI: ElectronAPI = {
   attachments: {
     listTree: () =>
       safeInvoke<FileExplorerNode[]>(IPC_CHANNELS.ATTACHMENTS.LIST_TREE),
+    onChanged: (cb: () => void) => {
+      const handler = (): void => cb()
+      ipcRenderer.on(IPC_CHANNELS.ATTACHMENTS.CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.ATTACHMENTS.CHANGED, handler)
+    },
   },
 
   // ============ 系统主题监听 ============

@@ -35,7 +35,10 @@ type ElectronFileApi = {
     move?: (sources: string[], destDir: string) => Promise<{ ok: true; written: string[] } | { ok: false; reason: string }>
     openInTerminal?: (p: string) => Promise<{ ok: true } | { ok: false; reason: string }>
   }
-  attachments: { listTree: () => Promise<FileNode[]> }
+  attachments: {
+    listTree: () => Promise<FileNode[]>
+    onChanged?: (cb: () => void) => () => void
+  }
 }
 
 export type SelectMode = 'replace' | 'toggle' | 'range'
@@ -108,11 +111,25 @@ type Actions = {
   trashSelection: () => Promise<void>
   compareSelection: () => Promise<{ ok: boolean; reason?: string }>
   collectVisiblePaths: () => string[]
+  /**
+   * Idempotent. Sets up renderer-side IPC subscriptions:
+   *  - `fs.onWatchEvent` for workspace file changes (chokidar push)
+   *  - `attachments.onChanged` for chat-uploaded attachments (AttachmentService push)
+   *
+   * Safe to call from any mount effect; later calls are no-ops. Tests can
+   * call this directly to wire the subscription without going through a full
+   * workspace flow.
+   */
+  ensureSubscriptions: () => void
 }
 
 let unsubscribeWatch: (() => void) | null = null
+let unsubscribeAttachments: (() => void) | null = null
+let attachmentsRefreshTimer: ReturnType<typeof setTimeout> | null = null
 
-function ensureWatchSubscription(getState: () => State & Actions): void {
+const ATTACHMENTS_REFRESH_DEBOUNCE_MS = 200
+
+function ensureFsWatchSubscription(getState: () => State & Actions): void {
   if (unsubscribeWatch || typeof window === 'undefined') return
   const api = (window as Window & { electronAPI?: ElectronFileApi }).electronAPI
   if (!api) return
@@ -149,6 +166,45 @@ function ensureWatchSubscription(getState: () => State & Actions): void {
     }))
     await refreshWorkspaceRootsForEvent(event, getState)
   }) ?? null
+}
+
+function ensureAttachmentsSubscription(getState: () => State & Actions): void {
+  if (unsubscribeAttachments || typeof window === 'undefined') return
+  const api = (window as Window & { electronAPI?: ElectronFileApi }).electronAPI
+  if (!api?.attachments?.onChanged) return
+  unsubscribeAttachments = api.attachments.onChanged(() => {
+    // Trailing-edge debounce: AttachmentService.ingest() runs sequentially and
+    // emits per-file, so a burst of N uploads would otherwise trigger N
+    // back-to-back readdir + Prisma round-trips. 200ms aggregates the burst
+    // into a single refresh without making the UI feel laggy.
+    if (attachmentsRefreshTimer) clearTimeout(attachmentsRefreshTimer)
+    attachmentsRefreshTimer = setTimeout(() => {
+      attachmentsRefreshTimer = null
+      void getState().refreshAttachmentsTree()
+    }, ATTACHMENTS_REFRESH_DEBOUNCE_MS)
+  })
+}
+
+function ensureWatchSubscription(getState: () => State & Actions): void {
+  ensureFsWatchSubscription(getState)
+  ensureAttachmentsSubscription(getState)
+}
+
+/**
+ * Test-only: reset module-level subscription singletons so Vitest's per-test
+ * `setState(initialState, true)` actually starts from a clean slate. Production
+ * code should NOT call this — leaking a subscription across windows would
+ * cause double-fire.
+ */
+export function __resetSubscriptionsForTesting(): void {
+  unsubscribeWatch?.()
+  unsubscribeWatch = null
+  unsubscribeAttachments?.()
+  unsubscribeAttachments = null
+  if (attachmentsRefreshTimer) {
+    clearTimeout(attachmentsRefreshTimer)
+    attachmentsRefreshTimer = null
+  }
 }
 
 function readStorage(key: string): string | null {
@@ -862,6 +918,10 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
       return { tabs, activeTabId: id }
     })
     return { ok: true }
+  },
+
+  ensureSubscriptions: () => {
+    ensureWatchSubscription(get)
   },
 }))
 
