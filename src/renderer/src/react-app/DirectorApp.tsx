@@ -54,11 +54,9 @@ export function DirectorApp() {
   const setSkipStyleAnchor = useDirectorStore((s) => s.setSkipStyleAnchor)
   const setEnableCreativePreplanner = useDirectorStore((s) => s.setEnableCreativePreplanner)
   const applyVisionDetailPreset = useDirectorStore((s) => s.applyVisionDetailPreset)
-  const setViewState = useDirectorStore((s) => s.setViewState)
   const pushProgress = useDirectorStore((s) => s.pushProgress)
-  const resetProgress = useDirectorStore((s) => s.resetProgress)
-  const setGeneratedResults = useDirectorStore((s) => s.setGeneratedResults)
-  const { startGeneration, cancelGeneration, pauseGeneration, resumeGeneration, generationStatus } = useDirectorGeneration()
+  const pendingCount = useDirectorStore((s) => s.pendingCount)
+  const { enqueueGeneration, cancelGeneration, pauseGeneration, resumeGeneration, generationStatus } = useDirectorGeneration()
   const activePreset = useMemo(() => detectVisionDetailPreset({
     visionDetailTaskPlanning,
     visionDetailAnalyzeScene,
@@ -116,42 +114,39 @@ export function DirectorApp() {
     }
   }, [])
 
-  const handleGenerate = useCallback(async () => {
-    setViewState('generating')
-    resetProgress()
-    setGeneratedResults([])
-    try {
-      await startGeneration((progress) => {
-        pushProgress(progress as any)
+  // v4.2.7 — fire-and-forget enqueue. runJob inside the hook owns
+  // viewState/progress/results per task, so we no longer pre-empt them here.
+  // Returns synchronously; the queue drainer picks up the work on its own.
+  const handleGenerate = useCallback(() => {
+    enqueueGeneration((progress) => {
+      pushProgress(progress as any)
 
-        // 图像流式回调：单张成功后立即显示，无需等待整个 pipeline 结束
-        const evt = (progress as any)?.data
-        if (evt?.type === 'image_generated' && typeof evt.url === 'string' && evt.url) {
-          const store = useDirectorStore.getState()
-          store.setGeneratedResults((prev) => {
-            return [
-              ...prev,
-              {
-                url: evt.url,
-                prompt: typeof evt.prompt === 'string' ? evt.prompt : '',
-                timestamp: Date.now(),
-              },
-            ]
-          })
-        }
-      })
-
-      const currentStatus = useDirectorStore.getState().generationStatus
-      if (currentStatus !== 'paused') {
-        setViewState('results')
+      // 图像流式回调：单张成功后立即显示，无需等待整个 pipeline 结束
+      const evt = (progress as any)?.data
+      if (evt?.type === 'image_generated' && typeof evt.url === 'string' && evt.url) {
+        const store = useDirectorStore.getState()
+        store.setGeneratedResults((prev) => {
+          return [
+            ...prev,
+            {
+              url: evt.url,
+              prompt: typeof evt.prompt === 'string' ? evt.prompt : '',
+              timestamp: Date.now(),
+            },
+          ]
+        })
       }
-    } catch (error: any) {
-      console.error('[DirectorApp] Generation failed:', error)
-      setViewState('idle')
+    })
+
+    // Surface queue feedback. pendingCount is updated synchronously inside
+    // enqueueGeneration, so the freshly-read value below reflects the new job.
+    const nextPending = useDirectorStore.getState().pendingCount
+    const status = useDirectorStore.getState().generationStatus
+    if (status === 'running' || status === 'paused') {
       const toast = (window as any).toastManagerTS ?? (window as any).toastManager
-      toast?.show?.(error.message || '生成失败', 'error')
+      toast?.show?.(`已加入队列（待运行 ${nextPending}）`, 'info')
     }
-  }, [startGeneration, setViewState, pushProgress, resetProgress, setGeneratedResults])
+  }, [enqueueGeneration, pushProgress])
 
   return (
     <div className="relative z-10">
@@ -405,9 +400,16 @@ export function DirectorApp() {
             <GenerationProgress collapsed={viewState === 'results'} />
           )}
           {generationStatus === 'paused' && (
-            <div className="text-amber-400 text-sm mt-2 flex items-center gap-2">
-              <i className="fas fa-pause-circle" />
-              已暂停 — 点击「继续」恢复生成
+            <div className="text-amber-400 text-sm mt-2 space-y-1">
+              <div className="flex items-center gap-2">
+                <i className="fas fa-pause-circle" />
+                已暂停 — 点击「继续」恢复生成
+              </div>
+              {pendingCount > 0 && (
+                <div className="text-[11px] text-amber-400/75 ml-6">
+                  队列中 {pendingCount} 个任务等待运行（当前任务结束后自动接续）
+                </div>
+              )}
             </div>
           )}
           {(viewState === 'generating' || generatedResults.length > 0) && (

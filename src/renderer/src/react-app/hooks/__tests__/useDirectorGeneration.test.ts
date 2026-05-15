@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { renderHook } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { useDirectorGeneration } from '../useDirectorGeneration'
 import { useDirectorStore } from '../../stores/useDirectorStore'
 
@@ -41,13 +41,14 @@ describe('useDirectorGeneration', () => {
     expect(result.current.canGenerate).toBe(true)
   })
 
-  it('should return canGenerate=false when isGenerating', () => {
+  it('keeps canGenerate=true while running so new jobs can be enqueued (v4.2.7 live-queue contract)', () => {
     useDirectorStore.getState().addReferenceImage({
       data: 'test', mimeType: 'image/jpeg', name: 'test.jpg'
     })
     useDirectorStore.getState().setIsGenerating(true)
+    useDirectorStore.getState().setGenerationStatus('running')
     const { result } = renderHook(() => useDirectorGeneration())
-    expect(result.current.canGenerate).toBe(false)
+    expect(result.current.canGenerate).toBe(true)
   })
 
   it('should provide getLayoutConfig for all layout types', () => {
@@ -83,9 +84,14 @@ describe('useDirectorGeneration', () => {
     store.setSemanticOrientation('portrait')
 
     const { result } = renderHook(() => useDirectorGeneration())
-    await result.current.startGeneration()
+    // v4.2.7: startGeneration is now a back-compat alias for enqueueGeneration
+    // (fire-and-forget). Wait for the queue drainer to actually invoke the
+    // pipeline before asserting on call args.
+    await act(async () => {
+      void result.current.startGeneration()
+    })
+    await waitFor(() => expect(executeMock).toHaveBeenCalled())
 
-    expect(executeMock).toHaveBeenCalled()
     const firstCallInput = executeMock.mock.calls[0]?.[0]
     expect(firstCallInput?.semanticOrientation).toBe('portrait')
   })
@@ -99,9 +105,11 @@ describe('useDirectorGeneration', () => {
     store.setVisionDetailVerifyConsistency('high')
 
     const { result } = renderHook(() => useDirectorGeneration())
-    await result.current.startGeneration()
+    await act(async () => {
+      void result.current.startGeneration()
+    })
+    await waitFor(() => expect(executeMock).toHaveBeenCalled())
 
-    expect(executeMock).toHaveBeenCalled()
     const firstCallInput = executeMock.mock.calls[0]?.[0]
     expect(firstCallInput?.visionDetailAnalyzeScene).toBe('low')
     expect(firstCallInput?.visionDetailCharacterAnchors).toBe('auto')

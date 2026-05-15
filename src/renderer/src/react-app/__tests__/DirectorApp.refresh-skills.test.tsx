@@ -4,7 +4,14 @@ import { DirectorApp } from '../DirectorApp'
 import { reloadDirectorSkills } from '@/services/pipeline/prompt-loader'
 import { useDirectorStore } from '../stores/useDirectorStore'
 
+// v4.2.7 — DirectorApp uses enqueueGeneration (fire-and-forget) instead of
+// startGeneration. The mock supplies both for back-compat with any callers
+// that still reach for startGeneration.
+const enqueueGenerationMock = vi.fn<(onProgress?: (p: any) => void) => number>()
 const startGenerationMock = vi.fn()
+const cancelGenerationMock = vi.fn()
+const pauseGenerationMock = vi.fn()
+const resumeGenerationMock = vi.fn()
 
 vi.mock('../components/ReferenceImageUpload', () => ({
   ReferenceImageUpload: () => <div data-testid="ReferenceImageUpload" />,
@@ -40,7 +47,12 @@ vi.mock('../components/ResultsGallery', () => ({
 }))
 vi.mock('../hooks/useDirectorGeneration', () => ({
   useDirectorGeneration: () => ({
+    enqueueGeneration: enqueueGenerationMock,
     startGeneration: startGenerationMock,
+    cancelGeneration: cancelGenerationMock,
+    pauseGeneration: pauseGenerationMock,
+    resumeGeneration: resumeGenerationMock,
+    generationStatus: 'idle' as const,
   }),
 }))
 
@@ -60,6 +72,7 @@ describe('DirectorApp refresh skills', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     useDirectorStore.getState().reset()
+    enqueueGenerationMock.mockReturnValue(1)
     startGenerationMock.mockResolvedValue(undefined)
     ;(reloadDirectorSkills as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(undefined)
     ;(window as any).electronAPI = {
@@ -122,7 +135,7 @@ describe('DirectorApp refresh skills', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Generate' }))
     await waitFor(() => {
-      expect(startGenerationMock).toHaveBeenCalledTimes(1)
+      expect(enqueueGenerationMock).toHaveBeenCalledTimes(1)
     })
   })
 
@@ -161,16 +174,17 @@ describe('DirectorApp refresh skills', () => {
   })
 
   it('流式回调同 URL 不应被去重吞掉', async () => {
-    startGenerationMock.mockImplementation(async (onProgress?: (p: any) => void) => {
+    enqueueGenerationMock.mockImplementation((onProgress?: (p: any) => void) => {
       onProgress?.({ data: { type: 'image_generated', url: 'https://example.com/same.png', prompt: 'p1' } })
       onProgress?.({ data: { type: 'image_generated', url: 'https://example.com/same.png', prompt: 'p2' } })
+      return 1
     })
 
     render(<DirectorApp />)
     fireEvent.click(screen.getByRole('button', { name: 'Generate' }))
 
     await waitFor(() => {
-      expect(startGenerationMock).toHaveBeenCalledTimes(1)
+      expect(enqueueGenerationMock).toHaveBeenCalledTimes(1)
       expect(useDirectorStore.getState().generatedResults.length).toBe(2)
     })
   })
