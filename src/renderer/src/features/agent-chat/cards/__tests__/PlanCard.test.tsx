@@ -22,10 +22,10 @@ function makePlan(): ActivityItem {
 }
 
 describe('PlanCard (ActivityCard kind="plan")', () => {
-  it('renders one row per step with the right glyph and counter', () => {
+  it('renders one row per step with the "X of Y Done" counter (image-1 spec)', () => {
     render(<ActivityCard item={makePlan()} />)
-    // counter 1/3 because only one is completed
-    expect(screen.getByText('1/3')).toBeTruthy()
+    // Header counter follows the image-1 wording exactly.
+    expect(screen.getByText('1 of 3 Done')).toBeTruthy()
     expect(screen.getByText('Read source files')).toBeTruthy()
     expect(screen.getByText('Write the fix')).toBeTruthy()
     expect(screen.getByText('Run tests')).toBeTruthy()
@@ -39,17 +39,36 @@ describe('PlanCard (ActivityCard kind="plan")', () => {
     expect(inProgress?.className).not.toContain('line-through')
   })
 
-  it('falls back to the generic activity pill when steps[] is empty', () => {
+  it('renders a "Creating plan…" placeholder card when steps[] is empty', () => {
+    // Plan tool fired but no structured / extractable steps yet. Earlier
+    // behaviour fell through to the generic chip — the user explicitly
+    // called that out as wrong UX. Slot is now always reserved.
     const item: ActivityItem = {
       type: 'activity',
       id: 'plan-1',
       startedAt: 0,
       kind: 'plan',
       label: 'plan',
-      status: 'success',
+      status: 'running',
     }
     render(<ActivityCard item={item} />)
-    // The plan-specific x/y counter shouldn't appear; the generic activity pill should.
-    expect(screen.queryByText('0/0')).toBeNull()
+    expect(screen.getByText('Creating plan…')).toBeTruthy()
+    // Generic chip's label "plan" shouldn't be visible since PlanCard
+    // owns the slot now.
+    expect(screen.queryByText(/^TOOL$/)).toBeNull()
+  })
+
+  it('surfaces the model explanation inside the placeholder row when available', () => {
+    const item: ActivityItem = {
+      type: 'activity',
+      id: 'plan-2',
+      startedAt: 0,
+      kind: 'plan',
+      label: 'plan',
+      status: 'running',
+      detail: '这是一个用于展示 todo list 的小计划。',
+    }
+    render(<ActivityCard item={item} />)
+    expect(screen.getByText('这是一个用于展示 todo list 的小计划。')).toBeTruthy()
   })
 })

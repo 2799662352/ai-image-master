@@ -89,13 +89,13 @@ description: "unterminated
     expect(summary.skills).toEqual([
       {
         name: 'workspace-skill',
-        scope: 'workspace',
+        scope: 'repo',
         description: 'Use from workspace.',
         path: path.join(cwd, '.agents', 'skills', 'workspace-skill', 'SKILL.md'),
       },
       {
         name: 'home-skill',
-        scope: 'home',
+        scope: 'user',
         description: '',
         path: path.join(home, '.agents', 'skills', 'home-skill', 'SKILL.md'),
       },

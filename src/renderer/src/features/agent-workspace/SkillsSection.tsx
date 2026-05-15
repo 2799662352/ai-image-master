@@ -11,6 +11,9 @@ type SkillsApi = {
     deleteSkill?: (id: string) => Promise<AgentApiResult>
   }
   openSkillsFolder?: () => Promise<AgentApiResult & { path?: string }>
+  shell?: {
+    showItemInFolder?: (p: string) => Promise<void>
+  }
 }
 
 type SkillsSectionProps = {
@@ -115,8 +118,23 @@ export function SkillsSection({ insertIntoChat }: SkillsSectionProps): React.JSX
     setFolderMessage((result as { error?: string }).error ?? '打开 Skills 文件夹失败。')
   }
 
-  const personalItems = items.filter((item) => item.scope === 'personal')
-  const workspaceItems = items.filter((item) => item.scope === 'workspace')
+  async function revealSkillInFolder(filePath: string): Promise<void> {
+    const electron = getElectronApi()
+    if (!electron?.shell?.showItemInFolder) {
+      setFolderMessage('打开所在位置 API 不可用。')
+      return
+    }
+    try {
+      await electron.shell.showItemInFolder(filePath)
+    } catch (reason) {
+      setFolderMessage(errorMessage(reason))
+    }
+  }
+
+  // Codex official scope names: user / repo / system (https://developers.openai.com/codex/skills)
+  const userItems = items.filter((item) => item.scope === 'user')
+  const repoItems = items.filter((item) => item.scope === 'repo')
+  const systemItems = items.filter((item) => item.scope === 'system')
 
   if (loading) {
     return (
@@ -180,23 +198,37 @@ export function SkillsSection({ insertIntoChat }: SkillsSectionProps): React.JSX
       ) : (
         <>
           <SkillGroup
-            title="Workspace (<projectRoot>/.agents)"
-            items={workspaceItems}
+            title="REPO (<projectRoot>/.agents)"
+            items={repoItems}
             confirmDelete={confirmDelete}
             onConfirmDelete={setConfirmDelete}
             onDelete={deleteSkill}
             onEdit={setEditing}
             onInsert={handleInsert}
+            onReveal={revealSkillInFolder}
           />
           <SkillGroup
-            title="Personal (~/.agents)"
-            items={personalItems}
+            title="USER (~/.agents)"
+            items={userItems}
             confirmDelete={confirmDelete}
             onConfirmDelete={setConfirmDelete}
             onDelete={deleteSkill}
             onEdit={setEditing}
             onInsert={handleInsert}
+            onReveal={revealSkillInFolder}
           />
+          {systemItems.length > 0 ? (
+            <SkillGroup
+              title="SYSTEM (随应用打包，只读)"
+              items={systemItems}
+              confirmDelete={confirmDelete}
+              onConfirmDelete={setConfirmDelete}
+              onDelete={deleteSkill}
+              onEdit={setEditing}
+              onInsert={handleInsert}
+              onReveal={revealSkillInFolder}
+            />
+          ) : null}
         </>
       )}
     </section>
@@ -211,6 +243,7 @@ function SkillGroup({
   onDelete,
   onEdit,
   onInsert,
+  onReveal,
 }: {
   title: string
   items: CodexSkillListItem[]
@@ -219,6 +252,7 @@ function SkillGroup({
   onDelete: (id: string) => Promise<void>
   onEdit: (id: string) => void
   onInsert: (name: string) => void
+  onReveal: (path: string) => Promise<void>
 }): React.JSX.Element {
   return (
     <section className="space-y-3">
@@ -229,11 +263,20 @@ function SkillGroup({
         </div>
       ) : (
         <div className="space-y-3">
-          {items.map((item) => (
+          {items.map((item) => {
+            const readOnly = item.readOnly === true || item.scope === 'system'
+            return (
             <article key={item.id} className="rounded-xl border border-cyan-400/15 bg-zinc-950/70 p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <h4 className="text-base font-semibold text-zinc-100">{item.name}</h4>
+                  <h4 className="text-base font-semibold text-zinc-100">
+                    {item.name}
+                    {readOnly ? (
+                      <span className="ml-2 rounded border border-zinc-700 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-zinc-400">
+                        Read-only
+                      </span>
+                    ) : null}
+                  </h4>
                   {item.description ? <p className="mt-1 text-sm text-zinc-400">{item.description}</p> : null}
                   <p className="mt-2 break-all text-xs text-zinc-500">{item.path}</p>
                 </div>
@@ -247,20 +290,33 @@ function SkillGroup({
                   </button>
                   <button
                     type="button"
-                    aria-label={`Edit ${item.name}`}
-                    onClick={() => onEdit(item.id)}
+                    aria-label={`Open location of ${item.name}`}
+                    title="在文件管理器中打开"
+                    onClick={() => void onReveal(item.path)}
                     className="cursor-pointer rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition-colors duration-200 hover:border-cyan-400/40 hover:text-cyan-100"
                   >
-                    Edit
+                    打开位置
                   </button>
-                  <button
-                    type="button"
-                    aria-label={`Delete ${item.name}`}
-                    onClick={() => onConfirmDelete(item.id)}
-                    className="cursor-pointer rounded-md border border-rose-400/30 px-3 py-1.5 text-sm text-rose-200 transition-colors duration-200 hover:bg-rose-500/10"
-                  >
-                    Delete
-                  </button>
+                  {!readOnly ? (
+                    <>
+                      <button
+                        type="button"
+                        aria-label={`Edit ${item.name}`}
+                        onClick={() => onEdit(item.id)}
+                        className="cursor-pointer rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition-colors duration-200 hover:border-cyan-400/40 hover:text-cyan-100"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Delete ${item.name}`}
+                        onClick={() => onConfirmDelete(item.id)}
+                        className="cursor-pointer rounded-md border border-rose-400/30 px-3 py-1.5 text-sm text-rose-200 transition-colors duration-200 hover:bg-rose-500/10"
+                      >
+                        Delete
+                      </button>
+                    </>
+                  ) : null}
                 </div>
               </div>
 
@@ -292,7 +348,8 @@ function SkillGroup({
                 </div>
               ) : null}
             </article>
-          ))}
+            )
+          })}
         </div>
       )}
     </section>

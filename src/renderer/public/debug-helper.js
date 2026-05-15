@@ -78,7 +78,7 @@ window.debugHelper = {
     
     // 完全检查
     fullCheck: function() {
-        console.clear();
+        // console.clear() disabled to reveal module loading errors
         console.log('🔍 开始完整检查...\n');
         
         this.checkDOMElements();

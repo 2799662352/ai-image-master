@@ -956,18 +956,18 @@ describe('CodexNotificationRouter', () => {
       })
     })
 
-    it('forwards plan deltas onto the activity card detail slot', () => {
+    it('drops PlanDeltaNotification (item/plan/delta) — text deltas have no PlanCard correspondence', () => {
+      // The plan ThreadItem's text field is a pre-rendered blob; its streaming
+      // deltas (PlanDeltaNotification) are flagged EXPERIMENTAL in the schema:
+      // "Clients should not assume concatenated deltas match the completed
+      // plan item content." We render the structured plan from the dedicated
+      // `turn/plan/updated` channel instead, so this stream is dropped.
       const router = new CodexNotificationRouter()
-      const event = router.route('item/plan/delta', {
-        threadId: 't', turnId: 'u', itemId: 'plan-1', delta: '1. read file\n2. patch',
-      })
-      expect(event).toEqual({
-        type: 'item_delta',
-        threadId: 't',
-        itemId: 'plan-1',
-        itemType: 'activity',
-        patch: { kind: 'mergeFields', fields: { detail: '1. read file\n2. patch' } },
-      })
+      expect(
+        router.route('item/plan/delta', {
+          threadId: 't', turnId: 'u', itemId: 'plan-1', delta: '1. read file\n2. patch',
+        }),
+      ).toBeNull()
     })
 
     // Codex echoes the user's prompt back as an `item.type === 'userMessage'`
@@ -1160,47 +1160,83 @@ describe('CodexNotificationRouter', () => {
     })
   })
 
-  describe('plan steps', () => {
-    it('extracts steps[] with normalised statuses on item/started', () => {
+  describe('plan steps (turn/plan/updated)', () => {
+    // Codex's `update_plan` / `todo_write` tool emits structured plan data via
+    // the `turn/plan/updated` notification (PR openai/codex#7329). The plan
+    // ThreadItem only carries a pre-rendered text blob in v2, so we route the
+    // structured plan exclusively through this dedicated channel.
+
+    it('synthesizes a plan ActivityItem keyed by `plan:${turnId}` with normalized steps', () => {
       const router = new CodexNotificationRouter()
-      const event = router.route('item/started', {
+      const event = router.route('turn/plan/updated', {
         threadId: 't',
-        item: {
-          id: 'plan-1',
-          type: 'plan',
-          plan: [
-            { step: 'Read source', status: 'completed' },
-            { step: 'Write fix', status: 'in_progress' },
-            { step: 'Run tests', status: 'pending' },
-          ],
-        },
+        turnId: 'turn-9',
+        explanation: null,
+        plan: [
+          { step: 'Read source', status: 'completed' },
+          { step: 'Write fix', status: 'in_progress' },
+          { step: 'Run tests', status: 'pending' },
+        ],
       })
-      expect(event).toMatchObject({
-        type: 'item_started',
+      expect(event).toEqual({
+        type: 'item_delta',
+        threadId: 't',
+        turnId: 'turn-9',
+        itemId: 'plan:turn-9',
         itemType: 'activity',
-        payload: {
-          kind: 'plan',
-          steps: [
-            { text: 'Read source', status: 'completed' },
-            { text: 'Write fix', status: 'in_progress' },
-            { text: 'Run tests', status: 'pending' },
-          ],
+        patch: {
+          kind: 'mergeFields',
+          fields: {
+            kind: 'plan',
+            label: 'plan',
+            steps: [
+              { text: 'Read source', status: 'completed' },
+              { text: 'Write fix', status: 'in_progress' },
+              { text: 'Run tests', status: 'pending' },
+            ],
+            status: 'running',
+          },
         },
       })
     })
 
-    it('accepts `text` as a fallback for `step` (older Codex builds)', () => {
+    it('flips status to success when every step is completed', () => {
       const router = new CodexNotificationRouter()
-      const event = router.route('item/started', {
+      const event = router.route('turn/plan/updated', {
         threadId: 't',
-        item: {
-          id: 'plan-1',
-          type: 'plan',
-          plan: [{ text: 'A', status: 'completed' }],
-        },
+        turnId: 'turn-9',
+        plan: [
+          { step: 'A', status: 'completed' },
+          { step: 'B', status: 'completed' },
+        ],
       })
       expect(event).toMatchObject({
-        payload: { steps: [{ text: 'A', status: 'completed' }] },
+        patch: { fields: { status: 'success' } },
+      })
+    })
+
+    it('surfaces explanation as the card detail when present', () => {
+      const router = new CodexNotificationRouter()
+      const event = router.route('turn/plan/updated', {
+        threadId: 't',
+        turnId: 'turn-9',
+        explanation: 'Refactoring db.ts before touching call sites',
+        plan: [{ step: 'A', status: 'pending' }],
+      })
+      expect(event).toMatchObject({
+        patch: { fields: { detail: 'Refactoring db.ts before touching call sites' } },
+      })
+    })
+
+    it('accepts `text` as a fallback for `step` (older / experimental gateways)', () => {
+      const router = new CodexNotificationRouter()
+      const event = router.route('turn/plan/updated', {
+        threadId: 't',
+        turnId: 'turn-9',
+        plan: [{ text: 'A', status: 'completed' }],
+      })
+      expect(event).toMatchObject({
+        patch: { fields: { steps: [{ text: 'A', status: 'completed' }] } },
       })
     })
 
@@ -1210,40 +1246,544 @@ describe('CodexNotificationRouter', () => {
       // garbage — we keep the entry but show it as pending so the user still
       // sees the step text.
       const router = new CodexNotificationRouter()
-      const event = router.route('item/started', {
+      const event = router.route('turn/plan/updated', {
         threadId: 't',
-        item: {
-          id: 'plan-1',
-          type: 'plan',
-          plan: [
-            { step: 'good', status: 'wat' },
-            null,
-            { step: 'no-status' },
-            { status: 'completed' }, // missing text → dropped
-          ],
-        },
+        turnId: 'turn-9',
+        plan: [
+          { step: 'good', status: 'wat' },
+          null,
+          { step: 'no-status' },
+          { status: 'completed' }, // missing text → dropped
+        ],
       })
-      expect((event as { payload: { steps: unknown } }).payload.steps).toEqual([
+      const fields = (event as { patch: { fields: { steps: unknown } } }).patch.fields
+      expect(fields.steps).toEqual([
         { text: 'good', status: 'pending' },
         { text: 'no-status', status: 'pending' },
       ])
     })
 
-    it('passes steps through item/completed too', () => {
+    it('returns null when turnId is missing (we need it for the synthetic itemId)', () => {
       const router = new CodexNotificationRouter()
-      const event = router.route('item/completed', {
-        threadId: 't',
+      expect(
+        router.route('turn/plan/updated', {
+          threadId: 't',
+          plan: [{ step: 'A', status: 'pending' }],
+        }),
+      ).toBeNull()
+    })
+
+    it('returns null when plan[] is empty / missing — no card to render', () => {
+      const router = new CodexNotificationRouter()
+      expect(
+        router.route('turn/plan/updated', { threadId: 't', turnId: 'u', plan: [] }),
+      ).toBeNull()
+      expect(
+        router.route('turn/plan/updated', { threadId: 't', turnId: 'u' }),
+      ).toBeNull()
+    })
+
+    it('drops `item/started` and `item/completed` for `type: "plan"` to avoid duplicating the PlanCard', () => {
+      // The plan ThreadItem (`{ type: 'plan', id, text }`) carries only a
+      // pre-rendered text blob in v2. Routing it through the generic activity
+      // pill would create a second card next to the structured PlanCard built
+      // from `turn/plan/updated`, confusing the user.
+      const router = new CodexNotificationRouter()
+      expect(
+        router.route('item/started', {
+          threadId: 't',
+          turnId: 'u',
+          item: { type: 'plan', id: 'plan-1', text: '' },
+        }),
+      ).toBeNull()
+      expect(
+        router.route('item/completed', {
+          threadId: 't',
+          turnId: 'u',
+          item: { type: 'plan', id: 'plan-1', text: '1. A\n2. B' },
+        }),
+      ).toBeNull()
+    })
+  })
+
+  // ---------------------------------------------------------------------
+  // Plan steps via dynamicToolCall (the actual wire shape Codex 0.130.0
+  // uses against non-Responses-API gateways — `update_plan` / `todo_write`
+  // arrives as a regular function tool call with the structured plan tucked
+  // inside `item.arguments.plan`, instead of the dedicated
+  // `turn/plan/updated` notification). Without these intercepts the user
+  // sees a generic "TOOL plan running" chip and nothing else; the
+  // structured steps are silently dropped.
+  // ---------------------------------------------------------------------
+  describe('plan steps (dynamicToolCall fallback)', () => {
+    const baseArgs = {
+      plan: [
+        { step: 'Phase 1: investigate', status: 'in_progress' },
+        { step: 'Phase 2: patch', status: 'pending' },
+      ],
+      explanation: 'Two-phase fix',
+    }
+
+    it('routes `item/started` with toolName=update_plan to the synthetic plan item', () => {
+      const router = new CodexNotificationRouter()
+      const event = router.route('item/started', {
+        threadId: 'thr',
+        turnId: 'tur',
         item: {
-          id: 'plan-1',
-          type: 'plan',
-          plan: [{ step: 'A', status: 'completed' }],
+          type: 'dynamicToolCall',
+          id: 'tool-1',
+          toolName: 'update_plan',
+          arguments: baseArgs,
+        },
+      })
+      expect(event).toEqual({
+        type: 'item_delta',
+        threadId: 'thr',
+        turnId: 'tur',
+        itemId: 'plan:tur',
+        itemType: 'activity',
+        patch: {
+          kind: 'mergeFields',
+          fields: {
+            kind: 'plan',
+            label: 'plan',
+            steps: [
+              { text: 'Phase 1: investigate', status: 'in_progress' },
+              { text: 'Phase 2: patch', status: 'pending' },
+            ],
+            status: 'running',
+            detail: 'Two-phase fix',
+          },
+        },
+      })
+    })
+
+    it('also detects the short alias `plan` and the rename target `todo_write`', () => {
+      const router = new CodexNotificationRouter()
+      for (const toolName of ['plan', 'todo_write', 'PLAN', 'Todo_Write']) {
+        const event = router.route('item/started', {
+          threadId: 'thr',
+          turnId: 'tur',
+          item: {
+            type: 'dynamicToolCall',
+            id: `tool-${toolName}`,
+            toolName,
+            arguments: baseArgs,
+          },
+        })
+        expect(event).not.toBeNull()
+        expect(event).toMatchObject({
+          itemId: 'plan:tur',
+          patch: { kind: 'mergeFields', fields: { kind: 'plan' } },
+        })
+      }
+    })
+
+    it('reads the toolName from `tool` or `name` when `toolName` is absent (v2 schema / MCP shape)', () => {
+      const router = new CodexNotificationRouter()
+      const viaTool = router.route('item/started', {
+        threadId: 'thr',
+        turnId: 'tur',
+        item: { type: 'dynamicToolCall', id: 'tc-1', tool: 'update_plan', arguments: baseArgs },
+      })
+      expect(viaTool).toMatchObject({ itemId: 'plan:tur' })
+      const viaName = router.route('item/started', {
+        threadId: 'thr',
+        turnId: 'tur',
+        item: { type: 'dynamicToolCall', id: 'tc-2', name: 'plan', arguments: baseArgs },
+      })
+      expect(viaName).toMatchObject({ itemId: 'plan:tur' })
+    })
+
+    it('parses arguments delivered as a JSON string (Responses-API function-call shape)', () => {
+      const router = new CodexNotificationRouter()
+      const event = router.route('item/started', {
+        threadId: 'thr',
+        turnId: 'tur',
+        item: {
+          type: 'dynamicToolCall',
+          id: 'tool-str',
+          toolName: 'update_plan',
+          arguments: JSON.stringify(baseArgs),
         },
       })
       expect(event).toMatchObject({
-        type: 'item_completed',
-        itemType: 'activity',
-        final: { steps: [{ text: 'A', status: 'completed' }] },
+        itemId: 'plan:tur',
+        patch: {
+          fields: {
+            kind: 'plan',
+            steps: [
+              { text: 'Phase 1: investigate', status: 'in_progress' },
+              { text: 'Phase 2: patch', status: 'pending' },
+            ],
+          },
+        },
       })
+    })
+
+    it('keeps status=running on intermediate `item/completed` when the snapshot still has pending/in_progress steps', () => {
+      // Codex calls `update_plan` repeatedly during a turn (once per step
+      // transition). Each individual tool call completes in milliseconds.
+      // We must NOT flip the card to success on every tool-call completion
+      // or the PlanCard would flash green between calls.
+      const router = new CodexNotificationRouter()
+      const event = router.route('item/completed', {
+        threadId: 'thr',
+        turnId: 'tur',
+        item: {
+          type: 'dynamicToolCall',
+          id: 'tool-mid',
+          toolName: 'update_plan',
+          arguments: baseArgs, // first step in_progress, second pending
+        },
+      })
+      expect(event).toMatchObject({
+        type: 'item_delta',
+        itemId: 'plan:tur',
+        patch: { kind: 'mergeFields', fields: { status: 'running' } },
+      })
+    })
+
+    it('flips status to success on the final `item/completed` when every step is completed', () => {
+      const router = new CodexNotificationRouter()
+      const event = router.route('item/completed', {
+        threadId: 'thr',
+        turnId: 'tur',
+        item: {
+          type: 'dynamicToolCall',
+          id: 'tool-final',
+          toolName: 'update_plan',
+          arguments: {
+            plan: [
+              { step: 'Phase 1: investigate', status: 'completed' },
+              { step: 'Phase 2: patch', status: 'completed' },
+            ],
+            explanation: 'Done',
+          },
+        },
+      })
+      expect(event).toMatchObject({
+        type: 'item_delta',
+        itemId: 'plan:tur',
+        patch: { kind: 'mergeFields', fields: { status: 'success' } },
+      })
+    })
+
+    it('upserts in-place across successive update_plan tool calls (single PlanCard, progressive status)', () => {
+      // Integration test for the "todolist marches forward" UX: three
+      // successive `update_plan` tool calls in the same turn should produce
+      // events that all target `plan:${turnId}`, so the renderer's
+      // `upsertItemInLastMessage` merges them into one card whose steps
+      // progress pending → in_progress → completed in place.
+      const router = new CodexNotificationRouter()
+      const turnId = 'tur'
+      const ev1 = router.route('item/started', {
+        threadId: 'thr',
+        turnId,
+        item: {
+          type: 'dynamicToolCall',
+          id: 'call-1',
+          toolName: 'update_plan',
+          arguments: {
+            plan: [
+              { step: 'A', status: 'in_progress' },
+              { step: 'B', status: 'pending' },
+              { step: 'C', status: 'pending' },
+            ],
+          },
+        },
+      })
+      const ev2 = router.route('item/started', {
+        threadId: 'thr',
+        turnId,
+        item: {
+          type: 'dynamicToolCall',
+          id: 'call-2',
+          toolName: 'update_plan',
+          arguments: {
+            plan: [
+              { step: 'A', status: 'completed' },
+              { step: 'B', status: 'in_progress' },
+              { step: 'C', status: 'pending' },
+            ],
+          },
+        },
+      })
+      const ev3 = router.route('item/completed', {
+        threadId: 'thr',
+        turnId,
+        item: {
+          type: 'dynamicToolCall',
+          id: 'call-3',
+          toolName: 'update_plan',
+          arguments: {
+            plan: [
+              { step: 'A', status: 'completed' },
+              { step: 'B', status: 'completed' },
+              { step: 'C', status: 'completed' },
+            ],
+          },
+        },
+      })
+      // All three events target the same synthetic id → same PlanCard.
+      expect(ev1).toMatchObject({ itemId: `plan:${turnId}` })
+      expect(ev2).toMatchObject({ itemId: `plan:${turnId}` })
+      expect(ev3).toMatchObject({ itemId: `plan:${turnId}` })
+      // Status flips only on the final call (all completed).
+      expect((ev1 as any).patch.fields.status).toBe('running')
+      expect((ev2 as any).patch.fields.status).toBe('running')
+      expect((ev3 as any).patch.fields.status).toBe('success')
+    })
+
+    it('also works for `collabToolCall` (Codex collab agent dispatch)', () => {
+      const router = new CodexNotificationRouter()
+      const event = router.route('item/started', {
+        threadId: 'thr',
+        turnId: 'tur',
+        item: {
+          type: 'collabToolCall',
+          id: 'collab-1',
+          toolName: 'plan',
+          arguments: baseArgs,
+        },
+      })
+      expect(event).toMatchObject({
+        itemId: 'plan:tur',
+        patch: { fields: { kind: 'plan' } },
+      })
+    })
+
+    it('falls through to the generic dynamicToolCall chip for non-plan tools', () => {
+      // Sanity check: arbitrary function tool calls still get the generic
+      // activity card so we don't accidentally swallow them.
+      const router = new CodexNotificationRouter()
+      const event = router.route('item/started', {
+        threadId: 'thr',
+        turnId: 'tur',
+        item: {
+          type: 'dynamicToolCall',
+          id: 'tool-search',
+          toolName: 'web_search',
+          arguments: { query: 'foo' },
+        },
+      })
+      expect(event).toMatchObject({
+        type: 'item_started',
+        itemType: 'activity',
+        payload: { kind: 'dynamicToolCall', label: 'web_search' },
+      })
+    })
+
+    // ---------------------------------------------------------------------
+    // Wire-truth regressions: Codex 0.130.0 ships a `TurnPlanStepStatus`
+    // enum with `#[serde(rename_all = "camelCase")]` for the
+    // `turn/plan/updated` notification, AND a separate `StepStatus` enum
+    // with `#[serde(rename_all = "snake_case")]` for the `update_plan`
+    // tool arguments. Earlier router builds only accepted snake_case so
+    // every `inProgress` step from `turn/plan/updated` silently downgraded
+    // to `pending`, making the PlanCard render look frozen.
+    //   - codex-rs/app-server-protocol/src/protocol/v2.rs (camelCase)
+    //   - codex-rs/protocol/src/plan_tool.rs (snake_case)
+    // ---------------------------------------------------------------------
+    it('accepts camelCase `inProgress` status from the v2 turn/plan/updated channel', () => {
+      const router = new CodexNotificationRouter()
+      const event = router.route('turn/plan/updated', {
+        threadId: 't',
+        turnId: 'u',
+        plan: [
+          { step: 'A', status: 'completed' },
+          { step: 'B', status: 'inProgress' }, // ← v2 camelCase
+          { step: 'C', status: 'pending' },
+        ],
+      })
+      expect((event as any).patch.fields.steps).toEqual([
+        { text: 'A', status: 'completed' },
+        { text: 'B', status: 'in_progress' }, // ← normalised to snake_case
+        { text: 'C', status: 'pending' },
+      ])
+    })
+
+    it('also tolerates kebab-case, PascalCase and synonyms (gateway rewrites in the wild)', () => {
+      const router = new CodexNotificationRouter()
+      const event = router.route('turn/plan/updated', {
+        threadId: 't',
+        turnId: 'u',
+        plan: [
+          { step: 'kebab', status: 'in-progress' },
+          { step: 'pascal', status: 'InProgress' },
+          { step: 'screaming', status: 'IN_PROGRESS' },
+          { step: 'synonym-active', status: 'active' },
+          { step: 'synonym-running', status: 'running' },
+          { step: 'done-alias', status: 'done' },
+        ],
+      })
+      expect((event as any).patch.fields.steps).toEqual([
+        { text: 'kebab', status: 'in_progress' },
+        { text: 'pascal', status: 'in_progress' },
+        { text: 'screaming', status: 'in_progress' },
+        { text: 'synonym-active', status: 'in_progress' },
+        { text: 'synonym-running', status: 'in_progress' },
+        { text: 'done-alias', status: 'completed' },
+      ])
+    })
+
+    it('reads dynamicToolCall.tool (v2 canonical), not just .toolName / .name', () => {
+      // v2 ThreadItem schema names the field `tool: String` — earlier router
+      // builds only read `toolName` / `name`, so on Codex 0.130.0 the plan
+      // tool would never be recognised and we'd fall through to a useless
+      // generic chip labelled `'tool'`.
+      const router = new CodexNotificationRouter()
+      const event = router.route('item/started', {
+        threadId: 'thr',
+        turnId: 'tur',
+        item: {
+          type: 'dynamicToolCall',
+          id: 'call-canonical',
+          // No `toolName`, no `name` — only the v2 canonical `tool` field.
+          tool: 'update_plan',
+          arguments: {
+            plan: [{ step: 'step', status: 'in_progress' }],
+          },
+        },
+      })
+      expect(event).toMatchObject({
+        itemId: 'plan:tur',
+        patch: {
+          kind: 'mergeFields',
+          fields: {
+            kind: 'plan',
+            steps: [{ text: 'step', status: 'in_progress' }],
+          },
+        },
+      })
+    })
+
+    it('still emits a plan placeholder card when args have no plan shape (image-2 wire case)', () => {
+      // The user's gateway sometimes invokes the `plan` tool with no
+      // structured payload — args either missing, a freeform string, or
+      // an unrelated object. Earlier behaviour fell through to a generic
+      // "TOOL plan running" chip + EvidenceDetails dump, which the user
+      // explicitly called out as wrong UX. The card should *always*
+      // reserve a slot when the plan tool fires; PlanCard renders a
+      // "Creating plan…" placeholder when steps[] is empty.
+      const router = new CodexNotificationRouter()
+      const event = router.route('item/started', {
+        threadId: 'thr',
+        turnId: 'tur',
+        item: {
+          type: 'dynamicToolCall',
+          id: 'tool-empty',
+          toolName: 'plan',
+          arguments: { unrelated: 'data' },
+        },
+      })
+      expect(event).toMatchObject({
+        type: 'item_delta',
+        itemId: 'plan:tur',
+        itemType: 'activity',
+        patch: {
+          kind: 'mergeFields',
+          fields: {
+            kind: 'plan',
+            steps: [],
+            status: 'running',
+          },
+        },
+      })
+    })
+
+    it('extracts a plan from `args.todo` singular (Codex PR #10124 future-proof path)', () => {
+      const router = new CodexNotificationRouter()
+      const event = router.route('item/started', {
+        threadId: 'thr',
+        turnId: 'tur',
+        item: {
+          type: 'dynamicToolCall',
+          id: 'todo-1',
+          tool: 'todo_write',
+          arguments: {
+            todo: [
+              { step: 'first', status: 'in_progress' },
+              { step: 'second', status: 'pending' },
+            ],
+          },
+        },
+      })
+      expect((event as any).patch.fields.steps).toEqual([
+        { text: 'first', status: 'in_progress' },
+        { text: 'second', status: 'pending' },
+      ])
+    })
+
+    it('falls back to freeform-string extraction when args are a markdown prose plan', () => {
+      // Many Chinese gateways front of OpenAI-compat APIs forward
+      // function-call arguments as a raw markdown string instead of a
+      // structured JSON object. Without this fallback the PlanCard sits
+      // empty even though the model clearly *did* write a plan.
+      const router = new CodexNotificationRouter()
+      const event = router.route('item/started', {
+        threadId: 'thr',
+        turnId: 'tur',
+        item: {
+          type: 'dynamicToolCall',
+          id: 'prose-1',
+          tool: 'plan',
+          arguments:
+            '这是一个用于展示 todo list 的小计划。\n' +
+            '1. 确认展示格式\n' +
+            '2. 列出简单任务\n' +
+            '3. 根据反馈调整\n' +
+            '当前第 2 项是进行中状态。',
+        },
+      })
+      expect((event as any).patch.fields.steps).toEqual([
+        { text: '确认展示格式', status: 'pending' },
+        { text: '列出简单任务', status: 'in_progress' },
+        { text: '根据反馈调整', status: 'pending' },
+      ])
+    })
+
+    it('parses freeform plan from args.explanation when no structured plan field', () => {
+      const router = new CodexNotificationRouter()
+      const event = router.route('item/started', {
+        threadId: 'thr',
+        turnId: 'tur',
+        item: {
+          type: 'dynamicToolCall',
+          id: 'expl-1',
+          tool: 'update_plan',
+          arguments: {
+            explanation: '- 第一步\n- 第二步\n- 第三步',
+          },
+        },
+      })
+      expect((event as any).patch.fields.steps).toEqual([
+        { text: '第一步', status: 'pending' },
+        { text: '第二步', status: 'pending' },
+        { text: '第三步', status: 'pending' },
+      ])
+    })
+
+    it('honours explicit checkbox / glyph status markers in freeform prose', () => {
+      const router = new CodexNotificationRouter()
+      const event = router.route('item/started', {
+        threadId: 'thr',
+        turnId: 'tur',
+        item: {
+          type: 'dynamicToolCall',
+          id: 'mixed-1',
+          tool: 'plan',
+          arguments:
+            '1. [x] step one done\n' +
+            '2. [-] step two in progress\n' +
+            '3. [ ] step three not started',
+        },
+      })
+      expect((event as any).patch.fields.steps).toEqual([
+        { text: 'step one done', status: 'completed' },
+        { text: 'step two in progress', status: 'in_progress' },
+        { text: 'step three not started', status: 'pending' },
+      ])
     })
   })
 

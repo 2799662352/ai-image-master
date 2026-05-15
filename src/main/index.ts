@@ -25,7 +25,7 @@ import {
 } from './services/smartErase'
 import { AgentManager } from './agent/AgentManager'
 import { AttachmentService } from './agent/AttachmentService'
-import { getPrisma, shutdownDatabase } from './agent/db'
+import { consumeStartupNotice, getPrisma, shutdownDatabase } from './agent/db'
 import { registerAgentIpc } from './agent/ipc'
 import { ThreadStore } from './agent/ThreadStore'
 import { registerAttachmentsTreeIpc } from './file-explorer/AttachmentTreeProvider'
@@ -191,9 +191,53 @@ let customGalleryPath: string | null = null
 let mainWindow: BrowserWindow | null = null
 let agentManager: AgentManager | null = null
 let agentMcpRuntime: McpRuntime | null = null
-let agentIpcRegistered = false
 let agentRuntimeCleanedUp = false
 let isQuittingAfterAgentCleanup = false
+
+// Single-instance lock — defends against the PGlite #884 dual-instance
+// corruption pathway. PGlite is "Postgres in single-user mode" (per upstream
+// docs/filesystems.md) and concurrent opens of the same dataDir reliably
+// brick it with `RuntimeError: Aborted()`. Without this lock, a user can
+// open two copies of the installer side-by-side and silently corrupt their
+// agent thread history. With it, the second launch hands off to the first
+// (focuses its window) and quits cleanly.
+//
+// @see https://github.com/electric-sql/pglite/issues/884
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  app.quit()
+  // `app.quit()` is asynchronous; calling `process.exit` here would race the
+  // event loop. The renderer never starts because we exit `whenReady` early.
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    }
+  })
+}
+
+// Deferred promise resolved when AgentManager finishes initializing.
+// Agent IPC handlers (registered eagerly at app ready) `await` this so renderer
+// calls that fire before the manager is ready block instead of crashing with
+// "No handler registered" — the first-launch race we hit before this fix.
+let resolveAgentManager: (manager: AgentManager) => void = () => {}
+let rejectAgentManager: (error: unknown) => void = () => {}
+const agentManagerReadyPromise: Promise<AgentManager> = new Promise((resolve, reject) => {
+  resolveAgentManager = resolve
+  rejectAgentManager = reject
+})
+// Mark the promise as handled so an early-init failure does not show up as an
+// unhandled rejection. Handlers that await the promise will still see the error.
+agentManagerReadyPromise.catch(() => {})
+
+function getReadyAgentManager(): Promise<AgentManager> {
+  return agentManagerReadyPromise
+}
+
+function getReadyToolRouter() {
+  return agentMcpRuntime?.router ?? null
+}
 
 function initPaths(): void {
   userDataPath = app.getPath('userData')
@@ -507,35 +551,79 @@ function createWindow(): void {
 }
 
 async function initAgentRuntime(win: BrowserWindow): Promise<void> {
-  if (agentManager && agentMcpRuntime) {
+  // Once the AgentManager exists this conversation is initialized — we just
+  // rebind the new BrowserWindow. We deliberately do NOT key off
+  // `agentMcpRuntime` here because it can legitimately be null when the
+  // local HTTP listener failed to bind (see startCatimationMcpServer); the
+  // rest of the agent surface is still usable in that case.
+  if (agentManager) {
     agentManager.setWindow(win)
-    agentMcpRuntime.router.setWindow(win)
+    agentMcpRuntime?.router.setWindow(win)
     return
   }
 
-  const prisma = await getPrisma()
-  const threadStore = new ThreadStore(prisma)
-  const attachmentService = new AttachmentService(prisma)
-  agentMcpRuntime = await startCatimationMcpServer(win)
-  agentManager = new AgentManager({
-    userDataDir: app.getPath('userData'),
-    win,
-    store: threadStore,
-    attachments: attachmentService,
-  })
-  void attachmentService.cleanup().catch((error) => {
-    console.warn('[AgentRuntime] attachment cleanup failed:', error)
-  })
-
-  if (!agentIpcRegistered) {
-    registerAgentIpc(agentManager, agentMcpRuntime.router)
-    agentIpcRegistered = true
-  }
-
   try {
-    await agentManager.start()
+    const prisma = await getPrisma()
+    const threadStore = new ThreadStore(prisma)
+    const attachmentService = new AttachmentService(prisma)
+    agentMcpRuntime = await startCatimationMcpServer(win)
+    if (!agentMcpRuntime) {
+      console.warn(
+        '[AgentRuntime] catimation MCP HTTP listener unavailable; ' +
+          'agent will run without the local MCP tool surface.',
+      )
+    }
+    agentManager = new AgentManager({
+      userDataDir: app.getPath('userData'),
+      win,
+      store: threadStore,
+      attachments: attachmentService,
+    })
+    // Unblock any IPC handlers that fired before the manager was ready (e.g.
+    // the renderer's mount-time `agent:list-threads`).
+    resolveAgentManager(agentManager)
+    void attachmentService.cleanup().catch((error) => {
+      console.warn('[AgentRuntime] attachment cleanup failed:', error)
+    })
+
+    try {
+      await agentManager.start()
+    } catch (error) {
+      console.error('[AgentRuntime] Codex backend init failed:', error)
+    }
+
+    // Flush any startup notice queued by the PGlite recovery branch (e.g.
+    // "数据库已自动重建"). Two-step delivery to dodge two well-known races:
+    //   1. webContents.send is fire-and-forget — if the page hasn't finished
+    //      loading, the message is dropped on the floor (electron/electron#9384
+    //      community thread). Wait for did-finish-load if needed.
+    //   2. Even after did-finish-load, the renderer's ipcRenderer.on('agent:event')
+    //      subscription happens inside React effects which run a tick later. Add
+    //      a small grace delay so the chat store is mounted and listening.
+    const startupNotice = consumeStartupNotice()
+    if (startupNotice && win && !win.isDestroyed()) {
+      const dispatchNotice = (): void => {
+        if (win.isDestroyed()) return
+        // 250ms: empirically lands after AgentChatPanel mounts and registers
+        // its IPC listener via store init. Tested with `npm run dev`; if it
+        // becomes flaky, switch to an explicit "renderer-ready" handshake.
+        setTimeout(() => {
+          if (!win.isDestroyed()) {
+            win.webContents.send('agent:event', { type: 'notice', notice: startupNotice })
+          }
+        }, 250)
+      }
+      if (win.webContents.isLoading()) {
+        win.webContents.once('did-finish-load', dispatchNotice)
+      } else {
+        dispatchNotice()
+      }
+    }
   } catch (error) {
-    console.error('[AgentRuntime] Codex backend init failed:', error)
+    // Surface the real init failure to renderer IPC calls instead of leaving
+    // them hanging forever on a never-resolving promise.
+    rejectAgentManager(error)
+    throw error
   }
 }
 
@@ -570,6 +658,12 @@ app.whenReady().then(async () => {
   await ensureDirectories()
 
   console.log(`[Performance] Paths initialized: ${Date.now() - startTime}ms`)
+
+  // Register agent IPC handlers BEFORE the window starts loading so the
+  // renderer's mount-time calls (e.g. `agent:list-threads`) always hit a
+  // registered handler. Each handler awaits `getReadyAgentManager()` so it
+  // transparently blocks until `initAgentRuntime` resolves the manager.
+  registerAgentIpc(getReadyAgentManager, getReadyToolRouter)
 
   // 关键路径：创建窗口
   createWindow()
@@ -787,20 +881,8 @@ ipcMain.handle('shell:open-external', async (_event, raw: unknown) => {
   return { success: true }
 })
 
-ipcMain.handle('agent:open-thread', async (_event, threadId: string) => {
-  if (!agentManager) throw new Error('Agent runtime not initialized')
-  return agentManager.openThread(threadId)
-})
-
-ipcMain.handle('agent:rename-thread', async (_event, threadId: string, title: string) => {
-  if (!agentManager) throw new Error('Agent runtime not initialized')
-  await agentManager.renameThread(threadId, title)
-})
-
-ipcMain.handle('agent:delete-thread', async (_event, threadId: string) => {
-  if (!agentManager) throw new Error('Agent runtime not initialized')
-  await agentManager.deleteThread(threadId)
-})
+// Agent thread CRUD channels (open/rename/delete) are wired by
+// `registerAgentIpc` above; no duplicate top-level stubs needed.
 
 // 图片操作
 ipcMain.handle('save-image', async (_event, { base64Data, filename }: ImageSaveParams) => {

@@ -63,6 +63,11 @@ interface GenerationSlice {
   passCards: unknown[]
   progressPercentage: number
   regenerateCount: number
+  // Number of jobs waiting in the Director-mode FIFO queue. The currently
+  // running job (if any) is NOT counted here — that one lives in
+  // useDirectorGeneration's internal currentJobIdRef. Decremented when a
+  // queued job starts running; incremented when enqueueGeneration is called.
+  pendingCount: number
   setIsGenerating: (val: boolean) => void
   setGenerationStatus: (status: GenerationStatus) => void
   setIsProcessingFiles: (val: boolean) => void
@@ -75,6 +80,7 @@ interface GenerationSlice {
   pushProgress: (progress: ProgressData) => void
   resetProgress: () => void
   setRegenerateCount: (val: number) => void
+  setPendingCount: (val: number | ((prev: number) => number)) => void
 }
 
 interface ConfigSlice {
@@ -429,7 +435,7 @@ const initialImageState: Pick<ImageSlice, 'referenceImages'> = {
 
 const initialGenerationState: Pick<
   GenerationSlice,
-  'isGenerating' | 'generationStatus' | 'isProcessingFiles' | 'generatedResults' | 'lastAnalysisResult' | 'lastCharacterAnchor' | 'lastPipelineState' | 'viewState' | 'currentProgress' | 'passStatuses' | 'passCards' | 'progressPercentage' | 'regenerateCount'
+  'isGenerating' | 'generationStatus' | 'isProcessingFiles' | 'generatedResults' | 'lastAnalysisResult' | 'lastCharacterAnchor' | 'lastPipelineState' | 'viewState' | 'currentProgress' | 'passStatuses' | 'passCards' | 'progressPercentage' | 'regenerateCount' | 'pendingCount'
 > = {
   isGenerating: false,
   generationStatus: 'idle' as GenerationStatus,
@@ -444,6 +450,7 @@ const initialGenerationState: Pick<
   regenerateCount: 2,
   passCards: [],
   progressPercentage: 0,
+  pendingCount: 0,
 }
 
 const createInitialConfigState = (): Pick<
@@ -568,6 +575,13 @@ const createGenerationSlice: StateCreator<DirectorStore, [], [], GenerationSlice
     passCards: [],
     progressPercentage: 0,
   }),
+  setPendingCount: (val) =>
+    set((state) => {
+      const next = typeof val === 'function'
+        ? (val as (prev: number) => number)(state.pendingCount)
+        : val
+      return { pendingCount: Math.max(0, next) }
+    }),
 })
 
 const createConfigSlice: StateCreator<DirectorStore, [], [], ConfigSlice> = (set) => ({

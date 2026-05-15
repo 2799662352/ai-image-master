@@ -71,5 +71,11 @@ function labelFor(kind: AgentNotice['kind']): string {
       return 'auto approve'
     case 'autoApprovalReviewCompleted':
       return 'auto approved'
+    case 'contextHighWatermark':
+      return 'context'
+    case 'attachmentSkipped':
+      return 'attachment'
+    case 'pgliteReset':
+      return 'database'
   }
 }

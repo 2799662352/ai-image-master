@@ -31,6 +31,8 @@ describe('useUnderstandStore', () => {
     expect(state.question).toBe('')
     expect(state.analysisResult).toBe('')
     expect(state.analyzing).toBe(false)
+    expect(state.inFlightCount).toBe(0)
+    expect(state.latestSubmitId).toBe(0)
     expect(state.error).toBeNull()
   })
 
@@ -104,6 +106,67 @@ describe('useUnderstandStore', () => {
       await useUnderstandStore.getState().analyze(api)
 
       expect(useUnderstandStore.getState().error).toBe('42')
+    })
+
+    // Regression: previously the button gated on `analyzing` so users had to
+    // wait for a slow vision call to finish before re-asking. Now multiple
+    // analyses can fly concurrently; the most recent submit wins on the
+    // visible analysisResult (out-of-order completions don't clobber it).
+    it('supports concurrent fires — newest submit wins on result', async () => {
+      useUnderstandStore.setState({ imageUrl: 'http://img.jpg' })
+
+      let resolveOld: (v: any) => void = () => {}
+      let resolveNew: (v: any) => void = () => {}
+      const pOld = new Promise((r) => { resolveOld = r })
+      const pNew = new Promise((r) => { resolveNew = r })
+
+      const api = createMockApi({
+        understandImage: vi
+          .fn()
+          .mockImplementationOnce(() => pOld)
+          .mockImplementationOnce(() => pNew),
+      })
+
+      const fOld = useUnderstandStore.getState().analyze(api)
+      expect(useUnderstandStore.getState().inFlightCount).toBe(1)
+      expect(useUnderstandStore.getState().analyzing).toBe(true)
+
+      const fNew = useUnderstandStore.getState().analyze(api)
+      expect(useUnderstandStore.getState().inFlightCount).toBe(2)
+
+      // OLD resolves LAST but its result should NOT overwrite NEW's.
+      resolveNew({ content: 'fresh answer' })
+      await fNew
+      expect(useUnderstandStore.getState().analysisResult).toBe('fresh answer')
+      expect(useUnderstandStore.getState().inFlightCount).toBe(1)
+
+      resolveOld({ content: 'stale answer' })
+      await fOld
+      const final = useUnderstandStore.getState()
+      // stale answer is dropped — last-write-wins on submit order, not completion order
+      expect(final.analysisResult).toBe('fresh answer')
+      expect(final.inFlightCount).toBe(0)
+      expect(final.analyzing).toBe(false)
+    })
+
+    it('previous analysisResult stays visible while new analysis is in flight', async () => {
+      useUnderstandStore.setState({
+        imageUrl: 'http://img.jpg',
+        analysisResult: 'previous answer',
+      })
+
+      let resolve: (v: any) => void = () => {}
+      const p = new Promise((r) => { resolve = r })
+      const api = createMockApi({ understandImage: vi.fn().mockReturnValueOnce(p) })
+
+      const f = useUnderstandStore.getState().analyze(api)
+      // While the new call is in flight, the old answer is still on screen.
+      expect(useUnderstandStore.getState().analysisResult).toBe('previous answer')
+      expect(useUnderstandStore.getState().analyzing).toBe(true)
+
+      resolve({ content: 'new answer' })
+      await f
+      expect(useUnderstandStore.getState().analysisResult).toBe('new answer')
     })
   })
 })

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import {
   TEMPLATE_MAP,
   persistTemplateOverride,
@@ -8,6 +8,7 @@ import {
   updateCustomTemplate,
   getAllTemplates,
 } from '../constants/templates'
+import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea'
 
 interface EditorState {
   key: string
@@ -36,6 +37,14 @@ export function TemplatePickerModal({
 }: TemplatePickerModalProps) {
   const [editor, setEditor] = useState<EditorState | null>(null)
   const [listVersion, setListVersion] = useState(0)
+  const prefixRef = useRef<HTMLTextAreaElement>(null)
+  const suffixRef = useRef<HTMLTextAreaElement>(null)
+  const negativeRef = useRef<HTMLTextAreaElement>(null)
+  // Hooks must run unconditionally; pass '' when editor is null so the
+  // hook is a cheap no-op (refs are null until the editor opens).
+  useAutosizeTextarea(prefixRef, editor?.prefix ?? '', { minRows: 4, maxRows: 20 })
+  useAutosizeTextarea(suffixRef, editor?.suffix ?? '', { minRows: 3, maxRows: 16 })
+  useAutosizeTextarea(negativeRef, editor?.negative ?? '', { minRows: 3, maxRows: 16 })
 
   const active = currentTemplate ? TEMPLATE_MAP[currentTemplate] : null
 
@@ -226,10 +235,11 @@ export function TemplatePickerModal({
                   前缀提示词 (Prefix)
                 </label>
                 <textarea
+                  ref={prefixRef}
                   value={editor.prefix}
                   onChange={(e) => setEditor({ ...editor, prefix: e.target.value })}
                   rows={4}
-                  className="w-full px-3 py-2 bg-[#27272A] border border-[#3F3F46] rounded-none text-white text-sm font-mono focus:outline-none focus:border-[#FCE300] resize-y"
+                  className="w-full px-3 py-2 bg-[#27272A] border border-[#3F3F46] rounded-none text-white text-sm font-mono focus:outline-none focus:border-[#FCE300] resize-none transition-[height] duration-100"
                 />
               </div>
               <div>
@@ -237,10 +247,11 @@ export function TemplatePickerModal({
                   后缀提示词 (Suffix)
                 </label>
                 <textarea
+                  ref={suffixRef}
                   value={editor.suffix}
                   onChange={(e) => setEditor({ ...editor, suffix: e.target.value })}
                   rows={3}
-                  className="w-full px-3 py-2 bg-[#27272A] border border-[#3F3F46] rounded-none text-white text-sm font-mono focus:outline-none focus:border-[#FCE300] resize-y"
+                  className="w-full px-3 py-2 bg-[#27272A] border border-[#3F3F46] rounded-none text-white text-sm font-mono focus:outline-none focus:border-[#FCE300] resize-none transition-[height] duration-100"
                 />
               </div>
               <div>
@@ -260,11 +271,12 @@ export function TemplatePickerModal({
                   </button>
                 </div>
                 <textarea
+                  ref={negativeRef}
                   value={editor.negative}
                   onChange={(e) => setEditor({ ...editor, negative: e.target.value })}
                   rows={3}
                   disabled={!editor.negativeEnabled}
-                  className={`w-full px-3 py-2 bg-[#27272A] border border-[#3F3F46] rounded-none text-white text-sm font-mono focus:outline-none focus:border-[#FCE300] resize-y ${
+                  className={`w-full px-3 py-2 bg-[#27272A] border border-[#3F3F46] rounded-none text-white text-sm font-mono focus:outline-none focus:border-[#FCE300] resize-none transition-[height] duration-100 ${
                     !editor.negativeEnabled ? 'opacity-30' : ''
                   }`}
                 />

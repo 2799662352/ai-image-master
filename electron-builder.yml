@@ -48,6 +48,14 @@ extraResources:
     to: skills
     filter:
       - "**/*"
+  # System-scope Codex Agent skills (deep-agents-*, etc.) shipped read-only
+  # with the installer. resolveWorkspacePaths exposes these under the
+  # 'system' skill scope (per Codex docs:
+  # https://developers.openai.com/codex/skills) when app.isPackaged === true.
+  - from: .agents/skills
+    to: .agents/skills
+    filter:
+      - "**/*.md"
 
 asarUnpack:
   - resources/**

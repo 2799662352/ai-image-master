@@ -6,6 +6,7 @@ import type {
   CodexConfigScope,
   CodexSkillInput,
   CodexSkillListItem,
+  CodexSkillListScope,
   CodexWorkspacePaths,
 } from '../../types/agent'
 
@@ -13,6 +14,12 @@ export interface ResolvePathsInput {
   home: string
   cwd: string
   userData: string
+  /**
+   * Electron `process.resourcesPath` when running in packaged mode. When provided,
+   * bundled skills shipped inside the installer at `<resourcesPath>/.agents/skills`
+   * are exposed as a read-only 'bundled' scope.
+   */
+  resourcesPath?: string
 }
 
 export function resolveWorkspacePaths(input: ResolvePathsInput): CodexWorkspacePaths {
@@ -21,6 +28,9 @@ export function resolveWorkspacePaths(input: ResolvePathsInput): CodexWorkspaceP
     personalSkillsRoot: path.join(input.home, '.agents', 'skills'),
     workspaceConfigToml: path.join(input.cwd, '.codex', 'workspace-mcp.toml'),
     workspaceSkillsRoot: path.join(input.cwd, '.agents', 'skills'),
+    systemSkillsRoot: input.resourcesPath
+      ? path.join(input.resourcesPath, '.agents', 'skills')
+      : undefined,
     runtimeConfigToml: path.join(input.userData, 'codex-runtime', 'config.toml'),
     auditLogPath: path.join(input.userData, 'codex-runtime', 'audit.log'),
   }
@@ -179,7 +189,7 @@ function buildSkillFile(input: CodexSkillInput): string {
 
 async function listSkillsInRoot(
   root: string,
-  scope: CodexConfigScope,
+  scope: CodexSkillListScope,
 ): Promise<CodexSkillListItem[]> {
   const entries: CodexSkillListItem[] = []
   let dirents: import('node:fs').Dirent[]
@@ -188,6 +198,7 @@ async function listSkillsInRoot(
   } catch {
     return []
   }
+  const readOnly = scope === 'system'
   for (const d of dirents) {
     if (!d.isDirectory()) continue
     const skillPath = path.join(root, d.name, 'SKILL.md')
@@ -205,17 +216,24 @@ async function listSkillsInRoot(
       path: skillPath,
       description: fm.description,
       warnings: [],
+      ...(readOnly ? { readOnly: true } : {}),
     })
   }
   return entries
 }
 
 export async function listSkills(paths: CodexWorkspacePaths): Promise<CodexSkillListItem[]> {
-  const [personal, workspace] = await Promise.all([
-    listSkillsInRoot(paths.personalSkillsRoot, 'personal'),
-    listSkillsInRoot(paths.workspaceSkillsRoot, 'workspace'),
-  ])
-  return [...personal, ...workspace].sort((a, b) => a.name.localeCompare(b.name))
+  // Codex official skill scopes: USER (~/.agents) / REPO (<projectRoot>/.agents)
+  // / SYSTEM (bundled with installer). See https://developers.openai.com/codex/skills
+  const tasks: Promise<CodexSkillListItem[]>[] = [
+    listSkillsInRoot(paths.personalSkillsRoot, 'user'),
+    listSkillsInRoot(paths.workspaceSkillsRoot, 'repo'),
+  ]
+  if (paths.systemSkillsRoot) {
+    tasks.push(listSkillsInRoot(paths.systemSkillsRoot, 'system'))
+  }
+  const groups = await Promise.all(tasks)
+  return groups.flat().sort((a, b) => a.name.localeCompare(b.name))
 }
 
 export async function getSkillDetail(
@@ -224,8 +242,22 @@ export async function getSkillDetail(
 ): Promise<CodexSkillInput | null> {
   const [scope, ...rest] = id.split(':')
   const name = rest.join(':')
-  if (scope !== 'personal' && scope !== 'workspace') return null
-  const root = scope === 'personal' ? paths.personalSkillsRoot : paths.workspaceSkillsRoot
+  let root: string | undefined
+  // Codex official scope names (user/repo/system) plus the legacy writable
+  // synonyms (personal=user, workspace=repo) for backward compatibility with
+  // any persisted IDs.
+  if (scope === 'user' || scope === 'personal') root = paths.personalSkillsRoot
+  else if (scope === 'repo' || scope === 'workspace') root = paths.workspaceSkillsRoot
+  else if (scope === 'system') root = paths.systemSkillsRoot
+  else return null
+  if (!root) return null
+  // System skills are read-only; the editor would fail to save back, so we
+  // surface the detail but the writable scope falls back to 'personal'.
+  const editScope: CodexConfigScope =
+    scope === 'system' ? 'personal'
+    : scope === 'user' ? 'personal'
+    : scope === 'repo' ? 'workspace'
+    : (scope as CodexConfigScope)
   const filePath = path.join(root, name, 'SKILL.md')
   let raw: string
   try {
@@ -237,7 +269,7 @@ export async function getSkillDetail(
   return {
     id,
     name: fm.name ?? name,
-    scope,
+    scope: editScope,
     description: fm.description ?? '',
     whenToUse: fm.whenToUse ?? '',
     instructions: fm.body.trimStart(),
@@ -248,6 +280,9 @@ export async function saveSkill(
   paths: CodexWorkspacePaths,
   input: CodexSkillInput,
 ): Promise<{ ok: boolean; id?: string; error?: string }> {
+  if ((input.scope as string) === 'system') {
+    return { ok: false, error: 'System skills are read-only' }
+  }
   const err = validateName(input.name)
   if (err) {
     await appendMutationAudit(paths, {
@@ -304,9 +339,17 @@ export async function deleteSkill(
   paths: CodexWorkspacePaths,
   id: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  const [scope, ...rest] = id.split(':')
+  const [rawScope, ...rest] = id.split(':')
   const name = rest.join(':')
-  if (scope !== 'personal' && scope !== 'workspace') {
+  if (rawScope === 'system') {
+    return { ok: false, error: 'System skills are read-only' }
+  }
+  // Accept Codex-aligned `user`/`repo` and legacy `personal`/`workspace` for IDs.
+  const scope: CodexConfigScope | null =
+    rawScope === 'user' || rawScope === 'personal' ? 'personal'
+    : rawScope === 'repo' || rawScope === 'workspace' ? 'workspace'
+    : null
+  if (!scope) {
     await appendMutationAudit(paths, {
       action: 'skill.delete',
       name,

@@ -4,10 +4,10 @@ import type { FileChange } from '../../../../../types/agent-timeline'
 const MAX_VISIBLE_LINES = 200
 
 function diffLineClass(line: string): string {
-  if (line.startsWith('@@')) return 'text-zinc-500'
-  if (line.startsWith('+')) return 'text-[#5fdb89] bg-[#0e1b14]'
-  if (line.startsWith('-')) return 'text-[#f47b6f] bg-[#1c0e0e]'
-  return 'text-zinc-400'
+  if (line.startsWith('@@')) return 'border-l border-cyan-400/20 bg-cyan-500/[0.05] pl-2 text-cyan-300/60'
+  if (line.startsWith('+')) return 'border-l border-emerald-400/25 bg-emerald-500/10 pl-2 text-emerald-200'
+  if (line.startsWith('-')) return 'border-l border-red-400/25 bg-red-500/10 pl-2 text-red-200'
+  return 'border-l border-transparent pl-2 text-zinc-400'
 }
 
 export function FileDiffBlock({ change }: { change: FileChange }) {
@@ -23,7 +23,7 @@ export function FileDiffBlock({ change }: { change: FileChange }) {
         <span className="text-emerald-400">+{change.added}</span>
         <span className="text-red-400">−{change.removed}</span>
       </div>
-      <pre className="overflow-x-auto rounded border border-zinc-800/60 bg-zinc-950/70 p-2 font-mono text-[11px] leading-[1.6]">
+      <pre className="overflow-x-auto rounded border border-zinc-800/60 bg-zinc-950/70 p-1.5 font-mono text-[11px] leading-[1.6]">
         {visible.map((line, i) => (
           <div key={i} className={diffLineClass(line)}>
             {line || ' '}

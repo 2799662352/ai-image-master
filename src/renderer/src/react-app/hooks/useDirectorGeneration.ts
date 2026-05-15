@@ -1,6 +1,12 @@
 import { useCallback, useRef } from 'react'
 import { useDirectorStore } from '../stores/useDirectorStore'
-import type { LayoutOrientation } from '../stores/useDirectorStore'
+import type {
+  DirectorReferenceImage,
+  GenerationMode,
+  LayoutOrientation,
+  LayoutType,
+  VisionDetail,
+} from '../stores/useDirectorStore'
 import { useShallow } from 'zustand/react/shallow'
 import { getStyleInstructions } from '../constants/templates'
 import type { PipelineProgress } from '@/services/pipeline/types'
@@ -52,56 +58,62 @@ function getLayoutMapByOrientation(orientation: LayoutOrientation): Record<strin
 
 const DEFAULT_LAYOUT: LayoutConfig = LANDSCAPE_LAYOUT_MAP['6grid']
 
-export function useDirectorGeneration() {
-  const abortControllerRef = useRef<AbortController | null>(null)
-  const pipelineRef = useRef<any>(null)
+// Frozen snapshot of all inputs a single generation run needs. Captured at
+// enqueue-time so subsequent UI edits (scene text, ref images, layout…)
+// don't bleed into in-flight or queued jobs.
+interface JobSnapshot {
+  referenceImages: DirectorReferenceImage[]
+  sceneDescription: string
+  multiSceneText: string
+  currentMode: GenerationMode
+  currentLayout: LayoutType
+  currentLayoutOrientation: LayoutOrientation
+  currentTemplate: string | null
+  currentRatio: string
+  currentResolution: string
+  currentSemanticOrientation: LayoutOrientation
+  imageCount: number
+  skipVerify: boolean
+  skipTaskPlanning: boolean
+  skipAnalyzeScene: boolean
+  skipCharacterAnchors: boolean
+  skipStyleAnchor: boolean
+  enableCreativePreplanner: boolean
+  scoreThreshold: number
+  maxRetries: number
+  visionDetailTaskPlanning: VisionDetail
+  visionDetailAnalyzeScene: VisionDetail
+  visionDetailCharacterAnchors: VisionDetail
+  visionDetailExtractStyleAnchor: VisionDetail
+  visionDetailDesignAssemble: VisionDetail
+  visionDetailVerifyConsistency: VisionDetail
+  visionModel: string
+  imageModel: string
+}
 
-  const {
-    referenceImages,
-    isGenerating,
-    generationStatus,
-    visionModel,
-    imageModel,
-    sceneDescription,
-    currentLayout,
-    currentTemplate,
-    currentMode,
-    currentRatio,
-    currentLayoutOrientation,
-    currentSemanticOrientation,
-    currentResolution,
-    imageCount,
-    multiSceneText,
-    skipVerify,
-    skipTaskPlanning,
-    skipAnalyzeScene,
-    skipCharacterAnchors,
-    skipStyleAnchor,
-    enableCreativePreplanner,
-    scoreThreshold,
-    maxRetries,
-    visionDetailTaskPlanning,
-    visionDetailAnalyzeScene,
-    visionDetailCharacterAnchors,
-    visionDetailExtractStyleAnchor,
-    visionDetailDesignAssemble,
-    visionDetailVerifyConsistency,
-  } = useDirectorStore(useShallow((s) => ({
-    referenceImages: s.referenceImages,
-    isGenerating: s.isGenerating,
-    generationStatus: s.generationStatus,
-    visionModel: s.visionModel,
-    imageModel: s.imageModel,
+interface QueuedJob {
+  id: number
+  styleInstructions?: string
+  onProgress?: (progress: PipelineProgress) => void
+  snapshot: JobSnapshot
+}
+
+function snapshotFromStore(): JobSnapshot {
+  const s = useDirectorStore.getState()
+  return {
+    // Shallow copy: image array becomes immutable for the job's lifetime
+    // even if the user removes/replaces refs in the UI before it runs.
+    referenceImages: s.referenceImages.slice(),
     sceneDescription: s.sceneDescription,
-    currentLayout: s.currentLayout,
-    currentTemplate: s.currentTemplate,
-    currentMode: s.currentMode,
-    currentRatio: s.currentRatio,
-    currentLayoutOrientation: s.currentLayoutOrientation,
-    currentSemanticOrientation: s.currentSemanticOrientation,
-    currentResolution: s.currentResolution,
-    imageCount: s.imageCount,
     multiSceneText: s.multiSceneText,
+    currentMode: s.currentMode,
+    currentLayout: s.currentLayout,
+    currentLayoutOrientation: s.currentLayoutOrientation,
+    currentTemplate: s.currentTemplate,
+    currentRatio: s.currentRatio,
+    currentResolution: s.currentResolution,
+    currentSemanticOrientation: s.currentSemanticOrientation,
+    imageCount: s.imageCount,
     skipVerify: s.skipVerify,
     skipTaskPlanning: s.skipTaskPlanning,
     skipAnalyzeScene: s.skipAnalyzeScene,
@@ -116,140 +128,154 @@ export function useDirectorGeneration() {
     visionDetailExtractStyleAnchor: s.visionDetailExtractStyleAnchor,
     visionDetailDesignAssemble: s.visionDetailDesignAssemble,
     visionDetailVerifyConsistency: s.visionDetailVerifyConsistency,
-  })))
+    visionModel: s.visionModel,
+    imageModel: s.imageModel,
+  }
+}
 
-  const canGenerate = referenceImages.length > 0 && !isGenerating
+function getLayoutConfigFor(snapshot: JobSnapshot, layout?: string): LayoutConfig {
+  const map = getLayoutMapByOrientation(snapshot.currentLayoutOrientation)
+  return map[layout ?? snapshot.currentLayout] ?? map['6grid'] ?? DEFAULT_LAYOUT
+}
 
-  const resolveVisionModel = useCallback((): string => {
-    const model = (visionModel || '').trim()
-    if (!model) {
-      throw new Error('未检测到视觉模型，请先在导演模式中选择“视觉模型(分析)”')
-    }
-    return model
-  }, [visionModel])
+function resolveVisionModel(snapshot: JobSnapshot): string {
+  const model = (snapshot.visionModel || '').trim()
+  if (!model) {
+    throw new Error('未检测到视觉模型，请先在导演模式中选择"视觉模型(分析)"')
+  }
+  return model
+}
 
-  const resolveImageModel = useCallback((): string => {
-    const globalModel =
-      localStorage.getItem('current_model') ||
-      (window as any).modelSelectorManagerTS?.getCurrentModelKey?.() ||
-      ''
-    return globalModel || imageModel
-  }, [imageModel])
+function resolveImageModel(snapshot: JobSnapshot): string {
+  const globalModel =
+    (typeof window !== 'undefined'
+      ? window.localStorage.getItem('current_model') || (window as any).modelSelectorManagerTS?.getCurrentModelKey?.()
+      : '') || ''
+  return globalModel || snapshot.imageModel
+}
 
-  const getLayoutConfig = useCallback((layout?: string): LayoutConfig => {
-    const map = getLayoutMapByOrientation(currentLayoutOrientation)
-    return map[layout ?? currentLayout] ?? map['6grid'] ?? DEFAULT_LAYOUT
-  }, [currentLayout, currentLayoutOrientation])
+export function useDirectorGeneration() {
+  // The pipeline + abort controller of the *currently running* job. Single
+  // pipeline-at-a-time is a hard requirement (the deep-agent pipeline owns
+  // pause/resume internal state that can't be safely multiplexed).
+  const abortControllerRef = useRef<AbortController | null>(null)
+  const pipelineRef = useRef<any>(null)
+  const currentJobIdRef = useRef<number>(0)
+  // FIFO queue of jobs waiting to start. Drained by processQueue() one-by-one.
+  const queueRef = useRef<QueuedJob[]>([])
+  // Single-flight guard: only one processQueue loop runs at a time. Set true
+  // for the entire duration of "actively draining the queue", cleared when
+  // we stop (queue empty, paused, or cancelled).
+  const isProcessingRef = useRef<boolean>(false)
+  const jobIdCounterRef = useRef<number>(0)
+
+  const { referenceImages, isGenerating, generationStatus, pendingCount } = useDirectorStore(
+    useShallow((s) => ({
+      referenceImages: s.referenceImages,
+      isGenerating: s.isGenerating,
+      generationStatus: s.generationStatus,
+      pendingCount: s.pendingCount,
+    })),
+  )
+
+  // canGenerate stays true even while busy — main button enqueues into the
+  // live queue instead of being disabled. Only "no ref images" disables it.
+  const canGenerate = referenceImages.length > 0
 
   const executeSingle = useCallback(
     async (
       pipeline: any,
+      snapshot: JobSnapshot,
       scene: string,
       resolvedStyle: string,
       layoutConfig: LayoutConfig,
       drawingModel: string,
-      onProgress?: (progress: PipelineProgress) => void,
-      signal?: AbortSignal,
+      onProgress: ((progress: PipelineProgress) => void) | undefined,
+      signal: AbortSignal,
     ) => {
       return pipeline.execute(
         {
-          inputImages: referenceImages.map((img) => ({
+          inputImages: snapshot.referenceImages.map((img) => ({
             data: img.data,
             mimeType: img.mimeType,
           })),
           sceneDescription: scene,
           layout: layoutConfig,
-          template: currentTemplate ?? '',
+          template: snapshot.currentTemplate ?? '',
           styleInstructions: resolvedStyle,
-          semanticOrientation: currentSemanticOrientation,
+          semanticOrientation: snapshot.currentSemanticOrientation,
           imageModel: drawingModel,
-          ratio: currentRatio,
-          resolution: currentResolution,
-          currentImageCount: imageCount,
-          skipVerify,
-          skipTaskPlanning,
-          skipAnalyzeScene,
-          skipCharacterAnchors,
-          skipStyleAnchor,
-          enableCreativePreplanner,
-          scoreThreshold,
-          maxRetries,
-          visionDetailTaskPlanning,
-          visionDetailAnalyzeScene,
-          visionDetailCharacterAnchors,
-          visionDetailExtractStyleAnchor,
-          visionDetailDesignAssemble,
-          visionDetailVerifyConsistency,
+          ratio: snapshot.currentRatio,
+          resolution: snapshot.currentResolution,
+          currentImageCount: snapshot.imageCount,
+          skipVerify: snapshot.skipVerify,
+          skipTaskPlanning: snapshot.skipTaskPlanning,
+          skipAnalyzeScene: snapshot.skipAnalyzeScene,
+          skipCharacterAnchors: snapshot.skipCharacterAnchors,
+          skipStyleAnchor: snapshot.skipStyleAnchor,
+          enableCreativePreplanner: snapshot.enableCreativePreplanner,
+          scoreThreshold: snapshot.scoreThreshold,
+          maxRetries: snapshot.maxRetries,
+          visionDetailTaskPlanning: snapshot.visionDetailTaskPlanning,
+          visionDetailAnalyzeScene: snapshot.visionDetailAnalyzeScene,
+          visionDetailCharacterAnchors: snapshot.visionDetailCharacterAnchors,
+          visionDetailExtractStyleAnchor: snapshot.visionDetailExtractStyleAnchor,
+          visionDetailDesignAssemble: snapshot.visionDetailDesignAssemble,
+          visionDetailVerifyConsistency: snapshot.visionDetailVerifyConsistency,
         },
         onProgress,
         { signal },
       )
     },
-    [
-      referenceImages,
-      currentTemplate,
-      currentSemanticOrientation,
-      currentRatio,
-      currentResolution,
-      imageCount,
-      skipVerify,
-      skipTaskPlanning,
-      skipAnalyzeScene,
-      skipCharacterAnchors,
-      skipStyleAnchor,
-      enableCreativePreplanner,
-      scoreThreshold,
-      maxRetries,
-      visionDetailTaskPlanning,
-      visionDetailAnalyzeScene,
-      visionDetailCharacterAnchors,
-      visionDetailExtractStyleAnchor,
-      visionDetailDesignAssemble,
-      visionDetailVerifyConsistency,
-    ],
+    [],
   )
 
-  const startGeneration = useCallback(
-    async (
-      onProgress?: (progress: PipelineProgress) => void,
-      styleInstructions?: string
-    ) => {
+  // Runs ONE job against the snapshot. Sets running → resets progress →
+  // executes the pipeline (single or multi-scene) → writes results to the
+  // store with append semantics → finally sets idle (unless the job paused).
+  const runJob = useCallback(
+    async (job: QueuedJob): Promise<void> => {
+      const { snapshot, onProgress, styleInstructions } = job
       const store = useDirectorStore.getState()
+
+      currentJobIdRef.current = job.id
+
+      // Each job starts a fresh progress timeline (passStatuses, passCards…).
+      // Without this, the second job's progress bar would resume from the
+      // first job's "completed" state.
+      store.resetProgress()
+      store.setViewState('generating')
       store.setGenerationStatus('running')
 
       const abortController = new AbortController()
       abortControllerRef.current = abortController
 
       try {
-        const analysisModel = resolveVisionModel()
-        const drawingModel = resolveImageModel()
+        const analysisModel = resolveVisionModel(snapshot)
+        const drawingModel = resolveImageModel(snapshot)
         if (!drawingModel) {
           throw new Error('未检测到绘图模型，请先在顶部模型选择器中选择生图模型')
         }
         if (analysisModel === drawingModel) {
-          throw new Error('视觉模型与绘图模型不能混用，请分别设置“视觉模型(分析)”与顶部“绘图模型(出图)”')
+          throw new Error('视觉模型与绘图模型不能混用，请分别设置"视觉模型(分析)"与顶部"绘图模型(出图)"')
         }
         store.setImageModel(drawingModel)
 
-        const { getDirectorPipelineService } = await import(
-          '@/services/ServiceBridge'
-        )
+        const { getDirectorPipelineService } = await import('@/services/ServiceBridge')
         const pipeline = await getDirectorPipelineService(analysisModel)
         if (!pipeline) {
           throw new Error('导演模式初始化失败: 请确认已在「设置 → Vision API Key」中正确填写 API Key，且当前站点有效')
         }
         pipelineRef.current = pipeline
 
-        const layoutConfig = getLayoutConfig(currentLayout)
-        const resolvedStyle = styleInstructions || getStyleInstructions(currentTemplate)
+        const layoutConfig = getLayoutConfigFor(snapshot, snapshot.currentLayout)
+        const resolvedStyle = styleInstructions || getStyleInstructions(snapshot.currentTemplate)
 
-        if (currentMode === 'multi' && multiSceneText.trim()) {
-          const scenes = multiSceneText
+        if (snapshot.currentMode === 'multi' && snapshot.multiSceneText.trim()) {
+          const scenes = snapshot.multiSceneText
             .split(/\n\s*\n/)
             .map((s) => s.trim())
             .filter((s) => s.length > 0)
-
-          const allResults: Array<{ url: string; prompt: string; timestamp: number }> = []
 
           for (let i = 0; i < scenes.length; i++) {
             if (abortController.signal.aborted) {
@@ -257,13 +283,19 @@ export function useDirectorGeneration() {
               break
             }
             const result = await executeSingle(
-              pipeline, scenes[i], resolvedStyle, layoutConfig, drawingModel, onProgress,
+              pipeline,
+              snapshot,
+              scenes[i],
+              resolvedStyle,
+              layoutConfig,
+              drawingModel,
+              onProgress,
               abortController.signal,
             )
 
             if (result.__paused) {
-              store.setGenerationStatus('paused')
-              return result
+              useDirectorStore.getState().setGenerationStatus('paused')
+              return
             }
 
             if (result.images?.length) {
@@ -272,23 +304,28 @@ export function useDirectorGeneration() {
                 prompt: img.prompt,
                 timestamp: Date.now(),
               }))
-              allResults.push(...mapped)
-              store.setGeneratedResults([...allResults])
-              // 历史记录保存不应阻塞主流程收尾；后台异步即可
-              void saveToHistory(mapped, scenes[i], currentRatio)
+              // Append (not replace) so previous job/scene results stay visible.
+              useDirectorStore.getState().setGeneratedResults((prev) => [...prev, ...mapped])
+              void saveToHistory(mapped, scenes[i], snapshot.currentRatio)
             }
-            if (result.scene) store.setLastAnalysisResult(JSON.stringify(result.scene))
-            if (result.characters) store.setLastCharacterAnchor(JSON.stringify(result.characters))
+            if (result.scene) useDirectorStore.getState().setLastAnalysisResult(JSON.stringify(result.scene))
+            if (result.characters) useDirectorStore.getState().setLastCharacterAnchor(JSON.stringify(result.characters))
           }
         } else {
           const result = await executeSingle(
-            pipeline, sceneDescription, resolvedStyle, layoutConfig, drawingModel, onProgress,
+            pipeline,
+            snapshot,
+            snapshot.sceneDescription,
+            resolvedStyle,
+            layoutConfig,
+            drawingModel,
+            onProgress,
             abortController.signal,
           )
 
           if (result.__paused) {
-            store.setGenerationStatus('paused')
-            return result
+            useDirectorStore.getState().setGenerationStatus('paused')
+            return
           }
 
           const mappedImages = (result.images ?? []).map((img: any) => ({
@@ -296,18 +333,21 @@ export function useDirectorGeneration() {
             prompt: img.prompt,
             timestamp: Date.now(),
           }))
-          store.setGeneratedResults((prev) => {
-            const prevSuccessCount = prev.filter((img) => Boolean(img.url)).length
-            const mappedSuccessCount = mappedImages.filter((img) => Boolean(img.url)).length
-            // 流式阶段可能已拿到更多成功图片，避免在收尾时被较少结果覆盖
-            if (prevSuccessCount > mappedSuccessCount) {
-              return prev
-            }
-            return mappedImages
+
+          // Stream-then-finalize reconciliation: the progress callback in
+          // DirectorApp already appends each image to generatedResults as
+          // soon as 'image_generated' fires. By the time runJob's final
+          // `result.images` arrives, those images may already be in the
+          // store. To avoid duplicating, only append images whose URL isn't
+          // already present from this job's streaming pass.
+          useDirectorStore.getState().setGeneratedResults((prev) => {
+            const seen = new Set(prev.map((img) => img.url).filter(Boolean))
+            const fresh = mappedImages.filter((img: { url: string }) => img.url && !seen.has(img.url))
+            return fresh.length > 0 ? [...prev, ...fresh] : prev
           })
 
-          if (result.scene) store.setLastAnalysisResult(JSON.stringify(result.scene))
-          if (result.characters) store.setLastCharacterAnchor(JSON.stringify(result.characters))
+          if (result.scene) useDirectorStore.getState().setLastAnalysisResult(JSON.stringify(result.scene))
+          if (result.characters) useDirectorStore.getState().setLastCharacterAnchor(JSON.stringify(result.characters))
 
           const normalizedPanels = Array.isArray((result as any)?.panels)
             ? (result as any).panels
@@ -315,30 +355,30 @@ export function useDirectorGeneration() {
               ? (result as any).panels.panels
               : null
 
-          store.setLastPipelineState({
-            inputImages: referenceImages.map((img) => ({ data: img.data, mimeType: img.mimeType })),
-            sceneDescription,
+          useDirectorStore.getState().setLastPipelineState({
+            inputImages: snapshot.referenceImages.map((img) => ({ data: img.data, mimeType: img.mimeType })),
+            sceneDescription: snapshot.sceneDescription,
             layout: layoutConfig,
-            template: currentTemplate ?? '',
+            template: snapshot.currentTemplate ?? '',
             styleInstructions: resolvedStyle,
-            semanticOrientation: currentSemanticOrientation,
+            semanticOrientation: snapshot.currentSemanticOrientation,
             imageModel: drawingModel,
-            ratio: currentRatio,
-            resolution: currentResolution,
-            skipVerify,
-            skipTaskPlanning,
-            skipAnalyzeScene,
-            skipCharacterAnchors,
-            skipStyleAnchor,
-            enableCreativePreplanner,
-            scoreThreshold,
-            maxRetries,
-            visionDetailTaskPlanning,
-            visionDetailAnalyzeScene,
-            visionDetailCharacterAnchors,
-            visionDetailExtractStyleAnchor,
-            visionDetailDesignAssemble,
-            visionDetailVerifyConsistency,
+            ratio: snapshot.currentRatio,
+            resolution: snapshot.currentResolution,
+            skipVerify: snapshot.skipVerify,
+            skipTaskPlanning: snapshot.skipTaskPlanning,
+            skipAnalyzeScene: snapshot.skipAnalyzeScene,
+            skipCharacterAnchors: snapshot.skipCharacterAnchors,
+            skipStyleAnchor: snapshot.skipStyleAnchor,
+            enableCreativePreplanner: snapshot.enableCreativePreplanner,
+            scoreThreshold: snapshot.scoreThreshold,
+            maxRetries: snapshot.maxRetries,
+            visionDetailTaskPlanning: snapshot.visionDetailTaskPlanning,
+            visionDetailAnalyzeScene: snapshot.visionDetailAnalyzeScene,
+            visionDetailCharacterAnchors: snapshot.visionDetailCharacterAnchors,
+            visionDetailExtractStyleAnchor: snapshot.visionDetailExtractStyleAnchor,
+            visionDetailDesignAssemble: snapshot.visionDetailDesignAssemble,
+            visionDetailVerifyConsistency: snapshot.visionDetailVerifyConsistency,
             scene: result.scene,
             characters: result.characters,
             panels: normalizedPanels,
@@ -346,68 +386,98 @@ export function useDirectorGeneration() {
             report: result.report,
           })
 
-          void saveToHistory(mappedImages, sceneDescription, currentRatio)
-
-          return result
+          void saveToHistory(mappedImages, snapshot.sceneDescription, snapshot.currentRatio)
         }
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') {
           console.log('[Director] 生成已取消')
           return
         }
-        throw err
+        // Surface error to UI via toast (mirrors handleGenerate's old behaviour).
+        const toast =
+          (typeof window !== 'undefined' && ((window as any).toastManagerTS ?? (window as any).toastManager)) || null
+        toast?.show?.((err as any)?.message || '生成失败', 'error')
+        console.error('[Director] runJob failed:', err)
       } finally {
         const s = useDirectorStore.getState()
         if (s.generationStatus === 'running') {
           s.setGenerationStatus('idle')
+          // viewState stays as-is: if we produced results above, the gallery
+          // is already mounted; if not, DirectorApp's idle-empty placeholder
+          // will reassert next render.
+          if (s.generatedResults.length > 0) {
+            s.setViewState('results')
+          } else {
+            s.setViewState('idle')
+          }
         }
       }
     },
-    [
-      visionModel,
-      imageModel,
-      referenceImages,
-      sceneDescription,
-      currentMode,
-      multiSceneText,
-      currentLayout,
-      currentTemplate,
-      currentRatio,
-      currentLayoutOrientation,
-      currentSemanticOrientation,
-      currentResolution,
-      imageCount,
-      skipVerify,
-      skipTaskPlanning,
-      skipAnalyzeScene,
-      skipCharacterAnchors,
-      skipStyleAnchor,
-      enableCreativePreplanner,
-      scoreThreshold,
-      maxRetries,
-      visionDetailTaskPlanning,
-      visionDetailAnalyzeScene,
-      visionDetailCharacterAnchors,
-      visionDetailExtractStyleAnchor,
-      visionDetailDesignAssemble,
-      visionDetailVerifyConsistency,
-      getLayoutConfig,
-      executeSingle,
-      resolveVisionModel,
-      resolveImageModel,
-    ]
+    [executeSingle],
+  )
+
+  // Drains the queue serially. Single-flight via isProcessingRef so multiple
+  // enqueue() calls in the same tick still produce one drain loop, not a race.
+  const processQueue = useCallback(async (): Promise<void> => {
+    if (isProcessingRef.current) return
+    if (queueRef.current.length === 0) return
+    isProcessingRef.current = true
+    try {
+      while (queueRef.current.length > 0) {
+        // Peek-and-shift only after the run starts: keeps pendingCount in
+        // sync with what's "queued behind the running one".
+        const job = queueRef.current.shift()!
+        useDirectorStore.getState().setPendingCount((n) => n - 1)
+        await runJob(job)
+
+        // If the running job paused (pipeline returned __paused), stop draining.
+        // The user must explicitly resume or cancel before the next job runs.
+        const status = useDirectorStore.getState().generationStatus
+        if (status === 'paused') break
+      }
+    } finally {
+      isProcessingRef.current = false
+    }
+  }, [runJob])
+
+  // Public API: append a snapshot of current store state to the queue and
+  // kick the drainer if it's idle. Always synchronous — callers don't need
+  // to await. The caller's `onProgress` is captured per-job, so progress
+  // callbacks don't bleed across jobs.
+  const enqueueGeneration = useCallback(
+    (onProgress?: (progress: PipelineProgress) => void, styleInstructions?: string): number => {
+      const id = ++jobIdCounterRef.current
+      const job: QueuedJob = {
+        id,
+        styleInstructions,
+        onProgress,
+        snapshot: snapshotFromStore(),
+      }
+      queueRef.current.push(job)
+      useDirectorStore.getState().setPendingCount((n) => n + 1)
+      // Fire-and-forget — processQueue's single-flight guard handles dedupe.
+      void processQueue()
+      return id
+    },
+    [processQueue],
   )
 
   const cancelGeneration = useCallback(() => {
     abortControllerRef.current?.abort()
     pipelineRef.current?.clearPauseRequest?.()
     useDirectorStore.getState().setGenerationStatus('idle')
+    // Note: we deliberately do NOT clear queueRef. "Cancel" cancels the
+    // currently-running job; pending jobs continue (matches BatchPage UX).
+    // The drain loop naturally picks up the next queued job after this
+    // job's finally block resolves.
   }, [])
 
   const pauseGeneration = useCallback(() => {
     pipelineRef.current?.requestPause?.()
   }, [])
 
+  // Resume the *currently paused* job's pipeline, then re-trigger the
+  // drain loop so any queued jobs that piled up during the pause also run.
   const resumeGeneration = useCallback(
     async (onProgress?: (progress: PipelineProgress) => void) => {
       const pipeline = pipelineRef.current
@@ -426,7 +496,7 @@ export function useDirectorGeneration() {
         const result = await pipeline.resume(onProgress, { signal: abortController.signal })
 
         if (result.__paused) {
-          store.setGenerationStatus('paused')
+          useDirectorStore.getState().setGenerationStatus('paused')
           return result
         }
 
@@ -435,10 +505,14 @@ export function useDirectorGeneration() {
           prompt: img.prompt,
           timestamp: Date.now(),
         }))
-        store.setGeneratedResults(mappedImages)
+        useDirectorStore.getState().setGeneratedResults((prev) => {
+          const seen = new Set(prev.map((img) => img.url).filter(Boolean))
+          const fresh = mappedImages.filter((img: { url: string }) => img.url && !seen.has(img.url))
+          return fresh.length > 0 ? [...prev, ...fresh] : prev
+        })
 
-        if (result.scene) store.setLastAnalysisResult(JSON.stringify(result.scene))
-        if (result.characters) store.setLastCharacterAnchor(JSON.stringify(result.characters))
+        if (result.scene) useDirectorStore.getState().setLastAnalysisResult(JSON.stringify(result.scene))
+        if (result.characters) useDirectorStore.getState().setLastCharacterAnchor(JSON.stringify(result.characters))
 
         return result
       } catch (err) {
@@ -452,16 +526,18 @@ export function useDirectorGeneration() {
         if (s.generationStatus === 'running') {
           s.setGenerationStatus('idle')
         }
+        // After resume completes (or aborts), if more jobs piled up while we
+        // were paused, drain them now. processQueue is no-op if already running.
+        if (queueRef.current.length > 0) {
+          void processQueue()
+        }
       }
     },
-    [],
+    [processQueue],
   )
 
   const regenerateImages = useCallback(
-    async (
-      count: number,
-      onProgress?: (progress: PipelineProgress) => void,
-    ) => {
+    async (count: number, onProgress?: (progress: PipelineProgress) => void) => {
       const store = useDirectorStore.getState()
       const prevState = store.lastPipelineState
       if (!prevState) {
@@ -474,19 +550,20 @@ export function useDirectorGeneration() {
       abortControllerRef.current = abortController
 
       try {
-        const analysisModel = resolveVisionModel()
-        const drawingModel = resolveImageModel()
+        // Regenerate piggybacks on the most-recent snapshot for vision/image
+        // model resolution. The pipeline data itself comes from lastPipelineState.
+        const snapshot = snapshotFromStore()
+        const analysisModel = resolveVisionModel(snapshot)
+        const drawingModel = resolveImageModel(snapshot)
         if (!drawingModel) {
           throw new Error('未检测到绘图模型，请先在顶部模型选择器中选择生图模型')
         }
         if (analysisModel === drawingModel) {
-          throw new Error('视觉模型与绘图模型不能混用，请分别设置“视觉模型(分析)”与顶部“绘图模型(出图)”')
+          throw new Error('视觉模型与绘图模型不能混用，请分别设置"视觉模型(分析)"与顶部"绘图模型(出图)"')
         }
         store.setImageModel(drawingModel)
 
-        const { getDirectorPipelineService } = await import(
-          '@/services/ServiceBridge'
-        )
+        const { getDirectorPipelineService } = await import('@/services/ServiceBridge')
         const pipeline = await getDirectorPipelineService(analysisModel)
         if (!pipeline) {
           throw new Error('导演模式初始化失败: 请确认已在「设置 → Vision API Key」中正确填写 API Key，且当前站点有效')
@@ -505,9 +582,13 @@ export function useDirectorGeneration() {
           timestamp: Date.now(),
         }))
 
-        store.setGeneratedResults((prev) => [...prev, ...mappedImages])
+        useDirectorStore.getState().setGeneratedResults((prev) => [...prev, ...mappedImages])
 
-        void saveToHistory(mappedImages, String((prevState as any).sceneDescription || ''), currentRatio)
+        void saveToHistory(
+          mappedImages,
+          String((prevState as any).sceneDescription || ''),
+          snapshot.currentRatio,
+        )
 
         return result
       } catch (err) {
@@ -523,21 +604,41 @@ export function useDirectorGeneration() {
         }
       }
     },
-    [currentRatio, resolveVisionModel, resolveImageModel],
+    [],
   )
 
   const canRegenerate = useDirectorStore((s) => s.lastPipelineState !== null) && !isGenerating
+
+  // Back-compat alias: existing call sites use startGeneration. Map it to
+  // enqueueGeneration which now provides the live-queue behaviour. Old
+  // callers got Promise<void>; new callers can ignore the return value or
+  // observe pendingCount / generationStatus to know when the job completes.
+  const startGeneration = useCallback(
+    async (
+      onProgress?: (progress: PipelineProgress) => void,
+      styleInstructions?: string,
+    ): Promise<void> => {
+      enqueueGeneration(onProgress, styleInstructions)
+    },
+    [enqueueGeneration],
+  )
 
   return {
     canGenerate,
     canRegenerate,
     isGenerating,
     generationStatus,
+    pendingCount,
     startGeneration,
+    enqueueGeneration,
     regenerateImages,
     cancelGeneration,
     pauseGeneration,
     resumeGeneration,
-    getLayoutConfig,
+    // Kept for back-compat with code that builds a layout config outside the hook.
+    getLayoutConfig: useCallback((layout?: string) => {
+      const snapshot = snapshotFromStore()
+      return getLayoutConfigFor(snapshot, layout)
+    }, []),
   }
 }

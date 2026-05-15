@@ -6,6 +6,7 @@ import MentionChips from '../../components/shared/media-tokens/MentionChips'
 import type { MediaRef } from '../../components/shared/media-tokens/types'
 import '../../components/shared/media-tokens/media-tokens.css'
 import { DirectorPromptHelperBar } from './DirectorPromptHelperBar'
+import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea'
 
 export function SceneInput() {
   const sceneDescription = useDirectorStore((s) => s.sceneDescription)
@@ -40,6 +41,7 @@ export function SceneInput() {
     value: sceneDescription,
     onValueChange: setSceneDescription,
   })
+  useAutosizeTextarea(textareaRef, sceneDescription, { minRows: 4, maxRows: 20 })
 
   return (
     <div className="bg-[#27272A] rounded-none p-4">
@@ -55,7 +57,7 @@ export function SceneInput() {
         onKeyDown={handleKeyDown}
         placeholder="描述你想要的漫画场景…（可选）输入 @ 引用参考图"
         rows={4}
-        className="w-full bg-[#09090B] border border-[#3F3F46] rounded-none px-3 py-2 text-sm text-white placeholder-white placeholder-opacity-30 resize-none focus:outline-none focus:border-purple-400 transition-colors"
+        className="w-full bg-[#09090B] border border-[#3F3F46] rounded-none px-3 py-2 text-sm text-white placeholder-white placeholder-opacity-30 resize-none focus:outline-none focus:border-purple-400 transition-[colors,height] duration-100"
       />
       <TokenAutocomplete
         visible={visible}

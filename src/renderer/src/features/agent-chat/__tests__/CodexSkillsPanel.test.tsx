@@ -20,7 +20,7 @@ describe('CodexSkillsPanel', () => {
             skills: [
               {
                 name: 'workspace-skill',
-                scope: 'workspace',
+                scope: 'repo',
                 description: 'Use from workspace.',
                 path: 'D:/repo/.agents/skills/workspace-skill/SKILL.md',
               },
@@ -35,7 +35,7 @@ describe('CodexSkillsPanel', () => {
     render(<CodexSkillsPanel />)
 
     expect(await screen.findByText('workspace-skill')).toBeTruthy()
-    expect(screen.getByText('workspace')).toBeTruthy()
+    expect(screen.getByText('repo')).toBeTruthy()
     expect(screen.getByText('Use from workspace.')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: /Insert \$workspace-skill/i }))

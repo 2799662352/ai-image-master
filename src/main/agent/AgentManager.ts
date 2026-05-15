@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { dialog } from 'electron'
+import { app, dialog } from 'electron'
 import { CodexLocalBackend } from './CodexLocalBackend'
 import { DEFAULT_CODEX_SESSION_CONFIG } from './codexLaunch'
 import { getDockerMcpGatewayService, type CheckInstalledResult, type GatewayStatus } from './dockerMcpGateway'
@@ -259,6 +259,10 @@ export class AgentManager {
       home: os.homedir(),
       cwd: this.sessionConfig.writableRoots[0] ?? process.cwd(),
       userData: this.userDataDir,
+      // `app` may be `undefined` in vitest contexts that don't mock electron;
+      // we treat that case as "not packaged" so system-scope skill discovery
+      // simply skips, matching the dev-mode runtime behaviour.
+      resourcesPath: app?.isPackaged ? process.resourcesPath : undefined,
     })
   }
 
@@ -338,6 +342,8 @@ export class AgentManager {
     return discoverCodexSkills({
       cwd: this.sessionConfig.writableRoots[0] ?? process.cwd(),
       home: os.homedir(),
+      // Same defensive guard as `workspacePaths()` — see note there.
+      resourcesPath: app?.isPackaged ? process.resourcesPath : undefined,
     })
   }
 
@@ -601,7 +607,29 @@ export class AgentManager {
           model,
         })
     const attachmentInputs = payload.attachments ?? []
-    const savedAttachments = await this.attachments.ingest(thread.id, attachmentInputs)
+    // Per-attachment failures are non-fatal: AttachmentService emits an
+    // 'attachment-error' event for each skipped file, we relay it to the
+    // renderer as a notice, and the rest of the turn proceeds with whichever
+    // files *did* succeed. This matches the recovery direction Codex itself
+    // is shipping for openai/codex#13508 — "remove failed attachment, keep
+    // the turn alive".
+    const onAttachmentError = (e: { name: string; error: string }): void => {
+      this.emitEvent({ type: 'attachment_error', threadId: thread.id, name: e.name, error: e.error })
+    }
+    // The injected attachments service is typed as `AttachmentService`-like
+    // in tests (just `{ ingest }`), so guard the EventEmitter wiring.
+    const emitterLike = this.attachments as Partial<{
+      on(event: string, fn: (e: { name: string; error: string }) => void): void
+      off(event: string, fn: (e: { name: string; error: string }) => void): void
+    }>
+    const hasEmitter = typeof emitterLike.on === 'function' && typeof emitterLike.off === 'function'
+    if (hasEmitter) emitterLike.on!('attachment-error', onAttachmentError)
+    let savedAttachments: Awaited<ReturnType<typeof this.attachments.ingest>>
+    try {
+      savedAttachments = await this.attachments.ingest(thread.id, attachmentInputs)
+    } finally {
+      if (hasEmitter) emitterLike.off!('attachment-error', onAttachmentError)
+    }
     // Anchor every attachment's on-disk localPath into the agent's text
     // prompt. The renderer file-picker only gives us a buffer — without
     // this preamble the model can't `cat`/`read_file`/etc. the attachment

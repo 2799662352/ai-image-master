@@ -1,6 +1,6 @@
 {
   "name": "catimation-cyberpunk-master",
-  "version": "4.2.0",
+  "version": "4.2.7",
   "description": "CATIMATION-Cyberpunk Master - AI图片生成桌面应用",
   "main": "dist/main/index.js",
   "author": "CATIMATION",
@@ -8,12 +8,13 @@
   "codexCliVersion": "0.130.0",
   "dockerMcpGatewayVersion": "0.42.1",
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "node scripts/build-pglite-worker.mjs && electron-vite dev",
     "dev:static": "electron . --dev",
     "preview": "electron-vite preview",
     "start": "electron .",
     "typecheck": "tsc --noEmit",
-    "build:vite": "electron-vite build",
+    "build:pglite-worker": "node scripts/build-pglite-worker.mjs",
+    "build:vite": "electron-vite build && node scripts/build-pglite-worker.mjs",
     "build": "npm run build:vite && electron-builder",
     "build:win": "npm run build:vite && electron-builder --win",
     "build:win64": "npm run build:vite && electron-builder --win --x64",

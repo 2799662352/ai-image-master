@@ -1,7 +1,9 @@
 import { create } from 'zustand'
 import type { EditorState } from '@codemirror/state'
 import type { AgentReference } from '../../../../types/agent-reference'
+import type { FileChange } from '../../../../types/agent-timeline'
 import type { Conflict, FileNode, FileSource, FileTab } from './types'
+import { parseUnifiedDiff } from '../agent-chat/diff/parseUnifiedDiff'
 import { classify } from './classify'
 
 const FX_WIDTH_KEY = 'agent-chat:fx-tree-width'
@@ -77,6 +79,7 @@ type Actions = {
   refreshAttachmentsTree: () => Promise<void>
   expandDir: (path: string, source: FileSource) => Promise<void>
   openTab: (path: string, source: FileSource) => Promise<void>
+  openAiChange: (change: FileChange) => Promise<void>
   openReference: (reference: AgentReference) => Promise<void>
   closeTab: (tabId: string, options?: { saveDirty?: boolean }) => Promise<boolean>
   setActiveTab: (tabId: string) => void
@@ -198,6 +201,23 @@ async function syncAllowedRootsNow(roots: string[]): Promise<void> {
 
 function rootName(folder: string): string {
   return folder.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? folder
+}
+
+function basename(path: string): string {
+  return path.split(/[\\/]/).pop() ?? path
+}
+
+function hashString(value: string): string {
+  let hash = 2166136261
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i)
+    hash = Math.imul(hash, 16777619)
+  }
+  return (hash >>> 0).toString(36)
+}
+
+function aiChangeKey(change: FileChange): string {
+  return `ai-change:${hashString(`${change.path}\0${change.diff}`)}`
 }
 
 function pathIsInsideRoot(path: string, root: string): boolean {
@@ -408,6 +428,44 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
     }
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: id }))
     ensureWatchSubscription(get)
+  },
+
+  openAiChange: async (change) => {
+    const key = aiChangeKey(change)
+    const existing = get().tabs.find((t) => t.kind === 'ai-change' && t.aiChangeKey === key)
+    if (existing) {
+      set({ activeTabId: existing.id, fxOpen: true })
+      writeStorage(FX_OPEN_KEY, '1')
+      return
+    }
+
+    const parsed = parseUnifiedDiff(change.diff)
+    const id = globalThis.crypto?.randomUUID?.() ?? `ai-change-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const tab: FileTab = {
+      id,
+      path: '',
+      name: basename(change.path),
+      source: 'workspace',
+      kind: 'ai-change',
+      state: null,
+      diskContent: '',
+      diskMtime: 0,
+      dirty: false,
+      aiChangeKey: key,
+      aiChange: {
+        change,
+        ...(parsed.ok
+          ? { beforeContent: parsed.beforeContent, afterContent: parsed.afterContent }
+          : { parseError: parsed.reason }),
+      },
+    }
+
+    set((s) => ({
+      fxOpen: true,
+      activeTabId: id,
+      tabs: [...s.tabs, tab],
+    }))
+    writeStorage(FX_OPEN_KEY, '1')
   },
 
   openReference: async (reference) => {

@@ -99,7 +99,15 @@ export interface CodexMcpSummary {
   warnings: string[]
 }
 
-export type CodexSkillScope = 'workspace' | 'home'
+/**
+ * Codex skill scope for the chat `$skill` popup. Matches Codex official docs:
+ * - `repo`    → `<projectRoot>/.agents/skills` (Codex REPO)
+ * - `user`    → `$HOME/.agents/skills`        (Codex USER)
+ * - `system`  → `<resourcesPath>/.agents/skills` shipped read-only with the app (Codex SYSTEM)
+ *
+ * (Codex ADMIN scope is not yet implemented client-side.)
+ */
+export type CodexSkillScope = 'repo' | 'user' | 'system'
 
 export interface CodexSkillSummary {
   name: string
@@ -206,6 +214,9 @@ export interface AgentStreamEventBase {
  *   - `modelRerouted` (codex routed gpt-5 → gpt-4-turbo behind the scenes)
  *   - `hookStarted` / `hookCompleted` (extension hooks lifecycle pulse)
  *   - `autoApprovalReview` (auto-approver inspecting an action; informational)
+ *   - `contextHighWatermark` (renderer-detected: context window crossed the
+ *     70% mark — Codex auto-compacts at 90% but if we reach ~95% there is no
+ *     room left to emit a summary; see openai/codex#10823 community thread)
  */
 export type AgentNoticeKind =
   | 'configWarning'
@@ -215,6 +226,16 @@ export type AgentNoticeKind =
   | 'hookCompleted'
   | 'autoApprovalReview'
   | 'autoApprovalReviewCompleted'
+  | 'contextHighWatermark'
+  | 'attachmentSkipped'
+  /**
+   * Auto-recovery from PGlite NODEFS abort (upstream PGlite #884 / #794):
+   * the local pgdata couldn't be reopened (crash, force-quit, dual instance,
+   * installer overwrite) so we either moved the corrupt dir aside and rebuilt,
+   * or fell back to an ephemeral non-persistent dir if the circuit breaker
+   * tripped. Surfaces with `details.backupPath` or `details.ephemeralDir`.
+   */
+  | 'pgliteReset'
 
 export interface AgentNotice {
   /** Stable id so the renderer can dedupe identical notices. */
@@ -237,6 +258,7 @@ export type AgentStreamEvent =
   | (AgentStreamEventBase & { type: 'token_usage_updated'; usage: AgentTokenUsage })
   | (AgentStreamEventBase & { type: 'error'; error: string })
   | (AgentStreamEventBase & { type: 'cancelled' })
+  | (AgentStreamEventBase & { type: 'attachment_error'; name: string; error: string })
   | { type: 'mcp_status_updated'; name: string; status: string; error: string | null }
   | { type: 'mcp_oauth_completed'; name: string; success: boolean; error: string | null }
   | { type: 'skills_changed' }
@@ -266,7 +288,18 @@ export interface AgentApiResult {
   error?: string
 }
 
+/** Writable scopes for MCP config & user-authored skills (Codex `personal` ≈ user, `workspace` ≈ repo). */
 export type CodexConfigScope = 'personal' | 'workspace'
+
+/**
+ * Listing scope for skills, matching Codex official documentation naming:
+ *   - `repo`    → workspace-local skills (writable; alias of CodexConfigScope 'workspace')
+ *   - `user`    → home-directory skills (writable; alias of CodexConfigScope 'personal')
+ *   - `system`  → bundled-with-installer skills (read-only, packaged mode only)
+ *
+ * (Codex ADMIN scope not yet implemented.)
+ */
+export type CodexSkillListScope = 'user' | 'repo' | 'system'
 
 export interface CodexMcpServerInput {
   id?: string
@@ -305,10 +338,12 @@ export interface CodexSkillInput {
 export interface CodexSkillListItem {
   id: string
   name: string
-  scope: CodexConfigScope
+  scope: CodexSkillListScope
   path: string
   description?: string
   warnings: string[]
+  /** True for read-only bundled skills shipped with the installer. */
+  readOnly?: boolean
 }
 
 export interface CodexAuditLogEntry {
@@ -326,6 +361,12 @@ export interface CodexWorkspacePaths {
   personalSkillsRoot: string
   workspaceConfigToml: string
   workspaceSkillsRoot: string
+  /**
+   * Optional read-only root for `system` scope — skills shipped inside the
+   * installer (`<resourcesPath>/.agents/skills` in packaged mode; undefined in
+   * dev). Matches Codex official SYSTEM scope.
+   */
+  systemSkillsRoot?: string
   runtimeConfigToml: string
   auditLogPath: string
 }

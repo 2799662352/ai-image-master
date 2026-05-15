@@ -1,22 +1,22 @@
-import { useMemo, useState, useEffect, useCallback } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useModelStore, useToastStore, useBatchStore } from '../stores'
 import { useApi } from '../hooks/useService'
-import PunkShell from './batch-punk/PunkShell'
-import PunkHeader from './batch-punk/PunkHeader'
-import PunkModeSwitcher from './batch-punk/PunkModeSwitcher'
-import PunkPromptCard from './batch-punk/PunkPromptCard'
-import PunkPromptMulti from './batch-punk/PunkPromptMulti'
-import PunkConfigGrid, {
+import BatchShell from './batch/BatchShell'
+import BatchHeader from './batch/BatchHeader'
+import BatchModeSwitcher from './batch/BatchModeSwitcher'
+import BatchPromptCard from './batch/BatchPromptCard'
+import BatchPromptMulti from './batch/BatchPromptMulti'
+import BatchConfigGrid, {
   type RatioOption,
   type ResolutionOption,
-} from './batch-punk/PunkConfigGrid'
-import PunkRefDrop from './batch-punk/PunkRefDrop'
-import PunkActionBar from './batch-punk/PunkActionBar'
-import PunkResultGrid from './batch-punk/PunkResultGrid'
-import PunkPromptHelperBar from './batch-punk/PunkPromptHelperBar'
+} from './batch/BatchConfigGrid'
+import BatchRefDrop from './batch/BatchRefDrop'
+import BatchActionBar from './batch/BatchActionBar'
+import BatchResultGrid from './batch/BatchResultGrid'
+import BatchPromptHelperBar from './batch/BatchPromptHelperBar'
 import type { MediaRef } from '../components/shared/media-tokens/types'
-import { PunkBudgetReceipt } from './batch-punk/PunkBudgetReceipt'
+import { BatchBudgetReceipt } from './batch/BatchBudgetReceipt'
 import { extractPriceFromModel } from '../utils/model-price'
 import { TemplateInline } from '../react-app/components/TemplateInline'
 
@@ -48,8 +48,9 @@ interface ModelConfigSnapshot {
 }
 
 /**
- * BatchPage (punk) — 批量生成页, P5 拼贴 + 多娜多娜朋克 zine 主题
- * 数据驱动:全部状态在 useBatchStore
+ * BatchPage — 批量生成页(干净赛博朋克版,沿用 GeneratePage zinc + cyberpunk-yellow 风)
+ * 全部业务逻辑由 useBatchStore 驱动;早期 P5 朋克拼贴版的 PunkXxx 组件已移交 batch-punk/
+ * 目录归档,本页不再引用。
  */
 export default function BatchPage() {
   const api = useApi()
@@ -89,7 +90,6 @@ export default function BatchPage() {
   }, [items])
 
   // ---- 估算这次点 GENERATE 会新增多少任务 ----
-  // multi 模式: 整段文本作为 1 条 prompt, 重复 perPromptCount 次, 不再按行拆分
   const willEnqueue = useMemo(() => {
     if (mode === 'card') {
       return cardPrompt.trim() ? cardCount : 0
@@ -108,7 +108,7 @@ export default function BatchPage() {
     return () => window.removeEventListener('keydown', onKey)
   }, [previewUrl])
 
-  // ---- 当前 model 的 ratio / resolution 选项 (随 currentModelKey 实时变化) ----
+  // ---- 当前 model 的 ratio / resolution 选项 ----
   const [modelConfig, setModelConfig] = useState<ModelConfigSnapshot | null>(null)
   useEffect(() => {
     const aiApi = (window as any).aiImageAPI
@@ -138,7 +138,7 @@ export default function BatchPage() {
     return FALLBACK_RESOLUTIONS
   }, [modelConfig, supportsResolution])
 
-  // ---- 预算收据需要的派生量 ----
+  // ---- 预算收据派生 ----
   const unitPrice = useMemo(() => extractPriceFromModel(modelConfig), [modelConfig])
   const receiptCount = mode === 'card' ? cardCount : perPromptCount
   const modelDisplayName = modelConfig?.name || currentModelKey || '未知模型'
@@ -195,31 +195,52 @@ export default function BatchPage() {
       addToast({ message: '请先在顶部选择模型', type: 'warning' })
       return
     }
-    if (running) return
 
-    // 1) 入队
+    // 1) 入队 — 即便 running=true 也允许追加，因为 useBatchStore 改造后的
+    //    workers 走的是 live-claim 模型 (claimNextPending)，新入队的 item
+    //    会被空闲 / 下一轮 worker 直接捡走，不再需要等本轮 batch 整体跑完。
+    let enqueuedThisClick = 0
     if (mode === 'card') {
       const p = cardPrompt.trim()
-      if (!p && stats.pending === 0) {
+      if (!p && stats.pending === 0 && !running) {
         addToast({ message: '请输入提示词', type: 'warning' })
         return
       }
       if (p) {
-        for (let i = 0; i < cardCount; i++) addItem(p)
+        for (let i = 0; i < cardCount; i++) {
+          addItem(p)
+          enqueuedThisClick += 1
+        }
       }
     } else {
-      // multi 模式: 整段文本作为单条 prompt 入队, 重复 perPromptCount 次
       const p = multiText.trim()
-      if (!p && stats.pending === 0) {
+      if (!p && stats.pending === 0 && !running) {
         addToast({ message: '请输入提示词', type: 'warning' })
         return
       }
       if (p) {
-        for (let i = 0; i < perPromptCount; i++) addItem(p)
+        for (let i = 0; i < perPromptCount; i++) {
+          addItem(p)
+          enqueuedThisClick += 1
+        }
       }
     }
 
-    // 2) 跑队列
+    // 2) 已经在跑 -> 工人会自动接管新加入的 items，本次调用只做加入通知
+    //    然后返回，不要 await（也不要再发完成 toast，那一次会由最初点
+    //    "开始生成" 的那次调用负责）。
+    if (running) {
+      if (enqueuedThisClick > 0) {
+        addToast({
+          message: `已加入运行队列 (+${enqueuedThisClick})`,
+          type: 'info',
+          duration: 2000,
+        })
+      }
+      return
+    }
+
+    // 3) 没在跑 -> 启动 workers
     try {
       await runBatch(api, currentModelKey, {
         ratio, resolution, concurrency,
@@ -247,8 +268,8 @@ export default function BatchPage() {
   }
 
   return (
-    <PunkShell>
-      <PunkHeader
+    <BatchShell>
+      <BatchHeader
         total={stats.total}
         done={stats.done}
         failed={stats.failed}
@@ -259,22 +280,14 @@ export default function BatchPage() {
       />
 
       {/* 双栏:左 = 输入, 右 = 配置 + 参考图 */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
-          gap: 22,
-          alignItems: 'start',
-        }}
-        className="punk-batch-grid"
-      >
+      <div className="batch-page-grid grid gap-5" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', alignItems: 'start' }}>
         {/* ===== 左栏:模式 + 风格模板 + 视觉辅助 + 提示词输入 ===== */}
-        <section>
-          <PunkModeSwitcher mode={mode} onChange={setMode} />
-          <div style={{ marginBottom: 12 }}>
+        <section className="space-y-3">
+          <BatchModeSwitcher mode={mode} onChange={setMode} />
+          <div>
             <TemplateInline context="batch" />
           </div>
-          <PunkPromptHelperBar
+          <BatchPromptHelperBar
             refImages={refImages}
             onInject={(text) => {
               const cur = useBatchStore.getState()
@@ -287,7 +300,7 @@ export default function BatchPage() {
             }}
           />
           {mode === 'card' ? (
-            <PunkPromptCard
+            <BatchPromptCard
               prompt={cardPrompt}
               count={cardCount}
               onPromptChange={setCardPrompt}
@@ -295,7 +308,7 @@ export default function BatchPage() {
               mediaRefs={batchMediaRefs}
             />
           ) : (
-            <PunkPromptMulti
+            <BatchPromptMulti
               text={multiText}
               onChange={setMultiText}
               perPromptCount={perPromptCount}
@@ -306,8 +319,8 @@ export default function BatchPage() {
         </section>
 
         {/* ===== 右栏:配置 + 参考图 ===== */}
-        <section>
-          <PunkConfigGrid
+        <section className="space-y-3">
+          <BatchConfigGrid
             ratio={ratio}
             resolution={resolution}
             concurrency={concurrency}
@@ -319,7 +332,7 @@ export default function BatchPage() {
             onConcurrencyChange={setConcurrency}
             sizeHidden={sizeHidden}
           />
-          <PunkRefDrop
+          <BatchRefDrop
             images={refImages}
             onAdd={addRefImage}
             onRemove={removeRefImage}
@@ -330,7 +343,7 @@ export default function BatchPage() {
       </div>
 
       {/* ===== 全宽 ActionBar ===== */}
-      <PunkActionBar
+      <BatchActionBar
         total={stats.total}
         done={stats.done}
         failed={stats.failed}
@@ -340,7 +353,7 @@ export default function BatchPage() {
         onGenerate={handleGenerate}
         onCancel={handleCancel}
         leftSlot={
-          <PunkBudgetReceipt
+          <BatchBudgetReceipt
             modelName={modelDisplayName}
             unitPrice={unitPrice}
             count={receiptCount}
@@ -350,66 +363,36 @@ export default function BatchPage() {
       />
 
       {/* ===== 全宽结果网格 ===== */}
-      <PunkResultGrid
+      <BatchResultGrid
         items={items}
         onRemove={removeItem}
         onPreview={(url) => setPreviewUrl(url)}
       />
 
-      {/* ===== 极简预览 modal (portal 出去, 避开 stacking 干扰) ===== */}
+      {/* ===== 预览 modal ===== */}
       {previewUrl && createPortal(
         <div
           onClick={() => setPreviewUrl(null)}
-          style={{
-            position: 'fixed', inset: 0, zIndex: 70000,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            backgroundColor: 'rgba(0,0,0,0.92)',
-            backdropFilter: 'blur(6px)',
-            padding: 24,
-          }}
+          className="fixed inset-0 z-[70000] flex items-center justify-center bg-black/92 backdrop-blur p-6"
         >
           <div
-            className="donor-punk"
             onClick={(e) => e.stopPropagation()}
-            style={{
-              position: 'relative',
-              maxWidth: '92vw',
-              maxHeight: '92vh',
-              border: '5px solid var(--punk-pink)',
-              boxShadow: '8px 8px 0 var(--punk-cream)',
-              background: 'var(--punk-black)',
-              overflow: 'visible',
-            }}
+            className="relative max-w-[92vw] max-h-[92vh] border-2 border-zinc-700 bg-zinc-950 shadow-2xl"
           >
             <img
               src={previewUrl}
               alt="preview"
-              style={{ display: 'block', maxWidth: '92vw', maxHeight: '92vh', objectFit: 'contain' }}
+              className="block max-w-[92vw] max-h-[92vh] object-contain"
             />
             <button
               type="button"
               onClick={() => setPreviewUrl(null)}
               aria-label="关闭预览"
-              className="p-mono"
-              style={{
-                position: 'absolute', top: 8, right: 8,
-                width: 36, height: 36,
-                background: 'var(--punk-pink)',
-                color: 'var(--punk-black)',
-                border: '3px solid var(--punk-black)',
-                fontWeight: 900, fontSize: 18,
-                cursor: 'pointer', boxShadow: '3px 3px 0 var(--punk-cream)',
-                zIndex: 2,
-              }}
+              className="absolute top-2 right-2 w-9 h-9 flex items-center justify-center bg-zinc-900 border-2 border-zinc-700 text-white hover:bg-red-900/50 hover:border-red-700/60 text-lg font-bold transition-colors"
             >
               ×
             </button>
-            <div
-              style={{
-                position: 'absolute', bottom: 8, right: 8,
-                display: 'flex', gap: 8, alignItems: 'center',
-              }}
-            >
+            <div className="absolute bottom-2 right-2 flex gap-2">
               <button
                 type="button"
                 onClick={async (e) => {
@@ -431,37 +414,19 @@ export default function BatchPage() {
                     document.body.appendChild(a); a.click(); a.remove()
                   }
                 }}
-                className="p-mono"
                 aria-label="下载图片"
-                style={{
-                  background: 'var(--punk-toxic)',
-                  color: 'var(--punk-black)',
-                  border: '3px solid var(--punk-black)',
-                  padding: '4px 10px',
-                  fontWeight: 900, fontSize: 11,
-                  cursor: 'pointer',
-                  boxShadow: '3px 3px 0 var(--punk-pink)',
-                }}
+                className="px-3 py-1.5 bg-cyberpunk-yellow text-cyberpunk-black border-2 border-cyberpunk-yellow font-mono text-xs font-bold uppercase tracking-wider hover:bg-cyberpunk-accent transition-colors"
               >
-                [ ↓ DOWNLOAD ]
+                ↓ 下载
               </button>
               {!previewUrl.startsWith('data:') && (
                 <a
                   href={previewUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="p-mono"
-                  style={{
-                    background: 'var(--punk-cream)',
-                    color: 'var(--punk-black)',
-                    border: '3px solid var(--punk-black)',
-                    padding: '4px 10px',
-                    fontWeight: 900, fontSize: 11,
-                    textDecoration: 'none',
-                    boxShadow: '3px 3px 0 var(--punk-pink)',
-                  }}
+                  className="px-3 py-1.5 bg-zinc-900 text-zinc-200 border-2 border-zinc-700 font-mono text-xs font-bold uppercase tracking-wider hover:border-cyberpunk-yellow hover:text-cyberpunk-yellow transition-colors no-underline"
                 >
-                  [ OPEN.URL ]
+                  打开 URL
                 </a>
               )}
             </div>
@@ -473,11 +438,11 @@ export default function BatchPage() {
       {/* 响应式: 窄屏单栏 */}
       <style>{`
         @media (max-width: 880px) {
-          .punk-batch-grid {
+          .batch-page-grid {
             grid-template-columns: minmax(0, 1fr) !important;
           }
         }
       `}</style>
-    </PunkShell>
+    </BatchShell>
   )
 }

@@ -27,7 +27,16 @@ export interface BatchRunOpts {
   resolution?: string
   referenceImages?: string[]      // base64 数组(去掉 dataURL prefix 的纯 base64)
   perPromptCount?: number          // 每条 prompt 跑几次(扩张到 items)
-  concurrency?: number             // 并发数, 默认 1
+  concurrency?: number             // 并发数, 默认 3
+  /**
+   * Worker idle-exit grace period (ms). When a worker finds no pending item
+   * it polls every ~80ms; if the queue stays empty for this long, the
+   * worker exits. Larger value = more responsive to mid-run `addItem` calls
+   * (worker stays warm a bit longer), smaller value = batch wraps up faster
+   * after the last item completes. Tests pass 0 to make `runBatch` resolve
+   * immediately. @default 300
+   */
+  idleExitMs?: number
 }
 
 export interface BatchState {
@@ -129,6 +138,20 @@ export const useBatchStore = create<BatchState>((set, get) => ({
   },
 
   runBatch: async (api, modelKey, opts) => {
+    // Single-flight: if a batch is already running, the in-flight workers
+    // will pick up any newly-pending items live (see `claimNextPending`
+    // below). Spawning a second worker pool would just duplicate state
+    // races against the existing pool — they all read from the same
+    // `items[]` array, so the first set is enough.
+    //
+    // This is the user-visible "fix the second-task blocking" bug: before
+    // this rewrite, the queue was a `[...pending]` snapshot taken at entry,
+    // so anything added mid-run was stranded as `pending` until the user
+    // manually clicked "继续排队" again. Now `handleGenerate` can call
+    // `runBatch` unconditionally and the already-running workers pick up
+    // the new items within one poll cycle.
+    if (get().running) return
+
     const pending = get().items.filter((i) => i.status === 'pending')
     if (pending.length === 0) return
 
@@ -140,22 +163,48 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     const refRaw = opts?.referenceImages ?? get().refImages.map((r) => r.base64)
     const referenceImages = refRaw.map(stripDataUrl).filter(Boolean)
     const concurrency = Math.max(1, Math.min(6, opts?.concurrency ?? get().concurrency))
+    const idleExitMs = Math.max(0, opts?.idleExitMs ?? 300)
+    const POLL_IDLE_MS = 80
 
-    const queue = [...pending]
+    /**
+     * Atomically claim the first pending item. The whole read-and-flip
+     * happens inside a single `set` callback so two workers racing on the
+     * same item don't both pick it up — the second worker's `set` runs
+     * after the first's update is committed, sees `generating`, and
+     * returns null.
+     */
+    const claimNextPending = (): BatchItem | null => {
+      let claimed: BatchItem | null = null
+      set((state) => {
+        const next = state.items.find((i) => i.status === 'pending')
+        if (!next) return state
+        claimed = { ...next, status: 'generating' as const }
+        return {
+          items: state.items.map((i) =>
+            i.id === next.id ? { ...i, status: 'generating' as const } : i
+          ),
+        }
+      })
+      return claimed
+    }
+
     const runOne = async () => {
-      while (queue.length > 0) {
+      let idleSince: number | null = null
+      while (true) {
         if (ac.signal.aborted) break
 
-        const item = queue.shift()
-        if (!item) break
-
-        if (!get().items.some((i) => i.id === item.id)) continue
-
-        set((state) => ({
-          items: state.items.map((i) =>
-            i.id === item.id ? { ...i, status: 'generating' as const } : i
-          ),
-        }))
+        const item = claimNextPending()
+        if (!item) {
+          // No pending right now. Poll for a brief grace period so a
+          // sibling `addItem(...)` from the UI (user typing more prompts
+          // while the batch is running) can still wake this worker.
+          // Exits only after `idleExitMs` of continuous emptiness.
+          if (idleSince === null) idleSince = Date.now()
+          if (Date.now() - idleSince >= idleExitMs) break
+          await new Promise((r) => setTimeout(r, POLL_IDLE_MS))
+          continue
+        }
+        idleSince = null
 
         try {
           const templateKey = useTemplateStore.getState().getSelection('batch')

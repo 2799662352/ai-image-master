@@ -94,8 +94,8 @@ describe('registerAgentIpc thread management handlers', () => {
     ;(ipcMain as unknown as { __reset: () => void }).__reset()
     manager = makeManager()
     registerAgentIpc(
-      manager as unknown as Parameters<typeof registerAgentIpc>[0],
-      router as unknown as Parameters<typeof registerAgentIpc>[1],
+      () => Promise.resolve(manager as unknown as Awaited<ReturnType<Parameters<typeof registerAgentIpc>[0]>>),
+      () => router as unknown as ReturnType<Parameters<typeof registerAgentIpc>[1]>,
     )
   })
 
@@ -127,8 +127,8 @@ describe('registerAgentIpc thread management handlers', () => {
   it('can be registered again after an Electron dev reload', () => {
     const nextManager = makeManager()
     registerAgentIpc(
-      nextManager as unknown as Parameters<typeof registerAgentIpc>[0],
-      router as unknown as Parameters<typeof registerAgentIpc>[1],
+      () => Promise.resolve(nextManager as unknown as Awaited<ReturnType<Parameters<typeof registerAgentIpc>[0]>>),
+      () => router as unknown as ReturnType<Parameters<typeof registerAgentIpc>[1]>,
     )
 
     expect(get('agent:open-thread')).toBeTypeOf('function')

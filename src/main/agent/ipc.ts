@@ -41,81 +41,130 @@ const AGENT_HANDLE_CHANNELS = [
   'agent:docker-gw-stop',
 ]
 
-export function registerAgentIpc(manager: AgentManager, router: ToolRouter): void {
+export type GetAgentManager = () => Promise<AgentManager>
+export type GetToolRouter = () => ToolRouter | null
+
+// Registers all agent IPC handlers eagerly at app start. Each handler awaits
+// `getManager()` so renderer-side calls that fire before the AgentManager has
+// finished initializing (e.g. the chat sidebar's mount-time `agent:list-threads`)
+// block on the manager-ready promise instead of failing with "No handler
+// registered for ..." — which is the first-launch race users hit.
+export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetToolRouter): void {
   for (const channel of AGENT_HANDLE_CHANNELS) {
     ipcMain.removeHandler(channel)
   }
   ipcMain.removeAllListeners('agent:tool-response')
 
-  ipcMain.handle('agent:send-message', (_event, payload) => manager.sendMessage(payload))
+  ipcMain.handle('agent:send-message', async (_event, payload) =>
+    (await getManager()).sendMessage(payload),
+  )
   ipcMain.handle('agent:cancel', async (_event, payload) => {
-    await manager.cancel(payload.threadId)
+    await (await getManager()).cancel(payload.threadId)
     return { success: true }
   })
-  ipcMain.handle('agent:list-threads', () => manager.listThreads())
-  ipcMain.handle('agent:load-thread', (_event, threadId: string) => manager.loadThread(threadId))
-  ipcMain.handle('agent:open-thread', (_event, threadId: string) => manager.openThread(threadId))
-  ipcMain.handle('agent:rename-thread', (_event, threadId: string, title: string) =>
-    manager.renameThread(threadId, title),
+  ipcMain.handle('agent:list-threads', async () => (await getManager()).listThreads())
+  ipcMain.handle('agent:load-thread', async (_event, threadId: string) =>
+    (await getManager()).loadThread(threadId),
   )
-  ipcMain.handle('agent:delete-thread', (_event, threadId: string) => manager.deleteThread(threadId))
+  ipcMain.handle('agent:open-thread', async (_event, threadId: string) =>
+    (await getManager()).openThread(threadId),
+  )
+  ipcMain.handle('agent:rename-thread', async (_event, threadId: string, title: string) =>
+    (await getManager()).renameThread(threadId, title),
+  )
+  ipcMain.handle('agent:delete-thread', async (_event, threadId: string) =>
+    (await getManager()).deleteThread(threadId),
+  )
   ipcMain.handle('agent:set-api-key', async (_event, key: unknown) => {
     try {
-      await manager.setCodexApiKey(typeof key === 'string' ? key : '')
+      await (await getManager()).setCodexApiKey(typeof key === 'string' ? key : '')
       return { ok: true as const }
     } catch (err) {
       return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
     }
   })
-  ipcMain.handle('agent:test-connection', () => manager.testConnection())
-  ipcMain.handle('agent:get-session-status', () => manager.getSessionStatus())
-  ipcMain.handle('agent:set-session-config', (_event, patch: unknown) => manager.setSessionConfigPatch(patch))
-  ipcMain.handle('agent:set-allowed-roots', (_event, roots: unknown) => manager.setAllowedRoots(roots))
+  ipcMain.handle('agent:test-connection', async () => (await getManager()).testConnection())
+  ipcMain.handle('agent:get-session-status', async () => (await getManager()).getSessionStatus())
+  ipcMain.handle('agent:set-session-config', async (_event, patch: unknown) =>
+    (await getManager()).setSessionConfigPatch(patch),
+  )
+  ipcMain.handle('agent:set-allowed-roots', async (_event, roots: unknown) =>
+    (await getManager()).setAllowedRoots(roots),
+  )
   ipcMain.handle('agent:respond-approval', async (_event, payload: unknown) =>
-    manager.respondToApprovalResponse(validateApprovalResponse(payload)),
+    (await getManager()).respondToApprovalResponse(validateApprovalResponse(payload)),
   )
-  ipcMain.handle('agent:get-mcp-summary', () => manager.getMcpSummary())
-  ipcMain.handle('agent:get-skills-summary', () => manager.getSkillsSummary())
-  ipcMain.handle('agent:list-skills', () => handleWorkspaceRequest(() => manager.listSkills()))
-  ipcMain.handle('agent:get-skill-detail', (_event, id: unknown) =>
-    handleWorkspaceRequest(() => manager.getSkillDetail(validateWorkspaceId(id, 'Skill id'))),
+  ipcMain.handle('agent:get-mcp-summary', async () => (await getManager()).getMcpSummary())
+  ipcMain.handle('agent:get-skills-summary', async () => (await getManager()).getSkillsSummary())
+  ipcMain.handle('agent:list-skills', async () =>
+    handleWorkspaceRequest(async () => (await getManager()).listSkills()),
   )
-  ipcMain.handle('agent:save-skill', (_event, input: unknown) =>
-    handleWorkspaceRequest(() => manager.saveSkill(input as Parameters<AgentManager['saveSkill']>[0])),
+  ipcMain.handle('agent:get-skill-detail', async (_event, id: unknown) =>
+    handleWorkspaceRequest(async () =>
+      (await getManager()).getSkillDetail(validateWorkspaceId(id, 'Skill id')),
+    ),
   )
-  ipcMain.handle('agent:delete-skill', (_event, id: unknown) =>
-    handleWorkspaceRequest(() => manager.deleteSkill(validateWorkspaceId(id, 'Skill id'))),
+  ipcMain.handle('agent:save-skill', async (_event, input: unknown) =>
+    handleWorkspaceRequest(async () =>
+      (await getManager()).saveSkill(input as Parameters<AgentManager['saveSkill']>[0]),
+    ),
   )
-  ipcMain.handle('agent:get-workspace-logs', (_event, opts: unknown) =>
-    handleWorkspaceRequest(() => manager.getWorkspaceLogs(opts as Parameters<AgentManager['getWorkspaceLogs']>[0])),
+  ipcMain.handle('agent:delete-skill', async (_event, id: unknown) =>
+    handleWorkspaceRequest(async () =>
+      (await getManager()).deleteSkill(validateWorkspaceId(id, 'Skill id')),
+    ),
+  )
+  ipcMain.handle('agent:get-workspace-logs', async (_event, opts: unknown) =>
+    handleWorkspaceRequest(async () =>
+      (await getManager()).getWorkspaceLogs(opts as Parameters<AgentManager['getWorkspaceLogs']>[0]),
+    ),
   )
   ipcMain.handle('agent:restart-codex', async () => {
     try {
-      await manager.restartCodex()
+      await (await getManager()).restartCodex()
       return { ok: true as const }
     } catch (err) {
       return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
     }
   })
-  ipcMain.handle('agent:list-codex-threads', () => manager.listCodexThreads())
+  ipcMain.handle('agent:list-codex-threads', async () => (await getManager()).listCodexThreads())
   ipcMain.handle('agent:read-codex-thread', async (_event, threadId: unknown) =>
-    manager.readCodexThread(validateThreadId(threadId)),
+    (await getManager()).readCodexThread(validateThreadId(threadId)),
   )
   ipcMain.handle('agent:fork-codex-thread', async (_event, threadId: unknown) =>
-    manager.forkCodexThread(validateThreadId(threadId)),
+    (await getManager()).forkCodexThread(validateThreadId(threadId)),
   )
-  ipcMain.handle('agent:mcp-list-servers', (_event, params?: unknown) => manager.listMcpServersRpc(params))
-  ipcMain.handle('agent:mcp-batch-write', (_event, edits: unknown[], reload?: boolean) => manager.batchWriteConfigRpc(edits, reload))
-  ipcMain.handle('agent:mcp-write-value', (_event, keyPath: string, value: unknown) => manager.writeConfigValueRpc(keyPath, value))
-  ipcMain.handle('agent:mcp-reload', () => manager.reloadMcpServersRpc())
-  ipcMain.handle('agent:mcp-oauth-login', (_event, name: string) => manager.mcpOAuthLoginRpc(name))
-  ipcMain.handle('agent:mcp-read-config', () => manager.readConfigRpc())
-  ipcMain.handle('agent:mcp-status-snapshot', () => manager.getMcpStatusSnapshotRpc())
-  ipcMain.handle('agent:docker-gw-check', () => manager.dockerGatewayCheckRpc())
-  ipcMain.handle('agent:docker-gw-fix', (_event, opts?: { port?: number }) => manager.dockerGatewayFixRpc(opts))
-  ipcMain.handle('agent:docker-gw-status', () => manager.dockerGatewayStatusRpc())
-  ipcMain.handle('agent:docker-gw-stop', () => manager.dockerGatewayStopRpc())
-  ipcMain.on('agent:tool-response', (_event, response: AgentToolResponse) => router.handleRendererResponse(response))
+  ipcMain.handle('agent:mcp-list-servers', async (_event, params?: unknown) =>
+    (await getManager()).listMcpServersRpc(params),
+  )
+  ipcMain.handle('agent:mcp-batch-write', async (_event, edits: unknown[], reload?: boolean) =>
+    (await getManager()).batchWriteConfigRpc(edits, reload),
+  )
+  ipcMain.handle('agent:mcp-write-value', async (_event, keyPath: string, value: unknown) =>
+    (await getManager()).writeConfigValueRpc(keyPath, value),
+  )
+  ipcMain.handle('agent:mcp-reload', async () => (await getManager()).reloadMcpServersRpc())
+  ipcMain.handle('agent:mcp-oauth-login', async (_event, name: string) =>
+    (await getManager()).mcpOAuthLoginRpc(name),
+  )
+  ipcMain.handle('agent:mcp-read-config', async () => (await getManager()).readConfigRpc())
+  ipcMain.handle('agent:mcp-status-snapshot', async () =>
+    (await getManager()).getMcpStatusSnapshotRpc(),
+  )
+  ipcMain.handle('agent:docker-gw-check', async () => (await getManager()).dockerGatewayCheckRpc())
+  ipcMain.handle('agent:docker-gw-fix', async (_event, opts?: { port?: number }) =>
+    (await getManager()).dockerGatewayFixRpc(opts),
+  )
+  ipcMain.handle('agent:docker-gw-status', async () => (await getManager()).dockerGatewayStatusRpc())
+  ipcMain.handle('agent:docker-gw-stop', async () => (await getManager()).dockerGatewayStopRpc())
+
+  // Tool-response routing only takes effect once the catimation MCP HTTP
+  // listener is live (router != null). Resolving the router lazily lets us
+  // register the listener at startup regardless of MCP boot order.
+  ipcMain.on('agent:tool-response', (_event, response: AgentToolResponse) => {
+    const router = getRouter()
+    if (router) router.handleRendererResponse(response)
+  })
 }
 
 async function handleWorkspaceRequest<T>(

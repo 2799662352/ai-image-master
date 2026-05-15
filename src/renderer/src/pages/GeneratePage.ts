@@ -1099,7 +1099,9 @@ export class GeneratePage extends BasePage {
       }
     }, 1000)
 
-    setTimeout(() => clearInterval(interval), 300000)
+    // 与 ApiService 的 15 分钟硬超时对齐：进度条假动画也跟着撑到 15 分钟，
+    // 避免高画质 / 4K 长耗时模型生成中途进度条提前停下来让用户以为卡死。
+    setTimeout(() => clearInterval(interval), 900000)
 
     return interval
   }

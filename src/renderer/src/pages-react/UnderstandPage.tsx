@@ -10,6 +10,7 @@ export default function UnderstandPage() {
   const question = useUnderstandStore((s) => s.question)
   const analysisResult = useUnderstandStore((s) => s.analysisResult)
   const analyzing = useUnderstandStore((s) => s.analyzing)
+  const inFlightCount = useUnderstandStore((s) => s.inFlightCount)
   const error = useUnderstandStore((s) => s.error)
 
   const { setImageUrl, setQuestion, analyze } = useUnderstandStore.getState()
@@ -65,15 +66,22 @@ export default function UnderstandPage() {
 
       <button
         onClick={handleAnalyze}
-        disabled={analyzing || !imageUrl}
+        disabled={!imageUrl}
         className="w-full py-3 bg-cyberpunk-yellow text-cyberpunk-black font-bold uppercase tracking-tight hover:opacity-90 transition-all disabled:opacity-50"
       >
-        {analyzing ? '分析中...' : '开始分析'}
+        {analyzing ? `再次分析 (运行中 × ${inFlightCount})` : '开始分析'}
       </button>
 
       {analysisResult && (
         <div className="bg-zinc-900 border-2 border-zinc-700 p-4">
-          <h3 className="text-sm font-bold text-cyberpunk-yellow mb-2">分析结果</h3>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-bold text-cyberpunk-yellow">分析结果</h3>
+            {analyzing && (
+              <span className="text-[10px] text-zinc-500 font-mono uppercase tracking-wider">
+                新分析中 · {inFlightCount} 个待返回
+              </span>
+            )}
+          </div>
           <pre className="text-sm text-gray-300 whitespace-pre-wrap">{analysisResult}</pre>
         </div>
       )}

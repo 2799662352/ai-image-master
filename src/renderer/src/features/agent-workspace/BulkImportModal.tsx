@@ -1,8 +1,9 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import type React from 'react'
 
 import { stripNullDeep } from './mcpConfigSanitizer'
 import { useMcpStore } from './useMcpStore'
+import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea'
 
 interface ParsedServer {
   name: string
@@ -72,6 +73,8 @@ export function BulkImportModal({ onClose }: BulkImportModalProps): React.JSX.El
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [importing, setImporting] = useState(false)
   const [importError, setImportError] = useState<string | null>(null)
+  const rawJsonRef = useRef<HTMLTextAreaElement>(null)
+  useAutosizeTextarea(rawJsonRef, rawJson, { minRows: 10, maxRows: 28 })
   const fetchServers = useMcpStore((s) => s.fetchServers)
 
   const handleParse = useCallback(() => {
@@ -145,10 +148,11 @@ export function BulkImportModal({ onClose }: BulkImportModalProps): React.JSX.El
             粘贴 Cursor 的 mcp.json 内容或 Codex 格式的 JSON 配置。支持自动识别格式。
           </p>
           <textarea
+            ref={rawJsonRef}
             value={rawJson}
             onChange={(e) => setRawJson(e.target.value)}
             placeholder={'{\n  "mcpServers": {\n    "server-name": {\n      "command": "npx",\n      "args": ["-y", "package-name"]\n    }\n  }\n}'}
-            className="h-[200px] w-full resize-none rounded border border-zinc-700 bg-zinc-950 p-3 font-mono text-xs text-zinc-200 placeholder:text-zinc-700 focus:border-cyan-600/50 focus:outline-none"
+            className="w-full resize-none rounded border border-zinc-700 bg-zinc-950 p-3 font-mono text-xs text-zinc-200 placeholder:text-zinc-700 focus:border-cyan-600/50 focus:outline-none transition-[height] duration-100"
           />
           {parseError && (
             <p className="text-xs text-red-400">{parseError}</p>

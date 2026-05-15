@@ -219,6 +219,22 @@ interface AgentChatState {
    * "甚至没有个圈圈展示上下文压缩进度").
    */
   tokenUsage?: AgentTokenUsage
+  /**
+   * Per-thread dedup tracker for the proactive 70% context-window warning
+   * (see openai/codex#10823 — once context is past ~95%, Codex's
+   * auto-compact has no remaining budget to emit a summary and fails).
+   *
+   * Key: `${threadId}:l1` (l1 = "level 1" / 70%; reserved for future tiers
+   * such as l2/85% or l3/95%). Once set, we never re-push the same notice
+   * for the same thread within this session — even if the user dismisses
+   * and usage briefly drops then climbs back over the threshold. Cleared
+   * on `newThread` and `applyEvent('cancelled')` (fresh thread => fresh
+   * watermark surface).
+   *
+   * Intentionally kept in zustand state (not module-scoped) so tests can
+   * inspect/reset it deterministically via `useAgentChatStore.setState`.
+   */
+  contextWatermarkSeen: Record<string, true>
   setPanelWidth: (width: number) => void
   preview: PreviewState
   openPreview: (images: AttachmentRef[], startIndex: number) => void
@@ -461,6 +477,64 @@ function applyItemCompleted(item: TimelineItem, final: Record<string, unknown>):
   return { ...item, ...final, type: item.type, endedAt: Date.now() } as typeof item
 }
 
+/**
+ * Threshold for the proactive context-window warning. Picked at 0.70 because
+ * Codex's own auto-compact triggers at 0.90 (model_auto_compact_token_limit
+ * = 0.9 × model_context_window), and the failure mode reported in
+ * openai/codex#10823 is that crossing ~0.95 leaves no remaining budget for
+ * the model to emit a summary. Catching at 0.70 gives the user (and the
+ * agent) breathing room to wrap up the current task, manually compact, or
+ * spin up a fresh thread before hitting that wall.
+ *
+ * Single-tier on purpose: a louder 0.90 banner would duplicate the existing
+ * `contextCompaction` ActivityCard (which fires the moment Codex starts
+ * compacting), and the donut meter already turns red at ≥0.90.
+ */
+const CONTEXT_WATERMARK_RATIO_L1 = 0.7
+
+function watermarkKeyL1(threadId: string): string {
+  return `${threadId}:l1`
+}
+
+function formatTokensCompact(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${Math.round(n / 1_000)}K`
+  return String(n)
+}
+
+/**
+ * Compute whether the current token usage crosses the level-1 watermark for
+ * `threadId`. Returns the notice to push (caller pushes + marks seen), or
+ * `null` if no notice should fire right now.
+ *
+ * Pure: takes everything it needs as arguments so it can be unit-tested
+ * without zustand state.
+ */
+export function deriveContextWatermarkNotice(input: {
+  threadId: string | undefined
+  usage: AgentTokenUsage
+  seen: Record<string, true>
+}): AgentNotice | null {
+  const { threadId, usage, seen } = input
+  if (!threadId) return null
+  const used = usage.contextUsage ?? usage.inputTokens + usage.outputTokens
+  const window = usage.contextWindow
+  if (typeof window !== 'number' || window <= 0) return null
+  const ratio = used / window
+  if (!Number.isFinite(ratio) || ratio < CONTEXT_WATERMARK_RATIO_L1) return null
+  const key = watermarkKeyL1(threadId)
+  if (seen[key]) return null
+  const pct = Math.min(100, Math.round(ratio * 100))
+  return {
+    id: `context-watermark:${key}`,
+    kind: 'contextHighWatermark',
+    level: 'warning',
+    threadId,
+    message: `上下文已用 ${pct}% (${formatTokensCompact(used)} / ${formatTokensCompact(window)})。Codex 90% 才自动压缩，过高时压缩可能失败（codex#10823）。建议尽快收尾、新开会话或精简上下文。`,
+    details: { ratio, used, window, watermark: 'l1' },
+  }
+}
+
 export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   isOpen: false,
   input: '',
@@ -474,6 +548,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   selectedModelId: readPersistedModelId(),
   panelWidth: readPersistedPanelWidth(),
   tokenUsage: undefined,
+  contextWatermarkSeen: {},
   sidebarOpen: readPersistedSidebarOpen(),
   sidebarWidth: readPersistedSidebarWidth(),
   threadList: [],
@@ -840,6 +915,10 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       isRunning: false,
       error: undefined,
       tokenUsage: undefined,
+      // Fresh session => fresh watermark dedup. Cross-thread entries are
+      // already isolated by threadId-keyed keys, but resetting on newThread
+      // is the right place to release the bookkeeping for a clean slate.
+      contextWatermarkSeen: {},
       pendingApprovals: [],
       rewoundTurns: [],
       editingMessageId: undefined,
@@ -970,17 +1049,53 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         set({ isRunning: false })
         scheduleThreadListTitleRefreshes(() => void get().refreshThreadList())
         break
-      case 'token_usage_updated':
+      case 'token_usage_updated': {
         // Just overwrite — Codex sends cumulative counts. The header meter
         // reads `tokenUsage.contextUsage / contextWindow` if both are
         // present, otherwise falls back to inputTokens+outputTokens.
         set({ tokenUsage: event.usage })
+        // Proactive 70% watermark check. See `deriveContextWatermarkNotice`
+        // for the rationale; in short, Codex's 90% auto-compact can run out
+        // of summary budget on very long sessions (openai/codex#10823), so
+        // we surface a warning early enough for the user to course-correct.
+        const state = get()
+        const notice = deriveContextWatermarkNotice({
+          threadId: state.threadId,
+          usage: event.usage,
+          seen: state.contextWatermarkSeen,
+        })
+        if (notice && state.threadId) {
+          const key = watermarkKeyL1(state.threadId)
+          set({ contextWatermarkSeen: { ...state.contextWatermarkSeen, [key]: true } })
+          state.pushNotice(notice)
+        }
         break
+      }
       case 'error':
         set({ error: event.error, isRunning: false })
         break
       case 'cancelled':
         set({ isRunning: false })
+        break
+      case 'attachment_error': {
+        // Per-attachment ingest failures are non-fatal — surface them as a
+        // notice so the user sees which file was skipped and why, without
+        // killing the turn that succeeded for the other attachments.
+        const state = get()
+        state.pushNotice({
+          id: `attachment-${event.name}-${Date.now()}`,
+          kind: 'attachmentSkipped',
+          level: 'warning',
+          message: `已跳过 ${event.name}：${event.error}`,
+          threadId: event.threadId,
+        })
+        break
+      }
+      case 'mcp_status_updated':
+      case 'mcp_oauth_completed':
+        // MCP lifecycle pulses are subscribed to via a dedicated `agent:mcp-*`
+        // IPC channel in MCPSection — no-op here so the exhaustive guard
+        // below stays happy.
         break
       default: {
         // exhaustiveness: every AgentStreamEvent variant must be handled above.

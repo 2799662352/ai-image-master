@@ -72,6 +72,14 @@ describe('useBatchStore', () => {
   })
 
   describe('runBatch', () => {
+    // Tests pass `concurrency: 1, idleExitMs: 0` so:
+    //   1. ordering is deterministic (one worker, one item at a time)
+    //   2. the workers exit immediately when the queue drains — without
+    //      this, every runBatch test would pay the 300ms idle grace period
+    //      that exists in production to let live `addItem` calls reach
+    //      still-warm workers.
+    const TEST_OPTS = { concurrency: 1, idleExitMs: 0 } as const
+
     it('processes items sequentially', async () => {
       useBatchStore.getState().addItem('prompt1')
       useBatchStore.getState().addItem('prompt2')
@@ -84,7 +92,7 @@ describe('useBatchStore', () => {
         }),
       })
 
-      await useBatchStore.getState().runBatch(api, 'model-x')
+      await useBatchStore.getState().runBatch(api, 'model-x', TEST_OPTS)
 
       expect(callOrder).toEqual(['prompt1', 'prompt2'])
       const items = useBatchStore.getState().items
@@ -109,7 +117,7 @@ describe('useBatchStore', () => {
         }),
       })
 
-      await useBatchStore.getState().runBatch(api, 'model')
+      await useBatchStore.getState().runBatch(api, 'model', TEST_OPTS)
 
       const items = useBatchStore.getState().items
       expect(items[0].status).toBe('done')
@@ -127,7 +135,7 @@ describe('useBatchStore', () => {
       })
 
       const api = createMockApi()
-      await useBatchStore.getState().runBatch(api, 'model')
+      await useBatchStore.getState().runBatch(api, 'model', TEST_OPTS)
 
       expect(api.generateImage).toHaveBeenCalledTimes(1)
       expect(api.generateImage).toHaveBeenCalledWith(
@@ -141,7 +149,7 @@ describe('useBatchStore', () => {
       })
 
       const api = createMockApi()
-      await useBatchStore.getState().runBatch(api, 'model')
+      await useBatchStore.getState().runBatch(api, 'model', TEST_OPTS)
 
       expect(api.generateImage).not.toHaveBeenCalled()
       expect(useBatchStore.getState().running).toBe(false)
@@ -160,7 +168,7 @@ describe('useBatchStore', () => {
         }),
       })
 
-      await useBatchStore.getState().runBatch(api, 'model')
+      await useBatchStore.getState().runBatch(api, 'model', TEST_OPTS)
 
       const items = useBatchStore.getState().items
       expect(items[0].status).toBe('error')
@@ -176,7 +184,7 @@ describe('useBatchStore', () => {
         generateImage: vi.fn().mockResolvedValue({ success: true, images: ['http://via-images.jpg'] }),
       })
 
-      await useBatchStore.getState().runBatch(api, 'model')
+      await useBatchStore.getState().runBatch(api, 'model', TEST_OPTS)
 
       const items = useBatchStore.getState().items
       expect(items[0].status).toBe('done')
@@ -190,11 +198,104 @@ describe('useBatchStore', () => {
         generateImage: vi.fn().mockResolvedValue({ success: true }),
       })
 
-      await useBatchStore.getState().runBatch(api, 'model')
+      await useBatchStore.getState().runBatch(api, 'model', TEST_OPTS)
 
       const items = useBatchStore.getState().items
       expect(items[0].status).toBe('error')
       expect(items[0].error).toBe('接口未返回图片地址')
+    })
+
+    // The exact regression the user reported on 2026-05-14:
+    //   "发送一个生成 任务 必须完成 才能生成 第二个 不应该是这样"
+    //
+    // Pre-fix: runBatch captured `const queue = [...pending]` at entry, so
+    // items added via addItem() mid-run stayed `pending` forever. The user
+    // had to wait for the running batch to drain, see "继续排队", then click
+    // again. This test fails on the old code (only one generateImage call,
+    // second item left pending) and passes on the live-claim rewrite.
+    it('picks up items added during a running batch (live queue)', async () => {
+      useBatchStore.getState().addItem('first')
+
+      const resolvers: Array<(v: unknown) => void> = []
+      const api = createMockApi({
+        generateImage: vi.fn().mockImplementation(
+          () => new Promise((resolve) => {
+            resolvers.push(resolve)
+          })
+        ),
+      })
+
+      // concurrency=1 keeps the order deterministic; idleExitMs=300 gives
+      // the live-add a clear window to be picked up.
+      const batchPromise = useBatchStore.getState().runBatch(api, 'model', {
+        concurrency: 1,
+        idleExitMs: 300,
+      })
+
+      // Worker 1 should claim 'first' immediately and call generateImage.
+      await vi.waitFor(() => {
+        expect(resolvers.length).toBe(1)
+        expect(useBatchStore.getState().items[0]?.status).toBe('generating')
+      })
+
+      // User types another prompt and clicks "+ 加入队列" while the batch
+      // is still running — addItem flips it into the same items[] array.
+      useBatchStore.getState().addItem('second')
+      expect(useBatchStore.getState().items[1]?.status).toBe('pending')
+
+      // Finishing the first item must cause the worker to claim the second
+      // on its next loop iteration — no second runBatch call required.
+      resolvers[0]({ success: true, urls: ['http://first.jpg'] })
+
+      await vi.waitFor(() => {
+        expect(resolvers.length).toBe(2)
+        expect(useBatchStore.getState().items[1]?.status).toBe('generating')
+      })
+
+      resolvers[1]({ success: true, urls: ['http://second.jpg'] })
+      await batchPromise
+
+      const items = useBatchStore.getState().items
+      expect(items[0].status).toBe('done')
+      expect(items[0].resultUrl).toBe('http://first.jpg')
+      expect(items[1].status).toBe('done')
+      expect(items[1].resultUrl).toBe('http://second.jpg')
+      expect(useBatchStore.getState().running).toBe(false)
+    })
+
+    // Single-flight invariant: calling runBatch a second time while one
+    // is already running must be a no-op (no duplicate worker pool, no
+    // re-flip of `running`). This protects against the BatchPage handler
+    // accidentally calling runBatch on top of itself.
+    it('is single-flight while running (no-op on re-entry)', async () => {
+      useBatchStore.getState().addItem('a')
+
+      let resolveFirst: ((v: unknown) => void) | undefined
+      const api = createMockApi({
+        generateImage: vi.fn().mockImplementation(
+          () => new Promise((r) => { resolveFirst = r })
+        ),
+      })
+
+      const first = useBatchStore.getState().runBatch(api, 'model', {
+        concurrency: 2,
+        idleExitMs: 0,
+      })
+
+      await vi.waitFor(() => {
+        expect(useBatchStore.getState().running).toBe(true)
+      })
+
+      // Second runBatch call: should resolve immediately without flipping
+      // anything (the existing pool already owns the items[] pool).
+      const second = useBatchStore.getState().runBatch(api, 'model', TEST_OPTS)
+      await second
+      expect(api.generateImage).toHaveBeenCalledTimes(1)
+      expect(useBatchStore.getState().running).toBe(true)
+
+      resolveFirst?.({ success: true, urls: ['http://a.jpg'] })
+      await first
+      expect(useBatchStore.getState().running).toBe(false)
     })
   })
 
@@ -215,7 +316,10 @@ describe('useBatchStore', () => {
         }),
       })
 
-      const batchPromise = useBatchStore.getState().runBatch(api, 'model')
+      const batchPromise = useBatchStore.getState().runBatch(api, 'model', {
+        concurrency: 1,
+        idleExitMs: 0,
+      })
 
       await vi.waitFor(() => {
         expect(useBatchStore.getState().running).toBe(true)
@@ -245,7 +349,10 @@ describe('useBatchStore', () => {
         }),
       })
 
-      const batchPromise = useBatchStore.getState().runBatch(api, 'model')
+      const batchPromise = useBatchStore.getState().runBatch(api, 'model', {
+        concurrency: 1,
+        idleExitMs: 0,
+      })
 
       await vi.waitFor(() => {
         expect(useBatchStore.getState().running).toBe(true)
@@ -274,7 +381,10 @@ describe('useBatchStore', () => {
         }),
       })
 
-      const batchPromise = useBatchStore.getState().runBatch(api, 'model')
+      const batchPromise = useBatchStore.getState().runBatch(api, 'model', {
+        concurrency: 2,
+        idleExitMs: 0,
+      })
       await vi.waitFor(() => {
         expect(useBatchStore.getState().items[0]?.status).toBe('done')
       })
@@ -298,7 +408,10 @@ describe('useBatchStore', () => {
         }),
       })
 
-      const batchPromise = useBatchStore.getState().runBatch(api, 'model')
+      const batchPromise = useBatchStore.getState().runBatch(api, 'model', {
+        concurrency: 2,
+        idleExitMs: 0,
+      })
 
       await vi.waitFor(() => {
         expect(resolvers.length).toBe(2)
