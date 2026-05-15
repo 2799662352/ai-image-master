@@ -748,7 +748,7 @@
       "referenceImage": "参考图",
       "referenceImages": "参考图",
       "uploadHint": "点击或拖拽上传参考图",
-      "uploadFormat": "支持 JPG、PNG、WebP 格式，最多8张",
+      "uploadFormat": "支持 JPG、PNG、WebP 格式，最多12张",
       "multiImageHint": "多张参考图可提高角色一致性",
       "sceneDescription": "场景描述",
       "optional": "(可选)",
@@ -932,7 +932,7 @@
     },
     "galleryModal": {
       "title": "示例图库",
-      "hint": "点击选择示例图片作为参考图，可多选（最多8张）",
+      "hint": "点击选择示例图片作为参考图，可多选（最多12张）",
       "cancel": "取消",
       "confirm": "确认选择",
       "editMode": "编辑",

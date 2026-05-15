@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react'
 import { useDirectorStore } from '../stores/useDirectorStore'
 
 const TOTAL_EXAMPLES = 38
-const MAX_IMAGES = 8
+const MAX_IMAGES = 12
 
 const exampleImages = Array.from({ length: TOTAL_EXAMPLES }, (_, i) => {
   const num = String(i + 1).padStart(2, '0')

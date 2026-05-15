@@ -38,7 +38,7 @@ const MAX_FILE_MB = 20
 const ALLOWED = ['image/jpeg', 'image/png', 'image/webp']
 
 /**
- * BatchRefDrop - 参考图上传(拖拽 / 点击 / 8 张上限)
+ * BatchRefDrop - 参考图上传(拖拽 / 点击 / 默认 12 张上限)
  * 替代 PunkRefDrop 的米白 sticker + 倾斜缩略图 + 粉红投影。
  */
 export default function BatchRefDrop({
@@ -47,7 +47,7 @@ export default function BatchRefDrop({
   onRemove,
   onClear,
   onPreview,
-  max = 8,
+  max = 12,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragOver, setDragOver] = useState(false)

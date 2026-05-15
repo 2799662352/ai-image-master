@@ -291,7 +291,9 @@ export default function SettingsPage() {
         <label className="flex items-center justify-between gap-4 cursor-pointer">
           <div>
             <div className="text-sm text-white font-medium">图片编辑工具条</div>
-            <div className="text-xs text-zinc-500">悬停图片时显示"多角度"和"打光"提示词助手按钮</div>
+            <div className="text-xs text-zinc-500">
+              在图生图 / 批量 / 对比页的提示词框旁，以及结果图悬停时显示「多角度」「打光」助手按钮
+            </div>
           </div>
           <button
             type="button"

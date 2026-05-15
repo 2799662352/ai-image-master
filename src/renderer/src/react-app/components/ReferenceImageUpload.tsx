@@ -4,7 +4,7 @@ import { ExampleGallery } from './ExampleGallery'
 import { VisionModelSelector } from './VisionModelSelector'
 import { compressAndConvert } from '../../utils/image-compress'
 
-const MAX_IMAGES = 8
+const MAX_IMAGES = 12
 
 export function ReferenceImageUpload() {
   const referenceImages = useDirectorStore((s) => s.referenceImages)

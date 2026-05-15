@@ -151,7 +151,7 @@ export type DirectorStore = ImageSlice & GenerationSlice & ConfigSlice & ResetSl
 
 // --- Initial values ---
 
-const MAX_REFERENCE_IMAGES = 8
+const MAX_REFERENCE_IMAGES = 12
 const DEFAULT_SCORE_THRESHOLD = 6
 const DEFAULT_MAX_RETRIES = 1
 const SCORE_THRESHOLD_STORAGE_KEY = 'director.score-threshold.v1'

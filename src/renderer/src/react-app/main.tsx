@@ -9,6 +9,8 @@ import StoryboardSplitPage from '../pages-react/StoryboardSplitPage'
 import SmartErasePage from '../pages-react/SmartErasePage'
 import { ToastContainer } from '../components/Toast'
 import { GenerateTokenBridge } from './components/GenerateTokenBridge'
+import { GeneratePromptHelperBar } from './components/GeneratePromptHelperBar'
+import { ComparePromptHelperBar } from './components/ComparePromptHelperBar'
 import { TemplateInline } from './components/TemplateInline'
 
 const AgentWorkspacePage = lazy(() => import('../pages-react/AgentWorkspacePage'))
@@ -23,6 +25,8 @@ let agentWorkspaceRoot: Root | null = null
 let toastRoot: Root | null = null
 let generateTokenRoot: Root | null = null
 let generateTemplateRoot: Root | null = null
+let generatePromptHelperRoot: Root | null = null
+let comparePromptHelperRoot: Root | null = null
 
 export function mountDirectorReact(): void {
   const container = document.getElementById('director-react-root')
@@ -207,6 +211,58 @@ export function unmountGenerateTemplateInline(): void {
     generateTemplateRoot.unmount()
     generateTemplateRoot = null
     console.log('[React] GenerateTemplateInline unmounted')
+  }
+}
+
+/**
+ * GeneratePromptHelperBar: 在图生图页提示词输入框下方挂载
+ * [多角度] [打光] 按钮，桥接 vanilla GeneratePage 的参考图状态
+ * 与 #promptInput textarea。
+ */
+export function mountGeneratePromptHelper(): void {
+  const container = document.getElementById('generate-prompt-helper-mount')
+  if (!container) {
+    console.warn('[React] generate-prompt-helper-mount not found')
+    return
+  }
+  if (!generatePromptHelperRoot) {
+    generatePromptHelperRoot = createRoot(container)
+    generatePromptHelperRoot.render(<GeneratePromptHelperBar />)
+    console.log('[React] GeneratePromptHelperBar mounted')
+  }
+}
+
+export function unmountGeneratePromptHelper(): void {
+  if (generatePromptHelperRoot) {
+    generatePromptHelperRoot.unmount()
+    generatePromptHelperRoot = null
+    console.log('[React] GeneratePromptHelperBar unmounted')
+  }
+}
+
+/**
+ * ComparePromptHelperBar: 在模型对比页提示词输入框下方挂载
+ * [多角度] [打光] 按钮，桥接 vanilla ComparePage 的参考图状态
+ * 与 #comparePrompt textarea。
+ */
+export function mountComparePromptHelper(): void {
+  const container = document.getElementById('compare-prompt-helper-mount')
+  if (!container) {
+    console.warn('[React] compare-prompt-helper-mount not found')
+    return
+  }
+  if (!comparePromptHelperRoot) {
+    comparePromptHelperRoot = createRoot(container)
+    comparePromptHelperRoot.render(<ComparePromptHelperBar />)
+    console.log('[React] ComparePromptHelperBar mounted')
+  }
+}
+
+export function unmountComparePromptHelper(): void {
+  if (comparePromptHelperRoot) {
+    comparePromptHelperRoot.unmount()
+    comparePromptHelperRoot = null
+    console.log('[React] ComparePromptHelperBar unmounted')
   }
 }
 

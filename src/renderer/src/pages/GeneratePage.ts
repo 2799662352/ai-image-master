@@ -51,7 +51,7 @@ export class GeneratePage extends BasePage {
   private currentRatio: string = 'auto'
   private currentResolution: string = '2K'
   private referenceImages: ReferenceImage[] = []
-  private maxReferenceImages: number = 8
+  private maxReferenceImages: number = 12
   private isProcessingFiles: boolean = false
   private isFileSelectionActive: boolean = false
   private lastGeneratedUrls: string[] = []
@@ -349,7 +349,7 @@ export class GeneratePage extends BasePage {
     if (currentModel && currentModel.apiType === 'flux-kontext') {
       this.maxReferenceImages = 1
     } else {
-      this.maxReferenceImages = 8
+      this.maxReferenceImages = 12
     }
 
     const uploadId = Date.now() + '-' + Math.random().toString(36).substr(2, 9)
@@ -783,7 +783,7 @@ export class GeneratePage extends BasePage {
     if (currentModel && currentModel.apiType === 'flux-kontext') {
       this.maxReferenceImages = 1
     } else {
-      this.maxReferenceImages = 8
+      this.maxReferenceImages = 12
     }
 
     console.log('updateReferenceImagesPreview 开始执行，参考图数量:', this.referenceImages.length, '最大限制:', this.maxReferenceImages)

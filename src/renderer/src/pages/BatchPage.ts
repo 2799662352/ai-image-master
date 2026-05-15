@@ -57,7 +57,7 @@ export interface ImageDimensions {
 export class BatchPage extends BasePage {
   private currentResolution: string = '2K'
   private batchReferenceImages: BatchReferenceImage[] = []
-  private maxReferenceImages: number = 8
+  private maxReferenceImages: number = 12
   private isProcessingBatchFiles: boolean = false
   private isBatchFileSelectionActive: boolean = false
   private currentBatchResults: BatchResult[] = []
@@ -376,7 +376,7 @@ export class BatchPage extends BasePage {
     if (currentModel && currentModel.apiType === 'flux-kontext') {
       this.maxReferenceImages = 1
     } else {
-      this.maxReferenceImages = 8
+      this.maxReferenceImages = 12
     }
 
     const uploadId = Date.now() + '-batch-' + Math.random().toString(36).substr(2, 9)
@@ -664,7 +664,7 @@ export class BatchPage extends BasePage {
     if (currentModel && currentModel.apiType === 'flux-kontext') {
       this.maxReferenceImages = 1
     } else {
-      this.maxReferenceImages = 8
+      this.maxReferenceImages = 12
     }
 
     const uploadPrompt = this.getElement('batchReferenceUploadPrompt')
@@ -1359,7 +1359,7 @@ export class BatchPage extends BasePage {
     if (currentModel.apiType === 'flux-kontext') {
       this.maxReferenceImages = 1
     } else {
-      this.maxReferenceImages = 8
+      this.maxReferenceImages = 12
     }
 
     if (this.currentBatchMode === 'card') {
@@ -1704,7 +1704,7 @@ export class BatchPage extends BasePage {
     if (currentModel && currentModel.apiType === 'flux-kontext') {
       this.maxReferenceImages = 1
     } else {
-      this.maxReferenceImages = 8
+      this.maxReferenceImages = 12
     }
 
     const doRestore = async (): Promise<void> => {
