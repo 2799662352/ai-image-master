@@ -7,6 +7,7 @@ import type {
   CodexThreadSummary,
   CodexWorkspacePaths,
 } from '../../types/agent'
+import type { CodexProviderConfig } from './codexLaunch'
 
 export interface AgentInput extends AgentSendMessagePayload {
   model: string
@@ -26,6 +27,12 @@ export interface IAgentBackend {
   cancel(threadId: string): Promise<void>
   isHealthy(): boolean
   setSessionConfig?(patch: Partial<CodexSessionConfig>): void
+  /**
+   * Swap the active model provider. The new value is consumed on the next
+   * `restartCodex()` — implementations are not required to mutate a running
+   * codex process, only the next spawn.
+   */
+  setProvider?(provider: CodexProviderConfig | undefined): void
   respondToApprovalResponse?(response: CodexApprovalResponse): Promise<void> | void
   listThreads?(): Promise<CodexThreadSummary[]>
   readThread?(threadId: string): Promise<CodexThreadDetail>

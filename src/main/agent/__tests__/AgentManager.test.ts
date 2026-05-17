@@ -93,6 +93,12 @@ describe('AgentManager codex api key', () => {
     expect(mgr.getCodexApiKey()).toBe('')
   })
 
+  // v4.3 moved Codex API key persistence from `codex-agent.json` (single key)
+  // to `codex-providers.json` (per-provider keys, custom providers list, and
+  // the active provider id). `setCodexApiKey` is now a thin alias that sets
+  // the API key for the currently-active provider, so both layouts (legacy
+  // file present, and the new file written by setCodexApiKey) need to round-
+  // trip through getCodexApiKey().
   it('setCodexApiKey atomically writes to disk and updates the cache', async () => {
     const mgr = new AgentManager({ userDataDir: tmpDir })
     await mgr.setCodexApiKey('  sk-new  ')
@@ -100,12 +106,14 @@ describe('AgentManager codex api key', () => {
     expect(mgr.getCodexApiKey()).toBe('sk-new')
 
     const onDisk = JSON.parse(
-      await fs.readFile(path.join(tmpDir, 'codex-agent.json'), 'utf8'),
+      await fs.readFile(path.join(tmpDir, 'codex-providers.json'), 'utf8'),
     )
-    expect(onDisk.openaiApiKey).toBe('sk-new')
+    // Default active provider is `apiyi` — see codexProviders.ts.
+    expect(onDisk.apiKeys.apiyi).toBe('sk-new')
+    expect(onDisk.selectedProviderId).toBe('apiyi')
 
     const entries = await fs.readdir(tmpDir)
-    expect(entries).not.toContain('codex-agent.json.tmp')
+    expect(entries.some((name) => name.endsWith('.tmp'))).toBe(false)
   })
 
   it('a second AgentManager construction reads back what setCodexApiKey wrote', async () => {

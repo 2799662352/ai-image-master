@@ -5,6 +5,7 @@ import { useUIPrefsStore } from '../stores/useUIPrefsStore'
 import { useApi } from '../hooks/useService'
 import { SiteGrid } from './settings/SiteGrid'
 import { ApiKeyInput } from './settings/ApiKeyInput'
+import { CodexProviderManager } from './settings/CodexProviderManager'
 
 function TencentCloudSection() {
   const addToast = useToastStore((s) => s.addToast)
@@ -262,16 +263,12 @@ export default function SettingsPage() {
           <span className="w-6 h-6 bg-cyberpunk-yellow text-cyberpunk-black flex items-center justify-center text-sm font-bold">
             🤖
           </span>
-          <span className="font-bold text-white uppercase tracking-tight">CODEX AGENT API KEY</span>
+          <span className="font-bold text-white uppercase tracking-tight">CODEX AGENT</span>
         </div>
         <p className="text-xs text-zinc-500">
-          用于 AI Agent (Ctrl+Shift+A)。需要 OpenAI 直连 sk- key
+          用于 AI Agent (Ctrl+Shift+A)。选择内置 provider 或添加自定义网关，每个 provider 单独存储 key。
         </p>
-        <ApiKeyInput
-          value={codexApiKey}
-          onChange={setCodexApiKey}
-          placeholder="sk-..."
-        />
+        <CodexProviderManager />
         <button
           onClick={handleTestCodex}
           disabled={!codexApiKey.trim() || testingCodex}

@@ -170,6 +170,72 @@ describe('buildCodexLaunchArgs', () => {
     expect(args).toContain('model_providers.apiyi.base_url="https://api.apiyi.com/v1"')
     expect(args).toContain('model_providers.apiyi.wire_api="responses"')
   })
+
+  // The right.codes preset (https://docs.right.codes/docs/rc_cli_config/codex.html)
+  // requires several top-level overrides Codex normally leaves at default:
+  //   - model="gpt-5.2"
+  //   - model_reasoning_effort="xhigh"
+  //   - model_verbosity="high"
+  //   - disable_response_storage=true
+  //   - windows_wsl_setup_acknowledged=true
+  // and a per-provider `requires_openai_auth=true`. We model these as optional
+  // fields on the provider record so each preset can carry its own opinionated
+  // defaults, and so the user can still customize via the Settings page when
+  // they add a custom provider.
+  it('injects per-provider model / reasoning_effort / verbosity when supplied', () => {
+    const args = buildCodexLaunchArgs({
+      provider: {
+        id: 'rightcode',
+        name: 'Right.Codes',
+        baseUrl: 'https://right.codes/codex/v1',
+        envKey: 'OPENAI_API_KEY',
+        model: 'gpt-5.2',
+        reasoningEffort: 'xhigh',
+        verbosity: 'high',
+        requiresOpenaiAuth: true,
+      },
+    })
+
+    expect(args).toContain('model="gpt-5.2"')
+    expect(args).toContain('model_reasoning_effort="xhigh"')
+    expect(args).toContain('model_verbosity="high"')
+    expect(args).toContain('model_providers.rightcode.requires_openai_auth=true')
+  })
+
+  it('forwards extraTopLevelConfig as raw -c key=value entries', () => {
+    const args = buildCodexLaunchArgs({
+      provider: {
+        id: 'rightcode',
+        name: 'Right.Codes',
+        baseUrl: 'https://right.codes/codex/v1',
+        envKey: 'OPENAI_API_KEY',
+        extraTopLevelConfig: {
+          disable_response_storage: true,
+          windows_wsl_setup_acknowledged: true,
+        },
+      },
+    })
+
+    expect(args).toContain('disable_response_storage=true')
+    expect(args).toContain('windows_wsl_setup_acknowledged=true')
+  })
+
+  it('does not inject model overrides when provider does not specify them', () => {
+    const args = buildCodexLaunchArgs({
+      provider: {
+        id: 'apiyi',
+        name: 'API Yi',
+        baseUrl: 'https://api.apiyi.com/v1',
+        envKey: 'OPENAI_API_KEY',
+      },
+    })
+    const flat = args.join(' ')
+    // Top-level "model=" must not appear when the preset omits it; otherwise
+    // we'd silently override whatever the user set in their config.toml.
+    expect(flat).not.toMatch(/(?<!model_providers\.\w+\.)\bmodel="/)
+    expect(flat).not.toContain('model_reasoning_effort=')
+    expect(flat).not.toContain('model_verbosity=')
+  })
 })
 
 // ts-ignore-next: helper for config pair assertions

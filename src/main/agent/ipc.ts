@@ -39,6 +39,12 @@ const AGENT_HANDLE_CHANNELS = [
   'agent:docker-gw-fix',
   'agent:docker-gw-status',
   'agent:docker-gw-stop',
+  'agent:get-providers',
+  'agent:set-active-provider',
+  'agent:set-provider-api-key',
+  'agent:add-custom-provider',
+  'agent:update-custom-provider',
+  'agent:remove-custom-provider',
 ]
 
 export type GetAgentManager = () => Promise<AgentManager>
@@ -158,6 +164,72 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
   ipcMain.handle('agent:docker-gw-status', async () => (await getManager()).dockerGatewayStatusRpc())
   ipcMain.handle('agent:docker-gw-stop', async () => (await getManager()).dockerGatewayStopRpc())
 
+  // ----- Codex provider management (v4.3+) -----
+  ipcMain.handle('agent:get-providers', async () => {
+    try {
+      const snapshot = await (await getManager()).getProvidersSnapshot()
+      return { ok: true as const, ...snapshot }
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+  ipcMain.handle('agent:set-active-provider', async (_event, id: unknown) => {
+    try {
+      const validated = validateWorkspaceId(id, 'Provider id')
+      const result = await (await getManager()).setActiveProvider(validated)
+      return { ok: true as const, activeId: result.activeId }
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+  ipcMain.handle(
+    'agent:set-provider-api-key',
+    async (_event, id: unknown, key: unknown) => {
+      try {
+        const validated = validateWorkspaceId(id, 'Provider id')
+        await (await getManager()).setProviderApiKey(
+          validated,
+          typeof key === 'string' ? key : '',
+        )
+        return { ok: true as const }
+      } catch (err) {
+        return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  )
+  ipcMain.handle('agent:add-custom-provider', async (_event, input: unknown) => {
+    try {
+      const created = await (await getManager()).addCustomProvider(
+        validateCustomProviderInput(input),
+      )
+      return { ok: true as const, provider: created }
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+  ipcMain.handle(
+    'agent:update-custom-provider',
+    async (_event, id: unknown, patch: unknown) => {
+      try {
+        const validatedId = validateWorkspaceId(id, 'Provider id')
+        const validatedPatch = validateCustomProviderPatch(patch)
+        await (await getManager()).updateCustomProvider(validatedId, validatedPatch)
+        return { ok: true as const }
+      } catch (err) {
+        return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  )
+  ipcMain.handle('agent:remove-custom-provider', async (_event, id: unknown) => {
+    try {
+      const validated = validateWorkspaceId(id, 'Provider id')
+      const result = await (await getManager()).removeCustomProvider(validated)
+      return { ok: true as const, activeId: result.activeId }
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
   // Tool-response routing only takes effect once the catimation MCP HTTP
   // listener is live (router != null). Resolving the router lazily lets us
   // register the listener at startup regardless of MCP boot order.
@@ -210,4 +282,134 @@ function validateThreadId(value: unknown): string {
     throw new Error('Codex thread id must be a non-empty string')
   }
   return value
+}
+
+const ALLOWED_EXTRA_VALUE_TYPES = new Set(['string', 'boolean', 'number'])
+
+function validateExtraTopLevelConfig(value: unknown): Record<string, string | boolean | number> | undefined {
+  if (value === undefined || value === null) return undefined
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('extraTopLevelConfig must be an object of scalar values')
+  }
+  const result: Record<string, string | boolean | number> = {}
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_.-]*$/.test(key)) {
+      throw new Error(`extraTopLevelConfig key "${key}" is not a valid TOML key`)
+    }
+    if (!ALLOWED_EXTRA_VALUE_TYPES.has(typeof raw)) {
+      throw new Error(
+        `extraTopLevelConfig value for "${key}" must be string|boolean|number`,
+      )
+    }
+    result[key] = raw as string | boolean | number
+  }
+  return result
+}
+
+function validateCustomProviderInput(value: unknown): {
+  id?: string
+  name: string
+  baseUrl: string
+  envKey: string
+  model?: string
+  reasoningEffort?: string
+  verbosity?: string
+  requiresOpenaiAuth?: boolean
+  extraTopLevelConfig?: Record<string, string | boolean | number>
+  description?: string
+} {
+  if (!value || typeof value !== 'object') {
+    throw new Error('Custom provider input must be an object')
+  }
+  const v = value as Record<string, unknown>
+  if (typeof v.name !== 'string' || v.name.trim().length === 0) {
+    throw new Error('Custom provider name must be a non-empty string')
+  }
+  if (typeof v.baseUrl !== 'string' || v.baseUrl.trim().length === 0) {
+    throw new Error('Custom provider baseUrl must be a non-empty string')
+  }
+  return {
+    name: v.name.trim(),
+    baseUrl: v.baseUrl.trim(),
+    envKey: typeof v.envKey === 'string' && v.envKey.trim() ? v.envKey.trim() : 'OPENAI_API_KEY',
+    ...(typeof v.id === 'string' && v.id.trim() ? { id: v.id.trim() } : {}),
+    ...(typeof v.model === 'string' && v.model ? { model: v.model } : {}),
+    ...(typeof v.reasoningEffort === 'string' && v.reasoningEffort
+      ? { reasoningEffort: v.reasoningEffort }
+      : {}),
+    ...(typeof v.verbosity === 'string' && v.verbosity ? { verbosity: v.verbosity } : {}),
+    ...(typeof v.requiresOpenaiAuth === 'boolean'
+      ? { requiresOpenaiAuth: v.requiresOpenaiAuth }
+      : {}),
+    ...(typeof v.description === 'string' && v.description ? { description: v.description } : {}),
+    ...(v.extraTopLevelConfig !== undefined
+      ? { extraTopLevelConfig: validateExtraTopLevelConfig(v.extraTopLevelConfig) ?? {} }
+      : {}),
+  }
+}
+
+function validateCustomProviderPatch(value: unknown): {
+  name?: string
+  baseUrl?: string
+  envKey?: string
+  model?: string
+  reasoningEffort?: string
+  verbosity?: string
+  requiresOpenaiAuth?: boolean
+  extraTopLevelConfig?: Record<string, string | boolean | number>
+  description?: string
+} {
+  if (!value || typeof value !== 'object') {
+    throw new Error('Custom provider patch must be an object')
+  }
+  const v = value as Record<string, unknown>
+  const out: ReturnType<typeof validateCustomProviderPatch> = {}
+  if (v.name !== undefined) {
+    if (typeof v.name !== 'string' || v.name.trim().length === 0) {
+      throw new Error('Custom provider name must be a non-empty string')
+    }
+    out.name = v.name.trim()
+  }
+  if (v.baseUrl !== undefined) {
+    if (typeof v.baseUrl !== 'string' || v.baseUrl.trim().length === 0) {
+      throw new Error('Custom provider baseUrl must be a non-empty string')
+    }
+    out.baseUrl = v.baseUrl.trim()
+  }
+  if (v.envKey !== undefined) {
+    if (typeof v.envKey !== 'string') throw new Error('Custom provider envKey must be a string')
+    out.envKey = v.envKey
+  }
+  if (v.model !== undefined) {
+    if (typeof v.model !== 'string') throw new Error('Custom provider model must be a string')
+    out.model = v.model
+  }
+  if (v.reasoningEffort !== undefined) {
+    if (typeof v.reasoningEffort !== 'string') {
+      throw new Error('Custom provider reasoningEffort must be a string')
+    }
+    out.reasoningEffort = v.reasoningEffort
+  }
+  if (v.verbosity !== undefined) {
+    if (typeof v.verbosity !== 'string') {
+      throw new Error('Custom provider verbosity must be a string')
+    }
+    out.verbosity = v.verbosity
+  }
+  if (v.requiresOpenaiAuth !== undefined) {
+    if (typeof v.requiresOpenaiAuth !== 'boolean') {
+      throw new Error('Custom provider requiresOpenaiAuth must be a boolean')
+    }
+    out.requiresOpenaiAuth = v.requiresOpenaiAuth
+  }
+  if (v.description !== undefined) {
+    if (typeof v.description !== 'string') {
+      throw new Error('Custom provider description must be a string')
+    }
+    out.description = v.description
+  }
+  if (v.extraTopLevelConfig !== undefined) {
+    out.extraTopLevelConfig = validateExtraTopLevelConfig(v.extraTopLevelConfig) ?? {}
+  }
+  return out
 }
