@@ -1,6 +1,6 @@
 ---
 name: structured-captioning
-description: Use when panel prompts repeat character appearance descriptions causing token waste and visual inconsistency across panels
+description: Use when prompts repeat character appearance across panels and waste tokens — restructure as HoloCine: GLOBAL (scene, time, weather, mood) → CHARACTER DEFINITIONS ([char1]: anchor, [char2]: anchor) → PER-SHOT (references [char1] tag, never re-describes appearance), cutting tokens ~40% and locking one canonical look — applies to image-generation models (Midjourney, DALL-E, FLUX, Stable Diffusion, Imagen, Ideogram, Recraft), video-generation models (Sora, Veo, Runway, Kling, Seedance, Hailuo, Higgsfield, Hunyuan), screenplays, scripts, storyboards, AI video, AI image, 提示词, 视频模型, 图像模型, 写剧本, 脚本, 分镜.
 appliesTo: [designAndAssemble]
 priority: 2
 ---

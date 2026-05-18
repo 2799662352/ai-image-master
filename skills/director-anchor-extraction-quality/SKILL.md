@@ -1,6 +1,6 @@
 ---
 name: anchor-extraction-quality
-description: Use when extracting character anchors from reference images to ensure completeness and cross-panel reproducibility
+description: Use when extracting character anchors from reference images where every anchor must list face / build / outfit / markers, hit the 40-word minimum, differentiate similar builds explicitly ("A is taller by ~10cm"), and mark occluded parts with [inferred] — applies to image-generation models (Midjourney, DALL-E, FLUX, Stable Diffusion, Imagen, Ideogram, Recraft), video-generation models (Sora, Veo, Runway, Kling, Seedance, Hailuo, Higgsfield, Hunyuan), screenplays, scripts, storyboards, AI video, AI image, 提示词, 视频模型, 图像模型, 写剧本, 脚本, 分镜.
 appliesTo: [extractCharacterAnchors]
 priority: 1
 ---

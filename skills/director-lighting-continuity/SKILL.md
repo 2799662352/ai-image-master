@@ -1,6 +1,6 @@
 ---
 name: lighting-continuity
-description: Use when designing panels or verifying consistency to ensure lighting direction, color temperature, and HDR coherence across all shots in a scene
+description: Use when locking key light direction (left / right / top / back), quality (hard / soft), and color temperature (golden hour 3000-4000K, overcast 5500-6500K, night blue ambient + warm practicals, neon mixed) across every panel in a scene; flag light-direction reversals and color-temperature jumps without time skip — applies to image-generation models (Midjourney, DALL-E, FLUX, Stable Diffusion, Imagen, Ideogram, Recraft), video-generation models (Sora, Veo, Runway, Kling, Seedance, Hailuo, Higgsfield, Hunyuan), screenplays, scripts, storyboards, AI video, AI image, 提示词, 视频模型, 图像模型, 写剧本, 脚本, 分镜.
 appliesTo: [analyzeScene, verifyConsistency]
 priority: 2
 ---

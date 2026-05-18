@@ -1,6 +1,6 @@
 ---
 name: director-character-consistency
-description: Use when extracting character anchors or verifying cross-panel consistency for the same characters
+description: Use when the same character must appear identical across panels — anchored by face / build / outfit / markers, with hair / outfit / props unchanged across cuts and relative skin-tone descriptors used instead of absolute color — applies to image-generation models (Midjourney, DALL-E, FLUX, Stable Diffusion, Imagen, Ideogram, Recraft), video-generation models (Sora, Veo, Runway, Kling, Seedance, Hailuo, Higgsfield, Hunyuan), screenplays, scripts, storyboards, AI video, AI image, 提示词, 视频模型, 图像模型, 写剧本, 脚本, 分镜.
 ---
 
 CHARACTER ANCHOR FORMAT — every character MUST include ALL of:

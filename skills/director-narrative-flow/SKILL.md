@@ -1,6 +1,6 @@
 ---
 name: narrative-flow
-description: Use when designing panel sequence or verifying storyboard narrative coherence and shot transitions
+description: Use when sequencing shots — open with an establishing wide, follow with mediums for interaction, save close-ups for emotional peaks; enforce the 180-degree rule, eye-line matches, action continuity across cuts, and alternate scales to avoid 3-in-a-row of the same shot type — applies to image-generation models (Midjourney, DALL-E, FLUX, Stable Diffusion, Imagen, Ideogram, Recraft), video-generation models (Sora, Veo, Runway, Kling, Seedance, Hailuo, Higgsfield, Hunyuan), screenplays, scripts, storyboards, AI video, AI image, 提示词, 视频模型, 图像模型, 写剧本, 脚本, 分镜.
 appliesTo: [taskPlanning, designAndAssemble, verifyConsistency]
 priority: 2
 ---

@@ -1,6 +1,6 @@
 ---
 name: prompt-engineering
-description: Use when assembling image generation prompts from panel designs and character anchors
+description: Use when assembling a prompt in the canonical 7-field order — Subject+Action → Character Ref ([char1] tags) → Scene → Shot+Camera (e.g. 50mm, eye-level) → Lighting (direction, quality, color temperature) → Composition (rule of thirds, DoF) → Style+Mood — within 120 words and paired with negative prompts (blurry, deformed, bad anatomy, extra limbs, watermark) — applies to image-generation models (Midjourney, DALL-E, FLUX, Stable Diffusion, Imagen, Ideogram, Recraft), video-generation models (Sora, Veo, Runway, Kling, Seedance, Hailuo, Higgsfield, Hunyuan), screenplays, scripts, storyboards, AI video, AI image, 提示词, 视频模型, 图像模型, 写剧本, 脚本, 分镜.
 appliesTo: [designAndAssemble]
 priority: 1
 ---
