@@ -104,6 +104,14 @@ type Actions = {
   cutSelectionToClipboard: () => void
   copyPathToOsClipboard: (paths: string[], relative: boolean) => Promise<void>
   pasteIntoDir: (destDir: string) => Promise<{ ok: boolean; reason?: string }>
+  /**
+   * Drag-and-drop move. Pre-checks dir-into-self/descendant and same-dir
+   * no-op in the renderer so the UI never round-trips to main for an
+   * obviously-invalid drop. Delegates the real move to `fs.move`, which is
+   * the same IPC `pasteIntoDir` uses for cut+paste (handles EXDEV, ID
+   * conflicts, and dir-into-self on the server side as defense-in-depth).
+   */
+  moveByDnd: (sources: string[], destDir: string) => Promise<{ ok: boolean; reason?: string }>
   startNewNode: (parentPath: string, kind: 'file' | 'dir', source: FileSource) => Promise<void>
   commitNewNode: (name: string) => Promise<{ ok: boolean; reason?: string }>
   cancelNewNode: () => void
@@ -283,26 +291,87 @@ function pathIsInsideRoot(path: string, root: string): boolean {
   return p === r || p.startsWith(`${r}/`)
 }
 
+/**
+ * Find the deepest already-expanded directory in `tree` that contains
+ * `targetPath` (or matches it). The watcher fires events for any descendant,
+ * so we only need to re-list the closest expanded ancestor — re-listing the
+ * workspace root would drop the children of every other expanded subdir,
+ * which is exactly what caused the "folder collapses on save" + "new file
+ * doesn't appear" regression.
+ */
+function findDeepestAncestorDir(tree: FileNode[], targetPath: string): FileNode | null {
+  let best: FileNode | null = null
+  const visit = (n: FileNode): void => {
+    if (n.kind !== 'dir' || !n.childrenLoaded) return
+    if (n.path === targetPath || pathIsInsideRoot(targetPath, n.path)) {
+      if (!best || n.path.length > best.path.length) best = n
+      if (n.children) for (const c of n.children) visit(c)
+    }
+  }
+  for (const t of tree) visit(t)
+  return best
+}
+
+/**
+ * Splice already-loaded subtrees from `prevChildren` onto matching nodes in
+ * `listed`. Without this step, every re-list would replace `{childrenLoaded:
+ * true, children: [...]}` with `{childrenLoaded: false}` on every expanded
+ * subdir, visually collapsing them. Matches by `path`; non-dir entries and
+ * paths only in `listed` pass through unchanged.
+ */
+function mergeListedChildren(prevChildren: FileNode[] | undefined, listed: FileNode[]): FileNode[] {
+  if (!prevChildren || prevChildren.length === 0) return listed
+  const prevByPath = new Map<string, FileNode>()
+  for (const p of prevChildren) prevByPath.set(p.path, p)
+  return listed.map((next) => {
+    if (next.kind !== 'dir') return next
+    const prev = prevByPath.get(next.path)
+    if (prev && prev.kind === 'dir' && prev.childrenLoaded) {
+      return { ...next, childrenLoaded: true, children: prev.children ?? [] }
+    }
+    return next
+  })
+}
+
+/**
+ * Apply `updater` to the node at `targetPath`, preserving structural sharing
+ * for sibling/cousin subtrees so React reconciliation doesn't drop their UI
+ * state.
+ */
+function updateNodeInTree(
+  tree: FileNode[],
+  targetPath: string,
+  updater: (n: FileNode) => FileNode,
+): FileNode[] {
+  return tree.map((n) => {
+    if (n.path === targetPath) return updater(n)
+    if (n.children) return { ...n, children: updateNodeInTree(n.children, targetPath, updater) }
+    return n
+  })
+}
+
 async function refreshWorkspaceRootsForEvent(
   event: FileWatchEvent,
   getState: () => State & Actions,
 ): Promise<void> {
   const state = getState()
-  const touched = state.workspaceTree.filter((root) => pathIsInsideRoot(event.path, root.path))
-  if (touched.length === 0) return
-  const api = getApi()
-  const refreshed = await Promise.all(
-    state.workspaceTree.map(async (root) => {
-      if (!touched.some((t) => t.path === root.path)) return root
-      try {
-        const children = await api.fs.listDir(root.path)
-        return { ...root, childrenLoaded: true, children }
-      } catch {
-        return root
-      }
-    }),
-  )
-  useFileExplorerStore.setState({ workspaceTree: refreshed })
+  const target = findDeepestAncestorDir(state.workspaceTree, event.path)
+  if (!target) return
+  let listed: FileNode[]
+  try {
+    listed = await getApi().fs.listDir(target.path)
+  } catch {
+    return
+  }
+  // Re-read latest state in case the user toggled expansion mid-IPC; we'll
+  // still apply the merge — the targeted dir is the only one we mutate.
+  useFileExplorerStore.setState((s) => ({
+    workspaceTree: updateNodeInTree(s.workspaceTree, target.path, (n) => ({
+      ...n,
+      childrenLoaded: true,
+      children: mergeListedChildren(n.children, listed),
+    })),
+  }))
 }
 
 function getApi(): ElectronFileApi {
@@ -451,7 +520,18 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
   expandDir: async (p, source) => {
     if (source !== 'workspace') return
     const children = await getApi().fs.listDir(p)
-    set((s) => ({ workspaceTree: replaceChildren(s.workspaceTree, p, children) }))
+    // Merge against existing in-memory children so already-loaded grandchildren
+    // survive a refresh triggered by commitNewNode / pasteIntoDir / moveByDnd.
+    // Without this, creating a new file inside an expanded subdir would
+    // visually collapse all of that subdir's expanded children (the same
+    // bug pattern fixed in refreshWorkspaceRootsForEvent).
+    set((s) => ({
+      workspaceTree: updateNodeInTree(s.workspaceTree, p, (n) => ({
+        ...n,
+        childrenLoaded: true,
+        children: mergeListedChildren(n.children, children),
+      })),
+    }))
   },
 
   openTab: async (p, source) => {
@@ -818,6 +898,60 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
     return { ok: true }
   },
 
+  moveByDnd: async (sources, destDir) => {
+    if (sources.length === 0) return { ok: false, reason: 'nothing to move' }
+    const normalized = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '')
+    const dest = normalized(destDir)
+    // VSCode silently no-ops same-dir drops; without this the UI would round-
+    // trip to main and our `uniquePath` helper would produce spurious "a copy.ts"
+    // suffixes for users who just dragged within the same folder.
+    const allSameDir = sources.every((s) => {
+      const norm = normalized(s)
+      const idx = Math.max(norm.lastIndexOf('/'))
+      const parent = idx > 0 ? norm.slice(0, idx) : norm
+      return parent === dest
+    })
+    if (allSameDir) return { ok: true }
+    // Dir-into-self / dir-into-descendant is the classic data-loss footgun.
+    // Main also enforces this, but the UI guard avoids a confusing error toast
+    // round-trip when the user obviously can't drop here.
+    for (const src of sources) {
+      const s = normalized(src)
+      if (s === dest || dest.startsWith(`${s}/`)) {
+        return { ok: false, reason: '不能将目录移动到自身或其子目录' }
+      }
+    }
+    const api = getApi()
+    if (!api.fs.move) return { ok: false, reason: 'move API not available' }
+    const res = await api.fs.move(sources, destDir)
+    if (!res.ok) return { ok: false, reason: res.reason }
+    // Refresh both the destination (newly-arrived items must appear) and the
+    // affected source directories (the items left). For sources we only need
+    // their immediate parents — chokidar would do this too, but the user
+    // expects an instant update.
+    const sourceDirs = new Set<string>()
+    for (const src of sources) {
+      const s = normalized(src)
+      const idx = Math.max(s.lastIndexOf('/'))
+      if (idx > 0) sourceDirs.add(s.slice(0, idx))
+    }
+    const destSource = inferSource(get().workspaceTree, destDir)
+    try {
+      await get().expandDir(destDir, destSource)
+    } catch {
+      // listDir failure here is non-fatal — chokidar will catch up.
+    }
+    for (const dir of sourceDirs) {
+      const src = inferSource(get().workspaceTree, dir)
+      try {
+        await get().expandDir(dir, src)
+      } catch {
+        // same as above
+      }
+    }
+    return { ok: true }
+  },
+
   startNewNode: async (parentPath, kind, source) => {
     // 确保父目录在树中是展开的
     const parentNode = findNodeInTrees(get().workspaceTree, get().attachmentsTree, parentPath)
@@ -977,14 +1111,6 @@ async function writeTextToOsClipboard(text: string): Promise<void> {
       // 静默失败：内部状态仍然有效
     }
   }
-}
-
-function replaceChildren(tree: FileNode[], targetPath: string, children: FileNode[]): FileNode[] {
-  return tree.map((n) => {
-    if (n.path === targetPath) return { ...n, childrenLoaded: true, children }
-    if (n.children) return { ...n, children: replaceChildren(n.children, targetPath, children) }
-    return n
-  })
 }
 
 function removeFromTree(tree: FileNode[], targetPath: string): FileNode[] {

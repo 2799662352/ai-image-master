@@ -2,8 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 import type { FileNode, FileSource } from './types'
 import { useFileExplorerStore } from './store'
 import { FolderIcon, FolderOpenIcon, FileIcon, ImageFileIcon, ChevronRightIcon } from './icons'
-import { serializeFileDrag } from './dragHelpers'
+import { serializeFileDrag, parseFileDrop } from './dragHelpers'
 import { FileContextMenu, type FileMenuAction, type MenuItemDescriptor } from './FileContextMenu'
+
+// The attachments tree's pseudo-root node has this synthetic path; drops onto
+// it would call fs.move with a non-filesystem destDir which assertContained
+// rejects. We early-return wherever it would matter.
+const ATTACHMENTS_ROOT = '__attachments__'
 
 type ShellBridge = {
   showItemInFolder?: (path: string) => Promise<unknown>
@@ -50,12 +55,17 @@ export function FileTreeNode({ node, depth }: { node: FileNode; depth: number })
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const [renaming, setRenaming] = useState(false)
   const [draftName, setDraftName] = useState(node.name)
+  // Tracks whether a drag is currently hovering this row, used to paint a
+  // highlight identical to VSCode's "drop target" tint. We can't just use
+  // CSS `:hover` because that triggers without an active drag.
+  const [dropActive, setDropActive] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const expandDir = useFileExplorerStore((s) => s.expandDir)
   const openTab = useFileExplorerStore((s) => s.openTab)
   const trashFile = useFileExplorerStore((s) => s.trashFile)
   const renameFile = useFileExplorerStore((s) => s.renameFile)
+  const moveByDnd = useFileExplorerStore((s) => s.moveByDnd)
   const selectNode = useFileExplorerStore((s) => s.selectNode)
   const selectedPaths = useFileExplorerStore((s) => s.selectedPaths)
   const clipboard = useFileExplorerStore((s) => s.clipboard)
@@ -137,17 +147,22 @@ export function FileTreeNode({ node, depth }: { node: FileNode; depth: number })
   }
 
   const onDragStart = (e: React.DragEvent) => {
-    if (node.kind !== 'file') return
-    // VSCode 行为：拖动已选中的节点 → 拖整个选区里的文件；
-    // 拖动未选中的节点 → 替换选区为该节点（保证拖出的就是用户看到的）
+    // Attachments root is a synthetic pseudo-node — refuse to drag it.
+    if (node.path === ATTACHMENTS_ROOT) {
+      e.preventDefault()
+      return
+    }
+    // VSCode 行为：拖动已选中的节点 → 拖整个选区；
+    // 拖动未选中的节点 → 替换选区为该节点（保证拖出的就是用户看到的）。
+    // 与旧实现的区别：现在 dir 也可拖，所以 selection 中 file/dir 都保留。
     const store = useFileExplorerStore.getState()
     let paths: string[]
     if (store.selectedPaths.includes(node.path) && store.selectedPaths.length > 1) {
-      // 只拖文件，过滤掉目录（attachments 根这种伪节点也会被排除）
       const trees = [store.workspaceTree, store.attachmentsTree]
       paths = store.selectedPaths.filter((p) => {
+        if (p === ATTACHMENTS_ROOT) return false
         const n = findNodeAcrossTrees(trees, p)
-        return n?.kind === 'file'
+        return n != null
       })
     } else {
       paths = [node.path]
@@ -160,10 +175,54 @@ export function FileTreeNode({ node, depth }: { node: FileNode; depth: number })
       return
     }
     serializeFileDrag(e.dataTransfer, paths)
-    // 让浏览器在拖影上显示数量（多选时尤其有用）
-    if (paths.length > 1 && e.dataTransfer.setDragImage) {
-      // 不重写 drag image，仅设置 effectAllowed 与浏览器默认数字徽章
-      e.dataTransfer.effectAllowed = 'copyMove'
+    // copyMove tells the OS our payload supports both internal move + external
+    // copy; the actual op is chosen by the drop target.
+    e.dataTransfer.effectAllowed = 'copyMove'
+  }
+
+  // VSCode treats both dirs AND files as valid drop targets — dropping onto a
+  // file uses its parent directory as dest. That matches user mental models
+  // (everyone has at some point dropped onto README.md hoping to land it in
+  // the same folder). We replicate that here.
+  const resolveDropDestDir = (): string | null => {
+    if (node.path === ATTACHMENTS_ROOT) return null
+    if (node.kind === 'dir') return node.path
+    const idx = Math.max(node.path.lastIndexOf('/'), node.path.lastIndexOf('\\'))
+    return idx > 0 ? node.path.slice(0, idx) : null
+  }
+
+  const onDragOver = (e: React.DragEvent) => {
+    // dataTransfer.types is read-only during dragover; we just check it's our
+    // payload so we don't activate the highlight for unrelated drags (text
+    // from outside the app, etc.)
+    if (!e.dataTransfer.types.includes('application/x-catimation-file-paths')) return
+    const dest = resolveDropDestDir()
+    if (!dest) return
+    e.preventDefault()
+    e.stopPropagation()
+    e.dataTransfer.dropEffect = 'move'
+    if (!dropActive) setDropActive(true)
+  }
+
+  const onDragLeave = (e: React.DragEvent) => {
+    // dragleave fires for every nested element transition — only clear when
+    // the cursor truly leaves this row.
+    const related = e.relatedTarget as Node | null
+    if (related && e.currentTarget.contains(related)) return
+    if (dropActive) setDropActive(false)
+  }
+
+  const onDrop = async (e: React.DragEvent) => {
+    const dest = resolveDropDestDir()
+    if (!dest) return
+    const paths = parseFileDrop(e.dataTransfer)
+    if (paths.length === 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    setDropActive(false)
+    const res = await moveByDnd(paths, dest)
+    if (!res.ok && res.reason) {
+      window.alert(`移动失败: ${res.reason}`)
     }
   }
 
@@ -256,9 +315,11 @@ export function FileTreeNode({ node, depth }: { node: FileNode; depth: number })
   const Icon = node.kind === 'dir' ? (open ? FolderOpenIcon : FolderIcon) : isImage ? ImageFileIcon : FileIcon
 
   const rowBase = 'flex cursor-pointer select-none items-center gap-1 py-0.5 text-sm'
-  const rowState = isSelected
-    ? 'bg-cyan-400/15 text-cyan-50'
-    : 'text-cyan-100/80 hover:bg-white/5'
+  const rowState = dropActive
+    ? 'bg-cyan-400/25 text-cyan-50 ring-1 ring-cyan-300/40'
+    : isSelected
+      ? 'bg-cyan-400/15 text-cyan-50'
+      : 'text-cyan-100/80 hover:bg-white/5'
   const cutOpacity = isCut ? 'opacity-50' : ''
 
   // 检查是否要在该节点下渲染「新建占位」
@@ -269,9 +330,12 @@ export function FileTreeNode({ node, depth }: { node: FileNode; depth: number })
       <div
         role="treeitem"
         aria-selected={isSelected || undefined}
-        draggable={node.kind === 'file' && !renaming}
+        draggable={!renaming && node.path !== ATTACHMENTS_ROOT}
         onClick={(e) => void onClick(e)}
         onDragStart={onDragStart}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={(e) => void onDrop(e)}
         onContextMenu={onContextMenu}
         style={{ paddingLeft: 8 + depth * 12 }}
         className={`${rowBase} ${rowState} ${cutOpacity}`}

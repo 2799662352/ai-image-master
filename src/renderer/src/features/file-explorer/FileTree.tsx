@@ -1,6 +1,6 @@
 import { useEffect, useCallback } from 'react'
 import { useFileExplorerStore } from './store'
-import { FileTreeNode, NewNodeRow } from './FileTreeNode'
+import { FileTreeNode } from './FileTreeNode'
 import { CloseIcon, FolderIcon, FileIcon } from './icons'
 import type { FileNode } from './types'
 
@@ -29,9 +29,6 @@ export function FileTree() {
   const refreshAttachmentsTree = useFileExplorerStore((s) => s.refreshAttachmentsTree)
   const ensureSubscriptions = useFileExplorerStore((s) => s.ensureSubscriptions)
   const startNewNode = useFileExplorerStore((s) => s.startNewNode)
-  const commitNewNode = useFileExplorerStore((s) => s.commitNewNode)
-  const cancelNewNode = useFileExplorerStore((s) => s.cancelNewNode)
-  const pendingNewNode = useFileExplorerStore((s) => s.pendingNewNode)
   const selectedPaths = useFileExplorerStore((s) => s.selectedPaths)
   const clipboard = useFileExplorerStore((s) => s.clipboard)
 
@@ -138,17 +135,19 @@ export function FileTree() {
                 </button>
               </div>
             ))}
-            {/* 在根级直接新建（pendingNewNode.parentPath 等于某个根 workspace 根，且该根未展开时由 FileTreeNode 内部渲染） */}
-            {pendingNewNode &&
-              workspaceTree.every((n) => n.path !== pendingNewNode.parentPath) &&
-              attachmentsTree.every((n) => n.path !== pendingNewNode.parentPath) && (
-                <NewNodeRow
-                  depth={1}
-                  kind={pendingNewNode.kind}
-                  onCommit={(name) => void commitNewNode(name)}
-                  onCancel={cancelNewNode}
-                />
-              )}
+            {/*
+              All inline new-node inputs are owned by FileTreeNode (it knows
+              the correct depth + parent context for both root nodes and
+              arbitrarily-deep subdirs). A previous fallback here used
+              `workspaceTree.every(n => n.path !== parentPath)`, which only
+              compared root paths and therefore matched ANY subdirectory —
+              spawning a second NewNodeRow at the panel bottom. Its empty
+              <input> stole focus, triggered onBlur on the real input, which
+              fired commitNewNode('') and silently cleared pendingNewNode,
+              so creating files/folders in subdirectories appeared broken.
+              VS Code's tree puts the input at the exact target node; we
+              match that here by deleting the fallback entirely.
+            */}
           </>
         ) : (
           <div className="flex flex-col items-center gap-2 py-6 text-xs text-cyan-300/40">
