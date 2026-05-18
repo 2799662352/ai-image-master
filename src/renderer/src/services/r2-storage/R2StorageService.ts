@@ -124,36 +124,69 @@ export class R2StorageService {
   }
 
   /**
-   * 上传 Base64 图片到 R2
+   * 上传 Base64 图片到对象存储。
+   *
+   * In Electron the upload is routed through the main process to Tencent
+   * COS bucket `image-master-1345773498` (ap-guangzhou). The Cloudflare
+   * Worker / R2 path is kept as a web-only fallback so this service still
+   * works in dev/browser preview where `window.electronAPI` is absent.
+   *
+   * Why we kept the class name `R2StorageService`:
+   *   Every history-page caller already depends on this method shape
+   *   (`uploadBase64(dataUrl, metadata) → { url, key, success }`). Renaming
+   *   would force a sweep across history / image-viewer / donor modules
+   *   for cosmetic gain. The class is now a thin storage-router; rename in
+   *   a follow-up if/when R2 fallback is removed.
    */
   async uploadBase64(base64Data: string, metadata: UploadMetadata = {}): Promise<UploadResult> {
-    await this.init()
+    // 验证 base64 数据 — same validation regardless of backend.
+    if (!base64Data?.startsWith('data:image')) {
+      return { success: false, error: '无效的图片数据' }
+    }
+    const base64Match = base64Data.match(/^data:([^;]+);base64,(.+)$/)
+    if (!base64Match) {
+      return { success: false, error: '无效的 base64 数据格式' }
+    }
+    const mimeType = base64Match[1]
+    const base64Content = base64Match[2]
 
+    // Lazy-load default config when called before init() — keeps the
+    // Tencent COS path usable even if isAvailable()/init() wasn't called.
+    if (!this.config) {
+      this.config = this.getDefaultConfig()
+    }
+    const base64Size = (base64Content.length * 3) / 4
+    if (base64Size > this.config.features.maxFileSize) {
+      return { success: false, error: '图片大小超过限制' }
+    }
+
+    // Electron path: route through Tencent COS via main process IPC.
+    const cosApi = (window as any)?.electronAPI?.cos
+    if (cosApi?.uploadImageHistory) {
+      try {
+        const result = await cosApi.uploadImageHistory(base64Content, mimeType, {
+          ...metadata,
+          source: 'ai-image-master',
+          uploadedAt: new Date().toISOString(),
+        })
+        if (result?.success) {
+          console.log('图片已上传到 Tencent COS:', result.url)
+          return { success: true, url: result.url, key: result.key }
+        }
+        return { success: false, error: result?.error ?? '上传失败' }
+      } catch (error) {
+        console.error('Tencent COS 上传失败:', error)
+        return { success: false, error: (error as Error).message }
+      }
+    }
+
+    // Web fallback path — Cloudflare Worker + R2.
+    await this.init()
     if (!this.isAvailable()) {
-      return { success: false, error: 'R2 服务不可用' }
+      return { success: false, error: 'R2 服务不可用 (web fallback)' }
     }
 
     try {
-      // 验证 base64 数据
-      if (!base64Data?.startsWith('data:image')) {
-        return { success: false, error: '无效的图片数据' }
-      }
-
-      // 提取 base64 数据
-      const base64Match = base64Data.match(/^data:([^;]+);base64,(.+)$/)
-      if (!base64Match) {
-        return { success: false, error: '无效的 base64 数据格式' }
-      }
-
-      const mimeType = base64Match[1]
-      const base64Content = base64Match[2]
-
-      // 检查文件大小
-      const base64Size = (base64Content.length * 3) / 4
-      if (this.config && base64Size > this.config.features.maxFileSize) {
-        return { success: false, error: '图片大小超过限制' }
-      }
-
       const { signature, timestamp, nonce } = this.generateSignature({
         type: 'upload',
         mimeType,

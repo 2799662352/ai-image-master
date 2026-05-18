@@ -32,6 +32,57 @@ export interface BatchResult {
   index: number
 }
 
+// ---------------------------------------------------------------------------
+// Per-item history dispatch — used to fan out one history record per image
+// the moment its `batchItemComplete` event fires, instead of waiting for
+// the whole batch to finish. This decouples the testable dispatch policy
+// from the BatchPage class so we don't need to instantiate the whole
+// 1700-line DOM-bound page to verify upload-on-completion semantics.
+// ---------------------------------------------------------------------------
+
+export type BatchItemResult = Pick<
+  BatchResult,
+  'index' | 'prompt' | 'urls' | 'success'
+> & { errorMessage?: string }
+
+export type AddToHistoryFn = (
+  type: string,
+  prompt: string,
+  urls: string[],
+  ratio: string,
+) => unknown
+
+export interface DispatchOptions {
+  historyType: string
+  ratio: string
+  /**
+   * The host's `addToHistory` (usually `this.app.addToHistory`). Allowed to
+   * be undefined for defensive runtime safety — e.g. during hot reload or
+   * teardown when the host App reference is briefly missing.
+   */
+  addToHistory: AddToHistoryFn | undefined
+}
+
+/**
+ * Fan out a single `batchItemComplete` result into one `addToHistory` call
+ * per URL, so each image starts uploading to Tencent COS the instant it
+ * finishes generating rather than queuing until the whole batch settles.
+ *
+ * Returns the number of history calls dispatched (mostly for tests).
+ */
+export function dispatchBatchItemToHistory(
+  result: BatchItemResult,
+  { historyType, ratio, addToHistory }: DispatchOptions,
+): number {
+  if (!addToHistory) return 0
+  if (!result.success) return 0
+  if (!Array.isArray(result.urls) || result.urls.length === 0) return 0
+  for (const url of result.urls) {
+    addToHistory(historyType, result.prompt, [url], ratio)
+  }
+  return result.urls.length
+}
+
 export interface BatchPageState {
   mode: BatchMode
   cardPrompt: string
@@ -64,6 +115,12 @@ export class BatchPage extends BasePage {
   private isBatchGenerating: boolean = false
   private currentBatchMode: BatchMode = 'card'
   private currentBatchUploadId: string | null = null
+  // Per-run history dispatch context — set by execute*Generation BEFORE
+  // batchItemComplete events can fire, then read inside addSingleResult()
+  // so each finished image is forwarded to addToHistory immediately
+  // rather than queuing until the whole batch settles.
+  private currentBatchHistoryType: string = 'batch'
+  private currentBatchHistoryRatio: string = '1:1'
 
   constructor(app: AppInterface) {
     super(app)
@@ -925,6 +982,9 @@ export class BatchPage extends BasePage {
 
     this.isBatchGenerating = true
     this.currentBatchResults = []
+    // Wire up per-item dispatcher BEFORE batchGenerate fires any events.
+    this.currentBatchHistoryType = 'batch-card'
+    this.currentBatchHistoryRatio = ratio
 
     if (batchBtn) {
       batchBtn.disabled = true
@@ -945,13 +1005,12 @@ export class BatchPage extends BasePage {
       }
 
       const finalResults = this.currentBatchResults.filter((r) => r)
-
-      this.app.addToHistory(
-        'batch-card',
-        `🎰 抽卡生成 ${count} 张`,
-        finalResults.filter((r) => r.success).flatMap((r) => r.urls || []),
-        ratio
-      )
+      // NOTE: addToHistory is no longer called here in aggregate — each
+      // image was already routed to addToHistory the moment its
+      // batchItemComplete event fired (see addSingleResult). The local
+      // `results` / `finalResults` variables are kept around because some
+      // downstream paths inspect them for success counts and toast copy.
+      void results
 
       const successCount = finalResults.filter((r) => r.success).length
       this.showToast(this.t('batch.messages.cardComplete', { success: successCount, total: count }), 'success')
@@ -1011,6 +1070,10 @@ export class BatchPage extends BasePage {
 
     this.isBatchGenerating = true
     this.currentBatchResults = []
+    // Wire up per-item dispatcher BEFORE batchGenerate fires any events.
+    this.currentBatchHistoryType =
+      this.batchReferenceImages.length > 0 ? 'batch-with-reference' : 'batch'
+    this.currentBatchHistoryRatio = ratio
 
     if (batchBtn) {
       batchBtn.disabled = true
@@ -1029,16 +1092,10 @@ export class BatchPage extends BasePage {
       }
 
       const finalResults = this.currentBatchResults.filter((r) => r)
-
-      const historyType = this.batchReferenceImages.length > 0 ? 'batch-with-reference' : 'batch'
-      const description = `批量生成 ${prompts.length} 个提示词${this.batchReferenceImages.length > 0 ? ` (含${this.batchReferenceImages.length}张参考图)` : ''}`
-
-      this.app.addToHistory(
-        historyType,
-        description,
-        finalResults.filter((r) => r.success).flatMap((r) => r.urls || []),
-        ratio
-      )
+      // NOTE: addToHistory is no longer called here in aggregate — each
+      // image was already routed to addToHistory the moment its
+      // batchItemComplete event fired (see addSingleResult).
+      void results
 
       const totalImagesGenerated = finalResults
         .filter((r) => r.success)
@@ -1110,6 +1167,16 @@ export class BatchPage extends BasePage {
 
     const result = detail.result
     this.currentBatchResults[result.index] = result
+
+    // Fire-and-forget: kick off Tencent COS upload for THIS image right
+    // now, without waiting for the rest of the batch to finish. Each URL
+    // becomes its own history record + its own IPC → cosClient.putObject.
+    // See `dispatchBatchItemToHistory` above the class for the policy.
+    dispatchBatchItemToHistory(result, {
+      historyType: this.currentBatchHistoryType,
+      ratio: this.currentBatchHistoryRatio,
+      addToHistory: this.app?.addToHistory?.bind(this.app),
+    })
 
     const resultCard = document.createElement('div')
     resultCard.className = 'bg-white/5 rounded-lg p-4 animate-fade-in'

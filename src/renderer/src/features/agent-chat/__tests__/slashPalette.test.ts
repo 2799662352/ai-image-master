@@ -122,16 +122,20 @@ describe('filterPaletteItems', () => {
     expect(out.skills.map((s) => s.name)).toEqual(['context7-mcp'])
   })
 
-  it('caps results per section (no infinite scroll dump)', () => {
-    const many: CodexSkillSummary[] = Array.from({ length: 50 }, (_, i) => ({
+  it('returns up to the hard skill cap so power users see their full library', () => {
+    // Earlier the section was hard-capped at 8 which truncated power users
+    // who ship 20+ skills (the popup itself is scrollable, so 8 was a UX
+    // bug, not an ergonomics win). Cap raised to 50 with internal scroll;
+    // matching skills beyond that fold are deferred to refined queries.
+    const many: CodexSkillSummary[] = Array.from({ length: 80 }, (_, i) => ({
       name: `skill-${i}`,
       scope: 'user',
       description: '',
       path: `/p/${i}`,
     }))
     const out = filterPaletteItems('skill', many)
-    // Skill section caps at 8 to keep the popup compact on narrow chat panels.
-    expect(out.skills.length).toBeLessThanOrEqual(8)
+    expect(out.skills.length).toBeGreaterThan(8)
+    expect(out.skills.length).toBeLessThanOrEqual(50)
   })
 })
 

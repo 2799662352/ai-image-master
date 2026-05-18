@@ -2,6 +2,7 @@
 import { app, BrowserWindow, ipcMain, dialog, Menu, shell, nativeTheme, net, clipboard, nativeImage } from 'electron'
 import * as path from 'path'
 import * as fs from 'fs'
+import { randomBytes } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { getAutoUpdaterInstance } from './updater'
 import {
@@ -27,7 +28,9 @@ import { AgentManager } from './agent/AgentManager'
 import { AttachmentService } from './agent/AttachmentService'
 import { consumeStartupNotice, getPrisma, shutdownDatabase } from './agent/db'
 import { registerAgentIpc } from './agent/ipc'
+import { migrateLegacyUserSkills } from './agent/legacySkillsMigration'
 import { ThreadStore } from './agent/ThreadStore'
+import { uploadBufferToBucket } from './services/tencent/cosClient'
 import { registerAttachmentsTreeIpc, wireAttachmentBroadcast } from './file-explorer/AttachmentTreeProvider'
 import { AttachmentDirWatcher } from './file-explorer/AttachmentDirWatcher'
 import { registerFsIpc } from './file-explorer/fsIpc'
@@ -733,14 +736,12 @@ function deferNonCriticalInit(): void {
       // 检查窗口是否仍然有效
       if (currentWindow && !currentWindow.isDestroyed()) {
         // 使用 getAutoUpdaterInstance() 获取已初始化的实例
+        // 仅检测国内热更新 CDN（腾讯云 COS）。GitHub 上的 release 仅作为
+        // 源码备份，autoUpdater 不再回退到 GitHub Releases — 当 COS 检测
+        // 失败时直接抛错给用户，避免国内网络环境下卡在 GitHub 超时。
         const updater = getAutoUpdaterInstance({
           provider: 'generic',
           url: 'https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/',
-          fallback: {
-            provider: 'github',
-            owner: '2799662352',
-            repo: 'ai-image-master'
-          }
         })
         updater.setMainWindow(currentWindow)
         updater.checkForUpdatesOnStartup(0)
@@ -791,10 +792,51 @@ app.on('before-quit', (event) => {
 // ==================== IPC 处理 ====================
 
 // AI Skills 读写
+// ---------------------------------------------------------------------------
+// Codex CLI builds its skill registry at session start by scanning the
+// official roots ONLY: `$HOME/.agents/skills` (USER), `<repo>/.agents/skills`
+// (REPO), bundled installer (SYSTEM). A `skill` input item pointing outside
+// those roots is rejected by the model with "is not an installed skill in
+// this session" (see openai/codex#21524). So all skill IPC entry points
+// (open / load / save) must target `$HOME/.agents/skills` from now on.
+//
+// `userSkillsDir` remains defined as the legacy `<userData>/skills` path
+// because:
+//   - `migrateLegacyUserSkills` copies its contents into `officialUserSkillsDir`
+//     once on startup, then leaves the legacy folder alone (non-destructive);
+//   - the side-panel + `/` palette scanners (`codexConfigStore.listSkills` and
+//     `codexConfigDiscovery.discoverCodexSkills`) keep reading it via
+//     `legacyUserSkillsRoots` so old installs still see their skills even
+//     before the migration has run for them.
+// ---------------------------------------------------------------------------
 const builtinSkillsDir = app.isPackaged
   ? path.join(process.resourcesPath, 'skills')
   : path.resolve(__dirname, '../../skills')
+const officialUserSkillsDir = path.join(app.getPath('home'), '.agents', 'skills')
 const userSkillsDir = path.join(app.getPath('userData'), 'skills')
+
+// Fire-and-forget startup migration. Resolves to the report so callers (tests
+// or future telemetry) can inspect counts, but we don't await it from the
+// top-level since the IPC handlers below tolerate the official root being
+// created lazily by `mkdirSync(officialUserSkillsDir, { recursive: true })`.
+const legacySkillsMigrationPromise: Promise<{ copied: string[]; skipped: string[] }> =
+  migrateLegacyUserSkills({
+    legacyRoot: userSkillsDir,
+    officialRoot: officialUserSkillsDir,
+  }).then(
+    (report) => {
+      if (report.copied.length > 0) {
+        console.info(
+          `[skills] migrated ${report.copied.length} legacy skill(s) → ${officialUserSkillsDir}: ${report.copied.join(', ')}`,
+        )
+      }
+      return report
+    },
+    (err) => {
+      console.warn('[skills] legacy migration failed (non-fatal):', err)
+      return { copied: [], skipped: [] }
+    },
+  )
 
 function readSkillsFromDir(dir: string): Record<string, string> {
   const result: Record<string, string> = {}
@@ -812,11 +854,16 @@ function readSkillsFromDir(dir: string): Record<string, string> {
 
 ipcMain.handle('load-skills', async () => {
   try {
-    // Ensure user skills directory exists to improve discoverability.
-    fs.mkdirSync(userSkillsDir, { recursive: true })
+    // Wait for one-shot migration so legacy skills surface immediately
+    // under their official names. Already-migrated installs no-op.
+    await legacySkillsMigrationPromise
+    fs.mkdirSync(officialUserSkillsDir, { recursive: true })
     const builtin = readSkillsFromDir(builtinSkillsDir)
-    const user = readSkillsFromDir(userSkillsDir)
-    return { ...builtin, ...user }
+    const user = readSkillsFromDir(officialUserSkillsDir)
+    // Fallback: still read pre-migration legacy entries (e.g. ones whose
+    // target name collided with an official skill during migration).
+    const legacy = readSkillsFromDir(userSkillsDir)
+    return { ...builtin, ...legacy, ...user }
   } catch (error: any) {
     console.error('加载 Skills 失败:', error)
     return {}
@@ -828,10 +875,14 @@ ipcMain.handle('save-skill', async (_event, skillName: string, content: string) 
     if (!/^[a-zA-Z0-9_-]+$/.test(skillName)) {
       return { success: false, error: 'Invalid skill name' }
     }
-    const dir = path.join(userSkillsDir, skillName)
+    // Write to the Codex-official USER scope so the CLI's skill registry
+    // discovers the new skill on next session start. Writing to
+    // `<userData>/skills` (the pre-Codex path) would leave the skill
+    // invisible to the model — see openai/codex#21524.
+    const dir = path.join(officialUserSkillsDir, skillName)
     fs.mkdirSync(dir, { recursive: true })
     fs.writeFileSync(path.join(dir, 'SKILL.md'), content, 'utf-8')
-    return { success: true }
+    return { success: true, path: dir }
   } catch (error: any) {
     console.error('保存 Skill 失败:', error)
     return { success: false, error: error.message }
@@ -840,17 +891,96 @@ ipcMain.handle('save-skill', async (_event, skillName: string, content: string) 
 
 ipcMain.handle('open-skills-folder', async () => {
   try {
-    fs.mkdirSync(userSkillsDir, { recursive: true })
-    const errorMessage = await shell.openPath(userSkillsDir)
+    fs.mkdirSync(officialUserSkillsDir, { recursive: true })
+    const errorMessage = await shell.openPath(officialUserSkillsDir)
     if (errorMessage) {
-      return { success: false, error: errorMessage, path: userSkillsDir }
+      return { success: false, error: errorMessage, path: officialUserSkillsDir }
     }
-    return { success: true, path: userSkillsDir }
+    return { success: true, path: officialUserSkillsDir }
   } catch (error: any) {
     console.error('打开 Skills 文件夹失败:', error)
-    return { success: false, error: error.message, path: userSkillsDir }
+    return { success: false, error: error.message, path: officialUserSkillsDir }
   }
 })
+
+// ---------------------------------------------------------------------------
+// Image History bucket (Tencent COS)
+// ---------------------------------------------------------------------------
+// The image-history page uploads previews to a *dedicated* bucket separate
+// from the storyboardSplit / smartErase bucket (`map-tiles-bucket-...`) so
+// that lifecycle policies, public-read settings, and quota don't collide.
+// Bucket is hardcoded — switching it requires a coordinated content
+// migration; keep it visible in source for code search.
+const IMAGE_HISTORY_BUCKET = 'image-master-1345773498'
+const IMAGE_HISTORY_REGION = 'ap-guangzhou'
+
+function generateImageHistoryKey(mimeType: string): string {
+  const ext = mimeTypeToExtension(mimeType)
+  const now = new Date()
+  const yyyy = String(now.getFullYear())
+  const mm = String(now.getMonth() + 1).padStart(2, '0')
+  const dd = String(now.getDate()).padStart(2, '0')
+  // 16-byte random identifier — `crypto.randomUUID` would also work but
+  // keys never need to be cryptographically secret, so randomBytes keeps
+  // the dependency surface to `node:crypto` only.
+  const id = randomBytes(8).toString('hex')
+  return `image-history/${yyyy}/${mm}/${dd}/${id}.${ext}`
+}
+
+function mimeTypeToExtension(mime: string): string {
+  switch (mime) {
+    case 'image/png': return 'png'
+    case 'image/jpeg': case 'image/jpg': return 'jpg'
+    case 'image/webp': return 'webp'
+    case 'image/gif': return 'gif'
+    case 'image/avif': return 'avif'
+    case 'image/heic': return 'heic'
+    default: return 'bin'
+  }
+}
+
+ipcMain.handle(
+  'cos:upload-image-history',
+  async (
+    _event,
+    payload: { base64: string; mimeType: string; metadata?: Record<string, unknown> },
+  ): Promise<
+    | { success: true; url: string; key: string }
+    | { success: false; error: string }
+  > => {
+    try {
+      const { base64, mimeType, metadata } = payload
+      if (typeof base64 !== 'string' || !base64) {
+        return { success: false, error: 'invalid base64 payload' }
+      }
+      if (typeof mimeType !== 'string' || !mimeType.startsWith('image/')) {
+        return { success: false, error: 'invalid mimeType (must be image/*)' }
+      }
+      const body = Buffer.from(base64, 'base64')
+      if (body.byteLength === 0) {
+        return { success: false, error: 'empty buffer after base64 decode' }
+      }
+      const key = generateImageHistoryKey(mimeType)
+      const url = await uploadBufferToBucket({
+        bucket: IMAGE_HISTORY_BUCKET,
+        region: IMAGE_HISTORY_REGION,
+        key,
+        body,
+        contentType: mimeType,
+      })
+      // metadata currently isn't persisted to COS (no x-cos-meta-* headers
+      // wired through), but keep the param shape stable for forward-compat.
+      void metadata
+      return { success: true, url, key }
+    } catch (err: any) {
+      console.error('[cos:upload-image-history] failed:', err)
+      return {
+        success: false,
+        error: err?.message ?? String(err) ?? 'upload failed',
+      }
+    }
+  },
+)
 
 // Shell helpers (clipboard / save dialog) — used by the Codex Agent Lightbox.
 ipcMain.handle('shell:copy-image', async (_event, uri: string) => {

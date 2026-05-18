@@ -147,9 +147,9 @@ publish:
     url: https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/
     channel: latest
     useMultipleRangeRequest: true
-  - provider: github
-    owner: "2799662352"
-    repo: ai-image-master
-    releaseType: release
+# NOTE: The GitHub publish provider was intentionally removed — the
+# repository is now private and end users in mainland China can't reliably
+# reach GitHub Releases. Updates flow exclusively through the Tencent COS
+# CDN above. GitHub is used only to host source code; never for binaries.
 
 generateUpdatesFilesForAllChannels: true

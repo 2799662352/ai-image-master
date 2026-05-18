@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { app, dialog } from 'electron'
+import { app, dialog, shell } from 'electron'
 import { CodexLocalBackend } from './CodexLocalBackend'
 import { CodexProviderStore, type NewCustomProvider } from './CodexProviderStore'
 import { DEFAULT_CODEX_SESSION_CONFIG } from './codexLaunch'
@@ -265,14 +265,25 @@ export class AgentManager {
   }
 
   private workspacePaths(): CodexWorkspacePaths {
+    const home = os.homedir()
     return resolveWorkspacePaths({
-      home: os.homedir(),
+      home,
       cwd: this.sessionConfig.writableRoots[0] ?? process.cwd(),
       userData: this.userDataDir,
       // `app` may be `undefined` in vitest contexts that don't mock electron;
       // we treat that case as "not packaged" so system-scope skill discovery
       // simply skips, matching the dev-mode runtime behaviour.
       resourcesPath: app?.isPackaged ? process.resourcesPath : undefined,
+      // Surface legacy USER-scope skill locations so `listSkills` finds:
+      //   - skills written by this app's legacy `save-skill` IPC and
+      //     "打开 Skills 文件夹" button (<userData>/skills) — this is where
+      //     AI-created skills currently land.
+      //   - the Codex CLI legacy USER path (~/.codex/skills), still loaded
+      //     by the official CLI per openai/codex#14337.
+      legacyUserSkillsRoots: [
+        path.join(this.userDataDir, 'skills'),
+        path.join(home, '.codex', 'skills'),
+      ],
     })
   }
 
@@ -476,11 +487,22 @@ export class AgentManager {
   }
 
   async getSkillsSummary(): Promise<CodexSkillsSummary> {
+    const home = os.homedir()
     return discoverCodexSkills({
       cwd: this.sessionConfig.writableRoots[0] ?? process.cwd(),
-      home: os.homedir(),
+      home,
       // Same defensive guard as `workspacePaths()` — see note there.
       resourcesPath: app?.isPackaged ? process.resourcesPath : undefined,
+      // Mirror `workspacePaths().legacyUserSkillsRoots` so the `/` palette
+      // and `$skill` popup see the same USER-scope inventory the
+      // SkillsSection panel does. Without this, AI-created skills under
+      // `<userData>/skills` (e.g. catimation-cyberpunk-master) and Codex
+      // CLI legacy `$HOME/.codex/skills` entries surface in the side panel
+      // but stay invisible in the chat command palette.
+      legacyUserSkillsRoots: [
+        path.join(this.userDataDir, 'skills'),
+        path.join(home, '.codex', 'skills'),
+      ],
     })
   }
 
@@ -498,6 +520,54 @@ export class AgentManager {
 
   async deleteSkill(id: string) {
     return deleteSkill(this.workspacePaths(), id)
+  }
+
+  /**
+   * Reveals a scope-specific skills root in the OS file browser. Unlike the
+   * legacy `open-skills-folder` IPC (which always opens `<userData>/skills`),
+   * this routes by scope so the side panel can give each group header its
+   * own "open" button:
+   *   - `repo`   → workspace `.agents/skills`
+   *   - `user`   → `$HOME/.agents/skills` (the official Codex USER path)
+   *   - `system` → packaged installer skills (read-only)
+   *
+   * Ensures the directory exists before opening so first-time users don't
+   * hit a "folder not found" toast on a fresh checkout.
+   */
+  async openSkillsRoot(
+    scope: 'repo' | 'user' | 'system',
+  ): Promise<{ ok: true; path: string } | { ok: false; error: string; path?: string }> {
+    const paths = this.workspacePaths()
+    let target: string | undefined
+    switch (scope) {
+      case 'repo':
+        target = paths.workspaceSkillsRoot
+        break
+      case 'user':
+        target = paths.personalSkillsRoot
+        break
+      case 'system':
+        target = paths.systemSkillsRoot
+        break
+      default: {
+        const _exhaustive: never = scope
+        return { ok: false, error: `Unknown scope: ${String(_exhaustive)}` }
+      }
+    }
+    if (!target) return { ok: false, error: `No path resolved for scope ${scope}` }
+
+    try {
+      // Read-only SYSTEM skills are bundled with the installer; skipping
+      // `mkdir` avoids EPERM noise on packaged builds.
+      if (scope !== 'system') {
+        await fs.mkdir(target, { recursive: true })
+      }
+      const errorMessage = await shell.openPath(target)
+      if (errorMessage) return { ok: false, error: errorMessage, path: target }
+      return { ok: true, path: target }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err), path: target }
+    }
   }
 
   async getWorkspaceLogs(opts?: { limit?: number; sinceIso?: string }) {

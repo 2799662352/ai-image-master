@@ -170,6 +170,7 @@ const IPC_CHANNELS = {
     GET_SKILL_DETAIL: 'agent:get-skill-detail',
     SAVE_SKILL: 'agent:save-skill',
     DELETE_SKILL: 'agent:delete-skill',
+    OPEN_SKILLS_ROOT: 'agent:open-skills-root',
     GET_WORKSPACE_LOGS: 'agent:get-workspace-logs',
     RESTART_CODEX: 'agent:restart-codex',
     LIST_CODEX_THREADS: 'agent:list-codex-threads',
@@ -362,6 +363,9 @@ export interface ElectronAPI {
     getSkillDetail: (id: string) => Promise<CodexSkillInput | null>
     saveSkill: (input: CodexSkillInput) => Promise<AgentApiResult & { id?: string }>
     deleteSkill: (id: string) => Promise<AgentApiResult>
+    openSkillsRoot: (
+      scope: 'repo' | 'user' | 'system',
+    ) => Promise<{ ok: true; path: string } | { ok: false; error: string; path?: string }>
     getWorkspaceLogs: (opts?: { limit?: number; sinceIso?: string }) => Promise<CodexAuditLogEntry[]>
     restartCodex: () => Promise<AgentApiResult>
     listCodexThreads: () => Promise<CodexThreadSummary[]>
@@ -413,6 +417,21 @@ export interface ElectronAPI {
     saveAs: (uri: string, suggestedName: string) => Promise<IpcResponse>
     showItemInFolder: (p: string) => Promise<void>
     openExternal: (url: string) => Promise<IpcResponse>
+  }
+  // Tencent COS uploads for renderer-side flows (image history, etc.).
+  // Routed through the main process so the COS SecretId/SecretKey never
+  // leak into renderer-land. Bucket selection is determined by the IPC
+  // handler — `uploadImageHistory` always targets the image-master bucket
+  // (separate from storyboardSplit/smartErase).
+  cos: {
+    uploadImageHistory: (
+      base64: string,
+      mimeType: string,
+      metadata?: Record<string, unknown>,
+    ) => Promise<
+      | { success: true; url: string; key: string }
+      | { success: false; error: string }
+    >
   }
   fs: {
     readText: (p: string) => Promise<{ content: string; mtime: number }>
@@ -760,6 +779,12 @@ const electronAPI: ElectronAPI = {
     deleteSkill: (id: string) =>
       safeInvoke<AgentApiResult>(IPC_CHANNELS.AGENT.DELETE_SKILL, id),
 
+    openSkillsRoot: (scope: 'repo' | 'user' | 'system') =>
+      safeInvoke<{ ok: true; path: string } | { ok: false; error: string; path?: string }>(
+        IPC_CHANNELS.AGENT.OPEN_SKILLS_ROOT,
+        scope,
+      ),
+
     getWorkspaceLogs: (opts?: { limit?: number; sinceIso?: string }) =>
       safeInvoke<CodexAuditLogEntry[]>(IPC_CHANNELS.AGENT.GET_WORKSPACE_LOGS, opts),
 
@@ -874,6 +899,19 @@ const electronAPI: ElectronAPI = {
       safeInvoke<void>(IPC_CHANNELS.SHELL.SHOW_ITEM_IN_FOLDER, p),
     openExternal: (url: string) =>
       safeInvoke<IpcResponse>(IPC_CHANNELS.SHELL.OPEN_EXTERNAL, url),
+  },
+
+  // ============ Tencent COS uploads (renderer-facing) ============
+  cos: {
+    uploadImageHistory: (
+      base64: string,
+      mimeType: string,
+      metadata?: Record<string, unknown>,
+    ) =>
+      safeInvoke<
+        | { success: true; url: string; key: string }
+        | { success: false; error: string }
+      >('cos:upload-image-history', { base64, mimeType, metadata }),
   },
 
   fs: {

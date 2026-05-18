@@ -133,6 +133,78 @@ describe('tencent/cosClient', () => {
     )
   })
 
+  // ---------------------------------------------------------------------------
+  // uploadBufferToBucket — like uploadBuffer but ignores the global bucket
+  // from credentials so callers (e.g. image-history IPC) can target a
+  // *different* bucket than storyboardSplit/smartErase use. Credentials are
+  // still resolved from `getCredentials()` because the SDK key pair has
+  // access to both buckets in the same Tencent Cloud account.
+  // ---------------------------------------------------------------------------
+  it('uploadBufferToBucket sends the explicit Bucket/Region, not the credentials bucket', async () => {
+    mockPutObject.mockImplementation((_p: any, cb: any) => cb(null, {}))
+    const { uploadBufferToBucket } = await import('../cosClient')
+
+    const url = await uploadBufferToBucket({
+      bucket: 'image-master-1345773498',
+      region: 'ap-guangzhou',
+      key: 'image-history/2026/05/abc.png',
+      body: Buffer.from('img'),
+      contentType: 'image/png',
+    })
+
+    expect(mockPutObject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        Bucket: 'image-master-1345773498',
+        Region: 'ap-guangzhou',
+        Key: 'image-history/2026/05/abc.png',
+        ContentType: 'image/png',
+      }),
+      expect.any(Function),
+    )
+    // Confirm we do NOT silently fall back to the default credentials bucket
+    // (the test mocks credentials as `bucket: 'b', region: 'ap-shanghai'`).
+    const args = mockPutObject.mock.calls[0][0]
+    expect(args.Bucket).not.toBe('b')
+    expect(args.Region).not.toBe('ap-shanghai')
+
+    // Returns the canonical public URL so the renderer (or any consumer)
+    // can render the uploaded image without a second IPC roundtrip.
+    expect(url).toBe(
+      'https://image-master-1345773498.cos.ap-guangzhou.myqcloud.com/image-history/2026/05/abc.png',
+    )
+  })
+
+  it('uploadBufferToBucket strips a leading slash from key in the resulting URL', async () => {
+    mockPutObject.mockImplementation((_p: any, cb: any) => cb(null, {}))
+    const { uploadBufferToBucket } = await import('../cosClient')
+    const url = await uploadBufferToBucket({
+      bucket: 'image-master-1345773498',
+      region: 'ap-guangzhou',
+      key: '/leading/slash.png',
+      body: Buffer.from('x'),
+    })
+    expect(url).toBe(
+      'https://image-master-1345773498.cos.ap-guangzhou.myqcloud.com/leading/slash.png',
+    )
+    const args = mockPutObject.mock.calls[0][0]
+    expect(args.Key).toBe('leading/slash.png')
+  })
+
+  it('uploadBufferToBucket rejects on COS error', async () => {
+    mockPutObject.mockImplementation((_p: any, cb: any) =>
+      cb({ code: 'AccessDenied', statusCode: 403, message: 'no' }),
+    )
+    const { uploadBufferToBucket } = await import('../cosClient')
+    await expect(
+      uploadBufferToBucket({
+        bucket: 'image-master-1345773498',
+        region: 'ap-guangzhou',
+        key: 'k.png',
+        body: Buffer.from('x'),
+      }),
+    ).rejects.toMatchObject({ code: 'AccessDenied' })
+  })
+
   it('deleteObjects no-ops on empty array', async () => {
     const { deleteObjects } = await import('../cosClient')
     await deleteObjects([])

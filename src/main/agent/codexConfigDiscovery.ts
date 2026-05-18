@@ -15,6 +15,23 @@ interface DiscoverSkillsOptions {
   home: string
   /** Optional path to the packaged installer's resources dir (process.resourcesPath). */
   resourcesPath?: string
+  /**
+   * Extra legacy USER-scope roots to scan alongside `$HOME/.agents/skills`.
+   * Entries surface as `user` scope and are de-duplicated by SKILL.md
+   * directory name (the directory that contains the SKILL.md file, *not* the
+   * frontmatter `name`, so two different on-disk directories that happen to
+   * declare the same `name:` still both surface). The canonical
+   * `$HOME/.agents/skills` entry wins on collision.
+   *
+   * Why we need this:
+   *   - This app's pre-Codex `save-skill` IPC writes to `<userData>/skills`,
+   *     and existing user content lives there.
+   *   - The Codex CLI continues to honour the legacy `$HOME/.codex/skills`
+   *     path even after introducing `.agents/skills` (openai/codex#14337).
+   * Without this list the `/` palette and `$skill` popup silently miss any
+   * skill that doesn't live exactly under `$HOME/.agents/skills`.
+   */
+  legacyUserSkillsRoots?: string[]
 }
 
 type UnknownRecord = Record<string, unknown>
@@ -80,27 +97,59 @@ export async function discoverCodexSkills({
   cwd,
   home,
   resourcesPath,
+  legacyUserSkillsRoots,
 }: DiscoverSkillsOptions): Promise<CodexSkillsSummary> {
   const warnings: string[] = []
   // Codex official skill scopes (https://developers.openai.com/codex/skills):
   // REPO (.agents/skills walked from CWD up to repo root)
   // USER ($HOME/.agents/skills)
   // SYSTEM (bundled with installation)
-  const scans: Promise<CodexSkillSummary[]>[] = [
-    discoverSkillsInRoot(path.join(cwd, '.agents', 'skills'), 'repo', warnings),
-    discoverSkillsInRoot(path.join(home, '.agents', 'skills'), 'user', warnings),
-  ]
-  if (resourcesPath) {
-    scans.push(
-      discoverSkillsInRoot(path.join(resourcesPath, '.agents', 'skills'), 'system', warnings),
-    )
+  const repoTask = discoverSkillsInRoot(path.join(cwd, '.agents', 'skills'), 'repo', warnings)
+  const userTask = discoverSkillsInRoot(path.join(home, '.agents', 'skills'), 'user', warnings)
+  const systemTask = resourcesPath
+    ? discoverSkillsInRoot(path.join(resourcesPath, '.agents', 'skills'), 'system', warnings)
+    : Promise.resolve<CodexSkillSummary[]>([])
+  const legacyTasks = (legacyUserSkillsRoots ?? []).map((root) =>
+    discoverSkillsInRoot(root, 'user', warnings),
+  )
+
+  const [repo, user, system, ...legacyGroups] = await Promise.all([
+    repoTask,
+    userTask,
+    systemTask,
+    ...legacyTasks,
+  ])
+
+  // Merge USER-scope entries: official `$HOME/.agents/skills` wins on dir
+  // name collision, then each legacy root in declaration order.
+  const seenUserDirNames = new Set<string>()
+  const mergedUser: CodexSkillSummary[] = []
+  for (const entry of user) {
+    seenUserDirNames.add(skillDirName(entry.path))
+    mergedUser.push(entry)
   }
-  const skillGroups = await Promise.all(scans)
+  for (const group of legacyGroups) {
+    for (const entry of group) {
+      const dirName = skillDirName(entry.path)
+      if (seenUserDirNames.has(dirName)) continue
+      seenUserDirNames.add(dirName)
+      mergedUser.push(entry)
+    }
+  }
+  mergedUser.sort((a, b) => a.name.localeCompare(b.name))
 
   return {
-    skills: skillGroups.flat(),
+    skills: [...repo, ...mergedUser, ...system],
     warnings,
   }
+}
+
+// `<root>/<dirName>/SKILL.md` → `<dirName>`. We dedupe by the on-disk folder
+// name rather than the frontmatter `name:` so two genuinely different skills
+// that happen to share a name in their frontmatter both surface; only true
+// path collisions (same folder copied to two roots) collapse.
+function skillDirName(skillMdPath: string): string {
+  return path.basename(path.dirname(skillMdPath))
 }
 
 function summarizeMcpServer(name: string, value: unknown): CodexMcpServerSummary | undefined {

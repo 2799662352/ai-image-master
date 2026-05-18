@@ -66,7 +66,8 @@ describe('SkillsSection', () => {
     })
 
     render(<SkillsSection insertIntoChat={vi.fn()} />)
-    expect(await screen.findByText('No skills yet.')).toBeTruthy()
+    // Empty-state copy lives in a friendlier card now: title + helper text.
+    expect(await screen.findByText('No skills yet')).toBeTruthy()
     fireEvent.click(screen.getByText('打开 Skills 文件夹'))
 
     expect(openSkillsFolder).toHaveBeenCalled()
@@ -88,12 +89,61 @@ describe('SkillsSection', () => {
 
     render(<SkillsSection insertIntoChat={vi.fn()} />)
 
-    expect(await screen.findByText('No skills yet.')).toBeTruthy()
-    fireEvent.click(screen.getByText('New Skill'))
+    expect(await screen.findByText('No skills yet')).toBeTruthy()
+    // The empty-state copy mentions "New Skill" inline, so target the
+    // toolbar button by role to disambiguate.
+    fireEvent.click(screen.getByRole('button', { name: 'New Skill' }))
 
     // Editor form fields appear
     expect(screen.getByLabelText('Name')).toBeTruthy()
     expect(screen.getByLabelText('Instructions')).toBeTruthy()
+  })
+
+  // Each SkillGroup header (REPO / USER / SYSTEM) gets its own "open folder"
+  // button so the user can jump to the right on-disk root directly, instead
+  // of always opening the legacy app-data folder via the toolbar action.
+  it('opens each scope root via the group-level open button', async () => {
+    const openSkillsRoot = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, path: 'D:/p/.agents/skills' })
+      .mockResolvedValueOnce({ ok: true, path: 'C:/Users/me/.agents/skills' })
+
+    Object.defineProperty(window, 'electronAPI', {
+      configurable: true,
+      value: {
+        agent: {
+          listSkills: vi.fn().mockResolvedValue([
+            {
+              id: 'repo:demo',
+              name: 'demo',
+              scope: 'repo',
+              path: 'D:/p/.agents/skills/demo/SKILL.md',
+              description: 'do x',
+              warnings: [],
+            },
+            {
+              id: 'user:helper',
+              name: 'helper',
+              scope: 'user',
+              path: 'C:/Users/me/.agents/skills/helper/SKILL.md',
+              description: 'helps',
+              warnings: [],
+            },
+          ]),
+          deleteSkill: vi.fn(),
+          openSkillsRoot,
+        },
+      },
+    })
+
+    render(<SkillsSection insertIntoChat={vi.fn()} />)
+    await screen.findByText('demo')
+
+    fireEvent.click(screen.getByLabelText('Open REPO skills folder'))
+    expect(openSkillsRoot).toHaveBeenNthCalledWith(1, 'repo')
+
+    fireEvent.click(screen.getByLabelText('Open USER skills folder'))
+    expect(openSkillsRoot).toHaveBeenNthCalledWith(2, 'user')
   })
 
   it('opens the SkillEditor for editing an existing skill', async () => {
