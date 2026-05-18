@@ -23,6 +23,7 @@ const AGENT_HANDLE_CHANNELS = [
   'agent:get-skill-detail',
   'agent:save-skill',
   'agent:delete-skill',
+  'agent:open-skills-root',
   'agent:get-workspace-logs',
   'agent:restart-codex',
   'agent:list-codex-threads',
@@ -120,6 +121,12 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
       (await getManager()).deleteSkill(validateWorkspaceId(id, 'Skill id')),
     ),
   )
+  ipcMain.handle('agent:open-skills-root', async (_event, scope: unknown) => {
+    if (scope !== 'repo' && scope !== 'user' && scope !== 'system') {
+      return { ok: false as const, error: `Unknown scope: ${String(scope)}` }
+    }
+    return (await getManager()).openSkillsRoot(scope)
+  })
   ipcMain.handle('agent:get-workspace-logs', async (_event, opts: unknown) =>
     handleWorkspaceRequest(async () =>
       (await getManager()).getWorkspaceLogs(opts as Parameters<AgentManager['getWorkspaceLogs']>[0]),

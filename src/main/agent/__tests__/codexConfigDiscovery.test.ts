@@ -104,4 +104,81 @@ description: "unterminated
       expect.stringContaining('Invalid frontmatter in home-skill'),
     ])
   })
+
+  // ---------------------------------------------------------------------------
+  // Legacy USER scope discovery — the `/` palette + `$skill` mention popup
+  // call `discoverCodexSkills` directly (via `getSkillsSummary`), separate
+  // from `listSkills` used by the SkillsSection panel. Both must surface
+  // AI-created skills written to `<userData>/skills` and Codex CLI legacy
+  // `$HOME/.codex/skills` (per openai/codex#14337), otherwise the in-chat
+  // popup and the side panel disagree on what's available.
+  // ---------------------------------------------------------------------------
+  it('discovers skills from legacy USER scope roots and dedupes against home', async () => {
+    const cwd = await makeTempDir()
+    const home = await makeTempDir()
+    const userData = await makeTempDir()
+    const userSkillsDir = path.join(userData, 'skills')
+    await mkdir(path.join(userSkillsDir, 'trailer-plan-generator'), { recursive: true })
+    await writeFile(
+      path.join(userSkillsDir, 'trailer-plan-generator', 'SKILL.md'),
+      `---\nname: trailer-plan-generator\ndescription: AI-created trailer skill\n---\n`,
+      'utf8',
+    )
+
+    // A second legacy root (codex CLI legacy ~/.codex/skills) with a unique skill.
+    const codexLegacy = path.join(home, '.codex', 'skills')
+    await mkdir(path.join(codexLegacy, 'codex-legacy-only'), { recursive: true })
+    await writeFile(
+      path.join(codexLegacy, 'codex-legacy-only', 'SKILL.md'),
+      `---\nname: codex-legacy-only\ndescription: from codex legacy\n---\n`,
+      'utf8',
+    )
+
+    // Same-name collision: a personal-scope skill in the official path. The
+    // legacy entry must NOT shadow it; the merged list keeps a single entry
+    // (the official one) plus the unique legacy ones.
+    await mkdir(path.join(home, '.agents', 'skills', 'shared'), { recursive: true })
+    await writeFile(
+      path.join(home, '.agents', 'skills', 'shared', 'SKILL.md'),
+      `---\nname: shared\ndescription: from official home\n---\n`,
+      'utf8',
+    )
+    await mkdir(path.join(userSkillsDir, 'shared'), { recursive: true })
+    await writeFile(
+      path.join(userSkillsDir, 'shared', 'SKILL.md'),
+      `---\nname: shared\ndescription: from app userData (legacy)\n---\n`,
+      'utf8',
+    )
+
+    const summary = await discoverCodexSkills({
+      cwd,
+      home,
+      legacyUserSkillsRoots: [userSkillsDir, codexLegacy],
+    })
+
+    const names = summary.skills.map((s) => s.name)
+    expect(names).toContain('trailer-plan-generator')
+    expect(names).toContain('codex-legacy-only')
+    // Both legacy and official `shared` exist on disk; dedupe keeps one and
+    // surfaces the official one's description.
+    expect(names.filter((n) => n === 'shared')).toHaveLength(1)
+    expect(summary.skills.find((s) => s.name === 'shared')?.description).toBe(
+      'from official home',
+    )
+    // Legacy entries are surfaced as USER scope.
+    expect(summary.skills.find((s) => s.name === 'trailer-plan-generator')?.scope).toBe('user')
+    expect(summary.skills.find((s) => s.name === 'codex-legacy-only')?.scope).toBe('user')
+  })
+
+  it('skips missing legacy roots silently', async () => {
+    const cwd = await makeTempDir()
+    const home = await makeTempDir()
+    const summary = await discoverCodexSkills({
+      cwd,
+      home,
+      legacyUserSkillsRoots: [path.join(home, 'does-not-exist', 'skills')],
+    })
+    expect(summary.skills).toEqual([])
+    expect(summary.warnings).toEqual([])
+  })
 })

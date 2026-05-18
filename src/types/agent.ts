@@ -367,6 +367,16 @@ export interface CodexWorkspacePaths {
    * dev). Matches Codex official SYSTEM scope.
    */
   systemSkillsRoot?: string
+  /**
+   * Additional legacy USER-scope skill roots discovered alongside
+   * `personalSkillsRoot`. Entries surface as `user` scope and are de-duplicated
+   * by skill directory name, with the official `personalSkillsRoot` winning on
+   * collision. Used to surface skills written by:
+   *   - this app's pre-codex `save-skill` IPC (`<userData>/skills`),
+   *   - the Codex CLI legacy USER path (`$HOME/.codex/skills`), still loaded by
+   *     the official CLI per openai/codex#14337 but slated for deprecation.
+   */
+  legacyUserSkillsRoots?: string[]
   runtimeConfigToml: string
   auditLogPath: string
 }

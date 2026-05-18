@@ -76,6 +76,54 @@ export async function uploadBuffer(opts: UploadBufferOptions): Promise<void> {
   })
 }
 
+export interface UploadBufferToBucketOptions {
+  bucket: string
+  region: string
+  key: string
+  body: Buffer
+  contentType?: string
+}
+
+/**
+ * Upload a buffer to a Tencent COS bucket *other than* the default one in
+ * credentials. Use when the caller needs to target a specific bucket — e.g.
+ * the image-history bucket — without disturbing storyboardSplit/smartErase
+ * which still rely on `getBucketAndRegion()`.
+ *
+ * Returns the canonical public URL of the uploaded object so callers can
+ * persist the link without a second `getObjectUrl` roundtrip. The leading
+ * slash (if any) is stripped from the key both in the SDK call and the
+ * URL — COS keys must not start with `/`.
+ */
+export async function uploadBufferToBucket(opts: UploadBufferToBucketOptions): Promise<string> {
+  const cos = getCosInstance()
+  const Key = opts.key.replace(/^\/+/, '')
+  await new Promise<void>((resolve, reject) => {
+    cos.putObject(
+      {
+        Bucket: opts.bucket,
+        Region: opts.region,
+        Key,
+        Body: opts.body,
+        ContentType: opts.contentType,
+      },
+      (err: any) => {
+        if (err) {
+          logCosError('uploadBufferToBucket', err, {
+            Bucket: opts.bucket,
+            Region: opts.region,
+            Key,
+          })
+          reject(err)
+          return
+        }
+        resolve()
+      },
+    )
+  })
+  return `https://${opts.bucket}.cos.${opts.region}.myqcloud.com/${Key}`
+}
+
 export interface UploadStreamProgress {
   loaded: number
   total: number

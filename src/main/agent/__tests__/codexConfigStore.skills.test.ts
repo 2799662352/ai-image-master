@@ -108,3 +108,102 @@ describe('skills CRUD', () => {
     expect(delRes.error).toMatch(/read-only/i)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Legacy USER scope discovery
+//
+// AI-created and historically saved skills live in app-specific or codex-CLI
+// legacy locations:
+//   - userData/skills  (this app's legacy `save-skill` IPC writes here, and
+//     the "打开 Skills 文件夹" button opens it)
+//   - $HOME/.codex/skills  (Codex CLI legacy USER scope, still loaded by the
+//     official CLI per openai/codex issue #14337; deprecated but supported)
+//
+// `listSkills` must surface those entries as `user` scope so the SkillsSection
+// can render them.
+// ---------------------------------------------------------------------------
+describe('skills USER scope legacy discovery', () => {
+  async function setupWithLegacy(legacyRoots: string[]) {
+    const home = path.join(tmp, 'h')
+    const cwd = path.join(tmp, 'p')
+    await mkdir(home, { recursive: true })
+    await mkdir(cwd, { recursive: true })
+    return resolveWorkspacePaths({
+      home,
+      cwd,
+      userData: tmp,
+      legacyUserSkillsRoots: legacyRoots,
+    })
+  }
+
+  async function writeSkill(root: string, name: string, body: string) {
+    const dir = path.join(root, name)
+    await mkdir(dir, { recursive: true })
+    await writeFile(path.join(dir, 'SKILL.md'), body, 'utf8')
+  }
+
+  it('resolveWorkspacePaths accepts and exposes legacyUserSkillsRoots', async () => {
+    const legacy = path.join(tmp, 'app-data', 'skills')
+    const paths = await setupWithLegacy([legacy])
+    expect(paths.legacyUserSkillsRoots).toEqual([legacy])
+  })
+
+  it('lists a skill from a legacy user skills root as user scope', async () => {
+    const legacy = path.join(tmp, 'app-data', 'skills')
+    const paths = await setupWithLegacy([legacy])
+    await writeSkill(
+      legacy,
+      'trailer-plan-generator',
+      `---\nname: trailer-plan-generator\ndescription: AI-created trailer skill\n---\n## Body\n`,
+    )
+
+    const list = await listSkills(paths)
+    const entry = list.find((s) => s.name === 'trailer-plan-generator')
+    expect(entry).toBeTruthy()
+    expect(entry?.scope).toBe('user')
+    expect(entry?.description).toBe('AI-created trailer skill')
+    expect(entry?.path.endsWith(path.join('trailer-plan-generator', 'SKILL.md'))).toBe(true)
+  })
+
+  it('lists a skill that has SKILL.md but no frontmatter (uses directory name)', async () => {
+    // AI-created skills frequently omit frontmatter. Detection must not require
+    // it: the directory name should be used as the skill name.
+    const legacy = path.join(tmp, 'app-data', 'skills')
+    const paths = await setupWithLegacy([legacy])
+    await writeSkill(legacy, 'no-frontmatter', `# Some Skill\n\nDo a thing.\n`)
+
+    const list = await listSkills(paths)
+    expect(list.find((s) => s.name === 'no-frontmatter')).toBeTruthy()
+  })
+
+  it('merges multiple legacy roots and dedupes by skill directory name (personal wins)', async () => {
+    // Simulate the realistic Windows runtime: AI writes via app legacy IPC into
+    // userData/skills, and a user also has a copy in ~/.codex/skills. We
+    // expect a single entry per name, with the official personal root taking
+    // precedence on collision.
+    const codexLegacy = path.join(tmp, 'h', '.codex', 'skills')
+    const appLegacy = path.join(tmp, 'app-data', 'skills')
+    const paths = await setupWithLegacy([appLegacy, codexLegacy])
+
+    await writeSkill(appLegacy, 'shared', `---\nname: shared\ndescription: from app legacy\n---\n`)
+    await writeSkill(codexLegacy, 'shared', `---\nname: shared\ndescription: from codex legacy\n---\n`)
+    // Personal (~/.agents/skills) should take precedence on duplicate.
+    await writeSkill(
+      paths.personalSkillsRoot,
+      'shared',
+      `---\nname: shared\ndescription: from personal\n---\n`,
+    )
+    await writeSkill(appLegacy, 'only-app', `---\nname: only-app\ndescription: app only\n---\n`)
+
+    const list = await listSkills(paths)
+    const shared = list.filter((s) => s.name === 'shared')
+    expect(shared).toHaveLength(1)
+    expect(shared[0]?.description).toBe('from personal')
+    expect(list.find((s) => s.name === 'only-app')?.scope).toBe('user')
+  })
+
+  it('survives missing legacy roots without throwing', async () => {
+    const paths = await setupWithLegacy([path.join(tmp, 'does-not-exist', 'skills')])
+    await expect(listSkills(paths)).resolves.toEqual([])
+  })
+})

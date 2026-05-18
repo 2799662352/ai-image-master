@@ -7,6 +7,7 @@ import { useAgentChatStore } from './store'
 import { parseFileDrop, parseQuoteDrop } from '../file-explorer/dragHelpers'
 import { useFileExplorerStore } from '../file-explorer/store'
 import type { FileNode } from '../file-explorer/types'
+import { rankFuzzyTargets, scoreFuzzyMatch } from './paletteFuzzy'
 
 /**
  * Find the active `$skill-name` token at `caret`, if any. Mirrors the
@@ -184,13 +185,21 @@ export interface PaletteSection {
   items: PaletteItem[]
 }
 
-/** Per-section result cap. Mirrors the existing skill/file popup ergonomics. */
-const PALETTE_PER_SECTION_LIMIT = 8
+/**
+ * Per-section result cap. Commands are few (~4) so we never truncate them.
+ * Skills can be 20+ on a power-user setup — the popup itself is scrollable
+ * (`max-h-72` + `overflow-auto` in the JSX), so we surface up to this many
+ * matches instead of the old hard cut of 8. The hard ceiling keeps render
+ * cost bounded; in practice users converge on a query within 2-3 keystrokes.
+ */
+const SKILL_RESULT_LIMIT = 50
 
 /**
- * Filter both sections by `query`. Commands match on id/label/description
- * substring; skills match on name/description substring. Both are
- * case-insensitive. Empty query returns everything (capped per section).
+ * Filter both sections by `query` using `paletteFuzzy.rankFuzzyTargets` so
+ * subsequence matches surface: `rev` reaches `reverse`, `tdd` reaches
+ * `test-driven-development`. Commands are matched against id/label/desc;
+ * skills against name/description. Empty query returns everything in input
+ * order so the popup feels predictable to mouse-only users.
  *
  * Exported (rather than inlined) so the popup state hook AND tests can
  * share one filter implementation — keyboard nav ranking depends on it.
@@ -199,29 +208,23 @@ export function filterPaletteItems(
   query: string,
   skills: readonly CodexSkillSummary[],
 ): { commands: SlashCommand[]; skills: CodexSkillSummary[] } {
-  const q = query.trim().toLowerCase()
-  const commandsRaw =
-    q.length === 0
-      ? SLASH_COMMANDS.slice()
-      : SLASH_COMMANDS.filter((c) =>
-          [c.id, c.label, c.description].some((field) => field.toLowerCase().includes(q)),
-        )
-  // Rank commands whose id starts with the query above bare substring matches
-  // so `cl` lands `clear` first instead of `cancel`.
-  const commands = [...commandsRaw].sort(
-    (a, b) =>
-      Number(b.id.toLowerCase().startsWith(q)) - Number(a.id.toLowerCase().startsWith(q)),
-  )
-  const skillsFiltered =
-    q.length === 0
-      ? skills.slice()
-      : skills.filter(
-          (s) => s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q),
-        )
+  const commands = rankFuzzyTargets(SLASH_COMMANDS, query, (c) => [c.id, c.label, c.description])
+  const skillsRanked = rankFuzzyTargets(skills, query, (s) => [s.name, s.description])
   return {
-    commands: commands.slice(0, PALETTE_PER_SECTION_LIMIT),
-    skills: skillsFiltered.slice(0, PALETTE_PER_SECTION_LIMIT),
+    commands,
+    skills: skillsRanked.slice(0, SKILL_RESULT_LIMIT),
   }
+}
+
+/**
+ * Compute the indices of `target` characters that matched `query`, using the
+ * same scorer that drove the ranking. Returns an empty array on empty query.
+ * Callers wrap matched glyphs in a span to emulate the VS Code / Cursor
+ * "hot prefix" highlight feel. Exported for the row renderer + tests.
+ */
+export function highlightMatchIndices(query: string, target: string): number[] {
+  if (query.length === 0) return []
+  return scoreFuzzyMatch(query, target).indices
 }
 
 /**
@@ -309,6 +312,83 @@ function SkillGlyph(): JSX.Element {
     >
       <path d="M7 1.5 8.4 5.2 12.2 5.6 9.4 8.2 10.2 12 7 10.1 3.8 12 4.6 8.2 1.8 5.6 5.6 5.2 7 1.5Z" />
     </svg>
+  )
+}
+
+/**
+ * Render `text` with the characters at `matchIndices` wrapped in a tinted
+ * span. Mirrors VS Code / Cursor's "hot prefix" highlight so the user can
+ * see WHY a row matched their typed query — `re` on `reverse` makes the
+ * leading `re` glow. Falls back to plain text on empty `matchIndices`.
+ */
+function HighlightedText({
+  text,
+  matchIndices,
+  className,
+}: {
+  text: string
+  matchIndices: readonly number[]
+  className?: string
+}): JSX.Element {
+  if (matchIndices.length === 0) {
+    return <span className={className}>{text}</span>
+  }
+  // Walk `text` once; emit alternating plain / highlighted spans. Using a
+  // Set membership check keeps the hot path linear without sorting hits.
+  const hits = new Set(matchIndices)
+  const out: JSX.Element[] = []
+  let buffer = ''
+  let isHit = false
+  const flush = (key: number) => {
+    if (buffer.length === 0) return
+    out.push(
+      isHit ? (
+        <mark
+          key={key}
+          className="rounded-sm bg-cyan-300/25 px-px font-semibold text-cyan-50"
+        >
+          {buffer}
+        </mark>
+      ) : (
+        <span key={key}>{buffer}</span>
+      ),
+    )
+    buffer = ''
+  }
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!
+    const charIsHit = hits.has(i)
+    if (charIsHit !== isHit) {
+      flush(i)
+      isHit = charIsHit
+    }
+    buffer += ch
+  }
+  flush(text.length)
+  return <span className={className}>{out}</span>
+}
+
+/**
+ * Scope chip color mapping. REPO is the "ship with project" green, USER is
+ * the personal cyan that mirrors brand color, SYSTEM is amber for "shipped
+ * read-only". Matches the SkillsSection palette so users learn one scheme.
+ */
+function ScopeChip({ scope }: { scope: 'repo' | 'user' | 'system' | string }): JSX.Element {
+  const styles =
+    scope === 'repo'
+      ? 'border-emerald-400/40 bg-emerald-400/10 text-emerald-100'
+      : scope === 'system'
+        ? 'border-amber-400/40 bg-amber-400/10 text-amber-100'
+        : 'border-cyan-400/40 bg-cyan-400/10 text-cyan-100'
+  return (
+    <span
+      className={
+        'rounded border px-1 py-[1px] text-[9px] font-medium uppercase tracking-[0.16em] ' +
+        styles
+      }
+    >
+      {scope}
+    </span>
   )
 }
 
@@ -853,7 +933,7 @@ export function MentionInput() {
           placeholder={
             isEditing
               ? 'Edit your message — Enter to save & submit, Esc to cancel'
-              : 'Ask Codex to generate, inspect, batch, or edit...  /  command  ·  $ skill  ·  @ file'
+              : 'Ask Codex to generate, inspect, batch, or edit…   /  command   ·   $ skill   ·   @ file   ·   ⌘↵ send'
           }
           value={input}
         />
@@ -861,7 +941,7 @@ export function MentionInput() {
           <ul
             role="listbox"
             aria-label="Slash command palette"
-            className="absolute bottom-full left-0 z-10 mb-1 max-h-72 w-full overflow-auto rounded-md border border-cyan-400/20 bg-zinc-950/95 p-1 shadow-lg shadow-black/40 backdrop-blur"
+            className="absolute bottom-full left-0 z-10 mb-1.5 max-h-80 w-full overflow-auto rounded-lg border border-cyan-400/25 bg-zinc-950/95 p-1.5 shadow-2xl shadow-black/60 backdrop-blur-md ring-1 ring-cyan-400/10"
           >
             {(() => {
               // Compute a running flat index so each row knows its position
@@ -871,14 +951,26 @@ export function MentionInput() {
                 const sectionStart = running
                 running += section.items.length
                 return (
-                  <li key={section.id} className="mb-1 last:mb-0">
-                    <div className="px-2 pb-1 pt-1.5 text-[9px] font-medium uppercase tracking-[0.22em] text-zinc-500">
-                      {section.label}
+                  <li key={section.id} className="mb-1.5 last:mb-0">
+                    <div className="flex items-center justify-between px-2 pb-1 pt-1.5">
+                      <span className="text-[9px] font-semibold uppercase tracking-[0.24em] text-zinc-500">
+                        {section.label}
+                      </span>
+                      <span className="text-[9px] font-mono text-zinc-600">
+                        {section.items.length}
+                      </span>
                     </div>
-                    <ul role="group" aria-label={section.label}>
+                    <ul role="group" aria-label={section.label} className="space-y-px">
                       {section.items.map((item, localIdx) => {
                         const flatIdx = sectionStart + localIdx
                         const isActive = flatIdx === slashHighlight
+                        const primary =
+                          item.kind === 'command' ? item.command.label : item.skill.name
+                        const description =
+                          item.kind === 'command'
+                            ? item.command.description
+                            : item.skill.description
+                        const matchIndices = highlightMatchIndices(slashPopup.query, primary)
                         return (
                           <li
                             key={
@@ -894,43 +986,45 @@ export function MentionInput() {
                             }}
                             onMouseEnter={() => setSlashHighlight(flatIdx)}
                             className={
-                              'flex cursor-pointer items-center gap-2 rounded px-2 py-1 transition-colors duration-150 ' +
+                              'flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 transition-all duration-150 ' +
                               (isActive
-                                ? 'bg-cyan-400/15 text-cyan-50'
-                                : 'text-zinc-200 hover:bg-cyan-400/10')
+                                ? 'bg-cyan-400/15 text-cyan-50 shadow-inner shadow-cyan-400/5 ring-1 ring-cyan-400/30'
+                                : 'text-zinc-200 hover:bg-cyan-400/8 hover:ring-1 hover:ring-cyan-400/15')
                             }
                           >
-                            {item.kind === 'command' ? (
-                              <SlashGlyph />
-                            ) : (
-                              <SkillGlyph />
-                            )}
+                            <span
+                              className={
+                                'flex h-6 w-6 shrink-0 items-center justify-center rounded ' +
+                                (isActive ? 'bg-cyan-400/15' : 'bg-zinc-900/60')
+                              }
+                            >
+                              {item.kind === 'command' ? <SlashGlyph /> : <SkillGlyph />}
+                            </span>
                             <div className="min-w-0 flex-1">
                               <div className="flex items-baseline gap-1.5">
-                                <span className="truncate font-mono text-[12px] text-cyan-200">
-                                  {item.kind === 'command' ? item.command.label : item.skill.name}
-                                </span>
+                                <HighlightedText
+                                  text={primary}
+                                  matchIndices={matchIndices}
+                                  className="truncate font-mono text-[12px] text-cyan-200"
+                                />
                                 {item.kind === 'skill' ? (
-                                  <span className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
-                                    {item.skill.scope}
-                                  </span>
+                                  <ScopeChip scope={item.skill.scope} />
                                 ) : null}
                               </div>
                               <div
                                 className="mt-0.5 truncate text-[11px] text-zinc-400"
-                                title={
-                                  item.kind === 'command'
-                                    ? item.command.description
-                                    : item.skill.description
-                                }
+                                title={description}
                               >
-                                {item.kind === 'command'
-                                  ? item.command.description
-                                  : item.skill.description || (
-                                      <span className="text-zinc-600">no description</span>
-                                    )}
+                                {description || (
+                                  <span className="text-zinc-600">no description</span>
+                                )}
                               </div>
                             </div>
+                            {isActive ? (
+                              <span className="ml-1 hidden shrink-0 items-center gap-1 rounded border border-cyan-400/30 bg-cyan-400/10 px-1.5 py-[1px] text-[9px] font-mono uppercase tracking-wider text-cyan-200 sm:inline-flex">
+                                ↵ Enter
+                              </span>
+                            ) : null}
                           </li>
                         )
                       })}
@@ -1011,9 +1105,23 @@ export function MentionInput() {
           </ul>
         ) : null}
       </div>
-      <label className="mt-1.5 flex cursor-pointer items-center justify-between rounded-lg border border-dashed border-cyan-400/20 px-2.5 py-1.5 text-[11px] text-cyan-100/75 hover:bg-cyan-400/10">
-        <span>Add references or files</span>
-        <span className="tabular-nums">{attachments.length}/{MAX_ATTACHMENTS}</span>
+      <label
+        className={
+          'mt-1.5 flex cursor-pointer items-center justify-between rounded-lg border border-dashed px-2.5 py-1.5 text-[11px] transition-colors duration-200 ' +
+          (attachments.length > 0
+            ? 'border-cyan-400/40 bg-cyan-400/5 text-cyan-100 hover:bg-cyan-400/10'
+            : 'border-cyan-400/20 text-cyan-100/75 hover:border-cyan-400/40 hover:bg-cyan-400/10 hover:text-cyan-100')
+        }
+      >
+        <span className="flex items-center gap-1.5">
+          <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+            <path d="M9.5 4.5v5a2.5 2.5 0 1 1-5 0V4a1.5 1.5 0 0 1 3 0v5a.5.5 0 0 1-1 0V4.5" />
+          </svg>
+          Add references or files
+        </span>
+        <span className="font-mono text-[10px] tabular-nums text-zinc-500">
+          {attachments.length}/{MAX_ATTACHMENTS}
+        </span>
         <input
           className="hidden"
           disabled={isRunning || attachments.length >= MAX_ATTACHMENTS}
@@ -1023,8 +1131,23 @@ export function MentionInput() {
         />
       </label>
       <div className="mt-1.5 flex items-center gap-1.5">
-        <span className="rounded border border-zinc-700/80 bg-zinc-900/70 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.18em] text-cyan-300/80">
-          {isEditing ? 'Editing' : 'Agent'}
+        <span
+          className={
+            'inline-flex items-center gap-1 rounded border bg-zinc-900/70 px-1.5 py-0.5 text-[9px] uppercase tracking-[0.18em] transition-colors duration-200 ' +
+            (isRunning
+              ? 'border-cyan-300/60 text-cyan-200'
+              : isEditing
+                ? 'border-amber-400/40 text-amber-200'
+                : 'border-zinc-700/80 text-cyan-300/80')
+          }
+        >
+          {isRunning ? (
+            <span
+              className="h-1.5 w-1.5 animate-pulse rounded-full bg-cyan-300"
+              aria-hidden="true"
+            />
+          ) : null}
+          {isEditing ? 'Editing' : isRunning ? 'Running' : 'Agent'}
         </span>
         <ModelPicker disabled={isRunning} />
         <div className="flex-1" />

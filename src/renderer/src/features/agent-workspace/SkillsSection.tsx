@@ -1,14 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type React from 'react'
 
-import type { AgentApiResult, CodexSkillListItem } from '../../../../types/agent'
+import type {
+  AgentApiResult,
+  CodexSkillListItem,
+  CodexSkillScope,
+} from '../../../../types/agent'
 import { useAgentChatStore } from '../agent-chat/store'
 import { SkillEditor } from './SkillEditor'
+
+type OpenSkillsRootResult =
+  | { ok: true; path: string }
+  | { ok: false; error: string; path?: string }
 
 type SkillsApi = {
   agent?: {
     listSkills?: () => Promise<CodexSkillListItem[]>
     deleteSkill?: (id: string) => Promise<AgentApiResult>
+    openSkillsRoot?: (scope: CodexSkillScope) => Promise<OpenSkillsRootResult>
   }
   openSkillsFolder?: () => Promise<AgentApiResult & { path?: string }>
   shell?: {
@@ -131,6 +140,24 @@ export function SkillsSection({ insertIntoChat }: SkillsSectionProps): React.JSX
     }
   }
 
+  async function openSkillsRoot(scope: CodexSkillScope): Promise<void> {
+    const api = getSkillsApi()
+    if (!api?.openSkillsRoot) {
+      setFolderMessage('打开 Skills 根目录 API 不可用。')
+      return
+    }
+    try {
+      const result = await api.openSkillsRoot(scope)
+      if (result.ok) {
+        setFolderMessage(`已打开 ${scope.toUpperCase()} 根目录：${result.path}`)
+      } else {
+        setFolderMessage(result.error ?? `打开 ${scope.toUpperCase()} 根目录失败。`)
+      }
+    } catch (reason) {
+      setFolderMessage(errorMessage(reason))
+    }
+  }
+
   // Codex official scope names: user / repo / system (https://developers.openai.com/codex/skills)
   const userItems = items.filter((item) => item.scope === 'user')
   const repoItems = items.filter((item) => item.scope === 'repo')
@@ -138,32 +165,55 @@ export function SkillsSection({ insertIntoChat }: SkillsSectionProps): React.JSX
 
   if (loading) {
     return (
-      <section className="rounded-xl border border-cyan-400/15 bg-zinc-950/70 p-4 text-sm text-zinc-300">
-        Loading skills...
+      <section className="rounded-xl border border-cyan-400/15 bg-zinc-950/70 p-6 text-sm text-zinc-300">
+        <span className="inline-flex items-center gap-2">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-cyan-300" aria-hidden="true" />
+          Loading skills…
+        </span>
       </section>
     )
   }
+
+  const totalCount = items.length
+  const userCount = userItems.length
+  const repoCount = repoItems.length
+  const systemCount = systemItems.length
 
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold text-cyan-100">Skills</h2>
-          <p className="mt-1 text-sm text-zinc-500">Manage Codex skills and insert skill mentions into chat.</p>
+          <div className="flex items-baseline gap-2">
+            <h2 className="text-lg font-semibold text-cyan-100">Skills</h2>
+            <span className="font-mono text-[11px] text-zinc-500">
+              {totalCount} total · {repoCount} repo · {userCount} user
+              {systemCount > 0 ? ` · ${systemCount} system` : ''}
+            </span>
+          </div>
+          <p className="mt-1 text-sm text-zinc-500">
+            Manage Codex skills. Type <code className="rounded bg-zinc-900 px-1 py-px font-mono text-[11px] text-cyan-200">/</code> or <code className="rounded bg-zinc-900 px-1 py-px font-mono text-[11px] text-cyan-200">$</code> in chat to invoke one.
+          </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
             onClick={() => void openSkillsFolder()}
-            className="cursor-pointer rounded-md border border-zinc-700 px-3 py-2 text-sm text-zinc-200 transition-colors duration-200 hover:border-cyan-400/40 hover:text-cyan-100"
+            className="cursor-pointer inline-flex items-center gap-1.5 rounded-md border border-zinc-700 px-3 py-2 text-sm text-zinc-200 transition-colors duration-200 hover:border-cyan-400/40 hover:text-cyan-100"
           >
+            <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M1.5 4.5h11v7a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1Z" />
+              <path d="M1.5 4.5V3a1 1 0 0 1 1-1h3.2l1.3 1.5h5a1 1 0 0 1 1 1v.5" />
+            </svg>
             打开 Skills 文件夹
           </button>
           <button
             type="button"
             onClick={() => setEditing('new')}
-            className="cursor-pointer rounded-md border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-100 transition-colors duration-200 hover:bg-cyan-500/20"
+            className="cursor-pointer inline-flex items-center gap-1.5 rounded-md border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-100 transition-colors duration-200 hover:bg-cyan-500/20 hover:border-cyan-400/50"
           >
+            <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+              <path d="M7 3v8M3 7h8" />
+            </svg>
             New Skill
           </button>
         </div>
@@ -192,12 +242,17 @@ export function SkillsSection({ insertIntoChat }: SkillsSectionProps): React.JSX
       ) : null}
 
       {items.length === 0 ? (
-        <div className="rounded-xl border border-zinc-800/80 bg-zinc-950/70 p-4 text-sm text-zinc-400">
-          No skills yet.
+        <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/40 p-8 text-center">
+          <p className="text-sm font-medium text-zinc-300">No skills yet</p>
+          <p className="mt-2 text-xs text-zinc-500">
+            Click <span className="text-cyan-200">New Skill</span> to create one, or drop a
+            SKILL.md folder into your skills directory.
+          </p>
         </div>
       ) : (
         <>
           <SkillGroup
+            scope="repo"
             title="REPO (<projectRoot>/.agents)"
             items={repoItems}
             confirmDelete={confirmDelete}
@@ -206,8 +261,10 @@ export function SkillsSection({ insertIntoChat }: SkillsSectionProps): React.JSX
             onEdit={setEditing}
             onInsert={handleInsert}
             onReveal={revealSkillInFolder}
+            onOpenRoot={openSkillsRoot}
           />
           <SkillGroup
+            scope="user"
             title="USER (~/.agents)"
             items={userItems}
             confirmDelete={confirmDelete}
@@ -216,9 +273,11 @@ export function SkillsSection({ insertIntoChat }: SkillsSectionProps): React.JSX
             onEdit={setEditing}
             onInsert={handleInsert}
             onReveal={revealSkillInFolder}
+            onOpenRoot={openSkillsRoot}
           />
           {systemItems.length > 0 ? (
             <SkillGroup
+              scope="system"
               title="SYSTEM (随应用打包，只读)"
               items={systemItems}
               confirmDelete={confirmDelete}
@@ -227,6 +286,7 @@ export function SkillsSection({ insertIntoChat }: SkillsSectionProps): React.JSX
               onEdit={setEditing}
               onInsert={handleInsert}
               onReveal={revealSkillInFolder}
+              onOpenRoot={openSkillsRoot}
             />
           ) : null}
         </>
@@ -236,6 +296,7 @@ export function SkillsSection({ insertIntoChat }: SkillsSectionProps): React.JSX
 }
 
 function SkillGroup({
+  scope,
   title,
   items,
   confirmDelete,
@@ -244,7 +305,9 @@ function SkillGroup({
   onEdit,
   onInsert,
   onReveal,
+  onOpenRoot,
 }: {
+  scope: CodexSkillScope
   title: string
   items: CodexSkillListItem[]
   confirmDelete: string | null
@@ -253,10 +316,27 @@ function SkillGroup({
   onEdit: (id: string) => void
   onInsert: (name: string) => void
   onReveal: (path: string) => Promise<void>
+  onOpenRoot: (scope: CodexSkillScope) => Promise<void>
 }): React.JSX.Element {
+  const scopeLabel = scope.toUpperCase()
   return (
     <section className="space-y-3">
-      <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">{title}</h3>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-500">{title}</h3>
+        <button
+          type="button"
+          aria-label={`Open ${scopeLabel} skills folder`}
+          title={`在文件管理器中打开 ${scopeLabel} 根目录`}
+          onClick={() => void onOpenRoot(scope)}
+          className="cursor-pointer inline-flex items-center gap-1 rounded-md border border-zinc-800 px-2 py-1 text-[11px] font-medium uppercase tracking-wider text-zinc-400 transition-colors duration-200 hover:border-cyan-400/40 hover:text-cyan-100"
+        >
+          <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M1.5 4.5h11v7a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1Z" />
+            <path d="M1.5 4.5V3a1 1 0 0 1 1-1h3.2l1.3 1.5h5a1 1 0 0 1 1 1v.5" />
+          </svg>
+          打开
+        </button>
+      </div>
       {items.length === 0 ? (
         <div className="rounded-xl border border-zinc-800/70 bg-zinc-950/50 p-4 text-sm text-zinc-500">
           No skills in this scope.

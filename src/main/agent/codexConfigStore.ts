@@ -20,6 +20,17 @@ export interface ResolvePathsInput {
    * are exposed as a read-only 'bundled' scope.
    */
   resourcesPath?: string
+  /**
+   * Additional USER-scope roots merged into `listSkills` results. Callers
+   * typically pass:
+   *   - `<userData>/skills` — this app's pre-codex `save-skill` IPC writes
+   *     here, and the "打开 Skills 文件夹" button opens it; AI-created skills
+   *     land here in current builds.
+   *   - `$HOME/.codex/skills` — Codex CLI legacy USER path; the official CLI
+   *     still loads it per openai/codex#14337 (slated for deprecation).
+   * Empty/missing roots are silently ignored.
+   */
+  legacyUserSkillsRoots?: string[]
 }
 
 export function resolveWorkspacePaths(input: ResolvePathsInput): CodexWorkspacePaths {
@@ -31,6 +42,10 @@ export function resolveWorkspacePaths(input: ResolvePathsInput): CodexWorkspaceP
     systemSkillsRoot: input.resourcesPath
       ? path.join(input.resourcesPath, '.agents', 'skills')
       : undefined,
+    legacyUserSkillsRoots:
+      input.legacyUserSkillsRoots && input.legacyUserSkillsRoots.length > 0
+        ? [...input.legacyUserSkillsRoots]
+        : undefined,
     runtimeConfigToml: path.join(input.userData, 'codex-runtime', 'config.toml'),
     auditLogPath: path.join(input.userData, 'codex-runtime', 'audit.log'),
   }
@@ -225,15 +240,50 @@ async function listSkillsInRoot(
 export async function listSkills(paths: CodexWorkspacePaths): Promise<CodexSkillListItem[]> {
   // Codex official skill scopes: USER (~/.agents) / REPO (<projectRoot>/.agents)
   // / SYSTEM (bundled with installer). See https://developers.openai.com/codex/skills
-  const tasks: Promise<CodexSkillListItem[]>[] = [
-    listSkillsInRoot(paths.personalSkillsRoot, 'user'),
-    listSkillsInRoot(paths.workspaceSkillsRoot, 'repo'),
-  ]
-  if (paths.systemSkillsRoot) {
-    tasks.push(listSkillsInRoot(paths.systemSkillsRoot, 'system'))
+  //
+  // We also fold any `legacyUserSkillsRoots` into the USER scope so AI- and
+  // legacy-written skills (under <userData>/skills or ~/.codex/skills) remain
+  // visible in the UI without forcing users to migrate. On collision, the
+  // official personal root wins; among legacy roots the order passed by the
+  // caller wins (first match takes precedence).
+  const personalTask = listSkillsInRoot(paths.personalSkillsRoot, 'user')
+  const repoTask = listSkillsInRoot(paths.workspaceSkillsRoot, 'repo')
+  const systemTask = paths.systemSkillsRoot
+    ? listSkillsInRoot(paths.systemSkillsRoot, 'system')
+    : Promise.resolve<CodexSkillListItem[]>([])
+  const legacyTasks = (paths.legacyUserSkillsRoots ?? []).map((root) =>
+    listSkillsInRoot(root, 'user'),
+  )
+
+  const [personal, repo, system, ...legacyGroups] = await Promise.all([
+    personalTask,
+    repoTask,
+    systemTask,
+    ...legacyTasks,
+  ])
+
+  const userScope: CodexSkillListItem[] = []
+  const seenDirNames = new Set<string>()
+  // Personal entries override legacy ones on duplicate skill directory names.
+  for (const entry of personal) {
+    userScope.push(entry)
+    seenDirNames.add(skillDirName(entry.path))
   }
-  const groups = await Promise.all(tasks)
-  return groups.flat().sort((a, b) => a.name.localeCompare(b.name))
+  for (const group of legacyGroups) {
+    for (const entry of group) {
+      const dirName = skillDirName(entry.path)
+      if (seenDirNames.has(dirName)) continue
+      seenDirNames.add(dirName)
+      userScope.push(entry)
+    }
+  }
+
+  return [...userScope, ...repo, ...system].sort((a, b) => a.name.localeCompare(b.name))
+}
+
+function skillDirName(skillFilePath: string): string {
+  // skillFilePath points at `<root>/<name>/SKILL.md`; dedupe by `<name>`.
+  return path.basename(path.dirname(skillFilePath))
 }
 
 export async function getSkillDetail(
