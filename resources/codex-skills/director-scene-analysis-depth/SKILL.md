@@ -1,6 +1,6 @@
 ---
 name: director-scene-analysis-depth
-description: Use when analyzing reference images to extract scene environment, atmosphere, lighting conditions, and spatial layout
+description: Use when extracting from a reference image the env field (location + time + atmosphere + weather in one sentence), a subjects array (one entry per visible person/animal/object with spatial relationships), and a style field (art style + color palette + lighting quality + emotional tone), reading time of day from shadow angles and light color — applies to image-generation models (Midjourney, DALL-E, FLUX, Stable Diffusion, Imagen, Ideogram, Recraft), video-generation models (Sora, Veo, Runway, Kling, Seedance, Hailuo, Higgsfield, Hunyuan), screenplays, scripts, storyboards, AI video, AI image, 提示词, 视频模型, 图像模型, 写剧本, 脚本, 分镜.
 ---
 
 SCENE ANALYSIS DEPTH — extract maximum context from reference images:

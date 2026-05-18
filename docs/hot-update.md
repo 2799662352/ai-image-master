@@ -138,6 +138,95 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
+### v4.3.7 (2026-05-19)
+
+v4.3.5 落地 Skill Marketplace MVP 后，收到的 UX 反馈分两批：
+
+1. "光在 tab bar 加一个『技能市场』tab 不够直观，应该在 Agent Workspace 的 Skills 页面有一个明显按钮一键跳过去；商城页本身应该像 Cursor 应用市场那样——左侧分类导航 + 右侧卡片 grid，而不是平铺三列。"
+2. "点不动按钮 / 卸载按钮一直抽搐。"
+
+第一批是预期 UI 抛光；第二批是 bug——marketplace tab 加在 React `useTabStore` 里却没在底层 vanilla DOM 体系（`TabManager.DEFAULT_VALID_TABS` + `index.html` 的 `<div id="xxxPanel">`）里注册，加上"已安装"按钮 hover 时切换两种文案的渲染宽度不一致导致 bounding box 跳变。v4.3.7 把这两批一并发掉。
+
+> **注**：原计划的 v4.3.6 没真正进入仓库历史（commit/tag 都没存在），所以这次直接跳号到 v4.3.7。如果你看到 docs/聊天记录里出现过 v4.3.6 字样，对应的内容已合并进本条目。
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| Agent Workspace 入口 | `src/renderer/src/features/agent-workspace/SkillsSection.tsx` (+18) | "New Skill" 按钮旁加一颗亮黄色 "🛒 Skill 商城" 按钮,点击通过 `useTabStore.switchTab('marketplace')` 跳转。视觉上是头部 3 个 action 中最显眼的一个（cyberpunk yellow filled），优先级高于"打开 Skills 文件夹"和"New Skill" |
+| 商城页重写 | `src/renderer/src/pages-react/MarketplacePage.tsx` (重写 ~280 行) | 从三列 tab（可安装/已安装/有更新）变成 Cursor-marketplace 风格的左侧 sidebar + 右侧 grid 卡片：sidebar 7 个分类（Featured / Director / Storyboard / Methodology / Other / Installed / Updates），每项带 emoji icon + 计数；顶部有搜索框（按名称或描述模糊匹配）；卡片每行 2 列（lg breakpoint），包含 emoji 图标 + skill 名称 + 版本号 + 2 行描述截断 + 体积 + 已认领 badge + Get / Installed ✓ / Update 按钮 |
+| **Bugfix: marketplace tab 注册** | `src/renderer/src/features/tab-manager/TabManager.ts` (+1), `src/renderer/index.html` (+5), `src/renderer/src/react-app/main.tsx` (+27), `src/renderer/src/services/ServiceBridge.ts` (+8) | 项目目前是两套 tab 系统并存的渐进迁移状态：上层 React `useTabStore` 走 zustand 状态，下层是 vanilla DOM 的 `TabManager` + `index.html` 里手写的 `<div id="xxxPanel">` panel。`marketplace` 之前只加在 React 侧，导致 zustand subscribe 转发到 `TabManager.switchTab('marketplace')` 时被白名单拒绝（控制台 `无效的标签名: marketplace`），按钮点了没反应。修复：(a) `DEFAULT_VALID_TABS` 加 `'marketplace'`，(b) `index.html` 加 `<div id="marketplacePanel">` 容器 + 内嵌 `<div id="marketplace-react-root">`，(c) `react-app/main.tsx` 加 `mountMarketplaceReact` / `unmountMarketplaceReact`（与其他 React-only 页面同款 lazy + Suspense 模式），(d) `ServiceBridge.ts` 把 mount/unmount 接到 onTabChange 桥 + 启动时预 mount 一次 |
+| **Bugfix: 已安装按钮抽搐** | `src/renderer/src/pages-react/MarketplacePage.tsx` (-5 +18) | 原实现用 `group-hover:hidden` 切换"✓ Installed" / "Uninstall" 两个 span 的 `display`，但两段文案渲染宽度不同 → hover 时按钮宽度跳变 → 鼠标恰好被甩出 button bounding box → leave 触发 → 文字切回 → 鼠标又落回 → enter 触发，进入 hover-flicker 死循环（CSS 经典坑）。修复：按钮固定 `w-24 h-7`(96×28px) bounding box 永不变；两个 span 全部 `absolute inset-0` 脱离布局流，互不影响尺寸；改用 `opacity` + `transition-opacity duration-150` 平滑切换。同时把 Get / Update 按钮也 lock 成相同尺寸，避免 busy 文案切换（Get ↔ 安装中…）抖动 |
+
+#### 分类推导规则（不需要后端 taxonomy 字段）
+
+```
+director-*       → Director (12 个)
+storyboard-*     → Storyboard (7 个)
+codex-research-* → Methodology (1 个)
+其他              → Other
+```
+
+Featured 是手动 curated 4 个推荐 skill（`codex-research-grounded-prompting` / `director-prompt-engineering` / `director-structured-captioning` / `storyboard-structure`），写死在 `FEATURED_NAMES` 集合里。后续要加分类只需改 `CATEGORIES` 数组，不动 catalog schema。
+
+#### 双 tab 系统注释（给未来接手的人）
+
+`useTabStore` 是 React 侧状态，`TabManager` + `index.html` panel 是 vanilla DOM 老体系，二者通过 `ServiceBridge` 双向 subscribe 同步。新增任何 React 路由 tab 必须**同时**：(1) 在 `useTabStore.VALID_TABS` 加，(2) 在 `TabManager.DEFAULT_VALID_TABS` 加，(3) 在 `index.html` 加 panel 容器，(4) 在 `react-app/main.tsx` 写 mount/unmount，(5) 在 `ServiceBridge` 接入 onTabChange + 预 mount。漏一处都会出现"按钮点不动"症状。
+
+#### 用户可见行为
+
+1. 升级 v4.3.5 → v4.3.7：自动检测热更新 → 安装 → 重启 → Agent Workspace → Skills tab 多了亮黄色 "Skill 商城" 按钮。
+2. 点按钮跳转到全新商城页（左侧 sidebar 分类 + 右侧 grid），搜索 / 浏览 / 安装更顺手。
+3. 已安装 skill 的卸载按钮 hover 不再抽搐：默认绿框绿字 "✓ Installed"，hover 平滑淡入红字 "Uninstall"，宽度不变。
+
+### v4.3.6 (未发布 — 内容已合并进 v4.3.7)
+
+### v4.3.5 (2026-05-18)
+
+把 v4.3.3 / v4.3.4 强制 mirror 的"每次启动复制 20 个 bundled skill 到 `~/.agents/skills/`"流程**完全废弃**，改为**用户主动安装**的 Skill Marketplace（插件商城）。源头痛点：bundled skill 的目录级非覆盖镜像让升级用户必须手动删 `~/.agents/skills/<name>/` 才能拿到新版 SKILL.md（v4.3.4 changelog 里那段"升级用户需手动删除"就是这个 bug 的 UX）。MVP 把决定权还给用户——什么时候装、装哪几个、什么时候升级，全在 app 内一个新 tab 里完成。
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| 废弃 bundled mirror | `src/main/index.ts` (-60) + `electron-builder.yml` (-15) | 删除 `bundledCodexSkillsMirrorPromise` 与 `bundledCodexSkillsDir`；`load-skills` IPC 只 await legacy `<userData>/skills` 迁移那一份。installer 不再把 `resources/codex-skills/` 打入 extraResources（用户机器从此不会被自动塞 20 个 skill） |
+| 新增 marketplace service | `src/main/marketplace/marketplaceService.ts` (+225) + `src/main/marketplace/ipc.ts` (+100) | DI 化的 `MarketplaceService` 类：`fetchCatalog`（缓存 + force 刷新）/ `install`（下载 zip → sha256 校验 → temp 解压 → 原子 rename → 写 state，**任何失败都不留半成品**）/ `uninstall`（删目录 + 删 state）/ `listInstalled`（读 ledger）/ `adoptExisting`（首启认领 v4.3.4 leftover）。fetcher 注入 `fetch()`（Node 18 全局），不走 Chromium 网络栈 |
+| 共享类型 | `src/types/marketplace.ts` (+55) | `Catalog` / `CatalogEntry` / `InstalledRecord` / 5 个 IPC envelope。main + preload + renderer 三处共用 |
+| 启动认领 | `src/main/index.ts` | 启动时 fire-and-forget 跑 `adoptExisting()`：扫 `~/.agents/skills/<name>/`，若 `<name>` 命中 catalog 且 state 里没记录 → 写入 `marketplace-state.json` 标记 `source: 'adopted'`。结果：v4.3.4 老用户升级到 v4.3.5 后，marketplace 的"已安装"页直接列出他们机器上现有的 20 个 skill，**不需要重新下载** |
+| 上传脚本 | `scripts/upload-skills-to-cos.mjs` (+185) + `resources/codex-skills/skill-versions.json` (+30) | 扫 `resources/codex-skills/*` 每个目录 → 读 SKILL.md `description` + skill-versions.json 的 version → `JSZip` 打包 → sha256 → 上传 `cos://image-master-1345773498/skills/<name>-<version>.zip` → 聚合上传 `catalog.json`。`--dry-run` 不动 COS 只打印。新增 `npm run publish:skills` |
+| 渲染层 marketplace 页 | `src/renderer/src/pages-react/MarketplacePage.tsx` (+275) | 三栏视图（可安装 / 已安装 / 有更新）+ 安装/升级/卸载按钮 + sha256 校验失败的 toast。卸载前 `confirm()` 二次确认。版本不一致即显示"有更新"，不假设 semver 比较——避免误判 |
+| Tab 入口 | `useTabStore.ts` + `TabBar.tsx` + `AppLayout.tsx` + `pages-react/index.ts` | 新增 `marketplace` tab（🛒 技能市场），居于 Agent Workspace 与设置之间 |
+| Preload bridge | `src/preload/index.ts` (+30) | 暴露 `window.electronAPI.marketplace.{fetchCatalog,install,uninstall,listInstalled,adoptExisting}`，复用现有 `safeInvoke` |
+| 测试 | `src/main/marketplace/__tests__/marketplaceService.test.ts` (+340) | TDD 11 测试：catalog 缓存 / install 成功+sha256 不匹配+目录消失原子回滚 / 升级覆盖 / uninstall 含 no-op / adopt 认领 + 幂等 + 非 catalog 目录忽略 / state 跨进程持久化。+ legacy migration 6 测试不动。**17 测试全过** |
+
+#### COS 布局
+
+```
+image-master-1345773498/
+└── skills/
+    ├── catalog.json                                  # ~19 KB, 20 skill entries
+    ├── codex-research-grounded-prompting-1.0.0.zip   # ~21 KB
+    ├── director-anchor-extraction-quality-1.0.0.zip  # ~1.2 KB
+    └── ... 18 more zips
+```
+
+`catalog.json` 是 source of truth，每个 entry 含 `{name, version, description, size, sha256, url}`。客户端先拉 catalog，安装时按 `url` 下载 zip，按 `sha256` 校验，落盘到 `~/.agents/skills/<name>/`。
+
+#### 用户可见行为
+
+1. 全新安装 v4.3.5：`~/.agents/skills/` 是空的。打开"技能市场"tab → 可安装列表显示 20 个 skill → 用户挑想要的点"安装"。
+2. v4.3.4 老用户升级：原 `~/.agents/skills/` 里的 20 个 skill 保留不动，启动时自动被 `adoptExisting` 标记为 `源: 已认领`（蓝色 badge），在"已安装"列表里直接可见。如果 catalog 里的版本与本地一致 → "有更新"是空的；如果 catalog 之后发版了新 skill 内容 → "有更新"亮起对应条目，点"升级"即可。
+3. 单 skill 升级：marketplace 不再触发 app 全量热更新——`scripts/upload-skills-to-cos.mjs` 单独跑就能换 skill 内容，无需 build app/发 installer。
+
+#### 发布步骤
+
+```
+npm run publish:skills:dry  # build & inspect catalog, no upload
+npm run publish:skills      # upload to image-master-1345773498/skills/
+npm run release:cn          # then build & publish app binary as usual
+```
+
+参考：
+- `src/main/marketplace/`（service + ipc）
+- `scripts/upload-skills-to-cos.mjs`
+- `src/types/marketplace.ts`
+
 ### v4.3.4 (2026-05-18)
 
 把 `codex-research-grounded-prompting`（方法论 skill）和 v4.3.3 同期落地的 19 个 `director-* / storyboard-*` cookbook（具体写法 skill）显式建立 method → recipe 两层关系——之前它们仅"并存"，Codex agent 没有信号知道走到某一步该 *调用* 哪一条 cookbook。

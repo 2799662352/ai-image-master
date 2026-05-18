@@ -56,17 +56,15 @@ extraResources:
     to: .agents/skills
     filter:
       - "**/*.md"
-  # Bundled Codex-only skills (e.g. codex-research-grounded-prompting).
-  # NOT placed under .agents/skills above because the user explicitly chose
-  # USER scope, not SYSTEM scope: the app mirrors these to
-  # `$HOME/.agents/skills/` on first launch via migrateLegacyUserSkills, then
-  # the user can freely edit the copy without the next install clobbering it
-  # (the mirror helper is directory-level non-overwriting). See
-  # `src/main/index.ts` → `bundledCodexSkillsMirrorPromise`.
-  - from: resources/codex-skills
-    to: codex-skills
-    filter:
-      - "**/*"
+  # NOTE: bundled Codex-only skills (codex-research-grounded-prompting + the
+  # 19 cookbook skills under `resources/codex-skills/`) used to be shipped in
+  # the installer and auto-mirrored to `$HOME/.agents/skills/` on every
+  # launch. Starting v4.3.5 they ship out-of-band through the Skill
+  # Marketplace (catalog.json + per-skill zips on Tencent COS) — the user
+  # picks which ones they want via the in-app marketplace page. The source
+  # tree at `resources/codex-skills/` is now the catalog upload source
+  # (see `scripts/upload-skills-to-cos.mjs`) and is no longer copied into
+  # the installer.
 
 asarUnpack:
   - resources/**

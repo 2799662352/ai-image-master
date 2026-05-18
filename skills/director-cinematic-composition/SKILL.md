@@ -1,6 +1,6 @@
 ---
 name: cinematic-composition
-description: Use when designing panel shots, camera angles, or analyzing scene composition in multi-panel storyboards
+description: Use when framing a shot — placing the subject at a rule-of-thirds intersection, building foreground / midground / background layers, deploying leading lines, varying focal length wide → medium → close-up, and tuning negative space / look-space for tension vs calm — applies to image-generation models (Midjourney, DALL-E, FLUX, Stable Diffusion, Imagen, Ideogram, Recraft), video-generation models (Sora, Veo, Runway, Kling, Seedance, Hailuo, Higgsfield, Hunyuan), screenplays, scripts, storyboards, AI video, AI image, 提示词, 视频模型, 图像模型, 写剧本, 脚本, 分镜.
 appliesTo: [taskPlanning, analyzeScene]
 priority: 1
 ---

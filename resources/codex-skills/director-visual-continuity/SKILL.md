@@ -1,6 +1,6 @@
 ---
 name: director-visual-continuity
-description: Use when verifying lighting, color, and spatial consistency across storyboard panels
+description: Use when verifying that a scene's 2-3 dominant colors stay consistent, color temperature does not mix warm and cool, object-to-character scale holds (table at waist height stays at waist height, ≤20% drift), and architecture / environment landmarks keep their spatial relationships across panels — applies to image-generation models (Midjourney, DALL-E, FLUX, Stable Diffusion, Imagen, Ideogram, Recraft), video-generation models (Sora, Veo, Runway, Kling, Seedance, Hailuo, Higgsfield, Hunyuan), screenplays, scripts, storyboards, AI video, AI image, 提示词, 视频模型, 图像模型, 写剧本, 脚本, 分镜.
 ---
 
 VISUAL CONTINUITY — same scene = same visual physics:

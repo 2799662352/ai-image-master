@@ -1,6 +1,6 @@
 ---
 name: storyboard-visual
-description: Use when scene or shot output needs physical lighting parameters, color hierarchy, lens specification, and Z-axis depth composition
+description: Use when a shot needs physical lighting (shadow 10-40% day / 60-90% night, rim / candle / natural / fill), color hierarchy ([key hex] dominant + faint [accent hex], never equal warm + cool), explicit lens spec [mm] f/[stop] instead of "8k masterpiece", and a mandatory Z-axis (fg occluder / mg subject / bg environment) — applies to image-generation models (Midjourney, DALL-E, FLUX, Stable Diffusion, Imagen, Ideogram, Recraft), video-generation models (Sora, Veo, Runway, Kling, Seedance, Hailuo, Higgsfield, Hunyuan), screenplays, scripts, storyboards, AI video, AI image, 提示词, 视频模型, 图像模型, 写剧本, 脚本, 分镜.
 ---
 
 Visual Rules:

@@ -152,11 +152,40 @@ The list is illustrative, not exhaustive. For domains outside the above — game
 
 </authoritative-sources>
 
+<title-driven-shortlisting>
+
+Sometimes the user names a *work* but not the *people* — *"want the feel of `<film-title-X>`"*, *"shots like that `<franchise-Y>`"*, *"`<animation-studio-Z>` kind of style"*. The work alone is not a research anchor that pillar 1 can verify: the model has to translate the title into the actual creators who shaped the look the user is reaching for, then let the user pick which of those creators becomes the anchor.
+
+**Trigger**: the brief names a film, anime, series, game, or franchise — usually wrapped in 《》, "", or quoted English / Japanese / Korean titles — without naming a director / animator / DP / composer / art director directly. If the user *did* name a specific person, skip this section and go straight to the walkthrough's Step 1.
+
+**Process**:
+
+1. For each title `<title-i>` the user named, query the available web search tool with `web_search("<title-i> staff credits director cinematographer art director")` and the analogous query in the source language — Japanese 「<title-i> スタッフ」 for anime, Chinese「<title-i> 主创」 for Chinese films, Korean「<title-i> 스태프」, and so on. The goal is the actual credited crew, not training-data guesses.
+
+2. Aggregate the credits, filter to the people who *visibly shaped the look the user is reaching for*. Default roles to surface: **director**, **director of photography / cinematographer**, **art director / production designer**, **key animator / animation director / 作画監督** (anime), **color grading lead / colorist** (live action), **composer** (only when the user's brief implies audio). Skip producers, distributors, and uncredited supervisors.
+
+3. Present **3 to 5 candidates**, each as one line in the format: *"`<name>` — `<role on this title>` — `<one specific signature trait the user can verify in one click>`"* (e.g. *the centred-symmetry tableau in their other film `<title-A>`*, *the sub-frame smear pass shown in this `<sakugabooru-tag>`*). Every signature trait must be something the user can actually open and check; if you cannot point to a verifiable work or clip, drop that candidate rather than padding the list with vague descriptors.
+
+4. **Ask the user to pick one or several** as the anchor(s) for pillar 1. Never silently default to "all of them" or "the director" — the user's pick is the anchor; until they pick, no prompt content is drafted. If the brief is urgent and the user explicitly says *"just pick a sensible default and go"*, the model may pick the director-of-photography (live action) or the animation director (anime) as the safest fidelity-bearing role, but must announce that choice and offer a one-step swap.
+
+5. Once the user picks, the picked names become `<ref-1> … <ref-N>` for the walkthrough's Step 1 (verify), and the work title itself becomes a secondary reference — useful for evidence-corpus expansion but not the primary anchor unless the user explicitly says *"the title itself is the style, the people are interchangeable"*.
+
+**Failure modes to avoid**:
+
+- *Skipping the search* and listing names from memory — these candidates are wrong about half the time and recursively poison pillar 1's evidence grounding.
+- *Listing the same predictable household-name director* for every famous title — the user already knows that name; the value of shortlisting is surfacing the lesser-known key animator / DP / production designer whose specific touch the user actually wants.
+- *Pre-picking for the user* — the model never decides which candidate is "the right one." That collapses the whole point of shortlisting.
+- *Refusing to shortlist because the title is obscure* — if web search returns thin results, surface what *was* found, flag what is missing, and ask the user whether to proceed with thin grounding, choose a different anchor work, or supply the names directly.
+
+After the user picks, walkthrough Step 1 (`<walkthrough>`) takes over with the picked names as `<ref-i>`.
+
+</title-driven-shortlisting>
+
 <walkthrough>
 
 End-to-end process — same six steps regardless of domain. Symbolic placeholders are used (`<style-X>`, `<reference-Y>`, etc.) to make clear that **nothing in the steps is a default name to plug in**. Read the user's brief, harvest *their* names, and substitute those.
 
-Step 1 — verify references (pillar 1). Parse the user's brief and harvest every proper noun: directors, animators, actors, DPs, palettes, eras, specific film/episode titles, platforms, genres. Call those `<ref-1> … <ref-N>`. For each, invoke the available web search / fetch tool against the domain-appropriate row of `<authoritative-sources>` — `web_search("<ref-i> sakugabooru recent")` for animator tags, `web_search("<ref-i> ANN staff")` for director credits, `web_search("<ref-i> IMDb")` for film, etc. If a search returns nothing or only stale data, the model says so explicitly — never substitutes a similar-sounding name from training data. If the user named *no* references, the model asks "what reference works or creators should I anchor to?" before drafting anything.
+Step 1 — verify references (pillar 1). Parse the user's brief and harvest every proper noun: directors, animators, actors, DPs, palettes, eras, specific film/episode titles, platforms, genres. **If the only proper nouns harvested are work titles (films, anime, series, games, franchises) and no individual creator is named, the model first runs `<title-driven-shortlisting>` to translate each title into 3-5 candidate creators and waits for the user to pick before continuing.** Call the named creators — or the user-picked candidates from shortlisting — `<ref-1> … <ref-N>`. For each, invoke the available web search / fetch tool against the domain-appropriate row of `<authoritative-sources>` — `web_search("<ref-i> sakugabooru recent")` for animator tags, `web_search("<ref-i> ANN staff")` for director credits, `web_search("<ref-i> IMDb")` for film, etc. If a search returns nothing or only stale data, the model says so explicitly — never substitutes a similar-sounding name from training data. If the user named *no* references *and no titles either*, the model asks "what reference works or creators should I anchor to?" before drafting anything.
 
 Step 2 — detect mode (pillar 3). Scan the user's wording for trigger keywords (the table under pillar 3). Pick the matching mode and announce it back in one line: *"Mode: <name>. <one-sentence priority statement>."* If no trigger keyword is present, default mode applies — say so.
 

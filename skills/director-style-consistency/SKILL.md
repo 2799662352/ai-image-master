@@ -1,6 +1,6 @@
 ---
 name: director-style-consistency
-description: Use when verifying or enforcing cross-panel style uniformity and resolving image-text style conflicts
+description: Use when resolving image-vs-text style conflict (TEXT WINS — reference image supplies only character identity, never rendering medium or color grading), enforcing uniform texture / cel-shading / film-grain density across panels, and reinforcing negative prompts (photoreal target → ban anime/cartoon; anime target → ban photoreal) — applies to image-generation models (Midjourney, DALL-E, FLUX, Stable Diffusion, Imagen, Ideogram, Recraft), video-generation models (Sora, Veo, Runway, Kling, Seedance, Hailuo, Higgsfield, Hunyuan), screenplays, scripts, storyboards, AI video, AI image, 提示词, 视频模型, 图像模型, 写剧本, 脚本, 分镜.
 appliesTo: [taskPlanning, extractStyleAnchor, verifyConsistency, designAndAssemble, generateImages]
 priority: 5
 ---

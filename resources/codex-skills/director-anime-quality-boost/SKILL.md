@@ -1,6 +1,6 @@
 ---
 name: director-anime-quality-boost
-description: Use when anime, anime-screencap, or theatrical template is selected and output shows painterly texture, low character consistency, or poor color harmony with scene lighting
+description: Use when output drifts toward painterly / 厚涂 / oil-painterly texture instead of cel-shaded anime screenshot style, character identity must lock across panels (hair / outfit / accessories), or injecting JSON instruction blocks with Color Harmony 1.5 and No-Painterly 1.8 weights (日式动画截图) — applies to image-generation models (Midjourney, DALL-E, FLUX, Stable Diffusion, Imagen, Ideogram, Recraft), video-generation models (Sora, Veo, Runway, Kling, Seedance, Hailuo, Higgsfield, Hunyuan), screenplays, scripts, storyboards, AI video, AI image, 提示词, 视频模型, 图像模型, 写剧本, 脚本, 分镜.
 ---
 
 Anime Quality Enforcement — enforces cel-shading, color harmony, character identity lock, and removes painterly/厚涂 texture.

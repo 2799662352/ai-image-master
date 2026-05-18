@@ -53,6 +53,8 @@ import {
   unmountSmartEraseReact,
   mountAgentWorkspaceReact,
   unmountAgentWorkspaceReact,
+  mountMarketplaceReact,
+  unmountMarketplaceReact,
   mountGlobalToast,
   mountGenerateTokenBridge,
   mountGenerateTemplateInline,
@@ -306,6 +308,8 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
         if (newTab === 'smartErase') mountSmartEraseReact()
         if (oldTab === 'agentWorkspace') unmountAgentWorkspaceReact()
         if (newTab === 'agentWorkspace') mountAgentWorkspaceReact()
+        if (oldTab === 'marketplace') unmountMarketplaceReact()
+        if (newTab === 'marketplace') mountMarketplaceReact()
       })
 
       // 在 React mount 之前同步模型列表到 store（消除首帧 race condition）
@@ -342,6 +346,9 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
 
       mountAgentWorkspaceReact()
       if (activeTab !== 'agentWorkspace') unmountAgentWorkspaceReact()
+
+      mountMarketplaceReact()
+      if (activeTab !== 'marketplace') unmountMarketplaceReact()
 
       window.tabManagerTS = tabManager
       ServiceRegistry.register(SERVICE_KEYS.TAB_MANAGER, tabManager)

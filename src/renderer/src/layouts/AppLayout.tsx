@@ -14,6 +14,7 @@ import {
   StoryboardSplitPage,
   SmartErasePage,
   AgentWorkspacePage,
+  MarketplacePage,
 } from '../pages-react'
 
 const PAGE_MAP: Record<TabName, LazyExoticComponent<ComponentType>> = {
@@ -26,6 +27,7 @@ const PAGE_MAP: Record<TabName, LazyExoticComponent<ComponentType>> = {
   director: DirectorPage,
   promptTemplates: PromptTemplatesPage,
   agentWorkspace: AgentWorkspacePage,
+  marketplace: MarketplacePage,
   storyboardSplit: StoryboardSplitPage,
   smartErase: SmartErasePage,
 }

@@ -1,6 +1,6 @@
 ---
 name: storyboard-audio
-description: Use when shot output needs three-layer audio design with real film score references, frame-synced SFX, and physics-based voice parameters
+description: Use when each shot needs a three-layer audio field — A1 Score (ref:Composer/Work + 乐器 + 力度 pp-ff + 速度 bpm + 张力值 0-10, derived via score_bpm = motion_freq × 60), A2 SFX (材质 + 动作 + 频率Hz + 衰减s + 空间定位), A3 Voice (基频Hz + 气声比% + 语速字/秒 + 混响 RT60) — banning emotion adjectives in favor of physical parameters (配乐 / 音效 / 配音) — applies to image-generation models (Midjourney, DALL-E, FLUX, Stable Diffusion, Imagen, Ideogram, Recraft), video-generation models (Sora, Veo, Runway, Kling, Seedance, Hailuo, Higgsfield, Hunyuan), screenplays, scripts, storyboards, AI video, AI image, 提示词, 视频模型, 图像模型, 写剧本, 脚本, 分镜.
 ---
 
 Audio Design Rules (每个镜头必须有audio字段，含三层):

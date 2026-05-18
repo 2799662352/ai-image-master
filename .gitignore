@@ -69,3 +69,4 @@ docs/codex-app-server/
 docs/codex-app-server.schema.json
 docs/codex-app-server.ts
 .worktrees/
+release-log.txt

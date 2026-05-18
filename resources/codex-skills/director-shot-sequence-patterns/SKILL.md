@@ -1,6 +1,6 @@
 ---
 name: director-shot-sequence-patterns
-description: Use when designing panel sequence to select appropriate cinematic shot patterns based on scene type (action, dialogue, emotional, establishing)
+description: Use when picking the shot pattern that matches the scene's dramatic intent — Establishing (wide → medium → close-up → detail), Dialogue (two-shot → shot-reverse-shot → reaction → re-establish), Action (wide → medium action → close-up impact → wide aftermath), Emotional (medium → close-up → extreme close-up → release) — and labeling every transition ("cut to", "dolly in", "match cut", "time skip") — applies to image-generation models (Midjourney, DALL-E, FLUX, Stable Diffusion, Imagen, Ideogram, Recraft), video-generation models (Sora, Veo, Runway, Kling, Seedance, Hailuo, Higgsfield, Hunyuan), screenplays, scripts, storyboards, AI video, AI image, 提示词, 视频模型, 图像模型, 写剧本, 脚本, 分镜.
 ---
 
 SHOT SEQUENCE PATTERNS — select the pattern that matches the scene's dramatic intent:

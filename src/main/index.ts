@@ -29,6 +29,7 @@ import { AttachmentService } from './agent/AttachmentService'
 import { consumeStartupNotice, getPrisma, shutdownDatabase } from './agent/db'
 import { registerAgentIpc } from './agent/ipc'
 import { migrateLegacyUserSkills } from './agent/legacySkillsMigration'
+import { registerMarketplaceIpc } from './marketplace/ipc'
 import { ThreadStore } from './agent/ThreadStore'
 import { uploadBufferToBucket } from './services/tencent/cosClient'
 import { registerAttachmentsTreeIpc, wireAttachmentBroadcast } from './file-explorer/AttachmentTreeProvider'
@@ -838,43 +839,41 @@ const legacySkillsMigrationPromise: Promise<{ copied: string[]; skipped: string[
     },
   )
 
-// ---------------------------------------------------------------------------
-// Bundled Codex-only skills (e.g. `codex-research-grounded-prompting`) ship
-// inside the installer as `<resources>/codex-skills/` (see
-// `electron-builder.yml#extraResources`). They must materialize under the
-// USER scope at `$HOME/.agents/skills/` — not the SYSTEM scope at
-// `<repo>/.agents/skills` or `<resources>/.agents/skills/` — because:
-//   1. The user explicitly chose user scope ("应该和用户 skill 在一起 而不是
-//      系统 skill") so the skill is editable post-install.
-//   2. `migrateLegacyUserSkills` is non-overwriting at the directory level,
-//      so once mirrored the user can rewrite the SKILL.md or references/
-//      without us clobbering their changes on next launch.
-//   3. Reusing the same helper keeps the discovery path uniform: every
-//      USER-scope skill, whether copied from legacy `<userData>/skills` or
-//      from bundled `<resources>/codex-skills`, lands in exactly one place.
-// ---------------------------------------------------------------------------
-const bundledCodexSkillsDir = app.isPackaged
-  ? path.join(process.resourcesPath, 'codex-skills')
-  : path.resolve(__dirname, '../../resources/codex-skills')
+// NOTE: As of v4.3.5 we no longer mirror bundled Codex-only skills
+// (`resources/codex-skills/*`) into `$HOME/.agents/skills/` on launch. They
+// are now published out-of-band through the Skill Marketplace (catalog.json
+// + per-skill zips on Tencent COS) and the user opts in to install/update
+// each one via the in-app marketplace page. See
+// `src/main/marketplace/` and `scripts/upload-skills-to-cos.mjs` for the
+// publish + install pipeline.
 
-const bundledCodexSkillsMirrorPromise: Promise<{ copied: string[]; skipped: string[] }> =
-  migrateLegacyUserSkills({
-    legacyRoot: bundledCodexSkillsDir,
-    officialRoot: officialUserSkillsDir,
-  }).then(
-    (report) => {
-      if (report.copied.length > 0) {
-        console.info(
-          `[skills] mirrored ${report.copied.length} bundled codex skill(s) → ${officialUserSkillsDir}: ${report.copied.join(', ')}`,
-        )
-      }
-      return report
-    },
-    (err) => {
-      console.warn('[skills] bundled codex skills mirror failed (non-fatal):', err)
-      return { copied: [], skipped: [] }
-    },
-  )
+// Skill Marketplace wiring. The service installs each chosen skill into
+// `officialUserSkillsDir` (so existing skill discovery picks them up with
+// no further changes) and persists its install ledger to
+// `<userData>/marketplace-state.json`.
+const marketplaceStateFile = path.join(app.getPath('userData'), 'marketplace-state.json')
+const marketplaceService = registerMarketplaceIpc({
+  userSkillsDir: officialUserSkillsDir,
+  stateFile: marketplaceStateFile,
+})
+
+// One-shot adoption pass. v4.3.4 users have ~20 bundled skills already on
+// disk (we used to mirror them every launch); marking them as `adopted`
+// lets the marketplace UI show them under "Installed" so users can
+// uninstall/replace selectively. Failure is non-fatal — the UI's first
+// `adopt-existing` IPC call will just retry.
+marketplaceService
+  .adoptExisting()
+  .then((adopted) => {
+    if (adopted.length > 0) {
+      console.info(
+        `[marketplace] adopted ${adopted.length} pre-existing skill(s) into marketplace state: ${adopted.map((r) => r.name).join(', ')}`,
+      )
+    }
+  })
+  .catch((err) => {
+    console.warn('[marketplace] startup adoption failed (non-fatal):', err)
+  })
 
 function readSkillsFromDir(dir: string): Record<string, string> {
   const result: Record<string, string> = {}
@@ -892,10 +891,11 @@ function readSkillsFromDir(dir: string): Record<string, string> {
 
 ipcMain.handle('load-skills', async () => {
   try {
-    // Wait for both startup mirror passes so user-visible skills include
-    // legacy migrations AND bundled codex-only skills on first launch.
-    // Already-mirrored installs no-op (directory-level non-overwriting).
-    await Promise.all([legacySkillsMigrationPromise, bundledCodexSkillsMirrorPromise])
+    // Wait for legacy <userData>/skills → ~/.agents/skills migration so the
+    // first call after a fresh upgrade returns the complete user-scope set.
+    // Bundled Codex-only skills are no longer auto-mirrored — they install
+    // on-demand through the Skill Marketplace (see scripts/upload-skills-to-cos.mjs).
+    await legacySkillsMigrationPromise
     fs.mkdirSync(officialUserSkillsDir, { recursive: true })
     const builtin = readSkillsFromDir(builtinSkillsDir)
     const user = readSkillsFromDir(officialUserSkillsDir)
