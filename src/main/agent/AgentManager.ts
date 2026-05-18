@@ -693,6 +693,16 @@ export class AgentManager {
     if (!this.codexApiKey) {
       return { ok: false, error: '请先填写 API Key' }
     }
+    // Resolve the *currently selected* provider (apiyi / rightcode / custom) so
+    // the probe backend talks to the same gateway the main agent does. v4.2.x
+    // used to hard-code apiyi here — see DEFAULT_PROVIDER reference removed in
+    // v4.3.0 — but with multi-provider that would silently mis-route the test
+    // and report success against the wrong host.
+    const persisted = await this.providerStore.load()
+    const activeProvider = resolveActiveProvider(
+      this.activeProviderId,
+      persisted.customProviders,
+    )
     // Build a fresh, isolated backend so we never disturb the long-lived one.
     // Re-uses the production resourceRoot resolution path inside CodexLocalBackend
     // (app.getAppPath / process.resourcesPath) — the only thing we tighten is
@@ -701,7 +711,7 @@ export class AgentManager {
     const backend = new CodexLocalBackend({
       getApiKey: () => this.codexApiKey,
       connectTimeoutMs: 8_000,
-      provider: DEFAULT_PROVIDER,
+      provider: activeProvider,
       sessionConfig: this.sessionConfig,
     })
     const TEST_TIMEOUT_MS = 15_000

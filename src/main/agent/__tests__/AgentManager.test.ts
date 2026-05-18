@@ -125,6 +125,65 @@ describe('AgentManager codex api key', () => {
   })
 })
 
+// Regression — a v4.3.0-rc shipped with `provider: DEFAULT_PROVIDER` (an
+// undefined identifier left over from the pre-multi-provider refactor) inside
+// testConnection. The IPC call surfaced as `ReferenceError: DEFAULT_PROVIDER
+// is not defined`, blocking the "测试 Codex 连接" button entirely. These
+// tests pin testConnection to the *currently active* provider and exercise
+// both the empty-key short-circuit and the resolution path.
+describe('AgentManager testConnection provider resolution', () => {
+  it('returns the "please fill in API key" error and never references DEFAULT_PROVIDER when key is empty', async () => {
+    const mgr = new AgentManager({ userDataDir: tmpDir })
+    const result = await mgr.testConnection()
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/API Key/i)
+    // The bug we are guarding against is a ReferenceError at module evaluation
+    // time. If testConnection threw, vitest would surface it instead of the
+    // structured error object above, so reaching this line proves the fix.
+  })
+
+  it('uses the currently selected provider for the probe backend (not a hard-coded default)', async () => {
+    // Stub backend bypasses the real CodexLocalBackend constructor and its
+    // restartCodex hook so we can swap active providers freely. testConnection
+    // ignores opts.backend and builds its own fresh CodexLocalBackend, which
+    // is exactly the path we want to exercise.
+    const stub = makeStubBackend([])
+    const mgr = new AgentManager({ userDataDir: tmpDir, backend: stub })
+
+    // Provision a key for rightcode before switching, so testConnection's
+    // empty-key short-circuit doesn't fire after the swap.
+    await mgr.setProviderApiKey('rightcode', 'sk-rightcode')
+    await mgr.setActiveProvider('rightcode')
+    expect(mgr.getCodexApiKey()).toBe('sk-rightcode')
+
+    // Monkey-patch CodexLocalBackend.prototype.start so the test isolates the
+    // constructor + provider plumbing without spawning an actual Codex
+    // process. testConnection wraps `backend.start()` in try/catch and
+    // returns { ok: false, error: msg }, so we get a clean assertion target.
+    const { CodexLocalBackend } = await import('../CodexLocalBackend')
+    const realStart = CodexLocalBackend.prototype.start
+    const sentinel = new Error('STOP-PROBE')
+    CodexLocalBackend.prototype.start = async function () {
+      ;(globalThis as Record<string, unknown>).__capturedProvider = (
+        this as unknown as { currentProvider?: { id?: string } }
+      ).currentProvider
+      throw sentinel
+    }
+    try {
+      const result = await mgr.testConnection()
+      expect(result.ok).toBe(false)
+      expect(result.error).toBe('STOP-PROBE')
+      const captured = (globalThis as Record<string, unknown>).__capturedProvider as
+        | { id?: string }
+        | undefined
+      expect(captured?.id).toBe('rightcode')
+    } finally {
+      CodexLocalBackend.prototype.start = realStart
+      delete (globalThis as Record<string, unknown>).__capturedProvider
+    }
+  })
+})
+
 describe('AgentManager sendMessage empty-key gate', () => {
   it('emits error event and does not start backend when sendMessage called with empty key', async () => {
     const events: AgentStreamEvent[] = []
