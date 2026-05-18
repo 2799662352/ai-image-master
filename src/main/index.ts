@@ -838,6 +838,44 @@ const legacySkillsMigrationPromise: Promise<{ copied: string[]; skipped: string[
     },
   )
 
+// ---------------------------------------------------------------------------
+// Bundled Codex-only skills (e.g. `codex-research-grounded-prompting`) ship
+// inside the installer as `<resources>/codex-skills/` (see
+// `electron-builder.yml#extraResources`). They must materialize under the
+// USER scope at `$HOME/.agents/skills/` — not the SYSTEM scope at
+// `<repo>/.agents/skills` or `<resources>/.agents/skills/` — because:
+//   1. The user explicitly chose user scope ("应该和用户 skill 在一起 而不是
+//      系统 skill") so the skill is editable post-install.
+//   2. `migrateLegacyUserSkills` is non-overwriting at the directory level,
+//      so once mirrored the user can rewrite the SKILL.md or references/
+//      without us clobbering their changes on next launch.
+//   3. Reusing the same helper keeps the discovery path uniform: every
+//      USER-scope skill, whether copied from legacy `<userData>/skills` or
+//      from bundled `<resources>/codex-skills`, lands in exactly one place.
+// ---------------------------------------------------------------------------
+const bundledCodexSkillsDir = app.isPackaged
+  ? path.join(process.resourcesPath, 'codex-skills')
+  : path.resolve(__dirname, '../../resources/codex-skills')
+
+const bundledCodexSkillsMirrorPromise: Promise<{ copied: string[]; skipped: string[] }> =
+  migrateLegacyUserSkills({
+    legacyRoot: bundledCodexSkillsDir,
+    officialRoot: officialUserSkillsDir,
+  }).then(
+    (report) => {
+      if (report.copied.length > 0) {
+        console.info(
+          `[skills] mirrored ${report.copied.length} bundled codex skill(s) → ${officialUserSkillsDir}: ${report.copied.join(', ')}`,
+        )
+      }
+      return report
+    },
+    (err) => {
+      console.warn('[skills] bundled codex skills mirror failed (non-fatal):', err)
+      return { copied: [], skipped: [] }
+    },
+  )
+
 function readSkillsFromDir(dir: string): Record<string, string> {
   const result: Record<string, string> = {}
   if (!fs.existsSync(dir)) return result
@@ -854,9 +892,10 @@ function readSkillsFromDir(dir: string): Record<string, string> {
 
 ipcMain.handle('load-skills', async () => {
   try {
-    // Wait for one-shot migration so legacy skills surface immediately
-    // under their official names. Already-migrated installs no-op.
-    await legacySkillsMigrationPromise
+    // Wait for both startup mirror passes so user-visible skills include
+    // legacy migrations AND bundled codex-only skills on first launch.
+    // Already-mirrored installs no-op (directory-level non-overwriting).
+    await Promise.all([legacySkillsMigrationPromise, bundledCodexSkillsMirrorPromise])
     fs.mkdirSync(officialUserSkillsDir, { recursive: true })
     const builtin = readSkillsFromDir(builtinSkillsDir)
     const user = readSkillsFromDir(officialUserSkillsDir)

@@ -111,4 +111,51 @@ describe('migrateLegacyUserSkills', () => {
     expect(second.copied).toEqual([])
     expect(second.skipped).toContain('demo')
   })
+
+  // Regression — bundled-Codex-skills mirror path. The same helper is reused
+  // a second time at startup with `legacyRoot = <resources>/codex-skills` to
+  // ship `codex-research-grounded-prompting` (and any future bundled USER-
+  // scope skills) into `$HOME/.agents/skills/`. Behavior contract:
+  //   1. Multi-file skills (SKILL.md + references/*) copy fully on first run.
+  //   2. User edits to the mirrored copy survive subsequent launches because
+  //      the helper is directory-level non-overwriting. This is what makes
+  //      the user-scope choice meaningful — without it, every install would
+  //      clobber the user's customizations.
+  it('mirrors bundled codex skills into USER scope and preserves user edits on re-mirror', async () => {
+    const bundled = await makeTempDir()
+    const official = await makeTempDir()
+    const skillName = 'codex-research-grounded-prompting'
+    const skillSrc = path.join(bundled, skillName)
+    await mkdir(path.join(skillSrc, 'references'), { recursive: true })
+    await writeFile(
+      path.join(skillSrc, 'SKILL.md'),
+      `---\nname: ${skillName}\n---\nBUNDLED BODY`,
+      'utf8',
+    )
+    await writeFile(
+      path.join(skillSrc, 'references', 'methodology-rationale.md'),
+      'BUNDLED RATIONALE',
+      'utf8',
+    )
+    await writeFile(path.join(skillSrc, 'references', 'papers.md'), 'BUNDLED PAPERS', 'utf8')
+
+    const first = await migrateLegacyUserSkills({ legacyRoot: bundled, officialRoot: official })
+    expect(first.copied).toEqual([skillName])
+    const mirroredSkill = path.join(official, skillName, 'SKILL.md')
+    const mirroredRationale = path.join(official, skillName, 'references', 'methodology-rationale.md')
+    const mirroredPapers = path.join(official, skillName, 'references', 'papers.md')
+    expect(await exists(mirroredSkill)).toBe(true)
+    expect(await exists(mirroredRationale)).toBe(true)
+    expect(await exists(mirroredPapers)).toBe(true)
+
+    // User customizes their mirrored copy.
+    await writeFile(mirroredSkill, 'USER EDITED BODY', 'utf8')
+
+    // Next launch: re-mirror. User's edit must survive — directory exists
+    // therefore the helper short-circuits at the directory level.
+    const second = await migrateLegacyUserSkills({ legacyRoot: bundled, officialRoot: official })
+    expect(second.copied).toEqual([])
+    expect(second.skipped).toContain(skillName)
+    expect(await readFile(mirroredSkill, 'utf8')).toBe('USER EDITED BODY')
+  })
 })

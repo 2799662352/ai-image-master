@@ -56,6 +56,17 @@ extraResources:
     to: .agents/skills
     filter:
       - "**/*.md"
+  # Bundled Codex-only skills (e.g. codex-research-grounded-prompting).
+  # NOT placed under .agents/skills above because the user explicitly chose
+  # USER scope, not SYSTEM scope: the app mirrors these to
+  # `$HOME/.agents/skills/` on first launch via migrateLegacyUserSkills, then
+  # the user can freely edit the copy without the next install clobbering it
+  # (the mirror helper is directory-level non-overwriting). See
+  # `src/main/index.ts` → `bundledCodexSkillsMirrorPromise`.
+  - from: resources/codex-skills
+    to: codex-skills
+    filter:
+      - "**/*"
 
 asarUnpack:
   - resources/**
