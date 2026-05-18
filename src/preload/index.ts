@@ -44,6 +44,13 @@ import type {
   CodexThreadDetail,
   CodexThreadSummary,
 } from '../types/agent'
+import type {
+  MarketplaceAdoptExistingResult,
+  MarketplaceFetchCatalogResult,
+  MarketplaceInstallResult,
+  MarketplaceListInstalledResult,
+  MarketplaceUninstallResult,
+} from '../types/marketplace'
 
 // ==================== IPC 通道常量 ====================
 // 集中管理所有 IPC 通道，便于类型检查和维护
@@ -121,6 +128,15 @@ const IPC_CHANNELS = {
     LOAD_ALL: 'load-skills',
     SAVE: 'save-skill',
     OPEN_FOLDER: 'open-skills-folder',
+  },
+  // Skill Marketplace (catalog hosted on Tencent COS, see
+  // scripts/upload-skills-to-cos.mjs + src/main/marketplace/)
+  MARKETPLACE: {
+    FETCH_CATALOG: 'marketplace:fetch-catalog',
+    INSTALL: 'marketplace:install',
+    UNINSTALL: 'marketplace:uninstall',
+    LIST_INSTALLED: 'marketplace:list-installed',
+    ADOPT_EXISTING: 'marketplace:adopt-existing',
   },
   // 宫格拆图
   STORYBOARD_SPLIT: {
@@ -338,6 +354,14 @@ export interface ElectronAPI {
   loadSkills: () => Promise<Record<string, string>>
   saveSkill: (skillName: string, content: string) => Promise<IpcResponse>
   openSkillsFolder: () => Promise<IpcResponse<{ path: string }>>
+  // Skill Marketplace
+  marketplace: {
+    fetchCatalog: (force?: boolean) => Promise<MarketplaceFetchCatalogResult>
+    install: (skillName: string) => Promise<MarketplaceInstallResult>
+    uninstall: (skillName: string) => Promise<MarketplaceUninstallResult>
+    listInstalled: () => Promise<MarketplaceListInstalledResult>
+    adoptExisting: () => Promise<MarketplaceAdoptExistingResult>
+  }
   // Codex Agent
   agent: {
     sendMessage: (payload: AgentSendMessagePayload) => Promise<{ threadId: string }>
@@ -706,6 +730,23 @@ const electronAPI: ElectronAPI = {
 
   openSkillsFolder: () =>
     safeInvoke<IpcResponse<{ path: string }>>(IPC_CHANNELS.SKILLS.OPEN_FOLDER),
+
+  // ============ Skill Marketplace ============
+  marketplace: {
+    fetchCatalog: (force?: boolean) =>
+      safeInvoke<MarketplaceFetchCatalogResult>(
+        IPC_CHANNELS.MARKETPLACE.FETCH_CATALOG,
+        force === true,
+      ),
+    install: (skillName: string) =>
+      safeInvoke<MarketplaceInstallResult>(IPC_CHANNELS.MARKETPLACE.INSTALL, skillName),
+    uninstall: (skillName: string) =>
+      safeInvoke<MarketplaceUninstallResult>(IPC_CHANNELS.MARKETPLACE.UNINSTALL, skillName),
+    listInstalled: () =>
+      safeInvoke<MarketplaceListInstalledResult>(IPC_CHANNELS.MARKETPLACE.LIST_INSTALLED),
+    adoptExisting: () =>
+      safeInvoke<MarketplaceAdoptExistingResult>(IPC_CHANNELS.MARKETPLACE.ADOPT_EXISTING),
+  },
 
   // ============ Codex Agent ============
   agent: {

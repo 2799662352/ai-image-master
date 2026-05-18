@@ -138,6 +138,54 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
+### v4.3.5 (2026-05-18)
+
+把 v4.3.3 / v4.3.4 强制 mirror 的"每次启动复制 20 个 bundled skill 到 `~/.agents/skills/`"流程**完全废弃**，改为**用户主动安装**的 Skill Marketplace（插件商城）。源头痛点：bundled skill 的目录级非覆盖镜像让升级用户必须手动删 `~/.agents/skills/<name>/` 才能拿到新版 SKILL.md（v4.3.4 changelog 里那段"升级用户需手动删除"就是这个 bug 的 UX）。MVP 把决定权还给用户——什么时候装、装哪几个、什么时候升级，全在 app 内一个新 tab 里完成。
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| 废弃 bundled mirror | `src/main/index.ts` (-60) + `electron-builder.yml` (-15) | 删除 `bundledCodexSkillsMirrorPromise` 与 `bundledCodexSkillsDir`；`load-skills` IPC 只 await legacy `<userData>/skills` 迁移那一份。installer 不再把 `resources/codex-skills/` 打入 extraResources（用户机器从此不会被自动塞 20 个 skill） |
+| 新增 marketplace service | `src/main/marketplace/marketplaceService.ts` (+225) + `src/main/marketplace/ipc.ts` (+100) | DI 化的 `MarketplaceService` 类：`fetchCatalog`（缓存 + force 刷新）/ `install`（下载 zip → sha256 校验 → temp 解压 → 原子 rename → 写 state，**任何失败都不留半成品**）/ `uninstall`（删目录 + 删 state）/ `listInstalled`（读 ledger）/ `adoptExisting`（首启认领 v4.3.4 leftover）。fetcher 注入 `fetch()`（Node 18 全局），不走 Chromium 网络栈 |
+| 共享类型 | `src/types/marketplace.ts` (+55) | `Catalog` / `CatalogEntry` / `InstalledRecord` / 5 个 IPC envelope。main + preload + renderer 三处共用 |
+| 启动认领 | `src/main/index.ts` | 启动时 fire-and-forget 跑 `adoptExisting()`：扫 `~/.agents/skills/<name>/`，若 `<name>` 命中 catalog 且 state 里没记录 → 写入 `marketplace-state.json` 标记 `source: 'adopted'`。结果：v4.3.4 老用户升级到 v4.3.5 后，marketplace 的"已安装"页直接列出他们机器上现有的 20 个 skill，**不需要重新下载** |
+| 上传脚本 | `scripts/upload-skills-to-cos.mjs` (+185) + `resources/codex-skills/skill-versions.json` (+30) | 扫 `resources/codex-skills/*` 每个目录 → 读 SKILL.md `description` + skill-versions.json 的 version → `JSZip` 打包 → sha256 → 上传 `cos://image-master-1345773498/skills/<name>-<version>.zip` → 聚合上传 `catalog.json`。`--dry-run` 不动 COS 只打印。新增 `npm run publish:skills` |
+| 渲染层 marketplace 页 | `src/renderer/src/pages-react/MarketplacePage.tsx` (+275) | 三栏视图（可安装 / 已安装 / 有更新）+ 安装/升级/卸载按钮 + sha256 校验失败的 toast。卸载前 `confirm()` 二次确认。版本不一致即显示"有更新"，不假设 semver 比较——避免误判 |
+| Tab 入口 | `useTabStore.ts` + `TabBar.tsx` + `AppLayout.tsx` + `pages-react/index.ts` | 新增 `marketplace` tab（🛒 技能市场），居于 Agent Workspace 与设置之间 |
+| Preload bridge | `src/preload/index.ts` (+30) | 暴露 `window.electronAPI.marketplace.{fetchCatalog,install,uninstall,listInstalled,adoptExisting}`，复用现有 `safeInvoke` |
+| 测试 | `src/main/marketplace/__tests__/marketplaceService.test.ts` (+340) | TDD 11 测试：catalog 缓存 / install 成功+sha256 不匹配+目录消失原子回滚 / 升级覆盖 / uninstall 含 no-op / adopt 认领 + 幂等 + 非 catalog 目录忽略 / state 跨进程持久化。+ legacy migration 6 测试不动。**17 测试全过** |
+
+#### COS 布局
+
+```
+image-master-1345773498/
+└── skills/
+    ├── catalog.json                                  # ~19 KB, 20 skill entries
+    ├── codex-research-grounded-prompting-1.0.0.zip   # ~21 KB
+    ├── director-anchor-extraction-quality-1.0.0.zip  # ~1.2 KB
+    └── ... 18 more zips
+```
+
+`catalog.json` 是 source of truth，每个 entry 含 `{name, version, description, size, sha256, url}`。客户端先拉 catalog，安装时按 `url` 下载 zip，按 `sha256` 校验，落盘到 `~/.agents/skills/<name>/`。
+
+#### 用户可见行为
+
+1. 全新安装 v4.3.5：`~/.agents/skills/` 是空的。打开"技能市场"tab → 可安装列表显示 20 个 skill → 用户挑想要的点"安装"。
+2. v4.3.4 老用户升级：原 `~/.agents/skills/` 里的 20 个 skill 保留不动，启动时自动被 `adoptExisting` 标记为 `源: 已认领`（蓝色 badge），在"已安装"列表里直接可见。如果 catalog 里的版本与本地一致 → "有更新"是空的；如果 catalog 之后发版了新 skill 内容 → "有更新"亮起对应条目，点"升级"即可。
+3. 单 skill 升级：marketplace 不再触发 app 全量热更新——`scripts/upload-skills-to-cos.mjs` 单独跑就能换 skill 内容，无需 build app/发 installer。
+
+#### 发布步骤
+
+```
+npm run publish:skills:dry  # build & inspect catalog, no upload
+npm run publish:skills      # upload to image-master-1345773498/skills/
+npm run release:cn          # then build & publish app binary as usual
+```
+
+参考：
+- `src/main/marketplace/`（service + ipc）
+- `scripts/upload-skills-to-cos.mjs`
+- `src/types/marketplace.ts`
+
 ### v4.3.4 (2026-05-18)
 
 把 `codex-research-grounded-prompting`（方法论 skill）和 v4.3.3 同期落地的 19 个 `director-* / storyboard-*` cookbook（具体写法 skill）显式建立 method → recipe 两层关系——之前它们仅"并存"，Codex agent 没有信号知道走到某一步该 *调用* 哪一条 cookbook。

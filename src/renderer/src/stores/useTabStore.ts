@@ -12,6 +12,7 @@ export const VALID_TABS = [
   'smartErase',
   'promptTemplates',
   'agentWorkspace',
+  'marketplace',
   'settings',
 ] as const
 

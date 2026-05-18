@@ -20,6 +20,7 @@ const TABS: TabDef[] = [
   { key: 'smartErase', label: '去字幕', icon: '✂️' },
   { key: 'promptTemplates', label: '模板', icon: '📝' },
   { key: 'agentWorkspace', label: 'Agent Workspace', icon: 'agent' },
+  { key: 'marketplace', label: '技能市场', icon: '🛒' },
   { key: 'settings', label: '设置', icon: '⚙️' },
 ]
 

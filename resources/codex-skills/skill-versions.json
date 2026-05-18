@@ -1,0 +1,27 @@
+{
+  "$schema": "https://image-master-1345773498.cos.ap-guangzhou.myqcloud.com/skills/skill-versions.schema.json",
+  "schemaVersion": 1,
+  "comment": "Single source of truth for marketplace skill versions. Bump the version when shipping a meaningful update to a skill's SKILL.md or references/. Used by scripts/upload-skills-to-cos.mjs to compute catalog.json.",
+  "skills": {
+    "codex-research-grounded-prompting": "1.0.0",
+    "director-anchor-extraction-quality": "1.0.0",
+    "director-anime-quality-boost": "1.0.0",
+    "director-character-consistency": "1.0.0",
+    "director-cinematic-composition": "1.0.0",
+    "director-lighting-continuity": "1.0.0",
+    "director-narrative-flow": "1.0.0",
+    "director-prompt-engineering": "1.0.0",
+    "director-scene-analysis-depth": "1.0.0",
+    "director-shot-sequence-patterns": "1.0.0",
+    "director-structured-captioning": "1.0.0",
+    "director-style-consistency": "1.0.0",
+    "director-visual-continuity": "1.0.0",
+    "storyboard-audio": "1.0.0",
+    "storyboard-dialogue": "1.0.0",
+    "storyboard-dodge": "1.0.0",
+    "storyboard-physics": "1.0.0",
+    "storyboard-structure": "1.0.0",
+    "storyboard-style": "1.0.0",
+    "storyboard-visual": "1.0.0"
+  }
+}
