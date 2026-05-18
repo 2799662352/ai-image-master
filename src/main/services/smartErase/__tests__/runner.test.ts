@@ -335,6 +335,203 @@ describe('smartErase/runner.runEraseJob', () => {
     expect(result.outputCosKey).toBe('smart-erase/abc/output.mp4')
     expect(result.outputCosKey.startsWith('/')).toBe(false)
   })
+
+  // ──────────────────────────────────────────────────────────────────────
+  // 2026-05-15 — user feedback "我不需要超时失败" + "这里明明有真实进度条 以及任务详情"
+  // These tests lock in three behaviour changes shipped together:
+  //   18: runner no longer throws POLL_TIMEOUT — it polls until cancel or
+  //       terminal status, even past the legacy 60-min "deadline".
+  //   19: each poll emits the real Tencent `SmartEraseTaskResult.Progress`
+  //       value via onProgress.mpsProgress (so the UI bar matches the
+  //       MPS console's "进行中 94%").
+  //   20: each poll emits a curated task-detail snapshot so the renderer
+  //       can render the "查看详情" panel without IPC-forwarding the whole
+  //       SDK payload (codec metadata + audio streams etc).
+  // ──────────────────────────────────────────────────────────────────────
+  it('Test 18a: never throws POLL_TIMEOUT — polls way past the old 60-min deadline, then succeeds', async () => {
+    vi.useFakeTimers()
+    // The mock keeps the task in PROCESSING for the first 199 polls and
+    // only flips to SUCCESS on poll 200. This 199-poll prefix is the test
+    // scenario, NOT a production cap — production code has `while (true)`
+    // with no `attempt < N` guard (see runner.ts:207). We just need a
+    // finite number here so the test can eventually finish and assert.
+    //
+    // Total fake-time consumed: 199 * pollIntervalMs(attempt) which sits
+    // at the 60s cap from attempt 10 onwards → roughly 199 * 60s ≈ 200min,
+    // dwarfing the legacy 60-min POLL_TIMEOUT_FLOOR_MS that used to kill
+    // the task. The promise resolves on poll 200 with the SUCCESS payload.
+    let polls = 0
+    describeTaskDetailMock.mockImplementation(() => {
+      polls++
+      if (polls < 200) return Promise.resolve({ Status: 'PROCESSING' })
+      return Promise.resolve(buildFinishSuccess('/smart-erase/abc/long.mp4'))
+    })
+
+    const { runEraseJob } = await import('../runner')
+    const promise = runEraseJob(freshJob({ durationSeconds: 5 }), new AbortController().signal)
+
+    // 200 * 60s of fake time — more than 3× the old 60-min deadline.
+    await vi.advanceTimersByTimeAsync(200 * 60_000)
+
+    await expect(promise).resolves.toMatchObject({
+      outputCosKey: 'smart-erase/abc/long.mp4',
+    })
+    expect(polls).toBe(200)
+  })
+
+  it('Test 18b: loop has no built-in attempt or time cap — promise stays pending forever on permanent PROCESSING', async () => {
+    vi.useFakeTimers()
+    // Counterpart to 18a: if MPS NEVER returns a terminal status, the
+    // promise must NEVER reject on its own — only user cancel (signal)
+    // or a terminal Status from Tencent can end it.
+    //
+    // We let the mock pin to PROCESSING forever, advance fake time by
+    // a year (!), and verify (a) the promise has not settled and
+    // (b) the runner is still polling. This is the spec-level lock-in:
+    // "不要限制 不要主动退出 不要有时间限制".
+    describeTaskDetailMock.mockResolvedValue({ Status: 'PROCESSING' })
+
+    const { runEraseJob } = await import('../runner')
+    const ctrl = new AbortController()
+    let settled = false
+    const promise = runEraseJob(freshJob(), ctrl.signal)
+    // Attach a swallow-catch so Node doesn't surface the eventual
+    // TASK_CANCELLED rejection as an unhandled-promise warning before
+    // the explicit `.rejects.toMatchObject` below awaits it.
+    promise.catch(() => {})
+    promise.then(
+      () => { settled = true },
+      () => { settled = true },
+    )
+
+    // 1 year of fake time. That's >24,000× the legacy deadline.
+    await vi.advanceTimersByTimeAsync(365 * 24 * 60 * 60 * 1000)
+
+    expect(settled).toBe(false)
+    // Lower bound: at least 100 polls — the actual count is much higher
+    // (year / 60s cap ≈ 525,000) but we don't need to pin the exact value.
+    expect(describeTaskDetailMock.mock.calls.length).toBeGreaterThan(100)
+
+    // Only the user's cancel ends it — terminating cleanly so the test
+    // doesn't leak a dangling promise.
+    ctrl.abort()
+    await vi.advanceTimersByTimeAsync(60_000)
+    await expect(promise).rejects.toMatchObject({ code: 'TASK_CANCELLED' })
+  })
+
+  it('Test 19: onProgress receives real mpsProgress on every poll while PROCESSING', async () => {
+    vi.useFakeTimers()
+    let polls = 0
+    describeTaskDetailMock.mockImplementation(() => {
+      polls++
+      if (polls === 1) {
+        return Promise.resolve({
+          Status: 'PROCESSING',
+          WorkflowTask: { ErrCode: 0, SmartEraseTaskResult: { Status: 'PROCESSING', Progress: 17 } },
+        })
+      }
+      if (polls === 2) {
+        return Promise.resolve({
+          Status: 'PROCESSING',
+          WorkflowTask: { ErrCode: 0, SmartEraseTaskResult: { Status: 'PROCESSING', Progress: 64 } },
+        })
+      }
+      return Promise.resolve({
+        Status: 'FINISH',
+        WorkflowTask: {
+          ErrCode: 0,
+          SmartEraseTaskResult: { Status: 'SUCCESS', Progress: 100, Output: { Path: '/p.mp4' } },
+        },
+      })
+    })
+
+    const progressPatches: Array<Record<string, unknown>> = []
+    const { runEraseJob } = await import('../runner')
+    const promise = runEraseJob(freshJob(), new AbortController().signal, {
+      onProgress: (p) => progressPatches.push({ ...p }),
+    })
+
+    // 2 inter-poll waits (~6s each after backoff math)
+    await vi.advanceTimersByTimeAsync(15_000)
+    await promise
+
+    // Filter to only the processing-stage patches with mpsProgress —
+    // there's also a 'submitting' + initial 'processing' (mpsTaskId only).
+    const progressEmits = progressPatches
+      .filter((p) => p.mpsProgress !== undefined)
+      .map((p) => p.mpsProgress)
+    expect(progressEmits).toEqual([17, 64, 100])
+  })
+
+  it('Test 20: onProgress carries a curated taskDetail snapshot on every poll', async () => {
+    describeTaskDetailMock.mockResolvedValueOnce({
+      Status: 'FINISH',
+      WorkflowTask: {
+        ErrCode: 0,
+        Message: 'SUCCESS',
+        SmartEraseTaskResult: {
+          Status: 'SUCCESS',
+          Progress: 100,
+          ErrCodeExt: '',
+          Message: 'SUCCESS',
+          BeginProcessTime: '2026-05-15T13:20:30Z',
+          FinishTime: '2026-05-15T13:20:56Z',
+          Output: { Path: '/smart-erase/abc/out.mp4' },
+        },
+      },
+    })
+
+    const progressPatches: Array<Record<string, any>> = []
+    const { runEraseJob } = await import('../runner')
+    await runEraseJob(freshJob(), new AbortController().signal, {
+      onProgress: (p) => progressPatches.push({ ...p }),
+    })
+
+    const withDetail = progressPatches.find((p) => p.taskDetail)
+    expect(withDetail?.taskDetail).toMatchObject({
+      workflowStatus: 'FINISH',
+      smartEraseStatus: 'SUCCESS',
+      progress: 100,
+      workflowErrCode: 0,
+      workflowMessage: 'SUCCESS',
+      beginProcessTime: '2026-05-15T13:20:30Z',
+      finishTime: '2026-05-15T13:20:56Z',
+      outputPath: '/smart-erase/abc/out.mp4',
+    })
+    expect(typeof withDetail?.taskDetail.fetchedAt).toBe('number')
+  })
+
+  it('Test 21: summarizeTaskDetail clamps Progress to 0–100 and survives missing fields', async () => {
+    const { summarizeTaskDetail } = await import('../runner')
+
+    // Realistic in-flight payload — top-level PROCESSING, no WorkflowTask yet.
+    expect(summarizeTaskDetail({ Status: 'WAITING' }, 1234)).toMatchObject({
+      workflowStatus: 'WAITING',
+      progress: undefined,
+      fetchedAt: 1234,
+    })
+
+    // Out-of-range progress (e.g. SDK bug) gets clamped, not propagated raw.
+    expect(
+      summarizeTaskDetail({
+        Status: 'PROCESSING',
+        WorkflowTask: {
+          ErrCode: 0,
+          SmartEraseTaskResult: { Status: 'PROCESSING', Progress: 150 },
+        },
+      }, 5).progress,
+    ).toBe(100)
+    expect(
+      summarizeTaskDetail({
+        Status: 'PROCESSING',
+        WorkflowTask: { SmartEraseTaskResult: { Progress: -10 } },
+      }, 5).progress,
+    ).toBe(0)
+
+    // Garbage / undefined yields undefined progress (no NaN leakage).
+    expect(summarizeTaskDetail({}, 0).progress).toBeUndefined()
+    expect(summarizeTaskDetail(null, 0).progress).toBeUndefined()
+  })
 })
 
 describe('pollIntervalMs (exponential backoff)', () => {

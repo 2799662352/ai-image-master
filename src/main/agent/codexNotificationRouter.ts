@@ -67,12 +67,21 @@ function summarizeActivity(item: CodexItem): { label?: string; detail?: string }
       }
     case 'dynamicToolCall':
     case 'collabToolCall': {
+      // Codex 0.130.0 v2 schema (codex-rs/app-server-protocol/src/protocol/v2.rs):
+      //   `ThreadItem::DynamicToolCall { id, namespace, tool: String, arguments, ... }`
+      // The canonical wire field is `tool` (single-word, no rename_all
+      // transformation). Older builds / some gateways still send
+      // `toolName`, and MCP-shaped payloads use `name`. Probe all three in
+      // canonical-first order so the generic chip surfaces the actual
+      // tool name instead of the `'tool'` literal fallback.
       const tool =
-        typeof item.toolName === 'string'
-          ? item.toolName
-          : typeof item.name === 'string'
-            ? item.name
-            : 'tool'
+        typeof item.tool === 'string'
+          ? item.tool
+          : typeof item.toolName === 'string'
+            ? item.toolName
+            : typeof item.name === 'string'
+              ? item.name
+              : 'tool'
       return { label: tool, detail: argsDetail(item.arguments) }
     }
     case 'imageView':
@@ -94,18 +103,32 @@ function summarizeActivity(item: CodexItem): { label?: string; detail?: string }
 }
 
 /**
- * Mirrors Codex's `update_plan` / `todo_write` tool payload from
- * codex-rs/protocol/src/plan_tool.rs:
+ * Mirrors the plan / todo payloads Codex 0.130.0 actually emits on the
+ * wire — **with the critical detail that the two channels use different
+ * serde casing conventions**:
  *
- *   { plan: [{ step: string, status: "pending" | "in_progress" | "completed" }] }
+ *   1. `turn/plan/updated` notification → `TurnPlanStepStatus` in
+ *      `codex-rs/app-server-protocol/src/protocol/v2.rs` is declared with
+ *      `#[serde(rename_all = "camelCase")]`, so the wire value is
+ *      `"inProgress"` (camelCase).
  *
- * Codex invariant: at most one step is `in_progress`. Older gateways may use
- * `text` instead of `step`, so we accept either; everything else we drop.
+ *   2. `dynamicToolCall.arguments.plan[].status` → `StepStatus` in
+ *      `codex-rs/protocol/src/plan_tool.rs` is declared with
+ *      `#[serde(rename_all = "snake_case")]`, so the wire value is
+ *      `"in_progress"` (snake_case).
+ *
+ * Both channels reach us with arbitrary case from gateway rewrites in the
+ * wild too. We normalise to snake_case internally so every renderer-side
+ * consumer (PlanCard, tests, etc.) stays on a single contract. Also
+ * tolerates the legacy `text` spelling for the step body that some
+ * experimental gateways use.
+ *
+ * Codex invariant: at most one step is `in_progress` at any time.
  */
 function extractPlanSteps(
-  item: CodexItem,
+  rawPlan: unknown,
 ): { text: string; status: 'pending' | 'in_progress' | 'completed' }[] | undefined {
-  const raw = Array.isArray(item.plan) ? item.plan : null
+  const raw = Array.isArray(rawPlan) ? rawPlan : null
   if (!raw) return undefined
   const out: { text: string; status: 'pending' | 'in_progress' | 'completed' }[] = []
   for (const entry of raw) {
@@ -114,12 +137,348 @@ function extractPlanSteps(
     const text =
       typeof o.step === 'string' ? o.step : typeof o.text === 'string' ? o.text : null
     if (!text) continue
-    const rawStatus = typeof o.status === 'string' ? o.status : ''
-    const status: 'pending' | 'in_progress' | 'completed' =
-      rawStatus === 'completed' ? 'completed' : rawStatus === 'in_progress' ? 'in_progress' : 'pending'
-    out.push({ text, status })
+    out.push({ text, status: normalisePlanStepStatus(o.status) })
   }
   return out.length > 0 ? out : undefined
+}
+
+/**
+ * Accept every variant of plan-step status Codex has shipped on the wire:
+ *   - snake_case `"in_progress"` (tool arguments, plan_tool.rs)
+ *   - camelCase `"inProgress"` (v2 app-server notification, v2.rs)
+ *   - kebab-case `"in-progress"` (some gateways normalise this way)
+ *   - PascalCase `"InProgress"` (Rust enum variant name if a gateway
+ *     forwards it without serde processing)
+ *   - any case-insensitive permutation of the above
+ * Anything unrecognised falls back to `pending` so the step is still
+ * displayed (we'd rather show a known step as pending than swallow it).
+ */
+function normalisePlanStepStatus(
+  raw: unknown,
+): 'pending' | 'in_progress' | 'completed' {
+  if (typeof raw !== 'string') return 'pending'
+  // Strip case + separators so `inProgress`, `in_progress`, `in-progress`,
+  // `InProgress`, `IN PROGRESS` all collapse to `inprogress`.
+  const key = raw.toLowerCase().replace(/[\s_-]/g, '')
+  if (key === 'completed' || key === 'done' || key === 'complete') return 'completed'
+  if (key === 'inprogress' || key === 'running' || key === 'active') return 'in_progress'
+  return 'pending'
+}
+
+/**
+ * Resolve a tool name across the wire shapes Codex / gateways have used.
+ * Order matters — probe **canonical-first**:
+ *   1. `tool` — v2 ThreadItem schema (Codex 0.130.0,
+ *      codex-rs/app-server-protocol/src/protocol/v2.rs `DynamicToolCall.tool`)
+ *   2. `toolName` — older Codex builds and several Chinese gateways that
+ *      rename for "legacy client" compatibility
+ *   3. `name` — MCP-shaped payloads (some MCP servers forward tool calls
+ *      with `name` instead of `tool`)
+ * We probe all three so the plan routing doesn't accidentally fall
+ * through to the generic dynamicToolCall chip just because of a casing /
+ * naming drift on a custom gateway.
+ */
+function readToolName(item: CodexItem): string | undefined {
+  const candidates: Array<unknown> = [
+    (item as Record<string, unknown>).tool,
+    (item as Record<string, unknown>).toolName,
+    (item as Record<string, unknown>).name,
+  ]
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.length > 0) return c
+  }
+  return undefined
+}
+
+/**
+ * Recognises the Codex plan/todo tool by name across all known aliases:
+ *   - `update_plan` (legacy primary name from `plan_tool.rs::PlanHandler`)
+ *   - `todo_write` (current primary after PR openai/codex#10124)
+ *   - `plan` (short alias observed on the wire from Codex 0.130.0 +
+ *     some upstream gateways)
+ * Case-insensitive: gateways sometimes upper-case tool names.
+ */
+function isPlanToolName(name: string | undefined): boolean {
+  if (!name) return false
+  const lc = name.toLowerCase()
+  return lc === 'plan' || lc === 'update_plan' || lc === 'todo_write'
+}
+
+/**
+ * Codex sometimes sends tool `arguments` as a JSON string (Responses-API
+ * function-call shape) and sometimes as a parsed object (v2 protocol /
+ * dynamic tool dispatch). Try both before giving up so the plan extractor
+ * can find `arguments.plan`.
+ */
+function parseToolArguments(value: unknown): Record<string, unknown> | undefined {
+  if (value && typeof value === 'object') return value as Record<string, unknown>
+  if (typeof value === 'string' && value.length > 0) {
+    try {
+      const parsed = JSON.parse(value)
+      return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : undefined
+    } catch {
+      return undefined
+    }
+  }
+  return undefined
+}
+
+/**
+ * Build the `mergeFields` payload for the synthetic plan ActivityItem. Used
+ * by all three plan code paths (`turn/plan/updated`, plan-tool-call started,
+ * plan-tool-call completed) so the PlanCard render shape stays identical
+ * regardless of which channel Codex actually used.
+ */
+function buildPlanMergeFields(
+  steps: { text: string; status: 'pending' | 'in_progress' | 'completed' }[],
+  explanation: string | undefined,
+  forceSuccess: boolean,
+): Record<string, unknown> {
+  // Empty-steps placeholder: the plan tool fired but we don't have any
+  // extractable steps yet (or ever — depends on gateway). Keep status
+  // `running` so the PlanCard pulses; never claim "success" without
+  // evidence of completion.
+  const allCompleted = steps.length > 0 && steps.every((s) => s.status === 'completed')
+  return {
+    kind: 'plan',
+    label: 'plan',
+    steps,
+    status: forceSuccess && allCompleted ? 'success' : allCompleted ? 'success' : 'running',
+    ...(explanation != null ? { detail: explanation } : {}),
+  }
+}
+
+/**
+ * When Codex routes `update_plan` / `todo_write` as a `dynamicToolCall` (or
+ * `collabToolCall`) instead of emitting a dedicated `turn/plan/updated`
+ * notification, the structured plan rides inside `item.arguments.plan`.
+ * Detect that case and route it through the same synthetic-itemId
+ * (`plan:${turnId}`) channel as `turn/plan/updated` — same store-side upsert
+ * path, same PlanCard render. Returning `null` from here means "not a plan
+ * tool call, let the generic dynamicToolCall chip handle it instead."
+ */
+/**
+ * Diagnostic logger for plan-tool routing. Fires only when a plan-like tool
+ * call comes in (so it doesn't spam the console), but logs enough context
+ * for "PlanCard didn't render" investigations:
+ *   - success: tool name + step count + statuses
+ *   - failure: tool name + raw arguments shape (truncated) so we can see
+ *     whether Codex actually shipped structured data
+ *
+ * Kept as console.log/warn so it shows up in the `npm run dev` terminal
+ * AND in production main-process stdout (which electron's --enable-logging
+ * or our agent log stream can capture). Truncates args to 800 chars to
+ * avoid leaking massive payloads if the model dumped a huge plan.
+ */
+function logPlanToolDiagnostic(
+  phase: 'started' | 'completed',
+  toolName: string | undefined,
+  status: 'routed' | 'no-args' | 'no-steps',
+  details: Record<string, unknown>,
+): void {
+  const prefix = `[plan-tool/${phase}]`
+  if (status === 'routed') {
+    console.log(prefix, 'routed', { tool: toolName, ...details })
+  } else {
+    console.warn(prefix, status, { tool: toolName, ...details })
+  }
+}
+
+function safeStringify(value: unknown, max = 800): string {
+  try {
+    const s = typeof value === 'string' ? value : JSON.stringify(value)
+    return s.length > max ? `${s.slice(0, max)}…(+${s.length - max} chars)` : s
+  } catch {
+    return '[unstringifiable]'
+  }
+}
+
+/**
+ * Last-resort plan extractor for when a gateway / model sends the plan as
+ * markdown prose instead of a structured `plan: [...]` array. We see this
+ * a lot in the wild — many Chinese gateways front of OpenAI-compatible
+ * APIs do not forward the function-call argument schema strictly, and
+ * smaller / older models often "describe" the plan as numbered text in
+ * `args.explanation` or the raw `arguments` string itself.
+ *
+ * Heuristics (intentionally conservative to avoid surfacing chips that
+ * aren't actually plans):
+ *   - Recognise bullets / ordered list markers:
+ *     `1.` `1)` `1、`  `- `  `* `  `• `  `· `  `①` … `⑩`
+ *   - Require **at least 2 list lines** before claiming we found a plan
+ *     (single bullets are usually titles, not plan items).
+ *   - Strip leading status markers the model might already have written:
+ *     `✓` `[x]` `[ ]` `(done)` `(in progress)`
+ *   - Look for an "in progress" hint in the **surrounding** text and
+ *     mark that step accordingly:
+ *       "第 2 项是进行中"   "currently on step 2"   "now: step 2"
+ *   - Look for "已完成" / "completed: 1, 2" style hints likewise.
+ */
+function extractStepsFromFreeformString(
+  text: string,
+): { text: string; status: 'pending' | 'in_progress' | 'completed' }[] | undefined {
+  if (typeof text !== 'string' || text.length === 0 || text.length > 8000) return undefined
+  // Bullet / ordered list marker. We capture the body after the marker so
+  // we can also detect inline status hints prefixed to the body.
+  const listMarker = /^\s*(?:(?:\d+|[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳])[.)、]\s*|[-*•·]\s+)(.+)$/
+  const steps: { text: string; status: 'pending' | 'in_progress' | 'completed' }[] = []
+  for (const rawLine of text.split(/\r?\n/)) {
+    const m = rawLine.match(listMarker)
+    if (!m) continue
+    let body = m[1].trim()
+    if (body.length === 0 || body.length > 240) continue
+    // Strip a leading checkbox / status prefix and capture intent.
+    let inlineStatus: 'pending' | 'in_progress' | 'completed' | null = null
+    const checkbox = body.match(/^\[\s*([x✓vV]|\s|-)\s*\]\s*(.*)$/)
+    if (checkbox) {
+      const mark = checkbox[1]
+      inlineStatus = mark.trim() === '' ? 'pending' : mark === '-' ? 'in_progress' : 'completed'
+      body = checkbox[2].trim()
+    } else {
+      const prefix = body.match(
+        /^(?:✓|✔|☑|☒|☐|→|▶|►|\(\s*done\s*\)|\(\s*completed\s*\)|\(\s*in[ _-]?progress\s*\)|\(\s*pending\s*\)|\(\s*todo\s*\))\s+(.*)$/i,
+      )
+      if (prefix) {
+        const head = body.slice(0, body.length - prefix[1].length).toLowerCase()
+        if (/[✓✔☑]|done|completed/.test(head)) inlineStatus = 'completed'
+        else if (/[→▶►]|in[ _-]?progress/.test(head)) inlineStatus = 'in_progress'
+        else if (/[☐]|todo|pending/.test(head)) inlineStatus = 'pending'
+        body = prefix[1].trim()
+      }
+    }
+    if (body.length === 0) continue
+    steps.push({ text: body, status: inlineStatus ?? 'pending' })
+  }
+  if (steps.length < 2) return undefined
+
+  // Surrounding-text status hints. Only apply when individual lines didn't
+  // already carry an explicit status marker — explicit beats inferred.
+  const hasExplicit = steps.some((s) => s.status !== 'pending')
+  if (!hasExplicit) {
+    const inProgressMatch =
+      text.match(/第\s*(\d+)\s*[项步条][^。]*(?:进行中|在做|正在|in[ _-]?progress|active|current)/i) ||
+      text.match(/(?:current|currently|now|目前|当前)[^。\n]{0,30}?(?:step|第)\s*(\d+)/i)
+    if (inProgressMatch) {
+      const idx = parseInt(inProgressMatch[1], 10) - 1
+      if (idx >= 0 && idx < steps.length) steps[idx].status = 'in_progress'
+    }
+    // "已完成第 1 / 2 项" / "completed: 1, 2"
+    const completedRange = text.match(
+      /(?:已完成|completed|done)[^\n]{0,40}?(?:第\s*)?([\d\s,，、和与and]+)/i,
+    )
+    if (completedRange) {
+      const nums = completedRange[1].match(/\d+/g)
+      if (nums) {
+        for (const n of nums) {
+          const idx = parseInt(n, 10) - 1
+          if (idx >= 0 && idx < steps.length && steps[idx].status === 'pending') {
+            steps[idx].status = 'completed'
+          }
+        }
+      }
+    }
+  }
+  return steps
+}
+
+/**
+ * The heart of "PlanCard always renders when plan tool fires." We try
+ * extraction in priority order:
+ *
+ *   1. Structured arrays: `args.plan` / `args.todo` (PR #10124) /
+ *      `args.todos` (legacy plural) / `args.steps` / `args.items` /
+ *      `args` itself if it's an array
+ *   2. Freeform-string fallback on `args.explanation` / `args.text` /
+ *      `args.content` — for gateways that pack the plan into a single
+ *      string field
+ *   3. Freeform-string fallback on the raw `item.arguments` string —
+ *      for gateways that pass the entire plan as a non-JSON string
+ *
+ * If nothing extractable is found we still emit a placeholder PlanCard
+ * with `steps: []` and `explanation` as label — the renderer shows a
+ * "creating plan..." state. This is far better UX than the generic
+ * "TOOL plan running" chip because the user gets a stable, recognisable
+ * card slot in the timeline that fills in once the data arrives.
+ */
+function extractStepsFromAnywhere(
+  args: Record<string, unknown> | undefined,
+  rawArguments: unknown,
+): { text: string; status: 'pending' | 'in_progress' | 'completed' }[] | undefined {
+  if (args) {
+    const structured =
+      extractPlanSteps(args.plan) ??
+      extractPlanSteps(args.todo) ??
+      extractPlanSteps(args.todos) ??
+      extractPlanSteps(args.steps) ??
+      extractPlanSteps(args.items) ??
+      extractPlanSteps(args)
+    if (structured) return structured
+    for (const field of ['explanation', 'text', 'content', 'plan', 'todo'] as const) {
+      const v = args[field]
+      if (typeof v === 'string') {
+        const fromProse = extractStepsFromFreeformString(v)
+        if (fromProse) return fromProse
+      }
+    }
+  }
+  if (typeof rawArguments === 'string') {
+    const fromProse = extractStepsFromFreeformString(rawArguments)
+    if (fromProse) return fromProse
+  }
+  return undefined
+}
+
+function maybeRoutePlanToolCall(
+  item: CodexItem,
+  threadId: unknown,
+  turnId: unknown,
+  forceSuccess: boolean,
+): AgentStreamEvent | null {
+  if (item.type !== 'dynamicToolCall' && item.type !== 'collabToolCall') return null
+  const toolName = readToolName(item)
+  if (!isPlanToolName(toolName)) return null
+  if (typeof threadId !== 'string' || threadId.length === 0) return null
+  if (typeof turnId !== 'string' || turnId.length === 0) return null
+  const phase = forceSuccess ? 'completed' : 'started'
+  const args = parseToolArguments(item.arguments)
+  const steps = extractStepsFromAnywhere(args, item.arguments) ?? []
+  const explanation =
+    args && typeof args.explanation === 'string' && args.explanation.length > 0
+      ? args.explanation
+      : typeof item.arguments === 'string' && steps.length === 0
+        ? item.arguments
+        : undefined
+
+  if (steps.length === 0) {
+    // Plan tool fired but we couldn't find any structured / list-like
+    // shape. Log the payload silhouette so the user can diff it against
+    // expected shapes from the Codex source. We *still* emit a plan
+    // event so the renderer shows a "creating plan" placeholder card
+    // instead of a generic chip — same slot reservation pattern
+    // Cursor / Codex CLI use.
+    logPlanToolDiagnostic(phase, toolName, args ? 'no-steps' : 'no-args', {
+      rawArgumentsType: typeof item.arguments,
+      argKeys: args ? Object.keys(args) : null,
+      argShapePreview: safeStringify(args ?? item.arguments),
+    })
+  } else {
+    logPlanToolDiagnostic(phase, toolName, 'routed', {
+      stepCount: steps.length,
+      statuses: steps.map((s) => s.status),
+    })
+  }
+
+  return {
+    type: 'item_delta',
+    threadId,
+    turnId,
+    itemId: `plan:${turnId}`,
+    itemType: 'activity',
+    patch: {
+      kind: 'mergeFields',
+      fields: buildPlanMergeFields(steps, explanation, forceSuccess),
+    },
+  }
 }
 
 function statusFromItem(item: CodexItem): 'running' | 'success' | 'error' | 'cancelled' | undefined {
@@ -373,15 +732,33 @@ export class CodexNotificationRouter {
               itemType: 'fileEdit',
               payload: {},
             }
+          case 'plan':
+            // `plan` ThreadItems carry only a pre-rendered text blob in v2
+            // (`{ type: 'plan', id, text }` per the v2 ThreadItem schema). The
+            // structured `[{ step, status }]` list — which is what the
+            // PlanCard renders — arrives on the separate `turn/plan/updated`
+            // notification (PR openai/codex#7329). Surfacing this item-level
+            // event would just create a generic activity pill alongside the
+            // real PlanCard built from `turn/plan/updated`, so we drop it.
+            return null
           default: {
+            // Plan-tool dispatch comes through here when Codex routes
+            // `update_plan` / `todo_write` as a `dynamicToolCall` instead of
+            // emitting the dedicated `turn/plan/updated` notification (which
+            // is what Codex 0.130.0 does in practice with non-Responses-API
+            // gateways). Intercept it and render as a real PlanCard;
+            // returning here also suppresses the generic "TOOL plan" chip so
+            // there's no double card.
+            const planEvent = maybeRoutePlanToolCall(item, params.threadId, params.turnId, false)
+            if (planEvent) return planEvent
+
             // Generic activity card: covers mcpToolCall, webSearch,
-            // dynamicToolCall, collabToolCall, imageView, plan,
+            // dynamicToolCall, collabToolCall, imageView,
             // contextCompaction, enteredReviewMode, exitedReviewMode, plus any
             // future Codex item.type we don't have a bespoke renderer for. The
             // pre-fix router silently dropped all of these, which is exactly
             // why the user couldn't see tool calls / MCP / file reads.
             const { label, detail } = summarizeActivity(item)
-            const steps = item.type === 'plan' ? extractPlanSteps(item) : undefined
             return {
               type: 'item_started',
               threadId: params.threadId,
@@ -391,7 +768,6 @@ export class CodexNotificationRouter {
                 kind: item.type,
                 ...(label != null ? { label } : {}),
                 ...(detail != null ? { detail } : {}),
-                ...(steps != null ? { steps } : {}),
                 status: statusFromItem(item) ?? 'running',
               },
             }
@@ -472,20 +848,45 @@ export class CodexNotificationRouter {
         return null
       }
 
-      case 'item/plan/delta': {
-        // No bespoke plan card yet. Surface the latest delta on the generic
-        // activity card's `detail` slot so users can at least watch the plan
-        // evolve. (Eventually deserves its own card.)
-        const itemId = params.itemId as string | undefined
-        if (typeof itemId !== 'string' || itemId.length === 0) return null
-        const text = typeof params.delta === 'string' ? params.delta : ''
-        if (text.length === 0) return null
+      case 'item/plan/delta':
+        // `PlanDeltaNotification` streams raw `text`-field deltas for the
+        // plan ThreadItem (which itself is dropped above). The schema header
+        // says: "Clients should not assume concatenated deltas match the
+        // completed plan item content." The structured PlanCard updates flow
+        // through `turn/plan/updated` instead, so this channel is dropped.
+        return null
+
+      case 'turn/plan/updated': {
+        // PR openai/codex#7329: `EventMsg::PlanUpdate(UpdatePlanArgs)` is
+        // serialized as a turn-level notification with the full structured
+        // plan in `params.plan: [{ step, status }]`. This is the *only* event
+        // that carries the data PlanCard needs.
+        //
+        // Codex re-emits this notification every time the model calls
+        // `update_plan` / `todo_write` (typically once at task start, then
+        // again each time a step transitions). We always have a complete
+        // snapshot, so we synthesize a single ActivityItem keyed by
+        // `plan:${turnId}` and let the store's existing `item_delta`
+        // mergeFields upsert path create-or-update it idempotently.
+        const threadId = params.threadId
+        const turnId = typeof params.turnId === 'string' ? params.turnId : undefined
+        if (typeof threadId !== 'string' || threadId.length === 0 || !turnId) return null
+        const steps = extractPlanSteps(params.plan)
+        if (!steps) return null
+        const explanation =
+          typeof params.explanation === 'string' && params.explanation.length > 0
+            ? params.explanation
+            : undefined
         return {
           type: 'item_delta',
-          threadId: params.threadId,
-          itemId,
+          threadId,
+          turnId,
+          itemId: `plan:${turnId}`,
           itemType: 'activity',
-          patch: { kind: 'mergeFields', fields: { detail: text } },
+          patch: {
+            kind: 'mergeFields',
+            fields: buildPlanMergeFields(steps, explanation, false),
+          },
         }
       }
 
@@ -579,14 +980,36 @@ export class CodexNotificationRouter {
               final: {},
             }
           }
+          case 'plan':
+            // Symmetric with the `item/started` plan drop above. The PlanCard
+            // is driven entirely by `turn/plan/updated`; the plan ThreadItem's
+            // `text` blob would just be a duplicate (and a misleading one,
+            // since the text is auto-rendered from the structured plan).
+            return null
           default: {
+            // Symmetric with the `item/started` plan-tool intercept above.
+            // Crucially we DON'T forceSuccess on completion: Codex calls
+            // `update_plan` repeatedly throughout a single turn (once per
+            // step transition per the tool prompt), and each individual call
+            // starts + completes in milliseconds. If we hard-coded
+            // `status: 'success'` on every tool-call completion the
+            // PlanCard would flash emerald (success theme) between calls
+            // and only briefly flip back to cyan when the next call starts,
+            // making the agent look like it keeps "finishing" the plan over
+            // and over. Instead let `buildPlanMergeFields` derive status
+            // from the snapshot itself (`allCompleted` → success, else
+            // running), so the card stays cyan throughout execution and
+            // turns green exactly once — when the final `update_plan` call
+            // arrives with every step marked completed.
+            const planEvent = maybeRoutePlanToolCall(item, params.threadId, params.turnId, false)
+            if (planEvent) return planEvent
+
             // Bookend the activity card so the spinner stops and the status
             // pill flips to success/error. Without this branch any
             // mcpToolCall / webSearch / etc. would stay perpetually running.
             const { label, detail } = summarizeActivity(item)
             const explicitError =
               typeof item.error === 'string' && item.error.length > 0 ? item.error : undefined
-            const steps = item.type === 'plan' ? extractPlanSteps(item) : undefined
             return {
               type: 'item_completed',
               threadId: params.threadId,
@@ -596,7 +1019,6 @@ export class CodexNotificationRouter {
                 kind: item.type,
                 ...(label != null ? { label } : {}),
                 ...(detail != null ? { detail } : {}),
-                ...(steps != null ? { steps } : {}),
                 status: statusFromItem(item) ?? (explicitError ? 'error' : 'success'),
                 ...(explicitError ? { error: explicitError } : {}),
               },

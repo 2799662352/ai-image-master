@@ -1,6 +1,7 @@
 import { useEffect, useRef, useMemo } from 'react'
 import { useModelStore, useToastStore, useGenerateStore } from '../stores'
 import { useApi } from '../hooks/useService'
+import { useAutosizeTextarea } from '../hooks/useAutosizeTextarea'
 import { ModelSelector } from '../components/ModelSelector'
 import { RatioSelector } from './generate/RatioSelector'
 import { ReferenceImageList } from './generate/ReferenceImageList'
@@ -18,6 +19,7 @@ export default function GeneratePage() {
   const prompt = useGenerateStore((s) => s.prompt)
   const ratio = useGenerateStore((s) => s.ratio)
   const generating = useGenerateStore((s) => s.generating)
+  const inFlightCount = useGenerateStore((s) => s.inFlightCount)
   const resultUrls = useGenerateStore((s) => s.resultUrls)
   const referenceImages = useGenerateStore((s) => s.referenceImages)
   const error = useGenerateStore((s) => s.error)
@@ -46,6 +48,7 @@ export default function GeneratePage() {
     value: prompt,
     onValueChange: setPrompt,
   })
+  useAutosizeTextarea(textareaRef, prompt, { minRows: 4, maxRows: 20 })
 
   useEffect(() => {
     if (error) addToast({ message: error, type: 'error' })
@@ -60,11 +63,15 @@ export default function GeneratePage() {
       addToast({ message: '请选择模型', type: 'warning' })
       return
     }
-    clearResults()
+    // Non-blocking: each click fires a concurrent generation. We do NOT clear
+    // results — completed images stream into the grid below. Use the "清空"
+    // button next to the grid to reset.
+    const urlsBefore = useGenerateStore.getState().resultUrls.length
     await generate(api, currentModelKey)
-    const urls = useGenerateStore.getState().resultUrls
-    if (urls.length > 0) {
-      addToast({ message: `生成完成 (${urls.length} 张)`, type: 'success' })
+    const urlsAfter = useGenerateStore.getState().resultUrls.length
+    const added = urlsAfter - urlsBefore
+    if (added > 0) {
+      addToast({ message: `生成完成 (+${added} 张)`, type: 'success' })
     }
   }
 
@@ -101,7 +108,7 @@ export default function GeneratePage() {
           onKeyDown={ac.handleKeyDown}
           placeholder="描述你想要生成的图片... 输入 @ 引用参考图"
           rows={4}
-          className="w-full px-4 py-3 bg-zinc-800 border-2 border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-cyberpunk-yellow resize-none"
+          className="w-full px-4 py-3 bg-zinc-800 border-2 border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-cyberpunk-yellow resize-none transition-[height] duration-100"
         />
         <TokenAutocomplete
           visible={ac.visible}
@@ -127,11 +134,26 @@ export default function GeneratePage() {
 
       <button
         onClick={handleGenerate}
-        disabled={generating}
+        disabled={!prompt.trim() || !currentModelKey}
         className="w-full py-3 bg-cyberpunk-yellow text-cyberpunk-black font-bold text-lg uppercase tracking-tight hover:opacity-90 transition-all disabled:opacity-50"
       >
-        {generating ? '生成中...' : '开始生成'}
+        {generating ? `加入队列 (运行中 × ${inFlightCount})` : '开始生成'}
       </button>
+
+      {resultUrls.length > 0 && (
+        <div className="flex items-center justify-between border-t-2 border-zinc-800 pt-3">
+          <span className="text-xs text-zinc-500 font-mono uppercase tracking-wider">
+            结果 · {resultUrls.length} 张{generating ? ` · 还有 ${inFlightCount} 个在生成` : ''}
+          </span>
+          <button
+            type="button"
+            onClick={clearResults}
+            className="px-3 py-1 text-xs uppercase tracking-wider text-zinc-400 border border-zinc-700 hover:border-cyberpunk-yellow hover:text-cyberpunk-yellow transition-colors"
+          >
+            清空
+          </button>
+        </div>
+      )}
 
       <ResultGrid urls={resultUrls} />
     </div>

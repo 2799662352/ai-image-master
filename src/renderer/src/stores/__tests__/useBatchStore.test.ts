@@ -72,6 +72,14 @@ describe('useBatchStore', () => {
   })
 
   describe('runBatch', () => {
+    // Tests pass `concurrency: 1, idleExitMs: 0` so:
+    //   1. ordering is deterministic (one worker, one item at a time)
+    //   2. the workers exit immediately when the queue drains — without
+    //      this, every runBatch test would pay the 300ms idle grace period
+    //      that exists in production to let live `addItem` calls reach
+    //      still-warm workers.
+    const TEST_OPTS = { concurrency: 1, idleExitMs: 0 } as const
+
     it('processes items sequentially', async () => {
       useBatchStore.getState().addItem('prompt1')
       useBatchStore.getState().addItem('prompt2')
@@ -84,7 +92,7 @@ describe('useBatchStore', () => {
         }),
       })
 
-      await useBatchStore.getState().runBatch(api, 'model-x')
+      await useBatchStore.getState().runBatch(api, 'model-x', TEST_OPTS)
 
       expect(callOrder).toEqual(['prompt1', 'prompt2'])
       const items = useBatchStore.getState().items
@@ -109,7 +117,7 @@ describe('useBatchStore', () => {
         }),
       })
 
-      await useBatchStore.getState().runBatch(api, 'model')
+      await useBatchStore.getState().runBatch(api, 'model', TEST_OPTS)
 
       const items = useBatchStore.getState().items
       expect(items[0].status).toBe('done')
@@ -127,7 +135,7 @@ describe('useBatchStore', () => {
       })
 
       const api = createMockApi()
-      await useBatchStore.getState().runBatch(api, 'model')
+      await useBatchStore.getState().runBatch(api, 'model', TEST_OPTS)
 
       expect(api.generateImage).toHaveBeenCalledTimes(1)
       expect(api.generateImage).toHaveBeenCalledWith(
@@ -141,7 +149,7 @@ describe('useBatchStore', () => {
       })
 
       const api = createMockApi()
-      await useBatchStore.getState().runBatch(api, 'model')
+      await useBatchStore.getState().runBatch(api, 'model', TEST_OPTS)
 
       expect(api.generateImage).not.toHaveBeenCalled()
       expect(useBatchStore.getState().running).toBe(false)
@@ -160,7 +168,7 @@ describe('useBatchStore', () => {
         }),
       })
 
-      await useBatchStore.getState().runBatch(api, 'model')
+      await useBatchStore.getState().runBatch(api, 'model', TEST_OPTS)
 
       const items = useBatchStore.getState().items
       expect(items[0].status).toBe('error')
@@ -176,7 +184,7 @@ describe('useBatchStore', () => {
         generateImage: vi.fn().mockResolvedValue({ success: true, images: ['http://via-images.jpg'] }),
       })
 
-      await useBatchStore.getState().runBatch(api, 'model')
+      await useBatchStore.getState().runBatch(api, 'model', TEST_OPTS)
 
       const items = useBatchStore.getState().items
       expect(items[0].status).toBe('done')
@@ -190,11 +198,105 @@ describe('useBatchStore', () => {
         generateImage: vi.fn().mockResolvedValue({ success: true }),
       })
 
-      await useBatchStore.getState().runBatch(api, 'model')
+      await useBatchStore.getState().runBatch(api, 'model', TEST_OPTS)
 
       const items = useBatchStore.getState().items
       expect(items[0].status).toBe('error')
       expect(items[0].error).toBe('接口未返回图片地址')
+    })
+
+    // The exact regression the user reported on 2026-05-14:
+    //   "发送一个生成 任务 必须完成 才能生成 第二个 不应该是这样"
+    //
+    // Pre-fix: runBatch captured `const queue = [...pending]` at entry, so
+    // items added via addItem() mid-run stayed `pending` forever. The user
+    // had to wait for the running batch to drain, see "继续排队", then click
+    // again.
+    //
+    // Post-fix (2026-05-15 follow-up): addItem during a running batch ALSO
+    // spawns a brand-new worker (capped at HARD_MAX_WORKERS=6) so the new
+    // item starts immediately instead of queueing behind the in-flight
+    // worker — this is the "没跑完也应该启动" fix. The original concurrency=1
+    // case below still works because spawn brings the pool from 1 → 2.
+    it('picks up items added during a running batch (live queue)', async () => {
+      useBatchStore.getState().addItem('first')
+
+      const resolvers: Array<(v: unknown) => void> = []
+      const api = createMockApi({
+        generateImage: vi.fn().mockImplementation(
+          () => new Promise((resolve) => {
+            resolvers.push(resolve)
+          })
+        ),
+      })
+
+      // concurrency=1 starts with 1 worker; the burst-spawn fix lets a
+      // mid-run addItem add a second worker (up to HARD_MAX=6).
+      const batchPromise = useBatchStore.getState().runBatch(api, 'model', {
+        concurrency: 1,
+        idleExitMs: 300,
+      })
+
+      // Worker 1 should claim 'first' immediately and call generateImage.
+      await vi.waitFor(() => {
+        expect(resolvers.length).toBe(1)
+        expect(useBatchStore.getState().items[0]?.status).toBe('generating')
+      })
+
+      // User types another prompt and clicks "+ 加入队列" while the batch
+      // is still running — addItem appends + spawns a new worker.
+      useBatchStore.getState().addItem('second')
+      await vi.waitFor(() => {
+        expect(resolvers.length).toBe(2)
+        expect(useBatchStore.getState().items[1]?.status).toBe('generating')
+      })
+
+      // Resolve both in any order — runBatch should settle cleanly.
+      resolvers[0]({ success: true, urls: ['http://first.jpg'] })
+      resolvers[1]({ success: true, urls: ['http://second.jpg'] })
+      await batchPromise
+
+      const items = useBatchStore.getState().items
+      expect(items[0].status).toBe('done')
+      expect(items[0].resultUrl).toBe('http://first.jpg')
+      expect(items[1].status).toBe('done')
+      expect(items[1].resultUrl).toBe('http://second.jpg')
+      expect(useBatchStore.getState().running).toBe(false)
+    })
+
+    // Single-flight invariant: calling runBatch a second time while one
+    // is already running must be a no-op (no duplicate worker pool, no
+    // re-flip of `running`). This protects against the BatchPage handler
+    // accidentally calling runBatch on top of itself.
+    it('is single-flight while running (no-op on re-entry)', async () => {
+      useBatchStore.getState().addItem('a')
+
+      let resolveFirst: ((v: unknown) => void) | undefined
+      const api = createMockApi({
+        generateImage: vi.fn().mockImplementation(
+          () => new Promise((r) => { resolveFirst = r })
+        ),
+      })
+
+      const first = useBatchStore.getState().runBatch(api, 'model', {
+        concurrency: 2,
+        idleExitMs: 0,
+      })
+
+      await vi.waitFor(() => {
+        expect(useBatchStore.getState().running).toBe(true)
+      })
+
+      // Second runBatch call: should resolve immediately without flipping
+      // anything (the existing pool already owns the items[] pool).
+      const second = useBatchStore.getState().runBatch(api, 'model', TEST_OPTS)
+      await second
+      expect(api.generateImage).toHaveBeenCalledTimes(1)
+      expect(useBatchStore.getState().running).toBe(true)
+
+      resolveFirst?.({ success: true, urls: ['http://a.jpg'] })
+      await first
+      expect(useBatchStore.getState().running).toBe(false)
     })
   })
 
@@ -215,7 +317,10 @@ describe('useBatchStore', () => {
         }),
       })
 
-      const batchPromise = useBatchStore.getState().runBatch(api, 'model')
+      const batchPromise = useBatchStore.getState().runBatch(api, 'model', {
+        concurrency: 1,
+        idleExitMs: 0,
+      })
 
       await vi.waitFor(() => {
         expect(useBatchStore.getState().running).toBe(true)
@@ -245,7 +350,10 @@ describe('useBatchStore', () => {
         }),
       })
 
-      const batchPromise = useBatchStore.getState().runBatch(api, 'model')
+      const batchPromise = useBatchStore.getState().runBatch(api, 'model', {
+        concurrency: 1,
+        idleExitMs: 0,
+      })
 
       await vi.waitFor(() => {
         expect(useBatchStore.getState().running).toBe(true)
@@ -274,7 +382,10 @@ describe('useBatchStore', () => {
         }),
       })
 
-      const batchPromise = useBatchStore.getState().runBatch(api, 'model')
+      const batchPromise = useBatchStore.getState().runBatch(api, 'model', {
+        concurrency: 2,
+        idleExitMs: 0,
+      })
       await vi.waitFor(() => {
         expect(useBatchStore.getState().items[0]?.status).toBe('done')
       })
@@ -298,7 +409,10 @@ describe('useBatchStore', () => {
         }),
       })
 
-      const batchPromise = useBatchStore.getState().runBatch(api, 'model')
+      const batchPromise = useBatchStore.getState().runBatch(api, 'model', {
+        concurrency: 2,
+        idleExitMs: 0,
+      })
 
       await vi.waitFor(() => {
         expect(resolvers.length).toBe(2)
@@ -311,6 +425,134 @@ describe('useBatchStore', () => {
       resolvers.forEach((r) => r({ success: true, urls: ['http://ok.jpg'] }))
       await batchPromise
 
+      expect(useBatchStore.getState().running).toBe(false)
+    })
+  })
+
+  // The exact regression the user reported on 2026-05-15:
+  //   "比如选三 的二次任务我发上去了 第二次 第一个 任务不会开始"
+  //   "没跑完也应该启动"
+  //
+  // Setup: user has CONC=3, clicks GENERATE×3 (3 items running in parallel),
+  // then clicks +3 mid-run. Expectation: the 3 new items start IMMEDIATELY
+  // in parallel with the first 3 — they should NOT wait for batch 1 to drain
+  // a worker slot.
+  //
+  // Pre-fix: the worker pool was fixed at concurrency=3 at runBatch entry.
+  // The 3 new items sat as `pending` until one of the first 3 finished,
+  // and only then trickled in one-by-one — so the user perceived "task
+  // didn't start" for many seconds. This test fails on that behavior:
+  // generateImage gets called only 3 times before all 6 finish.
+  //
+  // Post-fix: addItem during a running batch spawns a new worker (capped
+  // at HARD_MAX=6, the same as the CONC slider's upper bound), so all 6
+  // items are calling generateImage concurrently.
+  describe('burst enqueue during running batch', () => {
+    it('spawns additional workers up to HARD_MAX when items added mid-run', async () => {
+      // Initial 3 items, concurrency=3 → 3 workers
+      useBatchStore.getState().addItem('A')
+      useBatchStore.getState().addItem('B')
+      useBatchStore.getState().addItem('C')
+
+      const resolvers: Array<(v: unknown) => void> = []
+      const promptOrder: string[] = []
+      const api = createMockApi({
+        generateImage: vi.fn().mockImplementation(
+          ({ prompt }: { prompt: string }) =>
+            new Promise((resolve) => {
+              promptOrder.push(prompt)
+              resolvers.push(resolve)
+            })
+        ),
+      })
+
+      const batchPromise = useBatchStore.getState().runBatch(api, 'model', {
+        concurrency: 3,
+        idleExitMs: 300,
+      })
+
+      // Wait for the first 3 workers to claim and call generateImage.
+      await vi.waitFor(() => {
+        expect(resolvers.length).toBe(3)
+      })
+      // All 3 initial items are now generating; nothing has finished yet.
+      const midState = useBatchStore.getState()
+      expect(midState.items.filter((i) => i.status === 'generating')).toHaveLength(3)
+
+      // Simulate a second user click during the run: +3 more prompts.
+      useBatchStore.getState().addItem('D')
+      useBatchStore.getState().addItem('E')
+      useBatchStore.getState().addItem('F')
+
+      // ─────────────────────────────────────────────────────────────────────
+      // KEY ASSERTION: the 3 new items must ALSO start generating immediately,
+      // without waiting for any of the first 3 to resolve. The worker pool
+      // should expand from 3 → 6 (capped at HARD_MAX = slider max).
+      // ─────────────────────────────────────────────────────────────────────
+      await vi.waitFor(() => {
+        expect(resolvers.length).toBe(6)
+      })
+      expect(promptOrder).toEqual(['A', 'B', 'C', 'D', 'E', 'F'])
+      const burstState = useBatchStore.getState()
+      expect(burstState.items.filter((i) => i.status === 'generating')).toHaveLength(6)
+
+      // Resolve all 6 in order so the batch can finish cleanly.
+      resolvers.forEach((r, i) =>
+        r({ success: true, urls: [`http://${promptOrder[i]}.jpg`] })
+      )
+      await batchPromise
+
+      const final = useBatchStore.getState()
+      expect(final.items.every((i) => i.status === 'done')).toBe(true)
+      expect(final.running).toBe(false)
+    })
+
+    it('caps additional spawned workers at HARD_MAX=6 (no API blowup)', async () => {
+      // Start with 6 items + concurrency=6 → 6 workers claim immediately
+      for (let i = 1; i <= 6; i++) useBatchStore.getState().addItem(`P${i}`)
+
+      const resolvers: Array<(v: unknown) => void> = []
+      const api = createMockApi({
+        generateImage: vi.fn().mockImplementation(
+          () => new Promise((resolve) => { resolvers.push(resolve) })
+        ),
+      })
+
+      const batchPromise = useBatchStore.getState().runBatch(api, 'model', {
+        concurrency: 6,
+        idleExitMs: 300,
+      })
+
+      await vi.waitFor(() => {
+        expect(resolvers.length).toBe(6)
+      })
+
+      // Try to add 3 more — pool is already at HARD_MAX=6, so they
+      // should be queued (NOT picked up by a 7th/8th/9th worker).
+      useBatchStore.getState().addItem('extra-1')
+      useBatchStore.getState().addItem('extra-2')
+      useBatchStore.getState().addItem('extra-3')
+
+      // Give the event loop a tick — if the cap is broken, we'd see
+      // 7/8/9 calls here. The cap holds.
+      await new Promise((r) => setTimeout(r, 50))
+      expect(resolvers.length).toBe(6)
+      expect(
+        useBatchStore.getState().items.filter((i) => i.status === 'pending')
+      ).toHaveLength(3)
+
+      // Resolve first 3 — freed slots should pick up the extras.
+      resolvers.slice(0, 3).forEach((r) =>
+        r({ success: true, urls: ['http://done.jpg'] })
+      )
+      await vi.waitFor(() => {
+        expect(resolvers.length).toBe(9)
+      })
+      // Resolve everything remaining.
+      resolvers.slice(3).forEach((r) =>
+        r({ success: true, urls: ['http://done.jpg'] })
+      )
+      await batchPromise
       expect(useBatchStore.getState().running).toBe(false)
     })
   })

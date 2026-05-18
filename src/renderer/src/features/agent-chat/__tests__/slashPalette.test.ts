@@ -94,9 +94,9 @@ describe('SLASH_COMMANDS canon', () => {
 
 describe('filterPaletteItems', () => {
   const skills: CodexSkillSummary[] = [
-    { name: 'using-superpowers', scope: 'home', description: 'Process discipline guide', path: '/u' },
-    { name: 'systematic-debugging', scope: 'home', description: 'Bug hunting', path: '/d' },
-    { name: 'context7-mcp', scope: 'workspace', description: 'Docs lookup', path: '/c' },
+    { name: 'using-superpowers', scope: 'user', description: 'Process discipline guide', path: '/u' },
+    { name: 'systematic-debugging', scope: 'user', description: 'Bug hunting', path: '/d' },
+    { name: 'context7-mcp', scope: 'repo', description: 'Docs lookup', path: '/c' },
   ]
 
   it('returns all items when query is empty', () => {
@@ -125,7 +125,7 @@ describe('filterPaletteItems', () => {
   it('caps results per section (no infinite scroll dump)', () => {
     const many: CodexSkillSummary[] = Array.from({ length: 50 }, (_, i) => ({
       name: `skill-${i}`,
-      scope: 'home',
+      scope: 'user',
       description: '',
       path: `/p/${i}`,
     }))
@@ -137,7 +137,7 @@ describe('filterPaletteItems', () => {
 
 describe('buildPaletteSections (flattened for keyboard nav)', () => {
   const skills: CodexSkillSummary[] = [
-    { name: 'using-superpowers', scope: 'home', description: '', path: '/u' },
+    { name: 'using-superpowers', scope: 'user', description: '', path: '/u' },
   ]
 
   it('flattens visible items in display order (commands before skills)', () => {

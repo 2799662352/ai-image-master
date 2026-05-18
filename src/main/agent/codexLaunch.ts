@@ -17,7 +17,8 @@ export const DEFAULT_CODEX_SESSION_CONFIG: CodexSessionConfig = {
 /**
  * Custom Codex model_provider config. When passed, we wire it through the
  * `app-server`'s `-c` overrides so the spawned Codex talks to a third-party
- * OpenAI-compatible gateway (e.g. API易) instead of `api.openai.com`.
+ * OpenAI-compatible gateway (e.g. API易, Right.Codes) instead of
+ * `api.openai.com`.
  *
  * We MUST pin `wire_api="responses"` for custom OpenAI-compatible gateways:
  * after openai/codex#13592 (shipped in 0.128) Codex *prefers* websocket
@@ -33,12 +34,35 @@ export const DEFAULT_CODEX_SESSION_CONFIG: CodexSessionConfig = {
  *
  * The legacy `supports_websockets` field was removed by openai/codex#13592 —
  * we never set it.
+ *
+ * Optional fields (`model`, `reasoningEffort`, `verbosity`, `requiresOpenaiAuth`,
+ * `extraTopLevelConfig`) let presets carry their own opinionated config so a
+ * provider like Right.Codes — which requires `model="gpt-5.2"`,
+ * `model_reasoning_effort="xhigh"`, `disable_response_storage=true`, and
+ * `windows_wsl_setup_acknowledged=true` per its docs
+ * (https://docs.right.codes/docs/rc_cli_config/codex.html) — works out of the
+ * box without forcing the user to hand-edit `~/.codex/config.toml`.
  */
 export interface CodexProviderConfig {
   id: string
   name: string
   baseUrl: string
   envKey: string
+  /** Optional. When set, becomes `-c model="..."`. */
+  model?: string
+  /** Optional. When set, becomes `-c model_reasoning_effort="..."`. */
+  reasoningEffort?: string
+  /** Optional. When set, becomes `-c model_verbosity="..."`. */
+  verbosity?: string
+  /** Optional. When true, becomes `-c model_providers.<id>.requires_openai_auth=true`. */
+  requiresOpenaiAuth?: boolean
+  /**
+   * Optional. Each entry becomes `-c <key>=<value>`. Use for top-level
+   * scalar overrides not modelled above (e.g. `disable_response_storage`,
+   * `windows_wsl_setup_acknowledged`). Booleans/numbers serialize bare;
+   * strings serialize as `key="value"`.
+   */
+  extraTopLevelConfig?: Readonly<Record<string, string | boolean | number>>
 }
 
 export interface CodexLaunchOptions {
@@ -60,6 +84,11 @@ export function resolveCodexSessionConfig(input?: Partial<CodexSessionConfig>): 
   }
 }
 
+function serializeScalar(value: string | boolean | number): string {
+  if (typeof value === 'string') return `"${value}"`
+  return String(value)
+}
+
 export function appendProviderArgs(
   args: string[],
   provider?: CodexProviderConfig,
@@ -74,6 +103,23 @@ export function appendProviderArgs(
     // See `CodexProviderConfig` above for why this is mandatory.
     '-c', `model_providers.${id}.wire_api="responses"`,
   )
+  if (provider.requiresOpenaiAuth) {
+    args.push('-c', `model_providers.${id}.requires_openai_auth=true`)
+  }
+  if (provider.model) {
+    args.push('-c', `model="${provider.model}"`)
+  }
+  if (provider.reasoningEffort) {
+    args.push('-c', `model_reasoning_effort="${provider.reasoningEffort}"`)
+  }
+  if (provider.verbosity) {
+    args.push('-c', `model_verbosity="${provider.verbosity}"`)
+  }
+  if (provider.extraTopLevelConfig) {
+    for (const [key, value] of Object.entries(provider.extraTopLevelConfig)) {
+      args.push('-c', `${key}=${serializeScalar(value)}`)
+    }
+  }
   return args
 }
 

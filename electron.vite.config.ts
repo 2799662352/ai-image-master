@@ -15,9 +15,24 @@ export default defineConfig({
       outDir: 'dist/main',
       target: 'node18',
       minify: isProd,
+      // Keep `dist/main/pgliteWorker.js` (built by scripts/build-pglite-worker.mjs)
+      // intact across electron-vite (re)builds. electron-vite defaults to
+      // emptying the output dir, which would wipe the worker bundle the
+      // `dev` script pre-builds → utilityProcess.fork sees ENOENT → first
+      // launch crashes with "PGlite worker exited (code 1)". The main entry
+      // only ever produces `index.js` (no chunks/), so disabling auto-empty
+      // doesn't leave stale artifacts.
+      emptyOutDir: false,
       rollupOptions: {
         input: {
           index: resolve(__dirname, 'src/main/index.ts')
+          // NOTE: `pgliteWorker.ts` is intentionally NOT bundled here. As a
+          // sibling entry it ends up linked to index.js via a shared chunk
+          // (`require('./index.js')` at the top), which would re-execute the
+          // entire main process inside the utilityProcess. Instead the
+          // worker is built as a fully standalone CJS file by
+          // `scripts/build-pglite-worker.mjs`, hooked into the `build`
+          // script in package.json.
         },
         output: {
           format: 'cjs',
@@ -45,6 +60,14 @@ export default defineConfig({
           // already live.
           '@electric-sql/pglite',
           '@electric-sql/pglite-socket',
+          // @parcel/watcher is a native C++ addon (prebuilt .node binaries
+          // shipped per-platform via optionalDependencies — same engine
+          // VSCode uses for its file watcher). Bundling it through rolldown
+          // would strip the binary lookup; keep it as a runtime require so
+          // resolution lands in node_modules/@parcel/watcher-<platform>-<arch>/
+          // where electron-builder unpacks it from asar.
+          '@parcel/watcher',
+          /^@parcel\/watcher-/,
           ...builtinModules.flatMap(m => [m, `node:${m}`])
         ]
       }

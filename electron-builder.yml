@@ -48,10 +48,24 @@ extraResources:
     to: skills
     filter:
       - "**/*"
+  # System-scope Codex Agent skills (deep-agents-*, etc.) shipped read-only
+  # with the installer. resolveWorkspacePaths exposes these under the
+  # 'system' skill scope (per Codex docs:
+  # https://developers.openai.com/codex/skills) when app.isPackaged === true.
+  - from: .agents/skills
+    to: .agents/skills
+    filter:
+      - "**/*.md"
 
 asarUnpack:
   - resources/**
   - "**/node_modules/@electric-sql/pglite/**"
+  # Native C++ addon — required at runtime by AttachmentDirWatcher. The
+  # `@parcel/watcher-<platform>-<arch>` prebuilt binary packages each contain
+  # a `.node` file that node-loader can only dlopen() from a real file path,
+  # so they must live outside the asar. The wildcard `watcher*` catches the
+  # wrapper package AND every platform-specific binary subpackage.
+  - "**/node_modules/@parcel/watcher*/**"
 
 asar: true
 compression: maximum

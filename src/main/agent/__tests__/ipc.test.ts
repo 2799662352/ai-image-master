@@ -50,6 +50,12 @@ interface FakeManager {
   listCodexThreads: ReturnType<typeof vi.fn>
   readCodexThread: ReturnType<typeof vi.fn>
   forkCodexThread: ReturnType<typeof vi.fn>
+  getProvidersSnapshot: ReturnType<typeof vi.fn>
+  setActiveProvider: ReturnType<typeof vi.fn>
+  setProviderApiKey: ReturnType<typeof vi.fn>
+  addCustomProvider: ReturnType<typeof vi.fn>
+  updateCustomProvider: ReturnType<typeof vi.fn>
+  removeCustomProvider: ReturnType<typeof vi.fn>
 }
 
 function makeManager(): FakeManager {
@@ -70,6 +76,23 @@ function makeManager(): FakeManager {
     listCodexThreads: vi.fn().mockResolvedValue([]),
     readCodexThread: vi.fn().mockResolvedValue({ id: 'codex-1' }),
     forkCodexThread: vi.fn().mockResolvedValue({ id: 'codex-fork-1' }),
+    getProvidersSnapshot: vi.fn().mockResolvedValue({
+      builtins: [{ id: 'apiyi', name: 'API Yi', baseUrl: 'https://api.apiyi.com/v1', envKey: 'OPENAI_API_KEY' }],
+      custom: [],
+      activeId: 'apiyi',
+      apiKeys: {},
+    }),
+    setActiveProvider: vi.fn().mockResolvedValue({ ok: true, activeId: 'rightcode' }),
+    setProviderApiKey: vi.fn().mockResolvedValue({ ok: true }),
+    addCustomProvider: vi.fn().mockResolvedValue({
+      id: 'custom-1',
+      name: 'My',
+      baseUrl: 'https://x',
+      envKey: 'OPENAI_API_KEY',
+      isCustom: true,
+    }),
+    updateCustomProvider: vi.fn().mockResolvedValue({ ok: true }),
+    removeCustomProvider: vi.fn().mockResolvedValue({ ok: true, activeId: 'apiyi' }),
   }
 }
 
@@ -94,8 +117,8 @@ describe('registerAgentIpc thread management handlers', () => {
     ;(ipcMain as unknown as { __reset: () => void }).__reset()
     manager = makeManager()
     registerAgentIpc(
-      manager as unknown as Parameters<typeof registerAgentIpc>[0],
-      router as unknown as Parameters<typeof registerAgentIpc>[1],
+      () => Promise.resolve(manager as unknown as Awaited<ReturnType<Parameters<typeof registerAgentIpc>[0]>>),
+      () => router as unknown as ReturnType<Parameters<typeof registerAgentIpc>[1]>,
     )
   })
 
@@ -127,8 +150,8 @@ describe('registerAgentIpc thread management handlers', () => {
   it('can be registered again after an Electron dev reload', () => {
     const nextManager = makeManager()
     registerAgentIpc(
-      nextManager as unknown as Parameters<typeof registerAgentIpc>[0],
-      router as unknown as Parameters<typeof registerAgentIpc>[1],
+      () => Promise.resolve(nextManager as unknown as Awaited<ReturnType<Parameters<typeof registerAgentIpc>[0]>>),
+      () => router as unknown as ReturnType<Parameters<typeof registerAgentIpc>[1]>,
     )
 
     expect(get('agent:open-thread')).toBeTypeOf('function')
@@ -176,5 +199,96 @@ describe('registerAgentIpc thread management handlers', () => {
     expect(manager.forkCodexThread).toHaveBeenCalledWith('codex-1')
     await expect(readHandler!({}, '')).rejects.toThrow(/non-empty/)
     await expect(forkHandler!({}, '   ')).rejects.toThrow(/non-empty/)
+  })
+
+  it('agent:get-providers wraps the snapshot with ok:true', async () => {
+    const handler = get('agent:get-providers')
+    expect(handler).toBeTypeOf('function')
+    const result = (await handler!({})) as { ok: boolean; activeId?: string }
+    expect(manager.getProvidersSnapshot).toHaveBeenCalledOnce()
+    expect(result.ok).toBe(true)
+    expect(result.activeId).toBe('apiyi')
+  })
+
+  it('agent:set-active-provider validates id and forwards through', async () => {
+    const handler = get('agent:set-active-provider')
+    expect(handler).toBeTypeOf('function')
+    const result = (await handler!({}, 'rightcode')) as { ok: boolean; activeId?: string }
+    expect(manager.setActiveProvider).toHaveBeenCalledWith('rightcode')
+    expect(result).toEqual({ ok: true, activeId: 'rightcode' })
+
+    const bad = (await handler!({}, '')) as { ok: boolean; error?: string }
+    expect(bad.ok).toBe(false)
+    expect(bad.error).toMatch(/non-empty/)
+  })
+
+  it('agent:set-provider-api-key forwards id and key', async () => {
+    const handler = get('agent:set-provider-api-key')
+    expect(handler).toBeTypeOf('function')
+    const result = (await handler!({}, 'apiyi', 'sk-x')) as { ok: boolean }
+    expect(manager.setProviderApiKey).toHaveBeenCalledWith('apiyi', 'sk-x')
+    expect(result).toEqual({ ok: true })
+
+    // Non-string key gets coerced to '' so we never crash on undefined.
+    await handler!({}, 'apiyi', undefined)
+    expect(manager.setProviderApiKey).toHaveBeenLastCalledWith('apiyi', '')
+  })
+
+  it('agent:add-custom-provider validates required fields', async () => {
+    const handler = get('agent:add-custom-provider')
+    expect(handler).toBeTypeOf('function')
+
+    const ok = (await handler!({}, {
+      name: 'My Gateway',
+      baseUrl: 'https://gw.example.com/v1',
+    })) as { ok: boolean; provider?: unknown }
+    expect(ok.ok).toBe(true)
+    expect(manager.addCustomProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'My Gateway',
+        baseUrl: 'https://gw.example.com/v1',
+        envKey: 'OPENAI_API_KEY',
+      }),
+    )
+
+    const bad1 = (await handler!({}, { name: '', baseUrl: 'https://x' })) as { ok: boolean; error?: string }
+    expect(bad1.ok).toBe(false)
+    expect(bad1.error).toMatch(/name/i)
+
+    const bad2 = (await handler!({}, { name: 'a', baseUrl: '' })) as { ok: boolean; error?: string }
+    expect(bad2.ok).toBe(false)
+    expect(bad2.error).toMatch(/baseUrl/i)
+  })
+
+  it('agent:add-custom-provider rejects non-scalar extraTopLevelConfig values', async () => {
+    const handler = get('agent:add-custom-provider')!
+    const result = (await handler({}, {
+      name: 'X',
+      baseUrl: 'https://x',
+      extraTopLevelConfig: { evil: { nested: true } },
+    })) as { ok: boolean; error?: string }
+    expect(result.ok).toBe(false)
+    expect(result.error).toMatch(/extraTopLevelConfig/)
+  })
+
+  it('agent:update-custom-provider forwards id + sanitized patch', async () => {
+    const handler = get('agent:update-custom-provider')
+    expect(handler).toBeTypeOf('function')
+    await handler!({}, 'custom-1', { name: '  Renamed  ', model: 'gpt-5.5' })
+    expect(manager.updateCustomProvider).toHaveBeenCalledWith('custom-1', {
+      name: 'Renamed',
+      model: 'gpt-5.5',
+    })
+
+    const bad = (await handler!({}, '', { name: 'x' })) as { ok: boolean; error?: string }
+    expect(bad.ok).toBe(false)
+  })
+
+  it('agent:remove-custom-provider forwards id and surfaces new active id', async () => {
+    const handler = get('agent:remove-custom-provider')
+    expect(handler).toBeTypeOf('function')
+    const result = (await handler!({}, 'custom-1')) as { ok: boolean; activeId?: string }
+    expect(manager.removeCustomProvider).toHaveBeenCalledWith('custom-1')
+    expect(result).toEqual({ ok: true, activeId: 'apiyi' })
   })
 })

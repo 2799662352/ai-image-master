@@ -1,6 +1,7 @@
 import { useState, useRef, useMemo, useCallback } from 'react'
 import type { MediaRef } from '../components/shared/media-tokens/types'
 import { useTokenAutocomplete, TokenAutocomplete, MentionChips } from '../components/shared/media-tokens'
+import { useAutosizeTextarea } from '../hooks/useAutosizeTextarea'
 import { ReferenceImageList } from './generate/ReferenceImageList'
 import '../components/shared/media-tokens/media-tokens.css'
 
@@ -26,6 +27,7 @@ export default function DirectorPage() {
     value: prompt,
     onValueChange: setPrompt,
   })
+  useAutosizeTextarea(textareaRef, prompt, { minRows: 5, maxRows: 20 })
 
   const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
@@ -63,7 +65,7 @@ export default function DirectorPage() {
           onKeyDown={ac.handleKeyDown}
           placeholder="输入提示词... 键入 @ 引用参考图"
           rows={5}
-          className="w-full px-4 py-3 bg-zinc-800 border-2 border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-cyberpunk-yellow resize-none"
+          className="w-full px-4 py-3 bg-zinc-800 border-2 border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-cyberpunk-yellow resize-none transition-[height] duration-100"
         />
         <TokenAutocomplete
           visible={ac.visible}

@@ -5,6 +5,11 @@ node_modules/
 dist/
 out/
 release/
+release2/
+release-notes-*.md
+
+# Recovery tracking artifacts
+zero-byte-tracked.txt
 
 # Playwright
 playwright-report/

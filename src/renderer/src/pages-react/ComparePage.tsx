@@ -1,6 +1,7 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { useModelStore, useToastStore, useCompareStore } from '../stores'
 import { useApi } from '../hooks/useService'
+import { useAutosizeTextarea } from '../hooks/useAutosizeTextarea'
 import { ModelPairSelector } from './compare/ModelPairSelector'
 
 export default function ComparePage() {
@@ -17,6 +18,8 @@ export default function ComparePage() {
   const error = useCompareStore((s) => s.error)
 
   const { setLeftModel, setRightModel, setPrompt, compare } = useCompareStore.getState()
+  const promptRef = useRef<HTMLTextAreaElement>(null)
+  useAutosizeTextarea(promptRef, prompt, { minRows: 3, maxRows: 16 })
 
   const options = useMemo(
     () => Object.entries(models).map(([k, v]) => ({ value: k, label: v.name })),
@@ -79,11 +82,12 @@ export default function ComparePage() {
       )}
 
       <textarea
+        ref={promptRef}
         value={prompt}
         onChange={(e) => setPrompt(e.target.value)}
         placeholder="输入提示词..."
         rows={3}
-        className="w-full px-4 py-3 bg-zinc-800 border-2 border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-cyberpunk-yellow resize-none"
+        className="w-full px-4 py-3 bg-zinc-800 border-2 border-zinc-700 text-white placeholder-zinc-500 focus:outline-none focus:border-cyberpunk-yellow resize-none transition-[height] duration-100"
       />
 
       <button

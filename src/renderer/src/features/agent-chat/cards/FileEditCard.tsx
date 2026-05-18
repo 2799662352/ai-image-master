@@ -1,54 +1,102 @@
-import { useState } from 'react'
-import type { FileEditItem } from '../../../../../types/agent-timeline'
+import type { FileChange, FileEditItem } from '../../../../../types/agent-timeline'
 import { useFileExplorerStore } from '../../file-explorer/store'
-import { referencesFromTimelineItem } from '../references/referenceUtils'
 import { FileDiffBlock } from './FileDiffBlock'
+import { MarkdownDraftCard } from './MarkdownDraftCard'
+
+function isMarkdownPath(path: string): boolean {
+  return /\.(md|mdx|markdown)$/i.test(path)
+}
+
+function operationLabel(operation: FileChange['operation']): string {
+  switch (operation) {
+    case 'create':
+      return 'Created'
+    case 'delete':
+      return 'Deleted'
+    case 'edit':
+      return 'Edited'
+  }
+}
+
+function markdownContentFromCreateDiff(diff: string): string {
+  return diff
+    .split('\n')
+    .filter((line) => line.startsWith('+') && !line.startsWith('+++ '))
+    .map((line) => line.slice(1))
+    .join('\n')
+}
 
 export function FileEditCard({ item }: { item: FileEditItem }) {
   const isRunning = !item.endedAt
-  const [expanded, setExpanded] = useState(false)
-  const openReference = useFileExplorerStore((state) => state.openReference)
-  const references = referencesFromTimelineItem(item)
+  const openAiChange = useFileExplorerStore((state) => state.openAiChange)
+  const openTab = useFileExplorerStore((state) => state.openTab)
 
-  const summary =
-    item.changes.length === 1
-      ? `📝 ${item.changes[0].path} +${item.totalAdded} −${item.totalRemoved}`
-      : `📝 ${item.changes.length} files changed +${item.totalAdded} −${item.totalRemoved}`
+  if (
+    item.changes.length === 1 &&
+    item.changes[0].operation === 'create' &&
+    isMarkdownPath(item.changes[0].path)
+  ) {
+    const change = item.changes[0]
+    return (
+      <MarkdownDraftCard
+        path={change.path}
+        content={markdownContentFromCreateDiff(change.diff)}
+        status={isRunning ? 'streaming' : 'created'}
+        onOpen={(path) => void openTab(path, 'workspace')}
+      />
+    )
+  }
 
   return (
-    <div className="my-1">
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="flex items-center gap-1.5 rounded-md border border-zinc-700/60 bg-zinc-900/60 px-2 py-1 text-[11px] text-zinc-300 transition hover:border-zinc-600"
-      >
-        {isRunning ? (
-          <span className="inline-block h-3 w-3 animate-spin rounded-full border border-zinc-500 border-t-cyan-400" />
-        ) : null}
-        <span>{isRunning ? '📝 applying patch…' : summary}</span>
-        <span className="ml-1 text-[9px]">{expanded ? '▾' : '▸'}</span>
-      </button>
-      {expanded && (
-        <div className="mt-1 rounded border border-zinc-800/50 bg-zinc-950/40 p-1">
+    <div className="my-2 overflow-hidden rounded-lg border border-zinc-800/80 bg-zinc-950/70">
+      <div className="flex items-center gap-2 border-b border-zinc-800/70 px-2.5 py-1.5 text-[11px] text-zinc-300">
+        {isRunning && <span className="h-2 w-2 animate-pulse rounded-full bg-cyan-300" />}
+        <span className="font-medium text-zinc-100">
+          {isRunning ? 'Applying changes...' : `${item.changes.length} file${item.changes.length === 1 ? '' : 's'} changed`}
+        </span>
+        <span className="ml-auto text-emerald-300">+{item.totalAdded}</span>
+        <span className="text-red-300">-{item.totalRemoved}</span>
+      </div>
+
+      {item.changes.length > 1 ? (
+        <div className="divide-y divide-zinc-800/70">
           {item.changes.map((change) => (
-            <FileDiffBlock key={change.path} change={change} />
-          ))}
-        </div>
-      )}
-      {references.length > 0 ? (
-        <div className="mt-1 flex flex-wrap gap-1">
-          {references.map((reference) => (
             <button
-              key={reference.id}
+              key={`${change.operation}:${change.path}`}
               type="button"
-              onClick={() => void openReference(reference)}
-              className="rounded border border-cyan-500/30 px-2 py-0.5 text-[10px] text-cyan-200 hover:bg-cyan-500/10"
+              aria-label={`Open diff for ${change.path}`}
+              onClick={() => void openAiChange(change)}
+              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[11px] text-zinc-300 transition hover:bg-cyan-500/5"
             >
-              Open diff
+              <span className="w-14 shrink-0 text-cyan-200/70">{operationLabel(change.operation)}</span>
+              <span className="min-w-0 flex-1 truncate font-mono" title={change.path}>
+                {change.path}
+              </span>
+              <span className="text-emerald-300">+{change.added}</span>
+              <span className="text-red-300">-{change.removed}</span>
             </button>
           ))}
         </div>
-      ) : null}
+      ) : (
+        item.changes.map((change) => (
+          <div key={`${change.operation}:${change.path}`} className="p-1.5">
+            <button
+              type="button"
+              aria-label={`Open diff for ${change.path}`}
+              onClick={() => void openAiChange(change)}
+              className="mb-1 flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-[11px] text-zinc-300 hover:bg-cyan-500/5"
+            >
+              <span className="text-cyan-200/70">{operationLabel(change.operation)}</span>
+              <span className="min-w-0 flex-1 truncate font-mono" title={change.path}>
+                {change.path}
+              </span>
+              <span className="text-emerald-300">+{change.added}</span>
+              <span className="text-red-300">-{change.removed}</span>
+            </button>
+            <FileDiffBlock change={change} />
+          </div>
+        ))
+      )}
     </div>
   )
 }

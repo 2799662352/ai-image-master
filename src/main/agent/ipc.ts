@@ -39,83 +39,204 @@ const AGENT_HANDLE_CHANNELS = [
   'agent:docker-gw-fix',
   'agent:docker-gw-status',
   'agent:docker-gw-stop',
+  'agent:get-providers',
+  'agent:set-active-provider',
+  'agent:set-provider-api-key',
+  'agent:add-custom-provider',
+  'agent:update-custom-provider',
+  'agent:remove-custom-provider',
 ]
 
-export function registerAgentIpc(manager: AgentManager, router: ToolRouter): void {
+export type GetAgentManager = () => Promise<AgentManager>
+export type GetToolRouter = () => ToolRouter | null
+
+// Registers all agent IPC handlers eagerly at app start. Each handler awaits
+// `getManager()` so renderer-side calls that fire before the AgentManager has
+// finished initializing (e.g. the chat sidebar's mount-time `agent:list-threads`)
+// block on the manager-ready promise instead of failing with "No handler
+// registered for ..." — which is the first-launch race users hit.
+export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetToolRouter): void {
   for (const channel of AGENT_HANDLE_CHANNELS) {
     ipcMain.removeHandler(channel)
   }
   ipcMain.removeAllListeners('agent:tool-response')
 
-  ipcMain.handle('agent:send-message', (_event, payload) => manager.sendMessage(payload))
+  ipcMain.handle('agent:send-message', async (_event, payload) =>
+    (await getManager()).sendMessage(payload),
+  )
   ipcMain.handle('agent:cancel', async (_event, payload) => {
-    await manager.cancel(payload.threadId)
+    await (await getManager()).cancel(payload.threadId)
     return { success: true }
   })
-  ipcMain.handle('agent:list-threads', () => manager.listThreads())
-  ipcMain.handle('agent:load-thread', (_event, threadId: string) => manager.loadThread(threadId))
-  ipcMain.handle('agent:open-thread', (_event, threadId: string) => manager.openThread(threadId))
-  ipcMain.handle('agent:rename-thread', (_event, threadId: string, title: string) =>
-    manager.renameThread(threadId, title),
+  ipcMain.handle('agent:list-threads', async () => (await getManager()).listThreads())
+  ipcMain.handle('agent:load-thread', async (_event, threadId: string) =>
+    (await getManager()).loadThread(threadId),
   )
-  ipcMain.handle('agent:delete-thread', (_event, threadId: string) => manager.deleteThread(threadId))
+  ipcMain.handle('agent:open-thread', async (_event, threadId: string) =>
+    (await getManager()).openThread(threadId),
+  )
+  ipcMain.handle('agent:rename-thread', async (_event, threadId: string, title: string) =>
+    (await getManager()).renameThread(threadId, title),
+  )
+  ipcMain.handle('agent:delete-thread', async (_event, threadId: string) =>
+    (await getManager()).deleteThread(threadId),
+  )
   ipcMain.handle('agent:set-api-key', async (_event, key: unknown) => {
     try {
-      await manager.setCodexApiKey(typeof key === 'string' ? key : '')
+      await (await getManager()).setCodexApiKey(typeof key === 'string' ? key : '')
       return { ok: true as const }
     } catch (err) {
       return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
     }
   })
-  ipcMain.handle('agent:test-connection', () => manager.testConnection())
-  ipcMain.handle('agent:get-session-status', () => manager.getSessionStatus())
-  ipcMain.handle('agent:set-session-config', (_event, patch: unknown) => manager.setSessionConfigPatch(patch))
-  ipcMain.handle('agent:set-allowed-roots', (_event, roots: unknown) => manager.setAllowedRoots(roots))
+  ipcMain.handle('agent:test-connection', async () => (await getManager()).testConnection())
+  ipcMain.handle('agent:get-session-status', async () => (await getManager()).getSessionStatus())
+  ipcMain.handle('agent:set-session-config', async (_event, patch: unknown) =>
+    (await getManager()).setSessionConfigPatch(patch),
+  )
+  ipcMain.handle('agent:set-allowed-roots', async (_event, roots: unknown) =>
+    (await getManager()).setAllowedRoots(roots),
+  )
   ipcMain.handle('agent:respond-approval', async (_event, payload: unknown) =>
-    manager.respondToApprovalResponse(validateApprovalResponse(payload)),
+    (await getManager()).respondToApprovalResponse(validateApprovalResponse(payload)),
   )
-  ipcMain.handle('agent:get-mcp-summary', () => manager.getMcpSummary())
-  ipcMain.handle('agent:get-skills-summary', () => manager.getSkillsSummary())
-  ipcMain.handle('agent:list-skills', () => handleWorkspaceRequest(() => manager.listSkills()))
-  ipcMain.handle('agent:get-skill-detail', (_event, id: unknown) =>
-    handleWorkspaceRequest(() => manager.getSkillDetail(validateWorkspaceId(id, 'Skill id'))),
+  ipcMain.handle('agent:get-mcp-summary', async () => (await getManager()).getMcpSummary())
+  ipcMain.handle('agent:get-skills-summary', async () => (await getManager()).getSkillsSummary())
+  ipcMain.handle('agent:list-skills', async () =>
+    handleWorkspaceRequest(async () => (await getManager()).listSkills()),
   )
-  ipcMain.handle('agent:save-skill', (_event, input: unknown) =>
-    handleWorkspaceRequest(() => manager.saveSkill(input as Parameters<AgentManager['saveSkill']>[0])),
+  ipcMain.handle('agent:get-skill-detail', async (_event, id: unknown) =>
+    handleWorkspaceRequest(async () =>
+      (await getManager()).getSkillDetail(validateWorkspaceId(id, 'Skill id')),
+    ),
   )
-  ipcMain.handle('agent:delete-skill', (_event, id: unknown) =>
-    handleWorkspaceRequest(() => manager.deleteSkill(validateWorkspaceId(id, 'Skill id'))),
+  ipcMain.handle('agent:save-skill', async (_event, input: unknown) =>
+    handleWorkspaceRequest(async () =>
+      (await getManager()).saveSkill(input as Parameters<AgentManager['saveSkill']>[0]),
+    ),
   )
-  ipcMain.handle('agent:get-workspace-logs', (_event, opts: unknown) =>
-    handleWorkspaceRequest(() => manager.getWorkspaceLogs(opts as Parameters<AgentManager['getWorkspaceLogs']>[0])),
+  ipcMain.handle('agent:delete-skill', async (_event, id: unknown) =>
+    handleWorkspaceRequest(async () =>
+      (await getManager()).deleteSkill(validateWorkspaceId(id, 'Skill id')),
+    ),
+  )
+  ipcMain.handle('agent:get-workspace-logs', async (_event, opts: unknown) =>
+    handleWorkspaceRequest(async () =>
+      (await getManager()).getWorkspaceLogs(opts as Parameters<AgentManager['getWorkspaceLogs']>[0]),
+    ),
   )
   ipcMain.handle('agent:restart-codex', async () => {
     try {
-      await manager.restartCodex()
+      await (await getManager()).restartCodex()
       return { ok: true as const }
     } catch (err) {
       return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
     }
   })
-  ipcMain.handle('agent:list-codex-threads', () => manager.listCodexThreads())
+  ipcMain.handle('agent:list-codex-threads', async () => (await getManager()).listCodexThreads())
   ipcMain.handle('agent:read-codex-thread', async (_event, threadId: unknown) =>
-    manager.readCodexThread(validateThreadId(threadId)),
+    (await getManager()).readCodexThread(validateThreadId(threadId)),
   )
   ipcMain.handle('agent:fork-codex-thread', async (_event, threadId: unknown) =>
-    manager.forkCodexThread(validateThreadId(threadId)),
+    (await getManager()).forkCodexThread(validateThreadId(threadId)),
   )
-  ipcMain.handle('agent:mcp-list-servers', (_event, params?: unknown) => manager.listMcpServersRpc(params))
-  ipcMain.handle('agent:mcp-batch-write', (_event, edits: unknown[], reload?: boolean) => manager.batchWriteConfigRpc(edits, reload))
-  ipcMain.handle('agent:mcp-write-value', (_event, keyPath: string, value: unknown) => manager.writeConfigValueRpc(keyPath, value))
-  ipcMain.handle('agent:mcp-reload', () => manager.reloadMcpServersRpc())
-  ipcMain.handle('agent:mcp-oauth-login', (_event, name: string) => manager.mcpOAuthLoginRpc(name))
-  ipcMain.handle('agent:mcp-read-config', () => manager.readConfigRpc())
-  ipcMain.handle('agent:mcp-status-snapshot', () => manager.getMcpStatusSnapshotRpc())
-  ipcMain.handle('agent:docker-gw-check', () => manager.dockerGatewayCheckRpc())
-  ipcMain.handle('agent:docker-gw-fix', (_event, opts?: { port?: number }) => manager.dockerGatewayFixRpc(opts))
-  ipcMain.handle('agent:docker-gw-status', () => manager.dockerGatewayStatusRpc())
-  ipcMain.handle('agent:docker-gw-stop', () => manager.dockerGatewayStopRpc())
-  ipcMain.on('agent:tool-response', (_event, response: AgentToolResponse) => router.handleRendererResponse(response))
+  ipcMain.handle('agent:mcp-list-servers', async (_event, params?: unknown) =>
+    (await getManager()).listMcpServersRpc(params),
+  )
+  ipcMain.handle('agent:mcp-batch-write', async (_event, edits: unknown[], reload?: boolean) =>
+    (await getManager()).batchWriteConfigRpc(edits, reload),
+  )
+  ipcMain.handle('agent:mcp-write-value', async (_event, keyPath: string, value: unknown) =>
+    (await getManager()).writeConfigValueRpc(keyPath, value),
+  )
+  ipcMain.handle('agent:mcp-reload', async () => (await getManager()).reloadMcpServersRpc())
+  ipcMain.handle('agent:mcp-oauth-login', async (_event, name: string) =>
+    (await getManager()).mcpOAuthLoginRpc(name),
+  )
+  ipcMain.handle('agent:mcp-read-config', async () => (await getManager()).readConfigRpc())
+  ipcMain.handle('agent:mcp-status-snapshot', async () =>
+    (await getManager()).getMcpStatusSnapshotRpc(),
+  )
+  ipcMain.handle('agent:docker-gw-check', async () => (await getManager()).dockerGatewayCheckRpc())
+  ipcMain.handle('agent:docker-gw-fix', async (_event, opts?: { port?: number }) =>
+    (await getManager()).dockerGatewayFixRpc(opts),
+  )
+  ipcMain.handle('agent:docker-gw-status', async () => (await getManager()).dockerGatewayStatusRpc())
+  ipcMain.handle('agent:docker-gw-stop', async () => (await getManager()).dockerGatewayStopRpc())
+
+  // ----- Codex provider management (v4.3+) -----
+  ipcMain.handle('agent:get-providers', async () => {
+    try {
+      const snapshot = await (await getManager()).getProvidersSnapshot()
+      return { ok: true as const, ...snapshot }
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+  ipcMain.handle('agent:set-active-provider', async (_event, id: unknown) => {
+    try {
+      const validated = validateWorkspaceId(id, 'Provider id')
+      const result = await (await getManager()).setActiveProvider(validated)
+      return { ok: true as const, activeId: result.activeId }
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+  ipcMain.handle(
+    'agent:set-provider-api-key',
+    async (_event, id: unknown, key: unknown) => {
+      try {
+        const validated = validateWorkspaceId(id, 'Provider id')
+        await (await getManager()).setProviderApiKey(
+          validated,
+          typeof key === 'string' ? key : '',
+        )
+        return { ok: true as const }
+      } catch (err) {
+        return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  )
+  ipcMain.handle('agent:add-custom-provider', async (_event, input: unknown) => {
+    try {
+      const created = await (await getManager()).addCustomProvider(
+        validateCustomProviderInput(input),
+      )
+      return { ok: true as const, provider: created }
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+  ipcMain.handle(
+    'agent:update-custom-provider',
+    async (_event, id: unknown, patch: unknown) => {
+      try {
+        const validatedId = validateWorkspaceId(id, 'Provider id')
+        const validatedPatch = validateCustomProviderPatch(patch)
+        await (await getManager()).updateCustomProvider(validatedId, validatedPatch)
+        return { ok: true as const }
+      } catch (err) {
+        return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  )
+  ipcMain.handle('agent:remove-custom-provider', async (_event, id: unknown) => {
+    try {
+      const validated = validateWorkspaceId(id, 'Provider id')
+      const result = await (await getManager()).removeCustomProvider(validated)
+      return { ok: true as const, activeId: result.activeId }
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  // Tool-response routing only takes effect once the catimation MCP HTTP
+  // listener is live (router != null). Resolving the router lazily lets us
+  // register the listener at startup regardless of MCP boot order.
+  ipcMain.on('agent:tool-response', (_event, response: AgentToolResponse) => {
+    const router = getRouter()
+    if (router) router.handleRendererResponse(response)
+  })
 }
 
 async function handleWorkspaceRequest<T>(
@@ -161,4 +282,134 @@ function validateThreadId(value: unknown): string {
     throw new Error('Codex thread id must be a non-empty string')
   }
   return value
+}
+
+const ALLOWED_EXTRA_VALUE_TYPES = new Set(['string', 'boolean', 'number'])
+
+function validateExtraTopLevelConfig(value: unknown): Record<string, string | boolean | number> | undefined {
+  if (value === undefined || value === null) return undefined
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('extraTopLevelConfig must be an object of scalar values')
+  }
+  const result: Record<string, string | boolean | number> = {}
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_.-]*$/.test(key)) {
+      throw new Error(`extraTopLevelConfig key "${key}" is not a valid TOML key`)
+    }
+    if (!ALLOWED_EXTRA_VALUE_TYPES.has(typeof raw)) {
+      throw new Error(
+        `extraTopLevelConfig value for "${key}" must be string|boolean|number`,
+      )
+    }
+    result[key] = raw as string | boolean | number
+  }
+  return result
+}
+
+function validateCustomProviderInput(value: unknown): {
+  id?: string
+  name: string
+  baseUrl: string
+  envKey: string
+  model?: string
+  reasoningEffort?: string
+  verbosity?: string
+  requiresOpenaiAuth?: boolean
+  extraTopLevelConfig?: Record<string, string | boolean | number>
+  description?: string
+} {
+  if (!value || typeof value !== 'object') {
+    throw new Error('Custom provider input must be an object')
+  }
+  const v = value as Record<string, unknown>
+  if (typeof v.name !== 'string' || v.name.trim().length === 0) {
+    throw new Error('Custom provider name must be a non-empty string')
+  }
+  if (typeof v.baseUrl !== 'string' || v.baseUrl.trim().length === 0) {
+    throw new Error('Custom provider baseUrl must be a non-empty string')
+  }
+  return {
+    name: v.name.trim(),
+    baseUrl: v.baseUrl.trim(),
+    envKey: typeof v.envKey === 'string' && v.envKey.trim() ? v.envKey.trim() : 'OPENAI_API_KEY',
+    ...(typeof v.id === 'string' && v.id.trim() ? { id: v.id.trim() } : {}),
+    ...(typeof v.model === 'string' && v.model ? { model: v.model } : {}),
+    ...(typeof v.reasoningEffort === 'string' && v.reasoningEffort
+      ? { reasoningEffort: v.reasoningEffort }
+      : {}),
+    ...(typeof v.verbosity === 'string' && v.verbosity ? { verbosity: v.verbosity } : {}),
+    ...(typeof v.requiresOpenaiAuth === 'boolean'
+      ? { requiresOpenaiAuth: v.requiresOpenaiAuth }
+      : {}),
+    ...(typeof v.description === 'string' && v.description ? { description: v.description } : {}),
+    ...(v.extraTopLevelConfig !== undefined
+      ? { extraTopLevelConfig: validateExtraTopLevelConfig(v.extraTopLevelConfig) ?? {} }
+      : {}),
+  }
+}
+
+function validateCustomProviderPatch(value: unknown): {
+  name?: string
+  baseUrl?: string
+  envKey?: string
+  model?: string
+  reasoningEffort?: string
+  verbosity?: string
+  requiresOpenaiAuth?: boolean
+  extraTopLevelConfig?: Record<string, string | boolean | number>
+  description?: string
+} {
+  if (!value || typeof value !== 'object') {
+    throw new Error('Custom provider patch must be an object')
+  }
+  const v = value as Record<string, unknown>
+  const out: ReturnType<typeof validateCustomProviderPatch> = {}
+  if (v.name !== undefined) {
+    if (typeof v.name !== 'string' || v.name.trim().length === 0) {
+      throw new Error('Custom provider name must be a non-empty string')
+    }
+    out.name = v.name.trim()
+  }
+  if (v.baseUrl !== undefined) {
+    if (typeof v.baseUrl !== 'string' || v.baseUrl.trim().length === 0) {
+      throw new Error('Custom provider baseUrl must be a non-empty string')
+    }
+    out.baseUrl = v.baseUrl.trim()
+  }
+  if (v.envKey !== undefined) {
+    if (typeof v.envKey !== 'string') throw new Error('Custom provider envKey must be a string')
+    out.envKey = v.envKey
+  }
+  if (v.model !== undefined) {
+    if (typeof v.model !== 'string') throw new Error('Custom provider model must be a string')
+    out.model = v.model
+  }
+  if (v.reasoningEffort !== undefined) {
+    if (typeof v.reasoningEffort !== 'string') {
+      throw new Error('Custom provider reasoningEffort must be a string')
+    }
+    out.reasoningEffort = v.reasoningEffort
+  }
+  if (v.verbosity !== undefined) {
+    if (typeof v.verbosity !== 'string') {
+      throw new Error('Custom provider verbosity must be a string')
+    }
+    out.verbosity = v.verbosity
+  }
+  if (v.requiresOpenaiAuth !== undefined) {
+    if (typeof v.requiresOpenaiAuth !== 'boolean') {
+      throw new Error('Custom provider requiresOpenaiAuth must be a boolean')
+    }
+    out.requiresOpenaiAuth = v.requiresOpenaiAuth
+  }
+  if (v.description !== undefined) {
+    if (typeof v.description !== 'string') {
+      throw new Error('Custom provider description must be a string')
+    }
+    out.description = v.description
+  }
+  if (v.extraTopLevelConfig !== undefined) {
+    out.extraTopLevelConfig = validateExtraTopLevelConfig(v.extraTopLevelConfig) ?? {}
+  }
+  return out
 }

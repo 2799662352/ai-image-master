@@ -27,10 +27,16 @@ export function useEraseEvents(): void {
       if (channel === 'erase:progress') {
         const d = data as EraseProgressEvent
         const prev = session.activeTasks.find((t) => t.id === d.taskId)
+        // Only assign optional fields when the event actually carries them.
+        // The 'submitting' emit (before the first DescribeTaskDetail poll)
+        // omits mpsProgress + taskDetail; if we wrote `undefined` here, the
+        // store's spread would clobber any previously-seen real progress.
         const patch: Partial<typeof prev & {}> = {
-          uploadProgress: d.uploadProgress,
           mpsTaskId: d.mpsTaskId,
         }
+        if (d.uploadProgress !== undefined) patch.uploadProgress = d.uploadProgress
+        if (d.mpsProgress !== undefined) patch.mpsProgress = d.mpsProgress
+        if (d.taskDetail !== undefined) patch.taskDetail = d.taskDetail
         if (d.status === 'processing' && prev?.status !== 'processing') {
           patch.processingStartedAt = Date.now()
         }

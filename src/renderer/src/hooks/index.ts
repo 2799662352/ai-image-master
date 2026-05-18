@@ -7,3 +7,4 @@ export {
   usePageState,
   useTranslation,
 } from './useService'
+export { useAutosizeTextarea } from './useAutosizeTextarea'

@@ -759,7 +759,7 @@
       "referenceImage": "Reference Image",
       "referenceImages": "Reference Images",
       "uploadHint": "Click or drag to upload reference images",
-      "uploadFormat": "Supports JPG, PNG, WebP formats, up to 8 images",
+      "uploadFormat": "Supports JPG, PNG, WebP formats, up to 12 images",
       "multiImageHint": "Multiple reference images improve character consistency",
       "sceneDescription": "Scene Description",
       "optional": "(Optional)",
@@ -940,7 +940,7 @@
     },
     "galleryModal": {
       "title": "Example Gallery",
-      "hint": "Click to select example images as reference (max 8)",
+      "hint": "Click to select example images as reference (max 12)",
       "cancel": "Cancel",
       "confirm": "Confirm Selection",
       "editMode": "Edit",

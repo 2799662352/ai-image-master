@@ -1,4 +1,6 @@
+import { useRef } from 'react'
 import { useDirectorStore } from '../stores/useDirectorStore'
+import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea'
 
 function parseSceneCount(text: string): number {
   if (!text.trim()) return 0
@@ -12,6 +14,9 @@ export function ModeSelector() {
   const setMultiSceneText = useDirectorStore((s) => s.setMultiSceneText)
 
   const sceneCount = parseSceneCount(multiSceneText)
+  const multiRef = useRef<HTMLTextAreaElement>(null)
+  // Multi-scene mode can grow long; cap at 32 rows before internal scroll.
+  useAutosizeTextarea(multiRef, multiSceneText, { minRows: 8, maxRows: 32 })
 
   return (
     <div className="bg-[#27272A] rounded-none p-4">
@@ -55,11 +60,12 @@ export function ModeSelector() {
             <span className="text-white opacity-50 text-sm">{sceneCount} 个场景</span>
           </div>
           <textarea
+            ref={multiRef}
             value={multiSceneText}
             onChange={(e) => setMultiSceneText(e.target.value)}
             rows={8}
             placeholder={"每个场景用空行分隔，例如：\n\n场景1：男主站在雨中，背对镜头\n\n场景2：女主在窗边看书，阳光洒落\n\n场景3：两人在咖啡店相遇"}
-            className="w-full px-4 py-3 bg-[#09090B] border border-[#3F3F46] rounded-none text-white font-mono text-sm placeholder-white placeholder-opacity-30 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+            className="w-full px-4 py-3 bg-[#09090B] border border-[#3F3F46] rounded-none text-white font-mono text-sm placeholder-white placeholder-opacity-30 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none transition-[height] duration-100"
           />
           <p className="text-white opacity-30 text-xs mt-2">
             <i className="fas fa-info-circle mr-1" />

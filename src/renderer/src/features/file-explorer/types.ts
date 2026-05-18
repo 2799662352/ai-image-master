@@ -1,5 +1,6 @@
 import type { EditorState } from '@codemirror/state'
 import type { AgentReference } from '../../../../types/agent-reference'
+import type { FileChange } from '../../../../types/agent-timeline'
 
 export type FileSource = 'workspace' | 'attachments'
 
@@ -14,7 +15,7 @@ export type FileNode = {
   children?: FileNode[]
 }
 
-export type FileTabKind = 'text' | 'image' | 'video' | 'pdf' | 'binary' | 'reference' | 'compare'
+export type FileTabKind = 'text' | 'image' | 'video' | 'pdf' | 'binary' | 'reference' | 'compare' | 'ai-change'
 
 export type FileTab = {
   id: string
@@ -32,10 +33,17 @@ export type FileTab = {
    */
   referenceKey?: string
   reference?: AgentReference
+  aiChangeKey?: string
   /**
    * For `kind === 'compare'`: the two file paths being compared.
    */
   compare?: { left: string; right: string; leftContent: string; rightContent: string }
+  aiChange?: {
+    change: FileChange
+    beforeContent?: string
+    afterContent?: string
+    parseError?: string
+  }
 }
 
 export type WatchEvent = { type: 'add' | 'addDir' | 'change' | 'unlink' | 'unlinkDir'; path: string; mtime?: number }

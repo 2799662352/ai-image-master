@@ -115,6 +115,7 @@ export class CodexLocalBackend implements IAgentBackend {
   private readonly wsUrlOverride: string | undefined
   private readonly resourceRootOverride: string | undefined
   private sessionConfig: CodexSessionConfig
+  private currentProvider: CodexProviderConfig | undefined
   private configDirty = false
   private codexHome: string | undefined
 
@@ -123,6 +124,17 @@ export class CodexLocalBackend implements IAgentBackend {
     this.wsUrlOverride = options.wsUrl
     this.resourceRootOverride = options.resourceRoot
     this.sessionConfig = resolveCodexSessionConfig(options.sessionConfig)
+    this.currentProvider = options.provider
+  }
+
+  setProvider(provider: CodexProviderConfig | undefined): void {
+    this.currentProvider = provider
+    // Mark config dirty so callers driving config-change-then-restart see the
+    // pending change reflected in `isConfigDirty()`. The new provider takes
+    // effect on the next `restartCodex()` / `start()` cycle — we deliberately
+    // do not kill the running process here so a UI flicker doesn't turn into
+    // a hard restart on every keystroke.
+    this.configDirty = true
   }
 
   async start(): Promise<void> {
@@ -174,7 +186,7 @@ export class CodexLocalBackend implements IAgentBackend {
       bin,
       buildCodexLaunchArgs({
         listenUrl,
-        provider: this.options.provider,
+        provider: this.currentProvider,
         sessionConfig: this.sessionConfig,
       }),
       {

@@ -1,5 +1,6 @@
-import { app, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain } from 'electron'
 import type { PrismaClient } from '@prisma/client'
+import type EventEmitter from 'node:events'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { FileNodeIpc } from './fsIpc'
@@ -73,4 +74,39 @@ export function registerAttachmentsTreeIpc(prismaGetter: () => PrismaLike | Prom
     const rows = await prisma.agentAttachment.findMany({ orderBy: { uploadedAt: 'desc' } })
     return buildAttachmentTreeFromInputs(uploadsDir, rows)
   })
+}
+
+/**
+ * Bridge `AttachmentService` success events to every open BrowserWindow as the
+ * `attachments:changed` IPC channel. Mirrors the fs watcher push pattern in
+ * `fsIpc.ts` so the renderer's ATTACHMENTS panel never has to poll.
+ *
+ * Returns a cleanup that removes the listener — used by tests; production
+ * lifetime is bound to the AttachmentService instance, which lives for the
+ * whole AgentRuntime session.
+ *
+ * Why this is the correct seam:
+ *  - AttachmentService is the only place that performs successful ingests.
+ *  - The Prisma row is created inside `ingestOne`, so the event fires AFTER
+ *    both disk write + DB row are durable. The renderer's `listTree` pull will
+ *    see the new row.
+ *  - We broadcast a content-free signal ("something changed, pull again")
+ *    rather than the row payload itself. This keeps the contract one-way and
+ *    avoids race-y partial-tree updates if multiple ingests interleave.
+ */
+export function wireAttachmentBroadcast(
+  service: EventEmitter,
+  windowsGetter: () => BrowserWindow[] = () => BrowserWindow.getAllWindows(),
+): () => void {
+  const handler = (): void => {
+    for (const win of windowsGetter()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send('attachments:changed')
+      }
+    }
+  }
+  service.on('attachment-added', handler)
+  return () => {
+    service.off('attachment-added', handler)
+  }
 }

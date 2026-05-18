@@ -3,6 +3,7 @@ import type React from 'react'
 import YAML from 'yaml'
 
 import type { AgentApiResult, CodexConfigScope, CodexSkillInput } from '../../../../types/agent'
+import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea'
 
 type SkillEditorApi = {
   agent?: {
@@ -32,6 +33,10 @@ export function SkillEditor({ mode, onClose }: SkillEditorProps): React.JSX.Elem
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const mountedRef = useRef(false)
+  const instructionsRef = useRef<HTMLTextAreaElement>(null)
+  const rawRef = useRef<HTMLTextAreaElement>(null)
+  useAutosizeTextarea(instructionsRef, input.instructions, { minRows: 12, maxRows: 32 })
+  useAutosizeTextarea(rawRef, rawText, { minRows: 18, maxRows: 40 })
 
   useEffect(() => {
     mountedRef.current = true
@@ -188,18 +193,20 @@ export function SkillEditor({ mode, onClose }: SkillEditorProps): React.JSX.Elem
           </Field>
           <Field label="Instructions">
             <textarea
+              ref={instructionsRef}
               value={input.instructions}
               onChange={(event) => setInput({ ...input, instructions: event.target.value })}
-              className="h-48 rounded border border-zinc-800 bg-zinc-950 px-2 py-1 font-mono text-sm text-zinc-100"
+              className="rounded border border-zinc-800 bg-zinc-950 px-2 py-1 font-mono text-sm text-zinc-100 transition-[height] duration-100"
             />
           </Field>
         </div>
       ) : (
         <textarea
+          ref={rawRef}
           data-testid="skill-raw-editor"
           value={rawText}
           onChange={(event) => setRawText(event.target.value)}
-          className="h-72 w-full rounded border border-zinc-800 bg-zinc-950 p-2 font-mono text-xs text-zinc-100"
+          className="w-full rounded border border-zinc-800 bg-zinc-950 p-2 font-mono text-xs text-zinc-100 transition-[height] duration-100"
         />
       )}
 

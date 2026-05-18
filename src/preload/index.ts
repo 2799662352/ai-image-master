@@ -189,6 +189,12 @@ const IPC_CHANNELS = {
     OPEN_THREAD: 'agent:open-thread',
     RENAME_THREAD: 'agent:rename-thread',
     DELETE_THREAD: 'agent:delete-thread',
+    GET_PROVIDERS: 'agent:get-providers',
+    SET_ACTIVE_PROVIDER: 'agent:set-active-provider',
+    SET_PROVIDER_API_KEY: 'agent:set-provider-api-key',
+    ADD_CUSTOM_PROVIDER: 'agent:add-custom-provider',
+    UPDATE_CUSTOM_PROVIDER: 'agent:update-custom-provider',
+    REMOVE_CUSTOM_PROVIDER: 'agent:remove-custom-provider',
   },
   AGENT_EVENTS: [
     'agent:event',
@@ -223,6 +229,7 @@ const IPC_CHANNELS = {
   },
   ATTACHMENTS: {
     LIST_TREE: 'attachments:list-tree',
+    CHANGED: 'attachments:changed',
   },
 } as const
 
@@ -292,6 +299,38 @@ export type FileExplorerStat =
   | { ok: true; size: number; mime: string; mtime: number }
   | { ok: false; reason: string }
 
+/**
+ * Renderer-side mirror of `ProviderPreset` from
+ * `src/main/agent/codexProviders.ts`. Kept in sync manually because preload is
+ * a sandboxed module that can't import main-process files at type-check time.
+ */
+export interface CodexProviderRecord {
+  id: string
+  name: string
+  baseUrl: string
+  envKey: string
+  model?: string
+  reasoningEffort?: string
+  verbosity?: string
+  requiresOpenaiAuth?: boolean
+  extraTopLevelConfig?: Record<string, string | boolean | number>
+  description?: string
+  isCustom?: boolean
+}
+
+export interface CodexCustomProviderInput {
+  id?: string
+  name: string
+  baseUrl: string
+  envKey?: string
+  model?: string
+  reasoningEffort?: string
+  verbosity?: string
+  requiresOpenaiAuth?: boolean
+  extraTopLevelConfig?: Record<string, string | boolean | number>
+  description?: string
+}
+
 export interface ElectronAPI {
   isElectron: boolean
   // AI Skills
@@ -349,6 +388,24 @@ export interface ElectronAPI {
     dockerGatewayStatus: () => Promise<{ running: boolean; port: number | null; pid: number | null; profile: string | null }>
     dockerGatewayStop: () => Promise<{ ok: boolean; error?: string }>
     onMcpStatus: (handler: (event: any) => void) => () => void
+    getProviders: () => Promise<{
+      ok: boolean
+      error?: string
+      builtins?: CodexProviderRecord[]
+      custom?: CodexProviderRecord[]
+      activeId?: string
+      apiKeys?: Record<string, string>
+    }>
+    setActiveProvider: (id: string) => Promise<{ ok: boolean; error?: string; activeId?: string }>
+    setProviderApiKey: (id: string, key: string) => Promise<{ ok: boolean; error?: string }>
+    addCustomProvider: (
+      input: CodexCustomProviderInput,
+    ) => Promise<{ ok: boolean; error?: string; provider?: CodexProviderRecord }>
+    updateCustomProvider: (
+      id: string,
+      patch: Partial<CodexCustomProviderInput>,
+    ) => Promise<{ ok: boolean; error?: string }>
+    removeCustomProvider: (id: string) => Promise<{ ok: boolean; error?: string; activeId?: string }>
   }
   // Shell helpers (clipboard / save dialog)
   shell: {
@@ -377,6 +434,7 @@ export interface ElectronAPI {
   }
   attachments: {
     listTree: () => Promise<FileExplorerNode[]>
+    onChanged: (cb: () => void) => () => void
   }
   // 图片存储
   saveImage: (base64Data: string, filename: string) => Promise<SaveImageResponse>
@@ -761,6 +819,49 @@ const electronAPI: ElectronAPI = {
         snapshot?: Record<string, { status: string; error: string | null }>
         error?: string
       }>(IPC_CHANNELS.AGENT.MCP_STATUS_SNAPSHOT),
+
+    // ----- Codex provider management (v4.3+) -----
+    getProviders: () =>
+      safeInvoke<{
+        ok: boolean
+        error?: string
+        builtins?: CodexProviderRecord[]
+        custom?: CodexProviderRecord[]
+        activeId?: string
+        apiKeys?: Record<string, string>
+      }>(IPC_CHANNELS.AGENT.GET_PROVIDERS),
+
+    setActiveProvider: (id: string) =>
+      safeInvoke<{ ok: boolean; error?: string; activeId?: string }>(
+        IPC_CHANNELS.AGENT.SET_ACTIVE_PROVIDER,
+        id,
+      ),
+
+    setProviderApiKey: (id: string, key: string) =>
+      safeInvoke<{ ok: boolean; error?: string }>(
+        IPC_CHANNELS.AGENT.SET_PROVIDER_API_KEY,
+        id,
+        key,
+      ),
+
+    addCustomProvider: (input: CodexCustomProviderInput) =>
+      safeInvoke<{ ok: boolean; error?: string; provider?: CodexProviderRecord }>(
+        IPC_CHANNELS.AGENT.ADD_CUSTOM_PROVIDER,
+        input,
+      ),
+
+    updateCustomProvider: (id: string, patch: Partial<CodexCustomProviderInput>) =>
+      safeInvoke<{ ok: boolean; error?: string }>(
+        IPC_CHANNELS.AGENT.UPDATE_CUSTOM_PROVIDER,
+        id,
+        patch,
+      ),
+
+    removeCustomProvider: (id: string) =>
+      safeInvoke<{ ok: boolean; error?: string; activeId?: string }>(
+        IPC_CHANNELS.AGENT.REMOVE_CUSTOM_PROVIDER,
+        id,
+      ),
   },
 
   // ============ Shell helpers (clipboard / save dialog) ============
@@ -834,6 +935,11 @@ const electronAPI: ElectronAPI = {
   attachments: {
     listTree: () =>
       safeInvoke<FileExplorerNode[]>(IPC_CHANNELS.ATTACHMENTS.LIST_TREE),
+    onChanged: (cb: () => void) => {
+      const handler = (): void => cb()
+      ipcRenderer.on(IPC_CHANNELS.ATTACHMENTS.CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.ATTACHMENTS.CHANGED, handler)
+    },
   },
 
   // ============ 系统主题监听 ============

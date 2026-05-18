@@ -84,3 +84,37 @@ describe('generationStatus state machine', () => {
     expect(useDirectorStore.getState().generationStatus).toBe('idle')
   })
 })
+
+describe('pendingCount (v4.2.7 Director queue)', () => {
+  beforeEach(() => {
+    window.localStorage.clear()
+    useDirectorStore.getState().reset()
+  })
+
+  it('defaults to 0', () => {
+    expect(useDirectorStore.getState().pendingCount).toBe(0)
+  })
+
+  it('accepts an absolute value', () => {
+    useDirectorStore.getState().setPendingCount(3)
+    expect(useDirectorStore.getState().pendingCount).toBe(3)
+  })
+
+  it('accepts an updater function over the previous value', () => {
+    useDirectorStore.getState().setPendingCount(2)
+    useDirectorStore.getState().setPendingCount((prev) => prev + 5)
+    expect(useDirectorStore.getState().pendingCount).toBe(7)
+  })
+
+  it('clamps to 0 to prevent negative counts (enqueue/dequeue race protection)', () => {
+    useDirectorStore.getState().setPendingCount(1)
+    useDirectorStore.getState().setPendingCount((prev) => prev - 5)
+    expect(useDirectorStore.getState().pendingCount).toBe(0)
+  })
+
+  it('reset() returns pendingCount to 0', () => {
+    useDirectorStore.getState().setPendingCount(4)
+    useDirectorStore.getState().reset()
+    expect(useDirectorStore.getState().pendingCount).toBe(0)
+  })
+})

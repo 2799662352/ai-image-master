@@ -94,8 +94,8 @@ describe('agent IPC workspace handlers', () => {
     ;(ipcMain as unknown as { __reset: () => void }).__reset()
     manager = makeManager()
     registerAgentIpc(
-      manager as unknown as Parameters<typeof registerAgentIpc>[0],
-      router as unknown as Parameters<typeof registerAgentIpc>[1],
+      () => Promise.resolve(manager as unknown as Awaited<ReturnType<Parameters<typeof registerAgentIpc>[0]>>),
+      () => router as unknown as ReturnType<Parameters<typeof registerAgentIpc>[1]>,
     )
   })
 
@@ -126,8 +126,8 @@ describe('agent IPC workspace handlers', () => {
     const nextManager = makeManager()
 
     registerAgentIpc(
-      nextManager as unknown as Parameters<typeof registerAgentIpc>[0],
-      router as unknown as Parameters<typeof registerAgentIpc>[1],
+      () => Promise.resolve(nextManager as unknown as Awaited<ReturnType<Parameters<typeof registerAgentIpc>[0]>>),
+      () => router as unknown as ReturnType<Parameters<typeof registerAgentIpc>[1]>,
     )
 
     expect(get('agent:save-skill')).toBeTypeOf('function')

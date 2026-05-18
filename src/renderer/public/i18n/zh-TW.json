@@ -884,7 +884,7 @@
     "labels": {
       "referenceImage": "參考圖",
       "uploadHint": "點擊或拖曳上傳參考圖",
-      "uploadFormat": "支援 JPG、PNG、WebP 格式，最多8張",
+      "uploadFormat": "支援 JPG、PNG、WebP 格式，最多12張",
       "multiImageHint": "多張參考圖可提高角色一致性",
       "sceneDescription": "場景描述",
       "optional": "(可選)",
@@ -1025,7 +1025,7 @@
     },
     "galleryModal": {
       "title": "示例圖庫",
-      "hint": "點擊選擇示例圖片作為參考圖，可多選（最多8張）",
+      "hint": "點擊選擇示例圖片作為參考圖，可多選（最多12張）",
       "cancel": "取消",
       "confirm": "確認選擇",
       "editMode": "編輯",

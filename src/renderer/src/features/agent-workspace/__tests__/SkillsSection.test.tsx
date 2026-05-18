@@ -12,7 +12,7 @@ afterEach(() => {
 })
 
 describe('SkillsSection', () => {
-  it('lists workspace and personal skills with insert action', async () => {
+  it('lists repo and user skills with insert action', async () => {
     const insertText = vi.fn()
     Object.defineProperty(window, 'electronAPI', {
       configurable: true,
@@ -20,17 +20,17 @@ describe('SkillsSection', () => {
         agent: {
           listSkills: vi.fn().mockResolvedValue([
             {
-              id: 'workspace:demo',
+              id: 'repo:demo',
               name: 'demo',
-              scope: 'workspace',
+              scope: 'repo',
               path: '/p/.agents/skills/demo/SKILL.md',
               description: 'do x',
               warnings: [],
             },
             {
-              id: 'personal:helper',
+              id: 'user:helper',
               name: 'helper',
-              scope: 'personal',
+              scope: 'user',
               path: '/h/.agents/skills/helper/SKILL.md',
               description: 'helps',
               warnings: [],
@@ -103,9 +103,9 @@ describe('SkillsSection', () => {
         agent: {
           listSkills: vi.fn().mockResolvedValue([
             {
-              id: 'workspace:demo',
+              id: 'repo:demo',
               name: 'demo',
-              scope: 'workspace',
+              scope: 'repo',
               path: '/p/.agents/skills/demo/SKILL.md',
               description: 'do x',
               warnings: [],

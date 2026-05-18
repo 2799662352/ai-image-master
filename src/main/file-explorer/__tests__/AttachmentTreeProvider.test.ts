@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { EventEmitter } from 'node:events'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { buildAttachmentTreeFromInputs } from '../AttachmentTreeProvider'
+import { buildAttachmentTreeFromInputs, wireAttachmentBroadcast } from '../AttachmentTreeProvider'
 
 let dir: string
 beforeEach(async () => {
@@ -44,5 +45,49 @@ describe('buildAttachmentTreeFromInputs', () => {
   it('returns empty array when uploads dir does not exist', async () => {
     const r = await buildAttachmentTreeFromInputs(path.join(dir, 'missing'), [])
     expect(r).toEqual([])
+  })
+})
+
+describe('wireAttachmentBroadcast', () => {
+  it('forwards attachment-added events to every open BrowserWindow as attachments:changed', () => {
+    const sendA = vi.fn()
+    const sendB = vi.fn()
+    const win1 = {
+      isDestroyed: () => false,
+      webContents: { send: sendA },
+    }
+    const win2 = {
+      isDestroyed: () => false,
+      webContents: { send: sendB },
+    }
+    const service = new EventEmitter()
+
+    const cleanup = wireAttachmentBroadcast(service, () => [win1 as never, win2 as never])
+
+    service.emit('attachment-added', { saved: { originalName: 'foo.txt' } })
+
+    expect(sendA).toHaveBeenCalledWith('attachments:changed')
+    expect(sendB).toHaveBeenCalledWith('attachments:changed')
+
+    cleanup()
+    sendA.mockClear()
+    sendB.mockClear()
+    service.emit('attachment-added', { saved: { originalName: 'after-cleanup.txt' } })
+    expect(sendA).not.toHaveBeenCalled()
+    expect(sendB).not.toHaveBeenCalled()
+  })
+
+  it('skips destroyed windows so we never crash on already-closed renderers', () => {
+    const liveSend = vi.fn()
+    const deadSend = vi.fn()
+    const live = { isDestroyed: () => false, webContents: { send: liveSend } }
+    const dead = { isDestroyed: () => true, webContents: { send: deadSend } }
+    const service = new EventEmitter()
+
+    wireAttachmentBroadcast(service, () => [live as never, dead as never])
+    service.emit('attachment-added', { saved: { originalName: 'x.txt' } })
+
+    expect(liveSend).toHaveBeenCalledWith('attachments:changed')
+    expect(deadSend).not.toHaveBeenCalled()
   })
 })

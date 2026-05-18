@@ -13,6 +13,8 @@ import type {
 interface DiscoverSkillsOptions {
   cwd: string
   home: string
+  /** Optional path to the packaged installer's resources dir (process.resourcesPath). */
+  resourcesPath?: string
 }
 
 type UnknownRecord = Record<string, unknown>
@@ -74,12 +76,26 @@ export async function readMcpSummary(configPath: string): Promise<CodexMcpSummar
   return { servers, warnings: [] }
 }
 
-export async function discoverCodexSkills({ cwd, home }: DiscoverSkillsOptions): Promise<CodexSkillsSummary> {
+export async function discoverCodexSkills({
+  cwd,
+  home,
+  resourcesPath,
+}: DiscoverSkillsOptions): Promise<CodexSkillsSummary> {
   const warnings: string[] = []
-  const skillGroups = await Promise.all([
-    discoverSkillsInRoot(path.join(cwd, '.agents', 'skills'), 'workspace', warnings),
-    discoverSkillsInRoot(path.join(home, '.agents', 'skills'), 'home', warnings),
-  ])
+  // Codex official skill scopes (https://developers.openai.com/codex/skills):
+  // REPO (.agents/skills walked from CWD up to repo root)
+  // USER ($HOME/.agents/skills)
+  // SYSTEM (bundled with installation)
+  const scans: Promise<CodexSkillSummary[]>[] = [
+    discoverSkillsInRoot(path.join(cwd, '.agents', 'skills'), 'repo', warnings),
+    discoverSkillsInRoot(path.join(home, '.agents', 'skills'), 'user', warnings),
+  ]
+  if (resourcesPath) {
+    scans.push(
+      discoverSkillsInRoot(path.join(resourcesPath, '.agents', 'skills'), 'system', warnings),
+    )
+  }
+  const skillGroups = await Promise.all(scans)
 
   return {
     skills: skillGroups.flat(),

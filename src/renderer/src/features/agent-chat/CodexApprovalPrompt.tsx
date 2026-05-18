@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { CodexApprovalRequest, CodexApprovalResponse } from '../../../../types/agent'
+import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea'
 
 const SUMMARY_LIMIT = 800
 const PREFERRED_VALUE_LIMIT = 180
@@ -33,6 +34,8 @@ export function CodexApprovalPrompt({ request, onRespond }: CodexApprovalPromptP
   const [message, setMessage] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const kind = classifyMethod(request.method)
+  const messageRef = useRef<HTMLTextAreaElement>(null)
+  useAutosizeTextarea(messageRef, message, { minRows: 2, maxRows: 10 })
 
   async function respond(approved: boolean): Promise<void> {
     setSubmitting(true)
@@ -83,10 +86,11 @@ export function CodexApprovalPrompt({ request, onRespond }: CodexApprovalPromptP
       <label className="mt-2 block text-xs text-amber-100/80">
         {labels.denialLabel}
         <textarea
+          ref={messageRef}
           value={message}
           onChange={(event) => setMessage(event.target.value)}
           placeholder="Optional reason for denying this request"
-          className="mt-1 min-h-16 w-full resize-y rounded-lg border border-amber-300/20 bg-black/30 p-2 text-xs text-amber-50 outline-none placeholder:text-amber-100/30 focus:border-amber-200/50"
+          className="mt-1 w-full resize-none rounded-lg border border-amber-300/20 bg-black/30 p-2 text-xs text-amber-50 outline-none placeholder:text-amber-100/30 focus:border-amber-200/50 transition-[height] duration-100"
         />
       </label>
     </section>

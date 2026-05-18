@@ -10,6 +10,7 @@ import { BinaryViewer } from './BinaryViewer'
 import { ConflictModal } from './ConflictModal'
 import { ReferencePreview } from './ReferencePreview'
 import { DiffMergeView } from './DiffMergeView'
+import { AiChangeViewer } from './AiChangeViewer'
 import type { FileNode } from './types'
 
 function findNodeFlat(tree: FileNode[], target: string): FileNode | null {
@@ -71,6 +72,8 @@ function ActiveViewer() {
           </div>
         </div>
       )
+    case 'ai-change':
+      return <AiChangeViewer tab={tab} />
   }
 }
 

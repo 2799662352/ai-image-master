@@ -5,6 +5,7 @@ import { useUIPrefsStore } from '../stores/useUIPrefsStore'
 import { useApi } from '../hooks/useService'
 import { SiteGrid } from './settings/SiteGrid'
 import { ApiKeyInput } from './settings/ApiKeyInput'
+import { CodexProviderManager } from './settings/CodexProviderManager'
 
 function TencentCloudSection() {
   const addToast = useToastStore((s) => s.addToast)
@@ -262,16 +263,12 @@ export default function SettingsPage() {
           <span className="w-6 h-6 bg-cyberpunk-yellow text-cyberpunk-black flex items-center justify-center text-sm font-bold">
             🤖
           </span>
-          <span className="font-bold text-white uppercase tracking-tight">CODEX AGENT API KEY</span>
+          <span className="font-bold text-white uppercase tracking-tight">CODEX AGENT</span>
         </div>
         <p className="text-xs text-zinc-500">
-          用于 AI Agent (Ctrl+Shift+A)。需要 OpenAI 直连 sk- key
+          用于 AI Agent (Ctrl+Shift+A)。选择内置 provider 或添加自定义网关，每个 provider 单独存储 key。
         </p>
-        <ApiKeyInput
-          value={codexApiKey}
-          onChange={setCodexApiKey}
-          placeholder="sk-..."
-        />
+        <CodexProviderManager />
         <button
           onClick={handleTestCodex}
           disabled={!codexApiKey.trim() || testingCodex}
@@ -291,7 +288,9 @@ export default function SettingsPage() {
         <label className="flex items-center justify-between gap-4 cursor-pointer">
           <div>
             <div className="text-sm text-white font-medium">图片编辑工具条</div>
-            <div className="text-xs text-zinc-500">悬停图片时显示"多角度"和"打光"提示词助手按钮</div>
+            <div className="text-xs text-zinc-500">
+              在图生图 / 批量 / 对比页的提示词框旁，以及结果图悬停时显示「多角度」「打光」助手按钮
+            </div>
           </div>
           <button
             type="button"

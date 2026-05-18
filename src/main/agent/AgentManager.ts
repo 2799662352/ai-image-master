@@ -1,11 +1,18 @@
 import crypto from 'node:crypto'
-import { readFileSync } from 'node:fs'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { dialog } from 'electron'
+import { app, dialog } from 'electron'
 import { CodexLocalBackend } from './CodexLocalBackend'
+import { CodexProviderStore, type NewCustomProvider } from './CodexProviderStore'
 import { DEFAULT_CODEX_SESSION_CONFIG } from './codexLaunch'
+import {
+  BUILTIN_PROVIDER_PRESETS,
+  DEFAULT_PROVIDER_ID,
+  isBuiltinProviderId,
+  resolveActiveProvider,
+  type ProviderPreset,
+} from './codexProviders'
 import { getDockerMcpGatewayService, type CheckInstalledResult, type GatewayStatus } from './dockerMcpGateway'
 import {
   GATEWAY_DEFAULT_PORT,
@@ -48,28 +55,21 @@ import type { AgentInput, IAgentBackend } from './types'
 import { ThreadTitleSummarizer } from './ThreadTitleSummarizer'
 import { setFsAllowedRoots } from '../file-explorer/fsIpc'
 
-const CODEX_API_KEY_FILE = 'codex-agent.json'
 const EMPTY_KEY_ERROR = '请在设置页填写 Codex Agent API Key'
 
 /**
- * Default Codex provider config. Points at API易 (apiyi), an
- * OpenAI-compatible Responses API gateway. Hardcoded for MVP — eventually we
- * should expose this via the same settings page that hosts the API key.
+ * Default Codex agent model used by the ThreadTitleSummarizer (and as the
+ * fallback model id when a provider preset doesn't pin its own). `gpt-5.5`
+ * ships full Responses-API tool support including the native `web_search`
+ * tool that Codex 0.128 `app-server` registers by default. Keep in sync with
+ * the renderer-side `DEFAULT_MODEL_ID` in
+ * `src/renderer/src/features/agent-chat/models.ts`.
  *
- * `gpt-5.5` is the default — it ships full Responses-API tool support
- * including the native `web_search` tool that Codex 0.128 `app-server`
- * registers by default. `gpt-4.1-mini` was the previous default but rejected
- * `tools[i].type='web_search'` with a 400 invalid_value through this
- * gateway. Keep this in sync with the renderer-side `DEFAULT_MODEL_ID`
- * in `src/renderer/src/features/agent-chat/models.ts`.
+ * Provider-specific defaults (e.g. Right.Codes' `gpt-5.2` + `xhigh`) live in
+ * `codexProviders.ts:BUILTIN_PROVIDER_PRESETS` and are wired through
+ * `appendProviderArgs` — this constant is the renderer-facing fallback only.
  */
 const DEFAULT_AGENT_MODEL = 'gpt-5.5'
-const DEFAULT_PROVIDER = {
-  id: 'apiyi',
-  name: 'API Yi',
-  baseUrl: 'https://api.apiyi.com/v1',
-  envKey: 'OPENAI_API_KEY',
-} as const
 
 /**
  * Subset of `AgentAttachment` (Prisma row) we need to format the prompt
@@ -170,7 +170,8 @@ export class AgentManager {
   private readonly attachments: AttachmentService | undefined
   private readonly eventSink: ((event: AgentStreamEvent) => void) | undefined
   private readonly userDataDir: string
-  private readonly codexApiKeyPath: string
+  private readonly providerStore: CodexProviderStore
+  private activeProviderId: string
   private codexApiKey = ''
   private summarizer?: ThreadTitleSummarizer
   private sessionConfig: CodexSessionConfig = { ...DEFAULT_CODEX_SESSION_CONFIG }
@@ -201,11 +202,14 @@ export class AgentManager {
     this.attachments = opts.attachments
     this.eventSink = opts.eventSink
     this.userDataDir = opts.userDataDir
-    this.codexApiKeyPath = path.join(opts.userDataDir, CODEX_API_KEY_FILE)
-    this.loadCodexApiKey()
+    this.providerStore = new CodexProviderStore({ userDataDir: opts.userDataDir })
+    const persisted = this.providerStore.loadSync()
+    this.activeProviderId = persisted.selectedProviderId
+    this.codexApiKey = persisted.apiKeys[this.activeProviderId] ?? ''
+    const activeProvider = resolveActiveProvider(this.activeProviderId, persisted.customProviders)
     this.backend = opts.backend ?? new CodexLocalBackend({
       getApiKey: () => this.codexApiKey,
-      provider: DEFAULT_PROVIDER,
+      provider: activeProvider,
       sessionConfig: this.sessionConfig,
       onApprovalRequest: (request) => this.emitApprovalRequest(request),
       onMcpNotification: (event) => this.handleMcpNotification(event),
@@ -213,6 +217,12 @@ export class AgentManager {
     if (this.store) {
       this.summarizer = new ThreadTitleSummarizer(this.store, this.backend, DEFAULT_AGENT_MODEL)
     }
+    // Kick off async legacy migration in the background — the sync load above
+    // already covered the v4.3 file; this finishes the codex-agent.json →
+    // codex-providers.json one-way migration the first time the manager
+    // boots after upgrade. Failures are best-effort: the worst case is the
+    // user re-types their key once.
+    void this.providerStore.load().catch(() => {})
   }
 
   /**
@@ -259,6 +269,10 @@ export class AgentManager {
       home: os.homedir(),
       cwd: this.sessionConfig.writableRoots[0] ?? process.cwd(),
       userData: this.userDataDir,
+      // `app` may be `undefined` in vitest contexts that don't mock electron;
+      // we treat that case as "not packaged" so system-scope skill discovery
+      // simply skips, matching the dev-mode runtime behaviour.
+      resourcesPath: app?.isPackaged ? process.resourcesPath : undefined,
     })
   }
 
@@ -277,12 +291,139 @@ export class AgentManager {
     return this.codexApiKey
   }
 
+  /**
+   * Sets the API key for the *currently active* provider. Preserved as the
+   * IPC `agent:set-api-key` entry-point to keep the v4.2 settings UI
+   * working — new code paths should prefer `setProviderApiKey(id, key)`.
+   */
   async setCodexApiKey(key: string): Promise<void> {
-    const trimmed = key.trim()
-    const tmpPath = `${this.codexApiKeyPath}.tmp`
-    await fs.writeFile(tmpPath, JSON.stringify({ openaiApiKey: trimmed }), 'utf8')
-    await fs.rename(tmpPath, this.codexApiKeyPath)
-    this.codexApiKey = trimmed
+    await this.setProviderApiKey(this.activeProviderId, key)
+  }
+
+  // ---------------------------------------------------------------------
+  // Codex provider management (v4.3+)
+  // ---------------------------------------------------------------------
+
+  /**
+   * Returns the snapshot used by the Settings page: builtin presets, custom
+   * providers, the active id, and the per-provider api keys (so the UI can
+   * prefill input fields without a second roundtrip). Keys are returned
+   * verbatim — callers that render them in the DOM should mask them via
+   * the existing `<ApiKeyInput showToggle>` component.
+   */
+  async getProvidersSnapshot(): Promise<{
+    builtins: ProviderPreset[]
+    custom: ProviderPreset[]
+    activeId: string
+    apiKeys: Record<string, string>
+  }> {
+    const persisted = await this.providerStore.load()
+    return {
+      builtins: BUILTIN_PROVIDER_PRESETS.map((p) => ({ ...p })),
+      custom: persisted.customProviders.map((p) => ({ ...p })),
+      activeId: persisted.selectedProviderId,
+      apiKeys: { ...persisted.apiKeys },
+    }
+  }
+
+  async setActiveProvider(id: string): Promise<{ ok: true; activeId: string }> {
+    const persisted = await this.providerStore.load()
+    const provider = resolveActiveProvider(id, persisted.customProviders)
+    // resolveActiveProvider falls back to the apiyi preset when the id is
+    // unknown — surface that as an explicit error so UI bugs don't silently
+    // pin the user to an unintended provider.
+    if (provider.id !== id) {
+      throw new Error(`Unknown Codex provider id "${id}"`)
+    }
+    await this.providerStore.setSelectedId(id)
+    this.activeProviderId = id
+    this.codexApiKey = persisted.apiKeys[id] ?? ''
+    this.backend.setProvider?.(provider)
+    // Restart codex so the new base_url + model take effect immediately
+    // instead of waiting for the next user message. We swallow restart
+    // errors here — the renderer has already updated its state and a
+    // failed restart will surface as the next message timing out, which is
+    // less confusing than the settings save throwing.
+    if (this.backend.restartCodex) {
+      try {
+        await this.backend.restartCodex(this.workspacePaths())
+      } catch (err) {
+        console.warn('[AgentManager] restartCodex after setActiveProvider failed:', err)
+      }
+    }
+    return { ok: true, activeId: id }
+  }
+
+  async setProviderApiKey(id: string, key: string): Promise<{ ok: true }> {
+    await this.providerStore.setApiKey(id, key)
+    if (id === this.activeProviderId) {
+      this.codexApiKey = (key ?? '').trim()
+    }
+    return { ok: true }
+  }
+
+  async addCustomProvider(input: NewCustomProvider): Promise<ProviderPreset> {
+    const trimmedName = input.name?.trim() ?? ''
+    if (!trimmedName) throw new Error('Provider name is required')
+    try {
+      new URL(input.baseUrl)
+    } catch {
+      throw new Error('Provider baseUrl must be a valid URL')
+    }
+    return this.providerStore.addCustomProvider({ ...input, name: trimmedName })
+  }
+
+  async updateCustomProvider(
+    id: string,
+    patch: Partial<Omit<ProviderPreset, 'id' | 'isCustom'>>,
+  ): Promise<{ ok: true }> {
+    if (isBuiltinProviderId(id)) throw new Error('Cannot update builtin provider')
+    if (patch.baseUrl !== undefined) {
+      try {
+        new URL(patch.baseUrl)
+      } catch {
+        throw new Error('Provider baseUrl must be a valid URL')
+      }
+    }
+    await this.providerStore.updateCustomProvider(id, patch)
+    if (id === this.activeProviderId) {
+      // Re-resolve the active provider with the patched data and restart so
+      // the new model / baseUrl reaches Codex without an app reload.
+      const persisted = await this.providerStore.load()
+      const refreshed = resolveActiveProvider(id, persisted.customProviders)
+      this.backend.setProvider?.(refreshed)
+      if (this.backend.restartCodex) {
+        try {
+          await this.backend.restartCodex(this.workspacePaths())
+        } catch (err) {
+          console.warn('[AgentManager] restartCodex after updateCustomProvider failed:', err)
+        }
+      }
+    }
+    return { ok: true }
+  }
+
+  async removeCustomProvider(id: string): Promise<{ ok: true; activeId: string }> {
+    if (isBuiltinProviderId(id)) throw new Error('Cannot remove builtin provider')
+    await this.providerStore.removeCustomProvider(id)
+    const persisted = await this.providerStore.load()
+    // If the removed provider was active, the store has already reverted to
+    // DEFAULT_PROVIDER_ID. Mirror that into the in-memory state and respawn
+    // codex so traffic doesn't keep flowing to a now-unknown gateway.
+    if (this.activeProviderId === id) {
+      this.activeProviderId = persisted.selectedProviderId
+      this.codexApiKey = persisted.apiKeys[this.activeProviderId] ?? ''
+      const provider = resolveActiveProvider(this.activeProviderId, persisted.customProviders)
+      this.backend.setProvider?.(provider)
+      if (this.backend.restartCodex) {
+        try {
+          await this.backend.restartCodex(this.workspacePaths())
+        } catch (err) {
+          console.warn('[AgentManager] restartCodex after removeCustomProvider failed:', err)
+        }
+      }
+    }
+    return { ok: true, activeId: this.activeProviderId }
   }
 
   async setAllowedRoots(roots: unknown): Promise<string[]> {
@@ -338,6 +479,8 @@ export class AgentManager {
     return discoverCodexSkills({
       cwd: this.sessionConfig.writableRoots[0] ?? process.cwd(),
       home: os.homedir(),
+      // Same defensive guard as `workspacePaths()` — see note there.
+      resourcesPath: app?.isPackaged ? process.resourcesPath : undefined,
     })
   }
 
@@ -550,6 +693,16 @@ export class AgentManager {
     if (!this.codexApiKey) {
       return { ok: false, error: '请先填写 API Key' }
     }
+    // Resolve the *currently selected* provider (apiyi / rightcode / custom) so
+    // the probe backend talks to the same gateway the main agent does. v4.2.x
+    // used to hard-code apiyi here — see DEFAULT_PROVIDER reference removed in
+    // v4.3.0 — but with multi-provider that would silently mis-route the test
+    // and report success against the wrong host.
+    const persisted = await this.providerStore.load()
+    const activeProvider = resolveActiveProvider(
+      this.activeProviderId,
+      persisted.customProviders,
+    )
     // Build a fresh, isolated backend so we never disturb the long-lived one.
     // Re-uses the production resourceRoot resolution path inside CodexLocalBackend
     // (app.getAppPath / process.resourcesPath) — the only thing we tighten is
@@ -558,7 +711,7 @@ export class AgentManager {
     const backend = new CodexLocalBackend({
       getApiKey: () => this.codexApiKey,
       connectTimeoutMs: 8_000,
-      provider: DEFAULT_PROVIDER,
+      provider: activeProvider,
       sessionConfig: this.sessionConfig,
     })
     const TEST_TIMEOUT_MS = 15_000
@@ -601,7 +754,29 @@ export class AgentManager {
           model,
         })
     const attachmentInputs = payload.attachments ?? []
-    const savedAttachments = await this.attachments.ingest(thread.id, attachmentInputs)
+    // Per-attachment failures are non-fatal: AttachmentService emits an
+    // 'attachment-error' event for each skipped file, we relay it to the
+    // renderer as a notice, and the rest of the turn proceeds with whichever
+    // files *did* succeed. This matches the recovery direction Codex itself
+    // is shipping for openai/codex#13508 — "remove failed attachment, keep
+    // the turn alive".
+    const onAttachmentError = (e: { name: string; error: string }): void => {
+      this.emitEvent({ type: 'attachment_error', threadId: thread.id, name: e.name, error: e.error })
+    }
+    // The injected attachments service is typed as `AttachmentService`-like
+    // in tests (just `{ ingest }`), so guard the EventEmitter wiring.
+    const emitterLike = this.attachments as Partial<{
+      on(event: string, fn: (e: { name: string; error: string }) => void): void
+      off(event: string, fn: (e: { name: string; error: string }) => void): void
+    }>
+    const hasEmitter = typeof emitterLike.on === 'function' && typeof emitterLike.off === 'function'
+    if (hasEmitter) emitterLike.on!('attachment-error', onAttachmentError)
+    let savedAttachments: Awaited<ReturnType<typeof this.attachments.ingest>>
+    try {
+      savedAttachments = await this.attachments.ingest(thread.id, attachmentInputs)
+    } finally {
+      if (hasEmitter) emitterLike.off!('attachment-error', onAttachmentError)
+    }
     // Anchor every attachment's on-disk localPath into the agent's text
     // prompt. The renderer file-picker only gives us a buffer — without
     // this preamble the model can't `cat`/`read_file`/etc. the attachment
@@ -774,16 +949,6 @@ export class AgentManager {
   async deleteThread(threadId: string): Promise<void> {
     if (!this.store) throw new Error('AgentManager.deleteThread called without store')
     return this.store.deleteThread(threadId)
-  }
-
-  private loadCodexApiKey(): void {
-    try {
-      const raw = readFileSync(this.codexApiKeyPath, 'utf8')
-      const parsed = JSON.parse(raw) as { openaiApiKey?: unknown }
-      this.codexApiKey = typeof parsed?.openaiApiKey === 'string' ? parsed.openaiApiKey : ''
-    } catch {
-      this.codexApiKey = ''
-    }
   }
 
   private async confirmUnsafeSessionConfigChange(patch: Partial<CodexSessionConfig>): Promise<void> {

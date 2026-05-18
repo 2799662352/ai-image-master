@@ -26,6 +26,31 @@ export interface EraseProbeResult {
   warning?: 'FILE_PATH_UNAVAILABLE' | 'FILE_NOT_LOCAL' | 'PROBE_FAILED' | string
 }
 
+/**
+ * Curated snapshot of the latest Tencent DescribeTaskDetail response.
+ * Surfaced so the renderer can show a "查看详情" panel matching what the
+ * Tencent MPS console shows, without forwarding the whole SDK payload.
+ *
+ * Kept in sync with `EraseTaskDetailSnapshot` in
+ * src/main/services/smartErase/runner.ts — that file owns the
+ * canonical shape and the `summarizeTaskDetail` curator. We re-declare
+ * it here (instead of importing across the main/renderer boundary) so
+ * the renderer tree doesn't need to resolve main-process imports.
+ */
+export interface EraseTaskDetailSnapshot {
+  workflowStatus?: string
+  smartEraseStatus?: string
+  progress?: number
+  workflowErrCode?: number
+  workflowMessage?: string
+  errCodeExt?: string
+  message?: string
+  beginProcessTime?: string
+  finishTime?: string
+  outputPath?: string
+  fetchedAt: number
+}
+
 export interface EraseTask {
   id: string
   filename: string
@@ -39,6 +64,10 @@ export interface EraseTask {
   errorCode?: string
   errorMessage?: string
   processingStartedAt?: number   // ms; set by renderer when status → 'processing'
+  /** Real MPS progress from `SmartEraseTaskResult.Progress` (0-100). */
+  mpsProgress?: number
+  /** Latest curated task-detail snapshot for the "查看详情" panel. */
+  taskDetail?: EraseTaskDetailSnapshot
 }
 
 export interface EraseHistoryItem {
@@ -62,6 +91,10 @@ export interface EraseProgressEvent {
   status: EraseTask['status']
   uploadProgress?: number
   mpsTaskId?: string
+  /** Real MPS progress from Tencent; preferred over the renderer's exponential estimate. */
+  mpsProgress?: number
+  /** Latest task-detail snapshot, refreshed on every poll. */
+  taskDetail?: EraseTaskDetailSnapshot
 }
 
 export interface EraseFinishedEvent {

@@ -612,17 +612,38 @@ export function MentionInput() {
     let totalBytes = attachments.reduce((sum, item) => sum + item.size, 0)
     let skipped = 0
 
+    // Prefer "path-only" attachments: ask the preload (via webUtils.getPathForFile,
+    // Electron ≥ 32) for the on-disk path. When we have a path we never copy the
+    // file contents into renderer memory or into an IPC structuredClone — the
+    // main process streams the bytes off disk itself. This mirrors the drag-and-
+    // drop path and is the same model Codex landed in openai/codex#21108 to fix
+    // attachment-induced freezes (issues #13508, #15270).
+    //
+    // Fallback to arrayBuffer() only when the source isn't a real file (e.g. a
+    // synthetic File from a clipboard paste); preload returns "" in that case.
+    const electronApi = (window as Window & { electronAPI?: { getFilePath?: (file: File) => string } }).electronAPI
+
     for (const file of files.slice(0, remainingSlots)) {
       if (file.size > MAX_ATTACHMENT_BYTES || totalBytes + file.size > MAX_TOTAL_ATTACHMENT_BYTES) {
         skipped += 1
         continue
       }
-      addAttachment({
-        name: file.name,
-        mime: file.type || 'application/octet-stream',
-        size: file.size,
-        buffer: await file.arrayBuffer(),
-      })
+      const filePath = electronApi?.getFilePath ? electronApi.getFilePath(file) : ''
+      if (filePath) {
+        addAttachment({
+          name: file.name,
+          mime: file.type || 'application/octet-stream',
+          size: file.size,
+          path: filePath,
+        })
+      } else {
+        addAttachment({
+          name: file.name,
+          mime: file.type || 'application/octet-stream',
+          size: file.size,
+          buffer: await file.arrayBuffer(),
+        })
+      }
       totalBytes += file.size
     }
 

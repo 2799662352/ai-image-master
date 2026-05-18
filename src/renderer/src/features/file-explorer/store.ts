@@ -1,7 +1,9 @@
 import { create } from 'zustand'
 import type { EditorState } from '@codemirror/state'
 import type { AgentReference } from '../../../../types/agent-reference'
+import type { FileChange } from '../../../../types/agent-timeline'
 import type { Conflict, FileNode, FileSource, FileTab } from './types'
+import { parseUnifiedDiff } from '../agent-chat/diff/parseUnifiedDiff'
 import { classify } from './classify'
 
 const FX_WIDTH_KEY = 'agent-chat:fx-tree-width'
@@ -33,7 +35,10 @@ type ElectronFileApi = {
     move?: (sources: string[], destDir: string) => Promise<{ ok: true; written: string[] } | { ok: false; reason: string }>
     openInTerminal?: (p: string) => Promise<{ ok: true } | { ok: false; reason: string }>
   }
-  attachments: { listTree: () => Promise<FileNode[]> }
+  attachments: {
+    listTree: () => Promise<FileNode[]>
+    onChanged?: (cb: () => void) => () => void
+  }
 }
 
 export type SelectMode = 'replace' | 'toggle' | 'range'
@@ -77,6 +82,7 @@ type Actions = {
   refreshAttachmentsTree: () => Promise<void>
   expandDir: (path: string, source: FileSource) => Promise<void>
   openTab: (path: string, source: FileSource) => Promise<void>
+  openAiChange: (change: FileChange) => Promise<void>
   openReference: (reference: AgentReference) => Promise<void>
   closeTab: (tabId: string, options?: { saveDirty?: boolean }) => Promise<boolean>
   setActiveTab: (tabId: string) => void
@@ -98,6 +104,14 @@ type Actions = {
   cutSelectionToClipboard: () => void
   copyPathToOsClipboard: (paths: string[], relative: boolean) => Promise<void>
   pasteIntoDir: (destDir: string) => Promise<{ ok: boolean; reason?: string }>
+  /**
+   * Drag-and-drop move. Pre-checks dir-into-self/descendant and same-dir
+   * no-op in the renderer so the UI never round-trips to main for an
+   * obviously-invalid drop. Delegates the real move to `fs.move`, which is
+   * the same IPC `pasteIntoDir` uses for cut+paste (handles EXDEV, ID
+   * conflicts, and dir-into-self on the server side as defense-in-depth).
+   */
+  moveByDnd: (sources: string[], destDir: string) => Promise<{ ok: boolean; reason?: string }>
   startNewNode: (parentPath: string, kind: 'file' | 'dir', source: FileSource) => Promise<void>
   commitNewNode: (name: string) => Promise<{ ok: boolean; reason?: string }>
   cancelNewNode: () => void
@@ -105,11 +119,25 @@ type Actions = {
   trashSelection: () => Promise<void>
   compareSelection: () => Promise<{ ok: boolean; reason?: string }>
   collectVisiblePaths: () => string[]
+  /**
+   * Idempotent. Sets up renderer-side IPC subscriptions:
+   *  - `fs.onWatchEvent` for workspace file changes (chokidar push)
+   *  - `attachments.onChanged` for chat-uploaded attachments (AttachmentService push)
+   *
+   * Safe to call from any mount effect; later calls are no-ops. Tests can
+   * call this directly to wire the subscription without going through a full
+   * workspace flow.
+   */
+  ensureSubscriptions: () => void
 }
 
 let unsubscribeWatch: (() => void) | null = null
+let unsubscribeAttachments: (() => void) | null = null
+let attachmentsRefreshTimer: ReturnType<typeof setTimeout> | null = null
 
-function ensureWatchSubscription(getState: () => State & Actions): void {
+const ATTACHMENTS_REFRESH_DEBOUNCE_MS = 200
+
+function ensureFsWatchSubscription(getState: () => State & Actions): void {
   if (unsubscribeWatch || typeof window === 'undefined') return
   const api = (window as Window & { electronAPI?: ElectronFileApi }).electronAPI
   if (!api) return
@@ -146,6 +174,45 @@ function ensureWatchSubscription(getState: () => State & Actions): void {
     }))
     await refreshWorkspaceRootsForEvent(event, getState)
   }) ?? null
+}
+
+function ensureAttachmentsSubscription(getState: () => State & Actions): void {
+  if (unsubscribeAttachments || typeof window === 'undefined') return
+  const api = (window as Window & { electronAPI?: ElectronFileApi }).electronAPI
+  if (!api?.attachments?.onChanged) return
+  unsubscribeAttachments = api.attachments.onChanged(() => {
+    // Trailing-edge debounce: AttachmentService.ingest() runs sequentially and
+    // emits per-file, so a burst of N uploads would otherwise trigger N
+    // back-to-back readdir + Prisma round-trips. 200ms aggregates the burst
+    // into a single refresh without making the UI feel laggy.
+    if (attachmentsRefreshTimer) clearTimeout(attachmentsRefreshTimer)
+    attachmentsRefreshTimer = setTimeout(() => {
+      attachmentsRefreshTimer = null
+      void getState().refreshAttachmentsTree()
+    }, ATTACHMENTS_REFRESH_DEBOUNCE_MS)
+  })
+}
+
+function ensureWatchSubscription(getState: () => State & Actions): void {
+  ensureFsWatchSubscription(getState)
+  ensureAttachmentsSubscription(getState)
+}
+
+/**
+ * Test-only: reset module-level subscription singletons so Vitest's per-test
+ * `setState(initialState, true)` actually starts from a clean slate. Production
+ * code should NOT call this — leaking a subscription across windows would
+ * cause double-fire.
+ */
+export function __resetSubscriptionsForTesting(): void {
+  unsubscribeWatch?.()
+  unsubscribeWatch = null
+  unsubscribeAttachments?.()
+  unsubscribeAttachments = null
+  if (attachmentsRefreshTimer) {
+    clearTimeout(attachmentsRefreshTimer)
+    attachmentsRefreshTimer = null
+  }
 }
 
 function readStorage(key: string): string | null {
@@ -200,6 +267,23 @@ function rootName(folder: string): string {
   return folder.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? folder
 }
 
+function basename(path: string): string {
+  return path.split(/[\\/]/).pop() ?? path
+}
+
+function hashString(value: string): string {
+  let hash = 2166136261
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i)
+    hash = Math.imul(hash, 16777619)
+  }
+  return (hash >>> 0).toString(36)
+}
+
+function aiChangeKey(change: FileChange): string {
+  return `ai-change:${hashString(`${change.path}\0${change.diff}`)}`
+}
+
 function pathIsInsideRoot(path: string, root: string): boolean {
   const normalize = (p: string) => p.replace(/\\/g, '/').toLowerCase().replace(/\/+$/, '')
   const p = normalize(path)
@@ -207,26 +291,87 @@ function pathIsInsideRoot(path: string, root: string): boolean {
   return p === r || p.startsWith(`${r}/`)
 }
 
+/**
+ * Find the deepest already-expanded directory in `tree` that contains
+ * `targetPath` (or matches it). The watcher fires events for any descendant,
+ * so we only need to re-list the closest expanded ancestor — re-listing the
+ * workspace root would drop the children of every other expanded subdir,
+ * which is exactly what caused the "folder collapses on save" + "new file
+ * doesn't appear" regression.
+ */
+function findDeepestAncestorDir(tree: FileNode[], targetPath: string): FileNode | null {
+  let best: FileNode | null = null
+  const visit = (n: FileNode): void => {
+    if (n.kind !== 'dir' || !n.childrenLoaded) return
+    if (n.path === targetPath || pathIsInsideRoot(targetPath, n.path)) {
+      if (!best || n.path.length > best.path.length) best = n
+      if (n.children) for (const c of n.children) visit(c)
+    }
+  }
+  for (const t of tree) visit(t)
+  return best
+}
+
+/**
+ * Splice already-loaded subtrees from `prevChildren` onto matching nodes in
+ * `listed`. Without this step, every re-list would replace `{childrenLoaded:
+ * true, children: [...]}` with `{childrenLoaded: false}` on every expanded
+ * subdir, visually collapsing them. Matches by `path`; non-dir entries and
+ * paths only in `listed` pass through unchanged.
+ */
+function mergeListedChildren(prevChildren: FileNode[] | undefined, listed: FileNode[]): FileNode[] {
+  if (!prevChildren || prevChildren.length === 0) return listed
+  const prevByPath = new Map<string, FileNode>()
+  for (const p of prevChildren) prevByPath.set(p.path, p)
+  return listed.map((next) => {
+    if (next.kind !== 'dir') return next
+    const prev = prevByPath.get(next.path)
+    if (prev && prev.kind === 'dir' && prev.childrenLoaded) {
+      return { ...next, childrenLoaded: true, children: prev.children ?? [] }
+    }
+    return next
+  })
+}
+
+/**
+ * Apply `updater` to the node at `targetPath`, preserving structural sharing
+ * for sibling/cousin subtrees so React reconciliation doesn't drop their UI
+ * state.
+ */
+function updateNodeInTree(
+  tree: FileNode[],
+  targetPath: string,
+  updater: (n: FileNode) => FileNode,
+): FileNode[] {
+  return tree.map((n) => {
+    if (n.path === targetPath) return updater(n)
+    if (n.children) return { ...n, children: updateNodeInTree(n.children, targetPath, updater) }
+    return n
+  })
+}
+
 async function refreshWorkspaceRootsForEvent(
   event: FileWatchEvent,
   getState: () => State & Actions,
 ): Promise<void> {
   const state = getState()
-  const touched = state.workspaceTree.filter((root) => pathIsInsideRoot(event.path, root.path))
-  if (touched.length === 0) return
-  const api = getApi()
-  const refreshed = await Promise.all(
-    state.workspaceTree.map(async (root) => {
-      if (!touched.some((t) => t.path === root.path)) return root
-      try {
-        const children = await api.fs.listDir(root.path)
-        return { ...root, childrenLoaded: true, children }
-      } catch {
-        return root
-      }
-    }),
-  )
-  useFileExplorerStore.setState({ workspaceTree: refreshed })
+  const target = findDeepestAncestorDir(state.workspaceTree, event.path)
+  if (!target) return
+  let listed: FileNode[]
+  try {
+    listed = await getApi().fs.listDir(target.path)
+  } catch {
+    return
+  }
+  // Re-read latest state in case the user toggled expansion mid-IPC; we'll
+  // still apply the merge — the targeted dir is the only one we mutate.
+  useFileExplorerStore.setState((s) => ({
+    workspaceTree: updateNodeInTree(s.workspaceTree, target.path, (n) => ({
+      ...n,
+      childrenLoaded: true,
+      children: mergeListedChildren(n.children, listed),
+    })),
+  }))
 }
 
 function getApi(): ElectronFileApi {
@@ -375,7 +520,18 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
   expandDir: async (p, source) => {
     if (source !== 'workspace') return
     const children = await getApi().fs.listDir(p)
-    set((s) => ({ workspaceTree: replaceChildren(s.workspaceTree, p, children) }))
+    // Merge against existing in-memory children so already-loaded grandchildren
+    // survive a refresh triggered by commitNewNode / pasteIntoDir / moveByDnd.
+    // Without this, creating a new file inside an expanded subdir would
+    // visually collapse all of that subdir's expanded children (the same
+    // bug pattern fixed in refreshWorkspaceRootsForEvent).
+    set((s) => ({
+      workspaceTree: updateNodeInTree(s.workspaceTree, p, (n) => ({
+        ...n,
+        childrenLoaded: true,
+        children: mergeListedChildren(n.children, children),
+      })),
+    }))
   },
 
   openTab: async (p, source) => {
@@ -408,6 +564,44 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
     }
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: id }))
     ensureWatchSubscription(get)
+  },
+
+  openAiChange: async (change) => {
+    const key = aiChangeKey(change)
+    const existing = get().tabs.find((t) => t.kind === 'ai-change' && t.aiChangeKey === key)
+    if (existing) {
+      set({ activeTabId: existing.id, fxOpen: true })
+      writeStorage(FX_OPEN_KEY, '1')
+      return
+    }
+
+    const parsed = parseUnifiedDiff(change.diff)
+    const id = globalThis.crypto?.randomUUID?.() ?? `ai-change-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const tab: FileTab = {
+      id,
+      path: '',
+      name: basename(change.path),
+      source: 'workspace',
+      kind: 'ai-change',
+      state: null,
+      diskContent: '',
+      diskMtime: 0,
+      dirty: false,
+      aiChangeKey: key,
+      aiChange: {
+        change,
+        ...(parsed.ok
+          ? { beforeContent: parsed.beforeContent, afterContent: parsed.afterContent }
+          : { parseError: parsed.reason }),
+      },
+    }
+
+    set((s) => ({
+      fxOpen: true,
+      activeTabId: id,
+      tabs: [...s.tabs, tab],
+    }))
+    writeStorage(FX_OPEN_KEY, '1')
   },
 
   openReference: async (reference) => {
@@ -704,6 +898,60 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
     return { ok: true }
   },
 
+  moveByDnd: async (sources, destDir) => {
+    if (sources.length === 0) return { ok: false, reason: 'nothing to move' }
+    const normalized = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '')
+    const dest = normalized(destDir)
+    // VSCode silently no-ops same-dir drops; without this the UI would round-
+    // trip to main and our `uniquePath` helper would produce spurious "a copy.ts"
+    // suffixes for users who just dragged within the same folder.
+    const allSameDir = sources.every((s) => {
+      const norm = normalized(s)
+      const idx = Math.max(norm.lastIndexOf('/'))
+      const parent = idx > 0 ? norm.slice(0, idx) : norm
+      return parent === dest
+    })
+    if (allSameDir) return { ok: true }
+    // Dir-into-self / dir-into-descendant is the classic data-loss footgun.
+    // Main also enforces this, but the UI guard avoids a confusing error toast
+    // round-trip when the user obviously can't drop here.
+    for (const src of sources) {
+      const s = normalized(src)
+      if (s === dest || dest.startsWith(`${s}/`)) {
+        return { ok: false, reason: '不能将目录移动到自身或其子目录' }
+      }
+    }
+    const api = getApi()
+    if (!api.fs.move) return { ok: false, reason: 'move API not available' }
+    const res = await api.fs.move(sources, destDir)
+    if (!res.ok) return { ok: false, reason: res.reason }
+    // Refresh both the destination (newly-arrived items must appear) and the
+    // affected source directories (the items left). For sources we only need
+    // their immediate parents — chokidar would do this too, but the user
+    // expects an instant update.
+    const sourceDirs = new Set<string>()
+    for (const src of sources) {
+      const s = normalized(src)
+      const idx = Math.max(s.lastIndexOf('/'))
+      if (idx > 0) sourceDirs.add(s.slice(0, idx))
+    }
+    const destSource = inferSource(get().workspaceTree, destDir)
+    try {
+      await get().expandDir(destDir, destSource)
+    } catch {
+      // listDir failure here is non-fatal — chokidar will catch up.
+    }
+    for (const dir of sourceDirs) {
+      const src = inferSource(get().workspaceTree, dir)
+      try {
+        await get().expandDir(dir, src)
+      } catch {
+        // same as above
+      }
+    }
+    return { ok: true }
+  },
+
   startNewNode: async (parentPath, kind, source) => {
     // 确保父目录在树中是展开的
     const parentNode = findNodeInTrees(get().workspaceTree, get().attachmentsTree, parentPath)
@@ -805,6 +1053,10 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
     })
     return { ok: true }
   },
+
+  ensureSubscriptions: () => {
+    ensureWatchSubscription(get)
+  },
 }))
 
 // 辅助：将一个工作区根的绝对路径转成相对路径
@@ -859,14 +1111,6 @@ async function writeTextToOsClipboard(text: string): Promise<void> {
       // 静默失败：内部状态仍然有效
     }
   }
-}
-
-function replaceChildren(tree: FileNode[], targetPath: string, children: FileNode[]): FileNode[] {
-  return tree.map((n) => {
-    if (n.path === targetPath) return { ...n, childrenLoaded: true, children }
-    if (n.children) return { ...n, children: replaceChildren(n.children, targetPath, children) }
-    return n
-  })
 }
 
 function removeFromTree(tree: FileNode[], targetPath: string): FileNode[] {
