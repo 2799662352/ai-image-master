@@ -35,7 +35,8 @@ export class TabManager {
     'director',
     'storyboardSplit',
     'smartErase',
-    'agentWorkspace'
+    'agentWorkspace',
+    'marketplace'
   ]
 
   constructor(config: TabManagerConfig = {}) {

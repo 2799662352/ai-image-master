@@ -7,6 +7,7 @@ import type {
   CodexSkillScope,
 } from '../../../../types/agent'
 import { useAgentChatStore } from '../agent-chat/store'
+import { useTabStore } from '../../stores'
 import { SkillEditor } from './SkillEditor'
 
 type OpenSkillsRootResult =
@@ -39,6 +40,7 @@ export function SkillsSection({ insertIntoChat }: SkillsSectionProps): React.JSX
   const [editing, setEditing] = useState<EditingState>(null)
   const [folderMessage, setFolderMessage] = useState<string | null>(null)
   const appendInputText = useAgentChatStore((state) => state.appendInputText)
+  const switchTab = useTabStore((state) => state.switchTab)
   const mountedRef = useRef(false)
   const loadRequestIdRef = useRef(0)
 
@@ -195,6 +197,20 @@ export function SkillsSection({ insertIntoChat }: SkillsSectionProps): React.JSX
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => switchTab('marketplace')}
+            className="cursor-pointer inline-flex items-center gap-1.5 rounded-md border border-cyberpunk-yellow/40 bg-cyberpunk-yellow/10 px-3 py-2 text-sm text-cyberpunk-yellow font-semibold transition-colors duration-200 hover:bg-cyberpunk-yellow/20 hover:border-cyberpunk-yellow/60"
+            aria-label="浏览 Skill 商城"
+            title="去 Skill 商城下载更多技能"
+          >
+            <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="5" cy="11" r="1" />
+              <circle cx="11" cy="11" r="1" />
+              <path d="M1 1h2l1.5 7h7.5l1-5H4" />
+            </svg>
+            Skill 商城
+          </button>
           <button
             type="button"
             onClick={() => void openSkillsFolder()}

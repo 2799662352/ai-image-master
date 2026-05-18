@@ -14,6 +14,7 @@ import { ComparePromptHelperBar } from './components/ComparePromptHelperBar'
 import { TemplateInline } from './components/TemplateInline'
 
 const AgentWorkspacePage = lazy(() => import('../pages-react/AgentWorkspacePage'))
+const MarketplacePage = lazy(() => import('../pages-react/MarketplacePage'))
 
 let root: Root | null = null
 let settingsRoot: Root | null = null
@@ -22,6 +23,7 @@ let batchRoot: Root | null = null
 let storyboardSplitRoot: Root | null = null
 let smartEraseRoot: Root | null = null
 let agentWorkspaceRoot: Root | null = null
+let marketplaceRoot: Root | null = null
 let toastRoot: Root | null = null
 let generateTokenRoot: Root | null = null
 let generateTemplateRoot: Root | null = null
@@ -339,6 +341,31 @@ export function mountAgentWorkspaceReact(): void {
 
 export function unmountAgentWorkspaceReact(): void {
   const container = document.getElementById('agent-workspace-react-root')
+  if (container) {
+    container.style.display = 'none'
+  }
+}
+
+export function mountMarketplaceReact(): void {
+  const container = document.getElementById('marketplace-react-root')
+  if (!container) {
+    console.warn('[React] marketplace-react-root not found')
+    return
+  }
+  if (!marketplaceRoot) {
+    marketplaceRoot = createRoot(container)
+    marketplaceRoot.render(
+      <Suspense fallback={null}>
+        <MarketplacePage />
+      </Suspense>
+    )
+    console.log('[React] MarketplacePage mounted (first time)')
+  }
+  container.style.display = ''
+}
+
+export function unmountMarketplaceReact(): void {
+  const container = document.getElementById('marketplace-react-root')
   if (container) {
     container.style.display = 'none'
   }

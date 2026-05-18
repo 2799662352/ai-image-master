@@ -7,23 +7,59 @@ import type {
   InstalledRecord,
 } from '../../../types/marketplace'
 
-type ViewKey = 'available' | 'installed' | 'updates'
-
 /**
- * Skill Marketplace (v4.3.5 MVP).
+ * Skill Marketplace — Cursor-marketplace-style layout.
  *
- * Three views over the user's marketplace state:
- *   - Available: catalog entries not yet on this machine
- *   - Installed: skills the user has either installed via marketplace OR that
- *                were "adopted" from the v4.3.4 bundled-mirror leftovers
- *   - Updates:   installed skills whose catalog version differs from their
- *                local install version (semver-agnostic — any string diff)
+ * Left sidebar: category filters (Featured / 分类 / All / Installed / Updates).
+ * Right pane: search box + responsive grid of skill cards.
+ * Each card: emoji icon + name + one-line description + Get/Update/Installed pill.
  *
- * Everything renders from two pieces of state: `catalog` (fetched from
- * Tencent COS on mount) and `installed` (read from the local marketplace
- * ledger). The user actions Install / Update / Uninstall mutate the latter
- * and we just re-derive the views.
+ * Categories are inferred from the skill name prefix — we don't ship taxonomy
+ * metadata in the catalog (yet), so the prefix convention
+ *   director-*       → Director (12)
+ *   storyboard-*     → Storyboard (7)
+ *   codex-research-* → Methodology (1)
+ * is the source of truth. New prefixes show up under "Other" without code
+ * changes; if a category grows large enough to warrant its own bucket, add a
+ * row to `CATEGORIES` below.
  */
+
+type Section = 'featured' | 'director' | 'storyboard' | 'research' | 'other' | 'installed' | 'updates'
+
+interface CategoryDef {
+  key: Section
+  label: string
+  icon: string
+  blurb?: string
+  /** Return true if this catalog entry belongs to the section. Featured /
+   *  Installed / Updates are handled separately and don't use `match`. */
+  match?: (entry: CatalogEntry) => boolean
+}
+
+const CATEGORIES: CategoryDef[] = [
+  { key: 'featured', label: 'Featured', icon: '✨', blurb: '推荐技能 — 适合大多数用户' },
+  { key: 'director', label: 'Director', icon: '🎬', blurb: '导演模式 — 镜头、构图、连续性', match: (e) => e.name.startsWith('director-') },
+  { key: 'storyboard', label: 'Storyboard', icon: '🎞️', blurb: '分镜模式 — 物理、对白、风格', match: (e) => e.name.startsWith('storyboard-') },
+  { key: 'research', label: 'Methodology', icon: '🔬', blurb: '研究 / 方法论 — 学术化提示词工程', match: (e) => e.name.startsWith('codex-research') },
+  { key: 'other', label: 'Other', icon: '📦', blurb: '其他 / 未分类', match: (e) => !e.name.startsWith('director-') && !e.name.startsWith('storyboard-') && !e.name.startsWith('codex-research') },
+  { key: 'installed', label: 'Installed', icon: '✓', blurb: '本机已安装的技能' },
+  { key: 'updates', label: 'Updates', icon: '⬆', blurb: '本地版本与目录版本不一致' },
+]
+
+const FEATURED_NAMES = new Set<string>([
+  'codex-research-grounded-prompting',
+  'director-prompt-engineering',
+  'director-structured-captioning',
+  'storyboard-structure',
+])
+
+function iconFor(entry: CatalogEntry): string {
+  if (entry.name.startsWith('director-')) return '🎬'
+  if (entry.name.startsWith('storyboard-')) return '🎞️'
+  if (entry.name.startsWith('codex-research')) return '🔬'
+  return '📦'
+}
+
 export default function MarketplacePage() {
   const addToast = useToastStore((s) => s.addToast)
   const api = (window as { electronAPI?: any }).electronAPI
@@ -32,7 +68,8 @@ export default function MarketplacePage() {
   const [installed, setInstalled] = useState<InstalledRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [busyName, setBusyName] = useState<string | null>(null)
-  const [view, setView] = useState<ViewKey>('available')
+  const [section, setSection] = useState<Section>('featured')
+  const [search, setSearch] = useState('')
   const [error, setError] = useState<string | null>(null)
 
   const refreshCatalog = useCallback(
@@ -79,34 +116,50 @@ export default function MarketplacePage() {
     return m
   }, [installed])
 
-  const { availableEntries, installedEntries, updateEntries } = useMemo(() => {
+  // Section counts + filtered view all derived from the same catalog +
+  // installed snapshot; recomputed only when those change.
+  const { counts, visible } = useMemo(() => {
     const entries = catalog?.skills ?? []
-    const available: CatalogEntry[] = []
-    const installedRows: Array<{ entry: CatalogEntry | null; record: InstalledRecord }> = []
-    const updates: Array<{ entry: CatalogEntry; record: InstalledRecord }> = []
-    const seen = new Set<string>()
+    const byCategory = new Map<Section, CatalogEntry[]>()
+    for (const c of CATEGORIES) {
+      if (c.match) byCategory.set(c.key, entries.filter(c.match))
+    }
 
-    for (const e of entries) {
+    const featured = entries.filter((e) => FEATURED_NAMES.has(e.name))
+    byCategory.set('featured', featured)
+
+    const installedRows: CatalogEntry[] = entries.filter((e) => installedByName.has(e.name))
+    byCategory.set('installed', installedRows)
+
+    const updateRows = entries.filter((e) => {
       const rec = installedByName.get(e.name)
-      seen.add(e.name)
-      if (!rec) {
-        available.push(e)
-      } else {
-        installedRows.push({ entry: e, record: rec })
-        if (rec.version !== e.version) updates.push({ entry: e, record: rec })
-      }
+      return rec ? rec.version !== e.version : false
+    })
+    byCategory.set('updates', updateRows)
+
+    const c: Record<Section, number> = {
+      featured: byCategory.get('featured')?.length ?? 0,
+      director: byCategory.get('director')?.length ?? 0,
+      storyboard: byCategory.get('storyboard')?.length ?? 0,
+      research: byCategory.get('research')?.length ?? 0,
+      other: byCategory.get('other')?.length ?? 0,
+      installed: installedRows.length,
+      updates: updateRows.length,
     }
-    // Adopted/Installed records whose catalog entry has gone missing — still
-    // show them so the user can uninstall them.
-    for (const rec of installed) {
-      if (!seen.has(rec.name)) installedRows.push({ entry: null, record: rec })
-    }
-    return {
-      availableEntries: available,
-      installedEntries: installedRows,
-      updateEntries: updates,
-    }
-  }, [catalog, installed, installedByName])
+
+    const active = byCategory.get(section) ?? []
+    const q = search.trim().toLowerCase()
+    const filtered =
+      q === ''
+        ? active
+        : active.filter(
+            (e) =>
+              e.name.toLowerCase().includes(q) ||
+              (e.description ?? '').toLowerCase().includes(q),
+          )
+
+    return { counts: c, visible: filtered }
+  }, [catalog, installedByName, section, search])
 
   const handleInstall = async (name: string) => {
     setBusyName(name)
@@ -150,179 +203,206 @@ export default function MarketplacePage() {
     }
   }
 
+  const activeCategory = CATEGORIES.find((c) => c.key === section) ?? CATEGORIES[0]
+
   return (
-    <div className="h-full overflow-auto px-6 py-6 bg-cyberpunk-black text-white">
-      <header className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold uppercase tracking-tight">
-            <span className="text-cyberpunk-yellow">SKILL</span> MARKETPLACE
+    <div className="flex h-full bg-cyberpunk-black text-white">
+      {/* Sidebar */}
+      <aside className="w-56 shrink-0 border-r border-zinc-800 bg-zinc-950/50 overflow-y-auto">
+        <div className="px-4 py-5">
+          <h1 className="text-lg font-bold uppercase tracking-wide">
+            <span className="text-cyberpunk-yellow">Skill</span>
+            <br />
+            <span className="text-white">Marketplace</span>
           </h1>
-          <p className="text-xs text-zinc-500 mt-1">
-            从腾讯云目录按需安装 Codex skill。安装后位于 <code>~/.agents/skills/</code>，可在 Agent Workspace 中使用。
+          <p className="mt-1 text-[11px] text-zinc-500 leading-relaxed">
+            按需安装 Codex skill<br />
+            内容托管在腾讯云
           </p>
         </div>
-        <button
-          onClick={handleRefresh}
-          disabled={loading}
-          className="px-3 py-1.5 text-sm border border-cyberpunk-yellow/50 hover:bg-cyberpunk-yellow/10 disabled:opacity-50 rounded"
-        >
-          {loading ? '加载中…' : '刷新目录'}
-        </button>
-      </header>
-
-      <nav className="flex gap-1 mb-4 border-b border-zinc-700">
-        <TabButton active={view === 'available'} onClick={() => setView('available')}>
-          可安装 ({availableEntries.length})
-        </TabButton>
-        <TabButton active={view === 'installed'} onClick={() => setView('installed')}>
-          已安装 ({installedEntries.length})
-        </TabButton>
-        <TabButton active={view === 'updates'} onClick={() => setView('updates')}>
-          有更新 ({updateEntries.length})
-        </TabButton>
-      </nav>
-
-      {error && (
-        <div className="mb-4 px-3 py-2 border border-red-500/40 bg-red-500/5 text-sm text-red-300">
-          {error}
+        <nav className="px-2 pb-4 space-y-0.5">
+          {CATEGORIES.map((cat) => {
+            const count = counts[cat.key]
+            const isActive = section === cat.key
+            return (
+              <button
+                key={cat.key}
+                onClick={() => setSection(cat.key)}
+                className={`w-full flex items-center gap-2 px-3 py-2 rounded text-sm transition-colors text-left ${
+                  isActive
+                    ? 'bg-cyberpunk-yellow/15 text-cyberpunk-yellow border-l-2 border-cyberpunk-yellow'
+                    : 'text-zinc-400 hover:text-white hover:bg-white/5 border-l-2 border-transparent'
+                }`}
+              >
+                <span className="w-5 text-center">{cat.icon}</span>
+                <span className="flex-1 truncate">{cat.label}</span>
+                <span className="text-[10px] text-zinc-500 font-mono">{count}</span>
+              </button>
+            )
+          })}
+        </nav>
+        <div className="border-t border-zinc-800 px-2 py-3">
+          <button
+            onClick={handleRefresh}
+            disabled={loading}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm text-zinc-400 hover:text-white rounded hover:bg-white/5 disabled:opacity-50"
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 7a5 5 0 1 1-1.5-3.5L12 5" />
+              <path d="M12 2v3h-3" />
+            </svg>
+            {loading ? '加载中…' : '刷新目录'}
+          </button>
         </div>
-      )}
+      </aside>
 
-      {loading && !catalog && (
-        <div className="text-center text-zinc-500 py-12">正在拉取技能目录…</div>
-      )}
-
-      {view === 'available' && (
-        <SkillList
-          empty="所有可用 skill 都已安装。"
-          rows={availableEntries.map((entry) => ({
-            key: entry.name,
-            title: entry.name,
-            version: entry.version,
-            description: entry.description,
-            size: entry.size,
-            actions: (
-              <button
-                onClick={() => handleInstall(entry.name)}
-                disabled={busyName === entry.name}
-                className="px-3 py-1 text-sm bg-cyberpunk-yellow text-cyberpunk-black font-semibold rounded hover:opacity-90 disabled:opacity-50"
+      {/* Main pane */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="sticky top-0 z-10 bg-cyberpunk-black/95 backdrop-blur border-b border-zinc-800">
+          <div className="px-6 py-4">
+            <div className="flex items-baseline gap-3 mb-3">
+              <span className="text-2xl">{activeCategory.icon}</span>
+              <h2 className="text-xl font-semibold">{activeCategory.label}</h2>
+              {activeCategory.blurb && (
+                <span className="text-xs text-zinc-500">— {activeCategory.blurb}</span>
+              )}
+            </div>
+            <div className="relative">
+              <svg
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500"
+                width="14"
+                height="14"
+                viewBox="0 0 14 14"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
               >
-                {busyName === entry.name ? '安装中…' : '安装'}
-              </button>
-            ),
-          }))}
-        />
-      )}
+                <circle cx="6" cy="6" r="4" />
+                <path d="m9 9 3 3" />
+              </svg>
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="搜索 skill 名称或描述…"
+                className="w-full pl-9 pr-3 py-2 bg-zinc-900/70 border border-zinc-800 rounded text-sm focus:outline-none focus:border-cyberpunk-yellow/50 placeholder:text-zinc-600"
+              />
+            </div>
+          </div>
+        </div>
 
-      {view === 'installed' && (
-        <SkillList
-          empty="还没有安装任何技能。"
-          rows={installedEntries.map(({ entry, record }) => ({
-            key: record.name,
-            title: record.name,
-            version: record.version,
-            description: entry?.description ?? '（目录中已无此 skill，可能是手动添加或已下架）',
-            badge:
-              record.source === 'adopted'
-                ? { label: '已认领', color: 'text-blue-300 border-blue-500/40' }
-                : null,
-            actions: (
-              <button
-                onClick={() => handleUninstall(record.name)}
-                disabled={busyName === record.name}
-                className="px-3 py-1 text-sm border border-zinc-600 hover:border-red-500/50 hover:text-red-300 rounded disabled:opacity-50"
-              >
-                {busyName === record.name ? '卸载中…' : '卸载'}
-              </button>
-            ),
-          }))}
-        />
-      )}
+        <div className="px-6 py-6">
+          {error && (
+            <div className="mb-4 px-3 py-2 border border-red-500/40 bg-red-500/5 text-sm text-red-300 rounded">
+              {error}
+            </div>
+          )}
 
-      {view === 'updates' && (
-        <SkillList
-          empty="所有已安装 skill 均为最新版本。"
-          rows={updateEntries.map(({ entry, record }) => ({
-            key: record.name,
-            title: record.name,
-            version: `${record.version} → ${entry.version}`,
-            description: entry.description,
-            size: entry.size,
-            actions: (
-              <button
-                onClick={() => handleInstall(record.name)}
-                disabled={busyName === record.name}
-                className="px-3 py-1 text-sm bg-cyberpunk-yellow text-cyberpunk-black font-semibold rounded hover:opacity-90 disabled:opacity-50"
-              >
-                {busyName === record.name ? '更新中…' : '升级'}
-              </button>
-            ),
-          }))}
-        />
-      )}
+          {loading && !catalog && (
+            <div className="text-center text-zinc-500 py-16">正在拉取技能目录…</div>
+          )}
+
+          {!loading && visible.length === 0 && (
+            <div className="text-center text-zinc-500 py-16">
+              {search ? `没有匹配 "${search}" 的 skill` : '此分类暂无技能'}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            {visible.map((entry) => {
+              const installedRec = installedByName.get(entry.name)
+              const hasUpdate = installedRec && installedRec.version !== entry.version
+              return (
+                <SkillCard
+                  key={entry.name}
+                  entry={entry}
+                  installed={installedRec ?? null}
+                  hasUpdate={!!hasUpdate}
+                  busy={busyName === entry.name}
+                  onInstall={() => handleInstall(entry.name)}
+                  onUninstall={() => handleUninstall(entry.name)}
+                />
+              )
+            })}
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
 
-interface TabButtonProps {
-  active: boolean
-  onClick: () => void
-  children: React.ReactNode
-}
-function TabButton({ active, onClick, children }: TabButtonProps) {
-  return (
-    <button
-      onClick={onClick}
-      className={`px-4 py-2 text-sm border-b-2 transition-colors ${
-        active
-          ? 'border-cyberpunk-yellow text-cyberpunk-yellow font-semibold'
-          : 'border-transparent text-zinc-400 hover:text-white'
-      }`}
-    >
-      {children}
-    </button>
-  )
+interface SkillCardProps {
+  entry: CatalogEntry
+  installed: InstalledRecord | null
+  hasUpdate: boolean
+  busy: boolean
+  onInstall: () => void
+  onUninstall: () => void
 }
 
-interface SkillRow {
-  key: string
-  title: string
-  version: string
-  description: string
-  size?: number
-  badge?: { label: string; color: string } | null
-  actions: React.ReactNode
-}
+function SkillCard({ entry, installed, hasUpdate, busy, onInstall, onUninstall }: SkillCardProps) {
+  const icon = iconFor(entry)
 
-function SkillList({ rows, empty }: { rows: SkillRow[]; empty: string }) {
-  if (rows.length === 0) {
-    return <div className="text-center text-zinc-500 py-12">{empty}</div>
-  }
   return (
-    <ul className="divide-y divide-zinc-800 border border-zinc-800 rounded">
-      {rows.map((r) => (
-        <li
-          key={r.key}
-          className="px-4 py-3 flex items-start gap-4 hover:bg-white/5 transition-colors"
-        >
-          <div className="flex-1 min-w-0">
-            <div className="flex items-baseline gap-2 mb-1">
-              <span className="font-semibold text-white">{r.title}</span>
-              <span className="text-xs text-zinc-500">v{r.version}</span>
-              {typeof r.size === 'number' && (
-                <span className="text-xs text-zinc-600">{(r.size / 1024).toFixed(1)} KB</span>
-              )}
-              {r.badge && (
-                <span className={`text-xs border px-1.5 py-0.5 rounded ${r.badge.color}`}>
-                  {r.badge.label}
-                </span>
-              )}
-            </div>
-            <p className="text-xs text-zinc-400 line-clamp-3 leading-relaxed">{r.description}</p>
-          </div>
-          <div className="shrink-0">{r.actions}</div>
-        </li>
-      ))}
-    </ul>
+    <article className="flex items-start gap-3 p-4 rounded border border-zinc-800 bg-zinc-950/60 hover:bg-zinc-900/60 hover:border-zinc-700 transition-colors">
+      <div className="w-10 h-10 shrink-0 rounded bg-zinc-900 border border-zinc-800 flex items-center justify-center text-xl">
+        {icon}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-baseline gap-2 mb-0.5">
+          <h3 className="font-semibold text-white truncate">{entry.name}</h3>
+          <span className="text-[10px] text-zinc-500 font-mono shrink-0">
+            v{entry.version}
+            {hasUpdate && installed && (
+              <span className="text-cyberpunk-yellow"> ← v{installed.version}</span>
+            )}
+          </span>
+        </div>
+        <p className="text-xs text-zinc-400 line-clamp-2 leading-relaxed">{entry.description}</p>
+        <div className="flex items-center gap-2 mt-2 text-[10px] text-zinc-600">
+          <span>{(entry.size / 1024).toFixed(1)} KB</span>
+          {installed?.source === 'adopted' && (
+            <span className="px-1.5 py-0.5 border border-blue-500/40 text-blue-300 rounded">
+              已认领
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="shrink-0">
+        {!installed && (
+          <button
+            onClick={onInstall}
+            disabled={busy}
+            className="inline-flex items-center justify-center w-24 h-7 text-xs bg-cyberpunk-yellow text-cyberpunk-black font-semibold rounded hover:opacity-90 disabled:opacity-50"
+          >
+            {busy ? '安装中…' : 'Get'}
+          </button>
+        )}
+        {installed && !hasUpdate && (
+          <button
+            onClick={onUninstall}
+            disabled={busy}
+            className="group relative inline-flex items-center justify-center w-24 h-7 text-xs border border-green-500/40 text-green-300 rounded hover:border-red-400/60 hover:bg-red-500/10 hover:text-red-200 disabled:opacity-50 transition-colors overflow-hidden"
+            title="点击卸载"
+          >
+            <span className="absolute inset-0 flex items-center justify-center transition-opacity duration-150 group-hover:opacity-0">
+              ✓ Installed
+            </span>
+            <span className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+              Uninstall
+            </span>
+          </button>
+        )}
+        {installed && hasUpdate && (
+          <button
+            onClick={onInstall}
+            disabled={busy}
+            className="inline-flex items-center justify-center w-24 h-7 text-xs bg-cyberpunk-yellow/90 text-cyberpunk-black font-semibold rounded hover:opacity-90 disabled:opacity-50"
+          >
+            {busy ? '更新中…' : 'Update'}
+          </button>
+        )}
+      </div>
+    </article>
   )
 }
