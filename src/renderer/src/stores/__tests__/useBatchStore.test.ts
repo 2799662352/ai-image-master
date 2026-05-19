@@ -556,4 +556,149 @@ describe('useBatchStore', () => {
       expect(useBatchStore.getState().running).toBe(false)
     })
   })
+
+  describe('restoreForEdit', () => {
+    it('writes cardPrompt when mode is card', () => {
+      useBatchStore.setState({ mode: 'card', cardPrompt: 'old', multiText: 'multi-untouched' })
+
+      useBatchStore.getState().restoreForEdit({
+        prompt: 'restored prompt',
+        mode: 'card',
+      })
+
+      const s = useBatchStore.getState()
+      expect(s.mode).toBe('card')
+      expect(s.cardPrompt).toBe('restored prompt')
+      expect(s.multiText).toBe('multi-untouched')
+    })
+
+    it('writes multiText when mode is multi', () => {
+      useBatchStore.setState({ mode: 'card', cardPrompt: 'card-untouched', multiText: 'old' })
+
+      useBatchStore.getState().restoreForEdit({
+        prompt: 'multi restored',
+        mode: 'multi',
+      })
+
+      const s = useBatchStore.getState()
+      expect(s.mode).toBe('multi')
+      expect(s.multiText).toBe('multi restored')
+      expect(s.cardPrompt).toBe('card-untouched')
+    })
+
+    it('preserves prompts when snapshot.prompt is undefined', () => {
+      useBatchStore.setState({ mode: 'card', cardPrompt: 'keep', multiText: 'keep-multi' })
+
+      useBatchStore.getState().restoreForEdit({ mode: 'card' })
+
+      const s = useBatchStore.getState()
+      expect(s.cardPrompt).toBe('keep')
+      expect(s.multiText).toBe('keep-multi')
+    })
+
+    it('rebuilds referenceImages as BatchRefImage[] from raw base64 array', () => {
+      useBatchStore.setState({ refImages: [] })
+
+      useBatchStore.getState().restoreForEdit({
+        referenceImages: ['data:image/png;base64,AAAA', 'data:image/jpeg;base64,BBBB'],
+      })
+
+      const refs = useBatchStore.getState().refImages
+      expect(refs).toHaveLength(2)
+      expect(refs[0].base64).toBe('data:image/png;base64,AAAA')
+      expect(refs[0].fileName).toBe('restored-1')
+      expect(refs[0].id).toMatch(/^restored-/)
+      expect(refs[1].fileName).toBe('restored-2')
+    })
+
+    it('preserves existing refImages when snapshot.referenceImages is undefined', () => {
+      const existing = {
+        id: 'keep-me',
+        base64: 'data:image/png;base64,KEEP',
+        fileName: 'orig.png',
+        fileSize: 100,
+      }
+      useBatchStore.setState({ refImages: [existing] })
+
+      useBatchStore.getState().restoreForEdit({ prompt: 'p', mode: 'card' })
+
+      expect(useBatchStore.getState().refImages).toEqual([existing])
+    })
+
+    it('updates ratio when provided, preserves when omitted', () => {
+      useBatchStore.setState({ ratio: '1:1' })
+
+      useBatchStore.getState().restoreForEdit({ ratio: '16:9' })
+      expect(useBatchStore.getState().ratio).toBe('16:9')
+
+      useBatchStore.getState().restoreForEdit({ prompt: 'p' })
+      expect(useBatchStore.getState().ratio).toBe('16:9')
+    })
+
+    it('preserves current mode when snapshot.mode is omitted (BatchPage 内部 ↺ EDIT 不能强切回 card)', () => {
+      // 用户当前在 multi 模式编排一堆 prompt, 中间点了某条结果的 ↺ EDIT。
+      // 老行为是强切回 'card', 会丢掉 multiText 里其他几行。新契约: 保持 s.mode。
+      useBatchStore.setState({ mode: 'multi', multiText: 'a\nb\nc' })
+
+      useBatchStore.getState().restoreForEdit({ prompt: 'hi' })
+
+      expect(useBatchStore.getState().mode).toBe('multi')
+      // multi 模式下 prompt 会盖到 multiText (HistoryPage 的传统语义),
+      // 但 mode 本身没切, 用户可以手动切回 card 或继续在 multi 里编辑。
+      expect(useBatchStore.getState().multiText).toBe('hi')
+    })
+
+    it('honors explicit snapshot.mode (HistoryPage 显式传 card)', () => {
+      // HistoryPage.handleEdit 会显式传 mode='card', 这条路径必须不变。
+      useBatchStore.setState({ mode: 'multi', multiText: 'old' })
+
+      useBatchStore.getState().restoreForEdit({ prompt: 'hi', mode: 'card' })
+
+      expect(useBatchStore.getState().mode).toBe('card')
+      expect(useBatchStore.getState().cardPrompt).toBe('hi')
+    })
+  })
+
+  describe('runBatch / snapshot 挂载', () => {
+    it('在 worker 把 item flip 为 generating 时, 给 item 挂上 snapshot', async () => {
+      const ratio = '16:9'
+      const refRaw = ['data:image/png;base64,AAAA', 'data:image/png;base64,BBBB']
+      const modelKey = 'test-model'
+
+      // 用一个会"挂起"的 API, 让我们能在 generating 状态下检查 item.snapshot
+      let resolveGen!: (v: any) => void
+      const api = {
+        generateImage: vi.fn(() => new Promise((resolve) => { resolveGen = resolve })),
+      } as any
+
+      useBatchStore.getState().addItem('test prompt')
+      const itemId = useBatchStore.getState().items[0].id
+
+      const runPromise = useBatchStore.getState().runBatch(api, modelKey, {
+        ratio,
+        referenceImages: refRaw,
+        concurrency: 1,
+        idleExitMs: 50,
+      })
+
+      // 等到 item 翻成 generating
+      await vi.waitFor(() => {
+        const it = useBatchStore.getState().items.find((i) => i.id === itemId)
+        expect(it?.status).toBe('generating')
+      })
+
+      const item = useBatchStore.getState().items.find((i) => i.id === itemId)!
+      expect(item.snapshot).toBeDefined()
+      expect(item.snapshot!.prompt).toBe('test prompt')
+      expect(item.snapshot!.ratio).toBe(ratio)
+      expect(item.snapshot!.referenceImages).toEqual(refRaw)
+      expect(item.snapshot!.modelKey).toBe(modelKey)
+
+      // 解锁让 runBatch 完成 —— 用 success:false 让 worker 走 error 分支,
+      // 这样不会触发 uploadImageUrlToCos 真实网络调用 (fire-and-forget 在
+      // 测试环境会变成 unhandled rejection)。我们只关心 snapshot 是否写入。
+      resolveGen({ success: false, error: 'test-end' })
+      await runPromise
+    })
+  })
 })

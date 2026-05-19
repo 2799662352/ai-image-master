@@ -5,6 +5,9 @@ interface Props {
   item: DonorItemView
   onDelete: (id: number | string) => void
   onPreview: (item: DonorItemView, urlIndex: number) => void
+  /** 重新编辑: 把 item 的 prompt/ratio/refs 回灌到 GeneratePage 表单。
+   *  父组件不传也行 — 按钮自动隐藏, 保持向后兼容。 */
+  onEdit?: (item: DonorItemView) => void
 }
 
 const STATUS_META: Record<
@@ -17,7 +20,7 @@ const STATUS_META: Record<
   failed: { label: 'FAILED', labelJp: '失敗', className: 'd-status-tag--fail', icon: '✕' },
 }
 
-export default function DonorCard({ item, onDelete, onPreview }: Props) {
+export default function DonorCard({ item, onDelete, onPreview, onEdit }: Props) {
   const [imgError, setImgError] = useState<Set<number>>(new Set())
   const meta = STATUS_META[item.status]
 
@@ -44,6 +47,22 @@ export default function DonorCard({ item, onDelete, onPreview }: Props) {
     if (window.confirm('确认删除这条记录吗? / 削除しますか?')) {
       onDelete(item.id)
     }
+  }
+
+  // 任一可恢复字段(prompt / refs / ratio)存在就允许 EDIT。完全空的脏数据才隐藏。
+  const canEdit = !!(
+    onEdit &&
+    (item.prompt ||
+      (Array.isArray(item.referenceImages) && item.referenceImages.length > 0) ||
+      item.ratio)
+  )
+  // 路由提示: type 以 batch 开头时按钮上标记 →BATCH, 否则 →GEN
+  const editTargetTag =
+    typeof item.type === 'string' && item.type.startsWith('batch') ? 'BATCH' : 'GEN'
+
+  const handleEditClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    onEdit?.(item)
   }
 
   return (
@@ -99,6 +118,20 @@ export default function DonorCard({ item, onDelete, onPreview }: Props) {
           <span>{meta.labelJp}</span>
           <em className="opacity-80">/{meta.label}</em>
         </div>
+
+        {/* 常驻 EDIT 按钮(右上角)— 解决 hover bar 在某些屏幕 / 触控环境点不到的问题。
+            zIndex 拉高确保不被状态角标 / 多图指示器盖住; stopPropagation 防止
+            冒泡到 article 的 onClick (那会打开 preview, 不是用户想要的)。 */}
+        {canEdit && (
+          <button
+            type="button"
+            onClick={handleEditClick}
+            title={`重新编辑 → ${editTargetTag} 页 / Restore params to ${editTargetTag}`}
+            className="absolute right-2 top-2 z-10 px-2 py-1 d-mono text-[10px] font-bold tracking-widest uppercase bg-[color:var(--donor-bg-0)]/90 text-[color:var(--donor-yellow)] border border-[color:var(--donor-yellow)]/70 hover:bg-[color:var(--donor-yellow)] hover:text-[color:var(--donor-bg-0)] transition-colors cursor-pointer"
+          >
+            ↺ {editTargetTag}
+          </button>
+        )}
       </div>
 
       {/* ===== 信息区 ===== */}
@@ -136,7 +169,9 @@ export default function DonorCard({ item, onDelete, onPreview }: Props) {
         </div>
       </div>
 
-      {/* ===== Hover 操作栏 ===== */}
+      {/* ===== Hover 操作栏 (VIEW + DELETE) =====
+          注: EDIT 按钮已移到图像区右上角常驻显示, 不再放这里 ——
+          因为 hover bar 在触控屏 / 高 DPI 屏 / 慢手势下容易点不到。 */}
       <div className="absolute inset-x-0 bottom-0 translate-y-full group-hover:translate-y-0 transition-transform duration-150 flex border-t border-[color:var(--donor-magenta)] bg-[color:var(--donor-bg-0)]/95">
         {hasImage && (
           <button

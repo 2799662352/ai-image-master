@@ -97,13 +97,17 @@ export class HistoryDataService {
 
   /**
    * 添加历史记录 (支持 Base64 图片自动上传到 R2)
+   *
+   * `extras` 可选: 携带 referenceImages 等"非主结果但需要持久化"的字段。
+   * 老调用方不传依然兼容; 新功能(重新编辑)读这里恢复参考图。
    */
   async addToHistory(
     type: string,
     prompt: string,
     urls: string[],
     ratio?: string,
-    model?: string
+    model?: string,
+    extras?: { referenceImages?: string[] }
   ): Promise<HistoryItem | null> {
     // 检测是否有 base64 数据需要上传
     const hasBase64 = urls.some(url => url.startsWith('data:image'))
@@ -124,6 +128,13 @@ export class HistoryDataService {
       originalUrls: hasBase64 ? urls : undefined,
       ratio,
       model,
+      // 参考图作为 dataURL/http URL 数组直接持久化进 history item。
+      // 重新编辑按钮会从这里把它们回灌到 useGenerateStore.referenceImages。
+      // 空数组 / undefined 都不写, 节省存储 + 让 UI 判 "有没有 refs" 简单。
+      referenceImages:
+        extras?.referenceImages && extras.referenceImages.length > 0
+          ? [...extras.referenceImages]
+          : undefined,
       timestamp: new Date().toISOString(),
       uploading: hasBase64,
       r2Storage: false

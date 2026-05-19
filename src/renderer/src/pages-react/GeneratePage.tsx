@@ -1,6 +1,7 @@
-import { useEffect, useRef, useMemo } from 'react'
+import { useEffect, useRef, useMemo, useCallback } from 'react'
 import { useModelStore, useToastStore, useGenerateStore } from '../stores'
 import { useApi } from '../hooks/useService'
+import type { GenerateSnapshot } from '../stores/useGenerateStore'
 import { useAutosizeTextarea } from '../hooks/useAutosizeTextarea'
 import { ModelSelector } from '../components/ModelSelector'
 import { RatioSelector } from './generate/RatioSelector'
@@ -21,10 +22,11 @@ export default function GeneratePage() {
   const generating = useGenerateStore((s) => s.generating)
   const inFlightCount = useGenerateStore((s) => s.inFlightCount)
   const resultUrls = useGenerateStore((s) => s.resultUrls)
+  const resultMeta = useGenerateStore((s) => s.resultMeta)
   const referenceImages = useGenerateStore((s) => s.referenceImages)
   const error = useGenerateStore((s) => s.error)
 
-  const { setPrompt, setRatio, addReferenceImage, removeReferenceImage, clearResults, generate } =
+  const { setPrompt, setRatio, addReferenceImage, removeReferenceImage, clearResults, generate, restoreForEdit } =
     useGenerateStore.getState()
 
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -74,6 +76,26 @@ export default function GeneratePage() {
       addToast({ message: `生成完成 (+${added} 张)`, type: 'success' })
     }
   }
+
+  /**
+   * 点 [重编辑] 按钮: 把对应结果的 snapshot 灌回表单。
+   *
+   * 用户已经在 generate 页, 不用切 tab。但要:
+   * 1) 把 prompt/refs/ratio 写回表单, 并切换 model store
+   * 2) 让 textarea 立刻看到新 prompt(setPrompt 已经走 store, autosize 自动跟随)
+   * 3) toast 提示一下, 避免静默把表单刷掉用户看不到
+   */
+  const handleEditFromResult = useCallback((snapshot: GenerateSnapshot) => {
+    restoreForEdit({
+      prompt: snapshot.prompt,
+      ratio: snapshot.ratio,
+      referenceImages: snapshot.referenceImages,
+    })
+    if (snapshot.modelKey && models[snapshot.modelKey]) {
+      useModelStore.getState().switchModel(snapshot.modelKey)
+    }
+    addToast({ type: 'success', message: '参数已恢复, 修改后再点生成 / RESTORED' })
+  }, [restoreForEdit, models, addToast])
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
@@ -155,7 +177,7 @@ export default function GeneratePage() {
         </div>
       )}
 
-      <ResultGrid urls={resultUrls} />
+      <ResultGrid urls={resultUrls} meta={resultMeta} onEditFromResult={handleEditFromResult} />
     </div>
   )
 }

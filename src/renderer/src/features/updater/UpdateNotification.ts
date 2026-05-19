@@ -47,6 +47,14 @@ export class UpdateNotification {
   private progress: DownloadProgress | null = null
   private checkIntervalId: ReturnType<typeof setInterval> | null = null
 
+  /**
+   * 保存 7 个 IPC 监听各自的 unsubscribe, destroy 时挨个调用。
+   * 旧实现只是 `electronAPI.on(...)` 后扔掉返回值, listener 永远摘不掉 ——
+   * 如果 resetUpdateNotification() 被调用(HMR / 手动重置), 旧实例的回调
+   * 还会被 fire, 操作已经置 null 的 dom/state 导致报错。
+   */
+  private ipcUnsubscribes: Array<() => void> = []
+
   constructor(config: Partial<UpdateNotificationConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config }
   }
@@ -81,11 +89,23 @@ export class UpdateNotification {
       return
     }
 
-    electronAPI.on('updater:checking-for-update', () => {
+    // preload 的 .on(channel, cb) 现在返回 unsubscribe 函数 ——
+    // 把它们攒起来, destroy() 时挨个调用。这样 HMR / 手动 reset 不会
+    // 留死 listener 在 ipcRenderer 上抓着已置 null 的 this。
+    // 若运行在老版 preload (旧返回 void) 上, push undefined 会被
+    // .filter(Boolean) 在 destroy 里自然跳过。
+    const reg = (channel: string, cb: (...args: any[]) => void): void => {
+      const unsubscribe = electronAPI.on(channel, cb)
+      if (typeof unsubscribe === 'function') {
+        this.ipcUnsubscribes.push(unsubscribe)
+      }
+    }
+
+    reg('updater:checking-for-update', () => {
       this.status = 'checking'
     })
 
-    electronAPI.on('updater:update-available', (...args: any[]) => {
+    reg('updater:update-available', (...args: any[]) => {
       const info = this.extractPayload<UpdateInfo & { autoDownload?: boolean }>(args)
       if (!info?.version) return
       this.updateInfo = info
@@ -98,13 +118,13 @@ export class UpdateNotification {
       }
     })
 
-    electronAPI.on('updater:update-not-available', (...args: any[]) => {
+    reg('updater:update-not-available', (...args: any[]) => {
       this.status = 'idle'
       const data = this.extractPayload<{ currentVersion?: string; latestVersion?: string }>(args)
       this.showNoUpdate(data?.currentVersion || data?.latestVersion)
     })
 
-    electronAPI.on('updater:download-progress', (...args: any[]) => {
+    reg('updater:download-progress', (...args: any[]) => {
       const progress = this.extractPayload<DownloadProgress>(args)
       if (!progress) return
       this.status = 'downloading'
@@ -114,14 +134,14 @@ export class UpdateNotification {
       }
     })
 
-    electronAPI.on('updater:update-downloaded', (...args: any[]) => {
+    reg('updater:update-downloaded', (...args: any[]) => {
       const info = this.extractPayload<{ version: string }>(args)
       if (!info?.version) return
       this.status = 'ready'
       this.showUpdateReady(info.version)
     })
 
-    electronAPI.on('updater:update-error', (...args: any[]) => {
+    reg('updater:update-error', (...args: any[]) => {
       const error = this.extractPayload<{ message?: string }>(args)
       const message =
         typeof error?.message === 'string' && error.message.trim()
@@ -131,7 +151,7 @@ export class UpdateNotification {
       this.showError(message)
     })
 
-    electronAPI.on('updater:download-retry', (...args: any[]) => {
+    reg('updater:download-retry', (...args: any[]) => {
       const info = this.extractPayload<{ attempt: number; maxRetries: number }>(args)
       if (!info) return
       console.log(`[UpdateNotification] 下载重试 ${info.attempt}/${info.maxRetries}`)
@@ -844,6 +864,14 @@ export class UpdateNotification {
 
   destroy(): void {
     this.stopAutoCheck()
+    // 摘掉 setupIpcListeners 挂的 7 个 ipcRenderer listener,
+    // 否则 instance 自身被 listener 闭包持有, GC 不掉; 还有更糟的情况 ——
+    // resetUpdateNotification() 之后新实例上线, 但旧 listener 仍然 fire
+    // 操作 this(已变僵尸), 触发 "Cannot read property of null"。
+    for (const unsubscribe of this.ipcUnsubscribes) {
+      try { unsubscribe() } catch { /* listener 已被外部清掉, 忽略 */ }
+    }
+    this.ipcUnsubscribes = []
     this.dismiss()
     UpdateNotification.instance = null
   }

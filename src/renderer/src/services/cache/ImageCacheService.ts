@@ -30,6 +30,12 @@ export interface ImageCacheConfig {
   defaultExpiry?: number
   /** 需要缓存的 URL 模式 */
   cachePatterns?: string[]
+  /**
+   * 本地 Map 软上限 — 防止长时间生图后 Map 无界增长 (此前只靠 TTL,
+   * 在单次会话内仍然可以累积几千条占内存)。默认 500 条, 满了就 FIFO
+   * 丢最老的(Map 自身按插入顺序保留 key)。
+   */
+  maxEntries?: number
   /** API 实例引用 */
   apiInstance?: {
     cleanupExpiredCache?: () => void
@@ -49,7 +55,8 @@ type CacheUpdateCallback = (originalUrls: string[], cachedUrls: string[]) => voi
 
 const DEFAULT_CONFIG: Required<Omit<ImageCacheConfig, 'apiInstance' | 'loadHistory' | 'saveHistory' | 'refreshHistoryDisplay' | 'getCurrentTab'>> = {
   defaultExpiry: 24 * 60 * 60 * 1000, // 24 hours
-  cachePatterns: ['bfl.ai', 'flux-kontext']
+  cachePatterns: ['bfl.ai', 'flux-kontext'],
+  maxEntries: 500
 }
 
 /**
@@ -60,40 +67,41 @@ export class ImageCacheService {
   private localCache: Map<string, CachedImageInfo> = new Map()
   private updateCallbacks: CacheUpdateCallback[] = []
   private initialized = false
-  
+
+  // 监听器必须挂在 this 上 — 此前 init() 里写匿名箭头函数,
+  // destroy() 没办法 removeEventListener('fluxImagesCached', sameRef),
+  // 导致整个 service 实例被 window 持有, 永远不会 GC。
+  private readonly boundHandleCachedEvent: EventListener
+
   constructor(config: ImageCacheConfig = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config }
-  }
-  
-  /**
-   * 初始化缓存服务
-   */
-  init(): void {
-    if (this.initialized) return
-    
-    console.log('[ImageCacheService] 初始化图片缓存服务...')
-    
-    // 清理过期缓存
-    this.cleanupExpired()
-    
-    // 监听缓存完成事件
-    window.addEventListener('fluxImagesCached', ((event: CustomEvent<{
+    this.boundHandleCachedEvent = ((event: CustomEvent<{
       originalUrls: string[]
       cachedUrls: string[]
     }>) => {
       const { originalUrls, cachedUrls } = event.detail
       console.log('[ImageCacheService] 收到图片缓存完成事件', { originalUrls, cachedUrls })
-      
-      // 更新本地缓存
       this.addToLocalCache(originalUrls, cachedUrls)
-      
-      // 更新历史记录
       this.updateHistoryWithCachedImages(originalUrls, cachedUrls)
-      
-      // 触发回调
       this.notifyUpdate(originalUrls, cachedUrls)
-    }) as EventListener)
-    
+    }) as EventListener
+  }
+
+  /**
+   * 初始化缓存服务
+   */
+  init(): void {
+    if (this.initialized) return
+
+    console.log('[ImageCacheService] 初始化图片缓存服务...')
+
+    // 清理过期缓存
+    this.cleanupExpired()
+
+    // 监听缓存完成事件 — 用 constructor 里 bind 好的同一引用,
+    // destroy 才能用同一引用 removeEventListener。
+    window.addEventListener('fluxImagesCached', this.boundHandleCachedEvent)
+
     this.initialized = true
     console.log('[ImageCacheService] 初始化完成')
   }
@@ -135,13 +143,17 @@ export class ImageCacheService {
   }
   
   /**
-   * 添加到本地缓存
+   * 添加到本地缓存。每次插入后调用 trimCache 控制软上限,
+   * 这是和此前最大的差别 — 没有这个 trim, Map 会无界增长。
    */
   private addToLocalCache(originalUrls: string[], cachedUrls: string[]): void {
     const now = Date.now()
-    
+
     originalUrls.forEach((url, index) => {
       if (cachedUrls[index]) {
+        // 如果 key 已存在, 先 delete 再 set, 让它移到 Map 的"最新"位置;
+        // Map 按插入顺序遍历, 这样 trimCache 的 FIFO 才是 LRU 而不是 FIFO。
+        if (this.localCache.has(url)) this.localCache.delete(url)
         this.localCache.set(url, {
           originalUrl: url,
           cachedData: cachedUrls[index],
@@ -149,6 +161,22 @@ export class ImageCacheService {
         })
       }
     })
+
+    this.trimCache()
+  }
+
+  /**
+   * 把 localCache 砍到不超过 maxEntries 条, 多余的从最老开始丢。
+   * Map 的迭代顺序就是插入顺序, 配合 addToLocalCache 的 delete-then-set
+   * 实现近似 LRU 语义(新写入的一定在尾部, 老的在头部)。
+   */
+  private trimCache(): void {
+    const max = this.config.maxEntries ?? DEFAULT_CONFIG.maxEntries
+    while (this.localCache.size > max) {
+      const oldestKey = this.localCache.keys().next().value
+      if (oldestKey === undefined) break
+      this.localCache.delete(oldestKey)
+    }
   }
   
   /**
@@ -240,12 +268,14 @@ export class ImageCacheService {
    * 手动添加缓存
    */
   addCache(originalUrl: string, cachedData: string, expiresIn?: number): void {
+    if (this.localCache.has(originalUrl)) this.localCache.delete(originalUrl)
     this.localCache.set(originalUrl, {
       originalUrl,
       cachedData,
       timestamp: Date.now(),
       expiresIn
     })
+    this.trimCache()
   }
   
   /**
@@ -307,9 +337,13 @@ export class ImageCacheService {
   }
   
   /**
-   * 销毁服务
+   * 销毁服务 — 必须先把 window 上的监听摘掉, 否则 service 实例被
+   * window 持有, 永远无法 GC; 监听器闭包里又持有 this, 形成保留链。
    */
   destroy(): void {
+    if (this.initialized) {
+      window.removeEventListener('fluxImagesCached', this.boundHandleCachedEvent)
+    }
     this.localCache.clear()
     this.updateCallbacks = []
     this.initialized = false

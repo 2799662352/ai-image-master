@@ -1,6 +1,7 @@
-import { useMemo, useState, useEffect } from 'react'
+import { useCallback, useMemo, useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useModelStore, useToastStore, useBatchStore } from '../stores'
+import type { BatchItem } from '../stores/useBatchStore'
 import { useApi } from '../hooks/useService'
 import BatchShell from './batch/BatchShell'
 import BatchHeader from './batch/BatchHeader'
@@ -176,6 +177,61 @@ export default function BatchPage() {
     addToast({ message: '已清除已完成结果', type: 'info' })
   }
 
+  /**
+   * 点击批量结果卡上的 ↺ EDIT: 用跟历史页 ↺ BATCH 完全一样的路径,
+   * 把那条 item 生成时的 prompt + 比例 + 参考图 + 模型 全部回灌。
+   *
+   * 早期版本只灌 prompt, 用户反馈"图片没载入"。现在直接复用
+   * useBatchStore.restoreForEdit + useModelStore.switchModel 这套
+   * 历史页跑通的逻辑, 行为对齐。
+   *
+   * snapshot 在 worker 把 item flip 成 generating 时写入 (见
+   * useBatchStore.runBatch → claimNextPending), pending 阶段为 undefined。
+   * 没 snapshot 时退化为仅塞 prompt + 保留当前 ratio/refs。
+   */
+  // (p4) useCallback: BatchResultGrid → ResultCard 走 React.memo, 父侧
+  // 回调必须引用稳定, 否则 200 张卡片 memo 全部 miss, 状态变化时整网格
+  // 重新渲染。依赖 currentModelKey + addToast 即可。
+  const handleEditItem = useCallback((item: BatchItem) => {
+    const snap = item.snapshot
+    useBatchStore.getState().restoreForEdit(
+      snap
+        ? {
+            prompt: snap.prompt,
+            ratio: snap.ratio,
+            referenceImages: snap.referenceImages,
+            mode: 'card',
+          }
+        : {
+            prompt: item.prompt,
+            mode: 'card',
+          },
+    )
+
+    // model 校验跟 HistoryPage.handleEdit 保持一致: 不在 models 字典里
+    // 就只 toast 不切, 避免点 GENERATE 时打到不存在的模型。
+    if (snap?.modelKey && snap.modelKey !== currentModelKey) {
+      const modelStore = useModelStore.getState()
+      if (modelStore.models[snap.modelKey]) {
+        modelStore.switchModel(snap.modelKey)
+      } else {
+        addToast({ type: 'warning', message: `模型 ${snap.modelKey} 不可用, 请手动选择` })
+      }
+    }
+
+    addToast({
+      message: snap
+        ? '已回灌 prompt / 比例 / 参考图 / RESTORED'
+        : 'Prompt 已加载 (无快照, 仅恢复文本) / RESTORED',
+      type: 'success',
+    })
+  }, [currentModelKey, addToast])
+
+  // (p4) 同上, 预览回调要稳定, 否则 ResultCard.memo 失效。
+  const handlePreview = useCallback((url: string) => {
+    setPreviewUrl(url)
+  }, [])
+
   const handleClearAll = () => {
     if (running) {
       addToast({ message: '生成中, 请稍后再清空', type: 'warning' })
@@ -337,7 +393,7 @@ export default function BatchPage() {
             onAdd={addRefImage}
             onRemove={removeRefImage}
             onClear={clearRefImages}
-            onPreview={(url) => setPreviewUrl(url)}
+            onPreview={handlePreview}
           />
         </section>
       </div>
@@ -366,7 +422,8 @@ export default function BatchPage() {
       <BatchResultGrid
         items={items}
         onRemove={removeItem}
-        onPreview={(url) => setPreviewUrl(url)}
+        onPreview={handlePreview}
+        onEditItem={handleEditItem}
       />
 
       {/* ===== 预览 modal ===== */}

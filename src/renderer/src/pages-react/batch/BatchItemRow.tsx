@@ -18,8 +18,12 @@ export function BatchItemRow({ item, onRemove }: BatchItemRowProps) {
         <p className="text-sm text-gray-300 truncate">{item.prompt}</p>
         {item.error && <p className="text-xs text-red-400 mt-1">{item.error}</p>}
       </div>
-      {item.resultUrl && (
-        <img src={item.resultUrl} alt="" className="w-10 h-10 object-cover border border-zinc-700" />
+      {(item.cosUrl || item.resultUrl) && (
+        <img
+          src={item.cosUrl ?? item.resultUrl}
+          alt=""
+          className="w-10 h-10 object-cover border border-zinc-700"
+        />
       )}
       {item.status === 'generating' && (
         <div className="w-4 h-4 border-2 border-cyberpunk-yellow border-t-transparent rounded-full animate-spin" />

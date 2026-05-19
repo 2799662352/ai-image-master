@@ -4,7 +4,7 @@ import * as path from 'path'
 import * as fs from 'fs'
 import { randomBytes } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { getAutoUpdaterInstance } from './updater'
+import { getAutoUpdaterInstance, AutoUpdater } from './updater'
 import {
   submitSplit,
   cancelTask,
@@ -24,6 +24,7 @@ import {
   deleteEraseRemoteObjects,
   setMainWindow as setEraseMainWindow,
 } from './services/smartErase'
+import { untrackAndCleanupAll as cleanupSmartEraseReaper } from './services/smartErase/reaper'
 import { AgentManager } from './agent/AgentManager'
 import { AttachmentService } from './agent/AttachmentService'
 import { consumeStartupNotice, getPrisma, shutdownDatabase } from './agent/db'
@@ -42,6 +43,41 @@ import type { McpRuntime } from './mcp/server'
 
 // 检测开发模式：通过命令行参数或环境变量
 const isDev = process.argv.includes('--dev') || process.env.NODE_ENV === 'development'
+
+// ─── 全局错误兜底 ────────────────────────────────────────────────────────────
+//
+// Node 15+ / Electron 15+ 的默认行为是: unhandledRejection 会让进程崩溃。
+// Electron 官方文档 ("Utility Process unhandled rejection behavior change")
+// 明确建议对此类事件自己接管, 不要让它直接 process.exit。
+//
+// 这里我们尽早(import 之后立刻)装上 listener, 这样后续任何模块加载或
+// 同步初始化里抛出来的 promise rejection 都能被吃掉, 不会拖崩主进程。
+// 95+ 个 ipcMain.handle 里的抛错 Electron 会自动序列化 reject 回 renderer,
+// 那条路径不在这里覆盖范围内 —— 这里管的是 ipc handler **外部** 的:
+//   - setTimeout / setInterval 里的 async 抛错
+//   - .catch(...) 里再抛的二次错误
+//   - unawaited promise (void fn(); 但 fn 内部 reject)
+//   - 模块顶层 await 的失败
+//
+// 选择 log + 不 exit: 主进程崩了用户必须重启, 体验远差于把错误吞下打日志。
+// 调试期通过 console + electron-log 落盘就能事后排查。
+process.on('unhandledRejection', (reason, promise) => {
+  const msg =
+    reason instanceof Error
+      ? `${reason.message}\n${reason.stack}`
+      : String(reason)
+  console.error('[main] unhandledRejection (吞掉, 不让进程崩):', msg, promise)
+})
+process.on('uncaughtException', (error, origin) => {
+  console.error(
+    `[main] uncaughtException (吞掉, 不让进程崩) origin=${origin}:`,
+    error?.stack || error,
+  )
+  // 注意: Node 文档说 uncaughtException 之后进程已处于"未定义状态",
+  // 严格上应该 exit。但在 Electron 桌面应用里, 直接 exit 用户感知就是
+  // "自我删除/无声闪退"; 我们选择继续运行, 配合 IPC 回执报错让用户重试
+  // 当前操作。这是 ux-vs-correctness 的有意取舍。
+})
 
 // 类型定义
 interface StoreInstance {
@@ -271,6 +307,45 @@ function initCustomGalleryPath(): string {
   return customGalleryPath!
 }
 
+/**
+ * 一次性注册 nativeTheme 监听 —— createWindow() 在 macOS dock 重新点击或
+ * 其他场景下会被多次调用, 旧实现每次都 `nativeTheme.on('updated', ...)`,
+ * 全局 EventEmitter 上累积 N 个相同 listener, 切主题时被回调 N 次, 还会触发
+ * MaxListenersExceededWarning。这里改为模块级一次性注册。
+ *
+ * Windows 在切 dark/light、wallpaper accent、高对比度时会短时间内连续触发
+ * 多次 `updated` 事件; 我们用 50ms throttle + 值比较去抖, 没变就不发, 避免
+ * renderer 跟着反复重渲。
+ */
+let nativeThemeListenerInstalled = false
+function setupNativeThemeListenerOnce(): void {
+  if (nativeThemeListenerInstalled) return
+  nativeThemeListenerInstalled = true
+
+  let lastTheme = {
+    shouldUseDarkColors: nativeTheme.shouldUseDarkColors,
+    prefersReducedTransparency: nativeTheme.prefersReducedTransparency,
+  }
+  let themeUpdateTimer: ReturnType<typeof setTimeout> | null = null
+
+  nativeTheme.on('updated', () => {
+    if (themeUpdateTimer !== null) return
+    themeUpdateTimer = setTimeout(() => {
+      themeUpdateTimer = null
+      const next = {
+        shouldUseDarkColors: nativeTheme.shouldUseDarkColors,
+        prefersReducedTransparency: nativeTheme.prefersReducedTransparency,
+      }
+      if (
+        next.shouldUseDarkColors === lastTheme.shouldUseDarkColors &&
+        next.prefersReducedTransparency === lastTheme.prefersReducedTransparency
+      ) return
+      lastTheme = next
+      mainWindow?.webContents.send('native-theme-changed', next)
+    }, 50)
+  })
+}
+
 function createWindow(): void {
   console.log(`[Performance] Window created: ${Date.now() - startTime}ms`)
 
@@ -336,27 +411,34 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
-  // 键盘快捷键: F5, Ctrl+R, Cmd+R 刷新页面
+  // 键盘快捷键: F5, Ctrl+R, Cmd+R 刷新页面。
+  //
+  // 关键: Ctrl+Shift+R 必须先判定, 否则会先命中 Ctrl+R 普通 reload, 紧接着
+  // 再命中 Ctrl+Shift+R 的 reloadIgnoringCache —— 用户按一下强制刷新会
+  // 闪两次。改为严格 if/else 顺序: Shift 在最前, 后面用 else if。
   mainWindow.webContents.on('before-input-event', (event, input) => {
-    // F5 刷新
-    if (input.key === 'F5') {
-      mainWindow?.webContents.reload()
-      event.preventDefault()
-    }
-    // Ctrl+R 或 Cmd+R 刷新
-    if ((input.control || input.meta) && input.key.toLowerCase() === 'r') {
-      mainWindow?.webContents.reload()
-      event.preventDefault()
-    }
-    // Ctrl+Shift+R 或 Cmd+Shift+R 强制刷新（清除缓存）
-    if ((input.control || input.meta) && input.shift && input.key.toLowerCase() === 'r') {
-      mainWindow?.webContents.reloadIgnoringCache()
-      event.preventDefault()
-    }
-    // F12 打开开发者工具（所有模式可用，方便调试）
     if (input.key === 'F12') {
       mainWindow?.webContents.toggleDevTools()
       event.preventDefault()
+      return
+    }
+    // Ctrl+Shift+R / Cmd+Shift+R 强制刷新(清缓存) — 必须先于普通 Ctrl+R 判定
+    if ((input.control || input.meta) && input.shift && input.key.toLowerCase() === 'r') {
+      mainWindow?.webContents.reloadIgnoringCache()
+      event.preventDefault()
+      return
+    }
+    // Ctrl+R / Cmd+R 普通刷新
+    if ((input.control || input.meta) && input.key.toLowerCase() === 'r') {
+      mainWindow?.webContents.reload()
+      event.preventDefault()
+      return
+    }
+    // F5 普通刷新
+    if (input.key === 'F5') {
+      mainWindow?.webContents.reload()
+      event.preventDefault()
+      return
     }
   })
 
@@ -383,13 +465,11 @@ function createWindow(): void {
     })
   })
 
-  // 监听系统主题变化
-  nativeTheme.on('updated', () => {
-    mainWindow?.webContents.send('native-theme-changed', {
-      shouldUseDarkColors: nativeTheme.shouldUseDarkColors,
-      prefersReducedTransparency: nativeTheme.prefersReducedTransparency
-    })
-  })
+  // nativeTheme 监听已经移到 `setupNativeThemeListenerOnce()`(模块级),
+  // 这样 createWindow() 即便在 app.on('activate') 时被重复调用, 也不会
+  // 给全局 nativeTheme 重复挂 listener。这里只负责一次性同步初始状态,
+  // 同步逻辑写在上面的 ready-to-show 里。
+  setupNativeThemeListenerOnce()
 
   if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
@@ -743,6 +823,13 @@ function deferNonCriticalInit(): void {
         const updater = getAutoUpdaterInstance({
           provider: 'generic',
           url: 'https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/',
+          // round-5: 在 NSIS 接管之前必须杀掉 codex/docker mcp gateway 子进程,
+          // 否则它们握着 resources/*.node / app.asar 句柄, NSIS partial-install
+          // → 用户感知的"更新把自己卸载了"。详见 updater.ts:UpdaterConfig.preInstallCleanup。
+          //
+          // 注意: 这个 hook 跑完后 cleanupAgentRuntime 内部 agentRuntimeCleanedUp
+          // 已置 true, 后续 before-quit 监听里的二次调用会幂等 no-op。
+          preInstallCleanup: () => cleanupAgentRuntime(),
         })
         updater.setMainWindow(currentWindow)
         updater.checkForUpdatesOnStartup(0)
@@ -777,7 +864,20 @@ app.on('activate', () => {
 
 app.on('before-quit', (event) => {
   disposeFsWatchers()
+  // smartErase reaper 是个 5s setInterval, 还会握着 tracked Map 不放。
+  // app.quit() 最终会 kill 进程, 但在那之前的 cleanupAgentRuntime 阶段
+  // 这个 interval 会被 v8 当作 "还有事要做" 而拖住 quit 周期。
+  // 同步调用, 不需要 await —— 函数内部 tracked.clear() + stopInterval()
+  // 都是同步的, async 标记仅为接口对称。
+  void cleanupSmartEraseReaper().catch(() => { /* best-effort */ })
   if (isQuittingAfterAgentCleanup) return
+
+  // 安装更新时绝对不能拦截 quit —— electron-updater 在 quitAndInstall
+  // 内部已经把 NSIS 安装器拉起来等父进程退出, 我们这里再 preventDefault
+  // 一次会让安装器的退出协议错位, 旧 exe 在 Windows 上常会被改名/删除
+  // 但新 exe 还没就位, 直接命中"自我删除/启动失败"的坑。所以更新中直接
+  // 放行, 让 quit 周期完整跑完。
+  if (AutoUpdater.isInstallingUpdate) return
 
   event.preventDefault()
   void cleanupAgentRuntime()
@@ -978,6 +1078,33 @@ function mimeTypeToExtension(mime: string): string {
   }
 }
 
+/**
+ * IPC base64 → Buffer 输入硬上限 (round-5 安全加固)。
+ *
+ * 大小取舍: 一张 4K PNG 极限大约 30MB binary, base64 编码后 ≈ 40MB。
+ * 我们给到 80MB base64 字符串 (≈ 60MB binary) 留足余量, 但坚决拒绝
+ * 100MB+ 的输入 —— 因为 main process 没有 v8 heap 之外的 buffer pool,
+ * Buffer.from(huge, 'base64') 会瞬间在主进程堆里分配 60MB+ 临时副本,
+ * 并发几个 IPC 一起来就能直接 OOM 把主进程打死。
+ *
+ * 拒绝时尽量在 string 长度阶段就否决, 避免先 allocate 再丢弃。
+ */
+const MAX_IPC_BASE64_STRING_BYTES = 80 * 1024 * 1024 // 80MB base64 ≈ 60MB binary
+
+/**
+ * 校验 IPC 来的 base64 字符串大小, 超限直接拒绝。
+ * 返回 null 表示通过, 否则返回错误描述供 handler 透传给 renderer。
+ */
+function rejectOversizedBase64(s: unknown): string | null {
+  if (typeof s !== 'string') return null // 让上层用 type guard 各自报错
+  // 用 UTF-16 code unit 数 ≈ ascii 字符数估算字节; base64 全是 ASCII 所以等价。
+  if (s.length > MAX_IPC_BASE64_STRING_BYTES) {
+    const mb = (s.length / 1024 / 1024).toFixed(1)
+    return `base64 payload too large: ${mb}MB (limit ${MAX_IPC_BASE64_STRING_BYTES / 1024 / 1024}MB)`
+  }
+  return null
+}
+
 ipcMain.handle(
   'cos:upload-image-history',
   async (
@@ -992,6 +1119,8 @@ ipcMain.handle(
       if (typeof base64 !== 'string' || !base64) {
         return { success: false, error: 'invalid base64 payload' }
       }
+      const oversized = rejectOversizedBase64(base64)
+      if (oversized) return { success: false, error: oversized }
       if (typeof mimeType !== 'string' || !mimeType.startsWith('image/')) {
         return { success: false, error: 'invalid mimeType (must be image/*)' }
       }
@@ -1081,6 +1210,14 @@ ipcMain.handle('shell:open-external', async (_event, raw: unknown) => {
 // 图片操作
 ipcMain.handle('save-image', async (_event, { base64Data, filename }: ImageSaveParams) => {
   try {
+    if (typeof base64Data !== 'string') {
+      return { success: false, error: 'invalid base64 payload' }
+    }
+    const oversized = rejectOversizedBase64(base64Data)
+    if (oversized) {
+      console.warn('[save-image] 拒绝超大 base64:', oversized)
+      return { success: false, error: oversized }
+    }
     const buffer = Buffer.from(base64Data.replace(/^data:image\/\w+;base64,/, ''), 'base64')
     const filePath = path.join(imagesDir, filename)
     await fs.promises.writeFile(filePath, buffer)
@@ -1176,6 +1313,14 @@ ipcMain.handle('select-save-path', async () => {
 
 ipcMain.handle('export-image', async (_event, { base64Data, targetDir, filename }: ImageExportParams) => {
   try {
+    if (typeof base64Data !== 'string') {
+      return { success: false, error: 'invalid base64 payload' }
+    }
+    const oversized = rejectOversizedBase64(base64Data)
+    if (oversized) {
+      console.warn('[export-image] 拒绝超大 base64:', oversized)
+      return { success: false, error: oversized }
+    }
     const buffer = Buffer.from(base64Data.replace(/^data:image\/\w+;base64,/, ''), 'base64')
     const filePath = path.join(targetDir, filename)
     await fs.promises.writeFile(filePath, buffer)

@@ -1,6 +1,6 @@
 import { app } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { promises as fs } from 'node:fs'
+import { promises as fs, type WriteStream } from 'node:fs'
 import path from 'node:path'
 import { buildCodexLaunchArgs, resolveCodexSessionConfig, type CodexProviderConfig } from './codexLaunch'
 import { mergeCodexConfigs } from './codexConfigMerge'
@@ -78,6 +78,19 @@ export interface CodexLocalBackendOptions {
 type SpawnedCodexClient = {
   proc: ChildProcess
   client: CodexProtocolClient
+  /**
+   * (round-5) 显式持有 log WriteStream, 让 stop() 能 .end() 它。
+   *
+   * 早期版本里 log 是 startSpawnedClient 闭包内的局部变量, 没存到 this。
+   * proc 退出 + client 释放后, 这条 WriteStream 还握着 OS 文件 fd, 等
+   * v8 GC 找上门才会(也许)被 finalizer 关掉 —— 但 fs.WriteStream 的
+   * GC 关闭非确定性, 每次 provider 切换 / restartCodex 都泄一个 fd,
+   * Windows 上长 session 累计能把句柄表打爆。
+   *
+   * resourceRootOverride 走 process.stderr 那条路 log 没有可关的 fd,
+   * 用 null 标记跳过关闭。
+   */
+  log: WriteStream | null
 }
 
 /**
@@ -111,6 +124,11 @@ export async function rebuildRuntimeConfig(paths: CodexWorkspacePaths): Promise<
 export class CodexLocalBackend implements IAgentBackend {
   private proc: ChildProcess | null = null
   private client: CodexProtocolClient | null = null
+  /**
+   * (round-5) spawn 出来的 codex 子进程 stdout/stderr 重定向到磁盘的 log
+   * 文件流。stop() 必须 .end() 它, 否则每次 provider 切换都泄一个 fd。
+   */
+  private log: WriteStream | null = null
   private readonly options: CodexLocalBackendOptions
   private readonly wsUrlOverride: string | undefined
   private readonly resourceRootOverride: string | undefined
@@ -146,6 +164,7 @@ export class CodexLocalBackend implements IAgentBackend {
     const started = await this.startSpawnedClient()
     this.proc = started.proc
     this.client = started.client
+    this.log = started.log
   }
 
   private async startWsClient(url: string): Promise<CodexProtocolClient> {
@@ -170,9 +189,12 @@ export class CodexLocalBackend implements IAgentBackend {
       resourcesPath: process.resourcesPath,
     })
     const bin = resolveCodexBinary(resourceRoot)
-    const log: NodeJS.WritableStream = this.resourceRootOverride
-      ? process.stderr
+    // resourceRootOverride 分支走 process.stderr (测试 / 调试时), 没有 fd
+    // 可关; 走真实 file 那条会把 WriteStream 存到 ownedLog, 在 stop() 里 .end() 它。
+    const ownedLog: WriteStream | null = this.resourceRootOverride
+      ? null
       : createAgentLogStream('codex')
+    const log: NodeJS.WritableStream = ownedLog ?? process.stderr
     const recentOutput = new RingBuffer(STARTUP_LOG_TAIL)
     const captureOutput = (chunk: Buffer | string): void => {
       const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8')
@@ -237,22 +259,32 @@ export class CodexLocalBackend implements IAgentBackend {
       startupPhase = false
       await client.stop().catch(() => { /* ignore */ })
       await this.killProcessInstance(proc)
+      // 启动失败也要把刚开的 log fd 关掉, 否则失败重试场景下泄一个 fd。
+      if (ownedLog) ownedLog.end()
       throw error
     } finally {
       startupPhase = false
     }
-    return { proc, client }
+    return { proc, client, log: ownedLog }
   }
 
   async stop(): Promise<void> {
     const client = this.client
     const proc = this.proc
+    const log = this.log
     this.client = null
     this.proc = null
+    this.log = null
     if (client) {
       await client.stop().catch(() => { /* ignore */ })
     }
     await this.killProcessInstance(proc)
+    // 关 log fd: 用 .end() 而不是 .destroy(), 因为 proc.exit 之后 pipe
+    // 可能还有未 flush 的最后几行 buffered data, .end() 会 flush 完再关。
+    // 包 try 是因为 stream 内部状态可能已经 destroyed (双重关闭无害但报警)。
+    if (log) {
+      try { log.end() } catch { /* already closed */ }
+    }
   }
 
   async applyConfigChange(paths: CodexWorkspacePaths): Promise<void> {
@@ -281,14 +313,21 @@ export class CodexLocalBackend implements IAgentBackend {
 
     const oldClient = this.client
     const oldProc = this.proc
+    const oldLog = this.log
     const replacement = await this.startSpawnedClient()
     this.proc = replacement.proc
     this.client = replacement.client
+    this.log = replacement.log
 
     if (oldClient) {
       await oldClient.stop().catch(() => { /* ignore */ })
     }
     await this.killProcessInstance(oldProc)
+    // 跟 stop() 同款关 log: provider/config 切换走的就是这条热重启路径,
+    // 高频用户最容易在这里累积 fd 泄漏。
+    if (oldLog) {
+      try { oldLog.end() } catch { /* already closed */ }
+    }
     this.configDirty = false
 
     await this.auditRestart(paths)

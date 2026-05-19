@@ -2,15 +2,52 @@ import { create } from 'zustand'
 import type { ApiActions } from '../hooks/useService'
 import { useTemplateStore } from '../react-app/stores/useTemplateStore'
 import { composePromptWithTemplate } from '../react-app/constants/templates'
+import { uploadImageUrlToCos } from '../utils/cosImageUpload'
 
 export type BatchMode = 'card' | 'multi'
+
+/**
+ * 异步存储上传状态。
+ * - `uploading`: 已经拿到模型直出 URL,正在往 COS 推
+ * - `uploaded`:  COS URL 已经回来,UI 应该热切到 cosUrl
+ * - `failed`:    COS 出错,UI 永远 fallback 到 resultUrl(模型直出)
+ * - 字段缺省 = 还没开始 / 老历史数据
+ */
+export type BatchUploadStatus = 'uploading' | 'uploaded' | 'failed'
+
+/**
+ * 生成时表单参数快照, 给结果卡上的"↺ 重编辑"按钮用。
+ *
+ * 和 useGenerateStore.ResultUploadMeta.snapshot 对称设计:
+ * 即便用户后续改了 cardPrompt / refs / ratio, 这里依然记得这张图
+ * 是怎么来的。同一次 runBatch 内的所有 item 共享同一个 snapshot 对象
+ * (浅引用), 因为整批共享 ratio/refs/model, 只有 prompt 各自不同。
+ */
+export interface BatchItemSnapshot {
+  prompt: string
+  ratio: string
+  referenceImages: string[]
+  modelKey: string
+}
 
 export interface BatchItem {
   id: string
   prompt: string
   status: 'pending' | 'generating' | 'done' | 'error'
+  /** 模型直出 URL — 上传未完成时作为 fallback 显示 */
   resultUrl?: string
+  /** COS 持久化 URL — 一旦有值就优先显示 */
+  cosUrl?: string
+  uploadStatus?: BatchUploadStatus
+  uploadError?: string
   error?: string
+  /**
+   * 在 worker 把 item flip 为 `generating` 时挂上 —— 之前(pending)
+   * 阶段为 undefined。重编辑时:
+   *   - 有 snapshot 就用 snapshot.{prompt, ratio, referenceImages, modelKey}
+   *   - 没 snapshot(还在 pending) 就 fallback 到当前 store 状态 + item.prompt
+   */
+  snapshot?: BatchItemSnapshot
 }
 
 export interface BatchRefImage {
@@ -70,6 +107,21 @@ export interface BatchState {
   clearAll: () => void
   runBatch: (api: ApiActions, modelKey: string, opts?: BatchRunOpts) => Promise<void>
   cancelBatch: () => void
+  /**
+   * 把一份"批量配置快照"灌回当前 store 表单, 不触发生成。
+   *
+   * 与 useGenerateStore.restoreForEdit 的对称设计:
+   * - 历史"batch"条目走这条路径 (HistoryPage.handleEdit 按 type 分流)
+   * - 批量结果卡上的 ↺ 重编辑也走这条 — 只是只覆盖 cardPrompt, 不动 refs/ratio
+   *
+   * partial 字段缺省时保留 store 现状, 不误清表单。
+   */
+  restoreForEdit: (snapshot: {
+    prompt?: string
+    ratio?: string
+    referenceImages?: string[]
+    mode?: BatchMode
+  }) => void
 
   // ---- actions: 配置 ----
   setMode: (mode: BatchMode) => void
@@ -112,6 +164,32 @@ export const initialState = {
  */
 const HARD_MAX_WORKERS = 6
 
+/**
+ * 单次会话保留的最大批量项数。防止长时间生图无界堆积; 超过此值后
+ * 在 addItem 时从最老的已完成项(done / error)开始 FIFO 丢弃, 永不丢弃
+ * 仍在 pending / generating 状态的项 — 这是关键约束: 在跑的活儿不能掉。
+ */
+const MAX_ITEMS = 200
+
+/**
+ * 把 items 数组裁到不超过 MAX_ITEMS 条: 从前往后扫, 只丢已结束(done/error)
+ * 的, 直到满足上限或者无可丢为止。pending / generating 任意位置都跳过。
+ */
+function trimItems(items: BatchItem[]): BatchItem[] {
+  if (items.length <= MAX_ITEMS) return items
+  const toDrop = items.length - MAX_ITEMS
+  let dropped = 0
+  const kept: BatchItem[] = []
+  for (const item of items) {
+    if (dropped < toDrop && (item.status === 'done' || item.status === 'error')) {
+      dropped++
+      continue
+    }
+    kept.push(item)
+  }
+  return kept
+}
+
 /** 把 dataURL 切掉头, 只返回 base64 主体; 已经是纯 base64 则原样返回 */
 function stripDataUrl(s: string): string {
   const idx = s.indexOf(',')
@@ -123,7 +201,11 @@ export const useBatchStore = create<BatchState>((set, get) => ({
 
   addItem: (prompt) => {
     set((s) => ({
-      items: [...s.items, { id: crypto.randomUUID(), prompt, status: 'pending' }],
+      // 追加新项之后用 trimItems 限制总长 — 只丢已结束的, 跑的活儿不动。
+      items: trimItems([
+        ...s.items,
+        { id: crypto.randomUUID(), prompt, status: 'pending' },
+      ]),
     }))
     // If a batch is in flight, kick a brand-new worker so this freshly
     // added item starts running immediately instead of waiting for one
@@ -195,6 +277,16 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     const idleExitMs = Math.max(0, opts?.idleExitMs ?? 300)
     const POLL_IDLE_MS = 80
 
+    // 整批共享的回灌快照。注意 ratio 这里用 opts 里的原值(可能含 'auto'),
+    // 而不是已经被 API 过滤过的 undefined —— restoreForEdit 注入的是表单
+    // 值, 让用户在生图页看到一致的 UI 状态。referenceImages 用 refRaw
+    // (data URL 完整形式), 因为重编辑要回灌到 refImages, 后者也是 data URL。
+    const runSnapshotBase: Omit<BatchItemSnapshot, 'prompt'> = {
+      ratio,
+      referenceImages: refRaw,
+      modelKey,
+    }
+
     /**
      * Atomically claim the first pending item. The whole read-and-flip
      * happens inside a single `set` callback so two workers racing on the
@@ -207,10 +299,15 @@ export const useBatchStore = create<BatchState>((set, get) => ({
       set((state) => {
         const next = state.items.find((i) => i.status === 'pending')
         if (!next) return state
-        claimed = { ...next, status: 'generating' as const }
+        // Snapshot 在 claim 时挂上 —— 此时 prompt/ratio/refs/model 都已确定,
+        // 重编辑按钮(在 done 之后才显示)就能拿到完整回灌参数。
+        const snapshot: BatchItemSnapshot = { ...runSnapshotBase, prompt: next.prompt }
+        claimed = { ...next, status: 'generating' as const, snapshot }
         return {
           items: state.items.map((i) =>
-            i.id === next.id ? { ...i, status: 'generating' as const } : i
+            i.id === next.id
+              ? { ...i, status: 'generating' as const, snapshot }
+              : i
           ),
         }
       })
@@ -291,9 +388,36 @@ export const useBatchStore = create<BatchState>((set, get) => ({
 
             set((state) => ({
               items: state.items.map((i) =>
-                i.id === item.id ? { ...i, status: 'done' as const, resultUrl: url } : i
+                i.id === item.id
+                  ? { ...i, status: 'done' as const, resultUrl: url, uploadStatus: 'uploading' as const }
+                  : i
               ),
             }))
+
+            // Fire-and-forget: 把模型直出图异步推到腾讯云 COS。
+            // 不 await — 让 worker 继续 claim 下一条 pending 任务,
+            // 上传完成或失败时再 set 回 store 更新单个 item。
+            // 关键约束:
+            //   1) 若 batch 已 abort,上传也跟着取消(传 ac.signal)。
+            //   2) 上传失败不影响生成成功状态; UI 通过 uploadStatus='failed'
+            //      显示提示, 但 resultUrl 还能用。
+            //   3) item 可能在上传期间被 removeItem 删掉, set 时用 .map
+            //      天然容忍(找不到 id 就静默)。
+            void uploadImageUrlToCos(url, {
+              signal: ac.signal,
+              metadata: { source: 'batch', prompt: item.prompt, model: modelKey },
+            }).then((res) => {
+              if (ac.signal.aborted) return
+              set((state) => ({
+                items: state.items.map((i) =>
+                  i.id === item.id
+                    ? res.ok
+                      ? { ...i, cosUrl: res.url, uploadStatus: 'uploaded' as const, uploadError: undefined }
+                      : { ...i, uploadStatus: 'failed' as const, uploadError: res.error }
+                    : i
+                ),
+              }))
+            })
           } catch (err) {
             if (ac.signal.aborted) break
             set((state) => ({
@@ -365,15 +489,25 @@ export const useBatchStore = create<BatchState>((set, get) => ({
         try {
           const historyService = (window as any).historyDataServiceTS
           if (historyService?.addToHistory) {
-            const doneItems = get().items.filter((i) => i.status === 'done' && i.resultUrl)
+            // 优先用 cosUrl(已经异步转存到 COS, 历史保存可直接复用),
+            // 没有就 fallback 到模型直出 resultUrl(historyService 自己会再
+            // 做一次持久化 — 但模型 URL 可能很快过期,所以这里能拿到 cosUrl
+            // 最好。
+            const doneItems = get().items.filter(
+              (i) => i.status === 'done' && (i.cosUrl || i.resultUrl)
+            )
             for (const item of doneItems) {
               if (ac.signal.aborted) break
+              const persistUrl = item.cosUrl ?? item.resultUrl!
+              // refRaw 是这一批共用的参考图(批量模式下每张图共享一套 refs)。
+              // 写进 extras 让"重新编辑"能把它们回灌到 Generate 表单。
               await historyService.addToHistory(
                 refRaw.length > 0 ? 'batch-with-reference' : 'batch',
                 item.prompt,
-                [item.resultUrl!],
+                [persistUrl],
                 ratio,
                 modelKey,
+                { referenceImages: refRaw.length > 0 ? refRaw : undefined },
               ).catch((e: unknown) => console.warn('[Batch] history save failed:', e))
             }
           }
@@ -391,6 +525,42 @@ export const useBatchStore = create<BatchState>((set, get) => ({
         set({ _spawnWorker: null })
       }
     }
+  },
+
+  restoreForEdit: (snapshot) => {
+    // 把 dataURL 转成 BatchRefImage —— 历史里存的是 dataURL 数组, 但
+    // useBatchStore.refImages 是带元数据 (id/fileName/fileSize) 的对象数组,
+    // 所以这里要重构: 给每个 ref 生成一个稳定 id, fileName 用 'restored-N',
+    // fileSize 从 dataURL 字节长度近似估算 (b64 长 × 0.75)。
+    set((s) => {
+      const refs = snapshot.referenceImages
+      const nextRefs =
+        refs !== undefined
+          ? refs.map((base64, i): BatchRefImage => ({
+              id: `restored-${Date.now()}-${i}`,
+              base64,
+              fileName: `restored-${i + 1}`,
+              // 估算: data:image/png;base64,<...> 中 base64 部分长度 × 0.75 ≈ byte 数
+              fileSize: Math.floor((base64.length - (base64.indexOf(',') + 1)) * 0.75),
+            }))
+          : s.refImages
+
+      // mode 缺省时保持当前 mode 不变 —— 历史页会显式传 'card', 但
+      // BatchPage 内部 ↺ EDIT 不传 mode, 用户在 multi 模式时不应被强切回 card,
+      // 否则会丢掉 multiText 里其他几行的输入。
+      const nextMode = snapshot.mode !== undefined ? snapshot.mode : s.mode
+      const promptIsSet = snapshot.prompt !== undefined
+
+      return {
+        mode: nextMode,
+        cardPrompt:
+          nextMode === 'card' && promptIsSet ? snapshot.prompt! : s.cardPrompt,
+        multiText:
+          nextMode === 'multi' && promptIsSet ? snapshot.prompt! : s.multiText,
+        ratio: snapshot.ratio !== undefined ? snapshot.ratio : s.ratio,
+        refImages: nextRefs,
+      }
+    })
   },
 
   setMode: (mode) => set({ mode }),
