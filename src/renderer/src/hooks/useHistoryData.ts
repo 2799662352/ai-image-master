@@ -22,6 +22,13 @@ export interface RawHistoryItem {
   ratio?: string
   type?: string
   resolution?: string
+  /**
+   * 写入时机: `useGenerateStore.generate` 或 `useBatchStore` 完成一次生成后,
+   * 通过 `HistoryDataService.addToHistory(..., { referenceImages })` 持久化。
+   * 读出来给"重新编辑"按钮用 —— 把参考图回灌到 generate 表单。
+   * 老条目无此字段, 读出来是 `undefined`, UI 层用 Array.isArray 防御。
+   */
+  referenceImages?: string[]
   metadata?: Record<string, any>
   [key: string]: any
 }

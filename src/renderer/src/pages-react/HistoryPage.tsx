@@ -12,7 +12,7 @@ import DonorCard from '../components/donor/DonorCard'
 import DonorEmpty from '../components/donor/DonorEmpty'
 import DonorPreview from '../components/donor/DonorPreview'
 import DonorStorageModal from '../components/donor/DonorStorageModal'
-import { useToastStore } from '../stores'
+import { useToastStore, useTabStore, useGenerateStore, useModelStore, useBatchStore } from '../stores'
 
 export default function HistoryPage() {
   const { items, stats, delete: deleteItem, clear } = useHistoryData()
@@ -75,6 +75,58 @@ export default function HistoryPage() {
     setPreview({ item, index })
   }, [])
 
+  /**
+   * 重新编辑: 按 history 条目的 type 路由到 batch 页 或 generate 页。
+   *
+   * 路由规则 (item.type 由 addToHistory 写入):
+   * - 'batch' / 'batch-with-reference' → useBatchStore + 'batch' tab
+   * - 'generate' / 'generate-with-reference' / 'director' 等 → useGenerateStore + 'generate' tab
+   *
+   * 通用流程:
+   * 1) 拿到 type 对应的 store, 把 prompt / ratio / refs 回灌
+   * 2) 切换 model (若给定的 model 仍在 models 字典里)
+   * 3) switchTab — 必须最后做, 等 store 写完才切, 避免目标页面 mount
+   *    时拿到的还是上一份脏状态
+   * 4) toast 提示, 让用户感知到"我点了 EDIT, 真的有反应"
+   */
+  const handleEdit = useCallback((item: DonorItemView) => {
+    const isBatch = typeof item.type === 'string' && item.type.startsWith('batch')
+    const refsRaw = Array.isArray(item.referenceImages) ? item.referenceImages : undefined
+
+    if (isBatch) {
+      useBatchStore.getState().restoreForEdit({
+        prompt: item.prompt ?? '',
+        ratio: item.ratio,
+        referenceImages: refsRaw,
+        mode: 'card',
+      })
+    } else {
+      useGenerateStore.getState().restoreForEdit({
+        prompt: item.prompt ?? '',
+        ratio: item.ratio,
+        referenceImages: refsRaw,
+      })
+    }
+
+    if (item.model) {
+      const modelStore = useModelStore.getState()
+      // useModelStore.switchModel 不做 key 校验, 任何字符串都会被写进 store ——
+      // 这里手动检查一下: 不在 models 字典里就只提示, 不切换。否则点 [生成]
+      // 会去找一个不存在的模型把请求打爆。
+      if (modelStore.models[item.model]) {
+        modelStore.switchModel(item.model)
+      } else {
+        addToast({ type: 'warning', message: `模型 ${item.model} 不可用, 请手动选择` })
+      }
+    }
+
+    useTabStore.getState().switchTab(isBatch ? 'batch' : 'generate')
+    addToast({
+      type: 'success',
+      message: isBatch ? '已加载到批量页 / RESTORED (BATCH)' : '已加载到生图页 / RESTORED (GENERATE)',
+    })
+  }, [addToast])
+
   return (
     <DonorShell>
       {/* 背景装饰大字
@@ -126,7 +178,13 @@ export default function HistoryPage() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {filtered.map((it) => (
-            <DonorCard key={it.id} item={it} onDelete={handleDelete} onPreview={handlePreview} />
+            <DonorCard
+              key={it.id}
+              item={it}
+              onDelete={handleDelete}
+              onPreview={handlePreview}
+              onEdit={handleEdit}
+            />
           ))}
         </div>
       )}

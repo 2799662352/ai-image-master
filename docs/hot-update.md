@@ -138,6 +138,71 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
+### v4.3.8 (2026-05-20)
+
+本次发布是一波 **批量页性能 + 系统稳定性硬化** 综合补丁,聚焦"生图过多卡顿 / 内存涨 / 自我删除"三个老用户痛点。两条主线:
+
+**A. 批量结果页性能(BatchResultGrid)**
+
+200+ 张卡片场景下"改一条 item 状态全网格重渲"的渲染风暴,叠加 `items.indexOf` 的 O(N²) 主线程开销 ——
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| `O(N²) indexOf → Map(O(N)) lookup` | `src/renderer/src/pages-react/batch/BatchResultGrid.tsx` | 加 `indexById = useMemo(Map<id, idx>)` 替换 `displayItems.map` 里的 `items.indexOf(item)`。200 items 时单次渲染从 ~4 万次 indexOf 降到 200+200 次 Map 操作 |
+| `React.memo(ResultCard)` + 父侧 `useCallback` | `BatchResultGrid.tsx` + `pages-react/BatchPage.tsx` | 把卡片包 memo,父侧 `handleEditItem` / `handlePreview` 改 `useCallback` 引用稳定,grid 内 `handleOpenEditor` 也提到顶层。zustand `items.map` 保留未变 item 的引用 → memo 浅比较跳过未变卡片。单 item 状态翻转从触发全 N 张卡片重渲降为只重渲那 1 张 |
+| `failedItems` / `doneItems` / `displayItems` / `injectPrompt` 全部 useMemo / useCallback | `BatchResultGrid.tsx` | 派生数组依赖锁死, 防御性消除 N×O(N) 重扫 |
+| `<img decoding="async">` | `BatchResultGrid.tsx` | 大图解码 offload 到后台线程, 大量已完成结果同时进视口时不阻塞主线程 |
+| **react-window 2.x 虚拟化** | `BatchResultGrid.tsx` + `package.json` (新增 `react-window@^2.2.7`) | 阈值化策略: `items.length < 30` 走原 CSS Grid 保留页面整体滚动 UX, `>= 30` 切到 react-window `<Grid>` 内嵌滚动只渲染视口可见 cell。`useContainerSize` 用 ResizeObserver 跟踪容器宽度 + window.innerHeight × 0.7 自适应视口高度。`cellProps` 全 useMemo 保持引用稳定 → react-window 内部跳过未变 cell。200 items 满载时 DOM 节点从 ~6000 降到 ~360, decoded image bitmap 内存从 ~800MB 降到 ~50MB |
+
+**B. 主进程稳定性 / 资源泄漏(第五轮系统性挖洞)**
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| **修: 更新冲突自我删除** | `src/main/updater.ts` + `src/main/index.ts` | 真因不是 `before-quit` 逻辑而是 child process (codex agent / docker MCP gateway) 在 `quitAndInstall` 时仍持有文件句柄 → NSIS 装不上去。新增 `UpdaterConfig.preInstallCleanup` 钩子, `handleInstall()` 先 `await cleanup()`(带 8s 超时兜底)再 `quitAndInstall`。`index.ts` 注入 `cleanupAgentRuntime()` 作为 cleanup 实现, 解除所有 child process + 文件句柄 |
+| **IPC 大 base64 入参 OOM 防护** | `src/main/index.ts` | `cos:upload-image-history` / `save-image` / `export-image` 三个 IPC 加 `MAX_IPC_BASE64_STRING_BYTES = 80MB` + `rejectOversizedBase64()` helper。超大恶意/异常调用在字符串长度校验阶段就拒掉, 不再走到 Buffer.from(base64) 把主进程 OOM |
+| **修: codex agent 日志 FD 泄漏** | `src/main/agent/CodexLocalBackend.ts` | `SpawnedCodexClient` 加 `log: WriteStream \| null` 字段持有日志流引用, `start()` / `stop()` / `restartCodex()` 显式 `log.end()` 关闭。修复 provider 切换 / agent 重启时 fs.WriteStream 一个不放的累计 FD 泄漏 |
+| **修: COS sliceUploadFile 异常分支 FD 泄漏** | `src/main/services/tencent/cosClient.ts` + `__tests__/cosClient.test.ts` | `uploadStream` 增加防御层: (a) 代理 `onTaskReady` 抓住 taskId; (b) `SLICE_UPLOAD_HARD_TIMEOUT_MS = 10min` 硬超时, 超时主动 `cancelUpload(taskId)`; (c) sliceUploadFile callback err 分支显式 `safeCancel()` 兜底, 不依赖 SDK 内部 TaskInfo Map 清理。用户提供的 `onTaskReady` 包 try/catch 隔离, 异常不传染 |
+
+**C. 历史/批量页"重新编辑"功能闭环**
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| `BatchItem.snapshot` 字段 | `src/renderer/src/stores/useBatchStore.ts` | `BatchItemSnapshot { prompt, ratio, referenceImages, modelKey }`。`runBatch` 启动时 captures `runSnapshotBase`,`claimNextPending` 把"分发到 worker"的瞬间快照附到每个 BatchItem 上, pending 阶段保持 undefined |
+| `restoreForEdit` mode 保留语义 | `useBatchStore.ts` | snapshot.mode 未指定时保留当前 store.mode, BatchPage 显式传 `mode: 'card'` 走单项重编辑, HistoryPage 同款。修复批量页"重编辑只塞文本不载图"的回归 |
+| 历史页 + 批量页 ↺ EDIT 按钮 | `pages-react/HistoryPage.tsx` + `pages-react/BatchPage.tsx` + `pages-react/batch/BatchResultGrid.tsx` + `pages-react/generate/ResultGrid.tsx` + `pages-react/batch-punk/PunkResultGrid.tsx` + `pages-react/batch/BatchItemRow.tsx` + `components/donor/DonorCard.tsx` | `onEditPrompt(string)` → `onEditItem(item: BatchItem)` 重命名, 让父组件能拿到完整 snapshot 一起回灌。Donor 卡按钮永久可见(不再 hover 才出), title 区分有/无 snapshot 两态。BatchPage `handleEditItem` 复用 `useBatchStore.restoreForEdit` + `useModelStore.switchModel`, 跟 HistoryPage 走完全同一条 code path |
+
+**D. 异步 COS 转存 URL 上屏**
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| 异步上传 hook | `src/renderer/src/utils/cosImageUpload.ts` (新) | `cosImageUpload(resultUrl, item)` → 返回 cosUrl + status。`useBatchStore` / `useGenerateStore` 生成成功后 fire-and-forget 触发, status 字段(`uploading` / `uploaded` / `failed`) 通过 zustand 同步到 UI |
+| 卡片角标 | `BatchResultGrid.tsx` + `ResultGrid.tsx` | 三态角标 `up…` / `cos` / `!cos`, hover title 解释含义。`pickDisplayUrl` 优先选 `cosUrl` 兜底 `resultUrl`, 持久化链接生效后 UI 自动切换 |
+
+**E. 其它打磨**
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| 内置版本号文案修正 | `src/renderer/src/main.tsx` + `src/renderer/src/features/intro-video/IntroVideoController.ts` + `src/renderer/src/features/updater/UpdateNotification.ts` | 启动页 / 更新提示窗口里硬编码的版本号字符串同步到 4.3.8 |
+| 历史数据服务签名收紧 | `src/renderer/src/features/history/HistoryDataService.ts` + `hooks/useHistoryData.ts` + `services/cache/ImageCacheService.ts` | 跟 `cosUrl` / snapshot 字段配套的类型补全, 没运行时行为变化 |
+
+#### 测试
+
+- `pnpm exec vitest run useBatchStore.test.ts` → **28/28 全过**(其中含 3 个 batch 队列爆发并发的 timing-sensitive 测试)
+- `pnpm exec vitest run cosClient.test.ts` → COS 上传防御层新增的 timeout / cancel 路径全过
+- 受影响文件 lint / typecheck 干净(其它存量类型错误在 storage / storyboard-pipeline / LazyLibraries, 跟本次无关)
+
+#### 用户可见行为
+
+1. 升级到 v4.3.8 不再出现"更新装到一半 app 自己消失"(即使没装上, 老 exe 也保留, 重新启动 → 重新拉更新, 不会进死循环)
+2. 批量页跑 100+ 任务: 滚动稳定 60fps, 内存涨幅显著降低, 不再有"卡到爆"的体感
+3. 历史 / 批量任一项的 ↺ EDIT 按钮永久可见, 点了能把 prompt / 比例 / 参考图 / 模型一起灌回输入框
+4. 任一图片生成后, 卡片左下角实时显示 COS 上传状态角标; 升到 `cos` 后即使会话关闭再打开, 图也不会因为模型 URL 过期而 404
+
+参考:
+- React 官方 `React.memo` + `useCallback` 配合模式: <https://react.dev/reference/react/useCallback>
+- react-window 2.x 文档: <https://github.com/bvaughn/react-window>
+- electron-updater `quitAndInstall` 流程: <https://www.electron.build/auto-update>
+
 ### v4.3.7 (2026-05-19)
 
 v4.3.5 落地 Skill Marketplace MVP 后，收到的 UX 反馈分两批：

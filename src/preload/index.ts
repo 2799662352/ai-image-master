@@ -546,8 +546,15 @@ export interface ElectronAPI {
   removeSmartEraseListeners: () => void
   // 文件路径访问（合成 File 对象返回 ""，非 File 对象抛异常被吞掉返回 ""）
   getFilePath: (file: File) => string
-  // 通用事件监听（用于更新等事件）
-  on: (channel: string, callback: (...args: any[]) => void) => void
+  // 通用事件监听(更新等事件)。
+  // 返回值: unsubscribe 函数 —— 调用即移除自己注册的那个 wrapper,
+  // 不影响同 channel 上的其他订阅。旧调用方忽略返回值即可。
+  on: (channel: string, callback: (...args: any[]) => void) => () => void
+  /**
+   * 清空指定 channel 上所有的 listener。语义保留作为"全员退订"用,
+   * 但同 channel 上别人的订阅也会被一锅端。
+   * 推荐用法: 改用 `on()` 返回的 unsubscribe 函数, 只摘自己那一个。
+   */
   off: (channel: string) => void
 }
 
@@ -1101,7 +1108,16 @@ const electronAPI: ElectronAPI = {
 
   // ============ 通用事件监听 ============
   // 允许的通道：更新事件 + 系统事件
-  on: (channel: string, callback: (...args: any[]) => void) => {
+  //
+  // 返回值是 unsubscribe 函数。这是和老版本签名(返回 void)的唯一区别 ——
+  // 旧调用方仍然兼容(忽略返回值即可); 新调用方可以靠它精确卸载自己挂的那
+  // 个 wrapper, 不再需要走 off(channel) 把同通道上别人的订阅一起带走。
+  //
+  // 为什么这是个 bug 修复: 旧设计里每次 .on(channel, cb) 都会创建一个新的
+  // wrapper closure (_event, ...args) => cb(...args), 而 off(channel) 用
+  // removeAllListeners 一锅端 —— 同通道两个订阅者其中一个 off, 另一个会
+  // 被静默删除。新增 unsubscribe 让单个订阅者可以独立摘掉自己。
+  on: (channel: string, callback: (...args: any[]) => void): (() => void) => {
     const allowedChannels = [
       ...IPC_CHANNELS.UPDATE_EVENTS,
       IPC_CHANNELS.SYSTEM.NATIVE_THEME_CHANGED,
@@ -1109,11 +1125,13 @@ const electronAPI: ElectronAPI = {
       ...IPC_CHANNELS.STORYBOARD_SPLIT_EVENTS,
       ...IPC_CHANNELS.SMART_ERASE_EVENTS,
     ]
-    if (allowedChannels.includes(channel)) {
-      ipcRenderer.on(channel, (_event: IpcRendererEvent, ...args: any[]) => callback(...args))
-    } else {
+    if (!allowedChannels.includes(channel)) {
       console.warn(`[Preload] 不允许监听的通道: ${channel}`)
+      return () => {}
     }
+    const wrapper = (_event: IpcRendererEvent, ...args: any[]): void => callback(...args)
+    ipcRenderer.on(channel, wrapper)
+    return () => ipcRenderer.removeListener(channel, wrapper)
   },
 
   off: (channel: string) => {

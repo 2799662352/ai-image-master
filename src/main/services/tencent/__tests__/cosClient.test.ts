@@ -233,4 +233,56 @@ describe('tencent/cosClient', () => {
 
     await expect(deleteObjects(['a.jpg', 'b.jpg'])).rejects.toThrow(/partial delete failed.*a\.jpg/)
   })
+
+  // ───────────────────── round-5 加固 ─────────────────────
+  // uploadStream 在 sliceUploadFile 失败时, 必须显式 cancelTask 一次 ——
+  // 哪怕 SDK 已经"应该"清理过, 也再保险一遍, 让 SDK 走 evictTask 释放
+  // 内部 TaskInfo Map 里挂着的文件 fd。
+  it('uploadStream calls cancelTask on error path to defensively release fd', async () => {
+    mockSliceUploadFile.mockImplementation((params: any, cb: any) => {
+      // SDK 先 onTaskReady 把 taskId 抛上来, 后续才报错
+      params.onTaskReady?.('task-leak-456')
+      cb({ code: 'NetworkingError', message: 'TCP reset' })
+    })
+
+    const { uploadStream } = await import('../cosClient')
+    await expect(
+      uploadStream({ key: 'big.bin', filePath: '/tmp/big.bin' }),
+    ).rejects.toMatchObject({ code: 'NetworkingError' })
+
+    // 关键断言: 错误分支必须 cancelTask, 否则 SDK 内部状态可能留着 fd
+    expect(mockCancelTask).toHaveBeenCalledWith('task-leak-456')
+  })
+
+  // 成功路径不应该 cancelTask —— 否则会把 SDK 的"已成功上传"任务也清掉,
+  // 影响 SDK 内部的 task complete 后处理 / 用户拿不到 etag 等元信息。
+  it('uploadStream does NOT call cancelTask on success path', async () => {
+    mockSliceUploadFile.mockImplementation((params: any, cb: any) => {
+      params.onTaskReady?.('task-ok-789')
+      cb(null, {})
+    })
+
+    const { uploadStream } = await import('../cosClient')
+    await uploadStream({ key: 'k.bin', filePath: '/tmp/ok.bin' })
+
+    expect(mockCancelTask).not.toHaveBeenCalled()
+  })
+
+  // 即便上游业务方传的 onTaskReady 自己抛了, uploadStream 仍要继续吃 taskId,
+  // 不能因为业务回调把整条上传也带翻 —— 早期版本里没用 try 包裹直接 throw 会
+  // 让 sliceUploadFile 的回调链断在中途。
+  it('uploadStream swallows errors thrown by user-supplied onTaskReady', async () => {
+    mockSliceUploadFile.mockImplementation((params: any, cb: any) => {
+      params.onTaskReady?.('task-cb-err')
+      cb(null, {})
+    })
+
+    const { uploadStream } = await import('../cosClient')
+    await uploadStream({
+      key: 'k.bin',
+      filePath: '/tmp/ok.bin',
+      onTaskReady: () => { throw new Error('user cb boom') },
+    })
+    // 业务 cb 抛错不应影响完成: 没 reject 就算过。
+  })
 })

@@ -97,6 +97,22 @@ export class IntroVideoController {
     videoContainer: HTMLElement | null
   }
 
+  // 监听器闭包必须挂在 this 上, destroy 才能用同一个引用 removeEventListener。
+  // 此前用箭头函数现场拼装导致 add/remove 是两个不同函数, 永远摘不掉。
+  private readonly boundHandleKeydown: (e: KeyboardEvent) => void
+  private readonly boundHandleSkipClick: () => void
+  private readonly boundHandleEnterClick: () => void
+  private readonly boundHandleAppReady: () => void
+  // 视频元素上挂的 4 个监听器
+  private readonly boundHandleVideoCanPlay: () => void
+  private readonly boundHandleVideoTimeUpdate: () => void
+  private readonly boundHandleVideoEnded: () => void
+  private readonly boundHandleVideoError: () => void
+  // 由 setupTimeouts() 创建的两个 setTimeout, destroy 时清掉
+  private videoTimeoutId: ReturnType<typeof setTimeout> | null = null
+  private appInitTimeoutId: ReturnType<typeof setTimeout> | null = null
+  private hideLoaderTimeoutId: ReturnType<typeof setTimeout> | null = null
+
   constructor(config: IntroVideoConfig = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config }
     this.state = {
@@ -116,6 +132,35 @@ export class IntroVideoController {
       progressBar: null,
       fallbackLoader: null,
       videoContainer: null
+    }
+
+    // 一次性 bind, 所有 add/remove 都用这一组引用。
+    this.boundHandleKeydown = (e: KeyboardEvent) => this.handleKeydown(e)
+    this.boundHandleSkipClick = () => this.skipIntro()
+    this.boundHandleEnterClick = () => this.enterApp()
+    this.boundHandleAppReady = () => {
+      console.log('✅ [IntroVideoController] 应用初始化完成')
+      this.state.appInitialized = true
+      this.checkReadyToEnter()
+    }
+    this.boundHandleVideoCanPlay = () => {
+      console.log('🎬 [IntroVideoController] 视频加载完成,开始播放')
+      this.state.videoLoaded = true
+      this.playVideo()
+    }
+    this.boundHandleVideoTimeUpdate = () => {
+      this.updateProgress()
+    }
+    this.boundHandleVideoEnded = () => {
+      console.log('🎬 [IntroVideoController] 视频播放完成')
+      this.state.videoEnded = true
+      this.checkReadyToEnter()
+    }
+    this.boundHandleVideoError = () => {
+      console.warn('⚠️ [IntroVideoController] 视频加载失败,使用备用加载器')
+      this.state.videoEnded = true
+      this.showFallbackLoader()
+      this.checkReadyToEnter()
     }
   }
 
@@ -165,32 +210,10 @@ export class IntroVideoController {
 
     if (!video) return
 
-    // 视频加载完成
-    video.addEventListener('canplaythrough', () => {
-      console.log('🎬 [IntroVideoController] 视频加载完成，开始播放')
-      this.state.videoLoaded = true
-      this.playVideo()
-    })
-
-    // 视频播放进度
-    video.addEventListener('timeupdate', () => {
-      this.updateProgress()
-    })
-
-    // 视频播放结束
-    video.addEventListener('ended', () => {
-      console.log('🎬 [IntroVideoController] 视频播放完成')
-      this.state.videoEnded = true
-      this.checkReadyToEnter()
-    })
-
-    // 视频加载错误
-    video.addEventListener('error', () => {
-      console.warn('⚠️ [IntroVideoController] 视频加载失败，使用备用加载器')
-      this.state.videoEnded = true
-      this.showFallbackLoader()
-      this.checkReadyToEnter()
-    })
+    video.addEventListener('canplaythrough', this.boundHandleVideoCanPlay)
+    video.addEventListener('timeupdate', this.boundHandleVideoTimeUpdate)
+    video.addEventListener('ended', this.boundHandleVideoEnded)
+    video.addEventListener('error', this.boundHandleVideoError)
   }
 
   /**
@@ -263,24 +286,14 @@ export class IntroVideoController {
   }
 
   /**
-   * 绑定事件
+   * 绑定事件 —— 用 constructor 里 bind 好的引用, 这样 destroy 时
+   * 能用同一个引用 removeEventListener 把监听摘干净。
    */
   private bindEvents(): void {
-    // 跳过按钮
-    this.elements.skipButton?.addEventListener('click', () => this.skipIntro())
-
-    // 进入按钮
-    this.elements.enterButton?.addEventListener('click', () => this.enterApp())
-
-    // 键盘快捷键
-    document.addEventListener('keydown', (e) => this.handleKeydown(e))
-
-    // 监听应用初始化完成事件
-    window.addEventListener('appReady', () => {
-      console.log('✅ [IntroVideoController] 应用初始化完成')
-      this.state.appInitialized = true
-      this.checkReadyToEnter()
-    })
+    this.elements.skipButton?.addEventListener('click', this.boundHandleSkipClick)
+    this.elements.enterButton?.addEventListener('click', this.boundHandleEnterClick)
+    document.addEventListener('keydown', this.boundHandleKeydown)
+    window.addEventListener('appReady', this.boundHandleAppReady)
   }
 
   /**
@@ -294,22 +307,25 @@ export class IntroVideoController {
   }
 
   /**
-   * 设置超时处理
+   * 设置超时处理。timeout id 存到 this 上, destroy 时清掉,
+   * 避免控制器已经被销毁但定时器还在 fire 导致访问已置空的 this.elements。
    */
   private setupTimeouts(): void {
-    // 视频超时：显示进入按钮
-    setTimeout(() => {
+    // 视频超时:显示进入按钮
+    this.videoTimeoutId = setTimeout(() => {
+      this.videoTimeoutId = null
       if (!this.state.videoEnded) {
-        console.log('⏰ [IntroVideoController] 视频播放超时，显示进入按钮')
+        console.log('⏰ [IntroVideoController] 视频播放超时,显示进入按钮')
         this.state.videoEnded = true
         this.checkReadyToEnter()
       }
     }, this.config.videoTimeout)
 
-    // 应用初始化超时：强制标记为已初始化
-    setTimeout(() => {
+    // 应用初始化超时:强制标记为已初始化
+    this.appInitTimeoutId = setTimeout(() => {
+      this.appInitTimeoutId = null
       if (!this.state.appInitialized) {
-        console.warn('⚠️ [IntroVideoController] 应用初始化超时，强制标记为已初始化')
+        console.warn('⚠️ [IntroVideoController] 应用初始化超时,强制标记为已初始化')
         this.state.appInitialized = true
         if (this.state.videoEnded) {
           this.showEnterButton()
@@ -428,8 +444,9 @@ export class IntroVideoController {
       loader.classList.add('loaded')
       mainContent.classList.add('loaded')
 
-      // 完全移除加载器
-      setTimeout(() => {
+      // 完全移除加载器(timeout 句柄存到 this, destroy 能清掉)
+      this.hideLoaderTimeoutId = setTimeout(() => {
+        this.hideLoaderTimeoutId = null
         if (loader.parentNode) {
           loader.parentNode.removeChild(loader)
         }
@@ -445,13 +462,40 @@ export class IntroVideoController {
   }
 
   /**
-   * 销毁控制器
+   * 销毁控制器 —— 必须把所有 add 过的 listener 用同一个引用 remove 掉,
+   * 否则箭头函数闭包永远留在 document / window / video element 上,
+   * controller 自身也无法被 GC, 历次 Ctrl+R 累积成内存泄漏。
    */
   destroy(): void {
     this.stopMessageCycle()
 
-    // 移除事件监听器
-    document.removeEventListener('keydown', (e) => this.handleKeydown(e))
+    // 清掉 setupTimeouts() 起的两个定时器, 防止销毁后还触发
+    // checkReadyToEnter / showEnterButton 访问已置空的 elements。
+    if (this.videoTimeoutId !== null) {
+      clearTimeout(this.videoTimeoutId)
+      this.videoTimeoutId = null
+    }
+    if (this.appInitTimeoutId !== null) {
+      clearTimeout(this.appInitTimeoutId)
+      this.appInitTimeoutId = null
+    }
+    if (this.hideLoaderTimeoutId !== null) {
+      clearTimeout(this.hideLoaderTimeoutId)
+      this.hideLoaderTimeoutId = null
+    }
+
+    // 摘 document / window / 按钮 / video 上挂的监听器
+    document.removeEventListener('keydown', this.boundHandleKeydown)
+    window.removeEventListener('appReady', this.boundHandleAppReady)
+    this.elements.skipButton?.removeEventListener('click', this.boundHandleSkipClick)
+    this.elements.enterButton?.removeEventListener('click', this.boundHandleEnterClick)
+    const v = this.elements.video
+    if (v) {
+      v.removeEventListener('canplaythrough', this.boundHandleVideoCanPlay)
+      v.removeEventListener('timeupdate', this.boundHandleVideoTimeUpdate)
+      v.removeEventListener('ended', this.boundHandleVideoEnded)
+      v.removeEventListener('error', this.boundHandleVideoError)
+    }
 
     // 清理元素引用
     this.elements = {

@@ -248,4 +248,89 @@ describe('useGenerateStore', () => {
       )
     })
   })
+
+  describe('restoreForEdit', () => {
+    it('writes prompt / ratio / referenceImages back into the form', () => {
+      useGenerateStore.setState({
+        prompt: 'old',
+        ratio: '1:1',
+        referenceImages: ['existing'],
+      })
+
+      useGenerateStore.getState().restoreForEdit({
+        prompt: 'restored',
+        ratio: '16:9',
+        referenceImages: ['ref-a', 'ref-b'],
+      })
+
+      const state = useGenerateStore.getState()
+      expect(state.prompt).toBe('restored')
+      expect(state.ratio).toBe('16:9')
+      expect(state.referenceImages).toEqual(['ref-a', 'ref-b'])
+      expect(state.error).toBeNull()
+    })
+
+    it('preserves current refs when snapshot omits referenceImages', () => {
+      useGenerateStore.setState({
+        prompt: 'old',
+        ratio: '1:1',
+        referenceImages: ['keep-me'],
+      })
+
+      useGenerateStore.getState().restoreForEdit({ prompt: 'new prompt' })
+
+      const state = useGenerateStore.getState()
+      expect(state.prompt).toBe('new prompt')
+      expect(state.referenceImages).toEqual(['keep-me'])
+    })
+
+    it('clones referenceImages so later mutations do not leak back', () => {
+      const incoming = ['a', 'b']
+      useGenerateStore.getState().restoreForEdit({ referenceImages: incoming })
+      incoming.push('c')
+      expect(useGenerateStore.getState().referenceImages).toEqual(['a', 'b'])
+    })
+
+    it('clears error on restore (so stale error toast does not flash again)', () => {
+      useGenerateStore.setState({ error: 'previous failure' })
+      useGenerateStore.getState().restoreForEdit({ prompt: 'x' })
+      expect(useGenerateStore.getState().error).toBeNull()
+    })
+  })
+
+  describe('generate snapshot attachment', () => {
+    it('attaches a snapshot (prompt / ratio / refs / modelKey) to each new meta', async () => {
+      useGenerateStore.setState({
+        prompt: 'a cat',
+        ratio: '16:9',
+        referenceImages: ['data:image/png;base64,XXX'],
+      })
+
+      const api = createMockApi({
+        generateImage: vi.fn().mockResolvedValueOnce({ urls: ['out1.jpg', 'out2.jpg'] }),
+      })
+      await useGenerateStore.getState().generate(api, 'flux')
+
+      const meta = useGenerateStore.getState().resultMeta
+      expect(meta).toHaveLength(2)
+      // 同一批的多张图共享 snapshot — 浅引用即可
+      expect(meta[0].snapshot).toBeDefined()
+      expect(meta[0].snapshot).toBe(meta[1].snapshot)
+      expect(meta[0].snapshot).toEqual({
+        prompt: 'a cat',
+        ratio: '16:9',
+        referenceImages: ['data:image/png;base64,XXX'],
+        modelKey: 'flux',
+      })
+    })
+
+    it('snapshot captures empty refs as [] (not undefined) for type stability', async () => {
+      useGenerateStore.setState({ prompt: 'no refs', ratio: '1:1', referenceImages: [] })
+      const api = createMockApi({
+        generateImage: vi.fn().mockResolvedValueOnce({ urls: ['x.jpg'] }),
+      })
+      await useGenerateStore.getState().generate(api, 'flux')
+      expect(useGenerateStore.getState().resultMeta[0].snapshot?.referenceImages).toEqual([])
+    })
+  })
 })

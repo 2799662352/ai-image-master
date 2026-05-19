@@ -139,10 +139,48 @@ export interface UploadStreamOptions {
   onTaskReady?: (taskId: string) => void
 }
 
+/**
+ * sliceUploadFile 的硬超时。COS SDK 自带的 Timeout=120000ms 是单次 HTTP
+ * 请求超时, 不覆盖多分片串联的总时长; 一个大文件分片重试场景下可能挂很久。
+ * 我们这里加一个总时长上限, 触发后强行 cancelTask, 让 SDK 释放 TaskInfo
+ * Map 里的 fd。
+ */
+const SLICE_UPLOAD_HARD_TIMEOUT_MS = 10 * 60 * 1000 // 10 分钟
+
 export async function uploadStream(opts: UploadStreamOptions): Promise<void> {
   const cos = getCosInstance()
   const { Bucket, Region } = getBucketAndRegion()
+
+  // round-5 加固: 透明拦截 onTaskReady 把 taskId 抓在闭包里, 这样异常分支
+  // 也能调 cancelTask 做防御性清理 —— cos-nodejs-sdk-v5 的 sliceUploadFile
+  // 在某些 abort 路径上不会自动从内部 TaskInfo Map 里 evict 文件 fd,
+  // 显式 cancelTask 才会触发 finalizer。同时调用方原本绑的 onTaskReady
+  // 还是要透传, 不要吞掉。
+  let taskId: string | undefined
+  const onTaskReadyProxy = (id: string): void => {
+    taskId = id
+    try { opts.onTaskReady?.(id) } catch { /* user cb error 不能阻塞上传 */ }
+  }
+  const safeCancel = (): void => {
+    if (!taskId) return
+    try { cancelUpload(taskId) } catch { /* SDK 内部状态可能已 cleanup */ }
+  }
+
   await new Promise<void>((resolve, reject) => {
+    // 总时长保险丝。注意: 触发时我们 cancelTask + reject; 之后 cos 回调
+    // 也可能再来一次(成功完成或带 err), 但 Promise 已 settle, 后续 resolve/reject
+    // 会被 v8 静默忽略 —— 安全。
+    const hardTimer = setTimeout(() => {
+      logCosError(
+        'uploadStream-timeout',
+        new Error(`sliceUploadFile 超过 ${SLICE_UPLOAD_HARD_TIMEOUT_MS}ms 仍未完成`),
+        { Bucket, Region, Key: opts.key, filePath: opts.filePath, taskId },
+      )
+      safeCancel()
+      reject(new Error('sliceUploadFile timeout'))
+    }, SLICE_UPLOAD_HARD_TIMEOUT_MS)
+    hardTimer.unref?.()
+
     cos.sliceUploadFile(
       {
         Bucket,
@@ -151,11 +189,17 @@ export async function uploadStream(opts: UploadStreamOptions): Promise<void> {
         FilePath: opts.filePath,
         ContentType: opts.contentType,
         onProgress: opts.onProgress,
-        onTaskReady: opts.onTaskReady,
+        onTaskReady: onTaskReadyProxy,
       },
       (err: any) => {
+        clearTimeout(hardTimer)
         if (err) {
           logCosError('uploadStream', err, { Bucket, Region, Key: opts.key, filePath: opts.filePath })
+          // 防御性 cancel: SDK 在 callback(err) 触发时**应该**已 cleanup,
+          // 但实测某些版本里 multipart 的内部 TaskInfo Map 不释放文件流。
+          // 这里再调一次 cancelTask 让 SDK 走 evictTask 分支, 强制释放 fd。
+          // 已经 cleanup 的情况下 cancelTask 是 no-op, 没有副作用。
+          safeCancel()
           reject(err)
           return
         }

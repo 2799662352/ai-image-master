@@ -36,7 +36,35 @@ export interface UpdaterConfig {
   channel?: ReleaseChannel
   /** 备用更新源（主源失败时自动切换） */
   fallback?: Partial<UpdaterConfig>
+  /**
+   * 安装前清理钩子。在 quitAndInstall 之前同步等它跑完, 把所有 main
+   * process 持有的文件句柄 / 子进程释放掉。
+   *
+   * 为什么是必须的(round-5 真凶):
+   * Windows 上 NSIS 安装器需要替换 `resources/app.asar`,
+   * `resources/*.node`, 主 exe 等文件。如果还有任何子进程(codex,
+   * docker mcp gateway, smartErase worker)握着这些文件的句柄,
+   * NSIS 会陷入 partial install —— 旧 exe 已被改名成 .bak, 但新 exe
+   * 没装上, 用户感知就是"更新把自己卸载了"。
+   *
+   * 之前的 round-1 修复只把 `isInstallingUpdate` flag 加到 before-quit
+   * 让出 quit 周期, 但子进程并没有被杀。本轮补上。
+   *
+   * 推荐内容: 杀 codex/docker 子进程, dispose fs watchers, shutdown DB,
+   * 即 main/index.ts 里的 cleanupAgentRuntime()。
+   *
+   * 必须能在 PRE_INSTALL_TIMEOUT_MS 内完成, 超时会被无情跳过 ——
+   * 因为 quitAndInstall 阶段卡死比 partial install 更糟。
+   */
+  preInstallCleanup?: () => Promise<void>
 }
+
+/**
+ * preInstallCleanup 的硬超时。codex SIGTERM 给 2s 才升 SIGKILL, agentManager
+ * 串行 stop 多个 backend, 加上 db shutdown / dockerGateway.stop 留点余量。
+ * 超过 8s 就放弃, 让 NSIS 自己去抢锁(它有内置重试)。
+ */
+const PRE_INSTALL_TIMEOUT_MS = 8_000
 
 export interface UpdateProgress {
   percent: number
@@ -63,6 +91,17 @@ export class AutoUpdater {
   private downloadStartTime: number | null = null
   private usingFallback = false
 
+  /**
+   * 安装更新期间置 true。给 src/main/index.ts 的 `before-quit` 监听检查,
+   * 让它跳过自定义 cleanup + preventDefault 流程, 把 quit 周期完整交给
+   * electron-updater 自己接管 —— 否则 NSIS 安装器会在父进程被打断的瞬间
+   * 把旧 exe 改名/删除但新 exe 还没就位, 用户感知就是"自我删除/启动失败"。
+   *
+   * 用 static 是因为 before-quit 监听写在模块顶层, 无法持有 AutoUpdater
+   * 实例引用; 一个进程也只可能有一个 updater 实例。
+   */
+  static isInstallingUpdate = false
+
   constructor(config: UpdaterConfig = {}) {
     this.config = {
       provider: 'github',
@@ -86,7 +125,12 @@ export class AutoUpdater {
   private configureAutoUpdater(): void {
     // 基本配置
     autoUpdater.autoDownload = this.config.autoDownload ?? false
-    autoUpdater.autoInstallOnAppQuit = true
+    // 关键: autoInstallOnAppQuit 和 handleInstall 里的 quitAndInstall 是
+    // 二选一的两种姿势, 同时开会让 update 在两个不同的 quit 周期里都尝试
+    // 安装一次 NSIS 包 —— 第二次进入时 installer 已经把旧 exe 改名了,
+    // 直接命中 "self-deletion" 的 Windows 经典坑。我们这里走"显式由用户
+    // 点'立即重启安装'触发 quitAndInstall"那条路, 所以把 autoInstall 关掉。
+    autoUpdater.autoInstallOnAppQuit = false
     autoUpdater.autoRunAppAfterInstall = true
     
     // V17: 渠道配置 - beta/alpha 渠道自动允许预发布版本
@@ -370,11 +414,48 @@ export class AutoUpdater {
     }
   }
 
-  private handleInstall(): UpdateResult {
+  private async handleInstall(): Promise<UpdateResult> {
     try {
+      // 标记安装中 —— 让 main/index.ts 的 before-quit 监听放行,
+      // 不要 preventDefault 也不要再独立调一次 cleanupAgentRuntime,
+      // 而是把 cleanup 集中到本函数里 await 完, 再交给 electron-updater。
+      AutoUpdater.isInstallingUpdate = true
+
+      // 关键(round-5 真凶): 在 quitAndInstall 之前**同步**等待子进程
+      // 都死透。NSIS 在 Windows 上必须能独占 `resources/` 和主 exe;
+      // 残留的 codex/docker 子进程会握着 *.node / app.asar 的句柄,
+      // 让 NSIS partial-install, 引发"老 exe 已删 / 新 exe 未就位"
+      // 的自删现象。
+      //
+      // 硬超时 8s: 即便清理卡住也得继续, 让 NSIS 自己去抢锁
+      // (它有 retry-on-locked-file 的内置策略, 比这里傻等更靠谱)。
+      const cleanup = this.config.preInstallCleanup
+      if (cleanup) {
+        let timer: NodeJS.Timeout | undefined
+        await Promise.race([
+          cleanup().catch((err) => {
+            console.warn('[AutoUpdater] preInstallCleanup error (ignored):', err)
+          }),
+          new Promise<void>((resolve) => {
+            timer = setTimeout(() => {
+              console.warn(
+                `[AutoUpdater] preInstallCleanup 超时 ${PRE_INSTALL_TIMEOUT_MS}ms, 强行往下走 quitAndInstall`,
+              )
+              resolve()
+            }, PRE_INSTALL_TIMEOUT_MS)
+            timer.unref?.()
+          }),
+        ])
+        if (timer) clearTimeout(timer)
+      }
+
+      // isSilent=false: NSIS UI 可见, 让用户看到进度;
+      // isForceRunAfter=true: 安装完自动重启新版本(用户期望)。
       autoUpdater.quitAndInstall(false, true)
       return { success: true }
     } catch (error: any) {
+      // 安装失败回滚 flag, 否则下一次正常退出会被错误跳过 cleanup。
+      AutoUpdater.isInstallingUpdate = false
       return { success: false, error: error.message }
     }
   }

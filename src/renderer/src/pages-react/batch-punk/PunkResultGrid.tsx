@@ -76,7 +76,9 @@ function ResultCard({
   const badge = STATUS_BADGE[item.status]
   const isFail = item.status === 'error'
   const isRun = item.status === 'generating'
-  const isDone = item.status === 'done' && item.resultUrl
+  const displayUrl = item.cosUrl ?? item.resultUrl
+  const isDone = item.status === 'done' && !!displayUrl
+  const upload = item.uploadStatus
 
   return (
     <div
@@ -118,7 +120,7 @@ function ResultCard({
               type="button"
               onClick={(e) => {
                 e.stopPropagation()
-                downloadImage(item.resultUrl!, buildFilename(index, item.prompt))
+                downloadImage(displayUrl!, buildFilename(index, item.prompt))
               }}
               aria-label="下载图片"
               title="下载"
@@ -175,18 +177,18 @@ function ResultCard({
           overflow: 'hidden',
           cursor: isDone ? 'zoom-in' : 'default',
         }}
-        onClick={() => isDone && onPreview?.(item.resultUrl!)}
+        onClick={() => isDone && onPreview?.(displayUrl!)}
       >
         {isDone && (
           <ImageEditToolbar
             theme="punk"
-            imageUrl={item.resultUrl!}
-            onOpenEditor={(type) => onOpenEditor?.(item.resultUrl!, type)}
+            imageUrl={displayUrl!}
+            onOpenEditor={(type) => onOpenEditor?.(displayUrl!, type)}
           />
         )}
         {isDone && (
           <img
-            src={item.resultUrl}
+            src={displayUrl}
             alt={item.prompt}
             loading="lazy"
             style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
@@ -289,6 +291,64 @@ function ResultCard({
             }}
           >
             DONE
+          </span>
+        )}
+        {/* 异步存储状态角标 — 漫画风 */}
+        {isDone && upload === 'uploading' && (
+          <span
+            className="p-mono"
+            title="正在异步上传到腾讯云 COS…"
+            style={{
+              position: 'absolute',
+              bottom: 4,
+              left: 4,
+              background: 'var(--punk-black)',
+              color: 'var(--punk-toxic)',
+              padding: '1px 4px',
+              fontSize: 9,
+              fontWeight: 900,
+              border: '1.5px solid var(--punk-toxic)',
+            }}
+          >
+            UP…
+          </span>
+        )}
+        {isDone && upload === 'uploaded' && (
+          <span
+            className="p-mono"
+            title="当前显示的是 COS 持久化 URL"
+            style={{
+              position: 'absolute',
+              bottom: 4,
+              left: 4,
+              background: 'var(--punk-black)',
+              color: 'var(--punk-cyan)',
+              padding: '1px 4px',
+              fontSize: 9,
+              fontWeight: 900,
+              border: '1.5px solid var(--punk-cyan)',
+            }}
+          >
+            COS
+          </span>
+        )}
+        {isDone && upload === 'failed' && (
+          <span
+            className="p-mono"
+            title={`COS 转存失败: ${item.uploadError || '未知原因'}\n当前展示模型直出 URL,可能短期内会过期`}
+            style={{
+              position: 'absolute',
+              bottom: 4,
+              left: 4,
+              background: 'var(--punk-red)',
+              color: 'var(--punk-cream)',
+              padding: '1px 4px',
+              fontSize: 9,
+              fontWeight: 900,
+              border: '1.5px solid var(--punk-cream)',
+            }}
+          >
+            !COS
           </span>
         )}
       </div>
