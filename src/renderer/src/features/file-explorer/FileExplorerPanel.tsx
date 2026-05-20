@@ -3,6 +3,7 @@ import { useFileExplorerStore } from './store'
 import { FileTree } from './FileTree'
 import { FileTreeIcon, CloseIcon } from './icons'
 import { FileTabStrip } from './FileTabStrip'
+import { LatestPreviewBanner } from './LatestPreviewBanner'
 import { FileViewer } from './FileViewer'
 import { ImageViewer } from './ImageViewer'
 import { VideoViewer } from './VideoViewer'
@@ -246,6 +247,7 @@ export function FileExplorerPanel({ rightOffset }: { rightOffset: number }) {
         />
 
         <div className="flex min-w-0 flex-1 flex-col">
+          <LatestPreviewBanner />
           <FileTabStrip />
           <div className="min-h-0 flex-1 overflow-auto bg-black/40">
             <ActiveViewer />

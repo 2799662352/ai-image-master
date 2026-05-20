@@ -1,11 +1,29 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useFileExplorerStore } from './store'
 import { CloseIcon, DotIcon } from './icons'
 import type { FileTab } from './types'
 
 export function FileTabStrip() {
   const { tabs, activeTabId, setActiveTab, closeTab, saveTab } = useFileExplorerStore()
+  const scrollActiveTabToken = useFileExplorerStore((s) => s.scrollActiveTabToken)
   const [pendingClose, setPendingClose] = useState<FileTab | null>(null)
+  const tabRefs = useRef<Map<string, HTMLDivElement>>(new Map())
+
+  // Why both activeTabId AND token in deps:
+  //  - activeTabId change handles the natural case (openTab → new active tab,
+  //    scroll it into view automatically).
+  //  - token handles the "jump-back" gesture from LatestPreviewBanner when
+  //    the user manually scrolled the strip and activeTabId didn't change.
+  useEffect(() => {
+    if (!activeTabId) return
+    const el = tabRefs.current.get(activeTabId)
+    if (!el) return
+    if (typeof el.scrollIntoView !== 'function') return
+    // `inline: 'center'` keeps the active tab visually centered in the strip
+    // so neighbors stay visible — better orientation than 'nearest' alone.
+    el.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
+  }, [activeTabId, scrollActiveTabToken])
+
   if (tabs.length === 0) return null
   return (
     <div role="tablist" className="flex overflow-x-auto border-b border-cyan-500/15 bg-black/40">
@@ -14,6 +32,10 @@ export function FileTabStrip() {
         return (
           <div
             key={t.id}
+            ref={(el) => {
+              if (el) tabRefs.current.set(t.id, el)
+              else tabRefs.current.delete(t.id)
+            }}
             data-testid={`tab-${t.id}`}
             data-active={active ? 'true' : 'false'}
             onClick={() => setActiveTab(t.id)}

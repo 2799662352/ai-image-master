@@ -64,6 +64,15 @@ type State = {
   treeLoading: boolean
   tabs: FileTab[]
   activeTabId: string | null
+  /**
+   * Monotonic counter the tab strip watches to scroll the active tab into
+   * view. Bumped on every `openTab` / `openReference` / explicit user
+   * "jump back" click on `LatestPreviewBanner`. We use a counter rather
+   * than just observing `activeTabId` so the "jump back" gesture still
+   * fires even when the active tab id hasn't changed (e.g. the user
+   * scrolled the strip horizontally and the active tab is out of view).
+   */
+  scrollActiveTabToken: number
   conflict: Conflict
   pendingChatInsert: string | null
   selectedPaths: string[]
@@ -86,6 +95,8 @@ type Actions = {
   openReference: (reference: AgentReference) => Promise<void>
   closeTab: (tabId: string, options?: { saveDirty?: boolean }) => Promise<boolean>
   setActiveTab: (tabId: string) => void
+  /** Bump the scroll token to re-trigger "scrollIntoView" on FileTabStrip. */
+  requestScrollActiveTabIntoView: () => void
   saveTab: (tabId: string) => Promise<void>
   saveActiveTab: () => Promise<void>
   setActiveDoc: (doc: string) => void
@@ -392,6 +403,7 @@ function makeInitialState(): State {
     treeLoading: false,
     tabs: [],
     activeTabId: null,
+    scrollActiveTabToken: 0,
     conflict: null,
     pendingChatInsert: null,
     selectedPaths: [],
@@ -537,7 +549,10 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
   openTab: async (p, source) => {
     const existing = get().tabs.find((t) => t.path === p)
     if (existing) {
-      set({ activeTabId: existing.id })
+      // Bump the scroll token even when the tab is already active — otherwise
+      // clicking a chip pointing at the currently-active file would silently
+      // do nothing visually (no activeTabId change → no scrollIntoView).
+      set((s) => ({ activeTabId: existing.id, scrollActiveTabToken: s.scrollActiveTabToken + 1 }))
       return
     }
     const api = getApi()
@@ -570,7 +585,11 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
     const key = aiChangeKey(change)
     const existing = get().tabs.find((t) => t.kind === 'ai-change' && t.aiChangeKey === key)
     if (existing) {
-      set({ activeTabId: existing.id, fxOpen: true })
+      set((s) => ({
+        activeTabId: existing.id,
+        fxOpen: true,
+        scrollActiveTabToken: s.scrollActiveTabToken + 1,
+      }))
       writeStorage(FX_OPEN_KEY, '1')
       return
     }
@@ -610,6 +629,7 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
       (reference.openBehavior === 'code' ||
         reference.openBehavior === 'markdown' ||
         reference.openBehavior === 'image' ||
+        reference.openBehavior === 'video' ||
         reference.openBehavior === 'pdf')
     ) {
       const localPath = reference.source.path
@@ -630,7 +650,11 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
 
     const existing = get().tabs.find((t) => t.referenceKey === reference.id)
     if (existing) {
-      set({ activeTabId: existing.id, fxOpen: true })
+      set((s) => ({
+        activeTabId: existing.id,
+        fxOpen: true,
+        scrollActiveTabToken: s.scrollActiveTabToken + 1,
+      }))
       writeStorage(FX_OPEN_KEY, '1')
       return
     }
@@ -684,6 +708,9 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
   },
 
   setActiveTab: (tabId) => set({ activeTabId: tabId }),
+
+  requestScrollActiveTabIntoView: () =>
+    set((s) => ({ scrollActiveTabToken: s.scrollActiveTabToken + 1 })),
 
   setActiveDoc: (doc) => {
     pendingDoc = doc

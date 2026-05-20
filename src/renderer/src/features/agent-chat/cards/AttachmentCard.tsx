@@ -1,11 +1,23 @@
 import type { AttachmentItem, AttachmentRef } from '../../../../../types/agent-timeline'
+import type { AgentReference } from '../../../../../types/agent-reference'
+import {
+  MediaThumbnail,
+  classifyMediaKind,
+} from '../../../components/shared/media/MediaThumbnail'
 import { toRenderableUri } from '../../file-explorer/uri'
 import { useFileExplorerStore } from '../../file-explorer/store'
+import { FileIcon, OpenInPanelIcon } from '../icons'
 import { referencesFromTimelineItem } from '../references/referenceUtils'
 import { useAgentChatStore } from '../store'
 
-function isRenderableImage(ref: AttachmentRef): boolean {
-  if (ref.kind !== 'image') return false
+type MediaKind = 'image' | 'video'
+
+function mediaKindOf(ref: AttachmentRef): MediaKind | null {
+  return classifyMediaKind({ kind: ref.kind, mime: ref.mime, name: ref.name })
+}
+
+function isRenderableMedia(ref: AttachmentRef): boolean {
+  if (mediaKindOf(ref) == null) return false
   const uri = ref.thumbnailUri ?? ref.uri
   return typeof uri === 'string' && uri.length > 0
 }
@@ -14,60 +26,79 @@ export function AttachmentCard({ item }: { item: AttachmentItem }) {
   const openPreview = useAgentChatStore((s) => s.openPreview)
   const openReference = useFileExplorerStore((state) => state.openReference)
   const references = referencesFromTimelineItem(item)
-  const images = item.attachments.filter(isRenderableImage)
+  const mediaItems = item.attachments.filter(isRenderableMedia)
 
-  const handleDoubleClick = (id: string): void => {
-    const startIndex = images.findIndex((ref) => ref.id === id)
-    if (startIndex < 0) return
-    openPreview(
-      images.map((ref) => ({
-        ...ref,
-        uri: toRenderableUri(ref.uri),
-        thumbnailUri: ref.thumbnailUri ? toRenderableUri(ref.thumbnailUri) : undefined,
-      })),
-      startIndex,
-    )
+  // 把 attachment.id → AgentReference 做成 O(1) 表,
+  // 点击略缩图时一并 reveal 到文件展示栏不用再扫一遍 references 数组。
+  const referenceByAttachmentId = new Map<string, AgentReference>()
+  for (const ref of references) {
+    const matchPrefix = ref.id.indexOf(':')
+    if (matchPrefix > 0) referenceByAttachmentId.set(ref.id.slice(matchPrefix + 1), ref)
+  }
+
+  // 仅当 attachments 全部已能解出 reference(localPath 合法、非 traversal)时,
+  // 上方的 references 列表跟 attachment 一一对应。否则差集会留在 references 里,
+  // 我们仍把那些"无法 reveal"的 attachment 保留在 UI(让用户至少看得见)。
+  const handleClick = (clicked: AttachmentRef): void => {
+    const previewable = mediaItems.map((ref) => ({
+      ...ref,
+      uri: toRenderableUri(ref.uri),
+      thumbnailUri: ref.thumbnailUri ? toRenderableUri(ref.thumbnailUri) : undefined,
+    }))
+    const startIndex = mediaItems.findIndex((m) => m.id === clicked.id)
+    if (startIndex >= 0) openPreview(previewable, startIndex)
+
+    const reference = referenceByAttachmentId.get(clicked.id)
+    if (reference) void openReference(reference)
   }
 
   return (
     <div className="my-1">
       <div className="flex flex-wrap gap-2">
-        {item.attachments.map((ref) =>
-          isRenderableImage(ref) ? (
-            <img
-              key={ref.id}
-              src={toRenderableUri(ref.thumbnailUri ?? ref.uri)}
-              alt={ref.name}
-              onDoubleClick={() => handleDoubleClick(ref.id)}
-              className="h-16 w-16 rounded border border-zinc-700/50 object-cover cursor-pointer hover:border-cyan-400/50"
-              title={ref.name}
-            />
-          ) : (
-            <div
-              key={ref.id}
-              className="flex h-16 items-center gap-1.5 rounded border border-zinc-700/50 bg-zinc-900/50 px-2 text-[10px] text-zinc-300"
-              title={ref.name}
-            >
-              <span>file</span>
-              <span className="max-w-[100px] truncate">{ref.name}</span>
-            </div>
-          ),
-        )}
-      </div>
-      {references.length > 0 ? (
-        <div className="mt-1 flex flex-wrap gap-1">
-          {references.map((reference) => (
+        {item.attachments.map((ref) => {
+          const kind = mediaKindOf(ref)
+          if (kind != null && isRenderableMedia(ref)) {
+            return (
+              <MediaThumbnail
+                key={ref.id}
+                src={toRenderableUri(ref.thumbnailUri ?? ref.uri)}
+                kind={kind}
+                name={ref.name}
+                posterSrc={ref.thumbnailUri ? toRenderableUri(ref.thumbnailUri) : undefined}
+                onClick={() => handleClick(ref)}
+              />
+            )
+          }
+          const reference = referenceByAttachmentId.get(ref.id)
+          const clickable = reference != null
+          return (
             <button
-              key={reference.id}
+              key={ref.id}
               type="button"
-              onClick={() => void openReference(reference)}
-              className="rounded border border-cyan-500/30 px-2 py-0.5 text-[10px] text-cyan-200 hover:bg-cyan-500/10"
+              onClick={() => {
+                if (reference) void openReference(reference)
+              }}
+              className={
+                'group flex h-16 items-center gap-2 rounded border bg-zinc-900/50 px-2.5 text-[11px] text-zinc-200 transition-colors ' +
+                (clickable
+                  ? 'border-zinc-700/50 hover:border-cyan-400/60 hover:bg-cyan-500/10 hover:text-cyan-100 cursor-pointer'
+                  : 'border-zinc-800/50 opacity-60 cursor-not-allowed')
+              }
+              title={clickable ? `打开 ${ref.name}` : ref.name}
+              disabled={!clickable}
+              aria-label={clickable ? `Open ${ref.name} in file panel` : ref.name}
             >
-              {reference.type === 'image' ? 'Open image' : 'Open file'}
+              <FileIcon className={clickable ? 'text-cyan-300/70 group-hover:text-cyan-200' : 'text-zinc-500'} />
+              <span className="max-w-[120px] truncate font-mono">{ref.name}</span>
+              {clickable && (
+                <OpenInPanelIcon
+                  className="ml-1 h-3 w-3 text-cyan-300/50 opacity-0 transition-opacity group-hover:opacity-100"
+                />
+              )}
             </button>
-          ))}
-        </div>
-      ) : null}
+          )
+        })}
+      </div>
     </div>
   )
 }

@@ -40,7 +40,7 @@ export interface FileEditItem extends BaseItem {
 
 export interface AttachmentRef {
   id: string
-  kind: 'image' | 'file'
+  kind: 'image' | 'video' | 'file'
   name: string
   mime: string
   size: number

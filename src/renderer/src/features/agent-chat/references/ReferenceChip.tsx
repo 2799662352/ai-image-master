@@ -6,6 +6,7 @@ const TYPE_LABELS: Record<AgentReference['type'], string> = {
   command: 'cmd',
   mcp: 'mcp',
   image: 'image',
+  video: 'video',
   artifact: 'artifact',
   activity: 'activity',
 }
@@ -23,6 +24,11 @@ export function ReferenceChip({
     <span className="inline-flex max-w-[280px] items-center rounded-md border border-cyan-400/25 bg-cyan-400/10 text-[11px] text-cyan-100">
       <button
         type="button"
+        // Don't steal textarea focus when the chip lives in MentionInput —
+        // the input has a 100 ms blur-cleanup timer that would otherwise tear
+        // down popups the moment the user clicks the chip. onClick still
+        // fires; only the focus transfer is suppressed.
+        onMouseDown={(e) => e.preventDefault()}
         onClick={() => onOpen?.(reference)}
         className="inline-flex min-w-0 items-center gap-1.5 px-2 py-1 hover:text-cyan-50"
         title={`${reference.type}: ${reference.label}`}
