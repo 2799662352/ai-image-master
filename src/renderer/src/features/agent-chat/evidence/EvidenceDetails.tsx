@@ -6,6 +6,11 @@ import type {
   TimelineItem,
 } from '../../../../../types/agent-timeline'
 import type { AgentReference } from '../../../../../types/agent-reference'
+import {
+  MediaThumbnail,
+  classifyMediaKind,
+} from '../../../components/shared/media/MediaThumbnail'
+import { toRenderableUri } from '../../file-explorer/uri'
 import { FileDiffBlock } from '../cards/FileDiffBlock'
 
 type EvidenceDetailsProps = {
@@ -113,14 +118,35 @@ function AttachmentList({ title, items }: { title: string; items: AttachmentRef[
     <div>
       <div className="mb-1 text-[10px] font-semibold tracking-[0.16em] text-zinc-500 uppercase">{title}</div>
       <ul className="space-y-1">
-        {items.map((item) => (
-          <li key={item.id} className="rounded border border-zinc-800/70 bg-zinc-950 px-2 py-1">
-            <div className="font-medium text-zinc-200">{item.name}</div>
-            <div className="text-[11px] text-zinc-500">
-              {item.mime} - {item.size} bytes
-            </div>
-          </li>
-        ))}
+        {items.map((item) => {
+          // image/video 在 row 左侧补一张 mini 缩略图;mime + bytes 文本保留(给
+          // Codex CLI 截屏 / 截图 OCR 的语义信息)。普通文件保持原样。
+          const kind = classifyMediaKind({ kind: item.kind, mime: item.mime, name: item.name })
+          const src = item.thumbnailUri ?? item.uri
+          const renderable = kind != null && typeof src === 'string' && src.length > 0
+          return (
+            <li
+              key={item.id}
+              className="flex items-center gap-2 rounded border border-zinc-800/70 bg-zinc-950 px-2 py-1"
+            >
+              {renderable ? (
+                <MediaThumbnail
+                  src={toRenderableUri(src)}
+                  kind={kind}
+                  name={item.name}
+                  posterSrc={item.thumbnailUri ? toRenderableUri(item.thumbnailUri) : undefined}
+                  className="h-10 w-10 shrink-0"
+                />
+              ) : null}
+              <div className="min-w-0">
+                <div className="truncate font-medium text-zinc-200" title={item.name}>{item.name}</div>
+                <div className="text-[11px] text-zinc-500">
+                  {item.mime} - {item.size} bytes
+                </div>
+              </div>
+            </li>
+          )
+        })}
       </ul>
     </div>
   )

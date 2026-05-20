@@ -1,9 +1,13 @@
 import type {
   ActivityItem,
+  ArtifactItem,
+  AttachmentItem,
+  AttachmentRef,
   FileEditItem,
   ShellItem,
   TimelineItem,
 } from '../../../../../types/agent-timeline'
+import { classifyMediaKind } from '../../../components/shared/media/MediaThumbnail'
 import { referencesFromTimelineItem } from '../references/referenceUtils'
 
 export type ChatRenderGroup =
@@ -65,6 +69,30 @@ export function groupTimelineItemsForChat(items: TimelineItem[]): ChatRenderGrou
 
 function basename(path: string): string {
   return path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? path
+}
+
+/**
+ * 返回 attachment / artifact item 里"能渲染缩略图的" media refs。
+ *
+ * 用途:EvidenceStack chip、EvidenceDetails.AttachmentList、MentionInput
+ * 都需要在文本旁边补一张缩略图 —— 而不是替换文本(Codex CLI 还要看 chip
+ * 的 kind/label 文本来理解上下文)。
+ *
+ * Filter 规则跟 AttachmentCard.isRenderableMedia 一致:
+ *  1) classifyMediaKind 能判出 image / video
+ *  2) 至少有一个非空的可显示 URI(优先 thumbnailUri,其次 uri)
+ */
+export function mediaRefsOf(item: TimelineItem): AttachmentRef[] {
+  if (item.type !== 'attachment' && item.type !== 'artifact') return []
+  const refs: readonly AttachmentRef[] =
+    item.type === 'attachment'
+      ? (item as AttachmentItem).attachments
+      : (item as ArtifactItem).artifacts
+  return refs.filter((ref) => {
+    if (classifyMediaKind({ kind: ref.kind, mime: ref.mime, name: ref.name }) == null) return false
+    const src = ref.thumbnailUri ?? ref.uri
+    return typeof src === 'string' && src.length > 0
+  })
 }
 
 function shellStatus(item: ShellItem): EvidenceStatus {

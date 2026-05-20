@@ -1,5 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CodexSkillSummary } from '../../../../types/agent'
+import type { AgentReference } from '../../../../types/agent-reference'
+import {
+  MediaThumbnail,
+  classifyMediaKind,
+} from '../../components/shared/media/MediaThumbnail'
 import { ModelPicker } from './ModelPicker'
 import { ReferenceChip } from './references/ReferenceChip'
 import { makeFileReference } from './references/referenceUtils'
@@ -7,7 +12,27 @@ import { useAgentChatStore } from './store'
 import { parseFileDrop, parseQuoteDrop } from '../file-explorer/dragHelpers'
 import { useFileExplorerStore } from '../file-explorer/store'
 import type { FileNode } from '../file-explorer/types'
+import { toRenderableUri } from '../file-explorer/uri'
 import { rankFuzzyTargets, scoreFuzzyMatch } from './paletteFuzzy'
+
+/**
+ * 把 pending reference(image/video)映射成可渲染的 MediaThumbnail src。
+ * 仅当 reference 指向 localPath 文件时有效;命令 / URL / activity 类 reference
+ * 返回 null —— 调用方需自行降级到 ReferenceChip 文本。
+ */
+function thumbnailSrcOfReference(reference: AgentReference): string | null {
+  if (reference.source.kind !== 'localPath') return null
+  const mime = reference.preview?.mime
+  const thumb = reference.preview?.thumbnailUri
+  if (typeof thumb === 'string' && thumb.length > 0) return toRenderableUri(thumb)
+  const kind = classifyMediaKind({
+    kind: reference.type,
+    mime: typeof mime === 'string' ? mime : undefined,
+    name: reference.label,
+  })
+  if (!kind) return null
+  return toRenderableUri(reference.source.path)
+}
 
 /**
  * Find the active `$skill-name` token at `caret`, if any. Mirrors the
@@ -809,18 +834,40 @@ export function MentionInput() {
       }}
     >
       {pendingReferences.length > 0 ? (
-        <div className="mb-2 flex flex-wrap gap-1">
-          {pendingReferences.map((reference) => (
-            <ReferenceChip
-              key={reference.id}
-              reference={reference}
-              onOpen={(ref) => void openReference(ref)}
-              onRemove={() => {
-                removePendingReference(reference.id)
-                removeAttachmentForReference(reference)
-              }}
-            />
-          ))}
+        <div className="mb-2 flex flex-wrap items-center gap-1.5">
+          {pendingReferences.map((reference) => {
+            // image/video 在 chip 旁补一张缩略图,所见即所发;chip 文本仍保留,
+            // 既是 a11y 锚点也是 Codex CLI 读取的元数据。点缩略图 = 点 chip
+            // (复用 openReference 路径,保证"打开预览"行为一致)。
+            const mime = reference.preview?.mime
+            const kind = classifyMediaKind({
+              kind: reference.type,
+              mime: typeof mime === 'string' ? mime : undefined,
+              name: reference.label,
+            })
+            const thumbSrc = thumbnailSrcOfReference(reference)
+            return (
+              <div key={reference.id} className="inline-flex items-center gap-1">
+                {kind && thumbSrc ? (
+                  <MediaThumbnail
+                    src={thumbSrc}
+                    kind={kind}
+                    name={reference.label}
+                    onClick={() => void openReference(reference)}
+                    className="h-10 w-10"
+                  />
+                ) : null}
+                <ReferenceChip
+                  reference={reference}
+                  onOpen={(ref) => void openReference(ref)}
+                  onRemove={() => {
+                    removePendingReference(reference.id)
+                    removeAttachmentForReference(reference)
+                  }}
+                />
+              </div>
+            )
+          })}
         </div>
       ) : null}
       <div className="relative">

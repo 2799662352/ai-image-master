@@ -1,11 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import type { AgentReference } from '../../../../../types/agent-reference'
-import type { TimelineItem } from '../../../../../types/agent-timeline'
+import type { AttachmentRef, TimelineItem } from '../../../../../types/agent-timeline'
+import {
+  MediaThumbnail,
+  classifyMediaKind,
+} from '../../../components/shared/media/MediaThumbnail'
+import { toRenderableUri } from '../../file-explorer/uri'
 import { useFileExplorerStore } from '../../file-explorer/store'
 import { referencesFromTimelineItem } from '../references/referenceUtils'
+import { useAgentChatStore } from '../store'
 import { EvidenceDetails } from './EvidenceDetails'
-import { getEvidenceSummary } from './evidenceModel'
+import { getEvidenceSummary, mediaRefsOf } from './evidenceModel'
 
 const CLICK_DELAY_MS = 200
 
@@ -18,6 +24,32 @@ export function EvidenceStack({ items }: EvidenceStackProps) {
   const [panelErrorItemId, setPanelErrorItemId] = useState<string | null>(null)
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const openReference = useFileExplorerStore((state) => state.openReference)
+  const openPreview = useAgentChatStore((state) => state.openPreview)
+
+  // attachment/artifact 上的"点缩略图"复用 AttachmentCard 的"双效":
+  //   1) Lightbox 弹出大图(autoPlay video)
+  //   2) reveal 到文件展示栏(走 openReference)
+  // chip 文本继续保留 —— 是给 Codex CLI / 截图分享读的语义。
+  const handleMediaClick = (item: TimelineItem, clicked: AttachmentRef): void => {
+    const media = mediaRefsOf(item)
+    if (media.length === 0) return
+    const previewable = media.map((ref) => ({
+      ...ref,
+      uri: toRenderableUri(ref.uri),
+      thumbnailUri: ref.thumbnailUri ? toRenderableUri(ref.thumbnailUri) : undefined,
+    }))
+    const startIndex = media.findIndex((m) => m.id === clicked.id)
+    if (startIndex >= 0) openPreview(previewable, startIndex)
+
+    // 找到这个 attachment 对应的 reference 并 reveal。AttachmentCard 用 id 后缀
+    // 匹配,这里同样的逻辑:reference.id 形如 `attachment:<ref.id>` / `artifact:<ref.id>`。
+    const refs = referencesFromTimelineItem(item)
+    const target = refs.find((r) => {
+      const colon = r.id.indexOf(':')
+      return colon > 0 && r.id.slice(colon + 1) === clicked.id
+    })
+    if (target) void openReference(target).catch(() => setPanelErrorItemId(item.id))
+  }
 
   const clearClickTimer = (): void => {
     if (clickTimer.current == null) return
@@ -104,8 +136,34 @@ export function EvidenceStack({ items }: EvidenceStackProps) {
             </>
           )
 
+          const mediaRefs = mediaRefsOf(item)
           return (
-            <div key={item.id} className="max-w-full">
+            <div key={item.id} className="flex max-w-full flex-col gap-1">
+              {mediaRefs.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {mediaRefs.map((ref) => {
+                    const kind = classifyMediaKind({
+                      kind: ref.kind,
+                      mime: ref.mime,
+                      name: ref.name,
+                    })
+                    if (!kind) return null
+                    return (
+                      <MediaThumbnail
+                        key={ref.id}
+                        src={toRenderableUri(ref.thumbnailUri ?? ref.uri)}
+                        kind={kind}
+                        name={ref.name}
+                        posterSrc={
+                          ref.thumbnailUri ? toRenderableUri(ref.thumbnailUri) : undefined
+                        }
+                        onClick={() => handleMediaClick(item, ref)}
+                        className="h-14 w-14"
+                      />
+                    )
+                  })}
+                </div>
+              ) : null}
               {canInteract ? (
                 <button
                   type="button"
