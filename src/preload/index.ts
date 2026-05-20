@@ -238,6 +238,7 @@ const IPC_CHANNELS = {
     CREATE_FILE: 'fs:create-file',
     CREATE_FOLDER: 'fs:create-folder',
     COPY: 'fs:copy',
+    IMPORT_EXTERNAL: 'fs:import-external',
     MOVE: 'fs:move',
     OPEN_IN_TERMINAL: 'fs:open-in-terminal',
     PICK_FOLDER: 'workspace:pick-folder',
@@ -470,6 +471,9 @@ export interface ElectronAPI {
     createFile: (parentDir: string, name: string) => Promise<{ ok: true; path: string } | { ok: false; reason: string }>
     createFolder: (parentDir: string, name: string) => Promise<{ ok: true; path: string } | { ok: false; reason: string }>
     copy: (sources: string[], destDir: string) => Promise<{ ok: true; written: string[] } | { ok: false; reason: string }>
+    importExternal: (sources: string[], destDir: string) => Promise<
+      { ok: true; written: string[] } | { ok: false; reason: string; written?: string[] }
+    >
     move: (sources: string[], destDir: string) => Promise<{ ok: true; written: string[] } | { ok: false; reason: string }>
     openInTerminal: (p: string) => Promise<{ ok: true } | { ok: false; reason: string }>
     pickFolder: () => Promise<string | null>
@@ -1006,6 +1010,10 @@ const electronAPI: ElectronAPI = {
         IPC_CHANNELS.FILE_EXPLORER.COPY,
         { sources, destDir },
       ),
+    importExternal: (sources: string[], destDir: string) =>
+      safeInvoke<
+        { ok: true; written: string[] } | { ok: false; reason: string; written?: string[] }
+      >(IPC_CHANNELS.FILE_EXPLORER.IMPORT_EXTERNAL, { sources, destDir }),
     move: (sources: string[], destDir: string) =>
       safeInvoke<{ ok: true; written: string[] } | { ok: false; reason: string }>(
         IPC_CHANNELS.FILE_EXPLORER.MOVE,
