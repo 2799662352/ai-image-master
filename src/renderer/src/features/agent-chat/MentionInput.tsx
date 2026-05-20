@@ -767,7 +767,24 @@ export function MentionInput() {
       return
     }
 
-    const paths = parseFileDrop(event.dataTransfer)
+    // Tier 2 (existing): internal file-explorer drag with custom MIME.
+    let paths = parseFileDrop(event.dataTransfer)
+
+    // Tier 3 (NEW): external OS drop via webUtils.getPathForFile. The internal
+    // tier returns [] here because OS drops don't carry our custom MIME; they
+    // carry dataTransfer.files instead. Map each File back to its absolute path
+    // via preload's getFilePath wrapper (Electron 32+ webUtils API). Synthetic
+    // files (e.g. from clipboard paste with no on-disk path) return '' and are
+    // filtered out — Ctrl+V image paste is intentionally out of scope for PR-1.
+    if (paths.length === 0 && event.dataTransfer.files.length > 0) {
+      const electronApi = (window as Window & { electronAPI?: { getFilePath?: (file: File) => string } }).electronAPI
+      if (electronApi?.getFilePath) {
+        paths = Array.from(event.dataTransfer.files)
+          .map((file) => electronApi.getFilePath!(file))
+          .filter((p): p is string => Boolean(p))
+      }
+    }
+
     if (paths.length === 0) return
     const fsApi = (window as Window & { electronAPI?: FileExplorerApi }).electronAPI?.fs
     if (!fsApi) return
