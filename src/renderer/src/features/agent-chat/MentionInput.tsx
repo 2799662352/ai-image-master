@@ -778,9 +778,10 @@ export function MentionInput() {
     // filtered out — Ctrl+V image paste is intentionally out of scope for PR-1.
     if (paths.length === 0 && event.dataTransfer.files.length > 0) {
       const electronApi = (window as Window & { electronAPI?: { getFilePath?: (file: File) => string } }).electronAPI
-      if (electronApi?.getFilePath) {
+      const getFilePath = electronApi?.getFilePath
+      if (getFilePath) {
         paths = Array.from(event.dataTransfer.files)
-          .map((file) => electronApi.getFilePath!(file))
+          .map((file) => getFilePath(file))
           .filter((p): p is string => Boolean(p))
       }
     }
