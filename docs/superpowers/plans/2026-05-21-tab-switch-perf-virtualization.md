@@ -436,7 +436,7 @@ git commit -m "test(history): cover DonorVirtualGrid threshold + mount fallback"
 
 This is a probe step — `<Activity>` graduated from labs in React 19.2, but the runtime export and TS types must be confirmed before we depend on them in production code.
 
-- [ ] **Step 1: Type + runtime probe**
+- [x] **Step 1: Type + runtime probe**
 
 Run:
 
@@ -444,15 +444,15 @@ Run:
 node -e "const r = require('react'); console.log('Activity:', typeof r.Activity, '| version:', r.version)"
 ```
 
-Expected output:
+**Actual output (2026-05-21, this worktree):**
 
 ```
-Activity: function | version: 19.2.5
+Activity: symbol | version: 19.2.6
 ```
 
-If `Activity` prints `undefined`, **stop here** and switch to the fallback (a manual `<div hidden>` keep-alive wrapper — see Task 6 alt branch).
+`Activity` printed `symbol`, NOT `function` as the plan originally guessed. This is correct — `React.Activity` follows the same internal pattern as `React.Fragment` (`Symbol(react.fragment)`) and `React.Suspense` (`Symbol(react.suspense)`): they are special Symbol identifiers that React's reconciler treats as built-in component types. JSX (`<Activity mode="visible">…</Activity>`) renders them correctly. **Treat `symbol` as PASS.** Only `undefined` would have meant the export is missing.
 
-- [ ] **Step 2: TypeScript check**
+- [x] **Step 2: TypeScript check**
 
 Create a throwaway file `src/renderer/src/layouts/__activity-probe.ts` (do not commit) with:
 
@@ -473,12 +473,13 @@ Expected: probe file compiles. If it fails with "no exported member 'Activity'",
 
 Delete the probe file before continuing.
 
-- [ ] **Step 3: Record the result**
-
-Add a one-line note in this plan:
+- [x] **Step 3: Record the result**
 
 ```
-[probe] Activity export confirmed at react 19.2.5 (date YYYY-MM-DD).
+[probe] Activity export confirmed at react 19.2.6 (2026-05-21).
+  - typeof React.Activity === 'symbol' (NOT 'function' — same pattern as React.Fragment / React.Suspense, which are internal Symbol identifiers; JSX runtime renders them correctly)
+  - TS import { Activity } from 'react' resolves cleanly (no "no exported member" error)
+  - Safe to depend on in Task 6 without fallback path
 ```
 
 ---
