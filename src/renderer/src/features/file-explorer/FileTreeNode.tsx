@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { FileNode, FileSource } from './types'
 import { useFileExplorerStore } from './store'
 import { FolderIcon, FolderOpenIcon, FileIcon, ImageFileIcon, ChevronRightIcon } from './icons'
-import { serializeFileDrag, parseFileDrop } from './dragHelpers'
+import { serializeFileDrag, parseFileDrop, resolveExternalPaths } from './dragHelpers'
 import { FileContextMenu, type FileMenuAction, type MenuItemDescriptor } from './FileContextMenu'
 
 // The attachments tree's pseudo-root node has this synthetic path; drops onto
@@ -185,22 +185,34 @@ export function FileTreeNode({ node, depth }: { node: FileNode; depth: number })
   // (everyone has at some point dropped onto README.md hoping to land it in
   // the same folder). We replicate that here.
   const resolveDropDestDir = (): string | null => {
+    // v0: workspace tree only. Refuse the attachments header AND any node
+    // whose source is 'attachments' (the children). Spec defers attachments
+    // drop to v0.2.
     if (node.path === ATTACHMENTS_ROOT) return null
+    if (node.source === 'attachments') return null
     if (node.kind === 'dir') return node.path
     const idx = Math.max(node.path.lastIndexOf('/'), node.path.lastIndexOf('\\'))
     return idx > 0 ? node.path.slice(0, idx) : null
   }
 
   const onDragOver = (e: React.DragEvent) => {
-    // dataTransfer.types is read-only during dragover; we just check it's our
-    // payload so we don't activate the highlight for unrelated drags (text
-    // from outside the app, etc.)
-    if (!e.dataTransfer.types.includes('application/x-catimation-file-paths')) return
+    // Accept either our internal drag MIME (file-explorer → file-explorer move)
+    // or an external OS file drop (Desktop / Finder → workspace import).
+    const isInternal = e.dataTransfer.types.includes('application/x-catimation-file-paths')
+    const isExternal = e.dataTransfer.types.includes('Files')
+    if (!isInternal && !isExternal) return
     const dest = resolveDropDestDir()
-    if (!dest) return
+    if (!dest) {
+      // MIME matched but this row cannot accept the drop (e.g. ATTACHMENTS_ROOT
+      // header). Absorb the event so it doesn't bubble up to the panel's
+      // onRootDrop and silently land in the workspace root.
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
     e.preventDefault()
     e.stopPropagation()
-    e.dataTransfer.dropEffect = 'move'
+    e.dataTransfer.dropEffect = isExternal ? 'copy' : 'move'
     if (!dropActive) setDropActive(true)
   }
 
@@ -214,12 +226,32 @@ export function FileTreeNode({ node, depth }: { node: FileNode; depth: number })
 
   const onDrop = async (e: React.DragEvent) => {
     const dest = resolveDropDestDir()
-    if (!dest) return
-    const paths = parseFileDrop(e.dataTransfer)
-    if (paths.length === 0) return
+    if (!dest) {
+      // Same reason as onDragOver: prevent fall-through to onRootDrop.
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
     e.preventDefault()
     e.stopPropagation()
     setDropActive(false)
+
+    // Branch A: external OS file drop.
+    if ((e.dataTransfer.files?.length ?? 0) > 0) {
+      const externalPaths = resolveExternalPaths(e.dataTransfer.files)
+      if (externalPaths.length === 0) return
+
+      const importExternal = useFileExplorerStore.getState().importExternalByDnd
+      const res = await importExternal(externalPaths, dest)
+      if (!res.ok && res.reason) {
+        window.alert(`导入失败: ${res.reason}`)
+      }
+      return
+    }
+
+    // Branch B (existing): internal move via custom MIME.
+    const paths = parseFileDrop(e.dataTransfer)
+    if (paths.length === 0) return
     const res = await moveByDnd(paths, dest)
     if (!res.ok && res.reason) {
       window.alert(`移动失败: ${res.reason}`)

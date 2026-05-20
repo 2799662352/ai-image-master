@@ -12,6 +12,7 @@ import { ConflictModal } from './ConflictModal'
 import { ReferencePreview } from './ReferencePreview'
 import { DiffMergeView } from './DiffMergeView'
 import { AiChangeViewer } from './AiChangeViewer'
+import { resolveExternalPaths } from './dragHelpers'
 import type { FileNode } from './types'
 
 function findNodeFlat(tree: FileNode[], target: string): FileNode | null {
@@ -98,6 +99,35 @@ export function FileExplorerPanel({ rightOffset }: { rightOffset: number }) {
       window.removeEventListener('mouseup', onUp)
     }
   }, [dragging, setFxTreeWidth])
+
+  const workspaceRoot = useFileExplorerStore((s) => s.workspaceRoot)
+  const importExternalByDnd = useFileExplorerStore((s) => s.importExternalByDnd)
+
+  const onRootDragOver = (e: React.DragEvent): void => {
+    // Only respond to external file drops; internal-drag inside the tree is
+    // handled by individual FileTreeNodes (which call stopPropagation, so we
+    // never see those events here unless they fall through the gap).
+    if (!e.dataTransfer.types.includes('Files')) return
+    if (!workspaceRoot) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+  }
+
+  const onRootDrop = async (e: React.DragEvent): Promise<void> => {
+    // Inner FileTreeNode drops always call e.stopPropagation(), so they
+    // never reach this handler. The e.defaultPrevented check is
+    // defense-in-depth for edge cases (3rd-party handlers, future refactors).
+    if (e.defaultPrevented) return
+    if ((e.dataTransfer.files?.length ?? 0) === 0) return
+    if (!workspaceRoot) return
+    const paths = resolveExternalPaths(e.dataTransfer.files)
+    if (paths.length === 0) return
+    e.preventDefault()
+    const res = await importExternalByDnd(paths, workspaceRoot)
+    if (!res.ok && res.reason) {
+      window.alert(`导入失败: ${res.reason}`)
+    }
+  }
 
   // VSCode 风格快捷键 — 全局监听，靠 selectedPaths 守卫避免跟其他区域冲突
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
@@ -231,7 +261,12 @@ export function FileExplorerPanel({ rightOffset }: { rightOffset: number }) {
       </header>
 
       <div className="flex min-h-0 flex-1">
-        <div style={{ width: fxTreeWidth }} className="overflow-hidden border-r border-cyan-500/10">
+        <div
+          style={{ width: fxTreeWidth }}
+          className="overflow-hidden border-r border-cyan-500/10"
+          onDragOver={onRootDragOver}
+          onDrop={(e) => void onRootDrop(e)}
+        >
           <FileTree />
         </div>
 
