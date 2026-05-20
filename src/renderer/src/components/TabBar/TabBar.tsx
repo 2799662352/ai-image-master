@@ -1,3 +1,4 @@
+import { useState, useTransition } from 'react'
 import { Bot } from 'lucide-react'
 
 import { useTabStore, type TabName } from '../../stores'
@@ -27,32 +28,47 @@ const TABS: TabDef[] = [
 export function TabBar() {
   const activeTab = useTabStore((s) => s.activeTab)
   const switchTab = useTabStore((s) => s.switchTab)
+  // useTransition lets the click highlight commit instantly while React
+  // renders the new tab's heavy subtree at low priority. pendingTab tells
+  // us which tab the user just clicked so we can dim it during the transition.
+  const [isPending, startTransition] = useTransition()
+  const [pendingTab, setPendingTab] = useState<TabName | null>(null)
+
+  const handleSwitch = (tab: TabName) => {
+    setPendingTab(tab)
+    startTransition(() => switchTab(tab))
+  }
 
   return (
     <div className="flex items-center justify-between w-full bg-cyberpunk-dark border-b border-cyberpunk-yellow/20">
       <nav className="flex items-center gap-1 px-4 py-2 overflow-x-auto">
-        {TABS.map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => switchTab(tab.key)}
-            className={`
-              flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-exo
-              transition-colors whitespace-nowrap
-              ${
-                activeTab === tab.key
-                  ? 'bg-cyberpunk-yellow text-cyberpunk-black font-semibold'
-                  : 'text-gray-400 hover:text-white hover:bg-white/5'
-              }
-            `}
-          >
-            {tab.key === 'agentWorkspace' ? (
-              <Bot className="h-4 w-4" aria-hidden="true" />
-            ) : (
-              <span>{tab.icon}</span>
-            )}
-            <span>{tab.label}</span>
-          </button>
-        ))}
+        {TABS.map((tab) => {
+          const isThisPending = isPending && pendingTab === tab.key
+          return (
+            <button
+              key={tab.key}
+              onClick={() => handleSwitch(tab.key)}
+              aria-busy={isThisPending}
+              className={`
+                flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-exo
+                transition-colors whitespace-nowrap
+                ${
+                  activeTab === tab.key
+                    ? 'bg-cyberpunk-yellow text-cyberpunk-black font-semibold'
+                    : 'text-gray-400 hover:text-white hover:bg-white/5'
+                }
+                ${isThisPending ? 'opacity-60' : ''}
+              `}
+            >
+              {tab.key === 'agentWorkspace' ? (
+                <Bot className="h-4 w-4" aria-hidden="true" />
+              ) : (
+                <span>{tab.icon}</span>
+              )}
+              <span>{tab.label}</span>
+            </button>
+          )
+        })}
       </nav>
       <div className="flex items-center gap-2 px-4">
         <AgentStatusButton />

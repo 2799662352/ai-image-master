@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { memo, useState, useCallback } from 'react'
 import type { DonorItemView } from '../../hooks/useHistoryData'
 
 interface Props {
@@ -20,7 +20,7 @@ const STATUS_META: Record<
   failed: { label: 'FAILED', labelJp: '失敗', className: 'd-status-tag--fail', icon: '✕' },
 }
 
-export default function DonorCard({ item, onDelete, onPreview, onEdit }: Props) {
+function DonorCardImpl({ item, onDelete, onPreview, onEdit }: Props) {
   const [imgError, setImgError] = useState<Set<number>>(new Set())
   const meta = STATUS_META[item.status]
 
@@ -78,6 +78,7 @@ export default function DonorCard({ item, onDelete, onPreview, onEdit }: Props) 
               src={primaryUrl}
               alt={item.prompt || 'history'}
               loading="lazy"
+              decoding="async"
               onError={() => setBroken(0)}
               className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.04]"
             />
@@ -196,3 +197,5 @@ export default function DonorCard({ item, onDelete, onPreview, onEdit }: Props) 
     </article>
   )
 }
+
+export default memo(DonorCardImpl)

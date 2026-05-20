@@ -4,7 +4,7 @@
  * 返回响应式 history items + 操作方法
  */
 
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { getHistoryDataService } from '../features/history/HistoryDataService'
 
 /**
@@ -115,7 +115,34 @@ export function useHistoryData(): UseHistoryData {
     setRawItems([...(service.getAll() as unknown as RawHistoryItem[])])
   }, [service])
 
-  const items = useMemo(() => rawItems.map(toView), [rawItems])
+  // Cache DonorItemView by id + raw object identity. Lets React.memo on
+  // DonorCard actually skip work on store pushes that don't change a given
+  // item: when service emits [...history], the outer array is new but the
+  // inner item objects keep their references for untouched rows, so cached
+  // views stay shallow-equal across renders.
+  //
+  // Assumption: the service uses immutable updates (replaces the item object
+  // when its data changes). If a future contributor mutates items in place,
+  // displays could go stale here — switch to a deep field check then.
+  const viewCacheRef = useRef<Map<number | string, { raw: RawHistoryItem; view: DonorItemView }>>(
+    new Map()
+  )
+  const items = useMemo(() => {
+    const cache = viewCacheRef.current
+    const seenIds = new Set<number | string>()
+    const result = rawItems.map((raw) => {
+      seenIds.add(raw.id)
+      const cached = cache.get(raw.id)
+      if (cached && cached.raw === raw) return cached.view
+      const view = toView(raw)
+      cache.set(raw.id, { raw, view })
+      return view
+    })
+    for (const id of cache.keys()) {
+      if (!seenIds.has(id)) cache.delete(id)
+    }
+    return result
+  }, [rawItems])
 
   const stats = useMemo(() => {
     const s = { total: items.length, cloud: 0, local: 0, failed: 0, uploading: 0 }
