@@ -847,7 +847,19 @@ export function MentionInput() {
       }
       const name = c.path.split(/[\\/]/).pop() ?? c.path
       addAttachment({ name, mime, size, path: c.path })
-      addPendingReference(makeFileReference({ path: c.path, name, mime }))
+      // Tier 2 (internal MIME, no preStat) pushes a pending reference — the
+      // file came from the workspace tree, so the path passes main-side
+      // assertContained inside mapReferencesToInputItems. Tier 3 (external OS
+      // drop, preStat set) must NOT push a reference: the original OS path is
+      // by design outside allowedRoots, and `agent:send-message` would throw
+      // "Reference path is outside allowed roots" at click-Send. The matching
+      // attachment still gets ingested by AttachmentService into
+      // `<userData>/agent/uploads/<hash>.ext` (an in-root canonical path),
+      // mirroring the onFileChange file-picker flow at lines 730-754 which
+      // already attaches-without-referencing for the exact same reason.
+      if (!c.preStat) {
+        addPendingReference(makeFileReference({ path: c.path, name, mime }))
+      }
       totalBytes += size
       remainingSlots -= 1
     }

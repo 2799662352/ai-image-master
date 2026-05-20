@@ -41,7 +41,7 @@ beforeEach(() => {
 })
 
 describe('MentionInput external OS file drop', () => {
-  it('adds attachment + pending reference for each externally dropped file', async () => {
+  it('adds attachment-only for each externally dropped file (NO pending reference)', async () => {
     render(<MentionInput />)
     const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
     const dt = makeExternalFileTransfer([
@@ -55,7 +55,17 @@ describe('MentionInput external OS file drop', () => {
 
     const paths = useAgentChatStore.getState().attachments.map((a) => a.path)
     expect(paths).toEqual(['D:/desktop/photo.png', 'D:/desktop/note.md'])
-    expect(useAgentChatStore.getState().pendingReferences.length).toBe(2)
+    // Reference-list MUST stay empty for external drops. References travel
+    // through mapReferencesToInputItems on the main side, which calls
+    // `fs.realpath` and runs an assertContained check against allowedRoots
+    // — exactly what AttachmentService.ingest skips for source paths. Pushing
+    // an external path here would surface as `agent:send-message` failing with
+    // "Reference path is outside allowed roots: <path>" at click-Send. Mirror
+    // onFileChange (lines 730-754), which already attaches without referencing
+    // for the exact same reason — the AttachmentService canonicalizes the file
+    // into `<userData>/agent/uploads/<hash>.ext` and main returns the in-root
+    // canonical path via result.userMessageItems.
+    expect(useAgentChatStore.getState().pendingReferences.length).toBe(0)
   })
 
   it('ignores files when getFilePath returns "" (synthetic File from clipboard)', async () => {
@@ -115,5 +125,11 @@ describe('MentionInput external OS file drop', () => {
     const api = (window as unknown as { electronAPI: TestElectronAPI }).electronAPI
     expect(api.getFilePath).not.toHaveBeenCalled()
     expect(useAgentChatStore.getState().attachments.length).toBe(1)
+    // Internal MIME drops DO push a pending reference (the @-mention chip),
+    // because workspace paths pass main-side allowedRoots and this is the
+    // expected behavior when dragging from FileExplorerPanel. The asymmetry
+    // with external drops is intentional — locked in by this assertion
+    // alongside the corresponding "no reference" assert in the external case.
+    expect(useAgentChatStore.getState().pendingReferences.length).toBe(1)
   })
 })
