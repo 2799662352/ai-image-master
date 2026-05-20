@@ -192,15 +192,16 @@ export function FileTreeNode({ node, depth }: { node: FileNode; depth: number })
   }
 
   const onDragOver = (e: React.DragEvent) => {
-    // dataTransfer.types is read-only during dragover; we just check it's our
-    // payload so we don't activate the highlight for unrelated drags (text
-    // from outside the app, etc.)
-    if (!e.dataTransfer.types.includes('application/x-catimation-file-paths')) return
+    // Accept either our internal drag MIME (file-explorer → file-explorer move)
+    // or an external OS file drop (Desktop / Finder → workspace import).
+    const isInternal = e.dataTransfer.types.includes('application/x-catimation-file-paths')
+    const isExternal = e.dataTransfer.types.includes('Files')
+    if (!isInternal && !isExternal) return
     const dest = resolveDropDestDir()
     if (!dest) return
     e.preventDefault()
     e.stopPropagation()
-    e.dataTransfer.dropEffect = 'move'
+    e.dataTransfer.dropEffect = isExternal ? 'copy' : 'move'
     if (!dropActive) setDropActive(true)
   }
 
@@ -215,11 +216,34 @@ export function FileTreeNode({ node, depth }: { node: FileNode; depth: number })
   const onDrop = async (e: React.DragEvent) => {
     const dest = resolveDropDestDir()
     if (!dest) return
-    const paths = parseFileDrop(e.dataTransfer)
-    if (paths.length === 0) return
     e.preventDefault()
     e.stopPropagation()
     setDropActive(false)
+
+    // Branch A: external OS file drop. dataTransfer.files is populated and
+    // our internal MIME is absent. Each File needs webUtils.getPathForFile
+    // (exposed as electronAPI.getFilePath) to resolve to an OS-absolute path.
+    if ((e.dataTransfer.files?.length ?? 0) > 0) {
+      const getFilePath = (window as Window & {
+        electronAPI?: { getFilePath?: (f: File) => string }
+      }).electronAPI?.getFilePath
+      if (!getFilePath) return
+      const externalPaths = Array.from(e.dataTransfer.files)
+        .map((f) => getFilePath(f))
+        .filter((p): p is string => Boolean(p))
+      if (externalPaths.length === 0) return
+
+      const importExternal = useFileExplorerStore.getState().importExternalByDnd
+      const res = await importExternal(externalPaths, dest)
+      if (!res.ok && res.reason) {
+        window.alert(`导入失败: ${res.reason}`)
+      }
+      return
+    }
+
+    // Branch B (existing): internal move via custom MIME.
+    const paths = parseFileDrop(e.dataTransfer)
+    if (paths.length === 0) return
     const res = await moveByDnd(paths, dest)
     if (!res.ok && res.reason) {
       window.alert(`移动失败: ${res.reason}`)
