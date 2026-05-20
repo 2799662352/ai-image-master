@@ -41,3 +41,32 @@ export function serializeQuoteDrag(dt: DataTransfer, quote: string): void {
 export function parseQuoteDrop(dt: DataTransfer): string | null {
   return dt.getData(QUOTE_TYPE) || null
 }
+
+/**
+ * Resolve a `FileList` from an external OS drag-drop into absolute file paths
+ * via Electron's `webUtils.getPathForFile` (exposed at electronAPI.getFilePath).
+ *
+ * Returns [] when:
+ *   - The renderer is running on a build without the bridge (Electron < 32 or
+ *     a stripped preload), in which case we log a warning so future debugging
+ *     isn't a guessing game.
+ *   - Every File is synthetic (clipboard paste with no on-disk path → '').
+ *
+ * Callers should always check `paths.length === 0` and bail rather than
+ * dispatching an IPC with no work to do.
+ */
+export function resolveExternalPaths(files: FileList): string[] {
+  const getFilePath = (window as Window & {
+    electronAPI?: { getFilePath?: (f: File) => string }
+  }).electronAPI?.getFilePath
+  if (!getFilePath) {
+    console.warn(
+      '[file-explorer] electronAPI.getFilePath unavailable — external OS file drop ignored. ' +
+        'Renderer may be running on Electron < 32 or a stripped preload.',
+    )
+    return []
+  }
+  return Array.from(files)
+    .map((f) => getFilePath(f))
+    .filter((p): p is string => Boolean(p))
+}
