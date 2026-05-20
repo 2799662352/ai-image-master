@@ -85,6 +85,29 @@ describe('importExternalByDnd', () => {
     expect(window.electronAPI.fs.importExternal).not.toHaveBeenCalled()
   })
 
+  it('returns early when importExternal is not exposed on the preload', async () => {
+    // Re-stub electronAPI with importExternal missing — simulates an older
+    // preload bundle or a renderer running before B2's bridge shipped.
+    const original = window.electronAPI
+    Object.defineProperty(window, 'electronAPI', {
+      value: {
+        ...original,
+        fs: {
+          ...original.fs,
+          importExternal: undefined,
+        },
+      },
+      configurable: true,
+    })
+
+    const res = await useFileExplorerStore
+      .getState()
+      .importExternalByDnd(['C:/desktop/a.png'], 'C:/ws')
+
+    expect(res.ok).toBe(false)
+    expect(res.reason).toBe('importExternal API not available')
+  })
+
   it('selects the last-written file on success', async () => {
     const fs = (window.electronAPI as unknown as { fs: { importExternal: ReturnType<typeof vi.fn> } }).fs
     fs.importExternal.mockResolvedValueOnce({
