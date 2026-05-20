@@ -8,7 +8,7 @@ import { useHistoryData, type DonorItemView } from '../hooks/useHistoryData'
 import DonorShell from '../components/donor/DonorShell'
 import DonorHeader from '../components/donor/DonorHeader'
 import DonorFilterBar, { type SortMode, type StatusFilter } from '../components/donor/DonorFilterBar'
-import DonorCard from '../components/donor/DonorCard'
+import DonorVirtualGrid from '../components/donor/DonorVirtualGrid'
 import DonorEmpty from '../components/donor/DonorEmpty'
 import DonorPreview from '../components/donor/DonorPreview'
 import DonorStorageModal from '../components/donor/DonorStorageModal'
@@ -176,17 +176,12 @@ export default function HistoryPage() {
       {filtered.length === 0 ? (
         <DonorEmpty hasFilter={stats.total > 0} />
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {filtered.map((it) => (
-            <DonorCard
-              key={it.id}
-              item={it}
-              onDelete={handleDelete}
-              onPreview={handlePreview}
-              onEdit={handleEdit}
-            />
-          ))}
-        </div>
+        <DonorVirtualGrid
+          items={filtered}
+          onDelete={handleDelete}
+          onPreview={handlePreview}
+          onEdit={handleEdit}
+        />
       )}
 
       {/* 底部 HUD 装饰条 */}
