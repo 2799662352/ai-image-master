@@ -138,6 +138,37 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
+### v4.3.9 (2026-05-20) — Hotfix: 快速点击 tab 闪屏
+
+**问题**: 用户连续快速点击不同 tab(例如 BATCH → AGENT → BATCH),会看到大约 16ms 的旧页面内容闪现,即使最终落点正确。DevTools 控制台还会冒出 Chrome 的 `Throttling navigation to prevent the browser from hanging` 警告。
+
+**根因**: `TabManager.switchTab` 把 `onTabChange` 回调放在两层 `requestAnimationFrame` 之后才触发,闭包里 `newTab` 是 stale 的;再叠加 `ServiceBridge` 里的双向同步 (`tabManager.onTabChange` ↔ `useTabStore.subscribe`),stale 回调会把 React 状态反推回旧 tab,触发一次「面板可见性回滚 → 又被新一轮 RAF 拉回」的奇怪过山车。
+
+**修复** (`src/renderer/src/features/tab-manager/TabManager.ts`):
+
+| 改动 | 说明 |
+|------|------|
+| `onTabChange` 回调改成 **同步触发** | 与 `updateTabUI` 在同一 task 完成,React mount/unmount 的可见性切换跟 `panel.hidden` 切换原子化,既消除闪屏也消除空帧 |
+| Generation counter + `cancelAnimationFrame` | 每次 `switchTab` 自增 generation,RAF 回调进门先核对,stale 的直接放弃;同时显式取消上一次还在排队的 RAF |
+| `reentrancyGuard` | 回调里如果再调 `switchTab` 直接吞掉,让最外层那次 `switchTab` 决定最终状态,杜绝双向同步的回环 |
+| `deactivatePage` / `activatePage` 仍走 RAF | 这两个可能跑数据加载等重活,保留延迟避免阻塞首帧 |
+| `destroy()` 也清理 pending RAF | 防止 hot reload / unmount 时 RAF 漏跑 |
+
+**测试** (`src/renderer/src/features/tab-manager/__tests__/TabManager.rapidClicks.test.ts`):
+
+5 条新增回归用例,覆盖:
+1. 快点击 `batch → agentWorkspace` 后 DOM 直接落在最终 tab,中间态不残留
+2. `onTabChange` 必须同步触发,且 `newTab` 与调用顺序严格匹配
+3. stale RAF 被取消:`activatePage` 只对最终 tab 跑一次
+4. `reentrancyGuard` 兜住回调里再调 `switchTab` 的反向同步循环
+5. 相同 tab 重复 `switchTab` 是 no-op
+
+**影响范围**: 仅 `TabManager.switchTab` 内部时序,公共 API 完全不变。所有现有 `ServiceBridge` + `useTabStore` 的双向同步代码无需改动,reentrancyGuard 在 TabManager 层兜底即可。
+
+**升级路径**: 直接覆盖安装,无破坏性变更。
+
+---
+
 ### v4.3.8 (2026-05-20)
 
 本次发布是一波 **批量页性能 + 系统稳定性硬化** 综合补丁,聚焦"生图过多卡顿 / 内存涨 / 自我删除"三个老用户痛点。两条主线:
