@@ -71,6 +71,32 @@ describe('MentionInput external OS file drop', () => {
     expect(useAgentChatStore.getState().pendingReferences).toEqual([])
   })
 
+  it('uses File.size/type for external drops without calling fsApi.stat (REAL assertContained would reject OS paths)', async () => {
+    const api = (window as unknown as { electronAPI: TestElectronAPI }).electronAPI
+    // Mimic main-process behavior: fs:stat rejects external OS paths via
+    // assertContained, exactly like users see in production ("无法读取").
+    api.fs.stat.mockResolvedValue({ ok: false, reason: 'path outside allowed roots' })
+
+    render(<MentionInput />)
+    const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
+    const file = new File(['hello world!'], 'photo.png', { type: 'image/png' })
+    expect(file.size).toBeGreaterThan(0)
+    const dt = makeExternalFileTransfer([file])
+    fireEvent.drop(textarea, { dataTransfer: dt })
+    await new Promise((r) => setTimeout(r, 0))
+
+    const attachments = useAgentChatStore.getState().attachments
+    expect(attachments).toHaveLength(1)
+    expect(attachments[0]).toMatchObject({
+      name: 'photo.png',
+      mime: 'image/png',
+      size: file.size,
+      path: 'D:/desktop/photo.png',
+    })
+    // Root-cause guard: stat must NEVER be called for external drops.
+    expect(api.fs.stat).not.toHaveBeenCalled()
+  })
+
   it('does not trigger Tier 3 when internal MIME is present (regression guard)', async () => {
     render(<MentionInput />)
     const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
