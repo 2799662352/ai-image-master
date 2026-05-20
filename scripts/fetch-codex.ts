@@ -1,4 +1,24 @@
-import { chmod, mkdir, rm, writeFile } from 'node:fs/promises'
+/**
+ * Fetch the bundled Codex CLI binary for one or more target platforms.
+ *
+ * Two modes:
+ *   1. Pinned (default) — uses `package.json.codexCliVersion` so CI builds are
+ *      reproducible. Override per-invocation with `CODEX_CLI_VERSION=<semver>`
+ *      or `CODEX_RELEASE_TAG=<tag>`.
+ *   2. `--latest` (or `CODEX_CLI_VERSION=latest`) — queries the GitHub release
+ *      list for the most recent stable `rust-v*` tag, fetches binaries, then
+ *      writes the resolved version back to `package.json.codexCliVersion`. The
+ *      scheduled `codex-auto-update.yml` workflow uses this to open a bump PR
+ *      whenever a new Codex stable lands; humans can also run
+ *      `pnpm codex:fetch:latest` locally to do the same thing in one shot.
+ *
+ * Why not "always latest at build time": the binary is the runtime; a moving
+ * dependency means same git SHA can run different Codex behaviours on
+ * different days, which breaks bisect/rollback. We pin in package.json and let
+ * the scheduled workflow propose bumps via PR for human review (matches the
+ * Renovate/Dependabot pattern).
+ */
+import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
 import JSZip from 'jszip'
@@ -9,14 +29,26 @@ type GitHubReleaseAsset = {
 }
 
 type GitHubRelease = {
+  tag_name?: string
+  draft?: boolean
+  prerelease?: boolean
   assets: GitHubReleaseAsset[]
 }
 
 const GITHUB_OWNER = process.env.CODEX_GITHUB_OWNER ?? 'openai'
 const GITHUB_REPO = process.env.CODEX_GITHUB_REPO ?? 'codex'
-const DEFAULT_CODEX_VERSION = '0.130.0'
 
-const codexVersion = process.env.CODEX_CLI_VERSION ?? DEFAULT_CODEX_VERSION
+// Strict semver-with-rust-prefix match. We deliberately reject pre-release
+// suffixes like `rust-v0.132.0-rc.1` here so `--latest` never silently grabs
+// an RC. If you want to test a pre-release, pin it via `CODEX_RELEASE_TAG`.
+const RUST_TAG_PATTERN = /^rust-v(\d+\.\d+\.\d+)$/
+
+const argv = new Set(process.argv.slice(2))
+const requestedLatest = argv.has('--latest') || process.env.CODEX_CLI_VERSION === 'latest'
+
+const projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1'), '..')
+const packageJsonPath = path.join(projectRoot, 'package.json')
+
 const releaseTag = process.env.CODEX_RELEASE_TAG
 const targets = (process.env.CODEX_TARGETS ?? `${process.platform}-${process.arch}`)
   .split(',')
@@ -60,6 +92,20 @@ function getArchiveKind(assetName: string): 'zip' | 'raw' | 'unsupported' {
   return 'raw'
 }
 
+function getGitHubHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'catimation-codex-fetcher',
+    'X-GitHub-Api-Version': '2022-11-28',
+  }
+
+  if (process.env.GITHUB_TOKEN) {
+    headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`
+  }
+
+  return headers
+}
+
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url, {
     headers: getGitHubHeaders(),
@@ -73,10 +119,54 @@ async function fetchJson<T>(url: string): Promise<T> {
   return await response.json() as T
 }
 
-async function fetchRelease(): Promise<{ release: GitHubRelease, tag: string }> {
+async function fetchBytes(url: string): Promise<Buffer> {
+  const response = await fetch(url, {
+    headers: getGitHubHeaders(),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Asset download failed: ${response.status} ${response.statusText} (${url})`)
+  }
+
+  return Buffer.from(await response.arrayBuffer())
+}
+
+type PackageManifest = { codexCliVersion?: string; [key: string]: unknown }
+
+async function readPackageManifest(): Promise<PackageManifest> {
+  const raw = await readFile(packageJsonPath, 'utf8')
+  return JSON.parse(raw) as PackageManifest
+}
+
+async function writePackageCodexVersion(version: string): Promise<void> {
+  // Surgical regex replace instead of JSON.parse+stringify so the rest of
+  // package.json (key order, trailing newline, whitespace) is untouched —
+  // package.json normalisation belongs to a separate tool, not this script.
+  const raw = await readFile(packageJsonPath, 'utf8')
+  const next = raw.replace(
+    /("codexCliVersion"\s*:\s*")[^"]+(")/,
+    (_match, prefix: string, suffix: string) => `${prefix}${version}${suffix}`,
+  )
+  if (next === raw) {
+    throw new Error('Could not locate `codexCliVersion` key in package.json to update.')
+  }
+  await writeFile(packageJsonPath, next)
+}
+
+async function resolvePinnedVersion(): Promise<string> {
+  const envVersion = process.env.CODEX_CLI_VERSION
+  if (envVersion && envVersion !== 'latest') return envVersion
+  const manifest = await readPackageManifest()
+  if (typeof manifest.codexCliVersion !== 'string' || manifest.codexCliVersion.length === 0) {
+    throw new Error('package.json is missing the `codexCliVersion` field; set it or pass CODEX_CLI_VERSION.')
+  }
+  return manifest.codexCliVersion
+}
+
+async function fetchReleaseByTag(version: string): Promise<{ release: GitHubRelease; tag: string }> {
   const tags = releaseTag
     ? [releaseTag]
-    : [`rust-v${codexVersion}`, `v${codexVersion}`, codexVersion]
+    : [`rust-v${version}`, `v${version}`, version]
 
   let lastError: unknown
   for (const tag of tags) {
@@ -96,30 +186,24 @@ async function fetchRelease(): Promise<{ release: GitHubRelease, tag: string }> 
   throw new Error(`Could not find Codex release for ${GITHUB_OWNER}/${GITHUB_REPO}. Tried tags: ${tags.join(', ')}. ${message}`)
 }
 
-async function fetchBytes(url: string): Promise<Buffer> {
-  const response = await fetch(url, {
-    headers: getGitHubHeaders(),
-  })
-
-  if (!response.ok) {
-    throw new Error(`Asset download failed: ${response.status} ${response.statusText} (${url})`)
+async function fetchLatestStableRustRelease(): Promise<{ release: GitHubRelease; tag: string; version: string }> {
+  // The Codex repo ships multiple release tracks (rust-v*, npm-v*, etc.) so
+  // GitHub's `/releases/latest` (which picks the most-recently-edited
+  // non-prerelease across ALL tracks) is unreliable. List + filter ourselves.
+  const list = await fetchJson<GitHubRelease[]>(
+    `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases?per_page=30`,
+  )
+  for (const release of list) {
+    if (release.draft || release.prerelease) continue
+    const tag = release.tag_name ?? ''
+    const match = RUST_TAG_PATTERN.exec(tag)
+    if (!match) continue
+    if (!Array.isArray(release.assets) || release.assets.length === 0) continue
+    return { release, tag, version: match[1] }
   }
-
-  return Buffer.from(await response.arrayBuffer())
-}
-
-function getGitHubHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {
-    Accept: 'application/vnd.github+json',
-    'User-Agent': 'catimation-codex-fetcher',
-    'X-GitHub-Api-Version': '2022-11-28',
-  }
-
-  if (process.env.GITHUB_TOKEN) {
-    headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`
-  }
-
-  return headers
+  throw new Error(
+    `No stable rust-v* release found in the first 30 entries of ${GITHUB_OWNER}/${GITHUB_REPO}/releases.`,
+  )
 }
 
 function findAssetForTarget(release: GitHubRelease, target: string): GitHubReleaseAsset {
@@ -159,7 +243,7 @@ async function extractBinaryFromZip(bytes: Buffer, binaryName: string): Promise<
   return await binaryEntry.async('nodebuffer')
 }
 
-async function writeCodexBinary(target: string, asset: GitHubReleaseAsset): Promise<void> {
+async function writeCodexBinary(target: string, asset: GitHubReleaseAsset, version: string): Promise<void> {
   const targetDir = path.join(process.cwd(), 'resources', 'codex', target)
   const binaryName = getCodexBinaryName(target)
   const binaryPath = path.join(targetDir, binaryName)
@@ -180,7 +264,7 @@ async function writeCodexBinary(target: string, asset: GitHubReleaseAsset): Prom
 
   await writeFile(binaryPath, binaryBytes)
   await chmod(binaryPath, 0o755)
-  console.log(`Fetched Codex ${codexVersion} for ${target}: ${path.relative(process.cwd(), binaryPath)}`)
+  console.log(`Fetched Codex ${version} for ${target}: ${path.relative(process.cwd(), binaryPath)}`)
 }
 
 async function main(): Promise<void> {
@@ -188,12 +272,45 @@ async function main(): Promise<void> {
     throw new Error('No Codex targets requested. Set CODEX_TARGETS to a comma-separated platform-arch list.')
   }
 
-  const { release, tag } = await fetchRelease()
+  let release: GitHubRelease
+  let tag: string
+  let resolvedVersion: string
+  let isLatestBump = false
+
+  if (requestedLatest) {
+    const pinned = await resolvePinnedVersion()
+    const latest = await fetchLatestStableRustRelease()
+    if (latest.version === pinned) {
+      console.log(`Codex CLI is already up to date at ${pinned} (latest stable rust-v${latest.version}).`)
+      // Still re-fetch binaries so a fresh clone can populate `resources/codex/`
+      // — but skip the write-back since nothing changed.
+      release = latest.release
+      tag = latest.tag
+      resolvedVersion = latest.version
+    } else {
+      console.log(`Bumping Codex CLI: ${pinned} → ${latest.version} (tag ${latest.tag}).`)
+      release = latest.release
+      tag = latest.tag
+      resolvedVersion = latest.version
+      isLatestBump = true
+    }
+  } else {
+    resolvedVersion = await resolvePinnedVersion()
+    const result = await fetchReleaseByTag(resolvedVersion)
+    release = result.release
+    tag = result.tag
+  }
 
   for (const target of targets) {
     const asset = findAssetForTarget(release, target)
-    await writeCodexBinary(target, asset)
+    await writeCodexBinary(target, asset, resolvedVersion)
   }
+
+  if (isLatestBump) {
+    await writePackageCodexVersion(resolvedVersion)
+    console.log(`Updated package.json codexCliVersion → ${resolvedVersion}`)
+  }
+
   console.log(`Fetched Codex release ${tag} from ${GITHUB_OWNER}/${GITHUB_REPO}`)
 }
 
