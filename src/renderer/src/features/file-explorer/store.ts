@@ -33,6 +33,7 @@ type ElectronFileApi = {
     createFolder?: (parentDir: string, name: string) => Promise<{ ok: true; path: string } | { ok: false; reason: string }>
     copy?: (sources: string[], destDir: string) => Promise<{ ok: true; written: string[] } | { ok: false; reason: string }>
     move?: (sources: string[], destDir: string) => Promise<{ ok: true; written: string[] } | { ok: false; reason: string }>
+    importExternal?: (sources: string[], destDir: string) => Promise<{ ok: true; written: string[] } | { ok: false; reason: string }>
     openInTerminal?: (p: string) => Promise<{ ok: true } | { ok: false; reason: string }>
   }
   attachments: {
@@ -123,6 +124,7 @@ type Actions = {
    * conflicts, and dir-into-self on the server side as defense-in-depth).
    */
   moveByDnd: (sources: string[], destDir: string) => Promise<{ ok: boolean; reason?: string }>
+  importExternalByDnd: (sources: string[], destDir: string) => Promise<{ ok: boolean; reason?: string; written?: string[] }>
   startNewNode: (parentPath: string, kind: 'file' | 'dir', source: FileSource) => Promise<void>
   commitNewNode: (name: string) => Promise<{ ok: boolean; reason?: string }>
   cancelNewNode: () => void
@@ -977,6 +979,24 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
       }
     }
     return { ok: true }
+  },
+
+  importExternalByDnd: async (sources, destDir) => {
+    if (sources.length === 0) return { ok: false, reason: 'nothing to import' }
+    const api = getApi()
+    if (!api.fs.importExternal) return { ok: false, reason: 'importExternal API not available' }
+    const res = await api.fs.importExternal(sources, destDir)
+    if (!res.ok) return { ok: false, reason: res.reason }
+    const destSource = inferSource(get().workspaceTree, destDir)
+    try {
+      await get().expandDir(destDir, destSource)
+    } catch {
+      // listDir failure is non-fatal — chokidar will catch up.
+    }
+    if (res.written.length > 0) {
+      get().selectNode(res.written[res.written.length - 1], 'replace')
+    }
+    return { ok: true, written: res.written }
   },
 
   startNewNode: async (parentPath, kind, source) => {
