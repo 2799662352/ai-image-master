@@ -48,6 +48,7 @@
     "analyze:report": "npx vite-bundle-visualizer",
     "perf:startup": "npx tsx scripts/measure-startup.ts",
     "pipeline:test": "npx tsx scripts/run-pipeline-test.ts",
+    "bootstrap": "pnpm install && pnpm codex:fetch",
     "codex:fetch": "tsx scripts/fetch-codex.ts",
     "codex:fetch:latest": "tsx scripts/fetch-codex.ts --latest",
     "docker-mcp:fetch": "tsx scripts/fetch-docker-mcp.ts",
