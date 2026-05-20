@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, writeFileSync, mkdirSync, existsSync, rmSync } from 'node:fs'
+import { open } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { handleImportExternal, setFsAllowedRoots } from '../fsIpc'
@@ -57,12 +58,22 @@ describe('handleImportExternal', () => {
     expect(res.reason).toBe('is_dir')
   })
 
+  it('rejects nonexistent source paths with reason "unreadable"', async () => {
+    const ghost = path.join(outside, 'does-not-exist.txt')
+
+    const res = await handleImportExternal({ sources: [ghost], destDir: workspace })
+
+    expect(res.ok).toBe(false)
+    if (res.ok) return
+    expect(res.reason).toBe('unreadable')
+  })
+
   it('rejects files larger than 200MB with reason "oversize"', async () => {
     // We use a sparse file via fs.truncate: tiny disk footprint, but stat
     // reports the truncated size, which is what the size guard reads.
     const src = path.join(outside, 'huge.bin')
     writeFileSync(src, Buffer.alloc(1))
-    const fd = await import('node:fs/promises').then((m) => m.open(src, 'r+'))
+    const fd = await open(src, 'r+')
     await fd.truncate(201 * 1024 * 1024)
     await fd.close()
 
