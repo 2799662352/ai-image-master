@@ -4,6 +4,7 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 
 export const TEXT_READ_LIMIT = 10 * 1024 * 1024
+const IMPORT_EXTERNAL_MAX_BYTES = 200 * 1024 * 1024
 
 let allowedRoots: string[] | null = null
 
@@ -367,6 +368,56 @@ export async function handleReadBinary(p: string): Promise<
   }
 }
 
+/**
+ * Copy files from arbitrary OS paths (e.g. Desktop) into a workspace
+ * directory. Unlike `handleCopy`, this does NOT sandbox-validate sources —
+ * the user has explicitly drag-dropped them, so we trust the path. We still
+ * gate on:
+ *   - destDir must be inside an allowed root (workspace),
+ *   - each source must be an actual file (no directories — v0 reject),
+ *   - each source must be ≤ 200 MB,
+ *   - name conflicts get the same VSCode-style ` copy` / ` copy 2` suffix
+ *     used by handleCopy / handleCreateFile.
+ *
+ * Failure is fail-fast: the first src that fails stops the loop and we
+ * return its reason. `written` lists the paths that succeeded before that
+ * failure (so the UI can still refresh those rows).
+ */
+export async function handleImportExternal(args: { sources: string[]; destDir: string }): Promise<
+  | { ok: true; written: string[] }
+  | { ok: false; reason: string; written?: string[] }
+> {
+  try {
+    await assertContained(args.destDir)
+    const dest = await fs.stat(args.destDir).catch(() => null)
+    if (!dest || !dest.isDirectory()) return { ok: false, reason: 'destination not a directory' }
+
+    const written: string[] = []
+    for (const src of args.sources) {
+      // NOTE: no assertContained(src) — external OS paths are by design
+      // outside allowed roots. The drag-drop UX is the user-consent surface.
+      const srcStat = await fs.stat(src).catch(() => null)
+      if (!srcStat) {
+        return { ok: false, reason: 'unreadable', written }
+      }
+      if (srcStat.isDirectory()) {
+        return { ok: false, reason: 'is_dir', written }
+      }
+      if (srcStat.size > IMPORT_EXTERNAL_MAX_BYTES) {
+        return { ok: false, reason: 'oversize', written }
+      }
+      const baseName = path.basename(src)
+      const target = await uniquePath(args.destDir, baseName)
+      await assertContained(target)
+      await fs.cp(src, target, { recursive: false, errorOnExist: false })
+      written.push(target)
+    }
+    return { ok: true, written }
+  } catch (err) {
+    return { ok: false, reason: String(err) }
+  }
+}
+
 export function registerFsIpc(): void {
   ipcMain.handle('fs:read-text', (_e, p: string) => handleReadText(p))
   ipcMain.handle('fs:write-text', (_e, args: { path: string; content: string }) => handleWriteText(args))
@@ -378,6 +429,8 @@ export function registerFsIpc(): void {
   ipcMain.handle('fs:create-file', (_e, args: { parentDir: string; name: string }) => handleCreateFile(args))
   ipcMain.handle('fs:create-folder', (_e, args: { parentDir: string; name: string }) => handleCreateFolder(args))
   ipcMain.handle('fs:copy', (_e, args: { sources: string[]; destDir: string }) => handleCopy(args))
+  ipcMain.handle('fs:import-external', (_e, args: { sources: string[]; destDir: string }) =>
+    handleImportExternal(args))
   ipcMain.handle('fs:move', (_e, args: { sources: string[]; destDir: string }) => handleMove(args))
   ipcMain.handle('fs:open-in-terminal', (_e, p: string) => handleOpenInTerminal(p))
   ipcMain.handle('workspace:pick-folder', () => handlePickFolder())
