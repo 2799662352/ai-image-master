@@ -36,7 +36,7 @@
     "build:dir": "npm run build:vite && electron-builder --dir",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
-    "postinstall": "electron-builder install-app-deps",
+    "postinstall": "prisma generate && electron-builder install-app-deps",
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
