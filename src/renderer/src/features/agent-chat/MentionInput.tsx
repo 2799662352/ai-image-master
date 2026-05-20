@@ -410,6 +410,7 @@ export function MentionInput() {
   const cancelEditMessage = useAgentChatStore((state) => state.cancelEditMessage)
   const pendingChatInsert = useFileExplorerStore((state) => state.pendingChatInsert)
   const consumePendingChatInsert = useFileExplorerStore((state) => state.consumePendingChatInsert)
+  const openReference = useFileExplorerStore((state) => state.openReference)
   const availableSkills = useAgentChatStore((state) => state.availableSkills)
   const loadAvailableSkills = useAgentChatStore((state) => state.loadAvailableSkills)
   const workspaceTree = useFileExplorerStore((state) => state.workspaceTree)
@@ -813,6 +814,7 @@ export function MentionInput() {
             <ReferenceChip
               key={reference.id}
               reference={reference}
+              onOpen={(ref) => void openReference(ref)}
               onRemove={() => {
                 removePendingReference(reference.id)
                 removeAttachmentForReference(reference)

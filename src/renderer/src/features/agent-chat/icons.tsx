@@ -106,3 +106,24 @@ export function ChatBubbleIcon(props: IconProps): JSX.Element {
     </Svg>
   )
 }
+
+/** Generic file glyph (with folded corner) — used by attachment chips. */
+export function FileIcon(props: IconProps): JSX.Element {
+  return (
+    <Svg width={12} height={12} {...props}>
+      <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+      <path d="M14 3v6h6" />
+    </Svg>
+  )
+}
+
+/** Arrow-out-of-square — affordance hint for "open in side panel". */
+export function OpenInPanelIcon(props: IconProps): JSX.Element {
+  return (
+    <Svg width={10} height={10} {...props}>
+      <path d="M15 3h6v6" />
+      <path d="M10 14L21 3" />
+      <path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5" />
+    </Svg>
+  )
+}

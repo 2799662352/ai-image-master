@@ -7,6 +7,17 @@
   "license": "MIT",
   "codexCliVersion": "0.130.0",
   "dockerMcpGatewayVersion": "0.42.1",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@parcel/watcher",
+      "@prisma/engines",
+      "electron",
+      "electron-winstaller",
+      "esbuild",
+      "prisma",
+      "sharp"
+    ]
+  },
   "scripts": {
     "dev": "node scripts/build-pglite-worker.mjs && electron-vite dev",
     "dev:static": "electron . --dev",

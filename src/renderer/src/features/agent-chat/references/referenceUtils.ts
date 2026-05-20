@@ -33,11 +33,16 @@ function labelForUrl(url: string): string {
   }
 }
 
+const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm', '.mov', '.m4v', '.mkv', '.avi'])
+
 function openBehaviorForFile(name: string, mime?: string): AgentReferenceOpenBehavior {
   const lower = name.toLowerCase()
   if (mime?.startsWith('image/')) return 'image'
+  if (mime?.startsWith('video/')) return 'video'
   if (mime === 'application/pdf' || lower.endsWith('.pdf')) return 'pdf'
   if (lower.endsWith('.md') || lower.endsWith('.mdx')) return 'markdown'
+  const ext = lower.slice(lower.lastIndexOf('.'))
+  if (VIDEO_EXTENSIONS.has(ext)) return 'video'
   return 'code'
 }
 
@@ -202,9 +207,12 @@ function referenceFromAttachmentRef(prefix: 'attachment' | 'artifact', ref: Atta
   const localPath = localPathFromUri(ref.uri)
   if (!localPath) return null
 
+  const type: AgentReference['type'] =
+    ref.kind === 'image' ? 'image' : ref.kind === 'video' ? 'video' : 'file'
+
   return {
     id: createReferenceId(prefix, ref.id),
-    type: ref.kind === 'image' ? 'image' : 'file',
+    type,
     label: ref.name,
     source: { kind: 'localPath', path: localPath },
     status: 'ready',

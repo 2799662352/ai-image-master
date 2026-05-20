@@ -191,6 +191,30 @@ describe('MentionInput reference chips', () => {
     expect(useAgentChatStore.getState().pendingReferences).toEqual([])
   })
 
+  it('clicking the chip label opens the reference in the file panel', async () => {
+    const { useFileExplorerStore } = await import('../../file-explorer/store')
+    const openReference = vi.fn()
+    useFileExplorerStore.setState({ openReference } as never)
+
+    render(<MentionInput />)
+
+    const textarea = screen.getByRole('textbox')
+    const dt = makeDataTransfer()
+    serializeFileDrag(dt, ['D:/repo/notes.txt'])
+    fireEvent.drop(textarea, { dataTransfer: dt })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // The chip has two buttons — the "label" area (which opens) and the "x"
+    // (which removes). Click the label area, not the remove button.
+    const chipOpenButton = screen.getByTitle('file: notes.txt')
+    fireEvent.click(chipOpenButton)
+
+    expect(openReference).toHaveBeenCalledTimes(1)
+    const arg = (openReference.mock.calls[0] as unknown as [{ label: string }])[0]
+    expect(arg.label).toBe('notes.txt')
+    expect(useAgentChatStore.getState().pendingReferences.length).toBe(1)
+  })
+
   it('preserves pending references when IPC send fails', async () => {
     const sendMessage = getTestElectronAPI().agent.sendMessage
     sendMessage.mockRejectedValueOnce(new Error('send failed'))

@@ -944,7 +944,11 @@ export class AgentManager {
     if (savedAttachments.length > 0) {
       const refs: AttachmentRef[] = savedAttachments.map((a) => ({
         id: a.id ?? createTimelineId(),
-        kind: a.mime.startsWith('image/') ? 'image' : 'file',
+        kind: a.mime.startsWith('image/')
+          ? 'image'
+          : a.mime.startsWith('video/')
+            ? 'video'
+            : 'file',
         name: a.originalName,
         mime: a.mime,
         size: a.size,
