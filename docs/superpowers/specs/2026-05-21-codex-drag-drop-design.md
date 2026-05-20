@@ -54,21 +54,21 @@ if (paths.length === 0 && event.dataTransfer.files.length > 0) {
 
 ### Task B — `FileExplorerPanel` 接收外部 OS 拖入(import-copy)
 
-**新增 IPC**: `fs.copyIntoWorkspace(srcAbsPath: string, destDirRelToWorkspace: string)`
+**新增 IPC**: `fs:import-external(sources: string[], destDir: string)` —— 与 `fs:copy` 区别:**不 sandbox 校验 `sources`**(外部 OS 文件按定义就在沙盒外;drag-drop 本身就是用户授权)
 
 返回:
 ```ts
-type CopyResult =
-  | { ok: true; relPath: string; renamed: boolean }
-  | { ok: false; reason: 'oversize' | 'unreadable' | 'denied' | 'is_dir' | 'unknown'; message: string }
+type ImportResult =
+  | { ok: true; written: string[] }
+  | { ok: false; reason: 'is_dir' | 'oversize' | 'unreadable' | string; written?: string[] }
 ```
 
-**主进程职责**(`src/main/.../fileExplorer*.ts`):
-1. 校验 `srcAbsPath` 存在且为文件(不是目录)、大小 ≤ 200 MB
-2. 校验 `destDirRelToWorkspace` 在 workspace 沙盒内(防越界)
-3. 同名冲突 → 静默 rename 为 `name (1).ext` / `name (2).ext`(寻找首个空闲序号)
-4. 流式 `pipeline(fs.createReadStream, fs.createWriteStream)` 复制
-5. 返回 `relPath` + `renamed: true/false`
+**主进程职责**(`src/main/file-explorer/fsIpc.ts` 新加 `handleImportExternal`):
+1. **只**校验 `destDir` 在 `allowedRoots` 内(`assertContained(destDir)`)
+2. 对每个 `src` `fs.stat`:不存在 → `unreadable`;是目录 → `is_dir`;大小 > 200 MB → `oversize`
+3. 同名冲突 → 沿用 `uniquePath` 算法(VSCode 风格 `name copy.ext` / `name copy 2.ext` —— 与 `handleCopy`/`handleCreateFile` 完全一致,**不引入新算法**)
+4. `fs.cp(src, target, { recursive: false, errorOnExist: false })` 复制(Node 22+ API,与 `handleCopy` 一致)
+5. fail-fast:首个失败停止 + 返回 `written` 列出之前已成功的(让 UI 局部刷新)
 
 **渲染进程**(`FileExplorerPanel.tsx` / `FileTreeNode.tsx`):
 1. `onDragOver={(e) => { e.preventDefault(); setDropTarget(nodeId) }}` → 高亮(`bg-cyan-400/10` 边框)
@@ -77,8 +77,8 @@ type CopyResult =
    - 解析 `dt.files` + `getFilePath` 拿源路径数组
    - 解析目标节点:文件夹节点 = 该文件夹;文件节点 = 父文件夹;空白 = workspace 根
    - **拒绝文件夹**:`entry.isDirectory` 不能 OS 端判,需要先 `fs.stat` 在主进程 —— 走 IPC 时 main 端检测 `stat.isDirectory()` 返回 `reason:'is_dir'`,UI toast "暂不支持文件夹拖入"
-   - 对每个文件**并发上限 4**(用 `p-limit` 风格小函数或手写;避免磁盘抖动)调 `fs.copyIntoWorkspace`
-   - 进度反馈分两档:`<50MB` 用一句 toast `正在导入 N 个`;`≥50MB` 单文件按字节进度(IPC 主进程通过 `webContents.send('fs:copy-progress', { id, written, total })` 推,渲染端 store 转 toast 百分比)
+   - 对每个文件 **sequential** `for (const src of sources)`(与现存 `handleCopy` / `handleMove` 风格一致;v0 拒绝并发以避免磁盘抖动 + 简化 fail-fast 语义。drop 通常 ≤5 个文件,顺序 = 可预测 + 0 EBUSY 风险)
+   - 进度反馈:一句 toast `已导入 N 个`(完成后);**byte-level 进度推迟到 v0.2**(`fs.cp` 不暴露 progress hook,需要重写为 `pipeline(createReadStream, createWriteStream)` 才能拿到字节流,这是独立的 PR)
    - 完成后:`useFileExplorerStore.refreshTree(destDir)` + `selectFile(newRelPath)` + 1s 高亮
 
 ### 决策快照(brainstorm 冻结)
@@ -87,11 +87,11 @@ type CopyResult =
 |---|---|
 | 拖入语义(MentionInput) | path-only 引用(不复制) |
 | 拖入语义(FileExplorerPanel) | import-copy(复制到 workspace) |
-| 同名冲突 | 静默自动 rename `(1)` / `(2)` |
+| 同名冲突 | 静默自动 rename(沿用 `uniquePath`,VSCode 风格 ` copy` / ` copy 2`)|
 | 文件夹拖入 | v0 拒绝 + toast,YAGNI |
-| 多文件 | 支持,并发 copy |
+| 多文件 | 支持,**sequential** copy(与 `handleCopy`/`handleMove` 一致) |
 | 大小上限 | A: 100MB 单 / 250MB 总;B: 200MB 单 / 无总量上限 |
-| 进度反馈 | `<50MB` 一句 toast;`≥50MB` 加进度条 toast |
+| 进度反馈 | v0:完成后一句 toast `已导入 N 个`;**byte 进度推迟 v0.2** |
 | 复制后动作 | 自动 refresh + 选中 + 1s 高亮 |
 | PR 拆分 | PR-1(Task A,30 行)/ PR-2(Task B,200+ 行) |
 
@@ -103,6 +103,7 @@ type CopyResult =
 - 拖到 AgentChatPanel 任意位置(沉浸式)(超出 v0 范围)
 - 拖到右侧 ThreadSidebar(无明确用例)
 - 跨设备 / 云盘路径(`webUtils.getPathForFile` 已经能给本地路径)
+- **Byte 级进度上报** —— 需要从 `fs.cp` 切到手写 `pipeline(createReadStream, createWriteStream)` + 进度 IPC channel + 渲染端进度 toast 组件,独立 PR
 
 ## 测试
 
