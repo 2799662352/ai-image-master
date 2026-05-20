@@ -138,6 +138,63 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
+### v4.3.10 (2026-05-21) — Codex 聊天 + 文件管理栏接受拖入桌面文件
+
+本版本把"从桌面/Downloads/Finder/Explorer 拖一张图或一个文件进 app"这条体感最低门槛的交互打通到 Codex agent 链路上，分两条主线 + 一条仓库工具链改善：
+
+**A. Codex 聊天输入框接受外部 OS 文件拖入（PR #14）**
+
+老路径：用户把外部 OS 路径(`C:\Users\...\Downloads\foo.png`)拖进对话框 → renderer 调 `fsApi.stat(filePath)` → 主进程 `assertContained` 把任何不在 `allowedRoots` 里的路径直接拒绝 → 提示"已跳过 1 个：xxx（无法读取）"。即使越过 stat 这关，再点 Send 也会撞到 `mapReferencesToInputItems` 这道二级闸 → `agent:send-message` 抛 `Reference path is outside allowed roots`。两道闸 + 一道符号错位，外部拖入完全跑不通。
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| Tier 3 外部拖入分支 | `src/renderer/src/features/agent-chat/MentionInput.tsx` | `onDrop` 增加 Tier 3:`dataTransfer.files` 走 `electronAPI.getFilePath`(Electron 32+ `webUtils.getPathForFile`)拿真实 OS 路径,**File 对象自带 size+type**,跳过 `fsApi.stat` 这道带 `assertContained` 的闸(主进程 `AttachmentService.ingest` 用 `createReadStream` 直接读源路径,不需要 stat) |
+| 解耦 attachment vs reference | `MentionInput.tsx` | 外部拖入只 `addAttachment`,**不再** `addPendingReference`。Reference 走 `mapReferencesToInputItems` 时会 `fs.realpath + assertContained` 验证 → 外部路径必拒。文件拣选器(`onFileChange`)从 v4.2.4 起就遵守这条 invariant,这次 onDrop 对齐它 |
+| 完整 send-time pipeline | (无代码改动,行为变化) | 外部 file → renderer `addAttachment(rawOSPath)` → main `AttachmentService.ingest` `createReadStream` 流式读外部源 → 写到 `<userData>/agent/uploads/<sha>.<ext>`(canonical 路径,在 allowedRoots 内)→ Codex 收到 `localImage.path` 是 in-root canonical → 后端可读 → `result.userMessageItems` 把乐观消息 patch 成 canonical 路径,attachment chip 点击直达 file viewer |
+| Tests | `src/renderer/src/features/agent-chat/__tests__/MentionInput.externalDrop.test.tsx` | 4 个新 case:外部拖入 attachment-only(no reference)/合成 File 无路径忽略/`fs.stat` 失败时仍能 attach(锁定不走 stat 这条 invariant)/内部 MIME 仍 push reference(锁定 Tier 2 vs Tier 3 非对称) |
+
+**B. 文件管理栏接受外部 OS 文件拖入(PR #17 替换被自动关闭的 #15)**
+
+工作流的另一半:用户也希望把外部文件直接 **导入** workspace,而不是只把它附到一次对话上。文件管理栏需要一条独立的 IPC + UI hook,跟 chat attach 的 path-only 模式不同 —— 这边是真复制进 workspace。
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| 主进程 IPC `fs:import-external` | `src/main/file-explorer/fsIpc.ts` + `__tests__/fsIpc.importExternal.test.ts` | `handleImportExternal({ sources, destDir })` 复制外部 OS 路径到 workspace destDir。**destDir 走 `assertContained` 拒绝 workspace 外目标,sources 故意不走**(drag-drop 本身就是用户授权面)。拒绝目录源 / 单文件 >200MB / 不可读源,通过 `written: string[]` 暴露 partial-success 状态。8 个单元测试 |
+| Preload bridge | `src/preload/index.ts` + `api.d.ts` | `electronAPI.fs.importExternal(sources, destDir)` 复用现有 `safeInvoke` |
+| Renderer store action | `src/renderer/src/features/file-explorer/store.ts` + `__tests__/store.importExternal.test.ts` | `importExternalByDnd(sources, destDir)` 镜像 `moveByDnd`:转发到 main,无论 ok/partial 都 `expandDir` + `selectNode` 最后一个 `written`(防 chokidar 落后 + 视图不刷)。API guard + partial-failure-still-refresh 各自有回归测试。7 个测试 |
+| FileTreeNode 外部拖入 | `src/renderer/src/features/file-explorer/FileTreeNode.tsx` + `dragHelpers.ts` + `__tests__/FileTreeNode.externalDrop.test.tsx` | `onDragOver/onDrop` 识别外部 `Files` MIME,`dropEffect` 区分 `copy`(外部)/ `move`(内部)。`resolveDropDestDir` 显式拒绝 `ATTACHMENTS_ROOT` 自身 + attachment 子节点(workspace-tree-only invariant,有两个针对性回归)。`resolveExternalPaths` 抽到 `dragHelpers.ts` 给 MentionInput/FileExplorerPanel/FileTreeNode 三处复用,bridge 缺失时 console.warn。5 个测试 |
+| FileExplorerPanel root 拖入 | `FileExplorerPanel.tsx` | 树底下的空白区域也接 drop,目标默认 `workspaceRoot`,不再让用户必须精确瞄准某个子目录 |
+
+**C. 仓库工具链:`pnpm bootstrap`(PR #16)**
+
+`.gitignore` 排除 `resources/codex/`(239MB Codex CLI 不入仓)。`git clone` / `git worktree add` 之后默认没有这个二进制 → app 启动时 `AgentRuntime` 拼一个 `spawn .../codex.exe` 直接 ENOENT → backend `start()` 抛错 → `this.client` 永远 null → 任何 chat 操作都报 `CodexLocalBackend.send called before start`。这条隐性陷阱原 README 没文档化,本版本一站式补上。
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| 一站式初始化脚本 | `package.json` `bootstrap = pnpm install && pnpm codex:fetch` | fresh clone 或新建 worktree 后跑一遍即可(`pnpm install` 自动触发 `postinstall = prisma generate && electron-builder install-app-deps`,串联 codex 二进制下载) |
+| README 升级 | `README.md` | Quick Start 把首条命令换成 `pnpm bootstrap`,新增一段解释 worktree 陷阱 + 给出从兄弟 worktree `Copy-Item` 的 fast-path(239MB 不必重下) |
+
+#### 用户可见行为
+
+1. 在 Codex 聊天框,从桌面/下载/任意盘符 拖一张图进来 → 立即出现 attachment chip(以前固定报"无法读取")。点 Send → Codex 收到图 → 正常回复(以前报"Reference path is outside allowed roots"卡 send)。
+2. 在 ATTACHMENTS / WORKSPACE 文件管理栏,从桌面拖文件/图进来 → 自动复制进当前选中的文件夹(或 workspace root),tree 即刻刷出新节点。拖到 ATTACHMENTS 树里安全降级为 no-op(`ATTACHMENTS_ROOT` 不再 fall-through 到 workspace root)。
+3. fresh clone 或 `git worktree add` 之后:跑 `pnpm bootstrap` → install + 拉 Codex 二进制一次到位,启动不再卡在 `send called before start` 这条隐性错误。
+
+#### 测试
+
+- `pnpm vitest run agent-chat/__tests__/MentionInput.externalDrop.test.tsx` → **4/4**
+- `pnpm vitest run file-explorer/__tests__/{fsIpc.importExternal,store.importExternal,FileTreeNode.externalDrop}.test.{ts,tsx}` → **20/20**(8 + 7 + 5)
+- `pnpm vitest run agent-chat` → 305 测试中 294 pass,11 fail 全在 `Lightbox.video.test.tsx`(自 PR #10 起未动过,与本次无关)
+- 三轮人工 smoke(包含 ATTACHMENTS_ROOT fall-through、attachment-children 误投递、partial-failure UI 不刷新三个边界 bug)
+
+参考:
+- PR #14:[2799662352/ai-image-master#14](https://github.com/2799662352/ai-image-master/pull/14)(chat 拖入,含 `3c48116 bypass fs:stat` + `303437f drop external-drop reference` 两条 fix)
+- PR #17:[#17](https://github.com/2799662352/ai-image-master/pull/17)(文件管理栏,替换被关闭的 #15)
+- PR #16:[#16](https://github.com/2799662352/ai-image-master/pull/16)(`pnpm bootstrap`)
+- Codex `localImage.path` 协议沙箱模型:`src/main/agent/codexUserInput.ts` + `AttachmentService.ts`
+
+---
+
 ### v4.3.9 (2026-05-20) — Hotfix: 快速点击 tab 闪屏
 
 **问题**: 用户连续快速点击不同 tab(例如 BATCH → AGENT → BATCH),会看到大约 16ms 的旧页面内容闪现,即使最终落点正确。DevTools 控制台还会冒出 Chrome 的 `Throttling navigation to prevent the browser from hanging` 警告。
