@@ -5,6 +5,7 @@ import * as fs from 'fs'
 import { randomBytes } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { getAutoUpdaterInstance, AutoUpdater } from './updater'
+import { resolveMainWindowShortcut } from './keyboardShortcuts'
 import {
   submitSplit,
   cancelTask,
@@ -412,35 +413,33 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
-  // 键盘快捷键: F5, Ctrl+R, Cmd+R 刷新页面。
+  // 键盘快捷键: F5 / Ctrl+R / Cmd+R 刷新, F12 devtools, F11 全屏。
   //
-  // 关键: Ctrl+Shift+R 必须先判定, 否则会先命中 Ctrl+R 普通 reload, 紧接着
-  // 再命中 Ctrl+Shift+R 的 reloadIgnoringCache —— 用户按一下强制刷新会
-  // 闪两次。改为严格 if/else 顺序: Shift 在最前, 后面用 else if。
+  // 路由逻辑抽到 `resolveMainWindowShortcut` 纯函数里:
+  //   1. 单测覆盖所有分支(`src/main/__tests__/keyboardShortcuts.test.ts`)。
+  //   2. 关键顺序约束(Ctrl+Shift+R 先于 Ctrl+R)封装在那里,避免改本文件
+  //      时不小心把顺序弄反 —— v4.2.x 曾因此一次强刷闪两次。
+  //   3. F11 是 v4.3.12 重新接回的 affordance:`Menu.setApplicationMenu(null)`
+  //      去掉默认菜单后副作用是 togglefullscreen role 的 accelerator 也丢,
+  //      这里在 keyDown 上显式 toggle 把行为还回来。
   mainWindow.webContents.on('before-input-event', (event, input) => {
-    if (input.key === 'F12') {
-      mainWindow?.webContents.toggleDevTools()
-      event.preventDefault()
-      return
+    const action = resolveMainWindowShortcut(input)
+    if (!action || !mainWindow) return
+    switch (action.type) {
+      case 'toggleDevTools':
+        mainWindow.webContents.toggleDevTools()
+        break
+      case 'reload':
+        mainWindow.webContents.reload()
+        break
+      case 'reloadIgnoringCache':
+        mainWindow.webContents.reloadIgnoringCache()
+        break
+      case 'toggleFullScreen':
+        mainWindow.setFullScreen(!mainWindow.isFullScreen())
+        break
     }
-    // Ctrl+Shift+R / Cmd+Shift+R 强制刷新(清缓存) — 必须先于普通 Ctrl+R 判定
-    if ((input.control || input.meta) && input.shift && input.key.toLowerCase() === 'r') {
-      mainWindow?.webContents.reloadIgnoringCache()
-      event.preventDefault()
-      return
-    }
-    // Ctrl+R / Cmd+R 普通刷新
-    if ((input.control || input.meta) && input.key.toLowerCase() === 'r') {
-      mainWindow?.webContents.reload()
-      event.preventDefault()
-      return
-    }
-    // F5 普通刷新
-    if (input.key === 'F5') {
-      mainWindow?.webContents.reload()
-      event.preventDefault()
-      return
-    }
+    event.preventDefault()
   })
 
   mainWindow.once('ready-to-show', async () => {
