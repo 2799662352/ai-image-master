@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { FileNode, FileSource } from './types'
 import { useFileExplorerStore } from './store'
 import { FolderIcon, FolderOpenIcon, FileIcon, ImageFileIcon, ChevronRightIcon } from './icons'
-import { serializeFileDrag, parseFileDrop } from './dragHelpers'
+import { serializeFileDrag, parseFileDrop, resolveExternalPaths } from './dragHelpers'
 import { FileContextMenu, type FileMenuAction, type MenuItemDescriptor } from './FileContextMenu'
 
 // The attachments tree's pseudo-root node has this synthetic path; drops onto
@@ -198,7 +198,14 @@ export function FileTreeNode({ node, depth }: { node: FileNode; depth: number })
     const isExternal = e.dataTransfer.types.includes('Files')
     if (!isInternal && !isExternal) return
     const dest = resolveDropDestDir()
-    if (!dest) return
+    if (!dest) {
+      // MIME matched but this row cannot accept the drop (e.g. ATTACHMENTS_ROOT
+      // header). Absorb the event so it doesn't bubble up to the panel's
+      // onRootDrop and silently land in the workspace root.
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
     e.preventDefault()
     e.stopPropagation()
     e.dataTransfer.dropEffect = isExternal ? 'copy' : 'move'
@@ -215,22 +222,19 @@ export function FileTreeNode({ node, depth }: { node: FileNode; depth: number })
 
   const onDrop = async (e: React.DragEvent) => {
     const dest = resolveDropDestDir()
-    if (!dest) return
+    if (!dest) {
+      // Same reason as onDragOver: prevent fall-through to onRootDrop.
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
     e.preventDefault()
     e.stopPropagation()
     setDropActive(false)
 
-    // Branch A: external OS file drop. dataTransfer.files is populated and
-    // our internal MIME is absent. Each File needs webUtils.getPathForFile
-    // (exposed as electronAPI.getFilePath) to resolve to an OS-absolute path.
+    // Branch A: external OS file drop.
     if ((e.dataTransfer.files?.length ?? 0) > 0) {
-      const getFilePath = (window as Window & {
-        electronAPI?: { getFilePath?: (f: File) => string }
-      }).electronAPI?.getFilePath
-      if (!getFilePath) return
-      const externalPaths = Array.from(e.dataTransfer.files)
-        .map((f) => getFilePath(f))
-        .filter((p): p is string => Boolean(p))
+      const externalPaths = resolveExternalPaths(e.dataTransfer.files)
       if (externalPaths.length === 0) return
 
       const importExternal = useFileExplorerStore.getState().importExternalByDnd

@@ -12,6 +12,7 @@ import { ConflictModal } from './ConflictModal'
 import { ReferencePreview } from './ReferencePreview'
 import { DiffMergeView } from './DiffMergeView'
 import { AiChangeViewer } from './AiChangeViewer'
+import { resolveExternalPaths } from './dragHelpers'
 import type { FileNode } from './types'
 
 function findNodeFlat(tree: FileNode[], target: string): FileNode | null {
@@ -113,18 +114,13 @@ export function FileExplorerPanel({ rightOffset }: { rightOffset: number }) {
   }
 
   const onRootDrop = async (e: React.DragEvent): Promise<void> => {
-    // If a FileTreeNode already consumed the drop, defaultPrevented is true and
-    // we bail out — the inner node's choice wins.
+    // Inner FileTreeNode drops always call e.stopPropagation(), so they
+    // never reach this handler. The e.defaultPrevented check is
+    // defense-in-depth for edge cases (3rd-party handlers, future refactors).
     if (e.defaultPrevented) return
     if ((e.dataTransfer.files?.length ?? 0) === 0) return
     if (!workspaceRoot) return
-    const getFilePath = (window as Window & {
-      electronAPI?: { getFilePath?: (f: File) => string }
-    }).electronAPI?.getFilePath
-    if (!getFilePath) return
-    const paths = Array.from(e.dataTransfer.files)
-      .map((f) => getFilePath(f))
-      .filter((p): p is string => Boolean(p))
+    const paths = resolveExternalPaths(e.dataTransfer.files)
     if (paths.length === 0) return
     e.preventDefault()
     const res = await importExternalByDnd(paths, workspaceRoot)
