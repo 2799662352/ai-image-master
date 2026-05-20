@@ -45,9 +45,8 @@ cos-credentials.json
 **/secrets/
 **/auth*.json
 
-# Package manager locks (using npm)
+# Package manager locks - keep pnpm-lock.yaml (used by project + CI)
 yarn.lock
-pnpm-lock.yaml
 
 # Temporary files
 *.tmp

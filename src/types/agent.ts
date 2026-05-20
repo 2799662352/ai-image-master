@@ -41,6 +41,31 @@ export interface AgentSendMessagePayload {
   skills?: AgentSkillRef[]
 }
 
+/**
+ * Return shape of `agent:send-message`.
+ *
+ * The optional `userMessageItems` carries the *canonicalized* user-turn
+ * timeline items (post-attachment-ingest URIs that point at
+ * `<userData>/agent/uploads/<hash>.ext`). The renderer's optimistic
+ * `send()` initially pushes the user message with the **raw OS path**
+ * each attachment was picked from (e.g. `D:\360MoveData\...\foo.png`).
+ * Those paths sit outside the fs IPC's allowed-roots gate, so:
+ *
+ *   - clicking the attachment chip → AttachmentCard.handleClick →
+ *     openReference → file-explorer openTab → `fs:stat` REJECTS → tab
+ *     silently never opens → ImageViewer never mounts → `useFileUrl`
+ *     never runs.
+ *
+ * After we patch the optimistic message in place with these canonical
+ * items, the attachment chip references the uploads-cache path, which
+ * IS in allowed-roots, so the tab opens immediately without the
+ * "refresh to view" workaround the user previously had to use.
+ */
+export interface AgentSendMessageResult {
+  threadId: string
+  userMessageItems?: TimelineItem[]
+}
+
 export type CodexSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
 export type CodexApprovalPolicy = 'untrusted' | 'on-request' | 'never'
 export type CodexWebSearchMode = 'cached' | 'live' | 'disabled'

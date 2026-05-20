@@ -46,26 +46,64 @@ function openBehaviorForFile(name: string, mime?: string): AgentReferenceOpenBeh
   return 'code'
 }
 
+/**
+ * Extract an OS path from any "local-file-ish" URI shape the renderer may
+ * see for an attachment. Returns `''` for things that aren't local files
+ * (blob:, http(s):, data:, etc.) — caller treats `''` as "no reference".
+ *
+ * Accepts three shapes — must keep this in sync with
+ * `components/shared/media/useResolvedMediaSrc.ts::toOsPathIfLocal`:
+ *
+ *   1. `local-file:///D%3A/foo/bar.png` — canonical form produced by
+ *      `toRenderableUri`. Strip prefix, percent-decode, drop traversal.
+ *
+ *   2. `D:\foo\bar.png` or `D:/foo/bar.png` — raw Windows path. This is
+ *      what `buildAttachmentUri` returns in the **optimistic** send path
+ *      when the renderer only has a file path (no Blob buffer). Without
+ *      this branch the just-sent attachment chip would have no reference
+ *      attached, so AttachmentCard's click handler can't call
+ *      `openReference`, so the file viewer tab never opens (the user
+ *      reports it as "needs refresh to display" because reloading the
+ *      thread re-fetches messages from main with canonical `local-file://`
+ *      URIs that DO pass the prefix check).
+ *
+ *   3. `/home/user/foo.png` — raw POSIX absolute path. Same scenario on
+ *      macOS/Linux.
+ *
+ * **Do NOT use `new URL()` here.** Chromium parses `local-file` as a
+ * standard scheme and applies `file://`-style Windows drive folding:
+ * `new URL('local-file:///C%3A/Users/...').pathname` returns
+ * `/Users/...` (drive letter silently dropped). Pure string parsing
+ * matches `vscode-uri`'s approach. See electron/electron#49073 and
+ * microsoft/vscode#209453.
+ */
 function localPathFromUri(uri: string): string {
-  try {
-    if (!uri.toLowerCase().startsWith('local-file:')) return ''
-    const decodedRawPath = decodeURIComponent(uri.slice('local-file:'.length))
-    if (decodedRawPath.split(/[\\/]/).some((segment) => segment === '..')) return ''
-
-    const url = new URL(uri)
-    if (url.protocol !== 'local-file:') return ''
-
-    const decoded = decodeURIComponent(url.pathname)
+  if (typeof uri !== 'string' || uri.length === 0) return ''
+  // `local-file:///` form.
+  const prefix = 'local-file:///'
+  if (uri.toLowerCase().startsWith(prefix)) {
+    let decoded: string
+    try {
+      decoded = decodeURIComponent(uri.slice(prefix.length))
+    } catch {
+      return ''
+    }
     if (decoded.split(/[\\/]/).some((segment) => segment === '..')) return ''
-
-    const stripped = decoded
-      .replace(/^\/(?=[A-Za-z]:)/, '')
-      .replace(/^\/{2,}(?=[^/])/, '/')
-    const isAbsolute = stripped.startsWith('/') || /^[A-Za-z]:[\\/]/.test(stripped)
-    return isAbsolute ? stripped : ''
-  } catch {
-    return ''
+    // Windows path emerges as `C:/Users/...` after decoding `C%3A`.
+    if (/^[A-Za-z]:[\\/]/.test(decoded)) return decoded
+    // POSIX path lost its leading slash when toRenderableUri prefixed with
+    // `local-file:///`; add it back.
+    if (!decoded.startsWith('/')) return '/' + decoded
+    return decoded
   }
+  // Non-local schemes — caller decides what to do.
+  if (/^(blob|data|https?|file):/i.test(uri)) return ''
+  if (uri.split(/[\\/]/).some((segment) => segment === '..')) return ''
+  // Raw Windows path (`C:\foo` or `C:/foo`).
+  if (/^[A-Za-z]:[\\/]/.test(uri)) return uri
+  // Raw POSIX absolute path.
+  if (uri.startsWith('/') && !uri.startsWith('//')) return uri
+  return ''
 }
 
 export function makeFileReference(input: {

@@ -15,6 +15,7 @@
  *  - 在 `onClick` 里串接 Lightbox / 文件预览 / 下载等具体行为
  */
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useResolvedMediaSrc } from './useResolvedMediaSrc'
 
 export type MediaThumbnailKind = 'image' | 'video'
 
@@ -72,6 +73,11 @@ export function MediaThumbnail({
   onClick,
   className,
 }: MediaThumbnailProps) {
+  const resolvedSrc = useResolvedMediaSrc(src, kind)
+  // `kind` is already 'image' | 'video' — pass through as the mime hint so
+  // the hook can disambiguate ambiguous extensions when the main-process
+  // mime probe returns application/octet-stream.
+
   if (typeof src !== 'string' || src.length === 0) return null
 
   const interactive = typeof onClick === 'function'
@@ -109,31 +115,28 @@ export function MediaThumbnail({
         onKeyDown={keyHandler}
         className={containerClass}
       >
-        <video
-          src={src}
-          poster={posterSrc}
-          preload="metadata"
-          muted
-          playsInline
-          // 不显原生 controls,让略缩纯粹是张静帧 —— 想播放走 Lightbox。
-          controls={false}
-          // 第一帧定格用 currentTime=0.1, 0.1s 处比 0s 更稳(部分容器在 0s 帧不可解)。
-          // 配 preload=metadata 后只取这一帧,不会下载整段视频。
-          onLoadedMetadata={(e) => {
-            const v = e.currentTarget
-            try {
-              if (!posterSrc) v.currentTime = Math.min(0.1, (v.duration || 1) * 0.1)
-            } catch (err) {
-              // Safari 早期对未定时加载抛 InvalidStateError;不影响显示,但
-              // dev 里留一条线索,方便排查 codec / 容器异常。
-              // eslint-disable-next-line no-console
-              if (typeof console !== 'undefined' && import.meta.env?.DEV) {
-                console.debug('[MediaThumbnail] currentTime seek failed', err)
+        {resolvedSrc ? (
+          <video
+            src={resolvedSrc}
+            poster={posterSrc}
+            preload="metadata"
+            muted
+            playsInline
+            controls={false}
+            onLoadedMetadata={(e) => {
+              const v = e.currentTarget
+              try {
+                if (!posterSrc) v.currentTime = Math.min(0.1, (v.duration || 1) * 0.1)
+              } catch (err) {
+                if (typeof console !== 'undefined' && import.meta.env?.DEV) {
+                  // eslint-disable-next-line no-console
+                  console.debug('[MediaThumbnail] currentTime seek failed', err)
+                }
               }
-            }
-          }}
-          className="block h-full w-full object-cover"
-        />
+            }}
+            className="block h-full w-full object-cover"
+          />
+        ) : null}
         <PlayBadge />
       </div>
     )
@@ -148,13 +151,15 @@ export function MediaThumbnail({
       onKeyDown={keyHandler}
       className={containerClass}
     >
-      <img
-        src={src}
-        alt={name ?? ''}
-        loading="lazy"
-        decoding="async"
-        className="block h-full w-full object-cover"
-      />
+      {resolvedSrc ? (
+        <img
+          src={resolvedSrc}
+          alt={name ?? ''}
+          loading="lazy"
+          decoding="async"
+          className="block h-full w-full object-cover"
+        />
+      ) : null}
     </div>
   )
 }

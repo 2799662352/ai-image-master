@@ -1,0 +1,99 @@
+name: Auto-update Codex CLI
+
+# Watches openai/codex for new stable `rust-v*` releases and opens a bump PR
+# whenever one appears. Runs daily plus on-demand via workflow_dispatch.
+#
+# Why a PR (not a commit-to-main): every Codex bump is a runtime-behaviour
+# change for our app, so it has to go through review + CI before reaching
+# main. The PR locks the specific version in `package.json.codexCliVersion`,
+# which keeps `pnpm codex:fetch` reproducible for all downstream builds.
+#
+# The workflow also fetches binaries for all four shipping targets — if the
+# upstream release is missing any asset we'd need at build time, the fetch
+# fails here BEFORE the PR is opened, so we never propose a broken bump.
+
+on:
+  schedule:
+    # 06:00 UTC daily = 14:00 Asia/Shanghai. Light-traffic window globally.
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        # `--ignore-scripts` skips postinstall (prisma generate, electron-builder
+        # install-app-deps) — neither is needed for the fetch step and both
+        # waste CI minutes. We only need tsx + jszip to resolve in node_modules.
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Fetch latest Codex stable
+        id: fetch
+        env:
+          # Authenticated GitHub API call avoids the 60/hr unauth rate limit.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Validate every target we ship — a missing asset on any platform
+          # fails this step before we open a bump PR.
+          CODEX_TARGETS: win32-x64,darwin-arm64,darwin-x64,linux-x64
+        run: pnpm codex:fetch:latest
+
+      - name: Detect version bump
+        id: diff
+        run: |
+          if git diff --quiet -- package.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Codex CLI is already up to date — nothing to do."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            version=$(node -p "require('./package.json').codexCliVersion")
+            echo "version=${version}" >> "$GITHUB_OUTPUT"
+            echo "Detected bump to ${version}."
+          fi
+
+      - name: Open or update bump PR
+        if: steps.diff.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: chore/codex-bump-${{ steps.diff.outputs.version }}
+          # Stable branch name per target version means re-running the
+          # workflow on the same release just updates the existing PR
+          # instead of opening a new one. When a NEWER release lands the
+          # branch name changes, so each version gets its own PR for an
+          # auditable bump history.
+          delete-branch: true
+          commit-message: "chore(codex): bump Codex CLI to ${{ steps.diff.outputs.version }}"
+          title: "chore(codex): bump Codex CLI to ${{ steps.diff.outputs.version }}"
+          body: |
+            Automated bump of the bundled Codex CLI to **${{ steps.diff.outputs.version }}**.
+
+            * Release notes: https://github.com/openai/codex/releases/tag/rust-v${{ steps.diff.outputs.version }}
+            * Triggered by: `${{ github.event_name }}` (workflow `codex-auto-update.yml`)
+            * Validated assets: `win32-x64`, `darwin-arm64`, `darwin-x64`, `linux-x64`
+
+            ### Reviewer checklist
+            - [ ] Scan release notes for protocol / wire-format changes that touch `codexNotificationRouter` or `AgentManager`
+            - [ ] Confirm CI passes (build matrix + tests)
+            - [ ] If notes mention removed APIs (e.g. `PermissionProfile`), grep the codebase for usage
+          labels: |
+            dependencies
+            codex
+          add-paths: |
+            package.json

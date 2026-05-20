@@ -181,6 +181,51 @@ describe('referencesFromTimelineItem', () => {
     expect(ref.id.startsWith('artifact:')).toBe(true)
   })
 
+  it('accepts raw OS paths in attachment URIs (optimistic-send window)', () => {
+    // During the optimistic-send window the renderer pushes the user message
+    // BEFORE main's attachment ingest finishes, so AttachmentRef.uri still
+    // carries the raw filesystem path the user picked the file from instead
+    // of a canonical `local-file:///` URI. Without raw-path support here the
+    // attachment chip becomes un-clickable for ~50ms after send — which the
+    // user reported as "needs refresh to display" because reloading the
+    // thread re-reads canonical URIs from the persisted message.
+    const winItem: AttachmentItem = {
+      type: 'attachment', id: 'opt_w', startedAt: 1,
+      attachments: [
+        { id: 'rw', kind: 'image', name: 'pic.png', mime: 'image/png', size: 1, uri: 'D:\\360MoveData\\Users\\27996\\Documents\\pic.png' },
+      ],
+    }
+    const [winRef] = referencesFromTimelineItem(winItem)
+    expect(winRef.source).toEqual({ kind: 'localPath', path: 'D:\\360MoveData\\Users\\27996\\Documents\\pic.png' })
+
+    const posixItem: AttachmentItem = {
+      type: 'attachment', id: 'opt_p', startedAt: 1,
+      attachments: [
+        { id: 'rp', kind: 'image', name: 'pic.png', mime: 'image/png', size: 1, uri: '/Users/me/Pictures/pic.png' },
+      ],
+    }
+    const [posixRef] = referencesFromTimelineItem(posixItem)
+    expect(posixRef.source).toEqual({ kind: 'localPath', path: '/Users/me/Pictures/pic.png' })
+  })
+
+  it('drops attachment references with blob: / data: / UNC-style URIs', () => {
+    // Blob and data URIs can't be expressed as filesystem paths, and
+    // `//host/share` would look like a UNC mount we don't want to silently
+    // hand to fs.realpath. Each of these should produce NO reference so the
+    // AttachmentCard renders an un-openable chip rather than a click target
+    // that mysteriously does nothing.
+    const item: AttachmentItem = {
+      type: 'attachment', id: 'drop_1', startedAt: 1,
+      attachments: [
+        { id: 'b', kind: 'image', name: 'b.png', mime: 'image/png', size: 1, uri: 'blob:http://localhost/abc' },
+        { id: 'd', kind: 'image', name: 'd.png', mime: 'image/png', size: 1, uri: 'data:image/png;base64,iVBORw0' },
+        { id: 'u', kind: 'image', name: 'u.png', mime: 'image/png', size: 1, uri: '//share/host/u.png' },
+      ],
+    }
+    const refs = referencesFromTimelineItem(item)
+    expect(refs).toHaveLength(0)
+  })
+
   it('drops attachment references with traversal in their URI', () => {
     const traversalItem: AttachmentItem = {
       type: 'attachment',
