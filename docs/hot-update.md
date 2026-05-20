@@ -138,6 +138,46 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
+### v4.3.11 (2026-05-21) — Hotfix: v4.3.10 installer 启动崩溃(缺 @parcel/watcher prebuilt)
+
+**问题**: 用户装上 v4.3.10 双击启动 → 立刻弹白底红 X 错误窗:
+
+```
+A JavaScript error occurred in the main process
+Error: No prebuild or local build of @parcel/watcher found.
+Tried @parcel/watcher-win32-x64. Please ensure it is installed...
+  at C:\Users\...\CATIMATION-Cyberpunk Master\resources\app.asar\
+     node_modules\@parcel\watcher\index.js:27:13
+```
+
+主进程根本没起来。
+
+**根因**: v4.2.9 引入 `@parcel/watcher` 做 ATTACHMENTS 面板的原生 FS watcher,通过 `optionalDependencies` 拉对应平台 prebuilt 子包(`@parcel/watcher-win32-x64` / `-darwin-arm64` / `-linux-x64-glibc` 等),里面装着 `watcher.node` C++ 原生二进制。v4.2.9 当时仓库还在用 npm,npm 默认 hoist 一切到顶层 `node_modules/`,electron-builder 扫顶层就能找到 `node_modules/@parcel/watcher-win32-x64/` 把它复制进 `app.asar.unpacked`,user 装上之后 `require('@parcel/watcher-win32-x64')` 解析正常。
+
+v4.3.6 仓库切到 **pnpm**(`pnpm bootstrap` 脚本,`packageManager: pnpm@10.12.4`)。pnpm 默认 **传递性 optionalDependencies 不 hoist**(只 hoist 直接 dependencies),平台 prebuilt 包躺在 `node_modules/.pnpm/@parcel+watcher-win32-x64@2.5.6/node_modules/@parcel/watcher-win32-x64/`,顶层 `node_modules/@parcel/` 下只有 `watcher/`(JS wrapper)没有 `watcher-win32-x64/`。
+
+electron-builder packaging 阶段 `searching for node modules pm=pnpm searchDir=...` 已经检测出 pnpm,但 walking 仍然只看顶层 `node_modules`,不递归 `.pnpm/`。结果 `app.asar.unpacked\node_modules\@parcel\` 下面只有 `watcher/` 一个目录,**`watcher-win32-x64/` 整个缺失**。装上电脑后 `@parcel/watcher/index.js:27` 的 `require('@parcel/watcher-win32-x64')` 必然失败,主进程 crash。
+
+v4.3.6 ~ v4.3.10 五个版本本质上都中招了 —— 只是 v4.3.6 之前的 build pipeline 还在 npm,问题没暴露;切到 pnpm 后第一波打的安装包就是 v4.3.10。
+
+**修复** (`.npmrc`):
+
+```
+public-hoist-pattern[]=@parcel/watcher-*
+```
+
+强制 pnpm 把 `@parcel/watcher-win32-x64` / `-darwin-*` / `-linux-*` 等所有平台 prebuilt 子包 hoist 到顶层 `node_modules/@parcel/`,electron-builder 一扫即中。`pnpm install` 一次 reinstall 后 verify:`node_modules/@parcel/watcher-win32-x64/watcher.node` 已经存在(就是缺的那个 .node)。
+
+**为什么不一开始 hoist 全部 6 个平台 prebuilt**: 仓库 `.pnpm/` 里另外 5 个平台 prebuilt(`@esbuild/win32-x64`、`@rolldown/binding-win32-x64-msvc`、`@tailwindcss/oxide-*`、`lightningcss-*`、`@img/sharp-win32-x64`)都是 build-tool 自用,vite / rolldown / tailwind 自己会通过 `.pnpm/` 真实路径 resolve,electron-builder 也不需要把它们打进 app(它们不是 runtime 依赖)。只有 `@parcel/watcher` 是主进程 `import` 的 runtime 依赖,这条 hoist 规则只对它需要。
+
+**预防回归**: 这条 `.npmrc` 进入仓库,后续在新机器、新 worktree 上 `pnpm install` 都会自动 hoist。还在 `.npmrc` 注释里把这次踩坑历史写进去防止后续被无意删掉。
+
+**版本号**: v4.3.10 已上 COS 但不可用。**直接 bump 到 v4.3.11 重发**,electron-updater 看到 v4.3.11 > 已装的 v4.3.9(老用户)就会拉新版;v4.3.10 用户已经 crash 起不来,只能手动重下 v4.3.11 安装包。
+
+**用户操作**: 已经下了 v4.3.10 的人请到 https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/latest.yml 看到的就是 v4.3.11,从 COS 重新下载安装即可。v4.3.10 之前的版本(<=v4.3.9)正常自动更新无需手工干预。
+
+---
+
 ### v4.3.10 (2026-05-21) — Codex 聊天 + 文件管理栏接受拖入桌面文件
 
 本版本把"从桌面/Downloads/Finder/Explorer 拖一张图或一个文件进 app"这条体感最低门槛的交互打通到 Codex agent 链路上，分两条主线 + 一条仓库工具链改善：
