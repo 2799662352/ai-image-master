@@ -1,17 +1,34 @@
 // src/renderer/src/components/donor/__tests__/DonorVirtualGrid.test.tsx
-import { describe, expect, it, vi, beforeAll } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { describe, expect, it, vi, beforeAll, beforeEach, afterEach } from 'vitest'
+import { act, cleanup, render, screen } from '@testing-library/react'
 import DonorVirtualGrid from '../DonorVirtualGrid'
 import type { DonorItemView } from '../../../hooks/useHistoryData'
+
+// Capture the most recently installed ResizeObserver callback so individual
+// tests can drive the virtualized branch by simulating a layout measurement.
+let lastRoCallback: ((entries: Array<{ contentRect: { width: number } }>) => void) | null = null
 
 beforeAll(() => {
   // jsdom does not ship ResizeObserver
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (globalThis as any).ResizeObserver = class {
+  ;(globalThis as any).ResizeObserver = class {
+    constructor(cb: (entries: Array<{ contentRect: { width: number } }>) => void) {
+      lastRoCallback = cb
+    }
     observe() {}
     unobserve() {}
     disconnect() {}
   }
+})
+
+beforeEach(() => {
+  lastRoCallback = null
+})
+
+// Explicit cleanup — Vitest + RTL auto-cleanup is unreliable in this project's
+// setup (other tests already do their own cleanup), so we lock it down here.
+afterEach(() => {
+  cleanup()
 })
 
 function makeItem(i: number): DonorItemView {
@@ -53,5 +70,51 @@ describe('DonorVirtualGrid', () => {
     )
     // CSS-grid fallback path renders all 100 cards (no measurement yet)
     expect(screen.queryByRole('grid')).toBeNull()
+  })
+
+  it('switches to react-window <Grid> after the container is measured (>=30 items)', () => {
+    const items = Array.from({ length: 100 }, (_, i) => makeItem(i))
+    render(
+      <DonorVirtualGrid
+        items={items}
+        onDelete={vi.fn()}
+        onPreview={vi.fn()}
+      />,
+    )
+
+    // Pre-measurement: still CSS-grid fallback
+    expect(screen.queryByRole('grid')).toBeNull()
+    expect(lastRoCallback).not.toBeNull()
+
+    // Simulate the browser measuring the container at 1200px wide.
+    act(() => {
+      lastRoCallback?.([{ contentRect: { width: 1200 } }])
+    })
+
+    // react-window's <Grid> renders its outer wrapper with role="grid".
+    expect(screen.queryByRole('grid')).not.toBeNull()
+    // Virtualized: only a viewport-worth of cards are mounted, not all 100.
+    // DonorCard renders an <article>; react-window v2's custom cellComponent
+    // (our VirtualCell) is a plain <div>, so we count articles directly.
+    const cards = document.querySelectorAll('article')
+    expect(cards.length).toBeGreaterThan(0)
+    expect(cards.length).toBeLessThan(100)
+  })
+
+  it('keeps CSS-grid fallback even after measurement when items < 30', () => {
+    const items = Array.from({ length: 12 }, (_, i) => makeItem(i))
+    render(
+      <DonorVirtualGrid
+        items={items}
+        onDelete={vi.fn()}
+        onPreview={vi.fn()}
+      />,
+    )
+    act(() => {
+      lastRoCallback?.([{ contentRect: { width: 1200 } }])
+    })
+    // Threshold guard: even with a measured width, small lists stay on CSS grid.
+    expect(screen.queryByRole('grid')).toBeNull()
+    expect(screen.getAllByRole('img')).toHaveLength(12)
   })
 })
