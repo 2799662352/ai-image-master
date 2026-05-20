@@ -33,7 +33,9 @@ type ElectronFileApi = {
     createFolder?: (parentDir: string, name: string) => Promise<{ ok: true; path: string } | { ok: false; reason: string }>
     copy?: (sources: string[], destDir: string) => Promise<{ ok: true; written: string[] } | { ok: false; reason: string }>
     move?: (sources: string[], destDir: string) => Promise<{ ok: true; written: string[] } | { ok: false; reason: string }>
-    importExternal?: (sources: string[], destDir: string) => Promise<{ ok: true; written: string[] } | { ok: false; reason: string }>
+    importExternal?: (sources: string[], destDir: string) => Promise<
+      { ok: true; written: string[] } | { ok: false; reason: string; written?: string[] }
+    >
     openInTerminal?: (p: string) => Promise<{ ok: true } | { ok: false; reason: string }>
   }
   attachments: {
@@ -986,7 +988,7 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
     const api = getApi()
     if (!api.fs.importExternal) return { ok: false, reason: 'importExternal API not available' }
     const res = await api.fs.importExternal(sources, destDir)
-    if (!res.ok) return { ok: false, reason: res.reason }
+    if (!res.ok) return { ok: false, reason: res.reason, written: res.written }
     const destSource = inferSource(get().workspaceTree, destDir)
     try {
       await get().expandDir(destDir, destSource)
