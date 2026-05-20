@@ -126,4 +126,26 @@ describe('FileTreeNode external drop', () => {
 
     expect(useFileExplorerStore.getState().importExternalByDnd).not.toHaveBeenCalled()
   })
+
+  it('refuses drop on attachments tree children (source === "attachments")', async () => {
+    render(
+      <FileTreeNode
+        node={{
+          path: 'C:/attachments-root/photo.png',
+          name: 'photo.png',
+          kind: 'file',
+          source: 'attachments',
+        }}
+        depth={1}
+      />,
+    )
+    const row = screen.getByText('photo.png').closest('[role="treeitem"]') as HTMLElement
+
+    const dt = makeExternalDt([new File(['x'], 'new.png', { type: 'image/png' })])
+    fireEvent.dragOver(row, { dataTransfer: dt })
+    fireEvent.drop(row, { dataTransfer: dt })
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(useFileExplorerStore.getState().importExternalByDnd).not.toHaveBeenCalled()
+  })
 })

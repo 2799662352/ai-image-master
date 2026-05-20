@@ -138,4 +138,20 @@ describe('importExternalByDnd', () => {
     expect(res.reason).toBe('is_dir')
     expect(res.written).toEqual(['C:/ws/a.png', 'C:/ws/b.png'])
   })
+
+  it('refreshes dest dir AND selects last written even on partial IPC failure', async () => {
+    const fs = (window.electronAPI as unknown as { fs: { importExternal: ReturnType<typeof vi.fn> } }).fs
+    fs.importExternal.mockResolvedValueOnce({
+      ok: false,
+      reason: 'is_dir',
+      written: ['C:/ws/a.png', 'C:/ws/b.png'],
+    })
+
+    await useFileExplorerStore
+      .getState()
+      .importExternalByDnd(['C:/desk/a.png', 'C:/desk/b.png', 'C:/desk/sub'], 'C:/ws')
+
+    expect(window.electronAPI.fs.listDir).toHaveBeenCalledWith('C:/ws')
+    expect(useFileExplorerStore.getState().selectedPaths).toEqual(['C:/ws/b.png'])
+  })
 })

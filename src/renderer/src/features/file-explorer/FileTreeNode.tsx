@@ -185,7 +185,11 @@ export function FileTreeNode({ node, depth }: { node: FileNode; depth: number })
   // (everyone has at some point dropped onto README.md hoping to land it in
   // the same folder). We replicate that here.
   const resolveDropDestDir = (): string | null => {
+    // v0: workspace tree only. Refuse the attachments header AND any node
+    // whose source is 'attachments' (the children). Spec defers attachments
+    // drop to v0.2.
     if (node.path === ATTACHMENTS_ROOT) return null
+    if (node.source === 'attachments') return null
     if (node.kind === 'dir') return node.path
     const idx = Math.max(node.path.lastIndexOf('/'), node.path.lastIndexOf('\\'))
     return idx > 0 ? node.path.slice(0, idx) : null
