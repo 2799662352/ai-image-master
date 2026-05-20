@@ -7,6 +7,7 @@
   "license": "MIT",
   "codexCliVersion": "0.130.0",
   "dockerMcpGatewayVersion": "0.42.1",
+  "packageManager": "pnpm@10.12.4",
   "pnpm": {
     "onlyBuiltDependencies": [
       "@parcel/watcher",
