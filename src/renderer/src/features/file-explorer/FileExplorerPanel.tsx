@@ -99,6 +99,40 @@ export function FileExplorerPanel({ rightOffset }: { rightOffset: number }) {
     }
   }, [dragging, setFxTreeWidth])
 
+  const workspaceRoot = useFileExplorerStore((s) => s.workspaceRoot)
+  const importExternalByDnd = useFileExplorerStore((s) => s.importExternalByDnd)
+
+  const onRootDragOver = (e: React.DragEvent): void => {
+    // Only respond to external file drops; internal-drag inside the tree is
+    // handled by individual FileTreeNodes (which call stopPropagation, so we
+    // never see those events here unless they fall through the gap).
+    if (!e.dataTransfer.types.includes('Files')) return
+    if (!workspaceRoot) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+  }
+
+  const onRootDrop = async (e: React.DragEvent): Promise<void> => {
+    // If a FileTreeNode already consumed the drop, defaultPrevented is true and
+    // we bail out — the inner node's choice wins.
+    if (e.defaultPrevented) return
+    if ((e.dataTransfer.files?.length ?? 0) === 0) return
+    if (!workspaceRoot) return
+    const getFilePath = (window as Window & {
+      electronAPI?: { getFilePath?: (f: File) => string }
+    }).electronAPI?.getFilePath
+    if (!getFilePath) return
+    const paths = Array.from(e.dataTransfer.files)
+      .map((f) => getFilePath(f))
+      .filter((p): p is string => Boolean(p))
+    if (paths.length === 0) return
+    e.preventDefault()
+    const res = await importExternalByDnd(paths, workspaceRoot)
+    if (!res.ok && res.reason) {
+      window.alert(`导入失败: ${res.reason}`)
+    }
+  }
+
   // VSCode 风格快捷键 — 全局监听，靠 selectedPaths 守卫避免跟其他区域冲突
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     const target = e.target as HTMLElement | null
@@ -231,7 +265,12 @@ export function FileExplorerPanel({ rightOffset }: { rightOffset: number }) {
       </header>
 
       <div className="flex min-h-0 flex-1">
-        <div style={{ width: fxTreeWidth }} className="overflow-hidden border-r border-cyan-500/10">
+        <div
+          style={{ width: fxTreeWidth }}
+          className="overflow-hidden border-r border-cyan-500/10"
+          onDragOver={onRootDragOver}
+          onDrop={(e) => void onRootDrop(e)}
+        >
           <FileTree />
         </div>
 
