@@ -35,6 +35,7 @@ import { validateSessionConfigPatch } from './sessionConfigValidation'
 import type { BrowserWindow } from 'electron'
 import type {
   AgentSendMessagePayload,
+  AgentSendMessageResult,
   AgentStreamEvent,
   CodexApprovalRequest,
   CodexApprovalResponse,
@@ -804,7 +805,7 @@ export class AgentManager {
     }
   }
 
-  async sendMessage(payload: AgentSendMessagePayload): Promise<{ threadId: string }> {
+  async sendMessage(payload: AgentSendMessagePayload): Promise<AgentSendMessageResult> {
     if (!this.codexApiKey) {
       const threadId = payload.threadId ?? 'pending'
       this.emitEvent({ type: 'error', threadId, error: EMPTY_KEY_ERROR })
@@ -922,7 +923,18 @@ export class AgentManager {
         error: error instanceof Error ? error.message : String(error),
       })
     })
-    return { threadId: thread.id }
+    // `userMessageItems` lets the renderer patch its OPTIMISTIC user message
+    // (which carries the raw OS path the file was picked from, outside the
+    // fs IPC allowed-roots gate) in place with these CANONICAL items
+    // (uploads-cache paths, which are inside allowed-roots and click through
+    // to the file viewer immediately). See `AgentSendMessageResult` jsdoc.
+    // JSON round-trip drops `undefined` keys and ensures the payload is
+    // structured-cloneable over IPC, matching the shape the renderer would
+    // get if it re-fetched the thread via `agent:load-thread`.
+    const cloneableItems = userTimelineItems.length > 0
+      ? (JSON.parse(JSON.stringify(userTimelineItems)) as typeof userTimelineItems)
+      : undefined
+    return { threadId: thread.id, userMessageItems: cloneableItems }
   }
 
   private buildUserTimelineItems(

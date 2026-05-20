@@ -28,6 +28,7 @@ import type {
   AgentApiResult,
   AgentCancelPayload,
   AgentSendMessagePayload,
+  AgentSendMessageResult,
   AgentStreamEvent,
   AgentThreadSummary,
   AgentToolRequest,
@@ -247,6 +248,7 @@ const IPC_CHANNELS = {
   ATTACHMENTS: {
     LIST_TREE: 'attachments:list-tree',
     CHANGED: 'attachments:changed',
+    READ_THUMB: 'attachments:read-thumb',
   },
 } as const
 
@@ -364,7 +366,7 @@ export interface ElectronAPI {
   }
   // Codex Agent
   agent: {
-    sendMessage: (payload: AgentSendMessagePayload) => Promise<{ threadId: string }>
+    sendMessage: (payload: AgentSendMessagePayload) => Promise<AgentSendMessageResult>
     cancel: (payload: AgentCancelPayload) => Promise<IpcResponse>
     listThreads: () => Promise<AgentThreadSummary[]>
     loadThread: (threadId: string) => Promise<unknown>
@@ -478,6 +480,15 @@ export interface ElectronAPI {
   attachments: {
     listTree: () => Promise<FileExplorerNode[]>
     onChanged: (cb: () => void) => () => void
+    /**
+     * Read an attachment file's bytes for thumbnail/lightbox rendering.
+     * Unlike `fs.readBinary` this channel has no workspace allowed-roots
+     * gate — instead it enforces a mime+size whitelist (image/video/audio,
+     * ≤100 MB). See main/file-explorer/attachmentsIpc.ts for the rationale.
+     */
+    readThumb: (
+      p: string,
+    ) => Promise<{ ok: true; base64: string; mime: string } | { ok: false; reason: string }>
   }
   // 图片存储
   saveImage: (base64Data: string, filename: string) => Promise<SaveImageResponse>
@@ -758,7 +769,7 @@ const electronAPI: ElectronAPI = {
   // ============ Codex Agent ============
   agent: {
     sendMessage: (payload: AgentSendMessagePayload) =>
-      safeInvoke<{ threadId: string }>(IPC_CHANNELS.AGENT.SEND_MESSAGE, payload),
+      safeInvoke<AgentSendMessageResult>(IPC_CHANNELS.AGENT.SEND_MESSAGE, payload),
 
     cancel: (payload: AgentCancelPayload) =>
       safeInvoke<IpcResponse>(IPC_CHANNELS.AGENT.CANCEL, payload),
@@ -1026,6 +1037,10 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.on(IPC_CHANNELS.ATTACHMENTS.CHANGED, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.ATTACHMENTS.CHANGED, handler)
     },
+    readThumb: (p: string) =>
+      safeInvoke<
+        { ok: true; base64: string; mime: string } | { ok: false; reason: string }
+      >(IPC_CHANNELS.ATTACHMENTS.READ_THUMB, p),
   },
 
   // ============ 系统主题监听 ============

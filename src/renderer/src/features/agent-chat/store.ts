@@ -5,6 +5,7 @@ import type {
   AgentApiResult,
   AgentNotice,
   AgentSendMessagePayload,
+  AgentSendMessageResult,
   AgentStreamEvent,
   AgentThreadSummary,
   AgentTokenUsage,
@@ -111,7 +112,7 @@ function persistSidebarWidth(w: number): void {
 
 type AgentElectronApi = {
   agent?: {
-    sendMessage: (payload: AgentSendMessagePayload) => Promise<{ threadId: string }>
+    sendMessage: (payload: AgentSendMessagePayload) => Promise<AgentSendMessageResult>
     cancel: (payload: AgentCancelPayload) => Promise<unknown>
     listThreads?: () => Promise<AgentThreadSummary[]>
     openThread?: (id: string) => Promise<unknown>
@@ -677,11 +678,18 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     if (attachments.length > 0) {
       const refs: AttachmentRef[] = attachments.map((a) => {
         const uri = buildAttachmentUri(a)
-        const isImage = a.mime.startsWith('image/')
-        // Only claim 'image' when we actually have something the renderer can
-        // load — otherwise downgrade to 'file' so the card renders a 📄 chip
-        // instead of `<img src="">`.
-        const kind: AttachmentRef['kind'] = isImage && typeof uri === 'string' && uri.length > 0 ? 'image' : 'file'
+        const hasUri = typeof uri === 'string' && uri.length > 0
+        // Mirror AgentManager.buildUserTimelineItems on the main side so the
+        // image/video classification is consistent across optimistic vs
+        // persisted timeline items. We still gate on hasUri so the card
+        // renderer never gets an `<img src="">` (which both warns and refetches
+        // the page). When the URI is missing we degrade to 'file' so the card
+        // renders a 📄 chip instead of a broken `<img>`.
+        let kind: AttachmentRef['kind'] = 'file'
+        if (hasUri) {
+          if (a.mime.startsWith('image/')) kind = 'image'
+          else if (a.mime.startsWith('video/')) kind = 'video'
+        }
         return {
           id: createId(),
           kind,
@@ -730,6 +738,25 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         skills: skills.length > 0 ? skills : undefined,
       })
       set({ threadId: result.threadId })
+      // After ingest, replace the optimistic user message's items with the
+      // canonical ones from main. The optimistic version uses the raw OS
+      // path each attachment was picked from (e.g. `D:\360MoveData\…\foo.png`),
+      // which sits OUTSIDE the fs IPC allowed-roots gate — so a click on the
+      // attachment chip would silently fail `fs:stat` and never open the
+      // file viewer tab. The canonical version uses uploads-cache paths
+      // (`<userData>/agent/uploads/<hash>.ext`) which ARE in allowed-roots.
+      // Without this patch the user had to refresh the thread before
+      // attachments became clickable. Matches Cursor/VSCode's pattern of
+      // immediately reflecting server-canonicalized state in the optimistic
+      // message — see microsoft/vscode#196782.
+      if (result.userMessageItems && result.userMessageItems.length > 0) {
+        const canonicalItems = result.userMessageItems
+        set((current) => ({
+          messages: current.messages.map((m) =>
+            m.id === userMsg.id ? { ...m, items: canonicalItems } : m,
+          ),
+        }))
+      }
       // PHASE-1-INVARIANT: pendingReferences are renderer-only chips. Do not
       // add them to AgentSendMessagePayload until the Phase 2 payload contract lands.
       get().clearPendingReferences()

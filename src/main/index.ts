@@ -37,6 +37,7 @@ import { registerAttachmentsTreeIpc, wireAttachmentBroadcast } from './file-expl
 import { AttachmentDirWatcher } from './file-explorer/AttachmentDirWatcher'
 import { registerFsIpc } from './file-explorer/fsIpc'
 import { registerLocalFileScheme, installLocalFileHandler } from './file-explorer/protocolHandler'
+import { registerAttachmentsThumbIpc } from './file-explorer/attachmentsIpc'
 import { registerFsWatcherIpc, disposeAll as disposeFsWatchers } from './file-explorer/fsWatcher'
 import { startCatimationMcpServer } from './mcp/server'
 import type { McpRuntime } from './mcp/server'
@@ -760,6 +761,7 @@ app.whenReady().then(async () => {
   installLocalFileHandler()
   registerFsIpc()
   registerAttachmentsTreeIpc(getPrisma)
+  registerAttachmentsThumbIpc()
   registerFsWatcherIpc()
 
   // 关键路径：仅初始化必要的路径和目录

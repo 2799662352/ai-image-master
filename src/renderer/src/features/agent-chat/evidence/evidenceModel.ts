@@ -88,11 +88,40 @@ export function mediaRefsOf(item: TimelineItem): AttachmentRef[] {
     item.type === 'attachment'
       ? (item as AttachmentItem).attachments
       : (item as ArtifactItem).artifacts
-  return refs.filter((ref) => {
-    if (classifyMediaKind({ kind: ref.kind, mime: ref.mime, name: ref.name }) == null) return false
+  const kept: AttachmentRef[] = []
+  for (const ref of refs) {
+    const kind = classifyMediaKind({ kind: ref.kind, mime: ref.mime, name: ref.name })
     const src = ref.thumbnailUri ?? ref.uri
-    return typeof src === 'string' && src.length > 0
-  })
+    const hasSrc = typeof src === 'string' && src.length > 0
+    if (kind != null && hasSrc) {
+      kept.push(ref)
+      continue
+    }
+    // DEV-only diagnostic so when a user reports "thumbnail didn't show up",
+    // we can see in the renderer console exactly which gate failed. In prod
+    // we stay silent — a no-thumbnail render is a valid outcome for real
+    // non-media attachments.
+    if (
+      typeof import.meta !== 'undefined' &&
+      import.meta.env?.DEV &&
+      typeof console !== 'undefined'
+    ) {
+      // eslint-disable-next-line no-console
+      console.warn('[mediaRefsOf] skipped attachment', {
+        timelineItemId: item.id,
+        refId: ref.id,
+        name: ref.name,
+        kindField: ref.kind,
+        mime: ref.mime,
+        uri: ref.uri,
+        thumbnailUri: ref.thumbnailUri,
+        classified: kind,
+        hasSrc,
+        reason: kind == null ? 'classifyMediaKind=null' : 'empty src',
+      })
+    }
+  }
+  return kept
 }
 
 function shellStatus(item: ShellItem): EvidenceStatus {

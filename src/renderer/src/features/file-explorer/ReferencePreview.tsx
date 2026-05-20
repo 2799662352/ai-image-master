@@ -1,36 +1,60 @@
 import type { AgentReference } from '../../../../types/agent-reference'
+import { useResolvedMediaSrc } from '../../components/shared/media/useResolvedMediaSrc'
 import { JsonResourcePreview } from './JsonResourcePreview'
 import { ShellOutputPreview } from './ShellOutputPreview'
 import { UrlPreview } from './UrlPreview'
 import { toRenderableUri } from './uri'
 
 /**
- * Inline image preview for reference tabs whose backing file lives outside the
- * workspace allowed roots (e.g. attachment uploads under userData/agent/uploads).
- * openTab() refused them via fs:list-dir / fs:stat allowedRoots check; here we
- * fall back to the local-file:// protocol which has its own (broader) handler.
+ * Inline image preview for reference tabs whose backing file lives outside
+ * the workspace allowed roots (e.g. attachment uploads under
+ * userData/agent/uploads, or user-dragged files from arbitrary disk paths).
+ *
+ * Goes through `useResolvedMediaSrc` for the same reason MediaThumbnail and
+ * Lightbox do: directly using `local-file://` in `<img src>` triggers
+ * Chromium's standard-scheme URL normalisation, which strips the Windows
+ * drive letter (`%3A` collapses) and the protocol handler then gets a path
+ * like `/27996/AppData/...` with no `C:` prefix and 500s. The hook routes
+ * through the `attachments:read-thumb` IPC and renders a blob URL.
  */
 function ImageReferencePreview({ reference }: { reference: AgentReference }) {
   if (reference.source.kind !== 'localPath') return <UnsupportedReference />
-  const src = toRenderableUri(reference.source.path)
-  return (
-    <div className="flex h-full items-center justify-center bg-black/40 p-2">
-      <img
-        src={src}
-        alt={reference.label}
-        className="max-h-full max-w-full object-contain"
-      />
-    </div>
-  )
+  return <ResolvedMediaPreview path={reference.source.path} alt={reference.label} kind="image" />
 }
 
 function VideoReferencePreview({ reference }: { reference: AgentReference }) {
   if (reference.source.kind !== 'localPath') return <UnsupportedReference />
-  const src = toRenderableUri(reference.source.path)
+  return <ResolvedMediaPreview path={reference.source.path} alt={reference.label} kind="video" />
+}
+
+function ResolvedMediaPreview({
+  path,
+  alt,
+  kind,
+}: {
+  path: string
+  alt: string
+  kind: 'image' | 'video'
+}) {
+  // toRenderableUri normalises the raw OS path into the same `local-file://`
+  // shape the hook accepts (and that MediaThumbnail/Lightbox see), so all
+  // three surfaces hit the same code path in `useResolvedMediaSrc`.
+  const resolvedSrc = useResolvedMediaSrc(toRenderableUri(path), kind)
+  if (resolvedSrc == null) {
+    return (
+      <div className="flex h-full items-center justify-center bg-black/40 p-2 text-xs text-zinc-400">
+        Loading…
+      </div>
+    )
+  }
   return (
     <div className="flex h-full items-center justify-center bg-black/40 p-2">
-      {/* controls 让用户能 seek/暂停;不 autoplay 避免抢焦点 + 节省 CPU。 */}
-      <video src={src} controls className="max-h-full max-w-full bg-black object-contain" />
+      {kind === 'video' ? (
+        /* controls 让用户能 seek/暂停;不 autoplay 避免抢焦点 + 节省 CPU。 */
+        <video src={resolvedSrc} controls className="max-h-full max-w-full bg-black object-contain" />
+      ) : (
+        <img src={resolvedSrc} alt={alt} className="max-h-full max-w-full object-contain" />
+      )}
     </div>
   )
 }
