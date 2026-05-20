@@ -767,10 +767,50 @@ export function MentionInput() {
       return
     }
 
-    const paths = parseFileDrop(event.dataTransfer)
-    if (paths.length === 0) return
+    // Two source tiers, normalised into a single Candidate list so the quota
+    // loop below stays linear:
+    //   Tier 2 — internal file-explorer drag with our custom MIME. We only
+    //            have absolute paths, so size+mime must come from fsApi.stat.
+    //            Paths are inside the workspace, so assertContained passes.
+    //   Tier 3 — external OS drop (Desktop, Finder, Explorer). dataTransfer
+    //            .files carries File objects that already expose size + type,
+    //            and electronAPI.getFilePath (Electron 32+ webUtils) maps each
+    //            File → OS path. We MUST NOT call fsApi.stat here: the IPC
+    //            stat handler validates via assertContained, and external
+    //            paths are by design outside allowedRoots — that's where the
+    //            "无法读取" bug came from. Mirror onFileChange (lines 730-754)
+    //            which already uses File.size/type for the same reason.
+    //
+    // Synthetic Files (clipboard paste; getFilePath → '') are filtered out —
+    // Ctrl+V image paste is intentionally out of scope for PR-1.
+    type Candidate = { path: string; preStat?: { size: number; mime: string } }
+    const internalPaths = parseFileDrop(event.dataTransfer)
+    let candidates: Candidate[]
+    if (internalPaths.length > 0) {
+      candidates = internalPaths.map((p) => ({ path: p }))
+    } else if (event.dataTransfer.files.length > 0) {
+      const electronApi = (window as Window & { electronAPI?: { getFilePath?: (file: File) => string } }).electronAPI
+      const getFilePath = electronApi?.getFilePath
+      if (!getFilePath) return
+      candidates = Array.from(event.dataTransfer.files)
+        .map((file): Candidate | null => {
+          const path = getFilePath(file)
+          if (!path) return null
+          return {
+            path,
+            preStat: { size: file.size, mime: file.type || 'application/octet-stream' },
+          }
+        })
+        .filter((c): c is Candidate => c !== null)
+    } else {
+      return
+    }
+
+    if (candidates.length === 0) return
     const fsApi = (window as Window & { electronAPI?: FileExplorerApi }).electronAPI?.fs
-    if (!fsApi) return
+    // fsApi only needed for Tier 2 candidates (no preStat). Tier 3 carries
+    // everything it needs in preStat, so a missing fsApi is non-fatal there.
+    if (!fsApi && candidates.some((c) => !c.preStat)) return
 
     // 共享配额（在循环里更新），让用户看到一次合并后的 skip 提示
     const currentAttachments = useAgentChatStore.getState().attachments
@@ -778,35 +818,49 @@ export function MentionInput() {
     let totalBytes = currentAttachments.reduce((sum, item) => sum + item.size, 0)
     const skippedReasons: string[] = []
 
-    for (const filePath of paths) {
+    for (const c of candidates) {
       if (remainingSlots <= 0) {
-        skippedReasons.push(`${filePath}（已达 ${MAX_ATTACHMENTS} 个上限）`)
+        skippedReasons.push(`${c.path}（已达 ${MAX_ATTACHMENTS} 个上限）`)
         continue
       }
-      const stat = await fsApi.stat(filePath)
-      if (!stat.ok) {
-        skippedReasons.push(`${filePath}（无法读取）`)
+      let size: number
+      let mime: string
+      if (c.preStat) {
+        size = c.preStat.size
+        mime = c.preStat.mime
+      } else {
+        const stat = await fsApi!.stat(c.path)
+        if (!stat.ok) {
+          skippedReasons.push(`${c.path}（无法读取）`)
+          continue
+        }
+        size = stat.size
+        mime = stat.mime || 'application/octet-stream'
+      }
+      if (size > MAX_ATTACHMENT_BYTES) {
+        skippedReasons.push(`${c.path}（超过单文件 100MB）`)
         continue
       }
-      if (stat.size > MAX_ATTACHMENT_BYTES) {
-        skippedReasons.push(`${filePath}（超过单文件 100MB）`)
+      if (totalBytes + size > MAX_TOTAL_ATTACHMENT_BYTES) {
+        skippedReasons.push(`${c.path}（超过总量 250MB）`)
         continue
       }
-      if (totalBytes + stat.size > MAX_TOTAL_ATTACHMENT_BYTES) {
-        skippedReasons.push(`${filePath}（超过总量 250MB）`)
-        continue
+      const name = c.path.split(/[\\/]/).pop() ?? c.path
+      addAttachment({ name, mime, size, path: c.path })
+      // Tier 2 (internal MIME, no preStat) pushes a pending reference — the
+      // file came from the workspace tree, so the path passes main-side
+      // assertContained inside mapReferencesToInputItems. Tier 3 (external OS
+      // drop, preStat set) must NOT push a reference: the original OS path is
+      // by design outside allowedRoots, and `agent:send-message` would throw
+      // "Reference path is outside allowed roots" at click-Send. The matching
+      // attachment still gets ingested by AttachmentService into
+      // `<userData>/agent/uploads/<hash>.ext` (an in-root canonical path),
+      // mirroring the onFileChange file-picker flow at lines 730-754 which
+      // already attaches-without-referencing for the exact same reason.
+      if (!c.preStat) {
+        addPendingReference(makeFileReference({ path: c.path, name, mime }))
       }
-      const name = filePath.split(/[\\/]/).pop() ?? filePath
-      addAttachment({
-        name,
-        mime: stat.mime || 'application/octet-stream',
-        size: stat.size,
-        path: filePath,
-      })
-      addPendingReference(
-        makeFileReference({ path: filePath, name, mime: stat.mime || undefined }),
-      )
-      totalBytes += stat.size
+      totalBytes += size
       remainingSlots -= 1
     }
 
