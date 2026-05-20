@@ -27,13 +27,17 @@ AI 图片生成桌面应用 — Electron + React + LangChain/LangGraph。
 ```bash
 git clone https://github.com/2799662352/ai-image-master.git
 cd ai-image-master
-npm install
-npm run dev              # 开发模式 (electron-vite)
-npm run build            # 构建并打包
-npm run build:win        # Windows 安装包
+pnpm bootstrap           # pnpm install + 下载 Codex 二进制 (~239MB)
+pnpm dev                 # 开发模式 (electron-vite)
+pnpm build               # 构建并打包
+pnpm build:win           # Windows 安装包
 ```
 
-纯 Electron 桌面应用，无 Docker 部署。
+`pnpm bootstrap` 是 fresh clone 或新建 `git worktree` 后的一站式初始化:跑 `pnpm install`(自动触发 `prisma generate` + `electron-builder install-app-deps`)+ `pnpm codex:fetch` 把 Codex CLI 二进制下到 `resources/codex/`。`.gitignore` 排除了那个目录(避免 200+MB 进仓),所以新 worktree 不跑 bootstrap 会在启动时报 `CodexLocalBackend.send called before start`(本质是 `spawn codex.exe ENOENT`)。
+
+如果你已经在主 worktree 跑过 `codex:fetch`,新建 worktree 时可以直接 `Copy-Item ../../resources/codex/* ./resources/codex/ -Recurse`(或 `cp -r`),比重新下 239MB 快得多。
+
+纯 Electron 桌面应用,无 Docker 部署。
 
 ## 项目结构
 
