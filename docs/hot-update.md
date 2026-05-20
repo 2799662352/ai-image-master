@@ -138,6 +138,41 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
+### v4.3.12 (2026-05-21) — F11 全屏回归(因 `Menu.setApplicationMenu(null)` 副作用丢失多版本)
+
+**问题**: 用户按 F11 完全没反应,既不进全屏也不退。窗口右上角"最大化"按钮还在工作,但 F11 这条全键盘党的标准 affordance 失效。
+
+**根因**: Electron 的 F11 全屏切换不是平台原生的,是 default application menu 上 `role: 'togglefullscreen'` 注册的 accelerator —— menu 在,F11 就能用;menu 没了,F11 也跟着没。
+
+`src/main/index.ts:167` 长期有这一行(为了不让原生菜单栏出现在窗口顶部影响视觉):
+
+```typescript
+// 性能优化:禁用默认应用菜单
+Menu.setApplicationMenu(null)
+```
+
+这条调用把整个 application menu 拆掉,**副作用**是 togglefullscreen 的 accelerator 同时被剥除。同一文件 line 420-444 的 `before-input-event` handler 里覆盖了 F12 (devtools)、F5 / Ctrl-R / Ctrl-Shift-R (reload) 四种快捷键,**唯独没有 F11**。F11 键下放到 webContents → 没人处理 → no-op。
+
+这条 regression 至少从 v4.3.6 切到 pnpm 那波之后就一直存在(或更早,具体哪个版本开始 set null 的还能再考古),v4.3.12 才有用户反馈出来。
+
+**修复** (`src/main/keyboardShortcuts.ts` 新文件 + `src/main/index.ts` wire-in):
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| 抽 pure helper `resolveMainWindowShortcut(input)` | `src/main/keyboardShortcuts.ts`(新增 53 行) | 把 5 条快捷键(F12 / F5 / Ctrl-R / Ctrl-Shift-R / F11)的判定逻辑从 inline closure 抽到独立纯函数。输入 `{key, type, control, meta, shift}`,输出 `{type: 'toggleDevTools' \| 'reload' \| 'reloadIgnoringCache' \| 'toggleFullScreen'} \| null`。**显式过滤 keyDown** —— Electron `before-input-event` 同时报 keyDown 和 keyUp,toggle 类动作(devtools / fullscreen)若 keyUp 也响应会 net 到 no-op,这条防御性约束之前没有,顺便补上。**保留 Ctrl+Shift+R 必须先于 Ctrl+R 的判定顺序约束** —— 这是 v4.2.x 的老坑,反过来强刷会闪两次 |
+| Wire-in 到 inline handler | `src/main/index.ts:420-444 → 22 行` | 24 行 if-else 链 → 10 行 switch over 解析结果。行为与旧版 1:1 等价,只多了 F11 这条新分支 |
+| 单测覆盖 | `src/main/__tests__/keyboardShortcuts.test.ts`(新增 10 cases) | F12 / F5 / Ctrl-R / Cmd-R / Ctrl-Shift-R(覆盖 Cmd-Shift-R 同款)/ F11 各自一条,加 keyUp 忽略、大写 R 容忍(caps lock)、无 modifier 字母不抢、其他 fn 键 fallthrough 等防御性 case。**4 条已存在的快捷键之前从未有单测**,这次顺手补齐 |
+
+**为什么不用别的方案**:
+
+- ❌ **`Menu.setApplicationMenu(new Menu({...togglefullscreen}))`**: 想保留菜单加速键但让菜单栏不可见。macOS 上 application menu 是顶部菜单栏,空 menu 也会显示 app 名字,跟"性能优化不要菜单"的原意冲突。Windows 上 `setMenuBarVisibility(false)` 可隐藏但 macOS 不行。统一用 `before-input-event` 更跨平台干净。
+- ❌ **`globalShortcut.register('F11', ...)`**: 全局热键会"抢"系统其他程序的 F11,用户在浏览器或视频播放器里按 F11 也会触发本 app,违反最小权限。
+- ✅ **`before-input-event`**: 只在 app 聚焦时生效,Electron 官方推荐,与现有 4 条快捷键同款 pattern。零迁移成本。
+
+**用户可见行为**: 升 v4.3.12 后,任何视图下按 F11 → 切换到无边框全屏(Windows / Linux),再按 F11 → 退出全屏。窗口右上角 traffic light / max-restore 按钮、`F12` devtools、`Ctrl/Cmd+R` 刷新、`Ctrl/Cmd+Shift+R` 强刷全部保持原行为不变。
+
+---
+
 ### v4.3.11 (2026-05-21) — Hotfix: v4.3.10 installer 启动崩溃(缺 @parcel/watcher prebuilt)
 
 **问题**: 用户装上 v4.3.10 双击启动 → 立刻弹白底红 X 错误窗:
