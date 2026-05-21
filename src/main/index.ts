@@ -881,14 +881,23 @@ app.on('before-quit', (event) => {
   if (AutoUpdater.isInstallingUpdate) return
 
   event.preventDefault()
-  void cleanupAgentRuntime()
-    .catch((error) => {
+
+  const drainUploads = inflightUploads.size > 0
+    ? Promise.race([
+        Promise.allSettled(inflightUploads),
+        new Promise<void>((r) => setTimeout(r, 5000)),
+      ])
+    : Promise.resolve()
+
+  void Promise.all([
+    cleanupAgentRuntime().catch((error) => {
       console.error('[AgentRuntime] cleanup failed:', error)
-    })
-    .finally(() => {
-      isQuittingAfterAgentCleanup = true
-      app.quit()
-    })
+    }),
+    drainUploads,
+  ]).finally(() => {
+    isQuittingAfterAgentCleanup = true
+    app.quit()
+  })
 })
 
 // ==================== IPC 处理 ====================
@@ -1106,6 +1115,31 @@ function rejectOversizedBase64(s: unknown): string | null {
   return null
 }
 
+const inflightUploads = new Set<Promise<void>>()
+const MAX_CONCURRENT_UPLOADS_MAIN = 4
+
+function enqueueUpload(opts: Parameters<typeof uploadBufferToBucket>[0]): void {
+  const wait = (): Promise<void> | null => {
+    if (inflightUploads.size < MAX_CONCURRENT_UPLOADS_MAIN) return null
+    return Promise.race(inflightUploads)
+  }
+
+  const run = async (): Promise<void> => {
+    const pending = wait()
+    if (pending) await pending
+    await uploadBufferToBucket(opts)
+  }
+
+  const p = run()
+    .catch((err: any) => {
+      console.error('[cos:upload-image-history] background upload failed:', err?.message ?? err)
+    })
+    .finally(() => {
+      inflightUploads.delete(p)
+    })
+  inflightUploads.add(p)
+}
+
 ipcMain.handle(
   'cos:upload-image-history',
   async (
@@ -1130,15 +1164,16 @@ ipcMain.handle(
         return { success: false, error: 'empty buffer after base64 decode' }
       }
       const key = generateImageHistoryKey(mimeType)
-      const url = await uploadBufferToBucket({
+      const url = `https://${IMAGE_HISTORY_BUCKET}.cos.${IMAGE_HISTORY_REGION}.myqcloud.com/${key}`
+
+      enqueueUpload({
         bucket: IMAGE_HISTORY_BUCKET,
         region: IMAGE_HISTORY_REGION,
         key,
         body,
         contentType: mimeType,
       })
-      // metadata currently isn't persisted to COS (no x-cos-meta-* headers
-      // wired through), but keep the param shape stable for forward-compat.
+
       void metadata
       return { success: true, url, key }
     } catch (err: any) {
