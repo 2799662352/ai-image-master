@@ -138,6 +138,32 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
+### v4.3.13 (2026-05-21) — COS 图片上传异步化 + 新增 21 个 Storyboard 技能
+
+**A. COS 图片上传性能优化**
+
+**问题**: 用户在生图后触发 COS 历史图片上传时 UI 卡顿，主进程被 `uploadBufferToBucket` 的网络 I/O 阻塞。
+
+**修复** (`src/main/index.ts`):
+
+| 改动 | 说明 |
+|------|------|
+| Fire-and-forget 返回 | IPC handler 立即返回预测 URL（`https://{bucket}.cos.{region}.myqcloud.com/{key}`），不再 await 上传完成。渲染进程零等待 |
+| 主进程并发控制 | 新增 `enqueueUpload()` + `inflightUploads: Set<Promise>`，最多 4 个并发上传。因 IPC 瞬间返回，渲染侧 semaphore 不再有效约束实际并发，改在主进程侧兜底 |
+| 优雅退出 drain | `before-quit` handler 中等待 `inflightUploads` settle（最多 5 秒超时），防止关闭 app 时丢上传 |
+| 输入验证保留 | `Buffer.from(base64)` + `byteLength === 0` 检查保留在返回之前，无效 payload 仍返回 `{ success: false }` |
+
+**B. 新增 21 个 Storyboard/Director 技能**
+
+从 super-i.cn 提取并创建 21 个中文 SKILL.md 文件，覆盖伪透视、鲁棒性破坏、负面控制、特征坍缩、时间词、导演思维、角色表演、动机驱动、色彩分级、创意想象、情感蒙太奇、前景遮挡、运动学逆向工程、光线重建、真人角色写实、多角色控制、场景拆解、镜头情绪匹配、风格提取逻辑、视频提示词优化、声音控制等方向。已全部注册到 `skill-versions.json` 并更新 `codex-research-grounded-prompting` 母 skill 的 companion 路由表。
+
+#### 用户可见行为
+
+1. 生图后 COS 上传不再卡顿 UI，图片 URL 即时可用
+2. Skill Marketplace 新增 21 个可安装技能
+
+---
+
 ### v4.3.12 (2026-05-21) — F11 全屏回归(因 `Menu.setApplicationMenu(null)` 副作用丢失多版本)
 
 **问题**: 用户按 F11 完全没反应,既不进全屏也不退。窗口右上角"最大化"按钮还在工作,但 F11 这条全键盘党的标准 affordance 失效。
