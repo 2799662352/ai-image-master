@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import type { ApiActions } from '../hooks/useService'
 import { useTemplateStore } from '../react-app/stores/useTemplateStore'
 import { composePromptWithTemplate } from '../react-app/constants/templates'
-import { uploadImageUrlToCos } from '../utils/cosImageUpload'
+import { enqueueCosUpload, registerCosUploadHandler } from '../utils/cosUploadDispatcher'
 
 /**
  * 单张生成结果的异步存储状态。
@@ -200,75 +200,27 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
         }
       })
 
-      // Fire-and-forget: 每张图独立异步上传到 COS, 回来后用 id 找索引热切。
+      // 真 fire-and-forget: 同步入队 N 张, 每张 0 个 pending promise / 0 个
+      // .then 微任务。主进程后台 fetch → 上传 COS, 完成后通过事件回推, 由
+      // generateUploadResultHandler(模块底部一次性注册)统一处理 set + 写
+      // history。这样 N 张图同时返回时, generate() 不会被任何 await/.then
+      // 链堵塞, 也不会引发 N 次连环 React 重渲染。
       //
-      // 关键约束:
-      // 1) 不 await — 让 generate() 立即结束, UI 立刻拿到 modelUrl 占位。
-      // 2) 回调可能跑得很晚, 用 id 找索引(数组可能已被 clearResults 清掉,
-      //    或者被别的 generate 追加, 索引早就变了)。
-      // 3) clearResults 之后, 当前 store 中已经没有该 id, set 时静默丢弃。
-      // 4) 写 history 也在这个回调里 — 这样能拿到 cosUrl(若成功), 失败则
-      //    fallback 到 modelUrl。和 useBatchStore 的策略对齐。
+      // pendingHistoryContext 保存写 history 所需的上下文(prompt/ratio/refs
+      // 这些每次 generate 的不同变量), 事件回调按 id 查表。和上面 forEach
+      // 闭包捕获等价, 只是通过 Map 解耦了上传链。
       newMetas.forEach((meta) => {
-        void uploadImageUrlToCos(meta.modelUrl, {
-          metadata: { source: 'generate', prompt: finalPrompt, model: modelKey },
-        }).then((res) => {
-          set((s) => {
-            const idx = s.resultMeta.findIndex((m) => m.id === meta.id)
-            if (idx < 0) return s // 已被 clearResults 清掉, 静默
-            const nextMeta = s.resultMeta.slice()
-            const nextUrls = s.resultUrls.slice()
-            if (res.ok) {
-              nextMeta[idx] = {
-                ...nextMeta[idx],
-                cosUrl: res.url,
-                uploadStatus: 'uploaded',
-                uploadError: undefined,
-              }
-              // 热切 displayUrl: 把同位置的 resultUrls[i] 改成 cosUrl。
-              // 这样老消费者(ResultGrid 之类只看 urls)不用改也能拿到 COS URL。
-              nextUrls[idx] = res.url
-            } else {
-              nextMeta[idx] = {
-                ...nextMeta[idx],
-                uploadStatus: 'failed',
-                uploadError: res.error,
-              }
-              // 失败保留 modelUrl 在 resultUrls 中 — UI 至少还能看到图。
-            }
-            return { resultMeta: nextMeta, resultUrls: nextUrls }
-          })
-
-          // 写一条 history。
-          // - 失败也写 — 让用户能从历史里再点重新编辑, prompt/refs 还在。
-          // - 用 window.historyDataServiceTS 是和 useBatchStore.ts 一致的桥,
-          //   避免在 store 里硬引用 service 单例(便于测试 mock)。
-          const historyService = (window as unknown as {
-            historyDataServiceTS?: {
-              addToHistory?: (
-                type: string,
-                prompt: string,
-                urls: string[],
-                ratio?: string,
-                model?: string,
-                extras?: { referenceImages?: string[] }
-              ) => Promise<unknown>
-            }
-          }).historyDataServiceTS
-          if (historyService?.addToHistory) {
-            const persistUrl = res.ok ? res.url : meta.modelUrl
-            const historyType =
-              refsSnapshot && refsSnapshot.length > 0
-                ? 'generate-with-reference'
-                : 'generate'
-            void historyService
-              .addToHistory(historyType, prompt, [persistUrl], ratio, modelKey, {
-                referenceImages: refsSnapshot,
-              })
-              .catch((e: unknown) =>
-                console.warn('[Generate] history save failed:', e),
-              )
-          }
+        pendingHistoryContext.set(meta.id, {
+          modelUrl: meta.modelUrl,
+          prompt,
+          ratio,
+          modelKey,
+          refsSnapshot,
+        })
+        enqueueCosUpload(meta.id, meta.modelUrl, {
+          source: 'generate',
+          prompt: finalPrompt,
+          model: modelKey,
         })
       })
     } catch (err) {
@@ -283,3 +235,79 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
     }
   },
 }))
+
+// ============== 异步 COS 上传结果路由 ==============
+//
+// generate() 把每张图入队后立刻 return, 不持有 promise。主进程上传完成
+// 后通过 'cos:upload-result' 事件把结果推回, 这里按 'generate:' 前缀路由
+// 接收, 执行: ① 把 cosUrl 回填到 resultMeta(供持久化层用); ② 写一条
+// history(失败也写, 但 url 用 modelUrl fallback)。
+//
+// pendingHistoryContext 是 id → {prompt, ratio, modelKey, refsSnapshot,
+// modelUrl} 的暂存表 —— 等价于原 forEach 闭包捕获的局部变量, 用 Map 解耦
+// 后允许 await IPC 链整段消失。事件回调消费后立刻 delete 防泄漏。
+
+interface PendingGenerateHistoryCtx {
+  modelUrl: string
+  prompt: string
+  ratio: string
+  modelKey: string
+  refsSnapshot: string[] | undefined
+}
+
+const pendingHistoryContext = new Map<string, PendingGenerateHistoryCtx>()
+
+interface HistoryServiceBridge {
+  addToHistory?: (
+    type: string,
+    prompt: string,
+    urls: string[],
+    ratio?: string,
+    model?: string,
+    extras?: { referenceImages?: string[] },
+  ) => Promise<unknown>
+}
+
+registerCosUploadHandler('generate:', (result) => {
+  const id = result.requestId.slice('generate:'.length)
+  const ctx = pendingHistoryContext.get(id)
+  if (!ctx) return
+  pendingHistoryContext.delete(id)
+
+  useGenerateStore.setState((s) => {
+    const idx = s.resultMeta.findIndex((m) => m.id === id)
+    if (idx < 0) return s
+    const nextMeta = s.resultMeta.slice()
+    if (result.success) {
+      nextMeta[idx] = {
+        ...nextMeta[idx],
+        cosUrl: result.url,
+        uploadStatus: 'uploaded',
+        uploadError: undefined,
+      }
+    } else {
+      nextMeta[idx] = {
+        ...nextMeta[idx],
+        uploadStatus: 'failed',
+        uploadError: result.error,
+      }
+    }
+    return { resultMeta: nextMeta }
+  })
+
+  const historyService = (window as unknown as {
+    historyDataServiceTS?: HistoryServiceBridge
+  }).historyDataServiceTS
+  if (historyService?.addToHistory) {
+    const persistUrl = result.success ? result.url : ctx.modelUrl
+    const historyType =
+      ctx.refsSnapshot && ctx.refsSnapshot.length > 0
+        ? 'generate-with-reference'
+        : 'generate'
+    void historyService
+      .addToHistory(historyType, ctx.prompt, [persistUrl], ctx.ratio, ctx.modelKey, {
+        referenceImages: ctx.refsSnapshot,
+      })
+      .catch((e: unknown) => console.warn('[Generate] history save failed:', e))
+  }
+})

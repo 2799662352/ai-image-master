@@ -76,7 +76,7 @@ function ResultCard({
   const badge = STATUS_BADGE[item.status]
   const isFail = item.status === 'error'
   const isRun = item.status === 'generating'
-  const displayUrl = item.cosUrl ?? item.resultUrl
+  const displayUrl = item.resultUrl ?? item.cosUrl
   const isDone = item.status === 'done' && !!displayUrl
   const upload = item.uploadStatus
 

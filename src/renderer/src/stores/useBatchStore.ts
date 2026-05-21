@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import type { ApiActions } from '../hooks/useService'
 import { useTemplateStore } from '../react-app/stores/useTemplateStore'
 import { composePromptWithTemplate } from '../react-app/constants/templates'
-import { uploadImageUrlToCos } from '../utils/cosImageUpload'
+import { enqueueCosUpload, registerCosUploadHandler } from '../utils/cosUploadDispatcher'
 
 export type BatchMode = 'card' | 'multi'
 
@@ -227,6 +227,11 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     set((s) => ({
       items: s.items.filter((i) => i.id !== id),
     }))
+    // 清掉 pending history context: 旧版 finally 写 history 时会过滤
+    // 已被 removeItem 的 item, 新版必须显式 delete 才能保持"删除后不进
+    // history"的语义。COS 上传仍在主进程跑(已 enqueue), 但回来时找不到
+    // ctx 就 noop, 不会落盘 history。
+    pendingBatchHistoryContext.delete(id)
     if (get().running) {
       const { items, _abortController: ac } = get()
       const hasWork = items.some((i) => i.status === 'pending' || i.status === 'generating')
@@ -237,7 +242,10 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     }
   },
 
-  clearAll: () => set({ items: [] }),
+  clearAll: () => {
+    pendingBatchHistoryContext.clear()
+    set({ items: [] })
+  },
 
   cancelBatch: () => {
     if (!get().running) return
@@ -394,29 +402,25 @@ export const useBatchStore = create<BatchState>((set, get) => ({
               ),
             }))
 
-            // Fire-and-forget: 把模型直出图异步推到腾讯云 COS。
-            // 不 await — 让 worker 继续 claim 下一条 pending 任务,
-            // 上传完成或失败时再 set 回 store 更新单个 item。
-            // 关键约束:
-            //   1) 若 batch 已 abort,上传也跟着取消(传 ac.signal)。
-            //   2) 上传失败不影响生成成功状态; UI 通过 uploadStatus='failed'
-            //      显示提示, 但 resultUrl 还能用。
-            //   3) item 可能在上传期间被 removeItem 删掉, set 时用 .map
-            //      天然容忍(找不到 id 就静默)。
-            void uploadImageUrlToCos(url, {
-              signal: ac.signal,
-              metadata: { source: 'batch', prompt: item.prompt, model: modelKey },
-            }).then((res) => {
-              if (ac.signal.aborted) return
-              set((state) => ({
-                items: state.items.map((i) =>
-                  i.id === item.id
-                    ? res.ok
-                      ? { ...i, cosUrl: res.url, uploadStatus: 'uploaded' as const, uploadError: undefined }
-                      : { ...i, uploadStatus: 'failed' as const, uploadError: res.error }
-                    : i
-                ),
-              }))
+            // 真 fire-and-forget: 入队后立即返回, 完全不持有 promise。
+            // 主进程上传完成后通过 'cos:upload-result' 事件把结果推回,
+            // 全局监听器(模块底部 registerCosUploadHandler 一次性注册)
+            // 按 requestId 找 item 并 set 回去, 同时写入 history。
+            //
+            // 关键: 在 enqueue 前把写 history 所需的上下文 stash 到
+            // pendingBatchHistoryContext, 让 event handler 能拿到
+            // prompt/ratio/refRaw/modelUrl 等(refRaw 共享浅引用即可)。
+            pendingBatchHistoryContext.set(item.id, {
+              modelUrl: url,
+              prompt: item.prompt,
+              ratio,
+              modelKey,
+              refRaw,
+            })
+            enqueueCosUpload(item.id, url, {
+              source: 'batch',
+              prompt: item.prompt,
+              model: modelKey,
             })
           } catch (err) {
             if (ac.signal.aborted) break
@@ -485,36 +489,16 @@ export const useBatchStore = create<BatchState>((set, get) => ({
         await Promise.all(snapshot)
       }
 
-      if (!ac.signal.aborted) {
-        try {
-          const historyService = (window as any).historyDataServiceTS
-          if (historyService?.addToHistory) {
-            // 优先用 cosUrl(已经异步转存到 COS, 历史保存可直接复用),
-            // 没有就 fallback 到模型直出 resultUrl(historyService 自己会再
-            // 做一次持久化 — 但模型 URL 可能很快过期,所以这里能拿到 cosUrl
-            // 最好。
-            const doneItems = get().items.filter(
-              (i) => i.status === 'done' && (i.cosUrl || i.resultUrl)
-            )
-            for (const item of doneItems) {
-              if (ac.signal.aborted) break
-              const persistUrl = item.cosUrl ?? item.resultUrl!
-              // refRaw 是这一批共用的参考图(批量模式下每张图共享一套 refs)。
-              // 写进 extras 让"重新编辑"能把它们回灌到 Generate 表单。
-              await historyService.addToHistory(
-                refRaw.length > 0 ? 'batch-with-reference' : 'batch',
-                item.prompt,
-                [persistUrl],
-                ratio,
-                modelKey,
-                { referenceImages: refRaw.length > 0 ? refRaw : undefined },
-              ).catch((e: unknown) => console.warn('[Batch] history save failed:', e))
-            }
-          }
-        } catch (e) {
-          console.warn('[Batch] history service unavailable:', e)
-        }
-      }
+      // History 写入已下放到 'batch:' COS event handler(模块底部)。
+      // 那里每张图上传完成时各自异步写一条 history, 不再阻塞 batch finally。
+      //
+      // 原本这里是串行 `await historyService.addToHistory(...)` × N, 5 张图
+      // = 5 次 IPC + 5 次 fs.writeFile, 总耗时 150-750ms, 期间 running=true
+      // 不能切到 false, 用户感知为"任务完成那一瞬间的卡顿"。
+      //
+      // 现在的语义优于旧版: 旧版只能写 modelUrl (cosUrl 大概率还没回来),
+      // modelUrl 几小时后过期 → history 失效; 新版 event handler 在上传
+      // 成功后才写, 写的就是持久 cosUrl, 失败再 fallback modelUrl。
     } finally {
       // Always clear `_spawnWorker` so no zombie addItem can spawn after
       // the batch settles. `running` / `_abortController` are reset only
@@ -579,3 +563,73 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     set((s) => ({ refImages: s.refImages.filter((r) => r.id !== id) })),
   clearRefImages: () => set({ refImages: [] }),
 }))
+
+// ============== 异步 COS 上传结果路由 + history 写入 ==============
+//
+// runOne 入队后立即 return, 完全不持有 promise。主进程上传完成后通过
+// 'cos:upload-result' 事件回推, 这里按 'batch:' 前缀路由接收, 执行:
+//   ① 把 cosUrl 回填到 item(供 UI 切徽章 + 持久化层用)
+//   ② 写一条 history(失败也写, url 用 modelUrl fallback)
+//
+// pendingBatchHistoryContext 暂存 runBatch 闭包里的整批共享变量 (prompt/
+// ratio/refRaw/modelKey/modelUrl)。runOne 在 enqueue 前 set, handler 消费
+// 后 delete 防泄漏。refRaw 同一批 N 张图共享浅引用即可。
+
+interface PendingBatchHistoryCtx {
+  modelUrl: string
+  prompt: string
+  ratio: string
+  modelKey: string
+  refRaw: string[]
+}
+
+const pendingBatchHistoryContext = new Map<string, PendingBatchHistoryCtx>()
+
+interface HistoryServiceBridge {
+  addToHistory?: (
+    type: string,
+    prompt: string,
+    urls: string[],
+    ratio?: string,
+    model?: string,
+    extras?: { referenceImages?: string[] },
+  ) => Promise<unknown>
+}
+
+registerCosUploadHandler('batch:', (result) => {
+  const itemId = result.requestId.slice('batch:'.length)
+
+  useBatchStore.setState((state) => ({
+    items: state.items.map((i) =>
+      i.id === itemId
+        ? result.success
+          ? { ...i, cosUrl: result.url, uploadStatus: 'uploaded' as const, uploadError: undefined }
+          : { ...i, uploadStatus: 'failed' as const, uploadError: result.error }
+        : i,
+    ),
+  }))
+
+  // 写 history. 容忍 context 已被清(removeItem / cancelBatch 之类):
+  // 没 ctx 就直接 return, 不影响 UI 状态切换。
+  const ctx = pendingBatchHistoryContext.get(itemId)
+  if (!ctx) return
+  pendingBatchHistoryContext.delete(itemId)
+
+  const historyService = (window as unknown as {
+    historyDataServiceTS?: HistoryServiceBridge
+  }).historyDataServiceTS
+  if (!historyService?.addToHistory) return
+
+  const persistUrl = result.success ? result.url : ctx.modelUrl
+  const hasRefs = ctx.refRaw.length > 0
+  void historyService
+    .addToHistory(
+      hasRefs ? 'batch-with-reference' : 'batch',
+      ctx.prompt,
+      [persistUrl],
+      ctx.ratio,
+      ctx.modelKey,
+      { referenceImages: hasRefs ? ctx.refRaw : undefined },
+    )
+    .catch((e: unknown) => console.warn('[Batch] history save failed:', e))
+})

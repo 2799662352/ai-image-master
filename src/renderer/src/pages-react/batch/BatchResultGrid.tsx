@@ -132,7 +132,11 @@ const STATUS_BADGE: Record<
  * 上传未完成或失败时 fallback 到 resultUrl(模型直出, 可能是临时签名链接)。
  */
 function pickDisplayUrl(item: BatchItem): string | undefined {
-  return item.cosUrl ?? item.resultUrl
+  // 优先 resultUrl(模型直出, 浏览器已下载并解码),
+  // 避免上传成功后切换到 cosUrl 导致同一张图被重新下载/解码 —
+  // 批量场景下多张图同时切源会卡顿主线程。
+  // cosUrl 只用于历史持久化(过期 modelUrl 失效后才需要)。
+  return item.resultUrl ?? item.cosUrl
 }
 
 /**
