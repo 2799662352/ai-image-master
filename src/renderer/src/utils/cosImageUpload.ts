@@ -28,6 +28,14 @@ interface ElectronAPILike {
       | { success: true; url: string; key: string }
       | { success: false; error: string }
     >
+    uploadImageFromUrl?: (
+      sourceUrl: string,
+      mimeType?: string,
+      metadata?: Record<string, unknown>,
+    ) => Promise<
+      | { success: true; url: string; key: string }
+      | { success: false; error: string }
+    >
   }
 }
 
@@ -137,8 +145,7 @@ export async function uploadImageUrlToCos(
   options: CosUploadOptions = {},
 ): Promise<CosUploadResult> {
   const bridge = getCosBridge()
-  const uploadFn = bridge?.uploadImageHistory
-  if (!uploadFn) {
+  if (!bridge?.uploadImageHistory && !bridge?.uploadImageFromUrl) {
     return { ok: false, error: 'electronAPI.cos unavailable (browser preview?)' }
   }
   if (!source || typeof source !== 'string') {
@@ -148,14 +155,39 @@ export async function uploadImageUrlToCos(
     return { ok: false, error: 'aborted before start' }
   }
 
-  // 排队等并发位。aborted 信号在排队期间到达时, 直接退出 ——
-  // 避免占着名额却不干活, 也避免无谓地把 base64 抓出来又扔掉。
   await acquireUploadSlot()
   try {
     if (options.signal?.aborted) {
       return { ok: false, error: 'aborted while queued' }
     }
-    return await doUpload(uploadFn, source, options)
+
+    // Fast path: main process fetches the URL directly. Renderer main
+    // thread is never blocked by fetch + base64 + IPC structured-clone
+    // of a multi-MB string. Only base64 sources (data: URLs) fall back
+    // to the renderer-side path because the bytes already live here.
+    if (bridge.uploadImageFromUrl && !source.startsWith('data:')) {
+      try {
+        const result = await bridge.uploadImageFromUrl(
+          source,
+          undefined,
+          options.metadata,
+        )
+        if (result.success) {
+          return { ok: true, url: result.url, key: result.key }
+        }
+        return { ok: false, error: result.error || 'unknown COS error' }
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        }
+      }
+    }
+
+    if (!bridge.uploadImageHistory) {
+      return { ok: false, error: 'no compatible cos upload bridge' }
+    }
+    return await doUpload(bridge.uploadImageHistory, source, options)
   } finally {
     releaseUploadSlot()
   }

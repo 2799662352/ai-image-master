@@ -45,15 +45,19 @@ export interface DonorItemView extends RawHistoryItem {
 /**
  * 推断单条记录的状态标签
  */
+function isCosUrl(url: string): boolean {
+  return url.includes('.cos.') && url.includes('.myqcloud.com')
+}
+
 function inferStatus(item: RawHistoryItem): DonorItemStatus {
   if (item.uploading) return 'uploading'
   const urls = item.urls || []
-  // 任一 url 带 pending: 前缀 → 上传中/失败
   const hasPending = urls.some((u) => typeof u === 'string' && u.startsWith('pending:'))
   if (hasPending) return 'uploading'
   if (urls.length === 0) return 'failed'
-  // 有 r2Storage 标记 = 已上云;否则本地
-  return item.r2Storage ? 'ok-cloud' : 'ok-local'
+  if (item.r2Storage) return 'ok-cloud'
+  if (urls.some((u) => typeof u === 'string' && isCosUrl(u))) return 'ok-cloud'
+  return 'ok-local'
 }
 
 function toView(item: RawHistoryItem): DonorItemView {

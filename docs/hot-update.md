@@ -138,6 +138,81 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
+### v4.3.14 (2026-05-21) — 批量完成卡顿根除 + COS 上传事件驱动重构
+
+**A. 批量页完成瞬间卡顿修复(根因 #1)**
+
+**问题**: 5 张图批量生成完成时，UI 卡顿 150-750ms,"开始生成"按钮无法及时回到可点击状态。
+
+**根因**: `runBatch` finally 里串行 `await historyService.addToHistory(...)` × N，每次都触发 `historyManager.add() → await this.save() → IPC 序列化整个 history 数组 → fs.writeFile(history.json)`。5 张图 = 5 次串行 IPC + 5 次整文件写入，期间 `running=true` 不能切换 → UI 状态卡住。
+
+**修复** (`src/renderer/src/stores/useBatchStore.ts`):
+
+| 改动 | 说明 |
+|------|------|
+| 删除 finally 里的串行 history 循环 | `runBatch` 末尾不再写 history，立即 `set({running: false})` |
+| History 写入下放到 `batch:` COS 事件 handler | 每张图 COS 上传完成时各自异步写一条 history，不阻塞 UI 关键路径 |
+| `pendingBatchHistoryContext` Map | 暂存 prompt/ratio/refRaw/modelKey/modelUrl 等闭包变量，event handler 按 itemId 查表后 delete 防泄漏 |
+| `removeItem` / `clearAll` 清理 context | 保持"删除/清空后不进 history"语义 |
+
+**额外收益**: History 持久化用 **cosUrl** 而不是会过期的 modelUrl。旧版批量结束时 cosUrl 大概率没回来 → 只能 fallback modelUrl → 几小时后 history 失效。新版在 COS 上传成功后才写，写的就是永久 cosUrl，失败才 fallback。
+
+**B. COS 上传从"预测返回"重构为"事件回推"(根因 #2)**
+
+**v4.3.13 遗留问题**: 立即返回预测 URL + `setImmediate` 延迟实际上传，导致 thumbnail 在 COS 上传完成前就被浏览器请求 → 缓存 404 → 略缩图不显示。
+
+**修复** (`src/main/index.ts` + `src/preload/index.ts`):
+
+| 改动 | 说明 |
+|------|------|
+| 新 IPC `cos:enqueue-upload-from-url` | 立即返回 `{queued: true}`，主进程后台 fetch URL → buffer → 上传 |
+| 新事件 `cos:upload-result` | 主进程通过 `webContents.send` 广播上传结果给所有窗口 |
+| `cos:upload-image-history` 恢复 await | 旧 IPC 改回真正 await `enqueueUpload` 完成才 return → 修复 thumbnail 404 |
+| `enqueueUpload` 主进程并发门 | 4-wide gate 保留，未 settle 的 `Promise` 收集到 `inflightUploads`，`before-quit` 5s 内 drain |
+| `cos:upload-image-from-url` (await 版本) | 保留给需要同步拿到 URL 的调用点 |
+
+**C. 渲染端真 fire-and-forget(根因 #3)**
+
+**问题**: 渲染端 batch / generate 路径每张图都 `void uploadImageUrlToCos().then(set + history)`，N 张图同时完成时 = N 个 pending promise + N 个 .then 微任务 + N 次 React 重渲染，UI 感知卡顿。
+
+**修复**:
+
+| 文件 | 改动 |
+|------|------|
+| `src/renderer/src/utils/cosUploadDispatcher.ts` (新) | 全局事件路由器，按 `prefix:` 前缀分发到各 store; `enqueueCosUpload(itemId, url, metadata)` 同步入队 0 promise |
+| `src/renderer/src/stores/useBatchStore.ts` | 模块底部注册 `batch:` handler，runOne 改用 `enqueueCosUpload` |
+| `src/renderer/src/stores/useGenerateStore.ts` | 模块底部注册 `generate:` handler，generate() 改用 `enqueueCosUpload`，删除 N 个并行 `await uploadImageUrlToCos().then()` |
+
+**D. 结果卡显示优先级修复**
+
+**问题**: COS 上传完成后切 `src={cosUrl}`，浏览器要重新下载 + 解码同一张图，N 张同时切 = 主线程卡顿 + thumbnail 闪烁。
+
+**修复** (`src/renderer/src/pages-react/batch/BatchResultGrid.tsx`, `BatchItemRow.tsx`, `batch-punk/PunkResultGrid.tsx`, `useGenerateStore.ts`):
+
+| 改动 | 说明 |
+|------|------|
+| `pickDisplayUrl: resultUrl ?? cosUrl` | 优先用已加载的模型 URL 展示，避免重新下载/解码 |
+| 删除 `useGenerateStore` 里的 `nextUrls[idx] = res.url` 热切 | cosUrl 只通过 resultMeta 暴露给持久化层，live view 继续吃 modelUrl 直到 session 结束 |
+
+**E. 历史页云端徽章修复**
+
+**问题**: `inferStatus` 用 `r2Storage` 字段判断"是否云端"，但新 COS 上传不写 r2Storage → 5 张云端图只有 1 张显示云端徽章。
+
+**修复** (`src/renderer/src/hooks/useHistoryData.ts`):
+
+- 新增 `isCosUrl(url)` helper 检测 `*.cos.*.myqcloud.com` 模式
+- `inferStatus` 兜底: `r2Storage` 优先 → `urls` 含 cosUrl → 视为 'ok-cloud'
+
+#### 用户可见行为
+
+1. **批量 5 张生成完成那一刻 UI 不再卡顿**，"开始生成"按钮立刻回到可点击状态
+2. **生成多张同时完成不再卡顿**，渲染端零 pending promise 0 .then 微任务
+3. **历史页所有云端图都显示 COS 徽章**，不再"只显示一个"
+4. **批量历史用 cosUrl 持久化**，不再因 modelUrl 过期失效
+5. Thumbnail / 略缩图 100% 显示（修复 v4.3.13 的 use-before-upload race regression）
+
+---
+
 ### v4.3.13 (2026-05-21) — COS 图片上传异步化 + 新增 21 个 Storyboard 技能
 
 **A. COS 图片上传性能优化**

@@ -1118,26 +1118,35 @@ function rejectOversizedBase64(s: unknown): string | null {
 const inflightUploads = new Set<Promise<void>>()
 const MAX_CONCURRENT_UPLOADS_MAIN = 4
 
-function enqueueUpload(opts: Parameters<typeof uploadBufferToBucket>[0]): void {
-  const wait = (): Promise<void> | null => {
-    if (inflightUploads.size < MAX_CONCURRENT_UPLOADS_MAIN) return null
-    return Promise.race(inflightUploads)
+async function enqueueUpload(
+  opts: Parameters<typeof uploadBufferToBucket>[0],
+): Promise<string> {
+  while (inflightUploads.size >= MAX_CONCURRENT_UPLOADS_MAIN) {
+    await Promise.race(inflightUploads)
   }
 
-  const run = async (): Promise<void> => {
-    const pending = wait()
-    if (pending) await pending
-    await uploadBufferToBucket(opts)
-  }
+  let resolveSlot!: () => void
+  const slot = new Promise<void>((r) => {
+    resolveSlot = r
+  })
+  inflightUploads.add(slot)
 
-  const p = run()
-    .catch((err: any) => {
-      console.error('[cos:upload-image-history] background upload failed:', err?.message ?? err)
-    })
-    .finally(() => {
-      inflightUploads.delete(p)
-    })
-  inflightUploads.add(p)
+  try {
+    return await uploadBufferToBucket(opts)
+  } finally {
+    inflightUploads.delete(slot)
+    resolveSlot()
+  }
+}
+
+function mimeFromUrl(url: string, fallback = 'image/png'): string {
+  const lower = url.split('?')[0]?.toLowerCase() ?? ''
+  if (lower.endsWith('.png')) return 'image/png'
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg'
+  if (lower.endsWith('.webp')) return 'image/webp'
+  if (lower.endsWith('.gif')) return 'image/gif'
+  if (lower.endsWith('.avif')) return 'image/avif'
+  return fallback
 }
 
 ipcMain.handle(
@@ -1164,9 +1173,8 @@ ipcMain.handle(
         return { success: false, error: 'empty buffer after base64 decode' }
       }
       const key = generateImageHistoryKey(mimeType)
-      const url = `https://${IMAGE_HISTORY_BUCKET}.cos.${IMAGE_HISTORY_REGION}.myqcloud.com/${key}`
 
-      enqueueUpload({
+      const url = await enqueueUpload({
         bucket: IMAGE_HISTORY_BUCKET,
         region: IMAGE_HISTORY_REGION,
         key,
@@ -1178,6 +1186,186 @@ ipcMain.handle(
       return { success: true, url, key }
     } catch (err: any) {
       console.error('[cos:upload-image-history] failed:', err)
+      return {
+        success: false,
+        error: err?.message ?? String(err) ?? 'upload failed',
+      }
+    }
+  },
+)
+
+// True fire-and-forget: renderer just enqueues a (requestId, sourceUrl)
+// pair and returns immediately. Main process fetches the URL, uploads to
+// COS in the background, then broadcasts a `cos:upload-result` event with
+// the same requestId so the renderer can patch its store by item.id.
+//
+// Why this exists in addition to the await-based handlers below:
+//   - Renderer holds zero pending promises per upload → no microtask
+//     pressure, no .then() React re-render cascade when many uploads
+//     finish in quick succession.
+//   - History persistence at batch-end still works: items keep
+//     uploadStatus='uploading' if cos hasn't returned yet; the result
+//     event back-patches cosUrl into the item by id afterwards.
+function broadcastUploadResult(
+  result:
+    | { requestId: string; success: true; url: string; key: string }
+    | { requestId: string; success: false; error: string },
+): void {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) {
+      w.webContents.send('cos:upload-result', result)
+    }
+  }
+}
+
+ipcMain.handle(
+  'cos:enqueue-upload-from-url',
+  async (
+    _event,
+    payload: {
+      requestId: string
+      sourceUrl: string
+      mimeType?: string
+      metadata?: Record<string, unknown>
+    },
+  ): Promise<{ queued: true } | { queued: false; error: string }> => {
+    const { requestId, sourceUrl, mimeType: hintMime, metadata } = payload || ({} as any)
+    if (typeof requestId !== 'string' || !requestId) {
+      return { queued: false, error: 'invalid requestId' }
+    }
+    if (typeof sourceUrl !== 'string' || !sourceUrl) {
+      return { queued: false, error: 'invalid sourceUrl' }
+    }
+    if (!/^https?:\/\//i.test(sourceUrl) && !sourceUrl.startsWith('data:')) {
+      return { queued: false, error: 'sourceUrl must be http(s):// or data:' }
+    }
+
+    // Don't await — kick off background work and return synchronously.
+    void (async () => {
+      try {
+        let body: Buffer
+        let mimeType: string
+        if (sourceUrl.startsWith('data:')) {
+          const m = /^data:([^;,]+);base64,(.+)$/i.exec(sourceUrl)
+          if (!m) {
+            broadcastUploadResult({ requestId, success: false, error: 'invalid data: URL' })
+            return
+          }
+          mimeType = m[1] || hintMime || 'image/png'
+          body = Buffer.from(m[2], 'base64')
+        } else {
+          const controller = new AbortController()
+          const timer = setTimeout(() => controller.abort(), 30_000)
+          try {
+            const resp = await fetch(sourceUrl, { signal: controller.signal })
+            if (!resp.ok) {
+              broadcastUploadResult({ requestId, success: false, error: `fetch ${resp.status}` })
+              return
+            }
+            mimeType = hintMime || resp.headers.get('content-type') || mimeFromUrl(sourceUrl)
+            const ab = await resp.arrayBuffer()
+            body = Buffer.from(ab)
+          } finally {
+            clearTimeout(timer)
+          }
+        }
+
+        if (body.byteLength === 0) {
+          broadcastUploadResult({ requestId, success: false, error: 'empty body after fetch' })
+          return
+        }
+        if (!mimeType.startsWith('image/')) {
+          mimeType = mimeFromUrl(sourceUrl)
+        }
+
+        const key = generateImageHistoryKey(mimeType)
+        const url = await enqueueUpload({
+          bucket: IMAGE_HISTORY_BUCKET,
+          region: IMAGE_HISTORY_REGION,
+          key,
+          body,
+          contentType: mimeType,
+        })
+
+        void metadata
+        broadcastUploadResult({ requestId, success: true, url, key })
+      } catch (err: any) {
+        console.error('[cos:enqueue-upload-from-url] background failed:', err?.message ?? err)
+        broadcastUploadResult({
+          requestId,
+          success: false,
+          error: err?.message ?? String(err) ?? 'upload failed',
+        })
+      }
+    })()
+
+    return { queued: true }
+  },
+)
+
+// Direct URL → COS handler (await-based). Kept for callers that want the
+// URL back synchronously (e.g. one-off generate-then-display flows).
+ipcMain.handle(
+  'cos:upload-image-from-url',
+  async (
+    _event,
+    payload: { sourceUrl: string; mimeType?: string; metadata?: Record<string, unknown> },
+  ): Promise<
+    | { success: true; url: string; key: string }
+    | { success: false; error: string }
+  > => {
+    try {
+      const { sourceUrl, mimeType: hintMime, metadata } = payload
+      if (typeof sourceUrl !== 'string' || !sourceUrl) {
+        return { success: false, error: 'invalid sourceUrl' }
+      }
+      if (!/^https?:\/\//i.test(sourceUrl) && !sourceUrl.startsWith('data:')) {
+        return { success: false, error: 'sourceUrl must be http(s):// or data:' }
+      }
+
+      let body: Buffer
+      let mimeType: string
+      if (sourceUrl.startsWith('data:')) {
+        const m = /^data:([^;,]+);base64,(.+)$/i.exec(sourceUrl)
+        if (!m) return { success: false, error: 'invalid data: URL' }
+        mimeType = m[1] || hintMime || 'image/png'
+        body = Buffer.from(m[2], 'base64')
+      } else {
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), 30_000)
+        try {
+          const resp = await fetch(sourceUrl, { signal: controller.signal })
+          if (!resp.ok) {
+            return { success: false, error: `fetch ${resp.status}` }
+          }
+          mimeType = hintMime || resp.headers.get('content-type') || mimeFromUrl(sourceUrl)
+          const ab = await resp.arrayBuffer()
+          body = Buffer.from(ab)
+        } finally {
+          clearTimeout(timer)
+        }
+      }
+
+      if (body.byteLength === 0) {
+        return { success: false, error: 'empty body after fetch' }
+      }
+      if (!mimeType.startsWith('image/')) {
+        mimeType = mimeFromUrl(sourceUrl)
+      }
+
+      const key = generateImageHistoryKey(mimeType)
+      const url = await enqueueUpload({
+        bucket: IMAGE_HISTORY_BUCKET,
+        region: IMAGE_HISTORY_REGION,
+        key,
+        body,
+        contentType: mimeType,
+      })
+
+      void metadata
+      return { success: true, url, key }
+    } catch (err: any) {
+      console.error('[cos:upload-image-from-url] failed:', err)
       return {
         success: false,
         error: err?.message ?? String(err) ?? 'upload failed',

@@ -18,9 +18,9 @@ export function BatchItemRow({ item, onRemove }: BatchItemRowProps) {
         <p className="text-sm text-gray-300 truncate">{item.prompt}</p>
         {item.error && <p className="text-xs text-red-400 mt-1">{item.error}</p>}
       </div>
-      {(item.cosUrl || item.resultUrl) && (
+      {(item.resultUrl || item.cosUrl) && (
         <img
-          src={item.cosUrl ?? item.resultUrl}
+          src={item.resultUrl ?? item.cosUrl}
           alt=""
           className="w-10 h-10 object-cover border border-zinc-700"
         />

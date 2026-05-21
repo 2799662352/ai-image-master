@@ -975,6 +975,41 @@ const electronAPI: ElectronAPI = {
         | { success: true; url: string; key: string }
         | { success: false; error: string }
       >('cos:upload-image-history', { base64, mimeType, metadata }),
+    uploadImageFromUrl: (
+      sourceUrl: string,
+      mimeType?: string,
+      metadata?: Record<string, unknown>,
+    ) =>
+      safeInvoke<
+        | { success: true; url: string; key: string }
+        | { success: false; error: string }
+      >('cos:upload-image-from-url', { sourceUrl, mimeType, metadata }),
+    /**
+     * 真 fire-and-forget: 立即入队, IPC 立刻 resolve。
+     * 实际上传完成后, main 进程通过 `onUploadResult` 推回结果。
+     * 渲染端 0 个 pending promise, 0 个 .then 微任务。
+     */
+    enqueueUploadFromUrl: (
+      requestId: string,
+      sourceUrl: string,
+      mimeType?: string,
+      metadata?: Record<string, unknown>,
+    ) =>
+      safeInvoke<{ queued: true } | { queued: false; error: string }>(
+        'cos:enqueue-upload-from-url',
+        { requestId, sourceUrl, mimeType, metadata },
+      ),
+    onUploadResult: (
+      cb: (
+        result:
+          | { requestId: string; success: true; url: string; key: string }
+          | { requestId: string; success: false; error: string },
+      ) => void,
+    ) => {
+      const handler = (_evt: IpcRendererEvent, data: any): void => cb(data)
+      ipcRenderer.on('cos:upload-result', handler)
+      return () => ipcRenderer.removeListener('cos:upload-result', handler)
+    },
   },
 
   fs: {
