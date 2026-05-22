@@ -44,6 +44,18 @@ extraResources:
     to: docker-mcp/${platform}-${arch}
     filter:
       - "docker-mcp*"
+  # Vendored apiyi-mcp-server (resolves to <resourcesPath>/apiyi-mcp/dist/index.js
+  # at runtime via src/main/agent/apiyiMcpLauncher.ts). Pure Node, no per-platform
+  # subdir. Vendored by scripts/vendor-apiyi-mcp.mjs as part of `npm run build`.
+  - from: resources/apiyi-mcp
+    to: apiyi-mcp
+    filter:
+      - "dist/**/*"
+      - "node_modules/**/*"
+      - "package.json"
+      - "version.json"
+      - "README.md"
+      - "LICENSE"
   - from: resources/skills
     to: skills
     filter:
