@@ -37,7 +37,10 @@ describe('mergeEnvWithScaffold', () => {
     const userEnv = {
       APIYI_API_KEY: 'sk-user-keep',
       GEMINI_MODEL: 'gemini-2.5-flash',
-      // missing: APIYI_BASE_URL, GEMINI_MAX_OUTPUT_TOKENS, GEMINI_TIMEOUT, ELECTRON_RUN_AS_NODE
+      // missing: APIYI_BASE_URL, GEMINI_MAX_OUTPUT_TOKENS, GEMINI_TIMEOUT
+      // NOTE: ELECTRON_RUN_AS_NODE is NOT in the scaffold by design — it's
+      // only meaningful for the Electron-as-Node fallback and gets layered on
+      // via `extraEnv` in resolveApiyiCommand, never via the scaffold.
     }
     const merged = mergeEnvWithScaffold(userEnv)
     expect(merged).not.toBeNull()
@@ -46,7 +49,7 @@ describe('mergeEnvWithScaffold', () => {
     expect(merged!.APIYI_BASE_URL).toBe('https://api.apiyi.com') // ← filled
     expect(merged!.GEMINI_MAX_OUTPUT_TOKENS).toBe('65536')  // ← filled
     expect(merged!.GEMINI_TIMEOUT).toBe('1800000')          // ← filled
-    expect(merged!.ELECTRON_RUN_AS_NODE).toBe('1')          // ← filled
+    expect(merged!.ELECTRON_RUN_AS_NODE).toBeUndefined()    // ← NOT in scaffold; not filled
   })
 
   it('treats a non-object env (e.g. user wrote env = "broken") as empty and replaces with scaffold', () => {
@@ -73,7 +76,7 @@ describe('seedApiyiMcpEntry', () => {
     const action = await seedApiyiMcpEntry({
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
-      nodeBin: FAKE_NODE,
+      command: FAKE_NODE,
     })
     expect(action).toBe('seeded')
 
@@ -96,7 +99,32 @@ describe('seedApiyiMcpEntry', () => {
     expect(apiyi.env.GEMINI_MODEL).toBe('gemini-3.5-flash')
     expect(apiyi.env.GEMINI_MAX_OUTPUT_TOKENS).toBe('65536')
     expect(apiyi.env.GEMINI_TIMEOUT).toBe('1800000')
-    expect(apiyi.env.ELECTRON_RUN_AS_NODE).toBe('1')
+    // ELECTRON_RUN_AS_NODE is intentionally NOT in the scaffold — the
+    // Electron-as-Node fallback adds it via `extraEnv`, the system-node path
+    // doesn't need it. A bare seed (no extraEnv) does not write it.
+    expect(apiyi.env.ELECTRON_RUN_AS_NODE).toBeUndefined()
+  })
+
+  it('layers caller-supplied extraEnv on top of the scaffold (Electron-as-Node fallback)', async () => {
+    const action = await seedApiyiMcpEntry({
+      personalConfigToml: configPath,
+      entryPath: FAKE_ENTRY,
+      command: '/path/to/electron.exe',
+      extraEnv: { ELECTRON_RUN_AS_NODE: '1' },
+    })
+    expect(action).toBe('seeded')
+
+    const parsed = parseToml(await fs.readFile(configPath, 'utf8')) as Record<
+      string,
+      unknown
+    >
+    const apiyi = (parsed.mcp_servers as Record<string, unknown>).apiyi as {
+      command: string
+      env: Record<string, string>
+    }
+    expect(apiyi.command).toBe('/path/to/electron.exe')
+    expect(apiyi.env.ELECTRON_RUN_AS_NODE).toBe('1') // ← from extraEnv
+    expect(apiyi.env.APIYI_BASE_URL).toBe('https://api.apiyi.com') // ← from scaffold
   })
 
   it('preserves existing mcp_servers and other top-level keys', async () => {
@@ -117,7 +145,7 @@ describe('seedApiyiMcpEntry', () => {
     await seedApiyiMcpEntry({
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
-      nodeBin: FAKE_NODE,
+      command: FAKE_NODE,
     })
 
     const parsed = parseToml(await fs.readFile(configPath, 'utf8')) as Record<
@@ -155,7 +183,7 @@ describe('seedApiyiMcpEntry', () => {
     const action = await seedApiyiMcpEntry({
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
-      nodeBin: FAKE_NODE,
+      command: FAKE_NODE,
     })
     expect(action).toBe('backfilled')
 
@@ -199,7 +227,7 @@ describe('seedApiyiMcpEntry', () => {
     const action = await seedApiyiMcpEntry({
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
-      nodeBin: FAKE_NODE,
+      command: FAKE_NODE,
     })
     expect(action).toBe('backfilled')
 
@@ -239,7 +267,7 @@ describe('seedApiyiMcpEntry', () => {
     const action = await seedApiyiMcpEntry({
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
-      nodeBin: FAKE_NODE,
+      command: FAKE_NODE,
     })
     expect(action).toBe('skipped')
   })
@@ -248,14 +276,14 @@ describe('seedApiyiMcpEntry', () => {
     const first = await seedApiyiMcpEntry({
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
-      nodeBin: FAKE_NODE,
+      command: FAKE_NODE,
     })
     expect(first).toBe('seeded')
 
     const second = await seedApiyiMcpEntry({
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
-      nodeBin: FAKE_NODE,
+      command: FAKE_NODE,
     })
     expect(second).toBe('skipped')
   })
@@ -278,14 +306,14 @@ describe('seedApiyiMcpEntry', () => {
     const first = await seedApiyiMcpEntry({
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
-      nodeBin: FAKE_NODE,
+      command: FAKE_NODE,
     })
     expect(first).toBe('backfilled')
 
     const second = await seedApiyiMcpEntry({
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
-      nodeBin: FAKE_NODE,
+      command: FAKE_NODE,
     })
     expect(second).toBe('skipped')
   })
@@ -296,7 +324,7 @@ describe('seedApiyiMcpEntry', () => {
     const action = await seedApiyiMcpEntry({
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
-      nodeBin: FAKE_NODE,
+      command: FAKE_NODE,
     })
     expect(action).toBe('seeded')
     const parsed = parseToml(await fs.readFile(configPath, 'utf8')) as Record<

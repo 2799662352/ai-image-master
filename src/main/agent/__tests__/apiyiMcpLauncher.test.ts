@@ -64,8 +64,12 @@ describe('APIYI_MCP_ENV_SCAFFOLD', () => {
     expect(APIYI_MCP_ENV_SCAFFOLD.APIYI_API_KEY).toBe('')
   })
 
-  it('forces ELECTRON_RUN_AS_NODE=1 so electron.exe spawns as pure Node', () => {
-    expect(APIYI_MCP_ENV_SCAFFOLD.ELECTRON_RUN_AS_NODE).toBe('1')
+  it('does NOT bake ELECTRON_RUN_AS_NODE into the scaffold (only injected via extraEnv on the Electron-as-Node fallback)', () => {
+    // System-node is the standard path; `command = "node"` makes ELECTRON_RUN_AS_NODE
+    // meaningless. We only need that flag when `command = electron.exe`, in which
+    // case `resolveApiyiCommand` returns it via `extraEnv`. Keeping it out of the
+    // shared scaffold prevents leaking a misleading env into the system-node path.
+    expect(APIYI_MCP_ENV_SCAFFOLD.ELECTRON_RUN_AS_NODE).toBeUndefined()
   })
 
   it('pre-fills a sane model + long-context tokens + 30min timeout', () => {
@@ -89,10 +93,10 @@ describe('buildApiyiMcpConfigEntry', () => {
   // The seeded env block is a full scaffold (NOT empty {}) so the user only
   // has to fill APIYI_API_KEY in the JSON editor.
 
-  it('builds a disabled stub with the full env scaffold pre-filled', () => {
+  it('builds a disabled stub with the full env scaffold pre-filled (system-node path)', () => {
     const entry = buildApiyiMcpConfigEntry({
       entryPath: '/path/to/dist/index.js',
-      nodeBin: '/path/to/node',
+      command: '/path/to/node',
       enabled: false,
     })
     expect(entry).toEqual({
@@ -103,10 +107,24 @@ describe('buildApiyiMcpConfigEntry', () => {
     })
   })
 
+  it('merges extraEnv on top of the scaffold for the Electron-as-Node fallback path', () => {
+    const entry = buildApiyiMcpConfigEntry({
+      entryPath: '/path/to/dist/index.js',
+      command: '/path/to/electron.exe',
+      extraEnv: { ELECTRON_RUN_AS_NODE: '1' },
+      enabled: false,
+    })
+    expect(entry.command).toBe('/path/to/electron.exe')
+    expect(entry.env).toEqual({
+      ...APIYI_MCP_ENV_SCAFFOLD,
+      ELECTRON_RUN_AS_NODE: '1',
+    })
+  })
+
   it('builds an enabled stub with the same scaffold (env is independent of enabled)', () => {
     const entry = buildApiyiMcpConfigEntry({
       entryPath: '/path/to/dist/index.js',
-      nodeBin: '/path/to/node',
+      command: '/path/to/node',
       enabled: true,
     })
     expect(entry.enabled).toBe(true)
@@ -114,8 +132,8 @@ describe('buildApiyiMcpConfigEntry', () => {
   })
 
   it('returns a fresh env object per call so callers can mutate safely', () => {
-    const a = buildApiyiMcpConfigEntry({ entryPath: '/x', nodeBin: '/y', enabled: false })
-    const b = buildApiyiMcpConfigEntry({ entryPath: '/x', nodeBin: '/y', enabled: false })
+    const a = buildApiyiMcpConfigEntry({ entryPath: '/x', command: '/y', enabled: false })
+    const b = buildApiyiMcpConfigEntry({ entryPath: '/x', command: '/y', enabled: false })
     expect(a.env).not.toBe(b.env)
     expect(a.env).not.toBe(APIYI_MCP_ENV_SCAFFOLD)
     // Mutating one copy must not affect the next call.
