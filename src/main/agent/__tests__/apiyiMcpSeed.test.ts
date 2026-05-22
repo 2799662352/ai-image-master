@@ -25,7 +25,7 @@ describe('seedApiyiMcpEntry', () => {
   // entry. The user is the sole source of truth for env / enabled, editing
   // via the MCP JSON editor in the agent workspace.
 
-  it('creates config.toml with disabled apiyi stub when file does not exist', async () => {
+  it('creates config.toml with disabled apiyi stub + pre-filled env scaffold', async () => {
     const action = await seedApiyiMcpEntry({
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
@@ -37,12 +37,22 @@ describe('seedApiyiMcpEntry', () => {
     const parsed = parseToml(raw) as Record<string, unknown>
     const servers = parsed.mcp_servers as Record<string, unknown>
     expect(servers).toBeDefined()
-    expect(servers.apiyi).toEqual({
-      command: FAKE_NODE,
-      args: [FAKE_ENTRY],
-      enabled: false,
-      env: {},
-    })
+    const apiyi = servers.apiyi as {
+      command: string
+      args: string[]
+      enabled: boolean
+      env: Record<string, string>
+    }
+    expect(apiyi.command).toBe(FAKE_NODE)
+    expect(apiyi.args).toEqual([FAKE_ENTRY])
+    expect(apiyi.enabled).toBe(false)
+    // The scaffolded env: only APIYI_API_KEY is empty for the user to fill.
+    expect(apiyi.env.APIYI_API_KEY).toBe('')
+    expect(apiyi.env.APIYI_BASE_URL).toBe('https://api.apiyi.com')
+    expect(apiyi.env.GEMINI_MODEL).toBe('gemini-3.1-pro-preview-thinking')
+    expect(apiyi.env.GEMINI_MAX_OUTPUT_TOKENS).toBe('65536')
+    expect(apiyi.env.GEMINI_TIMEOUT).toBe('1800000')
+    expect(apiyi.env.ELECTRON_RUN_AS_NODE).toBe('1')
   })
 
   it('preserves existing mcp_servers and other top-level keys', async () => {

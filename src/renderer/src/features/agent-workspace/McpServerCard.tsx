@@ -78,11 +78,11 @@ function TrashIcon(): React.JSX.Element {
  */
 function getEmptyToolsHint(server: McpServerCardData): string {
   // App-bundled apiyi-mcp-server: vendored into resources/apiyi-mcp/,
-  // launched as `<node> .../dist/index.js`. Needs APIYI_API_KEY in env.
-  // The whole MCP entry (incl. env) is user-edited via the ✏️ JSON editor —
-  // the Settings UI path was removed in commit 39eab6c.
+  // launched as `<electron.exe-as-node> .../dist/index.js`. The seed already
+  // pre-fills APIYI_BASE_URL / GEMINI_MODEL / ELECTRON_RUN_AS_NODE etc., so
+  // the only field the user has to fill is APIYI_API_KEY.
   if (server.isAppBundled && server.name === 'apiyi') {
-    return '已连接但未返回工具。请点击右上 ✏️ 编辑，在 env.APIYI_API_KEY 中填入有效的 api.apiyi.com 密钥（不能是空格），保存后点上方「刷新」。'
+    return '已连接但未返回工具。请点击右上 ✏️ 编辑，把 env.APIYI_API_KEY 改成你的 api.apiyi.com 密钥（sk- 开头，不能是空格），保存后点上方「刷新」。其它字段已预填默认值无需改动。'
   }
   // Anything routed through docker (gateway or otherwise) — the original
   // hint is correct here.

@@ -1,6 +1,7 @@
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+  APIYI_MCP_ENV_SCAFFOLD,
   buildApiyiMcpConfigEntry,
   getApiyiMcpEntryPath,
 } from '../apiyiMcpLauncher'
@@ -50,12 +51,39 @@ describe('getApiyiMcpEntryPath', () => {
   })
 })
 
+describe('APIYI_MCP_ENV_SCAFFOLD', () => {
+  // Pins the contract for the JSON-editor scaffold the user sees on first
+  // boot. Empty APIYI_API_KEY is the *only* field they must edit; everything
+  // else is sensible defaults aligned with the working Cursor mcp.json shape.
+
+  it('ships the apiyi.com base URL (NOT bltcy.ai), so sk- keys validate', () => {
+    expect(APIYI_MCP_ENV_SCAFFOLD.APIYI_BASE_URL).toBe('https://api.apiyi.com')
+  })
+
+  it('leaves APIYI_API_KEY empty so the JSON editor surfaces it visibly', () => {
+    expect(APIYI_MCP_ENV_SCAFFOLD.APIYI_API_KEY).toBe('')
+  })
+
+  it('forces ELECTRON_RUN_AS_NODE=1 so electron.exe spawns as pure Node', () => {
+    expect(APIYI_MCP_ENV_SCAFFOLD.ELECTRON_RUN_AS_NODE).toBe('1')
+  })
+
+  it('pre-fills a sane model + long-context tokens + 30min timeout', () => {
+    expect(APIYI_MCP_ENV_SCAFFOLD.GEMINI_MODEL).toBe('gemini-3.1-pro-preview-thinking')
+    expect(APIYI_MCP_ENV_SCAFFOLD.GEMINI_MAX_OUTPUT_TOKENS).toBe('65536')
+    expect(APIYI_MCP_ENV_SCAFFOLD.GEMINI_TIMEOUT).toBe('1800000')
+  })
+
+  it('is frozen so accidental imports cannot mutate the shared template', () => {
+    expect(Object.isFrozen(APIYI_MCP_ENV_SCAFFOLD)).toBe(true)
+  })
+})
+
 describe('buildApiyiMcpConfigEntry', () => {
-  // Per design: env is ALWAYS empty `{}` regardless of `enabled`. The user
-  // fills `APIYI_API_KEY`, `ELECTRON_RUN_AS_NODE`, `GEMINI_MODEL` themselves
-  // via the MCP JSON editor. No auto-write of secrets / runtime flags.
+  // The seeded env block is a full scaffold (NOT empty {}) so the user only
+  // has to fill APIYI_API_KEY in the JSON editor.
 
-  it('builds a disabled stub: command + args + enabled=false + env={}', () => {
+  it('builds a disabled stub with the full env scaffold pre-filled', () => {
     const entry = buildApiyiMcpConfigEntry({
       entryPath: '/path/to/dist/index.js',
       nodeBin: '/path/to/node',
@@ -65,39 +93,27 @@ describe('buildApiyiMcpConfigEntry', () => {
       command: '/path/to/node',
       args: ['/path/to/dist/index.js'],
       enabled: false,
-      env: {},
+      env: { ...APIYI_MCP_ENV_SCAFFOLD },
     })
   })
 
-  it('builds an enabled stub with the same empty env shape', () => {
+  it('builds an enabled stub with the same scaffold (env is independent of enabled)', () => {
     const entry = buildApiyiMcpConfigEntry({
       entryPath: '/path/to/dist/index.js',
       nodeBin: '/path/to/node',
       enabled: true,
     })
-    expect(entry).toEqual({
-      command: '/path/to/node',
-      args: ['/path/to/dist/index.js'],
-      enabled: true,
-      env: {},
-    })
-  })
-
-  it('env is always {} — no auto-injection of secrets or ELECTRON_RUN_AS_NODE', () => {
-    for (const enabled of [true, false]) {
-      const entry = buildApiyiMcpConfigEntry({
-        entryPath: '/x',
-        nodeBin: '/y',
-        enabled,
-      })
-      expect(entry.env).toEqual({})
-      expect(Object.keys(entry.env)).toHaveLength(0)
-    }
+    expect(entry.enabled).toBe(true)
+    expect(entry.env).toEqual({ ...APIYI_MCP_ENV_SCAFFOLD })
   })
 
   it('returns a fresh env object per call so callers can mutate safely', () => {
     const a = buildApiyiMcpConfigEntry({ entryPath: '/x', nodeBin: '/y', enabled: false })
     const b = buildApiyiMcpConfigEntry({ entryPath: '/x', nodeBin: '/y', enabled: false })
     expect(a.env).not.toBe(b.env)
+    expect(a.env).not.toBe(APIYI_MCP_ENV_SCAFFOLD)
+    // Mutating one copy must not affect the next call.
+    a.env.APIYI_API_KEY = 'sk-mutated'
+    expect(b.env.APIYI_API_KEY).toBe('')
   })
 })
