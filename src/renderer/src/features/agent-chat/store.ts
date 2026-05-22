@@ -20,9 +20,11 @@ import type { AgentReference } from '../../../../types/agent-reference'
 import type { AttachmentRef, Message, PlanStep, TimelineItem } from '../../../../types/agent-timeline'
 import { upsertItemInLastMessage } from '../../../../types/agent-timeline'
 import { AGENT_MODELS, DEFAULT_MODEL_ID } from './models'
+import { VIDEO_MODELS, DEFAULT_VIDEO_MODEL_ID } from './videoModels'
 import { useFileExplorerStore } from '../file-explorer/store'
 
 const SELECTED_MODEL_STORAGE_KEY = 'catimation.agent.selectedModel'
+const SELECTED_VIDEO_MODEL_STORAGE_KEY = 'catimation.agent.selectedVideoModel'
 const PANEL_WIDTH_STORAGE_KEY = 'catimation.agent.panelWidth'
 const PANEL_WIDTH_DEFAULT = 420
 const PANEL_WIDTH_MIN = 360
@@ -55,6 +57,24 @@ function readPersistedModelId(): string {
 function persistModelId(id: string): void {
   try {
     globalThis.localStorage?.setItem(SELECTED_MODEL_STORAGE_KEY, id)
+  } catch {
+    // localStorage unavailable (SSR / sandbox); silently ignore.
+  }
+}
+
+function readPersistedVideoModelId(): string {
+  try {
+    const raw = globalThis.localStorage?.getItem(SELECTED_VIDEO_MODEL_STORAGE_KEY)
+    if (!raw) return DEFAULT_VIDEO_MODEL_ID
+    return VIDEO_MODELS.some((m) => m.id === raw) ? raw : DEFAULT_VIDEO_MODEL_ID
+  } catch {
+    return DEFAULT_VIDEO_MODEL_ID
+  }
+}
+
+function persistVideoModelId(id: string): void {
+  try {
+    globalThis.localStorage?.setItem(SELECTED_VIDEO_MODEL_STORAGE_KEY, id)
   } catch {
     // localStorage unavailable (SSR / sandbox); silently ignore.
   }
@@ -211,6 +231,13 @@ interface AgentChatState {
   isRunning: boolean
   error?: string
   selectedModelId: string
+  /**
+   * Default Gemini model id for the bundled apiyi-mcp video understanding
+   * tool. Persisted to localStorage and pushed to the main process via
+   * `electronAPI.agent.setApiyiVideoModel`, which writes
+   * `mcp_servers.apiyi.env.GEMINI_MODEL` in ~/.codex/config.toml.
+   */
+  selectedVideoModelId: string
   messages: Message[]
   panelWidth: number
   /**
@@ -247,6 +274,7 @@ interface AgentChatState {
   appendInputText: (text: string) => void
   setError: (error?: string) => void
   setSelectedModel: (modelId: string) => void
+  setSelectedVideoModel: (modelId: string) => void
   addAttachment: (attachment: AgentAttachmentInput) => void
   removeAttachment: (name: string) => void
   removeAttachmentForReference: (reference: AgentReference) => void
@@ -547,6 +575,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   messages: [],
   isRunning: false,
   selectedModelId: readPersistedModelId(),
+  selectedVideoModelId: readPersistedVideoModelId(),
   panelWidth: readPersistedPanelWidth(),
   tokenUsage: undefined,
   contextWatermarkSeen: {},
@@ -601,6 +630,22 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     if (!AGENT_MODELS.some((m) => m.id === modelId)) return
     persistModelId(modelId)
     set({ selectedModelId: modelId })
+  },
+  setSelectedVideoModel: (modelId) => {
+    if (!VIDEO_MODELS.some((m) => m.id === modelId)) return
+    persistVideoModelId(modelId)
+    set({ selectedVideoModelId: modelId })
+    // Push to main so the apiyi-mcp child re-spawns with the new GEMINI_MODEL.
+    // Fire-and-forget: any failure is non-fatal to the UI; the next save or
+    // restart will re-converge from the localStorage value.
+    try {
+      const bridge = (globalThis as unknown as {
+        window?: { electronAPI?: { agent?: { setApiyiVideoModel?: (id: string) => Promise<unknown> } } }
+      }).window?.electronAPI?.agent
+      void bridge?.setApiyiVideoModel?.(modelId)
+    } catch {
+      // bridge unavailable in dev/SSR; ignore.
+    }
   },
   addAttachment: (attachment) => set((state) => ({ attachments: [...state.attachments, attachment] })),
   removeAttachment: (name) => set((state) => ({

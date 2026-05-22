@@ -6,6 +6,7 @@ import {
   classifyMediaKind,
 } from '../../components/shared/media/MediaThumbnail'
 import { ModelPicker } from './ModelPicker'
+import { VideoModelPicker } from './VideoModelPicker'
 import { ReferenceChip } from './references/ReferenceChip'
 import { makeFileReference } from './references/referenceUtils'
 import { useAgentChatStore } from './store'
@@ -1253,6 +1254,7 @@ export function MentionInput() {
           {isEditing ? 'Editing' : isRunning ? 'Running' : 'Agent'}
         </span>
         <ModelPicker disabled={isRunning} />
+        <VideoModelPicker disabled={isRunning} />
         <div className="flex-1" />
         {isEditing ? (
           <button

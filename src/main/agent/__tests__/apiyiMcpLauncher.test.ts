@@ -109,4 +109,50 @@ describe('buildApiyiMcpConfigEntry', () => {
     })
     expect(entry.env).toEqual({ APIYI_API_KEY: specialKey })
   })
+
+  it('writes GEMINI_MODEL when enabled + apiKey + videoModel are all provided', () => {
+    const entry = buildApiyiMcpConfigEntry({
+      entryPath: '/x',
+      nodeBin: '/y',
+      enabled: true,
+      apiKey: 'sk-live',
+      videoModel: 'gemini-2.5-flash',
+    })
+    expect(entry.env).toEqual({
+      APIYI_API_KEY: 'sk-live',
+      GEMINI_MODEL: 'gemini-2.5-flash',
+    })
+  })
+
+  it('drops GEMINI_MODEL when videoModel is empty string', () => {
+    const entry = buildApiyiMcpConfigEntry({
+      entryPath: '/x',
+      nodeBin: '/y',
+      enabled: true,
+      apiKey: 'sk-live',
+      videoModel: '',
+    })
+    expect(entry.env).toEqual({ APIYI_API_KEY: 'sk-live' })
+  })
+
+  it('ignores videoModel when apiKey is missing (env stays empty)', () => {
+    const entry = buildApiyiMcpConfigEntry({
+      entryPath: '/x',
+      nodeBin: '/y',
+      enabled: true,
+      videoModel: 'gemini-2.5-pro',
+    })
+    expect(entry.env).toEqual({})
+  })
+
+  it('ignores videoModel when disabled', () => {
+    const entry = buildApiyiMcpConfigEntry({
+      entryPath: '/x',
+      nodeBin: '/y',
+      enabled: false,
+      apiKey: 'sk-live',
+      videoModel: 'gemini-2.5-pro',
+    })
+    expect(entry.env).toEqual({})
+  })
 })

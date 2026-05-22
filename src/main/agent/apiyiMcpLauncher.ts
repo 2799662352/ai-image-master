@@ -26,6 +26,14 @@ export interface ApiyiMcpConfigEntryInput {
   enabled: boolean
   /** Literal API key. Only honored when `enabled` is true. */
   apiKey?: string
+  /**
+   * Default Gemini model id (e.g. `gemini-2.5-flash`). Forwarded to apiyi-mcp
+   * via the `GEMINI_MODEL` env var, which sets `config.defaultModel` for the
+   * server's `generate_content` tool. Empty / undefined → apiyi-mcp falls
+   * back to its own built-in default (`gemini-3.1-pro-preview-thinking`).
+   * Only honored when both `enabled` is true and `apiKey` is provided.
+   */
+  videoModel?: string
 }
 
 /**
@@ -40,17 +48,16 @@ export interface ApiyiMcpConfigEntryInput {
  * `enabled: false` is the first-boot default; the settings UI flips it to
  * `true` and re-writes the file.
  *
- * `env` decision table:
- * | enabled | apiKey     | env                              |
- * |---------|------------|----------------------------------|
- * | false   | (any)      | `{}`                             |
- * | true    | undefined  | `{}`                             |
- * | true    | 'sk-...'   | `{ APIYI_API_KEY: 'sk-...' }`    |
+ * `env` decision table (when enabled && apiKey are both truthy):
+ * | videoModel       | env                                                            |
+ * |------------------|----------------------------------------------------------------|
+ * | undefined / ''   | `{ APIYI_API_KEY: '<key>' }`                                   |
+ * | 'gemini-x.y-...' | `{ APIYI_API_KEY: '<key>', GEMINI_MODEL: 'gemini-x.y-...' }`   |
  *
- * The `enabled && !apiKey` combination should never happen in practice — the
- * AgentManager always passes an apiKey when enabling. Emitting `{}` in that
- * case is the safest defensive fallback: it avoids writing a stale placeholder
- * literal to disk that the codex CLI would pass through verbatim.
+ * If `enabled` is false OR `apiKey` is missing, env is always `{}` regardless
+ * of `videoModel`. The `enabled && !apiKey` combination should never happen
+ * in practice — the AgentManager always passes an apiKey when enabling.
+ * Emitting `{}` in that case is the safest defensive fallback.
  */
 export interface ApiyiMcpConfigEntry {
   command: string
@@ -65,6 +72,9 @@ export function buildApiyiMcpConfigEntry(
   const env: Record<string, string> = {}
   if (input.enabled && input.apiKey) {
     env.APIYI_API_KEY = input.apiKey
+    if (input.videoModel) {
+      env.GEMINI_MODEL = input.videoModel
+    }
   }
   return {
     command: input.nodeBin,
