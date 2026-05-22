@@ -42,6 +42,9 @@ import { registerAttachmentsThumbIpc } from './file-explorer/attachmentsIpc'
 import { registerFsWatcherIpc, disposeAll as disposeFsWatchers } from './file-explorer/fsWatcher'
 import { startCatimationMcpServer } from './mcp/server'
 import type { McpRuntime } from './mcp/server'
+import { resolveWorkspacePaths } from './agent/codexConfigStore'
+import { getApiyiMcpEntryPath } from './agent/apiyiMcpLauncher'
+import { seedApiyiMcpEntry } from './agent/apiyiMcpSeed'
 
 // 检测开发模式：通过命令行参数或环境变量
 const isDev = process.argv.includes('--dev') || process.env.NODE_ENV === 'development'
@@ -784,6 +787,30 @@ app.whenReady().then(async () => {
     void initAgentRuntime(mainWindow).catch((error) => {
       console.error('[AgentRuntime] init failed:', error)
     })
+  }
+
+  // First-boot seed: ensure mcp_servers.apiyi exists (disabled) in the
+  // user's personal codex config. Cheap (~5-50ms), idempotent, best-effort.
+  try {
+    const apiyiPaths = resolveWorkspacePaths({
+      home: app.getPath('home'),
+      cwd: process.cwd(),
+      userData: app.getPath('userData'),
+      resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+    })
+    const apiyiEntry = getApiyiMcpEntryPath({
+      appPath: app.getAppPath(),
+      isPackaged: app.isPackaged,
+      resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+    })
+    const apiyiAction = await seedApiyiMcpEntry({
+      personalConfigToml: apiyiPaths.personalConfigToml,
+      entryPath: apiyiEntry,
+      nodeBin: process.execPath,
+    })
+    console.log(`[apiyi-mcp] first-boot seed: ${apiyiAction}`)
+  } catch (err) {
+    console.warn('[apiyi-mcp] seed failed:', err)
   }
 
   // 非关键路径：延迟初始化
