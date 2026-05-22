@@ -210,6 +210,7 @@ const IPC_CHANNELS = {
     GET_PROVIDERS: 'agent:get-providers',
     SET_ACTIVE_PROVIDER: 'agent:set-active-provider',
     SET_PROVIDER_API_KEY: 'agent:set-provider-api-key',
+    SET_APIYI_VIDEO_KEY: 'agent:set-apiyi-video-key',
     ADD_CUSTOM_PROVIDER: 'agent:add-custom-provider',
     UPDATE_CUSTOM_PROVIDER: 'agent:update-custom-provider',
     REMOVE_CUSTOM_PROVIDER: 'agent:remove-custom-provider',
@@ -429,6 +430,7 @@ export interface ElectronAPI {
     }>
     setActiveProvider: (id: string) => Promise<{ ok: boolean; error?: string; activeId?: string }>
     setProviderApiKey: (id: string, key: string) => Promise<{ ok: boolean; error?: string }>
+    setApiyiVideoKey: (key: string) => Promise<{ ok: boolean; error?: string }>
     addCustomProvider: (
       input: CodexCustomProviderInput,
     ) => Promise<{ ok: boolean; error?: string; provider?: CodexProviderRecord }>
@@ -929,6 +931,12 @@ const electronAPI: ElectronAPI = {
       safeInvoke<{ ok: boolean; error?: string }>(
         IPC_CHANNELS.AGENT.SET_PROVIDER_API_KEY,
         id,
+        key,
+      ),
+
+    setApiyiVideoKey: (key: string) =>
+      safeInvoke<{ ok: boolean; error?: string }>(
+        IPC_CHANNELS.AGENT.SET_APIYI_VIDEO_KEY,
         key,
       ),
 

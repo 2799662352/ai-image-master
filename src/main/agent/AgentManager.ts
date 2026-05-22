@@ -21,6 +21,7 @@ import {
   buildGatewayConfigEntry,
   selectDockerStdioEntries,
 } from './dockerMcpFix'
+import { getApiyiMcpEntryPath, buildApiyiMcpConfigEntry } from './apiyiMcpLauncher'
 import {
   deleteSkill,
   getSkillDetail,
@@ -372,6 +373,51 @@ export class AgentManager {
       this.codexApiKey = (key ?? '').trim()
     }
     return { ok: true }
+  }
+
+  /**
+   * Atomically persist the apiyi-video API key (used by the bundled
+   * apiyi-mcp-server) and update the codex `mcp_servers.apiyi` TOML
+   * entry. Triggers `reloadMcpServers` so codex re-spawns the apiyi
+   * child with the new env without restarting the codex parent.
+   *
+   * Empty key disables the MCP cleanly: `enabled: false` + `env: {}`.
+   *
+   * Failure semantics: if providerStore.setApiKey succeeds but
+   * batchWriteConfig throws, we leave the key in providers.json and
+   * surface the error. The next call re-converges. We do NOT
+   * roll back providers.json (partial-rollback is more fragile than
+   * re-converge).
+   */
+  async setApiyiVideoKey(key: string): Promise<{ ok: true } | { ok: false; error: string }> {
+    const trimmed = (key ?? '').trim()
+    try {
+      await this.providerStore.setApiKey('apiyi-video', trimmed)
+
+      const entryPath = getApiyiMcpEntryPath({
+        appPath: app?.getAppPath?.() ?? '',
+        isPackaged: !!app?.isPackaged,
+        resourcesPath: app?.isPackaged ? process.resourcesPath : undefined,
+      })
+
+      const entry = buildApiyiMcpConfigEntry({
+        entryPath,
+        nodeBin: process.execPath,
+        enabled: trimmed.length > 0,
+        apiKey: trimmed.length > 0 ? trimmed : undefined,
+      })
+
+      if (!this.backend.batchWriteConfig) {
+        throw new Error('Codex backend missing batchWriteConfig')
+      }
+      await this.backend.batchWriteConfig(
+        [{ keyPath: 'mcp_servers.apiyi', value: entry, mergeStrategy: 'replace' }],
+        true,
+      )
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
   }
 
   async addCustomProvider(input: NewCustomProvider): Promise<ProviderPreset> {
