@@ -39,6 +39,40 @@ pnpm build:win           # Windows 安装包
 
 纯 Electron 桌面应用,无 Docker 部署。
 
+## 远程 apiyi 网关 / BYOK(可选)
+
+如果想跨设备/多人共用 `apiyi-mcp-server` 的能力 —— 在自己的服务器上挂一个 HTTPS endpoint,
+**每个用户填自己的 apiyi key**(BYOK,Bring Your Own Key):
+
+```
+[ Client ] ─ Authorization: Bearer sk-xxx ─→ https://api.example.com/mcp
+                                                    │
+                                                    ▼ (HTTPS / CDN / DDoS / WAF)
+                                          [ 腾讯 EdgeOne (或其他 CDN) ]
+                                                    │ 回源 HTTP:80
+                                                    ▼
+                                            [ apiyi-fastmcp (Python) ]
+                                                    │ per call: read Bearer,
+                                                    │ build google-genai client
+                                                    ▼
+                                              api.apiyi.com
+```
+
+实现细节:`deploy/apiyi-fastmcp/server.py` 用 **FastMCP** 重写了 `apiyi-mcp-server`(原 Node 版)
+的两个工具 `generate_content` + `generate_content_batch`,直接调用 `google-genai` Python SDK
+打到 apiyi 网关。**API key 来自每次请求的 Authorization 头**,服务端不持有任何 key、不缓存任何 key,
+是目前主流 MCP 网关(Docker MCP Gateway / Supergateway / mcp-proxy)都不原生支持的 BYOK 模式。
+
+源站只跑 FastMCP 监听 80 端口,HTTPS 由前面的 CDN / 反代统一终止(我们用的是腾讯 EdgeOne;
+没有 CDN 就翻 git 历史拉回 Caddy 配置自己签 Let's Encrypt 证书,二选一)。
+
+完整方案见 [`deploy/README.md`](./deploy/README.md) —— 包含 Docker Compose、EdgeOne 配置、
+客户端 JSON 配置示例(支持 Cursor / Codex / Claude Desktop)。一行命令部署:
+
+```bash
+cd deploy && docker compose up -d --build
+```
+
 ## 项目结构
 
 ```

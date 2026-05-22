@@ -1,0 +1,29 @@
+[project]
+name = "apiyi-fastmcp"
+version = "2.0.0"
+description = "BYOK Gemini gateway — FastMCP rewrite of apiyi-mcp-server"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "tecx" }]
+dependencies = [
+    "fastmcp>=2.10.0,<4",
+    "google-genai>=1.0.0,<2",
+    "pydantic>=2.7,<3",
+    "starlette>=0.37",
+    "uvicorn[standard]>=0.30",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+apiyi-fastmcp = "server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+only-include = ["server.py"]
+
+[tool.hatch.build.targets.wheel.sources]
+"server.py" = "apiyi_fastmcp/__init__.py"
