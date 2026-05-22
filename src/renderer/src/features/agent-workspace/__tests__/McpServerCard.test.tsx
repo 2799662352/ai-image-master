@@ -19,6 +19,7 @@ function makeServer(overrides: Partial<McpServerCardData> = {}): McpServerCardDa
     error: null,
     tools: [],
     isBuiltin: false,
+    isAppBundled: false,
     ...overrides,
   }
 }
@@ -149,5 +150,78 @@ describe('McpServerCard', () => {
       />,
     )
     expect(screen.getByText('Search repositories')).toBeTruthy()
+  })
+
+  // Cursor-style UX: edit + delete buttons must be ALWAYS visible (not
+  // hover-revealed) so users do not need to know to hover and never need
+  // to scroll the card off-screen to reach destructive actions.
+  it('renders edit and delete buttons in the header row, always visible (no hover required)', () => {
+    const onEdit = vi.fn()
+    const onDelete = vi.fn()
+    render(
+      <McpServerCard
+        server={makeServer()}
+        onEdit={onEdit}
+        onDelete={onDelete}
+        onToggle={vi.fn()}
+        onLogin={vi.fn()}
+      />,
+    )
+    const editBtn = screen.getByRole('button', { name: /编辑 test-server/ })
+    const deleteBtn = screen.getByRole('button', { name: /删除 test-server/ })
+    expect(editBtn).toBeTruthy()
+    expect(deleteBtn).toBeTruthy()
+    fireEvent.click(editBtn)
+    expect(onEdit).toHaveBeenCalledWith('test-server')
+    fireEvent.click(deleteBtn)
+    expect(onDelete).toHaveBeenCalledWith('test-server')
+  })
+
+  it('hides edit and delete buttons for codex built-in servers', () => {
+    render(
+      <McpServerCard
+        server={makeServer({ isBuiltin: true })}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggle={vi.fn()}
+        onLogin={vi.fn()}
+      />,
+    )
+    expect(screen.queryByRole('button', { name: /编辑/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /删除/ })).toBeNull()
+  })
+
+  it('shows a "预装" badge for app-bundled MCPs', () => {
+    render(
+      <McpServerCard
+        server={makeServer({ name: 'apiyi', isAppBundled: true })}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggle={vi.fn()}
+        onLogin={vi.fn()}
+      />,
+    )
+    expect(screen.getByText('预装')).toBeTruthy()
+  })
+
+  it('apiyi (bundled) gets the api-key hint instead of the Docker MCP Gateway hint', () => {
+    render(
+      <McpServerCard
+        server={makeServer({
+          name: 'apiyi',
+          isAppBundled: true,
+          command: 'node',
+          args: ['/path/to/apiyi-mcp/dist/index.js'],
+          status: 'ready',
+          tools: [],
+        })}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggle={vi.fn()}
+        onLogin={vi.fn()}
+      />,
+    )
+    expect(screen.getByText(/视频理解 API Key/)).toBeTruthy()
+    expect(screen.queryByText(/Docker Desktop/)).toBeNull()
   })
 })

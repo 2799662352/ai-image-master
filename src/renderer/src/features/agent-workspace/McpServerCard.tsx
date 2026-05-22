@@ -20,6 +20,52 @@ const STATUS_DOT: Record<string, string> = {
   unknown: 'bg-zinc-600',
 }
 
+const STATUS_LABEL: Record<string, string> = {
+  ready: '已连接',
+  starting: '启动中',
+  failed: '连接失败',
+  cancelled: '已禁用',
+  unknown: '状态未知',
+}
+
+function PencilIcon(): React.JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.121 2.121 0 113 3L7 19l-4 1 1-4L16.5 3.5z" />
+    </svg>
+  )
+}
+
+function TrashIcon(): React.JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-2 14a2 2 0 01-2 2H9a2 2 0 01-2-2L5 6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+    </svg>
+  )
+}
+
 /**
  * Render the "ready but tools=0" hint based on the actual server, not a
  * one-size-fits-all Docker message. apiyi (and any other app-bundled MCP
@@ -86,33 +132,102 @@ export function McpServerCard({
   onLogin,
 }: McpServerCardProps): React.JSX.Element {
   const dotColor = STATUS_DOT[server.status] ?? STATUS_DOT.unknown
+  const statusLabel = STATUS_LABEL[server.status] ?? server.status
   const needsLogin = server.authStatus === 'notLoggedIn'
+  const commandLine =
+    server.type === 'http'
+      ? (server.url ?? '')
+      : [server.command, ...(server.args ?? [])].filter(Boolean).join(' ')
+  const emptyToolsHint =
+    server.status === 'ready' && server.tools.length === 0 ? getEmptyToolsHint(server) : null
 
   return (
-    <div className="group rounded-lg border border-zinc-800/60 bg-zinc-900/60 p-4 transition-colors hover:border-zinc-700/80">
-      {/* Header row: status dot · name · type badge · toggle */}
-      <div className="flex items-center gap-2">
-        <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${dotColor}`} title={server.status} />
-        <span className="flex-1 truncate text-sm font-medium text-zinc-100">{server.name}</span>
-        <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] uppercase text-zinc-400">
+    <div className="rounded-lg border border-zinc-800/60 bg-zinc-900/60 p-3 transition-colors hover:border-zinc-700/80">
+      {/* Header row — name on the left, actions + toggle ALWAYS visible on
+          the right. Cursor-style: never hidden behind hover, never pushed
+          off-screen by long description text below (which is line-clamped). */}
+      <div className="flex min-w-0 items-center gap-2">
+        <span
+          className={`h-2 w-2 shrink-0 rounded-full ${dotColor}`}
+          title={statusLabel}
+          aria-label={statusLabel}
+        />
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-100" title={server.name}>
+          {server.name}
+        </span>
+
+        {server.isAppBundled && (
+          <span
+            className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-300"
+            title="应用自带的预装 MCP 服务器"
+          >
+            预装
+          </span>
+        )}
+        <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] uppercase text-zinc-500">
           {server.type}
         </span>
-        <ToggleSwitch
-          checked={server.enabled}
-          onChange={(next) => onToggle(server.name, next)}
-          label={server.enabled ? '已启用' : '已禁用'}
-        />
+
+        {/* Action cluster — always visible, fixed-width so card width is
+            stable regardless of name length or status text. */}
+        <div className="ml-1 flex shrink-0 items-center gap-0.5">
+          {!server.isBuiltin && (
+            <>
+              <button
+                type="button"
+                onClick={() => onEdit(server.name)}
+                className="flex h-7 w-7 items-center justify-center rounded text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+                title="编辑"
+                aria-label={`编辑 ${server.name}`}
+              >
+                <PencilIcon />
+              </button>
+              <button
+                type="button"
+                onClick={() => onDelete(server.name)}
+                className="flex h-7 w-7 items-center justify-center rounded text-zinc-500 transition-colors hover:bg-red-500/15 hover:text-red-300"
+                title="删除"
+                aria-label={`删除 ${server.name}`}
+              >
+                <TrashIcon />
+              </button>
+            </>
+          )}
+          <div className="ml-1">
+            <ToggleSwitch
+              checked={server.enabled}
+              onChange={(next) => onToggle(server.name, next)}
+              label={server.enabled ? '已启用' : '已禁用'}
+            />
+          </div>
+        </div>
       </div>
 
-      {/* Command / URL */}
-      <p className="mt-1 truncate text-xs text-zinc-500">
-        {server.type === 'http' ? server.url : [server.command, ...(server.args ?? [])].join(' ')}
-      </p>
+      {/* Command / URL — single line, full text on hover */}
+      {commandLine && (
+        <p className="mt-1.5 truncate text-xs text-zinc-500" title={commandLine}>
+          {commandLine}
+        </p>
+      )}
 
-      {/* Error message */}
+      {/* Error message — clamped to 2 lines so it can never push the card
+          taller than ~3 rows of text. Hover for full message. */}
       {server.error && (
-        <p className="mt-1 text-xs text-red-400" title={server.error}>
+        <p
+          className="mt-1 line-clamp-2 break-all text-xs text-red-400"
+          title={server.error}
+        >
           {server.error}
+        </p>
+      )}
+
+      {/* Empty-tools hint — also clamped + hover-for-full. */}
+      {emptyToolsHint && (
+        <p
+          className="mt-1 line-clamp-2 break-all text-xs text-amber-300/80"
+          title={emptyToolsHint}
+        >
+          {emptyToolsHint}
         </p>
       )}
 
@@ -130,50 +245,28 @@ export function McpServerCard({
           ))}
         </div>
       )}
-      {server.status === 'ready' && server.tools.length === 0 && (
-        <p className="mt-2 text-xs text-amber-300/80">
-          {getEmptyToolsHint(server)}
-        </p>
+
+      {/* Login row — only rendered when an HTTP MCP demands auth, which is
+          rare enough that a dedicated row is fine here. */}
+      {(needsLogin || loggingIn) && (
+        <div className="mt-2 flex items-center gap-2">
+          {needsLogin && !loggingIn && (
+            <button
+              type="button"
+              onClick={() => onLogin(server.name)}
+              className="rounded bg-cyan-600/80 px-2.5 py-1 text-xs font-medium text-white hover:bg-cyan-600"
+            >
+              登录 →
+            </button>
+          )}
+          {loggingIn && (
+            <span className="inline-flex items-center gap-1.5 rounded bg-zinc-800 px-2.5 py-1 text-xs text-zinc-300">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-cyan-400" />
+              登录中...
+            </span>
+          )}
+        </div>
       )}
-
-      {/* Action row: login button (when needed), edit, delete */}
-      <div className="mt-3 flex items-center gap-2">
-        {needsLogin && !loggingIn && (
-          <button
-            type="button"
-            onClick={() => onLogin(server.name)}
-            className="rounded bg-cyan-600/80 px-2.5 py-1 text-xs font-medium text-white hover:bg-cyan-600"
-          >
-            登录 →
-          </button>
-        )}
-        {loggingIn && (
-          <span className="inline-flex items-center gap-1.5 rounded bg-zinc-800 px-2.5 py-1 text-xs text-zinc-300">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-cyan-400" />
-            登录中...
-          </span>
-        )}
-
-        {/* Edit/delete only revealed on hover to keep the card calm */}
-        {!server.isBuiltin && (
-          <div className="ml-auto flex gap-2 opacity-0 transition-opacity group-hover:opacity-100">
-            <button
-              type="button"
-              onClick={() => onEdit(server.name)}
-              className="rounded px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
-            >
-              编辑
-            </button>
-            <button
-              type="button"
-              onClick={() => onDelete(server.name)}
-              className="rounded px-2 py-1 text-xs text-red-400/70 hover:bg-red-500/10 hover:text-red-300"
-            >
-              删除
-            </button>
-          </div>
-        )}
-      </div>
     </div>
   )
 }
