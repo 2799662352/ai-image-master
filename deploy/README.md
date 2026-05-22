@@ -349,9 +349,14 @@ A: Bearer 里的 sk-xxx 在 apiyi 那边无效 / 余额不足。直接 cURL 测�
 curl -H "Authorization: Bearer sk-xxx" https://api.apiyi.com/v1beta/models
 ```
 
-**Q: 视频太大 / 上传慢。**
-A: EdgeOne 基础版对 POST body 有默认上限,大文件先压缩或拆批。`GEMINI_MAX_TOTAL_FILE_SIZE`
-(MB)也别忘了改。
+**Q: 视频太大 / 上传慢 / 大文件被 EdgeOne 切断。**
+A: 实测 ~12 MB base64 + Gemini Thinking(~50s 推理)会被 EdgeOne 默认 timeout 切断
+(`IncompleteRead`)。两种解法:
+1. **视频分析这种大请求走直连 IP**:`http://42.194.167.238/mcp`(防火墙记得放行
+   你自己的客户端 IP)。日常对话调用继续走 HTTPS 域名。
+2. **改 EdgeOne 配置**:控制台 → 站点加速 → 规则引擎 → 新建规则 →
+   匹配 `path 等于 /mcp` → 操作:`回源超时 180s` + `请求体大小 100MB`。
+另外:`GEMINI_MAX_TOTAL_FILE_SIZE`(MB,默认 50)是服务端硬上限,要更大改这个。
 
 **Q: 想跑单租户(自己用,不公网开放)。**
 A: `docker-compose.yml` 的 `gateway.environment` 加 `APIYI_API_KEY=sk-xxx`,客户端
