@@ -209,6 +209,63 @@ describe('useMcpStore', () => {
   })
 
   // -------------------------------------------------------------------------
+  // v4.3.18: when codex has already rejected the on-disk config and we've
+  // surfaced a fatal red banner via `codexConfigError` (with a "修复 X"
+  // deep-link), `listMcpServersRpc` necessarily fails for the same root
+  // cause (one shared config-reload pipeline). Re-displaying the same error
+  // as an amber `syncError` banner was double-banner noise pointing at the
+  // same broken entry. `syncTools` now stays silent in that case.
+  // -------------------------------------------------------------------------
+  it('syncTools suppresses syncError when codexConfigError already covers the same invalid-transport root cause', async () => {
+    useMcpStore.setState({
+      codexConfigError: 'invalid configuration: invalid transport in `mcp_servers.apiyi`',
+      servers: [
+        { name: 'apiyi', type: 'stdio', command: 'node', enabled: true, status: 'failed', error: null, tools: [], isBuiltin: false, isAppBundled: false },
+      ],
+    })
+    mockApi.listMcpServersRpc.mockResolvedValue({
+      ok: false,
+      error: 'failed to reload config: C:\\...config.toml:1:1: invalid transport',
+    })
+
+    await useMcpStore.getState().syncTools()
+
+    const state = useMcpStore.getState()
+    expect(state.syncError).toBeNull()
+    expect(state.syncing).toBe(false)
+  })
+
+  it('syncTools still reports unrelated sync errors even when codexConfigError is set', async () => {
+    // If codex's reload pipeline is broken AND there's an UNRELATED RPC
+    // failure on top (network, IPC handler missing, etc.), the user needs
+    // to see it — only invalid-transport / reload-config noise is muted.
+    useMcpStore.setState({
+      codexConfigError: 'invalid configuration: invalid transport in `mcp_servers.apiyi`',
+    })
+    mockApi.listMcpServersRpc.mockResolvedValue({
+      ok: false,
+      error: 'spawn ENOENT: codex binary missing',
+    })
+
+    await useMcpStore.getState().syncTools()
+
+    expect(useMcpStore.getState().syncError).toContain('spawn ENOENT')
+  })
+
+  it('syncTools reports ok=false errors normally when codexConfigError is NOT set', async () => {
+    // Sanity: A→fix shouldn't accidentally swallow errors on the happy
+    // path. With no codexConfigError, every ok=false surfaces as before.
+    mockApi.listMcpServersRpc.mockResolvedValue({
+      ok: false,
+      error: 'failed to reload config: 1:1: invalid transport',
+    })
+
+    await useMcpStore.getState().syncTools()
+
+    expect(useMcpStore.getState().syncError).toContain('invalid transport')
+  })
+
+  // -------------------------------------------------------------------------
   // Codex rejecting the on-disk config (e.g. invalid `transport`) USED TO
   // wall the user off the entire MCP page — `fetchServers` set `error` and
   // `McpServerList` short-circuited to a full-page error with only a

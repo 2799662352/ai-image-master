@@ -803,12 +803,30 @@ app.whenReady().then(async () => {
       isPackaged: app.isPackaged,
       resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
     })
+    // -------------------------------------------------------------------
+    // v4.3.18: previously this site passed `nodeBin: process.execPath`,
+    // but SeedApiyiMcpInput was refactored in v4.3.16 to take
+    // `command` + `extraEnv?` — `nodeBin` is now silently ignored and
+    // `input.command` resolves to `undefined`. @iarna/toml.stringify
+    // skips undefined fields, so freshly-seeded toml entries had NO
+    // `command = "..."` line at all. codex 0.132's deserializer then
+    // sees `command = None && url = None` and aborts the entire config
+    // load with bare `"invalid transport"` (codex-rs/core/src/config/
+    // types.rs:124-155), wedging the MCP page for any user whose first
+    // boot landed on v4.3.16+.
+    //
+    // Fix: pick the right binary via `resolveApiyiCommand` (system
+    // `node` if on PATH, else Electron-as-Node with ELECTRON_RUN_AS_NODE
+    // in extraEnv) and forward both fields with their correct names.
+    // -------------------------------------------------------------------
+    const apiyiCmd = await resolveApiyiCommand(process.execPath)
     const apiyiAction = await seedApiyiMcpEntry({
       personalConfigToml: apiyiPaths.personalConfigToml,
       entryPath: apiyiEntry,
-      nodeBin: process.execPath,
+      command: apiyiCmd.command,
+      extraEnv: apiyiCmd.extraEnv,
     })
-    console.log(`[apiyi-mcp] boot convergence: ${apiyiAction}`)
+    console.log(`[apiyi-mcp] boot convergence: ${apiyiAction} (command=${apiyiCmd.command})`)
   } catch (err) {
     console.warn('[apiyi-mcp] seed failed:', err)
   }

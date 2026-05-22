@@ -138,6 +138,59 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
+### v4.3.18 (2026-05-23) — 根因修复: v4.3.16 引入的 `command=undefined` 回归(全新装机的 apiyi 永远 broken) + 编辑器先验校验 + banner 去重
+
+**用户报告**:v4.3.17 给了「修复 apiyi」按钮但是问题反复出现 —— 重新装/重新启动后,顶部仍然冒出**两条重复 banner**:`Codex 拒绝加载当前 MCP 配置: invalid transport in 'mcp_servers.apiyi'` 和 `工具列表同步失败: failed to reload config: ... invalid transport(状态点不受影响,可点「刷新」重试)`。
+
+**Phase 1 / 根因调查**
+
+按 systematic-debugging 三层取证,顺着调用栈反推:
+
+- **Layer 1(产物)**:`~/.codex/config.toml` 里 `[mcp_servers.apiyi]` 块**没有 `command` 字段也没有 `url` 字段**(只有 `args` / `env` / `enabled` / `tool_timeout_sec`)
+- **Layer 2(校验)**:codex 0.132.0 的 `McpServerConfig` 是 `serde(untagged)` 枚举(`McpServerTransportConfig::{Stdio{command,args,env}, StreamableHttp{url,bearer_token_env_var}}`)。一旦 entry 同时缺 `command` 和 `url`,两个 variant 都匹配不上,deserializer 直接吐 `invalid transport` —— **这一层我们改不了**(上游 Rust binary)
+- **Layer 3(写入)**:谁把 `command` 字段写丢的?往回追到 v4.3.16 提交 `8fb60d2`:`src/main/index.ts:809` 把旧的 `nodeBin: process.execPath` 直接换成新签名 `seedApiyiMcpEntry({ command: ..., extraEnv: ... })` 时,**漏改了 call site**,变成 `seedApiyiMcpEntry({ ...other, nodeBin: process.execPath })` —— `nodeBin` 不是 `SeedApiyiMcpInput` 的合法字段,TypeScript 没拦下来是因为 `input.command` 类型是 `string | undefined` 在写入路径上没被 narrow
+
+- **Layer 4(放大器)**:`apiyiMcpSeed.ts` 拿到 `input.command === undefined` 后,写出的 entry 是 `{ command: undefined, args: [...], env: {...} }`。`@iarna/toml.stringify` 看到 `undefined` 字段**静默丢弃**(它不能在 TOML 里编码 `undefined`),最终落盘的就是缺 `command` 的非法 transport entry。所有 v4.3.16+ **全新装机**或**首次 seed 的用户**,机器上都生成了这条 broken entry → 进 codex → 整页报错
+
+**为什么 v4.3.17 没修到根**:v4.3.17 的精力全花在"让 UI 别死锁 + 提供编辑入口"上(读 raw TOML、graceful degradation、修复按钮),**完全没动 seed 写入路径**。所以每次启动 boot convergence 还是写出同样的 broken entry,用户每打开一次页面就再被刷一次。
+
+**Phase 2 / 修复(三件并行,B 是根因)**
+
+| 代号 | 改动 | 文件 | 说明 |
+|------|------|------|------|
+| **B0** | 修 v4.3.16 call site 回归 | `src/main/index.ts` | 改成先 `resolveApiyiCommand(process.execPath)` 拿到 `{ command, extraEnv }`,再传给 `seedApiyiMcpEntry({ command: apiyiCmd.command, extraEnv: apiyiCmd.extraEnv, ... })`。**全新装机现在永远写出带 `command` 字段的合法 entry** |
+| **B1** | seed 自愈 broken entry | `src/main/agent/apiyiMcpSeed.ts` | 加 `isBrokenApiyiEntryMissingTransport()` 检测器 + `'repaired'` 新 SeedAction。boot convergence 时如果发现现存 `apiyi` entry **同时缺 `command` 和 `url`**,**就地补回 `command`/`args`,保留 `env`/`enabled`/`tool_timeout_sec` 等用户字段**;`extraEnv` 走 mergeEnvWithScaffold(永不覆盖用户已设的值)。**老用户从 v4.3.16/v4.3.17 升上来,首次启动就被自动修好,不用点任何按钮** |
+| **A** | banner 去重 | `src/renderer/src/features/agent-workspace/useMcpStore.ts` | `syncTools` 失败时,如果 `codexConfigError` 已经在显示同根因错误(`/invalid transport/i` 或 `/reload config/i`),**直接吞掉 `syncError`**,只留一条 banner。RPC 调用本身不变 —— 仍然会调,只是不再渲染重复消息 |
+| **C** | JSON 编辑器先验校验 | `src/renderer/src/features/agent-workspace/mcpEntryValidator.ts`(新) + `McpJsonEditor.tsx` | 抽出 `validateMcpServerEntry()` —— 在前端**复刻** codex 的 `McpServerTransportConfig::{Stdio, StreamableHttp}` 判定逻辑(`command` 必须是非空 string,或 `url` 必须是非空 string,且两者类型正确)。保存按钮调 `batchWriteConfig` 之前,对每条 entry 跑一遍,任何一条不合法直接 `throw new Error('mcp_servers.xxx: ...')` 阻断写入,在 modal 顶部红条提示 —— **用户在编辑器里手编出一份缺 `command` 的配置,在写盘之前就被拦下,不会重蹈 v4.3.16 覆辙** |
+
+**Phase 3 / 测试覆盖**
+
+- `apiyiMcpSeed.test.ts`:加 3 个新 case,17/17 全过
+  - `'returns repaired when existing apiyi entry is missing both command and url'`:从 broken entry 自愈到合法 stdio,验证 `env` / `enabled` 等用户字段被保留
+  - `'returns repaired with extraEnv merged additively, never overwriting existing env values'`:验证 `extraEnv` 仅补缺,从不覆盖已存在的 key
+  - `'does NOT touch entries that have an explicit url'`(防回归):URL 型 entry 不应被识别成 broken
+- `useMcpStore.test.ts`:加 3 个新 case
+  - `'syncTools suppresses syncError when codexConfigError already covers the same invalid-transport root cause'`
+  - `'syncTools still reports unrelated sync errors even when codexConfigError is set'`(防过度抑制)
+  - `'syncTools reports ok=false errors normally when codexConfigError is NOT set'`(健康路径)
+- `mcpEntryValidator.test.ts`(新):覆盖 valid stdio / valid http / missing-transport / empty command / wrong-typed command / null entry / array entry / `formatValidationError` 输出文案
+
+**总计**:6 个测试文件 / 94 个测试全过。
+
+#### 用户可见行为
+
+1. **从 v4.3.16/v4.3.17 升级到 v4.3.18,机器上有 broken apiyi 块的用户**:启动那一刻 `seedApiyiMcpEntry` 直接 `'repaired'`,console 日志 `[apiyi-mcp] boot convergence: repaired (command=...)`,**用户进 MCP 页面看到的就是已经修好的状态**,没有 banner,无需点任何按钮
+2. **全新装 v4.3.18 的用户**:`'created'` 路径写出的 entry **第一次就带 `command` 字段**,永远不会触发 `invalid transport`
+3. **JSON 编辑器手编场景**:用户在 modal 里把 `command` 删掉或写成空串 → 点保存 → 红条提示 `mcp_servers.xxx: missing transport: either 'command' (stdio) or 'url' (streamable-http) is required`,写盘动作被阻断
+4. **同根因 + 不同根因的 banner 区分**:同根因(invalid transport)只留 `codexConfigError` 一条;不同根因(比如 RPC 网络挂了 / 工具列表里某个 server 启不来)`syncError` 该报还报,不会被过度吞
+
+#### 不修的部分(deliberately scoped out)
+
+- **codex 0.132.0 自己的 `McpServerConfig` 校验逻辑**:不动,这条线我们尊重上游
+- **autoFixApiyiBroken 一键修复按钮的独立 IPC**:v4.3.17 那个「修复 apiyi」按钮目前是直接打开 JSON 编辑器,工作良好;v4.3.18 已经把根因从 boot path 治了,**绝大多数用户根本走不到那个按钮**,所以暂不加独立 RPC
+
+---
+
 ### v4.3.17 (2026-05-23) — Hotfix: codex 拒绝 MCP 配置时整页死锁(用户无路径修复)
 
 **用户报告**:升级到 v4.3.16 后打开 Agent Workspace → MCP Servers,整页变成一条红色错误:

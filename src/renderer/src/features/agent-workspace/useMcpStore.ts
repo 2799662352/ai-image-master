@@ -394,7 +394,22 @@ export const useMcpStore = create<McpStore>((set, get) => ({
         'listMcpServersRpc',
       )
       if ((res as any)?.ok === false) {
-        set({ syncing: false, syncError: (res as any).error ?? '工具列表同步失败' })
+        // When codex has already rejected the on-disk TOML, `fetchServers`
+        // surfaces a fatal red banner via `codexConfigError` with a "修复"
+        // deep-link. `listMcpServersRpc` necessarily fails for the same
+        // root cause (codex shares one config-reload pipeline between
+        // RPCs), so re-displaying the same error as an amber `syncError`
+        // banner is just noise pointing back to the same broken entry.
+        // Stay silent here; the fix path runs through the red banner.
+        const rawErr = (res as any).error
+        const sameRootCause =
+          !!get().codexConfigError
+          && typeof rawErr === 'string'
+          && (/invalid transport/i.test(rawErr) || /reload config/i.test(rawErr))
+        set({
+          syncing: false,
+          syncError: sameRootCause ? null : (rawErr ?? '工具列表同步失败'),
+        })
         return
       }
       const liveServers = getLiveServersFromListResponse(res)

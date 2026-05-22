@@ -39,6 +39,7 @@ loader.config({ monaco })
 
 import { mcpConfigSchema } from './mcpSchemaJson'
 import { stripNullDeep } from './mcpConfigSanitizer'
+import { validateMcpServerEntry, formatValidationError } from './mcpEntryValidator'
 import { useMcpStore } from './useMcpStore'
 
 interface McpJsonEditorProps {
@@ -161,6 +162,20 @@ export function McpJsonEditor({ serverName, onClose }: McpJsonEditorProps): Reac
       const parsed = JSON.parse(value)
       if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
         throw new Error('配置必须是一个 JSON 对象')
+      }
+
+      // ----------------------------------------------------------------
+      // Pre-flight: catch the codex "invalid transport" gate locally so
+      // the user gets a concrete "X 缺少 command/url" message inline
+      // instead of an opaque RPC failure (codex won't tell us WHICH
+      // server tripped the gate when batchWrite rejects). See
+      // mcpEntryValidator.ts for the rationale and codex source ref.
+      // ----------------------------------------------------------------
+      for (const [name, config] of Object.entries(parsed)) {
+        const validationErr = validateMcpServerEntry(name, config)
+        if (validationErr) {
+          throw new Error(formatValidationError(validationErr))
+        }
       }
 
       const api = getApi()

@@ -272,6 +272,121 @@ describe('seedApiyiMcpEntry', () => {
     expect(action).toBe('skipped')
   })
 
+  // ---------------------------------------------------------------------
+  // v4.3.18 regression rescue: v4.3.16's seed call site bug
+  // (`nodeBin` field name shipped through `command`-typed slot →
+  // `input.command === undefined` → iarna/toml drops the line entirely)
+  // wrote `command`-less, `url`-less entries to disk. codex 0.132's
+  // `McpServerConfig::deserialize` aborts on this shape with bare
+  // `"invalid transport"`. Anyone whose first boot landed on v4.3.16/17
+  // needs the next boot to detect and repair the entry.
+  // ---------------------------------------------------------------------
+  it('repairs an existing entry that has neither command nor url (the v4.3.16 regression shape)', async () => {
+    await fs.writeFile(
+      configPath,
+      [
+        '[mcp_servers.apiyi]',
+        'args = ["D:\\\\old\\\\path.js"]',
+        'enabled = true',
+        '',
+        '[mcp_servers.apiyi.env]',
+        'APIYI_API_KEY = "sk-user-already-pasted"',
+        'GEMINI_MODEL = "gemini-3.5-flash"',
+        '',
+      ].join('\n'),
+      'utf8',
+    )
+
+    const action = await seedApiyiMcpEntry({
+      personalConfigToml: configPath,
+      entryPath: FAKE_ENTRY,
+      command: FAKE_NODE,
+      extraEnv: { ELECTRON_RUN_AS_NODE: '1' },
+    })
+    expect(action).toBe('repaired')
+
+    const parsed = parseToml(await fs.readFile(configPath, 'utf8')) as Record<string, unknown>
+    const apiyi = (parsed.mcp_servers as Record<string, unknown>).apiyi as {
+      command: string
+      args: string[]
+      enabled: boolean
+      env: Record<string, string>
+    }
+    // command + args now match the resolved binary (fixes the broken shape).
+    expect(apiyi.command).toBe(FAKE_NODE)
+    expect(apiyi.args).toEqual([FAKE_ENTRY])
+    // enabled is sacred — repair must NOT flip it (user already toggled on).
+    expect(apiyi.enabled).toBe(true)
+    // env: user-set values preserved, scaffold gaps backfilled, extraEnv layered.
+    expect(apiyi.env.APIYI_API_KEY).toBe('sk-user-already-pasted')
+    expect(apiyi.env.GEMINI_MODEL).toBe('gemini-3.5-flash')
+    expect(apiyi.env.APIYI_BASE_URL).toBe('https://api.apiyi.com')
+    expect(apiyi.env.ELECTRON_RUN_AS_NODE).toBe('1') // ← from extraEnv
+  })
+
+  it('repair is idempotent — second boot after a repair returns "skipped"', async () => {
+    await fs.writeFile(
+      configPath,
+      [
+        '[mcp_servers.apiyi]',
+        'args = ["D:\\\\old\\\\path.js"]',
+        'enabled = false',
+        '',
+        '[mcp_servers.apiyi.env]',
+        'APIYI_API_KEY = ""',
+        '',
+      ].join('\n'),
+      'utf8',
+    )
+
+    const first = await seedApiyiMcpEntry({
+      personalConfigToml: configPath,
+      entryPath: FAKE_ENTRY,
+      command: FAKE_NODE,
+    })
+    expect(first).toBe('repaired')
+
+    const second = await seedApiyiMcpEntry({
+      personalConfigToml: configPath,
+      entryPath: FAKE_ENTRY,
+      command: FAKE_NODE,
+    })
+    expect(second).toBe('skipped')
+  })
+
+  it('does NOT touch entries with explicit url (streamable_http transport — user intent honored)', async () => {
+    // Edge case: somehow the user wrote `url = "..."` for apiyi (maybe they
+    // pasted a future remote-apiyi setup). That's a valid transport from
+    // codex's perspective. Repair must not blow it away.
+    await fs.writeFile(
+      configPath,
+      [
+        '[mcp_servers.apiyi]',
+        'url = "https://api.13797248455.xyz/mcp"',
+        'enabled = true',
+        '',
+        '[mcp_servers.apiyi.env]',
+        'APIYI_API_KEY = "sk-x"',
+        '',
+      ].join('\n'),
+      'utf8',
+    )
+
+    const action = await seedApiyiMcpEntry({
+      personalConfigToml: configPath,
+      entryPath: FAKE_ENTRY,
+      command: FAKE_NODE,
+    })
+    // Not repaired — codex would accept this entry as streamable_http.
+    // env backfill still runs because APIYI_BASE_URL et al are missing.
+    expect(action).toBe('backfilled')
+
+    const parsed = parseToml(await fs.readFile(configPath, 'utf8')) as Record<string, unknown>
+    const apiyi = (parsed.mcp_servers as Record<string, unknown>).apiyi as Record<string, unknown>
+    expect(apiyi.url).toBe('https://api.13797248455.xyz/mcp')
+    expect((apiyi as { command?: string }).command).toBeUndefined() // never added
+  })
+
   it('is idempotent on repeated boots (seed → skip; backfill → skip)', async () => {
     const first = await seedApiyiMcpEntry({
       personalConfigToml: configPath,
