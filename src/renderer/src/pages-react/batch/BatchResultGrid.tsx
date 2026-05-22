@@ -4,6 +4,7 @@ import type { BatchItem } from '../../stores/useBatchStore'
 import { useBatchStore } from '../../stores/useBatchStore'
 import ImageEditToolbar from '../../components/shared/image-editors/ImageEditToolbar'
 import ImageEditorModal from '../../components/shared/image-editors/ImageEditorModal'
+import { useDisplaySrc } from '../../hooks/useDisplaySrc'
 import '../../components/shared/image-editors/image-editors.css'
 
 /**
@@ -170,6 +171,10 @@ const ResultCard = memo(function ResultCard({
   const isFail = item.status === 'error'
   const isRun = item.status === 'generating'
   const displayUrl = pickDisplayUrl(item)
+  // imgSrc 是 displayUrl 在 dataURL 时换出来的 blob: URL, 用于 <img src>。
+  // displayUrl 自己保持不变 —— ImageEditToolbar / Modal / onPreview / download
+  // 这些消费方仍要拿原始 dataURL/http 去走 API + IPC, blob: URL 在主进程不可读。
+  const imgSrc = useDisplaySrc(displayUrl)
   const isDone = item.status === 'done' && !!displayUrl
   // 同步切到 COS 之后, UI 用一个小角标提示当前展示的是哪种 URL。
   const upload = item.uploadStatus
@@ -251,11 +256,13 @@ const ResultCard = memo(function ResultCard({
         )}
         {isDone && (
           <img
-            src={displayUrl}
+            src={imgSrc}
             alt={item.prompt}
             loading="lazy"
             // (p5) decoding=async 让浏览器在后台线程解码大图,
             // 避免大批量结果一次性进入视口时主线程被解码阻塞掉好几帧。
+            // 配合 useDisplaySrc 把 dataURL 换成 blob: URL 后, 主线程完全不参与
+            // base64 → bitmap 的解析, 200 张卡 进入视口才真正不卡。
             decoding="async"
             className="w-full h-full object-cover block"
           />

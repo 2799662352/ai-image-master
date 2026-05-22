@@ -1,5 +1,6 @@
 import { memo, useState, useCallback } from 'react'
 import type { DonorItemView } from '../../hooks/useHistoryData'
+import { useDisplaySrc } from '../../hooks/useDisplaySrc'
 
 interface Props {
   item: DonorItemView
@@ -39,6 +40,10 @@ function DonorCardImpl({ item, onDelete, onPreview, onEdit }: Props) {
 
   const urls = item.displayUrls
   const primaryUrl = urls[0]
+  // 历史卡片缩略图是 HistoryPage 一屏最多的元素 (几十张甚至上百张)。
+  // 老条目的 displayUrl 是 data:image/png;base64,... — 同步解码会卡主线程,
+  // 用 useDisplaySrc 转成 blob: 让浏览器后台异步解码; http(cos)/blob 透传无开销。
+  const primaryImgSrc = useDisplaySrc(primaryUrl)
   const hasImage = !!primaryUrl && !imgError.has(0)
   const isBroken = item.isBroken
 
@@ -75,7 +80,7 @@ function DonorCardImpl({ item, onDelete, onPreview, onEdit }: Props) {
         {hasImage ? (
           <>
             <img
-              src={primaryUrl}
+              src={primaryImgSrc}
               alt={item.prompt || 'history'}
               loading="lazy"
               decoding="async"

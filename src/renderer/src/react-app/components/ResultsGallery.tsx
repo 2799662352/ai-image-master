@@ -1,6 +1,36 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { useDirectorStore } from '../stores/useDirectorStore'
 import { useDirectorGeneration } from '../hooks/useDirectorGeneration'
+import { useDisplaySrc } from '../../hooks/useDisplaySrc'
+
+/**
+ * 单格图 —— 把 `<img>` 抽出来,只为让 useDisplaySrc 能在 .map() 里安全调用。
+ * 钩子不能直接在 .map 回调里写,每张 cell 单独持有它那张的 blob: URL 生命周期。
+ * src 是 dataURL 时换成 blob: 让浏览器后台解码; http/blob 透传。
+ */
+function GalleryImage({
+  src,
+  alt,
+  className,
+  draggable,
+}: {
+  src: string
+  alt: string
+  className: string
+  draggable?: boolean
+}) {
+  const imgSrc = useDisplaySrc(src)
+  return (
+    <img
+      src={imgSrc}
+      alt={alt}
+      loading="lazy"
+      decoding="async"
+      className={className}
+      draggable={draggable}
+    />
+  )
+}
 
 const REGEN_COUNT_OPTIONS = [1, 2, 3, 4, 5, 6, 8, 10]
 
@@ -345,7 +375,7 @@ export function ResultsGallery() {
           className="relative group rounded-none overflow-hidden bg-[#27272A] cursor-pointer"
           onClick={() => openImageViewer(allUrls, safeIndex)}
         >
-          <img
+          <GalleryImage
             src={current.url}
             alt={`Result ${safeIndex + 1}`}
             className="w-full object-contain max-h-[380px]"
@@ -416,7 +446,7 @@ export function ResultsGallery() {
                     : 'border-transparent opacity-50 hover:opacity-90 hover:border-white/20'
                 }`}
               >
-                <img src={result.url} alt={`Thumb ${idx + 1}`} className="w-full h-full object-cover" />
+                <GalleryImage src={result.url} alt={`Thumb ${idx + 1}`} className="w-full h-full object-cover" />
                 <span className="absolute bottom-0 left-0 right-0 text-center text-[10px] text-white bg-black/60 py-0.5 select-none">
                   {idx + 1}
                 </span>
@@ -455,7 +485,7 @@ export function ResultsGallery() {
                   openImageViewer(allUrls, idx)
                 }}
               >
-                <img
+                <GalleryImage
                   src={result.url}
                   alt={`Panel ${idx + 1}`}
                   className="w-full h-full object-cover"

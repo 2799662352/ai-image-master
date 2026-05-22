@@ -138,6 +138,70 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
+### v4.3.15 (2026-05-22) — 三件套：图片解码卡顿根除 + 批量闭包覆盖 bug + gpt-image-2-vip 分辨率对齐
+
+本版本解决三个独立的图像生成痛点：(A) `<img src="data:image/...">` 同步解码阻塞主线程导致的"生成完那一下卡顿"，(B) 批量页运行中追加新 item 时参数被首次快照覆盖的 bug，(C) gpt-image-2-vip `resolutionMap` 像素值与 apiyi.com 文档不一致。
+
+**A. 客户端 base64 → blob: URL 解码优化(根因:同步 base64 解码)**
+
+**问题**: 单张生成完成那一瞬间 UI 仍有可感卡顿;批量页 5 张同时完成时整面网格抖动。API 返回的是 `b64_json`(数 MB base64 字符串),`<img src="data:image/png;base64,...">` 触发浏览器**同步**解码 PNG/WebP → GPU texture,这步堵在主线程上,N 张同时切 src 就是 N 倍卡顿。
+
+**为什么不直接让 API 返回 url**: 评估过 `response_format: "url"`(走 CDN 链接),但国内用户访问 apiyi 的 CDN 不稳定,丢弃此路径,转向客户端优化。
+
+**修复** (`src/renderer/src/hooks/useDisplaySrc.ts` 新增 + 11 处集成):
+
+| 改动 | 说明 |
+|------|------|
+| 新增 `useDisplaySrc(src)` hook | 检测 `data:` 前缀 → `fetch(dataUrl).blob() → URL.createObjectURL(blob)` → `<img src={blob:...}>`。浏览器对 blob: URL 走**异步**解码 worker,主线程不卡。http/blob/undefined 透传零开销。StrictMode 安全(局部闭包持有 `createdBlobUrl` + `cancelled` flag,卸载时单独 revoke,无泄漏)。9 条单测覆盖 dataURL 转换、HTTP 透传、卸载 revoke、src 切换、并发竞态。 |
+| 11 处渲染入口接入 | `pages-react/batch/{BatchItemRow,BatchResultGrid}.tsx`、`pages-react/batch-punk/PunkResultGrid.tsx`、`pages-react/generate/ResultGrid.tsx`、`pages-react/storyboard-split/SplitPreview.tsx`、`pages-react/smart-erase/EraseResultCard.tsx`、`components/donor/{DonorCard,DonorPreview}.tsx`、`components/shared/image-editors/ImageEditorModal.tsx`、`react-app/components/ResultsGallery.tsx`、`react-app/shared/RawDataModal.tsx`。`.map()` 里的 `<img>` 抽 cell 子组件(`GalleryImage` / `PreviewImage` / `SplitImage` / `ChoiceThumb`)让钩子能在循环里安全使用,每张 cell 独立持有 blob URL 生命周期。 |
+| **只换 `<img src>`,保留原始 url 给其它消费者** | `downloadImage(url, ...)`、`fetch(url).blob()` (DonorPreview handleSave)、`openImageViewer(allUrls, idx)`、WebGL editor `imageUrl={currentUrl}`、`setCurrentUrl(ch.url)` 全部**继续用原 url**。理由:blob: URL 跨进程/canvas/`a.href` fallback 不一定可读,原 url 是兜底真理。`item.cosUrl` / `item.resultUrl` 在 store 中完全不变,COS 上传 / 历史持久化 / 重新编辑 三条路径零影响。 |
+| 已走 blob URL 的入口跳过 | `agent-chat/Lightbox.tsx`、`file-explorer/ImageViewer.tsx` 早已用 `useResolvedMediaSrc` / `useFileUrl` 产 blob:,不重复叠加。冷路径(UnderstandPage 单图预览、参考图 thumb、MentionChips)不做改动避免范围爆炸。 |
+
+**B. 批量页运行中追加 item 被首次快照覆盖 bug(根因:`runBatch` 闭包捕获)**
+
+**问题**: 用户在批量任务跑到一半时,改 prompt / 换参考图 / 切比例 → 点"加入队列" → 新 item 拿到的仍是**首次启动批次时的旧参考图和比例**,用户的中途修改被覆盖。
+
+**根因**: `runBatch` 入口处一次性闭包捕获 `ratio` / `referenceImages`,整个 batch 生命周期内所有 worker 共享这份快照。用户运行中追加的 item,worker claim 时调 `api.generateImage(...)` 传的仍是这份首次快照。
+
+**修复** (`src/renderer/src/stores/useBatchStore.ts` + `src/renderer/src/pages-react/BatchPage.tsx`):
+
+| 改动 | 说明 |
+|------|------|
+| `BatchItem` 扩展可选字段 | 新增 `referenceImages?: string[]` + `ratio?` 两个 item-level 字段,允许每个 item 自带参数 |
+| `addItem` 签名扩展 | `addItem(prompt, opts?: { referenceImages?, ratio? })`,入队时把 opts 锁定到 item 上 |
+| `claimNextPending` / `runOne` 优先级 | `itemRatio = next.ratio ?? runSnapshotBase.ratio`、`itemRefs = next.referenceImages ?? runSnapshotBase.referenceImages` —— item 自带值优先,无则 fallback 到首次快照(保持向后兼容) |
+| `pendingBatchHistoryContext` 同步 | history 持久化也用 item-level 值,确保历史记录与实际生成参数一致 |
+| `BatchPage.handleGenerate` 显式传参 | `addItem(p, { referenceImages: currentRefs, ratio })`,把当前表单状态锁进 item |
+
+**语义保证**: 首次启动 batch 的 items 没自带 opts(因为老调用点不传)→ fallback 到 `runSnapshotBase` → 行为不变。运行中追加的新 items 入队时锁定当前表单值 → worker 用 item 自身值 → **修改生效**。
+
+**C. gpt-image-2-vip 分辨率对齐 apiyi.com 文档(根因:`resolutionMap` 像素值脱节)**
+
+**问题**: gpt-image-2-vip 模型的 `resolutionMap`(在 `ApiService.ts` 内)定义的像素维度与 apiyi.com 官方文档 30 档常见尺寸表不一致,导致 `size` 参数被 API 拒绝或返回非预期比例的图片。
+
+**修复** (`src/renderer/src/services/api/ApiService.ts` + `__tests__/ApiService.gptImage2Vip.test.ts`):
+
+| 改动 | 说明 |
+|------|------|
+| `resolutionMap` 重写 | 严格按 apiyi.com [text-to-image](https://docs.apiyi.com/api-capabilities/gpt-image-2-vip/text-to-image) / [image-edit](https://docs.apiyi.com/api-capabilities/gpt-image-2-vip/image-edit) 文档 30 档尺寸表逐档对齐,`宽x高` 半角小写 x 写法 |
+| 测试覆盖 | `ApiService.gptImage2Vip.test.ts` 新增 177 行 case 覆盖文生图 JSON 路径、图编辑 FormData 路径、各 ratio 档 size 输出。jsdom 环境下 patch `convertToBlob` 让 FormData 能 append mock Blob,绕过 `fetch(dataURL)` 被全局 fetchMock 拦截后 `Response.blob()` 在 jsdom 里不是 native Blob 的问题 |
+
+#### 用户可见行为
+
+1. **生图完成那一瞬间 UI 不再卡顿**,无论是单张 generate 还是批量 5+ 张同时完成,主线程保持响应,"开始生成"按钮立即可点
+2. **历史记录页(HistoryPage)滚动顺滑**,几十甚至上百张老 dataURL 历史卡片不再让滚动条卡顿;点开 lightbox 主图秒出
+3. **批量页运行中改 prompt / 改参考图 / 改比例后追加的新 item 真正生效**,不再被首次启动时的快照覆盖
+4. **gpt-image-2-vip 模型生图比例准确**,按 apiyi.com 30 档尺寸表精确匹配,不再出现 size 被拒或比例错位
+
+#### 测试
+
+- `pnpm vitest run useDisplaySrc.test.ts` → **9/9 全过**(dataURL 转换、HTTP 透传、卸载 revoke、src 切换 5 场景)
+- `pnpm vitest run ApiService.gptImage2Vip.test.ts` → 文生图 + 图编辑全路径覆盖
+- 全量 `pnpm vitest run` → 1531 pass / 25 fail,fail 全部是预存的 ZodError / agent / pipeline 老问题(逐一核对失败文件均未触及本次改动)
+- lint 7 个新接入文件 0 错误
+
+---
+
 ### v4.3.14 (2026-05-21) — 批量完成卡顿根除 + COS 上传事件驱动重构
 
 **A. 批量页完成瞬间卡顿修复(根因 #1)**

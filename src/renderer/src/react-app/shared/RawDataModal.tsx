@@ -1,7 +1,25 @@
 import { useMemo } from 'react'
 import type { PassCardData } from '../../services/pipeline/types'
+import { useDisplaySrc } from '../../hooks/useDisplaySrc'
 
 const MAX_INLINE_STRING = 2000
+
+/**
+ * 单格预览图 —— 抽组件让 useDisplaySrc 能在 .map() 里安全使用。
+ * Pass card 里的 images 通常是 dataURL, 走 blob: 异步解码不卡主线程。
+ */
+function PreviewImage({ url, alt }: { url: string; alt: string }) {
+  const imgSrc = useDisplaySrc(url)
+  return (
+    <img
+      src={imgSrc}
+      alt={alt}
+      loading="lazy"
+      decoding="async"
+      className="w-full max-h-40 object-contain bg-black/30 border border-[#3F3F46]"
+    />
+  )
+}
 
 function sanitizeRawForDisplay(input: unknown): unknown {
   const visited = new WeakSet<object>()
@@ -56,7 +74,7 @@ export function RawDataModal({ card, onClose }: RawDataModalProps) {
           {previewUrls.length > 0 && (
             <div className="mb-4 grid grid-cols-2 gap-2">
               {previewUrls.map((url, idx) => (
-                <img key={`${idx}-${url.slice(0, 32)}`} src={url} alt={`Generated ${idx + 1}`} className="w-full max-h-40 object-contain bg-black/30 border border-[#3F3F46]" />
+                <PreviewImage key={`${idx}-${url.slice(0, 32)}`} url={url} alt={`Generated ${idx + 1}`} />
               ))}
             </div>
           )}
