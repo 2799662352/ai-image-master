@@ -265,7 +265,7 @@ export function McpJsonEditor({ serverName, onClose }: McpJsonEditorProps): Reac
         </div>
       ) : (
         <div
-          className="flex max-h-[85vh] w-full max-w-4xl flex-col gap-3 rounded-lg border border-zinc-700 bg-zinc-900 p-4 shadow-2xl"
+          className="flex h-[85vh] w-full max-w-4xl flex-col gap-3 rounded-lg border border-zinc-700 bg-zinc-900 p-4 shadow-2xl"
           // Stop click propagation so clicks inside the editor card never
           // hit the backdrop dismiss handler (Monaco fires lots of inner
           // mousedown/mouseup that would otherwise close the modal).
@@ -301,9 +301,16 @@ export function McpJsonEditor({ serverName, onClose }: McpJsonEditorProps): Reac
             <p className="rounded bg-red-500/10 px-3 py-1.5 text-xs text-red-300">{error}</p>
           )}
 
-          {/* Monaco Editor — `min-h-0` is required for `flex-1` to actually
-              shrink inside a `max-h-[85vh]` parent on small viewports. */}
-          <div className="min-h-0 flex-1 overflow-hidden rounded border border-zinc-800">
+          {/* Monaco Editor.
+              - Parent uses `h-[85vh]` (NOT `max-h-[85vh]`) so the column has
+                a real height; otherwise `flex-1` resolves against a content-
+                sized container and the editor renders at 0px tall (root
+                cause of v4.3.18 "modal opens blank" report).
+              - `min-h-0` lets `flex-1` shrink below intrinsic content size.
+              - `min-h-[300px]` is defense-in-depth: even if a future change
+                accidentally reverts the parent to a content-driven height,
+                the editor stays visible. */}
+          <div className="min-h-0 flex-1 overflow-hidden rounded border border-zinc-800" style={{ minHeight: 300 }}>
             <Editor
               height="100%"
               language="json"

@@ -138,6 +138,47 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
+### v4.3.19 (2026-05-23) — Hotfix: MCP JSON 编辑器 modal 内容区 0px 高度(点编辑/新增看上去空白)
+
+**用户报告**:v4.3.18 顶部红 banner 消失了(boot 自愈 + banner 去重生效),但点击 ✏️「编辑」或 +「新增」按钮,modal 弹出后**中间 Monaco 编辑区是完全空白的**,只看到顶部 header(标题/保存/取消)和底部 hint(`格式: { ... } 按 Esc 关闭`)挤在一起,modal 总高度只占视口 ~30%。
+
+**Phase 1 / 根因调查**
+
+DOM 结构是这样的:
+
+```tsx
+<div className="flex max-h-[85vh] w-full max-w-4xl flex-col gap-3 ...">  // ← 容器
+  {/* Header */}              // 自然高度 ~40px
+  {/* Error (可选) */}        // 不存在
+  <div className="min-h-0 flex-1 ...">
+    <Editor height="100%" />  // ← Monaco
+  </div>
+  {/* Hint */}                // 自然高度 ~20px
+</div>
+```
+
+Flex 列方向容器只设 `max-h-[85vh]`(上限)而没有 `h-...`(显式高度)。`max-h` 只规定**最大值**,实际高度由 content 决定 —— content 总和约 ~60px,**容器实际高度 ~60px**。这种"content-driven height"的 flex container 里,`flex-1` 没有任何可扩展的空间(剩余空间为 0),所以 `flex-1` 子 div 实际高度 = 0px。Monaco 拿到 `height="100%"` 计算出 0px,渲染为不可见。
+
+回头看 git history:**这是 `61d679a` 把 inline 编辑器重构成 modal 那次就埋的雷**(v4.3.17/v4.3.18 都没动这块,所以一脉相承)。当时没暴露是因为 modal 内承载的内容多到顶到 `max-h-[85vh]`,从而 flex-1 自然撑开;现在用户配置只剩一个 apiyi,JSON 短,modal 缩到 content-driven,Editor 就被压成 0。
+
+**Phase 2 / 修复**
+
+`src/renderer/src/features/agent-workspace/McpJsonEditor.tsx` 两处改动:
+
+1. 容器从 `max-h-[85vh]` 改成 `h-[85vh]` —— modal 总是占视口 85vh 的固定高度,header/hint 吃自然高度,剩余空间归 `flex-1` 子节点,Editor `height="100%"` 拿到真实像素值
+2. Editor 容器额外加 `style={{ minHeight: 300 }}` 兜底 —— 这是 defense-in-depth,即使将来又有人把父级改回 content-driven,Editor 至少有 300px 可见区,不会再出现"完全空白"的故障模式
+
+**为什么不加单元测试**:这是纯 CSS layout 问题。jsdom 没有真实 layout 引擎,`getComputedStyle().height` 拿不到 px 值,只能拿到 inline style 字符串。给 layout bug 写 unit test 测的是 className 字符串,本质上是在 assert 实现细节而不是行为 —— 收益低于成本。已存在的 43 个 renderer 测试照常 pass。
+
+#### 用户可见行为
+
+1. **点 ✏️ 编辑某 server**:modal 占视口 85vh,Monaco 编辑器显示该 server 的 `{ "apiyi": {...} }` 完整内容
+2. **点 + 新增**:modal 占视口 85vh,Monaco 编辑器显示当前所有 servers(用户可在里面追加新条目)
+3. **任何状态下,小视口/大视口**:Editor 至少 300px 可见,modal 上限 85vh
+4. **保存/取消/Esc/click-outside**:行为不变(v4.3.18 已修)
+
+---
+
 ### v4.3.18 (2026-05-23) — 根因修复: v4.3.16 引入的 `command=undefined` 回归(全新装机的 apiyi 永远 broken) + 编辑器先验校验 + banner 去重
 
 **用户报告**:v4.3.17 给了「修复 apiyi」按钮但是问题反复出现 —— 重新装/重新启动后,顶部仍然冒出**两条重复 banner**:`Codex 拒绝加载当前 MCP 配置: invalid transport in 'mcp_servers.apiyi'` 和 `工具列表同步失败: failed to reload config: ... invalid transport(状态点不受影响,可点「刷新」重试)`。
