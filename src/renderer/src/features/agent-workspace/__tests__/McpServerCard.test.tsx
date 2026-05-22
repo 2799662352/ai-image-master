@@ -191,6 +191,51 @@ describe('McpServerCard', () => {
     expect(screen.queryByRole('button', { name: /删除/ })).toBeNull()
   })
 
+  // Long Windows-style paths (electron.exe under node_modules + an absolute
+  // path to the script) used to render verbatim and overflow the card,
+  // forcing a horizontal scrollbar on the whole MCP page. The fix: render
+  // a Cursor-style condensed line (`electron index.js`) with the full path
+  // tucked into `title` for hover-to-inspect.
+  it('condenses long electron + absolute-path command lines into runtime + basename', () => {
+    render(
+      <McpServerCard
+        server={makeServer({
+          command:
+            'D:\\tecx\\text\\temp-ai-image-master-source\\node_modules\\.pnpm\\electron@41.6.1\\node_modules\\electron\\dist\\electron.exe',
+          args: [
+            'D:\\tecx\\text\\temp-ai-image-master-source\\resources\\apiyi-mcp\\dist\\index.js',
+          ],
+        })}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggle={vi.fn()}
+        onLogin={vi.fn()}
+      />,
+    )
+    // Short line (visible): only the runtime + script basename
+    const shortLine = screen.getByText('electron index.js')
+    expect(shortLine).toBeTruthy()
+    // Full path stays in `title` so hover still reveals it
+    expect(shortLine.getAttribute('title')).toContain('electron.exe')
+    expect(shortLine.getAttribute('title')).toContain('apiyi-mcp\\dist\\index.js')
+  })
+
+  // Short native commands (docker run -i mcp/test) MUST pass through
+  // unchanged — collapsing `mcp/test` → `test` would lose meaning, and
+  // shortening flags like `-i` is pointless.
+  it('passes short native commands through unchanged (docker run -i mcp/test)', () => {
+    render(
+      <McpServerCard
+        server={makeServer({ command: 'docker', args: ['run', '-i', 'mcp/test'] })}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggle={vi.fn()}
+        onLogin={vi.fn()}
+      />,
+    )
+    expect(screen.getByText('docker run -i mcp/test')).toBeTruthy()
+  })
+
   it('shows a "预装" badge for app-bundled MCPs', () => {
     render(
       <McpServerCard

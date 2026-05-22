@@ -67,6 +67,71 @@ function TrashIcon(): React.JSX.Element {
 }
 
 /**
+ * Strip platform path prefixes from a runtime binary path and drop the
+ * trailing `.exe` so the rendered command line stays short. We keep the
+ * full path in `title` for hover-to-inspect; this is purely a display
+ * concession. Path separators on Windows can be either `\` or `/`.
+ *
+ * Examples (all → "electron"):
+ *   D:\tecx\...\node_modules\electron\dist\electron.exe
+ *   C:/Users/me/AppData/Local/Programs/electron/electron.exe
+ *   /usr/local/bin/node
+ */
+function shortenBinary(bin: string): string {
+  if (!bin) return ''
+  // Normalize separators, take last non-empty segment, strip .exe
+  const parts = bin.replace(/\\/g, '/').split('/').filter(Boolean)
+  const last = parts[parts.length - 1] ?? bin
+  return last.replace(/\.exe$/i, '')
+}
+
+/**
+ * Strip path prefix from a CLI arg if it looks like an absolute path to a
+ * script or executable (anything with at least one `/` or `\` segment).
+ * Short args (flags, image names like `mcp/test`) pass through unchanged.
+ *
+ * Examples:
+ *   "D:\tecx\...\resources\apiyi-mcp\dist\index.js" → "index.js"
+ *   "-i"                                            → "-i"
+ *   "mcp/test"                                      → "mcp/test"
+ *   "run"                                           → "run"
+ */
+function shortenArg(arg: string): string {
+  if (!arg) return ''
+  // Heuristic: only collapse if the arg is an absolute Windows path
+  // (`X:\...`) or starts with `/` (POSIX absolute). Relative tokens like
+  // `mcp/test` (docker image), `run`, `-i` stay verbatim — they're already
+  // short and shortening them loses meaning (e.g. `mcp/test` → `test`).
+  const looksAbsolute = /^[a-zA-Z]:[\\/]/.test(arg) || arg.startsWith('/')
+  if (!looksAbsolute) return arg
+  const parts = arg.replace(/\\/g, '/').split('/').filter(Boolean)
+  return parts[parts.length - 1] ?? arg
+}
+
+/**
+ * Cursor-style condensed command display. Hides the long `node_modules/.pnpm/
+ * electron@x.y.z/...` and `D:\tecx\...\resources\apiyi-mcp\dist\index.js`
+ * gunk that has zero value to a user reading the card; surfaces just
+ * `<runtime> <script-basename> <…args>`. The full string is preserved in
+ * the `title` attribute for hover-to-inspect, and the JSON editor (which
+ * opens as a modal) shows the unabridged config.
+ *
+ * Returns BOTH the short label (for display) and the full line (for `title`)
+ * so the caller can wire hover-to-inspect without re-deriving anything.
+ */
+function formatCommandLine(server: McpServerCardData): { short: string; full: string } {
+  if (server.type === 'http') {
+    const url = server.url ?? ''
+    return { short: url, full: url }
+  }
+  const cmd = server.command ?? ''
+  const args = server.args ?? []
+  const full = [cmd, ...args].filter(Boolean).join(' ')
+  const short = [shortenBinary(cmd), ...args.map(shortenArg)].filter(Boolean).join(' ')
+  return { short: short || full, full }
+}
+
+/**
  * Render the "ready but tools=0" hint based on the actual server, not a
  * one-size-fits-all Docker message. apiyi (and any other app-bundled MCP
  * that needs an API key) usually hits this state when the key env var
@@ -136,19 +201,25 @@ export function McpServerCard({
   const dotColor = STATUS_DOT[server.status] ?? STATUS_DOT.unknown
   const statusLabel = STATUS_LABEL[server.status] ?? server.status
   const needsLogin = server.authStatus === 'notLoggedIn'
-  const commandLine =
-    server.type === 'http'
-      ? (server.url ?? '')
-      : [server.command, ...(server.args ?? [])].filter(Boolean).join(' ')
+  const { short: commandLineShort, full: commandLineFull } = formatCommandLine(server)
   const emptyToolsHint =
     server.status === 'ready' && server.tools.length === 0 ? getEmptyToolsHint(server) : null
 
   return (
-    <div className="rounded-lg border border-zinc-800/60 bg-zinc-900/60 p-3 transition-colors hover:border-zinc-700/80">
+    // `min-w-0` is REQUIRED here — this card sits inside a CSS Grid track,
+    // and grid items default to `min-width: auto` (≈ max-content). Without
+    // it, any long unbreakable string (e.g. a Windows absolute path like
+    // `D:\tecx\...\dist\electron.exe`) would push the grid track wider than
+    // the viewport and force a horizontal scrollbar on the entire MCP page.
+    // Pair this with `min-w-0` on the inner flex row so `truncate` actually
+    // collapses overflow instead of stretching the parent.
+    <div className="min-w-0 rounded-lg border border-zinc-800/60 bg-zinc-900/60 p-3 transition-colors hover:border-zinc-700/80">
       {/* Header row — name on the left, actions + toggle ALWAYS visible on
           the right. Cursor-style: never hidden behind hover, never pushed
-          off-screen by long description text below (which is line-clamped). */}
-      <div className="flex min-w-0 items-center gap-2">
+          off-screen by long description text below (which is line-clamped).
+          `flex-wrap` lets the action cluster drop to a second line on very
+          narrow widths instead of being shoved off-screen. */}
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
         <span
           className={`h-2 w-2 shrink-0 rounded-full ${dotColor}`}
           title={statusLabel}
@@ -205,10 +276,17 @@ export function McpServerCard({
         </div>
       </div>
 
-      {/* Command / URL — single line, full text on hover */}
-      {commandLine && (
-        <p className="mt-1.5 truncate text-xs text-zinc-500" title={commandLine}>
-          {commandLine}
+      {/* Command / URL — shortened to runtime + script basename (e.g.
+          `electron index.js`) instead of the raw `D:\…\electron.exe
+          D:\…\dist\index.js`. Full original string is preserved in `title`
+          so users can hover-to-inspect, and the JSON editor modal shows
+          the unabridged config. */}
+      {commandLineShort && (
+        <p
+          className="mt-1.5 truncate text-xs text-zinc-500"
+          title={commandLineFull}
+        >
+          {commandLineShort}
         </p>
       )}
 

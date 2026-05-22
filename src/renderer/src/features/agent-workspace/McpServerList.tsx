@@ -97,7 +97,11 @@ export function McpServerList({ onOpenEditor, onOpenImport }: McpServerListProps
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    // `min-w-0` lets this column live inside any flex/grid parent without
+    // its unbreakable string children (long Windows paths, long URLs)
+    // pushing the parent wider than its allotted width and forcing a
+    // page-level horizontal scrollbar.
+    <div className="flex min-w-0 flex-col gap-4">
       <AutoFixToast />
       {/* Header with action buttons */}
       <div className="flex items-center justify-between">
@@ -148,7 +152,7 @@ export function McpServerList({ onOpenEditor, onOpenImport }: McpServerListProps
       ) : (
         <div className="flex flex-col gap-4">
           {bundledServers.length > 0 && (
-            <section className="flex flex-col gap-2">
+            <section className="flex min-w-0 flex-col gap-2">
               <div className="flex items-center gap-2">
                 <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-300/80">
                   <span aria-hidden>🎁</span>
@@ -159,7 +163,14 @@ export function McpServerList({ onOpenEditor, onOpenImport }: McpServerListProps
                   应用自带 · 配置 API Key 即可启用
                 </span>
               </div>
-              <div className="grid gap-3">
+              {/* `grid-cols-[minmax(0,1fr)]` is the canonical fix for the
+                  CSS-Grid horizontal-overflow trap: grid items default to
+                  `min-width: auto` (= max-content), so an unbreakable long
+                  string inside any card would push the track wider than
+                  the viewport and create a horizontal scrollbar on the
+                  whole MCP page. The explicit `minmax(0, 1fr)` makes the
+                  track shrinkable, letting child `truncate` actually clip. */}
+              <div className="grid grid-cols-[minmax(0,1fr)] gap-3">
                 {bundledServers.map((server) => (
                   <McpServerCard
                     key={server.name}
@@ -176,7 +187,7 @@ export function McpServerList({ onOpenEditor, onOpenImport }: McpServerListProps
           )}
 
           {userServers.length > 0 && (
-            <section className="flex flex-col gap-2">
+            <section className="flex min-w-0 flex-col gap-2">
               <div className="flex items-center gap-2">
                 <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-300/80">
                   <span>你的 MCP 服务器</span>
@@ -184,7 +195,7 @@ export function McpServerList({ onOpenEditor, onOpenImport }: McpServerListProps
                 </h3>
                 <span className="text-[11px] text-zinc-500">手动添加或导入</span>
               </div>
-              <div className="grid gap-3">
+              <div className="grid grid-cols-[minmax(0,1fr)] gap-3">
                 {userServers.map((server) => (
                   <McpServerCard
                     key={server.name}

@@ -162,74 +162,136 @@ export function McpJsonEditor({ serverName, onClose }: McpJsonEditorProps): Reac
     }
   }, [value, fetchServers, onClose])
 
-  if (loadError) {
-    return (
-      <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4">
-        <p className="text-sm text-red-300">{loadError}</p>
-        <button type="button" onClick={onClose} className="mt-2 text-xs text-zinc-400 hover:text-zinc-200">
-          关闭
-        </button>
-      </div>
-    )
-  }
+  // ---------------------------------------------------------------------
+  // Modal lifecycle wiring — Esc to close, click-outside to close, body
+  // scroll lock while open. These were missing in the old inline layout
+  // because the editor was embedded directly under the server list (so
+  // there was nothing to "close out of"). Now that the editor is an
+  // overlay, all three behaviors are expected by users.
+  // ---------------------------------------------------------------------
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onClose()
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prevOverflow
+    }
+  }, [onClose])
 
+  const handleBackdropClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      // Only close when the click lands on the backdrop itself, NOT when
+      // it bubbles up from the inner editor card. Without this guard,
+      // clicking inside Monaco to position the cursor would dismiss the
+      // editor and discard unsaved edits.
+      if (e.target === e.currentTarget) onClose()
+    },
+    [onClose],
+  )
+
+  // Title used both in the modal header and as accessible label.
+  const title =
+    serverName && serverName !== '__new__'
+      ? `编辑: ${serverName}`
+      : 'MCP 服务器配置 (JSON)'
+
+  // Modal body (load-error variant or full editor) — wrapped in a single
+  // backdrop layer so positioning + Esc/click-outside semantics are shared.
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-zinc-700 bg-zinc-900/80 p-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium text-zinc-200">
-          {serverName && serverName !== '__new__' ? `编辑: ${serverName}` : 'MCP 服务器配置 (JSON)'}
-        </h3>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={saving}
-            className="rounded-md bg-cyan-600/80 px-3 py-1.5 text-xs text-white hover:bg-cyan-600 disabled:opacity-50"
-          >
-            {saving ? '保存中...' : '保存'}
-          </button>
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      onClick={handleBackdropClick}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+    >
+      {loadError ? (
+        <div className="w-full max-w-md rounded-lg border border-red-500/30 bg-zinc-900 p-4 shadow-2xl">
+          <h3 className="text-sm font-medium text-red-300">{title}</h3>
+          <p className="mt-2 text-sm text-red-300">{loadError}</p>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200"
+            className="mt-3 rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800"
           >
-            取消
+            关闭
           </button>
         </div>
-      </div>
+      ) : (
+        <div
+          className="flex max-h-[85vh] w-full max-w-4xl flex-col gap-3 rounded-lg border border-zinc-700 bg-zinc-900 p-4 shadow-2xl"
+          // Stop click propagation so clicks inside the editor card never
+          // hit the backdrop dismiss handler (Monaco fires lots of inner
+          // mousedown/mouseup that would otherwise close the modal).
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="min-w-0 truncate text-sm font-medium text-zinc-200">
+              {title}
+            </h3>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={saving}
+                className="rounded-md bg-cyan-600/80 px-3 py-1.5 text-xs text-white hover:bg-cyan-600 disabled:opacity-50"
+              >
+                {saving ? '保存中...' : '保存'}
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="关闭编辑器"
+                className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+              >
+                取消
+              </button>
+            </div>
+          </div>
 
-      {/* Error display */}
-      {error && (
-        <p className="rounded bg-red-500/10 px-3 py-1.5 text-xs text-red-300">{error}</p>
+          {/* Error display */}
+          {error && (
+            <p className="rounded bg-red-500/10 px-3 py-1.5 text-xs text-red-300">{error}</p>
+          )}
+
+          {/* Monaco Editor — `min-h-0` is required for `flex-1` to actually
+              shrink inside a `max-h-[85vh]` parent on small viewports. */}
+          <div className="min-h-0 flex-1 overflow-hidden rounded border border-zinc-800">
+            <Editor
+              height="100%"
+              language="json"
+              theme="vs-dark"
+              value={value}
+              onChange={(v) => setValue(v ?? '')}
+              onMount={handleEditorMount}
+              options={{
+                minimap: { enabled: false },
+                fontSize: 13,
+                lineNumbers: 'on',
+                scrollBeyondLastLine: false,
+                wordWrap: 'on',
+                tabSize: 2,
+                formatOnPaste: true,
+                automaticLayout: true,
+              }}
+            />
+          </div>
+
+          {/* Hint */}
+          <p className="text-[11px] text-zinc-600">
+            格式: {'{ "server-name": { "command": "...", "args": [...] } }'} 或{' '}
+            {'{ "server-name": { "url": "https://..." } }'} · 按 Esc 关闭
+          </p>
+        </div>
       )}
-
-      {/* Monaco Editor */}
-      <div className="h-[400px] overflow-hidden rounded border border-zinc-800">
-        <Editor
-          height="100%"
-          language="json"
-          theme="vs-dark"
-          value={value}
-          onChange={(v) => setValue(v ?? '')}
-          onMount={handleEditorMount}
-          options={{
-            minimap: { enabled: false },
-            fontSize: 13,
-            lineNumbers: 'on',
-            scrollBeyondLastLine: false,
-            wordWrap: 'on',
-            tabSize: 2,
-            formatOnPaste: true,
-            automaticLayout: true,
-          }}
-        />
-      </div>
-
-      {/* Hint */}
-      <p className="text-[11px] text-zinc-600">
-        格式: {'{ "server-name": { "command": "...", "args": [...] } }'} 或 {'{ "server-name": { "url": "https://..." } }'}
-      </p>
     </div>
   )
 }
