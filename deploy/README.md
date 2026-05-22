@@ -96,24 +96,66 @@ dig +short api.13797248455.xyz @8.8.8.8
 
 ## 2. 在 Lighthouse 上拉起 FastMCP
 
-OrcaTerm 一行一行跑:
+**镜像已经发布到 Docker Hub:[`zuozuoliang999/apiyi-fastmcp`](https://hub.docker.com/r/zuozuoliang999/apiyi-fastmcp)**
+(`linux/amd64`,~150 MB,直接从 Docker Hub 拉,不用 build)。
+
+### 2.1 极简 —— 一行 `docker run`(推荐)
+
+OrcaTerm 直接贴:
 
 ```bash
-# 1. 拉本仓的 feature 分支(deploy/ 在那里)
+docker rm -f apiyi-fastmcp 2>/dev/null; \
+docker run -d --name apiyi-fastmcp --restart unless-stopped \
+  -p 80:8000 \
+  -e APIYI_BASE_URL=https://api.apiyi.com \
+  -e GEMINI_MODEL=gemini-3.1-pro-preview-thinking \
+  -e GEMINI_MAX_OUTPUT_TOKENS=65536 \
+  -e GEMINI_TEMPERATURE=0.2 \
+  -e GEMINI_MAX_FILES=10 \
+  -e GEMINI_MAX_TOTAL_FILE_SIZE=50 \
+  -e GEMINI_MEDIA_RESOLUTION=MEDIUM \
+  -e FASTMCP_HOST=0.0.0.0 \
+  -e FASTMCP_PORT=8000 \
+  -e FASTMCP_PATH=/mcp \
+  -e FASTMCP_TRANSPORT=http \
+  -e LOG_LEVEL=INFO \
+  zuozuoliang999/apiyi-fastmcp:latest
+```
+
+首次 ~30 秒(拉镜像),之后 docker run 重启 < 2 秒。
+
+看日志:
+
+```bash
+docker logs -f apiyi-fastmcp
+# 启动 15 秒后应能看到:
+#   FastMCP HTTP server running on 0.0.0.0:8000 at /mcp (BYOK mode)
+```
+
+升级:
+
+```bash
+docker pull zuozuoliang999/apiyi-fastmcp:latest
+docker rm -f apiyi-fastmcp
+# 然后重跑上面那一行 docker run
+```
+
+### 2.2 进阶 —— `docker compose`(如果你要改本地 server.py)
+
+```bash
 cd /opt
 rm -rf ai-image
 git clone -b feature/apiyi-mcp-integration https://github.com/2799662352/ai-image-master.git ai-image
 cd ai-image/deploy
 
-# 2. 起服务(首次 ~3 分钟,拉 python:3.12-slim 镜像 + pip install)
-docker compose up -d --build
+docker compose up -d           # 默认拉 Docker Hub 镜像,~30 秒
+# 改了 deploy/apiyi-fastmcp/server.py 想本机 build:
+#   把 docker-compose.yml 里 image: 那行注释,放开 build: 段,再:
+#   docker compose up -d --build
 
-# 3. 看日志
 docker compose ps
-docker compose logs -f gateway     # FastMCP 启动信息;Ctrl+C 退出
+docker compose logs -f gateway
 ```
-
-启动 15 秒后应该可以看到日志里有 `Starting MCP server on 0.0.0.0:8000` 之类。
 
 ---
 
@@ -238,16 +280,34 @@ MP3/WAV/AIFF/AAC/OGG/FLAC、PDF/DOCX/XLSX/PPTX、TXT/MD/JSON/XML/CSV/HTML。
 
 ## 5. 运维
 
-```bash
-cd /opt/ai-image/deploy
+### 5.1 用 docker run 部署的(2.1 那一行)
 
-docker compose logs -f gateway     # 实时日志(Bearer 已脱敏)
-docker compose ps                  # 看健康状态
-docker compose restart gateway     # 重启
-docker compose down                # 关停(保留镜像)
-docker compose down -v             # 关停 + 删卷(无 caddy 卷,等同于上一个)
+```bash
+docker logs -f apiyi-fastmcp           # 实时日志(Bearer 已脱敏)
+docker ps --filter name=apiyi-fastmcp  # 看健康状态
+docker restart apiyi-fastmcp           # 重启
+docker stop apiyi-fastmcp              # 关停(保留容器)
+docker rm -f apiyi-fastmcp             # 销毁容器(下次重跑 2.1 那一行 docker run)
 
 # 升级
+docker pull zuozuoliang999/apiyi-fastmcp:latest
+docker rm -f apiyi-fastmcp
+# 重跑 2.1 的 docker run 一行
+```
+
+### 5.2 用 docker compose 部署的(2.2)
+
+```bash
+cd /opt/ai-image/deploy
+docker compose logs -f gateway     # 实时日志
+docker compose ps                  # 看健康状态
+docker compose restart gateway     # 重启
+docker compose down                # 关停
+
+# 升级(用远端镜像)
+cd /opt/ai-image && git pull && cd deploy && docker compose pull && docker compose up -d
+
+# 升级(本机重 build)
 cd /opt/ai-image && git pull && cd deploy && docker compose up -d --build
 ```
 

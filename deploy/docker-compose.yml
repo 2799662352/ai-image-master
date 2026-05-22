@@ -10,18 +10,22 @@
 #
 # 部署(已配好 EdgeOne 的前提下):
 #   1. 防火墙:Lighthouse 实例放行 80/tcp(443 留给 EdgeOne,不需开)。
-#   2. docker compose up -d --build
+#   2. docker compose up -d   (默认拉 Docker Hub 上的镜像,首次 ~30s)
 #   3. 等 15-30 秒,curl http://127.0.0.1/healthz 应返回 ok(本机直连)。
 #   4. curl https://api.13797248455.xyz/healthz 应返回 ok(走 EdgeOne)。
+#
+# 想本地源码改一行就跑?改成:docker compose up -d --build
 #
 # 客户端使用见 deploy/README.md(BYO key 模式)。
 
 services:
   gateway:
-    build:
-      context: ..
-      dockerfile: deploy/apiyi-fastmcp/Dockerfile
-    image: apiyi-fastmcp:local
+    # 远端镜像:linux/amd64,Lighthouse 直接拉,不用本机 build
+    image: zuozuoliang999/apiyi-fastmcp:latest
+    # 想自己改 server.py 时,把上面注释掉,放开下面的 build 段
+    # build:
+    #   context: ..
+    #   dockerfile: deploy/apiyi-fastmcp/Dockerfile
     container_name: apiyi-fastmcp
     restart: unless-stopped
     # 直接监听公网 80:由 EdgeOne 回源访问。如果你想用其他端口,改这里 + EdgeOne 回源端口。

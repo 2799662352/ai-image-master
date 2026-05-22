@@ -66,11 +66,20 @@ pnpm build:win           # Windows 安装包
 源站只跑 FastMCP 监听 80 端口,HTTPS 由前面的 CDN / 反代统一终止(我们用的是腾讯 EdgeOne;
 没有 CDN 就翻 git 历史拉回 Caddy 配置自己签 Let's Encrypt 证书,二选一)。
 
-完整方案见 [`deploy/README.md`](./deploy/README.md) —— 包含 Docker Compose、EdgeOne 配置、
-客户端 JSON 配置示例(支持 Cursor / Codex / Claude Desktop)。一行命令部署:
+完整方案见 [`deploy/README.md`](./deploy/README.md) —— 包含 EdgeOne 配置、运维、安全模型、
+客户端 JSON 配置示例(支持 Cursor / Codex / Claude Desktop)。
+
+镜像已发布到 Docker Hub:[`zuozuoliang999/apiyi-fastmcp`](https://hub.docker.com/r/zuozuoliang999/apiyi-fastmcp)
+(linux/amd64)。在自己的服务器上一行 `docker run` 即可拉起:
 
 ```bash
-cd deploy && docker compose up -d --build
+docker run -d --name apiyi-fastmcp --restart unless-stopped \
+  -p 80:8000 \
+  -e APIYI_BASE_URL=https://api.apiyi.com \
+  -e GEMINI_MODEL=gemini-3.1-pro-preview-thinking \
+  -e FASTMCP_HOST=0.0.0.0 -e FASTMCP_PORT=8000 \
+  -e FASTMCP_PATH=/mcp -e FASTMCP_TRANSPORT=http \
+  zuozuoliang999/apiyi-fastmcp:latest
 ```
 
 ## 项目结构
