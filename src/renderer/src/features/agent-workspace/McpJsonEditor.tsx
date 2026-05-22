@@ -98,6 +98,36 @@ export function McpJsonEditor({ serverName, onClose }: McpJsonEditorProps): Reac
         },
       ],
     })
+
+    // ---------------------------------------------------------------------
+    // Ctrl/Cmd+V override.
+    //
+    // Monaco standalone's built-in PasteAction registers Ctrl+V whenever
+    // `isNative` is true (which is the case in Electron renderer). The
+    // `code-editor` paste implementation then calls
+    // `BrowserClipboardService.triggerPaste()` — which returns `undefined`
+    // — and the `if (isWeb)` fallback is skipped because `isWeb` is false
+    // in Electron renderer. The implementation then falls through to
+    // `return true` (clipboard.js:292), telling MultiCommand "handled"
+    // without inserting any text. Result: Ctrl+V silently no-ops.
+    //
+    // We register a per-editor command for Ctrl/Cmd+V that reads the
+    // system clipboard and dispatches Handler.Paste directly on the
+    // editor widget (codeEditorWidget.js:790 path), bypassing the broken
+    // PasteAction chain entirely. This is fully public Monaco API.
+    // ---------------------------------------------------------------------
+    const pasteHandler = async (): Promise<void> => {
+      try {
+        const text = await navigator.clipboard.readText()
+        if (!text) return
+        editor.trigger('keyboard', 'paste', { text })
+      } catch (err) {
+        console.warn('[McpJsonEditor] clipboard.readText failed', err)
+      }
+    }
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV, () => {
+      void pasteHandler()
+    })
   }, [])
 
   const handleSave = useCallback(async () => {
