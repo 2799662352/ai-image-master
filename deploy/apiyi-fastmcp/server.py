@@ -43,7 +43,7 @@ DEFAULT_BASE_URL = (
     or os.environ.get("GEMINI_BASE_URL")
     or "https://api.apiyi.com"
 )
-DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.1-pro-preview-thinking")
+DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
 DEFAULT_TEMPERATURE = float(os.environ.get("GEMINI_TEMPERATURE", "0.2"))
 DEFAULT_MAX_OUTPUT_TOKENS = int(os.environ.get("GEMINI_MAX_OUTPUT_TOKENS", "8192"))
 DEFAULT_MAX_FILES = int(os.environ.get("GEMINI_MAX_FILES", "10"))

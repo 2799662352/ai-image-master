@@ -3,7 +3,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { parse as parseToml } from 'toml'
-import { seedApiyiMcpEntry } from '../apiyiMcpSeed'
+import { mergeEnvWithScaffold, seedApiyiMcpEntry } from '../apiyiMcpSeed'
+import { APIYI_MCP_ENV_SCAFFOLD } from '../apiyiMcpLauncher'
 
 let tmpDir: string
 let configPath: string
@@ -20,10 +21,53 @@ afterEach(async () => {
 const FAKE_ENTRY = '/Resources/apiyi-mcp/dist/index.js'
 const FAKE_NODE = '/usr/local/bin/node'
 
+describe('mergeEnvWithScaffold', () => {
+  it('returns null when existing env already has every scaffold key', () => {
+    const complete: Record<string, string> = { ...APIYI_MCP_ENV_SCAFFOLD, APIYI_API_KEY: 'sk-user' }
+    expect(mergeEnvWithScaffold(complete)).toBeNull()
+  })
+
+  it('fills missing scaffold keys when existing env is empty', () => {
+    const merged = mergeEnvWithScaffold({})
+    expect(merged).not.toBeNull()
+    expect(merged).toEqual({ ...APIYI_MCP_ENV_SCAFFOLD })
+  })
+
+  it('preserves every user-set value and only fills the gaps', () => {
+    const userEnv = {
+      APIYI_API_KEY: 'sk-user-keep',
+      GEMINI_MODEL: 'gemini-2.5-flash',
+      // missing: APIYI_BASE_URL, GEMINI_MAX_OUTPUT_TOKENS, GEMINI_TIMEOUT, ELECTRON_RUN_AS_NODE
+    }
+    const merged = mergeEnvWithScaffold(userEnv)
+    expect(merged).not.toBeNull()
+    expect(merged!.APIYI_API_KEY).toBe('sk-user-keep')      // ← preserved
+    expect(merged!.GEMINI_MODEL).toBe('gemini-2.5-flash')   // ← preserved (NOT overwritten with scaffold default)
+    expect(merged!.APIYI_BASE_URL).toBe('https://api.apiyi.com') // ← filled
+    expect(merged!.GEMINI_MAX_OUTPUT_TOKENS).toBe('65536')  // ← filled
+    expect(merged!.GEMINI_TIMEOUT).toBe('1800000')          // ← filled
+    expect(merged!.ELECTRON_RUN_AS_NODE).toBe('1')          // ← filled
+  })
+
+  it('treats a non-object env (e.g. user wrote env = "broken") as empty and replaces with scaffold', () => {
+    const merged = mergeEnvWithScaffold('not an object')
+    expect(merged).toEqual({ ...APIYI_MCP_ENV_SCAFFOLD })
+  })
+
+  it('treats undefined env as empty and returns the full scaffold', () => {
+    const merged = mergeEnvWithScaffold(undefined)
+    expect(merged).toEqual({ ...APIYI_MCP_ENV_SCAFFOLD })
+  })
+})
+
 describe('seedApiyiMcpEntry', () => {
-  // Per design: seed ONLY when entry doesn't exist; never touch an existing
-  // entry. The user is the sole source of truth for env / enabled, editing
-  // via the MCP JSON editor in the agent workspace.
+  // Three outcomes:
+  //   'seeded'     → entry didn't exist; fresh full scaffold written
+  //   'backfilled' → entry existed but env was missing scaffold keys;
+  //                  add the missing ones without ever overwriting user values
+  //   'skipped'    → entry exists and env already has every scaffold key
+  // command / args / enabled / tool_timeout_sec are NEVER touched on the
+  // backfill path.
 
   it('creates config.toml with disabled apiyi stub + pre-filled env scaffold', async () => {
     const action = await seedApiyiMcpEntry({
@@ -49,7 +93,7 @@ describe('seedApiyiMcpEntry', () => {
     // The scaffolded env: only APIYI_API_KEY is empty for the user to fill.
     expect(apiyi.env.APIYI_API_KEY).toBe('')
     expect(apiyi.env.APIYI_BASE_URL).toBe('https://api.apiyi.com')
-    expect(apiyi.env.GEMINI_MODEL).toBe('gemini-3.1-pro-preview-thinking')
+    expect(apiyi.env.GEMINI_MODEL).toBe('gemini-3.5-flash')
     expect(apiyi.env.GEMINI_MAX_OUTPUT_TOKENS).toBe('65536')
     expect(apiyi.env.GEMINI_TIMEOUT).toBe('1800000')
     expect(apiyi.env.ELECTRON_RUN_AS_NODE).toBe('1')
@@ -90,7 +134,7 @@ describe('seedApiyiMcpEntry', () => {
     expect((servers.apiyi as { enabled: boolean }).enabled).toBe(false)
   })
 
-  it('DOES NOT overwrite an existing apiyi entry — user config is sacred', async () => {
+  it('backfills missing env keys but NEVER overwrites user-set values', async () => {
     await fs.writeFile(
       configPath,
       [
@@ -102,7 +146,7 @@ describe('seedApiyiMcpEntry', () => {
         '[mcp_servers.apiyi.env]',
         'APIYI_API_KEY = "sk-user-already-set"',
         'ELECTRON_RUN_AS_NODE = "1"',
-        'GEMINI_MODEL = "gemini-3.5-flash"',
+        'GEMINI_MODEL = "gemini-2.5-flash"',
         '',
       ].join('\n'),
       'utf8',
@@ -113,7 +157,7 @@ describe('seedApiyiMcpEntry', () => {
       entryPath: FAKE_ENTRY,
       nodeBin: FAKE_NODE,
     })
-    expect(action).toBe('skipped')
+    expect(action).toBe('backfilled')
 
     const parsed = parseToml(await fs.readFile(configPath, 'utf8')) as Record<
       string,
@@ -125,15 +169,21 @@ describe('seedApiyiMcpEntry', () => {
       enabled: boolean
       env: Record<string, string>
     }
+    // command / args / enabled — NEVER touched on backfill path.
     expect(apiyi.command).toBe('/custom/node')
     expect(apiyi.args).toEqual(['/custom/path.js'])
     expect(apiyi.enabled).toBe(true)
+    // User-set env values preserved verbatim.
     expect(apiyi.env.APIYI_API_KEY).toBe('sk-user-already-set')
     expect(apiyi.env.ELECTRON_RUN_AS_NODE).toBe('1')
-    expect(apiyi.env.GEMINI_MODEL).toBe('gemini-3.5-flash')
+    expect(apiyi.env.GEMINI_MODEL).toBe('gemini-2.5-flash') // user override, NOT scaffold default
+    // Missing scaffold fields backfilled.
+    expect(apiyi.env.APIYI_BASE_URL).toBe('https://api.apiyi.com')
+    expect(apiyi.env.GEMINI_MAX_OUTPUT_TOKENS).toBe('65536')
+    expect(apiyi.env.GEMINI_TIMEOUT).toBe('1800000')
   })
 
-  it('skips even a partial / env-less existing entry — does not "fix" or migrate', async () => {
+  it('backfills the entire env scaffold when existing entry has no env block at all', async () => {
     await fs.writeFile(
       configPath,
       [
@@ -151,7 +201,7 @@ describe('seedApiyiMcpEntry', () => {
       entryPath: FAKE_ENTRY,
       nodeBin: FAKE_NODE,
     })
-    expect(action).toBe('skipped')
+    expect(action).toBe('backfilled')
 
     const parsed = parseToml(await fs.readFile(configPath, 'utf8')) as Record<
       string,
@@ -159,20 +209,78 @@ describe('seedApiyiMcpEntry', () => {
     >
     const apiyi = (parsed.mcp_servers as Record<string, unknown>).apiyi as {
       command: string
-      env?: Record<string, string>
+      env: Record<string, string>
     }
-    // No env injection — user must add it themselves via the JSON editor.
-    expect(apiyi.command).toBe('/c')
-    expect(apiyi.env).toBeUndefined()
+    expect(apiyi.command).toBe('/c') // command preserved
+    expect(apiyi.env).toEqual({ ...APIYI_MCP_ENV_SCAFFOLD })
   })
 
-  it('is idempotent on repeated boots (seed then skip)', async () => {
+  it('skips when existing entry already has every scaffold key (steady state)', async () => {
+    await fs.writeFile(
+      configPath,
+      [
+        '[mcp_servers.apiyi]',
+        'command = "/c"',
+        'args = ["/a"]',
+        'enabled = true',
+        '',
+        '[mcp_servers.apiyi.env]',
+        'APIYI_API_KEY = "sk-keep"',
+        'APIYI_BASE_URL = "https://api.apiyi.com"',
+        'GEMINI_MODEL = "gemini-3.5-flash"',
+        'GEMINI_MAX_OUTPUT_TOKENS = "65536"',
+        'GEMINI_TIMEOUT = "1800000"',
+        'ELECTRON_RUN_AS_NODE = "1"',
+        '',
+      ].join('\n'),
+      'utf8',
+    )
+
+    const action = await seedApiyiMcpEntry({
+      personalConfigToml: configPath,
+      entryPath: FAKE_ENTRY,
+      nodeBin: FAKE_NODE,
+    })
+    expect(action).toBe('skipped')
+  })
+
+  it('is idempotent on repeated boots (seed → skip; backfill → skip)', async () => {
     const first = await seedApiyiMcpEntry({
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
       nodeBin: FAKE_NODE,
     })
     expect(first).toBe('seeded')
+
+    const second = await seedApiyiMcpEntry({
+      personalConfigToml: configPath,
+      entryPath: FAKE_ENTRY,
+      nodeBin: FAKE_NODE,
+    })
+    expect(second).toBe('skipped')
+  })
+
+  it('post-backfill is also idempotent (backfill → skip on next boot)', async () => {
+    // Start with a legacy empty-env entry (what older seeds produced).
+    await fs.writeFile(
+      configPath,
+      [
+        '[mcp_servers.apiyi]',
+        'command = "/c"',
+        'args = ["/a"]',
+        'enabled = false',
+        '',
+        '[mcp_servers.apiyi.env]',
+        '',
+      ].join('\n'),
+      'utf8',
+    )
+    const first = await seedApiyiMcpEntry({
+      personalConfigToml: configPath,
+      entryPath: FAKE_ENTRY,
+      nodeBin: FAKE_NODE,
+    })
+    expect(first).toBe('backfilled')
 
     const second = await seedApiyiMcpEntry({
       personalConfigToml: configPath,

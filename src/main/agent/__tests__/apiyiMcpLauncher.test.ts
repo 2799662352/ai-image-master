@@ -69,7 +69,13 @@ describe('APIYI_MCP_ENV_SCAFFOLD', () => {
   })
 
   it('pre-fills a sane model + long-context tokens + 30min timeout', () => {
-    expect(APIYI_MCP_ENV_SCAFFOLD.GEMINI_MODEL).toBe('gemini-3.1-pro-preview-thinking')
+    // Default is the best price/perf 3.x model. The other two canonical
+    // choices (`gemini-3.1-pro-preview-thinking` for thinking-heavy work and
+    // `gemini-3-flash-preview` for cheapest-token batch work) are documented
+    // in apiyiMcpLauncher.ts but NOT enforced — the JSON editor accepts any
+    // string. Bumping this default is a deliberate UX change; if you flip it,
+    // also update the steady-state TOML fixture in apiyiMcpSeed.test.ts.
+    expect(APIYI_MCP_ENV_SCAFFOLD.GEMINI_MODEL).toBe('gemini-3.5-flash')
     expect(APIYI_MCP_ENV_SCAFFOLD.GEMINI_MAX_OUTPUT_TOKENS).toBe('65536')
     expect(APIYI_MCP_ENV_SCAFFOLD.GEMINI_TIMEOUT).toBe('1800000')
   })

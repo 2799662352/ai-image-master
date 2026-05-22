@@ -43,7 +43,7 @@ COPY deploy/apiyi-fastmcp/server.py ./server.py
 
 # Defaults (override via docker-compose or `-e` flags)
 ENV APIYI_BASE_URL=https://api.apiyi.com \
-    GEMINI_MODEL=gemini-3.1-pro-preview-thinking \
+    GEMINI_MODEL=gemini-3.5-flash \
     GEMINI_MAX_OUTPUT_TOKENS=65536 \
     GEMINI_TEMPERATURE=0.2 \
     GEMINI_MAX_FILES=10 \

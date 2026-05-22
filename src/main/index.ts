@@ -43,7 +43,7 @@ import { registerFsWatcherIpc, disposeAll as disposeFsWatchers } from './file-ex
 import { startCatimationMcpServer } from './mcp/server'
 import type { McpRuntime } from './mcp/server'
 import { resolveWorkspacePaths } from './agent/codexConfigStore'
-import { getApiyiMcpEntryPath } from './agent/apiyiMcpLauncher'
+import { getApiyiMcpEntryPath, resolveApiyiCommand } from './agent/apiyiMcpLauncher'
 import { seedApiyiMcpEntry } from './agent/apiyiMcpSeed'
 
 // 检测开发模式：通过命令行参数或环境变量

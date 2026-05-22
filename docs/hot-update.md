@@ -138,6 +138,73 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
+### v4.3.16 (2026-05-23) — 内嵌 apiyi-mcp 模型选择硬约束 + 老用户 env 配置自动 backfill
+
+本版本针对 v4.3.15 已嵌入的 apiyi-mcp(用 Gemini 多模态分析图像/视频/PDF)做两件事:**让 LLM 客户端不再"自作主张"地往工具调用里塞 `gemini-2.5-pro` 这个过气模型**,以及**让老用户升级时自动补齐缺失的 env scaffold 字段(但永不动用户已设的值)**。
+
+**问题背景**:v4.3.15 把 apiyi-mcp 默认模型设成了 `gemini-3.1-pro-preview-thinking`,但有用户反馈:打开 Codex/Claude agent 让它"分析这个视频",日志里看到工具调用参数仍然是 `{"model":"gemini-2.5-pro", ...}` —— **客户端 LLM 把 default 配置覆盖掉了**。原因是 apiyi-mcp 的 tool inputSchema 里 `model` 字段 description 只有空泛一句 `'Gemini model to use'`,没有任何枚举或推荐,LLM(尤其是 OpenAI o-series)就凭训练数据偏好填 `gemini-2.5-pro` —— 那是他们见得最多的"视频理解能用的模型"。
+
+**A. tool inputSchema 加 enum + 强 description(`apiyi-mcp-server` 上游 + vendored dist)**
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| `generate_content.inputSchema.model` 加 enum | `apiyi-mcp-server@c0856f4 src/index.ts` + vendored `resources/apiyi-mcp/dist/index.js` | 三档枚举:`gemini-3.5-flash`(默认,综合性价比最高,适合 99% 任务)/`gemini-3.1-pro-preview-thinking`(深度推理 / `thinking_budget`,贵且慢)/`gemini-3-flash-preview`(最便宜,适合大批量简单任务)。`description` 改写成多行表格式说明,显式标注"NEVER pass legacy 2.x ids (gemini-2.5-pro, gemini-2.5-flash, ...) — they are DEPRECATED" |
+| `generate_content_batch` 同步 | 同上 | 批量工具的 per-request `model` override 走同款 enum + description |
+| `DEFAULT_CONFIG.MODEL` 切换 | `apiyi-mcp-server src/constants.ts` | `gemini-3.1-pro-preview-thinking` → `gemini-3.5-flash`;LLM 不显式传 model 时直接走 3.5-flash |
+| Docker 镜像同步 | `Dockerfile` + `Dockerfile.sse` + `docker-compose.yml` | `ENV GEMINI_MODEL=gemini-3.5-flash`,注释列出三档推荐模型 |
+| 上游文档 | `apiyi-mcp-server CLAUDE.md` | 加"推荐模型"表 + 2.x 弃用说明 |
+| Vendor lock 更新 | `scripts/vendor-apiyi-mcp.lock.json` `a7062b2` → `c0856f4` | 通过 `npm run vendor:apiyi-mcp:update` 重建 `resources/apiyi-mcp/`,确保 fresh clone / CI build 拿到带 enum 的 dist |
+
+**为什么 enum + description 比"加 default + 文档说明"更硬**:JSON Schema enum 是 LLM 工具调用层的 hard constraint,大多数客户端(Cursor、Codex、Claude.app)在生成 args 时会严格遵循。即使 LLM 想填 `gemini-2.5-pro`,schema 校验会拒绝;**fallback 是落到服务端 default = gemini-3.5-flash**,双重保险。
+
+**B. apiyi-mcp env scaffold backfill(`src/main/agent/apiyiMcpSeed.ts`)**
+
+老用户的 `~/.codex/config.toml` 里 `[mcp_servers.apiyi]` 块如果已经存在(v4.3.15 装过),原来的 seed 逻辑是 **'skipped'**(只要存在就完全不动),导致他们的 env 块永远停留在老 scaffold —— **新的默认 `GEMINI_MODEL=gemini-3.5-flash` 永远到不了他们机器**。
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| `SeedAction` 加 `'backfilled'` 第三状态 | `src/main/agent/apiyiMcpSeed.ts` (+90 -21) | 三种结果:`seeded`(新写)/`backfilled`(已有但缺 scaffold key → 补)/`skipped`(已有且完整 → 不动) |
+| `mergeEnvWithScaffold(existingEnv)` 纯函数 | 同文件 | 遍历 `APIYI_MCP_ENV_SCAFFOLD`,**只补 missing key**;用户已设的值原样保留 —— 包括 `GEMINI_MODEL=gemini-2.5-pro` 这种"看起来不对"的值,**用户拥有 source of truth**。enum 约束在 LLM 调用层兜底就够了 |
+| 测试 +12 个 case | `src/main/agent/__tests__/apiyiMcpSeed.test.ts` (+128 -12) | 覆盖 backfill 添加缺失 key / 保留 user 值 / 三状态分支 / 幂等(连跑两次第二次必 'skipped') |
+| `SeedApiyiMcpInput` 改 `nodeBin` → `command` + `extraEnv` | 同文件 | 解耦"用哪个 binary 启动 apiyi-mcp"和 seed 自身的纯函数语义。caller(`resolveApiyiCommand` in `apiyiMcpLauncher.ts`)决定走 system node 还是 Electron-as-node(打包 app 内置 Electron 兼作 node runtime) |
+
+**C. apiyi-mcp launcher 扩展(`src/main/agent/apiyiMcpLauncher.ts` +142 -36)**
+
+| 改动 | 说明 |
+|------|------|
+| `APIYI_MCP_ENV_SCAFFOLD` 默认 `GEMINI_MODEL` | 改成 `gemini-3.5-flash`;`GEMINI_MAX_OUTPUT_TOKENS` `8192` → `65536`,`GEMINI_TIMEOUT` 加 `1800000`(30min)默认值 |
+| 新增 `resolveApiyiCommand()` 导出 | `src/main/index.ts` import 改成 `import { getApiyiMcpEntryPath, resolveApiyiCommand } from './agent/apiyiMcpLauncher'`。统一 dev/prod 启动路径:dev 走 system `node`,packaged 走 `process.execPath` + `ELECTRON_RUN_AS_NODE=1` |
+| `buildApiyiMcpConfigEntry` 签名重构 | 接受 `command` + `extraEnv` 而非 `nodeBin`,跟 seed 保持一致 |
+| JSDoc 详尽化 | 加表格式三档模型推荐;明确"白名单仅 LLM 调用层,env JSON 用户可填任意值";测试同步 (`+4 -4` line 期望更新) |
+
+**D. 远端 FastMCP BYOK 网关同步(`deploy/apiyi-fastmcp/`)**
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| Python 默认模型 | `deploy/apiyi-fastmcp/server.py` | `DEFAULT_MODEL = 'gemini-3.5-flash'` |
+| Docker 配置同步 | `deploy/apiyi-fastmcp/Dockerfile` + `deploy/docker-compose.yml` | `ENV GEMINI_MODEL=gemini-3.5-flash` |
+| 部署文档 | `deploy/README.md` + `deploy/apiyi-fastmcp/.dockerignore` + `pyproject.toml` | 同步;EdgeOne 长请求 + 大文件场景的反代配置说明 |
+
+#### 用户可见行为
+
+1. **Codex / Claude / Cursor agent 用 apiyi-mcp 跑视频/图像/PDF 分析**:工具调用参数里 `model` 字段被 enum 约束在三档 3.x 模型,不再蹦 `gemini-2.5-pro`(LLM 看到 schema 会自己选 `gemini-3.5-flash` 默认档)
+2. **v4.3.15 老用户升级到 v4.3.16**:启动时 `~/.codex/config.toml` 的 `[mcp_servers.apiyi]` env 块自动补齐新的 scaffold key(`GEMINI_MAX_OUTPUT_TOKENS=65536` 等),**已设的 `APIYI_API_KEY` / `GEMINI_MODEL` 等值原封不动**;首次启动会在 console 看到 `seedApiyiMcpEntry → backfilled` 日志,后续启动全部 `skipped`
+3. **MCP JSON 编辑器**(Agent Workspace → MCP Servers → apiyi → 配置)**不强制白名单**:用户在 env 块里填 `GEMINI_MODEL=gemini-2.5-pro`(不推荐但兼容)或任何其它 apiyi 支持的模型 id 都生效。约束只在 LLM 自动选择层,不在 env 配置层
+4. **fresh clone / CI build**:`npm run vendor:apiyi-mcp` 拉到 upstream `c0856f4` 的带 enum 版本,产出的 installer 内置正确的 schema
+
+#### 验证
+
+- 上游 `apiyi-mcp-server@c0856f4` 已 push 到 `https://github.com/2799662352/apiyi-mcp-server/commit/c0856f4`
+- 主项目 `npm run vendor:apiyi-mcp:update` → lock 更新到 `c0856f4126501615a067f9d8b0e7758d0d2d74c0`,`resources/apiyi-mcp/dist/index.js` 重新 build 包含 enum
+- `node --check resources/apiyi-mcp/dist/index.js` → 语法合法
+- `apiyiMcpSeed.test.ts` 全部 backfill / 保留 / 幂等 case 通过
+
+参考:
+- 上游 commit: <https://github.com/2799662352/apiyi-mcp-server/commit/c0856f4>
+- 远端 BYOK 网关部署: `deploy/apiyi-fastmcp/README.md`
+
+---
+
 ### v4.3.15 (2026-05-22) — 三件套：图片解码卡顿根除 + 批量闭包覆盖 bug + gpt-image-2-vip 分辨率对齐
 
 本版本解决三个独立的图像生成痛点：(A) `<img src="data:image/...">` 同步解码阻塞主线程导致的"生成完那一下卡顿"，(B) 批量页运行中追加新 item 时参数被首次快照覆盖的 bug，(C) gpt-image-2-vip `resolutionMap` 像素值与 apiyi.com 文档不一致。
