@@ -221,7 +221,12 @@ describe('McpServerCard', () => {
         onLogin={vi.fn()}
       />,
     )
-    expect(screen.getByText(/视频理解 API Key/)).toBeTruthy()
+    // Post-refactor: hint must point to the ✏️ JSON editor (not the deleted
+    // "设置 → 视频理解 API Key" path) and explicitly flag the whitespace-key
+    // trap (apiyi-mcp accepts " " as truthy, then Google GenAI rejects it).
+    expect(screen.getByText(/env\.APIYI_API_KEY/)).toBeTruthy()
+    expect(screen.getByText(/不能是空格/)).toBeTruthy()
+    expect(screen.queryByText(/视频理解 API Key/)).toBeNull()
     expect(screen.queryByText(/Docker Desktop/)).toBeNull()
   })
 })
