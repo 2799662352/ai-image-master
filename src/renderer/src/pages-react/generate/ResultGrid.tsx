@@ -1,4 +1,15 @@
 import type { ResultUploadMeta } from '../../stores/useGenerateStore'
+import { useDisplaySrc } from '../../hooks/useDisplaySrc'
+
+/**
+ * 单格图片 —— 把 `<img>` 抽成独立组件,只为了能在循环里安全调 useDisplaySrc:
+ * 钩子不能在 .map() 回调里直接调。每个 cell 自己持有它那一张的 blob URL 生命周期,
+ * 切换/卸载时自动 revoke,互不干扰。
+ */
+function ResultCell({ url, alt }: { url: string; alt: string }) {
+  const imgSrc = useDisplaySrc(url)
+  return <img src={imgSrc} alt={alt} className="w-full object-contain" />
+}
 
 interface ResultGridProps {
   /**
@@ -51,7 +62,7 @@ export function ResultGrid({ urls, meta, onEditFromResult }: ResultGridProps) {
         const canEdit = !!(onEditFromResult && snapshot)
         return (
           <div key={m?.id ?? `${i}-${url}`} className="group relative bg-zinc-900 border-2 border-zinc-700 overflow-hidden">
-            <img src={url} alt={`Result ${i + 1}`} className="w-full object-contain" />
+            <ResultCell url={url} alt={`Result ${i + 1}`} />
             {badge && (
               <span
                 aria-label={badge.title}

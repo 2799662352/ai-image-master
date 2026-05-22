@@ -256,6 +256,10 @@ export default function BatchPage() {
     //    workers 走的是 live-claim 模型 (claimNextPending)，新入队的 item
     //    会被空闲 / 下一轮 worker 直接捡走，不再需要等本轮 batch 整体跑完。
     let enqueuedThisClick = 0
+    // 入队时锁定当前 refs + ratio 到每个 item, 保证用户 mid-run 修改后
+    // 追加的新 item 使用的是修改后的值(而非首次 runBatch 闭包里的旧值)。
+    const currentRefs = refImages.map((r) => r.base64)
+    const itemOpts = { referenceImages: currentRefs, ratio }
     if (mode === 'card') {
       const p = cardPrompt.trim()
       if (!p && stats.pending === 0 && !running) {
@@ -264,7 +268,7 @@ export default function BatchPage() {
       }
       if (p) {
         for (let i = 0; i < cardCount; i++) {
-          addItem(p)
+          addItem(p, itemOpts)
           enqueuedThisClick += 1
         }
       }
@@ -276,7 +280,7 @@ export default function BatchPage() {
       }
       if (p) {
         for (let i = 0; i < perPromptCount; i++) {
-          addItem(p)
+          addItem(p, itemOpts)
           enqueuedThisClick += 1
         }
       }

@@ -42,6 +42,14 @@ export interface BatchItem {
   uploadError?: string
   error?: string
   /**
+   * 入队时锁定的参考图(base64 带 data: 前缀)。如果用户在 batch 运行中
+   * 改了参考图又点"加入队列", 新 item 携带的是修改后的 refs, 不会被
+   * 首次 runBatch 的闭包覆盖。
+   */
+  referenceImages?: string[]
+  /** 入队时锁定的比例, 同上原因。 */
+  ratio?: string
+  /**
    * 在 worker 把 item flip 为 `generating` 时挂上 —— 之前(pending)
    * 阶段为 undefined。重编辑时:
    *   - 有 snapshot 就用 snapshot.{prompt, ratio, referenceImages, modelKey}
@@ -102,7 +110,7 @@ export interface BatchState {
   refImages: BatchRefImage[]
 
   // ---- actions: 队列 ----
-  addItem: (prompt: string) => void
+  addItem: (prompt: string, opts?: { referenceImages?: string[]; ratio?: string }) => void
   removeItem: (id: string) => void
   clearAll: () => void
   runBatch: (api: ApiActions, modelKey: string, opts?: BatchRunOpts) => Promise<void>
@@ -199,12 +207,18 @@ function stripDataUrl(s: string): string {
 export const useBatchStore = create<BatchState>((set, get) => ({
   ...initialState,
 
-  addItem: (prompt) => {
+  addItem: (prompt, opts) => {
     set((s) => ({
       // 追加新项之后用 trimItems 限制总长 — 只丢已结束的, 跑的活儿不动。
       items: trimItems([
         ...s.items,
-        { id: crypto.randomUUID(), prompt, status: 'pending' },
+        {
+          id: crypto.randomUUID(),
+          prompt,
+          status: 'pending',
+          referenceImages: opts?.referenceImages,
+          ratio: opts?.ratio,
+        },
       ]),
     }))
     // If a batch is in flight, kick a brand-new worker so this freshly
@@ -309,7 +323,13 @@ export const useBatchStore = create<BatchState>((set, get) => ({
         if (!next) return state
         // Snapshot 在 claim 时挂上 —— 此时 prompt/ratio/refs/model 都已确定,
         // 重编辑按钮(在 done 之后才显示)就能拿到完整回灌参数。
-        const snapshot: BatchItemSnapshot = { ...runSnapshotBase, prompt: next.prompt }
+        // item 自身可能带独立 ratio/referenceImages (mid-run 追加的), 优先用。
+        const snapshot: BatchItemSnapshot = {
+          ...runSnapshotBase,
+          prompt: next.prompt,
+          ratio: next.ratio ?? runSnapshotBase.ratio,
+          referenceImages: next.referenceImages ?? runSnapshotBase.referenceImages,
+        }
         claimed = { ...next, status: 'generating' as const, snapshot }
         return {
           items: state.items.map((i) =>
@@ -360,12 +380,18 @@ export const useBatchStore = create<BatchState>((set, get) => ({
           try {
             const templateKey = useTemplateStore.getState().getSelection('batch')
             const finalPrompt = composePromptWithTemplate(templateKey, item.prompt)
+            // item 自身可能携带入队时锁定的 refs/ratio (用户 mid-run 修改后
+            // 追加的新 item), 优先取自身值, 否则 fallback 到 runBatch 闭包快照。
+            const itemRatio = item.ratio ?? ratio
+            const itemRefs = item.referenceImages
+              ? item.referenceImages.map(stripDataUrl).filter(Boolean)
+              : referenceImages
             const result = await api.generateImage({
               prompt: finalPrompt,
               model: modelKey,
-              ratio: ratio !== 'auto' ? ratio : undefined,
+              ratio: itemRatio !== 'auto' ? itemRatio : undefined,
               resolution,
-              referenceImages: referenceImages.length > 0 ? referenceImages : undefined,
+              referenceImages: itemRefs.length > 0 ? itemRefs : undefined,
               signal: ac.signal,
             })
 
@@ -413,9 +439,9 @@ export const useBatchStore = create<BatchState>((set, get) => ({
             pendingBatchHistoryContext.set(item.id, {
               modelUrl: url,
               prompt: item.prompt,
-              ratio,
+              ratio: item.ratio ?? ratio,
               modelKey,
-              refRaw,
+              refRaw: item.referenceImages ?? refRaw,
             })
             enqueueCosUpload(item.id, url, {
               source: 'batch',

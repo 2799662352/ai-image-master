@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import type { DonorItemView } from '../../hooks/useHistoryData'
+import { useDisplaySrc } from '../../hooks/useDisplaySrc'
 
 interface Props {
   item: DonorItemView
@@ -27,6 +28,10 @@ export default function DonorPreview({ item, startIndex, onClose }: Props) {
   }, [onClose, next, prev])
 
   const url = urls[idx]
+  // lightbox 主图: dataURL 走 blob: 异步解码; http/blob 透传。
+  // handleSave / fetch(url) 仍用原 url —— blob: 也能 fetch, 但 dataURL 走 IPC
+  // 下载更直接, 保留原 url 让 catch 分支的 a.href fallback 仍能工作。
+  const displayImgSrc = useDisplaySrc(url)
 
   const copyPrompt = async () => {
     if (item.prompt) {
@@ -108,7 +113,7 @@ export default function DonorPreview({ item, startIndex, onClose }: Props) {
         {/* 图片区 */}
         <div className="relative bg-[color:var(--donor-bg-0)] flex items-center justify-center p-4" style={{ minHeight: '40vh' }}>
           {url ? (
-            <img src={url} alt={item.prompt || 'preview'} className="max-w-full max-h-[65vh] object-contain" />
+            <img src={displayImgSrc} alt={item.prompt || 'preview'} className="max-w-full max-h-[65vh] object-contain" />
           ) : (
             <div className="py-20 text-center text-[color:var(--donor-red)] d-mono">NO_DATA</div>
           )}

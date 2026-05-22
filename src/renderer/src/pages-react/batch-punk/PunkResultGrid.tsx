@@ -3,6 +3,7 @@ import type { BatchItem } from '../../stores/useBatchStore'
 import { useBatchStore } from '../../stores/useBatchStore'
 import ImageEditToolbar from '../../components/shared/image-editors/ImageEditToolbar'
 import ImageEditorModal from '../../components/shared/image-editors/ImageEditorModal'
+import { useDisplaySrc } from '../../hooks/useDisplaySrc'
 import '../../components/shared/image-editors/image-editors.css'
 
 interface Props {
@@ -77,6 +78,10 @@ function ResultCard({
   const isFail = item.status === 'error'
   const isRun = item.status === 'generating'
   const displayUrl = item.resultUrl ?? item.cosUrl
+  // imgSrc 是 displayUrl 走 useDisplaySrc 换出来的 blob: URL, 仅用于 <img src>。
+  // displayUrl 原值留给 toolbar/modal/preview/download —— 那些需要原始 dataURL
+  // 或 http 链接送回服务端 / 主进程, blob: URL 在跨进程是无效的。
+  const imgSrc = useDisplaySrc(displayUrl)
   const isDone = item.status === 'done' && !!displayUrl
   const upload = item.uploadStatus
 
@@ -188,9 +193,10 @@ function ResultCard({
         )}
         {isDone && (
           <img
-            src={displayUrl}
+            src={imgSrc}
             alt={item.prompt}
             loading="lazy"
+            decoding="async"
             style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
           />
         )}

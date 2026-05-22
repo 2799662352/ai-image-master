@@ -2,7 +2,25 @@ import { useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import type { SplitHistoryItem } from '../../../../types/storyboardSplit'
 import { useSplitSessionStore } from '../../stores'
+import { useDisplaySrc } from '../../hooks/useDisplaySrc'
 import { zipDownload } from './utils/zipDownload'
+
+/**
+ * 单格图 —— 把 `<img>` 抽出来让 useDisplaySrc 能在 .map() 里安全使用。
+ * Storyboard 切片结果常是 dataURL, 走 blob: 异步解码避免卡。
+ */
+function SplitImage({
+  src,
+  alt,
+  className,
+}: {
+  src: string
+  alt: string
+  className: string
+}) {
+  const imgSrc = useDisplaySrc(src)
+  return <img src={imgSrc} alt={alt} className={className} loading="lazy" decoding="async" />
+}
 
 const GRID_PREVIEW_COLS: Record<number, string> = {
   1: 'grid-cols-1',
@@ -141,7 +159,7 @@ export default function SplitPreview({ item, onClose }: Props) {
         {mode === 'single' ? (
           <div className="relative bg-[color:var(--donor-bg-0)] flex items-center justify-center p-4" style={{ minHeight: '40vh' }}>
             {url ? (
-              <img src={url} alt={`${item.filename} #${idx + 1}`} className="max-w-full max-h-[65vh] object-contain" />
+              <SplitImage src={url} alt={`${item.filename} #${idx + 1}`} className="max-w-full max-h-[65vh] object-contain" />
             ) : (
               <div className="py-20 text-center text-[color:var(--donor-red)] d-mono">NO_DATA</div>
             )}
@@ -176,7 +194,7 @@ export default function SplitPreview({ item, onClose }: Props) {
                 onClick={() => { setIdx(i); setMode('single') }}
                 className="aspect-square overflow-hidden bg-[color:var(--donor-bg-1)] border border-transparent hover:border-[color:var(--donor-cyan)] transition-colors"
               >
-                <img src={u} alt={`#${i + 1}`} className="w-full h-full object-cover" loading="lazy" />
+                <SplitImage src={u} alt={`#${i + 1}`} className="w-full h-full object-cover" />
               </button>
             ))}
           </div>
@@ -192,7 +210,7 @@ export default function SplitPreview({ item, onClose }: Props) {
                 onClick={() => setIdx(i)}
                 className={`flex-shrink-0 w-12 h-12 overflow-hidden border-2 transition-colors ${i === idx ? 'border-[color:var(--donor-cyan)]' : 'border-transparent hover:border-[color:var(--donor-magenta-dim)]'}`}
               >
-                <img src={u} alt={`thumb ${i + 1}`} className="w-full h-full object-cover" loading="lazy" />
+                <SplitImage src={u} alt={`thumb ${i + 1}`} className="w-full h-full object-cover" />
               </button>
             ))}
           </div>

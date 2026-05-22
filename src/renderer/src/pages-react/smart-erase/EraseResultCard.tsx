@@ -1,5 +1,6 @@
 import type { EraseHistoryItem } from '../../../../types/smartErase'
 import { useEraseSessionStore } from '../../stores/useEraseSessionStore'
+import { useDisplaySrc } from '../../hooks/useDisplaySrc'
 
 export function EraseResultCard({
   item,
@@ -9,6 +10,9 @@ export function EraseResultCard({
   highlight?: boolean
 }) {
   const setModalItemId = useEraseSessionStore((s) => s.setModalItemId)
+  // posterDataUrl 是从视频抽帧出来的 dataURL, 单卡 180×160 不大, 但满屏 N 张
+  // 海报卡同时进入视口时主线程仍会被 base64 解码顶住, 走 blob: 异步解码更稳。
+  const posterImgSrc = useDisplaySrc(item.posterDataUrl)
 
   const expired = item.videoExpiresAt > 0 && item.videoExpiresAt < Date.now()
   const expiryMs = item.videoExpiresAt - Date.now()
@@ -49,7 +53,7 @@ export function EraseResultCard({
 
       <div className="flex-1 bg-black overflow-hidden">
         {item.posterDataUrl ? (
-          <img src={item.posterDataUrl} alt="" className="w-full h-full object-cover" />
+          <img src={posterImgSrc} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
             <span className="d-mono text-[color:var(--donor-ink-mute)] text-lg">▶</span>

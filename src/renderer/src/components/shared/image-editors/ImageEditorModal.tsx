@@ -1,6 +1,25 @@
 import { lazy, Suspense, Component, useState, useCallback, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { withRefPrefix } from './prompts'
+import { useDisplaySrc } from '../../../hooks/useDisplaySrc'
+
+/**
+ * 候选 thumb —— 抽组件让 useDisplaySrc 在 .map() 里安全使用。
+ * `currentUrl` / `setCurrentUrl(ch.url)` 仍传原始 url 给 Multi/Light Editor,
+ * 那些 WebGL 编辑器需要原图喂 texture, blob:URL 跨进程/canvas 加载不一定可读。
+ */
+function ChoiceThumb({ url, label, style }: { url: string; label?: string; style: React.CSSProperties }) {
+  const imgSrc = useDisplaySrc(url)
+  return (
+    <img
+      src={imgSrc}
+      alt={label || 'ref'}
+      loading="lazy"
+      decoding="async"
+      style={style}
+    />
+  )
+}
 
 const MultiAngleEditor = lazy(() => import('./MultiAngleEditor'))
 const LightEditor = lazy(() => import('./LightEditor'))
@@ -143,9 +162,9 @@ export default function ImageEditorModal({
                     transition: 'transform 120ms ease',
                   }}
                 >
-                  <img
-                    src={ch.url}
-                    alt={ch.label || `ref-${i + 1}`}
+                  <ChoiceThumb
+                    url={ch.url}
+                    label={ch.label || `ref-${i + 1}`}
                     style={{ display: 'block', width: '100%', height: '100%', objectFit: 'cover' }}
                   />
                 </button>

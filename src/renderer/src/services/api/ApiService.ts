@@ -233,17 +233,22 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       { key: '4K', label: '4K 超清', description: '印刷所需' }
     ],
     defaultResolution: '1K',
+    // 严格对齐 apiyi gpt-image-2-vip OpenAPI 30 档 size 枚举
+    // 文档: https://docs.apiyi.com/api-capabilities/gpt-image-2-vip/text-to-image
+    //       https://docs.apiyi.com/api-capabilities/gpt-image-2-vip/image-edit
+    // 注意: 必须是 ASCII 小写 x 分隔, 不是 Unicode ×; resolveGptImage2VipSize 已统一转 x
     resolutionMap: {
-      '1:1':  { '1K': '1024×1024', '2K': '2048×2048', '4K': '4096×4096' },
-      '2:3':  { '1K': '848×1264',  '2K': '1696×2528', '4K': '3392×5056' },
-      '3:2':  { '1K': '1264×848',  '2K': '2528×1696', '4K': '5056×3392' },
-      '3:4':  { '1K': '896×1200',  '2K': '1792×2400', '4K': '3584×4800' },
-      '4:3':  { '1K': '1200×896',  '2K': '2400×1792', '4K': '4800×3584' },
-      '4:5':  { '1K': '928×1152',  '2K': '1856×2304', '4K': '3712×4608' },
-      '5:4':  { '1K': '1152×928',  '2K': '2304×1856', '4K': '4608×3712' },
-      '9:16': { '1K': '768×1376',  '2K': '1536×2752', '4K': '3072×5504' },
-      '16:9': { '1K': '1376×768',  '2K': '2752×1536', '4K': '5504×3072' },
-      '21:9': { '1K': '1584×672',  '2K': '3168×1344', '4K': '6336×2688' },
+      // 1K Fast (长边 1280, 21:9 短边 544)
+      '1:1':  { '1K': '1280x1280', '2K': '2048x2048', '4K': '2880x2880' },
+      '2:3':  { '1K': '848x1280',  '2K': '1360x2048', '4K': '2336x3520' },
+      '3:2':  { '1K': '1280x848',  '2K': '2048x1360', '4K': '3520x2336' },
+      '3:4':  { '1K': '960x1280',  '2K': '1536x2048', '4K': '2480x3312' },
+      '4:3':  { '1K': '1280x960',  '2K': '2048x1536', '4K': '3312x2480' },
+      '4:5':  { '1K': '1024x1280', '2K': '1632x2048', '4K': '2560x3216' },
+      '5:4':  { '1K': '1280x1024', '2K': '2048x1632', '4K': '3216x2560' },
+      '9:16': { '1K': '720x1280',  '2K': '1152x2048', '4K': '2160x3840' },
+      '16:9': { '1K': '1280x720',  '2K': '2048x1152', '4K': '3840x2160' },
+      '21:9': { '1K': '1280x544',  '2K': '2048x864',  '4K': '3840x1632' },
       'auto': { '1K': '自适应',     '2K': '自适应',     '4K': '自适应' }
     },
     defaultParams: {
@@ -1161,6 +1166,9 @@ export class ApiService {
       if (cfg?.defaultParams?.output_format) {
         payload.output_format = cfg.defaultParams.output_format
       }
+      // 注意: vip 默认走 b64_json (apiyi 文档虽支持 "url", 但实测国内访问不了
+      // CDN 返回的 URL —— 用户已验证过), 单张几 MB base64 的主线程开销留待
+      // 渲染端优化 (Blob URL / Worker 解码), 不在 API 参数上做手脚。
     } else {
       payload.response_format = 'b64_json'
     }
@@ -1230,6 +1238,8 @@ export class ApiService {
     formData.append('model', model)
     formData.append('prompt', prompt)
     if (!acceptsSize) formData.append('response_format', 'b64_json')
+    // 不给 vip 显式设 response_format —— 走 apiyi 默认的 b64_json。
+    // 文档虽支持 url, 但实测返回的 URL 在国内访问不了, 留 b64_json 才能保证图片能展示。
     if (acceptsSize && size && size !== 'auto') formData.append('size', size)
     if (isOfficial && quality) formData.append('quality', quality)
 

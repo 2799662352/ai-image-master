@@ -1,4 +1,5 @@
 import type { BatchItem } from '../../stores/useBatchStore'
+import { useDisplaySrc } from '../../hooks/useDisplaySrc'
 
 interface BatchItemRowProps {
   item: BatchItem
@@ -12,15 +13,18 @@ export function BatchItemRow({ item, onRemove }: BatchItemRowProps) {
     : item.status === 'generating' ? 'border-cyberpunk-yellow/50 bg-cyberpunk-yellow/5'
     : 'border-zinc-700 bg-zinc-900'
 
+  const rawSrc = item.resultUrl ?? item.cosUrl
+  const imgSrc = useDisplaySrc(rawSrc)
+
   return (
     <div className={`flex items-center gap-3 p-3 border-2 ${borderClass}`}>
       <div className="flex-1 min-w-0">
         <p className="text-sm text-gray-300 truncate">{item.prompt}</p>
         {item.error && <p className="text-xs text-red-400 mt-1">{item.error}</p>}
       </div>
-      {(item.resultUrl || item.cosUrl) && (
+      {rawSrc && (
         <img
-          src={item.resultUrl ?? item.cosUrl}
+          src={imgSrc}
           alt=""
           className="w-10 h-10 object-cover border border-zinc-700"
         />
