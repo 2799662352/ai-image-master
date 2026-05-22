@@ -36,7 +36,7 @@ from starlette.responses import JSONResponse, PlainTextResponse
 # =========================================================================
 
 SERVER_NAME = "apiyi-mcp-server"
-SERVER_VERSION = "2.0.0-fastmcp"
+SERVER_VERSION = "2.0.1-fastmcp"
 
 DEFAULT_BASE_URL = (
     os.environ.get("APIYI_BASE_URL")
@@ -202,8 +202,13 @@ def _resolve_api_key() -> str:
     1. ``Authorization: Bearer sk-xxx``
     2. ``X-Apiyi-Key: sk-xxx`` / ``X-Api-Key: sk-xxx``
     3. ``APIYI_API_KEY`` / ``GEMINI_API_KEY`` env var (single-tenant fallback)
+
+    Note: FastMCP 3.x strips ``authorization`` from ``get_http_headers()`` by
+    default (treats it as proxy-sensitive). Must pass
+    ``include={"authorization"}`` to opt back in — this is a documented escape
+    hatch for "proxy transports that need to forward authorization headers".
     """
-    headers = get_http_headers()
+    headers = get_http_headers(include={"authorization"})
     auth = headers.get("authorization") or headers.get("Authorization") or ""
     if auth:
         token = auth[7:].strip() if auth.lower().startswith("bearer ") else auth.strip()
