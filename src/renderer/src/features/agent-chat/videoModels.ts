@@ -8,54 +8,81 @@
  * Extra High) so the price/latency gradient is consistent across both
  * pickers in the chat header.
  *
- * Default = `gemini-3.1-pro-preview-thinking` (matches apiyi-mcp's own
- * `DEFAULT_CONFIG.MODEL`). When a user has never picked a model, we don't
- * write `GEMINI_MODEL` into the TOML at all and apiyi-mcp falls back to
- * its built-in default — keeping the env block minimal.
+ * `triggerLabel` is the compact form rendered on the picker button itself
+ * (the dropdown still shows the full `label`). Without this, names like
+ * "Gemini 3.1 Pro (Thinking)" make the trigger button much wider than the
+ * codex `ModelPicker` next to it.
+ *
+ * Default = `gemini-3.5-flash` (released 2026-05-19 at Google I/O,
+ * available on api.apiyi.com from 2026-05-20). Per the apiyi.com launch
+ * note it beats Gemini 3.1 Pro on Terminal-Bench 2.1 / MCP Atlas /
+ * GDPval-AA while being ~4× faster and ~½ the price — the new sweet spot.
+ *
+ * Keep `DEFAULT_VIDEO_MODEL_ID` here in sync with
+ * `DEFAULT_VIDEO_MODEL_ID` in `src/main/agent/apiyiMcpLauncher.ts` so the
+ * UI picker label always matches what gets written to `GEMINI_MODEL`.
  */
 export type VideoModelTier = 'Fast' | 'Medium' | 'High' | 'Extra High'
 
 export interface VideoModelOption {
   id: string
   label: string
+  /** Compact form for the trigger button. Falls back to `label` when omitted. */
+  triggerLabel?: string
   tier: VideoModelTier
   description: string
+  /** Optional badge shown next to the label (e.g. 🆕 for newly launched). */
+  badge?: string
 }
 
 export const VIDEO_MODELS: readonly VideoModelOption[] = [
   {
     id: 'gemini-2.5-flash-lite',
     label: 'Gemini 2.5 Flash Lite',
+    triggerLabel: '2.5 Lite',
     tier: 'Fast',
     description: '最便宜 / 最快。短视频、缩略图、轻量 PDF。',
   },
   {
     id: 'gemini-2.5-flash',
     label: 'Gemini 2.5 Flash',
+    triggerLabel: '2.5 Flash',
     tier: 'Fast',
-    description: '便宜的视频理解默认。1080p 短片、音频、扫描件。',
+    description: '便宜的视频理解兜底。1080p 短片、音频、扫描件。',
+  },
+  {
+    id: 'gemini-3.5-flash',
+    label: 'Gemini 3.5 Flash',
+    triggerLabel: '3.5 Flash',
+    tier: 'Medium',
+    badge: '🆕',
+    description:
+      '🆕 默认。Google I/O 2026 发布;Flash 价格 + 4× 速度,Terminal-Bench / MCP Atlas / GDPval-AA 全面反超 3.1 Pro。',
   },
   {
     id: 'gemini-2.5-pro',
     label: 'Gemini 2.5 Pro',
+    triggerLabel: '2.5 Pro',
     tier: 'Medium',
     description: '长上下文、长视频、复杂 PDF / 多表格。',
   },
   {
     id: 'gemini-3.1-pro-preview-thinking',
     label: 'Gemini 3.1 Pro (Thinking)',
+    triggerLabel: '3.1 Pro·think',
     tier: 'High',
-    description: '默认。开启思维链，适合深度视频 / 长 PDF 分析。',
+    description: '思维链。深度视频 / 长 PDF 分析,推理可见。',
   },
   {
     id: 'gemini-3.1-pro-preview',
     label: 'Gemini 3.1 Pro',
+    triggerLabel: '3.1 Pro',
     tier: 'High',
-    description: 'Gemini 3.1 Pro 不带思维链。更快、更便宜。',
+    description: '3.1 Pro 不带思维链。更快、更便宜。',
   },
 ] as const
 
-export const DEFAULT_VIDEO_MODEL_ID = 'gemini-3.1-pro-preview-thinking'
+export const DEFAULT_VIDEO_MODEL_ID = 'gemini-3.5-flash'
 
 export function findVideoModel(id: string): VideoModelOption | undefined {
   return VIDEO_MODELS.find((m) => m.id === id)

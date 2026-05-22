@@ -6,6 +6,18 @@ export interface McpTool {
   disabled?: boolean
 }
 
+/**
+ * MCP server names that ship with the desktop app and live under
+ * `resources/<name>/` (vendored at build time by scripts/vendor-*.mjs).
+ * These are seeded into the user's codex `config.toml` on first boot and
+ * are functionally always present — the user can disable but not uninstall.
+ *
+ * Kept as a Set so add cost is O(1) when more bundled MCPs land in future
+ * releases (currently only apiyi-mcp-server for video / audio / PDF
+ * understanding).
+ */
+export const APP_BUNDLED_MCP_NAMES: ReadonlySet<string> = new Set(['apiyi'])
+
 export interface McpServerCard {
   name: string
   type: 'stdio' | 'http'
@@ -17,7 +29,21 @@ export interface McpServerCard {
   error: string | null
   tools: McpTool[]
   authStatus?: string
+  /**
+   * `true` when codex reports the server live but our config has no entry
+   * for it — i.e. codex's internal built-ins (e.g. docker-mcp-gateway).
+   * Edit/delete UI is hidden for these.
+   */
   isBuiltin: boolean
+  /**
+   * `true` when the server's name is in `APP_BUNDLED_MCP_NAMES` — i.e. the
+   * desktop app vendored it into `resources/` and seeded it into the user's
+   * codex config. Edit/delete is still available (the user can opt out by
+   * disabling or removing), but the UI groups them into a separate
+   * "🎁 预装" section so they're discoverable on the MCP page even when
+   * mixed with 20+ user-added entries.
+   */
+  isAppBundled: boolean
 }
 
 interface LiveStatus {
@@ -134,6 +160,7 @@ function buildServersFromConfig(
       tools,
       authStatus,
       isBuiltin,
+      isAppBundled: APP_BUNDLED_MCP_NAMES.has(name),
     }
   })
 }

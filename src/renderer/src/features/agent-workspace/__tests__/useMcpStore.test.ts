@@ -84,7 +84,7 @@ describe('useMcpStore', () => {
       data: { mcpServers: [{ name: 'legacy', tools: { t: {} }, authStatus: 'unsupported' }] },
     })
     useMcpStore.setState({
-      servers: [{ name: 'legacy', type: 'stdio', command: 'node', enabled: true, status: 'starting', error: null, tools: [], isBuiltin: false }],
+      servers: [{ name: 'legacy', type: 'stdio', command: 'node', enabled: true, status: 'starting', error: null, tools: [], isBuiltin: false, isAppBundled: false }],
     })
 
     await useMcpStore.getState().syncTools()
@@ -111,6 +111,7 @@ describe('useMcpStore', () => {
           error: null,
           tools: [],
           isBuiltin: false,
+          isAppBundled: false,
         },
       ],
     })
@@ -129,7 +130,7 @@ describe('useMcpStore', () => {
       data: [{ name: 'hf', tools: {}, authStatus: 'notLoggedIn' }],
     })
     useMcpStore.setState({
-      servers: [{ name: 'hf', type: 'http', url: 'https://huggingface.co/mcp', enabled: true, status: 'starting', error: null, tools: [], isBuiltin: false }],
+      servers: [{ name: 'hf', type: 'http', url: 'https://huggingface.co/mcp', enabled: true, status: 'starting', error: null, tools: [], isBuiltin: false, isAppBundled: false }],
     })
 
     await useMcpStore.getState().syncTools()
@@ -165,6 +166,7 @@ describe('useMcpStore', () => {
           error: null,
           tools: [],
           isBuiltin: false,
+          isAppBundled: false,
         },
       ],
     })
@@ -180,7 +182,7 @@ describe('useMcpStore', () => {
     mockApi.mcpOAuthLogin.mockResolvedValue({ ok: true, authorizationUrl: 'https://auth.example.com/login' })
     useMcpStore.setState({
       servers: [
-        { name: 'hf', type: 'http', url: 'https://huggingface.co/mcp', enabled: true, status: 'failed', error: '需要登录', tools: [], authStatus: 'notLoggedIn', isBuiltin: false },
+        { name: 'hf', type: 'http', url: 'https://huggingface.co/mcp', enabled: true, status: 'failed', error: '需要登录', tools: [], authStatus: 'notLoggedIn', isBuiltin: false, isAppBundled: false },
       ],
     })
 
@@ -195,7 +197,7 @@ describe('useMcpStore', () => {
     ;(window as any).electronAPI.shell.openExternal.mockResolvedValue({ success: false, error: 'unsafe_scheme' })
     useMcpStore.setState({
       servers: [
-        { name: 'hf', type: 'http', url: 'https://huggingface.co/mcp', enabled: true, status: 'failed', error: '需要登录', tools: [], authStatus: 'notLoggedIn', isBuiltin: false },
+        { name: 'hf', type: 'http', url: 'https://huggingface.co/mcp', enabled: true, status: 'failed', error: '需要登录', tools: [], authStatus: 'notLoggedIn', isBuiltin: false, isAppBundled: false },
       ],
     })
 
@@ -246,7 +248,7 @@ describe('useMcpStore', () => {
 
   it('updateStatus updates a server status in-place', () => {
     useMcpStore.setState({
-      servers: [{ name: 'github', type: 'stdio', command: 'docker', enabled: true, status: 'starting', error: null, tools: [], isBuiltin: false }],
+      servers: [{ name: 'github', type: 'stdio', command: 'docker', enabled: true, status: 'starting', error: null, tools: [], isBuiltin: false, isAppBundled: false }],
     })
     useMcpStore.getState().updateStatus('github', 'ready', null)
     expect(useMcpStore.getState().servers[0].status).toBe('ready')
@@ -254,7 +256,7 @@ describe('useMcpStore', () => {
 
   it('updateStatus sets error on failed', () => {
     useMcpStore.setState({
-      servers: [{ name: 'broken', type: 'stdio', command: 'nope', enabled: true, status: 'starting', error: null, tools: [], isBuiltin: false }],
+      servers: [{ name: 'broken', type: 'stdio', command: 'nope', enabled: true, status: 'starting', error: null, tools: [], isBuiltin: false, isAppBundled: false }],
     })
     useMcpStore.getState().updateStatus('broken', 'failed', 'spawn ENOENT')
     const s = useMcpStore.getState().servers[0]
@@ -264,7 +266,7 @@ describe('useMcpStore', () => {
 
   it('toggleEnabled calls writeConfigValue and updates state', async () => {
     useMcpStore.setState({
-      servers: [{ name: 'github', type: 'stdio', command: 'docker', enabled: true, status: 'ready', error: null, tools: [], isBuiltin: false }],
+      servers: [{ name: 'github', type: 'stdio', command: 'docker', enabled: true, status: 'ready', error: null, tools: [], isBuiltin: false, isAppBundled: false }],
     })
     mockApi.writeConfigValue.mockResolvedValue({ ok: true })
     await useMcpStore.getState().toggleEnabled('github', false)
@@ -273,7 +275,7 @@ describe('useMcpStore', () => {
 
   it('deleteServer calls batchWriteConfig to remove key', async () => {
     useMcpStore.setState({
-      servers: [{ name: 'github', type: 'stdio', command: 'docker', enabled: true, status: 'ready', error: null, tools: [], isBuiltin: false }],
+      servers: [{ name: 'github', type: 'stdio', command: 'docker', enabled: true, status: 'ready', error: null, tools: [], isBuiltin: false, isAppBundled: false }],
     })
     mockApi.batchWriteConfig.mockResolvedValue({ ok: true })
     mockApi.listMcpServersRpc.mockResolvedValue({ ok: true, data: { mcpServers: [] } })

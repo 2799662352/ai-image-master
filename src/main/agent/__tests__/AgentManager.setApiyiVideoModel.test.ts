@@ -70,7 +70,7 @@ describe('AgentManager.setApiyiVideoModel', () => {
     expect(providers.apiKeys['apiyi-video']).toBe('sk-existing')
   })
 
-  it('clears GEMINI_MODEL when modelId is empty (falls back to apiyi-mcp default)', async () => {
+  it('empty modelId clears the user preference and reverts GEMINI_MODEL to DEFAULT_VIDEO_MODEL_ID', async () => {
     const backend = makeFakeBackend()
     const mgr = new AgentManager({ userDataDir: tmpDir })
     ;(mgr as any).backend = backend
@@ -83,13 +83,15 @@ describe('AgentManager.setApiyiVideoModel', () => {
 
     expect(result).toEqual({ ok: true })
     const writtenEntry = vi.mocked(backend.batchWriteConfig).mock.calls[0][0][0]
+    // Empty model id => providers.apiKeys['apiyi-video-model'] is cleared
+    // => launcher falls back to the bundled default (gemini-3.5-flash),
+    //    not to "no GEMINI_MODEL at all" — keeps the picker label honest.
     expect(writtenEntry).toMatchObject({
       value: {
         enabled: true,
-        env: { APIYI_API_KEY: 'sk-key' },
+        env: { APIYI_API_KEY: 'sk-key', GEMINI_MODEL: 'gemini-3.5-flash' },
       },
     })
-    expect((writtenEntry as any).value.env.GEMINI_MODEL).toBeUndefined()
 
     const providers = JSON.parse(
       await fs.readFile(path.join(tmpDir, 'codex-providers.json'), 'utf8'),

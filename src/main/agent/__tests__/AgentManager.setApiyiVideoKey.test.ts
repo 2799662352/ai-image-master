@@ -40,7 +40,7 @@ afterEach(async () => {
 })
 
 describe('AgentManager.setApiyiVideoKey', () => {
-  it('happy path: non-empty key persists and enables MCP entry', async () => {
+  it('happy path: non-empty key persists, enables MCP entry, and seeds default GEMINI_MODEL', async () => {
     const backend = makeFakeBackend()
     const mgr = new AgentManager({ userDataDir: tmpDir })
     ;(mgr as any).backend = backend
@@ -58,7 +58,13 @@ describe('AgentManager.setApiyiVideoKey', () => {
         command: process.execPath,
         args: [expect.stringMatching(/apiyi-mcp[\\/]dist[\\/]index\.js$/)],
         enabled: true,
-        env: { APIYI_API_KEY: 'sk-live-abc123' },
+        env: {
+          APIYI_API_KEY: 'sk-live-abc123',
+          // apiyiMcpLauncher defaults to gemini-3.5-flash when no
+          // apiyi-video-model is set in providers, so the UI picker label
+          // always matches what the apiyi-mcp child actually runs.
+          GEMINI_MODEL: 'gemini-3.5-flash',
+        },
       },
     })
     expect(vi.mocked(backend.batchWriteConfig).mock.calls[0][1]).toBe(true)

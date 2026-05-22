@@ -65,7 +65,7 @@ describe('buildApiyiMcpConfigEntry', () => {
     })
   })
 
-  it('builds an enabled entry with literal APIYI_API_KEY when apiKey is provided', () => {
+  it('builds an enabled entry with literal APIYI_API_KEY + default GEMINI_MODEL when apiKey is provided without an explicit videoModel', () => {
     const entry = buildApiyiMcpConfigEntry({
       entryPath: '/path/to/dist/index.js',
       nodeBin: '/path/to/node',
@@ -76,7 +76,10 @@ describe('buildApiyiMcpConfigEntry', () => {
       command: '/path/to/node',
       args: ['/path/to/dist/index.js'],
       enabled: true,
-      env: { APIYI_API_KEY: 'sk-live-abc123' },
+      env: {
+        APIYI_API_KEY: 'sk-live-abc123',
+        GEMINI_MODEL: 'gemini-3.5-flash',
+      },
     })
   })
 
@@ -107,7 +110,10 @@ describe('buildApiyiMcpConfigEntry', () => {
       enabled: true,
       apiKey: specialKey,
     })
-    expect(entry.env).toEqual({ APIYI_API_KEY: specialKey })
+    expect(entry.env).toEqual({
+      APIYI_API_KEY: specialKey,
+      GEMINI_MODEL: 'gemini-3.5-flash',
+    })
   })
 
   it('writes GEMINI_MODEL when enabled + apiKey + videoModel are all provided', () => {
@@ -124,7 +130,7 @@ describe('buildApiyiMcpConfigEntry', () => {
     })
   })
 
-  it('drops GEMINI_MODEL when videoModel is empty string', () => {
+  it('falls back to DEFAULT_VIDEO_MODEL_ID when videoModel is empty string', () => {
     const entry = buildApiyiMcpConfigEntry({
       entryPath: '/x',
       nodeBin: '/y',
@@ -132,7 +138,10 @@ describe('buildApiyiMcpConfigEntry', () => {
       apiKey: 'sk-live',
       videoModel: '',
     })
-    expect(entry.env).toEqual({ APIYI_API_KEY: 'sk-live' })
+    expect(entry.env).toEqual({
+      APIYI_API_KEY: 'sk-live',
+      GEMINI_MODEL: 'gemini-3.5-flash',
+    })
   })
 
   it('ignores videoModel when apiKey is missing (env stays empty)', () => {

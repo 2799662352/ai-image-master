@@ -89,13 +89,16 @@ export function VideoModelPicker({ disabled }: VideoModelPickerProps) {
         type="button"
         disabled={disabled}
         onClick={() => setIsOpen((v) => !v)}
-        className="flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-950/30 px-2 py-1 text-[11px] text-amber-100 transition hover:border-amber-400/70 hover:text-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-950/30 px-1.5 py-1 text-[11px] text-amber-100 transition hover:border-amber-400/70 hover:text-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
         aria-haspopup="listbox"
         aria-expanded={isOpen}
         title={`🎥 视频理解默认模型: ${selected.label} · ${selected.tier}`}
       >
         <span aria-hidden>🎥</span>
-        <span className="font-medium">{selected.label}</span>
+        <span className="font-medium">{selected.triggerLabel ?? selected.label}</span>
+        {selected.badge ? (
+          <span aria-hidden className="leading-none">{selected.badge}</span>
+        ) : null}
         <svg
           width="10"
           height="10"

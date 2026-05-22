@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type React from 'react'
 
 import { AutoFixToast } from './AutoFixToast'
@@ -23,6 +23,21 @@ export function McpServerList({ onOpenEditor, onOpenImport }: McpServerListProps
   const deleteServer = useMcpStore((s) => s.deleteServer)
   const startOAuthLogin = useMcpStore((s) => s.startOAuthLogin)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+
+  // Split servers into "🎁 预装" (vendored by us into resources/, seeded into
+  // codex config on first boot — currently just apiyi-mcp) vs everything
+  // else the user has added themselves. Stable order: bundled stays in the
+  // order returned by buildServersFromConfig (alphabetical-ish), user list
+  // is untouched so manual reordering in config.toml still shows through.
+  const { bundledServers, userServers } = useMemo(() => {
+    const bundled: typeof servers = []
+    const userAdded: typeof servers = []
+    for (const s of servers) {
+      if (s.isAppBundled) bundled.push(s)
+      else userAdded.push(s)
+    }
+    return { bundledServers: bundled, userServers: userAdded }
+  }, [servers])
 
   useEffect(() => {
     // Only auto-fetch if we have never loaded yet — keeps state when the user
@@ -125,24 +140,65 @@ export function McpServerList({ onOpenEditor, onOpenImport }: McpServerListProps
         </div>
       )}
 
-      {/* Server cards */}
+      {/* Server cards — split into "🎁 预装" (app-bundled) and user-added */}
       {servers.length === 0 ? (
         <div className="rounded-lg border border-dashed border-zinc-700 p-8 text-center text-sm text-zinc-500">
           暂无 MCP 服务器配置。点击「+ 新增」或「导入」来添加。
         </div>
       ) : (
-        <div className="grid gap-3">
-          {servers.map((server) => (
-            <McpServerCard
-              key={server.name}
-              server={server}
-              loggingIn={loggingIn === server.name}
-              onEdit={onOpenEditor}
-              onDelete={handleDelete}
-              onToggle={handleToggle}
-              onLogin={handleLogin}
-            />
-          ))}
+        <div className="flex flex-col gap-4">
+          {bundledServers.length > 0 && (
+            <section className="flex flex-col gap-2">
+              <div className="flex items-center gap-2">
+                <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-300/80">
+                  <span aria-hidden>🎁</span>
+                  <span>预装 MCP</span>
+                  <span className="ml-1 text-zinc-500/80">({bundledServers.length})</span>
+                </h3>
+                <span className="text-[11px] text-zinc-500">
+                  应用自带 · 配置 API Key 即可启用
+                </span>
+              </div>
+              <div className="grid gap-3">
+                {bundledServers.map((server) => (
+                  <McpServerCard
+                    key={server.name}
+                    server={server}
+                    loggingIn={loggingIn === server.name}
+                    onEdit={onOpenEditor}
+                    onDelete={handleDelete}
+                    onToggle={handleToggle}
+                    onLogin={handleLogin}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {userServers.length > 0 && (
+            <section className="flex flex-col gap-2">
+              <div className="flex items-center gap-2">
+                <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-300/80">
+                  <span>你的 MCP 服务器</span>
+                  <span className="ml-1 text-zinc-500/80">({userServers.length})</span>
+                </h3>
+                <span className="text-[11px] text-zinc-500">手动添加或导入</span>
+              </div>
+              <div className="grid gap-3">
+                {userServers.map((server) => (
+                  <McpServerCard
+                    key={server.name}
+                    server={server}
+                    loggingIn={loggingIn === server.name}
+                    onEdit={onOpenEditor}
+                    onDelete={handleDelete}
+                    onToggle={handleToggle}
+                    onLogin={handleLogin}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
         </div>
       )}
 
