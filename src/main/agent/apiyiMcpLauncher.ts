@@ -24,25 +24,33 @@ export interface ApiyiMcpConfigEntryInput {
   entryPath: string
   nodeBin: string
   enabled: boolean
+  /** Literal API key. Only honored when `enabled` is true. */
+  apiKey?: string
 }
 
 /**
  * The TOML-serializable shape we write into `mcp_servers.apiyi`.
  *
- * `command` is the absolute path to a Node.js binary (we use Electron's own
- * `process.execPath` at runtime — Electron is built on Node so it can execute
- * a stdio MCP server fine, and we avoid forcing the user to install Node).
+ * `command` — absolute path to a Node.js binary (Electron's `process.execPath`
+ * at runtime; Electron can execute a stdio MCP server without a separate Node
+ * install).
  *
- * `args[0]` is the absolute path to the vendored `dist/index.js`.
+ * `args[0]` — absolute path to the vendored `dist/index.js`.
  *
- * `enabled: false` is the first-boot default; the settings IPC in PR-2 flips
- * it to `true` and re-writes the file. The codex CLI honors the `enabled`
- * field per `codexConfigMerge.ts:stripEnabledTrue`.
+ * `enabled: false` is the first-boot default; the settings UI flips it to
+ * `true` and re-writes the file.
  *
- * `env.APIYI_API_KEY` is a *string placeholder* (`'${APIYI_API_KEY}'`) when
- * enabled — the real key is injected by the AgentManager at child-process spawn
- * time, NOT persisted into the TOML. This keeps the on-disk config clean of
- * secrets even though codex-providers.json stores the actual key.
+ * `env` decision table:
+ * | enabled | apiKey     | env                              |
+ * |---------|------------|----------------------------------|
+ * | false   | (any)      | `{}`                             |
+ * | true    | undefined  | `{}`                             |
+ * | true    | 'sk-...'   | `{ APIYI_API_KEY: 'sk-...' }`    |
+ *
+ * The `enabled && !apiKey` combination should never happen in practice — the
+ * AgentManager always passes an apiKey when enabling. Emitting `{}` in that
+ * case is the safest defensive fallback: it avoids writing a stale placeholder
+ * literal to disk that the codex CLI would pass through verbatim.
  */
 export interface ApiyiMcpConfigEntry {
   command: string
@@ -54,10 +62,14 @@ export interface ApiyiMcpConfigEntry {
 export function buildApiyiMcpConfigEntry(
   input: ApiyiMcpConfigEntryInput,
 ): ApiyiMcpConfigEntry {
+  const env: Record<string, string> = {}
+  if (input.enabled && input.apiKey) {
+    env.APIYI_API_KEY = input.apiKey
+  }
   return {
     command: input.nodeBin,
     args: [input.entryPath],
     enabled: input.enabled,
-    env: input.enabled ? { APIYI_API_KEY: '${APIYI_API_KEY}' } : {},
+    env,
   }
 }

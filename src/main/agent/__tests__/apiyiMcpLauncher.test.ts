@@ -65,26 +65,48 @@ describe('buildApiyiMcpConfigEntry', () => {
     })
   })
 
-  it('builds an enabled entry with APIYI_API_KEY placeholder when enabled', () => {
+  it('builds an enabled entry with literal APIYI_API_KEY when apiKey is provided', () => {
     const entry = buildApiyiMcpConfigEntry({
       entryPath: '/path/to/dist/index.js',
       nodeBin: '/path/to/node',
       enabled: true,
+      apiKey: 'sk-live-abc123',
     })
     expect(entry).toEqual({
       command: '/path/to/node',
       args: ['/path/to/dist/index.js'],
       enabled: true,
-      env: { APIYI_API_KEY: '${APIYI_API_KEY}' },
+      env: { APIYI_API_KEY: 'sk-live-abc123' },
     })
   })
 
-  it('does not emit env.APIYI_API_KEY for the disabled form (avoid leaking placeholder)', () => {
+  it('disabled form produces empty env regardless of apiKey', () => {
     const entry = buildApiyiMcpConfigEntry({
       entryPath: '/x',
       nodeBin: '/y',
       enabled: false,
+      apiKey: 'sk-should-be-ignored',
     })
     expect(entry.env).toEqual({})
+  })
+
+  it('enabled without apiKey emits empty env (defensive)', () => {
+    const entry = buildApiyiMcpConfigEntry({
+      entryPath: '/x',
+      nodeBin: '/y',
+      enabled: true,
+    })
+    expect(entry.env).toEqual({})
+  })
+
+  it('apiKey value is written verbatim — no transformation', () => {
+    const specialKey = 'sk-$pecial "quoted" `tick`'
+    const entry = buildApiyiMcpConfigEntry({
+      entryPath: '/x',
+      nodeBin: '/y',
+      enabled: true,
+      apiKey: specialKey,
+    })
+    expect(entry.env).toEqual({ APIYI_API_KEY: specialKey })
   })
 })
