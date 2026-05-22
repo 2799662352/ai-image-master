@@ -43,8 +43,6 @@ const AGENT_HANDLE_CHANNELS = [
   'agent:get-providers',
   'agent:set-active-provider',
   'agent:set-provider-api-key',
-  'agent:set-apiyi-video-key',
-  'agent:set-apiyi-video-model',
   'agent:add-custom-provider',
   'agent:update-custom-provider',
   'agent:remove-custom-provider',
@@ -206,24 +204,6 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
       }
     },
   )
-  ipcMain.handle('agent:set-apiyi-video-key', async (_event, key: unknown) => {
-    try {
-      const validated = typeof key === 'string' ? key : ''
-      const result = await (await getManager()).setApiyiVideoKey(validated)
-      return result
-    } catch (err) {
-      return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
-    }
-  })
-  ipcMain.handle('agent:set-apiyi-video-model', async (_event, modelId: unknown) => {
-    try {
-      const validated = typeof modelId === 'string' ? modelId : ''
-      const result = await (await getManager()).setApiyiVideoModel(validated)
-      return result
-    } catch (err) {
-      return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
-    }
-  })
   ipcMain.handle('agent:add-custom-provider', async (_event, input: unknown) => {
     try {
       const created = await (await getManager()).addCustomProvider(

@@ -51,7 +51,11 @@ describe('getApiyiMcpEntryPath', () => {
 })
 
 describe('buildApiyiMcpConfigEntry', () => {
-  it('builds a disabled entry with command + args + ELECTRON_RUN_AS_NODE env only', () => {
+  // Per design: env is ALWAYS empty `{}` regardless of `enabled`. The user
+  // fills `APIYI_API_KEY`, `ELECTRON_RUN_AS_NODE`, `GEMINI_MODEL` themselves
+  // via the MCP JSON editor. No auto-write of secrets / runtime flags.
+
+  it('builds a disabled stub: command + args + enabled=false + env={}', () => {
     const entry = buildApiyiMcpConfigEntry({
       entryPath: '/path/to/dist/index.js',
       nodeBin: '/path/to/node',
@@ -61,128 +65,39 @@ describe('buildApiyiMcpConfigEntry', () => {
       command: '/path/to/node',
       args: ['/path/to/dist/index.js'],
       enabled: false,
-      env: { ELECTRON_RUN_AS_NODE: '1' },
+      env: {},
     })
   })
 
-  it('builds an enabled entry with literal APIYI_API_KEY + default GEMINI_MODEL when apiKey is provided without an explicit videoModel', () => {
+  it('builds an enabled stub with the same empty env shape', () => {
     const entry = buildApiyiMcpConfigEntry({
       entryPath: '/path/to/dist/index.js',
       nodeBin: '/path/to/node',
       enabled: true,
-      apiKey: 'sk-live-abc123',
     })
     expect(entry).toEqual({
       command: '/path/to/node',
       args: ['/path/to/dist/index.js'],
       enabled: true,
-      env: {
-        ELECTRON_RUN_AS_NODE: '1',
-        APIYI_API_KEY: 'sk-live-abc123',
-        GEMINI_MODEL: 'gemini-3.5-flash',
-      },
+      env: {},
     })
   })
 
-  it('disabled form produces ELECTRON_RUN_AS_NODE-only env regardless of apiKey', () => {
-    const entry = buildApiyiMcpConfigEntry({
-      entryPath: '/x',
-      nodeBin: '/y',
-      enabled: false,
-      apiKey: 'sk-should-be-ignored',
-    })
-    expect(entry.env).toEqual({ ELECTRON_RUN_AS_NODE: '1' })
-  })
-
-  it('enabled without apiKey emits ELECTRON_RUN_AS_NODE-only env (defensive)', () => {
-    const entry = buildApiyiMcpConfigEntry({
-      entryPath: '/x',
-      nodeBin: '/y',
-      enabled: true,
-    })
-    expect(entry.env).toEqual({ ELECTRON_RUN_AS_NODE: '1' })
-  })
-
-  it('apiKey value is written verbatim — no transformation', () => {
-    const specialKey = 'sk-$pecial "quoted" `tick`'
-    const entry = buildApiyiMcpConfigEntry({
-      entryPath: '/x',
-      nodeBin: '/y',
-      enabled: true,
-      apiKey: specialKey,
-    })
-    expect(entry.env).toEqual({
-      ELECTRON_RUN_AS_NODE: '1',
-      APIYI_API_KEY: specialKey,
-      GEMINI_MODEL: 'gemini-3.5-flash',
-    })
-  })
-
-  it('writes GEMINI_MODEL when enabled + apiKey + videoModel are all provided', () => {
-    const entry = buildApiyiMcpConfigEntry({
-      entryPath: '/x',
-      nodeBin: '/y',
-      enabled: true,
-      apiKey: 'sk-live',
-      videoModel: 'gemini-2.5-flash',
-    })
-    expect(entry.env).toEqual({
-      ELECTRON_RUN_AS_NODE: '1',
-      APIYI_API_KEY: 'sk-live',
-      GEMINI_MODEL: 'gemini-2.5-flash',
-    })
-  })
-
-  it('falls back to DEFAULT_VIDEO_MODEL_ID when videoModel is empty string', () => {
-    const entry = buildApiyiMcpConfigEntry({
-      entryPath: '/x',
-      nodeBin: '/y',
-      enabled: true,
-      apiKey: 'sk-live',
-      videoModel: '',
-    })
-    expect(entry.env).toEqual({
-      ELECTRON_RUN_AS_NODE: '1',
-      APIYI_API_KEY: 'sk-live',
-      GEMINI_MODEL: 'gemini-3.5-flash',
-    })
-  })
-
-  it('ignores videoModel when apiKey is missing (env stays ELECTRON_RUN_AS_NODE-only)', () => {
-    const entry = buildApiyiMcpConfigEntry({
-      entryPath: '/x',
-      nodeBin: '/y',
-      enabled: true,
-      videoModel: 'gemini-2.5-pro',
-    })
-    expect(entry.env).toEqual({ ELECTRON_RUN_AS_NODE: '1' })
-  })
-
-  it('ignores videoModel when disabled', () => {
-    const entry = buildApiyiMcpConfigEntry({
-      entryPath: '/x',
-      nodeBin: '/y',
-      enabled: false,
-      apiKey: 'sk-live',
-      videoModel: 'gemini-2.5-pro',
-    })
-    expect(entry.env).toEqual({ ELECTRON_RUN_AS_NODE: '1' })
-  })
-
-  it('ELECTRON_RUN_AS_NODE is always present so spawn never hits Electron GUI subsystem', () => {
-    // Regression test for the "ready + 0 tools" bug: without this env var,
-    // Electron's startup writes Chromium/GPU noise to stdout and breaks the
-    // MCP stdio framing. Always set it, even on disabled entries.
+  it('env is always {} — no auto-injection of secrets or ELECTRON_RUN_AS_NODE', () => {
     for (const enabled of [true, false]) {
-      for (const withKey of [true, false]) {
-        const entry = buildApiyiMcpConfigEntry({
-          entryPath: '/x',
-          nodeBin: '/y',
-          enabled,
-          apiKey: withKey ? 'sk-live' : undefined,
-        })
-        expect(entry.env.ELECTRON_RUN_AS_NODE).toBe('1')
-      }
+      const entry = buildApiyiMcpConfigEntry({
+        entryPath: '/x',
+        nodeBin: '/y',
+        enabled,
+      })
+      expect(entry.env).toEqual({})
+      expect(Object.keys(entry.env)).toHaveLength(0)
     }
+  })
+
+  it('returns a fresh env object per call so callers can mutate safely', () => {
+    const a = buildApiyiMcpConfigEntry({ entryPath: '/x', nodeBin: '/y', enabled: false })
+    const b = buildApiyiMcpConfigEntry({ entryPath: '/x', nodeBin: '/y', enabled: false })
+    expect(a.env).not.toBe(b.env)
   })
 })

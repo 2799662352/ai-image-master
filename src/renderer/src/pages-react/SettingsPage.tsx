@@ -100,7 +100,6 @@ export default function SettingsPage() {
   const activeSiteKey = useSettingsStore((s) => s.activeSiteKey)
   const apiKey = useSettingsStore((s) => s.apiKey)
   const visionApiKey = useSettingsStore((s) => s.visionApiKey)
-  const videoApiKey = useSettingsStore((s) => s.videoApiKey)
   const codexApiKey = useSettingsStore((s) => s.codexApiKey)
   const localPort = useSettingsStore((s) => s.localPort)
   const connectionStatus = useSettingsStore((s) => s.connectionStatus)
@@ -111,7 +110,6 @@ export default function SettingsPage() {
     switchSite,
     setApiKey,
     setVisionApiKey,
-    setVideoApiKey,
     setCodexApiKey,
     setLocalPort,
     testConnection,
@@ -161,15 +159,6 @@ export default function SettingsPage() {
         await (window as any).electronAPI?.agent?.setApiKey?.(codexApiKey)
       } catch (err) {
         console.warn('failed to push codex key to main:', err)
-      }
-      try {
-        // Push the apiyi-video (video understanding) key to main. This both
-        // persists it in codex-providers.json and re-writes the
-        // mcp_servers.apiyi entry so codex re-spawns the apiyi-mcp child
-        // with the new env. Empty key disables the MCP cleanly.
-        await (window as any).electronAPI?.agent?.setApiyiVideoKey?.(videoApiKey)
-      } catch (err) {
-        console.warn('failed to push apiyi-video key to main:', err)
       }
       addToast({ message: '配置已保存', type: 'success' })
       const vanillaApi = (window as any).aiImageAPI
@@ -250,19 +239,6 @@ export default function SettingsPage() {
           showToggle={false}
         />
         <p className="text-xs text-zinc-500">用于图像理解功能，可选填</p>
-      </section>
-
-      <section className="space-y-3">
-        <ApiKeyInput
-          value={videoApiKey}
-          onChange={setVideoApiKey}
-          label="🎥 视频理解 API Key（可选）"
-          placeholder="请输入 api.apiyi.com 的视频理解 API Key（可选）"
-          showToggle={false}
-        />
-        <p className="text-xs text-zinc-500">
-          用于视频 / 音频 / PDF 理解（apiyi-mcp）。留空则禁用此 MCP。
-        </p>
       </section>
 
       <div className="flex gap-3 pt-2">

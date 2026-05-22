@@ -21,7 +21,6 @@ import {
   buildGatewayConfigEntry,
   selectDockerStdioEntries,
 } from './dockerMcpFix'
-import { getApiyiMcpEntryPath, buildApiyiMcpConfigEntry } from './apiyiMcpLauncher'
 import {
   deleteSkill,
   getSkillDetail,
@@ -373,88 +372,6 @@ export class AgentManager {
       this.codexApiKey = (key ?? '').trim()
     }
     return { ok: true }
-  }
-
-  /**
-   * Re-derive `mcp_servers.apiyi` from the current providerStore snapshot
-   * and write it to ~/.codex/config.toml. The apiKey is sourced from
-   * `apiKeys["apiyi-video"]` and the model from `apiKeys["apiyi-video-model"]`
-   * (we abuse `apiKeys` as a generic string-keyed string-valued map to avoid
-   * a schema bump in `codex-providers.json`).
-   *
-   * `reload=true` triggers codex to re-spawn the apiyi child with the fresh
-   * env. No codex parent restart.
-   */
-  private async writeApiyiMcpEntry(): Promise<void> {
-    const snapshot = await this.providerStore.load()
-    const apiKey = (snapshot.apiKeys['apiyi-video'] ?? '').trim()
-    const videoModel = (snapshot.apiKeys['apiyi-video-model'] ?? '').trim()
-
-    const entryPath = getApiyiMcpEntryPath({
-      appPath: app?.getAppPath?.() ?? '',
-      isPackaged: !!app?.isPackaged,
-      resourcesPath: app?.isPackaged ? process.resourcesPath : undefined,
-    })
-
-    const entry = buildApiyiMcpConfigEntry({
-      entryPath,
-      nodeBin: process.execPath,
-      enabled: apiKey.length > 0,
-      apiKey: apiKey.length > 0 ? apiKey : undefined,
-      videoModel: videoModel.length > 0 ? videoModel : undefined,
-    })
-
-    if (!this.backend.batchWriteConfig) {
-      throw new Error('Codex backend missing batchWriteConfig')
-    }
-    await this.backend.batchWriteConfig(
-      [{ keyPath: 'mcp_servers.apiyi', value: entry, mergeStrategy: 'replace' }],
-      true,
-    )
-  }
-
-  /**
-   * Atomically persist the apiyi-video API key (used by the bundled
-   * apiyi-mcp-server) and re-write the codex `mcp_servers.apiyi` TOML
-   * entry (preserving any previously-saved model preference).
-   *
-   * Empty key disables the MCP cleanly: `enabled: false` + `env: {}`.
-   *
-   * Failure semantics: if providerStore.setApiKey succeeds but the
-   * TOML write throws, we leave the key in providers.json and surface
-   * the error. The next call re-converges. We do NOT roll back
-   * providers.json (partial-rollback is more fragile than re-converge).
-   */
-  async setApiyiVideoKey(key: string): Promise<{ ok: true } | { ok: false; error: string }> {
-    const trimmed = (key ?? '').trim()
-    try {
-      await this.providerStore.setApiKey('apiyi-video', trimmed)
-      await this.writeApiyiMcpEntry()
-      return { ok: true }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  }
-
-  /**
-   * Atomically persist the apiyi-video default model id (forwarded to
-   * apiyi-mcp via `GEMINI_MODEL`) and re-write the codex `mcp_servers.apiyi`
-   * TOML entry (preserving the apiKey). Empty / unknown model id clears
-   * the override and lets apiyi-mcp fall back to its built-in default.
-   *
-   * Note: if there's no apiKey saved, the entry remains `enabled: false`
-   * and the model is recorded in providers.json but doesn't reach the
-   * TOML env block until the user enters a key.
-   */
-  async setApiyiVideoModel(modelId: string): Promise<{ ok: true } | { ok: false; error: string }> {
-    const trimmed = (modelId ?? '').trim()
-    try {
-      await this.providerStore.setApiKey('apiyi-video-model', trimmed)
-      await this.writeApiyiMcpEntry()
-      return { ok: true }
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
   }
 
   async addCustomProvider(input: NewCustomProvider): Promise<ProviderPreset> {
