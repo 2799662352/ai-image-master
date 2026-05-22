@@ -1,0 +1,6 @@
+{
+  "repo": "https://github.com/2799662352/apiyi-mcp-server.git",
+  "commit": "a7062b225c221e71b2ece0314cdc36dd6a077845",
+  "ref": "main",
+  "notes": "Resolved at vendor time via `git ls-remote origin main`. Update by re-running `npm run vendor:apiyi-mcp:update`."
+}

@@ -69,3 +69,8 @@ docs/codex-app-server.schema.json
 docs/codex-app-server.ts
 .worktrees/
 release-log.txt
+
+# Vendored apiyi-mcp-server artifacts — produced by scripts/vendor-apiyi-mcp.mjs.
+# The lockfile (scripts/vendor-apiyi-mcp.lock.json) IS tracked; the build
+# output is not.
+/resources/apiyi-mcp/
