@@ -57,25 +57,35 @@ export interface ApiyiMcpConfigEntryInput {
 /**
  * The TOML-serializable shape we write into `mcp_servers.apiyi`.
  *
- * `command` — absolute path to a Node.js binary (Electron's `process.execPath`
- * at runtime; Electron can execute a stdio MCP server without a separate Node
- * install).
+ * `command` — absolute path to Electron's `process.execPath` at runtime
+ * (`electron.exe` in dev, the packaged app exe in prod). We deliberately do
+ * NOT require a separate Node install; Electron's binary doubles as a Node
+ * runtime when `ELECTRON_RUN_AS_NODE=1` is set in the spawn env.
  *
  * `args[0]` — absolute path to the vendored `dist/index.js`.
  *
  * `enabled: false` is the first-boot default; the settings UI flips it to
  * `true` and re-writes the file.
  *
+ * `env` always contains `ELECTRON_RUN_AS_NODE: '1'`. Without it Electron
+ * launches as a GUI subsystem process (even with a `.js` argv), spins up
+ * Chromium / GPU init, and writes startup noise to stdout. MCP stdio
+ * framing requires stdout to be pure line-delimited JSON-RPC, so the
+ * noise breaks `tools/list` handshake and the server appears as
+ * "ready but 0 tools" to Codex. `ELECTRON_RUN_AS_NODE=1` skips Chromium
+ * entirely and runs the binary as a node process — clean stdout, no GUI.
+ *
  * `env` decision table (when enabled && apiKey are both truthy):
- * | videoModel       | env                                                                  |
+ * | videoModel       | env (in addition to ELECTRON_RUN_AS_NODE: '1')                       |
  * |------------------|----------------------------------------------------------------------|
  * | undefined / ''   | `{ APIYI_API_KEY: '<key>', GEMINI_MODEL: DEFAULT_VIDEO_MODEL_ID }`    |
  * | 'gemini-x.y-...' | `{ APIYI_API_KEY: '<key>', GEMINI_MODEL: 'gemini-x.y-...' }`         |
  *
- * If `enabled` is false OR `apiKey` is missing, env is always `{}` regardless
- * of `videoModel`. The `enabled && !apiKey` combination should never happen
- * in practice — the AgentManager always passes an apiKey when enabling.
- * Emitting `{}` in that case is the safest defensive fallback.
+ * If `enabled` is false OR `apiKey` is missing, env is just
+ * `{ ELECTRON_RUN_AS_NODE: '1' }` (so even a disabled entry would still
+ * spawn as Node if someone manually flipped `enabled` without going
+ * through `setApiyiVideoKey`). The `enabled && !apiKey` combination
+ * should never happen in practice.
  */
 export interface ApiyiMcpConfigEntry {
   command: string
@@ -87,7 +97,10 @@ export interface ApiyiMcpConfigEntry {
 export function buildApiyiMcpConfigEntry(
   input: ApiyiMcpConfigEntryInput,
 ): ApiyiMcpConfigEntry {
-  const env: Record<string, string> = {}
+  // ELECTRON_RUN_AS_NODE=1 is REQUIRED — see jsdoc on ApiyiMcpConfigEntry.
+  // Without it, Codex's MCP client sees `tools=[]` even when APIYI_API_KEY
+  // is correct, because Electron's GUI-subsystem startup pollutes stdout.
+  const env: Record<string, string> = { ELECTRON_RUN_AS_NODE: '1' }
   if (input.enabled && input.apiKey) {
     env.APIYI_API_KEY = input.apiKey
     env.GEMINI_MODEL = input.videoModel && input.videoModel.length > 0

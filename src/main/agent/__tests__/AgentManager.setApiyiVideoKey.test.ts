@@ -59,6 +59,11 @@ describe('AgentManager.setApiyiVideoKey', () => {
         args: [expect.stringMatching(/apiyi-mcp[\\/]dist[\\/]index\.js$/)],
         enabled: true,
         env: {
+          // Required so Electron's process.execPath runs the child as a pure
+          // Node process; without it Chromium startup pollutes stdout and
+          // breaks MCP stdio framing (root cause of the "ready + 0 tools"
+          // regression we hit on v4.3.16).
+          ELECTRON_RUN_AS_NODE: '1',
           APIYI_API_KEY: 'sk-live-abc123',
           // apiyiMcpLauncher defaults to gemini-3.5-flash when no
           // apiyi-video-model is set in providers, so the UI picker label
@@ -93,7 +98,10 @@ describe('AgentManager.setApiyiVideoKey', () => {
       mergeStrategy: 'replace',
       value: {
         enabled: false,
-        env: {},
+        // ELECTRON_RUN_AS_NODE is always present even on disabled entries,
+        // so any future enabling that bypasses setApiyiVideoKey still spawns
+        // through the node path.
+        env: { ELECTRON_RUN_AS_NODE: '1' },
       },
     })
 

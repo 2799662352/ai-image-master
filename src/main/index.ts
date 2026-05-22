@@ -808,7 +808,7 @@ app.whenReady().then(async () => {
       entryPath: apiyiEntry,
       nodeBin: process.execPath,
     })
-    console.log(`[apiyi-mcp] first-boot seed: ${apiyiAction}`)
+    console.log(`[apiyi-mcp] boot convergence: ${apiyiAction}`)
   } catch (err) {
     console.warn('[apiyi-mcp] seed failed:', err)
   }

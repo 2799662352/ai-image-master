@@ -59,7 +59,11 @@ describe('AgentManager.setApiyiVideoModel', () => {
       mergeStrategy: 'replace',
       value: {
         enabled: true,
-        env: { APIYI_API_KEY: 'sk-existing', GEMINI_MODEL: 'gemini-2.5-pro' },
+        env: {
+          ELECTRON_RUN_AS_NODE: '1',
+          APIYI_API_KEY: 'sk-existing',
+          GEMINI_MODEL: 'gemini-2.5-pro',
+        },
       },
     })
     expect(vi.mocked(backend.batchWriteConfig).mock.calls[0][1]).toBe(true)
@@ -89,7 +93,11 @@ describe('AgentManager.setApiyiVideoModel', () => {
     expect(writtenEntry).toMatchObject({
       value: {
         enabled: true,
-        env: { APIYI_API_KEY: 'sk-key', GEMINI_MODEL: 'gemini-3.5-flash' },
+        env: {
+          ELECTRON_RUN_AS_NODE: '1',
+          APIYI_API_KEY: 'sk-key',
+          GEMINI_MODEL: 'gemini-3.5-flash',
+        },
       },
     })
 
@@ -111,7 +119,8 @@ describe('AgentManager.setApiyiVideoModel', () => {
     expect(writtenEntry).toMatchObject({
       value: {
         enabled: false,
-        env: {},
+        // ELECTRON_RUN_AS_NODE is set even on disabled entries (defensive).
+        env: { ELECTRON_RUN_AS_NODE: '1' },
       },
     })
 

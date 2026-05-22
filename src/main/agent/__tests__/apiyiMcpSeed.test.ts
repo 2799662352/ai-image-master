@@ -36,7 +36,7 @@ describe('seedApiyiMcpEntry', () => {
       command: FAKE_NODE,
       args: [FAKE_ENTRY],
       enabled: false,
-      env: {},
+      env: { ELECTRON_RUN_AS_NODE: '1' },
     })
   })
 
@@ -75,7 +75,7 @@ describe('seedApiyiMcpEntry', () => {
     expect((servers.apiyi as { enabled: boolean }).enabled).toBe(false)
   })
 
-  it('does NOT overwrite an existing mcp_servers.apiyi entry (idempotent)', async () => {
+  it('preserves command/args/enabled/APIYI_API_KEY when migrating env to add ELECTRON_RUN_AS_NODE', async () => {
     await fs.writeFile(
       configPath,
       [
@@ -85,17 +85,19 @@ describe('seedApiyiMcpEntry', () => {
         'enabled = true',
         '',
         '[mcp_servers.apiyi.env]',
-        'APIYI_API_KEY = "${APIYI_API_KEY}"',
+        'APIYI_API_KEY = "sk-user-already-set"',
+        'GEMINI_MODEL = "gemini-3.1-pro-preview"',
         '',
       ].join('\n'),
       'utf8',
     )
 
-    await seedApiyiMcpEntry({
+    const action = await seedApiyiMcpEntry({
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
       nodeBin: FAKE_NODE,
     })
+    expect(action).toBe('migrated')
 
     const parsed = parseToml(await fs.readFile(configPath, 'utf8')) as Record<
       string,
@@ -103,13 +105,47 @@ describe('seedApiyiMcpEntry', () => {
     >
     const apiyi = (parsed.mcp_servers as Record<string, unknown>).apiyi as {
       command: string
+      args: string[]
       enabled: boolean
+      env: Record<string, string>
     }
+    // Everything the user / settings UI configured stays put.
     expect(apiyi.command).toBe('/custom/node')
+    expect(apiyi.args).toEqual(['/custom/path.js'])
     expect(apiyi.enabled).toBe(true)
+    expect(apiyi.env.APIYI_API_KEY).toBe('sk-user-already-set')
+    expect(apiyi.env.GEMINI_MODEL).toBe('gemini-3.1-pro-preview')
+    // The only addition.
+    expect(apiyi.env.ELECTRON_RUN_AS_NODE).toBe('1')
   })
 
-  it('returns the action taken: "seeded" | "skipped"', async () => {
+  it('does NOT migrate when ELECTRON_RUN_AS_NODE is already present (idempotent across reboots)', async () => {
+    await fs.writeFile(
+      configPath,
+      [
+        '[mcp_servers.apiyi]',
+        'command = "/custom/node"',
+        'args = ["/custom/path.js"]',
+        'enabled = true',
+        '',
+        '[mcp_servers.apiyi.env]',
+        'ELECTRON_RUN_AS_NODE = "1"',
+        'APIYI_API_KEY = "sk-user-already-set"',
+        '',
+      ].join('\n'),
+      'utf8',
+    )
+
+    const action = await seedApiyiMcpEntry({
+      personalConfigToml: configPath,
+      entryPath: FAKE_ENTRY,
+      nodeBin: FAKE_NODE,
+    })
+    expect(action).toBe('skipped')
+  })
+
+  it('returns the action taken: "seeded" | "skipped" | "migrated"', async () => {
+    // First call on empty workspace → seeded
     const first = await seedApiyiMcpEntry({
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
@@ -117,12 +153,35 @@ describe('seedApiyiMcpEntry', () => {
     })
     expect(first).toBe('seeded')
 
+    // Second call when entry already has ELECTRON_RUN_AS_NODE → skipped
     const second = await seedApiyiMcpEntry({
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
       nodeBin: FAKE_NODE,
     })
     expect(second).toBe('skipped')
+
+    // Now simulate an older config without ELECTRON_RUN_AS_NODE → migrated
+    await fs.writeFile(
+      configPath,
+      [
+        '[mcp_servers.apiyi]',
+        'command = "/c"',
+        'args = ["/a"]',
+        'enabled = true',
+        '',
+        '[mcp_servers.apiyi.env]',
+        'APIYI_API_KEY = "sk"',
+        '',
+      ].join('\n'),
+      'utf8',
+    )
+    const third = await seedApiyiMcpEntry({
+      personalConfigToml: configPath,
+      entryPath: FAKE_ENTRY,
+      nodeBin: FAKE_NODE,
+    })
+    expect(third).toBe('migrated')
   })
 
   it('survives malformed existing TOML by treating it as empty (logs warning)', async () => {
