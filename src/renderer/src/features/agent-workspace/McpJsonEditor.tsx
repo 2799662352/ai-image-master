@@ -61,19 +61,43 @@ export function McpJsonEditor({ serverName, onClose }: McpJsonEditorProps): Reac
   useEffect(() => {
     async function loadConfig() {
       const api = getApi()
-      if (!api?.readConfig) {
+      if (!api) {
         setLoadError('MCP API 不可用')
         return
       }
       try {
-        const res = await api.readConfig()
-        if (!res.ok) {
-          setLoadError(res.error ?? '读取配置失败')
-          return
+        // Prefer the raw TOML reader: it bypasses codex's strict schema,
+        // so the editor stays usable even when codex refuses the config
+        // (e.g. unknown `transport` value in an existing block). This is
+        // precisely the scenario the editor exists to fix — falling
+        // through to `readConfig` here would re-trigger the same parse
+        // failure and lock the user out.
+        let mcpServers: Record<string, unknown> = {}
+        let usedRaw = false
+        if (api.readRawConfig) {
+          const rawRes = await api.readRawConfig()
+          if (rawRes.ok) {
+            const rawMcp = (rawRes.config as any)?.mcp_servers
+            if (rawMcp && typeof rawMcp === 'object') {
+              mcpServers = rawMcp
+            }
+            usedRaw = true
+          }
         }
-        const mcpServers = (res.config as any)?.mcp_servers ?? {}
+        if (!usedRaw) {
+          if (!api.readConfig) {
+            setLoadError('MCP API 不可用')
+            return
+          }
+          const res = await api.readConfig()
+          if (!res.ok) {
+            setLoadError(res.error ?? '读取配置失败')
+            return
+          }
+          mcpServers = (res.config as any)?.mcp_servers ?? {}
+        }
         if (serverName && serverName !== '__new__') {
-          const serverConfig = mcpServers[serverName]
+          const serverConfig = (mcpServers as any)[serverName]
           setValue(JSON.stringify(serverConfig ? { [serverName]: serverConfig } : { [serverName]: {} }, null, 2))
         } else {
           setValue(JSON.stringify(mcpServers, null, 2))

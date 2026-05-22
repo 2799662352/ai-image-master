@@ -138,6 +138,83 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
+### v4.3.17 (2026-05-23) — Hotfix: codex 拒绝 MCP 配置时整页死锁(用户无路径修复)
+
+**用户报告**:升级到 v4.3.16 后打开 Agent Workspace → MCP Servers,整页变成一条红色错误:
+
+```
+invalid configuration: invalid transport in `mcp_servers.apiyi`
+```
+
+下方只有一个「重试」按钮 —— 点击仍然挂同样的错。**用户无路径打开 JSON 编辑器修复出错的那一段**,MCP 页面被完全屏蔽。
+
+**根因(`/systematic-debugging` Phase 1)**:错误字符串不在我们仓库任何位置,grep 全 0 命中 → 由 codex Rust 二进制(`codex-rs`)在响应 `config/read` RPC 时抛出。完整链路:
+
+```
+useMcpStore.fetchServers
+  → electronAPI.agent.readConfig
+  → AgentManager.readConfigRpc
+  → CodexLocalBackend.readConfig
+  → CodexProtocolClient.rpc('config/read')
+  → codex.exe ← parse ~/.codex/config.toml
+                ← schema 校验拒绝 [mcp_servers.apiyi] 块(可能 transport 字段值不在白名单 / 旧版本残留 / 用户曾在 JSON 编辑器手编错)
+```
+
+我们 seed/backfill 的代码路径**从不写 `transport` 字段**(stdio 是默认),所以最可能的成因是用户 config.toml 在某条历史路径上被写入了非法 transport,codex 后续版本收紧了校验,把整个 `config/read` 调用一并拒绝。
+
+**真问题(架构层)**:`McpServerList` 拿到 `error` 时把整页换成红色错误屏蔽,**编辑器入口被该屏蔽 div 覆盖**,而编辑器本身又走同一个 `readConfig`,即使能进去也会触发同样错误 → 一旦 codex 挑剔,整个 MCP 页就废了。这是比"用户配置错了"更严重的设计漏洞。
+
+#### 修复:三层加固
+
+**A. 主进程:新增 codex-bypass 的 raw TOML 读取路径**
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| 新增 `readRawCodexConfig(configPath)` | `src/main/agent/codexConfigDiscovery.ts` (+62) | `fs.readFile` + `toml.parse`,**完全不经过 codex 二进制**。返回 `{ config, raw, parseError }`:ENOENT → `{ config: {}, raw: null }`(空配置);TOML 损坏 → `{ config: null, raw, parseError }`(保留 raw 字节供 UI 显示);成功 → 完整 parsed config,包括 codex 会拒绝的 `transport: "bogus"` 这类字段(**这正是要的:让用户看到 / 编辑出错的那一段**) |
+| 新增 `AgentManager.readRawConfigRpc()` | `src/main/agent/AgentManager.ts` (+27) | 暴露上面的函数为 RPC;走的是 `path.join(os.homedir(), '.codex', 'config.toml')` 这个 codex 同款路径 |
+| 注册新 IPC channel `agent:mcp-read-raw-config` | `src/main/agent/ipc.ts` (+2) | 加入 `AGENT_HANDLE_CHANNELS` 数组,跟现有 channels 一样在 dev-reload 时被 `removeHandler` 清理 |
+| preload 暴露 `readRawConfig` | `src/preload/index.ts` (+15) | API 形如 `electronAPI.agent.readRawConfig() → Promise<{ ok, config?, raw?, parseError? }>` |
+
+**B. 渲染层:graceful degrade — codex schema 拒绝从 fatal 降级为 banner**
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| `McpStore` 加 `codexConfigError: string \| null` | `src/renderer/src/features/agent-workspace/useMcpStore.ts` (+40 -8) | 跟 fatal `error` 严格区分:**`error` 只有"任何形式的 config 都读不到"才设**(codex RPC 失败 AND raw 读也失败,或 MCP API 整个不可用);**`codexConfigError` 才是 codex 拒绝 schema 这种"配置坏但文件能读到"** |
+| `fetchServers` fallback 逻辑 | 同文件 | codex `readConfig` 失败 → 自动调 `readRawConfig` 回退;成功就用 raw 的 `mcp_servers` map 喂给 `buildServersFromConfig`,卡片照常渲染 |
+| `McpServerList` 删整页屏蔽,改顶部 banner | `src/renderer/src/features/agent-workspace/McpServerList.tsx` (+45 -3) | `error` 分支保留(真 fatal 才落到这里);新增 `codexConfigError` banner:红色横条 + 错误原文(`whitespace-pre-wrap`,不裁断)+ 正则提取出错的 `mcp_servers.X` 名字 + **「修复 X」按钮 deep-link 到 JSON 编辑器**。卡片继续在下方正常显示(数据从 raw TOML 来) |
+| `McpJsonEditor` **优先** `readRawConfig` | `src/renderer/src/features/agent-workspace/McpJsonEditor.tsx` (+25 -7) | 编辑器存在的全部意义就是修复 codex parse 失败的配置 —— 如果它也走 `readConfig` 会触发同样错误把自己锁出来。**改为先尝试 `readRawConfig`,仅当 raw 也失败才退回 `readConfig`**。保存路径走 `batchWriteConfig` 不变(写入照常,codex 看到合法 TOML 就能重新加载) |
+
+**C. 测试覆盖(+159 lines)**
+
+| 测试文件 | 新增 case | 验证 |
+|---------|----------|------|
+| `codexConfigDiscovery.test.ts` | +3 case 在新 `describe('readRawCodexConfig')` 块下 | (1) 接受 codex 会拒绝的 `transport = "bogus-transport-value"` 块,完整 surface 给 caller;(2) 文件缺失 → `{ config: {}, raw: null }`;(3) TOML 损坏 → 保留 raw 字节 + parseError |
+| `useMcpStore.test.ts` | +3 case + 1 老 case 改写 | (1) codex readConfig 失败 + readRawConfig 成功 → `codexConfigError` 设置 / `error` 为 null / 卡片正常渲染;(2) 两条路径都死 → 升级为 fatal `error`;(3) happy path 不调 `readRawConfig`(避免多余 IO);(4) 原"readConfig 失败 → fatal" case 改写成"`readRawConfig` 不可用时才 fatal" |
+
+#### 用户可见行为
+
+1. **从 v4.3.16(或更早)升级到 v4.3.17 后,config.toml 已经被 codex 拒绝的用户**:打开 MCP 页面**看到卡片正常列出**(包括出错的 apiyi),顶部红色 banner 提示"Codex 拒绝加载当前 MCP 配置:<原错误信息>";banner 右侧有「修复 apiyi」按钮 → 点击直接打开 JSON 编辑器加载 apiyi 那一段,用户改完保存 → 点「刷新」让 codex 重新加载 → banner 消失,绿/灰状态点回归
+2. **config.toml 全新 / 健康的用户**:零差异,`readRawConfig` 在 happy path 上根本不会被调到
+3. **TOML 文件本身损坏到无法 parse**(极端情况,比如手编时把括号写漏):banner 显示 codex 原错误 + 提示"(原始 TOML 也解析失败:...)",JSON 编辑器会渲染空对象;用户至少不会被锁死,可以从 `{}` 起步重写一个合法块
+
+#### 验证
+
+- `codexConfigDiscovery.test.ts`:8/8 通过(原 5 + 新增 3)
+- `useMcpStore.test.ts`:21/21 通过
+- `ipc.test.ts` + `ipc.workspace.test.ts`:dev-reload 清理列表已包含新 channel,两条 reload 路径测试通过
+- 我所有触碰的测试文件:**48/48 全过**
+- `AgentManager.sessionConfig.test.ts`(4 个 approvalPolicy 失败)和 `preload/index.ts:995 uploadImageFromUrl` lint error 已用 `git stash` 隔离验证为 **baseline 失败**,与本次修复无关
+
+#### 不修的部分(deliberately scoped out)
+
+- **为什么用户的 config.toml 当初被写入了非法 transport**:成因可能是 v4.3.15 之前的 seed 路径、用户手编、或 codex 版本升级收紧校验 —— 三条都查不到当前用户机器上的真实 history。修这条的成本远高于直接打开"用户能自己改"的路径
+- **codex 校验本身**:不在我们控制范围,不动
+
+参考:
+- 调试方法论:`superpowers:systematic-debugging` skill(Phase 1-4 完整走完,Phase 1 grep 定位错误来源 → Phase 2 找到 UX 死锁的真问题 → Phase 3-4 codex-bypass 路径方案 + 验证)
+
+---
+
 ### v4.3.16 (2026-05-23) — 内嵌 apiyi-mcp 模型选择硬约束 + 老用户 env 配置自动 backfill
 
 本版本针对 v4.3.15 已嵌入的 apiyi-mcp(用 Gemini 多模态分析图像/视频/PDF)做两件事:**让 LLM 客户端不再"自作主张"地往工具调用里塞 `gemini-2.5-pro` 这个过气模型**,以及**让老用户升级时自动补齐缺失的 env scaffold 字段(但永不动用户已设的值)**。

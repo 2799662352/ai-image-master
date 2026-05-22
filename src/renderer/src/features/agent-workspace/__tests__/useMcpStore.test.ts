@@ -7,6 +7,7 @@ const mockApi = {
   reloadMcpServers: vi.fn(),
   mcpOAuthLogin: vi.fn(),
   readConfig: vi.fn(),
+  readRawConfig: vi.fn(),
   getMcpStatusSnapshot: vi.fn().mockResolvedValue({ ok: true, snapshot: {} }),
   onMcpStatus: vi.fn().mockReturnValue(() => undefined),
 }
@@ -24,6 +25,7 @@ describe('useMcpStore', () => {
       servers: [],
       loading: false,
       error: null,
+      codexConfigError: null,
       hasFetchedOnce: false,
       syncing: false,
       syncError: null,
@@ -206,6 +208,72 @@ describe('useMcpStore', () => {
     expect(useMcpStore.getState().servers[0].error).toContain('https://auth.example.com/login')
   })
 
+  // -------------------------------------------------------------------------
+  // Codex rejecting the on-disk config (e.g. invalid `transport`) USED TO
+  // wall the user off the entire MCP page — `fetchServers` set `error` and
+  // `McpServerList` short-circuited to a full-page error with only a
+  // "Retry" button, leaving NO path back to the JSON editor that exists
+  // precisely to fix this scenario. The store now falls back to the
+  // codex-bypass `readRawConfig` RPC: cards still render, but a
+  // `codexConfigError` banner tells the user codex refused to load them.
+  // -------------------------------------------------------------------------
+  it('fetchServers falls back to readRawConfig when codex rejects the config and surfaces the error as a non-fatal banner', async () => {
+    mockApi.listMcpServersRpc.mockImplementation(() => new Promise(() => {}))
+    mockApi.readConfig.mockResolvedValue({
+      ok: false,
+      error: 'invalid configuration: invalid transport in `mcp_servers.apiyi`',
+    })
+    mockApi.readRawConfig.mockResolvedValue({
+      ok: true,
+      config: {
+        mcp_servers: {
+          apiyi: { command: '/electron', args: ['index.js'], enabled: true, transport: 'bogus' },
+          good: { command: 'npx', args: ['-y', 'x'], enabled: false },
+        },
+      },
+      raw: '[mcp_servers.apiyi]\ntransport = "bogus"\n',
+    })
+
+    await useMcpStore.getState().fetchServers()
+
+    const state = useMcpStore.getState()
+    expect(state.error).toBeNull()
+    expect(state.codexConfigError).toContain('invalid transport')
+    expect(state.servers.map((s) => s.name).sort()).toEqual(['apiyi', 'good'])
+    expect(state.loading).toBe(false)
+    expect(state.hasFetchedOnce).toBe(true)
+  })
+
+  it('fetchServers escalates to fatal error when codex AND readRawConfig both fail', async () => {
+    mockApi.listMcpServersRpc.mockImplementation(() => new Promise(() => {}))
+    mockApi.readConfig.mockResolvedValue({
+      ok: false,
+      error: 'invalid configuration: invalid transport in `mcp_servers.apiyi`',
+    })
+    mockApi.readRawConfig.mockResolvedValue({ ok: false, error: 'EACCES: permission denied' })
+
+    await useMcpStore.getState().fetchServers()
+
+    const state = useMcpStore.getState()
+    expect(state.error).toContain('invalid transport')
+    expect(state.servers).toEqual([])
+    expect(state.codexConfigError).toBeNull()
+  })
+
+  it('fetchServers does not invoke readRawConfig on the happy path', async () => {
+    mockApi.listMcpServersRpc.mockImplementation(() => new Promise(() => {}))
+    mockApi.readConfig.mockResolvedValue({
+      ok: true,
+      config: { mcp_servers: { a: { command: 'x' } } },
+    })
+    mockApi.readRawConfig.mockResolvedValue({ ok: true, config: { mcp_servers: {} } })
+
+    await useMcpStore.getState().fetchServers()
+
+    expect(mockApi.readRawConfig).not.toHaveBeenCalled()
+    expect(useMcpStore.getState().codexConfigError).toBeNull()
+  })
+
   it('configured-enabled servers default to "starting" until a status notification arrives', async () => {
     mockApi.listMcpServersRpc.mockImplementation(() => new Promise(() => {}))
     mockApi.readConfig.mockResolvedValue({
@@ -236,14 +304,29 @@ describe('useMcpStore', () => {
     expect(byName.broken.error).toBe('boom')
   })
 
-  it('readConfig failure surfaces as fatal error (cannot render anything)', async () => {
-    mockApi.readConfig.mockResolvedValue({ ok: false, error: 'config dead' })
-    mockApi.listMcpServersRpc.mockImplementation(() => new Promise(() => {}))
+  // Previously this test asserted that codex's `readConfig` failure
+  // surfaced as a FATAL `error`. After the readRawConfig fallback landed,
+  // codex schema rejections become a non-fatal `codexConfigError` banner
+  // and only escalate to `error` if the raw read ALSO fails. Behaviour
+  // is split across two test cases now; this one keeps the original
+  // "MCP API unavailable" branch (no `readConfig` available at all) as
+  // a genuine fatal.
+  it('readConfig failure becomes a fatal error only when the readRawConfig RPC is unavailable', async () => {
+    // Drop readRawConfig from the API surface for this test only.
+    const originalRaw = mockApi.readRawConfig
+    ;(mockApi as any).readRawConfig = undefined
+    try {
+      mockApi.readConfig.mockResolvedValue({ ok: false, error: 'config dead' })
+      mockApi.listMcpServersRpc.mockImplementation(() => new Promise(() => {}))
 
-    await useMcpStore.getState().fetchServers()
-    const state = useMcpStore.getState()
-    expect(state.error).toBe('config dead')
-    expect(state.loading).toBe(false)
+      await useMcpStore.getState().fetchServers()
+      const state = useMcpStore.getState()
+      expect(state.error).toBe('config dead')
+      expect(state.codexConfigError).toBeNull()
+      expect(state.loading).toBe(false)
+    } finally {
+      ;(mockApi as any).readRawConfig = originalRaw
+    }
   })
 
   it('updateStatus updates a server status in-place', () => {

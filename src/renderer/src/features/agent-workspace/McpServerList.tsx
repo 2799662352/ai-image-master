@@ -14,6 +14,7 @@ export function McpServerList({ onOpenEditor, onOpenImport }: McpServerListProps
   const servers = useMcpStore((s) => s.servers)
   const loading = useMcpStore((s) => s.loading)
   const error = useMcpStore((s) => s.error)
+  const codexConfigError = useMcpStore((s) => s.codexConfigError)
   const loggingIn = useMcpStore((s) => s.loggingIn)
   const hasFetchedOnce = useMcpStore((s) => s.hasFetchedOnce)
   const syncing = useMcpStore((s) => s.syncing)
@@ -23,6 +24,15 @@ export function McpServerList({ onOpenEditor, onOpenImport }: McpServerListProps
   const deleteServer = useMcpStore((s) => s.deleteServer)
   const startOAuthLogin = useMcpStore((s) => s.startOAuthLogin)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+
+  // Heuristic: extract the offending mcp_servers.X name from codex's
+  // error message (e.g. "invalid transport in `mcp_servers.apiyi`") so
+  // we can deep-link "修复" straight into the JSON editor on that server.
+  const offendingServerName = useMemo(() => {
+    if (!codexConfigError) return null
+    const m = codexConfigError.match(/mcp_servers[.`'"]+([A-Za-z0-9_.-]+)/)
+    return m ? m[1] : null
+  }, [codexConfigError])
 
   // Split servers into "🎁 预装" (vendored by us into resources/, seeded into
   // codex config on first boot — currently just apiyi-mcp) vs everything
@@ -81,10 +91,14 @@ export function McpServerList({ onOpenEditor, onOpenImport }: McpServerListProps
     )
   }
 
+  // True fatal: we couldn't read the config in ANY form (codex RPC failed
+  // AND the raw TOML fallback also failed, or MCP IPC is unavailable
+  // entirely). Schema rejections by codex don't land here — they go
+  // through `codexConfigError` so the user keeps editor access.
   if (error) {
     return (
       <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-300">
-        <p>{error}</p>
+        <p className="whitespace-pre-wrap">{error}</p>
         <button
           type="button"
           onClick={() => fetchServers()}
@@ -137,6 +151,33 @@ export function McpServerList({ onOpenEditor, onOpenImport }: McpServerListProps
           </button>
         </div>
       </div>
+
+      {codexConfigError && (
+        <div className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs text-red-200">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="font-medium text-red-100">Codex 拒绝加载当前 MCP 配置</p>
+              <p className="mt-1 whitespace-pre-wrap break-words text-red-200/90">
+                {codexConfigError}
+              </p>
+              <p className="mt-1 text-red-300/80">
+                以下卡片来自原始 <code className="text-[10px]">~/.codex/config.toml</code>。
+                修复{offendingServerName ? <> <strong>{offendingServerName}</strong> 的</> : '出错的'}
+                配置后点「刷新」可让 Codex 重新加载。
+              </p>
+            </div>
+            {offendingServerName && (
+              <button
+                type="button"
+                onClick={() => onOpenEditor(offendingServerName)}
+                className="shrink-0 self-start rounded bg-red-500/20 px-3 py-1 text-xs text-red-100 hover:bg-red-500/30"
+              >
+                修复 {offendingServerName}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {syncError && (
         <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">

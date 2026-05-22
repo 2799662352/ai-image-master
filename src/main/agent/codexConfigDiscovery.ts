@@ -93,6 +93,59 @@ export async function readMcpSummary(configPath: string): Promise<CodexMcpSummar
   return { servers, warnings: [] }
 }
 
+export interface RawCodexConfigResult {
+  /** Best-effort parsed TOML. `null` when ENOENT or TOML parse failed. */
+  config: Record<string, unknown> | null
+  /** Raw file contents when readable (regardless of whether TOML parsing
+   *  succeeded). Useful so the renderer can surface the malformed section
+   *  to the user even when `config` is null. */
+  raw: string | null
+  /** Parse error message when TOML itself is malformed. */
+  parseError?: string
+}
+
+/**
+ * Read and TOML-parse `~/.codex/config.toml` directly, bypassing the codex
+ * Rust binary's stricter schema validation.
+ *
+ * The Rust `config/read` RPC fails the whole call if ANY `[mcp_servers.X]`
+ * block is invalid (e.g. unknown `transport` value). When that happens the
+ * renderer is otherwise blind and the user gets stuck on an error screen
+ * with no way to edit the file. This raw read lets the renderer keep
+ * rendering server cards (so the JSON editor remains reachable) and lets
+ * the editor reload its source after a save without bouncing off the
+ * codex validator.
+ *
+ * Contract:
+ * - Missing file → `{ config: {}, raw: null }` (treat as empty config).
+ * - Unreadable file (perm, etc.) → throws (caller should report).
+ * - Malformed TOML → `{ config: null, raw, parseError }` so the editor can
+ *   still display the bad bytes.
+ */
+export async function readRawCodexConfig(configPath: string): Promise<RawCodexConfigResult> {
+  let raw: string
+  try {
+    raw = await fs.readFile(configPath, 'utf8')
+  } catch (err) {
+    if (isNodeError(err) && err.code === 'ENOENT') {
+      return { config: {}, raw: null }
+    }
+    throw err
+  }
+
+  try {
+    const parsed = parseToml(raw)
+    const record = asRecord(parsed) ?? {}
+    return { config: record, raw }
+  } catch (err) {
+    return {
+      config: null,
+      raw,
+      parseError: err instanceof Error ? err.message : String(err),
+    }
+  }
+}
+
 export async function discoverCodexSkills({
   cwd,
   home,

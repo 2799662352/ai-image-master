@@ -54,7 +54,23 @@ interface LiveStatus {
 interface McpStore {
   servers: McpServerCard[]
   loading: boolean
+  /**
+   * Fatal error: we genuinely could not read ANY form of the config (codex
+   * RPC failed AND the raw TOML read also failed). When non-null the list
+   * UI shows the full-page error fallback. NOT used for codex schema
+   * rejections — those go into `codexConfigError` so the user keeps access
+   * to the JSON editor and can fix the broken section.
+   */
   error: string | null
+  /**
+   * Codex's Rust parser refused the on-disk config (e.g. invalid
+   * `transport` in some mcp_servers block). We still rendered cards from
+   * the raw TOML fallback, but tools, auth, and live status will be empty
+   * until the user fixes the config and reloads codex. Surfaced as a
+   * banner above the list (NOT as an error wall) so the user can reach
+   * the JSON editor to fix the offending entry.
+   */
+  codexConfigError: string | null
   loggingIn: string | null
   hasFetchedOnce: boolean
   syncing: boolean
@@ -213,6 +229,7 @@ export const useMcpStore = create<McpStore>((set, get) => ({
   servers: [],
   loading: false,
   error: null,
+  codexConfigError: null,
   loggingIn: null,
   hasFetchedOnce: false,
   syncing: false,
@@ -276,12 +293,12 @@ export const useMcpStore = create<McpStore>((set, get) => ({
   async fetchServers() {
     const isFirstFetch = !get().hasFetchedOnce
     if (isFirstFetch) {
-      set({ loading: true, error: null, syncError: null })
+      set({ loading: true, error: null, codexConfigError: null, syncError: null })
     }
 
     const api = getApi()
     if (!api?.readConfig) {
-      set({ loading: false, error: 'MCP API 不可用', hasFetchedOnce: true })
+      set({ loading: false, error: 'MCP API 不可用', codexConfigError: null, hasFetchedOnce: true })
       return
     }
 
@@ -291,20 +308,59 @@ export const useMcpStore = create<McpStore>((set, get) => ({
     // #21318). Status comes from `mcp_status_updated` notifications;
     // tools come from a background `syncTools()` call below.
     let configMap: Record<string, any> = {}
+    let codexConfigError: string | null = null
     let fatalError: string | null = null
+
     try {
       const configRes = await withTimeout(api.readConfig(), 10_000, 'readConfig')
       if ((configRes as any)?.ok === false) {
-        fatalError = (configRes as any).error ?? 'readConfig failed'
+        // Codex rejected the on-disk TOML. Most common cause is a stale
+        // `[mcp_servers.X]` block with a transport value that codex no
+        // longer recognises (or an env var with a `null` value the Rust
+        // schema can't deserialize). Falling through to the raw TOML
+        // reader below lets the user still see and EDIT the offending
+        // section instead of getting stuck on an error wall.
+        codexConfigError = (configRes as any).error ?? 'readConfig failed'
       } else {
         configMap = (configRes as any)?.config?.mcp_servers ?? {}
       }
     } catch (err) {
-      fatalError = err instanceof Error ? err.message : String(err)
+      codexConfigError = err instanceof Error ? err.message : String(err)
+    }
+
+    // Fallback: bypass codex's strict parser and read ~/.codex/config.toml
+    // directly. We only do this when codex rejected the config — the happy
+    // path stays untouched.
+    if (codexConfigError && api?.readRawConfig) {
+      try {
+        const rawRes = await withTimeout(api.readRawConfig(), 10_000, 'readRawConfig')
+        if ((rawRes as any)?.ok !== false) {
+          const rawMcp = (rawRes as any)?.config?.mcp_servers
+          if (rawMcp && typeof rawMcp === 'object') {
+            configMap = rawMcp as Record<string, any>
+          }
+          // If the raw read also failed to parse TOML, surface that
+          // parseError too — but don't treat it as fatal; an empty
+          // config map is still useful (user sees the empty list +
+          // banner and can click "+ 新增" to start fresh).
+          if ((rawRes as any)?.parseError && !codexConfigError.includes('TOML')) {
+            codexConfigError = `${codexConfigError}\n(原始 TOML 也解析失败: ${(rawRes as any).parseError})`
+          }
+        } else {
+          // Raw read itself errored — this means even fs.readFile threw.
+          // That's a genuine fatal: we can't recover, escalate.
+          fatalError = codexConfigError
+        }
+      } catch (err) {
+        fatalError = `${codexConfigError}\n(回退读取失败: ${err instanceof Error ? err.message : String(err)})`
+      }
+    } else if (codexConfigError) {
+      // No fallback available — treat as fatal.
+      fatalError = codexConfigError
     }
 
     if (fatalError) {
-      set({ loading: false, error: fatalError, hasFetchedOnce: true })
+      set({ loading: false, error: fatalError, codexConfigError: null, hasFetchedOnce: true })
       return
     }
 
@@ -313,10 +369,14 @@ export const useMcpStore = create<McpStore>((set, get) => ({
       servers,
       loading: false,
       error: null,
+      codexConfigError,
       hasFetchedOnce: true,
     })
 
     // Fire-and-forget tool sync. Updates servers when it eventually returns.
+    // NOTE: When codexConfigError is set, this will also fail (codex has
+    // refused to load the servers), but we still call it so the user gets
+    // a consistent retry path via the "刷新" button.
     void get().syncTools()
   },
 

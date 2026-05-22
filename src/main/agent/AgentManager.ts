@@ -29,7 +29,7 @@ import {
   resolveWorkspacePaths,
   saveSkill,
 } from './codexConfigStore'
-import { discoverCodexSkills, readMcpSummary } from './codexConfigDiscovery'
+import { discoverCodexSkills, readMcpSummary, readRawCodexConfig } from './codexConfigDiscovery'
 import { mapReferencesToInputItems } from './codexUserInput'
 import { validateSessionConfigPatch } from './sessionConfigValidation'
 import type { BrowserWindow } from 'electron'
@@ -615,6 +615,38 @@ export class AgentManager {
       if (!this.backend.readConfig) throw new Error('MCP read config API unavailable')
       const result = await this.backend.readConfig()
       return { ok: true, config: result?.config }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  /**
+   * Read `~/.codex/config.toml` directly (bypasses codex's strict schema).
+   *
+   * Why this exists separately from `readConfigRpc`:
+   *   The Rust `config/read` RPC rejects the entire request if any
+   *   `[mcp_servers.X]` block fails validation (e.g. unknown `transport`
+   *   value). The renderer must still be able to enumerate and EDIT the
+   *   broken section to fix it — without this RPC the MCP page is a dead
+   *   end whenever codex's parser tightens. We deliberately surface
+   *   whatever TOML the user has on disk, even when codex would reject it.
+   */
+  async readRawConfigRpc(): Promise<{
+    ok: boolean
+    error?: string
+    config?: Record<string, unknown> | null
+    raw?: string | null
+    parseError?: string
+  }> {
+    try {
+      const configPath = path.join(os.homedir(), '.codex', 'config.toml')
+      const result = await readRawCodexConfig(configPath)
+      return {
+        ok: true,
+        config: result.config,
+        raw: result.raw,
+        parseError: result.parseError,
+      }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
