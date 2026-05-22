@@ -48,24 +48,42 @@ extraResources:
   # at runtime via src/main/agent/apiyiMcpLauncher.ts). Pure Node, no per-platform
   # subdir. Vendored by scripts/vendor-apiyi-mcp.mjs as part of `npm run build`.
   #
-  # IMPORTANT: filter MUST be ["**/*"], NOT an enumerated include list.
-  # electron-builder 26.x has a long-standing quirk (issue #867) where an
-  # enumerated include filter triggers an internal `excludePatterns` +
-  # `stat.isDirectory()` path that silently drops `node_modules/` directory
-  # entries during copy, even when `"node_modules/**/*"` is explicitly listed.
-  # In v4.3.16–v4.3.19 this caused packaged installers to ship resources/apiyi-mcp/
-  # with `dist/` + 4 metadata files but ZERO `node_modules/`. End users on
-  # machines without system Node then hit `ELECTRON_RUN_AS_NODE=1` fallback,
-  # spawned dist/index.js, and the MCP process crashed immediately with
-  # `Cannot find module '@modelcontextprotocol/sdk'` → codex reported 0 tools
-  # → UI showed "已连接但未返回工具" with no actionable error surface.
-  # `["**/*"]` (or omitting filter entirely) goes through a different
-  # code path that copies the full vendored tree, node_modules included.
-  # The vendored tree is already curated by scripts/vendor-apiyi-mcp.mjs
-  # (only dist + node_modules + package.json + README + LICENSE + version.json
-  # get written), so there's nothing extraneous to filter out here.
+  # CRITICAL: node_modules MUST be a separate `from:` entry (NOT nested under
+  # `from: resources/apiyi-mcp`), and we must explicitly negate node_modules
+  # in the parent entry's filter.
+  #
+  # Why: electron-builder 26.x has a hard-coded special path for the directory
+  # name `node_modules` in its source-tree walker. When you point `from:` at
+  # `resources/apiyi-mcp` (which contains a `node_modules/` child), the walker
+  # treats that nested directory as a "production deps tree" and routes it
+  # through `searchAndCopyNodeModules()` instead of plain `cpRecursive()`.
+  # That helper reads the parent `package.json`, resolves only listed
+  # production deps, and copies those — but since the main project's
+  # `package.json` doesn't declare `@modelcontextprotocol/sdk` or
+  # `@google/genai` (they're transitively vendored under apiyi-mcp), it
+  # finds nothing to copy and the entire nested node_modules silently
+  # disappears from the packaged tree.
+  #
+  # In v4.3.16–v4.3.20 attempt 1 this caused packaged installers to ship
+  # resources/apiyi-mcp/ with `dist/` + 4 metadata files but ZERO node_modules/.
+  # End users on machines without system Node fell back to
+  # ELECTRON_RUN_AS_NODE=1 spawning dist/index.js, which crashed instantly
+  # on `Cannot find module '@modelcontextprotocol/sdk'`. codex reported 0
+  # tools and the UI looked alive but returned nothing even with a valid key.
+  #
+  # The fix is to bypass the smart walker entirely by listing node_modules
+  # as its OWN top-level extraResources entry. The walker sees a `from:` that
+  # already points INSIDE a node_modules directory and just plain-copies it
+  # (no "production deps resolution" smart path is triggered because there's
+  # no parent package.json above it to read).
   - from: resources/apiyi-mcp
     to: apiyi-mcp
+    filter:
+      - "**/*"
+      - "!node_modules"
+      - "!node_modules/**/*"
+  - from: resources/apiyi-mcp/node_modules
+    to: apiyi-mcp/node_modules
     filter:
       - "**/*"
   - from: resources/skills

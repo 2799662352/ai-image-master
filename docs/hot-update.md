@@ -152,7 +152,7 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 `enabled: false` 是 seed 设计行为(没 API key 前不让自启动避免噪音 token 错误循环)— 这部分**不是** bug。
 
-**Phase 1 / 根因调查 — 按 systematic-debugging 三层取证**
+**Phase 1 / 根因调查 — 按 systematic-debugging 三层取证 + 一次假设作废**
 
 立即假设 1:**vendoring 没执行**。`scripts/vendor-apiyi-mcp.mjs` 看一眼 — line 96-130 确认它把 upstream `apiyi-mcp-server/node_modules`(npm install --omit=dev 装好的生产依赖)整个 cp 到 `resources/apiyi-mcp/node_modules/`。验证 source 树:
 
@@ -177,54 +177,84 @@ version.json
 
 **`release\win-unpacked\resources\apiyi-mcp\` 里只有 20 个文件(几乎全是 `dist/` 里的 .js + 4 个元数据文件),`node_modules/` 整个目录消失**。即用户机器上 Electron-as-Node 跑 `dist/index.js` 时,第一行 `import { McpServer } from '@modelcontextprotocol/sdk/...'` 就立刻 throw `Cannot find module`,进程 0 秒内挂掉,codex 拿到 EOF → 报"0 工具"但不知道为什么。
 
-**根因锁定 → electron-builder 配置 quirk**
-
-回头看 `electron-builder.yml:47-58`(改动前):
+**根因第一次假设(后被作废)** — 起初怀疑是 electron-builder 26.x 的 issue #867:`extraResources.filter` 一旦写成"枚举 include 列表"(每条都是 positive pattern),内部走 `excludePatterns` + `stat.isDirectory()` 路径误杀 `node_modules/` 目录递归。基于这个假设,尝试 attempt 1:
 
 ```yaml
+# attempt 1 (didn't work):
 - from: resources/apiyi-mcp
   to: apiyi-mcp
   filter:
-    - "dist/**/*"
-    - "node_modules/**/*"
-    - "package.json"
-    - "version.json"
-    - "README.md"
-    - "LICENSE"
+    - "**/*"   # 单条 ["**/*"] 想走 default happy path
 ```
 
-filter 显式列了 `"node_modules/**/*"`,看起来天经地义,但 electron-builder 26.x 有一个 long-standing quirk(GitHub issue [electron-userland/electron-builder#867](https://github.com/electron-userland/electron-builder/issues/867)):**`extraResources.filter` 一旦写成"枚举 include 列表"(每条都是非 `!` 开头的 positive pattern),内部会走一条 `excludePatterns` + `stat.isDirectory()` 的代码路径,把 `node_modules/` 这种目录类型的 entry 在递归之前就 reject 掉**。即使下一层 `node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js` 完美匹配 `node_modules/**/*` 这个 glob,**它的父目录 `node_modules/` 已经被父级判定为 "not included",于是整个子树根本不会被 walk**。
+重新打包验证 — `release\win-unpacked\resources\apiyi-mcp\node_modules\` **依然为 0**。假设作废:issue #867 是相关但**不是这次的根因**。
 
-文档 [electron.build/contents](https://www.electron.build/contents) 明确说 `extraResources` 默认 filter 是 `**/*`,而 source 注释里有一句关键的:
+**根因第二次假设(确认成立)** — 真正的机制是 electron-builder 的 `searchAndCopyNodeModules()` 智能路径。它的 source-tree walker 遇到名字叫 `node_modules` 的子目录,**会无条件触发"production deps 解析"路径**,而不是走 `cpRecursive()`。这个智能路径会:
 
-> Default pattern `**/*` is not added to your custom if some of your patterns is not ignore (i.e. not starts with `!`)
+1. 读取 walker 起点的 `package.json`(主项目根目录的)
+2. 从那个 `package.json` 的 `dependencies` 解析需要哪些 production modules
+3. 仅复制对应的 modules,**忽略 source 树里实际存在的 node_modules 内容**
 
-也就是说,**一旦你自己列了任何一条 positive include**,electron-builder 就不再补 `**/*`,完全走你的精确列表 + 走那条 buggy 的 `excludePatterns` 代码路径。这是为什么所有其它 `extraResources` 块(`skills/**/*.md`、`codex*`、`docker-mcp*`)都 OK — 它们都是 **file-level glob**,不是 directory-recursive,不触发 `stat.isDirectory()` quirk。**只有 `apiyi-mcp` 用了 `node_modules/**/*` 这种 directory-recursive include,所以唯独它被坑**。
+主项目 `package.json` 没有 `@modelcontextprotocol/sdk`,也没有 `@google/genai`(它们是 vendored apiyi-mcp 的传递依赖),所以智能路径找到"零个需要复制的 production deps",**整个 nested node_modules 被静默忽略**。这条机制和 filter 写法**无关** — 不管你写枚举列表还是 `["**/*"]`,只要 `from:` 指向一个包含 `node_modules` 子目录的目录,智能路径都会被触发。
 
-**为什么 v4.3.16 → v4.3.19 都没修到这一层**:前四个版本全在 fix 上层症状 — v4.3.16 引入了 vendoring 流程(写出了完美的 source tree),v4.3.17 加 graceful degradation + 修复按钮,v4.3.18 修 `command=undefined` baseline bug + seed 自愈,v4.3.19 修 modal 0px 高度。**没人怀疑过 `electron-builder.yml` 本身写的 include 列表会被 electron-builder 自己 silently 吞掉 node_modules**,因为这条 filter 看起来再天经地义不过。直到这次拿到用户机器的 packaged tree dump,数文件数对照才把 quirk 钉死。
+证据链:
+- attempt 1 改成 `["**/*"]`,packaged tree 仍然 0 个 node_modules 文件 → 排除 filter 写法
+- 全部其它 `extraResources` 块(`skills/**/*.md`、`codex*`、`docker-mcp*`)都 OK — 它们都是 **file-level glob 且 `from:` 下没有 nested `node_modules` 目录**
+- electron-builder 日志 `searching for node modules pm=pnpm searchDir=D:\tecx\text\temp-ai-image-master-source` — 它在主项目根做 deps 解析,从来没提到 `resources/apiyi-mcp` 子树的 node_modules
+- 文档 [electron.build/contents](https://www.electron.build/contents):`**/node_modules/**/*` (only production dependencies will be copied) is added to your custom in any case
 
-**Phase 2 / 修复**
+**为什么 v4.3.16 → v4.3.19 都没修到这一层**:前四个版本全在 fix 上层症状 — v4.3.16 引入了 vendoring 流程(写出了完美的 source tree),v4.3.17 加 graceful degradation + 修复按钮,v4.3.18 修 `command=undefined` baseline bug + seed 自愈,v4.3.19 修 modal 0px 高度。**没人怀疑过 `electron-builder` 会对名叫 `node_modules` 的子目录无条件触发智能解析路径**,因为 vendored 树里的 `node_modules` 看起来就是一个普通目录。直到这次拿到用户机器的 packaged tree dump,数文件数对照才把机制钉死。
 
-`electron-builder.yml:47-70` 一处改动:filter 从枚举 include 列表改成单条 `"**/*"`,触发 electron-builder 完全不同的代码路径(no excludePatterns, no `stat.isDirectory()` 早期 reject,纯 `**/*` 大锅烩):
+**Phase 2 / 修复 — 把 node_modules 拎出来做独立 from**
+
+绕开智能路径的关键:**让 `from:` 直接指向 `node_modules` 内部**,这样它上面没有 `package.json` 可读,智能路径找不到 manifest 就回退到 plain `cpRecursive()`。`electron-builder.yml` 改动:
 
 ```yaml
 - from: resources/apiyi-mcp
   to: apiyi-mcp
   filter:
     - "**/*"
+    - "!node_modules"
+    - "!node_modules/**/*"   # 让 walker 完全跳过 nested node_modules
+- from: resources/apiyi-mcp/node_modules
+  to: apiyi-mcp/node_modules
+  filter:
+    - "**/*"                  # 从 node_modules/ 内部启动 walker,不触发智能路径
 ```
 
-`vendor-apiyi-mcp.mjs` 已经把 source 树筛干净(只写 `dist` + `node_modules` + `package.json` + `README.md` + `LICENSE` + `version.json`),所以这里"全包"是安全的 — 没有任何 `.git`、`.cache`、`__tests__` 之类的杂物会被连带打进 installer。
+两个 from 块的角色分工:
+- 第一个块负责 `dist/` + `package.json` + `README.md` + `version.json`(主体内容),显式 negate `node_modules` 让 walker 知道不要碰它
+- 第二个块直接从 `node_modules/` 内部启动,绕过"父级有 manifest → 触发智能路径"的判定 → 走 plain copy
 
-注释里把这个坑的来龙去脉、为什么必须 `["**/*"]`、什么场景触发 quirk、issue #867 链接全部写死,后人改这块前会看到血泪史。
+验证 attempt 2 包出来的产物:
 
-**为什么不加单元测试**:这是 build-tool 配置 bug,不是应用代码 bug。jsdom / vitest 跑不起来 electron-builder 真实打包流程,测的只能是 yaml 字符串解析,等于在 assert "filter 字段值是 `['**/*']`",纯实现细节 assertion。真正的验证是**比较 source tree 和 release tree 的文件数**,这件事在 `package.json` `release:cn` 流程里跑构建之后,操作员肉眼验证。这次我留了一条命令在文档里:
+```
+PS> dir /b release\win-unpacked\resources\apiyi-mcp
+dist
+node_modules         ← 回来了
+package.json
+README.md
+version.json
+PS> dir /s /b release\win-unpacked\resources\apiyi-mcp\node_modules | find /v /c ""
+4922                 ← 4923 source 里有 1 个被默认 ignore(README.md 之类)
+PS> dir /b release\win-unpacked\resources\apiyi-mcp\node_modules\@modelcontextprotocol
+sdk                  ← 核心 dep 在
+PS> dir /b release\win-unpacked\resources\apiyi-mcp\node_modules\@google
+genai                ← 另一个核心 dep 在
+```
+
+installer 体积:**45 MB(attempt 1)→ 370 MB(attempt 2)**,差额 ~325 MB 就是 node_modules 真正进来后的 production deps + tree shake 不掉的资源。这是必要代价。
+
+注释里把两次假设的来龙去脉、为什么必须分两个 from、智能路径触发条件全部写死,后人改这块前会看到血泪史。
+
+**为什么不加单元测试**:这是 build-tool 配置 bug,不是应用代码 bug。jsdom / vitest 跑不起来 electron-builder 真实打包流程,测的只能是 yaml 字符串解析,等于在 assert 实现细节。真正的验证是**比较 source tree 和 release tree 的文件数**,这件事在 `release:cn` 之后用一行 PowerShell 跑:
 
 ```
 cmd /c "dir /s /b release\win-unpacked\resources\apiyi-mcp\node_modules | find /v /c """""
+# 期望 ≥ 4900
 ```
 
-下次发版前如果想 paranoid,跑这条 — 期望 ≥ 4900。
+下次发版前如果想 paranoid,跑这条作 smoke test。
 
 #### 用户可见行为
 
@@ -235,9 +265,9 @@ cmd /c "dir /s /b release\win-unpacked\resources\apiyi-mcp\node_modules | find /
 
 #### 影响范围
 
-- 改的文件:`electron-builder.yml:47-70`(一处 filter)+ `package.json`(版本号)+ `docs/hot-update.md`(本段)
+- 改的文件:`electron-builder.yml:47-86`(分两个 from 块)+ `package.json`(版本号)+ `docs/hot-update.md`(本段)
 - 不动代码,不改 IPC,不改 seed 逻辑,不改 UI
-- installer 体积会增加 ~10-15 MB(node_modules 真正进来了),这是必要代价
+- installer 体积从 45 MB(漏 node_modules 的坏版本)涨到 370 MB(完整版),后续可以考虑用 esbuild 把 apiyi-mcp 整个 bundle 成单 .js 来瘦身,但那是 v4.3.21+ 的事
 
 ---
 
