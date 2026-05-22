@@ -138,6 +138,109 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
+### v4.3.20 (2026-05-23) — 根因修复: packaged installer 漏打 `resources/apiyi-mcp/node_modules`(用户填了 key 也拿不到工具)
+
+**用户报告**:v4.3.19 把"编辑器空白"问题修了之后,用户在 packaged 安装包里**填了有效 apiyi key、把 toggle 打开,但 MCP 始终返回 0 工具**。同一台机器上跑 dev workspace 一切正常,本地 → packaged 这一步出问题。截图对比:
+
+| 字段 | 本地(图 1,正常) | packaged(图 2,坏) |
+|------|------|------|
+| `command` | `D:\...\temp-ai-image-master-source\node_modules\.pnpm\electron@41.6.1\node_modules\electron\dist\electron.exe` | `C:\...\CATIMATION-Cyberpunk Master.exe` |
+| `args[0]` | `D:\...\resources\apiyi-mcp\dist\index.js` | `C:\...\resources\apiyi-mcp\dist\index.js` |
+| `env.ELECTRON_RUN_AS_NODE` | `"1"` | `"1"` |
+| `env.APIYI_API_KEY` | `sk-W9n6JToxre...`(有效) | 同一把(用户复制过去的) |
+| MCP 工具数 | ✅ 返回工具列表 | ❌ 0 工具 |
+
+`enabled: false` 是 seed 设计行为(没 API key 前不让自启动避免噪音 token 错误循环)— 这部分**不是** bug。
+
+**Phase 1 / 根因调查 — 按 systematic-debugging 三层取证**
+
+立即假设 1:**vendoring 没执行**。`scripts/vendor-apiyi-mcp.mjs` 看一眼 — line 96-130 确认它把 upstream `apiyi-mcp-server/node_modules`(npm install --omit=dev 装好的生产依赖)整个 cp 到 `resources/apiyi-mcp/node_modules/`。验证 source 树:
+
+```
+PS> cmd /c "dir /s /b resources\apiyi-mcp\node_modules | find /v /c """""
+4923
+```
+
+source 树**有 4923 个 node_modules 文件**(含 `@google/genai`、`@modelcontextprotocol/sdk` 及全部传递依赖)。vendoring 完全正常。
+
+立即假设 2:**packaged installer 没把它打进去**。验证 release tree:
+
+```
+PS> cmd /c "dir /s /b release\win-unpacked\resources\apiyi-mcp | find /v /c """""
+20
+PS> cmd /c "dir /b release\win-unpacked\resources\apiyi-mcp"
+dist
+package.json
+README.md
+version.json
+```
+
+**`release\win-unpacked\resources\apiyi-mcp\` 里只有 20 个文件(几乎全是 `dist/` 里的 .js + 4 个元数据文件),`node_modules/` 整个目录消失**。即用户机器上 Electron-as-Node 跑 `dist/index.js` 时,第一行 `import { McpServer } from '@modelcontextprotocol/sdk/...'` 就立刻 throw `Cannot find module`,进程 0 秒内挂掉,codex 拿到 EOF → 报"0 工具"但不知道为什么。
+
+**根因锁定 → electron-builder 配置 quirk**
+
+回头看 `electron-builder.yml:47-58`(改动前):
+
+```yaml
+- from: resources/apiyi-mcp
+  to: apiyi-mcp
+  filter:
+    - "dist/**/*"
+    - "node_modules/**/*"
+    - "package.json"
+    - "version.json"
+    - "README.md"
+    - "LICENSE"
+```
+
+filter 显式列了 `"node_modules/**/*"`,看起来天经地义,但 electron-builder 26.x 有一个 long-standing quirk(GitHub issue [electron-userland/electron-builder#867](https://github.com/electron-userland/electron-builder/issues/867)):**`extraResources.filter` 一旦写成"枚举 include 列表"(每条都是非 `!` 开头的 positive pattern),内部会走一条 `excludePatterns` + `stat.isDirectory()` 的代码路径,把 `node_modules/` 这种目录类型的 entry 在递归之前就 reject 掉**。即使下一层 `node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js` 完美匹配 `node_modules/**/*` 这个 glob,**它的父目录 `node_modules/` 已经被父级判定为 "not included",于是整个子树根本不会被 walk**。
+
+文档 [electron.build/contents](https://www.electron.build/contents) 明确说 `extraResources` 默认 filter 是 `**/*`,而 source 注释里有一句关键的:
+
+> Default pattern `**/*` is not added to your custom if some of your patterns is not ignore (i.e. not starts with `!`)
+
+也就是说,**一旦你自己列了任何一条 positive include**,electron-builder 就不再补 `**/*`,完全走你的精确列表 + 走那条 buggy 的 `excludePatterns` 代码路径。这是为什么所有其它 `extraResources` 块(`skills/**/*.md`、`codex*`、`docker-mcp*`)都 OK — 它们都是 **file-level glob**,不是 directory-recursive,不触发 `stat.isDirectory()` quirk。**只有 `apiyi-mcp` 用了 `node_modules/**/*` 这种 directory-recursive include,所以唯独它被坑**。
+
+**为什么 v4.3.16 → v4.3.19 都没修到这一层**:前四个版本全在 fix 上层症状 — v4.3.16 引入了 vendoring 流程(写出了完美的 source tree),v4.3.17 加 graceful degradation + 修复按钮,v4.3.18 修 `command=undefined` baseline bug + seed 自愈,v4.3.19 修 modal 0px 高度。**没人怀疑过 `electron-builder.yml` 本身写的 include 列表会被 electron-builder 自己 silently 吞掉 node_modules**,因为这条 filter 看起来再天经地义不过。直到这次拿到用户机器的 packaged tree dump,数文件数对照才把 quirk 钉死。
+
+**Phase 2 / 修复**
+
+`electron-builder.yml:47-70` 一处改动:filter 从枚举 include 列表改成单条 `"**/*"`,触发 electron-builder 完全不同的代码路径(no excludePatterns, no `stat.isDirectory()` 早期 reject,纯 `**/*` 大锅烩):
+
+```yaml
+- from: resources/apiyi-mcp
+  to: apiyi-mcp
+  filter:
+    - "**/*"
+```
+
+`vendor-apiyi-mcp.mjs` 已经把 source 树筛干净(只写 `dist` + `node_modules` + `package.json` + `README.md` + `LICENSE` + `version.json`),所以这里"全包"是安全的 — 没有任何 `.git`、`.cache`、`__tests__` 之类的杂物会被连带打进 installer。
+
+注释里把这个坑的来龙去脉、为什么必须 `["**/*"]`、什么场景触发 quirk、issue #867 链接全部写死,后人改这块前会看到血泪史。
+
+**为什么不加单元测试**:这是 build-tool 配置 bug,不是应用代码 bug。jsdom / vitest 跑不起来 electron-builder 真实打包流程,测的只能是 yaml 字符串解析,等于在 assert "filter 字段值是 `['**/*']`",纯实现细节 assertion。真正的验证是**比较 source tree 和 release tree 的文件数**,这件事在 `package.json` `release:cn` 流程里跑构建之后,操作员肉眼验证。这次我留了一条命令在文档里:
+
+```
+cmd /c "dir /s /b release\win-unpacked\resources\apiyi-mcp\node_modules | find /v /c """""
+```
+
+下次发版前如果想 paranoid,跑这条 — 期望 ≥ 4900。
+
+#### 用户可见行为
+
+1. **从 v4.3.19 / v4.3.18 / v4.3.17 升级上来的老用户**:升到 v4.3.20 后,packaged installer 里 `resources\apiyi-mcp\node_modules\` 完整存在,Electron-as-Node 跑 `dist/index.js` 不再 `Cannot find module`,MCP 正常启动并返回工具
+2. **全新装 v4.3.20 的用户**:同上,从未经历过 0 工具状态
+3. **本地 dev workspace 用户**:本来就不走 packaged tree,行为完全不变
+4. **`enabled: false` 默认行为不变**:用户填了 API key 才点开 toggle,符合"避免没 key 时刷错误循环"的设计
+
+#### 影响范围
+
+- 改的文件:`electron-builder.yml:47-70`(一处 filter)+ `package.json`(版本号)+ `docs/hot-update.md`(本段)
+- 不动代码,不改 IPC,不改 seed 逻辑,不改 UI
+- installer 体积会增加 ~10-15 MB(node_modules 真正进来了),这是必要代价
+
+---
+
 ### v4.3.19 (2026-05-23) — Hotfix: MCP JSON 编辑器 modal 内容区 0px 高度(点编辑/新增看上去空白)
 
 **用户报告**:v4.3.18 顶部红 banner 消失了(boot 自愈 + banner 去重生效),但点击 ✏️「编辑」或 +「新增」按钮,modal 弹出后**中间 Monaco 编辑区是完全空白的**,只看到顶部 header(标题/保存/取消)和底部 hint(`格式: { ... } 按 Esc 关闭`)挤在一起,modal 总高度只占视口 ~30%。
