@@ -48,6 +48,13 @@ interface SettingsState {
   activeSiteKey: string
   apiKey: string
   visionApiKey: string
+  /**
+   * API key for the bundled apiyi-mcp-server (video / audio / PDF understanding).
+   * Mirrors providers.apiKeys["apiyi-video"]. Pushed to the main process via
+   * `electronAPI.agent.setApiyiVideoKey` on save — empty string disables the
+   * MCP entry cleanly.
+   */
+  videoApiKey: string
   /** API key for the *currently active* Codex provider. Mirrors providers.apiKeys[activeId]. */
   codexApiKey: string
   localPort: string
@@ -62,6 +69,7 @@ interface SettingsState {
   switchSite: (key: string, api: ApiActions) => void
   setApiKey: (key: string) => void
   setVisionApiKey: (key: string) => void
+  setVideoApiKey: (key: string) => void
   setCodexApiKey: (key: string) => void
   setLocalPort: (port: string, api: ApiActions) => void
   testConnection: (api: ApiActions) => Promise<boolean>
@@ -82,6 +90,7 @@ interface AgentBridge {
   getProviders?: () => Promise<unknown>
   setActiveProvider?: (id: string) => Promise<unknown>
   setProviderApiKey?: (id: string, key: string) => Promise<unknown>
+  setApiyiVideoKey?: (key: string) => Promise<unknown>
   addCustomProvider?: (input: CodexCustomProviderInput) => Promise<unknown>
   updateCustomProvider?: (
     id: string,
@@ -129,6 +138,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   activeSiteKey: '',
   apiKey: '',
   visionApiKey: '',
+  videoApiKey: '',
   codexApiKey: '',
   localPort: '3000',
   connectionStatus: 'idle',
@@ -184,6 +194,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setApiKey: (key) => set({ apiKey: key }),
 
   setVisionApiKey: (key) => set({ visionApiKey: key }),
+
+  setVideoApiKey: (key) => set({ videoApiKey: key }),
 
   setCodexApiKey: (key) => {
     const trimmed = key.trim()
@@ -244,9 +256,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         return
       }
       const codexKey = snapshot.apiKeys[snapshot.activeId] ?? ''
+      const videoKey = snapshot.apiKeys['apiyi-video'] ?? ''
       set({
         providers: { ...snapshot, loaded: true, loadError: null },
         codexApiKey: codexKey,
+        videoApiKey: videoKey,
       })
     } catch (err) {
       set({

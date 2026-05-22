@@ -32,6 +32,7 @@ describe('useSettingsStore', () => {
       activeSiteKey: '',
       apiKey: '',
       visionApiKey: '',
+      videoApiKey: '',
       codexApiKey: '',
       connectionStatus: 'idle',
       saving: false,
@@ -201,6 +202,57 @@ describe('useSettingsStore', () => {
       await useSettingsStore.getState().saveAll(api)
 
       expect(localStorage.getItem('codex_api_key')).toBe('sk-toSave')
+    })
+  })
+
+  describe('videoApiKey (apiyi-mcp)', () => {
+    it('setVideoApiKey updates the store', () => {
+      useSettingsStore.getState().setVideoApiKey('sk-video-abc')
+
+      expect(useSettingsStore.getState().videoApiKey).toBe('sk-video-abc')
+    })
+
+    it('loadProviders populates videoApiKey from snapshot.apiKeys["apiyi-video"]', async () => {
+      const fakeBridge = {
+        getProviders: vi.fn().mockResolvedValue({
+          ok: true,
+          builtins: [],
+          custom: [],
+          activeId: 'apiyi',
+          apiKeys: { 'apiyi-video': 'sk-video-from-main', apiyi: 'sk-codex' },
+        }),
+      }
+      ;(globalThis as any).window = (globalThis as any).window ?? {}
+      ;(globalThis as any).window.electronAPI = { agent: fakeBridge }
+
+      await useSettingsStore.getState().loadProviders()
+
+      expect(useSettingsStore.getState().videoApiKey).toBe('sk-video-from-main')
+      expect(useSettingsStore.getState().codexApiKey).toBe('sk-codex')
+
+      delete (globalThis as any).window.electronAPI
+    })
+
+    it('loadProviders defaults videoApiKey to "" when apiyi-video missing', async () => {
+      const fakeBridge = {
+        getProviders: vi.fn().mockResolvedValue({
+          ok: true,
+          builtins: [],
+          custom: [],
+          activeId: 'apiyi',
+          apiKeys: {},
+        }),
+      }
+      ;(globalThis as any).window = (globalThis as any).window ?? {}
+      ;(globalThis as any).window.electronAPI = { agent: fakeBridge }
+
+      useSettingsStore.setState({ videoApiKey: 'leftover' })
+
+      await useSettingsStore.getState().loadProviders()
+
+      expect(useSettingsStore.getState().videoApiKey).toBe('')
+
+      delete (globalThis as any).window.electronAPI
     })
   })
 })
