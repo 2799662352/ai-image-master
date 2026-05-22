@@ -20,6 +20,36 @@ const STATUS_DOT: Record<string, string> = {
   unknown: 'bg-zinc-600',
 }
 
+/**
+ * Render the "ready but tools=0" hint based on the actual server, not a
+ * one-size-fits-all Docker message. apiyi (and any other app-bundled MCP
+ * that needs an API key) usually hits this state when the key env var
+ * is missing/empty — the child registers its tool handlers and then
+ * exits at `initializeGenAI()`, leaving codex with an empty tool cache.
+ * Docker MCP Gateway hits this when Docker Desktop is not running.
+ * Everything else falls back to a neutral "still handshaking, try
+ * refreshing" message.
+ */
+function getEmptyToolsHint(server: McpServerCardData): string {
+  // App-bundled apiyi-mcp-server: vendored into resources/apiyi-mcp/,
+  // launched as `<node> .../dist/index.js`. Needs APIYI_API_KEY in env.
+  if (server.isAppBundled && server.name === 'apiyi') {
+    return '已连接但未返回工具。请确认已在「设置 → 🎥 视频理解 API Key」中填入有效的 api.apiyi.com Key，然后点上方「刷新」。'
+  }
+  // Anything routed through docker (gateway or otherwise) — the original
+  // hint is correct here.
+  const cmd = (server.command ?? '').toLowerCase()
+  const looksLikeDocker =
+    cmd.startsWith('docker') ||
+    cmd.endsWith('\\docker.exe') ||
+    cmd.endsWith('/docker') ||
+    /^docker[-_]/i.test(server.name)
+  if (looksLikeDocker) {
+    return '服务器已连接，但未返回工具。Docker MCP Gateway 通常需要 Docker Desktop 运行，并在 Docker MCP Toolkit 中启用至少一个 server。'
+  }
+  return '已连接但未返回工具。可能仍在初始化或子进程已退出 —— 请稍候点上方「刷新」，或检查该 MCP 的命令行参数 / 环境变量 / stderr 日志。'
+}
+
 interface ToggleSwitchProps {
   checked: boolean
   onChange: (next: boolean) => void
@@ -102,7 +132,7 @@ export function McpServerCard({
       )}
       {server.status === 'ready' && server.tools.length === 0 && (
         <p className="mt-2 text-xs text-amber-300/80">
-          服务器已连接，但未返回工具。Docker MCP Gateway 通常需要 Docker Desktop 运行，并在 Docker MCP Toolkit 中启用至少一个 server。
+          {getEmptyToolsHint(server)}
         </p>
       )}
 
