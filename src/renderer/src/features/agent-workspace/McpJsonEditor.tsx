@@ -4,6 +4,8 @@ import Editor, { loader, type OnMount } from '@monaco-editor/react'
 import * as monaco from 'monaco-editor'
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
 import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker'
+import { registerSingleton } from 'monaco-editor/esm/vs/platform/instantiation/common/extensions'
+import { IProductService } from 'monaco-editor/esm/vs/platform/product/common/productService'
 
 self.MonacoEnvironment = {
   getWorker(_: unknown, label: string) {
@@ -11,6 +13,27 @@ self.MonacoEnvironment = {
     return new editorWorker()
   },
 }
+
+// ---------------------------------------------------------------------------
+// Monaco standalone (0.55.1) registers ~24 services but NOT IProductService,
+// so the built-in clipboard paste implementation
+// (monaco-editor/esm/vs/editor/contrib/clipboard/browser/clipboard.js:238)
+// throws `unknown service 'productService'` at every Ctrl+V — Monaco catches
+// it and downgrades to console.warn, but the noise is constant and confusing.
+//
+// We register a minimal stub. The only field the paste path reads is
+// `productService.quality !== 'stable'` to gate a telemetry call (clipboard.js
+// line 257). With `quality = 'stable'`, the branch short-circuits and no
+// downstream method is invoked, so the empty stub is sufficient.
+//
+// Side effect runs once at module-load (before any <Editor> mounts). Vite HMR
+// may re-execute this module; double-registration is harmless because the
+// last entry in Monaco's singleton registry wins.
+// ---------------------------------------------------------------------------
+class MonacoProductServiceStub {
+  quality = 'stable'
+}
+registerSingleton(IProductService, MonacoProductServiceStub, 0)
 
 loader.config({ monaco })
 
