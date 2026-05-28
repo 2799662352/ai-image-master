@@ -369,7 +369,18 @@ function createWindow(): void {
       // 安全加固选项
       webSecurity: true,
       allowRunningInsecureContent: false,
-      experimentalFeatures: false
+      experimentalFeatures: false,
+      // v4.3.x — 关掉 Chromium 后台节流,根因假设 H2:
+      //   用户报告 "关掉它在后台运行后,成功了没有立即返回,需手动刷新"。
+      //   Electron 默认 backgroundThrottling: true,Chromium 在窗口隐藏
+      //   ≥5 分钟后进入 Intensive Wake Up Throttling,setTimeout/MessageChannel
+      //   被对齐到 1/分钟,导致 Codex 流式事件到达后 React 调度器无法及时
+      //   commit/paint —— 用户感觉成功后没立即返回,点一下窗口(=用户输入
+      //   解除节流)就立刻"刷新"出来。
+      //   作为聊天客户端,前台/后台都需要即时反映 Agent 进度;权衡:隐藏
+      //   窗口时 CPU 占用比节流时略高(空闲下几乎无感),换 IPC 即时响应。
+      //   单变量验证;若仍有遗漏,再加 visibilitychange 重同步作为防御层。
+      backgroundThrottling: false,
     }
   })
 
