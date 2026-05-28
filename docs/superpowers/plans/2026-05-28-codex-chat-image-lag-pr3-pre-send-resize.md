@@ -1,5 +1,17 @@
 # PR-3: 发送前 client-side resize（兼容 vision API 硬限制）
 
+> **DEFERRED 2026-05-28 — 此方案从本次 change 移出。**
+>
+> PR-3 解决的是“图片发往 Anthropic / OpenAI vision API 时,长边 > 8000 px 或体积 > 5 MB 会被 provider 直接拒绝(400)”——这跟 PR-A/PR-23 解决的“drop 时渲染卡顿”是**两个独立问题**,当初打包进同一个 change 只是因为共享了 attachment 管线上下文。
+>
+> 现在 lag 问题已经由 PR [#22](https://github.com/2799662352/ai-image-master/pull/22) + PR [#23](https://github.com/2799662352/ai-image-master/pull/23) 关闭,继续把 PR-3 留在这里只会拖慢 archive 节奏。
+>
+> **重启方式**:当 vision API 400 真的出现在用户报告里,新开一个独立 change(建议 `openspec/changes/add-vision-api-pre-send-resize/`),把本文件的设计原样搬过去。约 80 行实现,半天可以收。
+>
+> 决策链:`openspec/changes/fix-codex-chat-image-attachment-lag/proposal.md` § Status (2026-05-28)。
+
+---
+
 - **Date**: 2026-05-28
 - **Branch**: `feature/codex-chat-image-lag-pr3`（基于 PR-1 已合并的 `main`，**不**依赖 PR-2）
 - **设计**: `docs/superpowers/specs/2026-05-28-codex-chat-image-lag-design.md` § PR-C

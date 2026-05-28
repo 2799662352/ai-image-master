@@ -1,5 +1,20 @@
 # Fix: Codex chat image attachment lag
 
+## Status (2026-05-28)
+
+| PR | Status | Notes |
+|---|---|---|
+| **PR-A** — `media:thumb` IPC hot path | **shipped** (this change → PR [#22](https://github.com/2799662352/ai-image-master/pull/22)) | Still valuable for the timeline (post-send `AttachmentCard`), file-tree previews, lightbox, and any other `MediaThumbnail` consumer. A3/A4 below are deferred backlog, not blockers. |
+| **PR-B** — Optional COS staged upload | **cancelled — superseded by PR [#23](https://github.com/2799662352/ai-image-master/pull/23)** | The composer no longer renders inline thumbnails, so the entire reason PR-B existed (faster thumbnail src via CDN) evaporated. Re-open only if remote-hosting becomes a primary requirement (cross-device, web client, etc.). |
+| **PR-C** — Pre-send vision-API resize | **cancelled — deferred to a standalone change** | Independent of the lag fix. If/when Anthropic 400-on-oversize becomes a real user-facing issue, file a new change focused only on `resizeForVision` (≈80 lines) without entangling the thumbnail discussion. |
+
+The original lag (drop 5×10 MB images → renderer freezes 500 ms+) is now closed by **PR-A + PR-23 together**:
+
+- **PR-A** made the per-thumbnail `media:thumb` IPC fast (~30 ms via `nativeImage.createThumbnailFromPath`).
+- **PR-23** removed the inline `MediaThumbnail` from the composer entirely, so on drop the renderer doesn't fire the IPC at all — chips show only filename + type + remove button; click-to-open still works via `openReference`.
+
+The rest of this document is preserved as historical context for why the 3-PR plan was originally proposed.
+
 ## Why
 
 Dragging images into the Codex chat composer freezes the renderer for hundreds of milliseconds to several seconds per image. The on-disk attachment contract (`openai/codex#21108`) is already correct — the lag lives **entirely in the thumbnail rendering path**:

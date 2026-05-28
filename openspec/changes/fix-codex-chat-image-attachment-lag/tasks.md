@@ -1,5 +1,7 @@
 # Tasks: Fix Codex chat image attachment lag
 
+> **Status (2026-05-28)** — PR-A shipped (PR [#22](https://github.com/2799662352/ai-image-master/pull/22)). **PR-B and PR-C are cancelled**, superseded by PR [#23](https://github.com/2799662352/ai-image-master/pull/23) which hides the inline thumbnail in the composer entirely. The drop-lag bug is closed by PR-A + PR-23 together. See `proposal.md` § Status for the full reasoning. PR-B / PR-C task lists below are kept as historical reference — they document a path we evaluated and chose NOT to take.
+
 Each task maps to one commit or one small PR. Tick `[x]` as you finish. PR-A is independently shippable; PR-B depends on PR-A's `media:thumb` IPC for renderer-side rendering of remote URLs (we use the same `MediaThumbnail` codepath); PR-C depends on PR-A only (it touches `AgentManager.send`).
 
 ## PR-A — Renderer thumbnail hot path (≈150 lines)
@@ -22,20 +24,22 @@ Each task maps to one commit or one small PR. Tick `[x]` as you finish. PR-A is 
 - [x] **A2.4** `Lightbox` calls the hook with `{ fullFidelity: true }` so full-resolution bytes are still produced for the modal/lightbox flow.
 - [x] **A2.5** No update needed: existing `MediaThumbnail.test.tsx` mocks `readThumb` and the new tests in `useResolvedMediaSrc.test.tsx` cover the `readMediaThumb`-preferred routing.
 
-### A3. `local-file://` Windows drive letter fix
+### A3. `local-file://` Windows drive letter fix _(deferred — PR-23 makes the composer not consume `local-file://` at all; A3 stays valid backlog for non-chat consumers)_
 
 - [ ] **A3.1** Audit `src/renderer/src/features/file-explorer/uri.ts` `toRenderableUri`: verify `%3A` encoding is applied unconditionally and survives downstream consumers (it currently is; add a regression test for `D:\path with space\foo.png`).
 - [ ] **A3.2** Audit `src/main/file-explorer/protocolHandler.ts` `resolveOsPathFromRequest`: ensure `parsed.hostname` being a single drive letter still reconstructs the path (covered by existing test; add `D:` + spaces in basename case).
 - [ ] **A3.3** Add Playwright smoke test in `e2e/` that loads a PNG via `<img src="local-file:///C%3A/...">` inside the renderer and asserts `naturalWidth > 0`.
 - [ ] **A3.4** If the smoke test passes reliably across mac/win/linux, **shortcut `useResolvedMediaSrc`** to skip the IPC and just pass `src` through when `toRenderableUri(src)` produced a `local-file://` URL. Keep the IPC path as fallback (gated by `import.meta.env.DEV` and a feature flag `CATIMATION_LOCAL_FILE_DIRECT=1`).
 
-### A4. Verification
+### A4. Verification _(partially superseded — PR-23 added `MentionInput.reference.test.tsx` regression tests asserting `[data-media-kind]` is never mounted, which closes the composer perf gate cheaper than A4.1)_
 
 - [ ] **A4.1** Add a vitest perf gate in `src/renderer/.../__tests__/MentionInput.lag.test.tsx`: render 3 chips with 5 MB JPEG paths (mocked IPC), assert wall time of the initial render < 100 ms in the test env (CI proxy for real-world < 200 ms).
 - [ ] **A4.2** Manual: with dev tools Performance tab open, drop a 5 MB JPEG; record a profile. Main-thread long-tasks (> 50 ms) must be zero in the 2 s following the drop.
 - [ ] **A4.3** Bisect the old behavior by temporarily forcing `readThumb` (full file) instead of `readMediaThumb`; confirm we can still reproduce the original lag (sanity check that we're measuring the right thing).
 
-## PR-B — Optional COS staged upload (≈300 lines)
+## ~~PR-B — Optional COS staged upload (≈300 lines)~~ — **CANCELLED, superseded by PR [#23](https://github.com/2799662352/ai-image-master/pull/23)**
+
+_The composer no longer mounts inline `MediaThumbnail`, so there is no renderer-side consumer that would benefit from `remoteUrl`. Re-open as a new change if cross-device sync, web client, or other remote-hosting requirements arise. Task list below preserved verbatim as the design we evaluated and chose not to ship._
 
 ### B1. Prisma migration
 
@@ -75,7 +79,9 @@ Each task maps to one commit or one small PR. Tick `[x]` as you finish. PR-A is 
 - [ ] **B5.3** Verify renderer code path: when `remoteUrl` is set, the renderer issues exactly one HTTPS GET (no IPC) for the thumbnail. Network panel screenshot in the test report.
 - [ ] **B5.4** Offline rollback: set `CATIMATION_ATTACHMENT_REMOTE_UPLOAD=0`, drop image, verify uploader never runs and renderer uses local fallback.
 
-## PR-C — Pre-send client-side resize (≈80 lines)
+## ~~PR-C — Pre-send client-side resize (≈80 lines)~~ — **DEFERRED to its own change**
+
+_PR-C addresses a different problem (Anthropic / OpenAI vision API rejecting > 8000 px or > 5 MB images) and was tangled into this change only because of shared context. File it as a fresh `openspec/changes/add-vision-api-resize/` if/when oversize-on-send becomes a real user-facing 400-error issue. Task list preserved below._
 
 ### C1. `resizeForVision` helper
 
@@ -99,6 +105,6 @@ Each task maps to one commit or one small PR. Tick `[x]` as you finish. PR-A is 
 
 ## Cross-PR
 
-- [ ] **X1** Update `openspec/specs/codex-chat-attachments/spec.md` with the merged delta after each PR lands.
-- [ ] **X2** Move this change folder to `openspec/changes/archive/2026-MM-DD-fix-codex-chat-image-attachment-lag/` once all three PRs land.
-- [ ] **X3** Cross-link the merged design doc into `docs/superpowers/specs/2026-05-28-codex-chat-image-lag-design.md` and the three plan files under `docs/superpowers/plans/`.
+- [ ] **X1** Update `openspec/specs/codex-chat-attachments/spec.md` with the merged delta once PR-A (PR #22) lands. PR-23 also touches the composer rendering contract and should be reflected there (see PR-23's diff to `MentionInput.tsx`).
+- [ ] **X2** Move this change folder to `openspec/changes/archive/2026-MM-DD-fix-codex-chat-image-attachment-lag/` once **PR-A (PR #22) AND PR-23 are both merged**. (Originally this gate was "all three PRs land"; revised because PR-B/C are cancelled.)
+- [ ] **X3** ~~Cross-link the merged design doc into `docs/superpowers/specs/2026-05-28-codex-chat-image-lag-design.md` and the three plan files under `docs/superpowers/plans/`.~~ — replaced by the SUPERSEDED banners added to the PR-2/PR-3 plan files in this commit.

@@ -1,5 +1,15 @@
 # PR-2: COS 异步上传通道（可选）
 
+> **SUPERSEDED 2026-05-28 — 此方案已取消。**
+>
+> PR [#23](https://github.com/2799662352/ai-image-master/pull/23) 改成"聊天输入栏不再渲染 inline 略缩图"——chip 只显示文件名 + 类型 + 删除按钮,点 chip 走 `openReference` 打开预览。这条路径根本不消费 `<img src=...>`,所以远端 URL 加速略缩图的价值消失。
+>
+> **保留本文档**:作为我们评估过、但未采纳的设计参考。如果将来出现真实需求(跨设备同步聊天历史、Web 客户端访问附件、CDN 加速等)再开新 change(建议 `openspec/changes/add-cos-staged-attachment-upload/`),不要复活本文件。
+>
+> 决策链:`openspec/changes/fix-codex-chat-image-attachment-lag/proposal.md` § Status (2026-05-28)。
+
+---
+
 - **Date**: 2026-05-28
 - **Branch**: `feature/codex-chat-image-lag-pr2`（基于 PR-1 已合并的 `main`）
 - **设计**: `docs/superpowers/specs/2026-05-28-codex-chat-image-lag-design.md` § PR-B

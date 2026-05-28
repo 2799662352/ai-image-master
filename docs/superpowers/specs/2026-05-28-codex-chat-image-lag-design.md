@@ -1,9 +1,24 @@
 # Codex 聊天图片附件卡顿 — 设计文档
 
+> **最终结论（2026-05-28 收敛）**
+>
+> 原始 3-PR 方案中,只有 **PR-A** 落地(PR [#22](https://github.com/2799662352/ai-image-master/pull/22):新增 `media:thumb` IPC 热路径,通过 `nativeImage.createThumbnailFromPath` 把每个略缩图调用拉到 ~30 ms)。
+>
+> **PR-B(COS 异步上传)被 PR [#23](https://github.com/2799662352/ai-image-master/pull/23) 取代**:不再异步把略缩图换源,而是直接让聊天输入栏不再渲染 inline 略缩图——chip 只展示文件名 + 类型 + 删除按钮,点 chip 经 `openReference` 打开预览。问题从“怎么让略缩图变快”降维成“略缩图根本不该在这渲染”。
+>
+> **PR-C(发送前 resize 兼容 vision API)** 从本次 change 拆出:这是和 lag 无关的独立问题,需要时单独开 change。
+>
+> 本文档保留作为决策记录,不要照搬执行。导航:
+> - 当前状态:`openspec/changes/fix-codex-chat-image-attachment-lag/proposal.md` § Status
+> - PR-B 取消理由:`docs/superpowers/plans/2026-05-28-codex-chat-image-lag-pr2-cos-staged-upload.md` 顶部 SUPERSEDED 注释
+> - PR-C 延期理由:`docs/superpowers/plans/2026-05-28-codex-chat-image-lag-pr3-pre-send-resize.md` 顶部 DEFERRED 注释
+
+---
+
 - **Date**: 2026-05-28
-- **Status**: Approved (brainstorming + 三个上游 issue 群核对完成)
+- **Status**: ~~Approved~~ — **partially superseded by PR #23 (see banner above)**
 - **Branch**: `feature/codex-chat-image-lag`（off `origin/main`）
-- **Estimated**: 3 PRs（PR-A ~150 行 / PR-B ~300 行 / PR-C ~80 行）
+- **Estimated**: ~~3 PRs（PR-A ~150 行 / PR-B ~300 行 / PR-C ~80 行）~~ → **actual**: PR-A (~150 行) + PR-23 (~25 行)
 - **OpenSpec mirror**: `openspec/changes/fix-codex-chat-image-attachment-lag/`
 
 ## 问题
