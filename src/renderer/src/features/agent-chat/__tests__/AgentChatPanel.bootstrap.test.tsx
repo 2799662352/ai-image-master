@@ -95,6 +95,33 @@ describe('AgentChatPanel + sidebar integration', () => {
     expect(screen.queryByTestId('thread-sidebar')).toBeNull()
   })
 
+  it('keeps agent:event subscription registered through isOpen toggles (regression: Codex 回答关闭面板后必须 F5 才能看到)', () => {
+    const unsubscribeMock = vi.fn()
+    fakeAgent.onEvent.mockReturnValue(unsubscribeMock)
+
+    useAgentChatStore.setState({ isOpen: true })
+    render(<AgentChatPanel />)
+
+    expect(fakeAgent.onEvent).toHaveBeenCalledTimes(1)
+    expect(unsubscribeMock).not.toHaveBeenCalled()
+
+    act(() => {
+      useAgentChatStore.getState().toggle()
+    })
+    expect(useAgentChatStore.getState().isOpen).toBe(false)
+
+    expect(unsubscribeMock).not.toHaveBeenCalled()
+    expect(fakeAgent.onEvent).toHaveBeenCalledTimes(1)
+
+    act(() => {
+      useAgentChatStore.getState().toggle()
+    })
+    expect(useAgentChatStore.getState().isOpen).toBe(true)
+
+    expect(fakeAgent.onEvent).toHaveBeenCalledTimes(1)
+    expect(unsubscribeMock).not.toHaveBeenCalled()
+  })
+
   it('keeps approval subscription active while closed and shows pending prompt when opened', async () => {
     const request: CodexApprovalRequest = {
       id: '43',
