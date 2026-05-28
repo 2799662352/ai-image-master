@@ -1,5 +1,25 @@
 import { act, cleanup, render, screen, fireEvent } from '@testing-library/react'
+import { forwardRef } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+// MessageList pulls in react-virtuoso + overlayscrollbars which both
+// touch browser APIs happy-dom doesn't implement (ResizeObserver math,
+// getComputedStyle on style-less elements). Stub them out — bootstrap
+// tests only care that AgentChatPanel boots correctly, not list internals.
+vi.mock('react-virtuoso', () => ({
+  Virtuoso: forwardRef(function VirtuosoStub(_props: Record<string, unknown>, _ref) {
+    return <div data-testid="virtuoso-stub" />
+  }),
+}))
+vi.mock('overlayscrollbars-react', () => ({
+  OverlayScrollbarsComponent: forwardRef(function OSStub(
+    props: { children?: React.ReactNode },
+    _ref,
+  ) {
+    return <div data-testid="os-stub">{props.children}</div>
+  }),
+}))
+
 import { AgentChatPanel } from '../AgentChatPanel'
 import { useAgentChatStore } from '../store'
 import type { CodexApprovalRequest } from '../../../../../types/agent'

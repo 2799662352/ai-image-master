@@ -3,7 +3,7 @@ import { AttachmentChips } from './AttachmentChips'
 import { CloseIcon, PanelCollapseRightIcon, PanelExpandLeftIcon } from './icons'
 import { Lightbox } from './Lightbox'
 import { MentionInput } from './MentionInput'
-import { MessageBubble } from './MessageBubble'
+import { MessageList } from './MessageList'
 import { ResizableHandle } from './ResizableHandle'
 import { RewoundTurnsDrawer } from './RewoundTurnsDrawer'
 import { ThreadCommandPalette } from './ThreadCommandPalette'
@@ -37,6 +37,7 @@ type AgentEventApi = {
 export function AgentChatPanel() {
   const isOpen = useAgentChatStore((state) => state.isOpen)
   const messages = useAgentChatStore((state) => state.messages)
+  const threadId = useAgentChatStore((state) => state.threadId)
   const editingMessageId = useAgentChatStore((state) => state.editingMessageId)
   const error = useAgentChatStore((state) => state.error)
   const applyEvent = useAgentChatStore((state) => state.applyEvent)
@@ -244,54 +245,14 @@ export function AgentChatPanel() {
           ) : null}
         </header>
 
-        <div className="flex-1 overflow-y-auto px-4 py-4">
-          <NoticesBanner />
-          {pendingApprovals.length > 0 ? (
-            <div className="mb-3 space-y-3">
-              {pendingApprovals.map((request) => (
-                <CodexApprovalPrompt
-                  key={request.id}
-                  request={request}
-                  onRespond={(response) => respondToApproval(response)}
-                />
-              ))}
-            </div>
-          ) : null}
-          {messages.length === 0 ? (
-            <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/5 p-4 text-sm text-zinc-300">
-              Tell the agent what to create or inspect. It can call CATIMATION tools and use local Codex
-              capabilities.
-            </div>
-          ) : null}
-          {messages.map((message) =>
-            message.id === editingMessageId ? (
-              // Inline edit mode: render the *exact same* MentionInput at
-              // the message's position so the user gets every feature
-              // (model picker, file refs, $/@/// triggers, drag-drop) for
-              // free. The footer composer is hidden below for the duration.
-              <div
-                key={message.id}
-                className="my-3 rounded-lg border border-cyan-400/30 bg-zinc-950/60 p-3 shadow-[0_0_0_1px_rgba(34,211,238,0.08)]"
-              >
-                <div className="mb-2 flex items-center justify-between text-[10px] font-medium uppercase tracking-[0.18em] text-cyan-300/80">
-                  <span>Editing message</span>
-                  <span className="text-zinc-500 normal-case tracking-normal">
-                    Esc to cancel · ⌘/Ctrl+Enter to submit
-                  </span>
-                </div>
-                <AttachmentChips />
-                <MentionInput />
-              </div>
-            ) : (
-              <MessageBubble key={message.id} message={message} />
-            ),
-          )}
-          {error ? (
-            <div className="mt-3 rounded-xl border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-100">
-              {error}
-            </div>
-          ) : null}
-        </div>
+        <MessageList
+          threadId={threadId}
+          messages={messages}
+          editingMessageId={editingMessageId}
+          pendingApprovals={pendingApprovals}
+          error={error}
+          onRespondApproval={(response) => respondToApproval(response)}
+        />
 
         {/* Footer composer hides while inline-editing — there's only one
             MentionInput in the tree, and it's been re-parented to the

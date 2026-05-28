@@ -134,6 +134,12 @@ importers:
       monaco-editor:
         specifier: ^0.55.1
         version: 0.55.1
+      overlayscrollbars:
+        specifier: ^2.16.0
+        version: 2.16.0
+      overlayscrollbars-react:
+        specifier: ^0.5.6
+        version: 0.5.6(overlayscrollbars@2.16.0)(react@19.2.6)
       pg:
         specifier: ^8.20.0
         version: 8.21.0
@@ -164,6 +170,9 @@ importers:
       react-syntax-highlighter:
         specifier: ^16.1.1
         version: 16.1.1(react@19.2.6)
+      react-virtuoso:
+        specifier: ^4.18.7
+        version: 4.18.7(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       react-window:
         specifier: ^2.2.7
         version: 2.2.7(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
@@ -4058,6 +4067,15 @@ packages:
   os-browserify@0.3.0:
     resolution: {integrity: sha512-gjcpUc3clBf9+210TRaDWbf+rZZZEshZ+DlXMRCeAjp0xhTrnQsKHypIy1J3d5hKdUzj69t708EHtU8P6bUn0A==}
 
+  overlayscrollbars-react@0.5.6:
+    resolution: {integrity: sha512-E5To04bL5brn9GVCZ36SnfGanxa2I2MDkWoa4Cjo5wol7l+diAgi4DBc983V7l2nOk/OLJ6Feg4kySspQEGDBw==}
+    peerDependencies:
+      overlayscrollbars: ^2.0.0
+      react: '>=16.8.0'
+
+  overlayscrollbars@2.16.0:
+    resolution: {integrity: sha512-N03oje/q7j93D0aLZtoCdsDSYLmhheSsv8H7oSLE7HhdV9P/bmCURtLV/KbPye7P/bpfyt/obSfDpGUYoJ0OWg==}
+
   p-cancelable@2.1.1:
     resolution: {integrity: sha512-BZOr3nRQHOntUjTrH8+Lh54smKHoHyur8We1V8DSMVrl5A2malOOwuJRnKRDjSnkoeBh4at6BwEnb5I7Jl31wg==}
     engines: {node: '>=8'}
@@ -4456,6 +4474,12 @@ packages:
     peerDependencies:
       react: '>=16.6.0'
       react-dom: '>=16.6.0'
+
+  react-virtuoso@4.18.7:
+    resolution: {integrity: sha512-xNF5zDGEEIMB7cKwcen/pLig0YDf6OnfFrVgKFa7sHPf9fRem0CaLshyObbBcP88jzn0enavL39EgplgdyT21g==}
+    peerDependencies:
+      react: '>=16 || >=17 || >= 18 || >= 19'
+      react-dom: '>=16 || >=17 || >= 18 || >=19'
 
   react-window@2.2.7:
     resolution: {integrity: sha512-SH5nvfUQwGHYyriDUAOt7wfPsfG9Qxd6OdzQxl5oQ4dsSsUicqQvjV7dR+NqZ4coY0fUn3w1jnC5PwzIUWEg5w==}
@@ -9497,6 +9521,13 @@ snapshots:
 
   os-browserify@0.3.0: {}
 
+  overlayscrollbars-react@0.5.6(overlayscrollbars@2.16.0)(react@19.2.6):
+    dependencies:
+      overlayscrollbars: 2.16.0
+      react: 19.2.6
+
+  overlayscrollbars@2.16.0: {}
+
   p-cancelable@2.1.1: {}
 
   p-finally@1.0.0: {}
@@ -9911,6 +9942,11 @@ snapshots:
       dom-helpers: 5.2.1
       loose-envify: 1.4.0
       prop-types: 15.8.1
+      react: 19.2.6
+      react-dom: 19.2.6(react@19.2.6)
+
+  react-virtuoso@4.18.7(react-dom@19.2.6(react@19.2.6))(react@19.2.6):
+    dependencies:
       react: 19.2.6
       react-dom: 19.2.6(react@19.2.6)
 
