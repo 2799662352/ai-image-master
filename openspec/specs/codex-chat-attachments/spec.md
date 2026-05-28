@@ -22,15 +22,15 @@ When the user drops files from Windows Explorer / macOS Finder / GNOME Files, ea
 - **AND** no `arrayBuffer()` / `readAsDataURL` is called on the `File`
 - **AND** the attachment counter chip updates to `1/20`
 
-### Requirement: The system SHALL accept internal file-explorer drag-drop and surface a preview chip.
+### Requirement: The system SHALL accept internal file-explorer drag-drop and surface a `ReferenceChip` per file.
 
-When the user drags entries from the in-app file-explorer panel, the drop payload carries the custom MIME `application/x-catimation-file-paths` plus the workspace-relative paths. These resolve to absolute paths via the workspace root, are size/mime-probed via the `fs:stat` IPC, and result in both an `attachment` entry **and** a `pendingReference` entry that renders a `MediaThumbnail` chip in the composer.
+When the user drags entries from the in-app file-explorer panel, the drop payload carries the custom MIME `application/x-catimation-file-paths` plus the workspace-relative paths. These resolve to absolute paths via the workspace root, are size/mime-probed via the `fs:stat` IPC, and result in both an `attachment` entry **and** a `pendingReference` entry that renders a text-only `ReferenceChip` in the composer (no inline thumbnail — see the dedicated "no inline thumbnail" requirement below).
 
 #### Scenario: Internal drop of three workspace PNGs
 
 - **WHEN** the user multi-selects three PNGs in the file-explorer panel and drags them onto the composer
 - **THEN** the store has three new attachments and three new pending references
-- **AND** three `MediaThumbnail` chips render with thumbnails sourced from `local-file:///<encoded-abs-path>`
+- **AND** three `ReferenceChip` elements render (filename + type label + remove `×`); zero `[data-media-kind]` wrappers exist in the composer
 - **AND** the failure mode for any single file (e.g. size > 100 MB) only skips that file, surfacing a `setError` message that lists the skipped path and reason
 
 ### Requirement: The system SHALL enforce attachment quotas client-side before any disk read.
@@ -54,25 +54,50 @@ Quotas: 20 files per turn, 100 MB per file, 250 MB total per turn. A drop that w
 - **AND** the resulting files exist at `<userData>/agent/uploads/<sha>.<ext>` and are referenced by `AgentAttachment` rows
 - **AND** `PrismaClient` does not raise `Server has closed the connection`
 
-### Requirement: The system SHALL render thumbnails of pending image/video references inside `MentionInput`.
+### Requirement: The system SHALL display each pending reference as a text-only `ReferenceChip` inside `MentionInput`, with no inline thumbnail.
 
-For each `pendingReference` whose kind classifies as `image` or `video`, a 64×64 px `MediaThumbnail` renders beside the `ReferenceChip`. The thumbnail source is the reference's `localPath`, transformed to a renderable URI via `toRenderableUri()` (yields `local-file:///<percent-encoded>`).
+For every entry in `pendingReferences` — image, video, or other — the composer renders exactly one `ReferenceChip` (type label + filename + remove `×`). No `MediaThumbnail` mounts in the composer's `<form>`, and no `media:thumb` / `attachments:read-thumb` IPC fires on drop. This is the trade chosen by [PR #23](https://github.com/2799662352/ai-image-master/pull/23) to eliminate per-drop renderer lag without needing remote-CDN acceleration: chip ≪ thumbnail in IPC cost, and click-to-open via `openReference` covers the "I want to verify what I attached" case.
 
-#### Scenario: Reference list contains an image and a doc
+#### Scenario: User drops five 10 MB images into the composer
 
-- **WHEN** `pendingReferences` is `[image.png, README.md]`
-- **THEN** `image.png` renders a `MediaThumbnail` chip; `README.md` renders a `ReferenceChip` only
+- **WHEN** the user multi-drops five 10 MB JPEGs from Finder / Explorer
+- **THEN** the composer renders five `ReferenceChip` elements within one paint frame (≤ 16 ms p99)
+- **AND** zero `[data-media-kind]` wrappers exist in the `<form>` subtree
+- **AND** zero `media:thumb` and zero `attachments:read-thumb` IPC invocations occur for those drops
+- **AND** the renderer main thread does not block for more than 50 ms p99 in the 2 s following the drop
 
-### Requirement: The system MAY display thumbnail bytes via a base64-over-IPC fallback when `local-file://` is unreliable.
+#### Scenario: Click on a queued image chip opens a preview
 
-In Electron 38 dev mode, `local-file://` URLs with Windows drive letters can fail to parse in the renderer (`electron/electron#49073`). The `useResolvedMediaSrc` hook accepts a raw `local-file://`-shaped URL **or** absolute OS path; for both it invokes `attachments:read-thumb` IPC to read the whole file (≤ 100 MB), base64-encodes it, IPC-clones the string to the renderer, decodes to `ArrayBuffer`, builds a `Blob`, and yields a `blob:` URL.
+- **WHEN** the user clicks any chip in the composer
+- **THEN** `openReference(reference)` is invoked
+- **AND** for image / video references this opens the Lightbox / file-explorer preview pane
 
-#### Scenario: Renderer mounts a `MediaThumbnail` with a `local-file://` src
+### Requirement: The system SHALL expose two distinct IPC channels for media bytes — a fast downscaled-thumbnail path and a slow full-fidelity path — and renderer code SHALL route requests to the right channel by explicit opt-in.
 
-- **WHEN** `MediaThumbnail` mounts with `src = 'local-file:///D%3A/photos/big.jpg'`
-- **THEN** `attachments:read-thumb` is invoked with the resolved OS path
-- **AND** the renderer eventually sets `<img src="blob:...">` and renders the image
-- **NOTE** this path is the dominant lag source for files > 1 MB and is replaced by the change `fix-codex-chat-image-attachment-lag`
+A new main-process IPC handler `media:thumb` accepts an absolute OS path and returns a downscaled JPEG produced by `nativeImage.createThumbnailFromPath(path, { width: 256, height: 256 })`. When NativeImage returns an empty result (no OS thumbnail backend, SVG input, animated frame), the handler falls back to `sharp(path).resize(...).jpeg({ quality: 78 }).toBuffer()`. SVG inputs are passed through as inline UTF-8 to avoid rasterization. The handler enforces the same path-validation rules as `attachments:read-thumb` (no traversal, mime whitelist, ≤ 100 MB source size cap, video MIMEs explicitly rejected).
+
+The pre-existing `attachments:read-thumb` IPC (a misnomer kept for backward compat) reads the full file's bytes and returns them as base64. Only `Lightbox`, the file-explorer `ReferencePreview` in "full view" mode, and any opt-in consumer that passes `{ fullFidelity: true }` to `useResolvedMediaSrc` may invoke it. The default `MediaThumbnail` codepath consumed by `AttachmentCard`, `EvidenceStack`, and file-tree previews routes through `media:thumb` instead. (The composer itself no longer mounts `MediaThumbnail` at all — see the previous requirement.)
+
+#### Scenario: Successful native thumbnail
+
+- **WHEN** the renderer invokes `electronAPI.attachments.readMediaThumb('/abs/path/photo.jpg')` for a valid 5 MB JPEG
+- **THEN** the response is `{ ok: true, base64, mime: 'image/jpeg' }` and the base64 length is ≤ 100 KB
+
+#### Scenario: SVG triggers sharp fallback
+
+- **WHEN** the renderer requests a thumbnail for a valid SVG file
+- **THEN** the handler returns the SVG bytes inline (no rasterization) and the renderer mounts it directly
+
+#### Scenario: Traversal segment rejected
+
+- **WHEN** the renderer requests `'/abs/../etc/passwd'`
+- **THEN** the response is `{ ok: false, reason: 'traversal segment in path' }`
+
+#### Scenario: Lightbox opens a local image at full fidelity
+
+- **WHEN** the user clicks a sent-message attachment and the Lightbox mounts with `useResolvedMediaSrc(src, { fullFidelity: true })`
+- **THEN** `attachments:read-thumb` is invoked and the full image renders
+- **AND** the corresponding timeline `MediaThumbnail` on the same path did not invoke `attachments:read-thumb` (it used `media:thumb`)
 
 ### Requirement: The system SHALL send attachments to the Codex CLI as on-disk paths.
 

@@ -105,6 +105,6 @@ _PR-C addresses a different problem (Anthropic / OpenAI vision API rejecting > 8
 
 ## Cross-PR
 
-- [ ] **X1** Update `openspec/specs/codex-chat-attachments/spec.md` with the merged delta once PR-A (PR #22) lands. PR-23 also touches the composer rendering contract and should be reflected there (see PR-23's diff to `MentionInput.tsx`).
-- [ ] **X2** Move this change folder to `openspec/changes/archive/2026-MM-DD-fix-codex-chat-image-attachment-lag/` once **PR-A (PR #22) AND PR-23 are both merged**. (Originally this gate was "all three PRs land"; revised because PR-B/C are cancelled.)
-- [ ] **X3** ~~Cross-link the merged design doc into `docs/superpowers/specs/2026-05-28-codex-chat-image-lag-design.md` and the three plan files under `docs/superpowers/plans/`.~~ — replaced by the SUPERSEDED banners added to the PR-2/PR-3 plan files in this commit.
+- [x] **X1** Update `openspec/specs/codex-chat-attachments/spec.md` with the merged delta. Filtered to the shipped slice: PR-A's `media:thumb` IPC and the full-fidelity routing rule, plus PR-23's "composer renders no inline thumbnail" rewrite of the original thumbnail-rendering requirement. PR-B / PR-C ADDED requirements (`AttachmentUploader`, SecretKey discipline, vision-API pre-resize) were intentionally skipped — see proposal.md § Status.
+- [x] **X2** Moved this change folder to `openspec/changes/archive/2026-05-28-fix-codex-chat-image-attachment-lag/` via `git mv` (history preserved as 4 renames).
+- [x] **X3** ~~Cross-link the merged design doc into `docs/superpowers/specs/2026-05-28-codex-chat-image-lag-design.md` and the three plan files under `docs/superpowers/plans/`.~~ — replaced by the SUPERSEDED banners added to the PR-2/PR-3 plan files in the convergence commit (`abd7a80`, part of PR #22).
