@@ -123,6 +123,24 @@ interface AttachmentsApi {
   readThumb: (
     p: string,
   ) => Promise<{ ok: true; base64: string; mime: string } | { ok: false; reason: string }>
+  /**
+   * PR-A of fix-codex-chat-image-attachment-lag: the renderer hot path.
+   * Returns a resized JPEG (~5–30 KB) instead of the full file. The main
+   * process picks `nativeImage.createThumbnailFromPath` first (OS thumbnail
+   * provider, very fast on warm cache) and falls back to sharp for cold
+   * decoding. Not all callers want this — lightbox / "Save As" pass
+   * `fullFidelity: true` and we route to `readThumb` instead.
+   *
+   * Marked optional so the renderer keeps booting against older preloads
+   * during in-place upgrades; falls back to readThumb when missing.
+   */
+  readMediaThumb?: (args: {
+    path: string
+    size?: number
+  }) => Promise<
+    | { ok: true; base64: string; mime: string; width?: number; height?: number }
+    | { ok: false; reason: string }
+  >
 }
 
 interface FsApi {
@@ -142,24 +160,61 @@ function getFsApi(): FsApi | null {
   return api?.fs ?? null
 }
 
+export interface UseResolvedMediaSrcOptions {
+  /**
+   * When true, bypass the resized `media:thumb` IPC and read the original
+   * bytes. Use for the lightbox (which displays at large size and needs
+   * full resolution), "Save As" / "Copy to Clipboard" flows, and anywhere
+   * else where the consumer is going to render the file at >256 px.
+   *
+   * Default `false` — the renderer hot path uses the small JPEG thumbnail.
+   */
+  fullFidelity?: boolean
+  /**
+   * Longest-edge size to request from the thumbnail IPC. Ignored when
+   * `fullFidelity` is true. Defaults to 256 (main-side default).
+   */
+  thumbSize?: number
+}
+
 /**
  * Read file bytes from disk for thumbnail/lightbox rendering.
  *
- * Tries the dedicated `attachments:read-thumb` IPC first (no sandbox roots,
- * mime+size whitelist). Falls back to `fs:read-binary` (workspace + uploads
- * roots only) so we don't regress paths that used to work. If both fail,
- * resolves to null and the component renders a broken-image placeholder.
+ * PR-A routing decisions (in order):
+ *
+ *   1. `opts.fullFidelity === true` → ALWAYS take the original-bytes path
+ *      (`attachments:read-thumb`). Lightbox is the canonical caller.
+ *
+ *   2. Default (no opts) → try `attachments.readMediaThumb` first. If the
+ *      main process returns `{ ok: false; reason }`:
+ *        - For "video thumbnail not yet supported" (PR-A doesn't extract
+ *          video frames), fall back to `readThumb` so the renderer can
+ *          paint the play-icon overlay on top of a real video element.
+ *        - For mime/whitelist/size failures, also fall back to readThumb
+ *          (the renderer caller knows better which surface to show).
+ *        - For "file not found" or other hard errors, surface the error
+ *          immediately — no point retrying with the bigger IPC.
+ *
+ *   3. If neither IPC is wired (older preload), final fallback is
+ *      `fs:read-binary` (workspace + uploads roots only).
  */
 async function readBytes(
   osPath: string,
+  opts: UseResolvedMediaSrcOptions,
 ): Promise<{ ok: true; base64: string; mime: string } | { ok: false; reason: string }> {
   const attachments = getAttachmentsApi()
+
+  if (!opts.fullFidelity && attachments?.readMediaThumb) {
+    const res = await attachments.readMediaThumb({ path: osPath, size: opts.thumbSize })
+    if (res.ok) return res
+    // Soft failures fall through to the original-bytes IPC; hard failures
+    // surface immediately so the consumer sees the real reason.
+    if (!/video|whitelist|size|mime|not.*support/i.test(res.reason)) return res
+  }
+
   if (attachments) {
     const res = await attachments.readThumb(osPath)
     if (res.ok) return res
-    // Fall through to fs API only when the dedicated IPC says "not eligible"
-    // (mime/size whitelist miss). Hard failures (file not found, EACCES)
-    // propagate as-is so the caller sees the original cause.
     if (!/whitelist|size|mime/i.test(res.reason)) return res
   }
   const fs = getFsApi()
@@ -185,8 +240,14 @@ function initialResolved(src: string): string | null {
   return null
 }
 
-export function useResolvedMediaSrc(src: string, hint: MediaKindHint = 'auto'): string | null {
+export function useResolvedMediaSrc(
+  src: string,
+  hint: MediaKindHint = 'auto',
+  opts: UseResolvedMediaSrcOptions = {},
+): string | null {
   const [resolved, setResolved] = useState<string | null>(() => initialResolved(src))
+  const fullFidelity = opts.fullFidelity === true
+  const thumbSize = opts.thumbSize
   // React's official "Storing information from previous renders" pattern —
   // https://react.dev/reference/react/useState#storing-information-from-previous-renders
   //
@@ -219,7 +280,7 @@ export function useResolvedMediaSrc(src: string, hint: MediaKindHint = 'auto'): 
     }
     let cancelled = false
     let createdBlobUrl: string | null = null
-    readBytes(osPath)
+    readBytes(osPath, { fullFidelity, thumbSize })
       .then((res) => {
         if (cancelled) return
         if (!res.ok) {
@@ -250,7 +311,7 @@ export function useResolvedMediaSrc(src: string, hint: MediaKindHint = 'auto'): 
       cancelled = true
       if (createdBlobUrl) URL.revokeObjectURL(createdBlobUrl)
     }
-  }, [src, hint])
+  }, [src, hint, fullFidelity, thumbSize])
 
   return resolved
 }

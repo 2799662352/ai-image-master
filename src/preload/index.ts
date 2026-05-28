@@ -250,6 +250,10 @@ const IPC_CHANNELS = {
     LIST_TREE: 'attachments:list-tree',
     CHANGED: 'attachments:changed',
     READ_THUMB: 'attachments:read-thumb',
+    // PR-A hot-path: resized JPEG thumbnails. See main/file-explorer/mediaThumbIpc.ts
+    // for the size/security envelope. Renderer calls this by default; falls
+    // through to READ_THUMB only when `useResolvedMediaSrc(..., { fullFidelity: true })`.
+    MEDIA_THUMB: 'media:thumb',
   },
 } as const
 
@@ -493,6 +497,20 @@ export interface ElectronAPI {
     readThumb: (
       p: string,
     ) => Promise<{ ok: true; base64: string; mime: string } | { ok: false; reason: string }>
+    /**
+     * Resized-JPEG thumbnail hot path (PR-A of fix-codex-chat-image-attachment-lag).
+     * Returns a small (~5–30 KB) JPEG sized so the longest edge is `size`
+     * (default 256). SVGs pass through unchanged; videos are not supported
+     * yet and return `{ ok: false; reason: 'video thumbnail not yet supported' }`
+     * so the caller can fall back to `readThumb` for fullFidelity rendering.
+     */
+    readMediaThumb: (args: {
+      path: string
+      size?: number
+    }) => Promise<
+      | { ok: true; base64: string; mime: string; width?: number; height?: number }
+      | { ok: false; reason: string }
+    >
   }
   // 图片存储
   saveImage: (base64Data: string, filename: string) => Promise<SaveImageResponse>
@@ -1084,6 +1102,11 @@ const electronAPI: ElectronAPI = {
       safeInvoke<
         { ok: true; base64: string; mime: string } | { ok: false; reason: string }
       >(IPC_CHANNELS.ATTACHMENTS.READ_THUMB, p),
+    readMediaThumb: (args: { path: string; size?: number }) =>
+      safeInvoke<
+        | { ok: true; base64: string; mime: string; width?: number; height?: number }
+        | { ok: false; reason: string }
+      >(IPC_CHANNELS.ATTACHMENTS.MEDIA_THUMB, args),
   },
 
   // ============ 系统主题监听 ============
