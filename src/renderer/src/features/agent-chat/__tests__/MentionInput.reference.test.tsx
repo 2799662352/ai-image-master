@@ -215,6 +215,72 @@ describe('MentionInput reference chips', () => {
     expect(useAgentChatStore.getState().pendingReferences.length).toBe(1)
   })
 
+  // Regression: dropping an image into the composer used to also mount a
+  // <MediaThumbnail> next to the chip. The thumbnail's useResolvedMediaSrc
+  // hook fires `media:thumb` IPC + base64 round-trip per file, which freezes
+  // the renderer when several large images are dropped at once. Hiding the
+  // inline thumbnail removes the hot path entirely while keeping the chip's
+  // click-to-open behavior — the user still sees a labeled chip and can open
+  // a full-size preview via Lightbox.
+  //
+  // The chip alone is enough UX feedback for "this file is attached"; the
+  // timeline (post-send) still renders thumbnails for sent images via PR-A's
+  // optimized media:thumb path.
+  it('does NOT render an inline <img> thumbnail when an image reference is queued', async () => {
+    render(<MentionInput />)
+
+    const textarea = screen.getByRole('textbox')
+    const dt = makeDataTransfer()
+    serializeFileDrag(dt, ['D:/photos/cat.png'])
+    getTestElectronAPI().fs.stat.mockResolvedValueOnce({
+      ok: true,
+      size: 12,
+      mime: 'image/png',
+      mtime: 1,
+    })
+    fireEvent.drop(textarea, { dataTransfer: dt })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // Chip is still there with the file label (makeFileReference always sets
+    // reference.type='file'; the chip text comes from TYPE_LABELS.file).
+    expect(screen.getByText('cat.png')).toBeTruthy()
+
+    // No MediaThumbnail wrapper rendered in the composer. The wrapper carries
+    // a stable `data-media-kind` attribute regardless of whether the inner
+    // useResolvedMediaSrc hook has resolved yet, which makes this contract
+    // robust in jsdom (no IPC roundtrip available) and in production (full
+    // resolution latency).
+    const form = textarea.closest('form')
+    if (!form) throw new Error('MentionInput form not found')
+    expect(form.querySelectorAll('[data-media-kind]').length).toBe(0)
+    // Belt-and-braces: also catch any raw <img> that a future regression might
+    // add directly (e.g. CDN thumbnail attempts).
+    expect(form.querySelectorAll('img').length).toBe(0)
+  })
+
+  it('does NOT render an inline thumbnail when a video reference is queued', async () => {
+    render(<MentionInput />)
+
+    const textarea = screen.getByRole('textbox')
+    const dt = makeDataTransfer()
+    serializeFileDrag(dt, ['D:/clips/take-1.mp4'])
+    getTestElectronAPI().fs.stat.mockResolvedValueOnce({
+      ok: true,
+      size: 1024,
+      mime: 'video/mp4',
+      mtime: 1,
+    })
+    fireEvent.drop(textarea, { dataTransfer: dt })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(screen.getByText('take-1.mp4')).toBeTruthy()
+
+    const form = textarea.closest('form')
+    if (!form) throw new Error('MentionInput form not found')
+    expect(form.querySelectorAll('[data-media-kind]').length).toBe(0)
+    expect(form.querySelectorAll('video').length).toBe(0)
+  })
+
   it('preserves pending references when IPC send fails', async () => {
     const sendMessage = getTestElectronAPI().agent.sendMessage
     sendMessage.mockRejectedValueOnce(new Error('send failed'))
