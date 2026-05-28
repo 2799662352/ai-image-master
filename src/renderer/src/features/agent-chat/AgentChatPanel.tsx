@@ -58,12 +58,16 @@ export function AgentChatPanel() {
   const [codexStatus, setCodexStatus] = useState<CodexSessionStatus | undefined>(undefined)
   const configDirty = useAgentWorkspaceStore((state) => state.configDirty)
 
+  // The agent:event subscription is bound to the AgentChatPanel mount, NOT to
+  // isOpen — otherwise hiding the panel cancels the IPC listener and every
+  // Codex stream event that arrives while the panel is collapsed is lost,
+  // forcing the user to F5 to recover. Mirrors the onApprovalRequest pattern
+  // below.
   useEffect(() => {
-    if (!isOpen) return undefined
     const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
     if (!agent) return undefined
     return agent.onEvent(applyEvent)
-  }, [applyEvent, isOpen])
+  }, [applyEvent])
 
   useEffect(() => {
     const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
