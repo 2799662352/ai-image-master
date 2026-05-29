@@ -138,6 +138,38 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
+### v4.3.21 (2026-05-29) — 紧急修复:打包缺 sharp 原生二进制,装机启动即崩
+
+> **严重级别:崩溃级 hotfix**。v4.3.20 安装到全新机器后,主进程启动立即弹
+> `A JavaScript error occurred in the main process / Could not load the "sharp"
+> module using the win32-x64 runtime`,应用无法打开。v4.3.21 仅修打包配置,无功能改动。
+
+**根因(systematic-debugging 四阶段定位,@parcel/watcher v4.3.10→v4.3.11 同款翻版)**
+
+- `src/main/file-explorer/mediaThumbIpc.ts` 在主进程**急切 `import sharp from 'sharp'`**(media:thumb IPC 热路径,由 PR #22 / `e8a6e1e` 引入)。
+- sharp 运行时要 dlopen 平台二进制 `@img/sharp-win32-x64`(transitive optionalDependency,内含 `lib/sharp-win32-x64.node`,423KB)。
+- **`sharp` 被放在 `devDependencies`**(历史上当 build-tool 用)。electron-builder 只打生产 `dependencies` 及其 optionalDependencies,**devDependencies 一律不打** → sharp 及其平台包 `@img/sharp-*` 从未进包。
+- **且 sharp 不在 electron-vite 的 main `external` 列表里** → rolldown 把 sharp 的 JS **bundle 进 `dist/main/index.js`**;bundle 后的代码仍在运行时 `require('@img/sharp-win32-x64')` 去 dlopen `.node`,但该包没进包 → 报 `Could not load the "sharp" module`(报错来自 sharp 自己的 JS,正因它被 bundle 进了主入口,堆栈停在 `index.js:489`)。
+- **为什么偏偏 v4.3.20 才暴露**:PR #22(sharp-in-main)在承载滚动条的 `main` 线上;线上 4.3.16–4.3.19 是另一条 apiyi-mcp 线,fork 在 PR #22 之前 → 主进程根本没有 sharp import → 不崩。v4.3.20 合并两线后,**第一次把 sharp-in-main 真正发布出去**,缺口随之暴露。
+- **确凿证据**:解包 v4.3.20 的 `app.asar.unpacked/node_modules` 只有 `@electric-sql / @parcel / @prisma / jszip`,完全没有 sharp / @img。对照 `@parcel/watcher`(正常)→ 它是 `dependencies` + 在 main external 列表 + 有 asarUnpack 规则;sharp 四项里缺了前两项。
+
+> **调试教训**:第一版修复只补了 `.npmrc` hoist + `asarUnpack`(symptom 层),重打后验证仍 MISSING —— 因为 `asarUnpack` 只能把**已被纳入打包**的文件从 asar 挪到 unpacked,不会把文件「拉进来」。回到 Phase 1 才发现 sharp 是 devDependency 且被 bundle,根因在更上游。
+
+**修复(对齐 @parcel/watcher 的四件套,缺一不可)**
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| **sharp 从 devDependencies → dependencies** | `package.json` | electron-builder 才会把 sharp 及其 optionalDependencies `@img/sharp-*` 纳入生产依赖树 |
+| **main external 加 `sharp` + `/^@img\/sharp-/`** | `electron.vite.config.ts` | 阻止 rolldown bundle sharp,改为运行时 `require()` 落到 node_modules,原生 `.node` 才能 dlopen |
+| 强制 hoist sharp + 全平台 @img/sharp-* 到真实顶层 | `.npmrc` | `public-hoist-pattern[]=sharp` + `@img/sharp-*`,让 electron-builder 在顶层扫得到(否则只躺在 `.pnpm/`) |
+| sharp + @img/sharp* 原生 `.node` 移出 asar | `electron-builder.yml` → `asarUnpack` | `**/node_modules/sharp/**` + `**/node_modules/@img/sharp*/**`,`.node` 只能从真实路径 dlopen,必须落在 `app.asar.unpacked` |
+
+**验证**:重打 `build:win` 后确认 `app.asar.unpacked/node_modules/@img/sharp-win32-x64/lib/sharp-win32-x64.node` 存在,且 `dist/main/index.js` 不再内联 sharp。
+
+参考:`.npmrc` 与 `electron-builder.yml` 的同款 @parcel/watcher 注释(v4.3.11 教训)。
+
+---
+
 ### v4.3.20 (2026-05-29) — Codex 聊天滚动状态机：发送锁底 + 跨进程持久化位置 + 常驻滑轮
 
 > **版本说明**:线上 4.3.16–4.3.19 是一条独立的 apiyi-mcp 工作线(MCP 配置 enum 约束 / 优雅降级 / command=undefined 修复 / JSON 编辑器空白修复 / FastMCP 网关),曾与本地承载滚动条工作的 `main` 分叉。本次已把 `v4.3.19` 完整合并进 `main`(含全部 MCP 修复,见下方 4.3.16–4.3.19 条目),再叠加本次滚动条改动统一发布 **v4.3.20**,COS + GitHub 双源指向 4.3.20,**不回退任何 MCP 修复**。

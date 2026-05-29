@@ -87,6 +87,15 @@ asarUnpack:
   # so they must live outside the asar. The wildcard `watcher*` catches the
   # wrapper package AND every platform-specific binary subpackage.
   - "**/node_modules/@parcel/watcher*/**"
+  # Native libvips addon — required at runtime by src/main/file-explorer/
+  # mediaThumbIpc.ts (`import sharp from 'sharp'`, the media:thumb hot path).
+  # `@img/sharp-<platform>-<arch>` ships `sharp-<platform>-<arch>.node` which
+  # must be dlopen'd from a real path outside the asar. Same class of bug as
+  # @parcel/watcher above — v4.3.20 shipped sharp-in-main for the first time
+  # and crashed on startup; v4.3.21 fixes by unpacking sharp + every @img/sharp*
+  # subpackage. Paired with the `.npmrc` public-hoist rules for these packages.
+  - "**/node_modules/sharp/**"
+  - "**/node_modules/@img/sharp*/**"
 
 asar: true
 compression: maximum
