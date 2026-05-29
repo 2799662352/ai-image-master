@@ -138,6 +138,45 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
+### v4.3.16 (2026-05-29) — Codex 聊天滚动状态机：发送锁底 + 跨进程持久化位置 + 常驻滑轮
+
+本版本重做 Codex 聊天面板的滚动体验，根除"每次打开对话框停在顶部 / AI 输出时滑轮不跟随 / 关闭后位置丢失"三个体感痛点。摒弃上一轮(已回退的 PR #27)引入的 `react-virtuoso` + `overlayscrollbars-react` 重型依赖，改用**原生 DOM 滚动 + 纯函数状态机 + Zustand 持久化**的轻量方案。
+
+**A. 滚动状态机三态语义(根因:原实现无"跟随意图"概念)**
+
+**问题**: 旧版聊天区每次重渲染都不主动滚动 → 打开面板停在顶部;AI 流式输出时内容增长但滑轮不动 → 用户看不到最新进度;面板关闭再打开 / 切线程 / 重启 app 后位置全部归零。
+
+**修复** (三文件拆分，纯逻辑与 DOM 交互解耦):
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| 纯函数状态机 + localStorage I/O | `src/renderer/src/features/agent-chat/chatScroll.ts`(新) | `distanceFromBottom`(带 clamp 防负值)/ `computeFollowBottom`(离底 ≤48px 判定锁底)/ `loadChatScrollByThread` / `persistChatScrollByThread`。`CHAT_SCROLL_UNLOCK_THRESHOLD_PX=48` 单一阈值常量。所有 localStorage 读写带 defensive try/catch + 畸形数据兜底。**12 个 RED-GREEN 单测**覆盖 clamp、阈值边界、持久化往返、解析容错 |
+| React hook 接 DOM | `src/renderer/src/features/agent-chat/useChatScroll.ts`(新) | `useLayoutEffect` 做无闪烁位置恢复;新消息到达时若处于锁底态则自动滚到底;`useRef` 防"程序化滚动→onScroll→再写状态"反馈环;`onScroll` 回调按 48px 阈值翻转 follow 标志并持久化 |
+| Store 状态 + 动作 + sendMessage 钩子 | `src/renderer/src/features/agent-chat/store.ts` | 新增 `chatScrollByThread` per-thread 状态、`setChatScroll` / `lockChatScrollToBottom` 动作。`sendMessage` 时(及 `threadId` 解析后)调 `lockChatScrollToBottom` —— **用户一发消息就强制锁底看回复尾巴** |
+| 常驻滑轮 CSS | `src/renderer/src/styles/index.css` | `.chat-scroll` 用 `overflow-y-scroll`(常显而非 auto)+ `::-webkit-scrollbar` 细青色轨道(Webkit)+ Firefox `scrollbar-width/color` 双写。摒弃外部滚动条库 |
+| 面板集成 | `src/renderer/src/features/agent-chat/AgentChatPanel.tsx` | `chatScrollRef` + `onScroll` 接到主滚动容器,接 `useChatScroll` hook |
+
+**语义保证**: 发送消息 → 锁底跟随 AI 输出;用户手动上滑离底 >48px → 解锁自由浏览;滑回 48px 内 → 重新锁底;关面板 / 切线程 / 重启 app → 位置从 localStorage 恢复(`full_persist` 跨进程)。
+
+#### 用户可见行为
+
+1. **打开 Codex 对话框默认停在最新消息**(锁底),不再回到顶部从头翻
+2. **AI 流式输出时滑轮自动跟随**到底部,实时看到生成进度
+3. **手动上滑即解锁**,可自由向上向下浏览历史,滑回底部附近自动恢复跟随
+4. **关闭面板 / 切换线程 / 重启 app 后回到上次离开的滚动位置**(localStorage 跨进程持久化)
+5. **滑轮常驻可见**(细青色),不再 hover 才出现
+
+#### 测试
+
+- `pnpm vitest run agent-chat/__tests__/chatScroll.test.ts` → **12/12 全过**(distanceFromBottom clamp / computeFollowBottom 阈值 / localStorage 往返 + 容错)
+- `AgentChatPanel.bootstrap.test.tsx` 0 regression(happy-dom 下补 stub mock 规避 getComputedStyle)
+
+参考:
+- PR #28:[per-thread scroll state machine](https://github.com/2799662352/ai-image-master/pull/28)
+- 回退的重型方案:PR #27(react-virtuoso + overlayscrollbars,因 auto-follow / 滑轮可见性 / 默认位置回归被关闭)
+
+---
+
 ### v4.3.15 (2026-05-22) — 三件套：图片解码卡顿根除 + 批量闭包覆盖 bug + gpt-image-2-vip 分辨率对齐
 
 本版本解决三个独立的图像生成痛点：(A) `<img src="data:image/...">` 同步解码阻塞主线程导致的"生成完那一下卡顿"，(B) 批量页运行中追加新 item 时参数被首次快照覆盖的 bug，(C) gpt-image-2-vip `resolutionMap` 像素值与 apiyi.com 文档不一致。
