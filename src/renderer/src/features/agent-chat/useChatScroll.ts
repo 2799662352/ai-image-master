@@ -27,10 +27,16 @@ export function useChatScroll(args: {
   containerRef: RefObject<HTMLDivElement | null>
   threadId: string | undefined
   messages: Message[]
+  // AgentChatPanel early-returns when closed, so the scroll container <div>
+  // unmounts while this hook (and its refs) stays mounted. `isOpen` is the only
+  // signal the hook gets that the container will (re)mount, so restore/auto-
+  // scroll effects depend on it — otherwise reopening parks the fresh div at
+  // scrollTop 0 (regression: 关闭再开滑轮回到最顶).
+  isOpen: boolean
 }): {
   onScroll: (event: UIEvent<HTMLDivElement>) => void
 } {
-  const { containerRef, threadId, messages } = args
+  const { containerRef, threadId, messages, isOpen } = args
 
   const setChatScroll = useAgentChatStore((s) => s.setChatScroll)
   // Read the *current* slice synchronously — we don't subscribe to it because
@@ -48,8 +54,17 @@ export function useChatScroll(args: {
   })
   followBottomRef.current = followBottom
 
-  // ----- Restore on thread change / first mount with thread -----
+  // ----- Reset the restore guard when the panel closes -----
+  // The container unmounts on close, so the next open must re-restore. Without
+  // this, `lastRestoredThreadIdRef` still equals the current thread key and the
+  // restore effect short-circuits, leaving the remounted div at the top.
   useLayoutEffect(() => {
+    if (!isOpen) lastRestoredThreadIdRef.current = null
+  }, [isOpen])
+
+  // ----- Restore on thread change / first mount / panel reopen -----
+  useLayoutEffect(() => {
+    if (!isOpen) return
     const el = containerRef.current
     if (!el) return
     const key = threadId ?? NO_THREAD
@@ -68,7 +83,7 @@ export function useChatScroll(args: {
       const max = el.scrollHeight - el.clientHeight
       el.scrollTop = Math.max(0, Math.min(stored.scrollTop, max))
     }
-  }, [containerRef, threadId])
+  }, [containerRef, threadId, isOpen])
 
   // ----- Auto-scroll to bottom whenever messages tick and we're locked -----
   useLayoutEffect(() => {
@@ -82,8 +97,9 @@ export function useChatScroll(args: {
       setChatScroll(threadId, { scrollTop: el.scrollTop, followBottom: true })
     }
     // `followBottom` is in deps too so a remote re-lock (e.g. sendMessage)
-    // immediately snaps to bottom, not on the next message tick.
-  }, [messages, followBottom, containerRef, threadId, setChatScroll])
+    // immediately snaps to bottom, not on the next message tick. `isOpen`
+    // re-glues a locked thread on reopen even if content height changed.
+  }, [messages, followBottom, containerRef, threadId, setChatScroll, isOpen])
 
   // ----- Track user scrolling -----
   const onScroll = useCallback(

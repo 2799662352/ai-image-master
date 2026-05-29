@@ -45,6 +45,7 @@ export function AgentChatPanel() {
     containerRef: chatScrollRef,
     threadId,
     messages,
+    isOpen,
   })
   const error = useAgentChatStore((state) => state.error)
   const applyEvent = useAgentChatStore((state) => state.applyEvent)

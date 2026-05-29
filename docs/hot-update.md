@@ -138,6 +138,34 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
+### v4.3.22 (2026-05-29) — 修复:关闭 Codex 聊天栏再打开,滚轮回到顶部(应停在离开位置)
+
+**根因(systematic-debugging Phase 1.5 数据流)**
+
+`AgentChatPanel` 在 `!isOpen` 时**提前 return**,只卸载内层聊天滚动 `<div ref={chatScrollRef}>`,但 `AgentChatPanel` 组件本身(及 `useChatScroll` 的所有 ref)**始终挂载**。`useChatScroll` 的 restore `useLayoutEffect` 依赖 `[containerRef, threadId]`:
+
+- 关闭 → 聊天 div 卸载,`chatScrollRef.current = null`,但 `lastRestoredThreadIdRef` 仍 = 当前 threadId。
+- 重开 → div 重新挂载(`chatScrollRef.current` = 新节点),但 deps 没变 → **restore effect 不重跑**;即便跑也被 `lastRestoredThreadIdRef === key` guard 挡住。于是新 div 停在默认 `scrollTop=0` = 顶部。
+
+**修复**
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| hook 新增 `isOpen` 入参 | `src/renderer/src/features/agent-chat/useChatScroll.ts` | 容器(重)挂载的唯一信号——面板 open/close 时组件不卸载,只能靠 isOpen 感知 |
+| 关闭时重置 restore guard | 同上 | `useLayoutEffect(() => { if (!isOpen) lastRestoredThreadIdRef.current = null }, [isOpen])`,让重开必重新恢复 |
+| restore + auto-scroll effect deps 加 `isOpen` | 同上 | 重开时 restore 重跑(自由滚动→恢复离开位置;锁底→重新贴底跟随 AI) |
+| 接线 | `src/renderer/src/features/agent-chat/AgentChatPanel.tsx` | `useChatScroll({ ..., isOpen })` |
+
+**验证(TDD,RED→GREEN)**
+
+- 新增 `useChatScroll.reopen.test.tsx`:RED 时 reopen 后 `scrollTop=0`,修复后 **2/2 通过**(自由滚动恢复到 250 / 锁底线程重开贴底 1000)。
+- `chatScroll.test.ts` 12/12 不变。
+- `AgentChatPanel.bootstrap.test.tsx` 的 3 个失败为 main 既有的 jsdom `getComputedStyle` 环境问题(stash 掉本次改动后同样失败),非本次回归。
+
+行为:关闭聊天栏再打开,**停在离开时的滚动位置**;发消息 / 锁底线程仍贴底跟随 AI 输出。
+
+---
+
 ### v4.3.21 (2026-05-29) — 紧急修复:打包缺 sharp 原生二进制,装机启动即崩
 
 > **严重级别:崩溃级 hotfix**。v4.3.20 安装到全新机器后,主进程启动立即弹
