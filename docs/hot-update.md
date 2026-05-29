@@ -138,7 +138,9 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
-### v4.3.16 (2026-05-29) — Codex 聊天滚动状态机：发送锁底 + 跨进程持久化位置 + 常驻滑轮
+### v4.3.17 (2026-05-29) — Codex 聊天滚动状态机：发送锁底 + 跨进程持久化位置 + 常驻滑轮
+
+> **跳号说明**:GitHub 上早先(2026-05-22)已存在一个内容不同的 `v4.3.16` release(当时仓库 `package.json` 还停在 4.3.15,属对不上仓库状态的幽灵 release,且已被少量用户下载)。为避免 electron-updater "同号不同内容"的检测混乱(见下方 v4.3.11 同类警告),本次直接跳号到 **v4.3.17** 重新发布,COS + GitHub 双源统一指向 4.3.17。
 
 本版本重做 Codex 聊天面板的滚动体验，根除"每次打开对话框停在顶部 / AI 输出时滑轮不跟随 / 关闭后位置丢失"三个体感痛点。摒弃上一轮(已回退的 PR #27)引入的 `react-virtuoso` + `overlayscrollbars-react` 重型依赖，改用**原生 DOM 滚动 + 纯函数状态机 + Zustand 持久化**的轻量方案。
 
