@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { discoverCodexSkills, readMcpSummary } from '../codexConfigDiscovery'
+import { discoverCodexSkills, readMcpSummary, readRawCodexConfig } from '../codexConfigDiscovery'
 
 async function makeTempDir(): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), 'codex-discovery-'))
@@ -180,5 +180,65 @@ description: "unterminated
     })
     expect(summary.skills).toEqual([])
     expect(summary.warnings).toEqual([])
+  })
+
+  // -------------------------------------------------------------------------
+  // readRawCodexConfig — the codex-bypass reader the renderer falls back to
+  // when codex's Rust `config/read` RPC rejects the on-disk TOML
+  // (e.g. "invalid transport in `mcp_servers.apiyi`"). Must NOT redact, NOT
+  // validate transport values, NOT discard the offending block — the whole
+  // point is to surface the user's actual bytes so they can edit and fix.
+  // -------------------------------------------------------------------------
+  describe('readRawCodexConfig', () => {
+    it('returns the full parsed config including blocks codex would reject', async () => {
+      const dir = await makeTempDir()
+      const configPath = path.join(dir, 'config.toml')
+      await writeFile(configPath, `
+[mcp_servers.apiyi]
+command = "/usr/bin/node"
+args = ["index.js"]
+transport = "bogus-transport-value"
+enabled = true
+
+[mcp_servers.apiyi.env]
+APIYI_API_KEY = "sk-test"
+
+[mcp_servers.good]
+command = "npx"
+args = ["-y", "@some/server"]
+enabled = false
+`, 'utf8')
+
+      const result = await readRawCodexConfig(configPath)
+
+      expect(result.parseError).toBeUndefined()
+      expect(result.raw).toContain('bogus-transport-value')
+      const mcp = (result.config as any)?.mcp_servers
+      expect(mcp).toBeTruthy()
+      // The offending entry MUST be surfaced verbatim — that's the point of
+      // this reader. Renderer relies on it to expose the JSON editor.
+      expect(mcp.apiyi.transport).toBe('bogus-transport-value')
+      expect(mcp.apiyi.command).toBe('/usr/bin/node')
+      expect(mcp.apiyi.env.APIYI_API_KEY).toBe('sk-test')
+      expect(mcp.good.command).toBe('npx')
+    })
+
+    it('returns empty config when file is missing', async () => {
+      const result = await readRawCodexConfig(path.join(await makeTempDir(), 'no-such.toml'))
+      expect(result).toEqual({ config: {}, raw: null })
+    })
+
+    it('returns raw bytes + parseError when TOML is malformed', async () => {
+      const dir = await makeTempDir()
+      const configPath = path.join(dir, 'config.toml')
+      const bytes = '[mcp_servers.broken\ncommand = "x"\n' // missing closing bracket
+      await writeFile(configPath, bytes, 'utf8')
+
+      const result = await readRawCodexConfig(configPath)
+
+      expect(result.config).toBeNull()
+      expect(result.raw).toBe(bytes)
+      expect(result.parseError).toBeTruthy()
+    })
   })
 })

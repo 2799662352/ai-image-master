@@ -203,4 +203,5 @@ describe('useSettingsStore', () => {
       expect(localStorage.getItem('codex_api_key')).toBe('sk-toSave')
     })
   })
+
 })

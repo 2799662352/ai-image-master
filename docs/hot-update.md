@@ -138,9 +138,9 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
-### v4.3.17 (2026-05-29) — Codex 聊天滚动状态机：发送锁底 + 跨进程持久化位置 + 常驻滑轮
+### v4.3.20 (2026-05-29) — Codex 聊天滚动状态机：发送锁底 + 跨进程持久化位置 + 常驻滑轮
 
-> **跳号说明**:GitHub 上早先(2026-05-22)已存在一个内容不同的 `v4.3.16` release(当时仓库 `package.json` 还停在 4.3.15,属对不上仓库状态的幽灵 release,且已被少量用户下载)。为避免 electron-updater "同号不同内容"的检测混乱(见下方 v4.3.11 同类警告),本次直接跳号到 **v4.3.17** 重新发布,COS + GitHub 双源统一指向 4.3.17。
+> **版本说明**:线上 4.3.16–4.3.19 是一条独立的 apiyi-mcp 工作线(MCP 配置 enum 约束 / 优雅降级 / command=undefined 修复 / JSON 编辑器空白修复 / FastMCP 网关),曾与本地承载滚动条工作的 `main` 分叉。本次已把 `v4.3.19` 完整合并进 `main`(含全部 MCP 修复,见下方 4.3.16–4.3.19 条目),再叠加本次滚动条改动统一发布 **v4.3.20**,COS + GitHub 双源指向 4.3.20,**不回退任何 MCP 修复**。
 
 本版本重做 Codex 聊天面板的滚动体验，根除"每次打开对话框停在顶部 / AI 输出时滑轮不跟随 / 关闭后位置丢失"三个体感痛点。摒弃上一轮(已回退的 PR #27)引入的 `react-virtuoso` + `overlayscrollbars-react` 重型依赖，改用**原生 DOM 滚动 + 纯函数状态机 + Zustand 持久化**的轻量方案。
 
@@ -176,6 +176,244 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 参考:
 - PR #28:[per-thread scroll state machine](https://github.com/2799662352/ai-image-master/pull/28)
 - 回退的重型方案:PR #27(react-virtuoso + overlayscrollbars,因 auto-follow / 滑轮可见性 / 默认位置回归被关闭)
+
+---
+
+### v4.3.19 (2026-05-23) — Hotfix: MCP JSON 编辑器 modal 内容区 0px 高度(点编辑/新增看上去空白)
+
+**用户报告**:v4.3.18 顶部红 banner 消失了(boot 自愈 + banner 去重生效),但点击 ✏️「编辑」或 +「新增」按钮,modal 弹出后**中间 Monaco 编辑区是完全空白的**,只看到顶部 header(标题/保存/取消)和底部 hint(`格式: { ... } 按 Esc 关闭`)挤在一起,modal 总高度只占视口 ~30%。
+
+**Phase 1 / 根因调查**
+
+DOM 结构是这样的:
+
+```tsx
+<div className="flex max-h-[85vh] w-full max-w-4xl flex-col gap-3 ...">  // ← 容器
+  {/* Header */}              // 自然高度 ~40px
+  {/* Error (可选) */}        // 不存在
+  <div className="min-h-0 flex-1 ...">
+    <Editor height="100%" />  // ← Monaco
+  </div>
+  {/* Hint */}                // 自然高度 ~20px
+</div>
+```
+
+Flex 列方向容器只设 `max-h-[85vh]`(上限)而没有 `h-...`(显式高度)。`max-h` 只规定**最大值**,实际高度由 content 决定 —— content 总和约 ~60px,**容器实际高度 ~60px**。这种"content-driven height"的 flex container 里,`flex-1` 没有任何可扩展的空间(剩余空间为 0),所以 `flex-1` 子 div 实际高度 = 0px。Monaco 拿到 `height="100%"` 计算出 0px,渲染为不可见。
+
+回头看 git history:**这是 `61d679a` 把 inline 编辑器重构成 modal 那次就埋的雷**(v4.3.17/v4.3.18 都没动这块,所以一脉相承)。当时没暴露是因为 modal 内承载的内容多到顶到 `max-h-[85vh]`,从而 flex-1 自然撑开;现在用户配置只剩一个 apiyi,JSON 短,modal 缩到 content-driven,Editor 就被压成 0。
+
+**Phase 2 / 修复**
+
+`src/renderer/src/features/agent-workspace/McpJsonEditor.tsx` 两处改动:
+
+1. 容器从 `max-h-[85vh]` 改成 `h-[85vh]` —— modal 总是占视口 85vh 的固定高度,header/hint 吃自然高度,剩余空间归 `flex-1` 子节点,Editor `height="100%"` 拿到真实像素值
+2. Editor 容器额外加 `style={{ minHeight: 300 }}` 兜底 —— 这是 defense-in-depth,即使将来又有人把父级改回 content-driven,Editor 至少有 300px 可见区,不会再出现"完全空白"的故障模式
+
+**为什么不加单元测试**:这是纯 CSS layout 问题。jsdom 没有真实 layout 引擎,`getComputedStyle().height` 拿不到 px 值,只能拿到 inline style 字符串。给 layout bug 写 unit test 测的是 className 字符串,本质上是在 assert 实现细节而不是行为 —— 收益低于成本。已存在的 43 个 renderer 测试照常 pass。
+
+#### 用户可见行为
+
+1. **点 ✏️ 编辑某 server**:modal 占视口 85vh,Monaco 编辑器显示该 server 的 `{ "apiyi": {...} }` 完整内容
+2. **点 + 新增**:modal 占视口 85vh,Monaco 编辑器显示当前所有 servers(用户可在里面追加新条目)
+3. **任何状态下,小视口/大视口**:Editor 至少 300px 可见,modal 上限 85vh
+4. **保存/取消/Esc/click-outside**:行为不变(v4.3.18 已修)
+
+---
+
+### v4.3.18 (2026-05-23) — 根因修复: v4.3.16 引入的 `command=undefined` 回归(全新装机的 apiyi 永远 broken) + 编辑器先验校验 + banner 去重
+
+**用户报告**:v4.3.17 给了「修复 apiyi」按钮但是问题反复出现 —— 重新装/重新启动后,顶部仍然冒出**两条重复 banner**:`Codex 拒绝加载当前 MCP 配置: invalid transport in 'mcp_servers.apiyi'` 和 `工具列表同步失败: failed to reload config: ... invalid transport(状态点不受影响,可点「刷新」重试)`。
+
+**Phase 1 / 根因调查**
+
+按 systematic-debugging 三层取证,顺着调用栈反推:
+
+- **Layer 1(产物)**:`~/.codex/config.toml` 里 `[mcp_servers.apiyi]` 块**没有 `command` 字段也没有 `url` 字段**(只有 `args` / `env` / `enabled` / `tool_timeout_sec`)
+- **Layer 2(校验)**:codex 0.132.0 的 `McpServerConfig` 是 `serde(untagged)` 枚举(`McpServerTransportConfig::{Stdio{command,args,env}, StreamableHttp{url,bearer_token_env_var}}`)。一旦 entry 同时缺 `command` 和 `url`,两个 variant 都匹配不上,deserializer 直接吐 `invalid transport` —— **这一层我们改不了**(上游 Rust binary)
+- **Layer 3(写入)**:谁把 `command` 字段写丢的?往回追到 v4.3.16 提交 `8fb60d2`:`src/main/index.ts:809` 把旧的 `nodeBin: process.execPath` 直接换成新签名 `seedApiyiMcpEntry({ command: ..., extraEnv: ... })` 时,**漏改了 call site**,变成 `seedApiyiMcpEntry({ ...other, nodeBin: process.execPath })` —— `nodeBin` 不是 `SeedApiyiMcpInput` 的合法字段,TypeScript 没拦下来是因为 `input.command` 类型是 `string | undefined` 在写入路径上没被 narrow
+
+- **Layer 4(放大器)**:`apiyiMcpSeed.ts` 拿到 `input.command === undefined` 后,写出的 entry 是 `{ command: undefined, args: [...], env: {...} }`。`@iarna/toml.stringify` 看到 `undefined` 字段**静默丢弃**(它不能在 TOML 里编码 `undefined`),最终落盘的就是缺 `command` 的非法 transport entry。所有 v4.3.16+ **全新装机**或**首次 seed 的用户**,机器上都生成了这条 broken entry → 进 codex → 整页报错
+
+**为什么 v4.3.17 没修到根**:v4.3.17 的精力全花在"让 UI 别死锁 + 提供编辑入口"上(读 raw TOML、graceful degradation、修复按钮),**完全没动 seed 写入路径**。所以每次启动 boot convergence 还是写出同样的 broken entry,用户每打开一次页面就再被刷一次。
+
+**Phase 2 / 修复(三件并行,B 是根因)**
+
+| 代号 | 改动 | 文件 | 说明 |
+|------|------|------|------|
+| **B0** | 修 v4.3.16 call site 回归 | `src/main/index.ts` | 改成先 `resolveApiyiCommand(process.execPath)` 拿到 `{ command, extraEnv }`,再传给 `seedApiyiMcpEntry({ command: apiyiCmd.command, extraEnv: apiyiCmd.extraEnv, ... })`。**全新装机现在永远写出带 `command` 字段的合法 entry** |
+| **B1** | seed 自愈 broken entry | `src/main/agent/apiyiMcpSeed.ts` | 加 `isBrokenApiyiEntryMissingTransport()` 检测器 + `'repaired'` 新 SeedAction。boot convergence 时如果发现现存 `apiyi` entry **同时缺 `command` 和 `url`**,**就地补回 `command`/`args`,保留 `env`/`enabled`/`tool_timeout_sec` 等用户字段**;`extraEnv` 走 mergeEnvWithScaffold(永不覆盖用户已设的值)。**老用户从 v4.3.16/v4.3.17 升上来,首次启动就被自动修好,不用点任何按钮** |
+| **A** | banner 去重 | `src/renderer/src/features/agent-workspace/useMcpStore.ts` | `syncTools` 失败时,如果 `codexConfigError` 已经在显示同根因错误(`/invalid transport/i` 或 `/reload config/i`),**直接吞掉 `syncError`**,只留一条 banner。RPC 调用本身不变 —— 仍然会调,只是不再渲染重复消息 |
+| **C** | JSON 编辑器先验校验 | `src/renderer/src/features/agent-workspace/mcpEntryValidator.ts`(新) + `McpJsonEditor.tsx` | 抽出 `validateMcpServerEntry()` —— 在前端**复刻** codex 的 `McpServerTransportConfig::{Stdio, StreamableHttp}` 判定逻辑(`command` 必须是非空 string,或 `url` 必须是非空 string,且两者类型正确)。保存按钮调 `batchWriteConfig` 之前,对每条 entry 跑一遍,任何一条不合法直接 `throw new Error('mcp_servers.xxx: ...')` 阻断写入,在 modal 顶部红条提示 —— **用户在编辑器里手编出一份缺 `command` 的配置,在写盘之前就被拦下,不会重蹈 v4.3.16 覆辙** |
+
+**Phase 3 / 测试覆盖**
+
+- `apiyiMcpSeed.test.ts`:加 3 个新 case,17/17 全过
+  - `'returns repaired when existing apiyi entry is missing both command and url'`:从 broken entry 自愈到合法 stdio,验证 `env` / `enabled` 等用户字段被保留
+  - `'returns repaired with extraEnv merged additively, never overwriting existing env values'`:验证 `extraEnv` 仅补缺,从不覆盖已存在的 key
+  - `'does NOT touch entries that have an explicit url'`(防回归):URL 型 entry 不应被识别成 broken
+- `useMcpStore.test.ts`:加 3 个新 case
+  - `'syncTools suppresses syncError when codexConfigError already covers the same invalid-transport root cause'`
+  - `'syncTools still reports unrelated sync errors even when codexConfigError is set'`(防过度抑制)
+  - `'syncTools reports ok=false errors normally when codexConfigError is NOT set'`(健康路径)
+- `mcpEntryValidator.test.ts`(新):覆盖 valid stdio / valid http / missing-transport / empty command / wrong-typed command / null entry / array entry / `formatValidationError` 输出文案
+
+**总计**:6 个测试文件 / 94 个测试全过。
+
+#### 用户可见行为
+
+1. **从 v4.3.16/v4.3.17 升级到 v4.3.18,机器上有 broken apiyi 块的用户**:启动那一刻 `seedApiyiMcpEntry` 直接 `'repaired'`,console 日志 `[apiyi-mcp] boot convergence: repaired (command=...)`,**用户进 MCP 页面看到的就是已经修好的状态**,没有 banner,无需点任何按钮
+2. **全新装 v4.3.18 的用户**:`'created'` 路径写出的 entry **第一次就带 `command` 字段**,永远不会触发 `invalid transport`
+3. **JSON 编辑器手编场景**:用户在 modal 里把 `command` 删掉或写成空串 → 点保存 → 红条提示 `mcp_servers.xxx: missing transport: either 'command' (stdio) or 'url' (streamable-http) is required`,写盘动作被阻断
+4. **同根因 + 不同根因的 banner 区分**:同根因(invalid transport)只留 `codexConfigError` 一条;不同根因(比如 RPC 网络挂了 / 工具列表里某个 server 启不来)`syncError` 该报还报,不会被过度吞
+
+#### 不修的部分(deliberately scoped out)
+
+- **codex 0.132.0 自己的 `McpServerConfig` 校验逻辑**:不动,这条线我们尊重上游
+- **autoFixApiyiBroken 一键修复按钮的独立 IPC**:v4.3.17 那个「修复 apiyi」按钮目前是直接打开 JSON 编辑器,工作良好;v4.3.18 已经把根因从 boot path 治了,**绝大多数用户根本走不到那个按钮**,所以暂不加独立 RPC
+
+---
+
+### v4.3.17 (2026-05-23) — Hotfix: codex 拒绝 MCP 配置时整页死锁(用户无路径修复)
+
+**用户报告**:升级到 v4.3.16 后打开 Agent Workspace → MCP Servers,整页变成一条红色错误:
+
+```
+invalid configuration: invalid transport in `mcp_servers.apiyi`
+```
+
+下方只有一个「重试」按钮 —— 点击仍然挂同样的错。**用户无路径打开 JSON 编辑器修复出错的那一段**,MCP 页面被完全屏蔽。
+
+**根因(`/systematic-debugging` Phase 1)**:错误字符串不在我们仓库任何位置,grep 全 0 命中 → 由 codex Rust 二进制(`codex-rs`)在响应 `config/read` RPC 时抛出。完整链路:
+
+```
+useMcpStore.fetchServers
+  → electronAPI.agent.readConfig
+  → AgentManager.readConfigRpc
+  → CodexLocalBackend.readConfig
+  → CodexProtocolClient.rpc('config/read')
+  → codex.exe ← parse ~/.codex/config.toml
+                ← schema 校验拒绝 [mcp_servers.apiyi] 块(可能 transport 字段值不在白名单 / 旧版本残留 / 用户曾在 JSON 编辑器手编错)
+```
+
+我们 seed/backfill 的代码路径**从不写 `transport` 字段**(stdio 是默认),所以最可能的成因是用户 config.toml 在某条历史路径上被写入了非法 transport,codex 后续版本收紧了校验,把整个 `config/read` 调用一并拒绝。
+
+**真问题(架构层)**:`McpServerList` 拿到 `error` 时把整页换成红色错误屏蔽,**编辑器入口被该屏蔽 div 覆盖**,而编辑器本身又走同一个 `readConfig`,即使能进去也会触发同样错误 → 一旦 codex 挑剔,整个 MCP 页就废了。这是比"用户配置错了"更严重的设计漏洞。
+
+#### 修复:三层加固
+
+**A. 主进程:新增 codex-bypass 的 raw TOML 读取路径**
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| 新增 `readRawCodexConfig(configPath)` | `src/main/agent/codexConfigDiscovery.ts` (+62) | `fs.readFile` + `toml.parse`,**完全不经过 codex 二进制**。返回 `{ config, raw, parseError }`:ENOENT → `{ config: {}, raw: null }`(空配置);TOML 损坏 → `{ config: null, raw, parseError }`(保留 raw 字节供 UI 显示);成功 → 完整 parsed config,包括 codex 会拒绝的 `transport: "bogus"` 这类字段(**这正是要的:让用户看到 / 编辑出错的那一段**) |
+| 新增 `AgentManager.readRawConfigRpc()` | `src/main/agent/AgentManager.ts` (+27) | 暴露上面的函数为 RPC;走的是 `path.join(os.homedir(), '.codex', 'config.toml')` 这个 codex 同款路径 |
+| 注册新 IPC channel `agent:mcp-read-raw-config` | `src/main/agent/ipc.ts` (+2) | 加入 `AGENT_HANDLE_CHANNELS` 数组,跟现有 channels 一样在 dev-reload 时被 `removeHandler` 清理 |
+| preload 暴露 `readRawConfig` | `src/preload/index.ts` (+15) | API 形如 `electronAPI.agent.readRawConfig() → Promise<{ ok, config?, raw?, parseError? }>` |
+
+**B. 渲染层:graceful degrade — codex schema 拒绝从 fatal 降级为 banner**
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| `McpStore` 加 `codexConfigError: string \| null` | `src/renderer/src/features/agent-workspace/useMcpStore.ts` (+40 -8) | 跟 fatal `error` 严格区分:**`error` 只有"任何形式的 config 都读不到"才设**(codex RPC 失败 AND raw 读也失败,或 MCP API 整个不可用);**`codexConfigError` 才是 codex 拒绝 schema 这种"配置坏但文件能读到"** |
+| `fetchServers` fallback 逻辑 | 同文件 | codex `readConfig` 失败 → 自动调 `readRawConfig` 回退;成功就用 raw 的 `mcp_servers` map 喂给 `buildServersFromConfig`,卡片照常渲染 |
+| `McpServerList` 删整页屏蔽,改顶部 banner | `src/renderer/src/features/agent-workspace/McpServerList.tsx` (+45 -3) | `error` 分支保留(真 fatal 才落到这里);新增 `codexConfigError` banner:红色横条 + 错误原文(`whitespace-pre-wrap`,不裁断)+ 正则提取出错的 `mcp_servers.X` 名字 + **「修复 X」按钮 deep-link 到 JSON 编辑器**。卡片继续在下方正常显示(数据从 raw TOML 来) |
+| `McpJsonEditor` **优先** `readRawConfig` | `src/renderer/src/features/agent-workspace/McpJsonEditor.tsx` (+25 -7) | 编辑器存在的全部意义就是修复 codex parse 失败的配置 —— 如果它也走 `readConfig` 会触发同样错误把自己锁出来。**改为先尝试 `readRawConfig`,仅当 raw 也失败才退回 `readConfig`**。保存路径走 `batchWriteConfig` 不变(写入照常,codex 看到合法 TOML 就能重新加载) |
+
+**C. 测试覆盖(+159 lines)**
+
+| 测试文件 | 新增 case | 验证 |
+|---------|----------|------|
+| `codexConfigDiscovery.test.ts` | +3 case 在新 `describe('readRawCodexConfig')` 块下 | (1) 接受 codex 会拒绝的 `transport = "bogus-transport-value"` 块,完整 surface 给 caller;(2) 文件缺失 → `{ config: {}, raw: null }`;(3) TOML 损坏 → 保留 raw 字节 + parseError |
+| `useMcpStore.test.ts` | +3 case + 1 老 case 改写 | (1) codex readConfig 失败 + readRawConfig 成功 → `codexConfigError` 设置 / `error` 为 null / 卡片正常渲染;(2) 两条路径都死 → 升级为 fatal `error`;(3) happy path 不调 `readRawConfig`(避免多余 IO);(4) 原"readConfig 失败 → fatal" case 改写成"`readRawConfig` 不可用时才 fatal" |
+
+#### 用户可见行为
+
+1. **从 v4.3.16(或更早)升级到 v4.3.17 后,config.toml 已经被 codex 拒绝的用户**:打开 MCP 页面**看到卡片正常列出**(包括出错的 apiyi),顶部红色 banner 提示"Codex 拒绝加载当前 MCP 配置:<原错误信息>";banner 右侧有「修复 apiyi」按钮 → 点击直接打开 JSON 编辑器加载 apiyi 那一段,用户改完保存 → 点「刷新」让 codex 重新加载 → banner 消失,绿/灰状态点回归
+2. **config.toml 全新 / 健康的用户**:零差异,`readRawConfig` 在 happy path 上根本不会被调到
+3. **TOML 文件本身损坏到无法 parse**(极端情况,比如手编时把括号写漏):banner 显示 codex 原错误 + 提示"(原始 TOML 也解析失败:...)",JSON 编辑器会渲染空对象;用户至少不会被锁死,可以从 `{}` 起步重写一个合法块
+
+#### 验证
+
+- `codexConfigDiscovery.test.ts`:8/8 通过(原 5 + 新增 3)
+- `useMcpStore.test.ts`:21/21 通过
+- `ipc.test.ts` + `ipc.workspace.test.ts`:dev-reload 清理列表已包含新 channel,两条 reload 路径测试通过
+- 我所有触碰的测试文件:**48/48 全过**
+- `AgentManager.sessionConfig.test.ts`(4 个 approvalPolicy 失败)和 `preload/index.ts:995 uploadImageFromUrl` lint error 已用 `git stash` 隔离验证为 **baseline 失败**,与本次修复无关
+
+#### 不修的部分(deliberately scoped out)
+
+- **为什么用户的 config.toml 当初被写入了非法 transport**:成因可能是 v4.3.15 之前的 seed 路径、用户手编、或 codex 版本升级收紧校验 —— 三条都查不到当前用户机器上的真实 history。修这条的成本远高于直接打开"用户能自己改"的路径
+- **codex 校验本身**:不在我们控制范围,不动
+
+参考:
+- 调试方法论:`superpowers:systematic-debugging` skill(Phase 1-4 完整走完,Phase 1 grep 定位错误来源 → Phase 2 找到 UX 死锁的真问题 → Phase 3-4 codex-bypass 路径方案 + 验证)
+
+---
+
+### v4.3.16 (2026-05-23) — 内嵌 apiyi-mcp 模型选择硬约束 + 老用户 env 配置自动 backfill
+
+本版本针对 v4.3.15 已嵌入的 apiyi-mcp(用 Gemini 多模态分析图像/视频/PDF)做两件事:**让 LLM 客户端不再"自作主张"地往工具调用里塞 `gemini-2.5-pro` 这个过气模型**,以及**让老用户升级时自动补齐缺失的 env scaffold 字段(但永不动用户已设的值)**。
+
+**问题背景**:v4.3.15 把 apiyi-mcp 默认模型设成了 `gemini-3.1-pro-preview-thinking`,但有用户反馈:打开 Codex/Claude agent 让它"分析这个视频",日志里看到工具调用参数仍然是 `{"model":"gemini-2.5-pro", ...}` —— **客户端 LLM 把 default 配置覆盖掉了**。原因是 apiyi-mcp 的 tool inputSchema 里 `model` 字段 description 只有空泛一句 `'Gemini model to use'`,没有任何枚举或推荐,LLM(尤其是 OpenAI o-series)就凭训练数据偏好填 `gemini-2.5-pro` —— 那是他们见得最多的"视频理解能用的模型"。
+
+**A. tool inputSchema 加 enum + 强 description(`apiyi-mcp-server` 上游 + vendored dist)**
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| `generate_content.inputSchema.model` 加 enum | `apiyi-mcp-server@c0856f4 src/index.ts` + vendored `resources/apiyi-mcp/dist/index.js` | 三档枚举:`gemini-3.5-flash`(默认,综合性价比最高,适合 99% 任务)/`gemini-3.1-pro-preview-thinking`(深度推理 / `thinking_budget`,贵且慢)/`gemini-3-flash-preview`(最便宜,适合大批量简单任务)。`description` 改写成多行表格式说明,显式标注"NEVER pass legacy 2.x ids (gemini-2.5-pro, gemini-2.5-flash, ...) — they are DEPRECATED" |
+| `generate_content_batch` 同步 | 同上 | 批量工具的 per-request `model` override 走同款 enum + description |
+| `DEFAULT_CONFIG.MODEL` 切换 | `apiyi-mcp-server src/constants.ts` | `gemini-3.1-pro-preview-thinking` → `gemini-3.5-flash`;LLM 不显式传 model 时直接走 3.5-flash |
+| Docker 镜像同步 | `Dockerfile` + `Dockerfile.sse` + `docker-compose.yml` | `ENV GEMINI_MODEL=gemini-3.5-flash`,注释列出三档推荐模型 |
+| 上游文档 | `apiyi-mcp-server CLAUDE.md` | 加"推荐模型"表 + 2.x 弃用说明 |
+| Vendor lock 更新 | `scripts/vendor-apiyi-mcp.lock.json` `a7062b2` → `c0856f4` | 通过 `npm run vendor:apiyi-mcp:update` 重建 `resources/apiyi-mcp/`,确保 fresh clone / CI build 拿到带 enum 的 dist |
+
+**为什么 enum + description 比"加 default + 文档说明"更硬**:JSON Schema enum 是 LLM 工具调用层的 hard constraint,大多数客户端(Cursor、Codex、Claude.app)在生成 args 时会严格遵循。即使 LLM 想填 `gemini-2.5-pro`,schema 校验会拒绝;**fallback 是落到服务端 default = gemini-3.5-flash**,双重保险。
+
+**B. apiyi-mcp env scaffold backfill(`src/main/agent/apiyiMcpSeed.ts`)**
+
+老用户的 `~/.codex/config.toml` 里 `[mcp_servers.apiyi]` 块如果已经存在(v4.3.15 装过),原来的 seed 逻辑是 **'skipped'**(只要存在就完全不动),导致他们的 env 块永远停留在老 scaffold —— **新的默认 `GEMINI_MODEL=gemini-3.5-flash` 永远到不了他们机器**。
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| `SeedAction` 加 `'backfilled'` 第三状态 | `src/main/agent/apiyiMcpSeed.ts` (+90 -21) | 三种结果:`seeded`(新写)/`backfilled`(已有但缺 scaffold key → 补)/`skipped`(已有且完整 → 不动) |
+| `mergeEnvWithScaffold(existingEnv)` 纯函数 | 同文件 | 遍历 `APIYI_MCP_ENV_SCAFFOLD`,**只补 missing key**;用户已设的值原样保留 —— 包括 `GEMINI_MODEL=gemini-2.5-pro` 这种"看起来不对"的值,**用户拥有 source of truth**。enum 约束在 LLM 调用层兜底就够了 |
+| 测试 +12 个 case | `src/main/agent/__tests__/apiyiMcpSeed.test.ts` (+128 -12) | 覆盖 backfill 添加缺失 key / 保留 user 值 / 三状态分支 / 幂等(连跑两次第二次必 'skipped') |
+| `SeedApiyiMcpInput` 改 `nodeBin` → `command` + `extraEnv` | 同文件 | 解耦"用哪个 binary 启动 apiyi-mcp"和 seed 自身的纯函数语义。caller(`resolveApiyiCommand` in `apiyiMcpLauncher.ts`)决定走 system node 还是 Electron-as-node(打包 app 内置 Electron 兼作 node runtime) |
+
+**C. apiyi-mcp launcher 扩展(`src/main/agent/apiyiMcpLauncher.ts` +142 -36)**
+
+| 改动 | 说明 |
+|------|------|
+| `APIYI_MCP_ENV_SCAFFOLD` 默认 `GEMINI_MODEL` | 改成 `gemini-3.5-flash`;`GEMINI_MAX_OUTPUT_TOKENS` `8192` → `65536`,`GEMINI_TIMEOUT` 加 `1800000`(30min)默认值 |
+| 新增 `resolveApiyiCommand()` 导出 | `src/main/index.ts` import 改成 `import { getApiyiMcpEntryPath, resolveApiyiCommand } from './agent/apiyiMcpLauncher'`。统一 dev/prod 启动路径:dev 走 system `node`,packaged 走 `process.execPath` + `ELECTRON_RUN_AS_NODE=1` |
+| `buildApiyiMcpConfigEntry` 签名重构 | 接受 `command` + `extraEnv` 而非 `nodeBin`,跟 seed 保持一致 |
+| JSDoc 详尽化 | 加表格式三档模型推荐;明确"白名单仅 LLM 调用层,env JSON 用户可填任意值";测试同步 (`+4 -4` line 期望更新) |
+
+**D. 远端 FastMCP BYOK 网关同步(`deploy/apiyi-fastmcp/`)**
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| Python 默认模型 | `deploy/apiyi-fastmcp/server.py` | `DEFAULT_MODEL = 'gemini-3.5-flash'` |
+| Docker 配置同步 | `deploy/apiyi-fastmcp/Dockerfile` + `deploy/docker-compose.yml` | `ENV GEMINI_MODEL=gemini-3.5-flash` |
+| 部署文档 | `deploy/README.md` + `deploy/apiyi-fastmcp/.dockerignore` + `pyproject.toml` | 同步;EdgeOne 长请求 + 大文件场景的反代配置说明 |
+
+#### 用户可见行为
+
+1. **Codex / Claude / Cursor agent 用 apiyi-mcp 跑视频/图像/PDF 分析**:工具调用参数里 `model` 字段被 enum 约束在三档 3.x 模型,不再蹦 `gemini-2.5-pro`(LLM 看到 schema 会自己选 `gemini-3.5-flash` 默认档)
+2. **v4.3.15 老用户升级到 v4.3.16**:启动时 `~/.codex/config.toml` 的 `[mcp_servers.apiyi]` env 块自动补齐新的 scaffold key(`GEMINI_MAX_OUTPUT_TOKENS=65536` 等),**已设的 `APIYI_API_KEY` / `GEMINI_MODEL` 等值原封不动**;首次启动会在 console 看到 `seedApiyiMcpEntry → backfilled` 日志,后续启动全部 `skipped`
+3. **MCP JSON 编辑器**(Agent Workspace → MCP Servers → apiyi → 配置)**不强制白名单**:用户在 env 块里填 `GEMINI_MODEL=gemini-2.5-pro`(不推荐但兼容)或任何其它 apiyi 支持的模型 id 都生效。约束只在 LLM 自动选择层,不在 env 配置层
+4. **fresh clone / CI build**:`npm run vendor:apiyi-mcp` 拉到 upstream `c0856f4` 的带 enum 版本,产出的 installer 内置正确的 schema
+
+#### 验证
+
+- 上游 `apiyi-mcp-server@c0856f4` 已 push 到 `https://github.com/2799662352/apiyi-mcp-server/commit/c0856f4`
+- 主项目 `npm run vendor:apiyi-mcp:update` → lock 更新到 `c0856f4126501615a067f9d8b0e7758d0d2d74c0`,`resources/apiyi-mcp/dist/index.js` 重新 build 包含 enum
+- `node --check resources/apiyi-mcp/dist/index.js` → 语法合法
+- `apiyiMcpSeed.test.ts` 全部 backfill / 保留 / 幂等 case 通过
+
+参考:
+- 上游 commit: <https://github.com/2799662352/apiyi-mcp-server/commit/c0856f4>
+- 远端 BYOK 网关部署: `deploy/apiyi-fastmcp/README.md`
 
 ---
 

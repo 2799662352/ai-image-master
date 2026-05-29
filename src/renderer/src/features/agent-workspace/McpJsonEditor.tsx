@@ -4,6 +4,8 @@ import Editor, { loader, type OnMount } from '@monaco-editor/react'
 import * as monaco from 'monaco-editor'
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
 import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker'
+import { registerSingleton } from 'monaco-editor/esm/vs/platform/instantiation/common/extensions'
+import { IProductService } from 'monaco-editor/esm/vs/platform/product/common/productService'
 
 self.MonacoEnvironment = {
   getWorker(_: unknown, label: string) {
@@ -12,10 +14,32 @@ self.MonacoEnvironment = {
   },
 }
 
+// ---------------------------------------------------------------------------
+// Monaco standalone (0.55.1) registers ~24 services but NOT IProductService,
+// so the built-in clipboard paste implementation
+// (monaco-editor/esm/vs/editor/contrib/clipboard/browser/clipboard.js:238)
+// throws `unknown service 'productService'` at every Ctrl+V — Monaco catches
+// it and downgrades to console.warn, but the noise is constant and confusing.
+//
+// We register a minimal stub. The only field the paste path reads is
+// `productService.quality !== 'stable'` to gate a telemetry call (clipboard.js
+// line 257). With `quality = 'stable'`, the branch short-circuits and no
+// downstream method is invoked, so the empty stub is sufficient.
+//
+// Side effect runs once at module-load (before any <Editor> mounts). Vite HMR
+// may re-execute this module; double-registration is harmless because the
+// last entry in Monaco's singleton registry wins.
+// ---------------------------------------------------------------------------
+class MonacoProductServiceStub {
+  quality = 'stable'
+}
+registerSingleton(IProductService, MonacoProductServiceStub, 0)
+
 loader.config({ monaco })
 
 import { mcpConfigSchema } from './mcpSchemaJson'
 import { stripNullDeep } from './mcpConfigSanitizer'
+import { validateMcpServerEntry, formatValidationError } from './mcpEntryValidator'
 import { useMcpStore } from './useMcpStore'
 
 interface McpJsonEditorProps {
@@ -38,19 +62,43 @@ export function McpJsonEditor({ serverName, onClose }: McpJsonEditorProps): Reac
   useEffect(() => {
     async function loadConfig() {
       const api = getApi()
-      if (!api?.readConfig) {
+      if (!api) {
         setLoadError('MCP API 不可用')
         return
       }
       try {
-        const res = await api.readConfig()
-        if (!res.ok) {
-          setLoadError(res.error ?? '读取配置失败')
-          return
+        // Prefer the raw TOML reader: it bypasses codex's strict schema,
+        // so the editor stays usable even when codex refuses the config
+        // (e.g. unknown `transport` value in an existing block). This is
+        // precisely the scenario the editor exists to fix — falling
+        // through to `readConfig` here would re-trigger the same parse
+        // failure and lock the user out.
+        let mcpServers: Record<string, unknown> = {}
+        let usedRaw = false
+        if (api.readRawConfig) {
+          const rawRes = await api.readRawConfig()
+          if (rawRes.ok) {
+            const rawMcp = (rawRes.config as any)?.mcp_servers
+            if (rawMcp && typeof rawMcp === 'object') {
+              mcpServers = rawMcp
+            }
+            usedRaw = true
+          }
         }
-        const mcpServers = (res.config as any)?.mcp_servers ?? {}
+        if (!usedRaw) {
+          if (!api.readConfig) {
+            setLoadError('MCP API 不可用')
+            return
+          }
+          const res = await api.readConfig()
+          if (!res.ok) {
+            setLoadError(res.error ?? '读取配置失败')
+            return
+          }
+          mcpServers = (res.config as any)?.mcp_servers ?? {}
+        }
         if (serverName && serverName !== '__new__') {
-          const serverConfig = mcpServers[serverName]
+          const serverConfig = (mcpServers as any)[serverName]
           setValue(JSON.stringify(serverConfig ? { [serverName]: serverConfig } : { [serverName]: {} }, null, 2))
         } else {
           setValue(JSON.stringify(mcpServers, null, 2))
@@ -75,6 +123,36 @@ export function McpJsonEditor({ serverName, onClose }: McpJsonEditorProps): Reac
         },
       ],
     })
+
+    // ---------------------------------------------------------------------
+    // Ctrl/Cmd+V override.
+    //
+    // Monaco standalone's built-in PasteAction registers Ctrl+V whenever
+    // `isNative` is true (which is the case in Electron renderer). The
+    // `code-editor` paste implementation then calls
+    // `BrowserClipboardService.triggerPaste()` — which returns `undefined`
+    // — and the `if (isWeb)` fallback is skipped because `isWeb` is false
+    // in Electron renderer. The implementation then falls through to
+    // `return true` (clipboard.js:292), telling MultiCommand "handled"
+    // without inserting any text. Result: Ctrl+V silently no-ops.
+    //
+    // We register a per-editor command for Ctrl/Cmd+V that reads the
+    // system clipboard and dispatches Handler.Paste directly on the
+    // editor widget (codeEditorWidget.js:790 path), bypassing the broken
+    // PasteAction chain entirely. This is fully public Monaco API.
+    // ---------------------------------------------------------------------
+    const pasteHandler = async (): Promise<void> => {
+      try {
+        const text = await navigator.clipboard.readText()
+        if (!text) return
+        editor.trigger('keyboard', 'paste', { text })
+      } catch (err) {
+        console.warn('[McpJsonEditor] clipboard.readText failed', err)
+      }
+    }
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV, () => {
+      void pasteHandler()
+    })
   }, [])
 
   const handleSave = useCallback(async () => {
@@ -84,6 +162,20 @@ export function McpJsonEditor({ serverName, onClose }: McpJsonEditorProps): Reac
       const parsed = JSON.parse(value)
       if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
         throw new Error('配置必须是一个 JSON 对象')
+      }
+
+      // ----------------------------------------------------------------
+      // Pre-flight: catch the codex "invalid transport" gate locally so
+      // the user gets a concrete "X 缺少 command/url" message inline
+      // instead of an opaque RPC failure (codex won't tell us WHICH
+      // server tripped the gate when batchWrite rejects). See
+      // mcpEntryValidator.ts for the rationale and codex source ref.
+      // ----------------------------------------------------------------
+      for (const [name, config] of Object.entries(parsed)) {
+        const validationErr = validateMcpServerEntry(name, config)
+        if (validationErr) {
+          throw new Error(formatValidationError(validationErr))
+        }
       }
 
       const api = getApi()
@@ -109,74 +201,143 @@ export function McpJsonEditor({ serverName, onClose }: McpJsonEditorProps): Reac
     }
   }, [value, fetchServers, onClose])
 
-  if (loadError) {
-    return (
-      <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4">
-        <p className="text-sm text-red-300">{loadError}</p>
-        <button type="button" onClick={onClose} className="mt-2 text-xs text-zinc-400 hover:text-zinc-200">
-          关闭
-        </button>
-      </div>
-    )
-  }
+  // ---------------------------------------------------------------------
+  // Modal lifecycle wiring — Esc to close, click-outside to close, body
+  // scroll lock while open. These were missing in the old inline layout
+  // because the editor was embedded directly under the server list (so
+  // there was nothing to "close out of"). Now that the editor is an
+  // overlay, all three behaviors are expected by users.
+  // ---------------------------------------------------------------------
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onClose()
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prevOverflow
+    }
+  }, [onClose])
 
+  const handleBackdropClick = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      // Only close when the click lands on the backdrop itself, NOT when
+      // it bubbles up from the inner editor card. Without this guard,
+      // clicking inside Monaco to position the cursor would dismiss the
+      // editor and discard unsaved edits.
+      if (e.target === e.currentTarget) onClose()
+    },
+    [onClose],
+  )
+
+  // Title used both in the modal header and as accessible label.
+  const title =
+    serverName && serverName !== '__new__'
+      ? `编辑: ${serverName}`
+      : 'MCP 服务器配置 (JSON)'
+
+  // Modal body (load-error variant or full editor) — wrapped in a single
+  // backdrop layer so positioning + Esc/click-outside semantics are shared.
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-zinc-700 bg-zinc-900/80 p-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium text-zinc-200">
-          {serverName && serverName !== '__new__' ? `编辑: ${serverName}` : 'MCP 服务器配置 (JSON)'}
-        </h3>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={saving}
-            className="rounded-md bg-cyan-600/80 px-3 py-1.5 text-xs text-white hover:bg-cyan-600 disabled:opacity-50"
-          >
-            {saving ? '保存中...' : '保存'}
-          </button>
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      onClick={handleBackdropClick}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+    >
+      {loadError ? (
+        <div className="w-full max-w-md rounded-lg border border-red-500/30 bg-zinc-900 p-4 shadow-2xl">
+          <h3 className="text-sm font-medium text-red-300">{title}</h3>
+          <p className="mt-2 text-sm text-red-300">{loadError}</p>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200"
+            className="mt-3 rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800"
           >
-            取消
+            关闭
           </button>
         </div>
-      </div>
+      ) : (
+        <div
+          className="flex h-[85vh] w-full max-w-4xl flex-col gap-3 rounded-lg border border-zinc-700 bg-zinc-900 p-4 shadow-2xl"
+          // Stop click propagation so clicks inside the editor card never
+          // hit the backdrop dismiss handler (Monaco fires lots of inner
+          // mousedown/mouseup that would otherwise close the modal).
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="min-w-0 truncate text-sm font-medium text-zinc-200">
+              {title}
+            </h3>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={saving}
+                className="rounded-md bg-cyan-600/80 px-3 py-1.5 text-xs text-white hover:bg-cyan-600 disabled:opacity-50"
+              >
+                {saving ? '保存中...' : '保存'}
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="关闭编辑器"
+                className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+              >
+                取消
+              </button>
+            </div>
+          </div>
 
-      {/* Error display */}
-      {error && (
-        <p className="rounded bg-red-500/10 px-3 py-1.5 text-xs text-red-300">{error}</p>
+          {/* Error display */}
+          {error && (
+            <p className="rounded bg-red-500/10 px-3 py-1.5 text-xs text-red-300">{error}</p>
+          )}
+
+          {/* Monaco Editor.
+              - Parent uses `h-[85vh]` (NOT `max-h-[85vh]`) so the column has
+                a real height; otherwise `flex-1` resolves against a content-
+                sized container and the editor renders at 0px tall (root
+                cause of v4.3.18 "modal opens blank" report).
+              - `min-h-0` lets `flex-1` shrink below intrinsic content size.
+              - `min-h-[300px]` is defense-in-depth: even if a future change
+                accidentally reverts the parent to a content-driven height,
+                the editor stays visible. */}
+          <div className="min-h-0 flex-1 overflow-hidden rounded border border-zinc-800" style={{ minHeight: 300 }}>
+            <Editor
+              height="100%"
+              language="json"
+              theme="vs-dark"
+              value={value}
+              onChange={(v) => setValue(v ?? '')}
+              onMount={handleEditorMount}
+              options={{
+                minimap: { enabled: false },
+                fontSize: 13,
+                lineNumbers: 'on',
+                scrollBeyondLastLine: false,
+                wordWrap: 'on',
+                tabSize: 2,
+                formatOnPaste: true,
+                automaticLayout: true,
+              }}
+            />
+          </div>
+
+          {/* Hint */}
+          <p className="text-[11px] text-zinc-600">
+            格式: {'{ "server-name": { "command": "...", "args": [...] } }'} 或{' '}
+            {'{ "server-name": { "url": "https://..." } }'} · 按 Esc 关闭
+          </p>
+        </div>
       )}
-
-      {/* Monaco Editor */}
-      <div className="h-[400px] overflow-hidden rounded border border-zinc-800">
-        <Editor
-          height="100%"
-          language="json"
-          theme="vs-dark"
-          value={value}
-          onChange={(v) => setValue(v ?? '')}
-          onMount={handleEditorMount}
-          options={{
-            minimap: { enabled: false },
-            fontSize: 13,
-            lineNumbers: 'on',
-            scrollBeyondLastLine: false,
-            wordWrap: 'on',
-            tabSize: 2,
-            formatOnPaste: true,
-            automaticLayout: true,
-          }}
-        />
-      </div>
-
-      {/* Hint */}
-      <p className="text-[11px] text-zinc-600">
-        格式: {'{ "server-name": { "command": "...", "args": [...] } }'} 或 {'{ "server-name": { "url": "https://..." } }'}
-      </p>
     </div>
   )
 }

@@ -1,0 +1,55 @@
+# 远程 apiyi MCP 网关 —— FastMCP + BYOK,前面挂腾讯 EdgeOne(SSL+CDN+DDoS)。
+#
+# 架构:
+#   Client (https://api.13797248455.xyz)
+#       │
+#       ▼  EdgeOne(SSL 终止 + CDN + WAF)
+#       │
+#       ▼  HTTP:80  Host: api.13797248455.xyz
+#   Lighthouse(本机):80 ──docker──> apiyi-fastmcp:8000
+#
+# 部署(已配好 EdgeOne 的前提下):
+#   1. 防火墙:Lighthouse 实例放行 80/tcp(443 留给 EdgeOne,不需开)。
+#   2. docker compose up -d   (默认拉 Docker Hub 上的镜像,首次 ~30s)
+#   3. 等 15-30 秒,curl http://127.0.0.1/healthz 应返回 ok(本机直连)。
+#   4. curl https://api.13797248455.xyz/healthz 应返回 ok(走 EdgeOne)。
+#
+# 想本地源码改一行就跑?改成:docker compose up -d --build
+#
+# 客户端使用见 deploy/README.md(BYO key 模式)。
+
+services:
+  gateway:
+    # 远端镜像:linux/amd64,Lighthouse 直接拉,不用本机 build
+    image: zuozuoliang999/apiyi-fastmcp:latest
+    # 想自己改 server.py 时,把上面注释掉,放开下面的 build 段
+    # build:
+    #   context: ..
+    #   dockerfile: deploy/apiyi-fastmcp/Dockerfile
+    container_name: apiyi-fastmcp
+    restart: unless-stopped
+    # 直接监听公网 80:由 EdgeOne 回源访问。如果你想用其他端口,改这里 + EdgeOne 回源端口。
+    ports:
+      - "80:8000"
+    environment:
+      APIYI_BASE_URL: https://api.apiyi.com
+      # gemini-3.5-flash 综合性价比最高 / 3.1-pro-preview-thinking 深度推理 / 3-flash-preview 最便宜
+      GEMINI_MODEL: gemini-3.5-flash
+      GEMINI_MAX_OUTPUT_TOKENS: "65536"
+      GEMINI_TEMPERATURE: "0.2"
+      GEMINI_MAX_FILES: "10"
+      GEMINI_MAX_TOTAL_FILE_SIZE: "50"
+      GEMINI_MEDIA_RESOLUTION: MEDIUM
+      FASTMCP_HOST: 0.0.0.0
+      FASTMCP_PORT: "8000"
+      FASTMCP_PATH: /mcp
+      FASTMCP_TRANSPORT: http
+      LOG_LEVEL: INFO
+      # 注意:APIYI_API_KEY 故意不设。客户端通过 Authorization: Bearer <key> 注入,
+      # 实现真正的 BYOK。如果想跑单租户兜底,加 APIYI_API_KEY=sk-xxx 即可被未带 token 的请求复用。
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

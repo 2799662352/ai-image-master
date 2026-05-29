@@ -199,6 +199,7 @@ const IPC_CHANNELS = {
     MCP_RELOAD: 'agent:mcp-reload',
     MCP_OAUTH_LOGIN: 'agent:mcp-oauth-login',
     MCP_READ_CONFIG: 'agent:mcp-read-config',
+    MCP_READ_RAW_CONFIG: 'agent:mcp-read-raw-config',
     MCP_STATUS_SNAPSHOT: 'agent:mcp-status-snapshot',
     DOCKER_GW_CHECK: 'agent:docker-gw-check',
     DOCKER_GW_FIX: 'agent:docker-gw-fix',
@@ -408,6 +409,13 @@ export interface ElectronAPI {
     reloadMcpServers: () => Promise<{ ok: boolean; error?: string }>
     mcpOAuthLogin: (name: string) => Promise<{ ok: boolean; error?: string; authorization_url?: string }>
     readConfig: () => Promise<{ ok: boolean; error?: string; config?: unknown }>
+    readRawConfig: () => Promise<{
+      ok: boolean
+      error?: string
+      config?: Record<string, unknown> | null
+      raw?: string | null
+      parseError?: string
+    }>
     getMcpStatusSnapshot: () => Promise<{
       ok: boolean
       snapshot?: Record<string, { status: string; error: string | null }>
@@ -898,6 +906,15 @@ const electronAPI: ElectronAPI = {
 
     readConfig: () =>
       safeInvoke<{ ok: boolean; error?: string; config?: unknown }>(IPC_CHANNELS.AGENT.MCP_READ_CONFIG),
+
+    readRawConfig: () =>
+      safeInvoke<{
+        ok: boolean
+        error?: string
+        config?: Record<string, unknown> | null
+        raw?: string | null
+        parseError?: string
+      }>(IPC_CHANNELS.AGENT.MCP_READ_RAW_CONFIG),
 
     dockerGatewayCheck: () =>
       safeInvoke<{ installed: boolean; version?: string; error?: string }>(IPC_CHANNELS.AGENT.DOCKER_GW_CHECK),

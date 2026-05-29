@@ -19,6 +19,7 @@ function makeServer(overrides: Partial<McpServerCardData> = {}): McpServerCardDa
     error: null,
     tools: [],
     isBuiltin: false,
+    isAppBundled: false,
     ...overrides,
   }
 }
@@ -149,5 +150,128 @@ describe('McpServerCard', () => {
       />,
     )
     expect(screen.getByText('Search repositories')).toBeTruthy()
+  })
+
+  // Cursor-style UX: edit + delete buttons must be ALWAYS visible (not
+  // hover-revealed) so users do not need to know to hover and never need
+  // to scroll the card off-screen to reach destructive actions.
+  it('renders edit and delete buttons in the header row, always visible (no hover required)', () => {
+    const onEdit = vi.fn()
+    const onDelete = vi.fn()
+    render(
+      <McpServerCard
+        server={makeServer()}
+        onEdit={onEdit}
+        onDelete={onDelete}
+        onToggle={vi.fn()}
+        onLogin={vi.fn()}
+      />,
+    )
+    const editBtn = screen.getByRole('button', { name: /编辑 test-server/ })
+    const deleteBtn = screen.getByRole('button', { name: /删除 test-server/ })
+    expect(editBtn).toBeTruthy()
+    expect(deleteBtn).toBeTruthy()
+    fireEvent.click(editBtn)
+    expect(onEdit).toHaveBeenCalledWith('test-server')
+    fireEvent.click(deleteBtn)
+    expect(onDelete).toHaveBeenCalledWith('test-server')
+  })
+
+  it('hides edit and delete buttons for codex built-in servers', () => {
+    render(
+      <McpServerCard
+        server={makeServer({ isBuiltin: true })}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggle={vi.fn()}
+        onLogin={vi.fn()}
+      />,
+    )
+    expect(screen.queryByRole('button', { name: /编辑/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /删除/ })).toBeNull()
+  })
+
+  // Long Windows-style paths (electron.exe under node_modules + an absolute
+  // path to the script) used to render verbatim and overflow the card,
+  // forcing a horizontal scrollbar on the whole MCP page. The fix: render
+  // a Cursor-style condensed line (`electron index.js`) with the full path
+  // tucked into `title` for hover-to-inspect.
+  it('condenses long electron + absolute-path command lines into runtime + basename', () => {
+    render(
+      <McpServerCard
+        server={makeServer({
+          command:
+            'D:\\tecx\\text\\temp-ai-image-master-source\\node_modules\\.pnpm\\electron@41.6.1\\node_modules\\electron\\dist\\electron.exe',
+          args: [
+            'D:\\tecx\\text\\temp-ai-image-master-source\\resources\\apiyi-mcp\\dist\\index.js',
+          ],
+        })}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggle={vi.fn()}
+        onLogin={vi.fn()}
+      />,
+    )
+    // Short line (visible): only the runtime + script basename
+    const shortLine = screen.getByText('electron index.js')
+    expect(shortLine).toBeTruthy()
+    // Full path stays in `title` so hover still reveals it
+    expect(shortLine.getAttribute('title')).toContain('electron.exe')
+    expect(shortLine.getAttribute('title')).toContain('apiyi-mcp\\dist\\index.js')
+  })
+
+  // Short native commands (docker run -i mcp/test) MUST pass through
+  // unchanged — collapsing `mcp/test` → `test` would lose meaning, and
+  // shortening flags like `-i` is pointless.
+  it('passes short native commands through unchanged (docker run -i mcp/test)', () => {
+    render(
+      <McpServerCard
+        server={makeServer({ command: 'docker', args: ['run', '-i', 'mcp/test'] })}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggle={vi.fn()}
+        onLogin={vi.fn()}
+      />,
+    )
+    expect(screen.getByText('docker run -i mcp/test')).toBeTruthy()
+  })
+
+  it('shows a "预装" badge for app-bundled MCPs', () => {
+    render(
+      <McpServerCard
+        server={makeServer({ name: 'apiyi', isAppBundled: true })}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggle={vi.fn()}
+        onLogin={vi.fn()}
+      />,
+    )
+    expect(screen.getByText('预装')).toBeTruthy()
+  })
+
+  it('apiyi (bundled) gets the api-key hint instead of the Docker MCP Gateway hint', () => {
+    render(
+      <McpServerCard
+        server={makeServer({
+          name: 'apiyi',
+          isAppBundled: true,
+          command: 'node',
+          args: ['/path/to/apiyi-mcp/dist/index.js'],
+          status: 'ready',
+          tools: [],
+        })}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggle={vi.fn()}
+        onLogin={vi.fn()}
+      />,
+    )
+    // Post-refactor: hint must point to the ✏️ JSON editor (not the deleted
+    // "设置 → 视频理解 API Key" path) and explicitly flag the whitespace-key
+    // trap (apiyi-mcp accepts " " as truthy, then Google GenAI rejects it).
+    expect(screen.getByText(/env\.APIYI_API_KEY/)).toBeTruthy()
+    expect(screen.getByText(/不能是空格/)).toBeTruthy()
+    expect(screen.queryByText(/视频理解 API Key/)).toBeNull()
+    expect(screen.queryByText(/Docker Desktop/)).toBeNull()
   })
 })

@@ -35,6 +35,7 @@ const AGENT_HANDLE_CHANNELS = [
   'agent:mcp-reload',
   'agent:mcp-oauth-login',
   'agent:mcp-read-config',
+  'agent:mcp-read-raw-config',
   'agent:mcp-status-snapshot',
   'agent:docker-gw-check',
   'agent:docker-gw-fix',
@@ -161,6 +162,7 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
     (await getManager()).mcpOAuthLoginRpc(name),
   )
   ipcMain.handle('agent:mcp-read-config', async () => (await getManager()).readConfigRpc())
+  ipcMain.handle('agent:mcp-read-raw-config', async () => (await getManager()).readRawConfigRpc())
   ipcMain.handle('agent:mcp-status-snapshot', async () =>
     (await getManager()).getMcpStatusSnapshotRpc(),
   )

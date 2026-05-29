@@ -6,6 +6,18 @@ export interface McpTool {
   disabled?: boolean
 }
 
+/**
+ * MCP server names that ship with the desktop app and live under
+ * `resources/<name>/` (vendored at build time by scripts/vendor-*.mjs).
+ * These are seeded into the user's codex `config.toml` on first boot and
+ * are functionally always present — the user can disable but not uninstall.
+ *
+ * Kept as a Set so add cost is O(1) when more bundled MCPs land in future
+ * releases (currently only apiyi-mcp-server for video / audio / PDF
+ * understanding).
+ */
+export const APP_BUNDLED_MCP_NAMES: ReadonlySet<string> = new Set(['apiyi'])
+
 export interface McpServerCard {
   name: string
   type: 'stdio' | 'http'
@@ -17,7 +29,21 @@ export interface McpServerCard {
   error: string | null
   tools: McpTool[]
   authStatus?: string
+  /**
+   * `true` when codex reports the server live but our config has no entry
+   * for it — i.e. codex's internal built-ins (e.g. docker-mcp-gateway).
+   * Edit/delete UI is hidden for these.
+   */
   isBuiltin: boolean
+  /**
+   * `true` when the server's name is in `APP_BUNDLED_MCP_NAMES` — i.e. the
+   * desktop app vendored it into `resources/` and seeded it into the user's
+   * codex config. Edit/delete is still available (the user can opt out by
+   * disabling or removing), but the UI groups them into a separate
+   * "🎁 预装" section so they're discoverable on the MCP page even when
+   * mixed with 20+ user-added entries.
+   */
+  isAppBundled: boolean
 }
 
 interface LiveStatus {
@@ -28,7 +54,23 @@ interface LiveStatus {
 interface McpStore {
   servers: McpServerCard[]
   loading: boolean
+  /**
+   * Fatal error: we genuinely could not read ANY form of the config (codex
+   * RPC failed AND the raw TOML read also failed). When non-null the list
+   * UI shows the full-page error fallback. NOT used for codex schema
+   * rejections — those go into `codexConfigError` so the user keeps access
+   * to the JSON editor and can fix the broken section.
+   */
   error: string | null
+  /**
+   * Codex's Rust parser refused the on-disk config (e.g. invalid
+   * `transport` in some mcp_servers block). We still rendered cards from
+   * the raw TOML fallback, but tools, auth, and live status will be empty
+   * until the user fixes the config and reloads codex. Surfaced as a
+   * banner above the list (NOT as an error wall) so the user can reach
+   * the JSON editor to fix the offending entry.
+   */
+  codexConfigError: string | null
   loggingIn: string | null
   hasFetchedOnce: boolean
   syncing: boolean
@@ -134,6 +176,7 @@ function buildServersFromConfig(
       tools,
       authStatus,
       isBuiltin,
+      isAppBundled: APP_BUNDLED_MCP_NAMES.has(name),
     }
   })
 }
@@ -186,6 +229,7 @@ export const useMcpStore = create<McpStore>((set, get) => ({
   servers: [],
   loading: false,
   error: null,
+  codexConfigError: null,
   loggingIn: null,
   hasFetchedOnce: false,
   syncing: false,
@@ -249,12 +293,12 @@ export const useMcpStore = create<McpStore>((set, get) => ({
   async fetchServers() {
     const isFirstFetch = !get().hasFetchedOnce
     if (isFirstFetch) {
-      set({ loading: true, error: null, syncError: null })
+      set({ loading: true, error: null, codexConfigError: null, syncError: null })
     }
 
     const api = getApi()
     if (!api?.readConfig) {
-      set({ loading: false, error: 'MCP API 不可用', hasFetchedOnce: true })
+      set({ loading: false, error: 'MCP API 不可用', codexConfigError: null, hasFetchedOnce: true })
       return
     }
 
@@ -264,20 +308,59 @@ export const useMcpStore = create<McpStore>((set, get) => ({
     // #21318). Status comes from `mcp_status_updated` notifications;
     // tools come from a background `syncTools()` call below.
     let configMap: Record<string, any> = {}
+    let codexConfigError: string | null = null
     let fatalError: string | null = null
+
     try {
       const configRes = await withTimeout(api.readConfig(), 10_000, 'readConfig')
       if ((configRes as any)?.ok === false) {
-        fatalError = (configRes as any).error ?? 'readConfig failed'
+        // Codex rejected the on-disk TOML. Most common cause is a stale
+        // `[mcp_servers.X]` block with a transport value that codex no
+        // longer recognises (or an env var with a `null` value the Rust
+        // schema can't deserialize). Falling through to the raw TOML
+        // reader below lets the user still see and EDIT the offending
+        // section instead of getting stuck on an error wall.
+        codexConfigError = (configRes as any).error ?? 'readConfig failed'
       } else {
         configMap = (configRes as any)?.config?.mcp_servers ?? {}
       }
     } catch (err) {
-      fatalError = err instanceof Error ? err.message : String(err)
+      codexConfigError = err instanceof Error ? err.message : String(err)
+    }
+
+    // Fallback: bypass codex's strict parser and read ~/.codex/config.toml
+    // directly. We only do this when codex rejected the config — the happy
+    // path stays untouched.
+    if (codexConfigError && api?.readRawConfig) {
+      try {
+        const rawRes = await withTimeout(api.readRawConfig(), 10_000, 'readRawConfig')
+        if ((rawRes as any)?.ok !== false) {
+          const rawMcp = (rawRes as any)?.config?.mcp_servers
+          if (rawMcp && typeof rawMcp === 'object') {
+            configMap = rawMcp as Record<string, any>
+          }
+          // If the raw read also failed to parse TOML, surface that
+          // parseError too — but don't treat it as fatal; an empty
+          // config map is still useful (user sees the empty list +
+          // banner and can click "+ 新增" to start fresh).
+          if ((rawRes as any)?.parseError && !codexConfigError.includes('TOML')) {
+            codexConfigError = `${codexConfigError}\n(原始 TOML 也解析失败: ${(rawRes as any).parseError})`
+          }
+        } else {
+          // Raw read itself errored — this means even fs.readFile threw.
+          // That's a genuine fatal: we can't recover, escalate.
+          fatalError = codexConfigError
+        }
+      } catch (err) {
+        fatalError = `${codexConfigError}\n(回退读取失败: ${err instanceof Error ? err.message : String(err)})`
+      }
+    } else if (codexConfigError) {
+      // No fallback available — treat as fatal.
+      fatalError = codexConfigError
     }
 
     if (fatalError) {
-      set({ loading: false, error: fatalError, hasFetchedOnce: true })
+      set({ loading: false, error: fatalError, codexConfigError: null, hasFetchedOnce: true })
       return
     }
 
@@ -286,10 +369,14 @@ export const useMcpStore = create<McpStore>((set, get) => ({
       servers,
       loading: false,
       error: null,
+      codexConfigError,
       hasFetchedOnce: true,
     })
 
     // Fire-and-forget tool sync. Updates servers when it eventually returns.
+    // NOTE: When codexConfigError is set, this will also fail (codex has
+    // refused to load the servers), but we still call it so the user gets
+    // a consistent retry path via the "刷新" button.
     void get().syncTools()
   },
 
@@ -307,7 +394,22 @@ export const useMcpStore = create<McpStore>((set, get) => ({
         'listMcpServersRpc',
       )
       if ((res as any)?.ok === false) {
-        set({ syncing: false, syncError: (res as any).error ?? '工具列表同步失败' })
+        // When codex has already rejected the on-disk TOML, `fetchServers`
+        // surfaces a fatal red banner via `codexConfigError` with a "修复"
+        // deep-link. `listMcpServersRpc` necessarily fails for the same
+        // root cause (codex shares one config-reload pipeline between
+        // RPCs), so re-displaying the same error as an amber `syncError`
+        // banner is just noise pointing back to the same broken entry.
+        // Stay silent here; the fix path runs through the red banner.
+        const rawErr = (res as any).error
+        const sameRootCause =
+          !!get().codexConfigError
+          && typeof rawErr === 'string'
+          && (/invalid transport/i.test(rawErr) || /reload config/i.test(rawErr))
+        set({
+          syncing: false,
+          syncError: sameRootCause ? null : (rawErr ?? '工具列表同步失败'),
+        })
         return
       }
       const liveServers = getLiveServersFromListResponse(res)

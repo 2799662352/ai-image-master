@@ -43,6 +43,9 @@ import { registerMediaThumbIpc } from './file-explorer/mediaThumbIpc'
 import { registerFsWatcherIpc, disposeAll as disposeFsWatchers } from './file-explorer/fsWatcher'
 import { startCatimationMcpServer } from './mcp/server'
 import type { McpRuntime } from './mcp/server'
+import { resolveWorkspacePaths } from './agent/codexConfigStore'
+import { getApiyiMcpEntryPath, resolveApiyiCommand } from './agent/apiyiMcpLauncher'
+import { seedApiyiMcpEntry } from './agent/apiyiMcpSeed'
 
 // 检测开发模式：通过命令行参数或环境变量
 const isDev = process.argv.includes('--dev') || process.env.NODE_ENV === 'development'
@@ -789,6 +792,48 @@ app.whenReady().then(async () => {
     void initAgentRuntime(mainWindow).catch((error) => {
       console.error('[AgentRuntime] init failed:', error)
     })
+  }
+
+  // First-boot seed: ensure mcp_servers.apiyi exists (disabled) in the
+  // user's personal codex config. Cheap (~5-50ms), idempotent, best-effort.
+  try {
+    const apiyiPaths = resolveWorkspacePaths({
+      home: app.getPath('home'),
+      cwd: process.cwd(),
+      userData: app.getPath('userData'),
+      resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+    })
+    const apiyiEntry = getApiyiMcpEntryPath({
+      appPath: app.getAppPath(),
+      isPackaged: app.isPackaged,
+      resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+    })
+    // -------------------------------------------------------------------
+    // v4.3.18: previously this site passed `nodeBin: process.execPath`,
+    // but SeedApiyiMcpInput was refactored in v4.3.16 to take
+    // `command` + `extraEnv?` — `nodeBin` is now silently ignored and
+    // `input.command` resolves to `undefined`. @iarna/toml.stringify
+    // skips undefined fields, so freshly-seeded toml entries had NO
+    // `command = "..."` line at all. codex 0.132's deserializer then
+    // sees `command = None && url = None` and aborts the entire config
+    // load with bare `"invalid transport"` (codex-rs/core/src/config/
+    // types.rs:124-155), wedging the MCP page for any user whose first
+    // boot landed on v4.3.16+.
+    //
+    // Fix: pick the right binary via `resolveApiyiCommand` (system
+    // `node` if on PATH, else Electron-as-Node with ELECTRON_RUN_AS_NODE
+    // in extraEnv) and forward both fields with their correct names.
+    // -------------------------------------------------------------------
+    const apiyiCmd = await resolveApiyiCommand(process.execPath)
+    const apiyiAction = await seedApiyiMcpEntry({
+      personalConfigToml: apiyiPaths.personalConfigToml,
+      entryPath: apiyiEntry,
+      command: apiyiCmd.command,
+      extraEnv: apiyiCmd.extraEnv,
+    })
+    console.log(`[apiyi-mcp] boot convergence: ${apiyiAction} (command=${apiyiCmd.command})`)
+  } catch (err) {
+    console.warn('[apiyi-mcp] seed failed:', err)
   }
 
   // 非关键路径：延迟初始化
