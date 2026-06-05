@@ -29,6 +29,9 @@ const AGENT_HANDLE_CHANNELS = [
   'agent:list-codex-threads',
   'agent:read-codex-thread',
   'agent:fork-codex-thread',
+  'agent:archive-codex-thread',
+  'agent:unarchive-codex-thread',
+  'agent:codex-doctor',
   'agent:mcp-list-servers',
   'agent:mcp-batch-write',
   'agent:mcp-write-value',
@@ -141,13 +144,39 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
       return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
     }
   })
-  ipcMain.handle('agent:list-codex-threads', async () => (await getManager()).listCodexThreads())
+  ipcMain.handle('agent:list-codex-threads', async (_event, params?: unknown) =>
+    (await getManager()).listCodexThreads(validateListThreadsParams(params)),
+  )
   ipcMain.handle('agent:read-codex-thread', async (_event, threadId: unknown) =>
     (await getManager()).readCodexThread(validateThreadId(threadId)),
   )
   ipcMain.handle('agent:fork-codex-thread', async (_event, threadId: unknown) =>
     (await getManager()).forkCodexThread(validateThreadId(threadId)),
   )
+  ipcMain.handle('agent:archive-codex-thread', async (_event, threadId: unknown) => {
+    try {
+      await (await getManager()).archiveCodexThread(validateThreadId(threadId))
+      return { ok: true as const }
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+  ipcMain.handle('agent:unarchive-codex-thread', async (_event, threadId: unknown) => {
+    try {
+      const thread = await (await getManager()).unarchiveCodexThread(validateThreadId(threadId))
+      return { ok: true as const, thread }
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+  ipcMain.handle('agent:codex-doctor', async () => {
+    try {
+      const report = await (await getManager()).runDoctor()
+      return { ok: true as const, report }
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
   ipcMain.handle('agent:mcp-list-servers', async (_event, params?: unknown) =>
     (await getManager()).listMcpServersRpc(params),
   )
@@ -291,6 +320,26 @@ function validateThreadId(value: unknown): string {
     throw new Error('Codex thread id must be a non-empty string')
   }
   return value
+}
+
+function validateListThreadsParams(
+  value: unknown,
+): { archived?: boolean; searchTerm?: string } | undefined {
+  if (value === undefined || value === null) return undefined
+  if (typeof value !== 'object') {
+    throw new Error('listCodexThreads params must be an object')
+  }
+  const v = value as Record<string, unknown>
+  const out: { archived?: boolean; searchTerm?: string } = {}
+  if (v.archived !== undefined) {
+    if (typeof v.archived !== 'boolean') throw new Error('listCodexThreads archived must be a boolean')
+    out.archived = v.archived
+  }
+  if (v.searchTerm !== undefined) {
+    if (typeof v.searchTerm !== 'string') throw new Error('listCodexThreads searchTerm must be a string')
+    out.searchTerm = v.searchTerm
+  }
+  return out
 }
 
 const ALLOWED_EXTRA_VALUE_TYPES = new Set(['string', 'boolean', 'number'])

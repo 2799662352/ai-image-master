@@ -8,6 +8,7 @@ import type {
   CodexWorkspacePaths,
 } from '../../types/agent'
 import type { CodexProviderConfig } from './codexLaunch'
+import type { DoctorReport } from './codexDoctor'
 
 export interface AgentInput extends AgentSendMessagePayload {
   model: string
@@ -18,6 +19,16 @@ export interface AgentInput extends AgentSendMessagePayload {
     | { type: 'image'; url: string }
     | { type: 'skill'; name: string; path: string }
   >
+}
+
+/**
+ * Subset of the app-server v2 `ThreadListParams` the desktop UI forwards.
+ * `archived: true` returns only archived threads; `false`/omitted returns only
+ * active ones. `searchTerm` is a substring match on the extracted thread title.
+ */
+export interface ListThreadsParams {
+  archived?: boolean
+  searchTerm?: string
 }
 
 export interface IAgentBackend {
@@ -34,9 +45,13 @@ export interface IAgentBackend {
    */
   setProvider?(provider: CodexProviderConfig | undefined): void
   respondToApprovalResponse?(response: CodexApprovalResponse): Promise<void> | void
-  listThreads?(): Promise<CodexThreadSummary[]>
+  listThreads?(params?: ListThreadsParams): Promise<CodexThreadSummary[]>
   readThread?(threadId: string): Promise<CodexThreadDetail>
   forkThread?(threadId: string): Promise<CodexThreadSummary>
+  archiveThread?(threadId: string): Promise<void>
+  unarchiveThread?(threadId: string): Promise<CodexThreadSummary>
+  /** Run `codex doctor --json` against the bundled binary (install diagnostics). */
+  runDoctor?(): Promise<DoctorReport>
   applyConfigChange?(paths: CodexWorkspacePaths): Promise<void>
   restartCodex?(paths: CodexWorkspacePaths): Promise<void>
 

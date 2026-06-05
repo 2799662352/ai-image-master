@@ -52,7 +52,8 @@ import type {
 import type { AttachmentRef, TimelineItem } from '../../types/agent-timeline'
 import type { AttachmentService } from './AttachmentService'
 import type { ThreadStore } from './ThreadStore'
-import type { AgentInput, IAgentBackend } from './types'
+import type { AgentInput, IAgentBackend, ListThreadsParams } from './types'
+import type { DoctorReport } from './codexDoctor'
 import { ThreadTitleSummarizer } from './ThreadTitleSummarizer'
 import { setFsAllowedRoots } from '../file-explorer/fsIpc'
 
@@ -1025,10 +1026,10 @@ export class AgentManager {
     return this.store.listThreads()
   }
 
-  async listCodexThreads(): Promise<CodexThreadSummary[]> {
+  async listCodexThreads(params?: ListThreadsParams): Promise<CodexThreadSummary[]> {
     if (!this.backend.isHealthy() || !this.backend.listThreads) return []
     try {
-      return await this.backend.listThreads()
+      return await this.backend.listThreads(params)
     } catch (err) {
       console.warn('[AgentManager] failed to list Codex threads:', err)
       return []
@@ -1047,6 +1048,30 @@ export class AgentManager {
     if (!this.backend.isHealthy()) throw new Error('Codex backend is not healthy')
     if (!this.backend.forkThread) throw new Error('Codex thread fork API is unavailable')
     return this.backend.forkThread(id)
+  }
+
+  async archiveCodexThread(threadId: string): Promise<void> {
+    const id = validateCodexThreadId(threadId)
+    if (!this.backend.isHealthy()) throw new Error('Codex backend is not healthy')
+    if (!this.backend.archiveThread) throw new Error('Codex thread archive API is unavailable')
+    return this.backend.archiveThread(id)
+  }
+
+  async unarchiveCodexThread(threadId: string): Promise<CodexThreadSummary> {
+    const id = validateCodexThreadId(threadId)
+    if (!this.backend.isHealthy()) throw new Error('Codex backend is not healthy')
+    if (!this.backend.unarchiveThread) throw new Error('Codex thread unarchive API is unavailable')
+    return this.backend.unarchiveThread(id)
+  }
+
+  /**
+   * Run `codex doctor --json` (install diagnostics). Unlike the thread RPCs this
+   * does NOT gate on `isHealthy()` — doctor's whole point is to explain *why* the
+   * backend may be unhealthy, so it must run even when the app-server is down.
+   */
+  async runDoctor(): Promise<DoctorReport> {
+    if (!this.backend.runDoctor) throw new Error('Codex doctor API is unavailable')
+    return this.backend.runDoctor()
   }
 
   async loadThread(threadId: string) {
