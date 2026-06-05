@@ -47,6 +47,8 @@ import {
   unmountHistoryReact,
   mountBatchReact,
   unmountBatchReact,
+  mountGenerateReact,
+  unmountGenerateReact,
   mountStoryboardSplitReact,
   unmountStoryboardSplitReact,
   mountSmartEraseReact,
@@ -56,9 +58,6 @@ import {
   mountMarketplaceReact,
   unmountMarketplaceReact,
   mountGlobalToast,
-  mountGenerateTokenBridge,
-  mountGenerateTemplateInline,
-  mountGeneratePromptHelper,
   mountComparePromptHelper,
 } from '../react-app/main'
 import { useModelStore, type ModelInfo } from '../stores/useModelStore'
@@ -302,6 +301,8 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
         if (newTab === 'history') mountHistoryReact()
         if (oldTab === 'batch') unmountBatchReact()
         if (newTab === 'batch') mountBatchReact()
+        if (oldTab === 'generate') unmountGenerateReact()
+        if (newTab === 'generate') mountGenerateReact()
         if (oldTab === 'storyboardSplit') unmountStoryboardSplitReact()
         if (newTab === 'storyboardSplit') mountStoryboardSplitReact()
         if (oldTab === 'smartErase') unmountSmartEraseReact()
@@ -319,9 +320,9 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
       } catch { /* 非关键路径，静默降级 */ }
 
       mountGlobalToast()
-      mountGenerateTokenBridge()
-      mountGenerateTemplateInline()
-      mountGeneratePromptHelper()
+      // Generate 已由整页 React (GeneratePage) 接管:模板/风格走页内 <TemplateInline>,
+      // @ 引用走页内 TokenAutocomplete,故不再挂 vanilla 的 token/template/prompt-helper 三个岛。
+      // Compare 仍是 vanilla,保留它的 prompt helper。
       mountComparePromptHelper()
 
       // 预 mount 所有 React 页 (只渲染一次),非活跃的先 display:none
@@ -337,6 +338,9 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
 
       mountBatchReact()
       if (activeTab !== 'batch') unmountBatchReact()
+
+      mountGenerateReact()
+      if (activeTab !== 'generate') unmountGenerateReact()
 
       mountStoryboardSplitReact()
       if (activeTab !== 'storyboardSplit') unmountStoryboardSplitReact()

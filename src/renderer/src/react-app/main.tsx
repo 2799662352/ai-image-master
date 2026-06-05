@@ -5,6 +5,7 @@ import { useDirectorStore } from './stores/useDirectorStore'
 import SettingsPage from '../pages-react/SettingsPage'
 import HistoryPage from '../pages-react/HistoryPage'
 import BatchPage from '../pages-react/BatchPage'
+import GeneratePage from '../pages-react/GeneratePage'
 import StoryboardSplitPage from '../pages-react/StoryboardSplitPage'
 import SmartErasePage from '../pages-react/SmartErasePage'
 import { ToastContainer } from '../components/Toast'
@@ -20,6 +21,7 @@ let root: Root | null = null
 let settingsRoot: Root | null = null
 let historyRoot: Root | null = null
 let batchRoot: Root | null = null
+let generateRoot: Root | null = null
 let storyboardSplitRoot: Root | null = null
 let smartEraseRoot: Root | null = null
 let agentWorkspaceRoot: Root | null = null
@@ -167,6 +169,36 @@ export function mountBatchReact(): void {
 
 export function unmountBatchReact(): void {
   const container = document.getElementById('batch-react-root')
+  if (container) {
+    container.style.display = 'none'
+  }
+}
+
+/**
+ * GeneratePage 整页 React 接管 #generate。与 Batch 同款"渲染一次,之后切
+ * tab 只切 display"策略,避免 unmount→mount 重建整棵 tree。vanilla
+ * pages/GeneratePage.ts 检测到 #generate-react-root 会跳过自身事件绑定。
+ */
+export function mountGenerateReact(): void {
+  const container = document.getElementById('generate-react-root')
+  if (!container) {
+    console.warn('[React] generate-react-root not found')
+    return
+  }
+  if (!generateRoot) {
+    generateRoot = createRoot(container)
+    generateRoot.render(
+      <Suspense fallback={null}>
+        <GeneratePage />
+      </Suspense>
+    )
+    console.log('[React] GeneratePage mounted (first time)')
+  }
+  container.style.display = ''
+}
+
+export function unmountGenerateReact(): void {
+  const container = document.getElementById('generate-react-root')
   if (container) {
     container.style.display = 'none'
   }

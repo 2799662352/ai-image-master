@@ -1,11 +1,14 @@
-import { useEffect, useRef, useMemo, useCallback } from 'react'
+import { useEffect, useRef, useMemo, useCallback, useState } from 'react'
 import { useModelStore, useToastStore, useGenerateStore } from '../stores'
+import { ImageLightbox } from '../components/shared/ImageLightbox'
 import { useApi } from '../hooks/useService'
 import type { GenerateSnapshot } from '../stores/useGenerateStore'
+import type { BatchRefImage } from '../stores/useBatchStore'
 import { useAutosizeTextarea } from '../hooks/useAutosizeTextarea'
-import { ModelSelector } from '../components/ModelSelector'
 import { ImageParamControls } from '../react-app/components/ImageParamControls'
-import { ReferenceImageList } from './generate/ReferenceImageList'
+import { TemplateInline } from '../react-app/components/TemplateInline'
+import BatchRefDrop from './batch/BatchRefDrop'
+import BatchPromptHelperBar from './batch/BatchPromptHelperBar'
 import { ResultGrid } from './generate/ResultGrid'
 import type { MediaRef } from '../components/shared/media-tokens/types'
 import { useTokenAutocomplete, TokenAutocomplete, MentionChips } from '../components/shared/media-tokens'
@@ -35,14 +38,17 @@ export default function GeneratePage() {
     setQuality,
     addReferenceImage,
     removeReferenceImage,
+    clearReferenceImages,
     clearResults,
     generate,
     restoreForEdit,
   } = useGenerateStore.getState()
 
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const currentModel = models[currentModelKey]
+
+  // ---- 预览 lightbox (结果区 + 参考图共用,支持 ←/→ 左右切换) ----
+  const [lightbox, setLightbox] = useState<{ urls: string[]; index: number } | null>(null)
 
   const genMediaRefs = useMemo<MediaRef[]>(
     () => referenceImages.map((url, i) => ({
@@ -50,6 +56,20 @@ export default function GeneratePage() {
       type: 'image' as const,
       url,
       label: `图片${i + 1}`,
+    })),
+    [referenceImages],
+  )
+
+  // 适配器:generate store 的 referenceImages 是 string[](沿用既有
+  // 生成/COS/历史/快照管线,零改动),而共享组件 BatchRefDrop /
+  // BatchPromptHelperBar 期望 BatchRefImage[]。这里用 index 作为稳定 id
+  // 做一层薄映射,复用同一套压缩 + 预览 + [多角度][打光] 逻辑。
+  const refImageObjs = useMemo<BatchRefImage[]>(
+    () => referenceImages.map((url, i) => ({
+      id: String(i),
+      base64: url,
+      fileName: `图片${i + 1}`,
+      fileSize: 0,
     })),
     [referenceImages],
   )
@@ -72,7 +92,7 @@ export default function GeneratePage() {
       return
     }
     if (!currentModelKey) {
-      addToast({ message: '请选择模型', type: 'warning' })
+      addToast({ message: '请先在顶部选择模型', type: 'warning' })
       return
     }
     // Non-blocking: each click fires a concurrent generation. We do NOT clear
@@ -107,30 +127,28 @@ export default function GeneratePage() {
     addToast({ type: 'success', message: '参数已恢复, 修改后再点生成 / RESTORED' })
   }, [restoreForEdit, models, addToast])
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files
-    if (!files) return
-    Array.from(files).forEach((file) => {
-      const reader = new FileReader()
-      reader.onload = () => {
-        if (typeof reader.result === 'string') addReferenceImage(reader.result)
-      }
-      reader.readAsDataURL(file)
-    })
-  }
+  // [多角度][打光] 注入:追加到当前 prompt 末尾(对齐 BatchPage.onInject)
+  const handleInjectPrompt = useCallback((text: string) => {
+    const cur = useGenerateStore.getState()
+    const sep = cur.prompt && !cur.prompt.endsWith('\n') ? '\n\n' : ''
+    cur.setPrompt(cur.prompt + sep + text)
+  }, [])
 
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-orbitron text-cyberpunk-yellow">🎨 AI 图片生成</h1>
-        <ModelSelector />
+        {currentModel && (
+          <span className="text-sm text-zinc-500">
+            当前模型: <span className="text-cyberpunk-yellow">{currentModel.name}</span>
+          </span>
+        )}
       </div>
 
-      {currentModel && (
-        <div className="text-sm text-zinc-500">
-          当前模型: <span className="text-cyberpunk-yellow">{currentModel.name}</span>
-        </div>
-      )}
+      <TemplateInline context="generate" />
+
+      {/* 视觉 prompt 辅助:[多角度][打光](复用 Batch 的共享组件,接 useGenerateStore) */}
+      <BatchPromptHelperBar refImages={refImageObjs} onInject={handleInjectPrompt} />
 
       <div className="relative">
         <textarea
@@ -166,11 +184,13 @@ export default function GeneratePage() {
         onQualityChange={setQuality}
       />
 
-      <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFileUpload} />
-      <ReferenceImageList
-        images={referenceImages}
-        onRemove={removeReferenceImage}
-        onAdd={() => fileInputRef.current?.click()}
+      {/* 参考图:复用 Batch 的拖拽上传 + 自动压缩 + 点击预览 */}
+      <BatchRefDrop
+        images={refImageObjs}
+        onAdd={(img) => addReferenceImage(img.base64)}
+        onRemove={(id) => removeReferenceImage(Number(id))}
+        onClear={clearReferenceImages}
+        onPreview={(url) => setLightbox({ urls: referenceImages, index: Math.max(0, referenceImages.indexOf(url)) })}
       />
 
       <button
@@ -196,7 +216,21 @@ export default function GeneratePage() {
         </div>
       )}
 
-      <ResultGrid urls={resultUrls} meta={resultMeta} onEditFromResult={handleEditFromResult} />
+      <ResultGrid
+        urls={resultUrls}
+        meta={resultMeta}
+        onEditFromResult={handleEditFromResult}
+        onPreview={(index) => setLightbox({ urls: resultUrls, index })}
+      />
+
+      {/* ===== 共享预览 lightbox(←/→ 左右切换,结果区/参考图共用) ===== */}
+      {lightbox && (
+        <ImageLightbox
+          urls={lightbox.urls}
+          startIndex={lightbox.index}
+          onClose={() => setLightbox(null)}
+        />
+      )}
     </div>
   )
 }

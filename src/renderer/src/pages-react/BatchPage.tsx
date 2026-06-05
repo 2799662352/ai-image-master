@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState, useEffect } from 'react'
-import { createPortal } from 'react-dom'
 import { useModelStore, useToastStore, useBatchStore } from '../stores'
+import { ImageLightbox } from '../components/shared/ImageLightbox'
 import type { BatchItem } from '../stores/useBatchStore'
 import { useApi } from '../hooks/useService'
 import BatchShell from './batch/BatchShell'
@@ -76,16 +76,8 @@ export default function BatchPage() {
     return multiText.trim() ? perPromptCount : 0
   }, [mode, cardPrompt, cardCount, multiText, perPromptCount])
 
-  // ---- 预览 modal ----
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  useEffect(() => {
-    if (!previewUrl) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setPreviewUrl(null)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [previewUrl])
+  // ---- 预览 lightbox (结果区 + 参考图共用,支持 ←/→ 左右切换) ----
+  const [lightbox, setLightbox] = useState<{ urls: string[]; index: number } | null>(null)
 
   // ---- 当前 model 的 ratio / resolution 选项 ----
   const [modelConfig, setModelConfig] = useState<ModelConfigSnapshot | null>(null)
@@ -170,9 +162,19 @@ export default function BatchPage() {
     })
   }, [currentModelKey, addToast])
 
-  // (p4) 同上, 预览回调要稳定, 否则 ResultCard.memo 失效。
-  const handlePreview = useCallback((url: string) => {
-    setPreviewUrl(url)
+  // (p4) 预览回调必须引用稳定(空依赖), 否则 ResultCard.memo 全部失效。
+  // 点击时用 getState() 即时取集合, 让 ImageLightbox 能在该集合里左右切换。
+  const handlePreviewResult = useCallback((url: string) => {
+    const its = useBatchStore.getState().items
+    const doneUrls = its
+      .filter((i) => i.status === 'done')
+      .map((i) => i.resultUrl ?? i.cosUrl)
+      .filter((u): u is string => !!u)
+    setLightbox({ urls: doneUrls, index: Math.max(0, doneUrls.indexOf(url)) })
+  }, [])
+  const handlePreviewRef = useCallback((url: string) => {
+    const refs = useBatchStore.getState().refImages.map((r) => r.base64)
+    setLightbox({ urls: refs, index: Math.max(0, refs.indexOf(url)) })
   }, [])
 
   const handleClearAll = () => {
@@ -339,7 +341,7 @@ export default function BatchPage() {
             onAdd={addRefImage}
             onRemove={removeRefImage}
             onClear={clearRefImages}
-            onPreview={handlePreview}
+            onPreview={handlePreviewRef}
           />
         </section>
       </div>
@@ -368,74 +370,17 @@ export default function BatchPage() {
       <BatchResultGrid
         items={items}
         onRemove={removeItem}
-        onPreview={handlePreview}
+        onPreview={handlePreviewResult}
         onEditItem={handleEditItem}
       />
 
-      {/* ===== 预览 modal ===== */}
-      {previewUrl && createPortal(
-        <div
-          onClick={() => setPreviewUrl(null)}
-          className="fixed inset-0 z-[70000] flex items-center justify-center bg-black/92 backdrop-blur p-6"
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="relative max-w-[92vw] max-h-[92vh] border-2 border-zinc-700 bg-zinc-950 shadow-2xl"
-          >
-            <img
-              src={previewUrl}
-              alt="preview"
-              className="block max-w-[92vw] max-h-[92vh] object-contain"
-            />
-            <button
-              type="button"
-              onClick={() => setPreviewUrl(null)}
-              aria-label="关闭预览"
-              className="absolute top-2 right-2 w-9 h-9 flex items-center justify-center bg-zinc-900 border-2 border-zinc-700 text-white hover:bg-red-900/50 hover:border-red-700/60 text-lg font-bold transition-colors"
-            >
-              ×
-            </button>
-            <div className="absolute bottom-2 right-2 flex gap-2">
-              <button
-                type="button"
-                onClick={async (e) => {
-                  e.stopPropagation()
-                  const fname = `preview-${Date.now()}.png`
-                  try {
-                    const res = await fetch(previewUrl, { mode: 'cors' })
-                    if (!res.ok) throw new Error(String(res.status))
-                    const blob = await res.blob()
-                    const obj = URL.createObjectURL(blob)
-                    const a = document.createElement('a')
-                    a.href = obj; a.download = fname
-                    document.body.appendChild(a); a.click(); a.remove()
-                    setTimeout(() => URL.revokeObjectURL(obj), 1000)
-                  } catch {
-                    const a = document.createElement('a')
-                    a.href = previewUrl; a.download = fname
-                    a.target = '_blank'; a.rel = 'noreferrer'
-                    document.body.appendChild(a); a.click(); a.remove()
-                  }
-                }}
-                aria-label="下载图片"
-                className="px-3 py-1.5 bg-cyberpunk-yellow text-cyberpunk-black border-2 border-cyberpunk-yellow font-mono text-xs font-bold uppercase tracking-wider hover:bg-cyberpunk-accent transition-colors"
-              >
-                ↓ 下载
-              </button>
-              {!previewUrl.startsWith('data:') && (
-                <a
-                  href={previewUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="px-3 py-1.5 bg-zinc-900 text-zinc-200 border-2 border-zinc-700 font-mono text-xs font-bold uppercase tracking-wider hover:border-cyberpunk-yellow hover:text-cyberpunk-yellow transition-colors no-underline"
-                >
-                  打开 URL
-                </a>
-              )}
-            </div>
-          </div>
-        </div>,
-        document.body,
+      {/* ===== 共享预览 lightbox(←/→ 左右切换,结果区/参考图共用) ===== */}
+      {lightbox && (
+        <ImageLightbox
+          urls={lightbox.urls}
+          startIndex={lightbox.index}
+          onClose={() => setLightbox(null)}
+        />
       )}
 
       {/* 响应式: 窄屏单栏 */}

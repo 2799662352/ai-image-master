@@ -58,6 +58,12 @@ describe('useGenerateStore', () => {
     expect(useGenerateStore.getState().referenceImages).toEqual(['a', 'c'])
   })
 
+  it('clearReferenceImages empties the array', () => {
+    useGenerateStore.setState({ referenceImages: ['a', 'b', 'c'] })
+    useGenerateStore.getState().clearReferenceImages()
+    expect(useGenerateStore.getState().referenceImages).toEqual([])
+  })
+
   it('clearResults resets resultUrls and error', () => {
     useGenerateStore.setState({ resultUrls: ['http://x.jpg'], error: 'old error' })
     useGenerateStore.getState().clearResults()
