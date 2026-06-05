@@ -1,11 +1,22 @@
-import type { GenerateImageParams } from '../../services/api'
+import type { GenerateImageParams, GenerateResult } from '../../services/api'
 import { ServiceRegistry, SERVICE_KEYS } from '../../services/ServiceBridge'
 import type { HistoryDataService } from '../history'
 import type { ImageViewer } from '../image-viewer'
 import { isTabName, useTabStore } from '../../stores/useTabStore'
+import { useAgentChatStore } from './store'
+import type { AttachmentRef } from '../../../../types/agent-timeline'
 import type { AgentToolRequest, AgentToolResponse } from '../../../../types/agent'
 
 type GenerateImageToolParams = GenerateImageParams
+
+/**
+ * The codex `generate_image` tool always renders on the stable VIP channel,
+ * regardless of the globally selected model. (`gpt-image-2-codex` hit
+ * org-level rate limits; vip is the documented drop-in with the same images
+ * API + size/quality params.)
+ */
+const CODEX_IMAGE_MODEL = 'gpt-image-2-vip'
+const CODEX_DEFAULT_RESOLUTION = '1K'
 
 type AgentElectronApi = {
   agent?: {
@@ -73,10 +84,66 @@ export class AgentToolExecutor {
   }
 
   private async generateImage(params: GenerateImageToolParams): Promise<unknown> {
-    const api = ServiceRegistry.getRequired<{ generateImage: (params: GenerateImageParams) => Promise<unknown> }>(
+    const api = ServiceRegistry.getRequired<{ generateImage: (params: GenerateImageParams) => Promise<GenerateResult> }>(
       SERVICE_KEYS.API,
     )
-    return api.generateImage(params)
+
+    // Force the stable VIP channel; ignore any model the agent passed.
+    const request: GenerateImageParams = {
+      ...params,
+      model: CODEX_IMAGE_MODEL,
+      resolution: params.resolution ?? CODEX_DEFAULT_RESOLUTION,
+    }
+
+    const result = await api.generateImage(request)
+    if (!result.success) {
+      throw new Error(result.error || 'Image generation failed')
+    }
+
+    const images = result.images ?? result.urls ?? []
+    if (images.length === 0) {
+      throw new Error('Image generation returned no images')
+    }
+
+    // Show the images as their own assistant bubble (thumbnail + lightbox).
+    useAgentChatStore.getState().appendArtifactMessage(this.toArtifacts(images))
+
+    // Persist to history under the 'codex' type (base64 → R2 handled inside).
+    await this.recordHistory(request, images)
+
+    // Return a COMPACT result to the agent — never echo multi-MB base64 back
+    // into the model context (token blowup + useless to the agent).
+    return { ok: true, count: images.length, model: CODEX_IMAGE_MODEL }
+  }
+
+  private toArtifacts(images: string[]): AttachmentRef[] {
+    return images.map((uri, i) => ({
+      id: `codex-img-${Date.now()}-${i}`,
+      kind: 'image' as const,
+      name: `codex-image-${i + 1}.png`,
+      mime: 'image/png',
+      size: uri.startsWith('data:') ? uri.length : 0,
+      uri,
+    }))
+  }
+
+  private async recordHistory(request: GenerateImageParams, images: string[]): Promise<void> {
+    try {
+      const history = ServiceRegistry.get<HistoryDataService>(SERVICE_KEYS.HISTORY_DATA)
+      if (!history) return
+      await history.init()
+      await history.addToHistory(
+        'codex',
+        request.prompt,
+        images,
+        request.ratio,
+        CODEX_IMAGE_MODEL,
+        request.referenceImages ? { referenceImages: request.referenceImages } : undefined,
+      )
+    } catch (error) {
+      // History persistence is best-effort; never fail the generation over it.
+      console.error('[AgentToolExecutor] failed to record codex image to history:', error)
+    }
   }
 
   private async queryHistory(params: QueryHistoryToolParams): Promise<unknown> {

@@ -150,7 +150,9 @@ describe('ApiService.gpt-image-2-vip JSON payload (text-to-image)', () => {
     expect((payload as any).response_format).not.toBe('url')
   })
 
-  it('includes size and excludes quality (vip 不支持 quality)', async () => {
+  // 2026-06-05 实测翻转: 探针 quality='high'→200, quality='zzz_invalid'→400 "不合法的quality",
+  // 证明 vip 校验且真实支持 quality。旧断言"vip 不支持 quality"作废。
+  it('includes size AND quality (vip 实测支持 quality)', async () => {
     const { ApiService } = await import('../ApiService')
     const service = new ApiService()
     const build = (service as any).buildGptImage2JsonPayload.bind(service)
@@ -159,7 +161,15 @@ describe('ApiService.gpt-image-2-vip JSON payload (text-to-image)', () => {
       model: 'gpt-image-2-vip',
       prompt: 'a cat',
       size: '1280x720',
+      quality: 'high',
     })
+  })
+
+  it('omits quality when not provided (vip)', async () => {
+    const { ApiService } = await import('../ApiService')
+    const service = new ApiService()
+    const build = (service as any).buildGptImage2JsonPayload.bind(service)
+    const payload = build('gpt-image-2-vip', 'a cat', '1280x720')
     expect((payload as any).quality).toBeUndefined()
   })
 
@@ -226,6 +236,7 @@ describe('ApiService.gpt-image-2-vip FormData (image-edit)', () => {
       undefined,
       900_000,
       '2048x2048',
+      'high',
     )
 
     expect(apiCalls).toHaveLength(1)
@@ -234,5 +245,7 @@ describe('ApiService.gpt-image-2-vip FormData (image-edit)', () => {
     expect(form.get('model')).toBe('gpt-image-2-vip')
     expect(form.get('prompt')).toBe('change background')
     expect(form.get('size')).toBe('2048x2048')
+    // 2026-06-05: vip 编辑请求也要带 quality(实测支持)
+    expect(form.get('quality')).toBe('high')
   })
 })

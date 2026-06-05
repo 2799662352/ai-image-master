@@ -43,7 +43,7 @@ export interface ModelConfig {
   resolutions?: ResolutionOption[]
   defaultResolution?: string
   resolutionMap?: Record<string, Record<string, string>>
-  /** 清晰度档位（仅官转 gpt-image-2 支持 quality；与 resolution/比例 三轴独立） */
+  /** 清晰度档位（官转 gpt-image-2 与 gpt-image-2-vip 均支持 quality；与 resolution/比例 三轴独立） */
   qualities?: QualityOption[]
   defaultQuality?: string
   /**
@@ -67,7 +67,7 @@ export interface ModelCapabilities {
   imageEdit?: boolean
   intelligentResize?: boolean
   resolutionControl?: boolean
-  /** 是否暴露独立的「清晰度 quality」下拉（官转 gpt-image-2 专属） */
+  /** 是否暴露独立的「清晰度 quality」下拉（官转 gpt-image-2 与 gpt-image-2-vip） */
   qualityControl?: boolean
   maxOutputs?: number
   useExtraBody?: boolean
@@ -275,6 +275,15 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       { key: '4K', label: '4K 超清', description: '印刷所需' }
     ],
     defaultResolution: '1K',
+    // 清晰度轴：2026-06-05 实测 vip 校验并支持 quality（quality=high→200，
+    // quality=zzz_invalid→400 "不合法的quality"），与官转同样作为独立第三参数。
+    qualities: [
+      { key: 'auto', label: '自动', description: '由模型决定' },
+      { key: 'low', label: '低', description: '草图最省' },
+      { key: 'medium', label: '中', description: '均衡' },
+      { key: 'high', label: '高', description: '文字/印刷' }
+    ],
+    defaultQuality: 'auto',
     // 严格对齐 apiyi gpt-image-2-vip OpenAPI 30 档 size 枚举
     // 文档: https://docs.apiyi.com/api-capabilities/gpt-image-2-vip/text-to-image
     //       https://docs.apiyi.com/api-capabilities/gpt-image-2-vip/image-edit
@@ -303,7 +312,8 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       referenceImage: true,
       imageEdit: true,
       maxOutputs: 1,
-      resolutionControl: true
+      resolutionControl: true,
+      qualityControl: true
     }
   },
   'gemini-3.1-flash-image-preview': {
@@ -1060,8 +1070,8 @@ export class ApiService {
       const resolvedSize = (isOfficial || isVip)
         ? this.resolveImageSizeFromMap(modelConfig, ratio, resolution)
         : undefined
-      // quality 仅官转支持，且来自独立的 quality 参数（不再借用 resolution）
-      const resolvedQuality = isOfficial ? this.resolveGptImage2Quality(quality) : undefined
+      // quality：官转与 vip 均支持（2026-06-05 实测 vip 校验 quality），来自独立的 quality 参数（不借用 resolution）
+      const resolvedQuality = (isOfficial || isVip) ? this.resolveGptImage2Quality(quality) : undefined
 
       if (hasImages) {
         const editUrl = this.buildRequestUrl(modelConfig, site, 'edit')
@@ -1195,7 +1205,7 @@ export class ApiService {
   /**
    * gpt-image-2 系列：文生图 JSON payload（无参考图）
    * - gpt-image-2 (官转)：支持 size/quality 参数
-   * - gpt-image-2-vip (Codex 官逆)：仅支持 size 参数，不支持 quality
+   * - gpt-image-2-vip (Codex 官逆)：支持 size/quality 参数（2026-06-05 实测 quality 被校验且生效）
    * - gpt-image-2-all (官逆)：均不支持，回 b64_json
    */
   private buildGptImage2JsonPayload(model: string, prompt: string, size?: string, quality?: string): object {
@@ -1204,7 +1214,7 @@ export class ApiService {
     const payload: Record<string, unknown> = { model, prompt }
     if (isOfficial || isVip) {
       if (size && size !== 'auto') payload.size = size
-      if (isOfficial && quality) payload.quality = quality
+      if ((isOfficial || isVip) && quality) payload.quality = quality
       const cfg = this.getModelConfig(model)
       if (cfg?.defaultParams?.output_format) {
         payload.output_format = cfg.defaultParams.output_format
@@ -1265,7 +1275,7 @@ export class ApiService {
   /**
    * gpt-image-2 系列：图片编辑 FormData 请求（有参考图）
    * - gpt-image-2 (官转)：额外支持 size/quality
-   * - gpt-image-2-vip (Codex 官逆)：仅 size
+   * - gpt-image-2-vip (Codex 官逆)：支持 size/quality（2026-06-05 实测 quality 生效）
    * - gpt-image-2-all (官逆)：均不支持，回 b64_json
    * 三档统一超时 20 分钟（1200s），见上游调用点。
    */
@@ -1290,7 +1300,7 @@ export class ApiService {
     // 不给 vip 显式设 response_format —— 走 apiyi 默认的 b64_json。
     // 文档虽支持 url, 但实测返回的 URL 在国内访问不了, 留 b64_json 才能保证图片能展示。
     if (acceptsSize && size && size !== 'auto') formData.append('size', size)
-    if (isOfficial && quality) formData.append('quality', quality)
+    if ((isOfficial || isVip) && quality) formData.append('quality', quality)
 
     let appendedCount = 0
     for (let i = 0; i < imageSources.length; i++) {

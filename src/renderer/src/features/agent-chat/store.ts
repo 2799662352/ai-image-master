@@ -298,6 +298,14 @@ interface AgentChatState {
   newThread: () => void
   switchThread: (threadId: string) => Promise<void>
   applyEvent: (event: AgentStreamEvent) => void
+  /**
+   * Append a standalone assistant message whose sole content is an
+   * `ArtifactItem` (generated images). Used by the codex `generate_image`
+   * tool path so the result shows up as its own bubble (thumbnail +
+   * click-to-fullscreen via ArtifactCard), separate from any in-flight
+   * assistant text. No-op when `artifacts` is empty.
+   */
+  appendArtifactMessage: (artifacts: AttachmentRef[]) => void
 
   // ----- Per-thread chat scroll state -----
   /**
@@ -591,6 +599,14 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     })
   },
   closePreview: () => set((s) => ({ preview: { ...s.preview, open: false } })),
+  appendArtifactMessage: (artifacts) =>
+    set((s) => {
+      if (!artifacts || artifacts.length === 0) return {}
+      const now = Date.now()
+      const item: TimelineItem = { type: 'artifact', id: createId(), startedAt: now, endedAt: now, artifacts }
+      const message: Message = { id: createId(), role: 'assistant', createdAt: now, items: [item] }
+      return { messages: [...s.messages, message] }
+    }),
   nextPreview: () =>
     set((s) => {
       if (s.preview.images.length === 0) return {}
