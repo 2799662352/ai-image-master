@@ -169,6 +169,36 @@ interface ToggleSwitchProps {
   label: string
 }
 
+/**
+ * Small auth posture pill driven by codex 0.137's typed `authStatus`.
+ * `notLoggedIn` is intentionally NOT badged here — that state already gets a
+ * dedicated "登录 →" button row below, so a redundant pill would be noise.
+ * `unsupported` (the common case for stdio servers) renders nothing.
+ */
+function AuthBadge({ authStatus }: { authStatus?: string }): React.JSX.Element | null {
+  if (authStatus === 'oAuth') {
+    return (
+      <span
+        className="shrink-0 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-300"
+        title="已通过 OAuth 登录"
+      >
+        OAuth
+      </span>
+    )
+  }
+  if (authStatus === 'bearerToken') {
+    return (
+      <span
+        className="shrink-0 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-medium text-sky-300"
+        title="使用 Bearer Token 鉴权"
+      >
+        Token
+      </span>
+    )
+  }
+  return null
+}
+
 function ToggleSwitch({ checked, onChange, label }: ToggleSwitchProps): React.JSX.Element {
   return (
     <button
@@ -240,6 +270,15 @@ export function McpServerCard({
         <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] uppercase text-zinc-500">
           {server.type}
         </span>
+        <AuthBadge authStatus={server.authStatus} />
+        {server.serverInfo?.version && (
+          <span
+            className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400"
+            title={server.serverInfo.title ? `${server.serverInfo.title} v${server.serverInfo.version}` : undefined}
+          >
+            v{server.serverInfo.version}
+          </span>
+        )}
 
         {/* Action cluster — always visible, fixed-width so card width is
             stable regardless of name length or status text. */}
@@ -309,6 +348,32 @@ export function McpServerCard({
         >
           {emptyToolsHint}
         </p>
+      )}
+
+      {/* Inventory meta — tools/resources/templates counts surfaced by
+          codex's `detail: 'full'` MCP status. Only shown when non-empty so
+          the card stays compact for plain tool-only servers. */}
+      {((server.resources?.length ?? 0) > 0 || (server.resourceTemplates?.length ?? 0) > 0) && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-zinc-500">
+          {(server.resources?.length ?? 0) > 0 && (
+            <span
+              className="inline-flex items-center gap-1 rounded bg-zinc-800/70 px-1.5 py-0.5"
+              title={server.resources!.map((r) => r.title ?? r.name ?? r.uri).join('\n')}
+            >
+              <span aria-hidden>📄</span>
+              {server.resources!.length} 资源
+            </span>
+          )}
+          {(server.resourceTemplates?.length ?? 0) > 0 && (
+            <span
+              className="inline-flex items-center gap-1 rounded bg-zinc-800/70 px-1.5 py-0.5"
+              title={server.resourceTemplates!.map((t) => t.title ?? t.name ?? t.uriTemplate).join('\n')}
+            >
+              <span aria-hidden>🧩</span>
+              {server.resourceTemplates!.length} 模板
+            </span>
+          )}
+        </div>
       )}
 
       {/* Tool chips */}

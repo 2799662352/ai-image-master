@@ -7,6 +7,42 @@ export interface McpTool {
 }
 
 /**
+ * MCP auth posture as reported by codex 0.137's `mcpServerStatus/list`.
+ * `unsupported` = the server advertises no auth; `notLoggedIn` = OAuth/token
+ * required but absent (we surface a "登录" button); `bearerToken` = a static
+ * token (e.g. Figma's `bearer_token_env_var`) is in use; `oAuth` = an OAuth
+ * session is active. We keep `(string & {})` so an unknown future variant
+ * renders verbatim instead of throwing.
+ */
+export type McpAuthStatus = 'unsupported' | 'notLoggedIn' | 'bearerToken' | 'oAuth' | (string & {})
+
+/** A concrete resource an MCP server can read (codex `Resource`). */
+export interface McpResource {
+  name: string
+  uri: string
+  title?: string
+  description?: string
+  mimeType?: string
+}
+
+/** A parameterised resource template (codex `ResourceTemplate`). */
+export interface McpResourceTemplate {
+  name: string
+  uriTemplate: string
+  title?: string
+  description?: string
+  mimeType?: string
+}
+
+/** Presentation metadata advertised by an initialized server (`McpServerInfo`). */
+export interface McpServerInfo {
+  title?: string
+  version?: string
+  description?: string
+  websiteUrl?: string
+}
+
+/**
  * MCP server names that ship with the desktop app and live under
  * `resources/<name>/` (vendored at build time by scripts/vendor-*.mjs).
  * These are seeded into the user's codex `config.toml` on first boot and
@@ -28,7 +64,16 @@ export interface McpServerCard {
   status: 'starting' | 'ready' | 'failed' | 'cancelled' | 'unknown'
   error: string | null
   tools: McpTool[]
-  authStatus?: string
+  authStatus?: McpAuthStatus
+  /**
+   * MCP resource inventory surfaced by codex 0.137 when we request
+   * `detail: 'full'`. Empty for servers that expose no resources, or until
+   * the background `syncTools()` resolves. `toolsAndAuthOnly` omits these.
+   */
+  resources?: McpResource[]
+  resourceTemplates?: McpResourceTemplate[]
+  /** Server-advertised metadata (title / version / website). */
+  serverInfo?: McpServerInfo | null
   /**
    * `true` when codex reports the server live but our config has no entry
    * for it — i.e. codex's internal built-ins (e.g. docker-mcp-gateway).
@@ -175,10 +220,60 @@ function buildServersFromConfig(
       error,
       tools,
       authStatus,
+      resources: normalizeResources(liveEntry?.resources),
+      resourceTemplates: normalizeResourceTemplates(
+        liveEntry?.resourceTemplates ?? liveEntry?.resource_templates,
+      ),
+      serverInfo: normalizeServerInfo(liveEntry?.serverInfo ?? liveEntry?.server_info),
       isBuiltin,
       isAppBundled: APP_BUNDLED_MCP_NAMES.has(name),
     }
   })
+}
+
+function pickString(...vals: unknown[]): string | undefined {
+  for (const v of vals) {
+    if (typeof v === 'string' && v.length > 0) return v
+  }
+  return undefined
+}
+
+function normalizeResources(raw: any): McpResource[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((r: any) => ({
+      name: String(r?.name ?? r?.title ?? r?.uri ?? ''),
+      uri: String(r?.uri ?? ''),
+      title: pickString(r?.title),
+      description: pickString(r?.description),
+      mimeType: pickString(r?.mimeType, r?.mime_type),
+    }))
+    .filter((r) => r.name.length > 0 || r.uri.length > 0)
+}
+
+function normalizeResourceTemplates(raw: any): McpResourceTemplate[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((r: any) => ({
+      name: String(r?.name ?? r?.title ?? ''),
+      uriTemplate: String(r?.uriTemplate ?? r?.uri_template ?? ''),
+      title: pickString(r?.title),
+      description: pickString(r?.description),
+      mimeType: pickString(r?.mimeType, r?.mime_type),
+    }))
+    .filter((r) => r.name.length > 0 || r.uriTemplate.length > 0)
+}
+
+function normalizeServerInfo(raw: any): McpServerInfo | null {
+  if (!raw || typeof raw !== 'object') return null
+  const info: McpServerInfo = {
+    title: pickString(raw.title),
+    version: pickString(raw.version),
+    description: pickString(raw.description),
+    websiteUrl: pickString(raw.websiteUrl, raw.website_url),
+  }
+  if (!info.title && !info.version && !info.description && !info.websiteUrl) return null
+  return info
 }
 
 function getLiveServersFromListResponse(res: any): any[] {
@@ -388,8 +483,13 @@ export const useMcpStore = create<McpStore>((set, get) => ({
       // 60s budget — Codex's own tools/list timeout is 30s per server. With
       // many servers we want to give the entire batch room, but still bail
       // eventually so `syncing` doesn't stay true forever.
+      // `full` (vs the lighter `toolsAndAuthOnly`) so codex also returns each
+      // server's resource + resourceTemplate inventory and `serverInfo`
+      // (title/version/website). This adds a `resources/list` round-trip per
+      // server, but it's a fire-and-forget background sync with a 60s budget,
+      // so a slow server can't block first paint (which is config-only).
       const res = await withTimeout(
-        api.listMcpServersRpc({ detail: 'toolsAndAuthOnly' }),
+        api.listMcpServersRpc({ detail: 'full' }),
         60_000,
         'listMcpServersRpc',
       )
@@ -423,15 +523,21 @@ export const useMcpStore = create<McpStore>((set, get) => ({
           const tools = normalizeTools(live.tools)
           // If server appears in live results but we never got a status
           // notification, infer 'ready' (codex only includes connected
-          // servers in this list when detail=toolsAndAuthOnly).
+          // servers in this list when detail=full).
           const cached = state.liveStatusByName[s.name]
           const status = cached ? s.status : ('ready' as const)
+          const authStatus = live.auth_status ?? live.authStatus ?? s.authStatus
           return {
             ...s,
             tools,
-            authStatus: live.auth_status ?? live.authStatus ?? s.authStatus,
-            status: (live.auth_status ?? live.authStatus) === 'notLoggedIn' ? 'failed' : status,
-            error: (live.auth_status ?? live.authStatus) === 'notLoggedIn' ? '需要登录' : s.error,
+            authStatus,
+            resources: normalizeResources(live.resources),
+            resourceTemplates: normalizeResourceTemplates(
+              live.resourceTemplates ?? live.resource_templates,
+            ),
+            serverInfo: normalizeServerInfo(live.serverInfo ?? live.server_info) ?? s.serverInfo ?? null,
+            status: authStatus === 'notLoggedIn' ? 'failed' : status,
+            error: authStatus === 'notLoggedIn' ? '需要登录' : s.error,
           }
         }),
       }))

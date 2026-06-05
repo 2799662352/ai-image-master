@@ -249,6 +249,54 @@ describe('McpServerCard', () => {
     expect(screen.getByText('预装')).toBeTruthy()
   })
 
+  it('renders an OAuth auth badge when authStatus is oAuth', () => {
+    render(
+      <McpServerCard
+        server={makeServer({ type: 'http', url: 'https://x', authStatus: 'oAuth' })}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggle={vi.fn()}
+        onLogin={vi.fn()}
+      />,
+    )
+    expect(screen.getByText('OAuth')).toBeTruthy()
+  })
+
+  it('renders a Token auth badge when authStatus is bearerToken', () => {
+    render(
+      <McpServerCard
+        server={makeServer({ type: 'http', url: 'https://x', authStatus: 'bearerToken' })}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggle={vi.fn()}
+        onLogin={vi.fn()}
+      />,
+    )
+    expect(screen.getByText('Token')).toBeTruthy()
+  })
+
+  it('renders resource + template counts and the server version', () => {
+    render(
+      <McpServerCard
+        server={makeServer({
+          resources: [
+            { name: 'a', uri: 'x://a' },
+            { name: 'b', uri: 'x://b' },
+          ],
+          resourceTemplates: [{ name: 't', uriTemplate: 'x://t/{id}' }],
+          serverInfo: { title: 'Figma', version: '1.4.0' },
+        })}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggle={vi.fn()}
+        onLogin={vi.fn()}
+      />,
+    )
+    expect(screen.getByText(/2\s*资源/)).toBeTruthy()
+    expect(screen.getByText(/1\s*模板/)).toBeTruthy()
+    expect(screen.getByText(/v1\.4\.0/)).toBeTruthy()
+  })
+
   it('apiyi (bundled) gets the api-key hint instead of the Docker MCP Gateway hint', () => {
     render(
       <McpServerCard

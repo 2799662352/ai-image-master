@@ -44,6 +44,7 @@ import type {
   CodexSkillsSummary,
   CodexThreadDetail,
   CodexThreadSummary,
+  DoctorReport,
 } from '../types/agent'
 import type {
   MarketplaceAdoptExistingResult,
@@ -193,6 +194,9 @@ const IPC_CHANNELS = {
     LIST_CODEX_THREADS: 'agent:list-codex-threads',
     READ_CODEX_THREAD: 'agent:read-codex-thread',
     FORK_CODEX_THREAD: 'agent:fork-codex-thread',
+    ARCHIVE_CODEX_THREAD: 'agent:archive-codex-thread',
+    UNARCHIVE_CODEX_THREAD: 'agent:unarchive-codex-thread',
+    CODEX_DOCTOR: 'agent:codex-doctor',
     MCP_LIST_SERVERS: 'agent:mcp-list-servers',
     MCP_BATCH_WRITE: 'agent:mcp-batch-write',
     MCP_WRITE_VALUE: 'agent:mcp-write-value',
@@ -400,9 +404,12 @@ export interface ElectronAPI {
     ) => Promise<{ ok: true; path: string } | { ok: false; error: string; path?: string }>
     getWorkspaceLogs: (opts?: { limit?: number; sinceIso?: string }) => Promise<CodexAuditLogEntry[]>
     restartCodex: () => Promise<AgentApiResult>
-    listCodexThreads: () => Promise<CodexThreadSummary[]>
+    listCodexThreads: (params?: { archived?: boolean; searchTerm?: string }) => Promise<CodexThreadSummary[]>
     readCodexThread: (threadId: string) => Promise<CodexThreadDetail>
     forkCodexThread: (threadId: string) => Promise<CodexThreadSummary>
+    archiveCodexThread: (threadId: string) => Promise<AgentApiResult>
+    unarchiveCodexThread: (threadId: string) => Promise<{ ok: boolean; error?: string; thread?: CodexThreadSummary }>
+    codexDoctor: () => Promise<{ ok: boolean; error?: string; report?: DoctorReport }>
     listMcpServersRpc: (params?: unknown) => Promise<{ ok: boolean; error?: string; data?: unknown }>
     batchWriteConfig: (edits: unknown[], reload?: boolean) => Promise<{ ok: boolean; error?: string }>
     writeConfigValue: (keyPath: string, value: unknown) => Promise<{ ok: boolean; error?: string }>
@@ -880,14 +887,28 @@ const electronAPI: ElectronAPI = {
     restartCodex: () =>
       safeInvoke<AgentApiResult>(IPC_CHANNELS.AGENT.RESTART_CODEX),
 
-    listCodexThreads: () =>
-      safeInvoke<CodexThreadSummary[]>(IPC_CHANNELS.AGENT.LIST_CODEX_THREADS),
+    listCodexThreads: (params?: { archived?: boolean; searchTerm?: string }) =>
+      safeInvoke<CodexThreadSummary[]>(IPC_CHANNELS.AGENT.LIST_CODEX_THREADS, params),
 
     readCodexThread: (threadId: string) =>
       safeInvoke<CodexThreadDetail>(IPC_CHANNELS.AGENT.READ_CODEX_THREAD, threadId),
 
     forkCodexThread: (threadId: string) =>
       safeInvoke<CodexThreadSummary>(IPC_CHANNELS.AGENT.FORK_CODEX_THREAD, threadId),
+
+    archiveCodexThread: (threadId: string) =>
+      safeInvoke<AgentApiResult>(IPC_CHANNELS.AGENT.ARCHIVE_CODEX_THREAD, threadId),
+
+    unarchiveCodexThread: (threadId: string) =>
+      safeInvoke<{ ok: boolean; error?: string; thread?: CodexThreadSummary }>(
+        IPC_CHANNELS.AGENT.UNARCHIVE_CODEX_THREAD,
+        threadId,
+      ),
+
+    codexDoctor: () =>
+      safeInvoke<{ ok: boolean; error?: string; report?: DoctorReport }>(
+        IPC_CHANNELS.AGENT.CODEX_DOCTOR,
+      ),
 
     listMcpServersRpc: (params?: unknown) =>
       safeInvoke<{ ok: boolean; error?: string; data?: unknown }>(IPC_CHANNELS.AGENT.MCP_LIST_SERVERS, params),

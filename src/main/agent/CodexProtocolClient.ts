@@ -24,7 +24,7 @@ import type {
   CodexThreadDetail,
   CodexThreadSummary,
 } from '../../types/agent'
-import type { AgentInput } from './types'
+import type { AgentInput, ListThreadsParams } from './types'
 
 /**
  * Mirrors `McpServerStatus` from Codex's generated TS schema at
@@ -252,8 +252,16 @@ export class CodexProtocolClient {
     grace.unref?.()
   }
 
-  async listThreads(): Promise<CodexThreadSummary[]> {
-    const response = await this.rpc<unknown>('thread/list', {})
+  async listThreads(params?: ListThreadsParams): Promise<CodexThreadSummary[]> {
+    // `thread/list` (app-server v2 ThreadListParams) accepts an optional
+    // `archived` filter (true = only archived, false/null = only active) and a
+    // `searchTerm` substring match on the extracted title. We forward only the
+    // keys the caller set so an argless call keeps the legacy empty-params wire
+    // shape (back-compat with older fake servers / call sites).
+    const wire: Record<string, unknown> = {}
+    if (params?.archived !== undefined) wire.archived = params.archived
+    if (params?.searchTerm !== undefined) wire.searchTerm = params.searchTerm
+    const response = await this.rpc<unknown>('thread/list', wire)
     return normalizeThreadList(response)
   }
 
@@ -264,6 +272,25 @@ export class CodexProtocolClient {
 
   async forkThread(threadId: string): Promise<CodexThreadSummary> {
     const response = await this.rpc<unknown>('thread/fork', { threadId })
+    return normalizeThreadSummary(extractThreadRecord(response))
+  }
+
+  /**
+   * Archive a saved session (app-server `thread/archive`, PR introducing
+   * `ThreadArchiveParams`/`ThreadArchiveResponse`). Archived threads are
+   * protected from resume/fork and hidden from the default `thread/list`.
+   * Response is an empty object, so this resolves void.
+   */
+  async archiveThread(threadId: string): Promise<void> {
+    await this.rpc<unknown>('thread/archive', { threadId })
+  }
+
+  /**
+   * Restore a previously archived session (app-server `thread/unarchive`).
+   * `ThreadUnarchiveResponse = { thread }` so we return the normalized summary.
+   */
+  async unarchiveThread(threadId: string): Promise<CodexThreadSummary> {
+    const response = await this.rpc<unknown>('thread/unarchive', { threadId })
     return normalizeThreadSummary(extractThreadRecord(response))
   }
 

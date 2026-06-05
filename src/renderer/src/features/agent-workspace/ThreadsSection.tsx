@@ -3,11 +3,15 @@ import type React from 'react'
 
 import type { CodexThreadDetail, CodexThreadSummary } from '../../../../types/agent'
 
+type AgentApiResult = { ok: boolean; error?: string }
+
 type ThreadsApi = {
   agent?: {
-    listCodexThreads?: () => Promise<CodexThreadSummary[]>
+    listCodexThreads?: (params?: { archived?: boolean; searchTerm?: string }) => Promise<CodexThreadSummary[]>
     readCodexThread?: (threadId: string) => Promise<CodexThreadDetail>
     forkCodexThread?: (threadId: string) => Promise<CodexThreadSummary>
+    archiveCodexThread?: (threadId: string) => Promise<AgentApiResult>
+    unarchiveCodexThread?: (threadId: string) => Promise<AgentApiResult & { thread?: CodexThreadSummary }>
   }
 }
 
@@ -16,10 +20,12 @@ export function ThreadsSection(): React.JSX.Element {
   const [detail, setDetail] = useState<CodexThreadDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
+  const [showArchived, setShowArchived] = useState(false)
+  const [busyId, setBusyId] = useState<string>()
   const mountedRef = useRef(false)
   const loadRequestIdRef = useRef(0)
 
-  const loadThreads = useCallback(async () => {
+  const loadThreads = useCallback(async (archived: boolean) => {
     const requestId = loadRequestIdRef.current + 1
     loadRequestIdRef.current = requestId
     const canUpdate = () => mountedRef.current && requestId === loadRequestIdRef.current
@@ -33,7 +39,7 @@ export function ThreadsSection(): React.JSX.Element {
     }
 
     try {
-      const nextThreads = await api.listCodexThreads()
+      const nextThreads = await api.listCodexThreads({ archived })
       if (canUpdate()) {
         setThreads(nextThreads)
         setError(undefined)
@@ -49,12 +55,54 @@ export function ThreadsSection(): React.JSX.Element {
 
   useEffect(() => {
     mountedRef.current = true
-    void loadThreads()
+    void loadThreads(showArchived)
 
     return () => {
       mountedRef.current = false
     }
-  }, [loadThreads])
+  }, [loadThreads, showArchived])
+
+  async function archiveThread(id: string): Promise<void> {
+    const api = getThreadsApi()
+    if (!api?.archiveCodexThread) {
+      setError('Codex archive API is unavailable.')
+      return
+    }
+    setBusyId(id)
+    try {
+      const res = await api.archiveCodexThread(id)
+      if (res && res.ok === false) {
+        if (mountedRef.current) setError(res.error ?? 'Archive failed.')
+        return
+      }
+      if (mountedRef.current) await loadThreads(showArchived)
+    } catch (reason) {
+      if (mountedRef.current) setError(errorMessage(reason))
+    } finally {
+      if (mountedRef.current) setBusyId(undefined)
+    }
+  }
+
+  async function unarchiveThread(id: string): Promise<void> {
+    const api = getThreadsApi()
+    if (!api?.unarchiveCodexThread) {
+      setError('Codex unarchive API is unavailable.')
+      return
+    }
+    setBusyId(id)
+    try {
+      const res = await api.unarchiveCodexThread(id)
+      if (res && res.ok === false) {
+        if (mountedRef.current) setError(res.error ?? 'Unarchive failed.')
+        return
+      }
+      if (mountedRef.current) await loadThreads(showArchived)
+    } catch (reason) {
+      if (mountedRef.current) setError(errorMessage(reason))
+    } finally {
+      if (mountedRef.current) setBusyId(undefined)
+    }
+  }
 
   async function readThread(id: string): Promise<void> {
     const api = getThreadsApi()
@@ -85,7 +133,7 @@ export function ThreadsSection(): React.JSX.Element {
     try {
       await api.forkCodexThread(id)
       if (mountedRef.current) {
-        void loadThreads()
+        void loadThreads(showArchived)
       }
     } catch (reason) {
       if (mountedRef.current) {
@@ -105,9 +153,27 @@ export function ThreadsSection(): React.JSX.Element {
   return (
     <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,0.8fr)]">
       <div className="space-y-4">
-        <div>
-          <h2 className="text-lg font-semibold text-cyan-100">Threads</h2>
-          <p className="mt-1 text-sm text-zinc-500">Read and fork saved Codex threads.</p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold text-cyan-100">Threads</h2>
+            <p className="mt-1 text-sm text-zinc-500">
+              {showArchived
+                ? 'Restore previously archived Codex sessions.'
+                : 'Read, fork, and archive saved Codex threads.'}
+            </p>
+          </div>
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-400">
+            <input
+              type="checkbox"
+              checked={showArchived}
+              onChange={(event) => {
+                setLoading(true)
+                setShowArchived(event.target.checked)
+              }}
+              className="h-4 w-4 cursor-pointer accent-cyan-500"
+            />
+            Show archived
+          </label>
         </div>
 
         {error ? (
@@ -118,7 +184,7 @@ export function ThreadsSection(): React.JSX.Element {
 
         {threads.length === 0 ? (
           <div className="rounded-xl border border-zinc-800/80 bg-zinc-950/70 p-4 text-sm text-zinc-400">
-            No Codex threads yet.
+            {showArchived ? 'No archived Codex threads.' : 'No Codex threads yet.'}
           </div>
         ) : (
           <div className="space-y-3">
@@ -144,6 +210,25 @@ export function ThreadsSection(): React.JSX.Element {
                     >
                       Fork
                     </button>
+                    {showArchived ? (
+                      <button
+                        type="button"
+                        disabled={busyId === thread.id}
+                        onClick={() => void unarchiveThread(thread.id)}
+                        className="cursor-pointer rounded-md border border-emerald-400/30 px-3 py-1.5 text-sm text-emerald-100 transition-colors duration-200 hover:bg-emerald-500/10 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Unarchive
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={busyId === thread.id}
+                        onClick={() => void archiveThread(thread.id)}
+                        className="cursor-pointer rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-400 transition-colors duration-200 hover:border-amber-400/40 hover:text-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Archive
+                      </button>
+                    )}
                   </div>
                 </div>
               </article>
