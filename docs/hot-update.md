@@ -138,6 +138,35 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
+### v4.3.24 (2026-06-05) — 修复:Codex 聊天里生成的图片重开软件后漂移到对话最上方
+
+**用户报告**:在 Codex 聊天栏生成图片后,关闭客户端再打开,图片气泡**漂移到对话最上方**(本该停在它生成时所在的底部位置)。之前一版尝试用「按 `createdAt` 时间顺序插入」修过一次,但问题依旧。
+
+**根因(systematic-debugging)**
+
+图片气泡是渲染层合成的(锚点存在 `localStorage`),重开时要和服务器返回的真实消息合并。两个时间戳来自**不同时刻**,无法跨源排序:
+
+- 直播时 `beginImageGeneration` 直接把图片气泡 **push 到对话末尾**(这一轮最底部)。
+- 服务器的助手文字消息是在 `turn_completed` 落库的;图片锚点的 `createdAt` 是工具**生成完成**那一刻 —— 永远早于 `turn_completed`。
+- 所以任何「按时间排序」的合并都会把图片排到那段助手文字**之上**;在短对话里就表现为漂到最顶。`v4.3.22` 那次是滚动位置修复,与消息排序无关,帮不上忙。
+
+**修复**
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| 合并策略改为「追加到服务器消息之后」 | `src/renderer/src/features/agent-chat/codexArtifactPersistence.ts` | `mergeCodexArtifacts` 不再按 `createdAt` 插入服务器时间线,而是把重建的图片气泡整体追加到服务器消息**之后**(多张之间才按 `createdAt` 互相排序),还原直播时它所在的底部位置,永不漂顶。纯渲染层改动,不依赖服务器时间戳。 |
+| 每条消息加时间戳 | `src/renderer/src/features/agent-chat/MessageBubble.tsx` | 用户/助手气泡头部显示相对时间(如 `5m ago`)+ 绝对本地时间 tooltip,方便用户按时间查找对话。 |
+| IPC 边界归一化 createdAt | `src/main/agent/ipc.ts` + `store.ts` | `agent:open-thread` 把 `Date`/ISO 字符串统一转 epoch number 再过 contextBridge;渲染层解析失败兜底 `0`(不再误填 `Date.now()`)。 |
+
+**验证(TDD)**
+
+- `codexArtifactPersistence.test.ts` 9/9 通过(含时钟偏移「服务器时间反而更新」、多锚点底部排序两个回归)。
+- agent-chat 相关套件 53/53 通过;时间线无其它按 `createdAt` 重排的代码路径。
+
+行为:Codex 聊天里生成的图片重开软件后**稳定停在生成时的底部位置**,不再漂到最上方。已存对话同样生效(纯客户端合并,无需迁移)。
+
+---
+
 ### v4.3.20 (2026-05-23) — 根因修复: packaged installer 漏打 `resources/apiyi-mcp/node_modules`(用户填了 key 也拿不到工具)
 
 **用户报告**:v4.3.19 把"编辑器空白"问题修了之后,用户在 packaged 安装包里**填了有效 apiyi key、把 toggle 打开,但 MCP 始终返回 0 工具**。同一台机器上跑 dev workspace 一切正常,本地 → packaged 这一步出问题。截图对比:
