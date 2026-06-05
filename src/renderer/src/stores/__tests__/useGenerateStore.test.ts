@@ -85,6 +85,8 @@ describe('useGenerateStore', () => {
       expect(api.generateImage).toHaveBeenCalledWith({
         prompt: 'sunset',
         ratio: '1:1',
+        resolution: '2K',
+        quality: 'auto',
         model: 'flux',
         referenceImages: undefined,
       })
