@@ -31,6 +31,11 @@ interface ResultGridProps {
    * 若不传或 meta[i].snapshot 不存在, 按钮自动隐藏(保持向后兼容)。
    */
   onEditFromResult?: (snapshot: NonNullable<ResultUploadMeta['snapshot']>) => void
+  /**
+   * 点击缩略图放大预览。父组件用同一份 urls + 该图索引打开共享 ImageLightbox,
+   * 支持在结果集里左右切换。不传时缩略图不可点。
+   */
+  onPreview?: (index: number) => void
 }
 
 const UPLOAD_BADGE: Record<ResultUploadMeta['uploadStatus'], { cls: string; label: string; title: string }> = {
@@ -51,8 +56,19 @@ const UPLOAD_BADGE: Record<ResultUploadMeta['uploadStatus'], { cls: string; labe
   },
 }
 
-export function ResultGrid({ urls, meta, onEditFromResult }: ResultGridProps) {
-  if (urls.length === 0) return null
+export function ResultGrid({ urls, meta, onEditFromResult, onPreview }: ResultGridProps) {
+  if (urls.length === 0) {
+    return (
+      <div className="border-2 border-dashed border-zinc-800 bg-zinc-950/40 py-16 px-4 text-center">
+        <div className="font-orbitron text-base uppercase tracking-wider text-zinc-400">
+          生成的图片将在这里显示
+        </div>
+        <div className="mt-1 font-mono text-[11px] text-zinc-500">
+          // 输入提示词,点"开始生成"后结果会在此处展示,点缩略图可放大预览
+        </div>
+      </div>
+    )
+  }
   return (
     <div className="grid grid-cols-2 gap-4">
       {urls.map((url, i) => {
@@ -61,7 +77,22 @@ export function ResultGrid({ urls, meta, onEditFromResult }: ResultGridProps) {
         const snapshot = m?.snapshot
         const canEdit = !!(onEditFromResult && snapshot)
         return (
-          <div key={m?.id ?? `${i}-${url}`} className="group relative bg-zinc-900 border-2 border-zinc-700 overflow-hidden">
+          <div
+            key={m?.id ?? `${i}-${url}`}
+            onClick={() => onPreview?.(i)}
+            role={onPreview ? 'button' : undefined}
+            tabIndex={onPreview ? 0 : undefined}
+            onKeyDown={(e) => {
+              if (onPreview && (e.key === 'Enter' || e.key === ' ')) {
+                e.preventDefault()
+                onPreview(i)
+              }
+            }}
+            title={onPreview ? '点击放大预览' : undefined}
+            className={`group relative bg-zinc-900 border-2 border-zinc-700 overflow-hidden ${
+              onPreview ? 'cursor-zoom-in hover:border-cyberpunk-yellow transition-colors' : ''
+            }`}
+          >
             <ResultCell url={url} alt={`Result ${i + 1}`} />
             {badge && (
               <span
@@ -75,7 +106,10 @@ export function ResultGrid({ urls, meta, onEditFromResult }: ResultGridProps) {
             {canEdit && (
               <button
                 type="button"
-                onClick={() => onEditFromResult!(snapshot!)}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onEditFromResult!(snapshot!)
+                }}
                 title="把这张图的 prompt / 参考图 / 比例回灌到表单"
                 className="absolute top-1 right-1 px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-wider bg-zinc-950/85 text-cyberpunk-yellow border border-cyberpunk-yellow/70 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-cyberpunk-yellow hover:text-cyberpunk-black"
               >

@@ -76,6 +76,7 @@ export interface GenerateState {
   setQuality: (v: string) => void
   addReferenceImage: (dataUrl: string) => void
   removeReferenceImage: (index: number) => void
+  clearReferenceImages: () => void
   clearResults: () => void
   generate: (api: ApiActions, modelKey: string) => Promise<void>
   /**
@@ -135,6 +136,7 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
     set((s) => ({
       referenceImages: s.referenceImages.filter((_, i) => i !== index),
     })),
+  clearReferenceImages: () => set({ referenceImages: [] }),
   clearResults: () => set({ resultUrls: [], resultMeta: [], error: null }),
 
   restoreForEdit: (snapshot) => {
