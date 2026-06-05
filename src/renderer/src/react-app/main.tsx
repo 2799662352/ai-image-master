@@ -47,6 +47,7 @@ export function mountDirectorReact(): void {
       if (saved.currentMode) store.setMode(saved.currentMode)
       if (saved.currentRatio) store.setRatio(saved.currentRatio)
       if (saved.currentResolution) store.setResolution(saved.currentResolution)
+      if (saved.currentQuality) store.setQuality(saved.currentQuality)
       if (saved.sceneDescription !== undefined) store.setSceneDescription(saved.sceneDescription)
       if (saved.multiSceneText !== undefined) store.setMultiSceneText(saved.multiSceneText)
       if (saved.visionModel) store.setVisionModel(saved.visionModel)
@@ -74,6 +75,7 @@ export function unmountDirectorReact(): void {
       currentMode: state.currentMode,
       currentRatio: state.currentRatio,
       currentResolution: state.currentResolution,
+      currentQuality: state.currentQuality,
       sceneDescription: state.sceneDescription,
       multiSceneText: state.multiSceneText,
       visionModel: state.visionModel,

@@ -44,6 +44,10 @@ export interface ResultUploadMeta {
 export interface GenerateState {
   prompt: string
   ratio: string
+  /** 分辨率档位(1K/2K/4K); 仅支持 resolutionControl 的模型有效 */
+  resolution: string
+  /** 清晰度 quality(auto/low/medium/high); 仅 gpt-image-2 等有效 */
+  quality: string
   /**
    * True when at least one in-flight generate call exists.
    * Derived from `inFlightCount > 0`. Kept as a discrete field for cheap
@@ -68,6 +72,8 @@ export interface GenerateState {
 
   setPrompt: (v: string) => void
   setRatio: (v: string) => void
+  setResolution: (v: string) => void
+  setQuality: (v: string) => void
   addReferenceImage: (dataUrl: string) => void
   removeReferenceImage: (index: number) => void
   clearResults: () => void
@@ -90,6 +96,8 @@ export interface GenerateState {
 export const initialState = {
   prompt: '',
   ratio: '1:1',
+  resolution: '2K',
+  quality: 'auto',
   generating: false,
   inFlightCount: 0,
   resultUrls: [] as string[],
@@ -120,6 +128,8 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
 
   setPrompt: (v) => set({ prompt: v }),
   setRatio: (v) => set({ ratio: v }),
+  setResolution: (v) => set({ resolution: v }),
+  setQuality: (v) => set({ quality: v }),
   addReferenceImage: (dataUrl) => set((s) => ({ referenceImages: [...s.referenceImages, dataUrl] })),
   removeReferenceImage: (index) =>
     set((s) => ({
@@ -145,7 +155,7 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
     // Snapshot form values at submit time so the user can keep typing the
     // next prompt while this one is in flight (matches BatchPage live-queue
     // semantics — no blocking guard, results stream back).
-    const { prompt, ratio, referenceImages } = get()
+    const { prompt, ratio, resolution, quality, referenceImages } = get()
     const templateKey = useTemplateStore.getState().getSelection('generate')
     const finalPrompt = composePromptWithTemplate(templateKey, prompt)
     const refsSnapshot = referenceImages.length > 0 ? [...referenceImages] : undefined
@@ -169,6 +179,8 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
       const result = await api.generateImage({
         prompt: finalPrompt,
         ratio,
+        resolution,
+        quality,
         model: modelKey,
         referenceImages: refsSnapshot,
       })

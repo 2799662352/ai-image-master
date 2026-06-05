@@ -93,6 +93,7 @@ interface ConfigSlice {
   currentMode: GenerationMode
   currentRatio: string
   currentResolution: string
+  currentQuality: string
   sceneDescription: string
   multiSceneText: string
   visionModel: string
@@ -121,6 +122,7 @@ interface ConfigSlice {
   setMode: (val: GenerationMode) => void
   setRatio: (val: string) => void
   setResolution: (val: string) => void
+  setQuality: (val: string) => void
   setSceneDescription: (val: string) => void
   setMultiSceneText: (val: string) => void
   setVisionModel: (val: string) => void
@@ -455,7 +457,7 @@ const initialGenerationState: Pick<
 
 const createInitialConfigState = (): Pick<
   ConfigSlice,
-  'currentLayout' | 'currentLayoutOrientation' | 'isLayoutOrientationAuto' | 'currentSemanticOrientation' | 'isSemanticOrientationAuto' | 'currentTemplate' | 'currentMode' | 'currentRatio' | 'currentResolution' | 'sceneDescription' | 'multiSceneText' | 'visionModel' | 'imageModel' | 'imageCount' | 'skipTaskPlanning' | 'skipVerify' | 'skipAnalyzeScene' | 'skipCharacterAnchors' | 'skipStyleAnchor' | 'enableCreativePreplanner' | 'scoreThreshold' | 'maxRetries' | 'visionDetailTaskPlanning' | 'visionDetailAnalyzeScene' | 'visionDetailCharacterAnchors' | 'visionDetailExtractStyleAnchor' | 'visionDetailDesignAssemble' | 'visionDetailVerifyConsistency'
+  'currentLayout' | 'currentLayoutOrientation' | 'isLayoutOrientationAuto' | 'currentSemanticOrientation' | 'isSemanticOrientationAuto' | 'currentTemplate' | 'currentMode' | 'currentRatio' | 'currentResolution' | 'currentQuality' | 'sceneDescription' | 'multiSceneText' | 'visionModel' | 'imageModel' | 'imageCount' | 'skipTaskPlanning' | 'skipVerify' | 'skipAnalyzeScene' | 'skipCharacterAnchors' | 'skipStyleAnchor' | 'enableCreativePreplanner' | 'scoreThreshold' | 'maxRetries' | 'visionDetailTaskPlanning' | 'visionDetailAnalyzeScene' | 'visionDetailCharacterAnchors' | 'visionDetailExtractStyleAnchor' | 'visionDetailDesignAssemble' | 'visionDetailVerifyConsistency'
 > => ({
   currentLayout: '6grid',
   currentLayoutOrientation: readLayoutOrientation() || getOrientationByRatio(readDirectorRatio()),
@@ -466,6 +468,7 @@ const createInitialConfigState = (): Pick<
   currentMode: 'single',
   currentRatio: readDirectorRatio(),
   currentResolution: '2K',
+  currentQuality: 'auto',
   sceneDescription: '',
   multiSceneText: '',
   visionModel: readDirectorVisionModel(),
@@ -648,6 +651,7 @@ const createConfigSlice: StateCreator<DirectorStore, [], [], ConfigSlice> = (set
     }))
   },
   setResolution: (val) => set({ currentResolution: val }),
+  setQuality: (val) => set({ currentQuality: val }),
   setSceneDescription: (val) => set({ sceneDescription: val }),
   setMultiSceneText: (val) => set({ multiSceneText: val }),
   setVisionModel: (val) => {

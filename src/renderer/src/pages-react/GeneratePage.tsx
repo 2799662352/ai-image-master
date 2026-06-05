@@ -4,7 +4,7 @@ import { useApi } from '../hooks/useService'
 import type { GenerateSnapshot } from '../stores/useGenerateStore'
 import { useAutosizeTextarea } from '../hooks/useAutosizeTextarea'
 import { ModelSelector } from '../components/ModelSelector'
-import { RatioSelector } from './generate/RatioSelector'
+import { ImageParamControls } from '../react-app/components/ImageParamControls'
 import { ReferenceImageList } from './generate/ReferenceImageList'
 import { ResultGrid } from './generate/ResultGrid'
 import type { MediaRef } from '../components/shared/media-tokens/types'
@@ -19,6 +19,8 @@ export default function GeneratePage() {
 
   const prompt = useGenerateStore((s) => s.prompt)
   const ratio = useGenerateStore((s) => s.ratio)
+  const resolution = useGenerateStore((s) => s.resolution)
+  const quality = useGenerateStore((s) => s.quality)
   const generating = useGenerateStore((s) => s.generating)
   const inFlightCount = useGenerateStore((s) => s.inFlightCount)
   const resultUrls = useGenerateStore((s) => s.resultUrls)
@@ -26,13 +28,21 @@ export default function GeneratePage() {
   const referenceImages = useGenerateStore((s) => s.referenceImages)
   const error = useGenerateStore((s) => s.error)
 
-  const { setPrompt, setRatio, addReferenceImage, removeReferenceImage, clearResults, generate, restoreForEdit } =
-    useGenerateStore.getState()
+  const {
+    setPrompt,
+    setRatio,
+    setResolution,
+    setQuality,
+    addReferenceImage,
+    removeReferenceImage,
+    clearResults,
+    generate,
+    restoreForEdit,
+  } = useGenerateStore.getState()
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const currentModel = models[currentModelKey]
-  const isSizeInPrompt = currentModel?.sizeStrategy === 'prompt'
 
   const genMediaRefs = useMemo<MediaRef[]>(
     () => referenceImages.map((url, i) => ({
@@ -145,7 +155,16 @@ export default function GeneratePage() {
         <MentionChips value={prompt} mediaRefs={genMediaRefs} theme="default" onValueChange={setPrompt} />
       </div>
 
-      <RatioSelector value={ratio} onChange={setRatio} hidden={isSizeInPrompt} />
+      <ImageParamControls
+        variant="cyberpunk"
+        modelConfig={currentModel}
+        ratio={ratio}
+        onRatioChange={setRatio}
+        resolution={resolution}
+        onResolutionChange={setResolution}
+        quality={quality}
+        onQualityChange={setQuality}
+      />
 
       <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFileUpload} />
       <ReferenceImageList

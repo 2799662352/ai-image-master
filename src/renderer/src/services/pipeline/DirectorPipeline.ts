@@ -81,6 +81,7 @@ const stateSchema = new StateSchema({
   styleInstructions: z.string().default(''),
   ratio: z.string().default('3:2'),
   resolution: z.string().default('2K'),
+  quality: z.string().default('auto'),
   semanticOrientation: z.enum(['landscape', 'portrait']).default('landscape'),
   imageModel: z.string().default(''),
   currentImageCount: z.number().default(1),
@@ -126,6 +127,7 @@ export interface DirectorState {
   styleInstructions: string
   ratio: string
   resolution: string
+  quality: string
   semanticOrientation: 'landscape' | 'portrait'
   imageModel: string
   currentImageCount: number
@@ -1915,6 +1917,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
                 negativePrompt,
                 ratio: state.ratio,
                 resolution: state.resolution,
+                quality: state.quality,
                 referenceImages,
                 signal: config?.signal,
               })
@@ -2391,6 +2394,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
             negativePrompt,
             ratio: state.ratio,
             resolution: state.resolution,
+            quality: state.quality,
             referenceImages,
             signal: options?.signal,
           })

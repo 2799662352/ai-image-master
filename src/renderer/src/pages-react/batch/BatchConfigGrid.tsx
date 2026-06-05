@@ -1,31 +1,16 @@
-export interface RatioOption {
-  key: string
-  label?: string
-  description?: string
-}
-
-export interface ResolutionOption {
-  key: string
-  label?: string
-  description?: string
-}
+import { ImageParamControls } from '../../react-app/components/ImageParamControls'
+import type { ImageParamModelConfig } from '../../services/api/imageParamControls'
 
 interface Props {
+  modelConfig: ImageParamModelConfig | null | undefined
   ratio: string
   resolution: string
+  quality: string
   concurrency: number
-  ratioOptions: RatioOption[]
-  resolutionOptions: ResolutionOption[]
-  supportsResolution: boolean
   onRatioChange: (s: string) => void
   onResolutionChange: (s: string) => void
+  onQualityChange: (s: string) => void
   onConcurrencyChange: (n: number) => void
-  sizeHidden?: boolean
-}
-
-function formatOption(opt: RatioOption | ResolutionOption): string {
-  const label = opt.label || opt.key
-  return opt.description ? `${label} ${opt.description}` : label
 }
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
@@ -36,78 +21,35 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
   )
 }
 
-const SELECT_CLASSES =
-  'w-full px-2.5 py-1.5 bg-zinc-800 border-2 border-zinc-700 text-white text-sm font-mono focus:outline-none focus:border-cyberpunk-yellow appearance-none cursor-pointer'
-
 /**
- * BatchConfigGrid - 尺寸 / 清晰度 / 并发 三栏配置
- * 替代 PunkConfigGrid 的 sticker + 倾斜 + 粉红块。
+ * BatchConfigGrid - 比例 / 分辨率 / 清晰度(共享 ImageParamControls) + 并发。
+ * 比例/分辨率/清晰度三轴全部走全站共享组件,本组件只额外负责「并发」这一批量专属配置。
  */
 export default function BatchConfigGrid({
+  modelConfig,
   ratio,
   resolution,
+  quality,
   concurrency,
-  ratioOptions,
-  resolutionOptions,
-  supportsResolution,
   onRatioChange,
   onResolutionChange,
+  onQualityChange,
   onConcurrencyChange,
-  sizeHidden,
 }: Props) {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-      {sizeHidden ? (
-        <div className="border-2 border-zinc-700 bg-zinc-900/60 p-3 sm:col-span-2">
-          <FieldLabel>// SIZE 尺寸</FieldLabel>
-          <p className="font-mono text-[11px] text-zinc-400">
-            ⚡ 该模型尺寸自适应,如需指定请在提示词中描述(如"横版16:9")
-          </p>
-        </div>
-      ) : (
-        <>
-          {/* RATIO */}
-          <div className="border-2 border-zinc-700 bg-zinc-900/60 p-3">
-            <FieldLabel>// RATIO 比例</FieldLabel>
-            <select
-              value={ratio}
-              onChange={(e) => onRatioChange(e.target.value)}
-              className={SELECT_CLASSES}
-              aria-label="尺寸比例"
-            >
-              {ratioOptions.map((r) => (
-                <option key={r.key} value={r.key}>{formatOption(r)}</option>
-              ))}
-            </select>
-          </div>
+    <div className="space-y-3">
+      <ImageParamControls
+        variant="cyberpunk"
+        modelConfig={modelConfig}
+        ratio={ratio}
+        onRatioChange={onRatioChange}
+        resolution={resolution}
+        onResolutionChange={onResolutionChange}
+        quality={quality}
+        onQualityChange={onQualityChange}
+      />
 
-          {/* RESOLUTION */}
-          <div className="border-2 border-zinc-700 bg-zinc-900/60 p-3">
-            <FieldLabel>// RES 清晰度</FieldLabel>
-            {supportsResolution ? (
-              <select
-                value={resolution}
-                onChange={(e) => onResolutionChange(e.target.value)}
-                className={SELECT_CLASSES}
-                aria-label="清晰度"
-              >
-                {resolutionOptions.map((r) => (
-                  <option key={r.key} value={r.key}>{formatOption(r)}</option>
-                ))}
-              </select>
-            ) : (
-              <div
-                className="px-2.5 py-1.5 bg-zinc-800 border-2 border-zinc-700 text-zinc-500 text-xs font-mono uppercase tracking-wider"
-                aria-label="当前模型不支持清晰度切换"
-              >
-                model default
-              </div>
-            )}
-          </div>
-        </>
-      )}
-
-      {/* CONCURRENCY */}
+      {/* CONCURRENCY 并发 —— 批量页专属 */}
       <div className="border-2 border-zinc-700 bg-zinc-900/60 p-3">
         <FieldLabel>// CONC 并发</FieldLabel>
         <div className="flex gap-1">
