@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-export type WorkspaceSectionKey = 'overview' | 'permissions' | 'mcp' | 'skills' | 'threads' | 'logs'
+export type WorkspaceSectionKey = 'overview' | 'permissions' | 'mcp' | 'skills' | 'threads' | 'logs' | 'doctor'
 
 interface WorkspaceState {
   section: WorkspaceSectionKey

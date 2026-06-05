@@ -8,10 +8,8 @@ import BatchHeader from './batch/BatchHeader'
 import BatchModeSwitcher from './batch/BatchModeSwitcher'
 import BatchPromptCard from './batch/BatchPromptCard'
 import BatchPromptMulti from './batch/BatchPromptMulti'
-import BatchConfigGrid, {
-  type RatioOption,
-  type ResolutionOption,
-} from './batch/BatchConfigGrid'
+import BatchConfigGrid from './batch/BatchConfigGrid'
+import type { ImageParamModelConfig } from '../services/api/imageParamControls'
 import BatchRefDrop from './batch/BatchRefDrop'
 import BatchActionBar from './batch/BatchActionBar'
 import BatchResultGrid from './batch/BatchResultGrid'
@@ -21,31 +19,10 @@ import { BatchBudgetReceipt } from './batch/BatchBudgetReceipt'
 import { extractPriceFromModel } from '../utils/model-price'
 import { TemplateInline } from '../react-app/components/TemplateInline'
 
-const FALLBACK_RATIOS: RatioOption[] = [
-  { key: 'auto', label: '自适应', description: '智能' },
-  { key: '1:1', label: '方形 1:1', description: '常用' },
-  { key: '16:9', label: '横版 16:9', description: '宽屏' },
-  { key: '9:16', label: '竖版 9:16', description: '竖屏' },
-  { key: '4:3', label: '横版 4:3', description: '标准' },
-  { key: '3:4', label: '竖版 3:4', description: '标准' },
-  { key: '3:2', label: '横版 3:2', description: '经典' },
-  { key: '2:3', label: '竖版 2:3', description: '经典' },
-]
-
-const FALLBACK_RESOLUTIONS: ResolutionOption[] = [
-  { key: '1K', label: '1K 标准', description: '高效' },
-  { key: '2K', label: '2K 高清', description: '稍慢' },
-]
-
-interface ModelConfigSnapshot {
+type ModelConfigSnapshot = ImageParamModelConfig & {
   name?: string
   displayName?: string
   price?: number
-  ratios?: RatioOption[]
-  resolutions?: ResolutionOption[]
-  defaultResolution?: string
-  capabilities?: { resolutionControl?: boolean }
-  sizeStrategy?: string
 }
 
 /**
@@ -65,6 +42,7 @@ export default function BatchPage() {
   const multiText = useBatchStore((s) => s.multiText)
   const ratio = useBatchStore((s) => s.ratio)
   const resolution = useBatchStore((s) => s.resolution)
+  const quality = useBatchStore((s) => s.quality)
   const perPromptCount = useBatchStore((s) => s.perPromptCount)
   const concurrency = useBatchStore((s) => s.concurrency)
   const refImages = useBatchStore((s) => s.refImages)
@@ -76,7 +54,7 @@ export default function BatchPage() {
   // ---- actions (引用稳定, getState 一次取出) ----
   const {
     setMode, setCardPrompt, setCardCount, setMultiText,
-    setRatio, setResolution, setPerPromptCount, setConcurrency,
+    setRatio, setResolution, setQuality, setPerPromptCount, setConcurrency,
     addRefImage, removeRefImage, clearRefImages,
     addItem, removeItem, clearAll, runBatch, cancelBatch,
   } = useBatchStore.getState()
@@ -117,27 +95,7 @@ export default function BatchPage() {
     setModelConfig(cfg || null)
   }, [currentModelKey])
 
-  const ratioOptions = useMemo<RatioOption[]>(() => {
-    return Array.isArray(modelConfig?.ratios) && modelConfig!.ratios!.length
-      ? modelConfig!.ratios!
-      : FALLBACK_RATIOS
-  }, [modelConfig])
-
-  const supportsResolution = useMemo(() => {
-    return Boolean(
-      modelConfig?.capabilities?.resolutionControl &&
-      modelConfig?.resolutions?.length,
-    )
-  }, [modelConfig])
-
-  const sizeHidden = useMemo(() => {
-    return modelConfig?.sizeStrategy === 'prompt'
-  }, [modelConfig])
-
-  const resolutionOptions = useMemo<ResolutionOption[]>(() => {
-    if (supportsResolution && modelConfig?.resolutions) return modelConfig.resolutions
-    return FALLBACK_RESOLUTIONS
-  }, [modelConfig, supportsResolution])
+  // 比例/分辨率/清晰度的选项派生与自动归位全部下沉到共享的 ImageParamControls。
 
   // ---- 预算收据派生 ----
   const unitPrice = useMemo(() => extractPriceFromModel(modelConfig), [modelConfig])
@@ -153,21 +111,6 @@ export default function BatchPage() {
     })),
     [refImages],
   )
-
-  // 模型切换后, 如果当前 ratio/resolution 不在选项里, 自动归位
-  useEffect(() => {
-    if (ratioOptions.some((o) => o.key === ratio)) return
-    const fallback = ratioOptions.find((o) => o.key === 'auto') || ratioOptions[0]
-    if (fallback) setRatio(fallback.key)
-  }, [ratio, ratioOptions, setRatio])
-
-  useEffect(() => {
-    if (!supportsResolution) return
-    if (resolutionOptions.some((o) => o.key === resolution)) return
-    const preferKey = modelConfig?.defaultResolution || '1K'
-    const fallback = resolutionOptions.find((o) => o.key === preferKey) || resolutionOptions[0]
-    if (fallback) setResolution(fallback.key)
-  }, [resolution, resolutionOptions, supportsResolution, modelConfig, setResolution])
 
   // ---- handlers ----
   const handleClearResults = () => {
@@ -381,16 +324,15 @@ export default function BatchPage() {
         {/* ===== 右栏:配置 + 参考图 ===== */}
         <section className="space-y-3">
           <BatchConfigGrid
+            modelConfig={modelConfig}
             ratio={ratio}
             resolution={resolution}
+            quality={quality}
             concurrency={concurrency}
-            ratioOptions={ratioOptions}
-            resolutionOptions={resolutionOptions}
-            supportsResolution={supportsResolution}
             onRatioChange={setRatio}
             onResolutionChange={setResolution}
+            onQualityChange={setQuality}
             onConcurrencyChange={setConcurrency}
-            sizeHidden={sizeHidden}
           />
           <BatchRefDrop
             images={refImages}

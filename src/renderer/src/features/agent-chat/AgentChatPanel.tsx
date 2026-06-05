@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useChatScroll } from './useChatScroll'
 import { AttachmentChips } from './AttachmentChips'
 import { CloseIcon, PanelCollapseRightIcon, PanelExpandLeftIcon } from './icons'
 import { Lightbox } from './Lightbox'
@@ -37,7 +38,15 @@ type AgentEventApi = {
 export function AgentChatPanel() {
   const isOpen = useAgentChatStore((state) => state.isOpen)
   const messages = useAgentChatStore((state) => state.messages)
+  const threadId = useAgentChatStore((state) => state.threadId)
   const editingMessageId = useAgentChatStore((state) => state.editingMessageId)
+  const chatScrollRef = useRef<HTMLDivElement | null>(null)
+  const { onScroll: onChatScroll } = useChatScroll({
+    containerRef: chatScrollRef,
+    threadId,
+    messages,
+    isOpen,
+  })
   const error = useAgentChatStore((state) => state.error)
   const applyEvent = useAgentChatStore((state) => state.applyEvent)
   const addApprovalRequest = useAgentChatStore((state) => state.addApprovalRequest)
@@ -58,12 +67,16 @@ export function AgentChatPanel() {
   const [codexStatus, setCodexStatus] = useState<CodexSessionStatus | undefined>(undefined)
   const configDirty = useAgentWorkspaceStore((state) => state.configDirty)
 
+  // The agent:event subscription is bound to the AgentChatPanel mount, NOT to
+  // isOpen — otherwise hiding the panel cancels the IPC listener and every
+  // Codex stream event that arrives while the panel is collapsed is lost,
+  // forcing the user to F5 to recover. Mirrors the onApprovalRequest pattern
+  // below.
   useEffect(() => {
-    if (!isOpen) return undefined
     const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
     if (!agent) return undefined
     return agent.onEvent(applyEvent)
-  }, [applyEvent, isOpen])
+  }, [applyEvent])
 
   useEffect(() => {
     const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
@@ -244,7 +257,11 @@ export function AgentChatPanel() {
           ) : null}
         </header>
 
-        <div className="flex-1 overflow-y-auto px-4 py-4">
+        <div
+          ref={chatScrollRef}
+          onScroll={onChatScroll}
+          className="chat-scroll flex-1 overflow-y-scroll px-4 py-4"
+        >
           <NoticesBanner />
           {pendingApprovals.length > 0 ? (
             <div className="mb-3 space-y-3">

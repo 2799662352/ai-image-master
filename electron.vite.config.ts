@@ -68,6 +68,16 @@ export default defineConfig({
           // where electron-builder unpacks it from asar.
           '@parcel/watcher',
           /^@parcel\/watcher-/,
+          // sharp is a native libvips addon used by the main-process media:thumb
+          // hot path (src/main/file-explorer/mediaThumbIpc.ts). Its platform
+          // binary lives in @img/sharp-<platform>-<arch>/lib/*.node and is loaded
+          // via a runtime require() that rolldown cannot bundle. Keep sharp +
+          // every @img/sharp-* subpackage external so resolution lands in
+          // node_modules at runtime, where electron-builder unpacks the .node
+          // from asar (asarUnpack rule). Bundling it caused the v4.3.20 startup
+          // crash: "Could not load the sharp module using the win32-x64 runtime".
+          'sharp',
+          /^@img\/sharp-/,
           ...builtinModules.flatMap(m => [m, `node:${m}`])
         ]
       }

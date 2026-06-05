@@ -1,6 +1,7 @@
 import React from 'react'
 
 import { AgentWorkspaceNav } from '../features/agent-workspace/AgentWorkspaceNav'
+import { DoctorSection } from '../features/agent-workspace/DoctorSection'
 import { LogsSection } from '../features/agent-workspace/LogsSection'
 import { McpSection } from '../features/agent-workspace/McpSection'
 import { OverviewSection } from '../features/agent-workspace/OverviewSection'
@@ -40,6 +41,11 @@ export default function AgentWorkspacePage(): React.JSX.Element {
         {section === 'threads' && (
           <div data-testid="section-threads">
             <ThreadsSection />
+          </div>
+        )}
+        {section === 'doctor' && (
+          <div data-testid="section-doctor">
+            <DoctorSection />
           </div>
         )}
         {section === 'logs' && (

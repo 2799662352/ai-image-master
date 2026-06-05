@@ -70,6 +70,7 @@ export interface BatchRefImage {
 export interface BatchRunOpts {
   ratio?: string
   resolution?: string
+  quality?: string
   referenceImages?: string[]      // base64 数组(去掉 dataURL prefix 的纯 base64)
   perPromptCount?: number          // 每条 prompt 跑几次(扩张到 items)
   concurrency?: number             // 并发数, 默认 3
@@ -105,6 +106,7 @@ export interface BatchState {
   multiText: string          // 多提示词模式 textarea 缓冲
   ratio: string              // auto / 1:1 / 2:3 / 3:2
   resolution: string         // 0.5K / 1K / 2K / 4K
+  quality: string            // auto / low / medium / high (仅 gpt-image-2)
   perPromptCount: number     // 多提示词模式下每条出几张 (1-2)
   concurrency: number        // 1-6
   refImages: BatchRefImage[]
@@ -138,6 +140,7 @@ export interface BatchState {
   setMultiText: (s: string) => void
   setRatio: (r: string) => void
   setResolution: (r: string) => void
+  setQuality: (q: string) => void
   setPerPromptCount: (n: number) => void
   setConcurrency: (n: number) => void
   addRefImage: (img: BatchRefImage) => void
@@ -156,6 +159,7 @@ export const initialState = {
   multiText: '',
   ratio: 'auto',
   resolution: '2K',
+  quality: 'auto',
   perPromptCount: 1,
   concurrency: 3,
   refImages: [] as BatchRefImage[],
@@ -293,6 +297,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
 
     const ratio = opts?.ratio ?? get().ratio
     const resolution = opts?.resolution ?? get().resolution
+    const quality = opts?.quality ?? get().quality
     const refRaw = opts?.referenceImages ?? get().refImages.map((r) => r.base64)
     const referenceImages = refRaw.map(stripDataUrl).filter(Boolean)
     const concurrency = Math.max(1, Math.min(HARD_MAX_WORKERS, opts?.concurrency ?? get().concurrency))
@@ -391,6 +396,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
               model: modelKey,
               ratio: itemRatio !== 'auto' ? itemRatio : undefined,
               resolution,
+              quality,
               referenceImages: itemRefs.length > 0 ? itemRefs : undefined,
               signal: ac.signal,
             })
@@ -579,6 +585,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
   setMultiText: (s) => set({ multiText: s }),
   setRatio: (r) => set({ ratio: r }),
   setResolution: (r) => set({ resolution: r }),
+  setQuality: (q) => set({ quality: q }),
   setPerPromptCount: (n) => set({ perPromptCount: Math.max(1, Math.min(2, n)) }),
   setConcurrency: (n) => set({ concurrency: Math.max(1, Math.min(6, n)) }),
   addRefImage: (img) =>

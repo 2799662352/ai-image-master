@@ -20,6 +20,12 @@ export interface ResolutionOption {
   description?: string
 }
 
+export interface QualityOption {
+  key: string
+  label: string
+  description?: string
+}
+
 export interface ModelConfig {
   name: string
   displayName: string
@@ -37,6 +43,9 @@ export interface ModelConfig {
   resolutions?: ResolutionOption[]
   defaultResolution?: string
   resolutionMap?: Record<string, Record<string, string>>
+  /** 清晰度档位（仅官转 gpt-image-2 支持 quality；与 resolution/比例 三轴独立） */
+  qualities?: QualityOption[]
+  defaultQuality?: string
   /**
    * 单张出图实际价格(USD)。优先级高于从 displayName 文本里抠取的旧值。
    * 不填时收据组件会回退到 displayName 中 `$X.XX/张` 的兜底解析。
@@ -58,6 +67,8 @@ export interface ModelCapabilities {
   imageEdit?: boolean
   intelligentResize?: boolean
   resolutionControl?: boolean
+  /** 是否暴露独立的「清晰度 quality」下拉（官转 gpt-image-2 专属） */
+  qualityControl?: boolean
   maxOutputs?: number
   useExtraBody?: boolean
 }
@@ -67,6 +78,8 @@ export interface GenerateImageParams {
   model?: string
   ratio?: string
   resolution?: string
+  /** 清晰度档位（官转 gpt-image-2 专属，auto/low/medium/high）；其它模型忽略 */
+  quality?: string
   referenceImages?: string[]
   imageBase64?: string  // 编辑模式的图片
   negativePrompt?: string
@@ -147,31 +160,59 @@ const BUILT_IN_SITES: Record<string, ApiSite> = {
 const DEFAULT_MODELS: Record<string, ModelConfig> = {
   'gpt-image-2': {
     name: 'GPT Image 2',
-    displayName: '60-360s，OpenAI官方旗舰，按token计费 low$0.006/med$0.053/high$0.211，精确size/quality控制，4K+mask重绘🔥',
+    displayName: '60-360s，OpenAI官方旗舰，按token计费 low$0.006/med$0.053/high$0.211，比例×分辨率(1K/2K/4K)×清晰度三参数，4K+mask重绘🔥',
     price: 0.006,
     time: '60-360s',
     isNew: true,
     baseURL: 'https://b.apiyi.com/v1/images/generations',
     editURL: 'https://b.apiyi.com/v1/images/edits',
     apiType: 'openai',
-    sizeStrategy: 'size-param',
+    sizeStrategy: 'gpt-image-2',
+    // 比例轴：与 gpt-image-2-vip 对齐（auto + 10 比例），ratio × resolution → size
     ratios: [
-      { key: 'auto', label: '自适应 auto', description: '智能' },
-      { key: '1024x1024', label: '方形 1:1', description: '1024×1024' },
-      { key: '1536x1024', label: '横版 3:2', description: '1536×1024' },
-      { key: '1024x1536', label: '竖版 2:3', description: '1024×1536' },
-      { key: '2048x2048', label: '2K 方形 1:1', description: '2048×2048' },
-      { key: '2048x1152', label: '2K 横版 16:9', description: '2048×1152' },
-      { key: '3840x2160', label: '4K 横版 16:9', description: '3840×2160' },
-      { key: '2160x3840', label: '4K 竖版 9:16', description: '2160×3840' }
+      { key: 'auto', label: '自适应', description: '智能' },
+      { key: '1:1', label: '方形 1:1', description: '常用' },
+      { key: '16:9', label: '横版 16:9', description: '宽屏' },
+      { key: '9:16', label: '竖版 9:16', description: '竖屏' },
+      { key: '4:3', label: '横版 4:3', description: '标准' },
+      { key: '3:4', label: '竖版 3:4', description: '标准' },
+      { key: '3:2', label: '横版 3:2', description: '经典' },
+      { key: '2:3', label: '竖版 2:3', description: '经典' },
+      { key: '21:9', label: '影院 21:9', description: '超宽屏' },
+      { key: '5:4', label: '横版 5:4', description: '传统' },
+      { key: '4:5', label: '竖版 4:5', description: '社媒' }
     ],
+    // 分辨率轴：1K/2K/4K（与 vip 对齐），不再借这一栏表达 quality
     resolutions: [
-      { key: 'auto', label: '自动', description: '智能选择' },
-      { key: 'low', label: '低', description: '草图 1K $0.006' },
-      { key: 'medium', label: '中', description: '均衡 1K $0.053' },
-      { key: 'high', label: '高', description: '精细 1K $0.211' }
+      { key: '1K', label: '1K 标准', description: '高效' },
+      { key: '2K', label: '2K 高清', description: '稍慢速度' },
+      { key: '4K', label: '4K 超清', description: '印刷所需' }
     ],
-    defaultResolution: 'auto',
+    defaultResolution: '1K',
+    // 清晰度轴：官转独有的 quality 档位，作为独立第三参数
+    qualities: [
+      { key: 'auto', label: '自动', description: '由模型决定' },
+      { key: 'low', label: '低', description: '草图最省 $0.006' },
+      { key: 'medium', label: '中', description: '均衡 $0.053' },
+      { key: 'high', label: '高', description: '文字/印刷 $0.211' }
+    ],
+    defaultQuality: 'auto',
+    // size 与 vip 完全一致的 30 档（这些尺寸同时满足官转的合法尺寸约束：
+    // 16 倍数边长 / 最大边 ≤3840 / 比例 ≤3:1 / 总像素 ∈ [655360, 8294400]）。
+    // 官转额外有 quality 轴，但 size 体系与 vip 通用，便于号池限速时无缝切换。
+    resolutionMap: {
+      '1:1':  { '1K': '1280x1280', '2K': '2048x2048', '4K': '2880x2880' },
+      '2:3':  { '1K': '848x1280',  '2K': '1360x2048', '4K': '2336x3520' },
+      '3:2':  { '1K': '1280x848',  '2K': '2048x1360', '4K': '3520x2336' },
+      '3:4':  { '1K': '960x1280',  '2K': '1536x2048', '4K': '2480x3312' },
+      '4:3':  { '1K': '1280x960',  '2K': '2048x1536', '4K': '3312x2480' },
+      '4:5':  { '1K': '1024x1280', '2K': '1632x2048', '4K': '2560x3216' },
+      '5:4':  { '1K': '1280x1024', '2K': '2048x1632', '4K': '3216x2560' },
+      '9:16': { '1K': '720x1280',  '2K': '1152x2048', '4K': '2160x3840' },
+      '16:9': { '1K': '1280x720',  '2K': '2048x1152', '4K': '3840x2160' },
+      '21:9': { '1K': '1280x544',  '2K': '2048x864',  '4K': '3840x1632' },
+      'auto': { '1K': '自适应',     '2K': '自适应',     '4K': '自适应' }
+    },
     defaultParams: {
       output_format: 'png'
     },
@@ -182,7 +223,8 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       referenceImage: true,
       imageEdit: true,
       maxOutputs: 1,
-      resolutionControl: true
+      resolutionControl: true,
+      qualityControl: true
     }
   },
   'gpt-image-2-all': {
@@ -553,7 +595,7 @@ export class ApiService {
    * 生成图片
    */
   async generateImage(params: GenerateImageParams): Promise<GenerateResult> {
-    const { prompt, model, ratio, resolution, referenceImages, imageBase64, count = 1, signal } = params
+    const { prompt, model, ratio, resolution, quality, referenceImages, imageBase64, count = 1, signal } = params
 
     if (!this.apiKey) {
       return { success: false, error: '请先设置 API Key' }
@@ -574,6 +616,7 @@ export class ApiService {
           model: modelKey,
           ratio,
           resolution,
+          quality,
           referenceImages,
           imageBase64,
           count,
@@ -990,6 +1033,7 @@ export class ApiService {
     model: string
     ratio?: string
     resolution?: string
+    quality?: string
     referenceImages?: string[]
     imageBase64?: string
     count: number
@@ -997,7 +1041,7 @@ export class ApiService {
     site: ApiSite
     signal?: AbortSignal
   }): Promise<Response> {
-    const { prompt, model, ratio, resolution, referenceImages, imageBase64, modelConfig, site, signal } = options
+    const { prompt, model, ratio, resolution, quality, referenceImages, imageBase64, modelConfig, site, signal } = options
 
     // gpt-image-2 / gpt-image-2-all / gpt-image-2-vip: 专用 Images API 路径
     if (model === 'gpt-image-2-all' || model === 'gpt-image-2' || model === 'gpt-image-2-vip') {
@@ -1011,14 +1055,13 @@ export class ApiService {
       // 留下 isOfficial / isVip 变量是因为下面 size / quality 解析仍然要按通道分支。
       const timeoutMs = 900_000
 
-      // size 解析：官转直接用 ratio key（如 "1024x1024"），VIP 走 resolutionMap，官逆不发 size
-      const resolvedSize = isOfficial
-        ? this.resolveGptImage2Size(ratio)
-        : isVip
-          ? this.resolveGptImage2VipSize(modelConfig, ratio, resolution)
-          : undefined
-      // quality 仅官转支持
-      const resolvedQuality = isOfficial ? this.resolveGptImage2Quality(resolution) : undefined
+      // size 解析：官转与 VIP 共用 resolutionMap（ratio × resolution → 30 档 size），
+      // 官逆 (-all) 不发 size（写进 prompt）。
+      const resolvedSize = (isOfficial || isVip)
+        ? this.resolveImageSizeFromMap(modelConfig, ratio, resolution)
+        : undefined
+      // quality 仅官转支持，且来自独立的 quality 参数（不再借用 resolution）
+      const resolvedQuality = isOfficial ? this.resolveGptImage2Quality(quality) : undefined
 
       if (hasImages) {
         const editUrl = this.buildRequestUrl(modelConfig, site, 'edit')
@@ -1176,20 +1219,13 @@ export class ApiService {
   }
 
   /**
-   * gpt-image-2 官转：ratio key 就是 API size 参数（如 "1024x1024"、"3840x2160"）
+   * 共用尺寸解析：通过 modelConfig.resolutionMap[ratio][resolution] 解析像素 size。
+   * gpt-image-2（官转）与 gpt-image-2-vip（官逆）共用同一套 30 档 size 体系，
+   * 故抽出为统一函数，避免两条通道各写一份。
+   * - 内部存储允许 Unicode "×"，发到 API 时统一转成 ASCII "x"（OpenAI size 约定）。
+   * - 比例为 'auto' 或落到 '自适应' 时返回 undefined（不发 size，由后端自决）。
    */
-  private resolveGptImage2Size(ratio?: string): string | undefined {
-    if (!ratio || ratio === 'auto') return undefined
-    if (ratio.includes('x')) return ratio
-    return undefined
-  }
-
-  /**
-   * gpt-image-2-vip：通过 resolutionMap[ratio][resolution] 解析像素尺寸。
-   * 内部存储用 Unicode "×"，发到 API 时统一转成 ASCII "x"（OpenAI size 参数约定）。
-   * 比例为 'auto' 或落到 '自适应' 时返回 undefined（不发 size，由后端自决）。
-   */
-  private resolveGptImage2VipSize(
+  private resolveImageSizeFromMap(
     modelConfig: ModelConfig | undefined,
     ratio?: string,
     resolution?: string,
@@ -1205,11 +1241,24 @@ export class ApiService {
   }
 
   /**
-   * gpt-image-2 官转：resolution 下拉框直接映射 quality 参数（auto/low/medium/high）
+   * @deprecated 向后兼容别名，委托给共用的 resolveImageSizeFromMap。
+   * 现有 vip 测试仍按此名调用，保留以免破坏。
    */
-  private resolveGptImage2Quality(resolution?: string): string | undefined {
-    if (!resolution || resolution === 'auto') return undefined
-    if (['low', 'medium', 'high'].includes(resolution)) return resolution
+  private resolveGptImage2VipSize(
+    modelConfig: ModelConfig | undefined,
+    ratio?: string,
+    resolution?: string,
+  ): string | undefined {
+    return this.resolveImageSizeFromMap(modelConfig, ratio, resolution)
+  }
+
+  /**
+   * gpt-image-2 官转：独立的「清晰度 quality」参数（auto/low/medium/high）。
+   * auto / 空 / 非法值都返回 undefined（不发 quality，由模型按默认处理）。
+   */
+  private resolveGptImage2Quality(quality?: string): string | undefined {
+    if (!quality || quality === 'auto') return undefined
+    if (['low', 'medium', 'high'].includes(quality)) return quality
     return undefined
   }
 

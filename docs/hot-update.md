@@ -268,7 +268,139 @@ cmd /c "dir /s /b release\win-unpacked\resources\apiyi-mcp\node_modules | find /
 - 改的文件:`electron-builder.yml:47-86`(分两个 from 块)+ `package.json`(版本号)+ `docs/hot-update.md`(本段)
 - 不动代码,不改 IPC,不改 seed 逻辑,不改 UI
 - installer 体积从 45 MB(漏 node_modules 的坏版本)涨到 370 MB(完整版),后续可以考虑用 esbuild 把 apiyi-mcp 整个 bundle 成单 .js 来瘦身,但那是 v4.3.21+ 的事
+### v4.3.23 (2026-06-05) — 根因修复:历史图片重开软件后消失(COS 上传在生产环境无凭据 → 存了会过期的模型直出 URL)
 
+**根因(systematic-debugging)**
+
+历史记录持久化在 `localStorage`,但存的是**模型直出 URL**而非永久 COS 链接 —— 因为生产环境根本传不上 COS:
+
+1. 客户端直传 COS 需要 `cos-credentials.json`(主账号密钥),它只存在于开发机仓库根目录,**没有打进安装包**(也绝不能打:那是公开仓库的主密钥泄露)。
+2. 于是绝大多数用户的 `credentials.ts` 兜底链拿不到任何密钥 → `uploadBufferToBucket` 失败 → 历史落库 `modelUrl`。
+3. 模型直出 URL 有 TTL,过期后历史里的图就成了死链 → "重开软件图片消失"。
+4. **导演模式更严重**:`saveToHistory` 直接落 `img.url`(模型 URL),从来没走过 COS,必过期。
+
+**修复 —— 服务端 STS,客户端零密钥**
+
+新增腾讯云 SCF 云函数(`serverless/sts-cos/`,Function URL 直连)用 `qcloud-cos-sts` 颁发**短时临时凭证**,作用域死锁在 `image-history/* 仅 PutObject`。主账号/子账号密钥只存在于云函数环境变量,**永不下发客户端**。
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| 新增 STS 凭证提供器 | `src/main/services/tencent/stsCredentials.ts` | 从 SCF Function URL 拉临时凭证,内存缓存(提前 5min 刷新)、并发去重、10s 超时;可选 `COS_STS_APP_TOKEN` 网关 |
+| image-history 上传改走 STS | `src/main/services/tencent/cosClient.ts` | 新增专用 COS 实例,SDK `getAuthorization` 回调每次取临时密钥(带 `SecurityToken`);其它桶(storyboardSplit/smartErase)仍用原永久凭证实例,互不影响 |
+| 导演模式落库前先转存 COS | `src/renderer/src/react-app/hooks/useDirectorGeneration.ts` | `saveToHistory` 对每张图先 `uploadImageUrlToCos`(自限流 4 并发),成功用永久 URL、失败兜底模型 URL |
+
+generate / batch 模式本就经 `enqueueUpload → uploadBufferToBucket`,随 STS 改造自动修复。
+
+**验证(TDD)**
+
+- 新增 `stsCredentials.test.ts`:缓存命中/到期刷新/并发去重/非 200 不缓存/缺凭证报错/APP_TOKEN 头 —— 6/6 通过。
+- `cosClient.test.ts` 15/15 不变(mock COS 不触发 getAuthorization,断言照旧)。
+- `useDirectorGeneration.nonblocking-history.test.tsx` 1/1 通过(浏览器无 bridge → 兜底模型 URL,仍非阻塞落库)。
+
+行为:新生成的图(含导演模式)落库即**永久 COS 链接**,重开软件不再消失。已存的过期链接无法追回(URL 已死),但未来不再丢。
+
+> 后续可硬化:给 Function URL 配 `APP_TOKEN`(服务端环境变量 + 客户端 `COS_STS_APP_TOKEN`)防止开放 URL 被滥用上传。
+
+---
+
+### v4.3.22 (2026-05-29) — 修复:关闭 Codex 聊天栏再打开,滚轮回到顶部(应停在离开位置)
+
+**根因(systematic-debugging Phase 1.5 数据流)**
+
+`AgentChatPanel` 在 `!isOpen` 时**提前 return**,只卸载内层聊天滚动 `<div ref={chatScrollRef}>`,但 `AgentChatPanel` 组件本身(及 `useChatScroll` 的所有 ref)**始终挂载**。`useChatScroll` 的 restore `useLayoutEffect` 依赖 `[containerRef, threadId]`:
+
+- 关闭 → 聊天 div 卸载,`chatScrollRef.current = null`,但 `lastRestoredThreadIdRef` 仍 = 当前 threadId。
+- 重开 → div 重新挂载(`chatScrollRef.current` = 新节点),但 deps 没变 → **restore effect 不重跑**;即便跑也被 `lastRestoredThreadIdRef === key` guard 挡住。于是新 div 停在默认 `scrollTop=0` = 顶部。
+
+**修复**
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| hook 新增 `isOpen` 入参 | `src/renderer/src/features/agent-chat/useChatScroll.ts` | 容器(重)挂载的唯一信号——面板 open/close 时组件不卸载,只能靠 isOpen 感知 |
+| 关闭时重置 restore guard | 同上 | `useLayoutEffect(() => { if (!isOpen) lastRestoredThreadIdRef.current = null }, [isOpen])`,让重开必重新恢复 |
+| restore + auto-scroll effect deps 加 `isOpen` | 同上 | 重开时 restore 重跑(自由滚动→恢复离开位置;锁底→重新贴底跟随 AI) |
+| 接线 | `src/renderer/src/features/agent-chat/AgentChatPanel.tsx` | `useChatScroll({ ..., isOpen })` |
+
+**验证(TDD,RED→GREEN)**
+
+- 新增 `useChatScroll.reopen.test.tsx`:RED 时 reopen 后 `scrollTop=0`,修复后 **2/2 通过**(自由滚动恢复到 250 / 锁底线程重开贴底 1000)。
+- `chatScroll.test.ts` 12/12 不变。
+- `AgentChatPanel.bootstrap.test.tsx` 的 3 个失败为 main 既有的 jsdom `getComputedStyle` 环境问题(stash 掉本次改动后同样失败),非本次回归。
+
+行为:关闭聊天栏再打开,**停在离开时的滚动位置**;发消息 / 锁底线程仍贴底跟随 AI 输出。
+
+---
+
+### v4.3.21 (2026-05-29) — 紧急修复:打包缺 sharp 原生二进制,装机启动即崩
+
+> **严重级别:崩溃级 hotfix**。v4.3.20 安装到全新机器后,主进程启动立即弹
+> `A JavaScript error occurred in the main process / Could not load the "sharp"
+> module using the win32-x64 runtime`,应用无法打开。v4.3.21 仅修打包配置,无功能改动。
+
+**根因(systematic-debugging 四阶段定位,@parcel/watcher v4.3.10→v4.3.11 同款翻版)**
+
+- `src/main/file-explorer/mediaThumbIpc.ts` 在主进程**急切 `import sharp from 'sharp'`**(media:thumb IPC 热路径,由 PR #22 / `e8a6e1e` 引入)。
+- sharp 运行时要 dlopen 平台二进制 `@img/sharp-win32-x64`(transitive optionalDependency,内含 `lib/sharp-win32-x64.node`,423KB)。
+- **`sharp` 被放在 `devDependencies`**(历史上当 build-tool 用)。electron-builder 只打生产 `dependencies` 及其 optionalDependencies,**devDependencies 一律不打** → sharp 及其平台包 `@img/sharp-*` 从未进包。
+- **且 sharp 不在 electron-vite 的 main `external` 列表里** → rolldown 把 sharp 的 JS **bundle 进 `dist/main/index.js`**;bundle 后的代码仍在运行时 `require('@img/sharp-win32-x64')` 去 dlopen `.node`,但该包没进包 → 报 `Could not load the "sharp" module`(报错来自 sharp 自己的 JS,正因它被 bundle 进了主入口,堆栈停在 `index.js:489`)。
+- **为什么偏偏 v4.3.20 才暴露**:PR #22(sharp-in-main)在承载滚动条的 `main` 线上;线上 4.3.16–4.3.19 是另一条 apiyi-mcp 线,fork 在 PR #22 之前 → 主进程根本没有 sharp import → 不崩。v4.3.20 合并两线后,**第一次把 sharp-in-main 真正发布出去**,缺口随之暴露。
+- **确凿证据**:解包 v4.3.20 的 `app.asar.unpacked/node_modules` 只有 `@electric-sql / @parcel / @prisma / jszip`,完全没有 sharp / @img。对照 `@parcel/watcher`(正常)→ 它是 `dependencies` + 在 main external 列表 + 有 asarUnpack 规则;sharp 四项里缺了前两项。
+
+> **调试教训**:第一版修复只补了 `.npmrc` hoist + `asarUnpack`(symptom 层),重打后验证仍 MISSING —— 因为 `asarUnpack` 只能把**已被纳入打包**的文件从 asar 挪到 unpacked,不会把文件「拉进来」。回到 Phase 1 才发现 sharp 是 devDependency 且被 bundle,根因在更上游。
+
+**修复(对齐 @parcel/watcher 的四件套,缺一不可)**
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| **sharp 从 devDependencies → dependencies** | `package.json` | electron-builder 才会把 sharp 及其 optionalDependencies `@img/sharp-*` 纳入生产依赖树 |
+| **main external 加 `sharp` + `/^@img\/sharp-/`** | `electron.vite.config.ts` | 阻止 rolldown bundle sharp,改为运行时 `require()` 落到 node_modules,原生 `.node` 才能 dlopen |
+| 强制 hoist sharp + 全平台 @img/sharp-* 到真实顶层 | `.npmrc` | `public-hoist-pattern[]=sharp` + `@img/sharp-*`,让 electron-builder 在顶层扫得到(否则只躺在 `.pnpm/`) |
+| sharp + @img/sharp* 原生 `.node` 移出 asar | `electron-builder.yml` → `asarUnpack` | `**/node_modules/sharp/**` + `**/node_modules/@img/sharp*/**`,`.node` 只能从真实路径 dlopen,必须落在 `app.asar.unpacked` |
+
+**验证**:重打 `build:win` 后确认 `app.asar.unpacked/node_modules/@img/sharp-win32-x64/lib/sharp-win32-x64.node` 存在,且 `dist/main/index.js` 不再内联 sharp。
+
+参考:`.npmrc` 与 `electron-builder.yml` 的同款 @parcel/watcher 注释(v4.3.11 教训)。
+
+---
+
+### v4.3.20 (2026-05-29) — Codex 聊天滚动状态机：发送锁底 + 跨进程持久化位置 + 常驻滑轮
+
+> **版本说明**:线上 4.3.16–4.3.19 是一条独立的 apiyi-mcp 工作线(MCP 配置 enum 约束 / 优雅降级 / command=undefined 修复 / JSON 编辑器空白修复 / FastMCP 网关),曾与本地承载滚动条工作的 `main` 分叉。本次已把 `v4.3.19` 完整合并进 `main`(含全部 MCP 修复,见下方 4.3.16–4.3.19 条目),再叠加本次滚动条改动统一发布 **v4.3.20**,COS + GitHub 双源指向 4.3.20,**不回退任何 MCP 修复**。
+
+本版本重做 Codex 聊天面板的滚动体验，根除"每次打开对话框停在顶部 / AI 输出时滑轮不跟随 / 关闭后位置丢失"三个体感痛点。摒弃上一轮(已回退的 PR #27)引入的 `react-virtuoso` + `overlayscrollbars-react` 重型依赖，改用**原生 DOM 滚动 + 纯函数状态机 + Zustand 持久化**的轻量方案。
+
+**A. 滚动状态机三态语义(根因:原实现无"跟随意图"概念)**
+
+**问题**: 旧版聊天区每次重渲染都不主动滚动 → 打开面板停在顶部;AI 流式输出时内容增长但滑轮不动 → 用户看不到最新进度;面板关闭再打开 / 切线程 / 重启 app 后位置全部归零。
+
+**修复** (三文件拆分，纯逻辑与 DOM 交互解耦):
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| 纯函数状态机 + localStorage I/O | `src/renderer/src/features/agent-chat/chatScroll.ts`(新) | `distanceFromBottom`(带 clamp 防负值)/ `computeFollowBottom`(离底 ≤48px 判定锁底)/ `loadChatScrollByThread` / `persistChatScrollByThread`。`CHAT_SCROLL_UNLOCK_THRESHOLD_PX=48` 单一阈值常量。所有 localStorage 读写带 defensive try/catch + 畸形数据兜底。**12 个 RED-GREEN 单测**覆盖 clamp、阈值边界、持久化往返、解析容错 |
+| React hook 接 DOM | `src/renderer/src/features/agent-chat/useChatScroll.ts`(新) | `useLayoutEffect` 做无闪烁位置恢复;新消息到达时若处于锁底态则自动滚到底;`useRef` 防"程序化滚动→onScroll→再写状态"反馈环;`onScroll` 回调按 48px 阈值翻转 follow 标志并持久化 |
+| Store 状态 + 动作 + sendMessage 钩子 | `src/renderer/src/features/agent-chat/store.ts` | 新增 `chatScrollByThread` per-thread 状态、`setChatScroll` / `lockChatScrollToBottom` 动作。`sendMessage` 时(及 `threadId` 解析后)调 `lockChatScrollToBottom` —— **用户一发消息就强制锁底看回复尾巴** |
+| 常驻滑轮 CSS | `src/renderer/src/styles/index.css` | `.chat-scroll` 用 `overflow-y-scroll`(常显而非 auto)+ `::-webkit-scrollbar` 细青色轨道(Webkit)+ Firefox `scrollbar-width/color` 双写。摒弃外部滚动条库 |
+| 面板集成 | `src/renderer/src/features/agent-chat/AgentChatPanel.tsx` | `chatScrollRef` + `onScroll` 接到主滚动容器,接 `useChatScroll` hook |
+
+**语义保证**: 发送消息 → 锁底跟随 AI 输出;用户手动上滑离底 >48px → 解锁自由浏览;滑回 48px 内 → 重新锁底;关面板 / 切线程 / 重启 app → 位置从 localStorage 恢复(`full_persist` 跨进程)。
+
+#### 用户可见行为
+
+1. **打开 Codex 对话框默认停在最新消息**(锁底),不再回到顶部从头翻
+2. **AI 流式输出时滑轮自动跟随**到底部,实时看到生成进度
+3. **手动上滑即解锁**,可自由向上向下浏览历史,滑回底部附近自动恢复跟随
+4. **关闭面板 / 切换线程 / 重启 app 后回到上次离开的滚动位置**(localStorage 跨进程持久化)
+5. **滑轮常驻可见**(细青色),不再 hover 才出现
+
+#### 测试
+
+- `pnpm vitest run agent-chat/__tests__/chatScroll.test.ts` → **12/12 全过**(distanceFromBottom clamp / computeFollowBottom 阈值 / localStorage 往返 + 容错)
+- `AgentChatPanel.bootstrap.test.tsx` 0 regression(happy-dom 下补 stub mock 规避 getComputedStyle)
+
+参考:
+- PR #28:[per-thread scroll state machine](https://github.com/2799662352/ai-image-master/pull/28)
+- 回退的重型方案:PR #27(react-virtuoso + overlayscrollbars,因 auto-follow / 滑轮可见性 / 默认位置回归被关闭)
 ---
 
 ### v4.3.19 (2026-05-23) — Hotfix: MCP JSON 编辑器 modal 内容区 0px 高度(点编辑/新增看上去空白)

@@ -8,6 +8,7 @@ import { appendAuditLog, atomicWriteFile } from './codexConfigStore'
 import { CodexProtocolClient, mapServerNotification } from './CodexProtocolClient'
 import { createAgentLogStream } from './logger'
 import { getCodexResourceRoot, resolveCodexBinary } from './paths'
+import { runCodexDoctor, type DoctorReport } from './codexDoctor'
 import { pickFreePort } from './ports'
 import type {
   AgentStreamEvent,
@@ -18,7 +19,7 @@ import type {
   CodexThreadSummary,
   CodexWorkspacePaths,
 } from '../../types/agent'
-import type { AgentInput, IAgentBackend } from './types'
+import type { AgentInput, IAgentBackend, ListThreadsParams } from './types'
 
 export { mapServerNotification }
 
@@ -180,14 +181,18 @@ export class CodexLocalBackend implements IAgentBackend {
     return client
   }
 
-  private async startSpawnedClient(): Promise<SpawnedCodexClient> {
-    const port = await pickFreePort(4222)
-    const listenUrl = `ws://127.0.0.1:${port}`
-    const resourceRoot = this.resourceRootOverride ?? getCodexResourceRoot({
+  private resolveResourceRoot(): string {
+    return this.resourceRootOverride ?? getCodexResourceRoot({
       appPath: app.getAppPath(),
       isPackaged: app.isPackaged,
       resourcesPath: process.resourcesPath,
     })
+  }
+
+  private async startSpawnedClient(): Promise<SpawnedCodexClient> {
+    const port = await pickFreePort(4222)
+    const listenUrl = `ws://127.0.0.1:${port}`
+    const resourceRoot = this.resolveResourceRoot()
     const bin = resolveCodexBinary(resourceRoot)
     // resourceRootOverride 分支走 process.stderr (测试 / 调试时), 没有 fd
     // 可关; 走真实 file 那条会把 WriteStream 存到 ownedLog, 在 stop() 里 .end() 它。
@@ -357,9 +362,9 @@ export class CodexLocalBackend implements IAgentBackend {
     await this.client.cancel(threadId)
   }
 
-  async listThreads(): Promise<CodexThreadSummary[]> {
+  async listThreads(params?: ListThreadsParams): Promise<CodexThreadSummary[]> {
     if (!this.client) throw new Error('CodexLocalBackend.listThreads called before start')
-    return this.client.listThreads()
+    return this.client.listThreads(params)
   }
 
   async readThread(threadId: string): Promise<CodexThreadDetail> {
@@ -370,6 +375,27 @@ export class CodexLocalBackend implements IAgentBackend {
   async forkThread(threadId: string): Promise<CodexThreadSummary> {
     if (!this.client) throw new Error('CodexLocalBackend.forkThread called before start')
     return this.client.forkThread(threadId)
+  }
+
+  async archiveThread(threadId: string): Promise<void> {
+    if (!this.client) throw new Error('CodexLocalBackend.archiveThread called before start')
+    return this.client.archiveThread(threadId)
+  }
+
+  async unarchiveThread(threadId: string): Promise<CodexThreadSummary> {
+    if (!this.client) throw new Error('CodexLocalBackend.unarchiveThread called before start')
+    return this.client.unarchiveThread(threadId)
+  }
+
+  /**
+   * Run `codex doctor --json` against the bundled binary. This diagnoses the
+   * local install (auth, config, MCP, git, app-server) and does NOT require our
+   * WS app-server to be running — so it works even when the backend failed to
+   * start, which is exactly when the user needs diagnostics most.
+   */
+  async runDoctor(): Promise<DoctorReport> {
+    const bin = resolveCodexBinary(this.resolveResourceRoot())
+    return runCodexDoctor({ binaryPath: bin, env: buildCodexSpawnEnv(process.env, this.options.getApiKey?.(), this.codexHome) })
   }
 
   respondToApprovalResponse(response: CodexApprovalResponse): void {

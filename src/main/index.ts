@@ -39,6 +39,7 @@ import { AttachmentDirWatcher } from './file-explorer/AttachmentDirWatcher'
 import { registerFsIpc } from './file-explorer/fsIpc'
 import { registerLocalFileScheme, installLocalFileHandler } from './file-explorer/protocolHandler'
 import { registerAttachmentsThumbIpc } from './file-explorer/attachmentsIpc'
+import { registerMediaThumbIpc } from './file-explorer/mediaThumbIpc'
 import { registerFsWatcherIpc, disposeAll as disposeFsWatchers } from './file-explorer/fsWatcher'
 import { startCatimationMcpServer } from './mcp/server'
 import type { McpRuntime } from './mcp/server'
@@ -764,6 +765,10 @@ app.whenReady().then(async () => {
   registerFsIpc()
   registerAttachmentsTreeIpc(getPrisma)
   registerAttachmentsThumbIpc()
+  // media:thumb — resized-JPEG hot-path IPC for chat/thumbnail render surfaces
+  // (PR-A of fix-codex-chat-image-attachment-lag). attachments:read-thumb
+  // stays registered above for the lightbox / download path (fullFidelity).
+  registerMediaThumbIpc()
   registerFsWatcherIpc()
 
   // 关键路径：仅初始化必要的路径和目录

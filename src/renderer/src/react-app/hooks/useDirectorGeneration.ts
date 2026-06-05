@@ -10,6 +10,7 @@ import type {
 import { useShallow } from 'zustand/react/shallow'
 import { getStyleInstructions } from '../constants/templates'
 import type { PipelineProgress } from '@/services/pipeline/types'
+import { uploadImageUrlToCos } from '../../utils/cosImageUpload'
 
 async function saveToHistory(
   images: Array<{ url: string; prompt: string }>,
@@ -20,8 +21,27 @@ async function saveToHistory(
   try {
     const historyService = (window as any).historyDataServiceTS
     if (!historyService?.addToHistory) return
-    const urls = images.map((img) => img.url)
     const prompt = images[0]?.prompt || fallbackPrompt || '导演模式生成'
+
+    // Persist permanent COS URLs, not the model's expiring direct links.
+    // Director mode previously stored raw model URLs, so its history images
+    // vanished once the model URL TTL lapsed — the same class of bug fixed
+    // for generate mode. Upload each image to COS first (self-throttled,
+    // max 4 concurrent); fall back to the model URL only if the upload
+    // fails so we never drop a result outright.
+    const urls = await Promise.all(
+      images.map(async (img) => {
+        try {
+          const r = await uploadImageUrlToCos(img.url, {
+            metadata: { source: 'director', prompt: img.prompt },
+          })
+          return r.ok ? r.url : img.url
+        } catch {
+          return img.url
+        }
+      }),
+    )
+
     await historyService.addToHistory('generate-with-reference', prompt, urls, ratio)
   } catch (e) {
     console.warn('[Director] 历史记录保存失败:', e)
@@ -71,6 +91,7 @@ interface JobSnapshot {
   currentTemplate: string | null
   currentRatio: string
   currentResolution: string
+  currentQuality: string
   currentSemanticOrientation: LayoutOrientation
   imageCount: number
   skipVerify: boolean
@@ -112,6 +133,7 @@ function snapshotFromStore(): JobSnapshot {
     currentTemplate: s.currentTemplate,
     currentRatio: s.currentRatio,
     currentResolution: s.currentResolution,
+    currentQuality: s.currentQuality,
     currentSemanticOrientation: s.currentSemanticOrientation,
     imageCount: s.imageCount,
     skipVerify: s.skipVerify,
@@ -207,6 +229,7 @@ export function useDirectorGeneration() {
           imageModel: drawingModel,
           ratio: snapshot.currentRatio,
           resolution: snapshot.currentResolution,
+          quality: snapshot.currentQuality,
           currentImageCount: snapshot.imageCount,
           skipVerify: snapshot.skipVerify,
           skipTaskPlanning: snapshot.skipTaskPlanning,
@@ -365,6 +388,7 @@ export function useDirectorGeneration() {
             imageModel: drawingModel,
             ratio: snapshot.currentRatio,
             resolution: snapshot.currentResolution,
+            quality: snapshot.currentQuality,
             skipVerify: snapshot.skipVerify,
             skipTaskPlanning: snapshot.skipTaskPlanning,
             skipAnalyzeScene: snapshot.skipAnalyzeScene,

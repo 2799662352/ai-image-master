@@ -1,5 +1,6 @@
 import COS from 'cos-nodejs-sdk-v5'
 import { getCredentials, onCredentialsInvalidated } from './credentials'
+import { getStsCredentials } from './stsCredentials'
 
 type CosInstance = {
   putObject: (params: any, cb: any) => void
@@ -10,6 +11,7 @@ type CosInstance = {
 }
 
 let cosInstance: CosInstance | null = null
+let stsCosInstance: CosInstance | null = null
 
 onCredentialsInvalidated(() => {
   cosInstance = null
@@ -26,6 +28,47 @@ function getCosInstance(): CosInstance {
     })
   }
   return cosInstance!
+}
+
+/**
+ * A COS instance authorized with **temporary STS credentials** fetched from
+ * the SCF endpoint (see ./stsCredentials). Unlike `getCosInstance`, this never
+ * touches the permanent master/sub-account key on the client — the SDK calls
+ * `getAuthorization` on every signed request and we hand back a short-lived
+ * token scoped to `image-history/*` PutObject.
+ *
+ * This is what makes image-history uploads work for *all* end users in
+ * production, where no permanent COS key is bundled. The callback always
+ * settles (even on fetch failure) so a down endpoint surfaces as a normal
+ * upload rejection instead of hanging the SDK.
+ */
+function getStsCosInstance(): CosInstance {
+  if (!stsCosInstance) {
+    stsCosInstance = new (COS as any)({
+      Protocol: 'https:',
+      Timeout: 120000,
+      getAuthorization: (_options: any, callback: any) => {
+        getStsCredentials()
+          .then((c) => {
+            callback({
+              TmpSecretId: c.tmpSecretId,
+              TmpSecretKey: c.tmpSecretKey,
+              SecurityToken: c.sessionToken,
+              StartTime: c.startTime,
+              ExpiredTime: c.expiredTime,
+            })
+          })
+          .catch((err) => {
+            logCosError('sts-getAuthorization', err)
+            // Hand back empty creds so the SDK fails signing and the putObject
+            // callback rejects with an error — never leave the callback unfired
+            // (that would wedge the upload).
+            callback({ TmpSecretId: '', TmpSecretKey: '', SecurityToken: '', StartTime: 0, ExpiredTime: 0 })
+          })
+      },
+    })
+  }
+  return stsCosInstance!
 }
 
 function getBucketAndRegion() {
@@ -94,9 +137,14 @@ export interface UploadBufferToBucketOptions {
  * persist the link without a second `getObjectUrl` roundtrip. The leading
  * slash (if any) is stripped from the key both in the SDK call and the
  * URL — COS keys must not start with `/`.
+ *
+ * Authorized via **STS temporary credentials**, so this path works for every
+ * end user without a bundled permanent key. That's the fix for "history images
+ * vanish after reopen": the upload now actually succeeds in production, so the
+ * stored link is a permanent COS URL instead of an expiring model URL.
  */
 export async function uploadBufferToBucket(opts: UploadBufferToBucketOptions): Promise<string> {
-  const cos = getCosInstance()
+  const cos = getStsCosInstance()
   const Key = opts.key.replace(/^\/+/, '')
   await new Promise<void>((resolve, reject) => {
     cos.putObject(

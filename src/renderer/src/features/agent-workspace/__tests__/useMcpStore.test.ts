@@ -53,7 +53,7 @@ describe('useMcpStore', () => {
     expect(state.syncError).toBeNull()
   })
 
-  it('fetchServers fires syncTools in background with detail:"toolsAndAuthOnly"', async () => {
+  it('fetchServers fires syncTools in background with detail:"full"', async () => {
     let resolveList: (v: any) => void = () => undefined
     mockApi.listMcpServersRpc.mockImplementation(
       () =>
@@ -64,7 +64,9 @@ describe('useMcpStore', () => {
     mockApi.readConfig.mockResolvedValue({ ok: true, config: { mcp_servers: { gh: { command: 'docker' } } } })
 
     await useMcpStore.getState().fetchServers()
-    expect(mockApi.listMcpServersRpc).toHaveBeenCalledWith({ detail: 'toolsAndAuthOnly' })
+    // 0.137: request `full` so resources + resourceTemplates + serverInfo
+    // come back (toolsAndAuthOnly omits the MCP resource inventory).
+    expect(mockApi.listMcpServersRpc).toHaveBeenCalledWith({ detail: 'full' })
     expect(useMcpStore.getState().syncing).toBe(true)
 
     resolveList({
@@ -78,6 +80,77 @@ describe('useMcpStore', () => {
     expect(state.syncing).toBe(false)
     expect(state.servers[0].tools).toHaveLength(1)
     expect(state.servers[0].status).toBe('ready')
+  })
+
+  it('syncTools captures resources, resourceTemplates, serverInfo and a typed authStatus (full detail)', async () => {
+    mockApi.listMcpServersRpc.mockResolvedValue({
+      ok: true,
+      data: {
+        data: [
+          {
+            name: 'figma',
+            tools: { get_file: { description: 'read a file' } },
+            resources: [
+              { name: 'design', uri: 'figma://design/1', title: 'Design', mimeType: 'application/json' },
+            ],
+            resourceTemplates: [
+              { name: 'node', uriTemplate: 'figma://node/{id}', description: 'A node by id' },
+            ],
+            serverInfo: { name: 'figma', title: 'Figma', version: '1.4.0', websiteUrl: 'https://figma.com' },
+            authStatus: 'bearerToken',
+          },
+        ],
+        nextCursor: null,
+      },
+    })
+    useMcpStore.setState({
+      servers: [
+        { name: 'figma', type: 'http', url: 'https://mcp.figma.com/mcp', enabled: true, status: 'starting', error: null, tools: [], isBuiltin: false, isAppBundled: false },
+      ],
+    })
+
+    await useMcpStore.getState().syncTools()
+
+    const s = useMcpStore.getState().servers[0]
+    expect(s.status).toBe('ready')
+    expect(s.authStatus).toBe('bearerToken')
+    expect(s.resources).toEqual([
+      { name: 'design', uri: 'figma://design/1', title: 'Design', description: undefined, mimeType: 'application/json' },
+    ])
+    expect(s.resourceTemplates).toEqual([
+      { name: 'node', uriTemplate: 'figma://node/{id}', title: undefined, description: 'A node by id', mimeType: undefined },
+    ])
+    expect(s.serverInfo).toMatchObject({ title: 'Figma', version: '1.4.0', websiteUrl: 'https://figma.com' })
+  })
+
+  it('syncTools normalizes snake_case resource_templates + server_info shapes', async () => {
+    mockApi.listMcpServersRpc.mockResolvedValue({
+      ok: true,
+      data: [
+        {
+          name: 'legacy',
+          tools: {},
+          resources: [{ name: 'r', uri: 'x://r' }],
+          resource_templates: [{ name: 't', uri_template: 'x://t/{id}' }],
+          server_info: { name: 'legacy', version: '0.9.0' },
+          authStatus: 'oAuth',
+        },
+      ],
+    })
+    useMcpStore.setState({
+      servers: [
+        { name: 'legacy', type: 'http', url: 'https://x', enabled: true, status: 'starting', error: null, tools: [], isBuiltin: false, isAppBundled: false },
+      ],
+    })
+
+    await useMcpStore.getState().syncTools()
+
+    const s = useMcpStore.getState().servers[0]
+    expect(s.resourceTemplates).toEqual([
+      { name: 't', uriTemplate: 'x://t/{id}', title: undefined, description: undefined, mimeType: undefined },
+    ])
+    expect(s.serverInfo).toMatchObject({ version: '0.9.0' })
+    expect(s.authStatus).toBe('oAuth')
   })
 
   it('syncTools supports older { data: { mcpServers } } response shape as a fallback', async () => {

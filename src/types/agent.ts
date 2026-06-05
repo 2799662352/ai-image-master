@@ -110,6 +110,28 @@ export interface CodexThreadSummary {
 
 export interface CodexThreadDetail extends CodexThreadSummary {}
 
+export type DoctorStatus = 'ok' | 'warn' | 'fail' | (string & {})
+
+/** One diagnostic check from `codex doctor --json` (rust-v0.137.0 schema). */
+export interface DoctorCheck {
+  id: string
+  category: string
+  status: DoctorStatus
+  summary: string
+  details: Record<string, unknown>
+  remediation: string | null
+  durationMs: number
+}
+
+/** Parsed `codex doctor --json` report; `checks` is flattened to an array. */
+export interface DoctorReport {
+  schemaVersion: number
+  generatedAt: string
+  overallStatus: DoctorStatus
+  codexVersion: string
+  checks: DoctorCheck[]
+}
+
 export interface CodexMcpServerSummary {
   name: string
   transport: string

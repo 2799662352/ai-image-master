@@ -1,4 +1,10 @@
 import { create } from 'zustand'
+import {
+  loadChatScrollByThread,
+  persistChatScrollByThread,
+  type ChatScrollByThread,
+  type ChatScrollState,
+} from './chatScroll'
 import type {
   AgentAttachmentInput,
   AgentCancelPayload,
@@ -293,6 +299,20 @@ interface AgentChatState {
   switchThread: (threadId: string) => Promise<void>
   applyEvent: (event: AgentStreamEvent) => void
 
+  // ----- Per-thread chat scroll state -----
+  /**
+   * Persisted per-thread scroll position + lock-to-bottom flag.
+   *   - Restored on panel reopen, thread switch, and app restart (localStorage).
+   *   - Lock flips back to true on `sendMessage` (user just submitted, they
+   *     want to see the reply tail).
+   *   - Lock flips to false when user scrolls past 48 px above the bottom,
+   *     and back to true when they return into the threshold zone.
+   *   - Pure-function helpers + tests live in `./chatScroll.ts`.
+   */
+  chatScrollByThread: ChatScrollByThread
+  setChatScroll: (threadId: string, partial: Partial<ChatScrollState>) => void
+  lockChatScrollToBottom: (threadId: string) => void
+
   // ----- Sidebar / thread list -----
   sidebarOpen: boolean
   sidebarWidth: number
@@ -546,6 +566,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   rewoundTurns: [],
   messages: [],
   isRunning: false,
+  chatScrollByThread: loadChatScrollByThread(),
   selectedModelId: readPersistedModelId(),
   panelWidth: readPersistedPanelWidth(),
   tokenUsage: undefined,
@@ -594,6 +615,30 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     set({ panelWidth: clamped })
   },
   toggle: () => set((state) => ({ isOpen: !state.isOpen })),
+  setChatScroll: (threadId, partial) =>
+    set((state) => {
+      const prev = state.chatScrollByThread[threadId] ?? { scrollTop: 0, followBottom: true }
+      const next = { ...prev, ...partial }
+      // Bail when nothing actually changed — avoids redundant zustand
+      // notifications during noisy onScroll bursts.
+      if (next.scrollTop === prev.scrollTop && next.followBottom === prev.followBottom) {
+        return state
+      }
+      const merged: ChatScrollByThread = { ...state.chatScrollByThread, [threadId]: next }
+      persistChatScrollByThread(merged)
+      return { chatScrollByThread: merged }
+    }),
+  lockChatScrollToBottom: (threadId) =>
+    set((state) => {
+      const prev = state.chatScrollByThread[threadId] ?? { scrollTop: 0, followBottom: true }
+      if (prev.followBottom) return state
+      const merged: ChatScrollByThread = {
+        ...state.chatScrollByThread,
+        [threadId]: { ...prev, followBottom: true },
+      }
+      persistChatScrollByThread(merged)
+      return { chatScrollByThread: merged }
+    }),
   setInput: (input) => set({ input }),
   appendInputText: (text) => set((state) => ({ input: state.input + text })),
   setError: (error) => set({ error }),
@@ -713,6 +758,12 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       isRunning: true,
       messages: [...current.messages, userMsg],
     }))
+    // sendMessage = explicit user intent to track the reply tail. Re-lock the
+    // current thread's scroll even if the user had scrolled up earlier. New
+    // threads (no threadId yet) get locked once result.threadId resolves below.
+    if (state.threadId) {
+      get().lockChatScrollToBottom(state.threadId)
+    }
 
     // Resolve `$skill-name` markers to {name, path} so codex injects the
     // SKILL.md instructions instead of letting the model resolve names
@@ -738,6 +789,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         skills: skills.length > 0 ? skills : undefined,
       })
       set({ threadId: result.threadId })
+      get().lockChatScrollToBottom(result.threadId)
       // After ingest, replace the optimistic user message's items with the
       // canonical ones from main. The optimistic version uses the raw OS
       // path each attachment was picked from (e.g. `D:\360MoveData\…\foo.png`),

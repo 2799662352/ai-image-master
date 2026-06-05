@@ -55,7 +55,12 @@ export function Lightbox() {
   // dedicated IPC (attachments:read-thumb), passes through everything else.
   // Without this the renderer fires GETs with the Windows drive letter
   // stripped (electron/electron#49073) and the protocol handler returns 500.
-  const resolvedSrc = useResolvedMediaSrc(rawSrc, kindHint)
+  //
+  // `fullFidelity: true` skips the small-JPEG `media:thumb` hot path (which
+  // is for chat thumbnails) and loads the original bytes. A 256px JPEG
+  // would look obviously blurry at lightbox dimensions. See PR-A of
+  // fix-codex-chat-image-attachment-lag for the routing contract.
+  const resolvedSrc = useResolvedMediaSrc(rawSrc, kindHint, { fullFidelity: true })
 
   if (!preview.open || preview.images.length === 0) return null
 
