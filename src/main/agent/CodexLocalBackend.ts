@@ -72,6 +72,13 @@ export interface CodexLocalBackendOptions {
    */
   provider?: CodexProviderConfig
   sessionConfig?: Partial<CodexSessionConfig>
+  /**
+   * Local in-process catimation MCP server coordinates ({ port, token }).
+   * Forwarded to `buildCodexLaunchArgs` so the spawned Codex subprocess gets
+   * an ephemeral `[mcp_servers.catimation]` entry and can call our in-app
+   * `generate_image` tool. Only used on the spawn path.
+   */
+  catimationMcp?: { port: number; token: string }
   onApprovalRequest?: (request: CodexApprovalRequest) => void
   onMcpNotification?: (event: AgentStreamEvent) => void
 }
@@ -215,6 +222,7 @@ export class CodexLocalBackend implements IAgentBackend {
         listenUrl,
         provider: this.currentProvider,
         sessionConfig: this.sessionConfig,
+        catimationMcp: this.options.catimationMcp,
       }),
       {
         stdio: ['ignore', 'pipe', 'pipe'],

@@ -55,6 +55,43 @@ const AGENT_HANDLE_CHANNELS = [
 export type GetAgentManager = () => Promise<AgentManager>
 export type GetToolRouter = () => ToolRouter | null
 
+/** Coerce a Prisma `DateTime` (Date | ISO string | epoch number) to epoch ms. */
+function toEpochMs(value: unknown): number | undefined {
+  if (value instanceof Date) return value.getTime()
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const ms = Date.parse(value)
+    return Number.isFinite(ms) ? ms : undefined
+  }
+  return undefined
+}
+
+/**
+ * Normalize each message's `createdAt` to a plain epoch number before the
+ * result crosses the IPC/contextBridge boundary.
+ *
+ * The renderer orders the timeline (and now renders per-message timestamps) by
+ * `createdAt`. Prisma hands us `Date` objects, but a `Date` does not reliably
+ * survive structured-clone through `contextBridge` as a usable value — when it
+ * arrives unrecognized the renderer used to fall back to `Date.now()`, which
+ * stamped every reloaded message with the reopen time and shoved older
+ * codex image bubbles to the very top of the conversation. Emitting a stable
+ * number here removes that ambiguity for both ordering and display.
+ */
+function normalizeThreadMessages<T>(thread: T): T {
+  if (!thread || typeof thread !== 'object') return thread
+  const messages = (thread as { messages?: unknown }).messages
+  if (!Array.isArray(messages)) return thread
+  return {
+    ...(thread as Record<string, unknown>),
+    messages: messages.map((m) => {
+      if (!m || typeof m !== 'object') return m
+      const ms = toEpochMs((m as { createdAt?: unknown }).createdAt)
+      return ms === undefined ? m : { ...(m as Record<string, unknown>), createdAt: ms }
+    }),
+  } as T
+}
+
 // Registers all agent IPC handlers eagerly at app start. Each handler awaits
 // `getManager()` so renderer-side calls that fire before the AgentManager has
 // finished initializing (e.g. the chat sidebar's mount-time `agent:list-threads`)
@@ -78,7 +115,7 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
     (await getManager()).loadThread(threadId),
   )
   ipcMain.handle('agent:open-thread', async (_event, threadId: string) =>
-    (await getManager()).openThread(threadId),
+    normalizeThreadMessages(await (await getManager()).openThread(threadId)),
   )
   ipcMain.handle('agent:rename-thread', async (_event, threadId: string, title: string) =>
     (await getManager()).renameThread(threadId, title),

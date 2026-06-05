@@ -1,3 +1,4 @@
+import { CATIMATION_MCP_HOST, CATIMATION_MCP_TOKEN_HEADER } from '../mcp/config'
 import type {
   CodexApprovalPolicy,
   CodexSandboxMode,
@@ -69,6 +70,15 @@ export interface CodexLaunchOptions {
   listenUrl?: string
   provider?: CodexProviderConfig
   sessionConfig?: Partial<CodexSessionConfig>
+  /**
+   * Local in-process catimation MCP server (port + per-session token). When
+   * present we inject an ephemeral `[mcp_servers.catimation]` entry via `-c`
+   * so the Codex subprocess can actually reach our `generate_image` /
+   * `query_history` / UI tools. Injecting via `-c` (instead of writing the
+   * user's `~/.codex/config.toml`) keeps the entry in lockstep with the
+   * current session's dynamic port/token and never leaves stale config behind.
+   */
+  catimationMcp?: { port: number; token: string }
 }
 
 function quote(value: string): string {
@@ -158,6 +168,47 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     // this client on the server side.
     '-c', 'experimental_use_rmcp_client=true',
   ]
+
+  // Register the local in-process catimation MCP server so the Codex
+  // subprocess can call our `generate_image` (vip channel) and other renderer
+  // tools. Without this, Codex has no image tool and confabulates with its own
+  // internal `image_gen` — which never produces a real image in the app.
+  //
+  // The transport enum in codex (`McpServerTransportConfig`) is
+  // `#[serde(deny_unknown_fields)]`, so we must NOT emit a `transport` key.
+  // Streamable-HTTP is selected purely by the presence of `url`. The custom
+  // auth header goes through `http_headers` (a TOML inline table). `-c` values
+  // are parsed as TOML, so the quoted string and inline table below are valid.
+  if (options?.catimationMcp) {
+    const { port, token } = options.catimationMcp
+    args.push(
+      '-c', `mcp_servers.catimation.url="http://${CATIMATION_MCP_HOST}:${port}/mcp"`,
+      '-c', `mcp_servers.catimation.http_headers={ "${CATIMATION_MCP_TOKEN_HEADER}" = "${token}" }`,
+      // Give `generate_image` room to finish. Codex's default per-tool timeout
+      // (`mcp_servers.<name>.tool_timeout_sec`) is short relative to a real
+      // image render on the vip channel — at 2K/4K high quality a single call
+      // can run for minutes. When Codex aborts first, the agent narrates a
+      // "tool timed out" and retries, even though the renderer kept going and
+      // the image actually completed + saved. ~2000s makes Codex wait for the
+      // real result (or an explicit error) instead of inventing a timeout. The
+      // value is plain seconds (codex deserializes it via `option_duration_secs`).
+      '-c', 'mcp_servers.catimation.tool_timeout_sec=2000',
+    )
+    // Make our `generate_image` the FIRST (and only) image path. Codex 0.137
+    // ships a built-in `imagegen` system skill (installed to
+    // `$CODEX_HOME/skills/.system/imagegen`) whose great description out-competes
+    // our MCP tool: the agent reads that SKILL.md, looks for the built-in
+    // `image_gen` tool — which is NOT exposed over app-server — wastes a turn,
+    // and only then falls back to `generate_image`. Disabling it by name removes
+    // it from the advertised skills so the agent reaches for `generate_image`
+    // straight away (it renders in chat + saves to history; the built-in cannot).
+    //
+    // `-c` lands on the SessionFlags config layer, which `skill_config_rules_from_stack`
+    // honors; the name selector matches the skill's `name: "imagegen"` frontmatter.
+    // We only disable it when our tool is actually wired, so a failed MCP bind
+    // still leaves the built-in as a fallback ("use whatever works").
+    args.push('-c', 'skills.config=[{ name = "imagegen", enabled = false }]')
+  }
 
   for (const root of sessionConfig.writableRoots) {
     args.push('--add-dir', root)

@@ -34,9 +34,13 @@ export function isEvidenceItem(item: TimelineItem): boolean {
     case 'shell':
     case 'fileEdit':
     case 'activity':
-    case 'artifact':
     case 'attachment':
       return true
+    case 'artifact':
+      // Codex in-app image generations carry a `status` and render inline as a
+      // prominent card (spinner → thumbnail → error) instead of a collapsed
+      // evidence chip. Plain artifacts (no status) stay in the evidence stack.
+      return item.status == null
     case 'text':
     case 'reasoning':
       return false

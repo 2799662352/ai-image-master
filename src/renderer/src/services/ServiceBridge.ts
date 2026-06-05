@@ -16,6 +16,7 @@ import { getR2StorageService, R2StorageService, initR2StorageGlobal } from './r2
 import { initPageStateManagerGlobal, getPageStateManager, PageStateManager } from './PageStateManager'
 import { getVersionChecker, VersionChecker } from './version-checker'
 import { getHistoryDataService, HistoryDataService } from '../features/history'
+import { setHistoryUrlResolver } from '../features/agent-chat/codexArtifactPersistence'
 import { getIntelligentResizeManager, IntelligentResizeManager } from '../features/intelligent-resize'
 import { getLanguageManager, LanguageManager } from '../features/language'
 import { getErrorHandler, ErrorHandler } from '../features/error-handler'
@@ -395,6 +396,12 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
       window.historyDataServiceTS = historyDataService
       ServiceRegistry.register(SERVICE_KEYS.HISTORY_DATA, historyDataService)
       console.log('[ServiceBridge] ✓ HistoryDataService (TS) 已就绪')
+
+      // Wire the agent-chat artifact rehydration resolver to the history record
+      // (the cloud-persisted source of truth). Injected here — not imported by
+      // the store — so the store's module graph stays free of service-layer
+      // side-effects. Lets codex image bubbles survive reload / thread switch.
+      setHistoryUrlResolver((id) => historyDataService.getById(id)?.urls)
 
       console.log(`[ServiceBridge] 关键服务初始化完成: ${(performance.now() - startTime).toFixed(1)}ms`)
 

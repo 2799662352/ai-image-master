@@ -5,8 +5,14 @@ import type { ToolRouter } from '../ToolRouter'
 export function registerImageTools(server: McpServer, router: ToolRouter): void {
   server.registerTool('generate_image', {
     description:
-      'Generate images in CATIMATION. Always renders on the stable gpt-image-2-vip channel ' +
-      '(the `model` field is ignored by the renderer). Output is saved to history and shown in chat.',
+      'Generate images from a text prompt inside the CATIMATION app. PREFER this tool for any ' +
+      'image/picture/illustration/图片/生成图 request: it renders on the stable gpt-image-2-vip ' +
+      'channel (the `model` field is ignored), shows the result directly in the chat, AND saves it ' +
+      'to the history page — which the built-in image generator cannot do. If for some reason this ' +
+      'tool is unavailable, you may fall back to your built-in generator (use whatever works), but ' +
+      'this one is the in-app path that actually persists and displays the image. Returns only a ' +
+      'compact summary ({ ok, count, model }) — the actual image is displayed to the user, so you ' +
+      'do not need to embed or describe the pixels.',
     inputSchema: z.object({
       prompt: z.string().min(1).describe('Image description / prompt.'),
       model: z

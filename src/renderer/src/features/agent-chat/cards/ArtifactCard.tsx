@@ -25,6 +25,43 @@ function isRenderableMedia(ref: AttachmentRef): boolean {
 export function ArtifactCard({ item }: { item: ArtifactItem }) {
   const openPreview = useAgentChatStore((s) => s.openPreview)
   const openReference = useFileExplorerStore((state) => state.openReference)
+
+  // In-app generation lifecycle (codex `generate_image`): show a live spinner
+  // while the request is in flight, and an error card on failure. Plain
+  // attachment artifacts have no `status` and fall through to the grid below.
+  if (item.status === 'generating') {
+    return (
+      <div className="my-1 flex items-center gap-3 rounded border border-cyan-400/30 bg-cyan-400/5 px-3 py-2.5">
+        <span
+          aria-hidden
+          className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-cyan-400/25 border-t-cyan-300"
+        />
+        <div className="flex min-w-0 flex-col">
+          <span className="font-mono text-[12px] text-cyan-100">正在生成图片…</span>
+          {item.prompt ? (
+            <span className="max-w-[240px] truncate text-[11px] text-cyan-300/60" title={item.prompt}>
+              {item.prompt}
+            </span>
+          ) : null}
+        </div>
+      </div>
+    )
+  }
+
+  if (item.status === 'error') {
+    return (
+      <div className="my-1 flex items-start gap-2 rounded border border-red-400/40 bg-red-500/10 px-3 py-2.5">
+        <span aria-hidden className="text-[13px] leading-none text-red-300">⚠</span>
+        <div className="flex min-w-0 flex-col">
+          <span className="font-mono text-[12px] text-red-200">图片生成失败</span>
+          {item.error ? (
+            <span className="max-w-[260px] break-words text-[11px] text-red-300/70">{item.error}</span>
+          ) : null}
+        </div>
+      </div>
+    )
+  }
+
   const references = referencesFromTimelineItem(item)
   const mediaItems = item.artifacts.filter(isRenderableMedia)
 

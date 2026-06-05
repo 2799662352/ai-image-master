@@ -4,6 +4,7 @@ import { getMessageText } from '../../../../types/agent-timeline'
 import { EvidenceStack } from './evidence/EvidenceStack'
 import { groupTimelineItemsForChat } from './evidence/evidenceModel'
 import { TimelineItemRenderer } from './TimelineItemRenderer'
+import { formatRelativeTime } from './relativeTime'
 import { useAgentChatStore } from './store'
 
 // Affordance discipline (per ui-ux-pro-max):
@@ -22,6 +23,23 @@ function PencilIcon({ className }: { className?: string }) {
     </svg>
   )
 }
+// Per-message timestamp. Relative label ("5m ago") for quick scanning; the
+// `title` carries the absolute local time so users can pinpoint when a turn
+// (e.g. a generated image) happened. Hidden when no usable timestamp exists
+// (createdAt <= 0) so we never render a bogus "1970" stamp.
+function MessageTimestamp({ createdAt }: { createdAt: number }) {
+  if (!Number.isFinite(createdAt) || createdAt <= 0) return null
+  return (
+    <time
+      dateTime={new Date(createdAt).toISOString()}
+      title={new Date(createdAt).toLocaleString()}
+      className="text-[10px] tabular-nums tracking-tight text-zinc-500"
+    >
+      {formatRelativeTime(createdAt)}
+    </time>
+  )
+}
+
 function CopyIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
@@ -127,13 +145,16 @@ export function MessageBubble({ message }: { message: Message }) {
       <article className="group/msg relative mb-4">
         <div className="rounded-lg border border-cyan-400/15 bg-zinc-800/60 px-3 py-2.5 leading-[1.55] transition-colors duration-150 hover:border-cyan-400/30">
           <div className="mb-1.5 flex items-center justify-between gap-2">
-            <span
-              className={
-                'text-[10px] font-medium uppercase tracking-[0.18em] ' + labelClass
-              }
-            >
-              {label}
-            </span>
+            <div className="flex items-baseline gap-2">
+              <span
+                className={
+                  'text-[10px] font-medium uppercase tracking-[0.18em] ' + labelClass
+                }
+              >
+                {label}
+              </span>
+              <MessageTimestamp createdAt={message.createdAt} />
+            </div>
             {toolbar}
           </div>
           <div className="text-[13px] text-zinc-100">
@@ -164,6 +185,9 @@ export function MessageBubble({ message }: { message: Message }) {
         >
           {label}
         </div>
+        <span className="mb-1">
+          <MessageTimestamp createdAt={message.createdAt} />
+        </span>
         <div className="mb-1">{toolbar}</div>
       </div>
       <div className="text-[13px] text-zinc-100">

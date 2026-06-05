@@ -163,6 +163,13 @@ export interface AgentManagerOptions {
    * `CodexLocalBackend` is constructed.
    */
   backend?: IAgentBackend
+  /**
+   * Local catimation MCP server coordinates ({ port, token }) produced by
+   * `startCatimationMcpServer`. Forwarded to the default `CodexLocalBackend`
+   * so the spawned Codex subprocess can reach our in-app `generate_image`
+   * tool. Omitted when the local MCP listener failed to bind.
+   */
+  mcpRuntime?: { port: number; token: string }
 }
 
 export class AgentManager {
@@ -213,6 +220,7 @@ export class AgentManager {
       getApiKey: () => this.codexApiKey,
       provider: activeProvider,
       sessionConfig: this.sessionConfig,
+      catimationMcp: opts.mcpRuntime,
       onApprovalRequest: (request) => this.emitApprovalRequest(request),
       onMcpNotification: (event) => this.handleMcpNotification(event),
     })

@@ -56,6 +56,18 @@ export interface AttachmentItem extends BaseItem {
 export interface ArtifactItem extends BaseItem {
   type: 'artifact'
   artifacts: AttachmentRef[]
+  /**
+   * Lifecycle of an in-app generation (e.g. the codex `generate_image` tool).
+   * - `generating`: request in flight; render a skeleton/spinner card.
+   * - `done` (or undefined): artifacts are ready; render thumbnails.
+   * - `error`: generation failed; render `error` text.
+   * Undefined keeps backward compatibility with plain attachment artifacts.
+   */
+  status?: 'generating' | 'done' | 'error'
+  /** Prompt that produced these artifacts (shown on the generating card). */
+  prompt?: string
+  /** Failure message when `status === 'error'`. */
+  error?: string
 }
 
 /**

@@ -255,6 +255,9 @@ const IPC_CHANNELS = {
     LIST_TREE: 'attachments:list-tree',
     CHANGED: 'attachments:changed',
     READ_THUMB: 'attachments:read-thumb',
+    // Persist a renderer-produced image (e.g. a codex `generate_image` result)
+    // into the watched uploads dir so it shows in the ATTACHMENTS file panel.
+    SAVE: 'attachments:save',
     // PR-A hot-path: resized JPEG thumbnails. See main/file-explorer/mediaThumbIpc.ts
     // for the size/security envelope. Renderer calls this by default; falls
     // through to READ_THUMB only when `useResolvedMediaSrc(..., { fullFidelity: true })`.
@@ -526,6 +529,18 @@ export interface ElectronAPI {
       | { ok: true; base64: string; mime: string; width?: number; height?: number }
       | { ok: false; reason: string }
     >
+    /**
+     * Persist a renderer-produced image into the agent uploads dir (the dir the
+     * ATTACHMENTS panel watches), so codex-generated images appear there. The
+     * bytes are sent as base64; the main side content-addresses + size-caps via
+     * AttachmentService, then broadcasts `attachments:changed`.
+     */
+    save: (args: {
+      threadId: string
+      name: string
+      mime: string
+      base64: string
+    }) => Promise<{ ok: true; path: string } | { ok: false; reason: string }>
   }
   // 图片存储
   saveImage: (base64Data: string, filename: string) => Promise<SaveImageResponse>
@@ -1145,6 +1160,11 @@ const electronAPI: ElectronAPI = {
         | { ok: true; base64: string; mime: string; width?: number; height?: number }
         | { ok: false; reason: string }
       >(IPC_CHANNELS.ATTACHMENTS.MEDIA_THUMB, args),
+    save: (args: { threadId: string; name: string; mime: string; base64: string }) =>
+      safeInvoke<{ ok: true; path: string } | { ok: false; reason: string }>(
+        IPC_CHANNELS.ATTACHMENTS.SAVE,
+        args,
+      ),
   },
 
   // ============ 系统主题监听 ============

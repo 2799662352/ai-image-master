@@ -23,10 +23,11 @@ import type {
   ItemDeltaPatch,
 } from '../../../../types/agent'
 import type { AgentReference } from '../../../../types/agent-reference'
-import type { AttachmentRef, Message, PlanStep, TimelineItem } from '../../../../types/agent-timeline'
+import type { ArtifactItem, AttachmentRef, Message, PlanStep, TimelineItem } from '../../../../types/agent-timeline'
 import { upsertItemInLastMessage } from '../../../../types/agent-timeline'
 import { AGENT_MODELS, DEFAULT_MODEL_ID } from './models'
 import { useFileExplorerStore } from '../file-explorer/store'
+import { rehydrateCodexArtifacts } from './codexArtifactPersistence'
 
 const SELECTED_MODEL_STORAGE_KEY = 'catimation.agent.selectedModel'
 const PANEL_WIDTH_STORAGE_KEY = 'catimation.agent.panelWidth'
@@ -47,6 +48,7 @@ function scheduleThreadListTitleRefreshes(run: () => void): void {
     setTimeout(run, delay)
   }
 }
+
 
 function readPersistedModelId(): string {
   try {
@@ -307,6 +309,18 @@ interface AgentChatState {
    */
   appendArtifactMessage: (artifacts: AttachmentRef[]) => void
 
+  /**
+   * Image-generation status machine for the codex `generate_image` tool.
+   * `beginImageGeneration` appends a standalone assistant bubble in the
+   * `generating` state (spinner + prompt) and returns its artifact-item id.
+   * The caller then resolves it with the finished images, or fails it with an
+   * error message — both edit the SAME bubble in place (no flicker / no extra
+   * messages). Returns the item id used by resolve/fail.
+   */
+  beginImageGeneration: (prompt: string) => string
+  resolveImageGeneration: (itemId: string, artifacts: AttachmentRef[]) => void
+  failImageGeneration: (itemId: string, error: string) => void
+
   // ----- Per-thread chat scroll state -----
   /**
    * Persisted per-thread scroll position + lock-to-bottom flag.
@@ -351,6 +365,44 @@ interface AgentChatState {
 
 function createId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+/** Coerce a server `createdAt` (epoch number | ISO string | Date) to epoch ms. */
+function toEpochMs(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (value instanceof Date) return value.getTime()
+  if (typeof value === 'string') {
+    const ms = Date.parse(value)
+    return Number.isFinite(ms) ? ms : undefined
+  }
+  return undefined
+}
+
+/**
+ * Immutably update the artifact `TimelineItem` with `itemId` wherever it lives
+ * in the message list. Returns the same array reference when nothing matched
+ * so zustand can skip a redundant notification.
+ */
+function mapArtifactItem(
+  messages: Message[],
+  itemId: string,
+  update: (item: ArtifactItem) => ArtifactItem,
+): Message[] {
+  let changed = false
+  const next = messages.map((message) => {
+    let itemChanged = false
+    const items = message.items.map((item) => {
+      if (item.type === 'artifact' && item.id === itemId) {
+        itemChanged = true
+        return update(item)
+      }
+      return item
+    })
+    if (!itemChanged) return message
+    changed = true
+    return { ...message, items }
+  })
+  return changed ? next : messages
 }
 
 /**
@@ -603,10 +655,45 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     set((s) => {
       if (!artifacts || artifacts.length === 0) return {}
       const now = Date.now()
-      const item: TimelineItem = { type: 'artifact', id: createId(), startedAt: now, endedAt: now, artifacts }
+      const item: TimelineItem = { type: 'artifact', id: createId(), startedAt: now, endedAt: now, artifacts, status: 'done' }
       const message: Message = { id: createId(), role: 'assistant', createdAt: now, items: [item] }
       return { messages: [...s.messages, message] }
     }),
+  beginImageGeneration: (prompt) => {
+    const itemId = createId()
+    set((s) => {
+      const now = Date.now()
+      const item: TimelineItem = {
+        type: 'artifact',
+        id: itemId,
+        startedAt: now,
+        artifacts: [],
+        status: 'generating',
+        prompt,
+      }
+      const message: Message = { id: createId(), role: 'assistant', createdAt: now, items: [item] }
+      return { messages: [...s.messages, message] }
+    })
+    return itemId
+  },
+  resolveImageGeneration: (itemId, artifacts) =>
+    set((s) => ({
+      messages: mapArtifactItem(s.messages, itemId, (item) => ({
+        ...item,
+        artifacts,
+        status: 'done',
+        endedAt: Date.now(),
+      })),
+    })),
+  failImageGeneration: (itemId, error) =>
+    set((s) => ({
+      messages: mapArtifactItem(s.messages, itemId, (item) => ({
+        ...item,
+        status: 'error',
+        error,
+        endedAt: Date.now(),
+      })),
+    })),
   nextPreview: () =>
     set((s) => {
       if (s.preview.images.length === 0) return {}
@@ -1033,7 +1120,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
             id: string
             role: string
             items: string | unknown[] | null
-            createdAt?: string | Date
+            createdAt?: string | number | Date
           }
           let parsedItems: unknown = r.items
           if (typeof parsedItems === 'string') {
@@ -1049,19 +1136,22 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
             id: r.id,
             role,
             items: Array.isArray(parsedItems) ? (parsedItems as TimelineItem[]) : [],
-            createdAt:
-              typeof r.createdAt === 'string'
-                ? Date.parse(r.createdAt)
-                : r.createdAt instanceof Date
-                  ? r.createdAt.getTime()
-                  : Date.now(),
+            // `agent:open-thread` normalizes this to an epoch number; we still
+            // accept string/Date defensively. Fall back to 0 (NOT Date.now())
+            // for an unrecoverable timestamp — stamping a reloaded message with
+            // the reopen time is exactly what made codex image bubbles drift to
+            // the top of the conversation.
+            createdAt: toEpochMs(r.createdAt) ?? 0,
           }
         })
       : []
 
     set({
       threadId,
-      messages,
+      // Re-attach codex-generated image bubbles persisted for this thread. The
+      // durable URLs come from the history record (cloud bucket), so reloads /
+      // thread switches show the thumbnail again instead of losing it.
+      messages: rehydrateCodexArtifacts(threadId, messages),
       isRunning: false,
       error: undefined,
       // Token usage is per-thread; reset until the next

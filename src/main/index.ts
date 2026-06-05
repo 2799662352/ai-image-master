@@ -31,6 +31,7 @@ import { AttachmentService } from './agent/AttachmentService'
 import { consumeStartupNotice, getPrisma, shutdownDatabase } from './agent/db'
 import { registerAgentIpc } from './agent/ipc'
 import { migrateLegacyUserSkills } from './agent/legacySkillsMigration'
+import { installFirstPartySkills } from './agent/firstPartySkills'
 import { registerMarketplaceIpc } from './marketplace/ipc'
 import { ThreadStore } from './agent/ThreadStore'
 import { uploadBufferToBucket } from './services/tencent/cosClient'
@@ -669,6 +670,58 @@ async function initAgentRuntime(win: BrowserWindow): Promise<void> {
     // Either path alone closes the original bug; both together also keep the
     // panel correct when the FS watcher is degraded (macOS seatbelt, EACCES).
     wireAttachmentBroadcast(attachmentService)
+
+    // `attachments:save` — lets the renderer persist an image it produced
+    // (codex `generate_image` results) into the watched uploads dir so it shows
+    // up in the ATTACHMENTS file panel. Reuses AttachmentService so the file is
+    // content-addressed, size-capped, and broadcasts `attachments:changed`.
+    // Narrow surface: image mimes only, bytes the renderer already holds.
+    ipcMain.removeHandler('attachments:save')
+    ipcMain.handle(
+      'attachments:save',
+      async (
+        _event,
+        args: { threadId?: unknown; name?: unknown; mime?: unknown; base64?: unknown },
+      ): Promise<{ ok: true; path: string } | { ok: false; reason: string }> => {
+        const threadId = typeof args?.threadId === 'string' ? args.threadId : ''
+        const name = typeof args?.name === 'string' ? args.name : ''
+        const mime = typeof args?.mime === 'string' ? args.mime : ''
+        const base64 = typeof args?.base64 === 'string' ? args.base64 : ''
+        if (!threadId || !name || !mime || !base64) {
+          return { ok: false, reason: 'attachments:save requires threadId, name, mime, base64' }
+        }
+        if (!mime.startsWith('image/')) {
+          return { ok: false, reason: 'attachments:save only accepts image/* mimes' }
+        }
+        let buffer: Buffer
+        try {
+          buffer = Buffer.from(base64, 'base64')
+        } catch {
+          return { ok: false, reason: 'attachments:save received invalid base64' }
+        }
+        if (buffer.byteLength === 0) {
+          return { ok: false, reason: 'attachments:save received empty image' }
+        }
+        try {
+          const [saved] = await attachmentService.ingest(threadId, [
+            {
+              name,
+              mime,
+              size: buffer.byteLength,
+              buffer: buffer.buffer.slice(
+                buffer.byteOffset,
+                buffer.byteOffset + buffer.byteLength,
+              ) as ArrayBuffer,
+            },
+          ])
+          if (!saved) return { ok: false, reason: 'attachments:save: ingest produced no file' }
+          return { ok: true, path: saved.localPath }
+        } catch (error) {
+          return { ok: false, reason: error instanceof Error ? error.message : String(error) }
+        }
+      },
+    )
+
     const uploadsDir = path.join(app.getPath('userData'), 'agent', 'uploads')
     attachmentDirWatcher = new AttachmentDirWatcher(uploadsDir)
     // Fire-and-forget: start() resolves once @parcel/watcher.subscribe finishes
@@ -689,6 +742,12 @@ async function initAgentRuntime(win: BrowserWindow): Promise<void> {
       win,
       store: threadStore,
       attachments: attachmentService,
+      // Hand the spawned Codex subprocess the local MCP server's dynamic
+      // port + token so it can actually call our `generate_image` tool.
+      // Null when the listener failed to bind (agent still works, sans tools).
+      mcpRuntime: agentMcpRuntime
+        ? { port: agentMcpRuntime.port, token: agentMcpRuntime.token }
+        : undefined,
     })
     // Unblock any IPC handlers that fired before the manager was ready (e.g.
     // the renderer's mount-time `agent:list-threads`).
@@ -999,6 +1058,30 @@ const legacySkillsMigrationPromise: Promise<{ copied: string[]; skipped: string[
     },
   )
 
+// First-party "system" skill install. Codex's own `.system` skills are
+// binary-embedded and wiped per binary version, so the app-controlled
+// equivalent is a skill we always ship into the Codex USER scope
+// (`officialUserSkillsDir`) that Codex natively discovers and the skills panel
+// lists. Currently this ships `catimation-image`, which steers the agent to our
+// in-chat + history-persisting `generate_image` MCP tool (we also disable the
+// competing built-in `imagegen` skill at codex launch). Idempotent and
+// non-destructive: user edits to the SKILL.md are preserved.
+const firstPartySkillsPromise: Promise<void> = legacySkillsMigrationPromise
+  .then(() => installFirstPartySkills({ officialRoot: officialUserSkillsDir }))
+  .then((report) => {
+    const touched = [...report.installed, ...report.updated]
+    if (touched.length > 0) {
+      console.info(
+        `[skills] first-party skill(s) ${report.installed.length ? `installed: ${report.installed.join(', ')}` : ''}${
+          report.installed.length && report.updated.length ? '; ' : ''
+        }${report.updated.length ? `updated: ${report.updated.join(', ')}` : ''} → ${officialUserSkillsDir}`,
+      )
+    }
+  })
+  .catch((err) => {
+    console.warn('[skills] first-party skill install failed (non-fatal):', err)
+  })
+
 // NOTE: As of v4.3.5 we no longer mirror bundled Codex-only skills
 // (`resources/codex-skills/*`) into `$HOME/.agents/skills/` on launch. They
 // are now published out-of-band through the Skill Marketplace (catalog.json
@@ -1022,8 +1105,10 @@ const marketplaceService = registerMarketplaceIpc({
 // lets the marketplace UI show them under "Installed" so users can
 // uninstall/replace selectively. Failure is non-fatal — the UI's first
 // `adopt-existing` IPC call will just retry.
-marketplaceService
-  .adoptExisting()
+// Chained after the first-party install so `catimation-image` is on disk and
+// gets adopted into marketplace state in the same pass (shows under "Installed").
+firstPartySkillsPromise
+  .then(() => marketplaceService.adoptExisting())
   .then((adopted) => {
     if (adopted.length > 0) {
       console.info(
@@ -1055,7 +1140,10 @@ ipcMain.handle('load-skills', async () => {
     // first call after a fresh upgrade returns the complete user-scope set.
     // Bundled Codex-only skills are no longer auto-mirrored — they install
     // on-demand through the Skill Marketplace (see scripts/upload-skills-to-cos.mjs).
+    // Also wait for the first-party `catimation-image` install so it appears in
+    // the panel on the first load after upgrade.
     await legacySkillsMigrationPromise
+    await firstPartySkillsPromise
     fs.mkdirSync(officialUserSkillsDir, { recursive: true })
     const builtin = readSkillsFromDir(builtinSkillsDir)
     const user = readSkillsFromDir(officialUserSkillsDir)

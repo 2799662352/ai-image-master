@@ -4,6 +4,7 @@ import type { HistoryDataService } from '../history'
 import type { ImageViewer } from '../image-viewer'
 import { isTabName, useTabStore } from '../../stores/useTabStore'
 import { useAgentChatStore } from './store'
+import { recordCodexArtifact } from './codexArtifactPersistence'
 import type { AttachmentRef } from '../../../../types/agent-timeline'
 import type { AgentToolRequest, AgentToolResponse } from '../../../../types/agent'
 
@@ -22,6 +23,17 @@ type AgentElectronApi = {
   agent?: {
     onToolRequest: (callback: (request: AgentToolRequest) => void) => () => void
     sendToolResponse: (response: AgentToolResponse) => void
+  }
+  attachments?: {
+    save: (args: {
+      threadId: string
+      name: string
+      mime: string
+      base64: string
+    }) => Promise<{ ok: true; path: string } | { ok: false; reason: string }>
+    readThumb: (
+      p: string,
+    ) => Promise<{ ok: true; base64: string; mime: string } | { ok: false; reason: string }>
   }
 }
 
@@ -88,28 +100,81 @@ export class AgentToolExecutor {
       SERVICE_KEYS.API,
     )
 
+    // Resolve reference images BEFORE showing the in-progress bubble. Codex
+    // passes uploads-dir file PATHS (e.g. `C:\...\agent\uploads\<hash>.jpg`),
+    // but the renderer's ApiService can only `fetch()` data:/http URLs — a raw
+    // path becomes `data:image/jpeg;base64,C:\...` → ERR_INVALID_URL. We read
+    // each path's bytes through the mime+size-gated attachments IPC and inline
+    // it as a data URL. Doing this before `beginImageGeneration` keeps a bad
+    // path from leaving a dangling "generating" bubble — it surfaces as a clean
+    // explicit error to the agent instead. Only `await` when refs are actually
+    // present so the no-ref (text-to-image) path still shows its in-progress
+    // bubble synchronously.
+    const referenceImages =
+      Array.isArray(params.referenceImages) && params.referenceImages.length > 0
+        ? await this.resolveReferenceImages(params.referenceImages)
+        : undefined
+
     // Force the stable VIP channel; ignore any model the agent passed.
     const request: GenerateImageParams = {
       ...params,
+      referenceImages,
       model: CODEX_IMAGE_MODEL,
       resolution: params.resolution ?? CODEX_DEFAULT_RESOLUTION,
     }
 
-    const result = await api.generateImage(request)
+    // Show a "generating" bubble immediately so the user sees in-progress
+    // feedback during the (potentially long) request, then settle it in place.
+    const chat = useAgentChatStore.getState()
+    const genId = chat.beginImageGeneration(request.prompt)
+
+    let result: GenerateResult
+    try {
+      result = await api.generateImage(request)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      chat.failImageGeneration(genId, message)
+      throw error
+    }
+
     if (!result.success) {
-      throw new Error(result.error || 'Image generation failed')
+      const message = result.error || 'Image generation failed'
+      chat.failImageGeneration(genId, message)
+      throw new Error(message)
     }
 
     const images = result.images ?? result.urls ?? []
     if (images.length === 0) {
-      throw new Error('Image generation returned no images')
+      const message = 'Image generation returned no images'
+      chat.failImageGeneration(genId, message)
+      throw new Error(message)
     }
 
-    // Show the images as their own assistant bubble (thumbnail + lightbox).
-    useAgentChatStore.getState().appendArtifactMessage(this.toArtifacts(images))
+    // Settle the bubble with the finished images (thumbnail + lightbox).
+    chat.resolveImageGeneration(genId, this.toArtifacts(images))
 
     // Persist to history under the 'codex' type (base64 → R2 handled inside).
-    await this.recordHistory(request, images)
+    const historyId = await this.recordHistory(request, images)
+
+    // Anchor the bubble to the (cloud-persisted) history record so it survives
+    // reload / thread-switch. We persist only a tiny pointer — the durable
+    // image URLs come from the history bucket, not from localStorage.
+    const threadId = chat.threadId
+    if (historyId != null && threadId) {
+      recordCodexArtifact(threadId, {
+        id: `codex-artifact-${historyId}`,
+        createdAt: Date.now(),
+        prompt: request.prompt,
+        historyId,
+      })
+    }
+
+    // Surface the image in the ATTACHMENTS file panel (right-side workspace
+    // tree) by persisting it into the watched uploads dir. Best-effort: the
+    // chat bubble + history are already settled, so a failure here is non-fatal.
+    if (threadId) {
+      void this.saveToFilePanel(threadId, request.prompt, images)
+    }
 
     // Return a COMPACT result to the agent — never echo multi-MB base64 back
     // into the model context (token blowup + useless to the agent).
@@ -127,23 +192,138 @@ export class AgentToolExecutor {
     }))
   }
 
-  private async recordHistory(request: GenerateImageParams, images: string[]): Promise<void> {
+  /**
+   * Normalize `referenceImages` into browser-loadable sources for ApiService.
+   *
+   * `data:`/`http(s):` entries pass through untouched. Anything else is treated
+   * as a local filesystem path (codex hands us uploads-dir paths) and read via
+   * the `attachments.readThumb` IPC — the renderer cannot `fetch()` a raw OS
+   * path, and that channel is the right security scope (mime + size whitelist)
+   * for a file the user/agent already produced in the uploads dir.
+   *
+   * Returns `undefined` for no refs (text-to-image). If refs were provided but
+   * NONE could be read, throws an explicit error so the agent learns the path
+   * was bad instead of the request silently degrading to text-to-image.
+   */
+  private async resolveReferenceImages(refs: unknown): Promise<string[] | undefined> {
+    if (!Array.isArray(refs) || refs.length === 0) return undefined
+
+    const api = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.attachments
+    const resolved: string[] = []
+    const failures: string[] = []
+
+    for (const raw of refs) {
+      if (typeof raw !== 'string' || raw.length === 0) continue
+      if (raw.startsWith('data:') || raw.startsWith('http://') || raw.startsWith('https://')) {
+        resolved.push(raw)
+        continue
+      }
+      if (!api?.readThumb) {
+        failures.push(`${raw} (attachments API unavailable)`)
+        continue
+      }
+      const res = await api.readThumb(raw)
+      if (res.ok) {
+        resolved.push(`data:${res.mime};base64,${res.base64}`)
+      } else {
+        failures.push(`${raw} (${res.reason})`)
+      }
+    }
+
+    if (resolved.length === 0 && failures.length > 0) {
+      throw new Error(`参考图无法读取：${failures.join('; ')}`)
+    }
+    return resolved.length > 0 ? resolved : undefined
+  }
+
+  private async recordHistory(
+    request: GenerateImageParams,
+    images: string[],
+  ): Promise<number | string | null> {
     try {
       const history = ServiceRegistry.get<HistoryDataService>(SERVICE_KEYS.HISTORY_DATA)
-      if (!history) return
+      if (!history) return null
       await history.init()
-      await history.addToHistory(
+      const saved = (await history.addToHistory(
         'codex',
         request.prompt,
         images,
         request.ratio,
         CODEX_IMAGE_MODEL,
         request.referenceImages ? { referenceImages: request.referenceImages } : undefined,
-      )
+      )) as { id?: number | string } | null
+      return saved?.id ?? null
     } catch (error) {
       // History persistence is best-effort; never fail the generation over it.
       console.error('[AgentToolExecutor] failed to record codex image to history:', error)
+      return null
     }
+  }
+
+  /**
+   * Persist generated images into the ATTACHMENTS file panel (uploads dir).
+   * Each image is normalized to base64 then handed to the main `attachments:save`
+   * IPC, which content-addresses + size-caps it and broadcasts a panel refresh.
+   */
+  private async saveToFilePanel(threadId: string, prompt: string, images: string[]): Promise<void> {
+    const api = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.attachments
+    if (!api?.save) return
+    const base = this.slugify(prompt) || 'codex-image'
+    const stamp = Date.now()
+    for (let i = 0; i < images.length; i++) {
+      try {
+        const decoded = await this.toBase64(images[i])
+        if (!decoded) continue
+        const suffix = images.length > 1 ? `-${i + 1}` : ''
+        const ext = decoded.mime === 'image/jpeg' ? 'jpg' : decoded.mime.split('/')[1] || 'png'
+        await api.save({
+          threadId,
+          name: `${base}-${stamp}${suffix}.${ext}`,
+          mime: decoded.mime,
+          base64: decoded.base64,
+        })
+      } catch (error) {
+        console.error('[AgentToolExecutor] failed to save codex image to file panel:', error)
+      }
+    }
+  }
+
+  /** Normalize a dataURL or http(s) image URL to `{ mime, base64 }`. */
+  private async toBase64(uri: string): Promise<{ mime: string; base64: string } | null> {
+    if (uri.startsWith('data:')) {
+      // We only expect base64-encoded data URLs from the image API.
+      const match = /^data:([^;,]+);base64,(.*)$/s.exec(uri)
+      if (!match) return null
+      return { mime: match[1] || 'image/png', base64: match[2] ?? '' }
+    }
+    try {
+      const res = await fetch(uri)
+      if (!res.ok) return null
+      const blob = await res.blob()
+      const buf = await blob.arrayBuffer()
+      const mime = blob.type && blob.type.startsWith('image/') ? blob.type : 'image/png'
+      return { mime, base64: this.bufferToBase64(buf) }
+    } catch {
+      return null
+    }
+  }
+
+  private bufferToBase64(buf: ArrayBuffer): string {
+    const bytes = new Uint8Array(buf)
+    let binary = ''
+    const chunk = 0x8000
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunk))
+    }
+    return btoa(binary)
+  }
+
+  private slugify(text: string): string {
+    return text
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 40)
   }
 
   private async queryHistory(params: QueryHistoryToolParams): Promise<unknown> {

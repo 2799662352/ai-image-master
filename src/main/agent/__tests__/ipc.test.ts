@@ -133,6 +133,31 @@ describe('registerAgentIpc thread management handlers', () => {
     expect(manager.openThread).toHaveBeenCalledWith('thread-abc')
   })
 
+  it('normalizes message createdAt (Date | ISO string) to epoch numbers on open-thread', async () => {
+    // A `Date` does not reliably survive structured-clone across the
+    // contextBridge as a usable value; the renderer orders + timestamps the
+    // timeline by a numeric createdAt, so the handler must emit numbers.
+    const date = new Date('2026-06-05T10:00:00.000Z')
+    manager.openThread.mockResolvedValueOnce({
+      id: 't1',
+      messages: [
+        { id: 'm1', role: 'user', items: '[]', createdAt: date },
+        { id: 'm2', role: 'assistant', items: '[]', createdAt: '2026-06-05T10:05:00.000Z' },
+        { id: 'm3', role: 'assistant', items: '[]' },
+      ],
+    })
+
+    const handler = get('agent:open-thread')!
+    const result = (await handler({}, 't1')) as {
+      messages: Array<{ id: string; createdAt?: unknown }>
+    }
+
+    expect(result.messages[0].createdAt).toBe(date.getTime())
+    expect(result.messages[1].createdAt).toBe(Date.parse('2026-06-05T10:05:00.000Z'))
+    // No usable timestamp → left untouched (renderer falls back to 0, not now).
+    expect(result.messages[2].createdAt).toBeUndefined()
+  })
+
   it('registers agent:rename-thread and forwards id + title', async () => {
     const handler = get('agent:rename-thread')
     expect(handler).toBeTypeOf('function')

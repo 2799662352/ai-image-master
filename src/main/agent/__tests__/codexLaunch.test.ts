@@ -119,6 +119,50 @@ describe('buildCodexLaunchArgs', () => {
     expect(args).toContain('experimental_use_rmcp_client=true')
   })
 
+  it('does NOT inject a catimation MCP entry when no runtime is provided', () => {
+    const args = buildCodexLaunchArgs()
+    expect(args.some((a) => a.includes('mcp_servers.catimation'))).toBe(false)
+  })
+
+  it('does NOT disable the built-in imagegen skill when our tool is unavailable', () => {
+    // Fallback safety: with no catimation MCP wired, the built-in `imagegen`
+    // skill is the only image path, so we must leave it enabled.
+    const args = buildCodexLaunchArgs()
+    expect(args.some((a) => a.includes('imagegen'))).toBe(false)
+  })
+
+  it('disables the built-in imagegen skill when catimation is wired (first choice)', () => {
+    // Codex 0.137 ships a built-in `imagegen` system skill that out-competes our
+    // MCP tool. Disabling it by name (SessionFlags layer via `-c`) makes
+    // `generate_image` the first/only image path.
+    const args = buildCodexLaunchArgs({ catimationMcp: { port: 7842, token: 'deadbeef' } })
+    expect(args).toContain('skills.config=[{ name = "imagegen", enabled = false }]')
+  })
+
+  it('injects the local catimation MCP server (url + token header) when provided', () => {
+    // This is THE wiring that lets the spawned Codex subprocess call our
+    // in-app `generate_image` tool. Without it Codex has no image tool and
+    // confabulates with its own internal `image_gen`.
+    const args = buildCodexLaunchArgs({ catimationMcp: { port: 7842, token: 'deadbeef' } })
+
+    // Streamable-HTTP is selected by `url` alone; codex's transport enum is
+    // deny_unknown_fields, so we must NEVER emit a `transport` key.
+    expect(args).toContain('mcp_servers.catimation.url="http://127.0.0.1:7842/mcp"')
+    expect(args.some((a) => a.includes('transport'))).toBe(false)
+
+    // Custom auth header via TOML inline table (the `-c` value is TOML-parsed).
+    expect(args).toContain('mcp_servers.catimation.http_headers={ "x-catimation-token" = "deadbeef" }')
+
+    // Generous per-tool timeout so Codex waits for a real image render (minutes
+    // at 2K/4K high) instead of aborting + retrying mid-generation.
+    expect(args).toContain('mcp_servers.catimation.tool_timeout_sec=2000')
+  })
+
+  it('uses the ephemeral port when the OS reassigned it', () => {
+    const args = buildCodexLaunchArgs({ catimationMcp: { port: 51234, token: 'abc' } })
+    expect(args).toContain('mcp_servers.catimation.url="http://127.0.0.1:51234/mcp"')
+  })
+
   it('accepts explicit safer overrides via sessionConfig', () => {
     const args = buildCodexLaunchArgs({
       listenUrl: 'ws://127.0.0.1:1234',
