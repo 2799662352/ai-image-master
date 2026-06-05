@@ -739,7 +739,7 @@ export class ApiService {
 
     // 超时（AbortSignal.timeout 抛出 TimeoutError，用户取消抛出 AbortError）
     if (message.includes('timeout') || error.name === 'TimeoutError') {
-      return '请求超时，图片生成可能需要较长时间（高画质 / 4K 最长可达 15 分钟），请稍后重试'
+      return '请求超时，图片生成可能需要较长时间（高画质 / 4K 最长可达 20 分钟），请稍后重试'
     }
     if (error.name === 'AbortError') {
       return '操作已取消'
@@ -1049,11 +1049,11 @@ export class ApiService {
       const hasImages = imageSources.length > 0
       const isOfficial = model === 'gpt-image-2'
       const isVip = model === 'gpt-image-2-vip'
-      // 用户反馈 5 分钟不够用：三档统一拉到 15 分钟。
+      // 用户反馈 15 分钟仍不够用：三档统一拉到 20 分钟。
       // 背后是不同的官方/逆向通道，但完成耗时主要受上游排队 / 审核触发影响，
       // 给同样的天花板更稳；之前 120/180/360s 的分档实际上更多是"快失败"而非真实差异。
       // 留下 isOfficial / isVip 变量是因为下面 size / quality 解析仍然要按通道分支。
-      const timeoutMs = 900_000
+      const timeoutMs = 1_200_000
 
       // size 解析：官转与 VIP 共用 resolutionMap（ratio × resolution → 30 档 size），
       // 官逆 (-all) 不发 size（写进 prompt）。
@@ -1121,8 +1121,8 @@ export class ApiService {
     }
 
     // 与 gpt-image-2 系列对齐：所有模型（Gemini-native / Flux / 通用 OpenAI-compat）
-    // 都给 15 分钟硬天花板，避免 Nano Banana Pro 等长耗时模型在上游排队 / 高峰期被无限挂起。
-    const fetchSignal = this.composeTimeoutSignal(signal, 900_000)
+    // 都给 20 分钟硬天花板，避免 Nano Banana Pro 等长耗时模型在上游排队 / 高峰期被无限挂起。
+    const fetchSignal = this.composeTimeoutSignal(signal, 1_200_000)
 
     return fetch(url, {
       method: 'POST',
@@ -1133,7 +1133,7 @@ export class ApiService {
   }
 
   /**
-   * 把上游 abort signal 与 15 分钟超时拼起来；任一触发即取消请求。
+   * 把上游 abort signal 与 20 分钟超时拼起来；任一触发即取消请求。
    * 抽出来是因为多个 fetch 调用点都要套同样的"用户取消 + 硬超时"组合。
    */
   private composeTimeoutSignal(userSignal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
@@ -1182,7 +1182,7 @@ export class ApiService {
       headers['x-api-key'] = this.apiKey!
     }
 
-    const fetchSignal = this.composeTimeoutSignal(signal, 900_000)
+    const fetchSignal = this.composeTimeoutSignal(signal, 1_200_000)
 
     return fetch(url, {
       method: 'POST',
@@ -1267,7 +1267,7 @@ export class ApiService {
    * - gpt-image-2 (官转)：额外支持 size/quality
    * - gpt-image-2-vip (Codex 官逆)：仅 size
    * - gpt-image-2-all (官逆)：均不支持，回 b64_json
-   * 三档统一超时 15 分钟（900s），见上游调用点。
+   * 三档统一超时 20 分钟（1200s），见上游调用点。
    */
   private async makeGptImage2FormDataRequest(
     url: string,
@@ -1276,7 +1276,7 @@ export class ApiService {
     imageSources: string[],
     site: ApiSite,
     userSignal?: AbortSignal,
-    timeoutMs = 900_000,
+    timeoutMs = 1_200_000,
     size?: string,
     quality?: string,
   ): Promise<Response> {

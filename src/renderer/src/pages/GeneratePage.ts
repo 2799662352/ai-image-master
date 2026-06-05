@@ -64,6 +64,13 @@ export class GeneratePage extends BasePage {
   }
 
   init(): void {
+    // 守护:存在 generate-react-root 说明 React 整页接管了 #generate,
+    // vanilla 的事件绑定全部 skip,避免与 React 双向冲突(同 BatchPage)。
+    if (typeof document !== 'undefined' && document.getElementById('generate-react-root')) {
+      console.log('[GeneratePage.ts] 检测到 generate-react-root,跳过 vanilla 初始化(React 接管)')
+      this.isInitialized = true
+      return
+    }
     this.bindEvents()
     this.bindResultTabEvents()
     this.bindStateAutoSave()

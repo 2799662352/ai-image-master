@@ -5,6 +5,7 @@ import type { GenerateSnapshot } from '../stores/useGenerateStore'
 import { useAutosizeTextarea } from '../hooks/useAutosizeTextarea'
 import { ModelSelector } from '../components/ModelSelector'
 import { ImageParamControls } from '../react-app/components/ImageParamControls'
+import { TemplateInline } from '../react-app/components/TemplateInline'
 import { ReferenceImageList } from './generate/ReferenceImageList'
 import { ResultGrid } from './generate/ResultGrid'
 import type { MediaRef } from '../components/shared/media-tokens/types'
@@ -131,6 +132,8 @@ export default function GeneratePage() {
           当前模型: <span className="text-cyberpunk-yellow">{currentModel.name}</span>
         </div>
       )}
+
+      <TemplateInline context="generate" />
 
       <div className="relative">
         <textarea

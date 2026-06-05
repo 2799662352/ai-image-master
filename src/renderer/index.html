@@ -1432,7 +1432,11 @@
         </div>
 
         <!-- 图片生成面板 -->
-        <div id="generatePanel" class="tab-panel bg-[#09090B] border border-[#3F3F46] rounded-none p-4 md:p-6 relative overflow-hidden">
+        <div id="generatePanel" class="tab-panel relative p-0 bg-transparent border-0">
+            <!-- React 接管(整页 GeneratePage)。旧 vanilla DOM 保留为隐藏占位,
+                 让 pages/GeneratePage.ts 的 querySelector/addEventListener 不报错;实际交互全走 React。 -->
+            <div id="generate-react-root"></div>
+            <div id="generatePanelLegacy" class="hidden" aria-hidden="true">
             <!-- Kinetic Typography - 装饰性背景数字 -->
             <div class="text-massive absolute -right-8 -top-8 opacity-[0.03] select-none pointer-events-none z-0" aria-hidden="true">01</div>
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 relative z-10">
@@ -1621,6 +1625,7 @@
                     </div>
                 </div>
             </div>
+            </div><!-- /generatePanelLegacy -->
         </div>
 
 
