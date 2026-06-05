@@ -101,8 +101,37 @@ describe('AgentToolExecutor.generateImage', () => {
 
     const result = (await callGenerate({ prompt: 'a cat' })) as Record<string, unknown>
 
-    expect(result).toEqual({ ok: true, count: 1, model: 'gpt-image-2-vip' })
+    // No threadId / no attachments API in this test → nothing saved locally,
+    // history fake returns null. Compact shape only; never any base64.
+    expect(result).toEqual({ ok: true, count: 1, model: 'gpt-image-2-vip', historyId: null, paths: [] })
     expect(JSON.stringify(result)).not.toContain('base64')
+  })
+
+  it('returns the saved local file path(s) so the agent can read/move them (codex-native parity)', async () => {
+    // Codex native image_gen always reports the saved path; replicate that.
+    useAgentChatStore.setState({ messages: [], threadId: 'thread-1' })
+    const savedPath = 'C:\\Users\\me\\AppData\\Roaming\\app\\agent\\uploads\\deadbeef.png'
+    const save = vi.fn(async () => ({ ok: true as const, path: savedPath }))
+    ;(window as unknown as { electronAPI?: unknown }).electronAPI = { attachments: { save } }
+
+    const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
+    const history: HistoryFake = { init: vi.fn(async () => {}), addToHistory: vi.fn(async () => ({ id: 42 })) }
+    registerFakes(api, history)
+
+    const result = (await callGenerate({ prompt: 'a cat' })) as Record<string, unknown>
+
+    expect(save).toHaveBeenCalledTimes(1)
+    expect(result).toEqual({
+      ok: true,
+      count: 1,
+      model: 'gpt-image-2-vip',
+      historyId: 42,
+      paths: [savedPath],
+    })
+    expect(JSON.stringify(result)).not.toContain('base64')
+
+    useAgentChatStore.setState({ threadId: undefined })
+    delete (window as unknown as { electronAPI?: unknown }).electronAPI
   })
 
   it('throws when generation fails and leaves an error bubble (so the agent + user see it)', async () => {

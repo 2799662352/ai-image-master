@@ -193,6 +193,17 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
       // real result (or an explicit error) instead of inventing a timeout. The
       // value is plain seconds (codex deserializes it via `option_duration_secs`).
       '-c', 'mcp_servers.catimation.tool_timeout_sec=2000',
+      // Let the agent fire several `generate_image` calls in ONE turn without the
+      // turn blocking on each render serially. Codex gates MCP parallelism per
+      // server: `ToolRouter::tool_supports_parallel` only returns true when the
+      // server name is in `parallel_mcp_server_names`, which is populated from
+      // each server's `supports_parallel_tool_calls` config flag (see
+      // codex-rs/core/src/tools/router.rs + config/src/mcp_types.rs). With this
+      // on, concurrent `generate_image` calls each take a read-lock (instead of
+      // the exclusive write-lock), so "一次生成多张图" runs concurrently and each
+      // call returns its own saved `paths` / `file://` resource_links the moment
+      // that image finishes — no per-call wait stalls the others.
+      '-c', 'mcp_servers.catimation.supports_parallel_tool_calls=true',
     )
     // Make our `generate_image` the FIRST (and only) image path. Codex 0.137
     // ships a built-in `imagegen` system skill (installed to

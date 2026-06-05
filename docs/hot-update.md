@@ -138,6 +138,37 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
+### v4.3.25 (2026-06-06) — catimation 生图对齐 codex 原生 + 多图并发 + 生成后自动查看
+
+**目标**:让 Codex 聊天里的 `catimation` 生图工具(`generate_image`)在「返回契约 / 多图并发 / 生成后自查」三方面对齐并超过 codex 原生 `image_gen`。
+
+**根因调查(systematic-debugging + codex 源码取证)**
+
+用户反馈"生成 3 张图时 UI 上感觉不到并发,是一张张来的"。逐层取证:
+
+- `ToolRouter`(主进程,`pending` map 按 id 索引)与 `AgentToolExecutor`(渲染层,`void this.handle(request)` + 无单飞锁)**都能并发**,不是执行瓶颈。
+- 决定模型「能否一轮发多个工具调用」的字段来自 **模型** 而非 MCP 服务器:`core/src/session/turn.rs:974` `parallel_tool_calls: turn_context.model_info.supports_parallel_tool_calls`。
+- 未知 slug 才会走 `model_info_from_slug` 兜底(`supports_parallel_tool_calls: false`);而 `OpenAiModelsManager::new` 会用内置 `models.json` 预热(`manager.rs:204`),其中 `gpt-5.5`/`gpt-5.2` 均 `supports_parallel_tool_calls: true`。
+- 结论:并发开关本就是开的,真正原因是**模型自行选择串行**(生成一张→叙述→再下一张;对照 codex issue [#14485](https://github.com/openai/codex/issues/14485) "GPT5.4 太爱并发" 印证这是模型裁量)。`ModelsManagerConfig` 没有该字段的 `-c` 覆盖入口,所以走 **提示词** 这一最有效杠杆。
+
+**改动**
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| 返回本地路径 + `resource_link` | `src/renderer/src/features/agent-chat/AgentToolExecutor.ts`、`src/main/mcp/tools/imageTools.ts` | `generate_image` 返回 `{ ok, count, model, historyId, paths }` 并为每个落地文件追加 `resource_link`(`file://`),与 codex 原生 `image_gen` 一样:本地存盘(返回路径)+ 历史页 + ATTACHMENTS 面板 |
+| 开启 MCP 并行执行 | `src/main/agent/codexLaunch.ts` | 注入 `-c mcp_servers.catimation.supports_parallel_tool_calls=true`,让 codex 并发执行模型一轮发出的多个生图调用 |
+| 技能写入「合理并发」 | `src/main/agent/firstPartySkills.ts`(`catimation-image`) | 新增一节:用户要多张图时**在同一轮一次性发出全部 `generate_image` 调用**(并行工具调用),约 4 张并发为上限、更多分批;仅当后一张依赖前一张返回路径时才串行 |
+| 技能写入「生成后自查」 | 同上 | 新增步骤 4:生成后**主动用看图能力打开每个返回的 `path`** 核对(主体/数量/风格/瑕疵/错字),不符就说明并主动重生成;多图逐张查看,检查从简 |
+
+**验证(TDD)**
+
+- `firstPartySkills.test.ts` 9/9、`imageTools.test.ts`、`AgentToolExecutor.generateImage.test.ts` 合计 **26/26 通过**。
+- 技能为 app 托管(`.catimation-managed` 哈希标记):内容变更后下次启动自动写入用户 scope `~/.agents/skills/catimation-image/SKILL.md`,用户手改过则不覆盖。
+
+行为:在 Codex 聊天里要"生成 N 张"时,模型倾向于同一轮并发发起多张生图、各自实时进度;生成完成后逐张自查;每张都落地为本地文件并进历史 + 附件面板,路径回传给模型可继续引用。
+
+---
+
 ### v4.3.24 (2026-06-05) — 修复:Codex 聊天里生成的图片重开软件后漂移到对话最上方
 
 **用户报告**:在 Codex 聊天栏生成图片后,关闭客户端再打开,图片气泡**漂移到对话最上方**(本该停在它生成时所在的底部位置)。之前一版尝试用「按 `createdAt` 时间顺序插入」修过一次,但问题依旧。

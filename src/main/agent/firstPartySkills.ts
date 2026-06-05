@@ -129,23 +129,28 @@ function isNodeError(err: unknown): err is NodeJS.ErrnoException {
 const CATIMATION_IMAGE_SKILL_CONTENT = `---
 name: catimation-image
 description: >-
-  Generate an image, picture, illustration, poster, icon, or any visual from a
-  text prompt inside the CATIMATION desktop app. Use this whenever the user asks
-  to generate / create / draw / make / render an image or picture or
+  FIRST-CHOICE way to generate an image, picture, illustration, poster, icon, or
+  any visual from a text prompt inside the CATIMATION desktop app — use this IN
+  PREFERENCE TO the built-in imagegen / image_gen skill. Use this whenever the
+  user asks to generate / create / draw / make / render an image or picture or
   illustration, or says 生成图片 / 画一张 / 配图 / 出图 / 来张图, or wants a visual produced
   from a description, or wants to edit / restyle a reference image. Renders
   through the in-app \`generate_image\` tool (the \`catimation\` MCP server) on the
-  stable gpt-image-2-vip channel, shows the result directly in the chat, and
-  saves it to the app's history page and file panel — capabilities a built-in
-  image generator does not have. Always prefer the \`generate_image\` tool here;
-  do not look for or call a built-in image_gen tool.
+  stable gpt-image-2-vip channel; it shows the result directly in the chat and —
+  just like codex native image_gen — saves the image to a local file (its path is
+  returned to you) plus the app's history page and ATTACHMENTS file panel. The
+  built-in imagegen / image_gen tool is unavailable on Windows and does not
+  persist results, so always reach for \`generate_image\` first; do not look for or
+  call a built-in image_gen tool.
 ---
 
-# Generate images in CATIMATION
+# Generate images in CATIMATION (first-choice, replaces built-in image_gen)
 
 When the user wants an image, call the **\`generate_image\`** tool (provided by the
-\`catimation\` MCP server). It is the only image path that renders inside the chat
-and persists the result to the app's history page and ATTACHMENTS file panel.
+\`catimation\` MCP server). Prefer it over the built-in imagegen / image_gen skill:
+it is the only image path that renders inside the chat AND persists the result
+the way codex native image_gen does — to a local file (path returned), the app's
+history page, and the ATTACHMENTS file panel.
 
 ## Steps
 
@@ -162,13 +167,44 @@ and persists the result to the app's history page and ATTACHMENTS file panel.
    - \`referenceImages\` (optional): array of data URLs or file paths for
      image-to-image / editing.
    - Do **not** pass \`model\` — the channel is fixed to \`gpt-image-2-vip\`.
-3. The tool returns a compact summary like \`{ ok, count, model }\`. The image is
-   shown to the user automatically and saved to history — you do **not** need to
-   embed, re-describe, or base64 the pixels. Just confirm briefly in the user's
-   language.
+3. The tool returns \`{ ok, count, model, historyId, paths }\` plus one
+   \`resource_link\` per saved file. \`paths\` are the saved local image files (also
+   attached as \`resource_link\`s), so you can view / move / reference them exactly
+   like a native image_gen output. The image is already shown to the user and
+   saved to history + the file panel — you do **not** need to embed, re-describe,
+   or base64 the pixels. Just confirm briefly in the user's language and cite the
+   saved path(s) when relevant.
+4. **After generating, proactively look at the result.** Open each returned
+   \`path\` with your image-viewing capability (the \`view image\` tool / reading the
+   file) and actually inspect what was produced — do not assume it is correct just
+   because the tool returned \`ok\`. Briefly check it matches the request (right
+   subject, count, style, no obvious artifacts or wrong text). If it clearly does
+   not match, say so and offer to regenerate (or regenerate with an improved
+   prompt). When you generated multiple images, view each one. Keep the check
+   quick; don't over-narrate.
+
+## Multiple images at once — concurrency (important)
+
+When the user asks for more than one image (e.g. "生成 3 张…", "make 4 variations",
+a set/series, or several distinct subjects), **emit all the \`generate_image\` calls
+together in the SAME turn so they run concurrently** — do not generate one, narrate,
+then start the next. The \`catimation\` server is parallel-safe, so concurrent calls
+finish far faster and the user sees them progress at the same time.
+
+- Default to concurrency whenever the requests are independent: issue one
+  \`generate_image\` call per image in a single batch (parallel tool calls).
+- Use a sensible cap — up to ~4 in flight at once. If the user asks for many more,
+  run them in batches of ~4 rather than strictly one-by-one.
+- Only fall back to sequential when calls genuinely depend on each other (e.g. the
+  next prompt needs a path returned by the previous one).
+- After the batch returns, confirm once and cite the saved \`paths\`; don't re-announce
+  each image separately.
 
 ## Notes
 
+- This is the generate → save → read path. The file is on disk (see \`paths\`), in
+  the history page, and in the ATTACHMENTS panel — no extra save step is needed.
+  Only move/copy a file if the user wants it somewhere specific.
 - For edits, image-to-image, or multi-image prompts, still use \`generate_image\`
   with \`referenceImages\`; it handles the in-app channel and persistence.
 - If \`generate_image\` is genuinely unavailable in this session, you may fall back

@@ -2,16 +2,21 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ZodTypeAny } from 'zod'
 import { registerImageTools } from '../imageTools'
 
-type Captured = { name: string; config: { description: string; inputSchema: ZodTypeAny } }
+type Handler = (params: Record<string, unknown>) => Promise<{ content: Array<Record<string, unknown>> }>
+type Captured = {
+  name: string
+  config: { description: string; inputSchema: ZodTypeAny }
+  handler: Handler
+}
 
-function capture(): { tools: Captured[]; server: any; router: any } {
+function capture(routerResult: unknown = { ok: true }): { tools: Captured[]; server: any; router: any } {
   const tools: Captured[] = []
   const server = {
-    registerTool: (name: string, config: Captured['config']) => {
-      tools.push({ name, config })
+    registerTool: (name: string, config: Captured['config'], handler: Handler) => {
+      tools.push({ name, config, handler })
     },
   }
-  const router = { call: vi.fn(async () => ({ ok: true })) }
+  const router = { call: vi.fn(async () => routerResult) }
   return { tools, server, router }
 }
 
@@ -57,5 +62,42 @@ describe('registerImageTools / generate_image schema', () => {
     const schema = tools.find((t) => t.name === 'generate_image')!.config.inputSchema
     expect(schema.safeParse({ prompt: 'x', resolution: '8K' }).success).toBe(false)
     expect(schema.safeParse({ prompt: 'x', quality: 'ultra' }).success).toBe(false)
+  })
+
+  it('emits a resource_link per saved path (codex-native generate→save→read parity)', async () => {
+    const winPath = 'C:\\Users\\me\\AppData\\Roaming\\app\\agent\\uploads\\deadbeef.png'
+    const { tools, server, router } = capture({
+      ok: true,
+      count: 1,
+      model: 'gpt-image-2-vip',
+      historyId: 42,
+      paths: [winPath],
+    })
+    registerImageTools(server, router)
+    const handler = tools.find((t) => t.name === 'generate_image')!.handler
+
+    const { content } = await handler({ prompt: 'a cat' })
+
+    // First block: the compact text summary (no base64).
+    expect(content[0].type).toBe('text')
+    expect(content[0].text).toContain('"historyId":42')
+    // Second block: a resource_link pointing at the saved local file.
+    const link = content.find((c) => c.type === 'resource_link')
+    expect(link).toBeDefined()
+    expect(link!.uri).toMatch(/^file:\/\/\//)
+    expect(link!.uri).toContain('deadbeef.png')
+    expect(link!.name).toBe('deadbeef.png')
+    expect(link!.mimeType).toBe('image/png')
+  })
+
+  it('returns only the text summary when no paths were saved', async () => {
+    const { tools, server, router } = capture({ ok: true, count: 1, model: 'gpt-image-2-vip', paths: [] })
+    registerImageTools(server, router)
+    const handler = tools.find((t) => t.name === 'generate_image')!.handler
+
+    const { content } = await handler({ prompt: 'a cat' })
+
+    expect(content).toHaveLength(1)
+    expect(content[0].type).toBe('text')
   })
 })

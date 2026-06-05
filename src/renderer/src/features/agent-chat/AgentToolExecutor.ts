@@ -169,16 +169,26 @@ export class AgentToolExecutor {
       })
     }
 
-    // Surface the image in the ATTACHMENTS file panel (right-side workspace
-    // tree) by persisting it into the watched uploads dir. Best-effort: the
-    // chat bubble + history are already settled, so a failure here is non-fatal.
-    if (threadId) {
-      void this.saveToFilePanel(threadId, request.prompt, images)
-    }
+    // Persist into the watched uploads dir so the image both shows in the
+    // ATTACHMENTS file panel AND gives us a concrete local file path to hand
+    // back to the agent. This replicates codex's native `image_gen`
+    // generate→save→read contract: that tool always reports the final saved
+    // path so the agent can view / move / reference the file. We await here (the
+    // chat bubble + history already settled, so UX is unaffected) to capture the
+    // paths; a save failure just yields an empty `paths` list.
+    const paths = threadId ? await this.saveToFilePanel(threadId, request.prompt, images) : []
 
     // Return a COMPACT result to the agent — never echo multi-MB base64 back
-    // into the model context (token blowup + useless to the agent).
-    return { ok: true, count: images.length, model: CODEX_IMAGE_MODEL }
+    // into the model context (token blowup + useless to the agent). `paths`
+    // (the saved local files) + `historyId` let the agent read/move/reference
+    // the result exactly like native `image_gen` output.
+    return {
+      ok: true,
+      count: images.length,
+      model: CODEX_IMAGE_MODEL,
+      historyId,
+      paths,
+    }
   }
 
   private toArtifacts(images: string[]): AttachmentRef[] {
@@ -261,31 +271,38 @@ export class AgentToolExecutor {
   }
 
   /**
-   * Persist generated images into the ATTACHMENTS file panel (uploads dir).
+   * Persist generated images into the ATTACHMENTS file panel (uploads dir) and
+   * return the saved absolute file path(s).
+   *
    * Each image is normalized to base64 then handed to the main `attachments:save`
-   * IPC, which content-addresses + size-caps it and broadcasts a panel refresh.
+   * IPC, which content-addresses + size-caps it, broadcasts a panel refresh, and
+   * returns the canonical on-disk path. Returning those paths is what lets the
+   * agent read/move/reference the result like codex's native `image_gen`.
    */
-  private async saveToFilePanel(threadId: string, prompt: string, images: string[]): Promise<void> {
+  private async saveToFilePanel(threadId: string, prompt: string, images: string[]): Promise<string[]> {
     const api = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.attachments
-    if (!api?.save) return
+    if (!api?.save) return []
     const base = this.slugify(prompt) || 'codex-image'
     const stamp = Date.now()
+    const paths: string[] = []
     for (let i = 0; i < images.length; i++) {
       try {
         const decoded = await this.toBase64(images[i])
         if (!decoded) continue
         const suffix = images.length > 1 ? `-${i + 1}` : ''
         const ext = decoded.mime === 'image/jpeg' ? 'jpg' : decoded.mime.split('/')[1] || 'png'
-        await api.save({
+        const res = await api.save({
           threadId,
           name: `${base}-${stamp}${suffix}.${ext}`,
           mime: decoded.mime,
           base64: decoded.base64,
         })
+        if (res.ok) paths.push(res.path)
       } catch (error) {
         console.error('[AgentToolExecutor] failed to save codex image to file panel:', error)
       }
     }
+    return paths
   }
 
   /** Normalize a dataURL or http(s) image URL to `{ mime, base64 }`. */
