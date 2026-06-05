@@ -1,0 +1,10 @@
+{
+  "name": "sts-cos",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tencent SCF function issuing short-lived STS credentials scoped to image-history uploads",
+  "main": "index.js",
+  "dependencies": {
+    "qcloud-cos-sts": "^3.1.0"
+  }
+}

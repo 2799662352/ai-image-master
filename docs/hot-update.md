@@ -138,6 +138,41 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
+### v4.3.23 (2026-06-05) — 根因修复:历史图片重开软件后消失(COS 上传在生产环境无凭据 → 存了会过期的模型直出 URL)
+
+**根因(systematic-debugging)**
+
+历史记录持久化在 `localStorage`,但存的是**模型直出 URL**而非永久 COS 链接 —— 因为生产环境根本传不上 COS:
+
+1. 客户端直传 COS 需要 `cos-credentials.json`(主账号密钥),它只存在于开发机仓库根目录,**没有打进安装包**(也绝不能打:那是公开仓库的主密钥泄露)。
+2. 于是绝大多数用户的 `credentials.ts` 兜底链拿不到任何密钥 → `uploadBufferToBucket` 失败 → 历史落库 `modelUrl`。
+3. 模型直出 URL 有 TTL,过期后历史里的图就成了死链 → "重开软件图片消失"。
+4. **导演模式更严重**:`saveToHistory` 直接落 `img.url`(模型 URL),从来没走过 COS,必过期。
+
+**修复 —— 服务端 STS,客户端零密钥**
+
+新增腾讯云 SCF 云函数(`serverless/sts-cos/`,Function URL 直连)用 `qcloud-cos-sts` 颁发**短时临时凭证**,作用域死锁在 `image-history/* 仅 PutObject`。主账号/子账号密钥只存在于云函数环境变量,**永不下发客户端**。
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| 新增 STS 凭证提供器 | `src/main/services/tencent/stsCredentials.ts` | 从 SCF Function URL 拉临时凭证,内存缓存(提前 5min 刷新)、并发去重、10s 超时;可选 `COS_STS_APP_TOKEN` 网关 |
+| image-history 上传改走 STS | `src/main/services/tencent/cosClient.ts` | 新增专用 COS 实例,SDK `getAuthorization` 回调每次取临时密钥(带 `SecurityToken`);其它桶(storyboardSplit/smartErase)仍用原永久凭证实例,互不影响 |
+| 导演模式落库前先转存 COS | `src/renderer/src/react-app/hooks/useDirectorGeneration.ts` | `saveToHistory` 对每张图先 `uploadImageUrlToCos`(自限流 4 并发),成功用永久 URL、失败兜底模型 URL |
+
+generate / batch 模式本就经 `enqueueUpload → uploadBufferToBucket`,随 STS 改造自动修复。
+
+**验证(TDD)**
+
+- 新增 `stsCredentials.test.ts`:缓存命中/到期刷新/并发去重/非 200 不缓存/缺凭证报错/APP_TOKEN 头 —— 6/6 通过。
+- `cosClient.test.ts` 15/15 不变(mock COS 不触发 getAuthorization,断言照旧)。
+- `useDirectorGeneration.nonblocking-history.test.tsx` 1/1 通过(浏览器无 bridge → 兜底模型 URL,仍非阻塞落库)。
+
+行为:新生成的图(含导演模式)落库即**永久 COS 链接**,重开软件不再消失。已存的过期链接无法追回(URL 已死),但未来不再丢。
+
+> 后续可硬化:给 Function URL 配 `APP_TOKEN`(服务端环境变量 + 客户端 `COS_STS_APP_TOKEN`)防止开放 URL 被滥用上传。
+
+---
+
 ### v4.3.22 (2026-05-29) — 修复:关闭 Codex 聊天栏再打开,滚轮回到顶部(应停在离开位置)
 
 **根因(systematic-debugging Phase 1.5 数据流)**
