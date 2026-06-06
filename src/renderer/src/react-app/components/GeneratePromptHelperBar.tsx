@@ -38,8 +38,9 @@ function toDataUrl(img: RawRefImage): string {
 export function GeneratePromptHelperBar() {
   const enabled = useUIPrefsStore((s) => s.imageEditorToolbar.enabled)
   const [editorState, setEditorState] = useState<{
-    type: 'angle' | 'light'
+    type: 'angle' | 'light' | 'panorama'
     imageUrl: string
+    tab?: 'preview' | 'generate'
   } | null>(null)
 
   const refImages = useVanillaPageRefImages<RawRefImage>({
@@ -74,9 +75,12 @@ export function GeneratePromptHelperBar() {
   if (!enabled) return null
 
   const hasRef = refImages.length > 0
-  const openEditor = (type: 'angle' | 'light') => {
+  const openEditor = (
+    type: 'angle' | 'light' | 'panorama',
+    tab?: 'preview' | 'generate',
+  ) => {
     if (!hasRef) return
-    setEditorState({ type, imageUrl: toDataUrl(refImages[0]) })
+    setEditorState({ type, imageUrl: toDataUrl(refImages[0]), tab })
   }
 
   const btnClass = hasRef
@@ -111,6 +115,24 @@ export function GeneratePromptHelperBar() {
         >
           打光 // light
         </button>
+        <button
+          type="button"
+          disabled={!hasRef}
+          onClick={() => openEditor('panorama', 'generate')}
+          className={btnClass}
+          title={hasRef ? '生成 360° 全景图(注入全景提示词)' : '请先上传参考图'}
+        >
+          生成全景图
+        </button>
+        <button
+          type="button"
+          disabled={!hasRef}
+          onClick={() => openEditor('panorama', 'preview')}
+          className={btnClass}
+          title={hasRef ? '进入全景:环视与截图' : '请先上传参考图'}
+        >
+          进入全景
+        </button>
         {!hasRef && (
           <span className="font-mono text-[10px] text-zinc-500">
             ← 先上传参考图
@@ -130,6 +152,7 @@ export function GeneratePromptHelperBar() {
           imageChoices={imageChoices}
           theme="default"
           onInjectPrompt={injectPrompt}
+          panoramaTab={editorState.tab}
           onClose={() => setEditorState(null)}
         />
       )}

@@ -65,12 +65,14 @@ function ResultCard({
   onRemove,
   onPreview,
   onOpenEditor,
+  onInjectPrompt,
 }: {
   item: BatchItem
   index: number
   onRemove: (id: string) => void
   onPreview?: (url: string) => void
-  onOpenEditor?: (url: string, type: 'angle' | 'light') => void
+  onOpenEditor?: (url: string, type: 'angle' | 'light' | 'panorama') => void
+  onInjectPrompt?: (prompt: string) => void
 }) {
   const tilt = index % 4
   const tiltClass = ['p-tilt-l-2', 'p-tilt-r-2', 'p-tilt-l-3', 'p-tilt-r-3'][tilt]
@@ -189,6 +191,7 @@ function ResultCard({
             theme="punk"
             imageUrl={displayUrl!}
             onOpenEditor={(type) => onOpenEditor?.(displayUrl!, type)}
+            onInjectPrompt={onInjectPrompt}
           />
         )}
         {isDone && (
@@ -399,7 +402,7 @@ function ResultCard({
  * PunkResultGrid - 任务卡片网格 + 全局 spin keyframe
  */
 export default function PunkResultGrid({ items, onRemove, onPreview }: Props) {
-  const [editorState, setEditorState] = useState<{ url: string; type: 'angle' | 'light' } | null>(null)
+  const [editorState, setEditorState] = useState<{ url: string; type: 'angle' | 'light' | 'panorama' } | null>(null)
   const [reversed, setReversed] = useState(true)
 
   const injectPrompt = (p: string) => {
@@ -519,6 +522,7 @@ export default function PunkResultGrid({ items, onRemove, onPreview }: Props) {
                 onRemove={onRemove}
                 onPreview={onPreview}
                 onOpenEditor={(url, type) => setEditorState({ url, type })}
+                onInjectPrompt={injectPrompt}
               />
             )
           })}

@@ -1,5 +1,6 @@
 import { useRef, useEffect, memo } from "react";
 import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { ORBIT_RADIUS, addOrbitGlobe, disposeScene } from "./orbitGlobeShared";
 
 type LightDirection = "left" | "top" | "right" | "front" | "bottom" | "back";
@@ -29,6 +30,11 @@ interface ThreeLightSceneProps {
    * 打开后: 松手若落在某预设附近, 自动跳回 preset 并更新提示词为该预设文案.
    */
   snapToPreset?: boolean;
+  /**
+   * 开启 OrbitControls:左键空白处=相机环绕(阻尼)+ 滚轮缩放;命中灯泡仍是拖灯.
+   * 仅全屏台开启. 内联小窗保持原手动相机环绕(拖空白会带动灯光).
+   */
+  orbitControls?: boolean;
 }
 
 /**
@@ -126,6 +132,7 @@ function ThreeLightSceneInner({
   imageUrl,
   onLightChange,
   snapToPreset = false,
+  orbitControls = false,
 }: ThreeLightSceneProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const onLightChangeRef = useRef(onLightChange);
@@ -307,6 +314,21 @@ function ThreeLightSceneInner({
     updateLightPosition();
     updateCameraFromOrbit();
 
+    // Optional OrbitControls for the fullscreen stage: left-drag on empty space
+    // orbits the camera with inertial damping, wheel zooms. Grabbing the bulb
+    // (handled below) temporarily disables it so dragging the light still works.
+    let controls: OrbitControls | null = null;
+    if (orbitControls) {
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.08;
+      controls.enablePan = false;
+      controls.minDistance = 8;
+      controls.maxDistance = 40;
+      controls.target.set(0, 0, 0);
+      controls.update();
+    }
+
     const animate = () => {
       state.frameId = requestAnimationFrame(animate);
       const t = (performance.now() - state.startTime) / 1000;
@@ -318,6 +340,7 @@ function ThreeLightSceneInner({
       state.dispEl += (state.tEl - state.dispEl) * lerp;
       updateLightPosition();
 
+      controls?.update();
       state.target.lookAt(state.camera.position);
 
       renderer.render(scene, camera);
@@ -350,15 +373,30 @@ function ThreeLightSceneInner({
     };
 
     const onDown = (e: PointerEvent) => {
+      const onBulb = hitBulb(e);
+      if (controls) {
+        // Pause orbit while grabbing the bulb so the light drag wins; otherwise
+        // let OrbitControls drive the camera (don't capture the pointer).
+        controls.enabled = !onBulb;
+        if (!onBulb) {
+          state.dragMode = "idle";
+          return;
+        }
+      }
       state.dragStart = { x: e.clientX, y: e.clientY };
-      state.dragMode = hitBulb(e) ? "light" : "camera";
+      state.dragMode = onBulb ? "light" : "camera";
       canvas.style.cursor = "grabbing";
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
     };
 
     const onMove = (e: PointerEvent) => {
       if (state.dragMode === "idle") {
-        canvas.style.cursor = hitBulb(e) ? "grab" : "default";
+        const overBulb = hitBulb(e);
+        // Disable orbit while hovering the bulb so the next press grabs the
+        // light instead of starting a camera rotate (capture-phase ordering
+        // can't beat OrbitControls' own listener, so we gate it on hover).
+        if (controls) controls.enabled = !overBulb;
+        canvas.style.cursor = overBulb ? "grab" : "default";
         return;
       }
       if (state.dragMode === "light") {
@@ -371,39 +409,30 @@ function ThreeLightSceneInner({
         const dx = e.clientX - state.dragStart.x;
         const dy = e.clientY - state.dragStart.y;
         state.dragStart = { x: e.clientX, y: e.clientY };
-        const dAz = -dx * 0.5;
-        const dEl = dy * 0.5;
 
-        // Rotate the preview camera.
-        state.camAz += dAz;
-        state.camEl = Math.max(-89, Math.min(89, state.camEl + dEl));
+        // Pure camera orbit — fully independent of the light. Dragging empty
+        // space only moves the viewpoint; the light only changes when you drag
+        // the bulb. (Matches the fullscreen OrbitControls behaviour.)
+        state.camAz += -dx * 0.5;
+        state.camEl = Math.max(-89, Math.min(89, state.camEl + dy * 0.5));
         updateCameraFromOrbit();
-
-        // Coupled: the bulb is "attached" to the rotating sphere, so it picks up
-        // the same delta in world space. The light's world direction genuinely
-        // changes, which is what drives the prompt update.
-        state.tAz = ((state.tAz + dAz) % 360 + 360) % 360;
-        state.tEl = Math.max(-89, Math.min(89, state.tEl + dEl));
-        onLightChangeRef.current?.({
-          type: "custom",
-          az: state.tAz,
-          el: state.tEl,
-        });
       }
     };
 
     const onUp = (e: PointerEvent) => {
-      // Both drag modes now drive the light direction, so both should trigger
-      // magnetic snap to the nearest preset on release.
-      const wasMovingLight =
-        state.dragMode === "light" || state.dragMode === "camera";
+      // Only the bulb drag moves the light, so only it triggers magnetic snap.
+      // Camera drag is a pure viewpoint change and never touches the light.
+      const wasMovingLight = state.dragMode === "light";
       state.dragMode = "idle";
       try {
         (e.target as HTMLElement).releasePointerCapture(e.pointerId);
       } catch {
         /* ignore */
       }
-      canvas.style.cursor = hitBulb(e) ? "grab" : "default";
+      const overBulb = hitBulb(e);
+      // Resume orbit unless the pointer is still resting on the bulb.
+      if (controls) controls.enabled = !overBulb;
+      canvas.style.cursor = overBulb ? "grab" : "default";
 
       // 仅当开关打开时才做磁吸. 默认关: 用户拖到的任何自由角度都原样保留.
       if (wasMovingLight && snapToPresetRef.current) {
@@ -419,19 +448,39 @@ function ThreeLightSceneInner({
     canvas.addEventListener("pointerup", onUp);
     canvas.addEventListener("pointerleave", onUp);
 
+    // Recover gracefully from WebGL context loss (driver hiccups, tab switch,
+    // or too many live contexts when several editors are open at once).
+    const onContextLost = (e: Event) => {
+      e.preventDefault();
+      cancelAnimationFrame(state.frameId);
+    };
+    const onContextRestored = () => {
+      // Reset the clock origin so the cone animation doesn't jump, then resume.
+      state.startTime = performance.now();
+      animate();
+    };
+    canvas.addEventListener("webglcontextlost", onContextLost);
+    canvas.addEventListener("webglcontextrestored", onContextRestored);
+
     return () => {
       cancelAnimationFrame(state.frameId);
       canvas.removeEventListener("pointerdown", onDown);
       canvas.removeEventListener("pointermove", onMove);
       canvas.removeEventListener("pointerup", onUp);
       canvas.removeEventListener("pointerleave", onUp);
+      canvas.removeEventListener("webglcontextlost", onContextLost);
+      canvas.removeEventListener("webglcontextrestored", onContextRestored);
+      controls?.dispose();
       (state.target.material as THREE.MeshBasicMaterial).map?.dispose();
       disposeScene(state.scene);
       renderer.dispose();
+      // Proactively free the GL context so the browser/Electron reclaims it
+      // immediately instead of waiting for GC.
+      renderer.forceContextLoss();
       if (canvas.parentNode === el) el.removeChild(canvas);
       sceneRef.current = null;
     };
-  }, [width, height]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [width, height, orbitControls]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* Imperative texture update when imageUrl changes */
   useEffect(() => {

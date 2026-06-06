@@ -145,6 +145,64 @@ export function buildLightingPrompt(
   return parts.join(' ')
 }
 
+/* ============================ 全景图生成 ============================ */
+
+/**
+ * 360° equirectangular 全景图生成约束块。
+ * 逆向自 RunningHub「全景图」节点模板(见 docs/全景图节点-逆向设计文档.md §3),
+ * 作用:把模型从默认的「单视角好看图」强拉回「可环视的等距柱状底图」。
+ */
+const PANORAMA_CONSTRAINTS = `技术要求:
+- 画面必须为标准的 360° equirectangular(等距柱状)全景格式。
+- 画面需支持完整的 360° 水平方向视野,并包含上方与下方的完整空间信息,形成可环视的沉浸式全景效果。
+- 视点应基于单一固定观察点展开,保证整个场景围绕观察者连续展开,而不是普通广角图、鱼眼图、拼接感很强的图,或多个画面拼合的分镜图。
+
+画面要求:
+- 场景的前、后、左、右、上、下必须在空间逻辑上完整闭合,环绕关系自然,过渡连贯。
+- 所有元素应符合统一的透视关系、比例关系、光影关系和空间结构,确保整体真实可信。
+- 保持画面首尾衔接自然,避免左右边缘在拼接处出现断裂、错位、重复、结构冲突或明显接缝。
+- 画面需具有沉浸感、空间延展感和真实环境包裹感。
+- 细节应丰富、清晰,主体信息明确,整体构图适合在 360 全景查看器中观看。
+- 不要生成普通单视角构图,不要生成平面海报式画面,不要生成多镜头拼贴效果。
+
+输出目标:
+- 最终结果应是一张高质量、完整、连续、可环视的 360° 全景图(建议宽高比 2:1)。
+- 严格遵循下述内容、氛围、风格、材质、光线、色彩与关键元素要求。`
+
+export type PanoramaMode = 'txt' | 'img'
+
+export interface PanoramaPromptInput {
+  /** 艺术风格,如「写实风格」「日式动画」 */
+  style?: string
+  /** 具体内容描述,如「现代客厅,温馨的灯光」 */
+  desc?: string
+  /** 图生图补充描述(可空) */
+  supplement?: string
+}
+
+/**
+ * 构造 360° 全景图生成提示词。
+ * - `txt` 文生图:按 风格 + 描述 生成。
+ * - `img` 图生图:基于参考图生成,并强调保持参考图元素不变;补充描述可选。
+ *   (参考图指代前缀由 withRefPrefix 在外层按需追加。)
+ */
+export function buildPanoramaPrompt(mode: PanoramaMode, input: PanoramaPromptInput = {}): string {
+  const style = (input.style || '').trim()
+  const desc = (input.desc || '').trim()
+  const supplement = (input.supplement || '').trim()
+
+  if (mode === 'img') {
+    const head =
+      '请根据参考图,生成一张真正可用于 360 度观看的全景图,确保参考图中的元素保持不变。'
+    const tail = supplement ? `\n\n补充描述:\n${supplement}` : ''
+    return `${head}\n\n${PANORAMA_CONSTRAINTS}${tail}`
+  }
+
+  const head = '请根据后续提供的详细描述,生成一张真正可用于 360 度观看的全景图。'
+  const detail = `\n\n以下是详细描述:\n艺术风格:${style || '写实风格'}\n描述:${desc || '(请填写场景内容)'}`
+  return `${head}\n\n${PANORAMA_CONSTRAINTS}${detail}`
+}
+
 /**
  * 在 prompt 前加上参考图指代前缀.
  * 约定: `【@图片N】` 是给下游模型看的视觉标记, 后端不解析.

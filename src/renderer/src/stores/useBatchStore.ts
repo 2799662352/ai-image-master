@@ -590,7 +590,8 @@ export const useBatchStore = create<BatchState>((set, get) => ({
   setConcurrency: (n) => set({ concurrency: Math.max(1, Math.min(6, n)) }),
   addRefImage: (img) =>
     set((s) =>
-      s.refImages.length >= 8 ? s : { refImages: [...s.refImages, img] }
+      // 上限对齐 gpt-image 单请求最多 16 张参考图
+      s.refImages.length >= 16 ? s : { refImages: [...s.refImages, img] }
     ),
   removeRefImage: (id) =>
     set((s) => ({ refImages: s.refImages.filter((r) => r.id !== id) })),

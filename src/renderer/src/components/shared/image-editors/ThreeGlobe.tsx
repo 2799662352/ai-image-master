@@ -1,5 +1,6 @@
 import { useRef, useEffect, memo } from "react";
 import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { ORBIT_RADIUS, addOrbitGlobe, disposeScene } from "./orbitGlobeShared";
 
 interface ThreeGlobeProps {
@@ -9,6 +10,8 @@ interface ThreeGlobeProps {
   width?: number;
   height?: number;
   imageUrl?: string;
+  /** Enable right-drag camera orbit + wheel zoom (used by the fullscreen stage). */
+  orbitControls?: boolean;
 }
 
 function ThreeGlobeInner({
@@ -18,6 +21,7 @@ function ThreeGlobeInner({
   width = 240,
   height = 240,
   imageUrl,
+  orbitControls = false,
 }: ThreeGlobeProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<{
@@ -27,16 +31,19 @@ function ThreeGlobeInner({
     subject: THREE.Mesh;
     subjectMat: THREE.MeshBasicMaterial;
     cameraIndicator: THREE.Group;
-    frameId: number;
     dragging: boolean;
     dragStart: { x: number; y: number };
   } | null>(null);
 
   const valuesRef = useRef({ h: horizontal, v: vertical });
   const onRotateRef = useRef(onRotate);
+  // On-demand rendering: scene is static except when angles/image change,
+  // so we render only when invalidated instead of every frame.
+  const invalidateRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     valuesRef.current = { h: horizontal, v: vertical };
+    invalidateRef.current();
   }, [horizontal, vertical]);
 
   useEffect(() => {
@@ -140,7 +147,6 @@ function ThreeGlobeInner({
       subject,
       subjectMat,
       cameraIndicator,
-      frameId: 0,
       dragging: false,
       dragStart: { x: 0, y: 0 },
     };
@@ -156,20 +162,64 @@ function ThreeGlobeInner({
 
       state.cameraIndicator.position.set(camX, camY, camZ);
       state.cameraIndicator.lookAt(0, 0, 0);
+      // Object3D.lookAt() points a (non-camera) object's local +Z at the target,
+      // but the lens is modelled on the -Z side. Flip 180° so the lens faces the
+      // subject instead of pointing away from it.
+      state.cameraIndicator.rotateY(Math.PI);
     }
 
-    updateIndicator();
+    // Optional camera orbit (used by the fullscreen stage): right-drag orbits,
+    // wheel zooms, with inertial damping. Left-drag stays reserved for the
+    // angle-setting interaction below.
+    let controls: OrbitControls | null = null;
+    if (orbitControls) {
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.08;
+      controls.enablePan = false;
+      controls.minDistance = 8;
+      controls.maxDistance = 40;
+      controls.target.set(0, 0, 0);
+      // Keep the left button for angle-drag; orbit on the right button.
+      controls.mouseButtons = {
+        LEFT: null as unknown as THREE.MOUSE,
+        MIDDLE: THREE.MOUSE.DOLLY,
+        RIGHT: THREE.MOUSE.ROTATE,
+      };
+      // One-finger touch keeps driving the angle; two fingers dolly/rotate.
+      controls.touches = {
+        ONE: undefined as unknown as THREE.TOUCH,
+        TWO: THREE.TOUCH.DOLLY_ROTATE,
+      };
+      // Make the subject visible from any side while inspecting in 3D.
+      subjectMat.side = THREE.DoubleSide;
+      controls.update();
+    }
 
-    const animate = () => {
-      state.frameId = requestAnimationFrame(animate);
+    // On-demand render: paint once now, then only when invalidated.
+    // requestAnimationFrame coalesces multiple invalidations into one frame.
+    // While the camera is settling (damping) the loop re-arms itself until idle.
+    let rafId = 0;
+    function renderFrame() {
+      rafId = 0;
       updateIndicator();
+      const changed = controls ? controls.update() : false;
       renderer.render(scene, camera);
-    };
-    animate();
+      if (changed) invalidate();
+    }
+    function invalidate() {
+      if (rafId) return;
+      rafId = requestAnimationFrame(renderFrame);
+    }
+    invalidateRef.current = invalidate;
+    controls?.addEventListener("change", invalidate);
+    renderFrame();
 
     sceneRef.current = state;
 
     const onDown = (e: PointerEvent) => {
+      // Only the left button drives the angle; right button is camera orbit.
+      if (e.button !== 0) return;
       state.dragging = true;
       state.dragStart = { x: e.clientX, y: e.clientY };
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
@@ -201,19 +251,42 @@ function ThreeGlobeInner({
     canvas.addEventListener("pointerup", onUp);
     canvas.addEventListener("pointerleave", onUp);
 
+    // Recover gracefully from WebGL context loss (driver hiccups, tab switch,
+    // or too many live contexts when several editors are open at once).
+    const onContextLost = (e: Event) => {
+      e.preventDefault();
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+        rafId = 0;
+      }
+    };
+    const onContextRestored = () => {
+      invalidate();
+    };
+    canvas.addEventListener("webglcontextlost", onContextLost);
+    canvas.addEventListener("webglcontextrestored", onContextRestored);
+
     return () => {
-      cancelAnimationFrame(state.frameId);
+      if (rafId) cancelAnimationFrame(rafId);
+      invalidateRef.current = () => {};
       canvas.removeEventListener("pointerdown", onDown);
       canvas.removeEventListener("pointermove", onMove);
       canvas.removeEventListener("pointerup", onUp);
       canvas.removeEventListener("pointerleave", onUp);
+      canvas.removeEventListener("webglcontextlost", onContextLost);
+      canvas.removeEventListener("webglcontextrestored", onContextRestored);
+      controls?.removeEventListener("change", invalidate);
+      controls?.dispose();
       state.subjectMat.map?.dispose();
       disposeScene(state.scene);
       renderer.dispose();
+      // Proactively free the GL context so the browser/Electron reclaims it
+      // immediately instead of waiting for GC.
+      renderer.forceContextLoss();
       if (canvas.parentNode === el) el.removeChild(canvas);
       sceneRef.current = null;
     };
-  }, [width, height]);
+  }, [width, height, orbitControls]);
 
   useEffect(() => {
     const s = sceneRef.current;
@@ -235,6 +308,7 @@ function ThreeGlobeInner({
         const aspect = img.width / img.height;
         if (aspect > 1) s.subject.scale.set(1, 1 / aspect, 1);
         else s.subject.scale.set(aspect, 1, 1);
+        invalidateRef.current();
       };
       img.src = imageUrl;
     } else {
@@ -265,6 +339,7 @@ function ThreeGlobeInner({
       mat.color.set(0xffffff);
       mat.needsUpdate = true;
       s.subject.scale.set(1, 1, 1);
+      invalidateRef.current();
     }
   }, [imageUrl]);
 

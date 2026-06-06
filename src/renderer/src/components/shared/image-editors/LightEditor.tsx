@@ -1,4 +1,5 @@
-import { memo, useState, useCallback, useMemo, useRef, lazy, Suspense, type ReactNode } from "react";
+import { memo, useState, useCallback, useMemo, useRef, useEffect, lazy, Suspense, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { buildLightingPrompt } from "./prompts";
 import type { LightAngle, LightTarget } from "./ThreeLightScene";
 
@@ -54,6 +55,7 @@ function LightEditorInner({ onInjectPrompt, onClose, imageUrl, theme = "default"
   // 自由角度会跳回预设标签(如 "front"). 关时保留任意自由 (az, el).
   const [snapToPreset, setSnapToPreset] = useState(false);
   const [promptCopied, setPromptCopied] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const lightPrompt = useMemo(
@@ -98,6 +100,42 @@ function LightEditorInner({ onInjectPrompt, onClose, imageUrl, theme = "default"
       /* silently ignore */
     }
   }, [lightPrompt]);
+
+  // ESC 退出全屏
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFullscreen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [fullscreen]);
+
+  const fullscreenOverlay = fullscreen ? (
+    <LightFullscreenStage
+      imageUrl={imageUrl}
+      direction={direction}
+      customAngle={customAngle}
+      brightness={brightness}
+      color={color}
+      viewMode={viewMode}
+      snapToPreset={snapToPreset}
+      rimLight={rimLight}
+      lightPrompt={lightPrompt}
+      promptCopied={promptCopied}
+      onViewMode={setViewMode}
+      onBrightness={setBrightness}
+      onColor={setColor}
+      onPreset={handlePresetClick}
+      onLightChange={handleLightChange}
+      onRim={setRimLight}
+      onSnap={setSnapToPreset}
+      onCopy={handleCopyPrompt}
+      resetParams={resetParams}
+      onInject={handleInject}
+      onExit={() => setFullscreen(false)}
+    />
+  ) : null;
 
   const brightnessPct = BRIGHTNESS_LABELS[brightness] ?? `${brightness * 25}`;
   const sliderPct = (brightness / 4) * 100;
@@ -203,7 +241,8 @@ function LightEditorInner({ onInjectPrompt, onClose, imageUrl, theme = "default"
               <PunkModeTab label="透视" active={viewMode === "perspective"} onClick={() => setViewMode("perspective")} />
               <PunkModeTab label="正面" active={viewMode === "front"} onClick={() => setViewMode("front")} />
             </div>
-            <div className="flex items-center justify-center overflow-hidden" style={{ width: 204, height: 240, background: "var(--punk-cream)" }}>
+            <div className="relative flex items-center justify-center overflow-hidden" style={{ width: 204, height: 240, background: "var(--punk-cream)" }}>
+              <FullscreenButton onClick={() => setFullscreen(true)} />
               <Suspense fallback={<div className="flex h-full w-full items-center justify-center"><span className="p-mono" style={{ fontSize: 11, color: "var(--punk-pink-deep)" }}>LOADING 3D…</span></div>}>
                 <ThreeLightScene
                   direction={direction}
@@ -512,6 +551,7 @@ function LightEditorInner({ onInjectPrompt, onClose, imageUrl, theme = "default"
             ★ 注入 PROMPT
           </button>
         </footer>
+        {fullscreenOverlay}
       </div>
     );
   }
@@ -566,7 +606,8 @@ function LightEditorInner({ onInjectPrompt, onClose, imageUrl, theme = "default"
             <ModeTab label="正面" active={viewMode === "front"} onClick={() => setViewMode("front")} />
           </div>
           <div className="h-px w-full bg-white/[0.06]" />
-          <div className="flex items-center justify-center overflow-hidden" style={{ width: 198, height: 240, backgroundColor: "rgb(28, 28, 28)" }}>
+          <div className="relative flex items-center justify-center overflow-hidden" style={{ width: 198, height: 240, backgroundColor: "rgb(28, 28, 28)" }}>
+            <FullscreenButton onClick={() => setFullscreen(true)} />
             <Suspense fallback={<div className="flex h-full w-full items-center justify-center"><span className="text-xs text-white/50">加载 3D 预览...</span></div>}>
               <ThreeLightScene
                 direction={direction}
@@ -835,12 +876,381 @@ function LightEditorInner({ onInjectPrompt, onClose, imageUrl, theme = "default"
           注入 Prompt
         </button>
       </div>
+      {fullscreenOverlay}
     </div>
   );
 }
 
 export const LightEditor = memo(LightEditorInner);
 export default LightEditor;
+
+/* ========== Fullscreen 操作台 ========== */
+
+function ExpandIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <polyline points="15 3 21 3 21 9" />
+      <polyline points="9 21 3 21 3 15" />
+      <line x1="21" y1="3" x2="14" y2="10" />
+      <line x1="3" y1="21" x2="10" y2="14" />
+    </svg>
+  );
+}
+
+function ShrinkIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <polyline points="4 14 10 14 10 20" />
+      <polyline points="20 10 14 10 14 4" />
+      <line x1="14" y1="10" x2="21" y2="3" />
+      <line x1="3" y1="21" x2="10" y2="14" />
+    </svg>
+  );
+}
+
+/** 内嵌 3D 预览右上角的「全屏操作台」悬浮按钮。 */
+function FullscreenButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      onPointerDown={(e) => e.stopPropagation()}
+      aria-label="全屏操作台"
+      title="全屏操作台 / 放大 3D 预览"
+      style={{
+        position: "absolute",
+        top: 6,
+        right: 6,
+        zIndex: 4,
+        width: 28,
+        height: 28,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "rgba(0,0,0,0.55)",
+        color: "#fff",
+        border: "1px solid rgba(255,255,255,0.25)",
+        borderRadius: 6,
+        cursor: "pointer",
+        backdropFilter: "blur(2px)",
+      }}
+    >
+      <ExpandIcon />
+    </button>
+  );
+}
+
+interface LightFullscreenStageProps {
+  imageUrl?: string;
+  direction: LightDirection;
+  customAngle: LightAngle | null;
+  brightness: number;
+  color: string;
+  viewMode: "perspective" | "front";
+  snapToPreset: boolean;
+  rimLight: boolean;
+  lightPrompt: string;
+  promptCopied: boolean;
+  onViewMode: (m: "perspective" | "front") => void;
+  onBrightness: (n: number) => void;
+  onColor: (c: string) => void;
+  onPreset: (k: LightDirection) => void;
+  onLightChange: (t: LightTarget) => void;
+  onRim: (v: boolean) => void;
+  onSnap: (v: boolean) => void;
+  onCopy: () => void;
+  resetParams: () => void;
+  onInject: () => void;
+  onExit: () => void;
+}
+
+/**
+ * 全屏打光操作台 —— 通过 portal 铺满视口, 提供大尺寸可拖拽光照场景 +
+ * 底部悬浮控制栏。复用 ThreeLightScene(响应 width/height)与既有控件。
+ * 画布底色本就是深色, 故 punk / default 主题共用同一套深色玻璃风格。
+ */
+function LightFullscreenStage({
+  imageUrl,
+  direction,
+  customAngle,
+  brightness,
+  color,
+  viewMode,
+  snapToPreset,
+  rimLight,
+  lightPrompt,
+  promptCopied,
+  onViewMode,
+  onBrightness,
+  onColor,
+  onPreset,
+  onLightChange,
+  onRim,
+  onSnap,
+  onCopy,
+  resetParams,
+  onInject,
+  onExit,
+}: LightFullscreenStageProps) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState({ w: 0, h: 0 });
+
+  useEffect(() => {
+    const el = hostRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const r = entries[0]?.contentRect;
+      if (r) {
+        setSize({ w: Math.max(1, Math.round(r.width)), h: Math.max(1, Math.round(r.height)) });
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const brightnessPct = BRIGHTNESS_LABELS[brightness] ?? `${brightness * 25}`;
+  const sliderPct = (brightness / 4) * 100;
+
+  return createPortal(
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 10000,
+        display: "flex",
+        flexDirection: "column",
+        background: "rgba(10,10,12,0.94)",
+        backdropFilter: "blur(6px)",
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {/* 顶栏 */}
+      <div className="flex items-center" style={{ gap: 12, padding: "12px 16px", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+        <span className="text-[14px] font-medium text-white/90">打光效果 · 全屏操作台</span>
+        <span className="text-[11px] text-white/40">拖拽灯泡旋转 · 滑块微调 · ESC 退出</span>
+        <div className="flex-1" />
+        <div className="flex items-center" style={{ gap: 6, marginRight: 8 }}>
+          <ModeTab label="透视" active={viewMode === "perspective"} onClick={() => onViewMode("perspective")} />
+          <ModeTab label="正面" active={viewMode === "front"} onClick={() => onViewMode("front")} />
+        </div>
+        <button
+          type="button"
+          onClick={onExit}
+          className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+          style={{ border: "1px solid rgba(255,255,255,0.14)" }}
+        >
+          <ShrinkIcon />
+          退出全屏
+        </button>
+      </div>
+
+      {/* 大画布 */}
+      <div ref={hostRef} className="relative min-h-0 flex-1" style={{ overflow: "hidden" }}>
+        {size.w > 1 ? (
+          <Suspense
+            fallback={
+              <div className="flex h-full w-full items-center justify-center">
+                <span className="text-sm text-white/50">加载 3D 预览...</span>
+              </div>
+            }
+          >
+            <ThreeLightScene
+              direction={direction}
+              customAngle={customAngle}
+              brightness={brightness}
+              color={color}
+              viewMode={viewMode}
+              width={size.w}
+              height={size.h}
+              imageUrl={imageUrl}
+              orbitControls
+              onLightChange={onLightChange}
+              snapToPreset={snapToPreset}
+            />
+          </Suspense>
+        ) : null}
+        {customAngle && (
+          <span
+            className="absolute left-3 top-3 rounded px-1.5 py-0.5 text-[11px] font-medium tracking-[0.06em] text-[#7bc6f0]"
+            style={{ background: "rgba(54,181,240,0.12)", border: "1px solid rgba(54,181,240,0.3)" }}
+            title={`方位 ${Math.round(customAngle.az)}° / 仰角 ${Math.round(customAngle.el)}°`}
+          >
+            自由 {Math.round(customAngle.az)}° / {Math.round(customAngle.el)}°
+          </span>
+        )}
+      </div>
+
+      {/* 底部控制栏 */}
+      <div style={{ padding: "12px 16px 16px", borderTop: "1px solid rgba(255,255,255,0.08)", background: "rgba(0,0,0,0.35)" }}>
+        <div className="flex items-start" style={{ gap: 24, flexWrap: "wrap", marginBottom: 10 }}>
+          {/* 亮度 */}
+          <div style={{ minWidth: 280, flex: 1 }}>
+            <div className="flex items-center gap-2">
+              <span className="text-[12px] text-white/70" style={{ width: 36 }}>亮度</span>
+              <input
+                type="range"
+                min={0}
+                max={4}
+                step={1}
+                value={brightness}
+                onChange={(e) => onBrightness(Number(e.target.value))}
+                className="angle-slider min-w-0 flex-1 cursor-pointer appearance-none"
+                style={{
+                  background: `linear-gradient(to right, #36b5f0 0%, #2b9cd9 ${sliderPct}%, rgba(255,255,255,0.08) ${sliderPct}%, rgba(255,255,255,0.08) 100%)`,
+                  height: 6,
+                  borderRadius: 3,
+                }}
+              />
+              <span className="inline-flex h-6 min-w-[44px] items-center justify-center rounded border border-[rgb(54,54,54)] px-1 text-center text-[12px] tabular-nums text-white/90">
+                {brightnessPct}%
+              </span>
+            </div>
+            <div className="flex items-center justify-between" style={{ paddingLeft: 44, paddingRight: 52, marginTop: 4 }}>
+              {BRIGHTNESS_TICKS.map((t, i) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => onBrightness(i)}
+                  className="text-[10px] leading-none transition-colors"
+                  style={{ color: i === brightness ? "#7bc6f0" : "rgb(110,110,110)", fontWeight: i === brightness ? 500 : 400 }}
+                  title={`亮度：${t}（${i * 25}%）`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 颜色 */}
+          <div className="flex items-center gap-2">
+            <span className="text-[12px] text-white/70">颜色</span>
+            <button
+              type="button"
+              className="relative flex h-7 w-10 items-center justify-center overflow-hidden rounded-md border border-[rgb(54,54,54)] transition-colors hover:border-[rgba(54,181,240,0.55)]"
+              title="自定义颜色"
+              aria-label="自定义颜色"
+            >
+              <div className="h-full w-full" style={{ backgroundColor: color }} />
+              <input
+                type="color"
+                value={color}
+                onChange={(e) => onColor(e.target.value)}
+                className="absolute inset-0 cursor-pointer opacity-0"
+              />
+            </button>
+            <div className="flex items-center gap-1">
+              {COLOR_PRESETS.map((p) => {
+                const active = color.toLowerCase() === p.hex.toLowerCase();
+                return (
+                  <button
+                    key={p.hex}
+                    type="button"
+                    onClick={() => onColor(p.hex)}
+                    className="relative h-5 w-5 rounded-full transition-all hover:scale-110"
+                    style={{
+                      backgroundColor: p.hex,
+                      border: active ? "2px solid rgba(54, 181, 240, 0.65)" : "1px solid rgba(255,255,255,0.12)",
+                      boxShadow: active ? "0 0 0 2px rgba(54, 181, 240, 0.25)" : "none",
+                    }}
+                    title={`${p.label}（${p.hex}）`}
+                    aria-label={p.label}
+                    aria-pressed={active}
+                  />
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 方向 */}
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[11px] uppercase tracking-[0.08em] text-white/40">主光源方向</span>
+            <div className="grid grid-cols-3 gap-1.5">
+              {DIRECTIONS.map((d) => {
+                const active = direction === d.key && !customAngle;
+                return (
+                  <button
+                    key={d.key}
+                    type="button"
+                    onClick={() => onPreset(d.key)}
+                    className="flex select-none items-center justify-center gap-1 whitespace-nowrap text-[12px] transition-colors"
+                    style={{
+                      padding: "6px 12px",
+                      borderRadius: 8,
+                      border: active ? "1px solid rgba(54, 181, 240, 0.55)" : "1px solid rgb(54, 54, 54)",
+                      backgroundColor: active ? "rgba(54, 181, 240, 0.10)" : "transparent",
+                      color: active ? "#7bc6f0" : "rgb(160, 160, 160)",
+                    }}
+                    aria-pressed={active}
+                  >
+                    <span className="flex h-3 w-3 shrink-0 items-center justify-center" style={{ opacity: active ? 1 : 0.7 }} aria-hidden>
+                      <d.Icon />
+                    </span>
+                    {d.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 开关 */}
+          <div className="flex flex-col" style={{ gap: 8 }}>
+            <div className="flex items-center gap-2">
+              <span className="text-[12px] text-white/70">轮廓光</span>
+              <div className="flex-1" />
+              <ToggleSwitch checked={rimLight} onChange={onRim} />
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[12px] text-white/70">磁吸</span>
+              <div className="flex-1" />
+              <ToggleSwitch checked={snapToPreset} onChange={onSnap} />
+            </div>
+          </div>
+        </div>
+
+        {/* 提示词 + 操作 */}
+        <div className="flex items-center" style={{ gap: 12, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={onCopy}
+            title="点击复制打光提示词"
+            className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left"
+            style={{ background: "rgba(54, 181, 240, 0.05)", border: "1px solid rgba(54, 181, 240, 0.12)" }}
+          >
+            <span className="shrink-0 rounded px-1 py-0.5 text-[10px] font-medium tracking-[0.04em]" style={{ background: "rgba(54, 181, 240, 0.15)", color: "#7bc6f0" }}>
+              PROMPT
+            </span>
+            <span className="min-w-0 flex-1 truncate text-[11px] text-white/75" title={lightPrompt}>
+              {lightPrompt}
+            </span>
+            <span className={`shrink-0 text-[10px] ${promptCopied ? "text-emerald-400" : "text-white/45"}`} aria-live="polite">
+              {promptCopied ? "已复制" : "复制"}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={resetParams}
+            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] text-white/70 transition-colors hover:bg-white/5 hover:text-white"
+          >
+            <ResetIcon />
+            <span>重置</span>
+          </button>
+          <button
+            type="button"
+            onClick={onInject}
+            className="flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-[13px] font-medium text-white transition-all active:scale-95"
+            style={{ background: "linear-gradient(135deg, #36b5f0 0%, #2b9cd9 100%)" }}
+          >
+            注入 Prompt
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
 
 function ModeTab({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (

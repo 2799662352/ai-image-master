@@ -1,6 +1,15 @@
-const MAX_SIZE_MB = 2
-const MAX_DIM = 2048
-const INITIAL_QUALITY = 0.9
+// 对齐生成接口的真实上限(base64 data URL 字段 maxLength ≈ 20MiB;base64 比原图膨胀约 1/3,
+// 故原图控制在 ~15MB 以内即安全)。取 14MB 留余量:
+// 14MB × 4/3 ≈ 18.7MiB < 20MiB。
+//
+// 关键:compressImage 在「原图 ≤ MAX_SIZE_MB」时直接原样返回(不缩放、不重编码),
+// 所以把阈值抬到 14MB 后,绝大多数全景图(2~8MB JPEG)= 原图字节直出,
+// 与参考站「全景图预览器.html」(FileReader 读原图)完全一致,清晰度不再被有损压缩拉低。
+// 仅超大文件(>14MB)才会触发缩放,且上限放宽到 4096(等距柱状 4K 已足够锐,
+// 又能把 base64 压在接口 20MiB 之内、避免超 GPU 纹理上限)。
+const MAX_SIZE_MB = 14
+const MAX_DIM = 4096
+const INITIAL_QUALITY = 0.92
 const LIB_URL = './cdn/browser-image-compression/browser-image-compression.js'
 
 export interface CompressResult {

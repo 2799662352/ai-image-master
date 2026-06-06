@@ -158,13 +158,15 @@ const ResultCard = memo(function ResultCard({
   onRemove,
   onPreview,
   onOpenEditor,
+  onInjectPrompt,
   onEditItem,
 }: {
   item: BatchItem
   index: number
   onRemove: (id: string) => void
   onPreview?: (url: string) => void
-  onOpenEditor?: (url: string, type: 'angle' | 'light') => void
+  onOpenEditor?: (url: string, type: 'angle' | 'light' | 'panorama') => void
+  onInjectPrompt?: (prompt: string) => void
   onEditItem?: (item: BatchItem) => void
 }) {
   const badge = STATUS_BADGE[item.status]
@@ -252,6 +254,7 @@ const ResultCard = memo(function ResultCard({
             theme="default"
             imageUrl={displayUrl!}
             onOpenEditor={(type) => onOpenEditor?.(displayUrl!, type)}
+            onInjectPrompt={onInjectPrompt}
           />
         )}
         {isDone && (
@@ -366,7 +369,8 @@ type VirtualCellProps = {
   onRemove: (id: string) => void
   onPreview?: (url: string) => void
   onEditItem?: (item: BatchItem) => void
-  onOpenEditor: (url: string, type: 'angle' | 'light') => void
+  onOpenEditor: (url: string, type: 'angle' | 'light' | 'panorama') => void
+  onInjectPrompt?: (prompt: string) => void
 }
 
 function VirtualCell({
@@ -380,6 +384,7 @@ function VirtualCell({
   onPreview,
   onEditItem,
   onOpenEditor,
+  onInjectPrompt,
 }: CellComponentProps<VirtualCellProps>) {
   const idx = rowIndex * columnCount + columnIndex
   const item = items[idx]
@@ -403,6 +408,7 @@ function VirtualCell({
         onRemove={onRemove}
         onPreview={onPreview}
         onOpenEditor={onOpenEditor}
+        onInjectPrompt={onInjectPrompt}
         onEditItem={onEditItem}
       />
     </div>
@@ -419,7 +425,7 @@ function VirtualCell({
  *                                       场景下 DOM 节点数从 200 张 → ~10-20 张。
  */
 export default function BatchResultGrid({ items, onRemove, onPreview, onEditItem }: Props) {
-  const [editorState, setEditorState] = useState<{ url: string; type: 'angle' | 'light' } | null>(null)
+  const [editorState, setEditorState] = useState<{ url: string; type: 'angle' | 'light' | 'panorama' } | null>(null)
   const [reversed, setReversed] = useState(true)
 
   const injectPrompt = useCallback((p: string) => {
@@ -449,7 +455,7 @@ export default function BatchResultGrid({ items, onRemove, onPreview, onEditItem
 
   // (p4) onOpenEditor 由本组件持有 editorState, 必须 useCallback 才能
   // 让下游 ResultCard 的 React.memo 命中(不然每次渲染都是新引用)。
-  const handleOpenEditor = useCallback((url: string, type: 'angle' | 'light') => {
+  const handleOpenEditor = useCallback((url: string, type: 'angle' | 'light' | 'panorama') => {
     setEditorState({ url, type })
   }, [])
 
@@ -494,8 +500,9 @@ export default function BatchResultGrid({ items, onRemove, onPreview, onEditItem
       onPreview,
       onEditItem,
       onOpenEditor: handleOpenEditor,
+      onInjectPrompt: injectPrompt,
     }
-  }, [displayItems, gridLayout, indexById, onRemove, onPreview, onEditItem, handleOpenEditor])
+  }, [displayItems, gridLayout, indexById, onRemove, onPreview, onEditItem, handleOpenEditor, injectPrompt])
 
   // (v) 只有真的"item 多 + 容器测好宽度"才上虚拟化。否则继续用原 CSS Grid。
   const shouldVirtualize =
@@ -586,6 +593,7 @@ export default function BatchResultGrid({ items, onRemove, onPreview, onEditItem
                     onRemove={onRemove}
                     onPreview={onPreview}
                     onOpenEditor={handleOpenEditor}
+                    onInjectPrompt={injectPrompt}
                     onEditItem={onEditItem}
                   />
                 )

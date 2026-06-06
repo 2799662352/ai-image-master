@@ -1,4 +1,5 @@
-import { memo, useState, useCallback, useRef, type ReactNode, lazy, Suspense } from "react";
+import { memo, useState, useCallback, useEffect, useRef, type ReactNode, lazy, Suspense } from "react";
+import { createPortal } from "react-dom";
 import { buildCameraPrompt } from "./prompts";
 
 const ThreeGlobe = lazy(() => import("./ThreeGlobe").then((m) => ({ default: m.ThreeGlobe })));
@@ -26,6 +27,10 @@ const ZOOM_LABELS: Record<number, string> = {
   1.4: "远景",
 };
 
+// 内嵌编辑器尺寸 (放大原 240 / 600 以缓解“UI 太小”)。
+const SCENE_SIZE = 300;
+const EDITOR_WIDTH = 720;
+
 interface MultiAngleEditorProps {
   onInjectPrompt: (prompt: string) => void;
   onClose: () => void;
@@ -41,6 +46,7 @@ function MultiAngleEditorInner({ onInjectPrompt, onClose, imageUrl, theme = "def
   const [vertical, setVertical] = useState(0);
   const [zoom, setZoom] = useState(1.0);
   const [promptCopied, setPromptCopied] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const cameraPromptText = buildCameraPrompt(horizontal, vertical, zoom);
@@ -80,6 +86,39 @@ function MultiAngleEditorInner({ onInjectPrompt, onClose, imageUrl, theme = "def
 
   const zoomLabel = ZOOM_LABELS[zoom] ?? `${zoom}`;
 
+  // 全屏操作台: ESC 退出 (capture 阶段拦截, 避免误关整个 modal)。
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setFullscreen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [fullscreen]);
+
+  // 全屏遮罩 (portal). punk / default 两个分支共用同一个深色操作台。
+  const fullscreenOverlay = fullscreen ? (
+    <FullscreenStage
+      imageUrl={imageUrl}
+      horizontal={horizontal}
+      vertical={vertical}
+      zoom={zoom}
+      zoomLabel={zoomLabel}
+      activePreset={activePreset}
+      cameraPromptText={cameraPromptText}
+      onHorizontal={(v) => { setHorizontal(v); setCustom(); }}
+      onVertical={(v) => { setVertical(v); setCustom(); }}
+      onZoom={(v) => { setZoom(v); setCustom(); }}
+      applyPreset={applyPreset}
+      resetParams={resetParams}
+      onInject={handleInject}
+      onExit={() => setFullscreen(false)}
+    />
+  ) : null;
+
   // ====================================================================
   // PUNK 分支 — ドーナドーナ × P5 拼贴风; 使用 donor-punk.css 里的 .p-* 工具类
   // ====================================================================
@@ -88,7 +127,7 @@ function MultiAngleEditorInner({ onInjectPrompt, onClose, imageUrl, theme = "def
       <div
         className="flex flex-col"
         style={{
-          width: 600,
+          width: EDITOR_WIDTH,
           background: "var(--punk-cream)",
           border: "3px solid var(--punk-black)",
           boxShadow: "4px 4px 0 var(--punk-black)",
@@ -196,12 +235,13 @@ function MultiAngleEditorInner({ onInjectPrompt, onClose, imageUrl, theme = "def
           <div
             className="relative shrink-0"
             style={{
-              width: 240,
+              width: SCENE_SIZE,
               border: "3px solid var(--punk-black)",
               background: "var(--punk-cream)",
               boxShadow: "4px 4px 0 var(--punk-black)",
             }}
           >
+            <FullscreenButton onClick={() => setFullscreen(true)} />
             <span
               className="p-hazard-tape"
               style={{
@@ -216,7 +256,7 @@ function MultiAngleEditorInner({ onInjectPrompt, onClose, imageUrl, theme = "def
             >
               PREVIEW
             </span>
-            <div className="relative" style={{ width: 234, height: 240 }}>
+            <div className="relative" style={{ width: SCENE_SIZE - 6, height: SCENE_SIZE }}>
               {imageUrl ? (
                 <Suspense
                   fallback={
@@ -228,8 +268,8 @@ function MultiAngleEditorInner({ onInjectPrompt, onClose, imageUrl, theme = "def
                   <ThreeGlobe
                     horizontal={horizontal}
                     vertical={vertical}
-                    width={234}
-                    height={240}
+                    width={SCENE_SIZE - 6}
+                    height={SCENE_SIZE}
                     imageUrl={imageUrl}
                     onRotate={(h, v) => {
                       setHorizontal(h);
@@ -272,7 +312,7 @@ function MultiAngleEditorInner({ onInjectPrompt, onClose, imageUrl, theme = "def
           </div>
 
           {/* Controls */}
-          <div className="flex min-w-0 flex-1 flex-col" style={{ gap: 10, minHeight: 240 }}>
+          <div className="flex min-w-0 flex-1 flex-col" style={{ gap: 10, minHeight: SCENE_SIZE }}>
             <SectionLabelPunk>镜头角度 / ANGLE</SectionLabelPunk>
             <div className="flex flex-col" style={{ gap: 4 }}>
               <PunkSliderRow label="水平环绕" min={0} max={359} step={1} value={horizontal} displayValue={`${horizontal}°`}
@@ -370,6 +410,7 @@ function MultiAngleEditorInner({ onInjectPrompt, onClose, imageUrl, theme = "def
             ★ 注入 PROMPT
           </button>
         </footer>
+        {fullscreenOverlay}
       </div>
     );
   }
@@ -381,7 +422,7 @@ function MultiAngleEditorInner({ onInjectPrompt, onClose, imageUrl, theme = "def
     <div
       className="flex flex-col"
       style={{
-        width: 600,
+        width: EDITOR_WIDTH,
         backgroundColor: "rgb(38, 38, 38)",
         borderRadius: 12,
         padding: "12px 8px 8px",
@@ -445,14 +486,15 @@ function MultiAngleEditorInner({ onInjectPrompt, onClose, imageUrl, theme = "def
         <div
           className="shrink-0 overflow-hidden"
           style={{
-            width: 240,
+            width: SCENE_SIZE,
             borderRadius: 14,
             border: "1px solid rgba(255, 255, 255, 0.08)",
             background: "rgb(28, 28, 28)",
             boxShadow: "inset 0 0 40px rgba(54, 181, 240, 0.05)",
           }}
         >
-          <div className="relative" style={{ width: 238, height: 240 }}>
+          <div className="relative" style={{ width: SCENE_SIZE - 2, height: SCENE_SIZE }}>
+            <FullscreenButton onClick={() => setFullscreen(true)} />
             {imageUrl ? (
               <Suspense
                 fallback={
@@ -464,8 +506,8 @@ function MultiAngleEditorInner({ onInjectPrompt, onClose, imageUrl, theme = "def
                 <ThreeGlobe
                   horizontal={horizontal}
                   vertical={vertical}
-                  width={238}
-                  height={240}
+                  width={SCENE_SIZE - 2}
+                  height={SCENE_SIZE}
                   imageUrl={imageUrl}
                   onRotate={(h, v) => {
                     setHorizontal(h);
@@ -542,7 +584,7 @@ function MultiAngleEditorInner({ onInjectPrompt, onClose, imageUrl, theme = "def
         </div>
 
         {/* Controls */}
-        <div className="flex min-w-0 flex-1 flex-col" style={{ gap: 12, minHeight: 240 }}>
+        <div className="flex min-w-0 flex-1 flex-col" style={{ gap: 12, minHeight: SCENE_SIZE }}>
           <section className="flex flex-col gap-1">
             <div className="flex items-center gap-2 px-1">
               <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-white/40">
@@ -651,6 +693,7 @@ function MultiAngleEditorInner({ onInjectPrompt, onClose, imageUrl, theme = "def
           注入 Prompt
         </button>
       </footer>
+      {fullscreenOverlay}
     </div>
   );
 }
@@ -732,6 +775,290 @@ function CloseIcon() {
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
       <path d="M18 6 6 18M6 6l12 12" />
     </svg>
+  );
+}
+
+function ExpandIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <polyline points="15 3 21 3 21 9" />
+      <polyline points="9 21 3 21 3 15" />
+      <line x1="21" y1="3" x2="14" y2="10" />
+      <line x1="3" y1="21" x2="10" y2="14" />
+    </svg>
+  );
+}
+
+function ShrinkIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <polyline points="4 14 10 14 10 20" />
+      <polyline points="20 10 14 10 14 4" />
+      <line x1="14" y1="10" x2="21" y2="3" />
+      <line x1="3" y1="21" x2="10" y2="14" />
+    </svg>
+  );
+}
+
+/** 内嵌 3D 预览右上角的「全屏操作台」悬浮按钮 (punk / default 共用)。 */
+function FullscreenButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      onPointerDown={(e) => e.stopPropagation()}
+      aria-label="全屏操作台"
+      title="全屏操作台 / 放大 3D 预览"
+      style={{
+        position: "absolute",
+        top: 6,
+        right: 6,
+        zIndex: 4,
+        width: 28,
+        height: 28,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "rgba(0,0,0,0.55)",
+        color: "#fff",
+        border: "1px solid rgba(255,255,255,0.25)",
+        borderRadius: 6,
+        cursor: "pointer",
+        backdropFilter: "blur(2px)",
+      }}
+    >
+      <ExpandIcon />
+    </button>
+  );
+}
+
+interface FullscreenStageProps {
+  imageUrl?: string;
+  horizontal: number;
+  vertical: number;
+  zoom: number;
+  zoomLabel: string;
+  activePreset: number;
+  cameraPromptText: string;
+  onHorizontal: (v: number) => void;
+  onVertical: (v: number) => void;
+  onZoom: (v: number) => void;
+  applyPreset: (i: number) => void;
+  resetParams: () => void;
+  onInject: () => void;
+  onExit: () => void;
+}
+
+/**
+ * 全屏 Three.js 操作台 —— 通过 portal 铺满视口, 提供大尺寸可拖拽 3D 画布 +
+ * 底部悬浮控制栏。复用现有 ThreeGlobe(响应 width/height)与 SliderRow/DirBtn。
+ * 采用统一深色玻璃风格 (画布底色本就是 #1a1a1a), 故 punk / default 主题共用。
+ */
+function FullscreenStage({
+  imageUrl,
+  horizontal,
+  vertical,
+  zoom,
+  zoomLabel,
+  activePreset,
+  cameraPromptText,
+  onHorizontal,
+  onVertical,
+  onZoom,
+  applyPreset,
+  resetParams,
+  onInject,
+  onExit,
+}: FullscreenStageProps) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState({ w: 0, h: 0 });
+
+  useEffect(() => {
+    const el = hostRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const r = entries[0]?.contentRect;
+      if (r) {
+        setSize({ w: Math.max(1, Math.round(r.width)), h: Math.max(1, Math.round(r.height)) });
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  return createPortal(
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 10000,
+        display: "flex",
+        flexDirection: "column",
+        background: "rgba(10,10,12,0.94)",
+        backdropFilter: "blur(6px)",
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {/* 顶栏 */}
+      <div
+        className="flex items-center"
+        style={{ gap: 12, padding: "12px 16px", borderBottom: "1px solid rgba(255,255,255,0.08)" }}
+      >
+        <span className="text-[14px] font-medium text-white/90">多角度编辑器 · 全屏操作台</span>
+        <span className="text-[11px] text-white/40">拖拽旋转 · 滑块微调 · ESC 退出</span>
+        <div className="flex-1" />
+        <button
+          type="button"
+          onClick={onExit}
+          className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+          style={{ border: "1px solid rgba(255,255,255,0.14)" }}
+        >
+          <ShrinkIcon />
+          退出全屏
+        </button>
+      </div>
+
+      {/* 大画布 */}
+      <div ref={hostRef} className="relative min-h-0 flex-1" style={{ overflow: "hidden" }}>
+        {size.w > 1 && imageUrl ? (
+          <Suspense
+            fallback={
+              <div className="flex h-full w-full items-center justify-center">
+                <span className="text-sm text-white/50">加载 3D 预览...</span>
+              </div>
+            }
+          >
+            <ThreeGlobe
+              horizontal={horizontal}
+              vertical={vertical}
+              width={size.w}
+              height={size.h}
+              imageUrl={imageUrl}
+              orbitControls
+              onRotate={(h, v) => {
+                onHorizontal(h);
+                onVertical(v);
+              }}
+            />
+          </Suspense>
+        ) : (
+          <div className="flex h-full w-full items-center justify-center">
+            <span className="text-sm text-white/40">先选择一张图片</span>
+          </div>
+        )}
+      </div>
+
+      {/* 底部控制栏 */}
+      <div
+        style={{
+          padding: "12px 16px 16px",
+          borderTop: "1px solid rgba(255,255,255,0.08)",
+          background: "rgba(0,0,0,0.35)",
+        }}
+      >
+        {/* 预设 */}
+        <div className="flex flex-wrap items-center" style={{ gap: 6, marginBottom: 10 }}>
+          {PRESETS.map((p, i) => {
+            const active = activePreset === i;
+            return (
+              <button
+                key={p.label}
+                type="button"
+                onClick={() => applyPreset(i)}
+                aria-pressed={active}
+                className="select-none whitespace-nowrap transition-colors"
+                style={{
+                  padding: "3px 10px",
+                  borderRadius: 6,
+                  border: active ? "1px solid rgba(54,181,240,0.55)" : "1px solid rgb(54,54,54)",
+                  backgroundColor: active ? "rgba(54,181,240,0.10)" : "transparent",
+                  color: active ? "#7bc6f0" : "rgb(160,160,160)",
+                  fontSize: 12,
+                  lineHeight: "20px",
+                  cursor: "pointer",
+                }}
+              >
+                {p.label}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="flex items-end" style={{ gap: 16, flexWrap: "wrap" }}>
+          <div className="min-w-[320px] flex-1">
+            <SliderRow
+              label="水平环绕"
+              min={0}
+              max={359}
+              step={1}
+              value={horizontal}
+              displayValue={`${horizontal}°`}
+              onChange={onHorizontal}
+            />
+            <SliderRow
+              label="垂直俯仰"
+              min={-30}
+              max={60}
+              step={1}
+              value={vertical}
+              displayValue={`${vertical}°`}
+              onChange={onVertical}
+            />
+            <SliderRow
+              label="景别缩放"
+              min={0.6}
+              max={1.4}
+              step={0.4}
+              value={zoom}
+              displayValue={zoomLabel}
+              onChange={onZoom}
+            />
+          </div>
+
+          <div className="flex items-center" style={{ gap: 8 }}>
+            <DirBtn ariaLabel="向左环绕 45°" onClick={() => onHorizontal((((horizontal - 45) % 360) + 360) % 360)}>
+              <ChevronLeftIcon />
+            </DirBtn>
+            <DirBtn ariaLabel="向上俯仰 30°" onClick={() => onVertical(Math.min(60, vertical + 30))}>
+              <ChevronUpIcon />
+            </DirBtn>
+            <DirBtn ariaLabel="向下俯仰 30°" onClick={() => onVertical(Math.max(-30, vertical - 30))}>
+              <ChevronDownIcon />
+            </DirBtn>
+            <DirBtn ariaLabel="向右环绕 45°" onClick={() => onHorizontal((horizontal + 45) % 360)}>
+              <ChevronRightIcon />
+            </DirBtn>
+          </div>
+
+          <div className="flex items-center" style={{ gap: 10 }}>
+            <button
+              type="button"
+              onClick={resetParams}
+              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] text-white/70 transition-colors hover:bg-white/5 hover:text-white"
+            >
+              <ResetIcon />
+              <span>重置</span>
+            </button>
+            <button
+              type="button"
+              onClick={onInject}
+              className="flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-[13px] font-medium text-white transition-all active:scale-95"
+              style={{ background: "linear-gradient(135deg, #36b5f0 0%, #2b9cd9 100%)" }}
+            >
+              注入 Prompt
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-2 truncate text-[11px] text-white/45" title={cameraPromptText}>
+          {cameraPromptText}
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 

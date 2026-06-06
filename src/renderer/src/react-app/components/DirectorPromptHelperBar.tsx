@@ -18,8 +18,9 @@ export function DirectorPromptHelperBar() {
   const setSceneDescription = useDirectorStore((s) => s.setSceneDescription)
 
   const [editorState, setEditorState] = useState<{
-    type: 'angle' | 'light'
+    type: 'angle' | 'light' | 'panorama'
     imageUrl: string
+    tab?: 'preview' | 'generate'
   } | null>(null)
 
   const imageChoices = useMemo<ImageChoice[]>(
@@ -35,9 +36,12 @@ export function DirectorPromptHelperBar() {
 
   const hasRef = referenceImages.length > 0
 
-  const openEditor = (type: 'angle' | 'light') => {
+  const openEditor = (
+    type: 'angle' | 'light' | 'panorama',
+    tab?: 'preview' | 'generate',
+  ) => {
     if (!hasRef) return
-    setEditorState({ type, imageUrl: imageChoices[0].url })
+    setEditorState({ type, imageUrl: imageChoices[0].url, tab })
   }
 
   const handleInject = (text: string) => {
@@ -81,6 +85,24 @@ export function DirectorPromptHelperBar() {
         >
           [ 打光 // LIGHT ]
         </button>
+        <button
+          type="button"
+          disabled={!hasRef}
+          onClick={() => openEditor('panorama', 'generate')}
+          className={btnClass(hasRef)}
+          title={hasRef ? '生成 360° 全景图(注入全景提示词)' : '请先上传参考图'}
+        >
+          [ 生成全景图 ]
+        </button>
+        <button
+          type="button"
+          disabled={!hasRef}
+          onClick={() => openEditor('panorama', 'preview')}
+          className={btnClass(hasRef)}
+          title={hasRef ? '进入全景:环视与截图' : '请先上传参考图'}
+        >
+          [ 进入全景 ]
+        </button>
         {!hasRef && (
           <span className="text-[10px] text-white/40 font-mono">
             ← 先上传参考图
@@ -100,6 +122,7 @@ export function DirectorPromptHelperBar() {
           imageChoices={imageChoices}
           theme="default"
           onInjectPrompt={handleInject}
+          panoramaTab={editorState.tab}
           onClose={() => setEditorState(null)}
         />
       )}

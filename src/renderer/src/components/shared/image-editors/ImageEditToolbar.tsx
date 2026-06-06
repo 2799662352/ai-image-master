@@ -1,12 +1,15 @@
 import { useUIPrefsStore } from '../../../stores/useUIPrefsStore'
+import { buildPanoramaPrompt } from './prompts'
 
 interface Props {
   theme: 'punk' | 'default'
   imageUrl: string
-  onOpenEditor: (type: 'angle' | 'light') => void
+  onOpenEditor: (type: 'angle' | 'light' | 'panorama') => void
+  /** 提供后,工具栏出现「生成全景」一键(基于当前图 img2img 注入 360 提示词)。 */
+  onInjectPrompt?: (prompt: string) => void
 }
 
-export default function ImageEditToolbar({ theme, imageUrl, onOpenEditor }: Props) {
+export default function ImageEditToolbar({ theme, imageUrl, onOpenEditor, onInjectPrompt }: Props) {
   const enabled = useUIPrefsStore((s) => s.imageEditorToolbar.enabled)
   if (!enabled || !imageUrl) return null
 
@@ -39,6 +42,23 @@ export default function ImageEditToolbar({ theme, imageUrl, onOpenEditor }: Prop
       >
         打光
       </button>
+      <button
+        type="button"
+        className={`px-2 py-0.5 text-[11px] font-bold cursor-pointer ${btnClass}`}
+        onClick={(e) => { e.stopPropagation(); onOpenEditor('panorama') }}
+      >
+        全景
+      </button>
+      {onInjectPrompt && (
+        <button
+          type="button"
+          className={`px-2 py-0.5 text-[11px] font-bold cursor-pointer ${btnClass}`}
+          onClick={(e) => { e.stopPropagation(); onInjectPrompt(buildPanoramaPrompt('img')) }}
+          title="基于当前图生成 360° 全景"
+        >
+          生成全景
+        </button>
+      )}
     </div>
   )
 }

@@ -1105,14 +1105,29 @@ export class ApiService {
 
     // 构建请求 URL：用站点的域名替换模型 URL 中的域名
     const url = this.buildRequestUrl(modelConfig, site)
-    
+
+    // 只认 base64 的端点：把 COS / 远端 URL 参考图先抓成 data URL，否则会被静默丢弃。
+    // - Gemini-native：现在改走 URL 直传(file_data.file_uri),不再强制 base64;
+    // - OpenAI /images/generations(image 字段只吃 base64):仍需预解析;
+    // - multipart(gpt-image-2 已在上面分支返回；Flux / sora-chat 直接用 URL)不走这里。
+    let resolvedRefs = referenceImages
+    let resolvedImageBase64 = imageBase64
+    const needsBase64Sources = !!modelConfig.baseURL?.includes('/images/generations')
+    if (needsBase64Sources) {
+      resolvedRefs = await this.resolveSourcesToDataUrls(referenceImages)
+      if (imageBase64 && /^https?:\/\//i.test(imageBase64)) {
+        const r = await this.resolveSourcesToDataUrls([imageBase64])
+        resolvedImageBase64 = r?.[0] ?? imageBase64
+      }
+    }
+
     const body = this.buildRequestBody({
       prompt,
       model,
       ratio,
       resolution,
-      referenceImages,
-      imageBase64,
+      referenceImages: resolvedRefs,
+      imageBase64: resolvedImageBase64,
       modelConfig
     })
 
@@ -1326,12 +1341,27 @@ export class ApiService {
 
     const signal = this.composeTimeoutSignal(userSignal, timeoutMs)
 
-    return fetch(url, {
+    const resp = await fetch(url, {
       method: 'POST',
       headers,
       body: formData,
       signal,
     })
+    // 失败时把服务端响应体打出来 —— 500/400 不带 body 无从诊断。
+    // (与上面 generations 分支的错误日志对齐。)
+    if (!resp.ok) {
+      let errText = ''
+      try {
+        errText = await resp.clone().text()
+      } catch {
+        /* body 不可读时忽略 */
+      }
+      console.error(
+        `[GPT-Image-2] edits ${resp.status} 失败 (model=${model}, size=${size ?? 'auto'}, imgs=${appendedCount}):`,
+        errText.slice(0, 4000),
+      )
+    }
+    return resp
   }
 
   /**
@@ -1366,6 +1396,62 @@ export class ApiService {
       console.error(`convertToBlob${tag}: 转换失败:`, error)
       return null
     }
+  }
+
+  /** 从 URL 后缀猜图片 mime;Gemini file_data.mime_type 必填,猜不到兜底 jpeg。 */
+  private guessImageMimeFromUrl(url: string, fallback = 'image/jpeg'): string {
+    const lower = url.split('?')[0]?.toLowerCase() ?? ''
+    if (lower.endsWith('.png')) return 'image/png'
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg'
+    if (lower.endsWith('.webp')) return 'image/webp'
+    if (lower.endsWith('.gif')) return 'image/gif'
+    if (lower.endsWith('.avif')) return 'image/avif'
+    if (lower.endsWith('.heic') || lower.endsWith('.heif')) return 'image/heic'
+    return fallback
+  }
+
+  /** Blob → dataURL(base64),给只吃 base64 的端点用。 */
+  private blobToDataUrl(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onerror = () => reject(reader.error ?? new Error('FileReader failed'))
+      reader.onload = () => resolve(reader.result as string)
+      reader.readAsDataURL(blob)
+    })
+  }
+
+  /**
+   * 把参考图里的 http(s) URL 预解析成 data URL(base64)。
+   *
+   * 为什么需要:本地上传现在原图直传 COS、只存 URL。但 Gemini 原生端点
+   * (inline_data)和 OpenAI `/images/generations` 的 `image` 字段都只认
+   * base64/data URL,不会自动抓取远端 URL —— 不预解析就会被静默丢弃,
+   * 等于"垫了图却没生效"。multipart 路径(gpt-image-2 / Flux)用
+   * convertToBlob 自己抓取,不需要走这里。
+   *
+   * 抓取失败时保留原 URL(对能直接吃 URL 的端点无害;Gemini 会丢弃,
+   * 但这已是抓取彻底失败的兜底)。
+   */
+  private async resolveSourcesToDataUrls(sources?: string[]): Promise<string[] | undefined> {
+    if (!sources || sources.length === 0) return sources
+    const out: string[] = []
+    for (const s of sources) {
+      if (typeof s === 'string' && /^https?:\/\//i.test(s)) {
+        const blob = await this.convertToBlob(s)
+        if (blob) {
+          try {
+            out.push(await this.blobToDataUrl(blob))
+            continue
+          } catch (e) {
+            console.warn('[resolveSourcesToDataUrls] blob→dataURL 失败,保留原 URL:', e)
+          }
+        }
+        out.push(s)
+      } else {
+        out.push(s)
+      }
+    }
+    return out
   }
 
   /**
@@ -1437,7 +1523,9 @@ export class ApiService {
     const imageSources = imageBase64 ? [imageBase64] : (referenceImages || [])
     for (const img of imageSources) {
       const normalized = this.normalizeImageSource(img)
-      if (normalized?.startsWith('data:image/')) {
+      if (!normalized) continue
+      if (normalized.startsWith('data:image/')) {
+        // base64 内联
         const match = normalized.match(/^data:(image\/[^;]+);base64,(.+)$/)
         if (match) {
           parts.push({
@@ -1447,6 +1535,15 @@ export class ApiService {
             }
           })
         }
+      } else if (/^https?:\/\//i.test(normalized)) {
+        // URL 直传:Gemini generateContent 的 file_data.file_uri。
+        // 省去渲染端 fetch→base64,直接把 COS/远端图链接交给上游抓取。
+        parts.push({
+          file_data: {
+            mime_type: this.guessImageMimeFromUrl(normalized),
+            file_uri: normalized
+          }
+        })
       }
     }
 

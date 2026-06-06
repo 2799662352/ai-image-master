@@ -23,6 +23,7 @@ function ChoiceThumb({ url, label, style }: { url: string; label?: string; style
 
 const MultiAngleEditor = lazy(() => import('./MultiAngleEditor'))
 const LightEditor = lazy(() => import('./LightEditor'))
+const PanoramaEditor = lazy(() => import('./PanoramaEditor'))
 
 class WebGLErrorBoundary extends Component<
   { children: ReactNode; fallback: ReactNode },
@@ -41,12 +42,14 @@ export interface ImageChoice {
 }
 
 interface Props {
-  editorType: 'angle' | 'light'
+  editorType: 'angle' | 'light' | 'panorama'
   imageUrl: string
   /** 可选:多张参考图时渲染顶部缩略图条, 用户可切换 */
   imageChoices?: ImageChoice[]
   theme: 'punk' | 'default'
   onInjectPrompt: (prompt: string) => void
+  /** 全景编辑器初始 Tab:'generate' 生成 / 'preview' 进入查看,默认 preview */
+  panoramaTab?: 'preview' | 'generate'
   onClose: () => void
 }
 
@@ -56,6 +59,7 @@ export default function ImageEditorModal({
   imageChoices,
   theme,
   onInjectPrompt,
+  panoramaTab = 'preview',
   onClose,
 }: Props) {
   const isPunk = theme === 'punk'
@@ -103,6 +107,29 @@ export default function ImageEditorModal({
   )
 
   const showPicker = imageChoices && imageChoices.length > 1
+
+  // 全景查看器:自带大舞台 + 工具栏 + 全屏/关闭,跳过居中面板与缩略图条。
+  if (editorType === 'panorama') {
+    return createPortal(
+      <div style={{ ...overlayStyle, background: 'rgba(0,0,0,0.85)' }} onClick={onClose}>
+        <div onClick={(e) => e.stopPropagation()}>
+          <WebGLErrorBoundary fallback={fallbackUI}>
+            <Suspense fallback={<div className="p-8 text-center text-zinc-500">加载中...</div>}>
+              <PanoramaEditor
+                imageUrl={currentUrl}
+                theme={theme}
+                onInjectPrompt={wrappedInject}
+                canRef={!!currentUrl}
+                initialTab={panoramaTab}
+                onClose={onClose}
+              />
+            </Suspense>
+          </WebGLErrorBoundary>
+        </div>
+      </div>,
+      document.body,
+    )
+  }
 
   return createPortal(
     <div style={overlayStyle} onClick={onClose}>
