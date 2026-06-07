@@ -138,6 +138,42 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
+### v4.3.26 (2026-06-07) — 3D 导演台:撤销/重做 + 框选多选移动 + 可重映射快捷键 + 预设姿势保持高度 + 全景统一光感面板
+
+本版本围绕 3D 导演台(Director)交互完整度与全景编辑器(PanoramaEditor)的统一光感/调色体验,补齐"专业 3D 编辑器该有的快捷键与多选"一整套能力,并修掉一个姿势预设的定位 bug。
+
+**A. 导演台快捷键 + 多选 + 历史**
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| 撤销/重做命令栈 | `src/renderer/src/components/shared/image-editors/director/DirectorStageScene.tsx` | 命令栈(上限 60 条)记录 gizmo 变换 / 增删 / 复制 / 姿势前后快照;删除/新增的对象保活,掉出历史窗口才 dispose。`Ctrl+Z` / `Ctrl+Shift+Z` 触发 |
+| 左键框选 + 多对象移动 | 同上 | `框选`工具开关禁用 OrbitControls 左拖,DOM marquee 选中包围盒中心落入框内的模型;拖动时多选对象临时挂到 pivot,松手再归位 `modelsGroup`。微小拖动回退单击选择,空白处单击取消选择 |
+| 标准 3D 快捷键 | 同上 | `W/E/R` 平移/旋转/缩放、`F` 聚焦、`Q` 世界/本地坐标系、`Delete` 删除、`Ctrl+D` 复制、`Shift` 拖动吸附、`Esc` 取消选择/退出框选 |
+| 可重映射快捷键(单一事实来源) | `src/renderer/src/components/shared/image-editors/director/directorShortcuts.ts`(新) | 动作与按键解耦:`SHORTCUT_DEFS` / `DEFAULT_KEYMAP` / `eventToToken` / `tokenToAction` / `tokenLabel`。UI 改键只改 token,场景按 token 匹配动作,Mac ⌘ 归一到 `ctrl` |
+| 快捷键面板可视化改键 | `src/renderer/src/components/shared/image-editors/director/DirectorEditor.tsx` | 「快捷键」面板列出可改动作 + 固定交互说明;点击捕获新键(`stopImmediatePropagation` 防止误触场景)、冲突自动解绑、`usePersistentState` 持久化、「恢复默认」一键还原。工具栏新增 删除/复制/撤销/重做/框选/聚焦 按钮(撤销重做按可用性禁用) |
+
+**B. 预设姿势保持垂直位置(bug 修复)**
+
+用户把模型移到地面以下再点预设姿势,模型会被错误地拉回地面以上。根因是 `applyPoseToObject` 内调用了 `groundPosed` 强制归位 `y=0`。修复:改用 `lowestSkinnedY` 测量蒙皮最低点,套用姿势前先记 `prevLowY`,套用后按 `prevLowY - newLowY` 回补 `obj.position.y`,保留模型原有"脚底高度",不再强制归位。
+
+**C. 全景编辑器统一光感/调色面板**
+
+把导演台的光感(曝光/辉光/对比/饱和/色温/暗角/颗粒 + tonemap + IBL + 景深 DoF)抽成可复用组件,接到全景编辑器:
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| 可复用后处理 | `src/renderer/src/components/shared/image-editors/postfx/{createLightFx,lightFxConstants}.ts`(新) | UnrealBloom + Grade ShaderPass(曝光/对比/饱和/色温/暗角/颗粒)+ BokehPass DoF + PMREM IBL,导演台/全景共用 |
+| 统一光感 UI | 共享 `LightFxPanel` 组件 | 两个编辑器同一套 props 驱动的面板;全景因球面 `MeshBasicMaterial` 隐藏 IBL 控件(不生效),保留 DoF 做创意效果 |
+| 接线 | `src/renderer/src/components/shared/image-editors/PanoramaEditor.tsx` / `LightEditor.tsx` | 在保留全景自有超采样的前提下叠加 Bokeh + Grade pass |
+
+#### 用户可见行为
+
+1. 导演台支持完整快捷键(可在面板里自由改键并持久化)、左键框选多选移动、撤销/重做
+2. 把模型移到地面下再套预设姿势,模型停在原垂直位置,不再弹回地面
+3. 全景编辑器拥有与导演台一致的光感/调色/景深面板
+
+---
+
 ### v4.3.25 (2026-06-06) — catimation 生图对齐 codex 原生 + 多图并发 + 生成后自动查看
 
 **目标**:让 Codex 聊天里的 `catimation` 生图工具(`generate_image`)在「返回契约 / 多图并发 / 生成后自查」三方面对齐并超过 codex 原生 `image_gen`。

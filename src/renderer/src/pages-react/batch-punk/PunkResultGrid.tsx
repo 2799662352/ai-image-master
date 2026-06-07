@@ -3,6 +3,7 @@ import type { BatchItem } from '../../stores/useBatchStore'
 import { useBatchStore } from '../../stores/useBatchStore'
 import ImageEditToolbar from '../../components/shared/image-editors/ImageEditToolbar'
 import ImageEditorModal from '../../components/shared/image-editors/ImageEditorModal'
+import { addImageUrlToReferences } from '../../components/shared/image-editors/referenceTargets'
 import { useDisplaySrc } from '../../hooks/useDisplaySrc'
 import '../../components/shared/image-editors/image-editors.css'
 
@@ -71,7 +72,7 @@ function ResultCard({
   index: number
   onRemove: (id: string) => void
   onPreview?: (url: string) => void
-  onOpenEditor?: (url: string, type: 'angle' | 'light' | 'panorama') => void
+  onOpenEditor?: (url: string, type: 'angle' | 'light' | 'panorama' | 'director') => void
   onInjectPrompt?: (prompt: string) => void
 }) {
   const tilt = index % 4
@@ -192,6 +193,7 @@ function ResultCard({
             imageUrl={displayUrl!}
             onOpenEditor={(type) => onOpenEditor?.(displayUrl!, type)}
             onInjectPrompt={onInjectPrompt}
+            onAddReference={(url) => addImageUrlToReferences('batch', url)}
           />
         )}
         {isDone && (
@@ -402,7 +404,7 @@ function ResultCard({
  * PunkResultGrid - 任务卡片网格 + 全局 spin keyframe
  */
 export default function PunkResultGrid({ items, onRemove, onPreview }: Props) {
-  const [editorState, setEditorState] = useState<{ url: string; type: 'angle' | 'light' | 'panorama' } | null>(null)
+  const [editorState, setEditorState] = useState<{ url: string; type: 'angle' | 'light' | 'panorama' | 'director' } | null>(null)
   const [reversed, setReversed] = useState(true)
 
   const injectPrompt = (p: string) => {
@@ -534,6 +536,7 @@ export default function PunkResultGrid({ items, onRemove, onPreview }: Props) {
           editorType={editorState.type}
           imageUrl={editorState.url}
           theme="punk"
+          directorEntry={editorState.type === 'director' ? 'panorama' : 'native'}
           onInjectPrompt={injectPrompt}
           onClose={() => setEditorState(null)}
         />

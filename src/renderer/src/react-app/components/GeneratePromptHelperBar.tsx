@@ -1,9 +1,6 @@
-import { useCallback, useMemo, useState } from 'react'
-import { useUIPrefsStore } from '../../stores/useUIPrefsStore'
-import ImageEditorModal, {
-  type ImageChoice,
-} from '../../components/shared/image-editors/ImageEditorModal'
-import '../../components/shared/image-editors/image-editors.css'
+import { useCallback, useMemo } from 'react'
+import VisualPromptBar from '../../components/shared/image-editors/VisualPromptBar'
+import type { ImageChoice } from '../../components/shared/image-editors/ImageEditorModal'
 import { useVanillaPageRefImages } from '../hooks/useVanillaPageRefImages'
 
 interface RawRefImage {
@@ -26,23 +23,14 @@ function toDataUrl(img: RawRefImage): string {
 }
 
 /**
- * GeneratePromptHelperBar — 图生图模式的视觉 prompt 辅助:
- *   [多角度] [打光] 按钮,基于已上传参考图构造 prompt 并注入 #promptInput。
+ * GeneratePromptHelperBar — 图生图模式的视觉 prompt 辅助(薄壳)。
  *
  * 桥接 vanilla GeneratePage:
- *   - 读: useVanillaPageRefImages (MutationObserver 事件驱动,见 hook 注释)
- *   - 写: 修改 #promptInput.value + dispatch 'input' 事件,让 vanilla 同步内部 state
- *
- * 无参考图时按钮禁用并显示「← 先上传参考图」提示,行为与 BatchPromptHelperBar 一致。
+ *   - 读: useVanillaPageRefImages(MutationObserver 事件驱动)
+ *   - 写: 修改 #promptInput.value + dispatch 'input',让 vanilla 同步内部 state
+ * UI / 交互全部交给共享 VisualPromptBar。
  */
 export function GeneratePromptHelperBar() {
-  const enabled = useUIPrefsStore((s) => s.imageEditorToolbar.enabled)
-  const [editorState, setEditorState] = useState<{
-    type: 'angle' | 'light' | 'panorama'
-    imageUrl: string
-    tab?: 'preview' | 'generate'
-  } | null>(null)
-
   const refImages = useVanillaPageRefImages<RawRefImage>({
     getPage: getGeneratePage,
     previewElementId: 'referenceImagesPreview',
@@ -60,102 +48,12 @@ export function GeneratePromptHelperBar() {
 
   const injectPrompt = useCallback((text: string) => {
     const el = document.getElementById('promptInput') as HTMLTextAreaElement | null
-    if (!el) {
-      setEditorState(null)
-      return
-    }
+    if (!el) return
     const current = el.value.trim()
-    const next = current ? `${current}, ${text}` : text
-    el.value = next
+    el.value = current ? `${current}, ${text}` : text
     el.dispatchEvent(new Event('input', { bubbles: true }))
     el.focus()
-    setEditorState(null)
   }, [])
 
-  if (!enabled) return null
-
-  const hasRef = refImages.length > 0
-  const openEditor = (
-    type: 'angle' | 'light' | 'panorama',
-    tab?: 'preview' | 'generate',
-  ) => {
-    if (!hasRef) return
-    setEditorState({ type, imageUrl: toDataUrl(refImages[0]), tab })
-  }
-
-  const btnClass = hasRef
-    ? 'px-3 py-1.5 border-2 border-zinc-700 bg-zinc-900 text-zinc-200 font-mono text-[11px] uppercase tracking-wider hover:border-cyberpunk-yellow hover:text-cyberpunk-yellow transition-colors'
-    : 'px-3 py-1.5 border-2 border-zinc-800 bg-zinc-900/40 text-zinc-600 font-mono text-[11px] uppercase tracking-wider cursor-not-allowed'
-
-  return (
-    <>
-      <div
-        role="toolbar"
-        aria-label="视觉 prompt 辅助"
-        className="flex items-center gap-2 flex-wrap mt-2"
-      >
-        <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-500">
-          // visual prompt
-        </span>
-        <button
-          type="button"
-          disabled={!hasRef}
-          onClick={() => openEditor('angle')}
-          className={btnClass}
-          title={hasRef ? '基于参考图构造多角度 prompt' : '请先上传参考图'}
-        >
-          多角度 // angle
-        </button>
-        <button
-          type="button"
-          disabled={!hasRef}
-          onClick={() => openEditor('light')}
-          className={btnClass}
-          title={hasRef ? '基于参考图构造打光 prompt' : '请先上传参考图'}
-        >
-          打光 // light
-        </button>
-        <button
-          type="button"
-          disabled={!hasRef}
-          onClick={() => openEditor('panorama', 'generate')}
-          className={btnClass}
-          title={hasRef ? '生成 360° 全景图(注入全景提示词)' : '请先上传参考图'}
-        >
-          生成全景图
-        </button>
-        <button
-          type="button"
-          disabled={!hasRef}
-          onClick={() => openEditor('panorama', 'preview')}
-          className={btnClass}
-          title={hasRef ? '进入全景:环视与截图' : '请先上传参考图'}
-        >
-          进入全景
-        </button>
-        {!hasRef && (
-          <span className="font-mono text-[10px] text-zinc-500">
-            ← 先上传参考图
-          </span>
-        )}
-        {hasRef && refImages.length > 1 && (
-          <span className="font-mono text-[10px] text-zinc-500">
-            {refImages.length} 张可选
-          </span>
-        )}
-      </div>
-
-      {editorState && (
-        <ImageEditorModal
-          editorType={editorState.type}
-          imageUrl={editorState.imageUrl}
-          imageChoices={imageChoices}
-          theme="default"
-          onInjectPrompt={injectPrompt}
-          panoramaTab={editorState.tab}
-          onClose={() => setEditorState(null)}
-        />
-      )}
-    </>
-  )
+  return <VisualPromptBar imageChoices={imageChoices} onInject={injectPrompt} variant="cyber" containerClassName="mt-2" />
 }

@@ -1,0 +1,311 @@
+{
+  "groups": [
+    "躯干",
+    "头颈",
+    "左臂",
+    "右臂",
+    "左腿",
+    "右腿",
+    "手指",
+    "脚趾"
+  ],
+  "bones": [
+    {
+      "label": "骨盆",
+      "boneName": "mixamorigHips",
+      "group": "躯干"
+    },
+    {
+      "label": "脊柱",
+      "boneName": "mixamorigSpine",
+      "group": "躯干"
+    },
+    {
+      "label": "上脊柱",
+      "boneName": "mixamorigSpine1",
+      "group": "躯干"
+    },
+    {
+      "label": "胸椎",
+      "boneName": "mixamorigSpine2",
+      "group": "躯干"
+    },
+    {
+      "label": "颈部",
+      "boneName": "mixamorigNeck",
+      "group": "头颈"
+    },
+    {
+      "label": "头部",
+      "boneName": "mixamorigHead",
+      "group": "头颈"
+    },
+    {
+      "label": "左肩",
+      "boneName": "mixamorigLeftShoulder",
+      "group": "左臂"
+    },
+    {
+      "label": "左上臂",
+      "boneName": "mixamorigLeftArm",
+      "group": "左臂"
+    },
+    {
+      "label": "左前臂",
+      "boneName": "mixamorigLeftForeArm",
+      "group": "左臂"
+    },
+    {
+      "label": "左手掌",
+      "boneName": "mixamorigLeftHand",
+      "group": "左臂"
+    },
+    {
+      "label": "右肩",
+      "boneName": "mixamorigRightShoulder",
+      "group": "右臂"
+    },
+    {
+      "label": "右上臂",
+      "boneName": "mixamorigRightArm",
+      "group": "右臂"
+    },
+    {
+      "label": "右前臂",
+      "boneName": "mixamorigRightForeArm",
+      "group": "右臂"
+    },
+    {
+      "label": "右手掌",
+      "boneName": "mixamorigRightHand",
+      "group": "右臂"
+    },
+    {
+      "label": "左大腿",
+      "boneName": "mixamorigLeftUpLeg",
+      "group": "左腿"
+    },
+    {
+      "label": "左小腿",
+      "boneName": "mixamorigLeftLeg",
+      "group": "左腿"
+    },
+    {
+      "label": "左脚",
+      "boneName": "mixamorigLeftFoot",
+      "group": "左腿"
+    },
+    {
+      "label": "右大腿",
+      "boneName": "mixamorigRightUpLeg",
+      "group": "右腿"
+    },
+    {
+      "label": "右小腿",
+      "boneName": "mixamorigRightLeg",
+      "group": "右腿"
+    },
+    {
+      "label": "右脚",
+      "boneName": "mixamorigRightFoot",
+      "group": "右腿"
+    },
+    {
+      "label": "左手拇指第1节",
+      "boneName": "mixamorigLeftHandThumb1",
+      "group": "手指"
+    },
+    {
+      "label": "左手拇指第2节",
+      "boneName": "mixamorigLeftHandThumb2",
+      "group": "手指"
+    },
+    {
+      "label": "左手拇指第3节",
+      "boneName": "mixamorigLeftHandThumb3",
+      "group": "手指"
+    },
+    {
+      "label": "左手食指第1节",
+      "boneName": "mixamorigLeftHandIndex1",
+      "group": "手指"
+    },
+    {
+      "label": "左手食指第2节",
+      "boneName": "mixamorigLeftHandIndex2",
+      "group": "手指"
+    },
+    {
+      "label": "左手食指第3节",
+      "boneName": "mixamorigLeftHandIndex3",
+      "group": "手指"
+    },
+    {
+      "label": "左手中指第1节",
+      "boneName": "mixamorigLeftHandMiddle1",
+      "group": "手指"
+    },
+    {
+      "label": "左手中指第2节",
+      "boneName": "mixamorigLeftHandMiddle2",
+      "group": "手指"
+    },
+    {
+      "label": "左手中指第3节",
+      "boneName": "mixamorigLeftHandMiddle3",
+      "group": "手指"
+    },
+    {
+      "label": "左手无名指第1节",
+      "boneName": "mixamorigLeftHandRing1",
+      "group": "手指"
+    },
+    {
+      "label": "左手无名指第2节",
+      "boneName": "mixamorigLeftHandRing2",
+      "group": "手指"
+    },
+    {
+      "label": "左手无名指第3节",
+      "boneName": "mixamorigLeftHandRing3",
+      "group": "手指"
+    },
+    {
+      "label": "左手小指第1节",
+      "boneName": "mixamorigLeftHandPinky1",
+      "group": "手指"
+    },
+    {
+      "label": "左手小指第2节",
+      "boneName": "mixamorigLeftHandPinky2",
+      "group": "手指"
+    },
+    {
+      "label": "左手小指第3节",
+      "boneName": "mixamorigLeftHandPinky3",
+      "group": "手指"
+    },
+    {
+      "label": "右手拇指第1节",
+      "boneName": "mixamorigRightHandThumb1",
+      "group": "手指"
+    },
+    {
+      "label": "右手拇指第2节",
+      "boneName": "mixamorigRightHandThumb2",
+      "group": "手指"
+    },
+    {
+      "label": "右手拇指第3节",
+      "boneName": "mixamorigRightHandThumb3",
+      "group": "手指"
+    },
+    {
+      "label": "右手食指第1节",
+      "boneName": "mixamorigRightHandIndex1",
+      "group": "手指"
+    },
+    {
+      "label": "右手食指第2节",
+      "boneName": "mixamorigRightHandIndex2",
+      "group": "手指"
+    },
+    {
+      "label": "右手食指第3节",
+      "boneName": "mixamorigRightHandIndex3",
+      "group": "手指"
+    },
+    {
+      "label": "右手中指第1节",
+      "boneName": "mixamorigRightHandMiddle1",
+      "group": "手指"
+    },
+    {
+      "label": "右手中指第2节",
+      "boneName": "mixamorigRightHandMiddle2",
+      "group": "手指"
+    },
+    {
+      "label": "右手中指第3节",
+      "boneName": "mixamorigRightHandMiddle3",
+      "group": "手指"
+    },
+    {
+      "label": "右手无名指第1节",
+      "boneName": "mixamorigRightHandRing1",
+      "group": "手指"
+    },
+    {
+      "label": "右手无名指第2节",
+      "boneName": "mixamorigRightHandRing2",
+      "group": "手指"
+    },
+    {
+      "label": "右手无名指第3节",
+      "boneName": "mixamorigRightHandRing3",
+      "group": "手指"
+    },
+    {
+      "label": "右手小指第1节",
+      "boneName": "mixamorigRightHandPinky1",
+      "group": "手指"
+    },
+    {
+      "label": "右手小指第2节",
+      "boneName": "mixamorigRightHandPinky2",
+      "group": "手指"
+    },
+    {
+      "label": "右手小指第3节",
+      "boneName": "mixamorigRightHandPinky3",
+      "group": "手指"
+    },
+    {
+      "label": "左脚趾根部",
+      "boneName": "mixamorigLeftToeBase",
+      "group": "脚趾"
+    },
+    {
+      "label": "右脚趾根部",
+      "boneName": "mixamorigRightToeBase",
+      "group": "脚趾"
+    }
+  ],
+  "order": [
+    "侧踢",
+    "俯卧撑",
+    "冲刺",
+    "刺拳",
+    "单膝跪",
+    "后仰",
+    "坐地",
+    "坐姿",
+    "妖娆躺",
+    "打电话",
+    "投掷",
+    "推东西",
+    "格斗",
+    "格斗1",
+    "格斗2",
+    "滑行",
+    "漂浮1",
+    "漂浮2",
+    "潜行",
+    "爬行",
+    "盘腿坐",
+    "看手机",
+    "祈祷",
+    "站立",
+    "背手站",
+    "被控制",
+    "被控制2",
+    "走路",
+    "跃起",
+    "跑步",
+    "跪姿",
+    "躺姿1",
+    "躺姿2",
+    "躺姿3",
+    "鞠躬"
+  ]
+}

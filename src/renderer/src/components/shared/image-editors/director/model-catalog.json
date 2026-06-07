@@ -1,0 +1,631 @@
+[
+  {
+    "key": "JC",
+    "label": "基础模型",
+    "description": "JC-通用-地面-水泥、JC-通用-球型-空心",
+    "models": [
+      {
+        "id": "c53956d2-0cc9-461a-ac35-8e7d093bc086",
+        "name": "女",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/c6a76e3f-6ca0-4f7c-87a0-46abd5cff6be.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/4a98116b-50b5-4cab-a306-27968a1a4e4f.png"
+      },
+      {
+        "id": "935cc669-2143-44b5-9bb2-510c930d87ec",
+        "name": "男",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/1c82f77e-e9cf-4710-8594-a8eb5bd6c944.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/d3720c8f-84b4-4ef8-b138-1272394b873a.png"
+      },
+      {
+        "id": "b53c94b0-8586-4d86-992e-7d351bcd9cbc",
+        "name": "地形",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/dddfc259-ed29-40a6-a054-f1eb88f2e98b.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/1af58104-4730-411d-af6d-b5bdf42cf866.png"
+      },
+      {
+        "id": "862f0823-24bc-40cb-9cf1-3fd9f26c36e7",
+        "name": "管道",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/3eb384ad-4a18-433c-be95-7f20b391e73c.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/55b8084e-1b61-4b27-8262-f21e30b0ab75.png"
+      },
+      {
+        "id": "fb2e8cfe-fbb1-4bc7-8b6f-e299e5df4c35",
+        "name": "立方体",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/034ecda8-fa31-470f-a845-26d1e63262ce.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/ce16c56c-642b-4ab1-9321-dbb959b73b63.png"
+      },
+      {
+        "id": "dd9e37cf-cad0-44f0-99f6-7a85432f6a9c",
+        "name": "球体",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/b75ccfbb-cb6c-4f56-8b27-5c36a97a7fcc.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/7afc12c6-79fa-4ee6-b8f5-bc8a0a53cb45.png"
+      },
+      {
+        "id": "9d155e18-f977-4a91-9ff8-512843c67421",
+        "name": "斜坡",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/054cea6a-9e0c-4ed0-85a6-245c52afeb2b.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/21741b35-4635-439e-9480-57eeb34dce06.png"
+      },
+      {
+        "id": "03f4ac51-1d75-4982-b9dd-b1ac2d789b7e",
+        "name": "圆环体",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/0f3e5a86-9702-4701-9ca2-dd190faa7ec9.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/4bc5deb4-09e7-4925-9395-fba45dfb9c14.png"
+      },
+      {
+        "id": "c3a2d9cb-314a-425c-9636-85b241a19afe",
+        "name": "圆柱体",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/7cc88b11-2e0f-4bba-b5fc-a35e9731e796.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/8e11dd69-c8ff-42f3-838a-0b3c4c47c9cb.png"
+      },
+      {
+        "id": "6ccfbe0f-6b9a-487c-a080-d9d5ff4a9194",
+        "name": "圆锥体",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/a1681321-aba6-4d6b-9db3-aaf8fc3a9e84.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/161e9847-9ded-4f8f-8d43-3c81848db6c5.png"
+      },
+      {
+        "id": "f36561f4-ef2c-4358-9600-836c3982e00d",
+        "name": "平面",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/21bd71c4-c80b-4614-86fe-8ce446c4db12.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/2fbf2efe-6378-4426-a81a-07856ba50d4c.png"
+      },
+      {
+        "id": "c412f964-e5ca-4f3b-bee1-98447367fba7",
+        "name": "圆盘",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/b224e008-550e-41b7-818b-0daf721d052b.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/2f7da819-420d-4062-b708-16eec5f6a064.png"
+      }
+    ]
+  },
+  {
+    "key": "RW",
+    "label": "人物",
+    "description": "RW-古风-盔甲-明代、RW-现代-职场装-女",
+    "models": [
+      {
+        "id": "390ccb80-74b8-4e10-b6fc-7baf2898a4a9",
+        "name": "建筑工人-01",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/14f0102a-b7bc-4ed7-a508-102259ffda15.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/3132f0db-dcdb-4650-bcc5-f5a8dee8a4ca.png"
+      },
+      {
+        "id": "ac6eea90-a183-4881-baf0-ec6bfd589cdd",
+        "name": "建筑工人-02",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/abe0cebb-c051-47b3-aae1-16a0b8454150.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/f47539c1-468b-49b8-8410-134c8d7b069b.png"
+      },
+      {
+        "id": "8bd8e378-2db1-496d-b956-d8beaed4328b",
+        "name": "建筑工人-03",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/fbc2818e-8b8d-4293-bd94-80e070393149.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/e52bf308-685d-42ab-a274-753bb63682b4.png"
+      },
+      {
+        "id": "5a9732f0-cbe6-4b16-bfa7-f90931fedf7c",
+        "name": "建筑工人-04",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/2f7f11ec-c9aa-47d8-b67c-afe057108396.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/8f241983-66bf-46da-a6df-353482750335.png"
+      },
+      {
+        "id": "c4910085-0242-4240-a15c-d1a1e814940a",
+        "name": "建筑工人-05",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/53dc568d-ce95-45e6-b5c6-5efaf1e23a86.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/4b4a24f3-f3fd-4df6-8925-022efb5bc35e.png"
+      },
+      {
+        "id": "202c0fbe-c2cb-4638-ad68-679d0b29ac07",
+        "name": "警察-法警",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/681a2195-99fb-4f89-b500-2dc5d4d886cf.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/afdc2cbf-7311-44fa-8efd-a3d69fb5efba.png"
+      },
+      {
+        "id": "db0d79c5-146f-4e68-9f72-6fbaf9109d3b",
+        "name": "警察-特警",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/447ab236-6914-48d5-b2bb-5b88bcdb02f8.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/c12fa4b5-d551-4898-8319-dfd41cb2c058.png"
+      },
+      {
+        "id": "8c79f6fd-90f9-4748-911e-077ec4a827bb",
+        "name": "消防员-01",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/ade7cbdb-c534-4a15-9a97-33e417680518.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/b052200c-aba7-415f-9554-0a029c90bc8b.png"
+      },
+      {
+        "id": "9199053d-c0cd-417c-afe0-0f6dfc172f7f",
+        "name": "消防员-02",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/1d189660-85d9-4c72-9cb2-8f6fae10319b.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/2acd81e1-eab8-4a2d-99cb-849f8647a20f.png"
+      },
+      {
+        "id": "3138a679-87b1-4f14-99cf-6f8272da4f0e",
+        "name": "消防员-03",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/5ea0b2da-da60-4698-b0c5-7c3f66788b8a.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/c7df3354-bada-41e2-935d-6f8d894c3024.png"
+      },
+      {
+        "id": "8813052f-c9a4-49ad-9109-b8a1c1186a24",
+        "name": "医生-01",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/13a680ce-0004-46be-a6ac-28f74c5ab543.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/34fc5a20-a042-4736-884e-fb04572d4047.png"
+      },
+      {
+        "id": "d72b32ba-ecb0-4121-99b3-a063830160e8",
+        "name": "医生-02",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/5e5b6db7-e00c-44fd-80a7-67bbea186d5e.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/30040e4b-f349-463c-9df7-babf4200dac6.png"
+      },
+      {
+        "id": "4cbf2296-b4f0-43c5-aedd-2d4011cf2ba8",
+        "name": "医生-03",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/70f27399-e960-496e-b454-5c75d9c458ff.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/6f7222c1-1a26-4c92-8e7f-a97fa8a96689.png"
+      },
+      {
+        "id": "8a05dc3c-02b4-4f74-9c57-b6a6ecea51c2",
+        "name": "医生-04",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/78c3b41d-ce85-49c4-97cf-27ec72d78e72.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/b9ae3779-964a-4d3d-94c0-568db196b466.png"
+      },
+      {
+        "id": "73e5d5a3-ae7f-448d-92ed-6a30f96ddfce",
+        "name": "医生-05",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/d047cbe7-ad76-4f46-841e-f0ef3105328e.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/2fb62e0d-b153-4f8d-9090-ffed8bf245c9.png"
+      },
+      {
+        "id": "fbafd599-10dd-4ce9-84e4-a6417648f346",
+        "name": "医生-06",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/3268ca1b-b55e-4c4e-a724-b965c88974ad.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/2a105958-8dac-4580-a6c1-014917c70214.png"
+      },
+      {
+        "id": "b2578c2f-73f7-4057-a899-d0bdf7272081",
+        "name": "宇航员",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/33d18afa-2af4-47f9-8c40-6d8f76ecd3b8.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/8e9b829f-b98f-42fe-a73a-15d0e812b179.png"
+      },
+      {
+        "id": "b630f1e0-c4d9-4daa-bd61-00e47d75f7ca",
+        "name": "职场男-01",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/17bed0a1-9498-4932-83b2-e11691d64ab3.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/633770b0-b4c6-4b41-9839-30f8df7beafb.png"
+      },
+      {
+        "id": "5a6cbf88-6904-429a-a903-06d43346c8ff",
+        "name": "职场男-02",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/dc455a32-b1b0-42cb-8087-17c039dac018.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/317c1144-653a-4c2c-b25d-b3185b41a741.png"
+      },
+      {
+        "id": "55a24360-7304-4431-8f41-7ee8e6a42740",
+        "name": "职场女-01",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/bdbfac19-8563-46fd-8e0d-4a20118509bc.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/62bb6a18-c209-4f8f-ab82-343dec9a1f1e.png"
+      },
+      {
+        "id": "1281679e-b111-48ff-b60b-f9e2a56abf4a",
+        "name": "职场女-02",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/067984cf-ac3e-4474-bf94-3e12e8b5ae06.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/b9a4555f-7856-43e7-95d4-30a6e053221b.png"
+      },
+      {
+        "id": "7f3a5d56-fa04-4678-9ac6-faf16abf8c14",
+        "name": "盔甲01-汉代",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/a091cf99-cbb2-4cda-ba42-1481d5a1345e.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/569aacf2-66e9-4d7a-93d4-12a77458d3dd.png"
+      },
+      {
+        "id": "afd0a6e8-9ba8-426f-8a11-fa219c03be08",
+        "name": "盔甲02-汉代",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/216edf3b-05ff-438c-a550-a446df5fa94f.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/75b6dce1-55c3-4a4e-b8c3-ddc04f184785.png"
+      },
+      {
+        "id": "26a456ce-ac3a-4d36-be94-4630a94f4991",
+        "name": "盔甲-明代",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/08523079-1a80-463e-821a-3c377e601c1b.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/9ba14257-f8f4-4f4b-86a9-03d64e076301.png"
+      },
+      {
+        "id": "1da4fe3c-8361-4d8e-8f8f-d23a8ece010d",
+        "name": "盔甲01-明代",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/4a051312-12f6-48d7-8673-7833813a7543.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/19cb52f1-5cd2-4c05-97bb-12f2fa3120ce.png"
+      },
+      {
+        "id": "b75bc253-d22f-4628-8b11-5833531d6b5c",
+        "name": "盔甲02-明代",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/70bc9d32-0d8e-440b-8d0d-17159a1ac22e.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/64854f8b-cc0d-42cb-b478-30c86a48ad40.png"
+      },
+      {
+        "id": "e748f8f5-bc67-4753-b1b9-df59ddf11410",
+        "name": "盔甲-秦代",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/ab0e748d-8ec0-4fef-8daf-7249d9e0da00.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/ab633217-efd0-4af9-a9b7-073da80a7935.png"
+      },
+      {
+        "id": "629e73ce-18d2-4aa2-b94c-6595902944d1",
+        "name": "盔甲-清代",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/680d2587-e190-4d31-b314-50770b92c439.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/8291d4fb-b855-40b5-a024-b00df0929be1.png"
+      },
+      {
+        "id": "526ac957-b668-46cf-be64-47c24f6ec1e6",
+        "name": "盔甲-唐代",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/df3f9347-38b9-497c-b3a4-784a6d8b3688.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/f306e869-9544-4af5-b517-7dc6d45270d1.png"
+      },
+      {
+        "id": "4faa820c-f4eb-4d5c-a68b-1d4dfa8cc5a0",
+        "name": "盔甲-元代",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/350cde4d-3de4-4bb4-bf5e-c4f4aae6c491.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/6ea10f5b-3665-4db2-9bd4-ebc1916b8550.png"
+      },
+      {
+        "id": "c2cc2726-68d2-4f9a-8e28-4359a6ad9a7a",
+        "name": "农民",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/3dacd73f-92d0-4390-a742-3f4f5e428859.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/d6790186-aefe-44df-9b99-275c041a13b2.png"
+      },
+      {
+        "id": "bf7bd16d-e5cd-4323-a5fb-2f3b97dccddc",
+        "name": "书生",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/d563b238-a2ab-4c33-b356-c1483ed78bee.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/c10fe261-4c17-4823-bebc-75e44189774f.png"
+      }
+    ]
+  },
+  {
+    "key": "DJ",
+    "label": "道具",
+    "description": "DJ-古风-纱帘-左、DJ-现代-水杯-玻璃",
+    "models": [
+      {
+        "id": "c5ffb166-73c9-4b72-bc43-690fa9784261",
+        "name": "纱帘-左",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/b725224c-69cf-43c9-b1f7-d7fe03dc02c5.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/80589ca4-b9fe-4f8b-baa0-f74cecb1dabe.png"
+      },
+      {
+        "id": "6241335b-1c0d-4a4f-83c4-64c60d81f83b",
+        "name": "纱帘-右",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/4442722c-8185-498a-9432-f3ccab36a3f8.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/8ed38a2a-b82d-46ae-a6be-6cb33e0025b1.png"
+      },
+      {
+        "id": "256854bc-e2de-4d87-91ab-001235a10e2b",
+        "name": "窗帘",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/90044140-2bbe-4662-923a-51a3af093332.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/79bff044-d55c-4df2-bde9-c77ca6298427.png"
+      },
+      {
+        "id": "ef74e4ea-f1e7-4f40-87f1-3030bbc8c546",
+        "name": "中药柜",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/59292fd4-cdef-43f7-b20c-7c8086c1b429.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/9430e2f2-ac4f-4ec1-8f24-1ed2aa5956d7.png"
+      },
+      {
+        "id": "6747ac3e-a375-4599-a866-0b3db7eb4880",
+        "name": "柜子",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/8d14acb0-1f9f-4c3d-8661-1debf89d3dbd.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/d933ec37-33f3-445f-a495-dd8207eb32b7.png"
+      },
+      {
+        "id": "850aca46-0cd7-438a-b8de-a3439a3c06bc",
+        "name": "人体工学椅",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/47eb3862-b27c-4eff-8a9a-72b34c9665f4.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/29f73c98-c571-4fa0-99b3-5b0ddedfd4ab.png"
+      },
+      {
+        "id": "d3a48f3f-08c5-4f59-8a5c-3103c4446a63",
+        "name": "椅子",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/b630adfa-5bf5-445f-bb13-12acbe29464c.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/442fb5d4-3905-4b7f-b5d1-0681ae3064dc.png"
+      },
+      {
+        "id": "44041688-13d9-4aad-aad9-8956f5f0b3b6",
+        "name": "桌子",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/a228016e-1d13-406e-bd1d-947bb9e83e22.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/77f2a76b-5da1-48e1-9b67-55b583f0acd1.png"
+      },
+      {
+        "id": "95da5486-66c4-401d-8dbd-0ebcc7fd94cf",
+        "name": "沙发",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/6b2cac4d-0648-439e-8979-dc91b8f1daf3.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/c7074942-fd3c-487a-9ad1-413e278394cc.png"
+      },
+      {
+        "id": "0238c7d1-d39e-4365-8f71-76abed343835",
+        "name": "鼓凳",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/02f1d1b8-3548-47d4-af94-3042e4f89bc7.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/cdf7361a-5c64-41dc-9290-bfb9691593c6.png"
+      },
+      {
+        "id": "6c67c08f-9a07-47df-9f93-193f7a4591ef",
+        "name": "交椅",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/f5755616-7e1e-487b-98dd-bf96ffcf9e98.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/0d24d4dc-a674-4f92-a218-cf5b1547c889.png"
+      },
+      {
+        "id": "29f9b1a3-d86a-4b82-ab70-e511668b41bb",
+        "name": "官帽椅",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/b1129a85-5c90-4e96-a716-b9d15bea6143.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/f6510d6a-53ea-4df9-93fa-2050ddc3cb0c.png"
+      },
+      {
+        "id": "64671cf5-3a53-47ad-bd89-69ca319afb47",
+        "name": "屏风",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/17d2ce0c-e926-45e8-b2bf-5af4c157598d.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/ea33ea37-a324-4872-9480-ac7dd281650e.png"
+      },
+      {
+        "id": "0c6a2cf7-5ba9-48c4-baa0-1f8138b91b1f",
+        "name": "刀",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/16e9279a-7090-4eed-9da5-8ea8f99ce366.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/47b3bf1d-50c7-4048-bd24-97b34872c6bf.png"
+      },
+      {
+        "id": "e7a39516-5df4-4089-b382-75f303ea4c9a",
+        "name": "盾",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/2a216656-629a-4c60-b8d5-9f143bda9e77.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/c661d985-9242-455d-89a5-95ab30d0ee4d.png"
+      },
+      {
+        "id": "86abf1db-5cf6-457a-b9dd-1c99ceeaad50",
+        "name": "弓箭",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/8ae3e9ba-a349-4f95-8c55-28114be76717.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/025dcaf6-30c7-4625-8c54-43fc9efcba07.png"
+      },
+      {
+        "id": "4db43d24-cf18-4fbc-bcac-0e642fcc7b7c",
+        "name": "剑",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/3229382e-9209-4e40-b506-7e346d8ee814.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/0867c6e1-2642-423a-8bff-6948788fb4dd.png"
+      },
+      {
+        "id": "5f9a6e2a-bdf1-47f9-a372-021f9bfdc25c",
+        "name": "枪",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/a47cc826-5182-46f8-9658-d297003a7a3c.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/d6288643-2c30-49f6-9d9f-423912e94024.png"
+      },
+      {
+        "id": "8e354398-23c3-48e0-b15e-e8a6453401c4",
+        "name": "长刀",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/71194389-b766-47d2-8ca4-8dab5777eb04.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/bfa4fbc5-da56-4edd-909f-e62c1e9c8f55.png"
+      }
+    ]
+  },
+  {
+    "key": "CJ",
+    "label": "场景",
+    "description": "CJ-古风-街道-清代、CJ-现代-大楼-写字楼",
+    "models": [
+      {
+        "id": "deecfcfc-b48f-4d32-975d-755ba536abb8",
+        "name": "别墅01",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/d464518d-d515-4c02-81d7-6efbf613964a.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/1cff0a8d-eb82-4787-8de8-3f260d72c581.png"
+      },
+      {
+        "id": "1c263be5-7c5a-4e4d-85e5-ad8cd92ea057",
+        "name": "别墅02",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/a232d59e-364c-4d03-8855-58c6c17d5232.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/2b71c6d5-c521-437f-87c9-50107e4c5ee8.png"
+      },
+      {
+        "id": "574794ea-7c84-4928-ad57-43d4037f075b",
+        "name": "城市群",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/9febf240-cb49-4e3d-b2d2-357b679270b2.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/80fbcbfc-05bc-481a-aa70-fbe1b186d84e.png"
+      },
+      {
+        "id": "e281c4a2-602f-499c-ab8b-c64ccdb2f208",
+        "name": "八角塔",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/c841825c-dd19-4782-92ee-8661b71a6e05.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/f9b3fa5e-6b94-4938-9e50-74af179dbf6c.png"
+      },
+      {
+        "id": "f332e6c6-57f3-48ff-adfc-7083c628e3ea",
+        "name": "城楼",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/c3164e35-321b-4eb2-93fa-ad880a8ba1b2.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/ed7d6f5c-e43f-4856-a684-bad2c65f5548.png"
+      },
+      {
+        "id": "25e2a7b7-3e9f-4d37-b56c-7c02bb630116",
+        "name": "城墙",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/92d4f336-edeb-43d3-9f63-b9bd92a3d229.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/081095be-5be6-4730-922d-0dd75eefb11c.png"
+      },
+      {
+        "id": "3647b38e-2150-4393-99eb-a1384290c41f",
+        "name": "大殿",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/4d54a29b-994a-40b5-ae78-1556c170926a.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/a4fa9c13-0d25-441b-94ba-7cb99172d426.png"
+      },
+      {
+        "id": "921d8749-18cd-4489-b3b8-9a19f0fe4a15",
+        "name": "牌坊",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/0aafc847-a552-4867-952d-909d267f8b94.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/5a57dc6c-d5a4-4f11-8001-24c6ba526a2c.png"
+      },
+      {
+        "id": "adb34282-a6db-41f4-a4a2-36eb055f8431",
+        "name": "建筑01",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/30dd1ff9-8b9d-44c0-a83e-f4816cb78f6d.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/f87f574b-0efe-4b57-a7b0-c2aadc17ac5e.png"
+      },
+      {
+        "id": "5ca4f0b9-8156-4bbb-95c0-31cddc7e31cf",
+        "name": "建筑02",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/5dbac765-b642-492b-947c-e42d5343cd58.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/982961db-e0d0-4aa9-9da1-c84726fdd423.png"
+      },
+      {
+        "id": "28cbaa17-db61-4289-be1c-00c714a771f3",
+        "name": "概念场景",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/955c9ebe-e1df-4ced-8958-38ea74410a47.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/43135582-7e3d-47b7-8bd0-1a1a19902ca2.png"
+      },
+      {
+        "id": "01831e6b-4419-475f-878f-dbf2c77c80a6",
+        "name": "概念场景01",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/d9e9ba9a-f611-4af2-8811-68137d73a96f.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/f6f9d6ec-8027-4b6c-b9b1-ecf978c318a4.png"
+      }
+    ]
+  },
+  {
+    "key": "JT",
+    "label": "交通工具",
+    "description": "JT-现代-警车-通用、JT-未来-悬浮车-02",
+    "models": [
+      {
+        "id": "5e144b69-90e6-4624-a5c6-18596991348c",
+        "name": "轰炸机",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/540b07d2-be5f-4809-a1ae-5d60a6c53b5a.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/0f3e222a-1907-4313-bb25-078cf8a9dc49.png"
+      },
+      {
+        "id": "760f7b5d-d6b9-4fa3-a5ac-5969c65b19cf",
+        "name": "客机",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/cfdf0749-8f69-485f-bc89-52cfc8055c11.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/59b0cea5-62a6-4629-9329-e84ad7e1345f.png"
+      },
+      {
+        "id": "a3ba6b83-56b0-4483-bbd1-410cbf2c5179",
+        "name": "无人机",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/d620e4e3-1981-4136-ba95-89fffb071662.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/bcf02c86-cb98-462f-b8ff-ae074071ab75.png"
+      },
+      {
+        "id": "74c5d5d6-3510-4dbb-a36e-f7f9d784bf85",
+        "name": "战斗机",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/2f563029-465c-4474-8fac-dfc038ab4319.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/70e25509-4271-4fcb-bf4b-98a8722103d3.png"
+      },
+      {
+        "id": "1434bfe7-cebd-4229-b0f1-cfe34f0358ff",
+        "name": "直升机",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/af1f9f10-7f4d-4877-bdb4-cc487d6a9e49.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/2a134756-c18e-4338-b086-13b243b902d1.png"
+      },
+      {
+        "id": "3b71c875-f8fd-461f-a3fc-c2ba7390a77a",
+        "name": "轿车",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/ca171329-1a22-45d1-b554-73c71374d2f1.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/d56c3cea-37b5-4838-9ec6-13b3ea7bc384.png"
+      },
+      {
+        "id": "0488451e-4367-43f9-a091-763a4faa8520",
+        "name": "轿车01",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/bf346a16-d4cd-443e-ba99-b1954102978d.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/a409e508-79f0-434c-9251-3630128a4593.png"
+      },
+      {
+        "id": "d67a45d7-d582-49c4-b902-ebc5f9699012",
+        "name": "公交车",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/a058c857-ef97-4d5d-8bb1-d90da1f69393.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/fcca76b1-86e4-4ae9-a636-9bdaf7a608e8.png"
+      },
+      {
+        "id": "3af1cc50-22b2-4fcf-a0d8-fd289f2ba3f1",
+        "name": "货车",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/483c5857-a84a-48a2-8d7f-e19ec2cee1bc.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/2958e1e7-6eaf-4803-9de0-dae9371b385e.png"
+      },
+      {
+        "id": "d2a4400a-a8eb-45bb-acdf-2c04d354e25c",
+        "name": "摩托车",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/045f81d0-08c5-43a5-a9fe-97daeafbeab5.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/9b0c4a53-3e05-49ba-bcc3-18ada9b95fe9.png"
+      },
+      {
+        "id": "fb85e8f0-9a07-4f72-810d-d1a32d734b1e",
+        "name": "坦克",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/a999ef03-91a8-4a04-8281-446dc31d9fdd.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/54834fa5-77ab-46f7-b519-a71f9e6b072e.png"
+      },
+      {
+        "id": "27b829d0-bc37-475d-a1c0-a414df15047f",
+        "name": "自行车",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/060b6513-333b-4128-a6e3-506389c7a6da.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/e588c317-27f1-4e15-bc2a-ac73df06eed5.png"
+      },
+      {
+        "id": "85bf3fcd-4666-4ea7-ba78-4d683906885b",
+        "name": "轮船",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/d204c4a8-0d3c-4353-b707-259aa7b8c0e2.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/25e8a9c7-c40b-43ec-bddc-068dbd0723f5.png"
+      },
+      {
+        "id": "077fee3f-4f3a-4a42-8aea-dd70aa1c1e88",
+        "name": "潜艇",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/335cac1f-904d-45ec-828c-a80052b61be6.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/ac148633-7f7c-482d-81ca-a9c0628653b5.png"
+      },
+      {
+        "id": "f1f1bad8-bfa6-4054-9848-af48359254ad",
+        "name": "游艇",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/b4f2ffeb-f873-4d6e-b0a7-d76e98c48e47.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/bb3884c2-6af4-4dc9-8460-214bbcc5a99a.png"
+      },
+      {
+        "id": "925e2d14-5786-48ce-8d25-767d86e0c0d0",
+        "name": "轿子",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/d26283b8-0b8e-4555-b6eb-c633f0951a35.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/07232f52-84fe-4dce-bf02-4e5bb53f4dbc.png"
+      },
+      {
+        "id": "f8579bcf-2c82-4ea5-b113-00ddb8d6da53",
+        "name": "骆驼",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/3c17389d-40a8-45d0-978e-69a3888b763c.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/103a06e5-c04e-4305-8fef-af4402cb8e55.png"
+      },
+      {
+        "id": "f46e75c6-290a-4ab9-b3ab-1f90b7854de8",
+        "name": "马车01",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/f516a765-3ef4-41aa-866a-0c379034a1e7.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/d4367118-11d8-4449-a545-c51acb54737b.png"
+      },
+      {
+        "id": "b7e556a9-77fa-41e6-a5d7-2f5c14258cd7",
+        "name": "马车02",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/496ec95e-d325-4000-80b2-fbc4aac6b6d2.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/f7dcb670-6ac9-40fb-88d4-1ab2432cf1b8.png"
+      },
+      {
+        "id": "eecbd928-c4d2-4198-ae18-3d23a6f12480",
+        "name": "独木舟",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/124a8e34-a839-4902-8a26-5115d676aac1.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/3f0cd84f-255d-4f92-9be4-e7d06c12496e.png"
+      },
+      {
+        "id": "bdc230bc-0286-4c07-a29a-a2a408cad3bf",
+        "name": "帆船",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/ba90bf59-e06b-45cb-a8df-004df88af54d.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/ce954fa1-afeb-4438-967d-a6c4b9db0e72.png"
+      },
+      {
+        "id": "22359b35-afd3-44d1-98a0-126b873b1342",
+        "name": "渔船",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/f7a559f4-14d7-4925-9388-390f904c9dfe.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/341db305-db13-4080-8aff-f2a886d6e69d.png"
+      },
+      {
+        "id": "57287143-faa6-47e5-88e0-f76416b75f86",
+        "name": "飞船",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/9d501eb6-73b0-4b95-a3c4-834da21f6ed1.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/8808b6f7-78a3-4c57-a18c-c531fd8db7a1.png"
+      },
+      {
+        "id": "7930724c-83a4-4899-bc39-0062298c54a2",
+        "name": "战舰",
+        "url": "https://rh-canvas-files.xiaoyaoyou.com/default/director/f774c442-2f18-4171-a946-a2536cc1102c.gltf",
+        "previewImage": "https://rh-canvas-files.xiaoyaoyou.com/default/director/b5a30a75-fd3a-4654-910b-887a9027d4f1.png"
+      }
+    ]
+  }
+]

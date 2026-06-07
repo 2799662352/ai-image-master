@@ -6,8 +6,19 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js'
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
+import { BokehPass } from 'three/addons/postprocessing/BokehPass.js'
 import { buildPanoramaPrompt, type PanoramaMode } from './prompts'
 import { usePersistentState } from './usePersistentState'
+import { FloatingPanel } from './director/directorFloatingPanel'
+import {
+  LIGHT_FX,
+  LIGHT_FX_VALUE_DEFAULTS,
+  resolveToneMapping,
+  type LightFxValue,
+  type ToneMappingMode,
+} from './postfx/lightFxConstants'
+import { GradeShader } from './postfx/createLightFx'
+import LightFxPanel from './postfx/LightFxPanel'
 
 /**
  * PanoramaEditor —— 360° 等距柱状全景查看器(逆向自 RunningHub 全景节点 + 全景图预览器.html)。
@@ -143,6 +154,8 @@ interface Props {
   onCapture?: (dataUrl: string, meta: { index: number; total: number }) => void
   /** 生成全景:把 360 提示词回填到生成框。缺省则隐藏「生成」Tab。 */
   onInjectPrompt?: (prompt: string) => void
+  /** 进入 3D 导演台:把当前全景图作为背景导入。缺省则隐藏入口按钮。 */
+  onEnterDirector?: () => void
   /** 是否存在参考图上下文(决定图生图是否可用 / 默认)。 */
   canRef?: boolean
   /** 初始 Tab,默认预览。 */
@@ -157,7 +170,10 @@ type SceneRefs = {
   controls: OrbitControls
   composer: EffectComposer
   distortion: ShaderPass
+  bokeh: BokehPass
   bloom: UnrealBloomPass
+  grade: ShaderPass
+  toneMode: ToneMappingMode
   texture: THREE.Texture | null
   sphereMat: THREE.MeshBasicMaterial
   raf: number
@@ -172,16 +188,18 @@ const MIN_FOV = 30
 const MAX_FOV = 110
 // 光感(opt-in,默认中性=对齐 HTML 的干净直出):曝光=1 + 辉光=0 时不启用任何后处理调色。
 // 用户把曝光/辉光拨离中性,才接 AgX 色调映射 + 高光辉光。
-const DEFAULT_EXPOSURE = 1.0
-const DEFAULT_BLOOM = 0
-const BLOOM_RADIUS = 0.4
-const BLOOM_THRESHOLD = 0.85 // 只有接近高光(天空/灯/反光)才起辉,避免整体发灰
+// 阈值/默认值与 3D 导演台共用同一「真源」(postfx/lightFxConstants),保证两端一致。
+const DEFAULT_EXPOSURE = LIGHT_FX.DEFAULT_EXPOSURE
+const DEFAULT_BLOOM = LIGHT_FX.DEFAULT_BLOOM
+const BLOOM_RADIUS = LIGHT_FX.BLOOM_RADIUS
+const BLOOM_THRESHOLD = LIGHT_FX.BLOOM_THRESHOLD // 只有接近高光(天空/灯/反光)才起辉,避免整体发灰
 
 export default function PanoramaEditor({
   imageUrl,
   theme,
   onCapture,
   onInjectPrompt,
+  onEnterDirector,
   canRef = false,
   initialTab = 'preview',
   onClose,
@@ -206,8 +224,9 @@ export default function PanoramaEditor({
   const [guides, setGuides] = usePersistentState('pano.guides', false)
   const [mirror, setMirror] = usePersistentState('pano.mirror', false)
   const [immersive, setImmersive] = usePersistentState('pano.immersive', true)
-  const [exposure, setExposure] = usePersistentState('pano.exposure', DEFAULT_EXPOSURE)
-  const [bloom, setBloom] = usePersistentState('pano.bloom', DEFAULT_BLOOM)
+  // 光感 / 调色:与 3D 导演台共用同一份参数形状(LightFxValue)+ 同一 UI 组件(LightFxPanel)。
+  // 全景内壁球为 MeshBasic,IBL 无效 → 面板隐藏 IBL;景深表现为整帧柔焦。
+  const [fx, setFx] = usePersistentState<LightFxValue>('pano.fx', { ...LIGHT_FX_VALUE_DEFAULTS })
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [textureReady, setTextureReady] = useState(false)
@@ -275,6 +294,11 @@ export default function PanoramaEditor({
     const distortion = new ShaderPass(DistortionShader)
     distortion.uniforms.uAspect.value = width / height
     composer.addPass(distortion)
+    // 景深(默认关):基于场景深度做 Bokeh 虚化,放在畸变之后、辉光之前。
+    // 内壁球深度近似恒定 ⇒ 表现为整帧柔焦(创意软焦),与导演台共用同一 DoF 控件。
+    const bokehPass = new BokehPass(scene, camera, { focus: 10, aperture: 0.0002, maxblur: 0.006 })
+    bokehPass.enabled = false
+    composer.addPass(bokehPass)
     // 高光辉光:在畸变之后、输出之前,线性空间内对高光做泛光,最后由 OutputPass 统一 tonemap+sRGB。
     const bloomPass = new UnrealBloomPass(
       new THREE.Vector2(width, height),
@@ -283,6 +307,10 @@ export default function PanoramaEditor({
       BLOOM_THRESHOLD,
     )
     composer.addPass(bloomPass)
+    // 调色(对比/饱和/色温/暗角/颗粒):与 3D 导演台共用同一 GradeShader。中性时为恒等。
+    const gradePass = new ShaderPass(GradeShader)
+    gradePass.enabled = false
+    composer.addPass(gradePass)
     composer.addPass(new OutputPass())
 
     refs.current = {
@@ -292,7 +320,10 @@ export default function PanoramaEditor({
       controls,
       composer,
       distortion,
+      bokeh: bokehPass,
       bloom: bloomPass,
+      grade: gradePass,
+      toneMode: 'auto',
       texture: null,
       sphereMat,
       raf: 0,
@@ -336,6 +367,8 @@ export default function PanoramaEditor({
       if (s) {
         cancelAnimationFrame(s.raf)
         s.controls.dispose()
+        s.grade.material.dispose()
+        ;(s.bokeh as unknown as { dispose?: () => void }).dispose?.()
         s.composer.dispose()
         s.texture?.dispose()
         sphereMat.dispose()
@@ -405,18 +438,18 @@ export default function PanoramaEditor({
     s.distortion.uniforms.uStrength.value = (curvature - 1.0) * 1.2
   }, [curvature])
 
-  /* ---------------- 光感:曝光 / 辉光 同步 ---------------- */
+  /* ---------------- 光感 / 调色:把 fx 应用到管线 ---------------- */
   useEffect(() => {
     const s = refs.current
     if (!s) return
-    s.renderer.toneMappingExposure = exposure
-  }, [exposure])
+    applyPanoFx(s, fx)
+  }, [fx])
 
-  useEffect(() => {
-    const s = refs.current
-    if (!s) return
-    s.bloom.strength = bloom
-  }, [bloom])
+  // 浅合并补丁(持久化 + 实时应用走同一条 effect)。
+  const patchFx = useCallback(
+    (p: Partial<LightFxValue>) => setFx((prev) => ({ ...prev, ...p })),
+    [setFx],
+  )
 
   /* ---------------- 布局 / letterbox / resize ---------------- */
   // 全屏不再铺满整屏:按 16:9 居中、四周留黑边(对齐参考站,避免超宽视口浪费像素预算)。
@@ -451,6 +484,7 @@ export default function PanoramaEditor({
       s.renderer.setSize(w, h, false) // false:不改 canvas 内联样式(canvas 100% 填满 mount 盒)
       s.composer.setSize(w, h)
       s.bloom.setSize(w, h)
+      s.bokeh.setSize(w, h)
       s.camera.aspect = w / h
       s.camera.updateProjectionMatrix()
       s.distortion.uniforms.uAspect.value = w / h
@@ -538,6 +572,7 @@ export default function PanoramaEditor({
       s.composer.setPixelRatio(clampByEdge(SUPERSAMPLE, SHOT_W, SHOT_H)) // 截图同样 SSAA 超采样后降采样
       s.composer.setSize(SHOT_W, SHOT_H)
       s.bloom.setSize(SHOT_W, SHOT_H)
+      s.bokeh.setSize(SHOT_W, SHOT_H)
       s.camera.aspect = SHOT_W / SHOT_H
       s.distortion.uniforms.uAspect.value = SHOT_W / SHOT_H
 
@@ -595,6 +630,7 @@ export default function PanoramaEditor({
         s.composer.setPixelRatio(postPixelRatio(prevSize.x, prevSize.y))
         s.composer.setSize(prevSize.x, prevSize.y)
         s.bloom.setSize(prevSize.x, prevSize.y)
+        s.bokeh.setSize(prevSize.x, prevSize.y)
         s.distortion.uniforms.uAspect.value = prevAspect
         s.controls.enabled = prevAutoUpdate
         setStatus('已保存')
@@ -612,8 +648,7 @@ export default function PanoramaEditor({
     setMirror(false)
     setGuides(false)
     setImmersive(true)
-    setExposure(DEFAULT_EXPOSURE)
-    setBloom(DEFAULT_BLOOM)
+    setFx({ ...LIGHT_FX_VALUE_DEFAULTS })
     if (s) {
       s.camera.position.set(0, 0, 0.01)
       s.camera.lookAt(0, 0, -1)
@@ -799,8 +834,18 @@ export default function PanoramaEditor({
       </div>
       )}
 
-      {/* 右上:全屏 + 关闭 */}
+      {/* 右上:导演台 + 全屏 + 关闭 */}
       <div style={{ position: 'absolute', top: 16, right: 16, display: 'flex', gap: 8, zIndex: 10 }}>
+        {onEnterDirector && (
+          <button
+            type="button"
+            className={btnCls(false)}
+            onClick={onEnterDirector}
+            title="把当前全景图作为背景,进入 3D 导演台"
+          >
+            进入导演台
+          </button>
+        )}
         <button type="button" className={btnCls(isFullscreen)} onClick={toggleFullscreen}>
           {isFullscreen ? '退出全屏' : '进入全屏'}
         </button>
@@ -809,35 +854,17 @@ export default function PanoramaEditor({
         </button>
       </div>
 
-      {/* 底部:视图设置面板(预览页)—— glass card,按 DESIGN.md */}
+      {/* 底部:视图设置面板(预览页)—— 可拖动 / 可收起浮窗,按 DESIGN.md */}
       {tab === 'preview' && (
-      <div
-        className="pano-glass"
-        style={{
-          position: 'absolute',
-          bottom: 16,
-          left: 16,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 10,
-          padding: '14px 16px',
-          borderRadius: 12,
-          zIndex: 10,
-          color: '#e7e7ea',
-          width: 268,
-        }}
+      <FloatingPanel
+        id="pano-view"
+        title="视图设置 // VIEW"
+        variant="glass"
+        anchor={{ bottom: 16, left: 16 }}
+        width={268}
+        zIndex={10}
       >
-        <div
-          style={{
-            fontSize: 11,
-            fontWeight: 600,
-            letterSpacing: '0.88px',
-            textTransform: 'uppercase',
-            color: '#807d72',
-          }}
-        >
-          视图设置 // VIEW
-        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, color: '#e7e7ea' }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={capLabel}>FOV</span>
           <input
@@ -866,47 +893,10 @@ export default function PanoramaEditor({
           />
           <span style={valueChip}>{curvature.toFixed(2)}</span>
         </label>
-        <div
-          style={{
-            fontSize: 11,
-            fontWeight: 600,
-            letterSpacing: '0.88px',
-            textTransform: 'uppercase',
-            color: '#807d72',
-            marginTop: 2,
-          }}
-        >
-          光感 // LIGHT
+        {/* 光感 / 调色:与 3D 导演台共用同一组件。全景内壁球为 MeshBasic → 隐藏 IBL。 */}
+        <LightFxPanel value={fx} onChange={patchFx} accent="#f54e00" showIbl={false} showDof />
         </div>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={capLabel}>曝光</span>
-          <input
-            type="range"
-            className="pano-slider"
-            min={0.5}
-            max={1.8}
-            step={0.05}
-            value={exposure}
-            onChange={(e) => setExposure(Number(e.target.value))}
-            style={{ flex: 1 }}
-          />
-          <span style={valueChip}>{exposure.toFixed(2)}</span>
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={capLabel}>辉光</span>
-          <input
-            type="range"
-            className="pano-slider"
-            min={0}
-            max={0.8}
-            step={0.01}
-            value={bloom}
-            onChange={(e) => setBloom(Number(e.target.value))}
-            style={{ flex: 1 }}
-          />
-          <span style={valueChip}>{bloom.toFixed(2)}</span>
-        </label>
-      </div>
+      </FloatingPanel>
       )}
 
       {/* 生成全景表单(生成页) */}
@@ -1057,22 +1047,62 @@ export default function PanoramaEditor({
   )
 }
 
+/** 调色是否启用(任一参数偏离中性). 与 createLightFx.gradeActive 同构. */
+function panoGradeActive(s: SceneRefs): boolean {
+  const g = s.grade.uniforms
+  return (
+    Math.abs(g.uContrast.value - 1) > LIGHT_FX.EPS ||
+    Math.abs(g.uSaturation.value - 1) > LIGHT_FX.EPS ||
+    Math.abs(g.uTemperature.value) > LIGHT_FX.EPS ||
+    g.uVignette.value > LIGHT_FX.EPS ||
+    g.uGrain.value > LIGHT_FX.EPS
+  )
+}
+
+/** 把统一参数 fx 应用到全景管线(曝光/辉光/调色/景深 + tonemap 模式). */
+function applyPanoFx(s: SceneRefs, fx: LightFxValue): void {
+  s.renderer.toneMappingExposure = fx.exposure
+  s.bloom.strength = Math.max(0, fx.bloom)
+  const g = s.grade.uniforms
+  g.uContrast.value = fx.contrast
+  g.uSaturation.value = fx.saturation
+  g.uTemperature.value = fx.temperature
+  g.uVignette.value = Math.max(0, fx.vignette)
+  g.uGrain.value = Math.max(0, fx.grain)
+  s.grade.enabled = panoGradeActive(s)
+  s.toneMode = fx.toneMapping
+  // 景深:内壁球深度近似恒定 → 整帧柔焦。
+  s.bokeh.enabled = fx.dofEnabled
+  const u = (s.bokeh as unknown as { uniforms?: Record<string, { value: number }> }).uniforms
+  if (u) {
+    u.focus.value = fx.dofFocus
+    u.aperture.value = fx.dofAperture
+    u.maxblur.value = fx.dofMaxBlur
+  }
+}
+
 /**
  * 成像策略(对齐参考站「全景图预览器.html」):
- * - 中性(曲度≈1 且 辉光≈0)→ 直接 renderer.render,零全屏重采样,最清晰、与 HTML 同构。
- * - 一旦启用曲度或辉光 → 走 composer(SSAA 超采样后降采样,既上特效又不发虚)。
- * - 色调映射:曝光=1 且 无辉光时用 NoToneMapping(与 HTML 一致的干净直出);
- *   否则切 AgX,让曝光/辉光有胶片级高光滚降。
+ * - 中性(曲度≈1 且 辉光≈0 且 无调色 且 无景深)→ 直接 renderer.render,零全屏重采样,最清晰。
+ * - 一旦启用曲度/辉光/调色/景深 → 走 composer(SSAA 超采样后降采样,既上特效又不发虚)。
+ * - 色调映射:由 fx.toneMapping 决定;'auto' 时复刻全景中性/AgX 自动切换。
  */
 function renderFrame(s: SceneRefs) {
   const hasCurvature = Math.abs(s.distortion.uniforms.uStrength.value) > 0.0008
-  const hasBloom = s.bloom.strength > 0.001
-  const hasExposure = Math.abs(s.renderer.toneMappingExposure - 1) > 0.001
+  const hasBloom = s.bloom.strength > LIGHT_FX.EPS
+  const gradeActive = panoGradeActive(s)
+  const hasDof = s.bokeh.enabled
 
-  const wantTM = hasExposure || hasBloom ? THREE.AgXToneMapping : THREE.NoToneMapping
+  // 色调映射决策与导演台共用同一函数。
+  const wantTM = resolveToneMapping(s.toneMode, s.renderer.toneMappingExposure, s.bloom.strength, gradeActive)
   if (s.renderer.toneMapping !== wantTM) s.renderer.toneMapping = wantTM
 
-  if (hasCurvature || hasBloom) s.composer.render()
+  // 颗粒:每帧抖动种子。
+  if (gradeActive && s.grade.uniforms.uGrain.value > LIGHT_FX.EPS) {
+    s.grade.uniforms.uSeed.value = (performance.now() % 1000) / 1000
+  }
+
+  if (hasCurvature || hasBloom || gradeActive || hasDof) s.composer.render()
   else s.renderer.render(s.scene, s.camera)
 }
 

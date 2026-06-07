@@ -4,6 +4,7 @@ import type { BatchItem } from '../../stores/useBatchStore'
 import { useBatchStore } from '../../stores/useBatchStore'
 import ImageEditToolbar from '../../components/shared/image-editors/ImageEditToolbar'
 import ImageEditorModal from '../../components/shared/image-editors/ImageEditorModal'
+import { addImageUrlToReferences } from '../../components/shared/image-editors/referenceTargets'
 import { useDisplaySrc } from '../../hooks/useDisplaySrc'
 import '../../components/shared/image-editors/image-editors.css'
 
@@ -165,7 +166,7 @@ const ResultCard = memo(function ResultCard({
   index: number
   onRemove: (id: string) => void
   onPreview?: (url: string) => void
-  onOpenEditor?: (url: string, type: 'angle' | 'light' | 'panorama') => void
+  onOpenEditor?: (url: string, type: 'angle' | 'light' | 'panorama' | 'director') => void
   onInjectPrompt?: (prompt: string) => void
   onEditItem?: (item: BatchItem) => void
 }) {
@@ -255,6 +256,7 @@ const ResultCard = memo(function ResultCard({
             imageUrl={displayUrl!}
             onOpenEditor={(type) => onOpenEditor?.(displayUrl!, type)}
             onInjectPrompt={onInjectPrompt}
+            onAddReference={(url) => addImageUrlToReferences('batch', url)}
           />
         )}
         {isDone && (
@@ -369,7 +371,7 @@ type VirtualCellProps = {
   onRemove: (id: string) => void
   onPreview?: (url: string) => void
   onEditItem?: (item: BatchItem) => void
-  onOpenEditor: (url: string, type: 'angle' | 'light' | 'panorama') => void
+  onOpenEditor: (url: string, type: 'angle' | 'light' | 'panorama' | 'director') => void
   onInjectPrompt?: (prompt: string) => void
 }
 
@@ -425,7 +427,7 @@ function VirtualCell({
  *                                       场景下 DOM 节点数从 200 张 → ~10-20 张。
  */
 export default function BatchResultGrid({ items, onRemove, onPreview, onEditItem }: Props) {
-  const [editorState, setEditorState] = useState<{ url: string; type: 'angle' | 'light' | 'panorama' } | null>(null)
+  const [editorState, setEditorState] = useState<{ url: string; type: 'angle' | 'light' | 'panorama' | 'director' } | null>(null)
   const [reversed, setReversed] = useState(true)
 
   const injectPrompt = useCallback((p: string) => {
@@ -455,7 +457,7 @@ export default function BatchResultGrid({ items, onRemove, onPreview, onEditItem
 
   // (p4) onOpenEditor 由本组件持有 editorState, 必须 useCallback 才能
   // 让下游 ResultCard 的 React.memo 命中(不然每次渲染都是新引用)。
-  const handleOpenEditor = useCallback((url: string, type: 'angle' | 'light' | 'panorama') => {
+  const handleOpenEditor = useCallback((url: string, type: 'angle' | 'light' | 'panorama' | 'director') => {
     setEditorState({ url, type })
   }, [])
 
@@ -608,6 +610,7 @@ export default function BatchResultGrid({ items, onRemove, onPreview, onEditItem
           editorType={editorState.type}
           imageUrl={editorState.url}
           theme="default"
+          directorEntry={editorState.type === 'director' ? 'panorama' : 'native'}
           onInjectPrompt={injectPrompt}
           onClose={() => setEditorState(null)}
         />

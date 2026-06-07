@@ -1,10 +1,7 @@
-import { useState, useMemo } from 'react'
-import { useUIPrefsStore } from '../../stores/useUIPrefsStore'
+import { useMemo } from 'react'
 import type { BatchRefImage } from '../../stores/useBatchStore'
-import ImageEditorModal, {
-  type ImageChoice,
-} from '../../components/shared/image-editors/ImageEditorModal'
-import '../../components/shared/image-editors/image-editors.css'
+import VisualPromptBar from '../../components/shared/image-editors/VisualPromptBar'
+import type { ImageChoice } from '../../components/shared/image-editors/ImageEditorModal'
 
 interface Props {
   refImages: BatchRefImage[]
@@ -13,18 +10,10 @@ interface Props {
 }
 
 /**
- * PunkPromptHelperBar — 生图前的视觉 prompt 辅助:
- * [多角度] [打光] 按钮, 基于用户上传的参考图构造 prompt 注入输入框.
- * 无参考图时按钮禁用并提示.
+ * PunkPromptHelperBar — Punk 主题的视觉 prompt 辅助(薄壳)。
+ * UI / 交互交给共享 VisualPromptBar(punk 主题)。
  */
 export default function PunkPromptHelperBar({ refImages, onInject }: Props) {
-  const enabled = useUIPrefsStore((s) => s.imageEditorToolbar.enabled)
-  const [editorState, setEditorState] = useState<{
-    type: 'angle' | 'light' | 'panorama'
-    imageUrl: string
-    tab?: 'preview' | 'generate'
-  } | null>(null)
-
   const imageChoices = useMemo<ImageChoice[]>(
     () =>
       refImages.map((r, i) => ({
@@ -34,138 +23,5 @@ export default function PunkPromptHelperBar({ refImages, onInject }: Props) {
     [refImages],
   )
 
-  if (!enabled) return null
-
-  const hasRef = refImages.length > 0
-  const openEditor = (
-    type: 'angle' | 'light' | 'panorama',
-    tab?: 'preview' | 'generate',
-  ) => {
-    if (!hasRef) return
-    setEditorState({ type, imageUrl: refImages[0].base64, tab })
-  }
-
-  const btnBase: React.CSSProperties = {
-    padding: '8px 14px',
-    fontWeight: 900,
-    fontSize: 12,
-    letterSpacing: '0.04em',
-    cursor: hasRef ? 'pointer' : 'not-allowed',
-    opacity: hasRef ? 1 : 0.45,
-    border: '3px solid var(--punk-black)',
-    background: 'var(--punk-cream)',
-    color: 'var(--punk-black)',
-    boxShadow: hasRef ? '3px 3px 0 var(--punk-black)' : 'none',
-    transition: 'transform 100ms ease, box-shadow 100ms ease',
-  }
-
-  return (
-    <>
-      <div
-        role="toolbar"
-        aria-label="视觉 prompt 辅助"
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          margin: '4px 0 16px',
-          flexWrap: 'wrap',
-        }}
-      >
-        <span
-          className="p-mono"
-          style={{
-            fontSize: 11,
-            fontWeight: 900,
-            letterSpacing: '0.08em',
-            color: 'var(--punk-black)',
-            opacity: 0.7,
-          }}
-        >
-          // VISUAL.PROMPT
-        </span>
-        <button
-          type="button"
-          disabled={!hasRef}
-          onClick={() => openEditor('angle')}
-          className="p-mono"
-          style={btnBase}
-          title={hasRef ? '基于参考图构造多角度 prompt' : '请先上传参考图'}
-        >
-          [ 多角度 // ANGLE ]
-        </button>
-        <button
-          type="button"
-          disabled={!hasRef}
-          onClick={() => openEditor('light')}
-          className="p-mono"
-          style={btnBase}
-          title={hasRef ? '基于参考图构造打光 prompt' : '请先上传参考图'}
-        >
-          [ 打光 // LIGHT ]
-        </button>
-        <button
-          type="button"
-          disabled={!hasRef}
-          onClick={() => openEditor('panorama', 'generate')}
-          className="p-mono"
-          style={btnBase}
-          title={hasRef ? '生成 360° 全景图(注入全景提示词)' : '请先上传参考图'}
-        >
-          [ 生成全景图 ]
-        </button>
-        <button
-          type="button"
-          disabled={!hasRef}
-          onClick={() => openEditor('panorama', 'preview')}
-          className="p-mono"
-          style={btnBase}
-          title={hasRef ? '进入全景:环视与截图' : '请先上传参考图'}
-        >
-          [ 进入全景 ]
-        </button>
-        {!hasRef && (
-          <span
-            className="p-mono"
-            style={{
-              fontSize: 10,
-              color: 'var(--punk-black)',
-              opacity: 0.6,
-              letterSpacing: '0.06em',
-            }}
-          >
-            ← 先上传参考图
-          </span>
-        )}
-        {hasRef && refImages.length > 1 && (
-          <span
-            className="p-mono"
-            style={{
-              fontSize: 10,
-              color: 'var(--punk-black)',
-              opacity: 0.7,
-              letterSpacing: '0.06em',
-            }}
-          >
-            {refImages.length} 张可选
-          </span>
-        )}
-      </div>
-
-      {editorState && (
-        <ImageEditorModal
-          editorType={editorState.type}
-          imageUrl={editorState.imageUrl}
-          imageChoices={imageChoices}
-          theme="punk"
-          onInjectPrompt={(p) => {
-            onInject(p)
-            setEditorState(null)
-          }}
-          panoramaTab={editorState.tab}
-          onClose={() => setEditorState(null)}
-        />
-      )}
-    </>
-  )
+  return <VisualPromptBar imageChoices={imageChoices} onInject={onInject} variant="punk" />
 }

@@ -41,9 +41,11 @@ interface LightEditorProps {
   imageUrl?: string;
   /** 视觉主题. punk = ドーナドーナ × P5 拼贴; default = 暗色 SaaS. 默认 default. */
   theme?: "punk" | "default";
+  /** 进入 3D 导演台:把当前图作为背景导入。缺省则隐藏入口按钮。 */
+  onEnterDirector?: () => void;
 }
 
-function LightEditorInner({ onInjectPrompt, onClose, imageUrl, theme = "default" }: LightEditorProps) {
+function LightEditorInner({ onInjectPrompt, onClose, imageUrl, theme = "default", onEnterDirector }: LightEditorProps) {
   const isPunk = theme === "punk";
   const [brightness, setBrightness] = useState(2);
   const [color, setColor] = useState("#ffe4c4");
@@ -182,6 +184,28 @@ function LightEditorInner({ onInjectPrompt, onClose, imageUrl, theme = "default"
             RELIGHT · BETA
           </span>
           <div className="flex-1" />
+          {onEnterDirector && (
+            <button
+              type="button"
+              onClick={onEnterDirector}
+              title="把当前图作为背景,进入 3D 导演台"
+              style={{
+                height: 28,
+                padding: "0 10px",
+                background: "var(--punk-pink)",
+                color: "var(--punk-black)",
+                border: "2px solid var(--punk-black)",
+                boxShadow: "2px 2px 0 var(--punk-black)",
+                cursor: "pointer",
+                fontFamily: "var(--punk-font-display)",
+                fontWeight: 900,
+                fontSize: 12,
+                textTransform: "uppercase",
+              }}
+            >
+              进入导演台
+            </button>
+          )}
           <button
             type="button"
             onClick={onClose}
@@ -574,11 +598,22 @@ function LightEditorInner({ onInjectPrompt, onClose, imageUrl, theme = "default"
         <h1 className="flex-1 text-[15px] font-medium tracking-[-0.01em] text-[rgb(247,247,247)]">
           打光效果
         </h1>
+        {onEnterDirector && (
+          <button
+            type="button"
+            onClick={onEnterDirector}
+            title="把当前图作为背景,进入 3D 导演台"
+            className="flex h-6 cursor-pointer items-center rounded-md px-2.5 text-[12px] font-medium text-[rgb(247,247,247)] transition-colors hover:bg-white/10"
+            style={{ border: "1px solid rgba(255,255,255,0.12)" }}
+          >
+            进入导演台
+          </button>
+        )}
         <button
           type="button"
           onClick={onClose}
           aria-label="关闭"
-          className="flex h-6 w-6 items-center justify-center rounded-md text-[rgb(145,145,145)] transition-colors hover:bg-white/10 hover:text-white"
+          className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md text-[rgb(145,145,145)] transition-colors hover:bg-white/10 hover:text-white"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M18 6 6 18M6 6l12 12" />

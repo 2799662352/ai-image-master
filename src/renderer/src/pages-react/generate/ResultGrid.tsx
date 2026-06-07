@@ -1,5 +1,10 @@
+import { useState } from 'react'
 import type { ResultUploadMeta } from '../../stores/useGenerateStore'
+import { useGenerateStore } from '../../stores/useGenerateStore'
 import { useDisplaySrc } from '../../hooks/useDisplaySrc'
+import ImageEditToolbar from '../../components/shared/image-editors/ImageEditToolbar'
+import ImageEditorModal from '../../components/shared/image-editors/ImageEditorModal'
+import { addImageUrlToReferences } from '../../components/shared/image-editors/referenceTargets'
 
 /**
  * 单格图片 —— 把 `<img>` 抽成独立组件,只为了能在循环里安全调 useDisplaySrc:
@@ -56,7 +61,17 @@ const UPLOAD_BADGE: Record<ResultUploadMeta['uploadStatus'], { cls: string; labe
   },
 }
 
+type EditorType = 'angle' | 'light' | 'panorama' | 'director'
+
 export function ResultGrid({ urls, meta, onEditFromResult, onPreview }: ResultGridProps) {
+  const [editorState, setEditorState] = useState<{ url: string; type: EditorType } | null>(null)
+
+  // 注入 360 提示词 / 全景反推:追加到生成框 prompt 尾部。
+  const injectPrompt = (p: string) => {
+    const { prompt, setPrompt } = useGenerateStore.getState()
+    setPrompt(prompt ? `${prompt}\n${p}` : p)
+  }
+
   if (urls.length === 0) {
     return (
       <div className="border-2 border-dashed border-zinc-800 bg-zinc-950/40 py-16 px-4 text-center">
@@ -94,6 +109,13 @@ export function ResultGrid({ urls, meta, onEditFromResult, onPreview }: ResultGr
             }`}
           >
             <ResultCell url={url} alt={`Result ${i + 1}`} />
+            <ImageEditToolbar
+              theme="default"
+              imageUrl={url}
+              onOpenEditor={(type) => setEditorState({ url, type })}
+              onInjectPrompt={injectPrompt}
+              onAddReference={(u) => addImageUrlToReferences('generate', u)}
+            />
             {badge && (
               <span
                 aria-label={badge.title}
@@ -119,6 +141,17 @@ export function ResultGrid({ urls, meta, onEditFromResult, onPreview }: ResultGr
           </div>
         )
       })}
+      {editorState && (
+        <ImageEditorModal
+          key={editorState.type}
+          editorType={editorState.type}
+          imageUrl={editorState.url}
+          theme="default"
+          directorEntry={editorState.type === 'director' ? 'panorama' : 'native'}
+          onInjectPrompt={injectPrompt}
+          onClose={() => setEditorState(null)}
+        />
+      )}
     </div>
   )
 }

@@ -24,6 +24,7 @@ function ChoiceThumb({ url, label, style }: { url: string; label?: string; style
 const MultiAngleEditor = lazy(() => import('./MultiAngleEditor'))
 const LightEditor = lazy(() => import('./LightEditor'))
 const PanoramaEditor = lazy(() => import('./PanoramaEditor'))
+const DirectorEditor = lazy(() => import('./director/DirectorEditor'))
 
 class WebGLErrorBoundary extends Component<
   { children: ReactNode; fallback: ReactNode },
@@ -42,8 +43,12 @@ export interface ImageChoice {
 }
 
 interface Props {
-  editorType: 'angle' | 'light' | 'panorama'
+  editorType: 'angle' | 'light' | 'panorama' | 'director'
   imageUrl: string
+  /** 导演台入口:'native' 空网格 / 'panorama' 用 imageUrl 作全景背景 */
+  directorEntry?: 'native' | 'panorama'
+  /** 导演台截图回调(可选);不传则默认下载 PNG */
+  onDirectorCapture?: (shots: { dataUrl: string; view: string }[]) => void
   /** 可选:多张参考图时渲染顶部缩略图条, 用户可切换 */
   imageChoices?: ImageChoice[]
   theme: 'punk' | 'default'
@@ -60,10 +65,19 @@ export default function ImageEditorModal({
   theme,
   onInjectPrompt,
   panoramaTab = 'preview',
+  directorEntry = 'native',
+  onDirectorCapture,
   onClose,
 }: Props) {
   const isPunk = theme === 'punk'
   const [currentUrl, setCurrentUrl] = useState(imageUrl)
+  // 编辑器内部可切换到导演台:全景/打光编辑器里点「进入导演台」时,把当前图当全景背景。
+  const [activeType, setActiveType] = useState<Props['editorType']>(editorType)
+  const [dirEntry, setDirEntry] = useState<'native' | 'panorama'>(directorEntry)
+  const goDirector = useCallback(() => {
+    setDirEntry(currentUrl ? 'panorama' : 'native')
+    setActiveType('director')
+  }, [currentUrl])
 
   // 仅当提供 imageChoices (多参考图场景) 时才加前缀 【@图片N】;
   // 从结果网格 hover 打开 modal 不传 imageChoices, 保持裸 prompt.
@@ -108,8 +122,30 @@ export default function ImageEditorModal({
 
   const showPicker = imageChoices && imageChoices.length > 1
 
+  // 导演台:全屏 3D 舞台(模型库 + 镜头/灯光/变换 + 多视角截图),自带头部与底栏。
+  if (activeType === 'director') {
+    return createPortal(
+      <div style={{ ...overlayStyle, background: 'rgba(0,0,0,0.85)' }} onClick={onClose}>
+        <div onClick={(e) => e.stopPropagation()}>
+          <WebGLErrorBoundary fallback={fallbackUI}>
+            <Suspense fallback={<div className="p-8 text-center text-zinc-500">加载中...</div>}>
+              <DirectorEditor
+                entry={dirEntry}
+                imageUrl={currentUrl}
+                theme={theme}
+                onCapture={onDirectorCapture}
+                onClose={onClose}
+              />
+            </Suspense>
+          </WebGLErrorBoundary>
+        </div>
+      </div>,
+      document.body,
+    )
+  }
+
   // 全景查看器:自带大舞台 + 工具栏 + 全屏/关闭,跳过居中面板与缩略图条。
-  if (editorType === 'panorama') {
+  if (activeType === 'panorama') {
     return createPortal(
       <div style={{ ...overlayStyle, background: 'rgba(0,0,0,0.85)' }} onClick={onClose}>
         <div onClick={(e) => e.stopPropagation()}>
@@ -119,6 +155,7 @@ export default function ImageEditorModal({
                 imageUrl={currentUrl}
                 theme={theme}
                 onInjectPrompt={wrappedInject}
+                onEnterDirector={goDirector}
                 canRef={!!currentUrl}
                 initialTab={panoramaTab}
                 onClose={onClose}
@@ -202,7 +239,7 @@ export default function ImageEditorModal({
 
         <WebGLErrorBoundary fallback={fallbackUI}>
           <Suspense fallback={<div className="p-8 text-center text-zinc-500">加载中...</div>}>
-            {editorType === 'angle' ? (
+            {activeType === 'angle' ? (
               <MultiAngleEditor
                 imageUrl={currentUrl}
                 theme={theme}
@@ -214,6 +251,7 @@ export default function ImageEditorModal({
                 imageUrl={currentUrl}
                 theme={theme}
                 onInjectPrompt={wrappedInject}
+                onEnterDirector={goDirector}
                 onClose={onClose}
               />
             )}
