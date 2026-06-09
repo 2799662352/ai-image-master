@@ -353,7 +353,42 @@ export class AgentToolExecutor {
       : DEFAULT_HISTORY_LIMIT
     const limit = Math.min(Math.max(requestedLimit, 1), MAX_HISTORY_LIMIT)
     const items = query ? history.search(query) : history.getAll()
-    return items.slice(0, limit)
+    // Return a LEAN, base64-free projection. History records can hold multi-MB
+    // base64 data URLs (codex images persist as base64 first, upload to R2/COS
+    // only asynchronously); shipping those whole made this tool slow to
+    // serialize over IPC→MCP→Codex AND blew past Codex's ~10 KiB / 256-line
+    // tool-result cap (openai/codex#6544), so the model received a chopped,
+    // unparseable blob. Strip every data: URL and oversized field here.
+    return items.slice(0, limit).map((item) => this.slimHistoryItem(item as unknown as Record<string, unknown>))
+  }
+
+  /** Project a history record to a small, base64-free summary safe to hand to the agent. */
+  private slimHistoryItem(item: Record<string, unknown>): Record<string, unknown> {
+    const isLight = (u: unknown): u is string =>
+      typeof u === 'string' && u.length > 0 && !u.startsWith('data:')
+    const urls = Array.isArray(item.urls) ? item.urls.filter(isLight) : []
+    const imageUrl = isLight(item.imageUrl) ? (item.imageUrl as string) : undefined
+    const imageCount = Array.isArray(item.urls)
+      ? item.urls.length
+      : Array.isArray(item.images)
+        ? item.images.length
+        : imageUrl
+          ? 1
+          : 0
+    return {
+      id: item.id,
+      type: item.type,
+      prompt: typeof item.prompt === 'string' ? item.prompt.slice(0, 300) : undefined,
+      model: item.model,
+      ratio: item.ratio,
+      timestamp: item.timestamp,
+      imageCount,
+      // Only http(s)/file URLs — never base64. May be empty if images are still
+      // uploading; that's fine, the count above still tells the agent it exists.
+      urls: urls.slice(0, 4),
+      ...(imageUrl ? { imageUrl } : {}),
+      uploading: item.uploading === true ? true : undefined,
+    }
   }
 
   private openImageViewer(params: OpenImageViewerToolParams): { opened: true; count: number } {

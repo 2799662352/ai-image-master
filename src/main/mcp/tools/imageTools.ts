@@ -19,6 +19,54 @@ function mimeFromPath(filePath: string): string {
   }
 }
 
+/** Extract the saved local file paths from the renderer's generate result. */
+function collectPaths(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  return raw.filter((p): p is string => typeof p === 'string' && p.length > 0)
+}
+
+/**
+ * Build the plain-text result the agent actually reads. Kept deliberately short
+ * (well under Codex's ~10 KiB / 256-line tool-result cap, openai/codex#6544) and
+ * front-loaded with the completion signal + exact location so the agent treats
+ * the call as DONE and never re-hunts for the file via `query_history` or a
+ * filesystem search. A trailing compact JSON line preserves the machine-readable
+ * `{ ok, count, model, historyId, paths, dir }` contract.
+ */
+function buildCompletionBanner(result: unknown, paths: string[], dir: string | undefined): string {
+  const r = (result && typeof result === 'object' ? result : {}) as {
+    ok?: unknown
+    count?: unknown
+    historyId?: unknown
+    model?: unknown
+  }
+  const count = typeof r.count === 'number' ? r.count : paths.length
+  const machine = JSON.stringify({ ...(r as object), ...(dir ? { dir } : {}) })
+
+  if (paths.length === 0) {
+    // No on-disk path (save failed / disabled). Still a clean completion; the
+    // image was shown + persisted to history, just not to the file panel.
+    return [
+      `✅ generate_image DONE — ${count} image(s) generated and shown to the user.`,
+      'No local file path was returned this time; the image is in the app chat + history.',
+      'Do NOT call query_history or search the filesystem to "find" it — just confirm to the user.',
+      machine,
+    ].join('\n')
+  }
+
+  return [
+    `✅ generate_image DONE — ${count} image(s) saved. Already shown to the user.`,
+    dir ? `📁 SAVED FOLDER: ${dir}` : '',
+    'FILES:',
+    ...paths.map((p) => `- ${p}`),
+    'To view/inspect, open the FILES path(s) above directly (or list the SAVED FOLDER).',
+    'Do NOT run query_history and do NOT search the filesystem to locate these — the paths above are authoritative and the task is complete.',
+    machine,
+  ]
+    .filter((line) => line.length > 0)
+    .join('\n')
+}
+
 export function registerImageTools(server: McpServer, router: ToolRouter): void {
   server.registerTool('generate_image', {
     description:
@@ -59,28 +107,35 @@ export function registerImageTools(server: McpServer, router: ToolRouter): void 
   }, async (params) => {
     const result = await router.call('generate_image', params)
 
-    // Compact text summary stays as the primary block (no base64 — the renderer
-    // already displayed + persisted the pixels).
+    const savedPaths = collectPaths((result as { paths?: unknown } | null)?.paths)
+    // The directory the file(s) live in — Codex should look HERE (or open the
+    // exact paths) to find/inspect the image, never `query_history` or a
+    // filesystem search. All saved files share one per-thread uploads dir.
+    const dir = savedPaths.length > 0 ? path.dirname(savedPaths[0]) : undefined
+
+    // PRIMARY text block = an explicit, lean completion banner. Codex caps every
+    // MCP tool result the model sees to ~10 KiB / 256 lines (openai/codex#6544)
+    // and may hide `resource_link`/`content[]` blocks (openai/codex#10334), so
+    // the saved location MUST live in plain text here — short enough to never be
+    // truncated — and must read as a "task complete + where it is" reminder so
+    // the agent stops hunting for the file.
     const content: Array<
       | { type: 'text'; text: string }
       | { type: 'resource_link'; uri: string; name: string; mimeType: string; description: string }
-    > = [{ type: 'text', text: JSON.stringify(result) }]
+    > = [{ type: 'text', text: buildCompletionBanner(result, savedPaths, dir) }]
 
     // Replicate codex native image_gen's "report the saved path" contract: turn
     // each saved local file into a resource_link so the agent can view / move /
-    // reference it (file://) just like a native generation output.
-    const paths = (result as { paths?: unknown } | null)?.paths
-    if (Array.isArray(paths)) {
-      for (const p of paths) {
-        if (typeof p !== 'string' || p.length === 0) continue
-        content.push({
-          type: 'resource_link',
-          uri: pathToFileURL(p).href,
-          name: path.basename(p),
-          mimeType: mimeFromPath(p),
-          description: 'Generated image saved locally (also in app history + chat).',
-        })
-      }
+    // reference it (file://) just like a native generation output. The text
+    // banner above is the source of truth; these are a best-effort bonus.
+    for (const p of savedPaths) {
+      content.push({
+        type: 'resource_link',
+        uri: pathToFileURL(p).href,
+        name: path.basename(p),
+        mimeType: mimeFromPath(p),
+        description: 'Generated image saved locally (also in app history + chat).',
+      })
     }
 
     return { content }

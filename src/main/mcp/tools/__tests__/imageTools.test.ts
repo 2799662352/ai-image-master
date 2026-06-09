@@ -90,6 +90,35 @@ describe('registerImageTools / generate_image schema', () => {
     expect(link!.mimeType).toBe('image/png')
   })
 
+  it('text banner names the saved folder, lists paths, and forbids history/fs hunts', async () => {
+    const winPath = 'C:\\Users\\me\\AppData\\Roaming\\app\\agent\\uploads\\deadbeef.png'
+    const { tools, server, router } = capture({
+      ok: true,
+      count: 1,
+      model: 'gpt-image-2-vip',
+      historyId: 42,
+      paths: [winPath],
+    })
+    registerImageTools(server, router)
+    const handler = tools.find((t) => t.name === 'generate_image')!.handler
+
+    const { content } = await handler({ prompt: 'a cat' })
+    const text = content[0].text as string
+
+    expect(text).toContain('generate_image DONE')
+    // Folder + exact file path both present in PLAIN TEXT (not only resource_link).
+    expect(text).toContain('C:\\Users\\me\\AppData\\Roaming\\app\\agent\\uploads')
+    expect(text).toContain(winPath)
+    // Steers the agent away from the slow/timeout-prone locating paths.
+    expect(text).toMatch(/do not run query_history/i)
+    expect(text).toMatch(/do not search the filesystem/i)
+    // Machine line preserved for programmatic consumers.
+    expect(text).toContain('"historyId":42')
+    expect(text).toContain('"dir":')
+    // Must stay tiny — Codex truncates tool results at ~10 KiB (openai/codex#6544).
+    expect(text.length).toBeLessThan(2000)
+  })
+
   it('returns only the text summary when no paths were saved', async () => {
     const { tools, server, router } = capture({ ok: true, count: 1, model: 'gpt-image-2-vip', paths: [] })
     registerImageTools(server, router)

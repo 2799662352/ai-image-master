@@ -167,21 +167,27 @@ history page, and the ATTACHMENTS file panel.
    - \`referenceImages\` (optional): array of data URLs or file paths for
      image-to-image / editing.
    - Do **not** pass \`model\` — the channel is fixed to \`gpt-image-2-vip\`.
-3. The tool returns \`{ ok, count, model, historyId, paths }\` plus one
-   \`resource_link\` per saved file. \`paths\` are the saved local image files (also
-   attached as \`resource_link\`s), so you can view / move / reference them exactly
-   like a native image_gen output. The image is already shown to the user and
-   saved to history + the file panel — you do **not** need to embed, re-describe,
-   or base64 the pixels. Just confirm briefly in the user's language and cite the
-   saved path(s) when relevant.
-4. **After generating, proactively look at the result.** Open each returned
-   \`path\` with your image-viewing capability (the \`view image\` tool / reading the
-   file) and actually inspect what was produced — do not assume it is correct just
-   because the tool returned \`ok\`. Briefly check it matches the request (right
-   subject, count, style, no obvious artifacts or wrong text). If it clearly does
-   not match, say so and offer to regenerate (or regenerate with an improved
-   prompt). When you generated multiple images, view each one. Keep the check
-   quick; don't over-narrate.
+3. The tool returns a short text result that begins with \`✅ generate_image DONE\`,
+   names the \`📁 SAVED FOLDER\`, lists the saved \`FILES:\`, and ends with a compact
+   \`{ ok, count, model, historyId, paths, dir }\` JSON line (plus one
+   \`resource_link\` per file). **A successful return means the task is complete —**
+   the image is already shown to the user and saved to history + the file panel.
+   You do **not** need to embed, re-describe, or base64 the pixels. Just confirm
+   briefly in the user's language and cite the saved path(s) when relevant.
+4. **Finding / inspecting the image — use the returned \`paths\` / \`dir\` ONLY.**
+   The \`paths\` (and their \`dir\`) in the return ARE the authoritative location. To
+   view what was produced, open those exact \`paths\` with your image-viewing
+   capability (the \`view image\` tool / reading the file), or list the \`dir\`
+   folder.
+   - **NEVER call \`query_history\` to locate an image you just generated.** It is
+     for browsing *older* sessions only and is slower.
+   - **NEVER shell out** (\`dir\`, \`ls\`, \`where\`, \`find\`, \`Get-ChildItem\`, etc.) to
+     search the filesystem for the file — that scans huge trees and times out
+     (\`exit 124\`). The path is already in the return; trust it.
+   Briefly check the image matches the request (right subject, count, style, no
+   obvious artifacts or wrong text). If it clearly does not match, say so and offer
+   to regenerate with an improved prompt. When you generated multiple images, view
+   each one. Keep the check quick; don't over-narrate.
 
 ## Multiple images at once — concurrency (important)
 
