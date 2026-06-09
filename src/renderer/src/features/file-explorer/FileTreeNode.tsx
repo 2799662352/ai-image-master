@@ -4,6 +4,7 @@ import { useFileExplorerStore } from './store'
 import { FolderIcon, FolderOpenIcon, FileIcon, ImageFileIcon, ChevronRightIcon } from './icons'
 import { serializeFileDrag, parseFileDrop, resolveExternalPaths } from './dragHelpers'
 import { FileContextMenu, type FileMenuAction, type MenuItemDescriptor } from './FileContextMenu'
+import { isAncestorPath } from './revealInExplorer'
 
 // The attachments tree's pseudo-root node has this synthetic path; drops onto
 // it would call fs.move with a non-filesystem destDir which assertContained
@@ -60,6 +61,7 @@ export function FileTreeNode({ node, depth }: { node: FileNode; depth: number })
   // CSS `:hover` because that triggers without an active drag.
   const [dropActive, setDropActive] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const rowRef = useRef<HTMLDivElement>(null)
 
   const expandDir = useFileExplorerStore((s) => s.expandDir)
   const openTab = useFileExplorerStore((s) => s.openTab)
@@ -117,6 +119,22 @@ export function FileTreeNode({ node, depth }: { node: FileNode; depth: number })
     window.addEventListener('file-explorer:collapse-all', handler)
     return () => window.removeEventListener('file-explorer:collapse-all', handler)
   }, [node.kind])
+
+  // 监听「定位到文件」事件（聊天里点击蓝色链接 → store.revealPath 派发）。
+  // 命中目标行 → 滚动到可见；是目标的祖先目录 → 自动展开，使深层文件可见。
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ path: string }>).detail
+      if (!detail?.path) return
+      if (detail.path === node.path) {
+        rowRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+      } else if (node.kind === 'dir' && isAncestorPath(node.path, detail.path)) {
+        setOpen(true)
+      }
+    }
+    window.addEventListener('file-explorer:reveal', handler)
+    return () => window.removeEventListener('file-explorer:reveal', handler)
+  }, [node.path, node.kind])
 
   const onClick = async (e: React.MouseEvent) => {
     if (renaming) return
@@ -360,6 +378,7 @@ export function FileTreeNode({ node, depth }: { node: FileNode; depth: number })
   return (
     <>
       <div
+        ref={rowRef}
         role="treeitem"
         aria-selected={isSelected || undefined}
         draggable={!renaming && node.path !== ATTACHMENTS_ROOT}

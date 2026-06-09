@@ -111,6 +111,12 @@ type Actions = {
   trashFile: (path: string) => Promise<{ ok: true } | { ok: false; reason: string }>
   renameFile: (oldPath: string, newName: string) => Promise<{ ok: true; newPath: string } | { ok: false; reason: string }>
   selectNode: (path: string, mode: SelectMode) => void
+  /**
+   * Open the panel, expand to + select an absolute path, and broadcast a
+   * `file-explorer:reveal` event so the matching tree row scrolls into view.
+   * Used by chat-link clicks ("show this generated image in FILES").
+   */
+  revealPath: (absPath: string) => Promise<void>
   clearSelection: () => void
   setSelectedPaths: (paths: string[]) => void
   selectAllVisible: (visiblePaths: string[]) => void
@@ -874,6 +880,58 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
     })
   },
 
+  revealPath: async (absPath) => {
+    if (typeof absPath !== 'string' || absPath.length === 0) return
+    get().setFxOpen(true)
+
+    const source = inferSource(get().workspaceTree, absPath)
+    if (source === 'workspace') {
+      // Expand each ancestor dir from its root down so the target node exists
+      // in the tree before we select + scroll to it. expandDir is a no-op for
+      // already-loaded dirs (it merges), so this is safe to call repeatedly.
+      const root = get().workspaceTree.find((n) => n.path === absPath || isDescendantPath(n.path, absPath))
+      if (root) {
+        for (const dir of ancestorChain(root.path, absPath)) {
+          const node = findNode(get().workspaceTree, dir)
+          if (node && node.kind === 'dir' && !node.childrenLoaded) {
+            try {
+              await get().expandDir(dir, 'workspace')
+            } catch {
+              // Best-effort: a missing/unreadable dir shouldn't abort reveal.
+            }
+          }
+        }
+      }
+    } else if (get().attachmentsTree.length === 0) {
+      try {
+        await get().refreshAttachmentsTree()
+      } catch {
+        // Best-effort.
+      }
+    }
+
+    get().selectNode(absPath, 'replace')
+
+    // Also open it in the right-pane viewer so the file is actually shown
+    // (image preview / code), not just highlighted in the tree.
+    try {
+      get().openTab(absPath, source)
+    } catch {
+      // Best-effort: a non-openable path shouldn't abort the reveal.
+    }
+
+    // Ask the mounted FileTreeNodes to open ancestors + scroll the match into
+    // view. Fire once now, then again after a tick so rows that only mount
+    // *after* their parent opens (deep workspace dirs) still catch the request.
+    if (typeof window !== 'undefined') {
+      const fire = (): void => {
+        window.dispatchEvent(new CustomEvent('file-explorer:reveal', { detail: { path: absPath } }))
+      }
+      fire()
+      setTimeout(fire, 80)
+    }
+  },
+
   clearSelection: () => set({ selectedPaths: [], lastSelectedPath: null }),
 
   setSelectedPaths: (paths) => set({ selectedPaths: paths, lastSelectedPath: paths[paths.length - 1] ?? null }),
@@ -1152,6 +1210,36 @@ function findNode(tree: FileNode[], target: string): FileNode | null {
 function inferSource(workspace: FileNode[], path: string): FileSource {
   const inWs = !!findNode(workspace, path)
   return inWs ? 'workspace' : 'attachments'
+}
+
+/** True when `target` lives under directory `root` (same separator family). */
+function isDescendantPath(root: string, target: string): boolean {
+  if (!root || !target || root === target) return false
+  const sep = root.includes('\\') || target.includes('\\') ? '\\' : '/'
+  const rootWithSep = root.endsWith(sep) ? root : root + sep
+  return target.startsWith(rootWithSep)
+}
+
+/**
+ * Ancestor directory chain from `rootPath` (inclusive) down to the parent dir
+ * of `filePath` (inclusive), in root-first order. Used by `revealPath` to
+ * expand each level before selecting a nested file.
+ */
+function ancestorChain(rootPath: string, filePath: string): string[] {
+  const sep = filePath.includes('\\') ? '\\' : '/'
+  const dirs: string[] = []
+  // Start from the file's parent dir.
+  let cur = filePath
+  const fileSlash = cur.lastIndexOf(sep)
+  cur = fileSlash > 0 ? cur.slice(0, fileSlash) : cur
+  while (cur.length >= rootPath.length && (cur === rootPath || cur.startsWith(rootPath))) {
+    dirs.unshift(cur)
+    if (cur === rootPath) break
+    const idx = cur.lastIndexOf(sep)
+    if (idx <= 0) break
+    cur = cur.slice(0, idx)
+  }
+  return dirs
 }
 
 async function writeToOsClipboard(paths: string[]): Promise<void> {

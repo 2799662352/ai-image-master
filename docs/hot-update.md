@@ -138,6 +138,54 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
+### v4.3.27 (2026-06-09) — Codex 生图:完成提醒+路径直达 + 聊天蓝链可点定位文件栏 + 参考图主动复用(多图)
+
+本版本聚焦 Codex 聊天里 `catimation` 生图的「收尾体验」与「素材复用」,三条线都按 `systematic-debugging` 取证到根因(含 codex / react-markdown 源码与官方 issue)。
+
+**A. 生图后 Codex 一定知道「完成 + 文件在哪」,不再傻等 / 搜全盘**
+
+根因(codex 官方 issue 取证):Codex 把模型可见的 MCP 工具结果**截断到 ~10 KiB / 256 行**([openai/codex#6544](https://github.com/openai/codex/issues/6544)),并在有 `structuredContent` 时**丢弃 `content[]`/`resource_link`**([#10334](https://github.com/openai/codex/issues/10334))。于是 `generate_image` 的存盘路径被埋没、`query_history` 又因含多 MB base64 而被截断成乱码 → 模型收不到完成信号、转而 shell 搜文件系统(`exit 124` 超时)。
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| `generate_image` 返回精简「完成横幅」 | `src/main/mcp/tools/imageTools.ts` | 首个 text 块改成 `✅ generate_image DONE` + `📁 SAVED FOLDER` + `FILES:` 全路径 + 紧凑 `{…,dir}` JSON,<2KB 不会被截断;路径写在**纯文本**里(不只 `resource_link`),并明确「别 query_history、别搜文件系统」 |
+| `query_history` 精简去 base64 | `src/renderer/src/features/agent-chat/AgentToolExecutor.ts` | 投影成 `{id,type,prompt,model,ratio,timestamp,imageCount,urls(≤4,仅 http/file)}`,剥离全部 data: URL;描述改为「仅用于翻旧记录,定位刚生成的图请用 generate_image 的 paths/dir」 |
+| skill 写入定位规则 | `src/main/agent/firstPartySkills.ts` | 成功返回即任务完成;用返回的 paths/dir 定位,**绝不** query_history 或 shell 搜索刚生成的图 |
+
+> 备注:Codex `PostToolUse` hook 在 Windows 上禁用,不能用来「提醒」,所以走「工具结果文本 + skill」这条可靠通道。
+
+**B. 聊天里的蓝色链接可点击 → 在左侧 FILES 栏真实定位(图片/文档通用)**
+
+根因:react-markdown v10 的 `defaultUrlTransform` 只放行 `http(s)/mailto/xmpp`,把 `file://` 和 `C:\…` 本地链接**清洗成空** → 点击走默认 `target=_blank` 弹浏览器;存活的 R2/COS `https` 图片链接也因「非本地」被默认外链打开。
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| 纯函数解析器 | `src/renderer/src/features/file-explorer/revealInExplorer.ts`(新) | `osPathFromHref`(支持 `file://`/`local-file://`/裸 Win/POSIX,拦截 `..`)、`isImageHref`、`isAncestorPath`;单测 18 例 |
+| 保留本地链接 + 点击路由 | `src/renderer/src/features/agent-chat/MarkdownContent.tsx` | `urlTransform` 让本地路径不被清洗;`<a>` onClick:本地路径→`revealPath`(开栏+选中+滚动+右侧查看器),远程图片→聊天内灯箱,真外链→浏览器 |
+| reveal 能力 | `src/renderer/src/features/file-explorer/store.ts` + `FileTreeNode.tsx` | 新增 `revealPath(absPath)`:开面板→按需展开祖先目录→选中→`openTab` 显示→派发 `file-explorer:reveal` 事件;节点监听后展开祖先 + `scrollIntoView` |
+| 文档同样支持 | (既有 `classify`) | `.md/.json/.ts/.yaml…` 归为 text → `FileViewer` 渲染,本地文档链接一并可点开 |
+
+**C. 用户给了参考图,主动复用做图生图(可多张)**
+
+缺口:skill/工具描述没要求「用户贴了图就当 `referenceImages` 用」,模型可能忽略素材做了文生图。
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| 工具描述强约束 | `src/main/mcp/tools/imageTools.ts` | `referenceImages` 注明:用户提供/附带图(prompt 里 `[Attached files…]`/`[Referenced files…]`)或说「按这张/参考这张/edit this」时**必须**传;且**接受多张**,全部相关图一起传 |
+| skill 复用规则 | `src/main/agent/firstPartySkills.ts` | 新增「Reference images」段:有素材就主动 image-to-image、不静默退回文生图;**可传多张不限一张**(角色+背景/多角度/主体+风格) |
+
+#### 用户可见行为
+
+1. Codex 生图完成后立即确认「已生成 + 文件夹路径」,不再卡顿空等或乱搜文件
+2. 聊天里点蓝色链接:本地图片/文档在左侧 FILES 栏定位并在查看器显示;远程图片弹聊天内灯箱;真正外链才开浏览器
+3. 贴了参考图说「按这张生成」,模型会主动图生图;给多张会一起参考
+
+#### 验证
+
+- `imageTools.test.ts` 8/8、`revealInExplorer.test.ts` 18/18、`AgentToolExecutor.generateImage.test.ts` 10/10 通过;触碰文件 lint 干净、typecheck 无新增错误
+
+---
+
 ### v4.3.26 (2026-06-07) — 3D 导演台:撤销/重做 + 框选多选移动 + 可重映射快捷键 + 预设姿势保持高度 + 全景统一光感面板
 
 本版本围绕 3D 导演台(Director)交互完整度与全景编辑器(PanoramaEditor)的统一光感/调色体验,补齐"专业 3D 编辑器该有的快捷键与多选"一整套能力,并修掉一个姿势预设的定位 bug。

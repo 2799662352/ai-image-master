@@ -102,7 +102,16 @@ export function registerImageTools(server: McpServer, router: ToolRouter): void 
       referenceImages: z
         .array(z.string())
         .optional()
-        .describe('Optional reference images (data URLs or paths) for image-to-image / editing.'),
+        .describe(
+          'Reference images for image-to-image / editing, as local file paths or data/http URLs. ' +
+          'Accepts MULTIPLE images — pass every relevant one (character + background, multiple ' +
+          'angles, subject + style ref), not just the first. IMPORTANT: if the user attached/provided ' +
+          'any image (its path appears in the prompt under "[Attached files at these local paths: …]" / ' +
+          '"[Referenced files at these local paths: …]"), or the user says things like ' +
+          '"按这张图/参考这张/基于这张/edit this", you MUST pass those image path(s) here so the result ' +
+          'follows the user-provided material — do NOT silently fall back to text-to-image when a ' +
+          'reference image was given.',
+        ),
     }),
   }, async (params) => {
     const result = await router.call('generate_image', params)

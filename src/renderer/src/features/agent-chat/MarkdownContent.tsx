@@ -1,8 +1,72 @@
 import { useMemo, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Components } from 'react-markdown'
 import { useFileExplorerStore } from '../file-explorer/store'
+import { useAgentChatStore } from './store'
+import { osPathFromHref, isImageHref } from '../file-explorer/revealInExplorer'
+import type { AttachmentRef } from '../../../../types/agent-timeline'
+
+const IMAGE_MIME_BY_EXT: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  gif: 'image/gif',
+  avif: 'image/avif',
+  bmp: 'image/bmp',
+  svg: 'image/svg+xml',
+}
+
+function mimeFromHref(href: string): string {
+  const ext = href.split(/[?#]/)[0].split('.').pop()?.toLowerCase() ?? ''
+  return IMAGE_MIME_BY_EXT[ext] ?? 'image/png'
+}
+
+/**
+ * react-markdown's default URL sanitizer strips every non-http(s) scheme,
+ * including `file://` and Windows drive paths (`C:\...`). That nukes the exact
+ * links we want to make actionable (chat citations of generated images). Keep
+ * local-file refs intact (osPathFromHref already blocks `..` traversal); defer
+ * everything else to the default sanitizer so we don't widen the attack surface.
+ */
+function chatUrlTransform(url: string): string {
+  if (osPathFromHref(url)) return url
+  return defaultUrlTransform(url)
+}
+
+/**
+ * A link click in an assistant message. We never want a chat citation of an
+ * app-generated image to open an external browser tab:
+ *  - LOCAL file (`file://` / `C:\...` / `/abs`) → reveal + open it in the left
+ *    FILES panel (and its viewer).
+ *  - Remote IMAGE url (R2/COS https) → open the in-chat lightbox, mirroring how
+ *    chat image thumbnails behave ("点击后在聊天栏展示").
+ *  - Anything else (real external links) → default browser behaviour.
+ */
+function handleChatLinkClick(e: React.MouseEvent<HTMLAnchorElement>, href: string | undefined): void {
+  if (!href) return
+
+  const osPath = osPathFromHref(href)
+  if (osPath) {
+    e.preventDefault()
+    void useFileExplorerStore.getState().revealPath(osPath)
+    return
+  }
+
+  if (/^https?:\/\//i.test(href) && isImageHref(href)) {
+    e.preventDefault()
+    const ref: AttachmentRef = {
+      id: `chat-link-${Date.now()}`,
+      kind: 'image',
+      name: decodeURIComponent(href.split(/[?#]/)[0].split('/').pop() || 'image'),
+      mime: mimeFromHref(href),
+      size: 0,
+      uri: href,
+    }
+    useAgentChatStore.getState().openPreview([ref], 0)
+  }
+}
 
 /**
  * Renders an AI-emitted markdown blob with Cursor-style code blocks:
@@ -25,6 +89,7 @@ export function MarkdownContent({ source }: { source: string }) {
           href={href}
           target="_blank"
           rel="noreferrer"
+          onClick={(e) => handleChatLinkClick(e, href)}
           className="text-cyan-300 underline-offset-2 hover:underline"
         >
           {children}
@@ -90,7 +155,7 @@ export function MarkdownContent({ source }: { source: string }) {
 
   return (
     <div className="markdown-content text-[13px] leading-[1.55] text-zinc-100">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={chatUrlTransform} components={components}>
         {source}
       </ReactMarkdown>
     </div>

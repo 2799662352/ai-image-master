@@ -164,8 +164,9 @@ history page, and the ATTACHMENTS file panel.
      (recommended), or \`4K\` (print detail).
    - \`quality\` (optional): \`auto\` (default), \`low\`, \`medium\`, or \`high\`. Use
      \`high\` for images with text or fine detail.
-   - \`referenceImages\` (optional): array of data URLs or file paths for
-     image-to-image / editing.
+   - \`referenceImages\` (optional but **important**): array of local file paths
+     or data/http URLs for image-to-image / editing. **If the user gave you any
+     image material, you MUST reuse it here** (see "Reference images" below).
    - Do **not** pass \`model\` — the channel is fixed to \`gpt-image-2-vip\`.
 3. The tool returns a short text result that begins with \`✅ generate_image DONE\`,
    names the \`📁 SAVED FOLDER\`, lists the saved \`FILES:\`, and ends with a compact
@@ -188,6 +189,31 @@ history page, and the ATTACHMENTS file panel.
    obvious artifacts or wrong text). If it clearly does not match, say so and offer
    to regenerate with an improved prompt. When you generated multiple images, view
    each one. Keep the check quick; don't over-narrate.
+
+## Reference images — reuse the user's material (important)
+
+If the user provides ANY image material, treat it as a reference and pass it in
+\`referenceImages\` (image-to-image) instead of doing text-to-image. Look for:
+
+- Paths listed in the prompt under \`[Attached files at these local paths: …]\`
+  or \`[Referenced files at these local paths: …]\` — these are the files the
+  user attached/@-mentioned in chat. Pass the image ones as \`referenceImages\`.
+- The user pointing at an image with language like "按这张图 / 参考这张 /
+  基于这张 / 用这张做 / edit this / make a variation of this / 换成…风格".
+- An image the user just generated in this thread that they now want changed.
+
+Rules:
+- Be proactive: when material is present and the request is plausibly about it,
+  reuse it. Do **not** silently drop the reference and generate from scratch.
+- **You can pass MULTIPLE reference images — you are not limited to one.**
+  \`referenceImages\` is an array: include every relevant image the user gave
+  (e.g. a character sheet + a background, several angles, a subject + a style
+  reference). Pass all of them together so the model can combine/condition on
+  the whole set, not just the first.
+- Pass the local file path(s) directly (the tool reads the full-resolution bytes
+  itself); you do not need to convert them.
+- If you are unsure whether the user wants the reference followed, prefer reusing
+  it and say briefly that you based it on their image(s).
 
 ## Multiple images at once — concurrency (important)
 
