@@ -22,7 +22,7 @@ export function ThreadSidebar(): JSX.Element | null {
   const threadListLoading = useAgentChatStore((s) => s.threadListLoading)
   const codexThreadList = useAgentChatStore((s) => s.codexThreadList)
   const codexThreadListLoading = useAgentChatStore((s) => s.codexThreadListLoading)
-  const isRunning = useAgentChatStore((s) => s.isRunning)
+  const runningByThread = useAgentChatStore((s) => s.runningByThread)
   const threadId = useAgentChatStore((s) => s.threadId)
   const newThread = useAgentChatStore((s) => s.newThread)
   const switchThread = useAgentChatStore((s) => s.switchThread)
@@ -103,7 +103,7 @@ export function ThreadSidebar(): JSX.Element | null {
                 key={group.label}
                 group={group}
                 activeThreadId={threadId}
-                isRunning={isRunning}
+                runningByThread={runningByThread}
                 onSwitch={switchThread}
                 onRename={renameThread}
                 onDelete={deleteThread}
@@ -194,7 +194,7 @@ function CodexSessionsSection(props: CodexSessionsSectionProps): JSX.Element | n
 interface ThreadGroupSectionProps {
   group: ThreadGroup
   activeThreadId: string | undefined
-  isRunning: boolean
+  runningByThread: Record<string, boolean>
   onSwitch: (id: string) => Promise<void> | void
   onRename: (id: string, title: string) => Promise<void>
   onDelete: (id: string) => Promise<void>
@@ -212,7 +212,7 @@ function ThreadGroupSection(props: ThreadGroupSectionProps): JSX.Element {
             key={t.id}
             thread={t}
             active={t.id === props.activeThreadId}
-            isRunning={props.isRunning}
+            running={props.runningByThread[t.id] ?? false}
             onSwitch={props.onSwitch}
             onRename={props.onRename}
             onDelete={props.onDelete}
@@ -226,7 +226,8 @@ function ThreadGroupSection(props: ThreadGroupSectionProps): JSX.Element {
 interface ThreadRowProps {
   thread: AgentThreadSummary
   active: boolean
-  isRunning: boolean
+  /** Whether THIS thread has a turn streaming (active or in the background). */
+  running: boolean
   onSwitch: (id: string) => Promise<void> | void
   onRename: (id: string, title: string) => Promise<void>
   onDelete: (id: string) => Promise<void>
@@ -239,8 +240,6 @@ function ThreadRow(props: ThreadRowProps): JSX.Element {
   const [draftTitle, setDraftTitle] = useState(props.thread.title)
   const inputRef = useRef<HTMLInputElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
-
-  const disabled = props.isRunning && !props.active
 
   const startRename = useCallback(() => {
     setDraftTitle(props.thread.title)
@@ -343,7 +342,6 @@ function ThreadRow(props: ThreadRowProps): JSX.Element {
         />
         <button
           type="button"
-          disabled={disabled}
           onClick={() => {
             if (props.active) return
             void props.onSwitch(props.thread.id)
@@ -351,12 +349,20 @@ function ThreadRow(props: ThreadRowProps): JSX.Element {
           onDoubleClick={() => startRename()}
           title={props.thread.title}
           className={[
-            'flex flex-1 items-center justify-between gap-2 px-2 py-1.5 text-left text-[12px] transition-colors',
+            'flex flex-1 items-center justify-between gap-2 px-2 py-1.5 text-left text-[12px] transition-colors cursor-pointer',
             props.active ? 'text-cyan-100' : 'text-zinc-200',
-            disabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer',
           ].join(' ')}
         >
-          <span className="truncate">{props.thread.title}</span>
+          <span className="flex min-w-0 items-center gap-1.5">
+            {props.running ? (
+              <span
+                aria-label="Running"
+                title="正在运行（可切走，不会中断）"
+                className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-cyan-400"
+              />
+            ) : null}
+            <span className="truncate">{props.thread.title}</span>
+          </span>
           <span className="shrink-0 text-[10px] text-zinc-500">
             {formatRelativeTime(props.thread.lastMessageAt)}
           </span>

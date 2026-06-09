@@ -249,5 +249,74 @@ export const CATIMATION_IMAGE_SKILL: FirstPartySkill = {
   content: CATIMATION_IMAGE_SKILL_CONTENT,
 }
 
+const CATIMATION_SUBAGENTS_SKILL_CONTENT = `---
+name: catimation-subagents
+description: >-
+  Use parallel Codex subagents to divide independent work and finish faster
+  inside CATIMATION. Trigger this whenever a task naturally splits into
+  independent parts — researching several topics at once, analyzing/captioning
+  multiple reference images or videos, exploring a large codebase from several
+  angles, processing many rows/items, or producing several distinct artifacts.
+  Also use it when the user says "并行 / 同时 / 分头 / 拆开做 / spawn agents /
+  delegate in parallel / one agent per point". Subagents run concurrently and
+  return distilled results to you.
+---
+
+# Use parallel subagents to divide independent work
+
+Codex can spawn specialized **subagents** that work concurrently and report back.
+This app raises the concurrency ceiling to **8 parallel agent threads**
+(\`agents.max_threads=8\`, \`agents.max_depth=1\`). Codex does NOT delegate on its
+own — **you must explicitly ask for subagents** when the task benefits.
+
+## When to delegate (do it proactively)
+
+Delegate when the work splits into parts that DON'T depend on each other:
+
+- **Multi-target research / analysis** — "对比这 4 个方案" → one agent per option.
+- **Many reference images / videos / docs** — caption / extract / analyze each in
+  parallel (one agent per file), then synthesize.
+- **Broad codebase exploration** — several independent "where/how does X work"
+  questions at once (the built-in \`explorer\` agent is fast and authoritative).
+- **Batch/per-row work** — a list/CSV where each row is the same job.
+- **Several distinct deliverables** — e.g. generate prompts for N scenes.
+
+Do NOT delegate trivial, sequential, or tightly-coupled work — a single agent is
+faster and cheaper there. Each subagent does its own model + tool work, so it
+costs more tokens than one combined pass; use it when the parallelism pays off.
+
+## How to delegate
+
+1. **Split the work explicitly** in your reasoning: name each subtask and what
+   each subagent should return (a short, distilled result — not raw dumps).
+2. **Spawn them in one go** so they run concurrently — e.g. "spawn 3 agents:
+   agent 1 does …, agent 2 does …, agent 3 does …". Up to ~8 run at once; ask
+   for more only in batches.
+3. **For row-per-worker batches**, use \`spawn_agents_on_csv\`: it reads a CSV and
+   starts one worker agent per row, concurrently.
+4. **State whether to wait** for all agents before continuing, and what the final
+   synthesis should look like.
+5. **Synthesize**: combine the subagents' distilled results into one answer;
+   don't just paste each agent's output.
+
+## Notes
+
+- Built-in agents (e.g. \`explorer\`) are available; you can also pin a cheaper/
+  faster model for light subagent work when you spawn them.
+- Subagents are for delegating *agent work*. To generate multiple IMAGES at once,
+  use the \`catimation-image\` skill's concurrent \`generate_image\` calls instead —
+  that's the right tool for image fan-out.
+- Keep delegation depth shallow (one level); deep recursion multiplies cost and
+  latency without clear benefit.
+`
+
+export const CATIMATION_SUBAGENTS_SKILL: FirstPartySkill = {
+  name: 'catimation-subagents',
+  content: CATIMATION_SUBAGENTS_SKILL_CONTENT,
+}
+
 /** All skills this app ships into the Codex USER scope on startup. */
-export const FIRST_PARTY_SKILLS: FirstPartySkill[] = [CATIMATION_IMAGE_SKILL]
+export const FIRST_PARTY_SKILLS: FirstPartySkill[] = [
+  CATIMATION_IMAGE_SKILL,
+  CATIMATION_SUBAGENTS_SKILL,
+]

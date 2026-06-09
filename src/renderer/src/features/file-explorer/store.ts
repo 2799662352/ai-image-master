@@ -451,6 +451,15 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
     const api = getApi()
     const roots = readWorkspaceRoots()
     if (roots.length === 0) return
+    // Register the persisted roots with the main-process fs allowed-roots gate
+    // BEFORE listing. On a fresh app start `allowedRoots` is empty (it's
+    // in-memory and reset every launch), so `fs:list-dir` → `assertContained`
+    // would reject every persisted folder ("fs path outside allowed roots"),
+    // the listDir throw would be swallowed, and the panel would fall back to
+    // "No folder open" — i.e. the workspace looked like it didn't persist
+    // across restarts. `pickWorkspaceFolder` already syncs first; this mirrors
+    // it so the restored workspace actually loads.
+    await syncAllowedRootsNow(roots)
     const workspaceTree: FileNode[] = []
     for (const folder of roots) {
       try {

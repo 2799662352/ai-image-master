@@ -167,6 +167,17 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     // edit any file by hand. OAuth login and tool-call surfaces both require
     // this client on the server side.
     '-c', 'experimental_use_rmcp_client=true',
+    // Subagents (parallel delegation). Codex can spawn specialized worker
+    // agents that explore/analyze/tackle work concurrently — but it only does
+    // so when explicitly asked, and the concurrency ceiling lives under the
+    // `[agents]` table (`agents.max_threads`, default 6). We bump it to 8 so a
+    // "spawn one agent per point" / `spawn_agents_on_csv` fan-out isn't
+    // bottlenecked, and pin `max_depth=1` (the default — a direct child may
+    // spawn, but no deeper recursion, which keeps token/latency cost
+    // predictable). Pairs with the shipped `catimation-subagents` skill that
+    // teaches the agent WHEN to delegate. Docs: https://developers.openai.com/codex/subagents
+    '-c', 'agents.max_threads=8',
+    '-c', 'agents.max_depth=1',
   ]
 
   // Register the local in-process catimation MCP server so the Codex

@@ -1017,6 +1017,16 @@ export class AgentManager {
     await this.backend.cancel(codexThreadId ?? threadId)
   }
 
+  /**
+   * Reverse-map a Codex thread UUID (from an MCP tool call's `_meta`) to our DB
+   * thread id. Used by the MCP ToolRouter so renderer tools (e.g.
+   * `generate_image`) can attribute their UI to the chat that requested them.
+   * Returns `undefined` when the mapping isn't known yet.
+   */
+  resolveDbThreadId(codexThreadId: string): string | undefined {
+    return findDbThreadId(this.codexThreadIdByDbThreadId, codexThreadId)
+  }
+
   async respondToApprovalResponse(response: CodexApprovalResponse): Promise<{ ok: boolean; error?: string }> {
     if (!this.backend.respondToApprovalResponse) {
       return { ok: false, error: 'Codex approval response API is unavailable' }

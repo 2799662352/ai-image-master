@@ -19,6 +19,29 @@ function mimeFromPath(filePath: string): string {
   }
 }
 
+/**
+ * Pull the Codex thread UUID out of an MCP tool-call context. Codex puts it on
+ * the raw request's `_meta` (NOT under `params._meta`): both as a top-level
+ * `_meta.threadId` and inside `_meta["x-codex-turn-metadata"].thread_id`. We
+ * read both for resilience across codex versions. Returns `undefined` when the
+ * metadata isn't present (older codex / manual calls) so the caller falls back.
+ */
+function extractCodexThreadId(ctx: unknown): string | undefined {
+  const meta = (ctx as { mcpReq?: { _meta?: unknown } } | undefined)?.mcpReq?._meta as
+    | { threadId?: unknown; ['x-codex-turn-metadata']?: { thread_id?: unknown; session_id?: unknown } }
+    | undefined
+  if (!meta) return undefined
+  const direct = typeof meta.threadId === 'string' && meta.threadId.length > 0 ? meta.threadId : undefined
+  const turn = meta['x-codex-turn-metadata']
+  const fromTurn =
+    typeof turn?.thread_id === 'string' && turn.thread_id.length > 0
+      ? turn.thread_id
+      : typeof turn?.session_id === 'string' && turn.session_id.length > 0
+        ? turn.session_id
+        : undefined
+  return direct ?? fromTurn
+}
+
 /** Extract the saved local file paths from the renderer's generate result. */
 function collectPaths(raw: unknown): string[] {
   if (!Array.isArray(raw)) return []
@@ -113,8 +136,16 @@ export function registerImageTools(server: McpServer, router: ToolRouter): void 
           'reference image was given.',
         ),
     }),
-  }, async (params) => {
-    const result = await router.call('generate_image', params)
+  }, async (params, ctx?: unknown) => {
+    // Codex stamps every MCP tool call with the requesting thread id in
+    // `mcpReq._meta` (`threadId` + `x-codex-turn-metadata.thread_id`; see
+    // openai/codex#15190 / #18093). Extract it so the renderer can route the
+    // generated image to the chat that ACTUALLY requested it instead of
+    // whatever chat is active when the (possibly long) render finishes — the
+    // parallel-chat contamination fix. The router reverse-maps this codex
+    // thread UUID to our db thread id before handing it to the renderer.
+    const codexThreadId = extractCodexThreadId(ctx)
+    const result = await router.call('generate_image', params, codexThreadId)
 
     const savedPaths = collectPaths((result as { paths?: unknown } | null)?.paths)
     // The directory the file(s) live in — Codex should look HERE (or open the

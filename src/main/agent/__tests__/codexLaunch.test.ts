@@ -26,6 +26,8 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'model_context_window=200000',
       '-c', 'model_auto_compact_token_limit=180000',
       '-c', 'experimental_use_rmcp_client=true',
+      '-c', 'agents.max_threads=8',
+      '-c', 'agents.max_depth=1',
     ])
   })
 
@@ -42,6 +44,8 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'model_context_window=200000',
       '-c', 'model_auto_compact_token_limit=180000',
       '-c', 'experimental_use_rmcp_client=true',
+      '-c', 'agents.max_threads=8',
+      '-c', 'agents.max_depth=1',
     ])
     const listenIdx = args.indexOf('--listen')
     const firstConfigIdx = args.indexOf('-c')

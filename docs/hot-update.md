@@ -138,6 +138,57 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
+### v4.3.28 (2026-06-09) — Codex 多对话并行 + 图像归属修复 + subagent 一等公民 + 侧栏/工作区持久化
+
+围绕 Codex 聊天的「多对话并行」补齐一整套:开新对话/切换不再打断或污染其它对话,生成的图片永远落在发起它的对话里,并把 subagent 做成内置能力。全部按 `systematic-debugging` 取证到根因(含 codex 源码/官方 issue + 运行时 `_meta` 实测)。
+
+**A. 多对话并行(渲染层 store 重构,零后端改动)**
+
+根因:后端 / Codex / `CodexProtocolClient` 早支持并发 turn,卡点只在渲染层一个全局 store(单 `messages`/`isRunning`/`threadId`,`applyEvent` 丢弃非活动线程事件)。
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| 按线程分桶 + 纯函数 reducer | `src/renderer/src/features/agent-chat/store.ts` | 抽出 `reduceThreadSlice`;新增 `threadSlices`(后台线程)+ `runningByThread`(每线程运行态);`applyEvent` 按 `event.threadId` 路由(活动→可见视图,其它→各自后台桶,不丢不漏) |
+| 切换/新建不杀旧 turn | 同上 | `newThread`/`switchThread` 快照当前→恢复目标(优先用更新的后台桶),**绝不 cancel** 旧 turn;`send`/`cancel` 按线程维护运行态 |
+| 新对话不串旧任务 | 同上 | adoption 仅认 `thread_created` 事件,避免后台线程的流被新空对话「领养」 |
+| 侧栏可并行 | `src/renderer/src/features/agent-chat/ThreadSidebar.tsx` | 运行中也能自由切换(去掉禁用),每个对话标题前脉动蓝点表示「正在跑(可切走不中断)」 |
+| 发送即刷新侧栏 | `store.ts` | 新对话 `send` 后立即 `refreshThreadList`,新行秒现(不再等 `turn_completed`) |
+
+**B. 生成图片归属到发起对话(根因:MCP 图像路径绕过线程路由)**
+
+`generate_image` 经 `AgentToolExecutor` 直写「活动」对话,与线程无关 → 切走后图片落到别的对话。运行时实测确认 Codex 在 **`mcpReq._meta`**(`threadId` + `x-codex-turn-metadata.thread_id`,见 openai/codex#15190/#18093)带了发起线程。
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| 提取 codex 线程 id | `src/main/mcp/tools/imageTools.ts` | `extractCodexThreadId(ctx)` 读 `mcpReq._meta` → 传给 `router.call` |
+| 反查 codex→db 线程 | `ToolRouter`(`setThreadIdResolver`)+ `AgentManager.resolveDbThreadId` + `index.ts` 接线 | 把 codex UUID 反查成 db threadId,挂到 `AgentToolRequest.threadId` |
+| 按线程渲染图片气泡 | `AgentToolExecutor.ts` + `store.ts`(`patchThreadMessages`、begin/resolve/fail 带 threadId) | 用权威 `request.threadId` 把生成中/完成/失败气泡定位到发起对话(缺失时回退发起时刻活动线程)。即使 5 张并发 + 快速切换也不串 |
+
+**C. Codex subagent 一等公民**
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| 并发配置 | `src/main/agent/codexLaunch.ts` | 注入 `-c agents.max_threads=8` + `agents.max_depth=1` |
+| 引导技能 | `src/main/agent/firstPartySkills.ts`(`catimation-subagents`) | 教 agent 何时/如何并行委派(多目标研究、多图分析、批处理),用 `spawn_agents_on_csv`/内置 explorer;多图生成仍走 `catimation-image` |
+
+**D. 工作区持久化(根因:启动 reload 在同步 allowed-roots 之前 listDir)**
+
+`fs:list-dir` 受 `assertContained` 的 allowed-roots 门控,而该门控每次启动清空。`loadWorkspaceFolders` 在 `syncAllowedRoots` 之前 listDir → 持久化的文件夹被拒 → 显示「No folder open」。修复:`loadWorkspaceFolders` 先 `await syncAllowedRootsNow(roots)` 再列目录(对齐 `pickWorkspaceFolder`)。文件:`src/renderer/src/features/file-explorer/store.ts`。
+
+#### 用户可见行为
+
+1. 开新对话 / 切对话,旧对话继续在后台跑、进度不丢、图片不串;右下角 Stop 只停当前这条
+2. 发送新对话后侧栏立即出现该对话(脉动蓝点 = 正在跑)
+3. 生成的图片永远落在发起它的对话里(含 5 张并发 + 快速切换)
+4. 对 Codex 说「并行开 N 个 agent / 拆开做」即可并发子代理
+5. 打开工作区文件夹后重启客户端,文件夹自动恢复(不再「No folder open」)
+
+#### 验证
+
+- 新增/更新单测:`store.parallel`(8)、`store.sendRefreshList`(2)、`store.loadWorkspaceFolders`(1)、`ToolRouter`(3)、`revealInExplorer`(18)、`codexLaunch`(21)、`firstPartySkills`(9)、`imageTools`(8)、`AgentToolExecutor.generateImage`(10)、`store.streaming/plan/ThreadSidebar` 等全绿;触碰文件 lint 干净、typecheck 无新增错误。
+
+---
+
 ### v4.3.27 (2026-06-09) — Codex 生图:完成提醒+路径直达 + 聊天蓝链可点定位文件栏 + 参考图主动复用(多图)
 
 本版本聚焦 Codex 聊天里 `catimation` 生图的「收尾体验」与「素材复用」,三条线都按 `systematic-debugging` 取证到根因(含 codex / react-markdown 源码与官方 issue)。

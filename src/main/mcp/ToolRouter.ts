@@ -23,6 +23,12 @@ type PendingRendererTool = {
 export class ToolRouter {
   private mainHandlers = new Map<string, MainToolHandler>()
   private pending = new Map<string, PendingRendererTool>()
+  /**
+   * Resolves a Codex thread UUID (from a tool call's `_meta`) to our DB thread
+   * id, so renderer tools can be attributed to the chat that requested them.
+   * Injected by `index.ts` once the AgentManager exists.
+   */
+  private threadIdResolver: ((codexThreadId: string) => string | undefined) | null = null
 
   constructor(private win: BrowserWindow) {}
 
@@ -30,14 +36,18 @@ export class ToolRouter {
     this.win = win
   }
 
+  setThreadIdResolver(resolver: (codexThreadId: string) => string | undefined): void {
+    this.threadIdResolver = resolver
+  }
+
   registerMain(name: string, handler: MainToolHandler): void {
     this.mainHandlers.set(name, handler)
   }
 
-  async call(name: string, params: Record<string, unknown>): Promise<unknown> {
+  async call(name: string, params: Record<string, unknown>, codexThreadId?: string): Promise<unknown> {
     const mainHandler = this.mainHandlers.get(name)
     if (mainHandler) return mainHandler(params)
-    return this.callRenderer(name, params)
+    return this.callRenderer(name, params, codexThreadId)
   }
 
   handleRendererResponse(response: AgentToolResponse): void {
@@ -49,9 +59,18 @@ export class ToolRouter {
     response.ok ? pending.resolve(response.result) : pending.reject(new Error(response.error ?? 'Renderer tool failed'))
   }
 
-  private callRenderer(toolName: string, params: Record<string, unknown>): Promise<unknown> {
+  private callRenderer(
+    toolName: string,
+    params: Record<string, unknown>,
+    codexThreadId?: string,
+  ): Promise<unknown> {
     const id = crypto.randomUUID()
-    const request: AgentToolRequest = { id, toolName, params }
+    // Reverse-map the codex thread UUID to our DB thread id so the renderer
+    // routes the tool's UI (e.g. a generated image bubble) to the requesting
+    // chat. Undefined when there's no resolver or no mapping yet — the renderer
+    // falls back to its active-thread capture.
+    const threadId = codexThreadId ? (this.threadIdResolver?.(codexThreadId) ?? undefined) : undefined
+    const request: AgentToolRequest = { id, toolName, params, ...(threadId ? { threadId } : {}) }
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {

@@ -220,6 +220,21 @@ interface AgentChatState {
   error?: string
   selectedModelId: string
   messages: Message[]
+  /**
+   * Background per-thread streaming state for chats that are NOT the active
+   * view. Populated when you switch away from / start a new chat while a turn
+   * is still running, and kept current by `applyEvent` routing background
+   * events here. Restored into the active view on `switchThread`. Keyed by
+   * db threadId. The active thread is intentionally absent (its state lives in
+   * the top-level fields).
+   */
+  threadSlices: Record<string, ThreadSlice>
+  /**
+   * Per-thread "is a turn running" flags, for the whole panel (active +
+   * background). Drives the ThreadSidebar running dots and lets the user see
+   * which chats are still working. Source of truth for cross-thread running.
+   */
+  runningByThread: Record<string, boolean>
   panelWidth: number
   /**
    * Latest cumulative token usage reported by the codex `app-server` for the
@@ -307,7 +322,7 @@ interface AgentChatState {
    * click-to-fullscreen via ArtifactCard), separate from any in-flight
    * assistant text. No-op when `artifacts` is empty.
    */
-  appendArtifactMessage: (artifacts: AttachmentRef[]) => void
+  appendArtifactMessage: (artifacts: AttachmentRef[], threadId?: string) => void
 
   /**
    * Image-generation status machine for the codex `generate_image` tool.
@@ -316,10 +331,14 @@ interface AgentChatState {
    * The caller then resolves it with the finished images, or fails it with an
    * error message — both edit the SAME bubble in place (no flicker / no extra
    * messages). Returns the item id used by resolve/fail.
+   *
+   * `threadId` pins the bubble to the chat that REQUESTED the generation so a
+   * background turn's image never lands in whatever chat happens to be active
+   * when it finishes (parallel-chat contamination). Omit for the active view.
    */
-  beginImageGeneration: (prompt: string) => string
-  resolveImageGeneration: (itemId: string, artifacts: AttachmentRef[]) => void
-  failImageGeneration: (itemId: string, error: string) => void
+  beginImageGeneration: (prompt: string, threadId?: string) => string
+  resolveImageGeneration: (itemId: string, artifacts: AttachmentRef[], threadId?: string) => void
+  failImageGeneration: (itemId: string, error: string, threadId?: string) => void
 
   // ----- Per-thread chat scroll state -----
   /**
@@ -403,6 +422,30 @@ function mapArtifactItem(
     return { ...message, items }
   })
   return changed ? next : messages
+}
+
+/**
+ * Apply a messages updater to a SPECIFIC thread — the active view when
+ * `threadId` is the active thread (or omitted), otherwise that thread's
+ * background slice. This is what keeps image-generation bubbles
+ * (begin/resolve/fail), which run outside the per-event `applyEvent` routing,
+ * pinned to the chat that requested them even after the user switches away or
+ * starts a new chat. Returns a `set()` patch (empty object = no change).
+ */
+function patchThreadMessages(
+  s: { threadId?: string; messages: Message[]; threadSlices: Record<string, ThreadSlice> },
+  threadId: string | undefined,
+  updater: (msgs: Message[]) => Message[],
+): { messages?: Message[]; threadSlices?: Record<string, ThreadSlice> } {
+  const target = threadId ?? s.threadId
+  if (target == null || target === s.threadId) {
+    const next = updater(s.messages)
+    return next === s.messages ? {} : { messages: next }
+  }
+  const slice = s.threadSlices[target] ?? EMPTY_THREAD_SLICE
+  const next = updater(slice.messages)
+  if (next === slice.messages) return {}
+  return { threadSlices: { ...s.threadSlices, [target]: { ...slice, messages: next } } }
 }
 
 /**
@@ -559,6 +602,88 @@ function applyItemCompleted(item: TimelineItem, final: Record<string, unknown>):
 }
 
 /**
+ * The per-thread streaming state that must stay isolated so multiple chats can
+ * run concurrently. The store keeps ONE of these "live" as the active view
+ * (mirrored onto the top-level `messages`/`isRunning`/`tokenUsage`/`error`
+ * fields for zero-churn UI reads) and a `threadSlices` map for every OTHER
+ * thread whose turn is still streaming in the background. Switching threads is
+ * a snapshot(active → map) + restore(map → active); it never cancels the
+ * backend turn (the main process + CodexProtocolClient are already per-(thread,
+ * turn) safe), so leaving a chat no longer drops its in-flight output.
+ */
+export interface ThreadSlice {
+  messages: Message[]
+  isRunning: boolean
+  tokenUsage?: AgentTokenUsage
+  error?: string
+}
+
+const EMPTY_THREAD_SLICE: ThreadSlice = {
+  messages: [],
+  isRunning: false,
+  tokenUsage: undefined,
+  error: undefined,
+}
+
+/**
+ * Pure per-thread reducer for a streaming `AgentStreamEvent`. Mirrors the
+ * timeline-mutating cases of `applyEvent` but operates on an isolated
+ * `ThreadSlice` so it can drive BOTH the active view and any number of
+ * background threads. Side effects (notices, thread-list refresh, the context
+ * watermark) deliberately stay in `applyEvent` — this function is referentially
+ * transparent and unit-testable. Events that don't touch the timeline
+ * (`thread_created`, `attachment_error`, `mcp_*`, etc.) return the slice
+ * unchanged.
+ */
+export function reduceThreadSlice(slice: ThreadSlice, event: AgentStreamEvent): ThreadSlice {
+  switch (event.type) {
+    case 'item_started': {
+      const itemId = resolveItemId(event)
+      const msgs = ensureAssistantMessage(slice.messages)
+      const next = upsertItemInLastMessage(
+        msgs,
+        itemId,
+        () => createItemFromStarted(event.itemType, itemId, event.payload),
+        (item) => item,
+      )
+      return next === slice.messages ? slice : { ...slice, messages: next }
+    }
+    case 'item_delta': {
+      const itemId = resolveItemId(event)
+      const msgs = ensureAssistantMessage(slice.messages)
+      const next = upsertItemInLastMessage(
+        msgs,
+        itemId,
+        () => applyItemPatch(createItemFromStarted(event.itemType, itemId, {}), event.patch),
+        (item) => applyItemPatch(item, event.patch),
+      )
+      return next === slice.messages ? slice : { ...slice, messages: next }
+    }
+    case 'item_completed': {
+      const itemId = resolveItemId(event)
+      const msgs = ensureAssistantMessage(slice.messages)
+      const next = upsertItemInLastMessage(
+        msgs,
+        itemId,
+        () => applyItemCompleted(createItemFromStarted(event.itemType, itemId, {}), event.final),
+        (item) => applyItemCompleted(item, event.final),
+      )
+      return next === slice.messages ? slice : { ...slice, messages: next }
+    }
+    case 'turn_completed':
+      return { ...slice, isRunning: false }
+    case 'token_usage_updated':
+      return { ...slice, tokenUsage: event.usage }
+    case 'error':
+      return { ...slice, error: event.error, isRunning: false }
+    case 'cancelled':
+      return { ...slice, isRunning: false }
+    default:
+      return slice
+  }
+}
+
+/**
  * Threshold for the proactive context-window warning. Picked at 0.70 because
  * Codex's own auto-compact triggers at 0.90 (model_auto_compact_token_limit
  * = 0.9 × model_context_window), and the failure mode reported in
@@ -626,6 +751,8 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   rewoundTurns: [],
   messages: [],
   isRunning: false,
+  threadSlices: {},
+  runningByThread: {},
   chatScrollByThread: loadChatScrollByThread(),
   selectedModelId: readPersistedModelId(),
   panelWidth: readPersistedPanelWidth(),
@@ -651,15 +778,15 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     })
   },
   closePreview: () => set((s) => ({ preview: { ...s.preview, open: false } })),
-  appendArtifactMessage: (artifacts) =>
+  appendArtifactMessage: (artifacts, threadId) =>
     set((s) => {
       if (!artifacts || artifacts.length === 0) return {}
       const now = Date.now()
       const item: TimelineItem = { type: 'artifact', id: createId(), startedAt: now, endedAt: now, artifacts, status: 'done' }
       const message: Message = { id: createId(), role: 'assistant', createdAt: now, items: [item] }
-      return { messages: [...s.messages, message] }
+      return patchThreadMessages(s, threadId, (msgs) => [...msgs, message])
     }),
-  beginImageGeneration: (prompt) => {
+  beginImageGeneration: (prompt, threadId) => {
     const itemId = createId()
     set((s) => {
       const now = Date.now()
@@ -672,28 +799,32 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         prompt,
       }
       const message: Message = { id: createId(), role: 'assistant', createdAt: now, items: [item] }
-      return { messages: [...s.messages, message] }
+      return patchThreadMessages(s, threadId, (msgs) => [...msgs, message])
     })
     return itemId
   },
-  resolveImageGeneration: (itemId, artifacts) =>
-    set((s) => ({
-      messages: mapArtifactItem(s.messages, itemId, (item) => ({
-        ...item,
-        artifacts,
-        status: 'done',
-        endedAt: Date.now(),
-      })),
-    })),
-  failImageGeneration: (itemId, error) =>
-    set((s) => ({
-      messages: mapArtifactItem(s.messages, itemId, (item) => ({
-        ...item,
-        status: 'error',
-        error,
-        endedAt: Date.now(),
-      })),
-    })),
+  resolveImageGeneration: (itemId, artifacts, threadId) =>
+    set((s) =>
+      patchThreadMessages(s, threadId, (msgs) =>
+        mapArtifactItem(msgs, itemId, (item) => ({
+          ...item,
+          artifacts,
+          status: 'done',
+          endedAt: Date.now(),
+        })),
+      ),
+    ),
+  failImageGeneration: (itemId, error, threadId) =>
+    set((s) =>
+      patchThreadMessages(s, threadId, (msgs) =>
+        mapArtifactItem(msgs, itemId, (item) => ({
+          ...item,
+          status: 'error',
+          error,
+          endedAt: Date.now(),
+        })),
+      ),
+    ),
   nextPreview: () =>
     set((s) => {
       if (s.preview.images.length === 0) return {}
@@ -860,6 +991,12 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       error: undefined,
       isRunning: true,
       messages: [...current.messages, userMsg],
+      // Mark this thread running for the sidebar dots. For a brand-new chat
+      // (no threadId yet) the flag is set once `result.threadId` resolves /
+      // the first event is adopted below.
+      runningByThread: state.threadId
+        ? { ...current.runningByThread, [state.threadId]: true }
+        : current.runningByThread,
     }))
     // sendMessage = explicit user intent to track the reply tail. Re-lock the
     // current thread's scroll even if the user had scrolled up earlier. New
@@ -891,8 +1028,20 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         model: modelId,
         skills: skills.length > 0 ? skills : undefined,
       })
-      set({ threadId: result.threadId })
+      const wasNewThread = state.threadId == null
+      set((current) => ({
+        threadId: result.threadId,
+        runningByThread: { ...current.runningByThread, [result.threadId]: true },
+      }))
       get().lockChatScrollToBottom(result.threadId)
+      // Refresh the sidebar immediately so a brand-new chat's row appears the
+      // moment it's sent (the thread is already persisted by `sendMessage`).
+      // Previously the list only refreshed via the delayed title-refresh
+      // schedule fired on `turn_completed`, so users waited the whole turn for
+      // the new thread to show up. Also reorders the just-used thread to top.
+      if (wasNewThread) {
+        void get().refreshThreadList()
+      }
       // After ingest, replace the optimistic user message's items with the
       // canonical ones from main. The optimistic version uses the raw OS
       // path each attachment was picked from (e.g. `D:\360MoveData\…\foo.png`),
@@ -917,14 +1066,19 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       get().clearPendingReferences()
       void useFileExplorerStore.getState().refreshAttachmentsTree().catch(() => undefined)
     } catch (error) {
-      set((current) => ({
-        input: content,
-        attachments,
-        pendingReferences: state.pendingReferences,
-        isRunning: false,
-        error: error instanceof Error ? error.message : String(error),
-        messages: current.messages.slice(0, -1),
-      }))
+      set((current) => {
+        const runningByThread = { ...current.runningByThread }
+        if (state.threadId) delete runningByThread[state.threadId]
+        return {
+          input: content,
+          attachments,
+          pendingReferences: state.pendingReferences,
+          isRunning: false,
+          error: error instanceof Error ? error.message : String(error),
+          messages: current.messages.slice(0, -1),
+          runningByThread,
+        }
+      })
     }
   },
   startEditMessage: (messageId: string) => {
@@ -1080,169 +1234,216 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   cancel: async () => {
     const threadId = get().threadId
     if (!threadId) return
+    const clearRunning = (extra: Partial<AgentChatState>): void =>
+      set((s) => {
+        const runningByThread = { ...s.runningByThread }
+        delete runningByThread[threadId]
+        return { isRunning: false, runningByThread, ...extra }
+      })
     try {
       await getAgentApi().cancel({ threadId })
-      set({ isRunning: false })
+      clearRunning({})
     } catch (error) {
-      set({
-        error: error instanceof Error ? error.message : String(error),
-        isRunning: false,
-      })
+      clearRunning({ error: error instanceof Error ? error.message : String(error) })
     }
   },
   newThread: () =>
-    set({
-      threadId: undefined,
-      messages: [],
-      isRunning: false,
-      error: undefined,
-      tokenUsage: undefined,
-      // Fresh session => fresh watermark dedup. Cross-thread entries are
-      // already isolated by threadId-keyed keys, but resetting on newThread
-      // is the right place to release the bookkeeping for a clean slate.
-      contextWatermarkSeen: {},
-      pendingApprovals: [],
-      rewoundTurns: [],
-      editingMessageId: undefined,
-      draftBackup: undefined,
+    set((current) => {
+      // Snapshot the outgoing chat so a still-running turn keeps streaming into
+      // its background slice instead of being dropped (the backend turn is NOT
+      // cancelled — main + CodexProtocolClient are per-(thread,turn) safe).
+      const threadSlices = { ...current.threadSlices }
+      if (current.threadId) {
+        threadSlices[current.threadId] = {
+          messages: current.messages,
+          isRunning: current.isRunning,
+          tokenUsage: current.tokenUsage,
+          error: current.error,
+        }
+      }
+      return {
+        threadSlices,
+        threadId: undefined,
+        messages: [],
+        isRunning: false,
+        error: undefined,
+        tokenUsage: undefined,
+        // Fresh session => fresh watermark dedup for the active view.
+        contextWatermarkSeen: {},
+        pendingApprovals: [],
+        rewoundTurns: [],
+        editingMessageId: undefined,
+        draftBackup: undefined,
+      }
     }),
   switchThread: async (threadId: string) => {
-    const agent = (window as Window & { electronAPI?: { agent?: { openThread?: (id: string) => Promise<unknown> } } })
-      .electronAPI?.agent
-    if (!agent?.openThread) return
-    const thread = await agent.openThread(threadId)
-    if (!thread || typeof thread !== 'object') return
+    if (get().threadId === threadId) return
 
-    const rawMessages = (thread as { messages?: unknown }).messages
-    const messages: Message[] = Array.isArray(rawMessages)
-      ? rawMessages.map((row: unknown) => {
-          const r = row as {
-            id: string
-            role: string
-            items: string | unknown[] | null
-            createdAt?: string | number | Date
-          }
-          let parsedItems: unknown = r.items
-          if (typeof parsedItems === 'string') {
-            try {
-              parsedItems = JSON.parse(parsedItems)
-            } catch {
-              parsedItems = []
+    // Prefer the live background slice (a chat that streamed while we were
+    // viewing another one) — it's fresher than the persisted server snapshot.
+    let restored: ThreadSlice | null = get().threadSlices[threadId] ?? null
+
+    if (!restored) {
+      const agent = (window as Window & { electronAPI?: { agent?: { openThread?: (id: string) => Promise<unknown> } } })
+        .electronAPI?.agent
+      if (!agent?.openThread) return
+      const thread = await agent.openThread(threadId)
+      if (!thread || typeof thread !== 'object') return
+
+      const rawMessages = (thread as { messages?: unknown }).messages
+      const messages: Message[] = Array.isArray(rawMessages)
+        ? rawMessages.map((row: unknown) => {
+            const r = row as {
+              id: string
+              role: string
+              items: string | unknown[] | null
+              createdAt?: string | number | Date
             }
-          }
-          const role: Message['role'] =
-            r.role === 'user' || r.role === 'assistant' ? r.role : 'assistant'
-          return {
-            id: r.id,
-            role,
-            items: Array.isArray(parsedItems) ? (parsedItems as TimelineItem[]) : [],
-            // `agent:open-thread` normalizes this to an epoch number; we still
-            // accept string/Date defensively. Fall back to 0 (NOT Date.now())
-            // for an unrecoverable timestamp — stamping a reloaded message with
-            // the reopen time is exactly what made codex image bubbles drift to
-            // the top of the conversation.
-            createdAt: toEpochMs(r.createdAt) ?? 0,
-          }
-        })
-      : []
+            let parsedItems: unknown = r.items
+            if (typeof parsedItems === 'string') {
+              try {
+                parsedItems = JSON.parse(parsedItems)
+              } catch {
+                parsedItems = []
+              }
+            }
+            const role: Message['role'] =
+              r.role === 'user' || r.role === 'assistant' ? r.role : 'assistant'
+            return {
+              id: r.id,
+              role,
+              items: Array.isArray(parsedItems) ? (parsedItems as TimelineItem[]) : [],
+              // `agent:open-thread` normalizes this to an epoch number; we still
+              // accept string/Date defensively. Fall back to 0 (NOT Date.now())
+              // for an unrecoverable timestamp — stamping a reloaded message with
+              // the reopen time is exactly what made codex image bubbles drift to
+              // the top of the conversation.
+              createdAt: toEpochMs(r.createdAt) ?? 0,
+            }
+          })
+        : []
 
-    set({
-      threadId,
-      // Re-attach codex-generated image bubbles persisted for this thread. The
-      // durable URLs come from the history record (cloud bucket), so reloads /
-      // thread switches show the thumbnail again instead of losing it.
-      messages: rehydrateCodexArtifacts(threadId, messages),
-      isRunning: false,
-      error: undefined,
-      // Token usage is per-thread; reset until the next
-      // thread/tokenUsage/updated arrives.
-      tokenUsage: undefined,
-      pendingApprovals: [],
+      restored = {
+        // Re-attach codex-generated image bubbles persisted for this thread. The
+        // durable URLs come from the history record (cloud bucket), so reloads /
+        // thread switches show the thumbnail again instead of losing it.
+        messages: rehydrateCodexArtifacts(threadId, messages),
+        // A persisted thread isn't streaming unless we already tracked it as
+        // running (rare race) — honor the cross-thread flag if set.
+        isRunning: get().runningByThread[threadId] ?? false,
+        tokenUsage: undefined,
+        error: undefined,
+      }
+    }
+
+    // Commit atomically: snapshot the OUTGOING active view into its background
+    // slice (so its in-flight turn keeps streaming there), drop the incoming
+    // thread from the background map (it's the active view now), and install it.
+    set((cur) => {
+      const threadSlices = { ...cur.threadSlices }
+      if (cur.threadId) {
+        threadSlices[cur.threadId] = {
+          messages: cur.messages,
+          isRunning: cur.isRunning,
+          tokenUsage: cur.tokenUsage,
+          error: cur.error,
+        }
+      }
+      delete threadSlices[threadId]
+      return {
+        threadId,
+        threadSlices,
+        messages: restored!.messages,
+        isRunning: restored!.isRunning,
+        tokenUsage: restored!.tokenUsage,
+        error: restored!.error,
+        pendingApprovals: [],
+      }
     })
   },
   applyEvent: (event) => {
-    // Two new global events bypass the thread guard: `skills_changed` is
-    // workspace-wide, and `notice` may or may not have a threadId. The
-    // existing `mcp_*` events already lack threadId and rely on the same
-    // bypass-by-shape: the guard only fires when a threadId is present.
+    // Panel-global events (no per-thread routing).
     if (event.type === 'skills_changed') {
       void get().loadAvailableSkills()
       return
     }
     if (event.type === 'notice') {
-      const activeThreadId = get().threadId
-      if (event.notice.threadId && activeThreadId && event.notice.threadId !== activeThreadId) return
+      // Notices render as panel-wide banners; show regardless of which thread
+      // they came from now that multiple chats can stream at once.
       get().pushNotice(event.notice)
       return
     }
-
-    const activeThreadId = get().threadId
-    if (
-      activeThreadId &&
-      'threadId' in event &&
-      typeof event.threadId === 'string' &&
-      event.threadId !== activeThreadId
-    )
+    if (event.type === 'mcp_status_updated' || event.type === 'mcp_oauth_completed') {
+      // Subscribed to via a dedicated `agent:mcp-*` IPC channel in MCPSection.
       return
+    }
+    if (event.type === 'attachment_error') {
+      get().pushNotice({
+        id: `attachment-${event.name}-${Date.now()}`,
+        kind: 'attachmentSkipped',
+        level: 'warning',
+        message: `已跳过 ${event.name}：${event.error}`,
+        threadId: event.threadId,
+      })
+      return
+    }
 
-    switch (event.type) {
-      case 'thread_created':
-        break
-      case 'item_started': {
-        const itemId = resolveItemId(event)
-        set((state) => {
-          const msgs = ensureAssistantMessage(state.messages)
-          const next = upsertItemInLastMessage(
-            msgs,
-            itemId,
-            () => createItemFromStarted(event.itemType, itemId, event.payload),
-            (item) => item,
-          )
-          return { messages: next }
-        })
-        break
+    const evtId =
+      'threadId' in event && typeof event.threadId === 'string' ? event.threadId : undefined
+
+    // Cross-thread running flag (drives the ThreadSidebar dots) + thread-list
+    // title refresh — both fire for ANY thread, active or background.
+    if (event.type === 'turn_completed' || event.type === 'error' || event.type === 'cancelled') {
+      if (evtId && get().runningByThread[evtId]) {
+        const next = { ...get().runningByThread }
+        delete next[evtId]
+        set({ runningByThread: next })
       }
-      case 'item_delta': {
-        const itemId = resolveItemId(event)
-        set((state) => {
-          const msgs = ensureAssistantMessage(state.messages)
-          const next = upsertItemInLastMessage(
-            msgs,
-            itemId,
-            () => applyItemPatch(createItemFromStarted(event.itemType, itemId, {}), event.patch),
-            (item) => applyItemPatch(item, event.patch),
-          )
-          return { messages: next }
-        })
-        break
+    }
+    if (event.type === 'turn_completed') {
+      scheduleThreadListTitleRefreshes(() => void get().refreshThreadList())
+    }
+
+    // Route to the ACTIVE view or a BACKGROUND slice.
+    //
+    // Adoption: an unsaved new chat (threadId undefined) that we just sent into
+    // (isRunning) must bind to ITS OWN freshly-created thread. We key adoption
+    // strictly on `thread_created` — Codex emits it first (from `thread/start`)
+    // for a brand-new thread, and existing background threads never re-emit it.
+    // Keying on `isRunning` alone (the previous logic) let a concurrently
+    // running background thread's deltas get adopted into the new chat — i.e.
+    // "上一个任务出现在下一个任务里". `thread_created` is the unambiguous signal.
+    const activeThreadId = get().threadId
+    let isActive: boolean
+    if (activeThreadId != null) {
+      isActive = evtId === activeThreadId
+    } else if (event.type === 'thread_created' && get().isRunning && evtId != null) {
+      set({ threadId: evtId, runningByThread: { ...get().runningByThread, [evtId]: true } })
+      isActive = true
+    } else {
+      isActive = false
+    }
+
+    if (isActive) {
+      const s = get()
+      const before: ThreadSlice = {
+        messages: s.messages,
+        isRunning: s.isRunning,
+        tokenUsage: s.tokenUsage,
+        error: s.error,
       }
-      case 'item_completed': {
-        const itemId = resolveItemId(event)
-        set((state) => {
-          const msgs = ensureAssistantMessage(state.messages)
-          const next = upsertItemInLastMessage(
-            msgs,
-            itemId,
-            () => applyItemCompleted(createItemFromStarted(event.itemType, itemId, {}), event.final),
-            (item) => applyItemCompleted(item, event.final),
-          )
-          return { messages: next }
+      const after = reduceThreadSlice(before, event)
+      if (after !== before) {
+        set({
+          messages: after.messages,
+          isRunning: after.isRunning,
+          tokenUsage: after.tokenUsage,
+          error: after.error,
         })
-        break
       }
-      case 'turn_completed':
-        set({ isRunning: false })
-        scheduleThreadListTitleRefreshes(() => void get().refreshThreadList())
-        break
-      case 'token_usage_updated': {
-        // Just overwrite — Codex sends cumulative counts. The header meter
-        // reads `tokenUsage.contextUsage / contextWindow` if both are
-        // present, otherwise falls back to inputTokens+outputTokens.
-        set({ tokenUsage: event.usage })
-        // Proactive 70% watermark check. See `deriveContextWatermarkNotice`
-        // for the rationale; in short, Codex's 90% auto-compact can run out
-        // of summary budget on very long sessions (openai/codex#10823), so
-        // we surface a warning early enough for the user to course-correct.
+      // Proactive 70% context watermark (active thread only — it needs the
+      // visible threadId). See `deriveContextWatermarkNotice` (openai/codex#10823).
+      if (event.type === 'token_usage_updated') {
         const state = get()
         const notice = deriveContextWatermarkNotice({
           threadId: state.threadId,
@@ -1254,40 +1455,18 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
           set({ contextWatermarkSeen: { ...state.contextWatermarkSeen, [key]: true } })
           state.pushNotice(notice)
         }
-        break
       }
-      case 'error':
-        set({ error: event.error, isRunning: false })
-        break
-      case 'cancelled':
-        set({ isRunning: false })
-        break
-      case 'attachment_error': {
-        // Per-attachment ingest failures are non-fatal — surface them as a
-        // notice so the user sees which file was skipped and why, without
-        // killing the turn that succeeded for the other attachments.
-        const state = get()
-        state.pushNotice({
-          id: `attachment-${event.name}-${Date.now()}`,
-          kind: 'attachmentSkipped',
-          level: 'warning',
-          message: `已跳过 ${event.name}：${event.error}`,
-          threadId: event.threadId,
-        })
-        break
-      }
-      case 'mcp_status_updated':
-      case 'mcp_oauth_completed':
-        // MCP lifecycle pulses are subscribed to via a dedicated `agent:mcp-*`
-        // IPC channel in MCPSection — no-op here so the exhaustive guard
-        // below stays happy.
-        break
-      default: {
-        // exhaustiveness: every AgentStreamEvent variant must be handled above.
-        const _exhaustive: never = event
-        void _exhaustive
-        break
-      }
+      return
+    }
+
+    // Background thread: keep accumulating into its slice so a later
+    // switchThread restores the full, up-to-date conversation. The backend
+    // turn keeps running regardless — we just stopped showing it live.
+    if (!evtId) return
+    const prev = get().threadSlices[evtId] ?? EMPTY_THREAD_SLICE
+    const next = reduceThreadSlice(prev, event)
+    if (next !== prev) {
+      set({ threadSlices: { ...get().threadSlices, [evtId]: next } })
     }
   },
 

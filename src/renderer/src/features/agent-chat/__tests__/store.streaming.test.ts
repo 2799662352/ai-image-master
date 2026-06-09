@@ -20,13 +20,18 @@ function currentTextItem(): TextItem {
 
 describe('agent chat store streaming text', () => {
   beforeEach(() => {
+    // The active view is thread-1 (matching the streamed events' threadId).
+    // Per-thread routing requires the active threadId to match for events to
+    // land in the visible `messages` (foreign-thread events go to background).
     useAgentChatStore.setState({
-      threadId: undefined,
+      threadId: 'thread-1',
       messages: [],
       isRunning: false,
       error: undefined,
       tokenUsage: undefined,
       pendingApprovals: [],
+      threadSlices: {},
+      runningByThread: {},
     })
   })
 

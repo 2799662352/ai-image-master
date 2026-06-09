@@ -315,6 +315,13 @@ export interface AgentToolRequest {
   id: string
   toolName: string
   params: Record<string, unknown>
+  /**
+   * DB thread id of the chat that requested this tool, reverse-mapped from the
+   * Codex `_meta` thread id by the main process. Lets the renderer attribute a
+   * tool's UI (e.g. a generated image) to the requesting chat even when the
+   * user has switched to another chat. Undefined for older codex / manual calls.
+   */
+  threadId?: string
 }
 
 export interface AgentToolResponse {

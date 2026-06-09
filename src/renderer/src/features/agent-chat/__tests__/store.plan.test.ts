@@ -27,13 +27,16 @@ function currentItems(): ActivityItem[] {
  */
 describe('agent chat store — plan rendering', () => {
   beforeEach(() => {
+    // Active view = thread-1, matching the streamed plan events' threadId.
     useAgentChatStore.setState({
-      threadId: undefined,
+      threadId: 'thread-1',
       messages: [],
       isRunning: false,
       error: undefined,
       tokenUsage: undefined,
       pendingApprovals: [],
+      threadSlices: {},
+      runningByThread: {},
     })
   })
 

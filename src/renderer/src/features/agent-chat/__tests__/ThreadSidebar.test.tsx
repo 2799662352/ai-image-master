@@ -126,11 +126,18 @@ describe('ThreadSidebar', () => {
     expect(fakeAgent.deleteThread).toHaveBeenCalledWith('older-1')
   })
 
-  it('disables row click while a turn is running', () => {
-    useAgentChatStore.setState({ isRunning: true })
+  it('keeps other rows clickable while a turn is running (parallel chats) and shows a running dot', () => {
+    // A background thread is running. With parallel chats you must still be able
+    // to switch to it without stopping it — so the row is NOT disabled.
+    useAgentChatStore.setState({ runningByThread: { 'older-1': true } })
     render(<ThreadSidebar />)
     const row = screen.getByText('Older thread').closest('button')
-    expect((row as HTMLButtonElement).disabled).toBe(true)
+    expect((row as HTMLButtonElement).disabled).toBe(false)
+    // A running indicator is shown for that thread.
+    expect(screen.getByLabelText('Running')).toBeTruthy()
+    // Clicking switches to it (does not require Stop first).
+    fireEvent.click(row as HTMLButtonElement)
+    expect(fakeAgent.openThread).toHaveBeenCalledWith('older-1')
   })
 
   it('renders nothing when sidebarOpen is false', () => {

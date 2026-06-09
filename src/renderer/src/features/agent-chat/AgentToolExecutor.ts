@@ -69,7 +69,7 @@ export class AgentToolExecutor {
 
   private async execute(request: AgentToolRequest): Promise<AgentToolResponse> {
     try {
-      const result = await this.call(request.toolName, request.params)
+      const result = await this.call(request.toolName, request.params, request.threadId)
       return { id: request.id, ok: true, result }
     } catch (error) {
       return {
@@ -80,10 +80,10 @@ export class AgentToolExecutor {
     }
   }
 
-  private async call(toolName: string, params: Record<string, unknown>): Promise<unknown> {
+  private async call(toolName: string, params: Record<string, unknown>, threadId?: string): Promise<unknown> {
     switch (toolName) {
       case 'generate_image':
-        return this.generateImage(params as unknown as GenerateImageToolParams)
+        return this.generateImage(params as unknown as GenerateImageToolParams, threadId)
       case 'query_history':
         return this.queryHistory(params as QueryHistoryToolParams)
       case 'open_image_viewer':
@@ -95,7 +95,7 @@ export class AgentToolExecutor {
     }
   }
 
-  private async generateImage(params: GenerateImageToolParams): Promise<unknown> {
+  private async generateImage(params: GenerateImageToolParams, requestThreadId?: string): Promise<unknown> {
     const api = ServiceRegistry.getRequired<{ generateImage: (params: GenerateImageParams) => Promise<GenerateResult> }>(
       SERVICE_KEYS.API,
     )
@@ -123,43 +123,53 @@ export class AgentToolExecutor {
       resolution: params.resolution ?? CODEX_DEFAULT_RESOLUTION,
     }
 
+    // Resolve the REQUESTING thread. Prefer the authoritative id Codex stamped
+    // on the tool call's `_meta` (reverse-mapped to our db thread id in main,
+    // arriving as `requestThreadId`) — that's correct even when several chats
+    // generate in parallel. Fall back to the active thread at tool-start only
+    // when the metadata is missing (older codex / manual calls). This is what
+    // keeps a background turn's image in ITS chat instead of leaking into
+    // whatever chat is active when the render finishes.
+    const chat = useAgentChatStore.getState()
+    const reqThreadId = requestThreadId ?? chat.threadId
+
     // Show a "generating" bubble immediately so the user sees in-progress
     // feedback during the (potentially long) request, then settle it in place.
-    const chat = useAgentChatStore.getState()
-    const genId = chat.beginImageGeneration(request.prompt)
+    const genId = chat.beginImageGeneration(request.prompt, reqThreadId)
 
     let result: GenerateResult
     try {
       result = await api.generateImage(request)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      chat.failImageGeneration(genId, message)
+      chat.failImageGeneration(genId, message, reqThreadId)
       throw error
     }
 
     if (!result.success) {
       const message = result.error || 'Image generation failed'
-      chat.failImageGeneration(genId, message)
+      chat.failImageGeneration(genId, message, reqThreadId)
       throw new Error(message)
     }
 
     const images = result.images ?? result.urls ?? []
     if (images.length === 0) {
       const message = 'Image generation returned no images'
-      chat.failImageGeneration(genId, message)
+      chat.failImageGeneration(genId, message, reqThreadId)
       throw new Error(message)
     }
 
     // Settle the bubble with the finished images (thumbnail + lightbox).
-    chat.resolveImageGeneration(genId, this.toArtifacts(images))
+    chat.resolveImageGeneration(genId, this.toArtifacts(images), reqThreadId)
 
     // Persist to history under the 'codex' type (base64 → R2 handled inside).
     const historyId = await this.recordHistory(request, images)
 
     // Anchor the bubble to the (cloud-persisted) history record so it survives
     // reload / thread-switch. We persist only a tiny pointer — the durable
-    // image URLs come from the history bucket, not from localStorage.
-    const threadId = chat.threadId
+    // image URLs come from the history bucket, not from localStorage. Use the
+    // captured requesting thread, not the (possibly switched) active one.
+    const threadId = reqThreadId
     if (historyId != null && threadId) {
       recordCodexArtifact(threadId, {
         id: `codex-artifact-${historyId}`,
