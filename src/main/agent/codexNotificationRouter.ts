@@ -1,4 +1,5 @@
 import type { AgentStreamEvent, AgentTokenUsage, AgentTokenUsageDelta } from '../../types/agent'
+import { MIN_SNAPSHOT_PREFIX_LEN } from '../../types/agent-timeline'
 import { countDiffLines, parseChange } from '../../shared/diffUtils'
 
 /**
@@ -669,6 +670,19 @@ export class CodexNotificationRouter {
   private readonly streamedDeltaItemIds = new Set<string>()
   private readonly streamedReasoningItemIds = new Set<string>()
   private readonly fileChangeOutputByItemId = new Map<string, string>()
+  /**
+   * Canonical agentMessage tracking for cumulative-snapshot gateways
+   * ("对话重复" source fix). Some Responses-API relays (apiyi, live
+   * 2026-06-10) never stream `item/agentMessage/delta`; instead every SSE
+   * chunk arrives as a brand-new agentMessage item (fresh `msg_*` id) whose
+   * completed `text` is the FULL reply accumulated so far. One real reply
+   * produced 130 such items. We track the last text item per thread and,
+   * when a new item's full text extends it, rewrite the event onto the
+   * canonical id with only the suffix — downstream (store, persistence)
+   * then sees ONE growing item, exactly like a compliant delta stream.
+   * The store/AgentManager-level dedup helpers remain as a fallback.
+   */
+  private readonly lastAgentTextByThread = new Map<string, { id: string; content: string }>()
 
   private clearThreadState(threadId: unknown): void {
     if (typeof threadId !== 'string' || threadId.length === 0) return
@@ -681,6 +695,17 @@ export class CodexNotificationRouter {
     }
     for (const key of this.fileChangeOutputByItemId.keys()) {
       if (key.startsWith(prefix)) this.fileChangeOutputByItemId.delete(key)
+    }
+    this.lastAgentTextByThread.delete(threadId)
+  }
+
+  private trackAgentText(threadId: unknown, itemId: string, appended: string): void {
+    if (typeof threadId !== 'string' || threadId.length === 0) return
+    const tracked = this.lastAgentTextByThread.get(threadId)
+    if (tracked && tracked.id === itemId) {
+      tracked.content += appended
+    } else {
+      this.lastAgentTextByThread.set(threadId, { id: itemId, content: appended })
     }
   }
 
@@ -698,21 +723,15 @@ export class CodexNotificationRouter {
             // appears under the real bubble). Drop it.
             return null
           case 'agentMessage':
-            return {
-              type: 'item_started',
-              threadId: params.threadId,
-              itemId: item.id,
-              itemType: 'text',
-              payload: {},
-            }
           case 'reasoning':
-            return {
-              type: 'item_started',
-              threadId: params.threadId,
-              itemId: item.id,
-              itemType: 'reasoning',
-              payload: {},
-            }
+            // Suppressed: both consumers (renderer store + AgentManager
+            // persistence) create-if-missing on item_delta/item_completed,
+            // so `started` carries no information for text/reasoning. In the
+            // cumulative-snapshot pattern (see lastAgentTextByThread) every
+            // chunk opens a fresh id — emitting started would materialize an
+            // empty text item / empty "Thought" pill per chunk that the
+            // canonicalized delta then never touches.
+            return null
           case 'commandExecution':
             return {
               type: 'item_started',
@@ -779,6 +798,9 @@ export class CodexNotificationRouter {
         const itemId = params.itemId as string | undefined
         const key = itemStateKey(params.threadId, itemId)
         if (key) this.streamedDeltaItemIds.add(key)
+        if (typeof itemId === 'string' && itemId.length > 0) {
+          this.trackAgentText(params.threadId, itemId, String(params.delta ?? ''))
+        }
         return {
           type: 'item_delta',
           threadId: params.threadId,
@@ -906,6 +928,33 @@ export class CodexNotificationRouter {
               return null
             }
             if (typeof item.text !== 'string' || item.text.length === 0) return null
+            // Cumulative-snapshot canonicalization: when this "new" item's
+            // full text merely extends the thread's previous text item, the
+            // gateway is re-sending the whole reply per chunk. Fold it onto
+            // the canonical id and emit only the suffix. Raw startsWith only
+            // — anything fuzzier (trailing-whitespace drift etc.) is left to
+            // the downstream dedup fallback.
+            const threadId = typeof params.threadId === 'string' ? params.threadId : ''
+            const tracked = threadId ? this.lastAgentTextByThread.get(threadId) : undefined
+            if (
+              tracked
+              && tracked.id !== item.id
+              && tracked.content.trimEnd().length >= MIN_SNAPSHOT_PREFIX_LEN
+              && item.text.startsWith(tracked.content)
+            ) {
+              const suffix = item.text.slice(tracked.content.length)
+              tracked.content = item.text
+              return {
+                type: 'item_delta',
+                threadId: params.threadId,
+                itemId: tracked.id,
+                itemType: 'text',
+                patch: { kind: 'appendText', field: 'content', text: suffix },
+              }
+            }
+            if (threadId) {
+              this.lastAgentTextByThread.set(threadId, { id: item.id, content: item.text })
+            }
             return {
               type: 'item_delta',
               threadId: params.threadId,
@@ -970,6 +1019,12 @@ export class CodexNotificationRouter {
                   final: { content: text },
                 }
               }
+              // Never streamed AND no text: an empty reasoning item carries
+              // zero information. Snapshot gateways emit one of these per
+              // SSE chunk (130 per reply in the live repro) — forwarding the
+              // completion would materialize an empty "Thought" pill each
+              // time, since consumers create-if-missing on item_completed.
+              return null
             }
             if (key) this.streamedReasoningItemIds.delete(key)
             return {

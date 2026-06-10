@@ -773,8 +773,39 @@ describe('CodexNotificationRouter', () => {
   })
 
   describe('reasoning completion', () => {
-    it('emits item_completed for reasoning items with no summary/content', () => {
+    it('drops reasoning completions with no streamed deltas and no summary/content (no empty Thought pills)', () => {
+      // Cumulative-snapshot gateways (apiyi, live 2026-06-10) emit one EMPTY
+      // reasoning item per SSE chunk — 130 per reply. Since both event
+      // consumers create-if-missing on item_completed, forwarding `final: {}`
+      // would materialize an empty "Thought" pill per chunk. An empty
+      // reasoning item carries zero information for ANY gateway → drop at
+      // the source.
       const router = new CodexNotificationRouter()
+      const event = router.route('item/completed', {
+        threadId: 't',
+        turnId: 'u',
+        item: { type: 'reasoning', id: 'r-1', summary: [], content: [] },
+      })
+      expect(event).toBeNull()
+    })
+
+    it('suppresses item_started for reasoning (seeded lazily by deltas / backfill)', () => {
+      // Same rationale as agentMessage: in the snapshot pattern every chunk
+      // opens a fresh empty reasoning item. Deltas and the text-bearing
+      // completion backfill both create-if-missing downstream, so started
+      // only ever materializes empty "Thought" pills.
+      const router = new CodexNotificationRouter()
+      const started = router.route('item/started', {
+        threadId: 't',
+        turnId: 'u',
+        item: { type: 'reasoning', id: 'r-1' },
+      })
+      expect(started).toBeNull()
+    })
+
+    it('still completes reasoning items whose deltas streamed', () => {
+      const router = new CodexNotificationRouter()
+      router.route('item/reasoning/textDelta', { threadId: 't', turnId: 'u', itemId: 'r-1', delta: 'thinking…' })
       const event = router.route('item/completed', {
         threadId: 't',
         turnId: 'u',
@@ -875,6 +906,152 @@ describe('CodexNotificationRouter', () => {
         itemType: 'reasoning',
         patch: { kind: 'appendText', field: 'content', text: '\n\n' },
       })
+    })
+  })
+
+  // ---------------------------------------------------------------------
+  // Cumulative-snapshot stream canonicalization ("对话重复" source fix).
+  //
+  // Wire-truth from the live repro (apiyi /v1/responses emulation,
+  // 2026-06-10, DB row cmq7z96v60002ccn7zpsf7chw — 267 items): the gateway
+  // does NOT stream `item/agentMessage/delta`. Instead every SSE chunk
+  // arrives as a fresh pair of
+  //   item/started  reasoning   (new rs_* id, never any text)
+  //   item/completed reasoning  (empty)
+  //   item/started  agentMessage (new msg_* id)
+  //   item/completed agentMessage (text = FULL accumulated reply so far)
+  // codex itself only speaks wire_api="responses" (chat was removed in
+  // openai/codex#7782), so the only place we can normalize this is here —
+  // the single ingestion point. Downstream dedup stays as a fallback.
+  // ---------------------------------------------------------------------
+  describe('cumulative-snapshot canonicalization (agentMessage)', () => {
+    const T = 'thread-snap'
+
+    function completeAgentMessage(router: CodexNotificationRouter, id: string, text: string) {
+      router.route('item/started', { threadId: T, turnId: 'u', item: { type: 'agentMessage', id } })
+      return router.route('item/completed', {
+        threadId: T,
+        turnId: 'u',
+        item: { type: 'agentMessage', id, text },
+      })
+    }
+
+    it('rewrites a growing full-text snapshot onto the FIRST item id as a suffix delta', () => {
+      const router = new CodexNotificationRouter()
+      const base = '我按原文的温柔、克制语气扩写了一版，保留核心意象，把情绪铺得更满。'
+
+      const first = completeAgentMessage(router, 'msg-0', base.slice(0, 12))
+      expect(first).toMatchObject({
+        type: 'item_delta',
+        itemId: 'msg-0',
+        patch: { kind: 'appendText', field: 'content', text: base.slice(0, 12) },
+      })
+
+      // Snapshot 2: NEW id, full accumulated text → must target msg-0 with
+      // only the new suffix, so downstream sees ONE growing item.
+      const second = completeAgentMessage(router, 'msg-1', base.slice(0, 20))
+      expect(second).toMatchObject({
+        type: 'item_delta',
+        itemId: 'msg-0',
+        patch: { kind: 'appendText', field: 'content', text: base.slice(12, 20) },
+      })
+
+      const third = completeAgentMessage(router, 'msg-2', base)
+      expect(third).toMatchObject({
+        type: 'item_delta',
+        itemId: 'msg-0',
+        patch: { kind: 'appendText', field: 'content', text: base.slice(20) },
+      })
+    })
+
+    it('emits a no-op suffix when an identical snapshot repeats under a new id', () => {
+      const router = new CodexNotificationRouter()
+      const text = '这一段足够长，可以触发快照折叠逻辑。'
+      completeAgentMessage(router, 'msg-0', text)
+      const dup = completeAgentMessage(router, 'msg-1', text)
+      expect(dup).toMatchObject({
+        type: 'item_delta',
+        itemId: 'msg-0',
+        patch: { kind: 'appendText', field: 'content', text: '' },
+      })
+    })
+
+    it('treats non-extending text as a genuinely new paragraph (new canonical id)', () => {
+      const router = new CodexNotificationRouter()
+      completeAgentMessage(router, 'msg-0', '第一段：独立的分析内容，长度足够。')
+      const next = completeAgentMessage(router, 'msg-1', '第二段：完全不同的结论，互不为前缀。')
+      expect(next).toMatchObject({ type: 'item_delta', itemId: 'msg-1' })
+
+      // …and the new paragraph becomes the canonical target for later snapshots.
+      const grown = completeAgentMessage(router, 'msg-2', '第二段：完全不同的结论，互不为前缀。补充。')
+      expect(grown).toMatchObject({
+        type: 'item_delta',
+        itemId: 'msg-1',
+        patch: { kind: 'appendText', field: 'content', text: '补充。' },
+      })
+    })
+
+    it('does not canonicalize across threads', () => {
+      const router = new CodexNotificationRouter()
+      const text = '同样的开头内容足够长足够长。'
+      completeAgentMessage(router, 'msg-0', text)
+      const other = router.route('item/completed', {
+        threadId: 'other-thread',
+        turnId: 'u',
+        item: { type: 'agentMessage', id: 'msg-1', text: `${text}延伸` },
+      })
+      expect(other).toMatchObject({ type: 'item_delta', itemId: 'msg-1' })
+    })
+
+    it('skips canonicalization for short prefixes (below safety threshold)', () => {
+      const router = new CodexNotificationRouter()
+      completeAgentMessage(router, 'msg-0', '好的。')
+      const next = completeAgentMessage(router, 'msg-1', '好的。我们继续推进下一步的修复工作。')
+      expect(next).toMatchObject({ type: 'item_delta', itemId: 'msg-1' })
+    })
+
+    it('resets canonical tracking when the turn completes', () => {
+      const router = new CodexNotificationRouter()
+      const text = '本回合的完整回复，长度足够触发折叠。'
+      completeAgentMessage(router, 'msg-0', text)
+      router.route('turn/completed', { threadId: T, turn: { id: 'turn-1' } })
+
+      // Next turn legitimately starts with the same opening — must NOT be
+      // folded into the previous turn's item.
+      const nextTurn = completeAgentMessage(router, 'msg-9', `${text}下一回合的延伸。`)
+      expect(nextTurn).toMatchObject({ type: 'item_delta', itemId: 'msg-9' })
+    })
+
+    it('tracks content streamed via compliant agentMessage deltas too', () => {
+      // Mixed-mode gateways: msg-0 streams real deltas, then a snapshot
+      // arrives under a new id carrying the full text — still folded.
+      const router = new CodexNotificationRouter()
+      router.route('item/agentMessage/delta', { threadId: T, turnId: 'u', itemId: 'msg-0', delta: '前半段内容，' })
+      router.route('item/agentMessage/delta', { threadId: T, turnId: 'u', itemId: 'msg-0', delta: '后半段内容。' })
+      const snapshot = router.route('item/completed', {
+        threadId: T,
+        turnId: 'u',
+        item: { type: 'agentMessage', id: 'msg-1', text: '前半段内容，后半段内容。结尾。' },
+      })
+      expect(snapshot).toMatchObject({
+        type: 'item_delta',
+        itemId: 'msg-0',
+        patch: { kind: 'appendText', field: 'content', text: '结尾。' },
+      })
+    })
+
+    it('suppresses item_started for agentMessage (items are seeded lazily by content events)', () => {
+      // In the snapshot pattern item/started arrives with a brand-new id per
+      // chunk; emitting item_started would materialize an empty text item
+      // that the canonicalized delta then never touches. Both consumers
+      // create-if-missing on item_delta, so started carries no information.
+      const router = new CodexNotificationRouter()
+      const started = router.route('item/started', {
+        threadId: T,
+        turnId: 'u',
+        item: { type: 'agentMessage', id: 'msg-0' },
+      })
+      expect(started).toBeNull()
     })
   })
 
@@ -1280,7 +1457,7 @@ describe('CodexNotificationRouter', () => {
           { status: 'completed' }, // missing text → dropped
         ],
       })
-      const fields = (event as { patch: { fields: { steps: unknown } } }).patch.fields
+      const fields = (event as unknown as { patch: { fields: { steps: unknown } } }).patch.fields
       expect(fields.steps).toEqual([
         { text: 'good', status: 'pending' },
         { text: 'no-status', status: 'pending' },

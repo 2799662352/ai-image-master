@@ -86,6 +86,13 @@ function basename(path: string): string {
  *  1) classifyMediaKind 能判出 image / video
  *  2) 至少有一个非空的可显示 URI(优先 thumbnailUri,其次 uri)
  */
+/**
+ * DEV diagnostic dedup: mediaRefsOf runs inside the React render path, so
+ * without this every re-render of a bubble re-warns about the same ref and
+ * floods the console (observed: dozens of identical lines per .txt chip).
+ */
+const warnedSkippedRefs = new Set<string>()
+
 export function mediaRefsOf(item: TimelineItem): AttachmentRef[] {
   if (item.type !== 'attachment' && item.type !== 'artifact') return []
   const refs: readonly AttachmentRef[] =
@@ -101,17 +108,22 @@ export function mediaRefsOf(item: TimelineItem): AttachmentRef[] {
       kept.push(ref)
       continue
     }
-    // DEV-only diagnostic so when a user reports "thumbnail didn't show up",
-    // we can see in the renderer console exactly which gate failed. In prod
-    // we stay silent — a no-thumbnail render is a valid outcome for real
-    // non-media attachments.
+    // kind == null means a genuinely non-media attachment (.txt, .pdf, …) —
+    // rendering it as a plain file chip without a thumbnail is the CORRECT
+    // outcome, not a failure. Stay silent.
+    if (kind == null) continue
+    // DEV-only diagnostic for the genuinely suspicious case: the ref claims
+    // to be image/video but carries no displayable URI, so a thumbnail the
+    // user expects will be missing. Warn once per ref; prod stays silent.
     if (
       typeof import.meta !== 'undefined' &&
       import.meta.env?.DEV &&
-      typeof console !== 'undefined'
+      typeof console !== 'undefined' &&
+      !warnedSkippedRefs.has(ref.id)
     ) {
+      warnedSkippedRefs.add(ref.id)
       // eslint-disable-next-line no-console
-      console.warn('[mediaRefsOf] skipped attachment', {
+      console.warn('[mediaRefsOf] media attachment has no displayable src', {
         timelineItemId: item.id,
         refId: ref.id,
         name: ref.name,
@@ -120,8 +132,6 @@ export function mediaRefsOf(item: TimelineItem): AttachmentRef[] {
         uri: ref.uri,
         thumbnailUri: ref.thumbnailUri,
         classified: kind,
-        hasSrc,
-        reason: kind == null ? 'classifyMediaKind=null' : 'empty src',
       })
     }
   }
