@@ -24,7 +24,7 @@ import type {
 } from '../../../../types/agent'
 import type { AgentReference } from '../../../../types/agent-reference'
 import type { ArtifactItem, AttachmentRef, Message, PlanStep, TimelineItem } from '../../../../types/agent-timeline'
-import { upsertItemInLastMessage } from '../../../../types/agent-timeline'
+import { trimRetriedStreamItemsInLastMessage, upsertItemInLastMessage } from '../../../../types/agent-timeline'
 import { AGENT_MODELS, DEFAULT_MODEL_ID } from './models'
 import { useFileExplorerStore } from '../file-explorer/store'
 import { rehydrateCodexArtifacts } from './codexArtifactPersistence'
@@ -674,8 +674,18 @@ export function reduceThreadSlice(slice: ThreadSlice, event: AgentStreamEvent): 
       return { ...slice, isRunning: false }
     case 'token_usage_updated':
       return { ...slice, tokenUsage: event.usage }
-    case 'error':
+    case 'error': {
+      if (event.willRetry) {
+        // Transient stream error: codex will retry the SAME request and
+        // re-stream the full response under NEW item ids. Drop the failed
+        // attempt's trailing partial text/reasoning so the retry replaces it
+        // instead of stacking a duplicate paragraph, and keep the turn
+        // running — this is not a terminal error (openai/codex#7611).
+        const msgs = trimRetriedStreamItemsInLastMessage(slice.messages)
+        return msgs === slice.messages ? slice : { ...slice, messages: msgs }
+      }
       return { ...slice, error: event.error, isRunning: false }
+    }
     case 'cancelled':
       return { ...slice, isRunning: false }
     default:
@@ -1393,7 +1403,13 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
 
     // Cross-thread running flag (drives the ThreadSidebar dots) + thread-list
     // title refresh — both fire for ANY thread, active or background.
-    if (event.type === 'turn_completed' || event.type === 'error' || event.type === 'cancelled') {
+    // willRetry errors are transient — the backend is re-streaming the same
+    // turn, so the thread is still running and must keep its sidebar dot.
+    if (
+      event.type === 'turn_completed' ||
+      event.type === 'cancelled' ||
+      (event.type === 'error' && !event.willRetry)
+    ) {
       if (evtId && get().runningByThread[evtId]) {
         const next = { ...get().runningByThread }
         delete next[evtId]

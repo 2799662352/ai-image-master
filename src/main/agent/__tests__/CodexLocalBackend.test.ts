@@ -169,7 +169,7 @@ describe('mapServerNotification', () => {
   it('maps error notifications to error events', () => {
     expect(
       mapServerNotification('error', { error: { message: 'kaboom' }, willRetry: false, threadId: 't', turnId: 'u' }),
-    ).toEqual({ type: 'error', threadId: 't', error: 'kaboom' })
+    ).toEqual({ type: 'error', threadId: 't', error: 'kaboom', willRetry: false })
   })
 
   it('returns null for notifications we do not consume', () => {

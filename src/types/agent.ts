@@ -303,7 +303,13 @@ export type AgentStreamEvent =
   | (AgentStreamEventBase & { type: 'item_completed'; itemId: string; itemType: TimelineItem['type']; final: Record<string, unknown> })
   | (AgentStreamEventBase & { type: 'turn_completed' })
   | (AgentStreamEventBase & { type: 'token_usage_updated'; usage: AgentTokenUsage })
-  | (AgentStreamEventBase & { type: 'error'; error: string })
+  /**
+   * `willRetry: true` mirrors codex's stream-error notification: the backend
+   * will retry the SAME model request and re-stream the full response under
+   * NEW item ids. Clients must drop the failed attempt's partial text or
+   * reasoning output and keep the turn running instead of terminating.
+   */
+  | (AgentStreamEventBase & { type: 'error'; error: string; willRetry?: boolean })
   | (AgentStreamEventBase & { type: 'cancelled' })
   | (AgentStreamEventBase & { type: 'attachment_error'; name: string; error: string })
   | { type: 'mcp_status_updated'; name: string; status: string; error: string | null }

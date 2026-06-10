@@ -50,6 +50,7 @@ import type {
   ItemDeltaPatch,
 } from '../../types/agent'
 import type { AttachmentRef, TimelineItem } from '../../types/agent-timeline'
+import { trimRetriedStreamItems } from '../../types/agent-timeline'
 import type { AttachmentService } from './AttachmentService'
 import type { ThreadStore } from './ThreadStore'
 import type { AgentInput, IAgentBackend, ListThreadsParams } from './types'
@@ -1277,13 +1278,21 @@ function isInvalidEncryptedContentError(error: unknown): boolean {
  * `AgentMessage` row written on `turn_completed`.
  *
  * Only handles the assistant-side item events (item_started / item_delta /
- * item_completed). Returns the original array for unrelated event types so
- * the caller can stay in a simple reassignment pattern.
+ * item_completed) plus stream-retry errors (`error` with `willRetry: true`,
+ * which drops the failed attempt's trailing text/reasoning so the retry's
+ * re-stream replaces it instead of duplicating it in the persisted row).
+ * Returns the original array for unrelated event types so the caller can
+ * stay in a simple reassignment pattern.
+ *
+ * Exported for tests.
  */
-function applyAssistantEvent(
+export function applyAssistantEvent(
   items: TimelineItem[],
   event: AgentStreamEvent,
 ): TimelineItem[] {
+  if (event.type === 'error') {
+    return event.willRetry ? trimRetriedStreamItems(items) : items
+  }
   if (event.type !== 'item_started' && event.type !== 'item_delta' && event.type !== 'item_completed') {
     return items
   }

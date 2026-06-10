@@ -48,11 +48,35 @@ describe('CodexNotificationRouter', () => {
     ).toEqual({ type: 'turn_completed', threadId: 't', turnId: 'turn-9' })
   })
 
-  it('translates error notifications', () => {
+  it('translates error notifications (terminal: willRetry false/absent)', () => {
     const router = new CodexNotificationRouter()
     expect(
       router.route('error', { threadId: 't', turnId: 'u', error: { message: 'boom' } }),
-    ).toEqual({ type: 'error', threadId: 't', error: 'boom' })
+    ).toEqual({ type: 'error', threadId: 't', error: 'boom', willRetry: false })
+    expect(
+      router.route('error', { threadId: 't', turnId: 'u', error: { message: 'boom' }, willRetry: false }),
+    ).toEqual({ type: 'error', threadId: 't', error: 'boom', willRetry: false })
+  })
+
+  it('forwards willRetry:true for stream-error notifications (openai/codex#7611)', () => {
+    // codex-rs bespoke_event_handling.rs: EventMsg::StreamError → Error
+    // notification with will_retry:true — the backend is about to re-stream
+    // the same request with NEW item ids. Clients must not treat this as a
+    // terminal error (VSCE renders it as "Reconnecting… 1/n").
+    const router = new CodexNotificationRouter()
+    expect(
+      router.route('error', {
+        threadId: 't',
+        turnId: 'u',
+        error: { message: 'stream disconnected before completion' },
+        willRetry: true,
+      }),
+    ).toEqual({
+      type: 'error',
+      threadId: 't',
+      error: 'stream disconnected before completion',
+      willRetry: true,
+    })
   })
 
   it('returns null for unrelated notifications', () => {

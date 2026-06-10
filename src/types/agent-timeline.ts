@@ -135,6 +135,42 @@ export function getMessageText(msg: Message): string {
     .join('\n')
 }
 
+/**
+ * Drops the trailing run of `text`/`reasoning` items — the partial streamed
+ * output of a model attempt that failed mid-stream. Codex stream retries
+ * (error notification with `willRetry: true`) re-stream the ENTIRE response
+ * under new item ids, so keeping the failed attempt's partial paragraphs
+ * duplicates them once per retry ("对话重复"). Completed tool items (shell,
+ * fileEdit, …) really executed and are preserved — only the trailing
+ * text/reasoning run is speculative. Returns the original array when there is
+ * nothing to trim.
+ */
+export function trimRetriedStreamItems(items: TimelineItem[]): TimelineItem[] {
+  let end = items.length
+  while (end > 0) {
+    const t = items[end - 1].type
+    if (t !== 'text' && t !== 'reasoning') break
+    end -= 1
+  }
+  return end === items.length ? items : items.slice(0, end)
+}
+
+/**
+ * Applies {@link trimRetriedStreamItems} to the last assistant message.
+ * Returns the original array when nothing changed.
+ */
+export function trimRetriedStreamItemsInLastMessage(messages: Message[]): Message[] {
+  if (messages.length === 0) return messages
+  const lastIdx = messages.length - 1
+  const lastMsg = messages[lastIdx]
+  if (lastMsg.role !== 'assistant') return messages
+  const trimmed = trimRetriedStreamItems(lastMsg.items)
+  if (trimmed === lastMsg.items) return messages
+  const updated = [...messages]
+  updated[lastIdx] = { ...lastMsg, items: trimmed }
+  return updated
+}
+
 export function upsertItemInLastMessage<T extends TimelineItem>(
   messages: Message[],
   itemId: string,

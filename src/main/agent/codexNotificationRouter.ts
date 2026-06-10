@@ -1047,10 +1047,15 @@ export class CodexNotificationRouter {
         }
 
       case 'error':
+        // codex-rs sends willRetry:true for transient stream errors
+        // (EventMsg::StreamError) right before re-streaming the same request
+        // with new item ids. Forward the flag so downstream consumers can
+        // drop the failed attempt's partial output instead of duplicating it.
         return {
           type: 'error',
           threadId: params.threadId,
           error: params.error?.message ?? 'codex error',
+          willRetry: params.willRetry === true,
         }
 
       case 'mcpServer/startupStatus/updated':
