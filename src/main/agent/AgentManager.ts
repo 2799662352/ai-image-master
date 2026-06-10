@@ -50,7 +50,7 @@ import type {
   ItemDeltaPatch,
 } from '../../types/agent'
 import type { AttachmentRef, TimelineItem } from '../../types/agent-timeline'
-import { trimRetriedStreamItems } from '../../types/agent-timeline'
+import { dropSupersededStreamItems, trimRetriedStreamItems } from '../../types/agent-timeline'
 import type { AttachmentService } from './AttachmentService'
 import type { ThreadStore } from './ThreadStore'
 import type { AgentInput, IAgentBackend, ListThreadsParams } from './types'
@@ -1304,23 +1304,36 @@ export function applyAssistantEvent(
       return [...items, created]
     }
     case 'item_delta': {
+      let next: TimelineItem[]
       if (idx < 0) {
         const seeded = createItemFromStarted(event.itemType, event.itemId, {})
-        return [...items, applyItemPatch(seeded, event.patch)]
+        next = [...items, applyItemPatch(seeded, event.patch)]
+      } else {
+        next = items.slice()
+        next[idx] = applyItemPatch(next[idx], event.patch)
       }
-      const next = items.slice()
-      next[idx] = applyItemPatch(next[idx], event.patch)
+      // Cumulative-snapshot gateways re-send the FULL text under a NEW item
+      // id per chunk; collapse superseded snapshots so the persisted row holds
+      // one final paragraph instead of 100+ stacked duplicates ("对话重复").
+      if (event.itemType === 'text' || event.itemType === 'reasoning') {
+        next = dropSupersededStreamItems(next, event.itemId)
+      }
       return next
     }
     case 'item_completed': {
+      let next: TimelineItem[]
       if (idx < 0) {
         const seeded = createItemFromStarted(event.itemType, event.itemId, {})
         const merged = { ...seeded, ...event.final, type: seeded.type, endedAt: Date.now() } as TimelineItem
-        return [...items, merged]
+        next = [...items, merged]
+      } else {
+        next = items.slice()
+        const cur = next[idx]
+        next[idx] = { ...cur, ...event.final, type: cur.type, endedAt: Date.now() } as TimelineItem
       }
-      const next = items.slice()
-      const cur = next[idx]
-      next[idx] = { ...cur, ...event.final, type: cur.type, endedAt: Date.now() } as TimelineItem
+      if (event.itemType === 'text' || event.itemType === 'reasoning') {
+        next = dropSupersededStreamItems(next, event.itemId)
+      }
       return next
     }
   }

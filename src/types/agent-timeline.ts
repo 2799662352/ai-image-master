@@ -171,6 +171,85 @@ export function trimRetriedStreamItemsInLastMessage(messages: Message[]): Messag
   return updated
 }
 
+/**
+ * Minimum prefix length before a text/reasoning item can be considered a
+ * superseded snapshot of a later one. Short openings ("好的。") legitimately
+ * repeat across paragraphs and must survive.
+ */
+export const MIN_SNAPSHOT_PREFIX_LEN = 8
+
+/**
+ * Some Responses-API relay gateways (observed live with apiyi, 2026-06-10)
+ * stream an assistant message as cumulative SNAPSHOTS: every SSE chunk
+ * arrives as a brand-new `agentMessage` item (fresh `msg_*` id) whose content
+ * is the FULL text accumulated so far, each preceded by a fresh EMPTY
+ * `reasoning` item (fresh `rs_*` id). One real reply produced 130 such pairs
+ * in 105s. Treating each snapshot as a separate timeline item stacks the same
+ * growing paragraph once per chunk ("对话重复") — no error/willRetry is
+ * involved, so the stream-retry trim never fires.
+ *
+ * Collapses that pattern after `touchedItemId` received content:
+ *   1. Any EARLIER same-type text/reasoning item whose content is a full
+ *      prefix (≥ {@link MIN_SNAPSHOT_PREFIX_LEN} chars, trailing-whitespace
+ *      insensitive) of the touched item's content is a superseded snapshot →
+ *      dropped.
+ *   2. Empty reasoning items immediately followed by another reasoning item
+ *      carry no information (the snapshot pattern emits one per chunk) →
+ *      dropped.
+ *
+ * Returns the original array when nothing changed.
+ */
+export function dropSupersededStreamItems(
+  items: TimelineItem[],
+  touchedItemId: string,
+): TimelineItem[] {
+  let result = items
+
+  const idx = items.findIndex((i) => i.id === touchedItemId)
+  if (idx > 0) {
+    const target = items[idx]
+    if (target.type === 'text' || target.type === 'reasoning') {
+      const targetContent = target.content.trimEnd()
+      if (targetContent.length >= MIN_SNAPSHOT_PREFIX_LEN) {
+        const filtered = items.filter((it, i) => {
+          if (i >= idx || it.type !== target.type) return true
+          const c = (it as TextItem | ReasoningItem).content.trimEnd()
+          return c.length < MIN_SNAPSHOT_PREFIX_LEN || !targetContent.startsWith(c)
+        })
+        if (filtered.length !== items.length) result = filtered
+      }
+    }
+  }
+
+  const collapsed = result.filter((it, i) => {
+    if (it.type !== 'reasoning' || it.content.trim() !== '') return true
+    const next = result[i + 1]
+    return !(next && next.type === 'reasoning')
+  })
+  if (collapsed.length !== result.length) result = collapsed
+
+  return result
+}
+
+/**
+ * Applies {@link dropSupersededStreamItems} to the last assistant message.
+ * Returns the original array when nothing changed.
+ */
+export function dropSupersededStreamItemsInLastMessage(
+  messages: Message[],
+  touchedItemId: string,
+): Message[] {
+  if (messages.length === 0) return messages
+  const lastIdx = messages.length - 1
+  const lastMsg = messages[lastIdx]
+  if (lastMsg.role !== 'assistant') return messages
+  const next = dropSupersededStreamItems(lastMsg.items, touchedItemId)
+  if (next === lastMsg.items) return messages
+  const updated = [...messages]
+  updated[lastIdx] = { ...lastMsg, items: next }
+  return updated
+}
+
 export function upsertItemInLastMessage<T extends TimelineItem>(
   messages: Message[],
   itemId: string,

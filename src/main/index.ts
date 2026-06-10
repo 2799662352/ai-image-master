@@ -657,13 +657,17 @@ async function initAgentRuntime(win: BrowserWindow): Promise<void> {
   try {
     const prisma = await getPrisma()
 
-    // One-time cleanup of stream-retry duplicates persisted before the
-    // v4.3.29 willRetry fix (see historyDedup.ts). Awaited so threads are
-    // already clean by the time the renderer can open them; its own
-    // try/catch keeps a cleanup failure from blocking agent startup — the
-    // marker is only written on success, so the next launch retries.
+    // One-time cleanup of duplicated assistant paragraphs (stream-retry
+    // artifacts AND the cumulative-snapshot gateway pattern fixed in
+    // v4.3.31, see historyDedup.ts / dropSupersededStreamItems). Awaited so
+    // threads are already clean by the time the renderer can open them; its
+    // own try/catch keeps a cleanup failure from blocking agent startup —
+    // the marker is only written on success, so the next launch retries.
+    // v2: re-runs once for installs that already completed the v1 pass,
+    // catching rows written between v1 and the live snapshot-dedup fix,
+    // plus the new empty-reasoning collapse.
     try {
-      const markerPath = path.join(app.getPath('userData'), 'agent-retry-dedup-v1.done')
+      const markerPath = path.join(app.getPath('userData'), 'agent-retry-dedup-v2.done')
       const stats = await runStartupDedupOnce({ prisma, markerPath })
       if (stats && stats.cleaned > 0) {
         console.log(

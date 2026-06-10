@@ -24,7 +24,11 @@ import type {
 } from '../../../../types/agent'
 import type { AgentReference } from '../../../../types/agent-reference'
 import type { ArtifactItem, AttachmentRef, Message, PlanStep, TimelineItem } from '../../../../types/agent-timeline'
-import { trimRetriedStreamItemsInLastMessage, upsertItemInLastMessage } from '../../../../types/agent-timeline'
+import {
+  dropSupersededStreamItemsInLastMessage,
+  trimRetriedStreamItemsInLastMessage,
+  upsertItemInLastMessage,
+} from '../../../../types/agent-timeline'
 import { AGENT_MODELS, DEFAULT_MODEL_ID } from './models'
 import { useFileExplorerStore } from '../file-explorer/store'
 import { rehydrateCodexArtifacts } from './codexArtifactPersistence'
@@ -651,23 +655,32 @@ export function reduceThreadSlice(slice: ThreadSlice, event: AgentStreamEvent): 
     case 'item_delta': {
       const itemId = resolveItemId(event)
       const msgs = ensureAssistantMessage(slice.messages)
-      const next = upsertItemInLastMessage(
+      let next = upsertItemInLastMessage(
         msgs,
         itemId,
         () => applyItemPatch(createItemFromStarted(event.itemType, itemId, {}), event.patch),
         (item) => applyItemPatch(item, event.patch),
       )
+      // Cumulative-snapshot gateways re-send the FULL text under a NEW item
+      // id per chunk; collapse superseded snapshots so the bubble shows one
+      // growing paragraph instead of stacking duplicates ("对话重复").
+      if (event.itemType === 'text' || event.itemType === 'reasoning') {
+        next = dropSupersededStreamItemsInLastMessage(next, itemId)
+      }
       return next === slice.messages ? slice : { ...slice, messages: next }
     }
     case 'item_completed': {
       const itemId = resolveItemId(event)
       const msgs = ensureAssistantMessage(slice.messages)
-      const next = upsertItemInLastMessage(
+      let next = upsertItemInLastMessage(
         msgs,
         itemId,
         () => applyItemCompleted(createItemFromStarted(event.itemType, itemId, {}), event.final),
         (item) => applyItemCompleted(item, event.final),
       )
+      if (event.itemType === 'text' || event.itemType === 'reasoning') {
+        next = dropSupersededStreamItemsInLastMessage(next, itemId)
+      }
       return next === slice.messages ? slice : { ...slice, messages: next }
     }
     case 'turn_completed':

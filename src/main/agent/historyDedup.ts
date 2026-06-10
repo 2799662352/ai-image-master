@@ -75,8 +75,23 @@ export function dedupeRetryArtifactItems(items: unknown): TimelineItem[] | null 
     }
   }
 
-  if (keep.every(Boolean)) return null
-  return items.filter((_, idx) => keep[idx])
+  let cleaned = items.filter((_, idx) => keep[idx])
+
+  // Second pass: the cumulative-snapshot gateway pattern (one EMPTY reasoning
+  // item per SSE chunk — see dropSupersededStreamItems in agent-timeline.ts)
+  // leaves long runs of empty reasoning items once the superseded text
+  // snapshots above are removed. An empty reasoning item immediately followed
+  // by another reasoning item carries no information → drop it.
+  cleaned = cleaned.filter((it, i) => {
+    if (it.type !== 'reasoning') return true
+    const content = contentOf(it)
+    if (content !== '' && content !== null) return true
+    const next = cleaned[i + 1]
+    return !(next && next.type === 'reasoning')
+  })
+
+  if (cleaned.length === items.length) return null
+  return cleaned
 }
 
 export interface DedupStats {

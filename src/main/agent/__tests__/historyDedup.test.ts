@@ -75,6 +75,27 @@ describe('dedupeRetryArtifactItems', () => {
     expect(result!.map((i) => i.id)).toEqual(['t2'])
   })
 
+  it('collapses runs of empty reasoning items left by the snapshot gateway pattern', () => {
+    // Real-world shape (msg cmq7z96v60002ccn7zpsf7chw): per SSE chunk the
+    // gateway emitted a fresh EMPTY reasoning item + a fresh cumulative text
+    // snapshot. After the prefix pass removes superseded texts, the empty
+    // reasoning run must collapse to its last member.
+    const base = '我按原文的温柔、克制语气扩写了一版，保留核心意象。'
+    const items: TimelineItem[] = []
+    for (let n = 0; n < 4; n++) {
+      items.push(reasoning(`rs-${n}`, ''))
+      items.push(text(`msg-${n}`, base.slice(0, 10 + n * 5)))
+    }
+    const result = dedupeRetryArtifactItems(items)
+    expect(result).not.toBeNull()
+    expect(result!.map((i) => i.id)).toEqual(['rs-3', 'msg-3'])
+  })
+
+  it('keeps a single empty reasoning item followed by text (legit stripped-reasoning gateway)', () => {
+    const items = [reasoning('r1', ''), text('t1', '答案内容足够长足够长足够长。')]
+    expect(dedupeRetryArtifactItems(items)).toBeNull()
+  })
+
   it('returns null for malformed input', () => {
     expect(dedupeRetryArtifactItems('not-an-array')).toBeNull()
     expect(dedupeRetryArtifactItems(null)).toBeNull()
