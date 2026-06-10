@@ -31,6 +31,7 @@ import { AttachmentService } from './agent/AttachmentService'
 import { consumeStartupNotice, getPrisma, shutdownDatabase } from './agent/db'
 import { registerAgentIpc } from './agent/ipc'
 import { migrateLegacyUserSkills } from './agent/legacySkillsMigration'
+import { runStartupDedupOnce } from './agent/historyDedup'
 import { installFirstPartySkills } from './agent/firstPartySkills'
 import { registerMarketplaceIpc } from './marketplace/ipc'
 import { ThreadStore } from './agent/ThreadStore'
@@ -655,6 +656,24 @@ async function initAgentRuntime(win: BrowserWindow): Promise<void> {
 
   try {
     const prisma = await getPrisma()
+
+    // One-time cleanup of stream-retry duplicates persisted before the
+    // v4.3.29 willRetry fix (see historyDedup.ts). Awaited so threads are
+    // already clean by the time the renderer can open them; its own
+    // try/catch keeps a cleanup failure from blocking agent startup — the
+    // marker is only written on success, so the next launch retries.
+    try {
+      const markerPath = path.join(app.getPath('userData'), 'agent-retry-dedup-v1.done')
+      const stats = await runStartupDedupOnce({ prisma, markerPath })
+      if (stats && stats.cleaned > 0) {
+        console.log(
+          `[historyDedup] cleaned ${stats.cleaned}/${stats.scanned} assistant messages, removed ${stats.itemsRemoved} duplicated items`,
+        )
+      }
+    } catch (err) {
+      console.warn('[historyDedup] startup cleanup failed (will retry next launch):', err)
+    }
+
     const threadStore = new ThreadStore(prisma)
     const attachmentService = new AttachmentService(prisma)
     // Defense-in-depth invalidation for the renderer ATTACHMENTS panel
