@@ -3,6 +3,7 @@ import { AgentToolExecutor } from '../AgentToolExecutor'
 import { useAgentChatStore } from '../store'
 import { ServiceRegistry, SERVICE_KEYS } from '../../../services/ServiceBridge'
 import type { ArtifactItem } from '../../../../../types/agent-timeline'
+import { getCodexArtifacts } from '../codexArtifactPersistence'
 
 type ApiFake = { generateImage: ReturnType<typeof vi.fn> }
 type HistoryFake = { init: ReturnType<typeof vi.fn>; addToHistory: ReturnType<typeof vi.fn> }
@@ -23,6 +24,7 @@ function callGenerate(params: Record<string, unknown>): Promise<unknown> {
 
 beforeEach(() => {
   useAgentChatStore.setState({ messages: [] })
+  localStorage.clear()
 })
 
 describe('AgentToolExecutor.generateImage', () => {
@@ -125,6 +127,10 @@ describe('AgentToolExecutor.generateImage', () => {
       ok: true,
       count: 1,
       model: 'gpt-image-2-vip',
+      historyId: 42,
+      paths: [savedPath],
+    })
+    expect(getCodexArtifacts('thread-1')[0]).toMatchObject({
       historyId: 42,
       paths: [savedPath],
     })

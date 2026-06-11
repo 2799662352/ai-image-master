@@ -51,6 +51,62 @@ describe('startEditMessage', () => {
     expect(s.input).toBe('content-0')
   })
 
+  it('rehydrates user message attachments when entering edit mode', () => {
+    useAgentChatStore.setState({
+      messages: [
+        {
+          id: 'msg-with-attachment',
+          role: 'user',
+          createdAt: Date.now(),
+          items: [
+            {
+              type: 'attachment',
+              id: 'att-item',
+              startedAt: Date.now(),
+              attachments: [
+                {
+                  id: 'img-1',
+                  kind: 'image',
+                  name: 'cat.png',
+                  mime: 'image/png',
+                  size: 123,
+                  uri: 'local-file:///C:/Users/me/AppData/Roaming/app/agent/uploads/cat.png',
+                },
+                {
+                  id: 'file-1',
+                  kind: 'file',
+                  name: 'notes.txt',
+                  mime: 'text/plain',
+                  size: 456,
+                  uri: 'local-file:///C:/Users/me/AppData/Roaming/app/agent/uploads/notes.txt',
+                },
+              ],
+            },
+            { type: 'text', id: 'txt', startedAt: Date.now(), content: 'caption' },
+          ],
+        },
+      ],
+    })
+
+    useAgentChatStore.getState().startEditMessage('msg-with-attachment')
+
+    expect(useAgentChatStore.getState().input).toBe('caption')
+    expect(useAgentChatStore.getState().attachments).toEqual([
+      {
+        name: 'cat.png',
+        mime: 'image/png',
+        size: 123,
+        path: 'C:/Users/me/AppData/Roaming/app/agent/uploads/cat.png',
+      },
+      {
+        name: 'notes.txt',
+        mime: 'text/plain',
+        size: 456,
+        path: 'C:/Users/me/AppData/Roaming/app/agent/uploads/notes.txt',
+      },
+    ])
+  })
+
   it('backs up the in-flight draft so cancel can restore it', () => {
     useAgentChatStore.getState().startEditMessage('msg-0')
     expect(useAgentChatStore.getState().draftBackup?.input).toBe('in-flight draft')

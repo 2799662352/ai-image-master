@@ -25,6 +25,13 @@ export interface CodexArtifactAnchor {
   prompt?: string
   /** History record id — the source of truth for the durable image URLs. */
   historyId: number | string
+  /**
+   * Local saved file paths returned by the generate_image MCP tool. These are
+   * tiny strings but make reload/edit resilient while the history record still
+   * contains `pending:*` placeholders or when async R2/COS upload has not
+   * settled yet.
+   */
+  paths?: string[]
 }
 
 const STORAGE_KEY = 'catimation:codex-artifacts:v1'
@@ -110,6 +117,23 @@ export function rehydrateCodexArtifacts(threadId: string, messages: Message[]): 
   }
 }
 
+function toFileUrl(filePath: string): string {
+  // Avoid importing node:url into the renderer bundle; this is enough for local
+  // Windows paths and keeps the stored anchor as plain filesystem strings.
+  return `file:///${filePath.replace(/\\/g, '/').replace(/^([A-Za-z]):/, '$1:')}`
+}
+
+function resolveAnchorUrls(anchor: CodexArtifactAnchor, resolveUrls: ResolveHistoryUrls): string[] {
+  const urls = (resolveUrls(anchor.historyId) ?? []).filter(
+    (u) => typeof u === 'string' && u.length > 0 && !u.startsWith('pending:'),
+  )
+  if (urls.length > 0) return urls
+
+  return (anchor.paths ?? [])
+    .filter((p): p is string => typeof p === 'string' && p.length > 0)
+    .map(toFileUrl)
+}
+
 function toArtifactRefs(anchor: CodexArtifactAnchor, urls: string[]): AttachmentRef[] {
   return urls.map((uri, i) => ({
     id: `${anchor.id}-${i}`,
@@ -138,9 +162,7 @@ export function mergeCodexArtifacts(
 
   const rebuilt: Message[] = []
   for (const anchor of anchors) {
-    const urls = (resolveUrls(anchor.historyId) ?? []).filter(
-      (u) => typeof u === 'string' && u.length > 0 && !u.startsWith('pending:'),
-    )
+    const urls = resolveAnchorUrls(anchor, resolveUrls)
     if (urls.length === 0) continue
     const item: TimelineItem = {
       type: 'artifact',

@@ -165,20 +165,6 @@ export class AgentToolExecutor {
     // Persist to history under the 'codex' type (base64 → R2 handled inside).
     const historyId = await this.recordHistory(request, images)
 
-    // Anchor the bubble to the (cloud-persisted) history record so it survives
-    // reload / thread-switch. We persist only a tiny pointer — the durable
-    // image URLs come from the history bucket, not from localStorage. Use the
-    // captured requesting thread, not the (possibly switched) active one.
-    const threadId = reqThreadId
-    if (historyId != null && threadId) {
-      recordCodexArtifact(threadId, {
-        id: `codex-artifact-${historyId}`,
-        createdAt: Date.now(),
-        prompt: request.prompt,
-        historyId,
-      })
-    }
-
     // Persist into the watched uploads dir so the image both shows in the
     // ATTACHMENTS file panel AND gives us a concrete local file path to hand
     // back to the agent. This replicates codex's native `image_gen`
@@ -186,7 +172,22 @@ export class AgentToolExecutor {
     // path so the agent can view / move / reference the file. We await here (the
     // chat bubble + history already settled, so UX is unaffected) to capture the
     // paths; a save failure just yields an empty `paths` list.
+    const threadId = reqThreadId
     const paths = threadId ? await this.saveToFilePanel(threadId, request.prompt, images) : []
+
+    // Anchor the bubble to the history record so it survives reload /
+    // thread-switch. History URLs are preferred when available, but they can
+    // remain `pending:*` until async R2/COS upload settles. Store the tiny local
+    // saved paths too, so reload/edit can still restore thumbnail + address.
+    if (historyId != null && threadId) {
+      recordCodexArtifact(threadId, {
+        id: `codex-artifact-${historyId}`,
+        createdAt: Date.now(),
+        prompt: request.prompt,
+        historyId,
+        paths,
+      })
+    }
 
     // Return a COMPACT result to the agent — never echo multi-MB base64 back
     // into the model context (token blowup + useless to the agent). `paths`

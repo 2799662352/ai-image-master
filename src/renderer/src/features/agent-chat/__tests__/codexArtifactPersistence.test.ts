@@ -107,6 +107,39 @@ describe('codexArtifactPersistence', () => {
     expect(merged).toEqual(server)
   })
 
+  it('falls back to saved local paths when history still has pending placeholders', () => {
+    const savedPath = 'C:\\Users\\me\\AppData\\Roaming\\app\\agent\\uploads\\deadbeef.png'
+    recordCodexArtifact(THREAD, {
+      id: 'p',
+      createdAt: 150,
+      historyId: 5,
+      paths: [savedPath],
+    })
+    const server = [userMsg('u1', 100)]
+    const merged = mergeCodexArtifacts(THREAD, server, () => ['pending:123'])
+    const item = merged[1].items[0]
+    expect(item.type).toBe('artifact')
+    if (item.type === 'artifact') {
+      expect(item.artifacts[0].uri).toBe('file:///C:/Users/me/AppData/Roaming/app/agent/uploads/deadbeef.png')
+    }
+  })
+
+  it('prefers durable history URLs over local fallback paths once upload settles', () => {
+    recordCodexArtifact(THREAD, {
+      id: 'p',
+      createdAt: 150,
+      historyId: 5,
+      paths: ['C:\\Users\\me\\local.png'],
+    })
+    const server = [userMsg('u1', 100)]
+    const merged = mergeCodexArtifacts(THREAD, server, () => ['https://cdn.example/durable.png'])
+    const item = merged[1].items[0]
+    expect(item.type).toBe('artifact')
+    if (item.type === 'artifact') {
+      expect(item.artifacts[0].uri).toBe('https://cdn.example/durable.png')
+    }
+  })
+
   it('returns server messages untouched when no anchors exist', () => {
     const server = [userMsg('u1', 100)]
     expect(mergeCodexArtifacts(THREAD, server, () => ['x'])).toBe(server)

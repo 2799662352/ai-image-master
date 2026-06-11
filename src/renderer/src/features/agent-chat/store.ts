@@ -486,6 +486,41 @@ function normalizeReferencePath(value: string): string {
   return value.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
 }
 
+function localPathFromAttachmentUri(uri: string): string | undefined {
+  if (typeof uri !== 'string' || uri.length === 0) return undefined
+  const prefix = 'local-file:///'
+  if (uri.toLowerCase().startsWith(prefix)) {
+    try {
+      const decoded = decodeURIComponent(uri.slice(prefix.length))
+      if (decoded.split(/[\\/]/).some((segment) => segment === '..')) return undefined
+      if (/^[A-Za-z]:[\\/]/.test(decoded)) return decoded
+      return decoded.startsWith('/') ? decoded : `/${decoded}`
+    } catch {
+      return undefined
+    }
+  }
+  if (/^[A-Za-z]:[\\/]/.test(uri) || uri.startsWith('/')) return uri
+  return undefined
+}
+
+function attachmentsFromMessage(message: Message): AgentAttachmentInput[] {
+  const out: AgentAttachmentInput[] = []
+  for (const item of message.items) {
+    if (item.type !== 'attachment') continue
+    for (const ref of item.attachments) {
+      const path = localPathFromAttachmentUri(ref.uri)
+      if (!path) continue
+      out.push({
+        name: ref.name,
+        mime: ref.mime || 'application/octet-stream',
+        size: typeof ref.size === 'number' ? ref.size : 0,
+        path,
+      })
+    }
+  }
+  return out
+}
+
 function getAgentApi(): NonNullable<AgentElectronApi['agent']> {
   const agent = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.agent
   if (!agent) throw new Error('Electron agent API is unavailable')
@@ -1117,6 +1152,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       .filter((item): item is import('../../../../types/agent-timeline').TextItem => item.type === 'text')
       .map((item) => item.content)
       .join('\n')
+    const restoredAttachments = attachmentsFromMessage(target)
 
     set({
       editingMessageId: messageId,
@@ -1129,10 +1165,10 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
             pendingReferences: state.pendingReferences,
           },
       input: text,
-      // Attachments aren't rehydratable from AttachmentRef (uri may be a
-      // revoked blob), so we start with a clean slate. The user can drag
-      // files back in if needed — mirrors Cursor's behaviour.
-      attachments: [],
+      // Main returns canonical local-file:// uploads-cache paths after send;
+      // those ARE rehydratable, so editing a sent message preserves attached
+      // images/files. Blob/data-only optimistic refs are intentionally skipped.
+      attachments: restoredAttachments,
       pendingReferences: [],
       error: undefined,
     })

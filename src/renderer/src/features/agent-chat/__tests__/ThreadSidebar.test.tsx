@@ -126,6 +126,35 @@ describe('ThreadSidebar', () => {
     expect(fakeAgent.deleteThread).toHaveBeenCalledWith('older-1')
   })
 
+  it('thread action menu absorbs pointer/mouse/click events so underlying UI is not triggered', () => {
+    const docPointer = vi.fn()
+    const docMouse = vi.fn()
+    const docClick = vi.fn()
+    document.addEventListener('pointerdown', docPointer)
+    document.addEventListener('mousedown', docMouse)
+    document.addEventListener('click', docClick)
+    try {
+      render(<ThreadSidebar />)
+      fireEvent.click(screen.getByTestId('thread-menu-older-1'))
+      docPointer.mockClear()
+      docMouse.mockClear()
+      docClick.mockClear()
+
+      const rename = screen.getByRole('menuitem', { name: /rename/i })
+      fireEvent.pointerDown(rename)
+      fireEvent.mouseDown(rename)
+      fireEvent.click(rename)
+
+      expect(docPointer).not.toHaveBeenCalled()
+      expect(docMouse).not.toHaveBeenCalled()
+      expect(docClick).not.toHaveBeenCalled()
+    } finally {
+      document.removeEventListener('pointerdown', docPointer)
+      document.removeEventListener('mousedown', docMouse)
+      document.removeEventListener('click', docClick)
+    }
+  })
+
   it('keeps other rows clickable while a turn is running (parallel chats) and shows a running dot', () => {
     // A background thread is running. With parallel chats you must still be able
     // to switch to it without stopping it — so the row is NOT disabled.

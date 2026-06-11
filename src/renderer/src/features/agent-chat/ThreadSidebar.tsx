@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { JSX } from 'react'
+import { createPortal } from 'react-dom'
 import type { AgentThreadSummary, CodexThreadSummary } from '../../../../types/agent'
 import { ChatBubbleIcon, MoreIcon, PencilIcon, PlusIcon, TrashIcon } from './icons'
 import { formatRelativeTime, groupThreadsByRecency, type ThreadGroup } from './relativeTime'
@@ -237,9 +238,11 @@ type RowMode = 'idle' | 'menu' | 'rename' | 'confirm-delete'
 
 function ThreadRow(props: ThreadRowProps): JSX.Element {
   const [mode, setMode] = useState<RowMode>('idle')
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null)
   const [draftTitle, setDraftTitle] = useState(props.thread.title)
   const inputRef = useRef<HTMLInputElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const menuButtonRef = useRef<HTMLButtonElement>(null)
 
   const startRename = useCallback(() => {
     setDraftTitle(props.thread.title)
@@ -269,6 +272,31 @@ function ThreadRow(props: ThreadRowProps): JSX.Element {
     return () => document.removeEventListener('mousedown', onMouseDown)
   }, [mode])
 
+  useEffect(() => {
+    if (mode !== 'menu') return undefined
+    function syncMenuPosition(): void {
+      const rect = menuButtonRef.current?.getBoundingClientRect()
+      if (!rect) return
+      const width = 150
+      const viewportWidth = Number.isFinite(window.innerWidth) && window.innerWidth > 0 ? window.innerWidth : 1024
+      const viewportHeight = Number.isFinite(window.innerHeight) && window.innerHeight > 0 ? window.innerHeight : 768
+      const left = Math.max(8, Math.min(viewportWidth - width - 8, rect.right - width))
+      const top = Math.max(8, Math.min(viewportHeight - 96, rect.bottom + 4))
+      setMenuPos({ top, left })
+    }
+    syncMenuPosition()
+    if (typeof window.addEventListener === 'function') {
+      window.addEventListener('scroll', syncMenuPosition, true)
+      window.addEventListener('resize', syncMenuPosition)
+    }
+    return () => {
+      if (typeof window.removeEventListener === 'function') {
+        window.removeEventListener('scroll', syncMenuPosition, true)
+        window.removeEventListener('resize', syncMenuPosition)
+      }
+    }
+  }, [mode])
+
   if (mode === 'rename') {
     return (
       <li className="px-1">
@@ -296,8 +324,13 @@ function ThreadRow(props: ThreadRowProps): JSX.Element {
 
   if (mode === 'confirm-delete') {
     return (
-      <li className="px-1">
-        <div className="flex items-center justify-between gap-2 rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1.5 text-[11px] text-red-100">
+      <li
+        className="px-1"
+        onPointerDown={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="relative z-[80] flex items-center justify-between gap-2 rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1.5 text-[11px] text-red-100">
           <span className="truncate" title={props.thread.title}>
             Delete &quot;{props.thread.title}&quot;?
           </span>
@@ -341,6 +374,7 @@ function ThreadRow(props: ThreadRowProps): JSX.Element {
           ].join(' ')}
         />
         <button
+          ref={menuButtonRef}
           type="button"
           onClick={() => {
             if (props.active) return
@@ -375,41 +409,94 @@ function ThreadRow(props: ThreadRowProps): JSX.Element {
           aria-expanded={mode === 'menu'}
           onClick={(e) => {
             e.stopPropagation()
-            setMode((m) => (m === 'menu' ? 'idle' : 'menu'))
+            if (mode === 'menu') {
+              setMode('idle')
+              return
+            }
+            const rect = e.currentTarget.getBoundingClientRect()
+            const width = 150
+            const viewportWidth = Number.isFinite(window.innerWidth) && window.innerWidth > 0 ? window.innerWidth : 1024
+            const viewportHeight = Number.isFinite(window.innerHeight) && window.innerHeight > 0 ? window.innerHeight : 768
+            setMenuPos({
+              top: Math.max(8, Math.min(viewportHeight - 96, rect.bottom + 4)),
+              left: Math.max(8, Math.min(viewportWidth - width - 8, rect.right - width)),
+            })
+            setMode('menu')
           }}
           className="flex w-7 cursor-pointer items-center justify-center text-zinc-500 opacity-0 transition-opacity duration-150 hover:text-zinc-100 group-hover:opacity-100 aria-expanded:opacity-100"
         >
           <MoreIcon className="h-3.5 w-3.5" />
         </button>
       </div>
-      {mode === 'menu' ? (
-        <div
-          ref={menuRef}
-          role="menu"
-          className="absolute right-2 top-full z-10 mt-1 min-w-[140px] overflow-hidden rounded-md border border-zinc-800 bg-zinc-950/98 py-1 text-[12px] text-zinc-200 shadow-2xl ring-1 ring-black/40"
-        >
-          <button
-            role="menuitem"
-            type="button"
-            onClick={() => {
+      {mode === 'menu' && menuPos ? createPortal(
+        <>
+          {/*
+            Pointer shield: menu actions used to "click through" into the app
+            behind the sidebar when the menu closed during the same pointer
+            gesture. A fixed transparent shield consumes all outside pointer /
+            mouse / click events first, so the underlying UI never receives
+            them. The menu itself sits one z-layer above this shield.
+          */}
+          <div
+            aria-hidden="true"
+            data-testid={`thread-menu-shield-${props.thread.id}`}
+            className="fixed inset-0 z-[99998] cursor-default"
+            onPointerDown={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
               setMode('idle')
-              startRename()
             }}
-            className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-zinc-800/60"
+            onMouseDown={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+            }}
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+            }}
+          />
+          <div
+            ref={menuRef}
+            role="menu"
+            style={{ top: menuPos.top, left: menuPos.left }}
+            onPointerDownCapture={(e) => {
+              e.stopPropagation()
+            }}
+            onMouseDownCapture={(e) => {
+              e.stopPropagation()
+            }}
+            className="fixed z-[99999] min-w-[150px] overflow-hidden rounded-md border border-zinc-700 bg-zinc-950 py-1 text-[12px] text-zinc-200 shadow-[0_18px_60px_rgba(0,0,0,0.65)] ring-1 ring-cyan-400/20"
           >
-            <PencilIcon className="h-3.5 w-3.5" />
-            Rename
-          </button>
-          <button
-            role="menuitem"
-            type="button"
-            onClick={() => setMode('confirm-delete')}
-            className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-red-300 transition-colors hover:bg-red-500/15"
-          >
-            <TrashIcon className="h-3.5 w-3.5" />
-            Delete
-          </button>
-        </div>
+            <button
+              role="menuitem"
+              type="button"
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                setMode('idle')
+                startRename()
+              }}
+              className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-zinc-800/60"
+            >
+              <PencilIcon className="h-3.5 w-3.5" />
+              Rename
+            </button>
+            <button
+              role="menuitem"
+              type="button"
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                setMode('confirm-delete')
+              }}
+              className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-red-300 transition-colors hover:bg-red-500/15"
+            >
+              <TrashIcon className="h-3.5 w-3.5" />
+              Delete
+            </button>
+          </div>
+        </>,
+        document.body,
       ) : null}
     </li>
   )
