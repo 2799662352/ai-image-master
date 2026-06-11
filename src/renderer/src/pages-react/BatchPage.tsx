@@ -1,6 +1,10 @@
 import { useCallback, useMemo, useState, useEffect } from 'react'
 import { useModelStore, useToastStore, useBatchStore } from '../stores'
 import { ImageLightbox } from '../components/shared/ImageLightbox'
+import ImageEditActions, { type ImageEditorType } from '../components/shared/image-editors/ImageEditActions'
+import ImageEditorModal from '../components/shared/image-editors/ImageEditorModal'
+import { addImageUrlToReferences } from '../components/shared/image-editors/referenceTargets'
+import '../components/shared/image-editors/image-editors.css'
 import type { BatchItem } from '../stores/useBatchStore'
 import { useApi } from '../hooks/useService'
 import BatchShell from './batch/BatchShell'
@@ -77,7 +81,25 @@ export default function BatchPage() {
   }, [mode, cardPrompt, cardCount, multiText, perPromptCount])
 
   // ---- 预览 lightbox (结果区 + 参考图共用,支持 ←/→ 左右切换) ----
-  const [lightbox, setLightbox] = useState<{ urls: string[]; index: number } | null>(null)
+  // kind 区分来源: 结果图预览带 多角度/打光/全景/导演台/加为参考图 动作行
+  // (原缩略图悬停工具栏移到这里); 参考图预览保持纯预览。
+  const [lightbox, setLightbox] = useState<{ urls: string[]; index: number; kind: 'results' | 'refs' } | null>(null)
+
+  // ---- 预览页里的图片编辑器(多角度/打光/全景/导演台) ----
+  const [editorState, setEditorState] = useState<{ url: string; type: ImageEditorType } | null>(null)
+
+  const injectPrompt = useCallback((p: string) => {
+    const { mode: m, cardPrompt: cp, multiText: mt, setCardPrompt: scp, setMultiText: smt } = useBatchStore.getState()
+    if (m === 'card') scp(cp + '\n' + p)
+    else smt(mt + '\n' + p)
+  }, [])
+
+  // ImageEditorModal 的 zIndex(9999) 低于 ImageLightbox(70000), 所以打开
+  // 编辑器前必须先关掉预览层, 否则编辑器会被压在预览下面看不见。
+  const handleOpenEditor = useCallback((url: string, type: ImageEditorType) => {
+    setLightbox(null)
+    setEditorState({ url, type })
+  }, [])
 
   // ---- 当前 model 的 ratio / resolution 选项 ----
   const [modelConfig, setModelConfig] = useState<ModelConfigSnapshot | null>(null)
@@ -170,11 +192,11 @@ export default function BatchPage() {
       .filter((i) => i.status === 'done')
       .map((i) => i.resultUrl ?? i.cosUrl)
       .filter((u): u is string => !!u)
-    setLightbox({ urls: doneUrls, index: Math.max(0, doneUrls.indexOf(url)) })
+    setLightbox({ urls: doneUrls, index: Math.max(0, doneUrls.indexOf(url)), kind: 'results' })
   }, [])
   const handlePreviewRef = useCallback((url: string) => {
     const refs = useBatchStore.getState().refImages.map((r) => r.base64)
-    setLightbox({ urls: refs, index: Math.max(0, refs.indexOf(url)) })
+    setLightbox({ urls: refs, index: Math.max(0, refs.indexOf(url)), kind: 'refs' })
   }, [])
 
   const handleClearAll = () => {
@@ -380,6 +402,32 @@ export default function BatchPage() {
           urls={lightbox.urls}
           startIndex={lightbox.index}
           onClose={() => setLightbox(null)}
+          renderActions={
+            lightbox.kind === 'results'
+              ? (currentUrl) => (
+                  <ImageEditActions
+                    theme="default"
+                    imageUrl={currentUrl}
+                    onOpenEditor={(type) => handleOpenEditor(currentUrl, type)}
+                    onInjectPrompt={injectPrompt}
+                    onAddReference={(url) => addImageUrlToReferences('batch', url)}
+                  />
+                )
+              : undefined
+          }
+        />
+      )}
+
+      {/* ===== 预览页动作打开的图片编辑器(多角度/打光/全景/导演台) ===== */}
+      {editorState && (
+        <ImageEditorModal
+          key={editorState.type}
+          editorType={editorState.type}
+          imageUrl={editorState.url}
+          theme="default"
+          directorEntry={editorState.type === 'director' ? 'panorama' : 'native'}
+          onInjectPrompt={injectPrompt}
+          onClose={() => setEditorState(null)}
         />
       )}
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useDisplaySrc } from '../../hooks/useDisplaySrc'
 
@@ -8,6 +8,13 @@ interface ImageLightboxProps {
   /** 打开时的初始索引。 */
   startIndex: number
   onClose: () => void
+  /**
+   * 可选的动作按钮插槽,渲染在图片左下角(右下角是内置的 下载/打开 URL)。
+   * 回调收到「当前正在展示的图」的 URL —— index 由组件内部维护,父组件
+   * 不知道用户切到了哪张,所以必须以回调形式取 URL。
+   * Batch 页用它挂 多角度/打光/全景/导演台/加为参考图(原缩略图悬停工具栏)。
+   */
+  renderActions?: (currentUrl: string) => ReactNode
 }
 
 async function downloadImage(url: string, filename: string): Promise<void> {
@@ -43,7 +50,7 @@ async function downloadImage(url: string, filename: string): Promise<void> {
  * 自包含:内部持有当前 index,父组件只负责传 urls + startIndex + onClose。
  * 大 dataURL 走 useDisplaySrc 换 blob: URL,避免主线程同步解码卡顿。
  */
-export function ImageLightbox({ urls, startIndex, onClose }: ImageLightboxProps) {
+export function ImageLightbox({ urls, startIndex, onClose, renderActions }: ImageLightboxProps) {
   const [index, setIndex] = useState(startIndex)
 
   // 父组件可能在已打开状态下换一张缩略图(传新的 startIndex),同步过去。
@@ -118,6 +125,14 @@ export function ImageLightbox({ urls, startIndex, onClose }: ImageLightboxProps)
           onClick={() => hasMultiple && goNext()}
           className={`block max-w-[92vw] max-h-[82vh] object-contain ${hasMultiple ? 'cursor-pointer' : ''}`}
         />
+        {renderActions && (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="absolute bottom-2 left-2 flex flex-wrap items-center gap-1 max-w-[60%] px-2 py-1 bg-zinc-900/90 border border-zinc-600 rounded-lg"
+          >
+            {renderActions(currentUrl)}
+          </div>
+        )}
         <div className="absolute bottom-2 right-2 flex gap-2">
           <button
             type="button"

@@ -1,12 +1,7 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { Grid, type CellComponentProps } from 'react-window'
 import type { BatchItem } from '../../stores/useBatchStore'
-import { useBatchStore } from '../../stores/useBatchStore'
-import ImageEditToolbar from '../../components/shared/image-editors/ImageEditToolbar'
-import ImageEditorModal from '../../components/shared/image-editors/ImageEditorModal'
-import { addImageUrlToReferences } from '../../components/shared/image-editors/referenceTargets'
 import { useDisplaySrc } from '../../hooks/useDisplaySrc'
-import '../../components/shared/image-editors/image-editors.css'
 
 /**
  * (v) 虚拟化布局常量
@@ -146,7 +141,7 @@ function pickDisplayUrl(item: BatchItem): string | undefined {
  * **单条 item** 状态变更不再触发整网格里其他 N-1 张卡片重新渲染。
  *
  * 配合要求:
- *  1) 父组件必须给 onRemove / onPreview / onOpenEditor / onEditItem
+ *  1) 父组件必须给 onRemove / onPreview / onEditItem
  *     传**引用稳定**的回调 —— zustand action / useCallback。否则 memo
  *     的浅比较会因 fn 引用不等永远 miss。已经在 BatchPage + 本文件里
  *     用 useCallback 兜住。
@@ -158,16 +153,12 @@ const ResultCard = memo(function ResultCard({
   index,
   onRemove,
   onPreview,
-  onOpenEditor,
-  onInjectPrompt,
   onEditItem,
 }: {
   item: BatchItem
   index: number
   onRemove: (id: string) => void
   onPreview?: (url: string) => void
-  onOpenEditor?: (url: string, type: 'angle' | 'light' | 'panorama' | 'director') => void
-  onInjectPrompt?: (prompt: string) => void
   onEditItem?: (item: BatchItem) => void
 }) {
   const badge = STATUS_BADGE[item.status]
@@ -175,8 +166,8 @@ const ResultCard = memo(function ResultCard({
   const isRun = item.status === 'generating'
   const displayUrl = pickDisplayUrl(item)
   // imgSrc 是 displayUrl 在 dataURL 时换出来的 blob: URL, 用于 <img src>。
-  // displayUrl 自己保持不变 —— ImageEditToolbar / Modal / onPreview / download
-  // 这些消费方仍要拿原始 dataURL/http 去走 API + IPC, blob: URL 在主进程不可读。
+  // displayUrl 自己保持不变 —— onPreview / download 这些消费方仍要拿
+  // 原始 dataURL/http 去走 API + IPC, blob: URL 在主进程不可读。
   const imgSrc = useDisplaySrc(displayUrl)
   const isDone = item.status === 'done' && !!displayUrl
   // 同步切到 COS 之后, UI 用一个小角标提示当前展示的是哪种 URL。
@@ -243,22 +234,18 @@ const ResultCard = memo(function ResultCard({
         </div>
       </div>
 
-      {/* 缩略图 / 占位 */}
+      {/*
+        缩略图 / 占位。
+        编辑动作(多角度/打光/全景/导演台/加为参考图)不再做悬停浮层 ——
+        点击放大后的 ImageLightbox 左下角统一提供(见 BatchPage renderActions),
+        卡片本身只负责「点击 → 预览」。
+      */}
       <div
         className={`group relative aspect-square bg-zinc-950 border-2 border-zinc-800 overflow-hidden ${
           isDone ? 'cursor-zoom-in' : ''
         }`}
         onClick={() => isDone && onPreview?.(displayUrl!)}
       >
-        {isDone && (
-          <ImageEditToolbar
-            theme="default"
-            imageUrl={displayUrl!}
-            onOpenEditor={(type) => onOpenEditor?.(displayUrl!, type)}
-            onInjectPrompt={onInjectPrompt}
-            onAddReference={(url) => addImageUrlToReferences('batch', url)}
-          />
-        )}
         {isDone && (
           <img
             src={imgSrc}
@@ -371,8 +358,6 @@ type VirtualCellProps = {
   onRemove: (id: string) => void
   onPreview?: (url: string) => void
   onEditItem?: (item: BatchItem) => void
-  onOpenEditor: (url: string, type: 'angle' | 'light' | 'panorama' | 'director') => void
-  onInjectPrompt?: (prompt: string) => void
 }
 
 function VirtualCell({
@@ -385,8 +370,6 @@ function VirtualCell({
   onRemove,
   onPreview,
   onEditItem,
-  onOpenEditor,
-  onInjectPrompt,
 }: CellComponentProps<VirtualCellProps>) {
   const idx = rowIndex * columnCount + columnIndex
   const item = items[idx]
@@ -409,8 +392,6 @@ function VirtualCell({
         index={origIdx}
         onRemove={onRemove}
         onPreview={onPreview}
-        onOpenEditor={onOpenEditor}
-        onInjectPrompt={onInjectPrompt}
         onEditItem={onEditItem}
       />
     </div>
@@ -427,14 +408,7 @@ function VirtualCell({
  *                                       场景下 DOM 节点数从 200 张 → ~10-20 张。
  */
 export default function BatchResultGrid({ items, onRemove, onPreview, onEditItem }: Props) {
-  const [editorState, setEditorState] = useState<{ url: string; type: 'angle' | 'light' | 'panorama' | 'director' } | null>(null)
   const [reversed, setReversed] = useState(true)
-
-  const injectPrompt = useCallback((p: string) => {
-    const { mode, cardPrompt, multiText, setCardPrompt, setMultiText } = useBatchStore.getState()
-    if (mode === 'card') setCardPrompt(cardPrompt + '\n' + p)
-    else setMultiText(multiText + '\n' + p)
-  }, [])
 
   // (p3) failedItems / doneItems / displayItems 均放进 useMemo, 避免每
   // 次渲染都 O(N) 重扫整个 items, 在 200 张满载时这 3 个 filter/reverse
@@ -454,12 +428,6 @@ export default function BatchResultGrid({ items, onRemove, onPreview, onEditItem
     for (let i = 0; i < items.length; i++) map.set(items[i].id, i)
     return map
   }, [items])
-
-  // (p4) onOpenEditor 由本组件持有 editorState, 必须 useCallback 才能
-  // 让下游 ResultCard 的 React.memo 命中(不然每次渲染都是新引用)。
-  const handleOpenEditor = useCallback((url: string, type: 'angle' | 'light' | 'panorama' | 'director') => {
-    setEditorState({ url, type })
-  }, [])
 
   // (v) ResizeObserver 跟踪容器宽度。第一次挂载 width=0 时退化到 CSS Grid,
   // 等 RO fire 一次拿到真实宽度后, 大批量场景才会切到虚拟化分支。
@@ -501,10 +469,8 @@ export default function BatchResultGrid({ items, onRemove, onPreview, onEditItem
       onRemove,
       onPreview,
       onEditItem,
-      onOpenEditor: handleOpenEditor,
-      onInjectPrompt: injectPrompt,
     }
-  }, [displayItems, gridLayout, indexById, onRemove, onPreview, onEditItem, handleOpenEditor, injectPrompt])
+  }, [displayItems, gridLayout, indexById, onRemove, onPreview, onEditItem])
 
   // (v) 只有真的"item 多 + 容器测好宽度"才上虚拟化。否则继续用原 CSS Grid。
   const shouldVirtualize =
@@ -594,8 +560,6 @@ export default function BatchResultGrid({ items, onRemove, onPreview, onEditItem
                     index={origIdx}
                     onRemove={onRemove}
                     onPreview={onPreview}
-                    onOpenEditor={handleOpenEditor}
-                    onInjectPrompt={injectPrompt}
                     onEditItem={onEditItem}
                   />
                 )
@@ -604,17 +568,6 @@ export default function BatchResultGrid({ items, onRemove, onPreview, onEditItem
           )}
         </div>
       </div>
-      {editorState && (
-        <ImageEditorModal
-          key={editorState.type}
-          editorType={editorState.type}
-          imageUrl={editorState.url}
-          theme="default"
-          directorEntry={editorState.type === 'director' ? 'panorama' : 'native'}
-          onInjectPrompt={injectPrompt}
-          onClose={() => setEditorState(null)}
-        />
-      )}
     </>
   )
 }
