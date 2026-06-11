@@ -24,7 +24,8 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'show_raw_agent_reasoning=true',
       '-c', 'model_reasoning_summary="auto"',
       '-c', 'model_context_window=200000',
-      '-c', 'model_auto_compact_token_limit=180000',
+      '-c', 'model_auto_compact_token_limit=100000',
+      '-c', 'tool_output_token_limit=10000',
       '-c', 'experimental_use_rmcp_client=true',
       '-c', 'agents.max_threads=8',
       '-c', 'agents.max_depth=1',
@@ -42,7 +43,8 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'show_raw_agent_reasoning=true',
       '-c', 'model_reasoning_summary="auto"',
       '-c', 'model_context_window=200000',
-      '-c', 'model_auto_compact_token_limit=180000',
+      '-c', 'model_auto_compact_token_limit=100000',
+      '-c', 'tool_output_token_limit=10000',
       '-c', 'experimental_use_rmcp_client=true',
       '-c', 'agents.max_threads=8',
       '-c', 'agents.max_depth=1',
@@ -109,9 +111,26 @@ describe('buildCodexLaunchArgs', () => {
   })
 
   it('passes model_context_window and model_auto_compact_token_limit so Codex auto-compacts', () => {
+    // 100k (50% of the declared window), NOT the stock 90% ratio: stateless
+    // relay gateways (apiyi) enforce a request-BODY-BYTE cap that long
+    // threads hit well before 180k tokens, and once over it even the
+    // compaction request itself 413s — the thread is permanently stuck
+    // (openai/codex#11440). Compaction must fire with a wide safety margin.
     const args = buildCodexLaunchArgs()
     expect(args).toContain('model_context_window=200000')
-    expect(args).toContain('model_auto_compact_token_limit=180000')
+    expect(args).toContain('model_auto_compact_token_limit=100000')
+  })
+
+  it('pins tool_output_token_limit to the official catalog value (10k)', () => {
+    // codex-rs/models-manager/models.json caps per-tool-call output at
+    // 10_000 tokens for gpt-5.5/5.4/5.3 (bytes for 5.2). A user-level
+    // ~/.codex/config.toml carrying e.g. `tool_output_token_limit = 64_000`
+    // makes every big file read inject 6.4x the official budget into
+    // history — ballooning replayed requests straight into the gateway's
+    // request_too_large wall. `-c` outranks config.toml, restoring the
+    // official truncation for our sessions.
+    const args = buildCodexLaunchArgs()
+    expect(args).toContain('tool_output_token_limit=10000')
   })
 
   it('enables rmcp client so URL-based MCP servers actually start', () => {

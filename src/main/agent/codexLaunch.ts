@@ -153,11 +153,26 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     '-c', 'model_reasoning_summary="auto"',
     // Tell Codex the model's hard context limit so its tokenUsage
     // notifications carry `contextWindow`, and so it auto-compacts before
-    // running into a wall. 200K matches GPT-5.5 / GPT-5.4 on apiyi; the
-    // auto_compact threshold is 90% of that, the documented Codex default
-    // ratio. See https://developers.openai.com/codex/config-advanced.
+    // running into a wall. 200K matches GPT-5.5 / GPT-5.4 on apiyi.
+    //
+    // auto_compact at 100k (50%), NOT the stock 90% ratio: stateless relay
+    // gateways (apiyi) replay the FULL history per request and enforce a
+    // request-BODY-BYTE cap ("request_too_large") that text+image-heavy
+    // threads hit long before 180k TOKENS. Past that wall even the
+    // compaction request 413s (it replays the same history through the same
+    // gateway), permanently wedging the thread — openai/codex#11440 calls
+    // this out and ships no client-side fix. Compacting at 50% trades a bit
+    // of long-thread context fidelity for never reaching the dead zone.
     '-c', 'model_context_window=200000',
-    '-c', 'model_auto_compact_token_limit=180000',
+    '-c', 'model_auto_compact_token_limit=100000',
+    // Official per-tool-call output budget. codex-rs/models-manager/
+    // models.json pins truncation at 10_000 tokens for gpt-5.5/5.4/5.3
+    // (10_000 bytes for 5.2 and unknown slugs). Without this pin a
+    // user-level ~/.codex/config.toml (observed in the wild with
+    // `tool_output_token_limit = 64_000`) multiplies every large file read
+    // by 6.4x the official budget, ballooning replayed history straight
+    // into the gateway byte cap. `-c` outranks config.toml.
+    '-c', 'tool_output_token_limit=10000',
     // Enable rmcp transport so URL-based MCP servers (e.g.
     // `[mcp_servers.context7] url = "https://mcp.context7.com/mcp"`) are
     // actually started. With Codex 0.128, omitting this flag silently skips
