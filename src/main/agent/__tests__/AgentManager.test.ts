@@ -451,6 +451,56 @@ describe('AgentManager codex thread id mapping (regression: invalid thread id)',
     expect(events).toContainEqual({ type: 'turn_completed', threadId: 'cm-db-id-stream-error', turnId: 't2' })
   })
 
+  it('retries on the "missing recognized prefix" encrypted-content variant (apiyi validation_error)', async () => {
+    // Live repro 2026-06-11: apiyi's Responses emulation rejects replayed
+    // reasoning blocks whose encrypted_content it didn't mint itself with
+    //   {"error":{"message":"encrypted content missing recognized prefix
+    //    (expected `rsn_` or `smry_`)","type":"invalid_request_error",
+    //    "code":"validation_error"}}
+    // — different code AND different wording from the two variants the
+    // matcher knew, so the self-heal never fired and the raw JSON rendered
+    // in chat. The poisoned thread must be retried on a FRESH codex thread.
+    const events: AgentStreamEvent[] = []
+    const fakeStore = {
+      ...persistStubs,
+      createThread: async () => ({ id: 'cm-db-id-prefix-error' }),
+    } as any
+    const fakeAttachments = { ingest: async () => [] } as any
+    const recoveredUuid = 'cccccccc-dddd-eeee-ffff-000000000000'
+    const backend = makeStubBackend([
+      [
+        { type: 'thread_created', threadId: CODEX_UUID },
+        {
+          type: 'error',
+          threadId: CODEX_UUID,
+          turnId: 't1',
+          error:
+            '{"error":{"message":"encrypted content missing recognized prefix (expected `rsn_` or `smry_`)","localized_message":"Unknown error","type":"invalid_request_error","param":"","code":"validation_error"}}',
+        },
+      ],
+      [
+        { type: 'thread_created', threadId: recoveredUuid },
+        { type: 'turn_completed', threadId: recoveredUuid, turnId: 't2' },
+      ],
+    ])
+
+    const mgr = new AgentManager({
+      userDataDir: tmpDir,
+      store: fakeStore,
+      attachments: fakeAttachments,
+      eventSink: (e) => events.push(e),
+      backend,
+    })
+
+    await mgr.sendMessage({ content: 'first', attachments: [] })
+    await flushMicrotasks(30)
+
+    expect(backend.calls).toHaveLength(2)
+    expect(backend.calls[1].threadId).toBeUndefined()
+    expect(events.filter((event) => event.type === 'error')).toHaveLength(0)
+    expect(events).toContainEqual({ type: 'turn_completed', threadId: 'cm-db-id-prefix-error', turnId: 't2' })
+  })
+
   it('forwards payload.model through to backend.send when caller selects a model', async () => {
     const fakeStore = {
       ...persistStubs,

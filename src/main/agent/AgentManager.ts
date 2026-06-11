@@ -1267,9 +1267,27 @@ function validateCodexThreadId(threadId: string): string {
   return threadId
 }
 
+/**
+ * Stateless relays replay the whole thread (incl. reasoning blocks with
+ * `encrypted_content`) on every turn. When the gateway can't validate a
+ * replayed block — typically because the thread earlier ran against a
+ * different upstream route/model that minted blocks in another format —
+ * the thread is permanently poisoned: every retry replays the same bad
+ * blocks. The only cure is a FRESH codex thread (history not replayed),
+ * which `forwardEvents` does when this matcher fires.
+ *
+ * Known wordings in the wild:
+ *  - `invalid_encrypted_content` (OpenAI canonical error code)
+ *  - "Encrypted content could not be decrypted"
+ *  - "encrypted content missing recognized prefix (expected `rsn_` or
+ *    `smry_`)" with code `validation_error` (apiyi emulation, 2026-06-11)
+ */
 function isInvalidEncryptedContentError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
-  return message.includes('invalid_encrypted_content') || message.includes('Encrypted content could not be decrypted')
+  return (
+    message.includes('invalid_encrypted_content')
+    || /encrypted content (could not be decrypted|missing recognized prefix)/i.test(message)
+  )
 }
 
 /**
