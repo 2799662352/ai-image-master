@@ -136,8 +136,86 @@ describe('AgentToolExecutor.generateImage', () => {
     })
     expect(JSON.stringify(result)).not.toContain('base64')
 
+    // The bubble carries the prominent "saved" banner with the folder.
+    const item = useAgentChatStore.getState().messages[0].items[0] as ArtifactItem
+    expect(item.save).toMatchObject({
+      status: 'saved',
+      dir: 'C:\\Users\\me\\AppData\\Roaming\\app\\agent\\uploads',
+      paths: [savedPath],
+    })
+
     useAgentChatStore.setState({ threadId: undefined })
     delete (window as unknown as { electronAPI?: unknown }).electronAPI
+  })
+
+  it('returns success WITHOUT blocking when history persistence hangs (generation alone decides success)', async () => {
+    // Reproduces the Prisma P1017 wedge: the image rendered fine but
+    // addToHistory never settles. The tool response must NOT wait on it.
+    vi.useFakeTimers()
+    try {
+      const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
+      const history: HistoryFake = {
+        init: vi.fn(async () => {}),
+        addToHistory: vi.fn(() => new Promise(() => {})), // hangs forever
+      }
+      registerFakes(api, history)
+
+      const pending = callGenerate({ prompt: 'a cat' })
+      // Burn through the persistence budget; generation itself already resolved.
+      await vi.advanceTimersByTimeAsync(10_000)
+      const result = (await pending) as Record<string, unknown>
+
+      expect(result).toEqual({
+        ok: true,
+        count: 1,
+        model: 'gpt-image-2-vip',
+        historyId: null,
+        paths: [],
+        persistencePending: true,
+      })
+
+      // The user-facing bubble settled long before the budget expired, AND it
+      // carries the eye-catching "saving in background" banner state.
+      const item = useAgentChatStore.getState().messages[0].items[0] as ArtifactItem
+      expect(item.status).toBe('done')
+      expect(item.save).toEqual({ status: 'pending' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('flips the SAME bubble banner from pending → saved when the late save settles', async () => {
+    vi.useFakeTimers()
+    try {
+      const savedPath = 'C:\\Users\\me\\AppData\\Roaming\\app\\agent\\uploads\\late.png'
+      useAgentChatStore.setState({ messages: [], threadId: 'thread-late' })
+      let resolveSave: (v: { ok: true; path: string }) => void = () => {}
+      ;(window as unknown as { electronAPI?: unknown }).electronAPI = {
+        attachments: { save: vi.fn(() => new Promise((r) => { resolveSave = r })) },
+      }
+      const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
+      const history: HistoryFake = { init: vi.fn(async () => {}), addToHistory: vi.fn(async () => ({ id: 7 })) }
+      registerFakes(api, history)
+
+      const pending = callGenerate({ prompt: 'a cat' })
+      await vi.advanceTimersByTimeAsync(10_000)
+      await pending
+
+      const pendingItem = useAgentChatStore.getState().messages[0].items[0] as ArtifactItem
+      expect(pendingItem.save).toEqual({ status: 'pending' })
+
+      // Background save finally settles → same bubble shows the saved folder.
+      resolveSave({ ok: true, path: savedPath })
+      await vi.advanceTimersByTimeAsync(0)
+
+      const savedItem = useAgentChatStore.getState().messages[0].items[0] as ArtifactItem
+      expect(savedItem.save).toMatchObject({ status: 'saved', paths: [savedPath] })
+      expect(savedItem.save?.dir).toBe('C:\\Users\\me\\AppData\\Roaming\\app\\agent\\uploads')
+    } finally {
+      useAgentChatStore.setState({ threadId: undefined })
+      delete (window as unknown as { electronAPI?: unknown }).electronAPI
+      vi.useRealTimers()
+    }
   })
 
   it('throws when generation fails and leaves an error bubble (so the agent + user see it)', async () => {

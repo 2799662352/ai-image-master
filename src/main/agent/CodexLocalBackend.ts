@@ -2,7 +2,7 @@ import { app } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { promises as fs, type WriteStream } from 'node:fs'
 import path from 'node:path'
-import { buildCodexLaunchArgs, resolveCodexSessionConfig, type CodexProviderConfig } from './codexLaunch'
+import { buildCodexLaunchArgs, resolveCodexSessionConfig, type CatimationMcpLaunchInfo, type CodexProviderConfig } from './codexLaunch'
 import { mergeCodexConfigs } from './codexConfigMerge'
 import { appendAuditLog, atomicWriteFile } from './codexConfigStore'
 import { CodexProtocolClient, mapServerNotification } from './CodexProtocolClient'
@@ -73,12 +73,13 @@ export interface CodexLocalBackendOptions {
   provider?: CodexProviderConfig
   sessionConfig?: Partial<CodexSessionConfig>
   /**
-   * Local in-process catimation MCP server coordinates ({ port, token }).
-   * Forwarded to `buildCodexLaunchArgs` so the spawned Codex subprocess gets
-   * an ephemeral `[mcp_servers.catimation]` entry and can call our in-app
-   * `generate_image` tool. Only used on the spawn path.
+   * Local in-process catimation MCP server coordinates. Forwarded to
+   * `buildCodexLaunchArgs` so the spawned Codex subprocess gets an ephemeral
+   * `[mcp_servers.catimation]` entry (stdio bridge when `stdio` is present,
+   * streamable HTTP otherwise) and can call our in-app `generate_image`
+   * tool. Only used on the spawn path.
    */
-  catimationMcp?: { port: number; token: string }
+  catimationMcp?: CatimationMcpLaunchInfo
   onApprovalRequest?: (request: CodexApprovalRequest) => void
   onMcpNotification?: (event: AgentStreamEvent) => void
 }

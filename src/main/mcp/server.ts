@@ -3,9 +3,11 @@ import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node'
 import { McpServer, isInitializeRequest } from '@modelcontextprotocol/server'
 import type { BrowserWindow } from 'electron'
 import { randomBytes, randomUUID } from 'node:crypto'
-import type { AddressInfo, Server } from 'node:net'
-import type { Express } from 'express'
+import type { Server as HttpServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
+import type { Express, Request, Response } from 'express'
 import { CATIMATION_MCP_HOST, CATIMATION_MCP_PORT, CATIMATION_MCP_TOKEN_HEADER } from './config'
+import { startCatimationBridgeListener, type BridgeRuntime } from './bridge'
 import { ToolRouter } from './ToolRouter'
 import { registerTools } from './tools'
 
@@ -13,6 +15,20 @@ export interface McpRuntime {
   port: number
   token: string
   router: ToolRouter
+  /**
+   * The bound Node HTTP server. Exposed so callers/tests can close it and so
+   * its keep-alive/request timeouts (configured for long-lived MCP tool
+   * calls) are observable.
+   */
+  httpServer: HttpServer
+  /**
+   * TCP loopback listener for the stdio bridge (resources/catimation-bridge).
+   * This is the PREFERRED codex transport — the HTTP listener above remains
+   * for external clients (e.g. a user-level Cursor `mcp.json` pointing at
+   * `http://127.0.0.1:7842/mcp`). Null when the bridge listener failed to
+   * bind, in which case codex falls back to streamable HTTP.
+   */
+  bridge: BridgeRuntime | null
 }
 
 /**
@@ -29,7 +45,7 @@ export interface McpRuntime {
  * Exported for unit tests so the fallback policy can be exercised in
  * isolation from `startCatimationMcpServer`.
  */
-export function listenOnPort(app: Express, host: string, port: number): Promise<{ server: Server; port: number }> {
+export function listenOnPort(app: Express, host: string, port: number): Promise<{ server: HttpServer; port: number }> {
   return new Promise((resolve, reject) => {
     const server = app.listen(port, host)
     const onError = (err: Error & { code?: string }) => {
@@ -69,8 +85,22 @@ export async function startCatimationMcpServer(
 ): Promise<McpRuntime | null> {
   const token = randomBytes(32).toString('hex')
   const router = new ToolRouter(win)
-  const server = new McpServer({ name: 'catimation', version: '1.0.0' })
-  registerTools(server, router)
+
+  // One McpServer instance PER CONNECTION/SESSION, all sharing this router.
+  // The SDK's Protocol is a single-transport state machine: `connect()` sets
+  // `this._transport`, and responses go to whatever `_transport` points at
+  // when the request arrives. Sharing one instance across sessions meant a
+  // second connection (codex subagent bridge, codex HTTP re-init, external
+  // Cursor client) silently stole response routing from the first — the
+  // first session's in-flight tool result was written to the wrong peer and
+  // codex hung forever. Per-session instances are the SDK's own documented
+  // multi-session pattern; registering the handful of tools per session is
+  // cheap (no I/O, just closures over the shared router).
+  const createServerInstance = (): McpServer => {
+    const server = new McpServer({ name: 'catimation', version: '1.0.0' })
+    registerTools(server, router)
+    return server
+  }
 
   const app = createMcpExpressApp({ host: CATIMATION_MCP_HOST })
   app.use((req, res, next) => {
@@ -82,6 +112,21 @@ export async function startCatimationMcpServer(
   })
 
   const transports = new Map<string, NodeStreamableHTTPServerTransport>()
+
+  // Per the MCP streamable-HTTP spec, an unknown/expired session MUST get
+  // HTTP 404 — that status is the signal that tells the client (codex's rmcp)
+  // to re-initialize a FRESH session and recover. Anything else (our old 400,
+  // or Express's HTML 404 for unrouted GET/DELETE) leaves rmcp permanently
+  // wedged after a transport drop: every later tool call fails with
+  // "Unexpected content type" / "session expired" and the turn hangs.
+  const sessionNotFound = (res: Response): void => {
+    res.status(404).json({
+      jsonrpc: '2.0',
+      error: { code: -32001, message: 'Session not found' },
+      id: null,
+    })
+  }
+
   app.post('/mcp', async (req, res) => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined
     if (sessionId && transports.has(sessionId)) {
@@ -97,13 +142,33 @@ export async function startCatimationMcpServer(
       transport.onclose = () => {
         if (transport.sessionId) transports.delete(transport.sessionId)
       }
-      await server.connect(transport)
+      // Fresh per-session instance — see createServerInstance for why.
+      await createServerInstance().connect(transport)
       await transport.handleRequest(req, res, req.body)
       return
     }
 
+    if (sessionId) {
+      sessionNotFound(res)
+      return
+    }
     res.status(400).json({ error: 'Invalid request' })
   })
+
+  // GET = the client's server→client SSE "common stream"; DELETE = explicit
+  // session teardown. Both are part of the streamable-HTTP lifecycle. We only
+  // routed POST before, so rmcp logged "fail to get common stream: 404" on
+  // every session and teardown DELETEs bounced off Express's HTML 404.
+  const handleSessionRequest = async (req: Request, res: Response): Promise<void> => {
+    const sessionId = req.headers['mcp-session-id'] as string | undefined
+    if (sessionId && transports.has(sessionId)) {
+      await transports.get(sessionId)!.handleRequest(req, res)
+      return
+    }
+    sessionNotFound(res)
+  }
+  app.get('/mcp', handleSessionRequest)
+  app.delete('/mcp', handleSessionRequest)
 
   // Bind strategy (see openai/codex#11269 for upstream precedent):
   //   1. Try the configured fixed port (predictable URL during dev/debug).
@@ -113,7 +178,7 @@ export async function startCatimationMcpServer(
   //   3. If even that fails (extremely unusual), log and return null so the
   //      app can boot without the MCP tool surface instead of hard-crashing
   //      the main process.
-  let bound: { port: number } | null = null
+  let bound: { server: HttpServer; port: number } | null = null
   try {
     bound = await listenOnPort(app, CATIMATION_MCP_HOST, port)
   } catch (err) {
@@ -134,5 +199,25 @@ export async function startCatimationMcpServer(
       return null
     }
   }
-  return { port: bound.port, token, router }
+
+  // Loopback-only server hosting MINUTES-long tool calls (image renders hold
+  // the POST open while the SSE response waits for the result):
+  //  - keepAliveTimeout=0: never close idle pooled sockets. Node's 5s default
+  //    races rmcp's connection reuse — the server closes the socket exactly
+  //    as the client sends on it, the send fails, and rmcp's worker quits
+  //    FATALLY, orphaning the in-flight generate_images result ("经常卡住",
+  //    nodejs/node#52649). On 127.0.0.1 idle sockets cost nothing.
+  //  - requestTimeout=0: disable Node 18+'s 300s whole-request timer so a
+  //    long-lived tool-call exchange is never destroyed mid-render.
+  bound.server.keepAliveTimeout = 0
+  bound.server.requestTimeout = 0
+
+  // stdio-bridge listener (ephemeral loopback TCP); each bridge connection
+  // gets its own McpServer instance from the factory. codex talks to the
+  // bridge over stdio pipes — its rmcp HTTP client (and every
+  // keep-alive/session failure mode that came with it) leaves the critical
+  // path. The HTTP listener above stays up for external clients.
+  const bridge = await startCatimationBridgeListener(createServerInstance)
+
+  return { port: bound.port, token, router, httpServer: bound.server, bridge }
 }

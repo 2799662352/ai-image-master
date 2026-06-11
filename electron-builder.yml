@@ -86,6 +86,14 @@ extraResources:
     to: apiyi-mcp/node_modules
     filter:
       - "**/*"
+  # Zero-dependency stdio↔socket bridge spawned BY codex as the catimation
+  # MCP server (resolves to <resourcesPath>/catimation-bridge/index.js at
+  # runtime via src/main/mcp/bridge.ts getCatimationBridgeEntryPath). Plain
+  # Node script committed verbatim — no vendor/build step needed.
+  - from: resources/catimation-bridge
+    to: catimation-bridge
+    filter:
+      - "**/*"
   - from: resources/skills
     to: skills
     filter:

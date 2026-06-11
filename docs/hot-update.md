@@ -138,6 +138,42 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
+### v4.3.36 (2026-06-12) — 根因修复:Codex「生成成功了没有反应」(MCP 传输三连坑) + 保存状态气泡
+
+> 详细踩坑复盘见 `docs/2026-06-12-mcp-stdio-bridge-pitfalls.md`。三个独立的坑叠加成同一症状:图片在 UI 生成成功,但 codex 永远收不到工具结果,turn 卡死。
+
+**A. stdio 桥替代 streamable HTTP(坑 1:codex rmcp HTTP 客户端长调用不可靠)**
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| 零依赖 stdio↔TCP 桥 | `resources/catimation-bridge/index.js`(新)+ `src/main/mcp/bridge.ts`(新) | codex spawn 纯 Node 桥脚本作 stdio MCP server,字节转发到 Electron 主进程 loopback TCP listener(token 鉴权);把 codex rmcp streamable-HTTP 客户端(keep-alive/session 失败模式会吞掉长 `generate_image` 的回包)从关键路径摘掉 |
+| codex 配置切 stdio | `src/main/agent/codexLaunch.ts` + `src/main/index.ts` | catimation MCP entry 从 `url=http://...` 改为 `command=node args=[桥脚本] env={PORT,TOKEN}`;桥脚本缺失/listener 失败时自动回退 HTTP |
+| 打包带入桥脚本 | `electron-builder.yml` | `extraResources: resources/catimation-bridge → catimation-bridge`,packaged 经 `getCatimationBridgeEntryPath` 解析 |
+
+**B. server-per-connection(坑 2 根因核心:共享 `McpServer` 的 `_transport` 被覆盖)**
+
+SDK `Protocol` 基类只有一个 `_transport` 字段,`connect()` 静默覆盖。共享实例下:连接 A 的 `generate_image` 在跑 → 连接 B(subagent/重连)插入 → A 的结果经 `this._transport` 发给了 B → A 永远等不到。修复:`src/main/mcp/server.ts` 抽 `createServerInstance()` 工厂,**每条 socket / 每个 HTTP session 新建独立 `McpServer`**。回归测试钉死双连接 in-flight 场景(`bridge.test.ts` / `server.transport.test.ts`)。
+
+**C. 生成即成功,持久化限时降级(坑 3:收尾记账阻塞回包)**
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| 10s 持久化预算 | `src/renderer/src/features/agent-chat/AgentToolExecutor.ts` | 历史落库+文件存盘套 `Promise.race`;超时立即返回成功 + `persistencePending: true`,后台继续保存(Prisma P1017 等 DB 挂起不再无限等) |
+| codex 完成横幅区分 pending | `src/main/mcp/tools/imageTools.ts` | pending 时文案明示「已生成、文件后台保存中、不要重试不要等」 |
+| 聊天保存状态气泡 | `cards/ArtifactCard.tsx`(`SaveStatusBanner`)+ `store.ts`(`annotateImageGeneration`)+ `src/types/agent-timeline.ts`(`ArtifactSaveInfo`) | 图片气泡下方醒目横幅:琥珀「⏳ 后台保存中…」→ 翠绿「✅ 已保存 + 📁 目录」/红「⚠️ 保存失败(图可正常查看)」,同一气泡原地翻转 |
+
+#### 用户可见行为
+
+1. Codex 生图后**立即**收到结果并继续回复,不再「生成成功了没有反应」
+2. 多对话 / subagent 并发生图,回包不串连接
+3. 本地数据库抽风时图片照常上屏,气泡显示「后台保存中」,保存完成后原地翻成「已保存 + 目录」
+
+#### 验证
+
+- `bridge.test.ts` / `server.transport.test.ts`(多连接路由)、`AgentToolExecutor.generateImage.test.ts`(持久化挂起不阻塞 + pending→saved 翻转)、`ArtifactCard.saveBanner.test.tsx`(三态气泡)、`imageTools.test.ts`(pending 横幅)全部通过;实机双 TCP 连接验证回包只回发起方
+
+---
+
 ### v4.3.28 (2026-06-09) — Codex 多对话并行 + 图像归属修复 + subagent 一等公民 + 侧栏/工作区持久化
 
 围绕 Codex 聊天的「多对话并行」补齐一整套:开新对话/切换不再打断或污染其它对话,生成的图片永远落在发起它的对话里,并把 subagent 做成内置能力。全部按 `systematic-debugging` 取证到根因(含 codex 源码/官方 issue + 运行时 `_meta` 实测)。

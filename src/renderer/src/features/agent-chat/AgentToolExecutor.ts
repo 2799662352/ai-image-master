@@ -5,7 +5,7 @@ import type { ImageViewer } from '../image-viewer'
 import { isTabName, useTabStore } from '../../stores/useTabStore'
 import { useAgentChatStore } from './store'
 import { recordCodexArtifact } from './codexArtifactPersistence'
-import type { AttachmentRef } from '../../../../types/agent-timeline'
+import type { ArtifactSaveInfo, AttachmentRef } from '../../../../types/agent-timeline'
 import type { AgentToolRequest, AgentToolResponse } from '../../../../types/agent'
 
 type GenerateImageToolParams = GenerateImageParams
@@ -53,6 +53,18 @@ type QueryHistoryToolParams = {
 
 const DEFAULT_HISTORY_LIMIT = 20
 const MAX_HISTORY_LIMIT = 100
+
+/**
+ * Time budget for POST-generation persistence (history record + file-panel
+ * save). Generation success is decided by the render alone — once the image
+ * exists and is on screen, the tool call IS successful. Persistence normally
+ * finishes in well under a second; this budget only matters when the local DB
+ * wedges (e.g. Prisma P1017 against PGlite), which previously made the tool
+ * response hang forever even though the user was already looking at the
+ * image. On timeout we return success WITHOUT paths and let persistence keep
+ * running in the background.
+ */
+const PERSISTENCE_BUDGET_MS = 10_000
 
 export class AgentToolExecutor {
   start(): () => void {
@@ -162,32 +174,43 @@ export class AgentToolExecutor {
     // Settle the bubble with the finished images (thumbnail + lightbox).
     chat.resolveImageGeneration(genId, this.toArtifacts(images), reqThreadId)
 
-    // Persist to history under the 'codex' type (base64 → R2 handled inside).
-    const historyId = await this.recordHistory(request, images)
+    // THE SUCCESS CRITERION ENDS HERE. The image is rendered and on screen, so
+    // the tool call is a success no matter what happens to the bookkeeping
+    // below. History + file-panel persistence (which yield `historyId` and the
+    // local `paths`) run under a fixed time budget: if they finish in time, the
+    // agent gets the full result; if the local DB hangs, we return success
+    // immediately with empty paths and let persistence settle in the
+    // background. Codex must NEVER wait on bookkeeping for an image the user
+    // is already looking at.
+    const persistence = this.persistArtifacts(request, images, reqThreadId)
+    const settled = await Promise.race([
+      persistence,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), PERSISTENCE_BUDGET_MS)),
+    ])
 
-    // Persist into the watched uploads dir so the image both shows in the
-    // ATTACHMENTS file panel AND gives us a concrete local file path to hand
-    // back to the agent. This replicates codex's native `image_gen`
-    // generate→save→read contract: that tool always reports the final saved
-    // path so the agent can view / move / reference the file. We await here (the
-    // chat bubble + history already settled, so UX is unaffected) to capture the
-    // paths; a save failure just yields an empty `paths` list.
-    const threadId = reqThreadId
-    const paths = threadId ? await this.saveToFilePanel(threadId, request.prompt, images) : []
-
-    // Anchor the bubble to the history record so it survives reload /
-    // thread-switch. History URLs are preferred when available, but they can
-    // remain `pending:*` until async R2/COS upload settles. Store the tiny local
-    // saved paths too, so reload/edit can still restore thumbnail + address.
-    if (historyId != null && threadId) {
-      recordCodexArtifact(threadId, {
-        id: `codex-artifact-${historyId}`,
-        createdAt: Date.now(),
-        prompt: request.prompt,
-        historyId,
-        paths,
-      })
+    if (!settled) {
+      // Show the save-status banner on the bubble NOW (pending), and update the
+      // SAME bubble whenever the background save eventually settles — so the
+      // user sees "保存中" flip to the final folder without any new message.
+      chat.annotateImageGeneration(genId, { status: 'pending' }, reqThreadId)
+      void persistence
+        .then((late) => {
+          useAgentChatStore
+            .getState()
+            .annotateImageGeneration(genId, this.toSaveInfo(late), reqThreadId)
+        })
+        .catch(() => {})
+      return {
+        ok: true,
+        count: images.length,
+        model: CODEX_IMAGE_MODEL,
+        historyId: null,
+        paths: [],
+        persistencePending: true,
+      }
     }
+
+    chat.annotateImageGeneration(genId, this.toSaveInfo(settled), reqThreadId)
 
     // Return a COMPACT result to the agent — never echo multi-MB base64 back
     // into the model context (token blowup + useless to the agent). `paths`
@@ -197,7 +220,64 @@ export class AgentToolExecutor {
       ok: true,
       count: images.length,
       model: CODEX_IMAGE_MODEL,
-      historyId,
+      historyId: settled.historyId,
+      paths: settled.paths,
+    }
+  }
+
+  /**
+   * Post-generation bookkeeping: history record (base64 → R2 handled inside)
+   * and file-panel save (uploads dir → concrete local paths, replicating
+   * codex native `image_gen`'s generate→save→report-path contract). Never
+   * rejects — generation success was already decided by the render, so any
+   * failure here just degrades the returned metadata.
+   */
+  private async persistArtifacts(
+    request: GenerateImageParams,
+    images: string[],
+    threadId: string | undefined,
+  ): Promise<{ historyId: number | string | null; paths: string[] }> {
+    try {
+      const [historyId, paths] = await Promise.all([
+        this.recordHistory(request, images),
+        threadId ? this.saveToFilePanel(threadId, request.prompt, images) : Promise.resolve([]),
+      ])
+
+      // Anchor the bubble to the history record so it survives reload /
+      // thread-switch. History URLs are preferred when available, but they can
+      // remain `pending:*` until async R2/COS upload settles. Store the tiny
+      // local saved paths too, so reload/edit can still restore thumbnail +
+      // address.
+      if (historyId != null && threadId) {
+        recordCodexArtifact(threadId, {
+          id: `codex-artifact-${historyId}`,
+          createdAt: Date.now(),
+          prompt: request.prompt,
+          historyId,
+          paths,
+        })
+      }
+      return { historyId, paths }
+    } catch (error) {
+      console.error('[AgentToolExecutor] post-generation persistence failed:', error)
+      return { historyId: null, paths: [] }
+    }
+  }
+
+  /** Map settled persistence results to the bubble's save-status banner payload. */
+  private toSaveInfo(settled: { historyId: number | string | null; paths: string[] }): ArtifactSaveInfo {
+    const { historyId, paths } = settled
+    // No file paths AND no history record → the bookkeeping really failed.
+    // Paths alone can legitimately be empty (e.g. no file-panel thread); the
+    // history record still makes the image findable, so that's a save.
+    if (paths.length === 0) {
+      return historyId != null ? { status: 'saved' } : { status: 'failed' }
+    }
+    const first = paths[0]
+    const cut = Math.max(first.lastIndexOf('\\'), first.lastIndexOf('/'))
+    return {
+      status: 'saved',
+      dir: cut > 0 ? first.slice(0, cut) : undefined,
       paths,
     }
   }

@@ -45,6 +45,8 @@ import { registerMediaThumbIpc } from './file-explorer/mediaThumbIpc'
 import { registerFsWatcherIpc, disposeAll as disposeFsWatchers } from './file-explorer/fsWatcher'
 import { startCatimationMcpServer } from './mcp/server'
 import type { McpRuntime } from './mcp/server'
+import { getCatimationBridgeEntryPath } from './mcp/bridge'
+import type { CatimationMcpLaunchInfo } from './agent/codexLaunch'
 import { resolveWorkspacePaths } from './agent/codexConfigStore'
 import { getApiyiMcpEntryPath, resolveApiyiCommand } from './agent/apiyiMcpLauncher'
 import { seedApiyiMcpEntry } from './agent/apiyiMcpSeed'
@@ -760,17 +762,53 @@ async function initAgentRuntime(win: BrowserWindow): Promise<void> {
           'agent will run without the local MCP tool surface.',
       )
     }
+    // Prefer the stdio bridge transport for the spawned codex: codex runs
+    // resources/catimation-bridge/index.js as a plain stdio MCP server and
+    // the bridge pipes bytes to our loopback TCP listener. This takes codex's
+    // rmcp streamable-HTTP client (whose keep-alive/session failure modes
+    // wedged long generate_image turns) off the critical path. Falls back to
+    // the HTTP url entry when the bridge listener or script is unavailable.
+    let catimationMcpLaunch: CatimationMcpLaunchInfo | undefined
+    if (agentMcpRuntime) {
+      catimationMcpLaunch = { port: agentMcpRuntime.port, token: agentMcpRuntime.token }
+      if (agentMcpRuntime.bridge) {
+        const bridgeEntry = getCatimationBridgeEntryPath({
+          appPath: app.getAppPath(),
+          isPackaged: app.isPackaged,
+          resourcesPath: process.resourcesPath,
+        })
+        if (fs.existsSync(bridgeEntry)) {
+          // Same node-vs-Electron-as-Node resolution the apiyi stdio server
+          // already uses (system `node` when on PATH, otherwise our own
+          // binary with ELECTRON_RUN_AS_NODE=1).
+          const resolved = await resolveApiyiCommand(process.execPath)
+          catimationMcpLaunch.stdio = {
+            command: resolved.command,
+            args: [bridgeEntry],
+            env: {
+              ...resolved.extraEnv,
+              CATIMATION_BRIDGE_PORT: String(agentMcpRuntime.bridge.port),
+              CATIMATION_BRIDGE_TOKEN: agentMcpRuntime.bridge.token,
+            },
+          }
+          console.log('[AgentRuntime] catimation MCP: stdio bridge enabled (port', agentMcpRuntime.bridge.port, ')')
+        } else {
+          console.warn('[AgentRuntime] catimation bridge script missing at', bridgeEntry, '— falling back to HTTP transport')
+        }
+      } else {
+        console.warn('[AgentRuntime] catimation bridge listener unavailable — falling back to HTTP transport')
+      }
+    }
     agentManager = new AgentManager({
       userDataDir: app.getPath('userData'),
       win,
       store: threadStore,
       attachments: attachmentService,
-      // Hand the spawned Codex subprocess the local MCP server's dynamic
-      // port + token so it can actually call our `generate_image` tool.
-      // Null when the listener failed to bind (agent still works, sans tools).
-      mcpRuntime: agentMcpRuntime
-        ? { port: agentMcpRuntime.port, token: agentMcpRuntime.token }
-        : undefined,
+      // Hand the spawned Codex subprocess the local MCP server coordinates
+      // (stdio bridge preferred, HTTP fallback) so it can actually call our
+      // `generate_image` tool. Undefined when the listener failed to bind
+      // (agent still works, sans tools).
+      mcpRuntime: catimationMcpLaunch,
     })
     // Let the MCP ToolRouter reverse-map Codex thread UUIDs (carried in each
     // tool call's `_meta`) to our DB thread ids, so renderer tools like

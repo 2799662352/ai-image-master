@@ -147,6 +147,31 @@ describe('registerImageTools / generate_image schema', () => {
     expect(content[0].type).toBe('text')
   })
 
+  it('reports a clean DONE (not an error) when persistence is still pending in the background', async () => {
+    // Renderer hit its persistence budget: image rendered + shown, but
+    // history/file save still settling. Success = generation; the banner must
+    // say COMPLETE, forbid retries, and point at query_history for later.
+    const { tools, server, router } = capture({
+      ok: true,
+      count: 1,
+      model: 'gpt-image-2-vip',
+      historyId: null,
+      paths: [],
+      persistencePending: true,
+    })
+    registerImageTools(server, router)
+    const handler = tools.find((t) => t.name === 'generate_image')!.handler
+
+    const { content } = await handler({ prompt: 'a cat' })
+    const text = content[0].text as string
+
+    expect(text).toContain('generate_image DONE')
+    expect(text).toMatch(/still finishing in the background/i)
+    expect(text).toMatch(/do not retry/i)
+    expect(text).toContain('query_history')
+    expect(text).toContain('"persistencePending":true')
+  })
+
   it('registers generate_images for batch image fan-out', () => {
     const { tools, server, router } = capture()
     registerImageTools(server, router)
@@ -185,11 +210,35 @@ describe('registerImageTools / generate_image schema', () => {
     expect(router.call).toHaveBeenCalledTimes(3)
     expect(maxInFlight).toBeGreaterThan(1)
     const text = content[0].text as string
-    expect(text).toContain('generate_images DONE — 3/3 image(s) saved')
+    expect(text).toContain('generate_images DONE — 3/3 image(s) generated')
     expect(text).toContain(paths[0])
     expect(text).toContain(paths[1])
     expect(text).toContain(paths[2])
     expect(text).toMatch(/Do NOT open these files with view_image/i)
     expect(content.filter((c) => c.type === 'resource_link')).toHaveLength(3)
+  })
+
+  it('generate_images stays DONE when some saves are pending; lists available paths + notes the rest', async () => {
+    const savedPath = 'C:\\Users\\me\\AppData\\Roaming\\app\\agent\\uploads\\cat-1.png'
+    const { tools, server, router } = capture()
+    router.call = vi.fn(async (_name: string, params: Record<string, unknown>) => {
+      const idx = Number(params.__batchIndex)
+      return idx === 1
+        ? { ok: true, count: 1, model: 'gpt-image-2-vip', historyId: 10, paths: [savedPath] }
+        : { ok: true, count: 1, model: 'gpt-image-2-vip', historyId: null, paths: [], persistencePending: true }
+    })
+    registerImageTools(server, router)
+    const handler = tools.find((t) => t.name === 'generate_images')!.handler
+
+    const { content } = await handler({ prompts: ['cat one', 'cat two'] })
+    const text = content[0].text as string
+
+    // Generation succeeded for both → DONE, never PARTIAL/FAILED.
+    expect(text).toContain('generate_images DONE — 2/2 image(s) generated')
+    expect(text).toContain(savedPath)
+    expect(text).toMatch(/1 file save\(s\) are still finishing in the background/i)
+    expect(text).toMatch(/do not retry/i)
+    // The blanket "never query_history" line is dropped when paths are incomplete.
+    expect(text).not.toMatch(/Do NOT run query_history and do NOT search the filesystem/i)
   })
 })

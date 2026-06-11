@@ -53,6 +53,21 @@ export interface AttachmentItem extends BaseItem {
   attachments: AttachmentRef[]
 }
 
+/**
+ * Post-generation save/bookkeeping state for a generated artifact, rendered as
+ * a standalone status banner under the thumbnails. Success of the GENERATION
+ * is decided by the render alone; this only narrates where the files went.
+ * - `pending`: history/file save still running in the background.
+ * - `saved`: files persisted; `dir`/`paths` point at the local copies.
+ * - `failed`: generation succeeded but local save did not (images still live
+ *   in chat + history).
+ */
+export interface ArtifactSaveInfo {
+  status: 'pending' | 'saved' | 'failed'
+  dir?: string
+  paths?: string[]
+}
+
 export interface ArtifactItem extends BaseItem {
   type: 'artifact'
   artifacts: AttachmentRef[]
@@ -68,6 +83,8 @@ export interface ArtifactItem extends BaseItem {
   prompt?: string
   /** Failure message when `status === 'error'`. */
   error?: string
+  /** Save-status banner (codex `generate_image` tool); absent for plain attachments. */
+  save?: ArtifactSaveInfo
 }
 
 /**

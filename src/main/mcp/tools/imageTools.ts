@@ -62,9 +62,23 @@ function buildCompletionBanner(result: unknown, paths: string[], dir: string | u
     count?: unknown
     historyId?: unknown
     model?: unknown
+    persistencePending?: unknown
   }
   const count = typeof r.count === 'number' ? r.count : paths.length
   const machine = JSON.stringify({ ...(r as object), ...(dir ? { dir } : {}) })
+
+  if (r.persistencePending === true) {
+    // Render succeeded but local bookkeeping (history/file save) exceeded its
+    // time budget and is still settling in the background. Success is decided
+    // by the render — never make the agent wait on (or retry over) bookkeeping.
+    return [
+      `✅ generate_image DONE — ${count} image(s) generated and shown to the user.`,
+      'Local file save is still finishing in the background, so no path is available yet.',
+      'Treat this generation as COMPLETE — do NOT retry or re-generate.',
+      'If you genuinely need the file path later, call query_history then; otherwise just confirm to the user.',
+      machine,
+    ].join('\n')
+  }
 
   if (paths.length === 0) {
     // No on-disk path (save failed / disabled). Still a clean completion; the
@@ -96,6 +110,9 @@ function buildCompletionBanner(result: unknown, paths: string[], dir: string | u
 
 function buildBatchCompletionBanner(results: unknown[], paths: string[]): string {
   const dirs = [...new Set(paths.map((p) => path.dirname(p)))]
+  const pendingCount = results.filter(
+    (r) => (r as { persistencePending?: unknown } | null)?.persistencePending === true,
+  ).length
   const machine = JSON.stringify({
     ok: true,
     count: results.length,
@@ -105,12 +122,17 @@ function buildBatchCompletionBanner(results: unknown[], paths: string[]): string
   })
 
   return [
-    `✅ generate_images DONE — ${results.length}/${results.length} image(s) saved. Already shown to the user.`,
+    `✅ generate_images DONE — ${results.length}/${results.length} image(s) generated. Already shown to the user.`,
     dirs.length === 1 ? `📁 SAVED FOLDER: ${dirs[0]}` : '',
-    'FILES:',
+    paths.length > 0 ? 'FILES:' : '',
     ...paths.map((p) => `- ${p}`),
+    pendingCount > 0
+      ? `${pendingCount} file save(s) are still finishing in the background — their paths are not listed yet. The generation itself is COMPLETE; do NOT retry. Use query_history later only if a missing path is genuinely needed.`
+      : '',
     'Do NOT open these files with view_image to "double-check" — the user is already looking at the image(s) in chat. Viewing them injects multi-MB base64 into context and can kill the thread (request_too_large). Only view if the user explicitly asks, and then at most ONE image.',
-    'Do NOT run query_history and do NOT search the filesystem to locate these — the paths above are authoritative and the batch task is complete.',
+    pendingCount === 0
+      ? 'Do NOT run query_history and do NOT search the filesystem to locate these — the paths above are authoritative and the batch task is complete.'
+      : '',
     machine,
   ]
     .filter((line) => line.length > 0)

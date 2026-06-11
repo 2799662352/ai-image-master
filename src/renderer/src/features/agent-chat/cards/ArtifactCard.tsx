@@ -22,6 +22,64 @@ function isRenderableMedia(ref: AttachmentRef): boolean {
   return typeof uri === 'string' && uri.length > 0
 }
 
+/**
+ * Standalone save-status banner rendered under the generated thumbnails as its
+ * own eye-catching bubble (NOT plain text inside the grid). Three states:
+ * pending (amber, pulsing), saved (emerald, shows the folder), failed (red,
+ * but explicitly says the image itself is fine).
+ */
+function SaveStatusBanner({ save, count }: { save: NonNullable<ArtifactItem['save']>; count: number }) {
+  if (save.status === 'pending') {
+    return (
+      <div
+        data-testid="artifact-save-banner"
+        className="mt-2 flex items-center gap-2.5 rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 shadow-[0_0_12px_rgba(251,191,36,0.15)]"
+      >
+        <span
+          aria-hidden
+          className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-amber-400/25 border-t-amber-300"
+        />
+        <span className="font-mono text-[12px] font-semibold text-amber-200">
+          ✅ 已生成 {count} 张图 · 文件仍在后台保存中…
+        </span>
+      </div>
+    )
+  }
+
+  if (save.status === 'failed') {
+    return (
+      <div
+        data-testid="artifact-save-banner"
+        className="mt-2 flex items-center gap-2.5 rounded-lg border border-red-400/40 bg-red-500/10 px-3 py-2"
+      >
+        <span aria-hidden className="text-[13px] leading-none">⚠️</span>
+        <span className="font-mono text-[12px] text-red-200">
+          图片已生成（可正常查看），但本地保存失败
+        </span>
+      </div>
+    )
+  }
+
+  return (
+    <div
+      data-testid="artifact-save-banner"
+      className="mt-2 flex items-center gap-2.5 rounded-lg border border-emerald-400/40 bg-emerald-400/10 px-3 py-2 shadow-[0_0_12px_rgba(52,211,153,0.15)]"
+    >
+      <span aria-hidden className="text-[13px] leading-none">✅</span>
+      <div className="flex min-w-0 flex-col">
+        <span className="font-mono text-[12px] font-semibold text-emerald-200">
+          已生成 {count} 张图 · 已保存
+        </span>
+        {save.dir ? (
+          <span className="max-w-[300px] truncate text-[11px] text-emerald-300/70" title={save.dir}>
+            📁 {save.dir}
+          </span>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
 export function ArtifactCard({ item }: { item: ArtifactItem }) {
   const openPreview = useAgentChatStore((s) => s.openPreview)
   const openReference = useFileExplorerStore((state) => state.openReference)
@@ -85,8 +143,9 @@ export function ArtifactCard({ item }: { item: ArtifactItem }) {
   }
 
   return (
-    <div className="my-1 flex flex-wrap gap-2">
-      {item.artifacts.map((ref) => {
+    <div className="my-1">
+      <div className="flex flex-wrap gap-2">
+        {item.artifacts.map((ref) => {
         const kind = mediaKindOf(ref)
         if (kind != null && isRenderableMedia(ref)) {
           return (
@@ -129,7 +188,9 @@ export function ArtifactCard({ item }: { item: ArtifactItem }) {
             )}
           </button>
         )
-      })}
+        })}
+      </div>
+      {item.save ? <SaveStatusBanner save={item.save} count={item.artifacts.length} /> : null}
     </div>
   )
 }

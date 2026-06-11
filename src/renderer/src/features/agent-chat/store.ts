@@ -23,7 +23,7 @@ import type {
   ItemDeltaPatch,
 } from '../../../../types/agent'
 import type { AgentReference } from '../../../../types/agent-reference'
-import type { ArtifactItem, AttachmentRef, Message, PlanStep, TimelineItem } from '../../../../types/agent-timeline'
+import type { ArtifactItem, ArtifactSaveInfo, AttachmentRef, Message, PlanStep, TimelineItem } from '../../../../types/agent-timeline'
 import {
   dropSupersededStreamItemsInLastMessage,
   trimRetriedStreamItemsInLastMessage,
@@ -343,6 +343,14 @@ interface AgentChatState {
   beginImageGeneration: (prompt: string, threadId?: string) => string
   resolveImageGeneration: (itemId: string, artifacts: AttachmentRef[], threadId?: string) => void
   failImageGeneration: (itemId: string, error: string, threadId?: string) => void
+
+  /**
+   * Attach/refresh the save-status banner on a generation bubble. Called after
+   * `resolveImageGeneration`: first with `pending` when persistence exceeds its
+   * time budget, then again with `saved`/`failed` when the background save
+   * settles — the SAME bubble updates in place.
+   */
+  annotateImageGeneration: (itemId: string, save: ArtifactSaveInfo, threadId?: string) => void
 
   // ----- Per-thread chat scroll state -----
   /**
@@ -880,6 +888,15 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
           status: 'error',
           error,
           endedAt: Date.now(),
+        })),
+      ),
+    ),
+  annotateImageGeneration: (itemId, save, threadId) =>
+    set((s) =>
+      patchThreadMessages(s, threadId, (msgs) =>
+        mapArtifactItem(msgs, itemId, (item) => ({
+          ...item,
+          save,
         })),
       ),
     ),

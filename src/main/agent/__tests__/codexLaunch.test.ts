@@ -184,6 +184,62 @@ describe('buildCodexLaunchArgs', () => {
     expect(args).toContain('mcp_servers.catimation.url="http://127.0.0.1:51234/mcp"')
   })
 
+  it('prefers the stdio bridge (command/args/env) over the HTTP url when stdio info is present', () => {
+    // Plan-B cutover for the "生成成功但 codex 没收到响应" incident: even the
+    // hardened streamable-HTTP transport dropped a completed generate_image
+    // result. With stdio info present we register the bridge subprocess and
+    // must NOT emit a url — codex picks its transport by which keys exist
+    // (deny_unknown_fields enum, url ⇒ HTTP / command ⇒ stdio).
+    const args = buildCodexLaunchArgs({
+      catimationMcp: {
+        port: 7842,
+        token: 'deadbeef',
+        stdio: {
+          command: 'C:\\Program Files\\nodejs\\node.exe',
+          args: ['C:\\app\\resources\\catimation-bridge\\index.js'],
+          env: { CATIMATION_BRIDGE_PORT: '51234', CATIMATION_BRIDGE_TOKEN: 'cafebabe' },
+        },
+      },
+    })
+
+    // JSON.stringify escaping doubles backslashes — valid TOML basic strings,
+    // so Windows paths survive `-c` TOML parsing.
+    expect(args).toContain('mcp_servers.catimation.command="C:\\\\Program Files\\\\nodejs\\\\node.exe"')
+    expect(args).toContain('mcp_servers.catimation.args=["C:\\\\app\\\\resources\\\\catimation-bridge\\\\index.js"]')
+    expect(args).toContain(
+      'mcp_servers.catimation.env={ "CATIMATION_BRIDGE_PORT" = "51234", "CATIMATION_BRIDGE_TOKEN" = "cafebabe" }',
+    )
+
+    // No HTTP-transport keys and still no `transport` key.
+    expect(args.some((a) => a.includes('mcp_servers.catimation.url'))).toBe(false)
+    expect(args.some((a) => a.includes('http_headers'))).toBe(false)
+    expect(args.some((a) => a.includes('transport'))).toBe(false)
+
+    // Transport-agnostic knobs still apply on the stdio path.
+    expect(args).toContain('mcp_servers.catimation.tool_timeout_sec=2000')
+    expect(args).toContain('mcp_servers.catimation.supports_parallel_tool_calls=true')
+    expect(args).toContain('skills.config=[{ name = "imagegen", enabled = false }]')
+  })
+
+  it('carries ELECTRON_RUN_AS_NODE through stdio env for the packaged-app fallback', () => {
+    // When no system node exists, resolveApiyiCommand falls back to our own
+    // Electron binary + ELECTRON_RUN_AS_NODE=1; that env must reach codex's
+    // spawn config or electron.exe boots in GUI mode and trashes stdio.
+    const args = buildCodexLaunchArgs({
+      catimationMcp: {
+        port: 7842,
+        token: 't',
+        stdio: {
+          command: 'C:\\app\\catimation.exe',
+          args: ['C:\\app\\resources\\catimation-bridge\\index.js'],
+          env: { ELECTRON_RUN_AS_NODE: '1', CATIMATION_BRIDGE_PORT: '1', CATIMATION_BRIDGE_TOKEN: 't' },
+        },
+      },
+    })
+    const envArg = args.find((a) => a.startsWith('mcp_servers.catimation.env='))
+    expect(envArg).toContain('"ELECTRON_RUN_AS_NODE" = "1"')
+  })
+
   it('accepts explicit safer overrides via sessionConfig', () => {
     const args = buildCodexLaunchArgs({
       listenUrl: 'ws://127.0.0.1:1234',

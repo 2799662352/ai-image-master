@@ -66,19 +66,46 @@ export interface CodexProviderConfig {
   extraTopLevelConfig?: Readonly<Record<string, string | boolean | number>>
 }
 
+/**
+ * Coordinates of the in-app catimation MCP server, with two possible codex
+ * transports:
+ *
+ *  - `stdio` present (preferred): codex spawns the vendored bridge script
+ *    (`resources/catimation-bridge/index.js`) as a plain stdio MCP server;
+ *    the bridge pipes bytes to the Electron main process over loopback TCP.
+ *    This removes codex's rmcp streamable-HTTP client — whose keep-alive /
+ *    session-404 failure modes repeatedly wedged long `generate_image`
+ *    turns — from the critical path entirely.
+ *
+ *  - `stdio` absent (fallback): the original streamable-HTTP entry
+ *    (`url` + token header) pointing at the in-process Express listener.
+ */
+export interface CatimationMcpLaunchInfo {
+  /** HTTP listener port — fallback transport + external clients. */
+  port: number
+  /** HTTP listener auth token (x-catimation-token header). */
+  token: string
+  /** When set, register the stdio bridge instead of the HTTP url. */
+  stdio?: {
+    command: string
+    args: string[]
+    env: Record<string, string>
+  }
+}
+
 export interface CodexLaunchOptions {
   listenUrl?: string
   provider?: CodexProviderConfig
   sessionConfig?: Partial<CodexSessionConfig>
   /**
-   * Local in-process catimation MCP server (port + per-session token). When
-   * present we inject an ephemeral `[mcp_servers.catimation]` entry via `-c`
-   * so the Codex subprocess can actually reach our `generate_image` /
+   * Local in-process catimation MCP server coordinates. When present we
+   * inject an ephemeral `[mcp_servers.catimation]` entry via `-c` so the
+   * Codex subprocess can actually reach our `generate_image` /
    * `query_history` / UI tools. Injecting via `-c` (instead of writing the
    * user's `~/.codex/config.toml`) keeps the entry in lockstep with the
    * current session's dynamic port/token and never leaves stale config behind.
    */
-  catimationMcp?: { port: number; token: string }
+  catimationMcp?: CatimationMcpLaunchInfo
 }
 
 function quote(value: string): string {
@@ -206,10 +233,31 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
   // auth header goes through `http_headers` (a TOML inline table). `-c` values
   // are parsed as TOML, so the quoted string and inline table below are valid.
   if (options?.catimationMcp) {
-    const { port, token } = options.catimationMcp
+    const { port, token, stdio } = options.catimationMcp
+    if (stdio) {
+      // Preferred transport: stdio bridge subprocess. Codex selects stdio
+      // purely by the presence of `command` (its transport enum is
+      // deny_unknown_fields — never emit a `transport` key). `quote()` is
+      // JSON.stringify, whose escaping (`\\` for Windows paths) is valid
+      // TOML basic-string escaping, so absolute paths survive `-c` parsing.
+      args.push(
+        '-c', `mcp_servers.catimation.command=${quote(stdio.command)}`,
+        '-c', `mcp_servers.catimation.args=[${stdio.args.map(quote).join(', ')}]`,
+      )
+      const envEntries = Object.entries(stdio.env)
+      if (envEntries.length > 0) {
+        args.push(
+          '-c',
+          `mcp_servers.catimation.env={ ${envEntries.map(([k, v]) => `${quote(k)} = ${quote(v)}`).join(', ')} }`,
+        )
+      }
+    } else {
+      args.push(
+        '-c', `mcp_servers.catimation.url="http://${CATIMATION_MCP_HOST}:${port}/mcp"`,
+        '-c', `mcp_servers.catimation.http_headers={ "${CATIMATION_MCP_TOKEN_HEADER}" = "${token}" }`,
+      )
+    }
     args.push(
-      '-c', `mcp_servers.catimation.url="http://${CATIMATION_MCP_HOST}:${port}/mcp"`,
-      '-c', `mcp_servers.catimation.http_headers={ "${CATIMATION_MCP_TOKEN_HEADER}" = "${token}" }`,
       // Give `generate_image` room to finish. Codex's default per-tool timeout
       // (`mcp_servers.<name>.tool_timeout_sec`) is short relative to a real
       // image render on the vip channel — at 2K/4K high quality a single call

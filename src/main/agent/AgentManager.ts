@@ -5,7 +5,7 @@ import path from 'node:path'
 import { app, dialog, shell } from 'electron'
 import { CodexLocalBackend } from './CodexLocalBackend'
 import { CodexProviderStore, type NewCustomProvider } from './CodexProviderStore'
-import { DEFAULT_CODEX_SESSION_CONFIG } from './codexLaunch'
+import { DEFAULT_CODEX_SESSION_CONFIG, type CatimationMcpLaunchInfo } from './codexLaunch'
 import {
   BUILTIN_PROVIDER_PRESETS,
   DEFAULT_PROVIDER_ID,
@@ -165,12 +165,13 @@ export interface AgentManagerOptions {
    */
   backend?: IAgentBackend
   /**
-   * Local catimation MCP server coordinates ({ port, token }) produced by
-   * `startCatimationMcpServer`. Forwarded to the default `CodexLocalBackend`
-   * so the spawned Codex subprocess can reach our in-app `generate_image`
-   * tool. Omitted when the local MCP listener failed to bind.
+   * Local catimation MCP server coordinates produced by
+   * `startCatimationMcpServer` (+ stdio bridge launch info when available).
+   * Forwarded to the default `CodexLocalBackend` so the spawned Codex
+   * subprocess can reach our in-app `generate_image` tool. Omitted when the
+   * local MCP listener failed to bind.
    */
-  mcpRuntime?: { port: number; token: string }
+  mcpRuntime?: CatimationMcpLaunchInfo
 }
 
 export class AgentManager {
