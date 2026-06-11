@@ -82,7 +82,11 @@ function buildCompletionBanner(result: unknown, paths: string[], dir: string | u
     dir ? `📁 SAVED FOLDER: ${dir}` : '',
     'FILES:',
     ...paths.map((p) => `- ${p}`),
-    'To view/inspect, open the FILES path(s) above directly (or list the SAVED FOLDER).',
+    // The "do not self-inspect" line is load-bearing: a batch of view_image
+    // calls on these full-res files injects N × multi-MB base64 into the next
+    // model request, which exceeds relay gateways' request-size cap and wedges
+    // the thread (observed live 2026-06-11: 5 images → 5 view_image → hang).
+    'Do NOT open these files with view_image to "double-check" — the user is already looking at the image(s) in chat. Viewing them injects multi-MB base64 into context and can kill the thread (request_too_large). Only view if the user explicitly asks, and then at most ONE image.',
     'Do NOT run query_history and do NOT search the filesystem to locate these — the paths above are authoritative and the task is complete.',
     machine,
   ]
@@ -90,7 +94,53 @@ function buildCompletionBanner(result: unknown, paths: string[], dir: string | u
     .join('\n')
 }
 
+function buildBatchCompletionBanner(results: unknown[], paths: string[]): string {
+  const dirs = [...new Set(paths.map((p) => path.dirname(p)))]
+  const machine = JSON.stringify({
+    ok: true,
+    count: results.length,
+    paths,
+    dirs,
+    results,
+  })
+
+  return [
+    `✅ generate_images DONE — ${results.length}/${results.length} image(s) saved. Already shown to the user.`,
+    dirs.length === 1 ? `📁 SAVED FOLDER: ${dirs[0]}` : '',
+    'FILES:',
+    ...paths.map((p) => `- ${p}`),
+    'Do NOT open these files with view_image to "double-check" — the user is already looking at the image(s) in chat. Viewing them injects multi-MB base64 into context and can kill the thread (request_too_large). Only view if the user explicitly asks, and then at most ONE image.',
+    'Do NOT run query_history and do NOT search the filesystem to locate these — the paths above are authoritative and the batch task is complete.',
+    machine,
+  ]
+    .filter((line) => line.length > 0)
+    .join('\n')
+}
+
+function buildBatchFailureBanner(successes: unknown[], failures: Array<{ index: number; error: string }>, paths: string[]): string {
+  const machine = JSON.stringify({ ok: false, successCount: successes.length, failureCount: failures.length, paths, failures })
+  return [
+    `❌ generate_images PARTIAL/FAILED — ${successes.length} succeeded, ${failures.length} failed.`,
+    paths.length > 0 ? 'SAVED FILES:' : '',
+    ...paths.map((p) => `- ${p}`),
+    'FAILURES:',
+    ...failures.map((f) => `- #${f.index}: ${f.error}`),
+    'The chat UI already shows any successful image(s). Do not inspect generated images unless the user explicitly asks.',
+    machine,
+  ]
+    .filter((line) => line.length > 0)
+    .join('\n')
+}
+
 export function registerImageTools(server: McpServer, router: ToolRouter): void {
+  const ratioSchema = z
+    .enum(['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '21:9', '5:4', '4:5'])
+    .optional()
+    .describe(
+      'Aspect ratio. Supported values match the UI dropdown exactly: ' +
+      'auto, 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 21:9, 5:4, 4:5.',
+    )
+
   server.registerTool('generate_image', {
     description:
       'FIRST-CHOICE image generation tool inside the CATIMATION app — use this for ANY ' +
@@ -110,14 +160,11 @@ export function registerImageTools(server: McpServer, router: ToolRouter): void 
         .string()
         .optional()
         .describe('Ignored: the renderer forces gpt-image-2-vip for stability.'),
-      ratio: z
-        .string()
-        .optional()
-        .describe('Aspect ratio, e.g. "1:1", "16:9", "9:16", "3:2". Omit or "auto" lets the model decide.'),
+      ratio: ratioSchema,
       resolution: z
         .enum(['1K', '2K', '4K'])
         .optional()
-        .describe('Resolution tier. 1K=fast (default), 2K=recommended, 4K=print detail.'),
+        .describe('Resolution tier. 2K is the default/recommended choice. Use 1K only when the user asks for fast/cheap/draft. Use 4K only for explicit print/ultra-detail requests.'),
       quality: z
         .enum(['auto', 'low', 'medium', 'high'])
         .optional()
@@ -168,6 +215,93 @@ export function registerImageTools(server: McpServer, router: ToolRouter): void 
     // each saved local file into a resource_link so the agent can view / move /
     // reference it (file://) just like a native generation output. The text
     // banner above is the source of truth; these are a best-effort bonus.
+    for (const p of savedPaths) {
+      content.push({
+        type: 'resource_link',
+        uri: pathToFileURL(p).href,
+        name: path.basename(p),
+        mimeType: mimeFromPath(p),
+        description: 'Generated image saved locally (also in app history + chat).',
+      })
+    }
+
+    return { content }
+  })
+
+  server.registerTool('generate_images', {
+    description:
+      'Batch image generation tool for when the user asks for MULTIPLE images (e.g. "生成 3 张", ' +
+      '"make 5 variations", "几张图", "批量生成"). Prefer this over calling generate_image repeatedly: ' +
+      'it fans out one generate_image call per prompt concurrently inside CATIMATION, so the images ' +
+      'render in chat in parallel and the model receives one concise combined DONE/FAILED result. ' +
+      'Use one prompt per desired image; for variations, write distinct but related prompts. Do not ' +
+      'use subagents for image fan-out.',
+    inputSchema: z.object({
+      prompts: z.array(z.string().min(1)).min(2).max(8).describe(
+        'One prompt per image. If the user asks for N images, provide N prompts here.',
+      ),
+      ratio: ratioSchema,
+      resolution: z
+        .enum(['1K', '2K', '4K'])
+        .optional()
+        .describe('Resolution tier shared by all images. Prefer 2K by default. Use 1K only for fast/cheap/draft, and 4K only for explicit print/ultra-detail requests.'),
+      quality: z
+        .enum(['auto', 'low', 'medium', 'high'])
+        .optional()
+        .describe('Rendering quality shared by all images.'),
+      referenceImages: z
+        .array(z.string())
+        .optional()
+        .describe('Reference images shared by all prompts, as local file paths or data/http URLs.'),
+    }),
+  }, async (params, ctx?: unknown) => {
+    const parsed = params as {
+      prompts?: unknown
+      ratio?: string
+      resolution?: '1K' | '2K' | '4K'
+      quality?: 'auto' | 'low' | 'medium' | 'high'
+      referenceImages?: string[]
+    }
+    const prompts = Array.isArray(parsed.prompts) ? parsed.prompts.filter((p): p is string => typeof p === 'string' && p.trim().length > 0) : []
+    const codexThreadId = extractCodexThreadId(ctx)
+
+    const calls = prompts.map((prompt, i) => router.call('generate_image', {
+      prompt,
+      ratio: parsed.ratio,
+      resolution: parsed.resolution,
+      quality: parsed.quality,
+      referenceImages: parsed.referenceImages,
+      // Internal marker for tests/logging; renderer ignores unknown params.
+      __batchIndex: i + 1,
+    }, codexThreadId))
+
+    const settled = await Promise.allSettled(calls)
+    const successes: unknown[] = []
+    const failures: Array<{ index: number; error: string }> = []
+    const savedPaths: string[] = []
+
+    settled.forEach((entry, i) => {
+      if (entry.status === 'fulfilled') {
+        successes.push(entry.value)
+        savedPaths.push(...collectPaths((entry.value as { paths?: unknown } | null)?.paths))
+      } else {
+        failures.push({
+          index: i + 1,
+          error: entry.reason instanceof Error ? entry.reason.message : String(entry.reason),
+        })
+      }
+    })
+
+    const content: Array<
+      | { type: 'text'; text: string }
+      | { type: 'resource_link'; uri: string; name: string; mimeType: string; description: string }
+    > = [{
+      type: 'text',
+      text: failures.length === 0
+        ? buildBatchCompletionBanner(successes, savedPaths)
+        : buildBatchFailureBanner(successes, failures, savedPaths),
+    }]
+
     for (const p of savedPaths) {
       content.push({
         type: 'resource_link',

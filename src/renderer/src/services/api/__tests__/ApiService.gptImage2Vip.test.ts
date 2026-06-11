@@ -39,7 +39,7 @@ describe('ApiService.gpt-image-2-vip size resolution', () => {
     expect(cfg?.sizeStrategy).toBe('gpt-image-2-vip')
     expect(cfg?.ratios).toHaveLength(11)
     expect(cfg?.resolutions?.map((r) => r.key)).toEqual(['1K', '2K', '4K'])
-    expect(cfg?.defaultResolution).toBe('1K')
+    expect(cfg?.defaultResolution).toBe('2K')
   })
 
   /**
@@ -113,12 +113,12 @@ describe('ApiService.gpt-image-2-vip size resolution', () => {
     expect(resolve(cfg, undefined, '2K')).toBeUndefined()
   })
 
-  it('falls back to defaultResolution (1K) when resolution is omitted', async () => {
+  it('falls back to defaultResolution (2K) when resolution is omitted', async () => {
     const { ApiService } = await import('../ApiService')
     const service = new ApiService()
     const cfg = service.getModelConfig('gpt-image-2-vip')!
     const resolve = (service as any).resolveGptImage2VipSize.bind(service)
-    expect(resolve(cfg, '1:1')).toBe('1280x1280')
+    expect(resolve(cfg, '1:1')).toBe('2048x2048')
   })
 
   it('returns undefined for unknown ratio key', async () => {
@@ -180,6 +180,35 @@ describe('ApiService.gpt-image-2-vip JSON payload (text-to-image)', () => {
     const payload = build('gpt-image-2-vip', 'a cat', 'auto')
     expect((payload as any).size).toBeUndefined()
     expect((payload as any).response_format).not.toBe('url')
+  })
+
+  it('retries a transient HTTP 500 once for gpt-image-2-vip JSON generation', async () => {
+    const { ApiService } = await import('../ApiService')
+    const service = new ApiService()
+    ;(service as any).apiKey = 'sk-test'
+    ;(service as any).currentSite = 'apiyi'
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({ error: { message: 'temporary upstream failure' } }),
+        { status: 500, statusText: 'Internal Server Error', headers: { 'Content-Type': 'application/json' } },
+      ))
+      .mockResolvedValueOnce(new Response(
+        JSON.stringify({ data: [{ b64_json: 'AAA' }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await service.generateImage({
+      prompt: 'a cat',
+      model: 'gpt-image-2-vip',
+      ratio: '1:1',
+      resolution: '2K',
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(result.success).toBe(true)
   })
 })
 

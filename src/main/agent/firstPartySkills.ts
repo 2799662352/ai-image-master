@@ -41,6 +41,8 @@ export interface FirstPartySkillReport {
   installed: string[]
   /** App-managed skills refreshed to a newer shipped version. */
   updated: string[]
+  /** App-managed skills removed because this app no longer ships them. */
+  removed: string[]
   /** Skills left untouched because the user hand-edited them. */
   preserved: string[]
 }
@@ -84,7 +86,7 @@ export async function installFirstPartySkills(
   options: InstallFirstPartySkillsOptions,
 ): Promise<FirstPartySkillReport> {
   const skills = options.skills ?? FIRST_PARTY_SKILLS
-  const report: FirstPartySkillReport = { installed: [], updated: [], preserved: [] }
+  const report: FirstPartySkillReport = { installed: [], updated: [], removed: [], preserved: [] }
 
   await fs.mkdir(options.officialRoot, { recursive: true })
 
@@ -113,6 +115,24 @@ export async function installFirstPartySkills(
 
     await writeManaged(dir, skill)
     report.updated.push(skill.name)
+  }
+
+  const activeNames = new Set(skills.map((s) => s.name))
+  for (const name of RETIRED_FIRST_PARTY_SKILL_NAMES) {
+    if (activeNames.has(name)) continue
+    const dir = path.join(options.officialRoot, name)
+    const existing = await readFileOrNull(path.join(dir, 'SKILL.md'))
+    if (existing === null) continue
+
+    const marker = (await readFileOrNull(path.join(dir, MANAGED_MARKER)))?.trim() ?? null
+    const isAppManaged = marker !== null && marker === sha256(existing)
+    if (!isAppManaged) {
+      report.preserved.push(name)
+      continue
+    }
+
+    await fs.rm(dir, { recursive: true, force: true })
+    report.removed.push(name)
   }
 
   return report
@@ -146,49 +166,64 @@ description: >-
 
 # Generate images in CATIMATION (first-choice, replaces built-in image_gen)
 
-When the user wants an image, call the **\`generate_image\`** tool (provided by the
-\`catimation\` MCP server). Prefer it over the built-in imagegen / image_gen skill:
-it is the only image path that renders inside the chat AND persists the result
-the way codex native image_gen does — to a local file (path returned), the app's
-history page, and the ATTACHMENTS file panel.
+When the user wants one image, call the **\`generate_image\`** tool. When the user
+wants MORE THAN ONE image, call **\`generate_images\`** instead. Both tools are
+provided by the \`catimation\` MCP server and replace the built-in imagegen /
+image_gen skill: they render inside the chat AND persist results to local files
+(paths returned), the app's history page, and the ATTACHMENTS file panel.
 
 ## Steps
 
 1. Turn the request into one clear, descriptive prompt. Cover subject, style,
    composition, lighting, and mood. Keep it concise.
-2. Call \`generate_image\` with:
+2. If the user asks for exactly ONE image, call \`generate_image\` with:
    - \`prompt\` (required): the description from step 1.
    - \`ratio\` (optional): aspect ratio, e.g. \`1:1\`, \`16:9\`, \`9:16\`, \`4:3\`, \`3:2\`.
      Omit or \`auto\` lets the model decide.
-   - \`resolution\` (optional): clarity tier — \`1K\` (fast, default), \`2K\`
-     (recommended), or \`4K\` (print detail).
+   - \`resolution\` (optional): clarity tier — prefer \`2K\` by default. Use \`1K\`
+     only when the user asks for fast/cheap/draft; use \`4K\` only when the user
+     explicitly asks for print/ultra-detail/4K.
    - \`quality\` (optional): \`auto\` (default), \`low\`, \`medium\`, or \`high\`. Use
      \`high\` for images with text or fine detail.
    - \`referenceImages\` (optional but **important**): array of local file paths
      or data/http URLs for image-to-image / editing. **If the user gave you any
      image material, you MUST reuse it here** (see "Reference images" below).
    - Do **not** pass \`model\` — the channel is fixed to \`gpt-image-2-vip\`.
-3. The tool returns a short text result that begins with \`✅ generate_image DONE\`,
+3. If the user asks for TWO OR MORE images, call \`generate_images\` ONCE with:
+   - \`prompts\` (required): one prompt per requested image. If the user asks for
+     N images, provide exactly N prompts.
+   - shared \`ratio\`, \`resolution\`, \`quality\`, and \`referenceImages\` when
+     appropriate.
+   - Do not spawn subagents and do not call \`generate_image\` one-by-one.
+     \`generate_images\` performs the parallel fan-out internally and returns one
+     combined result.
+4. The tool returns a short text result that begins with \`✅ generate_image DONE\`
+   or \`✅ generate_images DONE\`,
    names the \`📁 SAVED FOLDER\`, lists the saved \`FILES:\`, and ends with a compact
    \`{ ok, count, model, historyId, paths, dir }\` JSON line (plus one
    \`resource_link\` per file). **A successful return means the task is complete —**
    the image is already shown to the user and saved to history + the file panel.
    You do **not** need to embed, re-describe, or base64 the pixels. Just confirm
    briefly in the user's language and cite the saved path(s) when relevant.
-4. **Finding / inspecting the image — use the returned \`paths\` / \`dir\` ONLY.**
-   The \`paths\` (and their \`dir\`) in the return ARE the authoritative location. To
-   view what was produced, open those exact \`paths\` with your image-viewing
-   capability (the \`view image\` tool / reading the file), or list the \`dir\`
-   folder.
+5. **Do NOT inspect the generated image(s) — the user already sees them.**
+   A \`✅ DONE\` return means the image is ALREADY rendered in the chat; the user
+   is looking at it right now and will tell you if something is off. Just
+   confirm briefly and cite the saved path(s). In particular:
+   - **NEVER open the result with \`view_image\` / by reading the file "to
+     double-check".** Each view injects the full-resolution image as multi-MB
+     base64 into the conversation; after a multi-image batch the NEXT model
+     request exceeds the gateway's request-size limit and the whole thread
+     hangs/dies (\`request_too_large\`). Self-inspection has wedged real user
+     threads — it is never worth it.
+   - The ONLY time you may view a result: the user explicitly reports a problem
+     or asks you to look, AND you view at most ONE image in that turn.
    - **NEVER call \`query_history\` to locate an image you just generated.** It is
      for browsing *older* sessions only and is slower.
    - **NEVER shell out** (\`dir\`, \`ls\`, \`where\`, \`find\`, \`Get-ChildItem\`, etc.) to
      search the filesystem for the file — that scans huge trees and times out
      (\`exit 124\`). The path is already in the return; trust it.
-   Briefly check the image matches the request (right subject, count, style, no
-   obvious artifacts or wrong text). If it clearly does not match, say so and offer
-   to regenerate with an improved prompt. When you generated multiple images, view
-   each one. Keep the check quick; don't over-narrate.
+   If the user says the image does not match, offer to regenerate with an
+   improved prompt. Keep confirmations short; don't over-narrate.
 
 ## Reference images — reuse the user's material (important)
 
@@ -215,30 +250,30 @@ Rules:
 - If you are unsure whether the user wants the reference followed, prefer reusing
   it and say briefly that you based it on their image(s).
 
-## Multiple images at once — concurrency (important)
+## Multiple images at once — use generate_images (important)
 
 When the user asks for more than one image (e.g. "生成 3 张…", "make 4 variations",
-a set/series, or several distinct subjects), **emit all the \`generate_image\` calls
-together in the SAME turn so they run concurrently** — do not generate one, narrate,
-then start the next. The \`catimation\` server is parallel-safe, so concurrent calls
-finish far faster and the user sees them progress at the same time.
+a set/series, or several distinct subjects), **call \`generate_images\` exactly
+once**. Do not try to manually emit several \`generate_image\` calls; models often
+serialize those calls even when asked to be parallel. \`generate_images\` is the
+parallel-safe batch wrapper and fans out the renderer calls concurrently inside
+CATIMATION.
 
-- Default to concurrency whenever the requests are independent: issue one
-  \`generate_image\` call per image in a single batch (parallel tool calls).
-- Use a sensible cap — up to ~4 in flight at once. If the user asks for many more,
-  run them in batches of ~4 rather than strictly one-by-one.
-- Only fall back to sequential when calls genuinely depend on each other (e.g. the
-  next prompt needs a path returned by the previous one).
-- After the batch returns, confirm once and cite the saved \`paths\`; don't re-announce
-  each image separately.
+- If the user asks for N images, pass exactly N prompts to \`generate_images.prompts\`.
+- For variations, write N distinct but related prompts so the outputs are not clones.
+- For many more than 8 images, ask the user to split into batches; the tool caps
+  each batch to keep the UI and gateway stable.
+- After \`generate_images\` returns, confirm once and cite the saved \`paths\`; don't
+  re-announce each image separately.
 
 ## Notes
 
 - This is the generate → save → read path. The file is on disk (see \`paths\`), in
   the history page, and in the ATTACHMENTS panel — no extra save step is needed.
   Only move/copy a file if the user wants it somewhere specific.
-- For edits, image-to-image, or multi-image prompts, still use \`generate_image\`
-  with \`referenceImages\`; it handles the in-app channel and persistence.
+- For edits, image-to-image, or multi-image prompts, use \`generate_image\` for one
+  output or \`generate_images\` for multiple outputs, always with \`referenceImages\`
+  when references are present.
 - If \`generate_image\` is genuinely unavailable in this session, you may fall back
   to whatever image tool you do have — but \`generate_image\` is the preferred,
   in-app path that actually displays and saves the result.
@@ -252,38 +287,40 @@ export const CATIMATION_IMAGE_SKILL: FirstPartySkill = {
 const CATIMATION_SUBAGENTS_SKILL_CONTENT = `---
 name: catimation-subagents
 description: >-
-  Use parallel Codex subagents to divide independent work and finish faster
-  inside CATIMATION. Trigger this whenever a task naturally splits into
-  independent parts — researching several topics at once, analyzing/captioning
-  multiple reference images or videos, exploring a large codebase from several
-  angles, processing many rows/items, or producing several distinct artifacts.
-  Also use it when the user says "并行 / 同时 / 分头 / 拆开做 / spawn agents /
-  delegate in parallel / one agent per point". Subagents run concurrently and
-  return distilled results to you.
+  Use parallel Codex subagents inside CATIMATION ONLY when the user explicitly
+  asks for parallel delegation or subagents. Trigger on explicit phrases like
+  "并行 / 同时 / 分头 / 拆开做 / 开子代理 / 子代理 / spawn agents / delegate in
+  parallel / one agent per point". Do NOT trigger merely because a task could be
+  split naturally.
 ---
 
-# Use parallel subagents to divide independent work
+# Use parallel subagents ONLY when explicitly requested
 
 Codex can spawn specialized **subagents** that work concurrently and report back.
 This app raises the concurrency ceiling to **8 parallel agent threads**
-(\`agents.max_threads=8\`, \`agents.max_depth=1\`). Codex does NOT delegate on its
-own — **you must explicitly ask for subagents** when the task benefits.
+(\`agents.max_threads=8\`, \`agents.max_depth=1\`).
 
-## When to delegate (do it proactively)
+## Hard trigger rule
 
-Delegate when the work splits into parts that DON'T depend on each other:
+Use subagents **ONLY** when the user explicitly asks for them or explicitly asks
+to split work in parallel. Do **not** infer subagents from task shape alone.
 
-- **Multi-target research / analysis** — "对比这 4 个方案" → one agent per option.
-- **Many reference images / videos / docs** — caption / extract / analyze each in
-  parallel (one agent per file), then synthesize.
-- **Broad codebase exploration** — several independent "where/how does X work"
-  questions at once (the built-in \`explorer\` agent is fast and authoritative).
-- **Batch/per-row work** — a list/CSV where each row is the same job.
-- **Several distinct deliverables** — e.g. generate prompts for N scenes.
+Explicit trigger examples:
 
-Do NOT delegate trivial, sequential, or tightly-coupled work — a single agent is
-faster and cheaper there. Each subagent does its own model + tool work, so it
-costs more tokens than one combined pass; use it when the parallelism pays off.
+- "并行做 / 同时做 / 分头做 / 拆开做"
+- "开几个子代理 / 用子代理 / spawn agents"
+- "one agent per file / one agent per point"
+- "delegate this in parallel"
+
+Non-triggers (do NOT spawn subagents):
+
+- A task merely has multiple independent parts.
+- The user asks for multiple images, prompts, files, or examples but does not
+  mention parallel/subagents.
+- You think subagents would be faster.
+
+Each subagent does its own model + tool work, so it costs more tokens than one
+combined pass. User intent controls this feature.
 
 ## How to delegate
 
@@ -303,9 +340,9 @@ costs more tokens than one combined pass; use it when the parallelism pays off.
 
 - Built-in agents (e.g. \`explorer\`) are available; you can also pin a cheaper/
   faster model for light subagent work when you spawn them.
-- Subagents are for delegating *agent work*. To generate multiple IMAGES at once,
-  use the \`catimation-image\` skill's concurrent \`generate_image\` calls instead —
-  that's the right tool for image fan-out.
+- Subagents are for delegating *agent work*. To generate multiple IMAGES, use the
+  \`catimation-image\` skill's \`generate_images\` batch tool instead — that's the
+  right tool for image fan-out.
 - Keep delegation depth shallow (one level); deep recursion multiplies cost and
   latency without clear benefit.
 `
@@ -315,8 +352,14 @@ export const CATIMATION_SUBAGENTS_SKILL: FirstPartySkill = {
   content: CATIMATION_SUBAGENTS_SKILL_CONTENT,
 }
 
+/**
+ * First-party skills no longer shipped by default. If an older app version
+ * installed an app-managed copy, remove it on startup so Codex stops discovering
+ * it. User-edited copies are preserved.
+ */
+const RETIRED_FIRST_PARTY_SKILL_NAMES = ['catimation-subagents']
+
 /** All skills this app ships into the Codex USER scope on startup. */
 export const FIRST_PARTY_SKILLS: FirstPartySkill[] = [
   CATIMATION_IMAGE_SKILL,
-  CATIMATION_SUBAGENTS_SKILL,
 ]

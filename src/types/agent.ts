@@ -274,6 +274,13 @@ export type AgentNoticeKind =
   | 'autoApprovalReview'
   | 'autoApprovalReviewCompleted'
   | 'contextHighWatermark'
+  /**
+   * A poisoned codex thread (replayed history rejected by the gateway —
+   * request_too_large / 413) was abandoned and the current message re-sent on
+   * a fresh codex thread. The chat keeps working but codex-side memory of
+   * earlier turns is gone; the user should re-state key context.
+   */
+  | 'threadContextReset'
   | 'attachmentSkipped'
   /**
    * Auto-recovery from PGlite NODEFS abort (upstream PGlite #884 / #794):

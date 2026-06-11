@@ -36,6 +36,7 @@ describe('installFirstPartySkills', () => {
 
     expect(report.installed).toEqual(['demo-skill'])
     expect(report.updated).toEqual([])
+    expect(report.removed).toEqual([])
     expect(report.preserved).toEqual([])
 
     const written = await readFile(
@@ -52,6 +53,7 @@ describe('installFirstPartySkills', () => {
 
     expect(report.installed).toEqual([])
     expect(report.updated).toEqual([])
+    expect(report.removed).toEqual([])
     expect(report.preserved).toEqual([])
   })
 
@@ -61,6 +63,7 @@ describe('installFirstPartySkills', () => {
 
     const report = await installFirstPartySkills({ officialRoot, skills: [skillV2] })
     expect(report.updated).toEqual(['demo-skill'])
+    expect(report.removed).toEqual([])
     expect(report.preserved).toEqual([])
 
     const written = await readFile(
@@ -81,6 +84,7 @@ describe('installFirstPartySkills', () => {
     const report = await installFirstPartySkills({ officialRoot, skills: [skillV2] })
     expect(report.installed).toEqual([])
     expect(report.updated).toEqual([])
+    expect(report.removed).toEqual([])
     expect(report.preserved).toEqual(['demo-skill'])
 
     const written = await readFile(skillFile, 'utf8')
@@ -118,6 +122,41 @@ describe('installFirstPartySkills', () => {
     expect(mine).toBe(skillV1.content)
   })
 
+  it('removes retired app-managed first-party skills', async () => {
+    const officialRoot = await makeTempRoot()
+    const retired = {
+      name: 'catimation-subagents',
+      content: '---\nname: catimation-subagents\ndescription: retired.\n---\n\nbody\n',
+    }
+    await installFirstPartySkills({ officialRoot, skills: [retired] })
+
+    const report = await installFirstPartySkills({ officialRoot, skills: [skillV1] })
+
+    expect(report.removed).toEqual(['catimation-subagents'])
+    await expect(readFile(path.join(officialRoot, 'catimation-subagents', 'SKILL.md'), 'utf8')).rejects.toThrow()
+  })
+
+  it('preserves retired first-party skills if the user edited them', async () => {
+    const officialRoot = await makeTempRoot()
+    const retired = {
+      name: 'catimation-subagents',
+      content: '---\nname: catimation-subagents\ndescription: retired.\n---\n\nbody\n',
+    }
+    await installFirstPartySkills({ officialRoot, skills: [retired] })
+    await writeFile(
+      path.join(officialRoot, 'catimation-subagents', 'SKILL.md'),
+      '---\nname: catimation-subagents\ndescription: user copy.\n---\n\nmanual\n',
+      'utf8',
+    )
+
+    const report = await installFirstPartySkills({ officialRoot, skills: [skillV1] })
+
+    expect(report.removed).toEqual([])
+    expect(report.preserved).toContain('catimation-subagents')
+    const written = await readFile(path.join(officialRoot, 'catimation-subagents', 'SKILL.md'), 'utf8')
+    expect(written).toContain('manual')
+  })
+
   describe('CATIMATION_IMAGE_SKILL (the shipped default)', () => {
     it('has a hyphen-case name and the required frontmatter', () => {
       expect(CATIMATION_IMAGE_SKILL.name).toMatch(/^[a-z0-9-]+$/)
@@ -141,6 +180,7 @@ describe('installFirstPartySkills', () => {
       const officialRoot = await makeTempRoot()
       const report = await installFirstPartySkills({ officialRoot })
       expect(report.installed).toContain(CATIMATION_IMAGE_SKILL.name)
+      expect(report.installed).not.toContain('catimation-subagents')
       const written = await readFile(
         path.join(officialRoot, CATIMATION_IMAGE_SKILL.name, 'SKILL.md'),
         'utf8',

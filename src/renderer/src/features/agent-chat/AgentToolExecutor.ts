@@ -17,7 +17,7 @@ type GenerateImageToolParams = GenerateImageParams
  * API + size/quality params.)
  */
 const CODEX_IMAGE_MODEL = 'gpt-image-2-vip'
-const CODEX_DEFAULT_RESOLUTION = '1K'
+const CODEX_DEFAULT_RESOLUTION = '2K'
 
 type AgentElectronApi = {
   agent?: {

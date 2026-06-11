@@ -36,7 +36,7 @@ describe('AgentToolExecutor.generateImage', () => {
     const sent = api.generateImage.mock.calls[0][0]
     expect(sent.model).toBe('gpt-image-2-vip')
     expect(sent.ratio).toBe('16:9')
-    expect(sent.resolution).toBe('1K') // default applied
+    expect(sent.resolution).toBe('2K') // default applied
   })
 
   it('records the image to history under the "codex" type', async () => {

@@ -23,8 +23,8 @@ describe('buildCodexLaunchArgs', () => {
       // even when reasoningOutputTokens > 0.
       '-c', 'show_raw_agent_reasoning=true',
       '-c', 'model_reasoning_summary="auto"',
-      '-c', 'model_context_window=200000',
-      '-c', 'model_auto_compact_token_limit=100000',
+      '-c', 'model_context_window=272000',
+      '-c', 'model_auto_compact_token_limit=220000',
       '-c', 'tool_output_token_limit=10000',
       '-c', 'experimental_use_rmcp_client=true',
       '-c', 'agents.max_threads=8',
@@ -42,8 +42,8 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'web_search="live"',
       '-c', 'show_raw_agent_reasoning=true',
       '-c', 'model_reasoning_summary="auto"',
-      '-c', 'model_context_window=200000',
-      '-c', 'model_auto_compact_token_limit=100000',
+      '-c', 'model_context_window=272000',
+      '-c', 'model_auto_compact_token_limit=220000',
       '-c', 'tool_output_token_limit=10000',
       '-c', 'experimental_use_rmcp_client=true',
       '-c', 'agents.max_threads=8',
@@ -111,14 +111,12 @@ describe('buildCodexLaunchArgs', () => {
   })
 
   it('passes model_context_window and model_auto_compact_token_limit so Codex auto-compacts', () => {
-    // 100k (50% of the declared window), NOT the stock 90% ratio: stateless
-    // relay gateways (apiyi) enforce a request-BODY-BYTE cap that long
-    // threads hit well before 180k tokens, and once over it even the
-    // compaction request itself 413s — the thread is permanently stuck
-    // (openai/codex#11440). Compaction must fire with a wide safety margin.
+    // 272k is the official gpt-5.5 / gpt-5.4 model catalog context window.
+    // 220k (~81%) gives long-thread runway while still compacting earlier than
+    // the stock 90% ratio, leaving headroom for apiyi's request-BODY-BYTE cap.
     const args = buildCodexLaunchArgs()
-    expect(args).toContain('model_context_window=200000')
-    expect(args).toContain('model_auto_compact_token_limit=100000')
+    expect(args).toContain('model_context_window=272000')
+    expect(args).toContain('model_auto_compact_token_limit=220000')
   })
 
   it('pins tool_output_token_limit to the official catalog value (10k)', () => {

@@ -42,6 +42,23 @@ describe('registerImageTools / generate_image schema', () => {
     expect(result.success).toBe(true)
   })
 
+  it('accepts every gpt-image-2-vip ratio exposed by the UI dropdown', () => {
+    const { tools, server, router } = capture()
+    registerImageTools(server, router)
+    const schema = tools.find((t) => t.name === 'generate_image')!.config.inputSchema
+    const ratios = ['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '21:9', '5:4', '4:5']
+    for (const ratio of ratios) {
+      expect(schema.safeParse({ prompt: 'a cat', ratio }).success, ratio).toBe(true)
+    }
+  })
+
+  it('rejects ratios outside the gpt-image-2-vip UI dropdown', () => {
+    const { tools, server, router } = capture()
+    registerImageTools(server, router)
+    const schema = tools.find((t) => t.name === 'generate_image')!.config.inputSchema
+    expect(schema.safeParse({ prompt: 'a cat', ratio: '2:1' }).success).toBe(false)
+  })
+
   it('accepts a bare prompt (all else optional)', () => {
     const { tools, server, router } = capture()
     registerImageTools(server, router)
@@ -128,5 +145,51 @@ describe('registerImageTools / generate_image schema', () => {
 
     expect(content).toHaveLength(1)
     expect(content[0].type).toBe('text')
+  })
+
+  it('registers generate_images for batch image fan-out', () => {
+    const { tools, server, router } = capture()
+    registerImageTools(server, router)
+    const tool = tools.find((t) => t.name === 'generate_images')
+    expect(tool).toBeDefined()
+    expect(tool!.config.inputSchema.safeParse({
+      prompts: ['cat one', 'cat two'],
+      ratio: '21:9',
+      resolution: '2K',
+      quality: 'high',
+    }).success).toBe(true)
+  })
+
+  it('generate_images fans out one renderer call per prompt concurrently and returns one combined DONE banner', async () => {
+    const paths = [
+      'C:\\Users\\me\\AppData\\Roaming\\app\\agent\\uploads\\cat-1.png',
+      'C:\\Users\\me\\AppData\\Roaming\\app\\agent\\uploads\\cat-2.png',
+      'C:\\Users\\me\\AppData\\Roaming\\app\\agent\\uploads\\cat-3.png',
+    ]
+    let inFlight = 0
+    let maxInFlight = 0
+    const { tools, server, router } = capture()
+    router.call = vi.fn(async (_name: string, params: Record<string, unknown>) => {
+      inFlight += 1
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      inFlight -= 1
+      const idx = Number(params.__batchIndex) - 1
+      return { ok: true, count: 1, model: 'gpt-image-2-vip', historyId: idx + 10, paths: [paths[idx]] }
+    })
+    registerImageTools(server, router)
+    const handler = tools.find((t) => t.name === 'generate_images')!.handler
+
+    const { content } = await handler({ prompts: ['cat one', 'cat two', 'cat three'], ratio: '1:1' })
+
+    expect(router.call).toHaveBeenCalledTimes(3)
+    expect(maxInFlight).toBeGreaterThan(1)
+    const text = content[0].text as string
+    expect(text).toContain('generate_images DONE — 3/3 image(s) saved')
+    expect(text).toContain(paths[0])
+    expect(text).toContain(paths[1])
+    expect(text).toContain(paths[2])
+    expect(text).toMatch(/Do NOT open these files with view_image/i)
+    expect(content.filter((c) => c.type === 'resource_link')).toHaveLength(3)
   })
 })

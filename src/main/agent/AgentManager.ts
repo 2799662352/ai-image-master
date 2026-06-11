@@ -1173,8 +1173,30 @@ export class AgentManager {
     })
   }
 
+  /**
+   * Emitted when a poisoned codex thread (undecryptable replayed reasoning,
+   * or replayed history past the gateway's request-byte cap) is abandoned and
+   * the current message re-sent on a FRESH codex thread. The chat keeps
+   * working, but codex-side memory of earlier turns is gone — the user must
+   * know why the agent suddenly "forgot" the conversation.
+   */
+  private notifyThreadContextReset(dbThreadId: string, reason: string): void {
+    this.emitEvent({
+      type: 'notice',
+      notice: {
+        id: `thread-context-reset-${dbThreadId}-${Date.now()}`,
+        kind: 'threadContextReset',
+        level: 'warning',
+        threadId: dbThreadId,
+        message:
+          '上一段对话上下文已超出网关限制，已自动在全新上下文中继续——本条消息正常处理，但 AI 不再记得此前的对话内容。建议把关键结论重新粘贴给它。',
+        details: { reason },
+      },
+    })
+  }
+
   private async forwardEvents(dbThreadId: string, input: AgentInput): Promise<void> {
-    let canRetryEncryptedThread = true
+    let canRetryPoisonedThread = true
 
     while (true) {
       const codexThreadId = this.codexThreadIdByDbThreadId.get(dbThreadId)
@@ -1188,9 +1210,12 @@ export class AgentManager {
           if (event.type === 'thread_created' && event.threadId) {
             this.codexThreadIdByDbThreadId.set(dbThreadId, event.threadId)
           }
-          if (event.type === 'error' && canRetryEncryptedThread && isInvalidEncryptedContentError(event.error)) {
-            canRetryEncryptedThread = false
+          if (event.type === 'error' && canRetryPoisonedThread && isPoisonedThreadError(event.error)) {
+            canRetryPoisonedThread = false
             this.codexThreadIdByDbThreadId.delete(dbThreadId)
+            if (isOversizedRequestError(event.error)) {
+              this.notifyThreadContextReset(dbThreadId, 'request_too_large')
+            }
             break
           }
           if (!this.eventSink && this.win?.isDestroyed()) return
@@ -1233,14 +1258,17 @@ export class AgentManager {
             }
           }
         }
-        if (!canRetryEncryptedThread && !this.codexThreadIdByDbThreadId.has(dbThreadId)) {
+        if (!canRetryPoisonedThread && !this.codexThreadIdByDbThreadId.has(dbThreadId)) {
           continue
         }
         return
       } catch (error) {
-        if (codexThreadId && canRetryEncryptedThread && isInvalidEncryptedContentError(error)) {
-          canRetryEncryptedThread = false
+        if (codexThreadId && canRetryPoisonedThread && isPoisonedThreadError(error)) {
+          canRetryPoisonedThread = false
           this.codexThreadIdByDbThreadId.delete(dbThreadId)
+          if (isOversizedRequestError(error)) {
+            this.notifyThreadContextReset(dbThreadId, 'request_too_large')
+          }
           continue
         }
         throw error
@@ -1288,6 +1316,32 @@ function isInvalidEncryptedContentError(error: unknown): boolean {
     message.includes('invalid_encrypted_content')
     || /encrypted content (could not be decrypted|missing recognized prefix)/i.test(message)
   )
+}
+
+/**
+ * The replayed thread history exceeds the gateway's request-body byte cap
+ * ("request_too_large" / HTTP 413). Every retry on the SAME codex thread
+ * replays the same oversized history, so the thread is permanently wedged
+ * (openai/codex#11440 — no upstream client-side fix). Typical trigger: a
+ * batch of view_image calls injecting N × multi-MB base64 into history.
+ */
+function isOversizedRequestError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return (
+    message.includes('request_too_large')
+    || /request exceeds the maximum allowed size/i.test(message)
+    || /413 payload too large/i.test(message)
+  )
+}
+
+/**
+ * Errors that permanently poison a codex thread: every subsequent turn
+ * replays the same bad history and fails identically. The only cure is
+ * re-sending the current message on a FRESH codex thread (history not
+ * replayed). `forwardEvents` does exactly that, once per send.
+ */
+function isPoisonedThreadError(error: unknown): boolean {
+  return isInvalidEncryptedContentError(error) || isOversizedRequestError(error)
 }
 
 /**

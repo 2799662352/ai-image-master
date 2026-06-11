@@ -188,7 +188,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       { key: '2K', label: '2K 高清', description: '稍慢速度' },
       { key: '4K', label: '4K 超清', description: '印刷所需' }
     ],
-    defaultResolution: '1K',
+    defaultResolution: '2K',
     // 清晰度轴：官转独有的 quality 档位，作为独立第三参数
     qualities: [
       { key: 'auto', label: '自动', description: '由模型决定' },
@@ -274,7 +274,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       { key: '2K', label: '2K 高清', description: '稍慢速度' },
       { key: '4K', label: '4K 超清', description: '印刷所需' }
     ],
-    defaultResolution: '1K',
+    defaultResolution: '2K',
     // 清晰度轴：2026-06-05 实测 vip 校验并支持 quality（quality=high→200，
     // quality=zzz_invalid→400 "不合法的quality"），与官转同样作为独立第三参数。
     qualities: [
@@ -1097,7 +1097,12 @@ export class ApiService {
         })
         if (!resp.ok) {
           const errText = await resp.clone().text()
-          console.error('[GPT-Image-2] 400 response:', resp.status, errText)
+          console.error('[GPT-Image-2] error response:', resp.status, errText)
+          if (resp.status >= 500 || resp.status === 429) {
+            const err = new Error(errText || `API 请求失败: ${resp.status} ${resp.statusText}`) as Error & { status?: number }
+            err.status = resp.status
+            throw err
+          }
         }
         return resp
       }

@@ -501,6 +501,61 @@ describe('AgentManager codex thread id mapping (regression: invalid thread id)',
     expect(events).toContainEqual({ type: 'turn_completed', threadId: 'cm-db-id-prefix-error', turnId: 't2' })
   })
 
+  it('retries on a fresh thread when the gateway rejects with request_too_large (oversized replayed history)', async () => {
+    // Live repro 2026-06-11: a 5-image view_image batch ballooned the replayed
+    // history past apiyi's request-body byte cap. EVERY subsequent turn on
+    // that codex thread re-sends the same oversized history → the thread is
+    // permanently wedged ("卡住了之后不能继续对话") — openai/codex#11440
+    // documents the dead-end and ships no client-side fix. Our escape hatch:
+    // drop the poisoned codex thread mapping and re-send the CURRENT message
+    // on a fresh thread (small request → succeeds; codex-side memory of the
+    // old turns is lost, surfaced to the user via a notice).
+    const events: AgentStreamEvent[] = []
+    const fakeStore = {
+      ...persistStubs,
+      createThread: async () => ({ id: 'cm-db-id-too-large' }),
+    } as any
+    const fakeAttachments = { ingest: async () => [] } as any
+    const recoveredUuid = 'dddddddd-eeee-ffff-0000-111111111111'
+    const backend = makeStubBackend([
+      [
+        { type: 'thread_created', threadId: CODEX_UUID },
+        {
+          type: 'error',
+          threadId: CODEX_UUID,
+          turnId: 't1',
+          error:
+            '{"error":{"message":"Request exceeds the maximum allowed size","localized_message":"Unknown error","type":"invalid_request_error","param":"","code":"request_too_large"}}',
+        },
+      ],
+      [
+        { type: 'thread_created', threadId: recoveredUuid },
+        { type: 'turn_completed', threadId: recoveredUuid, turnId: 't2' },
+      ],
+    ])
+
+    const mgr = new AgentManager({
+      userDataDir: tmpDir,
+      store: fakeStore,
+      attachments: fakeAttachments,
+      eventSink: (e) => events.push(e),
+      backend,
+    })
+
+    await mgr.sendMessage({ content: 'first', attachments: [] })
+    await flushMicrotasks(30)
+
+    expect(backend.calls).toHaveLength(2)
+    expect(backend.calls[1].threadId).toBeUndefined()
+    expect(events.filter((event) => event.type === 'error')).toHaveLength(0)
+    expect(events).toContainEqual({ type: 'turn_completed', threadId: 'cm-db-id-too-large', turnId: 't2' })
+    // The user must learn that codex-side memory was reset.
+    const notices = events.filter(
+      (e): e is Extract<AgentStreamEvent, { type: 'notice' }> => e.type === 'notice',
+    )
+    expect(notices.some((n) => n.notice.kind === 'threadContextReset')).toBe(true)
+  })
+
   it('forwards payload.model through to backend.send when caller selects a model', async () => {
     const fakeStore = {
       ...persistStubs,

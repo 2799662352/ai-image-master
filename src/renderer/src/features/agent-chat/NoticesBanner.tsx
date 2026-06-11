@@ -77,5 +77,7 @@ function labelFor(kind: AgentNotice['kind']): string {
       return 'attachment'
     case 'pgliteReset':
       return 'database'
+    case 'threadContextReset':
+      return 'context reset'
   }
 }
