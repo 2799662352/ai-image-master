@@ -58,6 +58,8 @@ import {
   unmountAgentWorkspaceReact,
   mountMarketplaceReact,
   unmountMarketplaceReact,
+  mountPortraitLibraryReact,
+  unmountPortraitLibraryReact,
   mountGlobalToast,
   mountComparePromptHelper,
 } from '../react-app/main'
@@ -312,6 +314,8 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
         if (newTab === 'agentWorkspace') mountAgentWorkspaceReact()
         if (oldTab === 'marketplace') unmountMarketplaceReact()
         if (newTab === 'marketplace') mountMarketplaceReact()
+        if (oldTab === 'portraitLibrary') unmountPortraitLibraryReact()
+        if (newTab === 'portraitLibrary') mountPortraitLibraryReact()
       })
 
       // 在 React mount 之前同步模型列表到 store（消除首帧 race condition）
@@ -354,6 +358,9 @@ export async function initServiceBridge(config: ServiceBridgeConfig = {}): Promi
 
       mountMarketplaceReact()
       if (activeTab !== 'marketplace') unmountMarketplaceReact()
+
+      mountPortraitLibraryReact()
+      if (activeTab !== 'portraitLibrary') unmountPortraitLibraryReact()
 
       window.tabManagerTS = tabManager
       ServiceRegistry.register(SERVICE_KEYS.TAB_MANAGER, tabManager)

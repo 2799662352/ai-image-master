@@ -16,6 +16,7 @@ import { TemplateInline } from './components/TemplateInline'
 
 const AgentWorkspacePage = lazy(() => import('../pages-react/AgentWorkspacePage'))
 const MarketplacePage = lazy(() => import('../pages-react/MarketplacePage'))
+const PortraitLibraryPage = lazy(() => import('../pages-react/PortraitLibraryPage'))
 
 let root: Root | null = null
 let settingsRoot: Root | null = null
@@ -26,6 +27,7 @@ let storyboardSplitRoot: Root | null = null
 let smartEraseRoot: Root | null = null
 let agentWorkspaceRoot: Root | null = null
 let marketplaceRoot: Root | null = null
+let portraitLibraryRoot: Root | null = null
 let toastRoot: Root | null = null
 let generateTokenRoot: Root | null = null
 let generateTemplateRoot: Root | null = null
@@ -400,6 +402,31 @@ export function mountMarketplaceReact(): void {
 
 export function unmountMarketplaceReact(): void {
   const container = document.getElementById('marketplace-react-root')
+  if (container) {
+    container.style.display = 'none'
+  }
+}
+
+export function mountPortraitLibraryReact(): void {
+  const container = document.getElementById('portrait-library-react-root')
+  if (!container) {
+    console.warn('[React] portrait-library-react-root not found')
+    return
+  }
+  if (!portraitLibraryRoot) {
+    portraitLibraryRoot = createRoot(container)
+    portraitLibraryRoot.render(
+      <Suspense fallback={null}>
+        <PortraitLibraryPage />
+      </Suspense>
+    )
+    console.log('[React] PortraitLibraryPage mounted (first time)')
+  }
+  container.style.display = ''
+}
+
+export function unmountPortraitLibraryReact(): void {
+  const container = document.getElementById('portrait-library-react-root')
   if (container) {
     container.style.display = 'none'
   }

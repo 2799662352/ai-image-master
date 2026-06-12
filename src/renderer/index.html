@@ -1423,6 +1423,11 @@
                     <span class="text-base whitespace-nowrap desktop-text font-bold">智能去字幕</span>
                     <span class="text-sm whitespace-nowrap mobile-text">去字幕</span>
                 </button>
+                <button class="tab-btn flex-1 px-4 md:px-8 py-3 text-center font-medium transition-all duration-300 flex items-center justify-center space-x-1 md:space-x-2 whitespace-nowrap" data-tab="portraitLibrary">
+                    <i class="fas fa-user text-sm"></i>
+                    <span class="text-base whitespace-nowrap desktop-text font-bold">人像库</span>
+                    <span class="text-sm whitespace-nowrap mobile-text">人像</span>
+                </button>
                 <button class="tab-btn flex-1 px-4 md:px-8 py-3 text-center font-medium transition-all duration-300 flex items-center justify-center space-x-1 md:space-x-2 whitespace-nowrap" data-tab="agentWorkspace">
                     <i class="fas fa-robot text-sm"></i>
                     <span class="text-base whitespace-nowrap desktop-text font-bold">Agent</span>
@@ -2205,6 +2210,11 @@
         <!-- Skill 商城面板 (v4.3.7) -->
         <div id="marketplacePanel" class="tab-panel hidden relative p-0 bg-transparent border-0" style="height: calc(100vh - 180px);">
             <div id="marketplace-react-root" class="h-full"></div>
+        </div>
+
+        <!-- 人像库面板 (Seedance 素材库, 视频参考图入库/选择) -->
+        <div id="portraitLibraryPanel" class="tab-panel hidden relative p-0 bg-transparent border-0" style="height: calc(100vh - 180px);">
+            <div id="portrait-library-react-root" class="h-full"></div>
         </div>
 
     </main> <!-- 主要内容区域结束 -->

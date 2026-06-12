@@ -62,6 +62,13 @@ export default function PortraitLibraryPage() {
   const addToast = useToastStore((s) => s.addToast)
   const switchTab = useTabStore((s) => s.switchTab)
 
+  // 经典壳（index.html）里设置是模态框（SiteManager），React 壳里是 settings tab。
+  const openSettings = () => {
+    const siteManager = (window as unknown as { siteManagerTS?: { openSettingsModal?: () => void } }).siteManagerTS
+    if (siteManager?.openSettingsModal) siteManager.openSettingsModal()
+    else switchTab('settings')
+  }
+
   const [configured, setConfigured] = useState<boolean | null>(null)
   const [items, setItems] = useState<SeedanceAssetItem[]>([])
   const [total, setTotal] = useState(0)
@@ -187,7 +194,7 @@ export default function PortraitLibraryPage() {
           （素材接口使用 HMAC 签名）。配置完成后，视频生成的参考图会自动入库到这里。
         </p>
         <button
-          onClick={() => switchTab('settings')}
+          onClick={openSettings}
           className="px-4 py-2 bg-cyberpunk-yellow text-cyberpunk-black font-bold text-sm uppercase rounded hover:opacity-90"
         >
           前往设置
