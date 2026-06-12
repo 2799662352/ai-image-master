@@ -28,7 +28,17 @@ function isRenderableMedia(ref: AttachmentRef): boolean {
  * pending (amber, pulsing), saved (emerald, shows the folder), failed (red,
  * but explicitly says the image itself is fine).
  */
-function SaveStatusBanner({ save, count }: { save: NonNullable<ArtifactItem['save']>; count: number }) {
+function SaveStatusBanner({
+  save,
+  count,
+  isVideo,
+}: {
+  save: NonNullable<ArtifactItem['save']>
+  count: number
+  isVideo: boolean
+}) {
+  const unitLabel = isVideo ? `${count} 个视频` : `${count} 张图`
+  const mediaLabel = isVideo ? '视频' : '图片'
   if (save.status === 'pending') {
     return (
       <div
@@ -40,7 +50,7 @@ function SaveStatusBanner({ save, count }: { save: NonNullable<ArtifactItem['sav
           className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-amber-400/25 border-t-amber-300"
         />
         <span className="font-mono text-[12px] font-semibold text-amber-200">
-          ✅ 已生成 {count} 张图 · 文件仍在后台保存中…
+          ✅ 已生成 {unitLabel} · 文件仍在后台保存中…
         </span>
       </div>
     )
@@ -54,7 +64,7 @@ function SaveStatusBanner({ save, count }: { save: NonNullable<ArtifactItem['sav
       >
         <span aria-hidden className="text-[13px] leading-none">⚠️</span>
         <span className="font-mono text-[12px] text-red-200">
-          图片已生成（可正常查看），但本地保存失败
+          {mediaLabel}已生成（可正常查看），但本地保存失败
         </span>
       </div>
     )
@@ -68,7 +78,7 @@ function SaveStatusBanner({ save, count }: { save: NonNullable<ArtifactItem['sav
       <span aria-hidden className="text-[13px] leading-none">✅</span>
       <div className="flex min-w-0 flex-col">
         <span className="font-mono text-[12px] font-semibold text-emerald-200">
-          已生成 {count} 张图 · 已保存
+          已生成 {unitLabel} · 已保存
         </span>
         {save.dir ? (
           <span className="max-w-[300px] truncate text-[11px] text-emerald-300/70" title={save.dir}>
@@ -88,6 +98,7 @@ export function ArtifactCard({ item }: { item: ArtifactItem }) {
   // while the request is in flight, and an error card on failure. Plain
   // attachment artifacts have no `status` and fall through to the grid below.
   if (item.status === 'generating') {
+    const fallback = item.mediaKind === 'video' ? '正在生成视频…' : '正在生成图片…'
     return (
       <div className="my-1 flex items-center gap-3 rounded border border-cyan-400/30 bg-cyan-400/5 px-3 py-2.5">
         <span
@@ -95,7 +106,7 @@ export function ArtifactCard({ item }: { item: ArtifactItem }) {
           className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-cyan-400/25 border-t-cyan-300"
         />
         <div className="flex min-w-0 flex-col">
-          <span className="font-mono text-[12px] text-cyan-100">正在生成图片…</span>
+          <span className="font-mono text-[12px] text-cyan-100">{item.progressText ?? fallback}</span>
           {item.prompt ? (
             <span className="max-w-[240px] truncate text-[11px] text-cyan-300/60" title={item.prompt}>
               {item.prompt}
@@ -111,7 +122,9 @@ export function ArtifactCard({ item }: { item: ArtifactItem }) {
       <div className="my-1 flex items-start gap-2 rounded border border-red-400/40 bg-red-500/10 px-3 py-2.5">
         <span aria-hidden className="text-[13px] leading-none text-red-300">⚠</span>
         <div className="flex min-w-0 flex-col">
-          <span className="font-mono text-[12px] text-red-200">图片生成失败</span>
+          <span className="font-mono text-[12px] text-red-200">
+            {item.mediaKind === 'video' ? '视频生成失败' : '图片生成失败'}
+          </span>
           {item.error ? (
             <span className="max-w-[260px] break-words text-[11px] text-red-300/70">{item.error}</span>
           ) : null}
@@ -190,7 +203,15 @@ export function ArtifactCard({ item }: { item: ArtifactItem }) {
         )
         })}
       </div>
-      {item.save ? <SaveStatusBanner save={item.save} count={item.artifacts.length} /> : null}
+      {item.save ? (
+        <SaveStatusBanner
+          save={item.save}
+          count={item.artifacts.length}
+          isVideo={
+            item.mediaKind === 'video' || item.artifacts.some((a) => mediaKindOf(a) === 'video')
+          }
+        />
+      ) : null}
     </div>
   )
 }

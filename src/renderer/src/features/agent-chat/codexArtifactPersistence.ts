@@ -26,6 +26,12 @@ export interface CodexArtifactAnchor {
   /** History record id — the source of truth for the durable image URLs. */
   historyId: number | string
   /**
+   * Media kind of the generated artifacts. Drives the rebuilt AttachmentRef's
+   * kind/mime/name so video bubbles re-render as playable videos instead of
+   * broken <img> tags. Absent (legacy anchors) means image.
+   */
+  kind?: 'image' | 'video'
+  /**
    * Local saved file paths returned by the generate_image MCP tool. These are
    * tiny strings but make reload/edit resilient while the history record still
    * contains `pending:*` placeholders or when async R2/COS upload has not
@@ -135,11 +141,12 @@ function resolveAnchorUrls(anchor: CodexArtifactAnchor, resolveUrls: ResolveHist
 }
 
 function toArtifactRefs(anchor: CodexArtifactAnchor, urls: string[]): AttachmentRef[] {
+  const isVideo = anchor.kind === 'video'
   return urls.map((uri, i) => ({
     id: `${anchor.id}-${i}`,
-    kind: 'image' as const,
-    name: `codex-image-${i + 1}.png`,
-    mime: 'image/png',
+    kind: isVideo ? ('video' as const) : ('image' as const),
+    name: isVideo ? `codex-video-${i + 1}.mp4` : `codex-image-${i + 1}.png`,
+    mime: isVideo ? 'video/mp4' : 'image/png',
     size: uri.startsWith('data:') ? uri.length : 0,
     uri,
   }))

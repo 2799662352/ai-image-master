@@ -1,7 +1,12 @@
 import { Activity, Suspense, useEffect, useState, type ComponentType, type LazyExoticComponent } from 'react'
 import { useTabStore, type TabName } from '../stores'
 import { TabBar } from '../components/TabBar'
-import { AgentChatPanel, mountAgentToolExecutor, useAgentChatStore } from '../features/agent-chat'
+import {
+  AgentChatPanel,
+  mountAgentToolExecutor,
+  mountSeedanceTaskListener,
+  useAgentChatStore,
+} from '../features/agent-chat'
 import {
   GeneratePage,
   BatchPage,
@@ -79,6 +84,10 @@ export function AppLayout() {
 
   useEffect(() => {
     return mountAgentToolExecutor()
+  }, [])
+
+  useEffect(() => {
+    return mountSeedanceTaskListener()
   }, [])
 
   useEffect(() => {

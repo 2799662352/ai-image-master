@@ -81,6 +81,18 @@ export interface ArtifactItem extends BaseItem {
   status?: 'generating' | 'done' | 'error'
   /** Prompt that produced these artifacts (shown on the generating card). */
   prompt?: string
+  /**
+   * Live progress line shown on the `generating` card (e.g. video tasks
+   * report "排队中…" → "生成中 · 23s"). Absent for image generations, which
+   * have no intermediate states.
+   */
+  progressText?: string
+  /**
+   * What kind of media this generation produces. Drives the card copy
+   * ("正在生成视频…" vs "正在生成图片…") for states where `artifacts` is
+   * still empty (generating / error). Defaults to image.
+   */
+  mediaKind?: 'image' | 'video'
   /** Failure message when `status === 'error'`. */
   error?: string
   /** Save-status banner (codex `generate_image` tool); absent for plain attachments. */

@@ -45,6 +45,7 @@ import { registerMediaThumbIpc } from './file-explorer/mediaThumbIpc'
 import { registerFsWatcherIpc, disposeAll as disposeFsWatchers } from './file-explorer/fsWatcher'
 import { startCatimationMcpServer } from './mcp/server'
 import type { McpRuntime } from './mcp/server'
+import { initSeedanceRuntime } from './services/seedance/runtime'
 import { getCatimationBridgeEntryPath } from './mcp/bridge'
 import type { CatimationMcpLaunchInfo } from './agent/codexLaunch'
 import { resolveWorkspacePaths } from './agent/codexConfigStore'
@@ -749,8 +750,8 @@ async function initAgentRuntime(win: BrowserWindow): Promise<void> {
         if (!threadId || !name || !mime || !base64) {
           return { ok: false, reason: 'attachments:save requires threadId, name, mime, base64' }
         }
-        if (!mime.startsWith('image/')) {
-          return { ok: false, reason: 'attachments:save only accepts image/* mimes' }
+        if (!mime.startsWith('image/') && !mime.startsWith('video/')) {
+          return { ok: false, reason: 'attachments:save only accepts image/* or video/* mimes' }
         }
         let buffer: Buffer
         try {
@@ -795,6 +796,15 @@ async function initAgentRuntime(win: BrowserWindow): Promise<void> {
         '[AgentRuntime] catimation MCP HTTP listener unavailable; ' +
           'agent will run without the local MCP tool surface.',
       )
+    } else {
+      // Seedance 视频生成：注册 generate_video / check_video_task 的主进程
+      // handler + 任务状态机 + 设置页 IPC。状态全在 TaskManager 单例，
+      // server-per-connection 的 MCP 工厂随便建几个实例都安全。
+      initSeedanceRuntime({
+        router: agentMcpRuntime.router,
+        attachments: attachmentService,
+        getWindow: () => BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ?? null,
+      })
     }
     // Prefer the stdio bridge transport for the spawned codex: codex runs
     // resources/catimation-bridge/index.js as a plain stdio MCP server and

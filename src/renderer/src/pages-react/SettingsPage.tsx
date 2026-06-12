@@ -92,6 +92,82 @@ function TencentCloudSection() {
   )
 }
 
+function SeedanceSection() {
+  const addToast = useToastStore((s) => s.addToast)
+  const [apiKey, setApiKeyInput] = React.useState('')
+  const [keyState, setKeyState] = React.useState<{
+    hasKey: boolean
+    keyMasked?: string
+    source: 'store' | 'env' | 'none'
+  } | null>(null)
+  const [saving, setSaving] = React.useState(false)
+
+  const api = (window as any).electronAPI
+
+  React.useEffect(() => {
+    api?.seedance?.getConfig?.().then((state: any) => {
+      if (state) setKeyState(state)
+    })
+  }, [])
+
+  const handleSave = async (key: string) => {
+    setSaving(true)
+    try {
+      const state = await api?.seedance?.setConfig?.({ apiKey: key })
+      if (state) {
+        setKeyState(state)
+        setApiKeyInput('')
+        addToast({
+          message: key ? 'Seedance API Key 已保存' : 'Seedance API Key 已清除',
+          type: 'success',
+        })
+      } else {
+        addToast({ message: '保存失败：Seedance 接口不可用', type: 'error' })
+      }
+    } catch (e: any) {
+      addToast({ message: `保存失败: ${e?.message ?? String(e)}`, type: 'error' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const sourceLabel =
+    keyState?.source === 'env'
+      ? '.env 已配置'
+      : keyState?.source === 'store'
+        ? `已保存 ${keyState.keyMasked ?? ''}`
+        : null
+
+  return (
+    <section className="space-y-3 pt-4 border-t border-zinc-700">
+      <div className="flex items-center gap-2">
+        <span className="w-6 h-6 bg-cyberpunk-yellow text-cyberpunk-black flex items-center justify-center text-sm font-bold">🎬</span>
+        <span className="font-bold text-white uppercase tracking-tight">Seedance 视频生成</span>
+        {sourceLabel && <span className="text-xs text-green-400">({sourceLabel})</span>}
+      </div>
+      <p className="text-xs text-zinc-500">
+        用于 Agent 的 generate_video 工具（Seedance 2.0 / 2.0 Fast）。填入火山方舟 Ark API Key；留空保存可清除。
+      </p>
+      <div className="flex gap-3">
+        <input
+          type="password"
+          value={apiKey}
+          onChange={(e) => setApiKeyInput(e.target.value)}
+          placeholder={keyState?.hasKey ? '已配置，输入新 Key 可覆盖' : '请输入 Seedance (Ark) API Key'}
+          className="flex-1 bg-zinc-800 border border-zinc-600 text-white text-sm px-3 py-2 rounded"
+        />
+        <button
+          onClick={() => handleSave(apiKey.trim())}
+          disabled={saving || (!apiKey.trim() && !keyState?.hasKey)}
+          className="px-4 py-2 bg-cyberpunk-yellow hover:opacity-90 text-cyberpunk-black font-bold text-sm uppercase tracking-tight transition-all disabled:opacity-50 rounded"
+        >
+          {saving ? '保存中...' : apiKey.trim() ? '💾 保存' : '🗑 清除'}
+        </button>
+      </div>
+    </section>
+  )
+}
+
 export default function SettingsPage() {
   const api = useApi()
   const addToast = useToastStore((s) => s.addToast)
@@ -309,6 +385,8 @@ export default function SettingsPage() {
           </button>
         </label>
       </section>
+
+      <SeedanceSection />
 
       <TencentCloudSection />
     </div>

@@ -340,9 +340,16 @@ interface AgentChatState {
    * background turn's image never lands in whatever chat happens to be active
    * when it finishes (parallel-chat contamination). Omit for the active view.
    */
-  beginImageGeneration: (prompt: string, threadId?: string) => string
+  beginImageGeneration: (prompt: string, threadId?: string, mediaKind?: 'image' | 'video') => string
   resolveImageGeneration: (itemId: string, artifacts: AttachmentRef[], threadId?: string) => void
   failImageGeneration: (itemId: string, error: string, threadId?: string) => void
+
+  /**
+   * Update the live progress line on a `generating` bubble (video tasks:
+   * "排队中…" → "生成中 · 23s"). Edits the SAME bubble in place; no-op once
+   * the item has settled to done/error.
+   */
+  updateGenerationProgress: (itemId: string, progressText: string, threadId?: string) => void
 
   /**
    * Attach/refresh the save-status banner on a generation bubble. Called after
@@ -852,7 +859,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       const message: Message = { id: createId(), role: 'assistant', createdAt: now, items: [item] }
       return patchThreadMessages(s, threadId, (msgs) => [...msgs, message])
     }),
-  beginImageGeneration: (prompt, threadId) => {
+  beginImageGeneration: (prompt, threadId, mediaKind) => {
     const itemId = createId()
     set((s) => {
       const now = Date.now()
@@ -863,6 +870,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         artifacts: [],
         status: 'generating',
         prompt,
+        ...(mediaKind ? { mediaKind } : {}),
       }
       const message: Message = { id: createId(), role: 'assistant', createdAt: now, items: [item] }
       return patchThreadMessages(s, threadId, (msgs) => [...msgs, message])
@@ -889,6 +897,14 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
           error,
           endedAt: Date.now(),
         })),
+      ),
+    ),
+  updateGenerationProgress: (itemId, progressText, threadId) =>
+    set((s) =>
+      patchThreadMessages(s, threadId, (msgs) =>
+        mapArtifactItem(msgs, itemId, (item) =>
+          item.status === 'generating' ? { ...item, progressText } : item,
+        ),
       ),
     ),
   annotateImageGeneration: (itemId, save, threadId) =>

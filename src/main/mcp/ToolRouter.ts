@@ -12,7 +12,13 @@ import type { AgentToolRequest, AgentToolResponse } from '../../types/agent'
 // never answers at all (crash / closed window).
 const RENDERER_TOOL_TIMEOUT_MS = 2_000_000
 
-export type MainToolHandler = (params: Record<string, unknown>) => Promise<unknown>
+/**
+ * `threadId` is the resolved DB thread id of the chat that issued the tool
+ * call (reverse-mapped from the codex thread UUID), so main-process tools
+ * (e.g. `generate_video`) can route progress bubbles / persistence to the
+ * requesting chat — same parallel-chat contamination fix as renderer tools.
+ */
+export type MainToolHandler = (params: Record<string, unknown>, threadId?: string) => Promise<unknown>
 
 type PendingRendererTool = {
   resolve: (value: unknown) => void
@@ -46,7 +52,10 @@ export class ToolRouter {
 
   async call(name: string, params: Record<string, unknown>, codexThreadId?: string): Promise<unknown> {
     const mainHandler = this.mainHandlers.get(name)
-    if (mainHandler) return mainHandler(params)
+    if (mainHandler) {
+      const threadId = codexThreadId ? (this.threadIdResolver?.(codexThreadId) ?? undefined) : undefined
+      return mainHandler(params, threadId)
+    }
     return this.callRenderer(name, params, codexThreadId)
   }
 

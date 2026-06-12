@@ -53,6 +53,7 @@ import type {
   MarketplaceListInstalledResult,
   MarketplaceUninstallResult,
 } from '../types/marketplace'
+import type { SeedanceKeyState, SeedanceTaskUpdate } from '../types/seedance'
 
 // ==================== IPC 通道常量 ====================
 // 集中管理所有 IPC 通道，便于类型检查和维护
@@ -481,6 +482,14 @@ export interface ElectronAPI {
       | { success: true; url: string; key: string }
       | { success: false; error: string }
     >
+  }
+  // Seedance 视频生成（codex `generate_video` 工具）。Key 走主进程
+  // safeStorage，渲染端只见 masked 状态；任务进度经 `seedance:task-update`
+  // 推送驱动聊天气泡。
+  seedance: {
+    getConfig: () => Promise<SeedanceKeyState>
+    setConfig: (apiKey: string) => Promise<SeedanceKeyState>
+    onTaskUpdate: (cb: (update: SeedanceTaskUpdate) => void) => () => void
   }
   fs: {
     readText: (p: string) => Promise<{ content: string; mtime: number }>
@@ -1080,6 +1089,18 @@ const electronAPI: ElectronAPI = {
       const handler = (_evt: IpcRendererEvent, data: any): void => cb(data)
       ipcRenderer.on('cos:upload-result', handler)
       return () => ipcRenderer.removeListener('cos:upload-result', handler)
+    },
+  },
+
+  // ============ Seedance 视频生成 ============
+  seedance: {
+    getConfig: () => safeInvoke<SeedanceKeyState>('seedance:get-config'),
+    setConfig: (apiKey: string) =>
+      safeInvoke<SeedanceKeyState>('seedance:set-config', { apiKey }),
+    onTaskUpdate: (cb: (update: SeedanceTaskUpdate) => void) => {
+      const handler = (_evt: IpcRendererEvent, data: SeedanceTaskUpdate): void => cb(data)
+      ipcRenderer.on('seedance:task-update', handler)
+      return () => ipcRenderer.removeListener('seedance:task-update', handler)
     },
   },
 
