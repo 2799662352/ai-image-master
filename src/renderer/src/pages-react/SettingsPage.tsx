@@ -95,10 +95,13 @@ function TencentCloudSection() {
 function SeedanceSection() {
   const addToast = useToastStore((s) => s.addToast)
   const [apiKey, setApiKeyInput] = React.useState('')
+  const [apiSecret, setApiSecretInput] = React.useState('')
   const [keyState, setKeyState] = React.useState<{
     hasKey: boolean
     keyMasked?: string
     source: 'store' | 'env' | 'none'
+    hasSecret?: boolean
+    secretMasked?: string
   } | null>(null)
   const [saving, setSaving] = React.useState(false)
 
@@ -110,15 +113,17 @@ function SeedanceSection() {
     })
   }, [])
 
-  const handleSave = async (key: string) => {
+  const handleSave = async (field: 'apiKey' | 'apiSecret', value: string) => {
     setSaving(true)
+    const label = field === 'apiKey' ? 'API Key' : 'API Secret'
     try {
-      const state = await api?.seedance?.setConfig?.({ apiKey: key })
+      const state = await api?.seedance?.setConfig?.({ [field]: value })
       if (state) {
         setKeyState(state)
-        setApiKeyInput('')
+        if (field === 'apiKey') setApiKeyInput('')
+        else setApiSecretInput('')
         addToast({
-          message: key ? 'Seedance API Key 已保存' : 'Seedance API Key 已清除',
+          message: value ? `Seedance ${label} 已保存` : `Seedance ${label} 已清除`,
           type: 'success',
         })
       } else {
@@ -146,7 +151,8 @@ function SeedanceSection() {
         {sourceLabel && <span className="text-xs text-green-400">({sourceLabel})</span>}
       </div>
       <p className="text-xs text-zinc-500">
-        用于 Agent 的 generate_video 工具（Seedance 2.0 / 2.0 Fast）。填入火山方舟 Ark API Key；留空保存可清除。
+        用于 Agent 的 generate_video 工具（Seedance 2.0 / 2.0 Fast）。API Key 用于视频任务；
+        API Secret 用于人像库（素材）接口签名，配置后视频参考图会自动入库并复用。留空保存可清除。
       </p>
       <div className="flex gap-3">
         <input
@@ -157,11 +163,31 @@ function SeedanceSection() {
           className="flex-1 bg-zinc-800 border border-zinc-600 text-white text-sm px-3 py-2 rounded"
         />
         <button
-          onClick={() => handleSave(apiKey.trim())}
+          onClick={() => handleSave('apiKey', apiKey.trim())}
           disabled={saving || (!apiKey.trim() && !keyState?.hasKey)}
           className="px-4 py-2 bg-cyberpunk-yellow hover:opacity-90 text-cyberpunk-black font-bold text-sm uppercase tracking-tight transition-all disabled:opacity-50 rounded"
         >
           {saving ? '保存中...' : apiKey.trim() ? '💾 保存' : '🗑 清除'}
+        </button>
+      </div>
+      <div className="flex gap-3">
+        <input
+          type="password"
+          value={apiSecret}
+          onChange={(e) => setApiSecretInput(e.target.value)}
+          placeholder={
+            keyState?.hasSecret
+              ? `已配置 ${keyState.secretMasked ?? ''}，输入新 Secret 可覆盖`
+              : '请输入 Seedance API Secret（人像库需要）'
+          }
+          className="flex-1 bg-zinc-800 border border-zinc-600 text-white text-sm px-3 py-2 rounded"
+        />
+        <button
+          onClick={() => handleSave('apiSecret', apiSecret.trim())}
+          disabled={saving || (!apiSecret.trim() && !keyState?.hasSecret)}
+          className="px-4 py-2 bg-cyberpunk-yellow hover:opacity-90 text-cyberpunk-black font-bold text-sm uppercase tracking-tight transition-all disabled:opacity-50 rounded"
+        >
+          {saving ? '保存中...' : apiSecret.trim() ? '💾 保存' : '🗑 清除'}
         </button>
       </div>
     </section>

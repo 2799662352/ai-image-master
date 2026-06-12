@@ -19,6 +19,7 @@ const TABS: TabDef[] = [
   { key: 'director', label: '导演', icon: '🎬' },
   { key: 'storyboardSplit', label: '拆图', icon: '🧩' },
   { key: 'smartErase', label: '去字幕', icon: '✂️' },
+  { key: 'portraitLibrary', label: '人像库', icon: '👤' },
   { key: 'promptTemplates', label: '模板', icon: '📝' },
   { key: 'agentWorkspace', label: 'Agent Workspace', icon: 'agent' },
   { key: 'marketplace', label: '技能市场', icon: '🛒' },

@@ -10,6 +10,7 @@ export const VALID_TABS = [
   'director',
   'storyboardSplit',
   'smartErase',
+  'portraitLibrary',
   'promptTemplates',
   'agentWorkspace',
   'marketplace',

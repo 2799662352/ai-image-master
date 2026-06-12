@@ -20,6 +20,7 @@ import {
   SmartErasePage,
   AgentWorkspacePage,
   MarketplacePage,
+  PortraitLibraryPage,
 } from '../pages-react'
 
 const PAGE_MAP: Record<TabName, LazyExoticComponent<ComponentType>> = {
@@ -35,6 +36,7 @@ const PAGE_MAP: Record<TabName, LazyExoticComponent<ComponentType>> = {
   marketplace: MarketplacePage,
   storyboardSplit: StoryboardSplitPage,
   smartErase: SmartErasePage,
+  portraitLibrary: PortraitLibraryPage,
 }
 
 function PageFallback() {

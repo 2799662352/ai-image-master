@@ -8,9 +8,19 @@ import type { ToolRouter } from '../../mcp/ToolRouter'
 import type { AttachmentService } from '../../agent/AttachmentService'
 import { CHECK_LONG_POLL_MS } from '../../mcp/tools/videoTools'
 import { seedanceClient } from './client'
-import { getSeedanceApiKey, getSeedanceKeyState, setSeedanceApiKey } from './credentials'
+import {
+  getSeedanceApiKey,
+  getSeedanceApiSecret,
+  getSeedanceKeyState,
+  setSeedanceCredentials,
+} from './credentials'
+import { importSeedanceAsset, listSeedanceAssets } from './assets'
 import { SeedanceTaskManager } from './taskManager'
 import type { CreateVideoTaskInput, SeedanceContentItem } from './types'
+import type {
+  SeedanceAssetImportInput,
+  SeedanceAssetListQuery,
+} from '../../../types/seedance'
 
 /**
  * 本地素材内联为 data: URL 的单文件上限。上游 data: 字段约 5MB 顶,
@@ -36,10 +46,10 @@ const MIME_BY_EXT: Record<string, string> = {
   '.m4a': 'audio/mp4',
 }
 
-/** 本地路径 → data: URL;data:/http(s) 原样透传。 */
+/** 本地路径 → data: URL;data:/http(s)/asset: 原样透传。 */
 async function resolveMediaUrl(src: string, label: string): Promise<string> {
   const trimmed = src.trim()
-  if (/^(data:|https?:)/i.test(trimmed)) return trimmed
+  if (/^(data:|https?:|asset:)/i.test(trimmed)) return trimmed
   let buf: Buffer
   try {
     buf = await fs.readFile(trimmed)
@@ -54,6 +64,40 @@ async function resolveMediaUrl(src: string, label: string): Promise<string> {
   }
   const mime = MIME_BY_EXT[path.extname(trimmed).toLowerCase()] ?? 'application/octet-stream'
   return `data:${mime};base64,${buf.toString('base64')}`
+}
+
+/**
+ * 视频生成的图片素材默认先导入素材库（人像分类 image_people），再以
+ * `asset://assetId` 引用创建任务 —— 上游按内容 hash 去重，同图复用同一
+ * assetId，保证人像一致性，且人像库页面能看到所有用过的参考图。
+ * 未配置 API Secret 或导入失败时回退为原 data:/https 直传，不阻塞生成。
+ */
+async function importImagesToPortraitLibrary(content: SeedanceContentItem[]): Promise<void> {
+  const apiKey = getSeedanceApiKey()
+  const apiSecret = getSeedanceApiSecret()
+  if (!apiKey || !apiSecret) return
+  for (const item of content) {
+    if (item.type !== 'image_url') continue
+    const url = item.image_url.url
+    if (url.startsWith('asset://')) continue
+    try {
+      const mime = /^data:([^;,]+)/i.exec(url)?.[1]
+      const { asset } = await importSeedanceAsset(
+        {
+          kind: 'image',
+          imageCategory: 'image_people',
+          url,
+          name: `视频参考-${item.role ?? 'reference_image'}-${Date.now()}`,
+          ...(mime ? { mimeType: mime } : {}),
+        },
+        { apiKey, apiSecret },
+      )
+      item.image_url.url = asset.assetUrl
+      item.assetId = asset.assetId
+    } catch (e) {
+      console.warn('[seedance] portrait-library import failed, falling back to direct URL:', e)
+    }
+  }
 }
 
 async function buildContent(input: CreateVideoTaskInput): Promise<SeedanceContentItem[]> {
@@ -120,6 +164,7 @@ export function initSeedanceRuntime(opts: {
   router.registerMain('generate_video', async (params, threadId) => {
     const input = params as unknown as CreateVideoTaskInput
     const content = await buildContent(input)
+    await importImagesToPortraitLibrary(content)
     return taskManager.submit({ input, content, threadId })
   })
 
@@ -132,10 +177,24 @@ export function initSeedanceRuntime(opts: {
   ipcMain.removeHandler('seedance:get-config')
   ipcMain.handle('seedance:get-config', () => getSeedanceKeyState())
   ipcMain.removeHandler('seedance:set-config')
-  ipcMain.handle('seedance:set-config', (_event, args: { apiKey?: unknown }) => {
-    setSeedanceApiKey(typeof args?.apiKey === 'string' ? args.apiKey : '')
+  ipcMain.handle('seedance:set-config', (_event, args: { apiKey?: unknown; apiSecret?: unknown }) => {
+    setSeedanceCredentials({
+      apiKey: typeof args?.apiKey === 'string' ? args.apiKey : undefined,
+      apiSecret: typeof args?.apiSecret === 'string' ? args.apiSecret : undefined,
+    })
     return getSeedanceKeyState()
   })
+
+  // ============ 素材库（人像库） ============
+  const assetCreds = () => ({ apiKey: getSeedanceApiKey(), apiSecret: getSeedanceApiSecret() })
+  ipcMain.removeHandler('seedance:assets-list')
+  ipcMain.handle('seedance:assets-list', (_event, query: SeedanceAssetListQuery) =>
+    listSeedanceAssets(query ?? {}, assetCreds()),
+  )
+  ipcMain.removeHandler('seedance:assets-import')
+  ipcMain.handle('seedance:assets-import', (_event, input: SeedanceAssetImportInput) =>
+    importSeedanceAsset(input, assetCreds()),
+  )
 
   return {
     taskManager,

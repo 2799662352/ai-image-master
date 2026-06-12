@@ -148,7 +148,10 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
       'and the finished MP4 plays inline in the chat, is saved to a local file, and lands in the app ' +
       'history page — exactly like generate_image. Model choice: "2.0-fast" (default) is fast + ' +
       'cheap and great for most requests; pick "2.0" only when the user asks for top quality or ' +
-      'complex multi-shot motion. 1080p requires model "2.0".',
+      'complex multi-shot motion. 1080p requires model "2.0". All input images are automatically ' +
+      'imported into the user\'s portrait library (人像库) and referenced as asset://assetId — ' +
+      'identical images are deduplicated upstream, which keeps characters consistent across videos. ' +
+      'You can also pass an existing asset://assetId (from the 人像库 page) directly as any image input.',
     inputSchema: z.object({
       prompt: z.string().min(1).describe(
         'Video description. Supports shot language (运镜/景别), dialogue lines, and -- style ' +
@@ -163,11 +166,11 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
       ratio: z.enum(['16:9', '9:16', '4:3', '3:4', '1:1', '21:9']).optional().describe('Aspect ratio. Default 16:9.'),
       duration: z.number().int().min(3).max(12).optional().describe('Video length in seconds (3–12). Default 5. Longer = more expensive.'),
       generateAudio: z.boolean().optional().describe('Generate soundtrack/voice audio. Default true (no extra cost).'),
-      firstFrame: z.string().optional().describe('First-frame image: local file path, data: URL, or https URL. Local files must be ≤4.5MB.'),
+      firstFrame: z.string().optional().describe('First-frame image: local file path, data: URL, https URL, or asset://assetId (portrait library). Local files must be ≤4.5MB.'),
       lastFrame: z.string().optional().describe('Last-frame image (requires firstFrame too). Same formats/limits as firstFrame.'),
       referenceImages: z.array(z.string()).max(4).optional().describe(
         'Up to 4 reference images for subject/style consistency (人物/角色一致性). If the user attached ' +
-        'image paths in the prompt, pass them here.',
+        'image paths in the prompt, pass them here. asset://assetId from the portrait library also works.',
       ),
       referenceVideo: z.string().optional().describe('Reference video (motion/style), local path or URL. Local files must be ≤4.5MB.'),
       referenceAudio: z.string().optional().describe('Reference audio (lip-sync/voice), local path or URL. Local files must be ≤4.5MB.'),

@@ -53,7 +53,14 @@ import type {
   MarketplaceListInstalledResult,
   MarketplaceUninstallResult,
 } from '../types/marketplace'
-import type { SeedanceKeyState, SeedanceTaskUpdate } from '../types/seedance'
+import type {
+  SeedanceAssetImportInput,
+  SeedanceAssetImportResult,
+  SeedanceAssetListQuery,
+  SeedanceAssetListResult,
+  SeedanceKeyState,
+  SeedanceTaskUpdate,
+} from '../types/seedance'
 
 // ==================== IPC 通道常量 ====================
 // 集中管理所有 IPC 通道，便于类型检查和维护
@@ -488,8 +495,11 @@ export interface ElectronAPI {
   // 推送驱动聊天气泡。
   seedance: {
     getConfig: () => Promise<SeedanceKeyState>
-    setConfig: (apiKey: string) => Promise<SeedanceKeyState>
+    setConfig: (config: { apiKey?: string; apiSecret?: string }) => Promise<SeedanceKeyState>
     onTaskUpdate: (cb: (update: SeedanceTaskUpdate) => void) => () => void
+    /** 素材库（人像库）：列表 / 导入。需要 API Secret。 */
+    listAssets: (query: SeedanceAssetListQuery) => Promise<SeedanceAssetListResult>
+    importAsset: (input: SeedanceAssetImportInput) => Promise<SeedanceAssetImportResult>
   }
   fs: {
     readText: (p: string) => Promise<{ content: string; mtime: number }>
@@ -1095,13 +1105,17 @@ const electronAPI: ElectronAPI = {
   // ============ Seedance 视频生成 ============
   seedance: {
     getConfig: () => safeInvoke<SeedanceKeyState>('seedance:get-config'),
-    setConfig: (apiKey: string) =>
-      safeInvoke<SeedanceKeyState>('seedance:set-config', { apiKey }),
+    setConfig: (config: { apiKey?: string; apiSecret?: string }) =>
+      safeInvoke<SeedanceKeyState>('seedance:set-config', config),
     onTaskUpdate: (cb: (update: SeedanceTaskUpdate) => void) => {
       const handler = (_evt: IpcRendererEvent, data: SeedanceTaskUpdate): void => cb(data)
       ipcRenderer.on('seedance:task-update', handler)
       return () => ipcRenderer.removeListener('seedance:task-update', handler)
     },
+    listAssets: (query: SeedanceAssetListQuery) =>
+      safeInvoke<SeedanceAssetListResult>('seedance:assets-list', query),
+    importAsset: (input: SeedanceAssetImportInput) =>
+      safeInvoke<SeedanceAssetImportResult>('seedance:assets-import', input),
   },
 
   fs: {

@@ -40,4 +40,69 @@ export interface SeedanceKeyState {
   /** 形如 `sk-1a****`。 */
   keyMasked?: string
   source: 'store' | 'env' | 'none'
+  /** 素材库（人像库）接口需要 API Secret 做 HMAC 签名。 */
+  hasSecret: boolean
+  secretMasked?: string
+}
+
+// ==================== 素材库（人像库） ====================
+// 上游 /api/open/v1/local-assets 协议；图片可标记 image_people（人像）。
+
+export type SeedanceAssetKind = 'image' | 'video' | 'audio'
+
+/** 列表接口的 kind 过滤项（上游原样）。 */
+export type SeedanceAssetKindFilter =
+  | 'all'
+  | 'image_people'
+  | 'image_environment'
+  | 'video'
+  | 'audio'
+  | 'text'
+
+export interface SeedanceAssetItem {
+  id: string
+  kind: SeedanceAssetKind | string
+  imageCategory?: 'image_people' | 'image_environment'
+  name: string
+  /** 后台缩略图预览地址（仅展示用）。 */
+  previewUrl?: string
+  sourceUrl?: string
+  /** 完整 `asset://...`，创建任务时直接引用。 */
+  assetUrl: string
+  assetId: string
+  mimeType?: string
+  sizeBytes?: number
+  status?: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface SeedanceAssetListResult {
+  items: SeedanceAssetItem[]
+  total: number
+  page: number
+  pageSize: number
+  totalPages: number
+  summary?: { used: number; limit: number; remaining: number }
+}
+
+export interface SeedanceAssetListQuery {
+  page?: number
+  pageSize?: number
+  q?: string
+  kind?: SeedanceAssetKindFilter
+}
+
+export interface SeedanceAssetImportInput {
+  kind: SeedanceAssetKind
+  /** 远程 https URL 或 data: URL。 */
+  url: string
+  name?: string
+  mimeType?: string
+  imageCategory?: 'image_people' | 'image_environment'
+}
+
+export interface SeedanceAssetImportResult {
+  duplicated: boolean
+  asset: SeedanceAssetItem
 }

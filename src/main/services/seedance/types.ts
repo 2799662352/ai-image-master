@@ -27,9 +27,11 @@ export type SeedanceContentItem =
       type: 'image_url'
       role?: 'first_frame' | 'last_frame' | 'reference_image'
       image_url: { url: string }
+      /** 引用素材库（人像库）条目时同时携带（文档 4.2.3 推荐写法）。 */
+      assetId?: string
     }
-  | { type: 'video_url'; video_url: { url: string } }
-  | { type: 'audio_url'; audio_url: { url: string } }
+  | { type: 'video_url'; video_url: { url: string }; assetId?: string }
+  | { type: 'audio_url'; audio_url: { url: string }; assetId?: string }
 
 /** 发给上游创建接口的请求体。 */
 export interface SeedanceCreateTaskBody {
