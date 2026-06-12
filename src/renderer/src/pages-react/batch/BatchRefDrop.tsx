@@ -64,6 +64,12 @@ interface Props {
   onClear: () => void
   onPreview?: (url: string) => void
   max?: number
+  /**
+   * 当前模型是否要求参考图以 base64 inline_data 发送(大香蕉系列)。
+   * 为 true 时本地上传跳过 COS,直接保留 base64 —— 避免「上传 COS → 生成时再抓回 base64」
+   * 的无意义往返。来源:模型配置 inlineRefImageAsBase64。
+   */
+  preferBase64?: boolean
 }
 
 const MAX_FILE_MB = 20
@@ -80,6 +86,7 @@ export default function BatchRefDrop({
   onClear,
   onPreview,
   max = 16,
+  preferBase64 = false,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragOver, setDragOver] = useState(false)
@@ -113,6 +120,8 @@ export default function BatchRefDrop({
 
     const outcome = await uploadRefImageOriginalFirst(file, {
       metadata: { source: 'batch-ref-upload', fileName: file.name },
+      // base64 inline 模型(大香蕉系列):跳过 COS,直接留本地 base64。
+      skipCos: preferBase64,
       onStage: (stage) => updatePending(pendingId, { stage }),
     })
 
@@ -135,6 +144,15 @@ export default function BatchRefDrop({
     if (outcome.viaCos) {
       addToast({
         message: `已上传原图到云端: ${shortName(file.name)}`,
+        type: 'success',
+        duration: 2000,
+      })
+    } else if (outcome.cosSkipped) {
+      // 主动跳过 COS:base64 直传,不是失败。
+      addToast({
+        message: outcome.compressed
+          ? `已用本地 base64 直传(${fmtKB(outcome.originalSize)} → ${fmtKB(outcome.fileSize)}): ${shortName(file.name)}`
+          : `已用本地 base64 直传(免上传云端): ${shortName(file.name)}`,
         type: 'success',
         duration: 2000,
       })
@@ -293,7 +311,9 @@ export default function BatchRefDrop({
           {remaining > 0 ? '点击或拖拽上传' : '⛔ 已满'}
         </div>
         <div className="mt-1 font-mono text-[11px] text-zinc-500">
-          JPG / PNG / WEBP · ≤ {MAX_FILE_MB}MB · 原图直传云端,不压缩
+          {preferBase64
+            ? `JPG / PNG / WEBP · ≤ ${MAX_FILE_MB}MB · 本地 base64 直传,免上传云端`
+            : `JPG / PNG / WEBP · ≤ ${MAX_FILE_MB}MB · 原图直传云端,不压缩`}
         </div>
         <input
           ref={inputRef}

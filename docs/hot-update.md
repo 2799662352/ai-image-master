@@ -138,6 +138,29 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
+### v4.3.37 (2026-06-12) — 大香蕉系列参考图 base64 直传(免 COS 往返)+ 模型名对齐 apiyi
+
+**A. base64 inline 模型参考图不再转 URL(免 COS 往返)**
+
+`gemini-3-pro-image` / `gemini-3.1-flash-image`(大香蕉系列)本来就把参考图以 base64 `inline_data` 发给 apiyi 原生 `:generateContent` 端点。之前链路是「上传 COS 拿 URL → 生成前再把 URL 抓回 base64」,纯属无意义往返(多一次上传 + 一次下载)。现在选中这两个模型时,本地上传**直接保留 base64、跳过 COS**。
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| `skipCos` 选项 | `src/renderer/src/utils/refImageUpload.ts` | `skipCos:true` 时不碰 COS,直接落本地 base64:≤14MB 原图直出、>14MB 才压缩(避免超过 API 20MiB 字段上限);返回 `cosSkipped:true` 区分「主动跳过」与「上传失败降级」;≤14MB 不压缩时复用已读原图,避免大图二次解码 |
+| 模型感知开关 | `src/renderer/src/pages-react/batch/BatchRefDrop.tsx` | 新增 `preferBase64` prop → 透传 `skipCos`;拖拽区提示与 toast 区分 base64 直传 / COS 直传 |
+| 批量页 / 生成页接线 | `BatchPage.tsx` / `GeneratePage.tsx` | 按当前模型 `inlineRefImageAsBase64` 传 `preferBase64`,两页复用同一 `BatchRefDrop` |
+
+兼容性:默认 `skipCos=false`,其它模型(gpt-image-2 / Flux / 其它 gemini)行为不变;DirectorPage / UnderstandPage 不受影响;两个方向(base64↔URL 模型互切)都由生成前的 `resolveSourcesToDataUrls` 兜底,安全。
+
+**B. 模型名对齐 apiyi 官方(去 -preview)+ 右键另存为修复**
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| baseURL/displayName 去 `-preview` | `src/renderer/src/services/api/ApiService.ts` | `gemini-3.1-flash-image` / `gemini-3-pro-image` 的请求端点与展示名与 apiyi 一致(内部 key 不变) |
+| 批量页图片「右键另存为」修复 | `src/main/index.ts` | UI 展示用 `useDisplaySrc` 把 dataURL 转 `blob:` URL(性能优化),但主进程 `net.fetch` 读不到渲染进程的 `blob:` → 另存为静默失败。现回渲染进程 `executeJavaScript` 取字节转 dataURL 再落盘;失败弹错误框,不再静默 |
+
+---
+
 ### v4.3.36 (2026-06-12) — 根因修复:Codex「生成成功了没有反应」(MCP 传输三连坑) + 保存状态气泡
 
 > 详细踩坑复盘见 `docs/2026-06-12-mcp-stdio-bridge-pitfalls.md`。三个独立的坑叠加成同一症状:图片在 UI 生成成功,但 codex 永远收不到工具结果,turn 卡死。

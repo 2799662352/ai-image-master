@@ -27,6 +27,8 @@ type ModelConfigSnapshot = ImageParamModelConfig & {
   name?: string
   displayName?: string
   price?: number
+  /** base64 inline 模型(大香蕉系列):参考图本地直传 base64,不走 COS。 */
+  inlineRefImageAsBase64?: boolean
 }
 
 /**
@@ -364,6 +366,7 @@ export default function BatchPage() {
             onRemove={removeRefImage}
             onClear={clearRefImages}
             onPreview={handlePreviewRef}
+            preferBase64={!!modelConfig?.inlineRefImageAsBase64}
           />
         </section>
       </div>

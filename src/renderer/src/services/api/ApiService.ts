@@ -51,6 +51,13 @@ export interface ModelConfig {
    * 不填时收据组件会回退到 displayName 中 `$X.XX/张` 的兜底解析。
    */
   price?: number
+  /**
+   * gemini-native 专用：把参考图强制以 base64 `inline_data` 内联，而不是默认的
+   * `file_data.file_uri`(URL 直传)。开启后请求前会把 COS/远端 URL 参考图抓回
+   * 成 data URL，与 apiyi 官方 `:generateContent` curl 的 `inline_data` 写法一致。
+   * 大图会显著增大请求体，仅在确需 base64 内联的模型上开启(如大香蕉系列)。
+   */
+  inlineRefImageAsBase64?: boolean
 }
 
 export interface RatioOption {
@@ -318,12 +325,13 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   },
   'gemini-3.1-flash-image-preview': {
     name: '🍌 Nano Banana 2',
-    displayName: '15s，gemini-3.1-flash-image-preview 谷歌原生端点请求，支持超多尺寸4K，$0.03/张🚀 官网低于2折',
+    displayName: '15s，gemini-3.1-flash-image 谷歌原生端点请求，支持超多尺寸4K，$0.03/张🚀 官网低于2折',
     price: 0.06,
     time: '15s',
     isNew: true,
-    baseURL: 'https://b.apiyi.com/v1beta/models/gemini-3.1-flash-image-preview:generateContent',
+    baseURL: 'https://b.apiyi.com/v1beta/models/gemini-3.1-flash-image:generateContent',
     apiType: 'gemini-native',
+    inlineRefImageAsBase64: true,
     internalPrompt: '生成图片：',
     ratios: [
       { key: 'auto', label: '自适应', description: '智能' },
@@ -378,12 +386,13 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
   },
   'gemini-3-pro-image-preview': {
     name: '🍌 Nano Banana Pro',
-    displayName: '60s，gemini-3-pro-image-preview 谷歌原生端点请求，支持多尺寸4K，$0.05/张🔥 官网1/5价格',
+    displayName: '60s，gemini-3-pro-image 谷歌原生端点请求，支持多尺寸4K，$0.05/张🔥 官网1/5价格',
     price: 0.09,
     time: '60s',
     isNew: false,
-    baseURL: 'https://b.apiyi.com/v1beta/models/gemini-3-pro-image-preview:generateContent',
+    baseURL: 'https://b.apiyi.com/v1beta/models/gemini-3-pro-image:generateContent',
     apiType: 'gemini-native',
+    inlineRefImageAsBase64: true,
     internalPrompt: '生成图片：',
     ratios: [
       { key: 'auto', label: '自适应', description: '智能' },
@@ -1117,7 +1126,12 @@ export class ApiService {
     // - multipart(gpt-image-2 已在上面分支返回；Flux / sora-chat 直接用 URL)不走这里。
     let resolvedRefs = referenceImages
     let resolvedImageBase64 = imageBase64
-    const needsBase64Sources = !!modelConfig.baseURL?.includes('/images/generations')
+    // /images/generations 的 image 字段只吃 base64；gemini-native 默认走 URL 直传，
+    // 但带 inlineRefImageAsBase64 的模型(大香蕉系列)要求 base64 inline_data，
+    // 同样需要把 COS/远端 URL 先抓回 data URL。
+    const needsBase64Sources =
+      !!modelConfig.baseURL?.includes('/images/generations') ||
+      modelConfig.inlineRefImageAsBase64 === true
     if (needsBase64Sources) {
       resolvedRefs = await this.resolveSourcesToDataUrls(referenceImages)
       if (imageBase64 && /^https?:\/\//i.test(imageBase64)) {

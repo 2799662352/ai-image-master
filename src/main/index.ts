@@ -552,6 +552,31 @@ function createWindow(): void {
             if (isDataUri) {
               const base64Data = url.replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '')
               await fs.promises.writeFile(result.filePath, Buffer.from(base64Data, 'base64'))
+            } else if (url.startsWith('blob:')) {
+              // blob: URL 只存在于渲染进程上下文 —— net.fetch（主进程）读不到它。
+              // 批量/预览页把模型直出的 dataURL 经 useDisplaySrc 换成了 blob:，
+              // 所以这里必须回渲染进程 fetch 出字节、转成 dataURL 再落盘，
+              // 否则「图片另存为」会静默失败（用户感知为「另存为没反应」）。
+              const dataUrl = await mainWindow!.webContents.executeJavaScript(
+                `(async () => {` +
+                `try {` +
+                `const r = await fetch(${JSON.stringify(url)});` +
+                `const b = await r.blob();` +
+                `return await new Promise((res, rej) => {` +
+                `const fr = new FileReader();` +
+                `fr.onload = () => res(fr.result);` +
+                `fr.onerror = () => rej(fr.error);` +
+                `fr.readAsDataURL(b);` +
+                `});` +
+                `} catch (e) { return null; }` +
+                `})()`,
+                true,
+              )
+              if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:')) {
+                throw new Error('无法从渲染进程读取 blob 图片字节')
+              }
+              const base64Data = dataUrl.replace(/^data:[^;]+;base64,/, '')
+              await fs.promises.writeFile(result.filePath, Buffer.from(base64Data, 'base64'))
             } else {
               const res = await net.fetch(url)
               if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -560,6 +585,15 @@ function createWindow(): void {
             }
           } catch (error) {
             console.error('[context-menu] 保存图片失败:', error)
+            // 不再静默：弹个错误框，避免「另存为点了没反应」的体验。
+            try {
+              dialog.showErrorBox(
+                '图片另存为失败',
+                error instanceof Error ? error.message : String(error),
+              )
+            } catch {
+              // showErrorBox 本身失败就只能吞掉了
+            }
           }
         }
       })

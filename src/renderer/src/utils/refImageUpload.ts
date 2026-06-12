@@ -47,6 +47,14 @@ export interface RefUploadOptions {
   metadata?: Record<string, unknown>
   /** COS 失败时是否降级本地压缩(默认 true);false 则降级直接用原图 dataURL。 */
   compressOnFallback?: boolean
+  /**
+   * 主动跳过 COS,直接保留本地 base64(默认 false)。
+   * 用于 base64 inline 模型(大香蕉系列 gemini-3-pro-image / gemini-3.1-flash-image):
+   * 这些模型本来就把参考图以 base64 `inline_data` 发出去,先传 COS 再抓回 data URL
+   * 是无意义的往返。开启后跳过上传,≤14MB 原图直出 base64、>14MB 才压缩以免超过
+   * API 20MiB 字段上限。返回 viaCos:false 但 cosSkipped:true(不是失败)。
+   */
+  skipCos?: boolean
   /** 进度回调:'reading' → 'uploading' →(降级时)'compressing'。 */
   onStage?: (stage: RefUploadStage) => void
 }
@@ -74,6 +82,8 @@ interface RefUploadLocalOk {
   height?: number
   /** COS 失败原因,供调用方按需 console.warn */
   cosError?: string
+  /** 是否是 skipCos 主动跳过(而非 COS 失败降级);用于区分 toast 文案。 */
+  cosSkipped?: boolean
 }
 
 interface RefUploadErr {
@@ -101,6 +111,7 @@ export async function uploadRefImageOriginalFirst(
 ): Promise<RefUploadOutcome> {
   const { metadata, onStage } = options
   const compressOnFallback = options.compressOnFallback !== false
+  const skipCos = options.skipCos === true
 
   // 1) 读原图(不压缩)
   onStage?.('reading')
@@ -111,21 +122,42 @@ export async function uploadRefImageOriginalFirst(
     return { ok: false, error: e instanceof Error ? e.message : 'read failed' }
   }
 
-  // 2) 原图直传 COS
-  onStage?.('uploading')
-  const up = await uploadImageUrlToCos(original.dataUrl, { metadata })
-  if (up.ok) {
-    return {
-      ok: true,
-      viaCos: true,
-      src: up.url,
-      fileSize: file.size,
-      width: original.w,
-      height: original.h,
+  // 2) 原图直传 COS(skipCos 时跳过 —— base64 inline 模型不需要走 URL 往返)
+  if (!skipCos) {
+    onStage?.('uploading')
+    const up = await uploadImageUrlToCos(original.dataUrl, { metadata })
+    if (up.ok) {
+      return {
+        ok: true,
+        viaCos: true,
+        src: up.url,
+        fileSize: file.size,
+        width: original.w,
+        height: original.h,
+      }
     }
+    return toLocal(file, original, compressOnFallback, onStage, up.error, false)
   }
 
-  // 3a) 降级:直接用原图 dataURL(调用方明确不想压缩)
+  // skipCos:不碰 COS,直接落本地 base64(标记 cosSkipped,区别于上传失败降级)
+  return toLocal(file, original, compressOnFallback, onStage, undefined, true)
+}
+
+/**
+ * 把原图落成本地 base64 参考图源。
+ * - compressOnFallback=false:直接用原图 dataURL(不压缩);
+ * - compressOnFallback=true :>14MB 压缩、≤14MB 原图直出(见 image-compress)。
+ * cosSkipped 标记本次是主动 skipCos 而非 COS 失败降级,供调用方区分 toast。
+ */
+async function toLocal(
+  file: File,
+  original: RefImageReadResult,
+  compressOnFallback: boolean,
+  onStage: RefUploadOptions['onStage'],
+  cosError: string | undefined,
+  cosSkipped: boolean,
+): Promise<RefUploadOutcome> {
+  // 3a) 直接用原图 dataURL(调用方明确不想压缩)
   if (!compressOnFallback) {
     return {
       ok: true,
@@ -136,11 +168,12 @@ export async function uploadRefImageOriginalFirst(
       fileSize: file.size,
       width: original.w,
       height: original.h,
-      cosError: up.error,
+      cosError,
+      cosSkipped,
     }
   }
 
-  // 3b) 降级:本地压缩成 base64
+  // 3b) 本地压缩成 base64(≤14MB 原图直出,>14MB 才真正压小)
   onStage?.('compressing')
   let processed: File = file
   let compressed = false
@@ -150,11 +183,16 @@ export async function uploadRefImageOriginalFirst(
   } catch {
     // 压缩失败就用原 File,继续读
   }
+  // 没压缩(≤14MB / 压缩失败)时 processed === file,step1 已读过原图,直接复用避免再解码一遍大图。
   let fb: RefImageReadResult
-  try {
-    fb = await readImageFileWithDims(processed)
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'read failed' }
+  if (processed === file) {
+    fb = original
+  } else {
+    try {
+      fb = await readImageFileWithDims(processed)
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : 'read failed' }
+    }
   }
   return {
     ok: true,
@@ -165,6 +203,7 @@ export async function uploadRefImageOriginalFirst(
     fileSize: processed.size,
     width: fb.w ?? original.w,
     height: fb.h ?? original.h,
-    cosError: up.error,
+    cosError,
+    cosSkipped,
   }
 }

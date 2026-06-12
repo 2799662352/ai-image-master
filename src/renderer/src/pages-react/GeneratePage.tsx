@@ -191,6 +191,7 @@ export default function GeneratePage() {
         onRemove={(id) => removeReferenceImage(Number(id))}
         onClear={clearReferenceImages}
         onPreview={(url) => setLightbox({ urls: referenceImages, index: Math.max(0, referenceImages.indexOf(url)) })}
+        preferBase64={!!currentModel?.inlineRefImageAsBase64}
       />
 
       <button
