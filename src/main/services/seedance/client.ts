@@ -75,8 +75,67 @@ export const seedanceClient: SeedanceClient = {
   },
 
   async downloadVideo(videoUrl) {
-    const res = await net.fetch(videoUrl)
-    if (!res.ok) throw new Error(`video download failed: HTTP ${res.status}`)
-    return Buffer.from(await res.arrayBuffer())
+    // ⚠️ 必须用 net.request 而非 net.fetch:上游视频代理会在响应头里塞
+    // prompt 派生的中文文件名(如 Content-Disposition: filename="做自然回归…mp4"),
+    // net.fetch 用 undici 的 Headers(Web 标准,要求 Latin1 ByteString)重建响应头,
+    // 遇到 >255 的中文字节直接抛 TypeError;该异常发生在 Electron 内部的 response
+    // 回调里 → 变 uncaughtException 被全局吞掉,而 fetch 的 Promise 永不 settle,
+    // persistence 卡死在「文件仍在后台保存中…」(2026-06-13 实测,字符 '自'=33258)。
+    // net.request 的 response.headers 是 Chromium 侧普通对象,不过 undici 校验,绕开此坑。
+    // 单次 120s 超时 + 重试一次;两次都失败抛错 → persistence=failed。
+    let lastError: unknown
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        return await downloadViaNetRequest(videoUrl, 120_000)
+      } catch (e) {
+        lastError = e
+        console.warn(`[seedance] downloadVideo attempt ${attempt + 1} failed:`, e)
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError))
   },
+}
+
+/**
+ * 用 net.request 流式下载二进制,带主动超时(到时 abort 请求)。
+ * 不读取/不重建响应头,彻底规避 net.fetch 的 undici ByteString 兼容问题。
+ */
+function downloadViaNetRequest(url: string, timeoutMs: number): Promise<Buffer> {
+  return new Promise<Buffer>((resolve, reject) => {
+    const request = net.request(url)
+    const chunks: Buffer[] = []
+    let settled = false
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      try {
+        request.abort()
+      } catch {
+        /* noop */
+      }
+      reject(new Error(`video download timed out after ${Math.round(timeoutMs / 1000)}s`))
+    }, timeoutMs)
+    timer.unref?.()
+    const done = (run: () => void): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      run()
+    }
+    request.on('response', (response) => {
+      const status = response.statusCode ?? 0
+      if (status < 200 || status >= 300) {
+        response.on('data', () => {})
+        response.on('end', () => done(() => reject(new Error(`video download failed: HTTP ${status}`))))
+        response.on('error', (e: Error) => done(() => reject(e)))
+        return
+      }
+      response.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)))
+      response.on('end', () => done(() => resolve(Buffer.concat(chunks))))
+      response.on('error', (e: Error) => done(() => reject(e)))
+    })
+    request.on('error', (e: Error) => done(() => reject(e)))
+    request.on('abort', () => done(() => reject(new Error('video download aborted'))))
+    request.end()
+  })
 }

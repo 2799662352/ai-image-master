@@ -46,7 +46,8 @@ export default function DonorPreview({ item, startIndex, onClose }: Props) {
   const handleSave = async () => {
     if (!url) return
     const shortId = String(item.id).slice(-6).toLowerCase()
-    const filename = `donor-${shortId}-${idx + 1}.png`
+    const ext = item.isVideo ? 'mp4' : 'png'
+    const filename = `donor-${shortId}-${idx + 1}.${ext}`
     try {
       const res = await fetch(url, { mode: 'cors' })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -110,10 +111,21 @@ export default function DonorPreview({ item, startIndex, onClose }: Props) {
           </button>
         </div>
 
-        {/* 图片区 */}
+        {/* 图片/视频区 */}
         <div className="relative bg-[color:var(--donor-bg-0)] flex items-center justify-center p-4" style={{ minHeight: '40vh' }}>
           {url ? (
-            <img src={displayImgSrc} alt={item.prompt || 'preview'} className="max-w-full max-h-[65vh] object-contain" />
+            item.isVideo ? (
+              <video
+                key={url}
+                src={url}
+                controls
+                autoPlay
+                playsInline
+                className="max-w-full max-h-[65vh] object-contain"
+              />
+            ) : (
+              <img src={displayImgSrc} alt={item.prompt || 'preview'} className="max-w-full max-h-[65vh] object-contain" />
+            )
           ) : (
             <div className="py-20 text-center text-[color:var(--donor-red)] d-mono">NO_DATA</div>
           )}
@@ -174,7 +186,7 @@ export default function DonorPreview({ item, startIndex, onClose }: Props) {
                 onClick={handleSave}
                 className="d-hover-invert px-3 py-1 d-mono text-[11px] tracking-widest uppercase"
               >
-                [ SAVE.IMG ]
+                {item.isVideo ? '[ SAVE.MP4 ]' : '[ SAVE.IMG ]'}
               </button>
             )}
             {url && (

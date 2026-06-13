@@ -141,6 +141,51 @@ export interface ActivityItem extends BaseItem {
   steps?: PlanStep[]
 }
 
+/** One selectable option in an interactive `ask_user` card. */
+export interface ChoiceOption {
+  /** Stable id returned to the agent when chosen. */
+  id: string
+  /** Human-facing button text. */
+  label: string
+  /** Optional one-line trade-off / explanation shown under the label. */
+  description?: string
+}
+
+/**
+ * Result of an interactive `ask_user` card, handed back to the agent.
+ * - `answered`: user made a concrete choice (selected something or typed text).
+ * - `skipped`: user pressed the skip/default button (`answered` is false).
+ * - `selected`: chosen options (0 for skip, 1 for single, 0..n for multi).
+ * - `freeText`: optional free-text the user typed.
+ */
+export interface ChoiceAnswer {
+  answered: boolean
+  skipped: boolean
+  freeText?: string
+  selected: ChoiceOption[]
+}
+
+/**
+ * Interactive question rendered as its own clickable card (AskUserCard), driven
+ * by the `ask_user` MCP tool. Lives as a standalone assistant message so it is
+ * clean, read-only after answering, and persists across reload like any other
+ * timeline item. The agent's tool call blocks until the user answers.
+ */
+export interface ChoiceRequestItem extends BaseItem {
+  type: 'choiceRequest'
+  /** Ties the rendered card back to the pending tool-call resolver. */
+  requestId: string
+  question: string
+  options: ChoiceOption[]
+  /** `single` settles on first click; `multi` needs a confirm press. */
+  mode: 'single' | 'multi'
+  allowFreeText: boolean
+  allowSkip: boolean
+  status: 'pending' | 'answered'
+  /** Filled once answered so the card renders a read-only summary. */
+  answer?: ChoiceAnswer
+}
+
 export type TimelineItem =
   | TextItem
   | ReasoningItem
@@ -149,6 +194,7 @@ export type TimelineItem =
   | AttachmentItem
   | ArtifactItem
   | ActivityItem
+  | ChoiceRequestItem
 
 export interface Message {
   id: string

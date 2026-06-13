@@ -76,8 +76,12 @@ function dirOf(filePath: string): string | undefined {
  * the history page / reload behaviour.
  */
 async function persistHistory(update: SeedanceTaskUpdate, task: TrackedTask): Promise<void> {
-  if (task.historyRecorded || !update.localPath) return
+  // 历史记录优先存永久 COS URL(remoteUrl):重启 / 链接过期都不丢；
+  // 仅当 COS 转存失败时退回本地 file:// 路径。
+  if (task.historyRecorded || (!update.remoteUrl && !update.localPath)) return
   task.historyRecorded = true
+  const durableUrl = update.remoteUrl ?? (update.localPath ? toFileUrl(update.localPath) : undefined)
+  if (!durableUrl) return
   try {
     const history = ServiceRegistry.get<HistoryDataService>(SERVICE_KEYS.HISTORY_DATA)
     if (!history) return
@@ -85,7 +89,7 @@ async function persistHistory(update: SeedanceTaskUpdate, task: TrackedTask): Pr
     const saved = (await history.addToHistory(
       'codex-video',
       update.prompt,
-      [toFileUrl(update.localPath)],
+      [durableUrl],
       update.ratio,
       `seedance-${update.model}`,
     )) as { id?: number | string } | null
@@ -96,7 +100,8 @@ async function persistHistory(update: SeedanceTaskUpdate, task: TrackedTask): Pr
         createdAt: Date.now(),
         prompt: update.prompt,
         historyId,
-        paths: [update.localPath],
+        // 本地路径仅作为 COS URL 未解析时的兜底(anchor.paths)。
+        ...(update.localPath ? { paths: [update.localPath] } : {}),
         kind: 'video',
       })
     }
@@ -127,9 +132,10 @@ export function handleSeedanceTaskUpdate(update: SeedanceTaskUpdate): void {
       return
 
     case 'succeeded': {
-      // Prefer the durable local mp4; fall back to the upstream proxy URL so
-      // the user can already play the video while persistence runs.
-      const uri = update.localPath ? toFileUrl(update.localPath) : update.videoUrl
+      // 优先永久 COS URL(remoteUrl,持久且 https) > 本地 mp4 > 上游代理地址
+      // (临时,有效期未知)。persistence 完成后 remoteUrl 到达会触发一次
+      // 重解析,把气泡从临时地址换成永久地址。
+      const uri = update.remoteUrl ?? (update.localPath ? toFileUrl(update.localPath) : update.videoUrl)
       if (uri && uri !== task.resolvedUri) {
         task.resolvedUri = uri
         chat.resolveImageGeneration(task.itemId, [videoArtifact(update, uri)], task.threadId)

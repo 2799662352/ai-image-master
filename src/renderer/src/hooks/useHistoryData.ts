@@ -40,6 +40,8 @@ export interface DonorItemView extends RawHistoryItem {
   displayUrls: string[]
   /** 是否为占位/损坏/失败项 (用于渲染失败卡片) */
   isBroken: boolean
+  /** 视频记录 (codex-video / .mp4 等),卡片与灯箱用 <video> 而非 <img> 渲染。 */
+  isVideo: boolean
 }
 
 /**
@@ -60,6 +62,14 @@ function inferStatus(item: RawHistoryItem): DonorItemStatus {
   return 'ok-local'
 }
 
+/** URL 去掉 query/hash 后以视频扩展名结尾。 */
+const VIDEO_URL_RE = /\.(mp4|webm|mov|m4v|ogv)(?:[?#]|$)/i
+
+function isVideoItem(item: RawHistoryItem, displayUrls: string[]): boolean {
+  if (item.type === 'codex-video') return true
+  return displayUrls.some((u) => typeof u === 'string' && VIDEO_URL_RE.test(u))
+}
+
 function toView(item: RawHistoryItem): DonorItemView {
   const status = inferStatus(item)
   const urls = item.urls || []
@@ -71,7 +81,8 @@ function toView(item: RawHistoryItem): DonorItemView {
     return u
   }).filter(Boolean)
   const isBroken = status === 'failed' || displayUrls.length === 0
-  return { ...item, status, displayUrls, isBroken }
+  const isVideo = isVideoItem(item, displayUrls)
+  return { ...item, status, displayUrls, isBroken, isVideo }
 }
 
 export interface UseHistoryData {

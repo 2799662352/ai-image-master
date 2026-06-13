@@ -30,8 +30,8 @@ export type SeedanceContentItem =
       /** 引用素材库（人像库）条目时同时携带（文档 4.2.3 推荐写法）。 */
       assetId?: string
     }
-  | { type: 'video_url'; video_url: { url: string }; assetId?: string }
-  | { type: 'audio_url'; audio_url: { url: string }; assetId?: string }
+  | { type: 'video_url'; role?: 'reference_video'; video_url: { url: string }; assetId?: string }
+  | { type: 'audio_url'; role?: 'reference_audio'; audio_url: { url: string }; assetId?: string }
 
 /** 发给上游创建接口的请求体。 */
 export interface SeedanceCreateTaskBody {
@@ -53,7 +53,14 @@ export interface CreateVideoTaskInput {
   generateAudio?: boolean
   firstFrame?: string
   lastFrame?: string
+  /** 全能参考模式：最多 9 张参考图（人物/风格一致性）。 */
   referenceImages?: string[]
+  /** 全能参考模式：最多 3 段参考视频（运动/风格），总时长 ≤15s。 */
+  referenceVideos?: string[]
+  /** 全能参考模式：最多 3 段参考音频（对口型/音色），总时长 ≤15s。 */
+  referenceAudios?: string[]
+  /** @deprecated 单数别名，buildContent 会并入 referenceVideos。 */
   referenceVideo?: string
+  /** @deprecated 单数别名，buildContent 会并入 referenceAudios。 */
   referenceAudio?: string
 }

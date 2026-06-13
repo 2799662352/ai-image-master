@@ -79,14 +79,46 @@ function DonorCardImpl({ item, onDelete, onPreview, onEdit }: Props) {
       <div className="relative aspect-[4/3] overflow-hidden bg-[color:var(--donor-bg-1)]">
         {hasImage ? (
           <>
-            <img
-              src={primaryImgSrc}
-              alt={item.prompt || 'history'}
-              loading="lazy"
-              decoding="async"
-              onError={() => setBroken(0)}
-              className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.04]"
-            />
+            {item.isVideo ? (
+              <>
+                <video
+                  // 首帧缩略图:metadata 加载后命令式 seek 到 ~0.1s 强制解码绘制首帧。
+                  // 与聊天栏 MediaThumbnail 一致 —— 单靠 #t=0.1 媒体片段在部分源下只黑屏。
+                  src={primaryUrl}
+                  muted
+                  playsInline
+                  preload="metadata"
+                  controls={false}
+                  onLoadedMetadata={(e) => {
+                    const v = e.currentTarget
+                    try {
+                      v.currentTime = Math.min(0.1, (v.duration || 1) * 0.1)
+                    } catch {
+                      /* seek 失败退化为黑屏占位 */
+                    }
+                  }}
+                  onError={() => setBroken(0)}
+                  className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.04]"
+                />
+                {/* 播放角标 */}
+                <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[color:var(--donor-bg-0)]/70 backdrop-blur-sm">
+                    <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" className="ml-[1px] text-[color:var(--donor-cyan)]" aria-hidden="true">
+                      <path d="M4 2.5v11l9-5.5z" />
+                    </svg>
+                  </span>
+                </span>
+              </>
+            ) : (
+              <img
+                src={primaryImgSrc}
+                alt={item.prompt || 'history'}
+                loading="lazy"
+                decoding="async"
+                onError={() => setBroken(0)}
+                className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.04]"
+              />
+            )}
             {/* 多图指示器 */}
             {urls.length > 1 && (
               <div className="absolute top-2 right-2 d-mono text-[10px] px-2 py-0.5 bg-[color:var(--donor-bg-0)]/80 text-[color:var(--donor-cyan)] border border-[color:var(--donor-cyan)]">

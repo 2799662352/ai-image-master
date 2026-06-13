@@ -4,9 +4,21 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   CATIMATION_IMAGE_SKILL,
+  CATIMATION_BRAINSTORM_SKILL,
+  FIRST_PARTY_SKILLS,
   installFirstPartySkills,
   type FirstPartySkill,
 } from '../firstPartySkills'
+
+function frontmatterDescription(content: string): string {
+  const match = content.match(/\ndescription:\s*>-\n([\s\S]*?)\n---/)
+  if (!match) return ''
+  return match[1]
+    .split('\n')
+    .map((l) => l.trim())
+    .join(' ')
+    .trim()
+}
 
 const created: string[] = []
 
@@ -186,6 +198,41 @@ describe('installFirstPartySkills', () => {
         'utf8',
       )
       expect(written).toBe(CATIMATION_IMAGE_SKILL.content)
+    })
+  })
+
+  describe('CATIMATION_BRAINSTORM_SKILL', () => {
+    it('is shipped in FIRST_PARTY_SKILLS with valid frontmatter', () => {
+      expect(FIRST_PARTY_SKILLS).toContain(CATIMATION_BRAINSTORM_SKILL)
+      expect(CATIMATION_BRAINSTORM_SKILL.name).toBe('catimation-brainstorm')
+      expect(CATIMATION_BRAINSTORM_SKILL.content.startsWith('---\n')).toBe(true)
+      expect(CATIMATION_BRAINSTORM_SKILL.content).toMatch(/\nname:\s*catimation-brainstorm/)
+      expect(CATIMATION_BRAINSTORM_SKILL.content).toMatch(/\ndescription:\s*\S/)
+    })
+
+    it('keeps the always-injected description concise (progressive disclosure)', () => {
+      const desc = frontmatterDescription(CATIMATION_BRAINSTORM_SKILL.content)
+      expect(desc.length).toBeGreaterThan(0)
+      expect(desc.length).toBeLessThanOrEqual(500)
+    })
+
+    it('drives the interactive ask_user tool, not a text survey', () => {
+      const c = CATIMATION_BRAINSTORM_SKILL.content
+      expect(c).toContain('ask_user')
+      expect(c).toContain('single')
+      expect(c).toContain('multi')
+      expect(c).toContain('allowSkip')
+    })
+
+    it('installs cleanly alongside the other first-party skills', async () => {
+      const officialRoot = await makeTempRoot()
+      const report = await installFirstPartySkills({ officialRoot })
+      expect(report.installed).toContain('catimation-brainstorm')
+      const written = await readFile(
+        path.join(officialRoot, 'catimation-brainstorm', 'SKILL.md'),
+        'utf8',
+      )
+      expect(written).toBe(CATIMATION_BRAINSTORM_SKILL.content)
     })
   })
 })

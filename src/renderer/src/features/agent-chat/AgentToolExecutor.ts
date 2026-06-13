@@ -5,7 +5,7 @@ import type { ImageViewer } from '../image-viewer'
 import { isTabName, useTabStore } from '../../stores/useTabStore'
 import { useAgentChatStore } from './store'
 import { recordCodexArtifact } from './codexArtifactPersistence'
-import type { ArtifactSaveInfo, AttachmentRef } from '../../../../types/agent-timeline'
+import type { ArtifactSaveInfo, AttachmentRef, ChoiceAnswer, ChoiceOption } from '../../../../types/agent-timeline'
 import type { AgentToolRequest, AgentToolResponse } from '../../../../types/agent'
 
 type GenerateImageToolParams = GenerateImageParams
@@ -44,6 +44,18 @@ type OpenImageViewerToolParams = {
 
 type NavigatePageToolParams = {
   tab?: unknown
+}
+
+type AskUserToolParams = {
+  question?: unknown
+  options?: unknown
+  mode?: unknown
+  allowFreeText?: unknown
+  allowSkip?: unknown
+}
+
+function createChoiceId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `opt-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
 type QueryHistoryToolParams = {
@@ -102,9 +114,42 @@ export class AgentToolExecutor {
         return this.openImageViewer(params as OpenImageViewerToolParams)
       case 'navigate_page':
         return this.navigatePage(params as NavigatePageToolParams)
+      case 'ask_user':
+        return this.askUser(params as AskUserToolParams, threadId)
       default:
         throw new Error(`Unknown renderer tool: ${toolName}`)
     }
+  }
+
+  /**
+   * Interactive question: append a clickable card to the requesting chat and
+   * block until the user answers/skips. The resolved {@link ChoiceAnswer} flows
+   * straight back to the agent as the tool result (option ids + labels + any
+   * free text), so the agent can act on the decision without re-asking.
+   */
+  private async askUser(params: AskUserToolParams, requestThreadId?: string): Promise<ChoiceAnswer> {
+    const question = typeof params.question === 'string' ? params.question.trim() : ''
+    if (!question) throw new Error('ask_user requires a question')
+
+    const options: ChoiceOption[] = Array.isArray(params.options)
+      ? params.options
+          .filter((o): o is { id: unknown; label: unknown; description?: unknown } => !!o && typeof o === 'object')
+          .map((o) => ({
+            id: typeof o.id === 'string' && o.id.length > 0 ? o.id : createChoiceId(),
+            label: typeof o.label === 'string' ? o.label : String(o.label ?? ''),
+            ...(typeof o.description === 'string' ? { description: o.description } : {}),
+          }))
+          .filter((o) => o.label.length > 0)
+      : []
+
+    const mode: 'single' | 'multi' = params.mode === 'multi' ? 'multi' : 'single'
+    // An option-less question is implicitly free-text (e.g. "片名叫什么?").
+    const allowFreeText = options.length === 0 ? true : params.allowFreeText !== false
+    const allowSkip = params.allowSkip !== false
+
+    const chat = useAgentChatStore.getState()
+    const reqThreadId = requestThreadId ?? chat.threadId
+    return chat.ask({ question, options, mode, allowFreeText, allowSkip }, reqThreadId)
   }
 
   private async generateImage(params: GenerateImageToolParams, requestThreadId?: string): Promise<unknown> {

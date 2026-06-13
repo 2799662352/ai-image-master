@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ZodTypeAny } from 'zod'
 import {
   registerVideoTools,
-  buildCreatedBanner,
+  buildBudgetExhaustedBanner,
   buildRunningBanner,
   buildDoneBanner,
   buildFailedBanner,
@@ -79,15 +79,41 @@ describe('registerVideoTools / schemas', () => {
     expect((res.content[0] as { text: string }).text).toContain('1080p requires model "2.0"')
   })
 
-  it('generate_video handler returns created banner with taskId + polling instruction', async () => {
-    const { tools, server, router } = capture(makeTask())
+  it('generate_video blocks until succeeded and returns DONE + saved path + resource_link', async () => {
+    const { tools, server, router } = capture()
+    // 第 1 次 call = 提交（返回 queued 任务）；后续 = check_video_task 轮询。
+    router.call
+      .mockResolvedValueOnce(makeTask())
+      .mockResolvedValueOnce({ found: true, task: makeTask({ status: 'running' }) })
+      .mockResolvedValueOnce({
+        found: true,
+        task: makeTask({ status: 'succeeded', persistence: 'done', localPath: 'D:/save/v.mp4', videoUrl: 'https://cdn/v.mp4' }),
+      })
     registerVideoTools(server, router)
     const res = await tools[0].handler({ prompt: '猫跳舞' })
     const text = (res.content[0] as { text: string }).text
-    expect(text).toContain('TASK CREATED')
-    expect(text).toContain('cgt-123')
-    expect(text).toContain('check_video_task')
-    expect(text).toContain('do NOT resubmit')
+    expect(text).toContain('DONE')
+    expect(text).toContain('D:/save/v.mp4')
+    expect((res.content[1] as { type: string; mimeType: string }).type).toBe('resource_link')
+    // 提交 1 次 + 轮询 2 次,全部走 router
+    expect(router.call).toHaveBeenCalledTimes(3)
+    expect(router.call.mock.calls[0][0]).toBe('generate_video')
+    expect(router.call.mock.calls[1][0]).toBe('check_video_task')
+  })
+
+  it('generate_video blocks until failed and returns the failure banner', async () => {
+    const { tools, server, router } = capture()
+    router.call
+      .mockResolvedValueOnce(makeTask())
+      .mockResolvedValueOnce({
+        found: true,
+        task: makeTask({ status: 'failed', error: 'OutputVideoSensitive: 审核未通过' }),
+      })
+    registerVideoTools(server, router)
+    const res = await tools[0].handler({ prompt: '猫跳舞' })
+    const text = (res.content[0] as { text: string }).text
+    expect(text).toContain('FAILED')
+    expect(text).toContain('OutputVideoSensitive')
   })
 
   it('generate_video handler maps SEEDANCE_KEY_MISSING to settings guidance', async () => {
@@ -123,10 +149,12 @@ describe('registerVideoTools / schemas', () => {
 })
 
 describe('video banners', () => {
-  it('created banner front-loads taskId and machine JSON', () => {
-    const text = buildCreatedBanner(makeTask())
-    expect(text).toContain('cgt-123')
-    expect(JSON.parse(text.split('\n').at(-1)!)).toMatchObject({ taskId: 'cgt-123', status: 'queued' })
+  it('budget-exhausted banner hands off to check_video_task with machine JSON', () => {
+    const text = buildBudgetExhaustedBanner(makeTask({ status: 'running' }))
+    expect(text).toContain('STILL RUNNING')
+    expect(text).toContain('check_video_task')
+    expect(text).toContain('Do NOT resubmit')
+    expect(JSON.parse(text.split('\n').at(-1)!)).toMatchObject({ taskId: 'cgt-123', status: 'running' })
   })
 
   it('running banner shows elapsed seconds and re-poll instruction', () => {

@@ -23,7 +23,7 @@ import type {
   ItemDeltaPatch,
 } from '../../../../types/agent'
 import type { AgentReference } from '../../../../types/agent-reference'
-import type { ArtifactItem, ArtifactSaveInfo, AttachmentRef, Message, PlanStep, TimelineItem } from '../../../../types/agent-timeline'
+import type { ArtifactItem, ArtifactSaveInfo, AttachmentRef, ChoiceAnswer, ChoiceOption, ChoiceRequestItem, Message, PlanStep, TimelineItem } from '../../../../types/agent-timeline'
 import {
   dropSupersededStreamItemsInLastMessage,
   trimRetriedStreamItemsInLastMessage,
@@ -359,6 +359,28 @@ interface AgentChatState {
    */
   annotateImageGeneration: (itemId: string, save: ArtifactSaveInfo, threadId?: string) => void
 
+  /**
+   * Interactive `ask_user` flow. `ask` appends a standalone assistant bubble
+   * holding a single `choiceRequest` item (rendered by AskUserCard) and returns
+   * a Promise that resolves once the user answers/skips — the renderer-routed
+   * `ask_user` tool awaits this so the agent blocks on real user input.
+   * `settleChoiceRequest` is called by the card on click: it marks the item
+   * answered in place and resolves the pending Promise.
+   *
+   * `threadId` pins the card to the requesting chat (parallel-chat safety).
+   */
+  ask: (
+    request: {
+      question: string
+      options: ChoiceOption[]
+      mode: 'single' | 'multi'
+      allowFreeText: boolean
+      allowSkip: boolean
+    },
+    threadId?: string,
+  ) => Promise<ChoiceAnswer>
+  settleChoiceRequest: (requestId: string, answer: ChoiceAnswer) => void
+
   // ----- Per-thread chat scroll state -----
   /**
    * Persisted per-thread scroll position + lock-to-bottom flag.
@@ -414,6 +436,88 @@ function toEpochMs(value: unknown): number | undefined {
     return Number.isFinite(ms) ? ms : undefined
   }
   return undefined
+}
+
+/**
+ * Pending `ask_user` resolvers, keyed by `requestId`. Resolver functions are
+ * NOT serializable, so they live module-scoped rather than in zustand state;
+ * `ask()` stores one, `settleChoiceRequest()` pops + calls it. The matching
+ * `choiceRequest` timeline item (which IS serializable) carries the requestId
+ * so the rendered card can settle the right pending call.
+ */
+const choiceResolvers = new Map<string, (answer: ChoiceAnswer) => void>()
+
+/**
+ * Answer used when a pending `ask_user` card is torn down (its turn is
+ * cancelled or its thread deleted) before the user clicked: report it as a
+ * clean "skipped" so the agent's blocked call returns instead of hanging.
+ */
+const ABANDONED_CHOICE_ANSWER: ChoiceAnswer = { answered: false, skipped: true, selected: [] }
+
+/**
+ * Immutably mark the `choiceRequest` item with `requestId` answered wherever it
+ * lives. Only matches a still-`pending` card, so a stray double-settle (or a
+ * settle on an already-expired card) is a no-op. Returns the same array
+ * reference when nothing matched.
+ */
+function mapChoiceItem(
+  messages: Message[],
+  requestId: string,
+  update: (item: ChoiceRequestItem) => ChoiceRequestItem,
+): Message[] {
+  let changed = false
+  const next = messages.map((message) => {
+    let itemChanged = false
+    const items = message.items.map((item) => {
+      if (item.type === 'choiceRequest' && item.requestId === requestId && item.status === 'pending') {
+        itemChanged = true
+        return update(item)
+      }
+      return item
+    })
+    if (!itemChanged) return message
+    changed = true
+    return { ...message, items }
+  })
+  return changed ? next : messages
+}
+
+/**
+ * Freeze every still-`pending` choiceRequest in `messages` (mark it answered as
+ * abandoned) and collect their requestIds so the caller can resolve the matching
+ * blocked `ask()` promises AFTER the `set()` commits. Pure: returns the same
+ * array reference when nothing was pending. Used by `cancel`/`deleteThread` so a
+ * dangling ask_user card never blocks the agent or stays clickable-but-dead.
+ */
+function expirePendingChoices(messages: Message[]): { messages: Message[]; ids: string[] } {
+  const ids: string[] = []
+  let changed = false
+  const next = messages.map((message) => {
+    let itemChanged = false
+    const items = message.items.map((item) => {
+      if (item.type === 'choiceRequest' && item.status === 'pending') {
+        itemChanged = true
+        ids.push(item.requestId)
+        return { ...item, status: 'answered' as const, answer: ABANDONED_CHOICE_ANSWER, endedAt: Date.now() }
+      }
+      return item
+    })
+    if (!itemChanged) return message
+    changed = true
+    return { ...message, items }
+  })
+  return { messages: changed ? next : messages, ids }
+}
+
+/** Resolve + drop the blocked `ask()` promises for the given requestIds. */
+function resolveAbandonedChoices(ids: string[]): void {
+  for (const id of ids) {
+    const resolve = choiceResolvers.get(id)
+    if (resolve) {
+      choiceResolvers.delete(id)
+      resolve(ABANDONED_CHOICE_ANSWER)
+    }
+  }
 }
 
 /**
@@ -916,6 +1020,64 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         })),
       ),
     ),
+  ask: (request, threadId) => {
+    const requestId = createId()
+    set((s) => {
+      const now = Date.now()
+      const item: TimelineItem = {
+        type: 'choiceRequest',
+        id: createId(),
+        startedAt: now,
+        requestId,
+        question: request.question,
+        options: request.options,
+        mode: request.mode,
+        allowFreeText: request.allowFreeText,
+        allowSkip: request.allowSkip,
+        status: 'pending',
+      }
+      const message: Message = { id: createId(), role: 'assistant', createdAt: now, items: [item] }
+      return patchThreadMessages(s, threadId, (msgs) => [...msgs, message])
+    })
+    return new Promise<ChoiceAnswer>((resolve) => {
+      choiceResolvers.set(requestId, resolve)
+    })
+  },
+  settleChoiceRequest: (requestId, answer) => {
+    set((s) => {
+      // Search the active view AND every background thread slice — the card may
+      // belong to a chat the user has since switched away from.
+      const inActive = mapChoiceItem(s.messages, requestId, (item) => ({
+        ...item,
+        status: 'answered',
+        answer,
+        endedAt: Date.now(),
+      }))
+      if (inActive !== s.messages) return { messages: inActive }
+      let touched = false
+      const slices: Record<string, ThreadSlice> = {}
+      for (const [tid, slice] of Object.entries(s.threadSlices)) {
+        const next = mapChoiceItem(slice.messages, requestId, (item) => ({
+          ...item,
+          status: 'answered',
+          answer,
+          endedAt: Date.now(),
+        }))
+        if (next !== slice.messages) {
+          touched = true
+          slices[tid] = { ...slice, messages: next }
+        } else {
+          slices[tid] = slice
+        }
+      }
+      return touched ? { threadSlices: slices } : {}
+    })
+    const resolve = choiceResolvers.get(requestId)
+    if (resolve) {
+      choiceResolvers.delete(requestId)
+      resolve(answer)
+    }
+  },
   nextPreview: () =>
     set((s) => {
       if (s.preview.images.length === 0) return {}
@@ -1326,6 +1488,16 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   cancel: async () => {
     const threadId = get().threadId
     if (!threadId) return
+    // The turn is going away — settle any pending ask_user cards in this view as
+    // abandoned so the agent's blocked call returns and the card stops being
+    // clickable (otherwise it hangs until the ~33-min renderer-tool timeout).
+    const expiredIds: string[] = []
+    set((s) => {
+      const r = expirePendingChoices(s.messages)
+      expiredIds.push(...r.ids)
+      return r.messages === s.messages ? {} : { messages: r.messages }
+    })
+    resolveAbandonedChoices(expiredIds)
     const clearRunning = (extra: Partial<AgentChatState>): void =>
       set((s) => {
         const runningByThread = { ...s.runningByThread }
@@ -1673,6 +1845,23 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     const agent = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.agent
     if (!agent?.deleteThread) return
     await agent.deleteThread(threadId)
+    // Unblock any pending ask_user cards owned by the deleted thread (active view
+    // OR a background slice) so their blocked agent calls return instead of
+    // leaking a resolver forever.
+    const expiredIds: string[] = []
+    set((s) => {
+      const isActive = s.threadId === threadId
+      const msgs = isActive ? s.messages : s.threadSlices[threadId]?.messages
+      if (!msgs) return {}
+      const r = expirePendingChoices(msgs)
+      expiredIds.push(...r.ids)
+      if (r.messages === msgs) return {}
+      if (isActive) return { messages: r.messages }
+      const slice = s.threadSlices[threadId]
+      if (!slice) return {}
+      return { threadSlices: { ...s.threadSlices, [threadId]: { ...slice, messages: r.messages } } }
+    })
+    resolveAbandonedChoices(expiredIds)
     if (get().threadId === threadId) {
       // Drop into the empty-thread state and let the user pick another row.
       set({

@@ -1,9 +1,15 @@
-// Seedance 视频生成 MCP 工具（两工具轮询模式）。
+// Seedance 视频生成 MCP 工具（catimation generate_image 同款「阻塞到完成」模式）。
 //
-// 设计：docs/superpowers/specs/2026-06-12-seedance-video-mcp-design.md
-// - `generate_video` 提交即回（秒级），返回 taskId + 显式轮询指令；
-// - `check_video_task` 服务端长轮询 ≤25s，状态一变立即返回；
-// 两者回包都远小于任何超时阈值 —— 长调用断流问题（坑 1）从结构上消除。
+// 设计演进（2026-06-12 v2）：
+// - v1 是「提交即回 + check_video_task 轮询」双工具模式 —— 实测 codex 经常在
+//   渲染完成前就停止轮询（turn 结束/自行判断「已提交」），视频出来了用户却
+//   没有拿到结果。
+// - v2 对齐 catimation `generate_image` 策略：stdio 桥上长工具调用是安全的
+//   （坑 1 只影响 streamable HTTP；codexLaunch 配了 tool_timeout_sec=2000），
+//   所以 `generate_video` 内部轮询任务直到终态才返回 —— 「生成完才回归」，
+//   模型零轮询负担、不可能提前弃坑。
+// - `check_video_task` 保留为兜底：阻塞预算（10 分钟）烧完、或 app 重启后
+//   追旧任务时才需要它。
 //
 // banner 约定与 imageTools 一致：短文本、完成信号前置、显式「勿重试 /
 // 勿翻文件 / 勿自检」，结尾附 machine-readable JSON 行。
@@ -17,6 +23,20 @@ import type { SeedanceTaskState } from '../../services/seedance/types'
 
 /** check_video_task 服务端长轮询窗口（须 < codex 工具超时，留足余量）。 */
 export const CHECK_LONG_POLL_MS = 25_000
+/**
+ * generate_video 阻塞等待预算。渲染典型 1–3 分钟；10 分钟还没出结果就把
+ * taskId 交还给模型用 check_video_task 兜底（codex 工具超时是 2000s，余量充足）。
+ */
+export const GENERATE_BLOCKING_BUDGET_MS = 10 * 60_000
+/**
+ * succeeded 后等落盘（persistence）的额外预算 —— 成功语义由渲染决定，落盘只是
+ * bookkeeping，「后台保存过慢绝不阻塞任务」（坑 3）。视频已在聊天里播放、状态已
+ * 广播，这里只为「快落盘」抢回本地路径塞进回包；超过预算就带 persistencePending
+ * 立即返回（banner 已说明仍在后台保存）。
+ */
+export const PERSISTENCE_GRACE_MS = 8_000
+/** 落盘等待期的短轮询窗口：让慢落盘最多 ~PERSISTENCE_GRACE_MS 即返回，而非卡满 25s 长轮询。 */
+export const PERSISTENCE_POLL_MS = 2_000
 
 /** 与 imageTools.extractCodexThreadId 相同的 _meta 提取逻辑。 */
 function extractCodexThreadId(ctx: unknown): string | undefined {
@@ -53,12 +73,12 @@ function machineLine(task: SeedanceTaskState): string {
   })
 }
 
-export function buildCreatedBanner(task: SeedanceTaskState): string {
+/** 阻塞预算烧完仍未终态：把 taskId 交还模型走 check_video_task 兜底。 */
+export function buildBudgetExhaustedBanner(task: SeedanceTaskState): string {
   return [
-    `🎬 generate_video TASK CREATED — taskId: ${task.taskId}`,
-    `Model seedance-${task.model} · ${task.resolution} · ${task.duration}s · ${task.ratio} · status: ${task.status}.`,
-    'Typical render time: 1–3 minutes. The user ALREADY sees a live progress bubble in the chat — do NOT resubmit.',
-    `NEXT STEP: call check_video_task with this taskId. Each call long-polls server-side up to ~25s and returns as soon as the status changes — keep calling it until DONE or FAILED.`,
+    `⏳ generate_video STILL RUNNING after ${elapsedSeconds(task)}s — taskId: ${task.taskId}.`,
+    'The render is taking unusually long but the task is alive; the user sees a live progress bubble in the chat.',
+    'NEXT STEP: call check_video_task with this taskId (it long-polls ~25s server-side) and keep calling until DONE or FAILED. Do NOT resubmit generate_video.',
     machineLine(task),
   ].join('\n')
 }
@@ -138,20 +158,89 @@ function textResult(text: string): { content: Array<{ type: 'text'; text: string
   return { content: [{ type: 'text', text }] }
 }
 
+type ToolContent = Array<
+  | { type: 'text'; text: string }
+  | { type: 'resource_link'; uri: string; name: string; mimeType: string; description: string }
+>
+
+/** succeeded 任务的统一回包：DONE banner + 本地文件 resource_link。 */
+function doneContent(task: SeedanceTaskState): { content: ToolContent } {
+  const content: ToolContent = [{ type: 'text', text: buildDoneBanner(task) }]
+  if (task.localPath) {
+    content.push({
+      type: 'resource_link',
+      uri: pathToFileURL(task.localPath).href,
+      name: path.basename(task.localPath),
+      mimeType: 'video/mp4',
+      description: 'Generated video saved locally (also playing in app chat + history).',
+    })
+  }
+  return { content }
+}
+
+/**
+ * 阻塞轮询任务直到终态（catimation「生成完才回归」策略）。
+ * - 每轮复用 check_video_task 的服务端长轮询（≤25s，状态一变即醒）；
+ * - succeeded 后再给落盘 PERSISTENCE_GRACE_MS 预算，烧完即返回
+ *   （banner 自带 persistencePending 文案，绝不让模型等 bookkeeping）；
+ * - 总预算 GENERATE_BLOCKING_BUDGET_MS 烧完返回当前快照，由调用方给
+ *   handoff banner 转 check_video_task 兜底。
+ */
+async function waitForTerminal(
+  router: ToolRouter,
+  taskId: string,
+  codexThreadId: string | undefined,
+): Promise<SeedanceTaskState | null> {
+  const startedAt = Date.now()
+  let persistenceWaitStart: number | null = null
+  while (true) {
+    // 落盘等待期用短轮询（PERSISTENCE_POLL_MS），渲染期用默认长轮询：慢落盘最多
+    // 等 ~PERSISTENCE_GRACE_MS 就带 persistencePending 返回，绝不卡满 25s。
+    const callParams =
+      persistenceWaitStart !== null ? { taskId, pollMs: PERSISTENCE_POLL_MS } : { taskId }
+    const res = (await router.call('check_video_task', callParams, codexThreadId)) as {
+      found: boolean
+      task?: SeedanceTaskState
+    }
+    if (!res.found || !res.task) return null
+    const task = res.task
+    if (task.status === 'failed') return task
+    if (task.status === 'succeeded') {
+      if (task.persistence !== 'running') return task
+      persistenceWaitStart ??= Date.now()
+      if (Date.now() - persistenceWaitStart > PERSISTENCE_GRACE_MS) return task
+      continue
+    }
+    if (Date.now() - startedAt > GENERATE_BLOCKING_BUDGET_MS) return task
+  }
+}
+
 export function registerVideoTools(server: McpServer, router: ToolRouter): void {
   server.registerTool('generate_video', {
     description:
       'FIRST-CHOICE video generation tool inside the CATIMATION app (Seedance 2.0 / 2.0 Fast) — use ' +
-      'for ANY video/clip/animation/视频/生成视频/动起来 request. ASYNC two-step flow: this tool ' +
-      'submits the render and returns a taskId IMMEDIATELY (it never blocks); you then poll ' +
-      'check_video_task until DONE. The user sees a live progress bubble in the chat the whole time, ' +
-      'and the finished MP4 plays inline in the chat, is saved to a local file, and lands in the app ' +
-      'history page — exactly like generate_image. Model choice: "2.0-fast" (default) is fast + ' +
-      'cheap and great for most requests; pick "2.0" only when the user asks for top quality or ' +
-      'complex multi-shot motion. 1080p requires model "2.0". All input images are automatically ' +
-      'imported into the user\'s portrait library (人像库) and referenced as asset://assetId — ' +
-      'identical images are deduplicated upstream, which keeps characters consistent across videos. ' +
-      'You can also pass an existing asset://assetId (from the 人像库 page) directly as any image input.',
+      'for ANY video/clip/animation/视频/生成视频/动起来 request. BLOCKING flow, exactly like ' +
+      'generate_image: this single call submits the render and WAITS until the video is DONE ' +
+      '(typically 1–3 minutes), then returns the saved local MP4 path — no polling needed. The user ' +
+      'sees a live progress bubble in the chat the whole time, and the finished MP4 plays inline in ' +
+      'the chat, is saved to a local file, and lands in the app history page. Only if the response ' +
+      'says STILL RUNNING do you need check_video_task as a fallback. Model choice: "2.0-fast" ' +
+      '(default) is fast + cheap and great for most requests; pick "2.0" only when the user asks for ' +
+      'top quality or complex multi-shot motion. 1080p requires model "2.0". All input images are ' +
+      'automatically imported into the user\'s portrait library (人像库) and referenced as ' +
+      'asset://assetId — identical images are deduplicated upstream, which keeps characters ' +
+      'consistent across videos. You can also pass an existing asset://assetId (from the 人像库 ' +
+      'page) directly as any image input. DEFAULT MODE = 全能参考 (omni-reference): for almost every ' +
+      'request, supply the user material via referenceImages (up to 9), referenceVideos (up to 3, total ' +
+      '≤15s) and referenceAudios (up to 3, total ≤15s) — this keeps subject/motion/voice consistent and ' +
+      'is the recommended path. Only use firstFrame/lastFrame (strict first/last-frame mode) when the ' +
+      'user explicitly asks for it or has a clear first/last-frame need. This ONE tool also covers ' +
+      'VIDEO EDITING (替换/增删/修改元素 in an existing clip) and VIDEO EXTENSION (向前/向后延长 or ' +
+      'stitching up to 3 clips): both are just omni-reference under the hood — pass the source clip(s) ' +
+      'via referenceVideos and write an edit/extend-style prompt (see the catimation-video skill). In ' +
+      'the prompt, refer to materials by ordinal ("视频1 / 图片1 / 音频1"), never by assetId. Note: real ' +
+      'human faces cannot be used as references directly — use a 人像库 asset:// (virtual avatar) or a ' +
+      'previously Seedance-generated clip.',
     inputSchema: z.object({
       prompt: z.string().min(1).describe(
         'Video description. Supports shot language (运镜/景别), dialogue lines, and -- style ' +
@@ -166,14 +255,23 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
       ratio: z.enum(['16:9', '9:16', '4:3', '3:4', '1:1', '21:9']).optional().describe('Aspect ratio. Default 16:9.'),
       duration: z.number().int().min(3).max(12).optional().describe('Video length in seconds (3–12). Default 5. Longer = more expensive.'),
       generateAudio: z.boolean().optional().describe('Generate soundtrack/voice audio. Default true (no extra cost).'),
-      firstFrame: z.string().optional().describe('First-frame image: local file path, data: URL, https URL, or asset://assetId (portrait library). Local files must be ≤4.5MB.'),
-      lastFrame: z.string().optional().describe('Last-frame image (requires firstFrame too). Same formats/limits as firstFrame.'),
-      referenceImages: z.array(z.string()).max(4).optional().describe(
-        'Up to 4 reference images for subject/style consistency (人物/角色一致性). If the user attached ' +
-        'image paths in the prompt, pass them here. asset://assetId from the portrait library also works.',
+      firstFrame: z.string().optional().describe('STRICT first/last-frame mode only — use ONLY when the user explicitly wants a fixed first frame. First-frame image: local file path, data: URL, https URL, or asset://assetId (portrait library). Local images ≤30MB (large files are relayed automatically).'),
+      lastFrame: z.string().optional().describe('Last-frame image (requires firstFrame too, strict mode only). Same formats/limits as firstFrame.'),
+      referenceImages: z.array(z.string()).max(9).optional().describe(
+        '全能参考 (DEFAULT mode): up to 9 reference images for subject/style consistency (人物/角色一致性). ' +
+        'Prefer this over firstFrame for almost every request. If the user attached image paths in the ' +
+        'prompt, pass them here. asset://assetId from the portrait library also works.',
       ),
-      referenceVideo: z.string().optional().describe('Reference video (motion/style), local path or URL. Local files must be ≤4.5MB.'),
-      referenceAudio: z.string().optional().describe('Reference audio (lip-sync/voice), local path or URL. Local files must be ≤4.5MB.'),
+      referenceVideos: z.array(z.string()).max(3).optional().describe(
+        '全能参考: up to 3 reference videos (motion/style), local path / URL / asset://assetId. Each 4–15s, ' +
+        'local files ≤50MB, COMBINED total duration ≤15s.',
+      ),
+      referenceAudios: z.array(z.string()).max(3).optional().describe(
+        '全能参考: up to 3 reference audios (lip-sync/voice), local path / URL / asset://assetId. Each 4–15s, ' +
+        'local files ≤50MB, COMBINED total duration ≤15s.',
+      ),
+      referenceVideo: z.string().optional().describe('Deprecated single alias for referenceVideos — prefer referenceVideos.'),
+      referenceAudio: z.string().optional().describe('Deprecated single alias for referenceAudios — prefer referenceAudios.'),
     }),
   }, async (params, ctx?: unknown) => {
     const p = params as { model?: '2.0' | '2.0-fast'; resolution?: string }
@@ -183,7 +281,14 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
     const codexThreadId = extractCodexThreadId(ctx)
     try {
       const task = (await router.call('generate_video', params, codexThreadId)) as SeedanceTaskState
-      return textResult(buildCreatedBanner(task))
+      // catimation 策略：阻塞到生成完成才返回（与 generate_image 一致），
+      // 模型零轮询负担、不可能提前弃坑。
+      const final = await waitForTerminal(router, task.taskId, codexThreadId)
+      if (!final) return textResult(buildUnknownTaskBanner(task.taskId))
+      if (final.status === 'failed') return textResult(buildFailedBanner(final))
+      if (final.status === 'succeeded') return doneContent(final)
+      // 预算烧完仍在渲染：交还 taskId 走 check_video_task 兜底。
+      return textResult(buildBudgetExhaustedBanner(final))
     } catch (error) {
       return textResult(buildErrorBanner('generate_video', error))
     }
@@ -191,10 +296,12 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
 
   server.registerTool('check_video_task', {
     description:
-      'Poll a generate_video task. Long-polls server-side for up to ~25s and returns AS SOON AS the ' +
-      'status changes, so call it immediately after generate_video and again right after each ' +
-      'non-final response — no manual sleeping needed. Returns queued/running progress, the final ' +
-      'saved MP4 path on success, or the upstream error on failure.',
+      'FALLBACK poller for a generate_video task — normally NOT needed because generate_video ' +
+      'blocks until the video is done. Use it ONLY when generate_video returned a STILL RUNNING ' +
+      'handoff (with a taskId), or to re-check a task after an unexpected interruption. Long-polls ' +
+      'server-side for up to ~25s and returns AS SOON AS the status changes; keep calling until ' +
+      'DONE or FAILED. Returns queued/running progress, the final saved MP4 path on success, or ' +
+      'the upstream error on failure.',
     inputSchema: z.object({
       taskId: z.string().min(1).describe('Task id returned by generate_video.'),
     }),
@@ -210,22 +317,7 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
       }
       const task = result.task
       if (task.status === 'failed') return textResult(buildFailedBanner(task))
-      if (task.status === 'succeeded') {
-        const content: Array<
-          | { type: 'text'; text: string }
-          | { type: 'resource_link'; uri: string; name: string; mimeType: string; description: string }
-        > = [{ type: 'text', text: buildDoneBanner(task) }]
-        if (task.localPath) {
-          content.push({
-            type: 'resource_link',
-            uri: pathToFileURL(task.localPath).href,
-            name: path.basename(task.localPath),
-            mimeType: 'video/mp4',
-            description: 'Generated video saved locally (also playing in app chat + history).',
-          })
-        }
-        return { content }
-      }
+      if (task.status === 'succeeded') return doneContent(task)
       return textResult(buildRunningBanner(task))
     } catch (error) {
       return textResult(buildErrorBanner('check_video_task', error))

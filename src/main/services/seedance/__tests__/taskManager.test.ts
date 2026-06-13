@@ -21,7 +21,7 @@ describe('SeedanceTaskManager', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     broadcasts = []
-    persistVideo = vi.fn(async () => 'D:/save/video.mp4')
+    persistVideo = vi.fn(async () => ({ localPath: 'D:/save/video.mp4', remoteUrl: 'https://cos/v.mp4' }))
   })
 
   afterEach(() => {
@@ -77,6 +77,7 @@ describe('SeedanceTaskManager', () => {
     expect(t.videoUrl).toBe('https://cdn/v.mp4')
     expect(t.persistence).toBe('done')
     expect(t.localPath).toBe('D:/save/video.mp4')
+    expect(t.remoteUrl).toBe('https://cos/v.mp4')
     // 广播链：queued → running → succeeded(persist running) → persist done
     expect(broadcasts.map((b) => `${b.status}/${b.persistence}`)).toEqual([
       'queued/idle',

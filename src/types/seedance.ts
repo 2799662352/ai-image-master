@@ -27,6 +27,11 @@ export interface SeedanceTaskState {
   videoUrl?: string
   /** 落盘后的本地 mp4 绝对路径（权威结果位置）。 */
   localPath?: string
+  /**
+   * 转存到历史桶（COS）后的永久 https URL。这是聊天气泡 / 历史记录的
+   * 持久来源 —— 不会因上游代理地址过期、也不会因本地文件被清理而失效。
+   */
+  remoteUrl?: string
   persistence: SeedancePersistence
   /** failed 时的上游错误（code: message）。 */
   error?: string
@@ -76,6 +81,35 @@ export interface SeedanceAssetItem {
   createdAt?: string
   updatedAt?: string
 }
+
+/**
+ * 人像库「本地叠加层」—— 上游素材接口只有 列表/导入,没有改名/删除/分组。
+ * 这层在主进程持久化(单一真相源),按 assetId 索引,渲染端 UI 与 MCP agent
+ * 共享同一份。删除=隐藏(软删除,可恢复)。
+ */
+export interface AssetOverlayEntry {
+  /** 自定义显示名(覆盖上游 name)。 */
+  name?: string
+  /** 所属用户自定义分组名;未分组为 undefined。 */
+  group?: string
+  /** 软删除/隐藏标记。 */
+  hidden?: boolean
+}
+
+export interface PortraitOverlayState {
+  /** assetId → 叠加项。 */
+  entries: Record<string, AssetOverlayEntry>
+  /** 已知的用户自定义分组名(有序,含空分组)。 */
+  groups: string[]
+}
+
+/** 叠加层变更指令(IPC / MCP 共用)。 */
+export type PortraitOverlayMutation =
+  | { op: 'rename'; assetId: string; name: string }
+  | { op: 'moveToGroup'; assetIds: string[]; group?: string }
+  | { op: 'setHidden'; assetIds: string[]; hidden: boolean }
+  | { op: 'addGroup'; name: string }
+  | { op: 'removeGroup'; name: string }
 
 export interface SeedanceAssetListResult {
   items: SeedanceAssetItem[]

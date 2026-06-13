@@ -95,6 +95,27 @@ describe('importSeedanceAsset', () => {
       importSeedanceAsset({ kind: 'image', url: 'https://x/y.png' }, CREDS),
     ).rejects.toThrow(/429.*quota exceeded/)
   })
+
+  it('兼容 data 包裹一层的响应', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ code: 0, data: { asset: ASSET } }, 201))
+    const result = await importSeedanceAsset({ kind: 'image', url: 'https://x/y.png' }, CREDS)
+    expect(result.asset.assetId).toBe('v0c001')
+  })
+
+  it('兼容 asset 字段平铺在 data 里的响应', async () => {
+    const { assetUrl: _omit, ...withoutUrl } = ASSET
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: withoutUrl }, 201))
+    const result = await importSeedanceAsset({ kind: 'image', url: 'https://x/y.png' }, CREDS)
+    // assetUrl 缺失时由 assetId 拼出
+    expect(result.asset.assetUrl).toBe('asset://v0c001')
+  })
+
+  it('解析失败时错误信息带响应片段便于排查', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ success: true, weird: 'shape' }, 201))
+    await expect(
+      importSeedanceAsset({ kind: 'image', url: 'https://x/y.png' }, CREDS),
+    ).rejects.toThrow(/missing assetId.*weird/)
+  })
 })
 
 describe('listSeedanceAssets', () => {
@@ -116,5 +137,14 @@ describe('listSeedanceAssets', () => {
     expect(result.items).toEqual([])
     expect(result.page).toBe(1)
     expect(result.totalPages).toBe(1)
+  })
+
+  it('兼容 data 包裹一层的列表响应', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ code: 0, data: { items: [ASSET], total: 1, page: 1, pageSize: 24, totalPages: 1 } }),
+    )
+    const result = await listSeedanceAssets({}, CREDS)
+    expect(result.items).toHaveLength(1)
+    expect(result.total).toBe(1)
   })
 })

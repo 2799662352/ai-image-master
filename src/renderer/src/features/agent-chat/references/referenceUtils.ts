@@ -281,6 +281,7 @@ export function referencesFromTimelineItem(item: TimelineItem): AgentReference[]
         .filter(nonNull)
     case 'text':
     case 'reasoning':
+    case 'choiceRequest':
       return []
   }
 }

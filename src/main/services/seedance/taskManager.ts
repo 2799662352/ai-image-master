@@ -31,10 +31,11 @@ export interface SeedanceTaskManagerDeps {
   client: SeedanceClient
   getApiKey: () => string
   /**
-   * 下载 + 落盘（线程 uploads 目录 / 历史记录由调用侧编排），返回本地
-   * mp4 绝对路径。抛错只影响 persistence 状态，不影响任务 succeeded。
+   * 下载 + 落盘（线程 uploads 目录）并转存历史桶（COS）。返回本地 mp4 绝对
+   * 路径与永久 https URL（COS 上传失败时 remoteUrl 缺省，降级用本地路径）。
+   * 抛错只影响 persistence 状态，不影响任务 succeeded。
    */
-  persistVideo: (task: SeedanceTaskState) => Promise<string>
+  persistVideo: (task: SeedanceTaskState) => Promise<{ localPath: string; remoteUrl?: string }>
   /** 每次状态变化推给所有窗口（渲染进程气泡）。 */
   broadcast: (update: SeedanceTaskUpdate) => void
   /** 注入时钟便于单测。 */
@@ -206,8 +207,8 @@ export class SeedanceTaskManager {
         // 成功即成功 —— 先广播 succeeded，再做落盘 bookkeeping。
         this.update(taskId, { status: 'succeeded', videoUrl, persistence: 'running' })
         try {
-          const localPath = await this.deps.persistVideo({ ...this.tasks.get(taskId)! })
-          this.update(taskId, { persistence: 'done', localPath })
+          const { localPath, remoteUrl } = await this.deps.persistVideo({ ...this.tasks.get(taskId)! })
+          this.update(taskId, { persistence: 'done', localPath, remoteUrl })
         } catch (e) {
           console.warn('[seedance] persistVideo failed (video itself is fine):', e)
           this.update(taskId, { persistence: 'failed' })

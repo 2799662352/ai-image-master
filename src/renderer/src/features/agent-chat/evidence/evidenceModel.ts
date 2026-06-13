@@ -44,6 +44,10 @@ export function isEvidenceItem(item: TimelineItem): boolean {
     case 'text':
     case 'reasoning':
       return false
+    case 'choiceRequest':
+      // Interactive ask_user cards render as their own prominent, clickable
+      // card (like a status'd artifact) — never collapsed into evidence.
+      return false
     default:
       return assertNever(item)
   }
@@ -226,6 +230,17 @@ export function getEvidenceSummary(item: TimelineItem): EvidenceSummary {
         label: item.type,
         meta: '',
         status: 'success',
+        hasDetails: false,
+        hasReference: false,
+      }
+    case 'choiceRequest':
+      // Never reached (choiceRequest is not an evidence item); present only to
+      // satisfy the exhaustive switch.
+      return {
+        kind: 'ask',
+        label: item.question,
+        meta: item.status,
+        status: item.status === 'answered' ? 'success' : 'running',
         hasDetails: false,
         hasReference: false,
       }

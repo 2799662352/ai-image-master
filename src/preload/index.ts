@@ -54,6 +54,8 @@ import type {
   MarketplaceUninstallResult,
 } from '../types/marketplace'
 import type {
+  PortraitOverlayMutation,
+  PortraitOverlayState,
   SeedanceAssetImportInput,
   SeedanceAssetImportResult,
   SeedanceAssetListQuery,
@@ -500,6 +502,10 @@ export interface ElectronAPI {
     /** 素材库（人像库）：列表 / 导入。需要 API Secret。 */
     listAssets: (query: SeedanceAssetListQuery) => Promise<SeedanceAssetListResult>
     importAsset: (input: SeedanceAssetImportInput) => Promise<SeedanceAssetImportResult>
+    /** 人像库本地叠加层（改名/分组/隐藏）：主进程单一真相源，与 MCP agent 共享。 */
+    getOverlay: () => Promise<PortraitOverlayState>
+    mutateOverlay: (mutation: PortraitOverlayMutation) => Promise<PortraitOverlayState>
+    onOverlayChanged: (cb: (state: PortraitOverlayState) => void) => () => void
   }
   fs: {
     readText: (p: string) => Promise<{ content: string; mtime: number }>
@@ -1116,6 +1122,14 @@ const electronAPI: ElectronAPI = {
       safeInvoke<SeedanceAssetListResult>('seedance:assets-list', query),
     importAsset: (input: SeedanceAssetImportInput) =>
       safeInvoke<SeedanceAssetImportResult>('seedance:assets-import', input),
+    getOverlay: () => safeInvoke<PortraitOverlayState>('seedance:overlay-get'),
+    mutateOverlay: (mutation: PortraitOverlayMutation) =>
+      safeInvoke<PortraitOverlayState>('seedance:overlay-mutate', mutation),
+    onOverlayChanged: (cb: (state: PortraitOverlayState) => void) => {
+      const handler = (_evt: IpcRendererEvent, data: PortraitOverlayState): void => cb(data)
+      ipcRenderer.on('seedance:overlay-changed', handler)
+      return () => ipcRenderer.removeListener('seedance:overlay-changed', handler)
+    },
   },
 
   fs: {

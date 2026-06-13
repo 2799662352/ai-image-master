@@ -75,21 +75,43 @@ async function assetRequest<T>(
   return json as T
 }
 
+/**
+ * 从导入/列表响应里提取 asset 记录。
+ * 上游文档口径是 `{ duplicated, asset: {...} }`，但实际部署可能包一层
+ * `data`，或把字段平铺在顶层，这里做宽容解析；assetUrl 缺失时由 assetId 拼出。
+ */
+function extractAsset(raw: unknown): SeedanceAssetItem | null {
+  const root = raw as Record<string, unknown> | null
+  if (!root) return null
+  const candidates = [
+    root.asset,
+    (root.data as Record<string, unknown> | undefined)?.asset,
+    root.data,
+    root,
+  ]
+  for (const candidate of candidates) {
+    const a = candidate as Record<string, unknown> | undefined
+    if (!a || typeof a !== 'object') continue
+    const assetId = (a.assetId ?? a.asset_id) as string | undefined
+    if (!assetId) continue
+    const assetUrl = ((a.assetUrl ?? a.asset_url) as string | undefined) || `asset://${assetId}`
+    return { ...(a as unknown as SeedanceAssetItem), assetId, assetUrl }
+  }
+  return null
+}
+
 /** 导入素材（图片默认走人像分类由调用方决定）。内容重复时上游直接返回已有记录。 */
 export async function importSeedanceAsset(
   input: SeedanceAssetImportInput,
   creds: SeedanceAssetCredentials,
 ): Promise<SeedanceAssetImportResult> {
-  const result = await assetRequest<{ duplicated?: boolean; asset?: SeedanceAssetItem }>(
-    'POST',
-    '',
-    input,
-    creds,
-  )
-  if (!result.asset?.assetId || !result.asset.assetUrl) {
-    throw new Error('Seedance assets: import response missing assetId/assetUrl')
+  const result = await assetRequest<{ duplicated?: boolean }>('POST', '', input, creds)
+  const asset = extractAsset(result)
+  if (!asset) {
+    const snippet = JSON.stringify(result).slice(0, 400)
+    throw new Error(`Seedance assets: import response missing assetId/assetUrl, got: ${snippet}`)
   }
-  return { duplicated: !!result.duplicated, asset: result.asset }
+  return { duplicated: !!result.duplicated, asset }
 }
 
 /** 拉取素材列表（默认人像分类由调用方传 kind）。 */
@@ -103,7 +125,14 @@ export async function listSeedanceAssets(
   if (query.q) params.set('q', query.q)
   if (query.kind) params.set('kind', query.kind)
   const qs = params.size > 0 ? `?${params.toString()}` : ''
-  const result = await assetRequest<Partial<SeedanceAssetListResult>>('GET', qs, undefined, creds)
+  const raw = await assetRequest<Partial<SeedanceAssetListResult> & { data?: Partial<SeedanceAssetListResult> }>(
+    'GET',
+    qs,
+    undefined,
+    creds,
+  )
+  // 兼容 `data` 包裹一层的部署
+  const result = !Array.isArray(raw.items) && Array.isArray(raw.data?.items) ? raw.data! : raw
   return {
     items: Array.isArray(result.items) ? result.items : [],
     total: result.total ?? 0,
