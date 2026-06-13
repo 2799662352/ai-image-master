@@ -224,9 +224,9 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
       '(typically 1–3 minutes), then returns the saved local MP4 path — no polling needed. The user ' +
       'sees a live progress bubble in the chat the whole time, and the finished MP4 plays inline in ' +
       'the chat, is saved to a local file, and lands in the app history page. Only if the response ' +
-      'says STILL RUNNING do you need check_video_task as a fallback. Model choice: "2.0-fast" ' +
-      '(default) is fast + cheap and great for most requests; pick "2.0" only when the user asks for ' +
-      'top quality or complex multi-shot motion. 1080p requires model "2.0". All input images are ' +
+      'says STILL RUNNING do you need check_video_task as a fallback. Model choice: "2.0" ' +
+      '(default — 满血/full-quality model) for top quality and complex multi-shot motion; only switch to ' +
+      '"2.0-fast" when the user explicitly asks for fast/cheap/draft. Default resolution is 720p — do NOT jump to 1080p unless the user asks for HD; 1080p requires model "2.0". When the spec is unstated, confirm resolution/duration/ratio with the user (an ask_user card) before rendering. All input images are ' +
       'automatically imported into the user\'s portrait library (人像库) and referenced as ' +
       'asset://assetId — identical images are deduplicated upstream, which keeps characters ' +
       'consistent across videos. You can also pass an existing asset://assetId (from the 人像库 ' +
@@ -247,13 +247,13 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
         'parameters appended at the end.',
       ),
       model: z.enum(['2.0', '2.0-fast']).optional().describe(
-        'Seedance model. Default "2.0-fast" (fast/cheap). Use "2.0" for top quality / complex motion / 1080p.',
+        'Seedance model. Default "2.0" (满血/full-quality — top quality, complex motion, 1080p). Only use "2.0-fast" when the user explicitly wants fast/cheap/draft.',
       ),
       resolution: z.enum(['480p', '720p', '1080p']).optional().describe(
         'Output resolution. Default 720p. 480p = cheapest draft; 1080p only works with model "2.0".',
       ),
       ratio: z.enum(['16:9', '9:16', '4:3', '3:4', '1:1', '21:9']).optional().describe('Aspect ratio. Default 16:9.'),
-      duration: z.number().int().min(3).max(12).optional().describe('Video length in seconds (3–12). Default 5. Longer = more expensive.'),
+      duration: z.number().int().min(4).max(15).optional().describe('Video length in seconds (4–15). Default 5. Longer = more expensive.'),
       generateAudio: z.boolean().optional().describe('Generate soundtrack/voice audio. Default true (no extra cost).'),
       firstFrame: z.string().optional().describe('STRICT first/last-frame mode only — use ONLY when the user explicitly wants a fixed first frame. First-frame image: local file path, data: URL, https URL, or asset://assetId (portrait library). Local images ≤30MB (large files are relayed automatically).'),
       lastFrame: z.string().optional().describe('Last-frame image (requires firstFrame too, strict mode only). Same formats/limits as firstFrame.'),
@@ -275,7 +275,7 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
     }),
   }, async (params, ctx?: unknown) => {
     const p = params as { model?: '2.0' | '2.0-fast'; resolution?: string }
-    if (p.resolution === '1080p' && (p.model ?? '2.0-fast') !== '2.0') {
+    if (p.resolution === '1080p' && (p.model ?? '2.0') !== '2.0') {
       return textResult(buildErrorBanner('generate_video', new Error('1080p requires model "2.0" — either set model:"2.0" or drop to 720p.')))
     }
     const codexThreadId = extractCodexThreadId(ctx)

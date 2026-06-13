@@ -65,7 +65,7 @@ export class SeedanceTaskManager {
     const apiKey = this.deps.getApiKey()
     if (!apiKey) throw new Error('SEEDANCE_KEY_MISSING')
 
-    const model: SeedanceModelAlias = input.model ?? '2.0-fast'
+    const model: SeedanceModelAlias = input.model ?? '2.0'
     const resolution = input.resolution ?? '720p'
     const ratio = input.ratio ?? '16:9'
     const duration = input.duration ?? 5

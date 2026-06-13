@@ -66,15 +66,16 @@ describe('registerVideoTools / schemas', () => {
     registerVideoTools(server, router)
     const schema = tools[0].config.inputSchema
     expect(schema.safeParse({ prompt: '' }).success).toBe(false)
-    expect(schema.safeParse({ prompt: 'x', duration: 2 }).success).toBe(false)
-    expect(schema.safeParse({ prompt: 'x', duration: 13 }).success).toBe(false)
+    expect(schema.safeParse({ prompt: 'x', duration: 3 }).success).toBe(false)
+    expect(schema.safeParse({ prompt: 'x', duration: 16 }).success).toBe(false)
+    expect(schema.safeParse({ prompt: 'x', duration: 15 }).success).toBe(true)
     expect(schema.safeParse({ prompt: 'x', resolution: '4K' }).success).toBe(false)
   })
 
   it('generate_video handler rejects 1080p on 2.0-fast without calling upstream', async () => {
     const { tools, server, router } = capture()
     registerVideoTools(server, router)
-    const res = await tools[0].handler({ prompt: 'x', resolution: '1080p' })
+    const res = await tools[0].handler({ prompt: 'x', model: '2.0-fast', resolution: '1080p' })
     expect(router.call).not.toHaveBeenCalled()
     expect((res.content[0] as { text: string }).text).toContain('1080p requires model "2.0"')
   })

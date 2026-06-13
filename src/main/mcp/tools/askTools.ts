@@ -22,10 +22,10 @@ export function registerAskTools(server: McpServer, router: ToolRouter): void {
         'Ask the user a question with clickable options, rendered as an ' +
         'interactive card (buttons / checkboxes / free text). BLOCKS until they ' +
         'pick, type, or skip, then returns the chosen ids + labels + free text. ' +
-        'ALWAYS call this INSTEAD of writing options as a numbered text list ' +
-        'whenever you offer the user choices or ask them to pick a direction — ' +
-        'e.g. 给我几个选项 / 让我选 / 二选一 / 你来定 / which should I / give me options, ' +
-        'or when co-directing (景别 / 风格 / 运镜). One focused question at a time.',
+        'PREFER this (most of the time) over writing options/方案 as a numbered text ' +
+        'list (给我几个选项 / 让我选 / 二选一 / give me options, or co-directing 景别/风格/运镜). ' +
+        'Put ALL the 方案 you came up with into ONE card — NO 4-option cap, 6–8 is ' +
+        'fine. One question per card.',
       inputSchema: z.object({
         question: z.string().min(1),
         options: z
