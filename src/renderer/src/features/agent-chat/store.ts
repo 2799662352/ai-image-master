@@ -692,6 +692,11 @@ function createItemFromStarted(itemType: TimelineItem['type'], itemId: string, p
         status: safeStatus,
       }
     }
+    case 'choiceRequest':
+      // choiceRequest items are created locally via ask(), never from an
+      // agent "started" event. Reaching here means the backend emitted an
+      // unexpected item type.
+      throw new Error('choiceRequest items are created via ask(), not agent-started events')
   }
 }
 
