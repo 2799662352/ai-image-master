@@ -6,6 +6,7 @@
  */
 
 import { ServiceRegistry, SERVICE_KEYS } from '../services/ServiceBridge'
+import { useAgentChatStore } from '../features/agent-chat/store'
 import type { AppBootstrap } from './AppBootstrap'
 
 // 事件处理器类型
@@ -159,6 +160,11 @@ export class EventManager {
           tabManager.switchTab(tab, true)
         }
       }
+    })
+
+    // 切换 AGENT (Codex) 浮层 —— 与 Ctrl+Shift+A 完全一致
+    this.onClick('toggle-agent', () => {
+      useAgentChatStore.getState().toggle()
     })
 
     // 打开设置

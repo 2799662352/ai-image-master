@@ -811,6 +811,12 @@
 
             <!-- 桌面端导航菜单 -->
             <div class="hidden md:flex items-center space-x-2 lg:space-x-4">
+                <button id="agentEntryBtn" data-action="toggle-agent" class="flex items-center space-x-1 lg:space-x-2 bg-[#22d3ee] text-black hover:scale-105 active:scale-95 px-3 lg:px-4 py-2 rounded-none transition-all relative overflow-hidden font-bold uppercase tracking-tighter z-50 cursor-pointer"
+                        title="进入 AGENT (Codex) · Ctrl+Shift+A">
+                    <div class="absolute inset-0 bg-white opacity-0 hover:opacity-10 transition-opacity"></div>
+                    <i class="fas fa-robot relative z-10"></i>
+                    <span class="relative z-10 hidden lg:inline">AGENT</span>
+                </button>
                 <button id="activityBtn" data-action="open-activity" class="flex items-center space-x-1 lg:space-x-2 bg-[#FCE300] text-black hover:scale-105 active:scale-95 px-3 lg:px-4 py-2 rounded-none transition-all relative overflow-hidden font-bold uppercase tracking-tighter"
                         title="活动优惠" data-i18n-attr="title:nav.activityTitle">
                     <div class="absolute inset-0 bg-white opacity-0 hover:opacity-10 transition-opacity"></div>

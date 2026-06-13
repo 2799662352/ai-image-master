@@ -540,11 +540,11 @@ const CATIMATION_BRAINSTORM_SKILL_CONTENT = `---
 name: catimation-brainstorm
 description: >-
   Co-direct open-ended or high-value creative work in CATIMATION via clickable
-  choice cards. Trigger when the user is vague or ambitious about a video/image
-  ("做个宣传片" / "来点有电影感的" / "帮我想想" / "随便发挥") or explicitly asks to
-  brainstorm / 头脑风暴 / 给我几个方案 / 你来引导. Use the ask_user tool to ask ONE
-  focused question at a time with concrete options, then proceed. Skip it for
-  clear, simple asks. See the body for the flow.
+  choice cards (the ask_user tool). Trigger when the user is vague/ambitious
+  about a video/image ("做个宣传片" / "来点有电影感的" / "帮我想想" / "随便发挥"), asks to
+  brainstorm / 头脑风暴 / 给我几个方案 / 你来引导, OR asks you to offer choices
+  ("给我几个选项" / "让我选" / "二选一" / "可选" / "options" / "which should I"). Ask ONE
+  focused question at a time with concrete options. Skip for clear simple asks.
 ---
 
 # Brainstorm + co-direct with clickable choices
@@ -557,8 +557,9 @@ multi-select, free text, or skip). The user taps a choice and you continue.
 ## When to use this
 
 - **Use it** when the ask is vague / ambitious / high-value: 「做个产品宣传片」
-  「来个有电影感的片段」「帮我想个开场」「随便发挥」, or the user explicitly asks to
-  brainstorm or wants you to guide them.
+  「来个有电影感的片段」「帮我想个开场」「随便发挥」, the user asks to brainstorm or be
+  guided, OR asks you to offer choices: 「给我几个选项」「让我选」「二选一」「options」.
+  Any time you'd list options as text, render them as a card instead.
 - **Skip it** for clear, simple asks (「把这张图做成 5 秒视频」「生成一只猫」). A
   pop-up there just annoys the user — pick sensible defaults and go.
 

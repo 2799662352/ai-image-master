@@ -20,11 +20,12 @@ export function registerAskTools(server: McpServer, router: ToolRouter): void {
     {
       description:
         'Ask the user a question with clickable options, rendered as an ' +
-        'interactive card in the chat. BLOCKS until the user picks an option, ' +
-        'types free text, or skips. Use for brainstorming / co-directing and ' +
-        'whenever a decision is genuinely the user\'s to make. Returns the ' +
-        'chosen option ids + labels and any free text. Prefer ONE focused ' +
-        'question at a time over a long survey.',
+        'interactive card (buttons / checkboxes / free text). BLOCKS until they ' +
+        'pick, type, or skip, then returns the chosen ids + labels + free text. ' +
+        'ALWAYS call this INSTEAD of writing options as a numbered text list ' +
+        'whenever you offer the user choices or ask them to pick a direction — ' +
+        'e.g. 给我几个选项 / 让我选 / 二选一 / 你来定 / which should I / give me options, ' +
+        'or when co-directing (景别 / 风格 / 运镜). One focused question at a time.',
       inputSchema: z.object({
         question: z.string().min(1),
         options: z
