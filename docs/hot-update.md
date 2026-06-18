@@ -190,10 +190,12 @@ zip 文件名内容寻址(`-<sha8>` 后缀):文件名带 zip 的 sha256 前 8 �
 | 资产齐备 GATE(硬门) | 调 `generate_video` 前逐镜清点人物卡/场景环境图/关键道具/氛围色调参考/运镜参考视频/音乐配乐音色参考音频;**缺则先补,绝不先生成再补**;每镜推荐 4–5 素材 |
 | 缺口三选一处理 | ① 先在项目 `assets/`/人像库找现成的;② 非身份关键(环境/场景/氛围/通用道具/空镜)`generate_image` 自主补并入库;③ 身份/意图关键(特定真人/指定 IP/品牌 Logo/特定真实产品)才 `ask_user` 请用户提供 |
 | 用上全部可用资产 | 角色卡/场景/道具/氛围图→`referenceImages`、运镜/动作/风格参考视频→`referenceVideos`、音乐/配乐/音色音频→`referenceAudios`;**图片、视频、音乐/音频都是全能参考素材,有素材却纯文字 = 错** |
+| 素材归专属夹 | 每次生成要用的全部素材先**复制**进一个**新建专属夹**(一镜一夹,如 `<workspace>/assets/jobs/S01_<slug>/`),从该夹取路径喂入——便于复用与逐项检查 |
+| 写 prompt 前强制用 skill | 生成前必须先用 `director-orchestrator`(STEP 0 反问)+ `sd2-pe` + `storyboard-video-prompt-optimization` **渐进式披露**地把提示词写成结构化文本(物理可复现参数优先),并绑定已备素材;**禁止脱离 skill + 素材凭记忆硬写**。按 obra/Superpowers `writing-skills` 风格补了红旗(rationalization)表 |
 
 **B. film-studio:G3 升级人物卡 + 新增 G4.5 资产门 + G5 分镜多参**
 
-管线图加入 `G4.5 资产门`(`G0…G4 →[资产门 G4.5]→ G5…`)。G3 产出每角色人物卡(大头照+全身照)入库;**G4.5** 进 G5 前逐镜校验资产齐备(同上缺口三选一),不得带缺口进 G5;**G5** 每镜把全部可用资产(含视频/音乐)按 sd2-pe 绑定喂入 Seedance,禁纯文字生成。准则加 3.5、常见错误加 3 条、路由表更新(已建关键帧→先过资产门)。
+管线图加入 `G4.5 资产门`(`G0…G4 →[资产门 G4.5]→ G5…`)。G3 产出每角色人物卡(大头照+全身照)入库;**G4.5** 进 G5 前逐镜校验资产齐备(同上缺口三选一)、把每镜素材归专属夹,不得带缺口进 G5;**G5** 每镜把全部可用资产(含视频/音乐)按 sd2-pe 绑定喂入 Seedance,禁纯文字生成。「★ 总调度」note 升级为 prompt 必须经 `director-orchestrator` + `sd2-pe` + `storyboard-video-prompt-optimization` 渐进式编写、禁硬写。准则加 3.5、常见错误加 3 条、路由表更新(已建关键帧→先过资产门)。
 
 四处同步:`firstPartySkills.ts` 内嵌串(catimation-video)、`resources/plugins`(catimation-video + catimation-film 商城源)、`D:\tecx\catimation-plugins`(独立副本,逐字一致)。`sd2-pe` 仓内版本与用户 Downloads 完全一致(SHA 校验),未改,仅被引用。
 
