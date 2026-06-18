@@ -177,9 +177,9 @@ zip 文件名内容寻址(`-<sha8>` 后缀):文件名带 zip 的 sha256 前 8 �
 
 ## Changelog
 
-### 插件商城热更新 (2026-06-18) — 生成后自主看图 / 九宫格自查 → 改进 + 整理素材进工作区
+### v4.3.41 (2026-06-18) — 生成后自主看图 / 九宫格自查 → 改进 + 整理素材进工作区
 
-> 这是一次**插件商城热更新 + 源码修复**,不是 app 发版。源码已合并 `main`(`30ea2c9`),但内置 skill(`firstPartySkills.ts`)随**下一个 installer** 才会到达"全新安装 / 不走商城更新"的用户;经商城安装插件的用户已可立即看到「有更新」。Seedance 202 修复(`10a009e`)同批合并。
+> 双通道齐发:**(a) app installer 整包热更新**(本版,把内置 skill `firstPartySkills.ts` 推给"全新安装 / 不走商城"的用户)+ **(b) 插件商城热更新**(`catimation-core` 1.0.3 / `catimation-video` 1.0.1 已上 COS,已装插件的用户即见「有更新」)。Seedance 202 修复(`10a009e`)同批合并。
 
 **A. catimation-image / catimation-video:从"禁止看图"翻转为"自主 QA 环"**
 
