@@ -40,30 +40,44 @@ async function arkRequest<T>(url: string, apiKey: string, init?: RequestInit): P
     },
   })
   const text = await res.text()
-  let json: ArkEnvelope<T> | null = null
+  let json: (ArkEnvelope<T> & Partial<T>) | null = null
   try {
-    json = JSON.parse(text) as ArkEnvelope<T>
+    json = JSON.parse(text) as ArkEnvelope<T> & Partial<T>
   } catch {
     /* 非 JSON 响应，走下面的统一报错 */
   }
-  if (!res.ok || !json || json.success === false || !json.data) {
+  // VVDance/Ark 的成功响应形状不一致：标准 Ark 路径是 `{ success, data: {...} }`，
+  // 但 VVDance 的创建/查询接口（尤其 HTTP 202 Accepted —— 任务已受理、在后台跑）
+  // 会直接返回**扁平 body**（任务字段在顶层、无 data 包裹），例如
+  // `{ id, task_id, status:"running", created_at }`。
+  // 2026-06-18 实测根因：旧逻辑用 `!json.data` 当失败条件，把「202 + 扁平 body」
+  // 误判成失败 → createTask 抛 "Seedance API 202" → submit() 在登记任务前就抛错
+  // → 本地任务表里没有这个 taskId → check_video_task 返回 unknown → agent 误判
+  // 「不可用」并重复提交（堆出多个进行中任务、烧钱）。
+  // 修正：HTTP 2xx + 可解析 JSON + 未显式 success:false 即视为成功；payload 优先取
+  // `data` 包裹，缺省回退顶层 json，兼容「包裹」与「扁平」两种形状。只有 4xx/5xx
+  // 或显式 success:false 才算失败。
+  if (!res.ok || !json || json.success === false) {
     const detail =
       json?.error?.message || json?.message || text.slice(0, 300) || res.statusText
     const code = json?.error?.code ? `[${json.error.code}] ` : ''
     throw new Error(`Seedance API ${res.status}: ${code}${detail}`)
   }
-  return json.data
+  return (json.data ?? (json as unknown as T))
 }
 
 export const seedanceClient: SeedanceClient = {
   async createTask(body, apiKey) {
-    const data = await arkRequest<{ id: string; status?: SeedanceTaskStatus }>(
+    // 扁平 202 body 把任务 id 放在顶层 `id`/`task_id`（二者通常同值）；包裹响应放在
+    // `data.id`。arkRequest 已统一回退到顶层 json，这里再兼容 task_id 别名。
+    const data = await arkRequest<{ id?: string; task_id?: string; status?: SeedanceTaskStatus }>(
       `${SEEDANCE_BASE_URL}${TASKS_PATH}`,
       apiKey,
       { method: 'POST', body: JSON.stringify(body) },
     )
-    if (!data.id) throw new Error('Seedance API: create response missing task id')
-    return { id: data.id }
+    const id = data.id ?? data.task_id
+    if (!id) throw new Error('Seedance API: create response missing task id')
+    return { id }
   },
 
   async queryTask(taskId, apiKey) {
