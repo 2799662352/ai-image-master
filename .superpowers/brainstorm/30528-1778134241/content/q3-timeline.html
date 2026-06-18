@@ -1,0 +1,189 @@
+<h2>消息流里的"抽屉折叠"长这样？</h2>
+<p class="subtitle">
+  Cursor 风格 — 所有非消息事件（思考、工具调用、文件改动）都是消息流里的内联小卡，默认折叠，点击展开。
+  下面是一段对话的实际样子，左边运行中、右边完成后的状态。看下是这个意思吗？
+</p>
+
+<style>
+  .stream {
+    background: #09090b;
+    border: 1px solid #27272a;
+    border-radius: 8px;
+    padding: 12px 10px;
+    font-size: 11px;
+    color: #d4d4d8;
+    height: 480px;
+    overflow: hidden;
+  }
+  .bubble {
+    background: #18181b;
+    padding: 7px 10px;
+    border-radius: 8px;
+    margin-bottom: 8px;
+    border-left: 2px solid #52525b;
+  }
+  .bubble.user { border-left-color: #67e8f9; }
+  .bubble.assist { border-left-color: #6ee7b7; background: #064e3b14; }
+  .pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    margin: 4px 0 4px 12px;
+    background: #18181b;
+    border: 1px solid #27272a;
+    border-radius: 999px;
+    font-size: 10px;
+    color: #a1a1aa;
+    width: fit-content;
+    cursor: pointer;
+  }
+  .pill .ico { color: #71717a; }
+  .pill .chev { margin-left: auto; opacity: 0.5; }
+  .pill.live  { border-color: #fbbf2455; color: #fde68a; background: #422006; }
+  .pill.live .ico { color: #fbbf24; }
+  .pill.live .spinner {
+    width: 6px; height: 6px; border-radius: 50%; background: #fbbf24;
+    animation: pulse 1.2s infinite;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+
+  .drawer {
+    margin: 0 0 6px 12px;
+    background: #18181b;
+    border: 1px solid #27272a;
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .drawer .head {
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 10px; border-bottom: 1px solid #27272a;
+    cursor: pointer;
+    color: #d4d4d8;
+  }
+  .drawer .head .chev { margin-left: auto; }
+  .drawer .body { padding: 6px 10px; font-size: 10px; color: #a1a1aa; }
+
+  .filerow {
+    display: flex; align-items: center; gap: 8px;
+    padding: 3px 0;
+    font-family: ui-monospace, monospace;
+    font-size: 10px;
+  }
+  .badge-add  { color: #6ee7b7; background: #064e3b88; padding: 0 4px; border-radius: 3px; font-size: 9px; }
+  .badge-mod  { color: #fde68a; background: #422006; padding: 0 4px; border-radius: 3px; font-size: 9px; }
+  .badge-del  { color: #fca5a5; background: #450a0a; padding: 0 4px; border-radius: 3px; font-size: 9px; }
+  .stat { color: #6ee7b7; font-size: 10px; }
+  .stat.del { color: #fca5a5; }
+  .label-tag { font-size: 8px; color: #71717a; text-transform: uppercase; letter-spacing: 0.1em; }
+
+  .legend { font-size: 10px; color: #71717a; padding: 4px 6px; }
+</style>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">运行中（live state）</div>
+    <div class="mockup-body">
+      <div class="stream">
+        <div class="bubble user">把 src/agent 下面所有用 console.log 的地方改成 logger.debug，并跑一下测试。</div>
+
+        <div class="pill live">
+          <span class="ico spinner"></span> Thought for 6s
+          <span class="chev">▾</span>
+        </div>
+
+        <div class="drawer" style="border-color:#fbbf2455">
+          <div class="head" style="color:#fde68a">
+            <span>⏵</span> shell · <code style="color:#a1a1aa">grep -rn "console.log" src/agent</code>
+            <span class="chev">▾</span>
+          </div>
+          <div class="body" style="font-family: monospace">
+            <div style="color:#71717a">running…</div>
+          </div>
+        </div>
+
+        <div class="pill live">
+          <span class="ico spinner"></span> applying patch · 3 files
+          <span class="chev">▾</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mockup">
+    <div class="mockup-header">完成后（collapsed final）</div>
+    <div class="mockup-body">
+      <div class="stream">
+        <div class="bubble user">把 src/agent 下面所有用 console.log 的地方改成 logger.debug，并跑一下测试。</div>
+
+        <div class="pill">
+          <span class="ico">🧠</span> Thought for 8s
+          <span class="chev">▸</span>
+        </div>
+
+        <div class="pill">
+          <span class="ico">⏵</span> shell · grep / npm test · 2 calls
+          <span class="chev">▸</span>
+        </div>
+
+        <div class="drawer">
+          <div class="head">
+            <span>✎</span> 3 files changed
+            <span class="stat">+12</span>
+            <span class="stat del">−12</span>
+            <span class="chev">▾</span>
+          </div>
+          <div class="body">
+            <div class="filerow">
+              <span class="badge-mod">M</span>
+              <span style="color:#e4e4e7">src/agent/AgentManager.ts</span>
+              <span style="margin-left:auto" class="stat">+5 −5</span>
+            </div>
+            <div class="filerow">
+              <span class="badge-mod">M</span>
+              <span style="color:#e4e4e7">src/agent/CodexLocalBackend.ts</span>
+              <span style="margin-left:auto" class="stat">+4 −4</span>
+            </div>
+            <div class="filerow">
+              <span class="badge-mod">M</span>
+              <span style="color:#e4e4e7">src/agent/CodexProtocolClient.ts</span>
+              <span style="margin-left:auto" class="stat">+3 −3</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="bubble assist">
+          全部替换好了，<code>grep "console.log"</code> 已经返回空。<code>npm test</code> 在 agent 切片
+          63/63 都过了。要看具体 diff 点上面那张卡。
+        </div>
+
+        <div class="legend">点击 pill / 卡片头展开详情；状态会记到 zustand 但不持久化（重启折叠回默认）</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top:18px">默认行为</h3>
+<div class="options">
+  <div class="option" data-choice="default-cursor" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Cursor 同款（推荐）</h3>
+      <p>运行中 = 自动展开；完成 = 自动折叠成 pill。文件改动卡总是默认折叠（因为占空间最多）。手动展开后保持展开直到下个 turn。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="default-expanded" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>都默认展开</h3>
+      <p>所有事件展开显示，让人能扫读全过程。可以手动一个个折叠。屏幕滚动多。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="default-collapsed" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>都默认折叠</h3>
+      <p>包括运行中也折成 pill，只看到旋转 spinner。最干净，但运行时不知道发生了什么。</p>
+    </div>
+  </div>
+</div>

@@ -242,7 +242,9 @@
     "quantity": "數量",
     "quantityOptions": {
       "1": "1張",
-      "2": "2張"
+      "2": "2張",
+      "3": "3張",
+      "4": "4張"
     },
     "finalResolution": "最終分辨率：",
     "imageSize": "圖片尺寸",

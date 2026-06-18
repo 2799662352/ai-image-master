@@ -109,7 +109,9 @@
     "quantity": "数量",
     "quantityOptions": {
       "1": "1张",
-      "2": "2张"
+      "2": "2张",
+      "3": "3张",
+      "4": "4张"
     },
     "finalResolution": "最终分辨率",
     "imageSize": "图片尺寸",

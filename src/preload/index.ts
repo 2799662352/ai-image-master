@@ -49,9 +49,14 @@ import type {
 import type {
   MarketplaceAdoptExistingResult,
   MarketplaceFetchCatalogResult,
+  MarketplaceGetPathsResult,
   MarketplaceInstallResult,
   MarketplaceListInstalledResult,
   MarketplaceUninstallResult,
+  PluginFetchCatalogResult,
+  PluginInstallResult,
+  PluginListInstalledResult,
+  PluginUninstallResult,
 } from '../types/marketplace'
 import type {
   PortraitOverlayMutation,
@@ -149,6 +154,15 @@ const IPC_CHANNELS = {
     UNINSTALL: 'marketplace:uninstall',
     LIST_INSTALLED: 'marketplace:list-installed',
     ADOPT_EXISTING: 'marketplace:adopt-existing',
+    GET_PATHS: 'marketplace:get-paths',
+  },
+  // Plugin Marketplace (one-click skill bundles, see
+  // scripts/upload-plugins-to-cos.mjs + src/main/marketplace/)
+  PLUGIN_MARKETPLACE: {
+    FETCH_CATALOG: 'plugin-marketplace:fetch-catalog',
+    INSTALL: 'plugin-marketplace:install',
+    UNINSTALL: 'plugin-marketplace:uninstall',
+    LIST_INSTALLED: 'plugin-marketplace:list-installed',
   },
   // 宫格拆图
   STORYBOARD_SPLIT: {
@@ -386,6 +400,14 @@ export interface ElectronAPI {
     uninstall: (skillName: string) => Promise<MarketplaceUninstallResult>
     listInstalled: () => Promise<MarketplaceListInstalledResult>
     adoptExisting: () => Promise<MarketplaceAdoptExistingResult>
+    getPaths: () => Promise<MarketplaceGetPathsResult>
+  }
+  // Plugin Marketplace (one-click skill bundles)
+  pluginMarketplace: {
+    fetchCatalog: (force?: boolean) => Promise<PluginFetchCatalogResult>
+    install: (pluginName: string) => Promise<PluginInstallResult>
+    uninstall: (pluginName: string) => Promise<PluginUninstallResult>
+    listInstalled: () => Promise<PluginListInstalledResult>
   }
   // Codex Agent
   agent: {
@@ -841,6 +863,23 @@ const electronAPI: ElectronAPI = {
       safeInvoke<MarketplaceListInstalledResult>(IPC_CHANNELS.MARKETPLACE.LIST_INSTALLED),
     adoptExisting: () =>
       safeInvoke<MarketplaceAdoptExistingResult>(IPC_CHANNELS.MARKETPLACE.ADOPT_EXISTING),
+    getPaths: () =>
+      safeInvoke<MarketplaceGetPathsResult>(IPC_CHANNELS.MARKETPLACE.GET_PATHS),
+  },
+
+  // ============ Plugin Marketplace ============
+  pluginMarketplace: {
+    fetchCatalog: (force?: boolean) =>
+      safeInvoke<PluginFetchCatalogResult>(
+        IPC_CHANNELS.PLUGIN_MARKETPLACE.FETCH_CATALOG,
+        force === true,
+      ),
+    install: (pluginName: string) =>
+      safeInvoke<PluginInstallResult>(IPC_CHANNELS.PLUGIN_MARKETPLACE.INSTALL, pluginName),
+    uninstall: (pluginName: string) =>
+      safeInvoke<PluginUninstallResult>(IPC_CHANNELS.PLUGIN_MARKETPLACE.UNINSTALL, pluginName),
+    listInstalled: () =>
+      safeInvoke<PluginListInstalledResult>(IPC_CHANNELS.PLUGIN_MARKETPLACE.LIST_INSTALLED),
   },
 
   // ============ Codex Agent ============

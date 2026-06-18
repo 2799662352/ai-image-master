@@ -81,6 +81,45 @@ describe('registerImageTools / generate_image schema', () => {
     expect(schema.safeParse({ prompt: 'x', quality: 'ultra' }).success).toBe(false)
   })
 
+  it('accepts the selectable model channels (vip / 腾讯 / 万相) and rejects others', () => {
+    const { tools, server, router } = capture()
+    registerImageTools(server, router)
+    const genSchema = tools.find((t) => t.name === 'generate_image')!.config.inputSchema
+    for (const model of ['gpt-image-2-vip', 'custom-imagemodel-gt', 'wan2.7-image-pro']) {
+      expect(genSchema.safeParse({ prompt: 'x', model }).success, model).toBe(true)
+    }
+    expect(genSchema.safeParse({ prompt: 'x', model: 'gpt-image-2' }).success).toBe(false)
+
+    const batchSchema = tools.find((t) => t.name === 'generate_images')!.config.inputSchema
+    expect(batchSchema.safeParse({ prompts: ['a', 'b'], model: 'wan2.7-image-pro' }).success).toBe(true)
+    expect(batchSchema.safeParse({ prompts: ['a', 'b'], model: 'nope' }).success).toBe(false)
+  })
+
+  it('accepts count 1–12 for wan2.7 组图 and rejects out-of-range / non-int', () => {
+    const { tools, server, router } = capture()
+    registerImageTools(server, router)
+    const schema = tools.find((t) => t.name === 'generate_image')!.config.inputSchema
+    expect(schema.safeParse({ prompt: 'x', model: 'wan2.7-image-pro', count: 1 }).success).toBe(true)
+    expect(schema.safeParse({ prompt: 'x', model: 'wan2.7-image-pro', count: 12 }).success).toBe(true)
+    expect(schema.safeParse({ prompt: 'x', count: 0 }).success).toBe(false)
+    expect(schema.safeParse({ prompt: 'x', count: 13 }).success).toBe(false)
+    expect(schema.safeParse({ prompt: 'x', count: 2.5 }).success).toBe(false)
+  })
+
+  it('forwards count to the renderer generate_image call (enables wan2.7 enable_sequential)', async () => {
+    const { tools, server, router } = capture({ ok: true, count: 4, model: 'wan2.7-image-pro', paths: [] })
+    registerImageTools(server, router)
+    const handler = tools.find((t) => t.name === 'generate_image')!.handler
+
+    await handler({ prompt: '同一只猫的四季', model: 'wan2.7-image-pro', count: 4 })
+
+    expect(router.call).toHaveBeenCalledWith(
+      'generate_image',
+      expect.objectContaining({ model: 'wan2.7-image-pro', count: 4 }),
+      undefined,
+    )
+  })
+
   it('emits a resource_link per saved path (codex-native generate→save→read parity)', async () => {
     const winPath = 'C:\\Users\\me\\AppData\\Roaming\\app\\agent\\uploads\\deadbeef.png'
     const { tools, server, router } = capture({

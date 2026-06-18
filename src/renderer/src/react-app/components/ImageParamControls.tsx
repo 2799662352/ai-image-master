@@ -28,6 +28,9 @@ interface ImageParamControlsProps {
   /** 仅 gpt-image-2 等支持 quality 的模型需要;不传则不渲染清晰度轴 */
   quality?: string
   onQualityChange?: (v: string) => void
+  /** 组图张数;仅 multipleImages 模型且传了 onCountChange 时渲染数量轴 */
+  count?: number
+  onCountChange?: (v: number) => void
   /** 比例自动归位时优先选中的 key(默认 auto) */
   preferRatio?: string
   className?: string
@@ -92,6 +95,8 @@ export function ImageParamControls({
   onResolutionChange,
   quality,
   onQualityChange,
+  count,
+  onCountChange,
   preferRatio = 'auto',
   className,
 }: ImageParamControlsProps) {
@@ -105,9 +110,12 @@ export function ImageParamControls({
     sizeHidden,
     defaultResolution,
     defaultQuality,
+    supportsCount,
+    maxCount,
   } = deriveImageParamControls(modelConfig)
 
   const showQuality = supportsQuality && typeof quality === 'string' && Boolean(onQualityChange)
+  const showCount = supportsCount && typeof count === 'number' && Boolean(onCountChange)
 
   // 模型切换后自动归位(当前值不在新选项内时)
   useEffect(() => {
@@ -130,6 +138,17 @@ export function ImageParamControls({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qualityOptions, showQuality])
 
+  // 模型切换后收敛组图张数: 不支持组图回 1, 超过上限收敛到上限
+  useEffect(() => {
+    if (typeof count !== 'number' || !onCountChange) return
+    if (!supportsCount && count !== 1) {
+      onCountChange(1)
+    } else if (supportsCount && count > maxCount) {
+      onCountChange(maxCount)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supportsCount, maxCount])
+
   if (sizeHidden) {
     return (
       <div className={className ?? ''}>
@@ -140,8 +159,13 @@ export function ImageParamControls({
     )
   }
 
-  const colCount = 2 + (showQuality ? 1 : 0)
-  const colClass = colCount === 3 ? 'grid-cols-2 sm:grid-cols-3' : 'grid-cols-2'
+  const colCount = 2 + (showQuality ? 1 : 0) + (showCount ? 1 : 0)
+  const colClass =
+    colCount >= 4
+      ? 'grid-cols-2 sm:grid-cols-4'
+      : colCount === 3
+        ? 'grid-cols-2 sm:grid-cols-3'
+        : 'grid-cols-2'
 
   return (
     <div className={className ?? `${theme.grid} ${colClass}`}>
@@ -198,6 +222,25 @@ export function ImageParamControls({
             {qualityOptions.map((opt) => (
               <option key={opt.key} value={opt.key}>
                 {formatOption(opt)}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {/* 数量(组图) —— 仅 multipleImages 模型(如万相 wan2.7) */}
+      {showCount && (
+        <div className={theme.card}>
+          {theme.renderLabel('数量', 'fa-images')}
+          <select
+            value={count}
+            onChange={(e) => onCountChange?.(Number(e.target.value))}
+            className={theme.select}
+            aria-label="数量"
+          >
+            {Array.from({ length: maxCount }, (_, i) => i + 1).map((n) => (
+              <option key={n} value={n}>
+                {`${n} 张`}
               </option>
             ))}
           </select>

@@ -1,0 +1,28 @@
+{
+  "name": "catimation-core",
+  "version": "1.0.2",
+  "description": "CATIMATION 应用核心:应用内出图、人像/角色锚点库、创意头脑风暴。",
+  "author": { "name": "CATIMATION", "url": "https://github.com/zuozuoliang999" },
+  "homepage": "https://github.com/zuozuoliang999/catimation-plugins",
+  "repository": "https://github.com/zuozuoliang999/catimation-plugins",
+  "license": "MIT",
+  "keywords": ["catimation", "image", "generate", "portrait", "brainstorm", "mcp"],
+  "skills": "./skills/",
+  "commands": "./commands/",
+  "hooks": "./hooks/hooks-codex.json",
+  "interface": {
+    "displayName": "CATIMATION Core",
+    "shortDescription": "应用内出图、人像库与创意头脑风暴",
+    "longDescription": "CATIMATION 桌面应用的核心集成层:catimation-image 提供 generate_image / generate_images(渲染进聊天并落盘+历史+附件面板,可选 gpt-image-2-vip / 腾讯 image2 / 万相 2.7 pro 渠道);catimation-portrait-library 自治管理人像/角色锚点库;catimation-brainstorm 用 ask_user 卡片在开放/高价值创意上先定方向。写提示词前先过 director-orchestrator。",
+    "developerName": "CATIMATION",
+    "category": "Creative",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "defaultPrompt": [
+      "画一张赛博朋克风格的猫。",
+      "我想做点东西,但还没想清楚,帮我捋捋。"
+    ],
+    "websiteURL": "https://github.com/zuozuoliang999/catimation-plugins",
+    "brandColor": "#10B981",
+    "screenshots": []
+  }
+}

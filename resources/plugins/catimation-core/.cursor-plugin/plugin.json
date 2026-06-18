@@ -1,0 +1,14 @@
+{
+  "name": "catimation-core",
+  "displayName": "CATIMATION Core",
+  "description": "应用内出图 generate_image / 人像库 / 创意头脑风暴。",
+  "version": "1.0.2",
+  "author": { "name": "CATIMATION", "url": "https://github.com/zuozuoliang999" },
+  "homepage": "https://github.com/zuozuoliang999/catimation-plugins",
+  "repository": "https://github.com/zuozuoliang999/catimation-plugins",
+  "license": "MIT",
+  "keywords": ["catimation", "image", "generate", "portrait", "brainstorm", "mcp"],
+  "skills": "./skills/",
+  "commands": "./commands/",
+  "hooks": "./hooks/hooks-cursor.json"
+}

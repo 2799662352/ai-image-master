@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# SessionStart hook for catimation-director plugin.
+# Injects the director-orchestrator router (the "每次必用" entry skill) so the
+# agent always routes image/video/prompt work through the 13-dimension
+# cinematography framework before writing any prompt.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+orchestrator_content=$(cat "${PLUGIN_ROOT}/skills/director-orchestrator/SKILL.md" 2>&1 || echo "Error reading director-orchestrator skill")
+
+# Escape a string for JSON embedding (single-pass bash substitutions).
+escape_for_json() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\t'/\\t}"
+    printf '%s' "$s"
+}
+
+orchestrator_escaped=$(escape_for_json "$orchestrator_content")
+session_context="<EXTREMELY_IMPORTANT>\nCATIMATION 导演模式已启用。\n\n只要本次任务涉及 图片 / 视频 / 动画 / 提示词(包括你自发为回答配图配视频),都必须先载入并执行下面的 director-orchestrator 总调度,走完 STEP 0 反问与技能路由,再动笔。其它 director-* / storyboard-* 技法技能用 Skill 工具按需加载。也可用 /director 命令直接进入。\n\n下面是 director-orchestrator 技能全文:\n\n${orchestrator_escaped}\n</EXTREMELY_IMPORTANT>"
+
+# Emit only the field the current harness consumes.
+if [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
+  printf '{\n  "additional_context": "%s"\n}\n' "$session_context"
+elif [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -z "${COPILOT_CLI:-}" ]; then
+  printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$session_context"
+else
+  printf '{\n  "additionalContext": "%s"\n}\n' "$session_context"
+fi
+
+exit 0

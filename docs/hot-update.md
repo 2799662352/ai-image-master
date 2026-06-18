@@ -138,6 +138,41 @@ https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/lates
 
 ## Changelog
 
+### v4.3.40 (2026-06-18) — wan2.7 pro 组图 + 比例补全 + 腾讯image2/万相 Miau API 说明 + 商城显示安装位置
+
+本版本聚焦 catimation 内置出图能力的 agent 侧补全与商城可见性,并同步 skill/插件热更新。
+
+**A. wan2.7-image-pro 组图(`enable_sequential`)对 agent 开放 + 比例全覆盖**
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| `generate_image` MCP 工具加 `count` 入参 | `src/main/mcp/tools/imageTools.ts` | agent(Codex/Claude)可经 `count` 触发 `wan2.7-image-pro` 的组图(系列图)能力,之前仅 UI 可用 |
+| wan2.7 比例补全 | `src/renderer/src/services/api/ApiService.ts` | `ratios` 与 `resolutionMap` 补 `auto` / `5:4` / `4:5`,与其它主力模型对齐,避免 size 被拒 |
+
+**B. 腾讯 image2 / 万相 2.7 pro 必须切到 Miau API 站点(文档化)**
+
+`custom-imagemodel-gt`(腾讯 image2)与 `wan2.7-image-pro`(阿里万相 2.7 pro)只经 Miau API 代理提供。应用发请求时会用「当前选中站点」域名替换模型端点域名,所以站点不对这两个渠道会被发到错误域名直接失败。已在 skill 文档与内置 skill 写明:用这两个 `model` 前必须在「API 设置 → 选择 API 站点」切到 **Miau API**;默认 `gpt-image-2-vip` 不受此限制。
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| skill 文档加站点要求 | `resources/plugins/catimation-core/skills/catimation-image/SKILL.md` | 热更新经 COS 下发,新增「站点要求」专节 |
+| 内置 skill 同步 | `src/main/agent/firstPartySkills.ts` | 全新装/未走商城更新的用户也能读到 Miau 站点警告 |
+
+**C. 商城显示安装位置**
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| 新增 `marketplace:get-paths` IPC | `src/main/marketplace/ipc.ts` + `src/types/marketplace.ts` + `src/preload/index.ts` | 暴露 `userSkillsDir`(`$HOME/.agents/skills`)给渲染层 |
+| 商城页显示安装路径 | `src/renderer/src/pages-react/MarketplacePage.tsx` | 侧栏底部显示安装位置 +「打开目录」按钮;每个 skill/插件卡片显示其落地路径 |
+
+#### 用户可见行为
+
+1. 在 Codex/Claude 聊天里要「生成一组/N 张系列图」可经 `count` 走 wan2.7 组图
+2. 用腾讯 image2 / 万相前若站点不对,会被提示先切到 Miau API
+3. 技能商城里能看到技能/插件装到了哪个目录,可一键打开
+
+---
+
 ### v4.3.37 (2026-06-12) — 大香蕉系列参考图 base64 直传(免 COS 往返)+ 模型名对齐 apiyi
 
 **A. base64 inline 模型参考图不再转 URL(免 COS 往返)**

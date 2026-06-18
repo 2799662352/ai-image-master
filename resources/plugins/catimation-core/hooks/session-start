@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# SessionStart hook for catimation-core plugin.
+set -euo pipefail
+
+session_context="<IMPORTANT>\nCATIMATION 核心集成已启用。应用内出图首选 catimation-image 的 generate_image / generate_images(渲染进聊天并落盘+历史);多张用 generate_images 一次批量。人像/角色锚点管理用 catimation-portrait-library。开放/高价值创意先用 catimation-brainstorm 的 ask_user 卡片定方向。命令:/gen-image 出图,/brainstorm 头脑风暴。写提示词前先过 director-orchestrator。\n</IMPORTANT>"
+
+if [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
+  printf '{\n  "additional_context": "%s"\n}\n' "$session_context"
+elif [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -z "${COPILOT_CLI:-}" ]; then
+  printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$session_context"
+else
+  printf '{\n  "additionalContext": "%s"\n}\n' "$session_context"
+fi
+exit 0

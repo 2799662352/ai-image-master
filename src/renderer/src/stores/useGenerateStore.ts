@@ -48,6 +48,8 @@ export interface GenerateState {
   resolution: string
   /** 清晰度 quality(auto/low/medium/high); 仅 gpt-image-2 等有效 */
   quality: string
+  /** 出图张数(组图); 仅 multipleImages 模型有效, 万相 wan2.7 多张走 enable_sequential 系列一致 */
+  count: number
   /**
    * True when at least one in-flight generate call exists.
    * Derived from `inFlightCount > 0`. Kept as a discrete field for cheap
@@ -74,6 +76,7 @@ export interface GenerateState {
   setRatio: (v: string) => void
   setResolution: (v: string) => void
   setQuality: (v: string) => void
+  setCount: (v: number) => void
   addReferenceImage: (dataUrl: string) => void
   removeReferenceImage: (index: number) => void
   clearReferenceImages: () => void
@@ -99,6 +102,7 @@ export const initialState = {
   ratio: '1:1',
   resolution: '2K',
   quality: 'auto',
+  count: 1,
   generating: false,
   inFlightCount: 0,
   resultUrls: [] as string[],
@@ -131,6 +135,7 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
   setRatio: (v) => set({ ratio: v }),
   setResolution: (v) => set({ resolution: v }),
   setQuality: (v) => set({ quality: v }),
+  setCount: (v) => set({ count: v }),
   addReferenceImage: (dataUrl) => set((s) => ({ referenceImages: [...s.referenceImages, dataUrl] })),
   removeReferenceImage: (index) =>
     set((s) => ({
@@ -157,7 +162,7 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
     // Snapshot form values at submit time so the user can keep typing the
     // next prompt while this one is in flight (matches BatchPage live-queue
     // semantics — no blocking guard, results stream back).
-    const { prompt, ratio, resolution, quality, referenceImages } = get()
+    const { prompt, ratio, resolution, quality, count, referenceImages } = get()
     const templateKey = useTemplateStore.getState().getSelection('generate')
     const finalPrompt = composePromptWithTemplate(templateKey, prompt)
     const refsSnapshot = referenceImages.length > 0 ? [...referenceImages] : undefined
@@ -183,6 +188,7 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
         ratio,
         resolution,
         quality,
+        count,
         model: modelKey,
         referenceImages: refsSnapshot,
       })

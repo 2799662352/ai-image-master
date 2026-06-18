@@ -6,10 +6,12 @@ interface Props {
   ratio: string
   resolution: string
   quality: string
+  count: number
   concurrency: number
   onRatioChange: (s: string) => void
   onResolutionChange: (s: string) => void
   onQualityChange: (s: string) => void
+  onCountChange: (n: number) => void
   onConcurrencyChange: (n: number) => void
 }
 
@@ -30,10 +32,12 @@ export default function BatchConfigGrid({
   ratio,
   resolution,
   quality,
+  count,
   concurrency,
   onRatioChange,
   onResolutionChange,
   onQualityChange,
+  onCountChange,
   onConcurrencyChange,
 }: Props) {
   return (
@@ -47,6 +51,8 @@ export default function BatchConfigGrid({
         onResolutionChange={onResolutionChange}
         quality={quality}
         onQualityChange={onQualityChange}
+        count={count}
+        onCountChange={onCountChange}
       />
 
       {/* CONCURRENCY 并发 —— 批量页专属 */}

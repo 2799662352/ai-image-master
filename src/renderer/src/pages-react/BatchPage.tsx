@@ -50,6 +50,7 @@ export default function BatchPage() {
   const resolution = useBatchStore((s) => s.resolution)
   const quality = useBatchStore((s) => s.quality)
   const perPromptCount = useBatchStore((s) => s.perPromptCount)
+  const count = useBatchStore((s) => s.count)
   const concurrency = useBatchStore((s) => s.concurrency)
   const refImages = useBatchStore((s) => s.refImages)
 
@@ -60,7 +61,7 @@ export default function BatchPage() {
   // ---- actions (引用稳定, getState 一次取出) ----
   const {
     setMode, setCardPrompt, setCardCount, setMultiText,
-    setRatio, setResolution, setQuality, setPerPromptCount, setConcurrency,
+    setRatio, setResolution, setQuality, setPerPromptCount, setCount, setConcurrency,
     addRefImage, removeRefImage, clearRefImages,
     addItem, removeItem, clearAll, runBatch, cancelBatch,
   } = useBatchStore.getState()
@@ -354,10 +355,12 @@ export default function BatchPage() {
             ratio={ratio}
             resolution={resolution}
             quality={quality}
+            count={count}
             concurrency={concurrency}
             onRatioChange={setRatio}
             onResolutionChange={setResolution}
             onQualityChange={setQuality}
+            onCountChange={setCount}
             onConcurrencyChange={setConcurrency}
           />
           <BatchRefDrop

@@ -85,6 +85,7 @@ const stateSchema = new StateSchema({
   semanticOrientation: z.enum(['landscape', 'portrait']).default('landscape'),
   imageModel: z.string().default(''),
   currentImageCount: z.number().default(1),
+  currentCount: z.number().default(1),
   visionDetailTaskPlanning: z.enum(['low', 'high', 'auto']).default(DEFAULT_VISION_DETAIL.taskPlanning),
   visionDetailAnalyzeScene: z.enum(['low', 'high', 'auto']).default(DEFAULT_VISION_DETAIL.analyzeScene),
   visionDetailCharacterAnchors: z.enum(['low', 'high', 'auto']).default(DEFAULT_VISION_DETAIL.extractCharacterAnchors),
@@ -131,6 +132,7 @@ export interface DirectorState {
   semanticOrientation: 'landscape' | 'portrait'
   imageModel: string
   currentImageCount: number
+  currentCount: number
   visionDetailTaskPlanning: VisionDetail
   visionDetailAnalyzeScene: VisionDetail
   visionDetailCharacterAnchors: VisionDetail
@@ -1863,6 +1865,9 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         const apiService = getApiService()
         const prompts = state.prompts || []
         const imageCount = state.currentImageCount || 1
+        // 组图：每次出图请求返回的连贯张数（wan2.7 等支持），与分镜变体数相乘扇出为多卡
+        const perRunCount = Math.max(1, state.currentCount || 1)
+        const totalImages = imageCount * perRunCount
         const drawingModel = state.imageModel?.trim()
         if (!drawingModel) {
           throw new Error('绘图模型未设置，已阻止降级回退。请先在顶部模型选择器中选择生图模型。')
@@ -1873,7 +1878,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
           pass: passNum,
           label: '图像生成中...',
           index: 0,
-          total: imageCount,
+          total: totalImages,
           prompt: 'Generating contact sheet...',
         })
 
@@ -1906,7 +1911,7 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
         const negativePrompt = buildAdaptiveNegativePrompt(baseNegative, state.template, state.styleAnchor)
         const referenceImages = getImages(state).map(img => `data:${img.mimeType};base64,${img.data}`)
         const userConcurrency = Math.max(1, imageCount)
-        const results = await self.runWithConcurrency(
+        const nestedResults = await self.runWithConcurrency(
           imageCount,
           userConcurrency,
           async (i) => {
@@ -1918,55 +1923,60 @@ export class DirectorPipeline extends BasePipeline<DirectorState, DirectorResult
                 ratio: state.ratio,
                 resolution: state.resolution,
                 quality: state.quality,
+                count: perRunCount,
                 referenceImages,
                 signal: config?.signal,
               })
 
-              const url = result.success
-                ? (result.images?.[0] || result.urls?.[0] || '')
-                : ''
+              // 组图：一次请求可能返回多张连贯图，全部扇出为相邻卡片
+              const urls = result.success
+                ? ((result.images?.length ? result.images : (result.urls || [])).filter(Boolean))
+                : []
+              const safeUrls = urls.length ? urls : ['']
 
-              const one = {
-                id: i + 1,
-                url,
-                prompt: compositePrompt,
-                error: result.success ? undefined : result.error,
-              }
-
+              return safeUrls.map((url, k) => {
+                const index = i * perRunCount + k
+                writer(config)?.({
+                  type: 'image_generated',
+                  pass: passNum,
+                  label: '图像生成中...',
+                  index,
+                  total: totalImages,
+                  url,
+                  prompt: compositePrompt,
+                })
+                return {
+                  id: index + 1,
+                  url,
+                  prompt: compositePrompt,
+                  error: result.success ? undefined : result.error,
+                }
+              })
+            } catch (error: unknown) {
+              const index = i * perRunCount
               writer(config)?.({
                 type: 'image_generated',
                 pass: passNum,
                 label: '图像生成中...',
-                index: i,
-                total: imageCount,
-                url,
+                index,
+                total: totalImages,
+                url: '',
                 prompt: compositePrompt,
               })
 
-              return one
-            } catch (error: unknown) {
-              const one = {
-                id: i + 1,
+              return [{
+                id: index + 1,
                 url: '',
                 prompt: compositePrompt,
                 error: error instanceof Error ? error.message : String(error),
-              }
-
-              writer(config)?.({
-                type: 'image_generated',
-                pass: passNum,
-                label: '图像生成中...',
-                index: i,
-                total: imageCount,
-                url: '',
-                prompt: compositePrompt,
-              })
-
-              return one
+              }]
             }
           },
           config?.signal,
         )
+
+        // 扁平化各分镜变体的扇出结果，并重排连续 id
+        const results = nestedResults.flat().map((item, idx) => ({ ...item, id: idx + 1 }))
 
         const elapsed = Date.now() - t0
         const passData = DirectorPipeline.buildPassCardData('generateImages', { pass: passNum, label: '图像生成' }, { images: results }, elapsed, appliedSkills)

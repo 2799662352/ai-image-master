@@ -11,13 +11,35 @@ import type { AgentToolRequest, AgentToolResponse } from '../../../../types/agen
 type GenerateImageToolParams = GenerateImageParams
 
 /**
- * The codex `generate_image` tool always renders on the stable VIP channel,
- * regardless of the globally selected model. (`gpt-image-2-codex` hit
- * org-level rate limits; vip is the documented drop-in with the same images
- * API + size/quality params.)
+ * Default channel for the codex `generate_image` tool: the stable VIP channel.
+ * (`gpt-image-2-codex` hit org-level rate limits; vip is the documented drop-in
+ * with the same images API + size/quality params.)
  */
 const CODEX_IMAGE_MODEL = 'gpt-image-2-vip'
 const CODEX_DEFAULT_RESOLUTION = '2K'
+
+/**
+ * MCP-selectable image models. The agent MAY opt into one of these alternates
+ * via the tool's `model` param; anything outside this allow-list (incl. a
+ * hallucinated name) falls back to the default VIP channel so generation never
+ * breaks. All three share the same ratio × resolution(1K/2K/4K) × quality
+ * parameter surface, so the tool schema is identical regardless of choice.
+ * - gpt-image-2-vip   : default, OpenAI 官逆，稳定
+ * - custom-imagemodel-gt : 腾讯 image2（经 Miau 代理）
+ * - wan2.7-image-pro  : 阿里万相 2.7 pro（超清/组图，经 Miau 代理）
+ */
+const MCP_SELECTABLE_IMAGE_MODELS: readonly string[] = [
+  CODEX_IMAGE_MODEL,
+  'custom-imagemodel-gt',
+  'wan2.7-image-pro',
+]
+
+/** Resolve the agent-requested model to an allow-listed one (default = VIP). */
+function resolveMcpImageModel(requested: unknown): string {
+  return typeof requested === 'string' && MCP_SELECTABLE_IMAGE_MODELS.includes(requested)
+    ? requested
+    : CODEX_IMAGE_MODEL
+}
 
 type AgentElectronApi = {
   agent?: {
@@ -172,11 +194,13 @@ export class AgentToolExecutor {
         ? await this.resolveReferenceImages(params.referenceImages)
         : undefined
 
-    // Force the stable VIP channel; ignore any model the agent passed.
+    // Honor an allow-listed model selection (vip / 腾讯 image2 / 万相 2.7 pro);
+    // any other value falls back to the stable VIP default.
+    const model = resolveMcpImageModel(params.model)
     const request: GenerateImageParams = {
       ...params,
       referenceImages,
-      model: CODEX_IMAGE_MODEL,
+      model,
       resolution: params.resolution ?? CODEX_DEFAULT_RESOLUTION,
     }
 
@@ -248,7 +272,7 @@ export class AgentToolExecutor {
       return {
         ok: true,
         count: images.length,
-        model: CODEX_IMAGE_MODEL,
+        model,
         historyId: null,
         paths: [],
         persistencePending: true,
@@ -264,7 +288,7 @@ export class AgentToolExecutor {
     return {
       ok: true,
       count: images.length,
-      model: CODEX_IMAGE_MODEL,
+      model,
       historyId: settled.historyId,
       paths: settled.paths,
     }
@@ -395,7 +419,7 @@ export class AgentToolExecutor {
         request.prompt,
         images,
         request.ratio,
-        CODEX_IMAGE_MODEL,
+        request.model ?? CODEX_IMAGE_MODEL,
         request.referenceImages ? { referenceImages: request.referenceImages } : undefined,
       )) as { id?: number | string } | null
       return saved?.id ?? null

@@ -93,6 +93,7 @@ describe('useGenerateStore', () => {
         ratio: '1:1',
         resolution: '2K',
         quality: 'auto',
+        count: 1,
         model: 'flux',
         referenceImages: undefined,
       })

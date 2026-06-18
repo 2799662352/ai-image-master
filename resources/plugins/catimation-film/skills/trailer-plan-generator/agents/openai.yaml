@@ -1,0 +1,4 @@
+interface:
+  display_name: "Trailer Plan Generator"
+  short_description: "Generate five 90-second trailer structures from a script."
+  default_prompt: "Use $trailer-plan-generator to turn my script into five professional 90-second trailer方案."

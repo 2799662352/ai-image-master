@@ -73,6 +73,7 @@ export interface BatchRunOpts {
   quality?: string
   referenceImages?: string[]      // base64 数组(去掉 dataURL prefix 的纯 base64)
   perPromptCount?: number          // 每条 prompt 跑几次(扩张到 items)
+  count?: number                   // 单次请求组图张数(wan2.7 系列), 默认取 store.count
   concurrency?: number             // 并发数, 默认 3
   /**
    * Worker idle-exit grace period (ms). When a worker finds no pending item
@@ -108,6 +109,13 @@ export interface BatchState {
   resolution: string         // 0.5K / 1K / 2K / 4K
   quality: string            // auto / low / medium / high (仅 gpt-image-2)
   perPromptCount: number     // 多提示词模式下每条出几张 (1-2)
+  /**
+   * 组图张数(单次请求出 N 张系列图)。与 perPromptCount 正交:
+   * perPromptCount 把一条 prompt 扩成 N 个独立 item(N 次请求);
+   * count 是每次请求里走 wan2.7 enable_sequential 一次返回 N 张连贯系列图,
+   * 多出来的图会以"兄弟卡"形式插入原 item 之后。仅 multipleImages 模型有效。
+   */
+  count: number              // 1..maxOutputs
   concurrency: number        // 1-6
   refImages: BatchRefImage[]
 
@@ -142,6 +150,7 @@ export interface BatchState {
   setResolution: (r: string) => void
   setQuality: (q: string) => void
   setPerPromptCount: (n: number) => void
+  setCount: (n: number) => void
   setConcurrency: (n: number) => void
   addRefImage: (img: BatchRefImage) => void
   removeRefImage: (id: string) => void
@@ -161,6 +170,7 @@ export const initialState = {
   resolution: '2K',
   quality: 'auto',
   perPromptCount: 1,
+  count: 1,
   concurrency: 3,
   refImages: [] as BatchRefImage[],
 }
@@ -301,6 +311,9 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     const refRaw = opts?.referenceImages ?? get().refImages.map((r) => r.base64)
     const referenceImages = refRaw.map(stripDataUrl).filter(Boolean)
     const concurrency = Math.max(1, Math.min(HARD_MAX_WORKERS, opts?.concurrency ?? get().concurrency))
+    // 组图张数: 每次 generateImage 请求出 N 张系列图(wan2.7 enable_sequential)。
+    // ApiService.buildOpenAIPayload 会按模型 maxOutputs 收敛 + 决定是否带 enable_sequential。
+    const count = Math.max(1, Math.floor(opts?.count ?? get().count))
     const idleExitMs = Math.max(0, opts?.idleExitMs ?? 300)
     const POLL_IDLE_MS = 80
 
@@ -397,6 +410,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
               ratio: itemRatio !== 'auto' ? itemRatio : undefined,
               resolution,
               quality,
+              count,
               referenceImages: itemRefs.length > 0 ? itemRefs : undefined,
               signal: ac.signal,
             })
@@ -414,7 +428,10 @@ export const useBatchStore = create<BatchState>((set, get) => ({
               continue
             }
 
-            const url = result.urls?.[0] ?? result.images?.[0]
+            // 组图: 一次请求可能返回多张(wan2.7 系列)。第 0 张回填原 item,
+            // 其余作为"兄弟卡"紧跟其后插入, 各自独立走 COS 上传 + history。
+            const urls = result.urls ?? result.images ?? []
+            const url = urls[0]
             if (!url) {
               set((state) => ({
                 items: state.items.map((i) =>
@@ -426,13 +443,29 @@ export const useBatchStore = create<BatchState>((set, get) => ({
               continue
             }
 
-            set((state) => ({
-              items: state.items.map((i) =>
+            // 为多出来的系列图(urls[1..])建兄弟卡, 复用原 item 的 prompt/ratio/refs/snapshot。
+            const siblings: BatchItem[] = urls.slice(1).map((u) => ({
+              ...item,
+              id: crypto.randomUUID(),
+              status: 'done' as const,
+              resultUrl: u,
+              uploadStatus: 'uploading' as const,
+            }))
+
+            set((state) => {
+              const mapped = state.items.map((i) =>
                 i.id === item.id
                   ? { ...i, status: 'done' as const, resultUrl: url, uploadStatus: 'uploading' as const }
                   : i
-              ),
-            }))
+              )
+              if (siblings.length === 0) return { items: mapped }
+              // 把兄弟卡插到原 item 之后, 保持系列相邻; 再过一遍 trimItems 控总长。
+              const idx = mapped.findIndex((i) => i.id === item.id)
+              const next = idx >= 0
+                ? [...mapped.slice(0, idx + 1), ...siblings, ...mapped.slice(idx + 1)]
+                : [...mapped, ...siblings]
+              return { items: trimItems(next) }
+            })
 
             // 真 fire-and-forget: 入队后立即返回, 完全不持有 promise。
             // 主进程上传完成后通过 'cos:upload-result' 事件把结果推回,
@@ -442,18 +475,22 @@ export const useBatchStore = create<BatchState>((set, get) => ({
             // 关键: 在 enqueue 前把写 history 所需的上下文 stash 到
             // pendingBatchHistoryContext, 让 event handler 能拿到
             // prompt/ratio/refRaw/modelUrl 等(refRaw 共享浅引用即可)。
-            pendingBatchHistoryContext.set(item.id, {
-              modelUrl: url,
-              prompt: item.prompt,
-              ratio: item.ratio ?? ratio,
-              modelKey,
-              refRaw: item.referenceImages ?? refRaw,
-            })
-            enqueueCosUpload(item.id, url, {
-              source: 'batch',
-              prompt: item.prompt,
-              model: modelKey,
-            })
+            const enqueueOne = (id: string, modelUrl: string) => {
+              pendingBatchHistoryContext.set(id, {
+                modelUrl,
+                prompt: item.prompt,
+                ratio: item.ratio ?? ratio,
+                modelKey,
+                refRaw: item.referenceImages ?? refRaw,
+              })
+              enqueueCosUpload(id, modelUrl, {
+                source: 'batch',
+                prompt: item.prompt,
+                model: modelKey,
+              })
+            }
+            enqueueOne(item.id, url)
+            for (const sib of siblings) enqueueOne(sib.id, sib.resultUrl!)
           } catch (err) {
             if (ac.signal.aborted) break
             set((state) => ({
@@ -587,6 +624,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
   setResolution: (r) => set({ resolution: r }),
   setQuality: (q) => set({ quality: q }),
   setPerPromptCount: (n) => set({ perPromptCount: Math.max(1, Math.min(2, n)) }),
+  setCount: (n) => set({ count: Math.max(1, Math.floor(n)) }),
   setConcurrency: (n) => set({ concurrency: Math.max(1, Math.min(6, n)) }),
   addRefImage: (img) =>
     set((s) =>

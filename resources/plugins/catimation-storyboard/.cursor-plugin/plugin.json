@@ -1,0 +1,14 @@
+{
+  "name": "catimation-storyboard",
+  "displayName": "CATIMATION Storyboard",
+  "description": "28 个分镜技法:光影重建/角色演技/构图遮挡/调色/运动学反推/负向控制/物理/对白/风格。",
+  "version": "1.0.0",
+  "author": { "name": "CATIMATION", "url": "https://github.com/zuozuoliang999" },
+  "homepage": "https://github.com/zuozuoliang999/catimation-plugins",
+  "repository": "https://github.com/zuozuoliang999/catimation-plugins",
+  "license": "MIT",
+  "keywords": ["storyboard", "prompt", "lighting", "composition", "catimation", "image", "video"],
+  "skills": "./skills/",
+  "commands": "./commands/",
+  "hooks": "./hooks/hooks-cursor.json"
+}

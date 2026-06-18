@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# SessionStart hook for catimation-video plugin.
+# Injects sd2-pe (Seedance 2.0 Prompt Optimizer) as the FOUNDATION / FALLBACK
+# for all video + prompt generation. Everything else is a derivation on top.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+sd2_content=$(cat "${PLUGIN_ROOT}/skills/sd2-pe/SKILL.md" 2>&1 || echo "Error reading sd2-pe skill")
+
+escape_for_json() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\t'/\\t}"
+    printf '%s' "$s"
+}
+
+sd2_escaped=$(escape_for_json "$sd2_content")
+session_context="<EXTREMELY_IMPORTANT>\nCATIMATION 视频出片插件已启用。\n\nsd2-pe(Seedance 2.0 Prompt Optimizer)是【视频与提示词的总兜底和起点】:只要任务涉及生成视频或写视频提示词(包括你自发配视频),都必须先用 sd2-pe 把需求/草稿/多模态 JSON 走完 Step 0→Step 4,产出工程化提示词,再叠加衍生技法(seedance-video-craft 模型对齐/配额、director-orchestrator 成套分镜 13 维定位、storyboard-* 逐镜打磨),最后交 catimation-video 的 generate_video 出片;剪辑拼接用 ffmpeg-win。命令:/sd2 直接优化提示词,/gen-video 出片,/edit-video 后期。\n\n下面是 sd2-pe 技能全文(总兜底,务必遵循其八大要素/路径A·B/兜底包/强制约束):\n\n${sd2_escaped}\n</EXTREMELY_IMPORTANT>"
+
+if [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
+  printf '{\n  "additional_context": "%s"\n}\n' "$session_context"
+elif [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -z "${COPILOT_CLI:-}" ]; then
+  printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$session_context"
+else
+  printf '{\n  "additionalContext": "%s"\n}\n' "$session_context"
+fi
+
+exit 0

@@ -1,0 +1,28 @@
+{
+  "name": "catimation-film",
+  "version": "1.0.0",
+  "description": "端到端制片编排器:把一个想法一条龙串成成片,每阶段带审批门。",
+  "author": { "name": "CATIMATION", "url": "https://github.com/zuozuoliang999" },
+  "homepage": "https://github.com/zuozuoliang999/catimation-plugins",
+  "repository": "https://github.com/zuozuoliang999/catimation-plugins",
+  "license": "MIT",
+  "keywords": ["film", "production", "screenwriter", "storyboard", "trailer", "animation", "catimation"],
+  "skills": "./skills/",
+  "commands": "./commands/",
+  "hooks": "./hooks/hooks-codex.json",
+  "interface": {
+    "displayName": "CATIMATION Film Studio",
+    "shortDescription": "从概念到成片的端到端 AI 制片流水线",
+    "longDescription": "制片导演总编排器:概念(G0)→剧本(G1)→分镜镜头表(G2)→角色/场景设定锚点(G3)→逐镜出图(G4)→图生视频(G5,Seedance 2.0)→配音配乐(G6)→ffmpeg 拼接(G7)→爆款体检交付(G8),每道门展示成果待用户确认,绝不跳门;每步调用本地工艺 skill(screenwriter/storyboard-*/director-*/seedance/ffmpeg)而非重写。",
+    "developerName": "CATIMATION",
+    "category": "Creative",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "defaultPrompt": [
+      "帮我把这个想法做成一部 60 秒短片。",
+      "从这个故事一条龙做到成片。"
+    ],
+    "websiteURL": "https://github.com/zuozuoliang999/catimation-plugins",
+    "brandColor": "#F59E0B",
+    "screenshots": []
+  }
+}

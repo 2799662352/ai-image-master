@@ -1,0 +1,10 @@
+=== 'sourceStaticFbx' -> 50 matches in _Dmnzwia4.js ===
+----- @67387 -----
+523,"y":-0.122205,"z":0.037194,"w":0.601592},"position":{"x":0,"y":13.816866,"z":0}}}'),ye="static-fbx-final-frame",ge="Animations/00_静态姿势预设/11_运动健身球类/俯卧撑.fbx",we={type:se,model:de,pose:ue,exportedAt:ce,floor:pe,modelTransform:me,parameters:xe,repairedFrom:ye,sourceStaticFbx:ge},he=Object.freeze(Obj
+
+----- @67561 -----
+del:de,pose:ue,exportedAt:ce,floor:pe,modelTransform:me,parameters:xe,repairedFrom:ye,sourceStaticFbx:ge},he=Object.freeze(Object.defineProperty({__proto__:null,default:we,exportedAt:ce,floor:pe,model:de,modelTransform:me,parameters:xe,pose:ue,repairedFrom:ye,sourceStaticFbx:ge,type:se},Symbol.toStr
+
+----- @84842 -----
+53656,"y":-0.08319,"z":-0.039583,"w":0.65078},"position":{"x":0,"y":13.816866,"z":0}}}'),qe="static-fbx-final-frame",ke="Animations/00_静态姿势预设/02_行走跑步移动/冲刺.fbx",He={type:fe,model:ze,pose:be,exportedAt:Te,floor:ve,modelTransform:_e,parameters:Ee,repairedFrom:qe,sourceStaticFbx:ke},Me=Object.freeze(Obj
+

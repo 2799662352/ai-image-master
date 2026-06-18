@@ -78,6 +78,8 @@ export interface ModelCapabilities {
   qualityControl?: boolean
   maxOutputs?: number
   useExtraBody?: boolean
+  /** 出多张时需显式开启组图模式（如万相 wan2.7 的 enable_sequential），且一次返回的系列图前后一致 */
+  sequentialGroup?: boolean
 }
 
 export interface GenerateImageParams {
@@ -163,8 +165,141 @@ const BUILT_IN_SITES: Record<string, ApiSite> = {
   }
 }
 
+// gpt-image-2 与腾讯 image2(custom-imagemodel-gt) 共用同一套「比例 × 分辨率(1K/2K/4K) × 清晰度」
+// 尺寸体系：30 档 size 满足 16 倍数边长 / 最大边 ≤3840 / 比例 ≤3:1 / 总像素 ∈ [655360, 8294400]。
+// 抽成共享常量，避免两处重复且保证规格一致。
+const GPT_IMAGE_2_RATIOS: RatioOption[] = [
+  { key: 'auto', label: '自适应', description: '智能' },
+  { key: '1:1', label: '方形 1:1', description: '常用' },
+  { key: '16:9', label: '横版 16:9', description: '宽屏' },
+  { key: '9:16', label: '竖版 9:16', description: '竖屏' },
+  { key: '4:3', label: '横版 4:3', description: '标准' },
+  { key: '3:4', label: '竖版 3:4', description: '标准' },
+  { key: '3:2', label: '横版 3:2', description: '经典' },
+  { key: '2:3', label: '竖版 2:3', description: '经典' },
+  { key: '21:9', label: '影院 21:9', description: '超宽屏' },
+  { key: '5:4', label: '横版 5:4', description: '传统' },
+  { key: '4:5', label: '竖版 4:5', description: '社媒' }
+]
+
+const GPT_IMAGE_2_RESOLUTIONS: ResolutionOption[] = [
+  { key: '1K', label: '1K 标准', description: '高效' },
+  { key: '2K', label: '2K 高清', description: '稍慢速度' },
+  { key: '4K', label: '4K 超清', description: '印刷所需' }
+]
+
+const GPT_IMAGE_2_QUALITIES: QualityOption[] = [
+  { key: 'auto', label: '自动', description: '由模型决定' },
+  { key: 'low', label: '低', description: '草图最省 $0.006' },
+  { key: 'medium', label: '中', description: '均衡 $0.053' },
+  { key: 'high', label: '高', description: '文字/印刷 $0.211' }
+]
+
+const GPT_IMAGE_2_RESOLUTION_MAP: Record<string, Record<string, string>> = {
+  '1:1':  { '1K': '1280x1280', '2K': '2048x2048', '4K': '2880x2880' },
+  '2:3':  { '1K': '848x1280',  '2K': '1360x2048', '4K': '2336x3520' },
+  '3:2':  { '1K': '1280x848',  '2K': '2048x1360', '4K': '3520x2336' },
+  '3:4':  { '1K': '960x1280',  '2K': '1536x2048', '4K': '2480x3312' },
+  '4:3':  { '1K': '1280x960',  '2K': '2048x1536', '4K': '3312x2480' },
+  '4:5':  { '1K': '1024x1280', '2K': '1632x2048', '4K': '2560x3216' },
+  '5:4':  { '1K': '1280x1024', '2K': '2048x1632', '4K': '3216x2560' },
+  '9:16': { '1K': '720x1280',  '2K': '1152x2048', '4K': '2160x3840' },
+  '16:9': { '1K': '1280x720',  '2K': '2048x1152', '4K': '3840x2160' },
+  '21:9': { '1K': '1280x544',  '2K': '2048x864',  '4K': '3840x1632' },
+  'auto': { '1K': '自适应',     '2K': '自适应',     '4K': '自适应' }
+}
+
 // 默认模型配置
 const DEFAULT_MODELS: Record<string, ModelConfig> = {
+  'wan2.7-image-pro': {
+    name: '万相 2.7 Pro',
+    displayName: '20s出图，阿里万相 wan2.7-image-pro，超清文生图/图像编辑/组图，文生图支持4K、编辑/组图最高2K（经 Miau API 代理，OpenAI 兼容端点）',
+    time: '20s',
+    isNew: true,
+    baseURL: 'http://175.178.198.17:3000/v1/images/generations',
+    editURL: 'http://175.178.198.17:3000/v1/images/edits',
+    apiType: 'image-generation',
+    sizeStrategy: 'seedream',
+    ratios: [
+      { key: 'auto', label: '自适应', description: '智能' },
+      { key: '1:1', label: '方形 1:1', description: '常用' },
+      { key: '4:3', label: '横版 4:3', description: '标准' },
+      { key: '3:4', label: '竖版 3:4', description: '标准' },
+      { key: '16:9', label: '横版 16:9', description: '宽屏' },
+      { key: '9:16', label: '竖版 9:16', description: '竖屏' },
+      { key: '3:2', label: '横版 3:2', description: '经典' },
+      { key: '2:3', label: '竖版 2:3', description: '经典' },
+      { key: '21:9', label: '影院 21:9', description: '超宽屏' },
+      { key: '5:4', label: '横版 5:4', description: '传统' },
+      { key: '4:5', label: '竖版 4:5', description: '社媒' }
+    ],
+    resolutions: [
+      { key: '1K', label: '1K 标准', description: '快速出图' },
+      { key: '2K', label: '2K 高清', description: '标准分辨率' },
+      { key: '4K', label: '4K 超清', description: '超高分辨率' }
+    ],
+    defaultResolution: '2K',
+    resolutionMap: {
+      '1:1': { '1K': '1024×1024', '2K': '2048×2048', '4K': '4096×4096' },
+      '4:3': { '1K': '1200×896', '2K': '2304×1728', '4K': '4608×3456' },
+      '3:4': { '1K': '896×1200', '2K': '1728×2304', '4K': '3456×4608' },
+      '16:9': { '1K': '1376×768', '2K': '2560×1440', '4K': '5120×2880' },
+      '9:16': { '1K': '768×1376', '2K': '1440×2560', '4K': '2880×5120' },
+      '3:2': { '1K': '1264×848', '2K': '2496×1664', '4K': '4992×3328' },
+      '2:3': { '1K': '848×1264', '2K': '1664×2496', '4K': '3328×4992' },
+      '21:9': { '1K': '1584×672', '2K': '3024×1296', '4K': '6048×2592' },
+      '5:4': { '1K': '1120×896', '2K': '2240×1792', '4K': '4480×3584' },
+      '4:5': { '1K': '896×1120', '2K': '1792×2240', '4K': '3584×4480' }
+    },
+    defaultParams: {
+      sequential_image_generation: 'disabled',
+      response_format: 'url',
+      size: '2K',
+      stream: false,
+      watermark: false
+    },
+    responseFormats: ['url'],
+    capabilities: {
+      multipleImages: true,
+      customSize: true,
+      referenceImage: true,
+      imageEdit: true,
+      // 组图(enable_sequential)模式 n 上限 12（模型决定实际数量，≤n）；非组图文生图 1-4
+      maxOutputs: 12,
+      resolutionControl: true,
+      sequentialGroup: true
+    }
+  },
+  'custom-imagemodel-gt': {
+    name: '腾讯 Image 2',
+    displayName: '30s出图，tokenhub 新渠道·更快更好，腾讯 image2（custom-imagemodel-gt），文生图/图片编辑，比例×分辨率(1K/2K/4K)×清晰度三参数（经 Miau API 代理，OpenAI 兼容端点）',
+    time: '30s',
+    isNew: true,
+    baseURL: 'http://175.178.198.17:3000/v1/images/generations',
+    editURL: 'http://175.178.198.17:3000/v1/images/edits',
+    apiType: 'openai',
+    sizeStrategy: 'gpt-image-2',
+    // 与 gpt-image-2 共用同一套 比例 × 分辨率 × 清晰度 规格
+    ratios: GPT_IMAGE_2_RATIOS,
+    resolutions: GPT_IMAGE_2_RESOLUTIONS,
+    defaultResolution: '2K',
+    qualities: GPT_IMAGE_2_QUALITIES,
+    defaultQuality: 'auto',
+    resolutionMap: GPT_IMAGE_2_RESOLUTION_MAP,
+    defaultParams: {
+      output_format: 'png'
+    },
+    capabilities: {
+      multipleImages: false,
+      customSize: true,
+      aspectRatioControl: true,
+      referenceImage: true,
+      imageEdit: true,
+      maxOutputs: 1,
+      resolutionControl: true,
+      qualityControl: true
+    }
+  },
   'gpt-image-2': {
     name: 'GPT Image 2',
     displayName: '60-360s，OpenAI官方旗舰，按token计费 low$0.006/med$0.053/high$0.211，比例×分辨率(1K/2K/4K)×清晰度三参数，4K+mask重绘🔥',
@@ -175,51 +310,13 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
     editURL: 'https://b.apiyi.com/v1/images/edits',
     apiType: 'openai',
     sizeStrategy: 'gpt-image-2',
-    // 比例轴：与 gpt-image-2-vip 对齐（auto + 10 比例），ratio × resolution → size
-    ratios: [
-      { key: 'auto', label: '自适应', description: '智能' },
-      { key: '1:1', label: '方形 1:1', description: '常用' },
-      { key: '16:9', label: '横版 16:9', description: '宽屏' },
-      { key: '9:16', label: '竖版 9:16', description: '竖屏' },
-      { key: '4:3', label: '横版 4:3', description: '标准' },
-      { key: '3:4', label: '竖版 3:4', description: '标准' },
-      { key: '3:2', label: '横版 3:2', description: '经典' },
-      { key: '2:3', label: '竖版 2:3', description: '经典' },
-      { key: '21:9', label: '影院 21:9', description: '超宽屏' },
-      { key: '5:4', label: '横版 5:4', description: '传统' },
-      { key: '4:5', label: '竖版 4:5', description: '社媒' }
-    ],
-    // 分辨率轴：1K/2K/4K（与 vip 对齐），不再借这一栏表达 quality
-    resolutions: [
-      { key: '1K', label: '1K 标准', description: '高效' },
-      { key: '2K', label: '2K 高清', description: '稍慢速度' },
-      { key: '4K', label: '4K 超清', description: '印刷所需' }
-    ],
+    // 比例 / 分辨率 / 清晰度 / size 体系抽到模块级常量，与腾讯 image2 复用同一套规格
+    ratios: GPT_IMAGE_2_RATIOS,
+    resolutions: GPT_IMAGE_2_RESOLUTIONS,
     defaultResolution: '2K',
-    // 清晰度轴：官转独有的 quality 档位，作为独立第三参数
-    qualities: [
-      { key: 'auto', label: '自动', description: '由模型决定' },
-      { key: 'low', label: '低', description: '草图最省 $0.006' },
-      { key: 'medium', label: '中', description: '均衡 $0.053' },
-      { key: 'high', label: '高', description: '文字/印刷 $0.211' }
-    ],
+    qualities: GPT_IMAGE_2_QUALITIES,
     defaultQuality: 'auto',
-    // size 与 vip 完全一致的 30 档（这些尺寸同时满足官转的合法尺寸约束：
-    // 16 倍数边长 / 最大边 ≤3840 / 比例 ≤3:1 / 总像素 ∈ [655360, 8294400]）。
-    // 官转额外有 quality 轴，但 size 体系与 vip 通用，便于号池限速时无缝切换。
-    resolutionMap: {
-      '1:1':  { '1K': '1280x1280', '2K': '2048x2048', '4K': '2880x2880' },
-      '2:3':  { '1K': '848x1280',  '2K': '1360x2048', '4K': '2336x3520' },
-      '3:2':  { '1K': '1280x848',  '2K': '2048x1360', '4K': '3520x2336' },
-      '3:4':  { '1K': '960x1280',  '2K': '1536x2048', '4K': '2480x3312' },
-      '4:3':  { '1K': '1280x960',  '2K': '2048x1536', '4K': '3312x2480' },
-      '4:5':  { '1K': '1024x1280', '2K': '1632x2048', '4K': '2560x3216' },
-      '5:4':  { '1K': '1280x1024', '2K': '2048x1632', '4K': '3216x2560' },
-      '9:16': { '1K': '720x1280',  '2K': '1152x2048', '4K': '2160x3840' },
-      '16:9': { '1K': '1280x720',  '2K': '2048x1152', '4K': '3840x2160' },
-      '21:9': { '1K': '1280x544',  '2K': '2048x864',  '4K': '3840x1632' },
-      'auto': { '1K': '自适应',     '2K': '自适应',     '4K': '自适应' }
-    },
+    resolutionMap: GPT_IMAGE_2_RESOLUTION_MAP,
     defaultParams: {
       output_format: 'png'
     },
@@ -1060,28 +1157,28 @@ export class ApiService {
     site: ApiSite
     signal?: AbortSignal
   }): Promise<Response> {
-    const { prompt, model, ratio, resolution, quality, referenceImages, imageBase64, modelConfig, site, signal } = options
+    const { prompt, model, ratio, resolution, quality, referenceImages, imageBase64, count, modelConfig, site, signal } = options
 
-    // gpt-image-2 / gpt-image-2-all / gpt-image-2-vip: 专用 Images API 路径
-    if (model === 'gpt-image-2-all' || model === 'gpt-image-2' || model === 'gpt-image-2-vip') {
+    // gpt-image-2 / gpt-image-2-all / gpt-image-2-vip / 腾讯 image2: 专用 Images API 路径
+    if (model === 'gpt-image-2-all' || model === 'gpt-image-2' || model === 'gpt-image-2-vip'
+        || model === 'custom-imagemodel-gt') {
       const imageSources = imageBase64 ? [imageBase64] : (referenceImages || [])
       const hasImages = imageSources.length > 0
-      const isOfficial = model === 'gpt-image-2'
-      const isVip = model === 'gpt-image-2-vip'
+      // 支持 size + quality 三参数的模型：官转 / vip / 腾讯 image2（同规格，复用 resolutionMap）
+      const acceptsSizeQuality = this.isSizeQualityImageModel(model)
       // 用户反馈：宁可等后台真正返回结果或明确报错，也不要"快失败"。
       // 三档统一拉到约 2000s（~33 分钟）当作"基本不设超时"的天花板——完成耗时主要
       // 受上游排队 / 审核触发影响，之前 1200s 偶尔仍在 2K/4K high 下被截断，导致
-      // 工具侧误报超时、实际却已生成成功。留下 isOfficial / isVip 变量是因为下面
-      // size / quality 解析仍然要按通道分支。
+      // 工具侧误报超时、实际却已生成成功。
       const timeoutMs = 2_000_000
 
-      // size 解析：官转与 VIP 共用 resolutionMap（ratio × resolution → 30 档 size），
+      // size 解析：支持 size 的模型共用 resolutionMap（ratio × resolution → 30 档 size），
       // 官逆 (-all) 不发 size（写进 prompt）。
-      const resolvedSize = (isOfficial || isVip)
+      const resolvedSize = acceptsSizeQuality
         ? this.resolveImageSizeFromMap(modelConfig, ratio, resolution)
         : undefined
-      // quality：官转与 vip 均支持（2026-06-05 实测 vip 校验 quality），来自独立的 quality 参数（不借用 resolution）
-      const resolvedQuality = (isOfficial || isVip) ? this.resolveGptImage2Quality(quality) : undefined
+      // quality：官转 / vip / 腾讯 均支持独立的 quality 参数（不借用 resolution）
+      const resolvedQuality = acceptsSizeQuality ? this.resolveGptImage2Quality(quality) : undefined
 
       if (hasImages) {
         const editUrl = this.buildRequestUrl(modelConfig, site, 'edit')
@@ -1147,6 +1244,7 @@ export class ApiService {
       resolution,
       referenceImages: resolvedRefs,
       imageBase64: resolvedImageBase64,
+      count,
       modelConfig
     })
 
@@ -1165,17 +1263,29 @@ export class ApiService {
       headers['x-api-key'] = this.apiKey!
     }
 
+    if (modelConfig.capabilities?.sequentialGroup) {
+      console.log('[Wan-Image] request URL:', url)
+      console.log('[Wan-Image] request body:', JSON.stringify(body, null, 2))
+    }
+
     // 与 gpt-image-2 系列对齐：所有模型（Gemini-native / Flux / 通用 OpenAI-compat）
     // 都给约 2000s（~33 分钟）的软天花板，避免 Nano Banana Pro 等长耗时模型在上游排队 /
     // 高峰期被过早截断（宁可等真实结果或明确报错）。
     const fetchSignal = this.composeTimeoutSignal(signal, 2_000_000)
 
-    return fetch(url, {
+    const resp = await fetch(url, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
       signal: fetchSignal,
     })
+
+    if (!resp.ok) {
+      const errText = await resp.clone().text()
+      console.error(`[ApiService] ${model} ${resp.status} @ ${url}:`, errText.slice(0, 4000))
+    }
+
+    return resp
   }
 
   /**
@@ -1245,12 +1355,11 @@ export class ApiService {
    * - gpt-image-2-all (官逆)：均不支持，回 b64_json
    */
   private buildGptImage2JsonPayload(model: string, prompt: string, size?: string, quality?: string): object {
-    const isOfficial = model === 'gpt-image-2'
-    const isVip = model === 'gpt-image-2-vip'
+    const acceptsSizeQuality = this.isSizeQualityImageModel(model)
     const payload: Record<string, unknown> = { model, prompt }
-    if (isOfficial || isVip) {
+    if (acceptsSizeQuality) {
       if (size && size !== 'auto') payload.size = size
-      if ((isOfficial || isVip) && quality) payload.quality = quality
+      if (quality) payload.quality = quality
       const cfg = this.getModelConfig(model)
       if (cfg?.defaultParams?.output_format) {
         payload.output_format = cfg.defaultParams.output_format
@@ -1299,6 +1408,15 @@ export class ApiService {
   }
 
   /**
+   * 是否为「支持 size + quality 三参数」的 Images 模型：
+   * gpt-image-2（官转）、gpt-image-2-vip（官逆）、custom-imagemodel-gt（腾讯 image2，同规格复用）。
+   * gpt-image-2-all（官逆）不在内 —— 它把尺寸写进 prompt，回 b64_json。
+   */
+  private isSizeQualityImageModel(model: string): boolean {
+    return model === 'gpt-image-2' || model === 'gpt-image-2-vip' || model === 'custom-imagemodel-gt'
+  }
+
+  /**
    * gpt-image-2 官转：独立的「清晰度 quality」参数（auto/low/medium/high）。
    * auto / 空 / 非法值都返回 undefined（不发 quality，由模型按默认处理）。
    */
@@ -1326,9 +1444,7 @@ export class ApiService {
     size?: string,
     quality?: string,
   ): Promise<Response> {
-    const isOfficial = model === 'gpt-image-2'
-    const isVip = model === 'gpt-image-2-vip'
-    const acceptsSize = isOfficial || isVip
+    const acceptsSize = this.isSizeQualityImageModel(model)
     const formData = new FormData()
     formData.append('model', model)
     formData.append('prompt', prompt)
@@ -1336,7 +1452,7 @@ export class ApiService {
     // 不给 vip 显式设 response_format —— 走 apiyi 默认的 b64_json。
     // 文档虽支持 url, 但实测返回的 URL 在国内访问不了, 留 b64_json 才能保证图片能展示。
     if (acceptsSize && size && size !== 'auto') formData.append('size', size)
-    if ((isOfficial || isVip) && quality) formData.append('quality', quality)
+    if (acceptsSize && quality) formData.append('quality', quality)
 
     let appendedCount = 0
     for (let i = 0; i < imageSources.length; i++) {
@@ -1483,9 +1599,10 @@ export class ApiService {
     resolution?: string
     referenceImages?: string[]
     imageBase64?: string
+    count?: number
     modelConfig: ModelConfig
   }): any {
-    const { prompt, model, ratio, resolution, referenceImages, imageBase64, modelConfig } = options
+    const { prompt, model, ratio, resolution, referenceImages, imageBase64, count, modelConfig } = options
 
     // Gemini Native 格式
     if (modelConfig.apiType === 'gemini-native') {
@@ -1511,7 +1628,7 @@ export class ApiService {
       })
     }
 
-    // OpenAI 兼容格式 (包括 seedream, sora_image)
+    // OpenAI 兼容格式 (万相经 newapi /v1/images/generations、seedream、sora_image 等)
     return this.buildOpenAIPayload({
       prompt,
       model,
@@ -1519,6 +1636,7 @@ export class ApiService {
       resolution,
       referenceImages,
       imageBase64,
+      count,
       modelConfig
     })
   }
@@ -1628,8 +1746,31 @@ export class ApiService {
   }
 
   /**
-   * 构建 OpenAI 兼容请求体
+   * 万相 size 参数：非 1:1 文生图用像素控制比例；其余用 1K/2K/4K 档位（官方推荐）。
+   * 组图/有参考图时 4K 自动降为 2K。
    */
+  private resolveDashScopeImageSize(
+    modelConfig: ModelConfig,
+    ratio: string | undefined,
+    resolution: string | undefined,
+    isSequentialGroup: boolean,
+    hasImageInput: boolean,
+  ): string {
+    let effectiveResolution = resolution || modelConfig.defaultResolution || '2K'
+    if (modelConfig.capabilities?.sequentialGroup && effectiveResolution === '4K' &&
+        (isSequentialGroup || hasImageInput)) {
+      effectiveResolution = '2K'
+    }
+
+    const normalizedRatio = ratio || '1:1'
+    if (normalizedRatio !== '1:1' && !hasImageInput) {
+      const pixelSize = this.resolveImageSizeFromMap(modelConfig, normalizedRatio, effectiveResolution)
+      if (pixelSize) return pixelSize
+    }
+
+    return effectiveResolution
+  }
+
   private buildOpenAIPayload(options: {
     prompt: string
     model: string
@@ -1637,27 +1778,71 @@ export class ApiService {
     resolution?: string
     referenceImages?: string[]
     imageBase64?: string
+    count?: number
     modelConfig: ModelConfig
   }): any {
-    const { prompt, model, ratio, resolution, referenceImages, imageBase64, modelConfig } = options
+    const { prompt, model, ratio, resolution, referenceImages, imageBase64, count, modelConfig } = options
 
     // 检查是否是图片生成 API 格式
     if (modelConfig.baseURL?.includes('/images/generations')) {
+      // 出图张数：UI 数量选择器 → n，按模型 maxOutputs 收敛到 [1, maxOutputs]
+      const maxOutputs = modelConfig.capabilities?.maxOutputs ?? 1
+      const requested = Math.max(1, Math.floor(count ?? 1))
+      const rawN = Math.min(requested, Math.max(1, maxOutputs))
+
+      const imageSources = imageBase64 ? [imageBase64] : (referenceImages || [])
+      const isEditOrImageInput = imageSources.length > 0
+      const isWanModel = !!modelConfig.capabilities?.sequentialGroup
+
+      // 万相：n>1 必须 enable_sequential（组图，上限 12）；否则 n 最多 4
+      const isSequentialGroup = isWanModel && rawN > 1
+      const n = isSequentialGroup ? Math.min(rawN, 12) : (isWanModel ? Math.min(rawN, 4) : rawN)
+
       const payload: any = {
         model,
         prompt,
-        n: 1
+        n
       }
 
-      // 计算尺寸
-      const size = this.getImageSize(modelConfig, ratio, resolution)
+      const size = isWanModel
+        ? this.resolveDashScopeImageSize(modelConfig, ratio, resolution, isSequentialGroup, isEditOrImageInput)
+        : (this.getImageSize(modelConfig, ratio, resolution) ?? undefined)
       if (size) {
         payload.size = size
       }
 
-      // 添加图片
-      const imageSources = imageBase64 ? [imageBase64] : (referenceImages || [])
-      if (imageSources.length > 0) {
+      if (isWanModel) {
+        payload.response_format = modelConfig.defaultParams?.response_format ?? 'url'
+        payload.watermark = modelConfig.defaultParams?.watermark ?? false
+
+        // new-api ali 通道从 Extra["parameters"] / Extra["input"] 透传 DashScope 原生字段
+        const parameters: Record<string, unknown> = {
+          n,
+          watermark: modelConfig.defaultParams?.watermark ?? false,
+        }
+        if (size) {
+          parameters.size = size.includes('x') ? size.replace(/x/g, '*') : size
+        }
+        if (isSequentialGroup) {
+          parameters.enable_sequential = true
+        } else if (!isEditOrImageInput) {
+          parameters.thinking_mode = modelConfig.defaultParams?.thinking_mode ?? true
+        }
+        payload.parameters = parameters
+
+        // 官方 wan2.7 要求 input.messages；new-api 不会把顶层 image 转成 messages
+        const contentParts: Array<{ text?: string; image?: string }> = []
+        for (const img of imageSources) {
+          contentParts.push({ image: img })
+        }
+        contentParts.push({ text: prompt })
+        payload.input = {
+          messages: [{
+            role: 'user',
+            content: imageSources.length > 0 ? contentParts : [{ text: prompt }],
+          }],
+        }
+      } else if (imageSources.length > 0) {
         payload.image = imageSources[0]
         if (imageSources.length > 1) {
           payload.images = imageSources
@@ -1746,10 +1931,11 @@ export class ApiService {
   /**
    * 解析响应
    */
-  private parseResponse(response: Response, _modelConfig: ModelConfig): Promise<GenerateResult> {
+  private parseResponse(response: Response, modelConfig: ModelConfig): Promise<GenerateResult> {
     return response.json().then(data => {
       if (!response.ok) {
-        const apiMsg = data.error?.message
+        // OpenAI 形态 data.error.message；DashScope 原生形态顶层 code/message
+        const apiMsg = data.error?.message || (data.code ? `${data.code}: ${data.message}` : data.message)
         let friendlyMsg: string
         switch (response.status) {
           case 401: friendlyMsg = 'API Key 无效或已过期'; break
@@ -1767,10 +1953,24 @@ export class ApiService {
         }
       }
 
-      // 解析图片 URL
-      const images = this.extractImages(data)
-      
+      const dashScopeError = getDashScopeErrorMessage(data)
+      if (dashScopeError) {
+        if (modelConfig.capabilities?.sequentialGroup) {
+          console.error('[Wan-Image] API error in 200 body:', dashScopeError, data)
+        }
+        return {
+          success: false,
+          error: dashScopeError,
+          rawResponse: data
+        }
+      }
+
+      const images = extractImagesFromApiResponse(data)
+
       if (images.length === 0) {
+        if (modelConfig.capabilities?.sequentialGroup) {
+          console.error('[Wan-Image] empty images, raw response:', JSON.stringify(data).slice(0, 8000))
+        }
         return {
           success: false,
           error: '未能从响应中提取图片',
@@ -1785,57 +1985,6 @@ export class ApiService {
         rawResponse: data
       }
     })
-  }
-
-  /**
-   * 从响应中提取图片
-   */
-  private extractImages(data: any): string[] {
-    const images: string[] = []
-
-    // Gemini 格式
-    if (data.candidates) {
-      for (const candidate of data.candidates) {
-        if (candidate.content?.parts) {
-          for (const part of candidate.content.parts) {
-            if (part.inlineData?.data) {
-              images.push(`data:${part.inlineData.mimeType || 'image/png'};base64,${part.inlineData.data}`)
-            }
-          }
-        }
-      }
-    }
-
-    // OpenAI Images 格式 (data[].url / data[].b64_json)
-    if (data.data) {
-      for (const item of data.data) {
-        if (item.url) images.push(item.url)
-        if (item.b64_json) {
-          const b64 = item.b64_json
-          images.push(b64.startsWith('data:') ? b64 : `data:image/png;base64,${b64}`)
-        }
-      }
-    }
-
-    // Chat Completions 格式 (gpt-image-2-all, sora_image 等)
-    // 图片 URL 嵌入在 choices[].message.content 的 markdown 文本中
-    if (data.choices && images.length === 0) {
-      for (const choice of data.choices) {
-        const content = choice.message?.content
-        if (typeof content === 'string') {
-          const urlMatches = content.match(/https?:\/\/[^\s)"\]]+\.(?:png|jpg|jpeg|webp|gif)/gi)
-          if (urlMatches) {
-            images.push(...urlMatches)
-          }
-          const dataUrlMatches = content.match(/data:image\/[^\s)"\]]+/gi)
-          if (dataUrlMatches) {
-            images.push(...dataUrlMatches)
-          }
-        }
-      }
-    }
-
-    return images
   }
 
   /**
@@ -2360,4 +2509,204 @@ export function initApiServiceGlobal(): ApiService {
   console.log('[V16.3] ApiService TypeScript 版本已加载 (废弃警告已启用)')
 
   return service
+}
+
+// ========================================
+// 响应解析（万相 / new-api metadata 兼容，可单测）
+// ========================================
+
+function normalizeExtractedImageSource(value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  if (/^https?:\/\//i.test(trimmed)) return trimmed
+  if (trimmed.toLowerCase().startsWith('data:image/')) return trimmed
+  return `data:image/png;base64,${trimmed}`
+}
+
+function extractImagesFromDashScopeOutput(output: unknown, sink: string[], seen: Set<string>): void {
+  if (!output || typeof output !== 'object') return
+  const out = output as Record<string, unknown>
+
+  const results = out.results
+  if (Array.isArray(results)) {
+    for (const item of results) {
+      if (!item || typeof item !== 'object') continue
+      const row = item as Record<string, unknown>
+      if (typeof row.url === 'string' && row.url && !seen.has(row.url)) {
+        seen.add(row.url)
+        sink.push(row.url)
+      }
+      if (typeof row.b64_image === 'string' && row.b64_image) {
+        const normalized = normalizeExtractedImageSource(row.b64_image)
+        if (normalized && !seen.has(normalized)) {
+          seen.add(normalized)
+          sink.push(normalized)
+        }
+      }
+    }
+  }
+
+  const choices = out.choices
+  if (!Array.isArray(choices)) return
+
+  for (const choice of choices) {
+    if (!choice || typeof choice !== 'object') continue
+    const message = (choice as Record<string, unknown>).message as Record<string, unknown> | undefined
+    const parts = message?.content
+    if (!Array.isArray(parts)) continue
+
+    for (const part of parts) {
+      if (!part || typeof part !== 'object') continue
+      const image = (part as Record<string, unknown>).image
+      if (typeof image !== 'string' || !image) continue
+      const normalized = normalizeExtractedImageSource(image)
+      if (normalized && !seen.has(normalized)) {
+        seen.add(normalized)
+        sink.push(normalized)
+      }
+    }
+  }
+}
+
+function parseMetadataBody(metadata: unknown): unknown {
+  if (typeof metadata === 'string') {
+    try {
+      return JSON.parse(metadata)
+    } catch {
+      return null
+    }
+  }
+  return metadata
+}
+
+/** 从 HTTP 200 的 DashScope 错误体提取可读信息 */
+export function getDashScopeErrorMessage(data: unknown): string | null {
+  if (!data || typeof data !== 'object') return null
+  const body = data as Record<string, unknown>
+
+  if (body.error && typeof body.error === 'object') {
+    const msg = (body.error as Record<string, unknown>).message
+    if (typeof msg === 'string' && msg) return msg
+  }
+
+  const code = body.code
+  const message = body.message
+  if (typeof code === 'string' && code && typeof message === 'string' && message) {
+    const output = body.output
+    const hasImages = output && typeof output === 'object'
+      && (
+        Array.isArray((output as Record<string, unknown>).choices)
+        || Array.isArray((output as Record<string, unknown>).results)
+      )
+    if (!hasImages) return `${code}: ${message}`
+  }
+
+  const meta = parseMetadataBody(body.metadata)
+  if (meta && typeof meta === 'object') {
+    const metaBody = meta as Record<string, unknown>
+    const metaCode = metaBody.code
+    const metaMessage = metaBody.message
+    if (typeof metaCode === 'string' && metaCode && typeof metaMessage === 'string' && metaMessage) {
+      const metaOutput = metaBody.output
+      const hasMetaImages = metaOutput && typeof metaOutput === 'object'
+        && (
+          Array.isArray((metaOutput as Record<string, unknown>).choices)
+          || Array.isArray((metaOutput as Record<string, unknown>).results)
+        )
+      if (!hasMetaImages) return `${metaCode}: ${metaMessage}`
+    }
+  }
+
+  return null
+}
+
+/** 从 OpenAI / DashScope / new-api(metadata) 响应中提取全部图片 URL 或 data URL */
+export function extractImagesFromApiResponse(data: unknown): string[] {
+  if (!data || typeof data !== 'object') return []
+
+  const images: string[] = []
+  const seen = new Set<string>()
+  const body = data as Record<string, unknown>
+
+  // new-api 会把原始 DashScope body 放在 metadata（组图时比 data[] 更完整）
+  const metadata = parseMetadataBody(body.metadata)
+  if (metadata && typeof metadata === 'object') {
+    extractImagesFromDashScopeOutput((metadata as Record<string, unknown>).output, images, seen)
+  }
+
+  // DashScope 原生顶层 output
+  extractImagesFromDashScopeOutput(body.output, images, seen)
+
+  // OpenAI Images: data[].url / data[].b64_json
+  if (Array.isArray(body.data)) {
+    for (const item of body.data) {
+      if (!item || typeof item !== 'object') continue
+      const row = item as Record<string, unknown>
+      if (typeof row.url === 'string' && row.url && !seen.has(row.url)) {
+        seen.add(row.url)
+        images.push(row.url)
+      }
+      if (typeof row.b64_json === 'string' && row.b64_json) {
+        const normalized = normalizeExtractedImageSource(row.b64_json)
+        if (normalized && !seen.has(normalized)) {
+          seen.add(normalized)
+          images.push(normalized)
+        }
+      }
+    }
+  }
+
+  if (images.length > 0) return images
+
+  // Gemini 格式
+  if (Array.isArray(body.candidates)) {
+    for (const candidate of body.candidates) {
+      if (!candidate || typeof candidate !== 'object') continue
+      const parts = (candidate as Record<string, unknown>).content as Record<string, unknown> | undefined
+      const partList = parts?.parts
+      if (!Array.isArray(partList)) continue
+      for (const part of partList) {
+        if (!part || typeof part !== 'object') continue
+        const inlineData = (part as Record<string, unknown>).inlineData as Record<string, unknown> | undefined
+        if (typeof inlineData?.data === 'string' && inlineData.data) {
+          const mime = typeof inlineData.mimeType === 'string' ? inlineData.mimeType : 'image/png'
+          const dataUrl = `data:${mime};base64,${inlineData.data}`
+          if (!seen.has(dataUrl)) {
+            seen.add(dataUrl)
+            images.push(dataUrl)
+          }
+        }
+      }
+    }
+  }
+
+  // Chat Completions markdown 内嵌 URL
+  if (Array.isArray(body.choices)) {
+    for (const choice of body.choices) {
+      if (!choice || typeof choice !== 'object') continue
+      const content = (choice as Record<string, unknown>).message as Record<string, unknown> | undefined
+      const text = content?.content
+      if (typeof text !== 'string') continue
+      const urlMatches = text.match(/https?:\/\/[^\s)"\]]+\.(?:png|jpg|jpeg|webp|gif)/gi)
+      if (urlMatches) {
+        for (const url of urlMatches) {
+          if (!seen.has(url)) {
+            seen.add(url)
+            images.push(url)
+          }
+        }
+      }
+      const dataUrlMatches = text.match(/data:image\/[^\s)"\]]+/gi)
+      if (dataUrlMatches) {
+        for (const url of dataUrlMatches) {
+          if (!seen.has(url)) {
+            seen.add(url)
+            images.push(url)
+          }
+        }
+      }
+    }
+  }
+
+  return images
 }

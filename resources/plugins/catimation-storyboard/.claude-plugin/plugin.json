@@ -1,0 +1,10 @@
+{
+  "name": "catimation-storyboard",
+  "description": "分镜技法库:28 个 storyboard-* craft skill,覆盖光影重建、角色演技、构图遮挡、调色、运动学反推、负向控制、物理、对白、风格、伪透视、情绪蒙太奇等单镜画面打磨与参考图反推技法。",
+  "version": "1.0.0",
+  "author": { "name": "CATIMATION", "url": "https://github.com/zuozuoliang999" },
+  "homepage": "https://github.com/zuozuoliang999/catimation-plugins",
+  "repository": "https://github.com/zuozuoliang999/catimation-plugins",
+  "license": "MIT",
+  "keywords": ["storyboard", "prompt", "lighting", "composition", "catimation", "image", "video"]
+}

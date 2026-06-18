@@ -1,0 +1,9 @@
+{
+  "name": "screenwriter-docx-tools",
+  "version": "1.0.0",
+  "private": true,
+  "description": "可选的 .docx 导出工具(好莱坞格式剧本 / 双语 / 分场大纲)。运行前先 npm install docx。",
+  "dependencies": {
+    "docx": "^9.0.0"
+  }
+}

@@ -1,6 +1,28 @@
 {
   "models": [
     {
+      "id": "qwen3.7-max",
+      "name": "Qwen3.7 Max",
+      "displayName": "Qwen3.7 Max",
+      "shortName": "Qwen3.7 Max",
+      "description": "阿里通义千问 3.7 旗舰版，顶级理解与深度推理（经独立代理站访问）",
+      "features": ["旗舰性能", "深度推理", "多模态分析"],
+      "price": "按代理站计费",
+      "icon": "🌟",
+      "recommended": true
+    },
+    {
+      "id": "qwen3.7-plus",
+      "name": "Qwen3.7 Plus",
+      "displayName": "Qwen3.7 Plus",
+      "shortName": "Qwen3.7 Plus",
+      "description": "通义千问 3.7 增强版，多模态理解，均衡性价比（经独立代理站访问）",
+      "features": ["多模态", "均衡性价比", "快速响应"],
+      "price": "按代理站计费",
+      "icon": "✨",
+      "recommended": true
+    },
+    {
       "id": "gpt-5.2",
       "name": "GPT-5.2",
       "displayName": "GPT-5.2",

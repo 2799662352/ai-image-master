@@ -1,0 +1,189 @@
+<h2>图片 / 文件在消息流里怎么显示？双击点开干嘛？</h2>
+<p class="subtitle">两个独立的小问题：(1) 内联布局长啥样 — 上面对比；(2) 双击预览的方式 — 下面三选一</p>
+
+<style>
+  .demo {
+    background: #09090b;
+    border: 1px solid #27272a;
+    border-radius: 8px;
+    padding: 12px 10px;
+    font-size: 11px;
+    color: #d4d4d8;
+    height: 320px;
+    overflow: hidden;
+  }
+  .bub {
+    background: #18181b;
+    padding: 7px 10px;
+    border-radius: 8px;
+    margin-bottom: 8px;
+    border-left: 2px solid #67e8f9;
+  }
+  .bub.assist { border-left-color: #6ee7b7; background: #064e3b14; }
+  .grid2 {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 4px; margin-top: 6px;
+  }
+  .grid3 {
+    display: grid; grid-template-columns: 1fr 1fr 1fr;
+    gap: 4px; margin-top: 6px;
+  }
+  .thumb {
+    aspect-ratio: 1;
+    background: linear-gradient(135deg, #1e3a8a, #7c3aed);
+    border-radius: 4px; position: relative;
+    cursor: zoom-in;
+  }
+  .thumb.t2 { background: linear-gradient(135deg, #be185d, #f59e0b); }
+  .thumb.t3 { background: linear-gradient(135deg, #14532d, #84cc16); }
+  .thumb.t4 { background: linear-gradient(135deg, #7c2d12, #f97316); }
+  .thumb .sz { position: absolute; bottom: 2px; right: 3px; color: white;
+                font-size: 9px; background: rgba(0,0,0,0.5); padding: 0 3px; border-radius: 2px; }
+  .thumb-row {
+    display: flex; gap: 4px; margin-top: 6px; overflow-x: auto;
+  }
+  .thumb-row .thumb { flex: 0 0 80px; }
+  .filechip {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: #18181b; border: 1px solid #27272a; border-radius: 6px;
+    padding: 4px 8px; margin-right: 6px; margin-top: 4px;
+    font-size: 10px;
+  }
+  .lightbox {
+    position: absolute; inset: 0; background: rgba(0,0,0,0.92);
+    display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 12px;
+  }
+  .lb-img {
+    width: 70%; max-height: 60%; aspect-ratio: 4/3;
+    background: linear-gradient(135deg, #1e3a8a, #7c3aed);
+    border-radius: 4px;
+  }
+  .lb-toolbar {
+    display: flex; gap: 12px; color: #a1a1aa; font-size: 10px;
+  }
+  .lb-arrow {
+    position: absolute; top: 50%; transform: translateY(-50%);
+    color: #a1a1aa; font-size: 18px; padding: 8px;
+  }
+  .lb-arrow.l { left: 8px; } .lb-arrow.r { right: 8px; }
+  .ospin {
+    display: inline-flex; gap: 4px; align-items: center;
+    color: #71717a; font-size: 10px;
+  }
+  .pane-split { display: flex; height: 100%; }
+  .pane-l { flex: 1; padding: 6px; border-right: 1px solid #27272a; overflow: hidden; }
+  .pane-r { flex: 1.4; padding: 8px; background: #09090b; }
+</style>
+
+<h3 style="margin-top:6px;color:#a1a1aa">内联布局对比（消息气泡里）</h3>
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">用户上传 4 张图 + 1 个文件</div>
+    <div class="mockup-body">
+      <div class="demo">
+        <div class="bub">
+          帮我把这 4 张参考图风格融合成一张，配合 brief.pdf 的描述。
+          <div class="grid2">
+            <div class="thumb"><span class="sz">2.1MB</span></div>
+            <div class="thumb t2"><span class="sz">1.4MB</span></div>
+            <div class="thumb t3"><span class="sz">3.2MB</span></div>
+            <div class="thumb t4"><span class="sz">1.8MB</span></div>
+          </div>
+          <span class="filechip">📄 brief.pdf <span style="color:#71717a">· 240KB</span></span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="mockup">
+    <div class="mockup-header">Agent 生成 3 张候选图</div>
+    <div class="mockup-body">
+      <div class="demo">
+        <div class="bub assist">
+          融合方向给你 3 个候选，第 2 张构图最稳，但第 3 张更接近 brief 里"霓虹反射"那条要求：
+          <div class="grid3">
+            <div class="thumb t3"><span class="sz">v1</span></div>
+            <div class="thumb t4"><span class="sz">v2</span></div>
+            <div class="thumb t2"><span class="sz">v3</span></div>
+          </div>
+          要哪张就直接说，我可以再迭代。
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top:18px">双击图片之后...？</h3>
+<div class="cards">
+  <div class="card" data-choice="lightbox" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="demo" style="position:relative;height:240px">
+        <div class="bub">用户气泡</div>
+        <div class="lightbox">
+          <span class="lb-arrow l">‹</span>
+          <div class="lb-img"></div>
+          <span class="lb-arrow r">›</span>
+          <div class="lb-toolbar">2 / 4 · ⌨ ← → 切换 · Esc 关闭 · ↓ 下载</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A · Lightbox（推荐）</h3>
+      <p>panel 内全屏遮罩，键盘左右切换 thread 内所有图，Esc 关闭，↓ 保存。不需要离开 app。</p>
+      <div style="font-size:10px;color:#6ee7b7">+ 浏览/比较体验最好</div>
+    </div>
+  </div>
+
+  <div class="card" data-choice="os" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="demo" style="height:240px">
+        <div class="bub">用户气泡</div>
+        <div class="grid3" style="margin-top:30px">
+          <div class="thumb"></div>
+          <div class="thumb t2"></div>
+          <div class="thumb t3"></div>
+        </div>
+        <div class="ospin" style="margin-top:18px;justify-content:center">
+          <span>↗ 调用系统默认看图工具打开</span>
+        </div>
+        <div style="background:#0a0a0a;border:1px solid #27272a;border-radius:4px;padding:6px;margin-top:8px;color:#a1a1aa;font-size:10px">
+          🪟 Windows 照片 · v2.png &nbsp;&nbsp; <span style="color:#71717a">100% · 可缩放/旋转</span>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B · OS 默认</h3>
+      <p>双击 → <code>shell.openPath()</code>，调系统看图工具。简单，但跳出 app。</p>
+      <div style="font-size:10px;color:#6ee7b7">+ 0 实现成本</div>
+      <div style="font-size:10px;color:#fca5a5">− 要切窗口，不能在 chat 里直接对比</div>
+    </div>
+  </div>
+
+  <div class="card" data-choice="sidepane" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="demo" style="height:240px;padding:0">
+        <div class="pane-split">
+          <div class="pane-l">
+            <div class="bub" style="margin:6px 0">用户气泡</div>
+            <div class="grid3"><div class="thumb"></div><div class="thumb t2" style="border:2px solid #67e8f9"></div><div class="thumb t3"></div></div>
+          </div>
+          <div class="pane-r">
+            <div style="font-size:9px;color:#71717a;margin-bottom:4px">v2.png · 1.4MB · ✕</div>
+            <div style="aspect-ratio:1;background:linear-gradient(135deg, #be185d, #f59e0b);border-radius:4px"></div>
+            <div style="display:flex;gap:8px;margin-top:6px;font-size:10px;color:#a1a1aa">
+              <span>↓ 下载</span><span>📋 复制</span><span>🔍 100%</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C · Side Pane 分屏</h3>
+      <p>chat panel 内右侧拉出预览栏，再次双击或点 ✕ 关闭。可以一边看图一边继续聊。</p>
+      <div style="font-size:10px;color:#6ee7b7">+ 边聊边看，不打断</div>
+      <div style="font-size:10px;color:#fca5a5">− chat 和预览都被压缩，panel 至少要 600px 才好用</div>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:14px">非图片文件（pdf / json / md / 任意）双击 → 一律调系统默认（B 行为），因为 panel 里渲染 PDF 太重。</p>

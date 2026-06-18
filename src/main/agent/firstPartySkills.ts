@@ -170,6 +170,13 @@ image_gen skill: they render inside the chat AND persist results to local files
    composition, lighting, and mood. Keep it concise.
 2. If the user asks for exactly ONE image, call \`generate_image\` with:
    - \`prompt\` (required): the description from step 1.
+   - \`model\` (optional): rendering channel. **Omit it** for the default
+     \`gpt-image-2-vip\` (stable). Only set it when the user explicitly names a
+     channel (see "Choosing a model" below):
+     - \`custom-imagemodel-gt\` — 腾讯 image2 (same ratio/resolution/quality spec).
+       **需把 API 站点切到 Miau API**(见下方「站点要求」)。
+     - \`wan2.7-image-pro\` — 阿里万相 2.7 pro (超清文生图 / 图像编辑 / 组图).
+       **需把 API 站点切到 Miau API**(见下方「站点要求」)。
    - \`ratio\` (optional): aspect ratio, e.g. \`1:1\`, \`16:9\`, \`9:16\`, \`4:3\`, \`3:2\`.
      Omit or \`auto\` lets the model decide.
    - \`resolution\` (optional): clarity tier — prefer \`2K\` by default. Use \`1K\`
@@ -180,12 +187,11 @@ image_gen skill: they render inside the chat AND persist results to local files
    - \`referenceImages\` (optional but **important**): array of local file paths
      or data/http URLs for image-to-image / editing. **If the user gave you any
      image material, you MUST reuse it here** (see "Reference images" below).
-   - Do **not** pass \`model\` — the channel is fixed to \`gpt-image-2-vip\`.
 3. If the user asks for TWO OR MORE images, call \`generate_images\` ONCE with:
    - \`prompts\` (required): one prompt per requested image. If the user asks for
      N images, provide exactly N prompts.
-   - shared \`ratio\`, \`resolution\`, \`quality\`, and \`referenceImages\` when
-     appropriate.
+   - shared \`model\` (optional, same choices as above), \`ratio\`, \`resolution\`,
+     \`quality\`, and \`referenceImages\` when appropriate.
    - Do not spawn subagents and do not call \`generate_image\` one-by-one.
      \`generate_images\` performs the parallel fan-out internally and returns one
      combined result.
@@ -216,6 +222,33 @@ image_gen skill: they render inside the chat AND persist results to local files
      (\`exit 124\`). The path is already in the return; trust it.
    If the user says the image does not match, offer to regenerate with an
    improved prompt. Keep confirmations short; don't over-narrate.
+
+## Choosing a model (default vs. 腾讯 / 万相)
+
+The \`model\` param is **optional**. By default (omit it) generation runs on the
+stable \`gpt-image-2-vip\` channel — keep doing that for ordinary requests. Only
+switch when the user *explicitly* asks for a specific channel:
+
+- **\`custom-imagemodel-gt\` (腾讯 image2)** — pick when the user says 腾讯 /
+  tencent / image2 / 腾讯模型. Same ratio × resolution(1K/2K/4K) × quality
+  surface as the default, so all the other params behave identically.
+- **\`wan2.7-image-pro\` (阿里万相 2.7 pro)** — pick when the user says 万相 /
+  wanxiang / wan / 通义万相, OR when they want a **consistent multi-image 组图
+  series**. Wan excels at 超清文生图、图像编辑、组图; it also supports 4K
+  (text-to-image only — editing/组图 cap at 2K).
+- All three accept \`referenceImages\` for image-to-image / editing.
+
+### ⚠️ 站点要求(重要 — 用 腾讯 image2 / 万相 2.7 前必读)
+
+\`custom-imagemodel-gt\`(腾讯 image2)和 \`wan2.7-image-pro\`(阿里万相 2.7 pro)
+**都只经 Miau API 代理提供**。调用这两个 \`model\` 之前,必须先在
+**「API 设置 → ① 选择 API 站点」里把当前站点切到 \`Miau API\`**。原因:应用发请求时
+会用「当前选中站点」的域名替换模型端点的域名,站点不对时这两个渠道会被发到错误域名
+(如 API易官方)而直接失败。默认 \`gpt-image-2-vip\` 不受此限制,任意站点都可用;
+若用户要用 腾讯 image2 / 万相 而当前站点不是 Miau API,先提醒切站点再生成。
+
+When the user does not name a channel, **do not guess** — just omit \`model\` and
+use the default. Never invent a model name; only these three values are valid.
 
 ## Reference images — reuse the user's material (important)
 

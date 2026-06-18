@@ -7,15 +7,16 @@
  *   1. Read the SKILL.md `description` for the catalog entry.
  *   2. Look up the version from `resources/codex-skills/skill-versions.json`.
  *   3. Build a zip of the skill folder (SKILL.md + references/*).
- *   4. Upload the zip to `cos://<bucket>/skills/<name>-<version>.zip`.
+ *   4. Upload the zip to `cos://<bucket>/skills/<name>-<version>-<sha8>.zip`.
  *   5. Aggregate catalog entries and upload `cos://<bucket>/skills/catalog.json`.
  *
  * NOTE: zips are NOT byte-stable across runs (jszip stamps internal
- * timestamps we don't control), so re-running the publish produces a
- * different sha256 even if SKILL.md hasn't changed. That's fine — the client
- * downloads the zip, hashes it, and compares to `sha256` in the freshly
- * uploaded catalog.json (which carries the matching digest for THIS run).
- * The catalog is the single source of truth at install time.
+ * timestamps we don't control). Rather than fight that, the zip filename is
+ * CONTENT-ADDRESSED (a `-<sha8>` suffix): a content change yields a new object
+ * instead of overwriting, so even a stale CDN-cached catalog still resolves to
+ * an existing zip whose digest matches its entry — the sha256 check can never
+ * be tripped by cache skew. The catalog remains the single source of truth at
+ * install time; the client hashes the downloaded zip and compares to `sha256`.
  *
  * Env vars (reads `.env` automatically):
  *   COS_SECRET_ID         (required)
@@ -192,7 +193,12 @@ async function main() {
     const zipBuf = await buildSkillZip(skillDir)
     const digest = sha256(zipBuf)
     const size = zipBuf.length
-    const key = `${Prefix}${skillName}-${version}.zip`
+    // Content-addressed filename: the sha8 suffix makes the object immutable
+    // per content. Re-publishing a version with changed bytes produces a NEW
+    // object rather than overwriting, so a stale cached catalog still points at
+    // an existing (old) zip whose digest matches — no sha256 mismatch can ever
+    // block install/update from CDN cache skew (review finding C1).
+    const key = `${Prefix}${skillName}-${version}-${digest.slice(0, 8)}.zip`
     const url = `https://${Bucket}.cos.${Region}.myqcloud.com/${key}`
 
     console.log(`  ⬆ ${skillName}@${version} — ${(size / 1024).toFixed(1)} KB  sha256=${digest.slice(0, 12)}…`)

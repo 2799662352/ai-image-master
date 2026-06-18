@@ -1,0 +1,185 @@
+{
+ "1440": {
+  "count": 3,
+  "samples": [
+   ",ru=\"high\",au=[{key:\"1080p\",label:\"1080p\",short:1080},{key:\"1440p\",label:\"1440p\",short:1440},{key:\"4k\",label:\"4K\",short:2160}],nu=\"1080p\";function lu(t,e){const i=\"number\"==typeof ",
+   "[{key:\"1080p\",label:\"1080p\",short:1080},{key:\"1440p\",label:\"1440p\",short:1440},{key:\"4k\",label:\"4K\",short:2160}],nu=\"1080p\";function lu(t,e){const i=\"number\"==typeof e&&e>0?e:16/9;",
+   ",label:\"1080p\",short:1080},{key:\"1440p\",label:\"1440p\",short:1440},{key:\"4k\",label:\"4K\",short:2160}],nu=\"1080p\";function lu(t,e){const i=\"number\"==typeof e&&e>0?e:16/9;let o,r;retur"
+  ]
+ },
+ "1920": {
+  "count": 3,
+  "samples": [
+   "(0,t)))})),P=g(\"undefined\"!=typeof window?window.innerWidth:1920),N=o((()=>{const t=i.hasPanorama?2080:1920;return P.value<t})),A=o((()=>P.value<1280)),B=o((()=>{const t=st(i.aspec",
+   "indow.innerWidth:1920),N=o((()=>{const t=i.hasPanorama?2080:1920;return P.value<t})),A=o((()=>P.value<1280)),B=o((()=>{const t=st(i.aspect).ratio;return au.map((e=>{const i=lu(e.sh",
+   "wShort\"))),_=g(\"undefined\"!=typeof window?window.innerWidth:1920),E=o((()=>_.value<1600)),q=o((()=>_.value<1280));function k(){_.value=window.innerWidth}return I((()=>{window.addEv"
+  ]
+ },
+ "2048": {
+  "count": 5,
+  "samples": [
+   "name=\"humanoid\";const i=new t.MeshStandardMaterial({color:10204835,roughness:.7,metalness:0}),o=(o,r,a,n)=>{const l=new t.Mesh(o,i);l.position.set(r,a,n),e.add(l)};return o(new t.S",
+   "r\":{\"x\":-68.29,\"y\":-16.47,\"z\":-3.14},\"quaternion\":{\"x\":-0.552048,\"y\":-0.133683,\"z\":0.057908,\"w\":0.820986},\"position\":{\"x\":0.000005,\"y\":28.328835,\"z\":-0.000001}},\"mixamorigRightShou",
+   "Euler\":{\"x\":44.58,\"y\":20.07,\"z\":-72.83},\"quaternion\":{\"x\":0.204882,\"y\":0.351429,\"z\":-0.487665,\"w\":0.772466},\"position\":{\"x\":0,\"y\":10.838176,\"z\":0}},\"mixamorigRightForeArm\":{\"label\"",
+   "onEuler\":{\"x\":23.71,\"y\":-1.69,\"z\":3.65},\"quaternion\":{\"x\":0.204815,\"y\":-0.020931,\"z\":0.028163,\"w\":0.978172},\"position\":{\"x\":0,\"y\":3.6,\"z\":0}},\"mixamorigRightHandThumb2\":{\"label\":\"右"
+  ]
+ },
+ "2160": {
+  "count": 3,
+  "samples": [
+   "Euler\":{\"x\":-23.8,\"y\":-7.75,\"z\":39.13},\"quaternion\":{\"x\":-0.216009,\"y\":0.006547,\"z\":0.340076,\"w\":0.91523},\"position\":{\"x\":0,\"y\":3.416271,\"z\":0}},\"mixamorigRightHandRing3\":{\"label\":",
+   "Euler\":{\"x\":-23.8,\"y\":-7.75,\"z\":39.13},\"quaternion\":{\"x\":-0.21601,\"y\":0.006546,\"z\":0.340076,\"w\":0.91523},\"position\":{\"x\":0,\"y\":3.416271,\"z\":0}},\"mixamorigRightHandRing3\":{\"label\":\"",
+   "1440p\",label:\"1440p\",short:1440},{key:\"4k\",label:\"4K\",short:2160}],nu=\"1080p\";function lu(t,e){const i=\"number\"==typeof e&&e>0?e:16/9;let o,r;return i>=1?(r=t,o=Math.round(t*i)):(o"
+  ]
+ },
+ "3840": {
+  "count": 3,
+  "samples": [
+   "nEuler\":{\"x\":27.82,\"y\":0.57,\"z\":17.22},\"quaternion\":{\"x\":0.238408,\"y\":-0.031232,\"z\":0.146475,\"w\":0.959547},\"position\":{\"x\":-3.002975,\"y\":3.788809,\"z\":2.167149}},\"左手拇指第2节\":{\"label\":",
+   ".75,\"y\":-24.62,\"z\":75.84},\"quaternion\":{\"x\":-0.172199,\"y\":0.384086,\"z\":-0.491224,\"w\":-0.762577},\"position\":{\"x\":-4.56997,\"y\":11.195844,\"z\":-0.806632}},\"mixamorigRightArm\":{\"label\":",
+   "nEuler\":{\"x\":27.82,\"y\":0.57,\"z\":17.22},\"quaternion\":{\"x\":0.238409,\"y\":-0.031232,\"z\":0.146475,\"w\":0.959547},\"position\":{\"x\":-3.002975,\"y\":3.788809,\"z\":2.167149}},\"左手拇指第2节\":{\"label\":"
+  ]
+ },
+ "PerspectiveCamera": {
+  "count": 3,
+  "samples": [
+   "his.scene.background=new i.Color(2895930),this.camera=new i.PerspectiveCamera(Ut(this._lensKey).fov,n/l,.01,2e3),this._cameraDistance=8,this._setCameraOrbit(this._cameraDistance),t",
+   "aSlots[0]||null)}_buildSlotCamera(t){const e=new this.THREE.PerspectiveCamera(t.fov,16/9,.1,2e3);return e.userData.__directorSlotCamera=!0,this._applySlotToCamera(t,e),e}_applySlot",
+   "value));t&&E.setCursorState(t)}t?.THREE&&!z&&(z=new t.THREE.PerspectiveCamera(50,16/9,.1,2e3),q())},disableSceneOverlay:function(){E&&E.detach(),z=null,T={x:0,y:0,w:0,h:0},a.value="
+  ]
+ },
+ "GridHelper": {
+  "count": 0,
+  "samples": []
+ },
+ "maxDistance": {
+  "count": 2,
+  "samples": [
+   "ereClip(),this.orbit&&(this.orbit.minDistance=.5,this.orbit.maxDistance=200,this.orbit.update()),!0}clearSplats(){if(!this._modelMap||0===this._modelMap.size)return!1;const t=[];fo",
+   ".camera.lookAt(0,0,0),this.orbit.minDistance=.01,this.orbit.maxDistance=1/0,this.orbit.update(),this._cameraDistance=4,this.events.emit(\"camera:distance\",4)}_registerModel(t,e,i){c"
+  ]
+ },
+ "minDistance": {
+  "count": 2,
+  "samples": [
+   ");return this._syncGridSphereClip(),this.orbit&&(this.orbit.minDistance=.5,this.orbit.maxDistance=200,this.orbit.update()),!0}clearSplats(){if(!this._modelMap||0===this._modelMap.s",
+   "ra.position.set(0,0,4),this.camera.lookAt(0,0,0),this.orbit.minDistance=.01,this.orbit.maxDistance=1/0,this.orbit.update(),this._cameraDistance=4,this.events.emit(\"camera:distance\""
+  ]
+ },
+ "captureStream": {
+  "count": 4,
+  "samples": [
+   "法导出视频\");const d=t.getCanvas?.();if(!d||\"function\"!=typeof d.captureStream)throw new Error(\"canvas.captureStream 不可用，无法录制视频\");const u=t.getRendererSize(),c=!!t.orbit?.enabled,p=t.re",
+   "|\"function\"!=typeof d.captureStream)throw new Error(\"canvas.captureStream 不可用，无法录制视频\");const u=t.getRendererSize(),c=!!t.orbit?.enabled,p=t.renderer?.getPixelRatio?.()??1;t.setCont",
+   "i.height),t.applyCameraState(e(0)),t.renderOnce();const m=d.captureStream(0),x=m.getVideoTracks()[0],y=!(!x||\"function\"!=typeof x.requestFrame);let g=m;if(!y){try{m.getTracks().for",
+   "(!y){try{m.getTracks().forEach((t=>t.stop()))}catch(C){}g=d.captureStream(i.fps)}const w=g.getVideoTracks()[0],h=new MediaRecorder(g,{mimeType:s.mime,videoBitsPerSecond:i.bitrate})"
+  ]
+ },
+ "MediaRecorder": {
+  "count": 6,
+  "samples": [
+   "]]);function Sf(){const t=function(){if(\"undefined\"==typeof MediaRecorder||\"function\"!=typeof MediaRecorder.isTypeSupported)return\"\";const t=[\"video/mp4;codecs=avc1.42E01F\",\"video/",
+   "(){if(\"undefined\"==typeof MediaRecorder||\"function\"!=typeof MediaRecorder.isTypeSupported)return\"\";const t=[\"video/mp4;codecs=avc1.42E01F\",\"video/mp4;codecs=h264\",\"video/webm;codec",
+   "ideo/webm;codecs=vp8\",\"video/webm\"];for(const i of t)try{if(MediaRecorder.isTypeSupported(i))return i}catch(e){}return\"\"}(),e=/^video\\/mp4/.test(t);return{available:!!t,mime:t,exte",
+   "正数\");const s=Sf();if(!s.available)throw new Error(\"当前浏览器不支持 MediaRecorder，无法导出视频\");const d=t.getCanvas?.();if(!d||\"function\"!=typeof d.captureStream)throw new Error(\"canvas.capture"
+  ]
+ },
+ "webm": {
+  "count": 7,
+  "samples": [
+   "ideo/mp4;codecs=avc1.42E01F\",\"video/mp4;codecs=h264\",\"video/webm;codecs=h264\",\"video/webm;codecs=vp9\",\"video/webm;codecs=vp8\",\"video/webm\"];for(const i of t)try{if(MediaRecorder.is",
+   "1F\",\"video/mp4;codecs=h264\",\"video/webm;codecs=h264\",\"video/webm;codecs=vp9\",\"video/webm;codecs=vp8\",\"video/webm\"];for(const i of t)try{if(MediaRecorder.isTypeSupported(i))return i",
+   "64\",\"video/webm;codecs=h264\",\"video/webm;codecs=vp9\",\"video/webm;codecs=vp8\",\"video/webm\"];for(const i of t)try{if(MediaRecorder.isTypeSupported(i))return i}catch(e){}return\"\"}(),e",
+   "264\",\"video/webm;codecs=vp9\",\"video/webm;codecs=vp8\",\"video/webm\"];for(const i of t)try{if(MediaRecorder.isTypeSupported(i))return i}catch(e){}return\"\"}(),e=/^video\\/mp4/.test(t);r"
+  ]
+ },
+ "requestVideoFrame": {
+  "count": 0,
+  "samples": []
+ },
+ "setPixelRatio": {
+  "count": 7,
+  "samples": [
+   "ialias:!1,preserveDrawingBuffer:!0,alpha:!1}),this.renderer.setPixelRatio(Math.min(window.devicePixelRatio,2)),this.renderer.setSize(n,l,!1),this.renderer.outputColorSpace=i.SRGBCo",
+   "his._hideMannequinNumberLabelsForRender();try{this.renderer.setPixelRatio(1),this.renderer.setSize(t,e,!1),this.camera.aspect=t/e,this.camera.updateProjectionMatrix(),this._renderS",
+   "0,0,t,e),o.toDataURL(\"image/png\")):\"\"}finally{this.renderer.setPixelRatio(o),this.renderer.setSize(r.x,r.y,!1),this.camera.aspect=a,this.camera.updateProjectionMatrix(),n&&(n.visib",
+   "his._slotOverlay;u?.setHelpersVisible(!1);try{this.renderer.setPixelRatio(1),this.renderer.setSize(e,i,!1),r.aspect=e/i,r.updateProjectionMatrix(),this.renderer.setScissorTest(!1),"
+  ]
+ },
+ "setSize(": {
+  "count": 11,
+  "samples": [
+   "Element),this.transform.setMode(\"translate\"),this.transform.setSize(.85);const s=this.transform.getHelper?this.transform.getHelper():this.transform;this._helperObject=s,o.add(s),th",
+   "Element),this.transform.setMode(\"translate\"),this.transform.setSize(.85),jt(this.transform);const a=this.transform.getHelper?this.transform.getHelper():this.transform;this.transfor",
+   "s.targetTransform.setMode(\"translate\"),this.targetTransform.setSize(.7),jt(this.targetTransform);const n=this.targetTransform.getHelper?this.targetTransform.getHelper():this.target",
+   "xelRatio(Math.min(window.devicePixelRatio,2)),this.renderer.setSize(n,l,!1),this.renderer.outputColorSpace=i.SRGBColorSpace,e.appendChild(this.renderer.domElement),this.orbit=new o"
+  ]
+ },
+ ".far=": {
+  "count": 0,
+  "samples": []
+ },
+ "far:": {
+  "count": 0,
+  "samples": []
+ },
+ "near:": {
+  "count": 2,
+  "samples": [
+   "ncludes(\":\")?t:`mixamorig:${t.slice(9)}`:t}const Zd={rectilinear:0,pannini:1,stereographic:2,\"little-planet\":3,mercator:4,equirectangular:5};class Jd{constructor(t,e={}){this.engin",
+   "c\",\"little-planet\",\"mercator\",\"equirectangular\"],Qd={rectilinear:1.5,pannini:.9,stereographic:.85,\"little-planet\":.65,mercator:1,equirectangular:1};class tu{constructor(){this.even"
+  ]
+ },
+ "Fog(": {
+  "count": 0,
+  "samples": []
+ },
+ "OrbitControls": {
+  "count": 5,
+  "samples": [
+   "class tu{constructor(){this.events=e(),this.THREE=null,this.OrbitControls=null,this.TransformControls=null,this.scene=null,this.camera=null,this.renderer=null,this.orbit=null,this.",
+   "=await t((()=>import(\"./ZFEOZDfe.js\")),[],import.meta.url),{OrbitControls:o}=await t((async()=>{const{OrbitControls:t}=await import(\"./y99myTsR.js\");return{OrbitControls:t}}),__vit",
+   "import.meta.url),{OrbitControls:o}=await t((async()=>{const{OrbitControls:t}=await import(\"./y99myTsR.js\");return{OrbitControls:t}}),__vite__mapDeps([5,1]),import.meta.url),{Transf",
+   "const{OrbitControls:t}=await import(\"./y99myTsR.js\");return{OrbitControls:t}}),__vite__mapDeps([5,1]),import.meta.url),{TransformControls:r}=await t((async()=>{const{TransformContr"
+  ]
+ },
+ "focal": {
+  "count": 9,
+  "samples": [
+   "t=[{key:\"standard\",labelKey:\"canvas.director.lens.standard\",focal:50,fov:39.6},{key:\"wide\",labelKey:\"canvas.director.lens.wide\",focal:24,fov:73.7},{key:\"ultraWide\",labelKey:\"canvas",
+   ",fov:39.6},{key:\"wide\",labelKey:\"canvas.director.lens.wide\",focal:24,fov:73.7},{key:\"ultraWide\",labelKey:\"canvas.director.lens.ultraWide\",focal:16,fov:96.7},{key:\"portrait\",labelKe",
+   ",{key:\"ultraWide\",labelKey:\"canvas.director.lens.ultraWide\",focal:16,fov:96.7},{key:\"portrait\",labelKey:\"canvas.director.lens.portrait\",focal:85,fov:23.9},{key:\"tele\",labelKey:\"can",
+   "7},{key:\"portrait\",labelKey:\"canvas.director.lens.portrait\",focal:85,fov:23.9},{key:\"tele\",labelKey:\"canvas.director.lens.tele\",focal:135,fov:15.2},{key:\"ultraTele\",labelKey:\"canva"
+  ]
+ },
+ "fov:": {
+  "count": 20,
+  "samples": [
+   "standard\",labelKey:\"canvas.director.lens.standard\",focal:50,fov:39.6},{key:\"wide\",labelKey:\"canvas.director.lens.wide\",focal:24,fov:73.7},{key:\"ultraWide\",labelKey:\"canvas.director",
+   "},{key:\"wide\",labelKey:\"canvas.director.lens.wide\",focal:24,fov:73.7},{key:\"ultraWide\",labelKey:\"canvas.director.lens.ultraWide\",focal:16,fov:96.7},{key:\"portrait\",labelKey:\"canvas",
+   "traWide\",labelKey:\"canvas.director.lens.ultraWide\",focal:16,fov:96.7},{key:\"portrait\",labelKey:\"canvas.director.lens.portrait\",focal:85,fov:23.9},{key:\"tele\",labelKey:\"canvas.direc",
+   "portrait\",labelKey:\"canvas.director.lens.portrait\",focal:85,fov:23.9},{key:\"tele\",labelKey:\"canvas.director.lens.tele\",focal:135,fov:15.2},{key:\"ultraTele\",labelKey:\"canvas.directo"
+  ]
+ },
+ "fov=": {
+  "count": 8,
+  "samples": [
+   "f t.fov&&Math.abs(t.fov-this.camera.fov)>.001&&(this.camera.fov=t.fov,this.camera.updateProjectionMatrix()),this.camera.updateMatrixWorld())}renderOnce(){this.renderer&&this.scene&",
+   "LensPreset(t){const e=Ut(t);this._lensKey=e.key,this.camera.fov=e.fov,this.camera.updateProjectionMatrix(),this.events.emit(\"lens\",e.key),this.events.emit(\"fov\",e.fov)}setFov(t){if",
+   "0,t));if(Math.abs(e-this.camera.fov)<.01)return;this.camera.fov=e,this.camera.updateProjectionMatrix();for(const i of Ot)if(Math.abs(i.fov-e)<.5){this._lensKey=i.key;break}this.eve",
+   "is.camera.fov+t));if(e===this.camera.fov)return;this.camera.fov=e,this.camera.updateProjectionMatrix();let i=Ot[0];for(const o of Ot)Math.abs(o.fov-e)<Math.abs(i.fov-e)&&(i=o);this"
+  ]
+ },
+ "PlaneGeometry": {
+  "count": 3,
+  "samples": [
+   "new t.TorusGeometry(.5,.18,16,64);break;case\"plane\":i=new t.PlaneGeometry(2,2);break;case\"capsule\":i=new t.CapsuleGeometry(.4,.8,8,16)}const o=new t.MeshStandardMaterial({color:119",
+   "5},uPanniniD:{value:1},uProjMode:{value:1}}});const o=new i.PlaneGeometry(2,2);this._quad=new i.Mesh(o,this.material),this._quad.frustumCulled=!1,this.quadScene.add(this._quad),thi",
+   "ra.lookAt(0,.5,0)}_installGrid(){const t=this.THREE,e=new t.PlaneGeometry(4e3,4e3,1,1);e.rotateX(-Math.PI/2);const i=new t.ShaderMaterial({transparent:!0,depthWrite:!1,side:t.Doubl"
+  ]
+ },
+ "GridHelper(": {
+  "count": 0,
+  "samples": []
+ }
+}

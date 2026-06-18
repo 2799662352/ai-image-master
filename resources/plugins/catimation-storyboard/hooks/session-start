@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# SessionStart hook for catimation-storyboard plugin.
+set -euo pipefail
+
+session_context="<IMPORTANT>\nCATIMATION 分镜技法库已启用(28 个 storyboard-* craft skill:光影重建/角色演技/构图遮挡/调色/运动学反推/负向控制/物理/对白/风格…)。当任务涉及单镜画面打磨、参考图反推、提示词去 AI 味时,用 Skill 工具按需加载相关 storyboard-* 技能;成套写镜头先过 director-orchestrator。命令:/storyboard 写镜头提示词,/reverse-shot 反推参考图/视频。\n</IMPORTANT>"
+
+if [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
+  printf '{\n  "additional_context": "%s"\n}\n' "$session_context"
+elif [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -z "${COPILOT_CLI:-}" ]; then
+  printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$session_context"
+else
+  printf '{\n  "additionalContext": "%s"\n}\n' "$session_context"
+fi
+exit 0

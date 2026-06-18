@@ -50,3 +50,76 @@ export type MarketplaceListInstalledResult =
 export type MarketplaceAdoptExistingResult =
   | { ok: true; adopted: InstalledRecord[] }
   | { ok: false; error: string }
+
+/**
+ * Where the marketplace installs content on this machine. Skills AND plugin-
+ * bundled skills both land in `userSkillsDir` (`$HOME/.agents/skills`); the
+ * UI surfaces this so users know where their installs live.
+ */
+export interface MarketplacePaths {
+  userSkillsDir: string
+}
+
+export type MarketplaceGetPathsResult =
+  | { ok: true; paths: MarketplacePaths }
+  | { ok: false; error: string }
+
+/* ------------------------------- Plugins -------------------------------- */
+/**
+ * A plugin is a one-click bundle of skills (+ commands/hooks for external IDE
+ * harnesses). In-app we only consume the bundled skills: installing a plugin
+ * extracts every `<plugin>/skills/<name>/` into `$HOME/.agents/skills/<name>/`,
+ * exactly where individually-installed skills land. Catalog hosted at
+ * `plugins/plugins-catalog.json` on COS (see scripts/upload-plugins-to-cos.mjs).
+ */
+export interface PluginCatalogEntry {
+  name: string
+  version: string
+  description: string
+  /** Number of bundled skills (for display only). */
+  skills: number
+  /** Number of bundled slash-commands (for display only). */
+  commands: number
+  size: number
+  sha256: string
+  url: string
+}
+
+export interface PluginBundleEntry {
+  name: string
+  version: string
+  size: number
+  sha256: string
+  url: string
+}
+
+export interface PluginCatalog {
+  schemaVersion: number
+  generatedAt: string
+  marketplace?: { name: string; description: string; owner?: { name: string; url?: string } }
+  bundle?: PluginBundleEntry
+  plugins: PluginCatalogEntry[]
+}
+
+export interface InstalledPluginRecord {
+  name: string
+  version: string
+  installedAt: string
+  sha256: string
+  /** Skill dir names this plugin dropped into `$HOME/.agents/skills/`. */
+  skills: string[]
+}
+
+export type PluginFetchCatalogResult =
+  | { ok: true; catalog: PluginCatalog }
+  | { ok: false; error: string }
+
+export type PluginInstallResult =
+  | { ok: true; record: InstalledPluginRecord }
+  | { ok: false; error: string }
+
+export type PluginUninstallResult = { ok: true } | { ok: false; error: string }
+
+export type PluginListInstalledResult =
+  | { ok: true; installed: InstalledPluginRecord[] }
+  | { ok: false; error: string }

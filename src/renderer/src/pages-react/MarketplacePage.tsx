@@ -5,6 +5,9 @@ import type {
   Catalog,
   CatalogEntry,
   InstalledRecord,
+  InstalledPluginRecord,
+  PluginCatalog,
+  PluginCatalogEntry,
 } from '../../../types/marketplace'
 
 /**
@@ -24,7 +27,15 @@ import type {
  * row to `CATEGORIES` below.
  */
 
-type Section = 'featured' | 'director' | 'storyboard' | 'research' | 'other' | 'installed' | 'updates'
+type Section =
+  | 'plugins'
+  | 'featured'
+  | 'director'
+  | 'storyboard'
+  | 'research'
+  | 'other'
+  | 'installed'
+  | 'updates'
 
 interface CategoryDef {
   key: Section
@@ -37,6 +48,7 @@ interface CategoryDef {
 }
 
 const CATEGORIES: CategoryDef[] = [
+  { key: 'plugins', label: 'Plugins', icon: '🧩', blurb: '整插件 — 一键安装整组 skill' },
   { key: 'featured', label: 'Featured', icon: '✨', blurb: '推荐技能 — 适合大多数用户' },
   { key: 'director', label: 'Director', icon: '🎬', blurb: '导演模式 — 镜头、构图、连续性', match: (e) => e.name.startsWith('director-') },
   { key: 'storyboard', label: 'Storyboard', icon: '🎞️', blurb: '分镜模式 — 物理、对白、风格', match: (e) => e.name.startsWith('storyboard-') },
@@ -47,6 +59,7 @@ const CATEGORIES: CategoryDef[] = [
 ]
 
 const FEATURED_NAMES = new Set<string>([
+  'sd2-pe',
   'codex-research-grounded-prompting',
   'director-prompt-engineering',
   'director-structured-captioning',
@@ -54,10 +67,26 @@ const FEATURED_NAMES = new Set<string>([
 ])
 
 function iconFor(entry: CatalogEntry): string {
+  if (entry.name === 'sd2-pe') return '🎥'
   if (entry.name.startsWith('director-')) return '🎬'
   if (entry.name.startsWith('storyboard-')) return '🎞️'
   if (entry.name.startsWith('codex-research')) return '🔬'
   return '📦'
+}
+
+/** Join an install root with a skill name using the dir's own separator. */
+function joinInstallPath(dir: string, name: string): string {
+  const sep = dir.includes('\\') ? '\\' : '/'
+  return `${dir.replace(/[\\/]+$/, '')}${sep}${name}`
+}
+
+function iconForPlugin(name: string): string {
+  if (name.includes('director')) return '🎬'
+  if (name.includes('storyboard')) return '🎞️'
+  if (name.includes('film')) return '🎬'
+  if (name.includes('video')) return '🎥'
+  if (name.includes('core')) return '⚙️'
+  return '🧩'
 }
 
 export default function MarketplacePage() {
@@ -66,11 +95,14 @@ export default function MarketplacePage() {
 
   const [catalog, setCatalog] = useState<Catalog | null>(null)
   const [installed, setInstalled] = useState<InstalledRecord[]>([])
+  const [pluginCatalog, setPluginCatalog] = useState<PluginCatalog | null>(null)
+  const [pluginInstalled, setPluginInstalled] = useState<InstalledPluginRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [busyName, setBusyName] = useState<string | null>(null)
-  const [section, setSection] = useState<Section>('featured')
+  const [section, setSection] = useState<Section>('plugins')
   const [search, setSearch] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [installDir, setInstallDir] = useState<string | null>(null)
 
   const refreshCatalog = useCallback(
     async (force: boolean) => {
@@ -95,10 +127,41 @@ export default function MarketplacePage() {
     setInstalled(res.installed)
   }, [api])
 
+  const refreshPluginCatalog = useCallback(
+    async (force: boolean) => {
+      const res = await api?.pluginMarketplace?.fetchCatalog?.(force)
+      // Plugin catalog is best-effort — don't surface a hard error if only the
+      // plugin endpoint is unreachable; the skills marketplace still works.
+      if (res?.ok) setPluginCatalog(res.catalog)
+      return res?.ok ? res.catalog : null
+    },
+    [api],
+  )
+
+  const refreshPluginInstalled = useCallback(async () => {
+    const res = await api?.pluginMarketplace?.listInstalled?.()
+    if (res?.ok) setPluginInstalled(res.installed)
+  }, [api])
+
+  const refreshPaths = useCallback(async () => {
+    const res = await api?.marketplace?.getPaths?.()
+    if (res?.ok) setInstallDir(res.paths.userSkillsDir)
+  }, [api])
+
+  const openInstallDir = useCallback(async () => {
+    await api?.openSkillsFolder?.()
+  }, [api])
+
   useEffect(() => {
     let cancelled = false
     setLoading(true)
-    Promise.all([refreshCatalog(false), refreshInstalled()])
+    Promise.all([
+      refreshCatalog(false),
+      refreshInstalled(),
+      refreshPluginCatalog(false),
+      refreshPluginInstalled(),
+      refreshPaths(),
+    ])
       .catch((err: unknown) => {
         if (!cancelled) setError(String((err as Error)?.message ?? err))
       })
@@ -108,13 +171,19 @@ export default function MarketplacePage() {
     return () => {
       cancelled = true
     }
-  }, [refreshCatalog, refreshInstalled])
+  }, [refreshCatalog, refreshInstalled, refreshPluginCatalog, refreshPluginInstalled, refreshPaths])
 
   const installedByName = useMemo(() => {
     const m = new Map<string, InstalledRecord>()
     for (const rec of installed) m.set(rec.name, rec)
     return m
   }, [installed])
+
+  const pluginInstalledByName = useMemo(() => {
+    const m = new Map<string, InstalledPluginRecord>()
+    for (const rec of pluginInstalled) m.set(rec.name, rec)
+    return m
+  }, [pluginInstalled])
 
   // Section counts + filtered view all derived from the same catalog +
   // installed snapshot; recomputed only when those change.
@@ -138,6 +207,7 @@ export default function MarketplacePage() {
     byCategory.set('updates', updateRows)
 
     const c: Record<Section, number> = {
+      plugins: pluginCatalog?.plugins?.length ?? 0,
       featured: byCategory.get('featured')?.length ?? 0,
       director: byCategory.get('director')?.length ?? 0,
       storyboard: byCategory.get('storyboard')?.length ?? 0,
@@ -159,7 +229,18 @@ export default function MarketplacePage() {
           )
 
     return { counts: c, visible: filtered }
-  }, [catalog, installedByName, section, search])
+  }, [catalog, installedByName, section, search, pluginCatalog])
+
+  // Plugin view: filtered list of plugin catalog entries for the search box.
+  const visiblePlugins = useMemo(() => {
+    const entries = pluginCatalog?.plugins ?? []
+    const q = search.trim().toLowerCase()
+    if (q === '') return entries
+    return entries.filter(
+      (e) =>
+        e.name.toLowerCase().includes(q) || (e.description ?? '').toLowerCase().includes(q),
+    )
+  }, [pluginCatalog, search])
 
   const handleInstall = async (name: string) => {
     setBusyName(name)
@@ -192,11 +273,49 @@ export default function MarketplacePage() {
     }
   }
 
+  const handleInstallPlugin = async (name: string) => {
+    setBusyName(name)
+    try {
+      const res = await api?.pluginMarketplace?.install?.(name)
+      if (res?.ok) {
+        const n = res.record.skills.length
+        addToast({ message: `${name} 已安装(${n} 个 skill)`, type: 'success' })
+        await Promise.all([refreshPluginInstalled(), refreshInstalled()])
+      } else {
+        addToast({ message: res?.error ?? '插件安装失败', type: 'error' })
+      }
+    } finally {
+      setBusyName(null)
+    }
+  }
+
+  const handleUninstallPlugin = async (name: string) => {
+    const rec = pluginInstalledByName.get(name)
+    const n = rec?.skills.length ?? 0
+    if (!window.confirm(`卸载插件 ${name}？会删除它安装的 ${n} 个 skill 目录。`)) return
+    setBusyName(name)
+    try {
+      const res = await api?.pluginMarketplace?.uninstall?.(name)
+      if (res?.ok) {
+        addToast({ message: `${name} 已卸载`, type: 'success' })
+        await Promise.all([refreshPluginInstalled(), refreshInstalled()])
+      } else {
+        addToast({ message: res?.error ?? '插件卸载失败', type: 'error' })
+      }
+    } finally {
+      setBusyName(null)
+    }
+  }
+
   const handleRefresh = async () => {
     setLoading(true)
     try {
-      await refreshCatalog(true)
-      await refreshInstalled()
+      await Promise.all([
+        refreshCatalog(true),
+        refreshInstalled(),
+        refreshPluginCatalog(true),
+        refreshPluginInstalled(),
+      ])
       addToast({ message: '市场目录已刷新', type: 'success' })
     } finally {
       setLoading(false)
@@ -241,7 +360,30 @@ export default function MarketplacePage() {
             )
           })}
         </nav>
-        <div className="border-t border-zinc-800 px-2 py-3">
+        <div className="border-t border-zinc-800 px-2 py-3 space-y-2">
+          {installDir && (
+            <div className="px-1">
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <span className="text-[10px] uppercase tracking-wide text-zinc-500">安装位置</span>
+                <button
+                  onClick={openInstallDir}
+                  className="text-[10px] text-cyberpunk-yellow/80 hover:text-cyberpunk-yellow"
+                  title="在文件管理器中打开"
+                >
+                  打开目录
+                </button>
+              </div>
+              <p
+                className="text-[10px] text-zinc-500 font-mono leading-snug break-all"
+                title={installDir}
+              >
+                {installDir}
+              </p>
+              <p className="mt-1 text-[10px] text-zinc-600 leading-snug">
+                技能与插件内置的 skill 都安装到这里(每个一个子目录)。
+              </p>
+            </div>
+          )}
           <button
             onClick={handleRefresh}
             disabled={loading}
@@ -302,29 +444,59 @@ export default function MarketplacePage() {
             <div className="text-center text-zinc-500 py-16">正在拉取技能目录…</div>
           )}
 
-          {!loading && visible.length === 0 && (
-            <div className="text-center text-zinc-500 py-16">
-              {search ? `没有匹配 "${search}" 的 skill` : '此分类暂无技能'}
-            </div>
+          {section === 'plugins' ? (
+            <>
+              {!loading && visiblePlugins.length === 0 && (
+                <div className="text-center text-zinc-500 py-16">
+                  {search ? `没有匹配 "${search}" 的插件` : '暂无可安装的插件'}
+                </div>
+              )}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                {visiblePlugins.map((entry) => {
+                  const rec = pluginInstalledByName.get(entry.name)
+                  const hasUpdate = rec && rec.version !== entry.version
+                  return (
+                    <PluginCard
+                      key={entry.name}
+                      entry={entry}
+                      installed={rec ?? null}
+                      hasUpdate={!!hasUpdate}
+                      busy={busyName === entry.name}
+                      installDir={installDir}
+                      onInstall={() => handleInstallPlugin(entry.name)}
+                      onUninstall={() => handleUninstallPlugin(entry.name)}
+                    />
+                  )
+                })}
+              </div>
+            </>
+          ) : (
+            <>
+              {!loading && visible.length === 0 && (
+                <div className="text-center text-zinc-500 py-16">
+                  {search ? `没有匹配 "${search}" 的 skill` : '此分类暂无技能'}
+                </div>
+              )}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                {visible.map((entry) => {
+                  const installedRec = installedByName.get(entry.name)
+                  const hasUpdate = installedRec && installedRec.version !== entry.version
+                  return (
+                    <SkillCard
+                      key={entry.name}
+                      entry={entry}
+                      installed={installedRec ?? null}
+                      hasUpdate={!!hasUpdate}
+                      busy={busyName === entry.name}
+                      installDir={installDir}
+                      onInstall={() => handleInstall(entry.name)}
+                      onUninstall={() => handleUninstall(entry.name)}
+                    />
+                  )
+                })}
+              </div>
+            </>
           )}
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            {visible.map((entry) => {
-              const installedRec = installedByName.get(entry.name)
-              const hasUpdate = installedRec && installedRec.version !== entry.version
-              return (
-                <SkillCard
-                  key={entry.name}
-                  entry={entry}
-                  installed={installedRec ?? null}
-                  hasUpdate={!!hasUpdate}
-                  busy={busyName === entry.name}
-                  onInstall={() => handleInstall(entry.name)}
-                  onUninstall={() => handleUninstall(entry.name)}
-                />
-              )
-            })}
-          </div>
         </div>
       </div>
     </div>
@@ -336,11 +508,12 @@ interface SkillCardProps {
   installed: InstalledRecord | null
   hasUpdate: boolean
   busy: boolean
+  installDir: string | null
   onInstall: () => void
   onUninstall: () => void
 }
 
-function SkillCard({ entry, installed, hasUpdate, busy, onInstall, onUninstall }: SkillCardProps) {
+function SkillCard({ entry, installed, hasUpdate, busy, installDir, onInstall, onUninstall }: SkillCardProps) {
   const icon = iconFor(entry)
 
   return (
@@ -367,6 +540,99 @@ function SkillCard({ entry, installed, hasUpdate, busy, onInstall, onUninstall }
             </span>
           )}
         </div>
+        {installed && installDir && (
+          <p
+            className="mt-1 text-[10px] text-zinc-600 font-mono truncate"
+            title={joinInstallPath(installDir, entry.name)}
+          >
+            📁 {joinInstallPath(installDir, entry.name)}
+          </p>
+        )}
+      </div>
+      <div className="shrink-0">
+        {!installed && (
+          <button
+            onClick={onInstall}
+            disabled={busy}
+            className="inline-flex items-center justify-center w-24 h-7 text-xs bg-cyberpunk-yellow text-cyberpunk-black font-semibold rounded hover:opacity-90 disabled:opacity-50"
+          >
+            {busy ? '安装中…' : 'Get'}
+          </button>
+        )}
+        {installed && !hasUpdate && (
+          <button
+            onClick={onUninstall}
+            disabled={busy}
+            className="group relative inline-flex items-center justify-center w-24 h-7 text-xs border border-green-500/40 text-green-300 rounded hover:border-red-400/60 hover:bg-red-500/10 hover:text-red-200 disabled:opacity-50 transition-colors overflow-hidden"
+            title="点击卸载"
+          >
+            <span className="absolute inset-0 flex items-center justify-center transition-opacity duration-150 group-hover:opacity-0">
+              ✓ Installed
+            </span>
+            <span className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+              Uninstall
+            </span>
+          </button>
+        )}
+        {installed && hasUpdate && (
+          <button
+            onClick={onInstall}
+            disabled={busy}
+            className="inline-flex items-center justify-center w-24 h-7 text-xs bg-cyberpunk-yellow/90 text-cyberpunk-black font-semibold rounded hover:opacity-90 disabled:opacity-50"
+          >
+            {busy ? '更新中…' : 'Update'}
+          </button>
+        )}
+      </div>
+    </article>
+  )
+}
+
+interface PluginCardProps {
+  entry: PluginCatalogEntry
+  installed: InstalledPluginRecord | null
+  hasUpdate: boolean
+  busy: boolean
+  installDir: string | null
+  onInstall: () => void
+  onUninstall: () => void
+}
+
+function PluginCard({ entry, installed, hasUpdate, busy, installDir, onInstall, onUninstall }: PluginCardProps) {
+  const icon = iconForPlugin(entry.name)
+
+  return (
+    <article className="flex items-start gap-3 p-4 rounded border border-zinc-800 bg-zinc-950/60 hover:bg-zinc-900/60 hover:border-zinc-700 transition-colors">
+      <div className="w-10 h-10 shrink-0 rounded bg-zinc-900 border border-cyberpunk-yellow/20 flex items-center justify-center text-xl">
+        {icon}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-baseline gap-2 mb-0.5">
+          <h3 className="font-semibold text-white truncate">{entry.name}</h3>
+          <span className="text-[10px] text-zinc-500 font-mono shrink-0">
+            v{entry.version}
+            {hasUpdate && installed && (
+              <span className="text-cyberpunk-yellow"> ← v{installed.version}</span>
+            )}
+          </span>
+        </div>
+        <p className="text-xs text-zinc-400 line-clamp-2 leading-relaxed">{entry.description}</p>
+        <div className="flex items-center gap-2 mt-2 text-[10px] text-zinc-600">
+          <span className="px-1.5 py-0.5 border border-cyberpunk-yellow/30 text-cyberpunk-yellow/80 rounded">
+            {entry.skills} skills
+          </span>
+          {entry.commands > 0 && <span>{entry.commands} cmds</span>}
+          <span>{(entry.size / 1024).toFixed(1)} KB</span>
+        </div>
+        {installDir && (
+          <p
+            className="mt-1 text-[10px] text-zinc-600 font-mono truncate"
+            title={`${installed ? `已安装 ${installed.skills.length} 个 skill 到 ` : '安装到 '}${installDir}`}
+          >
+            📁 {installed ? `${installed.skills.length} 个 skill → ` : '安装到 '}
+            {installDir}
+          </p>
+        )}
       </div>
       <div className="shrink-0">
         {!installed && (

@@ -33,7 +33,7 @@ import { registerAgentIpc } from './agent/ipc'
 import { migrateLegacyUserSkills } from './agent/legacySkillsMigration'
 import { runStartupDedupOnce } from './agent/historyDedup'
 import { installFirstPartySkills } from './agent/firstPartySkills'
-import { registerMarketplaceIpc } from './marketplace/ipc'
+import { registerMarketplaceIpc, registerPluginMarketplaceIpc } from './marketplace/ipc'
 import { ThreadStore } from './agent/ThreadStore'
 import { uploadBufferToBucket } from './services/tencent/cosClient'
 import { registerAttachmentsTreeIpc, wireAttachmentBroadcast } from './file-explorer/AttachmentTreeProvider'
@@ -391,11 +391,11 @@ function createWindow(): void {
           "script-src 'self' 'unsafe-inline' 'unsafe-eval' node: https://cdn.jsdelivr.net",
           "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
           "font-src 'self' https://fonts.gstatic.com data:",
-          "img-src 'self' data: blob: https: file: local-file:",
-          "connect-src 'self' https: wss: data: http://175.178.198.17:* http://127.0.0.1:* http://localhost:*",
+          "img-src 'self' data: blob: https: http://175.178.198.17:* http://43.161.233.87:* file: local-file:",
+          "connect-src 'self' https: wss: data: http://43.161.233.87:* http://175.178.198.17:* http://127.0.0.1:* http://localhost:*",
             // allow COS HTTPS presigned URLs (smart erase output), file:// (compare-with-original),
             // and local-file:// for the file-explorer video previewer.
-            "media-src 'self' data: blob: https: file: local-file:",
+            "media-src 'self' data: blob: https: http://175.178.198.17:* http://43.161.233.87:* file: local-file:",
           "worker-src 'self' blob:", // 允许 Web Worker 从 blob URL 创建（图片压缩库需要）
           "frame-src https:"
         ].join('; ')
@@ -1211,6 +1211,19 @@ const marketplaceStateFile = path.join(app.getPath('userData'), 'marketplace-sta
 const marketplaceService = registerMarketplaceIpc({
   userSkillsDir: officialUserSkillsDir,
   stateFile: marketplaceStateFile,
+})
+
+// Plugin Marketplace wiring. A plugin is a one-click bundle of skills; install
+// extracts its bundled skills into the same `officialUserSkillsDir` so existing
+// skill discovery picks them up. Ledger persists separately so plugin and
+// per-skill installs don't clobber each other's state.
+const pluginMarketplaceStateFile = path.join(app.getPath('userData'), 'plugin-marketplace-state.json')
+registerPluginMarketplaceIpc({
+  userSkillsDir: officialUserSkillsDir,
+  stateFile: pluginMarketplaceStateFile,
+  // Lets plugin uninstall avoid deleting a skill the per-skill marketplace
+  // independently owns (review finding I2).
+  skillStateFile: marketplaceStateFile,
 })
 
 // One-shot adoption pass. v4.3.4 users have ~20 bundled skills already on

@@ -1,0 +1,28 @@
+{
+  "name": "catimation-director",
+  "version": "1.0.0",
+  "description": "导演模式总调度:以 13 维电影摄制框架编排镜头/构图/光影/连续性/角色一致性技法,产出结构化提示词。",
+  "author": { "name": "CATIMATION", "url": "https://github.com/zuozuoliang999" },
+  "homepage": "https://github.com/zuozuoliang999/catimation-plugins",
+  "repository": "https://github.com/zuozuoliang999/catimation-plugins",
+  "license": "MIT",
+  "keywords": ["director", "cinematography", "prompt", "catimation", "image", "video", "storyboard"],
+  "skills": "./skills/",
+  "commands": "./commands/",
+  "hooks": "./hooks/hooks-codex.json",
+  "interface": {
+    "displayName": "CATIMATION Director",
+    "shortDescription": "13 维电影摄制框架的导演总调度与镜头技法",
+    "longDescription": "把分散的 director-* / storyboard-* 技法串成一条流水线:先按 13 维(主体动作/景别焦段/机位运镜/构图/景深/光照/色温/环境/角色锚点/物理微表情/节奏/风格)做 STEP 0 反问与技能路由,再以物理可复现参数(而非情绪形容词)写出结构化提示词,交给 catimation 出图出片。",
+    "developerName": "CATIMATION",
+    "category": "Creative",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "defaultPrompt": [
+      "把这张参考图做成黄昏窗边、电影感的特写。",
+      "帮我写一组分镜的提示词,保持角色一致性。"
+    ],
+    "websiteURL": "https://github.com/zuozuoliang999/catimation-plugins",
+    "brandColor": "#7C3AED",
+    "screenshots": []
+  }
+}

@@ -109,7 +109,9 @@
     "quantity": "Quantity",
     "quantityOptions": {
       "1": "1 image",
-      "2": "2 images"
+      "2": "2 images",
+      "3": "3 images",
+      "4": "4 images"
     },
     "finalResolution": "Final Resolution",
     "imageSize": "Image Size",

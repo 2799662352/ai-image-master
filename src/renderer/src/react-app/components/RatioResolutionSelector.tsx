@@ -13,6 +13,8 @@ export function RatioResolutionSelector() {
   const setResolution = useDirectorStore((s) => s.setResolution)
   const currentQuality = useDirectorStore((s) => s.currentQuality)
   const setQuality = useDirectorStore((s) => s.setQuality)
+  const currentCount = useDirectorStore((s) => s.currentCount)
+  const setCount = useDirectorStore((s) => s.setCount)
 
   const modelConfig = useCurrentModelConfig()
 
@@ -26,6 +28,8 @@ export function RatioResolutionSelector() {
       onResolutionChange={setResolution}
       quality={currentQuality}
       onQualityChange={setQuality}
+      count={currentCount}
+      onCountChange={setCount}
       preferRatio="16:9"
     />
   )

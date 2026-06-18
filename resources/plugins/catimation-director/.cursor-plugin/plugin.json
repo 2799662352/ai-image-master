@@ -1,0 +1,14 @@
+{
+  "name": "catimation-director",
+  "displayName": "CATIMATION Director",
+  "description": "导演模式总调度 + 13 个 director-* 技法:13 维电影摄制框架、镜头/构图/光影/角色一致性。",
+  "version": "1.0.0",
+  "author": { "name": "CATIMATION", "url": "https://github.com/zuozuoliang999" },
+  "homepage": "https://github.com/zuozuoliang999/catimation-plugins",
+  "repository": "https://github.com/zuozuoliang999/catimation-plugins",
+  "license": "MIT",
+  "keywords": ["director", "cinematography", "prompt", "catimation", "image", "video", "storyboard"],
+  "skills": "./skills/",
+  "commands": "./commands/",
+  "hooks": "./hooks/hooks-cursor.json"
+}

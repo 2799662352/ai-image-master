@@ -1,0 +1,140 @@
+<h2>聊天历史侧栏怎么放？</h2>
+<p class="subtitle">这是最底层的布局决定 — 后面所有 UI 改动（resize、抽屉、双击预览）都依赖它先定下来。点选你倾向的方案，或在终端里说"都不喜欢，我想要 X"。</p>
+
+<style>
+  .layout-mockup {
+    background: #0a0a0a;
+    border: 1px solid #27272a;
+    border-radius: 6px;
+    height: 220px;
+    display: grid;
+    overflow: hidden;
+    font-size: 10px;
+    color: #a1a1aa;
+  }
+  .layout-mockup .col { padding: 6px 8px; min-width: 0; }
+  .layout-mockup .editor { background: #0a0a0a; border-right: 1px solid #18181b; }
+  .layout-mockup .panel  { background: #0e0e10; border-left: 1px solid #22d3ee33; }
+  .layout-mockup .threads { background: #18181b; border-right: 1px solid #27272a; }
+  .layout-mockup .label { color: #71717a; font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 4px; }
+  .layout-mockup .row    { padding: 3px 4px; border-radius: 3px; margin-bottom: 2px; color: #d4d4d8; }
+  .layout-mockup .row.active { background: #22d3ee22; color: #67e8f9; }
+  .layout-mockup .msg { background: #18181b; padding: 4px 6px; border-radius: 4px; margin-bottom: 4px; color: #e4e4e7; }
+  .layout-mockup .msg.assist { background: #064e3b33; color: #6ee7b7; }
+  .layout-mockup .input { background: #18181b; border-radius: 4px; padding: 6px; margin-top: auto; color: #71717a; font-style: italic; }
+  .layout-mockup .pcol { display: flex; flex-direction: column; height: 100%; }
+  .layout-mockup .pinned { color: #fbbf24; font-size: 9px; margin-top: 4px; }
+  .layout-mockup .group-label { font-size: 8px; color: #52525b; text-transform: uppercase; margin: 6px 0 2px; }
+  .layout-mockup .modal-overlay {
+    position: absolute; inset: 0; background: rgba(0,0,0,0.55);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .layout-mockup .modal {
+    width: 75%; height: 70%; background: #18181b;
+    border: 1px solid #27272a; border-radius: 6px; padding: 8px;
+  }
+  .layout-mockup .relative-host { position: relative; height: 100%; }
+  .layout-mockup .toggle-pill {
+    position: absolute; left: 6px; top: 6px;
+    background: #22d3ee22; color: #67e8f9; padding: 2px 6px;
+    border-radius: 3px; font-size: 8px;
+  }
+</style>
+
+<div class="cards">
+  <div class="card" data-choice="embedded" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="layout-mockup" style="grid-template-columns: 2.6fr 1fr 1.6fr">
+        <div class="col editor">
+          <div class="label">Editor</div>
+          <div class="placeholder" style="height:160px"></div>
+        </div>
+        <div class="col threads">
+          <div class="label">Threads</div>
+          <div class="pinned">★ Pinned</div>
+          <div class="row active">Codex 配置</div>
+          <div class="group-label">Today</div>
+          <div class="row">图像批量生成</div>
+          <div class="row">Bug: 401 网关</div>
+          <div class="group-label">Yesterday</div>
+          <div class="row">命名生成测试</div>
+        </div>
+        <div class="col panel pcol">
+          <div class="label">Local Codex</div>
+          <div class="msg">用户：把这张图扣个白底</div>
+          <div class="msg assist">好，我来调用扣图工具…</div>
+          <div class="input">Ask Codex to…</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A · 嵌入式（推荐）</h3>
+      <p>Cursor 同款。Thread 列表是 chat panel 内部左半边一列，可一键折叠。整个 panel 还是右侧 overlay 但加宽到 ~640px。</p>
+      <div style="display:flex;gap:8px;margin-top:6px">
+        <span style="font-size:10px;color:#6ee7b7">+ 不会和主编辑器抢空间</span>
+      </div>
+      <div style="font-size:10px;color:#fca5a5">− Panel 加宽后挡住的主内容更多</div>
+    </div>
+  </div>
+
+  <div class="card" data-choice="drawer" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="layout-mockup relative-host" style="grid-template-columns: 2.6fr 1.4fr">
+        <div class="col editor">
+          <div class="label">Editor</div>
+          <div class="placeholder" style="height:160px"></div>
+        </div>
+        <div class="col panel pcol" style="position:relative">
+          <div class="label">Local Codex</div>
+          <div class="toggle-pill">≡ Threads</div>
+          <div class="msg" style="margin-top:18px">用户：把这张图扣个白底</div>
+          <div class="msg assist">好，我来调用扣图工具…</div>
+          <div class="input">Ask Codex to…</div>
+          <div style="position:absolute;left:0;top:0;bottom:0;width:60%;background:#18181bee;padding:6px;border-right:1px solid #22d3ee44;">
+            <div class="label">Threads (drawer)</div>
+            <div class="row active">Codex 配置</div>
+            <div class="group-label">Today</div>
+            <div class="row">图像批量生成</div>
+            <div class="row">Bug: 401 网关</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B · 抽屉式</h3>
+      <p>Panel 还是当前 420px 宽度。点 header 上的"≡ Threads"按钮，列表从左边滑出来盖在消息区上面，再点一次收回。</p>
+      <div style="font-size:10px;color:#6ee7b7">+ 不需要加宽 panel，省空间</div>
+      <div style="font-size:10px;color:#fca5a5">− 选 thread 时看不到当前消息，切换体验稍差</div>
+    </div>
+  </div>
+
+  <div class="card" data-choice="modal" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="layout-mockup relative-host" style="grid-template-columns: 2.6fr 1.4fr">
+        <div class="col editor"><div class="label">Editor</div></div>
+        <div class="col panel pcol">
+          <div class="label">Local Codex</div>
+          <div class="msg">用户：把这张图扣个白底</div>
+          <div class="msg assist">好，我来调用扣图工具…</div>
+          <div class="input">Ask Codex to…</div>
+        </div>
+        <div class="modal-overlay">
+          <div class="modal">
+            <div class="label">Switch Thread (Ctrl+P)</div>
+            <input class="mock-input" placeholder="搜索聊天…" style="margin-bottom:6px"/>
+            <div class="row active">Codex 配置</div>
+            <div class="row">图像批量生成</div>
+            <div class="row">Bug: 401 网关</div>
+            <div class="row">命名生成测试</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C · 命令面板</h3>
+      <p>VS Code Cmd+P 同款。快捷键或点 header 按钮弹出居中模态框，搜索 + 列表，选完关闭。</p>
+      <div style="font-size:10px;color:#6ee7b7">+ 键盘党友好，搜索一等公民</div>
+      <div style="font-size:10px;color:#fca5a5">− 没有"hover 浏览历史"那种感觉，不像聊天产品</div>
+    </div>
+  </div>
+</div>

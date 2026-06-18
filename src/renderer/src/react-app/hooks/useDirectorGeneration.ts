@@ -94,6 +94,7 @@ interface JobSnapshot {
   currentQuality: string
   currentSemanticOrientation: LayoutOrientation
   imageCount: number
+  currentCount: number
   skipVerify: boolean
   skipTaskPlanning: boolean
   skipAnalyzeScene: boolean
@@ -136,6 +137,7 @@ function snapshotFromStore(): JobSnapshot {
     currentQuality: s.currentQuality,
     currentSemanticOrientation: s.currentSemanticOrientation,
     imageCount: s.imageCount,
+    currentCount: s.currentCount,
     skipVerify: s.skipVerify,
     skipTaskPlanning: s.skipTaskPlanning,
     skipAnalyzeScene: s.skipAnalyzeScene,
@@ -231,6 +233,7 @@ export function useDirectorGeneration() {
           resolution: snapshot.currentResolution,
           quality: snapshot.currentQuality,
           currentImageCount: snapshot.imageCount,
+          currentCount: snapshot.currentCount,
           skipVerify: snapshot.skipVerify,
           skipTaskPlanning: snapshot.skipTaskPlanning,
           skipAnalyzeScene: snapshot.skipAnalyzeScene,

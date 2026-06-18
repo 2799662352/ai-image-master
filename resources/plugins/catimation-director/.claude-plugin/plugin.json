@@ -1,0 +1,10 @@
+{
+  "name": "catimation-director",
+  "description": "导演模式总调度:以 13 维电影摄制框架(物理可复现参数优先于情绪形容词)编排镜头/构图/光影/连续性/角色一致性等导演技法,产出结构化提示词,交给 catimation 出图出片。",
+  "version": "1.0.0",
+  "author": { "name": "CATIMATION", "url": "https://github.com/zuozuoliang999" },
+  "homepage": "https://github.com/zuozuoliang999/catimation-plugins",
+  "repository": "https://github.com/zuozuoliang999/catimation-plugins",
+  "license": "MIT",
+  "keywords": ["director", "cinematography", "prompt", "catimation", "image", "video", "storyboard"]
+}

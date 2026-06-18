@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# SessionStart hook for catimation-film plugin.
+set -euo pipefail
+
+session_context="<IMPORTANT>\nCATIMATION 制片编排器已启用。当用户要「做电影/做短片/一条龙/从剧本到成片」时,用 Skill 工具加载 film-studio 总编排器,按 G0→G8 门控流水线推进(概念→剧本→分镜→设定→出图→图生视频→配音→拼接→交付),绝不跳门;每个出图/出视频阶段先过 director-orchestrator 的 STEP 0。命令:/make-film 端到端制片,/write-script 写剧本,/trailer 预告片方案。\n</IMPORTANT>"
+
+if [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
+  printf '{\n  "additional_context": "%s"\n}\n' "$session_context"
+elif [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -z "${COPILOT_CLI:-}" ]; then
+  printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$session_context"
+else
+  printf '{\n  "additionalContext": "%s"\n}\n' "$session_context"
+fi
+exit 0

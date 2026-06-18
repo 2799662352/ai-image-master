@@ -41,6 +41,37 @@ describe('AgentToolExecutor.generateImage', () => {
     expect(sent.resolution).toBe('2K') // default applied
   })
 
+  it('honors an allow-listed model selection (腾讯 image2)', async () => {
+    const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
+    const history = makeHistory()
+    registerFakes(api, history)
+
+    const result = (await callGenerate({ prompt: 'a cat', model: 'custom-imagemodel-gt' })) as Record<string, unknown>
+
+    expect(api.generateImage.mock.calls[0][0].model).toBe('custom-imagemodel-gt')
+    expect(result.model).toBe('custom-imagemodel-gt')
+    expect(history.addToHistory.mock.calls[0][4]).toBe('custom-imagemodel-gt')
+  })
+
+  it('honors an allow-listed model selection (万相 2.7 pro)', async () => {
+    const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
+    registerFakes(api, makeHistory())
+
+    const result = (await callGenerate({ prompt: 'a cat', model: 'wan2.7-image-pro' })) as Record<string, unknown>
+
+    expect(api.generateImage.mock.calls[0][0].model).toBe('wan2.7-image-pro')
+    expect(result.model).toBe('wan2.7-image-pro')
+  })
+
+  it('falls back to vip for an unknown/hallucinated model', async () => {
+    const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
+    registerFakes(api, makeHistory())
+
+    await callGenerate({ prompt: 'a cat', model: 'totally-made-up-model' })
+
+    expect(api.generateImage.mock.calls[0][0].model).toBe('gpt-image-2-vip')
+  })
+
   it('records the image to history under the "codex" type', async () => {
     const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
     const history = makeHistory()

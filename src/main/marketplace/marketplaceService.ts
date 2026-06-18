@@ -196,6 +196,16 @@ function sha256Hex(buf: Buffer): string {
   return createHash('sha256').update(buf).digest('hex')
 }
 
+/** Reject any zip entry whose resolved path escapes destDir (Zip Slip). */
+function safeJoin(destDir: string, relPath: string): string {
+  const abs = path.resolve(destDir, relPath)
+  const root = path.resolve(destDir)
+  if (abs !== root && !abs.startsWith(root + path.sep)) {
+    throw new Error(`Unsafe zip entry path escapes archive root: ${relPath}`)
+  }
+  return abs
+}
+
 async function extractZipBuffer(buf: Buffer, destDir: string): Promise<void> {
   const zip = await JSZip.loadAsync(buf)
   // Two-pass: first create all directories, then write files. Avoids order-
@@ -203,13 +213,13 @@ async function extractZipBuffer(buf: Buffer, destDir: string): Promise<void> {
   const fileEntries: Array<{ relPath: string; entry: JSZip.JSZipObject }> = []
   for (const [relPath, entry] of Object.entries(zip.files)) {
     if (entry.dir) {
-      await fs.mkdir(path.join(destDir, relPath), { recursive: true })
+      await fs.mkdir(safeJoin(destDir, relPath), { recursive: true })
     } else {
       fileEntries.push({ relPath, entry })
     }
   }
   for (const { relPath, entry } of fileEntries) {
-    const absPath = path.join(destDir, relPath)
+    const absPath = safeJoin(destDir, relPath)
     await fs.mkdir(path.dirname(absPath), { recursive: true })
     const content = await entry.async('nodebuffer')
     await fs.writeFile(absPath, content)

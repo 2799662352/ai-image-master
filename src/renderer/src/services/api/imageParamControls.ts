@@ -25,6 +25,10 @@ export interface ImageParamModelConfig {
   capabilities?: {
     resolutionControl?: boolean
     qualityControl?: boolean
+    /** 是否支持一次出多张(组图) */
+    multipleImages?: boolean
+    /** 单次最大出图张数(组图上限) */
+    maxOutputs?: number
   }
 }
 
@@ -38,6 +42,10 @@ export interface ImageParamControlsState {
   sizeHidden: boolean
   defaultResolution: string
   defaultQuality: string
+  /** 是否支持组图(一次多张) */
+  supportsCount: boolean
+  /** 组图上限(>=2 才有意义); 不支持时为 1 */
+  maxCount: number
 }
 
 export const FALLBACK_RATIO_OPTIONS: ParamOption[] = [
@@ -81,6 +89,9 @@ export function deriveImageParamControls(
 
   const sizeHidden = cfg.sizeStrategy === 'prompt'
 
+  const maxCount = Math.max(1, cfg.capabilities?.maxOutputs ?? 1)
+  const supportsCount = Boolean(cfg.capabilities?.multipleImages) && maxCount > 1
+
   return {
     ratioOptions,
     resolutionOptions,
@@ -90,6 +101,8 @@ export function deriveImageParamControls(
     sizeHidden,
     defaultResolution: cfg.defaultResolution || '2K',
     defaultQuality: cfg.defaultQuality || 'auto',
+    supportsCount,
+    maxCount,
   }
 }
 

@@ -1,0 +1,28 @@
+{
+  "name": "catimation-storyboard",
+  "version": "1.0.0",
+  "description": "分镜技法库:28 个 storyboard-* craft skill,单镜画面打磨与参考图反推。",
+  "author": { "name": "CATIMATION", "url": "https://github.com/zuozuoliang999" },
+  "homepage": "https://github.com/zuozuoliang999/catimation-plugins",
+  "repository": "https://github.com/zuozuoliang999/catimation-plugins",
+  "license": "MIT",
+  "keywords": ["storyboard", "prompt", "lighting", "composition", "catimation", "image", "video"],
+  "skills": "./skills/",
+  "commands": "./commands/",
+  "hooks": "./hooks/hooks-codex.json",
+  "interface": {
+    "displayName": "CATIMATION Storyboard",
+    "shortDescription": "28 个分镜画面技法与参考图反推",
+    "longDescription": "单镜画面级的工艺技能库:光影重建、角色演技/动机、构图与前景遮挡、电影调色、运动学反推、负向控制、人体物理、对白与配音、风格提取、伪透视、情绪蒙太奇、去 AI 味等。成套写镜头先过 director-orchestrator,本库提供逐镜打磨与反推的具体技法。",
+    "developerName": "CATIMATION",
+    "category": "Creative",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "defaultPrompt": [
+      "把这张图的塑料感去掉,重建黄昏侧逆光。",
+      "反推这段爆款视频的镜头和运动规律。"
+    ],
+    "websiteURL": "https://github.com/zuozuoliang999/catimation-plugins",
+    "brandColor": "#06B6D4",
+    "screenshots": []
+  }
+}

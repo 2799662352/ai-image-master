@@ -163,6 +163,19 @@ export function registerImageTools(server: McpServer, router: ToolRouter): void 
       'auto, 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 21:9, 5:4, 4:5.',
     )
 
+  // Selectable rendering channels. All three share the same ratio × resolution ×
+  // quality surface; anything else falls back to the default vip in the renderer.
+  const modelSchema = z
+    .enum(['gpt-image-2-vip', 'custom-imagemodel-gt', 'wan2.7-image-pro'])
+    .optional()
+    .describe(
+      'Rendering channel (optional). Default "gpt-image-2-vip" (stable, OpenAI 官逆). ' +
+      'Choose "custom-imagemodel-gt" for 腾讯 image2 (same size/quality spec), or ' +
+      '"wan2.7-image-pro" for 阿里万相 2.7 pro (超清文生图/图像编辑/组图). Omit to use the default. ' +
+      'Pick wan2.7-image-pro when the user explicitly wants 万相/wan or a consistent multi-image 组图 series; ' +
+      'pick custom-imagemodel-gt when the user explicitly wants 腾讯/tencent image2.',
+    )
+
   server.registerTool('generate_image', {
     description:
       'FIRST-CHOICE image generation tool inside the CATIMATION app — use this for ANY ' +
@@ -175,13 +188,13 @@ export function registerImageTools(server: McpServer, router: ToolRouter): void 
       'the same files are also attached as `resource_link` content blocks so you can view / move / ' +
       'reference them. Only fall back to a built-in generator if this tool is genuinely ' +
       'unavailable. Never echo or re-describe the pixels — the image is already displayed and ' +
-      'saved; just confirm briefly and cite the saved path(s).',
+      'saved; just confirm briefly and cite the saved path(s). Renders on gpt-image-2-vip by ' +
+      'default; pass `model` to pick 腾讯 image2 (custom-imagemodel-gt) or 万相 2.7 pro (wan2.7-image-pro). ' +
+      'For a CONSISTENT multi-image 组图 series from one prompt, use model="wan2.7-image-pro" with ' +
+      '`count`>1 (1–12); for unrelated images use generate_images instead.',
     inputSchema: z.object({
       prompt: z.string().min(1).describe('Image description / prompt.'),
-      model: z
-        .string()
-        .optional()
-        .describe('Ignored: the renderer forces gpt-image-2-vip for stability.'),
+      model: modelSchema,
       ratio: ratioSchema,
       resolution: z
         .enum(['1K', '2K', '4K'])
@@ -191,6 +204,19 @@ export function registerImageTools(server: McpServer, router: ToolRouter): void 
         .enum(['auto', 'low', 'medium', 'high'])
         .optional()
         .describe('Rendering quality. "high" for text/print; "auto" lets the model decide (default).'),
+      count: z
+        .number()
+        .int()
+        .min(1)
+        .max(12)
+        .optional()
+        .describe(
+          'Number of images from THIS single prompt (default 1). ONLY meaningful for ' +
+          'model="wan2.7-image-pro": count>1 turns on 万相 组图 / enable_sequential, returning a ' +
+          'front-to-back CONSISTENT series (e.g. 同一只猫的四季, same character across shots) — up to 12. ' +
+          'Other channels ignore it and always return 1. For several UNRELATED images (distinct ' +
+          'subjects/variations), use generate_images with one prompt each instead of count.',
+        ),
       referenceImages: z
         .array(z.string())
         .optional()
@@ -262,6 +288,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter): void 
       prompts: z.array(z.string().min(1)).min(2).max(8).describe(
         'One prompt per image. If the user asks for N images, provide N prompts here.',
       ),
+      model: modelSchema,
       ratio: ratioSchema,
       resolution: z
         .enum(['1K', '2K', '4K'])
@@ -279,6 +306,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter): void 
   }, async (params, ctx?: unknown) => {
     const parsed = params as {
       prompts?: unknown
+      model?: 'gpt-image-2-vip' | 'custom-imagemodel-gt' | 'wan2.7-image-pro'
       ratio?: string
       resolution?: '1K' | '2K' | '4K'
       quality?: 'auto' | 'low' | 'medium' | 'high'
@@ -289,6 +317,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter): void 
 
     const calls = prompts.map((prompt, i) => router.call('generate_image', {
       prompt,
+      model: parsed.model,
       ratio: parsed.ratio,
       resolution: parsed.resolution,
       quality: parsed.quality,

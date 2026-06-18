@@ -1,0 +1,37 @@
+@@ _installGrid() @ 659669
+_installGrid(),this._slotOverlay=new Yt(this,{onTransformSlot:(t,e)=>this._writeSlotTransform(t,e),onTransformTarget:(t,e)=>this._writeSlotTargetTransform(t,e),onTransformEnd:t=>this.events.emit("cameraSlot:change",{reason:"transform-end",id:t})}),this._slotOverlay.attach(),this._projectionRenderer=new Jd(this,{cubeSize:1024}),this._projectionRenderer.setMode(this._projectionMode),this._projectionRenderer.setScale(this._projectionScale),this._tmpVecForward=new i.Vector3,this._tmpVecRight=new i.Vector3,this._tmpVecOffset=new i.Vector3,this._tmpVecOrbitV=new i.Vector3,this._tmpVecOrbitAxis=new i.Vector3(0,1,0),this._tmpVecOrbitFlat=new i.Vector3,this._tmpCollisionBox=new i.Box3,this._clock=new i.Clock,this._observeResize(),this._loop(),this._inited=!0,this.events.emit("ready")}_setCameraOrbit(t){this._cameraDistance=t;const e=t,i=Math.PI/180*72,o=Math.PI/180*40,r=e*Math.sin(i)*Math.sin(o),a=e*Math.cos(i),n=e*Math.sin(i)*Math.cos(o);this.camera.position.set(r,a+.5,n),this.orbit&&this.orbit.target.set(0,.5,0),this.camera.lookAt(0,.5,0)}_installGrid(){const t=this.THREE,e=new t.PlaneGeometry(4e3,4e3,1,1);e.rotateX(-Math.PI/2);const i=new t.ShaderMaterial({transparent:!0,depthWrite:!1,side:t.DoubleSide,extensions:{derivatives:!0},uniforms:{uMinorColor:{value:new t.Color(3553860)},uMajorColor:{value:new t.Color(4870234)},uMinorStep:{value:1},uMajorStep:{value:10},uFadeStart:{value:40},uFadeEnd:{value:220},uOpacityMul:{value:1},uSphereClip:{value:0},uSphereCenter:{value:new t.Vector3(0,0,0)},uSphereRadius:{value:25}},vertexShader:"\n        varying vec3 vWorldPos;\n        void main() {\n          vec4 wp = modelMatrix * vec4(position, 1.0);\n          vWorldPos = wp.xyz;\n          gl_Position = projectionMatrix * viewMatrix * wp;\n        }\n      ",fragmentShader:"\n        uniform vec3  uMinorColor;\n        uniform vec3  uMajorColor;\n        uniform float uMinorStep;\n        uniform float uMajorStep;\n        uniform float uFadeStart;\n        uniform float uFadeEnd;\n        uniform float uOpacityMul;\n        uniform float uSphereClip;\n        uniform vec3  uSphereCenter;\n        uniform float uSphereRadius;\n        varying vec3  vWorldPos;\n\n        // 抗锯齿网格线强度：返回 [0,1]，1 = 在线上\n        float gridLine(vec2 p, float step) {\n          vec2 coord = p / step;\n          vec2 d = fwidth(coord);\n          vec2 g = abs(fract(coord - 0.5) - 0.5) / max(d, vec2(1e-5));\n          return 1.0 - min(min(g.x, g.y), 1.0);\n        }\n\n        void main() {\n          vec2 p = vWorldPos.xz;\n\n          // 全景球裁剪：网格平面与椭球交截面是一个圆（半径已由 JS 侧预算），超出则丢弃\n          if (
+
+========
+
+@@ applyCameraState( @ 668285
+applyCameraState(t){t&&this.camera&&this.orbit&&(Array.isArray(t.position)&&this.camera.position.set(t.position[0],t.position[1],t.position[2]),Array.isArray(t.quaternion)&&this.camera.quaternion.set(t.quaternion[0],t.quaternion[1],t.quaternion[2],t.quaternion[3]),Array.isArray(t.target)&&this.orbit.target.set(t.target[0],t.target[1],t.target[2]),"number"==typeof t.fov&&Math.abs(t.fov-this.camera.fov)>.001&&(this.camera.fov=t.fov,this.camera.updateProjectionMatrix()),this.camera.updateMatrixWorld())}renderOnce(){this.renderer&&this.scene&&this.camera&&this._renderSceneWithCurrentProjection(this.camera)}_renderSceneWithCurrentProjection(t){this.renderer&&this.scene&&t&&("rectilinear"!==this._
+
+========
+
+@@ _setCameraOrbit( @ 656997
+_setCameraOrbit(this._cameraDistance),this.renderer=new i.WebGLRenderer({antialias:!1,preserveDrawingBuffer:!0,alpha:!1}),this.renderer.setPixelRatio(Math.min(window.devicePixelRatio,2)),this.renderer.setSize(n,l,!1),this.renderer.outputColorSpace=i.SRGBColorSpace,e.appendChild(this.renderer.domElement),this.orbit=new o(this.camera,this.renderer.domElement),this.orbit.enableDamping=!0,this.orbit.dampingFactor=.08,this.orbit.target.set(0,.5,0),this.orbit.addEventListener("start",this._onOrbitStar
+
+========
+
+@@ _buildSlotCamera( @ 716395
+_buildSlotCamera(d);return this._slotCameraMap.set(i,u),this._slotOverlay?.addHelper(d),e?(this._currentSlotId=i,this._slotOverlay?.setSelected(i)):this._slotOverlay?.setSelected(this._currentSlotId),this.events.emit("cameraSlot:change",{reason:"add",id:i}),i}removeCameraSlot(t){const e=this._cameraSlots.findIndex((e=>e.id===t));if(-1!==e){if(this._cameraSlots.splice(e,1),this._slotCameraMap.delete(t),this._slotOverlay?.removeHelper(t),this._currentSlotId===t){const t=this._cameraSlots[e-1]||this._cameraSlots[e]||this._cameraSlots[0];this._currentSlotId=t?.id||"",this._slotOverlay?.setSelected(this._currentSlotId)}this.events.emit("cameraSlot:change",{reason:"remove",id:t})}}duplicateCameraS
+
+========
+
+@@ getRendererSize( @ 670404
+getRendererSize(){if(!this.renderer)return{width:0,height:0};const t=this.renderer.getSize(new this.THREE.Vector2);return{width:t.x,height:t.y}}getCanvas(){return this.renderer?.domElement||null}setSelectionEnabled(t){this.selection?.setEnabled?.(t)}resize(){if(!this.container||!this.renderer||!this
+
+========
+
+@@ getCanvas( @ 670548
+getCanvas(){return this.renderer?.domElement||null}setSelectionEnabled(t){this.selection?.setEnabled?.(t)}resize(){if(!this.container||!this.renderer||!this.camera)return;const{clientWidth:t,clientHei
+
+========
+
+@@ function lu(t,e) @ 737367
+function lu(t,e){const i="number"==typeof e&&e>0?e:16/9;let o,r;return i>=1?(r=t,o=Math.round(t*i)):(o=t,r=Math.round(t/i)),{width:o-o%2,height:r-r%2}}function su(t,e,i,o){const r=ou.find((e=>e.key===t))||ou[2],a=Math.max(1,Number(e)||0),n=Math.max(1,Number(i)||0),l=Math.max(1,Number(o)||0),s=r.bpp*a*n*l;return Math.max(15e5,Math.min(8e7,Math.round(s)))}const du=["width","height","viewBox"],uu=["d"],cu=["width","height","viewBox"],pu={key:0,class:"frame-grid"},mu=["x1","y1","x2","y2"],xu=["x1","
+
+========
+
+@@ canvas.captureStream 不可用 @ 887635
+stop()))}catch(C){}g=d.captureStream(i.fps)}const w=g.getVideoTracks()[0],h=new MediaRecorder(g,{mimeType:s.mime,videoBitsPerSecond:i.bitrate}),f=[];let z,b,T=!1;const v=new Promise(((t,e)=>{z=t,b=e}));h.ondataavailable=t=>{t.data&&t.data.size>0&&f.push(t.data)},h.onerror=t=>b(t?.error||new Error("MediaRecorder error")),h.onstop=()=>{if(T)return void b(new Error("export-canceled"));const t=new Blob(f,{type:s.mime.split(";")[0]});z({blob:t,mime:s.mime,durationMs:1e3*o})},h.start(200);const _=performance.now(),E=1e3*o,q=1e3/i.fps;let k=-1,H=!1,M=0,R=0;function L(){if(!H){H=!0;try{h.stop()}catch(C){}try{g.getTracks().forEach((t=>t.stop()))}catch(C){}}}function S(){if(H)return;a?.(100);const t=performance.now();!function e(){if(H)return;if(performance.now()-t>=200){try{h.requestData?.()}catch(C){}setTimeout(L,150)}else{try{w?.requestFrame?.()}catch(C){}R=setTimeout(e,q)}}()}y?function i(){if(H)return;if("function"==typeof n&&n())return T=!0,void L();const r=performance.now()-_;if(r>=E){con
