@@ -150,6 +150,45 @@ When unsure, propose a sensible default out loud and let the user correct you.
    - `❌ FAILED` → report the upstream error. You may retry ONCE with an
      adjusted prompt only if the error suggests a content/parameter problem.
 
+## QA the clip with an ffmpeg 九宫格 contact sheet, then improve
+
+You cannot meaningfully "watch" an MP4, and injecting the raw video bytes into the
+chat is wasteful and unsafe — so to self-check a finished clip, build a **3×3
+九宫格 contact sheet** of evenly-spaced frames with ffmpeg (use your ffmpeg MCP
+tool, e.g. `ffmpeg-win`, or any ffmpeg available), then `view_image` that ONE
+montage:
+
+1. Extract 9 evenly-spaced frames tiled into a grid. Set `fps ≈ 9 / clip_duration`
+   so the 9 tiles span the whole clip:
+
+   ```
+   ffmpeg -i "<clip>.mp4" -vf "fps=9/<DURATION>,scale=320:-1,tile=3x3:padding=6:color=black" -frames:v 1 -y "<clip>_grid.png"
+   ```
+
+   (For a 5s clip, `fps=9/5=1.8`; set `<DURATION>` to the real length. If the grid
+   comes out with too few/many tiles, nudge the fps.)
+2. `view_image` the `_grid.png` and judge: subject/character consistency across
+   frames, motion sanity (no melting / teleporting / extra limbs), artifacts, and
+   prompt adherence. The grid is one small PNG, so this is cheap and safe.
+3. If the clip is clearly bad, regenerate with an adjusted prompt (or switch mode)
+   and re-check. Iterate at MOST 2–3 times — each render costs money and ~1–3 min.
+4. **Never** inject the full MP4 or its raw bytes into the chat — always inspect
+   quality via the contact sheet, never the video itself. The user is already
+   watching the clip play inline.
+
+## Organize finished clips into the user's workspace (when in a project)
+
+When working inside a user project/workspace, **COPY** the finalized MP4 (and its
+`_grid.png` contact sheet) into a tidy assets subfolder with a descriptive,
+ordered name — e.g. `<workspace>/assets/video/S01_station_wide.mp4` and
+`<workspace>/assets/contact-sheets/S01_station_wide_grid.png`.
+
+- **COPY, don't move**, from the saved path in the `DONE` banner so the chat /
+  history copy stays intact.
+- Use zero-padded shot ordinals (`S01_`, `S02_`…) so clips assemble in order — this
+  is exactly what a later ffmpeg concat/拼接 step needs.
+- Skip for a one-off casual clip unless the user asks.
+
 ## Portrait library (人像库) — push materials in, then reference
 
 The `catimation` MCP server exposes portrait-library tools
@@ -183,8 +222,9 @@ them **proactively** around video generation:
   are relayed through the app's upload pipeline automatically — pass plain
   local paths and let the tool deal with size limits (images ≤30MB,
   video/audio ≤50MB & 4–15s).
-- Do NOT open the resulting MP4 with view_image or read its bytes — the user is
-  already watching it in the chat.
+- To self-check quality, build an ffmpeg 九宫格 contact sheet and `view_image`
+  that (see the QA section above) — never open the resulting MP4 with view_image
+  or read its raw bytes; the user is already watching it play in the chat.
 - **Background saving never blocks you.** Success is decided by the render: once
   the banner says DONE the video is already playing, even if the local file is
   still saving in the background (`persistencePending`). Treat the task as

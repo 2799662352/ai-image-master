@@ -203,25 +203,25 @@ image_gen skill: they render inside the chat AND persist results to local files
    the image is already shown to the user and saved to history + the file panel.
    You do **not** need to embed, re-describe, or base64 the pixels. Just confirm
    briefly in the user's language and cite the saved path(s) when relevant.
-5. **Do NOT inspect the generated image(s) — the user already sees them.**
-   A \`✅ DONE\` return means the image is ALREADY rendered in the chat; the user
-   is looking at it right now and will tell you if something is off. Just
-   confirm briefly and cite the saved path(s). In particular:
-   - **NEVER open the result with \`view_image\` / by reading the file "to
-     double-check".** Each view injects the full-resolution image as multi-MB
-     base64 into the conversation; after a multi-image batch the NEXT model
-     request exceeds the gateway's request-size limit and the whole thread
-     hangs/dies (\`request_too_large\`). Self-inspection has wedged real user
-     threads — it is never worth it.
-   - The ONLY time you may view a result: the user explicitly reports a problem
-     or asks you to look, AND you view at most ONE image in that turn.
-   - **NEVER call \`query_history\` to locate an image you just generated.** It is
-     for browsing *older* sessions only and is slower.
-   - **NEVER shell out** (\`dir\`, \`ls\`, \`where\`, \`find\`, \`Get-ChildItem\`, etc.) to
-     search the filesystem for the file — that scans huge trees and times out
-     (\`exit 124\`). The path is already in the return; trust it.
-   If the user says the image does not match, offer to regenerate with an
-   improved prompt. Keep confirmations short; don't over-narrate.
+5. **Self-review the result, then improve if needed (autonomous QA loop).**
+   A \`✅ DONE\` return means the image is ALREADY rendered in the chat. Before you
+   hand off, do a quick autonomous quality pass:
+   - Open the generated image(s) with \`view_image\` and look critically for
+     defects — wrong/extra fingers or limbs, broken faces, garbled text, obvious
+     artifacts — and above all whether it matches the prompt (subject, count,
+     composition, style). Viewing returned images, **including in batches**, is
+     supported; for a very large batch, review a representative subset rather than
+     every frame in one turn.
+   - If you spot a clear problem, briefly say what's off and **regenerate with an
+     improved prompt**. To keep what worked and fix only the rest, pass the prior
+     result back as \`referenceImages\` (image-to-image). Then re-review. Iterate
+     at MOST 2–3 times and converge — don't loop on marginal nitpicks, and each
+     regeneration costs money.
+   - When it's good (or good enough), confirm briefly in the user's language and
+     cite the saved path(s). Don't over-narrate each pass.
+   - You still do NOT need \`query_history\` to find an image you just generated,
+     and do NOT shell out (\`dir\`/\`ls\`/\`where\`/\`find\`/\`Get-ChildItem\`) to hunt for
+     the file — the path is already in the return; \`view_image\` that path directly.
 
 ## Choosing a model (default vs. 腾讯 / 万相)
 
@@ -291,11 +291,27 @@ CATIMATION.
 - After \`generate_images\` returns, confirm once and cite the saved \`paths\`; don't
   re-announce each image separately.
 
+## Organize finished assets into the user's workspace (when in a project)
+
+When you're working inside a user project/workspace folder (e.g. a film /
+storyboard project, or the user asked you to organize outputs), proactively
+**COPY** each finalized image into a tidy assets subfolder of that working
+directory and give it a descriptive, ordered name — e.g.
+\`<workspace>/assets/images/S01_hero_wide.png\`.
+
+- **COPY, don't move**, from the saved path in the tool result, so the chat /
+  history / ATTACHMENTS copy stays intact.
+- Group by purpose/shot and use zero-padded ordinals (\`S01_\`, \`S02_\`…) so files
+  sort naturally.
+- For a one-off casual generation outside any project, skip this unless asked —
+  the file is already saved and in history.
+
 ## Notes
 
 - This is the generate → save → read path. The file is on disk (see \`paths\`), in
   the history page, and in the ATTACHMENTS panel — no extra save step is needed.
-  Only move/copy a file if the user wants it somewhere specific.
+  Only move/copy a file if the user wants it somewhere specific (see the organize
+  section above when working in a project).
 - For edits, image-to-image, or multi-image prompts, use \`generate_image\` for one
   output or \`generate_images\` for multiple outputs, always with \`referenceImages\`
   when references are present.
@@ -456,6 +472,42 @@ When unsure, propose a sensible default out loud and let the user correct you.
    - \`❌ FAILED\` → report the upstream error. You may retry ONCE with an
      adjusted prompt only if the error suggests a content/parameter problem.
 
+## QA the clip with an ffmpeg 九宫格 contact sheet, then improve
+
+You cannot meaningfully "watch" an MP4, and injecting the raw video bytes into the
+chat is wasteful and unsafe — so to self-check a finished clip, build a **3×3
+九宫格 contact sheet** of evenly-spaced frames with ffmpeg (use your ffmpeg MCP
+tool, e.g. \`ffmpeg-win\`, or any ffmpeg available), then \`view_image\` that ONE
+montage:
+
+1. Extract 9 evenly-spaced frames tiled into a grid. Set \`fps ≈ 9 / clip_duration\`
+   so the 9 tiles span the whole clip:
+
+       ffmpeg -i "<clip>.mp4" -vf "fps=9/<DURATION>,scale=320:-1,tile=3x3:padding=6:color=black" -frames:v 1 -y "<clip>_grid.png"
+
+   (For a 5s clip, \`fps=9/5=1.8\`; set \`<DURATION>\` to the real length. If the grid
+   has too few/many tiles, nudge the fps.)
+2. \`view_image\` the \`_grid.png\` and judge: subject/character consistency across
+   frames, motion sanity (no melting / teleporting / extra limbs), artifacts, and
+   prompt adherence. The grid is one small PNG, so this is cheap and safe.
+3. If the clip is clearly bad, regenerate with an adjusted prompt (or switch mode)
+   and re-check. Iterate at MOST 2–3 times — each render costs money and ~1–3 min.
+4. **Never** inject the full MP4 or its raw bytes into the chat — always inspect
+   quality via the contact sheet, never the video itself.
+
+## Organize finished clips into the user's workspace (when in a project)
+
+When working inside a user project/workspace, **COPY** the finalized MP4 (and its
+\`_grid.png\` contact sheet) into a tidy assets subfolder with a descriptive,
+ordered name — e.g. \`<workspace>/assets/video/S01_station_wide.mp4\` and
+\`<workspace>/assets/contact-sheets/S01_station_wide_grid.png\`.
+
+- **COPY, don't move**, from the saved path in the \`DONE\` banner so the chat /
+  history copy stays intact.
+- Use zero-padded shot ordinals (\`S01_\`, \`S02_\`…) so clips assemble in order —
+  exactly what a later ffmpeg concat/拼接 step needs.
+- Skip for a one-off casual clip unless the user asks.
+
 ## Portrait library (人像库) — push materials in, then reference
 
 The \`catimation\` MCP server exposes portrait-library tools
@@ -489,8 +541,9 @@ them **proactively** around video generation:
   are relayed through the app's upload pipeline automatically — pass plain
   local paths and let the tool deal with size limits (images ≤30MB,
   video/audio ≤50MB & 4–15s).
-- Do NOT open the resulting MP4 with view_image or read its bytes — the user is
-  already watching it in the chat.
+- To self-check quality, build an ffmpeg 九宫格 contact sheet and \`view_image\`
+  that (see the QA section above) — never open the resulting MP4 with view_image
+  or read its raw bytes; the user is already watching it play in the chat.
 - **Background saving never blocks you.** Success is decided by the render: once
   the banner says DONE the video is already playing, even if the local file is
   still saving in the background (\`persistencePending\`). Treat the task as

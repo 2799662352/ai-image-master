@@ -67,25 +67,25 @@ image_gen skill: they render inside the chat AND persist results to local files
    the image is already shown to the user and saved to history + the file panel.
    You do **not** need to embed, re-describe, or base64 the pixels. Just confirm
    briefly in the user's language and cite the saved path(s) when relevant.
-5. **Do NOT inspect the generated image(s) — the user already sees them.**
-   A `✅ DONE` return means the image is ALREADY rendered in the chat; the user
-   is looking at it right now and will tell you if something is off. Just
-   confirm briefly and cite the saved path(s). In particular:
-   - **NEVER open the result with `view_image` / by reading the file "to
-     double-check".** Each view injects the full-resolution image as multi-MB
-     base64 into the conversation; after a multi-image batch the NEXT model
-     request exceeds the gateway's request-size limit and the whole thread
-     hangs/dies (`request_too_large`). Self-inspection has wedged real user
-     threads — it is never worth it.
-   - The ONLY time you may view a result: the user explicitly reports a problem
-     or asks you to look, AND you view at most ONE image in that turn.
-   - **NEVER call `query_history` to locate an image you just generated.** It is
-     for browsing *older* sessions only and is slower.
-   - **NEVER shell out** (`dir`, `ls`, `where`, `find`, `Get-ChildItem`, etc.) to
-     search the filesystem for the file — that scans huge trees and times out
-     (`exit 124`). The path is already in the return; trust it.
-   If the user says the image does not match, offer to regenerate with an
-   improved prompt. Keep confirmations short; don't over-narrate.
+5. **Self-review the result, then improve if needed (autonomous QA loop).**
+   A `✅ DONE` return means the image is ALREADY rendered in the chat. Before you
+   hand off, do a quick autonomous quality pass:
+   - Open the generated image(s) with `view_image` and look critically for
+     defects — wrong/extra fingers or limbs, broken faces, garbled text, obvious
+     artifacts — and above all whether it matches the prompt (subject, count,
+     composition, style). Viewing returned images, **including in batches**, is
+     supported; for a very large batch, review a representative subset rather than
+     every frame in one turn.
+   - If you spot a clear problem, briefly say what's off and **regenerate with an
+     improved prompt**. To keep what worked and fix only the rest, pass the prior
+     result back as `referenceImages` (image-to-image). Then re-review. Iterate
+     at MOST 2–3 times and converge — don't loop on marginal nitpicks, and each
+     regeneration costs money.
+   - When it's good (or good enough), confirm briefly in the user's language and
+     cite the saved path(s). Don't over-narrate each pass.
+   - You still do NOT need `query_history` to find an image you just generated,
+     and do NOT shell out (`dir`/`ls`/`where`/`find`/`Get-ChildItem`) to hunt for
+     the file — the path is already in the return; `view_image` that path directly.
 
 ## Choosing a model (default vs. 腾讯 / 万相)
 
@@ -163,11 +163,27 @@ CATIMATION.
 - After `generate_images` returns, confirm once and cite the saved `paths`; don't
   re-announce each image separately.
 
+## Organize finished assets into the user's workspace (when in a project)
+
+When you're working inside a user project/workspace folder (e.g. a film /
+storyboard project, or the user asked you to organize outputs), proactively
+**COPY** each finalized image into a tidy assets subfolder of that working
+directory and give it a descriptive, ordered name — e.g.
+`<workspace>/assets/images/S01_hero_wide.png`.
+
+- **COPY, don't move**, from the saved path in the tool result, so the chat /
+  history / ATTACHMENTS copy stays intact.
+- Group by purpose/shot and use zero-padded ordinals (`S01_`, `S02_`…) so files
+  sort naturally.
+- For a one-off casual generation outside any project, skip this unless asked —
+  the file is already saved and in history.
+
 ## Notes
 
 - This is the generate → save → read path. The file is on disk (see `paths`), in
   the history page, and in the ATTACHMENTS panel — no extra save step is needed.
-  Only move/copy a file if the user wants it somewhere specific.
+  Only move/copy a file if the user wants it somewhere specific (see the organize
+  section above when working in a project).
 - For edits, image-to-image, or multi-image prompts, use `generate_image` for one
   output or `generate_images` for multiple outputs, always with `referenceImages`
   when references are present.
