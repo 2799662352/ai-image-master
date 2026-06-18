@@ -2,7 +2,7 @@
   "name": "catimation-video",
   "displayName": "CATIMATION Video",
   "description": "sd2-pe 提示词工程化(总兜底)→ Seedance 2.0 出片 + 应用内 generate_video + ffmpeg 剪辑拼接。",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "author": { "name": "CATIMATION", "url": "https://github.com/zuozuoliang999" },
   "homepage": "https://github.com/zuozuoliang999/catimation-plugins",
   "repository": "https://github.com/zuozuoliang999/catimation-plugins",

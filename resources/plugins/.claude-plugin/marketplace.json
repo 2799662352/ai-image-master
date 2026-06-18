@@ -30,7 +30,7 @@
     {
       "name": "catimation-video",
       "description": "视频出片与后期:Seedance 2.0 出片技法、catimation 应用内 generate_video、ffmpeg 剪辑拼接、研究驱动提示词。含 /gen-video、/edit-video 命令。",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "source": "./catimation-video",
       "author": { "name": "CATIMATION", "url": "https://github.com/zuozuoliang999" }
     },

@@ -177,7 +177,7 @@ zip 文件名内容寻址(`-<sha8>` 后缀):文件名带 zip 的 sha256 前 8 �
 
 ## Changelog
 
-### v4.3.42 (2026-06-18) — 制片流程补全:人物卡 / 故事板 / 分镜多参 + 资产齐备硬门 + 缺口自主补 + 视频/音乐也是全能参考素材
+### v4.3.42 (2026-06-18) — 制片流程补全:人物卡 / 故事板 / 分镜多参 + 资产齐备硬门 + 缺口自主补 + 视频/音乐也是全能参考素材 + hook 硬指引常驻注入
 
 > 双通道齐发:**(a) app installer 整包热更新**(本版,把内置 skill `firstPartySkills.ts` 推给"全新安装 / 不走商城"的用户)+ **(b) 插件商城热更新**(`catimation-film` 1.0.1 / `catimation-video` 1.0.2 已上 COS,已装插件的用户即见「有更新」)。以用户提供的 `sd2-pe`(Seedance 2.0 提示词优化器)为权威来源,把"锁人 / 排板 / 多参 / 备齐才开拍"固化进制片与生成流程。
 
@@ -204,16 +204,21 @@ zip 文件名内容寻址(`-<sha8>` 后缀):文件名带 zip 的 sha256 前 8 �
 | 插件 | 旧 → 新 | 同步文件 |
 |------|---------|---------|
 | catimation-film(含 film-studio) | 1.0.0 → **1.0.1** | `marketplace.json` + `.{claude,codex,cursor}-plugin/plugin.json` |
-| catimation-video | 1.0.1 → **1.0.2** | 同上 |
+| catimation-video | 1.0.1 → **1.0.3** | 同上(1.0.2 加 SKILL 正文规则,1.0.3 加 hook 硬指引) |
 
-已 `npm run publish:plugins` 重打包上传 COS,线上 `plugins-catalog.json` 已生效(`catimation-film-1.0.1-<sha8>.zip` / `catimation-video-1.0.2-<sha8>.zip`)。
+已 `npm run publish:plugins` 重打包上传 COS,线上 `plugins-catalog.json` 已生效(`catimation-film-1.0.1-<sha8>.zip` / `catimation-video-1.0.3-<sha8>.zip`)。
+
+**D. catimation-video hook 硬指引(SessionStart 注入,参 obra/Superpowers)**
+
+SKILL 正文规则只在 agent **主动加载** skill 时生效;为保证「商城路径 / 任意会话」从第一条消息起就受约束,把四条铁律纲要写进 `catimation-video/hooks/session-start`,随 `SessionStart`(startup/resume/clear)以 `additionalContext` **常驻注入**(原本只注入 sd2-pe 全文,现额外加「制片纪律·硬门」纲要段)。按 Superpowers `writing-skills` 风格:`<EXTREMELY_IMPORTANT>` 包裹 + 祈使 MUST + **渐进式披露**(hook 只放纲要,完整规则指向 SKILL 正文按需 `Skill` 加载),避免 hook 体积膨胀。注入要点:① 人物卡(大头照+全身照、禁多视图)② 故事板/分镜(镜头1/2/… 四要素)③ 资产齐备硬门(缺口三选一:找/自主补/问用户)④ 用上全部资产(图+视频+音频全能参考、一镜一夹)⑤ 写 prompt 前强制 `director-orchestrator`+`sd2-pe`+`storyboard-video-prompt-optimization` 渐进式编写。保留「单图让它动起来」轻量例外。三套 harness 配置(`hooks.json` claude / `hooks-codex.json` / `hooks-cursor.json`)共用同一 `session-start` 脚本,改一处即三端生效。已校验脚本输出为合法 JSON。
 
 #### 用户可见行为
 
 1. 做角色片 / 多镜短片时,agent 会先为角色建人物卡、排故事板,再逐镜备齐资产,**资产没齐不会直接开生成**
 2. 缺资产时:能自己出的(环境/氛围/道具)自主补图,项目里有的先找,必须你给的(特定真人/IP/Logo/真实产品)才询问你
 3. 生成视频时会把**全部可用资产**(图片 + 参考视频 + 音乐/音频)一并作为全能参考喂入,不再有素材却纯文字
-4. 已装 catimation-film / catimation-video 插件的用户,商城里会看到「有更新」
+4. 装了 catimation-video 插件后,**任意会话一开场**就已带上制片纪律纲要(hook 注入),不必等 agent 主动加载 skill
+5. 已装 catimation-film / catimation-video 插件的用户,商城里会看到「有更新」
 
 ---
 

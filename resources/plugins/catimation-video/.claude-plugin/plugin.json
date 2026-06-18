@@ -1,7 +1,7 @@
 {
   "name": "catimation-video",
   "description": "视频出片与后期。以 sd2-pe(Seedance 2.0 提示词工程化引擎)为总兜底和起点:任何视频/提示词需求先经 sd2-pe 八大要素 + 路径A/B 三段论结构化,再叠加 seedance-video-craft 出片技法、catimation 应用内 generate_video、ffmpeg 剪辑拼接、研究驱动提示词等衍生。",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "author": { "name": "CATIMATION", "url": "https://github.com/zuozuoliang999" },
   "homepage": "https://github.com/zuozuoliang999/catimation-plugins",
   "repository": "https://github.com/zuozuoliang999/catimation-plugins",
