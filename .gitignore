@@ -74,3 +74,14 @@ release-log.txt
 # The lockfile (scripts/vendor-apiyi-mcp.lock.json) IS tracked; the build
 # output is not.
 /resources/apiyi-mcp/
+
+# Runtime-generated 3D / video assets and local scratch — NEVER version these.
+# director-assets/models holds tens of multi-MB .gltf files that bloat the repo
+# and break `git push` (connection resets on huge packs).
+director-assets/
+.tmp_video_frames/
+.brainstorm-session.txt
+face_ref*.jpg
+face_ref*.png
+fbx-diag.mjs
+*.har
