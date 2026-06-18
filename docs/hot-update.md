@@ -136,7 +136,84 @@ nsis:
 https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/latest.yml
 ```
 
+## 技能 / 插件商城热更新(免发版)
+
+除了 app installer 整包热更新,skill 内容与整插件可以**单独发到 COS**,不用 build app / 发 installer。两条独立链路,都以 COS 上的 catalog 为 source of truth:
+
+| 链路 | 脚本 / npm | COS 路径 | catalog |
+|------|-----------|----------|---------|
+| 单 skill 商城 | `npm run publish:skills`(预览 `publish:skills:dry`) | `cos://image-master-1345773498/skills/` | `skills/catalog.json` |
+| 整插件商城 | `npm run publish:plugins`(预览 `publish:plugins:dry`) | `cos://image-master-1345773498/plugins/` | `plugins/plugins-catalog.json` |
+
+### 整插件发布步骤(`scripts/upload-plugins-to-cos.mjs`)
+
+1. 改 `resources/plugins/<plugin>/...`(skills / commands / hooks / manifests)。
+2. **bump 版本**:商城「有更新」判定是 `rec.version !== entry.version`(`MarketplacePage.tsx`,只比版本号、不比 sha),所以内容变了必须同时 bump `resources/plugins/.claude-plugin/marketplace.json` 里该插件的 `version`(catalog 的 version 取自这里),并同步 `<plugin>/.{claude,codex,cursor}-plugin/plugin.json`。
+3. `npm run publish:plugins:dry` 预览 catalog 与各 zip 的 sha。
+4. `npm run publish:plugins` 正式上传:逐插件 zip + 全量 bundle zip + `plugins-catalog.json`。
+5. 同步 `D:\tecx\catimation-plugins`(对外 GitHub 插件仓镜像,保持逐字一致)。
+
+### COS 布局
+
+```
+image-master-1345773498/
+└── plugins/
+    ├── plugins-catalog.json                       # source of truth(bundle + 5 插件)
+    ├── catimation-core-1.0.3-<sha8>.zip
+    ├── catimation-video-1.0.1-<sha8>.zip
+    ├── catimation-director-1.0.0-<sha8>.zip
+    ├── catimation-storyboard-1.0.0-<sha8>.zip
+    ├── catimation-film-1.0.0-<sha8>.zip
+    └── catimation-plugins-1.0.0-<sha8>.zip         # 全量 bundle
+```
+
+zip 文件名内容寻址(`-<sha8>` 后缀):文件名带 zip 的 sha256 前 8 位,客户端下载后按 catalog 里的完整 sha256 校验,**陈旧缓存的 catalog 永远不会解析到 digest 不匹配的 zip**。
+
+> ⚠️ 注意:JSZip 输出并非字节稳定(同样内容、连续两次跑产出的 zip sha 也会变),所以 sha 是 **per-run** 而非严格 per-content——同一次 `publish:plugins` 里 catalog 的 sha 与上传的 zip 同源、一致,正确性不受影响;副作用是 COS 上会累积旧版孤儿 zip(可按需手动清理)。
+
+### 与内置 skill 的关系
+
+`catimation-image` / `catimation-video` 同时存在两份投递:(a) `src/main/agent/firstPartySkills.ts` 内嵌串,随 **app installer** 装进 Codex USER scope(`~/.agents/skills/`);(b) `resources/plugins` 经**商城**安装。改 skill 时两处都要同步,且 firstPartySkills 用**内容 sha256 比对**自动判断更新(无需手动 bump),但只有发新 installer 才会到达"全新安装 / 不走商城"的用户。
+
 ## Changelog
+
+### 插件商城热更新 (2026-06-18) — 生成后自主看图 / 九宫格自查 → 改进 + 整理素材进工作区
+
+> 这是一次**插件商城热更新 + 源码修复**,不是 app 发版。源码已合并 `main`(`30ea2c9`),但内置 skill(`firstPartySkills.ts`)随**下一个 installer** 才会到达"全新安装 / 不走商城更新"的用户;经商城安装插件的用户已可立即看到「有更新」。Seedance 202 修复(`10a009e`)同批合并。
+
+**A. catimation-image / catimation-video:从"禁止看图"翻转为"自主 QA 环"**
+
+`request_too_large` 已解决(分批 `view_image` 安全),故把之前因网关请求体上限而加的「NEVER view_image」硬约束(见早期"生成后自查"被回退的历史)重新启用为受控自查:
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| catimation-image step5 改 QA 环 | `resources/plugins/catimation-core/skills/catimation-image/SKILL.md` + `firstPartySkills.ts` | 生成完 `view_image` 自查(手指/脸/错字/伪影/是否贴合 prompt,支持分批;超大批看代表性子集)→ 有问题用 `referenceImages` 图生图改进 → 最多迭代 2-3 次收敛 |
+| catimation-video 加九宫格自查 | `resources/plugins/catimation-video/skills/catimation-video/SKILL.md` + `firstPartySkills.ts` | MP4 不能直接"看",改用 ffmpeg `fps=9/时长` + `tile=3x3` 抽 9 帧拼一张小 PNG → 只 `view_image` 这张判断一致性/运动/伪影 → 差则调 prompt 重生;仍**禁注入原始 MP4 字节** |
+| 两条都加「整理素材进工作区」 | 同上 | 在项目工作区里把成品**复制**(不 move)进 `<workspace>/assets/{images,video,contact-sheets}/`,零填充序号便于后续 ffmpeg 拼接;一次性闲聊不强制 |
+
+三处同步:`firstPartySkills.ts` 内嵌串(实际投递给 agent)、`resources/plugins`(商城源)、`D:\tecx\catimation-plugins`(独立副本,逐字一致)。
+
+**B. 插件版本 bump(商城更新检测是版本号比较)**
+
+| 插件 | 旧 → 新 | 同步文件 |
+|------|---------|---------|
+| catimation-core(含 catimation-image) | 1.0.2 → **1.0.3** | `marketplace.json` + `.{claude,codex,cursor}-plugin/plugin.json` |
+| catimation-video | 1.0.0 → **1.0.1** | 同上 |
+
+已 `npm run publish:plugins` 重新打包上传 COS,线上 `plugins-catalog.json` 已生效(`catimation-core-1.0.3-<sha8>.zip` / `catimation-video-1.0.1-<sha8>.zip`)。
+
+**C. Seedance `generate_video` 202 修复(同批)**
+
+`10a009e`:VVDance/Ark 创建任务返回 **HTTP 202 + 扁平 body**(任务字段在顶层、无 `data` 包裹)被旧逻辑 `!json.data` 误判为失败 → `check_video_task` 查不到 → agent 误判"不可用"并重复提交(烧钱)。修正 `src/main/services/seedance/client.ts` 的 `arkRequest`:2xx + 可解析 JSON + 未显式 `success:false` 即成功,payload 优先 `data` 缺省回退顶层;`createTask` 兼容 `id`/`task_id`。+ 新增 `client.test.ts` 防回归。
+
+#### 用户可见行为
+
+1. 生图完成后,agent 会(分批)看自己生成的图,发现明显瑕疵会说明并自动用图生图改进
+2. 生视频完成后,agent 用 ffmpeg 九宫格抽帧自查质量,差则调提示词重生
+3. 在项目里工作时,成品会被整理复制进 `<workspace>/assets/` 对应子目录
+4. 已装 catimation-core / catimation-video 插件的用户,商城里会看到「有更新」
+
+---
 
 ### v4.3.40 (2026-06-18) — wan2.7 pro 组图 + 比例补全 + 腾讯image2/万相 Miau API 说明 + 商城显示安装位置
 
