@@ -177,6 +177,44 @@ zip 文件名内容寻址(`-<sha8>` 后缀):文件名带 zip 的 sha256 前 8 �
 
 ## Changelog
 
+### v4.3.42 (2026-06-18) — 制片流程补全:人物卡 / 故事板 / 分镜多参 + 资产齐备硬门 + 缺口自主补 + 视频/音乐也是全能参考素材
+
+> 双通道齐发:**(a) app installer 整包热更新**(本版,把内置 skill `firstPartySkills.ts` 推给"全新安装 / 不走商城"的用户)+ **(b) 插件商城热更新**(`catimation-film` 1.0.1 / `catimation-video` 1.0.2 已上 COS,已装插件的用户即见「有更新」)。以用户提供的 `sd2-pe`(Seedance 2.0 提示词优化器)为权威来源,把"锁人 / 排板 / 多参 / 备齐才开拍"固化进制片与生成流程。
+
+**A. catimation-video:新增《角色片 / 多镜项目:先备齐资产,再开生成》一节**
+
+| 规则 | 说明 |
+|------|------|
+| 人物卡 (Character Card) | 每个出镜角色先建「大头照(正脸无表情)+ 全身照」存人像库 → `asset://`,作唯一身份锚,全片复用;禁用三视图/多视图(防 ID 漂移/双胞胎);缺图先 `generate_image` 补 |
+| 故事板 / 分镜 | 非「单场景单连续动作」(sd2-pe 路径 A)一律先排 `镜头1/2/…`,按 运镜→动作→空间→音频 四要素(路径 B 三段论),过一遍再生成;一镜一运镜、用序号不写绝对秒数 |
+| 资产齐备 GATE(硬门) | 调 `generate_video` 前逐镜清点人物卡/场景环境图/关键道具/氛围色调参考/运镜参考视频/音乐配乐音色参考音频;**缺则先补,绝不先生成再补**;每镜推荐 4–5 素材 |
+| 缺口三选一处理 | ① 先在项目 `assets/`/人像库找现成的;② 非身份关键(环境/场景/氛围/通用道具/空镜)`generate_image` 自主补并入库;③ 身份/意图关键(特定真人/指定 IP/品牌 Logo/特定真实产品)才 `ask_user` 请用户提供 |
+| 用上全部可用资产 | 角色卡/场景/道具/氛围图→`referenceImages`、运镜/动作/风格参考视频→`referenceVideos`、音乐/配乐/音色音频→`referenceAudios`;**图片、视频、音乐/音频都是全能参考素材,有素材却纯文字 = 错** |
+
+**B. film-studio:G3 升级人物卡 + 新增 G4.5 资产门 + G5 分镜多参**
+
+管线图加入 `G4.5 资产门`(`G0…G4 →[资产门 G4.5]→ G5…`)。G3 产出每角色人物卡(大头照+全身照)入库;**G4.5** 进 G5 前逐镜校验资产齐备(同上缺口三选一),不得带缺口进 G5;**G5** 每镜把全部可用资产(含视频/音乐)按 sd2-pe 绑定喂入 Seedance,禁纯文字生成。准则加 3.5、常见错误加 3 条、路由表更新(已建关键帧→先过资产门)。
+
+四处同步:`firstPartySkills.ts` 内嵌串(catimation-video)、`resources/plugins`(catimation-video + catimation-film 商城源)、`D:\tecx\catimation-plugins`(独立副本,逐字一致)。`sd2-pe` 仓内版本与用户 Downloads 完全一致(SHA 校验),未改,仅被引用。
+
+**C. 插件版本 bump(商城更新检测是版本号比较)**
+
+| 插件 | 旧 → 新 | 同步文件 |
+|------|---------|---------|
+| catimation-film(含 film-studio) | 1.0.0 → **1.0.1** | `marketplace.json` + `.{claude,codex,cursor}-plugin/plugin.json` |
+| catimation-video | 1.0.1 → **1.0.2** | 同上 |
+
+已 `npm run publish:plugins` 重打包上传 COS,线上 `plugins-catalog.json` 已生效(`catimation-film-1.0.1-<sha8>.zip` / `catimation-video-1.0.2-<sha8>.zip`)。
+
+#### 用户可见行为
+
+1. 做角色片 / 多镜短片时,agent 会先为角色建人物卡、排故事板,再逐镜备齐资产,**资产没齐不会直接开生成**
+2. 缺资产时:能自己出的(环境/氛围/道具)自主补图,项目里有的先找,必须你给的(特定真人/IP/Logo/真实产品)才询问你
+3. 生成视频时会把**全部可用资产**(图片 + 参考视频 + 音乐/音频)一并作为全能参考喂入,不再有素材却纯文字
+4. 已装 catimation-film / catimation-video 插件的用户,商城里会看到「有更新」
+
+---
+
 ### v4.3.41 (2026-06-18) — 生成后自主看图 / 九宫格自查 → 改进 + 整理素材进工作区
 
 > 双通道齐发:**(a) app installer 整包热更新**(本版,把内置 skill `firstPartySkills.ts` 推给"全新安装 / 不走商城"的用户)+ **(b) 插件商城热更新**(`catimation-core` 1.0.3 / `catimation-video` 1.0.1 已上 COS,已装插件的用户即见「有更新」)。Seedance 202 修复(`10a009e`)同批合并。

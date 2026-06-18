@@ -23,14 +23,14 @@
     {
       "name": "catimation-film",
       "description": "端到端制片编排器:概念→剧本→分镜→出图→图生视频→配音→拼接→交付的门控流水线。含 film-studio / screenwriter / trailer-plan-generator / animation-craft 与 /make-film、/write-script、/trailer 命令。",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "source": "./catimation-film",
       "author": { "name": "CATIMATION", "url": "https://github.com/zuozuoliang999" }
     },
     {
       "name": "catimation-video",
       "description": "视频出片与后期:Seedance 2.0 出片技法、catimation 应用内 generate_video、ffmpeg 剪辑拼接、研究驱动提示词。含 /gen-video、/edit-video 命令。",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "source": "./catimation-video",
       "author": { "name": "CATIMATION", "url": "https://github.com/zuozuoliang999" }
     },

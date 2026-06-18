@@ -1,7 +1,7 @@
 {
   "name": "catimation-film",
   "description": "端到端制片编排器:概念→剧本→分镜→角色设定→逐镜出图→图生视频→配音配乐→ffmpeg 拼接→爆款体检交付,每阶段带审批门(gate)。含 film-studio / screenwriter / trailer-plan-generator / animation-craft。",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": { "name": "CATIMATION", "url": "https://github.com/zuozuoliang999" },
   "homepage": "https://github.com/zuozuoliang999/catimation-plugins",
   "repository": "https://github.com/zuozuoliang999/catimation-plugins",

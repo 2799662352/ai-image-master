@@ -2,7 +2,7 @@
   "name": "catimation-film",
   "displayName": "CATIMATION Film Studio",
   "description": "端到端制片:概念→剧本→分镜→出图→图生视频→配音→拼接→交付的门控流水线。",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": { "name": "CATIMATION", "url": "https://github.com/zuozuoliang999" },
   "homepage": "https://github.com/zuozuoliang999/catimation-plugins",
   "repository": "https://github.com/zuozuoliang999/catimation-plugins",
