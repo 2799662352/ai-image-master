@@ -5,7 +5,7 @@
   "main": "dist/main/index.js",
   "author": "CATIMATION",
   "license": "MIT",
-  "codexCliVersion": "0.139.0",
+  "codexCliVersion": "0.141.0",
   "dockerMcpGatewayVersion": "0.42.1",
   "packageManager": "pnpm@10.12.4",
   "pnpm": {
