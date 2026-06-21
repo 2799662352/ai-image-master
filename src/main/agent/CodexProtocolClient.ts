@@ -355,8 +355,10 @@ export class CodexProtocolClient {
   // Method strings pinned from openai/codex
   // `app-server-protocol/src/protocol/common.rs` (client_request_definitions!)
   // at tag rust-v0.141.0. These require a Codex binary ≥0.140; remote catalogs
-  // (`vertical` / `created-by-me-remote`) and `apps/list` are additionally
+  // (`vertical` / `created-by-me-remote`) and `app/list` are additionally
   // gated behind ChatGPT auth / experimental feature flags server-side.
+  // NOTE: the wire method is `app/list` (singular) even though the Rust enum
+  // variant is `AppsList` — verified against v2/apps.rs + the serialize test.
 
   /** List plugins across marketplaces. Omitting `marketplaceKinds` queries only
    *  local marketplaces (+ the default remote catalog when feature-flagged). */
@@ -404,7 +406,7 @@ export class CodexProtocolClient {
 
   /** List available apps / connectors (EXPERIMENTAL; paginated via `nextCursor`). */
   async listApps(params?: AppsListParams): Promise<AppsListResponse> {
-    return this.rpc<AppsListResponse>('apps/list', params ?? {})
+    return this.rpc<AppsListResponse>('app/list', params ?? {})
   }
 
   /** Detect importable external-agent configs (Claude Code, etc.). */

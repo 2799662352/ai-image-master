@@ -446,22 +446,31 @@ export function MentionInput() {
     const slashDetected = detectSlashTrigger(el.value, caret)
     const skillDetected = detectSkillTrigger(el.value, caret)
     const atDetected = detectAtTrigger(el.value, caret)
+    // Only reset the keyboard highlight when the trigger NEWLY opens or its
+    // query/anchor changes. refreshTriggerPopups also runs on `onKeyUp`, which
+    // fires after an ArrowDown/ArrowUp keydown (preventDefault stops the caret
+    // move but NOT the keyup) — resetting to 0 there would undo the arrow nav
+    // the keydown handler just applied, making the popup feel un-navigable.
+    const sameTrigger = (
+      a: { start: number; query: string } | null,
+      b: { start: number; query: string },
+    ): boolean => a !== null && a.start === b.start && a.query === b.query
     // Priority: slash palette > skill > file. Slash wins because it's the most
     // explicit (start-of-line only) and shouldn't be ambushed by a stray @ in
     // a multi-line draft.
     if (slashDetected) {
+      if (!sameTrigger(slashPopup, slashDetected)) setSlashHighlight(0)
       setSlashPopup(slashDetected)
-      setSlashHighlight(0)
       setSkillPopup(null)
       setFilePopup(null)
     } else if (skillDetected) {
+      if (!sameTrigger(skillPopup, skillDetected)) setSkillHighlight(0)
       setSkillPopup(skillDetected)
-      setSkillHighlight(0)
       setFilePopup(null)
       setSlashPopup(null)
     } else if (atDetected) {
+      if (!sameTrigger(filePopup, atDetected)) setFileHighlight(0)
       setFilePopup(atDetected)
-      setFileHighlight(0)
       setSkillPopup(null)
       setSlashPopup(null)
     } else {

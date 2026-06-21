@@ -137,10 +137,10 @@ describe('CodexProtocolClient plugin/connector methods', () => {
 
   // ─── Apps / connectors ────────────────────────────────────────────────────
 
-  it('listApps sends apps/list and parses {data,nextCursor}', async () => {
+  it('listApps sends app/list and parses {data,nextCursor}', async () => {
     server.setResponder(() => ({ data: [{ id: 'a1', name: 'App1' }], nextCursor: null }))
     const result = await client.listApps()
-    expect(server.sent('apps/list')).toBeTruthy()
+    expect(server.sent('app/list')).toBeTruthy()
     expect(result.data).toHaveLength(1)
     expect(result.nextCursor).toBeNull()
   })

@@ -177,6 +177,15 @@ zip 文件名内容寻址(`-<sha8>` 后缀):文件名带 zip 的 sha256 前 8 �
 
 ## Changelog
 
+### v4.3.47 (2026-06-22) — Connectors 修正:apps RPC 方法名 + 斜杠面板方向键导航(渲染层,走 installer)
+
+> 纯渲染层热更新(整包 installer)。修两处 agent 工作区 bug,均对照 openai/codex `rust-v0.141.0` 源码 / systematic-debugging 定位根因。
+
+| 项 | 文件 | 根因 / 修复 |
+|---|---|---|
+| apps RPC 方法名 | `src/main/agent/CodexProtocolClient.ts` + 测试 | wire 方法是 `app/list`(单数,见 `v2/apps.rs` + common.rs 序列化测试),v4.3.46 误写成 `apps/list`(复数,Rust 变体名是 `AppsList`)→ 后端报 unknown variant。改回 `app/list`,Apps 标签页在 0.141 可真正拉取(EXPERIMENTAL,需 ChatGPT 登录) |
+| 斜杠面板方向键失效 | `src/renderer/src/features/agent-chat/MentionInput.tsx` + 新增 `MentionInput.slashNav.test.tsx` | keydown 设高亮后,`onKeyUp={refreshTriggerPopups}` 无条件 `setHighlight(0)`(preventDefault 挡光标不挡 keyup)→ ↓ 永远停在第一项。改为只在 trigger 新开 / query 变化时 reset,一并修好 `/`、`$`、`@` 三个面板 |
+
 ### v4.3.46 (2026-06-22) — Connectors 修正:Apps 标签页优雅降级 + 商城更新方向显示修复(渲染层,走 installer)
 
 > 纯渲染层热更新(整包 installer)。对照真实 Codex 0.141 后端的 `client_request_definitions!` 方法清单核对了 P0 的 11 个 RPC——10 个完全匹配,唯一 `apps/list` 在该版本**不存在**(报 `unknown variant`)。该版本里 apps/connectors 本就是策展市场的 plugin,经 `plugin/list` 显示在 Plugins 标签页(Linear / Gmail / Google Calendar 等)。
