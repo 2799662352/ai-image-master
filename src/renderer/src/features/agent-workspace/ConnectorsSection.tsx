@@ -389,17 +389,57 @@ function PluginCard({
 
 // ─── Apps ─────────────────────────────────────────────────────────────────────
 
+// A Codex build that predates the dedicated `apps/list` RPC rejects it with a
+// JSON-RPC "unknown variant `apps/list`" error (the method isn't in its
+// `client_request_definitions!`). In that build apps are surfaced as plugins
+// from the curated marketplace via `plugin/list`, so there's nothing to fetch
+// here — degrade to an explanatory note instead of dumping the raw variant list.
+function isAppsUnsupported(message: string | undefined): boolean {
+  if (!message) return false
+  return /unknown variant|apps\/list|method not found|unsupported|not implemented/i.test(message)
+}
+
 function AppsPanel(): React.JSX.Element {
   const [apps, setApps] = useState<AppInfo[] | null>(null)
+  const [unsupported, setUnsupported] = useState(false)
   const fetcher = useCallback(async () => {
+    setUnsupported(false)
     const api = getApi()
-    if (!api?.listApps) throw new Error('Apps API is unavailable.')
+    if (!api?.listApps) {
+      setUnsupported(true)
+      return
+    }
     const res = await api.listApps()
-    if (!res?.ok || !res.data) throw new Error(res?.error ?? 'apps/list failed.')
+    if (!res?.ok || !res.data) {
+      if (isAppsUnsupported(res?.error)) {
+        setUnsupported(true)
+        return
+      }
+      throw new Error(res?.error ?? 'apps/list failed.')
+    }
     setApps(res.data.data ?? [])
   }, [])
 
   const { error, running, reload } = useAsyncLoad(fetcher)
+
+  if (unsupported) {
+    return (
+      <PanelShell
+        title="Apps"
+        hint="此 Codex 版本未提供独立的 apps 接口。"
+        running={running}
+        empty={false}
+        emptyText=""
+        onReload={reload}
+      >
+        <article className="rounded-xl border border-zinc-800/80 bg-zinc-950/70 p-4 text-sm text-zinc-400">
+          当前 Codex 后端没有 <code className="text-zinc-300">apps/list</code> 方法。在该版本里,apps
+          / connectors 作为插件由策展市场提供,请到 <span className="text-cyberpunk-yellow">Plugins</span>{' '}
+          标签页查看与安装(例如 Linear、Gmail、Google Calendar)。
+        </article>
+      </PanelShell>
+    )
+  }
 
   return (
     <PanelShell

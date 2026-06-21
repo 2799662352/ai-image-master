@@ -177,6 +177,17 @@ zip 文件名内容寻址(`-<sha8>` 后缀):文件名带 zip 的 sha256 前 8 �
 
 ## Changelog
 
+### v4.3.46 (2026-06-22) — Connectors 修正:Apps 标签页优雅降级 + 商城更新方向显示修复(渲染层,走 installer)
+
+> 纯渲染层热更新(整包 installer)。对照真实 Codex 0.141 后端的 `client_request_definitions!` 方法清单核对了 P0 的 11 个 RPC——10 个完全匹配,唯一 `apps/list` 在该版本**不存在**(报 `unknown variant`)。该版本里 apps/connectors 本就是策展市场的 plugin,经 `plugin/list` 显示在 Plugins 标签页(Linear / Gmail / Google Calendar 等)。
+
+| 项 | 文件 | 说明 |
+|---|---|---|
+| Apps 面板优雅降级 | `src/renderer/src/features/agent-workspace/ConnectorsSection.tsx` | 检测到 `unknown variant` / 方法不存在类错误时,不再抛出原始协议清单,改显示「此 Codex 版本无独立 apps 接口,见 Plugins 标签页」说明;成功/空两条原有路径不变 |
+| 商城更新方向显示 | `src/renderer/src/pages-react/MarketplacePage.tsx` | 插件/skill 卡片由易误解的 `v新 ← v旧` 改为 `v旧 → v新`(commit `b3a1ae1`,本版随 installer 生效) |
+
+> 说明:`marketplace/upgrade` 在后端清单内;策展市场 `openai-curated` 点升级返回 "not configured as a git marketplace" 是后端**正确**语义报错,非 bug。
+
 ### v4.3.45 (2026-06-22) — Codex 原生插件/市场 Connectors UI(P0–P3)+ 插件/skill 商城全量 bump + codex-skills 策展同步
 
 > 三通道齐发:**(a) app installer 整包热更新**(本版,含 agent 工作区新增「Connectors」原生插件/市场标签页的读+写能力)+ **(b) 插件商城热更新**(6 插件全部上 COS)+ **(c) 独立 skill 商城热更新**(50 skill,codex-skills 策展同步)。
