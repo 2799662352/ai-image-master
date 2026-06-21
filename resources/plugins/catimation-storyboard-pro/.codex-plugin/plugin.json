@@ -1,12 +1,23 @@
 {
   "name": "catimation-storyboard-pro",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "连续性优先的制片包生成器:剧本→圣经+shot cards+衔接/剪辑边界矩阵+Image2/Seedance 双语提示词。",
-  "author": { "name": "CATIMATION", "url": "https://github.com/zuozuoliang999" },
+  "author": {
+    "name": "CATIMATION",
+    "url": "https://github.com/zuozuoliang999"
+  },
   "homepage": "https://github.com/zuozuoliang999/catimation-plugins",
   "repository": "https://github.com/zuozuoliang999/catimation-plugins",
   "license": "MIT",
-  "keywords": ["storyboard", "production-package", "seedance", "continuity", "shot-card", "catimation", "video"],
+  "keywords": [
+    "storyboard",
+    "production-package",
+    "seedance",
+    "continuity",
+    "shot-card",
+    "catimation",
+    "video"
+  ],
   "skills": "./skills/",
   "commands": "./commands/",
   "hooks": "./hooks/hooks-codex.json",
@@ -16,7 +27,11 @@
     "longDescription": "把剧本/概念做成连续性受控的出片素材包:角色/场景/道具/风格/连贯性圣经 + 逐镜 shot card(含 action/emotion 起止与衔接字段)+ handoff 衔接矩阵 + edit-boundary 剪辑边界矩阵 + 中英分离的 Image2 提示词 + Seedance 逐镜提示词 + 剪映/CapCut 剪辑与回退清单。每段 Seedance ≤15s,整图不作唯一视频输入;视频提示词最终经 sd2-pe 工程化。端到端成片由 film-studio 编排调用本 skill。",
     "developerName": "CATIMATION",
     "category": "Creative",
-    "capabilities": ["Interactive", "Read", "Write"],
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
     "defaultPrompt": [
       "把这段短剧本做成连续性受控的 Seedance 制片包。",
       "给这个广告概念出 shot cards + 衔接矩阵 + 双语 Image2 提示词。"

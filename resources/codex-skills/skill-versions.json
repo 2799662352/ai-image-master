@@ -6,7 +6,7 @@
     "codex-research-grounded-prompting": "1.0.1",
     "director-anchor-extraction-quality": "1.0.3",
     "director-anime-quality-boost": "1.0.3",
-    "director-character-consistency": "1.0.3",
+    "director-character-consistency": "1.0.4",
     "director-cinematic-composition": "1.0.3",
     "director-orchestrator": "1.0.3",
     "director-lighting-continuity": "1.0.3",
@@ -32,7 +32,7 @@
     "storyboard-light-reconstruction": "1.0.1",
     "storyboard-live-character-realism": "1.0.1",
     "storyboard-multi-character-control": "1.0.1",
-    "storyboard-negative-control": "1.0.1",
+    "storyboard-negative-control": "1.0.2",
     "storyboard-physics": "1.0.3",
     "storyboard-pseudo-perspective": "1.0.1",
     "storyboard-robustness-breaking": "1.0.1",
@@ -42,16 +42,16 @@
     "storyboard-style": "1.0.3",
     "storyboard-style-extraction-logic": "1.0.1",
     "storyboard-time-words": "1.0.1",
-    "storyboard-video-prompt-optimization": "1.0.2",
+    "storyboard-video-prompt-optimization": "1.0.3",
     "storyboard-visual": "1.0.3",
     "storyboard-voice-control": "1.0.1",
     "find-skills": "1.0.0",
     "ffmpeg-win": "1.0.1",
     "screenwriter": "1.0.1",
-    "seedance-video-craft": "1.0.5",
+    "seedance-video-craft": "1.0.6",
     "animation-craft": "1.0.5",
-    "film-studio": "1.0.4",
+    "film-studio": "1.0.5",
     "sd2-pe": "1.0.1",
-    "storyboard-grid-to-seedance": "1.0.0"
+    "storyboard-grid-to-seedance": "1.0.1"
   }
 }

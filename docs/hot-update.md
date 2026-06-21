@@ -177,6 +177,49 @@ zip 文件名内容寻址(`-<sha8>` 后缀):文件名带 zip 的 sha256 前 8 �
 
 ## Changelog
 
+### 插件/技能市场 (2026-06-22) — 每个 catimation-* 插件加「总览入口」路由技能(仿 using-superpowers)+ standalone 6 skill reconcile(仅市场,app 保持 4.3.47)
+
+> **不走 installer / 无 exe**。纯插件商城 + 独立 skill 商城热更新。起因:插件内置的几十个 skill 会被摊平进 `~/.agents/skills/`,在 Codex `/` 面板里按字母混排、沉到折叠线以下,用户难发现、也不知怎么按插件触发。解决:给每个插件加一张**入口卡**(总览 + 路由器),像 `using-superpowers` 那样先判断需求归类、再加载对应子技能;描述统一改为 `superpowers` 规范的「Use when…」触发式(`writing-skills` 指引)。
+
+**A. 新增 5 个总览入口技能(随插件商城投递,不进 standalone)**
+
+| 插件 | 新增技能 | 触发 |
+|---|---|---|
+| catimation-storyboard | `catimation-storyboard` | 分镜/提示词/反推复刻/AI 感修复/打光调色 → 路由 29 个 storyboard-* |
+| catimation-film | `catimation-film` | 做一整部片(短片/宣传片/预告片)→ 主力 film-studio + 3 专项 |
+| catimation-core | `catimation-core` | 应用内出图/人像库/头脑风暴 → 3 核心子技能 |
+| catimation-director | `catimation-director` | 导演模式镜头/构图/光影/一致性 → 13 个 director-* |
+| catimation-storyboard-pro | `catimation-storyboard-pro` | 一键导演级故事板制作包 → create-storyboard |
+
+> `catimation-video` 插件已自带同名总览技能,本次不重复新增。
+
+**B. 插件商城版本 bump(商城更新检测靠版本号比较;同步 `marketplace.json` + `plugin.json`)**
+
+| 插件 | 旧 → 新 |
+|---|---|
+| catimation-director | 1.0.1 → 1.0.2 |
+| catimation-storyboard | 1.0.1 → 1.0.2 |
+| catimation-storyboard-pro | 1.0.0 → 1.0.1 |
+| catimation-film | 1.0.2 → 1.0.3 |
+| catimation-core | 1.0.4 → 1.0.5 |
+
+> `catimation-video` 1.0.4 不变(无内容变更)。
+
+**C. 独立 skill 商城 reconcile(`sync-plugin-skills-to-codex.mjs --apply`)**
+
+发布前 codex-skills 与 plugins 源已有历史漂移,本次一并对齐(内容刷新 + patch bump):
+
+| skill | 旧 → 新 |
+|---|---|
+| director-character-consistency | 1.0.3 → 1.0.4 |
+| film-studio | 1.0.4 → 1.0.5 |
+| seedance-video-craft | 1.0.5 → 1.0.6 |
+| storyboard-grid-to-seedance | 1.0.0 → 1.0.1 |
+| storyboard-negative-control | 1.0.1 → 1.0.2 |
+| storyboard-video-prompt-optimization | 1.0.2 → 1.0.3 |
+
+发布命令:`npm run publish:plugins` + `npm run publish:skills`(均上 COS,catalog 即时生效)。
+
 ### v4.3.47 (2026-06-22) — Connectors 修正:apps RPC 方法名 + 斜杠面板方向键导航(渲染层,走 installer)
 
 > 纯渲染层热更新(整包 installer)。修两处 agent 工作区 bug,均对照 openai/codex `rust-v0.141.0` 源码 / systematic-debugging 定位根因。
