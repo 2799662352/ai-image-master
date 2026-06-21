@@ -40,6 +40,17 @@ const AGENT_HANDLE_CHANNELS = [
   'agent:mcp-read-config',
   'agent:mcp-read-raw-config',
   'agent:mcp-status-snapshot',
+  'agent:plugin-list',
+  'agent:plugin-installed',
+  'agent:plugin-read',
+  'agent:plugin-install',
+  'agent:plugin-uninstall',
+  'agent:marketplace-add',
+  'agent:marketplace-remove',
+  'agent:marketplace-upgrade',
+  'agent:apps-list',
+  'agent:ext-agent-detect',
+  'agent:ext-agent-import',
   'agent:docker-gw-check',
   'agent:docker-gw-fix',
   'agent:docker-gw-status',
@@ -232,6 +243,42 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
   ipcMain.handle('agent:mcp-status-snapshot', async () =>
     (await getManager()).getMcpStatusSnapshotRpc(),
   )
+
+  // ----- Codex native plugin / marketplace / apps / external-agent-import -----
+  ipcMain.handle('agent:plugin-list', async (_event, params?: unknown) =>
+    (await getManager()).listPluginsRpc(params as never),
+  )
+  ipcMain.handle('agent:plugin-installed', async (_event, params?: unknown) =>
+    (await getManager()).listInstalledPluginsRpc(params as never),
+  )
+  ipcMain.handle('agent:plugin-read', async (_event, params: unknown) =>
+    (await getManager()).readPluginRpc(params as never),
+  )
+  ipcMain.handle('agent:plugin-install', async (_event, params: unknown) =>
+    (await getManager()).installPluginRpc(params as never),
+  )
+  ipcMain.handle('agent:plugin-uninstall', async (_event, pluginId: string) =>
+    (await getManager()).uninstallPluginRpc(pluginId),
+  )
+  ipcMain.handle('agent:marketplace-add', async (_event, params: unknown) =>
+    (await getManager()).addMarketplaceRpc(params as never),
+  )
+  ipcMain.handle('agent:marketplace-remove', async (_event, marketplaceName: string) =>
+    (await getManager()).removeMarketplaceRpc(marketplaceName),
+  )
+  ipcMain.handle('agent:marketplace-upgrade', async (_event, marketplaceName?: string) =>
+    (await getManager()).upgradeMarketplacesRpc(marketplaceName),
+  )
+  ipcMain.handle('agent:apps-list', async (_event, params?: unknown) =>
+    (await getManager()).listAppsRpc(params as never),
+  )
+  ipcMain.handle('agent:ext-agent-detect', async (_event, params?: unknown) =>
+    (await getManager()).detectExternalAgentConfigRpc(params as never),
+  )
+  ipcMain.handle('agent:ext-agent-import', async (_event, migrationItems: unknown) =>
+    (await getManager()).importExternalAgentConfigRpc(migrationItems as never),
+  )
+
   ipcMain.handle('agent:docker-gw-check', async () => (await getManager()).dockerGatewayCheckRpc())
   ipcMain.handle('agent:docker-gw-fix', async (_event, opts?: { port?: number }) =>
     (await getManager()).dockerGatewayFixRpc(opts),

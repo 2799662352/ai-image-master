@@ -8,6 +8,7 @@ const ITEMS: Array<{ key: WorkspaceSectionKey; label: string }> = [
   { key: 'permissions', label: 'Permissions' },
   { key: 'mcp', label: 'MCP Servers' },
   { key: 'skills', label: 'Skills' },
+  { key: 'connectors', label: 'Connectors' },
   { key: 'threads', label: 'Threads' },
   { key: 'doctor', label: 'Doctor' },
   { key: 'logs', label: 'Logs' },

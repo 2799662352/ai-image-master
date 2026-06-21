@@ -258,10 +258,10 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
       )
     }
     args.push(
-      // Give `generate_image` room to finish. Codex's default per-tool timeout
-      // (`mcp_servers.<name>.tool_timeout_sec`) is short relative to a real
-      // image render on the vip channel — at 2K/4K high quality a single call
-      // can run for minutes. When Codex aborts first, the agent narrates a
+      // Give `generate_image` room to finish. Codex 0.141 raised the default
+      // per-tool timeout to 300s (openai/codex#28234), but a real image render
+      // on the vip channel — at 2K/4K high quality a single call can run for
+      // minutes — still blows past it. When Codex aborts first, the agent narrates a
       // "tool timed out" and retries, even though the renderer kept going and
       // the image actually completed + saved. ~2000s makes Codex wait for the
       // real result (or an explicit error) instead of inventing a timeout. The

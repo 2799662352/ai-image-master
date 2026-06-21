@@ -10,10 +10,10 @@ afterEach(() => {
 })
 
 describe('AgentWorkspacePage', () => {
-  it('renders the six sections in nav', () => {
+  it('renders all sections in nav', () => {
     render(<AgentWorkspacePage />)
 
-    for (const label of ['Overview', 'Permissions', 'MCP Servers', 'Skills', 'Threads', 'Logs']) {
+    for (const label of ['Overview', 'Permissions', 'MCP Servers', 'Skills', 'Connectors', 'Threads', 'Logs', 'Doctor']) {
       expect(screen.getByText(label)).toBeTruthy()
     }
   })
@@ -24,5 +24,13 @@ describe('AgentWorkspacePage', () => {
     fireEvent.click(screen.getByText('MCP Servers'))
 
     expect(screen.getByTestId('section-mcp')).toBeTruthy()
+  })
+
+  it('switches to the Connectors section', () => {
+    render(<AgentWorkspacePage />)
+
+    fireEvent.click(screen.getByText('Connectors'))
+
+    expect(screen.getByTestId('section-connectors')).toBeTruthy()
   })
 })

@@ -525,9 +525,13 @@ function SkillCard({ entry, installed, hasUpdate, busy, installDir, onInstall, o
         <div className="flex items-baseline gap-2 mb-0.5">
           <h3 className="font-semibold text-white truncate">{entry.name}</h3>
           <span className="text-[10px] text-zinc-500 font-mono shrink-0">
-            v{entry.version}
-            {hasUpdate && installed && (
-              <span className="text-cyberpunk-yellow"> ← v{installed.version}</span>
+            {hasUpdate && installed ? (
+              <>
+                v{installed.version}
+                <span className="text-cyberpunk-yellow"> → v{entry.version}</span>
+              </>
+            ) : (
+              <>v{entry.version}</>
             )}
           </span>
         </div>
@@ -610,9 +614,13 @@ function PluginCard({ entry, installed, hasUpdate, busy, installDir, onInstall, 
         <div className="flex items-baseline gap-2 mb-0.5">
           <h3 className="font-semibold text-white truncate">{entry.name}</h3>
           <span className="text-[10px] text-zinc-500 font-mono shrink-0">
-            v{entry.version}
-            {hasUpdate && installed && (
-              <span className="text-cyberpunk-yellow"> ← v{installed.version}</span>
+            {hasUpdate && installed ? (
+              <>
+                v{installed.version}
+                <span className="text-cyberpunk-yellow"> → v{entry.version}</span>
+              </>
+            ) : (
+              <>v{entry.version}</>
             )}
           </span>
         </div>

@@ -17,6 +17,13 @@ frames) and keeps the SAME character or scene consistent across clips. Four
 `catimation` MCP tools let you manage it — use them proactively; you do not
 need permission to add, search, organize, or download on the user's behalf.
 
+## When to Use
+
+- 用户提到 人像库 / 素材库 / 参考素材 / 角色库,要 收藏 / 搜索 / 整理 / 重命名 / 分组 / 删除 / 下载 素材。
+- 视频生成需要参考素材(角色 / 场景一致性)→ 先入库拿 `asset://assetId` 再喂 `generate_video`。
+- 用户要复用「上次那个人 / 同一个角色 / 同一个场景」→ 先 `list_portrait_library` 找回锚点。
+- 用户喜欢刚生成的图、之后可能复用 → 主动入库。
+
 ## Tools
 
 - **`add_to_portrait_library`** — upload ONE asset. `source` may be a local
@@ -68,3 +75,10 @@ need permission to add, search, organize, or download on the user's behalf.
   tool tells you to ask the user to set them — relay that and stop.
 - Renaming / grouping / hiding is a local organizing layer shared with the UI;
   it never deletes upstream data (hide is reversible via `unhide`).
+
+## Common Mistakes
+
+- 凭空猜 `assetId` / `sourceUrl`;必须先 `list_portrait_library` 查到再用。
+- 漏 `list` 直接 `edit_portrait_library` / `download_portrait_asset`。
+- 调高 `pageSize` 一次性 dump 整库(结果会被截断、浪费上下文),应先用 `query`/`kind`/`group` 收窄再翻页。
+- 缺 API Key/Secret 仍硬调;缺失时转告用户去设置并停下。

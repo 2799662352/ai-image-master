@@ -177,6 +177,38 @@ zip 文件名内容寻址(`-<sha8>` 后缀):文件名带 zip 的 sha256 前 8 �
 
 ## Changelog
 
+### v4.3.45 (2026-06-22) — Codex 原生插件/市场 Connectors UI(P0–P3)+ 插件/skill 商城全量 bump + codex-skills 策展同步
+
+> 三通道齐发:**(a) app installer 整包热更新**(本版,含 agent 工作区新增「Connectors」原生插件/市场标签页的读+写能力)+ **(b) 插件商城热更新**(6 插件全部上 COS)+ **(c) 独立 skill 商城热更新**(50 skill,codex-skills 策展同步)。
+
+**A. App 侧(走 installer)**
+
+| 项 | 文件 | 说明 |
+|---|---|---|
+| Codex 原生插件/市场协议层 P0 | `src/main/agent/CodexProtocolClient.ts` + `src/types/codexPlugins.ts` | 镜像 Codex 0.141 app-server 的 plugins/marketplace/apps/ext-agent RPC(11 个方法 + DTO) |
+| IPC 贯通 P1 | `types.ts` / `CodexLocalBackend.ts` / `AgentManager.ts` / `ipc.ts` / `preload/index.ts` | `IAgentBackend`→`AgentManager *Rpc`(统一 envelope)→`agent:*` 通道→preload |
+| Connectors UI P2/P3 | `src/renderer/src/features/agent-workspace/ConnectorsSection.tsx` 等 | 只读预览 → 写操作(装/卸插件、增删/升级市场、应用外部 agent 配置导入),含两步内联确认 |
+| codexLaunch 注释 | `src/main/agent/codexLaunch.ts` | 标注 Codex 0.141 `tool_timeout_sec` 默认 300s(仍保留 2000s 覆写) |
+
+**B. 插件商城版本 bump(商城更新检测是版本号比较)**
+
+| 插件 | 旧 → 新 |
+|---|---|
+| catimation-core | 1.0.3 → 1.0.4 |
+| catimation-director | 1.0.0 → 1.0.1 |
+| catimation-film | 1.0.1 → 1.0.2 |
+| catimation-storyboard | 1.0.0 → 1.0.1 |
+| catimation-video | 1.0.3 → 1.0.4 |
+| catimation-storyboard-pro | (新) 1.0.0 |
+
+每个插件同步 `marketplace.json` + `.{claude,codex,cursor}-plugin/plugin.json` 三套清单。
+
+**C. 独立 skill 商城:codex-skills 策展同步(新增 `scripts/sync-plugin-skills-to-codex.mjs`)**
+
+`publish:skills` 的源 `resources/codex-skills/` 与插件源 `resources/plugins/**/skills/` 是两棵分叉的树(codex-skills 停在 v4.3.40)。codex-skills 是**人工策展的子集 + 额外项**,不是纯镜像,故新增确定性脚本做**策展式同步**:只刷新两树交集 + 显式 ADD 列表(`storyboard-grid-to-seedance`),按内容 hash 判定 bump,**排除 app 专用 skill**(catimation-image/video/brainstorm/portrait-library、trailer-plan-generator、create-storyboard —— 这些经插件商城 + firstPartySkills 投递),保留 codex-only 的 `find-skills`。本次:新增 1 + bump 48,catalog 共 50 skill。
+
+**清理**:删除 `%BASE%/`(脚本变量未展开产生的垃圾目录)。
+
 ### v4.3.42 (2026-06-18) — 制片流程补全:人物卡 / 故事板 / 分镜多参 + 资产齐备硬门 + 缺口自主补 + 视频/音乐也是全能参考素材 + hook 硬指引常驻注入
 
 > 双通道齐发:**(a) app installer 整包热更新**(本版,把内置 skill `firstPartySkills.ts` 推给"全新安装 / 不走商城"的用户)+ **(b) 插件商城热更新**(`catimation-film` 1.0.1 / `catimation-video` 1.0.2 已上 COS,已装插件的用户即见「有更新」)。以用户提供的 `sd2-pe`(Seedance 2.0 提示词优化器)为权威来源,把"锁人 / 排板 / 多参 / 备齐才开拍"固化进制片与生成流程。

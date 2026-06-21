@@ -14,6 +14,7 @@ description: 分镜画面打磨 — 按需调用 storyboard-* 技法把单镜/�
    - 默认网红脸/脏纹理 → `storyboard-negative-control`
    - 物理/人体结构 → `storyboard-physics`
    - 对白/配音 → `storyboard-dialogue` / `storyboard-voice-control`
+   - 要一张图出整套分镜/网格故事板(3×3/4×4) → `storyboard-grid-to-seedance`
 3. 以物理可复现参数、默认正向提示词,输出结构化文本提示词。
 
 诉求在下方:

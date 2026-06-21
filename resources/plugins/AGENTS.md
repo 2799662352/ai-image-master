@@ -8,6 +8,8 @@
 1. **涉及图片/视频/动画/提示词 → 先过 `director-orchestrator`**(catimation-director),走完 STEP 0 反问与技能路由再动笔;**若判定为视频,STEP 0 定位后交给 sd2-pe 结构化**。各插件的 SessionStart hook 会提醒这一点。
 2. **要做整片(从想法/剧本到成片)→ 用 `/make-film`**(film-studio 门控流水线),它会在各阶段调用其它插件的 skill。
 3. **单镜打磨 / 反推参考图 → `/storyboard`、`/reverse-shot`**(catimation-storyboard)。
+3.1. **要一张图出整套分镜 / 网格故事板(3×3/4×4/16 格)→ `storyboard-grid-to-seedance`**(catimation-storyboard);整图只作顺序参考,主输入仍用干净关键帧。
+3.2. **要连续性受控的出片制片包(角色/场景圣经 / 衔接矩阵 / 剪辑边界 / 双语 Image2+Seedance 提示词)→ `catimation-storyboard-pro` 的 `create-storyboard`(命令 `/create-storyboard`)**;端到端成片仍由 `film-studio` 编排(它会按需调本 skill)。视频提示词仍必经 sd2-pe。
 4. **出图 → `/gen-image`**;**出视频 → `/gen-video`**;**后期 → `/edit-video`**。
 5. **方向不明 / 开放创意 → 先 `/brainstorm`**(catimation-core)再收敛。
 

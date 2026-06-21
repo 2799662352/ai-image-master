@@ -55,6 +55,26 @@ import type { AttachmentService } from './AttachmentService'
 import type { ThreadStore } from './ThreadStore'
 import type { AgentInput, IAgentBackend, ListThreadsParams } from './types'
 import type { DoctorReport } from './codexDoctor'
+import type {
+  AppsListParams,
+  AppsListResponse,
+  ExternalAgentConfigDetectParams,
+  ExternalAgentConfigDetectResponse,
+  ExternalAgentConfigImportResponse,
+  ExternalAgentConfigMigrationItem,
+  MarketplaceAddParams,
+  MarketplaceAddResponse,
+  MarketplaceRemoveResponse,
+  MarketplaceUpgradeResponse,
+  PluginInstallParams,
+  PluginInstallResponse,
+  PluginInstalledParams,
+  PluginInstalledResponse,
+  PluginListParams,
+  PluginListResponse,
+  PluginReadParams,
+  PluginReadResponse,
+} from '../../types/codexPlugins'
 import { ThreadTitleSummarizer } from './ThreadTitleSummarizer'
 import { setFsAllowedRoots } from '../file-explorer/fsIpc'
 
@@ -678,6 +698,126 @@ export class AgentManager {
       if (!this.backend.mcpOAuthLogin) throw new Error('MCP OAuth API unavailable')
       const result = await this.backend.mcpOAuthLogin(name)
       return { ok: true, authorization_url: result?.authorization_url }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  // ─── Native plugin / marketplace / apps / external-agent-import (≥0.140) ───
+  // Each delegates to the backend passthrough and wraps the result in the
+  // standard `{ ok, error?, data? }` envelope so the renderer never has to
+  // try/catch across the IPC boundary. The "API unavailable" guard fires when
+  // the active backend is non-Codex or hasn't been started yet.
+
+  async listPluginsRpc(params?: PluginListParams): Promise<{ ok: boolean; error?: string; data?: PluginListResponse }> {
+    try {
+      if (!this.backend.listPlugins) throw new Error('Plugin list API unavailable')
+      return { ok: true, data: await this.backend.listPlugins(params) }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  async listInstalledPluginsRpc(
+    params?: PluginInstalledParams,
+  ): Promise<{ ok: boolean; error?: string; data?: PluginInstalledResponse }> {
+    try {
+      if (!this.backend.listInstalledPlugins) throw new Error('Installed plugins API unavailable')
+      return { ok: true, data: await this.backend.listInstalledPlugins(params) }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  async readPluginRpc(params: PluginReadParams): Promise<{ ok: boolean; error?: string; data?: PluginReadResponse }> {
+    try {
+      if (!this.backend.readPlugin) throw new Error('Plugin read API unavailable')
+      return { ok: true, data: await this.backend.readPlugin(params) }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  async installPluginRpc(
+    params: PluginInstallParams,
+  ): Promise<{ ok: boolean; error?: string; data?: PluginInstallResponse }> {
+    try {
+      if (!this.backend.installPlugin) throw new Error('Plugin install API unavailable')
+      return { ok: true, data: await this.backend.installPlugin(params) }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  async uninstallPluginRpc(pluginId: string): Promise<{ ok: boolean; error?: string }> {
+    try {
+      if (!this.backend.uninstallPlugin) throw new Error('Plugin uninstall API unavailable')
+      await this.backend.uninstallPlugin(pluginId)
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  async addMarketplaceRpc(
+    params: MarketplaceAddParams,
+  ): Promise<{ ok: boolean; error?: string; data?: MarketplaceAddResponse }> {
+    try {
+      if (!this.backend.addMarketplace) throw new Error('Marketplace add API unavailable')
+      return { ok: true, data: await this.backend.addMarketplace(params) }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  async removeMarketplaceRpc(
+    marketplaceName: string,
+  ): Promise<{ ok: boolean; error?: string; data?: MarketplaceRemoveResponse }> {
+    try {
+      if (!this.backend.removeMarketplace) throw new Error('Marketplace remove API unavailable')
+      return { ok: true, data: await this.backend.removeMarketplace(marketplaceName) }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  async upgradeMarketplacesRpc(
+    marketplaceName?: string,
+  ): Promise<{ ok: boolean; error?: string; data?: MarketplaceUpgradeResponse }> {
+    try {
+      if (!this.backend.upgradeMarketplaces) throw new Error('Marketplace upgrade API unavailable')
+      return { ok: true, data: await this.backend.upgradeMarketplaces(marketplaceName) }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  async listAppsRpc(params?: AppsListParams): Promise<{ ok: boolean; error?: string; data?: AppsListResponse }> {
+    try {
+      if (!this.backend.listApps) throw new Error('Apps list API unavailable')
+      return { ok: true, data: await this.backend.listApps(params) }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  async detectExternalAgentConfigRpc(
+    params?: ExternalAgentConfigDetectParams,
+  ): Promise<{ ok: boolean; error?: string; data?: ExternalAgentConfigDetectResponse }> {
+    try {
+      if (!this.backend.detectExternalAgentConfig) throw new Error('External agent config detect API unavailable')
+      return { ok: true, data: await this.backend.detectExternalAgentConfig(params) }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  async importExternalAgentConfigRpc(
+    migrationItems: ExternalAgentConfigMigrationItem[],
+  ): Promise<{ ok: boolean; error?: string; data?: ExternalAgentConfigImportResponse }> {
+    try {
+      if (!this.backend.importExternalAgentConfig) throw new Error('External agent config import API unavailable')
+      return { ok: true, data: await this.backend.importExternalAgentConfig(migrationItems) }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }

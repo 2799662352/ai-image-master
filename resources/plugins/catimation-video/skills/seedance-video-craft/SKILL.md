@@ -18,6 +18,10 @@ description: 用 Seedance 2.0 满血版出片的深度实战 skill,做 AI 视频
 
 **写任何视频提示词 / 调用任何生成工具之前,先载入 `director-orchestrator` 并执行它的 STEP 0 反问**——逐条答出:这次落在 13 维的哪几维?要载入哪些本地 `director-*` / `storyboard-*`?web 要核实什么技法文档?目标模型(Seedance)与素材(参考图/视频/音频)齐了吗?把第 1、2 条结论用一行说给用户听,再回到本 skill 的出片编排。**禁止跳过反问直接写 prompt。**
 
+## ★ STEP 0.5(先跑 sd2-pe 总兜底,再写本 skill 的提示词)
+
+`sd2-pe` 是视频提示词的**总兜底和起点**。过完上面反问、判定要出视频后,**先载入并跑完 `sd2-pe`**——走完它的八大要素自检、任务分类、素材映射与路径 A/B 三段论,挂上画质/稳定/水印等强制兜底包。本 skill 的 `references/prompt-engineering.md` 定位为「**sd2-pe 之上的 Seedance 模型对齐补充**」,不替代 sd2-pe。
+
 ---
 
 ## 一、先记住模型的真实能力(不要假设)
@@ -58,7 +62,7 @@ Seedance 2.0 是**原生统一多模态音视频联合生成**模型,一次前�
 1. **问清规格(用卡片,一次一项)。** 分辨率(默认 720p)、时长(4–15s)、画幅(9:16/16:9/1:1)、是否要原生音频/口型。不要一次性把所有问题甩出来。
 2. **选模式**(见上表),默认全能参考。
 3. **分配参考配额**(9 图/3 视频/3 音频)——见 `references/all-around-reference.md`。
-4. **写提示词**——遵循 `references/prompt-engineering.md`:单一主导动作、首帧霸权(图生视频不复述静态帧)、运动矢量语言、主动写声音、**默认只写正向提示词(不写反向)**、用真实技法词填充。
+4. **写提示词**——先经 `sd2-pe` 工程化(八大要素 / 路径 A·B / 兜底包),再按 `references/prompt-engineering.md` 做 Seedance 模型对齐补充:单一主导动作、首帧霸权(图生视频不复述静态帧)、运动矢量语言、主动写声音、**默认只写正向提示词(不写反向)**、用真实技法词填充。
 5. **调用本地工艺 skill 补强**——镜头/导演/前景遮挡/光影/角色一致性等,见下「与工艺 skill 协作」。
 6. **生成前做爆款体检**——用 `references/virality-scorecard.md` 自评 hook(0–3s)、留存、payoff、分心风险;低于阈值先改提示词再生成。
 7. **生成 → 交付**:给结果 + 一行摘要(模式、时长、分辨率)。多段片用 ffmpeg 拼接(见 `ffmpeg-win` skill)。
@@ -67,7 +71,7 @@ Seedance 2.0 是**原生统一多模态音视频联合生成**模型,一次前�
 
 ## 四、与本地工艺 skill 协作(让它自己去找)
 
-本 app 本地已装大量视频工艺 skill(一般在 `C:\Users\27996\.agents\skills\` 与本桶)。**不要把它们的内容抄进来**,而是在需要时按主题加载:
+本 app 本地已装大量视频工艺 skill(一般在 `~/.agents/skills/` 与本桶)。**不要把它们的内容抄进来**,而是在需要时按主题加载:
 
 - 运镜/构图 → `director-cinematic-composition`、`storyboard-shot-emotion-matching`
 - 叙事节奏/分镜 → `director-narrative-flow`、`storyboard-scene-breakdown`、`storyboard-structure`
@@ -122,6 +126,7 @@ Seedance 2.0 是**原生统一多模态音视频联合生成**模型,一次前�
 - `references/prompt-engineering.md` — Seedance 2.0 提示词工程
 - `references/virality-scorecard.md` — 爆款体检自评表(改编 Virality Predictor)
 - `references/ad-short-form-modes.md` — 广告/短视频模式分类(改编 Marketing Studio)
+- `references/time-allocation-and-multimodal.md` — 按内容密度切时长(字/秒)+ `@素材`/`<图片N>` 多模态绑定(≤12 文件)+ 换人/运镜复刻/产品广告案例(移植自 updream jimeng-prompt-pro)
 
 ---
 

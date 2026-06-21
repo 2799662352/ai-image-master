@@ -177,7 +177,7 @@ AI 容易把情绪词映射到模板表情:happy → 标准微笑,angry → 皱�
 
 ## 何时调用其他 skill
 
-- 角色动作需要明确动机:调用 `storyboard-character-motivation`。
+- 演技三件套(各有侧重,可互补):动作缺"为什么发生" → `storyboard-character-motivation`(行为动机/有事可做);人物"好看但塑料假" → `storyboard-live-character-realism`(环境对抗+局部光影哑光)。本 skill 侧重微表情序列与情绪因果。
 - 需要把参考视频拆成时间线/空间结构:调用 `storyboard-scene-breakdown`。
 - 需要更物理化的动作参数:调用 `storyboard-physics`。
 - 需要声音分层设计:调用 `storyboard-audio`。

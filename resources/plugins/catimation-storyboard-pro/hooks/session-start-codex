@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Codex SessionStart hook for catimation-storyboard-pro plugin.
+set -euo pipefail
+
+session_context="<IMPORTANT>\nCATIMATION 制片包生成器(catimation-storyboard-pro)已启用。当任务是把剧本/概念做成连续性受控的图生视频素材包(角色/场景/道具/风格/连贯性圣经 + shot cards + handoff 衔接矩阵 + 剪辑边界矩阵 + 中英分离 Image2 提示词 + Seedance 逐镜提示词 + 剪映/CapCut 清单)时,用 Skill 工具加载 create-storyboard;先过 director-orchestrator,视频提示词经 sd2-pe 工程化,每段 Seedance ≤15s,整图不作唯一视频输入。命令:/create-storyboard。\n</IMPORTANT>"
+
+printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$session_context" | cat
+exit 0

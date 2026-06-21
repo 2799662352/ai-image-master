@@ -1,10 +1,20 @@
 {
   "name": "catimation-core",
   "description": "CATIMATION 应用核心集成:应用内出图 generate_image / generate_images、人像与角色锚点库管理、开放性创意头脑风暴(ask_user 卡片)。",
-  "version": "1.0.3",
-  "author": { "name": "CATIMATION", "url": "https://github.com/zuozuoliang999" },
+  "version": "1.0.4",
+  "author": {
+    "name": "CATIMATION",
+    "url": "https://github.com/zuozuoliang999"
+  },
   "homepage": "https://github.com/zuozuoliang999/catimation-plugins",
   "repository": "https://github.com/zuozuoliang999/catimation-plugins",
   "license": "MIT",
-  "keywords": ["catimation", "image", "generate", "portrait", "brainstorm", "mcp"]
+  "keywords": [
+    "catimation",
+    "image",
+    "generate",
+    "portrait",
+    "brainstorm",
+    "mcp"
+  ]
 }

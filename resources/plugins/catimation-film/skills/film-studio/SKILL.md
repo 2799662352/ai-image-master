@@ -39,14 +39,14 @@ description: 端到端「做电影/做片子」的总编排器(制片导演),把
 
 ### G2 · 分镜镜头表(Shot List / Storyboard)
 - **做:** 把剧本拆成场→镜,每镜定景别/运镜/时长/动作/转场;产出可机读的分镜 JSON。
-- **调:** `scene-blueprint`(多场景分镜 JSON)、`storyboard-scene-breakdown`、`storyboard-structure`、`director-narrative-flow`、`director-shot-sequence-patterns`、`storyboard-shot-emotion-matching`。
+- **调:** `scene-blueprint`(多场景分镜 JSON)、`storyboard-scene-breakdown`、`storyboard-structure`、`director-narrative-flow`、`director-shot-sequence-patterns`、`storyboard-shot-emotion-matching`、`storyboard-grid-to-seedance`(一张图出整套分镜/网格法)。需要连续性受控的完整制片包(角色/场景圣经 + 衔接矩阵 + 剪辑边界矩阵)时,调 `catimation-storyboard-pro` 的 `create-storyboard`。
 - **门 G2:** 用户批准镜头表与节奏。
 
 ### G3 · 角色与场景设定锚点(Bible / Anchors)+ 人物卡 / 场景卡
 - **做:** 为每个角色/关键场景建「锁定锚点」(脸/发/剪影/服装/标志道具;场景光源/天气/建筑),建连贯性台账。**并为每个出镜角色落一张「人物卡」**——这是该角色全片**唯一身份锚**,后续所有镜头(G4 出图、G5 出视频)都引用同一张卡:
-  - 人物卡 = 一张**大头照**(仅头部、正脸、无表情)+ 一张**全身照**(定妆造/服装/配饰);**禁用三视图/多视图**(易触发 ID 漂移与双胞胎,见 `sd2-pe` 人脸最佳实践)。
-  - 把人物卡存进**人像库**得到 `asset://assetId`,作为引用句柄;关键场景同理落「场景卡」。缺图先在 G4 思路下出一张定妆/场景图补齐,不要拿现成多视图硬塞。
-- **调:** `director-anchor-extraction-quality`、`director-character-consistency`、`storyboard-multi-character-control`、`director-visual-continuity`;绑定语法用 `sd2-pe`(`<主体N>@图片N` / 大头照+全身照);台账用 `animation-craft` 的 continuity-ledger 模板。
+  - 人物卡 = 一张**大头照**(仅头部、正脸、无表情)+ 一张**全身照**(定妆造/服装/配饰);默认用此单锚点,**三视图/四视图可作可选补充,慎用**(多视图易触发 ID 漂移与双胞胎,见 `sd2-pe` 人脸最佳实践)。
+  - 把人物卡存进**人像库**得到 `asset://assetId`,作为引用句柄;关键场景同理落「场景卡」。缺图先在 G4 思路下出一张定妆/场景图补齐;默认不拿现成多视图整张当唯一身份锚(如需,多视图可作可选补充参考)。
+- **调:** `director-anchor-extraction-quality`、`director-character-consistency`、`storyboard-multi-character-control`、`director-visual-continuity`;绑定语法用 `sd2-pe`(`<主体N>@图片N` / 大头照+全身照);台账用 `animation-craft` 的 continuity-ledger 模板;建衔接矩阵/剪辑边界矩阵的列定义参考 `references/continuity-matrices.md`。
 - **门 G3:** 用户批准角色/场景设定 **+ 每个角色的人物卡(大头照+全身照)已建库**。
 
 ### G4 · 逐镜出图(Keyframes)
@@ -62,7 +62,7 @@ description: 端到端「做电影/做片子」的总编排器(制片导演),把
   - **③ 才问用户:** 身份/意图关键、不能凭空捏造的(特定真人、用户指定角色/IP、品牌 Logo、特定真实产品、用户心里已有具体样子的道具)→ 请用户上传或给 `asset://`;给不出就敲定可生成的替代方案。
 - **素材归专属夹:** 把每镜要用的全部素材**复制**进一个**新建专属夹**(一镜一夹,如 `<workspace>/assets/jobs/S01_<slug>/`),G5 从该夹取路径喂入——便于复用(下次直接拷夹)与逐项检查。
 - **调:** `sd2-pe`(Step 2 素材映射与配置策略:重要素材前置、人物用大头照+全身照、>4 人先分组)。
-- **门 G4.5:** 每镜资产清单齐备、归入专属夹、`asset://` 句柄就绪——**这是开始生成视频的硬性前置条件**。
+- **门 G4.5:** 每镜资产清单齐备、归入专属夹、`asset://` 句柄就绪——**这是开始生成视频的硬性前置条件**;逐镜边界/衔接是否按 `references/continuity-matrices.md` 填齐。
 
 ### G5 · 图生视频(Animate)— 分镜多参,用上全部可用资产
 - **做:** 把关键帧 + 运动描述喂给 Seedance 2.0 出片;**每镜把 G4.5 备齐的全部资产都喂进去(分镜多参)**:角色卡/场景图 → 参考图,运镜参考 → 参考视频,音色 → 参考音频(或严格首尾帧),并按 `sd2-pe` 语法用 `图片N/视频N/<主体N>` 在 prompt 里逐一绑定。**有素材却只发纯文字 = 错。** 分配全能参考配额;生成前做爆款体检。
@@ -136,6 +136,7 @@ description: 端到端「做电影/做片子」的总编排器(制片导演),把
 - `references/pipeline-example.md` — 完整样例:从一句概念到成片制片包(逐门走一遍)
 - `references/gates-and-routing.md` — 门控规则 + 智能路由检测细则
 - `references/production-package.md` — 最终交付制片包格式
+- `references/continuity-matrices.md` — 衔接矩阵/剪辑边界矩阵列定义 + shot-card schema(蒸馏自 create-storyboard)
 
 ---
 

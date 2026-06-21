@@ -9,6 +9,26 @@ import type {
 } from '../../types/agent'
 import type { CodexProviderConfig } from './codexLaunch'
 import type { DoctorReport } from './codexDoctor'
+import type {
+  AppsListParams,
+  AppsListResponse,
+  ExternalAgentConfigDetectParams,
+  ExternalAgentConfigDetectResponse,
+  ExternalAgentConfigImportResponse,
+  ExternalAgentConfigMigrationItem,
+  MarketplaceAddParams,
+  MarketplaceAddResponse,
+  MarketplaceRemoveResponse,
+  MarketplaceUpgradeResponse,
+  PluginInstallParams,
+  PluginInstallResponse,
+  PluginInstalledParams,
+  PluginInstalledResponse,
+  PluginListParams,
+  PluginListResponse,
+  PluginReadParams,
+  PluginReadResponse,
+} from '../../types/codexPlugins'
 
 export interface AgentInput extends AgentSendMessagePayload {
   model: string
@@ -62,6 +82,20 @@ export interface IAgentBackend {
   readConfig?(): Promise<{ config: Record<string, unknown> }>
   reloadMcpServers?(): Promise<void>
   mcpOAuthLogin?(name: string): Promise<{ authorization_url: string }>
+
+  // Native plugin / marketplace / apps / external-agent-import (app-server v2,
+  // ≥0.140). Codex-specific — optional so non-Codex backends can omit them.
+  listPlugins?(params?: PluginListParams): Promise<PluginListResponse>
+  listInstalledPlugins?(params?: PluginInstalledParams): Promise<PluginInstalledResponse>
+  readPlugin?(params: PluginReadParams): Promise<PluginReadResponse>
+  installPlugin?(params: PluginInstallParams): Promise<PluginInstallResponse>
+  uninstallPlugin?(pluginId: string): Promise<void>
+  addMarketplace?(params: MarketplaceAddParams): Promise<MarketplaceAddResponse>
+  removeMarketplace?(marketplaceName: string): Promise<MarketplaceRemoveResponse>
+  upgradeMarketplaces?(marketplaceName?: string): Promise<MarketplaceUpgradeResponse>
+  listApps?(params?: AppsListParams): Promise<AppsListResponse>
+  detectExternalAgentConfig?(params?: ExternalAgentConfigDetectParams): Promise<ExternalAgentConfigDetectResponse>
+  importExternalAgentConfig?(migrationItems: ExternalAgentConfigMigrationItem[]): Promise<ExternalAgentConfigImportResponse>
 }
 
 export interface JsonRpcMessage {

@@ -19,7 +19,7 @@ Consistency Checks:
 Verification Scoring:
 - Deduct 2 points per character with missing anchor fields
 - Deduct 3 points per cross-panel inconsistency (hair, outfit, prop continuity)
-- Flag as issue if anchor description is under 30 words (too vague to reproduce)
+- 锚点字数下限以 `director-anchor-extraction-quality` 为准(≥40 词);低于则判为过于模糊、不可复现。
 
 ## Example
 
@@ -27,3 +27,11 @@ Verification Scoring:
 - Panel 2 (close-up): ponytail + gold studs visible.
 - Panel 5 (wide): same olive jacket + red backpack still worn.
 → Hair color/length, jacket, and backpack unchanged across cuts = consistent. (A panel that switched the jacket to blue or dropped the backpack would be flagged.)
+
+## 角色从无到有时:先建档案再取锚点
+
+本 skill 管「已有角色的跨镜一致性」。当角色**还没立起来**(没有可锚定的外貌/性格/弧光)时,先用 `references/character-design-profiles.md` 走「信息收集 → 档案构建 → 编剧/美术/选角三版」把角色设计出来,其中**美术版**的字段可直接映射成上面的 CHARACTER ANCHOR(Face/Build/Outfit/Markers)。
+
+默认用**单锚点人像库**:大头照(正脸无表情)+ 全身照;三视图/四视图可作可选补充,**慎用**(多视图易触发 ID 漂移与双胞胎)。需要多视图设计稿 / 360° 转台 / 六表情模组时,见 `references/character-multiview-supplement.md`(含四视图合图 A-pose+三点布光的中英提示词模板,已适配本 app 工具)。
+
+**何时改用 `director-anchor-extraction-quality`:** 需要**从参考图新提取**锚点、把握提取质量(≥40 词、相似角色区分、遮挡标 [inferred])时,用 anchor-extraction;本 skill 负责锚点**确定后跨镜复用与一致性校验**。

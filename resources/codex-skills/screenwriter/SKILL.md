@@ -78,7 +78,7 @@ description: 编剧 / 剧作 skill,写电影或剧集剧本时使用——开发
 | `.docx` 双语 | 双语写作(对白原文 + 括号内译文) | `tools/build_bilingual.js` |
 | `.docx` 分场大纲(treatment) | 结构总览,每场 3-5 句 | `tools/build_treatment.js` |
 
-> `.docx` 工具是**可选**的本地脚本,依赖 npm 包 `docx`。首次使用前在 `tools/` 目录运行 `npm install docx`,再 `node build_screenplay.js`。详见 `references/README.md`。若环境没有 Node/docx,直接在聊天里输出等宽纯文本剧本即可,方法论照常适用。
+> `.docx` 工具是**可选**的本地脚本,依赖 npm 包 `docx`。首次使用前在 `tools/` 目录运行 `npm install docx`,再 `node build_screenplay.js`。若环境没有 Node/docx,直接在聊天里输出等宽纯文本剧本即可,方法论照常适用。
 
 ---
 
@@ -99,8 +99,7 @@ screenwriter/
 │   ├── methodology.md             ← McKee + Campbell + Aristotle(通用原理)
 │   ├── style-rules.md             ← 写作规则
 │   ├── workflow.md                ← 工作模式
-│   ├── timing-and-cutting.md      ← 如何估算片长
-│   └── README.md                  ← 新用户快速上手
+│   └── timing-and-cutting.md      ← 如何估算片长
 ├── templates/
 │   ├── synopsis.template.md       ← 故事梗概空白模板
 │   ├── characters.template.md     ← 人物圣经空白模板

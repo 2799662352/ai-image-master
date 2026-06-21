@@ -86,3 +86,9 @@ description: 用于赋予 AI 角色“活人感”,去除塑料AI味、油腻感
 - 是否存在环境对抗力:风/雨/雪/重量/阻力?
 - 光影是否避免大平光和塑料高光?
 - 图生视频时是否删掉重复风格词,只驱动微动作?
+
+## 何时改用其他 skill
+
+- 需要细化微表情序列与情绪因果 → `storyboard-character-acting`。
+- 动作缺"为什么发生" → `storyboard-character-motivation`(行为动机)。
+- 本 skill 侧重去塑料感:环境对抗、物理惯性、局部光影哑光。

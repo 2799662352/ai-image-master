@@ -20,6 +20,26 @@ import type {
   CodexWorkspacePaths,
 } from '../../types/agent'
 import type { AgentInput, IAgentBackend, ListThreadsParams } from './types'
+import type {
+  AppsListParams,
+  AppsListResponse,
+  ExternalAgentConfigDetectParams,
+  ExternalAgentConfigDetectResponse,
+  ExternalAgentConfigImportResponse,
+  ExternalAgentConfigMigrationItem,
+  MarketplaceAddParams,
+  MarketplaceAddResponse,
+  MarketplaceRemoveResponse,
+  MarketplaceUpgradeResponse,
+  PluginInstallParams,
+  PluginInstallResponse,
+  PluginInstalledParams,
+  PluginInstalledResponse,
+  PluginListParams,
+  PluginListResponse,
+  PluginReadParams,
+  PluginReadResponse,
+} from '../../types/codexPlugins'
 
 export { mapServerNotification }
 
@@ -455,6 +475,69 @@ export class CodexLocalBackend implements IAgentBackend {
   async mcpOAuthLogin(name: string): Promise<{ authorization_url: string }> {
     if (!this.client) throw new Error('CodexLocalBackend.mcpOAuthLogin called before start')
     return this.client.mcpOAuthLogin(name)
+  }
+
+  // ─── Native plugin / marketplace / apps / external-agent-import (≥0.140) ───
+  // Thin passthroughs to the protocol client (P0). Each throws if start()
+  // hasn't run, mirroring the MCP passthroughs above.
+
+  async listPlugins(params?: PluginListParams): Promise<PluginListResponse> {
+    if (!this.client) throw new Error('CodexLocalBackend.listPlugins called before start')
+    return this.client.listPlugins(params)
+  }
+
+  async listInstalledPlugins(params?: PluginInstalledParams): Promise<PluginInstalledResponse> {
+    if (!this.client) throw new Error('CodexLocalBackend.listInstalledPlugins called before start')
+    return this.client.listInstalledPlugins(params)
+  }
+
+  async readPlugin(params: PluginReadParams): Promise<PluginReadResponse> {
+    if (!this.client) throw new Error('CodexLocalBackend.readPlugin called before start')
+    return this.client.readPlugin(params)
+  }
+
+  async installPlugin(params: PluginInstallParams): Promise<PluginInstallResponse> {
+    if (!this.client) throw new Error('CodexLocalBackend.installPlugin called before start')
+    return this.client.installPlugin(params)
+  }
+
+  async uninstallPlugin(pluginId: string): Promise<void> {
+    if (!this.client) throw new Error('CodexLocalBackend.uninstallPlugin called before start')
+    await this.client.uninstallPlugin(pluginId)
+  }
+
+  async addMarketplace(params: MarketplaceAddParams): Promise<MarketplaceAddResponse> {
+    if (!this.client) throw new Error('CodexLocalBackend.addMarketplace called before start')
+    return this.client.addMarketplace(params)
+  }
+
+  async removeMarketplace(marketplaceName: string): Promise<MarketplaceRemoveResponse> {
+    if (!this.client) throw new Error('CodexLocalBackend.removeMarketplace called before start')
+    return this.client.removeMarketplace(marketplaceName)
+  }
+
+  async upgradeMarketplaces(marketplaceName?: string): Promise<MarketplaceUpgradeResponse> {
+    if (!this.client) throw new Error('CodexLocalBackend.upgradeMarketplaces called before start')
+    return this.client.upgradeMarketplaces(marketplaceName)
+  }
+
+  async listApps(params?: AppsListParams): Promise<AppsListResponse> {
+    if (!this.client) throw new Error('CodexLocalBackend.listApps called before start')
+    return this.client.listApps(params)
+  }
+
+  async detectExternalAgentConfig(
+    params?: ExternalAgentConfigDetectParams,
+  ): Promise<ExternalAgentConfigDetectResponse> {
+    if (!this.client) throw new Error('CodexLocalBackend.detectExternalAgentConfig called before start')
+    return this.client.detectExternalAgentConfig(params)
+  }
+
+  async importExternalAgentConfig(
+    migrationItems: ExternalAgentConfigMigrationItem[],
+  ): Promise<ExternalAgentConfigImportResponse> {
+    if (!this.client) throw new Error('CodexLocalBackend.importExternalAgentConfig called before start')
+    return this.client.importExternalAgentConfig(migrationItems)
   }
 
   private async killProcessInstance(proc: ChildProcess | null): Promise<void> {

@@ -68,6 +68,26 @@ import type {
   SeedanceKeyState,
   SeedanceTaskUpdate,
 } from '../types/seedance'
+import type {
+  AppsListParams,
+  AppsListResponse,
+  ExternalAgentConfigDetectParams,
+  ExternalAgentConfigDetectResponse,
+  ExternalAgentConfigImportResponse,
+  ExternalAgentConfigMigrationItem,
+  MarketplaceAddParams,
+  MarketplaceAddResponse,
+  MarketplaceRemoveResponse,
+  MarketplaceUpgradeResponse,
+  PluginInstallParams,
+  PluginInstallResponse,
+  PluginInstalledParams,
+  PluginInstalledResponse,
+  PluginListParams,
+  PluginListResponse,
+  PluginReadParams,
+  PluginReadResponse,
+} from '../types/codexPlugins'
 
 // ==================== IPC 通道常量 ====================
 // 集中管理所有 IPC 通道，便于类型检查和维护
@@ -229,6 +249,17 @@ const IPC_CHANNELS = {
     MCP_READ_CONFIG: 'agent:mcp-read-config',
     MCP_READ_RAW_CONFIG: 'agent:mcp-read-raw-config',
     MCP_STATUS_SNAPSHOT: 'agent:mcp-status-snapshot',
+    PLUGIN_LIST: 'agent:plugin-list',
+    PLUGIN_INSTALLED: 'agent:plugin-installed',
+    PLUGIN_READ: 'agent:plugin-read',
+    PLUGIN_INSTALL: 'agent:plugin-install',
+    PLUGIN_UNINSTALL: 'agent:plugin-uninstall',
+    MARKETPLACE_ADD: 'agent:marketplace-add',
+    MARKETPLACE_REMOVE: 'agent:marketplace-remove',
+    MARKETPLACE_UPGRADE: 'agent:marketplace-upgrade',
+    APPS_LIST: 'agent:apps-list',
+    EXT_AGENT_DETECT: 'agent:ext-agent-detect',
+    EXT_AGENT_IMPORT: 'agent:ext-agent-import',
     DOCKER_GW_CHECK: 'agent:docker-gw-check',
     DOCKER_GW_FIX: 'agent:docker-gw-fix',
     DOCKER_GW_STATUS: 'agent:docker-gw-status',
@@ -463,6 +494,18 @@ export interface ElectronAPI {
       snapshot?: Record<string, { status: string; error: string | null }>
       error?: string
     }>
+    // Codex native plugin / marketplace / apps / external-agent-import (≥0.140)
+    listPlugins: (params?: PluginListParams) => Promise<{ ok: boolean; error?: string; data?: PluginListResponse }>
+    listInstalledPlugins: (params?: PluginInstalledParams) => Promise<{ ok: boolean; error?: string; data?: PluginInstalledResponse }>
+    readPlugin: (params: PluginReadParams) => Promise<{ ok: boolean; error?: string; data?: PluginReadResponse }>
+    installPlugin: (params: PluginInstallParams) => Promise<{ ok: boolean; error?: string; data?: PluginInstallResponse }>
+    uninstallPlugin: (pluginId: string) => Promise<{ ok: boolean; error?: string }>
+    addMarketplace: (params: MarketplaceAddParams) => Promise<{ ok: boolean; error?: string; data?: MarketplaceAddResponse }>
+    removeMarketplace: (marketplaceName: string) => Promise<{ ok: boolean; error?: string; data?: MarketplaceRemoveResponse }>
+    upgradeMarketplaces: (marketplaceName?: string) => Promise<{ ok: boolean; error?: string; data?: MarketplaceUpgradeResponse }>
+    listApps: (params?: AppsListParams) => Promise<{ ok: boolean; error?: string; data?: AppsListResponse }>
+    detectExternalAgentConfig: (params?: ExternalAgentConfigDetectParams) => Promise<{ ok: boolean; error?: string; data?: ExternalAgentConfigDetectResponse }>
+    importExternalAgentConfig: (migrationItems: ExternalAgentConfigMigrationItem[]) => Promise<{ ok: boolean; error?: string; data?: ExternalAgentConfigImportResponse }>
     dockerGatewayCheck: () => Promise<{ installed: boolean; version?: string; error?: string }>
     dockerGatewayFix: (opts?: { port?: number }) => Promise<{
       ok: boolean
@@ -1042,6 +1085,40 @@ const electronAPI: ElectronAPI = {
         snapshot?: Record<string, { status: string; error: string | null }>
         error?: string
       }>(IPC_CHANNELS.AGENT.MCP_STATUS_SNAPSHOT),
+
+    // ----- Codex native plugin / marketplace / apps / external-agent-import (≥0.140) -----
+    listPlugins: (params?: PluginListParams) =>
+      safeInvoke<{ ok: boolean; error?: string; data?: PluginListResponse }>(IPC_CHANNELS.AGENT.PLUGIN_LIST, params),
+
+    listInstalledPlugins: (params?: PluginInstalledParams) =>
+      safeInvoke<{ ok: boolean; error?: string; data?: PluginInstalledResponse }>(IPC_CHANNELS.AGENT.PLUGIN_INSTALLED, params),
+
+    readPlugin: (params: PluginReadParams) =>
+      safeInvoke<{ ok: boolean; error?: string; data?: PluginReadResponse }>(IPC_CHANNELS.AGENT.PLUGIN_READ, params),
+
+    installPlugin: (params: PluginInstallParams) =>
+      safeInvoke<{ ok: boolean; error?: string; data?: PluginInstallResponse }>(IPC_CHANNELS.AGENT.PLUGIN_INSTALL, params),
+
+    uninstallPlugin: (pluginId: string) =>
+      safeInvoke<{ ok: boolean; error?: string }>(IPC_CHANNELS.AGENT.PLUGIN_UNINSTALL, pluginId),
+
+    addMarketplace: (params: MarketplaceAddParams) =>
+      safeInvoke<{ ok: boolean; error?: string; data?: MarketplaceAddResponse }>(IPC_CHANNELS.AGENT.MARKETPLACE_ADD, params),
+
+    removeMarketplace: (marketplaceName: string) =>
+      safeInvoke<{ ok: boolean; error?: string; data?: MarketplaceRemoveResponse }>(IPC_CHANNELS.AGENT.MARKETPLACE_REMOVE, marketplaceName),
+
+    upgradeMarketplaces: (marketplaceName?: string) =>
+      safeInvoke<{ ok: boolean; error?: string; data?: MarketplaceUpgradeResponse }>(IPC_CHANNELS.AGENT.MARKETPLACE_UPGRADE, marketplaceName),
+
+    listApps: (params?: AppsListParams) =>
+      safeInvoke<{ ok: boolean; error?: string; data?: AppsListResponse }>(IPC_CHANNELS.AGENT.APPS_LIST, params),
+
+    detectExternalAgentConfig: (params?: ExternalAgentConfigDetectParams) =>
+      safeInvoke<{ ok: boolean; error?: string; data?: ExternalAgentConfigDetectResponse }>(IPC_CHANNELS.AGENT.EXT_AGENT_DETECT, params),
+
+    importExternalAgentConfig: (migrationItems: ExternalAgentConfigMigrationItem[]) =>
+      safeInvoke<{ ok: boolean; error?: string; data?: ExternalAgentConfigImportResponse }>(IPC_CHANNELS.AGENT.EXT_AGENT_IMPORT, migrationItems),
 
     // ----- Codex provider management (v4.3+) -----
     getProviders: () =>

@@ -1,6 +1,6 @@
 ---
 name: storyboard-negative-control
-description: 用于通过负向提示词和边界限制反向控制 AI 画质,解决默认网红脸、塑料锐化、脏纹理、梦幻=烟雾、高级=金粉、自动补齐背景等误解机制。适用于 negative prompt、--no、禁止词、反向控制、抽象词拆解、视觉公式、缺省词、自动补齐、画质真实感、Midjourney/Stable Diffusion/NanoBananaPro。
+description: 用于通过负向提示词和边界限制反向控制 AI 画质,解决默认网红脸、塑料锐化、脏纹理、梦幻=烟雾、高级=金粉、自动补齐背景等误解机制;并含 Seedance 2.0 内容合规审核与正向化改写(9 类敏感检测 + A–G 改写策略)。适用于 negative prompt、--no、禁止词、反向控制、抽象词拆解、视觉公式、缺省词、自动补齐、画质真实感、内容合规、过审、敏感词改写、Midjourney/Stable Diffusion/NanoBananaPro。
 ---
 
 # Storyboard Negative Control / 负向与误解控制
@@ -101,3 +101,7 @@ A classic yellow Jaguar E-Type parked in front of a brownstone building in Manha
 - 是否有负向词阻止塑料锐化/HDR/脏纹理?
 - 是否明确背景边界和禁止额外物体?
 - 负向词是否过多以至于误伤主体?
+
+## 内容合规审核(与画质误解控制互补)
+
+本 skill 正文管「画质误解」(锐化/塑料/脏纹理);**内容合规**(涉政/低俗/暴力/品牌等会被平台拦审的表述)走 `references/compliance-filter.md` —— 9 类敏感检测清单 + A–G 正向化改写策略 + 合规输出格式。涉及视频/图像出片且题材敏感时,先过该清单做一次正向化改写,再写正式提示词。

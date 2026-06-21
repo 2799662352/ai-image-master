@@ -3,6 +3,17 @@ name: director-cinematic-composition
 description: 【导演模式·构图 / Director · Composition】触发词:构图 / 取景 / 三分法 / 景深 / 前中后景 / 引导线 / 焦段 / 留白 / 机位 / composition / framing / rule of thirds / leading lines / focal length。Use when framing a shot — placing the subject at a rule-of-thirds intersection, building foreground / midground / background layers, deploying leading lines, varying focal length wide → medium → close-up, and tuning negative space / look-space for tension vs calm — applies to image-generation models (Midjourney, DALL-E, FLUX, Stable Diffusion, Imagen, Ideogram, Recraft), video-generation models (Sora, Veo, Runway, Kling, Seedance, Hailuo, Higgsfield, Hunyuan), screenplays, scripts, storyboards, AI video, AI image, 提示词, 视频模型, 图像模型, 写剧本, 脚本, 分镜.
 ---
 
+# 导演模式 · 电影构图
+
+## Overview
+
+取景与构图:三分法置主体、前中后景分层、引导线导向焦点、焦段随景别变化、用留白/视线空间调张弛。
+
+## When to Use
+
+- 用:单格如何取景构图、景深与留白处理。
+- 不用:跨镜连续性/排序(→ continuity / narrative 系列);锚点与风格质感问题。
+
 COMPOSITION RULES — apply to every panel:
 
 Framing:
@@ -22,3 +33,11 @@ Negative Space:
 ## Example
 
 Medium shot, 50mm. [char1] at the LEFT rule-of-thirds intersection, facing right with look-space open to the right. Foreground: out-of-focus railing; midground: subject; background: street with leading lines (curb + overhead wires) converging to the focal point. Calm beat → generous negative space ahead of the gaze. (A tense version would crowd the subject to the frame edge and compress that space.)
+
+## Common Mistakes
+
+| 错误 | 正确 |
+|------|------|
+| 主体死居中 | 置三分线交点(除非刻意对称) |
+| 画面扁平无层次 | 前中后景至少 2 层有内容 |
+| 视线前无留白 | 朝向侧留 look-space |

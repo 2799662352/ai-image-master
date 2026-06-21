@@ -16,6 +16,13 @@ provided by the `catimation` MCP server and replace the built-in imagegen /
 image_gen skill: they render inside the chat AND persist results to local files
 (paths returned), the app's history page, and the ATTACHMENTS file panel.
 
+## When to Use
+
+- 用户要生成 / 画 / 渲染 / 编辑 / 重绘图片、插画、海报、图标、配图(生成图片 / 画一张 / 出图 / 改图)。
+- 你自己回答时需要一张配图。
+- 用户给了图想以图改图 / 换风格 → 走本 skill 并带上 `referenceImages`。
+- 优先于内置 imagegen / image_gen(后者 Windows 不可用且不落盘)。
+
 ## Steps
 
 0. **Before writing the prompt, load `director-orchestrator`** (the
@@ -69,18 +76,21 @@ image_gen skill: they render inside the chat AND persist results to local files
    briefly in the user's language and cite the saved path(s) when relevant.
 5. **Self-review the result, then improve if needed (autonomous QA loop).**
    A `✅ DONE` return means the image is ALREADY rendered in the chat. Before you
-   hand off, do a quick autonomous quality pass:
-   - Open the generated image(s) with `view_image` and look critically for
-     defects — wrong/extra fingers or limbs, broken faces, garbled text, obvious
-     artifacts — and above all whether it matches the prompt (subject, count,
-     composition, style). Viewing returned images, **including in batches**, is
-     supported; for a very large batch, review a representative subset rather than
-     every frame in one turn.
-   - If you spot a clear problem, briefly say what's off and **regenerate with an
-     improved prompt**. To keep what worked and fix only the rest, pass the prior
-     result back as `referenceImages` (image-to-image). Then re-review. Iterate
-     at MOST 2–3 times and converge — don't loop on marginal nitpicks, and each
-     regeneration costs money.
+   hand off, open the generated image(s) with `view_image`(支持批量;超大批量看代表性子集)
+   and过一遍**四项验收清单**:
+   - **① 符合用户要求**:主体 / 数量 / 画幅比例 / 文字内容 / 明确指定的元素是否都对上;
+     用户给了 `referenceImages` 时是否真的体现了参考(而非从零另画)。
+   - **② 质量合理**:无多/缺手指与肢体、无崩脸、无乱码文字、无明显伪影/拼接错位;
+     分辨率与清晰度匹配用途。
+   - **③ 风格一致**:与用户指定风格一致;**系列/组图**内各帧画风、色调、角色外观前后一致;
+     若项目有角色锚点 / 圣经(character_bible)或既定风格,新图须与之吻合(见
+     `director-style-consistency` / `director-character-consistency`)。
+   - **④ 过 skill / 插件门**:提示词是否经 `director-orchestrator` 的 13 维框架(物理参数优先);
+     角色身份是否遵循单锚点纪律(默认大头照+全身照,三视图/四视图为可选补充);
+     涉敏感/合规内容是否过 `storyboard-negative-control`;在制片流程中是否满足 `film-studio` 的资产门。
+   - 若任一项不达标:简述哪里不对,**带改进后的提示词重生成**(保留可用部分时把上一版回传为
+     `referenceImages` 做图生图),再复检。最多迭代 2–3 次即收敛——别在边角小瑕疵上死磕,
+     每次重生成都花钱。
    - When it's good (or good enough), confirm briefly in the user's language and
      cite the saved path(s). Don't over-narrate each pass.
    - You still do NOT need `query_history` to find an image you just generated,
@@ -177,6 +187,13 @@ directory and give it a descriptive, ordered name — e.g.
   sort naturally.
 - For a one-off casual generation outside any project, skip this unless asked —
   the file is already saved and in history.
+
+## Common Mistakes
+
+- 用户给了图却忘传 `referenceImages`,改成从零文生图。
+- 调 `custom-imagemodel-gt` / `wan2.7-image-pro` 前不切到 Miau API 站点,直接调用导致失败。
+- 多张图却逐个调 `generate_image`,而不是一次 `generate_images`。
+- 凭空编造 `model` 名;只有三个合法值,用户没点名就省略 `model` 走默认。
 
 ## Notes
 

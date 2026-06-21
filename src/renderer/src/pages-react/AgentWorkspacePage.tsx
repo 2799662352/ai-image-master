@@ -1,6 +1,7 @@
 import React from 'react'
 
 import { AgentWorkspaceNav } from '../features/agent-workspace/AgentWorkspaceNav'
+import { ConnectorsSection } from '../features/agent-workspace/ConnectorsSection'
 import { DoctorSection } from '../features/agent-workspace/DoctorSection'
 import { LogsSection } from '../features/agent-workspace/LogsSection'
 import { McpSection } from '../features/agent-workspace/McpSection'
@@ -36,6 +37,11 @@ export default function AgentWorkspacePage(): React.JSX.Element {
         {section === 'skills' && (
           <div data-testid="section-skills">
             <SkillsSection insertIntoChat={insertIntoChat} />
+          </div>
+        )}
+        {section === 'connectors' && (
+          <div data-testid="section-connectors">
+            <ConnectorsSection />
           </div>
         )}
         {section === 'threads' && (

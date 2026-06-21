@@ -225,43 +225,22 @@ Three or more "No" answers means the prompt is not ready and the model rewrites 
 
 <companion-skills>
 
-This skill is **the method**. The 40 sibling skills under `$HOME/.agents/skills/{director-*,storyboard-*}/` are **the recipes** — every one of them is a battle-tested in-app prompt-craft rule set ported verbatim from the storyboard pipeline and director mode of this application. The method tells you *what to do at each step*; the recipes give the exact *rules for how to write the words*. Use them in tandem; never use the method alone when a matching recipe exists.
+This skill is **the method**. The 19 sibling skills under `$HOME/.agents/skills/{director-*,storyboard-*}/` are **the recipes** — every one of them is a battle-tested in-app prompt-craft rule set ported verbatim from the storyboard pipeline and director mode of this application. The method tells you *what to do at each step*; the recipes give the exact *rules for how to write the words*. Use them in tandem; never use the method alone when a matching recipe exists.
 
 | Step you are at | Read & follow this sibling skill | What it gives you |
 |---|---|---|
-| Lens 1 / Lens 4 — reference video reverse-engineering | `storyboard-scene-breakdown` | reject tag-word "prompt reverse engineering"; decompose the reference into composition/camera, subject, lighting, foreground-midground-background depth, timeline slices, and camera trajectory |
-| Lens 1 / Lens 4 — kinematic video reverse-engineering | `storyboard-kinematic-reverse-engineering` | use setup/climax/resolve frames to extract motion vectors, camera movement, parallax, speed curves, and executable video parameters |
-| Lens 1 / Lens 4 — video prompt cleanup | `storyboard-video-prompt-optimization` | respect first-frame visual authority, remove redundant style words, resolve camera/light conflicts, and allocate motion by timeline |
-| Lens 1 / Lens 4 — multi-character control | `storyboard-multi-character-control` | lock each character's spatial slot, split actions by time segment, preserve satisfied characters during semantic editing, and use shot-by-shot action handoffs |
 | Pillar 2 — pick N-field structure | `director-prompt-engineering` | 7-field prompt order (Subject+Action → Character ref → Scene → Shot+Camera → Lighting → Composition → Style+Mood) + negative-prompt hygiene |
 | Pillar 2 — caption template | `director-structured-captioning` | VGoT structured caption fields |
-| Pillar 2 — director thinking / mise-en-scène | `storyboard-director-thinking` | plan Z-axis staging, motivated light, parallax movement, core action, resistance, and A-roll/B-roll edit structure before generating |
-| Pillar 2 — character acting / remove NPC feel | `storyboard-character-acting` | replace emotion labels (happy/angry/sad/nervous) with micro-expression sequences, body-causality gestures, and visualized environmental sound cues |
-| Pillar 2 — character behavior motivation | `storyboard-character-motivation` | convert poses into motivated action: current task → trigger → continuous beats → micro-life reaction; for multi-character shots, one acts while another reacts |
-| Pillar 2 — character live realism | `storyboard-live-character-realism` | add micro-expression flow, subconscious gestures, environmental resistance, physical inertia, local light, and matte skin to remove plastic/NPC feel |
-| Pillar 2 — creative imagination | `storyboard-creative-imagination` | break physical laws, create time anomalies, and turn the camera into a character/POV to avoid generic "realistic blockbuster" outputs |
-| Pillar 2 — emotional montage | `storyboard-emotional-montage` | express emotion through objective correlative environments, Kuleshov contrast, and extreme inserts rather than facial emotion labels |
-| Pillar 2 — time-word dynamics | `storyboard-time-words` | use past/present/future tense words to trigger traces, decisive motion moments, and impending tension rather than static dead-object prompts |
-| Pillar 2 — feature collapse aesthetics | `storyboard-feature-collapse` | intentionally collapse non-subject detail, decay edges, and preserve sharp emotional anchors for negative-space / dream / cyber-impressionist looks |
-| Pillar 2 — robustness breaking | `storyboard-robustness-breaking` | lightly destabilize composition, light, and style to escape safe centered AI defaults while keeping the image direction controlled |
-| Pillar 2 — negative / misunderstanding control | `storyboard-negative-control` | use explicit negative prompts, abstract-word decomposition, and boundary locks to prevent plastic sharpening, dirty texture, and automatic background filling |
 | Pillar 4 — animation exaggeration | `director-anime-quality-boost` | impact frames, speed lines, smear-frame craft, "wrongness is the point" |
 | Pillar 4 — body / motion physics | `storyboard-physics` | motion vectors (°/cm/m·s⁻¹), muscle tension, micro-expression in mm (not adjectives) |
 | Pillar 5 — continuity verify (visual) | `director-visual-continuity` | per-panel checklist for visual element coherence across the scene |
 | Pillar 5 — continuity verify (light) | `director-lighting-continuity` | key/fill/rim direction + color temperature + HDR coherence across panels |
-| Pillar 5 — lighting reconstruction | `storyboard-light-reconstruction` | convert vague "cinematic/side light" into light source, physical effect, visible shadows, matte highlights, and de-light/re-light workflows |
 | Pillar 5 — continuity verify (style) | `director-style-consistency` | style descriptor verbatim across every panel, no paraphrase drift |
 | Lens 1 — intent extraction | `director-scene-analysis-depth` | physical / spatial / narrative depth dimensions for any scene |
 | Lens 2 — character anchors | `director-character-consistency` + `director-anchor-extraction-quality` | anchor schema (face/hair/build/outfit/markers) + density and specificity rules |
 | Lens 3 — style extraction | `storyboard-style` + `storyboard-visual` + `director-cinematic-composition` | palette ratio (≥7:3), key/fill/rim lighting, lens [mm] f/[stop], Z-axis fg/mg/bg, rule-of-thirds composition |
-| Lens 3 — style logic extraction | `storyboard-style-extraction-logic` | extract "what the reference rejects", cross-sample invariants, Style DNA, and negative constraints instead of /describe-style semantic fitting |
-| Lens 3 — color grading control | `storyboard-color-grading-control` | use HEX palettes, color DNA, DIT parameters, shadow/highlight bias, negative color constraints, and AI A/B grading validation |
-| Lens 3 — foreground occlusion / cinematic depth | `storyboard-foreground-occlusion` | add physical or atmospheric foreground occlusion, camera-position cues, air perspective, Tyndall effect, and parallax-ready fg/mg/bg layers |
-| Lens 3 — shot/emotion matching | `storyboard-shot-emotion-matching` | match shot scale, focal length, perspective, psychological distance, and spatial logic to the intended emotion |
-| Lens 3 — pseudo-perspective / spatial depth | `storyboard-pseudo-perspective` | use direction vectors, vanishing points, atmospheric density, scale contrast, lens codes, and light carving to trick AI into stronger 3D depth |
 | Lens 4 — shot-rhythm extraction | `director-shot-sequence-patterns` + `director-narrative-flow` + `storyboard-structure` | shot type cycle (wide / medium / CU / POV) + per-shot emotional arc + single-action mid-action freeze discipline |
 | Per-shot audio design (when domain warrants) | `storyboard-audio` | 3-layer audio: score (real composer ref + tension-value-to-bpm formula) / SFX (Hz + decay + spatial) / voice (Hz + breath% + 字/秒) |
-| Character voice / spoken line delivery | `storyboard-voice-control` | turn emotion labels into age, timbre, speed, pauses, breath, stress, tail tone, punctuation rhythm, and per-line voice progression |
 | Dialogue / character-name handling | `storyboard-dialogue` | extract dialogue + character names *verbatim* from the screenplay, never fabricate |
 | Sensitive content evasion | `storyboard-dodge` | artistic dodge rule set (contour / physics / shadow over explicit anatomical or graphic terms) |
 

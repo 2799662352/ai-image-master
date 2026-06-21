@@ -25,6 +25,26 @@ import type {
   CodexThreadSummary,
 } from '../../types/agent'
 import type { AgentInput, ListThreadsParams } from './types'
+import type {
+  AppsListParams,
+  AppsListResponse,
+  ExternalAgentConfigDetectParams,
+  ExternalAgentConfigDetectResponse,
+  ExternalAgentConfigImportResponse,
+  ExternalAgentConfigMigrationItem,
+  MarketplaceAddParams,
+  MarketplaceAddResponse,
+  MarketplaceRemoveResponse,
+  MarketplaceUpgradeResponse,
+  PluginInstallParams,
+  PluginInstallResponse,
+  PluginInstalledParams,
+  PluginInstalledResponse,
+  PluginListParams,
+  PluginListResponse,
+  PluginReadParams,
+  PluginReadResponse,
+} from '../../types/codexPlugins'
 
 /**
  * Mirrors `McpServerStatus` from Codex's generated TS schema at
@@ -329,6 +349,81 @@ export class CodexProtocolClient {
 
   async mcpToolCall(params: { threadId?: string; server: string; tool: string; arguments?: unknown }): Promise<unknown> {
     return this.rpc('mcpServer/tool/call', params)
+  }
+
+  // ─── Native Plugin / Marketplace / Connectors RPC (app-server v2, ≥0.140) ──
+  // Method strings pinned from openai/codex
+  // `app-server-protocol/src/protocol/common.rs` (client_request_definitions!)
+  // at tag rust-v0.141.0. These require a Codex binary ≥0.140; remote catalogs
+  // (`vertical` / `created-by-me-remote`) and `apps/list` are additionally
+  // gated behind ChatGPT auth / experimental feature flags server-side.
+
+  /** List plugins across marketplaces. Omitting `marketplaceKinds` queries only
+   *  local marketplaces (+ the default remote catalog when feature-flagged). */
+  async listPlugins(params?: PluginListParams): Promise<PluginListResponse> {
+    return this.rpc<PluginListResponse>('plugin/list', params ?? {})
+  }
+
+  /** List only installed plugins (lighter than `plugin/list`). */
+  async listInstalledPlugins(params?: PluginInstalledParams): Promise<PluginInstalledResponse> {
+    return this.rpc<PluginInstalledResponse>('plugin/installed', params ?? {})
+  }
+
+  /** Read full detail (skills, hooks, apps, mcpServers) for one plugin. */
+  async readPlugin(params: PluginReadParams): Promise<PluginReadResponse> {
+    return this.rpc<PluginReadResponse>('plugin/read', params)
+  }
+
+  /** Install a plugin. Returns the auth policy + any apps needing auth. */
+  async installPlugin(params: PluginInstallParams): Promise<PluginInstallResponse> {
+    return this.rpc<PluginInstallResponse>('plugin/install', params)
+  }
+
+  /** Uninstall a plugin by its installed plugin id. */
+  async uninstallPlugin(pluginId: string): Promise<void> {
+    await this.rpc('plugin/uninstall', { pluginId })
+  }
+
+  /** Add a marketplace source (git url / catalog) to discover plugins. */
+  async addMarketplace(params: MarketplaceAddParams): Promise<MarketplaceAddResponse> {
+    return this.rpc<MarketplaceAddResponse>('marketplace/add', params)
+  }
+
+  /** Remove a previously added marketplace by name. */
+  async removeMarketplace(marketplaceName: string): Promise<MarketplaceRemoveResponse> {
+    return this.rpc<MarketplaceRemoveResponse>('marketplace/remove', { marketplaceName })
+  }
+
+  /** Upgrade one marketplace, or all of them when `marketplaceName` is omitted. */
+  async upgradeMarketplaces(marketplaceName?: string): Promise<MarketplaceUpgradeResponse> {
+    return this.rpc<MarketplaceUpgradeResponse>(
+      'marketplace/upgrade',
+      marketplaceName ? { marketplaceName } : {},
+    )
+  }
+
+  /** List available apps / connectors (EXPERIMENTAL; paginated via `nextCursor`). */
+  async listApps(params?: AppsListParams): Promise<AppsListResponse> {
+    return this.rpc<AppsListResponse>('apps/list', params ?? {})
+  }
+
+  /** Detect importable external-agent configs (Claude Code, etc.). */
+  async detectExternalAgentConfig(
+    params?: ExternalAgentConfigDetectParams,
+  ): Promise<ExternalAgentConfigDetectResponse> {
+    return this.rpc<ExternalAgentConfigDetectResponse>('externalAgentConfig/detect', params ?? {})
+  }
+
+  /** Import the selected external-agent migration items. */
+  async importExternalAgentConfig(
+    migrationItems: ExternalAgentConfigMigrationItem[],
+  ): Promise<ExternalAgentConfigImportResponse> {
+    return this.rpc<ExternalAgentConfigImportResponse>('externalAgentConfig/import', { migrationItems })
+  }
+
+  /** Permanently delete a saved session (distinct from archive/unarchive). */
+  async deleteThread(threadId: string): Promise<void> {
+    await this.rpc('thread/delete', { threadId })
   }
 
   respondToServerRequest(response: CodexApprovalResponse): void {

@@ -164,8 +164,22 @@ provided by the \`catimation\` MCP server and replace the built-in imagegen /
 image_gen skill: they render inside the chat AND persist results to local files
 (paths returned), the app's history page, and the ATTACHMENTS file panel.
 
+## When to Use
+
+- 用户要生成 / 画 / 渲染 / 编辑 / 重绘图片、插画、海报、图标、配图(生成图片 / 画一张 / 出图 / 改图)。
+- 你自己回答时需要一张配图。
+- 用户给了图想以图改图 / 换风格 → 走本 skill 并带上 \`referenceImages\`。
+- 优先于内置 imagegen / image_gen(后者 Windows 不可用且不落盘)。
+
 ## Steps
 
+0. **Before writing the prompt, load \`director-orchestrator\`** (the
+   导演总调度 router). It runs a STEP 0 self-reflection on which \`director-*\` /
+   \`storyboard-*\` craft skills apply, then writes the prompt as structured text
+   on the 13-dimension framework (physical params over emotion adjectives,
+   positive prompts by default). Do this even when YOU generate an illustration
+   for your own answer. For open-ended asks, go through \`catimation-brainstorm\`
+   first. Skip only for a trivially clear one-off.
 1. Turn the request into one clear, descriptive prompt. Cover subject, style,
    composition, lighting, and mood. Keep it concise.
 2. If the user asks for exactly ONE image, call \`generate_image\` with:
@@ -184,6 +198,11 @@ image_gen skill: they render inside the chat AND persist results to local files
      explicitly asks for print/ultra-detail/4K.
    - \`quality\` (optional): \`auto\` (default), \`low\`, \`medium\`, or \`high\`. Use
      \`high\` for images with text or fine detail.
+   - \`count\` (optional, **wan2.7 only**): number of images from THIS one prompt
+     (1–12, default 1). Set \`model: 'wan2.7-image-pro'\` + \`count > 1\` to get a
+     front-to-back **consistent 组图 series** (same character/subject across
+     frames, e.g. 同一只猫的四季). Other channels ignore \`count\` (always 1). For
+     several *unrelated* images, use \`generate_images\` (one prompt each) instead.
    - \`referenceImages\` (optional but **important**): array of local file paths
      or data/http URLs for image-to-image / editing. **If the user gave you any
      image material, you MUST reuse it here** (see "Reference images" below).
@@ -205,18 +224,21 @@ image_gen skill: they render inside the chat AND persist results to local files
    briefly in the user's language and cite the saved path(s) when relevant.
 5. **Self-review the result, then improve if needed (autonomous QA loop).**
    A \`✅ DONE\` return means the image is ALREADY rendered in the chat. Before you
-   hand off, do a quick autonomous quality pass:
-   - Open the generated image(s) with \`view_image\` and look critically for
-     defects — wrong/extra fingers or limbs, broken faces, garbled text, obvious
-     artifacts — and above all whether it matches the prompt (subject, count,
-     composition, style). Viewing returned images, **including in batches**, is
-     supported; for a very large batch, review a representative subset rather than
-     every frame in one turn.
-   - If you spot a clear problem, briefly say what's off and **regenerate with an
-     improved prompt**. To keep what worked and fix only the rest, pass the prior
-     result back as \`referenceImages\` (image-to-image). Then re-review. Iterate
-     at MOST 2–3 times and converge — don't loop on marginal nitpicks, and each
-     regeneration costs money.
+   hand off, open the generated image(s) with \`view_image\`(支持批量;超大批量看代表性子集)
+   and过一遍**四项验收清单**:
+   - **① 符合用户要求**:主体 / 数量 / 画幅比例 / 文字内容 / 明确指定的元素是否都对上;
+     用户给了 \`referenceImages\` 时是否真的体现了参考(而非从零另画)。
+   - **② 质量合理**:无多/缺手指与肢体、无崩脸、无乱码文字、无明显伪影/拼接错位;
+     分辨率与清晰度匹配用途。
+   - **③ 风格一致**:与用户指定风格一致;**系列/组图**内各帧画风、色调、角色外观前后一致;
+     若项目有角色锚点 / 圣经(character_bible)或既定风格,新图须与之吻合(见
+     \`director-style-consistency\` / \`director-character-consistency\`)。
+   - **④ 过 skill / 插件门**:提示词是否经 \`director-orchestrator\` 的 13 维框架(物理参数优先);
+     角色身份是否遵循单锚点纪律(默认大头照+全身照,三视图/四视图为可选补充);
+     涉敏感/合规内容是否过 \`storyboard-negative-control\`;在制片流程中是否满足 \`film-studio\` 的资产门。
+   - 若任一项不达标:简述哪里不对,**带改进后的提示词重生成**(保留可用部分时把上一版回传为
+     \`referenceImages\` 做图生图),再复检。最多迭代 2–3 次即收敛——别在边角小瑕疵上死磕,
+     每次重生成都花钱。
    - When it's good (or good enough), confirm briefly in the user's language and
      cite the saved path(s). Don't over-narrate each pass.
    - You still do NOT need \`query_history\` to find an image you just generated,
@@ -234,8 +256,12 @@ switch when the user *explicitly* asks for a specific channel:
   surface as the default, so all the other params behave identically.
 - **\`wan2.7-image-pro\` (阿里万相 2.7 pro)** — pick when the user says 万相 /
   wanxiang / wan / 通义万相, OR when they want a **consistent multi-image 组图
-  series**. Wan excels at 超清文生图、图像编辑、组图; it also supports 4K
-  (text-to-image only — editing/组图 cap at 2K).
+  series** (e.g. "同一只猫的四季组图，前后一致"). For a 组图 series, call
+  \`generate_image\` with \`model: 'wan2.7-image-pro'\` and \`count\` = how many frames
+  (2–12) — it returns one front-to-back-consistent set from a single prompt
+  (do NOT use \`generate_images\`, which makes unrelated images). Wan excels at
+  超清文生图、图像编辑、组图; it also supports 4K (text-to-image only —
+  editing/组图 cap at 2K).
 - All three accept \`referenceImages\` for image-to-image / editing.
 
 ### ⚠️ 站点要求(重要 — 用 腾讯 image2 / 万相 2.7 前必读)
@@ -243,9 +269,13 @@ switch when the user *explicitly* asks for a specific channel:
 \`custom-imagemodel-gt\`(腾讯 image2)和 \`wan2.7-image-pro\`(阿里万相 2.7 pro)
 **都只经 Miau API 代理提供**。调用这两个 \`model\` 之前,必须先在
 **「API 设置 → ① 选择 API 站点」里把当前站点切到 \`Miau API\`**。原因:应用发请求时
-会用「当前选中站点」的域名替换模型端点的域名,站点不对时这两个渠道会被发到错误域名
-(如 API易官方)而直接失败。默认 \`gpt-image-2-vip\` 不受此限制,任意站点都可用;
-若用户要用 腾讯 image2 / 万相 而当前站点不是 Miau API,先提醒切站点再生成。
+会用「当前选中站点」的域名替换模型端点的域名,所以站点不对时,这两个渠道的请求会被
+发到错误的域名(如 API易官方),那边没有这两个模型,直接失败 / 报错。
+
+- 默认渠道 \`gpt-image-2-vip\` **不受此限制**,在任何站点都能用——这也是为什么不指定
+  \`model\` 时要保持默认。
+- 如果用户明确要用 腾讯 image2 / 万相,而当前站点不是 Miau API:先提醒用户到
+  「API 设置」把站点切到 **Miau API**(并填好对应 API Key)再生成,否则会失败。
 
 When the user does not name a channel, **do not guess** — just omit \`model\` and
 use the default. Never invent a model name; only these three values are valid.
@@ -305,6 +335,13 @@ directory and give it a descriptive, ordered name — e.g.
   sort naturally.
 - For a one-off casual generation outside any project, skip this unless asked —
   the file is already saved and in history.
+
+## Common Mistakes
+
+- 用户给了图却忘传 \`referenceImages\`,改成从零文生图。
+- 调 \`custom-imagemodel-gt\` / \`wan2.7-image-pro\` 前不切到 Miau API 站点,直接调用导致失败。
+- 多张图却逐个调 \`generate_image\`,而不是一次 \`generate_images\`。
+- 凭空编造 \`model\` 名;只有三个合法值,用户没点名就省略 \`model\` 走默认。
 
 ## Notes
 
@@ -394,7 +431,12 @@ remote upstream URLs expire in ~24h, so prefer the local copy.
 
 ## Co-direct the shot — brainstorm with the user + your local craft skills
 
-Before you write the \`prompt\`, take a beat to shape the shot **with** the user.
+Before you write the \`prompt\`, **load \`director-orchestrator\`** (the 导演总调度
+router): it runs a mandatory STEP 0 self-reflection — 「涉及 13 维里哪几维?要用哪些本地
+director-* / storyboard- skill?」 — loads the matching craft skills, and writes
+the prompt as structured text (never JSON) with physical/camera-reproducible
+params over emotion adjectives. Do this even when YOU generate a clip for your
+own answer. Then take a beat to shape the shot **with** the user.
 You have a LARGE library of local video / storytelling craft skills in your own
 skills directory (usually \`~/.agents/skills/\`, e.g. \`C:\\Users\\<you>\\.agents\\skills\`)
 — 镜头/景别/运镜, 导演思维, 前景遮挡, 打光/光影, 构图/伪透视, 角色动机与演技, 调色,
@@ -432,9 +474,9 @@ When unsure, propose a sensible default out loud and let the user correct you.
 1. **人物卡 (Character Card) — 先锁人,再开拍。** 每个出镜角色先建一张人物卡并存进
    人像库,作为该角色**唯一身份锚**,全片所有镜头都引用同一张卡:
    - 一张**大头照**(仅头部、正脸、无表情)+ 一张**全身照**(定妆造 / 服装 / 配饰)。
-     **禁用三视图 / 多视图**——多视图易触发 ID 漂移与双胞胎(\`sd2-pe\` 人脸最佳实践)。
+     默认用此单锚点,**三视图 / 四视图可作可选补充,慎用**——多视图易触发 ID 漂移与双胞胎(\`sd2-pe\` 人脸最佳实践)。
    - 缺图就先用 \`generate_image\` 出一张定妆照补齐,再 \`add_to_portrait_library\`
-     存成 \`asset://assetId\`;**不要**拿现成多视图硬塞。
+     存成 \`asset://assetId\`;默认**不**拿现成多视图整张当唯一身份锚(如需,多视图可作可选补充参考)。
    - 提示词里绑成稳定主体:\`<主体1> 的面部参考 图片1(大头照)、妆造参考 图片2(全身照)\`。
 
 2. **故事板 / 分镜 (Storyboard) — 多事件 / 多镜先排板。** 只要不是「单场景一个连续动作」
@@ -561,17 +603,20 @@ montage:
 1. Extract 9 evenly-spaced frames tiled into a grid. Set \`fps ≈ 9 / clip_duration\`
    so the 9 tiles span the whole clip:
 
-       ffmpeg -i "<clip>.mp4" -vf "fps=9/<DURATION>,scale=320:-1,tile=3x3:padding=6:color=black" -frames:v 1 -y "<clip>_grid.png"
+   \`\`\`
+   ffmpeg -i "<clip>.mp4" -vf "fps=9/<DURATION>,scale=320:-1,tile=3x3:padding=6:color=black" -frames:v 1 -y "<clip>_grid.png"
+   \`\`\`
 
    (For a 5s clip, \`fps=9/5=1.8\`; set \`<DURATION>\` to the real length. If the grid
-   has too few/many tiles, nudge the fps.)
+   comes out with too few/many tiles, nudge the fps.)
 2. \`view_image\` the \`_grid.png\` and judge: subject/character consistency across
    frames, motion sanity (no melting / teleporting / extra limbs), artifacts, and
    prompt adherence. The grid is one small PNG, so this is cheap and safe.
 3. If the clip is clearly bad, regenerate with an adjusted prompt (or switch mode)
    and re-check. Iterate at MOST 2–3 times — each render costs money and ~1–3 min.
 4. **Never** inject the full MP4 or its raw bytes into the chat — always inspect
-   quality via the contact sheet, never the video itself.
+   quality via the contact sheet, never the video itself. The user is already
+   watching the clip play inline.
 
 ## Organize finished clips into the user's workspace (when in a project)
 
@@ -582,8 +627,8 @@ ordered name — e.g. \`<workspace>/assets/video/S01_station_wide.mp4\` and
 
 - **COPY, don't move**, from the saved path in the \`DONE\` banner so the chat /
   history copy stays intact.
-- Use zero-padded shot ordinals (\`S01_\`, \`S02_\`…) so clips assemble in order —
-  exactly what a later ffmpeg concat/拼接 step needs.
+- Use zero-padded shot ordinals (\`S01_\`, \`S02_\`…) so clips assemble in order — this
+  is exactly what a later ffmpeg concat/拼接 step needs.
 - Skip for a one-off casual clip unless the user asks.
 
 ## Portrait library (人像库) — push materials in, then reference
