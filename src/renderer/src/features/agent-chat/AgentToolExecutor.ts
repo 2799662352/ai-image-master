@@ -6,9 +6,26 @@ import { isTabName, useTabStore } from '../../stores/useTabStore'
 import { useAgentChatStore } from './store'
 import { recordCodexArtifact } from './codexArtifactPersistence'
 import type { ArtifactSaveInfo, AttachmentRef, ChoiceAnswer, ChoiceOption } from '../../../../types/agent-timeline'
-import type { AgentToolRequest, AgentToolResponse } from '../../../../types/agent'
+import type { AgentToolRequest, AgentToolResponse, ImageTaskUpdate } from '../../../../types/agent'
+import { canvasBridge } from '../agent-workspace/canvas/canvasBridge'
 
 type GenerateImageToolParams = GenerateImageParams
+
+type GenerateImagesToolParams = {
+  prompts?: unknown
+  model?: unknown
+  ratio?: unknown
+  resolution?: unknown
+  quality?: unknown
+  referenceImages?: unknown
+}
+
+/** Combined batch result shipped to main; shape matches imageTools' BatchTaskResult. */
+interface ImageBatchResult {
+  successes: unknown[]
+  failures: Array<{ index: number; error: string }>
+  savedPaths: string[]
+}
 
 /**
  * Default channel for the codex `generate_image` tool: the stable VIP channel.
@@ -45,6 +62,7 @@ type AgentElectronApi = {
   agent?: {
     onToolRequest: (callback: (request: AgentToolRequest) => void) => () => void
     sendToolResponse: (response: AgentToolResponse) => void
+    sendImageTaskUpdate: (update: ImageTaskUpdate) => void
   }
   attachments?: {
     save: (args: {
@@ -109,8 +127,53 @@ export class AgentToolExecutor {
   }
 
   private async handle(request: AgentToolRequest): Promise<void> {
+    // Image tools are TRULY async: ack the kick immediately (so main's
+    // `router.call` returns in ms instead of holding the IPC open for the whole
+    // multi-minute render), run the render in the background, and broadcast ONE
+    // terminal `image:task-update` when it settles. The renderer's own chat
+    // bubble already shows progress to the user, so nothing about UX changes —
+    // only the main↔renderer contract becomes non-blocking.
+    if (request.toolName === 'generate_image' || request.toolName === 'generate_images') {
+      const taskId = typeof request.params.__taskId === 'string' ? request.params.__taskId : ''
+      this.getAgentApi().sendToolResponse({ id: request.id, ok: true, result: { accepted: true, taskId } })
+      void this.runImageTaskInBackground(request, taskId)
+      return
+    }
+
     const response = await this.execute(request)
     this.getAgentApi().sendToolResponse(response)
+  }
+
+  /**
+   * Run an image task in the background and broadcast its terminal status to
+   * main. Never throws (the broadcast carries success/failure) — a stray throw
+   * here would leave main's task waiting until its budget/poll expires.
+   */
+  private async runImageTaskInBackground(request: AgentToolRequest, taskId: string): Promise<void> {
+    const kind: ImageTaskUpdate['kind'] = request.toolName === 'generate_images' ? 'batch' : 'single'
+    try {
+      const result =
+        kind === 'batch'
+          ? await this.generateImages(request.params as GenerateImagesToolParams, request.threadId)
+          : await this.generateImage(request.params as unknown as GenerateImageToolParams, request.threadId)
+      this.broadcastImageTask({ taskId, kind, status: 'succeeded', result })
+    } catch (error) {
+      this.broadcastImageTask({
+        taskId,
+        kind,
+        status: 'failed',
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+
+  private broadcastImageTask(update: ImageTaskUpdate): void {
+    if (!update.taskId) return
+    try {
+      this.getAgentApi().sendImageTaskUpdate(update)
+    } catch (error) {
+      console.error('[AgentToolExecutor] failed to broadcast image task update:', error)
+    }
   }
 
   private async execute(request: AgentToolRequest): Promise<AgentToolResponse> {
@@ -128,8 +191,9 @@ export class AgentToolExecutor {
 
   private async call(toolName: string, params: Record<string, unknown>, threadId?: string): Promise<unknown> {
     switch (toolName) {
-      case 'generate_image':
-        return this.generateImage(params as unknown as GenerateImageToolParams, threadId)
+      // generate_image / generate_images are handled out-of-band in `handle()`
+      // (ack + background + broadcast), so they never reach this synchronous
+      // dispatch path.
       case 'query_history':
         return this.queryHistory(params as QueryHistoryToolParams)
       case 'open_image_viewer':
@@ -138,9 +202,22 @@ export class AgentToolExecutor {
         return this.navigatePage(params as NavigatePageToolParams)
       case 'ask_user':
         return this.askUser(params as AskUserToolParams, threadId)
+      case 'canvas_open':
+      case 'prepare_image_generation':
+      case 'create_image_holder':
+      case 'insert_image_into_holder':
+      case 'collect_annotations':
+      case 'prepare_annotation_edit':
+      case 'create_image_version':
+      case 'save_snapshot':
+        return this.callCanvas(toolName, params)
       default:
         throw new Error(`Unknown renderer tool: ${toolName}`)
     }
+  }
+
+  private async callCanvas(toolName: string, params: Record<string, unknown>): Promise<unknown> {
+    return canvasBridge.handle(toolName, params)
   }
 
   /**
@@ -292,6 +369,59 @@ export class AgentToolExecutor {
       historyId: settled.historyId,
       paths: settled.paths,
     }
+  }
+
+  /**
+   * Batch render: fan out N single renders concurrently (each drives its OWN
+   * "generating" bubble in the requesting chat, identical UX to before) and
+   * fold the outcomes into one combined result. Uses `allSettled` so a partial
+   * failure never sinks the whole batch — failures are reported per-index in the
+   * combined banner main builds from this. The reference images / model / ratio
+   * / resolution / quality apply to every prompt.
+   */
+  private async generateImages(
+    params: GenerateImagesToolParams,
+    requestThreadId?: string,
+  ): Promise<ImageBatchResult> {
+    const prompts = Array.isArray(params.prompts)
+      ? params.prompts.filter((p): p is string => typeof p === 'string' && p.trim().length > 0)
+      : []
+    if (prompts.length === 0) throw new Error('generate_images requires a non-empty prompts[]')
+
+    const settled = await Promise.allSettled(
+      prompts.map((prompt) =>
+        this.generateImage(
+          {
+            prompt,
+            model: params.model,
+            ratio: params.ratio,
+            resolution: params.resolution,
+            quality: params.quality,
+            referenceImages: params.referenceImages,
+          } as unknown as GenerateImageToolParams,
+          requestThreadId,
+        ),
+      ),
+    )
+
+    const successes: unknown[] = []
+    const failures: Array<{ index: number; error: string }> = []
+    const savedPaths: string[] = []
+    settled.forEach((entry, i) => {
+      if (entry.status === 'fulfilled') {
+        successes.push(entry.value)
+        const paths = (entry.value as { paths?: unknown } | null)?.paths
+        if (Array.isArray(paths)) {
+          for (const p of paths) if (typeof p === 'string' && p.length > 0) savedPaths.push(p)
+        }
+      } else {
+        failures.push({
+          index: i + 1,
+          error: entry.reason instanceof Error ? entry.reason.message : String(entry.reason),
+        })
+      }
+    })
+    return { successes, failures, savedPaths }
   }
 
   /**
