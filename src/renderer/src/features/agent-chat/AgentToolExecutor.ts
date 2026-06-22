@@ -3,7 +3,7 @@ import { ServiceRegistry, SERVICE_KEYS } from '../../services/ServiceBridge'
 import type { HistoryDataService } from '../history'
 import type { ImageViewer } from '../image-viewer'
 import { isTabName, useTabStore } from '../../stores/useTabStore'
-import { useAgentWorkspaceStore } from '../agent-workspace/useAgentWorkspaceStore'
+import { useFileExplorerStore } from '../file-explorer/store'
 import { useAgentChatStore } from './store'
 import { recordCodexArtifact } from './codexArtifactPersistence'
 import type { ArtifactSaveInfo, AttachmentRef, ChoiceAnswer, ChoiceOption } from '../../../../types/agent-timeline'
@@ -219,11 +219,11 @@ export class AgentToolExecutor {
 
   private async callCanvas(toolName: string, params: Record<string, unknown>): Promise<unknown> {
     if (toolName === 'canvas_open') {
-      // Navigate the UI to the Canvas tab so the tldraw editor mounts, then wait
-      // for it to register with the bridge before reporting success — this lets
-      // the agent call canvas_open and immediately follow with shape tools.
-      useTabStore.getState().switchTab('agentWorkspace')
-      useAgentWorkspaceStore.getState().setSection('canvas')
+      // Open the Canvas surface directly in the Codex page's center display
+      // (file-explorer viewer) so the tldraw editor mounts, then wait for it to
+      // register with the bridge before reporting success — this lets the agent
+      // call canvas_open and immediately follow with shape tools.
+      useFileExplorerStore.getState().openCanvasTab()
       await canvasBridge.waitForEditor()
       return { opened: true }
     }

@@ -94,6 +94,12 @@ type Actions = {
   refreshAttachmentsTree: () => Promise<void>
   expandDir: (path: string, source: FileSource) => Promise<void>
   openTab: (path: string, source: FileSource) => Promise<void>
+  /**
+   * Open (or re-activate) the singleton tldraw Canvas tab in the center
+   * display. The canvas is a renderer-only surface (no disk file), so it
+   * carries an empty path and a stable id like reference/ai-change tabs.
+   */
+  openCanvasTab: () => void
   openAiChange: (change: FileChange) => Promise<void>
   openReference: (reference: AgentReference) => Promise<void>
   closeTab: (tabId: string, options?: { saveDirty?: boolean }) => Promise<boolean>
@@ -598,6 +604,28 @@ export const useFileExplorerStore = create<State & Actions>((set, get) => ({
     }
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: id }))
     ensureWatchSubscription(get)
+  },
+
+  openCanvasTab: () => {
+    const existing = get().tabs.find((t) => t.kind === 'canvas')
+    if (existing) {
+      set((s) => ({ fxOpen: true, activeTabId: existing.id, scrollActiveTabToken: s.scrollActiveTabToken + 1 }))
+      writeStorage(FX_OPEN_KEY, '1')
+      return
+    }
+    const tab: FileTab = {
+      id: 'canvas:main',
+      path: '',
+      name: 'Canvas',
+      source: 'workspace',
+      kind: 'canvas',
+      state: null,
+      diskContent: '',
+      diskMtime: 0,
+      dirty: false,
+    }
+    set((s) => ({ fxOpen: true, activeTabId: tab.id, tabs: [...s.tabs, tab] }))
+    writeStorage(FX_OPEN_KEY, '1')
   },
 
   openAiChange: async (change) => {

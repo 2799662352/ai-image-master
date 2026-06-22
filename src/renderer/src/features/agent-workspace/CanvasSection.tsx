@@ -61,7 +61,7 @@ export function CanvasSection(): React.JSX.Element {
       : 'Codex 未监听：回到聊天说「开启自动修图」'
 
   return (
-    <div className="flex h-[80vh] w-full gap-3">
+    <div className="flex h-full min-h-0 w-full gap-3 p-3">
       <div className="relative flex-1 overflow-hidden rounded-lg border border-zinc-800/60">
         <Tldraw persistenceKey="catimation-canvas" onMount={handleMount} />
       </div>

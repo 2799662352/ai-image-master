@@ -15,7 +15,7 @@ export type FileNode = {
   children?: FileNode[]
 }
 
-export type FileTabKind = 'text' | 'image' | 'video' | 'pdf' | 'binary' | 'reference' | 'compare' | 'ai-change'
+export type FileTabKind = 'text' | 'image' | 'video' | 'pdf' | 'binary' | 'reference' | 'compare' | 'ai-change' | 'canvas'
 
 export type FileTab = {
   id: string

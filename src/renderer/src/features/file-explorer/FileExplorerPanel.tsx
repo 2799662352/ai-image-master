@@ -12,6 +12,7 @@ import { ConflictModal } from './ConflictModal'
 import { ReferencePreview } from './ReferencePreview'
 import { DiffMergeView } from './DiffMergeView'
 import { AiChangeViewer } from './AiChangeViewer'
+import { CanvasSection } from '../agent-workspace/CanvasSection'
 import { resolveExternalPaths } from './dragHelpers'
 import type { FileNode } from './types'
 
@@ -76,6 +77,8 @@ function ActiveViewer() {
       )
     case 'ai-change':
       return <AiChangeViewer tab={tab} />
+    case 'canvas':
+      return <CanvasSection />
   }
 }
 

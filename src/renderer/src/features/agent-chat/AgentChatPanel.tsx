@@ -236,9 +236,7 @@ export function AgentChatPanel() {
               <button
                 type="button"
                 onClick={() => {
-                  useTabStore.getState().switchTab('agentWorkspace')
-                  useAgentWorkspaceStore.getState().setSection('canvas')
-                  useAgentChatStore.setState({ isOpen: false })
+                  useFileExplorerStore.getState().openCanvasTab()
                 }}
                 className="cursor-pointer text-cyan-300 hover:text-cyan-100"
               >
