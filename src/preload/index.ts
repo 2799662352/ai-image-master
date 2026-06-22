@@ -33,6 +33,7 @@ import type {
   AgentThreadSummary,
   AgentToolRequest,
   AgentToolResponse,
+  ImageTaskUpdate,
   CodexApprovalRequest,
   CodexApprovalResponse,
   CodexAuditLogEntry,
@@ -220,6 +221,9 @@ const IPC_CHANNELS = {
     LOAD_THREAD: 'agent:load-thread',
     UPLOAD_ATTACHMENTS: 'agent:upload-attachments',
     TOOL_RESPONSE: 'agent:tool-response',
+    IMAGE_TASK_UPDATE: 'image:task-update',
+    CANVAS_SUBMIT_EDIT_REQUEST: 'canvas:submit-edit-request',
+    CANVAS_EDIT_QUEUE_STATUS: 'canvas:edit-queue-status',
     SET_API_KEY: 'agent:set-api-key',
     TEST_CONNECTION: 'agent:test-connection',
     GET_SESSION_STATUS: 'agent:get-session-status',
@@ -453,6 +457,9 @@ export interface ElectronAPI {
     onToolRequest: (handler: (request: AgentToolRequest) => void) => () => void
     onApprovalRequest: (handler: (request: CodexApprovalRequest) => void) => () => void
     sendToolResponse: (response: AgentToolResponse) => void
+    sendImageTaskUpdate: (update: ImageTaskUpdate) => void
+    submitCanvasEditRequest: (request: unknown) => void
+    getCanvasEditQueueStatus: () => Promise<import('../types/canvas').EditRequestQueueStatus>
     respondApproval: (response: CodexApprovalResponse) => Promise<AgentApiResult>
     setApiKey: (key: string) => Promise<AgentApiResult>
     testConnection: () => Promise<AgentApiResult>
@@ -960,6 +967,16 @@ const electronAPI: ElectronAPI = {
     sendToolResponse: (response: AgentToolResponse) => {
       ipcRenderer.send(IPC_CHANNELS.AGENT.TOOL_RESPONSE, response)
     },
+
+    /** Renderer→main: broadcast an async image task's terminal status. */
+    sendImageTaskUpdate: (update: ImageTaskUpdate) => {
+      ipcRenderer.send(IPC_CHANNELS.AGENT.IMAGE_TASK_UPDATE, update)
+    },
+
+    submitCanvasEditRequest: (request: unknown) => {
+      ipcRenderer.send(IPC_CHANNELS.AGENT.CANVAS_SUBMIT_EDIT_REQUEST, request)
+    },
+    getCanvasEditQueueStatus: () => ipcRenderer.invoke(IPC_CHANNELS.AGENT.CANVAS_EDIT_QUEUE_STATUS),
 
     respondApproval: (response: CodexApprovalResponse) =>
       safeInvoke<AgentApiResult>(IPC_CHANNELS.AGENT.RESPOND_APPROVAL, response),

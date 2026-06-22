@@ -1,7 +1,9 @@
 import { ipcMain } from 'electron'
-import type { AgentToolResponse, CodexApprovalResponse } from '../../types/agent'
+import type { AgentToolResponse, CodexApprovalResponse, ImageTaskUpdate } from '../../types/agent'
 import type { ToolRouter } from '../mcp/ToolRouter'
 import type { AgentManager } from './AgentManager'
+import { imageTaskManager } from '../mcp/tools/imageTaskRegistry'
+import { editRequestRegistry } from '../mcp/canvas/EditRequestRegistry'
 
 const AGENT_HANDLE_CHANNELS = [
   'agent:send-message',
@@ -359,6 +361,23 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
     const router = getRouter()
     if (router) router.handleRendererResponse(response)
   })
+
+  // Truly-async image tasks: the renderer renders generate_image /
+  // generate_images in the background and broadcasts ONE terminal update here.
+  // The MCP tools (generate_image / check_image_task) long-poll the manager for
+  // that state. Unknown / already-settled taskIds are ignored inside applyUpdate.
+  ipcMain.on('image:task-update', (_event, update: ImageTaskUpdate) => {
+    imageTaskManager.applyUpdate(update)
+  })
+
+  // Renderer enqueues a fully-parsed edit request (annotation plan + edit
+  // prompt + input image path) when the user clicks 按标注修图. watch_edit_requests
+  // (MCP tool) long-polls the registry for it.
+  ipcMain.on('canvas:submit-edit-request', (_event, request) => {
+    if (request && typeof request === 'object') editRequestRegistry.enqueue(request)
+  })
+
+  ipcMain.handle('canvas:edit-queue-status', () => editRequestRegistry.getStatus())
 }
 
 async function handleWorkspaceRequest<T>(
