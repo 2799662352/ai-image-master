@@ -232,16 +232,29 @@ export function AgentChatPanel() {
             <span>
               {`Codex · ${codexStatus?.sandboxMode ?? '?'} · ${codexStatus?.approvalPolicy ?? '?'} · ${codexStatus?.webSearch ?? '?'}`}
             </span>
-            <button
-              type="button"
-              onClick={() => {
-                useTabStore.getState().switchTab('agentWorkspace')
-                useAgentChatStore.setState({ isOpen: false })
-              }}
-              className="cursor-pointer text-cyan-300 hover:text-cyan-100"
-            >
-              Open Agent Workspace
-            </button>
+            <span className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  useTabStore.getState().switchTab('agentWorkspace')
+                  useAgentWorkspaceStore.getState().setSection('canvas')
+                  useAgentChatStore.setState({ isOpen: false })
+                }}
+                className="cursor-pointer text-cyan-300 hover:text-cyan-100"
+              >
+                画布
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  useTabStore.getState().switchTab('agentWorkspace')
+                  useAgentChatStore.setState({ isOpen: false })
+                }}
+                className="cursor-pointer text-cyan-300 hover:text-cyan-100"
+              >
+                Open Agent Workspace
+              </button>
+            </span>
           </div>
           {configDirty ? (
             <div className="mt-2 flex items-center justify-between gap-3 rounded-md border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">

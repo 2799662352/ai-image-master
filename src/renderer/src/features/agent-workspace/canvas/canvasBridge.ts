@@ -16,9 +16,31 @@ const BASE_STATE: CanvasStatePayload = {
 
 class CanvasBridge {
   private editor: Editor | null = null
+  private waiters: Array<(editor: Editor) => void> = []
 
   setEditor(editor: Editor | null): void {
     this.editor = editor
+    if (editor) {
+      const pending = this.waiters
+      this.waiters = []
+      for (const resolve of pending) resolve(editor)
+    }
+  }
+
+  /** Resolve once the Canvas tab has mounted its tldraw editor (or reject on timeout). */
+  waitForEditor(timeoutMs = 8000): Promise<Editor> {
+    if (this.editor) return Promise.resolve(this.editor)
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.waiters = this.waiters.filter((w) => w !== onReady)
+        reject(new Error('Canvas did not open in time. Open the Canvas tab in Agent Workspace and retry.'))
+      }, timeoutMs)
+      const onReady = (editor: Editor): void => {
+        clearTimeout(timer)
+        resolve(editor)
+      }
+      this.waiters.push(onReady)
+    })
   }
 
   private requireEditor(): Editor {
