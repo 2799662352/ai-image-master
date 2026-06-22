@@ -185,6 +185,14 @@ interface AgentChatState {
   input: string
   attachments: AgentAttachmentInput[]
   pendingReferences: AgentReference[]
+  /**
+   * One-shot context note injected into the NEXT user turn after the user
+   * manually opens the canvas (chat 画布 button). Lets Codex know the canvas is
+   * now the active surface so follow-ups are smooth — it won't claim it can't
+   * see the canvas and will reach for canvas_snapshot/edit tools. Cleared after
+   * it rides one message. Not set when Codex opens the canvas itself (canvas_open).
+   */
+  pendingCanvasContext: string | null
   pendingApprovals: CodexApprovalRequest[]
   /**
    * Transient notices surfaced from codex `app-server` notifications:
@@ -280,6 +288,8 @@ interface AgentChatState {
   addPendingReference: (reference: AgentReference) => void
   removePendingReference: (referenceId: string) => void
   clearPendingReferences: () => void
+  /** Mark that the user just opened the canvas; rides the next turn as context. */
+  notifyCanvasOpened: () => void
   addApprovalRequest: (request: CodexApprovalRequest) => void
   removeApprovalRequest: (id: string) => void
   pushNotice: (notice: AgentNotice) => void
@@ -928,6 +938,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   input: '',
   attachments: [],
   pendingReferences: [],
+  pendingCanvasContext: null,
   pendingApprovals: [],
   notices: [],
   rewoundTurns: [],
@@ -1164,6 +1175,13 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       pendingReferences: state.pendingReferences.filter((item) => item.id !== referenceId),
     })),
   clearPendingReferences: () => set({ pendingReferences: [] }),
+  notifyCanvasOpened: () =>
+    set({
+      pendingCanvasContext:
+        '[canvas] 用户刚打开了 CATIMATION 画布，正在看着它。画布现在是当前操作面。' +
+        '需要查看内容时调用 canvas_snapshot（返回所有形状 + 整张画布的 PNG 路径，可直接打开查看）；' +
+        '不要说你看不到画布。在画布上生图/改图请用 canvas_* + generate_image 工具。',
+    }),
   addApprovalRequest: (request) =>
     set((state) => ({
       pendingApprovals: state.pendingApprovals.some((item) => item.id === request.id)
@@ -1206,6 +1224,9 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     const content = state.input.trim()
     const attachments = state.attachments
     const references = state.pendingReferences
+    // One-shot canvas-open hook: rides this turn as a hidden prefix so Codex is
+    // canvas-aware without mutating the visible user message. See notifyCanvasOpened.
+    const canvasContext = state.pendingCanvasContext
     if (state.isRunning) return
     if (!content && attachments.length === 0 && references.length === 0) return
 
@@ -1246,6 +1267,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     set((current) => ({
       input: '',
       attachments: [],
+      pendingCanvasContext: null,
       error: undefined,
       isRunning: true,
       messages: [...current.messages, userMsg],
@@ -1279,7 +1301,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     try {
       const result = await getAgentApi().sendMessage({
         threadId: state.threadId,
-        content,
+        content: canvasContext ? `${canvasContext}\n\n${content}` : content,
         attachments,
         references,
         currentPage: window.location.hash.slice(1),

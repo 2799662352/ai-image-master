@@ -204,13 +204,22 @@ export class AgentToolExecutor {
       case 'ask_user':
         return this.askUser(params as AskUserToolParams, threadId)
       case 'canvas_open':
+      case 'canvas_snapshot':
+      case 'list_canvas_images':
+      case 'get_canvas_image':
       case 'prepare_image_generation':
       case 'create_image_holder':
       case 'insert_image_into_holder':
+      case 'insert_video':
       case 'collect_annotations':
       case 'prepare_annotation_edit':
       case 'create_image_version':
       case 'save_snapshot':
+      case 'save_checkpoint':
+      case 'load_checkpoint':
+      case 'list_checkpoints':
+      case 'canvas_exec':
+      case 'canvas_search':
         return this.callCanvas(toolName, params)
       default:
         throw new Error(`Unknown renderer tool: ${toolName}`)
@@ -226,6 +235,14 @@ export class AgentToolExecutor {
       useFileExplorerStore.getState().openCanvasTab()
       await canvasBridge.waitForEditor()
       return { opened: true }
+    }
+    if (toolName === 'canvas_snapshot' || toolName === 'get_canvas_image' || toolName === 'save_snapshot') {
+      // These persist an exported PNG as a thread-scoped attachment (FK on
+      // threadId), so hand the bridge the active chat thread; without it the
+      // image export is dropped (canvas_snapshot) / omitted (get_canvas_image) /
+      // save_snapshot returns no imagePath.
+      const threadId = useAgentChatStore.getState().threadId
+      return canvasBridge.handle(toolName, { ...params, threadId })
     }
     return canvasBridge.handle(toolName, params)
   }

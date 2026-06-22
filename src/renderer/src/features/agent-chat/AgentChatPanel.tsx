@@ -237,6 +237,9 @@ export function AgentChatPanel() {
                 type="button"
                 onClick={() => {
                   useFileExplorerStore.getState().openCanvasTab()
+                  // Hook: user-initiated open → make Codex canvas-aware on the
+                  // next turn (Codex's own canvas_open path does not fire this).
+                  useAgentChatStore.getState().notifyCanvasOpened()
                 }}
                 className="cursor-pointer text-cyan-300 hover:text-cyan-100"
               >

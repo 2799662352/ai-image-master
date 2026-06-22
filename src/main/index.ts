@@ -42,6 +42,7 @@ import { registerFsIpc } from './file-explorer/fsIpc'
 import { registerLocalFileScheme, installLocalFileHandler } from './file-explorer/protocolHandler'
 import { registerAttachmentsThumbIpc } from './file-explorer/attachmentsIpc'
 import { registerMediaThumbIpc } from './file-explorer/mediaThumbIpc'
+import { registerCanvasCheckpointIpc } from './file-explorer/canvasCheckpointIpc'
 import { registerFsWatcherIpc, disposeAll as disposeFsWatchers } from './file-explorer/fsWatcher'
 import { startCatimationMcpServer } from './mcp/server'
 import type { McpRuntime } from './mcp/server'
@@ -390,9 +391,16 @@ function createWindow(): void {
           "default-src 'self'",
           "script-src 'self' 'unsafe-inline' 'unsafe-eval' node: https://cdn.jsdelivr.net",
           "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-          "font-src 'self' https://fonts.gstatic.com data:",
+          // tldraw loads its IBM Plex / Shantell Sans woff2 fonts from its CDN
+          // (https://cdn.tldraw.com/<version>/fonts/*). Without this origin the
+          // canvas throws a font-src CSP violation + NetworkError on mount.
+          "font-src 'self' https://fonts.gstatic.com https://cdn.tldraw.com data:",
           "img-src 'self' data: blob: https: http://175.178.198.17:* http://43.161.233.87:* file: local-file:",
-          "connect-src 'self' https: wss: data: http://43.161.233.87:* http://175.178.198.17:* http://127.0.0.1:* http://localhost:*",
+          // blob: is required for tldraw image export: toImageDataUrl/exportToSvg
+          // fetch() the image's blob: object URL to inline it as a data URI. Without
+          // it the canvas edit pipeline can't produce a targetImagePath (export throws
+          // "Refused to connect"/timeout), so annotations never reach the edit queue.
+          "connect-src 'self' https: wss: data: blob: http://43.161.233.87:* http://175.178.198.17:* http://127.0.0.1:* http://localhost:*",
             // allow COS HTTPS presigned URLs (smart erase output), file:// (compare-with-original),
             // and local-file:// for the file-explorer video previewer.
             "media-src 'self' data: blob: https: http://175.178.198.17:* http://43.161.233.87:* file: local-file:",
@@ -941,6 +949,9 @@ app.whenReady().then(async () => {
   // (PR-A of fix-codex-chat-image-attachment-lag). attachments:read-thumb
   // stays registered above for the lightbox / download path (fullFidelity).
   registerMediaThumbIpc()
+  // canvas:{save,read,list}-checkpoint — restorable tldraw snapshot JSON on disk
+  // (gap-analysis §8/§9). Separate from attachments (image/video only).
+  registerCanvasCheckpointIpc(path.join(app.getPath('userData'), 'agent', 'canvas-checkpoints'))
   registerFsWatcherIpc()
 
   // 关键路径：仅初始化必要的路径和目录

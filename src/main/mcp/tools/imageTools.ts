@@ -3,6 +3,50 @@ import { pathToFileURL } from 'node:url'
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { ToolRouter } from '../ToolRouter'
+import { imageTaskManager, type ImageTaskManager, type ImageTaskState } from './imageTaskRegistry'
+
+/** generate_images 批量任务的结果形状(存进 registry,check_image_task 据此重建 banner)。 */
+interface BatchTaskResult {
+  successes: unknown[]
+  failures: Array<{ index: number; error: string }>
+  savedPaths: string[]
+}
+
+/**
+ * generate_image 阻塞预算 —— 「短阻塞 + handoff 轮询」混合模型。
+ *
+ * 背景:裸阻塞到终态(实测一张图 ~6 分钟)会让 agent 整段静默,体验差;而早期 45s 又偏
+ * 短、且会暴露「codex 拿到 STILL RUNNING 就结束 turn / 自判已提交而不轮询」的弃坑风险。
+ * 折中:阻塞 1 分钟 —— 足够接住快渲染直接返回 ✅ DONE,又不会把 agent 闷死太久。超过 1
+ * 分钟仍在渲染就把 taskId 交还(⏳ STILL RUNNING),agent 立刻回话(「已提交,正在生成」)
+ * 并由 check_image_task 兜底长轮询到完成。
+ *
+ * 兜底能真正触发的两个保证:① firstPartySkills 明确要求收到 STILL RUNNING 后用
+ * check_image_task 轮询到 DONE/FAILED;② check_image_task 服务端长轮询(见下),状态一变
+ * 立即返回,使「再调一次」即可拿到结果,降低弃坑概率。期间用户在 app 聊天里始终看到
+ * 「生成中」气泡(渲染层独立链路),图最终一定会出现,与 agent 是否轮询无关。
+ */
+export const GENERATE_IMAGE_BLOCKING_BUDGET_MS = 60_000
+/** check_image_task 服务端长轮询窗口(须 < codex 工具超时,留足余量)。 */
+export const CHECK_IMAGE_LONG_POLL_MS = 25_000
+
+export interface ImageToolsOptions {
+  /** 注入图片任务管理器(测试用);默认进程级单例。 */
+  manager?: ImageTaskManager
+  /** 注入阻塞预算(测试用)。 */
+  blockingBudgetMs?: number
+  /** 注入长轮询窗口(测试用)。 */
+  checkLongPollMs?: number
+}
+
+type ImageToolContent = Array<
+  | { type: 'text'; text: string }
+  | { type: 'resource_link'; uri: string; name: string; mimeType: string; description: string }
+>
+
+function elapsedSeconds(task: ImageTaskState): number {
+  return Math.max(0, Math.round((Date.now() - task.createdAt) / 1000))
+}
 
 /** Best-effort image mime from a saved filename, for the resource_link block. */
 function mimeFromPath(filePath: string): string {
@@ -154,7 +198,99 @@ function buildBatchFailureBanner(successes: unknown[], failures: Array<{ index: 
     .join('\n')
 }
 
-export function registerImageTools(server: McpServer, router: ToolRouter): void {
+/** 成功任务的统一回包:DONE banner(纯文本权威) + 每个本地文件一个 resource_link。 */
+function buildImageDoneContent(result: unknown): ImageToolContent {
+  const savedPaths = collectPaths((result as { paths?: unknown } | null)?.paths)
+  const dir = savedPaths.length > 0 ? path.dirname(savedPaths[0]) : undefined
+  const content: ImageToolContent = [{ type: 'text', text: buildCompletionBanner(result, savedPaths, dir) }]
+  for (const p of savedPaths) {
+    content.push({
+      type: 'resource_link',
+      uri: pathToFileURL(p).href,
+      name: path.basename(p),
+      mimeType: mimeFromPath(p),
+      description: 'Generated image saved locally (also in app history + chat).',
+    })
+  }
+  return content
+}
+
+/** 短预算烧完仍在渲染:把 taskId 交还 agent,它可继续回话,由 check_image_task 兜底。 */
+export function buildImageRunningHandoffBanner(task: ImageTaskState): string {
+  return [
+    `⏳ generate_image STILL RUNNING after ${elapsedSeconds(task)}s — taskId: ${task.taskId}.`,
+    'The render is taking longer than usual but the task is alive, and the user ALREADY sees a live "generating" bubble in the chat — the finished image will appear there automatically whether or not you poll.',
+    'You can keep talking to the user now (e.g. say the image is generating). When you want to confirm completion and get the saved file path, call check_image_task with this taskId (it long-polls ~25s server-side); keep calling until DONE or FAILED.',
+    'Do NOT resubmit generate_image for the same request — that would render a duplicate.',
+    JSON.stringify({ taskId: task.taskId, status: 'running', elapsedSeconds: elapsedSeconds(task) }),
+  ].join('\n')
+}
+
+/** check_image_task 仍在渲染时的回包。 */
+export function buildImageCheckRunningBanner(task: ImageTaskState): string {
+  return [
+    `⏳ check_image_task — still rendering. Elapsed: ${elapsedSeconds(task)}s.`,
+    'Call check_image_task again with the same taskId (it long-polls ~25s server-side, so just call it immediately). Do NOT resubmit generate_image — the task is alive and the user sees its progress bubble.',
+    JSON.stringify({ taskId: task.taskId, status: 'running', elapsedSeconds: elapsedSeconds(task) }),
+  ].join('\n')
+}
+
+export function buildUnknownImageTaskBanner(taskId: string): string {
+  return [
+    `❌ check_image_task — unknown taskId: ${taskId}.`,
+    'Image tasks live in memory and are dropped after app restart or ~30 minutes past completion.',
+    'If the image never appeared in the chat, submit a NEW generate_image call; do not keep checking this id.',
+    JSON.stringify({ taskId, status: 'unknown' }),
+  ].join('\n')
+}
+
+export function buildImageFailureBanner(task: ImageTaskState): string {
+  return [
+    `❌ generate_image FAILED — ${task.error ?? 'image generation failed'}.`,
+    'The user sees the failure in the chat. You may retry ONCE with an adjusted prompt if the error suggests a content/parameter problem; otherwise report the error to the user.',
+    JSON.stringify({ ok: false, taskId: task.taskId, error: task.error ?? 'image generation failed' }),
+  ].join('\n')
+}
+
+/** 批量任务完成回包:组合 banner(全成功/部分失败) + 每个本地文件 resource_link。 */
+function buildBatchContent(data: BatchTaskResult): ImageToolContent {
+  const { successes, failures, savedPaths } = data
+  const content: ImageToolContent = [
+    {
+      type: 'text',
+      text:
+        failures.length === 0
+          ? buildBatchCompletionBanner(successes, savedPaths)
+          : buildBatchFailureBanner(successes, failures, savedPaths),
+    },
+  ]
+  for (const p of savedPaths) {
+    content.push({
+      type: 'resource_link',
+      uri: pathToFileURL(p).href,
+      name: path.basename(p),
+      mimeType: mimeFromPath(p),
+      description: 'Generated image saved locally (also in app history + chat).',
+    })
+  }
+  return content
+}
+
+/** generate_images 烧满预算仍在渲染:把批量 taskId 交还,走 check_image_task 兜底。 */
+export function buildBatchRunningHandoffBanner(task: ImageTaskState): string {
+  return [
+    `⏳ generate_images STILL RUNNING after ${elapsedSeconds(task)}s — taskId: ${task.taskId}.`,
+    'The batch is taking longer than usual but is alive; the user ALREADY sees live "generating" bubbles in the chat — every finished image appears there automatically whether or not you poll.',
+    'You can keep talking to the user now. To confirm completion and get the saved paths, call check_image_task with this taskId (it long-polls ~25s server-side); keep calling until DONE or FAILED.',
+    'Do NOT resubmit generate_images for the same request — that would render duplicates.',
+    JSON.stringify({ taskId: task.taskId, status: 'running', elapsedSeconds: elapsedSeconds(task) }),
+  ].join('\n')
+}
+
+export function registerImageTools(server: McpServer, router: ToolRouter, options: ImageToolsOptions = {}): void {
+  const manager = options.manager ?? imageTaskManager
+  const blockingBudgetMs = options.blockingBudgetMs ?? GENERATE_IMAGE_BLOCKING_BUDGET_MS
+  const checkLongPollMs = options.checkLongPollMs ?? CHECK_IMAGE_LONG_POLL_MS
   const ratioSchema = z
     .enum(['auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '21:9', '5:4', '4:5'])
     .optional()
@@ -191,7 +327,13 @@ export function registerImageTools(server: McpServer, router: ToolRouter): void 
       'saved; just confirm briefly and cite the saved path(s). Renders on gpt-image-2-vip by ' +
       'default; pass `model` to pick 腾讯 image2 (custom-imagemodel-gt) or 万相 2.7 pro (wan2.7-image-pro). ' +
       'For a CONSISTENT multi-image 组图 series from one prompt, use model="wan2.7-image-pro" with ' +
-      '`count`>1 (1–12); for unrelated images use generate_images instead.',
+      '`count`>1 (1–12); for unrelated images use generate_images instead. ' +
+      'TIMING: a single render typically takes several minutes. This call blocks up to ~1 minute and ' +
+      'returns ✅ DONE if the image finishes that fast; otherwise it returns ⏳ STILL RUNNING with a ' +
+      '`taskId` (this is the COMMON case for normal renders). When you get STILL RUNNING the image ' +
+      'will STILL appear in the user\'s chat automatically — tell the user it is generating and then ' +
+      'call check_image_task with that taskId, repeatedly, until it reports DONE or FAILED. Before ' +
+      'calling this tool, briefly tell the user you are submitting the render.',
     inputSchema: z.object({
       prompt: z.string().min(1).describe('Image description / prompt.'),
       model: modelSchema,
@@ -240,40 +382,74 @@ export function registerImageTools(server: McpServer, router: ToolRouter): void 
     // parallel-chat contamination fix. The router reverse-maps this codex
     // thread UUID to our db thread id before handing it to the renderer.
     const codexThreadId = extractCodexThreadId(ctx)
-    const result = await router.call('generate_image', params, codexThreadId)
 
-    const savedPaths = collectPaths((result as { paths?: unknown } | null)?.paths)
-    // The directory the file(s) live in — Codex should look HERE (or open the
-    // exact paths) to find/inspect the image, never `query_history` or a
-    // filesystem search. All saved files share one per-thread uploads dir.
-    const dir = savedPaths.length > 0 ? path.dirname(savedPaths[0]) : undefined
+    // Truly-async model (mirrors generate_video). Register the task FIRST, then
+    // "kick" the renderer with the taskId: the renderer acks IMMEDIATELY (no
+    // long-held IPC) and renders in the background, broadcasting one terminal
+    // `image:task-update` when done → main's ImageTaskManager.applyUpdate writes
+    // it back. We only block up to a SHORT budget waiting for that terminal
+    // state. Within budget → ✅ DONE (text banner is source of truth +
+    // resource_links). Over budget → ⏳ STILL RUNNING + taskId so the agent
+    // regains control and polls via check_image_task. The renderer's own
+    // "generating" bubble shows the image to the user regardless of polling.
+    const taskId = manager.create(typeof params.prompt === 'string' ? params.prompt : '', 'single')
+    void router.call('generate_image', { ...params, __taskId: taskId }, codexThreadId).catch((error) => {
+      // The renderer never even acked (it's gone / threw before starting) →
+      // settle failed so the budget wait returns immediately instead of stalling.
+      manager.fail(taskId, error instanceof Error ? error.message : String(error))
+    })
+
+    const snapshot = await manager.waitForTerminal(taskId, blockingBudgetMs)
+    if (!snapshot) {
+      // Should never happen (we just created it), but fail safe with a handoff.
+      return { content: [{ type: 'text', text: buildUnknownImageTaskBanner(taskId) }] }
+    }
+    if (snapshot.status === 'failed') {
+      // Preserve "the tool errored" semantics so Codex marks the call failed.
+      throw new Error(snapshot.error ?? 'Image generation failed')
+    }
+    if (snapshot.status === 'running') {
+      // Budget exhausted, render still in flight → hand the taskId back.
+      return { content: [{ type: 'text', text: buildImageRunningHandoffBanner(snapshot) }] }
+    }
 
     // PRIMARY text block = an explicit, lean completion banner. Codex caps every
     // MCP tool result the model sees to ~10 KiB / 256 lines (openai/codex#6544)
     // and may hide `resource_link`/`content[]` blocks (openai/codex#10334), so
     // the saved location MUST live in plain text here — short enough to never be
     // truncated — and must read as a "task complete + where it is" reminder so
-    // the agent stops hunting for the file.
-    const content: Array<
-      | { type: 'text'; text: string }
-      | { type: 'resource_link'; uri: string; name: string; mimeType: string; description: string }
-    > = [{ type: 'text', text: buildCompletionBanner(result, savedPaths, dir) }]
+    // the agent stops hunting for the file. resource_links replicate codex
+    // native image_gen's "report the saved path" contract (best-effort bonus).
+    return { content: buildImageDoneContent(snapshot.result) }
+  })
 
-    // Replicate codex native image_gen's "report the saved path" contract: turn
-    // each saved local file into a resource_link so the agent can view / move /
-    // reference it (file://) just like a native generation output. The text
-    // banner above is the source of truth; these are a best-effort bonus.
-    for (const p of savedPaths) {
-      content.push({
-        type: 'resource_link',
-        uri: pathToFileURL(p).href,
-        name: path.basename(p),
-        mimeType: mimeFromPath(p),
-        description: 'Generated image saved locally (also in app history + chat).',
-      })
+  server.registerTool('check_image_task', {
+    description:
+      'Poller for a generate_image / generate_images task. Use it whenever those tools returned a ' +
+      '⏳ STILL RUNNING handoff (with a taskId) — which is COMMON since a normal render takes several ' +
+      'minutes and the tools only block ~1 minute — to confirm completion and get the saved file ' +
+      'path(s). Long-polls server-side for up to ~25s and returns AS SOON AS the status changes; keep ' +
+      'calling with the same taskId until DONE or FAILED. The image(s) already appear in the user\'s ' +
+      'chat automatically, so this is only about getting the saved path / final status — never ' +
+      'resubmit generate_image.',
+    inputSchema: z.object({
+      taskId: z.string().min(1).describe('Task id returned by a generate_image STILL RUNNING handoff.'),
+    }),
+  }, async (params) => {
+    const taskId = typeof (params as { taskId?: unknown }).taskId === 'string' ? (params as { taskId: string }).taskId : ''
+    const snapshot = await manager.waitForTerminal(taskId, checkLongPollMs)
+    if (!snapshot) {
+      return { content: [{ type: 'text', text: buildUnknownImageTaskBanner(taskId) }] }
     }
-
-    return { content }
+    if (snapshot.status === 'failed') {
+      return { content: [{ type: 'text', text: buildImageFailureBanner(snapshot) }] }
+    }
+    if (snapshot.status === 'succeeded') {
+      return snapshot.kind === 'batch'
+        ? { content: buildBatchContent(snapshot.result as BatchTaskResult) }
+        : { content: buildImageDoneContent(snapshot.result) }
+    }
+    return { content: [{ type: 'text', text: buildImageCheckRunningBanner(snapshot) }] }
   })
 
   server.registerTool('generate_images', {
@@ -283,7 +459,12 @@ export function registerImageTools(server: McpServer, router: ToolRouter): void 
       'it fans out one generate_image call per prompt concurrently inside CATIMATION, so the images ' +
       'render in chat in parallel and the model receives one concise combined DONE/FAILED result. ' +
       'Use one prompt per desired image; for variations, write distinct but related prompts. Do not ' +
-      'use subagents for image fan-out.',
+      'use subagents for image fan-out. ' +
+      'TIMING: like generate_image this blocks up to ~1 minute and returns ✅ DONE if the whole batch ' +
+      'finishes that fast; otherwise (the COMMON case, since renders take several minutes) it returns ' +
+      '⏳ STILL RUNNING with a `taskId`. The images still appear in the user\'s chat automatically; ' +
+      'tell the user they are generating and call check_image_task with that taskId, repeatedly, until ' +
+      'DONE or FAILED. Before calling, briefly tell the user you are submitting the batch.',
     inputSchema: z.object({
       prompts: z.array(z.string().min(1)).min(2).max(8).describe(
         'One prompt per image. If the user asks for N images, provide N prompts here.',
@@ -315,54 +496,30 @@ export function registerImageTools(server: McpServer, router: ToolRouter): void 
     const prompts = Array.isArray(parsed.prompts) ? parsed.prompts.filter((p): p is string => typeof p === 'string' && p.trim().length > 0) : []
     const codexThreadId = extractCodexThreadId(ctx)
 
-    const calls = prompts.map((prompt, i) => router.call('generate_image', {
-      prompt,
-      model: parsed.model,
-      ratio: parsed.ratio,
-      resolution: parsed.resolution,
-      quality: parsed.quality,
-      referenceImages: parsed.referenceImages,
-      // Internal marker for tests/logging; renderer ignores unknown params.
-      __batchIndex: i + 1,
-    }, codexThreadId))
-
-    const settled = await Promise.allSettled(calls)
-    const successes: unknown[] = []
-    const failures: Array<{ index: number; error: string }> = []
-    const savedPaths: string[] = []
-
-    settled.forEach((entry, i) => {
-      if (entry.status === 'fulfilled') {
-        successes.push(entry.value)
-        savedPaths.push(...collectPaths((entry.value as { paths?: unknown } | null)?.paths))
-      } else {
-        failures.push({
-          index: i + 1,
-          error: entry.reason instanceof Error ? entry.reason.message : String(entry.reason),
-        })
-      }
-    })
-
-    const content: Array<
-      | { type: 'text'; text: string }
-      | { type: 'resource_link'; uri: string; name: string; mimeType: string; description: string }
-    > = [{
-      type: 'text',
-      text: failures.length === 0
-        ? buildBatchCompletionBanner(successes, savedPaths)
-        : buildBatchFailureBanner(successes, failures, savedPaths),
-    }]
-
-    for (const p of savedPaths) {
-      content.push({
-        type: 'resource_link',
-        uri: pathToFileURL(p).href,
-        name: path.basename(p),
-        mimeType: mimeFromPath(p),
-        description: 'Generated image saved locally (also in app history + chat).',
+    // Truly-async batch (mirrors generate_image). Register ONE batch task, then
+    // kick the renderer with the taskId — it acks immediately, fans out the N
+    // renders concurrently in the background (each with its own "generating"
+    // bubble), and broadcasts ONE terminal `image:task-update` carrying the
+    // combined { successes, failures, savedPaths }. We only block up to the
+    // budget; over budget → hand the taskId back for check_image_task.
+    const taskId = manager.create(prompts[0] ?? '', 'batch')
+    void router
+      .call('generate_images', { ...(params as Record<string, unknown>), prompts, __taskId: taskId }, codexThreadId)
+      .catch((error) => {
+        manager.fail(taskId, error instanceof Error ? error.message : String(error))
       })
-    }
 
-    return { content }
+    const snapshot = await manager.waitForTerminal(taskId, blockingBudgetMs)
+    if (!snapshot) {
+      return { content: [{ type: 'text', text: buildUnknownImageTaskBanner(taskId) }] }
+    }
+    if (snapshot.status === 'running') {
+      return { content: [{ type: 'text', text: buildBatchRunningHandoffBanner(snapshot) }] }
+    }
+    if (snapshot.status === 'failed') {
+      // The whole batch kick failed before the renderer could run.
+      return { content: [{ type: 'text', text: buildImageFailureBanner(snapshot) }] }
+    }
+    return { content: buildBatchContent(snapshot.result as BatchTaskResult) }
   })
 }

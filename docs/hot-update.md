@@ -177,6 +177,33 @@ zip 文件名内容寻址(`-<sha8>` 后缀):文件名带 zip 的 sha256 前 8 �
 
 ## Changelog
 
+### 插件市场 (2026-06-22) — catimation-storyboard-pro 1.0.2:create-storyboard 对齐参考库 + 明确「零 Python / 无脚本」(仅市场,app 保持 4.3.49)
+
+> **不走 installer / 无 exe**。纯插件商城热更新,只动 `catimation-storyboard-pro`。起因:用户反馈 `storyboard-grid-to-seedance` 不够专业,要求用参考库 `reference-projects/github-grid-to-seedance/create-storyboard-skill` 改进 `create-storyboard`;随后追问「用户没装 Python 怎么办」。核对发现:插件版 `create-storyboard` 已被刻意改成 **harness-agnostic / 无脚本**——目录树由 agent 用文件工具按 `assets/production_package_spec.md` 确定性创建,**不依赖 Python**;但 `references/runtime-and-platform.md` 仍是参考库带来的「需要 Python / `python3 …` / `py …`」旧话术,会误导用户与 agent。
+
+**改动**
+
+| 项 | 文件 | 说明 |
+|---|---|---|
+| 重写运行时文档 | `skills/create-storyboard/references/runtime-and-platform.md` | 去掉「需要 Python」框架,明确零运行时依赖:用户没装 Python 也不影响,agent 直接用文件工具搭骨架;新增「确定性搭骨架步骤(无脚本)」;Python/外部脚本不再出现在主路径 |
+| 保持无脚本 | (不新增 `scripts/`) | 参考库的 `scripts/create_storyboard_package.py` 刻意**不并入**插件,与 SKILL.md「不使用任何脚本」自洽(避免误导无 Python 的用户去跑脚本而失败) |
+
+> 内容核对:`assets/*`(3)+ `references/storyboard_workflow.md` 与参考库**逐字节一致**;`SKILL.md` 为插件特化版(中文 + harness-agnostic + 接 sd2-pe/film-studio,有意不同);参考库的 `agents/openai.yaml` 由插件三套 `plugin.json` 的 `interface` 块覆盖,无需并入。发布命令:`npm run publish:plugins`。
+
+### v4.3.49 (2026-06-22) — generate_image/generate_images 对齐 generate_video「短阻塞 + handoff 轮询」(修「出图成功后半天没反应」根因,走 installer)
+
+> 整包 installer 热更新(改动在 `src/main` 主进程 MCP 工具层)。起因:用户反馈「这次生成图片成功后半天没反应,之前很快」。systematic-debugging 定位:`generate_image` 历史上是**裸阻塞到出图**(`router.call` 一路 await),上游排队时实测静默 209s,期间 codex 工具调用占着、agent 一个字发不出;而图片侧**根本没有 video 那样的兜底轮询 hook**。本版把图片工具对齐 `generate_video` 的「短预算阻塞 + STILL RUNNING 交接 + check_image_task 兜底」四段式契约。
+
+| 项 | 文件 | 根因 / 修复 |
+|---|---|---|
+| 图片异步任务表底座 | `src/main/mcp/tools/imageTaskRegistry.ts`(新增) | 主进程单例:把在途渲染 promise 包成任务(`single`/`batch` 两种 kind),settle 时回写并唤醒长轮询 waiter。渲染层 `beginImageGeneration→resolveImageGeneration` 是独立链路,**图无论 agent 是否轮询都会进聊天**——消除 video v1「提前弃坑→结果丢失」风险 |
+| generate_image 短阻塞 + 交接 | `src/main/mcp/tools/imageTools.ts` | 阻塞预算 **60s**(一张图常需几分钟,预算内出图直返 ✅ DONE;超时返回 `⏳ STILL RUNNING + taskId` 交还控制权)。早期 45s 偏短被纠正:6 分钟 ≫ 45s 会让每张图都触发 handoff、且暴露「拿到 STILL RUNNING 就结束 turn 不轮询」弃坑面 |
+| generate_images 批量同款 | `src/main/mcp/tools/imageTools.ts` | 整批包成一个 `kind:'batch'` 任务,`Promise.allSettled` 永不 reject(部分/全失败由组合 banner 表达),同样 60s 阻塞 + handoff |
+| check_image_task 兜底轮询 | `src/main/mcp/tools/imageTools.ts` | 新增工具:服务端长轮询 25s、状态变即返回 DONE/FAILED/RUNNING/unknown,区分 single/batch 回包,agent 反复调到终态 |
+| agent 指引 | `src/main/agent/firstPartySkills.ts` | 调用前一行告知用户「正在提交、通常几分钟」;明确 STILL RUNNING 是常态、**不要在它上面结束 turn**、要一直 check_image_task 轮到终态 |
+
+> 测试 32/32(含批量超时交接、交接后 check 回组合 banner 两条新用例);本次 4 文件 0 lint / 0 新增类型错误。与 video 唯一刻意差异:预算 60s(vs video 10min);图片渲染层无后端异步任务,故用 `imageTaskRegistry` 包 promise,对 agent 视角等价。
+
 ### 插件/技能市场 (2026-06-22) — 每个 catimation-* 插件加「总览入口」路由技能(仿 using-superpowers)+ standalone 6 skill reconcile(仅市场,app 保持 4.3.47)
 
 > **不走 installer / 无 exe**。纯插件商城 + 独立 skill 商城热更新。起因:插件内置的几十个 skill 会被摊平进 `~/.agents/skills/`,在 Codex `/` 面板里按字母混排、沉到折叠线以下,用户难发现、也不知怎么按插件触发。解决:给每个插件加一张**入口卡**(总览 + 路由器),像 `using-superpowers` 那样先判断需求归类、再加载对应子技能;描述统一改为 `superpowers` 规范的「Use when…」触发式(`writing-skills` 指引)。

@@ -49,12 +49,40 @@ export interface ShapeSummary {
   color?: string
   assetPath?: string
   assetUrl?: string
+  /** tldraw asset id backing an image shape (for get_canvas_image addressing). */
+  assetId?: string
+  /** Natural (intrinsic) pixel dimensions of the backing image asset. */
+  imageWidth?: number
+  imageHeight?: number
   aspectRatio?: string
   version?: number
   parentShapeId?: string
   arrowStart?: Point
   arrowEnd?: Point
   meta?: AiCanvasShapeMeta
+}
+
+/**
+ * One entry of `list_canvas_images` — a flat, focused index of the image shapes
+ * on the canvas. Mirrors the sora-canvas-mcp / tldraw mcp-app "list then fetch"
+ * pattern: Codex calls this first (cheap, read-only) to learn which shapeId to
+ * pass to `get_canvas_image`, and whether a usable on-disk file already exists.
+ */
+export interface ImageShapeListItem {
+  shapeId: string
+  assetId: string | null
+  /** On-canvas display size (rounded), not the intrinsic asset size. */
+  w: number
+  h: number
+  role?: AiCanvasRole
+  version?: number
+  title?: string
+  /** Absolute on-disk path when known (images WE inserted carry it in meta). */
+  assetPath: string | null
+  /** Backing asset src (may be an opaque `asset:<id>` ref for pasted images). */
+  assetUrl: string | null
+  /** True when `assetPath` points at a real file Codex can open directly. */
+  hasFile: boolean
 }
 
 export interface SelectionSnapshot {

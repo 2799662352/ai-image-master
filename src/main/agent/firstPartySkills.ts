@@ -214,6 +214,12 @@ image_gen skill: they render inside the chat AND persist results to local files
    - Do not spawn subagents and do not call \`generate_image\` one-by-one.
      \`generate_images\` performs the parallel fan-out internally and returns one
      combined result.
+3.5. **Before you call the tool, tell the user in ONE short line that you are
+   submitting the render and it usually takes a few minutes.** The call blocks for
+   up to ~1 minute and then, for a normal multi-minute render, hands control back
+   to you with a \`⏳ STILL RUNNING\` + \`taskId\` (see step 4) — so this heads-up is
+   what the user sees first. (The app also shows a live "生成中" bubble in the chat
+   the whole time, and the finished image lands there automatically.)
 4. The tool returns a short text result that begins with \`✅ generate_image DONE\`
    or \`✅ generate_images DONE\`,
    names the \`📁 SAVED FOLDER\`, lists the saved \`FILES:\`, and ends with a compact
@@ -222,6 +228,15 @@ image_gen skill: they render inside the chat AND persist results to local files
    the image is already shown to the user and saved to history + the file panel.
    You do **not** need to embed, re-describe, or base64 the pixels. Just confirm
    briefly in the user's language and cite the saved path(s) when relevant.
+   - **\`⏳ STILL RUNNING\`** (the COMMON case — any render that takes longer than the
+     ~1 min block, i.e. most of them): the result carries a \`taskId\` instead of a
+     path. The image will STILL appear in the user's chat automatically — you now
+     have control back, so tell the user it's generating, then call
+     **\`check_image_task\`** with that \`taskId\` (it long-polls ~25s server-side, so
+     just call it again right away) and **keep calling until \`✅ DONE\` or
+     \`❌ FAILED\`** — do not end your turn on STILL RUNNING. **Never** resubmit
+     \`generate_image\` / \`generate_images\` for the same request (that renders a
+     duplicate).
 5. **Self-review the result, then improve if needed (autonomous QA loop).**
    A \`✅ DONE\` return means the image is ALREADY rendered in the chat. Before you
    hand off, open the generated image(s) with \`view_image\`(支持批量;超大批量看代表性子集)
@@ -907,6 +922,180 @@ export const CATIMATION_SUBAGENTS_SKILL: FirstPartySkill = {
   content: CATIMATION_SUBAGENTS_SKILL_CONTENT,
 }
 
+const CATIMATION_CANVAS_SKILL_CONTENT = `---
+name: catimation-canvas
+description: >-
+  Interactive AI image canvas (tldraw) in the CATIMATION desktop app. Trigger when
+  the user wants to work on the 画布 / canvas, place a generated image there, or
+  iterate on an image by drawing annotations (arrows+notes, circles, boxes).
+  Especially trigger on 打开画布 / 开启自动修图 / 自动修图模式 / 按标注修图 / 在画布上改图 / canvas edit.
+  The canvas AUTO-SUBMITS an edit request when the user finishes annotating (no
+  button); keep watching for and applying those. Uses the canvas_* + generate_image tools.
+---
+
+# CATIMATION Canvas — generate on canvas + auto-edit from annotations
+
+The canvas is an infinite tldraw surface embedded in the Codex page. You drive it
+through MCP tools; the user draws on it. There is **no manual submit button** — when
+the user finishes annotating, the canvas auto-enqueues an edit request and you pick
+it up via the watch loop below.
+
+## Open the canvas
+
+Call \`canvas_open\` first (idempotent). If the canvas is not visible the tool opens
+it as the active center tab.
+
+## See what's on the canvas
+
+You CAN inspect the canvas — do not tell the user you cannot see it. Call
+\`canvas_snapshot\`: it returns a structured list of every shape (images, dashed
+holders, arrows/circles/text annotations with their positions/bounds, plus each
+image's \`assetId\`/\`assetPath\`/intrinsic size) AND an \`imagePath\` — a real on-disk
+PNG render of the whole canvas. Open/view that \`imagePath\` to actually see the
+pixels (layout, what the user drew, current image). Use \`canvas_snapshot\` whenever
+the user asks "what's on the canvas / 看一下画布", or before editing so you know the
+exact target and where the marks are.
+
+### Picking and fetching one image (list → fetch)
+
+When you need to act on a specific image (not the whole layout), prefer the
+focused pair instead of eyeballing the full snapshot:
+
+1. \`list_canvas_images\` (cheap, read-only) → a flat index of image shapes:
+   \`shapeId\`, \`assetId\`, on-canvas \`w\`/\`h\`, \`role\`, \`version\`, \`assetPath\`, and
+   \`hasFile\`. Use it to choose the right \`shapeId\`.
+2. \`get_canvas_image { shapeId }\` → that one image's focused metadata plus an
+   \`imagePath\` — an on-disk PNG of just that image, **annotations excluded**. This
+   is the clean edit source: pass its \`imagePath\` to \`generate_image\` as a
+   \`referenceImages\` entry. Never claim you can't find the image's file — fetch it
+   here. (If \`hasFile\` was already true in the list, \`assetPath\` is also usable.)
+
+## Open-canvas hook
+
+When the user opens the canvas themselves, the next turn arrives with a leading
+\`[canvas]\` note telling you the canvas is now the active surface. Treat it as a
+signal to stay in canvas mode: the canvas is already open (no need to call
+\`canvas_open\`), and if you need to know what's on it, call \`canvas_snapshot\`
+before acting. Do not echo the \`[canvas]\` note back to the user.
+
+## Generate an image onto the canvas
+
+1. \`prepare_image_generation\` with the user's request + aspect ratio → returns a
+   holder shape id, bounds, and a suggested prompt.
+2. \`generate_image\` with that prompt (and any \`referenceImages\` the user gave).
+3. \`insert_image_into_holder\` with the returned \`holderShapeId\` + the generated
+   image path. The image now lives on the canvas.
+
+## Put a video on the canvas
+
+After you generate a video (e.g. a Seedance/Sora clip), call \`insert_video\` with
+\`videoPath\` (the local file path) to drop it onto the canvas as a real video shape
+that plays inline. Optional \`x\`/\`y\` to position it (e.g. next to its source image)
+and \`w\`/\`h\` to size it — omit them to use the clip's intrinsic size (capped to
+640px on the longest edge). Use this for "把视频也放到画布上 / 出个视频放上去" requests.
+(The user can also drag a file straight from the workspace file tree — or the OS —
+onto the canvas; images and videos land as real shapes. \`insert_video\` /
+\`insert_image_into_holder\` are the programmatic paths so YOU can place media
+precisely.) For text/labels, use
+\`canvas_exec\` to create a \`text\`/\`note\` shape (\`toRichText\` is injected).
+
+## Auto-edit mode (Codex 直接监听) — the main loop
+
+When the user says 开启自动修图 / 自动修图模式 (or asks you to keep applying canvas edits),
+enter this loop and DO NOT stop until the user tells you to:
+
+1. Call \`watch_edit_requests\` (it long-polls ~25s and claims the next request). If
+   it returns nothing, call it again — keep looping.
+2. When a request arrives, set it to processing if useful, then call
+   \`generate_image\` with the request's \`editPrompt\` and pass its \`targetImagePath\`
+   as a \`referenceImages\` entry (image-to-image edit). \`targetImagePath\` is ALWAYS a
+   real, on-disk PNG that the canvas exported for you — use it directly; never claim
+   the file is missing.
+3. **Geometry-only marks** (\`needsClarification: true\`, e.g. the user drew an arrow,
+   circle, or box but no text label): the marks tell you WHERE to change; take WHAT
+   to change from the user's most recent chat instruction (e.g. "人物换成真人"). Combine
+   them into the edit and proceed — do NOT dead-end. Only stop and ask one short
+   question if neither the annotations nor the recent conversation give any intent.
+4. Call \`create_image_version\` with \`sourceShapeId\` = the request's
+   \`targetShapeId\` and the new image path. This places the new version **to the
+   right of the original and preserves the old image** — never overwrite it.
+5. Call \`update_edit_request\` with \`status: 'completed'\` (or \`needs_clarification\`
+   only when there is genuinely no intent anywhere).
+6. Go back to step 1.
+
+If the watch loop has been idle for a long time and stops, the canvas shows the
+user that you've paused; when they ask you to continue, just re-enter the loop.
+
+## Reading annotations directly (one-off, no loop)
+
+To apply the current marks once without the loop: \`prepare_annotation_edit\`
+(optionally with a \`targetShapeId\`) returns the parsed annotation plan + a ready
+\`editPrompt\`. Then do generate_image → create_image_version exactly as above.
+
+## Free-form canvas control (canvas_exec + canvas_search)
+
+For layout/edits the fixed tools above don't cover — move, align, distribute,
+group, delete, resize, reorder, draw custom shapes/connectors — use the escape
+hatch:
+
+1. \`canvas_search { code }\` (read-only): write JS that gets \`spec\` and returns a
+   result, to discover the Editor API. e.g.
+   \`return spec.members.filter(m => m.category === 'layout').map(m => m.signature)\`
+   or \`return spec.types.shapes.find(s => s.shapeType === 'arrow')\`.
+2. \`canvas_exec { code }\`: write JS that runs on the live tldraw \`editor\`. In scope:
+   \`editor\` (real tldraw Editor API) + helpers \`createShapeId\`, \`createBindingId\`,
+   \`createArrowBetweenShapes(fromId,toId,{text?,bend?})\`, \`boxShapes(ids,{text?,color?})\`,
+   \`zoomToFit(ids)\`, \`Box\`, \`Vec\`, \`Mat\`, \`clamp\`, \`getArrowBindings\`, \`toRichText\`.
+   Use \`return\` to read data back. Examples:
+   - \`return editor.getCurrentPageShapes().map(s => ({ id: s.id, type: s.type }))\`
+   - \`editor.createShape({ type:'geo', x:200, y:120, props:{ geo:'rectangle', w:320, h:180 } })\`
+   - \`createArrowBetweenShapes('shape:a','shape:b',{ text:'next' })\`
+   - \`editor.distributeShapes(editor.getSelectedShapeIds(), 'horizontal')\`
+
+\`canvas_exec\` returns \`{ success, result?, error? }\`. On \`success:false\` the code did
+NOT apply — read \`error\`, fix the snippet, and retry. Prefer the dedicated image
+tools (insert_image_into_holder / create_image_version) for the image-version flow;
+use exec for everything else. Don't delete the user's images unless asked.
+
+## Saving / exposing the canvas as a file
+
+\`save_snapshot\` persists the canvas and returns \`imagePath\` — an on-disk PNG of the
+whole canvas you can open or share, like an uploaded attachment. Use it when the
+user wants to "save / 导出 / 存一下画布".
+
+## Restorable checkpoints (save / load / list)
+
+Beyond the flat PNG, you can save the **full editable canvas state** and restore it
+later — useful as a "fork"/branch point before risky edits, or to keep named
+versions:
+
+- \`save_checkpoint { name? }\` → saves the whole canvas (tldraw snapshot JSON) to
+  disk; returns \`{ checkpointId, path, shapeCount }\`. Call this BEFORE a big/risky
+  change so you can return to it.
+- \`list_checkpoints\` → newest-first \`{ checkpointId, name, createdAt, shapeCount, path }\`.
+- \`load_checkpoint { checkpointId }\` → **replaces** the current canvas with that
+  checkpoint (switches to that branch). Save the current state first if you might
+  want it back. Returns \`{ ok:false, error }\` on an incompatible snapshot instead
+  of crashing the canvas.
+
+Use checkpoints for "存个版本 / 回到之前那版 / 试一个分支" type requests. Use
+\`save_snapshot\` (PNG) only when the user just wants a flat image to share.
+
+## Notes
+
+- Arrows with a text label = "change the thing this arrow points at, per the note".
+  Circles / boxes scope a region. Bare short notes (改一下 / 不好看) are too vague —
+  ask one crisp clarifying question rather than guessing.
+- Keep every prior version on the canvas; iterations go left → right.
+- generate_image is the in-app path that actually displays + saves the result; use
+  it rather than any built-in image tool.
+`
+
+export const CATIMATION_CANVAS_SKILL: FirstPartySkill = {
+  name: 'catimation-canvas',
+  content: CATIMATION_CANVAS_SKILL_CONTENT,
+}
+
 /**
  * First-party skills no longer shipped by default. If an older app version
  * installed an app-managed copy, remove it on startup so Codex stops discovering
@@ -920,4 +1109,5 @@ export const FIRST_PARTY_SKILLS: FirstPartySkill[] = [
   CATIMATION_VIDEO_SKILL,
   CATIMATION_PORTRAIT_LIBRARY_SKILL,
   CATIMATION_BRAINSTORM_SKILL,
+  CATIMATION_CANVAS_SKILL,
 ]

@@ -322,7 +322,23 @@ const IPC_CHANNELS = {
     // through to READ_THUMB only when `useResolvedMediaSrc(..., { fullFidelity: true })`.
     MEDIA_THUMB: 'media:thumb',
   },
+  // Restorable tldraw canvas checkpoints (gap-analysis §8/§9). The renderer
+  // serialises with getSnapshot → JSON; these channels write/read/list that
+  // JSON on disk (attachments:save is image/video only).
+  CANVAS: {
+    SAVE_CHECKPOINT: 'canvas:save-checkpoint',
+    READ_CHECKPOINT: 'canvas:read-checkpoint',
+    LIST_CHECKPOINTS: 'canvas:list-checkpoints',
+  },
 } as const
+
+export interface CanvasCheckpointMeta {
+  checkpointId: string
+  name: string
+  createdAt: string
+  shapeCount: number
+  path: string
+}
 
 // ==================== 类型定义 ====================
 
@@ -638,6 +654,23 @@ export interface ElectronAPI {
       mime: string
       base64: string
     }) => Promise<{ ok: true; path: string } | { ok: false; reason: string }>
+  }
+  /**
+   * Restorable canvas checkpoints (gap-analysis §8/§9). The renderer serialises
+   * the live tldraw editor with `getSnapshot(editor.store)` and hands the JSON
+   * string here to persist; `readCheckpoint` returns that JSON for `loadSnapshot`
+   * to restore. Separate from `attachments` because snapshots are JSON, not media.
+   */
+  canvas: {
+    saveCheckpoint: (args: {
+      name?: string
+      snapshotJson: string
+      shapeCount?: number
+    }) => Promise<{ ok: true; checkpointId: string; path: string } | { ok: false; reason: string }>
+    readCheckpoint: (
+      args: { checkpointId: string },
+    ) => Promise<{ ok: true; checkpointId: string; json: string } | { ok: false; reason: string }>
+    listCheckpoints: () => Promise<CanvasCheckpointMeta[]>
   }
   // 图片存储
   saveImage: (base64Data: string, filename: string) => Promise<SaveImageResponse>
@@ -1347,6 +1380,22 @@ const electronAPI: ElectronAPI = {
         IPC_CHANNELS.ATTACHMENTS.SAVE,
         args,
       ),
+  },
+
+  // ============ 画布快照 checkpoint ============
+  canvas: {
+    saveCheckpoint: (args: { name?: string; snapshotJson: string; shapeCount?: number }) =>
+      safeInvoke<{ ok: true; checkpointId: string; path: string } | { ok: false; reason: string }>(
+        IPC_CHANNELS.CANVAS.SAVE_CHECKPOINT,
+        args,
+      ),
+    readCheckpoint: (args: { checkpointId: string }) =>
+      safeInvoke<{ ok: true; checkpointId: string; json: string } | { ok: false; reason: string }>(
+        IPC_CHANNELS.CANVAS.READ_CHECKPOINT,
+        args,
+      ),
+    listCheckpoints: () =>
+      safeInvoke<CanvasCheckpointMeta[]>(IPC_CHANNELS.CANVAS.LIST_CHECKPOINTS),
   },
 
   // ============ 系统主题监听 ============

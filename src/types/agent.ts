@@ -345,6 +345,37 @@ export interface AgentToolResponse {
 }
 
 /**
+ * Terminal status broadcast from the renderer to the main process for an
+ * asynchronous image task (generate_image / generate_images).
+ *
+ * The image render runs in the RENDERER (it owns the API client, history,
+ * R2, file-panel save). To make image generation "truly async" — matching the
+ * Seedance video task model — main no longer holds the long `router.call`
+ * IPC open for the whole render. Instead main pre-registers a task, kicks the
+ * renderer off (which acks immediately), and the renderer pushes ONE terminal
+ * update back over `image:task-update` when the background render settles. The
+ * main `ImageTaskManager` mirrors that state so `generate_image` /
+ * `check_image_task` can long-poll it exactly like `check_video_task`.
+ *
+ * Only terminal transitions are broadcast — intermediate "generating" progress
+ * is driven directly in the renderer chat bubble, so it never needs to round-
+ * trip through main.
+ */
+export interface ImageTaskUpdate {
+  /** Task id assigned by main (passed to the renderer as `params.__taskId`). */
+  taskId: string
+  /** 'single' = generate_image, 'batch' = generate_images. */
+  kind: 'single' | 'batch'
+  status: 'succeeded' | 'failed'
+  /**
+   * single: the renderer generate result `{ ok, count, model, historyId, paths, persistencePending? }`.
+   * batch:  `{ successes, failures, savedPaths }`.
+   */
+  result?: unknown
+  error?: string
+}
+
+/**
  * Shape returned by the renderer-facing agent IPC calls that don't have a
  * domain-specific payload (`agent:set-api-key`, `agent:test-connection`).
  * Kept narrow on purpose — main and preload both import this so their

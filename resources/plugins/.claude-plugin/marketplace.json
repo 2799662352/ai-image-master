@@ -29,7 +29,7 @@
     {
       "name": "catimation-storyboard-pro",
       "description": "连续性优先的图生视频制片包生成器:剧本→角色/场景/道具/风格/连贯性圣经 + shot cards + handoff 衔接矩阵 + 剪辑边界矩阵 + 中英分离 Image2 提示词 + Seedance 逐镜提示词 + 剪映/CapCut 清单。含 create-storyboard skill 与 /create-storyboard 命令。",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "source": "./catimation-storyboard-pro",
       "author": {
         "name": "CATIMATION",

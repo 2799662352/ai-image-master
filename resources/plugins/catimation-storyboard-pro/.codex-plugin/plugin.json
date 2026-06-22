@@ -1,6 +1,6 @@
 {
   "name": "catimation-storyboard-pro",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "连续性优先的制片包生成器:剧本→圣经+shot cards+衔接/剪辑边界矩阵+Image2/Seedance 双语提示词。",
   "author": {
     "name": "CATIMATION",
