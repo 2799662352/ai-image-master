@@ -100,6 +100,15 @@ export interface CodexLocalBackendOptions {
    * tool. Only used on the spawn path.
    */
   catimationMcp?: CatimationMcpLaunchInfo
+  /**
+   * Resolves the qwen3.7-max-dashscope understanding provider (Path B) at spawn
+   * time. When it returns a config + token, the spawned codex registers an
+   * EXTRA `[model_providers.qwen]` table (so a subagent can select
+   * `modelProvider="qwen"`) and the token is injected as the provider's env var
+   * (e.g. `MIAU_API_KEY`). Returns `undefined` when the Miau token is not
+   * configured — then no qwen provider is registered and Path B is unavailable.
+   */
+  getUnderstandProvider?: () => { provider: CodexProviderConfig; token: string } | undefined
   onApprovalRequest?: (request: CodexApprovalRequest) => void
   onMcpNotification?: (event: AgentStreamEvent) => void
 }
@@ -132,12 +141,22 @@ export function buildCodexSpawnEnv(
   baseEnv: NodeJS.ProcessEnv,
   apiKey: string | undefined,
   codexHome?: string,
+  extraEnv?: Record<string, string | undefined>,
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...baseEnv }
   const trimmed = apiKey?.trim() ?? ''
   if (trimmed) env.OPENAI_API_KEY = trimmed
   else delete env.OPENAI_API_KEY
   if (codexHome) env.CODEX_HOME = codexHome
+  // Extra env vars for registered (non-active) providers — e.g. MIAU_API_KEY
+  // for the qwen understanding subagent (Path B). Only non-empty trimmed
+  // values are set; empty ones are skipped (never clobber with blanks).
+  if (extraEnv) {
+    for (const [key, value] of Object.entries(extraEnv)) {
+      const v = value?.trim() ?? ''
+      if (v) env[key] = v
+    }
+  }
   return env
 }
 
@@ -235,7 +254,13 @@ export class CodexLocalBackend implements IAgentBackend {
     }
 
     const apiKey = this.options.getApiKey?.()
-    const env = buildCodexSpawnEnv(process.env, apiKey, this.codexHome)
+    // Path B: register the qwen understanding provider + inject its token env
+    // when the Miau token is configured. Inert (undefined) otherwise.
+    const understand = this.options.getUnderstandProvider?.()
+    const extraEnv = understand?.token
+      ? { [understand.provider.envKey]: understand.token }
+      : undefined
+    const env = buildCodexSpawnEnv(process.env, apiKey, this.codexHome, extraEnv)
     const spawnFactory = this.options.spawnFactory ?? spawn
     const proc = spawnFactory(
       bin,
@@ -244,6 +269,7 @@ export class CodexLocalBackend implements IAgentBackend {
         provider: this.currentProvider,
         sessionConfig: this.sessionConfig,
         catimationMcp: this.options.catimationMcp,
+        extraProviders: understand ? [understand.provider] : undefined,
       }),
       {
         stdio: ['ignore', 'pipe', 'pipe'],

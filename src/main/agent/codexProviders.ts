@@ -90,6 +90,28 @@ const RIGHTCODE_PRO_PRESET: ProviderPreset = {
   description: '正价池 0.4x · 高稳定性兜底 · cache_read $0.07/M',
 }
 
+/**
+ * Provider id + config for the qwen3.7-max-dashscope UNDERSTANDING capability
+ * (Path B). This is NOT a selectable active agent provider — it is registered
+ * as an EXTRA `[model_providers.qwen]` table so a subagent can run on it via
+ * `modelProvider="qwen"` for video/document/web understanding. It rides the
+ * same new-api gateway + Miau token as image generation:
+ *  - base_url: the antigravity new-api gateway's OpenAI-compatible /v1 root;
+ *  - env_key:  MIAU_API_KEY (injected at spawn from the persisted Miau token,
+ *              stored under apiKeys['qwen']);
+ *  - wire_api: "chat" (new-api proxies qwen over /v1/chat/completions).
+ */
+export const QWEN_UNDERSTAND_PROVIDER_ID = 'qwen' as const
+
+export const QWEN_UNDERSTAND_PROVIDER: CodexProviderConfig = {
+  id: QWEN_UNDERSTAND_PROVIDER_ID,
+  name: 'Qwen Understanding (DashScope via new-api)',
+  baseUrl: 'http://175.178.198.17:3000/v1',
+  envKey: 'MIAU_API_KEY',
+  model: 'qwen3.7-max-dashscope',
+  wireApi: 'chat',
+}
+
 export const BUILTIN_PROVIDER_PRESETS: readonly ProviderPreset[] = Object.freeze([
   Object.freeze(APIYI_PRESET),
   Object.freeze(RIGHTCODE_PRESET),

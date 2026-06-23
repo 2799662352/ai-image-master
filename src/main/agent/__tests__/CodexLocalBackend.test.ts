@@ -451,6 +451,19 @@ describe('buildCodexSpawnEnv', () => {
     expect(env.CODEX_HOME).toBe('/tmp/runtime-home')
     expect(env.FOO).toBe('bar')
   })
+
+  it('merges non-empty extraEnv (e.g. MIAU_API_KEY) and skips blank values', () => {
+    const env = buildCodexSpawnEnv(
+      { FOO: 'bar' } as NodeJS.ProcessEnv,
+      'sk-active',
+      undefined,
+      { MIAU_API_KEY: '  miau-123  ', EMPTY_ONE: '   ', UNDEF_ONE: undefined },
+    )
+    expect(env.MIAU_API_KEY).toBe('miau-123')
+    expect(env.EMPTY_ONE).toBeUndefined()
+    expect(env.UNDEF_ONE).toBeUndefined()
+    expect(env.OPENAI_API_KEY).toBe('sk-active')
+  })
 })
 
 describe('CodexLocalBackend spawn env injection', () => {
@@ -511,6 +524,62 @@ describe('CodexLocalBackend spawn env injection', () => {
     })
     await expect(backend.start()).rejects.toThrow()
     expect(captured?.OPENAI_API_KEY).toBe('sk-itest')
+    await backend.stop()
+  })
+
+  it('injects the qwen understanding provider (env + model_providers.qwen) when getUnderstandProvider returns a config', async () => {
+    let capturedEnv: NodeJS.ProcessEnv | undefined
+    let capturedArgs: string[] | undefined
+    const fakeProc = makeFakeChildProc()
+    const backend = new CodexLocalBackend({
+      resourceRoot: '/tmp/codex-fake-root',
+      getApiKey: () => 'sk-active',
+      getUnderstandProvider: () => ({
+        provider: {
+          id: 'qwen',
+          name: 'Qwen Understanding',
+          baseUrl: 'http://175.178.198.17:3000/v1',
+          envKey: 'MIAU_API_KEY',
+          model: 'qwen3.7-max-dashscope',
+          wireApi: 'chat',
+        },
+        token: 'miau-secret',
+      }),
+      spawnFactory: ((_bin: string, args: string[], opts: any) => {
+        capturedArgs = args
+        capturedEnv = opts?.env
+        return fakeProc
+      }) as any,
+      connectTimeoutMs: 100,
+    })
+    await expect(backend.start()).rejects.toThrow()
+    expect(capturedEnv?.MIAU_API_KEY).toBe('miau-secret')
+    expect(capturedEnv?.OPENAI_API_KEY).toBe('sk-active')
+    expect(capturedArgs).toContain('model_providers.qwen.env_key="MIAU_API_KEY"')
+    expect(capturedArgs).toContain('model_providers.qwen.wire_api="chat"')
+    // Must NOT seize the active model_provider.
+    expect(capturedArgs?.join(' ')).not.toContain('model_provider="qwen"')
+    await backend.stop()
+  })
+
+  it('does NOT register the qwen provider when getUnderstandProvider returns undefined', async () => {
+    let capturedEnv: NodeJS.ProcessEnv | undefined
+    let capturedArgs: string[] | undefined
+    const fakeProc = makeFakeChildProc()
+    const backend = new CodexLocalBackend({
+      resourceRoot: '/tmp/codex-fake-root',
+      getApiKey: () => 'sk-active',
+      getUnderstandProvider: () => undefined,
+      spawnFactory: ((_bin: string, args: string[], opts: any) => {
+        capturedArgs = args
+        capturedEnv = opts?.env
+        return fakeProc
+      }) as any,
+      connectTimeoutMs: 100,
+    })
+    await expect(backend.start()).rejects.toThrow()
+    expect(capturedEnv?.MIAU_API_KEY).toBeUndefined()
+    expect(capturedArgs?.some((a) => a.includes('model_providers.qwen'))).toBe(false)
     await backend.stop()
   })
 

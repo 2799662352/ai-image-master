@@ -9,6 +9,8 @@ import { DEFAULT_CODEX_SESSION_CONFIG, type CatimationMcpLaunchInfo } from './co
 import {
   BUILTIN_PROVIDER_PRESETS,
   DEFAULT_PROVIDER_ID,
+  QWEN_UNDERSTAND_PROVIDER,
+  QWEN_UNDERSTAND_PROVIDER_ID,
   isBuiltinProviderId,
   resolveActiveProvider,
   type ProviderPreset,
@@ -204,6 +206,13 @@ export class AgentManager {
   private readonly providerStore: CodexProviderStore
   private activeProviderId: string
   private codexApiKey = ''
+  /**
+   * Miau token for the qwen understanding provider (Path B). Persisted in the
+   * provider store under apiKeys['qwen'] (the renderer mirrors its image-gen
+   * key there via `setProviderApiKey('qwen', …)`). Read at spawn by
+   * `getUnderstandProvider`; updates take effect on the next codex (re)start.
+   */
+  private miauToken = ''
   private summarizer?: ThreadTitleSummarizer
   private sessionConfig: CodexSessionConfig = { ...DEFAULT_CODEX_SESSION_CONFIG }
   private allowedRoots: string[] = [...DEFAULT_CODEX_SESSION_CONFIG.writableRoots]
@@ -237,12 +246,17 @@ export class AgentManager {
     const persisted = this.providerStore.loadSync()
     this.activeProviderId = persisted.selectedProviderId
     this.codexApiKey = persisted.apiKeys[this.activeProviderId] ?? ''
+    this.miauToken = (persisted.apiKeys[QWEN_UNDERSTAND_PROVIDER_ID] ?? '').trim()
     const activeProvider = resolveActiveProvider(this.activeProviderId, persisted.customProviders)
     this.backend = opts.backend ?? new CodexLocalBackend({
       getApiKey: () => this.codexApiKey,
       provider: activeProvider,
       sessionConfig: this.sessionConfig,
       catimationMcp: opts.mcpRuntime,
+      getUnderstandProvider: () =>
+        this.miauToken
+          ? { provider: QWEN_UNDERSTAND_PROVIDER, token: this.miauToken }
+          : undefined,
       onApprovalRequest: (request) => this.emitApprovalRequest(request),
       onMcpNotification: (event) => this.handleMcpNotification(event),
     })
@@ -401,6 +415,13 @@ export class AgentManager {
     await this.providerStore.setApiKey(id, key)
     if (id === this.activeProviderId) {
       this.codexApiKey = (key ?? '').trim()
+    }
+    // The renderer mirrors its image-gen Miau token here (id='qwen') so Path B
+    // subagents can reach the qwen understanding gateway. Keep the in-memory
+    // copy fresh; it is consumed at the next codex (re)start via
+    // getUnderstandProvider.
+    if (id === QWEN_UNDERSTAND_PROVIDER_ID) {
+      this.miauToken = (key ?? '').trim()
     }
     return { ok: true }
   }

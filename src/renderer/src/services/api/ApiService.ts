@@ -716,6 +716,10 @@ export class ApiService {
     this.currentModel = this.getStoredModel() || 'gemini-3-pro-image-preview'
     this.apiKey = this.getStoredApiKey(this.currentSite)
     this.visionApiKey = this.getStoredVisionApiKey(this.currentSite)
+    // One-time Path B bridge: push any already-configured Miau token to main so
+    // a qwen understanding subagent works without re-saving the key. Deferred +
+    // guarded so it never blocks construction or runs outside Electron.
+    queueMicrotask(() => this.syncMiauTokenToMain())
   }
 
   /**
@@ -2060,6 +2064,7 @@ export class ApiService {
     try {
       this.apiKey = key
       localStorage.setItem(`api_key_${this.currentSite}`, key)
+      if (this.currentSite === 'antigravity') this.syncMiauTokenToMain()
       return true
     } catch {
       return false
@@ -2211,12 +2216,35 @@ export class ApiService {
   }
 
   /**
+   * Path B bridge: mirror the antigravity (Miau) image-gen token to the main
+   * process under the codex provider id 'qwen', so a qwen understanding
+   * subagent can reach the same gateway with `MIAU_API_KEY`. Best-effort:
+   * silently no-ops outside Electron / when the agent API is unavailable —
+   * Path A (the MCP understand_* tools) works without this bridge because
+   * understand() runs here in the renderer and reads the token directly.
+   */
+  syncMiauTokenToMain(): void {
+    try {
+      const token =
+        this.getStoredApiKey('antigravity') || this.getStoredVisionApiKey('antigravity') || ''
+      const agent = (window as unknown as { electronAPI?: { agent?: { setProviderApiKey?: (id: string, key: string) => Promise<unknown> } } })
+        ?.electronAPI?.agent
+      if (agent?.setProviderApiKey) {
+        void agent.setProviderApiKey('qwen', token)
+      }
+    } catch {
+      // best-effort; never block image-gen on the Path B bridge.
+    }
+  }
+
+  /**
    * 保存 Vision API Key
    */
   saveVisionApiKey(key: string): boolean {
     try {
       localStorage.setItem(`vision_api_key_${this.currentSite}`, key)
       this.visionApiKey = key
+      if (this.currentSite === 'antigravity') this.syncMiauTokenToMain()
       return true
     } catch {
       return false
