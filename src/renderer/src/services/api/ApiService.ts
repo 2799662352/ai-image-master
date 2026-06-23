@@ -20,6 +20,17 @@ export interface ResolutionOption {
   description?: string
 }
 
+/**
+ * 入参联合类型 for {@link ApiService.understand}。
+ * - video / document: 媒体走 OpenAI 多模态 content part(网关转 DashScope)。
+ * - web: 纯文本 + enable_search(联网扒资料)。
+ * 注:qwen 上游只认公网 URL,本机文件须先转可达 URL(由调用方处理)。
+ */
+export type UnderstandInput =
+  | { kind: 'video'; mediaUrl: string; question: string; fps?: number }
+  | { kind: 'document'; mediaUrl: string; question: string }
+  | { kind: 'web'; query: string }
+
 export interface QualityOption {
   key: string
   label: string
@@ -2128,6 +2139,75 @@ export class ApiService {
    */
   getStoredVisionApiKey(site?: string): string | null {
     return localStorage.getItem(`vision_api_key_${site || this.currentSite}`)
+  }
+
+  /**
+   * qwen3.7-max-dashscope 多模态理解（视频/文档/联网扒资料）。
+   *
+   * 复用出图同一条链路:经 new-api(antigravity 站点)网关
+   * /v1/chat/completions,model=qwen3.7-max-dashscope,Bearer = Miau 令牌。
+   * 网关已做 OpenAI→DashScope 转换,客户端只发标准 OpenAI content parts;
+   * 多模态请求不带 result_format(手册 §2)。联网用顶层 enable_search:true。
+   *
+   * 健壮解析:先 text() 再 try-parse,502/503/504 与非 JSON 返回都映射成
+   * 结构化中文错误而非抛异常,避免重蹈 parseResponse「先 json 后判 ok」的坑。
+   * 音频:qwen 上游不收 audio,音频走 skill 指导的 ffmpeg→MP4→understand_video。
+   */
+  async understand(
+    input: UnderstandInput,
+  ): Promise<{ success: true; text: string } | { success: false; error: string }> {
+    const site = this.apiSites['antigravity']
+    const key = this.getStoredApiKey('antigravity') || this.getStoredVisionApiKey('antigravity')
+    if (!key) {
+      return { success: false, error: '未配置 Miau API 令牌,请到设置页填入 API Key 后重试。' }
+    }
+
+    const content: unknown =
+      input.kind === 'web'
+        ? input.query
+        : [
+            { type: 'text', text: input.question },
+            input.kind === 'video'
+              ? { type: 'video_url', video_url: { url: input.mediaUrl } }
+              : { type: 'image_url', image_url: { url: input.mediaUrl } },
+          ]
+
+    const body: Record<string, unknown> = {
+      model: 'qwen3.7-max-dashscope',
+      messages: [{ role: 'user', content }],
+    }
+    if (input.kind === 'web') body.enable_search = true
+
+    try {
+      const resp = await fetch(`${site.baseURL}/v1/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${key}`,
+        },
+        body: JSON.stringify(body),
+      })
+      const raw = await resp.text()
+      if (!resp.ok) {
+        if (resp.status === 502 || resp.status === 503 || resp.status === 504) {
+          return { success: false, error: '上游服务器繁忙或无响应(502/503/504),请稍后重试。' }
+        }
+        return { success: false, error: `qwen 理解请求失败:${resp.status} ${resp.statusText}` }
+      }
+      let json: any
+      try {
+        json = JSON.parse(raw)
+      } catch {
+        return { success: false, error: '上游返回了非 JSON 响应(可能是网关错误页),请重试。' }
+      }
+      const text = json?.choices?.[0]?.message?.content
+      if (typeof text !== 'string' || text.length === 0) {
+        return { success: false, error: 'qwen 未返回可用文本。' }
+      }
+      return { success: true, text }
+    } catch (e) {
+      return { success: false, error: e instanceof Error ? e.message : String(e) }
+    }
   }
 
   /**
