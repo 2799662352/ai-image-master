@@ -341,6 +341,47 @@ describe('buildCodexLaunchArgs', () => {
     expect(args).toContain('windows_wsl_setup_acknowledged=true')
   })
 
+  it('registers extraProviders WITHOUT changing the active model_provider or top-level model', () => {
+    const args = buildCodexLaunchArgs({
+      provider: { id: 'apiyi', name: 'API Yi', baseUrl: 'https://api.apiyi.com/v1', envKey: 'OPENAI_API_KEY' },
+      extraProviders: [
+        {
+          id: 'qwen',
+          name: 'Qwen (DashScope via new-api)',
+          baseUrl: 'http://175.178.198.17:3000/v1',
+          envKey: 'MIAU_API_KEY',
+          model: 'qwen3.7-max-dashscope',
+          wireApi: 'chat',
+        },
+      ],
+    })
+
+    // Active provider stays apiyi; the extra provider must NOT seize model_provider.
+    expect(args).toContain('model_provider="apiyi"')
+    expect(args).not.toContain('model_provider="qwen"')
+    // Extra provider table is registered (name / base_url / env_key / wire_api=chat).
+    expect(args).toContain('model_providers.qwen.name="Qwen (DashScope via new-api)"')
+    expect(args).toContain('model_providers.qwen.base_url="http://175.178.198.17:3000/v1"')
+    expect(args).toContain('model_providers.qwen.env_key="MIAU_API_KEY"')
+    expect(args).toContain('model_providers.qwen.wire_api="chat"')
+    // The extra provider's model must NOT become the global top-level model
+    // (it is only used when a subagent selects modelProvider="qwen").
+    expect(args).not.toContain('model="qwen3.7-max-dashscope"')
+  })
+
+  it('registers extraProviders even when there is no active provider, defaulting wire_api to chat', () => {
+    const args = buildCodexLaunchArgs({
+      extraProviders: [
+        { id: 'qwen', name: 'Qwen', baseUrl: 'http://175.178.198.17:3000/v1', envKey: 'MIAU_API_KEY' },
+      ],
+    })
+    // No active provider selected.
+    expect(args.join(' ')).not.toContain('model_provider="')
+    // Extra provider still registered with a chat wire_api default.
+    expect(args).toContain('model_providers.qwen.wire_api="chat"')
+    expect(args).toContain('model_providers.qwen.env_key="MIAU_API_KEY"')
+  })
+
   it('does not inject model overrides when provider does not specify them', () => {
     const args = buildCodexLaunchArgs({
       provider: {

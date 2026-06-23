@@ -58,6 +58,14 @@ export interface CodexProviderConfig {
   /** Optional. When true, becomes `-c model_providers.<id>.requires_openai_auth=true`. */
   requiresOpenaiAuth?: boolean
   /**
+   * Optional wire protocol. The ACTIVE provider always pins `"responses"` (see
+   * the class doc above). EXTRA providers (registered via
+   * {@link CodexLaunchOptions.extraProviders} for per-subagent selection)
+   * default to `"chat"` because OpenAI-compatible gateways like new-api proxy
+   * the qwen DashScope model over `/v1/chat/completions`, not `/v1/responses`.
+   */
+  wireApi?: 'chat' | 'responses'
+  /**
    * Optional. Each entry becomes `-c <key>=<value>`. Use for top-level
    * scalar overrides not modelled above (e.g. `disable_response_storage`,
    * `windows_wsl_setup_acknowledged`). Booleans/numbers serialize bare;
@@ -96,6 +104,15 @@ export interface CatimationMcpLaunchInfo {
 export interface CodexLaunchOptions {
   listenUrl?: string
   provider?: CodexProviderConfig
+  /**
+   * Additional provider tables to REGISTER (but not activate). Each becomes a
+   * `[model_providers.<id>]` entry so a subagent can select it via
+   * `modelProvider="<id>"` (Path B: a qwen3.7-max-dashscope understanding
+   * subagent alongside the main agent's active provider). Unlike
+   * {@link provider}, these never set the top-level `model_provider`/`model`,
+   * so the main agent's provider is untouched.
+   */
+  extraProviders?: readonly CodexProviderConfig[]
   sessionConfig?: Partial<CodexSessionConfig>
   /**
    * Local in-process catimation MCP server coordinates. When present we
@@ -155,6 +172,33 @@ export function appendProviderArgs(
   if (provider.extraTopLevelConfig) {
     for (const [key, value] of Object.entries(provider.extraTopLevelConfig)) {
       args.push('-c', `${key}=${serializeScalar(value)}`)
+    }
+  }
+  return args
+}
+
+/**
+ * Register EXTRA provider tables for per-subagent selection (Path B). Unlike
+ * {@link appendProviderArgs}, this NEVER emits the top-level `model_provider`
+ * or `model` — it only defines `[model_providers.<id>]` so a subagent started
+ * with `modelProvider="<id>"` resolves to this gateway/model. wire_api defaults
+ * to `"chat"` (new-api proxies qwen over chat/completions).
+ */
+export function appendExtraProviders(
+  args: string[],
+  extras?: readonly CodexProviderConfig[],
+): string[] {
+  if (!extras || extras.length === 0) return args
+  for (const p of extras) {
+    const id = p.id
+    args.push(
+      '-c', `model_providers.${id}.name="${p.name}"`,
+      '-c', `model_providers.${id}.base_url="${p.baseUrl}"`,
+      '-c', `model_providers.${id}.env_key="${p.envKey}"`,
+      '-c', `model_providers.${id}.wire_api="${p.wireApi ?? 'chat'}"`,
+    )
+    if (p.requiresOpenaiAuth) {
+      args.push('-c', `model_providers.${id}.requires_openai_auth=true`)
     }
   }
   return args
@@ -299,5 +343,6 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     args.push('--add-dir', root)
   }
 
-  return appendProviderArgs(args, options?.provider)
+  const withActive = appendProviderArgs(args, options?.provider)
+  return appendExtraProviders(withActive, options?.extraProviders)
 }
