@@ -4,6 +4,7 @@ import { registerHistoryTools } from './historyTools'
 import { registerImageTools } from './imageTools'
 import { registerPortraitTools } from './portraitTools'
 import { registerUiTools } from './uiTools'
+import { registerUnderstandTools } from './understandTools'
 import { registerVideoTools } from './videoTools'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { ToolRouter } from '../ToolRouter'
@@ -16,4 +17,5 @@ export function registerTools(server: McpServer, router: ToolRouter): void {
   registerUiTools(server, router)
   registerAskTools(server, router)
   registerCanvasTools(server, router)
+  registerUnderstandTools(server, router)
 }
