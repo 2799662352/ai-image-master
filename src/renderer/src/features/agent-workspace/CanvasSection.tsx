@@ -22,6 +22,15 @@ function getCanvasApi(): CanvasAgentApi | undefined {
 /** Idle delay (ms) after the last annotation edit before auto-submitting to the queue. */
 const AUTO_SUBMIT_IDLE_MS = 1500
 
+// tldraw 默认 `maxAssetSize` 是 10MB(见官方 options 文档),原生拖拽/粘贴超过
+// 就被静默拒绝 —— 这正是"画布只能拖 10MB 文件"的根因。把上限抬到与本 app 全局
+// 媒体上限一致的 2GB(理解/附件链路已同口径);超大图再用 maxImageDimension 降采样,
+// 避免把巨幅位图原样 base64 内联进 persisted store(IndexedDB)撑爆存储。
+// 注:从工作区树拖拽走的是 canvasBridge.insertFileAt,本就不受此限,这里修的是
+// 原生 OS 文件拖拽 / 粘贴这条 tldraw 默认 asset 流水线。
+const CANVAS_MAX_ASSET_SIZE = 2 * 1024 * 1024 * 1024 // 2GB
+const CANVAS_MAX_IMAGE_DIMENSION = 8192 // 支持到 8K 长边,超过才降采样
+
 export function CanvasSection(): React.JSX.Element {
   const editorRef = useRef<Editor | null>(null)
   const wrapperRef = useRef<HTMLDivElement | null>(null)
@@ -186,7 +195,12 @@ export function CanvasSection(): React.JSX.Element {
 
   return (
     <div ref={wrapperRef} className="relative h-full min-h-0 w-full">
-      <Tldraw persistenceKey="catimation-canvas" onMount={handleMount} />
+      <Tldraw
+        persistenceKey="catimation-canvas"
+        onMount={handleMount}
+        maxAssetSize={CANVAS_MAX_ASSET_SIZE}
+        maxImageDimension={CANVAS_MAX_IMAGE_DIMENSION}
+      />
       {pill ? (
         <div className="pointer-events-none absolute right-3 top-3 z-10 rounded-full bg-cyan-600/90 px-3 py-1 text-xs font-medium text-white shadow-lg">
           {pill}
