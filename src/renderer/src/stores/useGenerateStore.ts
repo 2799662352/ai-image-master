@@ -309,10 +309,9 @@ interface HistoryServiceBridge {
 
 registerCosUploadHandler('generate:', (result) => {
   const id = result.requestId.slice('generate:'.length)
-  const ctx = pendingHistoryContext.get(id)
-  if (!ctx) return
-  pendingHistoryContext.delete(id)
 
+  // 先做状态热切 —— 不依赖 history ctx。即使 ctx 已被清理(并发追加 /
+  // clearResults / FIFO 溢出丢弃), 也必须保证内存能释放, 否则 P0 黑屏复发。
   useGenerateStore.setState((s) => {
     const idx = s.resultMeta.findIndex((m) => m.id === id)
     if (idx < 0) return s
@@ -324,15 +323,26 @@ registerCosUploadHandler('generate:', (result) => {
         uploadStatus: 'uploaded',
         uploadError: undefined,
       }
-    } else {
-      nextMeta[idx] = {
-        ...nextMeta[idx],
-        uploadStatus: 'failed',
-        uploadError: result.error,
-      }
+      // P0 OOM 修复(2026-06-23): 把 resultUrls 同位置热切到轻量 cosUrl,
+      // 释放模型直出 base64(4K ≈ 10MB/张)。否则一整次会话每张都常驻
+      // (上限 200) → 渲染进程堆 + blob + 解码位图耗尽 → 卡死黑屏。
+      // ResultGrid 早有注释「上传完成后这里会被替换成 cosUrl」, 这才真正落地。
+      const nextUrls = s.resultUrls.slice()
+      nextUrls[idx] = result.url
+      return { resultMeta: nextMeta, resultUrls: nextUrls }
+    }
+    // 失败: 保留 modelUrl(base64)兜底, cosUrl 不存在时它是唯一可显示的源。
+    nextMeta[idx] = {
+      ...nextMeta[idx],
+      uploadStatus: 'failed',
+      uploadError: result.error,
     }
     return { resultMeta: nextMeta }
   })
+
+  const ctx = pendingHistoryContext.get(id)
+  if (!ctx) return
+  pendingHistoryContext.delete(id)
 
   const historyService = (window as unknown as {
     historyDataServiceTS?: HistoryServiceBridge

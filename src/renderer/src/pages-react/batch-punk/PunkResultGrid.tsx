@@ -80,7 +80,10 @@ function ResultCard({
   const badge = STATUS_BADGE[item.status]
   const isFail = item.status === 'error'
   const isRun = item.status === 'generating'
-  const displayUrl = item.resultUrl ?? item.cosUrl
+  // P0 OOM 修复(2026-06-23): cosUrl(http 持久链接)优先。上传成功后 store 会
+  // 释放 resultUrl(模型直出 base64 ~10MB/张), 优先 cosUrl 让浏览器用可回收的
+  // http 解码缓存, 避免 base64 + blob + 位图常驻 → 渲染进程内存耗尽黑屏。
+  const displayUrl = item.cosUrl ?? item.resultUrl
   // imgSrc 是 displayUrl 走 useDisplaySrc 换出来的 blob: URL, 仅用于 <img src>。
   // displayUrl 原值留给 toolbar/modal/preview/download —— 那些需要原始 dataURL
   // 或 http 链接送回服务端 / 主进程, blob: URL 在跨进程是无效的。

@@ -129,11 +129,16 @@ const STATUS_BADGE: Record<
  * 上传未完成或失败时 fallback 到 resultUrl(模型直出, 可能是临时签名链接)。
  */
 function pickDisplayUrl(item: BatchItem): string | undefined {
-  // 优先 resultUrl(模型直出, 浏览器已下载并解码),
-  // 避免上传成功后切换到 cosUrl 导致同一张图被重新下载/解码 —
-  // 批量场景下多张图同时切源会卡顿主线程。
-  // cosUrl 只用于历史持久化(过期 modelUrl 失效后才需要)。
-  return item.resultUrl ?? item.cosUrl
+  // P0 OOM 修复(2026-06-23): 优先 cosUrl(http 持久链接)。
+  //
+  // 旧逻辑优先 resultUrl(模型直出 base64)是为了「避免切源重新解码的卡顿」,
+  // 但代价是每张 4K base64(~10MB)+ useDisplaySrc 产出的 blob + 解码位图一整次
+  // 会话常驻 → 30 分钟/数百张后渲染进程内存耗尽卡死黑屏。两害相权: 偶发黑屏
+  // 远比一次极轻微的解码抖动严重, 且上传是分散完成的(逐张切源, 非同时)。
+  //
+  // 上传成功后 store 已把 resultUrl 置空(见 useBatchStore cos handler), 这里
+  // 再用 cosUrl 优先做防御兜底: 即便将来 store 忘了释放, 也优先走可回收的 http 源。
+  return item.cosUrl ?? item.resultUrl
 }
 
 /**

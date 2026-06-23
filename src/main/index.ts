@@ -503,6 +503,77 @@ function createWindow(): void {
     console.log(`[Performance] Page loaded: ${Date.now() - startTime}ms`)
   })
 
+  // ───────────────────────────────────────────────────────────────
+  // P0 黑屏自愈 (2026-06-23)
+  //
+  // 渲染进程一旦 OOM/崩溃, 此前没有任何处理 → 窗口永久黑屏, 也没有任何日志。
+  // 按 Electron 官方建议监听 render-process-gone: ① 记录 reason/exitCode
+  // (便于线上确认是否 OOM); ② 对崩溃类原因自动 reload 到全新进程恢复。
+  //
+  // 主因(会话内 4K 模型 base64 常驻渲染进程)已在渲染层修复(上传成功后
+  // 释放 base64, 见 useGenerateStore / useBatchStore)。这里是兜底安全网:
+  // 即便出现别的 OOM 来源、或用户未配置 COS 导致 base64 未及时释放, 也不会
+  // 停在黑屏。clean-exit / killed 是正常关闭或我们主动 kill, 不处理。
+  //
+  // 防 reload 风暴: 60s 内崩溃 >= CRASH_MAX_RELOADS 次就停手并弹窗交给用户,
+  // 避免"崩溃→reload→立刻又崩"的死循环空烧 CPU。
+  const RELOAD_WORTHY_CRASH_REASONS = new Set<string>([
+    'crashed', 'oom', 'abnormal-exit', 'launch-failed', 'integrity-failure',
+  ])
+  const CRASH_WINDOW_MS = 60_000
+  const CRASH_MAX_RELOADS = 3
+  let recentRendererCrashes: number[] = []
+
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    const { reason, exitCode } = details
+    console.error(`[Renderer] render-process-gone reason=${reason} exitCode=${exitCode}`)
+    if (!RELOAD_WORTHY_CRASH_REASONS.has(reason)) return
+    if (isQuittingAfterAgentCleanup || AutoUpdater.isInstallingUpdate) return
+    const win = mainWindow
+    if (!win || win.isDestroyed()) return
+
+    const now = Date.now()
+    recentRendererCrashes = recentRendererCrashes.filter((t) => now - t < CRASH_WINDOW_MS)
+    recentRendererCrashes.push(now)
+
+    if (recentRendererCrashes.length > CRASH_MAX_RELOADS) {
+      void dialog
+        .showMessageBox(win, {
+          type: 'error',
+          title: '界面进程反复崩溃',
+          message: '检测到界面进程在短时间内多次崩溃(通常是内存不足导致)。',
+          detail: `最近一次原因: ${reason} (exitCode ${exitCode})。\n建议: 降低出图分辨率 / 减少单次批量数量, 或重启应用。`,
+          buttons: ['立即重载', '稍后'],
+          defaultId: 0,
+          cancelId: 1,
+        })
+        .then(({ response }) => {
+          if (response === 0 && mainWindow && !mainWindow.isDestroyed()) {
+            recentRendererCrashes = []
+            mainWindow.webContents.reload()
+          }
+        })
+        .catch(() => {
+          /* best-effort, 弹窗失败不致命 */
+        })
+      return
+    }
+
+    console.warn('[Renderer] auto-reloading window after crash to recover from black screen')
+    try {
+      win.webContents.reload()
+    } catch {
+      /* noop */
+    }
+  })
+
+  // unresponsive: 仅记录, 不主动 forcefullyCrashRenderer。本应用大图解码 /
+  // 大批量渲染可能让主线程短时无响应但并未崩溃, 主动 kill 会丢失内存里的
+  // 结果与队列。真正的崩溃由上面的 render-process-gone 自愈兜底。
+  mainWindow.webContents.on('unresponsive', () => {
+    console.warn('[Renderer] unresponsive (not killing; will self-recover, or crash→auto-reload)')
+  })
+
   // 右键菜单 - 支持图片保存
   mainWindow.webContents.on('context-menu', async (_event, params) => {
     // File Explorer 面板内的右键由 React 自定义菜单处理；

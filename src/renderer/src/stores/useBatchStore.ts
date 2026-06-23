@@ -34,7 +34,10 @@ export interface BatchItem {
   id: string
   prompt: string
   status: 'pending' | 'generating' | 'done' | 'error'
-  /** 模型直出 URL — 上传未完成时作为 fallback 显示 */
+  /**
+   * 模型直出 URL(通常是 base64 dataURL)— 上传未完成 / 失败时作为 fallback 显示。
+   * P0 OOM 修复: COS 上传**成功后会被置空**, 释放 4K ~10MB 的 base64, 改由 cosUrl 显示。
+   */
   resultUrl?: string
   /** COS 持久化 URL — 一旦有值就优先显示 */
   cosUrl?: string
@@ -693,7 +696,12 @@ registerCosUploadHandler('batch:', (result) => {
     items: state.items.map((i) =>
       i.id === itemId
         ? result.success
-          ? { ...i, cosUrl: result.url, uploadStatus: 'uploaded' as const, uploadError: undefined }
+          // P0 OOM 修复(2026-06-23): 上传成功后清空 resultUrl(模型直出 base64,
+          // 4K ≈ 10MB/张), 改用持久 cosUrl 显示。否则 base64 + useDisplaySrc
+          // 产出的 blob + 解码位图会一整次会话常驻(上限 200 条)→ 渲染进程
+          // 内存耗尽卡死黑屏。grid 的 displayUrl 已改为 cosUrl 优先。
+          ? { ...i, cosUrl: result.url, uploadStatus: 'uploaded' as const, uploadError: undefined, resultUrl: undefined }
+          // 失败: 保留 resultUrl 兜底, cosUrl 没回来时它是唯一可显示的源。
           : { ...i, uploadStatus: 'failed' as const, uploadError: result.error }
         : i,
     ),
