@@ -1,4 +1,4 @@
-import type { GenerateImageParams, GenerateResult } from '../../services/api'
+import type { GenerateImageParams, GenerateResult, UnderstandInput } from '../../services/api'
 import { ServiceRegistry, SERVICE_KEYS } from '../../services/ServiceBridge'
 import type { HistoryDataService } from '../history'
 import type { ImageViewer } from '../image-viewer'
@@ -221,9 +221,73 @@ export class AgentToolExecutor {
       case 'canvas_exec':
       case 'canvas_search':
         return this.callCanvas(toolName, params)
+      case 'understand_video':
+      case 'understand_document':
+      case 'web_research':
+        return this.callUnderstand(toolName, params)
       default:
         throw new Error(`Unknown renderer tool: ${toolName}`)
     }
+  }
+
+  /**
+   * qwen3.7-max-dashscope 理解工具(视频/文档/联网)。薄层:解析媒体源 →
+   * 调 ApiService.understand()。返回 `{success,…}` 结构体,由 main 端
+   * understandTools 包成 banner;这里不抛异常(健壮性已在 understand() 内处理),
+   * 仅当本机文件无法转成公网 URL 时返回结构化错误。
+   */
+  private async callUnderstand(
+    toolName: string,
+    params: Record<string, unknown>,
+  ): Promise<{ success: true; text: string } | { success: false; error: string }> {
+    const api = ServiceRegistry.getRequired<{
+      understand: (input: UnderstandInput) => Promise<
+        { success: true; text: string } | { success: false; error: string }
+      >
+    }>(SERVICE_KEYS.API)
+
+    if (toolName === 'web_research') {
+      const query = typeof params.query === 'string' ? params.query : ''
+      if (!query) return { success: false, error: 'web_research 缺少 query。' }
+      return api.understand({ kind: 'web', query })
+    }
+
+    const question = typeof params.question === 'string' ? params.question : ''
+    if (!question) return { success: false, error: `${toolName} 缺少 question。` }
+
+    const media = this.resolveMediaUrl(params, toolName === 'understand_video' ? 'video' : 'document')
+    if (!media.ok) return { success: false, error: media.error }
+
+    if (toolName === 'understand_video') {
+      const fps = typeof params.fps === 'number' ? params.fps : undefined
+      return api.understand({ kind: 'video', mediaUrl: media.url, question, fps })
+    }
+    return api.understand({ kind: 'document', mediaUrl: media.url, question })
+  }
+
+  /**
+   * 解析理解工具的媒体源。`*_url`(http/https/data)直接用;`*_path`(本机)
+   * 目前不在此自动上传 —— qwen 上游只认公网 URL,故返回结构化错误提示改传 URL。
+   * (自动转公网 URL 留作后续增强,见 plan Task 2 备注。)
+   */
+  private resolveMediaUrl(
+    params: Record<string, unknown>,
+    kind: 'video' | 'document',
+  ): { ok: true; url: string } | { ok: false; error: string } {
+    const urlKey = kind === 'video' ? 'video_url' : 'file_url'
+    const pathKey = kind === 'video' ? 'video_path' : 'file_path'
+    const url = params[urlKey]
+    if (typeof url === 'string' && /^(https?:|data:)/.test(url)) {
+      return { ok: true, url }
+    }
+    const localPath = params[pathKey]
+    if (typeof localPath === 'string' && localPath.length > 0) {
+      return {
+        ok: false,
+        error: `本机文件 (${pathKey}) 暂无法直接交给 qwen —— 它只接受公网可达 URL。请改用 ${urlKey} 传入一个 http(s) URL(或先把文件上传后用其 URL)。`,
+      }
+    }
+    return { ok: false, error: `缺少 ${urlKey} 或 ${pathKey}。` }
   }
 
   private async callCanvas(toolName: string, params: Record<string, unknown>): Promise<unknown> {

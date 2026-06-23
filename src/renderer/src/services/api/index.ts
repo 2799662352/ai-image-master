@@ -15,5 +15,6 @@ export type {
   GenerateImageParams,
   GenerateResult,
   VisionParams,
-  VisionResult
+  VisionResult,
+  UnderstandInput
 } from './ApiService'
