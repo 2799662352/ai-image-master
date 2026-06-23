@@ -24,9 +24,12 @@ describe('useModelStore', () => {
   it('normalizes legacy gemini preview model keys when switching', () => {
     useModelStore.getState().setModels({
       'gemini-3.1-flash-image': { name: 'Nano Banana 2', capabilities: {} },
+      'gemini-3-pro-image': { name: 'Nano Banana Pro', capabilities: {} },
     })
     useModelStore.getState().switchModel('gemini-3.1-flash-image-preview')
     expect(useModelStore.getState().currentModelKey).toBe('gemini-3.1-flash-image')
+    useModelStore.getState().switchModel('gemini-3-pro-image-preview')
+    expect(useModelStore.getState().currentModelKey).toBe('gemini-3-pro-image')
   })
 
   it('rejects invalid model key', () => {
