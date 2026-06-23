@@ -31,6 +31,47 @@ export type UnderstandInput =
   | { kind: 'document'; mediaUrl: string; question: string }
   | { kind: 'web'; query: string }
 
+/**
+ * 理解能力上游模型(走 antigravity new-api 网关的 DashScope 原生通道)。
+ *
+ * 默认 `qwen3.7-max-dashscope`(更强、更稳,prod 一直在用);
+ * `qwen3.7-plus-dashscope` 作为「更便宜 + 兜底」备选。两者能力一致(文本/图像/
+ * 视频/联网/工具,均不支持音频),差别是 max 更强更贵、plus 更便宜。
+ *
+ * 历史:plus 是「多模态专用」模型,其纯文本(如 web_research)必须被网关强制路由到
+ * multimodal 端点(`aliMultimodalOnlyModels`),否则上游回 `url error`。该端点强制
+ * 一度只在测试网关、prod 未上。2026-06-23 实测 prod(175.178.198.17)上 plus 的
+ * web_research + understand_video 均已通过(见 docs 24/25),故 plus 现可用作兜底。
+ *
+ * 切换/兜底:`understand(input, { model })` 可显式指定('max' / 'plus' / 全名);
+ * 非法值回落默认 max。primary 失败(同模型重试耗尽后)且 primary≠plus 时,自动用
+ * plus 兜底重试一次(见 understand)。
+ */
+export const QWEN_UNDERSTAND_MODEL = 'qwen3.7-max-dashscope'
+
+/** 更便宜 + 兜底模型:primary 失败时自动重试一次。也可经 `{ model }` 显式选用。 */
+export const QWEN_UNDERSTAND_FALLBACK_MODEL = 'qwen3.7-plus-dashscope'
+
+/** 允许显式选用的理解模型白名单(其余值回落到默认 max)。 */
+export const QWEN_UNDERSTAND_MODELS: readonly string[] = [
+  QWEN_UNDERSTAND_MODEL,
+  QWEN_UNDERSTAND_FALLBACK_MODEL,
+]
+
+/**
+ * 把调用方请求的模型归一成白名单内的真实模型名。
+ * - `'max'` / `'plus'` 简称 → 对应 -dashscope 全名(与默认无关,按字面映射);
+ * - 已是白名单全名 → 原样;
+ * - 其余(含幻觉名 / undefined)→ 默认 max。
+ */
+export function resolveUnderstandModel(requested?: string): string {
+  if (typeof requested !== 'string') return QWEN_UNDERSTAND_MODEL
+  const r = requested.trim().toLowerCase()
+  if (r === 'max') return 'qwen3.7-max-dashscope'
+  if (r === 'plus') return 'qwen3.7-plus-dashscope'
+  return QWEN_UNDERSTAND_MODELS.includes(requested) ? requested : QWEN_UNDERSTAND_MODEL
+}
+
 export interface QualityOption {
   key: string
   label: string
@@ -431,7 +472,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       qualityControl: true
     }
   },
-  'gemini-3.1-flash-image-preview': {
+  'gemini-3.1-flash-image': {
     name: '🍌 Nano Banana 2',
     displayName: '15s，gemini-3.1-flash-image 谷歌原生端点请求，支持超多尺寸4K，$0.03/张🚀 官网低于2折',
     price: 0.06,
@@ -492,7 +533,7 @@ const DEFAULT_MODELS: Record<string, ModelConfig> = {
       resolutionControl: true
     }
   },
-  'gemini-3-pro-image-preview': {
+  'gemini-3-pro-image': {
     name: '🍌 Nano Banana Pro',
     displayName: '60s，gemini-3-pro-image 谷歌原生端点请求，支持多尺寸4K，$0.05/张🔥 官网1/5价格',
     price: 0.09,
@@ -713,7 +754,7 @@ export class ApiService {
     this.apiSites = { ...BUILT_IN_SITES, ...this.customSites }
     this.models = { ...DEFAULT_MODELS }
     this.currentSite = this.getStoredSite() || 'b-apiyi'
-    this.currentModel = this.getStoredModel() || 'gemini-3-pro-image-preview'
+    this.currentModel = this.getStoredModel() || 'gemini-3-pro-image'
     this.apiKey = this.getStoredApiKey(this.currentSite)
     this.visionApiKey = this.getStoredVisionApiKey(this.currentSite)
     // One-time Path B bridge: push any already-configured Miau token to main so
@@ -1233,14 +1274,13 @@ export class ApiService {
     const url = this.buildRequestUrl(modelConfig, site)
 
     // 只认 base64 的端点：把 COS / 远端 URL 参考图先抓成 data URL，否则会被静默丢弃。
-    // - Gemini-native：现在改走 URL 直传(file_data.file_uri),不再强制 base64;
     // - OpenAI /images/generations(image 字段只吃 base64):仍需预解析;
+    // - inlineRefImageAsBase64 模型:保留为安全网(正常路径下 gemini 参考图在上传时
+    //   就已存成 base64 —— 切到 nano 时前端会清空 URL 参考图、要求重新上传压缩,
+    //   见 useRefImageModelSync / syncReferenceImagesForModel;这里只兜底极少数仍带 URL 的情况)。
     // - multipart(gpt-image-2 已在上面分支返回；Flux / sora-chat 直接用 URL)不走这里。
     let resolvedRefs = referenceImages
     let resolvedImageBase64 = imageBase64
-    // /images/generations 的 image 字段只吃 base64；gemini-native 默认走 URL 直传，
-    // 但带 inlineRefImageAsBase64 的模型(大香蕉系列)要求 base64 inline_data，
-    // 同样需要把 COS/远端 URL 先抓回 data URL。
     const needsBase64Sources =
       !!modelConfig.baseURL?.includes('/images/generations') ||
       modelConfig.inlineRefImageAsBase64 === true
@@ -2041,13 +2081,27 @@ export class ApiService {
    * 切换模型
    */
   setModel(modelKey: string): boolean {
-    if (!this.models[modelKey]) {
+    const resolved = this.resolveModelKey(modelKey)
+    if (!this.models[resolved]) {
       return false
     }
-    this.currentModel = modelKey
-    this.saveStoredModel(modelKey)
-    window.dispatchEvent(new CustomEvent('model-changed', { detail: { modelKey } }))
+    this.currentModel = resolved
+    this.saveStoredModel(resolved)
+    window.dispatchEvent(new CustomEvent('model-changed', { detail: { modelKey: resolved } }))
     return true
+  }
+
+  /**
+   * 旧 → 新 模型 key 别名:gemini 系列去掉历史的 `-preview` 后缀(上游端点本就用无 preview
+   * 的名字)。用户已存的 current_model / 历史记录里的旧 key 仍能解析,避免选择丢失。
+   */
+  private static readonly MODEL_KEY_ALIASES: Record<string, string> = {
+    'gemini-3.1-flash-image-preview': 'gemini-3.1-flash-image',
+    'gemini-3-pro-image-preview': 'gemini-3-pro-image',
+  }
+
+  private resolveModelKey(key: string): string {
+    return ApiService.MODEL_KEY_ALIASES[key] ?? key
   }
 
   /**
@@ -2082,7 +2136,7 @@ export class ApiService {
    * 按 key 获取模型配置（UI 层用于读取 capabilities）
    */
   getModelConfig(key: string): ModelConfig | undefined {
-    return this.models[key]
+    return this.models[this.resolveModelKey(key)]
   }
 
   /**
@@ -2125,7 +2179,8 @@ export class ApiService {
   }
 
   private getStoredModel(): string | null {
-    return localStorage.getItem('current_model')
+    const stored = localStorage.getItem('current_model')
+    return stored ? this.resolveModelKey(stored) : stored
   }
 
   private saveStoredModel(model: string): void {
@@ -2147,12 +2202,17 @@ export class ApiService {
   }
 
   /**
-   * qwen3.7-max-dashscope 多模态理解（视频/文档/联网扒资料）。
+   * qwen 多模态理解（视频/文档/联网扒资料）。默认 `qwen3.7-max-dashscope`(更强),
+   * `qwen3.7-plus-dashscope` 作为更便宜 + 兜底备选。
    *
    * 复用出图同一条链路:经 new-api(antigravity 站点)网关
-   * /v1/chat/completions,model=qwen3.7-max-dashscope,Bearer = Miau 令牌。
-   * 网关已做 OpenAI→DashScope 转换,客户端只发标准 OpenAI content parts;
-   * 多模态请求不带 result_format(手册 §2)。联网用顶层 enable_search:true。
+   * /v1/chat/completions,Bearer = Miau 令牌。网关已做 OpenAI→DashScope 转换,
+   * 客户端只发标准 OpenAI content parts;多模态请求不带 result_format(手册 §2)。
+   * 联网用顶层 enable_search:true。
+   *
+   * 模型选择:`opts.model`('max' / 'plus' / 全名)显式指定,非法值回落默认 max。
+   * 兜底:primary(默认 max)在同模型重试耗尽后仍失败,且 primary≠plus 且未禁用
+   * 兜底时,自动用 plus 再跑一轮(max 偶发对个别请求不稳时由 plus 救场)。
    *
    * 健壮解析:先 text() 再 try-parse,502/503/504 与非 JSON 返回都映射成
    * 结构化中文错误而非抛异常,避免重蹈 parseResponse「先 json 后判 ok」的坑。
@@ -2160,6 +2220,7 @@ export class ApiService {
    */
   async understand(
     input: UnderstandInput,
+    opts: { retries?: number; retryDelayMs?: number; model?: string; fallback?: boolean } = {},
   ): Promise<{ success: true; text: string } | { success: false; error: string }> {
     const site = this.apiSites['antigravity']
     const key = this.getStoredApiKey('antigravity') || this.getStoredVisionApiKey('antigravity')
@@ -2177,14 +2238,67 @@ export class ApiService {
               : { type: 'image_url', image_url: { url: input.mediaUrl } },
           ]
 
-    const body: Record<string, unknown> = {
-      model: 'qwen3.7-max-dashscope',
-      messages: [{ role: 'user', content }],
-    }
-    if (input.kind === 'web') body.enable_search = true
+    const baseBody: Record<string, unknown> = { messages: [{ role: 'user', content }] }
+    if (input.kind === 'web') baseBody.enable_search = true
 
+    const primary = resolveUnderstandModel(opts.model)
+    const primaryRes = await this.understandWithModel(site.baseURL, key, baseBody, primary, opts)
+    if (primaryRes.success) return primaryRes
+
+    // 兜底:primary 不是 plus 时(默认 max / 显式 max)用 plus 再跑一轮。可经
+    // `fallback:false` 关闭(如调用方明确只想要 primary 的结果)。
+    const allowFallback = opts.fallback !== false
+    if (allowFallback && primary !== QWEN_UNDERSTAND_FALLBACK_MODEL) {
+      const fb = await this.understandWithModel(
+        site.baseURL,
+        key,
+        baseBody,
+        QWEN_UNDERSTAND_FALLBACK_MODEL,
+        opts,
+      )
+      if (fb.success) return fb
+    }
+    return primaryRes
+  }
+
+  /**
+   * 对单个模型跑一轮带重试的 understand 请求。网关在较长的多模态/联网请求上偶发
+   * 掐连接(实测 `SocketError: other side closed` / 502),这类瞬时传输故障自动
+   * 重试即可恢复;4xx/非 JSON 属确定性错误,不重试。默认 2 次重试、退避 600ms*attempt。
+   */
+  private async understandWithModel(
+    baseURL: string,
+    key: string,
+    baseBody: Record<string, unknown>,
+    model: string,
+    opts: { retries?: number; retryDelayMs?: number },
+  ): Promise<{ success: true; text: string } | { success: false; error: string }> {
+    const body: Record<string, unknown> = { ...baseBody, model }
+    const maxAttempts = Math.max(1, (opts.retries ?? 2) + 1)
+    const retryDelayMs = opts.retryDelayMs ?? 600
+    let lastError = 'qwen 理解请求失败。'
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const r = await this.understandAttempt(baseURL, key, body)
+      if (r.kind === 'ok') return { success: true, text: r.text }
+      lastError = r.error
+      if (!r.retryable || attempt === maxAttempts) {
+        return { success: false, error: r.error }
+      }
+      await new Promise((res) => setTimeout(res, retryDelayMs * attempt))
+    }
+    return { success: false, error: lastError }
+  }
+
+  /** 单次 understand 请求。瞬时错误(网络异常 / 502·503·504)标 retryable。 */
+  private async understandAttempt(
+    baseURL: string,
+    key: string,
+    body: Record<string, unknown>,
+  ): Promise<{ kind: 'ok'; text: string } | { kind: 'fail'; retryable: boolean; error: string }> {
+    let resp: Response
     try {
-      const resp = await fetch(`${site.baseURL}/v1/chat/completions`, {
+      resp = await fetch(`${baseURL}/v1/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -2192,27 +2306,41 @@ export class ApiService {
         },
         body: JSON.stringify(body),
       })
-      const raw = await resp.text()
-      if (!resp.ok) {
-        if (resp.status === 502 || resp.status === 503 || resp.status === 504) {
-          return { success: false, error: '上游服务器繁忙或无响应(502/503/504),请稍后重试。' }
-        }
-        return { success: false, error: `qwen 理解请求失败:${resp.status} ${resp.statusText}` }
-      }
-      let json: any
-      try {
-        json = JSON.parse(raw)
-      } catch {
-        return { success: false, error: '上游返回了非 JSON 响应(可能是网关错误页),请重试。' }
-      }
-      const text = json?.choices?.[0]?.message?.content
-      if (typeof text !== 'string' || text.length === 0) {
-        return { success: false, error: 'qwen 未返回可用文本。' }
-      }
-      return { success: true, text }
     } catch (e) {
-      return { success: false, error: e instanceof Error ? e.message : String(e) }
+      return { kind: 'fail', retryable: true, error: e instanceof Error ? e.message : String(e) }
     }
+
+    const raw = await resp.text()
+    if (!resp.ok) {
+      if (resp.status === 502 || resp.status === 503 || resp.status === 504) {
+        return {
+          kind: 'fail',
+          retryable: true,
+          error: '上游服务器繁忙或无响应(502/503/504),请稍后重试。',
+        }
+      }
+      return {
+        kind: 'fail',
+        retryable: false,
+        error: `qwen 理解请求失败:${resp.status} ${resp.statusText}`,
+      }
+    }
+
+    let json: any
+    try {
+      json = JSON.parse(raw)
+    } catch {
+      return {
+        kind: 'fail',
+        retryable: false,
+        error: '上游返回了非 JSON 响应(可能是网关错误页),请重试。',
+      }
+    }
+    const text = json?.choices?.[0]?.message?.content
+    if (typeof text !== 'string' || text.length === 0) {
+      return { kind: 'fail', retryable: false, error: 'qwen 未返回可用文本。' }
+    }
+    return { kind: 'ok', text }
   }
 
   /**

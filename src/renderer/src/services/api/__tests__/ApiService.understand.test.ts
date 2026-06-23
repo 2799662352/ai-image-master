@@ -86,25 +86,125 @@ describe('ApiService.understand()', () => {
     expect(body.messages[0].content).toBe('今天的 AI 新闻')
   })
 
-  it('maps 502 to a friendly Chinese error without throwing', async () => {
+  it('maps a persistent 502 to a friendly Chinese error after exhausting retries', async () => {
     fetchMock.mockResolvedValue(
       fakeResponse({ ok: false, status: 502, statusText: 'Bad Gateway', body: '<html>502</html>' }),
     )
     const service = newServiceWithKey('sk-test')
 
-    const result = await service.understand({ kind: 'web', query: 'x' })
+    const result = await service.understand(
+      { kind: 'web', query: 'x' },
+      { retryDelayMs: 0, fallback: false },
+    )
 
     expect(result.success).toBe(false)
     if (!result.success) expect(result.error).toMatch(/繁忙|502/)
+    // 1 initial + 2 retries = 3 attempts (default retries = 2); fallback disabled
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('retries a transient network error and then succeeds', async () => {
+    fetchMock
+      .mockRejectedValueOnce(
+        Object.assign(new TypeError('fetch failed'), { cause: 'SocketError: other side closed' }),
+      )
+      .mockResolvedValueOnce(
+        fakeResponse({
+          ok: true,
+          body: JSON.stringify({ choices: [{ message: { content: '一只白兔子' } }] }),
+        }),
+      )
+    const service = newServiceWithKey('sk-test')
+
+    const result = await service.understand(
+      { kind: 'video', mediaUrl: 'https://x/a.mp4', question: 'q' },
+      { retryDelayMs: 0 },
+    )
+
+    expect(result).toEqual({ success: true, text: '一只白兔子' })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries a transient 502 and then succeeds', async () => {
+    fetchMock
+      .mockResolvedValueOnce(fakeResponse({ ok: false, status: 502, body: 'bad' }))
+      .mockResolvedValueOnce(
+        fakeResponse({
+          ok: true,
+          body: JSON.stringify({ choices: [{ message: { content: '今天的新闻' } }] }),
+        }),
+      )
+    const service = newServiceWithKey('sk-test')
+
+    const result = await service.understand({ kind: 'web', query: 'x' }, { retryDelayMs: 0 })
+
+    expect(result).toEqual({ success: true, text: '今天的新闻' })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('does NOT retry a deterministic 400 error', async () => {
+    fetchMock.mockResolvedValue(
+      fakeResponse({ ok: false, status: 400, statusText: 'Bad Request', body: 'invalid url' }),
+    )
+    const service = newServiceWithKey('sk-test')
+
+    const result = await service.understand(
+      { kind: 'video', mediaUrl: 'bad-url', question: 'q' },
+      { retryDelayMs: 0, fallback: false },
+    )
+
+    expect(result.success).toBe(false)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
   it('handles a non-JSON 200 body gracefully', async () => {
     fetchMock.mockResolvedValue(fakeResponse({ ok: true, body: 'not json at all' }))
     const service = newServiceWithKey('sk-test')
 
-    const result = await service.understand({ kind: 'web', query: 'x' })
+    const result = await service.understand({ kind: 'web', query: 'x' }, { fallback: false })
 
     expect(result.success).toBe(false)
+  })
+
+  it('defaults to qwen3.7-max-dashscope and falls back to plus on a primary failure', async () => {
+    fetchMock
+      // primary (max) → deterministic 400, no same-model retry
+      .mockResolvedValueOnce(fakeResponse({ ok: false, status: 400, statusText: 'Bad Request', body: 'x' }))
+      // fallback (plus) → success
+      .mockResolvedValueOnce(
+        fakeResponse({ ok: true, body: JSON.stringify({ choices: [{ message: { content: '兜底成功' } }] }) }),
+      )
+    const service = newServiceWithKey('sk-test')
+
+    const result = await service.understand(
+      { kind: 'video', mediaUrl: 'https://x/a.mp4', question: 'q' },
+      { retryDelayMs: 0 },
+    )
+
+    expect(result).toEqual({ success: true, text: '兜底成功' })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const primaryBody = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string)
+    const fallbackBody = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string)
+    expect(primaryBody.model).toBe('qwen3.7-max-dashscope')
+    expect(fallbackBody.model).toBe('qwen3.7-plus-dashscope')
+  })
+
+  it('honors an explicit model="plus" override and does NOT fall back (plus is the fallback model)', async () => {
+    fetchMock.mockResolvedValue(
+      fakeResponse({ ok: false, status: 400, statusText: 'Bad Request', body: 'x' }),
+    )
+    const service = newServiceWithKey('sk-test')
+
+    const result = await service.understand(
+      { kind: 'web', query: 'x' },
+      { retryDelayMs: 0, model: 'plus' },
+    )
+
+    expect(result.success).toBe(false)
+    // primary === plus === fallback model → no extra fallback attempt
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string)
+    expect(body.model).toBe('qwen3.7-plus-dashscope')
   })
 
   it('returns a config error when no key is available (does not call fetch)', async () => {

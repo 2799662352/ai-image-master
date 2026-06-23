@@ -236,6 +236,16 @@ export class AgentManager {
    */
   private readonly mcpStatusByName = new Map<string, { status: string; error: string | null }>()
 
+  /**
+   * In-flight backend start, shared by the bootstrap `start()` and the lazy
+   * (re)start on `sendMessage`, so a send racing the boot sequence (or retrying
+   * after a swallowed boot failure) never double-spawns the codex child. The
+   * promise is cleared once it settles, so a *failed* start can be retried by
+   * the next send (e.g. user fixes config, sends again). See
+   * `ensureBackendStarted`.
+   */
+  private startInFlight: Promise<void> | null = null
+
   constructor(opts: AgentManagerOptions) {
     this.win = opts.win
     this.store = opts.store
@@ -957,7 +967,25 @@ export class AgentManager {
   }
 
   async start(): Promise<void> {
-    await this.backend.start()
+    return this.ensureBackendStarted()
+  }
+
+  /**
+   * Idempotent, deduped backend start. No-op when the backend is already
+   * healthy; otherwise spawns codex (sharing one in-flight promise across
+   * concurrent callers). Throws the REAL startup error (spawn failure / config
+   * error / exit tail) so callers can surface it — instead of the cryptic
+   * "CodexLocalBackend.send called before start" that resulted when the
+   * bootstrap start() failed and was swallowed, leaving `this.client` null.
+   */
+  private async ensureBackendStarted(): Promise<void> {
+    if (this.backend.isHealthy()) return
+    if (!this.startInFlight) {
+      this.startInFlight = this.backend.start().finally(() => {
+        this.startInFlight = null
+      })
+    }
+    return this.startInFlight
   }
 
   async stop(): Promise<void> {
@@ -1018,6 +1046,21 @@ export class AgentManager {
 
     if (!this.store || !this.attachments) {
       throw new Error('AgentManager.sendMessage called without store/attachments')
+    }
+
+    // Lazily (re)start the backend if the bootstrap start() failed or never
+    // ran. Previously a swallowed boot failure left `this.client` null, so the
+    // first send threw the opaque "CodexLocalBackend.send called before start".
+    // Now we retry the start here and surface the ACTUAL startup error (config
+    // error / spawn failure / exit tail) to the renderer as a normal error
+    // event, keeping the turn recoverable once the user fixes the cause.
+    try {
+      await this.ensureBackendStarted()
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err)
+      const threadId = payload.threadId ?? 'pending'
+      this.emitEvent({ type: 'error', threadId, error: `Codex 后端启动失败:${detail}` })
+      return { threadId }
     }
 
     const referenceMapping = await mapReferencesToInputItems(payload.references, this.allowedRoots)

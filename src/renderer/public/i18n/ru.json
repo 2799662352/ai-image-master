@@ -950,13 +950,13 @@
     "processingImage": "Обработка изображения..."
   },
   "models": {
-    "gemini-3.1-flash-image-preview": {
+    "gemini-3.1-flash-image": {
       "name": "🍌 Nano Banana 2",
-      "displayName": "15s, gemini-3.1-flash-image-preview нативный эндпоинт Google, поддержка множества размеров до 4K, $0.03/изображение 🚀 Менее 20% от официальной цены"
+      "displayName": "15s, gemini-3.1-flash-image нативный эндпоинт Google, поддержка множества размеров до 4K, $0.03/изображение 🚀 Менее 20% от официальной цены"
     },
-    "gemini-3-pro-image-preview": {
+    "gemini-3-pro-image": {
       "name": "🍌 Nano Banana Pro",
-      "displayName": "60s, gemini-3-pro-image-preview нативная конечная точка Google, поддержка многоразмерного 4K, $0.05/изображение 🔥 1/5 официальной цены"
+      "displayName": "60s, gemini-3-pro-image нативная конечная точка Google, поддержка многоразмерного 4K, $0.05/изображение 🔥 1/5 официальной цены"
     },
     "gemini-2.5-flash-image": {
       "name": "🍌 Nano Banana",

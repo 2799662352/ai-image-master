@@ -13,6 +13,7 @@ import { ResultGrid } from './generate/ResultGrid'
 import type { MediaRef } from '../components/shared/media-tokens/types'
 import { useTokenAutocomplete, TokenAutocomplete, MentionChips } from '../components/shared/media-tokens'
 import '../components/shared/media-tokens/media-tokens.css'
+import { useRefImageModelSync } from '../hooks/useRefImageModelSync'
 
 export default function GeneratePage() {
   const api = useApi()
@@ -41,6 +42,7 @@ export default function GeneratePage() {
     addReferenceImage,
     removeReferenceImage,
     clearReferenceImages,
+    syncReferenceImagesForModel,
     clearResults,
     generate,
     restoreForEdit,
@@ -48,6 +50,24 @@ export default function GeneratePage() {
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const currentModel = models[currentModelKey]
+  // gemini 原生端点(nano / 大香蕉全系)= base64 内联组:参考图以 inline_data 发送。
+  const wantsInlineBase64 = currentModel?.apiType === 'gemini-native'
+
+  // 切模型时双向清洗不兼容的参考图(共用 hook,生成/批量一致,一改全改)。
+  useRefImageModelSync({
+    currentModelKey,
+    wantsInlineBase64,
+    syncRefs: syncReferenceImagesForModel,
+    onRemoved: (removed, inlineBase64) => {
+      addToast({
+        message: inlineBase64
+          ? `当前模型需内联图片,已清空 ${removed} 张云端 URL 参考图,请重新上传(会自动压缩)`
+          : `当前模型需云端图片链接,已清空 ${removed} 张本地图片,请重新上传`,
+        type: 'warning',
+        duration: 3500,
+      })
+    },
+  })
 
   // ---- 预览 lightbox (结果区 + 参考图共用,支持 ←/→ 左右切换) ----
   const [lightbox, setLightbox] = useState<{ urls: string[]; index: number } | null>(null)
@@ -195,7 +215,7 @@ export default function GeneratePage() {
         onRemove={(id) => removeReferenceImage(Number(id))}
         onClear={clearReferenceImages}
         onPreview={(url) => setLightbox({ urls: referenceImages, index: Math.max(0, referenceImages.indexOf(url)) })}
-        preferBase64={!!currentModel?.inlineRefImageAsBase64}
+        preferBase64={wantsInlineBase64}
       />
 
       <button

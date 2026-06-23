@@ -1054,13 +1054,13 @@
     "processingImage": "正在处理图片..."
   },
   "models": {
-    "gemini-3.1-flash-image-preview": {
+    "gemini-3.1-flash-image": {
       "name": "🍌 Nano Banana 2",
-      "displayName": "15s，gemini-3.1-flash-image-preview 谷歌原生端点请求，支持超多尺寸4K，$0.03/张🚀 官网低于2折"
+      "displayName": "15s，gemini-3.1-flash-image 谷歌原生端点请求，支持超多尺寸4K，$0.03/张🚀 官网低于2折"
     },
-    "gemini-3-pro-image-preview": {
+    "gemini-3-pro-image": {
       "name": "🍌 Nano Banana Pro",
-      "displayName": "60s，gemini-3-pro-image-preview 谷歌原生端点请求，支持多尺寸4K，$0.05/张🔥 官网1/5价格"
+      "displayName": "60s，gemini-3-pro-image 谷歌原生端点请求，支持多尺寸4K，$0.05/张🔥 官网1/5价格"
     },
     "gemini-2.5-flash-image": {
       "name": "🍌 Nano Banana",

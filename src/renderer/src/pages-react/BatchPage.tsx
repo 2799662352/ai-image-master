@@ -22,6 +22,7 @@ import type { MediaRef } from '../components/shared/media-tokens/types'
 import { BatchBudgetReceipt } from './batch/BatchBudgetReceipt'
 import { extractPriceFromModel } from '../utils/model-price'
 import { TemplateInline } from '../react-app/components/TemplateInline'
+import { useRefImageModelSync } from '../hooks/useRefImageModelSync'
 
 type ModelConfigSnapshot = ImageParamModelConfig & {
   name?: string
@@ -29,6 +30,8 @@ type ModelConfigSnapshot = ImageParamModelConfig & {
   price?: number
   /** base64 inline 模型(大香蕉系列):参考图本地直传 base64,不走 COS。 */
   inlineRefImageAsBase64?: boolean
+  /** 端点类型;gemini-native = base64 内联组(nano / 大香蕉全系)。 */
+  apiType?: string
 }
 
 /**
@@ -39,6 +42,7 @@ type ModelConfigSnapshot = ImageParamModelConfig & {
 export default function BatchPage() {
   const api = useApi()
   const currentModelKey = useModelStore((s) => s.currentModelKey)
+  const models = useModelStore((s) => s.models)
   const addToast = useToastStore((s) => s.addToast)
 
   // ---- 配置 ----
@@ -111,6 +115,27 @@ export default function BatchPage() {
     const cfg = aiApi?.getCurrentModel?.() as ModelConfigSnapshot | undefined
     setModelConfig(cfg || null)
   }, [currentModelKey])
+
+  // gemini 原生端点 = base64 内联组:参考图以 inline_data 发送。
+  // ⚠️ 必须从 model store **同步**派生(而非异步的 modelConfig),否则切换那一刻 flag
+  // 是旧值,清洗会错过一拍 —— 这正是之前"批量页切两次才清理 + 卡顿"的根因。
+  const wantsInlineBase64 = models[currentModelKey]?.apiType === 'gemini-native'
+
+  // 切模型时双向清洗不兼容的参考图(与 GeneratePage 共用同一 hook,一改全改)。
+  useRefImageModelSync({
+    currentModelKey,
+    wantsInlineBase64,
+    syncRefs: useBatchStore.getState().syncRefImagesForModel,
+    onRemoved: (removed, inlineBase64) => {
+      addToast({
+        message: inlineBase64
+          ? `当前模型需内联图片,已清空 ${removed} 张云端 URL 参考图,请重新上传(会自动压缩)`
+          : `当前模型需云端图片链接,已清空 ${removed} 张本地图片,请重新上传`,
+        type: 'warning',
+        duration: 3500,
+      })
+    },
+  })
 
   // 比例/分辨率/清晰度的选项派生与自动归位全部下沉到共享的 ImageParamControls。
 
@@ -369,7 +394,7 @@ export default function BatchPage() {
             onRemove={removeRefImage}
             onClear={clearRefImages}
             onPreview={handlePreviewRef}
-            preferBase64={!!modelConfig?.inlineRefImageAsBase64}
+            preferBase64={wantsInlineBase64}
           />
         </section>
       </div>

@@ -1107,28 +1107,44 @@ description: >-
   delegated jobs, spawn a subagent pinned to the qwen provider.
 ---
 
-# CATIMATION Understand — video / document / web via qwen3.7-max-dashscope
+# CATIMATION Understand — video / document / web via qwen
 
-These tools run on \`qwen3.7-max-dashscope\` through the same new-api gateway and
-Miau token used for image/video generation. They return Chinese text answers.
+These tools run on qwen through the same new-api gateway and Miau token used for
+image/video generation, and return Chinese text answers. **Model defaults to
+\`qwen3.7-max-dashscope\`** (stronger); pass \`model="plus"\` on any tool for the
+cheaper \`qwen3.7-plus-dashscope\`. You rarely need to: if max fails, the renderer
+automatically retries once on plus as a fallback. Only ask for \`plus\` when the
+user wants to save cost.
 
 ## When to use
 
 - "理解 / 分析这个视频"、"这段视频在干什么" → \`understand_video\`
+- "理解 / 分析画布上(选中)的这段视频" → \`understand_canvas_video\`
 - "读一下这份文档 / PDF 讲了什么" → \`understand_document\`
 - "上网查 / 搜一下 / 最新消息 / 扒点资料" → \`web_research\`
 
 ## Tools
 
-### understand_video { video_url, question, fps? }
-Pass a **public** http(s) \`video_url\` (qwen only accepts publicly reachable URLs).
-A local \`video_path\` is rejected with a hint — upload the file and pass its URL.
-\`fps\` is an optional sampling hint (reserved). Returns a description of
-画面/动作/字幕/剧情.
+### understand_video { video_url | video_path, question, fps? }
+Pass EITHER a public http(s) \`video_url\` OR a local \`video_path\`. qwen only
+accepts publicly reachable URLs, so a local path (or a \`data:\` URL) is
+**auto-uploaded to the history COS bucket** (\`image-history/media-relay/*\`,
+≤200MB) and the resulting public URL is used — you do NOT need to upload
+manually. \`fps\` is an optional sampling hint (reserved). Returns a description
+of 画面/动作/字幕/剧情.
 
-### understand_document { file_url, question }
-Pass a **public** \`file_url\`. Native document understanding is only PARTIAL
-upstream — for best results render the page(s) to image(s) and pass an image URL,
+### understand_canvas_video { question, model?, annotate? }
+Understand the video **selected on the canvas** (or the only video if none is
+selected) — NO url/path needed: the canvas exposes the clip's source itself, and
+a local source is auto-uploaded to COS just like \`understand_video\`. By default
+it also **writes the result back onto the canvas as a text note** next to the
+video; pass \`annotate=false\` to only return the text. Requires the Canvas tab
+open. Use this for "理解画布上选中的这段视频" instead of asking the user for a URL.
+
+### understand_document { file_url | file_path, question }
+Pass EITHER a public \`file_url\` OR a local \`file_path\` (auto-uploaded to COS
+just like video, ≤200MB). Native document understanding is only PARTIAL
+upstream — for best results render the page(s) to image(s) and pass an image,
 or extract the text and just ask normally.
 
 ### web_research { query }
@@ -1143,8 +1159,8 @@ qwen3.7-max-dashscope does not accept audio input (upstream returns
 1. Use the **ffmpeg-win** skill to convert the audio to an **MP4** (audio track +
    a placeholder/waveform video), e.g.
    \`ffmpeg -i in.mp3 -f lavfi -i color=c=black:s=640x360 -shortest -c:v libx264 out.mp4\`.
-2. Make the MP4 reachable as a public URL.
-3. Call \`understand_video\` with that URL and the user's question.
+2. Call \`understand_video\` with the local MP4 \`video_path\` and the user's
+   question — the tool auto-uploads it to COS to get a public URL.
 
 State clearly that audio understanding is best-effort via this MP4 workaround.
 
@@ -1162,7 +1178,8 @@ unavailable; fall back to calling the three tools directly and tell the user.
 
 ## Boundaries
 
-- Media must be a public URL (local paths are rejected by the tools).
+- Media reaches qwen as a public URL; local paths / \`data:\` URLs are
+  auto-uploaded to the history COS bucket first (≤200MB; larger → compress).
 - Documents: partial support; degrade to page-image or extracted-text + ask.
 - On a clean result, do NOT retry; just answer the user.
 `

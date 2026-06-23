@@ -870,9 +870,9 @@
     "processingImage": "Обработка изображения..."
   },
   "models": {
-    "gemini-3-pro-image-preview": {
+    "gemini-3-pro-image": {
       "name": "🍌 Nano Banana Pro",
-      "displayName": "60s, gemini-3-pro-image-preview нативная конечная точка Google, поддержка многоразмерного 4K, $0.05/изображение 🔥 1/5 официальной цены"
+      "displayName": "60s, gemini-3-pro-image нативная конечная точка Google, поддержка многоразмерного 4K, $0.05/изображение 🔥 1/5 официальной цены"
     },
     "gemini-2.5-flash-image": {
       "name": "🍌 Nano Banana",

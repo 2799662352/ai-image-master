@@ -870,9 +870,9 @@
     "processingImage": "Processing image..."
   },
   "models": {
-    "gemini-3-pro-image-preview": {
+    "gemini-3-pro-image": {
       "name": "🍌 Nano Banana Pro",
-      "displayName": "60s, gemini-3-pro-image-preview Google native endpoint, supports multi-size 4K, $0.05/image 🔥 1/5 official price"
+      "displayName": "60s, gemini-3-pro-image Google native endpoint, supports multi-size 4K, $0.05/image 🔥 1/5 official price"
     },
     "gemini-2.5-flash-image": {
       "name": "🍌 Nano Banana",

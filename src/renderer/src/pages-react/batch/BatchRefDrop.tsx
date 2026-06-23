@@ -74,6 +74,9 @@ interface Props {
 
 const MAX_FILE_MB = 20
 const ALLOWED = ['image/jpeg', 'image/png', 'image/webp']
+// 一批并发处理的张数:对齐 COS 上传层的 4 路并发闸(cosImageUpload MAX_CONCURRENT_UPLOADS),
+// 既把网络/解码打满,又不至于一次性开太多解码/压缩占内存。
+const UPLOAD_CONCURRENCY = 4
 
 /**
  * BatchRefDrop - 参考图上传(拖拽 / 点击 / 默认 16 张上限,对齐 gpt-image 单请求 16 张)
@@ -108,9 +111,10 @@ export default function BatchRefDrop({
 
   /**
    * 本地上传:走共用的"原图直传 COS、失败降级压缩"策略(见 utils/refImageUpload)。
-   * 这里只负责占位 UI(pending 阶段)与 toast。
+   * 这里只负责占位 UI(pending 阶段)与 toast。返回处理好的参考图(失败返回 null),
+   * 由调用方按输入顺序 onAdd —— 这样多张可并行处理而不打乱顺序。
    */
-  const processOne = async (file: File): Promise<void> => {
+  const processOne = async (file: File): Promise<BatchRefImage | null> => {
     const pendingId = crypto.randomUUID()
     const originalKB = file.size
     setPending((list) => [
@@ -124,22 +128,12 @@ export default function BatchRefDrop({
       skipCos: preferBase64,
       onStage: (stage) => updatePending(pendingId, { stage }),
     })
+    removePending(pendingId)
 
     if (!outcome.ok) {
-      removePending(pendingId)
       addToast({ message: `读取失败: ${file.name}`, type: 'error' })
-      return
+      return null
     }
-
-    onAdd({
-      id: crypto.randomUUID(),
-      base64: outcome.src,
-      fileName: file.name,
-      fileSize: outcome.fileSize,
-      width: outcome.width,
-      height: outcome.height,
-    })
-    removePending(pendingId)
 
     if (outcome.viaCos) {
       addToast({
@@ -166,6 +160,15 @@ export default function BatchRefDrop({
         duration: 2800,
       })
     }
+
+    return {
+      id: crypto.randomUUID(),
+      base64: outcome.src,
+      fileName: file.name,
+      fileSize: outcome.fileSize,
+      width: outcome.width,
+      height: outcome.height,
+    }
   }
 
   const handleFiles = async (files: FileList | File[]): Promise<void> => {
@@ -191,9 +194,15 @@ export default function BatchRefDrop({
       }
       accepted.push(file)
     }
-    // 串行处理,避免一次开 N 个 canvas 资源压缩卡死
-    for (const file of accepted) {
-      await processOne(file)
+    // 并发处理(每批 UPLOAD_CONCURRENCY 张):读图/解码/压缩并行,不再一张张串行阻塞。
+    // 上限既防一次开太多 canvas/解码占内存,又对齐 COS 上传层自身的 4 路并发闸
+    // (见 cosImageUpload MAX_CONCURRENT_UPLOADS)。按输入顺序 onAdd,保持参考图次序。
+    for (let i = 0; i < accepted.length; i += UPLOAD_CONCURRENCY) {
+      const chunk = accepted.slice(i, i + UPLOAD_CONCURRENCY)
+      const results = await Promise.all(chunk.map(processOne))
+      for (const img of results) {
+        if (img) onAdd(img)
+      }
     }
   }
 
@@ -218,37 +227,51 @@ export default function BatchRefDrop({
       .filter(Boolean)
     if (urls.length === 0) return
 
+    // 先按语法 + 剩余槽位筛出候选(顺序保留),无效链接当场报错;
+    // 再并发探活(每个 probe 最长 15s,串行会把 N 个链接拖成 N×15s)。
+    const slots = max - images.length - pending.length
+    const candidates: string[] = []
+    for (const url of urls) {
+      if (candidates.length >= slots) {
+        setError(`最多 ${max} 张,已满`)
+        addToast({ message: `已达上限 ${max} 张,跳过余下链接`, type: 'warning' })
+        break
+      }
+      if (!URL_RE.test(url)) {
+        addToast({ message: `不是有效链接: ${shortName(url, 28)}`, type: 'error' })
+        continue
+      }
+      candidates.push(url)
+    }
+
     setUrlBusy(true)
     let added = 0
     try {
-      for (const url of urls) {
-        if (images.length + pending.length + added >= max) {
-          setError(`最多 ${max} 张,已满`)
-          addToast({ message: `已达上限 ${max} 张,跳过余下链接`, type: 'warning' })
-          break
-        }
-        if (!URL_RE.test(url)) {
-          addToast({ message: `不是有效链接: ${shortName(url, 28)}`, type: 'error' })
-          continue
-        }
-        const probe = await probeImageUrl(url)
-        if (!probe.ok) {
-          addToast({
-            message: `图片无法加载(链接失效 / 跨域 / 非图片): ${shortName(url, 28)}`,
-            type: 'error',
-            duration: 3500,
+      // 并发探活(每批 UPLOAD_CONCURRENCY 个),按候选顺序 onAdd 保持次序。
+      for (let i = 0; i < candidates.length; i += UPLOAD_CONCURRENCY) {
+        const chunk = candidates.slice(i, i + UPLOAD_CONCURRENCY)
+        const probes = await Promise.all(
+          chunk.map(async (url) => ({ url, probe: await probeImageUrl(url) })),
+        )
+        for (const { url, probe } of probes) {
+          if (!probe.ok) {
+            addToast({
+              message: `图片无法加载(链接失效 / 跨域 / 非图片): ${shortName(url, 28)}`,
+              type: 'error',
+              duration: 3500,
+            })
+            continue
+          }
+          onAdd({
+            id: crypto.randomUUID(),
+            base64: url,
+            fileName: basenameFromUrl(url),
+            fileSize: 0,
+            width: probe.w,
+            height: probe.h,
           })
-          continue
+          added++
         }
-        onAdd({
-          id: crypto.randomUUID(),
-          base64: url,
-          fileName: basenameFromUrl(url),
-          fileSize: 0,
-          width: probe.w,
-          height: probe.h,
-        })
-        added++
       }
       if (added > 0) {
         setUrlInput('')

@@ -40,7 +40,7 @@ describe('ApiService', () => {
 
   describe('setModel', () => {
     it('应该切换到有效模型', () => {
-      const result = apiService.setModel('gemini-3-pro-image-preview')
+      const result = apiService.setModel('gemini-3-pro-image')
       
       expect(result).toBe(true)
     })
@@ -101,7 +101,7 @@ describe('ApiService', () => {
 
   describe('getModelCapabilities', () => {
     it('应该返回模型能力', () => {
-      const capabilities = apiService.getModelCapabilities('gemini-3-pro-image-preview')
+      const capabilities = apiService.getModelCapabilities('gemini-3-pro-image')
       
       expect(capabilities).toBeDefined()
       expect(typeof capabilities?.referenceImage).toBe('boolean')

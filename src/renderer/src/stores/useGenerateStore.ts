@@ -80,6 +80,14 @@ export interface GenerateState {
   addReferenceImage: (dataUrl: string) => void
   removeReferenceImage: (index: number) => void
   clearReferenceImages: () => void
+  /**
+   * 按新模型的参考图制式**双向**清洗参考图,返回删除数量。
+   * - wantsInlineBase64=true(切到 nano/gemini 原生):删掉 http(s) URL,保留本地 base64。
+   * - wantsInlineBase64=false(切到万相等 URL 模型):删掉本地 data: base64,保留 URL。
+   * 两类端点参考图格式互不兼容,与其发送时偷偷转码(易卡/跨域失败),不如切换时清掉
+   * 让用户重新上传(重新上传走正确的 skipCos 策略,见 BatchRefDrop / refImageUpload)。
+   */
+  syncReferenceImagesForModel: (wantsInlineBase64: boolean) => number
   clearResults: () => void
   generate: (api: ApiActions, modelKey: string) => Promise<void>
   /**
@@ -142,6 +150,17 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
       referenceImages: s.referenceImages.filter((_, i) => i !== index),
     })),
   clearReferenceImages: () => set({ referenceImages: [] }),
+  syncReferenceImagesForModel: (wantsInlineBase64) => {
+    const before = get().referenceImages
+    const kept = before.filter((s) =>
+      wantsInlineBase64
+        ? !/^https?:\/\//i.test(s) // base64 模型:删远端 URL
+        : !/^data:/i.test(s),       // URL 模型:删本地 base64
+    )
+    const removed = before.length - kept.length
+    if (removed > 0) set({ referenceImages: kept })
+    return removed
+  },
   clearResults: () => set({ resultUrls: [], resultMeta: [], error: null }),
 
   restoreForEdit: (snapshot) => {

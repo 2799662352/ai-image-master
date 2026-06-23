@@ -853,4 +853,78 @@ describe('AgentManager codex thread id mapping (regression: invalid thread id)',
     await mgr.cancel('cm-db-id-4')
     expect(backend.cancelCalls).toEqual([CODEX_UUID])
   })
+
+  // Regression: a swallowed bootstrap start() failure left the backend client
+  // null, so the first send threw the opaque "CodexLocalBackend.send called
+  // before start". sendMessage now (re)starts lazily and surfaces the REAL
+  // startup error as a normal error event, keeping the turn recoverable.
+  it('surfaces the real backend startup error as an error event instead of the cryptic "called before start"', async () => {
+    const events: AgentStreamEvent[] = []
+    const fakeStore = { ...persistStubs, createThread: async () => ({ id: 'cm-db-id-startfail' }) } as any
+    const fakeAttachments = { ingest: async () => [] } as any
+    let sendCalled = false
+    const backend: IAgentBackend = {
+      async start() {
+        throw new Error('`wire_api = "chat"` is no longer supported')
+      },
+      async stop() {},
+      isHealthy() { return false },
+      async cancel() {},
+      async *send() { sendCalled = true },
+    }
+    const mgr = new AgentManager({
+      userDataDir: tmpDir,
+      store: fakeStore,
+      attachments: fakeAttachments,
+      eventSink: (e) => events.push(e),
+      backend,
+    })
+
+    await mgr.sendMessage({ content: 'hi', attachments: [] })
+    await flushMicrotasks(20)
+
+    expect(sendCalled).toBe(false)
+    const err = events.find((e) => e.type === 'error') as
+      | Extract<AgentStreamEvent, { type: 'error' }>
+      | undefined
+    expect(err).toBeTruthy()
+    expect(err?.error).toContain('wire_api = "chat"')
+  })
+
+  it('lazily starts an unhealthy backend on send and dedupes concurrent starts', async () => {
+    const events: AgentStreamEvent[] = []
+    const fakeStore = { ...persistStubs, createThread: async () => ({ id: 'cm-db-id-lazy' }) } as any
+    const fakeAttachments = { ingest: async () => [] } as any
+    let startCount = 0
+    let healthy = false
+    const backend: IAgentBackend = {
+      async start() {
+        startCount += 1
+        await Promise.resolve()
+        healthy = true
+      },
+      async stop() {},
+      isHealthy() { return healthy },
+      async cancel() {},
+      async *send() {
+        yield { type: 'thread_created', threadId: CODEX_UUID }
+        yield { type: 'turn_completed', threadId: CODEX_UUID, turnId: 't1' }
+      },
+    }
+    const mgr = new AgentManager({
+      userDataDir: tmpDir,
+      store: fakeStore,
+      attachments: fakeAttachments,
+      eventSink: (e) => events.push(e),
+      backend,
+    })
+
+    await Promise.all([
+      mgr.sendMessage({ content: 'a', attachments: [] }),
+      mgr.sendMessage({ content: 'b', attachments: [] }),
+    ])
+    await flushMicrotasks(20)
+
+    expect(startCount).toBe(1)
+  })
 })

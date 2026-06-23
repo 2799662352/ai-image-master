@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { memo, useMemo, useState } from 'react'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Components } from 'react-markdown'
@@ -79,7 +79,13 @@ function handleChatLinkClick(e: React.MouseEvent<HTMLAnchorElement>, href: strin
  * minimal (Tailwind only, no global CSS) so it nests correctly inside the
  * compact 13px chat layout.
  */
-export function MarkdownContent({ source }: { source: string }) {
+// Memoized on `source`: react-markdown + remark-gfm re-parse the FULL string on
+// every render. Without memo, a delta on the streaming bubble re-parsed markdown
+// for that bubble even when neighboring re-renders changed nothing. With memo,
+// only a changed `source` triggers a reparse (the streaming bubble still
+// reparses as it grows — coalescing bounds that to ~1/frame; settled bubbles
+// never reparse). Single primitive prop → default shallow compare is exact.
+function MarkdownContentImpl({ source }: { source: string }) {
   const components = useMemo<Components>(
     () => ({
       // Disable raw HTML; default react-markdown already sanitises.
@@ -161,6 +167,8 @@ export function MarkdownContent({ source }: { source: string }) {
     </div>
   )
 }
+
+export const MarkdownContent = memo(MarkdownContentImpl)
 
 interface LanguageInfo {
   isBlock: boolean

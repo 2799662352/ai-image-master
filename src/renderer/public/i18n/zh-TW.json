@@ -1198,13 +1198,13 @@
     }
   },
   "models": {
-    "gemini-3.1-flash-image-preview": {
+    "gemini-3.1-flash-image": {
       "name": "🍌 Nano Banana 2",
-      "displayName": "15s，gemini-3.1-flash-image-preview 谷歌原生端點請求，支援超多尺寸4K，$0.03/張🚀 官網低於2折"
+      "displayName": "15s，gemini-3.1-flash-image 谷歌原生端點請求，支援超多尺寸4K，$0.03/張🚀 官網低於2折"
     },
-    "gemini-3-pro-image-preview": {
+    "gemini-3-pro-image": {
       "name": "🍌 Nano Banana Pro",
-      "displayName": "60s，gemini-3-pro-image-preview 谷歌原生端點請求，支援多尺寸4K，$0.05/張🔥 官網1/5價格"
+      "displayName": "60s，gemini-3-pro-image 谷歌原生端點請求，支援多尺寸4K，$0.05/張🔥 官網1/5價格"
     },
     "gemini-2.5-flash-image": {
       "name": "🍌 Nano Banana",

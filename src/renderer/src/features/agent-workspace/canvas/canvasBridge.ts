@@ -1,6 +1,6 @@
 import { getSnapshot, loadSnapshot, type Editor } from 'tldraw'
 import type { CanvasStatePayload } from '../../../../../types/canvas'
-import { createHolder, createImageVersion, insertImageAt, insertImageIntoHolder, insertVideo, listImageShapes, readCanvasState, summarizeShape } from './shapeOps'
+import { createHolder, createImageVersion, insertImageAt, insertImageIntoHolder, insertTextNote, insertVideo, listImageShapes, readCanvasState, summarizeShape } from './shapeOps'
 import { executeCanvasCode, searchEditorApi } from './shapeExec'
 import { parseAnnotations } from './annotationParser'
 import { editPrompt, findPreferredHolder, generationPrompt, holderSize } from './promptBuilders'
@@ -258,6 +258,14 @@ class CanvasBridge {
         // Fetch ONE image by shapeId: focused metadata + an on-disk PNG path Codex
         // can open. threadId (renderer-injected) is required to persist the export.
         return this.getCanvasImage(String(params.shapeId ?? ''), typeof params.threadId === 'string' ? params.threadId : undefined)
+      case 'get_selected_canvas_video':
+        // Internal helper (no MCP surface): resolve the canvas video the user
+        // wants understood — drives the understand_canvas_video MCP tool.
+        return this.getSelectedVideo()
+      case 'add_canvas_note':
+        // Internal helper (no MCP surface): write an AI text note (e.g. the
+        // video-understanding result) onto the canvas next to its source shape.
+        return this.addCanvasNote(params)
       default:
         throw new Error(`Unknown canvas tool: ${toolName}`)
     }
@@ -347,6 +355,70 @@ class CanvasBridge {
       assetUrl: summary.assetUrl ?? null,
       imagePath,
     }
+  }
+
+  /**
+   * Resolve the VIDEO the user wants understood from the canvas: the selected
+   * video shape, or — when nothing video is selected — the single video on the
+   * page. Returns its best source for understanding: PREFER the on-disk
+   * assetPath (the main process can read it and upload to COS), else the asset
+   * src/url. Falls back to the backing tldraw asset for videos pasted/dropped
+   * without our meta. Structured `{ ok:false, error }` (never throws) so
+   * understand_canvas_video can tell the user to select a video. This is the
+   * "理解画布上选中的视频" channel — the canvas side exposing the selected
+   * clip's source to understand_video.
+   */
+  async getSelectedVideo(): Promise<
+    | { ok: true; shapeId: string; assetPath: string | null; assetUrl: string | null; title: string | null }
+    | { ok: false; error: string }
+  > {
+    const editor = this.requireEditor()
+    const state = this.state()
+    let target = state.selection.shapes.find((s) => s.type === 'video')
+    if (!target) {
+      const videos = state.shapes.filter((s) => s.type === 'video')
+      if (videos.length === 0) return { ok: false, error: '画布上没有视频。先把视频拖到画布(或用 insert_video 放一个)再试。' }
+      if (videos.length > 1) return { ok: false, error: `画布上有 ${videos.length} 个视频,请先在画布上选中要理解的那一个。` }
+      target = videos[0]
+    }
+    let assetPath = typeof target.assetPath === 'string' && target.assetPath ? target.assetPath : null
+    let assetUrl = typeof target.assetUrl === 'string' && target.assetUrl ? target.assetUrl : null
+    if (!assetPath && !assetUrl) {
+      const shape = editor.getShape(target.id as never) as { props?: { assetId?: string } } | undefined
+      const assetId = shape?.props?.assetId
+      const asset = assetId ? (editor.getAsset(assetId as never) as { props?: { src?: unknown }; meta?: { assetPath?: unknown } } | undefined) : undefined
+      if (asset) {
+        if (typeof asset.meta?.assetPath === 'string') assetPath = asset.meta.assetPath
+        if (!assetUrl && typeof asset.props?.src === 'string') assetUrl = asset.props.src
+      }
+    }
+    if (!assetPath && !assetUrl) return { ok: false, error: '选中的视频没有可用的源(无 assetPath/assetUrl),无法理解。' }
+    const title = typeof target.meta?.title === 'string' ? target.meta.title : null
+    return { ok: true, shapeId: target.id, assetPath, assetUrl, title }
+  }
+
+  /**
+   * Write an AI text note onto the canvas (e.g. a video-understanding result),
+   * positioned next to its source shape. safeWrite-wrapped so a bad write is
+   * reported instead of crashing the tldraw tree. Drives the "把理解内容展示在
+   * 画布上" half of understand_canvas_video.
+   */
+  async addCanvasNote(
+    params: Record<string, unknown>,
+  ): Promise<{ ok: true; shapeId: string } | { ok: false; failed: true; tool: string; error: string }> {
+    const editor = this.requireEditor()
+    return this.safeWrite('add_canvas_note', () => {
+      const res = insertTextNote(editor, {
+        text: String(params.text ?? ''),
+        title: typeof params.title === 'string' ? params.title : undefined,
+        nearShapeId: typeof params.nearShapeId === 'string' ? params.nearShapeId : undefined,
+        x: typeof params.x === 'number' ? params.x : undefined,
+        y: typeof params.y === 'number' ? params.y : undefined,
+        width: typeof params.width === 'number' ? params.width : undefined,
+        role: typeof params.role === 'string' ? params.role : undefined,
+      })
+      return { ok: true as const, shapeId: res.shapeId }
+    })
   }
 
   private canvasApi(): CanvasCheckpointApi | undefined {

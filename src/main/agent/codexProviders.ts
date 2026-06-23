@@ -91,15 +91,27 @@ const RIGHTCODE_PRO_PRESET: ProviderPreset = {
 }
 
 /**
- * Provider id + config for the qwen3.7-max-dashscope UNDERSTANDING capability
- * (Path B). This is NOT a selectable active agent provider — it is registered
- * as an EXTRA `[model_providers.qwen]` table so a subagent can run on it via
+ * Provider id + config for the qwen UNDERSTANDING capability (Path B). This is
+ * NOT a selectable active agent provider — it is registered as an EXTRA
+ * `[model_providers.qwen]` table so a subagent can run on it via
  * `modelProvider="qwen"` for video/document/web understanding. It rides the
  * same new-api gateway + Miau token as image generation:
  *  - base_url: the antigravity new-api gateway's OpenAI-compatible /v1 root;
  *  - env_key:  MIAU_API_KEY (injected at spawn from the persisted Miau token,
  *              stored under apiKeys['qwen']);
- *  - wire_api: "chat" (new-api proxies qwen over /v1/chat/completions).
+ *  - wire_api: "responses" — MANDATORY. Codex **removed** `wire_api = "chat"`
+ *    (openai/codex#7782; hard error since ~Feb 2026). A "chat" value here made
+ *    `codex app-server` exit code 1 at config load, which bricked the ENTIRE
+ *    backend (every method threw "called before start"). The gateway must
+ *    expose `/v1/responses` for a qwen *subagent* to work. NOTE: the primary
+ *    understanding path does NOT depend on this provider at all — the
+ *    `understand_video/document/web_research/canvas_video` MCP tools call the
+ *    gateway's `/v1/chat/completions` directly via the renderer
+ *    (ApiService.understand), so understanding keeps working regardless.
+ *
+ * Model defaults to `qwen3.7-max-dashscope` (stronger). A subagent may override
+ * per-spawn with `model="qwen3.7-plus-dashscope"` for the cheaper model (the
+ * launch config sets the provider's default; the spawn can pin model).
  */
 export const QWEN_UNDERSTAND_PROVIDER_ID = 'qwen' as const
 
@@ -109,7 +121,7 @@ export const QWEN_UNDERSTAND_PROVIDER: CodexProviderConfig = {
   baseUrl: 'http://175.178.198.17:3000/v1',
   envKey: 'MIAU_API_KEY',
   model: 'qwen3.7-max-dashscope',
-  wireApi: 'chat',
+  wireApi: 'responses',
 }
 
 export const BUILTIN_PROVIDER_PRESETS: readonly ProviderPreset[] = Object.freeze([

@@ -58,13 +58,15 @@ export interface CodexProviderConfig {
   /** Optional. When true, becomes `-c model_providers.<id>.requires_openai_auth=true`. */
   requiresOpenaiAuth?: boolean
   /**
-   * Optional wire protocol. The ACTIVE provider always pins `"responses"` (see
-   * the class doc above). EXTRA providers (registered via
-   * {@link CodexLaunchOptions.extraProviders} for per-subagent selection)
-   * default to `"chat"` because OpenAI-compatible gateways like new-api proxy
-   * the qwen DashScope model over `/v1/chat/completions`, not `/v1/responses`.
+   * Optional wire protocol. Only `"responses"` is valid: Codex **removed**
+   * `wire_api = "chat"` support (deprecated in openai/codex#7782, hard error
+   * since ~Feb 2026 — a `chat` value makes `codex app-server` exit code 1 at
+   * config load, which previously bricked the entire backend). The ACTIVE
+   * provider always pins `"responses"`; EXTRA providers must too. A chat-only
+   * gateway therefore CANNOT be registered as a Codex model_provider anymore —
+   * route it through the MCP/renderer layer (`/v1/chat/completions`) instead.
    */
-  wireApi?: 'chat' | 'responses'
+  wireApi?: 'responses'
   /**
    * Optional. Each entry becomes `-c <key>=<value>`. Use for top-level
    * scalar overrides not modelled above (e.g. `disable_response_storage`,
@@ -181,8 +183,9 @@ export function appendProviderArgs(
  * Register EXTRA provider tables for per-subagent selection (Path B). Unlike
  * {@link appendProviderArgs}, this NEVER emits the top-level `model_provider`
  * or `model` — it only defines `[model_providers.<id>]` so a subagent started
- * with `modelProvider="<id>"` resolves to this gateway/model. wire_api defaults
- * to `"chat"` (new-api proxies qwen over chat/completions).
+ * with `modelProvider="<id>"` resolves to this gateway/model. wire_api always
+ * resolves to `"responses"` — Codex removed `"chat"` (openai/codex#7782), and
+ * emitting it makes the whole `app-server` exit code 1 at config load.
  */
 export function appendExtraProviders(
   args: string[],
@@ -195,7 +198,7 @@ export function appendExtraProviders(
       '-c', `model_providers.${id}.name="${p.name}"`,
       '-c', `model_providers.${id}.base_url="${p.baseUrl}"`,
       '-c', `model_providers.${id}.env_key="${p.envKey}"`,
-      '-c', `model_providers.${id}.wire_api="${p.wireApi ?? 'chat'}"`,
+      '-c', `model_providers.${id}.wire_api="${p.wireApi ?? 'responses'}"`,
     )
     if (p.requiresOpenaiAuth) {
       args.push('-c', `model_providers.${id}.requires_openai_auth=true`)

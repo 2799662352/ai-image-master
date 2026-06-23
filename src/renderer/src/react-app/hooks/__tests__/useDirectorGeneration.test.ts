@@ -23,7 +23,7 @@ describe('useDirectorGeneration', () => {
       report: null,
     })
     window.localStorage.clear()
-    window.localStorage.setItem('current_model', 'gemini-3.1-flash-image-preview')
+    window.localStorage.setItem('current_model', 'gemini-3.1-flash-image')
     useDirectorStore.getState().reset()
     useDirectorStore.getState().setVisionModel('gemini-3-flash-preview')
   })

@@ -220,6 +220,11 @@ export class AgentToolExecutor {
       case 'list_checkpoints':
       case 'canvas_exec':
       case 'canvas_search':
+      // Internal helpers (no MCP surface): driven by the understand_canvas_video
+      // main-side orchestrator via router.call to read the selected canvas video
+      // and write the understanding result back as a canvas note.
+      case 'get_selected_canvas_video':
+      case 'add_canvas_note':
         return this.callCanvas(toolName, params)
       case 'understand_video':
       case 'understand_document':
@@ -241,15 +246,20 @@ export class AgentToolExecutor {
     params: Record<string, unknown>,
   ): Promise<{ success: true; text: string } | { success: false; error: string }> {
     const api = ServiceRegistry.getRequired<{
-      understand: (input: UnderstandInput) => Promise<
-        { success: true; text: string } | { success: false; error: string }
-      >
+      understand: (
+        input: UnderstandInput,
+        opts?: { model?: string },
+      ) => Promise<{ success: true; text: string } | { success: false; error: string }>
     }>(SERVICE_KEYS.API)
+
+    // Optional model switch ('plus' | 'max' | full -dashscope name). Non-allow-listed
+    // values fall back to the default (plus) inside ApiService.resolveUnderstandModel.
+    const model = typeof params.model === 'string' ? params.model : undefined
 
     if (toolName === 'web_research') {
       const query = typeof params.query === 'string' ? params.query : ''
       if (!query) return { success: false, error: 'web_research 缺少 query。' }
-      return api.understand({ kind: 'web', query })
+      return api.understand({ kind: 'web', query }, { model })
     }
 
     const question = typeof params.question === 'string' ? params.question : ''
@@ -260,15 +270,19 @@ export class AgentToolExecutor {
 
     if (toolName === 'understand_video') {
       const fps = typeof params.fps === 'number' ? params.fps : undefined
-      return api.understand({ kind: 'video', mediaUrl: media.url, question, fps })
+      return api.understand({ kind: 'video', mediaUrl: media.url, question, fps }, { model })
     }
-    return api.understand({ kind: 'document', mediaUrl: media.url, question })
+    return api.understand({ kind: 'document', mediaUrl: media.url, question }, { model })
   }
 
   /**
-   * 解析理解工具的媒体源。`*_url`(http/https/data)直接用;`*_path`(本机)
-   * 目前不在此自动上传 —— qwen 上游只认公网 URL,故返回结构化错误提示改传 URL。
-   * (自动转公网 URL 留作后续增强,见 plan Task 2 备注。)
+   * 解析理解工具的媒体源。`*_url`(http/https/data)直接用。
+   *
+   * 注:本机 `*_path` → 公网 URL 的自动上传(走历史 COS 桶)已在 **main 端**
+   * understandTools.runUnderstand 里完成 —— 调到这里时 main 已把本机路径转成
+   * `*_url` 了,所以这里通常只会见到 URL。下面的本机路径分支是**防御性兜底**
+   * (理论上不会命中:所有调用都经 main 的 router.call,而 main 先做了转换);
+   * 万一未经 main 直达,则回结构化错误提示用 URL。
    */
   private resolveMediaUrl(
     params: Record<string, unknown>,
@@ -284,7 +298,7 @@ export class AgentToolExecutor {
     if (typeof localPath === 'string' && localPath.length > 0) {
       return {
         ok: false,
-        error: `本机文件 (${pathKey}) 暂无法直接交给 qwen —— 它只接受公网可达 URL。请改用 ${urlKey} 传入一个 http(s) URL(或先把文件上传后用其 URL)。`,
+        error: `本机文件 (${pathKey}) 未被 main 端转成公网 URL(异常路径);qwen 只接受公网可达 URL,请改用 ${urlKey}。`,
       }
     }
     return { ok: false, error: `缺少 ${urlKey} 或 ${pathKey}。` }

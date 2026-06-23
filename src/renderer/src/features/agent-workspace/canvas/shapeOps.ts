@@ -306,6 +306,50 @@ export async function insertVideo(
 }
 
 /**
+ * Drop a free-floating TEXT note onto the canvas (fixed-width, wrapped) — used to
+ * surface an AI analysis (e.g. a video-understanding result) right next to its
+ * source shape. When `nearShapeId` is given (and no explicit x/y), it lands to
+ * the RIGHT of that shape so it reads as a caption for the understood video.
+ * tldraw's text shape needs `autoSize:false` + a `w` to WRAP long markdown-ish
+ * content instead of stretching into one endless line. Same atomic editor.run +
+ * best-effort zoom-to-fit discipline as the media inserts.
+ */
+export function insertTextNote(
+  editor: Editor,
+  payload: { text: string; title?: string; nearShapeId?: string; x?: number; y?: number; width?: number; role?: string },
+): { shapeId: string; bounds: Bounds } {
+  const text = String(payload.text ?? '').trim()
+  if (!text) throw new Error('insertTextNote requires non-empty text')
+  const title = payload.title && String(payload.title).trim() ? String(payload.title).trim() : undefined
+  const body = title ? `${title}\n\n${text}` : text
+  let x = typeof payload.x === 'number' ? payload.x : 100
+  let y = typeof payload.y === 'number' ? payload.y : 100
+  if ((typeof payload.x !== 'number' || typeof payload.y !== 'number') && payload.nearShapeId) {
+    const b = editor.getShapePageBounds(payload.nearShapeId as never)
+    if (b) {
+      x = b.x + b.w + 40
+      y = b.y
+    }
+  }
+  const w = typeof payload.width === 'number' && payload.width > 0 ? payload.width : 360
+  const shapeId = createShapeId(`note_${crypto.randomUUID().slice(0, 8)}`) as never
+  editor.run(() => {
+    editor.createShape({
+      id: shapeId,
+      type: 'text',
+      x,
+      y,
+      props: { richText: toRichText(body), w, autoSize: false, color: 'black', size: 's', textAlign: 'start' },
+      meta: cleanMeta({ aiCanvasRole: payload.role ?? 'note', title, sourceShapeId: payload.nearShapeId }),
+    } as never)
+    editor.bringToFront([shapeId])
+    editor.select(shapeId)
+  })
+  zoomToFitShapes(editor, [String(shapeId)])
+  return { shapeId: String(shapeId), bounds: { x, y, w, h: 0 } }
+}
+
+/**
  * Place a standalone image at an arbitrary page point (NOT inside a holder) —
  * used when the user drags a file from the workspace tree onto the canvas. Same
  * atomic asset+shape transaction + zoom-to-fit as insertImageIntoHolder, but it

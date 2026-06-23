@@ -227,7 +227,7 @@ export class ComparePage extends BasePage {
       rightSelect.add(rightOption)
     })
 
-    const defaultLeft = 'gemini-3-pro-image-preview'
+    const defaultLeft = 'gemini-3-pro-image'
     const defaultRight = 'seedream-4-5-251128'
 
     console.log(`🎯 尝试设置默认模型: 左=${defaultLeft}, 右=${defaultRight}`)

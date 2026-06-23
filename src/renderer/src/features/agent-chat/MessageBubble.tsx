@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { memo, useCallback, useState } from 'react'
 import type { Message } from '../../../../types/agent-timeline'
 import { getMessageText } from '../../../../types/agent-timeline'
 import { EvidenceStack } from './evidence/EvidenceStack'
@@ -59,7 +59,13 @@ function RewindIcon({ className }: { className?: string }) {
   )
 }
 
-export function MessageBubble({ message }: { message: Message }) {
+// Memoized so a streaming delta (which rebuilds ONLY the last message object)
+// doesn't re-render every prior bubble. The reducer preserves referential
+// identity of untouched messages (reduceThreadSlice + upsertItemInLastMessage),
+// so prior bubbles get the same `message` ref and skip re-render. The store
+// slices this subscribes to (isRunning / editingMessageId) only change at
+// turn boundaries, not per-delta. See codex-lag investigation.
+function MessageBubbleImpl({ message }: { message: Message }) {
   const isUser = message.role === 'user'
   const groups = groupTimelineItemsForChat(message.items)
   const label = isUser ? 'You' : 'Codex'
@@ -205,3 +211,5 @@ export function MessageBubble({ message }: { message: Message }) {
     </article>
   )
 }
+
+export const MessageBubble = memo(MessageBubbleImpl)

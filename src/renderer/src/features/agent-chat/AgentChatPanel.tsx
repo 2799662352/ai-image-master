@@ -14,6 +14,7 @@ import { CodexApprovalPrompt } from './CodexApprovalPrompt'
 import { CodexStatusPanel } from './CodexStatusPanel'
 import { NoticesBanner } from './NoticesBanner'
 import { findModel } from './models'
+import { createEventCoalescer } from './eventCoalescer'
 import { useAgentChatStore } from './store'
 import { useAgentWorkspaceStore } from '../agent-workspace/useAgentWorkspaceStore'
 import { FileExplorerPanel } from '../file-explorer/FileExplorerPanel'
@@ -75,7 +76,17 @@ export function AgentChatPanel() {
   useEffect(() => {
     const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
     if (!agent) return undefined
-    return agent.onEvent(applyEvent)
+    // Coalesce high-frequency `item_delta` events to one apply per frame so a
+    // fast token stream no longer triggers a zustand set()/re-render per token.
+    // Structural/terminal events flush immediately (order-preserving), so the
+    // authoritative final text (item_completed) is never delayed. See
+    // eventCoalescer.ts + openai/codex#15759 (deltas arrive at model speed).
+    const coalescer = createEventCoalescer<AgentStreamEvent>(applyEvent)
+    const unsubscribe = agent.onEvent((event) => coalescer.push(event))
+    return () => {
+      unsubscribe?.()
+      coalescer.dispose()
+    }
   }, [applyEvent])
 
   useEffect(() => {

@@ -596,6 +596,30 @@ describe('useBatchStore', () => {
       expect(s.multiText).toBe('keep-multi')
     })
 
+    it('syncRefImagesForModel(true): 删远端 URL,保留本地 base64', () => {
+      useBatchStore.setState({
+        refImages: [
+          { id: '1', base64: 'https://cos.example.com/a.png', fileName: 'a', fileSize: 0 },
+          { id: '2', base64: 'data:image/png;base64,XXX', fileName: 'b', fileSize: 0 },
+        ],
+      })
+      const removed = useBatchStore.getState().syncRefImagesForModel(true)
+      expect(removed).toBe(1)
+      expect(useBatchStore.getState().refImages.map((r) => r.id)).toEqual(['2'])
+    })
+
+    it('syncRefImagesForModel(false): 删本地 base64,保留远端 URL', () => {
+      useBatchStore.setState({
+        refImages: [
+          { id: '1', base64: 'https://cos.example.com/a.png', fileName: 'a', fileSize: 0 },
+          { id: '2', base64: 'data:image/png;base64,XXX', fileName: 'b', fileSize: 0 },
+        ],
+      })
+      const removed = useBatchStore.getState().syncRefImagesForModel(false)
+      expect(removed).toBe(1)
+      expect(useBatchStore.getState().refImages.map((r) => r.id)).toEqual(['1'])
+    })
+
     it('rebuilds referenceImages as BatchRefImage[] from raw base64 array', () => {
       useBatchStore.setState({ refImages: [] })
 

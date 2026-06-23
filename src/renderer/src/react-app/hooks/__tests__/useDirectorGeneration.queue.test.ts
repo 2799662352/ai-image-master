@@ -63,7 +63,7 @@ describe('useDirectorGeneration queue (v4.2.7)', () => {
     clearPauseRequestMock.mockReset()
 
     window.localStorage.clear()
-    window.localStorage.setItem('current_model', 'gemini-3.1-flash-image-preview')
+    window.localStorage.setItem('current_model', 'gemini-3.1-flash-image')
 
     const store = useDirectorStore.getState()
     store.reset()

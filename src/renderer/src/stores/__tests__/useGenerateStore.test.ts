@@ -64,6 +64,32 @@ describe('useGenerateStore', () => {
     expect(useGenerateStore.getState().referenceImages).toEqual([])
   })
 
+  describe('syncReferenceImagesForModel — 双向清洗', () => {
+    it('切到 base64 内联模型(true):删远端 URL,保留本地 base64', () => {
+      useGenerateStore.setState({
+        referenceImages: ['https://cos.example.com/a.png', 'data:image/png;base64,XXX'],
+      })
+      const removed = useGenerateStore.getState().syncReferenceImagesForModel(true)
+      expect(removed).toBe(1)
+      expect(useGenerateStore.getState().referenceImages).toEqual(['data:image/png;base64,XXX'])
+    })
+
+    it('切到 URL 模型(false):删本地 base64,保留远端 URL', () => {
+      useGenerateStore.setState({
+        referenceImages: ['https://cos.example.com/a.png', 'data:image/png;base64,XXX'],
+      })
+      const removed = useGenerateStore.getState().syncReferenceImagesForModel(false)
+      expect(removed).toBe(1)
+      expect(useGenerateStore.getState().referenceImages).toEqual(['https://cos.example.com/a.png'])
+    })
+
+    it('没有不兼容项时返回 0 且不改数组引用语义', () => {
+      useGenerateStore.setState({ referenceImages: ['data:image/png;base64,A'] })
+      expect(useGenerateStore.getState().syncReferenceImagesForModel(true)).toBe(0)
+      expect(useGenerateStore.getState().referenceImages).toEqual(['data:image/png;base64,A'])
+    })
+  })
+
   it('clearResults resets resultUrls and error', () => {
     useGenerateStore.setState({ resultUrls: ['http://x.jpg'], error: 'old error' })
     useGenerateStore.getState().clearResults()

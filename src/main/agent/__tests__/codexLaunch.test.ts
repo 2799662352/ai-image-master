@@ -351,7 +351,7 @@ describe('buildCodexLaunchArgs', () => {
           baseUrl: 'http://175.178.198.17:3000/v1',
           envKey: 'MIAU_API_KEY',
           model: 'qwen3.7-max-dashscope',
-          wireApi: 'chat',
+          wireApi: 'responses',
         },
       ],
     })
@@ -359,17 +359,19 @@ describe('buildCodexLaunchArgs', () => {
     // Active provider stays apiyi; the extra provider must NOT seize model_provider.
     expect(args).toContain('model_provider="apiyi"')
     expect(args).not.toContain('model_provider="qwen"')
-    // Extra provider table is registered (name / base_url / env_key / wire_api=chat).
+    // Extra provider table is registered (name / base_url / env_key / wire_api).
     expect(args).toContain('model_providers.qwen.name="Qwen (DashScope via new-api)"')
     expect(args).toContain('model_providers.qwen.base_url="http://175.178.198.17:3000/v1"')
     expect(args).toContain('model_providers.qwen.env_key="MIAU_API_KEY"')
-    expect(args).toContain('model_providers.qwen.wire_api="chat"')
+    // Codex removed wire_api="chat" (#7782) — only "responses" is ever emitted.
+    expect(args).toContain('model_providers.qwen.wire_api="responses"')
+    expect(args).not.toContain('model_providers.qwen.wire_api="chat"')
     // The extra provider's model must NOT become the global top-level model
     // (it is only used when a subagent selects modelProvider="qwen").
     expect(args).not.toContain('model="qwen3.7-max-dashscope"')
   })
 
-  it('registers extraProviders even when there is no active provider, defaulting wire_api to chat', () => {
+  it('registers extraProviders even when there is no active provider, defaulting wire_api to responses', () => {
     const args = buildCodexLaunchArgs({
       extraProviders: [
         { id: 'qwen', name: 'Qwen', baseUrl: 'http://175.178.198.17:3000/v1', envKey: 'MIAU_API_KEY' },
@@ -377,8 +379,10 @@ describe('buildCodexLaunchArgs', () => {
     })
     // No active provider selected.
     expect(args.join(' ')).not.toContain('model_provider="')
-    // Extra provider still registered with a chat wire_api default.
-    expect(args).toContain('model_providers.qwen.wire_api="chat"')
+    // Extra provider registered with the responses wire_api default (Codex
+    // removed "chat" — #7782 — so chat must never be the fallback).
+    expect(args).toContain('model_providers.qwen.wire_api="responses"')
+    expect(args).not.toContain('model_providers.qwen.wire_api="chat"')
     expect(args).toContain('model_providers.qwen.env_key="MIAU_API_KEY"')
   })
 

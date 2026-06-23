@@ -541,7 +541,7 @@ describe('CodexLocalBackend spawn env injection', () => {
           baseUrl: 'http://175.178.198.17:3000/v1',
           envKey: 'MIAU_API_KEY',
           model: 'qwen3.7-max-dashscope',
-          wireApi: 'chat',
+          wireApi: 'responses',
         },
         token: 'miau-secret',
       }),
@@ -556,7 +556,7 @@ describe('CodexLocalBackend spawn env injection', () => {
     expect(capturedEnv?.MIAU_API_KEY).toBe('miau-secret')
     expect(capturedEnv?.OPENAI_API_KEY).toBe('sk-active')
     expect(capturedArgs).toContain('model_providers.qwen.env_key="MIAU_API_KEY"')
-    expect(capturedArgs).toContain('model_providers.qwen.wire_api="chat"')
+    expect(capturedArgs).toContain('model_providers.qwen.wire_api="responses"')
     // Must NOT seize the active model_provider.
     expect(capturedArgs?.join(' ')).not.toContain('model_provider="qwen"')
     await backend.stop()

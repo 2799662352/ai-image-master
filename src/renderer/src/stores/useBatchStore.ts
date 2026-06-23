@@ -155,6 +155,13 @@ export interface BatchState {
   addRefImage: (img: BatchRefImage) => void
   removeRefImage: (id: string) => void
   clearRefImages: () => void
+  /**
+   * 按新模型的参考图制式**双向**清洗参考图,返回删除数量。
+   * - wantsInlineBase64=true(切到 nano/gemini 原生):删掉 http(s) URL,保留本地 base64。
+   * - wantsInlineBase64=false(切到万相等 URL 模型):删掉本地 data: base64,保留 URL。
+   * 让用户重新上传(走正确的 skipCos 策略),不在发送时偷偷转码。
+   */
+  syncRefImagesForModel: (wantsInlineBase64: boolean) => number
 }
 
 export const initialState = {
@@ -634,6 +641,17 @@ export const useBatchStore = create<BatchState>((set, get) => ({
   removeRefImage: (id) =>
     set((s) => ({ refImages: s.refImages.filter((r) => r.id !== id) })),
   clearRefImages: () => set({ refImages: [] }),
+  syncRefImagesForModel: (wantsInlineBase64) => {
+    const before = get().refImages
+    const kept = before.filter((r) =>
+      wantsInlineBase64
+        ? !/^https?:\/\//i.test(r.base64) // base64 模型:删远端 URL
+        : !/^data:/i.test(r.base64),       // URL 模型:删本地 base64
+    )
+    const removed = before.length - kept.length
+    if (removed > 0) set({ refImages: kept })
+    return removed
+  },
 }))
 
 // ============== 异步 COS 上传结果路由 + history 写入 ==============
