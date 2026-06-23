@@ -43,7 +43,8 @@ describe('ApiService signal support', () => {
 
     expect(mockFetch).toHaveBeenCalled()
     const fetchCall = mockFetch.mock.calls[0]
-    expect(fetchCall[1]).toHaveProperty('signal', controller.signal)
+    expect(fetchCall[1]?.signal).toBeInstanceOf(AbortSignal)
+    expect(fetchCall[1]?.signal.aborted).toBe(false)
   })
 
   it('generateImage should abort when signal is aborted', async () => {
@@ -78,5 +79,45 @@ describe('ApiService signal support', () => {
 
     const result = await promise
     expect(result.success).toBe(false)
+  })
+
+  it('normalizes legacy gemini image preview model keys before lookup/generation', async () => {
+    const mockResponse = new Response(
+      JSON.stringify({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  inlineData: {
+                    mimeType: 'image/png',
+                    data: 'AAAA',
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    )
+    const mockFetch = vi.fn().mockResolvedValue(mockResponse)
+    globalThis.fetch = mockFetch
+
+    const { ApiService } = await import('../ApiService')
+    const service = new ApiService() as any
+    service.apiKey = 'test-key'
+    service.currentSite = 'b-apiyi'
+
+    const result = await service.generateImage({
+      prompt: 'test prompt',
+      model: 'gemini-3.1-flash-image-preview',
+      count: 1,
+    })
+
+    expect(result.success).toBe(true)
+    expect(mockFetch).toHaveBeenCalled()
+    expect(String(mockFetch.mock.calls[0][0])).toContain('gemini-3.1-flash-image:generateContent')
+    expect(String(mockFetch.mock.calls[0][0])).not.toContain('gemini-3.1-flash-image-preview')
   })
 })

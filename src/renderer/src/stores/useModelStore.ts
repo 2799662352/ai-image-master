@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { normalizeModelKey } from '../utils/modelKeyAliases'
 
 export interface ModelInfo {
   name: string
@@ -15,10 +16,14 @@ interface ModelState {
 }
 
 export const useModelStore = create<ModelState>()((set) => ({
-  currentModelKey: localStorage.getItem('current_model') || '',
+  currentModelKey: normalizeModelKey(localStorage.getItem('current_model') || ''),
   models: {},
   setModels: (models) => set({ models }),
-  switchModel: (key) => set({ currentModelKey: key }),
+  switchModel: (key) => set((state) => {
+    const resolved = normalizeModelKey(key)
+    if (!state.models[resolved]) return { currentModelKey: '' }
+    return { currentModelKey: resolved }
+  }),
 }))
 
 // 终极同步: 监听 ApiService.setModel() 派发的 CustomEvent

@@ -4,6 +4,8 @@
  * 处理与 AI 图片生成 API 的所有通信
  */
 
+import { normalizeModelKey } from '../../utils/modelKeyAliases'
+
 export interface ApiSite {
   name: string
   baseURL: string
@@ -754,7 +756,7 @@ export class ApiService {
     this.apiSites = { ...BUILT_IN_SITES, ...this.customSites }
     this.models = { ...DEFAULT_MODELS }
     this.currentSite = this.getStoredSite() || 'b-apiyi'
-    this.currentModel = this.getStoredModel() || 'gemini-3-pro-image'
+    this.currentModel = this.resolveModelKey(this.getStoredModel() || 'gemini-3-pro-image')
     this.apiKey = this.getStoredApiKey(this.currentSite)
     this.visionApiKey = this.getStoredVisionApiKey(this.currentSite)
     // One-time Path B bridge: push any already-configured Miau token to main so
@@ -773,7 +775,7 @@ export class ApiService {
       return { success: false, error: '请先设置 API Key' }
     }
 
-    const modelKey = model || this.currentModel
+    const modelKey = this.resolveModelKey(model || this.currentModel)
     const modelConfig = this.models[modelKey]
     const site = this.apiSites[this.currentSite]
 
@@ -2091,24 +2093,15 @@ export class ApiService {
     return true
   }
 
-  /**
-   * 旧 → 新 模型 key 别名:gemini 系列去掉历史的 `-preview` 后缀(上游端点本就用无 preview
-   * 的名字)。用户已存的 current_model / 历史记录里的旧 key 仍能解析,避免选择丢失。
-   */
-  private static readonly MODEL_KEY_ALIASES: Record<string, string> = {
-    'gemini-3.1-flash-image-preview': 'gemini-3.1-flash-image',
-    'gemini-3-pro-image-preview': 'gemini-3-pro-image',
-  }
-
   private resolveModelKey(key: string): string {
-    return ApiService.MODEL_KEY_ALIASES[key] ?? key
+    return normalizeModelKey(key)
   }
 
   /**
    * 获取当前模型 key
    */
   getModelKey(): string {
-    return this.currentModel
+    return this.resolveModelKey(this.currentModel)
   }
 
   /**
@@ -2129,7 +2122,7 @@ export class ApiService {
    * 获取当前模型
    */
   getCurrentModel(): ModelConfig | undefined {
-    return this.models[this.currentModel]
+    return this.models[this.resolveModelKey(this.currentModel)]
   }
 
   /**
