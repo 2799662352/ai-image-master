@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   CATIMATION_IMAGE_SKILL,
   CATIMATION_BRAINSTORM_SKILL,
+  CATIMATION_UNDERSTAND_SKILL,
   FIRST_PARTY_SKILLS,
   installFirstPartySkills,
   type FirstPartySkill,
@@ -233,6 +234,47 @@ describe('installFirstPartySkills', () => {
         'utf8',
       )
       expect(written).toBe(CATIMATION_BRAINSTORM_SKILL.content)
+    })
+  })
+
+  describe('CATIMATION_UNDERSTAND_SKILL', () => {
+    it('is shipped in FIRST_PARTY_SKILLS with valid frontmatter', () => {
+      expect(FIRST_PARTY_SKILLS).toContain(CATIMATION_UNDERSTAND_SKILL)
+      expect(CATIMATION_UNDERSTAND_SKILL.name).toBe('catimation-understand')
+      expect(CATIMATION_UNDERSTAND_SKILL.name).toMatch(/^[a-z0-9-]+$/)
+      expect(CATIMATION_UNDERSTAND_SKILL.content.startsWith('---\n')).toBe(true)
+      expect(CATIMATION_UNDERSTAND_SKILL.content).toMatch(/\nname:\s*catimation-understand/)
+      expect(CATIMATION_UNDERSTAND_SKILL.content).toMatch(/\ndescription:\s*\S/)
+    })
+
+    it('keeps the always-injected description concise (progressive disclosure)', () => {
+      const desc = frontmatterDescription(CATIMATION_UNDERSTAND_SKILL.content)
+      expect(desc.length).toBeGreaterThan(0)
+      expect(desc.length).toBeLessThanOrEqual(500)
+    })
+
+    it('documents the three understand tools, the audio→MP4 fallback, and the qwen subagent', () => {
+      const c = CATIMATION_UNDERSTAND_SKILL.content
+      expect(c).toContain('understand_video')
+      expect(c).toContain('understand_document')
+      expect(c).toContain('web_research')
+      // audio is not native → ffmpeg → MP4 → understand_video
+      expect(c).toContain('ffmpeg')
+      expect(c).toContain('MP4')
+      // Path B: spawn a subagent pinned to the qwen provider/model
+      expect(c).toContain('qwen3.7-max-dashscope')
+      expect(c).toContain('modelProvider')
+    })
+
+    it('installs cleanly alongside the other first-party skills', async () => {
+      const officialRoot = await makeTempRoot()
+      const report = await installFirstPartySkills({ officialRoot })
+      expect(report.installed).toContain('catimation-understand')
+      const written = await readFile(
+        path.join(officialRoot, 'catimation-understand', 'SKILL.md'),
+        'utf8',
+      )
+      expect(written).toBe(CATIMATION_UNDERSTAND_SKILL.content)
     })
   })
 })

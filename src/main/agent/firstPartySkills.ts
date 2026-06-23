@@ -1096,6 +1096,82 @@ export const CATIMATION_CANVAS_SKILL: FirstPartySkill = {
   content: CATIMATION_CANVAS_SKILL_CONTENT,
 }
 
+const CATIMATION_UNDERSTAND_SKILL_CONTENT = `---
+name: catimation-understand
+description: >-
+  Understand video / documents / and research the web with qwen3.7-max-dashscope
+  inside CATIMATION. Trigger when the user wants to 理解/分析视频, 看懂/读 a 文档/PDF,
+  or 上网查/搜一下/扒资料/最新消息. Also the path for "understand this audio" — audio is
+  NOT native, so convert it to MP4 first (ffmpeg) and use understand_video. Uses
+  the understand_video / understand_document / web_research tools; for heavy or
+  delegated jobs, spawn a subagent pinned to the qwen provider.
+---
+
+# CATIMATION Understand — video / document / web via qwen3.7-max-dashscope
+
+These tools run on \`qwen3.7-max-dashscope\` through the same new-api gateway and
+Miau token used for image/video generation. They return Chinese text answers.
+
+## When to use
+
+- "理解 / 分析这个视频"、"这段视频在干什么" → \`understand_video\`
+- "读一下这份文档 / PDF 讲了什么" → \`understand_document\`
+- "上网查 / 搜一下 / 最新消息 / 扒点资料" → \`web_research\`
+
+## Tools
+
+### understand_video { video_url, question, fps? }
+Pass a **public** http(s) \`video_url\` (qwen only accepts publicly reachable URLs).
+A local \`video_path\` is rejected with a hint — upload the file and pass its URL.
+\`fps\` is an optional sampling hint (reserved). Returns a description of
+画面/动作/字幕/剧情.
+
+### understand_document { file_url, question }
+Pass a **public** \`file_url\`. Native document understanding is only PARTIAL
+upstream — for best results render the page(s) to image(s) and pass an image URL,
+or extract the text and just ask normally.
+
+### web_research { query }
+Natural-language query; the tool sets \`enable_search\` so the answer incorporates
+live web results. Prefer this over guessing from stale memory; cite what you used.
+
+## Audio is NOT native — convert to MP4 first
+
+qwen3.7-max-dashscope does not accept audio input (upstream returns
+\`incorrect modal 'audio'\`). To "understand" an audio file:
+
+1. Use the **ffmpeg-win** skill to convert the audio to an **MP4** (audio track +
+   a placeholder/waveform video), e.g.
+   \`ffmpeg -i in.mp3 -f lavfi -i color=c=black:s=640x360 -shortest -c:v libx264 out.mp4\`.
+2. Make the MP4 reachable as a public URL.
+3. Call \`understand_video\` with that URL and the user's question.
+
+State clearly that audio understanding is best-effort via this MP4 workaround.
+
+## Path B — delegate to a qwen subagent (only when explicitly asked)
+
+For heavy/parallel/independent understanding jobs (e.g. "分头读这三份文档并汇总",
+"开个子代理去查资料"), and ONLY when the user explicitly asks for delegation or
+parallel work, spawn a subagent **pinned to the qwen provider**:
+\`modelProvider="qwen"\`, \`model="qwen3.7-max-dashscope"\`. The subagent does the
+understanding/research and reports a distilled result; you synthesize.
+
+Discipline: do NOT spawn subagents just because a task could be split — user
+intent controls it. If the Miau token is not configured, the qwen provider is
+unavailable; fall back to calling the three tools directly and tell the user.
+
+## Boundaries
+
+- Media must be a public URL (local paths are rejected by the tools).
+- Documents: partial support; degrade to page-image or extracted-text + ask.
+- On a clean result, do NOT retry; just answer the user.
+`
+
+export const CATIMATION_UNDERSTAND_SKILL: FirstPartySkill = {
+  name: 'catimation-understand',
+  content: CATIMATION_UNDERSTAND_SKILL_CONTENT,
+}
+
 /**
  * First-party skills no longer shipped by default. If an older app version
  * installed an app-managed copy, remove it on startup so Codex stops discovering
@@ -1110,4 +1186,5 @@ export const FIRST_PARTY_SKILLS: FirstPartySkill[] = [
   CATIMATION_PORTRAIT_LIBRARY_SKILL,
   CATIMATION_BRAINSTORM_SKILL,
   CATIMATION_CANVAS_SKILL,
+  CATIMATION_UNDERSTAND_SKILL,
 ]
