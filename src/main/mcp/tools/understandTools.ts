@@ -10,8 +10,9 @@
 // - 媒体最终只接受公网可达 URL(qwen 上游限制),但 main 端会自动兜底:
 //   * http(s) URL → 原样透传;
 //   * data: URL    → 中转到历史 COS 桶换公网 URL;
-//   * 本机 *_path  → 读取字节后中转到历史 COS 桶(image-history/media-relay/*)
-//     换公网 URL,再交给渲染层。复用出图历史同一条 COS 上传链路(mediaRelay)。
+//   * 本机 *_path  → 流式分片上传到历史 COS 桶(image-history/media-relay/*,
+//     不把整文件读进内存)换公网 URL,再交给渲染层。复用 COS STS 上传链路
+//     (mediaRelay.relayFileToCos)。支持到 qwen 上游客观上限 2GB / 2 小时。
 // - 音频不原生支持:skill「catimation-understand」指导先 ffmpeg 转 MP4 再走
 //   understand_video。
 // - 联网用 web_research(渲染层置 enable_search:true)。
@@ -22,7 +23,7 @@ import { promises as fs } from 'node:fs'
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/server'
 import type { ToolRouter } from '../ToolRouter'
-import { relayBufferToCos, relayDataUrlToCos } from '../../services/tencent/mediaRelay'
+import { relayDataUrlToCos, relayFileToCos } from '../../services/tencent/mediaRelay'
 
 /** 与 imageTools/videoTools 一致的 codex threadId 提取。 */
 function extractCodexThreadId(ctx: unknown): string | undefined {
@@ -59,7 +60,10 @@ function formatResult(tool: string, r: UnderstandResult): string {
 // qwen 上游只接受公网可达 URL。我们不再让用户手动改传 URL,而是在 main 端
 // (有文件系统访问)读取本机 *_path → 中转到历史 COS 桶 → 拿 https URL。
 
-const MAX_RELAY_BYTES = 200 * 1024 * 1024 // 200MB:超过则提示压缩,避免一次性读爆内存
+// 客观上限 = qwen3.7 系列视频理解的上游限制(2GB / 2 小时)。
+// 不再是「整文件读进内存」逼出来的 200MB 自设闸门 —— 本机文件改走 relayFileToCos
+// 流式分片上传(STS 鉴权,不占内存),所以这里可以放到真正的 2GB。
+const MAX_RELAY_BYTES = 2 * 1024 * 1024 * 1024 // 2GB:qwen3.7-plus / max 的视频上限
 
 const EXT_MIME: Record<string, string> = {
   // video
@@ -115,11 +119,13 @@ async function resolveMediaUrl(
       if (stat.size > MAX_RELAY_BYTES) {
         return {
           ok: false,
-          error: `本机文件过大(${(stat.size / 1024 / 1024).toFixed(0)}MB,上限 200MB),请压缩后再试。`,
+          error: `本机文件过大(${(stat.size / 1024 / 1024 / 1024).toFixed(2)}GB,上限 2GB),请压缩后再试。`,
         }
       }
-      const buf = await fs.readFile(localPath)
-      const publicUrl = await relayBufferToCos(buf, mimeFromPath(localPath, kind))
+      // 流式分片上传(不把整文件读进内存),所以可支持到 qwen 上游的 2GB 客观上限。
+      const publicUrl = await relayFileToCos(localPath, mimeFromPath(localPath, kind), {
+        fileSize: stat.size,
+      })
       return { ok: true, url: publicUrl }
     } catch (e) {
       return {
@@ -232,7 +238,8 @@ export function registerUnderstandTools(server: McpServer, router: ToolRouter): 
       description:
         'Understand / analyze a VIDEO with qwen (画面/动作/字幕/剧情). Use for ANY ' +
         '"理解/分析这个视频" request. Pass either a public video_url OR a local video_path — a local ' +
-        'path is auto-uploaded to the history COS bucket to obtain a public URL (≤200MB). ' +
+        'path is auto-uploaded (streamed) to the history COS bucket to obtain a public URL (≤2GB / 2h, ' +
+        'the qwen3.7 upstream limit). ' +
         'AUDIO is NOT natively supported: to "understand" an audio file, first convert it to MP4 ' +
         '(ffmpeg-win skill: audio track + placeholder/​waveform video) and pass that MP4 here. ' +
         'Model defaults to qwen3.7-max (stronger); pass model="plus" for the cheaper qwen3.7-plus. ' +
@@ -253,8 +260,8 @@ export function registerUnderstandTools(server: McpServer, router: ToolRouter): 
     {
       description:
         'Understand / read a DOCUMENT (PDF/图文页) with qwen. Pass either file_url ' +
-        '(public URL) OR a local file_path — a local path is auto-uploaded to the history COS bucket ' +
-        'to get a public URL (≤200MB). NOTE: native document understanding is only PARTIAL upstream — ' +
+        '(public URL) OR a local file_path — a local path is auto-uploaded (streamed) to the history COS ' +
+        'bucket to get a public URL (≤2GB). NOTE: native document understanding is only PARTIAL upstream — ' +
         'for best results render the page(s) to image(s) and pass an image, or extract text and ask ' +
         'normally. Model defaults to qwen3.7-max (stronger); pass model="plus" for the cheaper model. ' +
         'Returns a Chinese answer.',

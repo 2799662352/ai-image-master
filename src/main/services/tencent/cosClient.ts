@@ -179,6 +179,90 @@ export interface UploadStreamProgress {
   speed: number
 }
 
+export interface UploadStreamToBucketOptions {
+  bucket: string
+  region: string
+  key: string
+  filePath: string
+  contentType?: string
+  /**
+   * 总时长保险丝(覆盖多分片串联,不是单次 HTTP 超时)。大文件应按体积放大;
+   * 调用方(mediaRelay.relayFileToCos)会按文件大小算一个保底值传进来。
+   */
+  hardTimeoutMs?: number
+  onProgress?: (info: UploadStreamProgress) => void
+}
+
+/**
+ * Slice/multipart upload a file **from disk** to an arbitrary COS bucket using
+ * **STS temporary credentials** — the production-safe path that works for every
+ * end user (no bundled permanent key). Mirrors {@link uploadBufferToBucket} but
+ * streams from `filePath` via `sliceUploadFile`, so we never hold the whole file
+ * in a Node Buffer (that's what capped understand uploads at 200MB). The STS
+ * policy already authorizes the full multipart action set scoped to
+ * `image-history/*` (see serverless/sts-cos/index.js), so the Key MUST stay
+ * under that prefix.
+ *
+ * Returns the canonical public https URL of the uploaded object.
+ */
+export async function uploadStreamToBucket(opts: UploadStreamToBucketOptions): Promise<string> {
+  const cos = getStsCosInstance()
+  const Key = opts.key.replace(/^\/+/, '')
+  const hardTimeoutMs = opts.hardTimeoutMs ?? SLICE_UPLOAD_HARD_TIMEOUT_MS
+
+  // round-5 加固(同 uploadStream): 抓 taskId 以便异常分支显式 cancelTask,
+  // 强制 SDK evict 内部 TaskInfo Map 里的文件 fd。这里用 STS 实例自己的
+  // cancelTask(模块级 cancelUpload 绑的是永久 key 实例, 不通用)。
+  let taskId: string | undefined
+  const safeCancel = (): void => {
+    if (!taskId) return
+    try { cos.cancelTask(taskId) } catch { /* SDK 内部可能已 cleanup */ }
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const hardTimer = setTimeout(() => {
+      logCosError(
+        'uploadStreamToBucket-timeout',
+        new Error(`sliceUploadFile 超过 ${hardTimeoutMs}ms 仍未完成`),
+        { Bucket: opts.bucket, Region: opts.region, Key, filePath: opts.filePath, taskId },
+      )
+      safeCancel()
+      reject(new Error('sliceUploadFile timeout'))
+    }, hardTimeoutMs)
+    hardTimer.unref?.()
+
+    cos.sliceUploadFile(
+      {
+        Bucket: opts.bucket,
+        Region: opts.region,
+        Key,
+        FilePath: opts.filePath,
+        ContentType: opts.contentType,
+        onProgress: opts.onProgress,
+        onTaskReady: (id: string) => {
+          taskId = id
+        },
+      },
+      (err: any) => {
+        clearTimeout(hardTimer)
+        if (err) {
+          logCosError('uploadStreamToBucket', err, {
+            Bucket: opts.bucket,
+            Region: opts.region,
+            Key,
+            filePath: opts.filePath,
+          })
+          safeCancel()
+          reject(err)
+          return
+        }
+        resolve()
+      },
+    )
+  })
+  return `https://${opts.bucket}.cos.${opts.region}.myqcloud.com/${Key}`
+}
+
 export interface UploadStreamOptions {
   key: string
   filePath: string

@@ -15,7 +15,7 @@
 // (如曾用的 `media-relay/`)都会被 COS 拒为 `AccessDenied`。
 
 import { randomBytes } from 'node:crypto'
-import { uploadBufferToBucket } from './cosClient'
+import { uploadBufferToBucket, uploadStreamToBucket } from './cosClient'
 
 const MEDIA_RELAY_BUCKET = 'image-master-1345773498'
 const MEDIA_RELAY_REGION = 'ap-guangzhou'
@@ -31,6 +31,7 @@ const EXT_BY_MIME: Record<string, string> = {
   'video/mp4': 'mp4',
   'video/quicktime': 'mov',
   'video/webm': 'webm',
+  'video/x-matroska': 'mkv',
   'audio/mpeg': 'mp3',
   'audio/wav': 'wav',
   'audio/mp4': 'm4a',
@@ -56,6 +57,39 @@ export async function relayBufferToCos(body: Buffer, mimeType: string): Promise<
     key: relayKey(mimeType),
     body,
     contentType: mimeType,
+  })
+}
+
+/**
+ * 把一个**本机文件**流式分片上传到中转桶,返回公网 https URL。
+ *
+ * 与 relayBufferToCos 的区别:不把整文件读进 Buffer —— 用 COS sliceUploadFile
+ * 从磁盘流式上传(STS 鉴权,生产可用)。这样视频理解能支持到上游的客观上限
+ * (qwen3.7 系列 2GB / 2 小时),而不再被「整文件读进内存」逼出的 200MB 闸门卡住。
+ *
+ * `fileSize` 仅用于给总时长保险丝定一个随体积放大的保底值(慢网下 2GB 也不会被
+ * 提前掐断);不传则用 cosClient 的默认 10 分钟。
+ */
+export async function relayFileToCos(
+  filePath: string,
+  mimeType: string,
+  opts?: { fileSize?: number },
+): Promise<string> {
+  // 保底 15 分钟;按 0.5MB/s 的悲观下行估算放大(2GB ≈ 68 分钟),取两者较大值。
+  const FLOOR_MS = 15 * 60 * 1000
+  const sizeBasedMs =
+    opts?.fileSize && opts.fileSize > 0
+      ? Math.ceil(opts.fileSize / (0.5 * 1024 * 1024)) * 1000
+      : 0
+  const hardTimeoutMs = Math.max(FLOOR_MS, sizeBasedMs)
+
+  return uploadStreamToBucket({
+    bucket: MEDIA_RELAY_BUCKET,
+    region: MEDIA_RELAY_REGION,
+    key: relayKey(mimeType),
+    filePath,
+    contentType: mimeType,
+    hardTimeoutMs,
   })
 }
 

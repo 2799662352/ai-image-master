@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from 'vitest'
 
 const relayBufferToCos = vi.fn(async () => 'https://cos.example.com/image-history/media-relay/x.mp4')
 const relayDataUrlToCos = vi.fn(async () => 'https://cos.example.com/image-history/media-relay/data.mp4')
+const relayFileToCos = vi.fn(async () => 'https://cos.example.com/image-history/media-relay/stream.mp4')
 vi.mock('../../../services/tencent/mediaRelay', () => ({
   relayBufferToCos: (...args: unknown[]) => relayBufferToCos(...(args as [])),
   relayDataUrlToCos: (...args: unknown[]) => relayDataUrlToCos(...(args as [])),
+  relayFileToCos: (...args: unknown[]) => relayFileToCos(...(args as [])),
 }))
 
 const fsStat = vi.fn(async () => ({ size: 1234 }))
@@ -74,7 +76,8 @@ describe('registerUnderstandTools', () => {
     expect(firstText(res)).toContain('boom')
   })
 
-  it('auto-uploads a local video_path to COS and routes the public video_url', async () => {
+  it('auto-streams a local video_path to COS (no full-file read) and routes the public video_url', async () => {
+    relayFileToCos.mockClear()
     relayBufferToCos.mockClear()
     fsStat.mockClear()
     fsReadFile.mockClear()
@@ -83,13 +86,29 @@ describe('registerUnderstandTools', () => {
 
     await tools.get('understand_video')!({ video_path: 'C:/clips/cat.mp4', question: 'q' })
 
-    expect(fsReadFile).toHaveBeenCalledWith('C:/clips/cat.mp4')
-    expect(relayBufferToCos).toHaveBeenCalledTimes(1)
-    expect(relayBufferToCos.mock.calls[0][1]).toBe('video/mp4')
+    // Streamed from disk (slice upload), NOT read into a Buffer.
+    expect(fsReadFile).not.toHaveBeenCalled()
+    expect(relayBufferToCos).not.toHaveBeenCalled()
+    expect(relayFileToCos).toHaveBeenCalledTimes(1)
+    expect(relayFileToCos.mock.calls[0][0]).toBe('C:/clips/cat.mp4')
+    expect(relayFileToCos.mock.calls[0][1]).toBe('video/mp4')
     const [name, sentParams] = router.call.mock.calls[0]
     expect(name).toBe('understand_video')
-    expect(sentParams.video_url).toBe('https://cos.example.com/image-history/media-relay/x.mp4')
+    expect(sentParams.video_url).toBe('https://cos.example.com/image-history/media-relay/stream.mp4')
     expect(sentParams.video_path).toBeUndefined()
+  })
+
+  it('accepts a large local file well over the old 200MB cap (e.g. 300MB) via streaming', async () => {
+    relayFileToCos.mockClear()
+    fsStat.mockResolvedValueOnce({ size: 300 * 1024 * 1024 } as any)
+    const { tools, server, router } = fakeServerAndRouter(async () => ({ success: true, text: 'ok' }))
+    registerUnderstandTools(server, router)
+
+    await tools.get('understand_video')!({ video_path: 'C:/clips/big.mp4', question: 'q' })
+
+    expect(relayFileToCos).toHaveBeenCalledTimes(1)
+    expect(router.call).toHaveBeenCalledTimes(1)
+    expect(router.call.mock.calls[0][1].video_url).toBe('https://cos.example.com/image-history/media-relay/stream.mp4')
   })
 
   it('passes a public http video_url through without uploading', async () => {
@@ -116,15 +135,17 @@ describe('registerUnderstandTools', () => {
     expect(router.call.mock.calls[0][1].video_url).toBe('https://cos.example.com/image-history/media-relay/data.mp4')
   })
 
-  it('refuses an oversized local file and does not call router.call', async () => {
-    fsStat.mockResolvedValueOnce({ size: 300 * 1024 * 1024 } as any)
+  it('refuses a local file over the objective 2GB upstream limit and does not call router.call', async () => {
+    relayFileToCos.mockClear()
+    fsStat.mockResolvedValueOnce({ size: 3 * 1024 * 1024 * 1024 } as any)
     const { tools, server, router } = fakeServerAndRouter()
     registerUnderstandTools(server, router)
 
-    const res = await tools.get('understand_video')!({ video_path: 'C:/big.mp4', question: 'q' })
+    const res = await tools.get('understand_video')!({ video_path: 'C:/huge.mp4', question: 'q' })
 
+    expect(relayFileToCos).not.toHaveBeenCalled()
     expect(router.call).not.toHaveBeenCalled()
-    expect(firstText(res)).toContain('200MB')
+    expect(firstText(res)).toContain('2GB')
   })
 
   it('returns a structured error when neither url nor path is provided', async () => {
@@ -138,6 +159,7 @@ describe('registerUnderstandTools', () => {
   })
 
   it('understand_canvas_video: reads the selected canvas video, uploads its local source, understands, and annotates the canvas', async () => {
+    relayFileToCos.mockClear()
     relayBufferToCos.mockClear()
     fsReadFile.mockClear()
     fsStat.mockClear()
@@ -155,10 +177,11 @@ describe('registerUnderstandTools', () => {
     const res = await tools.get('understand_canvas_video')!({ question: '这是什么' })
 
     expect(calls[0][0]).toBe('get_selected_canvas_video')
-    // local assetPath was auto-uploaded to COS
-    expect(relayBufferToCos).toHaveBeenCalledTimes(1)
+    // local assetPath was auto-streamed to COS (no full-file read)
+    expect(relayFileToCos).toHaveBeenCalledTimes(1)
+    expect(relayBufferToCos).not.toHaveBeenCalled()
     const uv = calls.find((c) => c[0] === 'understand_video')!
-    expect(uv[1].video_url).toBe('https://cos.example.com/image-history/media-relay/x.mp4')
+    expect(uv[1].video_url).toBe('https://cos.example.com/image-history/media-relay/stream.mp4')
     expect(uv[1].question).toBe('这是什么')
     // result written back as a note next to the video
     const note = calls.find((c) => c[0] === 'add_canvas_note')!
@@ -169,6 +192,7 @@ describe('registerUnderstandTools', () => {
   })
 
   it('understand_canvas_video: surfaces a "no video" canvas error without uploading or understanding', async () => {
+    relayFileToCos.mockClear()
     relayBufferToCos.mockClear()
     const calls: string[] = []
     const callImpl = async (name: string) => {
@@ -182,6 +206,7 @@ describe('registerUnderstandTools', () => {
     const res = await tools.get('understand_canvas_video')!({ question: 'q' })
 
     expect(calls).toEqual(['get_selected_canvas_video'])
+    expect(relayFileToCos).not.toHaveBeenCalled()
     expect(relayBufferToCos).not.toHaveBeenCalled()
     expect(firstText(res)).toContain('没有视频')
   })

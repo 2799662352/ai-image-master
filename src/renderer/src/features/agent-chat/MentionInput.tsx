@@ -257,8 +257,15 @@ export function buildPaletteSections(
 }
 
 const MAX_ATTACHMENTS = 20
-const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024
-const MAX_TOTAL_ATTACHMENT_BYTES = 250 * 1024 * 1024
+// Path-based attachments are streamed off disk by the main process (never copied
+// into renderer memory or an IPC structuredClone — see the onFileChange/onDrop
+// notes about webUtils.getPathForFile), so they can be large: cap at the same
+// 2GB the qwen understand path supports. Buffer-based attachments (synthetic /
+// clipboard File via arrayBuffer()) DO cross IPC in memory, so they keep a
+// conservative cap.
+const MAX_PATH_ATTACHMENT_BYTES = 2 * 1024 * 1024 * 1024 // 2GB (streamed from disk)
+const MAX_BUFFER_ATTACHMENT_BYTES = 100 * 1024 * 1024 // 100MB (in-memory + IPC structuredClone)
+const MAX_TOTAL_ATTACHMENT_BYTES = 4 * 1024 * 1024 * 1024 // 4GB across all attachments
 
 // auto-grow 输入框：13px * 1.55 行高 ≈ 20px/行 + 上下 padding 16px
 const TEXTAREA_LINE_HEIGHT = 20
@@ -638,8 +645,9 @@ export function MentionInput() {
     const totalBytes = current.reduce((sum, item) => sum + item.size, 0)
     const stat = await fsApi.stat(filePath)
     if (!stat.ok) return '无法读取'
-    if (stat.size > MAX_ATTACHMENT_BYTES) return '超过单文件 100MB'
-    if (totalBytes + stat.size > MAX_TOTAL_ATTACHMENT_BYTES) return '超过总量 250MB'
+    // Path-based: streamed off disk by main → 2GB cap.
+    if (stat.size > MAX_PATH_ATTACHMENT_BYTES) return '超过单文件 2GB'
+    if (totalBytes + stat.size > MAX_TOTAL_ATTACHMENT_BYTES) return '超过总量 4GB'
     addAttachment({
       name,
       mime: stat.mime || 'application/octet-stream',
@@ -715,11 +723,14 @@ export function MentionInput() {
     const electronApi = (window as Window & { electronAPI?: { getFilePath?: (file: File) => string } }).electronAPI
 
     for (const file of files.slice(0, remainingSlots)) {
-      if (file.size > MAX_ATTACHMENT_BYTES || totalBytes + file.size > MAX_TOTAL_ATTACHMENT_BYTES) {
+      // Decide the source FIRST: a real on-disk path → streamed by main (2GB cap);
+      // no path (synthetic/clipboard File) → arrayBuffer() into memory + IPC (100MB cap).
+      const filePath = electronApi?.getFilePath ? electronApi.getFilePath(file) : ''
+      const perFileCap = filePath ? MAX_PATH_ATTACHMENT_BYTES : MAX_BUFFER_ATTACHMENT_BYTES
+      if (file.size > perFileCap || totalBytes + file.size > MAX_TOTAL_ATTACHMENT_BYTES) {
         skipped += 1
         continue
       }
-      const filePath = electronApi?.getFilePath ? electronApi.getFilePath(file) : ''
       if (filePath) {
         addAttachment({
           name: file.name,
@@ -822,12 +833,14 @@ export function MentionInput() {
         size = stat.size
         mime = stat.mime || 'application/octet-stream'
       }
-      if (size > MAX_ATTACHMENT_BYTES) {
-        skippedReasons.push(`${c.path}（超过单文件 100MB）`)
+      // Drops are always path-based (both tiers addAttachment with a path) →
+      // streamed off disk by main, so the large 2GB cap applies.
+      if (size > MAX_PATH_ATTACHMENT_BYTES) {
+        skippedReasons.push(`${c.path}（超过单文件 2GB）`)
         continue
       }
       if (totalBytes + size > MAX_TOTAL_ATTACHMENT_BYTES) {
-        skippedReasons.push(`${c.path}（超过总量 250MB）`)
+        skippedReasons.push(`${c.path}（超过总量 4GB）`)
         continue
       }
       const name = c.path.split(/[\\/]/).pop() ?? c.path

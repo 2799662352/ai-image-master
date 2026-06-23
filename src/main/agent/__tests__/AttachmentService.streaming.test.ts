@@ -157,15 +157,16 @@ describe('AttachmentService (streaming ingest)', () => {
     ])
   })
 
-  it('rejects attachments larger than the per-file cap before any disk write', async () => {
+  it('accepts a path-based attachment well over the old 100MB cap (e.g. 200MB) — streamed off disk', async () => {
     const { AttachmentService } = await import('../AttachmentService')
     const prisma = makePrismaStub()
     const service = new AttachmentService(prisma as never)
 
-    // We mock a stat that returns > 100MB so we don't actually need to allocate
-    // a 100MB+ file on disk just to assert the preflight.
-    const fakeBig = path.join(tmpDir, 'fake-big.bin')
-    await fs.writeFile(fakeBig, 'x')
+    // Mock stat → 200MB so we don't allocate a 200MB file; the actual on-disk
+    // file is tiny, and the stream copies whatever bytes really exist. The point
+    // is the size PREFLIGHT no longer rejects a 200MB path-based attachment.
+    const big = path.join(tmpDir, 'big-video.mp4')
+    await fs.writeFile(big, 'fake-mp4-bytes')
     const statSpy = vi.spyOn(fs, 'stat').mockResolvedValueOnce({
       isFile: () => true,
       size: 200 * 1024 * 1024,
@@ -175,13 +176,59 @@ describe('AttachmentService (streaming ingest)', () => {
     service.on('attachment-error', (e: { name: string; error: string }) => errors.push(e))
 
     const out = await service.ingest('thread-E', [
-      { name: 'fake-big.bin', mime: 'application/octet-stream', size: 200 * 1024 * 1024, path: fakeBig },
+      { name: 'big-video.mp4', mime: 'video/mp4', size: 200 * 1024 * 1024, path: big },
+    ])
+
+    expect(errors).toHaveLength(0)
+    expect(out).toHaveLength(1)
+    expect(out[0].originalName).toBe('big-video.mp4')
+    statSpy.mockRestore()
+  })
+
+  it('rejects a path-based attachment over the 2GB streaming cap before any disk write', async () => {
+    const { AttachmentService } = await import('../AttachmentService')
+    const prisma = makePrismaStub()
+    const service = new AttachmentService(prisma as never)
+
+    const huge = path.join(tmpDir, 'huge.mp4')
+    await fs.writeFile(huge, 'x')
+    const statSpy = vi.spyOn(fs, 'stat').mockResolvedValueOnce({
+      isFile: () => true,
+      size: 3 * 1024 * 1024 * 1024, // 3GB > 2GB cap
+    } as never)
+
+    const errors: Array<{ name: string; error: string }> = []
+    service.on('attachment-error', (e: { name: string; error: string }) => errors.push(e))
+
+    const out = await service.ingest('thread-E2', [
+      { name: 'huge.mp4', mime: 'video/mp4', size: 3 * 1024 * 1024 * 1024, path: huge },
     ])
 
     expect(out).toHaveLength(0)
-    expect(errors[0].name).toBe('fake-big.bin')
+    expect(errors[0].name).toBe('huge.mp4')
     expect(errors[0].error).toMatch(/too large/i)
     statSpy.mockRestore()
+  })
+
+  it('rejects a buffer-based attachment over the 100MB in-memory cap', async () => {
+    const { AttachmentService } = await import('../AttachmentService')
+    const prisma = makePrismaStub()
+    const service = new AttachmentService(prisma as never)
+
+    const errors: Array<{ name: string; error: string }> = []
+    service.on('attachment-error', (e: { name: string; error: string }) => errors.push(e))
+
+    // Fake ArrayBuffer-like: preflight only reads byteLength and throws before
+    // touching the bytes, so we avoid allocating 100MB in the test.
+    const fakeBuffer = { byteLength: 200 * 1024 * 1024 } as ArrayBuffer
+
+    const out = await service.ingest('thread-E3', [
+      { name: 'pasted.png', mime: 'image/png', size: 200 * 1024 * 1024, buffer: fakeBuffer },
+    ])
+
+    expect(out).toHaveLength(0)
+    expect(errors[0].name).toBe('pasted.png')
+    expect(errors[0].error).toMatch(/too large/i)
   })
 
   it('emits attachment-added after each successful ingest so the file panel can refresh', async () => {
