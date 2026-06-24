@@ -281,7 +281,11 @@ const ResultCard = memo(function ResultCard({
         {isFail && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 px-2 text-red-300 text-center">
             <span className="text-3xl font-bold leading-none">✗</span>
-            <span className="font-mono text-[10px] leading-tight line-clamp-3 break-words">
+            <span
+              className="font-mono text-[10px] leading-tight line-clamp-3 break-words"
+              title={item.error || 'FAILED'}
+              style={{ cursor: item.error ? 'help' : 'default' }}
+            >
               {item.error || 'FAILED'}
             </span>
           </div>

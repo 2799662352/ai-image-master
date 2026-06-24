@@ -270,6 +270,7 @@ function ResultCard({
             <span style={{ fontSize: 36, fontWeight: 900 }}>✗</span>
             <span
               className="p-mono"
+              title={item.error || 'FAILED'}
               style={{
                 fontSize: 10,
                 fontWeight: 700,
@@ -281,6 +282,7 @@ function ResultCard({
                 WebkitBoxOrient: 'vertical',
                 overflow: 'hidden',
                 wordBreak: 'break-word',
+                cursor: item.error ? 'help' : 'default',
               }}
             >
               {item.error || 'FAILED'}

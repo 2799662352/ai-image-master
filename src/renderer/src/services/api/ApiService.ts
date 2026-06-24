@@ -2088,60 +2088,85 @@ export class ApiService {
   /**
    * 解析响应
    */
-  private parseResponse(response: Response, modelConfig: ModelConfig): Promise<GenerateResult> {
-    return response.json().then(data => {
-      if (!response.ok) {
-        // OpenAI 形态 data.error.message；DashScope 原生形态顶层 code/message
-        const apiMsg = data.error?.message || (data.code ? `${data.code}: ${data.message}` : data.message)
-        let friendlyMsg: string
-        switch (response.status) {
-          case 401: friendlyMsg = 'API Key 无效或已过期'; break
-          case 402: friendlyMsg = '账户余额不足，请充值后重试'; break
-          case 429: friendlyMsg = apiMsg?.includes('insufficient') || apiMsg?.includes('额度')
-            ? '账户额度不足，请充值后重试'
-            : '请求过于频繁，请稍后重试'; break
-          case 500: friendlyMsg = '服务端内部错误，请稍后重试'; break
-          default: friendlyMsg = apiMsg || `API 错误: ${response.status}`
-        }
-        return {
-          success: false,
-          error: friendlyMsg,
-          rawResponse: data
-        }
+  private async parseResponse(response: Response, _modelConfig: ModelConfig): Promise<GenerateResult> {
+    // 先读 text，再自己 JSON.parse —— 不要直接 response.json()。
+    // 网关限流 / 5xx / 被劫持时常返回 HTML 错误页或空体，response.json() 会抛
+    // "Unexpected token '<'" 这类无意义错误，把真实根因(上游 body)吞掉，
+    // 导致「报错显示不完全」。这里把原始 body 完整保留并回传。
+    const rawText = await response.text().catch(() => '')
+    const bodySnippet = rawText
+      ? rawText.replace(/\s+/g, ' ').trim().slice(0, 600)
+      : '(空响应体)'
+
+    let data: any = null
+    let parseFailed = false
+    if (rawText.trim()) {
+      try {
+        data = JSON.parse(rawText)
+      } catch {
+        parseFailed = true
       }
+    } else {
+      parseFailed = true
+    }
 
-      const dashScopeError = getDashScopeErrorMessage(data)
-      if (dashScopeError) {
-        if (modelConfig.capabilities?.sequentialGroup) {
-          console.error('[Wan-Image] API error in 200 body:', dashScopeError, data)
-        }
-        return {
-          success: false,
-          error: dashScopeError,
-          rawResponse: data
-        }
+    if (!response.ok) {
+      // OpenAI 形态 data.error.message；DashScope 原生形态顶层 code/message
+      const apiMsg = data?.error?.message || (data?.code ? `${data.code}: ${data.message}` : data?.message)
+      let friendlyMsg: string
+      switch (response.status) {
+        case 401: friendlyMsg = 'API Key 无效或已过期'; break
+        case 402: friendlyMsg = '账户余额不足，请充值后重试'; break
+        case 429: friendlyMsg = (apiMsg?.includes('insufficient') || apiMsg?.includes('额度'))
+          ? '账户额度不足，请充值后重试'
+          : '请求过于频繁，请稍后重试'; break
+        case 500: friendlyMsg = '服务端内部错误，请稍后重试'; break
+        default: friendlyMsg = apiMsg || `API 错误: ${response.status}`
       }
+      // 把真实细节附在友好提示后面：优先结构化 apiMsg，否则原始 body 片段。
+      // 这样用户既看到可读提示，又能看到上游到底回了什么(排障关键)。
+      const detail = apiMsg || (parseFailed ? bodySnippet : '')
+      const fullError = detail && !friendlyMsg.includes(detail)
+        ? `${friendlyMsg}（HTTP ${response.status}：${detail}）`
+        : `${friendlyMsg}（HTTP ${response.status}）`
+      console.error(`[ApiService] parseResponse 非 OK ${response.status} @ ${response.url}:`, fullError, '\n原始 body:', bodySnippet)
+      return { success: false, error: fullError, rawResponse: data ?? rawText }
+    }
 
-      const images = extractImagesFromApiResponse(data)
+    // HTTP 200 但 body 不是合法 JSON（网关错误页 / 空体 / 被中间层劫持）
+    if (parseFailed) {
+      const err = rawText.trim()
+        ? `服务器返回了非 JSON 响应（可能是网关错误页或限流），请稍后重试或更换模型。响应片段：${bodySnippet}`
+        : '服务器返回了空响应（HTTP 200 但无内容），请稍后重试或更换模型'
+      console.error('[ApiService] parseResponse 非 JSON 200 响应:', err)
+      return { success: false, error: err, rawResponse: rawText }
+    }
 
-      if (images.length === 0) {
-        if (modelConfig.capabilities?.sequentialGroup) {
-          console.error('[Wan-Image] empty images, raw response:', JSON.stringify(data).slice(0, 8000))
-        }
-        return {
-          success: false,
-          error: '未能从响应中提取图片',
-          rawResponse: data
-        }
-      }
+    const dashScopeError = getDashScopeErrorMessage(data)
+    if (dashScopeError) {
+      console.error('[ApiService] API 在 200 body 内返回错误:', dashScopeError)
+      return { success: false, error: dashScopeError, rawResponse: data }
+    }
 
+    const images = extractImagesFromApiResponse(data)
+
+    if (images.length === 0) {
+      const raw = JSON.stringify(data).slice(0, 2000)
+      console.error('[ApiService] 响应未含图片，原始 body:', raw)
       return {
-        success: true,
-        images,
-        urls: images,  // 兼容旧 API 格式
+        success: false,
+        // 把原始 body 片段带上，避免「未能从响应中提取图片」这种无信息提示
+        error: `未能从响应中提取图片，响应片段：${raw.slice(0, 600)}`,
         rawResponse: data
       }
-    })
+    }
+
+    return {
+      success: true,
+      images,
+      urls: images,  // 兼容旧 API 格式
+      rawResponse: data
+    }
   }
 
   /**

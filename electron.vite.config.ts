@@ -235,9 +235,13 @@ export default defineConfig({
       sourcemap: isAnalyze ? true : false,
       // 构建报告: 生产模式跳过压缩大小计算以加速构建
       reportCompressedSize: !isProd,
-      // 生产环境移除 console.log 和 debugger (通过 esbuild transform)
+      // 生产环境只删 debugger + 噪音日志(log/info/debug/trace)，
+      // 但【保留 console.error / console.warn】——否则打包后 F12 完全看不到报错，
+      // 用户无法诊断「图片报错但不显示细节」。pure 让 minifier 把无副作用的
+      // 噪音日志 tree-shake 掉，error/warn 不在 pure 列表故得以保留。
       esbuild: {
-        drop: isProd ? ['console', 'debugger'] : [],
+        drop: isProd ? ['debugger'] : [],
+        pure: isProd ? ['console.log', 'console.info', 'console.debug', 'console.trace'] : [],
         legalComments: 'none'
       }
     },
