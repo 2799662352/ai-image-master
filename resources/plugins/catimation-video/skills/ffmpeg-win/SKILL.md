@@ -1,6 +1,6 @@
 ---
 name: ffmpeg-win
-description: Process video/audio with FFmpeg 8.1, preferring the bundled local ffmpeg/ffprobe CLI (on PATH, zero Docker, zero install) with the ffmpeg-win Docker MCP tool as a parallel fallback. Use for transcoding, resizing, trimming, speed change, compression, audio extraction, concat, cropping, fades, overlays, thumbnails, GIFs, inspection, and 审片/quality-check (ffprobe report + loudness + 3×3 contact sheet + release checkpoint before publishing). Triggers on "用 ffmpeg", "处理视频", "转码/压缩/裁剪/拼接视频", "提取音频", "竖屏适配", "加 BGM", "审片/质检/检查成片", "ffmpeg-win", or any CATIMATION 出片 post-processing. References cover filters, codecs, audio, streaming/hwaccel, platform export, and the CATIMATION workflow.
+description: Process video/audio with FFmpeg 8.1, preferring the bundled local ffmpeg/ffprobe CLI (on PATH, zero Docker, zero install) with the ffmpeg-win Docker MCP tool as a parallel fallback. Use for transcoding, resizing, trimming, speed change, compression, audio extraction, concat, cropping, fades, overlays, thumbnails, GIFs, inspection, and the technical+fix half of the 审片/quality-check loop (ffprobe 粗检 + 九宫格视觉 + loudness + 修复 + release checkpoint; hands off to catimation-understand for the model content-review stage). Triggers on "用 ffmpeg", "处理视频", "转码/压缩/裁剪/拼接视频", "提取音频", "竖屏适配", "加 BGM", "审片/质检/检查成片质量", "能不能发/达标了吗", "ffmpeg-win", or any CATIMATION 出片 post-processing. References cover filters, codecs, audio, streaming/hwaccel, platform export, and the CATIMATION workflow.
 ---
 
 # FFmpeg (local CLI preferred · ffmpeg-win Docker MCP fallback)
@@ -237,19 +237,36 @@ file info to **stderr**, so non-empty stderr on success is normal.
 `error` (stderr — progress AND info), and `command` (the docker line run).
 `success: true` with text in `error` is normal — FFmpeg logs to stderr.
 
-## Review / 审片 (quality check + release checkpoint)
+## Review / 审片 — one staged loop across TWO linked skills
 
-Before you treat any rendered or edited video as final — **especially anything the
-user will publish** — run a lightweight 审片 pass. This mirrors the
-inspect → verify → human-review contract from agent video pipelines: never ship
-agent-made video on blind faith.
+审片 is **NOT a single pass**, and it is **NOT all done here**. It is a **loop you
+climb stage by stage**, spanning two skills that hand off to each other:
 
-**1) Quality check (ffprobe — Backend A).** Probe the file and judge it against
+- **`ffmpeg-win` (this skill)** — the *technical* eye + the *fixer*: probe streams,
+  build a visual contact sheet, measure loudness, and apply every repair
+  (transcode / crop / loudnorm / concat / scale).
+- **`catimation-understand`** — the *model content* eye: calls `understand_video`
+  to judge 剧情 / 字幕 / 动作 / 连续性 / 穿帮 against the brief. ffmpeg cannot judge
+  story or continuity — only pixels and streams — so that half lives there.
+
+Run only the stages a task needs, and **escalate one stage at a time** — a quick
+"能不能发" only needs Stage 0–1; a publish-bound deliverable runs the whole loop.
+
+```
+Stage0 ffprobe 粗检 ──▶ Stage1 九宫格视觉 ──▶ Stage2 understand_video 模型内容审查
+        │ (catimation-understand)                                  │
+        └────────────  Stage3 不达标 → ffmpeg 修复 → 回到 Stage0 复检  ◀┘
+                                    │ pass
+                                    ▼
+                       Stage4 release checkpoint + 人工签收
+```
+
+**Stage 0 — 粗检 (ffprobe, the cheap gate).** Probe the file and judge it against
 the brief:
 ```
 ffprobe -v error -show_entries format=duration,bit_rate:stream=codec_type,codec_name,width,height,r_frame_rate,channels,sample_rate -of json "D:/out/final.mp4"
 ```
-Flag and fix before shipping:
+Flag (and fix in Stage 3) before going further:
 - **No audio stream** when the brief wanted sound (no `"codec_type":"audio"`).
 - **Odd width/height** (not divisible by 2) → re-encode with
   `scale=trunc(iw/2)*2:trunc(ih/2)*2`.
@@ -258,7 +275,7 @@ Flag and fix before shipping:
 - **Suspiciously low bitrate** for the resolution (blocky output).
 On Backend B (no ffprobe) use `ffmpeg -i` and read the stderr report instead.
 
-**2) Visual sanity (3×3 contact sheet).** You cannot "watch" an MP4 — build a
+**Stage 1 — 视觉细检 (3×3 contact sheet).** You cannot "watch" an MP4 — build a
 九宫格 of evenly-spaced frames and inspect that ONE montage (e.g. with the app's
 `view_image`) to catch melting/teleporting subjects, extra limbs, artifacts, and
 prompt drift:
@@ -267,23 +284,34 @@ ffmpeg -y -i "D:/out/final.mp4" -vf "fps=9/<DURATION>,scale=320:-1,tile=3x3:padd
 ```
 Set `<DURATION>` to the real clip length (for a 5s clip, `fps=9/5`).
 
-**3) Loudness (when there's audio).** Measure EBU R128 so the mix isn't too hot or
-too quiet:
+**Stage 2 — 模型内容审查 (hand off to the OTHER skill).** The contact sheet shows
+*pixels*; it cannot tell you whether the *content* is right. Hand off to the
+**`catimation-understand`** skill: in-app, call `understand_video` on the clip with
+a review question — e.g. *"这段视频:剧情/字幕/动作是否符合需求?有无穿帮、错字、
+连续性断裂?"*. (Outside the app, where `understand_video` is unavailable, use your
+own video-understanding / vision tool for this stage.) This is the **content half
+of the same loop** — do not skip it for anything narrative.
+
+**Stage 3 — 修复并复检 (the loop back).** If any stage flags a problem, **fix it
+here** with the recipes above (transcode / crop / `loudnorm` / concat / scale),
+then **re-enter the loop at Stage 0** — re-probe, re-grid, re-understand. Iterate
+at most **2–3 times**; each fix+recheck costs time. Loudness fix (when there's
+audio): measure EBU R128
 ```
 ffmpeg -i "D:/out/final.mp4" -af loudnorm=I=-14:TP=-1.5:LRA=11:print_format=summary -f null -
 ```
-Target ≈ **-14 LUFS** for web/social. If it's off, bake in normalization by
-re-encoding with the same `loudnorm` as an audio filter.
+target ≈ **-14 LUFS** for web/social; if off, bake in normalization by re-encoding
+with the same `loudnorm` as an audio filter.
 
-**4) Release checkpoint (artifacts for human review).** For a publish-bound
-deliverable, also emit a poster frame and leave it beside the contact sheet so the
-user can eyeball before posting:
+**Stage 4 — 发布前 release checkpoint (only when the loop passes).** For a
+publish-bound deliverable, emit a poster frame and leave it beside the contact
+sheet for a human:
 ```
 ffmpeg -y -ss <BEST_T> -i "D:/out/final.mp4" -frames:v 1 -q:v 2 "D:/out/final_poster.jpg"
 ```
 Then tell the user it passed QC and point them at `final_grid.png` /
-`final_poster.jpg` for a quick human review. **Do not auto-publish** — QC plus
-human sign-off comes first.
+`final_poster.jpg`. **Do not auto-publish** — the loop plus human sign-off comes
+first.
 
 ### Preflight guardrails (sanity-check BEFORE the encode)
 
