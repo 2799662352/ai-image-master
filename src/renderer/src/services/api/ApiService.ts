@@ -5,6 +5,7 @@
  */
 
 import { normalizeModelKey } from '../../utils/modelKeyAliases'
+import { wantsInlineBase64ForModel } from '../../utils/refImageStrategy'
 
 export interface ApiSite {
   name: string
@@ -1240,12 +1241,20 @@ export class ApiService {
 
       if (hasImages) {
         const editUrl = this.buildRequestUrl(modelConfig, site, 'edit')
+        // 腾讯 image2(custom-imagemodel-gt):edit 端点支持 JSON `images:[url]`。
+        // 参考图是 COS / 远端 URL 时直接传 URL，避免把图下载回来再以 base64 multipart 上传
+        // （省带宽、避开"url too long"/请求体膨胀）。极少数 data: 参考图仍回落 FormData。
+        const allHttpUrls = imageSources.every((s) => typeof s === 'string' && /^https?:\/\//i.test(s))
+        if (model === 'custom-imagemodel-gt' && allHttpUrls) {
+          return this.makeTencentImage2JsonEdit(
+            editUrl, model, prompt, imageSources, site, signal, timeoutMs, resolvedSize, resolvedQuality,
+          )
+        }
         return this.makeGptImage2FormDataRequest(editUrl, model, prompt, imageSources, site, signal, timeoutMs, resolvedSize, resolvedQuality)
       } else {
         const genUrl = this.buildRequestUrl(modelConfig, site)
         const body = this.buildGptImage2JsonPayload(model, prompt, resolvedSize, resolvedQuality)
-        console.log('[GPT-Image-2] request URL:', genUrl)
-        console.log('[GPT-Image-2] request body:', JSON.stringify(body, null, 2))
+        this.logImageRequest(model, genUrl, body)
         const headers: Record<string, string> = { 'Content-Type': 'application/json' }
         if (site.authType === 'bearer') {
           headers['Authorization'] = `Bearer ${this.apiKey}`
@@ -1275,17 +1284,19 @@ export class ApiService {
     // 构建请求 URL：用站点的域名替换模型 URL 中的域名
     const url = this.buildRequestUrl(modelConfig, site)
 
-    // 只认 base64 的端点：把 COS / 远端 URL 参考图先抓成 data URL，否则会被静默丢弃。
-    // - OpenAI /images/generations(image 字段只吃 base64):仍需预解析;
-    // - inlineRefImageAsBase64 模型:保留为安全网(正常路径下 gemini 参考图在上传时
-    //   就已存成 base64 —— 切到 nano 时前端会清空 URL 参考图、要求重新上传压缩,
-    //   见 useRefImageModelSync / syncReferenceImagesForModel;这里只兜底极少数仍带 URL 的情况)。
+    // 内联 base64 的唯一规则：只有 nano / gemini 系列(inlineRefImageAsBase64 === true)
+    // 才把参考图抓成 data URL；其余模型一律走 COS / 远端 URL 直传。
+    // - 单一真源 = wantsInlineBase64ForModel(同前端 refImageStrategy),改一处全局跟随;
+    // - 之前还按 baseURL 命中 `/images/generations` 强转 base64,把 wan2.7(input.messages
+    //   原生支持 URL)的 COS 参考图回灌成超大 base64,既浪费带宽又易触发上游
+    //   "url is too long" / 请求体膨胀 —— 已移除该判断;
+    // - 正常路径下 gemini 参考图在上传时就已是 base64(切到 nano 时前端清空 URL 参考图、
+    //   要求重新上传压缩,见 useRefImageModelSync / syncReferenceImagesForModel),
+    //   这里只兜底极少数仍带 URL 的情况;
     // - multipart(gpt-image-2 已在上面分支返回；Flux / sora-chat 直接用 URL)不走这里。
     let resolvedRefs = referenceImages
     let resolvedImageBase64 = imageBase64
-    const needsBase64Sources =
-      !!modelConfig.baseURL?.includes('/images/generations') ||
-      modelConfig.inlineRefImageAsBase64 === true
+    const needsBase64Sources = wantsInlineBase64ForModel(modelConfig)
     if (needsBase64Sources) {
       resolvedRefs = await this.resolveSourcesToDataUrls(referenceImages)
       if (imageBase64 && /^https?:\/\//i.test(imageBase64)) {
@@ -1320,10 +1331,9 @@ export class ApiService {
       headers['x-api-key'] = this.apiKey!
     }
 
-    if (modelConfig.capabilities?.sequentialGroup) {
-      console.log('[Wan-Image] request URL:', url)
-      console.log('[Wan-Image] request body:', JSON.stringify(body, null, 2))
-    }
+    // 所有模型(nano/gemini、wan、sora、通用 OpenAI-compat)统一打印请求体到 F12，
+    // 方便核对发出去的到底是 URL 还是 base64；base64/超长串会被截断，避免刷屏。
+    this.logImageRequest(model, url, body)
 
     // 与 gpt-image-2 系列对齐：所有模型（Gemini-native / Flux / 通用 OpenAI-compat）
     // 都给约 2000s（~33 分钟）的软天花板，避免 Nano Banana Pro 等长耗时模型在上游排队 /
@@ -1352,6 +1362,28 @@ export class ApiService {
   private composeTimeoutSignal(userSignal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
     const timeoutSignal = AbortSignal.timeout(timeoutMs)
     return userSignal ? AbortSignal.any([userSignal, timeoutSignal]) : timeoutSignal
+  }
+
+  /**
+   * 统一打印图片生成请求体到 F12，方便核对「发的是 URL 还是 base64」。
+   * - data:/超长字符串(base64)截断成 `data:image/...;base64,xxxx…[N chars]`，避免控制台被刷爆；
+   * - 任何模型(nano/gemini、wan、sora、gpt-image、flux)都走这一个入口，tag 用模型名。
+   */
+  private logImageRequest(model: string, url: string, body: unknown): void {
+    try {
+      const json = JSON.stringify(
+        body,
+        (_k, v) =>
+          typeof v === 'string' && v.length > 200
+            ? `${v.slice(0, 64)}…[${v.length} chars]`
+            : v,
+        2,
+      )
+      console.log(`[ImageReq:${model}] URL:`, url)
+      console.log(`[ImageReq:${model}] body:`, json)
+    } catch {
+      console.log(`[ImageReq:${model}] URL:`, url, '(body 无法序列化)')
+    }
   }
 
   /**
@@ -1484,6 +1516,64 @@ export class ApiService {
   }
 
   /**
+   * 腾讯 image2(custom-imagemodel-gt) 图片编辑：JSON `images:[url]` 请求。
+   * - 该网关 edit 端点接受公网 URL 数组（无需 base64 multipart）；
+   * - logo_add:0 关闭水印，与全局 watermark:false 对齐；
+   * - 响应解析复用 extractImagesFromApiResponse（url / b64_json 都吃）。
+   */
+  private async makeTencentImage2JsonEdit(
+    url: string,
+    model: string,
+    prompt: string,
+    imageSources: string[],
+    site: ApiSite,
+    userSignal?: AbortSignal,
+    timeoutMs = 2_000_000,
+    size?: string,
+    quality?: string,
+  ): Promise<Response> {
+    const body: Record<string, unknown> = {
+      model,
+      prompt,
+      images: imageSources,
+      n: 1,
+    }
+    if (size && size !== 'auto') body.size = size
+    if (quality) body.quality = quality
+    body.extra_body = { logo_add: 0 }
+
+    this.logImageRequest(model, url, body)
+
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (site.authType === 'bearer') {
+      headers['Authorization'] = `Bearer ${this.apiKey}`
+    } else {
+      headers['x-api-key'] = this.apiKey!
+    }
+
+    const signal = this.composeTimeoutSignal(userSignal, timeoutMs)
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal,
+    })
+    if (!resp.ok) {
+      let errText = ''
+      try {
+        errText = await resp.clone().text()
+      } catch {
+        /* body 不可读时忽略 */
+      }
+      console.error(
+        `[ImageReq:${model}] edits(JSON) ${resp.status} 失败 (size=${size ?? 'auto'}, imgs=${imageSources.length}):`,
+        errText.slice(0, 4000),
+      )
+    }
+    return resp
+  }
+
+  /**
    * gpt-image-2 系列：图片编辑 FormData 请求（有参考图）
    * - gpt-image-2 (官转)：额外支持 size/quality
    * - gpt-image-2-vip (Codex 官逆)：支持 size/quality（2026-06-05 实测 quality 生效）
@@ -1530,6 +1620,16 @@ export class ApiService {
     } else {
       headers['x-api-key'] = this.apiKey!
     }
+
+    // FormData 不是 JSON：打印结构化摘要(含参考图源)到 F12，标注 multipart。
+    this.logImageRequest(model, url, {
+      model,
+      prompt,
+      size: size ?? 'auto',
+      quality,
+      'image[]': `${appendedCount} blob (multipart/form-data)`,
+      sources: imageSources,
+    })
 
     const signal = this.composeTimeoutSignal(userSignal, timeoutMs)
 

@@ -187,4 +187,30 @@ describe('ApiService wan2.7 request payload', () => {
     expect(payload.parameters.thinking_mode).toBeUndefined()
     expect(payload.image).toBeUndefined()
   })
+
+  // 回归：只有 nano/gemini(inlineRefImageAsBase64)才内联 base64；wan2.7 走 URL 直传。
+  it('wan2.7 does NOT force COS/URL reference images into base64', async () => {
+    const { ApiService } = await import('../ApiService')
+    const service = new ApiService()
+    const wan = service.getModelConfig('wan2.7-image-pro')!
+    const gemini = service.getModelConfig('gemini-3.1-flash-image')!
+
+    const { wantsInlineBase64ForModel } = await import('../../../utils/refImageStrategy')
+    // wan2.7 baseURL 含 /images/generations，但不应再被强转 base64
+    expect(wan.baseURL).toContain('/images/generations')
+    expect(wantsInlineBase64ForModel(wan)).toBe(false)
+    // gemini 仍内联 base64
+    expect(wantsInlineBase64ForModel(gemini)).toBe(true)
+
+    // wan 参考图保持原样(COS URL 直传 input.messages)
+    const cosUrl = 'https://history.example.com/image-history/ref.png'
+    const payload = (service as any).buildOpenAIPayload({
+      prompt: '重绘', model: 'wan2.7-image-pro', ratio: '1:1', resolution: '2K',
+      referenceImages: [cosUrl], count: 1, modelConfig: wan,
+    })
+    expect(payload.input.messages[0].content).toEqual([
+      { image: cosUrl },
+      { text: '重绘' },
+    ])
+  })
 })
