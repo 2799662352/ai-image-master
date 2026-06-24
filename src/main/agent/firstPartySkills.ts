@@ -633,11 +633,12 @@ montage:
    quality via the contact sheet, never the video itself. The user is already
    watching the clip play inline.
 
-> 进阶 — 上面的九宫格只是审片大循环里的一个快检环节。成片要**发布/交付**时走完整
-> 的**审片 loop**(跨两个技能):\`ffmpeg-win\` 主导技术面(ffprobe 粗检 → 九宫格视觉
-> → 响度 → 修复 → release checkpoint),\`catimation-understand\`(\`understand_video\`)
-> 负责模型内容审查(剧情/字幕/连续性/穿帮);不达标就 ffmpeg 修复后回到粗检复检,过了
-> 再发布。详见 \`ffmpeg-win\` 技能的 **Review / 审片** 段。
+> 进阶 — 上面的九宫格只是一个快检环节,背后是一个**跨两个技能的 inspect→process→verify
+> 大循环**,**不止发布前审片**:任何要**理解或处理 视频/音频/多媒体**的时候都自主触发——
+> 处理前先 probe 摸清、处理后必复核。\`ffmpeg-win\` 主导技术面(ffprobe 粗检 → 九宫格视觉
+> → 响度 → 修复 → release checkpoint,checkpoint 仅交付时),\`catimation-understand\`
+> (\`understand_video\`)负责模型内容理解/审查(剧情/字幕/连续性/穿帮);不达标就 ffmpeg
+> 修复后回到粗检复检,过了再交付。详见 \`ffmpeg-win\` 技能的 **inspect→process→verify** 段。
 
 ## Organize finished clips into the user's workspace (when in a project)
 
@@ -1107,10 +1108,10 @@ name: catimation-understand
 description: >-
   Understand video / documents / and research the web with qwen3.7-max-dashscope
   inside CATIMATION. Trigger to 理解/分析视频, 看懂/读 文档/PDF, or 上网查/搜一下/扒资料/最新消息.
-  Also the **model content-review stage** of the 审片 loop: when asked to 审查/看内容/
-  检查剧情字幕连续性 of a clip, judge content here with understand_video, then hand the
-  technical QC + fixes back to the ffmpeg-win skill. Audio isn't native — convert to
-  MP4 first (ffmpeg) then understand_video.
+  Also the model understand/review stage of the multimedia inspect→verify loop that
+  fires for ANY video/audio task (not just 审片): judge content here with
+  understand_video, then hand technical QC + fixes back to the ffmpeg-win skill.
+  Audio isn't native — convert to MP4 first (ffmpeg) then understand_video.
 ---
 
 # CATIMATION Understand — video / document / web via qwen
@@ -1128,16 +1129,22 @@ user wants to save cost.
 - "理解 / 分析画布上(选中)的这段视频" → \`understand_canvas_video\`
 - "读一下这份文档 / PDF 讲了什么" → \`understand_document\`
 - "上网查 / 搜一下 / 最新消息 / 扒点资料" → \`web_research\`
-- "审查 / 审一下这部片子的内容"、"剧情/字幕/连续性对不对" → \`understand_video\` (你是审片 loop 的模型审查阶段,见下)
+- "审查/审片/检查内容"、"剧情/字幕/连续性对不对",或任何**理解/处理 视频音频 前后**的核对 → \`understand_video\`(你是多媒体 inspect→verify loop 的内容阶段,见下)
 
-## 审片 loop — 你是「模型内容审查」这一阶段(不要单干)
+## 多媒体 inspect→verify loop — 你是「模型内容理解/审查」这一阶段(不要单干)
 
-成片「审片 / 质检」是一个**跨两个技能的大循环**,由 **ffmpeg-win** 技能主导编排:
+**不止「发布前审片」**:只要任务要**理解或处理 视频 / 音频 / 多媒体文件**,就走一个
+**跨两个技能的 inspect → process → verify 大循环**(由 **ffmpeg-win** 技能主导编排),
+而且 **agent 自主触发、别等人催**:
 
 \`\`\`
-ffprobe 粗检(ffmpeg-win) → 九宫格视觉(ffmpeg-win) → 模型内容审查(你 · understand_video)
-   → 不达标 → ffmpeg 修复 + 回到粗检复检(ffmpeg-win) → 发布前 checkpoint(ffmpeg-win)
+ffprobe 粗检(ffmpeg-win) → 九宫格视觉(ffmpeg-win) → 模型内容理解/审查(你 · understand_video)
+   → 不达标/要改 → ffmpeg 修复 + 回到粗检复检(ffmpeg-win) → 发布前 checkpoint(ffmpeg-win,仅交付时)
 \`\`\`
+
+何时触发(不只成片):**理解/分析**一段视频音频前,先让 ffmpeg-win probe 摸清真实
+时长/码流再下判断;**处理**(转码/剪辑/拼接/提取音频/加 BGM)前 probe 输入、处理后回来
+复核输出;**刚生成**的视频先 grid+理解再说「做好了」;**发布/交付前**才走完整闭环到 checkpoint。
 
 你负责的是**内容那一半**:用 \`understand_video\` 看这条片子的 **剧情 / 字幕 / 动作 /
 连续性 / 有无穿帮错字**,对照需求给出「过 / 不过 + 具体问题」。
@@ -1223,7 +1230,7 @@ const RETIRED_FIRST_PARTY_SKILL_NAMES = ['catimation-subagents']
 
 const CATIMATION_FFMPEG_WIN_SKILL_CONTENT = `---
 name: ffmpeg-win
-description: Process video/audio with FFmpeg 8.1, preferring the bundled local ffmpeg/ffprobe CLI (on PATH, zero Docker, zero install) with the ffmpeg-win Docker MCP tool as a parallel fallback. Use for transcoding, resizing, trimming, speed change, compression, audio extraction, concat, cropping, fades, overlays, thumbnails, GIFs, inspection, and the technical+fix half of the 审片/quality-check loop (ffprobe 粗检 + 九宫格视觉 + loudness + 修复 + release checkpoint; hands off to catimation-understand for the model content-review stage). Triggers on "用 ffmpeg", "处理视频", "转码/压缩/裁剪/拼接视频", "提取音频", "竖屏适配", "加 BGM", "审片/质检/检查成片质量", "能不能发/达标了吗", "ffmpeg-win", or any CATIMATION 出片 post-processing. References cover filters, codecs, audio, streaming/hwaccel, platform export, and the CATIMATION workflow.
+description: Process video/audio with FFmpeg 8.1, preferring the bundled local ffmpeg/ffprobe CLI (on PATH, zero Docker, zero install) with the ffmpeg-win Docker MCP tool as a parallel fallback. Use for transcoding, resizing, trimming, speed change, compression, audio extraction, concat, cropping, fades, overlays, thumbnails, GIFs, inspection, and the technical half of the inspect→process→verify loop that fires for ANY video/audio/multimedia task — autonomously probe the input BEFORE processing and verify the output AFTER, not just at 发布前审片 (ffprobe 粗检 + 九宫格视觉 + loudness + 修复 + release checkpoint; hands off to catimation-understand for model content review). Triggers on "用 ffmpeg", "处理/理解视频", "转码/压缩/裁剪/拼接视频", "提取音频", "竖屏适配", "加 BGM", "拿到一个视频/音频文件", "审片/质检/检查成片质量", "能不能发/达标了吗", "ffmpeg-win", or any multimedia handling / CATIMATION 出片 post-processing. References cover filters, codecs, audio, streaming/hwaccel, platform export, and the CATIMATION workflow.
 ---
 
 # FFmpeg (local CLI preferred · ffmpeg-win Docker MCP fallback)
@@ -1460,9 +1467,21 @@ file info to **stderr**, so non-empty stderr on success is normal.
 \`error\` (stderr — progress AND info), and \`command\` (the docker line run).
 \`success: true\` with text in \`error\` is normal — FFmpeg logs to stderr.
 
-## Review / 审片 — one staged loop across TWO linked skills
+## Multimedia discipline (inspect → process → verify) — one staged loop across TWO linked skills
 
-审片 is **NOT a single pass**, and it is **NOT all done here**. It is a **loop you
+**This loop is NOT only for 发布前审片.** It is the default discipline for **ANY
+task that understands or processes a video / audio / multimedia file**, and you
+**trigger it autonomously — don't wait to be asked**:
+- **About to understand / analyze** a clip → Stage 0 probe it FIRST (know its real
+  duration / streams / codec / resolution) before you reason about or describe it.
+- **About to process** it (转码 / 剪辑 / 拼接 / 压缩 / 提取音频 / 加 BGM / 竖屏适配 /
+  变速 …) → probe the **input** first (Stage 0) so you choose correct params, THEN
+  **verify the output** afterward (Stage 0–1, plus Stage 2 if it's narrative). Never
+  hand back a file you produced without re-probing/eyeballing it.
+- **Just generated** a video → grid it and understand it before claiming it's done.
+- **发布/交付前审片** → run the whole loop through Stage 4 + human sign-off.
+
+It is **NOT a single pass**, and it is **NOT all done here**. It is a **loop you
 climb stage by stage**, spanning two skills that hand off to each other:
 
 - **\`ffmpeg-win\` (this skill)** — the *technical* eye + the *fixer*: probe streams,
@@ -1472,8 +1491,11 @@ climb stage by stage**, spanning two skills that hand off to each other:
   to judge 剧情 / 字幕 / 动作 / 连续性 / 穿帮 against the brief. ffmpeg cannot judge
   story or continuity — only pixels and streams — so that half lives there.
 
-Run only the stages a task needs, and **escalate one stage at a time** — a quick
-"能不能发" only needs Stage 0–1; a publish-bound deliverable runs the whole loop.
+Run only the stages a task needs, and **escalate one stage at a time** — a plain
+transcode/understand needs just a Stage 0 probe-first + a Stage 0–1 verify-after; a
+quick "能不能发" needs Stage 0–1; a narrative or publish-bound deliverable runs the
+whole loop. The point is: **probe before you act, verify after you act — every time
+multimedia is involved**, not only at publish.
 
 \`\`\`
 Stage0 ffprobe 粗检 ──▶ Stage1 九宫格视觉 ──▶ Stage2 understand_video 模型内容审查

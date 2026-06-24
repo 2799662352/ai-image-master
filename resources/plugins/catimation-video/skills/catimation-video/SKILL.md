@@ -254,11 +254,12 @@ montage:
    quality via the contact sheet, never the video itself. The user is already
    watching the clip play inline.
 
-> 进阶 — 上面的九宫格只是审片大循环里的一个快检环节。成片要**发布/交付**时走完整
-> 的**审片 loop**(跨两个技能):`ffmpeg-win` 主导技术面(ffprobe 粗检 → 九宫格视觉
-> → 响度 → 修复 → release checkpoint),`catimation-understand`(`understand_video`)
-> 负责模型内容审查(剧情/字幕/连续性/穿帮);不达标就 ffmpeg 修复后回到粗检复检,过了
-> 再发布。详见 `ffmpeg-win` 技能的 **Review / 审片** 段。
+> 进阶 — 上面的九宫格只是一个快检环节,背后是一个**跨两个技能的 inspect→process→verify
+> 大循环**,**不止发布前审片**:任何要**理解或处理 视频/音频/多媒体**的时候都自主触发——
+> 处理前先 probe 摸清、处理后必复核。`ffmpeg-win` 主导技术面(ffprobe 粗检 → 九宫格视觉
+> → 响度 → 修复 → release checkpoint,checkpoint 仅交付时),`catimation-understand`
+> (`understand_video`)负责模型内容理解/审查(剧情/字幕/连续性/穿帮);不达标就 ffmpeg
+> 修复后回到粗检复检,过了再交付。详见 `ffmpeg-win` 技能的 **inspect→process→verify** 段。
 
 ## Organize finished clips into the user's workspace (when in a project)
 

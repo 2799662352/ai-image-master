@@ -1,6 +1,6 @@
 ---
 name: ffmpeg-win
-description: Process video/audio with FFmpeg 8.1, preferring the bundled local ffmpeg/ffprobe CLI (on PATH, zero Docker, zero install) with the ffmpeg-win Docker MCP tool as a parallel fallback. Use for transcoding, resizing, trimming, speed change, compression, audio extraction, concat, cropping, fades, overlays, thumbnails, GIFs, inspection, and the technical+fix half of the 审片/quality-check loop (ffprobe 粗检 + 九宫格视觉 + loudness + 修复 + release checkpoint; hands off to catimation-understand for the model content-review stage). Triggers on "用 ffmpeg", "处理视频", "转码/压缩/裁剪/拼接视频", "提取音频", "竖屏适配", "加 BGM", "审片/质检/检查成片质量", "能不能发/达标了吗", "ffmpeg-win", or any CATIMATION 出片 post-processing. References cover filters, codecs, audio, streaming/hwaccel, platform export, and the CATIMATION workflow.
+description: Process video/audio with FFmpeg 8.1, preferring the bundled local ffmpeg/ffprobe CLI (on PATH, zero Docker, zero install) with the ffmpeg-win Docker MCP tool as a parallel fallback. Use for transcoding, resizing, trimming, speed change, compression, audio extraction, concat, cropping, fades, overlays, thumbnails, GIFs, inspection, and the technical half of the inspect→process→verify loop that fires for ANY video/audio/multimedia task — autonomously probe the input BEFORE processing and verify the output AFTER, not just at 发布前审片 (ffprobe 粗检 + 九宫格视觉 + loudness + 修复 + release checkpoint; hands off to catimation-understand for model content review). Triggers on "用 ffmpeg", "处理/理解视频", "转码/压缩/裁剪/拼接视频", "提取音频", "竖屏适配", "加 BGM", "拿到一个视频/音频文件", "审片/质检/检查成片质量", "能不能发/达标了吗", "ffmpeg-win", or any multimedia handling / CATIMATION 出片 post-processing. References cover filters, codecs, audio, streaming/hwaccel, platform export, and the CATIMATION workflow.
 ---
 
 # FFmpeg (local CLI preferred · ffmpeg-win Docker MCP fallback)
@@ -237,9 +237,21 @@ file info to **stderr**, so non-empty stderr on success is normal.
 `error` (stderr — progress AND info), and `command` (the docker line run).
 `success: true` with text in `error` is normal — FFmpeg logs to stderr.
 
-## Review / 审片 — one staged loop across TWO linked skills
+## Multimedia discipline (inspect → process → verify) — one staged loop across TWO linked skills
 
-审片 is **NOT a single pass**, and it is **NOT all done here**. It is a **loop you
+**This loop is NOT only for 发布前审片.** It is the default discipline for **ANY
+task that understands or processes a video / audio / multimedia file**, and you
+**trigger it autonomously — don't wait to be asked**:
+- **About to understand / analyze** a clip → Stage 0 probe it FIRST (know its real
+  duration / streams / codec / resolution) before you reason about or describe it.
+- **About to process** it (转码 / 剪辑 / 拼接 / 压缩 / 提取音频 / 加 BGM / 竖屏适配 /
+  变速 …) → probe the **input** first (Stage 0) so you choose correct params, THEN
+  **verify the output** afterward (Stage 0–1, plus Stage 2 if it's narrative). Never
+  hand back a file you produced without re-probing/eyeballing it.
+- **Just generated** a video → grid it and understand it before claiming it's done.
+- **发布/交付前审片** → run the whole loop through Stage 4 + human sign-off.
+
+It is **NOT a single pass**, and it is **NOT all done here**. It is a **loop you
 climb stage by stage**, spanning two skills that hand off to each other:
 
 - **`ffmpeg-win` (this skill)** — the *technical* eye + the *fixer*: probe streams,
@@ -249,8 +261,11 @@ climb stage by stage**, spanning two skills that hand off to each other:
   to judge 剧情 / 字幕 / 动作 / 连续性 / 穿帮 against the brief. ffmpeg cannot judge
   story or continuity — only pixels and streams — so that half lives there.
 
-Run only the stages a task needs, and **escalate one stage at a time** — a quick
-"能不能发" only needs Stage 0–1; a publish-bound deliverable runs the whole loop.
+Run only the stages a task needs, and **escalate one stage at a time** — a plain
+transcode/understand needs just a Stage 0 probe-first + a Stage 0–1 verify-after; a
+quick "能不能发" needs Stage 0–1; a narrative or publish-bound deliverable runs the
+whole loop. The point is: **probe before you act, verify after you act — every time
+multimedia is involved**, not only at publish.
 
 ```
 Stage0 ffprobe 粗检 ──▶ Stage1 九宫格视觉 ──▶ Stage2 understand_video 模型内容审查
