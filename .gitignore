@@ -64,6 +64,7 @@ lQLPKIIzYQI-*.png
 docs/prompt-research/superi-auth.json
 resources/codex/
 resources/docker-mcp/
+resources/ffmpeg/
 docs/codex-app-server/
 docs/codex-app-server.schema.json
 docs/codex-app-server.ts

@@ -7,7 +7,7 @@ import { mergeCodexConfigs } from './codexConfigMerge'
 import { appendAuditLog, atomicWriteFile } from './codexConfigStore'
 import { CodexProtocolClient, mapServerNotification } from './CodexProtocolClient'
 import { createAgentLogStream } from './logger'
-import { getCodexResourceRoot, resolveCodexBinary } from './paths'
+import { getCodexResourceRoot, resolveBundledFfmpegDir, resolveCodexBinary } from './paths'
 import { runCodexDoctor, type DoctorReport } from './codexDoctor'
 import { pickFreePort } from './ports'
 import type {
@@ -142,6 +142,7 @@ export function buildCodexSpawnEnv(
   apiKey: string | undefined,
   codexHome?: string,
   extraEnv?: Record<string, string | undefined>,
+  extraPathDirs?: readonly string[],
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...baseEnv }
   const trimmed = apiKey?.trim() ?? ''
@@ -156,6 +157,19 @@ export function buildCodexSpawnEnv(
       const v = value?.trim() ?? ''
       if (v) env[key] = v
     }
+  }
+  // Prepend bundled tool dirs (e.g. the shipped gyan ffmpeg/ffprobe) so Codex's
+  // shell resolves OUR binaries first without the user installing anything. The
+  // existing PATH key is found case-insensitively because Windows stores it as
+  // `Path`, and spreading process.env into a plain object loses the OS-level
+  // case folding. Codex runs with sandbox_mode=danger-full-access, so spawning
+  // these binaries is not blocked by the Windows sandbox.
+  const dirs = (extraPathDirs ?? []).filter((dir) => dir.trim().length > 0)
+  if (dirs.length > 0) {
+    const pathKey = Object.keys(env).find((key) => key.toLowerCase() === 'path') ?? 'PATH'
+    const existing = env[pathKey] ?? ''
+    const prefix = dirs.join(path.delimiter)
+    env[pathKey] = existing ? `${prefix}${path.delimiter}${existing}` : prefix
   }
   return env
 }
@@ -260,7 +274,17 @@ export class CodexLocalBackend implements IAgentBackend {
     const extraEnv = understand?.token
       ? { [understand.provider.envKey]: understand.token }
       : undefined
-    const env = buildCodexSpawnEnv(process.env, apiKey, this.codexHome, extraEnv)
+    // Make the bundled gyan ffmpeg/ffprobe visible to Codex's shell (video
+    // transcode / 抽帧 / 字幕 / 封面 / 音频提取) without any user install. Null
+    // when not shipped (non-Windows or dev checkout) → falls back to system PATH.
+    const ffmpegDir = resolveBundledFfmpegDir(resourceRoot)
+    const env = buildCodexSpawnEnv(
+      process.env,
+      apiKey,
+      this.codexHome,
+      extraEnv,
+      ffmpegDir ? [ffmpegDir] : undefined,
+    )
     const spawnFactory = this.options.spawnFactory ?? spawn
     const proc = spawnFactory(
       bin,

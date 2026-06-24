@@ -464,6 +464,48 @@ describe('buildCodexSpawnEnv', () => {
     expect(env.UNDEF_ONE).toBeUndefined()
     expect(env.OPENAI_API_KEY).toBe('sk-active')
   })
+
+  it('prepends extraPathDirs to an existing PATH using the platform delimiter', () => {
+    const env = buildCodexSpawnEnv(
+      { PATH: `/usr/bin${path.delimiter}/bin` } as NodeJS.ProcessEnv,
+      undefined,
+      undefined,
+      undefined,
+      ['/opt/ffmpeg'],
+    )
+    expect(env.PATH).toBe(`/opt/ffmpeg${path.delimiter}/usr/bin${path.delimiter}/bin`)
+  })
+
+  it('updates the existing PATH key case-insensitively (Windows stores it as `Path`)', () => {
+    const env = buildCodexSpawnEnv(
+      { Path: 'C:\\Windows\\System32' } as NodeJS.ProcessEnv,
+      undefined,
+      undefined,
+      undefined,
+      ['C:\\app\\ffmpeg'],
+    )
+    expect(env.Path).toBe(`C:\\app\\ffmpeg${path.delimiter}C:\\Windows\\System32`)
+    // Must not create a second, divergent PATH key that the OS would ignore.
+    expect(env.PATH).toBeUndefined()
+  })
+
+  it('sets PATH to just the extra dirs when none pre-exists, and ignores blank dirs', () => {
+    const env = buildCodexSpawnEnv(
+      { FOO: 'bar' } as NodeJS.ProcessEnv,
+      undefined,
+      undefined,
+      undefined,
+      ['   ', 'C:\\app\\ffmpeg'],
+    )
+    expect(env.PATH).toBe('C:\\app\\ffmpeg')
+  })
+
+  it('leaves PATH untouched when extraPathDirs is omitted or empty', () => {
+    const omitted = buildCodexSpawnEnv({ PATH: '/usr/bin' } as NodeJS.ProcessEnv, undefined)
+    expect(omitted.PATH).toBe('/usr/bin')
+    const empty = buildCodexSpawnEnv({ PATH: '/usr/bin' } as NodeJS.ProcessEnv, undefined, undefined, undefined, [])
+    expect(empty.PATH).toBe('/usr/bin')
+  })
 })
 
 describe('CodexLocalBackend spawn env injection', () => {

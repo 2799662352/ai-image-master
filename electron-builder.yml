@@ -44,6 +44,18 @@ extraResources:
     to: docker-mcp/${platform}-${arch}
     filter:
       - "docker-mcp*"
+  # Bundled gyan.dev FFmpeg (full_build-shared: ffmpeg.exe + ffprobe.exe + the
+  # avcodec/avformat/... DLLs). Fetched by scripts/fetch-ffmpeg.ts into
+  # resources/ffmpeg/<platform>-<arch>/ (gitignored, populated by `ffmpeg:fetch`
+  # in bootstrap). Injected into Codex's PATH at spawn time via
+  # src/main/agent/CodexLocalBackend.ts → resolveBundledFfmpegDir so video work
+  # (transcode / 抽帧 / 字幕 / 封面 / 音频提取) needs no user install or Docker.
+  # The exe + DLLs MUST land in the same dir (Windows DLL search order); `**/*`
+  # keeps them together. gyan is Windows-only, so this dir is empty on mac/linux.
+  - from: resources/ffmpeg/${platform}-${arch}
+    to: ffmpeg/${platform}-${arch}
+    filter:
+      - "**/*"
   # Vendored apiyi-mcp-server (resolves to <resourcesPath>/apiyi-mcp/dist/index.js
   # at runtime via src/main/agent/apiyiMcpLauncher.ts). Pure Node, no per-platform
   # subdir. Vendored by scripts/vendor-apiyi-mcp.mjs as part of `npm run build`.

@@ -6,6 +6,7 @@ import {
   CATIMATION_IMAGE_SKILL,
   CATIMATION_BRAINSTORM_SKILL,
   CATIMATION_UNDERSTAND_SKILL,
+  CATIMATION_FFMPEG_WIN_SKILL,
   FIRST_PARTY_SKILLS,
   installFirstPartySkills,
   type FirstPartySkill,
@@ -275,6 +276,46 @@ describe('installFirstPartySkills', () => {
         'utf8',
       )
       expect(written).toBe(CATIMATION_UNDERSTAND_SKILL.content)
+    })
+  })
+
+  describe('CATIMATION_FFMPEG_WIN_SKILL', () => {
+    it('is shipped in FIRST_PARTY_SKILLS with valid frontmatter', () => {
+      expect(FIRST_PARTY_SKILLS).toContain(CATIMATION_FFMPEG_WIN_SKILL)
+      expect(CATIMATION_FFMPEG_WIN_SKILL.name).toBe('ffmpeg-win')
+      expect(CATIMATION_FFMPEG_WIN_SKILL.name).toMatch(/^[a-z0-9-]+$/)
+      expect(CATIMATION_FFMPEG_WIN_SKILL.content.startsWith('---\n')).toBe(true)
+      expect(CATIMATION_FFMPEG_WIN_SKILL.content).toMatch(/\nname:\s*ffmpeg-win/)
+      expect(CATIMATION_FFMPEG_WIN_SKILL.content).toMatch(/\ndescription:\s*\S/)
+    })
+
+    it('documents both backends (local CLI preferred, Docker MCP fallback)', () => {
+      const c = CATIMATION_FFMPEG_WIN_SKILL.content
+      expect(c).toContain('Backend A')
+      expect(c).toContain('Backend B')
+      expect(c).toContain('ffprobe')
+      // Step 0 backend probe so the agent picks local-first.
+      expect(c).toMatch(/ffmpeg -version/)
+    })
+
+    it('carries the mcp-video-inspired 审片 (quality check + release checkpoint)', () => {
+      const c = CATIMATION_FFMPEG_WIN_SKILL.content
+      expect(c).toContain('release checkpoint')
+      expect(c).toContain('loudnorm')
+      expect(c).toContain('tile=3x3')
+      expect(c).toContain('Preflight guardrails')
+      expect(c).toContain('Do not auto-publish')
+    })
+
+    it('installs cleanly alongside the other first-party skills', async () => {
+      const officialRoot = await makeTempRoot()
+      const report = await installFirstPartySkills({ officialRoot })
+      expect(report.installed).toContain('ffmpeg-win')
+      const written = await readFile(
+        path.join(officialRoot, 'ffmpeg-win', 'SKILL.md'),
+        'utf8',
+      )
+      expect(written).toBe(CATIMATION_FFMPEG_WIN_SKILL.content)
     })
   })
 })

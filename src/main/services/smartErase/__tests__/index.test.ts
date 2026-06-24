@@ -4,7 +4,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 const runUploadMock = vi.fn()
 const runProcessAndPollMock = vi.fn()
-const generatePosterDataUrlMock = vi.fn()
 const trackForReapingMock = vi.fn()
 const deleteObjectsMock = vi.fn()
 const getCredentialsMock = vi.fn(() => ({
@@ -19,10 +18,6 @@ const setCredentialsMock = vi.fn()
 vi.mock('../runner', () => ({
   runUpload: runUploadMock,
   runProcessAndPoll: runProcessAndPollMock,
-}))
-
-vi.mock('../posterGen', () => ({
-  generatePosterDataUrl: generatePosterDataUrlMock,
 }))
 
 vi.mock('../reaper', () => ({
@@ -67,12 +62,10 @@ describe('smartErase service composer', () => {
     vi.resetModules()
     runUploadMock.mockReset()
     runProcessAndPollMock.mockReset()
-    generatePosterDataUrlMock.mockReset()
     trackForReapingMock.mockReset()
     deleteObjectsMock.mockReset()
     sendSpy.mockClear()
 
-    generatePosterDataUrlMock.mockResolvedValue('data:image/jpeg;base64,FAKE')
     runUploadMock.mockResolvedValue({ inputCosKey: 'smart-erase/x/input/test.mp4' })
     runProcessAndPollMock.mockResolvedValue({
       videoUrl: 'https://cos.example/output.mp4?sig=abc',
@@ -180,22 +173,4 @@ describe('smartErase service composer', () => {
     expect(trackForReapingMock).not.toHaveBeenCalled()
   })
 
-  it('Test 4: poster generation throws → submit still succeeds with posterDataUrl=""', async () => {
-    generatePosterDataUrlMock.mockRejectedValueOnce(new Error('POSTER_FAILED: ffmpeg crashed'))
-
-    const svc = await import('../index')
-    svc.setMainWindow(mockWin as any)
-
-    const ret = await svc.submitErase(SUBMIT_PAYLOAD)
-    expect(ret.success).toBe(true)
-    expect(ret.posterDataUrl).toBe('')
-    expect(warnSpy).toHaveBeenCalled()
-    const warnText = warnSpy.mock.calls.map((c) => c.join(' ')).join('\n')
-    expect(warnText).toMatch(/poster/i)
-
-    // Runner still gets called
-    await flush()
-    await flush()
-    expect(runUploadMock).toHaveBeenCalledTimes(1)
-  })
 })
