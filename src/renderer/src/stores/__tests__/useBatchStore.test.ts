@@ -264,6 +264,55 @@ describe('useBatchStore', () => {
       expect(useBatchStore.getState().running).toBe(false)
     })
 
+    // Regression (2026-06-25): mid-run model switch on the batch page.
+    // While a 'gpt-image-2' batch is in flight, the user switches the
+    // top-bar model to 'nano-banana' and clicks 加入队列. The freshly
+    // enqueued item MUST be generated with the model that was active when
+    // it was enqueued (nano-banana) — NOT the original batch's captured
+    // modelKey. Before the fix, model was a per-runBatch closure param, so
+    // the addItem-spawned worker sent the new item as 'gpt-image-2' with
+    // nano's inline-base64 refs → upstream rejected it → the user saw the
+    // nano task "发送不出去".
+    it('locks model per-item so a mid-run model switch uses the new model', async () => {
+      useBatchStore.getState().addItem('gpt-prompt', { model: 'gpt-image-2' })
+
+      const calls: Array<{ prompt: string; model: string }> = []
+      const resolvers: Array<(v: unknown) => void> = []
+      const api = createMockApi({
+        generateImage: vi.fn().mockImplementation(
+          (args: { prompt: string; model: string }) =>
+            new Promise((resolve) => {
+              calls.push({ prompt: args.prompt, model: args.model })
+              resolvers.push(resolve)
+            }),
+        ),
+      })
+
+      const batchPromise = useBatchStore.getState().runBatch(api, 'gpt-image-2', {
+        concurrency: 1,
+        idleExitMs: 300,
+      })
+
+      await vi.waitFor(() => {
+        expect(calls.length).toBe(1)
+        expect(calls[0]).toMatchObject({ prompt: 'gpt-prompt', model: 'gpt-image-2' })
+      })
+
+      // Mid-run: user switched the top bar to nano and enqueued a nano item.
+      useBatchStore.getState().addItem('nano-prompt', { model: 'nano-banana' })
+      await vi.waitFor(() => {
+        expect(calls.length).toBe(2)
+      })
+
+      // The nano item must be sent as nano-banana, not the batch's gpt model.
+      const nanoCall = calls.find((c) => c.prompt === 'nano-prompt')
+      expect(nanoCall?.model).toBe('nano-banana')
+
+      resolvers.forEach((r) => r({ success: true, urls: ['http://x.jpg'] }))
+      await batchPromise
+      expect(useBatchStore.getState().running).toBe(false)
+    })
+
     // Single-flight invariant: calling runBatch a second time while one
     // is already running must be a no-op (no duplicate worker pool, no
     // re-flip of `running`). This protects against the BatchPage handler

@@ -253,10 +253,13 @@ export default function BatchPage() {
     //    workers 走的是 live-claim 模型 (claimNextPending)，新入队的 item
     //    会被空闲 / 下一轮 worker 直接捡走，不再需要等本轮 batch 整体跑完。
     let enqueuedThisClick = 0
-    // 入队时锁定当前 refs + ratio 到每个 item, 保证用户 mid-run 修改后
+    // 入队时锁定当前 refs + ratio + model 到每个 item, 保证用户 mid-run 修改后
     // 追加的新 item 使用的是修改后的值(而非首次 runBatch 闭包里的旧值)。
+    // model 尤其关键: 一批在跑时切了顶栏模型再点"加入队列", 新 item 必须用
+    // 切换后的 currentModelKey, 否则会被在跑那批的闭包 modelKey 顶替(原 bug:
+    // 切到 nano 后加的任务被当 gpt-image 发, 带着 nano 的 base64 refs → 失败)。
     const currentRefs = refImages.map((r) => r.base64)
-    const itemOpts = { referenceImages: currentRefs, ratio }
+    const itemOpts = { referenceImages: currentRefs, ratio, model: currentModelKey }
     if (mode === 'card') {
       const p = cardPrompt.trim()
       if (!p && stats.pending === 0 && !running) {

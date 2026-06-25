@@ -53,6 +53,13 @@ export interface BatchItem {
   /** 入队时锁定的比例, 同上原因。 */
   ratio?: string
   /**
+   * 入队时锁定的模型 key。和 ratio/referenceImages 同款 per-item 锁定:
+   * 一批在跑(running)时用户切了顶栏模型再点"加入队列",新 item 必须用
+   * **切换后**的模型,而不是首次 runBatch 闭包捕获的旧 modelKey。worker
+   * 取 `item.modelKey ?? 闭包 modelKey`。缺省(单次启动的整批)= 用闭包值。
+   */
+  modelKey?: string
+  /**
    * 在 worker 把 item flip 为 `generating` 时挂上 —— 之前(pending)
    * 阶段为 undefined。重编辑时:
    *   - 有 snapshot 就用 snapshot.{prompt, ratio, referenceImages, modelKey}
@@ -123,7 +130,7 @@ export interface BatchState {
   refImages: BatchRefImage[]
 
   // ---- actions: 队列 ----
-  addItem: (prompt: string, opts?: { referenceImages?: string[]; ratio?: string }) => void
+  addItem: (prompt: string, opts?: { referenceImages?: string[]; ratio?: string; model?: string }) => void
   removeItem: (id: string) => void
   clearAll: () => void
   runBatch: (api: ApiActions, modelKey: string, opts?: BatchRunOpts) => Promise<void>
@@ -242,6 +249,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
           status: 'pending',
           referenceImages: opts?.referenceImages,
           ratio: opts?.ratio,
+          modelKey: opts?.model,
         },
       ]),
     }))
@@ -357,6 +365,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
           prompt: next.prompt,
           ratio: next.ratio ?? runSnapshotBase.ratio,
           referenceImages: next.referenceImages ?? runSnapshotBase.referenceImages,
+          modelKey: next.modelKey ?? runSnapshotBase.modelKey,
         }
         claimed = { ...next, status: 'generating' as const, snapshot }
         return {
@@ -408,15 +417,18 @@ export const useBatchStore = create<BatchState>((set, get) => ({
           try {
             const templateKey = useTemplateStore.getState().getSelection('batch')
             const finalPrompt = composePromptWithTemplate(templateKey, item.prompt)
-            // item 自身可能携带入队时锁定的 refs/ratio (用户 mid-run 修改后
-            // 追加的新 item), 优先取自身值, 否则 fallback 到 runBatch 闭包快照。
+            // item 自身可能携带入队时锁定的 refs/ratio/model (用户 mid-run 切了
+            // 模型 / 改了 refs 后追加的新 item), 优先取自身值, 否则 fallback 到
+            // runBatch 闭包快照。model 尤其关键: 一批在跑时切顶栏模型再加队列,
+            // 新 item 必须用切换后的模型,而不是闭包捕获的旧 modelKey。
+            const itemModel = item.modelKey ?? modelKey
             const itemRatio = item.ratio ?? ratio
             const itemRefs = item.referenceImages
               ? item.referenceImages.map(stripDataUrl).filter(Boolean)
               : referenceImages
             const result = await api.generateImage({
               prompt: finalPrompt,
-              model: modelKey,
+              model: itemModel,
               ratio: itemRatio !== 'auto' ? itemRatio : undefined,
               resolution,
               quality,
@@ -490,13 +502,13 @@ export const useBatchStore = create<BatchState>((set, get) => ({
                 modelUrl,
                 prompt: item.prompt,
                 ratio: item.ratio ?? ratio,
-                modelKey,
+                modelKey: itemModel,
                 refRaw: item.referenceImages ?? refRaw,
               })
               enqueueCosUpload(id, modelUrl, {
                 source: 'batch',
                 prompt: item.prompt,
-                model: modelKey,
+                model: itemModel,
               })
             }
             enqueueOne(item.id, url)
