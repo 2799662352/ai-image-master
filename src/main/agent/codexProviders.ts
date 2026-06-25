@@ -109,8 +109,8 @@ const RIGHTCODE_PRO_PRESET: ProviderPreset = {
  *    gateway's `/v1/chat/completions` directly via the renderer
  *    (ApiService.understand), so understanding keeps working regardless.
  *
- * Model defaults to `qwen3.7-max-dashscope` (stronger). A subagent may override
- * per-spawn with `model="qwen3.7-plus-dashscope"` for the cheaper model (the
+ * Model defaults to `qwen3.7-plus-dashscope` (cheaper). A subagent may override
+ * per-spawn with `model="qwen3.7-max-dashscope"` for the stronger model (the
  * launch config sets the provider's default; the spawn can pin model).
  */
 export const QWEN_UNDERSTAND_PROVIDER_ID = 'qwen' as const
@@ -120,7 +120,7 @@ export const QWEN_UNDERSTAND_PROVIDER: CodexProviderConfig = {
   name: 'Qwen Understanding (DashScope via new-api)',
   baseUrl: 'http://175.178.198.17:3000/v1',
   envKey: 'MIAU_API_KEY',
-  model: 'qwen3.7-max-dashscope',
+  model: 'qwen3.7-plus-dashscope',
   wireApi: 'responses',
 }
 

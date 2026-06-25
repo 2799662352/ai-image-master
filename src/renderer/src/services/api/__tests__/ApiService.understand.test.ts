@@ -60,7 +60,7 @@ describe('ApiService.understand()', () => {
       'Content-Type': 'application/json',
     })
     const body = JSON.parse((init as RequestInit).body as string)
-    expect(body.model).toBe('qwen3.7-max-dashscope')
+    expect(body.model).toBe('qwen3.7-plus-dashscope')
     expect(body.result_format).toBeUndefined()
     expect(body.enable_search).toBeUndefined()
     expect(body.messages[0].content).toEqual([
@@ -166,11 +166,11 @@ describe('ApiService.understand()', () => {
     expect(result.success).toBe(false)
   })
 
-  it('defaults to qwen3.7-max-dashscope and falls back to plus on a primary failure', async () => {
+  it('defaults to qwen3.7-plus-dashscope and falls back to max on a primary failure', async () => {
     fetchMock
-      // primary (max) → deterministic 400, no same-model retry
+      // primary (plus) → deterministic 400, no same-model retry
       .mockResolvedValueOnce(fakeResponse({ ok: false, status: 400, statusText: 'Bad Request', body: 'x' }))
-      // fallback (plus) → success
+      // fallback (max) → success
       .mockResolvedValueOnce(
         fakeResponse({ ok: true, body: JSON.stringify({ choices: [{ message: { content: '兜底成功' } }] }) }),
       )
@@ -185,11 +185,11 @@ describe('ApiService.understand()', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
     const primaryBody = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string)
     const fallbackBody = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string)
-    expect(primaryBody.model).toBe('qwen3.7-max-dashscope')
-    expect(fallbackBody.model).toBe('qwen3.7-plus-dashscope')
+    expect(primaryBody.model).toBe('qwen3.7-plus-dashscope')
+    expect(fallbackBody.model).toBe('qwen3.7-max-dashscope')
   })
 
-  it('honors an explicit model="plus" override and does NOT fall back (plus is the fallback model)', async () => {
+  it('honors an explicit model="max" override and does NOT fall back (max is the fallback model)', async () => {
     fetchMock.mockResolvedValue(
       fakeResponse({ ok: false, status: 400, statusText: 'Bad Request', body: 'x' }),
     )
@@ -197,14 +197,14 @@ describe('ApiService.understand()', () => {
 
     const result = await service.understand(
       { kind: 'web', query: 'x' },
-      { retryDelayMs: 0, model: 'plus' },
+      { retryDelayMs: 0, model: 'max' },
     )
 
     expect(result.success).toBe(false)
-    // primary === plus === fallback model → no extra fallback attempt
+    // primary === max === fallback model → no extra fallback attempt
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string)
-    expect(body.model).toBe('qwen3.7-plus-dashscope')
+    expect(body.model).toBe('qwen3.7-max-dashscope')
   })
 
   it('returns a config error when no key is available (does not call fetch)', async () => {

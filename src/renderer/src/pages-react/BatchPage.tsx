@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, useEffect } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useModelStore, useToastStore, useBatchStore } from '../stores'
 import { ImageLightbox } from '../components/shared/ImageLightbox'
 import ImageEditActions, { type ImageEditorType } from '../components/shared/image-editors/ImageEditActions'
@@ -109,12 +109,14 @@ export default function BatchPage() {
   }, [])
 
   // ---- 当前 model 的 ratio / resolution 选项 ----
-  const [modelConfig, setModelConfig] = useState<ModelConfigSnapshot | null>(null)
-  useEffect(() => {
-    const aiApi = (window as any).aiImageAPI
-    const cfg = aiApi?.getCurrentModel?.() as ModelConfigSnapshot | undefined
-    setModelConfig(cfg || null)
-  }, [currentModelKey])
+  // 纯从 model store 派生(与 GeneratePage 的 currentModel 同源),切换模型即同步更新。
+  // 旧版从异步的 window.aiImageAPI.getCurrentModel()(= ApiService 单例)读,而 React
+  // 选择器只更新 store、不回推单例,导致切完模型后 modelConfig 仍是旧值 —— 比例/分辨率/
+  // 质量选项、单价、模型名全卡在上一个模型。现在 switchModel 已统一两端,这里直接吃 store。
+  const modelConfig = useMemo<ModelConfigSnapshot | null>(
+    () => (models[currentModelKey] as unknown as ModelConfigSnapshot | undefined) ?? null,
+    [models, currentModelKey],
+  )
 
   // gemini 原生端点 = base64 内联组:参考图以 inline_data 发送。
   // ⚠️ 必须从 model store **同步**派生(而非异步的 modelConfig),否则切换那一刻 flag

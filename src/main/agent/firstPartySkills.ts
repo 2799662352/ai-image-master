@@ -1106,7 +1106,7 @@ export const CATIMATION_CANVAS_SKILL: FirstPartySkill = {
 const CATIMATION_UNDERSTAND_SKILL_CONTENT = `---
 name: catimation-understand
 description: >-
-  Understand video / documents / and research the web with qwen3.7-max-dashscope
+  Understand video / documents / and research the web with qwen3.7-plus-dashscope
   inside CATIMATION. Trigger to 理解/分析视频, 看懂/读 文档/PDF, or 上网查/搜一下/扒资料/最新消息.
   Also the model understand/review stage of the multimedia inspect→verify loop that
   fires for ANY video/audio task (not just 审片): judge content here with
@@ -1118,10 +1118,10 @@ description: >-
 
 These tools run on qwen through the same new-api gateway and Miau token used for
 image/video generation, and return Chinese text answers. **Model defaults to
-\`qwen3.7-max-dashscope\`** (stronger); pass \`model="plus"\` on any tool for the
-cheaper \`qwen3.7-plus-dashscope\`. You rarely need to: if max fails, the renderer
-automatically retries once on plus as a fallback. Only ask for \`plus\` when the
-user wants to save cost.
+\`qwen3.7-plus-dashscope\`** (cheaper); pass \`model="max"\` on any tool for the
+stronger \`qwen3.7-max-dashscope\`. You rarely need to: if plus fails, the renderer
+automatically retries once on max as a fallback. Only ask for \`max\` when plus
+struggles on a hard clip or the user explicitly wants the strongest model.
 
 ## When to use
 

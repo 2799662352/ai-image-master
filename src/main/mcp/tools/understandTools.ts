@@ -1,6 +1,6 @@
-// qwen 理解工具（视频 / 文档 / 联网扒资料）。默认 qwen3.7-max(更强)、
-// 可经 model="plus" 切到更便宜的 qwen3.7-plus;渲染层 understand() 还会在 max 失败时
-// 自动用 plus 兜底。
+// qwen 理解工具（视频 / 文档 / 联网扒资料）。默认 qwen3.7-plus(更便宜)、
+// 可经 model="max" 切到更强的 qwen3.7-max;渲染层 understand() 还会在 plus 失败时
+// 自动用 max 兜底。
 //
 // 与 imageTools/videoTools 同款薄层模式:main 端只做参数透传 + banner 包装,
 // 实际模型调用在渲染层 AgentToolExecutor.callUnderstand → ApiService.understand()
@@ -242,14 +242,14 @@ export function registerUnderstandTools(server: McpServer, router: ToolRouter): 
         'the qwen3.7 upstream limit). ' +
         'AUDIO is NOT natively supported: to "understand" an audio file, first convert it to MP4 ' +
         '(ffmpeg-win skill: audio track + placeholder/​waveform video) and pass that MP4 here. ' +
-        'Model defaults to qwen3.7-max (stronger); pass model="plus" for the cheaper qwen3.7-plus. ' +
+        'Model defaults to qwen3.7-plus (cheaper); pass model="max" for the stronger qwen3.7-max. ' +
         'Returns a Chinese description. Do NOT retry on a clean result.',
       inputSchema: z.object({
         video_url: z.string().optional().describe('Public http(s) URL of the video (preferred when you already have one).'),
         video_path: z.string().optional().describe('Local file path — auto-uploaded to COS (image-history/media-relay/*) to get a public URL.'),
         question: z.string().min(1).describe('What you want to know about the video.'),
         fps: z.number().int().positive().optional().describe('Optional sampling fps hint (reserved; not yet sent upstream).'),
-        model: z.enum(['max', 'plus']).optional().describe('Model: "max" (default, stronger) or "plus" (cheaper). Omit for max.'),
+        model: z.enum(['max', 'plus']).optional().describe('Model: "plus" (default, cheaper) or "max" (stronger). Omit for plus.'),
       }),
     },
     async (params, ctx?: unknown) => runUnderstand(router, 'understand_video', params as Record<string, unknown>, ctx),
@@ -263,13 +263,13 @@ export function registerUnderstandTools(server: McpServer, router: ToolRouter): 
         '(public URL) OR a local file_path — a local path is auto-uploaded (streamed) to the history COS ' +
         'bucket to get a public URL (≤2GB). NOTE: native document understanding is only PARTIAL upstream — ' +
         'for best results render the page(s) to image(s) and pass an image, or extract text and ask ' +
-        'normally. Model defaults to qwen3.7-max (stronger); pass model="plus" for the cheaper model. ' +
+        'normally. Model defaults to qwen3.7-plus (cheaper); pass model="max" for the stronger model. ' +
         'Returns a Chinese answer.',
       inputSchema: z.object({
         file_url: z.string().optional().describe('Public http(s) URL of the document/page image (preferred when you already have one).'),
         file_path: z.string().optional().describe('Local file path — auto-uploaded to COS (image-history/media-relay/*) to get a public URL.'),
         question: z.string().min(1).describe('What you want to know from the document.'),
-        model: z.enum(['max', 'plus']).optional().describe('Model: "max" (default, stronger) or "plus" (cheaper). Omit for max.'),
+        model: z.enum(['max', 'plus']).optional().describe('Model: "plus" (default, cheaper) or "max" (stronger). Omit for plus.'),
       }),
     },
     async (params, ctx?: unknown) => runUnderstand(router, 'understand_document', params as Record<string, unknown>, ctx),
@@ -281,11 +281,11 @@ export function registerUnderstandTools(server: McpServer, router: ToolRouter): 
       description:
         'Search the web / 上网扒资料 with qwen (enable_search). Use for "上网查/查一下/' +
         '搜一下/最新消息" requests. Pass a natural-language query; returns a synthesized answer that ' +
-        'incorporates live web results. Model defaults to qwen3.7-max (stronger); pass model="plus" ' +
-        'for the cheaper model. Prefer this over guessing from stale memory.',
+        'incorporates live web results. Model defaults to qwen3.7-plus (cheaper); pass model="max" ' +
+        'for the stronger model. Prefer this over guessing from stale memory.',
       inputSchema: z.object({
         query: z.string().min(1).describe('Natural-language research query.'),
-        model: z.enum(['max', 'plus']).optional().describe('Model: "max" (default, stronger) or "plus" (cheaper). Omit for max.'),
+        model: z.enum(['max', 'plus']).optional().describe('Model: "plus" (default, cheaper) or "max" (stronger). Omit for plus.'),
       }),
     },
     async (params, ctx?: unknown) => runUnderstand(router, 'web_research', params as Record<string, unknown>, ctx),
@@ -298,12 +298,12 @@ export function registerUnderstandTools(server: McpServer, router: ToolRouter): 
         'Understand / analyze the VIDEO currently SELECTED on the canvas (or the only video on the canvas if ' +
         'nothing is selected) with qwen, and by default write the result back ONTO the canvas as a text note ' +
         'next to that video. Use for "理解/分析画布上(选中)的这段视频". NO url/path needed — it reads the ' +
-        'selected canvas video itself (local sources are auto-uploaded to COS). Model defaults to qwen3.7-max ' +
-        '(stronger); pass model="plus" for the cheaper qwen3.7-plus. Set annotate=false to only return the text ' +
+        'selected canvas video itself (local sources are auto-uploaded to COS). Model defaults to qwen3.7-plus ' +
+        '(cheaper); pass model="max" for the stronger qwen3.7-max. Set annotate=false to only return the text ' +
         'without drawing the note. Requires the Canvas tab open. Returns a Chinese description.',
       inputSchema: z.object({
         question: z.string().min(1).describe('What you want to know about the selected canvas video.'),
-        model: z.enum(['max', 'plus']).optional().describe('Model: "max" (default, stronger) or "plus" (cheaper). Omit for max.'),
+        model: z.enum(['max', 'plus']).optional().describe('Model: "plus" (default, cheaper) or "max" (stronger). Omit for plus.'),
         annotate: z.boolean().optional().describe('Write the result onto the canvas as a text note next to the video (default true).'),
       }),
     },

@@ -37,25 +37,25 @@ export type UnderstandInput =
 /**
  * 理解能力上游模型(走 antigravity new-api 网关的 DashScope 原生通道)。
  *
- * 默认 `qwen3.7-max-dashscope`(更强、更稳,prod 一直在用);
- * `qwen3.7-plus-dashscope` 作为「更便宜 + 兜底」备选。两者能力一致(文本/图像/
- * 视频/联网/工具,均不支持音频),差别是 max 更强更贵、plus 更便宜。
+ * 默认 `qwen3.7-plus-dashscope`(更便宜,日常足够);`qwen3.7-max-dashscope`
+ * 作为「更强 + 兜底」备选。两者能力一致(文本/图像/视频/联网/工具,均不支持
+ * 音频),差别是 plus 更便宜、max 更强更贵。
  *
  * 历史:plus 是「多模态专用」模型,其纯文本(如 web_research)必须被网关强制路由到
  * multimodal 端点(`aliMultimodalOnlyModels`),否则上游回 `url error`。该端点强制
  * 一度只在测试网关、prod 未上。2026-06-23 实测 prod(175.178.198.17)上 plus 的
- * web_research + understand_video 均已通过(见 docs 24/25),故 plus 现可用作兜底。
+ * web_research + understand_video 均已通过(见 docs 24/25),故 plus 现已稳定可作默认。
  *
  * 切换/兜底:`understand(input, { model })` 可显式指定('max' / 'plus' / 全名);
- * 非法值回落默认 max。primary 失败(同模型重试耗尽后)且 primary≠plus 时,自动用
- * plus 兜底重试一次(见 understand)。
+ * 非法值回落默认 plus。primary 失败(同模型重试耗尽后)且 primary≠max 时,自动用
+ * max 兜底重试一次(见 understand)。
  */
-export const QWEN_UNDERSTAND_MODEL = 'qwen3.7-max-dashscope'
+export const QWEN_UNDERSTAND_MODEL = 'qwen3.7-plus-dashscope'
 
-/** 更便宜 + 兜底模型:primary 失败时自动重试一次。也可经 `{ model }` 显式选用。 */
-export const QWEN_UNDERSTAND_FALLBACK_MODEL = 'qwen3.7-plus-dashscope'
+/** 更强 + 兜底模型:primary 失败时自动重试一次。也可经 `{ model }` 显式选用。 */
+export const QWEN_UNDERSTAND_FALLBACK_MODEL = 'qwen3.7-max-dashscope'
 
-/** 允许显式选用的理解模型白名单(其余值回落到默认 max)。 */
+/** 允许显式选用的理解模型白名单(其余值回落到默认 plus)。 */
 export const QWEN_UNDERSTAND_MODELS: readonly string[] = [
   QWEN_UNDERSTAND_MODEL,
   QWEN_UNDERSTAND_FALLBACK_MODEL,
@@ -65,7 +65,7 @@ export const QWEN_UNDERSTAND_MODELS: readonly string[] = [
  * 把调用方请求的模型归一成白名单内的真实模型名。
  * - `'max'` / `'plus'` 简称 → 对应 -dashscope 全名(与默认无关,按字面映射);
  * - 已是白名单全名 → 原样;
- * - 其余(含幻觉名 / undefined)→ 默认 max。
+ * - 其余(含幻觉名 / undefined)→ 默认 plus。
  */
 export function resolveUnderstandModel(requested?: string): string {
   if (typeof requested !== 'string') return QWEN_UNDERSTAND_MODEL
@@ -2212,6 +2212,12 @@ export class ApiService {
     if (!this.models[resolved]) {
       return false
     }
+    // 幂等守卫:已是当前模型就不再持久化/派发。这同时切断
+    // useModelStore.switchModel → setModel → model-changed → switchModel
+    // 的潜在回环(第二趟进来 resolved === currentModel,直接返回)。
+    if (resolved === this.currentModel) {
+      return true
+    }
     this.currentModel = resolved
     this.saveStoredModel(resolved)
     window.dispatchEvent(new CustomEvent('model-changed', { detail: { modelKey: resolved } }))
@@ -2320,17 +2326,17 @@ export class ApiService {
   }
 
   /**
-   * qwen 多模态理解（视频/文档/联网扒资料）。默认 `qwen3.7-max-dashscope`(更强),
-   * `qwen3.7-plus-dashscope` 作为更便宜 + 兜底备选。
+   * qwen 多模态理解（视频/文档/联网扒资料）。默认 `qwen3.7-plus-dashscope`(更便宜),
+   * `qwen3.7-max-dashscope` 作为更强 + 兜底备选。
    *
    * 复用出图同一条链路:经 new-api(antigravity 站点)网关
    * /v1/chat/completions,Bearer = Miau 令牌。网关已做 OpenAI→DashScope 转换,
    * 客户端只发标准 OpenAI content parts;多模态请求不带 result_format(手册 §2)。
    * 联网用顶层 enable_search:true。
    *
-   * 模型选择:`opts.model`('max' / 'plus' / 全名)显式指定,非法值回落默认 max。
-   * 兜底:primary(默认 max)在同模型重试耗尽后仍失败,且 primary≠plus 且未禁用
-   * 兜底时,自动用 plus 再跑一轮(max 偶发对个别请求不稳时由 plus 救场)。
+   * 模型选择:`opts.model`('max' / 'plus' / 全名)显式指定,非法值回落默认 plus。
+   * 兜底:primary(默认 plus)在同模型重试耗尽后仍失败,且 primary≠max 且未禁用
+   * 兜底时,自动用 max 再跑一轮(plus 偶发对个别请求不稳时由更强的 max 救场)。
    *
    * 健壮解析:先 text() 再 try-parse,502/503/504 与非 JSON 返回都映射成
    * 结构化中文错误而非抛异常,避免重蹈 parseResponse「先 json 后判 ok」的坑。
@@ -2363,7 +2369,7 @@ export class ApiService {
     const primaryRes = await this.understandWithModel(site.baseURL, key, baseBody, primary, opts)
     if (primaryRes.success) return primaryRes
 
-    // 兜底:primary 不是 plus 时(默认 max / 显式 max)用 plus 再跑一轮。可经
+    // 兜底:primary 不是 max 时(默认 plus / 显式 plus)用更强的 max 再跑一轮。可经
     // `fallback:false` 关闭(如调用方明确只想要 primary 的结果)。
     const allowFallback = opts.fallback !== false
     if (allowFallback && primary !== QWEN_UNDERSTAND_FALLBACK_MODEL) {
