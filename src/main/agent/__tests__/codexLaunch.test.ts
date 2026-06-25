@@ -30,10 +30,15 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'agents.max_threads=8',
       '-c', 'agents.max_depth=1',
       // Bare MCP tool names (openai/codex#21576) so the model calls `ask_user`
-      // / `generate_image` exactly as the skills document them — no
-      // `mcp__catimation__` prefix to mis-reconstruct (the `unsupported call`
-      // ask_user root cause). Codex maps the bare name back to the raw tool.
+      // / `generate_image` exactly as the skills document them, and so the
+      // canonical namespace is the bare `catimation` the escape-hatch keys off.
       '-c', 'features.non_prefixed_mcp_tool_names=true',
+      // Force our MCP tools to stay DIRECTLY model-visible instead of being
+      // deferred behind tool_search (codex 0.142.2 PR #29486) — the verified
+      // root cause of the `ask_user` "unsupported call: catimationaskuser"
+      // failure. See codexLaunch.ts for the full source-level rationale.
+      '-c', 'features.code_mode.enabled=false',
+      '-c', 'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation"]',
     ])
   })
 
@@ -54,6 +59,8 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'agents.max_threads=8',
       '-c', 'agents.max_depth=1',
       '-c', 'features.non_prefixed_mcp_tool_names=true',
+      '-c', 'features.code_mode.enabled=false',
+      '-c', 'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation"]',
     ])
     const listenIdx = args.indexOf('--listen')
     const firstConfigIdx = args.indexOf('-c')
@@ -63,6 +70,28 @@ describe('buildCodexLaunchArgs', () => {
   it('does not include the legacy `serve` subcommand', () => {
     const args = buildCodexLaunchArgs()
     expect(args).not.toContain('serve')
+  })
+
+  it('keeps catimation MCP tools directly model-visible (ask_user popup root-cause fix)', () => {
+    // Codex 0.142.2 (PR #29486) defers ALL MCP tools behind tool_search by
+    // default, which hides `ask_user` so the model fabricates an unregistered
+    // name (`catimationaskuser`) → `unsupported call`. The only escape hatch is
+    // `code_mode.direct_only_tool_namespaces`, which promotes our namespace to
+    // DirectModelOnly so the tools stay directly callable. `enabled=false` keeps
+    // the experimental code-mode exec routing off.
+    const args = buildCodexLaunchArgs()
+    expect(args).toContain('features.code_mode.enabled=false')
+    expect(args).toContain(
+      'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation"]',
+    )
+    // It must be unconditional — present even with a custom provider/MCP wired.
+    const withMcp = buildCodexLaunchArgs({
+      provider: { id: 'apiyi', name: 'API Yi', baseUrl: 'https://api.apiyi.com/v1', envKey: 'OPENAI_API_KEY' },
+      catimationMcp: { port: 7842, token: 'deadbeef' },
+    })
+    expect(withMcp).toContain(
+      'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation"]',
+    )
   })
 
   it('configures the active provider via -c overrides when provider config is given', () => {
@@ -87,11 +116,12 @@ describe('buildCodexLaunchArgs', () => {
     // 401 + a "Reconnecting...N/5" warning loop. We need plain HTTP Responses
     // API which apiyi actually proxies (https://docs.apiyi.com/api-capabilities/openai-responses).
     expect(pairs(args)).toContainEqual(['-c', 'model_providers.apiyi.wire_api="responses"'])
-    // MCP namespace flattening (openai/codex#26234): every gateway we ship is
-    // OpenAI-COMPATIBLE (not real OpenAI), so they don't expand Codex's
-    // `type:"namespace"` MCP wrapper — pinning `namespace_tools=false` flattens
-    // MCP tools to plain functions + resolves flat/proxy-mangled names back,
-    // fixing the `unsupported call` ask_user failure deterministically.
+    // Legacy `namespace_tools=false` (openai/codex#26234). NOTE: as of codex
+    // 0.142.2 this per-provider key is a no-op — `ProviderCapabilities` is a
+    // hardcoded trait default (namespace_tools=true) for configured providers,
+    // not config-readable. We keep emitting it as a harmless forward-compat
+    // hint; the ACTUAL ask_user deferral fix is
+    // `features.code_mode.direct_only_tool_namespaces` in the base args.
     expect(pairs(args)).toContainEqual(['-c', 'model_providers.apiyi.namespace_tools=false'])
     // The deprecated `supports_websockets` field was removed in 0.128 — never
     // set it; passing it would just be noise.

@@ -36,6 +36,12 @@ export function CanvasSection(): React.JSX.Element {
   const wrapperRef = useRef<HTMLDivElement | null>(null)
   const [status, setStatus] = useState<EditRequestQueueStatus | null>(null)
   const [flash, setFlash] = useState<string>('')
+  // Mirrors editor.getIsFocused() so the UI can tell the user, at a glance,
+  // whether canvas keyboard shortcuts (zoom / undo / delete) are live. tldraw
+  // gates BOTH its container `keydown` handler and its native clipboard
+  // `copy/cut/paste` handlers on this flag (see useDocumentEvents.js +
+  // useClipboardEvents.js), so "focused" literally == "shortcuts on".
+  const [focused, setFocused] = useState(false)
 
   // Last submitted annotation signature, so the same marks are not re-queued.
   const lastSignatureRef = useRef<string>('')
@@ -104,9 +110,74 @@ export function CanvasSection(): React.JSX.Element {
         { source: 'user', scope: 'document' }
       )
 
+      // Keep the React `focused` mirror in sync with tldraw's instance state.
+      // Fires for BOTH our explicit focus()/blur() and any internal change, so
+      // the UI indicator never drifts. Seed it once for the current value.
+      setFocused(editor.getIsFocused())
+      const offFocusSync = editor.sideEffects.registerAfterChangeHandler(
+        'instance',
+        (prev, next) => {
+          if (prev.isFocused !== next.isFocused) setFocused(next.isFocused)
+        },
+      )
+
+      // ───────────────────────────────────────────────────────────────────────
+      // FOCUS OWNERSHIP (root-caused against tldraw 5.1.1 source, not guessed):
+      //
+      //   tldraw gates its container `keydown` shortcuts (useDocumentEvents.js:
+      //   `if (!isAppFocused) return`) AND its document-level `copy/cut/paste`
+      //   handlers (useClipboardEvents.js: same gate; copy only preventDefaults
+      //   when a SHAPE is selected) on `editor.getInstanceState().isFocused`.
+      //
+      //   tldraw's OWN click-to-focus / click-outside-to-blur wiring
+      //   (TldrawEditor.js handleFocusOnPointerDownForPreserveFocusMode) only
+      //   registers under `if (autoFocus && noAutoFocus())`, and `noAutoFocus()`
+      //   is just `location.search.includes('tldraw_preserve_focus')` — never
+      //   true here. So in our app tldraw NEVER auto-manages focus on click:
+      //     • default autoFocus=true  → focused at mount, never blurs  → the
+      //       original "蓝链 Ctrl+C 被吞" bug (stays focused next to the chat).
+      //     • our   autoFocus=false   → never focuses, even on click    → "快捷键
+      //       要先点一下也没用" (zoom dead because isFocused stays false).
+      //   Therefore WE own focus: focus when the user actually works on the
+      //   canvas, blur the moment they touch the chat (so it never holds the
+      //   global clipboard). This is the single-editor analog of tldraw's own
+      //   "Multiple editors" focus-coordination example.
+      //
+      // Capture phase so we settle focus before tldraw's gated handlers read it.
+      const isEditableTarget = (el: EventTarget | null): boolean => {
+        if (!(el instanceof HTMLElement)) return false
+        const tag = el.tagName
+        return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable
+      }
+      const focusFromCanvas = (e: Event): void => {
+        const target = e.target
+        if (!(target instanceof Node)) return
+        if (!wrapperRef.current?.contains(target)) return
+        // Pointer-enter must NOT yank focus out of the chat composer while the
+        // user is typing; an explicit pointerdown on the canvas always may.
+        if (e.type === 'pointerenter' && isEditableTarget(document.activeElement)) return
+        if (!editor.getIsFocused()) editor.focus()
+      }
+      const blurIfOutside = (e: Event): void => {
+        const target = e.target
+        if (!(target instanceof Node)) return
+        if (wrapperRef.current?.contains(target)) return
+        if (editor.getIsFocused()) editor.blur()
+      }
+      const wrapperEl = wrapperRef.current
+      wrapperEl?.addEventListener('pointerenter', focusFromCanvas)
+      document.addEventListener('pointerdown', focusFromCanvas, true)
+      document.addEventListener('pointerdown', blurIfOutside, true)
+      document.addEventListener('focusin', blurIfOutside, true)
+
       return () => {
         if (idle) window.clearTimeout(idle)
         unlisten()
+        offFocusSync()
+        wrapperEl?.removeEventListener('pointerenter', focusFromCanvas)
+        document.removeEventListener('pointerdown', focusFromCanvas, true)
+        document.removeEventListener('pointerdown', blurIfOutside, true)
+        document.removeEventListener('focusin', blurIfOutside, true)
         canvasBridge.setEditor(null)
         editorRef.current = null
       }
@@ -197,10 +268,40 @@ export function CanvasSection(): React.JSX.Element {
     <div ref={wrapperRef} className="relative h-full min-h-0 w-full">
       <Tldraw
         persistenceKey="catimation-canvas"
+        // Do NOT grab global keyboard/clipboard on mount — see the FOCUS
+        // OWNERSHIP block in handleMount. We focus the editor ourselves on
+        // pointer-enter/down and blur it when the user moves to the chat, so the
+        // canvas never holds the global clipboard while you're copying chat text.
+        autoFocus={false}
         onMount={handleMount}
         maxAssetSize={CANVAS_MAX_ASSET_SIZE}
         maxImageDimension={CANVAS_MAX_IMAGE_DIMENSION}
       />
+      {/* Focus affordance: a soft ring when the canvas owns the keyboard, so the
+          user always knows whether zoom/undo/delete shortcuts will land here vs.
+          in the chat. Pointer-transparent so it never blocks canvas input. */}
+      <div
+        aria-hidden
+        className={
+          'pointer-events-none absolute inset-0 z-10 rounded-sm ring-inset transition-all duration-200 ' +
+          (focused ? 'ring-2 ring-cyan-400/45' : 'ring-0 ring-transparent')
+        }
+      />
+      {/* Shortcut-state hint (bottom-left): tells the user how to enable canvas
+          shortcuts when unfocused, and confirms they're live when focused. */}
+      <div
+        className={
+          // Lifted above tldraw's bottom toolbar row (zoom "22%" menu sits at
+          // bottom-left and was covering this hint).
+          'pointer-events-none absolute bottom-16 left-3 z-10 flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium shadow-lg backdrop-blur transition-colors duration-200 ' +
+          (focused
+            ? 'bg-cyan-600/85 text-white'
+            : 'bg-zinc-900/80 text-zinc-300 ring-1 ring-zinc-700/70')
+        }
+      >
+        <span aria-hidden>{focused ? '⌨' : '🖱'}</span>
+        <span>{focused ? '画布快捷键已启用 · 滚轮缩放 / Ctrl+Z 撤销' : '点击或悬停画布以启用快捷键'}</span>
+      </div>
       {pill ? (
         <div className="pointer-events-none absolute right-3 top-3 z-10 rounded-full bg-cyan-600/90 px-3 py-1 text-xs font-medium text-white shadow-lg">
           {pill}

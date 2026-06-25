@@ -294,23 +294,53 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     // `mcp__catimation__<tool>` prefix (openai/codex feature
     // `non_prefixed_mcp_tool_names`, PR #21576). Codex still maps the bare
     // model-visible name back to the raw server/tool via McpConnectionManager,
-    // so OUR handlers receive the identical raw name — nothing downstream
-    // changes.
-    //
-    // Why this is the real fix for the `ask_user` "unsupported call" bug:
-    // every skill/description documents the BARE name (`ask_user`). With the
-    // legacy prefix on, the actually-callable name is `mcp__catimation__ask_user`.
-    // For tools the model has already SEEN used (canvas_snapshot, generate_image)
-    // it copies that exact prefixed string and succeeds; but for a tool it has
-    // NEVER seen used (`ask_user`) it RECONSTRUCTS the name from the skill's bare
-    // "ask_user" + the `mcp__catimation` prefix pattern and fumbles the
-    // separators → `mcp__catimationaskuser`, which matches no registered tool →
-    // Codex returns `unsupported call`. Making the exposed name == the documented
-    // name removes the reconstruction step entirely, deterministically, for ALL
-    // tools. Pairs with `namespace_tools=false` below (flatten for non-OpenAI
-    // gateways); the two are independent layers (model-visible NAME vs wire
-    // SERIALIZATION).
+    // so OUR handlers receive the identical raw name. This also makes each
+    // tool's canonical namespace the bare server name `catimation` (no `mcp__`
+    // prefix), which the deferral escape-hatch below keys off.
     '-c', 'features.non_prefixed_mcp_tool_names=true',
+    // ─────────────────────────────────────────────────────────────────────────
+    // ROOT-CAUSE FIX for the `ask_user` "unsupported call: catimationaskuser"
+    // popup failure. Verified against codex rust-v0.142.2 source — NOT a
+    // name-mangling bug in our bridge (the server tool IS literally `ask_user`):
+    //
+    //   • PR #29486 ("Use tool search for MCP tools by default") makes Codex
+    //     DEFER every MCP tool behind `tool_search` whenever
+    //     `model.supports_search_tool && provider.capabilities().namespace_tools`
+    //     (codex-rs/core/src/tools/spec_plan.rs::search_tool_enabled +
+    //     mcp_tool_exposure.rs). A deferred tool stays in the registry but is
+    //     NOT directly model-visible — it must be found via `tool_search`.
+    //   • `ProviderCapabilities::default().namespace_tools` is HARDCODED `true`
+    //     for ALL configured/custom providers (codex-rs/model-provider/src/
+    //     provider.rs — the base `capabilities()` returns the default; the test
+    //     `configured_provider_uses_default_capabilities` pins this). So our
+    //     per-provider `-c model_providers.<id>.namespace_tools=false` is
+    //     SILENTLY IGNORED (it was never a real, config-readable capability key),
+    //     and `supports_search_tool` is not config-overridable
+    //     (model_info::with_config_overrides does not list it).
+    //   • Result: `ask_user` is deferred → invisible → the model reconstructs the
+    //     name from skill-doc memory ("ask_user"), glues on the server namespace
+    //     and drops the underscore → `catimationaskuser` → Codex's strict matcher
+    //     returns `unsupported call`. (generate_image/canvas_snapshot survive
+    //     because the model discovered them via tool_search and copies the exact
+    //     name; a never-typed tool like `ask_user` does not.)
+    //
+    // The ONLY config escape in 0.142.2 — `tool_search` is a removed no-op
+    // (always on) and the two deferral inputs above are unconfigurable — is
+    // `code_mode.direct_only_tool_namespaces`: any runtime whose CANONICAL
+    // namespace is listed is promoted from `Deferred` to `DirectModelOnly` in
+    // `apply_direct_model_only_namespace_overrides` (runs unconditionally, not
+    // gated on the code-mode feature), i.e. it stays DIRECTLY model-visible and
+    // is never deferred. Proven by codex's own
+    // `code_mode_only_exposes_direct_model_only_mcp_namespaces` test. Our MCP
+    // tools' canonical namespace == the sanitized server name `catimation`
+    // (McpHandler::tool_name → ToolInfo::canonical_tool_name → callable_namespace;
+    // with non_prefixed names there's no `mcp__` prefix). We list the prefixed
+    // form too as a belt-and-suspenders guard if a provider ever keeps the
+    // legacy prefix. `enabled=false` keeps the experimental code-mode EXEC
+    // routing OFF — we only want the exposure override (read regardless of
+    // enablement), not nested code-mode tool calling.
+    '-c', 'features.code_mode.enabled=false',
+    '-c', 'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation"]',
   ]
 
   // Register the local in-process catimation MCP server so the Codex

@@ -83,13 +83,17 @@ export function summarizeShape(editor: Editor, shape: any): ShapeSummary {
       summary.arrowEnd = { x: (shape.x ?? 0) + end.x, y: (shape.y ?? 0) + end.y }
     }
   }
-  // Focused-snapshot enrichment for images: resolve the backing tldraw asset so
-  // Codex gets the shape's assetId, intrinsic pixel size, src and (when known)
-  // an on-disk path — instead of the bare `meta:{}` that left it "able to see
-  // the image but unable to get its file path". Mirrors tldraw mcp-app's focused
-  // image fields. getAsset is read-only and optional-chained so simpler fakes
+  // Focused-snapshot enrichment for images AND videos: resolve the backing
+  // tldraw asset so Codex gets the shape's assetId, intrinsic pixel size, src
+  // and (when known) an on-disk path — instead of the bare `meta:{}` that left
+  // it "able to see the media but unable to get its file path". Mirrors tldraw
+  // mcp-app's focused fields. Critically this now covers `video` too: a video
+  // shape often carries its local mp4 path only on the backing asset's meta
+  // (not the shape meta), so without this fallback canvas_snapshot handed the
+  // agent a video with an assetId but no path, forcing it to hunt the disk by
+  // filename/size. getAsset is read-only and optional-chained so simpler fakes
   // (and shapes without a linked asset) don't break.
-  if (shape.type === 'image') {
+  if (shape.type === 'image' || shape.type === 'video') {
     const assetId = shape.props?.assetId
     if (assetId) summary.assetId = String(assetId)
     const asset = assetId ? (editor.getAsset?.(assetId as never) as { props?: Record<string, unknown>; meta?: Record<string, unknown> } | undefined) : undefined

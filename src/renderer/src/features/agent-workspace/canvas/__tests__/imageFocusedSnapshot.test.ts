@@ -46,6 +46,36 @@ describe('A: summarizeShape enriches image shapes from their backing asset (focu
   })
 })
 
+describe('B: summarizeShape enriches VIDEO shapes from their backing asset too', () => {
+  const videoShape = {
+    id: 'shape:vid',
+    type: 'video',
+    x: 0,
+    y: 0,
+    props: { assetId: 'asset:v', w: 1280, h: 720 },
+    // shape.meta has NO assetPath — the local mp4 path lives only on the asset
+    // (the exact case that made the agent hunt the disk by filename/size).
+    meta: {},
+  }
+  const videoAssets = {
+    'asset:v': { props: { src: 'asset:v', w: 1280, h: 720 }, meta: { assetPath: 'C:/clip_TC.mp4' } },
+  }
+
+  it('recovers assetId, src and the on-disk mp4 path so canvas_snapshot carries it', () => {
+    const summary = summarizeShape(fakeEditor([videoShape], videoAssets), videoShape)
+    expect(summary.type).toBe('video')
+    expect(summary.assetId).toBe('asset:v')
+    expect(summary.assetUrl).toBe('asset:v')
+    expect(summary.assetPath).toBe('C:/clip_TC.mp4')
+  })
+
+  it('keeps shape-meta assetPath when present (does not clobber it)', () => {
+    const withMeta = { ...videoShape, meta: { assetPath: 'D:/original.mp4' } }
+    const summary = summarizeShape(fakeEditor([withMeta], videoAssets), withMeta)
+    expect(summary.assetPath).toBe('D:/original.mp4')
+  })
+})
+
 describe('list_canvas_images (borrowed from sora-canvas-mcp): flat image index', () => {
   it('returns only image shapes with shapeId/dims/assetId/path/hasFile', () => {
     const shapes = [
