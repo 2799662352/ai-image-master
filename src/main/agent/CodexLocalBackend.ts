@@ -286,15 +286,23 @@ export class CodexLocalBackend implements IAgentBackend {
       ffmpegDir ? [ffmpegDir] : undefined,
     )
     const spawnFactory = this.options.spawnFactory ?? spawn
+    const launchArgs = buildCodexLaunchArgs({
+      listenUrl,
+      provider: this.currentProvider,
+      sessionConfig: this.sessionConfig,
+      catimationMcp: this.options.catimationMcp,
+      extraProviders: understand ? [understand.provider] : undefined,
+    })
+    // DIAGNOSTIC: dump the exact codex spawn command so we can confirm which
+    // config `-c` overrides (e.g. features.non_prefixed_mcp_tool_names,
+    // namespace_tools) are actually present in the running process. Grep the
+    // codex agent log / dev console for "[CodexLaunch] spawn".
+    const spawnLine = `[CodexLaunch] spawn ${bin} ${launchArgs.join(' ')}`
+    log.write(spawnLine + '\n')
+    console.log(spawnLine)
     const proc = spawnFactory(
       bin,
-      buildCodexLaunchArgs({
-        listenUrl,
-        provider: this.currentProvider,
-        sessionConfig: this.sessionConfig,
-        catimationMcp: this.options.catimationMcp,
-        extraProviders: understand ? [understand.provider] : undefined,
-      }),
+      launchArgs,
       {
         stdio: ['ignore', 'pipe', 'pipe'],
         env,

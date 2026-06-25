@@ -9,9 +9,9 @@ description: 用于反推 AI 视频或参考视频的运动学规律,避免只�
 
 提炼自中文教程《拒绝“看图说话”:AI视频反推的真正逻辑—运动学解构》。参考: <https://www.super-i.cn/info-2610.html>
 
-## 第一步:三帧定乾坤
+## 第一步:先抽帧拼宫格图通览,再圈三帧
 
-不要只截图一帧。至少截:
+不要只手动截一两帧——`view_image` 不能直接开 MP4。先用 `ffmpeg-win` **等步长抽帧 → 拼成 3×3 / 4×4 宫格图(contact sheet)→ `view_image` 那一张宫格图**通览整段运动节奏,再从宫格里**圈出三个关键帧**做运动学锚点(抽帧拼格先载入 `ffmpeg-win`;要看懂整段运动/剧情可用 `catimation-understand` 的 `understand_video`,只是别把 MP4 原始字节塞进聊天):
 
 - **起始帧 Setup**:动作开始前的状态。
 - **爆发帧 Climax**:动作幅度最大、光影变化最剧烈的一刻。
@@ -88,7 +88,7 @@ Lens: 20mm wide angle, perspective distortion increases speed and scale.
 
 ## 出稿前检查
 
-- 是否使用三帧,而不是单张截图?
+- 是否先用 `ffmpeg-win` 抽帧拼宫格图 + `view_image` 通览,再从宫格里圈出三帧(而不是凭记忆 / 单张截图)?
 - 是否区分 dolly 和 zoom?
 - 是否输出相机运动参数,而不是影评散文?
 - 是否描述主体、镜头、环境三套运动?

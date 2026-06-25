@@ -90,13 +90,22 @@ function MarkdownContentImpl({ source }: { source: string }) {
     () => ({
       // Disable raw HTML; default react-markdown already sanitises.
       a: ({ href, children, ...rest }) => (
+        // `draggable={false}` is load-bearing, not cosmetic: Chromium/Electron
+        // makes every `<a href>` draggable by default, so dragging across the
+        // link starts a NATIVE LINK DRAG instead of a text selection — the user
+        // can never select/copy the blue text — and a click with the slightest
+        // pointer movement is swallowed as a drag-start so `onClick` never fires
+        // (= "can't jump"). Disabling drag restores both copy (drag → text
+        // selection) and reliable clicks. `select-text` defends against any
+        // ancestor `select-none` leaking in.
         <a
           {...rest}
           href={href}
           target="_blank"
           rel="noreferrer"
+          draggable={false}
           onClick={(e) => handleChatLinkClick(e, href)}
-          className="text-cyan-300 underline-offset-2 hover:underline"
+          className="cursor-pointer select-text text-cyan-300 underline-offset-2 hover:underline"
         >
           {children}
         </a>

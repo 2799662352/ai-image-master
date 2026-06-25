@@ -158,6 +158,25 @@ export function appendProviderArgs(
     '-c', `model_providers.${id}.env_key="${provider.envKey}"`,
     // See `CodexProviderConfig` above for why this is mandatory.
     '-c', `model_providers.${id}.wire_api="responses"`,
+    // FLATTEN MCP tools into plain `function` specs (openai/codex#26234, shipped
+    // in 0.142.x via the `namespace_tools` provider capability). Codex normally
+    // serializes each MCP server's tools inside a proprietary
+    // `{"type":"namespace","name":"mcp__<server>__","tools":[…]}` wrapper that
+    // ONLY real OpenAI / Azure expand. Every provider WE ship is an
+    // OpenAI-COMPATIBLE GATEWAY (apiyi / right.codes / user-custom), not the
+    // genuine OpenAI endpoint — those relays pass the wrapper through
+    // unexpanded, so the model sees a single non-callable `mcp__catimation__`
+    // entry and emits flattened / separator-dropped names
+    // (`mcp__catimationask_user` → even `mcp__catimationaskuser`), which Codex's
+    // strict-match router rejects as `unsupported call` (the ask_user popup
+    // failure; also #20652/#22970/#24297). With `namespace_tools=false` Codex
+    // emits each tool as a flat `function` named `mcp__<server>__<tool>` AND its
+    // registry resolves flat / proxy-mangled names back to the namespaced
+    // runtime — deterministically across ALL our gateways. The capability
+    // otherwise defaults to `requires_openai_auth` (false for apiyi, but TRUE
+    // for the Right.Codes presets), so pinning it false here is what makes the
+    // fix uniform instead of provider-dependent.
+    '-c', `model_providers.${id}.namespace_tools=false`,
   )
   if (provider.requiresOpenaiAuth) {
     args.push('-c', `model_providers.${id}.requires_openai_auth=true`)
@@ -199,6 +218,9 @@ export function appendExtraProviders(
       '-c', `model_providers.${id}.base_url="${p.baseUrl}"`,
       '-c', `model_providers.${id}.env_key="${p.envKey}"`,
       '-c', `model_providers.${id}.wire_api="${p.wireApi ?? 'responses'}"`,
+      // Flatten MCP tools for extra (subagent) gateways too — see the detailed
+      // rationale in appendProviderArgs (openai/codex#26234).
+      '-c', `model_providers.${id}.namespace_tools=false`,
     )
     if (p.requiresOpenaiAuth) {
       args.push('-c', `model_providers.${id}.requires_openai_auth=true`)
@@ -267,6 +289,28 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     // teaches the agent WHEN to delegate. Docs: https://developers.openai.com/codex/subagents
     '-c', 'agents.max_threads=8',
     '-c', 'agents.max_depth=1',
+    // Expose MCP tools to the model under their BARE names (`ask_user`,
+    // `generate_image`, `canvas_snapshot`) instead of the legacy
+    // `mcp__catimation__<tool>` prefix (openai/codex feature
+    // `non_prefixed_mcp_tool_names`, PR #21576). Codex still maps the bare
+    // model-visible name back to the raw server/tool via McpConnectionManager,
+    // so OUR handlers receive the identical raw name — nothing downstream
+    // changes.
+    //
+    // Why this is the real fix for the `ask_user` "unsupported call" bug:
+    // every skill/description documents the BARE name (`ask_user`). With the
+    // legacy prefix on, the actually-callable name is `mcp__catimation__ask_user`.
+    // For tools the model has already SEEN used (canvas_snapshot, generate_image)
+    // it copies that exact prefixed string and succeeds; but for a tool it has
+    // NEVER seen used (`ask_user`) it RECONSTRUCTS the name from the skill's bare
+    // "ask_user" + the `mcp__catimation` prefix pattern and fumbles the
+    // separators → `mcp__catimationaskuser`, which matches no registered tool →
+    // Codex returns `unsupported call`. Making the exposed name == the documented
+    // name removes the reconstruction step entirely, deterministically, for ALL
+    // tools. Pairs with `namespace_tools=false` below (flatten for non-OpenAI
+    // gateways); the two are independent layers (model-visible NAME vs wire
+    // SERIALIZATION).
+    '-c', 'features.non_prefixed_mcp_tool_names=true',
   ]
 
   // Register the local in-process catimation MCP server so the Codex

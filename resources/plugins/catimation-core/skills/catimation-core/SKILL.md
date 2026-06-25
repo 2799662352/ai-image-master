@@ -21,6 +21,10 @@ description: Use when 在 CATIMATION 应用里要生成图片/出图/画一张�
 2. **要存/复用素材或角色** → `catimation-portrait-library`,把素材入库拿到 `asset://assetId` 再引用,保跨图/跨视频一致性。
 3. **需求不清/要先聊方向** → `catimation-brainstorm` 摊一张 `ask_user` 卡片,定下方向再开工。
 
+## 交互弹窗 `ask_user`(系统级 · 随时可用 · 不限头脑风暴)
+
+`ask_user` 是**系统级交互工具**,和 `generate_image` / `view_image` 同级,**永远直接可调用**,不需要先命中 `catimation-brainstorm`。判定很简单:**只要你准备给用户列 2 个以上选项/方案/选项/方向,或遇到该由用户拍板的决策(景别/风格/运镜/模型/下一步…),就直接调用 `ask_user` 渲染可点击选项卡,而不是发纯文字编号列表。** 一次一问、所有方案塞进同一张卡(6–8 个也行)。`catimation-brainstorm` 只是把这套用法包成「先聊方向」的完整流程,**不是 `ask_user` 的唯一入口**。
+
 ## 与其它插件的关系
 
 - 本插件是底座:`catimation-director` / `catimation-storyboard` 写好提示词后,**出图都落到 `catimation-image`**;视频落到 `catimation-video`。

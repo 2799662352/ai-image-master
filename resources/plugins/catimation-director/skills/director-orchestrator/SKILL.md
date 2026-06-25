@@ -94,7 +94,10 @@ description: 【导演模式·总调度 / Director · Orchestrator·每次必用
 1. **开放/高价值需求** → 先 `catimation-brainstorm` 用 `ask_user` 卡片定方向(气质/景别/运镜/时长),再回到本调度器写镜头。
 2. **明确简单需求**(「让这张图动起来」)→ 跳过提问,STEP 0 自反问后直接写、直接生成。
 3. 提示词写好 → 图像交 `catimation-image`(`generate_image`/`generate_images`),视频交 `catimation-video`(`generate_video`,默认全能参考)。素材一律按序号 图片1/视频1/音频1 引用。
-4. 出片后简短确认,不要 `view_image` 自检。
+4. **出片后必做 `view_image` 自检(分图像 / 视频,别省)。**
+   - **图像:出图后 `view_image` 那张成片**,对照 `catimation-image` 四项验收(符合要求 / 质量 / 风格一致 / 过门)亲眼核对,不合格带改进点重生成。
+   - **视频:必须过 `ffmpeg-win` 的视觉门**——`view_image` 不能直接开 MP4,所以**视觉结构**用 `ffmpeg-win` 抽帧拼 **3×3 九宫格 contact sheet**,再 `view_image` **那一张宫格图**自检(首尾帧 / 连续性 / 穿帮 / 占位);**同一次自检里再用** `catimation-understand` 的 `understand_video` 看懂**剧情 / 字幕 / 连续性 / 穿帮**(模型替你"看"整段,补上宫格图采不到的帧间内容)——**宫格图 + understand_video 两面一起看,不二选一**,只是别把 MP4 原始字节塞进聊天、也别拿 `view_image` 去开 MP4。不合格就带改进点重生成。
+   - **宫格图 / 故事板就是素材**:按剧情裁剪、拼接出的九宫格、分镜板本身是优质可复用素材——回喂 `referenceImages` 传主体/风格,抽尾帧/关键帧作下一镜 `firstFrame`。**跨镜续接首选 `ffmpeg-win` 抽上一镜尾帧/关键帧,而不是把上一段 Seedance MP4 整段当视频参考回喂(整段回喂是兜底,不是首选)。** 需要抽帧/抽音频先载入 `ffmpeg-win`。
 
 ## 示例(一次完整调度)
 

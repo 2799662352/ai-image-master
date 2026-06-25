@@ -125,8 +125,13 @@ export function registerPortraitTools(server: McpServer, router: ToolRouter): vo
         'you material for a video, or after you generate an image they want to reuse, add it here. ' +
         'Accepts a local file path, a data: URL, an http(s) URL, or an existing asset://assetId. Kind is ' +
         'auto-detected from the file; identical content is deduplicated upstream (same assetId), which ' +
-        'keeps characters consistent. Returns the assetId + asset://assetId you can immediately pass to ' +
-        'generate_video.',
+        'keeps characters consistent. Returns the assetId + asset://assetId. ' +
+        'REVIEW GATE: a freshly uploaded asset goes through upstream content review (审核) before it is ' +
+        'usable — do NOT immediately pass a brand-new asset://assetId to generate_video, or the ' +
+        'generation task FAILS (内容审核未通过 / not ready). A duplicated:true result means it was already ' +
+        'in the (reviewed) library and is safe to use now; for a fresh duplicated:false upload, wait for ' +
+        'review to pass (it shows up normally in list_portrait_library with no 审核中 marker) — or tell ' +
+        'the user to wait for review — before generating with it.',
       inputSchema: z.object({
         source: z.string().min(1).describe('Local file path, data: URL, https URL, or asset://assetId.'),
         kind: z.enum(['image', 'video', 'audio']).optional().describe('Override auto-detected kind.'),

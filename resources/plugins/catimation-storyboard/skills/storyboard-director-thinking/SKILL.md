@@ -109,3 +109,4 @@ B-roll 3: 窗外巨大飞船阴影扫过街道。
 - 光源是否有动机?
 - 角色是否有核心行动和阻力?
 - 是否把 AI 直出当素材,并计划补拍/剪辑?
+- A-roll/B-roll 渲染后是否用 `ffmpeg-win` 抽帧拼宫格图 + `view_image` 自检空间调度 / 动机光 / 剪辑断点(`view_image` 看宫格图、不是 MP4;懂内容用 `understand_video`)?

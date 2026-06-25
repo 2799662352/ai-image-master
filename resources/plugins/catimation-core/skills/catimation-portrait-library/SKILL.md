@@ -20,7 +20,7 @@ need permission to add, search, organize, or download on the user's behalf.
 ## When to Use
 
 - 用户提到 人像库 / 素材库 / 参考素材 / 角色库,要 收藏 / 搜索 / 整理 / 重命名 / 分组 / 删除 / 下载 素材。
-- 视频生成需要参考素材(角色 / 场景一致性)→ 先入库拿 `asset://assetId` 再喂 `generate_video`。
+- 视频生成需要参考素材(角色 / 场景一致性)→ 先入库拿 `asset://assetId` 再喂 `generate_video`(**视频/音频类素材先用 `ffmpeg-win` 抽静帧/抽音轨再入库当参考,不直传原始视频**)。
 - 用户要复用「上次那个人 / 同一个角色 / 同一个场景」→ 先 `list_portrait_library` 找回锚点。
 - 用户喜欢刚生成的图、之后可能复用 → 主动入库。
 
@@ -30,8 +30,10 @@ need permission to add, search, organize, or download on the user's behalf.
   file path, `data:` URL, `https` URL, or an existing `asset://assetId`. Kind
   (image/video/audio) is auto-detected (override with `kind`); for people use
   `imageCategory: image_people` (default). Identical content dedupes to the same
-  `assetId`. Returns `{ assetId, assetUrl, name, duplicated }` — pass
-  `assetUrl` (`asset://…`) straight into `generate_video`.
+  `assetId`. Returns `{ assetId, assetUrl, name, duplicated }`. **图像** asset 的
+  `assetUrl` (`asset://…`) 可直传 `generate_video`;但**视频/音频 asset 不直接当视觉参考**
+  ——先用 `ffmpeg-win` 抽干净关键帧 / 拼宫格图(或抽音轨),把**静帧 / 音频**入库再喂,原始
+  视频仅留底(尤其是 Seedance 自产片段,整段回喂会二次编码、画质打折)。
 - **`list_portrait_library`** — search / browse. Optional `query` (name text),
   `kind` (`all`/`image_people`/`image_environment`/`video`/`audio`),
   `group`, `page`, `pageSize`, `includeHidden`. Returns items with
@@ -45,13 +47,29 @@ need permission to add, search, organize, or download on the user's behalf.
 - **`download_portrait_asset`** — save an asset locally; pass the `sourceUrl`
   from `list_portrait_library`. Returns the saved local path.
 
+## 审核闸门(上传后别立刻拿去生成 ⚠️)
+
+`add_to_portrait_library` 上传**新**素材后,上游会先做**内容审核(审核)**。审核
+未通过 / 仍在审核中的素材,直接把它的 `asset://assetId` 喂给 `generate_video`
+**会让生成任务直接失败**(如 `内容审核未通过` / 素材不可用)。所以:
+
+- ✅ **复用库里已存在的素材最稳**——它们早已审核通过。
+- ✅ `add_to_portrait_library` 返回 `duplicated: true` = 命中去重 = 已在库 =
+  已审核,**可以立刻用**。
+- ⛔ 全新上传(`duplicated: false`)**不要审核没过就抢着生成**:先确认审核通过
+  ——用 `list_portrait_library` 能正常查到、人像库页面对该素材无「审核中 / 待审核」
+  标记后再 `generate_video`;或直接告诉用户「素材正在审核,通过后再生成」并停下,
+  **不要赌它已通过**。
+- 一句话:**先入库 → 等审核过 → 再生成**,顺序不能颠倒。
+
 ## Proactive workflows
 
 1. **User mentions video generation with material** → `add_to_portrait_library`
-   each provided image/video/audio FIRST, then reference the returned
-   `asset://assetId` in `generate_video`. (Images passed directly to
-   `generate_video` are auto-imported; videos/audio and any "save for later"
-   material are on you.)
+   each provided image/video/audio FIRST. Then — only after it clears review
+   (see 审核闸门 above; a `duplicated:true` result is already reviewed) —
+   reference the returned `asset://assetId` in `generate_video`. (Images passed
+   directly to `generate_video` are auto-imported; videos/audio and any "save
+   for later" material are on you.)
 2. **Reuse a character/scene** ("还是上次那个人 / 同一个角色 / 同一个场景") →
    `list_portrait_library` to find the matching `asset://assetId`, then
    reference it — this is what keeps identity consistent.
@@ -78,6 +96,8 @@ need permission to add, search, organize, or download on the user's behalf.
 
 ## Common Mistakes
 
+- **新上传的素材审核没过就抢着 `generate_video`**(任务必失败):见上「审核闸门」,
+  先等审核通过(或复用 `duplicated:true` 的已审核素材)再生成。
 - 凭空猜 `assetId` / `sourceUrl`;必须先 `list_portrait_library` 查到再用。
 - 漏 `list` 直接 `edit_portrait_library` / `download_portrait_asset`。
 - 调高 `pageSize` 一次性 dump 整库(结果会被截断、浪费上下文),应先用 `query`/`kind`/`group` 收窄再翻页。

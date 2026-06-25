@@ -444,6 +444,14 @@ Seedance itself generated earlier (model-product 二创 is审核-safe). When reu
 earlier generated video for edit/extend, pass its saved local path / asset:// —
 remote upstream URLs expire in ~24h, so prefer the local copy.
 
+**别把未经处理的 Seedance 视频直接当视频参考喂回去(效果打折)**: 把上一段 Seedance
+生成的 MP4 原封不动塞进 \`referenceVideos\` 去做延长/编辑/续接,会经历一次二次编码 +
+运动重采样,画质与跨镜一致性明显打折。**优先用 \`ffmpeg-win\` 把它先「降维」成干净的延续
+条件再喂回去**——抽**尾帧/关键帧成静图**(尾帧做下一段 \`firstFrame\` 衔接最稳,或抽
+3×3 多宫格关键帧塞 \`referenceImages\` 传递主体/风格),或**抽出音频/音乐**塞
+\`referenceAudios\` 续接节奏/配乐。确实需要整段视频参考时(例如靠它规避真人脸审核)再退回
+直接传 MP4——那是兜底,不是首选。要做抽帧/抽音频先载入 \`ffmpeg-win\` 技能。
+
 ## Co-direct the shot — brainstorm with the user + your local craft skills
 
 Before you write the \`prompt\`, **load \`director-orchestrator\`** (the 导演总调度
@@ -607,38 +615,43 @@ When unsure, propose a sensible default out loud and let the user correct you.
    - \`❌ FAILED\` → report the upstream error. You may retry ONCE with an
      adjusted prompt only if the error suggests a content/parameter problem.
 
-## QA the clip with an ffmpeg 九宫格 contact sheet, then improve
+## QA the clip: 九宫格 contact sheet + understand_video(合成一次自检,别二选一)
 
-You cannot meaningfully "watch" an MP4, and injecting the raw video bytes into the
-chat is wasteful and unsafe — so to self-check a finished clip, build a **3×3
-九宫格 contact sheet** of evenly-spaced frames with ffmpeg (use your ffmpeg MCP
-tool, e.g. \`ffmpeg-win\`, or any ffmpeg available), then \`view_image\` that ONE
-montage:
+\`view_image\` can't open an MP4 directly, and injecting the raw video bytes into the
+chat is wasteful — so a real self-check pairs **two complementary lenses in ONE
+pass** (the grid samples only ~9 frames; \`understand_video\` covers what happens
+between them — you need both):
 
-1. Extract 9 evenly-spaced frames tiled into a grid. Set \`fps ≈ 9 / clip_duration\`
-   so the 9 tiles span the whole clip:
+1. **视觉扫描 — 九宫格 contact sheet.** Extract 9 evenly-spaced frames tiled into a
+   grid with ffmpeg (\`ffmpeg-win\` or any ffmpeg). Set \`fps ≈ 9 / clip_duration\` so
+   the 9 tiles span the whole clip:
 
    \`\`\`
    ffmpeg -i "<clip>.mp4" -vf "fps=9/<DURATION>,scale=320:-1,tile=3x3:padding=6:color=black" -frames:v 1 -y "<clip>_grid.png"
    \`\`\`
 
-   (For a 5s clip, \`fps=9/5=1.8\`; set \`<DURATION>\` to the real length. If the grid
-   comes out with too few/many tiles, nudge the fps.)
-2. \`view_image\` the \`_grid.png\` and judge: subject/character consistency across
-   frames, motion sanity (no melting / teleporting / extra limbs), artifacts, and
-   prompt adherence. The grid is one small PNG, so this is cheap and safe.
-3. If the clip is clearly bad, regenerate with an adjusted prompt (or switch mode)
-   and re-check. Iterate at MOST 2–3 times — each render costs money and ~1–3 min.
-4. **Never** inject the full MP4 or its raw bytes into the chat — always inspect
-   quality via the contact sheet, never the video itself. The user is already
-   watching the clip play inline.
+   (For a 5s clip, \`fps=9/5=1.8\`; set \`<DURATION>\` to the real length. Nudge fps if
+   tiles come out too few/many.) Then \`view_image\` the \`_grid.png\` and judge
+   subject/character consistency, motion sanity (no melting / teleporting / extra
+   limbs), artifacts, and prompt adherence. One small PNG — cheap and safe.
+2. **内容审查 — \`understand_video\`.** Run \`catimation-understand\`'s \`understand_video\`
+   to "watch" the WHOLE clip for 剧情 / 字幕 / 连续性 / 穿帮 that a 9-frame grid
+   samples too sparsely to catch. **这两步是同一次自检的两面,不是二选一。**
+3. If either lens flags a problem, regenerate with an adjusted prompt (or switch
+   mode) and re-check. Iterate at MOST 2–3 times — each render costs money and ~1–3 min.
+4. **Never** inject the full MP4 or its raw bytes into the chat — inspect via the
+   contact sheet + \`understand_video\`, never by dumping the video. The user is
+   already watching the clip play inline.
 
-> 进阶 — 上面的九宫格只是一个快检环节,背后是一个**跨两个技能的 inspect→process→verify
-> 大循环**,**不止发布前审片**:任何要**理解或处理 视频/音频/多媒体**的时候都自主触发——
-> 处理前先 probe 摸清、处理后必复核。\`ffmpeg-win\` 主导技术面(ffprobe 粗检 → 九宫格视觉
-> → 响度 → 修复 → release checkpoint,checkpoint 仅交付时),\`catimation-understand\`
-> (\`understand_video\`)负责模型内容理解/审查(剧情/字幕/连续性/穿帮);不达标就 ffmpeg
-> 修复后回到粗检复检,过了再交付。详见 \`ffmpeg-win\` 技能的 **inspect→process→verify** 段。
+> 进阶 — 上面这套「九宫格 + understand_video」自检,背后是一个**跨两个技能的
+> inspect→process→verify 大循环**,**不止发布前审片**:任何要**理解或处理 视频/音频/多媒体**
+> 的时候都自主触发——处理前先 probe 摸清、处理后必复核,**九宫格视觉与 understand_video
+> 内容两面一起看,不拆开**。\`ffmpeg-win\` 主导技术面(ffprobe 粗检 → 九宫格视觉 → 响度 →
+> 修复 → release checkpoint,checkpoint 仅交付时),\`catimation-understand\`
+> (\`understand_video\`)同一循环里负责模型内容理解/审查(剧情/字幕/连续性/穿帮);不达标就
+> ffmpeg 修复后回到粗检复检,过了再交付。详见 \`ffmpeg-win\` 技能的 **inspect→process→verify** 段。
+
+> 宫格图 / 故事板 = 素材,不只是检查工具:按剧情裁剪、拼接出的九宫格、分镜板本身是**优质可复用参考**——回喂 \`referenceImages\` 传主体/风格,或抽其中关键帧/尾帧作下一镜 \`firstFrame\`(配合上文「别把未处理的 Seedance 视频直接当参考」纪律:跨镜续接优先抽帧,不整段回喂)。
 
 ## Organize finished clips into the user's workspace (when in a project)
 
@@ -725,8 +738,10 @@ need permission to add, search, organize, or download on the user's behalf.
   file path, \`data:\` URL, \`https\` URL, or an existing \`asset://assetId\`. Kind
   (image/video/audio) is auto-detected (override with \`kind\`); for people use
   \`imageCategory: image_people\` (default). Identical content dedupes to the same
-  \`assetId\`. Returns \`{ assetId, assetUrl, name, duplicated }\` — pass
-  \`assetUrl\` (\`asset://…\`) straight into \`generate_video\`.
+  \`assetId\`. Returns \`{ assetId, assetUrl, name, duplicated }\`. **图像** asset 的
+  \`assetUrl\` (\`asset://…\`) 可直传 \`generate_video\`;但**视频/音频 asset 不直接当视觉参考**
+  ——先用 \`ffmpeg-win\` 抽干净关键帧 / 拼宫格图(或抽音轨),把**静帧 / 音频**入库再喂,原始
+  视频仅留底(尤其是 Seedance 自产片段,整段回喂会二次编码、画质打折)。
 - **\`list_portrait_library\`** — search / browse. Optional \`query\` (name text),
   \`kind\` (\`all\`/\`image_people\`/\`image_environment\`/\`video\`/\`audio\`),
   \`group\`, \`page\`, \`pageSize\`, \`includeHidden\`. Returns items with
@@ -740,13 +755,29 @@ need permission to add, search, organize, or download on the user's behalf.
 - **\`download_portrait_asset\`** — save an asset locally; pass the \`sourceUrl\`
   from \`list_portrait_library\`. Returns the saved local path.
 
+## 审核闸门(上传后别立刻拿去生成 ⚠️)
+
+\`add_to_portrait_library\` 上传**新**素材后,上游会先做**内容审核(审核)**。审核
+未通过 / 仍在审核中的素材,直接把它的 \`asset://assetId\` 喂给 \`generate_video\`
+**会让生成任务直接失败**(如 \`内容审核未通过\` / 素材不可用)。所以:
+
+- ✅ **复用库里已存在的素材最稳**——它们早已审核通过。
+- ✅ \`add_to_portrait_library\` 返回 \`duplicated: true\` = 命中去重 = 已在库 =
+  已审核,**可以立刻用**。
+- ⛔ 全新上传(\`duplicated: false\`)**不要审核没过就抢着生成**:先确认审核通过
+  ——用 \`list_portrait_library\` 能正常查到、人像库页面对该素材无「审核中 / 待审核」
+  标记后再 \`generate_video\`;或直接告诉用户「素材正在审核,通过后再生成」并停下,
+  **不要赌它已通过**。
+- 一句话:**先入库 → 等审核过 → 再生成**,顺序不能颠倒。
+
 ## Proactive workflows
 
 1. **User mentions video generation with material** → \`add_to_portrait_library\`
-   each provided image/video/audio FIRST, then reference the returned
-   \`asset://assetId\` in \`generate_video\`. (Images passed directly to
-   \`generate_video\` are auto-imported; videos/audio and any "save for later"
-   material are on you.)
+   each provided image/video/audio FIRST. Then — only after it clears review
+   (see 审核闸门 above; a \`duplicated:true\` result is already reviewed) —
+   reference the returned \`asset://assetId\` in \`generate_video\`. (Images passed
+   directly to \`generate_video\` are auto-imported; videos/audio and any "save
+   for later" material are on you.)
 2. **Reuse a character/scene** ("还是上次那个人 / 同一个角色 / 同一个场景") →
    \`list_portrait_library\` to find the matching \`asset://assetId\`, then
    reference it — this is what keeps identity consistent.
@@ -847,9 +878,18 @@ ask_user({
 })
 \`\`\`
 
+## 怎么把弹窗真正弹出来(直接调用,别只是「想」)⚠️
+
+想给用户弹选择卡片,就是**直接调用工具 \`ask_user\`**(带 question + options),
+名字就是字面的 \`ask_user\`(它和 \`generate_image\` / \`canvas_snapshot\` 一样,**永远直接可调用**,
+不需要先搜索/加载)。不要在脑子里盘算「要不要用 / 它是不是没暴露」——盘算不会弹窗,调用才会。
+
 ## Notes
 
 - \`ask_user\` BLOCKS until the user answers — that's intended; just await it.
+- **工具名就是字面的 \`ask_user\`(带下划线),直接照抄调用,别自己拼前缀。**
+  万一真返回 \`unsupported call\`,**不要反复重试各种变体**——立刻退回**编号文字选项**
+  (方案1 / 方案2 / …,让用户回个数字)继续推进,别让流程卡死。
 - This skill is general-purpose: use it for video, image, or any creative
   decision that's genuinely the user's to make.
 - It pairs with \`catimation-video\` / \`catimation-image\`: brainstorm here, then

@@ -88,9 +88,18 @@ Even when you skip brainstorming for a simple ask, still pass through
 `director-orchestrator` before generating — including when YOU generate your own
 illustration for an answer.
 
+## 怎么把弹窗真正弹出来(直接调用,别只是「想」)⚠️
+
+想给用户弹选择卡片,就是**直接调用工具 `ask_user`**(带 question + options),
+名字就是字面的 `ask_user`(它和 `generate_image` / `canvas_snapshot` 一样,**永远直接可调用**,
+不需要先搜索/加载)。不要在脑子里盘算「要不要用 / 它是不是没暴露」——盘算不会弹窗,调用才会。
+
 ## Notes
 
 - `ask_user` BLOCKS until the user answers — that's intended; just await it.
+- **工具名就是字面的 `ask_user`(带下划线),直接照抄调用,别自己拼前缀。**
+  万一真返回 `unsupported call`,**不要反复重试各种变体**——立刻退回**编号文字选项**
+  (方案1 / 方案2 / …,让用户回个数字)继续推进,别让流程卡死。
 - This skill is general-purpose: use it for video, image, or any creative
   decision that's genuinely the user's to make.
 - It pairs with `catimation-video` / `catimation-image`: brainstorm here, then

@@ -77,3 +77,30 @@ describe('MarkdownContent code blocks', () => {
     expect(screen.queryByRole('button', { name: /copy/i })).toBeNull()
   })
 })
+
+describe('MarkdownContent links', () => {
+  it('renders links as non-draggable so the blue text stays selectable/copyable', () => {
+    // Regression: anchors are draggable by default in Chromium/Electron, which
+    // hijacks drag-to-select (no copy) and swallows clicks-with-movement (no
+    // jump). The anchor must opt out of native drag.
+    const { container } = render(
+      <MarkdownContent source={'[镜头摆设](file:///C:/u/uploads/x.png)'} />,
+    )
+    const a = container.querySelector('a') as HTMLAnchorElement
+    expect(a).toBeTruthy()
+    expect(a.getAttribute('draggable')).toBe('false')
+  })
+
+  it('clicking a local-file link reveals it in the FILES panel instead of navigating', () => {
+    const spy = vi
+      .spyOn(useFileExplorerStore.getState(), 'revealPath')
+      .mockResolvedValue(undefined)
+    const { container } = render(
+      <MarkdownContent source={'[镜头摆设](file:///C:/u/uploads/x.png)'} />,
+    )
+    const a = container.querySelector('a') as HTMLAnchorElement
+    fireEvent.click(a)
+    expect(spy).toHaveBeenCalledWith('C:/u/uploads/x.png')
+    spy.mockRestore()
+  })
+})

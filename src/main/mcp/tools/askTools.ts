@@ -9,23 +9,28 @@ import type { ToolRouter } from '../ToolRouter'
  * agent. There is no main-process handler for this tool, so `router.call`
  * routes it to the renderer (AgentToolExecutor) exactly like `generate_image`.
  *
- * Use it for the `catimation-brainstorm` flow and any time a real decision is
- * the user's to make (景别 / 风格 / 运镜 / 方向…). The returned JSON carries the
- * chosen option ids AND labels plus any free text, so the agent can act on the
- * answer without re-asking.
+ * This is a GENERAL, always-available system interaction tool — same tier as
+ * `generate_image` / `view_image`, NOT scoped to `catimation-brainstorm`. The
+ * tool description below is in the model's context every turn (independent of
+ * which skill is loaded), so it is the always-on lever that makes the agent
+ * reach for a clickable card WHENEVER it would otherwise hand the user a
+ * numbered text list — any options/方案/选项/方向, or any decision that is the
+ * user's to make (景别 / 风格 / 运镜 / 模型 / 下一步…). The returned JSON carries
+ * the chosen option ids AND labels plus any free text, so the agent can act on
+ * the answer without re-asking.
  */
 export function registerAskTools(server: McpServer, router: ToolRouter): void {
   server.registerTool(
     'ask_user',
     {
       description:
-        'Ask the user a question with clickable options, rendered as an ' +
-        'interactive card (buttons / checkboxes / free text). BLOCKS until they ' +
-        'pick, type, or skip, then returns the chosen ids + labels + free text. ' +
-        'PREFER this (most of the time) over writing options/方案 as a numbered text ' +
-        'list (给我几个选项 / 让我选 / 二选一 / give me options, or co-directing 景别/风格/运镜). ' +
-        'Put ALL the 方案 you came up with into ONE card — NO 4-option cap, 6–8 is ' +
-        'fine. One question per card.',
+        'Interactive clickable choice card in CATIMATION chat. ALWAYS available like ' +
+        'generate_image/view_image — NOT brainstorm-only. Use WHENEVER you\'d list 2+ ' +
+        'options/方案/方向 or face a user decision (景别/风格/运镜/模型/下一步); prefer ' +
+        'over a numbered text list. One question per card, all options in one (6–8 ok). ' +
+        'BLOCKS until pick/type/skip; returns ids+labels+free text. Exact name ' +
+        '"ask_user" (underscore); on "unsupported call" do NOT retry variants — fall ' +
+        'back to a numbered text list.',
       inputSchema: z.object({
         question: z.string().min(1),
         options: z

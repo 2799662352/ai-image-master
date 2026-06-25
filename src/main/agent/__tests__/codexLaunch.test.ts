@@ -29,6 +29,11 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'experimental_use_rmcp_client=true',
       '-c', 'agents.max_threads=8',
       '-c', 'agents.max_depth=1',
+      // Bare MCP tool names (openai/codex#21576) so the model calls `ask_user`
+      // / `generate_image` exactly as the skills document them — no
+      // `mcp__catimation__` prefix to mis-reconstruct (the `unsupported call`
+      // ask_user root cause). Codex maps the bare name back to the raw tool.
+      '-c', 'features.non_prefixed_mcp_tool_names=true',
     ])
   })
 
@@ -48,6 +53,7 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'experimental_use_rmcp_client=true',
       '-c', 'agents.max_threads=8',
       '-c', 'agents.max_depth=1',
+      '-c', 'features.non_prefixed_mcp_tool_names=true',
     ])
     const listenIdx = args.indexOf('--listen')
     const firstConfigIdx = args.indexOf('-c')
@@ -81,6 +87,12 @@ describe('buildCodexLaunchArgs', () => {
     // 401 + a "Reconnecting...N/5" warning loop. We need plain HTTP Responses
     // API which apiyi actually proxies (https://docs.apiyi.com/api-capabilities/openai-responses).
     expect(pairs(args)).toContainEqual(['-c', 'model_providers.apiyi.wire_api="responses"'])
+    // MCP namespace flattening (openai/codex#26234): every gateway we ship is
+    // OpenAI-COMPATIBLE (not real OpenAI), so they don't expand Codex's
+    // `type:"namespace"` MCP wrapper — pinning `namespace_tools=false` flattens
+    // MCP tools to plain functions + resolves flat/proxy-mangled names back,
+    // fixing the `unsupported call` ask_user failure deterministically.
+    expect(pairs(args)).toContainEqual(['-c', 'model_providers.apiyi.namespace_tools=false'])
     // The deprecated `supports_websockets` field was removed in 0.128 — never
     // set it; passing it would just be noise.
     const flat = args.join(' ')
@@ -366,6 +378,8 @@ describe('buildCodexLaunchArgs', () => {
     // Codex removed wire_api="chat" (#7782) — only "responses" is ever emitted.
     expect(args).toContain('model_providers.qwen.wire_api="responses"')
     expect(args).not.toContain('model_providers.qwen.wire_api="chat"')
+    // Extra gateways flatten MCP tools too (openai/codex#26234).
+    expect(args).toContain('model_providers.qwen.namespace_tools=false')
     // The extra provider's model must NOT become the global top-level model
     // (it is only used when a subagent selects modelProvider="qwen").
     expect(args).not.toContain('model="qwen3.7-max-dashscope"')

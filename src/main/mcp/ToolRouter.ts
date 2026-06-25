@@ -51,6 +51,11 @@ export class ToolRouter {
   }
 
   async call(name: string, params: Record<string, unknown>, codexThreadId?: string): Promise<unknown> {
+    // DIAGNOSTIC: every tool name Codex actually dispatches to our MCP server
+    // arrives here verbatim. Use this to confirm whether `ask_user` ever
+    // reaches us (vs. being rejected upstream as `unsupported call`) and what
+    // EXACT name working tools (canvas_snapshot, generate_image) come in as.
+    console.log(`[ToolRouter] incoming tool call: ${JSON.stringify(name)}`)
     const mainHandler = this.mainHandlers.get(name)
     if (mainHandler) {
       const threadId = codexThreadId ? (this.threadIdResolver?.(codexThreadId) ?? undefined) : undefined
