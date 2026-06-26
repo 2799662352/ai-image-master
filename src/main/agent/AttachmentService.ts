@@ -157,21 +157,50 @@ export class AttachmentService extends EventEmitter {
       if (!existsCheck) throw renameErr
     }
 
-    const saved = await this.prisma.agentAttachment.create({
-      data: {
+    // 4) Record metadata in the DB. The bytes are ALREADY content-addressed on
+    //    disk at `finalPath`; the row is only for the ATTACHMENTS panel + cleanup
+    //    sweep. So if the metadata insert fails — typically the dev PGlite sidecar
+    //    dropping its socket mid-turn (`P1017 Server has closed the connection`)
+    //    or a transient `Aborted()` during NODEFS recovery (see pgliteRecovery.ts)
+    //    — DO NOT throw away a perfectly good on-disk file. The localPath is what
+    //    every caller actually consumes: canvas-video materialize (ffmpeg /
+    //    understand), generate_image save, snapshot export. Losing it here is what
+    //    surfaced as "好像没有成功存储 / 拖上来的视频没注册路径". Degrade to
+    //    "disk path only": skip the panel broadcast (no row to back it) and hand
+    //    back a synthetic record carrying the real path. This mirrors the
+    //    per-attachment isolation philosophy — a flaky sidecar DB must never
+    //    swallow the user's bytes.
+    try {
+      const saved = await this.prisma.agentAttachment.create({
+        data: {
+          threadId,
+          originalName: attachment.name,
+          localPath: finalPath,
+          mime: attachment.mime,
+          size: declaredSize,
+        },
+      })
+      // Success signal: AttachmentTreeProvider.wireAttachmentBroadcast subscribes
+      // to this and pushes `attachments:changed` over IPC so the renderer's
+      // ATTACHMENTS panel refreshes without polling. Mirrors the 'attachment-error'
+      // contract on the failure side.
+      this.emit('attachment-added', { saved } satisfies AttachmentAddedEvent)
+      return saved
+    } catch (dbErr) {
+      const message = dbErr instanceof Error ? dbErr.message : String(dbErr)
+      console.warn(
+        `[AttachmentService] metadata insert failed for ${attachment.name}; returning on-disk path without a DB row (file is safe at ${finalPath}): ${message}`,
+      )
+      return {
+        id: `nodb_${sha}`,
         threadId,
         originalName: attachment.name,
         localPath: finalPath,
         mime: attachment.mime,
         size: declaredSize,
-      },
-    })
-    // Success signal: AttachmentTreeProvider.wireAttachmentBroadcast subscribes
-    // to this and pushes `attachments:changed` over IPC so the renderer's
-    // ATTACHMENTS panel refreshes without polling. Mirrors the 'attachment-error'
-    // contract on the failure side.
-    this.emit('attachment-added', { saved } satisfies AttachmentAddedEvent)
-    return saved
+        uploadedAt: new Date(),
+      }
+    }
   }
 
   async cleanup(cutoffMs = 7 * 24 * 60 * 60 * 1000): Promise<number> {

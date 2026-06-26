@@ -104,7 +104,71 @@ export function summarizeShape(editor: Editor, shape: any): ShapeSummary {
       if (!summary.assetPath && typeof asset.meta?.assetPath === 'string') summary.assetPath = asset.meta.assetPath
     }
   }
+  // Origin URL — the link counterpart of assetPath, so EVERY way content reaches
+  // the canvas exposes its source in canvas_snapshot (the "公用能力"):
+  //   • a pasted web link → tldraw makes a `bookmark` (or `embed`) whose
+  //     `props.url` is the source of truth regardless of how it was created;
+  //   • any shape may also carry `meta.sourceUrl` (e.g. agent-attached links).
+  // Reading native `props.url` means no per-entry-point wiring is needed.
+  const propsUrl = shape.props?.url
+  if (typeof propsUrl === 'string' && propsUrl) {
+    summary.sourceUrl = propsUrl
+    if (!summary.assetUrl) summary.assetUrl = propsUrl
+  } else if (typeof meta.sourceUrl === 'string' && meta.sourceUrl) {
+    summary.sourceUrl = meta.sourceUrl
+  }
   return summary
+}
+
+/** Minimal shape of a tldraw 'file' external-asset handler (what the editor's
+ * `externalAssetContentHandlers.file` is / what `registerExternalAssetHandler`
+ * takes). Kept structural so this helper stays unit-testable without importing
+ * tldraw's editor types. */
+type FileAssetInfo = { type: 'file'; file: File; assetId?: unknown }
+type FileAssetHandler = (info: FileAssetInfo) => Promise<{ type?: string; meta?: Record<string, unknown> } | undefined>
+
+/**
+ * Wrap tldraw's DEFAULT `file` external-asset handler so an OS-desktop-dropped
+ * image/video gets a REAL on-disk path baked into `asset.meta.assetPath` at DROP
+ * TIME — the AI-Canvas "path at creation" model (their App.tsx always sets
+ * meta.assetPath when it creates a shape; OS drops never did, so the path only
+ * existed in IndexedDB as an opaque `asset:<id>` ref and the agent had to call
+ * get_canvas_video to materialize one on demand).
+ *
+ * We DELEGATE to the captured default handler instead of reimplementing it, so
+ * tldraw keeps doing dimension probing, the IndexedDB upload, video/image
+ * detection and the not-allowed/size checks (with the correct toasts/mime opts
+ * baked into that closure). Then, best-effort, we persist a disk copy and merge
+ * its path into the returned asset's meta. `summarizeShape` + `getSelectedVideo`
+ * already read `asset.meta.assetPath`, so the path shows up natively in
+ * `canvas_snapshot` afterwards. Capture order is safe: Tldraw.tsx registers the
+ * defaults, then the store's onMount, then OUR onMount LAST — so grabbing the
+ * existing handler and replacing it cannot lose the default.
+ *
+ * Failure is non-fatal: if there's no active thread or the disk copy fails, we
+ * return the plain default asset unchanged (the clip still lands; on-demand
+ * get_canvas_video can still materialize a path later).
+ */
+export function makeFileAssetHandlerWithDiskPath(
+  defaultHandler: FileAssetHandler | null | undefined,
+  persist: (file: File, threadId: string) => Promise<string | undefined>,
+  getThreadId: () => string | undefined,
+): FileAssetHandler {
+  return async (info) => {
+    const asset = defaultHandler ? await defaultHandler(info) : undefined
+    if (!asset || (asset.type !== 'video' && asset.type !== 'image')) return asset
+    try {
+      const threadId = getThreadId()
+      const file = info?.file
+      if (threadId && file) {
+        const diskPath = await persist(file, threadId)
+        if (diskPath) return { ...asset, meta: { ...(asset.meta ?? {}), assetPath: diskPath } }
+      }
+    } catch {
+      // Non-fatal: never block the drop just because the disk copy failed.
+    }
+    return asset
+  }
 }
 
 /**
@@ -351,6 +415,93 @@ export function insertTextNote(
   })
   zoomToFitShapes(editor, [String(shapeId)])
   return { shapeId: String(shapeId), bounds: { x, y, w, h: 0 } }
+}
+
+/**
+ * Drop a labeled PLACEHOLDER note for a file tldraw cannot render as a shape —
+ * audio (mp3/wav…), archives, pdf, arbitrary docs. tldraw only makes real shapes
+ * for image/video, so without this such files would land NOWHERE and the agent
+ * could never see them. The placeholder is a normal text shape whose `meta`
+ * carries the real on-disk `assetPath` (+ `assetKind`), so `summarizeShape`
+ * surfaces the path in canvas_snapshot exactly like a media shape — the agent can
+ * then e.g. mux an mp3 with ffmpeg by reading that path. Atomic editor.run +
+ * best-effort zoom-to-fit, same discipline as the media inserts.
+ */
+export function insertFilePlaceholder(
+  editor: Editor,
+  payload: { assetPath?: string; assetUrl?: string; title: string; kind: 'audio' | 'file'; x?: number; y?: number },
+): { shapeId: string; bounds: Bounds } {
+  const title = String(payload.title ?? 'file').trim() || 'file'
+  const icon = payload.kind === 'audio' ? '🎵' : '📎'
+  const label = payload.assetPath ? `${icon} ${title}\n${payload.assetPath}` : `${icon} ${title}`
+  const x = Number(payload.x ?? 100)
+  const y = Number(payload.y ?? 100)
+  const w = 360
+  const shapeId = createShapeId(`file_${crypto.randomUUID().slice(0, 8)}`) as never
+  editor.run(() => {
+    editor.createShape({
+      id: shapeId,
+      type: 'text',
+      x,
+      y,
+      props: { richText: toRichText(label), w, autoSize: false, color: 'grey', size: 's', textAlign: 'start' },
+      meta: cleanMeta({
+        aiCanvasRole: payload.kind === 'audio' ? 'dropped_audio' : 'dropped_file',
+        assetKind: payload.kind,
+        assetPath: payload.assetPath,
+        assetUrl: payload.assetUrl,
+        title,
+      }),
+    } as never)
+    editor.bringToFront([shapeId])
+    editor.select(shapeId)
+  })
+  zoomToFitShapes(editor, [String(shapeId)])
+  return { shapeId: String(shapeId), bounds: { x, y, w, h: 0 } }
+}
+
+/** Minimal shape of tldraw's 'files' external-CONTENT handler (`editor
+ * .externalContentHandlers.files` / what `registerExternalContentHandler` takes).
+ * Structural so the wrapper below stays unit-testable without tldraw types. */
+type FilesContentInfo = { type?: 'files'; files: File[]; point?: { x: number; y: number } }
+type FilesContentHandler = (info: FilesContentInfo) => Promise<void> | void
+
+/**
+ * Wrap tldraw's DEFAULT 'files' content handler so OS-dropped files tldraw can't
+ * render (audio/zip/pdf/…) still leave a path-bearing placeholder instead of just
+ * a "type not allowed" toast. The default content handler `continue`-skips any
+ * file whose mime has no asset util, so those files normally vanish; here we split
+ * the drop:
+ *   - files tldraw CAN render → delegate to the captured default (which routes
+ *     them through the asset handler, so our drop-time `meta.assetPath` stamping
+ *     still applies to images/videos),
+ *   - everything else → `placeOther` (one placeholder note per file).
+ * Capture-then-replace is safe (defaults registered before our onMount). Each
+ * `placeOther` is isolated so one failure can't abort the rest of the batch, and
+ * an all-supported drop behaves byte-for-byte like stock tldraw.
+ */
+export function makeFilesContentHandlerWithPlaceholders(
+  defaultHandler: FilesContentHandler | null | undefined,
+  isHandledByTldraw: (file: File) => boolean,
+  placeOther: (file: File, point: { x: number; y: number } | undefined, index: number) => Promise<void>,
+): FilesContentHandler {
+  return async (info) => {
+    const files = info?.files ?? []
+    const supported = files.filter((f) => isHandledByTldraw(f))
+    const others = files.filter((f) => !isHandledByTldraw(f))
+    if (supported.length && defaultHandler) {
+      await defaultHandler({ ...info, files: supported })
+    }
+    let i = 0
+    for (const f of others) {
+      try {
+        await placeOther(f, info?.point, i)
+      } catch {
+        // Non-fatal: never let one bad placeholder abort the rest of the drop.
+      }
+      i += 1
+    }
+  }
 }
 
 /**

@@ -76,6 +76,48 @@ describe('B: summarizeShape enriches VIDEO shapes from their backing asset too',
   })
 })
 
+describe('C: summarizeShape surfaces the source URL of link-like shapes (公用能力)', () => {
+  it('exposes a pasted web link from a bookmark shape (props.url → sourceUrl)', () => {
+    const bookmark = {
+      id: 'shape:bm',
+      type: 'bookmark',
+      x: 0,
+      y: 0,
+      props: { url: 'https://example.com/article', w: 300, h: 320, assetId: null },
+      meta: {},
+    }
+    const summary = summarizeShape(fakeEditor([bookmark]), bookmark)
+    expect(summary.type).toBe('bookmark')
+    expect(summary.sourceUrl).toBe('https://example.com/article')
+    // mirrored into assetUrl too so consumers reading either field find it.
+    expect(summary.assetUrl).toBe('https://example.com/article')
+  })
+
+  it('exposes an embedded link from an embed shape (e.g. pasted YouTube)', () => {
+    const embed = {
+      id: 'shape:em',
+      type: 'embed',
+      x: 0,
+      y: 0,
+      props: { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', w: 640, h: 360 },
+      meta: {},
+    }
+    const summary = summarizeShape(fakeEditor([embed]), embed)
+    expect(summary.sourceUrl).toBe('https://www.youtube.com/watch?v=dQw4w9WgXcQ')
+  })
+
+  it('falls back to meta.sourceUrl when a shape has no props.url', () => {
+    const note = { id: 'shape:n', type: 'text', x: 0, y: 0, props: {}, meta: { sourceUrl: 'https://ref.example/doc' } }
+    const summary = summarizeShape(fakeEditor([note]), note)
+    expect(summary.sourceUrl).toBe('https://ref.example/doc')
+  })
+
+  it('leaves sourceUrl undefined for ordinary shapes', () => {
+    const summary = summarizeShape(fakeEditor([imageShape], assets), imageShape)
+    expect(summary.sourceUrl).toBeUndefined()
+  })
+})
+
 describe('list_canvas_images (borrowed from sora-canvas-mcp): flat image index', () => {
   it('returns only image shapes with shapeId/dims/assetId/path/hasFile', () => {
     const shapes = [

@@ -1,6 +1,6 @@
 import { getSnapshot, loadSnapshot, type Editor } from 'tldraw'
 import type { CanvasStatePayload } from '../../../../../types/canvas'
-import { createHolder, createImageVersion, insertImageAt, insertImageIntoHolder, insertTextNote, insertVideo, listImageShapes, readCanvasState, summarizeShape } from './shapeOps'
+import { createHolder, createImageVersion, insertFilePlaceholder, insertImageAt, insertImageIntoHolder, insertTextNote, insertVideo, listImageShapes, readCanvasState, summarizeShape } from './shapeOps'
 import { executeCanvasCode, searchEditorApi } from './shapeExec'
 import { parseAnnotations } from './annotationParser'
 import { editPrompt, findPreferredHolder, generationPrompt, holderSize } from './promptBuilders'
@@ -132,19 +132,36 @@ class CanvasBridge {
   /**
    * Drop a workspace file onto the canvas at a page point. Used by the Canvas
    * tab's native drop handler when the user drags a file from the file-explorer
-   * tree (custom MIME → a disk path, NOT an OS File). Routes by extension to a
-   * standalone image or a video shape; non-media files are reported back so the
-   * UI can flash "only images/videos". Extension is checked BEFORE touching the
-   * editor so a stray .txt drop is a cheap no-op.
+   * tree (custom MIME → a disk path, NOT an OS File). Routes by extension:
+   * image/video → a real media shape; audio/any-other → a labeled placeholder
+   * note carrying the disk path (so the agent can still locate it). Every kind
+   * therefore records `assetPath`, visible in canvas_snapshot.
    */
-  async insertFileAt(path: string, point: { x: number; y: number }): Promise<{ ok: true; kind: 'image' | 'video' } | { ok: false; reason: string }> {
+  async insertFileAt(
+    path: string,
+    point: { x: number; y: number },
+  ): Promise<{ ok: true; kind: 'image' | 'video' | 'audio' | 'file' } | { ok: false; reason: string }> {
     const lower = path.toLowerCase()
     const isVideo = /\.(mp4|webm|mov|m4v|mkv|ogg|ogv)$/.test(lower)
     const isImage = /\.(png|jpe?g|gif|webp|bmp|avif|svg|ico)$/.test(lower)
-    if (!isVideo && !isImage) return { ok: false, reason: 'unsupported' }
+    const isAudio = /\.(mp3|wav|m4a|aac|flac|opus|oga|weba)$/.test(lower)
     const editor = this.requireEditor()
-    const assetUrl = await this.toLoadable(path)
     const title = path.split(/[\\/]/).pop() || 'file'
+    // Audio + any other non-renderable file: tldraw has no shape for these, so we
+    // drop a labeled placeholder note carrying the REAL workspace path (the tree
+    // drag already hands us a disk path — no copy needed). Keeps the path visible
+    // in canvas_snapshot so the agent can ffmpeg/mux it.
+    if (!isVideo && !isImage) {
+      const kind: 'audio' | 'file' = isAudio ? 'audio' : 'file'
+      const res = await this.safeWrite('insert_file_placeholder', () =>
+        insertFilePlaceholder(editor, { assetPath: path, title, kind, x: point.x, y: point.y }),
+      )
+      if (res && typeof res === 'object' && 'failed' in (res as Record<string, unknown>)) {
+        return { ok: false, reason: String((res as { error?: string }).error ?? 'write failed') }
+      }
+      return { ok: true, kind }
+    }
+    const assetUrl = await this.toLoadable(path)
     const res = isVideo
       ? await this.safeWrite('insert_video', () => insertVideo(editor, { assetUrl, assetPath: path, x: point.x, y: point.y, title }))
       : await this.safeWrite('insert_image_at', () => insertImageAt(editor, { assetUrl, assetPath: path, x: point.x, y: point.y, title }))
@@ -262,6 +279,13 @@ class CanvasBridge {
         // Internal helper (no MCP surface): resolve the canvas video the user
         // wants understood — drives the understand_canvas_video MCP tool.
         return this.getSelectedVideo()
+      case 'get_canvas_video':
+        // MCP-surfaced sibling of get_canvas_image, for VIDEOS: resolve the
+        // selected (or single) canvas video to a guaranteed-openable LOCAL file
+        // path so the agent can ffmpeg / contact-sheet it instead of hunting the
+        // disk by filename. threadId (renderer-injected) lets the materialize
+        // fallback persist a fresh copy when the shape has no recorded path.
+        return this.getCanvasVideo(typeof params.threadId === 'string' ? params.threadId : undefined)
       case 'add_canvas_note':
         // Internal helper (no MCP surface): write an AI text note (e.g. the
         // video-understanding result) onto the canvas next to its source shape.
@@ -395,6 +419,181 @@ class CanvasBridge {
     if (!assetPath && !assetUrl) return { ok: false, error: '选中的视频没有可用的源(无 assetPath/assetUrl),无法理解。' }
     const title = typeof target.meta?.title === 'string' ? target.meta.title : null
     return { ok: true, shapeId: target.id, assetPath, assetUrl, title }
+  }
+
+  /**
+   * Resolve the selected (or single) canvas VIDEO to an openable LOCAL file path
+   * — the video analog of getCanvasImage and the missing MCP surface that forced
+   * the agent to hunt the disk by filename/size before running ffmpeg / building
+   * a contact sheet. Strategy:
+   *   1. PREFER the recorded on-disk assetPath (clips inserted via insert_video
+   *      or dragged from the workspace tree carry the real path).
+   *   2. Else MATERIALIZE the backing asset bytes (data:/blob: src) to a real
+   *      file on disk and return THAT — so a pasted/OS-dropped clip with no
+   *      recorded path still yields a usable file (this is the "好像没有成功存储 /
+   *      没披露链接" case: we always hand back an openable path or, failing that,
+   *      the source URL).
+   *   3. Else disclose the assetUrl so the agent at least has a source to relay.
+   * Structured `{ ok:false, error }` (never throws), mirroring getCanvasImage.
+   */
+  async getCanvasVideo(
+    threadId?: string,
+  ): Promise<
+    | { ok: true; shapeId: string; videoPath: string | null; assetPath: string | null; assetUrl: string | null; title: string | null; materialized: boolean }
+    | { ok: false; error: string }
+  > {
+    const sel = await this.getSelectedVideo()
+    if (!sel.ok) return sel
+    if (sel.assetPath) {
+      return { ok: true, shapeId: sel.shapeId, videoPath: sel.assetPath, assetPath: sel.assetPath, assetUrl: sel.assetUrl, title: sel.title, materialized: false }
+    }
+    const materialized = threadId ? await this.exportSelectedVideoFile(sel.shapeId, threadId) : undefined
+    return {
+      ok: true,
+      shapeId: sel.shapeId,
+      videoPath: materialized ?? null,
+      assetPath: null,
+      assetUrl: sel.assetUrl,
+      title: sel.title,
+      materialized: Boolean(materialized),
+    }
+  }
+
+  /**
+   * Write a canvas video's backing-asset bytes to a real file on disk and return
+   * its absolute path. The video counterpart of exportTargetImageFile.
+   *
+   * Root-caused against tldraw 5.x source (useLocalStore.ts + Editor.ts): with a
+   * `persistenceKey` set, an OS-dragged / pasted clip's bytes are stored in
+   * IndexedDB and the shape's `asset.props.src` is left as an OPAQUE `asset:<id>`
+   * ref — NOT a data:/blob: URL — so reading `props.src` directly and handing it
+   * to srcToBase64 (which rejects `asset:`) yielded nothing (the "拖上来的视频没
+   * 注册路径" case). The official read path is `editor.resolveAssetUrl(assetId)`,
+   * which turns that ref into a fetchable `blob:` URL (via the local store's
+   * `URL.createObjectURL`) and returns a data:/http src as-is. We resolve first,
+   * fall back to the raw `props.src` only when resolveAssetUrl is unavailable.
+   * Persist via the thread-scoped attachments store (mime whitelist allows
+   * video/*). Requires a real thread (FK).
+   */
+  async exportSelectedVideoFile(shapeId: string, threadId: string): Promise<string | undefined> {
+    if (!threadId) return undefined
+    const editor = this.requireEditor() as Editor & {
+      resolveAssetUrl?: (assetId: unknown, ctx: { shouldResolveToOriginal?: boolean }) => Promise<string | null>
+    }
+    const shape = editor.getShape(shapeId as never) as { props?: { assetId?: string } } | undefined
+    const assetId = shape?.props?.assetId
+    if (!assetId) return undefined
+    let src: string | null = null
+    if (typeof editor.resolveAssetUrl === 'function') {
+      try {
+        src = await editor.resolveAssetUrl(assetId, { shouldResolveToOriginal: true })
+      } catch {
+        src = null
+      }
+    }
+    if (!src) {
+      const asset = editor.getAsset(assetId as never) as { props?: { src?: unknown } } | undefined
+      src = typeof asset?.props?.src === 'string' ? asset.props.src : null
+    }
+    if (!src) return undefined
+    const decoded = await srcToBase64(src)
+    if (!decoded) return undefined
+    const api = (window as Window & { electronAPI?: { attachments?: AttachmentsSaveApi } }).electronAPI?.attachments
+    if (!api?.save) return undefined
+    const ext = decoded.mime.includes('webm') ? 'webm' : decoded.mime.includes('quicktime') ? 'mov' : 'mp4'
+    const res = await api.save({
+      threadId,
+      name: `canvas-video-${Date.now()}.${ext}`,
+      mime: decoded.mime,
+      base64: decoded.base64,
+    })
+    return res.ok ? res.path : undefined
+  }
+
+  /**
+   * The real on-disk path of an OS-dropped `File`, via Electron's
+   * `webUtils.getPathForFile` (exposed as `electronAPI.getFilePath`). This app
+   * runs UN-sandboxed (sandbox:false), so a desktop/Explorer drag exposes the
+   * file's actual path — for ANY type (image/video/audio/zip/…) and ANY size,
+   * with ZERO copy. Returns undefined for synthetic/clipboard File objects (paste,
+   * generated blobs) which have no OS path (getFilePath returns '').
+   */
+  private osPathForFile(file: File): string | undefined {
+    const api = (window as Window & { electronAPI?: { getFilePath?: (f: File) => string } }).electronAPI
+    if (!api?.getFilePath) return undefined
+    try {
+      const p = api.getFilePath(file)
+      return typeof p === 'string' && p.trim() ? p : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * Resolve an absolute on-disk path for a dropped `File`, so the canvas can stamp
+   * it as `meta.assetPath` at DROP TIME ("path at creation", like AI-Canvas) and
+   * the path appears natively in canvas_snapshot / get_selected_canvas_video
+   * WITHOUT the agent calling get_canvas_video.
+   *
+   * Two tiers:
+   *  1. Real OS path (preferred) — zero copy, works for every file type and size.
+   *  2. Fallback copy into the thread uploads dir for synthetic/clipboard Files
+   *     that have no OS path. The save IPC only accepts image/* or video/* and
+   *     holds bytes in memory, so this tier is media-only + size-capped (~100MB);
+   *     anything else returns undefined (the clip still lands, and get_canvas_video
+   *     can materialize from the IndexedDB blob on demand).
+   *
+   * Best-effort: returns undefined rather than throwing so a drop is never blocked.
+   */
+  async resolveDroppedFileDiskPath(file: File, threadId: string): Promise<string | undefined> {
+    if (!file) return undefined
+    const osPath = this.osPathForFile(file)
+    if (osPath) return osPath
+    // Fallback: copy bytes (only possible for a real thread + media mime).
+    if (!threadId) return undefined
+    const MAX_INLINE_BYTES = 100 * 1024 * 1024
+    if (typeof file.size === 'number' && file.size > MAX_INLINE_BYTES) return undefined
+    const lower = (file.name ?? '').toLowerCase()
+    const mime =
+      file.type ||
+      (lower.endsWith('.webm') ? 'video/webm' : lower.endsWith('.mov') ? 'video/quicktime' : lower.endsWith('.mp4') ? 'video/mp4' : '')
+    if (!mime.startsWith('image/') && !mime.startsWith('video/')) return undefined
+    const base64 = await blobToBase64(file)
+    if (!base64) return undefined
+    const api = (window as Window & { electronAPI?: { attachments?: AttachmentsSaveApi } }).electronAPI?.attachments
+    if (!api?.save) return undefined
+    const res = await api.save({ threadId, name: file.name || `canvas-drop-${Date.now()}`, mime, base64 })
+    return res.ok ? res.path : undefined
+  }
+
+  /**
+   * OS-drag fallback for a NON-media file (audio/zip/pdf/…): tldraw can't render
+   * it, so it never becomes a shape and would vanish from canvas_snapshot. We drop
+   * a labeled placeholder note carrying the file's real disk path in
+   * `meta.assetPath` so the agent can still locate it (e.g. mux an mp3 with
+   * ffmpeg). Non-fatal: a failure here must never break the rest of the drop.
+   */
+  async placeDroppedNonMediaFile(
+    file: File,
+    point: { x: number; y: number } | undefined,
+    index: number,
+    threadId: string,
+  ): Promise<void> {
+    const editor = this.editor
+    if (!editor) return
+    const diskPath = await this.resolveDroppedFileDiskPath(file, threadId)
+    const kind: 'audio' | 'file' = (file.type ?? '').startsWith('audio/') ? 'audio' : 'file'
+    const base = point ?? { x: 100, y: 100 }
+    const offset = index * 28
+    await this.safeWrite('place_dropped_file', () =>
+      insertFilePlaceholder(editor, {
+        assetPath: diskPath,
+        title: file.name || 'file',
+        kind,
+        x: base.x + offset,
+        y: base.y + offset,
+      }),
+    )
   }
 
   /**

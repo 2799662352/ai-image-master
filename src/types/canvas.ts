@@ -49,6 +49,10 @@ export interface ShapeSummary {
   color?: string
   assetPath?: string
   assetUrl?: string
+  /** Origin URL for link-like shapes — a pasted web link becomes a bookmark/embed
+   * whose `props.url` is surfaced here, so canvas_snapshot exposes the source the
+   * same way `assetPath` exposes a dropped/generated file's disk path. */
+  sourceUrl?: string
   /** tldraw asset id backing an image shape (for get_canvas_image addressing). */
   assetId?: string
   /** Natural (intrinsic) pixel dimensions of the backing image asset. */

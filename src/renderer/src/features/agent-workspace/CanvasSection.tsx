@@ -4,6 +4,7 @@ import { type Editor, Tldraw } from 'tldraw'
 import 'tldraw/tldraw.css'
 import type { EditRequestQueueStatus } from '../../../../types/canvas'
 import { canvasBridge } from './canvas/canvasBridge'
+import { makeFileAssetHandlerWithDiskPath, makeFilesContentHandlerWithPlaceholders } from './canvas/shapeOps'
 import { useAgentChatStore } from '../agent-chat/store'
 import { parseFileDrop } from '../file-explorer/dragHelpers'
 
@@ -90,6 +91,46 @@ export function CanvasSection(): React.JSX.Element {
     (editor: Editor) => {
       editorRef.current = editor
       canvasBridge.setEditor(editor)
+
+      // ── DROP-TIME PATH REGISTRATION (AI-Canvas "path at creation") ──
+      // OS-desktop drops fall through to tldraw's default 'file' asset handler,
+      // which uploads the bytes to IndexedDB and leaves src as an opaque
+      // `asset:<id>` ref with NO disk path — so canvas_snapshot showed no
+      // `assetPath` and the agent had to call get_canvas_video to materialize one.
+      // We wrap that default (captured here BEFORE we override it; Tldraw.tsx runs
+      // our onMount LAST, after the defaults are registered) so a dropped image/
+      // video also gets its real on-disk path baked into the asset meta. Because
+      // this app is UN-sandboxed, the path comes from electronAPI.getFilePath
+      // (zero copy, any size) — only synthetic/clipboard Files fall back to a copy.
+      // After this the path is present the moment the clip lands on the canvas.
+      const editorWithHandlers = editor as Editor & {
+        externalAssetContentHandlers: { file: Parameters<typeof makeFileAssetHandlerWithDiskPath>[0] }
+        externalContentHandlers: { files: Parameters<typeof makeFilesContentHandlerWithPlaceholders>[0] }
+      }
+      const wrappedFileHandler = makeFileAssetHandlerWithDiskPath(
+        editorWithHandlers.externalAssetContentHandlers.file,
+        (file, threadId) => canvasBridge.resolveDroppedFileDiskPath(file, threadId),
+        () => useAgentChatStore.getState().threadId,
+      )
+      editor.registerExternalAssetHandler('file', wrappedFileHandler as never)
+
+      // ── NON-MEDIA OS DROPS (audio/zip/pdf/…) ──
+      // tldraw only makes shapes for image/video; everything else its default
+      // 'files' content handler `continue`-skips (just a "type not allowed" toast),
+      // so a desktop-dragged mp3 would land NOWHERE and the agent could never see
+      // it. We wrap that content handler so non-renderable files instead leave a
+      // path-bearing placeholder note (real path via getFilePath), while images/
+      // videos still flow through the default (and the asset wrapper above stamps
+      // their path). `getAssetUtilForMimeType` is tldraw's own "can I render this?"
+      // check, so the split matches stock behaviour exactly.
+      const editorMime = editor as Editor & { getAssetUtilForMimeType?: (m: string) => unknown }
+      const wrappedFilesHandler = makeFilesContentHandlerWithPlaceholders(
+        editorWithHandlers.externalContentHandlers.files,
+        (file) => !!editorMime.getAssetUtilForMimeType?.(file.type),
+        (file, point, index) =>
+          canvasBridge.placeDroppedNonMediaFile(file, point, index, useAgentChatStore.getState().threadId ?? ''),
+      )
+      editor.registerExternalContentHandler('files', wrappedFilesHandler as never)
 
       // Seed the signature with whatever annotations already exist so a restored
       // canvas does not immediately re-queue prior marks.
@@ -202,7 +243,7 @@ export function CanvasSection(): React.JSX.Element {
           // One bad file must not abort the rest of the batch.
         }
       }
-      showFlash(placed > 0 ? `已把 ${placed} 个文件放到画布` : '只能把图片或视频拖到画布上')
+      showFlash(placed > 0 ? `已把 ${placed} 个文件放到画布` : '无法放置该文件')
     },
     [showFlash],
   )

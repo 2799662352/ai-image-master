@@ -88,6 +88,17 @@ function mimeFromPath(p: string, kind: 'video' | 'document'): string {
 }
 
 /**
+ * http(s)/data: URLs can be relayed to COS (or passed upstream) as-is. Opaque
+ * tldraw `asset:<id>` refs (and renderer-scoped `blob:` URLs) CANNOT: the bytes
+ * live in the renderer's IndexedDB and the main process can neither fetch them
+ * nor stat a file — so a canvas video that only carries such a ref must first be
+ * MATERIALIZED to a real on-disk file (via get_canvas_video) before relay.
+ */
+function isRelayableUrl(u: unknown): u is string {
+  return typeof u === 'string' && /^(https?:|data:)/i.test(u)
+}
+
+/**
  * 把一个媒体参数(*_url / *_path)归一成公网 URL:
  * - http(s) → 原样;data: → 中转 COS;本机路径 → 读字节后中转 COS。
  * 失败返回结构化 error(不抛)。
@@ -197,10 +208,34 @@ async function runUnderstandCanvasVideo(
     return textResult(formatResult(tool, { success: false, error: sel?.error ?? '没有可理解的画布视频。请先在画布上选中一个视频。' }))
   }
 
-  // 2) 归一成公网 URL(本机路径 → COS;data: → COS;http → 透传)。
+  // 2) 选一个「可中转」的源,再归一成公网 URL:
+  //    - 本机 assetPath → 流式上传 COS;
+  //    - http/data assetUrl → 透传 / 中转;
+  //    - 否则(不透明的 asset:/blob: 引用,典型是把视频从「桌面/OS」直接拖进持久化画布:
+  //      字节落在渲染层 IndexedDB,main 端既 fetch 不到也 stat 不到)→ 先让渲染层
+  //      把它 materialize 成真实本机文件(get_canvas_video,内部走 tldraw
+  //      resolveAssetUrl→blob→落盘,与 ffmpeg 取流同一条已修复链路),再中转那份文件。
+  //      不直接对 http 源走 get_canvas_video,避免把公网视频先下载再上传的无谓往返。
   const mediaParams: Record<string, unknown> = {}
-  if (typeof sel.assetPath === 'string' && sel.assetPath) mediaParams.video_path = sel.assetPath
-  else if (typeof sel.assetUrl === 'string' && sel.assetUrl) mediaParams.video_url = sel.assetUrl
+  if (typeof sel.assetPath === 'string' && sel.assetPath) {
+    mediaParams.video_path = sel.assetPath
+  } else if (isRelayableUrl(sel.assetUrl)) {
+    mediaParams.video_url = sel.assetUrl
+  } else {
+    let cv: { ok?: boolean; error?: string; videoPath?: string | null; assetUrl?: string | null }
+    try {
+      cv = (await router.call('get_canvas_video', {}, threadId)) as typeof cv
+    } catch (e) {
+      return textResult(formatResult(tool, { success: false, error: `落盘画布视频失败:${e instanceof Error ? e.message : String(e)}` }))
+    }
+    if (cv?.ok && typeof cv.videoPath === 'string' && cv.videoPath) {
+      mediaParams.video_path = cv.videoPath
+    } else if (cv?.ok && isRelayableUrl(cv.assetUrl)) {
+      mediaParams.video_url = cv.assetUrl
+    } else {
+      return textResult(formatResult(tool, { success: false, error: cv?.error ?? '无法解析该画布视频的可用源(可能是从桌面拖入、字节尚未就绪)。请重试,或先用 insert_video 放置。' }))
+    }
+  }
   const media = await resolveMediaUrl(mediaParams, 'video')
   if (!media.ok) return textResult(formatResult(tool, { success: false, error: media.error }))
 
@@ -298,7 +333,8 @@ export function registerUnderstandTools(server: McpServer, router: ToolRouter): 
         'Understand / analyze the VIDEO currently SELECTED on the canvas (or the only video on the canvas if ' +
         'nothing is selected) with qwen, and by default write the result back ONTO the canvas as a text note ' +
         'next to that video. Use for "理解/分析画布上(选中)的这段视频". NO url/path needed — it reads the ' +
-        'selected canvas video itself (local sources are auto-uploaded to COS). Model defaults to qwen3.7-plus ' +
+        'selected canvas video itself (local files AND clips dragged in from the desktop are auto-uploaded to ' +
+        'COS — a dragged-in clip is first materialized to a real file). Model defaults to qwen3.7-plus ' +
         '(cheaper); pass model="max" for the stronger qwen3.7-max. Set annotate=false to only return the text ' +
         'without drawing the note. Requires the Canvas tab open. Returns a Chinese description.',
       inputSchema: z.object({

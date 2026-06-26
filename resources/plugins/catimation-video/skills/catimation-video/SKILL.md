@@ -243,6 +243,14 @@ chat is wasteful — so a real self-check pairs **two complementary lenses in ON
 pass** (the grid samples only ~9 frames; `understand_video` covers what happens
 between them — you need both):
 
+0. **拿到 `<clip>.mp4` 的本地路径(别搜盘).** If you already generated the clip you
+   have its path. If the clip lives **ON THE CANVAS** (a video shape), call
+   `get_canvas_video` (the video sibling of `get_canvas_image`) — it returns
+   `videoPath`, an absolute on-disk mp4/webm/mov for the selected (or only) canvas
+   video: the recorded path, or a freshly materialized copy if the shape had none.
+   Use that `videoPath` as `<clip>` below. **Never** `canvas_exec`-probe or hunt the
+   disk by filename/size for a canvas video — that path is solved by this tool.
+
 1. **视觉扫描 — 九宫格 contact sheet.** Extract 9 evenly-spaced frames tiled into a
    grid with ffmpeg (`ffmpeg-win` or any ffmpeg). Set `fps ≈ 9 / clip_duration` so
    the 9 tiles span the whole clip:

@@ -262,6 +262,46 @@ describe('AttachmentService (streaming ingest)', () => {
     expect(added[0].saved.localPath).toBe(out[0].localPath)
   })
 
+  it('returns the on-disk path even when the metadata insert fails (DB degraded, e.g. PGlite P1017)', async () => {
+    // Root cause of "好像没有成功存储 / 拖上来的视频没注册路径": the dev PGlite
+    // sidecar drops its socket mid-turn, so `prisma.agentAttachment.create` throws
+    // AFTER the bytes are already content-addressed on disk. The path must survive
+    // — every consumer (canvas-video materialize, generate_image save) needs it.
+    const { AttachmentService } = await import('../AttachmentService')
+    const prisma = {
+      agentAttachment: {
+        create: async () => {
+          throw new Error('Server has closed the connection. code: P1017')
+        },
+      },
+    }
+    const service = new AttachmentService(prisma as never)
+
+    const added: unknown[] = []
+    const errors: unknown[] = []
+    service.on('attachment-added', (e) => added.push(e))
+    service.on('attachment-error', (e) => errors.push(e))
+
+    const bytes = crypto.randomBytes(50 * 1024)
+    const expectedHash = crypto.createHash('sha256').update(bytes).digest('hex')
+
+    const out = await service.ingest('thread-DBDOWN', [
+      { name: 'clip.mp4', mime: 'video/mp4', size: bytes.byteLength, buffer: bytes.buffer },
+    ])
+
+    // The path survives even though the metadata row could not be written.
+    expect(out).toHaveLength(1)
+    expect(out[0].localPath.endsWith(`${expectedHash}.mp4`)).toBe(true)
+    expect(out[0].mime).toBe('video/mp4')
+    // The bytes really are on disk and intact.
+    const written = await fs.readFile(out[0].localPath)
+    expect(written.equals(bytes)).toBe(true)
+    // Degraded mode: no panel broadcast (no DB row to back it), and this is NOT
+    // surfaced as a per-attachment error — the file is fully usable.
+    expect(added).toHaveLength(0)
+    expect(errors).toHaveLength(0)
+  })
+
   it('does NOT emit attachment-added when ingest fails (size cap, missing file, etc.)', async () => {
     const { AttachmentService } = await import('../AttachmentService')
     const prisma = makePrismaStub()

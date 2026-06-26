@@ -17,7 +17,7 @@ describe('registerCanvasTools', () => {
   it('registers renderer + queue tools', () => {
     const { tools, server, router } = fakeServerAndRouter()
     registerCanvasTools(server, router)
-    for (const name of ['canvas_open', 'canvas_snapshot', 'list_canvas_images', 'get_canvas_image', 'create_image_holder', 'insert_image_into_holder', 'insert_video', 'collect_annotations', 'create_image_version', 'save_snapshot', 'save_checkpoint', 'load_checkpoint', 'list_checkpoints', 'canvas_exec', 'canvas_search', 'watch_edit_requests', 'get_edit_request', 'update_edit_request']) {
+    for (const name of ['canvas_open', 'canvas_snapshot', 'list_canvas_images', 'get_canvas_image', 'get_canvas_video', 'create_image_holder', 'insert_image_into_holder', 'insert_video', 'collect_annotations', 'create_image_version', 'save_snapshot', 'save_checkpoint', 'load_checkpoint', 'list_checkpoints', 'canvas_exec', 'canvas_search', 'watch_edit_requests', 'get_edit_request', 'update_edit_request']) {
       expect(tools.has(name)).toBe(true)
     }
   })

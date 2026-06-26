@@ -622,6 +622,14 @@ chat is wasteful — so a real self-check pairs **two complementary lenses in ON
 pass** (the grid samples only ~9 frames; \`understand_video\` covers what happens
 between them — you need both):
 
+0. **拿到 \`<clip>.mp4\` 的本地路径(别搜盘).** If you already generated the clip you
+   have its path. If the clip lives **ON THE CANVAS** (a video shape), call
+   \`get_canvas_video\` (the video sibling of \`get_canvas_image\`) — it returns
+   \`videoPath\`, an absolute on-disk mp4/webm/mov for the selected (or only) canvas
+   video: the recorded path, or a freshly materialized copy if the shape had none.
+   Use that \`videoPath\` as \`<clip>\` below. **Never** \`canvas_exec\`-probe or hunt the
+   disk by filename/size for a canvas video — that path is solved by this tool.
+
 1. **视觉扫描 — 九宫格 contact sheet.** Extract 9 evenly-spaced frames tiled into a
    grid with ffmpeg (\`ffmpeg-win\` or any ffmpeg). Set \`fps ≈ 9 / clip_duration\` so
    the 9 tiles span the whole clip:
@@ -1046,6 +1054,13 @@ onto the canvas; images and videos land as real shapes. \`insert_video\` /
 precisely.) For text/labels, use
 \`canvas_exec\` to create a \`text\`/\`note\` shape (\`toRichText\` is injected).
 
+To go the OTHER way — get a canvas video's file back so you can ffmpeg / contact-sheet
+it — call \`get_canvas_video\` (no args; acts on the selected, or only, video). It
+returns \`videoPath\`: an absolute on-disk mp4/webm/mov (the clip's recorded path, or a
+materialized copy if it had none) plus \`shapeId\`/\`assetUrl\`/\`title\`. This is the video
+analog of \`list_canvas_images\`→\`get_canvas_image\`: never hunt the disk by filename for
+a canvas clip. (For semantic 理解/分析 of the clip instead, use \`understand_canvas_video\`.)
+
 ## Auto-edit mode (Codex 直接监听) — the main loop
 
 When the user says 开启自动修图 / 自动修图模式 (or asks you to keep applying canvas edits),
@@ -1208,7 +1223,9 @@ of 画面/动作/字幕/剧情.
 ### understand_canvas_video { question, model?, annotate? }
 Understand the video **selected on the canvas** (or the only video if none is
 selected) — NO url/path needed: the canvas exposes the clip's source itself, and
-a local source is auto-uploaded to COS just like \`understand_video\`. By default
+a local source is auto-uploaded to COS just like \`understand_video\`. This works
+even for a clip you **dragged in from the desktop** (its bytes live in the
+canvas store with no recorded path — it's materialized to a real file first). By default
 it also **writes the result back onto the canvas as a text note** next to the
 video; pass \`annotate=false\` to only return the text. Requires the Canvas tab
 open. Use this for "理解画布上选中的这段视频" instead of asking the user for a URL.

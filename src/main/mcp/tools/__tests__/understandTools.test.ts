@@ -191,6 +191,37 @@ describe('registerUnderstandTools', () => {
     expect(firstText(res)).toContain('shape:note1')
   })
 
+  it('understand_canvas_video: OS-dragged clip (asset: ref, no path) materializes via get_canvas_video then relays', async () => {
+    relayFileToCos.mockClear()
+    relayBufferToCos.mockClear()
+    fsReadFile.mockClear()
+    fsStat.mockClear()
+    const calls: Array<[string, any]> = []
+    const callImpl = async (name: string, params: any) => {
+      calls.push([name, params])
+      // Raw source read: only an opaque tldraw asset: ref (bytes in IndexedDB).
+      if (name === 'get_selected_canvas_video') return { ok: true, shapeId: 'shape:v1', assetPath: null, assetUrl: 'asset:2100541745', title: null }
+      // Renderer materializes the IndexedDB bytes to a real file.
+      if (name === 'get_canvas_video') return { ok: true, shapeId: 'shape:v1', videoPath: 'C:/agent/uploads/canvas-video-9.mp4', assetPath: null, assetUrl: 'asset:2100541745', title: null, materialized: true }
+      if (name === 'understand_video') return { success: true, text: '拖进来的猫' }
+      if (name === 'add_canvas_note') return { ok: true, shapeId: 'shape:note9' }
+      return { success: true, text: 'ok' }
+    }
+    const { tools, server, router } = fakeServerAndRouter(callImpl)
+    registerUnderstandTools(server, router)
+
+    const res = await tools.get('understand_canvas_video')!({ question: '这是什么' })
+
+    // Asset: ref must NOT be sent straight to relay; it falls back to materialize.
+    expect(calls.map((c) => c[0])).toEqual(['get_selected_canvas_video', 'get_canvas_video', 'understand_video', 'add_canvas_note'])
+    // The materialized local file (not the asset: ref) was streamed to COS.
+    expect(relayFileToCos).toHaveBeenCalledTimes(1)
+    expect(relayFileToCos.mock.calls[0][0]).toBe('C:/agent/uploads/canvas-video-9.mp4')
+    const uv = calls.find((c) => c[0] === 'understand_video')!
+    expect(uv[1].video_url).toBe('https://cos.example.com/image-history/media-relay/stream.mp4')
+    expect(firstText(res)).toContain('拖进来的猫')
+  })
+
   it('understand_canvas_video: surfaces a "no video" canvas error without uploading or understanding', async () => {
     relayFileToCos.mockClear()
     relayBufferToCos.mockClear()

@@ -63,9 +63,23 @@ describe('insertImageAt (workspace file → canvas)', () => {
 describe('canvasBridge.insertFileAt routing', () => {
   afterEach(() => canvasBridge.setEditor(null))
 
-  it('rejects a non-media file as unsupported WITHOUT requiring the editor', async () => {
-    // No editor set → must short-circuit on extension, not throw "canvas not open".
+  it('drops an AUDIO file as a placeholder note carrying its real workspace path', async () => {
+    const { editor, shapes } = makeEditor()
+    canvasBridge.setEditor(editor)
+    const res = await canvasBridge.insertFileAt('D:/work/theme.mp3', { x: 40, y: 60 })
+    expect(res).toEqual({ ok: true, kind: 'audio' })
+    const note = shapes.find((s) => s.type === 'text' && s.typeName !== 'asset')
+    expect(note.meta.assetKind).toBe('audio')
+    expect(note.meta.assetPath).toBe('D:/work/theme.mp3')
+  })
+
+  it('drops ANY other file (.txt/.zip/.pdf) as a placeholder with its path', async () => {
+    const { editor, shapes } = makeEditor()
+    canvasBridge.setEditor(editor)
     const res = await canvasBridge.insertFileAt('C:/notes.txt', { x: 0, y: 0 })
-    expect(res).toEqual({ ok: false, reason: 'unsupported' })
+    expect(res).toEqual({ ok: true, kind: 'file' })
+    const note = shapes.find((s) => s.type === 'text' && s.typeName !== 'asset')
+    expect(note.meta.assetKind).toBe('file')
+    expect(note.meta.assetPath).toBe('C:/notes.txt')
   })
 })

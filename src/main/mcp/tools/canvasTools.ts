@@ -103,6 +103,13 @@ export function registerCanvasTools(server: McpServer, router: ToolRouter): void
     annotations: { readOnlyHint: true, idempotentHint: false, openWorldHint: false },
   }, async (params) => asResult(await router.call('get_canvas_image', params as Record<string, unknown>)))
 
+  server.registerTool('get_canvas_video', {
+    description:
+      "Resolve the VIDEO currently selected on the canvas (or the only video if nothing is selected) to a LOCAL file path you can run ffmpeg on — contact-sheet / probe / trim / transcode. Returns `videoPath`: an absolute on-disk mp4/webm/mov (the clip's recorded path, or a freshly materialized copy if it had none) plus `shapeId`, `assetUrl`, `title`, `materialized`. Call this FIRST whenever you need to ffmpeg or QA a video that lives ON THE CANVAS — never hunt the disk by filename/size. (For semantic '理解/分析' of the clip, use understand_canvas_video instead.)",
+    inputSchema: z.object({}),
+    annotations: { readOnlyHint: true, idempotentHint: false, openWorldHint: false },
+  }, async () => asResult(await router.call('get_canvas_video', {})))
+
   server.registerTool('collect_annotations', {
     description:
       'Read the canvas and return the structured annotation plan (arrows/text/circles) for the target AI image.',
