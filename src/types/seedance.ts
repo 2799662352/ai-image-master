@@ -42,6 +42,13 @@ export interface SeedanceTaskState {
    * 缺省时（手动 MCP 调用等）渲染端回退用 taskId。
    */
   clientId?: string
+  /**
+   * 客户端合成相位（仅 `announcePreparing` 的预备卡片设置；上游真实任务的
+   * 每条广播都不带）。用来把「createTask 之前的素材准备阶段」与上游 `queued`
+   * 区分开：渲染端见到 `preparing` 显示「正在准备素材…」，而真实 `queued`
+   * 仍显示「排队中」。不进入 `SeedanceTaskStatus`（那是 Ark 上游状态原样）。
+   */
+  phase?: 'preparing'
 }
 
 export type SeedanceTaskUpdate = SeedanceTaskState

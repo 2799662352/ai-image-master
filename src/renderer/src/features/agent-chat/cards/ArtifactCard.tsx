@@ -1,10 +1,9 @@
 import type { ArtifactItem, AttachmentRef } from '../../../../../types/agent-timeline'
 import type { AgentReference } from '../../../../../types/agent-reference'
-import {
-  MediaThumbnail,
-  classifyMediaKind,
-} from '../../../components/shared/media/MediaThumbnail'
+import { classifyMediaKind } from '../../../components/shared/media/MediaThumbnail'
 import { toRenderableUri } from '../../file-explorer/uri'
+import { appendCosThumb } from '../../../utils/cosThumb'
+import { MediaThumbWithPoster } from '../MediaThumbWithPoster'
 import { useFileExplorerStore } from '../../file-explorer/store'
 import { FileIcon, OpenInPanelIcon } from '../icons'
 import { referencesFromTimelineItem } from '../references/referenceUtils'
@@ -20,6 +19,26 @@ function isRenderableMedia(ref: AttachmentRef): boolean {
   if (mediaKindOf(ref) == null) return false
   const uri = ref.thumbnailUri ?? ref.uri
   return typeof uri === 'string' && uri.length > 0
+}
+
+/**
+ * Source for the small 80px bubble.
+ *
+ *  - **image**: prefer an explicit `thumbnailUri`; otherwise derive a 数据万象
+ *    `imageMogr2` thumbnail when the image lives on COS (few-KB WebP instead of
+ *    decoding the full image), and otherwise fall back to the bare uri — a local
+ *    path which `useResolvedMediaSrc` routes through the `media:thumb` IPC.
+ *  - **video**: the plain (renderable) video URL. The `<video>` element needs
+ *    the real media for click-to-play / first-frame fallback; the cheap still
+ *    comes from `bubblePosterSrc` so we never run image-only `imageMogr2` on an
+ *    `.mp4`.
+ *
+ * The lightbox always opens the original `ref.uri` (uncompressed), so this only
+ * affects the inline thumbnail.
+ */
+function bubbleThumbSrc(ref: AttachmentRef, kind: MediaKind): string {
+  if (kind === 'video') return toRenderableUri(ref.uri)
+  return toRenderableUri(ref.thumbnailUri ?? appendCosThumb(ref.uri))
 }
 
 /**
@@ -162,12 +181,13 @@ export function ArtifactCard({ item }: { item: ArtifactItem }) {
         const kind = mediaKindOf(ref)
         if (kind != null && isRenderableMedia(ref)) {
           return (
-            <MediaThumbnail
+            <MediaThumbWithPoster
               key={ref.id}
-              src={toRenderableUri(ref.thumbnailUri ?? ref.uri)}
+              src={bubbleThumbSrc(ref, kind)}
+              videoUri={ref.uri}
+              thumbnailUri={ref.thumbnailUri}
               kind={kind}
               name={ref.name}
-              posterSrc={ref.thumbnailUri ? toRenderableUri(ref.thumbnailUri) : undefined}
               onClick={() => handleClick(ref)}
               className="h-20 w-20 border-cyan-400/25 hover:border-cyan-300/50"
             />

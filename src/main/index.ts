@@ -42,11 +42,12 @@ import { registerFsIpc } from './file-explorer/fsIpc'
 import { registerLocalFileScheme, installLocalFileHandler } from './file-explorer/protocolHandler'
 import { registerAttachmentsThumbIpc } from './file-explorer/attachmentsIpc'
 import { registerMediaThumbIpc } from './file-explorer/mediaThumbIpc'
+import { registerVideoPosterIpc } from './file-explorer/videoPosterIpc'
 import { registerCanvasCheckpointIpc } from './file-explorer/canvasCheckpointIpc'
 import { registerFsWatcherIpc, disposeAll as disposeFsWatchers } from './file-explorer/fsWatcher'
 import { startCatimationMcpServer } from './mcp/server'
 import type { McpRuntime } from './mcp/server'
-import { initSeedanceRuntime } from './services/seedance/runtime'
+import { initSeedanceRuntime, registerSeedanceRendererIpc } from './services/seedance/runtime'
 import { getCatimationBridgeEntryPath } from './mcp/bridge'
 import type { CatimationMcpLaunchInfo } from './agent/codexLaunch'
 import { resolveWorkspacePaths } from './agent/codexConfigStore'
@@ -1020,6 +1021,9 @@ app.whenReady().then(async () => {
   // (PR-A of fix-codex-chat-image-attachment-lag). attachments:read-thumb
   // stays registered above for the lightbox / download path (fullFidelity).
   registerMediaThumbIpc()
+  // media:ensure-video-poster — generate-once + persist a video still as a
+  // static COS object so chat never re-runs the billable 数据万象 snapshot.
+  registerVideoPosterIpc()
   // canvas:{save,read,list}-checkpoint — restorable tldraw snapshot JSON on disk
   // (gap-analysis §8/§9). Separate from attachments (image/video only).
   registerCanvasCheckpointIpc(path.join(app.getPath('userData'), 'agent', 'canvas-checkpoints'))
@@ -1036,6 +1040,16 @@ app.whenReady().then(async () => {
   // registered handler. Each handler awaits `getReadyAgentManager()` so it
   // transparently blocks until `initAgentRuntime` resolves the manager.
   registerAgentIpc(getReadyAgentManager, getReadyToolRouter)
+
+  // 同理:人像库的渲染端 IPC(配置/素材/叠加层)只依赖凭证与本地叠加层模块,
+  // 与 MCP router 无关 —— 必须在窗口加载前注册。否则人像库页面挂载时的
+  // getConfig()/listAssets() 会与延迟、未 await 的 initSeedanceRuntime()
+  // (它要等 await startCatimationMcpServer 之后才注册这些 handler)竞态,被
+  // "No handler registered" reject,页面随即钉死在「人像库未就绪」,只能整页
+  // 刷新才恢复。提前注册即可让人像库启动即自动连接。
+  registerSeedanceRendererIpc(
+    () => BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ?? null,
+  )
 
   // 关键路径：创建窗口
   createWindow()

@@ -1,10 +1,8 @@
 import type { AttachmentItem, AttachmentRef } from '../../../../../types/agent-timeline'
 import type { AgentReference } from '../../../../../types/agent-reference'
-import {
-  MediaThumbnail,
-  classifyMediaKind,
-} from '../../../components/shared/media/MediaThumbnail'
+import { classifyMediaKind } from '../../../components/shared/media/MediaThumbnail'
 import { toRenderableUri } from '../../file-explorer/uri'
+import { MediaThumbWithPoster } from '../MediaThumbWithPoster'
 import { useFileExplorerStore } from '../../file-explorer/store'
 import { FileIcon, OpenInPanelIcon } from '../icons'
 import { referencesFromTimelineItem } from '../references/referenceUtils'
@@ -59,12 +57,13 @@ export function AttachmentCard({ item }: { item: AttachmentItem }) {
           const kind = mediaKindOf(ref)
           if (kind != null && isRenderableMedia(ref)) {
             return (
-              <MediaThumbnail
+              <MediaThumbWithPoster
                 key={ref.id}
                 src={toRenderableUri(ref.thumbnailUri ?? ref.uri)}
+                videoUri={ref.uri}
+                thumbnailUri={ref.thumbnailUri}
                 kind={kind}
                 name={ref.name}
-                posterSrc={ref.thumbnailUri ? toRenderableUri(ref.thumbnailUri) : undefined}
                 onClick={() => handleClick(ref)}
               />
             )

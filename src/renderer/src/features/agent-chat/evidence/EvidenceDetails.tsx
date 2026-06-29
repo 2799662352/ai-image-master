@@ -6,11 +6,9 @@ import type {
   TimelineItem,
 } from '../../../../../types/agent-timeline'
 import type { AgentReference } from '../../../../../types/agent-reference'
-import {
-  MediaThumbnail,
-  classifyMediaKind,
-} from '../../../components/shared/media/MediaThumbnail'
+import { classifyMediaKind } from '../../../components/shared/media/MediaThumbnail'
 import { toRenderableUri } from '../../file-explorer/uri'
+import { MediaThumbWithPoster } from '../MediaThumbWithPoster'
 import { FileDiffBlock } from '../cards/FileDiffBlock'
 
 type EvidenceDetailsProps = {
@@ -130,11 +128,12 @@ function AttachmentList({ title, items }: { title: string; items: AttachmentRef[
               className="flex items-center gap-2 rounded border border-zinc-800/70 bg-zinc-950 px-2 py-1"
             >
               {renderable ? (
-                <MediaThumbnail
+                <MediaThumbWithPoster
                   src={toRenderableUri(src)}
+                  videoUri={item.uri}
+                  thumbnailUri={item.thumbnailUri}
                   kind={kind}
                   name={item.name}
-                  posterSrc={item.thumbnailUri ? toRenderableUri(item.thumbnailUri) : undefined}
                   className="h-10 w-10 shrink-0"
                 />
               ) : null}

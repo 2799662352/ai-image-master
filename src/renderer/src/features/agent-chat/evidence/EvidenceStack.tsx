@@ -2,11 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import type { AgentReference } from '../../../../../types/agent-reference'
 import type { AttachmentRef, TimelineItem } from '../../../../../types/agent-timeline'
-import {
-  MediaThumbnail,
-  classifyMediaKind,
-} from '../../../components/shared/media/MediaThumbnail'
+import { classifyMediaKind } from '../../../components/shared/media/MediaThumbnail'
 import { toRenderableUri } from '../../file-explorer/uri'
+import { MediaThumbWithPoster } from '../MediaThumbWithPoster'
 import { useFileExplorerStore } from '../../file-explorer/store'
 import { referencesFromTimelineItem } from '../references/referenceUtils'
 import { useAgentChatStore } from '../store'
@@ -149,14 +147,13 @@ export function EvidenceStack({ items }: EvidenceStackProps) {
                     })
                     if (!kind) return null
                     return (
-                      <MediaThumbnail
+                      <MediaThumbWithPoster
                         key={ref.id}
                         src={toRenderableUri(ref.thumbnailUri ?? ref.uri)}
+                        videoUri={ref.uri}
+                        thumbnailUri={ref.thumbnailUri}
                         kind={kind}
                         name={ref.name}
-                        posterSrc={
-                          ref.thumbnailUri ? toRenderableUri(ref.thumbnailUri) : undefined
-                        }
                         onClick={() => handleMediaClick(item, ref)}
                         className="h-14 w-14"
                       />

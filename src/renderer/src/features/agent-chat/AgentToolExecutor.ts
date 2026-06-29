@@ -6,6 +6,7 @@ import { isTabName, useTabStore } from '../../stores/useTabStore'
 import { useFileExplorerStore } from '../file-explorer/store'
 import { useAgentChatStore } from './store'
 import { recordCodexArtifact } from './codexArtifactPersistence'
+import { buildLightArtifacts } from './buildLightArtifacts'
 import type { ArtifactSaveInfo, AttachmentRef, ChoiceAnswer, ChoiceOption } from '../../../../types/agent-timeline'
 import type { AgentToolRequest, AgentToolResponse, ImageTaskUpdate } from '../../../../types/agent'
 import { canvasBridge } from '../agent-workspace/canvas/canvasBridge'
@@ -453,6 +454,7 @@ export class AgentToolExecutor {
       chat.annotateImageGeneration(genId, { status: 'pending' }, reqThreadId)
       void persistence
         .then((late) => {
+          this.swapBubbleToSaved(genId, late, reqThreadId)
           useAgentChatStore
             .getState()
             .annotateImageGeneration(genId, this.toSaveInfo(late), reqThreadId)
@@ -468,6 +470,7 @@ export class AgentToolExecutor {
       }
     }
 
+    this.swapBubbleToSaved(genId, settled, reqThreadId)
     chat.annotateImageGeneration(genId, this.toSaveInfo(settled), reqThreadId)
 
     // Return a COMPACT result to the agent — never echo multi-MB base64 back
@@ -572,6 +575,27 @@ export class AgentToolExecutor {
     } catch (error) {
       console.error('[AgentToolExecutor] post-generation persistence failed:', error)
       return { historyId: null, paths: [] }
+    }
+  }
+
+  /**
+   * Once the image is safely on disk, rebuild the bubble from the tiny saved
+   * paths so the inline multi-MB `data:` base64 (held by `toArtifacts` for the
+   * instant on-screen render) can be garbage-collected instead of lingering in
+   * the chat store for the whole session — the live-session half of the OOM /
+   * "memory leak" fix. The local path then renders through `media:thumb` (512px
+   * bubble) + full-fidelity lightbox; on reload the bubble upgrades to the COS
+   * 数据万象 thumbnail. No-op when persistence produced no local paths (the
+   * original base64 keeps the image visible; the save banner reports failure).
+   */
+  private swapBubbleToSaved(
+    genId: string,
+    settled: { historyId: number | string | null; paths: string[] },
+    threadId: string | undefined,
+  ): void {
+    const light = buildLightArtifacts(settled.paths, 'image', genId)
+    if (light.length > 0) {
+      useAgentChatStore.getState().replaceImageArtifacts(genId, light, threadId)
     }
   }
 

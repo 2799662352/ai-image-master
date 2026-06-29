@@ -139,7 +139,10 @@ export class SeedanceTaskManager {
    */
   announcePreparing(params: { input: CreateVideoTaskInput; threadId?: string }): string {
     const clientId = `pending-${randomUUID()}`
-    this.deps.broadcast(this.baseUpdate(clientId, params.input, params.threadId, 'queued'))
+    // status 仍用 'queued'（waitForChange/pollLoop 等逻辑不受影响），但带上
+    // client-only 'preparing' 相位，渲染端据此显示「正在准备素材…」而非「排队中」，
+    // 让前置上传/导入这段慢活有可见、可区分的进度卡片。
+    this.deps.broadcast({ ...this.baseUpdate(clientId, params.input, params.threadId, 'queued'), phase: 'preparing' })
     return clientId
   }
 

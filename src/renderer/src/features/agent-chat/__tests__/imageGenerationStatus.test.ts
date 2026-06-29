@@ -57,4 +57,35 @@ describe('image-generation status machine', () => {
     // Same array reference back when nothing matched.
     expect(useAgentChatStore.getState().messages).toBe(before)
   })
+
+  it('replaceImageArtifacts swaps the bubble artifacts in place, keeping status/save', () => {
+    const id = useAgentChatStore.getState().beginImageGeneration('a cat')
+    useAgentChatStore.getState().resolveImageGeneration(id, [ref('a')])
+    useAgentChatStore.getState().annotateImageGeneration(id, { status: 'saved', dir: 'D:\\imgs' })
+
+    const light: AttachmentRef = {
+      id: 'a',
+      kind: 'image',
+      name: 'a.png',
+      mime: 'image/png',
+      size: 0,
+      uri: 'D:\\imgs\\a.png',
+    }
+    useAgentChatStore.getState().replaceImageArtifacts(id, [light])
+
+    const item = lastArtifact()
+    expect(item.status).toBe('done')
+    expect(item.save).toEqual({ status: 'saved', dir: 'D:\\imgs' })
+    // base64 dropped — artifact now points at the local path, not a data: URL.
+    expect(item.artifacts).toHaveLength(1)
+    expect(item.artifacts[0].uri).toBe('D:\\imgs\\a.png')
+    expect(item.artifacts[0].uri.startsWith('data:')).toBe(false)
+  })
+
+  it('replaceImageArtifacts on an unknown id is a no-op (same array reference)', () => {
+    useAgentChatStore.getState().beginImageGeneration('a cat')
+    const before = useAgentChatStore.getState().messages
+    useAgentChatStore.getState().replaceImageArtifacts('nope', [ref('a')])
+    expect(useAgentChatStore.getState().messages).toBe(before)
+  })
 })

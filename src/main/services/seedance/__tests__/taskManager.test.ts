@@ -59,6 +59,9 @@ describe('SeedanceTaskManager', () => {
       threadId: 'th-1',
       prompt: INPUT.prompt,
       persistence: 'idle',
+      // 预备卡片带 client-only 'preparing' 相位，渲染端据此显示「正在准备素材…」
+      // 而非与上游 queued 同形的「排队中」。
+      phase: 'preparing',
     })
     expect(mgr.get(clientId)).toBeUndefined() // 没有真实任务被登记
     mgr.dispose()
@@ -82,6 +85,8 @@ describe('SeedanceTaskManager', () => {
     const state = await mgr.submit({ input: INPUT, content: [], threadId: 'th-1', clientId: 'pending-x' })
     expect(state.clientId).toBe('pending-x')
     expect(broadcasts[0]).toMatchObject({ taskId: 'task-1', clientId: 'pending-x', status: 'queued' })
+    // 真实任务广播不带 preparing 相位（只有 announcePreparing 的预备卡片才带）。
+    expect(broadcasts[0].phase).toBeUndefined()
     mgr.dispose()
   })
 

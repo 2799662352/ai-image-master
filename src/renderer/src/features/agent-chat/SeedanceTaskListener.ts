@@ -63,6 +63,9 @@ function videoArtifact(update: SeedanceTaskUpdate, uri: string): AttachmentRef {
 function progressLabel(update: SeedanceTaskUpdate): string {
   const elapsed = Math.max(0, Math.round((Date.now() - update.createdAt) / 1000))
   const spec = `Seedance ${update.model} · ${update.duration}s ${update.resolution}`
+  // 预备卡片（createTask 之前的素材准备阶段）：与上游「排队中」区分开，让
+  // 批量并发时每条任务在前置上传/导入期间就有可见且可辨识的进度气泡。
+  if (update.phase === 'preparing') return `正在准备素材… (${spec})`
   if (update.status === 'queued') return `正在生成视频 · 排队中 (${spec})`
   return `正在生成视频 · ${elapsed}s (${spec})`
 }

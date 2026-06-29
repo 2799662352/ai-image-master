@@ -264,11 +264,39 @@ export default function PortraitLibraryPage() {
   }, [])
   const clearSelection = useCallback(() => setSelectedIds(new Set()), [])
 
+  // 配置探测:必须区分「主进程 handler / preload 尚未就绪(Promise reject)」与
+  // 「确实没配置(resolve 出 hasKey/hasSecret=false)」。前者在启动早期属正常竞态
+  // (主进程注册 seedance IPC 与渲染端挂载抢跑),应退避重试而非一次失败就钉死;
+  // 后者才显示「未就绪」。否则配合 AppLayout 的 <Activity>(标签页常驻不重挂),
+  // 一次 reject 会把人像库永久卡在未就绪,只能整页刷新——正是本次要修的 bug。
   useEffect(() => {
-    seedanceApi()
-      ?.getConfig?.()
-      .then((state) => setConfigured(!!state?.hasKey && !!state?.hasSecret))
-      .catch(() => setConfigured(false))
+    let cancelled = false
+    let attempts = 0
+    const MAX_ATTEMPTS = 20 // 20 × 300ms ≈ 6s,足够覆盖冷启动 IPC 注册窗口
+    const RETRY_MS = 300
+    const probe = (): void => {
+      if (cancelled) return
+      const api = seedanceApi()
+      if (!api?.getConfig) {
+        // preload 尚未注入 electronAPI.seedance —— 稍后重试。
+        if (attempts++ < MAX_ATTEMPTS) setTimeout(probe, RETRY_MS)
+        return
+      }
+      api
+        .getConfig()
+        .then((state) => {
+          if (!cancelled) setConfigured(!!state?.hasKey && !!state?.hasSecret)
+        })
+        .catch(() => {
+          // handler 还没注册好(竞态)或瞬时错误 —— 退避重试,不要 latch 到 false。
+          if (!cancelled && attempts++ < MAX_ATTEMPTS) setTimeout(probe, RETRY_MS)
+          else if (!cancelled) setConfigured(false)
+        })
+    }
+    probe()
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   const applyResult = useCallback((result: SeedanceAssetListResult) => {

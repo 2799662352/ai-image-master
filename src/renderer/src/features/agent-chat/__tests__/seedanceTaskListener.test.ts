@@ -56,6 +56,24 @@ describe('seedance task-update → artifact bubble', () => {
     expect(item.progressText).toContain('排队中')
   })
 
+  it('预备卡片(phase=preparing) 显示「正在准备素材…」，区别于上游「排队中」', () => {
+    const clientId = `pending-${taskSeq}-prep`
+    handleSeedanceTaskUpdate(makeUpdate({ taskId: clientId, clientId, status: 'queued', phase: 'preparing' }))
+
+    let item = lastArtifact()
+    expect(item.status).toBe('generating')
+    expect(item.mediaKind).toBe('video')
+    expect(item.progressText).toContain('正在准备素材')
+    expect(item.progressText).not.toContain('排队中')
+
+    // 真实任务的 queued 广播（无 phase，同一 clientId）应翻成「排队中」——同一张气泡。
+    handleSeedanceTaskUpdate(makeUpdate({ taskId: 'real-prep', clientId, status: 'queued' }))
+    expect(useAgentChatStore.getState().messages).toHaveLength(1)
+    item = lastArtifact()
+    expect(item.progressText).toContain('排队中')
+    expect(item.progressText).not.toContain('正在准备素材')
+  })
+
   it('running update edits the SAME bubble progress line (no new message)', () => {
     const taskId = `task-${taskSeq}`
     handleSeedanceTaskUpdate(makeUpdate({ taskId, status: 'queued' }))

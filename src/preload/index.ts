@@ -323,6 +323,10 @@ const IPC_CHANNELS = {
     // for the size/security envelope. Renderer calls this by default; falls
     // through to READ_THUMB only when `useResolvedMediaSrc(..., { fullFidelity: true })`.
     MEDIA_THUMB: 'media:thumb',
+    // Generate-once + persist a video bubble's still frame as a static COS
+    // object (so chat never re-runs the billable 数据万象 snapshot per render).
+    // See main/file-explorer/videoPosterIpc.ts.
+    ENSURE_VIDEO_POSTER: 'media:ensure-video-poster',
   },
   // Restorable tldraw canvas checkpoints (gap-analysis §8/§9). The renderer
   // serialises with getSnapshot → JSON; these channels write/read/list that
@@ -644,6 +648,19 @@ export interface ElectronAPI {
       size?: number
     }) => Promise<
       | { ok: true; base64: string; mime: string; width?: number; height?: number }
+      | { ok: false; reason: string }
+    >
+    /**
+     * Generate-once + persist a COS video's still frame as a static sibling
+     * object (`<videoKey>.poster.jpg`) and return its URL. The billable 数据万象
+     * snapshot runs at most once per video (guarded by a COS HEAD check); every
+     * later view references the plain poster object (no CI processing → no
+     * recurring billing). No-op `{ ok:false }` for non-COS / local videos.
+     */
+    ensureVideoPoster: (
+      videoUrl: string,
+    ) => Promise<
+      | { ok: true; posterUrl: string; generated: boolean }
       | { ok: false; reason: string }
     >
     /**
@@ -1382,6 +1399,11 @@ const electronAPI: ElectronAPI = {
         | { ok: true; base64: string; mime: string; width?: number; height?: number }
         | { ok: false; reason: string }
       >(IPC_CHANNELS.ATTACHMENTS.MEDIA_THUMB, args),
+    ensureVideoPoster: (videoUrl: string) =>
+      safeInvoke<
+        | { ok: true; posterUrl: string; generated: boolean }
+        | { ok: false; reason: string }
+      >(IPC_CHANNELS.ATTACHMENTS.ENSURE_VIDEO_POSTER, videoUrl),
     save: (args: { threadId: string; name: string; mime: string; base64: string }) =>
       safeInvoke<{ ok: true; path: string } | { ok: false; reason: string }>(
         IPC_CHANNELS.ATTACHMENTS.SAVE,

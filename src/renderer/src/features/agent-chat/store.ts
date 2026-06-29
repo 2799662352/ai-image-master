@@ -370,6 +370,15 @@ interface AgentChatState {
   annotateImageGeneration: (itemId: string, save: ArtifactSaveInfo, threadId?: string) => void
 
   /**
+   * Swap a settled generation bubble's artifacts in place — used after
+   * persistence lands the image on disk/COS so the bubble can drop the inline
+   * multi-MB `data:` base64 (which otherwise lingers in the store for the whole
+   * session) and point at a lightweight local path / COS URL instead. Keeps
+   * `status` and the `save` banner untouched; no-op on unknown id.
+   */
+  replaceImageArtifacts: (itemId: string, artifacts: AttachmentRef[], threadId?: string) => void
+
+  /**
    * Interactive `ask_user` flow. `ask` appends a standalone assistant bubble
    * holding a single `choiceRequest` item (rendered by AskUserCard) and returns
    * a Promise that resolves once the user answers/skips — the renderer-routed
@@ -1033,6 +1042,15 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         mapArtifactItem(msgs, itemId, (item) => ({
           ...item,
           save,
+        })),
+      ),
+    ),
+  replaceImageArtifacts: (itemId, artifacts, threadId) =>
+    set((s) =>
+      patchThreadMessages(s, threadId, (msgs) =>
+        mapArtifactItem(msgs, itemId, (item) => ({
+          ...item,
+          artifacts,
         })),
       ),
     ),

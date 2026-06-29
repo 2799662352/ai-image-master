@@ -217,6 +217,78 @@ export interface SeedanceRuntime {
   dispose: () => void
 }
 
+/**
+ * 注册「渲染端面向」的 Seedance IPC —— 人像库的 配置 / 素材 / 叠加层。
+ *
+ * 这些 handler 只依赖独立的 credentials / assets / overlay 模块,**不依赖** MCP
+ * router 或 TaskManager,因此必须在窗口开始加载**之前**注册。否则人像库页面
+ * 挂载时的 `getConfig()` / `listAssets()` 会与延迟执行的 `initSeedanceRuntime()`
+ * (它要等 `await startCatimationMcpServer` 之后才跑)发生竞态,以
+ * "No handler registered for 'seedance:get-config'" reject,页面随即被钉死在
+ * 「人像库未就绪」,只能整页刷新才恢复。与 index.ts 里 agent IPC「在
+ * createWindow 之前注册」的处理同理。
+ *
+ * 返回一个 disposer,用于解除 overlay 变更广播订阅。
+ */
+export function registerSeedanceRendererIpc(getWindow: () => BrowserWindow | null): () => void {
+  // ============ 设置(API Key / Secret) ============
+  ipcMain.removeHandler('seedance:get-config')
+  ipcMain.handle('seedance:get-config', () => getSeedanceKeyState())
+  ipcMain.removeHandler('seedance:set-config')
+  ipcMain.handle('seedance:set-config', (_event, args: { apiKey?: unknown; apiSecret?: unknown }) => {
+    setSeedanceCredentials({
+      apiKey: typeof args?.apiKey === 'string' ? args.apiKey : undefined,
+      apiSecret: typeof args?.apiSecret === 'string' ? args.apiSecret : undefined,
+    })
+    return getSeedanceKeyState()
+  })
+
+  // ============ 素材库（人像库） ============
+  const assetCreds = () => ({ apiKey: getSeedanceApiKey(), apiSecret: getSeedanceApiSecret() })
+  ipcMain.removeHandler('seedance:assets-list')
+  ipcMain.handle('seedance:assets-list', (_event, query: SeedanceAssetListQuery) =>
+    listSeedanceAssets(query ?? {}, assetCreds()),
+  )
+  ipcMain.removeHandler('seedance:assets-import')
+  ipcMain.handle('seedance:assets-import', async (_event, input: SeedanceAssetImportInput) => {
+    // 人像库页面上传:data: URL 先中转 COS 拿 https URL,避开上游
+    // `url is too long` 限制,同时比直传 base64 快得多。
+    const url = input?.url?.startsWith('data:') ? await relayDataUrlToCos(input.url) : input?.url
+    return importSeedanceAsset({ ...input, url }, assetCreds())
+  })
+  ipcMain.removeHandler('seedance:assets-capacity')
+  ipcMain.handle('seedance:assets-capacity', () => getSeedanceAssetCapacity(assetCreds()))
+  ipcMain.removeHandler('seedance:assets-delete')
+  ipcMain.handle('seedance:assets-delete', (_event, args: { assetIds?: unknown }) => {
+    const ids = Array.isArray(args?.assetIds)
+      ? args.assetIds.filter((x): x is string => typeof x === 'string')
+      : []
+    return deleteSeedanceAssets(ids, assetCreds())
+  })
+
+  // ============ 叠加层(改名/分组/隐藏)IPC + 广播 ============
+  // 主进程是单一真相源:渲染端 UI 与 MCP agent 共享同一份。任何变更都广播给
+  // 渲染端,使人像库页面实时反映 agent 的编辑。
+  ipcMain.removeHandler('seedance:overlay-get')
+  ipcMain.handle('seedance:overlay-get', () => getPortraitOverlay())
+  ipcMain.removeHandler('seedance:overlay-mutate')
+  ipcMain.handle('seedance:overlay-mutate', (_event, mutation: PortraitOverlayMutation) =>
+    mutatePortraitOverlay(mutation),
+  )
+  const unsubscribeOverlay = onPortraitOverlayChange((state) => {
+    const win = getWindow()
+    if (win && !win.isDestroyed()) {
+      try {
+        win.webContents.send('seedance:overlay-changed', state)
+      } catch (e) {
+        console.warn('[seedance/overlay] broadcast failed:', e)
+      }
+    }
+  })
+
+  return () => unsubscribeOverlay()
+}
+
 export function initSeedanceRuntime(opts: {
   router: ToolRouter
   attachments: AttachmentService
@@ -294,59 +366,12 @@ export function initSeedanceRuntime(opts: {
     return task ? { found: true, task } : { found: false }
   })
 
-  ipcMain.removeHandler('seedance:get-config')
-  ipcMain.handle('seedance:get-config', () => getSeedanceKeyState())
-  ipcMain.removeHandler('seedance:set-config')
-  ipcMain.handle('seedance:set-config', (_event, args: { apiKey?: unknown; apiSecret?: unknown }) => {
-    setSeedanceCredentials({
-      apiKey: typeof args?.apiKey === 'string' ? args.apiKey : undefined,
-      apiSecret: typeof args?.apiSecret === 'string' ? args.apiSecret : undefined,
-    })
-    return getSeedanceKeyState()
-  })
-
-  // ============ 素材库（人像库） ============
+  // 素材库（人像库）凭证 —— MCP 工具(list/add/download/edit_portrait_library)用它取
+  // Key/Secret。渲染端面向的 IPC(seedance:get-config / set-config / assets-* /
+  // overlay-*)已改为在窗口加载前由 `registerSeedanceRendererIpc()` 注册(见上),
+  // 避免人像库页面挂载时调用比本函数(要等 `await startCatimationMcpServer` 之后
+  // 才执行)更早而 reject,把页面永久钉死在「人像库未就绪」。
   const assetCreds = () => ({ apiKey: getSeedanceApiKey(), apiSecret: getSeedanceApiSecret() })
-  ipcMain.removeHandler('seedance:assets-list')
-  ipcMain.handle('seedance:assets-list', (_event, query: SeedanceAssetListQuery) =>
-    listSeedanceAssets(query ?? {}, assetCreds()),
-  )
-  ipcMain.removeHandler('seedance:assets-import')
-  ipcMain.handle('seedance:assets-import', async (_event, input: SeedanceAssetImportInput) => {
-    // 人像库页面上传:data: URL 先中转 COS 拿 https URL,避开上游
-    // `url is too long` 限制,同时比直传 base64 快得多。
-    const url = input?.url?.startsWith('data:') ? await relayDataUrlToCos(input.url) : input?.url
-    return importSeedanceAsset({ ...input, url }, assetCreds())
-  })
-  ipcMain.removeHandler('seedance:assets-capacity')
-  ipcMain.handle('seedance:assets-capacity', () => getSeedanceAssetCapacity(assetCreds()))
-  ipcMain.removeHandler('seedance:assets-delete')
-  ipcMain.handle('seedance:assets-delete', (_event, args: { assetIds?: unknown }) => {
-    const ids = Array.isArray(args?.assetIds)
-      ? args.assetIds.filter((x): x is string => typeof x === 'string')
-      : []
-    return deleteSeedanceAssets(ids, assetCreds())
-  })
-
-  // ============ 叠加层(改名/分组/隐藏)IPC + 广播 ============
-  // 主进程是单一真相源:渲染端 UI 与 MCP agent 共享同一份。任何变更都广播给
-  // 渲染端,使人像库页面实时反映 agent 的编辑。
-  ipcMain.removeHandler('seedance:overlay-get')
-  ipcMain.handle('seedance:overlay-get', () => getPortraitOverlay())
-  ipcMain.removeHandler('seedance:overlay-mutate')
-  ipcMain.handle('seedance:overlay-mutate', (_event, mutation: PortraitOverlayMutation) =>
-    mutatePortraitOverlay(mutation),
-  )
-  const unsubscribeOverlay = onPortraitOverlayChange((state) => {
-    const win = getWindow()
-    if (win && !win.isDestroyed()) {
-      try {
-        win.webContents.send('seedance:overlay-changed', state)
-      } catch (e) {
-        console.warn('[seedance/overlay] broadcast failed:', e)
-      }
-    }
-  })
 
   // ============ MCP agent 人像库工具(自主上传/搜索/整理/下载) ============
   /** 把素材源(本地路径/data:/http/asset:)上传到人像库。 */
@@ -565,7 +590,6 @@ export function initSeedanceRuntime(opts: {
   return {
     taskManager,
     dispose: () => {
-      unsubscribeOverlay()
       taskManager.dispose()
     },
   }
