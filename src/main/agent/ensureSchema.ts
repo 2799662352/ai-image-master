@@ -15,6 +15,7 @@ CREATE TABLE "AgentThread" (
     "title" TEXT NOT NULL,
     "model" TEXT NOT NULL,
     "manualTitle" BOOLEAN NOT NULL DEFAULT false,
+    "codexThreadId" TEXT,
     "lastMessageAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
@@ -99,6 +100,7 @@ ALTER TABLE "AgentAttachment" ADD CONSTRAINT "AgentAttachment_threadId_fkey" FOR
 // existing user DBs pick them up here.
 const ALIGN_SCHEMA_SQL: readonly string[] = [
   `ALTER TABLE "AgentThread" ADD COLUMN IF NOT EXISTS "manualTitle" BOOLEAN NOT NULL DEFAULT false`,
+  `ALTER TABLE "AgentThread" ADD COLUMN IF NOT EXISTS "codexThreadId" TEXT`,
   `ALTER TABLE "AgentThread" ADD COLUMN IF NOT EXISTS "lastMessageAt" TIMESTAMP(3)`,
   `CREATE INDEX IF NOT EXISTS "AgentThread_lastMessageAt_idx" ON "AgentThread"("lastMessageAt" DESC)`,
   `ALTER TABLE "AgentMessage" ADD COLUMN IF NOT EXISTS "items" JSONB NOT NULL DEFAULT '[]'`,

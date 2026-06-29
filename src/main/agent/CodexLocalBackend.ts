@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { promises as fs, type WriteStream } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { buildCodexLaunchArgs, resolveCodexSessionConfig, type CatimationMcpLaunchInfo, type CodexProviderConfig } from './codexLaunch'
 import { mergeCodexConfigs } from './codexConfigMerge'
@@ -111,6 +112,13 @@ export interface CodexLocalBackendOptions {
   getUnderstandProvider?: () => { provider: CodexProviderConfig; token: string } | undefined
   onApprovalRequest?: (request: CodexApprovalRequest) => void
   onMcpNotification?: (event: AgentStreamEvent) => void
+  /**
+   * Pin the `CODEX_HOME` used for EVERY spawn (initial + `restartCodex`).
+   * Defaults to {@link resolveStableCodexHome} (`~/.codex`, honoring a
+   * `CODEX_HOME` env override). Tests inject an explicit dir so the spawned
+   * env is deterministic; production omits it.
+   */
+  codexHome?: string
 }
 
 type SpawnedCodexClient = {
@@ -129,6 +137,33 @@ type SpawnedCodexClient = {
    * 用 null 标记跳过关闭。
    */
   log: WriteStream | null
+}
+
+/**
+ * Resolve the single, STABLE `CODEX_HOME` the app pins for every codex spawn.
+ *
+ * Mirrors codex's own `find_codex_home` (codex-rs/utils/home-dir): honor a
+ * non-empty `CODEX_HOME` env override, otherwise default to `~/.codex`.
+ *
+ * Why this matters: the app used to leave the FIRST spawn's home unset (so codex
+ * fell back to `~/.codex`) while `restartCodex` flipped it to
+ * `<userData>/codex-runtime`. Session rollouts live at
+ * `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl`, so a rollout written after a
+ * provider switch (in codex-runtime) became unfindable on the next launch's
+ * fresh (`~/.codex`) spawn — `thread/resume` looked in the wrong home and the
+ * chat lost its memory. Pinning ONE home for every spawn keeps writes and
+ * resumes in the same place across launches and provider switches. `~/.codex` is
+ * codex's canonical default (non-gitignored, where the user's `config.toml`/auth
+ * and the bulk of prior history already live), which also sidesteps the
+ * gitignored-CODEX_HOME resume failures in openai/codex#5247 / #5412.
+ */
+export function resolveStableCodexHome(
+  env: NodeJS.ProcessEnv = process.env,
+  homeDir: string = os.homedir(),
+): string {
+  const fromEnv = env.CODEX_HOME?.trim()
+  if (fromEnv) return fromEnv
+  return path.join(homeDir, '.codex')
 }
 
 /**
@@ -197,7 +232,13 @@ export class CodexLocalBackend implements IAgentBackend {
   private sessionConfig: CodexSessionConfig
   private currentProvider: CodexProviderConfig | undefined
   private configDirty = false
-  private codexHome: string | undefined
+  /**
+   * Pinned `CODEX_HOME` for every spawn (initial + `restartCodex`). Set once in
+   * the constructor and never reassigned, so session rollouts always land in —
+   * and resume from — the same place across launches. See
+   * {@link resolveStableCodexHome}.
+   */
+  private readonly codexHome: string
   /**
    * Generation counter bumped once per successful spawn/connect (see
    * `startSpawnedClient` / `startWsClient`). Every codex respawn — crash
@@ -215,6 +256,7 @@ export class CodexLocalBackend implements IAgentBackend {
     this.resourceRootOverride = options.resourceRoot
     this.sessionConfig = resolveCodexSessionConfig(options.sessionConfig)
     this.currentProvider = options.provider
+    this.codexHome = options.codexHome ?? resolveStableCodexHome()
   }
 
   setProvider(provider: CodexProviderConfig | undefined): void {
@@ -404,7 +446,13 @@ export class CodexLocalBackend implements IAgentBackend {
 
   async restartCodex(paths: CodexWorkspacePaths): Promise<void> {
     await rebuildRuntimeConfig(paths)
-    this.codexHome = path.dirname(paths.runtimeConfigToml)
+    // NOTE: `CODEX_HOME` is intentionally NOT reassigned here. It is pinned once
+    // in the constructor (see `this.codexHome` / `resolveStableCodexHome`). The
+    // old code flipped it to `<userData>/codex-runtime` on every provider switch,
+    // which drifted session rollouts away from the `~/.codex` the next launch's
+    // first spawn used — so `thread/resume` missed and the chat lost its memory.
+    // The new provider still takes effect: it is re-applied via the `-c
+    // model_provider*` launch args on the respawn below.
     this.configDirty = true
 
     if (this.client?.hasInFlightWork()) return

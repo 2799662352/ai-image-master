@@ -86,4 +86,27 @@ export class ThreadStore {
       data: { lastMessageAt: new Date() },
     })
   }
+
+  /**
+   * Persist the Codex-protocol thread UUID for a DB thread so a later app
+   * restart can `thread/resume` the same on-disk rollout (keeping conversation
+   * memory) instead of starting a fresh, amnesiac codex thread. `updateMany`
+   * (not `update`) so a stale/just-deleted thread id is a no-op rather than a
+   * throw — this runs best-effort inside the streaming hot path.
+   */
+  async setCodexThreadId(threadId: string, codexThreadId: string): Promise<void> {
+    await this.prisma.agentThread.updateMany({
+      where: { id: threadId },
+      data: { codexThreadId },
+    })
+  }
+
+  /** Read the persisted Codex thread UUID for a DB thread (null if none yet). */
+  async getCodexThreadId(threadId: string): Promise<string | null> {
+    const row = await this.prisma.agentThread.findUnique({
+      where: { id: threadId },
+      select: { codexThreadId: true },
+    })
+    return row?.codexThreadId ?? null
+  }
 }

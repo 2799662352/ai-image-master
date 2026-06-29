@@ -3,7 +3,8 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { app, dialog, shell } from 'electron'
-import { CodexLocalBackend } from './CodexLocalBackend'
+import { CodexLocalBackend, resolveStableCodexHome } from './CodexLocalBackend'
+import { migrateLegacyCodexSessions } from './codexSessionMigration'
 import { CodexProviderStore, type NewCustomProvider } from './CodexProviderStore'
 import { DEFAULT_CODEX_SESSION_CONFIG, type CatimationMcpLaunchInfo } from './codexLaunch'
 import {
@@ -239,6 +240,16 @@ export class AgentManager {
   private readonly codexThreadEpochByDbThreadId = new Map<string, number>()
 
   /**
+   * DB thread ids for which we've already tried to hydrate a persisted codex
+   * thread id from the store this process. Guards the "first send after a full
+   * app restart" path in `resolveCodexThreadForSend` so we hit the DB (and
+   * attempt `thread/resume`) at most once per thread per process — after that
+   * the in-memory map is the source of truth, and a thread that failed to
+   * resume (or never had a persisted id) starts fresh without re-querying.
+   */
+  private readonly codexThreadHydrationAttempted = new Set<string>()
+
+  /**
    * Latest status emitted per MCP server name. Populated by
    * `mcp_status_updated` notifications from codex. The renderer pulls this
    * snapshot via `getMcpStatusSnapshotRpc` on subscribe, so dots stay correct
@@ -256,6 +267,13 @@ export class AgentManager {
    * `ensureBackendStarted`.
    */
   private startInFlight: Promise<void> | null = null
+
+  /**
+   * Guards the one-time {@link migrateLegacyCodexSessionsOnce} so the orphaned
+   * `codex-runtime` → pinned-home rollout consolidation runs at most once per
+   * app process (it's a no-op on every subsequent call anyway).
+   */
+  private legacySessionsMigrated = false
 
   constructor(opts: AgentManagerOptions) {
     this.win = opts.win
@@ -992,11 +1010,46 @@ export class AgentManager {
   private async ensureBackendStarted(): Promise<void> {
     if (this.backend.isHealthy()) return
     if (!this.startInFlight) {
-      this.startInFlight = this.backend.start().finally(() => {
+      // Assign `startInFlight` synchronously (no `await` before this point) so
+      // concurrent callers dedupe onto one start. The one-time legacy-session
+      // consolidation runs INSIDE that promise, before the spawn, so the
+      // upcoming `thread/resume` can find sessions written under the old per-app
+      // `codex-runtime` home. Best-effort: migration never rejects the start.
+      this.startInFlight = (async () => {
+        await this.migrateLegacyCodexSessionsOnce()
+        await this.backend.start()
+      })().finally(() => {
         this.startInFlight = null
       })
     }
     return this.startInFlight
+  }
+
+  /**
+   * One-time, best-effort consolidation of codex session rollouts into the
+   * pinned `CODEX_HOME`. Recovers conversations whose rollout was written under
+   * the legacy per-app `<userData>/codex-runtime/sessions` home (only happened
+   * after a provider switch — see `resolveStableCodexHome`). Never throws into
+   * the start path; the worst case is an old provider-switched chat that can't
+   * resume, which already degrades gracefully to a fresh thread + notice.
+   */
+  private async migrateLegacyCodexSessionsOnce(): Promise<void> {
+    if (this.legacySessionsMigrated) return
+    this.legacySessionsMigrated = true
+    try {
+      const runtimeDir = path.dirname(this.workspacePaths().runtimeConfigToml)
+      const legacySessionsDir = path.join(runtimeDir, 'sessions')
+      const targetSessionsDir = path.join(resolveStableCodexHome(), 'sessions')
+      const result = await migrateLegacyCodexSessions({ legacySessionsDir, targetSessionsDir })
+      if (result.moved > 0) {
+        console.log(
+          `[AgentManager] migrated ${result.moved} legacy codex session rollout(s) into the pinned CODEX_HOME` +
+            (result.skipped > 0 ? ` (${result.skipped} already present)` : ''),
+        )
+      }
+    } catch (err) {
+      console.warn('[AgentManager] legacy codex session migration failed (best-effort):', err)
+    }
   }
 
   async stop(): Promise<void> {
@@ -1425,12 +1478,26 @@ export class AgentManager {
     this.codexThreadIdByDbThreadId.set(dbThreadId, codexThreadId)
     const epoch = this.backend.currentEpoch?.()
     if (epoch !== undefined) this.codexThreadEpochByDbThreadId.set(dbThreadId, epoch)
+    // Persist (best-effort, off the hot path) so a full app restart can resume
+    // this exact codex thread instead of starting a fresh, amnesiac one. Same
+    // fire-and-forget posture as updateLastMessageAt — a crash between mint and
+    // persist just loses the resume hint (degrades to today's behaviour).
+    const persist = this.store?.setCodexThreadId?.(dbThreadId, codexThreadId)
+    if (persist && typeof persist.catch === 'function') {
+      persist.catch((err: unknown) =>
+        console.warn('[AgentManager] failed to persist codexThreadId:', err),
+      )
+    }
   }
 
   /** Drop both the id and its epoch tag (poisoned-thread reset / stale respawn). */
   private forgetCodexThread(dbThreadId: string): void {
     this.codexThreadIdByDbThreadId.delete(dbThreadId)
     this.codexThreadEpochByDbThreadId.delete(dbThreadId)
+    // A forgotten thread is dead for this process — never resurrect it via the
+    // restart-hydration path (it would re-resume a just-failed/poisoned id).
+    // The next fresh thread_created repopulates the map and re-persists.
+    this.codexThreadHydrationAttempted.add(dbThreadId)
   }
 
   /**
@@ -1449,7 +1516,7 @@ export class AgentManager {
    */
   private async resolveCodexThreadForSend(dbThreadId: string): Promise<string | undefined> {
     const id = this.codexThreadIdByDbThreadId.get(dbThreadId)
-    if (!id) return undefined
+    if (!id) return this.hydrateCodexThreadAfterRestart(dbThreadId)
     const current = this.backend.currentEpoch?.()
     if (current === undefined) return id
     const stored = this.codexThreadEpochByDbThreadId.get(dbThreadId)
@@ -1471,6 +1538,56 @@ export class AgentManager {
     this.forgetCodexThread(dbThreadId)
     this.notifyThreadContextReset(dbThreadId, 'codex_restarted')
     return undefined
+  }
+
+  /**
+   * First send on a db thread whose in-memory codex mapping is empty — the
+   * normal state right after a FULL app restart (the whole process, and with it
+   * `codexThreadIdByDbThreadId`, was torn down). The codex rollout still lives
+   * on disk under the PINNED `CODEX_HOME` (see `resolveStableCodexHome`; a
+   * one-time migration also folds in any legacy `codex-runtime` rollouts), so if
+   * we persisted the thread id we can `thread/resume` it and keep the
+   * conversation's memory — fixing
+   * "重启之后对话又没有记忆了". Falls back to a fresh thread (with a user notice)
+   * when there's no persisted id, the backend can't resume, or resume fails
+   * (thread gone/archived, oversized, Windows path-normalization, etc. — see
+   * openai/codex#21659 / #22996). Hydration is attempted at most once per thread
+   * per process; after that the in-memory map is authoritative.
+   */
+  private async hydrateCodexThreadAfterRestart(dbThreadId: string): Promise<string | undefined> {
+    if (this.codexThreadHydrationAttempted.has(dbThreadId)) return undefined
+    this.codexThreadHydrationAttempted.add(dbThreadId)
+
+    if (!this.store?.getCodexThreadId) return undefined
+    let persisted: string | null = null
+    try {
+      persisted = await this.store.getCodexThreadId(dbThreadId)
+    } catch (err) {
+      console.warn('[AgentManager] failed to read persisted codexThreadId:', err)
+      return undefined
+    }
+    // Brand-new thread (no prior codex turn persisted) → let the caller start a
+    // fresh thread normally; nothing to resume and nothing was lost.
+    if (!persisted) return undefined
+
+    // We have a persisted id from a previous app process. The current
+    // app-server has never heard of it (its in-memory threads are fresh), so we
+    // MUST resume it from disk before reusing it — replaying it straight into
+    // turn/start would 404. No resume capability → safest to start fresh.
+    if (!this.backend.resumeThread) {
+      this.notifyThreadContextReset(dbThreadId, 'codex_restarted')
+      return undefined
+    }
+    try {
+      await this.backend.resumeThread(persisted)
+      // Live again in this generation — adopt it (re-tags epoch + re-persists).
+      this.rememberCodexThread(dbThreadId, persisted)
+      return persisted
+    } catch (err) {
+      console.warn('[AgentManager] thread/resume after app restart failed, starting fresh:', err)
+      this.notifyThreadContextReset(dbThreadId, 'codex_restarted')
+      return undefined
+    }
   }
 
   private async forwardEvents(dbThreadId: string, input: AgentInput): Promise<void> {

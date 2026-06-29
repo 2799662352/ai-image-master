@@ -11,6 +11,10 @@ model AgentThread {
   title         String
   model         String
   manualTitle   Boolean           @default(false)
+  // Codex-protocol thread UUID (from `thread/start`). Persisted so a full app
+  // restart can `thread/resume` the same on-disk rollout and keep conversation
+  // memory, instead of silently starting a brand-new (amnesiac) codex thread.
+  codexThreadId String?
   lastMessageAt DateTime?
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt

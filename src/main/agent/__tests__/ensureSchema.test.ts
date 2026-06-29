@@ -102,6 +102,20 @@ describe('ensureSchema', () => {
       const colNames = threadCols.rows.map((r) => r.column_name)
       expect(colNames).toContain('manualTitle')
       expect(colNames).toContain('lastMessageAt')
+      // Crash-resume across a FULL app restart needs the persisted codex thread
+      // id. Existing users' DBs (created before this column) must pick it up via
+      // ALIGN_SCHEMA_SQL on the hot-update boot, or resume-on-restart silently
+      // degrades back to amnesiac fresh threads.
+      expect(colNames).toContain('codexThreadId')
+      await db.query(
+        `UPDATE "AgentThread" SET "codexThreadId" = $1 WHERE id = $2`,
+        ['11111111-2222-3333-4444-555555555555', 'legacy-thread'],
+      )
+      const codexRow = await db.query<{ codexThreadId: string | null }>(
+        `SELECT "codexThreadId" FROM "AgentThread" WHERE id = $1`,
+        ['legacy-thread'],
+      )
+      expect(codexRow.rows[0]?.codexThreadId).toBe('11111111-2222-3333-4444-555555555555')
 
       // contentJson renamed to items, data preserved.
       const msgCols = await db.query<{ column_name: string }>(

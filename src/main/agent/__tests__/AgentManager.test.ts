@@ -490,6 +490,97 @@ describe('AgentManager codex thread id mapping (regression: invalid thread id)',
     expect(notices.some((n) => n.notice.kind === 'threadContextReset')).toBe(false)
   })
 
+  it('after a FULL app restart (in-memory map wiped) hydrates the persisted codex thread id and RESUMES it', async () => {
+    // Repro for "重启之后 对话又没有记忆了": Fix B only healed app-server respawns
+    // WITHIN one app session (the in-memory epoch map survived). A full app
+    // *process* restart wipes codexThreadIdByDbThreadId entirely, so the next
+    // send started a brand-new codex thread → the model had zero memory of the
+    // prior turns even though the rollout still lives on disk under CODEX_HOME.
+    // The fix persists the codex thread id to the DB and, on first send after a
+    // restart, hydrates it and `thread/resume`s before reusing the same id.
+    const DB_ID = 'cm-db-restart'
+    // Simulated AgentThread row shared across the two manager "processes".
+    let persistedCodexThreadId: string | undefined
+    const makeStore = () =>
+      ({
+        ...persistStubs,
+        createThread: async () => ({ id: DB_ID }),
+        setCodexThreadId: async (_threadId: string, codexThreadId: string) => {
+          persistedCodexThreadId = codexThreadId
+        },
+        getCodexThreadId: async (_threadId: string) => persistedCodexThreadId,
+      }) as any
+    const fakeAttachments = { ingest: async () => [] } as any
+
+    // ---- App session #1: thread created, codex id minted + persisted ----
+    const backendA = {
+      calls: [] as BackendCall[],
+      cancelCalls: [] as string[],
+      async start() {},
+      async stop() {},
+      isHealthy() { return true },
+      currentEpoch() { return 1 },
+      async cancel() {},
+      async *send(threadId: string | undefined, input: AgentInput) {
+        this.calls.push({ threadId, input })
+        yield { type: 'thread_created', threadId: CODEX_UUID } as AgentStreamEvent
+        yield { type: 'turn_completed', threadId: CODEX_UUID, turnId: 't1' } as AgentStreamEvent
+      },
+    } satisfies IAgentBackend & { calls: BackendCall[]; cancelCalls: string[] }
+    const mgrA = new AgentManager({
+      userDataDir: tmpDir,
+      store: makeStore(),
+      attachments: fakeAttachments,
+      eventSink: () => {},
+      backend: backendA,
+    })
+    await mgrA.sendMessage({ content: 'remember BANANA-42', attachments: [] })
+    await flushMicrotasks(20)
+    expect(persistedCodexThreadId).toBe(CODEX_UUID)
+
+    // ---- App fully restarted: brand-new manager, empty in-memory maps,
+    //      fresh app-server (epoch resets to 1 again), SAME persisted store ----
+    const events: AgentStreamEvent[] = []
+    const resumed: string[] = []
+    const backendB = {
+      calls: [] as BackendCall[],
+      cancelCalls: [] as string[],
+      async start() {},
+      async stop() {},
+      isHealthy() { return true },
+      currentEpoch() { return 1 },
+      async resumeThread(threadId: string) { resumed.push(threadId) },
+      async cancel() {},
+      async *send(threadId: string | undefined, input: AgentInput) {
+        this.calls.push({ threadId, input })
+        yield { type: 'turn_completed', threadId: CODEX_UUID, turnId: 't2' } as AgentStreamEvent
+      },
+    } satisfies IAgentBackend & { calls: BackendCall[]; cancelCalls: string[] }
+    const mgrB = new AgentManager({
+      userDataDir: tmpDir,
+      store: makeStore(),
+      attachments: fakeAttachments,
+      eventSink: (e) => events.push(e),
+      backend: backendB,
+    })
+
+    await mgrB.sendMessage({
+      threadId: DB_ID,
+      content: 'what did I ask you to remember?',
+      attachments: [],
+    })
+    await flushMicrotasks(20)
+
+    // The crux: resume the persisted thread and reuse the SAME id (memory kept).
+    expect(resumed).toEqual([CODEX_UUID])
+    expect(backendB.calls).toHaveLength(1)
+    expect(backendB.calls[0].threadId).toBe(CODEX_UUID)
+    const restartNotices = events.filter(
+      (e): e is Extract<AgentStreamEvent, { type: 'notice' }> => e.type === 'notice',
+    )
+    expect(restartNotices.some((n) => n.notice.kind === 'threadContextReset')).toBe(false)
+  })
+
   it('retries on a new Codex thread when cached thread encryption is rejected', async () => {
     const events: AgentStreamEvent[] = []
     const fakeStore = {

@@ -6,7 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import WebSocket, { WebSocketServer } from 'ws'
-import { buildCodexSpawnEnv, CodexLocalBackend, mapServerNotification } from '../CodexLocalBackend'
+import { buildCodexSpawnEnv, CodexLocalBackend, mapServerNotification, resolveStableCodexHome } from '../CodexLocalBackend'
 import { resolveWorkspacePaths } from '../codexConfigStore'
 import type { AgentStreamEvent, CodexApprovalRequest } from '../../../types/agent'
 import type { AgentInput } from '../types'
@@ -625,12 +625,21 @@ describe('CodexLocalBackend spawn env injection', () => {
     await backend.stop()
   })
 
-  it('restarts with CODEX_HOME and only kills the old process after replacement starts', async () => {
+  it('pins ONE stable CODEX_HOME on BOTH the initial spawn and restartCodex (sessions never drift across launches)', async () => {
+    // Root cause of "重启之后对话又没有记忆了": the FIRST spawn each launch left
+    // CODEX_HOME unset → codex fell back to ~/.codex, while restartCodex (on a
+    // provider switch) flipped it to <userData>/codex-runtime. A rollout written
+    // after a switch therefore lived in codex-runtime but the next launch's fresh
+    // (~/.codex) spawn looked elsewhere → thread/resume missed → amnesia. The fix
+    // pins ONE home (resolveStableCodexHome) for every spawn. We inject an
+    // explicit home here so the assertion is deterministic and host-independent.
     const workspace = await createWorkspacePaths()
+    const stableHome = path.join(workspace.tmp, 'home', '.codex')
     const spawned: any[] = []
     const envs: NodeJS.ProcessEnv[] = []
     const backend = new CodexLocalBackend({
       resourceRoot: '/tmp/codex-fake-root',
+      codexHome: stableHome,
       spawnFactory: ((_bin: string, args: string[], opts: any) => {
         envs.push(opts?.env)
         const proc = makeFakeCodexServerChildProc(args)
@@ -647,7 +656,11 @@ describe('CodexLocalBackend spawn env injection', () => {
       await backend.restartCodex(workspace.paths)
 
       expect(envs).toHaveLength(2)
-      expect(envs[1].CODEX_HOME).toBe(path.dirname(workspace.paths.runtimeConfigToml))
+      // The whole bug: these two used to differ (undefined vs codex-runtime).
+      expect(envs[0].CODEX_HOME).toBe(stableHome)
+      expect(envs[1].CODEX_HOME).toBe(stableHome)
+      // restartCodex must NOT flip the home to the per-app runtime dir anymore.
+      expect(envs[1].CODEX_HOME).not.toBe(path.dirname(workspace.paths.runtimeConfigToml))
       expect(spawned[0].exitCode).toBe(0)
       expect(spawned[1].exitCode).toBeNull()
       expect(backend.isHealthy()).toBe(true)
@@ -656,6 +669,19 @@ describe('CodexLocalBackend spawn env injection', () => {
       await backend.stop()
       await rm(workspace.tmp, { recursive: true, force: true })
     }
+  })
+
+  it('defaults the pinned CODEX_HOME to ~/.codex and honors a CODEX_HOME env override', () => {
+    expect(resolveStableCodexHome({} as NodeJS.ProcessEnv, '/Users/alice')).toBe(
+      path.join('/Users/alice', '.codex'),
+    )
+    expect(
+      resolveStableCodexHome({ CODEX_HOME: '  /custom/home  ' } as NodeJS.ProcessEnv, '/Users/alice'),
+    ).toBe('/custom/home')
+    // Empty/whitespace env must fall back to the default (mirrors codex find_codex_home).
+    expect(resolveStableCodexHome({ CODEX_HOME: '   ' } as NodeJS.ProcessEnv, '/Users/alice')).toBe(
+      path.join('/Users/alice', '.codex'),
+    )
   })
 
   it('keeps the old spawned backend running when replacement startup fails', async () => {
