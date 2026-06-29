@@ -40,7 +40,7 @@ interface TrackedTask {
   historyRecorded: boolean
 }
 
-/** taskId → bubble bookkeeping. Module-level so remounts don't duplicate bubbles. */
+/** clientId (fallback taskId) → bubble bookkeeping. Module-level so remounts don't duplicate bubbles. */
 const tracked = new Map<string, TrackedTask>()
 
 function toFileUrl(filePath: string): string {
@@ -48,6 +48,8 @@ function toFileUrl(filePath: string): string {
 }
 
 function videoArtifact(update: SeedanceTaskUpdate, uri: string): AttachmentRef {
+  // 注意：artifact id 故意用真实上游 taskId（持久身份），而非气泡 key（clientid 兜底）；
+  // 别在「一致性清理」时误改成 key。
   return {
     id: `seedance-${update.taskId}`,
     kind: 'video',
@@ -96,6 +98,7 @@ async function persistHistory(update: SeedanceTaskUpdate, task: TrackedTask): Pr
     const historyId = saved?.id
     if (historyId != null && task.threadId) {
       recordCodexArtifact(task.threadId, {
+        // anchor id 同样用真实上游 taskId（持久身份），非气泡 key。
         id: `codex-video-${update.taskId}`,
         createdAt: Date.now(),
         prompt: update.prompt,
@@ -113,11 +116,14 @@ async function persistHistory(update: SeedanceTaskUpdate, task: TrackedTask): Pr
 export function handleSeedanceTaskUpdate(update: SeedanceTaskUpdate): void {
   const chat = useAgentChatStore.getState()
 
-  let task = tracked.get(update.taskId)
+  // 气泡身份优先用稳定的 clientId：generate_video 的「预备卡片」与之后真实
+  // taskId 的广播带同一个 clientId，于是驱动同一张气泡（不重复建）；缺省回退 taskId。
+  const key = update.clientId ?? update.taskId
+  let task = tracked.get(key)
   if (!task) {
     const itemId = chat.beginImageGeneration(update.prompt, update.threadId, 'video')
     task = { itemId, threadId: update.threadId, historyRecorded: false }
-    tracked.set(update.taskId, task)
+    tracked.set(key, task)
   }
 
   switch (update.status) {
@@ -128,7 +134,7 @@ export function handleSeedanceTaskUpdate(update: SeedanceTaskUpdate): void {
 
     case 'failed':
       chat.failImageGeneration(task.itemId, update.error ?? '视频生成失败', task.threadId)
-      tracked.delete(update.taskId)
+      tracked.delete(key)
       return
 
     case 'succeeded': {
@@ -148,7 +154,7 @@ export function handleSeedanceTaskUpdate(update: SeedanceTaskUpdate): void {
           return
         case 'failed':
           chat.annotateImageGeneration(task.itemId, { status: 'failed' }, task.threadId)
-          tracked.delete(update.taskId)
+          tracked.delete(key)
           return
         case 'done': {
           const localPath = update.localPath
@@ -159,7 +165,7 @@ export function handleSeedanceTaskUpdate(update: SeedanceTaskUpdate): void {
               : { status: 'saved' },
             task.threadId,
           )
-          void persistHistory(update, task).finally(() => tracked.delete(update.taskId))
+          void persistHistory(update, task).finally(() => tracked.delete(key))
           return
         }
         default: {

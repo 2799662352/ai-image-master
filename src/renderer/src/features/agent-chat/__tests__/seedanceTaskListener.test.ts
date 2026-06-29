@@ -177,4 +177,34 @@ describe('seedance task-update → artifact bubble', () => {
     expect(useAgentChatStore.getState().messages).not.toBe(undefined)
     expect(before[before.length - 1].items[0]).toMatchObject({ status: 'error' })
   })
+
+  it('预备卡片(clientId) 与随后的真实 taskId 复用同一张气泡（不重复建）', () => {
+    const clientId = `pending-${taskSeq}`
+    // 1) generate_video 在重活前广播：taskId === clientId
+    handleSeedanceTaskUpdate(makeUpdate({ taskId: clientId, clientId, status: 'queued' }))
+    // 2) submit 之后真实任务的广播：真实 taskId + 同一 clientId
+    handleSeedanceTaskUpdate(makeUpdate({ taskId: 'real-1', clientId, status: 'queued' }))
+    handleSeedanceTaskUpdate(
+      makeUpdate({ taskId: 'real-1', clientId, status: 'running', createdAt: Date.now() - 5_000 }),
+    )
+
+    // 始终只有一张气泡
+    expect(useAgentChatStore.getState().messages).toHaveLength(1)
+    const item = lastArtifact()
+    expect(item.status).toBe('generating')
+    expect(item.progressText).toMatch(/正在生成视频 · \d+s/)
+  })
+
+  it('预备卡片(clientId) 在前置失败时落为 error（同一张气泡）', () => {
+    const clientId = `pending-${taskSeq}-f`
+    handleSeedanceTaskUpdate(makeUpdate({ taskId: clientId, clientId, status: 'queued' }))
+    handleSeedanceTaskUpdate(
+      makeUpdate({ taskId: clientId, clientId, status: 'failed', error: 'LOCAL_ASSET_IMPORT_FAILED: boom' }),
+    )
+
+    expect(useAgentChatStore.getState().messages).toHaveLength(1)
+    const item = lastArtifact()
+    expect(item.status).toBe('error')
+    expect(item.error).toContain('LOCAL_ASSET_IMPORT_FAILED')
+  })
 })
