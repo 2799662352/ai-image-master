@@ -35,6 +35,13 @@ export interface SeedanceTaskState {
   persistence: SeedancePersistence
   /** failed 时的上游错误（code: message）。 */
   error?: string
+  /**
+   * 渲染端用的「气泡身份」。generate_video 在真正 createTask 之前先用一个临时
+   * clientId 广播一张「准备中」卡片；createTask 成功后真实任务的每条广播都带
+   * 同一个 clientId，渲染端据此复用同一张卡片（见 SeedanceTaskListener）。
+   * 缺省时（手动 MCP 调用等）渲染端回退用 taskId。
+   */
+  clientId?: string
 }
 
 export type SeedanceTaskUpdate = SeedanceTaskState
