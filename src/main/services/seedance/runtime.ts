@@ -264,9 +264,24 @@ export function initSeedanceRuntime(opts: {
 
   router.registerMain('generate_video', async (params, threadId) => {
     const input = params as unknown as CreateVideoTaskInput
-    const content = await buildContent(input)
-    await importImagesToPortraitLibrary(content)
-    return taskManager.submit({ input, content, threadId })
+    // 关键：在任何 COS 中转 / 人像库导入 / createTask 之前，先广播一张「准备中」
+    // 卡片。批量并发时每条任务都能瞬间出气泡，不再被前置大图上传压住（根因修复）。
+    const clientId = taskManager.announcePreparing({ input, threadId })
+    try {
+      const content = await buildContent(input)
+      await importImagesToPortraitLibrary(content)
+      return await taskManager.submit({ input, content, threadId, clientId })
+    } catch (e) {
+      // 前置阶段（素材解析/导入/createTask，如 LOCAL_ASSET_IMPORT_FAILED）抛错时，
+      // 把预备卡片落成 failed，避免气泡永远转圈；随后照旧把错误抛给工具层出横幅。
+      taskManager.announceFailed({
+        clientId,
+        input,
+        threadId,
+        error: e instanceof Error ? e.message : String(e),
+      })
+      throw e
+    }
   })
 
   router.registerMain('check_video_task', async (params) => {
