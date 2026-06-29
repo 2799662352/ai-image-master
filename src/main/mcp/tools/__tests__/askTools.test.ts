@@ -27,35 +27,63 @@ function capture(routerResult: unknown = { answered: true, skipped: false, selec
   return { tools, server, router }
 }
 
+const canonicalOf = (tools: Captured[]) => tools.find((t) => t.name === 'ask_user')!
+
 describe('registerAskTools', () => {
-  it('registers a single ask_user tool with a concise description', () => {
+  it('registers the canonical ask_user first, then hardcoded name aliases', () => {
     const { tools, server, router } = capture()
     registerAskTools(server, router)
-    expect(tools.map((t) => t.name)).toEqual(['ask_user'])
-    expect(tools[0].config.description.length).toBeLessThan(500)
+    const names = tools.map((t) => t.name)
+    // Canonical is first and carries the rich, model-facing description.
+    expect(names[0]).toBe('ask_user')
+    expect(canonicalOf(tools).config.description.length).toBeLessThan(500)
+    expect(canonicalOf(tools).config.description).toContain('ask_user')
+    // The exact mis-spellings observed in real-run codex logs MUST be
+    // dispatchable registry entries so the option card still pops.
+    expect(names).toEqual(
+      expect.arrayContaining(['askuser', 'catimationaskuser', 'catimation_ask_user']),
+    )
+    // No duplicate names (each alias registered once).
+    expect(new Set(names).size).toBe(names.length)
   })
 
-  it('schema requires a question and defaults the optional fields', () => {
+  it('routes EVERY registered variant to the canonical ask_user renderer tool', async () => {
+    const answer = { answered: true, skipped: false, selected: [{ id: 'a', label: 'A' }] }
+    const { tools, server, router } = capture(answer)
+    registerAskTools(server, router)
+    expect(tools.length).toBeGreaterThan(1)
+
+    for (const tool of tools) {
+      router.call.mockClear()
+      const result = await tool.handler({ question: 'q', options: [] })
+      // A mis-spelled MCP tool name still drives the one true `ask_user` card.
+      expect(router.call).toHaveBeenCalledWith('ask_user', { question: 'q', options: [] })
+      expect(result.content[0].type).toBe('text')
+      expect(JSON.parse(result.content[0].text as string)).toEqual(answer)
+    }
+  })
+
+  it('every variant shares the same schema (requires a question, defaults optionals)', () => {
     const { tools, server, router } = capture()
     registerAskTools(server, router)
-    const schema = tools[0].config.inputSchema
-
-    expect(schema.safeParse({ question: '' }).success).toBe(false)
-
-    const parsed = schema.safeParse({ question: '想要什么景别?' })
-    expect(parsed.success).toBe(true)
-    if (parsed.success) {
-      expect(parsed.data.mode).toBe('single')
-      expect(parsed.data.allowFreeText).toBe(true)
-      expect(parsed.data.allowSkip).toBe(true)
-      expect(parsed.data.options).toEqual([])
+    for (const tool of tools) {
+      const schema = tool.config.inputSchema
+      expect(schema.safeParse({ question: '' }).success).toBe(false)
+      const parsed = schema.safeParse({ question: '想要什么景别?' })
+      expect(parsed.success).toBe(true)
+      if (parsed.success) {
+        expect(parsed.data.mode).toBe('single')
+        expect(parsed.data.allowFreeText).toBe(true)
+        expect(parsed.data.allowSkip).toBe(true)
+        expect(parsed.data.options).toEqual([])
+      }
     }
   })
 
   it('schema rejects options missing id/label and bad mode', () => {
     const { tools, server, router } = capture()
     registerAskTools(server, router)
-    const schema = tools[0].config.inputSchema
+    const schema = canonicalOf(tools).config.inputSchema
     expect(schema.safeParse({ question: 'q', options: [{ label: 'A' }] }).success).toBe(false)
     expect(schema.safeParse({ question: 'q', mode: 'triple' }).success).toBe(false)
     expect(
@@ -63,12 +91,12 @@ describe('registerAskTools', () => {
     ).toBe(true)
   })
 
-  it('routes to the renderer and wraps the answer as JSON text content', async () => {
+  it('wraps the renderer answer as JSON text content', async () => {
     const answer = { answered: true, skipped: false, selected: [{ id: 'a', label: 'A' }] }
     const { tools, server, router } = capture(answer)
     registerAskTools(server, router)
 
-    const result = await tools[0].handler({ question: 'q', options: [] })
+    const result = await canonicalOf(tools).handler({ question: 'q', options: [] })
     expect(router.call).toHaveBeenCalledWith('ask_user', { question: 'q', options: [] })
     expect(result.content[0].type).toBe('text')
     expect(JSON.parse(result.content[0].text as string)).toEqual(answer)
