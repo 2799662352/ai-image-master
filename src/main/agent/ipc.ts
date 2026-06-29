@@ -63,6 +63,20 @@ const AGENT_HANDLE_CHANNELS = [
   'agent:add-custom-provider',
   'agent:update-custom-provider',
   'agent:remove-custom-provider',
+  // Canvas edit-queue status is an `ipcMain.handle` too, so it must be torn down
+  // before re-registering on an Electron dev reload (otherwise the duplicate
+  // `handle()` throws "Attempted to register a second handler").
+  'canvas:edit-queue-status',
+]
+
+// `ipcMain.on` listeners registered by `registerAgentIpc`. Unlike `handle`,
+// duplicate `on` calls don't throw — they silently stack, so each dev reload
+// would add another listener (double tool-response routing / double task or
+// edit-request enqueues). Cleared up-front on every (re)registration.
+const AGENT_ON_CHANNELS = [
+  'agent:tool-response',
+  'image:task-update',
+  'canvas:submit-edit-request',
 ]
 
 export type GetAgentManager = () => Promise<AgentManager>
@@ -114,7 +128,9 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
   for (const channel of AGENT_HANDLE_CHANNELS) {
     ipcMain.removeHandler(channel)
   }
-  ipcMain.removeAllListeners('agent:tool-response')
+  for (const channel of AGENT_ON_CHANNELS) {
+    ipcMain.removeAllListeners(channel)
+  }
 
   ipcMain.handle('agent:send-message', async (_event, payload) =>
     (await getManager()).sendMessage(payload),

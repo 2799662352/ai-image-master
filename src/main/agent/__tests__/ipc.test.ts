@@ -180,7 +180,15 @@ describe('registerAgentIpc thread management handlers', () => {
     )
 
     expect(get('agent:open-thread')).toBeTypeOf('function')
+    // Handlers registered AFTER the cleanup block must also be idempotent — the
+    // canvas edit-queue handler used to throw "second handler" on dev reload
+    // because it was missing from the cleanup list.
+    expect(get('canvas:edit-queue-status')).toBeTypeOf('function')
+    // `ipcMain.on` listeners must be torn down on re-register too, or each dev
+    // reload stacks another listener (double tool-response / double enqueue).
     expect(listenerCount('agent:tool-response')).toBe(1)
+    expect(listenerCount('image:task-update')).toBe(1)
+    expect(listenerCount('canvas:submit-edit-request')).toBe(1)
   })
 
   it('validates and forwards approval responses', async () => {

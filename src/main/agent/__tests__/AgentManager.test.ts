@@ -370,6 +370,126 @@ describe('AgentManager codex thread id mapping (regression: invalid thread id)',
     expect(backend.calls[1].threadId).toBe(CODEX_UUID)
   })
 
+  it('after codex restarts (epoch bump), starts a FRESH thread instead of wedging on the stale UUID', async () => {
+    // Repro for the "闪退后同一对话无法连续对话" bug: when the codex app-server is
+    // respawned mid-conversation (crash recovery or provider/config switch), the
+    // in-memory thread is gone, but the AgentManager kept mapping db→old UUID, so
+    // every later turn 404'd on `turn/start` and the chat was wedged until a full
+    // app restart. The epoch guard must detect the respawn and start fresh.
+    const events: AgentStreamEvent[] = []
+    const fakeStore = {
+      ...persistStubs,
+      createThread: async () => ({ id: 'cm-db-epoch' }),
+    } as any
+    const fakeAttachments = { ingest: async () => [] } as any
+    const recoveredUuid = 'ffffffff-0000-1111-2222-333333333333'
+
+    let epoch = 1
+    const calls: BackendCall[] = []
+    const backend = {
+      calls,
+      cancelCalls: [] as string[],
+      async start() {},
+      async stop() {},
+      isHealthy() { return true },
+      currentEpoch() { return epoch },
+      async cancel() {},
+      async *send(threadId: string | undefined, input: AgentInput) {
+        calls.push({ threadId, input })
+        const created = calls.length === 1 ? CODEX_UUID : recoveredUuid
+        yield { type: 'thread_created', threadId: created } as AgentStreamEvent
+        yield { type: 'turn_completed', threadId: created, turnId: `t${calls.length}` } as AgentStreamEvent
+      },
+    } satisfies IAgentBackend & { calls: BackendCall[]; cancelCalls: string[] }
+
+    const mgr = new AgentManager({
+      userDataDir: tmpDir,
+      store: fakeStore,
+      attachments: fakeAttachments,
+      eventSink: (e) => events.push(e),
+      backend,
+    })
+
+    await mgr.sendMessage({ content: 'first', attachments: [] })
+    await flushMicrotasks(20)
+    expect(backend.calls[0].threadId).toBeUndefined()
+
+    // Codex app-server was respawned (crash self-heal / provider switch).
+    epoch = 2
+
+    await mgr.sendMessage({ threadId: 'cm-db-epoch', content: 'second', attachments: [] })
+    await flushMicrotasks(20)
+
+    expect(backend.calls).toHaveLength(2)
+    // FRESH start, NOT the stale UUID the dead app-server generation minted.
+    expect(backend.calls[1].threadId).toBeUndefined()
+    const notices = events.filter(
+      (e): e is Extract<AgentStreamEvent, { type: 'notice' }> => e.type === 'notice',
+    )
+    expect(notices.some((n) => n.notice.kind === 'threadContextReset')).toBe(true)
+  })
+
+  it('after codex restarts, RESUMES the same thread (preserving context) when the backend supports thread/resume', async () => {
+    // Fix B: instead of discarding context, reload the persisted thread from
+    // disk into the respawned app-server via `thread/resume`, then keep using
+    // the SAME codex thread id so the conversation continues with full memory.
+    const events: AgentStreamEvent[] = []
+    const fakeStore = {
+      ...persistStubs,
+      createThread: async () => ({ id: 'cm-db-resume' }),
+    } as any
+    const fakeAttachments = { ingest: async () => [] } as any
+
+    let epoch = 1
+    const calls: BackendCall[] = []
+    const resumed: string[] = []
+    const backend = {
+      calls,
+      cancelCalls: [] as string[],
+      async start() {},
+      async stop() {},
+      isHealthy() { return true },
+      currentEpoch() { return epoch },
+      async resumeThread(threadId: string) { resumed.push(threadId) },
+      async cancel() {},
+      async *send(threadId: string | undefined, input: AgentInput) {
+        calls.push({ threadId, input })
+        if (calls.length === 1) {
+          yield { type: 'thread_created', threadId: CODEX_UUID } as AgentStreamEvent
+        }
+        yield { type: 'turn_completed', threadId: CODEX_UUID, turnId: `t${calls.length}` } as AgentStreamEvent
+      },
+    } satisfies IAgentBackend & { calls: BackendCall[]; cancelCalls: string[] }
+
+    const mgr = new AgentManager({
+      userDataDir: tmpDir,
+      store: fakeStore,
+      attachments: fakeAttachments,
+      eventSink: (e) => events.push(e),
+      backend,
+    })
+
+    await mgr.sendMessage({ content: 'first', attachments: [] })
+    await flushMicrotasks(20)
+    expect(backend.calls[0].threadId).toBeUndefined()
+
+    // Codex app-server respawned (crash self-heal / provider switch).
+    epoch = 2
+
+    await mgr.sendMessage({ threadId: 'cm-db-resume', content: 'second', attachments: [] })
+    await flushMicrotasks(20)
+
+    // Reloaded the persisted thread, then reused the SAME id → context kept.
+    expect(resumed).toEqual([CODEX_UUID])
+    expect(backend.calls).toHaveLength(2)
+    expect(backend.calls[1].threadId).toBe(CODEX_UUID)
+    // No "context was reset" notice — the whole point of resume is to keep it.
+    const notices = events.filter(
+      (e): e is Extract<AgentStreamEvent, { type: 'notice' }> => e.type === 'notice',
+    )
+    expect(notices.some((n) => n.notice.kind === 'threadContextReset')).toBe(false)
+  })
+
   it('retries on a new Codex thread when cached thread encryption is rejected', async () => {
     const events: AgentStreamEvent[] = []
     const fakeStore = {

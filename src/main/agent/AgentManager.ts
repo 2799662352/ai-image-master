@@ -228,6 +228,17 @@ export class AgentManager {
   private readonly codexThreadIdByDbThreadId = new Map<string, string>()
 
   /**
+   * Backend generation (`backend.currentEpoch()`) under which each
+   * `codexThreadId` above was minted. When codex respawns (crash self-heal or
+   * provider/config restart) its epoch bumps and the old process's in-memory
+   * thread is gone — so a mapping whose stored epoch != the current epoch is
+   * stale and must NOT be replayed into `turn/start` (it would 404 and wedge
+   * the conversation). See `resolveCodexThreadForSend`. Parallel to the id map so
+   * the existing `findDbThreadId`/`cancel` value-iteration keeps working untouched.
+   */
+  private readonly codexThreadEpochByDbThreadId = new Map<string, number>()
+
+  /**
    * Latest status emitted per MCP server name. Populated by
    * `mcp_status_updated` notifications from codex. The renderer pulls this
    * snapshot via `getMcpStatusSnapshotRpc` on subscribe, so dots stay correct
@@ -1386,6 +1397,12 @@ export class AgentManager {
    * know why the agent suddenly "forgot" the conversation.
    */
   private notifyThreadContextReset(dbThreadId: string, reason: string): void {
+    // Same UX as the poisoned-thread reset, but the cause differs: a respawn
+    // (crash recovery / provider switch) drops the engine-side memory rather
+    // than the gateway rejecting oversized history.
+    const message = reason === 'codex_restarted'
+      ? 'Codex 引擎刚刚重启（崩溃自愈或切换了模型/配置），上一段对话的引擎侧记忆已随旧进程释放，已自动在全新上下文中继续——本条消息正常处理，但 AI 不再记得此前的对话内容。建议把关键结论重新粘贴给它。'
+      : '上一段对话上下文已超出网关限制，已自动在全新上下文中继续——本条消息正常处理，但 AI 不再记得此前的对话内容。建议把关键结论重新粘贴给它。'
     this.emitEvent({
       type: 'notice',
       notice: {
@@ -1393,18 +1410,74 @@ export class AgentManager {
         kind: 'threadContextReset',
         level: 'warning',
         threadId: dbThreadId,
-        message:
-          '上一段对话上下文已超出网关限制，已自动在全新上下文中继续——本条消息正常处理，但 AI 不再记得此前的对话内容。建议把关键结论重新粘贴给它。',
+        message,
         details: { reason },
       },
     })
+  }
+
+  /**
+   * Record the codex-side thread id for a db thread, tagged with the backend
+   * generation that minted it so `resolveCodexThreadForSend` can later detect a
+   * respawn.
+   */
+  private rememberCodexThread(dbThreadId: string, codexThreadId: string): void {
+    this.codexThreadIdByDbThreadId.set(dbThreadId, codexThreadId)
+    const epoch = this.backend.currentEpoch?.()
+    if (epoch !== undefined) this.codexThreadEpochByDbThreadId.set(dbThreadId, epoch)
+  }
+
+  /** Drop both the id and its epoch tag (poisoned-thread reset / stale respawn). */
+  private forgetCodexThread(dbThreadId: string): void {
+    this.codexThreadIdByDbThreadId.delete(dbThreadId)
+    this.codexThreadEpochByDbThreadId.delete(dbThreadId)
+  }
+
+  /**
+   * Resolve the codex thread id to use for the next `send()` on a db thread,
+   * healing across app-server respawns:
+   *
+   * - Same generation (or backend without epoch support) → reuse the id as-is.
+   * - Codex was respawned since the id was minted (the old in-memory thread is
+   *   gone, so a stale id would 404 on `turn/start` and wedge the conversation —
+   *   the bug behind "闪退后同一对话无法连续对话"): first try `thread/resume` to
+   *   reload the SAME thread's rollout from disk into the new generation,
+   *   preserving context. On success, re-tag the id to the current epoch and
+   *   reuse it. If resume is unavailable or fails (thread gone/archived,
+   *   oversized, unsupported), forget the mapping, tell the user the context was
+   *   reset, and return undefined so the caller starts a FRESH thread.
+   */
+  private async resolveCodexThreadForSend(dbThreadId: string): Promise<string | undefined> {
+    const id = this.codexThreadIdByDbThreadId.get(dbThreadId)
+    if (!id) return undefined
+    const current = this.backend.currentEpoch?.()
+    if (current === undefined) return id
+    const stored = this.codexThreadEpochByDbThreadId.get(dbThreadId)
+    if (stored === undefined || stored === current) return id
+
+    // Stale generation: attempt to reload the persisted thread so the user keeps
+    // their conversation context across the respawn.
+    if (this.backend.resumeThread) {
+      try {
+        await this.backend.resumeThread(id)
+        // Same id is now live in the current generation — re-tag and reuse it.
+        this.codexThreadEpochByDbThreadId.set(dbThreadId, current)
+        return id
+      } catch (err) {
+        console.warn('[AgentManager] thread/resume failed, starting fresh thread:', err)
+      }
+    }
+
+    this.forgetCodexThread(dbThreadId)
+    this.notifyThreadContextReset(dbThreadId, 'codex_restarted')
+    return undefined
   }
 
   private async forwardEvents(dbThreadId: string, input: AgentInput): Promise<void> {
     let canRetryPoisonedThread = true
 
     while (true) {
-      const codexThreadId = this.codexThreadIdByDbThreadId.get(dbThreadId)
+      const codexThreadId = await this.resolveCodexThreadForSend(dbThreadId)
       // Accumulate the assistant turn's timeline items in main-process memory so
       // we can write a single AgentMessage row at turn_completed time. Mirrors
       // (a tiny subset of) the renderer's `applyEvent` reducer; kept inline to
@@ -1413,11 +1486,11 @@ export class AgentManager {
       try {
         for await (const event of this.backend.send(codexThreadId, input)) {
           if (event.type === 'thread_created' && event.threadId) {
-            this.codexThreadIdByDbThreadId.set(dbThreadId, event.threadId)
+            this.rememberCodexThread(dbThreadId, event.threadId)
           }
           if (event.type === 'error' && canRetryPoisonedThread && isPoisonedThreadError(event.error)) {
             canRetryPoisonedThread = false
-            this.codexThreadIdByDbThreadId.delete(dbThreadId)
+            this.forgetCodexThread(dbThreadId)
             if (isOversizedRequestError(event.error)) {
               this.notifyThreadContextReset(dbThreadId, 'request_too_large')
             }
@@ -1470,7 +1543,7 @@ export class AgentManager {
       } catch (error) {
         if (codexThreadId && canRetryPoisonedThread && isPoisonedThreadError(error)) {
           canRetryPoisonedThread = false
-          this.codexThreadIdByDbThreadId.delete(dbThreadId)
+          this.forgetCodexThread(dbThreadId)
           if (isOversizedRequestError(error)) {
             this.notifyThreadContextReset(dbThreadId, 'request_too_large')
           }

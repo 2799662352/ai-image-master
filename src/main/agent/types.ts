@@ -57,6 +57,29 @@ export interface IAgentBackend {
   send(threadId: string | undefined, input: AgentInput): AsyncIterable<AgentStreamEvent>
   cancel(threadId: string): Promise<void>
   isHealthy(): boolean
+  /**
+   * Monotonic generation counter that increments every time the underlying
+   * agent process is (re)spawned — crash self-heal via `start()`, or a
+   * provider/config `restartCodex()`. Lets `AgentManager` detect that a
+   * previously minted thread id belongs to a DEAD app-server generation (its
+   * in-memory thread is gone, since codex keeps threads per-process) and start
+   * a FRESH thread instead of wedging the conversation on a stale id that the
+   * new process 404s on. Optional: backends that never respawn (or test stubs)
+   * may omit it, in which case the manager treats every id as belonging to the
+   * current generation (legacy behavior).
+   */
+  currentEpoch?(): number
+  /**
+   * Reload a previously persisted thread (by codex thread id) from disk into the
+   * CURRENT app-server generation via the v2 `thread/resume` RPC, so a following
+   * `send()` with the same id appends to it instead of 404ing. Used to preserve
+   * conversation context across a respawn (crash self-heal / provider switch)
+   * rather than dropping it. Rejects if the thread can't be resumed (gone,
+   * archived, oversized, or the param shape is unsupported by the binary), in
+   * which case the manager falls back to starting a fresh thread. Optional:
+   * backends without a resumable on-disk store (or test stubs) may omit it.
+   */
+  resumeThread?(threadId: string): Promise<void>
   setSessionConfig?(patch: Partial<CodexSessionConfig>): void
   /**
    * Swap the active model provider. The new value is consumed on the next

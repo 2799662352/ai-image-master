@@ -76,6 +76,21 @@ async function startFakeCodexServer(): Promise<FakeCodexServer> {
             },
           },
         }))
+      } else if (msg.method === 'thread/resume' && msg.id !== undefined) {
+        // Response shape matches thread/start; resumeThread ignores it.
+        ws.send(JSON.stringify({
+          jsonrpc: '2.0',
+          id: msg.id,
+          result: {
+            thread: {
+              id: msg.params.threadId,
+              preview: 'Resumed Codex session',
+              createdAt: '2026-05-08T04:00:00Z',
+              updatedAt: '2026-05-08T04:10:00Z',
+              cwd: 'D:/repo',
+            },
+          },
+        }))
       }
     })
   })
@@ -159,5 +174,14 @@ describe('CodexProtocolClient thread history wrappers', () => {
       updatedAt: '2026-05-08T03:00:00Z',
       cwd: 'D:/repo',
     })
+  })
+
+  it('resumeThread sends thread/resume with only the thread id (binary-compatible)', async () => {
+    await startClient()
+
+    await expect(client!.resumeThread('codex-thread-1')).resolves.toBeUndefined()
+
+    const request = server!.receivedFromClient.find((msg) => msg.method === 'thread/resume')
+    expect(request?.params).toEqual({ threadId: 'codex-thread-1' })
   })
 })

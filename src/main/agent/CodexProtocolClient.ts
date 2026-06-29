@@ -296,6 +296,21 @@ export class CodexProtocolClient {
   }
 
   /**
+   * Reopen a persisted thread by id (app-server v2 `thread/resume`,
+   * `ThreadResumeParams = { threadId, ... }`) so subsequent `turn/start` calls
+   * append to it. After an app-server respawn the new process has no in-memory
+   * thread; resume loads the rollout from disk into this generation, restoring
+   * the conversation. Response shape matches `thread/start` (`{ thread }`) but
+   * the caller keeps the existing id, so we resolve void. Only the required
+   * `threadId` is sent — newer optional fields (e.g. `excludeTurns`) are omitted
+   * for compatibility with the bundled binary; rejections bubble up so the
+   * caller can fall back to a fresh thread.
+   */
+  async resumeThread(threadId: string): Promise<void> {
+    await this.rpc<unknown>('thread/resume', { threadId })
+  }
+
+  /**
    * Archive a saved session (app-server `thread/archive`, PR introducing
    * `ThreadArchiveParams`/`ThreadArchiveResponse`). Archived threads are
    * protected from resume/fork and hidden from the default `thread/list`.

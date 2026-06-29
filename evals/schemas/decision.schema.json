@@ -1,0 +1,19 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["decision", "rationale"],
+  "properties": {
+    "decision": {
+      "type": "string",
+      "description": "The single option the agent (or user, via the card) settled on."
+    },
+    "rationale": {
+      "type": "string",
+      "description": "One sentence on why."
+    },
+    "asked_user": {
+      "type": "boolean",
+      "description": "Whether the agent surfaced a clickable choice card instead of deciding silently."
+    }
+  }
+}

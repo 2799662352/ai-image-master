@@ -198,6 +198,16 @@ export class CodexLocalBackend implements IAgentBackend {
   private currentProvider: CodexProviderConfig | undefined
   private configDirty = false
   private codexHome: string | undefined
+  /**
+   * Generation counter bumped once per successful spawn/connect (see
+   * `startSpawnedClient` / `startWsClient`). Every codex respawn — crash
+   * self-heal via `start()` or a provider/config `restartCodex()` — mints a
+   * brand-new app-server process whose in-memory threads start empty, so any
+   * thread id from a prior generation is no longer resumable on `turn/start`.
+   * `AgentManager` reads this via `currentEpoch()` to drop stale thread ids
+   * instead of wedging the conversation on a dead id.
+   */
+  private epoch = 0
 
   constructor(options: CodexLocalBackendOptions = {}) {
     this.options = options
@@ -239,6 +249,7 @@ export class CodexLocalBackend implements IAgentBackend {
       onMcpNotification: this.options.onMcpNotification,
     })
     await client.start()
+    this.epoch += 1
     return client
   }
 
@@ -357,6 +368,9 @@ export class CodexLocalBackend implements IAgentBackend {
     } finally {
       startupPhase = false
     }
+    // One bump per successful spawn — invalidates any thread id minted by a
+    // previous codex generation (see `epoch` field jsdoc).
+    this.epoch += 1
     return { proc, client, log: ownedLog }
   }
 
@@ -464,6 +478,11 @@ export class CodexLocalBackend implements IAgentBackend {
     return this.client.forkThread(threadId)
   }
 
+  async resumeThread(threadId: string): Promise<void> {
+    if (!this.client) throw new Error('CodexLocalBackend.resumeThread called before start')
+    return this.client.resumeThread(threadId)
+  }
+
   async archiveThread(threadId: string): Promise<void> {
     if (!this.client) throw new Error('CodexLocalBackend.archiveThread called before start')
     return this.client.archiveThread(threadId)
@@ -494,6 +513,10 @@ export class CodexLocalBackend implements IAgentBackend {
     if (!this.client?.isOpen()) return false
     if (this.wsUrlOverride) return true
     return this.proc !== null && this.proc.exitCode === null
+  }
+
+  currentEpoch(): number {
+    return this.epoch
   }
 
   setSessionConfig(patch: Partial<CodexSessionConfig>): void {
