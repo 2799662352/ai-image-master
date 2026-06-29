@@ -14,7 +14,12 @@ import {
   getSeedanceKeyState,
   setSeedanceCredentials,
 } from './credentials'
-import { importSeedanceAsset, listSeedanceAssets } from './assets'
+import {
+  deleteSeedanceAssets,
+  getSeedanceAssetCapacity,
+  importSeedanceAsset,
+  listSeedanceAssets,
+} from './assets'
 import {
   getPortraitOverlay,
   mutatePortraitOverlay,
@@ -297,6 +302,15 @@ export function initSeedanceRuntime(opts: {
     // `url is too long` 限制,同时比直传 base64 快得多。
     const url = input?.url?.startsWith('data:') ? await relayDataUrlToCos(input.url) : input?.url
     return importSeedanceAsset({ ...input, url }, assetCreds())
+  })
+  ipcMain.removeHandler('seedance:assets-capacity')
+  ipcMain.handle('seedance:assets-capacity', () => getSeedanceAssetCapacity(assetCreds()))
+  ipcMain.removeHandler('seedance:assets-delete')
+  ipcMain.handle('seedance:assets-delete', (_event, args: { assetIds?: unknown }) => {
+    const ids = Array.isArray(args?.assetIds)
+      ? args.assetIds.filter((x): x is string => typeof x === 'string')
+      : []
+    return deleteSeedanceAssets(ids, assetCreds())
   })
 
   // ============ 叠加层(改名/分组/隐藏)IPC + 广播 ============

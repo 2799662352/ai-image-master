@@ -31,6 +31,15 @@ describe('seedanceClient.createTask', () => {
     expect(res.id).toBe('task-enveloped')
   })
 
+  it('POST 到 Ark 推荐新路径 /api/v3/contents/generations/ark/tasks（200）', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ id: 'task-200', status: 'queued', created_at: 1 }, 200))
+    const res = await seedanceClient.createTask({} as never, 'key')
+    expect(res.id).toBe('task-200')
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('https://vvdance.yongmuai.com/api/v3/contents/generations/ark/tasks')
+    expect(init.method).toBe('POST')
+  })
+
   // 根因回归（2026-06-18）：VVDance 创建接口对已受理的异步任务返回 HTTP 202 +
   // 扁平 body（无 data 包裹），如 { id, task_id, status:"running", created_at }。
   // 旧逻辑 `!json.data` 把它误判成失败 → 抛 "Seedance API 202" → 任务从未登记本地表。
@@ -85,5 +94,12 @@ describe('seedanceClient.queryTask', () => {
     )
     const res = await seedanceClient.queryTask('t2', 'key')
     expect(res.status).toBe('running')
+  })
+
+  it('查询仍走旧任务路径 /api/v3/contents/generations/tasks/{taskId}', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ id: 't3', status: 'succeeded' }))
+    await seedanceClient.queryTask('t3', 'key')
+    const [url] = fetchMock.mock.calls[0] as [string]
+    expect(url).toBe('https://vvdance.yongmuai.com/api/v3/contents/generations/tasks/t3')
   })
 })

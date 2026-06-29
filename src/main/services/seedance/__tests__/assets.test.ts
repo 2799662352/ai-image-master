@@ -7,7 +7,13 @@ vi.mock('electron', () => ({
   net: { fetch: (...args: unknown[]) => fetchMock(...args) },
 }))
 
-import { signAssetRequest, importSeedanceAsset, listSeedanceAssets } from '../assets'
+import {
+  signAssetRequest,
+  importSeedanceAsset,
+  listSeedanceAssets,
+  getSeedanceAssetCapacity,
+  deleteSeedanceAssets,
+} from '../assets'
 
 const CREDS = { apiKey: 'sd_key', apiSecret: 'sd_secret' }
 
@@ -146,5 +152,86 @@ describe('listSeedanceAssets', () => {
     const result = await listSeedanceAssets({}, CREDS)
     expect(result.items).toHaveLength(1)
     expect(result.total).toBe(1)
+  })
+})
+
+describe('getSeedanceAssetCapacity', () => {
+  it('GET /capacity，签名签到含 /capacity 的子路径', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ used: 1, limit: 100, remaining: 99 }))
+    const result = await getSeedanceAssetCapacity(CREDS)
+    expect(result).toEqual({ used: 1, limit: 100, remaining: 99 })
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('https://vvdance.yongmuai.com/api/open/v1/local-assets/capacity')
+    expect(init.method).toBe('GET')
+    expect(init.body).toBeUndefined()
+    const headers = init.headers as Record<string, string>
+    // 子路径必须进签名：用同一时间戳重算，证明签的是 .../local-assets/capacity 而非裸路径。
+    const ts = headers['X-Timestamp']
+    const expected = signAssetRequest('GET', '/api/open/v1/local-assets/capacity', '', 'sd_secret', ts)
+    expect(headers['X-Signature']).toBe(expected.signature)
+    const wrong = signAssetRequest('GET', '/api/open/v1/local-assets', '', 'sd_secret', ts)
+    expect(headers['X-Signature']).not.toBe(wrong.signature)
+  })
+
+  it('兼容 data 包裹并对缺字段回退 0', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: { used: 5 } }))
+    const result = await getSeedanceAssetCapacity(CREDS)
+    expect(result).toEqual({ used: 5, limit: 0, remaining: 0 })
+  })
+})
+
+describe('deleteSeedanceAssets', () => {
+  it('DELETE 把 assetIds 放进 body 并对该 body 签名', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        deletedCount: 1,
+        items: [{ assetId: 'v0c001', name: '参考1.jpg', deletedAt: '2026-06-09T08:15:30.000Z' }],
+        summary: { used: 0, limit: 100, remaining: 100 },
+      }),
+    )
+    const result = await deleteSeedanceAssets(['v0c001'], CREDS)
+    expect(result.deletedCount).toBe(1)
+    expect(result.items[0].assetId).toBe('v0c001')
+    expect(result.summary?.remaining).toBe(100)
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('https://vvdance.yongmuai.com/api/open/v1/local-assets')
+    expect(init.method).toBe('DELETE')
+    expect(init.body).toBe(JSON.stringify({ assetIds: ['v0c001'] }))
+    const headers = init.headers as Record<string, string>
+    const ts = headers['X-Timestamp']
+    const expected = signAssetRequest(
+      'DELETE',
+      '/api/open/v1/local-assets',
+      JSON.stringify({ assetIds: ['v0c001'] }),
+      'sd_secret',
+      ts,
+    )
+    expect(headers['X-Signature']).toBe(expected.signature)
+  })
+
+  it('空 assetIds 直接报错（不发请求）', async () => {
+    await expect(deleteSeedanceAssets([], CREDS)).rejects.toThrow(/至少一个 assetId/)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('超过 100 个直接报错（不发请求）', async () => {
+    const many = Array.from({ length: 101 }, (_, i) => `id-${i}`)
+    await expect(deleteSeedanceAssets(many, CREDS)).rejects.toThrow(/最多删除 100/)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('缺 deletedCount 时按 items 长度兜底', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        data: {
+          items: [
+            { assetId: 'a', name: 'a', deletedAt: 't' },
+            { assetId: 'b', name: 'b', deletedAt: 't' },
+          ],
+        },
+      }),
+    )
+    const result = await deleteSeedanceAssets(['a', 'b'], CREDS)
+    expect(result.deletedCount).toBe(2)
   })
 })

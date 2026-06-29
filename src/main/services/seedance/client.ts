@@ -7,7 +7,12 @@ import { net } from 'electron'
 import type { SeedanceCreateTaskBody, SeedanceTaskStatus } from './types'
 
 export const SEEDANCE_BASE_URL = 'https://vvdance.yongmuai.com'
-const TASKS_PATH = '/api/v3/contents/generations/tasks'
+// 创建任务走 Ark 推荐新路径（文档 2.0）：异步受理成功返回 **200 OK**。
+// 旧路径 `/api/v3/contents/generations/tasks`（返回 202 Accepted）仍兼容，但官方
+// 推荐迁到 /ark/tasks；arkRequest 把所有 2xx 当成功，故 200/202 都正常解析。
+const CREATE_TASK_PATH = '/api/v3/contents/generations/ark/tasks'
+// 查询沿用 `/api/v3/contents/generations/tasks/{taskId}`（文档 3 查询地址一，仍有效）。
+const QUERY_TASK_PATH = '/api/v3/contents/generations/tasks'
 
 export interface SeedanceQueryResult {
   id: string
@@ -68,10 +73,10 @@ async function arkRequest<T>(url: string, apiKey: string, init?: RequestInit): P
 
 export const seedanceClient: SeedanceClient = {
   async createTask(body, apiKey) {
-    // 扁平 202 body 把任务 id 放在顶层 `id`/`task_id`（二者通常同值）；包裹响应放在
+    // 扁平 200/202 body 把任务 id 放在顶层 `id`/`task_id`（二者通常同值）；包裹响应放在
     // `data.id`。arkRequest 已统一回退到顶层 json，这里再兼容 task_id 别名。
     const data = await arkRequest<{ id?: string; task_id?: string; status?: SeedanceTaskStatus }>(
-      `${SEEDANCE_BASE_URL}${TASKS_PATH}`,
+      `${SEEDANCE_BASE_URL}${CREATE_TASK_PATH}`,
       apiKey,
       { method: 'POST', body: JSON.stringify(body) },
     )
@@ -82,7 +87,7 @@ export const seedanceClient: SeedanceClient = {
 
   async queryTask(taskId, apiKey) {
     return arkRequest<SeedanceQueryResult>(
-      `${SEEDANCE_BASE_URL}${TASKS_PATH}/${encodeURIComponent(taskId)}`,
+      `${SEEDANCE_BASE_URL}${QUERY_TASK_PATH}/${encodeURIComponent(taskId)}`,
       apiKey,
       { method: 'GET' },
     )

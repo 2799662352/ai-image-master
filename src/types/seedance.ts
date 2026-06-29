@@ -111,13 +111,34 @@ export type PortraitOverlayMutation =
   | { op: 'addGroup'; name: string }
   | { op: 'removeGroup'; name: string }
 
+/** 素材额度摘要（列表 summary 与 GET /local-assets/capacity 同形）。 */
+export interface SeedanceAssetCapacity {
+  used: number
+  limit: number
+  remaining: number
+}
+
 export interface SeedanceAssetListResult {
   items: SeedanceAssetItem[]
   total: number
   page: number
   pageSize: number
   totalPages: number
-  summary?: { used: number; limit: number; remaining: number }
+  summary?: SeedanceAssetCapacity
+}
+
+/** 批量删除返回里的单条删除确认（文档 4.2.4）。 */
+export interface SeedanceAssetDeleteItem {
+  assetId: string
+  name: string
+  deletedAt: string
+}
+
+/** DELETE /local-assets 的返回（文档 4.2.4）。 */
+export interface SeedanceAssetDeleteResult {
+  deletedCount: number
+  items: SeedanceAssetDeleteItem[]
+  summary?: SeedanceAssetCapacity
 }
 
 export interface SeedanceAssetListQuery {

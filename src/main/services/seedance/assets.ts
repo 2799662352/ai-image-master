@@ -9,6 +9,8 @@
 import { net } from 'electron'
 import crypto from 'node:crypto'
 import type {
+  SeedanceAssetCapacity,
+  SeedanceAssetDeleteResult,
   SeedanceAssetImportInput,
   SeedanceAssetImportResult,
   SeedanceAssetItem,
@@ -38,16 +40,20 @@ export function signAssetRequest(
 }
 
 async function assetRequest<T>(
-  method: 'GET' | 'POST',
+  method: 'GET' | 'POST' | 'DELETE',
+  subPath: string,
   query: string,
   body: unknown,
   creds: SeedanceAssetCredentials,
 ): Promise<T> {
   if (!creds.apiKey) throw new Error('Seedance assets: API Key 未配置')
   if (!creds.apiSecret) throw new Error('Seedance assets: API Secret 未配置（素材库接口需要签名）')
-  const bodyText = method === 'POST' ? JSON.stringify(body) : ''
-  const { timestamp, signature } = signAssetRequest(method, ASSETS_PATH, bodyText, creds.apiSecret)
-  const res = await net.fetch(`${SEEDANCE_BASE_URL}${ASSETS_PATH}${query}`, {
+  // 签名只签**路径**（含 /capacity 这类子路径），永远不含 query string（文档 4.2.2）。
+  const requestPath = `${ASSETS_PATH}${subPath}`
+  // GET 签空 body；POST/DELETE 签 JSON body（批量删除把 assetIds 放在 DELETE 的 body 里）。
+  const bodyText = method === 'GET' ? '' : JSON.stringify(body ?? {})
+  const { timestamp, signature } = signAssetRequest(method, requestPath, bodyText, creds.apiSecret)
+  const res = await net.fetch(`${SEEDANCE_BASE_URL}${requestPath}${query}`, {
     method,
     headers: {
       'Content-Type': 'application/json',
@@ -55,7 +61,7 @@ async function assetRequest<T>(
       'X-Timestamp': timestamp,
       'X-Signature': signature,
     },
-    body: method === 'POST' ? bodyText : undefined,
+    body: method === 'GET' ? undefined : bodyText,
   })
   const text = await res.text()
   let json: unknown = null
@@ -105,7 +111,7 @@ export async function importSeedanceAsset(
   input: SeedanceAssetImportInput,
   creds: SeedanceAssetCredentials,
 ): Promise<SeedanceAssetImportResult> {
-  const result = await assetRequest<{ duplicated?: boolean }>('POST', '', input, creds)
+  const result = await assetRequest<{ duplicated?: boolean }>('POST', '', '', input, creds)
   const asset = extractAsset(result)
   if (!asset) {
     const snippet = JSON.stringify(result).slice(0, 400)
@@ -127,6 +133,7 @@ export async function listSeedanceAssets(
   const qs = params.size > 0 ? `?${params.toString()}` : ''
   const raw = await assetRequest<Partial<SeedanceAssetListResult> & { data?: Partial<SeedanceAssetListResult> }>(
     'GET',
+    '',
     qs,
     undefined,
     creds,
@@ -140,5 +147,59 @@ export async function listSeedanceAssets(
     pageSize: result.pageSize ?? query.pageSize ?? 12,
     totalPages: result.totalPages ?? 1,
     summary: result.summary,
+  }
+}
+
+/**
+ * 查询素材额度（文档 4.2.3）。GET /api/open/v1/local-assets/capacity，
+ * 返回 `{ used, limit, remaining }`。导入前可先查剩余额度。
+ * 兼容 `data` 包裹一层的部署，字段缺省回退 0。
+ */
+export async function getSeedanceAssetCapacity(
+  creds: SeedanceAssetCredentials,
+): Promise<SeedanceAssetCapacity> {
+  const raw = await assetRequest<Partial<SeedanceAssetCapacity> & { data?: Partial<SeedanceAssetCapacity> }>(
+    'GET',
+    '/capacity',
+    '',
+    undefined,
+    creds,
+  )
+  const hasNum = (o?: Partial<SeedanceAssetCapacity>): boolean =>
+    !!o && (typeof o.used === 'number' || typeof o.limit === 'number' || typeof o.remaining === 'number')
+  const c = !hasNum(raw) && hasNum(raw.data) ? raw.data! : raw
+  return {
+    used: c.used ?? 0,
+    limit: c.limit ?? 0,
+    remaining: c.remaining ?? 0,
+  }
+}
+
+/**
+ * 按 assetId 批量删除素材（文档 4.2.4）。DELETE /api/open/v1/local-assets，
+ * body 直接传 `{ assetIds: [...] }`。单次最多 100 个；上游只删属于当前
+ * 开发者的素材。兼容 `data` 包裹一层；缺 deletedCount 时按 items 长度兜底。
+ */
+export async function deleteSeedanceAssets(
+  assetIds: string[],
+  creds: SeedanceAssetCredentials,
+): Promise<SeedanceAssetDeleteResult> {
+  const ids = Array.isArray(assetIds) ? assetIds.filter((id) => typeof id === 'string' && id.trim()) : []
+  if (ids.length === 0) throw new Error('Seedance assets: deleteSeedanceAssets 需要至少一个 assetId')
+  if (ids.length > 100) throw new Error('Seedance assets: 单次最多删除 100 个素材')
+  const raw = await assetRequest<Partial<SeedanceAssetDeleteResult> & { data?: Partial<SeedanceAssetDeleteResult> }>(
+    'DELETE',
+    '',
+    '',
+    { assetIds: ids },
+    creds,
+  )
+  const r =
+    raw.data && (typeof raw.data.deletedCount === 'number' || Array.isArray(raw.data.items)) ? raw.data : raw
+  const items = Array.isArray(r.items) ? r.items : []
+  return {
+    deletedCount: typeof r.deletedCount === 'number' ? r.deletedCount : items.length,
+    items,
+    summary: r.summary,
   }
 }
