@@ -319,6 +319,11 @@ const IPC_CHANNELS = {
     // Persist a renderer-produced image (e.g. a codex `generate_image` result)
     // into the watched uploads dir so it shows in the ATTACHMENTS file panel.
     SAVE: 'attachments:save',
+    // Same as SAVE but the renderer hands a remote http(s) URL instead of bytes.
+    // The MAIN process downloads it (Node fetch → no browser CORS) and ingests,
+    // so URL-returning image/video channels (whose COS/OSS links omit
+    // Access-Control-Allow-Origin) can still be saved to local paths.
+    SAVE_FROM_URL: 'attachments:save-from-url',
     // PR-A hot-path: resized JPEG thumbnails. See main/file-explorer/mediaThumbIpc.ts
     // for the size/security envelope. Renderer calls this by default; falls
     // through to READ_THUMB only when `useResolvedMediaSrc(..., { fullFidelity: true })`.
@@ -674,6 +679,17 @@ export interface ElectronAPI {
       name: string
       mime: string
       base64: string
+    }) => Promise<{ ok: true; path: string } | { ok: false; reason: string }>
+    /**
+     * Persist a remote http(s) image/video into the agent uploads dir by
+     * downloading it in the MAIN process. CORS is a browser concept, so this
+     * succeeds for presigned COS/OSS result URLs that block a renderer `fetch`.
+     * The detected Content-Type drives the final extension/mime.
+     */
+    saveFromUrl: (args: {
+      threadId: string
+      name: string
+      url: string
     }) => Promise<{ ok: true; path: string } | { ok: false; reason: string }>
   }
   /**
@@ -1407,6 +1423,11 @@ const electronAPI: ElectronAPI = {
     save: (args: { threadId: string; name: string; mime: string; base64: string }) =>
       safeInvoke<{ ok: true; path: string } | { ok: false; reason: string }>(
         IPC_CHANNELS.ATTACHMENTS.SAVE,
+        args,
+      ),
+    saveFromUrl: (args: { threadId: string; name: string; url: string }) =>
+      safeInvoke<{ ok: true; path: string } | { ok: false; reason: string }>(
+        IPC_CHANNELS.ATTACHMENTS.SAVE_FROM_URL,
         args,
       ),
   },

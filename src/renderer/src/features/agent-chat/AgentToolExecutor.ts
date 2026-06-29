@@ -73,6 +73,11 @@ type AgentElectronApi = {
       mime: string
       base64: string
     }) => Promise<{ ok: true; path: string } | { ok: false; reason: string }>
+    saveFromUrl?: (args: {
+      threadId: string
+      name: string
+      url: string
+    }) => Promise<{ ok: true; path: string } | { ok: false; reason: string }>
     readThumb: (
       p: string,
     ) => Promise<{ ok: true; base64: string; mime: string } | { ok: false; reason: string }>
@@ -712,10 +717,28 @@ export class AgentToolExecutor {
     const stamp = Date.now()
     const paths: string[] = []
     for (let i = 0; i < images.length; i++) {
+      const uri = images[i]
+      const suffix = images.length > 1 ? `-${i + 1}` : ''
       try {
-        const decoded = await this.toBase64(images[i])
+        // URL-returning channels: the result is a remote presigned link (COS/OSS)
+        // that the renderer cannot `fetch()` (no Access-Control-Allow-Origin → the
+        // `net::ERR_FAILED 200` CORS block). Hand the URL to MAIN, which downloads
+        // it (no browser CORS) + ingests. Covers image AND video result URLs.
+        if (/^https?:\/\//i.test(uri) && api.saveFromUrl) {
+          const res = await api.saveFromUrl({
+            threadId,
+            name: `${base}-${stamp}${suffix}.bin`,
+            url: uri,
+          })
+          if (res.ok) {
+            paths.push(res.path)
+            continue
+          }
+          console.warn('[AgentToolExecutor] saveFromUrl failed, falling back to base64:', res.reason)
+          // Fall through to the base64 path (works for data: URLs / same-origin).
+        }
+        const decoded = await this.toBase64(uri)
         if (!decoded) continue
-        const suffix = images.length > 1 ? `-${i + 1}` : ''
         const ext = decoded.mime === 'image/jpeg' ? 'jpg' : decoded.mime.split('/')[1] || 'png'
         const res = await api.save({
           threadId,

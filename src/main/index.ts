@@ -57,6 +57,65 @@ import { seedApiyiMcpEntry } from './agent/apiyiMcpSeed'
 // 检测开发模式：通过命令行参数或环境变量
 const isDev = process.argv.includes('--dev') || process.env.NODE_ENV === 'development'
 
+// ─── attachments:save-from-url media-type helpers ───────────────────────────
+// Some image/video channels return a presigned remote URL (COS/OSS) whose
+// extension is hidden behind query-signed params and whose Content-Type may be
+// a generic octet-stream. These resolve the real media mime + canonical file
+// extension so a downloaded result is content-addressed under a sane name.
+const URL_EXT_TO_MIME: Readonly<Record<string, string>> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  gif: 'image/gif',
+  bmp: 'image/bmp',
+  svg: 'image/svg+xml',
+  mp4: 'video/mp4',
+  webm: 'video/webm',
+  mov: 'video/quicktime',
+  m4v: 'video/x-m4v',
+}
+const MIME_TO_EXT: Readonly<Record<string, string>> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'image/bmp': 'bmp',
+  'image/svg+xml': 'svg',
+  'video/mp4': 'mp4',
+  'video/webm': 'webm',
+  'video/quicktime': 'mov',
+  'video/x-m4v': 'm4v',
+}
+
+/**
+ * Resolve a downloadable media mime, preferring the server's Content-Type and
+ * falling back to the URL pathname extension. Returns `null` when the result is
+ * neither image/* nor video/* (so the caller can reject non-media downloads).
+ */
+function resolveMediaMime(headerMime: string, url: string): string | null {
+  if (headerMime.startsWith('image/') || headerMime.startsWith('video/')) return headerMime
+  let pathname = url
+  try {
+    pathname = new URL(url).pathname
+  } catch {
+    /* keep raw url */
+  }
+  const ext = pathname.split('.').pop()?.toLowerCase() ?? ''
+  return URL_EXT_TO_MIME[ext] ?? null
+}
+
+/** Canonical file extension for a known media mime (defaults to `bin`). */
+function extensionForMime(mime: string): string {
+  return MIME_TO_EXT[mime] ?? 'bin'
+}
+
+/** Drop a trailing `.ext` from a filename (keeps dotfiles + no-ext names intact). */
+function stripExtension(name: string): string {
+  const dot = name.lastIndexOf('.')
+  return dot > 0 ? name.slice(0, dot) : name
+}
+
 // ─── 全局错误兜底 ────────────────────────────────────────────────────────────
 //
 // Node 15+ / Electron 15+ 的默认行为是: unhandledRejection 会让进程崩溃。
@@ -858,6 +917,76 @@ async function initAgentRuntime(win: BrowserWindow): Promise<void> {
           return { ok: true, path: saved.localPath }
         } catch (error) {
           return { ok: false, reason: error instanceof Error ? error.message : String(error) }
+        }
+      },
+    )
+
+    // `attachments:save-from-url` — the URL twin of `attachments:save`. Some
+    // image/video channels return a remote result URL (presigned COS/OSS) rather
+    // than inline base64; the renderer cannot `fetch()` those (no
+    // Access-Control-Allow-Origin → CORS block, the `net::ERR_FAILED 200` in the
+    // logs). We download here in MAIN (Node fetch isn't bound by browser CORS),
+    // detect the real mime from Content-Type, then reuse the same content-addressed
+    // AttachmentService ingest + `attachments:changed` broadcast.
+    ipcMain.removeHandler('attachments:save-from-url')
+    ipcMain.handle(
+      'attachments:save-from-url',
+      async (
+        _event,
+        args: { threadId?: unknown; name?: unknown; url?: unknown },
+      ): Promise<{ ok: true; path: string } | { ok: false; reason: string }> => {
+        const threadId = typeof args?.threadId === 'string' ? args.threadId : ''
+        const name = typeof args?.name === 'string' ? args.name : ''
+        const url = typeof args?.url === 'string' ? args.url : ''
+        if (!threadId || !name || !url) {
+          return { ok: false, reason: 'attachments:save-from-url requires threadId, name, url' }
+        }
+        if (!/^https?:\/\//i.test(url)) {
+          return { ok: false, reason: 'attachments:save-from-url only accepts http(s) URLs' }
+        }
+        if (typeof fetch !== 'function') {
+          return { ok: false, reason: 'attachments:save-from-url: fetch unavailable in main' }
+        }
+        const MAX_BYTES = 100 * 1024 * 1024
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), 60_000)
+        try {
+          const res = await fetch(url, { signal: controller.signal })
+          if (!res.ok) {
+            return { ok: false, reason: `attachments:save-from-url: download failed (HTTP ${res.status})` }
+          }
+          const declared = Number(res.headers.get('content-length') ?? '')
+          if (Number.isFinite(declared) && declared > MAX_BYTES) {
+            return { ok: false, reason: 'attachments:save-from-url: remote file too large' }
+          }
+          const arrayBuffer = await res.arrayBuffer()
+          if (arrayBuffer.byteLength === 0) {
+            return { ok: false, reason: 'attachments:save-from-url: downloaded empty file' }
+          }
+          if (arrayBuffer.byteLength > MAX_BYTES) {
+            return { ok: false, reason: 'attachments:save-from-url: remote file too large' }
+          }
+          const headerMime = (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase()
+          const mime = resolveMediaMime(headerMime, url)
+          if (!mime) {
+            return {
+              ok: false,
+              reason: `attachments:save-from-url: not an image/video (content-type: ${headerMime || 'unknown'})`,
+            }
+          }
+          // Force the filename extension to match the detected mime — the renderer
+          // can only guess (URLs hide the real type behind query-signed params).
+          const finalName = `${stripExtension(name)}.${extensionForMime(mime)}`
+          const [saved] = await attachmentService.ingest(threadId, [
+            { name: finalName, mime, size: arrayBuffer.byteLength, buffer: arrayBuffer },
+          ])
+          if (!saved) return { ok: false, reason: 'attachments:save-from-url: ingest produced no file' }
+          return { ok: true, path: saved.localPath }
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error)
+          return { ok: false, reason: `attachments:save-from-url: ${reason}` }
+        } finally {
+          clearTimeout(timer)
         }
       },
     )
