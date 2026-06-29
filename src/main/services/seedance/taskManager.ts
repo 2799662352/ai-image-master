@@ -9,6 +9,8 @@
 // waitForChange 给 check_video_task 提供 ≤25s 服务端长轮询：状态一变立即
 // 返回，否则超时返回当前快照 —— codex 每次调用都拿到新鲜状态且不会断流。
 
+import { randomUUID } from 'node:crypto'
+
 import type { SeedanceClient } from './client'
 import type {
   CreateVideoTaskInput,
@@ -16,6 +18,7 @@ import type {
   SeedanceContentItem,
   SeedanceModelAlias,
   SeedanceTaskState,
+  SeedanceTaskStatus,
   SeedanceTaskUpdate,
 } from './types'
 import { SEEDANCE_MODEL_IDS } from './types'
@@ -47,6 +50,8 @@ export interface SubmitParams {
   /** 已解析好的 content[]（含参考素材 dataURL），由 main handler 组装。 */
   content: SeedanceContentItem[]
   threadId?: string
+  /** generate_video 预备卡片的临时 id；真实任务广播会带上它做气泡对齐。 */
+  clientId?: string
 }
 
 export class SeedanceTaskManager {
@@ -82,6 +87,7 @@ export class SeedanceTaskManager {
     const { id } = await this.deps.client.createTask(body, apiKey)
     const state: SeedanceTaskState = {
       taskId: id,
+      clientId: params.clientId,
       threadId,
       prompt: input.prompt,
       model,
@@ -97,6 +103,57 @@ export class SeedanceTaskManager {
     this.deps.broadcast({ ...state })
     void this.pollLoop(id)
     return { ...state }
+  }
+
+  /**
+   * 拼装一条「合成广播」——用于真实任务存在之前的预备/失败卡片。taskId 直接复用
+   * clientId（渲染端以 clientId 为气泡键，二者一致即可），不进 tasks Map、不轮询。
+   */
+  private baseUpdate(
+    clientId: string,
+    input: CreateVideoTaskInput,
+    threadId: string | undefined,
+    status: SeedanceTaskStatus,
+  ): SeedanceTaskUpdate {
+    const now = this.now()
+    return {
+      taskId: clientId,
+      clientId,
+      threadId,
+      prompt: input.prompt,
+      model: input.model ?? '2.0',
+      resolution: input.resolution ?? '720p',
+      ratio: input.ratio ?? '16:9',
+      duration: input.duration ?? 5,
+      status,
+      createdAt: now,
+      updatedAt: now,
+      persistence: 'idle',
+    }
+  }
+
+  /**
+   * 在重活（buildContent / 素材库导入 / createTask）开始前立刻广播一张
+   * 「准备中（queued）」卡片，并返回 clientId 供 submit 透传。这样无论前置上传
+   * 多慢、批量并发多少条，用户都能瞬间看到每条任务的进度气泡。
+   */
+  announcePreparing(params: { input: CreateVideoTaskInput; threadId?: string }): string {
+    const clientId = `pending-${randomUUID()}`
+    this.deps.broadcast(this.baseUpdate(clientId, params.input, params.threadId, 'queued'))
+    return clientId
+  }
+
+  /** 前置阶段（素材解析/导入/createTask）抛错时，把预备卡片落成 failed，避免永远转圈。 */
+  announceFailed(params: {
+    clientId: string
+    input: CreateVideoTaskInput
+    threadId?: string
+    error: string
+  }): void {
+    this.deps.broadcast({
+      ...this.baseUpdate(params.clientId, params.input, params.threadId, 'failed'),
+      error: params.error,
+    })
   }
 
   get(taskId: string): SeedanceTaskState | undefined {

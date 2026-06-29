@@ -47,6 +47,44 @@ describe('SeedanceTaskManager', () => {
     mgr.dispose()
   })
 
+  it('announcePreparing 广播 queued 预备卡片并返回 clientId，不创建轮询任务', () => {
+    const mgr = makeManager(makeClient([]))
+    const clientId = mgr.announcePreparing({ input: INPUT, threadId: 'th-1' })
+    expect(clientId).toMatch(/^pending-/)
+    expect(broadcasts).toHaveLength(1)
+    expect(broadcasts[0]).toMatchObject({
+      taskId: clientId,
+      clientId,
+      status: 'queued',
+      threadId: 'th-1',
+      prompt: INPUT.prompt,
+      persistence: 'idle',
+    })
+    expect(mgr.get(clientId)).toBeUndefined() // 没有真实任务被登记
+    mgr.dispose()
+  })
+
+  it('announceFailed 广播 failed 卡片并带错误信息', () => {
+    const mgr = makeManager(makeClient([]))
+    mgr.announceFailed({ clientId: 'pending-x', input: INPUT, threadId: 'th-1', error: 'boom' })
+    expect(broadcasts).toHaveLength(1)
+    expect(broadcasts[0]).toMatchObject({
+      taskId: 'pending-x',
+      clientId: 'pending-x',
+      status: 'failed',
+      error: 'boom',
+    })
+    mgr.dispose()
+  })
+
+  it('submit 把 clientId 写进任务状态与每条广播', async () => {
+    const mgr = makeManager(makeClient([{ id: 'task-1', status: 'running' }]))
+    const state = await mgr.submit({ input: INPUT, content: [], threadId: 'th-1', clientId: 'pending-x' })
+    expect(state.clientId).toBe('pending-x')
+    expect(broadcasts[0]).toMatchObject({ taskId: 'task-1', clientId: 'pending-x', status: 'queued' })
+    mgr.dispose()
+  })
+
   it('无 API Key 时 submit 报 SEEDANCE_KEY_MISSING', async () => {
     const mgr = new SeedanceTaskManager({
       client: makeClient([]),
