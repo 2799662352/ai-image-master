@@ -1459,6 +1459,12 @@ export class ApiService {
     } else {
       payload.response_format = 'b64_json'
     }
+    // 腾讯 image2 去水印：文生图(generations)此前漏发 extra_body，导致右下角带
+    // logo 水印（edit 的 JSON 路径已带）。仅腾讯渠道注入——官转/vip 是 apiyi/OpenAI
+    // 兼容端点，logo_add 是腾讯网关私有参数，不应外发。
+    if (this.isTencentImage2(model)) {
+      payload.extra_body = { logo_add: 0 }
+    }
     return payload
   }
 
@@ -1506,6 +1512,16 @@ export class ApiService {
   }
 
   /**
+   * 是否为腾讯 image2 渠道(custom-imagemodel-gt)。
+   * 该网关需要 `extra_body.logo_add:0` 才能关掉右下角水印，且这是腾讯私有参数——
+   * 官转 / vip(apiyi/OpenAI 兼容端点)不能外发。统一在此判定，三条请求路径
+   * (文生图 generations / JSON edit / FormData edit)共用，避免再漏。
+   */
+  private isTencentImage2(model: string): boolean {
+    return model === 'custom-imagemodel-gt'
+  }
+
+  /**
    * gpt-image-2 官转：独立的「清晰度 quality」参数（auto/low/medium/high）。
    * auto / 空 / 非法值都返回 undefined（不发 quality，由模型按默认处理）。
    */
@@ -1540,7 +1556,7 @@ export class ApiService {
     }
     if (size && size !== 'auto') body.size = size
     if (quality) body.quality = quality
-    body.extra_body = { logo_add: 0 }
+    if (this.isTencentImage2(model)) body.extra_body = { logo_add: 0 }
 
     this.logImageRequest(model, url, body)
 
@@ -1600,6 +1616,12 @@ export class ApiService {
     // 文档虽支持 url, 但实测返回的 URL 在国内访问不了, 留 b64_json 才能保证图片能展示。
     if (acceptsSize && size && size !== 'auto') formData.append('size', size)
     if (acceptsSize && quality) formData.append('quality', quality)
+    // 腾讯 image2 去水印：multipart edit(data: 参考图回落路径)同样要带 extra_body，
+    // 否则这条回落路径产出的编辑图右下角仍有 logo。以 JSON 字符串字段下发，与 JSON
+    // 路径的嵌套 extra_body 结构对齐。
+    if (this.isTencentImage2(model)) {
+      formData.append('extra_body', JSON.stringify({ logo_add: 0 }))
+    }
 
     let appendedCount = 0
     for (let i = 0; i < imageSources.length; i++) {
@@ -1627,6 +1649,7 @@ export class ApiService {
       prompt,
       size: size ?? 'auto',
       quality,
+      ...(this.isTencentImage2(model) ? { extra_body: { logo_add: 0 } } : {}),
       'image[]': `${appendedCount} blob (multipart/form-data)`,
       sources: imageSources,
     })
