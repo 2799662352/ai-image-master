@@ -12,6 +12,7 @@ import {
   DEFAULT_PROVIDER_ID,
   QWEN_UNDERSTAND_PROVIDER,
   QWEN_UNDERSTAND_PROVIDER_ID,
+  APIYI_MCP_PROVIDER_ID,
   isBuiltinProviderId,
   resolveActiveProvider,
   type ProviderPreset,
@@ -214,6 +215,15 @@ export class AgentManager {
    * `getUnderstandProvider`; updates take effect on the next codex (re)start.
    */
   private miauToken = ''
+  /**
+   * The bundled apiyi-mcp server's `APIYI_API_KEY`. Persisted in the provider
+   * store under apiKeys['apiyi-mcp'] (the renderer mirrors the 设置 → API易 key
+   * there via `setProviderApiKey('apiyi-mcp', …)`). Read at spawn by
+   * `getApiyiKey` and injected via `-c mcp_servers.apiyi.env.APIYI_API_KEY` —
+   * never written to config.toml. Changing it restarts codex so the new key
+   * takes effect immediately (the user-chosen behavior).
+   */
+  private apiyiMcpKey = ''
   private summarizer?: ThreadTitleSummarizer
   private sessionConfig: CodexSessionConfig = { ...DEFAULT_CODEX_SESSION_CONFIG }
   private allowedRoots: string[] = [...DEFAULT_CODEX_SESSION_CONFIG.writableRoots]
@@ -286,6 +296,7 @@ export class AgentManager {
     this.activeProviderId = persisted.selectedProviderId
     this.codexApiKey = persisted.apiKeys[this.activeProviderId] ?? ''
     this.miauToken = (persisted.apiKeys[QWEN_UNDERSTAND_PROVIDER_ID] ?? '').trim()
+    this.apiyiMcpKey = (persisted.apiKeys[APIYI_MCP_PROVIDER_ID] ?? '').trim()
     const activeProvider = resolveActiveProvider(this.activeProviderId, persisted.customProviders)
     this.backend = opts.backend ?? new CodexLocalBackend({
       getApiKey: () => this.codexApiKey,
@@ -296,6 +307,7 @@ export class AgentManager {
         this.miauToken
           ? { provider: QWEN_UNDERSTAND_PROVIDER, token: this.miauToken }
           : undefined,
+      getApiyiKey: () => this.apiyiMcpKey || undefined,
       onApprovalRequest: (request) => this.emitApprovalRequest(request),
       onMcpNotification: (event) => this.handleMcpNotification(event),
     })
@@ -461,6 +473,27 @@ export class AgentManager {
     // getUnderstandProvider.
     if (id === QWEN_UNDERSTAND_PROVIDER_ID) {
       this.miauToken = (key ?? '').trim()
+    }
+    // The renderer mirrors the 设置 → API易 key here (id='apiyi-mcp') so the
+    // bundled apiyi-mcp server gets its `APIYI_API_KEY` injected at spawn via
+    // `-c` (never written to config.toml). Restart codex ON CHANGE so the new
+    // key takes effect immediately — the behavior the user picked. The
+    // change-guard is essential: the renderer re-pushes this key idempotently
+    // on every app boot / MCP-page load (constructor + saveApiKey + useMcpStore
+    // cold-start hook), and restarting on each of those would be a restart
+    // storm. On boot the in-memory copy is preloaded from the provider store,
+    // so the first idempotent push is a no-op.
+    if (id === APIYI_MCP_PROVIDER_ID) {
+      const next = (key ?? '').trim()
+      const changed = next !== this.apiyiMcpKey
+      this.apiyiMcpKey = next
+      if (changed && next && this.backend.restartCodex) {
+        try {
+          await this.backend.restartCodex(this.workspacePaths())
+        } catch (err) {
+          console.warn('[AgentManager] restartCodex after apiyi-mcp key change failed:', err)
+        }
+      }
     }
     return { ok: true }
   }

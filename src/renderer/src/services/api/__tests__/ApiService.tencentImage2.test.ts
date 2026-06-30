@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 /**
  * 腾讯 image2(custom-imagemodel-gt) 编辑路径：参考图为 COS/远端 URL 时，
- * 走 JSON `images:[url]` 而不是 base64 multipart。
+ * 走官方文档的 JSON `images:[{image_url}]`（Array of ImageRef）而不是 multipart。
  */
-describe('ApiService custom-imagemodel-gt edit → JSON images[url] (no base64)', () => {
+describe('ApiService custom-imagemodel-gt edit → JSON images[{image_url}]', () => {
   beforeEach(() => {
     vi.resetModules()
   })
@@ -21,7 +21,7 @@ describe('ApiService custom-imagemodel-gt edit → JSON images[url] (no base64)'
 
   const site = { authType: 'bearer' } as any
 
-  it('sends JSON body with image URLs (not FormData / not base64)', async () => {
+  it('sends JSON body with ImageRef objects {image_url} (not FormData / not base64)', async () => {
     const service = await makeService()
     const cfg = service.getModelConfig('custom-imagemodel-gt')!
 
@@ -51,6 +51,7 @@ describe('ApiService custom-imagemodel-gt edit → JSON images[url] (no base64)'
       count: 1,
       modelConfig: cfg,
       site,
+      apiKey: 'test-key',
     })
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
@@ -60,7 +61,7 @@ describe('ApiService custom-imagemodel-gt edit → JSON images[url] (no base64)'
     const body = JSON.parse(capturedInit!.body as string)
     expect(body.model).toBe('custom-imagemodel-gt')
     expect(body.prompt).toBe('合并这几张图')
-    expect(body.images).toEqual(urls)
+    expect(body.images).toEqual(urls.map((image_url) => ({ image_url })))
     expect(body.n).toBe(1)
     expect(body.quality).toBe('high')
     expect(body.extra_body).toMatchObject({ logo_add: 0 })
@@ -70,15 +71,74 @@ describe('ApiService custom-imagemodel-gt edit → JSON images[url] (no base64)'
     expect(headers['Content-Type']).toBe('application/json')
   })
 
-  it('only takes JSON path for all-http sources (guard: every isHttp)', async () => {
+  it('base64(data:) 参考图也走 JSON images[] 路径（不回落 multipart）', async () => {
     const service = await makeService()
     const cfg = service.getModelConfig('custom-imagemodel-gt')!
-    // 守卫逻辑单测：混入 data: 源时不应判定为「全 URL」
-    const allHttp = (srcs: string[]) =>
-      srcs.every((s) => typeof s === 'string' && /^https?:\/\//i.test(s))
-    expect(allHttp(['https://a/x.png', 'https://a/y.png'])).toBe(true)
-    expect(allHttp(['https://a/x.png', 'data:image/png;base64,aaa'])).toBe(false)
-    expect(cfg.editURL).toBeTruthy()
+
+    let capturedInit: RequestInit | undefined
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      capturedInit = init
+      return new Response(JSON.stringify({ data: [{ url: 'https://x/out.png' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const dataUri = 'data:image/png;base64,iVBORw0KGgoAAAA'
+    await (service as any).makeApiRequest({
+      prompt: '合并这几张图',
+      model: 'custom-imagemodel-gt',
+      ratio: '3:2',
+      resolution: '2K',
+      quality: 'high',
+      referenceImages: [dataUri],
+      count: 1,
+      modelConfig: cfg,
+      site,
+      apiKey: 'test-key',
+    })
+
+    // 必须是 JSON（string body），不是 FormData
+    expect(capturedInit?.body).toBeTypeOf('string')
+    const body = JSON.parse(capturedInit!.body as string)
+    expect(body.images).toEqual([{ image_url: dataUri }])
+    expect(body.extra_body).toMatchObject({ logo_add: 0 })
+  })
+
+  it('裸 base64 / 混合 http+base64 都归一化成 data URI 放进 images[{image_url}]', async () => {
+    const service = await makeService()
+    const cfg = service.getModelConfig('custom-imagemodel-gt')!
+
+    let capturedInit: RequestInit | undefined
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      capturedInit = init
+      return new Response(JSON.stringify({ data: [{ url: 'https://x/out.png' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const httpUrl = 'https://image-master.cos.example.com/a.png'
+    const rawB64 = 'AAAABBBBCCCC' // 无 data: 前缀的裸 base64
+    await (service as any).makeApiRequest({
+      prompt: '合并',
+      model: 'custom-imagemodel-gt',
+      ratio: '1:1',
+      resolution: '1K',
+      referenceImages: [httpUrl, rawB64],
+      count: 1,
+      modelConfig: cfg,
+      site,
+      apiKey: 'test-key',
+    })
+
+    expect(capturedInit?.body).toBeTypeOf('string')
+    const body = JSON.parse(capturedInit!.body as string)
+    expect(body.images[0]).toEqual({ image_url: httpUrl })
+    // 裸 base64 被补上 data: 前缀
+    expect(body.images[1].image_url).toMatch(/^data:image\/[a-z]+;base64,AAAABBBBCCCC$/)
   })
 })
 
@@ -123,19 +183,15 @@ describe('ApiService custom-imagemodel-gt 去水印 extra_body.logo_add:0（全�
     expect((build('gpt-image-2-vip', 'x', '1280x1280', 'high') as any).extra_body).toBeUndefined()
   })
 
-  it('FormData edit（data: 参考图回落路径）也带 extra_body.logo_add:0', async () => {
+  it('data: 参考图编辑（现走 JSON，不再回落 FormData）也带 extra_body.logo_add:0', async () => {
+    // 注：腾讯网关 edit 端点是 JSON `images:[]` 契约、不接受 multipart，因此 base64/data:
+    // 参考图统一走 JSON（见 makeApiRequest 路由）。本测试确认该 JSON 路径同样去水印。
     const service = await makeService()
     const cfg = service.getModelConfig('custom-imagemodel-gt')!
 
-    // convertToBlob 在测试环境下无法真正把 data: 解码成 jsdom Blob，直接桩成真 Blob，
-    // 让 FormData 编辑路径得以走完（被测对象是 extra_body 字段，不是图片解码）。
-    vi.spyOn(service as any, 'convertToBlob').mockResolvedValue(
-      new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' }),
-    )
-
-    let capturedForm: FormData | undefined
+    let capturedInit: RequestInit | undefined
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
-      if (init?.body instanceof FormData) capturedForm = init.body
+      capturedInit = init
       return new Response(JSON.stringify({ data: [{ url: 'https://x/out.png' }] }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -143,7 +199,6 @@ describe('ApiService custom-imagemodel-gt 去水印 extra_body.logo_add:0（全�
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    // data: 参考图 → 触发 FormData 回落路径（非全 http URL）
     await (service as any).makeApiRequest({
       prompt: '合并这几张图',
       model: 'custom-imagemodel-gt',
@@ -154,9 +209,74 @@ describe('ApiService custom-imagemodel-gt 去水印 extra_body.logo_add:0（全�
       count: 1,
       modelConfig: cfg,
       site,
+      apiKey: 'test-key',
     })
 
-    expect(capturedForm, '未走到 FormData edit 路径').toBeDefined()
-    expect(capturedForm!.get('extra_body')).toBe(JSON.stringify({ logo_add: 0 }))
+    expect(capturedInit?.body).toBeTypeOf('string')
+    const body = JSON.parse(capturedInit!.body as string)
+    expect(body.images).toEqual([{ image_url: 'data:image/png;base64,aaaa' }])
+    expect(body.extra_body).toMatchObject({ logo_add: 0 })
+  })
+})
+
+/**
+ * siteKey 自动路由：Miau-only 渠道（腾讯/万相）即使用户当前站点不是 Miau,
+ * 也能通过本次请求的 `siteKey` 强制走 Miau(antigravity)站点 host + 该站点令牌。
+ * 这是 codex 页把腾讯设为首选默认而无需手动切站点的底座。
+ */
+describe('ApiService.generateImage siteKey autoroute (Miau-only channels)', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    localStorage.clear()
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('pins the request to the given siteKey host + that site’s API key (not the current site)', async () => {
+    const { ApiService } = await import('../ApiService')
+    // 当前默认站点(b-apiyi)没有 Key;只有 Miau(antigravity)站点配了 Key。
+    localStorage.setItem('api_key_antigravity', 'miau-key')
+    const service = new ApiService()
+
+    let capturedUrl = ''
+    let capturedAuth = ''
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      capturedUrl = url
+      capturedAuth = String((init?.headers as Record<string, string>)?.['Authorization'] ?? '')
+      return new Response(JSON.stringify({ data: [{ url: 'https://cos.example/out.png' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await service.generateImage({
+      prompt: 'a cat',
+      model: 'custom-imagemodel-gt',
+      siteKey: 'antigravity',
+    })
+
+    expect(fetchMock).toHaveBeenCalled()
+    expect(capturedUrl).toContain('175.178.198.17:3000') // Miau gateway host
+    expect(capturedAuth).toBe('Bearer miau-key') // Miau site key, not current site
+    expect(res.success).toBe(true)
+  })
+
+  it('returns a clear error (no fetch) when the pinned site has no API key', async () => {
+    const { ApiService } = await import('../ApiService')
+    const service = new ApiService() // 没有为 antigravity 配 Key
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await service.generateImage({
+      prompt: 'a cat',
+      model: 'custom-imagemodel-gt',
+      siteKey: 'antigravity',
+    })
+
+    expect(res.success).toBe(false)
+    expect(res.error).toContain('API Key')
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })

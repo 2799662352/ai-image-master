@@ -82,6 +82,73 @@ describe('useMcpStore', () => {
     expect(state.servers[0].status).toBe('ready')
   })
 
+  it('syncTools suppresses a codex "timed out" RPC rejection — one slow server must not blank the panel', async () => {
+    // Regression: codex's RPC layer throws "Codex RPC mcpServerStatus/list
+    // timed out after 30000ms" (note "timed out", not "timeout"). The old
+    // /timeout/i guard missed it, leaking a fatal "工具列表刷新失败" banner when
+    // a single MCP server (e.g. a slow apiyi cold-start) was still starting.
+    useMcpStore.setState({ servers: [{ name: 'gh', status: 'ready', tools: [] } as any] })
+    mockApi.listMcpServersRpc.mockRejectedValue(
+      new Error('Codex RPC mcpServerStatus/list timed out after 30000ms'),
+    )
+
+    await useMcpStore.getState().syncTools()
+
+    const state = useMcpStore.getState()
+    expect(state.syncing).toBe(false)
+    expect(state.syncError).toBeNull()
+    // The pre-existing server (from config-only first paint) is untouched.
+    expect(state.servers.map((s) => s.name)).toEqual(['gh'])
+  })
+
+  it('syncTools STILL surfaces non-timeout errors so genuine failures are debuggable', async () => {
+    mockApi.listMcpServersRpc.mockRejectedValue(new Error('boom: unexpected'))
+    await useMcpStore.getState().syncTools()
+    expect(useMcpStore.getState().syncError).toBe('boom: unexpected')
+  })
+
+  it('refreshServer updates ONLY the named server and leaves the others untouched', async () => {
+    useMcpStore.setState({
+      servers: [
+        { name: 'gh', status: 'ready', tools: [{ name: 'old' }] } as any,
+        { name: 'apiyi', status: 'starting', tools: [] } as any,
+      ],
+    })
+    mockApi.listMcpServersRpc.mockResolvedValue({
+      ok: true,
+      data: [
+        { name: 'gh', tools: { fresh: { description: 'new' } }, authStatus: 'unsupported' },
+        { name: 'apiyi', tools: { gen: { description: 'x' } }, authStatus: 'unsupported' },
+      ],
+    })
+
+    await useMcpStore.getState().refreshServer('gh')
+
+    const state = useMcpStore.getState()
+    const gh = state.servers.find((s) => s.name === 'gh')!
+    const apiyi = state.servers.find((s) => s.name === 'apiyi')!
+    // gh got the fresh slice…
+    expect(gh.tools.map((t) => t.name)).toEqual(['fresh'])
+    expect(gh.status).toBe('ready')
+    // …apiyi (the other card) is completely untouched.
+    expect(apiyi.tools).toEqual([])
+    expect(apiyi.status).toBe('starting')
+    // per-server spinner cleared
+    expect(state.syncingByName.gh).toBeUndefined()
+  })
+
+  it('refreshServer suppresses a codex "timed out" rejection without a global banner', async () => {
+    useMcpStore.setState({ servers: [{ name: 'apiyi', status: 'starting', tools: [] } as any] })
+    mockApi.listMcpServersRpc.mockRejectedValue(
+      new Error('Codex RPC mcpServerStatus/list timed out after 90000ms'),
+    )
+    await useMcpStore.getState().refreshServer('apiyi')
+    const state = useMcpStore.getState()
+    expect(state.syncError).toBeNull()
+    expect(state.servers[0].error ?? null).toBeNull()
+    expect(state.syncingByName.apiyi).toBeUndefined()
+  })
+
   it('syncTools captures resources, resourceTemplates, serverInfo and a typed authStatus (full detail)', async () => {
     mockApi.listMcpServersRpc.mockResolvedValue({
       ok: true,

@@ -124,6 +124,20 @@ export const QWEN_UNDERSTAND_PROVIDER: CodexProviderConfig = {
   wireApi: 'responses',
 }
 
+/**
+ * Dedicated provider-store slot for the bundled apiyi-mcp server's `APIYI_API_KEY`.
+ *
+ * This is NOT a codex model_provider — it is a key-only channel, mirroring how
+ * {@link QWEN_UNDERSTAND_PROVIDER_ID} ('qwen') stashes the Miau token. We use a
+ * distinct id (`'apiyi-mcp'`, never the real `'apiyi'` gateway provider) so the
+ * MCP secret stays decoupled from the codex agent's own API易 gateway key: the
+ * renderer pushes the 设置 → API易 key here via `setProviderApiKey('apiyi-mcp', …)`,
+ * AgentManager keeps an in-memory copy, and `getApiyiKey` reads it at spawn so
+ * `buildCodexLaunchArgs` injects it via `-c mcp_servers.apiyi.env.APIYI_API_KEY`
+ * — runtime-only, never persisted to `~/.codex/config.toml` (catimation-style).
+ */
+export const APIYI_MCP_PROVIDER_ID = 'apiyi-mcp' as const
+
 export const BUILTIN_PROVIDER_PRESETS: readonly ProviderPreset[] = Object.freeze([
   Object.freeze(APIYI_PRESET),
   Object.freeze(RIGHTCODE_PRESET),

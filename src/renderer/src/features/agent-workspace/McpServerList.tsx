@@ -19,7 +19,9 @@ export function McpServerList({ onOpenEditor, onOpenImport }: McpServerListProps
   const hasFetchedOnce = useMcpStore((s) => s.hasFetchedOnce)
   const syncing = useMcpStore((s) => s.syncing)
   const syncError = useMcpStore((s) => s.syncError)
+  const syncingByName = useMcpStore((s) => s.syncingByName)
   const fetchServers = useMcpStore((s) => s.fetchServers)
+  const refreshServer = useMcpStore((s) => s.refreshServer)
   const toggleEnabled = useMcpStore((s) => s.toggleEnabled)
   const deleteServer = useMcpStore((s) => s.deleteServer)
   const startOAuthLogin = useMcpStore((s) => s.startOAuthLogin)
@@ -217,10 +219,12 @@ export function McpServerList({ onOpenEditor, onOpenImport }: McpServerListProps
                     key={server.name}
                     server={server}
                     loggingIn={loggingIn === server.name}
+                    refreshing={!!syncingByName[server.name]}
                     onEdit={onOpenEditor}
                     onDelete={handleDelete}
                     onToggle={handleToggle}
                     onLogin={handleLogin}
+                    onRefresh={refreshServer}
                   />
                 ))}
               </div>
@@ -242,10 +246,12 @@ export function McpServerList({ onOpenEditor, onOpenImport }: McpServerListProps
                     key={server.name}
                     server={server}
                     loggingIn={loggingIn === server.name}
+                    refreshing={!!syncingByName[server.name]}
                     onEdit={onOpenEditor}
                     onDelete={handleDelete}
                     onToggle={handleToggle}
                     onLogin={handleLogin}
+                    onRefresh={refreshServer}
                   />
                 ))}
               </div>

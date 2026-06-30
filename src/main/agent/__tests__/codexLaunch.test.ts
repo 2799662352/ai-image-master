@@ -38,7 +38,10 @@ describe('buildCodexLaunchArgs', () => {
       // root cause of the `ask_user` "unsupported call: catimationaskuser"
       // failure. See codexLaunch.ts for the full source-level rationale.
       '-c', 'features.code_mode.enabled=false',
-      '-c', 'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation"]',
+      '-c', 'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi"]',
+      // No apiyi key configured (neither 设置/localStorage nor config.toml) →
+      // keep apiyi dormant so a keyless apiyi-mcp can't hang the first turn.
+      '-c', 'mcp_servers.apiyi.enabled=false',
     ])
   })
 
@@ -60,7 +63,8 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'agents.max_depth=1',
       '-c', 'features.non_prefixed_mcp_tool_names=true',
       '-c', 'features.code_mode.enabled=false',
-      '-c', 'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation"]',
+      '-c', 'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi"]',
+      '-c', 'mcp_servers.apiyi.enabled=false',
     ])
     const listenIdx = args.indexOf('--listen')
     const firstConfigIdx = args.indexOf('-c')
@@ -82,7 +86,7 @@ describe('buildCodexLaunchArgs', () => {
     const args = buildCodexLaunchArgs()
     expect(args).toContain('features.code_mode.enabled=false')
     expect(args).toContain(
-      'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation"]',
+      'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi"]',
     )
     // It must be unconditional — present even with a custom provider/MCP wired.
     const withMcp = buildCodexLaunchArgs({
@@ -90,7 +94,7 @@ describe('buildCodexLaunchArgs', () => {
       catimationMcp: { port: 7842, token: 'deadbeef' },
     })
     expect(withMcp).toContain(
-      'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation"]',
+      'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi"]',
     )
   })
 
@@ -381,6 +385,81 @@ describe('buildCodexLaunchArgs', () => {
 
     expect(args).toContain('disable_response_storage=true')
     expect(args).toContain('windows_wsl_setup_acknowledged=true')
+  })
+
+  // apiyiKey is the catimation-style runtime secret injection: the single key
+  // the user saved in 设置 → API易 is overlaid onto the boot-seeded
+  // [mcp_servers.apiyi].env table via `-c` at spawn, NEVER written to
+  // config.toml. We only overlay the KEY (not the model) so a user's manual
+  // editor switch to a thinking model is respected.
+  it('overlays the apiyi-mcp APIYI_API_KEY via -c when apiyiKey is supplied', () => {
+    const args = buildCodexLaunchArgs({ apiyiKey: 'sk-apiyi-runtime' })
+    expect(args).toContain('mcp_servers.apiyi.env.APIYI_API_KEY="sk-apiyi-runtime"')
+    // The model must NOT be force-injected (the seed/editor owns it).
+    expect(args.some((a) => a.startsWith('mcp_servers.apiyi.env.GEMINI_MODEL'))).toBe(false)
+  })
+
+  // Reliability timeouts ride alongside the key (guarded so the seeded
+  // transport-carrying entry exists), mirroring catimation's tool_timeout_sec.
+  it('injects apiyi startup/tool timeouts when apiyiKey is supplied', () => {
+    const args = buildCodexLaunchArgs({ apiyiKey: 'sk-apiyi-runtime' })
+    // Generous 60s startup slack — the list side (90s budget + silent timeout
+    // degrade) is what keeps one slow server from blanking the whole panel, so
+    // apiyi's startup window need NOT be artificially shrunk.
+    expect(args).toContain('mcp_servers.apiyi.startup_timeout_sec=60')
+    expect(args).toContain('mcp_servers.apiyi.tool_timeout_sec=2000')
+  })
+
+  // apiyi tools must be promoted to DirectModelOnly so they're never deferred
+  // behind tool_search — this is why catimation always returns tools and apiyi
+  // (previously) sometimes did not. Unconditional (no key needed).
+  it('lists apiyi in direct_only_tool_namespaces unconditionally', () => {
+    expect(buildCodexLaunchArgs()).toContain(
+      'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi"]',
+    )
+  })
+
+  // No key from EITHER source (设置/localStorage `apiyiKey` nor a hand-edited
+  // config.toml `apiyiHasConfigKey`) → keep apiyi DORMANT at launch so a
+  // keyless apiyi-mcp can't hang the agent's first turn (openai/codex#19556 —
+  // run_turn awaits list_all_tools, one stalled server gates the whole map up
+  // to startup_timeout). We emit EXACTLY `enabled=false` and nothing else.
+  it('keeps apiyi dormant (enabled=false, no env/timeout) when NO key is configured', () => {
+    const args = buildCodexLaunchArgs()
+    expect(args.some((a) => a.startsWith('mcp_servers.apiyi.env.'))).toBe(false)
+    expect(args.some((a) => a.startsWith('mcp_servers.apiyi.startup_timeout_sec'))).toBe(false)
+    expect(args.some((a) => a.startsWith('mcp_servers.apiyi.tool_timeout_sec'))).toBe(false)
+    expect(args).toContain('mcp_servers.apiyi.enabled=false')
+  })
+
+  // A blank/whitespace key must be treated as "no key" — same dormant guard,
+  // never an env/timeout override.
+  it('treats a whitespace-only apiyiKey as no key → dormant guard', () => {
+    const args = buildCodexLaunchArgs({ apiyiKey: '   ' })
+    expect(args.some((a) => a.startsWith('mcp_servers.apiyi.env.'))).toBe(false)
+    expect(args.some((a) => a.startsWith('mcp_servers.apiyi.startup_timeout_sec'))).toBe(false)
+    expect(args).toContain('mcp_servers.apiyi.enabled=false')
+  })
+
+  // SECOND key source: the user hand-typed APIYI_API_KEY into config.toml (the
+  // empty-tools card hint instructs this). `apiyiHasConfigKey=true` means codex
+  // reads the secret straight off disk — we must NOT disable apiyi, and must NOT
+  // re-inject the secret via `-c` (that would leak it to the spawn log), but we
+  // DO still apply the reliability timeouts.
+  it('runs apiyi (timeouts, no disable, no -c secret) when key lives in config.toml', () => {
+    const args = buildCodexLaunchArgs({ apiyiHasConfigKey: true })
+    expect(args).not.toContain('mcp_servers.apiyi.enabled=false')
+    expect(args.some((a) => a.startsWith('mcp_servers.apiyi.env.APIYI_API_KEY'))).toBe(false)
+    expect(args).toContain('mcp_servers.apiyi.startup_timeout_sec=60')
+    expect(args).toContain('mcp_servers.apiyi.tool_timeout_sec=2000')
+  })
+
+  // localStorage key present → inject the secret via `-c`, apply timeouts, and
+  // never emit the dormant guard.
+  it('does not emit the dormant guard when apiyiKey is supplied', () => {
+    const args = buildCodexLaunchArgs({ apiyiKey: 'sk-apiyi-runtime' })
+    expect(args).not.toContain('mcp_servers.apiyi.enabled=false')
+    expect(args).toContain('mcp_servers.apiyi.env.APIYI_API_KEY="sk-apiyi-runtime"')
   })
 
   it('registers extraProviders WITHOUT changing the active model_provider or top-level model', () => {

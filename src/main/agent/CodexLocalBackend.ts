@@ -7,6 +7,7 @@ import { buildCodexLaunchArgs, resolveCodexSessionConfig, type CatimationMcpLaun
 import { mergeCodexConfigs } from './codexConfigMerge'
 import { appendAuditLog, atomicWriteFile } from './codexConfigStore'
 import { CodexProtocolClient, mapServerNotification } from './CodexProtocolClient'
+import { readApiyiConfigKey } from './apiyiMcpSeed'
 import { createAgentLogStream } from './logger'
 import { getCodexResourceRoot, resolveBundledFfmpegDir, resolveCodexBinary } from './paths'
 import { runCodexDoctor, type DoctorReport } from './codexDoctor'
@@ -110,6 +111,15 @@ export interface CodexLocalBackendOptions {
    * configured — then no qwen provider is registered and Path B is unavailable.
    */
   getUnderstandProvider?: () => { provider: CodexProviderConfig; token: string } | undefined
+  /**
+   * Returns the user's apiyi-mcp key (设置 → API易) at spawn time, or undefined
+   * when none is configured. Forwarded to `buildCodexLaunchArgs` as
+   * {@link CodexLaunchOptions.apiyiKey} so the secret is injected via `-c`
+   * (`mcp_servers.apiyi.env.APIYI_API_KEY`) — never persisted to config.toml.
+   * Resolved fresh on every spawn; updates take effect on the next codex
+   * (re)start (AgentManager restarts on apiyi-mcp key change).
+   */
+  getApiyiKey?: () => string | undefined
   onApprovalRequest?: (request: CodexApprovalRequest) => void
   onMcpNotification?: (event: AgentStreamEvent) => void
   /**
@@ -339,12 +349,21 @@ export class CodexLocalBackend implements IAgentBackend {
       ffmpegDir ? [ffmpegDir] : undefined,
     )
     const spawnFactory = this.options.spawnFactory ?? spawn
+    // Resolve the SECOND apiyi key source (hand-edited `config.toml`) so the
+    // no-key launch guard can tell "keyless" (keep dormant) from "key in
+    // config" (run normally) and never disable an apiyi the user configured by
+    // hand — the empty-tools card hint explicitly instructs that path. Read is
+    // best-effort (returns '' on any failure) and must never block spawn.
+    const apiyiHasConfigKey =
+      (await readApiyiConfigKey(path.join(this.codexHome, 'config.toml'))).length > 0
     const launchArgs = buildCodexLaunchArgs({
       listenUrl,
       provider: this.currentProvider,
       sessionConfig: this.sessionConfig,
       catimationMcp: this.options.catimationMcp,
       extraProviders: understand ? [understand.provider] : undefined,
+      apiyiKey: this.options.getApiyiKey?.(),
+      apiyiHasConfigKey,
     })
     // DIAGNOSTIC: dump the exact codex spawn command so we can confirm which
     // config `-c` overrides (e.g. features.non_prefixed_mcp_tool_names,

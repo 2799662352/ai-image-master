@@ -262,6 +262,7 @@ describe('ApiService.gpt-image-2-vip FormData (image-edit)', () => {
       'change background',
       [tinyPng],
       site,
+      'sk-test',
       undefined,
       900_000,
       '2048x2048',

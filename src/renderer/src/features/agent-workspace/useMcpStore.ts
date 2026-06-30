@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { getApiService } from '@/services/api'
 
 export interface McpTool {
   name: string
@@ -127,9 +128,25 @@ interface McpStore {
    * `mcp_status_updated` notifications fired during agent startup).
    */
   liveStatusByName: Record<string, LiveStatus>
+  /**
+   * Per-server in-flight flag for {@link McpStore.refreshServer}, keyed by
+   * name. Independent from the global `syncing` so a single card can spin
+   * (and its refresh button disable) without touching the others or the
+   * global 刷新 button.
+   */
+  syncingByName: Record<string, boolean>
   fetchServers: () => Promise<void>
   /** Fire-and-forget background fetch of tools + auth from listMcpServersRpc. */
   syncTools: () => Promise<void>
+  /**
+   * Refresh a SINGLE server's tools/resources/auth without disturbing the
+   * others. Codex exposes no per-name query (only the batch
+   * `mcpServerStatus/list`), so under the hood this still issues the batch
+   * RPC — but it applies ONLY this server's slice to its own card and leaves
+   * every other card untouched. Timeouts degrade silently (status keeps
+   * flowing via notifications); genuine errors land on this card's `error`.
+   */
+  refreshServer: (name: string) => Promise<void>
   updateStatus: (name: string, status: string, error: string | null) => void
   toggleEnabled: (name: string, enabled: boolean) => Promise<void>
   deleteServer: (name: string) => Promise<void>
@@ -330,6 +347,7 @@ export const useMcpStore = create<McpStore>((set, get) => ({
   syncing: false,
   syncError: null,
   liveStatusByName: {},
+  syncingByName: {},
   lastAutoFix: null,
   lastConvertedFingerprint: null,
 
@@ -468,6 +486,20 @@ export const useMcpStore = create<McpStore>((set, get) => ({
       hasFetchedOnce: true,
     })
 
+    // Cold-start reliability hook for the bundled apiyi-mcp: once we've
+    // confirmed codex is up enough to read its config (no codexConfigError),
+    // mirror the app's already-configured apiyi key into mcp_servers.apiyi.env
+    // so the user never has to re-paste it. Best-effort, first successful
+    // fetch only; the construction microtask may have run before codex was
+    // ready, so this is the guaranteed-codex-up retry.
+    if (isFirstFetch && !codexConfigError) {
+      try {
+        void getApiService().syncApiyiKeyToMcp()
+      } catch {
+        /* best-effort; never block the MCP list on the apiyi key bridge */
+      }
+    }
+
     // Fire-and-forget tool sync. Updates servers when it eventually returns.
     // NOTE: When codexConfigError is set, this will also fail (codex has
     // refused to load the servers), but we still call it so the user gets
@@ -480,17 +512,20 @@ export const useMcpStore = create<McpStore>((set, get) => ({
     if (!api?.listMcpServersRpc) return
     set({ syncing: true, syncError: null })
     try {
-      // 60s budget — Codex's own tools/list timeout is 30s per server. With
-      // many servers we want to give the entire batch room, but still bail
-      // eventually so `syncing` doesn't stay true forever.
+      // 95s outer ceiling — sits just ABOVE the main-side list RPC budget
+      // (CodexProtocolClient.MCP_LIST_TIMEOUT_MS = 90s) so the inner call wins
+      // the race on the happy path (returning real data) and this is only a
+      // backstop so `syncing` never sticks true forever. The 90s inner budget
+      // is what lets a slow server (apiyi's 60s startup) resolve in ONE pass
+      // instead of being cut off at the old 30s default.
       // `full` (vs the lighter `toolsAndAuthOnly`) so codex also returns each
       // server's resource + resourceTemplate inventory and `serverInfo`
       // (title/version/website). This adds a `resources/list` round-trip per
-      // server, but it's a fire-and-forget background sync with a 60s budget,
-      // so a slow server can't block first paint (which is config-only).
+      // server, but it's a fire-and-forget background sync, so a slow server
+      // can't block first paint (which is config-only).
       const res = await withTimeout(
         api.listMcpServersRpc({ detail: 'full' }),
-        60_000,
+        95_000,
         'listMcpServersRpc',
       )
       if ((res as any)?.ok === false) {
@@ -542,10 +577,80 @@ export const useMcpStore = create<McpStore>((set, get) => ({
         }),
       }))
     } catch (err) {
-      // Suppress timeouts — status still arrives via notifications. Surface
-      // unexpected errors so users can debug.
+      // Suppress timeouts — a slow/hung MCP server must NOT blank the whole
+      // panel; status keeps arriving via `mcp_status_updated` notifications and
+      // the config-only first paint already populated every server. Match BOTH
+      // wordings: our `withTimeout` throws "… timeout after …" while codex's
+      // own RPC layer throws "… timed out after 30000ms" — the old `/timeout/i`
+      // missed the latter, which is exactly why a single slow server leaked a
+      // fatal "工具列表刷新失败" banner. Genuinely unexpected errors still surface.
       const msg = err instanceof Error ? err.message : String(err)
-      set({ syncing: false, syncError: /timeout/i.test(msg) ? null : msg })
+      const isTimeout = /timed out|timeout/i.test(msg)
+      set({ syncing: false, syncError: isTimeout ? null : msg })
+    }
+  },
+
+  async refreshServer(name) {
+    const api = getApi()
+    if (!api?.listMcpServersRpc) return
+    // Per-server spin — independent from the global `syncing`, so refreshing
+    // ONE card never disables the others or the global 刷新 button.
+    set((state) => ({ syncingByName: { ...state.syncingByName, [name]: true } }))
+    const clearSpin = (extra?: Partial<McpServerCard>): void =>
+      set((state) => {
+        const { [name]: _drop, ...rest } = state.syncingByName
+        return {
+          syncingByName: rest,
+          servers: extra
+            ? state.servers.map((s) => (s.name === name ? { ...s, ...extra } : s))
+            : state.servers,
+        }
+      })
+    try {
+      // Codex has no per-name query, so we still issue the batch list — but we
+      // apply ONLY this server's slice below. 95s ceiling mirrors syncTools so
+      // a slow server can resolve in one pass.
+      const res = await withTimeout(
+        api.listMcpServersRpc({ detail: 'full' }),
+        95_000,
+        'refreshServer',
+      )
+      if ((res as any)?.ok === false) {
+        const rawErr = (res as any).error
+        // Same config-reload root cause as syncTools: stay silent if the red
+        // banner already owns it; otherwise surface on THIS card only.
+        const sameRootCause =
+          !!get().codexConfigError
+          && typeof rawErr === 'string'
+          && (/invalid transport/i.test(rawErr) || /reload config/i.test(rawErr))
+        clearSpin(sameRootCause ? undefined : { error: rawErr ?? '刷新失败' })
+        return
+      }
+      const live = getLiveServersFromListResponse(res).find((s: any) => s.name === name)
+      if (!live) {
+        // Server not in the live inventory (still starting / not connected).
+        // Leave the card as-is; status will arrive via notifications.
+        clearSpin()
+        return
+      }
+      const authStatus = live.auth_status ?? live.authStatus
+      clearSpin({
+        tools: normalizeTools(live.tools),
+        authStatus,
+        resources: normalizeResources(live.resources),
+        resourceTemplates: normalizeResourceTemplates(
+          live.resourceTemplates ?? live.resource_templates,
+        ),
+        serverInfo: normalizeServerInfo(live.serverInfo ?? live.server_info) ?? undefined,
+        status: authStatus === 'notLoggedIn' ? 'failed' : ('ready' as const),
+        error: authStatus === 'notLoggedIn' ? '需要登录' : null,
+      })
+    } catch (err) {
+      // Timeouts degrade silently (notifications keep status fresh); genuine
+      // errors land on this card only — never a global banner.
+      const msg = err instanceof Error ? err.message : String(err)
+      const isTimeout = /timed out|timeout/i.test(msg)
+      clearSpin(isTimeout ? undefined : { error: msg })
     }
   },
 

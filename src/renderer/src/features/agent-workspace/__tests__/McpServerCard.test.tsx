@@ -177,6 +177,51 @@ describe('McpServerCard', () => {
     expect(onDelete).toHaveBeenCalledWith('test-server')
   })
 
+  it('renders a per-server refresh button that calls onRefresh with the server name', () => {
+    const onRefresh = vi.fn()
+    render(
+      <McpServerCard
+        server={makeServer()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggle={vi.fn()}
+        onLogin={vi.fn()}
+        onRefresh={onRefresh}
+      />,
+    )
+    const refreshBtn = screen.getByRole('button', { name: /刷新 test-server/ })
+    fireEvent.click(refreshBtn)
+    expect(onRefresh).toHaveBeenCalledWith('test-server')
+  })
+
+  it('disables the per-server refresh button while that card is refreshing', () => {
+    render(
+      <McpServerCard
+        server={makeServer()}
+        refreshing
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggle={vi.fn()}
+        onLogin={vi.fn()}
+        onRefresh={vi.fn()}
+      />,
+    )
+    expect(screen.getByRole('button', { name: /刷新 test-server/ })).toHaveProperty('disabled', true)
+  })
+
+  it('omits the refresh button when onRefresh is not provided', () => {
+    render(
+      <McpServerCard
+        server={makeServer()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggle={vi.fn()}
+        onLogin={vi.fn()}
+      />,
+    )
+    expect(screen.queryByRole('button', { name: /^刷新/ })).toBeNull()
+  })
+
   it('hides edit and delete buttons for codex built-in servers', () => {
     render(
       <McpServerCard

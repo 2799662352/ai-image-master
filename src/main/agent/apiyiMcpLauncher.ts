@@ -22,14 +22,14 @@ export function getApiyiMcpEntryPath(options: ApiyiMcpPathOptions): string {
 }
 
 /**
- * Default env scaffold seeded into `mcp_servers.apiyi.env`. Modeled 1:1 on the
- * canonical Cursor `mcp.json` shape for `2799662352/apiyi-mcp-server`:
+ * Default env scaffold seeded into `mcp_servers.apiyi.env`. Modeled on the
+ * canonical Cursor `mcp.json` shape for `2799662352/apiyi-mcp-server`, MINUS
+ * the secret:
  *
  *   {
  *     "command": "node",
  *     "args": ["<absolute>/dist/index.js"],
  *     "env": {
- *       "APIYI_API_KEY": "sk-...",
  *       "GEMINI_MODEL": "gemini-3.5-flash",
  *       "APIYI_BASE_URL": "https://api.apiyi.com",
  *       "GEMINI_MAX_OUTPUT_TOKENS": "65536",
@@ -37,25 +37,38 @@ export function getApiyiMcpEntryPath(options: ApiyiMcpPathOptions): string {
  *     }
  *   }
  *
+ * `APIYI_API_KEY` is DELIBERATELY ABSENT from the persisted scaffold. Mirroring
+ * the in-app catimation MCP, the secret is injected at codex spawn via
+ * `-c mcp_servers.apiyi.env.APIYI_API_KEY=...` from the single key the user
+ * saved in 设置 → API易 (see `buildCodexLaunchArgs.apiyiKey` /
+ * `AgentManager.apiyiMcpKey`). So the user fills ONE key in 设置, the MCP JSON
+ * editor never shows or asks for a key, and no secret is left on disk. A user
+ * who instead hand-edits the JSON can still add their own `APIYI_API_KEY` there
+ * — the backfill below preserves any key they set and never clobbers it.
+ *
  * Field rationale:
- *  - `APIYI_API_KEY` — empty placeholder; the only field the user has to fill.
  *  - `APIYI_BASE_URL` — apiyi-mcp's own baked-in default is `https://api.bltcy.ai`,
  *    which silently rejects `sk-...` keys from `api.apiyi.com`. Overriding here
  *    is what makes a freshly-pasted apiyi key actually work.
- *  - `GEMINI_MODEL` — see "Recommended models" table below. Default is the
- *    best price/perf option; users can swap to anything via the MCP JSON editor
- *    (no whitelist is enforced — whatever string is in the JSON is what runs).
+ *  - `GEMINI_MODEL` — see "Recommended models" table below. Default (为主) is
+ *    `gemini-3.5-flash` — the stable, cheap+fast model the app pins for
+ *    apiyi-mcp understanding (incl. 音频理解). 关键:**绝不退回 `gemini-2.x`(2.5)**
+ *    — 2.x 已弃用且明显掉点。运行时注入只覆盖 key,**不覆盖 model**,所以用户可经
+ *    MCP JSON 编辑器手动切到 `gemini-3.1-pro-preview-thinking`(深度推理)等,
+ *    而默认/种子始终是 3.5-flash。
  *  - `GEMINI_MAX_OUTPUT_TOKENS` / `GEMINI_TIMEOUT` — long-context / long-running
  *    defaults from the documented Cursor reference, so large video / PDF jobs
  *    don't get truncated at 8K tokens or time-out at 5 minutes.
  *
  * ## Recommended models (Gemini 3.x only — 2.5 is EOL for this app)
  *
- * | Model                              | 价/速 | 强项           | 何时选          |
- * |------------------------------------|-------|----------------|-----------------|
- * | `gemini-3.5-flash`         ← 默认  | 便宜+快| 综合最强       | 99% 场景        |
- * | `gemini-3.1-pro-preview-thinking`  | 贵+慢 | 深度推理 / 思维链 | 复杂分析、需要 thinking_budget 时 |
- * | `gemini-3-flash-preview`           | 最便宜 | 简单任务最省 token | 量大、不在意精度时 |
+ * | Model                                    | 价/速 | 强项           | 何时选          |
+ * |------------------------------------------|-------|----------------|-----------------|
+ * | `gemini-3.5-flash`              ← 默认/为主 | 便宜+快| 综合最强(含音频)| 99% 场景,默认 |
+ * | `gemini-3.1-pro-preview-thinking`        | 贵+慢 | 深度推理 / 思维链 | 复杂分析、需要 thinking_budget 时手动切 |
+ * | `gemini-3-flash-preview`                 | 最便宜 | 简单任务最省 token | 量大、不在意精度时 |
+ *
+ * **`gemini-2.x`(2.5 等)已弃用,默认/自动填充绝不使用。**
  *
  * 旧的 `gemini-2.x` 系列已被替换,新种子不会推荐。注意 `seedApiyiMcpEntry` 的
  * backfill 路径会**保留用户已设的任意模型值**(包括 2.5),不强制升级。
@@ -67,7 +80,6 @@ export function getApiyiMcpEntryPath(options: ApiyiMcpPathOptions): string {
  * back to Electron-as-Node (no system `node` available — packaged-app users).
  */
 export const APIYI_MCP_ENV_SCAFFOLD: Readonly<Record<string, string>> = Object.freeze({
-  APIYI_API_KEY: '',
   APIYI_BASE_URL: 'https://api.apiyi.com',
   GEMINI_MODEL: 'gemini-3.5-flash',
   GEMINI_MAX_OUTPUT_TOKENS: '65536',
@@ -162,10 +174,11 @@ export async function resolveApiyiCommand(
  * `command` and `extraEnv` come from `resolveApiyiCommand` — see that helper
  * for the node-vs-electron decision matrix.
  *
- * `enabled: false` is the first-boot default; the seeded `APIYI_API_KEY` is
- * empty, so flipping on without filling the key would just produce a noisy
- * "token invalid" loop. User pastes their key in the JSON editor, then flips
- * the toggle.
+ * The seed defaults this entry to `enabled: true` (see `seedApiyiMcpEntry`) so
+ * apiyi works out of the box — the user neither fills a key nor flips a toggle.
+ * The key is injected at spawn from 设置 → API易; apiyi is the app's default
+ * codex gateway, so that key is the norm. `buildApiyiMcpConfigEntry` itself is
+ * generic and honors whatever `enabled` the caller passes.
  *
  * `env` is a fresh copy of the scaffold (frozen template → new mutable object
  * per call) with `extraEnv` merged on top, so downstream code can edit

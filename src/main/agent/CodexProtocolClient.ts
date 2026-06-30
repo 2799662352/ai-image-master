@@ -71,6 +71,18 @@ export interface McpServerStatusListResponse {
 }
 
 const DEFAULT_RPC_TIMEOUT_MS = 30_000
+/**
+ * `mcpServerStatus/list` is structurally slower than every other RPC: codex
+ * connects to EVERY configured MCP server and waits for each to reach a terminal
+ * state (ready/failed) before it can return their tools. A single slow server
+ * (e.g. the external apiyi `node` process with a generous 60s startup window)
+ * would therefore blow the default 30s budget and make the WHOLE list reject,
+ * blanking the tool panel. We give the list its own 90s budget (> the largest
+ * per-server startup_timeout) so a merely-slow server still resolves and the
+ * full inventory comes back in one pass; a genuine hang past 90s degrades
+ * silently (status keeps flowing via `mcp_status_updated` notifications).
+ */
+const MCP_LIST_TIMEOUT_MS = 90_000
 const DEFAULT_CONNECT_TIMEOUT_MS = 10_000
 const DEFAULT_CONNECT_INTERVAL_MS = 100
 const CANCEL_GRACE_MS = 2_000
@@ -336,9 +348,12 @@ export class CodexProtocolClient {
   ): Promise<McpServerStatusListResponse> {
     // Default to the lightweight detail mode (codex PR #16831). `full` rebuilds
     // the entire inventory and probes resources/templates which can take 10s+.
+    // Runs on the dedicated MCP_LIST_TIMEOUT_MS budget (not the default 30s) so
+    // one slow server can't reject the whole list — see the constant's doc.
     return this.rpc<McpServerStatusListResponse>(
       'mcpServerStatus/list',
       params ?? { detail: 'toolsAndAuthOnly' },
+      MCP_LIST_TIMEOUT_MS,
     )
   }
 
@@ -502,18 +517,19 @@ export class CodexProtocolClient {
     this.ws.send(JSON.stringify(payload))
   }
 
-  private rpc<T>(method: string, params: unknown): Promise<T> {
+  private rpc<T>(method: string, params: unknown, timeoutMs?: number): Promise<T> {
     if (this.ws?.readyState !== WebSocket.OPEN) {
       return Promise.reject(new Error('Codex websocket is not connected'))
     }
     const id = ++this.rpcId
     const payload = { jsonrpc: '2.0' as const, id, method, params }
+    const effectiveTimeout = timeoutMs ?? this.rpcTimeoutMs
 
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id)
-        reject(new Error(`Codex RPC ${method} timed out after ${this.rpcTimeoutMs}ms`))
-      }, this.rpcTimeoutMs)
+        reject(new Error(`Codex RPC ${method} timed out after ${effectiveTimeout}ms`))
+      }, effectiveTimeout)
       this.pending.set(id, { resolve: (value) => resolve(value as T), reject, timer })
       this.ws!.send(JSON.stringify(payload), (error) => {
         if (!error) return

@@ -944,14 +944,21 @@ async function initAgentRuntime(win: BrowserWindow): Promise<void> {
         if (!/^https?:\/\//i.test(url)) {
           return { ok: false, reason: 'attachments:save-from-url only accepts http(s) URLs' }
         }
-        if (typeof fetch !== 'function') {
-          return { ok: false, reason: 'attachments:save-from-url: fetch unavailable in main' }
+        if (typeof net?.fetch !== 'function') {
+          return { ok: false, reason: 'attachments:save-from-url: net.fetch unavailable in main' }
         }
         const MAX_BYTES = 100 * 1024 * 1024
         const controller = new AbortController()
         const timer = setTimeout(() => controller.abort(), 60_000)
         try {
-          const res = await fetch(url, { signal: controller.signal })
+          // Use Electron `net.fetch` (Chrome's network stack) — NOT Node's global
+          // `fetch` (undici). Node's stack ignores the app/system proxy and uses
+          // stricter standalone TLS, so presigned COS/OSS hosts that the renderer
+          // reaches fine (Chromium stack → the `200 OK` in the CORS log) throw a
+          // bare "fetch failed" under undici. `net.fetch` issues from the default
+          // session (proxy + system certs) and is not bound by CORS in main.
+          // Ref: electron/electron docs/api/net.md (net.fetch vs Node fetch).
+          const res = await net.fetch(url, { signal: controller.signal })
           if (!res.ok) {
             return { ok: false, reason: `attachments:save-from-url: download failed (HTTP ${res.status})` }
           }
@@ -983,8 +990,15 @@ async function initAgentRuntime(win: BrowserWindow): Promise<void> {
           if (!saved) return { ok: false, reason: 'attachments:save-from-url: ingest produced no file' }
           return { ok: true, path: saved.localPath }
         } catch (error) {
-          const reason = error instanceof Error ? error.message : String(error)
-          return { ok: false, reason: `attachments:save-from-url: ${reason}` }
+          // Surface `error.cause` — undici/net wrap the real network failure
+          // (ENOTFOUND / TLS / ECONNRESET / proxy) under a bare "fetch failed",
+          // and dropping the cause is what made the previous failure undiagnosable.
+          const base = error instanceof Error ? error.message : String(error)
+          const cause =
+            error instanceof Error && error.cause
+              ? ` (cause: ${error.cause instanceof Error ? error.cause.message : String(error.cause)})`
+              : ''
+          return { ok: false, reason: `attachments:save-from-url: ${base}${cause}` }
         } finally {
           clearTimeout(timer)
         }

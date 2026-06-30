@@ -55,6 +55,16 @@ export const QWEN_UNDERSTAND_MODEL = 'qwen3.7-plus-dashscope'
 /** 更强 + 兜底模型:primary 失败时自动重试一次。也可经 `{ model }` 显式选用。 */
 export const QWEN_UNDERSTAND_FALLBACK_MODEL = 'qwen3.7-max-dashscope'
 
+/**
+ * 把 apiyi-mcp 的 `APIYI_API_KEY` 推给主进程时使用的 provider-store 槽位 id。
+ * 不是 codex 网关 provider——是「只存 key」的通道,镜像 qwen('qwen')存 Miau token
+ * 的做法。用专属 id(`apiyi-mcp`,不是真正的网关 `apiyi`)把 MCP 密钥与 codex
+ * 自己的 API易 网关 key 解耦。主进程在 spawn 时经 `-c mcp_servers.apiyi.env.
+ * APIYI_API_KEY` 注入,运行时生效、绝不落 `config.toml`(catimation 同款)。
+ * 必须与 main 端 `APIYI_MCP_PROVIDER_ID`(codexProviders.ts)保持一致。
+ */
+export const APIYI_MCP_PROVIDER_ID = 'apiyi-mcp'
+
 /** 允许显式选用的理解模型白名单(其余值回落到默认 plus)。 */
 export const QWEN_UNDERSTAND_MODELS: readonly string[] = [
   QWEN_UNDERSTAND_MODEL,
@@ -149,6 +159,13 @@ export interface GenerateImageParams {
   negativePrompt?: string
   count?: number
   signal?: AbortSignal
+  /**
+   * 按本次请求强制使用的站点 key（覆盖当前选中站点）。用于「只经某网关提供」的
+   * 渠道（如腾讯 image2 / 万相 2.7 仅经 Miau API=`antigravity`）：codex 出图无需
+   * 用户先手动切站点，调用方直接指定本字段即可。省略时沿用当前选中站点，向后兼容。
+   * 该站点必须存在且已配置对应 API Key，否则 generateImage 直接返回清晰错误。
+   */
+  siteKey?: string
 }
 
 export interface GenerateResult {
@@ -764,21 +781,38 @@ export class ApiService {
     // a qwen understanding subagent works without re-saving the key. Deferred +
     // guarded so it never blocks construction or runs outside Electron.
     queueMicrotask(() => this.syncMiauTokenToMain())
+    // Same idea for apiyi-mcp: mirror the app's already-configured apiyi key
+    // into `mcp_servers.apiyi.env` so the bundled understanding MCP works
+    // without the user re-pasting the key into the MCP JSON editor.
+    queueMicrotask(() => void this.syncApiyiKeyToMcp())
   }
 
   /**
    * 生成图片
    */
   async generateImage(params: GenerateImageParams): Promise<GenerateResult> {
-    const { prompt, model, ratio, resolution, quality, referenceImages, imageBase64, count = 1, signal } = params
+    const { prompt, model, ratio, resolution, quality, referenceImages, imageBase64, count = 1, signal, siteKey } = params
 
-    if (!this.apiKey) {
-      return { success: false, error: '请先设置 API Key' }
+    // 解析「本次请求的有效站点 + 令牌」：调用方传了存在的 siteKey 就强制走该站点
+    // （及其专属 Key），否则沿用当前选中站点。绝不临时改 this.apiKey/this.currentSite——
+    // codex 并行 turn 下实例级可变状态会把一个渠道的 Key 串到另一个渠道。
+    const effectiveSiteKey = siteKey && this.apiSites[siteKey] ? siteKey : this.currentSite
+    const site = this.apiSites[effectiveSiteKey]
+    const apiKey =
+      effectiveSiteKey === this.currentSite ? this.apiKey : this.getStoredApiKey(effectiveSiteKey)
+
+    if (!apiKey) {
+      return {
+        success: false,
+        error:
+          effectiveSiteKey !== this.currentSite
+            ? `未配置「${site?.name || effectiveSiteKey}」站点的 API Key —— 该渠道经此站点提供，请到设置页为该站点填入 API Key 后重试。`
+            : '请先设置 API Key',
+      }
     }
 
     const modelKey = this.resolveModelKey(model || this.currentModel)
     const modelConfig = this.models[modelKey]
-    const site = this.apiSites[this.currentSite]
 
     if (!modelConfig) {
       return { success: false, error: `未知模型: ${modelKey}` }
@@ -797,6 +831,7 @@ export class ApiService {
           count,
           modelConfig,
           site,
+          apiKey,
           signal,
         }),
         { maxRetries: 1, retryDelay: 2000 }
@@ -1214,9 +1249,11 @@ export class ApiService {
     count: number
     modelConfig: ModelConfig
     site: ApiSite
+    /** 本次请求使用的 API Key（由 generateImage 按有效站点解析后透传，避免实例级竞态）。 */
+    apiKey: string
     signal?: AbortSignal
   }): Promise<Response> {
-    const { prompt, model, ratio, resolution, quality, referenceImages, imageBase64, count, modelConfig, site, signal } = options
+    const { prompt, model, ratio, resolution, quality, referenceImages, imageBase64, count, modelConfig, site, apiKey, signal } = options
 
     // gpt-image-2 / gpt-image-2-all / gpt-image-2-vip / 腾讯 image2: 专用 Images API 路径
     if (model === 'gpt-image-2-all' || model === 'gpt-image-2' || model === 'gpt-image-2-vip'
@@ -1241,25 +1278,35 @@ export class ApiService {
 
       if (hasImages) {
         const editUrl = this.buildRequestUrl(modelConfig, site, 'edit')
-        // 腾讯 image2(custom-imagemodel-gt):edit 端点支持 JSON `images:[url]`。
-        // 参考图是 COS / 远端 URL 时直接传 URL，避免把图下载回来再以 base64 multipart 上传
-        // （省带宽、避开"url too long"/请求体膨胀）。极少数 data: 参考图仍回落 FormData。
-        const allHttpUrls = imageSources.every((s) => typeof s === 'string' && /^https?:\/\//i.test(s))
-        if (model === 'custom-imagemodel-gt' && allHttpUrls) {
+        // 腾讯 image2(custom-imagemodel-gt):edit 端点是官方文档(GPT-Maas)的 JSON
+        // `images: [{ image_url }]` 契约(Array of ImageRef)，**不接受标准 multipart/form-data**
+        // （这也是这条专用 JSON 路径存在的原因）。因此腾讯渠道一律走 JSON：
+        //   - http/https 参考图直接传 URL（省带宽、避开"url too long"/请求体膨胀）；
+        //   - base64 / data: / 裸 base64 / 对象形参考图，归一化成 data URI；
+        //   两者最终都包成 ImageRef 对象放进 images:[] —— image_url 字段官方明确"传图片的
+        //   url 地址或 base64 编码数据"，所以腾讯也能像 gpt-image-2 一样吃 base64 参考图，
+        //   而不是回落到网关根本不支持的 multipart 导致失败。
+        if (model === 'custom-imagemodel-gt') {
+          const jsonSources = imageSources
+            .map((s) => this.normalizeImageSource(s))
+            .filter((s): s is string => !!s)
+          if (jsonSources.length === 0) {
+            throw new Error('腾讯 image2 参考图无法解析为 URL 或 base64，请检查输入参考图')
+          }
           return this.makeTencentImage2JsonEdit(
-            editUrl, model, prompt, imageSources, site, signal, timeoutMs, resolvedSize, resolvedQuality,
+            editUrl, model, prompt, jsonSources, site, apiKey, signal, timeoutMs, resolvedSize, resolvedQuality,
           )
         }
-        return this.makeGptImage2FormDataRequest(editUrl, model, prompt, imageSources, site, signal, timeoutMs, resolvedSize, resolvedQuality)
+        return this.makeGptImage2FormDataRequest(editUrl, model, prompt, imageSources, site, apiKey, signal, timeoutMs, resolvedSize, resolvedQuality)
       } else {
         const genUrl = this.buildRequestUrl(modelConfig, site)
         const body = this.buildGptImage2JsonPayload(model, prompt, resolvedSize, resolvedQuality)
         this.logImageRequest(model, genUrl, body)
         const headers: Record<string, string> = { 'Content-Type': 'application/json' }
         if (site.authType === 'bearer') {
-          headers['Authorization'] = `Bearer ${this.apiKey}`
+          headers['Authorization'] = `Bearer ${apiKey}`
         } else {
-          headers['x-api-key'] = this.apiKey!
+          headers['x-api-key'] = apiKey
         }
         const fetchSignal = this.composeTimeoutSignal(signal, timeoutMs)
         const resp = await fetch(genUrl, {
@@ -1318,7 +1365,7 @@ export class ApiService {
 
     // 检查是否需要 FormData (Flux with images)
     if (body.__isFluxKontextWithImage) {
-      return this.makeFluxFormDataRequest(url, body, site, signal)
+      return this.makeFluxFormDataRequest(url, body, site, apiKey, signal)
     }
 
     const headers: Record<string, string> = {
@@ -1326,9 +1373,9 @@ export class ApiService {
     }
 
     if (site.authType === 'bearer') {
-      headers['Authorization'] = `Bearer ${this.apiKey}`
+      headers['Authorization'] = `Bearer ${apiKey}`
     } else {
-      headers['x-api-key'] = this.apiKey!
+      headers['x-api-key'] = apiKey
     }
 
     // 所有模型(nano/gemini、wan、sora、通用 OpenAI-compat)统一打印请求体到 F12，
@@ -1393,6 +1440,7 @@ export class ApiService {
     url: string,
     payload: any,
     site: ApiSite,
+    apiKey: string,
     signal?: AbortSignal,
   ): Promise<Response> {
     const formData = new FormData()
@@ -1422,9 +1470,9 @@ export class ApiService {
 
     const headers: Record<string, string> = {}
     if (site.authType === 'bearer') {
-      headers['Authorization'] = `Bearer ${this.apiKey}`
+      headers['Authorization'] = `Bearer ${apiKey}`
     } else {
-      headers['x-api-key'] = this.apiKey!
+      headers['x-api-key'] = apiKey
     }
 
     const fetchSignal = this.composeTimeoutSignal(signal, 2_000_000)
@@ -1543,15 +1591,20 @@ export class ApiService {
     prompt: string,
     imageSources: string[],
     site: ApiSite,
+    apiKey: string,
     userSignal?: AbortSignal,
     timeoutMs = 2_000_000,
     size?: string,
     quality?: string,
   ): Promise<Response> {
+    // 官方文档(GPT-Maas)：images 类型是 `Array of ImageRef`，线格式为对象数组
+    // `[{ image_url: "<url 或 base64 编码数据>" }]`（见官方 curl 示例）。image_url 字段
+    // 同时接受 http(s) URL 与 data-URI base64，二者等价。这里统一把每个归一化后的
+    // 参考图(URL 或 data URI)包成 ImageRef 对象，URL 与 base64 走同一形态。
     const body: Record<string, unknown> = {
       model,
       prompt,
-      images: imageSources,
+      images: imageSources.map((image_url) => ({ image_url })),
       n: 1,
     }
     if (size && size !== 'auto') body.size = size
@@ -1562,9 +1615,9 @@ export class ApiService {
 
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
     if (site.authType === 'bearer') {
-      headers['Authorization'] = `Bearer ${this.apiKey}`
+      headers['Authorization'] = `Bearer ${apiKey}`
     } else {
-      headers['x-api-key'] = this.apiKey!
+      headers['x-api-key'] = apiKey
     }
 
     const signal = this.composeTimeoutSignal(userSignal, timeoutMs)
@@ -1602,6 +1655,7 @@ export class ApiService {
     prompt: string,
     imageSources: string[],
     site: ApiSite,
+    apiKey: string,
     userSignal?: AbortSignal,
     timeoutMs = 2_000_000,
     size?: string,
@@ -1638,9 +1692,9 @@ export class ApiService {
 
     const headers: Record<string, string> = {}
     if (site.authType === 'bearer') {
-      headers['Authorization'] = `Bearer ${this.apiKey}`
+      headers['Authorization'] = `Bearer ${apiKey}`
     } else {
-      headers['x-api-key'] = this.apiKey!
+      headers['x-api-key'] = apiKey
     }
 
     // FormData 不是 JSON：打印结构化摘要(含参考图源)到 F12，标注 multipart。
@@ -2266,6 +2320,8 @@ export class ApiService {
       this.apiKey = key
       localStorage.setItem(`api_key_${this.currentSite}`, key)
       if (this.currentSite === 'antigravity') this.syncMiauTokenToMain()
+      if (this.currentSite === 'apiyi' || this.currentSite === 'b-apiyi')
+        void this.syncApiyiKeyToMcp()
       return true
     } catch {
       return false
@@ -2513,6 +2569,57 @@ export class ApiService {
   }
 
   /**
+   * Mirror the app's already-configured API易 key to the main process so the
+   * bundled apiyi-mcp server gets its `APIYI_API_KEY` injected at codex spawn —
+   * the user fills ONE key in 设置 → API易 and never touches the MCP JSON editor.
+   *
+   * Catimation-style runtime injection (NOT a config write): we push the key to
+   * the provider store under the dedicated id `apiyi-mcp` via
+   * `setProviderApiKey`. The main process keeps an in-memory copy and, at every
+   * codex (re)start, overlays it onto `[mcp_servers.apiyi].env.APIYI_API_KEY`
+   * with a `-c` flag. The secret therefore:
+   *   - is NEVER written to `~/.codex/config.toml` (the editor stays key-less),
+   *   - always reflects the current 设置 value (recomputed each spawn, no stale),
+   *   - is decoupled from codex's own API易 gateway provider key.
+   * Changing the key in 设置 triggers an immediate codex restart on the main
+   * side (the change-guard there makes idempotent re-pushes free), so the new
+   * key takes effect without an app reload. `GEMINI_MODEL` is intentionally NOT
+   * touched — it lives in the seed (default `gemini-3.5-flash`) so a user can
+   * still hand-switch to `gemini-3.1-pro-preview-thinking` in the editor.
+   *
+   * Source of truth = whichever apiyi-family key the user saved in 设置
+   * (`api易官方` → `api_key_apiyi`, `API易 B站` → `api_key_b-apiyi`, with the
+   * optional 图像理解 keys as fallback). Both apiyi.com endpoints accept the same
+   * `sk-` key. We push ONLY when a key is actually stored; with no apiyi key in
+   * 设置 we no-op (a user managing the key by hand in the editor is untouched).
+   *
+   * Best-effort: silently no-ops outside Electron / when the agent API is
+   * unavailable. Re-runs idempotently from the constructor, the save path, and
+   * the `useMcpStore` cold-start hook.
+   */
+  syncApiyiKeyToMcp(): void {
+    try {
+      const key =
+        this.getStoredApiKey('apiyi') ||
+        this.getStoredApiKey('b-apiyi') ||
+        this.getStoredVisionApiKey('apiyi') ||
+        this.getStoredVisionApiKey('b-apiyi') ||
+        ''
+      if (!key) return
+      const agent = (
+        window as unknown as {
+          electronAPI?: { agent?: { setProviderApiKey?: (id: string, key: string) => Promise<unknown> } }
+        }
+      )?.electronAPI?.agent
+      if (agent?.setProviderApiKey) {
+        void agent.setProviderApiKey(APIYI_MCP_PROVIDER_ID, key)
+      }
+    } catch {
+      // best-effort; never block the app on the apiyi-mcp key bridge.
+    }
+  }
+
+  /**
    * 保存 Vision API Key
    */
   saveVisionApiKey(key: string): boolean {
@@ -2520,6 +2627,8 @@ export class ApiService {
       localStorage.setItem(`vision_api_key_${this.currentSite}`, key)
       this.visionApiKey = key
       if (this.currentSite === 'antigravity') this.syncMiauTokenToMain()
+      if (this.currentSite === 'apiyi' || this.currentSite === 'b-apiyi')
+        void this.syncApiyiKeyToMcp()
       return true
     } catch {
       return false

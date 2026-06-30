@@ -97,10 +97,10 @@ export function mergeEnvWithScaffold(
 /**
  * Boot-time convergence for `mcp_servers.apiyi`. Four outcomes:
  *
- *  - **'seeded'**     — entry didn't exist; write a disabled stub with the
+ *  - **'seeded'**     — entry didn't exist; write an ENABLED stub with the
  *    full APIYI_MCP_ENV_SCAFFOLD env block (base URL, model, timeouts) plus
- *    any caller-supplied `extraEnv`, and an empty `APIYI_API_KEY` slot for
- *    the user to fill in via the MCP JSON editor.
+ *    any caller-supplied `extraEnv`, and NO `APIYI_API_KEY` slot (it's
+ *    injected at codex spawn from 设置 → API易, never written to disk).
  *  - **'repaired'**   — entry exists but is in the v4.3.16/17 "missing
  *    transport" broken state (`command` AND `url` both absent → codex
  *    aborts with `"invalid transport"`). We rebuild `command` + `args`
@@ -133,6 +133,39 @@ export function mergeEnvWithScaffold(
  * the disk file is overwritten with a clean seeded version — preferable to
  * silently failing).
  */
+/**
+ * Read the apiyi-mcp API key that the user set DIRECTLY in `config.toml`
+ * (`mcp_servers.apiyi.env.APIYI_API_KEY`). This is the SECOND supported key
+ * source besides 设置 → API易 (which goes through localStorage → runtime `-c`
+ * injection and never touches disk): the empty-tools card hint explicitly tells
+ * users they can hand-edit `env.APIYI_API_KEY` in the MCP JSON editor.
+ *
+ * The launch-time "no key → keep apiyi dormant" guard MUST consult this so it
+ * never disables an apiyi the user configured by hand (whose key is invisible
+ * to the localStorage-fed `apiyiKey`). Returns '' when the file / entry / key
+ * is missing, empty, non-string, or the TOML is unparseable — all treated as
+ * "no config key". Never throws (a read/parse failure must not block spawn).
+ */
+export async function readApiyiConfigKey(personalConfigToml: string): Promise<string> {
+  try {
+    const raw = await fs.readFile(personalConfigToml, 'utf8')
+    if (!raw.trim()) return ''
+    let doc: Record<string, unknown>
+    try {
+      doc = parseToml(raw) as Record<string, unknown>
+    } catch {
+      return ''
+    }
+    const servers = isPlainObject(doc.mcp_servers) ? doc.mcp_servers : {}
+    const apiyi = isPlainObject(servers.apiyi) ? servers.apiyi : null
+    const env = apiyi && isPlainObject(apiyi.env) ? apiyi.env : null
+    const key = env && typeof env.APIYI_API_KEY === 'string' ? env.APIYI_API_KEY : ''
+    return key.trim()
+  } catch {
+    return ''
+  }
+}
+
 export async function seedApiyiMcpEntry(input: SeedApiyiMcpInput): Promise<SeedAction> {
   let rawDoc: Record<string, unknown> = {}
   try {
@@ -205,7 +238,11 @@ export async function seedApiyiMcpEntry(input: SeedApiyiMcpInput): Promise<SeedA
     entryPath: input.entryPath,
     command: input.command,
     extraEnv: input.extraEnv,
-    enabled: false,
+    // Default ON, like the auto-injected key — the user shouldn't have to flip
+    // a toggle. apiyi is the app's default codex gateway, so a key in 设置 →
+    // API易 is the norm; that key is overlaid at spawn via `-c`, so a freshly
+    // seeded entry works out of the box without any manual JSON editing.
+    enabled: true,
   })
 
   const nextServers = { ...existingServers, apiyi: seededEntry }

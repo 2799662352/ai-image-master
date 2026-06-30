@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { parse as parseToml } from 'toml'
-import { mergeEnvWithScaffold, seedApiyiMcpEntry } from '../apiyiMcpSeed'
+import { mergeEnvWithScaffold, readApiyiConfigKey, seedApiyiMcpEntry } from '../apiyiMcpSeed'
 import { APIYI_MCP_ENV_SCAFFOLD } from '../apiyiMcpLauncher'
 
 let tmpDir: string
@@ -72,7 +72,7 @@ describe('seedApiyiMcpEntry', () => {
   // command / args / enabled / tool_timeout_sec are NEVER touched on the
   // backfill path.
 
-  it('creates config.toml with disabled apiyi stub + pre-filled env scaffold', async () => {
+  it('creates config.toml with an ENABLED apiyi stub + pre-filled env scaffold', async () => {
     const action = await seedApiyiMcpEntry({
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
@@ -92,9 +92,11 @@ describe('seedApiyiMcpEntry', () => {
     }
     expect(apiyi.command).toBe(FAKE_NODE)
     expect(apiyi.args).toEqual([FAKE_ENTRY])
-    expect(apiyi.enabled).toBe(false)
-    // The scaffolded env: only APIYI_API_KEY is empty for the user to fill.
-    expect(apiyi.env.APIYI_API_KEY).toBe('')
+    // Default ON — like the auto-injected key, the user shouldn't flip a toggle.
+    expect(apiyi.enabled).toBe(true)
+    // The scaffolded env carries no key — APIYI_API_KEY is injected at codex
+    // spawn from 设置 → API易 (catimation-style), never seeded to disk.
+    expect(apiyi.env.APIYI_API_KEY).toBeUndefined()
     expect(apiyi.env.APIYI_BASE_URL).toBe('https://api.apiyi.com')
     expect(apiyi.env.GEMINI_MODEL).toBe('gemini-3.5-flash')
     expect(apiyi.env.GEMINI_MAX_OUTPUT_TOKENS).toBe('65536')
@@ -159,7 +161,7 @@ describe('seedApiyiMcpEntry', () => {
       args: ['x'],
       enabled: true,
     })
-    expect((servers.apiyi as { enabled: boolean }).enabled).toBe(false)
+    expect((servers.apiyi as { enabled: boolean }).enabled).toBe(true)
   })
 
   it('backfills missing env keys but NEVER overwrites user-set values', async () => {
@@ -449,5 +451,53 @@ describe('seedApiyiMcpEntry', () => {
     expect(
       (parsed.mcp_servers as Record<string, unknown>).apiyi,
     ).toBeDefined()
+  })
+})
+
+describe('readApiyiConfigKey', () => {
+  it("returns '' when the config file does not exist", async () => {
+    expect(await readApiyiConfigKey(path.join(tmpDir, 'nope.toml'))).toBe('')
+  })
+
+  it("returns '' for an empty file", async () => {
+    await fs.writeFile(configPath, '   \n', 'utf8')
+    expect(await readApiyiConfigKey(configPath)).toBe('')
+  })
+
+  it("returns '' when there is no apiyi entry", async () => {
+    await fs.writeFile(configPath, '[mcp_servers.other]\ncommand = "node"\n', 'utf8')
+    expect(await readApiyiConfigKey(configPath)).toBe('')
+  })
+
+  it("returns '' when apiyi has no env.APIYI_API_KEY", async () => {
+    await fs.writeFile(
+      configPath,
+      '[mcp_servers.apiyi]\ncommand = "node"\n[mcp_servers.apiyi.env]\nGEMINI_MODEL = "gemini-3.5-flash"\n',
+      'utf8',
+    )
+    expect(await readApiyiConfigKey(configPath)).toBe('')
+  })
+
+  it("returns '' for an empty / whitespace key", async () => {
+    await fs.writeFile(
+      configPath,
+      '[mcp_servers.apiyi]\ncommand = "node"\n[mcp_servers.apiyi.env]\nAPIYI_API_KEY = "   "\n',
+      'utf8',
+    )
+    expect(await readApiyiConfigKey(configPath)).toBe('')
+  })
+
+  it('returns the trimmed key when set directly in config.toml (hand-edited path)', async () => {
+    await fs.writeFile(
+      configPath,
+      '[mcp_servers.apiyi]\ncommand = "node"\n[mcp_servers.apiyi.env]\nAPIYI_API_KEY = "  sk-hand-typed  "\n',
+      'utf8',
+    )
+    expect(await readApiyiConfigKey(configPath)).toBe('sk-hand-typed')
+  })
+
+  it("returns '' (never throws) on malformed TOML", async () => {
+    await fs.writeFile(configPath, 'this is = not [valid toml', 'utf8')
+    expect(await readApiyiConfigKey(configPath)).toBe('')
   })
 })

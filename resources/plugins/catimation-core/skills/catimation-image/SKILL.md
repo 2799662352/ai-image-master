@@ -36,13 +36,13 @@ image_gen skill: they render inside the chat AND persist results to local files
    composition, lighting, and mood. Keep it concise.
 2. If the user asks for exactly ONE image, call `generate_image` with:
    - `prompt` (required): the description from step 1.
-   - `model` (optional): rendering channel. **Omit it** for the default
-     `gpt-image-2-vip` (stable). Only set it when the user explicitly names a
-     channel (see "Choosing a model" below):
-     - `custom-imagemodel-gt` — 腾讯 image2 (same ratio/resolution/quality spec).
-       **需把 API 站点切到 Miau API**(见下方「站点要求」)。
+   - `model` (optional): rendering channel. **Omit it** for the preferred default
+     `custom-imagemodel-gt` (腾讯 image2 — 快 ~30s、无水印). Only set it when the
+     user explicitly names another channel (see "Choosing a model" below):
+     - `gpt-image-2-vip` — OpenAI 官逆 (stable alternate; same ratio/resolution/quality spec).
      - `wan2.7-image-pro` — 阿里万相 2.7 pro (超清文生图 / 图像编辑 / 组图).
-       **需把 API 站点切到 Miau API**(见下方「站点要求」)。
+     - `gemini-3.1-flash-image` — Nano Banana 2（谷歌 Gemini 原生端点，快、多尺寸 4K）.
+     站点会自动处理(见下方「站点要求」)——你无需让用户手动切站点。
    - `ratio` (optional): aspect ratio, e.g. `1:1`, `16:9`, `9:16`, `4:3`, `3:2`.
      Omit or `auto` lets the model decide.
    - `resolution` (optional): clarity tier — prefer `2K` by default. Use `1K`
@@ -97,15 +97,15 @@ image_gen skill: they render inside the chat AND persist results to local files
      and do NOT shell out (`dir`/`ls`/`where`/`find`/`Get-ChildItem`) to hunt for
      the file — the path is already in the return; `view_image` that path directly.
 
-## Choosing a model (default vs. 腾讯 / 万相)
+## Choosing a model (default 腾讯 image2 vs. vip / 万相)
 
 The `model` param is **optional**. By default (omit it) generation runs on the
-stable `gpt-image-2-vip` channel — keep doing that for ordinary requests. Only
-switch when the user *explicitly* asks for a specific channel:
+preferred `custom-imagemodel-gt` (腾讯 image2) channel — 快(~30s)、无水印、与其它
+渠道同一套 ratio × resolution(1K/2K/4K) × quality 参数。Keep using the default for
+ordinary requests. Only switch when the user *explicitly* asks for another channel:
 
-- **`custom-imagemodel-gt` (腾讯 image2)** — pick when the user says 腾讯 /
-  tencent / image2 / 腾讯模型. Same ratio × resolution(1K/2K/4K) × quality
-  surface as the default, so all the other params behave identically.
+- **`gpt-image-2-vip` (OpenAI 官逆)** — pick when the user says 官逆 / vip /
+  OpenAI / 稳定渠道. Stable alternate; same param surface as the default.
 - **`wan2.7-image-pro` (阿里万相 2.7 pro)** — pick when the user says 万相 /
   wanxiang / wan / 通义万相, OR when they want a **consistent multi-image 组图
   series** (e.g. "同一只猫的四季组图，前后一致"). For a 组图 series, call
@@ -114,23 +114,26 @@ switch when the user *explicitly* asks for a specific channel:
   (do NOT use `generate_images`, which makes unrelated images). Wan excels at
   超清文生图、图像编辑、组图; it also supports 4K (text-to-image only —
   editing/组图 cap at 2K).
-- All three accept `referenceImages` for image-to-image / editing.
+- **`gemini-3.1-flash-image` (Nano Banana 2)** — pick when the user says nano /
+  nano2 / nano banana / gemini / 谷歌. 谷歌 Gemini 原生端点，出图快(~15s)、支持
+  超多宽高比与 4K，中文/文字与一致性也不错。
+- All four accept `referenceImages` for image-to-image / editing.
 
-### ⚠️ 站点要求(重要 — 用 腾讯 image2 / 万相 2.7 前必读)
+### 站点要求(已自动处理 — 无需手动切站点)
 
 `custom-imagemodel-gt`(腾讯 image2)和 `wan2.7-image-pro`(阿里万相 2.7 pro)
-**都只经 Miau API 代理提供**。调用这两个 `model` 之前,必须先在
-**「API 设置 → ① 选择 API 站点」里把当前站点切到 `Miau API`**。原因:应用发请求时
-会用「当前选中站点」的域名替换模型端点的域名,所以站点不对时,这两个渠道的请求会被
-发到错误的域名(如 API易官方),那边没有这两个模型,直接失败 / 报错。
+**都只经 Miau API 代理提供**。出图时应用会**自动把这两个渠道的请求固定走 Miau API
+站点**(无论用户当前在「API 设置」里选了哪个站点),所以你**不需要**让用户手动切站点——
+直接调用即可。
 
-- 默认渠道 `gpt-image-2-vip` **不受此限制**,在任何站点都能用——这也是为什么不指定
-  `model` 时要保持默认。
-- 如果用户明确要用 腾讯 image2 / 万相,而当前站点不是 Miau API:先提醒用户到
-  「API 设置」把站点切到 **Miau API**(并填好对应 API Key)再生成,否则会失败。
+- 唯一前提:Miau API 站点已配置 API Key。若没配,工具会返回清晰错误
+  「未配置『Miau API』站点的 API Key …」——这时再提醒用户到「API 设置」为 Miau API
+  站点填入 Key 即可,无需切换当前站点。
+- `gpt-image-2-vip` 和 `gemini-3.1-flash-image`(Nano Banana 2)走当前选中站点
+  (任意站点可用,无需 Miau)。
 
 When the user does not name a channel, **do not guess** — just omit `model` and
-use the default. Never invent a model name; only these three values are valid.
+use the default 腾讯 image2. Never invent a model name; only these four values are valid.
 
 ## Reference images — reuse the user's material (important)
 
@@ -191,9 +194,10 @@ directory and give it a descriptive, ordered name — e.g.
 ## Common Mistakes
 
 - 用户给了图却忘传 `referenceImages`,改成从零文生图。
-- 调 `custom-imagemodel-gt` / `wan2.7-image-pro` 前不切到 Miau API 站点,直接调用导致失败。
 - 多张图却逐个调 `generate_image`,而不是一次 `generate_images`。
-- 凭空编造 `model` 名;只有三个合法值,用户没点名就省略 `model` 走默认。
+- 凭空编造 `model` 名;只有四个合法值,用户没点名就省略 `model` 走默认(腾讯 image2)。
+- 用户点名 vip/官逆 时仍走默认腾讯渠道(应显式传 `model: 'gpt-image-2-vip'`);
+  用户点名 nano/nano2 时应显式传 `model: 'gemini-3.1-flash-image'`。
 
 ## Notes
 

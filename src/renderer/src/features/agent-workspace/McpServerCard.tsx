@@ -6,10 +6,14 @@ import type { McpServerCard as McpServerCardData } from './useMcpStore'
 interface McpServerCardProps {
   server: McpServerCardData
   loggingIn?: boolean
+  /** This card's per-server refresh is in flight (independent of other cards). */
+  refreshing?: boolean
   onEdit: (name: string) => void
   onDelete: (name: string) => void
   onToggle: (name: string, enabled: boolean) => void
   onLogin: (name: string) => void
+  /** Optional: when provided, renders a per-server refresh button. */
+  onRefresh?: (name: string) => void
 }
 
 const STATUS_DOT: Record<string, string> = {
@@ -43,6 +47,27 @@ function PencilIcon(): React.JSX.Element {
     >
       <path d="M12 20h9" />
       <path d="M16.5 3.5a2.121 2.121 0 113 3L7 19l-4 1 1-4L16.5 3.5z" />
+    </svg>
+  )
+}
+
+function RefreshIcon({ spinning }: { spinning?: boolean }): React.JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      className={spinning ? 'animate-spin' : undefined}
+    >
+      <path d="M23 4v6h-6" />
+      <path d="M1 20v-6h6" />
+      <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
     </svg>
   )
 }
@@ -223,10 +248,12 @@ function ToggleSwitch({ checked, onChange, label }: ToggleSwitchProps): React.JS
 export function McpServerCard({
   server,
   loggingIn,
+  refreshing,
   onEdit,
   onDelete,
   onToggle,
   onLogin,
+  onRefresh,
 }: McpServerCardProps): React.JSX.Element {
   const dotColor = STATUS_DOT[server.status] ?? STATUS_DOT.unknown
   const statusLabel = STATUS_LABEL[server.status] ?? server.status
@@ -283,6 +310,18 @@ export function McpServerCard({
         {/* Action cluster — always visible, fixed-width so card width is
             stable regardless of name length or status text. */}
         <div className="ml-1 flex shrink-0 items-center gap-0.5">
+          {onRefresh && (
+            <button
+              type="button"
+              onClick={() => onRefresh(server.name)}
+              disabled={refreshing}
+              className="flex h-7 w-7 items-center justify-center rounded text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-50"
+              title="只刷新这个服务器（不影响其它）"
+              aria-label={`刷新 ${server.name}`}
+            >
+              <RefreshIcon spinning={refreshing} />
+            </button>
+          )}
           {!server.isBuiltin && (
             <>
               <button

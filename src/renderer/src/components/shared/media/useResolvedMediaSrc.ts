@@ -28,8 +28,10 @@
  * This is the same path VSCode took for non-file schemes (vscode#209453,
  * PR #209458 "Load images in a data uri for image preview").
  *
- * **Passthrough** for `http(s)://`, `blob:`, `data:`, and `file://` — those
- * all work natively from the renderer without IPC.
+ * **Passthrough** for `http(s)://`, `blob:`, and `data:` — those work natively
+ * from the renderer without IPC. `file://` does NOT: this sandboxed renderer
+ * rejects it ("Not allowed to load local resource"), so we route file:// bytes
+ * through the same IPC as `local-file://` / raw OS paths.
  */
 
 import { useEffect, useState } from 'react'
@@ -93,7 +95,9 @@ function base64ToArrayBuffer(b64: string): ArrayBuffer {
  *      above on macOS/Linux.
  *
  * Returns null for traversal segments and for shapes that should go
- * straight to the renderer (`http(s)://`, `blob:`, `data:`, `file://`).
+ * straight to the renderer (`http(s)://`, `blob:`, `data:`). Note: `file://`
+ * is NOT passthrough — the sandboxed renderer cannot load it, so it is
+ * converted to an OS path here and routed through IPC.
  *
  * Pure string ops — does **not** call `new URL()` because in the renderer
  * `local-file` is not parseable as a standard scheme (see module docstring).
@@ -111,6 +115,28 @@ function toOsPathIfLocal(src: string): string | null {
     if (decoded.includes('..')) return null
     if (/^[A-Za-z]:[\\/]/.test(decoded)) return decoded
     return '/' + decoded
+  }
+  // `file://…` is NOT natively loadable from this sandboxed renderer (Chromium
+  // emits "Not allowed to load local resource"). Treat it as a local resource
+  // and route the bytes through IPC — same as `local-file://` / raw OS paths.
+  // (Defense-in-depth: `toRenderableUri` already converts file:// → local-file://
+  // at the rendering chokepoint, but direct callers may still pass a raw file://.)
+  if (/^file:\/\//i.test(src)) {
+    let rest = src.replace(/^file:\/\//i, '')
+    if (!rest.startsWith('/')) {
+      const slash = rest.indexOf('/')
+      rest = slash >= 0 ? rest.slice(slash) : '/' + rest
+    }
+    let decoded: string
+    try {
+      decoded = decodeURIComponent(rest)
+    } catch {
+      return null
+    }
+    if (decoded.includes('..')) return null
+    const win = /^\/([A-Za-z]:[\\/].*)$/.exec(decoded)
+    if (win) return win[1]
+    return decoded
   }
   // Raw Windows path: `D:\foo`, `D:/foo`, `\\server\share\foo` (UNC).
   if (/^[A-Za-z]:[\\/]/.test(src)) return src

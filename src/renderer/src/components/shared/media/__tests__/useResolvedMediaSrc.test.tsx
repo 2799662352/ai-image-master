@@ -118,6 +118,26 @@ describe('useResolvedMediaSrc — default (thumbnail hot path)', () => {
     expect(readMediaThumb).not.toHaveBeenCalled()
     expect(readThumb).not.toHaveBeenCalled()
   })
+
+  // 防御纵深：直连调用方（如 Lightbox）可能拿到裸 file://（沙箱不允许 <img src>），
+  // 必须像 local-file:// / 裸 OS 路径一样转 OS 路径走 IPC，而不是 passthrough。
+  it('routes file:// URIs through IPC (NOT passthrough — sandbox blocks file://)', async () => {
+    readMediaThumb.mockResolvedValue({
+      ok: true,
+      base64: Buffer.from('jpeg-bytes').toString('base64'),
+      mime: 'image/jpeg',
+    })
+
+    const { result } = renderHook(() =>
+      useResolvedMediaSrc('file:///C:/Users/me/agent/uploads/a.png', 'image'),
+    )
+
+    await waitFor(() => expect(result.current?.startsWith('blob:')).toBe(true))
+    expect(readMediaThumb).toHaveBeenCalledTimes(1)
+    expect(readMediaThumb).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'C:/Users/me/agent/uploads/a.png' }),
+    )
+  })
 })
 
 describe('useResolvedMediaSrc — opts.fullFidelity (lightbox / download path)', () => {

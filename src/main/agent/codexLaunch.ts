@@ -125,6 +125,35 @@ export interface CodexLaunchOptions {
    * current session's dynamic port/token and never leaves stale config behind.
    */
   catimationMcp?: CatimationMcpLaunchInfo
+  /**
+   * The user's apiyi-mcp API key (the single key saved in 设置 → API易). When
+   * present we overlay it onto the seeded `[mcp_servers.apiyi].env` table via
+   * `-c mcp_servers.apiyi.env.APIYI_API_KEY=...` at spawn — the SAME
+   * runtime-injection model as {@link catimationMcp}: the secret stays in
+   * lockstep with 设置, is NEVER written to `~/.codex/config.toml`, and so the
+   * MCP JSON editor never shows it or asks the user to re-paste it.
+   *
+   * The boot seed (`seedApiyiMcpEntry`) supplies command/args/base_url/model/
+   * timeouts for the entry; this `-c` only overlays the leaf secret (dotted
+   * `-c` merges, so the seeded siblings survive). We deliberately do NOT inject
+   * `GEMINI_MODEL` here so a user's manual editor switch to
+   * `gemini-3.1-pro-preview-thinking` (deep reasoning) is respected — the
+   * sanctioned default (`gemini-3.5-flash`) lives in the seeded config instead.
+   */
+  apiyiKey?: string
+  /**
+   * True when `~/.codex/config.toml` already carries a non-empty
+   * `mcp_servers.apiyi.env.APIYI_API_KEY` — i.e. the user hand-edited the MCP
+   * JSON editor (the SECOND supported key source besides {@link apiyiKey} /
+   * 设置 → API易, and the one the empty-tools card hint instructs). The backend
+   * resolves it at spawn via `readApiyiConfigKey`.
+   *
+   * Lets the no-key launch guard tell "keyless" (must stay dormant) apart from
+   * "key lives in config" (must run normally), so we never disable an apiyi the
+   * user configured by hand. The secret itself is NOT forwarded here (codex
+   * reads it straight from config.toml) — only the boolean fact that it exists.
+   */
+  apiyiHasConfigKey?: boolean
 }
 
 function quote(value: string): string {
@@ -339,8 +368,18 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     // legacy prefix. `enabled=false` keeps the experimental code-mode EXEC
     // routing OFF — we only want the exposure override (read regardless of
     // enablement), not nested code-mode tool calling.
+    //
+    // `apiyi` is listed for the EXACT same reason: the bundled apiyi-mcp server
+    // (understand_video / generate_content / 音频·PDF 理解 …) is a first-party
+    // tool path we want ALWAYS directly model-visible. Without this it gets
+    // deferred behind `tool_search` just like ask_user did, which is why apiyi
+    // tools "sometimes don't come back" — the model has to re-discover them via
+    // search and intermittently fails. Listing the namespace here promotes them
+    // to DirectModelOnly so they're never deferred. (This is a top-level
+    // features array — NOT under `mcp_servers.apiyi` — so it never synthesizes a
+    // transport-less entry even if apiyi isn't installed.)
     '-c', 'features.code_mode.enabled=false',
-    '-c', 'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation"]',
+    '-c', 'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi"]',
   ]
 
   // Register the local in-process catimation MCP server so the Codex
@@ -414,6 +453,69 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     // We only disable it when our tool is actually wired, so a failed MCP bind
     // still leaves the built-in as a fallback ("use whatever works").
     args.push('-c', 'skills.config=[{ name = "imagegen", enabled = false }]')
+  }
+
+  // apiyi-mcp launch policy. Three mutually-exclusive outcomes driven by where
+  // (if anywhere) the user's APIYI_API_KEY lives:
+  //
+  //   A) key in 设置 → API易 (localStorage → `apiyiKey`): overlay the secret at
+  //      runtime via a dotted `-c` (mirrors the catimation pattern) — never
+  //      touches config.toml, so the JSON editor entry stays key-less. + run
+  //      the reliability timeouts below.
+  //   B) key hand-typed into config.toml (`apiyiHasConfigKey`, resolved by the
+  //      backend via `readApiyiConfigKey`): codex reads the secret straight off
+  //      disk, so we do NOT re-inject it via `-c` (that would leak it onto the
+  //      spawn command line / diagnostic log). We DO still apply the timeouts.
+  //   C) NO key anywhere: keep apiyi DORMANT at launch (`enabled=false`). A
+  //      keyless apiyi-mcp registers its tool handlers then dies at
+  //      `initializeGenAI()`, and codex's `run_turn` awaits `list_all_tools()`
+  //      where ONE stalled server gates the whole map until startup_timeout —
+  //      so a keyless+enabled apiyi would hang the agent's FIRST TURN for the
+  //      full 60s window (openai/codex#19556, #21318; #29321 "skip not-ready
+  //      optional servers" is still only a proposal). The boot seed keeps
+  //      enabled:true so the card shows apiyi ready-to-go; this `-c` override
+  //      keeps it from actually spawning until a key exists. The moment the
+  //      user adds a key (设置 or JSON editor) + restarts, A/B re-enable it.
+  //
+  // The seed (`seedApiyiMcpEntry`) guarantees the entry's transport
+  // (`command`/`args`) at boot, so every `-c` below only sets a leaf onto an
+  // existing entry — we never synthesize a command-less `[mcp_servers.apiyi]`
+  // that codex would reject as "invalid transport".
+  const apiyiKey = options?.apiyiKey?.trim()
+  const apiyiHasConfigKey = options?.apiyiHasConfigKey === true
+  const apiyiHasAnyKey = !!apiyiKey || apiyiHasConfigKey
+  if (apiyiKey) {
+    // (A) Overlay the leaf secret; dotted `-c` merges over the boot-seeded env
+    // (base_url / model / other timeouts survive).
+    args.push('-c', `mcp_servers.apiyi.env.APIYI_API_KEY=${quote(apiyiKey)}`)
+  }
+  if (apiyiHasAnyKey) {
+    // (A+B) Reliability timeouts — the OTHER half of "why catimation always
+    // returns tools and apiyi sometimes doesn't". apiyi-mcp is a real external
+    // `node index.js` process (not catimation's in-process bridge), so:
+    //   • startup_timeout_sec=60 — a cold node boot + MCP `initialize`
+    //     handshake can intermittently blow codex's default startup window
+    //     (DEFAULT_STARTUP_TIMEOUT, ~10s), leaving the server in the "异"
+    //     (errored) state with ZERO tools listed. 60s of slack makes the
+    //     listing reliable. This deliberately does NOT shrink to fit the
+    //     tool-list RPC budget — a single slow server must never dictate
+    //     apiyi's startup window. Instead the LIST side is made resilient:
+    //     `CodexProtocolClient.listMcpServers` runs on its own 90s budget
+    //     (> this 60s, see MCP_LIST_TIMEOUT_MS) and a list timeout degrades
+    //     SILENTLY (status keeps arriving via `mcp_status_updated`
+    //     notifications), so one slow server can't blank the whole panel.
+    //   • tool_timeout_sec=2000 — per tool CALL (not startup); understanding
+    //     jobs (video/音频/PDF via Gemini) routinely run minutes; apiyi-mcp's
+    //     own GEMINI_TIMEOUT is 1800000ms (30min), so codex must wait at least
+    //     that long or it aborts mid-flight. 2000s > 1800s, matching
+    //     catimation. (Safe — does not affect the startup/list path above.)
+    args.push(
+      '-c', 'mcp_servers.apiyi.startup_timeout_sec=60',
+      '-c', 'mcp_servers.apiyi.tool_timeout_sec=2000',
+    )
+  } else {
+    // (C) No key from EITHER source → dormant, see rationale above.
+    args.push('-c', 'mcp_servers.apiyi.enabled=false')
   }
 
   for (const root of sessionConfig.writableRoots) {

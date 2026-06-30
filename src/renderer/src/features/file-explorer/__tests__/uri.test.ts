@@ -33,4 +33,27 @@ describe('toRenderableUri', () => {
   it('returns input unchanged when not a recognized shape', () => {
     expect(toRenderableUri('relative/path.png')).toBe('relative/path.png')
   })
+
+  // 回归：codex 重载时 R2/COS 未结算 → anchor.paths 回退为 file:///… ；沙箱渲染进程
+  // 不允许 <img src="file://…">（"Not allowed to load local resource"）。渲染层必须把
+  // file:// 归一化成 local-file://（→ 自定义协议/IPC）。
+  it('converts a Windows file:/// URL to local-file:/// (encoded drive colon)', () => {
+    expect(
+      toRenderableUri('file:///C:/Users/27996/AppData/Roaming/app/agent/uploads/a.png'),
+    ).toBe('local-file:///C%3A/Users/27996/AppData/Roaming/app/agent/uploads/a.png')
+  })
+
+  it('percent-decodes the drive colon form (file:///C%3A/…)', () => {
+    expect(toRenderableUri('file:///C%3A/u/x.png')).toBe('local-file:///C%3A/u/x.png')
+  })
+
+  it('converts a POSIX file:/// URL to local-file:///', () => {
+    expect(toRenderableUri('file:///home/u/x.png')).toBe('local-file:////home/u/x.png')
+  })
+
+  it('decodes percent-encoded spaces in a file:// URL', () => {
+    expect(toRenderableUri('file:///C:/My%20Pics/a%20b.png')).toBe(
+      'local-file:///C%3A/My Pics/a b.png',
+    )
+  })
 })

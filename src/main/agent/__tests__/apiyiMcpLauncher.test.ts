@@ -53,15 +53,19 @@ describe('getApiyiMcpEntryPath', () => {
 
 describe('APIYI_MCP_ENV_SCAFFOLD', () => {
   // Pins the contract for the JSON-editor scaffold the user sees on first
-  // boot. Empty APIYI_API_KEY is the *only* field they must edit; everything
-  // else is sensible defaults aligned with the working Cursor mcp.json shape.
+  // boot. The secret is DELIBERATELY absent — `APIYI_API_KEY` is injected at
+  // codex spawn from 设置 → API易 (catimation-style), so the editor stays
+  // key-less; everything else is sensible defaults aligned with the working
+  // Cursor mcp.json shape.
 
   it('ships the apiyi.com base URL (NOT bltcy.ai), so sk- keys validate', () => {
     expect(APIYI_MCP_ENV_SCAFFOLD.APIYI_BASE_URL).toBe('https://api.apiyi.com')
   })
 
-  it('leaves APIYI_API_KEY empty so the JSON editor surfaces it visibly', () => {
-    expect(APIYI_MCP_ENV_SCAFFOLD.APIYI_API_KEY).toBe('')
+  it('OMITS APIYI_API_KEY from the persisted scaffold (injected at spawn from 设置)', () => {
+    // The single key the user fills in 设置 is overlaid via `-c` at spawn, never
+    // written to config.toml — so the scaffold must NOT carry a key field.
+    expect(APIYI_MCP_ENV_SCAFFOLD.APIYI_API_KEY).toBeUndefined()
   })
 
   it('does NOT bake ELECTRON_RUN_AS_NODE into the scaffold (only injected via extraEnv on the Electron-as-Node fallback)', () => {
@@ -73,12 +77,14 @@ describe('APIYI_MCP_ENV_SCAFFOLD', () => {
   })
 
   it('pre-fills a sane model + long-context tokens + 30min timeout', () => {
-    // Default is the best price/perf 3.x model. The other two canonical
-    // choices (`gemini-3.1-pro-preview-thinking` for thinking-heavy work and
-    // `gemini-3-flash-preview` for cheapest-token batch work) are documented
-    // in apiyiMcpLauncher.ts but NOT enforced — the JSON editor accepts any
-    // string. Bumping this default is a deliberate UX change; if you flip it,
-    // also update the steady-state TOML fixture in apiyiMcpSeed.test.ts.
+    // Default (为主) is the stable `gemini-3.5-flash` — what the app pins apiyi-mcp
+    // to via syncApiyiKeyToMcp (incl. 音频理解). 关键:绝不退回 gemini-2.x(2.5)。
+    // The other canonical choices (`gemini-3.1-pro-preview-thinking` for deep
+    // reasoning, `gemini-3-flash-preview` for cheapest-token batch) are documented
+    // in apiyiMcpLauncher.ts but NOT enforced — the JSON editor accepts any string.
+    // Bumping this default is a deliberate UX change; the runtime `-c` injection
+    // only overlays the KEY (not the model), so this seed value is the single
+    // source of truth for the default model (a user can hand-switch in the editor).
     expect(APIYI_MCP_ENV_SCAFFOLD.GEMINI_MODEL).toBe('gemini-3.5-flash')
     expect(APIYI_MCP_ENV_SCAFFOLD.GEMINI_MAX_OUTPUT_TOKENS).toBe('65536')
     expect(APIYI_MCP_ENV_SCAFFOLD.GEMINI_TIMEOUT).toBe('1800000')
@@ -90,8 +96,8 @@ describe('APIYI_MCP_ENV_SCAFFOLD', () => {
 })
 
 describe('buildApiyiMcpConfigEntry', () => {
-  // The seeded env block is a full scaffold (NOT empty {}) so the user only
-  // has to fill APIYI_API_KEY in the JSON editor.
+  // The seeded env block is a full scaffold (NOT empty {}) carrying base_url /
+  // model / timeouts — but NO key. The key is injected at spawn from 设置.
 
   it('builds a disabled stub with the full env scaffold pre-filled (system-node path)', () => {
     const entry = buildApiyiMcpConfigEntry({
@@ -137,7 +143,7 @@ describe('buildApiyiMcpConfigEntry', () => {
     expect(a.env).not.toBe(b.env)
     expect(a.env).not.toBe(APIYI_MCP_ENV_SCAFFOLD)
     // Mutating one copy must not affect the next call.
-    a.env.APIYI_API_KEY = 'sk-mutated'
-    expect(b.env.APIYI_API_KEY).toBe('')
+    a.env.APIYI_BASE_URL = 'https://mutated.example'
+    expect(b.env.APIYI_BASE_URL).toBe('https://api.apiyi.com')
   })
 })

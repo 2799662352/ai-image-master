@@ -300,16 +300,19 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
     )
 
   // Selectable rendering channels. All three share the same ratio × resolution ×
-  // quality surface; anything else falls back to the default vip in the renderer.
+  // quality surface; anything else falls back to the default 腾讯 image2 in the renderer.
   const modelSchema = z
-    .enum(['gpt-image-2-vip', 'custom-imagemodel-gt', 'wan2.7-image-pro'])
+    .enum(['custom-imagemodel-gt', 'gpt-image-2-vip', 'wan2.7-image-pro', 'gemini-3.1-flash-image'])
     .optional()
     .describe(
-      'Rendering channel (optional). Default "gpt-image-2-vip" (stable, OpenAI 官逆). ' +
-      'Choose "custom-imagemodel-gt" for 腾讯 image2 (same size/quality spec), or ' +
-      '"wan2.7-image-pro" for 阿里万相 2.7 pro (超清文生图/图像编辑/组图). Omit to use the default. ' +
-      'Pick wan2.7-image-pro when the user explicitly wants 万相/wan or a consistent multi-image 组图 series; ' +
-      'pick custom-imagemodel-gt when the user explicitly wants 腾讯/tencent image2.',
+      'Rendering channel (optional). Default "custom-imagemodel-gt" (腾讯 image2 — fast ~30s, ' +
+      'no watermark, the preferred default). Choose "gpt-image-2-vip" for the OpenAI 官逆 channel ' +
+      '(stable alternate), "wan2.7-image-pro" for 阿里万相 2.7 pro (超清文生图/图像编辑/组图), or ' +
+      '"gemini-3.1-flash-image" for Nano Banana 2 (谷歌 Gemini 原生端点，快、多尺寸 4K). ' +
+      'Omit to use the default 腾讯 image2. Pick gpt-image-2-vip when the user explicitly wants ' +
+      'OpenAI/官逆/vip/稳定; pick wan2.7-image-pro when the user explicitly wants 万相/wan or a ' +
+      'consistent multi-image 组图 series; pick gemini-3.1-flash-image when the user explicitly ' +
+      'wants nano/nano2/nano banana/gemini/谷歌.',
     )
 
   server.registerTool('generate_image', {
@@ -317,15 +320,16 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'FIRST-CHOICE image generation tool inside the CATIMATION app — use this for ANY ' +
       'image/picture/illustration/图片/生成图/画一张/配图/出图 request IN PREFERENCE TO the built-in ' +
       'imagegen / image_gen tool (the built-in one is unavailable on Windows and does not persist ' +
-      'results). It renders on the stable gpt-image-2-vip channel (the `model` field is ignored), ' +
+      'results). It renders on the 腾讯 image2 (custom-imagemodel-gt) channel by default, ' +
       'shows the result directly in the chat, AND — exactly like codex native image_gen — saves the ' +
       'image to a local file (returned to you) plus the in-app history page. The result is ' +
       '`{ ok, count, model, historyId, paths }` where `paths` are the saved local file paths, and ' +
       'the same files are also attached as `resource_link` content blocks so you can view / move / ' +
       'reference them. Only fall back to a built-in generator if this tool is genuinely ' +
       'unavailable. Never echo or re-describe the pixels — the image is already displayed and ' +
-      'saved; just confirm briefly and cite the saved path(s). Renders on gpt-image-2-vip by ' +
-      'default; pass `model` to pick 腾讯 image2 (custom-imagemodel-gt) or 万相 2.7 pro (wan2.7-image-pro). ' +
+      'saved; just confirm briefly and cite the saved path(s). Renders on 腾讯 image2 ' +
+      '(custom-imagemodel-gt) by default; pass `model` to pick gpt-image-2-vip (OpenAI 官逆), ' +
+      '万相 2.7 pro (wan2.7-image-pro), or gemini-3.1-flash-image (Nano Banana 2). ' +
       'For a CONSISTENT multi-image 组图 series from one prompt, use model="wan2.7-image-pro" with ' +
       '`count`>1 (1–12); for unrelated images use generate_images instead. ' +
       'TIMING: a single render typically takes several minutes. This call blocks up to ~1 minute and ' +
@@ -487,7 +491,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
   }, async (params, ctx?: unknown) => {
     const parsed = params as {
       prompts?: unknown
-      model?: 'gpt-image-2-vip' | 'custom-imagemodel-gt' | 'wan2.7-image-pro'
+      model?: 'gpt-image-2-vip' | 'custom-imagemodel-gt' | 'wan2.7-image-pro' | 'gemini-3.1-flash-image'
       ratio?: string
       resolution?: '1K' | '2K' | '4K'
       quality?: 'auto' | 'low' | 'medium' | 'high'

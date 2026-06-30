@@ -59,7 +59,7 @@
     {
       "name": "catimation-core",
       "description": "CATIMATION 应用核心集成:应用内出图 generate_image / 人像库管理 / 创意头脑风暴。含 /gen-image、/brainstorm 命令。",
-      "version": "1.0.6",
+      "version": "1.0.8",
       "source": "./catimation-core",
       "author": {
         "name": "CATIMATION",

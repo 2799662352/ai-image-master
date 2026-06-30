@@ -30,34 +30,64 @@ interface ImageBatchResult {
 }
 
 /**
- * Default channel for the codex `generate_image` tool: the stable VIP channel.
- * (`gpt-image-2-codex` hit org-level rate limits; vip is the documented drop-in
- * with the same images API + size/quality params.)
+ * Preferred default channel for the codex `generate_image` tool: 腾讯 image2
+ * (custom-imagemodel-gt). Fast (~30s), watermark removed at the gateway, same
+ * ratio × resolution(1K/2K/4K) × quality surface as the others. Used whenever
+ * the agent omits `model` (or passes an unknown name).
  */
-const CODEX_IMAGE_MODEL = 'gpt-image-2-vip'
+const CODEX_DEFAULT_IMAGE_MODEL = 'custom-imagemodel-gt'
+/** Stable VIP fallback channel (OpenAI 官逆); selectable when the user wants it. */
+const CODEX_VIP_IMAGE_MODEL = 'gpt-image-2-vip'
+/**
+ * Nano Banana 2 (Google Gemini 3.1 flash image). Selectable alternate; uses the
+ * Gemini-native endpoint via the currently selected site (NOT Miau-only), same
+ * path the in-app 生图 page already uses. Good for fast 4K, multi-aspect output.
+ */
+const CODEX_NANO2_IMAGE_MODEL = 'gemini-3.1-flash-image'
 const CODEX_DEFAULT_RESOLUTION = '2K'
+
+/**
+ * Site key (Miau API) that proxies the Miau-only channels. The renderer's
+ * ApiService rewrites a model's endpoint host with the *currently selected*
+ * site's host, so these channels only reach the gateway when this site is
+ * active. We pin it per-request via `siteKey` (see generateImage) so codex
+ * image generation works regardless of which site the user has selected — no
+ * manual "switch to Miau API site" step required.
+ */
+const MIAU_SITE_KEY = 'antigravity'
+
+/**
+ * Channels that are ONLY available through the Miau API gateway. When the
+ * resolved model is one of these, generation is pinned to `MIAU_SITE_KEY`.
+ */
+const MIAU_ONLY_MODELS: ReadonlySet<string> = new Set([
+  'custom-imagemodel-gt',
+  'wan2.7-image-pro',
+])
 
 /**
  * MCP-selectable image models. The agent MAY opt into one of these alternates
  * via the tool's `model` param; anything outside this allow-list (incl. a
- * hallucinated name) falls back to the default VIP channel so generation never
+ * hallucinated name) falls back to the preferred default so generation never
  * breaks. All three share the same ratio × resolution(1K/2K/4K) × quality
  * parameter surface, so the tool schema is identical regardless of choice.
- * - gpt-image-2-vip   : default, OpenAI 官逆，稳定
- * - custom-imagemodel-gt : 腾讯 image2（经 Miau 代理）
+ * - custom-imagemodel-gt : 腾讯 image2（经 Miau 代理）— preferred default
+ * - gpt-image-2-vip   : OpenAI 官逆，稳定 — alternate
  * - wan2.7-image-pro  : 阿里万相 2.7 pro（超清/组图，经 Miau 代理）
+ * - gemini-3.1-flash-image : Nano Banana 2（Gemini 原生端点，当前站点）— alternate
  */
 const MCP_SELECTABLE_IMAGE_MODELS: readonly string[] = [
-  CODEX_IMAGE_MODEL,
-  'custom-imagemodel-gt',
+  CODEX_DEFAULT_IMAGE_MODEL,
+  CODEX_VIP_IMAGE_MODEL,
   'wan2.7-image-pro',
+  CODEX_NANO2_IMAGE_MODEL,
 ]
 
-/** Resolve the agent-requested model to an allow-listed one (default = VIP). */
+/** Resolve the agent-requested model to an allow-listed one (default = 腾讯 image2). */
 function resolveMcpImageModel(requested: unknown): string {
   return typeof requested === 'string' && MCP_SELECTABLE_IMAGE_MODELS.includes(requested)
     ? requested
-    : CODEX_IMAGE_MODEL
+    : CODEX_DEFAULT_IMAGE_MODEL
 }
 
 type AgentElectronApi = {
@@ -389,14 +419,18 @@ export class AgentToolExecutor {
         ? await this.resolveReferenceImages(params.referenceImages)
         : undefined
 
-    // Honor an allow-listed model selection (vip / 腾讯 image2 / 万相 2.7 pro);
-    // any other value falls back to the stable VIP default.
+    // Honor an allow-listed model selection (腾讯 image2 / vip / 万相 2.7 pro);
+    // any other value falls back to the preferred 腾讯 image2 default.
     const model = resolveMcpImageModel(params.model)
     const request: GenerateImageParams = {
       ...params,
       referenceImages,
       model,
       resolution: params.resolution ?? CODEX_DEFAULT_RESOLUTION,
+      // Pin Miau-only channels to the Miau API site so they always reach the
+      // gateway regardless of the user's currently selected site (the renderer
+      // otherwise rewrites the endpoint host with the active site's host).
+      ...(MIAU_ONLY_MODELS.has(model) ? { siteKey: MIAU_SITE_KEY } : {}),
     }
 
     // Resolve the REQUESTING thread. Prefer the authoritative id Codex stamped
@@ -690,7 +724,7 @@ export class AgentToolExecutor {
         request.prompt,
         images,
         request.ratio,
-        request.model ?? CODEX_IMAGE_MODEL,
+        request.model ?? CODEX_DEFAULT_IMAGE_MODEL,
         request.referenceImages ? { referenceImages: request.referenceImages } : undefined,
       )) as { id?: number | string } | null
       return saved?.id ?? null

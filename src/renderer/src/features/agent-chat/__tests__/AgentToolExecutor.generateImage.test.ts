@@ -28,7 +28,7 @@ beforeEach(() => {
 })
 
 describe('AgentToolExecutor.generateImage', () => {
-  it('forces gpt-image-2-vip regardless of the requested model', async () => {
+  it('defaults to 腾讯 image2 (and pins the Miau site) when model is omitted/invalid', async () => {
     const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
     registerFakes(api, makeHistory())
 
@@ -36,12 +36,13 @@ describe('AgentToolExecutor.generateImage', () => {
 
     expect(api.generateImage).toHaveBeenCalledTimes(1)
     const sent = api.generateImage.mock.calls[0][0]
-    expect(sent.model).toBe('gpt-image-2-vip')
+    expect(sent.model).toBe('custom-imagemodel-gt')
+    expect(sent.siteKey).toBe('antigravity') // Miau-only channel pinned to Miau site
     expect(sent.ratio).toBe('16:9')
     expect(sent.resolution).toBe('2K') // default applied
   })
 
-  it('honors an allow-listed model selection (腾讯 image2)', async () => {
+  it('honors an allow-listed model selection (腾讯 image2) and pins the Miau site', async () => {
     const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
     const history = makeHistory()
     registerFakes(api, history)
@@ -49,27 +50,52 @@ describe('AgentToolExecutor.generateImage', () => {
     const result = (await callGenerate({ prompt: 'a cat', model: 'custom-imagemodel-gt' })) as Record<string, unknown>
 
     expect(api.generateImage.mock.calls[0][0].model).toBe('custom-imagemodel-gt')
+    expect(api.generateImage.mock.calls[0][0].siteKey).toBe('antigravity')
     expect(result.model).toBe('custom-imagemodel-gt')
     expect(history.addToHistory.mock.calls[0][4]).toBe('custom-imagemodel-gt')
   })
 
-  it('honors an allow-listed model selection (万相 2.7 pro)', async () => {
+  it('honors an allow-listed model selection (万相 2.7 pro) and pins the Miau site', async () => {
     const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
     registerFakes(api, makeHistory())
 
     const result = (await callGenerate({ prompt: 'a cat', model: 'wan2.7-image-pro' })) as Record<string, unknown>
 
     expect(api.generateImage.mock.calls[0][0].model).toBe('wan2.7-image-pro')
+    expect(api.generateImage.mock.calls[0][0].siteKey).toBe('antigravity')
     expect(result.model).toBe('wan2.7-image-pro')
   })
 
-  it('falls back to vip for an unknown/hallucinated model', async () => {
+  it('honors an explicit vip selection and does NOT pin a site (uses current site)', async () => {
+    const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
+    registerFakes(api, makeHistory())
+
+    const result = (await callGenerate({ prompt: 'a cat', model: 'gpt-image-2-vip' })) as Record<string, unknown>
+
+    expect(api.generateImage.mock.calls[0][0].model).toBe('gpt-image-2-vip')
+    expect(api.generateImage.mock.calls[0][0].siteKey).toBeUndefined()
+    expect(result.model).toBe('gpt-image-2-vip')
+  })
+
+  it('honors a nano2 selection (gemini-3.1-flash-image) and does NOT pin a site (uses current site)', async () => {
+    const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
+    registerFakes(api, makeHistory())
+
+    const result = (await callGenerate({ prompt: 'a cat', model: 'gemini-3.1-flash-image' })) as Record<string, unknown>
+
+    expect(api.generateImage.mock.calls[0][0].model).toBe('gemini-3.1-flash-image')
+    expect(api.generateImage.mock.calls[0][0].siteKey).toBeUndefined()
+    expect(result.model).toBe('gemini-3.1-flash-image')
+  })
+
+  it('falls back to 腾讯 image2 for an unknown/hallucinated model', async () => {
     const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
     registerFakes(api, makeHistory())
 
     await callGenerate({ prompt: 'a cat', model: 'totally-made-up-model' })
 
-    expect(api.generateImage.mock.calls[0][0].model).toBe('gpt-image-2-vip')
+    expect(api.generateImage.mock.calls[0][0].model).toBe('custom-imagemodel-gt')
+    expect(api.generateImage.mock.calls[0][0].siteKey).toBe('antigravity')
   })
 
   it('records the image to history under the "codex" type', async () => {
@@ -84,7 +110,7 @@ describe('AgentToolExecutor.generateImage', () => {
     expect(type).toBe('codex')
     expect(prompt).toBe('a cat')
     expect(urls).toEqual(['data:image/png;base64,AAA'])
-    expect(model).toBe('gpt-image-2-vip')
+    expect(model).toBe('custom-imagemodel-gt')
   })
 
   it('appends a new assistant artifact bubble with one ref per image (status done)', async () => {
@@ -136,7 +162,7 @@ describe('AgentToolExecutor.generateImage', () => {
 
     // No threadId / no attachments API in this test → nothing saved locally,
     // history fake returns null. Compact shape only; never any base64.
-    expect(result).toEqual({ ok: true, count: 1, model: 'gpt-image-2-vip', historyId: null, paths: [] })
+    expect(result).toEqual({ ok: true, count: 1, model: 'custom-imagemodel-gt', historyId: null, paths: [] })
     expect(JSON.stringify(result)).not.toContain('base64')
   })
 
@@ -157,7 +183,7 @@ describe('AgentToolExecutor.generateImage', () => {
     expect(result).toEqual({
       ok: true,
       count: 1,
-      model: 'gpt-image-2-vip',
+      model: 'custom-imagemodel-gt',
       historyId: 42,
       paths: [savedPath],
     })
@@ -199,7 +225,7 @@ describe('AgentToolExecutor.generateImage', () => {
       expect(result).toEqual({
         ok: true,
         count: 1,
-        model: 'gpt-image-2-vip',
+        model: 'custom-imagemodel-gt',
         historyId: null,
         paths: [],
         persistencePending: true,
