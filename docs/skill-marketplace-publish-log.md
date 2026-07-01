@@ -3,6 +3,10 @@
 记录每次往腾讯云 COS「技能桶」发布/更新 Codex 技能的版本与校验结果。
 技能市场与 app 版本**解耦**——单跑发布脚本即可换技能内容，无需重新打包/发 installer。
 
+> 💡 **日常发布用一键命令**：`npm run publish:marketplace`（插件 + 单技能一起更新、自动对齐/升版、
+> 审计后发两个 catalog）。原理与排障见 `docs/marketplace-version-consistency.md`。下面的分步命令
+> （`publish:skills` 等）仅用于只发单通道或排障。
+
 ## 桶与脚本
 
 | 项 | 值 |

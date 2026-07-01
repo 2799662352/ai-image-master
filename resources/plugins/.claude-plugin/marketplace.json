@@ -9,7 +9,7 @@
     {
       "name": "catimation-director",
       "description": "导演模式总调度:以 13 维电影摄制框架(物理可复现参数优先于情绪形容词)编排镜头/构图/光影/连续性/角色一致性等导演技法,产出结构化提示词。含 13 个 director-* skill 与 /director 命令。",
-      "version": "1.0.3",
+      "version": "1.0.5",
       "source": "./catimation-director",
       "author": {
         "name": "CATIMATION",
@@ -49,7 +49,7 @@
     {
       "name": "catimation-video",
       "description": "视频出片与后期:sd2-pe 提示词工程化(总兜底,/sd2)→ Seedance 2.0 出片技法、catimation 应用内 generate_video(/gen-video)→ ffmpeg 剪辑拼接(/edit-video);研究驱动提示词。",
-      "version": "1.0.9",
+      "version": "1.0.10",
       "source": "./catimation-video",
       "author": {
         "name": "CATIMATION",

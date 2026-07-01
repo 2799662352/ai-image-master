@@ -46,6 +46,51 @@ STEP 0 第 2 问用这张表:把任务涉及的维度/意图映射到具体技�
 | Seedance 2.0 视频技法 | seedance-video-craft |
 | 日式动画作画原理/技法参考 | animation-craft |
 
+## 按症状 / 抱怨路由(不必等用户点名 skill —— 任务暴露了问题就触发)
+
+用户很少直接说「用 storyboard-foreground-occlusion」。他们说的是**症状**。听到下面这些词/意图,就**自动**加载对应技能(意图识别 > 关键词匹配):
+
+| 用户说的(症状 / 意图) | 自动加载 |
+|---|---|
+| 「不像电影 / 太 AI / 太假 / 没质感 / 塑料感」 | `storyboard-live-character-realism`、`storyboard-foreground-occlusion`、`storyboard-light-reconstruction`、`storyboard-color-grading-control` |
+| 「武打 / 打斗 / 动作 / 运镜 / 武侠 / 藏龙卧虎」 | `storyboard-physics`、`storyboard-shot-emotion-matching`、`director-shot-sequence-patterns`、`storyboard-video-prompt-optimization` |
+| 「人物不自然 / 像 NPC / 站桩 / 摆拍 / 没表演」 | `storyboard-character-acting`、`storyboard-character-motivation`、`storyboard-live-character-realism` |
+| 「电影感 / 画面单薄 / 像壁纸 / 没纵深」 | `director-cinematic-composition`、`storyboard-foreground-occlusion`、`storyboard-pseudo-perspective` |
+| 「风格不对 / 不像某部电影 / 调性不对」 | `storyboard-style-extraction-logic`、`storyboard-color-grading-control`、`director-style-consistency` |
+| 「光很平 / 塑料光 / 打光不对」 | `storyboard-light-reconstruction`、`director-lighting-continuity` |
+| 「动作太多 / 太乱 / 首帧被改」 | `storyboard-video-prompt-optimization`(首帧霸权、只驱动运动、不动作过载) |
+
+## 任务类型 → 最低 skill 套餐(分层叠加,只增不减)
+
+判断任务属于哪一层,**从上往下叠加**加载。低层是高层的子集——武打片要把「单图 / 人物 / 电影感」三层的套餐都含上。
+
+**① 单图动起来(纯物体/风景,无人表演)** — 最低套餐:
+```
+director-orchestrator + sd2-pe + storyboard-video-prompt-optimization
+```
+
+**② 人物图生视频(画面里有人要动/演)** — 在 ① 基础上加:
+```
+storyboard-live-character-realism + storyboard-character-acting + storyboard-character-motivation
+```
+
+**③ 电影感人物视频(要「电影感 / 质感 / 高级」)** — 在 ② 基础上加:
+```
+director-cinematic-composition + storyboard-foreground-occlusion + director-lighting-continuity + storyboard-color-grading-control
+```
+
+**④ 武打 / 武侠视频** — 在 ③ 基础上加:
+```
+storyboard-physics + storyboard-shot-emotion-matching + director-shot-sequence-patterns + storyboard-audio
+```
+
+**⑤ 多镜连续片 / 成片** — 在对应层基础上加:
+```
+film-studio + director-character-consistency + director-visual-continuity + storyboard-multi-character-control + ffmpeg-win
+```
+
+> 自检:若这是「武侠电影视频」,套餐里却没有 活人感 / 前景遮挡 / 物理 / 调色 —— 就是明显漏了,回头补。
+
 ## 正向 vs 负向(注意)
 
 - `director-prompt-engineering`、`storyboard-negative-control`、`storyboard-dodge` 原文含负向段。

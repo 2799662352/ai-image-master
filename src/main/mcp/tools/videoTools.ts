@@ -8,8 +8,13 @@
 //   （坑 1 只影响 streamable HTTP；codexLaunch 配了 tool_timeout_sec=2000），
 //   所以 `generate_video` 内部轮询任务直到终态才返回 —— 「生成完才回归」，
 //   模型零轮询负担、不可能提前弃坑。
-// - `check_video_task` 保留为兜底：阻塞预算（10 分钟）烧完、或 app 重启后
-//   追旧任务时才需要它。
+// - `check_video_task` 是常规续轮询：首个阻塞窗口（~75s）烧完就交还 taskId，模型
+//   接着用它每 ~25s 长轮询到终态；也用于 app 重启后追旧任务。
+//
+// 设计演进（2026-07-02 v3）：首窗从 10 分钟压到 ~75s（对齐 generate_image 的 60s
+//   首窗）。原因：阻塞期间模型不推理，用户 turn/steer 插话会排队到工具返回才处理；
+//   短首窗让模型每轮 check_video_task 之间冒头一次，插话响应从 ≤10min 降到 ≤~25s。
+//   可靠性不降——成片由 SeedanceTaskListener 独立落聊天，banner 明确要求继续轮询。
 //
 // banner 约定与 imageTools 一致：短文本、完成信号前置、显式「勿重试 /
 // 勿翻文件 / 勿自检」，结尾附 machine-readable JSON 行。
@@ -24,10 +29,17 @@ import type { SeedanceTaskState } from '../../services/seedance/types'
 /** check_video_task 服务端长轮询窗口（须 < codex 工具超时，留足余量）。 */
 export const CHECK_LONG_POLL_MS = 25_000
 /**
- * generate_video 阻塞等待预算。渲染典型 1–3 分钟；10 分钟还没出结果就把
- * taskId 交还给模型用 check_video_task 兜底（codex 工具超时是 2000s，余量充足）。
+ * generate_video 首个阻塞窗口。渲染典型 1–3 分钟，但我们只阻塞 ~75s 就把 taskId
+ * 交还模型走 check_video_task 兜底 —— 与 generate_image 的 60s 首窗同款(见
+ * GENERATE_IMAGE_BLOCKING_BUDGET_MS)。
+ *
+ * 为什么短:阻塞期间模型不做推理,用户的 turn/steer 插话会一直排队到工具返回才被
+ * 处理;首窗压到 ~75s 后,模型每轮 check_video_task(~25s 长轮询)之间都会冒头做一次
+ * 推理步,插话响应从「最长 10 分钟」降到「≤~25s」。可靠性不降:成片由
+ * SeedanceTaskListener 独立推进聊天,budget-exhausted banner 也明确要求继续轮询、
+ * 不重复提交。(codex 工具超时是 2000s,余量充足。)
  */
-export const GENERATE_BLOCKING_BUDGET_MS = 10 * 60_000
+export const GENERATE_BLOCKING_BUDGET_MS = 75_000
 /**
  * succeeded 后等落盘（persistence）的额外预算 —— 成功语义由渲染决定，落盘只是
  * bookkeeping，「后台保存过慢绝不阻塞任务」（坑 3）。视频已在聊天里播放、状态已
@@ -219,12 +231,13 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
   server.registerTool('generate_video', {
     description:
       'FIRST-CHOICE video generation tool inside the CATIMATION app (Seedance 2.0 / 2.0 Fast) — use ' +
-      'for ANY video/clip/animation/视频/生成视频/动起来 request. BLOCKING flow, exactly like ' +
-      'generate_image: this single call submits the render and WAITS until the video is DONE ' +
-      '(typically 1–3 minutes), then returns the saved local MP4 path — no polling needed. The user ' +
-      'sees a live progress bubble in the chat the whole time, and the finished MP4 plays inline in ' +
-      'the chat, is saved to a local file, and lands in the app history page. Only if the response ' +
-      'says STILL RUNNING do you need check_video_task as a fallback. Model choice: "2.0" ' +
+      'for ANY video/clip/animation/视频/生成视频/动起来 request. Submits the render and blocks ' +
+      '~75s for fast results/early failures; a normal render takes 1–3 minutes, so it COMMONLY ' +
+      'returns ⏳ STILL RUNNING with a taskId — then just keep calling check_video_task (server ' +
+      'long-polls ~25s, returns the moment status changes) until DONE or FAILED. Do NOT resubmit ' +
+      'generate_video. The user sees a live progress bubble the whole time and the finished MP4 ' +
+      'plays inline in the chat, is saved to a local file, and lands in the app history page — the ' +
+      'video is delivered to the chat automatically even if you stop polling. Model choice: "2.0" ' +
       '(default — 满血/full-quality model) for top quality and complex multi-shot motion; only switch to ' +
       '"2.0-fast" when the user explicitly asks for fast/cheap/draft. Default resolution is 720p — do NOT jump to 1080p unless the user asks for HD; 1080p requires model "2.0". When the spec is unstated, confirm resolution/duration/ratio with the user (an ask_user card) before rendering. All input images are ' +
       'automatically imported into the user\'s portrait library (人像库) and referenced as ' +

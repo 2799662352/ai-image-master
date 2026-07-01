@@ -40,7 +40,10 @@ const VERSIONS_FILE = path.join(CODEX_SKILLS, 'skill-versions.json')
 const apply = process.argv.includes('--apply')
 
 // New craft skills explicitly allowed to JOIN the standalone marketplace.
-const ADD_LIST = new Set(['storyboard-grid-to-seedance'])
+// catimation-video-director-router is the STEP -1 companion of director-orchestrator
+// (already curated here); ship it standalone too so orchestrator's router handoff
+// doesn't dangle for users who install skills individually rather than the plugin.
+const ADD_LIST = new Set(['storyboard-grid-to-seedance', 'catimation-video-director-router'])
 
 async function listDirs(dir) {
   const entries = await fs.readdir(dir, { withFileTypes: true })

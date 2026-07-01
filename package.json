@@ -1,6 +1,6 @@
 {
   "name": "catimation-cyberpunk-master",
-  "version": "4.3.72",
+  "version": "4.3.73",
   "description": "CATIMATION-Cyberpunk Master - AI图片生成桌面应用",
   "main": "dist/main/index.js",
   "author": "CATIMATION",
@@ -73,6 +73,9 @@
     "release": "npm run build:vite && electron-builder --publish always",
     "upload:cos": "node scripts/upload-cos.js",
     "release:cn": "npm run build:win && node scripts/upload-cos.js",
+    "publish:marketplace": "node scripts/publish-marketplace.mjs",
+    "publish:marketplace:dry": "node scripts/publish-marketplace.mjs --dry-run",
+    "publish:marketplace:test": "node --test scripts/lib/marketplace-versioning.test.mjs",
     "publish:skills": "node scripts/upload-skills-to-cos.mjs",
     "publish:skills:dry": "node scripts/upload-skills-to-cos.mjs --dry-run",
     "publish:plugins": "node scripts/upload-plugins-to-cos.mjs",

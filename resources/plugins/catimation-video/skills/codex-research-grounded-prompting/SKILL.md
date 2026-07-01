@@ -28,6 +28,8 @@ It applies broadly. Sora 2 motion brief, Midjourney v7 style sheet, Kling 1.5 re
 
 Do not invoke for general coding, infra, data extraction, or technical writing. The pillars are tuned for *generative* output where intent beats fidelity.
 
+**Trigger autonomously — do not wait for "查资料 / 权威参考".** This is not a "high-risk only" tool; it is the "don't create from memory" tool. Before writing any generation prompt, ask: *does any part of this brief depend on a real film / director / DP / production designer / composer / brand / historical era / cultural style / named genre, or on the user wanting it to "像 / 复刻 / 参考" something real, or on words like 高级 / 专业 / 电影级 / 爆款?* If yes, invoke this skill first and ground the anchors — even if the user never asked you to browse. Writing "《卧虎藏龙》→ 低饱和竹林轻功" from impression instead of verifying its creators (李安 / 摄影鲍德熹 / 美术叶锦添 / 动作袁和平 / 音乐谭盾) is exactly the failure this skill exists to prevent.
+
 </when-to-use>
 
 <the-five-pillars>

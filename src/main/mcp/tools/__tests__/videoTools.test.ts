@@ -7,6 +7,7 @@ import {
   buildDoneBanner,
   buildFailedBanner,
   buildUnknownTaskBanner,
+  GENERATE_BLOCKING_BUDGET_MS,
 } from '../videoTools'
 import type { SeedanceTaskState } from '../../../services/seedance/types'
 
@@ -52,6 +53,15 @@ describe('registerVideoTools / schemas', () => {
     const { tools, server, router } = capture()
     registerVideoTools(server, router)
     expect(tools.map((t) => t.name)).toEqual(['generate_video', 'check_video_task'])
+  })
+
+  it('first blocking window is short (~75s) so turn/steer interjection stays responsive', () => {
+    // The model cannot process queued turn/steer input while blocked inside this
+    // tool call, so the first window must be short — it hands back a taskId and
+    // lets check_video_task (~25s long-poll) drive the rest. Guards against a
+    // regression back to the old 10-minute budget.
+    expect(GENERATE_BLOCKING_BUDGET_MS).toBeGreaterThanOrEqual(45_000)
+    expect(GENERATE_BLOCKING_BUDGET_MS).toBeLessThanOrEqual(90_000)
   })
 
   it('generate_video accepts a bare prompt', () => {
