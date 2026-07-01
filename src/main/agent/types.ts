@@ -29,6 +29,12 @@ import type {
   PluginReadParams,
   PluginReadResponse,
 } from '../../types/codexPlugins'
+import type {
+  ThreadGoalSetParams,
+  ThreadGoalSetResponse,
+  ThreadGoalGetResponse,
+  ThreadGoalClearResponse,
+} from '../../types/codexGoals'
 
 export interface AgentInput extends AgentSendMessagePayload {
   model: string
@@ -56,6 +62,12 @@ export interface IAgentBackend {
   stop(): Promise<void>
   send(threadId: string | undefined, input: AgentInput): AsyncIterable<AgentStreamEvent>
   cancel(threadId: string): Promise<void>
+  /**
+   * Append user input to the in-flight turn without starting a new one
+   * (Codex `turn/steer`). Optional so alternate/mocked backends need not
+   * implement it; callers must feature-detect. Returns the accepted turnId.
+   */
+  steer?(threadId: string, input: AgentInput): Promise<string>
   isHealthy(): boolean
   /**
    * Monotonic generation counter that increments every time the underlying
@@ -105,6 +117,16 @@ export interface IAgentBackend {
   readConfig?(): Promise<{ config: Record<string, unknown> }>
   reloadMcpServers?(): Promise<void>
   mcpOAuthLogin?(name: string): Promise<{ authorization_url: string }>
+
+  // Native `/goal` (thread/goal/*, app-server v2). Optional — non-Codex
+  // backends omit them; the AgentManager RPC wrappers guard on presence.
+  setThreadGoal?(params: ThreadGoalSetParams): Promise<ThreadGoalSetResponse>
+  getThreadGoal?(threadId: string): Promise<ThreadGoalGetResponse>
+  clearThreadGoal?(threadId: string): Promise<ThreadGoalClearResponse>
+
+  // Native manual context compaction (thread/compact/start, app-server v2).
+  // Optional — non-Codex backends omit it; the AgentManager RPC wrapper guards.
+  compactThread?(threadId: string): Promise<Record<string, never>>
 
   // Native plugin / marketplace / apps / external-agent-import (app-server v2,
   // ≥0.140). Codex-specific — optional so non-Codex backends can omit them.

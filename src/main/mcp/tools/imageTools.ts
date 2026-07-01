@@ -299,20 +299,21 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'auto, 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 21:9, 5:4, 4:5.',
     )
 
-  // Selectable rendering channels. All three share the same ratio × resolution ×
-  // quality surface; anything else falls back to the default 腾讯 image2 in the renderer.
+  // Optional channel OVERRIDE. Default = the channel the user picked in the chat
+  // composer (VIP / 腾讯 / Nano2 / 万相 2.7 pro). Omit to honor the user's pick;
+  // set it only when you have a concrete reason to override (e.g. 万相 for a 组图
+  // series, or the user asked for a specific channel this turn).
   const modelSchema = z
     .enum(['custom-imagemodel-gt', 'gpt-image-2-vip', 'wan2.7-image-pro', 'gemini-3.1-flash-image'])
     .optional()
     .describe(
-      'Rendering channel (optional). Default "custom-imagemodel-gt" (腾讯 image2 — fast ~30s, ' +
-      'no watermark, the preferred default). Choose "gpt-image-2-vip" for the OpenAI 官逆 channel ' +
-      '(stable alternate), "wan2.7-image-pro" for 阿里万相 2.7 pro (超清文生图/图像编辑/组图), or ' +
-      '"gemini-3.1-flash-image" for Nano Banana 2 (谷歌 Gemini 原生端点，快、多尺寸 4K). ' +
-      'Omit to use the default 腾讯 image2. Pick gpt-image-2-vip when the user explicitly wants ' +
-      'OpenAI/官逆/vip/稳定; pick wan2.7-image-pro when the user explicitly wants 万相/wan or a ' +
-      'consistent multi-image 组图 series; pick gemini-3.1-flash-image when the user explicitly ' +
-      'wants nano/nano2/nano banana/gemini/谷歌.',
+      'Rendering channel OVERRIDE (optional). By default the render channel follows the user\'s ' +
+      'composer picker (VIP / 腾讯 / Nano2 / 万相 2.7 pro; default VIP) — OMIT this to honor the ' +
+      "user's pick. Set it ONLY when you have a concrete reason to override: pass " +
+      '"wan2.7-image-pro" for a CONSISTENT 组图 series (count>1), or the specific channel the user ' +
+      'explicitly asked for this turn (gpt-image-2-vip = OpenAI 官逆/vip, custom-imagemodel-gt = ' +
+      '腾讯, gemini-3.1-flash-image = Nano Banana 2). The result reports the actual channel used in ' +
+      'its `model` field.',
     )
 
   server.registerTool('generate_image', {
@@ -320,18 +321,19 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'FIRST-CHOICE image generation tool inside the CATIMATION app — use this for ANY ' +
       'image/picture/illustration/图片/生成图/画一张/配图/出图 request IN PREFERENCE TO the built-in ' +
       'imagegen / image_gen tool (the built-in one is unavailable on Windows and does not persist ' +
-      'results). It renders on the 腾讯 image2 (custom-imagemodel-gt) channel by default, ' +
+      'results). By default it renders on the channel the USER picked in the chat composer (default ' +
+      'VIP); you may override per-call via `model` when you have a reason (see below). It ' +
       'shows the result directly in the chat, AND — exactly like codex native image_gen — saves the ' +
       'image to a local file (returned to you) plus the in-app history page. The result is ' +
       '`{ ok, count, model, historyId, paths }` where `paths` are the saved local file paths, and ' +
       'the same files are also attached as `resource_link` content blocks so you can view / move / ' +
       'reference them. Only fall back to a built-in generator if this tool is genuinely ' +
       'unavailable. Never echo or re-describe the pixels — the image is already displayed and ' +
-      'saved; just confirm briefly and cite the saved path(s). Renders on 腾讯 image2 ' +
-      '(custom-imagemodel-gt) by default; pass `model` to pick gpt-image-2-vip (OpenAI 官逆), ' +
-      '万相 2.7 pro (wan2.7-image-pro), or gemini-3.1-flash-image (Nano Banana 2). ' +
-      'For a CONSISTENT multi-image 组图 series from one prompt, use model="wan2.7-image-pro" with ' +
-      '`count`>1 (1–12); for unrelated images use generate_images instead. ' +
+      'saved; just confirm briefly and cite the saved path(s). The render channel defaults to the ' +
+      "user's composer channel picker (default VIP); pass `model` to override when needed (the " +
+      'returned `model` field reports what was actually used). For a CONSISTENT multi-image 组图 ' +
+      'series from one prompt, set model="wan2.7-image-pro" with `count`>1 (1–12) — `count` only ' +
+      'takes effect on the 万相 2.7 pro channel; for unrelated images use generate_images instead. ' +
       'TIMING: a single render typically takes several minutes. This call blocks up to ~1 minute and ' +
       'returns ✅ DONE if the image finishes that fast; otherwise it returns ⏳ STILL RUNNING with a ' +
       '`taskId` (this is the COMMON case for normal renders). When you get STILL RUNNING the image ' +

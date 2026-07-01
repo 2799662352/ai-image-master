@@ -184,9 +184,10 @@ image_gen skill: they render inside the chat AND persist results to local files
    composition, lighting, and mood. Keep it concise.
 2. If the user asks for exactly ONE image, call \`generate_image\` with:
    - \`prompt\` (required): the description from step 1.
-   - \`model\` (optional): rendering channel. **Omit it** for the preferred default
-     \`custom-imagemodel-gt\` (腾讯 image2 — 快 ~30s、无水印). Only set it when the
-     user explicitly names another channel (see "Choosing a model" below):
+   - \`model\` (optional): rendering channel **override**. **Omit it** to honor the
+     user's channel picker in the chat composer (default VIP). Only set it when you
+     have a concrete reason — a consistent 组图 series (→ \`wan2.7-image-pro\`) or a
+     channel the user explicitly names this turn (see "Choosing a model" below):
      - \`gpt-image-2-vip\` — OpenAI 官逆 (stable alternate; same ratio/resolution/quality spec).
      - \`wan2.7-image-pro\` — 阿里万相 2.7 pro (超清文生图 / 图像编辑 / 组图).
      - \`gemini-3.1-flash-image\` — Nano Banana 2（谷歌 Gemini 原生端点，快、多尺寸 4K）.
@@ -260,12 +261,13 @@ image_gen skill: they render inside the chat AND persist results to local files
      and do NOT shell out (\`dir\`/\`ls\`/\`where\`/\`find\`/\`Get-ChildItem\`) to hunt for
      the file — the path is already in the return; \`view_image\` that path directly.
 
-## Choosing a model (default 腾讯 image2 vs. vip / 万相)
+## Choosing a model (user's composer picker is the default; you may override)
 
-The \`model\` param is **optional**. By default (omit it) generation runs on the
-preferred \`custom-imagemodel-gt\` (腾讯 image2) channel — 快(~30s)、无水印、与其它
-渠道同一套 ratio × resolution(1K/2K/4K) × quality 参数。Keep using the default for
-ordinary requests. Only switch when the user *explicitly* asks for another channel:
+The \`model\` param is an **optional override**. By default (omit it) generation runs
+on the channel the **user picked in the chat composer** (VIP / 腾讯 / Nano2 / 万相
+2.7 pro; default VIP) — 所有渠道同一套 ratio × resolution(1K/2K/4K) × quality 参数。
+Omitting \`model\` honors the user's pick — do this for ordinary requests. Set \`model\`
+only when you have a concrete reason to override:
 
 - **\`gpt-image-2-vip\` (OpenAI 官逆)** — pick when the user says 官逆 / vip /
   OpenAI / 稳定渠道. Stable alternate; same param surface as the default.
@@ -295,8 +297,10 @@ ordinary requests. Only switch when the user *explicitly* asks for another chann
 - \`gpt-image-2-vip\` 和 \`gemini-3.1-flash-image\`(Nano Banana 2)走当前选中站点
   (任意站点可用,无需 Miau)。
 
-When the user does not name a channel, **do not guess** — just omit \`model\` and
-use the default 腾讯 image2. Never invent a model name; only these four values are valid.
+When the user does not name a channel, **do not guess** — just omit \`model\` so the
+render honors the user's composer picker (default VIP). Set \`model\` only for a
+concrete reason (组图 → \`wan2.7-image-pro\`, or a channel the user named). Never
+invent a model name; only these four values are valid.
 
 ## Reference images — reuse the user's material (important)
 
@@ -358,9 +362,9 @@ directory and give it a descriptive, ordered name — e.g.
 
 - 用户给了图却忘传 \`referenceImages\`,改成从零文生图。
 - 多张图却逐个调 \`generate_image\`,而不是一次 \`generate_images\`。
-- 凭空编造 \`model\` 名;只有四个合法值,用户没点名就省略 \`model\` 走默认(腾讯 image2)。
-- 用户点名 vip/官逆 时仍走默认腾讯渠道(应显式传 \`model: 'gpt-image-2-vip'\`);
-  用户点名 nano/nano2 时应显式传 \`model: 'gemini-3.1-flash-image'\`。
+- 凭空编造 \`model\` 名;只有四个合法值。用户没点名就省略 \`model\`(交给用户在 composer 选的渠道,默认 VIP)。
+- 用户点名某渠道却不显式传 \`model\`(应显式传:vip/官逆 → \`gpt-image-2-vip\`、
+  nano/nano2 → \`gemini-3.1-flash-image\`、万相/组图 → \`wan2.7-image-pro\`)。
 
 ## Notes
 

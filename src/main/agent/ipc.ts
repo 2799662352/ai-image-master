@@ -7,6 +7,7 @@ import { editRequestRegistry } from '../mcp/canvas/EditRequestRegistry'
 
 const AGENT_HANDLE_CHANNELS = [
   'agent:send-message',
+  'agent:turn-steer',
   'agent:cancel',
   'agent:list-threads',
   'agent:load-thread',
@@ -42,6 +43,10 @@ const AGENT_HANDLE_CHANNELS = [
   'agent:mcp-read-config',
   'agent:mcp-read-raw-config',
   'agent:mcp-status-snapshot',
+  'agent:goal-set',
+  'agent:goal-get',
+  'agent:goal-clear',
+  'agent:compact-start',
   'agent:plugin-list',
   'agent:plugin-installed',
   'agent:plugin-read',
@@ -134,6 +139,9 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
 
   ipcMain.handle('agent:send-message', async (_event, payload) =>
     (await getManager()).sendMessage(payload),
+  )
+  ipcMain.handle('agent:turn-steer', async (_event, payload) =>
+    (await getManager()).steer(payload),
   )
   ipcMain.handle('agent:cancel', async (_event, payload) => {
     await (await getManager()).cancel(payload.threadId)
@@ -260,6 +268,25 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
   ipcMain.handle('agent:mcp-read-raw-config', async () => (await getManager()).readRawConfigRpc())
   ipcMain.handle('agent:mcp-status-snapshot', async () =>
     (await getManager()).getMcpStatusSnapshotRpc(),
+  )
+
+  // ----- Native `/goal` (thread/goal/*) -----
+  ipcMain.handle('agent:goal-set', async (_event, threadId: string, params: unknown) =>
+    (await getManager()).setThreadGoalRpc(
+      threadId,
+      (params ?? {}) as Parameters<AgentManager['setThreadGoalRpc']>[1],
+    ),
+  )
+  ipcMain.handle('agent:goal-get', async (_event, threadId: string) =>
+    (await getManager()).getThreadGoalRpc(threadId),
+  )
+  ipcMain.handle('agent:goal-clear', async (_event, threadId: string) =>
+    (await getManager()).clearThreadGoalRpc(threadId),
+  )
+
+  // ----- Native `/compact` (thread/compact/start) -----
+  ipcMain.handle('agent:compact-start', async (_event, threadId: string) =>
+    (await getManager()).compactThreadRpc(threadId),
   )
 
   // ----- Codex native plugin / marketplace / apps / external-agent-import -----

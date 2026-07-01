@@ -38,6 +38,16 @@ export interface ThreadStartParams {
     sandbox_workspace_write: {
       writable_roots: string[]
     }
+    /**
+     * Per-thread developer-role instructions. We use this to inject the
+     * `AGENTS.md` (+ fallbacks) of EXTRA selected workspace repositories — the
+     * ones beyond the primary `cwd`, whose docs the engine's root→cwd walk does
+     * NOT load. `developer_instructions` is a native ConfigToml field
+     * (codex-rs/config/src/config_toml.rs); passing it in the per-thread
+     * `config` override makes runtime folder switches take effect next turn.
+     * Omitted entirely when there are no extra repos with docs.
+     */
+    developer_instructions?: string
   }
 }
 export interface ThreadStartResponse { thread: Thread }
@@ -56,6 +66,11 @@ export type CodexUserInput =
 
 export interface TurnStartParams { threadId: string; input: CodexUserInput[] }
 export interface TurnStartResponse { turn: Turn }
+
+// `turn/steer` (openai/codex#10821): append user input to the in-flight turn
+// without starting a new one. `expectedTurnId` must match the active turn.
+export interface TurnSteerParams { threadId: string; input: CodexUserInput[]; expectedTurnId: string }
+export interface TurnSteerResponse { turnId: string }
 
 export interface TurnInterruptParams { threadId: string; turnId: string }
 

@@ -834,7 +834,9 @@ export class ApiService {
           apiKey,
           signal,
         }),
-        { maxRetries: 1, retryDelay: 2000 }
+        // 瞬时网关错误(502/503/504/429)现在会从 makeApiRequest 抛出，交给这里重试；
+        // 给 2 次重试(共 3 次尝试)+ 指数退避(2s、4s)，覆盖上游高峰期的短暂抖动。
+        { maxRetries: 2, retryDelay: 2000 }
       )
 
       const result = await this.parseResponse(response, modelConfig)
@@ -1397,6 +1399,21 @@ export class ApiService {
     if (!resp.ok) {
       const errText = await resp.clone().text()
       console.error(`[ApiService] ${model} ${resp.status} @ ${url}:`, errText.slice(0, 4000))
+
+      // 瞬时网关/服务端错误(429/500/502/503/504)抛出带 status 的异常，
+      // 交给 withRetry 自动重试(它把 status>=500 / 429 判为可重试)。
+      // nginx 502 Bad Gateway 这类上游后端临时无响应属于典型可恢复故障，
+      // 不应像非 OK 那样直接落到 parseResponse 一次性失败。
+      // 非瞬时错误(400/401/402/404 等)仍返回 resp，由 parseResponse 生成友好提示。
+      if ([429, 500, 502, 503, 504].includes(resp.status)) {
+        const snippet = errText.replace(/\s+/g, ' ').trim().slice(0, 300)
+        const err = new Error(
+          `服务器网关暂时不可用（HTTP ${resp.status}${resp.statusText ? ` ${resp.statusText}` : ''}），` +
+            `已自动重试仍失败，请稍后再试或更换模型/站点。${snippet ? `详情：${snippet}` : ''}`
+        ) as Error & { status?: number }
+        err.status = resp.status
+        throw err
+      }
     }
 
     return resp

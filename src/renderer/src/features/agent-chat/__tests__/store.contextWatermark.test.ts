@@ -52,14 +52,16 @@ describe('deriveContextWatermarkNotice', () => {
     ).toBeNull()
   })
 
-  it('returns null below the 70% threshold (69.9%)', () => {
-    // 0.699 × 200_000 = 139_800 < 140_000 → ratio 0.699 — below
-    const usage = makeUsage({ contextUsage: 139_800, contextWindow: 200_000 })
+  it('returns null just below the 70% threshold on the effective window', () => {
+    // Codex effective window = 200_000 − 12_000 baseline = 188_000. 70% crossing
+    // is at used = 0.7 × 188_000 + 12_000 = 143_600. 143_000 → ≈ 69.7% — below.
+    const usage = makeUsage({ contextUsage: 143_000, contextWindow: 200_000 })
     expect(deriveContextWatermarkNotice({ threadId, usage, seen: {} })).toBeNull()
   })
 
-  it('fires exactly at 70% with a warning-level notice carrying details', () => {
-    const usage = makeUsage({ contextUsage: 140_000, contextWindow: 200_000 })
+  it('fires exactly at 70% (effective window) with a warning-level notice carrying details', () => {
+    // used = 0.7 × (200_000 − 12_000) + 12_000 = 143_600 → exactly 70%.
+    const usage = makeUsage({ contextUsage: 143_600, contextWindow: 200_000 })
     const notice = deriveContextWatermarkNotice({ threadId, usage, seen: {} })
     expect(notice).not.toBeNull()
     expect(notice!.kind).toBe('contextHighWatermark')
@@ -69,14 +71,15 @@ describe('deriveContextWatermarkNotice', () => {
     expect(notice!.message).toContain('70%')
     expect(notice!.details).toMatchObject({
       ratio: 0.7,
-      used: 140_000,
+      used: 143_600,
       window: 200_000,
       watermark: 'l1',
     })
   })
 
   it('still fires near 90% (single-tier: never returns null above l1)', () => {
-    const usage = makeUsage({ contextUsage: 180_000, contextWindow: 200_000 })
+    // used = 0.9 × (200_000 − 12_000) + 12_000 = 181_200 → exactly 90%.
+    const usage = makeUsage({ contextUsage: 181_200, contextWindow: 200_000 })
     const notice = deriveContextWatermarkNotice({ threadId, usage, seen: {} })
     expect(notice).not.toBeNull()
     expect(notice!.message).toContain('90%')

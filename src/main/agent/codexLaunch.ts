@@ -380,6 +380,49 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     // transport-less entry even if apiyi isn't installed.)
     '-c', 'features.code_mode.enabled=false',
     '-c', 'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi"]',
+    // ─────────────────────────────────────────────────────────────────────────
+    // Native AGENTS.md (project-doc) alignment. The engine already loads
+    // AGENTS.md by walking from the `.git` project root down to the thread cwd
+    // and concatenating every file found (codex-rs/core/src/agents_md.rs); the
+    // thread cwd is `sessionConfig.writableRoots[0]` (the picked workspace
+    // folder), so dropping an AGENTS.md / AGENTS.override.md there Just Works.
+    // These three knobs make the app's project-doc behavior explicit and richer
+    // than the stock defaults:
+    //
+    //   • project_doc_max_bytes — stock default is ~32 KiB, which silently
+    //     truncates larger project constitutions. Pin 64 KiB so a sizable
+    //     AGENTS.md is included in full (0 would DISABLE loading entirely).
+    //   • project_root_markers — pin the native default (`.git`) explicitly so a
+    //     stray `~/.codex/config.toml` can't move the root-detection goalposts;
+    //     when no marker is found the engine considers only the cwd.
+    //   • project_doc_fallback_filenames — ALSO treat CLAUDE.md / GEMINI.md as
+    //     project docs (candidate order: AGENTS.override.md → AGENTS.md →
+    //     fallbacks), so cross-tool repos with a Claude/Gemini constitution but
+    //     no AGENTS.md still feed their instructions to Codex.
+    '-c', 'project_doc_max_bytes=65536',
+    '-c', 'project_root_markers=[".git"]',
+    '-c', 'project_doc_fallback_filenames=["CLAUDE.md", "GEMINI.md"]',
+    // ─────────────────────────────────────────────────────────────────────────
+    // Native cross-session MEMORY. Codex ships a first-party memory subsystem
+    // (codex-rs/memories/) gated behind the `memories` feature flag — verified
+    // against the shipped 0.142.2 binary via `experimentalFeature/list`
+    // (`memories`, stage=beta, default_enabled=false; NOT the docs-implied
+    // `memory`). Enabling it makes the engine, on every NON-ephemeral root
+    // session start, run a background two-phase pipeline that distills prior
+    // rollouts into `$CODEX_HOME/memories/` — `MEMORY.md` (searchable registry),
+    // `memory_summary.md` (injected into context at session start), and
+    // `rollout_summaries/` (per-session recaps + evidence). So the agent
+    // "remembers" the user's preferences/decisions across chats without us
+    // hand-rolling any persistence.
+    //
+    // Safe to pin here: `-c` lands on the config.toml layer (below `--enable`
+    // and cloud gates, above code-default per the documented precedence), and
+    // `$CODEX_HOME/memories` is already inside Codex's writable roots — doubly
+    // so for us since we run `sandbox_mode="danger-full-access"`, so memory
+    // maintenance never triggers an approval. Per-thread eligibility can still
+    // be toggled later via the experimental `thread/memoryMode/set` /
+    // `memory/reset` RPCs (exposed on the protocol client) without a relaunch.
+    '-c', 'features.memories=true',
   ]
 
   // Register the local in-process catimation MCP server so the Codex

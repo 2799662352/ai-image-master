@@ -91,6 +91,7 @@ import type {
   PluginReadParams,
   PluginReadResponse,
 } from '../types/codexPlugins'
+import type { GoalRpcResult, ThreadGoal, ThreadGoalStatus } from '../types/codexGoals'
 
 // ==================== IPC 通道常量 ====================
 // 集中管理所有 IPC 通道，便于类型检查和维护
@@ -218,6 +219,7 @@ const IPC_CHANNELS = {
   // Codex Agent
   AGENT: {
     SEND_MESSAGE: 'agent:send-message',
+    STEER: 'agent:turn-steer',
     CANCEL: 'agent:cancel',
     LIST_THREADS: 'agent:list-threads',
     LOAD_THREAD: 'agent:load-thread',
@@ -255,6 +257,10 @@ const IPC_CHANNELS = {
     MCP_READ_CONFIG: 'agent:mcp-read-config',
     MCP_READ_RAW_CONFIG: 'agent:mcp-read-raw-config',
     MCP_STATUS_SNAPSHOT: 'agent:mcp-status-snapshot',
+    GOAL_SET: 'agent:goal-set',
+    GOAL_GET: 'agent:goal-get',
+    GOAL_CLEAR: 'agent:goal-clear',
+    COMPACT_START: 'agent:compact-start',
     PLUGIN_LIST: 'agent:plugin-list',
     PLUGIN_INSTALLED: 'agent:plugin-installed',
     PLUGIN_READ: 'agent:plugin-read',
@@ -286,6 +292,7 @@ const IPC_CHANNELS = {
     'agent:approval-request',
   ] as const,
   AGENT_MCP_EVENTS: ['agent:mcp-status'] as const,
+  AGENT_GOAL_EVENTS: ['agent:goal'] as const,
   // Shell helpers (clipboard / save dialog)
   SHELL: {
     COPY_IMAGE: 'shell:copy-image',
@@ -474,6 +481,7 @@ export interface ElectronAPI {
   // Codex Agent
   agent: {
     sendMessage: (payload: AgentSendMessagePayload) => Promise<AgentSendMessageResult>
+    steer: (payload: AgentSendMessagePayload) => Promise<AgentSendMessageResult>
     cancel: (payload: AgentCancelPayload) => Promise<IpcResponse>
     listThreads: () => Promise<AgentThreadSummary[]>
     loadThread: (threadId: string) => Promise<unknown>
@@ -528,6 +536,15 @@ export interface ElectronAPI {
       snapshot?: Record<string, { status: string; error: string | null }>
       error?: string
     }>
+    // Codex native `/goal` (thread/goal/*). threadId = DB thread id.
+    setGoal: (
+      threadId: string,
+      params: { objective?: string; tokenBudget?: number; status?: ThreadGoalStatus },
+    ) => Promise<GoalRpcResult<ThreadGoal>>
+    getGoal: (threadId: string) => Promise<GoalRpcResult<ThreadGoal | null>>
+    clearGoal: (threadId: string) => Promise<GoalRpcResult<{ cleared: boolean }>>
+    onGoal: (handler: (event: any) => void) => () => void
+    compactThread: (threadId: string) => Promise<GoalRpcResult<{ started: boolean }>>
     // Codex native plugin / marketplace / apps / external-agent-import (≥0.140)
     listPlugins: (params?: PluginListParams) => Promise<{ ok: boolean; error?: string; data?: PluginListResponse }>
     listInstalledPlugins: (params?: PluginInstalledParams) => Promise<{ ok: boolean; error?: string; data?: PluginInstalledResponse }>
@@ -1007,6 +1024,9 @@ const electronAPI: ElectronAPI = {
     sendMessage: (payload: AgentSendMessagePayload) =>
       safeInvoke<AgentSendMessageResult>(IPC_CHANNELS.AGENT.SEND_MESSAGE, payload),
 
+    steer: (payload: AgentSendMessagePayload) =>
+      safeInvoke<AgentSendMessageResult>(IPC_CHANNELS.AGENT.STEER, payload),
+
     cancel: (payload: AgentCancelPayload) =>
       safeInvoke<IpcResponse>(IPC_CHANNELS.AGENT.CANCEL, payload),
 
@@ -1172,6 +1192,24 @@ const electronAPI: ElectronAPI = {
         snapshot?: Record<string, { status: string; error: string | null }>
         error?: string
       }>(IPC_CHANNELS.AGENT.MCP_STATUS_SNAPSHOT),
+
+    // ----- Codex native `/goal` (thread/goal/*) -----
+    setGoal: (
+      threadId: string,
+      params: { objective?: string; tokenBudget?: number; status?: ThreadGoalStatus },
+    ) => safeInvoke<GoalRpcResult<ThreadGoal>>(IPC_CHANNELS.AGENT.GOAL_SET, threadId, params),
+
+    getGoal: (threadId: string) =>
+      safeInvoke<GoalRpcResult<ThreadGoal | null>>(IPC_CHANNELS.AGENT.GOAL_GET, threadId),
+
+    clearGoal: (threadId: string) =>
+      safeInvoke<GoalRpcResult<{ cleared: boolean }>>(IPC_CHANNELS.AGENT.GOAL_CLEAR, threadId),
+
+    compactThread: (threadId: string) =>
+      safeInvoke<GoalRpcResult<{ started: boolean }>>(IPC_CHANNELS.AGENT.COMPACT_START, threadId),
+
+    onGoal: (handler: (event: any) => void) =>
+      safeOnWithCleanup<any>('agent:goal', handler, IPC_CHANNELS.AGENT_GOAL_EVENTS),
 
     // ----- Codex native plugin / marketplace / apps / external-agent-import (≥0.140) -----
     listPlugins: (params?: PluginListParams) =>

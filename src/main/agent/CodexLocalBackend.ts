@@ -42,6 +42,12 @@ import type {
   PluginReadParams,
   PluginReadResponse,
 } from '../../types/codexPlugins'
+import type {
+  ThreadGoalSetParams,
+  ThreadGoalSetResponse,
+  ThreadGoalGetResponse,
+  ThreadGoalClearResponse,
+} from '../../types/codexGoals'
 
 export { mapServerNotification }
 
@@ -122,6 +128,8 @@ export interface CodexLocalBackendOptions {
   getApiyiKey?: () => string | undefined
   onApprovalRequest?: (request: CodexApprovalRequest) => void
   onMcpNotification?: (event: AgentStreamEvent) => void
+  /** Out-of-band native `/goal` updates (`thread/goal/updated|cleared`). */
+  onGoalNotification?: (event: AgentStreamEvent) => void
   /**
    * Pin the `CODEX_HOME` used for EVERY spawn (initial + `restartCodex`).
    * Defaults to {@link resolveStableCodexHome} (`~/.codex`, honoring a
@@ -299,6 +307,7 @@ export class CodexLocalBackend implements IAgentBackend {
       connectTimeoutMs: 5_000,
       onApprovalRequest: this.options.onApprovalRequest,
       onMcpNotification: this.options.onMcpNotification,
+      onGoalNotification: this.options.onGoalNotification,
     })
     await client.start()
     this.epoch += 1
@@ -415,6 +424,7 @@ export class CodexLocalBackend implements IAgentBackend {
       onLog: (line) => log.write(line + '\n'),
       onApprovalRequest: this.options.onApprovalRequest,
       onMcpNotification: this.options.onMcpNotification,
+      onGoalNotification: this.options.onGoalNotification,
     })
 
     try {
@@ -530,6 +540,11 @@ export class CodexLocalBackend implements IAgentBackend {
     await this.client.cancel(threadId)
   }
 
+  async steer(threadId: string, input: AgentInput): Promise<string> {
+    if (!this.client) throw new Error('CodexLocalBackend.steer called before start')
+    return this.client.steer(threadId, input)
+  }
+
   async listThreads(params?: ListThreadsParams): Promise<CodexThreadSummary[]> {
     if (!this.client) throw new Error('CodexLocalBackend.listThreads called before start')
     return this.client.listThreads(params)
@@ -615,6 +630,18 @@ export class CodexLocalBackend implements IAgentBackend {
     return this.client.readConfig()
   }
 
+  async experimentalFeatureList(params?: {
+    threadId?: string
+    cursor?: string
+    limit?: number
+  }): Promise<{
+    features: Array<{ id: string; stage: string; enabled: boolean; defaultEnabled: boolean }>
+    nextCursor?: string
+  }> {
+    if (!this.client) throw new Error('CodexLocalBackend.experimentalFeatureList called before start')
+    return this.client.experimentalFeatureList(params)
+  }
+
   async reloadMcpServers(): Promise<void> {
     if (!this.client) throw new Error('CodexLocalBackend.reloadMcpServers called before start')
     await this.client.reloadMcpServers()
@@ -628,6 +655,26 @@ export class CodexLocalBackend implements IAgentBackend {
   // ─── Native plugin / marketplace / apps / external-agent-import (≥0.140) ───
   // Thin passthroughs to the protocol client (P0). Each throws if start()
   // hasn't run, mirroring the MCP passthroughs above.
+
+  async setThreadGoal(params: ThreadGoalSetParams): Promise<ThreadGoalSetResponse> {
+    if (!this.client) throw new Error('CodexLocalBackend.setThreadGoal called before start')
+    return this.client.setThreadGoal(params)
+  }
+
+  async getThreadGoal(threadId: string): Promise<ThreadGoalGetResponse> {
+    if (!this.client) throw new Error('CodexLocalBackend.getThreadGoal called before start')
+    return this.client.getThreadGoal(threadId)
+  }
+
+  async clearThreadGoal(threadId: string): Promise<ThreadGoalClearResponse> {
+    if (!this.client) throw new Error('CodexLocalBackend.clearThreadGoal called before start')
+    return this.client.clearThreadGoal(threadId)
+  }
+
+  async compactThread(threadId: string): Promise<Record<string, never>> {
+    if (!this.client) throw new Error('CodexLocalBackend.compactThread called before start')
+    return this.client.compactThread(threadId)
+  }
 
   async listPlugins(params?: PluginListParams): Promise<PluginListResponse> {
     if (!this.client) throw new Error('CodexLocalBackend.listPlugins called before start')

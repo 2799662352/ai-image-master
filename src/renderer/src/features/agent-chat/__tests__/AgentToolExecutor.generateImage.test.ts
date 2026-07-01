@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentToolExecutor } from '../AgentToolExecutor'
 import { useAgentChatStore } from '../store'
+import { DEFAULT_IMAGE_CHANNEL_ID } from '../imageChannels'
 import { ServiceRegistry, SERVICE_KEYS } from '../../../services/ServiceBridge'
 import type { ArtifactItem } from '../../../../../types/agent-timeline'
 import { getCodexArtifacts } from '../codexArtifactPersistence'
@@ -22,32 +23,39 @@ function callGenerate(params: Record<string, unknown>): Promise<unknown> {
   return (new AgentToolExecutor() as unknown as { generateImage: (p: unknown) => Promise<unknown> }).generateImage(params)
 }
 
+function setChannel(id: string): void {
+  useAgentChatStore.setState({ selectedImageChannel: id })
+}
+
 beforeEach(() => {
-  useAgentChatStore.setState({ messages: [] })
   localStorage.clear()
+  // Reset to the default channel (VIP) before each test; individual tests set a
+  // specific channel to exercise the authoritative-picker behavior.
+  useAgentChatStore.setState({ messages: [], selectedImageChannel: DEFAULT_IMAGE_CHANNEL_ID })
 })
 
 describe('AgentToolExecutor.generateImage', () => {
-  it('defaults to 腾讯 image2 (and pins the Miau site) when model is omitted/invalid', async () => {
+  it('defaults to VIP (no site pin) when the user has not picked a channel', async () => {
     const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
     registerFakes(api, makeHistory())
 
-    await callGenerate({ prompt: 'a cat', model: 'gpt-image-2', ratio: '16:9' })
+    await callGenerate({ prompt: 'a cat', ratio: '16:9' })
 
     expect(api.generateImage).toHaveBeenCalledTimes(1)
     const sent = api.generateImage.mock.calls[0][0]
-    expect(sent.model).toBe('custom-imagemodel-gt')
-    expect(sent.siteKey).toBe('antigravity') // Miau-only channel pinned to Miau site
+    expect(sent.model).toBe('gpt-image-2-vip') // default channel = VIP
+    expect(sent.siteKey).toBeUndefined() // VIP is not Miau-only
     expect(sent.ratio).toBe('16:9')
     expect(sent.resolution).toBe('2K') // default applied
   })
 
-  it('honors an allow-listed model selection (腾讯 image2) and pins the Miau site', async () => {
+  it('renders on the user-picked 腾讯 image2 channel and pins the Miau site', async () => {
     const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
     const history = makeHistory()
     registerFakes(api, history)
+    setChannel('custom-imagemodel-gt')
 
-    const result = (await callGenerate({ prompt: 'a cat', model: 'custom-imagemodel-gt' })) as Record<string, unknown>
+    const result = (await callGenerate({ prompt: 'a cat' })) as Record<string, unknown>
 
     expect(api.generateImage.mock.calls[0][0].model).toBe('custom-imagemodel-gt')
     expect(api.generateImage.mock.calls[0][0].siteKey).toBe('antigravity')
@@ -55,47 +63,86 @@ describe('AgentToolExecutor.generateImage', () => {
     expect(history.addToHistory.mock.calls[0][4]).toBe('custom-imagemodel-gt')
   })
 
-  it('honors an allow-listed model selection (万相 2.7 pro) and pins the Miau site', async () => {
+  it('renders on the user-picked 万相 2.7 pro channel and pins the Miau site', async () => {
     const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
     registerFakes(api, makeHistory())
+    setChannel('wan2.7-image-pro')
 
-    const result = (await callGenerate({ prompt: 'a cat', model: 'wan2.7-image-pro' })) as Record<string, unknown>
+    const result = (await callGenerate({ prompt: 'a cat' })) as Record<string, unknown>
 
     expect(api.generateImage.mock.calls[0][0].model).toBe('wan2.7-image-pro')
     expect(api.generateImage.mock.calls[0][0].siteKey).toBe('antigravity')
     expect(result.model).toBe('wan2.7-image-pro')
   })
 
-  it('honors an explicit vip selection and does NOT pin a site (uses current site)', async () => {
+  it('renders on the user-picked VIP channel and does NOT pin a site (uses current site)', async () => {
     const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
     registerFakes(api, makeHistory())
+    setChannel('gpt-image-2-vip')
 
-    const result = (await callGenerate({ prompt: 'a cat', model: 'gpt-image-2-vip' })) as Record<string, unknown>
+    const result = (await callGenerate({ prompt: 'a cat' })) as Record<string, unknown>
 
     expect(api.generateImage.mock.calls[0][0].model).toBe('gpt-image-2-vip')
     expect(api.generateImage.mock.calls[0][0].siteKey).toBeUndefined()
     expect(result.model).toBe('gpt-image-2-vip')
   })
 
-  it('honors a nano2 selection (gemini-3.1-flash-image) and does NOT pin a site (uses current site)', async () => {
+  it('renders on the user-picked nano2 channel (gemini-3.1-flash-image), no site pin', async () => {
     const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
     registerFakes(api, makeHistory())
+    setChannel('gemini-3.1-flash-image')
 
-    const result = (await callGenerate({ prompt: 'a cat', model: 'gemini-3.1-flash-image' })) as Record<string, unknown>
+    const result = (await callGenerate({ prompt: 'a cat' })) as Record<string, unknown>
 
     expect(api.generateImage.mock.calls[0][0].model).toBe('gemini-3.1-flash-image')
     expect(api.generateImage.mock.calls[0][0].siteKey).toBeUndefined()
     expect(result.model).toBe('gemini-3.1-flash-image')
   })
 
-  it('falls back to 腾讯 image2 for an unknown/hallucinated model', async () => {
+  it('lets the agent OVERRIDE the user channel with an explicit valid model (agent autonomy)', async () => {
     const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
     registerFakes(api, makeHistory())
+    setChannel('gpt-image-2-vip') // user default = VIP
 
-    await callGenerate({ prompt: 'a cat', model: 'totally-made-up-model' })
+    // Agent deliberately switches to 万相 for a 组图 series → agent choice wins.
+    await callGenerate({ prompt: '同一只猫的四季', model: 'wan2.7-image-pro' })
+
+    expect(api.generateImage.mock.calls[0][0].model).toBe('wan2.7-image-pro')
+    expect(api.generateImage.mock.calls[0][0].siteKey).toBe('antigravity')
+  })
+
+  it('honors the user channel when the agent omits model (picker is the default)', async () => {
+    const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
+    registerFakes(api, makeHistory())
+    setChannel('custom-imagemodel-gt') // user picked 腾讯
+
+    await callGenerate({ prompt: 'a cat' }) // no model → user default
 
     expect(api.generateImage.mock.calls[0][0].model).toBe('custom-imagemodel-gt')
     expect(api.generateImage.mock.calls[0][0].siteKey).toBe('antigravity')
+  })
+
+  it('falls back to the user channel (then VIP) for an unknown/hallucinated agent model', async () => {
+    const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
+    registerFakes(api, makeHistory())
+    setChannel('gemini-3.1-flash-image') // user picked Nano2
+
+    // Bogus model → not a valid override → falls back to the user's channel.
+    await callGenerate({ prompt: 'a cat', model: 'totally-made-up-model' })
+
+    expect(api.generateImage.mock.calls[0][0].model).toBe('gemini-3.1-flash-image')
+    expect(api.generateImage.mock.calls[0][0].siteKey).toBeUndefined()
+  })
+
+  it('falls back to VIP when the stored channel is stale/unknown', async () => {
+    const api: ApiFake = { generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })) }
+    registerFakes(api, makeHistory())
+    setChannel('totally-made-up-channel')
+
+    await callGenerate({ prompt: 'a cat' })
+
+    expect(api.generateImage.mock.calls[0][0].model).toBe('gpt-image-2-vip')
+    expect(api.generateImage.mock.calls[0][0].siteKey).toBeUndefined()
   })
 
   it('records the image to history under the "codex" type', async () => {
@@ -110,7 +157,7 @@ describe('AgentToolExecutor.generateImage', () => {
     expect(type).toBe('codex')
     expect(prompt).toBe('a cat')
     expect(urls).toEqual(['data:image/png;base64,AAA'])
-    expect(model).toBe('custom-imagemodel-gt')
+    expect(model).toBe('gpt-image-2-vip')
   })
 
   it('appends a new assistant artifact bubble with one ref per image (status done)', async () => {
@@ -162,7 +209,7 @@ describe('AgentToolExecutor.generateImage', () => {
 
     // No threadId / no attachments API in this test → nothing saved locally,
     // history fake returns null. Compact shape only; never any base64.
-    expect(result).toEqual({ ok: true, count: 1, model: 'custom-imagemodel-gt', historyId: null, paths: [] })
+    expect(result).toEqual({ ok: true, count: 1, model: 'gpt-image-2-vip', historyId: null, paths: [] })
     expect(JSON.stringify(result)).not.toContain('base64')
   })
 
@@ -183,7 +230,7 @@ describe('AgentToolExecutor.generateImage', () => {
     expect(result).toEqual({
       ok: true,
       count: 1,
-      model: 'custom-imagemodel-gt',
+      model: 'gpt-image-2-vip',
       historyId: 42,
       paths: [savedPath],
     })
@@ -225,7 +272,7 @@ describe('AgentToolExecutor.generateImage', () => {
       expect(result).toEqual({
         ok: true,
         count: 1,
-        model: 'custom-imagemodel-gt',
+        model: 'gpt-image-2-vip',
         historyId: null,
         paths: [],
         persistencePending: true,

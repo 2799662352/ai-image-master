@@ -1,6 +1,6 @@
 {
   "name": "catimation-core",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "CATIMATION 应用核心:应用内出图、人像/角色锚点库、创意头脑风暴。",
   "author": {
     "name": "CATIMATION",
@@ -23,7 +23,7 @@
   "interface": {
     "displayName": "CATIMATION Core",
     "shortDescription": "应用内出图、人像库与创意头脑风暴",
-    "longDescription": "CATIMATION 桌面应用的核心集成层:catimation-image 提供 generate_image / generate_images(渲染进聊天并落盘+历史+附件面板,默认走腾讯 image2 渠道——快、无水印,可选 gpt-image-2-vip / 万相 2.7 pro / Nano Banana 2(gemini-3.1-flash-image);Miau 专属渠道自动路由站点);catimation-portrait-library 自治管理人像/角色锚点库;catimation-brainstorm 用 ask_user 卡片在开放/高价值创意上先定方向。写提示词前先过 director-orchestrator。",
+    "longDescription": "CATIMATION 桌面应用的核心集成层:catimation-image 提供 generate_image / generate_images(渲染进聊天并落盘+历史+附件面板,渲染渠道跟随用户在 chat composer 选的渠道,默认 VIP;可选腾讯 image2 / 万相 2.7 pro / Nano Banana 2(gemini-3.1-flash-image),agent 可按需覆盖;Miau 专属渠道自动路由站点);catimation-portrait-library 自治管理人像/角色锚点库;catimation-brainstorm 用 ask_user 卡片在开放/高价值创意上先定方向。写提示词前先过 director-orchestrator。",
     "developerName": "CATIMATION",
     "category": "Creative",
     "capabilities": [

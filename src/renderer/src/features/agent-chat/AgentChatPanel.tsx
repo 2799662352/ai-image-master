@@ -9,6 +9,7 @@ import { ResizableHandle } from './ResizableHandle'
 import { RewoundTurnsDrawer } from './RewoundTurnsDrawer'
 import { ThreadCommandPalette } from './ThreadCommandPalette'
 import { ThreadSidebar } from './ThreadSidebar'
+import { GoalChip } from './GoalChip'
 import { TokenUsageMeter } from './TokenUsageMeter'
 import { CodexApprovalPrompt } from './CodexApprovalPrompt'
 import { CodexStatusPanel } from './CodexStatusPanel'
@@ -31,6 +32,7 @@ type AgentEventApi = {
   agent?: {
     onEvent: (handler: (event: AgentStreamEvent) => void) => () => void
     onApprovalRequest?: (handler: (request: CodexApprovalRequest) => void) => () => void
+    onGoal?: (handler: (event: AgentStreamEvent) => void) => () => void
     getSessionStatus?: () => Promise<CodexSessionStatus>
     restartCodex?: () => Promise<{ ok: boolean; error?: string }>
   }
@@ -51,6 +53,9 @@ export function AgentChatPanel() {
   const error = useAgentChatStore((state) => state.error)
   const applyEvent = useAgentChatStore((state) => state.applyEvent)
   const addApprovalRequest = useAgentChatStore((state) => state.addApprovalRequest)
+  const applyGoalEvent = useAgentChatStore((state) => state.applyGoalEvent)
+  const refreshGoal = useAgentChatStore((state) => state.refreshGoal)
+  const activeGoal = useAgentChatStore((state) => (threadId ? state.goalByThread[threadId] : null))
   const pendingApprovals = useAgentChatStore((state) => state.pendingApprovals)
   const respondToApproval = useAgentChatStore((state) => state.respondToApproval)
   const setError = useAgentChatStore((state) => state.setError)
@@ -93,6 +98,21 @@ export function AgentChatPanel() {
     const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
     return agent?.onApprovalRequest?.(addApprovalRequest)
   }, [addApprovalRequest])
+
+  // Native `/goal`: live goal status stream (thread/goal/updated|cleared).
+  // Mount-bound like onEvent so updates aren't lost while the panel is hidden.
+  useEffect(() => {
+    const agent = (window as Window & { electronAPI?: AgentEventApi }).electronAPI?.agent
+    return agent?.onGoal?.(applyGoalEvent)
+  }, [applyGoalEvent])
+
+  // Refresh the active thread's goal on open / thread switch so the chip
+  // reflects a goal set in a prior session (notifications only cover live
+  // changes; this covers the initial read).
+  useEffect(() => {
+    if (!isOpen || !threadId) return
+    void refreshGoal(threadId)
+  }, [isOpen, threadId, refreshGoal])
 
   // Restore the most recent thread + thread list on first open.
   useEffect(() => {
@@ -280,6 +300,7 @@ export function AgentChatPanel() {
               </button>
             </div>
           ) : null}
+          {activeGoal ? <GoalChip goal={activeGoal} /> : null}
         </header>
 
         <div

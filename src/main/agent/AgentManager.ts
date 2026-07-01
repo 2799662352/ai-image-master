@@ -79,6 +79,7 @@ import type {
   PluginReadParams,
   PluginReadResponse,
 } from '../../types/codexPlugins'
+import type { GoalRpcResult, ThreadGoal, ThreadGoalStatus } from '../../types/codexGoals'
 import { ThreadTitleSummarizer } from './ThreadTitleSummarizer'
 import { setFsAllowedRoots } from '../file-explorer/fsIpc'
 
@@ -310,6 +311,7 @@ export class AgentManager {
       getApiyiKey: () => this.apiyiMcpKey || undefined,
       onApprovalRequest: (request) => this.emitApprovalRequest(request),
       onMcpNotification: (event) => this.handleMcpNotification(event),
+      onGoalNotification: (event) => this.handleGoalNotification(event),
     })
     if (this.store) {
       this.summarizer = new ThreadTitleSummarizer(this.store, this.backend, DEFAULT_AGENT_MODEL)
@@ -333,6 +335,21 @@ export class AgentManager {
     if (typeof b.onMcpNotification === 'function') {
       b.onMcpNotification((event) => this.handleMcpNotification(event))
     }
+  }
+
+  /**
+   * Native `/goal` updates (`thread/goal/updated|cleared`) arrive keyed by the
+   * CODEX thread id; the renderer store is keyed by our DB thread id, so we
+   * reverse-map before forwarding. Unknown mappings are dropped (a goal on a
+   * thread the renderer doesn't track can't be attributed).
+   */
+  private handleGoalNotification(event: AgentStreamEvent): void {
+    const win = this.win
+    if (!win || win.isDestroyed()) return
+    const e = event as { type?: string; threadId?: string }
+    if (typeof e.threadId !== 'string') return
+    const dbThreadId = this.resolveDbThreadId(e.threadId) ?? e.threadId
+    win.webContents.send('agent:goal', { ...event, threadId: dbThreadId })
   }
 
   private handleMcpNotification(event: AgentStreamEvent): void {
@@ -796,6 +813,82 @@ export class AgentManager {
     }
   }
 
+  // ─── Native `/goal` + `/compact` (thread/goal/*, thread/compact/*) ─────────
+  // Renderer passes the DB thread id; we resolve it to the codex thread id
+  // (in-memory map, falling back to the persisted id) before hitting the
+  // app-server. All wrap in the standard `{ ok, error?, data? }` envelope.
+
+  private async resolveCodexThreadIdForRpc(dbThreadId: string): Promise<string | undefined> {
+    const inMem = this.codexThreadIdByDbThreadId.get(dbThreadId)
+    if (inMem) return inMem
+    try {
+      return (await this.store?.getCodexThreadId?.(dbThreadId)) ?? undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  async setThreadGoalRpc(
+    dbThreadId: string,
+    params: { objective?: string; tokenBudget?: number; status?: ThreadGoalStatus },
+  ): Promise<GoalRpcResult<ThreadGoal>> {
+    try {
+      if (!this.backend.setThreadGoal) throw new Error('Goal API unavailable')
+      const codexThreadId = await this.resolveCodexThreadIdForRpc(dbThreadId)
+      if (!codexThreadId) {
+        return { ok: false, error: '先发一条消息创建会话,再设置目标(/goal)。' }
+      }
+      const res = await this.backend.setThreadGoal({ threadId: codexThreadId, ...params })
+      return { ok: true, data: res.goal }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  async getThreadGoalRpc(dbThreadId: string): Promise<GoalRpcResult<ThreadGoal | null>> {
+    try {
+      if (!this.backend.getThreadGoal) throw new Error('Goal API unavailable')
+      const codexThreadId = await this.resolveCodexThreadIdForRpc(dbThreadId)
+      if (!codexThreadId) return { ok: true, data: null }
+      const res = await this.backend.getThreadGoal(codexThreadId)
+      return { ok: true, data: res.goal }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  async clearThreadGoalRpc(dbThreadId: string): Promise<GoalRpcResult<{ cleared: boolean }>> {
+    try {
+      if (!this.backend.clearThreadGoal) throw new Error('Goal API unavailable')
+      const codexThreadId = await this.resolveCodexThreadIdForRpc(dbThreadId)
+      if (!codexThreadId) return { ok: true, data: { cleared: false } }
+      const res = await this.backend.clearThreadGoal(codexThreadId)
+      return { ok: true, data: { cleared: res.cleared } }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  /**
+   * Kick off REAL native history compaction (thread/compact/start). Resolves
+   * once the app-server accepts the request; actual progress streams back as a
+   * `contextCompaction` activity item (started→completed) over the normal
+   * event channel. Requires an existing codex thread (send a message first).
+   */
+  async compactThreadRpc(dbThreadId: string): Promise<GoalRpcResult<{ started: boolean }>> {
+    try {
+      if (!this.backend.compactThread) throw new Error('Compact API unavailable')
+      const codexThreadId = await this.resolveCodexThreadIdForRpc(dbThreadId)
+      if (!codexThreadId) {
+        return { ok: false, error: '先发一条消息创建会话,再压缩上下文(/compact)。' }
+      }
+      await this.backend.compactThread(codexThreadId)
+      return { ok: true, data: { started: true } }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
   // ─── Native plugin / marketplace / apps / external-agent-import (≥0.140) ───
   // Each delegates to the backend passthrough and wraps the result in the
   // standard `{ ok, error?, data? }` envelope so the renderer never has to
@@ -1160,6 +1253,94 @@ export class AgentManager {
       return { threadId }
     }
 
+    const { threadId, input, userTimelineItems } = await this.assembleTurnInput(payload)
+
+    void this.forwardEvents(threadId, input).catch((error: unknown) => {
+      this.emitEvent({
+        type: 'error',
+        threadId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    })
+    // `userMessageItems` lets the renderer patch its OPTIMISTIC user message
+    // (raw OS path, outside the fs allowed-roots gate) with these CANONICAL
+    // items (uploads-cache paths that click through immediately). JSON
+    // round-trip drops `undefined` keys and guarantees structured-cloneability.
+    const cloneableItems = userTimelineItems.length > 0
+      ? (JSON.parse(JSON.stringify(userTimelineItems)) as typeof userTimelineItems)
+      : undefined
+    return { threadId, userMessageItems: cloneableItems }
+  }
+
+  /**
+   * Append user input to the currently in-flight turn via Codex `turn/steer`
+   * (openai/codex#10821) — the app's "插话/steering" path. The appended output
+   * rides the SAME turn's event stream that the original `sendMessage`'s
+   * `forwardEvents` loop is still draining, so we do NOT start a new forward
+   * loop here; we only persist the user message and fire the steer RPC. A
+   * missing/ended turn surfaces as an `error` event so the renderer can react.
+   */
+  async steer(payload: AgentSendMessagePayload): Promise<AgentSendMessageResult> {
+    const threadIdIn = payload.threadId
+    if (!threadIdIn) {
+      // Steering only applies to an existing thread with an active turn.
+      return { threadId: 'pending' }
+    }
+    if (!this.backend.steer) {
+      this.emitEvent({ type: 'error', threadId: threadIdIn, error: '当前后端不支持运行中插话(turn/steer)。' })
+      return { threadId: threadIdIn }
+    }
+    if (!this.codexApiKey) {
+      this.emitEvent({ type: 'error', threadId: threadIdIn, error: EMPTY_KEY_ERROR })
+      return { threadId: threadIdIn }
+    }
+    if (!this.store || !this.attachments) {
+      throw new Error('AgentManager.steer called without store/attachments')
+    }
+    try {
+      await this.ensureBackendStarted()
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err)
+      this.emitEvent({ type: 'error', threadId: threadIdIn, error: `Codex 后端启动失败:${detail}` })
+      return { threadId: threadIdIn }
+    }
+
+    const { threadId, input, userTimelineItems } = await this.assembleTurnInput(payload)
+    const codexThreadId = this.codexThreadIdByDbThreadId.get(threadId) ?? threadId
+    try {
+      await this.backend.steer(codexThreadId, input)
+    } catch (error) {
+      // Turn likely already completed between the user's keypress and the RPC.
+      // The persisted user message stays (it IS part of the conversation); the
+      // renderer surfaces the notice and can resend it as a fresh turn.
+      this.emitEvent({
+        type: 'error',
+        threadId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+    const cloneableItems = userTimelineItems.length > 0
+      ? (JSON.parse(JSON.stringify(userTimelineItems)) as typeof userTimelineItems)
+      : undefined
+    return { threadId, userMessageItems: cloneableItems }
+  }
+
+  /**
+   * Assemble a turn's `AgentInput` from a renderer payload: ingest attachments,
+   * build the prompt (attachment/reference mentions), resolve skill items, and
+   * persist the user message row. Shared by `sendMessage` (starts a new turn)
+   * and `steer` (appends to the in-flight turn). Callers guarantee the backend
+   * is started and the API key is present.
+   */
+  private async assembleTurnInput(payload: AgentSendMessagePayload): Promise<{
+    threadId: string
+    model: string
+    input: AgentInput
+    userTimelineItems: TimelineItem[]
+  }> {
+    if (!this.store || !this.attachments) {
+      throw new Error('AgentManager.assembleTurnInput called without store/attachments')
+    }
     const referenceMapping = await mapReferencesToInputItems(payload.references, this.allowedRoots)
     const model = payload.model?.trim() || DEFAULT_AGENT_MODEL
     const thread = payload.threadId
@@ -1260,25 +1441,7 @@ export class AgentManager {
       items,
     }
 
-    void this.forwardEvents(thread.id, input).catch((error: unknown) => {
-      this.emitEvent({
-        type: 'error',
-        threadId: thread.id,
-        error: error instanceof Error ? error.message : String(error),
-      })
-    })
-    // `userMessageItems` lets the renderer patch its OPTIMISTIC user message
-    // (which carries the raw OS path the file was picked from, outside the
-    // fs IPC allowed-roots gate) in place with these CANONICAL items
-    // (uploads-cache paths, which are inside allowed-roots and click through
-    // to the file viewer immediately). See `AgentSendMessageResult` jsdoc.
-    // JSON round-trip drops `undefined` keys and ensures the payload is
-    // structured-cloneable over IPC, matching the shape the renderer would
-    // get if it re-fetched the thread via `agent:load-thread`.
-    const cloneableItems = userTimelineItems.length > 0
-      ? (JSON.parse(JSON.stringify(userTimelineItems)) as typeof userTimelineItems)
-      : undefined
-    return { threadId: thread.id, userMessageItems: cloneableItems }
+    return { threadId: thread.id, model, input, userTimelineItems }
   }
 
   private buildUserTimelineItems(

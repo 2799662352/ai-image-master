@@ -1,6 +1,6 @@
 {
   "name": "catimation-cyberpunk-master",
-  "version": "4.3.69",
+  "version": "4.3.72",
   "description": "CATIMATION-Cyberpunk Master - AI图片生成桌面应用",
   "main": "dist/main/index.js",
   "author": "CATIMATION",
@@ -62,6 +62,7 @@
     "docker-mcp:fetch": "tsx scripts/fetch-docker-mcp.ts",
     "codex:probe": "tsx scripts/probe-codex.ts",
     "codex:smoke:resume": "tsx scripts/smoke-codex-resume.ts",
+    "codex:smoke:compaction": "tsx scripts/smoke-codex-compaction.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate:dev": "prisma migrate dev",
     "agent:init-sql": "prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script --output prisma/init.sql",

@@ -5,6 +5,12 @@ import type { ImageViewer } from '../image-viewer'
 import { isTabName, useTabStore } from '../../stores/useTabStore'
 import { useFileExplorerStore } from '../file-explorer/store'
 import { useAgentChatStore } from './store'
+import {
+  DEFAULT_IMAGE_CHANNEL_ID,
+  isMiauOnlyChannel,
+  isSelectableImageChannel,
+  resolveImageChannel,
+} from './imageChannels'
 import { recordCodexArtifact } from './codexArtifactPersistence'
 import { buildLightArtifacts } from './buildLightArtifacts'
 import type { ArtifactSaveInfo, AttachmentRef, ChoiceAnswer, ChoiceOption } from '../../../../types/agent-timeline'
@@ -29,21 +35,6 @@ interface ImageBatchResult {
   savedPaths: string[]
 }
 
-/**
- * Preferred default channel for the codex `generate_image` tool: 腾讯 image2
- * (custom-imagemodel-gt). Fast (~30s), watermark removed at the gateway, same
- * ratio × resolution(1K/2K/4K) × quality surface as the others. Used whenever
- * the agent omits `model` (or passes an unknown name).
- */
-const CODEX_DEFAULT_IMAGE_MODEL = 'custom-imagemodel-gt'
-/** Stable VIP fallback channel (OpenAI 官逆); selectable when the user wants it. */
-const CODEX_VIP_IMAGE_MODEL = 'gpt-image-2-vip'
-/**
- * Nano Banana 2 (Google Gemini 3.1 flash image). Selectable alternate; uses the
- * Gemini-native endpoint via the currently selected site (NOT Miau-only), same
- * path the in-app 生图 page already uses. Good for fast 4K, multi-aspect output.
- */
-const CODEX_NANO2_IMAGE_MODEL = 'gemini-3.1-flash-image'
 const CODEX_DEFAULT_RESOLUTION = '2K'
 
 /**
@@ -57,37 +48,25 @@ const CODEX_DEFAULT_RESOLUTION = '2K'
 const MIAU_SITE_KEY = 'antigravity'
 
 /**
- * Channels that are ONLY available through the Miau API gateway. When the
- * resolved model is one of these, generation is pinned to `MIAU_SITE_KEY`.
+ * Resolve the channel a `generate_image` call renders on. Precedence:
+ *
+ *   1. The agent's explicit, valid `model` argument — AGENT AUTONOMY. The agent
+ *      may deliberately override the channel when it has a concrete reason (e.g.
+ *      switch to 万相 2.7 pro for a `count>1` 组图 series, or honor a user who
+ *      asked for a specific channel mid-turn).
+ *   2. The user's picker selection (`store.selectedImageChannel`) — the DEFAULT
+ *      the picker sets. Used whenever the agent omits `model`.
+ *   3. VIP — the hard fallback when both are absent/stale.
+ *
+ * So the composer picker sets the user's default AND serves as a reminder to the
+ * agent, without stripping the agent's ability to pick a better channel for the
+ * task. Channel metadata (allow-list + Miau-only flag) lives in
+ * `imageChannels.ts`, so adding/renaming a channel flows to both the picker UI
+ * and this resolver.
  */
-const MIAU_ONLY_MODELS: ReadonlySet<string> = new Set([
-  'custom-imagemodel-gt',
-  'wan2.7-image-pro',
-])
-
-/**
- * MCP-selectable image models. The agent MAY opt into one of these alternates
- * via the tool's `model` param; anything outside this allow-list (incl. a
- * hallucinated name) falls back to the preferred default so generation never
- * breaks. All three share the same ratio × resolution(1K/2K/4K) × quality
- * parameter surface, so the tool schema is identical regardless of choice.
- * - custom-imagemodel-gt : 腾讯 image2（经 Miau 代理）— preferred default
- * - gpt-image-2-vip   : OpenAI 官逆，稳定 — alternate
- * - wan2.7-image-pro  : 阿里万相 2.7 pro（超清/组图，经 Miau 代理）
- * - gemini-3.1-flash-image : Nano Banana 2（Gemini 原生端点，当前站点）— alternate
- */
-const MCP_SELECTABLE_IMAGE_MODELS: readonly string[] = [
-  CODEX_DEFAULT_IMAGE_MODEL,
-  CODEX_VIP_IMAGE_MODEL,
-  'wan2.7-image-pro',
-  CODEX_NANO2_IMAGE_MODEL,
-]
-
-/** Resolve the agent-requested model to an allow-listed one (default = 腾讯 image2). */
-function resolveMcpImageModel(requested: unknown): string {
-  return typeof requested === 'string' && MCP_SELECTABLE_IMAGE_MODELS.includes(requested)
-    ? requested
-    : CODEX_DEFAULT_IMAGE_MODEL
+function resolveEffectiveImageChannel(agentRequested: unknown): string {
+  if (isSelectableImageChannel(agentRequested)) return agentRequested
+  return resolveImageChannel(useAgentChatStore.getState().selectedImageChannel)
 }
 
 type AgentElectronApi = {
@@ -419,9 +398,9 @@ export class AgentToolExecutor {
         ? await this.resolveReferenceImages(params.referenceImages)
         : undefined
 
-    // Honor an allow-listed model selection (腾讯 image2 / vip / 万相 2.7 pro);
-    // any other value falls back to the preferred 腾讯 image2 default.
-    const model = resolveMcpImageModel(params.model)
+    // Agent autonomy first (explicit valid `params.model` wins, e.g. 万相 for a
+    // 组图 series), else the user's picked channel, else VIP.
+    const model = resolveEffectiveImageChannel(params.model)
     const request: GenerateImageParams = {
       ...params,
       referenceImages,
@@ -430,7 +409,7 @@ export class AgentToolExecutor {
       // Pin Miau-only channels to the Miau API site so they always reach the
       // gateway regardless of the user's currently selected site (the renderer
       // otherwise rewrites the endpoint host with the active site's host).
-      ...(MIAU_ONLY_MODELS.has(model) ? { siteKey: MIAU_SITE_KEY } : {}),
+      ...(isMiauOnlyChannel(model) ? { siteKey: MIAU_SITE_KEY } : {}),
     }
 
     // Resolve the REQUESTING thread. Prefer the authoritative id Codex stamped
@@ -724,7 +703,7 @@ export class AgentToolExecutor {
         request.prompt,
         images,
         request.ratio,
-        request.model ?? CODEX_DEFAULT_IMAGE_MODEL,
+        request.model ?? DEFAULT_IMAGE_CHANNEL_ID,
         request.referenceImages ? { referenceImages: request.referenceImages } : undefined,
       )) as { id?: number | string } | null
       return saved?.id ?? null

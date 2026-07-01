@@ -22,6 +22,7 @@ import type {
   CodexThreadSummary,
   ItemDeltaPatch,
 } from '../../../../types/agent'
+import type { GoalRpcResult, ThreadGoal, ThreadGoalStatus } from '../../../../types/codexGoals'
 import type { AgentReference } from '../../../../types/agent-reference'
 import type { ArtifactItem, ArtifactSaveInfo, AttachmentRef, ChoiceAnswer, ChoiceOption, ChoiceRequestItem, Message, PlanStep, TimelineItem } from '../../../../types/agent-timeline'
 import {
@@ -30,10 +31,13 @@ import {
   upsertItemInLastMessage,
 } from '../../../../types/agent-timeline'
 import { AGENT_MODELS, DEFAULT_MODEL_ID } from './models'
+import { contextUsedPercent } from './contextWindowDefaults'
+import { DEFAULT_IMAGE_CHANNEL_ID, isSelectableImageChannel } from './imageChannels'
 import { useFileExplorerStore } from '../file-explorer/store'
 import { rehydrateCodexArtifacts } from './codexArtifactPersistence'
 
 const SELECTED_MODEL_STORAGE_KEY = 'catimation.agent.selectedModel'
+const SELECTED_IMAGE_CHANNEL_STORAGE_KEY = 'catimation.agent.selectedImageChannel'
 const PANEL_WIDTH_STORAGE_KEY = 'catimation.agent.panelWidth'
 const PANEL_WIDTH_DEFAULT = 420
 const PANEL_WIDTH_MIN = 360
@@ -67,6 +71,24 @@ function readPersistedModelId(): string {
 function persistModelId(id: string): void {
   try {
     globalThis.localStorage?.setItem(SELECTED_MODEL_STORAGE_KEY, id)
+  } catch {
+    // localStorage unavailable (SSR / sandbox); silently ignore.
+  }
+}
+
+function readPersistedImageChannel(): string {
+  try {
+    const raw = globalThis.localStorage?.getItem(SELECTED_IMAGE_CHANNEL_STORAGE_KEY)
+    if (!raw) return DEFAULT_IMAGE_CHANNEL_ID
+    return isSelectableImageChannel(raw) ? raw : DEFAULT_IMAGE_CHANNEL_ID
+  } catch {
+    return DEFAULT_IMAGE_CHANNEL_ID
+  }
+}
+
+function persistImageChannel(id: string): void {
+  try {
+    globalThis.localStorage?.setItem(SELECTED_IMAGE_CHANNEL_STORAGE_KEY, id)
   } catch {
     // localStorage unavailable (SSR / sandbox); silently ignore.
   }
@@ -125,6 +147,7 @@ function persistSidebarWidth(w: number): void {
 type AgentElectronApi = {
   agent?: {
     sendMessage: (payload: AgentSendMessagePayload) => Promise<AgentSendMessageResult>
+    steer?: (payload: AgentSendMessagePayload) => Promise<AgentSendMessageResult>
     cancel: (payload: AgentCancelPayload) => Promise<unknown>
     listThreads?: () => Promise<AgentThreadSummary[]>
     openThread?: (id: string) => Promise<unknown>
@@ -134,6 +157,15 @@ type AgentElectronApi = {
     listCodexThreads?: () => Promise<CodexThreadSummary[]>
     forkCodexThread?: (threadId: string) => Promise<CodexThreadSummary>
     getSkillsSummary?: () => Promise<CodexSkillsSummary>
+    // Codex native `/goal` (thread/goal/*). threadId = DB thread id.
+    setGoal?: (
+      threadId: string,
+      params: { objective?: string; tokenBudget?: number; status?: ThreadGoalStatus },
+    ) => Promise<GoalRpcResult<ThreadGoal>>
+    getGoal?: (threadId: string) => Promise<GoalRpcResult<ThreadGoal | null>>
+    clearGoal?: (threadId: string) => Promise<GoalRpcResult<{ cleared: boolean }>>
+    // Codex native `/compact` (thread/compact/start). threadId = DB thread id.
+    compactThread?: (threadId: string) => Promise<GoalRpcResult<{ started: boolean }>>
   }
 }
 
@@ -202,6 +234,12 @@ interface AgentChatState {
    */
   notices: AgentNotice[]
   /**
+   * Native `/goal` state per DB thread. `null` = fetched, no goal set;
+   * `undefined` (absent key) = not fetched yet. Updated live by the
+   * `thread/goal/updated|cleared` notification stream and by explicit reads.
+   */
+  goalByThread: Record<string, ThreadGoal | null>
+  /**
    * When set, the user is editing a previous message in place. The full
    * `MentionInput` composer is rendered at the message's position (the
    * footer composer is hidden) so the edit UI is *literally* the same
@@ -231,6 +269,8 @@ interface AgentChatState {
   isRunning: boolean
   error?: string
   selectedModelId: string
+  /** User-selected image render channel (authoritative for generate_image). */
+  selectedImageChannel: string
   messages: Message[]
   /**
    * Background per-thread streaming state for chats that are NOT the active
@@ -282,6 +322,7 @@ interface AgentChatState {
   appendInputText: (text: string) => void
   setError: (error?: string) => void
   setSelectedModel: (modelId: string) => void
+  setSelectedImageChannel: (channelId: string) => void
   addAttachment: (attachment: AgentAttachmentInput) => void
   removeAttachment: (name: string) => void
   removeAttachmentForReference: (reference: AgentReference) => void
@@ -295,7 +336,28 @@ interface AgentChatState {
   pushNotice: (notice: AgentNotice) => void
   dismissNotice: (id: string) => void
   respondToApproval: (response: CodexApprovalResponse) => Promise<void>
+  /** Apply a `goal_updated`/`goal_cleared` stream event to `goalByThread`. */
+  applyGoalEvent: (event: AgentStreamEvent) => void
+  /** Fetch the current goal for a thread (defaults to active) into state. */
+  refreshGoal: (threadId?: string) => Promise<void>
+  /** Set/replace the active thread's goal objective (optional token budget). */
+  setGoal: (objective: string, tokenBudget?: number) => Promise<void>
+  /** Change the active thread's goal status (pause/resume/blocked). */
+  setGoalStatus: (status: ThreadGoalStatus) => Promise<void>
+  /** Set/replace only the token budget on the existing goal. */
+  setGoalBudget: (tokenBudget: number) => Promise<void>
+  /** Clear the active thread's goal. */
+  clearGoal: () => Promise<void>
+  /** Kick off real native history compaction (thread/compact/start). */
+  compact: () => Promise<void>
   send: () => Promise<void>
+  /**
+   * Append the composer input to the CURRENTLY RUNNING turn (Codex
+   * `turn/steer`) instead of starting a new one — the app's "运行中插话".
+   * No-op unless a turn is running on the active thread. The steered output
+   * arrives on the same turn's existing event stream.
+   */
+  steer: () => Promise<void>
   /**
    * Enter edit mode for a previous user message. Backs up any in-flight
    * draft, then seeds the global `input` with the message's text so the
@@ -665,6 +727,48 @@ function getAgentApi(): NonNullable<AgentElectronApi['agent']> {
   return agent
 }
 
+function formatGoalTokens(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return '0'
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`
+  return String(n)
+}
+
+function formatGoalDuration(totalSeconds: number): string {
+  if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) return '0m'
+  const h = Math.floor(totalSeconds / 3600)
+  const m = Math.floor((totalSeconds % 3600) / 60)
+  if (h > 0) return `${h}h${m > 0 ? ` ${m}m` : ''}`
+  if (m > 0) return `${m}m`
+  return `${Math.floor(totalSeconds)}s`
+}
+
+/**
+ * Build a user-facing notice when the autonomous goal loop transitions into an
+ * attention state. Returns null for statuses that need no alert (active/paused).
+ * `complete` doubles as the completion report (final token + time usage).
+ */
+function goalTransitionNotice(threadId: string, goal: ThreadGoal): AgentNotice | null {
+  const id = `goal-status:${threadId}:${goal.status}:${goal.updatedAt}`
+  switch (goal.status) {
+    case 'blocked':
+      return { id, kind: 'configWarning', level: 'warning', threadId, message: '目标受阻,需要你介入 —— 处理后用 /goal resume 继续。' }
+    case 'budgetLimited':
+      return { id, kind: 'configWarning', level: 'warning', threadId, message: '目标预算耗尽 —— 用 /goal budget <n> 提高预算后 /goal resume 继续。' }
+    case 'usageLimited':
+      return { id, kind: 'configWarning', level: 'warning', threadId, message: '用量受限,目标已暂停 —— 稍后用 /goal resume 重试。' }
+    case 'complete':
+      return {
+        id,
+        kind: 'configWarning',
+        level: 'info',
+        threadId,
+        message: `🎉 目标已完成 —— 用量 ${formatGoalTokens(goal.tokensUsed)} tok · 用时 ${formatGoalDuration(goal.timeUsedSeconds)}。`,
+      }
+    default:
+      return null
+  }
+}
+
 function resolveItemId(event: { itemId: string; itemType: TimelineItem['type']; turnId?: string }): string {
   if (event.itemId && event.itemId.length > 0) return event.itemId
   return `${event.itemType}-${event.turnId ?? 'no-turn'}`
@@ -927,11 +1031,17 @@ export function deriveContextWatermarkNotice(input: {
   const used = usage.contextUsage ?? usage.inputTokens + usage.outputTokens
   const window = usage.contextWindow
   if (typeof window !== 'number' || window <= 0) return null
-  const ratio = used / window
+  // Codex-aligned occupancy: percent of the EFFECTIVE window (minus the 12K
+  // baseline), matching the header donut and the TUI. This is what the user
+  // sees on the meter, so the watermark must fire on the same number — not the
+  // raw used/window ratio. See contextWindowDefaults.contextUsedPercent().
+  const pctExact = contextUsedPercent(used, window)
+  if (pctExact == null) return null
+  const ratio = pctExact / 100
   if (!Number.isFinite(ratio) || ratio < CONTEXT_WATERMARK_RATIO_L1) return null
   const key = watermarkKeyL1(threadId)
   if (seen[key]) return null
-  const pct = Math.min(100, Math.round(ratio * 100))
+  const pct = Math.min(100, Math.round(pctExact))
   return {
     id: `context-watermark:${key}`,
     kind: 'contextHighWatermark',
@@ -950,6 +1060,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   pendingCanvasContext: null,
   pendingApprovals: [],
   notices: [],
+  goalByThread: {},
   rewoundTurns: [],
   messages: [],
   isRunning: false,
@@ -957,6 +1068,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   runningByThread: {},
   chatScrollByThread: loadChatScrollByThread(),
   selectedModelId: readPersistedModelId(),
+  selectedImageChannel: readPersistedImageChannel(),
   panelWidth: readPersistedPanelWidth(),
   tokenUsage: undefined,
   contextWatermarkSeen: {},
@@ -1168,6 +1280,11 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     persistModelId(modelId)
     set({ selectedModelId: modelId })
   },
+  setSelectedImageChannel: (channelId) => {
+    if (!isSelectableImageChannel(channelId)) return
+    persistImageChannel(channelId)
+    set({ selectedImageChannel: channelId })
+  },
   addAttachment: (attachment) => set((state) => ({ attachments: [...state.attachments, attachment] })),
   removeAttachment: (name) => set((state) => ({
     attachments: state.attachments.filter((item) => item.name !== name),
@@ -1220,6 +1337,167 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     set((state) => ({
       notices: state.notices.filter((notice) => notice.id !== id),
     })),
+  applyGoalEvent: (event) => {
+    if (event.type === 'goal_updated') {
+      const { threadId, goal } = event
+      // Detect a status *transition* into an attention state so the autonomous
+      // goal loop can alert the user (blocked/budget/usage/complete) without
+      // them watching the chip. Token-only ticks (status unchanged) stay silent.
+      const prev = get().goalByThread[threadId]
+      set((state) => ({ goalByThread: { ...state.goalByThread, [threadId]: goal } }))
+      if (prev && prev.status !== goal.status) {
+        const notice = goalTransitionNotice(threadId, goal)
+        if (notice) get().pushNotice(notice)
+      }
+    } else if (event.type === 'goal_cleared') {
+      const { threadId } = event
+      set((state) => ({ goalByThread: { ...state.goalByThread, [threadId]: null } }))
+    }
+  },
+  refreshGoal: async (threadId) => {
+    const target = threadId ?? get().threadId
+    if (!target) return
+    const getGoal = getAgentApi().getGoal
+    if (!getGoal) return
+    try {
+      const res = await getGoal(target)
+      if (!res.ok) return
+      set((state) => ({ goalByThread: { ...state.goalByThread, [target]: res.data ?? null } }))
+    } catch {
+      // Best-effort read; leave prior state intact on transport failure.
+    }
+  },
+  setGoal: async (objective, tokenBudget) => {
+    const threadId = get().threadId
+    const trimmed = objective.trim()
+    if (!threadId) {
+      get().pushNotice({
+        id: `goal-no-thread:${Date.now()}`,
+        kind: 'configWarning',
+        level: 'info',
+        message: '先发一条消息创建会话,再用 /goal 设定长期目标。',
+      })
+      return
+    }
+    if (!trimmed) return
+    // Codex caps objectives at 4000 chars (put long specs in a file + point at it).
+    if (trimmed.length > 4000) {
+      get().pushNotice({
+        id: `goal-too-long:${Date.now()}`,
+        kind: 'configWarning',
+        level: 'warning',
+        message: '目标过长(>4000 字符)。把细节放进文件,用 /goal 指向它,例如 “/goal 按 specs.md 完成迁移”。',
+      })
+      return
+    }
+    const setGoalApi = getAgentApi().setGoal
+    if (!setGoalApi) {
+      set({ error: 'Goal API 不可用(需要 Codex 后端)。' })
+      return
+    }
+    try {
+      const res = await setGoalApi(threadId, { objective: trimmed, tokenBudget })
+      if (!res.ok) throw new Error(res.error ?? 'Failed to set goal')
+      set((state) => ({ goalByThread: { ...state.goalByThread, [threadId]: res.data ?? null } }))
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : String(err) })
+    }
+  },
+  setGoalStatus: async (status) => {
+    const threadId = get().threadId
+    if (!threadId) return
+    const current = get().goalByThread[threadId]
+    if (!current) {
+      get().pushNotice({
+        id: `goal-none:${Date.now()}`,
+        kind: 'configWarning',
+        level: 'info',
+        message: '当前会话还没有目标。用 “/goal 你的目标” 先设一个。',
+      })
+      return
+    }
+    const setGoalApi = getAgentApi().setGoal
+    if (!setGoalApi) return
+    try {
+      const res = await setGoalApi(threadId, { status })
+      if (!res.ok) throw new Error(res.error ?? 'Failed to update goal status')
+      set((state) => ({ goalByThread: { ...state.goalByThread, [threadId]: res.data ?? null } }))
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : String(err) })
+    }
+  },
+  setGoalBudget: async (tokenBudget) => {
+    const threadId = get().threadId
+    if (!threadId) return
+    const current = get().goalByThread[threadId]
+    if (!current) {
+      get().pushNotice({
+        id: `goal-budget-none:${Date.now()}`,
+        kind: 'configWarning',
+        level: 'info',
+        message: '当前会话还没有目标。先用 “/goal 你的目标” 设一个,再设预算。',
+      })
+      return
+    }
+    if (!Number.isFinite(tokenBudget) || tokenBudget <= 0) return
+    const setGoalApi = getAgentApi().setGoal
+    if (!setGoalApi) return
+    try {
+      const res = await setGoalApi(threadId, { tokenBudget })
+      if (!res.ok) throw new Error(res.error ?? 'Failed to set goal budget')
+      set((state) => ({ goalByThread: { ...state.goalByThread, [threadId]: res.data ?? null } }))
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : String(err) })
+    }
+  },
+  clearGoal: async () => {
+    const threadId = get().threadId
+    if (!threadId) return
+    const clearGoalApi = getAgentApi().clearGoal
+    if (!clearGoalApi) return
+    try {
+      const res = await clearGoalApi(threadId)
+      if (!res.ok) throw new Error(res.error ?? 'Failed to clear goal')
+      set((state) => ({ goalByThread: { ...state.goalByThread, [threadId]: null } }))
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : String(err) })
+    }
+  },
+  compact: async () => {
+    const threadId = get().threadId
+    const compactApi = getAgentApi().compactThread
+    if (!compactApi) {
+      get().pushNotice({
+        id: `compact-unavailable:${Date.now()}`,
+        kind: 'configWarning',
+        level: 'warning',
+        message: '当前后端不支持手动压缩(/compact)。',
+      })
+      return
+    }
+    if (!threadId) {
+      get().pushNotice({
+        id: `compact-no-thread:${Date.now()}`,
+        kind: 'configWarning',
+        level: 'info',
+        message: '先发一条消息创建会话,再压缩上下文(/compact)。',
+      })
+      return
+    }
+    try {
+      const res = await compactApi(threadId)
+      if (!res.ok) throw new Error(res.error ?? 'Failed to start compaction')
+      get().pushNotice({
+        id: `compact-started:${Date.now()}`,
+        kind: 'configWarning',
+        level: 'info',
+        threadId,
+        message: '正在压缩上下文…(总结并丢弃旧历史,释放上下文窗口)',
+      })
+    } catch (err) {
+      set({ error: err instanceof Error ? err.message : String(err) })
+    }
+  },
   respondToApproval: async (response) => {
     const agent = getAgentApi()
     if (!agent.respondApproval) {
@@ -1377,6 +1655,95 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
           runningByThread,
         }
       })
+    }
+  },
+  steer: async () => {
+    const state = get()
+    const content = state.input.trim()
+    const attachments = state.attachments
+    const references = state.pendingReferences
+    // Steering only makes sense mid-turn on an existing thread. If nothing is
+    // running, defer to a normal send so a stray call never silently drops input.
+    if (!state.isRunning || !state.threadId) {
+      await get().send()
+      return
+    }
+    if (!content && attachments.length === 0 && references.length === 0) return
+    const steer = getAgentApi().steer
+    if (!steer) {
+      // Preload without steer support (older shell) — fall back to queue-on-send.
+      return
+    }
+
+    const now = Date.now()
+    const items: TimelineItem[] = []
+    if (attachments.length > 0) {
+      const refs: AttachmentRef[] = attachments.map((a) => {
+        const uri = buildAttachmentUri(a)
+        const hasUri = typeof uri === 'string' && uri.length > 0
+        let kind: AttachmentRef['kind'] = 'file'
+        if (hasUri) {
+          if (a.mime.startsWith('image/')) kind = 'image'
+          else if (a.mime.startsWith('video/')) kind = 'video'
+        }
+        return { id: createId(), kind, name: a.name, mime: a.mime, size: a.size, uri: uri ?? '' }
+      })
+      items.push({ type: 'attachment', id: createId(), startedAt: now, attachments: refs })
+    }
+    if (content.length > 0) {
+      items.push({ type: 'text', id: createId(), startedAt: now, content })
+    }
+    const userMsg: Message = { id: createId(), role: 'user', createdAt: now, items }
+    const threadId = state.threadId
+
+    // Optimistically append the interjection; the running turn stays live.
+    set((current) => ({
+      input: '',
+      attachments: [],
+      error: undefined,
+      messages: [...current.messages, userMsg],
+    }))
+    get().lockChatScrollToBottom(threadId)
+
+    const tokens = extractSkillTokens(content)
+    const known = new Map(state.availableSkills.map((s) => [s.name, s.path]))
+    const skills = Array.from(new Set(tokens))
+      .map((name) => {
+        const path = known.get(name)
+        return path ? { name, path } : null
+      })
+      .filter((s): s is { name: string; path: string } => s !== null)
+
+    try {
+      const result = await steer({
+        threadId,
+        content,
+        attachments,
+        references,
+        currentPage: window.location.hash.slice(1),
+        model: state.selectedModelId,
+        skills: skills.length > 0 ? skills : undefined,
+      })
+      if (result.userMessageItems && result.userMessageItems.length > 0) {
+        const canonicalItems = result.userMessageItems
+        set((current) => ({
+          messages: current.messages.map((m) =>
+            m.id === userMsg.id ? { ...m, items: canonicalItems } : m,
+          ),
+        }))
+      }
+      get().clearPendingReferences()
+      void useFileExplorerStore.getState().refreshAttachmentsTree().catch(() => undefined)
+    } catch (error) {
+      // Steer rejected (turn already ended, or no active turn): drop the
+      // optimistic bubble and restore the draft so the user can resend it.
+      set((current) => ({
+        input: content,
+        attachments,
+        pendingReferences: references,
+        error: error instanceof Error ? error.message : String(error),
+        messages: current.messages.filter((m) => m.id !== userMsg.id),
+      }))
     }
   },
   startEditMessage: (messageId: string) => {

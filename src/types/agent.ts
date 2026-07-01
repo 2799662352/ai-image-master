@@ -1,5 +1,6 @@
 import type { TimelineItem } from './agent-timeline'
 import type { AgentReference } from './agent-reference'
+import type { ThreadGoal } from './codexGoals'
 
 export type AgentRole = 'user' | 'assistant' | 'system' | 'tool'
 export type AgentToolStatus = 'pending' | 'running' | 'success' | 'error' | 'cancelled'
@@ -234,9 +235,13 @@ export interface AgentTokenUsage {
   /** Hard context window for the active model, in tokens. Optional because some gateways omit it. */
   contextWindow?: number
   /**
-   * Tokens currently considered "in the prompt" — used to drive the context
-   * usage meter and signal when Codex will compact. Falls back to
-   * `inputTokens + outputTokens` if the gateway doesn't report it explicitly.
+   * Tokens currently considered "in the prompt" — the live context-window
+   * occupancy that drives the usage meter and signals when Codex will compact.
+   * Sourced (in order): the gateway's explicit `contextUsage`, else synthesized
+   * from codex `last_token_usage` (`last.inputTokens + last.outputTokens` — the
+   * last request's absolute size), and only as a last resort the cumulative
+   * `inputTokens + outputTokens`. NOT the cumulative total, which sums every
+   * request's prompt across the thread and would pin the meter at 100%.
    */
   contextUsage?: number
   /**
@@ -322,6 +327,11 @@ export type AgentStreamEvent =
   | { type: 'mcp_status_updated'; name: string; status: string; error: string | null }
   | { type: 'mcp_oauth_completed'; name: string; success: boolean; error: string | null }
   | { type: 'skills_changed' }
+  // Native `/goal`: thread-scoped, turn-independent objective updates. Routed
+  // out-of-band (like the mcp_* events) to a dedicated side channel, not the
+  // per-turn queue, so goal status stays live even between turns.
+  | { type: 'goal_updated'; threadId: string; goal: ThreadGoal }
+  | { type: 'goal_cleared'; threadId: string }
   | { type: 'notice'; notice: AgentNotice }
 
 export interface AgentToolRequest {

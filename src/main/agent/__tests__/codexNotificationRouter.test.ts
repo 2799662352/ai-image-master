@@ -1117,7 +1117,7 @@ describe('CodexNotificationRouter', () => {
         type: 'item_started',
         itemId: 'cc-1',
         itemType: 'activity',
-        payload: { kind: 'contextCompaction', label: 'compacting context', status: 'running' },
+        payload: { kind: 'contextCompaction', label: '压缩上下文', status: 'running' },
       })
     })
 
@@ -1358,6 +1358,53 @@ describe('CodexNotificationRouter', () => {
         type: 'token_usage_updated',
         usage: { last: { inputTokens: 80, outputTokens: 30, cachedInputTokens: 40 } },
       })
+    })
+
+    // Regression for the "meter stuck at 100% + no compaction shown" bug.
+    // codex-core's `total` SUMS every request's full prompt across the whole
+    // thread, so on a long thread it dwarfs the context window. The context
+    // meter must instead reflect the LAST request's absolute size (current
+    // occupancy). We synthesize `contextUsage` from `last` so the donut +
+    // watermark divide the RIGHT numerator by the window.
+    it('synthesizes contextUsage from last (current occupancy), not cumulative total', () => {
+      const router = new CodexNotificationRouter()
+      const event = router.route('thread/tokenUsage/updated', {
+        threadId: 't',
+        turnId: 'u',
+        contextWindow: 272_000,
+        tokenUsage: {
+          // Cumulative would be 268k → 98% of the window (false near-full).
+          total: { inputTokens: 250_000, outputTokens: 18_000 },
+          // Real current context is only ~40k → 15%.
+          last: { inputTokens: 38_000, outputTokens: 2_000 },
+        },
+      })
+      expect(event).toMatchObject({
+        type: 'token_usage_updated',
+        usage: { contextUsage: 40_000, contextWindow: 272_000 },
+      })
+    })
+
+    it('keeps an explicit gateway contextUsage over the last-derived value', () => {
+      const router = new CodexNotificationRouter()
+      const event = router.route('thread/tokenUsage/updated', {
+        threadId: 't',
+        contextUsage: 12_345,
+        tokenUsage: {
+          total: { inputTokens: 250_000, outputTokens: 18_000 },
+          last: { inputTokens: 38_000, outputTokens: 2_000 },
+        },
+      })
+      expect((event as { usage: { contextUsage?: number } }).usage.contextUsage).toBe(12_345)
+    })
+
+    it('leaves contextUsage undefined when there is no last slice (cumulative-only gateway)', () => {
+      const router = new CodexNotificationRouter()
+      const event = router.route('thread/tokenUsage/updated', {
+        threadId: 't',
+        tokenUsage: { total: { inputTokens: 100, outputTokens: 50 } },
+      })
+      expect((event as { usage: { contextUsage?: number } }).usage.contextUsage).toBeUndefined()
     })
   })
 

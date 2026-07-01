@@ -25,7 +25,9 @@ describe('buildContextSegments', () => {
     ])
     expect(result.total).toBe(12_000)
     expect(result.windowTokens).toBe(110_000)
-    expect(result.pctFull).toBe(11)
+    // Codex effective-window formula: used = max(0, 12k − 12k baseline) = 0 →
+    // 0% of the (110k − 12k) effective window.
+    expect(result.pctFull).toBe(0)
   })
 
   it('treats missing cachedInputTokens as zero (Conversation = full inputTokens)', () => {
@@ -98,7 +100,8 @@ describe('buildContextSegments', () => {
       { fallbackContextWindow: 200_000 },
     )
     expect(result.windowTokens).toBe(200_000)
-    expect(result.pctFull).toBe(50)
+    // (100k − 12k) / (200k − 12k) = 88k/188k ≈ 47%.
+    expect(result.pctFull).toBe(47)
   })
 
   it('prefers usage.contextWindow over fallbackContextWindow', () => {
@@ -107,6 +110,29 @@ describe('buildContextSegments', () => {
       { fallbackContextWindow: 200_000 },
     )
     expect(result.windowTokens).toBe(100_000)
-    expect(result.pctFull).toBe(50)
+    // (50k − 12k) / (100k − 12k) = 38k/88k ≈ 43%.
+    expect(result.pctFull).toBe(43)
+  })
+
+  // Regression: the popover must mirror the header donut, i.e. show CURRENT
+  // context occupancy (codex `last_token_usage`), not cumulative lifetime spend.
+  // With cumulative it would read ">100% Full" on a long thread.
+  it('builds segments from usage.last (current context), not cumulative totals', () => {
+    const result = buildContextSegments({
+      // Cumulative (lifetime) totals — should be IGNORED for the breakdown.
+      inputTokens: 250_000,
+      outputTokens: 18_000,
+      contextWindow: 272_000,
+      // Current request occupancy.
+      last: { inputTokens: 40_000, outputTokens: 2_000, cachedInputTokens: 30_000, reasoningTokens: 500 },
+    })
+    const map = Object.fromEntries(result.segments.map((s) => [s.key, s.tokens]))
+    expect(map.cached).toBe(30_000)
+    expect(map.conversation).toBe(10_000) // 40k input - 30k cached
+    expect(map.reasoning).toBe(500)
+    expect(map.output).toBe(1_500) // 2k output - 500 reasoning
+    expect(result.total).toBe(42_000)
+    // (42k − 12k) / (272k − 12k) = 30k/260k ≈ 12%, not >100%.
+    expect(result.pctFull).toBe(12)
   })
 })

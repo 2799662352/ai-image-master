@@ -38,6 +38,7 @@ interface FakeManager {
   renameThread: ReturnType<typeof vi.fn>
   deleteThread: ReturnType<typeof vi.fn>
   sendMessage: ReturnType<typeof vi.fn>
+  steer: ReturnType<typeof vi.fn>
   cancel: ReturnType<typeof vi.fn>
   listThreads: ReturnType<typeof vi.fn>
   loadThread: ReturnType<typeof vi.fn>
@@ -64,6 +65,7 @@ function makeManager(): FakeManager {
     renameThread: vi.fn().mockResolvedValue(undefined),
     deleteThread: vi.fn().mockResolvedValue(undefined),
     sendMessage: vi.fn(),
+    steer: vi.fn().mockResolvedValue({ threadId: 't1' }),
     cancel: vi.fn(),
     listThreads: vi.fn(),
     loadThread: vi.fn(),
@@ -156,6 +158,15 @@ describe('registerAgentIpc thread management handlers', () => {
     expect(result.messages[1].createdAt).toBe(Date.parse('2026-06-05T10:05:00.000Z'))
     // No usable timestamp → left untouched (renderer falls back to 0, not now).
     expect(result.messages[2].createdAt).toBeUndefined()
+  })
+
+  it('registers agent:turn-steer and forwards the payload to manager.steer', async () => {
+    const handler = get('agent:turn-steer')
+    expect(handler).toBeTypeOf('function')
+    const payload = { threadId: 't1', content: 'actually, focus on the failing test', attachments: [] }
+    const result = await handler!({}, payload)
+    expect(manager.steer).toHaveBeenCalledWith(payload)
+    expect(result).toEqual({ threadId: 't1' })
   })
 
   it('registers agent:rename-thread and forwards id + title', async () => {

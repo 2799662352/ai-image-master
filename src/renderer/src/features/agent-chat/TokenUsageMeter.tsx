@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AgentTokenUsage } from '../../../../types/agent'
-import { DEFAULT_MODEL_CONTEXT_WINDOW } from './contextWindowDefaults'
+import { DEFAULT_MODEL_CONTEXT_WINDOW, contextUsedPercent } from './contextWindowDefaults'
 import { ContextPopover } from './ContextPopover'
 
 /**
@@ -30,8 +30,12 @@ export function TokenUsageMeter({ usage }: { usage?: AgentTokenUsage }) {
     typeof usage.contextWindow === 'number' && usage.contextWindow > 0
       ? usage.contextWindow
       : DEFAULT_MODEL_CONTEXT_WINDOW
-  const ratio = window > 0 ? Math.min(1, Math.max(0, used / window)) : null
-  const pct = ratio != null ? Math.round(ratio * 100) : null
+  // Codex-aligned percentage: effective window (minus the 12K baseline), used
+  // = current context occupancy. Matches the TUI's status indicator exactly
+  // (codex-rs/tui/src/token_usage.rs). See contextWindowDefaults.ts.
+  const pctExact = contextUsedPercent(used, window)
+  const ratio = pctExact != null ? pctExact / 100 : null
+  const pct = pctExact != null ? Math.round(pctExact) : null
 
   const radius = 8
   const stroke = 2

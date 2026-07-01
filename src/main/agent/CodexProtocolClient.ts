@@ -7,6 +7,7 @@ import { connectWithRetry } from './connectWithRetry'
 import { resolveCodexSessionConfig } from './codexLaunch'
 import { CodexNotificationRouter } from './codexNotificationRouter'
 import { mapUserInput } from './codexUserInput'
+import { buildExtraRootsDeveloperInstructions } from './projectDocs'
 import {
   isServerNotification,
   isServerRequest,
@@ -15,6 +16,7 @@ import {
   type ThreadStartParams,
   type ThreadStartResponse,
   type TurnStartResponse,
+  type TurnSteerResponse,
 } from './codexProtocol'
 import type {
   AgentStreamEvent,
@@ -45,6 +47,12 @@ import type {
   PluginReadParams,
   PluginReadResponse,
 } from '../../types/codexPlugins'
+import type {
+  ThreadGoalSetParams,
+  ThreadGoalSetResponse,
+  ThreadGoalGetResponse,
+  ThreadGoalClearResponse,
+} from '../../types/codexGoals'
 
 /**
  * Mirrors `McpServerStatus` from Codex's generated TS schema at
@@ -122,6 +130,12 @@ export interface CodexProtocolClientOptions {
   onLog?: (line: string) => void
   onApprovalRequest?: (request: CodexApprovalRequest) => void
   onMcpNotification?: (event: AgentStreamEvent) => void
+  /**
+   * Out-of-band native `/goal` updates (`thread/goal/updated|cleared`). Like
+   * `onMcpNotification`, these are thread-scoped but turn-independent, so they
+   * bypass the per-turn queue and go straight to the renderer's goal state.
+   */
+  onGoalNotification?: (event: AgentStreamEvent) => void
 }
 
 /**
@@ -265,6 +279,28 @@ export class CodexProtocolClient {
     }
   }
 
+  /**
+   * Append user input to the in-flight turn without starting a new one
+   * (Codex app-server `turn/steer`, openai/codex#10821 — a.k.a. "插话/steering").
+   * Requires an active turn on the thread: the appended output rides the SAME
+   * turn's event stream that the original `send()` generator is already
+   * draining, so no new queue is registered here. Rejects if there is no active
+   * turn (the caller surfaces it as a notice / falls back to a fresh turn).
+   * Returns the accepted turnId.
+   */
+  async steer(threadId: string, input: AgentInput): Promise<string> {
+    const expectedTurnId = this.turnIdByThread.get(threadId)
+    if (!expectedTurnId) {
+      throw new Error(`turn/steer: no active turn on thread ${threadId}`)
+    }
+    const response = await this.rpc<TurnSteerResponse>('turn/steer', {
+      threadId,
+      input: mapUserInput(input.items),
+      expectedTurnId,
+    })
+    return response.turnId
+  }
+
   async cancel(threadId: string): Promise<void> {
     const turnId = this.turnIdByThread.get(threadId)
     if (!turnId) return
@@ -369,6 +405,24 @@ export class CodexProtocolClient {
     return this.rpc('config/read', {})
   }
 
+  /**
+   * List Codex feature flags with stage metadata + enabled/default state
+   * (`experimentalFeature/list`, app-server v2). Used to discover the exact
+   * feature key for gated capabilities (e.g. `memory`) instead of guessing,
+   * and to drive a future memory/goals toggle surface. `threadId` computes
+   * `enabled` from that thread's refreshed config; omit for the server default.
+   */
+  async experimentalFeatureList(params?: {
+    threadId?: string
+    cursor?: string
+    limit?: number
+  }): Promise<{
+    features: Array<{ id: string; stage: string; enabled: boolean; defaultEnabled: boolean }>
+    nextCursor?: string
+  }> {
+    return this.rpc('experimentalFeature/list', params ?? {})
+  }
+
   async reloadMcpServers(): Promise<void> {
     await this.rpc('config/mcpServer/reload', {})
   }
@@ -379,6 +433,39 @@ export class CodexProtocolClient {
 
   async mcpToolCall(params: { threadId?: string; server: string; tool: string; arguments?: unknown }): Promise<unknown> {
     return this.rpc('mcpServer/tool/call', params)
+  }
+
+  // ─── Goals (thread/goal/*, app-server v2) ─────────────────────────────────
+  // Wire methods pinned from openai/codex `codex-rs/app-server/README.md`. A
+  // goal is a persisted per-thread objective; set/get/clear are local SQLite
+  // ops (no model call — they work offline). The `goals` feature is stable +
+  // default-on in the bundled binary. Status changes stream back via the
+  // `thread/goal/updated` / `thread/goal/cleared` notifications routed above.
+
+  /** Create, replace, or update the current goal (or change its status). */
+  async setThreadGoal(params: ThreadGoalSetParams): Promise<ThreadGoalSetResponse> {
+    return this.rpc<ThreadGoalSetResponse>('thread/goal/set', params)
+  }
+
+  /** Read the current goal without changing it (`{ goal: null }` when unset). */
+  async getThreadGoal(threadId: string): Promise<ThreadGoalGetResponse> {
+    return this.rpc<ThreadGoalGetResponse>('thread/goal/get', { threadId })
+  }
+
+  /** Remove the current goal. */
+  async clearThreadGoal(threadId: string): Promise<ThreadGoalClearResponse> {
+    return this.rpc<ThreadGoalClearResponse>('thread/goal/clear', { threadId })
+  }
+
+  // ─── Context compaction (thread/compact/*, app-server v2) ─────────────────
+  // Pinned from openai/codex `codex-rs/app-server/README.md`. Manual history
+  // compaction: returns `{}` immediately, progress streams via standard
+  // `turn/*` + `item/*` notifications (a single `contextCompaction` item,
+  // started→completed). While compaction runs the thread is effectively in a
+  // turn. This is REAL compaction — the model summarizes + drops history — not
+  // a client-side prompt trick.
+  async compactThread(threadId: string): Promise<Record<string, never>> {
+    return this.rpc<Record<string, never>>('thread/compact/start', { threadId })
   }
 
   // ─── Native Plugin / Marketplace / Connectors RPC (app-server v2, ≥0.140) ──
@@ -497,6 +584,14 @@ export class CodexProtocolClient {
 
   private threadStartParams(input: AgentInput): ThreadStartParams {
     const sessionConfig = this.sessionConfig
+    // Multi-repo AGENTS.md: aggregate the EXTRA selected roots' project-docs
+    // (beyond the primary cwd, which the engine auto-loads) into a per-thread
+    // `developer_instructions` override. Computed here so runtime folder
+    // switches take effect on the next new thread. `undefined` → field omitted.
+    const developerInstructions = buildExtraRootsDeveloperInstructions(
+      input.cwd,
+      sessionConfig.writableRoots,
+    )
     return {
       model: input.model,
       cwd: input.cwd,
@@ -507,6 +602,7 @@ export class CodexProtocolClient {
         sandbox_workspace_write: {
           writable_roots: sessionConfig.writableRoots,
         },
+        ...(developerInstructions ? { developer_instructions: developerInstructions } : {}),
       },
     }
   }
@@ -664,6 +760,10 @@ export class CodexProtocolClient {
     }
     if (event.type === 'mcp_status_updated' || event.type === 'mcp_oauth_completed') {
       this.options.onMcpNotification?.(event)
+      return
+    }
+    if (event.type === 'goal_updated' || event.type === 'goal_cleared') {
+      this.options.onGoalNotification?.(event)
       return
     }
     const threadId = event.threadId

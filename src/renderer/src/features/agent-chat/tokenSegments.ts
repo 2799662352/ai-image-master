@@ -1,4 +1,5 @@
 import type { AgentTokenUsage } from '../../../../types/agent'
+import { contextUsedPercent } from './contextWindowDefaults'
 
 export type SegmentKey = 'cached' | 'conversation' | 'reasoning' | 'output'
 
@@ -54,10 +55,17 @@ export function buildContextSegments(
   usage: AgentTokenUsage,
   options: BuildContextSegmentsOptions = {},
 ): ContextSegments {
-  const input = Math.max(0, usage.inputTokens ?? 0)
-  const output = Math.max(0, usage.outputTokens ?? 0)
-  const cachedRaw = Math.max(0, usage.cachedInputTokens ?? 0)
-  const reasoningRaw = Math.max(0, usage.reasoningTokens ?? 0)
+  // Prefer the LAST request's absolute usage (codex `last_token_usage` =
+  // current context occupancy) over the cumulative thread totals. The popover
+  // mirrors the header donut, which tracks how full the context window is NOW,
+  // not lifetime token spend — cumulative would balloon past the window and
+  // report a bogus ">100% Full". Falls back to top-level when no `last` slice
+  // has arrived yet (early turns).
+  const src = usage.last ?? usage
+  const input = Math.max(0, src.inputTokens ?? 0)
+  const output = Math.max(0, src.outputTokens ?? 0)
+  const cachedRaw = Math.max(0, src.cachedInputTokens ?? 0)
+  const reasoningRaw = Math.max(0, src.reasoningTokens ?? 0)
 
   const cached = Math.min(cachedRaw, input)
   const conversation = Math.max(input - cached, 0)
@@ -79,7 +87,15 @@ export function buildContextSegments(
       ? options.fallbackContextWindow
       : undefined
   const windowTokens = reportedWindow ?? fallbackWindow
-  const pctFull = windowTokens != null ? Math.round((100 * total) / windowTokens) : undefined
+  // Codex-aligned: percentage against the EFFECTIVE window (minus the 12K
+  // baseline), matching the header donut and the TUI status line. `total`
+  // here is the current context occupancy (segments derived from `last`).
+  // Falls back to the raw ratio only if the window is ≤ baseline (unusable).
+  let pctFull: number | undefined
+  if (windowTokens != null) {
+    const exact = contextUsedPercent(total, windowTokens)
+    pctFull = exact != null ? Math.round(exact) : Math.round((100 * total) / windowTokens)
+  }
 
   return { segments, total, windowTokens, pctFull }
 }

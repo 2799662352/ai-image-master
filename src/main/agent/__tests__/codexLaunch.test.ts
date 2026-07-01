@@ -39,6 +39,14 @@ describe('buildCodexLaunchArgs', () => {
       // failure. See codexLaunch.ts for the full source-level rationale.
       '-c', 'features.code_mode.enabled=false',
       '-c', 'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi"]',
+      // Native AGENTS.md (project-doc) alignment: bigger budget, pinned .git
+      // root marker, and CLAUDE.md/GEMINI.md fallbacks. See codexLaunch.ts.
+      '-c', 'project_doc_max_bytes=65536',
+      '-c', 'project_root_markers=[".git"]',
+      '-c', 'project_doc_fallback_filenames=["CLAUDE.md", "GEMINI.md"]',
+      // Native cross-session memory (feature key `memories`, verified beta on
+      // the 0.142.2 binary). See codexLaunch.ts for the full rationale.
+      '-c', 'features.memories=true',
       // No apiyi key configured (neither 设置/localStorage nor config.toml) →
       // keep apiyi dormant so a keyless apiyi-mcp can't hang the first turn.
       '-c', 'mcp_servers.apiyi.enabled=false',
@@ -64,6 +72,10 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'features.non_prefixed_mcp_tool_names=true',
       '-c', 'features.code_mode.enabled=false',
       '-c', 'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi"]',
+      '-c', 'project_doc_max_bytes=65536',
+      '-c', 'project_root_markers=[".git"]',
+      '-c', 'project_doc_fallback_filenames=["CLAUDE.md", "GEMINI.md"]',
+      '-c', 'features.memories=true',
       '-c', 'mcp_servers.apiyi.enabled=false',
     ])
     const listenIdx = args.indexOf('--listen')
@@ -96,6 +108,40 @@ describe('buildCodexLaunchArgs', () => {
     expect(withMcp).toContain(
       'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi"]',
     )
+  })
+
+  it('aligns native AGENTS.md project-doc loading (budget, .git root, CLAUDE/GEMINI fallbacks)', () => {
+    // The engine loads AGENTS.md from the .git root down to the thread cwd
+    // (agents_md.rs); we make the behavior explicit + richer than stock defaults.
+    const args = buildCodexLaunchArgs()
+    // 64 KiB budget so a sizable AGENTS.md is not truncated (0 would disable it).
+    expect(args).toContain('project_doc_max_bytes=65536')
+    // Pinned native root marker so a stray user config.toml can't move it.
+    expect(args).toContain('project_root_markers=[".git"]')
+    // Cross-tool: CLAUDE.md / GEMINI.md also count as project docs.
+    expect(args).toContain('project_doc_fallback_filenames=["CLAUDE.md", "GEMINI.md"]')
+    // Unconditional — present even with a custom provider/MCP wired.
+    const withMcp = buildCodexLaunchArgs({
+      provider: { id: 'apiyi', name: 'API Yi', baseUrl: 'https://api.apiyi.com/v1', envKey: 'OPENAI_API_KEY' },
+      catimationMcp: { port: 7842, token: 'deadbeef' },
+    })
+    expect(withMcp).toContain('project_doc_fallback_filenames=["CLAUDE.md", "GEMINI.md"]')
+  })
+
+  it('enables native cross-session memory via the verified `memories` feature key', () => {
+    // Feature key confirmed against the shipped 0.142.2 binary
+    // (experimentalFeature/list → `memories`, stage=beta, default off). The
+    // docs-implied `memory` key does NOT exist; using it would silently no-op.
+    const args = buildCodexLaunchArgs()
+    expect(args).toContain('features.memories=true')
+    // Must NOT use the wrong (non-existent) key.
+    expect(args).not.toContain('features.memory=true')
+    // Unconditional — present even with a custom provider/MCP wired.
+    const withMcp = buildCodexLaunchArgs({
+      provider: { id: 'apiyi', name: 'API Yi', baseUrl: 'https://api.apiyi.com/v1', envKey: 'OPENAI_API_KEY' },
+      catimationMcp: { port: 7842, token: 'deadbeef' },
+    })
+    expect(withMcp).toContain('features.memories=true')
   })
 
   it('configures the active provider via -c overrides when provider config is given', () => {

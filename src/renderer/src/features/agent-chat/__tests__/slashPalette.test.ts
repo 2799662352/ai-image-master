@@ -15,8 +15,9 @@ import type { CodexSkillSummary } from '../../../../../types/agent'
  *
  * Codex's TUI ships `/clear`, `/init`, `/compact`, `/help`, `/quit`, `/model`.
  * In our Electron app we wire the ones that map to existing actions:
- * `/clear`, `/cancel`, `/help`, `/compact` (placeholder). `/init` and
- * `/quit` would be off-platform so we omit them.
+ * `/clear`, `/cancel`, `/help`, `/compact` (placeholder), and `/init` (sends
+ * codex's official init prompt as a turn to generate AGENTS.md). `/quit` stays
+ * off-platform (the app owns its own lifecycle) so we omit it.
  */
 
 describe('detectSlashTrigger (whitespace-anchored, never mid-word)', () => {
@@ -75,11 +76,17 @@ describe('detectSlashTrigger (whitespace-anchored, never mid-word)', () => {
 })
 
 describe('SLASH_COMMANDS canon', () => {
-  it('exposes /clear, /cancel, /help, /compact at minimum (codex-tui parity subset)', () => {
+  it('exposes /clear, /cancel, /help, /compact, /init at minimum (codex-tui parity subset)', () => {
     const ids = SLASH_COMMANDS.map((c) => c.id)
-    for (const required of ['clear', 'cancel', 'help', 'compact']) {
+    for (const required of ['clear', 'cancel', 'help', 'compact', 'init']) {
       expect(ids).toContain(required)
     }
+  })
+
+  it('wires /init to the init action (generates AGENTS.md via codex prompt)', () => {
+    const init = SLASH_COMMANDS.find((c) => c.id === 'init')
+    expect(init).toBeDefined()
+    expect(init?.action).toBe('init')
   })
 
   it('every command has a label, description, and a trigger handler', () => {

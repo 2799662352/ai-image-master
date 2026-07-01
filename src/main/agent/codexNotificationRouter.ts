@@ -1,4 +1,5 @@
 import type { AgentStreamEvent, AgentTokenUsage, AgentTokenUsageDelta } from '../../types/agent'
+import type { ThreadGoal } from '../../types/codexGoals'
 import { MIN_SNAPSHOT_PREFIX_LEN } from '../../types/agent-timeline'
 import { countDiffLines, parseChange } from '../../shared/diffUtils'
 
@@ -97,7 +98,7 @@ function summarizeActivity(item: CodexItem): { label?: string; detail?: string }
     case 'exitedReviewMode':
       return { label: 'review mode: exit' }
     case 'contextCompaction':
-      return { label: 'compacting context' }
+      return { label: '压缩上下文', detail: '总结并丢弃旧历史,释放上下文窗口' }
     default:
       return { label: item.type }
   }
@@ -599,6 +600,18 @@ function extractTokenUsage(params: Record<string, unknown>): AgentTokenUsage | n
 
   const last = extractLastDelta(params)
   if (last) usage.last = last
+
+  // Context-window occupancy = the LAST request's absolute tokens (codex
+  // `last_token_usage`, whose input = the full current prompt), NOT the
+  // cumulative `total`. codex-core's `total_token_usage` SUMS every request's
+  // prompt across the whole thread, so it grows unbounded and, divided by the
+  // context window, makes the meter falsely pin at 100% on any long thread —
+  // which also masks when real usage nears the 90% auto-compact trigger. Mirror
+  // codex's own TUI, which derives "context left" from last_token_usage. Only
+  // synthesize when the gateway didn't already send an explicit contextUsage.
+  if (usage.contextUsage == null && last) {
+    usage.contextUsage = last.inputTokens + last.outputTokens
+  }
   return usage
 }
 
@@ -1127,6 +1140,26 @@ export class CodexNotificationRouter {
           name: params.name as string,
           success: params.success as boolean,
           error: (params.error as string) ?? null,
+        }
+
+      // Native `/goal` lifecycle. `thread/goal/updated` carries the full goal
+      // object (objective/status/token+time usage); `thread/goal/cleared` just
+      // the threadId. Both are turn-independent, so the client forwards them via
+      // the goal side channel rather than the per-turn queue.
+      case 'thread/goal/updated': {
+        const goal = params.goal
+        if (!goal || typeof goal !== 'object') return null
+        return {
+          type: 'goal_updated' as const,
+          threadId: params.threadId as string,
+          goal: goal as ThreadGoal,
+        }
+      }
+
+      case 'thread/goal/cleared':
+        return {
+          type: 'goal_cleared' as const,
+          threadId: params.threadId as string,
         }
 
       // Skill catalog drift on disk (user added/removed a SKILL.md). Renderer

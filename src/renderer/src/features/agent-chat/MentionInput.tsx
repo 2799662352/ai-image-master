@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CodexSkillSummary } from '../../../../types/agent'
 import type { AgentReference } from '../../../../types/agent-reference'
 import { ModelPicker } from './ModelPicker'
+import { ImageChannelPicker } from './ImageChannelPicker'
 import { ReferenceChip } from './references/ReferenceChip'
 import { makeFileReference } from './references/referenceUtils'
 import { useAgentChatStore } from './store'
@@ -9,6 +10,8 @@ import { parseFileDrop, parseQuoteDrop } from '../file-explorer/dragHelpers'
 import { useFileExplorerStore } from '../file-explorer/store'
 import type { FileNode } from '../file-explorer/types'
 import { rankFuzzyTargets, scoreFuzzyMatch } from './paletteFuzzy'
+import { INIT_AGENTS_MD_PROMPT } from './initPrompt'
+import { parseGoalCommand } from './goalCommand'
 
 /**
  * Find the active `$skill-name` token at `caret`, if any. Mirrors the
@@ -135,7 +138,7 @@ export function scoreFileMatch(query: string, relPath: string, name: string): nu
 // ---------------------------------------------------------------------------
 
 /** Discriminated action key — keeps SLASH_COMMANDS pure data (testable). */
-export type SlashCommandAction = 'clear' | 'cancel' | 'help' | 'compact'
+export type SlashCommandAction = 'clear' | 'cancel' | 'help' | 'compact' | 'init' | 'goal'
 
 export interface SlashCommand {
   id: string
@@ -171,8 +174,20 @@ export const SLASH_COMMANDS: ReadonlyArray<SlashCommand> = [
   {
     id: 'compact',
     label: '/compact',
-    description: 'Compact the conversation context (codex /compact)',
+    description: '压缩上下文 · 总结并丢弃旧历史释放窗口(对齐 codex /compact)',
     action: 'compact',
+  },
+  {
+    id: 'init',
+    label: '/init',
+    description: '生成 AGENTS.md 贡献者指南(已存在则不覆盖 · 对齐 codex /init)',
+    action: 'init',
+  },
+  {
+    id: 'goal',
+    label: '/goal',
+    description: '长期目标 · /goal 目标 · pause|resume|edit|clear · budget <n>(对齐 codex /goal)',
+    action: 'goal',
   },
 ]
 
@@ -412,6 +427,7 @@ export function MentionInput() {
   const addPendingReference = useAgentChatStore((state) => state.addPendingReference)
   const removePendingReference = useAgentChatStore((state) => state.removePendingReference)
   const send = useAgentChatStore((state) => state.send)
+  const steer = useAgentChatStore((state) => state.steer)
   const cancel = useAgentChatStore((state) => state.cancel)
   const editingMessageId = useAgentChatStore((state) => state.editingMessageId)
   const submitEditMessage = useAgentChatStore((state) => state.submitEditMessage)
@@ -432,6 +448,12 @@ export function MentionInput() {
   const [slashHighlight, setSlashHighlight] = useState(0)
   const newThread = useAgentChatStore((state) => state.newThread)
   const pushNotice = useAgentChatStore((state) => state.pushNotice)
+  const setGoal = useAgentChatStore((state) => state.setGoal)
+  const setGoalStatus = useAgentChatStore((state) => state.setGoalStatus)
+  const setGoalBudget = useAgentChatStore((state) => state.setGoalBudget)
+  const clearGoal = useAgentChatStore((state) => state.clearGoal)
+  const refreshGoal = useAgentChatStore((state) => state.refreshGoal)
+  const compact = useAgentChatStore((state) => state.compact)
 
   // Lazy-load the skill list on first mount so the `$` trigger has data
   // ready by the time the user types it. The store action is idempotent —
@@ -602,11 +624,51 @@ export function MentionInput() {
         })
         break
       case 'compact':
-        pushNotice({
-          id: `slash-compact-todo:${Date.now()}`,
-          kind: 'configWarning',
-          level: 'warning',
-          message: '/compact is not wired yet — codex compact RPC will land in a follow-up.',
+        // Native `/compact`: real history compaction via thread/compact/start.
+        // The model summarizes + drops old history to reclaim the context
+        // window; progress streams back as a `contextCompaction` activity item.
+        if (isRunning) {
+          pushNotice({
+            id: `slash-compact-busy:${Date.now()}`,
+            kind: 'configWarning',
+            level: 'info',
+            message: '正在运行中,先等当前回合结束再 /compact 压缩上下文。',
+          })
+          break
+        }
+        void compact()
+        break
+      case 'init':
+        // Native `/init`: send the official prompt as a turn against the
+        // current workspace cwd. The agent generates AGENTS.md (and won't
+        // overwrite an existing one — the guard is baked into the prompt).
+        if (isRunning) {
+          pushNotice({
+            id: `slash-init-busy:${Date.now()}`,
+            kind: 'configWarning',
+            level: 'info',
+            message: '正在运行中,先等当前回合结束再 /init 生成 AGENTS.md。',
+          })
+          break
+        }
+        setInput(INIT_AGENTS_MD_PROMPT)
+        void send()
+        break
+      case 'goal':
+        // Picking `/goal` from the palette (no inline args) = view the current
+        // goal. Typing `/goal <objective>` (or pause/resume/clear) + Enter is
+        // handled at submit time by `tryHandleGoalCommand`.
+        void refreshGoal().then(() => {
+          const st = useAgentChatStore.getState()
+          const goal = st.threadId ? st.goalByThread[st.threadId] : null
+          pushNotice({
+            id: `goal-view:${Date.now()}`,
+            kind: 'configWarning',
+            level: 'info',
+            message: goal
+              ? `目标[${goal.status}]:${goal.objective}`
+              : '当前会话没有目标。输入 “/goal 你的目标” 设定一个长期目标(Codex 会持续推进)。',
+          })
         })
         break
     }
@@ -874,7 +936,84 @@ export function MentionInput() {
   // up to the one being edited and sends the current draft as a fresh turn.
   // This is what makes the inline composer feel identical to the bottom one.
   const isEditing = Boolean(editingMessageId)
-  const submitAction = isEditing ? submitEditMessage : send
+  // While a turn is running, Enter/Send "插话" (append to the in-flight turn via
+  // Codex turn/steer) instead of starting a new turn. Editing still saves.
+  const submitAction = isEditing ? submitEditMessage : isRunning ? steer : send
+
+  // Native `/goal` intercept (codex-tui parity): parse the composer BEFORE it
+  // is sent to the model. `/goal <objective>` sets a persistent goal, `/goal`
+  // views it, `/goal pause|resume|clear` manages the lifecycle. Returns true
+  // when the input was a goal command (already handled — do NOT send/steer).
+  function tryHandleGoalCommand(): boolean {
+    if (isEditing) return false
+    const command = parseGoalCommand(input)
+    if (!command) return false
+    // `edit` is special: keep the composer populated with the current objective
+    // for revision instead of clearing it.
+    if (command.kind !== 'edit') setInput('')
+    switch (command.kind) {
+      case 'view':
+        void refreshGoal().then(() => {
+          const st = useAgentChatStore.getState()
+          const goal = st.threadId ? st.goalByThread[st.threadId] : null
+          pushNotice({
+            id: `goal-view:${Date.now()}`,
+            kind: 'configWarning',
+            level: 'info',
+            message: goal
+              ? `目标[${goal.status}]:${goal.objective}`
+              : '当前会话没有设定目标。用 “/goal 你的目标” 设一个长期目标(Codex 会持续推进)。',
+          })
+        })
+        break
+      case 'pause':
+        void setGoalStatus('paused')
+        break
+      case 'resume':
+        void setGoalStatus('active')
+        break
+      case 'clear':
+        void clearGoal()
+        break
+      case 'edit': {
+        // Prefill the composer with the current objective (as a /goal command)
+        // so the user can tweak it and re-submit to replace the goal.
+        const st = useAgentChatStore.getState()
+        const goal = st.threadId ? st.goalByThread[st.threadId] : null
+        if (goal?.objective) {
+          setInput(`/goal ${goal.objective}`)
+        } else {
+          setInput('')
+          void refreshGoal().then(() => {
+            pushNotice({
+              id: `goal-edit-none:${Date.now()}`,
+              kind: 'configWarning',
+              level: 'info',
+              message: '当前会话还没有目标可编辑。用 “/goal 你的目标” 先设一个。',
+            })
+          })
+        }
+        break
+      }
+      case 'budget':
+        void setGoalBudget(command.tokenBudget)
+        break
+      case 'set':
+        void setGoal(command.objective)
+        break
+      default: {
+        // Exhaustiveness guard — new GoalCommand kinds must be handled here.
+        const _exhaustive: never = command
+        return _exhaustive
+      }
+    }
+    return true
+  }
+
+  function runSubmit(): void {
+    if (tryHandleGoalCommand()) return
+    void submitAction()
+  }
 
   return (
     <form
@@ -882,7 +1021,7 @@ export function MentionInput() {
       onDrop={(event) => void onDrop(event)}
       onSubmit={(event) => {
         event.preventDefault()
-        void submitAction()
+        runSubmit()
       }}
     >
       {pendingReferences.length > 0 ? (
@@ -916,7 +1055,6 @@ export function MentionInput() {
             lineHeight: `${TEXTAREA_LINE_HEIGHT}px`,
           }}
           className="w-full resize-none rounded-lg border border-cyan-400/20 bg-black/40 px-3 py-2 text-[13px] text-cyan-50 outline-none placeholder:text-zinc-500 focus:border-cyan-300/50"
-          disabled={isRunning}
           onChange={(event) => {
             setInput(event.target.value)
             // Defer until React commits the new value so `selectionStart`
@@ -1004,9 +1142,17 @@ export function MentionInput() {
                 return
               }
             }
-            if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+            // Enter sends; Shift+Enter inserts a newline. Cmd/Ctrl+Enter still
+            // sends (muscle memory). Skip while an IME candidate window is open
+            // (isComposing) so committing Chinese/Japanese input never fires a
+            // send. Popups above already consumed+returned on Enter.
+            if (
+              event.key === 'Enter' &&
+              !event.shiftKey &&
+              !event.nativeEvent.isComposing
+            ) {
               event.preventDefault()
-              void submitAction()
+              runSubmit()
             }
             // Esc bails out of edit mode without sending. Only fires when
             // no popup is open (popups consume Esc above).
@@ -1018,7 +1164,9 @@ export function MentionInput() {
           placeholder={
             isEditing
               ? 'Edit your message — Enter to save & submit, Esc to cancel'
-              : 'Ask Codex to generate, inspect, batch, or edit…   /  command   ·   $ skill   ·   @ file   ·   ⌘↵ send'
+              : isRunning
+                ? '运行中… 输入可插话(steer)追加到当前回合,↵ 发送 · ⇧↵ 换行 · Stop 取消'
+                : 'Ask Codex to generate, inspect, batch, or edit…   /  command   ·   $ skill   ·   @ file   ·   ↵ send · ⇧↵ newline'
           }
           value={input}
         />
@@ -1209,7 +1357,7 @@ export function MentionInput() {
         </span>
         <input
           className="hidden"
-          disabled={isRunning || attachments.length >= MAX_ATTACHMENTS}
+          disabled={attachments.length >= MAX_ATTACHMENTS}
           multiple
           onChange={(event) => void onFileChange(event)}
           type="file"
@@ -1235,6 +1383,7 @@ export function MentionInput() {
           {isEditing ? 'Editing' : isRunning ? 'Running' : 'Agent'}
         </span>
         <ModelPicker disabled={isRunning} />
+        <ImageChannelPicker disabled={isRunning} />
         <div className="flex-1" />
         {isEditing ? (
           <button
@@ -1247,10 +1396,11 @@ export function MentionInput() {
         ) : null}
         <button
           className="rounded-lg bg-cyan-300 px-3 py-1.5 text-[12px] font-semibold text-zinc-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
-          disabled={isRunning || input.trim().length === 0}
+          disabled={input.trim().length === 0 && attachments.length === 0}
+          title={isRunning && !isEditing ? '插话:把这条追加到当前运行的回合(turn/steer)' : undefined}
           type="submit"
         >
-          {isRunning ? 'Running' : isEditing ? 'Save & Submit' : 'Send'}
+          {isEditing ? 'Save & Submit' : isRunning ? 'Steer' : 'Send'}
         </button>
         {isRunning && !isEditing ? (
           <button

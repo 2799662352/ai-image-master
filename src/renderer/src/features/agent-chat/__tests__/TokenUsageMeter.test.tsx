@@ -80,7 +80,21 @@ describe('TokenUsageMeter', () => {
 
   it('renders a percent using DEFAULT_MODEL_CONTEXT_WINDOW when usage.contextWindow is missing', () => {
     render(<TokenUsageMeter usage={{ inputTokens: 50_000, outputTokens: 50_000 }} />)
-    // 100_000 / 200_000 = 50%
-    expect(screen.getByRole('button').textContent).toContain('50%')
+    // Codex effective-window formula: (100k − 12k baseline) / (200k − 12k) =
+    // 88k / 188k ≈ 47%.
+    expect(screen.getByRole('button').textContent).toContain('47%')
+  })
+
+  it('applies the 12K baseline subtraction to the percent (codex TUI parity)', () => {
+    // used = contextUsage = 62k, window = 100k. Naive ratio would be 62%, but
+    // codex subtracts the 12k baseline from both: (62k−12k)/(100k−12k) =
+    // 50k/88k ≈ 57%.
+    render(<TokenUsageMeter usage={{ inputTokens: 62_000, outputTokens: 0, contextWindow: 100_000 }} />)
+    expect(screen.getByRole('button').textContent).toContain('57%')
+  })
+
+  it('clamps to 0% when occupancy is at or below the baseline', () => {
+    render(<TokenUsageMeter usage={{ inputTokens: 8_000, outputTokens: 0, contextWindow: 100_000 }} />)
+    expect(screen.getByRole('button').textContent).toContain('0%')
   })
 })

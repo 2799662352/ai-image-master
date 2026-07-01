@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { RefObject } from 'react'
-import type { AgentTokenUsage, AgentTokenUsageDelta } from '../../../../types/agent'
+import type { AgentTokenUsage } from '../../../../types/agent'
 import type { ContextSegments, Segment } from './tokenSegments'
 import { buildContextSegments } from './tokenSegments'
 
@@ -84,7 +84,7 @@ export function ContextPopover({ usage, onClose, triggerRef, fallbackContextWind
           <PctFullDisplay ctx={ctx} />
           <StackedBar ctx={ctx} />
           <SegmentLegend segments={ctx.segments} />
-          <LastTurnLine last={usage.last} />
+          <SessionTotalLine usage={usage} />
           <p className="mt-2 text-[9px] leading-relaxed text-zinc-500">
             Codex doesn&apos;t break input into Tools / Rules / MCP — those tokens are inside Cached prompt / Conversation.
           </p>
@@ -147,14 +147,22 @@ function SegmentLegend({ segments }: { segments: Segment[] }) {
   )
 }
 
-function LastTurnLine({ last }: { last?: AgentTokenUsageDelta }) {
-  if (!last) return null
+/**
+ * Cumulative lifetime tokens billed for the whole thread (codex
+ * `total_token_usage`). Distinct from the bar above, which shows the CURRENT
+ * context occupancy (last request). This footer is the "how much have I spent"
+ * counter — it keeps climbing across compactions, whereas the bar drops after
+ * one. Hidden until there's a non-zero total.
+ */
+function SessionTotalLine({ usage }: { usage: AgentTokenUsage }) {
+  const total = Math.max(0, usage.inputTokens ?? 0) + Math.max(0, usage.outputTokens ?? 0)
+  if (total <= 0) return null
   return (
     <p className="mt-2 border-t border-zinc-800 pt-2 font-mono text-[10px] text-zinc-500">
-      Last turn:{' '}
-      <span className="text-zinc-300">+{formatTokens(last.inputTokens)}</span> input
+      Session total:{' '}
+      <span className="text-zinc-300">{formatTokens(usage.inputTokens ?? 0)}</span> input
       {' • '}
-      <span className="text-zinc-300">+{formatTokens(last.outputTokens)}</span> output
+      <span className="text-zinc-300">{formatTokens(usage.outputTokens ?? 0)}</span> output
     </p>
   )
 }
