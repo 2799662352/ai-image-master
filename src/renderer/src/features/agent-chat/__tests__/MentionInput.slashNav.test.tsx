@@ -71,3 +71,28 @@ describe('MentionInput slash palette keyboard navigation', () => {
     expect(selectedOptionIndex()).toBe(2)
   })
 })
+
+/**
+ * Regression: picking `/goal` from the palette used to immediately "view the
+ * goal" and CLEAR the composer, so the user could never type their objective.
+ * `/goal` needs an argument, so committing it must PREFILL `/goal ` and keep
+ * focus (not execute / send).
+ */
+describe('MentionInput `/goal` command prefills instead of executing', () => {
+  it('committing /goal fills the composer with "/goal " and sends nothing', () => {
+    render(<MentionInput />)
+    const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
+    // Type `/goal` and open the palette (filtered to the goal command).
+    fireEvent.change(textarea, { target: { value: '/goal' } })
+    textarea.selectionStart = textarea.selectionEnd = 5
+    fireEvent.keyUp(textarea, { key: 'l' })
+
+    // Commit the highlighted item (the goal command) with Enter.
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+
+    // Composer is prefilled with the goal prefix (trailing space) — ready for
+    // the user to type their objective — and no message was dispatched.
+    expect(useAgentChatStore.getState().input).toBe('/goal ')
+    expect(window.electronAPI.agent.sendMessage).not.toHaveBeenCalled()
+  })
+})

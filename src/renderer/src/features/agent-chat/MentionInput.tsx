@@ -588,6 +588,26 @@ export function MentionInput() {
       return
     }
 
+    // `/goal` is the one command that needs an OBJECTIVE argument, so picking it
+    // from the palette must NOT execute — that would clear the box and rob the
+    // user of the chance to type their goal. Instead prefill `/goal ` and keep
+    // focus; the user types their objective and Enter (tryHandleGoalCommand runs
+    // it at submit). Bare `/goal ` + Enter still views the current goal.
+    if (item.command.action === 'goal') {
+      const inserted = '/goal '
+      const nextGoal = `${before}${inserted}${after}`
+      setInput(nextGoal)
+      setSlashPopup(null)
+      requestAnimationFrame(() => {
+        const node = textareaRef.current
+        if (!node) return
+        const newCaret = slashPopup.start + inserted.length
+        node.selectionStart = node.selectionEnd = newCaret
+        node.focus()
+      })
+      return
+    }
+
     // Command: drop the `/<query>` literal entirely (commands aren't
     // sent to codex as text) and run the action.
     const next = `${before}${after}`
@@ -655,21 +675,8 @@ export function MentionInput() {
         void send()
         break
       case 'goal':
-        // Picking `/goal` from the palette (no inline args) = view the current
-        // goal. Typing `/goal <objective>` (or pause/resume/clear) + Enter is
-        // handled at submit time by `tryHandleGoalCommand`.
-        void refreshGoal().then(() => {
-          const st = useAgentChatStore.getState()
-          const goal = st.threadId ? st.goalByThread[st.threadId] : null
-          pushNotice({
-            id: `goal-view:${Date.now()}`,
-            kind: 'configWarning',
-            level: 'info',
-            message: goal
-              ? `目标[${goal.status}]:${goal.objective}`
-              : '当前会话没有目标。输入 “/goal 你的目标” 设定一个长期目标(Codex 会持续推进)。',
-          })
-        })
+        // Unreachable: `/goal` is intercepted above (prefill `/goal `) so it
+        // never falls through to the action switch. Kept for switch completeness.
         break
     }
   }
