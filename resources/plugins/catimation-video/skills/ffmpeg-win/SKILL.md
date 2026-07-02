@@ -154,6 +154,13 @@ ffmpeg -y -i "D:/in.mp4" -vn -acodec libmp3lame -q:a 2 "D:/out.mp3"
 ```
 To AAC: `-vn -acodec aac -b:a 192k "D:/out.m4a"`. To WAV: `-vn "D:/out.wav"`. Volume: `-filter:a volume=1.5`. More → [references/audio-processing.md](references/audio-processing.md).
 
+> **音频接口 vs 视频接口 —— 别喂错容器。** 音频参考 / 音频素材导入 / 音频分析接口
+> (如 Seedance `referenceAudios`)只收**真实音频 `mp3` / `wav`**;丢一个视频容器
+> (`.mov` / `.mp4`,哪怕黑屏或波形占位)会被拒:`Unsupported audio format: mov.
+> Allowed formats: mp3, wav.`。**先用上面的命令抽音轨** `-vn -acodec libmp3lame`(mp3)
+> 或 `-vn`(wav),再导入。反过来,把音频包成「黑屏/波形 MP4」的技巧**只服务
+> `understand_video`(视频理解接口,不原生收音频)**,不要拿去喂音频接口。
+
 ## Crop
 
 `crop=w:h:x:y`:

@@ -193,6 +193,7 @@ description: "Optimizes user prompts for Seedance 2.0 multi-modal video generati
 
 ## 音频通道
 
+- **音频素材格式（强制）**：`@音频N` / `referenceAudios` / 音频分析接口只接受**真实音频文件 `mp3` / `wav`**。视频容器（`.mov` / `.mp4`，哪怕黑屏或波形占位）会被拒收：`Unsupported audio format: mov. Allowed formats: mp3, wav.`。素材若是视频/含视频轨，先用 `ffmpeg-win` 抽音轨：`ffmpeg -y -i in.mov -vn -acodec libmp3lame -q:a 2 out.mp3`（或 `-vn out.wav`），再导入 `out.mp3` / `out.wav`。⚠️「黑屏 MP4」封装只用于 `understand_video`（视频理解），**绝不能**当音频素材上传。
 - **音色参考**：`参考 @音频N 中的音色，生成…`；如音色还原度不佳，在提示词中补充细致音色描述（如 `使用 @音频1 低厚温润带细碎颗粒感中年男声的音色说`），并保持台词风格与参考音频语气接近。
 - **台词语种统一**：避免中英文混用（专有名词除外）；小语种台词需标注语种，如 `用日语说道 {こんにちは}`。
 - **中文发音兜底**：模型对多音字 / 生僻字 / 形近字易读错，可改写为发音一致的常用同音字（如"螭龙山" → "吃龙山"），并在"优化问题"段落披露替换。

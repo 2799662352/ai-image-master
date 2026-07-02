@@ -28,6 +28,13 @@ subject/motion/voice consistent. Caps:
 - `referenceVideos`: up to **3** videos, COMBINED total duration **≤15s**.
 - `referenceAudios`: up to **3** audios, COMBINED total duration **≤15s**.
 
+> **音频参考/音频素材导入只收真实音频 `mp3` / `wav`。** 视频容器(`.mov` / `.mp4`,
+> 哪怕是**黑屏或波形占位**)会被音频接口拒收:`Unsupported audio format: mov.
+> Allowed formats: mp3, wav.`。素材若是视频或含视频轨,先用 `ffmpeg-win` 抽音轨:
+> `ffmpeg -y -i in.mov -vn -acodec libmp3lame -q:a 2 out.mp3`(或 `-vn out.wav`),
+> 再把 `out.mp3` / `out.wav` 传 `referenceAudios`。⚠️ 把音频包成「黑屏 MP4」**只用于
+> `understand_video`(视频理解接口)**,绝不能当作音频参考 / 音频分析素材上传。
+
 Only switch to other modes when the user **specifically asks** for them or clearly
 needs them — e.g. strict `firstFrame`/`lastFrame` (fixed first/last frame). Do
 NOT reach for first/last-frame mode by default.
