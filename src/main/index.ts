@@ -53,6 +53,8 @@ import type { CatimationMcpLaunchInfo } from './agent/codexLaunch'
 import { resolveWorkspacePaths } from './agent/codexConfigStore'
 import { getApiyiMcpEntryPath, resolveApiyiCommand } from './agent/apiyiMcpLauncher'
 import { seedApiyiMcpEntry } from './agent/apiyiMcpSeed'
+import { getCinematographyKbMcpEntryPath } from './agent/cinematographyKbMcpLauncher'
+import { seedCinematographyKbMcpEntry } from './agent/cinematographyKbMcpSeed'
 
 // 检测开发模式：通过命令行参数或环境变量
 const isDev = process.argv.includes('--dev') || process.env.NODE_ENV === 'development'
@@ -1245,6 +1247,35 @@ app.whenReady().then(async () => {
     console.log(`[apiyi-mcp] boot convergence: ${apiyiAction} (command=${apiyiCmd.command})`)
   } catch (err) {
     console.warn('[apiyi-mcp] seed failed:', err)
+  }
+
+  // First-boot seed: ensure the first-party cinematography knowledge-base MCP
+  // (mcp_servers.cinematography_kb) exists in the user's personal codex config.
+  // Shares the maintainer's Bailian KB + key, so it works with zero setup.
+  // Cheap, idempotent, best-effort. Reuses the same node-vs-Electron command
+  // resolution as apiyi/catimation stdio servers.
+  try {
+    const kbPaths = resolveWorkspacePaths({
+      home: app.getPath('home'),
+      cwd: process.cwd(),
+      userData: app.getPath('userData'),
+      resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+    })
+    const kbEntry = getCinematographyKbMcpEntryPath({
+      appPath: app.getAppPath(),
+      isPackaged: app.isPackaged,
+      resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+    })
+    const kbCmd = await resolveApiyiCommand(process.execPath)
+    const kbAction = await seedCinematographyKbMcpEntry({
+      personalConfigToml: kbPaths.personalConfigToml,
+      entryPath: kbEntry,
+      command: kbCmd.command,
+      extraEnv: kbCmd.extraEnv,
+    })
+    console.log(`[cinematography-kb-mcp] boot convergence: ${kbAction} (command=${kbCmd.command})`)
+  } catch (err) {
+    console.warn('[cinematography-kb-mcp] seed failed:', err)
   }
 
   // 非关键路径：延迟初始化

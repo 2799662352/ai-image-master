@@ -126,6 +126,16 @@ export interface CodexLocalBackendOptions {
    * (re)start (AgentManager restarts on apiyi-mcp key change).
    */
   getApiyiKey?: () => string | undefined
+  /**
+   * Returns the user's cinematography-kb-mcp key (设置 → 运镜知识库) at spawn
+   * time, or undefined when none is configured. Forwarded to
+   * `buildCodexLaunchArgs` as {@link CodexLaunchOptions.cinematographyKbKey} so
+   * the secret is injected via `-c`
+   * (`mcp_servers.cinematography_kb.env.DASHSCOPE_API_KEY`) — never persisted to
+   * config.toml. Resolved fresh on every spawn; updates take effect on the next
+   * codex (re)start (AgentManager restarts on key change).
+   */
+  getCinematographyKbKey?: () => string | undefined
   onApprovalRequest?: (request: CodexApprovalRequest) => void
   onMcpNotification?: (event: AgentStreamEvent) => void
   /** Out-of-band native `/goal` updates (`thread/goal/updated|cleared`). */
@@ -373,6 +383,7 @@ export class CodexLocalBackend implements IAgentBackend {
       extraProviders: understand ? [understand.provider] : undefined,
       apiyiKey: this.options.getApiyiKey?.(),
       apiyiHasConfigKey,
+      cinematographyKbKey: this.options.getCinematographyKbKey?.(),
     })
     // DIAGNOSTIC: dump the exact codex spawn command so we can confirm which
     // config `-c` overrides (e.g. features.non_prefixed_mcp_tool_names,

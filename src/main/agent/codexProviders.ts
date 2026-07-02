@@ -138,6 +138,21 @@ export const QWEN_UNDERSTAND_PROVIDER: CodexProviderConfig = {
  */
 export const APIYI_MCP_PROVIDER_ID = 'apiyi-mcp' as const
 
+/**
+ * Dedicated provider-store slot for the bundled cinematography-kb-mcp server's
+ * `DASHSCOPE_API_KEY` — the "运镜与结构化描述库" (Alibaba Bailian) retrieval key.
+ *
+ * Mirrors {@link APIYI_MCP_PROVIDER_ID} exactly: a key-only channel (NOT a codex
+ * model_provider). The renderer pushes the 设置 → 运镜知识库 key here via
+ * `setProviderApiKey('cinematography-kb', …)`, AgentManager keeps an in-memory
+ * copy, and `getCinematographyKbKey` reads it at spawn so `buildCodexLaunchArgs`
+ * injects it via `-c mcp_servers.cinematography_kb.env.DASHSCOPE_API_KEY` —
+ * runtime-only, NEVER persisted to `~/.codex/config.toml` (catimation-style).
+ * A distinct id keeps this secret decoupled from the codex agent's own gateway
+ * key and from the apiyi-mcp key.
+ */
+export const CINEMATOGRAPHY_KB_PROVIDER_ID = 'cinematography-kb' as const
+
 export const BUILTIN_PROVIDER_PRESETS: readonly ProviderPreset[] = Object.freeze([
   Object.freeze(APIYI_PRESET),
   Object.freeze(RIGHTCODE_PRESET),

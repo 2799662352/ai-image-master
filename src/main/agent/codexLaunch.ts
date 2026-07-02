@@ -154,6 +154,23 @@ export interface CodexLaunchOptions {
    * reads it straight from config.toml) — only the boolean fact that it exists.
    */
   apiyiHasConfigKey?: boolean
+  /**
+   * The user's cinematography-kb-mcp key (设置 → 运镜知识库 → the Alibaba Bailian
+   * `DASHSCOPE_API_KEY`). When present we overlay it onto the seeded
+   * `[mcp_servers.cinematography_kb].env` table via
+   * `-c mcp_servers.cinematography_kb.env.DASHSCOPE_API_KEY=...` at spawn — the
+   * SAME runtime-injection model as {@link apiyiKey}: the secret stays in
+   * lockstep with 设置, is NEVER written to `~/.codex/config.toml`, and so the
+   * MCP JSON editor never shows it or asks the user to re-paste it.
+   *
+   * The boot seed (`seedCinematographyKbMcpEntry`) supplies command/args for the
+   * entry; this `-c` only overlays the leaf secret (dotted `-c` merges over the
+   * seeded — possibly empty — env, so any siblings survive). Tools always list
+   * regardless (the server's `tools/list` is static); only the tool CALL needs
+   * the key, so a keyless launch stays enabled and simply reports the missing
+   * key on first use.
+   */
+  cinematographyKbKey?: string
 }
 
 function quote(value: string): string {
@@ -559,6 +576,19 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
   } else {
     // (C) No key from EITHER source → dormant, see rationale above.
     args.push('-c', 'mcp_servers.apiyi.enabled=false')
+  }
+
+  // cinematography-kb-mcp key overlay (设置 → 运镜知识库). Dotted `-c` merges the
+  // leaf secret over the boot-seeded (possibly empty) env. Unlike apiyi we do
+  // NOT gate the server on the key: `tools/list` is static so the tool always
+  // appears; a keyless CALL just returns a "DASHSCOPE_API_KEY is not set"
+  // message. So we only overlay when a key exists and never disable otherwise.
+  const cinematographyKbKey = options?.cinematographyKbKey?.trim()
+  if (cinematographyKbKey) {
+    args.push(
+      '-c',
+      `mcp_servers.cinematography_kb.env.DASHSCOPE_API_KEY=${quote(cinematographyKbKey)}`,
+    )
   }
 
   for (const root of sessionConfig.writableRoots) {

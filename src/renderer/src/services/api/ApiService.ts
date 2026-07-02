@@ -65,6 +65,17 @@ export const QWEN_UNDERSTAND_FALLBACK_MODEL = 'qwen3.7-max-dashscope'
  */
 export const APIYI_MCP_PROVIDER_ID = 'apiyi-mcp'
 
+/**
+ * provider-store 槽位 id + localStorage 键,用于把 设置 → 运镜知识库 里填的
+ * 阿里云百炼 `DASHSCOPE_API_KEY` 推给主进程。做法完全对齐 apiyi-mcp:key 存本地
+ * (`localStorage[dashscope_api_key]`)+ 镜像到 provider store,主进程在 codex
+ * spawn 时经 `-c mcp_servers.cinematography_kb.env.DASHSCOPE_API_KEY` 注入,
+ * 运行时生效、绝不落 `config.toml`。必须与 main 端 `CINEMATOGRAPHY_KB_PROVIDER_ID`
+ * (codexProviders.ts)保持一致。
+ */
+export const CINEMATOGRAPHY_KB_MCP_PROVIDER_ID = 'cinematography-kb'
+export const DASHSCOPE_API_KEY_STORAGE = 'dashscope_api_key'
+
 /** 允许显式选用的理解模型白名单(其余值回落到默认 plus)。 */
 export const QWEN_UNDERSTAND_MODELS: readonly string[] = [
   QWEN_UNDERSTAND_MODEL,
@@ -785,6 +796,10 @@ export class ApiService {
     // into `mcp_servers.apiyi.env` so the bundled understanding MCP works
     // without the user re-pasting the key into the MCP JSON editor.
     queueMicrotask(() => void this.syncApiyiKeyToMcp())
+    // Same idea for the cinematography-kb-mcp: mirror the 设置 → 运镜知识库 key
+    // (localStorage) into `mcp_servers.cinematography_kb.env` so the bundled KB
+    // server gets its `DASHSCOPE_API_KEY` at codex spawn.
+    queueMicrotask(() => this.syncCinematographyKbKeyToMcp())
   }
 
   /**
@@ -2633,6 +2648,34 @@ export class ApiService {
       }
     } catch {
       // best-effort; never block the app on the apiyi-mcp key bridge.
+    }
+  }
+
+  /**
+   * Mirror the 设置 → 运镜知识库 DASHSCOPE key (stored in
+   * `localStorage[dashscope_api_key]`) to the main process under the dedicated
+   * `cinematography-kb` provider slot, so the bundled cinematography-kb-mcp
+   * server gets `DASHSCOPE_API_KEY` injected at codex spawn. Catimation-style
+   * runtime injection (NOT a config write): the secret never touches
+   * `~/.codex/config.toml`. Pushes even an empty string so a user CLEARING the
+   * key in 设置 propagates (main treats '' as "no key" and stops injecting).
+   * Best-effort: silently no-ops outside Electron / when the agent API is
+   * unavailable. Re-runs idempotently from the constructor and the settings
+   * save path.
+   */
+  syncCinematographyKbKeyToMcp(): void {
+    try {
+      const key = (localStorage.getItem(DASHSCOPE_API_KEY_STORAGE) ?? '').trim()
+      const agent = (
+        window as unknown as {
+          electronAPI?: { agent?: { setProviderApiKey?: (id: string, key: string) => Promise<unknown> } }
+        }
+      )?.electronAPI?.agent
+      if (agent?.setProviderApiKey) {
+        void agent.setProviderApiKey(CINEMATOGRAPHY_KB_MCP_PROVIDER_ID, key)
+      }
+    } catch {
+      // best-effort; never block the app on the cinematography-kb key bridge.
     }
   }
 

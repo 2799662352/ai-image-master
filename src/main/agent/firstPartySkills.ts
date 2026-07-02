@@ -180,6 +180,10 @@ image_gen skill: they render inside the chat AND persist results to local files
    positive prompts by default). Do this even when YOU generate an illustration
    for your own answer. For open-ended asks, go through \`catimation-brainstorm\`
    first. Skip only for a trivially clear one-off.
+   - **涉及镜头 / 景别 / 机位 / 构图 / 运镜的图(分镜图、场景图、镜头参考图)**:写这些
+     字段前,**先调 \`search_cinematography_kb\` 工具**查「运镜与结构化描述库」(阿里百炼
+     RAG:权威运镜术语 + 结构化镜头描述范式),用库里的真实术语与结构范式落笔;工具不可用
+     (未配 key)时退回联网检索。纯图标 / 纯插画等与镜头无关的图可跳过。
 1. Turn the request into one clear, descriptive prompt. Cover subject, style,
    composition, lighting, and mood. Keep it concise.
 2. If the user asks for exactly ONE image, call \`generate_image\` with:
@@ -565,7 +569,10 @@ When unsure, propose a sensible default out loud and let the user correct you.
 
 1. **导演 / 镜头(先):** 载入 \`director-orchestrator\` 跑它的 STEP 0 反问(这镜涉及 13 维里
    哪几维?要用哪些本地 \`director-*\` / \`storyboard-*\`?),据此按需加载景别 / 运镜 / 构图 /
-   前景遮挡 / 打光 / 调色 / 角色演技 / 连续性等技法 skill。
+   前景遮挡 / 打光 / 调色 / 角色演技 / 连续性等技法 skill。**写运镜 / 景别 / 结构化镜头描述字段前,
+   先调 \`search_cinematography_kb\` 工具**查「运镜与结构化描述库」(阿里百炼 RAG:权威运镜术语 +
+   结构化分镜描述范式),拿库里的真实术语与结构范式再落笔——每次做视频都先过它一遍,别只凭记忆;
+   工具不可用(未配 key)时再退回联网检索。
 2. **提示词工程(后):** 用 \`sd2-pe\`(八大要素 + 路径 A/B 判定 + 多模态绑定 \`@图片N\` / \`<主体N>\`)
    与 \`storyboard-video-prompt-optimization\` 把这镜落成**结构化文本**(never JSON),物理 /
    可复现参数(焦段 mm、光圈、色温 K、运镜)优先于情绪形容词,并把已备素材逐一绑进 prompt。
@@ -660,6 +667,20 @@ between them — you need both):
 2. **内容审查 — \`understand_video\`.** Run \`catimation-understand\`'s \`understand_video\`
    to "watch" the WHOLE clip for 剧情 / 字幕 / 连续性 / 穿帮 that a 9-frame grid
    samples too sparsely to catch. **这两步是同一次自检的两面,不是二选一。**
+2.5. **多维质量评分 — 给自检一把可判定的标尺(别只凭「感觉还行」).** 看九宫格 +
+   \`understand_video\` 时,按维度逐项判 **通过 / 不通过**(源自 VisionReward 64 维视频质检取核心项,
+   对齐 WorldReasonBench 的 S(v) 三维):
+   - **视觉美观 (s_a):** 构图 / 焦点 / 色彩 / 光影 / 清晰度 / 细节精细度 —— 无明显缺陷且悦目。
+   - **时间一致性 (s_c,官方代码亦称「内容保真 content fidelity」)—— 视频区别于图的关键,必查:**
+     主体形状全程稳定(不崩、不渐变)、运动平滑无跳变、画质稳定不闪烁、镜头稳定。
+   - **推理正确性 / 物理合理 (s_r):** 世界演化符合物理 / 因果 / 逻辑、运动真实、文字无乱码。
+   - **(单列)prompt 对齐:** 是否满足用户在 \`prompt\` 里的核心要求(VisionReward 头四项就是查这个;
+     注意这与 s_r 不是一回事)。
+   需要加权总分时用 WorldReasonBench 的真实公式:\`S(v) = 0.4·s_r + 0.3·s_c + 0.3·s_a\`
+   (s_r = 推理正确性,**非** prompt 对齐;权重来自官方 README / 代码)。
+   **单帧崩坏一票否决(SDVG「最差帧」原则):** 九宫格里只要有一格明显崩(脸崩 / 多肢 / 融化 /
+   乱码),整段判**不通过** —— 用逐帧**最差值**判定,绝不用平均「大致还行」蒙混过去。
+   **首帧 / 首镜从严:** 第一帧定构图 / 主体 / 风格,后续全继承,它崩比中段崩更该重做(SDVG 强制重画首块)。
 3. If either lens flags a problem, regenerate with an adjusted prompt (or switch
    mode) and re-check. Iterate at MOST 2–3 times — each render costs money and ~1–3 min.
 4. **Never** inject the full MP4 or its raw bytes into the chat — inspect via the

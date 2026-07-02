@@ -106,6 +106,14 @@ extraResources:
     to: catimation-bridge
     filter:
       - "**/*"
+  # Zero-dependency stdio cinematography knowledge-base MCP (resolves to
+  # <resourcesPath>/cinematography-kb-mcp/index.js at runtime via
+  # src/main/agent/cinematographyKbMcpLauncher.ts). Wraps the shared Bailian
+  # retrieval endpoint; plain Node script, no vendor/build step, no node_modules.
+  - from: resources/cinematography-kb-mcp
+    to: cinematography-kb-mcp
+    filter:
+      - "**/*"
   - from: resources/skills
     to: skills
     filter:

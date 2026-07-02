@@ -273,6 +273,20 @@ between them — you need both):
 2. **内容审查 — `understand_video`.** Run `catimation-understand`'s `understand_video`
    to "watch" the WHOLE clip for 剧情 / 字幕 / 连续性 / 穿帮 that a 9-frame grid
    samples too sparsely to catch. **这两步是同一次自检的两面,不是二选一。**
+2.5. **多维质量评分 — 给自检一把可判定的标尺(别只凭「感觉还行」).** 看九宫格 +
+   `understand_video` 时,按维度逐项判 **通过 / 不通过**(源自 VisionReward 64 维视频质检取核心项,
+   对齐 WorldReasonBench 的 S(v) 三维):
+   - **视觉美观 (s_a):** 构图 / 焦点 / 色彩 / 光影 / 清晰度 / 细节精细度 —— 无明显缺陷且悦目。
+   - **时间一致性 (s_c,官方代码亦称「内容保真 content fidelity」)—— 视频区别于图的关键,必查:**
+     主体形状全程稳定(不崩、不渐变)、运动平滑无跳变、画质稳定不闪烁、镜头稳定。
+   - **推理正确性 / 物理合理 (s_r):** 世界演化符合物理 / 因果 / 逻辑、运动真实、文字无乱码。
+   - **(单列)prompt 对齐:** 是否满足用户在 `prompt` 里的核心要求(VisionReward 头四项就是查这个;
+     注意这与 s_r 不是一回事)。
+   需要加权总分时用 WorldReasonBench 的真实公式:`S(v) = 0.4·s_r + 0.3·s_c + 0.3·s_a`
+   (s_r = 推理正确性,**非** prompt 对齐;权重来自官方 README / 代码)。
+   **单帧崩坏一票否决(SDVG「最差帧」原则):** 九宫格里只要有一格明显崩(脸崩 / 多肢 / 融化 /
+   乱码),整段判**不通过** —— 用逐帧**最差值**判定,绝不用平均「大致还行」蒙混过去。
+   **首帧 / 首镜从严:** 第一帧定构图 / 主体 / 风格,后续全继承,它崩比中段崩更该重做(SDVG 强制重画首块)。
 3. If either lens flags a problem, regenerate with an adjusted prompt (or switch
    mode) and re-check. Iterate at MOST 2–3 times — each render costs money and ~1–3 min.
 4. **Never** inject the full MP4 or its raw bytes into the chat — inspect via the

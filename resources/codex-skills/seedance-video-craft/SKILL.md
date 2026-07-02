@@ -10,6 +10,8 @@ description: 用 Seedance 2.0 满血版出片的深度实战 skill,做 AI 视频
 **理论基础:** 字节跳动 Seedance 2.0 技术报告《Seedance 2.0: Advancing Video Generation for World Complexity》(arXiv 2604.14148)+ Seed2.0 Model Card,2026‑02。
 **写法借鉴:** Higgsfield AI 的 Marketing Studio 模式分类 与 Virality Predictor(`brain_activity`)爆款打分维度。
 
+**运镜/结构化描述先查知识库:** 落笔运镜 / 景别 / 分镜 / 结构化镜头描述字段前,**先调 `search_cinematography_kb` 工具**查「运镜与结构化描述库」(阿里百炼 RAG:权威运镜术语 + 结构化分镜描述范式),用库里真实术语与结构范式填运镜段——比泛联网更准、更贴本项目产出格式;工具不可用 / 未配 key 时再退回下面的联网检索。
+
 **主动联网检索 + 真实技法词:** 不管真人还是动画,需要题材考据、运镜/作画/导演参考、真实人物/作品/职员、最新模型能力或行业惯例时,**先主动上网搜索真实电影/摄影技法文档并实际打开页面核实**,不要只凭记忆下断言。真人/摄影技法走 StudioBinder / American Cinematographer(ASC)/ No Film School / ShotDeck / Wikipedia「Cinematic techniques」;动画作画走权威源(Sakugabooru / Sakuga Blog / Sakuga Journal / Animétudes / ANN / AniDB,详见 `animation-craft`)。把查到的**实在技法词**(焦段 mm、光圈 f值、景别、运镜、布光、色温 K、调色)填进提示词。
 
 **正向提示词(默认):** 默认只写正向提示词,**不写反向/负向提示词**,把「不要 X」改写成对应的「要 Y」(详见 `references/prompt-engineering.md` 法则 5)。
@@ -62,7 +64,7 @@ Seedance 2.0 是**原生统一多模态音视频联合生成**模型,一次前�
 1. **问清规格(用卡片,一次一项)。** 分辨率(默认 720p)、时长(4–15s)、画幅(9:16/16:9/1:1)、是否要原生音频/口型。不要一次性把所有问题甩出来。
 2. **选模式**(见上表),默认全能参考。
 3. **分配参考配额**(9 图/3 视频/3 音频)——见 `references/all-around-reference.md`。
-4. **写提示词**——先经 `sd2-pe` 工程化(八大要素 / 路径 A·B / 兜底包),再按 `references/prompt-engineering.md` 做 Seedance 模型对齐补充:单一主导动作、首帧霸权(图生视频不复述静态帧)、运动矢量语言、主动写声音、**默认只写正向提示词(不写反向)**、用真实技法词填充。
+4. **写提示词**——先经 `sd2-pe` 工程化(八大要素 / 路径 A·B / 兜底包),再按 `references/prompt-engineering.md` 做 Seedance 模型对齐补充:单一主导动作、首帧霸权(图生视频不复述静态帧)、运动矢量语言、主动写声音、**默认只写正向提示词(不写反向)**、用真实技法词填充。**运镜/机位用词从 `references/camera-motion-primitives.md` 挑精确电影术语**(pan≠truck、tilt≠pedestal、zoom≠dolly),别写「镜头动一下」。
 5. **调用本地工艺 skill 补强**——镜头/导演/前景遮挡/光影/角色一致性等,见下「与工艺 skill 协作」。
 6. **生成前做爆款体检**——用 `references/virality-scorecard.md` 自评 hook(0–3s)、留存、payoff、分心风险;低于阈值先改提示词再生成。
 7. **生成 → 自检 → 交付**:出片后**先过 `ffmpeg-win` 的视觉门**——`view_image` 不能直接开 MP4,所以**视觉质检**抽帧拼 **3×3 九宫格 contact sheet** 再 `view_image` **那张宫格图**自检(首尾帧 / 单一主导动作 / 连续性 / 穿帮);**同一次自检里再用** `catimation-understand` 的 `understand_video` 看懂**内容**(剧情 / 字幕 / 穿帮,补上宫格图采不到的帧间)——**两面一起看,不二选一**,只是别把 MP4 原始字节塞进聊天、别拿 `view_image` 开 MP4;不合格带改进点重生成。通过后给结果 + 一行摘要(模式、时长、分辨率)。多段片用 `ffmpeg-win` 拼接;**跨段续接抽上段尾帧/关键帧作下段 `firstFrame`,而不是把整段 Seedance MP4 当视频参考回喂**——按剧情裁剪/拼接出的宫格图、故事板也是优质可复用素材(回喂 `referenceImages`)。
@@ -127,6 +129,7 @@ Seedance 2.0 是**原生统一多模态音视频联合生成**模型,一次前�
 - `references/virality-scorecard.md` — 爆款体检自评表(改编 Virality Predictor)
 - `references/ad-short-form-modes.md` — 广告/短视频模式分类(改编 Marketing Studio)
 - `references/time-allocation-and-multimodal.md` — 按内容密度切时长(字/秒)+ `@素材`/`<图片N>` 多模态绑定(≤12 文件)+ 换人/运镜复刻/产品广告案例(移植自 updream jimeng-prompt-pro)
+- `references/camera-motion-primitives.md` — **运镜基元词表(CameraBench-Pro 真实 taxonomy,245 标签 / 17 技能类)**:平移/旋转/变焦/弧形/7种跟拍/机位角度/离地高度/景别/对焦/POV/速度时间等的**精确电影术语**,写运镜提示词时挑词用(数据来自官方公开 test 分片,本地 jsonl 已存)
 
 ---
 

@@ -85,3 +85,17 @@ $j.skills | Where-Object { $_.name -eq 'ffmpeg-win' } | ConvertTo-Json
 - **理论基础**:字节 Seedance 2.0 技术报告《Advancing Video Generation for World Complexity》(arXiv 2604.14148)+ Seed2.0 Model Card(统一多模态音视频联合生成、4–15s、480p/720p、最多 9 图/3 视频/3 音频参考、原生音频+口型 8+ 语言、主体控制/运动操控/风格迁移/视频延长)。**仅用 2.0,不含 1.0/1.5pro。**
 - **写法借鉴**:Higgsfield AI 开源 skills(`higgsfield-ai/skills`)的 Marketing Studio 模式分类 与 Virality Predictor(`brain_activity`)爆款打分维度——但**不依赖 Higgsfield CLI**,是模型无关方法论,落到 app 内置 Seedance 2.0 工具上。
 - 与 app 默认一致:全能参考(9 图/3 视频/3 音频)、时长 4–15s、默认 720p、默认满血版 2.0。
+
+### 2026-07-03 — 运镜知识库(`search_cinematography_kb`)接入 skill/hook,随 app v4.3.75 发布
+
+一键 `npm run publish:marketplace` 自动升版并发布(内容签名比对触发)。**插件**升版 4 个、**单技能**升版 6 个,双 catalog 已上线并审计通过(marketplace.json == 3 份 manifest)。
+
+| 通道 | 升版条目 |
+|------|----------|
+| 插件 `plugins-catalog.json` | `catimation-director` 1.0.6、`catimation-storyboard` 1.0.4、`catimation-video` 1.0.12、`catimation-core` 1.0.10 |
+| 单技能 `catalog.json`(51 项) | `director-orchestrator` 1.0.6、`director-cinematic-composition` 1.0.4、`director-shot-sequence-patterns` 1.0.4、`sd2-pe` 1.0.4、`seedance-video-craft` 1.0.8、`storyboard-video-prompt-optimization` 1.0.5 |
+
+**内容**:把「运镜与结构化描述库」(阿里百炼 RAG)接入 `director-orchestrator`(总调度,库优先于联网)、`catimation-core` 全局 session-start hook、以及 `sd2-pe` / `storyboard-video-prompt-optimization` / `director-cinematic-composition` / `director-shot-sequence-patterns` / `seedance-video-craft` 等运镜相关 skill——写运镜/景别/机位/构图/结构化镜头描述前先调 `search_cinematography_kb`。首方 skill `catimation-video`/`catimation-image` 的同类指针随 app installer/热更新下发(不走市场)。所有指针条件式:工具不可用/未配 `DASHSCOPE_API_KEY` 时静默退回联网检索。
+
+- catalog:`https://image-master-1345773498.cos.ap-guangzhou.myqcloud.com/plugins/plugins-catalog.json` / `…/skills/catalog.json`
+- 校验:发布脚本内置 sha256 内容寻址 + 对齐审计,发布日志见上方脚本输出。

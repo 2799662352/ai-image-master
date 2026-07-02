@@ -6,6 +6,10 @@ import { useApi } from '../hooks/useService'
 import { SiteGrid } from './settings/SiteGrid'
 import { ApiKeyInput } from './settings/ApiKeyInput'
 import { CodexProviderManager } from './settings/CodexProviderManager'
+import {
+  CINEMATOGRAPHY_KB_MCP_PROVIDER_ID,
+  DASHSCOPE_API_KEY_STORAGE,
+} from '../services/api/ApiService'
 
 function TencentCloudSection() {
   const addToast = useToastStore((s) => s.addToast)
@@ -188,6 +192,95 @@ function SeedanceSection() {
           className="px-4 py-2 bg-cyberpunk-yellow hover:opacity-90 text-cyberpunk-black font-bold text-sm uppercase tracking-tight transition-all disabled:opacity-50 rounded"
         >
           {saving ? '保存中...' : apiSecret.trim() ? '💾 保存' : '🗑 清除'}
+        </button>
+      </div>
+    </section>
+  )
+}
+
+/** Mask a secret for display: keep the sk- prefix + last 4 chars. */
+function maskKey(key: string): string {
+  const k = key.trim()
+  if (k.length <= 8) return '••••'
+  return `${k.slice(0, 3)}••••${k.slice(-4)}`
+}
+
+/**
+ * 设置 → 运镜知识库 DASHSCOPE key. Mirrors apiyi-mcp's runtime-injection model:
+ * the key is stored in localStorage (so it survives reload + shows a "已配置"
+ * hint) AND pushed to the main process via `setProviderApiKey('cinematography-kb',
+ * …)`, which injects it at codex spawn via
+ * `-c mcp_servers.cinematography_kb.env.DASHSCOPE_API_KEY` — never written to
+ * `~/.codex/config.toml`. Clearing propagates as an empty push (main stops
+ * injecting). The bundled cinematography-kb-mcp server queries the shared 运镜与
+ * 结构化描述库 (Alibaba Bailian).
+ */
+function CinematographyKbSection() {
+  const addToast = useToastStore((s) => s.addToast)
+  const [input, setInput] = React.useState('')
+  const [saved, setSaved] = React.useState('')
+
+  React.useEffect(() => {
+    try {
+      setSaved((localStorage.getItem(DASHSCOPE_API_KEY_STORAGE) ?? '').trim())
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  const push = (key: string) => {
+    const agent = (window as any).electronAPI?.agent
+    if (agent?.setProviderApiKey) {
+      void agent.setProviderApiKey(CINEMATOGRAPHY_KB_MCP_PROVIDER_ID, key)
+    }
+  }
+
+  const handleSave = () => {
+    const key = input.trim()
+    try {
+      if (key) {
+        localStorage.setItem(DASHSCOPE_API_KEY_STORAGE, key)
+        setSaved(key)
+        push(key)
+        setInput('')
+        addToast({ message: '运镜知识库 DASHSCOPE Key 已保存', type: 'success' })
+      } else {
+        localStorage.removeItem(DASHSCOPE_API_KEY_STORAGE)
+        setSaved('')
+        push('')
+        addToast({ message: '运镜知识库 DASHSCOPE Key 已清除', type: 'success' })
+      }
+    } catch (e: any) {
+      addToast({ message: `保存失败: ${e?.message ?? String(e)}`, type: 'error' })
+    }
+  }
+
+  return (
+    <section className="space-y-3 pt-4 border-t border-zinc-700">
+      <div className="flex items-center gap-2">
+        <span className="w-6 h-6 bg-cyberpunk-yellow text-cyberpunk-black flex items-center justify-center text-sm font-bold">🎥</span>
+        <span className="font-bold text-white uppercase tracking-tight">运镜知识库（Codex MCP）</span>
+        {saved && <span className="text-xs text-green-400">(已配置 {maskKey(saved)})</span>}
+      </div>
+      <p className="text-xs text-zinc-500">
+        为 Codex Agent 的 <code className="text-zinc-400">search_cinematography_kb</code> 工具提供阿里云百炼
+        <code className="text-zinc-400"> DASHSCOPE_API_KEY</code>，用于检索「运镜与结构化描述库」（245 个运镜基元 /
+        CHAI 五维结构化描述 / 专业范例）。Key 仅存本地并在 codex 启动时注入，绝不写入 config.toml。留空保存可清除。
+      </p>
+      <div className="flex gap-3">
+        <input
+          type="password"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder={saved ? '已配置，输入新 Key 可覆盖' : '请输入百炼 DASHSCOPE API Key（sk- 开头）'}
+          className="flex-1 bg-zinc-800 border border-zinc-600 text-white text-sm px-3 py-2 rounded"
+        />
+        <button
+          onClick={handleSave}
+          disabled={!input.trim() && !saved}
+          className="px-4 py-2 bg-cyberpunk-yellow hover:opacity-90 text-cyberpunk-black font-bold text-sm uppercase tracking-tight transition-all disabled:opacity-50 rounded"
+        >
+          {input.trim() ? '💾 保存' : '🗑 清除'}
         </button>
       </div>
     </section>
@@ -379,6 +472,8 @@ export default function SettingsPage() {
           {testingCodex ? '测试中...' : '🔌 测试 Codex 连接'}
         </button>
       </section>
+
+      <CinematographyKbSection />
 
       <section className="space-y-3 pt-4 border-t border-zinc-700">
         <div className="flex items-center gap-2">

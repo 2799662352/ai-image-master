@@ -508,6 +508,30 @@ describe('buildCodexLaunchArgs', () => {
     expect(args).toContain('mcp_servers.apiyi.env.APIYI_API_KEY="sk-apiyi-runtime"')
   })
 
+  // cinematography-kb-mcp key: same catimation-style runtime injection as apiyi —
+  // the 设置 → 运镜知识库 key is overlaid onto the boot-seeded
+  // [mcp_servers.cinematography_kb].env table via `-c` at spawn, NEVER written to
+  // config.toml.
+  it('overlays cinematography_kb DASHSCOPE_API_KEY via -c when cinematographyKbKey is supplied', () => {
+    const args = buildCodexLaunchArgs({ cinematographyKbKey: 'sk-dashscope-runtime' })
+    expect(args).toContain(
+      'mcp_servers.cinematography_kb.env.DASHSCOPE_API_KEY="sk-dashscope-runtime"',
+    )
+  })
+
+  // Unlike apiyi, the KB server is NEVER disabled when keyless: `tools/list` is
+  // static so the tool always appears; only the CALL reports the missing key. So
+  // with no key we emit NO cinematography_kb `-c` at all (and no enabled=false).
+  it('emits no cinematography_kb -c when no key is configured (never disabled)', () => {
+    const args = buildCodexLaunchArgs()
+    expect(args.some((a) => a.startsWith('mcp_servers.cinematography_kb.'))).toBe(false)
+  })
+
+  it('treats a whitespace-only cinematographyKbKey as no key → no injection', () => {
+    const args = buildCodexLaunchArgs({ cinematographyKbKey: '   ' })
+    expect(args.some((a) => a.startsWith('mcp_servers.cinematography_kb.'))).toBe(false)
+  })
+
   it('registers extraProviders WITHOUT changing the active model_provider or top-level model', () => {
     const args = buildCodexLaunchArgs({
       provider: { id: 'apiyi', name: 'API Yi', baseUrl: 'https://api.apiyi.com/v1', envKey: 'OPENAI_API_KEY' },

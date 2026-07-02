@@ -13,6 +13,7 @@ import {
   QWEN_UNDERSTAND_PROVIDER,
   QWEN_UNDERSTAND_PROVIDER_ID,
   APIYI_MCP_PROVIDER_ID,
+  CINEMATOGRAPHY_KB_PROVIDER_ID,
   isBuiltinProviderId,
   resolveActiveProvider,
   type ProviderPreset,
@@ -225,6 +226,16 @@ export class AgentManager {
    * takes effect immediately (the user-chosen behavior).
    */
   private apiyiMcpKey = ''
+  /**
+   * The bundled cinematography-kb-mcp server's `DASHSCOPE_API_KEY`. Persisted in
+   * the provider store under apiKeys['cinematography-kb'] (the renderer mirrors
+   * the 设置 → 运镜知识库 key there via `setProviderApiKey('cinematography-kb', …)`).
+   * Read at spawn by `getCinematographyKbKey` and injected via
+   * `-c mcp_servers.cinematography_kb.env.DASHSCOPE_API_KEY` — never written to
+   * config.toml. Changing it restarts codex so the new key takes effect
+   * immediately (same behavior as {@link apiyiMcpKey}).
+   */
+  private cinematographyKbKey = ''
   private summarizer?: ThreadTitleSummarizer
   private sessionConfig: CodexSessionConfig = { ...DEFAULT_CODEX_SESSION_CONFIG }
   private allowedRoots: string[] = [...DEFAULT_CODEX_SESSION_CONFIG.writableRoots]
@@ -298,6 +309,7 @@ export class AgentManager {
     this.codexApiKey = persisted.apiKeys[this.activeProviderId] ?? ''
     this.miauToken = (persisted.apiKeys[QWEN_UNDERSTAND_PROVIDER_ID] ?? '').trim()
     this.apiyiMcpKey = (persisted.apiKeys[APIYI_MCP_PROVIDER_ID] ?? '').trim()
+    this.cinematographyKbKey = (persisted.apiKeys[CINEMATOGRAPHY_KB_PROVIDER_ID] ?? '').trim()
     const activeProvider = resolveActiveProvider(this.activeProviderId, persisted.customProviders)
     this.backend = opts.backend ?? new CodexLocalBackend({
       getApiKey: () => this.codexApiKey,
@@ -309,6 +321,7 @@ export class AgentManager {
           ? { provider: QWEN_UNDERSTAND_PROVIDER, token: this.miauToken }
           : undefined,
       getApiyiKey: () => this.apiyiMcpKey || undefined,
+      getCinematographyKbKey: () => this.cinematographyKbKey || undefined,
       onApprovalRequest: (request) => this.emitApprovalRequest(request),
       onMcpNotification: (event) => this.handleMcpNotification(event),
       onGoalNotification: (event) => this.handleGoalNotification(event),
@@ -509,6 +522,28 @@ export class AgentManager {
           await this.backend.restartCodex(this.workspacePaths())
         } catch (err) {
           console.warn('[AgentManager] restartCodex after apiyi-mcp key change failed:', err)
+        }
+      }
+    }
+    // The renderer mirrors the 设置 → 运镜知识库 key here (id='cinematography-kb')
+    // so the bundled cinematography-kb-mcp server gets its `DASHSCOPE_API_KEY`
+    // injected at spawn via `-c` (never written to config.toml). Same
+    // change-guarded restart as apiyi-mcp above (the renderer re-pushes this key
+    // idempotently on boot / save, so restarting only on a real change avoids a
+    // restart storm; the constructor preloads the in-memory copy so the first
+    // idempotent re-push is a no-op).
+    if (id === CINEMATOGRAPHY_KB_PROVIDER_ID) {
+      const next = (key ?? '').trim()
+      const changed = next !== this.cinematographyKbKey
+      this.cinematographyKbKey = next
+      if (changed && next && this.backend.restartCodex) {
+        try {
+          await this.backend.restartCodex(this.workspacePaths())
+        } catch (err) {
+          console.warn(
+            '[AgentManager] restartCodex after cinematography-kb key change failed:',
+            err,
+          )
         }
       }
     }

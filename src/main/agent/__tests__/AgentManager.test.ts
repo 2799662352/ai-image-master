@@ -179,6 +179,58 @@ describe('AgentManager apiyi-mcp key bridge', () => {
   })
 })
 
+// The cinematography-kb-mcp key bridge mirrors apiyi-mcp exactly: a dedicated
+// key-only provider slot, injected at spawn via
+// `-c mcp_servers.cinematography_kb.env.DASHSCOPE_API_KEY`, change-guarded so the
+// renderer's idempotent boot re-push never causes a restart storm.
+describe('AgentManager cinematography-kb key bridge', () => {
+  function makeRestartBackend() {
+    const restarts: unknown[] = []
+    const backend = Object.assign(makeStubBackend([]), {
+      async restartCodex(paths: unknown) {
+        restarts.push(paths)
+      },
+    })
+    return { backend, restarts }
+  }
+
+  it('persists the cinematography-kb key under its dedicated slot and restarts codex only on change', async () => {
+    const { backend, restarts } = makeRestartBackend()
+    const mgr = new AgentManager({ userDataDir: tmpDir, backend })
+
+    await mgr.setProviderApiKey('cinematography-kb', 'sk-dashscope')
+    expect(restarts.length).toBe(1) // '' -> 'sk-dashscope' is a change
+
+    // Idempotent re-push (same key) must NOT restart.
+    await mgr.setProviderApiKey('cinematography-kb', 'sk-dashscope')
+    expect(restarts.length).toBe(1)
+
+    const onDisk = JSON.parse(
+      await fs.readFile(path.join(tmpDir, 'codex-providers.json'), 'utf8'),
+    )
+    expect(onDisk.apiKeys['cinematography-kb']).toBe('sk-dashscope')
+    // It must NOT have touched the apiyi-mcp slot or the active id.
+    expect(onDisk.apiKeys['apiyi-mcp']).toBeUndefined()
+    expect(onDisk.selectedProviderId).toBe('apiyi')
+  })
+
+  it('a fresh manager preloads the persisted cinematography-kb key so an idempotent re-push does not restart', async () => {
+    const first = new AgentManager({ userDataDir: tmpDir, backend: makeStubBackend([]) })
+    await first.setProviderApiKey('cinematography-kb', 'sk-keep')
+
+    const { backend, restarts } = makeRestartBackend()
+    const second = new AgentManager({ userDataDir: tmpDir, backend })
+
+    // Same key as persisted at construction → cold-start re-push is a no-op.
+    await second.setProviderApiKey('cinematography-kb', 'sk-keep')
+    expect(restarts.length).toBe(0)
+
+    // A rotated key DOES restart.
+    await second.setProviderApiKey('cinematography-kb', 'sk-rotated')
+    expect(restarts.length).toBe(1)
+  })
+})
+
 // Regression — a v4.3.0-rc shipped with `provider: DEFAULT_PROVIDER` (an
 // undefined identifier left over from the pre-multi-provider refactor) inside
 // testConnection. The IPC call surfaced as `ReferenceError: DEFAULT_PROVIDER

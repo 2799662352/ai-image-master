@@ -37,6 +37,8 @@ description: 【导演模式·总调度 / Director · Orchestrator·每次必用
 
 把第 1、2 条的结论**简短说给用户听**(例:「这镜头我会用 director-cinematic-composition + storyboard-visual + director-lighting-continuity,按 13 维写」),再开始写。这一步就是本调度器的灵魂。
 
+> **写运镜 / 景别 / 结构化描述字段前,先查 `search_cinematography_kb`**(运镜与结构化描述知识库,见下方「术语来源」段)——拿库里的真实术语与结构范式再落笔,别只凭记忆。
+
 ## STEP 0.4 —— 默认镜头技法包:广触发,别只挑 2–3 个
 
 **触发太窄是本调度器最大的失败。** 你手里有 50+ 个 `director-*` / `storyboard-*` 技法技能,一个正经镜头本来就该同时吃很多。默认按 using-superpowers 的 **1% 规则**:**能沾边就加载,只把明显无关的划掉**——而不是反过来「只挑最主要的两三个」。
@@ -140,12 +142,17 @@ description: 【导演模式·总调度 / Director · Orchestrator·每次必用
 - 例:不写「不要模糊」→ 写「主体锐利对焦,背景 f/1.8 散景」;不写「别变形」→ 写「解剖正确,五指清晰,自然比例」。
 - 仅当目标模型确有独立负向字段且确需(SD/Midjourney 的 `--no`),才用 `storyboard-negative-control` / `director-prompt-engineering` 的负向段;能转正向就转正向。审查规避走 `storyboard-dodge`(同样用正向轮廓/物理量改写)。
 
-## 主动联网检索 + 真实技法词
+## 运镜/结构化描述术语来源:先查知识库,再联网(search_cinematography_kb 优先)
 
-不确定的技法 / 作家 / 镜头语言,**先联网检索权威资料再写**,不要只靠记忆。
-- 真人/实拍:StudioBinder、ASC、No Film School、ShotDeck、Wikipedia "Cinematic techniques"。
-- 动画作画:Sakugabooru、Sakuga Blog/Journal、Animétudes、ANN/AniDB。
-- 用检索到的**真实技法词**(焦距/f值/景别/运镜/三点光/色温K/LUT/タメツメ/コマ打ち)填字段;商业作品仅作学习参考并标注出处,**不批量下载未授权商业素材**。
+写字段前的术语来源有**两级,先库后网**:
+
+1. **首选 `search_cinematography_kb`(运镜与结构化描述库)。** 填 运镜(4)/ 景别焦段(2)/ 机位角度(3)/ 构图(5) 等字段前,或不确定某个运镜术语(推 / 拉 / 摇 / 移 / 甩 / 升降 / 环绕 / 手持…)、想把镜头写成**结构化分镜描述**时,**先调 `search_cinematography_kb` 工具**——它检索本项目的「运镜与结构化描述库」(阿里百炼 RAG:权威运镜术语 + 结构化分镜描述范式 + 镜头语言样例),比泛联网更准、更贴本项目产出格式。传一句自然语言 `query`(如「地铁站手持跟拍 结构化描述」「低角度仰拍推镜 术语」「情绪→生理 微表情量化」),读回检索片段,用其中的**真实术语与结构范式**填 13 维字段。**每次写运镜/结构化描述都先过它一遍**,别只凭记忆。
+2. **再联网检索(兜底 / 补充)。** 库里没命中,或涉及具体技法 / 作家 / 片例时,联网查权威资料,不要只靠记忆:
+   - 真人/实拍:StudioBinder、ASC、No Film School、ShotDeck、Wikipedia "Cinematic techniques"。
+   - 动画作画:Sakugabooru、Sakuga Blog/Journal、Animétudes、ANN/AniDB。
+   - 用检索到的**真实技法词**(焦距/f值/景别/运镜/三点光/色温K/LUT/タメツメ/コマ打ち)填字段;商业作品仅作学习参考并标注出处,**不批量下载未授权商业素材**。
+
+> `search_cinematography_kb` 由 codex 内置的 `cinematography_kb` MCP 提供(应用「设置 → 运镜知识库」填 DASHSCOPE_API_KEY 后即可用)。工具不存在 / 未配 key 时静默退回第 2 级联网检索,不要报错卡住。
 
 ## 输出格式:结构化文本(非 JSON)
 
