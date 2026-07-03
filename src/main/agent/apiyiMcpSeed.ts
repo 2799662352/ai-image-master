@@ -1,4 +1,5 @@
-import { promises as fs } from 'node:fs'
+import { existsSync, promises as fs } from 'node:fs'
+import path from 'node:path'
 import { parse as parseToml } from 'toml'
 import * as iarnaToml from '@iarna/toml'
 import { atomicWriteFile } from './codexConfigStore'
@@ -22,6 +23,11 @@ export interface SeedApiyiMcpInput {
    * config is sacred there).
    */
   extraEnv?: Record<string, string>
+  /**
+   * Injectable filesystem probe used by the stale-transport check. Defaults to
+   * `fs.existsSync`; tests override it to simulate uninstalled/moved paths.
+   */
+  fileExists?: (p: string) => boolean
 }
 
 export type SeedAction = 'seeded' | 'backfilled' | 'repaired' | 'skipped'
@@ -57,6 +63,28 @@ function isBrokenApiyiEntryMissingTransport(entry: Record<string, unknown>): boo
   const hasUrlKey = 'url' in entry
   // command/url completely absent → unambiguous: needs stdio repair.
   return !hasCommandKey && !hasUrlKey
+}
+
+/**
+ * Stale stdio transport: the entry HAS a string `command`, but the command
+ * and/or the first arg are absolute paths that no longer exist on disk
+ * (uninstalled Node, app moved to a new install dir, old dev checkout path).
+ * codex would fail the spawn every time; the entry can never heal on its own
+ * because seeding is one-shot. Only absolute paths are probed — a bare
+ * `node` resolves via PATH and existsSync cannot judge it, and `url` entries
+ * are a different transport we must not touch.
+ */
+function isStaleStdioTransport(
+  entry: Record<string, unknown>,
+  fileExists: (p: string) => boolean,
+): boolean {
+  if (typeof entry.command !== 'string' || entry.command === '') return false
+  if ('url' in entry) return false
+  const commandStale = path.isAbsolute(entry.command) && !fileExists(entry.command)
+  const arg0 =
+    Array.isArray(entry.args) && typeof entry.args[0] === 'string' ? entry.args[0] : null
+  const argStale = arg0 !== null && path.isAbsolute(arg0) && !fileExists(arg0)
+  return commandStale || argStale
 }
 
 /**
@@ -219,6 +247,36 @@ export async function seedApiyiMcpEntry(input: SeedApiyiMcpInput): Promise<SeedA
       const nextDoc = { ...rawDoc, mcp_servers: nextServers }
       const serialized = iarnaToml.stringify(nextDoc as unknown as iarnaToml.JsonMap)
       await atomicWriteFile(input.personalConfigToml, serialized)
+      return 'repaired'
+    }
+
+    const fileExists = input.fileExists ?? existsSync
+    if (isStaleStdioTransport(existingApiyi, fileExists)) {
+      const mergedEnv =
+        mergeEnvWithScaffold(existingApiyi.env) ??
+        (isPlainObject(existingApiyi.env)
+          ? ({ ...existingApiyi.env } as Record<string, string>)
+          : {})
+      const envOut: Record<string, string> = { ...mergedEnv }
+      // Converge to the freshly resolved form: on the node path the electron
+      // marker is meaningless (and misleading), so drop it; on the electron
+      // path extraEnv re-adds it below.
+      delete envOut.ELECTRON_RUN_AS_NODE
+      for (const [k, v] of Object.entries(input.extraEnv ?? {})) {
+        if (!(k in envOut)) envOut[k] = v
+      }
+      const repairedApiyi: Record<string, unknown> = {
+        ...existingApiyi,
+        command: input.command,
+        args: [input.entryPath],
+        env: envOut,
+      }
+      const nextServers = { ...existingServers, apiyi: repairedApiyi }
+      const nextDoc = { ...rawDoc, mcp_servers: nextServers }
+      await atomicWriteFile(
+        input.personalConfigToml,
+        iarnaToml.stringify(nextDoc as unknown as iarnaToml.JsonMap),
+      )
       return 'repaired'
     }
 

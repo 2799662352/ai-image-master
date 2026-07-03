@@ -186,6 +186,9 @@ describe('seedApiyiMcpEntry', () => {
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
       command: FAKE_NODE,
+      // Transport is healthy in this scenario — the fixture paths are fake,
+      // so pin the probe to avoid the stale-transport self-heal firing.
+      fileExists: () => true,
     })
     expect(action).toBe('backfilled')
 
@@ -230,6 +233,8 @@ describe('seedApiyiMcpEntry', () => {
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
       command: FAKE_NODE,
+      // Healthy transport (fake fixture paths) — pin the stale probe off.
+      fileExists: () => true,
     })
     expect(action).toBe('backfilled')
 
@@ -270,6 +275,8 @@ describe('seedApiyiMcpEntry', () => {
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
       command: FAKE_NODE,
+      // Healthy transport (fake fixture paths) — pin the stale probe off.
+      fileExists: () => true,
     })
     expect(action).toBe('skipped')
   })
@@ -345,6 +352,7 @@ describe('seedApiyiMcpEntry', () => {
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
       command: FAKE_NODE,
+      fileExists: () => true,
     })
     expect(first).toBe('repaired')
 
@@ -352,6 +360,9 @@ describe('seedApiyiMcpEntry', () => {
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
       command: FAKE_NODE,
+      // FAKE_NODE / FAKE_ENTRY are fixture paths that don't exist on the real
+      // disk; pin the probe so the stale self-heal doesn't re-fire.
+      fileExists: () => true,
     })
     expect(second).toBe('skipped')
   })
@@ -401,6 +412,9 @@ describe('seedApiyiMcpEntry', () => {
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
       command: FAKE_NODE,
+      // Seeded entry now carries the fixture FAKE_NODE / FAKE_ENTRY paths,
+      // which don't exist on the real disk; pin the stale probe off.
+      fileExists: () => true,
     })
     expect(second).toBe('skipped')
   })
@@ -424,6 +438,8 @@ describe('seedApiyiMcpEntry', () => {
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
       command: FAKE_NODE,
+      // Healthy transport (fake fixture paths) — pin the stale probe off.
+      fileExists: () => true,
     })
     expect(first).toBe('backfilled')
 
@@ -431,6 +447,7 @@ describe('seedApiyiMcpEntry', () => {
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
       command: FAKE_NODE,
+      fileExists: () => true,
     })
     expect(second).toBe('skipped')
   })
@@ -451,6 +468,112 @@ describe('seedApiyiMcpEntry', () => {
     expect(
       (parsed.mcp_servers as Record<string, unknown>).apiyi,
     ).toBeDefined()
+  })
+})
+
+describe('seedApiyiMcpEntry — stale transport self-heal', () => {
+  it('repairs an entry whose command path no longer exists on disk, preserving user env', async () => {
+    await fs.writeFile(
+      configPath,
+      [
+        '[mcp_servers.apiyi]',
+        'command = "/old/uninstalled/electron"',
+        'args = ["/old/uninstalled/resources/apiyi-mcp/dist/index.js"]',
+        'enabled = true',
+        '[mcp_servers.apiyi.env]',
+        'APIYI_API_KEY = "sk-user-keep"',
+        'ELECTRON_RUN_AS_NODE = "1"',
+      ].join('\n'),
+      'utf8',
+    )
+    const action = await seedApiyiMcpEntry({
+      personalConfigToml: configPath,
+      entryPath: FAKE_ENTRY,
+      command: FAKE_NODE,
+      fileExists: (p) => !p.startsWith('/old/uninstalled'),
+    })
+    expect(action).toBe('repaired')
+    const parsed = parseToml(await fs.readFile(configPath, 'utf8')) as Record<string, unknown>
+    const apiyi = (parsed.mcp_servers as Record<string, unknown>).apiyi as {
+      command: string; args: string[]; enabled: boolean; env: Record<string, string>
+    }
+    expect(apiyi.command).toBe(FAKE_NODE)
+    expect(apiyi.args).toEqual([FAKE_ENTRY])
+    expect(apiyi.enabled).toBe(true)
+    expect(apiyi.env.APIYI_API_KEY).toBe('sk-user-keep')
+    expect(apiyi.env.ELECTRON_RUN_AS_NODE).toBeUndefined()
+    expect(apiyi.env.APIYI_BASE_URL).toBe('https://api.apiyi.com')
+  })
+
+  it('repairs when args[0] entry path is stale even if command still exists', async () => {
+    await fs.writeFile(
+      configPath,
+      [
+        '[mcp_servers.apiyi]',
+        `command = "${FAKE_NODE}"`,
+        'args = ["/moved/away/dist/index.js"]',
+      ].join('\n'),
+      'utf8',
+    )
+    const action = await seedApiyiMcpEntry({
+      personalConfigToml: configPath,
+      entryPath: FAKE_ENTRY,
+      command: FAKE_NODE,
+      fileExists: (p) => p !== '/moved/away/dist/index.js',
+    })
+    expect(action).toBe('repaired')
+    const parsed = parseToml(await fs.readFile(configPath, 'utf8')) as Record<string, unknown>
+    const apiyi = (parsed.mcp_servers as Record<string, unknown>).apiyi as { args: string[] }
+    expect(apiyi.args).toEqual([FAKE_ENTRY])
+  })
+
+  it('does NOT touch a healthy custom command that differs from the resolved one', async () => {
+    await fs.writeFile(
+      configPath,
+      [
+        '[mcp_servers.apiyi]',
+        'command = "/my/custom/node"',
+        `args = ["${FAKE_ENTRY}"]`,
+        '[mcp_servers.apiyi.env]',
+        'APIYI_BASE_URL = "https://api.apiyi.com"',
+        'GEMINI_MODEL = "gemini-3.5-flash"',
+        'GEMINI_MAX_OUTPUT_TOKENS = "65536"',
+        'GEMINI_TIMEOUT = "1800000"',
+      ].join('\n'),
+      'utf8',
+    )
+    const action = await seedApiyiMcpEntry({
+      personalConfigToml: configPath,
+      entryPath: FAKE_ENTRY,
+      command: FAKE_NODE,
+      fileExists: () => true,
+    })
+    expect(action).toBe('skipped')
+  })
+
+  it('does NOT probe non-absolute commands like bare "node" (PATH-resolved, existsSync cannot judge)', async () => {
+    await fs.writeFile(
+      configPath,
+      [
+        '[mcp_servers.apiyi]',
+        'command = "node"',
+        `args = ["${FAKE_ENTRY}"]`,
+        '[mcp_servers.apiyi.env]',
+        'APIYI_BASE_URL = "https://api.apiyi.com"',
+        'GEMINI_MODEL = "gemini-3.5-flash"',
+        'GEMINI_MAX_OUTPUT_TOKENS = "65536"',
+        'GEMINI_TIMEOUT = "1800000"',
+      ].join('\n'),
+      'utf8',
+    )
+    const action = await seedApiyiMcpEntry({
+      personalConfigToml: configPath,
+      entryPath: FAKE_ENTRY,
+      command: FAKE_NODE,
+      // Entry path exists; bare "node" must never be probed (not absolute).
+      fileExists: (p) => p === FAKE_ENTRY,
+    })
+    expect(action).toBe('skipped')
   })
 })
 
