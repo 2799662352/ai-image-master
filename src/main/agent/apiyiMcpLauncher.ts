@@ -37,14 +37,16 @@ export function getApiyiMcpEntryPath(options: ApiyiMcpPathOptions): string {
  *     }
  *   }
  *
- * `APIYI_API_KEY` is DELIBERATELY ABSENT from the persisted scaffold. Mirroring
- * the in-app catimation MCP, the secret is injected at codex spawn via
- * `-c mcp_servers.apiyi.env.APIYI_API_KEY=...` from the single key the user
- * saved in 设置 → API易 (see `buildCodexLaunchArgs.apiyiKey` /
- * `AgentManager.apiyiMcpKey`). So the user fills ONE key in 设置, the MCP JSON
- * editor never shows or asks for a key, and no secret is left on disk. This is
- * the ONLY supported key source: the entry is app-managed and force-seeded
- * every boot, so a key hand-typed into the JSON editor is wiped at restart.
+ * `APIYI_API_KEY` is persisted as an EMPTY placeholder (`""`) — matching the
+ * canonical dev-machine mcp.json shape so the JSON editor shows the slot —
+ * but the REAL secret never touches disk. It is injected at codex spawn via
+ * `-c mcp_servers.apiyi.env.APIYI_API_KEY=...` (CLI `-c` overrides win over
+ * config.toml values, so the empty placeholder is always superseded) from the
+ * single key the user saved in 设置 → API易 (see `buildCodexLaunchArgs.apiyiKey`
+ * / `AgentManager.apiyiMcpKey`). This is the ONLY supported key source — for
+ * BOTH the system-node and Electron-as-Node forms alike. The entry is
+ * app-managed and force-seeded every boot, so a key hand-typed into the JSON
+ * editor is scrubbed back to `""` at restart (no secret persists).
  *
  * Field rationale:
  *  - `APIYI_BASE_URL` — apiyi-mcp's own baked-in default is `https://api.bltcy.ai`,
@@ -83,6 +85,10 @@ export const APIYI_MCP_ENV_SCAFFOLD: Readonly<Record<string, string>> = Object.f
   GEMINI_MODEL: 'gemini-3.5-flash',
   GEMINI_MAX_OUTPUT_TOKENS: '65536',
   GEMINI_TIMEOUT: '1800000',
+  // Empty placeholder only — the real key is injected at spawn from 设置 →
+  // API易 via `-c` (which overrides this value). Force-seeding scrubs any
+  // hand-typed secret back to "" at every boot.
+  APIYI_API_KEY: '',
 })
 
 export interface ApiyiResolvedCommand {

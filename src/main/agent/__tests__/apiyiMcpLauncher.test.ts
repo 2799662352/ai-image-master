@@ -62,10 +62,11 @@ describe('APIYI_MCP_ENV_SCAFFOLD', () => {
     expect(APIYI_MCP_ENV_SCAFFOLD.APIYI_BASE_URL).toBe('https://api.apiyi.com')
   })
 
-  it('OMITS APIYI_API_KEY from the persisted scaffold (injected at spawn from 设置)', () => {
-    // The single key the user fills in 设置 is overlaid via `-c` at spawn, never
-    // written to config.toml — so the scaffold must NOT carry a key field.
-    expect(APIYI_MCP_ENV_SCAFFOLD.APIYI_API_KEY).toBeUndefined()
+  it('ships an EMPTY APIYI_API_KEY placeholder (the real key is injected at spawn from 设置)', () => {
+    // Matches the canonical dev-machine mcp.json shape: the slot is visible in
+    // the JSON editor, but the single key the user fills in 设置 is overlaid
+    // via `-c` at spawn (CLI overrides beat config.toml) — no secret persists.
+    expect(APIYI_MCP_ENV_SCAFFOLD.APIYI_API_KEY).toBe('')
   })
 
   it('does NOT bake ELECTRON_RUN_AS_NODE into the scaffold (only injected via extraEnv on the Electron-as-Node fallback)', () => {

@@ -52,9 +52,10 @@ describe('seedApiyiMcpEntry — force convergence', () => {
     expect(apiyi.command).toBe(FAKE_NODE)
     expect(apiyi.args).toEqual([FAKE_ENTRY])
     expect(apiyi.enabled).toBe(true)
-    // The canonical env carries no key — APIYI_API_KEY is injected at codex
-    // spawn from 设置 → API易 (the ONLY key source), never persisted.
-    expect(apiyi.env.APIYI_API_KEY).toBeUndefined()
+    // The canonical env carries an EMPTY key placeholder — the real
+    // APIYI_API_KEY is injected at codex spawn from 设置 → API易 (the ONLY
+    // key source), never persisted.
+    expect(apiyi.env.APIYI_API_KEY).toBe('')
     expect(apiyi.env).toEqual({ ...APIYI_MCP_ENV_SCAFFOLD })
   })
 
@@ -128,7 +129,7 @@ describe('seedApiyiMcpEntry — force convergence', () => {
     expect(apiyi.command).toBe(FAKE_NODE)
     expect(apiyi.args).toEqual([FAKE_ENTRY])
     expect(apiyi.enabled).toBe(true) // force ON
-    expect(apiyi.env.APIYI_API_KEY).toBeUndefined() // empty key slot wiped
+    expect(apiyi.env.APIYI_API_KEY).toBe('') // placeholder stays empty
     expect(apiyi.env.ELECTRON_RUN_AS_NODE).toBeUndefined() // node path: marker dropped
   })
 
@@ -157,7 +158,7 @@ describe('seedApiyiMcpEntry — force convergence', () => {
 
     const apiyi = await readApiyi()
     expect(apiyi.command).toBe(FAKE_NODE) // custom command overwritten
-    expect(apiyi.env.APIYI_API_KEY).toBeUndefined() // hand-typed key wiped
+    expect(apiyi.env.APIYI_API_KEY).toBe('') // hand-typed key scrubbed to placeholder
     expect(apiyi.env.GEMINI_MODEL).toBe('gemini-3.5-flash') // model reset to default
     expect(apiyi.env.APIYI_BASE_URL).toBe('https://api.apiyi.com') // bad base URL fixed
     expect((apiyi as unknown as Record<string, unknown>).tool_timeout_sec).toBeUndefined() // extra field dropped
