@@ -577,6 +577,99 @@ describe('seedApiyiMcpEntry — stale transport self-heal', () => {
   })
 })
 
+describe('seedApiyiMcpEntry — electron→node upgrade', () => {
+  it('upgrades an Electron-as-Node entry to system node once node is available', async () => {
+    await fs.writeFile(
+      configPath,
+      [
+        '[mcp_servers.apiyi]',
+        'command = "/app/CATIMATION.exe"',
+        `args = ["${FAKE_ENTRY}"]`,
+        'enabled = true',
+        '[mcp_servers.apiyi.env]',
+        'ELECTRON_RUN_AS_NODE = "1"',
+        'APIYI_API_KEY = "sk-user-keep"',
+        'APIYI_BASE_URL = "https://api.apiyi.com"',
+        'GEMINI_MODEL = "gemini-3.5-flash"',
+        'GEMINI_MAX_OUTPUT_TOKENS = "65536"',
+        'GEMINI_TIMEOUT = "1800000"',
+      ].join('\n'),
+      'utf8',
+    )
+    const action = await seedApiyiMcpEntry({
+      personalConfigToml: configPath,
+      entryPath: FAKE_ENTRY,
+      command: FAKE_NODE, // resolver found system node → extraEnv omitted
+      electronExecPath: '/app/CATIMATION.exe', // identifies the seeded fallback form
+      fileExists: () => true, // old electron.exe still exists — upgrade anyway
+    })
+    expect(action).toBe('repaired')
+    const parsed = parseToml(await fs.readFile(configPath, 'utf8')) as Record<string, unknown>
+    const apiyi = (parsed.mcp_servers as Record<string, unknown>).apiyi as {
+      command: string
+      args: string[]
+      env: Record<string, string>
+    }
+    expect(apiyi.command).toBe(FAKE_NODE)
+    expect(apiyi.args).toEqual([FAKE_ENTRY])
+    expect(apiyi.env.ELECTRON_RUN_AS_NODE).toBeUndefined() // marker dropped
+    expect(apiyi.env.APIYI_API_KEY).toBe('sk-user-keep') // user env preserved
+  })
+
+  it('leaves a healthy Electron-as-Node entry alone when node is still absent', async () => {
+    await fs.writeFile(
+      configPath,
+      [
+        '[mcp_servers.apiyi]',
+        'command = "/app/CATIMATION.exe"',
+        `args = ["${FAKE_ENTRY}"]`,
+        '[mcp_servers.apiyi.env]',
+        'ELECTRON_RUN_AS_NODE = "1"',
+        'APIYI_BASE_URL = "https://api.apiyi.com"',
+        'GEMINI_MODEL = "gemini-3.5-flash"',
+        'GEMINI_MAX_OUTPUT_TOKENS = "65536"',
+        'GEMINI_TIMEOUT = "1800000"',
+      ].join('\n'),
+      'utf8',
+    )
+    const action = await seedApiyiMcpEntry({
+      personalConfigToml: configPath,
+      entryPath: FAKE_ENTRY,
+      command: '/app/CATIMATION.exe',
+      extraEnv: { ELECTRON_RUN_AS_NODE: '1' }, // resolver still on the fallback
+      electronExecPath: '/app/CATIMATION.exe',
+      fileExists: () => true,
+    })
+    expect(action).toBe('skipped')
+  })
+
+  it('never upgrades a user-customized command that merely carries the marker env', async () => {
+    await fs.writeFile(
+      configPath,
+      [
+        '[mcp_servers.apiyi]',
+        'command = "/my/own/electron-wrapper"',
+        `args = ["${FAKE_ENTRY}"]`,
+        '[mcp_servers.apiyi.env]',
+        'ELECTRON_RUN_AS_NODE = "1"',
+        'APIYI_BASE_URL = "https://api.apiyi.com"',
+        'GEMINI_MODEL = "gemini-3.5-flash"',
+        'GEMINI_MAX_OUTPUT_TOKENS = "65536"',
+        'GEMINI_TIMEOUT = "1800000"',
+      ].join('\n'),
+      'utf8',
+    )
+    const action = await seedApiyiMcpEntry({
+      personalConfigToml: configPath,
+      entryPath: FAKE_ENTRY,
+      command: FAKE_NODE, // node available…
+      electronExecPath: '/app/CATIMATION.exe', // …but command is NOT our exe
+      fileExists: () => true,
+    })
+    expect(action).toBe('skipped') // sacred user config
+  })
+})
+
 describe('readApiyiConfigKey', () => {
   it("returns '' when the config file does not exist", async () => {
     expect(await readApiyiConfigKey(path.join(tmpDir, 'nope.toml'))).toBe('')

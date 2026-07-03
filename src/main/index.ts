@@ -1243,6 +1243,10 @@ app.whenReady().then(async () => {
       entryPath: apiyiEntry,
       command: apiyiCmd.command,
       extraEnv: apiyiCmd.extraEnv,
+      // Enables the electron→node upgrade: an entry we previously seeded in
+      // the Electron-as-Node fallback form is converged to `command = node`
+      // as soon as a system node appears on PATH (see seedApiyiMcpEntry).
+      electronExecPath: process.execPath,
     })
     console.log(`[apiyi-mcp] boot convergence: ${apiyiAction} (command=${apiyiCmd.command})`)
   } catch (err) {

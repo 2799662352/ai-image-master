@@ -28,6 +28,15 @@ export interface SeedApiyiMcpInput {
    * `fs.existsSync`; tests override it to simulate uninstalled/moved paths.
    */
   fileExists?: (p: string) => boolean
+  /**
+   * The app's own executable path (`process.execPath`). Used to POSITIVELY
+   * identify an entry seeded in the Electron-as-Node fallback form
+   * (`command === electronExecPath` + `env.ELECTRON_RUN_AS_NODE === '1'`) so
+   * the electron→node upgrade never touches a user-customized command that
+   * merely happens to carry the marker env. Optional: when absent, the
+   * upgrade path is disabled (stale-transport repair still applies).
+   */
+  electronExecPath?: string
 }
 
 export type SeedAction = 'seeded' | 'backfilled' | 'repaired' | 'skipped'
@@ -251,7 +260,22 @@ export async function seedApiyiMcpEntry(input: SeedApiyiMcpInput): Promise<SeedA
     }
 
     const fileExists = input.fileExists ?? existsSync
-    if (isStaleStdioTransport(existingApiyi, fileExists)) {
+    // Upgrade trigger: the entry is OUR seeded Electron-as-Node fallback form
+    // (command IS the app's own executable + marker env present) but THIS boot
+    // resolved a real system node (extraEnv carries no marker). Converge to
+    // the canonical node form — same shape as a fresh dev-machine seed.
+    // resolveApiyiCommand's doc ("delete the entry and restart to re-seed")
+    // becomes automatic. The command identity check keeps user-customized
+    // commands sacred even when they carry the marker env.
+    const resolvedIsSystemNode = !(input.extraEnv && 'ELECTRON_RUN_AS_NODE' in input.extraEnv)
+    const entryIsSeededElectronFallback =
+      typeof input.electronExecPath === 'string' &&
+      existingApiyi.command === input.electronExecPath &&
+      isPlainObject(existingApiyi.env) &&
+      (existingApiyi.env as Record<string, unknown>).ELECTRON_RUN_AS_NODE === '1'
+    const wantsUpgrade = resolvedIsSystemNode && entryIsSeededElectronFallback
+
+    if (isStaleStdioTransport(existingApiyi, fileExists) || wantsUpgrade) {
       const mergedEnv =
         mergeEnvWithScaffold(existingApiyi.env) ??
         (isPlainObject(existingApiyi.env)
