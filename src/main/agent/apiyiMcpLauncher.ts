@@ -150,10 +150,12 @@ export async function whichNode(
  *      Catimation ships an Electron runtime regardless, so we coopt it as a
  *      Node interpreter via the documented `ELECTRON_RUN_AS_NODE` flag.
  *
- * Detection happens once at boot; the resolved command is baked into the
- * seeded `config.toml` entry and is NOT re-resolved on every spawn. If a user
- * later installs Node, they can re-seed (delete the apiyi entry and restart)
- * to pick up the cleaner `command = node` path.
+ * Detection happens at every boot. `seedApiyiMcpEntry` converges the on-disk
+ * entry to the resolved form automatically: stale absolute paths (moved /
+ * uninstalled binaries) are repaired, and an entry we seeded in the
+ * Electron-as-Node fallback form is upgraded to `command = node` as soon as a
+ * system node appears on PATH. User-set env values (and any user-customized
+ * command) are always preserved.
  */
 export async function resolveApiyiCommand(
   electronExecPath: string,
