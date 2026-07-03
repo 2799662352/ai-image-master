@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { parse as parseToml } from 'toml'
-import { mergeEnvWithScaffold, readApiyiConfigKey, seedApiyiMcpEntry } from '../apiyiMcpSeed'
+import { seedApiyiMcpEntry } from '../apiyiMcpSeed'
 import { APIYI_MCP_ENV_SCAFFOLD } from '../apiyiMcpLauncher'
 
 let tmpDir: string
@@ -21,58 +21,26 @@ afterEach(async () => {
 const FAKE_ENTRY = '/Resources/apiyi-mcp/dist/index.js'
 const FAKE_NODE = '/usr/local/bin/node'
 
-describe('mergeEnvWithScaffold', () => {
-  it('returns null when existing env already has every scaffold key', () => {
-    const complete: Record<string, string> = { ...APIYI_MCP_ENV_SCAFFOLD, APIYI_API_KEY: 'sk-user' }
-    expect(mergeEnvWithScaffold(complete)).toBeNull()
-  })
+interface ApiyiEntryShape {
+  command: string
+  args: string[]
+  enabled: boolean
+  env: Record<string, string>
+}
 
-  it('fills missing scaffold keys when existing env is empty', () => {
-    const merged = mergeEnvWithScaffold({})
-    expect(merged).not.toBeNull()
-    expect(merged).toEqual({ ...APIYI_MCP_ENV_SCAFFOLD })
-  })
+async function readApiyi(): Promise<ApiyiEntryShape> {
+  const parsed = parseToml(await fs.readFile(configPath, 'utf8')) as Record<string, unknown>
+  return (parsed.mcp_servers as Record<string, unknown>).apiyi as ApiyiEntryShape
+}
 
-  it('preserves every user-set value and only fills the gaps', () => {
-    const userEnv = {
-      APIYI_API_KEY: 'sk-user-keep',
-      GEMINI_MODEL: 'gemini-2.5-flash',
-      // missing: APIYI_BASE_URL, GEMINI_MAX_OUTPUT_TOKENS, GEMINI_TIMEOUT
-      // NOTE: ELECTRON_RUN_AS_NODE is NOT in the scaffold by design — it's
-      // only meaningful for the Electron-as-Node fallback and gets layered on
-      // via `extraEnv` in resolveApiyiCommand, never via the scaffold.
-    }
-    const merged = mergeEnvWithScaffold(userEnv)
-    expect(merged).not.toBeNull()
-    expect(merged!.APIYI_API_KEY).toBe('sk-user-keep')      // ← preserved
-    expect(merged!.GEMINI_MODEL).toBe('gemini-2.5-flash')   // ← preserved (NOT overwritten with scaffold default)
-    expect(merged!.APIYI_BASE_URL).toBe('https://api.apiyi.com') // ← filled
-    expect(merged!.GEMINI_MAX_OUTPUT_TOKENS).toBe('65536')  // ← filled
-    expect(merged!.GEMINI_TIMEOUT).toBe('1800000')          // ← filled
-    expect(merged!.ELECTRON_RUN_AS_NODE).toBeUndefined()    // ← NOT in scaffold; not filled
-  })
-
-  it('treats a non-object env (e.g. user wrote env = "broken") as empty and replaces with scaffold', () => {
-    const merged = mergeEnvWithScaffold('not an object')
-    expect(merged).toEqual({ ...APIYI_MCP_ENV_SCAFFOLD })
-  })
-
-  it('treats undefined env as empty and returns the full scaffold', () => {
-    const merged = mergeEnvWithScaffold(undefined)
-    expect(merged).toEqual({ ...APIYI_MCP_ENV_SCAFFOLD })
-  })
-})
-
-describe('seedApiyiMcpEntry', () => {
-  // Three outcomes:
-  //   'seeded'     → entry didn't exist; fresh full scaffold written
-  //   'backfilled' → entry existed but env was missing scaffold keys;
-  //                  add the missing ones without ever overwriting user values
-  //   'skipped'    → entry exists and env already has every scaffold key
-  // command / args / enabled / tool_timeout_sec are NEVER touched on the
-  // backfill path.
-
-  it('creates config.toml with an ENABLED apiyi stub + pre-filled env scaffold', async () => {
+// FORCE-convergence semantics: `mcp_servers.apiyi` is app-managed. Every boot
+// rewrites it to the canonical form (fresh command/args, full env scaffold,
+// enabled=true). User edits do NOT survive. Three outcomes:
+//   'seeded'   → entry absent, canonical written
+//   'repaired' → entry present but non-canonical, overwritten wholesale
+//   'skipped'  → entry already exactly canonical (steady state, no write)
+describe('seedApiyiMcpEntry — force convergence', () => {
+  it('creates config.toml with the canonical ENABLED entry (system-node path)', async () => {
     const action = await seedApiyiMcpEntry({
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
@@ -80,34 +48,17 @@ describe('seedApiyiMcpEntry', () => {
     })
     expect(action).toBe('seeded')
 
-    const raw = await fs.readFile(configPath, 'utf8')
-    const parsed = parseToml(raw) as Record<string, unknown>
-    const servers = parsed.mcp_servers as Record<string, unknown>
-    expect(servers).toBeDefined()
-    const apiyi = servers.apiyi as {
-      command: string
-      args: string[]
-      enabled: boolean
-      env: Record<string, string>
-    }
+    const apiyi = await readApiyi()
     expect(apiyi.command).toBe(FAKE_NODE)
     expect(apiyi.args).toEqual([FAKE_ENTRY])
-    // Default ON — like the auto-injected key, the user shouldn't flip a toggle.
     expect(apiyi.enabled).toBe(true)
-    // The scaffolded env carries no key — APIYI_API_KEY is injected at codex
-    // spawn from 设置 → API易 (catimation-style), never seeded to disk.
+    // The canonical env carries no key — APIYI_API_KEY is injected at codex
+    // spawn from 设置 → API易 (the ONLY key source), never persisted.
     expect(apiyi.env.APIYI_API_KEY).toBeUndefined()
-    expect(apiyi.env.APIYI_BASE_URL).toBe('https://api.apiyi.com')
-    expect(apiyi.env.GEMINI_MODEL).toBe('gemini-3.5-flash')
-    expect(apiyi.env.GEMINI_MAX_OUTPUT_TOKENS).toBe('65536')
-    expect(apiyi.env.GEMINI_TIMEOUT).toBe('1800000')
-    // ELECTRON_RUN_AS_NODE is intentionally NOT in the scaffold — the
-    // Electron-as-Node fallback adds it via `extraEnv`, the system-node path
-    // doesn't need it. A bare seed (no extraEnv) does not write it.
-    expect(apiyi.env.ELECTRON_RUN_AS_NODE).toBeUndefined()
+    expect(apiyi.env).toEqual({ ...APIYI_MCP_ENV_SCAFFOLD })
   })
 
-  it('layers caller-supplied extraEnv on top of the scaffold (Electron-as-Node fallback)', async () => {
+  it('layers extraEnv on top of the scaffold (Electron-as-Node fallback)', async () => {
     const action = await seedApiyiMcpEntry({
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
@@ -116,20 +67,12 @@ describe('seedApiyiMcpEntry', () => {
     })
     expect(action).toBe('seeded')
 
-    const parsed = parseToml(await fs.readFile(configPath, 'utf8')) as Record<
-      string,
-      unknown
-    >
-    const apiyi = (parsed.mcp_servers as Record<string, unknown>).apiyi as {
-      command: string
-      env: Record<string, string>
-    }
+    const apiyi = await readApiyi()
     expect(apiyi.command).toBe('/path/to/electron.exe')
-    expect(apiyi.env.ELECTRON_RUN_AS_NODE).toBe('1') // ← from extraEnv
-    expect(apiyi.env.APIYI_BASE_URL).toBe('https://api.apiyi.com') // ← from scaffold
+    expect(apiyi.env).toEqual({ ...APIYI_MCP_ENV_SCAFFOLD, ELECTRON_RUN_AS_NODE: '1' })
   })
 
-  it('preserves existing mcp_servers and other top-level keys', async () => {
+  it('preserves other servers and top-level keys when converging apiyi', async () => {
     await fs.writeFile(
       configPath,
       [
@@ -139,340 +82,111 @@ describe('seedApiyiMcpEntry', () => {
         'command = "/bin/foo"',
         'args = ["x"]',
         'enabled = true',
-        '',
       ].join('\n'),
       'utf8',
     )
-
-    await seedApiyiMcpEntry({
-      personalConfigToml: configPath,
-      entryPath: FAKE_ENTRY,
-      command: FAKE_NODE,
-    })
-
-    const parsed = parseToml(await fs.readFile(configPath, 'utf8')) as Record<
-      string,
-      unknown
-    >
-    expect(parsed.some_top_level).toBe('value')
-    const servers = parsed.mcp_servers as Record<string, unknown>
-    expect(servers.existing).toEqual({
-      command: '/bin/foo',
-      args: ['x'],
-      enabled: true,
-    })
-    expect((servers.apiyi as { enabled: boolean }).enabled).toBe(true)
-  })
-
-  it('backfills missing env keys but NEVER overwrites user-set values', async () => {
-    await fs.writeFile(
-      configPath,
-      [
-        '[mcp_servers.apiyi]',
-        'command = "/custom/node"',
-        'args = ["/custom/path.js"]',
-        'enabled = true',
-        '',
-        '[mcp_servers.apiyi.env]',
-        'APIYI_API_KEY = "sk-user-already-set"',
-        'ELECTRON_RUN_AS_NODE = "1"',
-        'GEMINI_MODEL = "gemini-2.5-flash"',
-        '',
-      ].join('\n'),
-      'utf8',
-    )
-
-    const action = await seedApiyiMcpEntry({
-      personalConfigToml: configPath,
-      entryPath: FAKE_ENTRY,
-      command: FAKE_NODE,
-      // Transport is healthy in this scenario — the fixture paths are fake,
-      // so pin the probe to avoid the stale-transport self-heal firing.
-      fileExists: () => true,
-    })
-    expect(action).toBe('backfilled')
-
-    const parsed = parseToml(await fs.readFile(configPath, 'utf8')) as Record<
-      string,
-      unknown
-    >
-    const apiyi = (parsed.mcp_servers as Record<string, unknown>).apiyi as {
-      command: string
-      args: string[]
-      enabled: boolean
-      env: Record<string, string>
-    }
-    // command / args / enabled — NEVER touched on backfill path.
-    expect(apiyi.command).toBe('/custom/node')
-    expect(apiyi.args).toEqual(['/custom/path.js'])
-    expect(apiyi.enabled).toBe(true)
-    // User-set env values preserved verbatim.
-    expect(apiyi.env.APIYI_API_KEY).toBe('sk-user-already-set')
-    expect(apiyi.env.ELECTRON_RUN_AS_NODE).toBe('1')
-    expect(apiyi.env.GEMINI_MODEL).toBe('gemini-2.5-flash') // user override, NOT scaffold default
-    // Missing scaffold fields backfilled.
-    expect(apiyi.env.APIYI_BASE_URL).toBe('https://api.apiyi.com')
-    expect(apiyi.env.GEMINI_MAX_OUTPUT_TOKENS).toBe('65536')
-    expect(apiyi.env.GEMINI_TIMEOUT).toBe('1800000')
-  })
-
-  it('backfills the entire env scaffold when existing entry has no env block at all', async () => {
-    await fs.writeFile(
-      configPath,
-      [
-        '[mcp_servers.apiyi]',
-        'command = "/c"',
-        'args = ["/a"]',
-        'enabled = true',
-        '',
-      ].join('\n'),
-      'utf8',
-    )
-
-    const action = await seedApiyiMcpEntry({
-      personalConfigToml: configPath,
-      entryPath: FAKE_ENTRY,
-      command: FAKE_NODE,
-      // Healthy transport (fake fixture paths) — pin the stale probe off.
-      fileExists: () => true,
-    })
-    expect(action).toBe('backfilled')
-
-    const parsed = parseToml(await fs.readFile(configPath, 'utf8')) as Record<
-      string,
-      unknown
-    >
-    const apiyi = (parsed.mcp_servers as Record<string, unknown>).apiyi as {
-      command: string
-      env: Record<string, string>
-    }
-    expect(apiyi.command).toBe('/c') // command preserved
-    expect(apiyi.env).toEqual({ ...APIYI_MCP_ENV_SCAFFOLD })
-  })
-
-  it('skips when existing entry already has every scaffold key (steady state)', async () => {
-    await fs.writeFile(
-      configPath,
-      [
-        '[mcp_servers.apiyi]',
-        'command = "/c"',
-        'args = ["/a"]',
-        'enabled = true',
-        '',
-        '[mcp_servers.apiyi.env]',
-        'APIYI_API_KEY = "sk-keep"',
-        'APIYI_BASE_URL = "https://api.apiyi.com"',
-        'GEMINI_MODEL = "gemini-3.5-flash"',
-        'GEMINI_MAX_OUTPUT_TOKENS = "65536"',
-        'GEMINI_TIMEOUT = "1800000"',
-        'ELECTRON_RUN_AS_NODE = "1"',
-        '',
-      ].join('\n'),
-      'utf8',
-    )
-
-    const action = await seedApiyiMcpEntry({
-      personalConfigToml: configPath,
-      entryPath: FAKE_ENTRY,
-      command: FAKE_NODE,
-      // Healthy transport (fake fixture paths) — pin the stale probe off.
-      fileExists: () => true,
-    })
-    expect(action).toBe('skipped')
-  })
-
-  // ---------------------------------------------------------------------
-  // v4.3.18 regression rescue: v4.3.16's seed call site bug
-  // (`nodeBin` field name shipped through `command`-typed slot →
-  // `input.command === undefined` → iarna/toml drops the line entirely)
-  // wrote `command`-less, `url`-less entries to disk. codex 0.132's
-  // `McpServerConfig::deserialize` aborts on this shape with bare
-  // `"invalid transport"`. Anyone whose first boot landed on v4.3.16/17
-  // needs the next boot to detect and repair the entry.
-  // ---------------------------------------------------------------------
-  it('repairs an existing entry that has neither command nor url (the v4.3.16 regression shape)', async () => {
-    await fs.writeFile(
-      configPath,
-      [
-        '[mcp_servers.apiyi]',
-        'args = ["D:\\\\old\\\\path.js"]',
-        'enabled = true',
-        '',
-        '[mcp_servers.apiyi.env]',
-        'APIYI_API_KEY = "sk-user-already-pasted"',
-        'GEMINI_MODEL = "gemini-3.5-flash"',
-        '',
-      ].join('\n'),
-      'utf8',
-    )
-
-    const action = await seedApiyiMcpEntry({
-      personalConfigToml: configPath,
-      entryPath: FAKE_ENTRY,
-      command: FAKE_NODE,
-      extraEnv: { ELECTRON_RUN_AS_NODE: '1' },
-    })
-    expect(action).toBe('repaired')
-
-    const parsed = parseToml(await fs.readFile(configPath, 'utf8')) as Record<string, unknown>
-    const apiyi = (parsed.mcp_servers as Record<string, unknown>).apiyi as {
-      command: string
-      args: string[]
-      enabled: boolean
-      env: Record<string, string>
-    }
-    // command + args now match the resolved binary (fixes the broken shape).
-    expect(apiyi.command).toBe(FAKE_NODE)
-    expect(apiyi.args).toEqual([FAKE_ENTRY])
-    // enabled is sacred — repair must NOT flip it (user already toggled on).
-    expect(apiyi.enabled).toBe(true)
-    // env: user-set values preserved, scaffold gaps backfilled, extraEnv layered.
-    expect(apiyi.env.APIYI_API_KEY).toBe('sk-user-already-pasted')
-    expect(apiyi.env.GEMINI_MODEL).toBe('gemini-3.5-flash')
-    expect(apiyi.env.APIYI_BASE_URL).toBe('https://api.apiyi.com')
-    expect(apiyi.env.ELECTRON_RUN_AS_NODE).toBe('1') // ← from extraEnv
-  })
-
-  it('repair is idempotent — second boot after a repair returns "skipped"', async () => {
-    await fs.writeFile(
-      configPath,
-      [
-        '[mcp_servers.apiyi]',
-        'args = ["D:\\\\old\\\\path.js"]',
-        'enabled = false',
-        '',
-        '[mcp_servers.apiyi.env]',
-        'APIYI_API_KEY = ""',
-        '',
-      ].join('\n'),
-      'utf8',
-    )
-
-    const first = await seedApiyiMcpEntry({
-      personalConfigToml: configPath,
-      entryPath: FAKE_ENTRY,
-      command: FAKE_NODE,
-      fileExists: () => true,
-    })
-    expect(first).toBe('repaired')
-
-    const second = await seedApiyiMcpEntry({
-      personalConfigToml: configPath,
-      entryPath: FAKE_ENTRY,
-      command: FAKE_NODE,
-      // FAKE_NODE / FAKE_ENTRY are fixture paths that don't exist on the real
-      // disk; pin the probe so the stale self-heal doesn't re-fire.
-      fileExists: () => true,
-    })
-    expect(second).toBe('skipped')
-  })
-
-  it('does NOT touch entries with explicit url (streamable_http transport — user intent honored)', async () => {
-    // Edge case: somehow the user wrote `url = "..."` for apiyi (maybe they
-    // pasted a future remote-apiyi setup). That's a valid transport from
-    // codex's perspective. Repair must not blow it away.
-    await fs.writeFile(
-      configPath,
-      [
-        '[mcp_servers.apiyi]',
-        'url = "https://api.13797248455.xyz/mcp"',
-        'enabled = true',
-        '',
-        '[mcp_servers.apiyi.env]',
-        'APIYI_API_KEY = "sk-x"',
-        '',
-      ].join('\n'),
-      'utf8',
-    )
-
-    const action = await seedApiyiMcpEntry({
-      personalConfigToml: configPath,
-      entryPath: FAKE_ENTRY,
-      command: FAKE_NODE,
-    })
-    // Not repaired — codex would accept this entry as streamable_http.
-    // env backfill still runs because APIYI_BASE_URL et al are missing.
-    expect(action).toBe('backfilled')
-
-    const parsed = parseToml(await fs.readFile(configPath, 'utf8')) as Record<string, unknown>
-    const apiyi = (parsed.mcp_servers as Record<string, unknown>).apiyi as Record<string, unknown>
-    expect(apiyi.url).toBe('https://api.13797248455.xyz/mcp')
-    expect((apiyi as { command?: string }).command).toBeUndefined() // never added
-  })
-
-  it('is idempotent on repeated boots (seed → skip; backfill → skip)', async () => {
-    const first = await seedApiyiMcpEntry({
-      personalConfigToml: configPath,
-      entryPath: FAKE_ENTRY,
-      command: FAKE_NODE,
-    })
-    expect(first).toBe('seeded')
-
-    const second = await seedApiyiMcpEntry({
-      personalConfigToml: configPath,
-      entryPath: FAKE_ENTRY,
-      command: FAKE_NODE,
-      // Seeded entry now carries the fixture FAKE_NODE / FAKE_ENTRY paths,
-      // which don't exist on the real disk; pin the stale probe off.
-      fileExists: () => true,
-    })
-    expect(second).toBe('skipped')
-  })
-
-  it('post-backfill is also idempotent (backfill → skip on next boot)', async () => {
-    // Start with a legacy empty-env entry (what older seeds produced).
-    await fs.writeFile(
-      configPath,
-      [
-        '[mcp_servers.apiyi]',
-        'command = "/c"',
-        'args = ["/a"]',
-        'enabled = false',
-        '',
-        '[mcp_servers.apiyi.env]',
-        '',
-      ].join('\n'),
-      'utf8',
-    )
-    const first = await seedApiyiMcpEntry({
-      personalConfigToml: configPath,
-      entryPath: FAKE_ENTRY,
-      command: FAKE_NODE,
-      // Healthy transport (fake fixture paths) — pin the stale probe off.
-      fileExists: () => true,
-    })
-    expect(first).toBe('backfilled')
-
-    const second = await seedApiyiMcpEntry({
-      personalConfigToml: configPath,
-      entryPath: FAKE_ENTRY,
-      command: FAKE_NODE,
-      fileExists: () => true,
-    })
-    expect(second).toBe('skipped')
-  })
-
-  it('survives malformed existing TOML by treating it as empty (logs warning)', async () => {
-    await fs.writeFile(configPath, 'this is not = valid [[toml', 'utf8')
-
     const action = await seedApiyiMcpEntry({
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
       command: FAKE_NODE,
     })
     expect(action).toBe('seeded')
-    const parsed = parseToml(await fs.readFile(configPath, 'utf8')) as Record<
-      string,
-      unknown
-    >
-    expect(
-      (parsed.mcp_servers as Record<string, unknown>).apiyi,
-    ).toBeDefined()
-  })
-})
 
-describe('seedApiyiMcpEntry — stale transport self-heal', () => {
-  it('repairs an entry whose command path no longer exists on disk, preserving user env', async () => {
+    const parsed = parseToml(await fs.readFile(configPath, 'utf8')) as Record<string, unknown>
+    expect(parsed.some_top_level).toBe('value')
+    const servers = parsed.mcp_servers as Record<string, unknown>
+    expect(servers.existing).toEqual({ command: '/bin/foo', args: ['x'], enabled: true })
+    expect((servers.apiyi as ApiyiEntryShape).enabled).toBe(true)
+  })
+
+  it('OVERWRITES a stale disabled entry (old seeds wrote enabled=false; users stayed dead forever)', async () => {
+    await fs.writeFile(
+      configPath,
+      [
+        '[mcp_servers.apiyi]',
+        'command = "D:\\\\old-install\\\\CATIMATION.exe"',
+        'args = ["D:\\\\old-install\\\\resources\\\\apiyi-mcp\\\\dist\\\\index.js"]',
+        'enabled = false',
+        '[mcp_servers.apiyi.env]',
+        'APIYI_API_KEY = ""',
+        'ELECTRON_RUN_AS_NODE = "1"',
+        'APIYI_BASE_URL = "https://api.apiyi.com"',
+        'GEMINI_MODEL = "gemini-3.5-flash"',
+        'GEMINI_MAX_OUTPUT_TOKENS = "65536"',
+        'GEMINI_TIMEOUT = "1800000"',
+      ].join('\n'),
+      'utf8',
+    )
+    const action = await seedApiyiMcpEntry({
+      personalConfigToml: configPath,
+      entryPath: FAKE_ENTRY,
+      command: FAKE_NODE,
+    })
+    expect(action).toBe('repaired')
+
+    const apiyi = await readApiyi()
+    expect(apiyi.command).toBe(FAKE_NODE)
+    expect(apiyi.args).toEqual([FAKE_ENTRY])
+    expect(apiyi.enabled).toBe(true) // force ON
+    expect(apiyi.env.APIYI_API_KEY).toBeUndefined() // empty key slot wiped
+    expect(apiyi.env.ELECTRON_RUN_AS_NODE).toBeUndefined() // node path: marker dropped
+  })
+
+  it('OVERWRITES user hand-edits including a hand-typed key (设置 is the only key source)', async () => {
+    await fs.writeFile(
+      configPath,
+      [
+        '[mcp_servers.apiyi]',
+        'command = "/my/custom/node"',
+        `args = ["${FAKE_ENTRY}"]`,
+        'enabled = true',
+        'tool_timeout_sec = 99',
+        '[mcp_servers.apiyi.env]',
+        'APIYI_API_KEY = "sk-hand-typed"',
+        'GEMINI_MODEL = "gemini-3.1-pro-preview-thinking"',
+        'APIYI_BASE_URL = "https://api.bltcy.ai"',
+      ].join('\n'),
+      'utf8',
+    )
+    const action = await seedApiyiMcpEntry({
+      personalConfigToml: configPath,
+      entryPath: FAKE_ENTRY,
+      command: FAKE_NODE,
+    })
+    expect(action).toBe('repaired')
+
+    const apiyi = await readApiyi()
+    expect(apiyi.command).toBe(FAKE_NODE) // custom command overwritten
+    expect(apiyi.env.APIYI_API_KEY).toBeUndefined() // hand-typed key wiped
+    expect(apiyi.env.GEMINI_MODEL).toBe('gemini-3.5-flash') // model reset to default
+    expect(apiyi.env.APIYI_BASE_URL).toBe('https://api.apiyi.com') // bad base URL fixed
+    expect((apiyi as unknown as Record<string, unknown>).tool_timeout_sec).toBeUndefined() // extra field dropped
+  })
+
+  it('repairs the v4.3.16 "missing transport" regression shape (no command, no url)', async () => {
+    await fs.writeFile(
+      configPath,
+      [
+        '[mcp_servers.apiyi]',
+        'args = ["D:\\\\old\\\\path.js"]',
+        'enabled = true',
+        '[mcp_servers.apiyi.env]',
+        'APIYI_BASE_URL = "https://api.apiyi.com"',
+      ].join('\n'),
+      'utf8',
+    )
+    const action = await seedApiyiMcpEntry({
+      personalConfigToml: configPath,
+      entryPath: FAKE_ENTRY,
+      command: FAKE_NODE,
+    })
+    expect(action).toBe('repaired')
+    const apiyi = await readApiyi()
+    expect(apiyi.command).toBe(FAKE_NODE)
+    expect(apiyi.args).toEqual([FAKE_ENTRY])
+  })
+
+  it('converges a stale Electron-as-Node entry to the freshly resolved node form', async () => {
     await fs.writeFile(
       configPath,
       [
@@ -481,7 +195,6 @@ describe('seedApiyiMcpEntry — stale transport self-heal', () => {
         'args = ["/old/uninstalled/resources/apiyi-mcp/dist/index.js"]',
         'enabled = true',
         '[mcp_servers.apiyi.env]',
-        'APIYI_API_KEY = "sk-user-keep"',
         'ELECTRON_RUN_AS_NODE = "1"',
       ].join('\n'),
       'utf8',
@@ -490,230 +203,76 @@ describe('seedApiyiMcpEntry — stale transport self-heal', () => {
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
       command: FAKE_NODE,
-      fileExists: (p) => !p.startsWith('/old/uninstalled'),
     })
     expect(action).toBe('repaired')
-    const parsed = parseToml(await fs.readFile(configPath, 'utf8')) as Record<string, unknown>
-    const apiyi = (parsed.mcp_servers as Record<string, unknown>).apiyi as {
-      command: string; args: string[]; enabled: boolean; env: Record<string, string>
-    }
+    const apiyi = await readApiyi()
     expect(apiyi.command).toBe(FAKE_NODE)
-    expect(apiyi.args).toEqual([FAKE_ENTRY])
-    expect(apiyi.enabled).toBe(true)
-    expect(apiyi.env.APIYI_API_KEY).toBe('sk-user-keep')
     expect(apiyi.env.ELECTRON_RUN_AS_NODE).toBeUndefined()
-    expect(apiyi.env.APIYI_BASE_URL).toBe('https://api.apiyi.com')
   })
 
-  it('repairs when args[0] entry path is stale even if command still exists', async () => {
-    await fs.writeFile(
-      configPath,
-      [
-        '[mcp_servers.apiyi]',
-        `command = "${FAKE_NODE}"`,
-        'args = ["/moved/away/dist/index.js"]',
-      ].join('\n'),
-      'utf8',
-    )
-    const action = await seedApiyiMcpEntry({
+  it('skips when the entry is already exactly canonical (steady state, idempotent)', async () => {
+    const first = await seedApiyiMcpEntry({
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
       command: FAKE_NODE,
-      fileExists: (p) => p !== '/moved/away/dist/index.js',
     })
-    expect(action).toBe('repaired')
-    const parsed = parseToml(await fs.readFile(configPath, 'utf8')) as Record<string, unknown>
-    const apiyi = (parsed.mcp_servers as Record<string, unknown>).apiyi as { args: string[] }
-    expect(apiyi.args).toEqual([FAKE_ENTRY])
-  })
+    expect(first).toBe('seeded')
+    const before = await fs.readFile(configPath, 'utf8')
 
-  it('does NOT touch a healthy custom command that differs from the resolved one', async () => {
-    await fs.writeFile(
-      configPath,
-      [
-        '[mcp_servers.apiyi]',
-        'command = "/my/custom/node"',
-        `args = ["${FAKE_ENTRY}"]`,
-        '[mcp_servers.apiyi.env]',
-        'APIYI_BASE_URL = "https://api.apiyi.com"',
-        'GEMINI_MODEL = "gemini-3.5-flash"',
-        'GEMINI_MAX_OUTPUT_TOKENS = "65536"',
-        'GEMINI_TIMEOUT = "1800000"',
-      ].join('\n'),
-      'utf8',
-    )
-    const action = await seedApiyiMcpEntry({
+    const second = await seedApiyiMcpEntry({
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
       command: FAKE_NODE,
-      fileExists: () => true,
     })
-    expect(action).toBe('skipped')
+    expect(second).toBe('skipped')
+    expect(await fs.readFile(configPath, 'utf8')).toBe(before) // no rewrite
   })
 
-  it('does NOT probe non-absolute commands like bare "node" (PATH-resolved, existsSync cannot judge)', async () => {
-    await fs.writeFile(
-      configPath,
-      [
-        '[mcp_servers.apiyi]',
-        'command = "node"',
-        `args = ["${FAKE_ENTRY}"]`,
-        '[mcp_servers.apiyi.env]',
-        'APIYI_BASE_URL = "https://api.apiyi.com"',
-        'GEMINI_MODEL = "gemini-3.5-flash"',
-        'GEMINI_MAX_OUTPUT_TOKENS = "65536"',
-        'GEMINI_TIMEOUT = "1800000"',
-      ].join('\n'),
-      'utf8',
-    )
-    const action = await seedApiyiMcpEntry({
-      personalConfigToml: configPath,
-      entryPath: FAKE_ENTRY,
-      command: FAKE_NODE,
-      // Entry path exists; bare "node" must never be probed (not absolute).
-      fileExists: (p) => p === FAKE_ENTRY,
-    })
-    expect(action).toBe('skipped')
-  })
-})
-
-describe('seedApiyiMcpEntry — electron→node upgrade', () => {
-  it('upgrades an Electron-as-Node entry to system node once node is available', async () => {
-    await fs.writeFile(
-      configPath,
-      [
-        '[mcp_servers.apiyi]',
-        'command = "/app/CATIMATION.exe"',
-        `args = ["${FAKE_ENTRY}"]`,
-        'enabled = true',
-        '[mcp_servers.apiyi.env]',
-        'ELECTRON_RUN_AS_NODE = "1"',
-        'APIYI_API_KEY = "sk-user-keep"',
-        'APIYI_BASE_URL = "https://api.apiyi.com"',
-        'GEMINI_MODEL = "gemini-3.5-flash"',
-        'GEMINI_MAX_OUTPUT_TOKENS = "65536"',
-        'GEMINI_TIMEOUT = "1800000"',
-      ].join('\n'),
-      'utf8',
-    )
-    const action = await seedApiyiMcpEntry({
-      personalConfigToml: configPath,
-      entryPath: FAKE_ENTRY,
-      command: FAKE_NODE, // resolver found system node → extraEnv omitted
-      electronExecPath: '/app/CATIMATION.exe', // identifies the seeded fallback form
-      fileExists: () => true, // old electron.exe still exists — upgrade anyway
-    })
-    expect(action).toBe('repaired')
-    const parsed = parseToml(await fs.readFile(configPath, 'utf8')) as Record<string, unknown>
-    const apiyi = (parsed.mcp_servers as Record<string, unknown>).apiyi as {
-      command: string
-      args: string[]
-      env: Record<string, string>
-    }
-    expect(apiyi.command).toBe(FAKE_NODE)
-    expect(apiyi.args).toEqual([FAKE_ENTRY])
-    expect(apiyi.env.ELECTRON_RUN_AS_NODE).toBeUndefined() // marker dropped
-    expect(apiyi.env.APIYI_API_KEY).toBe('sk-user-keep') // user env preserved
-  })
-
-  it('leaves a healthy Electron-as-Node entry alone when node is still absent', async () => {
-    await fs.writeFile(
-      configPath,
-      [
-        '[mcp_servers.apiyi]',
-        'command = "/app/CATIMATION.exe"',
-        `args = ["${FAKE_ENTRY}"]`,
-        '[mcp_servers.apiyi.env]',
-        'ELECTRON_RUN_AS_NODE = "1"',
-        'APIYI_BASE_URL = "https://api.apiyi.com"',
-        'GEMINI_MODEL = "gemini-3.5-flash"',
-        'GEMINI_MAX_OUTPUT_TOKENS = "65536"',
-        'GEMINI_TIMEOUT = "1800000"',
-      ].join('\n'),
-      'utf8',
-    )
-    const action = await seedApiyiMcpEntry({
+  it('skips the canonical Electron-fallback form too (extraEnv considered)', async () => {
+    const first = await seedApiyiMcpEntry({
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
       command: '/app/CATIMATION.exe',
-      extraEnv: { ELECTRON_RUN_AS_NODE: '1' }, // resolver still on the fallback
-      electronExecPath: '/app/CATIMATION.exe',
-      fileExists: () => true,
+      extraEnv: { ELECTRON_RUN_AS_NODE: '1' },
     })
-    expect(action).toBe('skipped')
+    expect(first).toBe('seeded')
+    const second = await seedApiyiMcpEntry({
+      personalConfigToml: configPath,
+      entryPath: FAKE_ENTRY,
+      command: '/app/CATIMATION.exe',
+      extraEnv: { ELECTRON_RUN_AS_NODE: '1' },
+    })
+    expect(second).toBe('skipped')
   })
 
-  it('never upgrades a user-customized command that merely carries the marker env', async () => {
-    await fs.writeFile(
-      configPath,
-      [
-        '[mcp_servers.apiyi]',
-        'command = "/my/own/electron-wrapper"',
-        `args = ["${FAKE_ENTRY}"]`,
-        '[mcp_servers.apiyi.env]',
-        'ELECTRON_RUN_AS_NODE = "1"',
-        'APIYI_BASE_URL = "https://api.apiyi.com"',
-        'GEMINI_MODEL = "gemini-3.5-flash"',
-        'GEMINI_MAX_OUTPUT_TOKENS = "65536"',
-        'GEMINI_TIMEOUT = "1800000"',
-      ].join('\n'),
-      'utf8',
-    )
+  it('re-converges when the resolved command changes (e.g. node installed later)', async () => {
+    await seedApiyiMcpEntry({
+      personalConfigToml: configPath,
+      entryPath: FAKE_ENTRY,
+      command: '/app/CATIMATION.exe',
+      extraEnv: { ELECTRON_RUN_AS_NODE: '1' },
+    })
     const action = await seedApiyiMcpEntry({
       personalConfigToml: configPath,
       entryPath: FAKE_ENTRY,
-      command: FAKE_NODE, // node available…
-      electronExecPath: '/app/CATIMATION.exe', // …but command is NOT our exe
-      fileExists: () => true,
+      command: FAKE_NODE,
     })
-    expect(action).toBe('skipped') // sacred user config
-  })
-})
-
-describe('readApiyiConfigKey', () => {
-  it("returns '' when the config file does not exist", async () => {
-    expect(await readApiyiConfigKey(path.join(tmpDir, 'nope.toml'))).toBe('')
+    expect(action).toBe('repaired')
+    const apiyi = await readApiyi()
+    expect(apiyi.command).toBe(FAKE_NODE)
+    expect(apiyi.env.ELECTRON_RUN_AS_NODE).toBeUndefined()
   })
 
-  it("returns '' for an empty file", async () => {
-    await fs.writeFile(configPath, '   \n', 'utf8')
-    expect(await readApiyiConfigKey(configPath)).toBe('')
-  })
-
-  it("returns '' when there is no apiyi entry", async () => {
-    await fs.writeFile(configPath, '[mcp_servers.other]\ncommand = "node"\n', 'utf8')
-    expect(await readApiyiConfigKey(configPath)).toBe('')
-  })
-
-  it("returns '' when apiyi has no env.APIYI_API_KEY", async () => {
-    await fs.writeFile(
-      configPath,
-      '[mcp_servers.apiyi]\ncommand = "node"\n[mcp_servers.apiyi.env]\nGEMINI_MODEL = "gemini-3.5-flash"\n',
-      'utf8',
-    )
-    expect(await readApiyiConfigKey(configPath)).toBe('')
-  })
-
-  it("returns '' for an empty / whitespace key", async () => {
-    await fs.writeFile(
-      configPath,
-      '[mcp_servers.apiyi]\ncommand = "node"\n[mcp_servers.apiyi.env]\nAPIYI_API_KEY = "   "\n',
-      'utf8',
-    )
-    expect(await readApiyiConfigKey(configPath)).toBe('')
-  })
-
-  it('returns the trimmed key when set directly in config.toml (hand-edited path)', async () => {
-    await fs.writeFile(
-      configPath,
-      '[mcp_servers.apiyi]\ncommand = "node"\n[mcp_servers.apiyi.env]\nAPIYI_API_KEY = "  sk-hand-typed  "\n',
-      'utf8',
-    )
-    expect(await readApiyiConfigKey(configPath)).toBe('sk-hand-typed')
-  })
-
-  it("returns '' (never throws) on malformed TOML", async () => {
+  it('treats malformed existing TOML as empty and rewrites a clean canonical entry', async () => {
     await fs.writeFile(configPath, 'this is = not [valid toml', 'utf8')
-    expect(await readApiyiConfigKey(configPath)).toBe('')
+    const action = await seedApiyiMcpEntry({
+      personalConfigToml: configPath,
+      entryPath: FAKE_ENTRY,
+      command: FAKE_NODE,
+    })
+    expect(action).toBe('seeded')
+    const apiyi = await readApiyi()
+    expect(apiyi.command).toBe(FAKE_NODE)
+    expect(apiyi.enabled).toBe(true)
   })
 })

@@ -7,7 +7,6 @@ import { buildCodexLaunchArgs, resolveCodexSessionConfig, type CatimationMcpLaun
 import { mergeCodexConfigs } from './codexConfigMerge'
 import { appendAuditLog, atomicWriteFile } from './codexConfigStore'
 import { CodexProtocolClient, mapServerNotification } from './CodexProtocolClient'
-import { readApiyiConfigKey } from './apiyiMcpSeed'
 import { createAgentLogStream } from './logger'
 import { getCodexResourceRoot, resolveBundledFfmpegDir, resolveCodexBinary } from './paths'
 import { runCodexDoctor, type DoctorReport } from './codexDoctor'
@@ -368,13 +367,9 @@ export class CodexLocalBackend implements IAgentBackend {
       ffmpegDir ? [ffmpegDir] : undefined,
     )
     const spawnFactory = this.options.spawnFactory ?? spawn
-    // Resolve the SECOND apiyi key source (hand-edited `config.toml`) so the
-    // no-key launch guard can tell "keyless" (keep dormant) from "key in
-    // config" (run normally) and never disable an apiyi the user configured by
-    // hand — the empty-tools card hint explicitly instructs that path. Read is
-    // best-effort (returns '' on any failure) and must never block spawn.
-    const apiyiHasConfigKey =
-      (await readApiyiConfigKey(path.join(this.codexHome, 'config.toml'))).length > 0
+    // apiyi key policy is FORCE-设置-only: the boot seed wipes any hand-typed
+    // config.toml key, so 设置 → API易 (getApiyiKey) is the single source and
+    // no config.toml read is needed here.
     const launchArgs = buildCodexLaunchArgs({
       listenUrl,
       provider: this.currentProvider,
@@ -382,7 +377,6 @@ export class CodexLocalBackend implements IAgentBackend {
       catimationMcp: this.options.catimationMcp,
       extraProviders: understand ? [understand.provider] : undefined,
       apiyiKey: this.options.getApiyiKey?.(),
-      apiyiHasConfigKey,
       cinematographyKbKey: this.options.getCinematographyKbKey?.(),
     })
     // DIAGNOSTIC: dump the exact codex spawn command so we can confirm which

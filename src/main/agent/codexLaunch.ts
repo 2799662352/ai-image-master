@@ -133,27 +133,16 @@ export interface CodexLaunchOptions {
    * lockstep with 设置, is NEVER written to `~/.codex/config.toml`, and so the
    * MCP JSON editor never shows it or asks the user to re-paste it.
    *
-   * The boot seed (`seedApiyiMcpEntry`) supplies command/args/base_url/model/
-   * timeouts for the entry; this `-c` only overlays the leaf secret (dotted
-   * `-c` merges, so the seeded siblings survive). We deliberately do NOT inject
-   * `GEMINI_MODEL` here so a user's manual editor switch to
-   * `gemini-3.1-pro-preview-thinking` (deep reasoning) is respected — the
-   * sanctioned default (`gemini-3.5-flash`) lives in the seeded config instead.
+   * The boot seed (`seedApiyiMcpEntry`) force-writes the canonical entry
+   * (command/args/base_url/model/timeouts, `enabled = true`) on every boot;
+   * this `-c` only overlays the leaf secret (dotted `-c` merges, so the
+   * seeded siblings survive).
+   *
+   * This is the ONLY supported key source. A key hand-typed into the MCP JSON
+   * editor does not survive the next boot (the force-seed wipes it), so the
+   * launch policy no longer consults config.toml for a key.
    */
   apiyiKey?: string
-  /**
-   * True when `~/.codex/config.toml` already carries a non-empty
-   * `mcp_servers.apiyi.env.APIYI_API_KEY` — i.e. the user hand-edited the MCP
-   * JSON editor (the SECOND supported key source besides {@link apiyiKey} /
-   * 设置 → API易, and the one the empty-tools card hint instructs). The backend
-   * resolves it at spawn via `readApiyiConfigKey`.
-   *
-   * Lets the no-key launch guard tell "keyless" (must stay dormant) apart from
-   * "key lives in config" (must run normally), so we never disable an apiyi the
-   * user configured by hand. The secret itself is NOT forwarded here (codex
-   * reads it straight from config.toml) — only the boolean fact that it exists.
-   */
-  apiyiHasConfigKey?: boolean
   /**
    * The user's cinematography-kb-mcp key (设置 → 运镜知识库 → the Alibaba Bailian
    * `DASHSCOPE_API_KEY`). When present we overlay it onto the seeded
@@ -515,19 +504,18 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     args.push('-c', 'skills.config=[{ name = "imagegen", enabled = false }]')
   }
 
-  // apiyi-mcp launch policy. Three mutually-exclusive outcomes driven by where
-  // (if anywhere) the user's APIYI_API_KEY lives:
+  // apiyi-mcp launch policy — FORCE mode. The 设置 → API易 key is the ONLY
+  // key source (the boot force-seed wipes any hand-typed config.toml key),
+  // giving two mutually-exclusive outcomes:
   //
   //   A) key in 设置 → API易 (localStorage → `apiyiKey`): overlay the secret at
   //      runtime via a dotted `-c` (mirrors the catimation pattern) — never
-  //      touches config.toml, so the JSON editor entry stays key-less. + run
-  //      the reliability timeouts below.
-  //   B) key hand-typed into config.toml (`apiyiHasConfigKey`, resolved by the
-  //      backend via `readApiyiConfigKey`): codex reads the secret straight off
-  //      disk, so we do NOT re-inject it via `-c` (that would leak it onto the
-  //      spawn command line / diagnostic log). We DO still apply the timeouts.
-  //   C) NO key anywhere: keep apiyi DORMANT at launch (`enabled=false`). A
-  //      keyless apiyi-mcp registers its tool handlers then dies at
+  //      touches config.toml. ALSO force `enabled=true` so a stale
+  //      `enabled = false` on disk (old seeds wrote that; users toggled cards
+  //      off while debugging) can never keep a keyed apiyi dead. + the
+  //      reliability timeouts below.
+  //   C) NO key: keep apiyi DORMANT at launch (`enabled=false`). A keyless
+  //      apiyi-mcp registers its tool handlers then dies at
   //      `initializeGenAI()`, and codex's `run_turn` awaits `list_all_tools()`
   //      where ONE stalled server gates the whole map until startup_timeout —
   //      so a keyless+enabled apiyi would hang the agent's FIRST TURN for the
@@ -535,22 +523,22 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
   //      optional servers" is still only a proposal). The boot seed keeps
   //      enabled:true so the card shows apiyi ready-to-go; this `-c` override
   //      keeps it from actually spawning until a key exists. The moment the
-  //      user adds a key (设置 or JSON editor) + restarts, A/B re-enable it.
+  //      user adds a key in 设置 + restarts, (A) enables it.
   //
-  // The seed (`seedApiyiMcpEntry`) guarantees the entry's transport
-  // (`command`/`args`) at boot, so every `-c` below only sets a leaf onto an
-  // existing entry — we never synthesize a command-less `[mcp_servers.apiyi]`
-  // that codex would reject as "invalid transport".
+  // The force-seed (`seedApiyiMcpEntry`) guarantees the entry's canonical
+  // transport (`command`/`args`) at boot, so every `-c` below only sets a leaf
+  // onto an existing entry — we never synthesize a command-less
+  // `[mcp_servers.apiyi]` that codex would reject as "invalid transport".
   const apiyiKey = options?.apiyiKey?.trim()
-  const apiyiHasConfigKey = options?.apiyiHasConfigKey === true
-  const apiyiHasAnyKey = !!apiyiKey || apiyiHasConfigKey
   if (apiyiKey) {
     // (A) Overlay the leaf secret; dotted `-c` merges over the boot-seeded env
-    // (base_url / model / other timeouts survive).
-    args.push('-c', `mcp_servers.apiyi.env.APIYI_API_KEY=${quote(apiyiKey)}`)
-  }
-  if (apiyiHasAnyKey) {
-    // (A+B) Reliability timeouts — the OTHER half of "why catimation always
+    // (base_url / model / other timeouts survive). Force-enable regardless of
+    // what the on-disk entry says — key present means apiyi MUST run.
+    args.push(
+      '-c', `mcp_servers.apiyi.env.APIYI_API_KEY=${quote(apiyiKey)}`,
+      '-c', 'mcp_servers.apiyi.enabled=true',
+    )
+    // (A) Reliability timeouts — the OTHER half of "why catimation always
     // returns tools and apiyi sometimes doesn't". apiyi-mcp is a real external
     // `node index.js` process (not catimation's in-process bridge), so:
     //   • startup_timeout_sec=60 — a cold node boot + MCP `initialize`
@@ -574,7 +562,7 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
       '-c', 'mcp_servers.apiyi.tool_timeout_sec=2000',
     )
   } else {
-    // (C) No key from EITHER source → dormant, see rationale above.
+    // (C) No key in 设置 → dormant, see rationale above.
     args.push('-c', 'mcp_servers.apiyi.enabled=false')
   }
 

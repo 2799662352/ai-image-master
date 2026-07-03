@@ -1238,15 +1238,14 @@ app.whenReady().then(async () => {
     // in extraEnv) and forward both fields with their correct names.
     // -------------------------------------------------------------------
     const apiyiCmd = await resolveApiyiCommand(process.execPath)
+    // FORCE convergence: the apiyi entry is app-managed — every boot rewrites
+    // it to the canonical form (fresh command/args, env scaffold, enabled=true)
+    // regardless of user edits. See seedApiyiMcpEntry for the rationale.
     const apiyiAction = await seedApiyiMcpEntry({
       personalConfigToml: apiyiPaths.personalConfigToml,
       entryPath: apiyiEntry,
       command: apiyiCmd.command,
       extraEnv: apiyiCmd.extraEnv,
-      // Enables the electron→node upgrade: an entry we previously seeded in
-      // the Electron-as-Node fallback form is converged to `command = node`
-      // as soon as a system node appears on PATH (see seedApiyiMcpEntry).
-      electronExecPath: process.execPath,
     })
     console.log(`[apiyi-mcp] boot convergence: ${apiyiAction} (command=${apiyiCmd.command})`)
   } catch (err) {

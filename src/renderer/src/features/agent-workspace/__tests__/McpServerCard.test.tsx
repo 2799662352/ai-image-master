@@ -359,11 +359,14 @@ describe('McpServerCard', () => {
         onLogin={vi.fn()}
       />,
     )
-    // Post-refactor: hint must point to the ✏️ JSON editor (not the deleted
-    // "设置 → 视频理解 API Key" path) and explicitly flag the whitespace-key
-    // trap (apiyi-mcp accepts " " as truthy, then Google GenAI rejects it).
-    expect(screen.getByText(/env\.APIYI_API_KEY/)).toBeTruthy()
+    // FORCE-设置-only key policy: the hint must point to 设置 → API易 (the
+    // single supported key source), warn that JSON hand-edits do not survive
+    // a restart (the boot force-seed rewrites the entry), and still flag the
+    // whitespace-key trap (apiyi-mcp accepts " " as truthy, then Google GenAI
+    // rejects it). It must NOT instruct editing env.APIYI_API_KEY anymore.
+    expect(screen.getByText(/设置 → API易/)).toBeTruthy()
     expect(screen.getByText(/不能是空格/)).toBeTruthy()
+    expect(screen.queryByText(/env\.APIYI_API_KEY/)).toBeNull()
     expect(screen.queryByText(/视频理解 API Key/)).toBeNull()
     expect(screen.queryByText(/Docker Desktop/)).toBeNull()
   })

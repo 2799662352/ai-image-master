@@ -168,11 +168,12 @@ function formatCommandLine(server: McpServerCardData): { short: string; full: st
  */
 function getEmptyToolsHint(server: McpServerCardData): string {
   // App-bundled apiyi-mcp-server: vendored into resources/apiyi-mcp/,
-  // launched as `<electron.exe-as-node> .../dist/index.js`. The seed already
-  // pre-fills APIYI_BASE_URL / GEMINI_MODEL / ELECTRON_RUN_AS_NODE etc., so
-  // the only field the user has to fill is APIYI_API_KEY.
+  // launched as `<electron.exe-as-node> .../dist/index.js`. The entry is
+  // app-managed (force-seeded every boot: command/args/env scaffold all
+  // pre-filled, enabled=true, hand-edits do NOT survive a restart). The ONLY
+  // key source is 设置 → API易 — never the JSON editor.
   if (server.isAppBundled && server.name === 'apiyi') {
-    return '已连接但未返回工具。请点击右上 ✏️ 编辑，把 env.APIYI_API_KEY 改成你的 api.apiyi.com 密钥（sk- 开头，不能是空格），保存后点上方「刷新」。其它字段已预填默认值无需改动。'
+    return '已连接但未返回工具。请到「设置 → API易」填入你的 api.apiyi.com 密钥（sk- 开头，不能是空格）并保存，然后重启应用。此条目由应用托管，JSON 手动改动（含密钥）重启后会被恢复为默认值。'
   }
   // Anything routed through docker (gateway or otherwise) — the original
   // hint is correct here.

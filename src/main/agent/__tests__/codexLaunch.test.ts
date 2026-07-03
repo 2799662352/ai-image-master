@@ -434,15 +434,25 @@ describe('buildCodexLaunchArgs', () => {
   })
 
   // apiyiKey is the catimation-style runtime secret injection: the single key
-  // the user saved in 设置 → API易 is overlaid onto the boot-seeded
-  // [mcp_servers.apiyi].env table via `-c` at spawn, NEVER written to
-  // config.toml. We only overlay the KEY (not the model) so a user's manual
-  // editor switch to a thinking model is respected.
+  // the user saved in 设置 → API易 (the ONLY supported key source — the boot
+  // force-seed wipes any hand-typed config.toml key) is overlaid onto the
+  // seeded [mcp_servers.apiyi].env table via `-c` at spawn, NEVER written to
+  // config.toml.
   it('overlays the apiyi-mcp APIYI_API_KEY via -c when apiyiKey is supplied', () => {
     const args = buildCodexLaunchArgs({ apiyiKey: 'sk-apiyi-runtime' })
     expect(args).toContain('mcp_servers.apiyi.env.APIYI_API_KEY="sk-apiyi-runtime"')
-    // The model must NOT be force-injected (the seed/editor owns it).
+    // The model is owned by the boot seed's canonical env (gemini-3.5-flash);
+    // the runtime overlay never injects it.
     expect(args.some((a) => a.startsWith('mcp_servers.apiyi.env.GEMINI_MODEL'))).toBe(false)
+  })
+
+  // FORCE mode: a key in 设置 must force-enable apiyi at runtime, overriding
+  // any stale `enabled = false` on disk (old seeds wrote that; users toggled
+  // the card off while debugging and stayed dead forever).
+  it('force-enables apiyi via -c when apiyiKey is supplied', () => {
+    const args = buildCodexLaunchArgs({ apiyiKey: 'sk-apiyi-runtime' })
+    expect(args).toContain('mcp_servers.apiyi.enabled=true')
+    expect(args).not.toContain('mcp_servers.apiyi.enabled=false')
   })
 
   // Reliability timeouts ride alongside the key (guarded so the seeded
@@ -465,8 +475,7 @@ describe('buildCodexLaunchArgs', () => {
     )
   })
 
-  // No key from EITHER source (设置/localStorage `apiyiKey` nor a hand-edited
-  // config.toml `apiyiHasConfigKey`) → keep apiyi DORMANT at launch so a
+  // No key in 设置 (the only key source) → keep apiyi DORMANT at launch so a
   // keyless apiyi-mcp can't hang the agent's first turn (openai/codex#19556 —
   // run_turn awaits list_all_tools, one stalled server gates the whole map up
   // to startup_timeout). We emit EXACTLY `enabled=false` and nothing else.
@@ -485,19 +494,6 @@ describe('buildCodexLaunchArgs', () => {
     expect(args.some((a) => a.startsWith('mcp_servers.apiyi.env.'))).toBe(false)
     expect(args.some((a) => a.startsWith('mcp_servers.apiyi.startup_timeout_sec'))).toBe(false)
     expect(args).toContain('mcp_servers.apiyi.enabled=false')
-  })
-
-  // SECOND key source: the user hand-typed APIYI_API_KEY into config.toml (the
-  // empty-tools card hint instructs this). `apiyiHasConfigKey=true` means codex
-  // reads the secret straight off disk — we must NOT disable apiyi, and must NOT
-  // re-inject the secret via `-c` (that would leak it to the spawn log), but we
-  // DO still apply the reliability timeouts.
-  it('runs apiyi (timeouts, no disable, no -c secret) when key lives in config.toml', () => {
-    const args = buildCodexLaunchArgs({ apiyiHasConfigKey: true })
-    expect(args).not.toContain('mcp_servers.apiyi.enabled=false')
-    expect(args.some((a) => a.startsWith('mcp_servers.apiyi.env.APIYI_API_KEY'))).toBe(false)
-    expect(args).toContain('mcp_servers.apiyi.startup_timeout_sec=60')
-    expect(args).toContain('mcp_servers.apiyi.tool_timeout_sec=2000')
   })
 
   // localStorage key present → inject the secret via `-c`, apply timeouts, and
