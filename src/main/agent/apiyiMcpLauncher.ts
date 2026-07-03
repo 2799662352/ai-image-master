@@ -42,9 +42,9 @@ export function getApiyiMcpEntryPath(options: ApiyiMcpPathOptions): string {
  * `-c mcp_servers.apiyi.env.APIYI_API_KEY=...` from the single key the user
  * saved in 设置 → API易 (see `buildCodexLaunchArgs.apiyiKey` /
  * `AgentManager.apiyiMcpKey`). So the user fills ONE key in 设置, the MCP JSON
- * editor never shows or asks for a key, and no secret is left on disk. A user
- * who instead hand-edits the JSON can still add their own `APIYI_API_KEY` there
- * — the backfill below preserves any key they set and never clobbers it.
+ * editor never shows or asks for a key, and no secret is left on disk. This is
+ * the ONLY supported key source: the entry is app-managed and force-seeded
+ * every boot, so a key hand-typed into the JSON editor is wiped at restart.
  *
  * Field rationale:
  *  - `APIYI_BASE_URL` — apiyi-mcp's own baked-in default is `https://api.bltcy.ai`,
@@ -53,9 +53,8 @@ export function getApiyiMcpEntryPath(options: ApiyiMcpPathOptions): string {
  *  - `GEMINI_MODEL` — see "Recommended models" table below. Default (为主) is
  *    `gemini-3.5-flash` — the stable, cheap+fast model the app pins for
  *    apiyi-mcp understanding (incl. 音频理解). 关键:**绝不退回 `gemini-2.x`(2.5)**
- *    — 2.x 已弃用且明显掉点。运行时注入只覆盖 key,**不覆盖 model**,所以用户可经
- *    MCP JSON 编辑器手动切到 `gemini-3.1-pro-preview-thinking`(深度推理)等,
- *    而默认/种子始终是 3.5-flash。
+ *    — 2.x 已弃用且明显掉点。条目由应用托管(每次启动强制收敛),模型固定为
+ *    3.5-flash;JSON 编辑器里的手动改动重启后会被恢复。
  *  - `GEMINI_MAX_OUTPUT_TOKENS` / `GEMINI_TIMEOUT` — long-context / long-running
  *    defaults from the documented Cursor reference, so large video / PDF jobs
  *    don't get truncated at 8K tokens or time-out at 5 minutes.
@@ -70,8 +69,8 @@ export function getApiyiMcpEntryPath(options: ApiyiMcpPathOptions): string {
  *
  * **`gemini-2.x`(2.5 等)已弃用,默认/自动填充绝不使用。**
  *
- * 旧的 `gemini-2.x` 系列已被替换,新种子不会推荐。注意 `seedApiyiMcpEntry` 的
- * backfill 路径会**保留用户已设的任意模型值**(包括 2.5),不强制升级。
+ * 旧的 `gemini-2.x` 系列已被替换。`seedApiyiMcpEntry` 现为强制收敛:每次启动
+ * 把 env 重写为本 scaffold,任何残留的 2.x 模型值都会被自动升级回 3.5-flash。
  *
  * `ELECTRON_RUN_AS_NODE` is deliberately NOT in the scaffold — when `command`
  * is plain `node` (the standard MCP convention used by Claude Desktop, Cursor,
