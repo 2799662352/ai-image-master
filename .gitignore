@@ -86,3 +86,6 @@ face_ref*.jpg
 face_ref*.png
 fbx-diag.mjs
 *.har
+
+# Sakuga-42M dataset (local research data, do not commit)
+videos/Sakuga-42M/
