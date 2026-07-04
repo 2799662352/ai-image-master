@@ -1,0 +1,5 @@
+# Sakuga-42M 云化管线依赖(python -m pip install -r requirements.txt)
+pandas
+pyarrow
+requests
+curl_cffi   # sakugabooru 有 Cloudflare challenge,需 TLS 浏览器伪装才能回源下载

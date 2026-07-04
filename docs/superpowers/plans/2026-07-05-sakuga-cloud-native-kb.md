@@ -578,6 +578,8 @@ if __name__ == "__main__":
 
 - [ ] **Step 6.3: 跑 select + download**(先 50 条冒烟确认 URL 可达,再全量)。
 
+> **实施修正(2026-07-05,已落地)**:sakugabooru 有 Cloudflare challenge,普通 requests 一律 403;实际实现改用 `curl_cffi`(`impersonate='chrome'`)回源。且 manifest 3000 行只对应 ~2500 个源视频 URL(一行 = 源视频内一个场景),实际实现按 URL 去重下载一次,再用应用自带 ffmpeg(`resources/ffmpeg/win32-x64`)按 `scene_start_time/end_time` 重编码精切出每条 clip,切完删源省磁盘。见 `scripts/sakuga/download_clips.py` 实码;6 行冒烟已通过(ok=6 failed=0,ffprobe 校验 h264/时长与场景吻合)。
+
 - [ ] **Step 6.4: 上传 OSS**(`datasets/sakuga-42m/pilot-clips/`,控制台或 ossutil)。
 
 - [ ] **Step 6.5: 建百炼「音视频搜索类知识库」**(控制台,用户已登录):数据源选 OSS 导入 pilot-clips;开启视频帧提取;**剧情解析关**;Meta 信息抽取配 `file_name` 变量(identifier 可回查 manifest)。等待解析完成。
