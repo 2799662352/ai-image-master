@@ -160,6 +160,18 @@ export interface CodexLaunchOptions {
    * key on first use.
    */
   cinematographyKbKey?: string
+  /**
+   * The user's DashVector API key (设置 → 运镜知识库 → Sakuga 数据集检索). The
+   * bundled cinematography-kb-mcp server also hosts `query_sakuga_dataset`,
+   * which searches the Sakuga-42M full-metadata DashVector collection; that
+   * call needs its own key (DashVector keys are separate from DashScope keys).
+   * Overlaid onto the same seeded `[mcp_servers.cinematography_kb].env` table
+   * via `-c mcp_servers.cinematography_kb.env.DASHVECTOR_API_KEY=...` at spawn
+   * — identical runtime-injection model as {@link cinematographyKbKey}: never
+   * persisted to config.toml, keyless launches stay enabled and the tool CALL
+   * reports the missing key.
+   */
+  dashVectorKey?: string
 }
 
 function quote(value: string): string {
@@ -576,6 +588,17 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     args.push(
       '-c',
       `mcp_servers.cinematography_kb.env.DASHSCOPE_API_KEY=${quote(cinematographyKbKey)}`,
+    )
+  }
+
+  // DashVector key overlay for query_sakuga_dataset (same server, own secret —
+  // DashVector clusters use their own API keys, distinct from DashScope). Same
+  // non-gating policy: only overlay when present, never disable.
+  const dashVectorKey = options?.dashVectorKey?.trim()
+  if (dashVectorKey) {
+    args.push(
+      '-c',
+      `mcp_servers.cinematography_kb.env.DASHVECTOR_API_KEY=${quote(dashVectorKey)}`,
     )
   }
 

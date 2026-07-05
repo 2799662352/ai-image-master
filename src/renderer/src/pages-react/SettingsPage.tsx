@@ -9,6 +9,8 @@ import { CodexProviderManager } from './settings/CodexProviderManager'
 import {
   CINEMATOGRAPHY_KB_MCP_PROVIDER_ID,
   DASHSCOPE_API_KEY_STORAGE,
+  DASHVECTOR_MCP_PROVIDER_ID,
+  DASHVECTOR_API_KEY_STORAGE,
 } from '../services/api/ApiService'
 
 function TencentCloudSection() {
@@ -219,19 +221,22 @@ function CinematographyKbSection() {
   const addToast = useToastStore((s) => s.addToast)
   const [input, setInput] = React.useState('')
   const [saved, setSaved] = React.useState('')
+  const [dvInput, setDvInput] = React.useState('')
+  const [dvSaved, setDvSaved] = React.useState('')
 
   React.useEffect(() => {
     try {
       setSaved((localStorage.getItem(DASHSCOPE_API_KEY_STORAGE) ?? '').trim())
+      setDvSaved((localStorage.getItem(DASHVECTOR_API_KEY_STORAGE) ?? '').trim())
     } catch {
       /* ignore */
     }
   }, [])
 
-  const push = (key: string) => {
+  const push = (providerId: string, key: string) => {
     const agent = (window as any).electronAPI?.agent
     if (agent?.setProviderApiKey) {
-      void agent.setProviderApiKey(CINEMATOGRAPHY_KB_MCP_PROVIDER_ID, key)
+      void agent.setProviderApiKey(providerId, key)
     }
   }
 
@@ -241,14 +246,34 @@ function CinematographyKbSection() {
       if (key) {
         localStorage.setItem(DASHSCOPE_API_KEY_STORAGE, key)
         setSaved(key)
-        push(key)
+        push(CINEMATOGRAPHY_KB_MCP_PROVIDER_ID, key)
         setInput('')
         addToast({ message: '运镜知识库 DASHSCOPE Key 已保存', type: 'success' })
       } else {
         localStorage.removeItem(DASHSCOPE_API_KEY_STORAGE)
         setSaved('')
-        push('')
+        push(CINEMATOGRAPHY_KB_MCP_PROVIDER_ID, '')
         addToast({ message: '运镜知识库 DASHSCOPE Key 已清除', type: 'success' })
+      }
+    } catch (e: any) {
+      addToast({ message: `保存失败: ${e?.message ?? String(e)}`, type: 'error' })
+    }
+  }
+
+  const handleSaveDashVector = () => {
+    const key = dvInput.trim()
+    try {
+      if (key) {
+        localStorage.setItem(DASHVECTOR_API_KEY_STORAGE, key)
+        setDvSaved(key)
+        push(DASHVECTOR_MCP_PROVIDER_ID, key)
+        setDvInput('')
+        addToast({ message: 'Sakuga 数据集 DashVector Key 已保存', type: 'success' })
+      } else {
+        localStorage.removeItem(DASHVECTOR_API_KEY_STORAGE)
+        setDvSaved('')
+        push(DASHVECTOR_MCP_PROVIDER_ID, '')
+        addToast({ message: 'Sakuga 数据集 DashVector Key 已清除', type: 'success' })
       }
     } catch (e: any) {
       addToast({ message: `保存失败: ${e?.message ?? String(e)}`, type: 'error' })
@@ -281,6 +306,28 @@ function CinematographyKbSection() {
           className="px-4 py-2 bg-cyberpunk-yellow hover:opacity-90 text-cyberpunk-black font-bold text-sm uppercase tracking-tight transition-all disabled:opacity-50 rounded"
         >
           {input.trim() ? '💾 保存' : '🗑 清除'}
+        </button>
+      </div>
+      <p className="text-xs text-zinc-500">
+        （可选）为 <code className="text-zinc-400">query_sakuga_dataset</code> 工具提供
+        <code className="text-zinc-400"> DashVector API Key</code>，用于检索 Sakuga-42M 真实动画数据集
+        （110 万条手绘作画片段描述 / 技法标签 / 回源链接）。同样仅本地保存、启动时注入。
+        {dvSaved && <span className="text-green-400">（已配置 {maskKey(dvSaved)}）</span>}
+      </p>
+      <div className="flex gap-3">
+        <input
+          type="password"
+          value={dvInput}
+          onChange={(e) => setDvInput(e.target.value)}
+          placeholder={dvSaved ? '已配置，输入新 Key 可覆盖' : '请输入 DashVector API Key（可选）'}
+          className="flex-1 bg-zinc-800 border border-zinc-600 text-white text-sm px-3 py-2 rounded"
+        />
+        <button
+          onClick={handleSaveDashVector}
+          disabled={!dvInput.trim() && !dvSaved}
+          className="px-4 py-2 bg-cyberpunk-yellow hover:opacity-90 text-cyberpunk-black font-bold text-sm uppercase tracking-tight transition-all disabled:opacity-50 rounded"
+        >
+          {dvInput.trim() ? '💾 保存' : '🗑 清除'}
         </button>
       </div>
     </section>

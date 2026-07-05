@@ -153,6 +153,22 @@ export const APIYI_MCP_PROVIDER_ID = 'apiyi-mcp' as const
  */
 export const CINEMATOGRAPHY_KB_PROVIDER_ID = 'cinematography-kb' as const
 
+/**
+ * Dedicated provider-store slot for the DashVector API key used by the bundled
+ * cinematography-kb-mcp server's `query_sakuga_dataset` tool (Sakuga-42M
+ * full-metadata retrieval).
+ *
+ * Mirrors {@link CINEMATOGRAPHY_KB_PROVIDER_ID} exactly: a key-only channel
+ * (NOT a codex model_provider). The renderer pushes the 设置 → 运镜知识库
+ * DashVector key here via `setProviderApiKey('dashvector', …)`, AgentManager
+ * keeps an in-memory copy, and `getDashVectorKey` reads it at spawn so
+ * `buildCodexLaunchArgs` injects it via
+ * `-c mcp_servers.cinematography_kb.env.DASHVECTOR_API_KEY` — runtime-only,
+ * NEVER persisted to `~/.codex/config.toml`. DashVector cluster keys are
+ * separate from DashScope keys, hence the distinct slot.
+ */
+export const DASHVECTOR_PROVIDER_ID = 'dashvector' as const
+
 export const BUILTIN_PROVIDER_PRESETS: readonly ProviderPreset[] = Object.freeze([
   Object.freeze(APIYI_PRESET),
   Object.freeze(RIGHTCODE_PRESET),

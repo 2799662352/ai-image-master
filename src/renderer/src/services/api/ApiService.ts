@@ -75,6 +75,12 @@ export const APIYI_MCP_PROVIDER_ID = 'apiyi-mcp'
  */
 export const CINEMATOGRAPHY_KB_MCP_PROVIDER_ID = 'cinematography-kb'
 export const DASHSCOPE_API_KEY_STORAGE = 'dashscope_api_key'
+/**
+ * DashVector key (Sakuga-42M 数据集检索,query_sakuga_dataset 工具)。与主进程
+ * `DASHVECTOR_PROVIDER_ID`(codexProviders.ts)保持一致。
+ */
+export const DASHVECTOR_MCP_PROVIDER_ID = 'dashvector'
+export const DASHVECTOR_API_KEY_STORAGE = 'dashvector_api_key'
 
 /** 允许显式选用的理解模型白名单(其余值回落到默认 plus)。 */
 export const QWEN_UNDERSTAND_MODELS: readonly string[] = [
@@ -800,6 +806,8 @@ export class ApiService {
     // (localStorage) into `mcp_servers.cinematography_kb.env` so the bundled KB
     // server gets its `DASHSCOPE_API_KEY` at codex spawn.
     queueMicrotask(() => this.syncCinematographyKbKeyToMcp())
+    // And the DashVector key (query_sakuga_dataset in the same bundled server).
+    queueMicrotask(() => this.syncDashVectorKeyToMcp())
   }
 
   /**
@@ -2676,6 +2684,30 @@ export class ApiService {
       }
     } catch {
       // best-effort; never block the app on the cinematography-kb key bridge.
+    }
+  }
+
+  /**
+   * Mirror the 设置 → 运镜知识库 DashVector key (stored in
+   * `localStorage[dashvector_api_key]`) to the main process under the dedicated
+   * `dashvector` provider slot, so the bundled cinematography-kb-mcp server's
+   * `query_sakuga_dataset` tool gets `DASHVECTOR_API_KEY` injected at codex
+   * spawn. Same catimation-style runtime injection + empty-push clearing +
+   * best-effort semantics as {@link syncCinematographyKbKeyToMcp}.
+   */
+  syncDashVectorKeyToMcp(): void {
+    try {
+      const key = (localStorage.getItem(DASHVECTOR_API_KEY_STORAGE) ?? '').trim()
+      const agent = (
+        window as unknown as {
+          electronAPI?: { agent?: { setProviderApiKey?: (id: string, key: string) => Promise<unknown> } }
+        }
+      )?.electronAPI?.agent
+      if (agent?.setProviderApiKey) {
+        void agent.setProviderApiKey(DASHVECTOR_MCP_PROVIDER_ID, key)
+      }
+    } catch {
+      // best-effort; never block the app on the dashvector key bridge.
     }
   }
 

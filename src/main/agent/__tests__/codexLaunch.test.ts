@@ -528,6 +528,25 @@ describe('buildCodexLaunchArgs', () => {
     expect(args.some((a) => a.startsWith('mcp_servers.cinematography_kb.'))).toBe(false)
   })
 
+  // DashVector key (Sakuga-42M raw-dataset retrieval, 设置 → 运镜知识库): same
+  // runtime `-c` overlay onto the cinematography_kb env table as the DASHSCOPE
+  // key above — the query_sakuga_dataset tool lives in the SAME bundled server.
+  it('overlays cinematography_kb DASHVECTOR_API_KEY via -c when dashVectorKey is supplied', () => {
+    const args = buildCodexLaunchArgs({ dashVectorKey: 'sk-dashvector-runtime' })
+    expect(args).toContain(
+      'mcp_servers.cinematography_kb.env.DASHVECTOR_API_KEY="sk-dashvector-runtime"',
+    )
+  })
+
+  it('emits no DASHVECTOR -c when dashVectorKey is absent or whitespace', () => {
+    expect(
+      buildCodexLaunchArgs().some((a) => a.includes('DASHVECTOR_API_KEY')),
+    ).toBe(false)
+    expect(
+      buildCodexLaunchArgs({ dashVectorKey: '  ' }).some((a) => a.includes('DASHVECTOR_API_KEY')),
+    ).toBe(false)
+  })
+
   it('registers extraProviders WITHOUT changing the active model_provider or top-level model', () => {
     const args = buildCodexLaunchArgs({
       provider: { id: 'apiyi', name: 'API Yi', baseUrl: 'https://api.apiyi.com/v1', envKey: 'OPENAI_API_KEY' },

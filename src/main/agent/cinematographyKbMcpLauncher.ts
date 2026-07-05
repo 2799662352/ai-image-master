@@ -38,6 +38,14 @@ export function getCinematographyKbMcpEntryPath(options: CinematographyKbMcpPath
  * `codex` CLI user who hand-types a key into the config env keeps it — the merge
  * only ADDS absent scaffold keys, and there are none). Tools still list without
  * a key; only the tool CALL reports the missing key.
+ *
+ * `query_sakuga_dataset` additionally reads `DASHVECTOR_API_KEY` (runtime `-c`
+ * overlay, same as the DASHSCOPE key — never seeded here) and
+ * `DASHVECTOR_ENDPOINT` (NOT a secret: the app's Sakuga-42M cluster host).
+ * The endpoint will be baked into this scaffold once the DashVector cluster
+ * exists (see docs/superpowers/plans/2026-07-05-sakuga-cloud-native-kb.md,
+ * Task 2) so external codex CLI users get it for free; until then the tool
+ * CALL reports the missing endpoint.
  */
 export const CINEMATOGRAPHY_KB_ENV_SCAFFOLD: Readonly<Record<string, string>> = Object.freeze({})
 

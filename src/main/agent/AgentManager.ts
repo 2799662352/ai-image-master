@@ -14,6 +14,7 @@ import {
   QWEN_UNDERSTAND_PROVIDER_ID,
   APIYI_MCP_PROVIDER_ID,
   CINEMATOGRAPHY_KB_PROVIDER_ID,
+  DASHVECTOR_PROVIDER_ID,
   isBuiltinProviderId,
   resolveActiveProvider,
   type ProviderPreset,
@@ -236,6 +237,16 @@ export class AgentManager {
    * immediately (same behavior as {@link apiyiMcpKey}).
    */
   private cinematographyKbKey = ''
+  /**
+   * DashVector API key for the cinematography-kb-mcp server's
+   * `query_sakuga_dataset` tool. Persisted under apiKeys['dashvector'] (the
+   * renderer mirrors the 设置 → 运镜知识库 DashVector key there via
+   * `setProviderApiKey('dashvector', …)`). Read at spawn by `getDashVectorKey`
+   * and injected via `-c mcp_servers.cinematography_kb.env.DASHVECTOR_API_KEY`
+   * — never written to config.toml. Change-guarded restart, same as
+   * {@link cinematographyKbKey}.
+   */
+  private dashVectorKey = ''
   private summarizer?: ThreadTitleSummarizer
   private sessionConfig: CodexSessionConfig = { ...DEFAULT_CODEX_SESSION_CONFIG }
   private allowedRoots: string[] = [...DEFAULT_CODEX_SESSION_CONFIG.writableRoots]
@@ -310,6 +321,7 @@ export class AgentManager {
     this.miauToken = (persisted.apiKeys[QWEN_UNDERSTAND_PROVIDER_ID] ?? '').trim()
     this.apiyiMcpKey = (persisted.apiKeys[APIYI_MCP_PROVIDER_ID] ?? '').trim()
     this.cinematographyKbKey = (persisted.apiKeys[CINEMATOGRAPHY_KB_PROVIDER_ID] ?? '').trim()
+    this.dashVectorKey = (persisted.apiKeys[DASHVECTOR_PROVIDER_ID] ?? '').trim()
     const activeProvider = resolveActiveProvider(this.activeProviderId, persisted.customProviders)
     this.backend = opts.backend ?? new CodexLocalBackend({
       getApiKey: () => this.codexApiKey,
@@ -322,6 +334,7 @@ export class AgentManager {
           : undefined,
       getApiyiKey: () => this.apiyiMcpKey || undefined,
       getCinematographyKbKey: () => this.cinematographyKbKey || undefined,
+      getDashVectorKey: () => this.dashVectorKey || undefined,
       onApprovalRequest: (request) => this.emitApprovalRequest(request),
       onMcpNotification: (event) => this.handleMcpNotification(event),
       onGoalNotification: (event) => this.handleGoalNotification(event),
@@ -542,6 +555,24 @@ export class AgentManager {
         } catch (err) {
           console.warn(
             '[AgentManager] restartCodex after cinematography-kb key change failed:',
+            err,
+          )
+        }
+      }
+    }
+    // The renderer mirrors the 设置 → 运镜知识库 DashVector key here
+    // (id='dashvector') for query_sakuga_dataset. Same change-guarded restart
+    // rationale as the two blocks above.
+    if (id === DASHVECTOR_PROVIDER_ID) {
+      const next = (key ?? '').trim()
+      const changed = next !== this.dashVectorKey
+      this.dashVectorKey = next
+      if (changed && next && this.backend.restartCodex) {
+        try {
+          await this.backend.restartCodex(this.workspacePaths())
+        } catch (err) {
+          console.warn(
+            '[AgentManager] restartCodex after dashvector key change failed:',
             err,
           )
         }
