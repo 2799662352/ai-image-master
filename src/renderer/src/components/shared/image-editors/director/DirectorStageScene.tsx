@@ -39,6 +39,7 @@ import { buildShaderGrid, type ShaderGrid } from './directorGrid';
 import { buildCrowdLayout, type CrowdOpts } from './directorMannequin';
 import { buildPoseClip, parseClipJson, type PoseKeyframe } from './directorPoseClip';
 import { accumulateBoneWeights, rankBoneIndices } from './directorBonePick';
+import { solveCcd } from './directorIk';
 
 /** 一个保存的机位:相机位姿 + 视点 + FOV(逆向自实站 applyCameraState). */
 export interface CameraSlot {
@@ -377,13 +378,22 @@ interface ActiveAnim {
   name: string;
 }
 
+/** 一条可拖拽 IK 链:links = 被解算旋转的骨(根→尾),effector = 末端骨. */
+interface IkChainRef {
+  links: THREE.Bone[];
+  effector: THREE.Bone;
+}
+
 /** 关节手柄:真实骨骼(非嵌套孪生)每根一个可点小球,单个 InstancedMesh 承载. */
 interface JointHandles {
   mesh: THREE.InstancedMesh;
   bones: THREE.Bone[];
-  radius: number;
+  /** 每关节半径:按骨长(到父骨距离)比例分配,手指小球远小于躯干. */
+  radii: number[];
   /** 当前 hover 的实例下标(-1 = 无). */
   hover: number;
+  /** 实例下标 → IK 链(手/脚末端小球可拖拽整条肢体). */
+  ik: Map<number, IkChainRef>;
 }
 
 interface StageState {
@@ -1861,21 +1871,21 @@ function DirectorStageInner(
     // Live transform readback → right panel
     const _boneDq = new THREE.Quaternion();
     const _boneEul = new THREE.Euler();
+    /** 回传 base⁻¹·current 的欧拉增量给右栏滑杆(gizmo 旋转 / IK 拖拽共用). */
+    const emitBoneDelta = (pb: THREE.Bone) => {
+      const base = (pb.userData?._poseBase ?? pb.userData?._restQuat) as
+        | THREE.Quaternion
+        | undefined;
+      if (!base) return;
+      _boneDq.copy(base).invert().multiply(pb.quaternion);
+      _boneEul.setFromQuaternion(_boneDq, 'XYZ');
+      const r = (rad: number) => Math.round(THREE.MathUtils.radToDeg(rad) * 10) / 10;
+      onBoneRotateRef.current?.(pb.name, [r(_boneEul.x), r(_boneEul.y), r(_boneEul.z)]);
+    };
     transform.addEventListener('objectChange', () => {
       if (state.selected) onSelRef.current?.(selectionInfo(state.selected));
-      // gizmo 旋转骨骼 → 回传 base⁻¹·current 的欧拉增量给右栏滑杆(双向同步)。
-      const pb = state.posingBone;
-      if (pb) {
-        const base = (pb.userData?._poseBase ?? pb.userData?._restQuat) as
-          | THREE.Quaternion
-          | undefined;
-        if (base) {
-          _boneDq.copy(base).invert().multiply(pb.quaternion);
-          _boneEul.setFromQuaternion(_boneDq, 'XYZ');
-          const r = (rad: number) => Math.round(THREE.MathUtils.radToDeg(rad) * 10) / 10;
-          onBoneRotateRef.current?.(pb.name, [r(_boneEul.x), r(_boneEul.y), r(_boneEul.z)]);
-        }
-      }
+      // gizmo 旋转骨骼 → 滑杆双向同步。
+      if (state.posingBone) emitBoneDelta(state.posingBone);
     });
 
     // ── Pointer: click-to-select + 框选(marquee)─────────────────────
@@ -1973,8 +1983,55 @@ function DirectorStageInner(
     };
 
     /**
-     * 骨骼点选模式:优先点关节手柄,其次点选中假人身体做皮肤权重反查。
-     * 返回 true 表示事件已消费(不再走整体模型选择)。
+     * IK 拖拽:按住手/脚末端小球拖动 → 整条肢体 CCD 解算(Blender 式,无模式
+     * 切换)。位移 < 4px 视为单击,落回普通选骨。目标点在「过末端、面向相机」
+     * 的平面上移动。
+     */
+    const startIkDrag = (e: PointerEvent, chain: IkChainRef) => {
+      const sel = state.selected;
+      if (!sel) return;
+      if (state.anims.has(sel)) stopAnimFor(sel);
+      const before = capturePose(sel);
+      const startX = e.clientX;
+      const startY = e.clientY;
+      let dragging = false;
+      const plane = new THREE.Plane();
+      const planeN = new THREE.Vector3();
+      const target = new THREE.Vector3();
+      chain.effector.getWorldPosition(target);
+      state.camera.getWorldDirection(planeN);
+      plane.setFromNormalAndCoplanarPoint(planeN, target);
+      // orbit 的 pointerdown 已先于本处理器执行;立刻禁用让它忽略后续 move,
+      // 避免拖末端时相机跟着转(pointerup 时 orbit 仍会正常清理指针状态)。
+      state.orbit.enabled = false;
+      const onMove = (ev: PointerEvent) => {
+        if (!dragging) {
+          if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < 4) return;
+          dragging = true;
+        }
+        aimRay(ev.clientX, ev.clientY);
+        if (!state.raycaster.ray.intersectPlane(plane, target)) return;
+        solveCcd(chain.links, chain.effector, target, { iterations: 8 });
+        updateSkeletons(sel);
+        for (const link of chain.links) emitBoneDelta(link); // 滑杆实时跟随
+      };
+      const onUp = () => {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        state.orbit.enabled = true;
+        if (!dragging) {
+          selectBoneForPosing(chain.effector); // 单击 = 选中末端骨(手/脚)
+          return;
+        }
+        commitPoseHistory(state, sel, before); // 一次拖拽 = 一步撤销
+      };
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+    };
+
+    /**
+     * 骨骼点选模式:优先点关节手柄(末端小球走 IK 拖拽),其次点选中假人身体
+     * 做皮肤权重反查。返回 true 表示事件已消费(不再走整体模型选择)。
      */
     const tryPickBone = (e: PointerEvent): boolean => {
       if (!state.bonePick) return false;
@@ -1986,7 +2043,9 @@ function DirectorStageInner(
         const jHits = state.raycaster.intersectObject(state.joints.mesh);
         const id = jHits[0]?.instanceId;
         if (id != null && state.joints.bones[id]) {
-          selectBoneForPosing(state.joints.bones[id]);
+          const chain = state.joints.ik.get(id);
+          if (chain) startIkDrag(e, chain);
+          else selectBoneForPosing(state.joints.bones[id]);
           return true;
         }
       }
@@ -2030,8 +2089,9 @@ function DirectorStageInner(
       if (id === j.hover) return;
       j.hover = id;
       refreshJointColors(state);
-      canvas.title = id >= 0 ? j.bones[id]?.name ?? '' : '';
-      canvas.style.cursor = id >= 0 ? 'pointer' : '';
+      const isIk = id >= 0 && j.ik.has(id);
+      canvas.title = id >= 0 ? `${j.bones[id]?.name ?? ''}${isIk ? ' · 拖拽 = IK' : ''}` : '';
+      canvas.style.cursor = id >= 0 ? (isIk ? 'grab' : 'pointer') : '';
     };
     canvas.addEventListener('pointermove', onHoverMove);
 
@@ -3196,7 +3256,17 @@ function boneFromSkinHit(s: StageState, hit: THREE.Intersection): THREE.Bone | n
 const JOINT_COLOR = new THREE.Color('#eab308');
 const JOINT_HOVER = new THREE.Color('#ffffff');
 const JOINT_ACTIVE = new THREE.Color('#22d3ee');
+const JOINT_IK = new THREE.Color('#fb7185'); // 手/脚末端:可拖拽 IK
+
+/** 四肢 IK 链(normBone 名):links 被解算旋转,effector 是被拖拽的末端. */
+const IK_CHAINS: { links: string[]; effector: string }[] = [
+  { links: ['leftarm', 'leftforearm'], effector: 'lefthand' },
+  { links: ['rightarm', 'rightforearm'], effector: 'righthand' },
+  { links: ['leftupleg', 'leftleg'], effector: 'leftfoot' },
+  { links: ['rightupleg', 'rightleg'], effector: 'rightfoot' },
+];
 const _jointPos = new THREE.Vector3();
+const _jointParentPos = new THREE.Vector3();
 const _jointMat = new THREE.Matrix4();
 const _jointBox = new THREE.Box3();
 
@@ -3209,7 +3279,18 @@ function buildJointHandles(s: StageState): void {
   if (bones.length === 0) return;
   _jointBox.setFromObject(sel);
   const h = _jointBox.isEmpty() ? 1.8 : _jointBox.max.y - _jointBox.min.y;
-  const radius = THREE.MathUtils.clamp(h * 0.013, 0.008, 0.06);
+  // 半径按骨长(到父骨的世界距离)分配:手指骨很短 → 小球;躯干/四肢 → 大球。
+  sel.updateMatrixWorld(true);
+  const rMin = h * 0.0035;
+  const rMax = h * 0.013;
+  const radii = bones.map((b) => {
+    const p = b.parent as THREE.Bone | null;
+    if (!p || !(p as THREE.Bone).isBone) return rMax;
+    b.getWorldPosition(_jointPos);
+    p.getWorldPosition(_jointParentPos);
+    const len = _jointPos.distanceTo(_jointParentPos);
+    return THREE.MathUtils.clamp(len * 0.22, rMin, rMax);
+  });
   const mesh = new THREE.InstancedMesh(
     new THREE.SphereGeometry(1, 10, 8),
     new THREE.MeshBasicMaterial({
@@ -3225,7 +3306,20 @@ function buildJointHandles(s: StageState): void {
   mesh.frustumCulled = false;
   mesh.name = '__jointHandles';
   s.scene.add(mesh);
-  s.joints = { mesh, bones, radius, hover: -1 };
+  // 手/脚末端小球挂 IK 链(拖拽 = 整条肢体 CCD 解算)。
+  const byNorm = new Map<string, THREE.Bone>();
+  for (const b of bones) {
+    const k = normBone(b.name);
+    if (!byNorm.has(k)) byNorm.set(k, b);
+  }
+  const ik = new Map<number, IkChainRef>();
+  for (const spec of IK_CHAINS) {
+    const effector = byNorm.get(spec.effector);
+    const links = spec.links.map((n) => byNorm.get(n));
+    if (!effector || links.some((l) => !l)) continue;
+    ik.set(bones.indexOf(effector), { links: links as THREE.Bone[], effector });
+  }
+  s.joints = { mesh, bones, radii, hover: -1, ik };
   refreshJointColors(s);
   updateJointHandles(s);
 }
@@ -3236,7 +3330,8 @@ function updateJointHandles(s: StageState): void {
   if (!j) return;
   for (let i = 0; i < j.bones.length; i++) {
     j.bones[i].getWorldPosition(_jointPos);
-    _jointMat.makeScale(j.radius, j.radius, j.radius).setPosition(_jointPos);
+    const r = j.radii[i];
+    _jointMat.makeScale(r, r, r).setPosition(_jointPos);
     j.mesh.setMatrixAt(i, _jointMat);
   }
   j.mesh.instanceMatrix.needsUpdate = true;
@@ -3248,7 +3343,8 @@ function refreshJointColors(s: StageState): void {
   if (!j) return;
   for (let i = 0; i < j.bones.length; i++) {
     const active = s.posingBone?.uuid === j.bones[i].uuid;
-    j.mesh.setColorAt(i, active ? JOINT_ACTIVE : i === j.hover ? JOINT_HOVER : JOINT_COLOR);
+    const base = j.ik.has(i) ? JOINT_IK : JOINT_COLOR;
+    j.mesh.setColorAt(i, active ? JOINT_ACTIVE : i === j.hover ? JOINT_HOVER : base);
   }
   if (j.mesh.instanceColor) j.mesh.instanceColor.needsUpdate = true;
 }

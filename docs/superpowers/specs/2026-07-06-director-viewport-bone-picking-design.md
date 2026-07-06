@@ -42,6 +42,35 @@
     Map<boneIndex, weight>
   - `rankBoneIndices(weights)` → 按权重降序的骨骼索引数组
 
-## 不做
+## 追加:IK 拖拽(同日拍板,提前到本期)
 
-- IK(下一期);普通假人/导入模型的点选(仅高级假人);GPU picking。
+用户改主意:IK 这期做。拍板:直接拖末端小球触发(无 FK/IK 模式切换,单击
+仍是选骨,4px 阈值区分);肘/膝铰链约束留下一轮。
+
+调研补充:官方 `CCDIKSolver` 要求 IK target 是**同一副 skeleton 里的骨骼**
+(iks 按 `skeleton.bones` 下标寻址),且对 Mixamo 带预旋转骨架约束失效
+(three.js#29682、官方论坛均确认,社区绕法是重建"只有位置"的影子骨架)。
+THREE.IK(FABRIK)2018 起未维护且铰链约束天然困难。结论:**自写轻量 CCD**
+(`directorIk.ts` 纯函数,可单测)——我们全是二连杆短链,plain CCD 数轮收敛。
+
+- 四条链:肩→肘(末端=手)、胯→膝(末端=脚)×左右,按 normBone 名解析,
+  只用主骨(嵌套孪生已折叠)。
+- `solveCcd(chain, effector, targetWorld, {iterations, tolerance})`:每轮从链尾
+  到链根把「骨→末端」旋向「骨→目标」,世界增量经 `P⁻¹·Q·P` 折算到父空间
+  premultiply;只改 quaternion 不动 position,末端骨自身不旋转。
+- 交互:末端小球(玫红 `#fb7185` 区分,hover cursor=grab)按下即禁 orbit;
+  拖动时目标点约束在「过末端、面向相机」的平面上,每 move 解算 8 轮 +
+  `updateSkeletons` + 对链骨逐一 `emitBoneDelta` 回写滑杆;松手
+  `commitPoseHistory`(一次拖拽 = 一步撤销);未达 4px = 单击,选中末端骨。
+- 动画播放中开始拖拽 → 先 `stopAnimFor` 恢复姿势快照再解算。
+
+## 追加:关节小球按骨长分级(同日)
+
+用户反馈手指圆点太大。半径改为按「到父骨世界距离」比例分配:
+`clamp(骨长×0.22, 身高×0.0035, 身高×0.013)`,手指骨极短自动落到最小档,
+躯干/四肢保持大号;`JointHandles.radius` → `radii[]`。
+
+## 不做(顺延下一期)
+
+- 肘/膝铰链约束与关节角度限制;pole target(肘/膝朝向控制);
+  普通假人/导入模型的点选(仅高级假人);GPU picking。
