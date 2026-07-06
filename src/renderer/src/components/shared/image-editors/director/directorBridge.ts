@@ -350,26 +350,28 @@ class DirectorBridge {
         return { ok: true };
       }
       case 'play': {
-        // 预览播放一遍(不导出):插值机位 0→duration,播完即返。
+        // 预览播放一遍(不导出):插值机位只播关键帧首→末区间,不含空白段。
         const kfs = h.recordListKeyframes();
-        const durationSec = Math.min(
-          num(params.durationSec) ?? Math.max(...kfs.map((k) => k.t), 1),
-          120,
-        );
         if (kfs.length < 2) return { ok: false, error: '至少需要 2 个关键帧才能播放运镜(先 add_keyframe)。' };
+        const tStart = kfs[0].t;
+        const tEnd = Math.min(
+          num(params.durationSec) != null ? tStart + (num(params.durationSec) as number) : kfs[kfs.length - 1].t,
+          tStart + 120,
+        );
+        const spanSec = Math.max(0.1, tEnd - tStart);
         await new Promise<void>((resolve) => {
           // 安全护栏:onDone 丢失时按时长+2s 兜底停,避免工具调用挂死。
           let guard: ReturnType<typeof setTimeout> | undefined;
-          const stop = h.recordPlay(durationSec, () => undefined, () => {
+          const stop = h.recordPlay(tStart, tEnd, () => undefined, () => {
             if (guard != null) clearTimeout(guard);
             resolve();
           });
           guard = setTimeout(() => {
             stop();
             resolve();
-          }, (durationSec + 2) * 1000);
+          }, (spanSec + 2) * 1000);
         });
-        return { ok: true, durationSec };
+        return { ok: true, durationSec: spanSec };
       }
       case 'capture_video': {
         // 直录当前视口(不插值机位)—— 适合录一段正在播放的角色动画。
@@ -392,7 +394,8 @@ class DirectorBridge {
         return { ok: true, videoPath, width: result.width, height: result.height, durationMs: result.durationMs };
       }
       case 'export': {
-        const durationSec = num(params.durationSec) ?? 8;
+        // 默认 0 = 按关键帧首→末跨度 1:1 实时导出;显式传值才拉伸时长。
+        const durationSec = num(params.durationSec) ?? 0;
         const resolution = (str(params.resolution) ?? '1080p') as CaptureResolution;
         const fps = (num(params.fps) ?? 30) as RecordFps;
         const quality = (str(params.quality) ?? 'high') as RecordQualityKey;

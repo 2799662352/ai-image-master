@@ -37,7 +37,14 @@ import {
 import { CAPTURE_RES_SHORT } from './directorConstants';
 import { buildShaderGrid, type ShaderGrid } from './directorGrid';
 import { buildCrowdLayout, type CrowdOpts } from './directorMannequin';
-import { buildPoseClip, parseClipJson, type PoseKeyframe } from './directorPoseClip';
+import { buildPoseClip, newKeyframeId, parseClipJson, type PoseKeyframe } from './directorPoseClip';
+import {
+  findClipCamera,
+  normalizeCameraKeys,
+  parseCameraClipJson,
+  sampleObjectClip,
+  type CameraKeyframe,
+} from './directorCameraClip';
 import { accumulateBoneWeights, rankBoneIndices } from './directorBonePick';
 import { clampSwingTwist, solveTwoBone } from './directorIk';
 
@@ -53,14 +60,9 @@ export interface CameraSlot {
   showRay: boolean;
 }
 
-/** 录制关键帧:某时刻的相机状态(位置/朝向/FOV),导出时插值成运镜. */
-export interface CameraKeyframe {
-  id: string;
-  t: number;
-  position: [number, number, number];
-  quaternion: [number, number, number, number];
-  fov: number;
-}
+// 录制关键帧类型迁到 directorCameraClip(通用镜头格式模块);这里 re-export
+// 保持既有 import 路径不变。
+export type { CameraKeyframe } from './directorCameraClip';
 
 /** 机位属性面板可编辑的字段(实站右侧「属性」). */
 export interface CameraSlotPatch {
@@ -72,11 +74,21 @@ export interface CameraSlotPatch {
 }
 
 export interface RecordOptions {
-  /** 录制时长(秒). */
+  /**
+   * 录制时长(秒)。对关键帧导出(recordExport):传 0/负值 = 按关键帧
+   * 跨度(首帧→末帧)1:1 实时导出,导出时长与时间轴严格对齐;传正值 =
+   * 把运镜整体拉伸/压缩到该时长。对直录(recordVideo)则为实际录制时长。
+   */
   durationSec: number;
   resolution: CaptureResolution;
   fps: RecordFps;
   quality: RecordQualityKey;
+  /**
+   * 输出画幅比例(宽/高),与机位「画幅比例」同一数据源(directorAspect)。
+   * null/未传 = 全屏(跟随画布比例,不裁剪);指定时按 renderAspectCrop 同款
+   * 居中裁剪导出,和录制页黄色取景框所见严格一致。
+   */
+  aspect?: number | null;
   onProgress?: (pct: number) => void;
 }
 
@@ -284,6 +296,12 @@ export interface DirectorStageHandle {
   playPoseClip(keys: readonly PoseKeyframe[], duration: number, name?: string): Promise<void>;
   /** 把关键帧集合编译为剪辑并连同选中假人导出为 .glb(GLTFExporter 按需加载). */
   exportPoseClipGlb(keys: readonly PoseKeyframe[], duration: number, name?: string): Promise<Blob>;
+  /**
+   * 把动画剪辑(目录/我的动画)采样成 K 动画姿势关键帧(拖动画到 K 时间轴):
+   * 选中高级假人上临时跑 mixer 逐时刻采样骨骼,采完恢复原姿势,不改现场。
+   * 采样密度 4Hz,上限 `maxKeys`(默认 20)—— 帧数可编辑不失控。
+   */
+  sampleAnimToPoseKeys(url: string, ext?: string, maxKeys?: number): Promise<PoseKeyframe[]>;
   /** Single screenshot → PNG data URL. `height` (px) overrides output resolution. */
   capture(height?: number): string;
   /**
@@ -326,10 +344,43 @@ export interface DirectorStageHandle {
   recordListKeyframes(): CameraKeyframe[];
   recordRemoveKeyframe(id: string): void;
   recordClearKeyframes(): void;
+  /**
+   * 把导入/预设的镜头关键帧装入时间轴并返回装入后的全量列表。
+   * `replace` = 覆盖现有关键帧(时间平移到 0);`append` = 接在末帧 1s 之后;
+   * `atSec` 指定时 = 平移到该时刻并入现有关键帧(拖入时间轴的落点语义)。
+   */
+  recordLoadKeyframes(
+    keys: readonly CameraKeyframe[],
+    mode?: 'replace' | 'append',
+    atSec?: number,
+  ): CameraKeyframe[];
+  /** 当前相机位姿基准(位置/注视目标/FOV),给镜头预设参数化(所见即基准). */
+  getCameraPose(): {
+    position: [number, number, number];
+    target: [number, number, number];
+    fov: number;
+  };
+  /**
+   * 从 URL 导入镜头文件为关键帧(不入时间轴,由 UI 决定 replace/append):
+   * - glb/gltf/fbx → 找相机节点(isCamera / 名含 cam),AnimationMixer 逐时刻
+   *   烘焙**世界**位姿(Blender 导出的相机常被父容器包裹,直读轨道会错);
+   * - json → director-camera@1 包裹或裸 AnimationClip JSON,轨道直接采样。
+   */
+  importCameraClip(url: string, ext?: string): Promise<{ name: string; keys: CameraKeyframe[] }>;
   /** Seek the camera to time `t` by interpolating between keyframes. */
   recordSeek(t: number): void;
-  /** Play 0→duration, optionally looping; returns a stop fn. */
-  recordPlay(durationSec: number, onTime: (t: number) => void, onDone: () => void): () => void;
+  /**
+   * Play the camera from `startSec` to `endSec` in real time; returns a stop fn.
+   * `loop` = 循环预览(与 K 动画预览同款):到末尾回到起点继续播,
+   * 直到调用返回的 stop 函数;此时不触发 `onDone`。
+   */
+  recordPlay(
+    startSec: number,
+    endSec: number,
+    onTime: (t: number) => void,
+    onDone: () => void,
+    loop?: boolean,
+  ): () => void;
   /** Export the keyframe animation as a video (plays + captures the canvas). */
   recordExport(opts: RecordOptions): Promise<RecordResult>;
   // ── 录制视频 (simple canvas capture, kept for fallback) ───────
@@ -986,6 +1037,8 @@ function DirectorStageInner(
         resetSkeletonsToBind(obj);
         // Normalize: center on ground, scale to a sensible height.
         normalizeModel(obj);
+        // Kill back-face-culled "invisible walls" + grazing-angle texture shimmer.
+        hardenImportedMaterials(obj, s.renderer);
         if (opts?.position) obj.position.set(...opts.position);
         obj.userData.modelId = opts?.modelId;
         // Tag how this object was created so 「保存工程」 can recreate it later.
@@ -1367,6 +1420,47 @@ function DirectorStageInner(
         })) as ArrayBuffer;
         return new Blob([buf], { type: 'model/gltf-binary' });
       },
+      async sampleAnimToPoseKeys(url, ext, maxKeys = 20) {
+        const s = stateRef.current;
+        const target = s?.selected;
+        if (!s || !target || !target.userData?.isFbxBot) {
+          throw new Error('请先选中一个高级假人');
+        }
+        const clip = retargetClipTracks(await loadAnimClip(url, ext), target);
+        // 采样不留痕:先停在播动画(其停止逻辑自带姿势恢复),再快照当前姿势,
+        // 采完 restorePose 原样放回。
+        if (s.anims.has(target)) stopAnimFor(target);
+        const snap = capturePose(target);
+        const dur = Math.max(0.1, clip.duration);
+        const n = Math.min(Math.max(2, maxKeys), Math.max(2, Math.ceil(dur * 4) + 1));
+        const mixer = new THREE.AnimationMixer(target);
+        const action = mixer.clipAction(clip);
+        action.setLoop(THREE.LoopOnce, 1);
+        action.clampWhenFinished = true;
+        action.play();
+        const keys: PoseKeyframe[] = [];
+        for (let i = 0; i < n; i++) {
+          const t = (dur * i) / (n - 1);
+          // 末帧收 epsilon:LoopOnce 在 t == duration 处 action 已 finished。
+          mixer.setTime(Math.min(t, dur - 1e-4));
+          const bones: Record<string, [number, number, number, number]> = {};
+          for (const b of collectSkeletonBones(target)) {
+            if (hasSameNamedBoneAncestor(b)) continue;
+            bones[b.name] = [b.quaternion.x, b.quaternion.y, b.quaternion.z, b.quaternion.w];
+          }
+          keys.push({
+            id: newKeyframeId(),
+            t,
+            bones,
+            rootPos: [target.position.x, target.position.y, target.position.z],
+          });
+        }
+        mixer.stopAllAction();
+        mixer.uncacheRoot(target);
+        restorePose(snap);
+        updateSkeletons(target);
+        return keys;
+      },
       capture(height) {
         const s = stateRef.current;
         if (!s) return '';
@@ -1540,27 +1634,94 @@ function DirectorStageInner(
         const s = stateRef.current;
         if (s) s.keyframes = [];
       },
+      recordLoadKeyframes(keys, mode = 'replace', atSec) {
+        const s = stateRef.current;
+        if (!s || keys.length === 0) return s?.keyframes.map((k) => ({ ...k })) ?? [];
+        const startAt =
+          atSec != null
+            ? Math.max(0, atSec)
+            : mode === 'append' && s.keyframes.length
+              ? s.keyframes[s.keyframes.length - 1].t + 1
+              : 0;
+        const loaded = normalizeCameraKeys(keys, startAt);
+        if (mode === 'replace' && atSec == null) {
+          s.keyframes = loaded;
+        } else {
+          // 并入:落点区间内的旧关键帧让位(±0.04s 同 recordAddKeyframe 的容差)。
+          const t0 = loaded[0].t;
+          const t1 = loaded[loaded.length - 1].t;
+          s.keyframes = [
+            ...s.keyframes.filter((k) => k.t < t0 - 0.04 || k.t > t1 + 0.04),
+            ...loaded,
+          ];
+        }
+        s.keyframes.sort((a, b) => a.t - b.t);
+        return s.keyframes.map((k) => ({ ...k }));
+      },
+      getCameraPose() {
+        const s = stateRef.current;
+        if (!s) return { position: [0, 2, 6], target: [0, 1, 0], fov: 40 };
+        return {
+          position: [s.camera.position.x, s.camera.position.y, s.camera.position.z],
+          target: [s.orbit.target.x, s.orbit.target.y, s.orbit.target.z],
+          fov: s.camera.fov,
+        };
+      },
+      async importCameraClip(url, ext) {
+        const kind = (ext ?? extFromUrl(url) ?? 'json').toLowerCase();
+        if (kind === 'json') {
+          const text = await fetch(url).then((r) => r.text());
+          return parseCameraClipJson(text);
+        }
+        // glb/gltf/fbx:加载整个场景图 → 找相机 → 世界位姿烘焙采样。
+        let root: THREE.Object3D;
+        let clips: THREE.AnimationClip[];
+        let gltfCam: THREE.Object3D | null = null;
+        if (kind === 'glb' || kind === 'gltf') {
+          const gltf = await gltfLoader.loadAsync(url);
+          root = gltf.scene;
+          clips = gltf.animations ?? [];
+          gltfCam = gltf.cameras?.[0] ?? null;
+        } else {
+          const group = await fbxLoader.loadAsync(url);
+          root = group;
+          clips = group.animations ?? [];
+        }
+        const clip = clips[0];
+        if (!clip) throw new Error('镜头文件里没有动画剪辑');
+        const cam = gltfCam ?? findClipCamera(root);
+        if (!cam) throw new Error('镜头文件里没有相机节点');
+        const keys = sampleObjectClip(root, clip, cam);
+        if (keys.length === 0) throw new Error('镜头动画采样失败(无有效轨道)');
+        return { name: clip.name || '导入镜头', keys };
+      },
       recordSeek(t) {
         const s = stateRef.current;
         if (!s || s.keyframes.length === 0) return;
         applyInterpolatedCamera(s, t);
       },
-      recordPlay(durationSec, onTime, onDone) {
+      recordPlay(startSec, endSec, onTime, onDone, loop = false) {
         const s = stateRef.current;
         if (!s || s.keyframes.length === 0) {
           onDone();
           return () => {};
         }
+        // 只播 [startSec, endSec] 区间(通常 = 首帧→末帧),不再从 0 播到
+        // 固定时长 —— 避免预览无关键帧的空白片段。
+        // loop=true:到末尾取模回起点循环(K 动画预览同款),由 stop 结束。
         s.recordPlaying = true;
         const start = performance.now();
-        const durMs = Math.max(100, durationSec * 1000);
+        const spanSec = Math.max(0.1, endSec - startSec);
+        const durMs = spanSec * 1000;
         const step = () => {
           if (!s.recordPlaying) return;
           const elapsed = performance.now() - start;
-          const t = Math.min(durationSec, elapsed / 1000);
+          const t = loop
+            ? startSec + ((elapsed / 1000) % spanSec)
+            : startSec + Math.min(spanSec, elapsed / 1000);
           applyInterpolatedCamera(s, t);
           onTime(t);
-          if (elapsed >= durMs) {
+          if (!loop && elapsed >= durMs) {
             s.recordPlaying = false;
             onDone();
             return;
@@ -2235,7 +2396,19 @@ function DirectorStageInner(
       if (tryPickBone(e)) return;
       // Default mode: click selects; left-drag still rotates the view (orbit).
       const root = pickRoot(e.clientX, e.clientY);
-      if (root) selectMany([root]);
+      if (root) {
+        selectMany([root]);
+        return;
+      }
+      // 点空白:位移 < 4px 视为单击 → 取消选中;更大位移是 orbit 旋转,不动选区。
+      const sx = e.clientX;
+      const sy = e.clientY;
+      const onEmptyUp = (ev: PointerEvent) => {
+        window.removeEventListener('pointerup', onEmptyUp);
+        if (isDragging()) return;
+        if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 4) deselectAll();
+      };
+      window.addEventListener('pointerup', onEmptyUp);
     };
     canvas.addEventListener('pointerdown', onPointerDown);
 
@@ -2373,6 +2546,7 @@ function DirectorStageInner(
         emitAnimTick();
       }
       if (state.joints) updateJointHandles(state); // 关节手柄跟随骨骼世界位置
+      adaptCameraNear(state); // 深度精度随镜头距离走,防远处共面闪烁
       renderStage(state, camera);
     };
     animate();
@@ -2529,6 +2703,24 @@ function retargetClipTracks(
   });
   if (!changed) return clip;
   return new THREE.AnimationClip(clip.name, clip.duration, tracks);
+}
+
+/**
+ * Depth-precision guard: near=0.01 with far=2000 packs almost all 24-bit depth
+ * precision into the first centimetre, so co-planar faces of mid/far geometry
+ * (door panels, walls of large imported models) z-fight and shimmer while
+ * orbiting. Scale `near` with the camera→target distance instead — the same
+ * `near ≈ size/100` heuristic three-gltf-viewer uses — with a small hysteresis
+ * so we don't rebuild the projection matrix every frame. Far stays at 2000
+ * (the "huge space" look depends on it; the ratio improvement comes from near).
+ */
+function adaptCameraNear(s: StageState): void {
+  const dist = s.camera.position.distanceTo(s.orbit.target);
+  const near = THREE.MathUtils.clamp(dist / 100, SCENE.cameraNear, 2);
+  if (Math.abs(near - s.camera.near) > s.camera.near * 0.05) {
+    s.camera.near = near;
+    s.camera.updateProjectionMatrix();
+  }
 }
 
 /**
@@ -2786,6 +2978,9 @@ function renderPreview(
     cam.fov = s.camera.fov;
   }
   cam.aspect = w / h;
+  // Keep thumbnail depth precision in step with the live view (adaptCameraNear).
+  cam.near = s.camera.near;
+  cam.far = s.camera.far;
   cam.updateProjectionMatrix();
 
   renderStageToTarget(s, cam, s.thumbRT);
@@ -2870,18 +3065,53 @@ async function recordKeyframeAnimation(
 
   const liveSize = new THREE.Vector2();
   s.renderer.getSize(liveSize);
-  const aspect = liveSize.x / liveSize.y || 16 / 9;
-  const { width, height } = computeOutputSize(CAPTURE_RES_SHORT[resolution], aspect);
+  const av = liveSize.x / liveSize.y || 16 / 9;
+  // 画幅比例与机位共用(directorAspect):null = 全屏,跟随画布比例。
+  const ratio = opts.aspect ?? av;
+  const { width, height } = computeOutputSize(CAPTURE_RES_SHORT[resolution], ratio);
   const bitrate = computeBitrate(quality, width, height, fps);
+
+  // 渲染缓冲取「恰好罩住输出裁剪框」的尺寸(renderAspectCrop 同款数学):
+  // 相机 aspect 保持与实时画面一致 → 取景不变,再居中裁出 width×height,
+  // 与录制页黄色取景框所见严格一致。
+  let rw: number;
+  let rh: number;
+  if (ratio <= av) {
+    rh = height;
+    rw = Math.round(height * av);
+  } else {
+    rw = width;
+    rh = Math.round(width / av);
+  }
+  rw = Math.max(2, rw - (rw % 2));
+  rh = Math.max(2, rh - (rh % 2));
 
   const prevPR = s.renderer.getPixelRatio();
   s.renderer.setPixelRatio(1);
-  s.renderer.setSize(width, height, false);
-  s.camera.aspect = width / height;
+  s.renderer.setSize(rw, rh, false);
+  s.camera.aspect = rw / rh;
   s.camera.updateProjectionMatrix();
   s.recordPlaying = true;
 
-  const stream = canvas.captureStream(fps);
+  // MediaRecorder 录「输出画布」:每帧把 renderer 画布的居中裁剪区 blit 过去
+  // (canvas.captureStream 无法直接裁剪)。全屏时 rw==width/rh==height,等价直拷。
+  const out = document.createElement('canvas');
+  out.width = width;
+  out.height = height;
+  const ctx = out.getContext('2d');
+  if (!ctx) {
+    s.recordPlaying = false;
+    s.renderer.setPixelRatio(prevPR);
+    s.renderer.setSize(liveSize.x, liveSize.y, false);
+    s.camera.aspect = liveSize.x / liveSize.y;
+    s.camera.updateProjectionMatrix();
+    throw new Error('无法创建导出画布');
+  }
+  const sx = Math.max(0, Math.round((rw - width) / 2));
+  const sy = Math.max(0, Math.round((rh - height) / 2));
+  const blit = () => ctx.drawImage(canvas, sx, sy, width, height, 0, 0, width, height);
+
+  const stream = out.captureStream(fps);
   const recorder = new MediaRecorder(stream, { mimeType: codec.mime, videoBitsPerSecond: bitrate });
   const chunks: BlobPart[] = [];
   recorder.ondataavailable = (e) => {
@@ -2907,6 +3137,10 @@ async function recordKeyframeAnimation(
       const blob = new Blob(chunks, { type: codec.mime.split(';')[0] });
       resolve({ blob, mime: codec.mime, ext: codec.ext, width, height, durationMs });
     };
+    // 先渲一帧并 blit,避免视频开头出现空白帧。
+    applyInterpolatedCamera(s, tStart);
+    renderStage(s, s.camera);
+    blit();
     const start = performance.now();
     recorder.start(200);
     onProgress?.(0);
@@ -2914,6 +3148,7 @@ async function recordKeyframeAnimation(
       const elapsed = performance.now() - start;
       const f = Math.min(1, elapsed / durationMs);
       applyInterpolatedCamera(s, tStart + (tEnd - tStart) * f);
+      blit(); // 主循环每帧渲到 renderer 画布,这里同步裁剪到输出画布
       onProgress?.(Math.round(f * 100));
       if (elapsed >= durationMs) {
         try {
@@ -2988,20 +3223,58 @@ function resetSkeletonsToBind(obj: THREE.Object3D): void {
   if (touched) obj.updateMatrixWorld(true);
 }
 
-/** Center model on the ground plane and scale tall props down to a workable size. */
-function normalizeModel(obj: THREE.Object3D): void {
-  const box = new THREE.Box3().setFromObject(obj);
+/**
+ * Robustness pass for imported models (user GLB/FBX and catalog assets):
+ * - glTF materials default to FrontSide; architecture/interior models viewed
+ *   from "outside" a wall get back-face culled and look invisible. DoubleSide
+ *   costs a bit of fill rate but never hides geometry (same trade-off most
+ *   web viewers make for arbitrary user uploads).
+ * - Anisotropic filtering kills the texture shimmer/moiré on grazing-angle
+ *   surfaces (floors, slatted doors) that reads as "像素闪动" when orbiting.
+ */
+function hardenImportedMaterials(
+  obj: THREE.Object3D,
+  renderer: THREE.WebGLRenderer,
+): void {
+  const aniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  obj.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const m of mats) {
+      if (!m) continue;
+      if (m.side === THREE.FrontSide) m.side = THREE.DoubleSide;
+      const std = m as THREE.MeshStandardMaterial;
+      for (const tex of [std.map, std.normalMap, std.roughnessMap, std.aoMap]) {
+        if (tex && tex.anisotropy < aniso) {
+          tex.anisotropy = aniso;
+          tex.needsUpdate = true;
+        }
+      }
+    }
+  });
+}
+
+/** Center model on the ground plane and scale tall props down to a workable size.
+ *  Exported for unit tests (pure Box3 math, no WebGL needed). */
+export function normalizeModel(obj: THREE.Object3D): void {
+  // Scale FIRST, then re-measure. Scaling shrinks geometry about the object's
+  // own origin (not the bbox centre), so offsets computed from the unscaled box
+  // would leave a big model floating above / sunk below the grid and off-centre
+  // (visible as a gap under the feet / walls clipped by the camera).
+  let box = new THREE.Box3().setFromObject(obj);
   const size = box.getSize(new THREE.Vector3());
+  const maxDim = Math.max(size.x, size.y, size.z);
+  if (maxDim > 6) {
+    obj.scale.multiplyScalar(4 / maxDim);
+    obj.updateMatrixWorld(true);
+    box = new THREE.Box3().setFromObject(obj);
+  }
   const center = box.getCenter(new THREE.Vector3());
   // recentre horizontally, drop to y=0
   obj.position.x -= center.x;
   obj.position.z -= center.z;
   obj.position.y -= box.min.y;
-  const maxDim = Math.max(size.x, size.y, size.z);
-  if (maxDim > 6) {
-    const k = 4 / maxDim;
-    obj.scale.multiplyScalar(k);
-  }
 }
 
 // Reusable temporaries (avoid per-pose allocations).

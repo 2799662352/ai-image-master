@@ -26,6 +26,7 @@ import DirectorRecordTimeline from './DirectorRecordTimeline';
 import { getCatalog, type DirectorModel } from './directorCatalog';
 import {
   type DirectorAsset,
+  ANIM_DND_MIME,
   ANIM_EXTS,
   MODEL_EXTS,
   MODEL_SIZE_HINT,
@@ -43,6 +44,11 @@ import {
 } from './directorAssetStore';
 import DirectorPoseTimeline from './DirectorPoseTimeline';
 import { useDragPanel } from './useDragPanel';
+// 静态 import:agent-chat 已随入口 chunk 常驻(main.ts mountAgentChatRuntime),
+// 这里静态引用零加载成本。此前的动态 import(barrel) 在生产构建里会解析到
+// 入口 chunk 的"内部导出名压缩"命名空间({n,t}),运行时抛
+// `syncAgentHostIntoFullscreen is not a function`,导致 AGENT 按钮点了没反应。
+import { syncAgentHostIntoFullscreen, useAgentChatStore } from '../../../../features/agent-chat';
 import { CROWD_DEFAULTS, type CrowdLayout } from './directorMannequin';
 import {
   ADVANCED_MANNEQUIN,
@@ -399,14 +405,11 @@ export default function DirectorEditor({
 
   /**
    * 顶栏 AGENT:呼出/收起 Codex 聊天面板(与 Ctrl+Shift+A 同效)。
-   * 动态 import 避免 DirectorEditor chunk 静态依赖 agent-chat;呼出前先把
-   * 面板 host 搬进 fullscreenElement(浏览器全屏只渲染全屏元素的后代)。
+   * 呼出前先把面板 host 搬进 fullscreenElement(浏览器全屏只渲染全屏元素的后代)。
    */
   const toggleAgentPanel = useCallback(() => {
-    void import('../../../../features/agent-chat').then((m) => {
-      m.syncAgentHostIntoFullscreen();
-      m.useAgentChatStore.getState().toggle();
-    });
+    syncAgentHostIntoFullscreen();
+    useAgentChatStore.getState().toggle();
   }, []);
 
   // ── 导演台主页面全屏(整面板) ──
@@ -1222,7 +1225,19 @@ export default function DirectorEditor({
             if (sideResize.current?.pointerId === e.pointerId) sideResize.current = null;
           }}
         />
-        <div style={{ ...styles.sidePanel, width: sideW, right: 12, background: panelBg }}>
+        <div
+          style={{
+            ...styles.sidePanel,
+            width: sideW,
+            right: 12,
+            background: panelBg,
+            // 录制/K 动画时底部有时间轴(约 150px):给面板让出高度,
+            // 否则「加载更多」等底部按钮会被时间轴盖住点不到。
+            ...(recordMode || poseTl
+              ? { maxHeight: 'calc(100% - 24px - 150px)' }
+              : null),
+          }}
+        >
           <div style={styles.tabRow}>
             <button
               style={tab === 'props' ? styles.tabActive : styles.tab}
@@ -1323,9 +1338,16 @@ export default function DirectorEditor({
                                 ...(active ? styles.posePresetActive : styles.posePreset),
                                 width: '100%',
                               }}
-                              title={`${a.name} · .${a.ext} · ${formatBytes(a.size)}`}
+                              title={`${a.name} · .${a.ext} · ${formatBytes(a.size)};可拖到 K 动画时间轴生成关键帧`}
                               disabled={animBusy != null}
                               onClick={() => void playMyAnim(a)}
+                              draggable
+                              onDragStart={(e) =>
+                                e.dataTransfer.setData(
+                                  ANIM_DND_MIME,
+                                  JSON.stringify({ assetId: a.id, ext: a.ext, name: a.name }),
+                                )
+                              }
                             >
                               {animBusy === url ? '⏳' : a.name}
                             </button>
@@ -1369,9 +1391,16 @@ export default function DirectorEditor({
                       <button
                         key={a.id}
                         style={active ? styles.posePresetActive : styles.posePreset}
-                        title={a.nameEn || a.name}
+                        title={`${a.nameEn || a.name};可拖到 K 动画时间轴生成关键帧`}
                         disabled={animBusy != null}
                         onClick={() => void playAnim(a)}
+                        draggable
+                        onDragStart={(e) =>
+                          e.dataTransfer.setData(
+                            ANIM_DND_MIME,
+                            JSON.stringify({ url: animUrl(a), name: a.name }),
+                          )
+                        }
                       >
                         {animBusy === url ? '⏳' : a.name}
                       </button>
@@ -1496,7 +1525,15 @@ export default function DirectorEditor({
       {/* Bottom toolbar */}
       <div style={styles.toolbar}>
         <div style={{ position: 'relative' }}>
-          <button style={styles.toolBtn} onClick={() => setShowLibrary((v) => !v)}>
+          <button
+            style={styles.toolBtn}
+            onClick={() => {
+              // 三个相邻下拉互斥:避免弹层互相叠压遮挡(截图问题)。
+              setShowCrowd(false);
+              setShowMann(false);
+              setShowLibrary((v) => !v);
+            }}
+          >
             添加模型
           </button>
           {showLibrary && (
@@ -1511,7 +1548,11 @@ export default function DirectorEditor({
         <div style={{ position: 'relative' }}>
           <button
             style={showCrowd ? styles.toolBtnActive : styles.toolBtn}
-            onClick={() => setShowCrowd((v) => !v)}
+            onClick={() => {
+              setShowLibrary(false);
+              setShowMann(false);
+              setShowCrowd((v) => !v);
+            }}
           >
             普通假人 ▾
           </button>
@@ -1567,7 +1608,11 @@ export default function DirectorEditor({
         <div style={{ position: 'relative' }}>
           <button
             style={showMann ? styles.toolBtnActive : styles.toolBtn}
-            onClick={() => setShowMann((v) => !v)}
+            onClick={() => {
+              setShowLibrary(false);
+              setShowCrowd(false);
+              setShowMann((v) => !v);
+            }}
           >
             高级假人 ▾
           </button>

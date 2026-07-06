@@ -89,3 +89,11 @@ fbx-diag.mjs
 
 # Sakuga-42M dataset (local research data, do not commit)
 videos/Sakuga-42M/
+
+# Sakuga ingest pipeline artifacts (local data/caches; the .py scripts ARE tracked)
+scripts/sakuga/__pycache__/
+scripts/sakuga/vectors/
+scripts/sakuga/vectors_top/
+scripts/sakuga/checkpoint*.txt
+scripts/sakuga/named_batch*.txt
+scripts/sakuga/upload_batches_done.txt

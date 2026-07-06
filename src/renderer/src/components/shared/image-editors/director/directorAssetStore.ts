@@ -11,7 +11,7 @@
  *   await deleteAsset(id)                                      // 删除
  */
 
-export type AssetKind = 'model' | 'panorama' | 'animation';
+export type AssetKind = 'model' | 'panorama' | 'animation' | 'camera';
 
 export interface DirectorAsset {
   id: string;
@@ -125,12 +125,22 @@ export async function deleteAsset(id: string): Promise<void> {
   await reqToPromise(store.delete(id));
 }
 
+// ── 拖拽 ────────────────────────────────────────────────────────
+
+/**
+ * 动画卡片 → K 动画时间轴的 dataTransfer 类型。payload JSON:
+ * `{ url?, ext?, name?, assetId? }`(目录动画带 url;「我的动画」带 assetId)。
+ */
+export const ANIM_DND_MIME = 'application/x-director-anim';
+
 // ── 文件辅助 ─────────────────────────────────────────────────────
 
 export const MODEL_EXTS = ['glb', 'gltf', 'fbx'] as const;
 export const PANORAMA_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'avif'] as const;
 /** 动画剪辑:fbx(Mixamo 等)/ glb/gltf(取 animations[0])/ json(本软件 K 动画导出)。 */
 export const ANIM_EXTS = ['fbx', 'glb', 'gltf', 'json'] as const;
+/** 镜头剪辑:json(director-camera@1 / 裸 AnimationClip)/ glb/gltf/fbx(相机动画烘焙采样)。 */
+export const CAMERA_EXTS = ['json', 'glb', 'gltf', 'fbx'] as const;
 /** 建议体积上限(字节)。超过仍可导入,只是给出提醒。 */
 export const MODEL_SIZE_HINT = 80 * 1024 * 1024; // 80MB
 export const PANORAMA_SIZE_HINT = 40 * 1024 * 1024; // 40MB
@@ -151,6 +161,10 @@ export function isPanoramaExt(ext: string): boolean {
 
 export function isAnimExt(ext: string): boolean {
   return (ANIM_EXTS as readonly string[]).includes(ext.toLowerCase());
+}
+
+export function isCameraExt(ext: string): boolean {
+  return (CAMERA_EXTS as readonly string[]).includes(ext.toLowerCase());
 }
 
 export function formatBytes(n: number): string {

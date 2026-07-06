@@ -16,7 +16,12 @@ import { GRID } from './directorConstants';
 const VERT = /* glsl */ `
   varying vec3 vWorldPos;
   void main() {
-    vec4 wp = modelMatrix * vec4(position, 1.0);
+    // 平面顶点跟随相机 XZ 平移(Fyrestar InfiniteGridHelper 同款):镜头
+    // 平移/拉远时地面永远铺在脚下,视觉上真·无限;网格线仍按绝对世界坐标
+    // 计算(vWorldPos),不会跟着相机"漂"。
+    vec3 pos = position;
+    pos.xz += cameraPosition.xz;
+    vec4 wp = modelMatrix * vec4(pos, 1.0);
     vWorldPos = wp.xyz;
     gl_Position = projectionMatrix * viewMatrix * wp;
   }
@@ -57,13 +62,17 @@ const FRAG = /* glsl */ `
     float minor = gridLine(p, uMinorStep);
     float major = gridLine(p, uMajorStep);
 
-    // 距视点(原点)距离淡出。
-    float dist = length(p);
+    // 距相机(XZ 投影)淡出 —— 不再以世界原点为中心:镜头移到哪,网格就
+    // 铺到哪(Fyrestar InfiniteGridHelper / drei Grid 同款 fadeFrom=camera)。
+    float dist = distance(cameraPosition.xz, p);
     float fade = 1.0 - smoothstep(uFadeStart, uFadeEnd, dist);
     if (fade <= 0.0) discard;
+    // 次级线提前淡出(半程):远处 1 单位细线密到亚像素会糊成噪点/摩尔纹,
+    // 只留 10 单位主线撑远景(Blender 网格同款取舍)。
+    float minorFade = 1.0 - smoothstep(uFadeStart * 0.5, uFadeEnd * 0.5, dist);
 
     vec3 color = mix(uMinorColor, uMajorColor, major);
-    float alpha = max(minor * 0.5, major) * fade * uOpacityMul;
+    float alpha = max(minor * 0.5 * minorFade, major * fade) * uOpacityMul;
     if (alpha <= 0.001) discard;
 
     gl_FragColor = vec4(color, alpha);

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   CameraKeyframe,
   DirectorStageHandle,
@@ -14,7 +14,27 @@ import {
   type RecordFps,
   type RecordQualityKey,
 } from './directorConstants';
+import { AspectSelect, aspectRatioOf } from './directorAspect';
 import { useDragPanel } from './useDragPanel';
+import {
+  CAMERA_PRESETS,
+  buildCameraPreset,
+  cameraClipToJson,
+  parseCameraClipJson,
+  type CameraPresetId,
+} from './directorCameraClip';
+import {
+  deleteAsset,
+  extOf,
+  getAsset,
+  isCameraExt,
+  listAssets,
+  putAsset,
+  type DirectorAsset,
+} from './directorAssetStore';
+
+/** 拖拽 payload 的 dataTransfer 类型(预设 / 我的镜头 → 时间轴)。 */
+const CLIP_DND_MIME = 'application/x-director-camera-clip';
 
 interface Props {
   stageRef: React.RefObject<DirectorStageHandle | null>;
@@ -22,10 +42,13 @@ interface Props {
   onExported: (r: RecordResult) => void;
 }
 
-const ASPECTS = ['16:9', '9:16', '1:1', '4:3'] as const;
-type Aspect = (typeof ASPECTS)[number];
-const ASPECT_RATIO: Record<Aspect, number> = { '16:9': 16 / 9, '9:16': 9 / 16, '1:1': 1, '4:3': 4 / 3 };
-const DURATION_SEC = 8; // 实站默认时长
+// 画幅比例与机位全屏页共用 directorAspect(单一数据源:全屏/1:1/4:3/3:4/
+// 16:9/9:16/3:2/2:3/21:9),不再各自维护一份短名单。
+// 时间轴时长可调(与 K 动画时间轴同款「时长」输入);上限仅作 UI 护栏,
+// 实际导出时长永远 = 关键帧首→末跨度,不受此值限制。
+const DUR_DEFAULT = 8;
+const DUR_MIN = 1;
+const DUR_MAX = 3600;
 
 const RES_LABEL: Record<CaptureResolution, string> = { '1080p': 'FHD', '2k': '2K', '4k': '4K' };
 
@@ -35,9 +58,12 @@ const RES_LABEL: Record<CaptureResolution, string> = { '1080p': 'FHD', '2k': '2K
  */
 export default function DirectorRecordTimeline({ stageRef, onExit, onExported }: Props) {
   const [keys, setKeys] = useState<CameraKeyframe[]>([]);
+  const [duration, setDuration] = useState(DUR_DEFAULT);
   const [playhead, setPlayhead] = useState(0);
-  const [aspect, setAspect] = useState<Aspect>('16:9');
+  const [aspect, setAspect] = useState('16:9');
   const [playing, setPlaying] = useState(false);
+  // 循环预览(K 动画预览同款):到末尾回起点继续播,直到手动暂停。
+  const [loopPreview, setLoopPreview] = useState(true);
   const [exportPct, setExportPct] = useState<number | null>(null);
   const [showExport, setShowExport] = useState(false);
   const [res, setRes] = useState<CaptureResolution>('1080p');
@@ -46,6 +72,26 @@ export default function DirectorRecordTimeline({ stageRef, onExit, onExported }:
   const stopRef = useRef<(() => void) | null>(null);
   const railRef = useRef<HTMLDivElement>(null);
   const previewRef = useRef<HTMLCanvasElement>(null);
+  // 镜头库弹层(预设 / 我的镜头 / 导入导出)
+  const [showClips, setShowClips] = useState(false);
+  const [myClips, setMyClips] = useState<DirectorAsset[]>([]);
+  const [clipMsg, setClipMsg] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const msgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 中央安全框:实测可用区域,按比例 contain 适配(纯 CSS aspect-ratio 在
+  // 竖版被 maxHeight 截断时会破比例 —— 截图 bug,改 JS 计算)。
+  const frameAreaRef = useRef<HTMLDivElement>(null);
+  const [frameBox, setFrameBox] = useState({ w: 0, h: 0 });
+  useEffect(() => {
+    const el = frameAreaRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const r = entries[0]?.contentRect;
+      if (r) setFrameBox({ w: r.width, h: r.height });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   // Preview 浮窗可拖动(标题栏抓握;选择框/×按钮不触发拖动)
   const previewDrag = useDragPanel(14, 60);
 
@@ -63,19 +109,28 @@ export default function DirectorRecordTimeline({ stageRef, onExit, onExported }:
     };
   }, [refresh, stageRef]);
 
-  // Live preview thumbnail of the current camera.
+  // Live preview thumbnail of the current camera —— 跟随所选画幅比例:
+  // 画布按比例适配 240×240 盒(横版贴宽、竖版贴高),内容走「cover+居中
+  // 裁剪」口径,与安全框/导出画面一致。
   useEffect(() => {
     const cv = previewRef.current;
     if (cv) {
-      cv.width = 240;
-      cv.height = 135;
+      const r = aspectRatioOf(aspect) ?? 16 / 9; // 全屏时缩略图保持 16:9
+      let w = 240;
+      let h = Math.round(240 / r);
+      if (h > 240) {
+        h = 240;
+        w = Math.max(2, Math.round(240 * r));
+      }
+      cv.width = w;
+      cv.height = h;
     }
     const draw = () => stageRef.current?.renderSlotPreview(null, previewRef.current!);
     const t = setInterval(() => {
       if (previewRef.current) draw();
     }, 200);
     return () => clearInterval(t);
-  }, [stageRef]);
+  }, [aspect, stageRef]);
 
   const addKeyframe = useCallback(() => {
     stageRef.current?.recordAddKeyframe(playhead);
@@ -97,11 +152,11 @@ export default function DirectorRecordTimeline({ stageRef, onExit, onExported }:
 
   const seekTo = useCallback(
     (t: number) => {
-      const clamped = Math.max(0, Math.min(DURATION_SEC, t));
+      const clamped = Math.max(0, Math.min(duration, t));
       setPlayhead(clamped);
       stageRef.current?.recordSeek(clamped);
     },
-    [stageRef],
+    [duration, stageRef],
   );
 
   const onRailClick = (e: React.MouseEvent) => {
@@ -109,8 +164,156 @@ export default function DirectorRecordTimeline({ stageRef, onExit, onExported }:
     if (!rail) return;
     const rect = rail.getBoundingClientRect();
     const ratio = (e.clientX - rect.left) / rect.width;
-    seekTo(ratio * DURATION_SEC);
+    seekTo(ratio * duration);
   };
+
+  // 预设/我的镜头可拖到时间尺:落点时刻 = 插入起始时间(关键帧全部可编辑)。
+  const onRailDragOver = (e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes(CLIP_DND_MIME)) e.preventDefault();
+  };
+  const onRailDrop = (e: React.DragEvent) => {
+    const raw = e.dataTransfer.getData(CLIP_DND_MIME);
+    const rail = railRef.current;
+    if (!raw || !rail) return;
+    e.preventDefault();
+    const rect = rail.getBoundingClientRect();
+    const t = Math.max(0, Math.min(duration, ((e.clientX - rect.left) / rect.width) * duration));
+    try {
+      const p = JSON.parse(raw) as { preset?: CameraPresetId; assetId?: string };
+      if (p.preset) applyPreset(p.preset, t);
+      else if (p.assetId) void applyAssetClip(p.assetId, t);
+    } catch {
+      // 非本组件的拖拽 payload,忽略。
+    }
+  };
+
+  /** 时长可调:不小于最后一个关键帧时间(否则关键帧会掉出时间轴)。 */
+  const changeDuration = useCallback(
+    (v: number) => {
+      if (!Number.isFinite(v)) return;
+      const lastT = keys.length ? keys[keys.length - 1].t : 0;
+      const d = Math.max(DUR_MIN, Math.max(Math.ceil(lastT), Math.min(DUR_MAX, v)));
+      setDuration(d);
+      setPlayhead((p) => Math.min(p, d));
+    },
+    [keys],
+  );
+
+  // ── 镜头库:预设 / 我的镜头 / 导入(json/glb/gltf/fbx)/ 导出 ──────
+  const flashClip = useCallback((m: string) => {
+    setClipMsg(m);
+    if (msgTimer.current) clearTimeout(msgTimer.current);
+    msgTimer.current = setTimeout(() => setClipMsg(null), 2600);
+  }, []);
+  useEffect(() => () => {
+    if (msgTimer.current) clearTimeout(msgTimer.current);
+  }, []);
+
+  const loadMyClips = useCallback(() => {
+    listAssets('camera')
+      .then(setMyClips)
+      .catch(() => setMyClips([]));
+  }, []);
+  useEffect(() => {
+    if (showClips) loadMyClips();
+  }, [loadMyClips, showClips]);
+
+  /** 把镜头关键帧装入时间轴(覆盖 / 拖入落点),必要时自动加长时间轴。 */
+  const loadKeys = useCallback(
+    (ks: readonly CameraKeyframe[], mode: 'replace' | 'append', atSec?: number) => {
+      const all = stageRef.current?.recordLoadKeyframes(ks, mode, atSec) ?? [];
+      const lastT = all.length ? all[all.length - 1].t : 0;
+      if (lastT > duration) setDuration(Math.min(DUR_MAX, Math.ceil(lastT)));
+      refresh();
+    },
+    [duration, refresh, stageRef],
+  );
+
+  const applyPreset = useCallback(
+    (id: CameraPresetId, atSec?: number) => {
+      const st = stageRef.current;
+      if (!st) return;
+      const ks = buildCameraPreset(id, st.getCameraPose());
+      loadKeys(ks, atSec != null ? 'append' : 'replace', atSec);
+      flashClip(atSec != null ? '预设已插入时间轴落点' : '预设已应用(覆盖原关键帧)');
+    },
+    [flashClip, loadKeys, stageRef],
+  );
+
+  const applyAssetClip = useCallback(
+    async (id: string, atSec?: number) => {
+      try {
+        const asset = await getAsset(id);
+        if (!asset) return;
+        const parsed = parseCameraClipJson(await asset.blob.text());
+        loadKeys(parsed.keys, atSec != null ? 'append' : 'replace', atSec);
+        flashClip(`已装入「${asset.name}」(${parsed.keys.length} 关键帧)`);
+      } catch (err) {
+        console.error('[director] load camera clip failed', err);
+        flashClip('镜头装入失败');
+      }
+    },
+    [flashClip, loadKeys],
+  );
+
+  const importClipFile = useCallback(
+    async (file: File) => {
+      const ext = extOf(file.name);
+      if (!isCameraExt(ext)) {
+        flashClip('仅支持 json / glb / gltf / fbx 镜头文件');
+        return;
+      }
+      const url = URL.createObjectURL(file);
+      try {
+        const r = await stageRef.current!.importCameraClip(url, ext);
+        const clipName = file.name.replace(/\.[^.]+$/, '') || r.name;
+        // 统一转存为通用 director-camera@1 JSON:网上找的 glb/fbx 镜头也
+        // 标准化落库,二次装入不再依赖 loader。
+        await putAsset({
+          kind: 'camera',
+          name: clipName,
+          ext: 'json',
+          blob: new Blob([cameraClipToJson(r.keys, clipName)], { type: 'application/json' }),
+        });
+        loadMyClips();
+        loadKeys(r.keys, 'replace');
+        flashClip(`已导入「${clipName}」(${r.keys.length} 关键帧)`);
+      } catch (err) {
+        console.error('[director] import camera clip failed', err);
+        flashClip(err instanceof Error ? err.message : '镜头导入失败');
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    },
+    [flashClip, loadKeys, loadMyClips, stageRef],
+  );
+
+  const exportClipJson = useCallback(() => {
+    if (keys.length === 0) return;
+    const text = cameraClipToJson(keys, 'director-camera');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+    a.download = `camera-clip-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }, [keys]);
+
+  const saveClipToLibrary = useCallback(async () => {
+    if (keys.length === 0) return;
+    const name = `镜头 ${new Date().toLocaleString('zh-CN', { hour12: false })}`;
+    await putAsset({
+      kind: 'camera',
+      name,
+      ext: 'json',
+      blob: new Blob([cameraClipToJson(keys, name)], { type: 'application/json' }),
+    });
+    loadMyClips();
+    flashClip('当前运镜已存入我的镜头');
+  }, [flashClip, keys, loadMyClips]);
+
+  // 预览/导出只覆盖关键帧首→末区间,不含前后空白段。
+  const tStart = keys.length ? keys[0].t : 0;
+  const tEnd = keys.length ? keys[keys.length - 1].t : 0;
 
   const togglePlay = useCallback(() => {
     if (playing) {
@@ -121,11 +324,29 @@ export default function DirectorRecordTimeline({ stageRef, onExit, onExported }:
     if (keys.length === 0) return;
     setPlaying(true);
     stopRef.current = stageRef.current!.recordPlay(
-      DURATION_SEC,
+      tStart,
+      tEnd,
       (t) => setPlayhead(t),
       () => setPlaying(false),
+      loopPreview,
     );
-  }, [keys.length, playing, stageRef]);
+  }, [keys.length, loopPreview, playing, stageRef, tEnd, tStart]);
+
+  /** 切换循环预览;正在播时就地按新模式重启,不用先暂停。 */
+  const toggleLoop = useCallback(() => {
+    const next = !loopPreview;
+    setLoopPreview(next);
+    if (playing) {
+      stopRef.current?.();
+      stopRef.current = stageRef.current!.recordPlay(
+        tStart,
+        tEnd,
+        (t) => setPlayhead(t),
+        () => setPlaying(false),
+        next,
+      );
+    }
+  }, [loopPreview, playing, stageRef, tEnd, tStart]);
 
   const doExport = useCallback(async () => {
     const stage = stageRef.current;
@@ -134,10 +355,14 @@ export default function DirectorRecordTimeline({ stageRef, onExit, onExported }:
     setExportPct(0);
     try {
       const r = await stage.recordExport({
-        durationSec: DURATION_SEC,
+        // 0 = 按关键帧首→末跨度 1:1 实时导出(recordKeyframeAnimation 语义),
+        // 导出时长与时间轴严格一致,不再拉伸到固定 8s。
+        durationSec: 0,
         resolution: res,
         fps,
         quality,
+        // 与机位共用的画幅比例;null = 全屏(跟随画布,不裁剪)。
+        aspect: aspectRatioOf(aspect),
         onProgress: (p) => setExportPct(p),
       });
       onExported(r);
@@ -149,12 +374,37 @@ export default function DirectorRecordTimeline({ stageRef, onExit, onExported }:
   }, [fps, keys.length, onExported, quality, res, stageRef]);
 
   const hasKeys = keys.length > 0;
+  const clipSec = Math.max(0, tEnd - tStart);
+  const aspectRatio = aspectRatioOf(aspect);
+  // 安全框 contain 适配:横向最多 58%(沿用旧观感),纵向最多 92%,
+  // 二者取先触到的边,比例严格成立(竖版 9:16 贴高、超宽 21:9 贴宽)。
+  let frameW = 0;
+  let frameH = 0;
+  if (aspectRatio != null && frameBox.w > 0 && frameBox.h > 0) {
+    const availW = frameBox.w * 0.58;
+    const availH = frameBox.h * 0.92;
+    if (availW / availH > aspectRatio) {
+      frameH = availH;
+      frameW = availH * aspectRatio;
+    } else {
+      frameW = availW;
+      frameH = availW / aspectRatio;
+    }
+  }
+  const tickStep = duration <= 12 ? 1 : duration <= 30 ? 2 : duration <= 120 ? 10 : 60;
+  const ticks = useMemo(() => {
+    const out: number[] = [];
+    for (let t = 0; t <= duration; t += tickStep) out.push(t);
+    return out;
+  }, [duration, tickStep]);
 
   return (
     <div style={styles.overlay}>
-      {/* 中央 16:9 安全框 */}
-      <div style={styles.frameArea}>
-        <div style={{ ...styles.safeFrame, aspectRatio: String(ASPECT_RATIO[aspect]) }} />
+      {/* 中央安全框(全屏 = 不遮幅,无框) */}
+      <div ref={frameAreaRef} style={styles.frameArea}>
+        {aspectRatio != null && frameW > 0 && (
+          <div style={{ ...styles.safeFrame, width: frameW, height: frameH }} />
+        )}
       </div>
 
       {/* 左上 Preview 面板(标题栏可拖动自由移动) */}
@@ -167,17 +417,7 @@ export default function DirectorRecordTimeline({ stageRef, onExit, onExported }:
           onPointerUp={previewDrag.handleProps.onPointerUp}
         >
           <span style={styles.previewTitle}>⠿ Preview</span>
-          <select
-            style={styles.aspectSel}
-            value={aspect}
-            onChange={(e) => setAspect(e.target.value as Aspect)}
-          >
-            {ASPECTS.map((a) => (
-              <option key={a} value={a}>
-                {a}
-              </option>
-            ))}
-          </select>
+          <AspectSelect value={aspect} onChange={setAspect} openUp={false} />
           <button style={styles.xBtn} onClick={onExit} title="关闭">
             ×
           </button>
@@ -206,10 +446,131 @@ export default function DirectorRecordTimeline({ stageRef, onExit, onExported }:
             style={hasKeys ? styles.tlBtn : styles.tlBtnDisabled}
             onClick={togglePlay}
             disabled={!hasKeys}
+            title={
+              hasKeys
+                ? `预览关键帧区间 ${tStart.toFixed(1)}s → ${tEnd.toFixed(1)}s${loopPreview ? '(循环)' : ''}`
+                : undefined
+            }
           >
             {playing ? '⏸ 暂停' : '▷ 预览'}
           </button>
+          <button
+            style={loopPreview ? styles.loopOn : styles.tlBtn}
+            onClick={toggleLoop}
+            title="循环预览(K 动画同款):开 = 播完自动从头继续;关 = 播完即停"
+          >
+            🔁 循环
+          </button>
+          <label style={styles.durLabel}>
+            时长
+            <input
+              style={styles.durInput}
+              type="number"
+              min={DUR_MIN}
+              max={DUR_MAX}
+              value={duration}
+              onChange={(e) => changeDuration(Number(e.target.value))}
+            />
+            s
+          </label>
+          {hasKeys && <span style={styles.clipHint}>片段 {clipSec.toFixed(1)}s</span>}
           <span style={{ flex: 1 }} />
+          <div style={{ position: 'relative' }}>
+            <button
+              style={showClips ? styles.loopOn : styles.tlBtn}
+              onClick={() => setShowClips((v) => !v)}
+              title="镜头库:预设 / 我的镜头 / 导入导出(通用格式)"
+            >
+              🎥 镜头
+            </button>
+            {showClips && (
+              <div style={styles.clipMenu}>
+                <div style={styles.clipHead}>镜头预设(点击应用 / 拖到时间尺插入)</div>
+                <div style={styles.clipGrid}>
+                  {CAMERA_PRESETS.map((p) => (
+                    <div
+                      key={p.id}
+                      style={styles.clipItem}
+                      draggable
+                      title={`${p.desc};点击 = 覆盖时间轴,拖到时间尺 = 插入落点`}
+                      onDragStart={(e) =>
+                        e.dataTransfer.setData(CLIP_DND_MIME, JSON.stringify({ preset: p.id }))
+                      }
+                      onClick={() => applyPreset(p.id)}
+                    >
+                      <span style={styles.clipName}>{p.name}</span>
+                      <span style={styles.clipSub}>{p.durationSec}s</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={styles.clipHead}>我的镜头</div>
+                {myClips.length === 0 ? (
+                  <div style={styles.clipEmpty}>暂无 — 导入镜头文件,或把当前运镜存入</div>
+                ) : (
+                  <div style={styles.clipList}>
+                    {myClips.map((c) => (
+                      <div
+                        key={c.id}
+                        style={styles.clipItem}
+                        draggable
+                        title="点击 = 覆盖时间轴,拖到时间尺 = 插入落点"
+                        onDragStart={(e) =>
+                          e.dataTransfer.setData(CLIP_DND_MIME, JSON.stringify({ assetId: c.id }))
+                        }
+                        onClick={() => void applyAssetClip(c.id)}
+                      >
+                        <span style={styles.clipName}>{c.name}</span>
+                        <button
+                          style={styles.clipDel}
+                          title="删除"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void deleteAsset(c.id).then(loadMyClips);
+                          }}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={styles.clipBtns}>
+                  <button style={styles.tlBtn} onClick={() => fileRef.current?.click()}>
+                    ⤒ 导入镜头文件
+                  </button>
+                  <button
+                    style={hasKeys ? styles.tlBtn : styles.tlBtnDisabled}
+                    disabled={!hasKeys}
+                    onClick={() => void saveClipToLibrary()}
+                  >
+                    ☆ 存入我的镜头
+                  </button>
+                  <button
+                    style={hasKeys ? styles.tlBtn : styles.tlBtnDisabled}
+                    disabled={!hasKeys}
+                    onClick={exportClipJson}
+                  >
+                    ⤓ 导出 .json
+                  </button>
+                </div>
+                <div style={styles.clipNote}>
+                  支持 director-camera JSON / 裸 AnimationClip JSON / glb / gltf / fbx —— Blender
+                  「导出 glTF 2.0 + 勾选 Cameras」的相机动画可直接导入
+                </div>
+              </div>
+            )}
+          </div>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".json,.glb,.gltf,.fbx"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void importClipFile(f);
+              e.target.value = '';
+            }}
+          />
           <button style={styles.tlBtnDisabled} disabled title="增强(暂未启用)">
             ✦ 增强
           </button>
@@ -265,6 +626,9 @@ export default function DirectorRecordTimeline({ stageRef, onExit, onExported }:
                     ))}
                   </div>
                 </div>
+                <div style={{ color: '#8b94a2', fontSize: 11 }}>
+                  导出时长 = 关键帧区间 {clipSec.toFixed(1)}s
+                </div>
                 <button style={styles.exportGo} onClick={doExport}>
                   开始导出
                 </button>
@@ -276,17 +640,32 @@ export default function DirectorRecordTimeline({ stageRef, onExit, onExported }:
           </button>
         </div>
 
-        {/* 时间尺 + 关键帧 + 游标 */}
-        <div style={styles.rail} ref={railRef} onMouseDown={onRailClick}>
-          {Array.from({ length: DURATION_SEC + 1 }, (_, i) => (
-            <span key={i} style={{ ...styles.tick, left: `${(i / DURATION_SEC) * 100}%` }}>
-              {i}s
+        {/* 时间尺 + 关键帧区间高亮 + 关键帧 + 游标(接受镜头拖入) */}
+        <div
+          style={styles.rail}
+          ref={railRef}
+          onMouseDown={onRailClick}
+          onDragOver={onRailDragOver}
+          onDrop={onRailDrop}
+        >
+          {hasKeys && clipSec > 0 && (
+            <span
+              style={{
+                ...styles.clipSpan,
+                left: `${(tStart / duration) * 100}%`,
+                width: `${(clipSec / duration) * 100}%`,
+              }}
+            />
+          )}
+          {ticks.map((t) => (
+            <span key={t} style={{ ...styles.tick, left: `${(t / duration) * 100}%` }}>
+              {t}s
             </span>
           ))}
           {keys.map((k) => (
             <span
               key={k.id}
-              style={{ ...styles.kf, left: `${(k.t / DURATION_SEC) * 100}%` }}
+              style={{ ...styles.kf, left: `${(k.t / duration) * 100}%` }}
               title={`关键帧 @ ${k.t.toFixed(1)}s — 双击删除`}
               onMouseDown={(e) => {
                 e.stopPropagation();
@@ -301,11 +680,13 @@ export default function DirectorRecordTimeline({ stageRef, onExit, onExported }:
               ◆
             </span>
           ))}
-          <span style={{ ...styles.playhead, left: `${(playhead / DURATION_SEC) * 100}%` }}>
+          <span style={{ ...styles.playhead, left: `${(playhead / duration) * 100}%` }}>
             <span style={styles.playheadLabel}>{playhead.toFixed(1)}s</span>
           </span>
         </div>
       </div>
+
+      {clipMsg && <div style={styles.clipToast}>{clipMsg}</div>}
 
       {exportPct !== null && (
         <div style={styles.exportOverlay}>
@@ -324,16 +705,17 @@ export default function DirectorRecordTimeline({ stageRef, onExit, onExported }:
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  overlay: { position: 'absolute', inset: 0, zIndex: 40, pointerEvents: 'none' },
+  // zIndex 10:高于左右面板(5/6),低于底栏弹出面板(19/20/30)与快捷键
+  // 弹层(40)—— 录制时打开「假人/镜头/机位」等 popup 不再被时间轴盖住。
+  overlay: { position: 'absolute', inset: 0, zIndex: 10, pointerEvents: 'none' },
   frameArea: {
     position: 'absolute',
     inset: '56px 0 130px 0',
     display: 'grid',
     placeItems: 'center',
   },
+  // 宽高由组件按比例实测计算(contain 适配),这里只留外观。
   safeFrame: {
-    width: '58%',
-    maxHeight: '92%',
     border: '1.5px solid #d9c64a',
     borderRadius: 2,
     boxShadow: '0 0 0 9999px rgba(8,9,12,0.28)',
@@ -346,7 +728,9 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#16181e',
     border: '1px solid #2c313b',
     borderRadius: 8,
-    overflow: 'hidden',
+    // 不能 overflow:hidden:画幅比例下拉(AspectSelect)从标题栏向下弹出,
+    // 会被面板裁掉后半截(截图 bug)。圆角裁剪改由 previewBody 自己负责。
+    overflow: 'visible',
     pointerEvents: 'auto',
     boxShadow: '0 8px 28px rgba(0,0,0,0.5)',
   },
@@ -358,17 +742,24 @@ const styles: Record<string, React.CSSProperties> = {
     borderBottom: '1px solid #2c313b',
   },
   previewTitle: { color: '#cbd2dd', fontSize: 12, flex: 1 },
-  aspectSel: {
-    background: '#23262e',
-    border: '1px solid #333a46',
-    color: '#cbd2dd',
-    borderRadius: 5,
-    fontSize: 11,
-    padding: '1px 4px',
-  },
   xBtn: { background: 'none', border: 'none', color: '#8b94a2', cursor: 'pointer', fontSize: 14 },
-  previewBody: { position: 'relative', lineHeight: 0 },
-  previewCanvas: { width: '100%', display: 'block', background: '#0c0e12' },
+  previewBody: {
+    position: 'relative',
+    lineHeight: 0,
+    background: '#0c0e12',
+    // 面板 overflow 已放开(给下拉让路),底部圆角在这里裁。
+    overflow: 'hidden',
+    borderRadius: '0 0 8px 8px',
+  },
+  // 不再强拉 width:100%:竖版比例(9:16 等)按画布自身宽高居中显示,
+  // 两侧自然留黑边,避免被拉宽变形。
+  previewCanvas: {
+    display: 'block',
+    margin: '0 auto',
+    maxWidth: '100%',
+    height: 'auto',
+    background: '#0c0e12',
+  },
   previewEmpty: {
     position: 'absolute',
     inset: 0,
@@ -403,6 +794,15 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#23262e',
     border: '1px solid #333a46',
     color: '#cbd2dd',
+    borderRadius: 6,
+    padding: '5px 10px',
+    cursor: 'pointer',
+    fontSize: 12,
+  },
+  loopOn: {
+    background: '#274264',
+    border: '1px solid #2f5fb0',
+    color: '#9ec3f5',
     borderRadius: 6,
     padding: '5px 10px',
     cursor: 'pointer',
@@ -480,6 +880,93 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     fontSize: 12,
   },
+  durLabel: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 4,
+    color: '#8b94a2',
+    fontSize: 11,
+  },
+  durInput: {
+    width: 52,
+    background: '#23262e',
+    border: '1px solid #333a46',
+    color: '#e5e9f0',
+    borderRadius: 5,
+    fontSize: 11,
+    padding: '2px 5px',
+  },
+  clipHint: { color: '#d9c64a', fontSize: 11 },
+  // ── 镜头库弹层 ──────────────────────────────────────────────
+  clipMenu: {
+    position: 'absolute',
+    right: 0,
+    bottom: 36,
+    width: 320,
+    maxHeight: 420,
+    overflowY: 'auto',
+    background: '#1a1c22',
+    border: '1px solid #333a46',
+    borderRadius: 8,
+    padding: 10,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+    boxShadow: '0 8px 28px rgba(0,0,0,0.6)',
+  },
+  clipHead: { color: '#8b94a2', fontSize: 11, fontWeight: 600 },
+  clipGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: 6,
+  },
+  clipList: { display: 'flex', flexDirection: 'column', gap: 4 },
+  clipItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    background: '#23262e',
+    border: '1px solid #333a46',
+    borderRadius: 6,
+    padding: '6px 8px',
+    cursor: 'grab',
+    userSelect: 'none',
+  },
+  clipName: {
+    color: '#cbd2dd',
+    fontSize: 12,
+    flex: 1,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  clipSub: { color: '#6b7480', fontSize: 10 },
+  clipDel: {
+    background: 'none',
+    border: 'none',
+    color: '#8b94a2',
+    cursor: 'pointer',
+    fontSize: 13,
+    lineHeight: 1,
+    padding: '0 2px',
+  },
+  clipEmpty: { color: '#6b7480', fontSize: 11, padding: '2px 0' },
+  clipBtns: { display: 'flex', gap: 6, flexWrap: 'wrap' },
+  clipNote: { color: '#5a626d', fontSize: 10, lineHeight: 1.5 },
+  clipToast: {
+    position: 'absolute',
+    left: '50%',
+    bottom: 150,
+    transform: 'translateX(-50%)',
+    background: '#1a1c22F0',
+    border: '1px solid #333a46',
+    borderRadius: 8,
+    color: '#cbd2dd',
+    fontSize: 12,
+    padding: '8px 14px',
+    pointerEvents: 'none',
+    boxShadow: '0 8px 28px rgba(0,0,0,0.5)',
+  },
   rail: {
     position: 'relative',
     height: 34,
@@ -487,6 +974,15 @@ const styles: Record<string, React.CSSProperties> = {
     border: '1px solid #262b34',
     borderRadius: 6,
     cursor: 'pointer',
+  },
+  clipSpan: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    background: 'rgba(217,198,74,0.10)',
+    borderLeft: '1px solid rgba(217,198,74,0.4)',
+    borderRight: '1px solid rgba(217,198,74,0.4)',
+    pointerEvents: 'none',
   },
   tick: {
     position: 'absolute',

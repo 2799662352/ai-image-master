@@ -117,9 +117,14 @@ export const GRID = {
   majorColor: 0x4a505a,
   minorStep: 1,
   majorStep: 10,
-  /** 距视点 fadeStart 单位开始淡出,fadeEnd 单位完全消失. */
-  fadeStart: 40,
-  fadeEnd: 220,
+  /**
+   * 距相机 fadeStart 单位开始淡出,fadeEnd 单位完全消失(shader 里次级线
+   * 半程提前淡出,远景只留主线)。fadeEnd 必须 < 相机 far(2000),否则
+   * 网格会被远裁剪面硬切出一条直线边。原值 40/220 视觉上"一小块地毯",
+   * 放大到 160/900 后接近 Blender/实站的"铺满地平线"观感。
+   */
+  fadeStart: 160,
+  fadeEnd: 900,
 } as const;
 
 /** 镜头距离滑杆范围(OrbitControls dolly 半径). 实站不限上限,UI 给到 200. */

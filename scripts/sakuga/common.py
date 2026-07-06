@@ -16,6 +16,12 @@ COLLECTION = "sakuga42m"
 DIM = 512
 
 
+def doc_id(identifier: str) -> str:
+    """DashVector doc id 只允许 [a-zA-Z0-9_-!@#$%+=.];原始 identifier
+    形如 '127464:15',冒号非法 → 换 '_'。原值完整保留在 identifier 字段。"""
+    return str(identifier).replace(":", "_")
+
+
 def env(name: str) -> str:
     v = os.environ.get(name, "").strip()
     if not v:
@@ -79,17 +85,25 @@ class DashVector:
         return r.json()
 
     def upsert(self, docs: list, retries: int = 5) -> dict:
+        """POST /docs/upsert(PUT /docs 是 update 语义,key 不存在会失败)。
+        顶层 code==0 不代表逐条成功,必须校验 output 里每条的 code。"""
         last = None
         for attempt in range(retries):
-            r = requests.put(
-                f"{self.base}/collections/{COLLECTION}/docs",
+            r = requests.post(
+                f"{self.base}/collections/{COLLECTION}/docs/upsert",
                 headers=self.h,
                 json={"docs": docs},
                 timeout=120,
             )
             last = r
-            if r.status_code == 200 and r.json().get("code") == 0:
-                return r.json()
+            if r.status_code == 200:
+                j = r.json()
+                per_doc = j.get("output") or []
+                bad = [o for o in per_doc if o.get("code") != 0]
+                if j.get("code") == 0 and not bad:
+                    return j
+                if bad:
+                    raise RuntimeError(f"upsert per-doc failures: {bad[:3]}")
             time.sleep(2**attempt)
         raise RuntimeError(f"upsert failed: {last.status_code} {last.text[:300]}")
 

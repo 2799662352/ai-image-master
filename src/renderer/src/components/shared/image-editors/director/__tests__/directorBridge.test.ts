@@ -86,7 +86,7 @@ function makeFakeHandle(): DirectorStageHandle {
     recordClearKeyframes: vi.fn(),
     recordSeek: vi.fn(),
     recordPlay: vi.fn(
-      (_durationSec: number, _onTime: (t: number) => void, onDone: () => void) => {
+      (_startSec: number, _endSec: number, _onTime: (t: number) => void, onDone: () => void) => {
         setTimeout(() => onDone(), 0);
         return () => {};
       },

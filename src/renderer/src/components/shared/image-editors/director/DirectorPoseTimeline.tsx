@@ -6,7 +6,7 @@ import {
   newKeyframeId,
   type PoseKeyframe,
 } from './directorPoseClip';
-import { putAsset } from './directorAssetStore';
+import { ANIM_DND_MIME, openAssetUrl, putAsset } from './directorAssetStore';
 
 /** 预览剪辑固定名 —— 用于从 AnimTick 识别「正在播的是本时间轴的预览」。 */
 const CLIP_NAME = 'K动画预览';
@@ -55,14 +55,19 @@ export default function DirectorPoseTimeline({
   const previewActive = animTick?.name === CLIP_NAME;
   const playing = previewActive && animTick.playing;
 
-  // 播放中把场景回传的时间同步到游标(循环播放 → 取模)。
-  useEffect(() => {
-    if (previewActive) setPlayhead(animTick.time % Math.max(duration, 0.001));
-  }, [animTick, previewActive, duration]);
-
   const sorted = useMemo(() => [...keys].sort((a, b) => a.t - b.t), [keys]);
   const hasKeys = keys.length > 0;
   const canPreview = sorted.length >= 2;
+
+  // 预览只循环「关键帧首→末」区间(录制视频预览同款):不带首尾空白段,
+  // 播到末帧立刻回首帧,不会出现"冻结尾巴"像停住了一样。
+  const spanStart = sorted.length ? sorted[0].t : 0;
+  const spanSec = sorted.length ? Math.max(0.1, sorted[sorted.length - 1].t - spanStart) : 0.1;
+
+  // 播放中把场景回传的时间同步到游标(剪辑时间 = 游标时间 - spanStart)。
+  useEffect(() => {
+    if (previewActive) setPlayhead(spanStart + (animTick.time % spanSec));
+  }, [animTick, previewActive, spanStart, spanSec]);
 
   const flash = useCallback((msg: string) => {
     setNotice(msg);
@@ -131,8 +136,11 @@ export default function DirectorPoseTimeline({
       return;
     }
     dirtyRef.current = false;
-    void st.playPoseClip(sorted, duration, CLIP_NAME).catch(() => flash('预览失败'));
-  }, [canPreview, duration, flash, playing, previewActive, sorted, stageRef]);
+    // 预览剪辑只编译关键帧首→末区间(整体前移 spanStart):LoopRepeat 播到
+    // 末帧立即回首帧无缝循环,与录制视频预览行为一致;导出仍用完整时长。
+    const shifted = sorted.map((k) => ({ ...k, t: k.t - spanStart }));
+    void st.playPoseClip(shifted, spanSec, CLIP_NAME).catch(() => flash('预览失败'));
+  }, [canPreview, flash, playing, previewActive, sorted, spanSec, spanStart, stageRef]);
 
   const stopPreview = useCallback(() => {
     if (previewActive) stageRef.current?.stopAnimation();
@@ -143,9 +151,14 @@ export default function DirectorPoseTimeline({
     (t: number) => {
       const clamped = Math.max(0, Math.min(duration, t));
       setPlayhead(clamped);
-      if (previewActive && !dirtyRef.current) stageRef.current?.seekAnimation(clamped);
+      // 预览剪辑从 spanStart 前移到 0:seek 时换算回剪辑本地时间。
+      if (previewActive && !dirtyRef.current) {
+        stageRef.current?.seekAnimation(
+          Math.max(0, Math.min(spanSec, clamped - spanStart)),
+        );
+      }
     },
-    [duration, previewActive, stageRef],
+    [duration, previewActive, spanSec, spanStart, stageRef],
   );
 
   const onRailClick = (e: React.MouseEvent) => {
@@ -153,6 +166,63 @@ export default function DirectorPoseTimeline({
     if (!rail) return;
     const rect = rail.getBoundingClientRect();
     seekTo(((e.clientX - rect.left) / rect.width) * duration);
+  };
+
+  /** 把一段姿势关键帧插入到 atSec 落点(区间内旧关键帧让位;必要时加长时间轴)。 */
+  const insertKeys = useCallback(
+    (ks: readonly PoseKeyframe[], atSec: number, label: string) => {
+      if (ks.length === 0) return;
+      const t0 = ks[0].t;
+      const shifted = ks.map((k) => ({ ...k, id: newKeyframeId(), t: atSec + (k.t - t0) }));
+      const tEnd = shifted[shifted.length - 1].t;
+      setDuration((d) => Math.max(d, Math.ceil(tEnd)));
+      mutateKeys((prev) => [
+        ...prev.filter((k) => k.t < atSec - T_EPS || k.t > tEnd + T_EPS),
+        ...shifted,
+      ]);
+      flash(`已插入「${label}」${shifted.length} 帧,可逐帧编辑`);
+    },
+    [flash, mutateKeys],
+  );
+
+  /** 动画卡片拖入:采样成姿势关键帧插到落点(目录动画带 url;我的动画带 assetId)。 */
+  const dropAnim = useCallback(
+    async (raw: string, atSec: number) => {
+      const st = stageRef.current;
+      if (!st) return;
+      let tempUrl: string | null = null;
+      try {
+        const p = JSON.parse(raw) as { url?: string; ext?: string; name?: string; assetId?: string };
+        let url = p.url;
+        if (!url && p.assetId) {
+          const r = await openAssetUrl(p.assetId);
+          if (r) url = tempUrl = r.url;
+        }
+        if (!url) return;
+        setBusy('drop');
+        const ks = await st.sampleAnimToPoseKeys(url, p.ext);
+        insertKeys(ks, atSec, p.name ?? '动画');
+      } catch (err) {
+        flash(err instanceof Error ? err.message : '动画采样失败');
+      } finally {
+        setBusy(null);
+        if (tempUrl) URL.revokeObjectURL(tempUrl);
+      }
+    },
+    [flash, insertKeys, stageRef],
+  );
+
+  const onRailDragOver = (e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes(ANIM_DND_MIME)) e.preventDefault();
+  };
+  const onRailDrop = (e: React.DragEvent) => {
+    const raw = e.dataTransfer.getData(ANIM_DND_MIME);
+    const rail = railRef.current;
+    if (!raw || !rail) return;
+    e.preventDefault();
+    const rect = rail.getBoundingClientRect();
+    const at = Math.max(0, Math.min(duration, ((e.clientX - rect.left) / rect.width) * duration));
+    void dropAnim(raw, at);
   };
 
   const jumpKey = useCallback(
@@ -345,7 +415,14 @@ export default function DirectorPoseTimeline({
         <div style={styles.hintRow}>选中一个高级假人后,用右栏「姿势」摆好姿势再打关键帧。</div>
       )}
 
-      <div style={styles.rail} ref={railRef} onMouseDown={onRailClick}>
+      <div
+        style={styles.rail}
+        ref={railRef}
+        onMouseDown={onRailClick}
+        onDragOver={onRailDragOver}
+        onDrop={onRailDrop}
+        title={busy === 'drop' ? '动画采样中…' : undefined}
+      >
         {ticks.map((t) => (
           <span key={t} style={{ ...styles.tick, left: `${(t / duration) * 100}%` }}>
             {t}s
@@ -396,7 +473,9 @@ const styles: Record<string, React.CSSProperties> = {
     left: 0,
     right: 0,
     bottom: 0,
-    zIndex: 42,
+    // 10:高于左右面板(5/6),低于底栏弹出面板(19/20/30)—— 打开「假人/
+    // 镜头/机位」等 popup 时不被时间轴盖住(与录制时间轴同层)。
+    zIndex: 10,
     background: '#16181eF7',
     borderTop: '1px solid #2c313b',
     padding: '8px 14px 14px',

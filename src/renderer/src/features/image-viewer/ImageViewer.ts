@@ -16,6 +16,7 @@ export class ImageViewer {
   private urls: string[] = []
   private options: ImageViewerOptions
   private keyboardHandler: ((e: KeyboardEvent) => void) | null = null
+  private fullscreenHandler: (() => void) | null = null
 
   constructor(options: ImageViewerOptions = {}) {
     this.options = options
@@ -51,10 +52,16 @@ export class ImageViewer {
       this.modal = null
     }
     this.unbindKeyboardEvents()
+    this.unbindFullscreenEvents()
   }
 
   /**
    * 创建模态框
+   *
+   * element-fullscreen 兼容:导演台「⛶ 全屏」用 shell.requestFullscreen(),
+   * 浏览器全屏期间只渲染 fullscreenElement 的后代 —— 挂在 body 下的模态框
+   * z-index 再高也画不出来(表现为"图片在导演台下层")。所以挂载点选
+   * `document.fullscreenElement ?? document.body`,并在全屏切换时跟随搬家。
    */
   private createModal(): void {
     this.modal = document.createElement('div')
@@ -64,7 +71,26 @@ export class ImageViewer {
     // 绑定事件
     this.bindEvents()
 
-    document.body.appendChild(this.modal)
+    ;(document.fullscreenElement ?? document.body).appendChild(this.modal)
+    this.bindFullscreenEvents()
+  }
+
+  /** 全屏进入/退出时把打开中的模态框搬进/搬出 fullscreenElement。 */
+  private bindFullscreenEvents(): void {
+    if (this.fullscreenHandler) return
+    this.fullscreenHandler = () => {
+      if (!this.modal) return
+      const target = document.fullscreenElement ?? document.body
+      if (this.modal.parentElement !== target) target.appendChild(this.modal)
+    }
+    document.addEventListener('fullscreenchange', this.fullscreenHandler)
+  }
+
+  private unbindFullscreenEvents(): void {
+    if (this.fullscreenHandler) {
+      document.removeEventListener('fullscreenchange', this.fullscreenHandler)
+      this.fullscreenHandler = null
+    }
   }
 
   /**
