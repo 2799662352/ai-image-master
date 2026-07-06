@@ -335,6 +335,8 @@ interface DirectorStageProps {
 export interface AnimTick {
   url: string;
   name: string;
+  /** 动画所在假人的 uuid(换选后 UI 仍能判断动画挂在谁身上). */
+  targetUuid: string;
   time: number;
   duration: number;
   playing: boolean;
@@ -595,6 +597,7 @@ function DirectorStageInner(
     onAnimTickRef.current?.({
       url: a.url,
       name: a.name,
+      targetUuid: a.target.uuid,
       time: a.action.time,
       duration: a.duration,
       playing: !a.action.paused,
@@ -614,7 +617,6 @@ function DirectorStageInner(
   const deselectAll = () => {
     const s = stateRef.current;
     if (!s) return;
-    if (s.anim) stopAnimationImpl();
     dissolveMulti(s);
     s.transform.detach();
     if (s.selected) {
@@ -628,8 +630,8 @@ function DirectorStageInner(
   const selectMany = (objs: THREE.Object3D[]) => {
     const s = stateRef.current;
     if (!s) return;
-    // 换选目标(或进入多选)即停掉别人身上的动画预览。
-    if (s.anim && (objs.length !== 1 || objs[0] !== s.anim.target)) stopAnimationImpl();
+    // 注意:换选/取消选择不停动画 —— 动画跟随目标对象存续(与 RunningHub 一致),
+    // 只在删除目标/清空场景/显式停止/在别的假人上播新动画时停止。
     dissolveMulti(s);
     if (objs.length === 0) {
       deselectAll();
@@ -1022,6 +1024,8 @@ function DirectorStageInner(
       poseBone(uuid) {
         const s = stateRef.current;
         if (!s || !s.selected) return;
+        // 摆骨骼与 mixer 冲突:目标正在播动画则先停(恢复播放前姿势)。
+        if (uuid && s.anim && s.anim.target === s.selected) stopAnimationImpl();
         s.transform.detach();
         if (!uuid) {
           // back to whole-model translate
@@ -1048,6 +1052,7 @@ function DirectorStageInner(
       resetPose() {
         const s = stateRef.current;
         if (!s || !s.selected) return;
+        if (s.anim && s.anim.target === s.selected) stopAnimationImpl();
         const obj = s.selected;
         const before = capturePose(obj);
         applyPoseToObject(obj, null);
@@ -1057,6 +1062,7 @@ function DirectorStageInner(
       applyPose(map) {
         const s = stateRef.current;
         if (!s || !s.selected) return;
+        if (s.anim && s.anim.target === s.selected) stopAnimationImpl();
         const obj = s.selected;
         const before = capturePose(obj);
         // Reset-to-rest then rotation-only, primary bones only (nested duplicate
@@ -1068,6 +1074,7 @@ function DirectorStageInner(
       setBoneDelta(boneName, deg) {
         const s = stateRef.current;
         if (!s || !s.selected) return;
+        if (s.anim && s.anim.target === s.selected) stopAnimationImpl();
         const key = normBone(boneName);
         // Only drive the real (non-nested) bone — the nested duplicate inherits
         // it. Driving the nested twin too would double-rotate it (see

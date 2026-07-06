@@ -55,7 +55,11 @@ FBXLoader（加载 X/Y Bot rig）、常驻 RAF 渲染循环、姿势系统（`_p
   - `stopAnimation()` — `mixer.stopAllAction()` + `restorePose(poseSnap)` + 清 `anim` + tick(null)。
   - `seekAnimation(sec)` — `action.time = sec; mixer.update(0)`。
 - 生命周期：动画为**瞬态预览** — 不进撤销栈、不进「保存工程」序列化（与 RH 一致）。
-  选中切到其他对象、删除目标对象、clearModels、组件卸载 → 自动 `stopAnimation()`。
+  删除目标对象、clearModels、组件卸载、在别的假人上播新动画 → 自动 `stopAnimation()`。
+  **修订(2026-07-06,用户实测反馈)**：换选/取消选择**不**停动画 — 动画跟随目标对象
+  存续（原「换选即停」会把假人弹回播放前的 T-pose）。姿势编辑与 mixer 的冲突改为
+  精确守卫：`poseBone`/`resetPose`/`applyPose`/`setBoneDelta` 作用在动画目标上时才
+  先停;UI 进「姿势」页仅当选中对象 === 动画目标（`AnimTick.targetUuid`）时停。
 
 ### 3. UI 层 — `DirectorEditor.tsx`
 

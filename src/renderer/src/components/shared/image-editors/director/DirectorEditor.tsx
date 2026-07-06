@@ -608,8 +608,11 @@ export default function DirectorEditor({
         setMode('translate');
       }
       if (t === 'pose') {
-        // 姿势编辑与动画 mixer 冲突:进姿势页先停动画(恢复播放前姿势)。
-        if (animTick) stageRef.current?.stopAnimation();
+        // 姿势编辑与动画 mixer 冲突:仅当选中对象正是动画目标时先停
+        // (恢复播放前姿势);别的假人在播则不打扰,场景层姿势入口另有兜底。
+        if (animTick && animTick.targetUuid === selection?.uuid) {
+          stageRef.current?.stopAnimation();
+        }
         const st = stageRef.current;
         setBones(selection && st ? st.getBones() : []);
       }
