@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import DirectorStageScene, {
   LIGHTFX_DEFAULTS,
+  type AnimTick,
   type BoneInfo,
   type DirectorLightFxState,
   type DirectorSceneData,
@@ -61,6 +62,13 @@ import {
   type TransformMode,
 } from './directorConstants';
 import { BONES_BY_GROUP, POSE_KEYS, getPose } from './directorPoses';
+import {
+  animUrl,
+  filterAnimations,
+  loadAnimCatalog,
+  type AnimCatalog,
+  type DirectorAnimation,
+} from './directorAnimations';
 
 export interface DirectorCaptureShot {
   dataUrl: string;
@@ -143,7 +151,7 @@ export default function DirectorEditor({
   const [showLights, setShowLights] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
   const [showLensMenu, setShowLensMenu] = useState(false);
-  const [tab, setTab] = useState<'props' | 'pose'>('props');
+  const [tab, setTab] = useState<'props' | 'pose' | 'anim'>('props');
 
   // ── 骨骼摆姿 ──
   const [bones, setBones] = useState<BoneInfo[]>([]);
@@ -222,6 +230,42 @@ export default function DirectorEditor({
   const [boneDeltas, setBoneDeltas] = useState<Record<string, [number, number, number]>>({});
   const [openGroup, setOpenGroup] = useState<string | null>(BONES_BY_GROUP[0]?.group ?? null);
   const isAdvanced = !!selection && bones.length > 0;
+
+  // ── 动画 Tab(高级假人 Mixamo 剪辑;瞬态预览,目录懒加载)──
+  const [animCatalog, setAnimCatalog] = useState<AnimCatalog | null>(null);
+  const [animLoadErr, setAnimLoadErr] = useState(false);
+  const [animCat, setAnimCat] = useState('');
+  const [animKw, setAnimKw] = useState('');
+  /** 前端分页:当前展示条数(每次「加载更多」+30). */
+  const [animShown, setAnimShown] = useState(30);
+  /** 播放进度(场景 ~10Hz 回传;null = 无活动动画,播放条隐藏). */
+  const [animTick, setAnimTick] = useState<AnimTick | null>(null);
+  /** 正在加载的动画 url(点击后 FBX 下载期间禁点其它卡片). */
+  const [animBusy, setAnimBusy] = useState<string | null>(null);
+  const animList = useMemo(
+    () =>
+      animCatalog
+        ? filterAnimations(animCatalog.animations, { category: animCat, keyword: animKw })
+        : [],
+    [animCatalog, animCat, animKw],
+  );
+  // 过滤条件变化时回到第一页。
+  useEffect(() => {
+    setAnimShown(30);
+  }, [animCat, animKw]);
+  const playAnim = useCallback(async (a: DirectorAnimation) => {
+    const st = stageRef.current;
+    if (!st) return;
+    const url = animUrl(a);
+    setAnimBusy(url);
+    try {
+      await st.playAnimation(url, a.name);
+    } catch {
+      alert(`动画加载失败:${a.name}(网络或资源不可用)`);
+    } finally {
+      setAnimBusy(null);
+    }
+  }, []);
 
   const catalog = useMemo(() => getCatalog(), []);
 
@@ -557,19 +601,26 @@ export default function DirectorEditor({
 
   // Leaving the pose tab returns the gizmo to the whole model.
   const switchTab = useCallback(
-    (t: 'props' | 'pose') => {
-      if (t === 'props' && activeBone) {
+    (t: 'props' | 'pose' | 'anim') => {
+      if (t !== 'pose' && activeBone) {
         stageRef.current?.poseBone(null);
         setActiveBone(null);
         setMode('translate');
       }
       if (t === 'pose') {
+        // 姿势编辑与动画 mixer 冲突:进姿势页先停动画(恢复播放前姿势)。
+        if (animTick) stageRef.current?.stopAnimation();
         const st = stageRef.current;
         setBones(selection && st ? st.getBones() : []);
       }
+      if (t === 'anim' && !animCatalog && !animLoadErr) {
+        loadAnimCatalog()
+          .then(setAnimCatalog)
+          .catch(() => setAnimLoadErr(true));
+      }
       setTab(t);
     },
-    [activeBone, selection],
+    [activeBone, selection, animTick, animCatalog, animLoadErr],
   );
 
   const isPunk = theme === 'punk';
@@ -792,7 +843,46 @@ export default function DirectorEditor({
             onHistoryChange={handleHistoryChange}
             onBoxSelectChange={setBoxSelect}
             keymap={keymap}
+            onAnimTick={setAnimTick}
           />
+          {/* 动画播放条(有活动动画时浮在视口底部中央) */}
+          {animTick && (
+            <div style={styles.animBar}>
+              <span style={styles.animBarName} title={animTick.name}>
+                {animTick.name}
+              </span>
+              <button
+                style={styles.toolBtn}
+                title={animTick.playing ? '暂停' : '播放'}
+                onClick={() =>
+                  animTick.playing
+                    ? stageRef.current?.pauseAnimation()
+                    : stageRef.current?.resumeAnimation()
+                }
+              >
+                {animTick.playing ? '⏸' : '▶'}
+              </button>
+              <input
+                type="range"
+                min={0}
+                max={animTick.duration}
+                step={0.01}
+                value={animTick.time}
+                onChange={(e) => stageRef.current?.seekAnimation(Number(e.target.value))}
+                style={{ flex: 1, minWidth: 0 }}
+              />
+              <span style={styles.animBarTime}>
+                {animTick.time.toFixed(1)}s / {animTick.duration.toFixed(1)}s
+              </span>
+              <button
+                style={styles.toolBtn}
+                title="停止并恢复播放前姿势"
+                onClick={() => stageRef.current?.stopAnimation()}
+              >
+                ⏹
+              </button>
+            </div>
+          )}
           {/* bottom-left camera sliders */}
           <div style={styles.camDock}>
             <Slider
@@ -879,6 +969,12 @@ export default function DirectorEditor({
             >
               姿势
             </button>
+            <button
+              style={tab === 'anim' ? styles.tabActive : styles.tab}
+              onClick={() => switchTab('anim')}
+            >
+              动画
+            </button>
           </div>
           {tab === 'props' ? (
             selection ? (
@@ -906,6 +1002,68 @@ export default function DirectorEditor({
               </>
             ) : (
               <div style={styles.hint}>点选一个模型以编辑变换</div>
+            )
+          ) : tab === 'anim' ? (
+            !selection ? (
+              <div style={styles.hint}>点选一个高级假人以播放动画</div>
+            ) : !isAdvanced ? (
+              <div style={styles.hint}>
+                该模型无骨骼(非绑定模型)。从底栏「高级假人」添加红/蓝假人(Mixamo
+                绑定)即可播放动画。
+              </div>
+            ) : animLoadErr ? (
+              <div style={styles.hint}>动画目录加载失败,切走再切回「动画」页重试。</div>
+            ) : !animCatalog ? (
+              <div style={styles.hint}>动画目录加载中…</div>
+            ) : (
+              <>
+                <select
+                  style={styles.animSelect}
+                  value={animCat}
+                  onChange={(e) => setAnimCat(e.target.value)}
+                >
+                  <option value="">全部分类({animCatalog.animations.length})</option>
+                  {animCatalog.categories.map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  style={styles.animSearch}
+                  value={animKw}
+                  onChange={(e) => setAnimKw(e.target.value)}
+                  placeholder="搜索动画(中/英文)"
+                />
+                <div style={styles.poseGrid}>
+                  {animList.slice(0, animShown).map((a) => {
+                    const url = animUrl(a);
+                    const active = animTick?.url === url;
+                    return (
+                      <button
+                        key={a.id}
+                        style={active ? styles.posePresetActive : styles.posePreset}
+                        title={a.nameEn || a.name}
+                        disabled={animBusy != null}
+                        onClick={() => void playAnim(a)}
+                      >
+                        {animBusy === url ? '⏳' : a.name}
+                      </button>
+                    );
+                  })}
+                </div>
+                {animList.length === 0 && (
+                  <div style={styles.hint}>没有匹配的动画,换个关键词试试。</div>
+                )}
+                {animShown < animList.length && (
+                  <button
+                    style={{ ...styles.toolBtn, width: '100%', marginTop: 6 }}
+                    onClick={() => setAnimShown((n) => n + 30)}
+                  >
+                    加载更多({Math.min(animShown, animList.length)}/{animList.length})
+                  </button>
+                )}
+              </>
             )
           ) : !selection ? (
             <div style={styles.hint}>点选一个模型以摆姿</div>
@@ -1890,6 +2048,60 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'rgba(15,17,22,0.7)',
     borderRadius: 8,
     backdropFilter: 'blur(4px)',
+  },
+  // ── 动画播放条(视口底部中央,有活动动画时显示) ──
+  animBar: {
+    position: 'absolute',
+    left: '50%',
+    bottom: 12,
+    transform: 'translateX(-50%)',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    width: 'min(520px, calc(100% - 500px))',
+    minWidth: 320,
+    padding: '6px 10px',
+    background: 'rgba(15,17,22,0.8)',
+    border: '1px solid #333a46',
+    borderRadius: 8,
+    backdropFilter: 'blur(4px)',
+    zIndex: 5,
+  },
+  animBarName: {
+    maxWidth: 110,
+    fontSize: 12,
+    color: '#22d3ee',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    flexShrink: 0,
+  },
+  animBarTime: {
+    fontSize: 11,
+    color: '#9aa3b2',
+    whiteSpace: 'nowrap',
+    flexShrink: 0,
+  },
+  animSelect: {
+    width: '100%',
+    marginBottom: 6,
+    padding: '6px 8px',
+    background: '#12141a',
+    border: '1px solid #333a46',
+    color: '#cbd2dd',
+    borderRadius: 6,
+    fontSize: 12,
+  },
+  animSearch: {
+    width: '100%',
+    boxSizing: 'border-box',
+    marginBottom: 8,
+    padding: '6px 8px',
+    background: '#12141a',
+    border: '1px solid #333a46',
+    color: '#cbd2dd',
+    borderRadius: 6,
+    fontSize: 12,
   },
   sidePanel: {
     position: 'absolute',

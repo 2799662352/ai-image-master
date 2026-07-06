@@ -235,6 +235,16 @@ export interface DirectorStageHandle {
   setBoneDelta(boneName: string, deg: [number, number, number]): void;
   /** True if the selected model is one of the rigged X/Y bot mannequins. */
   isAdvancedMannequin(): boolean;
+  // ── 动画(高级假人 Mixamo 剪辑预览) ────────────────────────────
+  // 动画是瞬态预览:不入撤销栈、不进「保存工程」序列化;停止时恢复播放前姿势。
+  /** Load + loop a Mixamo animation FBX on the selected advanced mannequin. */
+  playAnimation(url: string, name?: string): Promise<void>;
+  pauseAnimation(): void;
+  resumeAnimation(): void;
+  /** Stop and restore the pose captured before playback started. */
+  stopAnimation(): void;
+  /** Jump to `sec` (clamped to [0, duration]); works both playing and paused. */
+  seekAnimation(sec: number): void;
   /** Single screenshot → PNG data URL. `height` (px) overrides output resolution. */
   capture(height?: number): string;
   /**
@@ -317,6 +327,29 @@ interface DirectorStageProps {
   onBoxSelectChange?: (on: boolean) => void;
   /** 当前快捷键绑定(可由用户在面板里改键);省略时用默认绑定. */
   keymap?: Keymap;
+  /** 动画播放进度回传(播放中 ~10Hz;null = 动画已停止/清理). */
+  onAnimTick?: (tick: AnimTick | null) => void;
+}
+
+/** 动画播放进度(给 UI 播放条). */
+export interface AnimTick {
+  url: string;
+  name: string;
+  time: number;
+  duration: number;
+  playing: boolean;
+}
+
+/** 活动动画(挂在某个高级假人上的 mixer + 当前 action). */
+interface ActiveAnim {
+  mixer: THREE.AnimationMixer;
+  action: THREE.AnimationAction;
+  target: THREE.Object3D;
+  /** 播放前姿势快照 — stop 时恢复(动画是瞬态预览). */
+  poseSnap: PoseSnap;
+  duration: number;
+  url: string;
+  name: string;
 }
 
 interface StageState {
@@ -371,6 +404,10 @@ interface StageState {
   redoStack: HistoryCmd[];
   /** gizmo 拖拽开始时记录的受影响对象 transform 快照(拖拽结束后入栈). */
   dragSnap: TransformSnap[] | null;
+  /** 动画预览(高级假人):null = 无活动动画. */
+  anim: ActiveAnim | null;
+  /** RAF 循环里驱动 mixer.update 的时钟. */
+  clock: THREE.Clock;
 }
 
 /** A single undoable operation. `dispose` (optional) frees any detached objects
@@ -453,6 +490,7 @@ function DirectorStageInner(
     onHistoryChange,
     onBoxSelectChange,
     keymap,
+    onAnimTick,
   }: DirectorStageProps,
   ref: React.Ref<DirectorStageHandle>,
 ) {
@@ -465,10 +503,14 @@ function DirectorStageInner(
   const onHistRef = useRef(onHistoryChange);
   const onBoxRef = useRef(onBoxSelectChange);
   const keymapRef = useRef<Keymap>(keymap ?? DEFAULT_KEYMAP);
+  const onAnimTickRef = useRef(onAnimTick);
 
   useEffect(() => {
     onSelRef.current = onSelectionChange;
   }, [onSelectionChange]);
+  useEffect(() => {
+    onAnimTickRef.current = onAnimTick;
+  }, [onAnimTick]);
   useEffect(() => {
     onObjRef.current = onObjectsChange;
   }, [onObjectsChange]);
@@ -541,10 +583,38 @@ function DirectorStageInner(
     emitHistory();
   };
 
+  // ── 动画(高级假人 Mixamo 剪辑预览;瞬态,不入撤销/工程) ─────────
+  const emitAnimTick = () => {
+    const s = stateRef.current;
+    if (!s) return;
+    const a = s.anim;
+    if (!a) {
+      onAnimTickRef.current?.(null);
+      return;
+    }
+    onAnimTickRef.current?.({
+      url: a.url,
+      name: a.name,
+      time: a.action.time,
+      duration: a.duration,
+      playing: !a.action.paused,
+    });
+  };
+  /** Stop playback and restore the pose captured before it started. */
+  const stopAnimationImpl = () => {
+    const s = stateRef.current;
+    if (!s?.anim) return;
+    s.anim.mixer.stopAllAction();
+    restorePose(s.anim.poseSnap);
+    s.anim = null;
+    onAnimTickRef.current?.(null);
+  };
+
   // ── 选择(单选 / 框选多选) ─────────────────────────────────────
   const deselectAll = () => {
     const s = stateRef.current;
     if (!s) return;
+    if (s.anim) stopAnimationImpl();
     dissolveMulti(s);
     s.transform.detach();
     if (s.selected) {
@@ -558,6 +628,8 @@ function DirectorStageInner(
   const selectMany = (objs: THREE.Object3D[]) => {
     const s = stateRef.current;
     if (!s) return;
+    // 换选目标(或进入多选)即停掉别人身上的动画预览。
+    if (s.anim && (objs.length !== 1 || objs[0] !== s.anim.target)) stopAnimationImpl();
     dissolveMulti(s);
     if (objs.length === 0) {
       deselectAll();
@@ -595,6 +667,7 @@ function DirectorStageInner(
     if (!s) return;
     const objs = s.multi.length > 1 ? s.multi.slice() : s.selected ? [s.selected] : [];
     if (objs.length === 0) return;
+    if (s.anim && objs.includes(s.anim.target)) stopAnimationImpl();
     dissolveMulti(s);
     s.transform.detach();
     clearSkeletonHelper(s);
@@ -794,6 +867,7 @@ function DirectorStageInner(
       clearModels() {
         const s = stateRef.current;
         if (!s) return;
+        if (s.anim) stopAnimationImpl();
         dissolveMulti(s);
         clearSkeletonHelper(s);
         s.posingBone = null;
@@ -1021,6 +1095,47 @@ function DirectorStageInner(
       isAdvancedMannequin() {
         const s = stateRef.current;
         return !!s?.selected?.userData?.isFbxBot;
+      },
+      async playAnimation(url, name = '') {
+        const s = stateRef.current;
+        const target = s?.selected;
+        if (!s || !target || !target.userData?.isFbxBot) return;
+        const clip = await loadAnimClip(url);
+        const st = stateRef.current;
+        if (!st || st.selected !== target) return; // 加载期间选择已变,丢弃
+        if (st.anim && st.anim.target !== target) stopAnimationImpl();
+        const prev = st.anim; // null 或同目标(换剪辑,复用快照/mixer)
+        const poseSnap = prev ? prev.poseSnap : capturePose(target);
+        const mixer = prev ? prev.mixer : new THREE.AnimationMixer(target);
+        mixer.stopAllAction();
+        const action = mixer.clipAction(retargetClipTracks(clip, target));
+        action.reset();
+        action.setLoop(THREE.LoopRepeat, Infinity);
+        action.play();
+        st.anim = { mixer, action, target, poseSnap, duration: clip.duration, url, name };
+        emitAnimTick();
+      },
+      pauseAnimation() {
+        const s = stateRef.current;
+        if (!s?.anim) return;
+        s.anim.action.paused = true;
+        emitAnimTick();
+      },
+      resumeAnimation() {
+        const s = stateRef.current;
+        if (!s?.anim) return;
+        s.anim.action.paused = false;
+        emitAnimTick();
+      },
+      stopAnimation() {
+        stopAnimationImpl();
+      },
+      seekAnimation(sec) {
+        const s = stateRef.current;
+        if (!s?.anim) return;
+        s.anim.action.time = THREE.MathUtils.clamp(sec, 0, s.anim.duration);
+        s.anim.mixer.update(0);
+        emitAnimTick();
       },
       capture(height) {
         const s = stateRef.current;
@@ -1561,6 +1676,8 @@ function DirectorStageInner(
       undoStack: [],
       redoStack: [],
       dragSnap: null,
+      anim: null,
+      clock: new THREE.Clock(),
     };
     stateRef.current = state;
     positionKeyLight(state);
@@ -1756,11 +1873,22 @@ function DirectorStageInner(
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
 
+    let lastAnimTick = 0;
     const animate = () => {
       state.frameId = requestAnimationFrame(animate);
       // During keyframe playback the camera is driven manually; OrbitControls
       // would otherwise re-derive position from its target and override us.
       if (!state.recordPlaying) orbit.update();
+      const dt = state.clock.getDelta();
+      if (state.anim) {
+        state.anim.mixer.update(dt);
+        // 播放条进度回传节流到 ~10Hz(暂停/seek 时由各自入口即时回传)。
+        const now = performance.now();
+        if (!state.anim.action.paused && now - lastAnimTick > 100) {
+          lastAnimTick = now;
+          emitAnimTick();
+        }
+      }
       renderStage(state, camera);
     };
     animate();
@@ -1782,6 +1910,11 @@ function DirectorStageInner(
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       endMarquee();
+      if (state.anim) {
+        // 整个场景即将销毁 — 只停 mixer,无需恢复姿势。
+        state.anim.mixer.stopAllAction();
+        state.anim = null;
+      }
       dissolveMulti(state);
       clearSkeletonHelper(state);
       transform.detach();
@@ -1834,6 +1967,59 @@ function DirectorStageInner(
 
 const gltfLoader = new GLTFLoader();
 const fbxLoader = new FBXLoader();
+
+/** 动画剪辑缓存(URL → clip promise);加载失败不缓存,可重试. */
+const animClipCache = new Map<string, Promise<THREE.AnimationClip>>();
+
+/** Load a Mixamo animation FBX and return its first clip (cached by URL). */
+function loadAnimClip(url: string): Promise<THREE.AnimationClip> {
+  let p = animClipCache.get(url);
+  if (!p) {
+    p = fbxLoader.loadAsync(url).then((group) => {
+      const clip = group.animations?.[0];
+      if (!clip) throw new Error(`animation FBX has no clips: ${url}`);
+      return clip;
+    });
+    p.catch(() => animClipCache.delete(url));
+    animClipCache.set(url, p);
+  }
+  return p;
+}
+
+/**
+ * 轨道骨骼名兜底:动画 FBX 的轨道节点名(如 "mixamorig:Hips")与 rig 骨骼名
+ * (如 "mixamorigHips")可能差一个命名约定。目标里找不到同名节点的轨道,按
+ * normBone 归一化后匹配到真实(非嵌套重复)骨骼并重命名;全部命中则原样返回。
+ * 注:这些 rig 是双骨架(每根骨骼有嵌套同名孪生),只绑真实骨骼 — 嵌套孪生
+ * 继承父级即可,直接驱动它会双重旋转(同 applyPoseToObject 的拓扑说明)。
+ */
+function retargetClipTracks(
+  clip: THREE.AnimationClip,
+  target: THREE.Object3D,
+): THREE.AnimationClip {
+  const byNorm = new Map<string, string>();
+  for (const b of collectSkeletonBones(target)) {
+    if (!hasSameNamedBoneAncestor(b) && !byNorm.has(normBone(b.name))) {
+      byNorm.set(normBone(b.name), b.name);
+    }
+  }
+  const names = new Set(byNorm.values());
+  let changed = false;
+  const tracks = clip.tracks.map((t) => {
+    const dot = t.name.lastIndexOf('.');
+    if (dot < 0) return t;
+    const node = t.name.slice(0, dot);
+    if (names.has(node)) return t;
+    const mapped = byNorm.get(normBone(node));
+    if (!mapped) return t;
+    const c = t.clone();
+    c.name = `${mapped}${t.name.slice(dot)}`;
+    changed = true;
+    return c;
+  });
+  if (!changed) return clip;
+  return new THREE.AnimationClip(clip.name, clip.duration, tracks);
+}
 
 /**
  * 统一的「渲染到屏幕/画布」入口 —— 替换所有原先散落的 renderer.render(scene, camera)。
