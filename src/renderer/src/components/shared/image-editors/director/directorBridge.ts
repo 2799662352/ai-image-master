@@ -78,10 +78,19 @@ async function normalizePoseKeys(value: unknown): Promise<PoseKeyframe[]> {
     if (t == null || !bones || Object.keys(bones).length === 0) {
       throw new Error(`keyframes[${i}] 缺少 t 或 bones。`);
     }
+    // bonePos(骨骼位置轨,角色位移数据)可选透传:只收合法 [x,y,z] 项。
+    let bonePos: PoseKeyframe['bonePos'];
+    if (k.bonePos && typeof k.bonePos === 'object') {
+      for (const [name, p] of Object.entries(k.bonePos)) {
+        const v = vec3(p);
+        if (v) (bonePos ??= {})[name] = v;
+      }
+    }
     return {
       id: typeof k.id === 'string' && k.id ? k.id : newKeyframeId(),
       t,
       bones,
+      ...(bonePos ? { bonePos } : {}),
       rootPos: vec3(k.rootPos) ?? [0, 0, 0],
     };
   });
@@ -657,7 +666,11 @@ class DirectorBridge {
         if (!k || typeof k !== 'object' || !k.bones || typeof k.bones !== 'object') {
           throw new Error('apply_pose_keyframe 需要 keyframe:{ bones, rootPos? }(capture_pose_keyframe 的返回)。');
         }
-        h.applyPoseKeyframe({ bones: k.bones, rootPos: vec3(k.rootPos) ?? [0, 0, 0] });
+        h.applyPoseKeyframe({
+          bones: k.bones,
+          ...(k.bonePos ? { bonePos: k.bonePos } : {}),
+          rootPos: vec3(k.rootPos) ?? [0, 0, 0],
+        });
         return { ok: true };
       }
       case 'play_pose_clip': {

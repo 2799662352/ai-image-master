@@ -68,6 +68,38 @@ describe('buildPoseClip', () => {
   it('无关键帧抛错', () => {
     expect(() => buildPoseClip([], 8)).toThrow();
   });
+
+  it('bonePos 生成骨骼位置轨(Hips 位移/跳跃数据不丢)', () => {
+    const clip = buildPoseClip(
+      [
+        { ...kf(0, { Hips: Q_ID }), bonePos: { Hips: [0, 1, 0] } },
+        { ...kf(2, { Hips: Q_X180 }), bonePos: { Hips: [0.5, 1.25, -3] } },
+      ],
+      2,
+    );
+    // Hips.quaternion + Hips.position + 根 .position
+    expect(clip.tracks).toHaveLength(3);
+    const hipsPos = clip.tracks.find((t) => t.name === 'Hips.position')!;
+    expect(hipsPos).toBeInstanceOf(THREE.VectorKeyframeTrack);
+    expect(Array.from(hipsPos.times)).toEqual([0, 2]);
+    // 0.5/1.25/-3 都可被 float32 精确表示,直接全等比较。
+    expect(Array.from(hipsPos.values)).toEqual([0, 1, 0, 0.5, 1.25, -3]);
+  });
+
+  it('bonePos 只在部分帧出现时,位置轨只含在场帧;全程缺省则不产生位置轨', () => {
+    const clip = buildPoseClip(
+      [
+        { ...kf(0, { Hips: Q_ID }), bonePos: { Hips: [0, 1, 0] } },
+        kf(1, { Hips: Q_X180 }), // 手工帧无 bonePos
+      ],
+      1,
+    );
+    const hipsPos = clip.tracks.find((t) => t.name === 'Hips.position')!;
+    expect(Array.from(hipsPos.times)).toEqual([0]);
+
+    const noPos = buildPoseClip([kf(0, { Hips: Q_ID }), kf(1, { Hips: Q_X180 })], 1);
+    expect(noPos.tracks.find((t) => t.name === 'Hips.position')).toBeUndefined();
+  });
 });
 
 describe('clipToExportJson / parseClipJson', () => {

@@ -289,10 +289,10 @@ export interface DirectorStageHandle {
   /** Jump to `sec` (clamped to [0, duration]); works both playing and paused. */
   seekAnimation(sec: number): void;
   // ── K 动画(姿势关键帧;数据由 UI 持有,场景只负责取样/编译/播放) ──
-  /** 读选中假人当前姿势为一帧数据(真实骨骼四元数 + 根位置);非高级假人 → null. */
-  capturePoseKeyframe(): Pick<PoseKeyframe, 'bones' | 'rootPos'> | null;
+  /** 读选中假人当前姿势为一帧数据(真实骨骼四元数+根骨骼位置+根位置);非高级假人 → null. */
+  capturePoseKeyframe(): Pick<PoseKeyframe, 'bones' | 'rootPos' | 'bonePos'> | null;
   /** 把一帧姿势应用回选中假人(时间轴 scrub 单帧预览;不入撤销栈). */
-  applyPoseKeyframe(k: Pick<PoseKeyframe, 'bones' | 'rootPos'>): void;
+  applyPoseKeyframe(k: Pick<PoseKeyframe, 'bones' | 'rootPos' | 'bonePos'>): void;
   /** 把关键帧集合编译为剪辑并在选中假人上循环播放(走与目录动画同一 mixer 通路). */
   playPoseClip(keys: readonly PoseKeyframe[], duration: number, name?: string): Promise<void>;
   /** 把关键帧集合编译为剪辑并连同选中假人导出为 .glb(GLTFExporter 按需加载). */
@@ -1369,13 +1369,20 @@ function DirectorStageInner(
         if (!s || !target || !target.userData?.isFbxBot) return null;
         // 只记真实骨骼(嵌套孪生继承父级;驱动它会双重旋转,见 applyPoseToObject)。
         const bones: Record<string, [number, number, number, number]> = {};
+        // 根骨骼(父级不是骨骼,通常 Hips)另记位置:与采样自动画的帧混编时,
+        // 位置轨才不会在手工帧处断档(角色移动数据完整保留)。
+        const bonePos: Record<string, [number, number, number]> = {};
         for (const b of collectSkeletonBones(target)) {
           if (hasSameNamedBoneAncestor(b)) continue;
           const q = b.quaternion;
           bones[b.name] = [q.x, q.y, q.z, q.w];
+          if (!(b.parent as THREE.Bone | null)?.isBone) {
+            bonePos[b.name] = [b.position.x, b.position.y, b.position.z];
+          }
         }
         return {
           bones,
+          ...(Object.keys(bonePos).length > 0 ? { bonePos } : {}),
           rootPos: [target.position.x, target.position.y, target.position.z],
         };
       },
@@ -1391,6 +1398,8 @@ function DirectorStageInner(
           if (!q) continue;
           b.quaternion.set(q[0], q[1], q[2], q[3]);
           b.userData._poseBase = b.quaternion.clone();
+          const p = k.bonePos?.[b.name];
+          if (p) b.position.set(p[0], p[1], p[2]);
         }
         updateSkeletons(target);
         target.position.set(k.rootPos[0], k.rootPos[1], k.rootPos[2]);
@@ -1434,6 +1443,15 @@ function DirectorStageInner(
         const snap = capturePose(target);
         const dur = Math.max(0.1, clip.duration);
         const n = Math.min(Math.max(2, maxKeys), Math.max(2, Math.ceil(dur * 4) + 1));
+        // 位移数据在 position 轨上(Mixamo 挂 Hips.position;行走/跳跃全靠它)。
+        // 只对剪辑里真的有 position 轨的骨骼采位置,别的骨骼不用存。
+        const posTrackBones = new Set<string>();
+        for (const tr of clip.tracks) {
+          if (tr.name.endsWith('.position')) {
+            const node = tr.name.slice(0, -'.position'.length);
+            if (node) posTrackBones.add(node);
+          }
+        }
         const mixer = new THREE.AnimationMixer(target);
         const action = mixer.clipAction(clip);
         action.setLoop(THREE.LoopOnce, 1);
@@ -1445,14 +1463,19 @@ function DirectorStageInner(
           // 末帧收 epsilon:LoopOnce 在 t == duration 处 action 已 finished。
           mixer.setTime(Math.min(t, dur - 1e-4));
           const bones: Record<string, [number, number, number, number]> = {};
+          const bonePos: Record<string, [number, number, number]> = {};
           for (const b of collectSkeletonBones(target)) {
             if (hasSameNamedBoneAncestor(b)) continue;
             bones[b.name] = [b.quaternion.x, b.quaternion.y, b.quaternion.z, b.quaternion.w];
+            if (posTrackBones.has(b.name)) {
+              bonePos[b.name] = [b.position.x, b.position.y, b.position.z];
+            }
           }
           keys.push({
             id: newKeyframeId(),
             t,
             bones,
+            ...(Object.keys(bonePos).length > 0 ? { bonePos } : {}),
             rootPos: [target.position.x, target.position.y, target.position.z],
           });
         }
@@ -3440,7 +3463,7 @@ function transformsEqual(a: TransformSnap[], b: TransformSnap[]): boolean {
 interface PoseSnap {
   obj: THREE.Object3D;
   pos: THREE.Vector3;
-  bones: { bone: THREE.Bone; q: THREE.Quaternion; base: THREE.Quaternion }[];
+  bones: { bone: THREE.Bone; q: THREE.Quaternion; p: THREE.Vector3; base: THREE.Quaternion }[];
 }
 
 /** Snapshot a rigged model's full pose (bone quaternions + root Y) for undo. */
@@ -3448,6 +3471,8 @@ function capturePose(obj: THREE.Object3D): PoseSnap {
   const bones = collectSkeletonBones(obj).map((bone) => ({
     bone,
     q: bone.quaternion.clone(),
+    // 位置也快照:动画剪辑常带 Hips.position 轨(位移/跳跃),采样/播放会挪骨骼位置。
+    p: bone.position.clone(),
     base: ((bone.userData?._poseBase as THREE.Quaternion | undefined) ?? bone.quaternion).clone(),
   }));
   return { obj, pos: obj.position.clone(), bones };
@@ -3457,6 +3482,7 @@ function capturePose(obj: THREE.Object3D): PoseSnap {
 function restorePose(snap: PoseSnap): void {
   for (const b of snap.bones) {
     b.bone.quaternion.copy(b.q);
+    b.bone.position.copy(b.p);
     b.bone.userData._poseBase = b.base.clone();
   }
   updateSkeletons(snap.obj);

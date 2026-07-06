@@ -22,6 +22,13 @@ export interface PoseKeyframe {
   bones: Record<string, [number, number, number, number]>;
   /** 假人根对象位置 [x,y,z]。 */
   rootPos: [number, number, number];
+  /**
+   * 骨骼名 → 局部位置 [x,y,z](可选)。角色**位移/跳跃**数据在 Mixamo 等
+   * 动画里挂在 Hips 骨骼的 position 轨上 —— 只存四元数会把移动丢掉
+   * (Koikatsu Timeline 的 interpolable 同样是 pos+rot 双通道)。通常只含
+   * 根骨骼(Hips),体积可控。
+   */
+  bonePos?: Record<string, [number, number, number]>;
 }
 
 /** 导出 .json 的包裹格式(可再导入本软件;也兼容裸 AnimationClip JSON)。 */
@@ -67,6 +74,22 @@ export function buildPoseClip(
     }
     if (times.length === 0) continue;
     tracks.push(new THREE.QuaternionKeyframeTrack(`${bone}.quaternion`, times, values));
+  }
+
+  // 骨骼位置轨(角色位移/跳跃;通常只有 Hips):出现过的骨骼各一条。
+  const posBoneNames = new Set<string>();
+  for (const k of sorted) for (const b in k.bonePos ?? {}) posBoneNames.add(b);
+  for (const bone of posBoneNames) {
+    const times: number[] = [];
+    const values: number[] = [];
+    for (const k of sorted) {
+      const p = k.bonePos?.[bone];
+      if (!p) continue;
+      times.push(k.t);
+      values.push(p[0], p[1], p[2]);
+    }
+    if (times.length === 0) continue;
+    tracks.push(new THREE.VectorKeyframeTrack(`${bone}.position`, times, values));
   }
 
   const posTimes = sorted.map((k) => k.t);
