@@ -85,7 +85,12 @@ function makeFakeHandle(): DirectorStageHandle {
     recordRemoveKeyframe: vi.fn(),
     recordClearKeyframes: vi.fn(),
     recordSeek: vi.fn(),
-    recordPlay: vi.fn(() => () => {}),
+    recordPlay: vi.fn(
+      (_durationSec: number, _onTime: (t: number) => void, onDone: () => void) => {
+        setTimeout(() => onDone(), 0);
+        return () => {};
+      },
+    ),
     recordExport: vi.fn(async () => ({
       blob: new Blob(['x']),
       mime: 'video/webm',
@@ -276,6 +281,163 @@ describe('directorBridge', () => {
     expect(added.ok).toBe(true);
     expect(added.keyframe.t).toBe(2.5);
     expect(handle.recordAddKeyframe).toHaveBeenCalledWith(2.5);
+  });
+
+  it('scene: capture_pose_keyframe 非高级假人返回 ok:false;命中返回 boneCount', async () => {
+    const miss = (await directorBridge.handle('director_scene', {
+      action: 'capture_pose_keyframe',
+    })) as { ok: boolean; error?: string };
+    expect(miss.ok).toBe(false);
+    expect(miss.error).toContain('高级假人');
+
+    (handle.capturePoseKeyframe as ReturnType<typeof vi.fn>).mockReturnValue({
+      bones: { mixamorigHips: [0, 0, 0, 1], mixamorigSpine: [0, 0, 0, 1] },
+      rootPos: [0, 0, 0],
+    });
+    const hit = (await directorBridge.handle('director_scene', {
+      action: 'capture_pose_keyframe',
+    })) as { ok: boolean; boneCount: number };
+    expect(hit.ok).toBe(true);
+    expect(hit.boneCount).toBe(2);
+  });
+
+  it('scene: apply_pose_keyframe 校验 keyframe 并分发', async () => {
+    const bad = (await directorBridge.handle('director_scene', {
+      action: 'apply_pose_keyframe',
+    })) as { ok: boolean };
+    expect(bad.ok).toBe(false);
+
+    await directorBridge.handle('director_scene', {
+      action: 'apply_pose_keyframe',
+      keyframe: { bones: { mixamorigHips: [0, 0, 0, 1] }, rootPos: [0, 1, 0] },
+    });
+    expect(handle.applyPoseKeyframe).toHaveBeenCalledWith({
+      bones: { mixamorigHips: [0, 0, 0, 1] },
+      rootPos: [0, 1, 0],
+    });
+  });
+
+  it('scene: play_pose_clip 归一化关键帧(补 id/rootPos、duration 默认取最大 t)', async () => {
+    const bad = (await directorBridge.handle('director_scene', {
+      action: 'play_pose_clip',
+      keyframes: [{ t: 0 }],
+    })) as { ok: boolean; error?: string };
+    expect(bad.ok).toBe(false);
+    expect(bad.error).toContain('keyframes[0]');
+
+    const res = (await directorBridge.handle('director_scene', {
+      action: 'play_pose_clip',
+      keyframes: [
+        { t: 0, bones: { mixamorigHips: [0, 0, 0, 1] } },
+        { t: 2.5, bones: { mixamorigHips: [1, 0, 0, 0] }, rootPos: [0, 0, 1] },
+      ],
+    })) as { ok: boolean; keyframes: number; duration: number };
+    expect(res.ok).toBe(true);
+    expect(res.keyframes).toBe(2);
+    expect(res.duration).toBe(2.5);
+    const [keys, duration] = (handle.playPoseClip as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(duration).toBe(2.5);
+    expect(keys[0].id).toBeTruthy();
+    expect(keys[0].rootPos).toEqual([0, 0, 0]);
+    expect(keys[1].rootPos).toEqual([0, 0, 1]);
+  });
+
+  it('scene: export_pose_clip_glb 无 threadId 拒绝;有 threadId 落盘返回 glbPath', async () => {
+    const noThread = (await directorBridge.handle('director_scene', {
+      action: 'export_pose_clip_glb',
+      keyframes: [{ t: 0, bones: { mixamorigHips: [0, 0, 0, 1] } }],
+    })) as { ok: boolean; error?: string };
+    expect(noThread.ok).toBe(false);
+    expect(noThread.error).toContain('线程');
+
+    const save = vi.fn(async () => ({ ok: true as const, path: 'C:/threads/t1/anim.glb' }));
+    (window as unknown as { electronAPI?: unknown }).electronAPI = { attachments: { save } };
+    try {
+      const res = (await directorBridge.handle('director_scene', {
+        action: 'export_pose_clip_glb',
+        keyframes: [{ t: 0, bones: { mixamorigHips: [0, 0, 0, 1] } }],
+        duration: 3,
+        name: 'wave',
+        threadId: 't1',
+      })) as { ok: boolean; glbPath: string; duration: number };
+      expect(res.ok).toBe(true);
+      expect(res.glbPath).toBe('C:/threads/t1/anim.glb');
+      expect(res.duration).toBe(3);
+      expect(save).toHaveBeenCalledWith(
+        expect.objectContaining({ threadId: 't1', mime: 'model/gltf-binary' }),
+      );
+    } finally {
+      delete (window as unknown as { electronAPI?: unknown }).electronAPI;
+    }
+  });
+
+  it('scene: restore_scene 校验 scene 文档并分发;set_transform_mode 校验 mode', async () => {
+    const bad = (await directorBridge.handle('director_scene', {
+      action: 'restore_scene',
+    })) as { ok: boolean; error?: string };
+    expect(bad.ok).toBe(false);
+    expect(bad.error).toContain('restore_scene');
+
+    const doc = { version: 1, models: [], cameraSlots: [] };
+    const res = (await directorBridge.handle('director_scene', {
+      action: 'restore_scene',
+      scene: doc,
+    })) as { ok: boolean };
+    expect(res.ok).toBe(true);
+    expect(handle.restoreScene).toHaveBeenCalledWith(doc);
+
+    const badMode = (await directorBridge.handle('director_scene', {
+      action: 'set_transform_mode',
+      mode: 'fly',
+    })) as { ok: boolean };
+    expect(badMode.ok).toBe(false);
+    await directorBridge.handle('director_scene', { action: 'set_transform_mode', mode: 'rotate' });
+    expect(handle.setTransformMode).toHaveBeenCalledWith('rotate');
+  });
+
+  it('scene: show_skeleton / duplicate_camera_slot(不存在→ok:false)', async () => {
+    await directorBridge.handle('director_scene', { action: 'show_skeleton', visible: false });
+    expect(handle.showSkeleton).toHaveBeenCalledWith(false);
+
+    const missing = (await directorBridge.handle('director_scene', {
+      action: 'duplicate_camera_slot',
+      id: 'nope',
+    })) as { ok: boolean; error?: string };
+    expect(missing.ok).toBe(false);
+    expect(missing.error).toContain('nope');
+  });
+
+  it('record: play 需要 ≥2 关键帧;满足时播完即返', async () => {
+    const tooFew = (await directorBridge.handle('director_record', { action: 'play' })) as {
+      ok: boolean;
+      error?: string;
+    };
+    expect(tooFew.ok).toBe(false);
+    expect(tooFew.error).toContain('关键帧');
+
+    (handle.recordListKeyframes as ReturnType<typeof vi.fn>).mockReturnValue([
+      { id: 'k1', t: 0 },
+      { id: 'k2', t: 4 },
+    ]);
+    const res = (await directorBridge.handle('director_record', { action: 'play' })) as {
+      ok: boolean;
+      durationSec: number;
+    };
+    expect(res.ok).toBe(true);
+    expect(res.durationSec).toBe(4);
+    expect(handle.recordPlay).toHaveBeenCalled();
+  });
+
+  it('record: capture_video 直录视口;无 threadId 拒绝落盘', async () => {
+    const res = (await directorBridge.handle('director_record', {
+      action: 'capture_video',
+      durationSec: 3,
+    })) as { ok: boolean; error?: string };
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain('线程');
+    expect(handle.recordVideo).toHaveBeenCalledWith(
+      expect.objectContaining({ durationSec: 3, resolution: '1080p', fps: 30 }),
+    );
   });
 
   it('director_exec 在 handle 上执行 JS 并回传结果', async () => {

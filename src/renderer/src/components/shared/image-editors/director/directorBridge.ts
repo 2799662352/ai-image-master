@@ -1,9 +1,12 @@
 import type {
   CameraSlot,
+  DirectorSceneData,
   DirectorStageHandle,
+  RecordOptions,
   RecordResult,
 } from './DirectorStageScene';
 import type { CaptureResolution, RecordFps, RecordQualityKey } from './directorConstants';
+import type { PoseKeyframe } from './directorPoseClip';
 
 /**
  * directorBridge —— 导演台的 agent 控制桥(仿 canvasBridge)。
@@ -55,6 +58,33 @@ function serializeResult(result: unknown): unknown {
   } catch {
     return String(result);
   }
+}
+
+/**
+ * 归一化 agent 传来的姿势关键帧数组:每帧要求 {t, bones};rootPos 缺省补
+ * [0,0,0],id 缺省补新 id(agent 不需要关心 id,只在 UI 时间轴里有意义)。
+ */
+async function normalizePoseKeys(value: unknown): Promise<PoseKeyframe[]> {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(
+      'keyframes 需要非空数组:[{ t:秒, bones:{骨骼名:[qx,qy,qz,qw]}, rootPos?:[x,y,z] }, …](可用 capture_pose_keyframe 逐帧采集)。',
+    );
+  }
+  const { newKeyframeId } = await import('./directorPoseClip');
+  return value.map((raw, i) => {
+    const k = raw as Partial<PoseKeyframe> & { t?: unknown; bones?: unknown };
+    const t = typeof k.t === 'number' && Number.isFinite(k.t) ? k.t : null;
+    const bones = k.bones && typeof k.bones === 'object' ? (k.bones as PoseKeyframe['bones']) : null;
+    if (t == null || !bones || Object.keys(bones).length === 0) {
+      throw new Error(`keyframes[${i}] 缺少 t 或 bones。`);
+    }
+    return {
+      id: typeof k.id === 'string' && k.id ? k.id : newKeyframeId(),
+      t,
+      bones,
+      rootPos: vec3(k.rootPos) ?? [0, 0, 0],
+    };
+  });
 }
 
 function dataUrlToBase64(dataUrl: string): { mime: string; base64: string } | null {
@@ -298,6 +328,48 @@ class DirectorBridge {
         if (t == null) throw new Error('seek 需要 t(秒)。');
         h.recordSeek(t);
         return { ok: true };
+      }
+      case 'play': {
+        // 预览播放一遍(不导出):插值机位 0→duration,播完即返。
+        const kfs = h.recordListKeyframes();
+        const durationSec = Math.min(
+          num(params.durationSec) ?? Math.max(...kfs.map((k) => k.t), 1),
+          120,
+        );
+        if (kfs.length < 2) return { ok: false, error: '至少需要 2 个关键帧才能播放运镜(先 add_keyframe)。' };
+        await new Promise<void>((resolve) => {
+          // 安全护栏:onDone 丢失时按时长+2s 兜底停,避免工具调用挂死。
+          let guard: ReturnType<typeof setTimeout> | undefined;
+          const stop = h.recordPlay(durationSec, () => undefined, () => {
+            if (guard != null) clearTimeout(guard);
+            resolve();
+          });
+          guard = setTimeout(() => {
+            stop();
+            resolve();
+          }, (durationSec + 2) * 1000);
+        });
+        return { ok: true, durationSec };
+      }
+      case 'capture_video': {
+        // 直录当前视口(不插值机位)—— 适合录一段正在播放的角色动画。
+        const opts: RecordOptions = {
+          durationSec: Math.min(num(params.durationSec) ?? 5, 60),
+          resolution: (str(params.resolution) ?? '1080p') as CaptureResolution,
+          fps: (num(params.fps) ?? 30) as RecordFps,
+          quality: (str(params.quality) ?? 'high') as RecordQualityKey,
+        };
+        const result: RecordResult = await h.recordVideo(opts);
+        if (!threadId) return { ok: false, error: '没有活跃聊天线程,视频无法落盘。' };
+        const base64 = await blobToBase64(result.blob);
+        const videoPath = await saveAttachment(
+          threadId,
+          `director-video-${Date.now()}.${result.ext}`,
+          result.mime,
+          base64,
+        );
+        if (!videoPath) return { ok: false, error: '视频落盘失败(attachments API 不可用)。' };
+        return { ok: true, videoPath, width: result.width, height: result.height, durationMs: result.durationMs };
       }
       case 'export': {
         const durationSec = num(params.durationSec) ?? 8;
@@ -546,6 +618,76 @@ class DirectorBridge {
         if (sec == null) throw new Error('seek_animation 需要 sec。');
         h.seekAnimation(sec);
         return { ok: true };
+      }
+      // K 动画:姿势关键帧 → 编译剪辑(需先 select 一个高级假人) ----
+      case 'capture_pose_keyframe': {
+        const k = h.capturePoseKeyframe();
+        if (!k) {
+          return { ok: false, error: '当前选中不是高级假人(先 add_mannequin + select 再摆姿势)。' };
+        }
+        return { ok: true, keyframe: k, boneCount: Object.keys(k.bones).length };
+      }
+      case 'apply_pose_keyframe': {
+        const k = params.keyframe as Partial<PoseKeyframe> | undefined;
+        if (!k || typeof k !== 'object' || !k.bones || typeof k.bones !== 'object') {
+          throw new Error('apply_pose_keyframe 需要 keyframe:{ bones, rootPos? }(capture_pose_keyframe 的返回)。');
+        }
+        h.applyPoseKeyframe({ bones: k.bones, rootPos: vec3(k.rootPos) ?? [0, 0, 0] });
+        return { ok: true };
+      }
+      case 'play_pose_clip': {
+        const keys = await normalizePoseKeys(params.keyframes);
+        const duration = num(params.duration) ?? Math.max(...keys.map((k) => k.t), 1);
+        await h.playPoseClip(keys, duration, str(params.name));
+        return { ok: true, keyframes: keys.length, duration };
+      }
+      case 'export_pose_clip_glb': {
+        const keys = await normalizePoseKeys(params.keyframes);
+        const duration = num(params.duration) ?? Math.max(...keys.map((k) => k.t), 1);
+        const name = str(params.name) ?? 'director-anim';
+        const blob = await h.exportPoseClipGlb(keys, duration, name);
+        const threadId = str(params.threadId);
+        if (!threadId) return { ok: false, error: '没有活跃聊天线程,.glb 无法落盘。' };
+        const base64 = await blobToBase64(blob);
+        const glbPath = await saveAttachment(
+          threadId,
+          `${name}-${Date.now()}.glb`,
+          'model/gltf-binary',
+          base64,
+        );
+        if (!glbPath) return { ok: false, error: '.glb 导出落盘失败(attachments API 不可用)。' };
+        return { ok: true, glbPath, keyframes: keys.length, duration, bytes: blob.size };
+      }
+      // 场景管理 / 视图辅助 --------------------------------------
+      case 'restore_scene': {
+        const data = (params.scene ?? params.data) as DirectorSceneData | undefined;
+        if (!data || typeof data !== 'object' || !Array.isArray((data as DirectorSceneData).models)) {
+          throw new Error('restore_scene 需要 scene(director_snapshot mode=full 返回的 scene 字段,或保存工程的 JSON)。');
+        }
+        await h.restoreScene(data);
+        return { ok: true, objects: h.listObjects() };
+      }
+      case 'reset':
+        h.reset();
+        return { ok: true };
+      case 'set_transform_mode': {
+        const mode = str(params.mode);
+        if (mode !== 'translate' && mode !== 'rotate' && mode !== 'scale') {
+          throw new Error("set_transform_mode 需要 mode:'translate'|'rotate'|'scale'。");
+        }
+        h.setTransformMode(mode);
+        return { ok: true };
+      }
+      case 'show_skeleton':
+        h.showSkeleton(params.visible !== false);
+        return { ok: true };
+      case 'duplicate_camera_slot': {
+        const id = str(params.id);
+        if (!id) throw new Error('duplicate_camera_slot 需要 id。');
+        const slot = h.duplicateCameraSlot(id);
+        return slot
+          ? { ok: true, slot: { id: slot.id, name: slot.name, fov: slot.fov } }
+          : { ok: false, error: `机位不存在:${id}` };
       }
       default:
         throw new Error(

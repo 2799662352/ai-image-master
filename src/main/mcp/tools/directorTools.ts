@@ -32,8 +32,10 @@ export function registerDirectorTools(server: McpServer, router: ToolRouter): vo
 OBJECTS: list_objects | list_model_catalog {keyword?, limit?} | add_model {url, isFbx?, modelId?} | add_mannequin {color: 'blue'|'red'} (rigged advanced mannequin, supports pose+animation) | add_crowd {layout:'single'|'array'|'random', count?, columns?, spacingX?, spacingZ?, radius?} | select {uuid} | deselect | remove_selected | duplicate_selected | clear_models | focus_selected | mirror | undo | redo | set_transform {position?:[x,y,z], rotationDeg?:[x,y,z], scale?:[x,y,z]} | toggle_grid {visible} | set_panorama {url|null}
 CAMERA: set_fov {fov} | get_fov | set_distance {distance} | add_camera_slot {name?} | apply_camera_slot {id} | remove_camera_slot {id} | update_camera_slot {id, patch} | list_camera_slots
 LIGHT: set_key_light {intensity?, azimuthDeg?, elevationDeg?, color?} | set_ambient {intensity?, color?} | set_light_fx {exposure?, bloom?, contrast?, saturation?, temperature?, vignette?, grain?, ...} | get_light_fx
-POSE (select an advanced mannequin first): has_skeleton | get_bones | list_pose_presets | apply_pose {preset?} or {map?: {boneName:[qx,qy,qz,qw]}} (neither = reset) | set_bone_delta {bone, deg:[x,y,z]} | reset_pose
+POSE (select an advanced mannequin first): has_skeleton | get_bones | list_pose_presets | apply_pose {preset?} or {map?: {boneName:[qx,qy,qz,qw]}} (neither = reset) | set_bone_delta {bone, deg:[x,y,z]} | reset_pose | show_skeleton {visible}
 ANIMATION (select an advanced mannequin first): search_animations {keyword?, category?, limit?} (≈2000-clip Mixamo catalog; returns urls) | play_animation {url, name?, ext?} | pause_animation | resume_animation | stop_animation | seek_animation {sec}
+POSE-KEYFRAME AUTHORING (K动画 — author a custom animation on the selected mannequin): capture_pose_keyframe (read current pose as {bones, rootPos}) | apply_pose_keyframe {keyframe} (scrub a frame back) | play_pose_clip {keyframes:[{t, bones, rootPos?}], duration?, name?} (compile+loop) | export_pose_clip_glb {keyframes, duration?, name?} (save .glb, returns glbPath). Typical flow: pose via apply_pose/set_bone_delta → capture_pose_keyframe → repeat at different t → play_pose_clip → director_capture to verify → export_pose_clip_glb.
+SCENE MGMT: restore_scene {scene} (apply a full scene doc — from director_snapshot mode=full or a saved project JSON) | reset (reset camera/stage) | set_transform_mode {mode:'translate'|'rotate'|'scale'} | duplicate_camera_slot {id}
 
 Returns { ok, ... } per action; { ok:false, error } on failure (never crashes the stage).`,
     inputSchema: z.object({
@@ -71,9 +73,9 @@ Returns { ok, ... } per action; { ok:false, error } on failure (never crashes th
 
   server.registerTool('director_record', {
     description: `Camera-move recording timeline (运镜录制) via \`action\`:
-enter | exit — toggle recording layout. add_keyframe {t: seconds} — capture current camera as a keyframe at time t (move the camera between calls: director_exec or apply_camera_slot / set_transform). list | remove {id} | clear | seek {t} — manage/scrub keyframes. export {durationSec?, resolution?: '1080p'|'2k'|'4k', fps?: 24|30|60, quality?: 'low'|'medium'|'high'|'max'} — interpolate keyframes into a camera move, record the canvas and save a video file; returns \`videoPath\`.`,
+enter | exit — toggle recording layout. add_keyframe {t: seconds} — capture current camera as a keyframe at time t (move the camera between calls: director_exec or apply_camera_slot / set_transform). list | remove {id} | clear | seek {t} — manage/scrub keyframes. play {durationSec?} — preview the interpolated camera move once (no export; needs ≥2 keyframes). export {durationSec?, resolution?: '1080p'|'2k'|'4k', fps?: 24|30|60, quality?: 'low'|'medium'|'high'|'max'} — interpolate keyframes into a camera move, record the canvas and save a video file; returns \`videoPath\`. capture_video {durationSec?≤60, resolution?, fps?, quality?} — record the LIVE viewport as-is (no keyframe interpolation; great for recording a playing character animation); returns \`videoPath\`.`,
     inputSchema: z.object({
-      action: z.enum(['enter', 'exit', 'add_keyframe', 'list', 'remove', 'clear', 'seek', 'export']),
+      action: z.enum(['enter', 'exit', 'add_keyframe', 'list', 'remove', 'clear', 'seek', 'play', 'export', 'capture_video']),
       t: z.number().optional(),
       id: z.string().optional(),
       durationSec: z.number().optional(),

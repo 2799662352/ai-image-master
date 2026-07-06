@@ -331,15 +331,13 @@ export class AgentToolExecutor {
 
   /**
    * 导演台工具:全部交给 directorBridge(挂载即注册的 DirectorStageHandle)。
-   * capture/record 会把导出的 PNG/视频落盘为线程附件(FK on threadId),
-   * 所以注入当前活跃聊天线程;没有线程时 bridge 返回结构化错误而不是丢文件。
+   * 统一注入当前活跃聊天线程 —— capture/record/scene(export_pose_clip_glb)
+   * 都会把导出文件落盘为线程附件(FK on threadId);没有线程时 bridge 返回
+   * 结构化错误而不是丢文件。其余 action 忽略该字段,注入无副作用。
    */
   private async callDirector(toolName: string, params: Record<string, unknown>): Promise<unknown> {
-    if (toolName === 'director_capture' || toolName === 'director_record') {
-      const threadId = useAgentChatStore.getState().threadId
-      return directorBridge.handle(toolName, { ...params, threadId })
-    }
-    return directorBridge.handle(toolName, params)
+    const threadId = useAgentChatStore.getState().threadId
+    return directorBridge.handle(toolName, { ...params, threadId })
   }
 
   private async callCanvas(toolName: string, params: Record<string, unknown>): Promise<unknown> {
