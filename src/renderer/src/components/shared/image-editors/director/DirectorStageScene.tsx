@@ -39,7 +39,7 @@ import { buildShaderGrid, type ShaderGrid } from './directorGrid';
 import { buildCrowdLayout, type CrowdOpts } from './directorMannequin';
 import { buildPoseClip, parseClipJson, type PoseKeyframe } from './directorPoseClip';
 import { accumulateBoneWeights, rankBoneIndices } from './directorBonePick';
-import { solveCcd } from './directorIk';
+import { solveTwoBone } from './directorIk';
 
 /** 一个保存的机位:相机位姿 + 视点 + FOV(逆向自实站 applyCameraState). */
 export interface CameraSlot {
@@ -378,10 +378,12 @@ interface ActiveAnim {
   name: string;
 }
 
-/** 一条可拖拽 IK 链:links = 被解算旋转的骨(根→尾),effector = 末端骨. */
+/** 一条可拖拽 IK 链:links = [上肢骨, 下肢骨](肩/胯 → 肘/膝),effector = 末端骨. */
 interface IkChainRef {
   links: THREE.Bone[];
   effector: THREE.Bone;
+  /** pole target 在模型根局部空间的位置(肘/膝朝向;跟随模型变换). */
+  poleLocal: THREE.Vector3;
 }
 
 /** 关节手柄:真实骨骼(非嵌套孪生)每根一个可点小球,单个 InstancedMesh 承载. */
@@ -394,6 +396,13 @@ interface JointHandles {
   hover: number;
   /** 实例下标 → IK 链(手/脚末端小球可拖拽整条肢体). */
   ik: Map<number, IkChainRef>;
+  /** pole target 手柄(八面体小球,实例 i ↔ poleChains[i]). */
+  poleMesh: THREE.InstancedMesh | null;
+  poleChains: IkChainRef[];
+  poleHover: number;
+  poleRadius: number;
+  /** 肘/膝 → pole 的关联虚线. */
+  poleLines: THREE.LineSegments | null;
 }
 
 interface StageState {
@@ -1983,9 +1992,9 @@ function DirectorStageInner(
     };
 
     /**
-     * IK 拖拽:按住手/脚末端小球拖动 → 整条肢体 CCD 解算(Blender 式,无模式
-     * 切换)。位移 < 4px 视为单击,落回普通选骨。目标点在「过末端、面向相机」
-     * 的平面上移动。
+     * IK 拖拽:按住手/脚末端小球拖动 → 整条肢体解析二连杆解算(余弦定理,
+     * 防反关节由构造保证;肘/膝朝向跟随 pole 手柄)。位移 < 4px 视为单击,
+     * 落回普通选骨。目标点在「过末端、面向相机」的平面上移动。
      */
     const startIkDrag = (e: PointerEvent, chain: IkChainRef) => {
       const sel = state.selected;
@@ -1998,6 +2007,7 @@ function DirectorStageInner(
       const plane = new THREE.Plane();
       const planeN = new THREE.Vector3();
       const target = new THREE.Vector3();
+      const pole = new THREE.Vector3();
       chain.effector.getWorldPosition(target);
       state.camera.getWorldDirection(planeN);
       plane.setFromNormalAndCoplanarPoint(planeN, target);
@@ -2011,7 +2021,8 @@ function DirectorStageInner(
         }
         aimRay(ev.clientX, ev.clientY);
         if (!state.raycaster.ray.intersectPlane(plane, target)) return;
-        solveCcd(chain.links, chain.effector, target, { iterations: 8 });
+        sel.localToWorld(pole.copy(chain.poleLocal));
+        solveTwoBone(chain.links[0], chain.links[1], chain.effector, target, pole);
         updateSkeletons(sel);
         for (const link of chain.links) emitBoneDelta(link); // 滑杆实时跟随
       };
@@ -2030,6 +2041,61 @@ function DirectorStageInner(
     };
 
     /**
+     * pole 拖拽:移动肘/膝朝向手柄 → 末端钉在原位,重解整条肢体让肘/膝
+     * 转向新 pole(Blender 式 pole target)。pole 位置存模型局部空间并
+     * 持久化到 userData,跟随模型移动/旋转。
+     */
+    const startPoleDrag = (e: PointerEvent, chain: IkChainRef) => {
+      const sel = state.selected;
+      if (!sel) return;
+      if (state.anims.has(sel)) stopAnimFor(sel);
+      const before = capturePose(sel);
+      const startX = e.clientX;
+      const startY = e.clientY;
+      let dragging = false;
+      const plane = new THREE.Plane();
+      const planeN = new THREE.Vector3();
+      const pole = new THREE.Vector3();
+      const pinned = new THREE.Vector3();
+      chain.effector.getWorldPosition(pinned); // 末端钉住
+      sel.localToWorld(pole.copy(chain.poleLocal));
+      state.camera.getWorldDirection(planeN);
+      plane.setFromNormalAndCoplanarPoint(planeN, pole);
+      state.orbit.enabled = false;
+      const onMove = (ev: PointerEvent) => {
+        if (!dragging) {
+          if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < 4) return;
+          dragging = true;
+        }
+        aimRay(ev.clientX, ev.clientY);
+        if (!state.raycaster.ray.intersectPlane(plane, pole)) return;
+        chain.poleLocal.copy(pole);
+        sel.worldToLocal(chain.poleLocal);
+        solveTwoBone(chain.links[0], chain.links[1], chain.effector, pinned, pole);
+        updateSkeletons(sel);
+        for (const link of chain.links) emitBoneDelta(link);
+      };
+      const onUp = () => {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        state.orbit.enabled = true;
+        if (!dragging) return; // pole 单击无语义
+        const poles = (sel.userData._ikPoles ??= {}) as Record<
+          string,
+          [number, number, number]
+        >;
+        poles[normBone(chain.effector.name)] = [
+          chain.poleLocal.x,
+          chain.poleLocal.y,
+          chain.poleLocal.z,
+        ];
+        commitPoseHistory(state, sel, before);
+      };
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+    };
+
+    /**
      * 骨骼点选模式:优先点关节手柄(末端小球走 IK 拖拽),其次点选中假人身体
      * 做皮肤权重反查。返回 true 表示事件已消费(不再走整体模型选择)。
      */
@@ -2038,7 +2104,16 @@ function DirectorStageInner(
       const sel = state.selected;
       if (!sel || !sel.userData?.isFbxBot) return false;
       aimRay(e.clientX, e.clientY);
-      // 1) 关节手柄(显示骨架时)
+      // 1) pole 手柄(悬浮身体外,优先命中)
+      if (state.joints?.poleMesh) {
+        const pHits = state.raycaster.intersectObject(state.joints.poleMesh);
+        const pid = pHits[0]?.instanceId;
+        if (pid != null && state.joints.poleChains[pid]) {
+          startPoleDrag(e, state.joints.poleChains[pid]);
+          return true;
+        }
+      }
+      // 2) 关节手柄(显示骨架时)
       if (state.joints) {
         const jHits = state.raycaster.intersectObject(state.joints.mesh);
         const id = jHits[0]?.instanceId;
@@ -2049,7 +2124,7 @@ function DirectorStageInner(
           return true;
         }
       }
-      // 2) 点身体 → 权重最高骨骼(重复点同部位在权重前列骨骼间轮换)
+      // 3) 点身体 → 权重最高骨骼(重复点同部位在权重前列骨骼间轮换)
       const hits = state.raycaster.intersectObjects(state.modelsGroup.children, true);
       if (hits.length === 0) return false;
       let root = hits[0].object as THREE.Object3D;
@@ -2086,12 +2161,23 @@ function DirectorStageInner(
       aimRay(e.clientX, e.clientY);
       const hits = state.raycaster.intersectObject(j.mesh);
       const id = hits[0]?.instanceId ?? -1;
-      if (id === j.hover) return;
+      let pid = -1;
+      if (j.poleMesh) {
+        const pHits = state.raycaster.intersectObject(j.poleMesh);
+        pid = pHits[0]?.instanceId ?? -1;
+      }
+      if (id === j.hover && pid === j.poleHover) return;
       j.hover = id;
+      j.poleHover = pid;
       refreshJointColors(state);
       const isIk = id >= 0 && j.ik.has(id);
-      canvas.title = id >= 0 ? `${j.bones[id]?.name ?? ''}${isIk ? ' · 拖拽 = IK' : ''}` : '';
-      canvas.style.cursor = id >= 0 ? (isIk ? 'grab' : 'pointer') : '';
+      canvas.title =
+        pid >= 0
+          ? `${j.poleChains[pid]?.effector.name ?? ''} pole · 拖拽调肘/膝朝向`
+          : id >= 0
+            ? `${j.bones[id]?.name ?? ''}${isIk ? ' · 拖拽 = IK' : ''}`
+            : '';
+      canvas.style.cursor = pid >= 0 || (id >= 0 && isIk) ? 'grab' : id >= 0 ? 'pointer' : '';
     };
     canvas.addEventListener('pointermove', onHoverMove);
 
@@ -3257,6 +3343,7 @@ const JOINT_COLOR = new THREE.Color('#eab308');
 const JOINT_HOVER = new THREE.Color('#ffffff');
 const JOINT_ACTIVE = new THREE.Color('#22d3ee');
 const JOINT_IK = new THREE.Color('#fb7185'); // 手/脚末端:可拖拽 IK
+const JOINT_POLE = new THREE.Color('#a78bfa'); // pole target:肘/膝朝向
 
 /** 四肢 IK 链(normBone 名):links 被解算旋转,effector 是被拖拽的末端. */
 const IK_CHAINS: { links: string[]; effector: string }[] = [
@@ -3269,6 +3356,7 @@ const _jointPos = new THREE.Vector3();
 const _jointParentPos = new THREE.Vector3();
 const _jointMat = new THREE.Matrix4();
 const _jointBox = new THREE.Box3();
+const _polePos = new THREE.Vector3();
 
 /** 给选中高级假人的每根真实骨骼建一个可点关节小球(InstancedMesh). */
 function buildJointHandles(s: StageState): void {
@@ -3306,20 +3394,92 @@ function buildJointHandles(s: StageState): void {
   mesh.frustumCulled = false;
   mesh.name = '__jointHandles';
   s.scene.add(mesh);
-  // 手/脚末端小球挂 IK 链(拖拽 = 整条肢体 CCD 解算)。
+  // 手/脚末端小球挂 IK 链(拖拽 = 整条肢体解析二连杆解算)。
   const byNorm = new Map<string, THREE.Bone>();
   for (const b of bones) {
     const k = normBone(b.name);
     if (!byNorm.has(k)) byNorm.set(k, b);
   }
   const ik = new Map<number, IkChainRef>();
+  const poleChains: IkChainRef[] = [];
+  // pole 位置存模型 userData(普通数组,SkeletonUtils 克隆/骨架开关后仍在)。
+  const savedPoles = ((sel.userData._ikPoles ??= {}) as Record<
+    string,
+    [number, number, number]
+  >);
   for (const spec of IK_CHAINS) {
     const effector = byNorm.get(spec.effector);
     const links = spec.links.map((n) => byNorm.get(n));
     if (!effector || links.some((l) => !l)) continue;
-    ik.set(bones.indexOf(effector), { links: links as THREE.Bone[], effector });
+    const [upper, lower] = links as THREE.Bone[];
+    let poleLocal: THREE.Vector3;
+    const saved = savedPoles[spec.effector];
+    if (saved) {
+      poleLocal = new THREE.Vector3(saved[0], saved[1], saved[2]);
+    } else {
+      // 默认朝向:膝 → 模型前方(+z),肘 → 模型后方(-z),距肘/膝一臂长。
+      const l0 = sel.worldToLocal(upper.getWorldPosition(new THREE.Vector3()));
+      const l1 = sel.worldToLocal(lower.getWorldPosition(new THREE.Vector3()));
+      const l2 = sel.worldToLocal(effector.getWorldPosition(new THREE.Vector3()));
+      const reach = l0.distanceTo(l1) + l1.distanceTo(l2);
+      poleLocal = l1.clone();
+      poleLocal.z += (spec.effector.includes('foot') ? 1 : -1) * reach;
+      savedPoles[spec.effector] = [poleLocal.x, poleLocal.y, poleLocal.z];
+    }
+    const chain: IkChainRef = { links: links as THREE.Bone[], effector, poleLocal };
+    ik.set(bones.indexOf(effector), chain);
+    poleChains.push(chain);
   }
-  s.joints = { mesh, bones, radii, hover: -1, ik };
+  // pole 手柄(八面体)+ 肘/膝 → pole 关联虚线。
+  let poleMesh: THREE.InstancedMesh | null = null;
+  let poleLines: THREE.LineSegments | null = null;
+  if (poleChains.length > 0) {
+    poleMesh = new THREE.InstancedMesh(
+      new THREE.OctahedronGeometry(1, 0),
+      new THREE.MeshBasicMaterial({
+        depthTest: false,
+        depthWrite: false,
+        transparent: true,
+        opacity: 0.9,
+        toneMapped: false,
+      }),
+      poleChains.length,
+    );
+    poleMesh.renderOrder = 999;
+    poleMesh.frustumCulled = false;
+    poleMesh.name = '__ikPoleHandles';
+    s.scene.add(poleMesh);
+    const lineGeo = new THREE.BufferGeometry();
+    lineGeo.setAttribute(
+      'position',
+      new THREE.BufferAttribute(new Float32Array(poleChains.length * 6), 3),
+    );
+    poleLines = new THREE.LineSegments(
+      lineGeo,
+      new THREE.LineBasicMaterial({
+        color: 0xa78bfa,
+        transparent: true,
+        opacity: 0.35,
+        depthTest: false,
+      }),
+    );
+    poleLines.renderOrder = 998;
+    poleLines.frustumCulled = false;
+    poleLines.name = '__ikPoleLines';
+    s.scene.add(poleLines);
+  }
+  s.joints = {
+    mesh,
+    bones,
+    radii,
+    hover: -1,
+    ik,
+    poleMesh,
+    poleChains,
+    poleHover: -1,
+    poleRadius: rMax * 1.1,
+    poleLines,
+  };
   refreshJointColors(s);
   updateJointHandles(s);
 }
@@ -3335,6 +3495,27 @@ function updateJointHandles(s: StageState): void {
     j.mesh.setMatrixAt(i, _jointMat);
   }
   j.mesh.instanceMatrix.needsUpdate = true;
+  // pole 手柄跟随模型变换;虚线连肘/膝 → pole。
+  if (j.poleMesh && s.selected) {
+    const linePos = j.poleLines?.geometry.getAttribute('position') as
+      | THREE.BufferAttribute
+      | undefined;
+    for (let i = 0; i < j.poleChains.length; i++) {
+      const chain = j.poleChains[i];
+      _polePos.copy(chain.poleLocal);
+      s.selected.localToWorld(_polePos);
+      const r = j.poleRadius;
+      _jointMat.makeScale(r, r, r).setPosition(_polePos);
+      j.poleMesh.setMatrixAt(i, _jointMat);
+      if (linePos) {
+        chain.links[1].getWorldPosition(_jointPos); // 肘/膝
+        linePos.setXYZ(i * 2, _jointPos.x, _jointPos.y, _jointPos.z);
+        linePos.setXYZ(i * 2 + 1, _polePos.x, _polePos.y, _polePos.z);
+      }
+    }
+    j.poleMesh.instanceMatrix.needsUpdate = true;
+    if (linePos) linePos.needsUpdate = true;
+  }
 }
 
 /** 关节配色:选中 = 青,hover = 白,默认 = 琥珀. */
@@ -3347,6 +3528,12 @@ function refreshJointColors(s: StageState): void {
     j.mesh.setColorAt(i, active ? JOINT_ACTIVE : i === j.hover ? JOINT_HOVER : base);
   }
   if (j.mesh.instanceColor) j.mesh.instanceColor.needsUpdate = true;
+  if (j.poleMesh) {
+    for (let i = 0; i < j.poleChains.length; i++) {
+      j.poleMesh.setColorAt(i, i === j.poleHover ? JOINT_HOVER : JOINT_POLE);
+    }
+    if (j.poleMesh.instanceColor) j.poleMesh.instanceColor.needsUpdate = true;
+  }
 }
 
 function disposeJointHandles(s: StageState): void {
@@ -3356,6 +3543,17 @@ function disposeJointHandles(s: StageState): void {
   j.mesh.geometry.dispose();
   (j.mesh.material as THREE.Material).dispose();
   j.mesh.dispose();
+  if (j.poleMesh) {
+    s.scene.remove(j.poleMesh);
+    j.poleMesh.geometry.dispose();
+    (j.poleMesh.material as THREE.Material).dispose();
+    j.poleMesh.dispose();
+  }
+  if (j.poleLines) {
+    s.scene.remove(j.poleLines);
+    j.poleLines.geometry.dispose();
+    (j.poleLines.material as THREE.Material).dispose();
+  }
   s.joints = null;
 }
 

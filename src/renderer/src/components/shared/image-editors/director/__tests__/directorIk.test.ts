@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { solveCcd } from '../directorIk';
+import { solveCcd, solveTwoBone } from '../directorIk';
 
 /** 竖直二连杆:root(原点)→ mid(+1y)→ tip(+1y),总臂长 2. */
 function makeChain(): { root: THREE.Bone; mid: THREE.Bone; tip: THREE.Bone } {
@@ -65,5 +65,91 @@ describe('solveCcd', () => {
     expect(dist).toBeLessThan(1e-6);
     expect(Number.isNaN(root.quaternion.x)).toBe(false);
     expect(Number.isNaN(mid.quaternion.x)).toBe(false);
+  });
+});
+
+/** 肘/膝内角(度):mid 处 (mid→root) 与 (mid→tip) 的夹角. */
+function interiorAngleDeg(root: THREE.Bone, mid: THREE.Bone, tip: THREE.Bone): number {
+  const pr = root.getWorldPosition(new THREE.Vector3());
+  const pm = mid.getWorldPosition(new THREE.Vector3());
+  const pt = tip.getWorldPosition(new THREE.Vector3());
+  const u = pr.clone().sub(pm);
+  const v = pt.clone().sub(pm);
+  return THREE.MathUtils.radToDeg(u.angleTo(v));
+}
+
+describe('solveTwoBone', () => {
+  it('可达目标:末端精确落到目标,内角满足余弦定理', () => {
+    const { root, mid, tip } = makeChain();
+    const target = new THREE.Vector3(1, 1, 0); // c = √2,a=b=1 → 内角 = 90°
+    const dist = solveTwoBone(root, mid, tip, target);
+    expect(dist).toBeLessThan(1e-4);
+    expect(interiorAngleDeg(root, mid, tip)).toBeCloseTo(90, 0);
+  });
+
+  it('防反关节:任意目标下内角始终 ∈ (0°, 180°)', () => {
+    const targets = [
+      new THREE.Vector3(0.3, 0.1, 0),
+      new THREE.Vector3(-1, 1.5, 0.5),
+      new THREE.Vector3(0, -1.8, 0.2),
+      new THREE.Vector3(5, 5, 5), // 超出臂长
+      new THREE.Vector3(0.01, 0.01, 0.01), // 几乎在根部
+    ];
+    const { root, mid, tip } = makeChain();
+    const pole = new THREE.Vector3(0, 1, 2);
+    for (const t of targets) {
+      solveTwoBone(root, mid, tip, t, pole);
+      const deg = interiorAngleDeg(root, mid, tip);
+      expect(deg).toBeGreaterThan(0);
+      expect(deg).toBeLessThan(180);
+      expect(Number.isNaN(root.quaternion.x)).toBe(false);
+      expect(Number.isNaN(mid.quaternion.x)).toBe(false);
+    }
+  });
+
+  it('超出臂长:肢体接近伸直指向目标,但不完全锁直', () => {
+    const { root, mid, tip } = makeChain();
+    const target = new THREE.Vector3(4, 0, 0);
+    const dist = solveTwoBone(root, mid, tip, target);
+    expect(dist).toBeCloseTo(2, 1); // 4 - 臂长 2
+    const p = tip.getWorldPosition(new THREE.Vector3());
+    expect(p.x).toBeGreaterThan(1.9);
+    const deg = interiorAngleDeg(root, mid, tip);
+    expect(deg).toBeGreaterThan(170); // 接近伸直
+    expect(deg).toBeLessThan(180); // 但保留余量,不奇异
+  });
+
+  it('pole 对齐:肘/膝落到 pole 所在半平面', () => {
+    const { root, mid, tip } = makeChain();
+    const target = new THREE.Vector3(0, 1.2, 0); // 拉近迫使弯曲
+    const pole = new THREE.Vector3(0, 0.6, 5); // 要求膝盖朝 +z
+    solveTwoBone(root, mid, tip, target, pole);
+    const pm = mid.getWorldPosition(new THREE.Vector3());
+    expect(pm.z).toBeGreaterThan(0.1); // mid 弯向 +z 一侧
+    const pt = tip.getWorldPosition(new THREE.Vector3());
+    expect(pt.distanceTo(target)).toBeLessThan(1e-4);
+    // 换到对侧 pole → mid 翻到 -z 一侧,末端仍在目标上
+    solveTwoBone(root, mid, tip, target, new THREE.Vector3(0, 0.6, -5));
+    expect(mid.getWorldPosition(new THREE.Vector3()).z).toBeLessThan(-0.1);
+    expect(tip.getWorldPosition(new THREE.Vector3()).distanceTo(target)).toBeLessThan(1e-4);
+  });
+
+  it('不传 pole:保持解算前的弯曲面', () => {
+    const { root, mid, tip } = makeChain();
+    // 先用 pole 弯到 +z 面,再不带 pole 拖到新目标 → 仍在 +z 面
+    solveTwoBone(root, mid, tip, new THREE.Vector3(0, 1.2, 0), new THREE.Vector3(0, 0.6, 5));
+    solveTwoBone(root, mid, tip, new THREE.Vector3(0.5, 1.0, 0));
+    expect(mid.getWorldPosition(new THREE.Vector3()).z).toBeGreaterThan(0.05);
+  });
+
+  it('只旋转 root/mid,不改任何骨骼 position,末端骨局部姿态不变', () => {
+    const { root, mid, tip } = makeChain();
+    const midPos = mid.position.clone();
+    const tipPos = tip.position.clone();
+    const tipQ = tip.quaternion.clone();
+    solveTwoBone(root, mid, tip, new THREE.Vector3(1, 1, 0), new THREE.Vector3(0, 1, 3));
+    expect(mid.position.equals(midPos)).toBe(true);
+    expect(tip.position.equals(tipPos)).toBe(true);
+    expect(tip.quaternion.equals(tipQ)).toBe(true);
   });
 });

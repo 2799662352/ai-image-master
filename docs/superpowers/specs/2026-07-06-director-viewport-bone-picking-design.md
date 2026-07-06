@@ -70,7 +70,27 @@ THREE.IK(FABRIK)2018 起未维护且铰链约束天然困难。结论:**自写�
 `clamp(骨长×0.22, 身高×0.0035, 身高×0.013)`,手指骨极短自动落到最小档,
 躯干/四肢保持大号;`JointHandles.radius` → `radii[]`。
 
+## 追加:防反关节 + pole target(同日拍板,提前到本期)
+
+用户再改主意:防反关节和 pole 都这期做。调研(MoCap Online 引擎指南 /
+ozz-animation / Godot TwoBoneIK / Little Polygon):**业界四肢 IK 标准不是
+"CCD+铰链钳制",而是解析二连杆 IK(余弦定理)**——CCD 对二连杆短链会
+过度旋转根部关节,已不是四肢主流;swing-twist 钳制需逐骨标定 Mixamo 弯曲
+轴,脆。拍板:换 `solveTwoBone` + 可拖拽 pole 小球。
+
+- `solveTwoBone(root, mid, effector, target, pole?, {slack})` 三步:
+  ① 余弦定理解肘/膝内角(acos ∈ (0,π),**防反关节由数学构造保证**,
+  c 夹取 [|a-b|+ε, a+b-ε] 防奇异);② root swing 把末端旋向目标;
+  ③ 绕(根→目标)轴扭转 root 把肘/膝转到 pole 半平面(末端在轴上不动)。
+  不传 pole = 保持当前弯曲面。肢体伸直退化时用 pole 定弯曲轴。
+- **pole 手柄**:每条链一个八面体小球(紫 `#a78bfa`)+ 肘/膝→pole 关联
+  虚线;位置存模型局部空间(`userData._ikPoles`,骨架开关/换选后保留),
+  跟随模型变换。默认:膝 → 模型前方一臂长,肘 → 模型后方一臂长。
+- **拖 pole**:末端钉在原位,重解肢体让肘/膝转向新 pole;实时回写滑杆;
+  松手持久化 pole + 一步撤销。拖末端小球时每 move 都带当前 pole 解算。
+- CCD(`solveCcd`)保留在模块中,供未来脊柱等多节长链使用。
+
 ## 不做(顺延下一期)
 
-- 肘/膝铰链约束与关节角度限制;pole target(肘/膝朝向控制);
-  普通假人/导入模型的点选(仅高级假人);GPU picking。
+- 上肢骨(肩/胯)swing 角度限制;普通假人/导入模型的点选(仅高级假人);
+  GPU picking。
