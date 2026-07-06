@@ -167,6 +167,11 @@ export class EventManager {
       useAgentChatStore.getState().toggle()
     })
 
+    // 顶栏「导演台 3D」入口 —— 独立浮层;动态 import 保证 three.js 按需加载
+    this.onClick('open-director', () => {
+      void import('../features/director-launcher').then((m) => m.openDirectorOverlay())
+    })
+
     // 打开设置
     this.onClick('open-settings', () => {
       const siteManager = ServiceRegistry.get<any>(SERVICE_KEYS.SITE_MANAGER)

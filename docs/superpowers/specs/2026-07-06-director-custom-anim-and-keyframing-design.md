@@ -138,3 +138,25 @@ interface PoseKeyframe {
   只看「应用了哪条动画」,否则播着动画永远判脏)+ 全景来源。基线在
   onReady / 保存工程 / 打开工程时刷新;× 关闭走 `requestClose`
   (脏 → window.confirm);`beforeunload` 兜底窗口关闭/刷新。
+
+## 追加:UI 自由布局 + 顶栏导演台入口(同日,用户反馈)
+
+用户要求:①编辑器整体可放大拉宽;②「对象与机位」面板可自由移动;
+③录制模式左上 Preview 面板可自由移动;④顶栏 AGENT 右侧加导演台 3D 入口。
+
+- **编辑器可缩放**:shell 加 CSS `resize: both`(右下角原生手柄),
+  min 720×480 / max 98vw×96vh;右侧 属性/姿势/动画 面板加左缘 8px
+  拖宽 gutter(200–640px,`usePersistentState('director.sidePanelWidth')`
+  持久化);`poseGrid` 改 `auto-fill minmax(62px,1fr)`,拉宽自动多列。
+- **面板自由拖动**:新 `useDragPanel` hook(4px 阈值 + pointer capture +
+  视口限幅留 48px 抓握;指针落在 button/select/input 上不启动)。
+  「对象与机位」标题栏由 `<button>` 改 `<div role="button">`:拖动移动
+  整个左堆叠(含灯光面板),`didDrag()` 为真时忽略这次 click,折叠
+  开关不受影响;录制 Preview 面板标题栏同款拖动。
+- **顶栏入口**:`src/renderer/index.html` AGENT 按钮右侧加
+  `#directorEntryBtn`(`data-action="open-director"`,粉底 fa-cube);
+  EventManager 注册 `open-director` → 动态 import
+  `features/director-launcher`(独立 React root 挂 body,DirectorEditor
+  仍是 lazy chunk,three.js 不进主包;关闭时 `setTimeout` 推迟
+  unmount 避免 React 同步卸载告警)。与生成页 VisualPromptBar 的
+  「导演台 // 3D」入口(需经生成页)互不影响,native 空网格进入。

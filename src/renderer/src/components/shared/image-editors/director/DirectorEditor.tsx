@@ -42,6 +42,7 @@ import {
   putAsset,
 } from './directorAssetStore';
 import DirectorPoseTimeline from './DirectorPoseTimeline';
+import { useDragPanel } from './useDragPanel';
 import { CROWD_DEFAULTS, type CrowdLayout } from './directorMannequin';
 import {
   ADVANCED_MANNEQUIN,
@@ -166,6 +167,10 @@ export default function DirectorEditor({
   // ── 对象与机位 / 截图分辨率 / 快捷键 ──
   const [objects, setObjects] = useState<SceneObjectInfo[]>([]);
   const [objPanelOpen, setObjPanelOpen] = useState(true);
+  // ── 面板自由布局:左侧堆叠(对象与机位+灯光)可拖动;右侧面板宽度可拖(持久化)──
+  const objStackDrag = useDragPanel(12, 12);
+  const [sideW, setSideW] = usePersistentState<number>('director.sidePanelWidth', 232);
+  const sideResize = useRef<{ pointerId: number; startX: number; baseW: number } | null>(null);
   const [resolution, setResolution] = useState<CaptureResolution>('1080p');
   const [showRes, setShowRes] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
@@ -886,15 +891,30 @@ export default function DirectorEditor({
       </div>
 
       <div style={styles.body}>
-        {/* 左侧浮层:对象与机位 + 灯光 垂直堆叠 */}
-        <div style={styles.leftStack}>
+        {/* 左侧浮层:对象与机位 + 灯光 垂直堆叠(标题栏可拖动自由移动) */}
+        <div style={{ ...styles.leftStack, left: objStackDrag.pos.x, top: objStackDrag.pos.y }}>
         {/* 对象与机位 — 左上场景对象列表(对照原站) */}
         <div style={{ ...styles.objPanel, background: panelBg }}>
-          <button style={styles.objHeader} onClick={() => setObjPanelOpen((v) => !v)}>
+          <div
+            role="button"
+            tabIndex={0}
+            title="拖动移动面板;点击折叠/展开"
+            style={{ ...styles.objHeader, ...objStackDrag.handleProps.style, userSelect: 'none' }}
+            onPointerDown={objStackDrag.handleProps.onPointerDown}
+            onPointerMove={objStackDrag.handleProps.onPointerMove}
+            onPointerUp={objStackDrag.handleProps.onPointerUp}
+            onClick={() => {
+              if (!objStackDrag.didDrag()) setObjPanelOpen((v) => !v);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') setObjPanelOpen((v) => !v);
+            }}
+          >
+            <span style={{ opacity: 0.45 }}>⠿</span>
             <span>对象与机位</span>
             <span style={styles.objCount}>{objects.length}</span>
             <span style={{ marginLeft: 'auto', opacity: 0.6 }}>{objPanelOpen ? '▾' : '▸'}</span>
-          </button>
+          </div>
           {objPanelOpen && (
             <div style={styles.objList}>
               {objects.length === 0 ? (
@@ -1158,8 +1178,25 @@ export default function DirectorEditor({
           )}
         </div>
 
-        {/* Right panel — 属性 / 姿势 */}
-        <div style={{ ...styles.sidePanel, right: 12, background: panelBg }}>
+        {/* Right panel — 属性 / 姿势(左缘竖条可拖动调宽,持久化) */}
+        <div
+          title="拖动调整面板宽度"
+          style={{ ...styles.sideResizeGutter, right: 12 + sideW - 3 }}
+          onPointerDown={(e) => {
+            if (e.button !== 0) return;
+            sideResize.current = { pointerId: e.pointerId, startX: e.clientX, baseW: sideW };
+            e.currentTarget.setPointerCapture(e.pointerId);
+          }}
+          onPointerMove={(e) => {
+            const d = sideResize.current;
+            if (!d || d.pointerId !== e.pointerId) return;
+            setSideW(Math.min(640, Math.max(200, d.baseW + (d.startX - e.clientX))));
+          }}
+          onPointerUp={(e) => {
+            if (sideResize.current?.pointerId === e.pointerId) sideResize.current = null;
+          }}
+        />
+        <div style={{ ...styles.sidePanel, width: sideW, right: 12, background: panelBg }}>
           <div style={styles.tabRow}>
             <button
               style={tab === 'props' ? styles.tabActive : styles.tab}
@@ -2256,6 +2293,12 @@ const styles: Record<string, React.CSSProperties> = {
   shell: {
     width: '92vw',
     height: '88vh',
+    // 右下角原生拖拽手柄:整个编辑器可放大拉宽/缩小
+    resize: 'both',
+    minWidth: 720,
+    minHeight: 480,
+    maxWidth: '98vw',
+    maxHeight: '96vh',
     display: 'flex',
     flexDirection: 'column',
     background: '#0f1116',
@@ -2376,6 +2419,15 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 10,
     border: '1px solid #2a2e38',
     zIndex: 5,
+  },
+  sideResizeGutter: {
+    position: 'absolute',
+    top: 12,
+    bottom: 12,
+    width: 8,
+    cursor: 'ew-resize',
+    touchAction: 'none',
+    zIndex: 6,
   },
   leftStack: {
     position: 'absolute',
@@ -2867,10 +2919,10 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
   },
 
-  // 姿态预设 网格
+  // 姿态预设 网格(auto-fill:面板拖宽后自动多列)
   poseGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(3, 1fr)',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(62px, 1fr))',
     gap: 6,
     marginBottom: 4,
   },

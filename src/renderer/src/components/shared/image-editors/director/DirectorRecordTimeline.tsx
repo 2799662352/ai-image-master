@@ -14,6 +14,7 @@ import {
   type RecordFps,
   type RecordQualityKey,
 } from './directorConstants';
+import { useDragPanel } from './useDragPanel';
 
 interface Props {
   stageRef: React.RefObject<DirectorStageHandle | null>;
@@ -45,6 +46,8 @@ export default function DirectorRecordTimeline({ stageRef, onExit, onExported }:
   const stopRef = useRef<(() => void) | null>(null);
   const railRef = useRef<HTMLDivElement>(null);
   const previewRef = useRef<HTMLCanvasElement>(null);
+  // Preview 浮窗可拖动(标题栏抓握;选择框/×按钮不触发拖动)
+  const previewDrag = useDragPanel(14, 60);
 
   const refresh = useCallback(() => {
     setKeys(stageRef.current?.recordListKeyframes() ?? []);
@@ -154,10 +157,16 @@ export default function DirectorRecordTimeline({ stageRef, onExit, onExported }:
         <div style={{ ...styles.safeFrame, aspectRatio: String(ASPECT_RATIO[aspect]) }} />
       </div>
 
-      {/* 左上 Preview 面板 */}
-      <div style={styles.preview}>
-        <div style={styles.previewHead}>
-          <span style={styles.previewTitle}>◳ Preview</span>
+      {/* 左上 Preview 面板(标题栏可拖动自由移动) */}
+      <div style={{ ...styles.preview, left: previewDrag.pos.x, top: previewDrag.pos.y }}>
+        <div
+          title="拖动移动面板"
+          style={{ ...styles.previewHead, ...previewDrag.handleProps.style, userSelect: 'none' }}
+          onPointerDown={previewDrag.handleProps.onPointerDown}
+          onPointerMove={previewDrag.handleProps.onPointerMove}
+          onPointerUp={previewDrag.handleProps.onPointerUp}
+        >
+          <span style={styles.previewTitle}>⠿ Preview</span>
           <select
             style={styles.aspectSel}
             value={aspect}
