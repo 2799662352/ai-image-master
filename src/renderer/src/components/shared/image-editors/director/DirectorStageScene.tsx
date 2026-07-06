@@ -331,18 +331,18 @@ interface DirectorStageProps {
   onAnimTick?: (tick: AnimTick | null) => void;
 }
 
-/** 动画播放进度(给 UI 播放条). */
+/** 动画播放进度(给 UI 播放条;报「当前选中对象」的动画,选中无动画 = null). */
 export interface AnimTick {
   url: string;
   name: string;
-  /** 动画所在假人的 uuid(换选后 UI 仍能判断动画挂在谁身上). */
+  /** 动画所在假人的 uuid. */
   targetUuid: string;
   time: number;
   duration: number;
   playing: boolean;
 }
 
-/** 活动动画(挂在某个高级假人上的 mixer + 当前 action). */
+/** 活动动画(挂在某个高级假人上的 mixer + 当前 action;每假人一份,互不影响). */
 interface ActiveAnim {
   mixer: THREE.AnimationMixer;
   action: THREE.AnimationAction;
@@ -406,8 +406,8 @@ interface StageState {
   redoStack: HistoryCmd[];
   /** gizmo 拖拽开始时记录的受影响对象 transform 快照(拖拽结束后入栈). */
   dragSnap: TransformSnap[] | null;
-  /** 动画预览(高级假人):null = 无活动动画. */
-  anim: ActiveAnim | null;
+  /** 动画预览(高级假人):每个目标对象各自持有 mixer,可多假人同时播. */
+  anims: Map<THREE.Object3D, ActiveAnim>;
   /** RAF 循环里驱动 mixer.update 的时钟. */
   clock: THREE.Clock;
 }
@@ -586,10 +586,11 @@ function DirectorStageInner(
   };
 
   // ── 动画(高级假人 Mixamo 剪辑预览;瞬态,不入撤销/工程) ─────────
+  /** 播放条回传的是「当前选中对象」的动画;选中无动画 → null(其余假人照播). */
   const emitAnimTick = () => {
     const s = stateRef.current;
     if (!s) return;
-    const a = s.anim;
+    const a = s.selected ? s.anims.get(s.selected) : undefined;
     if (!a) {
       onAnimTickRef.current?.(null);
       return;
@@ -603,14 +604,15 @@ function DirectorStageInner(
       playing: !a.action.paused,
     });
   };
-  /** Stop playback and restore the pose captured before it started. */
-  const stopAnimationImpl = () => {
+  /** Stop one target's playback and restore the pose captured before it started. */
+  const stopAnimFor = (target: THREE.Object3D) => {
     const s = stateRef.current;
-    if (!s?.anim) return;
-    s.anim.mixer.stopAllAction();
-    restorePose(s.anim.poseSnap);
-    s.anim = null;
-    onAnimTickRef.current?.(null);
+    const a = s?.anims.get(target);
+    if (!s || !a) return;
+    a.mixer.stopAllAction();
+    restorePose(a.poseSnap);
+    s.anims.delete(target);
+    emitAnimTick();
   };
 
   // ── 选择(单选 / 框选多选) ─────────────────────────────────────
@@ -669,7 +671,7 @@ function DirectorStageInner(
     if (!s) return;
     const objs = s.multi.length > 1 ? s.multi.slice() : s.selected ? [s.selected] : [];
     if (objs.length === 0) return;
-    if (s.anim && objs.includes(s.anim.target)) stopAnimationImpl();
+    for (const o of objs) if (s.anims.has(o)) stopAnimFor(o);
     dissolveMulti(s);
     s.transform.detach();
     clearSkeletonHelper(s);
@@ -869,7 +871,7 @@ function DirectorStageInner(
       clearModels() {
         const s = stateRef.current;
         if (!s) return;
-        if (s.anim) stopAnimationImpl();
+        for (const t of [...s.anims.keys()]) stopAnimFor(t);
         dissolveMulti(s);
         clearSkeletonHelper(s);
         s.posingBone = null;
@@ -1025,7 +1027,7 @@ function DirectorStageInner(
         const s = stateRef.current;
         if (!s || !s.selected) return;
         // 摆骨骼与 mixer 冲突:目标正在播动画则先停(恢复播放前姿势)。
-        if (uuid && s.anim && s.anim.target === s.selected) stopAnimationImpl();
+        if (uuid && s.anims.has(s.selected)) stopAnimFor(s.selected);
         s.transform.detach();
         if (!uuid) {
           // back to whole-model translate
@@ -1052,7 +1054,7 @@ function DirectorStageInner(
       resetPose() {
         const s = stateRef.current;
         if (!s || !s.selected) return;
-        if (s.anim && s.anim.target === s.selected) stopAnimationImpl();
+        if (s.anims.has(s.selected)) stopAnimFor(s.selected);
         const obj = s.selected;
         const before = capturePose(obj);
         applyPoseToObject(obj, null);
@@ -1062,7 +1064,7 @@ function DirectorStageInner(
       applyPose(map) {
         const s = stateRef.current;
         if (!s || !s.selected) return;
-        if (s.anim && s.anim.target === s.selected) stopAnimationImpl();
+        if (s.anims.has(s.selected)) stopAnimFor(s.selected);
         const obj = s.selected;
         const before = capturePose(obj);
         // Reset-to-rest then rotation-only, primary bones only (nested duplicate
@@ -1074,7 +1076,7 @@ function DirectorStageInner(
       setBoneDelta(boneName, deg) {
         const s = stateRef.current;
         if (!s || !s.selected) return;
-        if (s.anim && s.anim.target === s.selected) stopAnimationImpl();
+        if (s.anims.has(s.selected)) stopAnimFor(s.selected);
         const key = normBone(boneName);
         // Only drive the real (non-nested) bone — the nested duplicate inherits
         // it. Driving the nested twin too would double-rotate it (see
@@ -1110,8 +1112,8 @@ function DirectorStageInner(
         const clip = await loadAnimClip(url);
         const st = stateRef.current;
         if (!st || st.selected !== target) return; // 加载期间选择已变,丢弃
-        if (st.anim && st.anim.target !== target) stopAnimationImpl();
-        const prev = st.anim; // null 或同目标(换剪辑,复用快照/mixer)
+        // 每个假人各自持有 mixer:给 B 播不影响 A(多假人同时播)。
+        const prev = st.anims.get(target); // 同目标换剪辑:复用快照与 mixer
         const poseSnap = prev ? prev.poseSnap : capturePose(target);
         const mixer = prev ? prev.mixer : new THREE.AnimationMixer(target);
         mixer.stopAllAction();
@@ -1119,29 +1121,33 @@ function DirectorStageInner(
         action.reset();
         action.setLoop(THREE.LoopRepeat, Infinity);
         action.play();
-        st.anim = { mixer, action, target, poseSnap, duration: clip.duration, url, name };
+        st.anims.set(target, { mixer, action, target, poseSnap, duration: clip.duration, url, name });
         emitAnimTick();
       },
       pauseAnimation() {
         const s = stateRef.current;
-        if (!s?.anim) return;
-        s.anim.action.paused = true;
+        const a = s?.selected ? s.anims.get(s.selected) : undefined;
+        if (!a) return;
+        a.action.paused = true;
         emitAnimTick();
       },
       resumeAnimation() {
         const s = stateRef.current;
-        if (!s?.anim) return;
-        s.anim.action.paused = false;
+        const a = s?.selected ? s.anims.get(s.selected) : undefined;
+        if (!a) return;
+        a.action.paused = false;
         emitAnimTick();
       },
       stopAnimation() {
-        stopAnimationImpl();
+        const s = stateRef.current;
+        if (s?.selected) stopAnimFor(s.selected);
       },
       seekAnimation(sec) {
         const s = stateRef.current;
-        if (!s?.anim) return;
-        s.anim.action.time = THREE.MathUtils.clamp(sec, 0, s.anim.duration);
-        s.anim.mixer.update(0);
+        const a = s?.selected ? s.anims.get(s.selected) : undefined;
+        if (!a) return;
+        a.action.time = THREE.MathUtils.clamp(sec, 0, a.duration);
+        a.mixer.update(0);
         emitAnimTick();
       },
       capture(height) {
@@ -1683,7 +1689,7 @@ function DirectorStageInner(
       undoStack: [],
       redoStack: [],
       dragSnap: null,
-      anim: null,
+      anims: new Map(),
       clock: new THREE.Clock(),
     };
     stateRef.current = state;
@@ -1880,21 +1886,27 @@ function DirectorStageInner(
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
 
-    let lastAnimTick = 0;
+    let lastAnimTickAt = 0;
+    let lastAnimTickKey = '';
     const animate = () => {
       state.frameId = requestAnimationFrame(animate);
       // During keyframe playback the camera is driven manually; OrbitControls
       // would otherwise re-derive position from its target and override us.
       if (!state.recordPlaying) orbit.update();
       const dt = state.clock.getDelta();
-      if (state.anim) {
-        state.anim.mixer.update(dt);
-        // 播放条进度回传节流到 ~10Hz(暂停/seek 时由各自入口即时回传)。
-        const now = performance.now();
-        if (!state.anim.action.paused && now - lastAnimTick > 100) {
-          lastAnimTick = now;
-          emitAnimTick();
-        }
+      for (const a of state.anims.values()) a.mixer.update(dt);
+      // 播放条回传「选中对象」的动画:身份/暂停态变化(含换选)立即发,
+      // 播放中进度节流到 ~10Hz;seek 由入口即时回传。
+      const sel = state.selected ? state.anims.get(state.selected) : undefined;
+      const key = sel ? `${sel.target.uuid}|${sel.url}|${sel.action.paused}` : '';
+      const now = performance.now();
+      if (
+        key !== lastAnimTickKey ||
+        (sel && !sel.action.paused && now - lastAnimTickAt > 100)
+      ) {
+        lastAnimTickKey = key;
+        lastAnimTickAt = now;
+        emitAnimTick();
       }
       renderStage(state, camera);
     };
@@ -1917,11 +1929,9 @@ function DirectorStageInner(
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       endMarquee();
-      if (state.anim) {
-        // 整个场景即将销毁 — 只停 mixer,无需恢复姿势。
-        state.anim.mixer.stopAllAction();
-        state.anim = null;
-      }
+      // 整个场景即将销毁 — 只停 mixer,无需恢复姿势。
+      for (const a of state.anims.values()) a.mixer.stopAllAction();
+      state.anims.clear();
       dissolveMulti(state);
       clearSkeletonHelper(state);
       transform.detach();

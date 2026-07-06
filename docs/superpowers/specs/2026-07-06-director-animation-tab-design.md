@@ -60,6 +60,12 @@ FBXLoader（加载 X/Y Bot rig）、常驻 RAF 渲染循环、姿势系统（`_p
   存续（原「换选即停」会把假人弹回播放前的 T-pose）。姿势编辑与 mixer 的冲突改为
   精确守卫：`poseBone`/`resetPose`/`applyPose`/`setBoneDelta` 作用在动画目标上时才
   先停;UI 进「姿势」页仅当选中对象 === 动画目标（`AnimTick.targetUuid`）时停。
+  **修订 2(2026-07-06,用户实测反馈)**：支持**多假人同时播**（原 YAGNI 项转正）——
+  `StageState.anim` 单槽位改为 `anims: Map<target, ActiveAnim>`，每假人各自持有
+  mixer/快照，给 B 播不再强停 A（原单槽位会把 A 弹回 T-pose）。播放条语义 =
+  「当前选中假人的动画」：换选到无动画对象则播放条隐藏（后台照播），
+  pause/stop/seek 只作用于选中假人;RAF 统一 update 所有 mixer，tick 在
+  选中动画身份/暂停态变化时立即回传、播放中 ~10Hz 节流。
 
 ### 3. UI 层 — `DirectorEditor.tsx`
 
