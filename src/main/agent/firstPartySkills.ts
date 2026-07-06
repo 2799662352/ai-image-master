@@ -252,7 +252,9 @@ image_gen skill: they render inside the chat AND persist results to local files
      分辨率与清晰度匹配用途。
    - **③ 风格一致**:与用户指定风格一致;**系列/组图**内各帧画风、色调、角色外观前后一致;
      若项目有角色锚点 / 圣经(character_bible)或既定风格,新图须与之吻合(见
-     \`director-style-consistency\` / \`director-character-consistency\`)。
+     \`director-style-consistency\` / \`director-character-consistency\`);
+     若本轮用了 3D 导演台 staging(\`director_capture\` 截图作参考),构图/姿势/
+     机位/光向还须与 staging 截图一致(见 \`catimation-director-stage\` 的衔接章节)。
    - **④ 过 skill / 插件门**:提示词是否经 \`director-orchestrator\` 的 13 维框架(物理参数优先);
      角色身份是否遵循单锚点纪律(默认大头照+全身照,三视图/四视图为可选补充);
      涉敏感/合规内容是否过 \`storyboard-negative-control\`;在制片流程中是否满足 \`film-studio\` 的资产门。
@@ -1801,6 +1803,25 @@ camera; \`clear_models\` empties the stage (destructive — confirm with the use
 Build a slot per shot (全景/中景/特写), then \`director_capture {slotId}\` each
 slot to deliver a shot list. \`duplicate_camera_slot\` + \`update_camera_slot\`
 for variants.
+
+## 衔接出图链路(单锚点纪律 × 四项质检)
+
+导演台截图在出图链路里的身份是 **姿势/构图/机位/光位锚,不是角色 ID 锚**:
+
+1. **分工**:角色"长什么样"仍由单锚点纪律负责(默认大头照+全身照,三视图/
+   四视图仅作可选补充);导演台截图负责"站哪、什么姿势、哪个机位、光从哪来"。
+   出图时把两者一起传 \`generate_image\` 的 \`referenceImages\`(角色锚点 +
+   \`director_capture\` 的 imagePaths),并在提示词里明说:灰色假人图仅供
+   pose / composition / camera / lighting 参考,**不要把假人外观画进成品**。
+2. **顺序纪律**:先在导演台摆好并 capture 自检通过(姿势自然、构图成立、
+   光位对),**再**出图 —— 不要出完图再反过来改 staging 空耗重生成迭代。
+3. **质检衔接**:成品图照过 catimation-image 的四项验收清单;其中
+   ③风格一致 除对照角色锚点/圣经外,还要**对照导演台 staging**——构图、
+   姿势、机位、光向是否与 capture 截图一致。不一致 → 把导演台截图作为
+   referenceImages 带上,改提示词重生成。
+4. **多镜制片**:每镜一个 camera slot → \`director_capture {slotId}\` 出一张
+   staging 参考 → 逐镜出图,天然满足 film-studio 资产门的"全用素材"要求;
+   连续性(服装/道具/光)靠同一场景不动、只切机位来保证。
 
 ## What NOT to do
 
