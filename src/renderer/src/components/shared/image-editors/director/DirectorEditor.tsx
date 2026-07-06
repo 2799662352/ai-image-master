@@ -327,7 +327,8 @@ export default function DirectorEditor({
     }
     setAnimBusy(url);
     try {
-      await st.playAnimation(url, a.name, a.ext);
+      // assetId 随动画进场景:保存工程时以资产 id 记录,跨会话可还原。
+      await st.playAnimation(url, a.name, a.ext, a.id);
     } catch {
       alert(`动画加载失败:${a.name}(文件无法解析,确认含动画剪辑)`);
     } finally {
@@ -543,9 +544,35 @@ export default function DirectorEditor({
   );
 
   // ── 保存工程 / 打开工程(JSON,非截图)────────────────────────
+  /** 最近一次 保存/打开/初始 的工程内容指纹;与当前指纹不同 = 有未保存更改. */
+  const savedSnapRef = useRef<string | null>(null);
   /**
-   * 「保存工程」= 序列化整个可编辑场景(模型/位姿/机位/相机/灯光/全景来源)为
-   * .json 下载,区别于「保存截图」(导出 PNG)。逆向自实站 serialize() 架构。
+   * 工程内容指纹(脏检查用):取 serializeScene 但剔除易变噪声 ——
+   * ① 自由相机(仅转视角不算改工程);② 动画播放头/播放中的逐帧骨骼姿势
+   * (播着动画时每帧都变,只看「应用了哪条动画」)。
+   */
+  const projectHash = useCallback((): string | null => {
+    const stage = stageRef.current;
+    if (!stage) return null;
+    const { camera: _cam, ...scene } = stage.serializeScene();
+    const models = scene.models.map(({ bonePose, anim, ...rest }) => ({
+      ...rest,
+      bonePose: anim ? undefined : bonePose,
+      anim: anim ? { name: anim.name, url: anim.url, assetId: anim.assetId } : undefined,
+    }));
+    return JSON.stringify({ ...scene, models, panorama: panoRefState.current });
+  }, []);
+  const markSaved = useCallback(() => {
+    savedSnapRef.current = projectHash();
+  }, [projectHash]);
+  const isDirty = useCallback(() => {
+    if (savedSnapRef.current == null) return false; // 场景尚未就绪
+    const cur = projectHash();
+    return cur != null && cur !== savedSnapRef.current;
+  }, [projectHash]);
+  /**
+   * 「保存工程」= 序列化整个可编辑场景(模型/位姿/动画状态/机位/相机/灯光/
+   * 运镜关键帧/全景来源)为 .json 下载,区别于「保存截图」(导出 PNG)。
    */
   const saveProject = useCallback(() => {
     const stage = stageRef.current;
@@ -565,7 +592,31 @@ export default function DirectorEditor({
     const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
     downloadDataUrl(url, `director-project-${Date.now()}.json`);
     setTimeout(() => URL.revokeObjectURL(url), 4000);
-  }, [entry, lens, resolution]);
+    markSaved();
+  }, [entry, lens, resolution, markSaved]);
+
+  /** 关闭导演台:有未保存更改先确认,避免误点 × 丢工程. */
+  const requestClose = useCallback(() => {
+    if (
+      isDirty() &&
+      !window.confirm(
+        '当前工程有未保存的更改(模型/姿势/动画/运镜关键帧等)。\n直接退出将丢失这些更改,确定退出吗?\n\n提示:可先点「💾 保存工程」导出 .json。',
+      )
+    )
+      return;
+    onClose();
+  }, [isDirty, onClose]);
+
+  // 窗口关闭/刷新兜底:有未保存更改时弹系统级确认。
+  useEffect(() => {
+    const h = (e: BeforeUnloadEvent) => {
+      if (!isDirty()) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', h);
+    return () => window.removeEventListener('beforeunload', h);
+  }, [isDirty]);
 
   const restorePanorama = useCallback(
     async (pano: typeof panoRefState.current) => {
@@ -626,8 +677,9 @@ export default function DirectorEditor({
       if (project.lens) setLens(project.lens);
       if (project.resolution) setResolution(project.resolution);
       await restorePanorama(project.panorama ?? null);
+      markSaved(); // 刚打开的工程 = 干净基线
     },
-    [restorePanorama],
+    [restorePanorama, markSaved],
   );
 
   // ── 录制导出:把关键帧运镜结果下载为视频 ──
@@ -827,7 +879,7 @@ export default function DirectorEditor({
           <button style={styles.ghostBtn} onClick={toggleMainFull} title="主页面全屏">
             {mainFull ? '🗗 退出全屏' : '⛶ 全屏'}
           </button>
-          <button style={styles.closeBtn} onClick={onClose} aria-label="关闭">
+          <button style={styles.closeBtn} onClick={requestClose} aria-label="关闭">
             ×
           </button>
         </div>
@@ -984,6 +1036,7 @@ export default function DirectorEditor({
             onAnimTick={setAnimTick}
             onBonePick={handleBonePick}
             onBoneRotate={handleBoneRotate}
+            onReady={markSaved}
           />
           {/* 动画播放条(有活动动画时浮在视口底部中央;K 动画时间轴打开时由其接管) */}
           {animTick && !poseTl && (

@@ -132,6 +132,19 @@ export interface DirectorModelMeta {
   crowd?: CrowdOpts;
 }
 
+/** 保存工程时记录的「已应用动画」:目录动画存 URL,导入/K 动画存资产 id. */
+export interface SavedAnimState {
+  name: string;
+  /** 可跨会话加载的 URL(http/https 目录动画);objectURL 不存. */
+  url?: string;
+  ext?: string;
+  /** 「我的动画」IndexedDB 资产 id(打开工程时重新解析成 objectURL). */
+  assetId?: string;
+  /** 保存时的播放头(秒)与播放/暂停态. */
+  time: number;
+  playing: boolean;
+}
+
 /** Per-object snapshot inside a saved project (transform + meta + pose). */
 export interface DirectorModelState extends DirectorModelMeta {
   name: string;
@@ -140,6 +153,8 @@ export interface DirectorModelState extends DirectorModelMeta {
   scale: [number, number, number];
   /** bone pose for rigged models: { boneName: [qx,qy,qz,qw] }. */
   bonePose?: Record<string, [number, number, number, number]>;
+  /** 保存时正在该假人上播放/暂停的动画(运动状态). */
+  anim?: SavedAnimState;
 }
 
 /**
@@ -167,6 +182,8 @@ export interface DirectorSceneData {
   };
   /** 光感/调色后处理(可选,向后兼容:旧工程无此字段时按中性还原). */
   fx?: DirectorLightFxState;
+  /** 录制视频的相机运镜关键帧(可选,向后兼容:旧工程无此字段 = 空). */
+  recordKeyframes?: CameraKeyframe[];
 }
 
 export interface DirectorStageHandle {
@@ -244,12 +261,14 @@ export interface DirectorStageHandle {
   /** True if the selected model is one of the rigged X/Y bot mannequins. */
   isAdvancedMannequin(): boolean;
   // ── 动画(高级假人 Mixamo 剪辑预览) ────────────────────────────
-  // 动画是瞬态预览:不入撤销栈、不进「保存工程」序列化;停止时恢复播放前姿势。
+  // 动画不入撤销栈;停止时恢复播放前姿势。「保存工程」会记录每个假人的
+  // 已应用动画(来源 + 播放头 + 播放/暂停态),打开工程时还原。
   /**
    * Load + loop an animation clip on the selected advanced mannequin.
    * `ext` 指明格式(fbx/glb/gltf/json);省略时按 URL 扩展名推断,默认 fbx。
+   * `assetId` = 「我的动画」资产 id(保存工程时以 id 还原,objectURL 跨会话无效)。
    */
-  playAnimation(url: string, name?: string, ext?: string): Promise<void>;
+  playAnimation(url: string, name?: string, ext?: string, assetId?: string): Promise<void>;
   pauseAnimation(): void;
   resumeAnimation(): void;
   /** Stop and restore the pose captured before playback started. */
@@ -376,6 +395,9 @@ interface ActiveAnim {
   duration: number;
   url: string;
   name: string;
+  /** 来源信息(保存工程时还原用):格式扩展名 / 「我的动画」资产 id. */
+  ext?: string;
+  assetId?: string;
 }
 
 /** 一条可拖拽 IK 链:links = [上肢骨, 下肢骨](肩/胯 → 肘/膝),effector = 末端骨. */
@@ -694,6 +716,7 @@ function DirectorStageInner(
     clip: THREE.AnimationClip,
     url: string,
     name: string,
+    meta?: { ext?: string; assetId?: string },
   ) => {
     const st = stateRef.current;
     if (!st || !target.parent) return; // 场景已卸载 / 目标已被删除
@@ -706,7 +729,17 @@ function DirectorStageInner(
     action.reset();
     action.setLoop(THREE.LoopRepeat, Infinity);
     action.play();
-    st.anims.set(target, { mixer, action, target, poseSnap, duration: clip.duration, url, name });
+    st.anims.set(target, {
+      mixer,
+      action,
+      target,
+      poseSnap,
+      duration: clip.duration,
+      url,
+      name,
+      ext: meta?.ext,
+      assetId: meta?.assetId,
+    });
     emitAnimTick();
   };
 
@@ -1242,13 +1275,13 @@ function DirectorStageInner(
         const s = stateRef.current;
         return !!s?.selected?.userData?.isFbxBot;
       },
-      async playAnimation(url, name = '', ext) {
+      async playAnimation(url, name = '', ext, assetId) {
         const s = stateRef.current;
         const target = s?.selected;
         if (!s || !target || !target.userData?.isFbxBot) return;
         const clip = await loadAnimClip(url, ext);
         if (stateRef.current?.selected !== target) return; // 加载期间选择已变,丢弃
-        startClipOnTarget(target, clip, url, name);
+        startClipOnTarget(target, clip, url, name, { ext, assetId });
       },
       pauseAnimation() {
         const s = stateRef.current;
@@ -1585,6 +1618,19 @@ function DirectorStageInner(
           };
           const pose = serializeBonePose(o);
           if (pose) state.bonePose = pose;
+          // 运动状态:该假人上已应用的动画(时间轴预览的 authored/objectURL 剪辑
+          // 只有拿到资产 id 才能跨会话还原,否则跳过)。
+          const anim = s.anims.get(o);
+          if (anim && (anim.assetId || /^https?:/i.test(anim.url))) {
+            state.anim = {
+              name: anim.name,
+              url: anim.assetId ? undefined : anim.url,
+              ext: anim.ext,
+              assetId: anim.assetId,
+              time: anim.action.time,
+              playing: !anim.action.paused,
+            };
+          }
           return state;
         });
         return {
@@ -1616,12 +1662,15 @@ function DirectorStageInner(
             ambientColor: `#${s.ambient.color.getHexString()}`,
           },
           fx: { ...s.fxState },
+          recordKeyframes: s.keyframes.map((k) => ({ ...k })),
         };
       },
       async restoreScene(data, resolveUrl) {
         const s = stateRef.current;
         if (!s || !data || data.version !== 1) return;
-        // 1) clear existing models.
+        // 1) clear existing models (旧模型的 mixer 一并停掉,防止残留更新).
+        for (const a of s.anims.values()) a.mixer.stopAllAction();
+        s.anims.clear();
         dissolveMulti(s);
         clearSkeletonHelper(s);
         s.posingBone = null;
@@ -1633,6 +1682,7 @@ function DirectorStageInner(
         s.selected = null;
         clearHistory(s);
         // 2) recreate each model with its saved transform + pose.
+        const pendingAnims: { obj: THREE.Object3D; anim: SavedAnimState }[] = [];
         for (const m of data.models || []) {
           try {
             let obj: THREE.Object3D | null = null;
@@ -1675,8 +1725,34 @@ function DirectorStageInner(
               obj.position.y = m.position[1];
             }
             s.modelsGroup.add(obj);
+            if (m.anim) pendingAnims.push({ obj, anim: m.anim });
           } catch {
             /* skip a model that fails to load (e.g. stale blob URL) */
+          }
+        }
+        // 2b) 运动状态:还原每个假人保存时已应用的动画(播放头 + 播放/暂停态)。
+        for (const { obj, anim } of pendingAnims) {
+          try {
+            let url = anim.url ?? '';
+            if (anim.assetId && resolveUrl) {
+              const resolved = await resolveUrl(anim.assetId).catch(() => null);
+              if (resolved) url = resolved;
+            }
+            if (!url) continue;
+            const clip = await loadAnimClip(url, anim.ext);
+            if (!stateRef.current) return; // unmounted mid-load
+            startClipOnTarget(obj, clip, url, anim.name, {
+              ext: anim.ext,
+              assetId: anim.assetId,
+            });
+            const active = s.anims.get(obj);
+            if (active) {
+              active.action.time = THREE.MathUtils.clamp(anim.time, 0, active.duration);
+              active.action.paused = !anim.playing;
+              active.mixer.update(0); // 立即套用该帧(暂停态也停在保存时的帧上)
+            }
+          } catch {
+            /* 动画资源失效(如资产被删)→ 保留静态姿势即可 */
           }
         }
         // 3) lighting.
@@ -1692,6 +1768,8 @@ function DirectorStageInner(
         }
         // 3b) 光感/调色后处理(旧工程无 fx → 还原为中性默认)。
         applyLightFx(s, { ...LIGHTFX_DEFAULTS, ...(data.fx ?? {}) });
+        // 3c) 录制视频的运镜关键帧(旧工程无此字段 = 清空)。
+        s.keyframes = (data.recordKeyframes ?? []).map((k) => ({ ...k }));
         // 4) camera 机位.
         s.cameraSlots = (data.cameraSlots || []).map((c) => ({
           ...c,

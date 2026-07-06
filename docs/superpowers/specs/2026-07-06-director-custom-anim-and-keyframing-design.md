@@ -115,3 +115,26 @@ interface PoseKeyframe {
   toJSON→parse 往返。
 - `directorAssetStore` 的 animation kind 走既有 CRUD(已有测试模式,补 kind 用例)。
 - 导入格式分派(ext→loader 选择)单测。
+
+## 追加:工程持久化运动状态 + 录制关键帧 + 退出提醒(同日,用户反馈)
+
+用户实测发现「保存工程」丢三样:①假人已应用的动画(运动状态);②录制视频
+的运镜关键帧;③点 × 退出无未保存提醒。推翻上面「动画不进工程序列化」的
+第一版边界,方案:
+
+- **运动状态入工程**:`DirectorModelState.anim?: SavedAnimState`
+  (`{name, url?, ext?, assetId?, time, playing}`)。来源区分:目录动画存
+  http(s) URL;「我的动画」(导入 + 已保存的 K 动画)存 IndexedDB 资产 id
+  (objectURL 跨会话无效),`playAnimation` 加第 4 参 `assetId` 随播放进
+  `ActiveAnim`。时间轴上未保存的 authored 预览剪辑无法还原 → 跳过。
+  restore 在模型重建后重放:`loadAnimClip` → `startClipOnTarget` → 恢复
+  播放头 + 播放/暂停态(`mixer.update(0)` 暂停也停在保存帧)。顺手修了
+  restoreScene 清模型时不清 `s.anims` 的残留 mixer 泄漏。
+- **录制关键帧入工程**:`DirectorSceneData.recordKeyframes?: CameraKeyframe[]`
+  (可选字段,旧工程向后兼容 = 清空);restore 直接回填 `s.keyframes`,
+  再进「录制视频」时间轴原样可见。
+- **退出未保存提醒**:编辑器持有内容指纹 `projectHash` =
+  serializeScene 剔除易变噪声(自由相机;动画播放头/播放中逐帧骨骼姿势 —
+  只看「应用了哪条动画」,否则播着动画永远判脏)+ 全景来源。基线在
+  onReady / 保存工程 / 打开工程时刷新;× 关闭走 `requestClose`
+  (脏 → window.confirm);`beforeunload` 兜底窗口关闭/刷新。
