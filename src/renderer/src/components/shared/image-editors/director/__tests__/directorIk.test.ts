@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { solveCcd, solveTwoBone } from '../directorIk';
+import { clampSwingTwist, solveCcd, solveTwoBone } from '../directorIk';
 
 /** 竖直二连杆:root(原点)→ mid(+1y)→ tip(+1y),总臂长 2. */
 function makeChain(): { root: THREE.Bone; mid: THREE.Bone; tip: THREE.Bone } {
@@ -151,5 +151,70 @@ describe('solveTwoBone', () => {
     expect(mid.position.equals(midPos)).toBe(true);
     expect(tip.position.equals(tipPos)).toBe(true);
     expect(tip.quaternion.equals(tipQ)).toBe(true);
+  });
+});
+
+const AXIS_Y = new THREE.Vector3(0, 1, 0);
+const deg = THREE.MathUtils.degToRad;
+
+/** swing 角 = twistAxis 与 q·twistAxis 的夹角(twist 不移动轴本身). */
+function swingAngleDeg(q: THREE.Quaternion, axis: THREE.Vector3): number {
+  return THREE.MathUtils.radToDeg(axis.clone().applyQuaternion(q).angleTo(axis));
+}
+
+describe('clampSwingTwist', () => {
+  it('限内旋转:返回 false 且 q 不变', () => {
+    const q = new THREE.Quaternion()
+      .setFromAxisAngle(new THREE.Vector3(1, 0, 0), deg(30))
+      .multiply(new THREE.Quaternion().setFromAxisAngle(AXIS_Y, deg(20)));
+    const before = q.clone();
+    expect(clampSwingTwist(q, AXIS_Y, deg(80), deg(60))).toBe(false);
+    expect(q.angleTo(before)).toBeLessThan(1e-6);
+  });
+
+  it('纯 twist 超限:钳到 ±twistMax,不引入 swing', () => {
+    for (const sign of [1, -1]) {
+      const q = new THREE.Quaternion().setFromAxisAngle(AXIS_Y, sign * deg(120));
+      expect(clampSwingTwist(q, AXIS_Y, deg(80), deg(90))).toBe(true);
+      const expected = new THREE.Quaternion().setFromAxisAngle(AXIS_Y, sign * deg(90));
+      expect(q.angleTo(expected)).toBeLessThan(1e-6);
+      expect(swingAngleDeg(q, AXIS_Y)).toBeLessThan(1e-4);
+    }
+  });
+
+  it('纯 swing 超限:钳到 swingMax,保持摆动方向,不引入 twist', () => {
+    const swingAxis = new THREE.Vector3(1, 0, 0); // ⊥ twistAxis
+    const q = new THREE.Quaternion().setFromAxisAngle(swingAxis, deg(120));
+    expect(clampSwingTwist(q, AXIS_Y, deg(80), deg(90))).toBe(true);
+    const expected = new THREE.Quaternion().setFromAxisAngle(swingAxis, deg(80));
+    expect(q.angleTo(expected)).toBeLessThan(1e-6);
+    expect(swingAngleDeg(q, AXIS_Y)).toBeCloseTo(80, 4);
+  });
+
+  it('swing+twist 同时超限:各自钳到边界', () => {
+    const swingAxis = new THREE.Vector3(0, 0, 1);
+    const q = new THREE.Quaternion()
+      .setFromAxisAngle(swingAxis, deg(150))
+      .multiply(new THREE.Quaternion().setFromAxisAngle(AXIS_Y, deg(-130)));
+    expect(clampSwingTwist(q, AXIS_Y, deg(100), deg(90))).toBe(true);
+    expect(swingAngleDeg(q, AXIS_Y)).toBeCloseTo(100, 3);
+    const expected = new THREE.Quaternion()
+      .setFromAxisAngle(swingAxis, deg(100))
+      .multiply(new THREE.Quaternion().setFromAxisAngle(AXIS_Y, deg(-90)));
+    expect(q.angleTo(expected)).toBeLessThan(1e-5);
+  });
+
+  it('180° 纯 swing 奇点:不产生 NaN,swing 钳到上限', () => {
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI);
+    expect(clampSwingTwist(q, AXIS_Y, deg(80), deg(90))).toBe(true);
+    expect(Number.isNaN(q.x)).toBe(false);
+    expect(Number.isNaN(q.w)).toBe(false);
+    expect(swingAngleDeg(q, AXIS_Y)).toBeCloseTo(80, 3);
+  });
+
+  it('单位旋转:限内,返回 false', () => {
+    const q = new THREE.Quaternion();
+    expect(clampSwingTwist(q, AXIS_Y, deg(80), deg(60))).toBe(false);
+    expect(q.w).toBe(1);
   });
 });

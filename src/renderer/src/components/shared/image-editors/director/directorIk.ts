@@ -171,3 +171,60 @@ export function solveTwoBone(
   effector.getWorldPosition(_tbEff);
   return _tbEff.distanceTo(targetWorld);
 }
+
+const _stTwist = new THREE.Quaternion();
+const _stSwing = new THREE.Quaternion();
+const _stInv = new THREE.Quaternion();
+const _stAxis = new THREE.Vector3();
+
+/**
+ * 球窝关节 swing-twist 限位(肩/胯,Jolt/Bullet 同款思路):
+ * 把相对休息姿势的增量旋转 q 分解为 q = swing · twist(twist 绕骨骼指向轴,
+ * swing 是骨骼指向的摆动,轴 ⊥ twistAxis),两部分独立钳制后重组。
+ * 对称锥模型:swing 角 ≤ swingMaxRad,twist 角 ∈ [-twistMaxRad, +twistMaxRad]。
+ *
+ * 分解按 Allen Chou 标准做法:四元数向量部投影到 twistAxis 得 twist,
+ * swing = q · twist⁻¹;180° 纯 swing 奇点(投影为零)twist 取单位元。
+ *
+ * @param q 增量旋转(休息姿势局部空间),**就地修改**
+ * @param twistAxis 骨骼指向轴(单位向量,休息局部空间)
+ * @returns 是否发生了钳制(false = 本就在限内,q 未动)
+ */
+export function clampSwingTwist(
+  q: THREE.Quaternion,
+  twistAxis: THREE.Vector3,
+  swingMaxRad: number,
+  twistMaxRad: number,
+): boolean {
+  q.normalize();
+  const d = q.x * twistAxis.x + q.y * twistAxis.y + q.z * twistAxis.z;
+  _stTwist.set(twistAxis.x * d, twistAxis.y * d, twistAxis.z * d, q.w);
+  const tLen = Math.sqrt(
+    _stTwist.x * _stTwist.x +
+      _stTwist.y * _stTwist.y +
+      _stTwist.z * _stTwist.z +
+      _stTwist.w * _stTwist.w,
+  );
+  if (tLen < 1e-9) _stTwist.identity();
+  else _stTwist.set(_stTwist.x / tLen, _stTwist.y / tLen, _stTwist.z / tLen, _stTwist.w / tLen);
+  _stSwing.copy(_stInv.copy(_stTwist).invert()).premultiply(q); // swing = q · twist⁻¹
+  if (_stSwing.w < 0) _stSwing.set(-_stSwing.x, -_stSwing.y, -_stSwing.z, -_stSwing.w);
+  // twist 有符号角(绕 twistAxis)与 swing 无符号角
+  const tDot = _stTwist.x * twistAxis.x + _stTwist.y * twistAxis.y + _stTwist.z * twistAxis.z;
+  let tAng = 2 * Math.atan2(tDot, _stTwist.w);
+  if (tAng > Math.PI) tAng -= 2 * Math.PI;
+  else if (tAng < -Math.PI) tAng += 2 * Math.PI;
+  const sAng = 2 * Math.acos(THREE.MathUtils.clamp(_stSwing.w, -1, 1));
+  const tClamped = THREE.MathUtils.clamp(tAng, -twistMaxRad, twistMaxRad);
+  const sClamped = Math.min(sAng, swingMaxRad);
+  if (Math.abs(tClamped - tAng) < 1e-7 && Math.abs(sClamped - sAng) < 1e-7) return false;
+  if (sAng > 1e-7) {
+    _stAxis.set(_stSwing.x, _stSwing.y, _stSwing.z).normalize();
+    _stSwing.setFromAxisAngle(_stAxis, sClamped);
+  } else {
+    _stSwing.identity();
+  }
+  _stTwist.setFromAxisAngle(twistAxis, tClamped);
+  q.copy(_stSwing).multiply(_stTwist);
+  return true;
+}

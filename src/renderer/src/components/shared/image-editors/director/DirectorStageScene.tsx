@@ -39,7 +39,7 @@ import { buildShaderGrid, type ShaderGrid } from './directorGrid';
 import { buildCrowdLayout, type CrowdOpts } from './directorMannequin';
 import { buildPoseClip, parseClipJson, type PoseKeyframe } from './directorPoseClip';
 import { accumulateBoneWeights, rankBoneIndices } from './directorBonePick';
-import { solveTwoBone } from './directorIk';
+import { clampSwingTwist, solveTwoBone } from './directorIk';
 
 /** 一个保存的机位:相机位姿 + 视点 + FOV(逆向自实站 applyCameraState). */
 export interface CameraSlot {
@@ -384,6 +384,12 @@ interface IkChainRef {
   effector: THREE.Bone;
   /** pole target 在模型根局部空间的位置(肘/膝朝向;跟随模型变换). */
   poleLocal: THREE.Vector3;
+  /** 根骨(肩/胯)骨骼指向轴 = 肘/膝在根骨局部空间的位置方向(单位向量). */
+  rootAxis: THREE.Vector3;
+  /** 根骨 swing 锥角上限(弧度,相对休息姿势;防手臂穿躯干/大腿反掰). */
+  swingMax: number;
+  /** 根骨 twist 上限(弧度,绕骨骼自身轴 ±). */
+  twistMax: number;
 }
 
 /** 关节手柄:真实骨骼(非嵌套孪生)每根一个可点小球,单个 InstancedMesh 承载. */
@@ -2023,6 +2029,7 @@ function DirectorStageInner(
         if (!state.raycaster.ray.intersectPlane(plane, target)) return;
         sel.localToWorld(pole.copy(chain.poleLocal));
         solveTwoBone(chain.links[0], chain.links[1], chain.effector, target, pole);
+        clampChainRoot(chain); // 肩/胯超限时顶住不走,末端随之停在可达边界
         updateSkeletons(sel);
         for (const link of chain.links) emitBoneDelta(link); // 滑杆实时跟随
       };
@@ -2072,6 +2079,7 @@ function DirectorStageInner(
         chain.poleLocal.copy(pole);
         sel.worldToLocal(chain.poleLocal);
         solveTwoBone(chain.links[0], chain.links[1], chain.effector, pinned, pole);
+        clampChainRoot(chain);
         updateSkeletons(sel);
         for (const link of chain.links) emitBoneDelta(link);
       };
@@ -3345,13 +3353,33 @@ const JOINT_ACTIVE = new THREE.Color('#22d3ee');
 const JOINT_IK = new THREE.Color('#fb7185'); // 手/脚末端:可拖拽 IK
 const JOINT_POLE = new THREE.Color('#a78bfa'); // pole target:肘/膝朝向
 
-/** 四肢 IK 链(normBone 名):links 被解算旋转,effector 是被拖拽的末端. */
-const IK_CHAINS: { links: string[]; effector: string }[] = [
-  { links: ['leftarm', 'leftforearm'], effector: 'lefthand' },
-  { links: ['rightarm', 'rightforearm'], effector: 'righthand' },
-  { links: ['leftupleg', 'leftleg'], effector: 'leftfoot' },
-  { links: ['rightupleg', 'rightleg'], effector: 'rightfoot' },
+/**
+ * 四肢 IK 链(normBone 名):links 被解算旋转,effector 是被拖拽的末端。
+ * swing/twist 为根骨(肩/胯)相对休息姿势的限位角(度),对称锥模型:
+ * 手臂锥角大(可垂下/前举),大腿更保守;仅 IK/pole 拖拽时钳制,
+ * 滑杆/gizmo 手动摆姿不受限。
+ */
+const IK_CHAINS: { links: string[]; effector: string; swingDeg: number; twistDeg: number }[] = [
+  { links: ['leftarm', 'leftforearm'], effector: 'lefthand', swingDeg: 100, twistDeg: 90 },
+  { links: ['rightarm', 'rightforearm'], effector: 'righthand', swingDeg: 100, twistDeg: 90 },
+  { links: ['leftupleg', 'leftleg'], effector: 'leftfoot', swingDeg: 80, twistDeg: 60 },
+  { links: ['rightupleg', 'rightleg'], effector: 'rightfoot', swingDeg: 80, twistDeg: 60 },
 ];
+
+const _limDelta = new THREE.Quaternion();
+const _limRestInv = new THREE.Quaternion();
+
+/** IK 解算后把肩/胯骨相对休息姿势的旋转钳回 swing-twist 锥内(防穿躯干/反掰). */
+function clampChainRoot(chain: IkChainRef): void {
+  const root = chain.links[0];
+  const rest = root.userData?._restQuat as THREE.Quaternion | undefined;
+  if (!rest) return;
+  _limDelta.copy(_limRestInv.copy(rest).invert()).multiply(root.quaternion);
+  if (clampSwingTwist(_limDelta, chain.rootAxis, chain.swingMax, chain.twistMax)) {
+    root.quaternion.copy(rest).multiply(_limDelta);
+    root.updateMatrixWorld(true);
+  }
+}
 const _jointPos = new THREE.Vector3();
 const _jointParentPos = new THREE.Vector3();
 const _jointMat = new THREE.Matrix4();
@@ -3426,7 +3454,17 @@ function buildJointHandles(s: StageState): void {
       poleLocal.z += (spec.effector.includes('foot') ? 1 : -1) * reach;
       savedPoles[spec.effector] = [poleLocal.x, poleLocal.y, poleLocal.z];
     }
-    const chain: IkChainRef = { links: links as THREE.Bone[], effector, poleLocal };
+    // 根骨指向轴 = 肘/膝的局部位置方向(骨骼空间常量,不随姿势变)。
+    const rootAxis = lower.position.clone().normalize();
+    if (rootAxis.lengthSq() < 0.5) rootAxis.set(0, 1, 0);
+    const chain: IkChainRef = {
+      links: links as THREE.Bone[],
+      effector,
+      poleLocal,
+      rootAxis,
+      swingMax: THREE.MathUtils.degToRad(spec.swingDeg),
+      twistMax: THREE.MathUtils.degToRad(spec.twistDeg),
+    };
     ik.set(bones.indexOf(effector), chain);
     poleChains.push(chain);
   }

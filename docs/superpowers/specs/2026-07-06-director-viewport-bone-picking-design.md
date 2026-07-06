@@ -90,7 +90,27 @@ ozz-animation / Godot TwoBoneIK / Little Polygon):**业界四肢 IK 标准不是
   松手持久化 pole + 一步撤销。拖末端小球时每 move 都带当前 pole 解算。
 - CCD(`solveCcd`)保留在模块中,供未来脊柱等多节长链使用。
 
+## 追加:肩/胯 swing-twist 限位(同日拍板,提前到本期)
+
+用户拍板把顺延项也做了。调研(Jolt `SwingTwistConstraintPart` / Allen Chou
+swing-twist 分解 / EPFL 球窝关节论文):肩/胯是球窝关节,业界标准是
+**swing-twist 分解限位**,无欧拉角万向节锁——这正是官方 CCDIKSolver 欧拉
+限位在 Mixamo 上翻车的根因。拍板:**对称锥 + twist 钳制**(每链 2 参数;
+Jolt 式椭圆 swing 留作纯参数升级路径),**仅 IK/pole 拖拽生效**,滑杆/
+gizmo 手动摆姿不受限(想摆夸张姿势仍有逃生口)。
+
+- `clampSwingTwist(q, twistAxis, swingMax, twistMax)`(directorIk.ts,纯函数,
+  就地改 q):把相对**休息姿势**的增量旋转分解 q = swing·twist(twist =
+  四元数向量部投影到骨骼指向轴,swing = q·twist⁻¹,180° 纯 swing 奇点取
+  单位元);swing 角钳到锥角上限、twist 钳到 ±上限后重组;限内返回 false
+  不动 q。
+- 场景侧:`IK_CHAINS` 每链带 `swingDeg/twistDeg`(手臂 100°/±90°,大腿
+  80°/±60°);`IkChainRef.rootAxis` = 肘/膝局部位置方向(骨骼空间常量)。
+  `clampChainRoot` 在每次 `solveTwoBone` 之后跑:delta = rest⁻¹·current,
+  超限则钳回并写回 `rest·delta'`。效果:拖到极限时肩/胯"顶住不走",
+  手臂不再横穿躯干、大腿不再反向掰。
+
 ## 不做(顺延下一期)
 
-- 上肢骨(肩/胯)swing 角度限制;普通假人/导入模型的点选(仅高级假人);
-  GPU picking。
+- Jolt 式椭圆 swing 限位(前后/上下分轴限角,更拟真,纯调参升级);
+  普通假人/导入模型的点选(仅高级假人);GPU picking。
