@@ -23,7 +23,7 @@
  */
 import { renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useResolvedMediaSrc } from '../useResolvedMediaSrc'
+import { resolveMediaSrcOnce, useResolvedMediaSrc } from '../useResolvedMediaSrc'
 
 const readMediaThumb = vi.fn()
 const readThumb = vi.fn()
@@ -156,5 +156,43 @@ describe('useResolvedMediaSrc — opts.fullFidelity (lightbox / download path)',
     expect(readMediaThumb).not.toHaveBeenCalled()
     expect(readThumb).toHaveBeenCalledTimes(1)
     expect(readThumb).toHaveBeenCalledWith('D:/photos/cat.png')
+  })
+})
+
+// resolveMediaSrcOnce — 非 hook 的一次性解析,供 open_image_viewer 等命令式
+// 调用方使用(vanilla-DOM ImageViewer 只能拿现成 src,跑不了 hook)。
+describe('resolveMediaSrcOnce (imperative one-shot)', () => {
+  it('resolves a raw Windows path to a blob: URL via readThumb (fullFidelity)', async () => {
+    readThumb.mockResolvedValue({
+      ok: true,
+      base64: Buffer.from('png-bytes').toString('base64'),
+      mime: 'image/png',
+    })
+
+    const out = await resolveMediaSrcOnce(
+      'C:\\Users\\me\\AppData\\Roaming\\catimation\\shot.png',
+      'image',
+      { fullFidelity: true },
+    )
+    expect(out?.startsWith('blob:')).toBe(true)
+    expect(readThumb).toHaveBeenCalledWith('C:\\Users\\me\\AppData\\Roaming\\catimation\\shot.png')
+    expect(readMediaThumb).not.toHaveBeenCalled()
+  })
+
+  it('passes web URLs through untouched without IPC', async () => {
+    const out = await resolveMediaSrcOnce('https://cdn.example.com/cat.png', 'image')
+    expect(out).toBe('https://cdn.example.com/cat.png')
+    expect(readThumb).not.toHaveBeenCalled()
+    expect(readMediaThumb).not.toHaveBeenCalled()
+  })
+
+  it('returns null when the read fails (file missing)', async () => {
+    readThumb.mockResolvedValue({ ok: false, reason: 'file not found' })
+    const out = await resolveMediaSrcOnce('D:\\gone\\missing.png', 'image', { fullFidelity: true })
+    expect(out).toBeNull()
+  })
+
+  it('returns null for empty input', async () => {
+    expect(await resolveMediaSrcOnce('', 'image')).toBeNull()
   })
 })

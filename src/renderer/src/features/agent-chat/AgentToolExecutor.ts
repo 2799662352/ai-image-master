@@ -17,6 +17,7 @@ import type { ArtifactSaveInfo, AttachmentRef, ChoiceAnswer, ChoiceOption } from
 import type { AgentToolRequest, AgentToolResponse, ImageTaskUpdate } from '../../../../types/agent'
 import { canvasBridge } from '../agent-workspace/canvas/canvasBridge'
 import { directorBridge } from '../../components/shared/image-editors/director/directorBridge'
+import { resolveMediaSrcOnce } from '../../components/shared/media/useResolvedMediaSrc'
 
 type GenerateImageToolParams = GenerateImageParams
 
@@ -874,13 +875,38 @@ export class AgentToolExecutor {
     }
   }
 
-  private openImageViewer(params: OpenImageViewerToolParams): { opened: true; count: number } {
+  /**
+   * Blob URLs created for the previous `open_image_viewer` call. The vanilla
+   * ImageViewer never revokes its srcs, so we revoke the prior batch when the
+   * agent opens a new one — the old modal is closed/replaced at that point.
+   */
+  private viewerBlobUrls: string[] = []
+
+  private async openImageViewer(
+    params: OpenImageViewerToolParams,
+  ): Promise<{ opened: true; count: number; skipped?: number }> {
     const urls = this.parseUrls(params.urls)
     const startIndex = typeof params.startIndex === 'number' ? params.startIndex : 0
     const viewer = ServiceRegistry.get<ImageViewer>(SERVICE_KEYS.IMAGE_VIEWER)
     if (!viewer) throw new Error('Image viewer is not ready yet')
-    viewer.open(urls, startIndex)
-    return { opened: true, count: urls.length }
+    // The agent routinely passes LOCAL paths (director_capture / generate_image
+    // saves under %APPDATA%). The sandboxed renderer cannot load those via
+    // `<img src>` (nor file://) — resolve to blob: URLs through the same
+    // attachments IPC the chat Lightbox uses; web/data/blob URLs pass through.
+    const resolved = await Promise.all(
+      urls.map((u) => resolveMediaSrcOnce(u, 'image', { fullFidelity: true })),
+    )
+    const displayable = resolved.filter((u): u is string => typeof u === 'string' && u.length > 0)
+    if (displayable.length === 0) {
+      throw new Error(
+        'open_image_viewer: none of the provided URLs could be loaded (files missing or unsupported)',
+      )
+    }
+    for (const old of this.viewerBlobUrls) URL.revokeObjectURL(old)
+    this.viewerBlobUrls = displayable.filter((u) => u.startsWith('blob:'))
+    const skipped = urls.length - displayable.length
+    viewer.open(displayable, Math.min(startIndex, displayable.length - 1))
+    return { opened: true, count: displayable.length, ...(skipped > 0 ? { skipped } : {}) }
   }
 
   private async navigatePage(params: NavigatePageToolParams): Promise<{ tab: string }> {

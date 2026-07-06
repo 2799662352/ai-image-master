@@ -249,6 +249,43 @@ async function readBytes(
 }
 
 /**
+ * One-shot (non-hook) variant of `useResolvedMediaSrc` for imperative
+ * callers — e.g. the agent `open_image_viewer` tool, which receives local
+ * paths from `director_capture`/`generate_image` saves and must convert
+ * them BEFORE handing off to the vanilla-DOM ImageViewer (which just sets
+ * `<img src>` and cannot run hooks). Same routing contract as the hook:
+ * web/blob/data URLs pass through, local-file-ish paths are read via the
+ * attachments IPC and returned as a `blob:` URL.
+ *
+ * Returns `null` on failure (file missing, non-media extension, IPC down).
+ * Caller owns the returned blob URL and should `URL.revokeObjectURL` it
+ * when the surface that displays it goes away.
+ */
+export async function resolveMediaSrcOnce(
+  src: string,
+  hint: MediaKindHint = 'auto',
+  opts: UseResolvedMediaSrcOptions = {},
+): Promise<string | null> {
+  if (typeof src !== 'string' || src.length === 0) return null
+  const osPath = toOsPathIfLocal(src)
+  if (osPath === null) return src
+  const res = await readBytes(osPath, opts)
+  if (!res.ok) {
+    if (import.meta.env?.DEV) {
+      // eslint-disable-next-line no-console
+      console.warn('[resolveMediaSrcOnce] read failed', { osPath, reason: res.reason })
+    }
+    return null
+  }
+  const mime =
+    res.mime && res.mime !== 'application/octet-stream'
+      ? res.mime
+      : guessMimeFromPath(osPath, hint)
+  const blob = new Blob([base64ToArrayBuffer(res.base64)], { type: mime })
+  return URL.createObjectURL(blob)
+}
+
+/**
  * Resolve a media src to something Chromium will actually render.
  *
  * @param src   The source URI as supplied by the model (`local-file://`,
