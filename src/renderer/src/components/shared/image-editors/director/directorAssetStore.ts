@@ -140,7 +140,7 @@ export const PANORAMA_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'avif'] as const;
 /** 动画剪辑:fbx(Mixamo 等)/ glb/gltf(取 animations[0])/ json(本软件 K 动画导出)。 */
 export const ANIM_EXTS = ['fbx', 'glb', 'gltf', 'json'] as const;
 /** 镜头剪辑:json(director-camera@1 / 裸 AnimationClip)/ glb/gltf/fbx(相机动画烘焙采样)。 */
-export const CAMERA_EXTS = ['json', 'glb', 'gltf', 'fbx'] as const;
+export const CAMERA_EXTS = ['json', 'glb', 'gltf', 'fbx', 'vmd'] as const;
 /** 建议体积上限(字节)。超过仍可导入,只是给出提醒。 */
 export const MODEL_SIZE_HINT = 80 * 1024 * 1024; // 80MB
 export const PANORAMA_SIZE_HINT = 40 * 1024 * 1024; // 40MB

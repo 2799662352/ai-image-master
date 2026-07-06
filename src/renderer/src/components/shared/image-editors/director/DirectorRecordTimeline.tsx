@@ -20,6 +20,8 @@ import {
   CAMERA_PRESETS,
   buildCameraPreset,
   cameraClipToJson,
+  cameraKeysToGlb,
+  cameraKeysToVmd,
   parseCameraClipJson,
   type CameraPresetId,
 } from './directorCameraClip';
@@ -260,7 +262,7 @@ export default function DirectorRecordTimeline({ stageRef, onExit, onExported }:
     async (file: File) => {
       const ext = extOf(file.name);
       if (!isCameraExt(ext)) {
-        flashClip('仅支持 json / glb / gltf / fbx 镜头文件');
+        flashClip('仅支持 json / glb / gltf / fbx / vmd 镜头文件');
         return;
       }
       const url = URL.createObjectURL(file);
@@ -288,15 +290,44 @@ export default function DirectorRecordTimeline({ stageRef, onExit, onExported }:
     [flashClip, loadKeys, loadMyClips, stageRef],
   );
 
-  const exportClipJson = useCallback(() => {
-    if (keys.length === 0) return;
-    const text = cameraClipToJson(keys, 'director-camera');
+  /** 通用下载(json 文本 / vmd·glb 二进制)。 */
+  const downloadBlob = useCallback((blob: Blob, filename: string) => {
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
-    a.download = `camera-clip-${new Date().toISOString().slice(0, 10)}.json`;
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(a.href);
-  }, [keys]);
+  }, []);
+
+  const exportClip = useCallback(
+    async (fmt: 'json' | 'vmd' | 'glb') => {
+      if (keys.length === 0) return;
+      const stamp = new Date().toISOString().slice(0, 10);
+      try {
+        if (fmt === 'json') {
+          downloadBlob(
+            new Blob([cameraClipToJson(keys, 'director-camera')], { type: 'application/json' }),
+            `camera-clip-${stamp}.json`,
+          );
+        } else if (fmt === 'vmd') {
+          downloadBlob(
+            new Blob([cameraKeysToVmd(keys)], { type: 'application/octet-stream' }),
+            `camera-clip-${stamp}.vmd`,
+          );
+        } else {
+          downloadBlob(
+            new Blob([await cameraKeysToGlb(keys)], { type: 'model/gltf-binary' }),
+            `camera-clip-${stamp}.glb`,
+          );
+        }
+        flashClip(`已导出 .${fmt}`);
+      } catch (err) {
+        console.error('[director] export camera clip failed', err);
+        flashClip('镜头导出失败');
+      }
+    },
+    [downloadBlob, flashClip, keys],
+  );
 
   const saveClipToLibrary = useCallback(async () => {
     if (keys.length === 0) return;
@@ -548,14 +579,31 @@ export default function DirectorRecordTimeline({ stageRef, onExit, onExported }:
                   <button
                     style={hasKeys ? styles.tlBtn : styles.tlBtnDisabled}
                     disabled={!hasKeys}
-                    onClick={exportClipJson}
+                    onClick={() => void exportClip('json')}
                   >
-                    ⤓ 导出 .json
+                    ⤓ .json
+                  </button>
+                  <button
+                    style={hasKeys ? styles.tlBtn : styles.tlBtnDisabled}
+                    disabled={!hasKeys}
+                    title="MMD / 恋活(Koikatsu)相机文件,可在 MMD 系工具直接使用"
+                    onClick={() => void exportClip('vmd')}
+                  >
+                    ⤓ .vmd
+                  </button>
+                  <button
+                    style={hasKeys ? styles.tlBtn : styles.tlBtnDisabled}
+                    disabled={!hasKeys}
+                    title="glTF 2.0 相机动画,Blender / Unity / three.js 可导入"
+                    onClick={() => void exportClip('glb')}
+                  >
+                    ⤓ .glb
                   </button>
                 </div>
                 <div style={styles.clipNote}>
-                  支持 director-camera JSON / 裸 AnimationClip JSON / glb / gltf / fbx —— Blender
-                  「导出 glTF 2.0 + 勾选 Cameras」的相机动画可直接导入
+                  导入:director-camera JSON / 裸 AnimationClip JSON / glb / gltf / fbx /
+                  <b> MMD 相机 .vmd</b>(BowlRoll、恋活社区流通的运镜文件直接用);Blender
+                  「导出 glTF 2.0 + 勾选 Cameras」的相机动画同样可导入
                 </div>
               </div>
             )}
@@ -563,7 +611,7 @@ export default function DirectorRecordTimeline({ stageRef, onExit, onExported }:
           <input
             ref={fileRef}
             type="file"
-            accept=".json,.glb,.gltf,.fbx"
+            accept=".json,.glb,.gltf,.fbx,.vmd"
             style={{ display: 'none' }}
             onChange={(e) => {
               const f = e.target.files?.[0];

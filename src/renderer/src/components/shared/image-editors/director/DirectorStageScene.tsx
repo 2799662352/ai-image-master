@@ -42,6 +42,7 @@ import {
   findClipCamera,
   normalizeCameraKeys,
   parseCameraClipJson,
+  parseVmdCameraBuffer,
   sampleObjectClip,
   type CameraKeyframe,
 } from './directorCameraClip';
@@ -1672,6 +1673,11 @@ function DirectorStageInner(
         if (kind === 'json') {
           const text = await fetch(url).then((r) => r.text());
           return parseCameraClipJson(text);
+        }
+        if (kind === 'vmd') {
+          // MMD / 恋活社区相机文件(BowlRoll 等):二进制直接解析,无需 loader。
+          const buf = await fetch(url).then((r) => r.arrayBuffer());
+          return parseVmdCameraBuffer(buf);
         }
         // glb/gltf/fbx:加载整个场景图 → 找相机 → 世界位姿烘焙采样。
         let root: THREE.Object3D;

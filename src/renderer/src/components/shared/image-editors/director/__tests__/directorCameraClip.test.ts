@@ -7,14 +7,17 @@ import * as THREE from 'three';
 import {
   CAMERA_CLIP_FORMAT,
   CAMERA_PRESETS,
+  MMD_UNIT_SCALE,
   buildCameraPreset,
   cameraClipToJson,
   cameraKeysToClip,
+  cameraKeysToVmd,
   clipToCameraKeys,
   findClipCamera,
   newCameraKeyId,
   normalizeCameraKeys,
   parseCameraClipJson,
+  parseVmdCameraBuffer,
   sampleObjectClip,
   type CameraKeyframe,
 } from '../directorCameraClip';
@@ -118,6 +121,138 @@ describe('sampleObjectClip(层级烘焙:Blender 相机被父容器包裹的通�
   });
 });
 
+describe('MMD .vmd 相机(社区通用格式)', () => {
+  /** 手写一个最小相机 VMD:1 个骨骼帧不带,直接 header + 0/0 + 相机帧。 */
+  function buildRawVmd(
+    frames: Array<{
+      frameNum: number;
+      distance: number;
+      pos: [number, number, number];
+      rot: [number, number, number];
+      fov: number;
+    }>,
+  ): ArrayBuffer {
+    const buf = new ArrayBuffer(50 + 12 + frames.length * 61);
+    const dv = new DataView(buf);
+    const u8 = new Uint8Array(buf);
+    const magic = 'Vocaloid Motion Data 0002';
+    for (let i = 0; i < magic.length; i++) u8[i] = magic.charCodeAt(i);
+    dv.setUint32(50, 0, true);
+    dv.setUint32(54, 0, true);
+    dv.setUint32(58, frames.length, true);
+    let off = 62;
+    for (const f of frames) {
+      dv.setUint32(off, f.frameNum, true);
+      dv.setFloat32(off + 4, f.distance, true);
+      dv.setFloat32(off + 8, f.pos[0], true);
+      dv.setFloat32(off + 12, f.pos[1], true);
+      dv.setFloat32(off + 16, f.pos[2], true);
+      dv.setFloat32(off + 20, f.rot[0], true);
+      dv.setFloat32(off + 24, f.rot[1], true);
+      dv.setFloat32(off + 28, f.rot[2], true);
+      dv.setUint32(off + 56, f.fov, true);
+      off += 61;
+    }
+    return buf;
+  }
+
+  it('零旋转:eye = target + (0,0,-distance)·scale,z 轴取反(LH→RH)', () => {
+    const buf = buildRawVmd([
+      { frameNum: 0, distance: -45, pos: [0, 10, 5], rot: [0, 0, 0], fov: 30 },
+    ]);
+    const { keys } = parseVmdCameraBuffer(buf);
+    expect(keys.length).toBe(1);
+    const s = MMD_UNIT_SCALE;
+    // target_three = (0, 10, -5)·s;distance -45 → 相机在 target 后方 +z 45·s
+    expect(keys[0].position[0]).toBeCloseTo(0);
+    expect(keys[0].position[1]).toBeCloseTo(10 * s);
+    expect(keys[0].position[2]).toBeCloseTo((-5 + 45) * s);
+    expect(keys[0].fov).toBe(30);
+    expect(keys[0].t).toBe(0);
+    // 朝向:-Z 指向 target
+    const q = new THREE.Quaternion(...keys[0].quaternion);
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
+    expect(fwd.z).toBeCloseTo(-1);
+  });
+
+  it('90° yaw:相机绕到目标 +x 侧,朝向仍指向目标', () => {
+    const buf = buildRawVmd([
+      { frameNum: 30, distance: -45, pos: [0, 0, 0], rot: [0, Math.PI / 2, 0], fov: 30 },
+    ]);
+    const { keys } = parseVmdCameraBuffer(buf);
+    const s = MMD_UNIT_SCALE;
+    expect(keys[0].t).toBeCloseTo(1); // 30 帧 / 30fps
+    expect(keys[0].position[0]).toBeCloseTo(45 * s);
+    expect(keys[0].position[2]).toBeCloseTo(0, 4);
+    const q = new THREE.Quaternion(...keys[0].quaternion);
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
+    expect(fwd.x).toBeCloseTo(-1); // 从 +x 看向原点
+  });
+
+  it('导出 → 解析 往返:机位/朝向/FOV/时间一致', () => {
+    const src: CameraKeyframe[] = [
+      {
+        id: newCameraKeyId(),
+        t: 0,
+        position: [0, 1.6, 4],
+        quaternion: [0, 0, 0, 1],
+        fov: 40,
+      },
+      {
+        id: newCameraKeyId(),
+        t: 2,
+        position: [3, 2.5, -1],
+        quaternion: new THREE.Quaternion()
+          .setFromEuler(new THREE.Euler(-0.2, 0.9, 0.1, 'YXZ'))
+          .toArray() as [number, number, number, number],
+        fov: 55,
+      },
+    ];
+    const vmd = cameraKeysToVmd(src);
+    const { keys } = parseVmdCameraBuffer(vmd);
+    expect(keys.length).toBe(2);
+    for (let i = 0; i < 2; i++) {
+      expect(keys[i].t).toBeCloseTo(src[i].t, 2);
+      for (let a = 0; a < 3; a++) {
+        expect(keys[i].position[a]).toBeCloseTo(src[i].position[a], 3);
+      }
+      expect(keys[i].fov).toBe(src[i].fov);
+      const qa = new THREE.Quaternion(...src[i].quaternion);
+      const qb = new THREE.Quaternion(...keys[i].quaternion);
+      expect(Math.abs(qa.dot(qb))).toBeGreaterThan(0.9999);
+    }
+  });
+
+  it('导出的 VMD 模型名为「カメラ・照明」(Shift-JIS),MMD 以此识别相机动画', () => {
+    const vmd = cameraKeysToVmd([
+      { id: newCameraKeyId(), t: 0, position: [0, 0, 5], quaternion: [0, 0, 0, 1], fov: 40 },
+    ]);
+    const u8 = new Uint8Array(vmd, 30, 12);
+    expect([...u8]).toEqual([0x83, 0x4a, 0x83, 0x81, 0x83, 0x89, 0x81, 0x45, 0x8f, 0xc6, 0x96, 0xbe]);
+  });
+
+  it('非 VMD / 无相机帧的 VMD 报错友好', () => {
+    expect(() => parseVmdCameraBuffer(new ArrayBuffer(10))).toThrow('太短');
+    expect(() => parseVmdCameraBuffer(new ArrayBuffer(200))).toThrow('magic');
+    const noCam = buildRawVmd([]);
+    expect(() => parseVmdCameraBuffer(noCam)).toThrow('没有相机帧');
+  });
+
+  it('超多帧抽稀到 CAMERA_KEYS_MAX(保首尾)', () => {
+    const frames = Array.from({ length: 600 }, (_, i) => ({
+      frameNum: i,
+      distance: -45,
+      pos: [0, 10, 0] as [number, number, number],
+      rot: [0, 0, 0] as [number, number, number],
+      fov: 30,
+    }));
+    const { keys } = parseVmdCameraBuffer(buildRawVmd(frames));
+    expect(keys.length).toBe(120);
+    expect(keys[0].t).toBeCloseTo(0);
+    expect(keys[keys.length - 1].t).toBeCloseTo(599 / 30);
+  });
+});
+
 describe('findClipCamera', () => {
   it('优先 isCamera 节点;否则回退名字含 cam 的节点', () => {
     const root = new THREE.Group();
@@ -154,12 +289,67 @@ describe('buildCameraPreset', () => {
   };
 
   it('每个预设都能生成 ≥2 个关键帧,t 从 0 到 durationSec', () => {
+    // dolly-zoom / zoom-in 是变焦预设,FOV 会动;其余预设 FOV 恒定。
+    const fovAnimated = new Set(['dolly-zoom', 'zoom-in']);
     for (const p of CAMERA_PRESETS) {
       const keys = buildCameraPreset(p.id, base);
       expect(keys.length).toBeGreaterThanOrEqual(2);
       expect(keys[0].t).toBe(0);
       expect(keys[keys.length - 1].t).toBeCloseTo(p.durationSec);
-      for (const k of keys) expect(k.fov).toBe(45);
+      if (!fovAnimated.has(p.id)) {
+        for (const k of keys) expect(k.fov).toBe(45);
+      }
+    }
+  });
+
+  it('共 16 个预设(8 基础 + 8 进阶)', () => {
+    expect(CAMERA_PRESETS.length).toBe(16);
+  });
+
+  it('dolly-zoom(希区柯克变焦):tan(fov/2)·距离 ≈ 常数(主体框幅不变)', () => {
+    const keys = buildCameraPreset('dolly-zoom', base);
+    const target = new THREE.Vector3(...base.target);
+    const c0 =
+      Math.tan(THREE.MathUtils.degToRad(keys[0].fov / 2)) *
+      new THREE.Vector3(...keys[0].position).distanceTo(target);
+    for (const k of keys) {
+      const c =
+        Math.tan(THREE.MathUtils.degToRad(k.fov / 2)) *
+        new THREE.Vector3(...k.position).distanceTo(target);
+      expect(c).toBeCloseTo(c0, 5);
+    }
+    // 机位后移、FOV 收窄
+    const dEnd = new THREE.Vector3(...keys[keys.length - 1].position).distanceTo(target);
+    const d0 = new THREE.Vector3(...keys[0].position).distanceTo(target);
+    expect(dEnd).toBeGreaterThan(d0);
+    expect(keys[keys.length - 1].fov).toBeLessThan(keys[0].fov);
+  });
+
+  it('zoom-in / whip-pan / handheld:机位特征正确', () => {
+    const zoom = buildCameraPreset('zoom-in', base);
+    expect(zoom[0].position).toEqual(zoom[zoom.length - 1].position);
+    expect(zoom[zoom.length - 1].fov).toBeCloseTo(45 * 0.45);
+
+    const whip = buildCameraPreset('whip-pan', base);
+    for (const k of whip) expect(k.position).toEqual(whip[0].position);
+
+    const hand = buildCameraPreset('handheld', base);
+    expect(hand.length).toBe(13);
+    const eye = new THREE.Vector3(...base.position);
+    for (const k of hand) {
+      expect(new THREE.Vector3(...k.position).distanceTo(eye)).toBeLessThan(0.5);
+    }
+  });
+
+  it('spiral-up:终点更高且更近;arc-left 全程与目标等距', () => {
+    const target = new THREE.Vector3(...base.target);
+    const spiral = buildCameraPreset('spiral-up', base);
+    expect(spiral[spiral.length - 1].position[1]).toBeGreaterThan(spiral[0].position[1]);
+
+    const arc = buildCameraPreset('arc-left', base);
+    const d0 = new THREE.Vector3(...arc[0].position).distanceTo(target);
+    for (const k of arc) {
+      expect(new THREE.Vector3(...k.position).distanceTo(target)).toBeCloseTo(d0, 5);
     }
   });
 
