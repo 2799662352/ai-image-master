@@ -82,14 +82,14 @@ describe('registerImageTools / generate_image schema', () => {
     expect(schema.safeParse({ prompt: 'x', quality: 'ultra' }).success).toBe(false)
   })
 
-  it('accepts the selectable model channels (vip / 腾讯 / 万相 / nano2) and rejects others', () => {
+  it('accepts the selectable model channels (vip / image2 官方 / 腾讯 / 万相 / nano2) and rejects others', () => {
     const { tools, server, router } = capture()
     registerImageTools(server, router)
     const genSchema = tools.find((t) => t.name === 'generate_image')!.config.inputSchema
-    for (const model of ['gpt-image-2-vip', 'custom-imagemodel-gt', 'wan2.7-image-pro', 'gemini-3.1-flash-image']) {
+    for (const model of ['gpt-image-2-vip', 'gpt-image-2', 'custom-imagemodel-gt', 'wan2.7-image-pro', 'gemini-3.1-flash-image']) {
       expect(genSchema.safeParse({ prompt: 'x', model }).success, model).toBe(true)
     }
-    expect(genSchema.safeParse({ prompt: 'x', model: 'gpt-image-2' }).success).toBe(false)
+    expect(genSchema.safeParse({ prompt: 'x', model: 'gpt-image-2-all' }).success).toBe(false)
 
     const batchSchema = tools.find((t) => t.name === 'generate_images')!.config.inputSchema
     expect(batchSchema.safeParse({ prompts: ['a', 'b'], model: 'wan2.7-image-pro' }).success).toBe(true)

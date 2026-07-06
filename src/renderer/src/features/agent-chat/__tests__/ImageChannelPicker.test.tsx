@@ -23,6 +23,7 @@ describe('ImageChannelPicker', () => {
     render(<ImageChannelPicker />)
     fireEvent.click(screen.getByRole('button', { name: /出图渠道/ }))
     expect(screen.getByRole('option', { name: /VIP image2/ })).toBeTruthy()
+    expect(screen.getByRole('option', { name: /GPT Image 2 官方/ })).toBeTruthy()
     expect(screen.getByRole('option', { name: /腾讯 image2/ })).toBeTruthy()
     expect(screen.getByRole('option', { name: /Nano Banana 2/ })).toBeTruthy()
     expect(screen.getByRole('option', { name: /万相 2\.7 pro/ })).toBeTruthy()

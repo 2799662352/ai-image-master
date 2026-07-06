@@ -300,20 +300,21 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
     )
 
   // Optional channel OVERRIDE. Default = the channel the user picked in the chat
-  // composer (VIP / 腾讯 / Nano2 / 万相 2.7 pro). Omit to honor the user's pick;
-  // set it only when you have a concrete reason to override (e.g. 万相 for a 组图
-  // series, or the user asked for a specific channel this turn).
+  // composer (VIP / Image2 官方 / 腾讯 / Nano2 / 万相 2.7 pro). Omit to honor the
+  // user's pick; set it only when you have a concrete reason to override (e.g. 万相
+  // for a 组图 series, or the user asked for a specific channel this turn).
   const modelSchema = z
-    .enum(['custom-imagemodel-gt', 'gpt-image-2-vip', 'wan2.7-image-pro', 'gemini-3.1-flash-image'])
+    .enum(['custom-imagemodel-gt', 'gpt-image-2-vip', 'gpt-image-2', 'wan2.7-image-pro', 'gemini-3.1-flash-image'])
     .optional()
     .describe(
       'Rendering channel OVERRIDE (optional). By default the render channel follows the user\'s ' +
-      'composer picker (VIP / 腾讯 / Nano2 / 万相 2.7 pro; default VIP) — OMIT this to honor the ' +
-      "user's pick. Set it ONLY when you have a concrete reason to override: pass " +
+      'composer picker (VIP / Image2 官方 / 腾讯 / Nano2 / 万相 2.7 pro; default VIP) — OMIT this to ' +
+      "honor the user's pick. Set it ONLY when you have a concrete reason to override: pass " +
       '"wan2.7-image-pro" for a CONSISTENT 组图 series (count>1), or the specific channel the user ' +
-      'explicitly asked for this turn (gpt-image-2-vip = OpenAI 官逆/vip, custom-imagemodel-gt = ' +
-      '腾讯, gemini-3.1-flash-image = Nano Banana 2). The result reports the actual channel used in ' +
-      'its `model` field.',
+      'explicitly asked for this turn (gpt-image-2-vip = OpenAI 官逆/vip, gpt-image-2 = API易 ' +
+      'OpenAI 官方旗舰/Image2 官方 — slower per-token billing, highest quality ceiling, ' +
+      'custom-imagemodel-gt = 腾讯, gemini-3.1-flash-image = Nano Banana 2). The result reports ' +
+      'the actual channel used in its `model` field.',
     )
 
   server.registerTool('generate_image', {
@@ -493,7 +494,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
   }, async (params, ctx?: unknown) => {
     const parsed = params as {
       prompts?: unknown
-      model?: 'gpt-image-2-vip' | 'custom-imagemodel-gt' | 'wan2.7-image-pro' | 'gemini-3.1-flash-image'
+      model?: 'gpt-image-2-vip' | 'gpt-image-2' | 'custom-imagemodel-gt' | 'wan2.7-image-pro' | 'gemini-3.1-flash-image'
       ratio?: string
       resolution?: '1K' | '2K' | '4K'
       quality?: 'auto' | 'low' | 'medium' | 'high'

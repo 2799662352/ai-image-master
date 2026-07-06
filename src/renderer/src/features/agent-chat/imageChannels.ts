@@ -31,7 +31,7 @@ export interface ImageChannel {
 }
 
 /**
- * Ordered exactly as requested: VIP (default) → 腾讯 → Nano Banana 2 → 万相 2.7 pro.
+ * Ordered exactly as requested: VIP (default) → Image2 官方 → 腾讯 → Nano Banana 2 → 万相 2.7 pro.
  */
 export const IMAGE_CHANNELS: readonly ImageChannel[] = [
   {
@@ -39,6 +39,13 @@ export const IMAGE_CHANNELS: readonly ImageChannel[] = [
     label: 'VIP',
     fullLabel: 'VIP image2',
     description: 'OpenAI 官逆，稳定。默认渠道。',
+    miauOnly: false,
+  },
+  {
+    id: 'gpt-image-2',
+    label: 'Image2',
+    fullLabel: 'GPT Image 2 官方',
+    description: 'API易 OpenAI 官方旗舰 — 按 token 计费，慢但质量上限最高，4K+mask 重绘。',
     miauOnly: false,
   },
   {

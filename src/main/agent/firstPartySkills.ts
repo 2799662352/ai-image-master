@@ -193,6 +193,7 @@ image_gen skill: they render inside the chat AND persist results to local files
      have a concrete reason — a consistent 组图 series (→ \`wan2.7-image-pro\`) or a
      channel the user explicitly names this turn (see "Choosing a model" below):
      - \`gpt-image-2-vip\` — OpenAI 官逆 (stable alternate; same ratio/resolution/quality spec).
+     - \`gpt-image-2\` — API易 OpenAI 官方旗舰 Image2（按 token 计费，慢但质量上限最高，4K+mask 重绘）.
      - \`wan2.7-image-pro\` — 阿里万相 2.7 pro (超清文生图 / 图像编辑 / 组图).
      - \`gemini-3.1-flash-image\` — Nano Banana 2（谷歌 Gemini 原生端点，快、多尺寸 4K）.
      站点会自动处理(见下方「站点要求」)——你无需让用户手动切站点。
@@ -270,13 +271,17 @@ image_gen skill: they render inside the chat AND persist results to local files
 ## Choosing a model (user's composer picker is the default; you may override)
 
 The \`model\` param is an **optional override**. By default (omit it) generation runs
-on the channel the **user picked in the chat composer** (VIP / 腾讯 / Nano2 / 万相
-2.7 pro; default VIP) — 所有渠道同一套 ratio × resolution(1K/2K/4K) × quality 参数。
+on the channel the **user picked in the chat composer** (VIP / Image2 官方 / 腾讯 /
+Nano2 / 万相 2.7 pro; default VIP) — 所有渠道同一套 ratio × resolution(1K/2K/4K) ×
+quality 参数。
 Omitting \`model\` honors the user's pick — do this for ordinary requests. Set \`model\`
 only when you have a concrete reason to override:
 
 - **\`gpt-image-2-vip\` (OpenAI 官逆)** — pick when the user says 官逆 / vip /
-  OpenAI / 稳定渠道. Stable alternate; same param surface as the default.
+  稳定渠道. Stable alternate; same param surface as the default.
+- **\`gpt-image-2\` (API易 OpenAI 官方旗舰 / Image2 官方)** — pick when the user says
+  官方 / 旗舰 / image2 官方 / gpt-image-2. 按 token 计费(low/med/high 价差大),
+  60–360s 慢渠道,但质量上限最高,支持 4K+mask 重绘;日常出图别默认选它。
 - **\`wan2.7-image-pro\` (阿里万相 2.7 pro)** — pick when the user says 万相 /
   wanxiang / wan / 通义万相, OR when they want a **consistent multi-image 组图
   series** (e.g. "同一只猫的四季组图，前后一致"). For a 组图 series, call
@@ -288,7 +293,7 @@ only when you have a concrete reason to override:
 - **\`gemini-3.1-flash-image\` (Nano Banana 2)** — pick when the user says nano /
   nano2 / nano banana / gemini / 谷歌. 谷歌 Gemini 原生端点，出图快(~15s)、支持
   超多宽高比与 4K，中文/文字与一致性也不错。
-- All four accept \`referenceImages\` for image-to-image / editing.
+- All five accept \`referenceImages\` for image-to-image / editing.
 
 ### 站点要求(已自动处理 — 无需手动切站点)
 
@@ -300,13 +305,13 @@ only when you have a concrete reason to override:
 - 唯一前提:Miau API 站点已配置 API Key。若没配,工具会返回清晰错误
   「未配置『Miau API』站点的 API Key …」——这时再提醒用户到「API 设置」为 Miau API
   站点填入 Key 即可,无需切换当前站点。
-- \`gpt-image-2-vip\` 和 \`gemini-3.1-flash-image\`(Nano Banana 2)走当前选中站点
-  (任意站点可用,无需 Miau)。
+- \`gpt-image-2-vip\`、\`gpt-image-2\`(Image2 官方)和 \`gemini-3.1-flash-image\`
+  (Nano Banana 2)走当前选中站点(任意站点可用,无需 Miau)。
 
 When the user does not name a channel, **do not guess** — just omit \`model\` so the
 render honors the user's composer picker (default VIP). Set \`model\` only for a
 concrete reason (组图 → \`wan2.7-image-pro\`, or a channel the user named). Never
-invent a model name; only these four values are valid.
+invent a model name; only these five values are valid.
 
 ## Reference images — reuse the user's material (important)
 
@@ -368,9 +373,10 @@ directory and give it a descriptive, ordered name — e.g.
 
 - 用户给了图却忘传 \`referenceImages\`,改成从零文生图。
 - 多张图却逐个调 \`generate_image\`,而不是一次 \`generate_images\`。
-- 凭空编造 \`model\` 名;只有四个合法值。用户没点名就省略 \`model\`(交给用户在 composer 选的渠道,默认 VIP)。
+- 凭空编造 \`model\` 名;只有五个合法值。用户没点名就省略 \`model\`(交给用户在 composer 选的渠道,默认 VIP)。
 - 用户点名某渠道却不显式传 \`model\`(应显式传:vip/官逆 → \`gpt-image-2-vip\`、
-  nano/nano2 → \`gemini-3.1-flash-image\`、万相/组图 → \`wan2.7-image-pro\`)。
+  官方/旗舰/image2 官方 → \`gpt-image-2\`、nano/nano2 → \`gemini-3.1-flash-image\`、
+  万相/组图 → \`wan2.7-image-pro\`)。
 
 ## Notes
 

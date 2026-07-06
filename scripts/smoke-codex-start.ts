@@ -1,22 +1,24 @@
-// Offline smoke for the Codex 0.142.2 binary upgrade. Spawns the REAL bundled
-// `codex app-server` with the FULL production launch arg set (including the
-// conditional catimation-MCP + `skills.config` imagegen-disable overrides) and
-// exercises an RPC round-trip — WITHOUT needing OPENAI_API_KEY, because we only
-// do `initialize` + read-only RPCs, never a model turn.
+// Offline smoke for the bundled Codex binary upgrade (version read from
+// package.json `codexCliVersion`). Spawns the REAL bundled `codex app-server`
+// with the FULL production launch arg set (including the conditional
+// catimation-MCP + `skills.config` imagegen-disable overrides) and exercises an
+// RPC round-trip — WITHOUT needing OPENAI_API_KEY, because we only do
+// `initialize` + read-only RPCs, never a model turn.
 //
-// What this verifies against 0.142.2 (the upgrade concerns):
+// What this verifies against the pinned binary (the upgrade concerns):
 //   1. dynamic MCP tools  — catimation MCP registers (listMcpServers returns it)
 //   2. skills.config       — `-c skills.config=[{name="imagegen",enabled=false}]`
-//                            is still accepted (start() would throw if 0.142.2
-//                            rejected the key/shape via deny_unknown_fields)
+//                            is still accepted (start() would throw if the new
+//                            binary rejected the key/shape via deny_unknown_fields)
 //   3. WS turn-state proto — `initialize` handshake + RPC framing round-trips
-//   4. tool search default — 0.142.2 defers MCP tools to `tool_search` by
+//   4. tool search default — 0.142.x defers MCP tools to `tool_search` by
 //                            default (#29486), so the model no longer types the
 //                            literal `mcp__catimation__<tool>` name from memory
 //                            (root-cause fix for the ask_user name mangling).
 //
 // Usage:  npx tsx scripts/smoke-codex-start.ts
 
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
@@ -28,6 +30,17 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const projectRoot = path.resolve(__dirname, '..')
 const resourceRoot = path.join(projectRoot, 'resources')
+
+const pinnedVersion: string = (() => {
+  try {
+    const manifest = JSON.parse(readFileSync(path.join(projectRoot, 'package.json'), 'utf8')) as {
+      codexCliVersion?: string
+    }
+    return manifest.codexCliVersion ?? 'unknown'
+  } catch {
+    return 'unknown'
+  }
+})()
 
 async function runSmoke(): Promise<void> {
   // URL transport to a dead port: codex registers the MCP server from the `-c`
@@ -41,7 +54,7 @@ async function runSmoke(): Promise<void> {
 
   const t0 = Date.now()
   await backend.start()
-  console.log(`[smoke] ✅ app-server spawned + initialize OK in ${Date.now() - t0}ms (0.142.2, full prod -c args accepted)`)
+  console.log(`[smoke] ✅ app-server spawned + initialize OK in ${Date.now() - t0}ms (${pinnedVersion}, full prod -c args accepted)`)
 
   try {
     const cfg = await backend.readConfig()
@@ -77,7 +90,7 @@ async function main(): Promise<void> {
   try {
     await Promise.race([runSmoke(), guard])
     if (timeout) clearTimeout(timeout)
-    console.log('\n[smoke] PASS — Codex 0.142.2 binary + production launch config verified.')
+    console.log(`\n[smoke] PASS — Codex ${pinnedVersion} binary + production launch config verified.`)
   } catch (error) {
     if (timeout) clearTimeout(timeout)
     console.error('\n[smoke] FAIL:', error instanceof Error ? error.message : error)

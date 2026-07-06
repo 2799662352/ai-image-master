@@ -12,7 +12,7 @@ CATIMATION 桌面应用的核心集成插件——出图、人像库、创意共
 
 | skill | 用途 |
 |---|---|
-| catimation-image | 应用内首选出图工具(渲染进聊天 + 落盘 + 历史 + 附件面板;支持 gpt-image-2-vip / 腾讯 image2 / 万相 2.7 pro 渠道选择) |
+| catimation-image | 应用内首选出图工具(渲染进聊天 + 落盘 + 历史 + 附件面板;支持 gpt-image-2-vip / gpt-image-2 官方 / 腾讯 image2 / Nano Banana 2 / 万相 2.7 pro 渠道选择) |
 | catimation-portrait-library | 自治管理人像库 / 角色锚点 |
 | catimation-brainstorm | 开放/高价值创意的 ask_user 卡片共创 |
 
