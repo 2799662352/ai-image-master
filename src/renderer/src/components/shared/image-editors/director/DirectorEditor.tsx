@@ -64,7 +64,7 @@ import {
   type MannequinColor,
   type TransformMode,
 } from './directorConstants';
-import { BONES_BY_GROUP, POSE_KEYS, getPose } from './directorPoses';
+import { BONES_BY_GROUP, BONE_SCHEMA, POSE_KEYS, getPose } from './directorPoses';
 import {
   animUrl,
   filterAnimations,
@@ -675,6 +675,56 @@ export default function DirectorEditor({
     setMode(uuid ? 'rotate' : 'translate'); // posing a bone forces rotate
   }, []);
 
+  // ── 视口骨骼点选(点身体/关节手柄选骨)──────────────────────────
+  /** 高级假人是 mixamorig 命名;去前缀小写即可与 schema 对上. */
+  const boneSchemaOf = useCallback((boneName: string) => {
+    const key = boneName.replace(/^mixamorig\d*[:_]?/i, '').toLowerCase();
+    return BONE_SCHEMA.find(
+      (b) => b.boneName.replace(/^mixamorig\d*[:_]?/i, '').toLowerCase() === key,
+    );
+  }, []);
+
+  /** 视口点到骨骼 → 切姿势 Tab、高亮骨骼列表、展开滑杆分组并滚动到卡片. */
+  const handleBonePick = useCallback(
+    (pick: { uuid: string; name: string } | null) => {
+      if (!pick) {
+        setActiveBone(null);
+        setMode('translate');
+        return;
+      }
+      setActiveBone(pick.uuid);
+      setMode('rotate');
+      setTab('pose');
+      const st = stageRef.current;
+      setBones(st ? st.getBones() : []);
+      const schema = boneSchemaOf(pick.name);
+      if (schema) {
+        setOpenGroup(schema.group);
+        requestAnimationFrame(() => {
+          document
+            .getElementById(`bone-card-${schema.boneName}`)
+            ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        });
+      }
+    },
+    [boneSchemaOf],
+  );
+
+  /** gizmo 旋转骨骼 → 回写对应滑杆(双向同步;不再回调场景以免循环). */
+  const handleBoneRotate = useCallback(
+    (boneName: string, deltaDeg: [number, number, number]) => {
+      const schema = boneSchemaOf(boneName);
+      if (!schema) return;
+      setBoneDeltas((prev) => ({ ...prev, [schema.boneName]: deltaDeg }));
+    },
+    [boneSchemaOf],
+  );
+
+  // 姿势 Tab 或 K 动画时间轴打开时启用视口骨骼点选。
+  useEffect(() => {
+    stageRef.current?.setBonePick(tab === 'pose' || poseTl);
+  }, [tab, poseTl]);
+
   const resetPose = useCallback(() => {
     stageRef.current?.resetPose();
     setActivePose('默认');
@@ -932,6 +982,8 @@ export default function DirectorEditor({
             onBoxSelectChange={setBoxSelect}
             keymap={keymap}
             onAnimTick={setAnimTick}
+            onBonePick={handleBonePick}
+            onBoneRotate={handleBoneRotate}
           />
           {/* 动画播放条(有活动动画时浮在视口底部中央;K 动画时间轴打开时由其接管) */}
           {animTick && !poseTl && (
@@ -1274,7 +1326,7 @@ export default function DirectorEditor({
                       const d = boneDeltas[b.boneName] ?? [0, 0, 0];
                       const dirty = d[0] !== 0 || d[1] !== 0 || d[2] !== 0;
                       return (
-                        <div key={b.boneName} style={styles.boneCard}>
+                        <div key={b.boneName} id={`bone-card-${b.boneName}`} style={styles.boneCard}>
                           <div style={styles.boneCardHead}>
                             <span>{b.label}</span>
                             <button

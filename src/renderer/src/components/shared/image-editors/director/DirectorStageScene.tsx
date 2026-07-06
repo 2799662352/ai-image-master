@@ -38,6 +38,7 @@ import { CAPTURE_RES_SHORT } from './directorConstants';
 import { buildShaderGrid, type ShaderGrid } from './directorGrid';
 import { buildCrowdLayout, type CrowdOpts } from './directorMannequin';
 import { buildPoseClip, parseClipJson, type PoseKeyframe } from './directorPoseClip';
+import { accumulateBoneWeights, rankBoneIndices } from './directorBonePick';
 
 /** 一个保存的机位:相机位姿 + 视点 + FOV(逆向自实站 applyCameraState). */
 export interface CameraSlot {
@@ -221,6 +222,11 @@ export interface DirectorStageHandle {
   showSkeleton(visible: boolean): void;
   /** Attach the gizmo to a bone (rotate mode) for posing; pass null to return to the whole model. */
   poseBone(uuid: string | null): void;
+  /**
+   * 视口骨骼点选模式(姿势 Tab / K 动画时间轴打开时启用):点选中高级假人的
+   * 身体 → 皮肤权重反查骨骼并挂 gizmo;「显示骨架」时叠加可点关节手柄。
+   */
+  setBonePick(on: boolean): void;
   /** Restore all bones of the selected model to their loaded rest pose. */
   resetPose(): void;
   /**
@@ -342,6 +348,10 @@ interface DirectorStageProps {
   keymap?: Keymap;
   /** 动画播放进度回传(播放中 ~10Hz;null = 动画已停止/清理). */
   onAnimTick?: (tick: AnimTick | null) => void;
+  /** 视口点选骨骼时回传(null = 退回整体模型),供右栏联动高亮/展开分组. */
+  onBonePick?: (pick: { uuid: string; name: string } | null) => void;
+  /** gizmo 旋转骨骼时回传相对姿势基准的 XYZ 欧拉增量(度),供滑杆双向同步. */
+  onBoneRotate?: (boneName: string, deltaDeg: [number, number, number]) => void;
 }
 
 /** 动画播放进度(给 UI 播放条;报「当前选中对象」的动画,选中无动画 = null). */
@@ -367,6 +377,15 @@ interface ActiveAnim {
   name: string;
 }
 
+/** 关节手柄:真实骨骼(非嵌套孪生)每根一个可点小球,单个 InstancedMesh 承载. */
+interface JointHandles {
+  mesh: THREE.InstancedMesh;
+  bones: THREE.Bone[];
+  radius: number;
+  /** 当前 hover 的实例下标(-1 = 无). */
+  hover: number;
+}
+
 interface StageState {
   renderer: THREE.WebGLRenderer;
   scene: THREE.Scene;
@@ -383,6 +402,10 @@ interface StageState {
   selected: THREE.Object3D | null;
   skeletonHelper: THREE.SkeletonHelper | null;
   posingBone: THREE.Bone | null;
+  /** 视口骨骼点选模式(姿势 Tab / K 动画时间轴打开时由 UI 开启). */
+  bonePick: boolean;
+  /** 关节手柄(「显示骨架」时的可点小球;与 skeletonHelper 同生命周期). */
+  joints: JointHandles | null;
   frameId: number;
   keyAz: number;
   keyEl: number;
@@ -506,6 +529,8 @@ function DirectorStageInner(
     onBoxSelectChange,
     keymap,
     onAnimTick,
+    onBonePick,
+    onBoneRotate,
   }: DirectorStageProps,
   ref: React.Ref<DirectorStageHandle>,
 ) {
@@ -519,10 +544,18 @@ function DirectorStageInner(
   const onBoxRef = useRef(onBoxSelectChange);
   const keymapRef = useRef<Keymap>(keymap ?? DEFAULT_KEYMAP);
   const onAnimTickRef = useRef(onAnimTick);
+  const onBonePickRef = useRef(onBonePick);
+  const onBoneRotateRef = useRef(onBoneRotate);
 
   useEffect(() => {
     onSelRef.current = onSelectionChange;
   }, [onSelectionChange]);
+  useEffect(() => {
+    onBonePickRef.current = onBonePick;
+  }, [onBonePick]);
+  useEffect(() => {
+    onBoneRotateRef.current = onBoneRotate;
+  }, [onBoneRotate]);
   useEffect(() => {
     onAnimTickRef.current = onAnimTick;
   }, [onAnimTick]);
@@ -650,6 +683,34 @@ function DirectorStageInner(
     action.play();
     st.anims.set(target, { mixer, action, target, poseSnap, duration: clip.duration, url, name });
     emitAnimTick();
+  };
+
+  // ── 视口骨骼点选(皮肤权重反查 / 关节手柄)──────────────────────
+  /** 视口点选骨骼:与 poseBone 同通路(停动画→gizmo 旋转),另加关节高亮+回传. */
+  const selectBoneForPosing = (bone: THREE.Bone) => {
+    const s = stateRef.current;
+    if (!s || !s.selected) return;
+    if (s.anims.has(s.selected)) stopAnimFor(s.selected);
+    s.transform.detach();
+    s.posingBone = bone;
+    s.transform.attach(bone);
+    s.transform.setMode('rotate');
+    onModeRef.current?.('rotate');
+    refreshJointColors(s);
+    onBonePickRef.current?.({ uuid: bone.uuid, name: bone.name || '(bone)' });
+  };
+
+  /** 退出骨骼会话:gizmo 回整体模型(Esc / 右栏「返回整体移动」). */
+  const exitBonePosing = () => {
+    const s = stateRef.current;
+    if (!s || !s.posingBone) return;
+    s.posingBone = null;
+    s.transform.detach();
+    if (s.selected) s.transform.attach(s.selected);
+    s.transform.setMode('translate');
+    onModeRef.current?.('translate');
+    refreshJointColors(s);
+    onBonePickRef.current?.(null);
   };
 
   // ── 选择(单选 / 框选多选) ─────────────────────────────────────
@@ -1058,6 +1119,18 @@ function DirectorStageInner(
           (helper.material as THREE.LineBasicMaterial).linewidth = 2;
           s.scene.add(helper);
           s.skeletonHelper = helper;
+          buildJointHandles(s);
+        }
+      },
+      setBonePick(on) {
+        const s = stateRef.current;
+        if (!s) return;
+        s.bonePick = on;
+        if (!on && s.joints) {
+          s.joints.hover = -1;
+          refreshJointColors(s);
+          s.renderer.domElement.title = '';
+          s.renderer.domElement.style.cursor = '';
         }
       },
       poseBone(uuid) {
@@ -1071,6 +1144,7 @@ function DirectorStageInner(
           s.posingBone = null;
           s.transform.attach(s.selected);
           s.transform.setMode('translate');
+          refreshJointColors(s);
           return;
         }
         let bone = collectBones(s.selected).find((b) => b.uuid === uuid);
@@ -1087,6 +1161,7 @@ function DirectorStageInner(
         s.posingBone = bone;
         s.transform.attach(bone);
         s.transform.setMode('rotate');
+        refreshJointColors(s);
       },
       resetPose() {
         const s = stateRef.current;
@@ -1755,6 +1830,8 @@ function DirectorStageInner(
       selected: null,
       skeletonHelper: null,
       posingBone: null,
+      bonePick: false,
+      joints: null,
       frameId: 0,
       keyAz: LIGHT_DEFAULTS.key.azimuthDeg,
       keyEl: LIGHT_DEFAULTS.key.elevationDeg,
@@ -1782,8 +1859,23 @@ function DirectorStageInner(
     if (entry === 'panorama' && panoramaUrl) applyPanorama(state, panoramaUrl);
 
     // Live transform readback → right panel
+    const _boneDq = new THREE.Quaternion();
+    const _boneEul = new THREE.Euler();
     transform.addEventListener('objectChange', () => {
       if (state.selected) onSelRef.current?.(selectionInfo(state.selected));
+      // gizmo 旋转骨骼 → 回传 base⁻¹·current 的欧拉增量给右栏滑杆(双向同步)。
+      const pb = state.posingBone;
+      if (pb) {
+        const base = (pb.userData?._poseBase ?? pb.userData?._restQuat) as
+          | THREE.Quaternion
+          | undefined;
+        if (base) {
+          _boneDq.copy(base).invert().multiply(pb.quaternion);
+          _boneEul.setFromQuaternion(_boneDq, 'XYZ');
+          const r = (rad: number) => Math.round(THREE.MathUtils.radToDeg(rad) * 10) / 10;
+          onBoneRotateRef.current?.(pb.name, [r(_boneEul.x), r(_boneEul.y), r(_boneEul.z)]);
+        }
+      }
     });
 
     // ── Pointer: click-to-select + 框选(marquee)─────────────────────
@@ -1872,6 +1964,44 @@ function DirectorStageInner(
       selectMany(picked);
     };
 
+    /** Update state.pointer + raycaster from a client coordinate. */
+    const aimRay = (clientX: number, clientY: number) => {
+      const rect = canvas.getBoundingClientRect();
+      state.pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      state.pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+      state.raycaster.setFromCamera(state.pointer, state.camera);
+    };
+
+    /**
+     * 骨骼点选模式:优先点关节手柄,其次点选中假人身体做皮肤权重反查。
+     * 返回 true 表示事件已消费(不再走整体模型选择)。
+     */
+    const tryPickBone = (e: PointerEvent): boolean => {
+      if (!state.bonePick) return false;
+      const sel = state.selected;
+      if (!sel || !sel.userData?.isFbxBot) return false;
+      aimRay(e.clientX, e.clientY);
+      // 1) 关节手柄(显示骨架时)
+      if (state.joints) {
+        const jHits = state.raycaster.intersectObject(state.joints.mesh);
+        const id = jHits[0]?.instanceId;
+        if (id != null && state.joints.bones[id]) {
+          selectBoneForPosing(state.joints.bones[id]);
+          return true;
+        }
+      }
+      // 2) 点身体 → 权重最高骨骼(重复点同部位在权重前列骨骼间轮换)
+      const hits = state.raycaster.intersectObjects(state.modelsGroup.children, true);
+      if (hits.length === 0) return false;
+      let root = hits[0].object as THREE.Object3D;
+      while (root.parent && root.parent !== state.modelsGroup) root = root.parent;
+      if (root !== sel) return false; // 点了别的模型:走正常换选
+      const bone = boneFromSkinHit(state, hits[0]);
+      if (bone) selectBoneForPosing(bone);
+      // 点中自己身体即消费事件,避免 selectMany 把骨骼会话重置回整体。
+      return true;
+    };
+
     const onPointerDown = (e: PointerEvent) => {
       if (e.button !== 0) return; // left button only (mid/right = pan/zoom orbit)
       if (isDragging()) return; // gizmo owns this drag
@@ -1882,11 +2012,28 @@ function DirectorStageInner(
         window.addEventListener('pointerup', onMarqueeUp);
         return;
       }
+      if (tryPickBone(e)) return;
       // Default mode: click selects; left-drag still rotates the view (orbit).
       const root = pickRoot(e.clientX, e.clientY);
       if (root) selectMany([root]);
     };
     canvas.addEventListener('pointerdown', onPointerDown);
+
+    // 关节手柄 hover:变色 + title 显示骨名(仅骨骼点选模式且手柄存在时)。
+    const onHoverMove = (e: PointerEvent) => {
+      const j = state.joints;
+      if (!state.bonePick || !j) return;
+      if (isDragging()) return;
+      aimRay(e.clientX, e.clientY);
+      const hits = state.raycaster.intersectObject(j.mesh);
+      const id = hits[0]?.instanceId ?? -1;
+      if (id === j.hover) return;
+      j.hover = id;
+      refreshJointColors(state);
+      canvas.title = id >= 0 ? j.bones[id]?.name ?? '' : '';
+      canvas.style.cursor = id >= 0 ? 'pointer' : '';
+    };
+    canvas.addEventListener('pointermove', onHoverMove);
 
     // ── Keyboard shortcuts (3D-editor style) ─────────────────────────
     const isTypingTarget = (t: EventTarget | null): boolean => {
@@ -1906,6 +2053,7 @@ function DirectorStageInner(
       // Esc 固定:退出框选 / 取消选择(不可改键)。
       if (e.key === 'Escape') {
         if (st.marquee) setMarqueeImpl(false);
+        else if (st.posingBone) exitBonePosing(); // 先退骨骼会话,再按一次才取消选择
         else deselectAll();
         return;
       }
@@ -1992,6 +2140,7 @@ function DirectorStageInner(
         lastAnimTickAt = now;
         emitAnimTick();
       }
+      if (state.joints) updateJointHandles(state); // 关节手柄跟随骨骼世界位置
       renderStage(state, camera);
     };
     animate();
@@ -2008,6 +2157,7 @@ function DirectorStageInner(
     return () => {
       cancelAnimationFrame(state.frameId);
       canvas.removeEventListener('pointerdown', onPointerDown);
+      canvas.removeEventListener('pointermove', onHoverMove);
       canvas.removeEventListener('webglcontextlost', onContextLost);
       canvas.removeEventListener('webglcontextrestored', onContextRestored);
       window.removeEventListener('keydown', onKeyDown);
@@ -2985,11 +3135,132 @@ function storeRestPose(obj: THREE.Object3D): void {
 }
 
 function clearSkeletonHelper(s: StageState): void {
+  disposeJointHandles(s); // 关节手柄与骨架线同生命周期
   if (!s.skeletonHelper) return;
   s.scene.remove(s.skeletonHelper);
   s.skeletonHelper.geometry.dispose();
   (s.skeletonHelper.material as THREE.Material).dispose();
   s.skeletonHelper = null;
+}
+
+// ── 视口骨骼点选:皮肤权重反查 + 关节手柄 ──────────────────────────
+const _skinVa = new THREE.Vector3();
+const _skinVb = new THREE.Vector3();
+const _skinVc = new THREE.Vector3();
+const _skinP = new THREE.Vector3();
+const _skinBary = new THREE.Vector3();
+const _skinTri = new THREE.Triangle();
+
+/**
+ * raycast 命中 SkinnedMesh → 权重最高的真实骨骼(嵌套孪生折叠到同名主骨)。
+ * 重复点同部位时在权重前 3 的骨骼间轮换(点胸口可在上/下脊柱间切换)。
+ */
+function boneFromSkinHit(s: StageState, hit: THREE.Intersection): THREE.Bone | null {
+  const sm = hit.object as THREE.SkinnedMesh;
+  if (!sm.isSkinnedMesh || !hit.face || !sm.skeleton) return null;
+  const geo = sm.geometry as THREE.BufferGeometry;
+  const skinIndex = geo.getAttribute('skinIndex');
+  const skinWeight = geo.getAttribute('skinWeight');
+  if (!skinIndex || !skinWeight) return null;
+  const { a, b, c } = hit.face;
+  // 蒙皮后的顶点位置(getVertexPosition 计入骨骼形变),局部空间做重心插值。
+  sm.getVertexPosition(a, _skinVa);
+  sm.getVertexPosition(b, _skinVb);
+  sm.getVertexPosition(c, _skinVc);
+  sm.worldToLocal(_skinP.copy(hit.point));
+  _skinTri.set(_skinVa, _skinVb, _skinVc);
+  const bary = _skinTri.getBarycoord(_skinP, _skinBary);
+  const [wa, wb, wc] = bary ? [bary.x, bary.y, bary.z] : [1 / 3, 1 / 3, 1 / 3];
+  const weights = accumulateBoneWeights(skinIndex, skinWeight, [a, b, c], [wa, wb, wc]);
+  const ranked = rankBoneIndices(weights);
+  const candidates: THREE.Bone[] = [];
+  for (const idx of ranked) {
+    let bone = sm.skeleton.bones[idx];
+    if (!bone) continue;
+    // 折叠嵌套孪生骨(gizmo 驱动它会双重旋转,见 hasSameNamedBoneAncestor)。
+    while (
+      bone.parent &&
+      (bone.parent as THREE.Bone).isBone &&
+      bone.parent.name === bone.name
+    ) {
+      bone = bone.parent as THREE.Bone;
+    }
+    if (!candidates.some((x) => x.uuid === bone.uuid)) candidates.push(bone);
+  }
+  if (candidates.length === 0) return null;
+  const cycleLen = Math.min(candidates.length, 3);
+  const at = s.posingBone ? candidates.findIndex((x) => x.uuid === s.posingBone?.uuid) : -1;
+  return at >= 0 && at < cycleLen ? candidates[(at + 1) % cycleLen] : candidates[0];
+}
+
+const JOINT_COLOR = new THREE.Color('#eab308');
+const JOINT_HOVER = new THREE.Color('#ffffff');
+const JOINT_ACTIVE = new THREE.Color('#22d3ee');
+const _jointPos = new THREE.Vector3();
+const _jointMat = new THREE.Matrix4();
+const _jointBox = new THREE.Box3();
+
+/** 给选中高级假人的每根真实骨骼建一个可点关节小球(InstancedMesh). */
+function buildJointHandles(s: StageState): void {
+  disposeJointHandles(s);
+  const sel = s.selected;
+  if (!sel || !sel.userData?.isFbxBot) return;
+  const bones = collectSkeletonBones(sel).filter((b) => !hasSameNamedBoneAncestor(b));
+  if (bones.length === 0) return;
+  _jointBox.setFromObject(sel);
+  const h = _jointBox.isEmpty() ? 1.8 : _jointBox.max.y - _jointBox.min.y;
+  const radius = THREE.MathUtils.clamp(h * 0.013, 0.008, 0.06);
+  const mesh = new THREE.InstancedMesh(
+    new THREE.SphereGeometry(1, 10, 8),
+    new THREE.MeshBasicMaterial({
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+      opacity: 0.9,
+      toneMapped: false,
+    }),
+    bones.length,
+  );
+  mesh.renderOrder = 999; // 骨架线之上、透视身体
+  mesh.frustumCulled = false;
+  mesh.name = '__jointHandles';
+  s.scene.add(mesh);
+  s.joints = { mesh, bones, radius, hover: -1 };
+  refreshJointColors(s);
+  updateJointHandles(s);
+}
+
+/** 每帧同步关节小球到骨骼世界位置(摆姿/动画播放时跟随). */
+function updateJointHandles(s: StageState): void {
+  const j = s.joints;
+  if (!j) return;
+  for (let i = 0; i < j.bones.length; i++) {
+    j.bones[i].getWorldPosition(_jointPos);
+    _jointMat.makeScale(j.radius, j.radius, j.radius).setPosition(_jointPos);
+    j.mesh.setMatrixAt(i, _jointMat);
+  }
+  j.mesh.instanceMatrix.needsUpdate = true;
+}
+
+/** 关节配色:选中 = 青,hover = 白,默认 = 琥珀. */
+function refreshJointColors(s: StageState): void {
+  const j = s.joints;
+  if (!j) return;
+  for (let i = 0; i < j.bones.length; i++) {
+    const active = s.posingBone?.uuid === j.bones[i].uuid;
+    j.mesh.setColorAt(i, active ? JOINT_ACTIVE : i === j.hover ? JOINT_HOVER : JOINT_COLOR);
+  }
+  if (j.mesh.instanceColor) j.mesh.instanceColor.needsUpdate = true;
+}
+
+function disposeJointHandles(s: StageState): void {
+  const j = s.joints;
+  if (!j) return;
+  s.scene.remove(j.mesh);
+  j.mesh.geometry.dispose();
+  (j.mesh.material as THREE.Material).dispose();
+  j.mesh.dispose();
+  s.joints = null;
 }
 
 function positionKeyLight(s: StageState): void {
