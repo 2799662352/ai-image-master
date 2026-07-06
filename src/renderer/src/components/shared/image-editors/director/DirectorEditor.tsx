@@ -66,6 +66,7 @@ import {
   type TransformMode,
 } from './directorConstants';
 import { BONES_BY_GROUP, BONE_SCHEMA, POSE_KEYS, getPose } from './directorPoses';
+import { directorBridge } from './directorBridge';
 import {
   animUrl,
   filterAnimations,
@@ -570,6 +571,12 @@ export default function DirectorEditor({
   const markSaved = useCallback(() => {
     savedSnapRef.current = projectHash();
   }, [projectHash]);
+  /** 场景就绪:记基线 + 把 handle 注册进 directorBridge(agent 控制通路). */
+  const handleStageReady = useCallback(() => {
+    markSaved();
+    directorBridge.setHandle(stageRef.current);
+  }, [markSaved]);
+  useEffect(() => () => directorBridge.clearHandle(), []);
   const isDirty = useCallback(() => {
     if (savedSnapRef.current == null) return false; // 场景尚未就绪
     const cur = projectHash();
@@ -1056,7 +1063,7 @@ export default function DirectorEditor({
             onAnimTick={setAnimTick}
             onBonePick={handleBonePick}
             onBoneRotate={handleBoneRotate}
-            onReady={markSaved}
+            onReady={handleStageReady}
           />
           {/* 动画播放条(有活动动画时浮在视口底部中央;K 动画时间轴打开时由其接管) */}
           {animTick && !poseTl && (

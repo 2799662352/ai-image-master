@@ -16,6 +16,7 @@ import { buildLightArtifacts } from './buildLightArtifacts'
 import type { ArtifactSaveInfo, AttachmentRef, ChoiceAnswer, ChoiceOption } from '../../../../types/agent-timeline'
 import type { AgentToolRequest, AgentToolResponse, ImageTaskUpdate } from '../../../../types/agent'
 import { canvasBridge } from '../agent-workspace/canvas/canvasBridge'
+import { directorBridge } from '../../components/shared/image-editors/director/directorBridge'
 
 type GenerateImageToolParams = GenerateImageParams
 
@@ -242,6 +243,13 @@ export class AgentToolExecutor {
       case 'get_selected_canvas_video':
       case 'add_canvas_note':
         return this.callCanvas(toolName, params)
+      case 'director_open':
+      case 'director_scene':
+      case 'director_snapshot':
+      case 'director_capture':
+      case 'director_record':
+      case 'director_exec':
+        return this.callDirector(toolName, params)
       case 'understand_video':
       case 'understand_document':
       case 'web_research':
@@ -318,6 +326,19 @@ export class AgentToolExecutor {
       }
     }
     return { ok: false, error: `缺少 ${urlKey} 或 ${pathKey}。` }
+  }
+
+  /**
+   * 导演台工具:全部交给 directorBridge(挂载即注册的 DirectorStageHandle)。
+   * capture/record 会把导出的 PNG/视频落盘为线程附件(FK on threadId),
+   * 所以注入当前活跃聊天线程;没有线程时 bridge 返回结构化错误而不是丢文件。
+   */
+  private async callDirector(toolName: string, params: Record<string, unknown>): Promise<unknown> {
+    if (toolName === 'director_capture' || toolName === 'director_record') {
+      const threadId = useAgentChatStore.getState().threadId
+      return directorBridge.handle(toolName, { ...params, threadId })
+    }
+    return directorBridge.handle(toolName, params)
   }
 
   private async callCanvas(toolName: string, params: Record<string, unknown>): Promise<unknown> {

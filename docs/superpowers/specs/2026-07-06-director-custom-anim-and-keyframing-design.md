@@ -160,3 +160,47 @@ interface PoseKeyframe {
   仍是 lazy chunk,three.js 不进主包;关闭时 `setTimeout` 推迟
   unmount 避免 React 同步卸载告警)。与生成页 VisualPromptBar 的
   「导演台 // 3D」入口(需经生成页)互不影响,native 空网格进入。
+
+## 追加:AI(Codex)全权控制导演台 —— director_* MCP 工具(同日,用户拍板「最高权限,别担心越权」)
+
+参考 UE5.8 官方 MCP「领域工具 + action 参数」形态,把 `DirectorStageHandle`
+的 55+ 方法收敛为 **6 个 MCP 工具**,复用现有 catimation MCP 通路
+(main `McpServer` → `ToolRouter` → IPC → renderer `AgentToolExecutor`):
+
+- **`director_open`** — 打开导演台(未开 → 动态 import launcher 挂独立浮层)
+  并等 handle 就绪(30s 超时),幂等。
+- **`director_scene`** — `action` 分发全量场景操作:对象
+  (list_objects / list_model_catalog / add_model / add_mannequin /
+  add_crowd / select / remove / duplicate / clear / focus / mirror /
+  undo / redo / set_transform / toggle_grid / set_panorama)、相机与机位
+  (set_fov / set_distance / add·apply·remove·update·list_camera_slot)、
+  灯光调色(set_key_light / set_ambient / set_light_fx / get_light_fx)、
+  姿势(get_bones / list_pose_presets / apply_pose / set_bone_delta /
+  reset_pose)、动画(search_animations 走 2032 条目录 chunk /
+  play·pause·resume·stop·seek_animation)。
+- **`director_snapshot`** — agent「读」场景:summary(剔除逐骨骼四元数,
+  保留对象/变换/动画状态/机位/灯光/fx/录制关键帧)或 full(完整
+  serializeScene)。
+- **`director_capture`** — agent「看」画面:view / aspect(letterbox 取景)
+  / multiview(环绕 4|12 视角,查姿势穿模神器);PNG 经 attachments IPC
+  落盘为线程附件,回 `imagePaths`。
+- **`director_record`** — 运镜:enter/exit/add_keyframe/list/remove/clear/
+  seek/export;export 走 `recordExport` 插值运镜录 webm → base64 →
+  attachments 落盘回 `videoPath`。
+- **`director_exec`** — **最高权限逃生舱**(产品明示要):AsyncFunction
+  跑模型 JS,作用域 `director`(整个 handle)+ `THREE`;30s 超时,
+  抛错回 `{success:false,error}`,与 canvas_exec 同款不设沙箱。
+
+架构落点:renderer 新增 `director/directorBridge.ts`(仿 canvasBridge:
+setHandle/waitForHandle 单例 + 统一 `handle()` 分发,**所有工具错误收敛为
+`{ok:false,error}`,绝不抛出去炸 3D 场景**);`DirectorEditor` 在
+`onReady` 注册 handle、卸载时清除,任一入口(顶栏/生成页)打开都接上;
+`AgentToolExecutor` 加 `director_*` 分支(capture/record 注入活跃
+threadId 供附件落盘 FK);main 新增 `mcp/tools/directorTools.ts` 注册
+6 工具(zod schema + 注解:exec/load 标 destructive)。打包纪律:
+directorBridge 被主 chunk 静态引入,故只 type-import 导演台重模块,
+catalog/poses/launcher/three 全部 action 内动态 import(build 实测
+three 仍只在 vendor/DirectorEditor chunk)。测试:
+`__tests__/directorBridge.test.ts` 11 用例(fake handle 验 action 映射 /
+缺参收敛 / snapshot 剔骨骼 / exec 成功与抛错)全绿;既有 4 个失败套件
+经 git stash 基线复现为预存,与本次无关。
