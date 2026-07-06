@@ -26,12 +26,14 @@ import DirectorRecordTimeline from './DirectorRecordTimeline';
 import { getCatalog, type DirectorModel } from './directorCatalog';
 import {
   type DirectorAsset,
+  ANIM_EXTS,
   MODEL_EXTS,
   MODEL_SIZE_HINT,
   PANORAMA_EXTS,
   deleteAsset,
   extOf,
   formatBytes,
+  isAnimExt,
   isModelExt,
   isPanoramaExt,
   listAssets,
@@ -39,6 +41,7 @@ import {
   openAssetUrl,
   putAsset,
 } from './directorAssetStore';
+import DirectorPoseTimeline from './DirectorPoseTimeline';
 import { CROWD_DEFAULTS, type CrowdLayout } from './directorMannequin';
 import {
   ADVANCED_MANNEQUIN,
@@ -266,6 +269,85 @@ export default function DirectorEditor({
       setAnimBusy(null);
     }
   }, []);
+
+  // ── 我的动画(用户导入 fbx/glb/gltf/json + K 动画保存;IndexedDB 持久化)──
+  const [myAnims, setMyAnims] = useState<DirectorAsset[]>([]);
+  const animFileRef = useRef<HTMLInputElement>(null);
+  /** 资产 id → 稳定 objectURL(剪辑缓存按 URL,复用同一 URL 命中缓存;卸载时统一回收). */
+  const myAnimUrls = useRef(new Map<string, string>());
+  /** K 动画时间轴开关. */
+  const [poseTl, setPoseTl] = useState(false);
+  const refreshMyAnims = useCallback(() => {
+    listAssets('animation').then(setMyAnims).catch(() => setMyAnims([]));
+  }, []);
+  useEffect(() => {
+    const urls = myAnimUrls.current;
+    return () => {
+      for (const u of urls.values()) URL.revokeObjectURL(u);
+      urls.clear();
+    };
+  }, []);
+
+  const importAnimFiles = useCallback(
+    async (files: FileList | null) => {
+      if (!files || files.length === 0) return;
+      for (const file of Array.from(files)) {
+        const ext = extOf(file.name);
+        if (!isAnimExt(ext)) {
+          alert(`不支持的动画格式:.${ext}\n支持:${ANIM_EXTS.map((e) => '.' + e).join(' / ')}`);
+          continue;
+        }
+        if (ext === 'json') {
+          // 轻校验:必须是含 tracks 的剪辑 JSON(裸剪辑或 director-anim@1 包裹)。
+          try {
+            const data = JSON.parse(await file.text()) as { tracks?: unknown; clip?: { tracks?: unknown } };
+            if (!Array.isArray(data?.tracks) && !Array.isArray(data?.clip?.tracks)) throw new Error('no tracks');
+          } catch {
+            alert(`${file.name} 不是有效的动画 JSON(需要 AnimationClip.toJSON 结构)`);
+            continue;
+          }
+        }
+        await putAsset({ kind: 'animation', name: file.name.replace(/\.[^.]+$/, ''), ext, blob: file });
+      }
+      refreshMyAnims();
+      if (animFileRef.current) animFileRef.current.value = '';
+    },
+    [refreshMyAnims],
+  );
+
+  const playMyAnim = useCallback(async (a: DirectorAsset) => {
+    const st = stageRef.current;
+    if (!st) return;
+    let url = myAnimUrls.current.get(a.id);
+    if (!url) {
+      const r = await openAssetUrl(a.id);
+      if (!r) return;
+      url = r.url;
+      myAnimUrls.current.set(a.id, url);
+    }
+    setAnimBusy(url);
+    try {
+      await st.playAnimation(url, a.name, a.ext);
+    } catch {
+      alert(`动画加载失败:${a.name}(文件无法解析,确认含动画剪辑)`);
+    } finally {
+      setAnimBusy(null);
+    }
+  }, []);
+
+  const deleteMyAnim = useCallback(
+    async (a: DirectorAsset) => {
+      if (!window.confirm(`删除「${a.name}」?`)) return;
+      await deleteAsset(a.id);
+      const url = myAnimUrls.current.get(a.id);
+      if (url) {
+        URL.revokeObjectURL(url);
+        myAnimUrls.current.delete(a.id);
+      }
+      refreshMyAnims();
+    },
+    [refreshMyAnims],
+  );
 
   const catalog = useMemo(() => getCatalog(), []);
 
@@ -616,14 +698,17 @@ export default function DirectorEditor({
         const st = stageRef.current;
         setBones(selection && st ? st.getBones() : []);
       }
-      if (t === 'anim' && !animCatalog && !animLoadErr) {
-        loadAnimCatalog()
-          .then(setAnimCatalog)
-          .catch(() => setAnimLoadErr(true));
+      if (t === 'anim') {
+        refreshMyAnims();
+        if (!animCatalog && !animLoadErr) {
+          loadAnimCatalog()
+            .then(setAnimCatalog)
+            .catch(() => setAnimLoadErr(true));
+        }
       }
       setTab(t);
     },
-    [activeBone, selection, animTick, animCatalog, animLoadErr],
+    [activeBone, selection, animTick, animCatalog, animLoadErr, refreshMyAnims],
   );
 
   const isPunk = theme === 'punk';
@@ -848,8 +933,8 @@ export default function DirectorEditor({
             keymap={keymap}
             onAnimTick={setAnimTick}
           />
-          {/* 动画播放条(有活动动画时浮在视口底部中央) */}
-          {animTick && (
+          {/* 动画播放条(有活动动画时浮在视口底部中央;K 动画时间轴打开时由其接管) */}
+          {animTick && !poseTl && (
             <div style={styles.animBar}>
               <span style={styles.animBarName} title={animTick.name}>
                 {animTick.name}
@@ -955,6 +1040,17 @@ export default function DirectorEditor({
               onExported={onExported}
             />
           )}
+
+          {/* K 动画:姿势关键帧时间轴(底部面板;与录制模式互斥) */}
+          {poseTl && !recordMode && (
+            <DirectorPoseTimeline
+              stageRef={stageRef}
+              animTick={animTick}
+              isAdvanced={isAdvanced}
+              onClose={() => setPoseTl(false)}
+              onSaved={refreshMyAnims}
+            />
+          )}
         </div>
 
         {/* Right panel — 属性 / 姿势 */}
@@ -1020,6 +1116,65 @@ export default function DirectorEditor({
               <div style={styles.hint}>动画目录加载中…</div>
             ) : (
               <>
+                {/* 我的动画:导入(fbx/glb/gltf/json)+ K 动画入口 */}
+                <div style={styles.poseToolRow}>
+                  <button
+                    style={styles.toolBtn}
+                    onClick={() => animFileRef.current?.click()}
+                    title={`导入动画文件(${ANIM_EXTS.map((e) => '.' + e).join(' / ')})`}
+                  >
+                    ⬆ 导入动画
+                  </button>
+                  <button
+                    style={poseTl ? styles.toolBtnActive : styles.toolBtn}
+                    onClick={() => setPoseTl((v) => !v)}
+                    title="姿势关键帧时间轴:摆姿→打点→插值预览→导出"
+                  >
+                    ◆ K 动画
+                  </button>
+                </div>
+                <input
+                  ref={animFileRef}
+                  type="file"
+                  accept={ANIM_EXTS.map((e) => '.' + e).join(',')}
+                  multiple
+                  style={{ display: 'none' }}
+                  onChange={(e) => void importAnimFiles(e.target.files)}
+                />
+                {myAnims.length > 0 && (
+                  <>
+                    <div style={styles.section}>我的动画({myAnims.length})</div>
+                    <div style={styles.poseGrid}>
+                      {myAnims.map((a) => {
+                        const url = myAnimUrls.current.get(a.id);
+                        const active = !!url && animTick?.url === url;
+                        return (
+                          <div key={a.id} style={{ position: 'relative' }}>
+                            <button
+                              style={{
+                                ...(active ? styles.posePresetActive : styles.posePreset),
+                                width: '100%',
+                              }}
+                              title={`${a.name} · .${a.ext} · ${formatBytes(a.size)}`}
+                              disabled={animBusy != null}
+                              onClick={() => void playMyAnim(a)}
+                            >
+                              {animBusy === url ? '⏳' : a.name}
+                            </button>
+                            <button
+                              style={styles.mineDel}
+                              title="删除"
+                              onClick={() => void deleteMyAnim(a)}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+                <div style={styles.section}>动画库</div>
                 <select
                   style={styles.animSelect}
                   value={animCat}

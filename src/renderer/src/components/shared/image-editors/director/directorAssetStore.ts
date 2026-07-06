@@ -11,7 +11,7 @@
  *   await deleteAsset(id)                                      // 删除
  */
 
-export type AssetKind = 'model' | 'panorama';
+export type AssetKind = 'model' | 'panorama' | 'animation';
 
 export interface DirectorAsset {
   id: string;
@@ -129,9 +129,12 @@ export async function deleteAsset(id: string): Promise<void> {
 
 export const MODEL_EXTS = ['glb', 'gltf', 'fbx'] as const;
 export const PANORAMA_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'avif'] as const;
+/** 动画剪辑:fbx(Mixamo 等)/ glb/gltf(取 animations[0])/ json(本软件 K 动画导出)。 */
+export const ANIM_EXTS = ['fbx', 'glb', 'gltf', 'json'] as const;
 /** 建议体积上限(字节)。超过仍可导入,只是给出提醒。 */
 export const MODEL_SIZE_HINT = 80 * 1024 * 1024; // 80MB
 export const PANORAMA_SIZE_HINT = 40 * 1024 * 1024; // 40MB
+export const ANIM_SIZE_HINT = 40 * 1024 * 1024; // 40MB
 
 export function extOf(filename: string): string {
   const i = filename.lastIndexOf('.');
@@ -144,6 +147,10 @@ export function isModelExt(ext: string): boolean {
 
 export function isPanoramaExt(ext: string): boolean {
   return (PANORAMA_EXTS as readonly string[]).includes(ext.toLowerCase());
+}
+
+export function isAnimExt(ext: string): boolean {
+  return (ANIM_EXTS as readonly string[]).includes(ext.toLowerCase());
 }
 
 export function formatBytes(n: number): string {

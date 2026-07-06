@@ -37,6 +37,7 @@ import {
 import { CAPTURE_RES_SHORT } from './directorConstants';
 import { buildShaderGrid, type ShaderGrid } from './directorGrid';
 import { buildCrowdLayout, type CrowdOpts } from './directorMannequin';
+import { buildPoseClip, parseClipJson, type PoseKeyframe } from './directorPoseClip';
 
 /** 一个保存的机位:相机位姿 + 视点 + FOV(逆向自实站 applyCameraState). */
 export interface CameraSlot {
@@ -237,14 +238,26 @@ export interface DirectorStageHandle {
   isAdvancedMannequin(): boolean;
   // ── 动画(高级假人 Mixamo 剪辑预览) ────────────────────────────
   // 动画是瞬态预览:不入撤销栈、不进「保存工程」序列化;停止时恢复播放前姿势。
-  /** Load + loop a Mixamo animation FBX on the selected advanced mannequin. */
-  playAnimation(url: string, name?: string): Promise<void>;
+  /**
+   * Load + loop an animation clip on the selected advanced mannequin.
+   * `ext` 指明格式(fbx/glb/gltf/json);省略时按 URL 扩展名推断,默认 fbx。
+   */
+  playAnimation(url: string, name?: string, ext?: string): Promise<void>;
   pauseAnimation(): void;
   resumeAnimation(): void;
   /** Stop and restore the pose captured before playback started. */
   stopAnimation(): void;
   /** Jump to `sec` (clamped to [0, duration]); works both playing and paused. */
   seekAnimation(sec: number): void;
+  // ── K 动画(姿势关键帧;数据由 UI 持有,场景只负责取样/编译/播放) ──
+  /** 读选中假人当前姿势为一帧数据(真实骨骼四元数 + 根位置);非高级假人 → null. */
+  capturePoseKeyframe(): Pick<PoseKeyframe, 'bones' | 'rootPos'> | null;
+  /** 把一帧姿势应用回选中假人(时间轴 scrub 单帧预览;不入撤销栈). */
+  applyPoseKeyframe(k: Pick<PoseKeyframe, 'bones' | 'rootPos'>): void;
+  /** 把关键帧集合编译为剪辑并在选中假人上循环播放(走与目录动画同一 mixer 通路). */
+  playPoseClip(keys: readonly PoseKeyframe[], duration: number, name?: string): Promise<void>;
+  /** 把关键帧集合编译为剪辑并连同选中假人导出为 .glb(GLTFExporter 按需加载). */
+  exportPoseClipGlb(keys: readonly PoseKeyframe[], duration: number, name?: string): Promise<Blob>;
   /** Single screenshot → PNG data URL. `height` (px) overrides output resolution. */
   capture(height?: number): string;
   /**
@@ -612,6 +625,30 @@ function DirectorStageInner(
     a.mixer.stopAllAction();
     restorePose(a.poseSnap);
     s.anims.delete(target);
+    emitAnimTick();
+  };
+  /**
+   * 在目标假人上循环播放一条剪辑(playAnimation / playPoseClip 共用尾程)。
+   * 加载期间选择可能已变 —— 调用方传入发起时的 target,这里再校验一次仍在场。
+   */
+  const startClipOnTarget = (
+    target: THREE.Object3D,
+    clip: THREE.AnimationClip,
+    url: string,
+    name: string,
+  ) => {
+    const st = stateRef.current;
+    if (!st || !target.parent) return; // 场景已卸载 / 目标已被删除
+    // 每个假人各自持有 mixer:给 B 播不影响 A(多假人同时播)。
+    const prev = st.anims.get(target); // 同目标换剪辑:复用快照与 mixer
+    const poseSnap = prev ? prev.poseSnap : capturePose(target);
+    const mixer = prev ? prev.mixer : new THREE.AnimationMixer(target);
+    mixer.stopAllAction();
+    const action = mixer.clipAction(retargetClipTracks(clip, target));
+    action.reset();
+    action.setLoop(THREE.LoopRepeat, Infinity);
+    action.play();
+    st.anims.set(target, { mixer, action, target, poseSnap, duration: clip.duration, url, name });
     emitAnimTick();
   };
 
@@ -1105,24 +1142,13 @@ function DirectorStageInner(
         const s = stateRef.current;
         return !!s?.selected?.userData?.isFbxBot;
       },
-      async playAnimation(url, name = '') {
+      async playAnimation(url, name = '', ext) {
         const s = stateRef.current;
         const target = s?.selected;
         if (!s || !target || !target.userData?.isFbxBot) return;
-        const clip = await loadAnimClip(url);
-        const st = stateRef.current;
-        if (!st || st.selected !== target) return; // 加载期间选择已变,丢弃
-        // 每个假人各自持有 mixer:给 B 播不影响 A(多假人同时播)。
-        const prev = st.anims.get(target); // 同目标换剪辑:复用快照与 mixer
-        const poseSnap = prev ? prev.poseSnap : capturePose(target);
-        const mixer = prev ? prev.mixer : new THREE.AnimationMixer(target);
-        mixer.stopAllAction();
-        const action = mixer.clipAction(retargetClipTracks(clip, target));
-        action.reset();
-        action.setLoop(THREE.LoopRepeat, Infinity);
-        action.play();
-        st.anims.set(target, { mixer, action, target, poseSnap, duration: clip.duration, url, name });
-        emitAnimTick();
+        const clip = await loadAnimClip(url, ext);
+        if (stateRef.current?.selected !== target) return; // 加载期间选择已变,丢弃
+        startClipOnTarget(target, clip, url, name);
       },
       pauseAnimation() {
         const s = stateRef.current;
@@ -1149,6 +1175,64 @@ function DirectorStageInner(
         a.action.time = THREE.MathUtils.clamp(sec, 0, a.duration);
         a.mixer.update(0);
         emitAnimTick();
+      },
+      capturePoseKeyframe() {
+        const s = stateRef.current;
+        const target = s?.selected;
+        if (!s || !target || !target.userData?.isFbxBot) return null;
+        // 只记真实骨骼(嵌套孪生继承父级;驱动它会双重旋转,见 applyPoseToObject)。
+        const bones: Record<string, [number, number, number, number]> = {};
+        for (const b of collectSkeletonBones(target)) {
+          if (hasSameNamedBoneAncestor(b)) continue;
+          const q = b.quaternion;
+          bones[b.name] = [q.x, q.y, q.z, q.w];
+        }
+        return {
+          bones,
+          rootPos: [target.position.x, target.position.y, target.position.z],
+        };
+      },
+      applyPoseKeyframe(k) {
+        const s = stateRef.current;
+        const target = s?.selected;
+        if (!s || !target || !target.userData?.isFbxBot) return;
+        // scrub 单帧预览与 mixer 冲突:目标在播则先停(恢复播放前姿势后再套帧)。
+        if (s.anims.has(target)) stopAnimFor(target);
+        for (const b of collectSkeletonBones(target)) {
+          if (hasSameNamedBoneAncestor(b)) continue;
+          const q = k.bones[b.name];
+          if (!q) continue;
+          b.quaternion.set(q[0], q[1], q[2], q[3]);
+          b.userData._poseBase = b.quaternion.clone();
+        }
+        updateSkeletons(target);
+        target.position.set(k.rootPos[0], k.rootPos[1], k.rootPos[2]);
+      },
+      async playPoseClip(keys, duration, name = 'K动画') {
+        const s = stateRef.current;
+        const target = s?.selected;
+        if (!s || !target || !target.userData?.isFbxBot || keys.length === 0) return;
+        const clip = buildPoseClip(keys, duration, name);
+        // 合成键不进 loadAnimClip 缓存;每次编译都是新剪辑。
+        startClipOnTarget(target, clip, `authored:${THREE.MathUtils.generateUUID()}`, name);
+      },
+      async exportPoseClipGlb(keys, duration, name = 'K动画') {
+        const s = stateRef.current;
+        const target = s?.selected;
+        if (!s || !target || !target.userData?.isFbxBot) {
+          throw new Error('请先选中一个高级假人');
+        }
+        if (keys.length === 0) throw new Error('没有关键帧');
+        const clip = buildPoseClip(keys, duration, name);
+        // GLTFExporter 按需加载(不进主包);导出原对象(SkinnedMesh 深拷贝骨骼绑定
+        // 复杂且无必要),导出期间不改场景。
+        const { GLTFExporter } = await import('three/addons/exporters/GLTFExporter.js');
+        const exporter = new GLTFExporter();
+        const buf = (await exporter.parseAsync(target, {
+          binary: true,
+          animations: [clip],
+        })) as ArrayBuffer;
+        return new Blob([buf], { type: 'model/gltf-binary' });
       },
       capture(height) {
         const s = stateRef.current;
@@ -1988,19 +2072,46 @@ const fbxLoader = new FBXLoader();
 /** 动画剪辑缓存(URL → clip promise);加载失败不缓存,可重试. */
 const animClipCache = new Map<string, Promise<THREE.AnimationClip>>();
 
-/** Load a Mixamo animation FBX and return its first clip (cached by URL). */
-function loadAnimClip(url: string): Promise<THREE.AnimationClip> {
+/**
+ * 按格式加载动画剪辑并取第一条(cached by URL)。
+ * - fbx(默认,目录动画与 Mixamo 导入)→ FBXLoader;
+ * - glb/gltf(用户导入)→ GLTFLoader 的 gltf.animations;
+ * - json(本软件「K 动画」导出)→ fetch + AnimationClip.parse。
+ * objectURL 无扩展名,导入资产由调用方经 `ext` 显式指明格式。
+ */
+function loadAnimClip(url: string, ext?: string): Promise<THREE.AnimationClip> {
   let p = animClipCache.get(url);
   if (!p) {
-    p = fbxLoader.loadAsync(url).then((group) => {
-      const clip = group.animations?.[0];
-      if (!clip) throw new Error(`animation FBX has no clips: ${url}`);
-      return clip;
-    });
+    const kind = (ext ?? extFromUrl(url) ?? 'fbx').toLowerCase();
+    if (kind === 'glb' || kind === 'gltf') {
+      p = gltfLoader.loadAsync(url).then((gltf) => {
+        const clip = gltf.animations?.[0];
+        if (!clip) throw new Error(`animation glTF has no clips: ${url}`);
+        return clip;
+      });
+    } else if (kind === 'json') {
+      p = fetch(url)
+        .then((r) => r.text())
+        .then((text) => parseClipJson(text));
+    } else {
+      p = fbxLoader.loadAsync(url).then((group) => {
+        const clip = group.animations?.[0];
+        if (!clip) throw new Error(`animation FBX has no clips: ${url}`);
+        return clip;
+      });
+    }
     p.catch(() => animClipCache.delete(url));
     animClipCache.set(url, p);
   }
   return p;
+}
+
+/** 从 URL 路径末尾提取扩展名(objectURL / 无点路径返回 null)。 */
+function extFromUrl(url: string): string | null {
+  const path = url.split(/[?#]/)[0];
+  const seg = path.slice(path.lastIndexOf('/') + 1);
+  const dot = seg.lastIndexOf('.');
+  return dot > 0 ? seg.slice(dot + 1) : null;
 }
 
 /**
