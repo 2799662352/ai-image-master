@@ -235,7 +235,8 @@ describe('directorBridge', () => {
       url: 'https://cdn/walk.fbx',
       name: 'Walk',
     });
-    expect(handle.playAnimation).toHaveBeenCalledWith('https://cdn/walk.fbx', 'Walk', undefined);
+    // ext 未显式给时从 url 推断(blob: URL 场景下 loader 选择依赖它)。
+    expect(handle.playAnimation).toHaveBeenCalledWith('https://cdn/walk.fbx', 'Walk', 'fbx');
   });
 
   it('snapshot summary 剔除 bonePose 但保留动画状态', async () => {
@@ -281,6 +282,67 @@ describe('directorBridge', () => {
     expect(added.ok).toBe(true);
     expect(added.keyframe.t).toBe(2.5);
     expect(handle.recordAddKeyframe).toHaveBeenCalledWith(2.5);
+  });
+
+  it('scene: add_model / play_animation 接受本地路径(经 IPC 转 blob:)', async () => {
+    const readThumb = vi.fn(async () => ({
+      ok: true as const,
+      base64: 'QUJD',
+      mime: 'model/gltf-binary',
+    }));
+    (window as unknown as { electronAPI?: unknown }).electronAPI = {
+      attachments: { readThumb },
+    };
+    const origCreate = URL.createObjectURL;
+    (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = () =>
+      'blob:mock-asset';
+    try {
+      const res = (await directorBridge.handle('director_scene', {
+        action: 'add_model',
+        url: 'D:\\models\\robot.glb',
+      })) as { ok: boolean };
+      expect(res.ok).toBe(true);
+      expect(readThumb).toHaveBeenCalledWith('D:\\models\\robot.glb');
+      expect(handle.addModel).toHaveBeenCalledWith('blob:mock-asset', {
+        isFbx: false,
+        modelId: undefined,
+      });
+
+      await directorBridge.handle('director_scene', {
+        action: 'play_animation',
+        url: 'C:\\anims\\wave.fbx',
+      });
+      // blob: URL 无扩展名,ext 必须显式传给 loadAnimClip 选 loader。
+      expect(handle.playAnimation).toHaveBeenCalledWith('blob:mock-asset', undefined, 'fbx');
+
+      // https URL 原样透传,不走 IPC。
+      readThumb.mockClear();
+      await directorBridge.handle('director_scene', {
+        action: 'play_animation',
+        url: 'https://cdn/walk.fbx',
+      });
+      expect(readThumb).not.toHaveBeenCalled();
+      expect(handle.playAnimation).toHaveBeenCalledWith('https://cdn/walk.fbx', undefined, 'fbx');
+    } finally {
+      (URL as unknown as { createObjectURL: typeof origCreate }).createObjectURL = origCreate;
+      delete (window as unknown as { electronAPI?: unknown }).electronAPI;
+    }
+  });
+
+  it('scene: 本地模型文件读不到时返回结构化错误', async () => {
+    (window as unknown as { electronAPI?: unknown }).electronAPI = {
+      attachments: { readThumb: vi.fn(async () => ({ ok: false as const, reason: 'ENOENT' })) },
+    };
+    try {
+      const res = (await directorBridge.handle('director_scene', {
+        action: 'add_model',
+        url: 'D:\\missing\\ghost.glb',
+      })) as { ok: boolean; error?: string };
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain('无法读取');
+    } finally {
+      delete (window as unknown as { electronAPI?: unknown }).electronAPI;
+    }
   });
 
   it('scene: capture_pose_keyframe 非高级假人返回 ok:false;命中返回 boneCount', async () => {

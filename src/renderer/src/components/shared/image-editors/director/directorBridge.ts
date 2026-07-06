@@ -87,6 +87,26 @@ async function normalizePoseKeys(value: unknown): Promise<PoseKeyframe[]> {
   });
 }
 
+/**
+ * 3D 资产 URL 归一化:web/blob/data URL 原样返回;本地路径(D:\…、
+ * local-file://、file://)经 attachments IPC 读字节转 blob: URL —— 沙箱
+ * 渲染器里 three 的 GLTFLoader/FBXLoader 走 fetch,吃不了本地路径。
+ * 这让 agent 能导入用户的本地模型/动画,也能把 export_pose_clip_glb
+ * 刚落盘的 .glb 直接喂回 play_animation。
+ */
+async function resolveAssetUrl(rawUrl: string): Promise<{ url: string; ext?: string }> {
+  const extMatch = /\.(glb|gltf|fbx|json)(?:[?#]|$)/i.exec(rawUrl);
+  const ext = extMatch ? extMatch[1].toLowerCase() : undefined;
+  const { resolveMediaSrcOnce } = await import('../../media/useResolvedMediaSrc');
+  const resolved = await resolveMediaSrcOnce(rawUrl, 'auto', { fullFidelity: true });
+  if (!resolved) {
+    throw new Error(
+      `无法读取模型/动画文件:${rawUrl}(文件不存在,或扩展名不受支持 —— 仅支持 glb/gltf/fbx/json)。`,
+    );
+  }
+  return { url: resolved, ext };
+}
+
 function dataUrlToBase64(dataUrl: string): { mime: string; base64: string } | null {
   const m = /^data:([^;]+);base64,(.*)$/s.exec(dataUrl);
   return m ? { mime: m[1] || 'image/png', base64: m[2] } : null;
@@ -421,10 +441,11 @@ class DirectorBridge {
         return { ok: true, count: filtered.length, models: filtered.slice(0, num(params.limit) ?? 100) };
       }
       case 'add_model': {
-        const url = str(params.url);
-        if (!url) throw new Error('add_model 需要 url(可先 list_model_catalog 查目录)。');
-        await h.addModel(url, {
-          isFbx: params.isFbx === true || /\.fbx(\?|$)/i.test(url),
+        const raw = str(params.url);
+        if (!raw) throw new Error('add_model 需要 url(可先 list_model_catalog 查目录;也接受本地 glb/gltf/fbx 文件路径)。');
+        const asset = await resolveAssetUrl(raw);
+        await h.addModel(asset.url, {
+          isFbx: params.isFbx === true || asset.ext === 'fbx',
           modelId: str(params.modelId),
         });
         return { ok: true, objects: h.listObjects() };
@@ -599,9 +620,10 @@ class DirectorBridge {
         };
       }
       case 'play_animation': {
-        const url = str(params.url);
-        if (!url) throw new Error('play_animation 需要 url(可先 search_animations)。');
-        await h.playAnimation(url, str(params.name), str(params.ext));
+        const raw = str(params.url);
+        if (!raw) throw new Error('play_animation 需要 url(可先 search_animations;也接受本地 fbx/glb/json 动画文件路径,含 export_pose_clip_glb 刚导出的 .glb)。');
+        const asset = await resolveAssetUrl(raw);
+        await h.playAnimation(asset.url, str(params.name), str(params.ext) ?? asset.ext);
         return { ok: true };
       }
       case 'pause_animation':

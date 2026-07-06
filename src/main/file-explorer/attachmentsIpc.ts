@@ -54,6 +54,12 @@ const ALLOWED_MIME_BY_EXT: Record<string, string> = {
   wav: 'audio/wav',
   flac: 'audio/flac',
   aac: 'audio/aac',
+  // 3D 资产:导演台 agent 导入本地模型/动画(add_model / play_animation 的
+  // 本地路径 → blob: 转换)要经本 IPC 读字节。纯读操作,与媒体同级风险。
+  glb: 'model/gltf-binary',
+  gltf: 'model/gltf+json',
+  fbx: 'application/octet-stream',
+  json: 'application/json',
 }
 
 function mimeFromExt(p: string): string | undefined {

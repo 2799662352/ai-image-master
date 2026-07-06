@@ -1779,6 +1779,12 @@ through 6 tools. Modeled on the Unreal Engine 5.8 MCP discipline.
 \`search_animations {keyword}\` (≈2000 Mixamo clips) → \`play_animation {url}\`
 → optionally \`director_record action=capture_video\` to hand the user a video.
 
+**Import the user's own files (导入本地模型/动画)**: \`add_model\` and
+\`play_animation\` both accept a LOCAL file path (glb/gltf/fbx, anim also json)
+— e.g. a model the user downloaded, or the .glb you just exported via
+\`export_pose_clip_glb\`. Pass the OS path directly as \`url\`; the bridge reads
+the bytes and loads them. No manual upload step needed.
+
 **Author a custom animation (K 动画)**: select mannequin → pose frame 1 →
 \`capture_pose_keyframe\` (returns {bones, rootPos}) → store it with t=0 →
 re-pose → capture again with t=1.5 … → \`play_pose_clip {keyframes, duration}\`
