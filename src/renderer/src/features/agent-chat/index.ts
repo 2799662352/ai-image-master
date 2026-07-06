@@ -1,6 +1,6 @@
 export { AgentChatPanel } from './AgentChatPanel'
 export { AgentToolExecutor, mountAgentToolExecutor } from './AgentToolExecutor'
 export { mountSeedanceTaskListener } from './SeedanceTaskListener'
-export { mountAgentChatRuntime } from './mount'
+export { mountAgentChatRuntime, syncAgentHostIntoFullscreen } from './mount'
 export { useAgentChatStore } from './store'
 export type { AgentChatMessage } from './types'

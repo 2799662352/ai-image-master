@@ -397,6 +397,18 @@ export default function DirectorEditor({
     [loadModel],
   );
 
+  /**
+   * 顶栏 AGENT:呼出/收起 Codex 聊天面板(与 Ctrl+Shift+A 同效)。
+   * 动态 import 避免 DirectorEditor chunk 静态依赖 agent-chat;呼出前先把
+   * 面板 host 搬进 fullscreenElement(浏览器全屏只渲染全屏元素的后代)。
+   */
+  const toggleAgentPanel = useCallback(() => {
+    void import('../../../../features/agent-chat').then((m) => {
+      m.syncAgentHostIntoFullscreen();
+      m.useAgentChatStore.getState().toggle();
+    });
+  }, []);
+
   // ── 导演台主页面全屏(整面板) ──
   const toggleMainFull = useCallback(() => {
     const el = shellRef.current;
@@ -888,6 +900,13 @@ export default function DirectorEditor({
           </button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button
+            style={styles.agentBtn}
+            onClick={toggleAgentPanel}
+            title="呼出 AGENT (Codex) 面板 · Ctrl+Shift+A"
+          >
+            🤖 AGENT
+          </button>
           <button style={styles.ghostBtn} onClick={toggleMainFull} title="主页面全屏">
             {mainFull ? '🗗 退出全屏' : '⛶ 全屏'}
           </button>
@@ -2333,6 +2352,17 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '4px 10px',
     cursor: 'pointer',
     fontSize: 12,
+  },
+  // 顶栏 AGENT 呼出按钮:与主界面 AGENT 入口同款青色系,便于识别
+  agentBtn: {
+    background: 'rgba(34,211,238,0.14)',
+    border: '1px solid rgba(34,211,238,0.5)',
+    color: '#22d3ee',
+    borderRadius: 6,
+    padding: '4px 10px',
+    cursor: 'pointer',
+    fontSize: 12,
+    fontWeight: 700,
   },
   closeBtn: {
     background: 'none',
