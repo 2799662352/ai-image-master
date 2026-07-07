@@ -15,7 +15,14 @@
  */
 
 import * as THREE from 'three';
-import { CCDIKSolver } from 'three/addons/animation/CCDIKSolver.js';
+// 注意:不用 three/addons 的 CCDIKSolver。r184 改了 limitation 的符号语义,
+// MMD 膝盖(反向关节)会在正/负弯间振荡 —— 见 vendor/CCDIKSolver.js 头注释。
+import { CCDIKSolver } from './vendor/CCDIKSolver.js';
+import {
+  convertIkLimitsToRightHanded,
+  disableIkOnPhysicsBones,
+  type IkChainLike,
+} from './directorMmdIkLimits';
 import {
   GrantSolver,
   MMDLoader,
@@ -24,6 +31,11 @@ import {
   type MMD,
 } from '@moeru/three-mmd';
 import JSZip from 'jszip';
+import {
+  createMmdPhysics,
+  type MmdPhysicsLike,
+  type MmdPhysicsPmxData,
+} from './directorMmdPhysics';
 
 /** MMD 模型格式:pmx / pmd 裸文件,或「pmx+贴图」打包的 zip。 */
 export const MMD_MODEL_EXTS = ['pmx', 'pmd', 'zip'] as const;
@@ -163,23 +175,98 @@ async function loadFromZip(url: string): Promise<MMD> {
 }
 
 /**
- * 把 IK/Grant 逐帧求解挂到容器 userData 上。RAF 循环里在所有 mixer.update
- * 之后调用 `userData.mmdUpdate(playing)`:mixer 写入骨骼四元数 → CCD IK 按
- * PMX 链约束解算(足ＩＫ等)→ Grant(付与)把源骨旋转按比例乘到关联骨。
+ * 把 MMD 逐帧运行时(骨骼快照 + IK + Grant + 物理)挂到容器 userData 上。
+ * 帧序完全对齐 three.js 官方 MMDAnimationHelper._animateMesh(r171):
  *
- * - IK 每帧都跑(收敛型,幂等):MMD 摆姿势本来就是「拖 IK 骨,腿脚跟着走」;
- * - Grant **只在 mixer 播放中跑**:`GrantSolver.addGrantRotation` 是
- *   `bone.quaternion.multiply(...)` 叠乘,只有 mixer 每帧重写 FK 后叠加才
- *   正确;静止/单帧 scrub 时没有人重置四元数,源骨非 identity 会让受付与骨
- *   每帧累积旋转 —— 表现为脚踝/捩骨越转越歪、部件穿模(three.js 官方
- *   MMDAnimationHelper 同样只在 animation 循环里跑 GrantSolver)。
+ *   restoreBones → mixer.update → saveBones → IK → Grant → physics.update
+ *
+ * RAF 循环里的调用点:
+ * - `userData.mmdPreAnim()`:**mixer.update 之前**(仅播放中)。把全部骨骼
+ *   恢复到上一帧「mixer 刚写完 FK」的快照。VMD 没有轨道的骨骼(捩骨/付与
+ *   目标/物理骨)不会被 mixer 重置,没有快照恢复的话 IK/Grant/物理的结果会
+ *   逐帧叠加 —— 正是「脚踝/部件越播越歪、穿模」的来源;
+ * - `userData.mmdUpdate(playing, delta)`:mixer.update 之后。播放中先存快照,
+ *   再跑 IK(每帧都跑:MMD 摆姿势 = 拖 IK 骨,腿脚跟着走)、Grant(仅播放中:
+ *   叠乘非幂等,必须有 mixer 每帧重写 FK 才正确)、物理(仅播放中步进;
+ *   裙摆/头发等 rigid body 驱动骨骼,修穿模);
+ * - `userData.mmdOnLoop()`:mixer 'loop' 事件时调用。循环回卷姿势瞬移,
+ *   物理刚体钉回骨骼,避免裙摆被甩飞(官方 resetPhysicsOnLoop 同款)。
+ *
+ * 物理异步热插入:Ammo wasm + MMDPhysics 加载完成前(或失败时)行为与
+ * 无物理版本一致。
  */
 export function attachMmdRuntime(group: THREE.Group, mmd: MMD): void {
-  const ikSolver = mmd.iks.length > 0 ? new CCDIKSolver(mmd.mesh, mmd.iks) : null;
-  const grantSolver = mmd.grants.length > 0 ? new GrantSolver(mmd.mesh, mmd.grants) : null;
-  group.userData.mmdUpdate = (playing = false) => {
+  const mesh = mmd.mesh;
+  // buildIK 透传的 rotationMin/Max 还是 PMX 左手系角度,先换手系再进求解器。
+  convertIkLimitsToRightHanded(mmd.iks as unknown as IkChainLike[]);
+  const ikSolver = mmd.iks.length > 0 ? new CCDIKSolver(mesh, mmd.iks) : null;
+  const grantSolver = mmd.grants.length > 0 ? new GrantSolver(mesh, mmd.grants) : null;
+
+  // ── 骨骼快照(官方 _saveBones/_restoreBones 同款,7 floats/骨) ──
+  let backup: Float32Array | null = null;
+  const saveBones = () => {
+    const bones = mesh.skeleton.bones;
+    if (!backup || backup.length !== bones.length * 7) {
+      backup = new Float32Array(bones.length * 7);
+    }
+    for (let i = 0; i < bones.length; i++) {
+      bones[i].position.toArray(backup, i * 7);
+      bones[i].quaternion.toArray(backup, i * 7 + 3);
+    }
+  };
+  const restoreBones = () => {
+    if (!backup) return;
+    const bones = mesh.skeleton.bones;
+    if (backup.length !== bones.length * 7) return;
+    for (let i = 0; i < bones.length; i++) {
+      bones[i].position.fromArray(backup, i * 7);
+      bones[i].quaternion.fromArray(backup, i * 7 + 3);
+    }
+  };
+
+  // ── 物理(异步热插入;失败降级为无物理) ──
+  let physics: MmdPhysicsLike | null = null;
+  createMmdPhysics(mesh, mmd.pmx as unknown as MmdPhysicsPmxData)
+    .then((p) => {
+      physics = p;
+      if (p) {
+        // 物理生效后,物理接管(刚体 type 1/2)的骨骼从 IK 链禁用 —— 否则
+        // IK 与物理每帧互拽同一根骨,表现为腿部/裙摆高频颤动(官方
+        // MMDAnimationHelper._optimizeIK 同款纪律;物理失败降级时不禁用)。
+        disableIkOnPhysicsBones(
+          mmd.iks as unknown as IkChainLike[],
+          (mmd.pmx?.rigidBodies ?? []) as { boneIndex: number; physicsMode: number }[],
+        );
+      }
+    })
+    .catch((err) => {
+      console.warn('[MMD] 物理初始化失败,以无物理模式继续:', err);
+    });
+
+  let wasPlaying = false;
+  group.userData.mmdPreAnim = () => restoreBones();
+  group.userData.mmdOnLoop = () => physics?.reset();
+  group.userData.mmdUpdate = (playing = false, delta = 1 / 60) => {
+    if (playing) {
+      saveBones();
+    } else {
+      // 手工摆姿/静止:快照会过期,丢弃;下次播放从干净状态重建。
+      backup = null;
+    }
     ikSolver?.update();
     if (playing) grantSolver?.update();
+    if (physics) {
+      if (playing) {
+        // 开播瞬间姿势跳变(rest→clip 首帧),先把刚体钉回骨骼防爆散。
+        if (!wasPlaying) physics.reset();
+        mesh.updateMatrixWorld(true);
+        physics.update(delta);
+      } else if (wasPlaying) {
+        // 停播:清掉残留动量,刚体回到当前姿势。
+        physics.reset();
+      }
+    }
+    wasPlaying = playing;
   };
 }
 

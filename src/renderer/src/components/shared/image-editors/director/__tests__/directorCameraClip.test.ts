@@ -18,6 +18,7 @@ import {
   normalizeCameraKeys,
   parseCameraClipJson,
   parseVmdCameraBuffer,
+  retargetCameraKeysToPose,
   sampleObjectClip,
   type CameraKeyframe,
 } from '../directorCameraClip';
@@ -278,6 +279,63 @@ describe('normalizeCameraKeys', () => {
     expect(out[0].t).toBeCloseTo(2);
     expect(out[1].t).toBeCloseTo(4);
     expect(out[0].id).not.toBe(keys[1].id);
+  });
+});
+
+describe('retargetCameraKeysToPose(镜头起始位置约束)', () => {
+  it('首帧位姿刚体对齐到锚点(位置 + 朝向)', () => {
+    const keys = [mkKey(0, 3), mkKey(2, 7)];
+    const anchor = {
+      position: [10, 5, -2] as [number, number, number],
+      quaternion: [0, Math.SQRT1_2, 0, Math.SQRT1_2] as [number, number, number, number], // 绕 Y 90°
+    };
+    const out = retargetCameraKeysToPose(keys, anchor);
+    expect(out[0].position[0]).toBeCloseTo(10);
+    expect(out[0].position[1]).toBeCloseTo(5);
+    expect(out[0].position[2]).toBeCloseTo(-2);
+    // 首帧朝向 == 锚点朝向(允许四元数取反的等价表示)
+    const q = new THREE.Quaternion(...out[0].quaternion);
+    const qa = new THREE.Quaternion(...anchor.quaternion);
+    expect(Math.abs(q.dot(qa))).toBeCloseTo(1);
+  });
+
+  it('后续帧与首帧的相对运动保持不变(距离守恒)', () => {
+    const keys = [mkKey(0, 0), mkKey(1, 4)]; // 首帧→次帧相距 4
+    const anchor = {
+      position: [1, 2, 3] as [number, number, number],
+      quaternion: [0, 0.5, 0, Math.sqrt(0.75)] as [number, number, number, number],
+    };
+    const out = retargetCameraKeysToPose(keys, anchor);
+    const d = new THREE.Vector3(...out[0].position).distanceTo(
+      new THREE.Vector3(...out[1].position),
+    );
+    expect(d).toBeCloseTo(4);
+    // 时间与 FOV 原样保留
+    expect(out[0].t).toBe(0);
+    expect(out[1].t).toBe(1);
+    expect(out[1].fov).toBe(40);
+  });
+
+  it('锚点 = 首帧位姿时输出与输入一致(恒等变换)', () => {
+    const keys = [mkKey(0, 2), mkKey(1, 5)];
+    const anchor = { position: keys[0].position, quaternion: keys[0].quaternion };
+    const out = retargetCameraKeysToPose(keys, anchor);
+    for (let i = 0; i < keys.length; i++) {
+      for (let j = 0; j < 3; j++) expect(out[i].position[j]).toBeCloseTo(keys[i].position[j]);
+    }
+  });
+
+  it('空数组返回空;不改入参', () => {
+    expect(retargetCameraKeysToPose([], { position: [0, 0, 0], quaternion: [0, 0, 0, 1] })).toEqual(
+      [],
+    );
+    const keys = [mkKey(0, 1)];
+    const snapshot = JSON.stringify(keys);
+    retargetCameraKeysToPose(keys, {
+      position: [9, 9, 9],
+      quaternion: [0, 1, 0, 0],
+    });
+    expect(JSON.stringify(keys)).toBe(snapshot);
   });
 });
 

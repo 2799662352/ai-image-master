@@ -52,6 +52,13 @@ export default function DirectorCameraPanel({ stageRef, freeFov, onClose, onFull
       if (stage && cvNow) {
         stage.renderSlotPreview(active === 'free' ? null : active, cvNow);
       }
+      // 机位可在 3D 里直接拖动摄像机模型 —— 属性面板数值跟随刷新。
+      if (stage) {
+        const latest = stage.listCameraSlots();
+        setSlots((prev) =>
+          JSON.stringify(prev) === JSON.stringify(latest) ? prev : latest,
+        );
+      }
     };
     raf = requestAnimationFrame(draw);
     timer = setInterval(draw, 220);
@@ -146,7 +153,11 @@ export default function DirectorCameraPanel({ stageRef, freeFov, onClose, onFull
               {s.name}
             </button>
           ))}
-          <button style={styles.tabAdd} onClick={addSlot} title="新增机位">
+          <button
+            style={styles.tabAdd}
+            onClick={addSlot}
+            title="新增机位:快照当前视角,并在 3D 场景生成一台可拖动/旋转的摄像机模型(Blender 同款)"
+          >
             + 机位
           </button>
         </div>

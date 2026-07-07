@@ -1,3 +1,4 @@
+// @ts-nocheck -- three.js r171 官方 MMDPhysics 原样 vendor(依赖运行时全局 Ammo)。
 import {
 	Bone,
 	BoxGeometry,

@@ -43,6 +43,7 @@ import {
   normalizeCameraKeys,
   parseCameraClipJson,
   parseVmdCameraBuffer,
+  retargetCameraKeysToPose,
   sampleObjectClip,
   type CameraKeyframe,
 } from './directorCameraClip';
@@ -90,6 +91,11 @@ export interface RecordOptions {
    * 居中裁剪导出,和录制页黄色取景框所见严格一致。
    */
   aspect?: number | null;
+  /**
+   * 选择性导出区间 [入点, 出点](秒,时间轴坐标)。未传 = 关键帧首→末全程。
+   * 与 durationSec 组合:durationSec>0 时把该区间拉伸/压缩到指定时长。
+   */
+  rangeSec?: [number, number] | null;
   onProgress?: (pct: number) => void;
 }
 
@@ -199,8 +205,12 @@ export interface DirectorSceneData {
   };
   /** 光感/调色后处理(可选,向后兼容:旧工程无此字段时按中性还原). */
   fx?: DirectorLightFxState;
-  /** 录制视频的相机运镜关键帧(可选,向后兼容:旧工程无此字段 = 空). */
+  /** 录制视频的相机运镜关键帧 = 自由视角全局轨(可选,向后兼容). */
   recordKeyframes?: CameraKeyframe[];
+  /** 多机位:各机位独立镜头轨道(key = 机位 id;可选,向后兼容). */
+  cameraTracks?: Record<string, CameraKeyframe[]>;
+  /** 机位切换点(播放/导出按 1→2→3 依序切活动机位;可选,向后兼容). */
+  cameraCuts?: { t: number; slotId: string }[];
 }
 
 export interface DirectorStageHandle {
@@ -347,8 +357,19 @@ export interface DirectorStageHandle {
   recordExit(): void;
   /** Capture the current camera as a keyframe at time `t` (seconds). */
   recordAddKeyframe(t: number): CameraKeyframe;
+  /** 把某机位的位姿作为关键帧放入时间轴(机位拖入时间轴),打上 slotId 标。 */
+  recordAddKeyframeFromSlot(slotId: string, t: number): CameraKeyframe | null;
   recordListKeyframes(): CameraKeyframe[];
   recordRemoveKeyframe(id: string): void;
+  /** 批量删除(多选 Delete / 剪切)。 */
+  recordRemoveKeyframes(ids: readonly string[]): void;
+  /** 把关键帧的相机位姿更新为当前机位(时间不变)。 */
+  recordUpdateKeyframe(id: string): void;
+  /**
+   * 把一组关键帧整体平移 `deltaT` 秒(打组自由移动)。整组被夹在 [0, maxT]
+   * 内(保持组内间距不变);返回实际生效的平移量。
+   */
+  recordMoveKeyframes(ids: readonly string[], deltaT: number, maxT?: number): number;
   recordClearKeyframes(): void;
   /**
    * 把导入/预设的镜头关键帧装入时间轴并返回装入后的全量列表。
@@ -359,6 +380,8 @@ export interface DirectorStageHandle {
     keys: readonly CameraKeyframe[],
     mode?: 'replace' | 'append',
     atSec?: number,
+    /** 镜头起始位置约束:true = 锚定当前相机;{slotId} = 锚定某机位(镜头放入机位)。 */
+    anchorTo?: boolean | { slotId: string },
   ): CameraKeyframe[];
   /** 当前相机位姿基准(位置/注视目标/FOV),给镜头预设参数化(所见即基准). */
   getCameraPose(): {
@@ -373,6 +396,23 @@ export interface DirectorStageHandle {
    * - json → director-camera@1 包裹或裸 AnimationClip JSON,轨道直接采样。
    */
   importCameraClip(url: string, ext?: string): Promise<{ name: string; keys: CameraKeyframe[] }>;
+  // ── 多机位轨道(Blender:每台相机独立 Action + Marker 绑定切机位)────
+  /** 切换激活轨道:'free'(自由视角全局轨)或机位 id。之后所有关键帧
+   *  操作(增/删/改/装入/列出)都作用于该轨。 */
+  recordSetActiveTrack(id: string): void;
+  recordGetActiveTrack(): string;
+  /** 机位切换点列表(按 t 升序)——1→2→3→4 依序切活动机位。 */
+  recordListCuts(): { t: number; slotId: string }[];
+  /** 在 t 秒放一个「切到某机位」的切换点(±0.04s 内已有则覆盖)。 */
+  recordAddCut(t: number, slotId: string): void;
+  recordRemoveCut(t: number): void;
+  /** 拖动切换点:把 oldT 处的切换点移到 newT(保持机位不变,重新排序)。 */
+  recordMoveCut(oldT: number, newT: number): void;
+  /** 按切换点把多机位编排拍扁成单相机关键帧流(导出成片镜头/VMD 用);
+   *  切点处相邻帧(1/30s)硬切;无切换点 = 当前轨副本。 */
+  recordFlattenedKeyframes(): CameraKeyframe[];
+  /** 时间轴总长度:所有轨道末帧与最后切换点的最大值(成片预览/导出范围)。 */
+  recordTimelineExtent(): number;
   /** Seek the camera to time `t` by interpolating between keyframes. */
   recordSeek(t: number): void;
   /**
@@ -519,11 +559,30 @@ interface StageState {
   /** Lines visualizing each slot's camera→target ray (keyed by slot id). */
   rayGroup: THREE.Group;
   rayLines: Map<string, THREE.Line>;
+  /** 机位摄像机模型(Blender 同款可拖动 3D gizmo),keyed by slot id. */
+  camGizmoGroup: THREE.Group;
+  camGizmos: Map<string, THREE.Group>;
+  /** 当前被 transform gizmo 选中的机位 id(点击摄像机模型时)。 */
+  selectedCamSlot: string | null;
+  /** TransformControls 的可视 helper(r0.184 getHelper() 加进 scene 的对象),
+   *  预览缩略图/导出渲染时需要隐藏 —— 移动/旋转/缩放控制环是编辑辅助物。 */
+  transformHelper: THREE.Object3D;
+  /** 机位模型缩放拖拽的基准镜头距离(拖拽开始时快照):
+   *  等比缩放 = 推拉镜头距离,以基准×手柄倍率计算,避免逐事件复利跳变。 */
+  camDragBaseDist: number | null;
   /** Offscreen render target + camera reused for preview thumbnails. */
   thumbRT: THREE.WebGLRenderTarget | null;
   thumbCam: THREE.PerspectiveCamera;
-  /** Recording keyframe state. */
+  /** Recording keyframe state —— `keyframes` 永远指向"激活轨道"的数组。 */
   keyframes: CameraKeyframe[];
+  /** 每机位独立镜头轨道(Blender:每台相机有自己的 Action):
+   *  key = 'free'(自由视角全局轨)或机位 id;激活轨不在 store 里,在 keyframes。 */
+  tracksStore: Map<string, CameraKeyframe[]>;
+  /** 当前激活轨道:'free' 或机位 id。所有 record* 关键帧操作作用于激活轨。 */
+  activeTrack: string;
+  /** 机位切换点(Blender Marker+Ctrl-B 绑定相机同款):按 t 升序;
+   *  播放/导出时依 1→2→3→4 依序切活动机位,每段内走该机位自己的轨道。 */
+  cuts: { t: number; slotId: string }[];
   recordPlaying: boolean;
   /** 光感/调色后处理(曝光/辉光/调色/景深),与全景共用 createLightFx. */
   lightFx: LightFx;
@@ -784,6 +843,13 @@ function DirectorStageInner(
     // skeleton 的 SkinnedMesh 根解析 → mixer 根用 mmdMesh(骨名轨道同样可解)。
     const mixerRoot = (target.userData?.mmdMesh as THREE.SkinnedMesh | undefined) ?? target;
     const mixer = prev ? prev.mixer : new THREE.AnimationMixer(mixerRoot);
+    if (!prev && target.userData?.mmdMesh) {
+      // MMD:循环回卷姿势瞬移,物理刚体钉回骨骼防裙摆甩飞(mixer 随
+      // anims 表项一起复用,监听器只挂一次)。
+      mixer.addEventListener('loop', () => {
+        (target.userData?.mmdOnLoop as (() => void) | undefined)?.();
+      });
+    }
     mixer.stopAllAction();
     const action = mixer.clipAction(retargetClipTracks(clip, target));
     action.reset();
@@ -837,6 +903,7 @@ function DirectorStageInner(
     if (!s) return;
     dissolveMulti(s);
     s.transform.detach();
+    s.selectedCamSlot = null;
     if (s.selected) {
       clearSkeletonHelper(s);
       s.posingBone = null;
@@ -1590,6 +1657,10 @@ function DirectorStageInner(
         if (!s) return;
         const i = s.cameraSlots.findIndex((x) => x.id === id);
         if (i !== -1) s.cameraSlots.splice(i, 1);
+        // 该机位的镜头轨道与切换点一并清理;正在编辑它 → 回自由视角轨。
+        if (s.activeTrack === id) setActiveTrackState(s, 'free');
+        s.tracksStore.delete(id);
+        s.cuts = s.cuts.filter((c) => c.slotId !== id);
         syncSlotRays(s);
       },
       duplicateCameraSlot(id) {
@@ -1650,6 +1721,9 @@ function DirectorStageInner(
         if (!s) return;
         s.recording = false;
         s.recordPlaying = false;
+        // 播放/拖游标期间机位模型沿镜头轨飞过(Blender 式);退出录制
+        // 模式时全部归位到机位原位。
+        syncCamGizmos(s);
       },
       recordAddKeyframe(t) {
         const s = stateRef.current;
@@ -1661,8 +1735,29 @@ function DirectorStageInner(
           position: [s.camera.position.x, s.camera.position.y, s.camera.position.z],
           quaternion: [s.camera.quaternion.x, s.camera.quaternion.y, s.camera.quaternion.z, s.camera.quaternion.w],
           fov: s.camera.fov,
+          // 机位轨道上 K 的镜头自动打机位标(时间轴按机位配色展示)。
+          ...(s.activeTrack !== 'free' ? { slotId: s.activeTrack } : null),
         };
         // Replace any keyframe at (almost) the same time, else insert sorted.
+        const near = s.keyframes.findIndex((k) => Math.abs(k.t - t) < 0.04);
+        if (near !== -1) s.keyframes[near] = kf;
+        else s.keyframes.push(kf);
+        s.keyframes.sort((a, b) => a.t - b.t);
+        return { ...kf };
+      },
+      recordAddKeyframeFromSlot(slotId, t) {
+        const s = stateRef.current;
+        if (!s) return null;
+        const slot = s.cameraSlots.find((x) => x.id === slotId);
+        if (!slot) return null;
+        const kf: CameraKeyframe = {
+          id: newSlotId(),
+          t,
+          position: [...slot.position],
+          quaternion: [...slot.quaternion],
+          fov: slot.fov,
+          slotId,
+        };
         const near = s.keyframes.findIndex((k) => Math.abs(k.t - t) < 0.04);
         if (near !== -1) s.keyframes[near] = kf;
         else s.keyframes.push(kf);
@@ -1678,11 +1773,52 @@ function DirectorStageInner(
         const i = s.keyframes.findIndex((k) => k.id === id);
         if (i !== -1) s.keyframes.splice(i, 1);
       },
+      recordRemoveKeyframes(ids) {
+        const s = stateRef.current;
+        if (!s || ids.length === 0) return;
+        const drop = new Set(ids);
+        s.keyframes = s.keyframes.filter((k) => !drop.has(k.id));
+      },
+      recordUpdateKeyframe(id) {
+        const s = stateRef.current;
+        if (!s) return;
+        const kf = s.keyframes.find((k) => k.id === id);
+        if (!kf) return;
+        kf.position = [s.camera.position.x, s.camera.position.y, s.camera.position.z];
+        kf.quaternion = [
+          s.camera.quaternion.x,
+          s.camera.quaternion.y,
+          s.camera.quaternion.z,
+          s.camera.quaternion.w,
+        ];
+        kf.fov = s.camera.fov;
+      },
+      recordMoveKeyframes(ids, deltaT, maxT) {
+        const s = stateRef.current;
+        if (!s || ids.length === 0 || !Number.isFinite(deltaT)) return 0;
+        const move = new Set(ids);
+        const picked = s.keyframes.filter((k) => move.has(k.id));
+        if (picked.length === 0) return 0;
+        // 整组夹取:保持组内间距,不让任何一帧越出 [0, maxT]。
+        let lo = Infinity;
+        let hi = -Infinity;
+        for (const k of picked) {
+          lo = Math.min(lo, k.t);
+          hi = Math.max(hi, k.t);
+        }
+        let d = deltaT;
+        if (lo + d < 0) d = -lo;
+        if (maxT != null && hi + d > maxT) d = maxT - hi;
+        if (d === 0) return 0;
+        for (const k of picked) k.t = Math.round((k.t + d) * 1000) / 1000;
+        s.keyframes.sort((a, b) => a.t - b.t);
+        return d;
+      },
       recordClearKeyframes() {
         const s = stateRef.current;
         if (s) s.keyframes = [];
       },
-      recordLoadKeyframes(keys, mode = 'replace', atSec) {
+      recordLoadKeyframes(keys, mode = 'replace', atSec, anchorTo) {
         const s = stateRef.current;
         if (!s || keys.length === 0) return s?.keyframes.map((k) => ({ ...k })) ?? [];
         const startAt =
@@ -1691,7 +1827,30 @@ function DirectorStageInner(
             : mode === 'append' && s.keyframes.length
               ? s.keyframes[s.keyframes.length - 1].t + 1
               : 0;
-        const loaded = normalizeCameraKeys(keys, startAt);
+        // 镜头起始位置约束:把镜头文件首帧刚体对齐到锚点(当前相机 / 某机位),
+        // 后续帧保持相对运动(导入的绝对世界坐标 → 从用户摆好的位置开播)。
+        const anchorSlot =
+          anchorTo && typeof anchorTo === 'object'
+            ? s.cameraSlots.find((x) => x.id === anchorTo.slotId) ?? null
+            : null;
+        let src: readonly CameraKeyframe[] = keys;
+        if (anchorSlot) {
+          src = retargetCameraKeysToPose(keys, {
+            position: [...anchorSlot.position],
+            quaternion: [...anchorSlot.quaternion],
+          }).map((k) => ({ ...k, slotId: anchorSlot.id })); // 机位轨道打标
+        } else if (anchorTo === true) {
+          src = retargetCameraKeysToPose(keys, {
+            position: [s.camera.position.x, s.camera.position.y, s.camera.position.z],
+            quaternion: [
+              s.camera.quaternion.x,
+              s.camera.quaternion.y,
+              s.camera.quaternion.z,
+              s.camera.quaternion.w,
+            ],
+          });
+        }
+        const loaded = normalizeCameraKeys(src, startAt);
         if (mode === 'replace' && atSec == null) {
           s.keyframes = loaded;
         } else {
@@ -1748,14 +1907,60 @@ function DirectorStageInner(
         if (keys.length === 0) throw new Error('镜头动画采样失败(无有效轨道)');
         return { name: clip.name || '导入镜头', keys };
       },
+      recordSetActiveTrack(id) {
+        const s = stateRef.current;
+        if (s) setActiveTrackState(s, id);
+      },
+      recordGetActiveTrack() {
+        return stateRef.current?.activeTrack ?? 'free';
+      },
+      recordListCuts() {
+        return stateRef.current?.cuts.map((c) => ({ ...c })) ?? [];
+      },
+      recordAddCut(t, slotId) {
+        const s = stateRef.current;
+        if (!s || !s.cameraSlots.some((x) => x.id === slotId)) return;
+        const near = s.cuts.findIndex((c) => Math.abs(c.t - t) < 0.04);
+        if (near !== -1) s.cuts[near] = { t, slotId };
+        else s.cuts.push({ t, slotId });
+        s.cuts.sort((a, b) => a.t - b.t);
+      },
+      recordRemoveCut(t) {
+        const s = stateRef.current;
+        if (!s) return;
+        const i = s.cuts.findIndex((c) => Math.abs(c.t - t) < 0.04);
+        if (i !== -1) s.cuts.splice(i, 1);
+      },
+      recordMoveCut(oldT, newT) {
+        const s = stateRef.current;
+        if (!s) return;
+        const cut = s.cuts.find((c) => Math.abs(c.t - oldT) < 0.04);
+        if (!cut) return;
+        cut.t = Math.max(0, newT);
+        s.cuts.sort((a, b) => a.t - b.t);
+      },
+      recordFlattenedKeyframes() {
+        const s = stateRef.current;
+        return s ? flattenCutsToKeys(s) : [];
+      },
+      recordTimelineExtent() {
+        const s = stateRef.current;
+        if (!s) return 0;
+        let ext = s.keyframes.length ? s.keyframes[s.keyframes.length - 1].t : 0;
+        for (const ks of s.tracksStore.values()) {
+          if (ks.length) ext = Math.max(ext, ks[ks.length - 1].t);
+        }
+        if (s.cuts.length) ext = Math.max(ext, s.cuts[s.cuts.length - 1].t);
+        return ext;
+      },
       recordSeek(t) {
         const s = stateRef.current;
-        if (!s || s.keyframes.length === 0) return;
+        if (!s || (s.keyframes.length === 0 && s.cuts.length === 0)) return;
         applyInterpolatedCamera(s, t);
       },
       recordPlay(startSec, endSec, onTime, onDone, loop = false) {
         const s = stateRef.current;
-        if (!s || s.keyframes.length === 0) {
+        if (!s || (s.keyframes.length === 0 && s.cuts.length === 0)) {
           onDone();
           return () => {};
         }
@@ -1789,7 +1994,9 @@ function DirectorStageInner(
       recordExport(opts) {
         const s = stateRef.current;
         if (!s) return Promise.reject(new Error('scene not ready'));
-        if (s.keyframes.length < 1) return Promise.reject(new Error('请先添加关键帧'));
+        if (s.keyframes.length < 1 && s.cuts.length === 0) {
+          return Promise.reject(new Error('请先添加关键帧或机位切换点'));
+        }
         return recordKeyframeAnimation(s, opts);
       },
       recordVideo(opts) {
@@ -1876,7 +2083,7 @@ function DirectorStageInner(
             ambientColor: `#${s.ambient.color.getHexString()}`,
           },
           fx: { ...s.fxState },
-          recordKeyframes: s.keyframes.map((k) => ({ ...k })),
+          ...serializeCameraTracks(s),
         };
       },
       async restoreScene(data, resolveUrl) {
@@ -1983,8 +2190,14 @@ function DirectorStageInner(
         }
         // 3b) 光感/调色后处理(旧工程无 fx → 还原为中性默认)。
         applyLightFx(s, { ...LIGHTFX_DEFAULTS, ...(data.fx ?? {}) });
-        // 3c) 录制视频的运镜关键帧(旧工程无此字段 = 清空)。
+        // 3c) 运镜时间轴:自由轨 + 各机位独立轨 + 切换点(旧工程无 = 清空)。
+        s.activeTrack = 'free';
+        s.tracksStore = new Map();
         s.keyframes = (data.recordKeyframes ?? []).map((k) => ({ ...k }));
+        for (const [id, ks] of Object.entries(data.cameraTracks ?? {})) {
+          s.tracksStore.set(id, ks.map((k) => ({ ...k })));
+        }
+        s.cuts = (data.cameraCuts ?? []).map((c) => ({ ...c })).sort((a, b) => a.t - b.t);
         // 4) camera 机位.
         s.cameraSlots = (data.cameraSlots || []).map((c) => ({
           ...c,
@@ -2048,6 +2261,35 @@ function DirectorStageInner(
     // mirroring the live `_setCameraOrbit`.
     placeCameraOrbit(camera, orbit, d.distance);
 
+    // 进入机位 = 锁定视角(Blender「Lock Camera to View」):录制模式下激活
+    // 某机位轨道时,用户拖动主视角就是在挪这台机位——机位位姿实时跟随,
+    // 模型/视锥同步刷新。只在真实交互(start→end)期间写回,避免 seek/播放
+    // 驱动的相机移动污染机位。
+    let orbitNavActive = false;
+    orbit.addEventListener('start', () => {
+      orbitNavActive = true;
+    });
+    orbit.addEventListener('end', () => {
+      orbitNavActive = false;
+    });
+    orbit.addEventListener('change', () => {
+      if (!orbitNavActive) return;
+      const st = stateRef.current;
+      if (!st || !st.recording || st.recordPlaying) return;
+      const slot = st.cameraSlots.find((x) => x.id === st.activeTrack);
+      if (!slot) return;
+      slot.position = [st.camera.position.x, st.camera.position.y, st.camera.position.z];
+      slot.quaternion = [
+        st.camera.quaternion.x,
+        st.camera.quaternion.y,
+        st.camera.quaternion.z,
+        st.camera.quaternion.w,
+      ];
+      slot.target = [st.orbit.target.x, st.orbit.target.y, st.orbit.target.z];
+      slot.fov = st.camera.fov;
+      syncSlotRays(st);
+    });
+
     // Lights (ground truth §10.2)
     const keyLight = new THREE.DirectionalLight(
       new THREE.Color(LIGHT_DEFAULTS.key.color),
@@ -2074,6 +2316,11 @@ function DirectorStageInner(
     rayGroup.name = '__cameraRays';
     scene.add(rayGroup);
 
+    // Group holding per-slot camera-model gizmos(机位摄像机模型).
+    const camGizmoGroup = new THREE.Group();
+    camGizmoGroup.name = '__cameraGizmos';
+    scene.add(camGizmoGroup);
+
     const transform = new TransformControls(camera, renderer.domElement);
     transform.setMode('translate');
     transform.addEventListener('dragging-changed', (e) => {
@@ -2081,6 +2328,23 @@ function DirectorStageInner(
       orbit.enabled = !dragging;
       const st = stateRef.current;
       if (!st) return;
+      // 机位摄像机模型:拖拽开始时快照镜头距离(缩放 = 推拉距离的基准),
+      // 结束时清掉并把模型 scale 复位(模型本身不随手势变大)。
+      const attObj = (transform as unknown as { object?: THREE.Object3D }).object;
+      const attCamId = attObj?.userData?.cameraSlotId as string | undefined;
+      if (attObj && attCamId) {
+        if (dragging) {
+          const slot = st.cameraSlots.find((x) => x.id === attCamId);
+          if (slot) {
+            _v0.set(...slot.position);
+            _v1.set(...slot.target);
+            st.camDragBaseDist = Math.max(_v0.distanceTo(_v1), 0.1);
+          }
+        } else {
+          st.camDragBaseDist = null;
+          attObj.scale.set(1, 1, 1);
+        }
+      }
       if (dragging) {
         // Snapshot affected objects so the move/rotate/scale is undoable.
         const objs =
@@ -2158,9 +2422,17 @@ function DirectorStageInner(
       recording: false,
       rayGroup,
       rayLines: new Map(),
+      camGizmoGroup,
+      camGizmos: new Map(),
+      selectedCamSlot: null,
+      transformHelper: gizmo,
+      camDragBaseDist: null,
       thumbRT: null,
       thumbCam: new THREE.PerspectiveCamera(40, 16 / 9, SCENE.cameraNear, SCENE.cameraFar),
       keyframes: [],
+      tracksStore: new Map(),
+      activeTrack: 'free',
+      cuts: [],
       recordPlaying: false,
       multi: [],
       pivot: null,
@@ -2194,6 +2466,14 @@ function DirectorStageInner(
       if (state.selected) onSelRef.current?.(selectionInfo(state.selected));
       // gizmo 旋转骨骼 → 滑杆双向同步。
       if (state.posingBone) emitBoneDelta(state.posingBone);
+      // 拖动机位摄像机模型 → 实时写回机位。移动/旋转写位置与朝向;
+      // 缩放 = 推拉镜头距离(基准×手柄倍率,单调平滑,不复利跳变)。
+      const att = (transform as unknown as { object?: THREE.Object3D }).object;
+      const camId = att?.userData?.cameraSlotId as string | undefined;
+      if (att && camId) {
+        if (transform.getMode() === 'scale') applyCamGizmoScale(state, camId, att);
+        else writeBackCamGizmo(state, camId, att);
+      }
     });
 
     // ── Pointer: click-to-select + 框选(marquee)─────────────────────
@@ -2212,6 +2492,32 @@ function DirectorStageInner(
       let root = hits[0].object as THREE.Object3D;
       while (root.parent && root.parent !== state.modelsGroup) root = root.parent;
       return root;
+    };
+
+    /** Raycast 机位摄像机模型 → 其 gizmo group 根,或 null。优先于普通模型。
+     *  只认实体 Mesh:Raycaster 对线框(Line)默认 1 世界单位的命中阈值,
+     *  会把摄像机模型周围一大片点击都吸过来,干扰普通模型选择。 */
+    const pickCamGizmo = (clientX: number, clientY: number): THREE.Group | null => {
+      if (state.camGizmoGroup.children.length === 0) return null;
+      const rect = canvas.getBoundingClientRect();
+      state.pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      state.pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+      state.raycaster.setFromCamera(state.pointer, state.camera);
+      const hits = state.raycaster.intersectObjects(state.camGizmoGroup.children, true);
+      const meshHit = hits.find((h) => (h.object as THREE.Mesh).isMesh);
+      if (!meshHit) return null;
+      let root = meshHit.object as THREE.Object3D;
+      while (root.parent && root.parent !== state.camGizmoGroup) root = root.parent;
+      return root as THREE.Group;
+    };
+
+    /** 选中一个机位摄像机模型:transform gizmo 挂上,可移动/旋转/缩放。
+     *  缩放的语义 = 推拉镜头距离(Blender 相机缩放不改成像,我们映射到
+     *  target 距离,视锥辅助线随之伸缩)。 */
+    const selectCamGizmo = (g: THREE.Group) => {
+      deselectAll();
+      state.selectedCamSlot = (g.userData.cameraSlotId as string) ?? null;
+      state.transform.attach(g);
     };
 
     // Marquee transient state (effect-local).
@@ -2448,6 +2754,12 @@ function DirectorStageInner(
         return;
       }
       if (tryPickBone(e)) return;
+      // 机位摄像机模型优先命中(小物件,压在普通模型之上)。
+      const camG = pickCamGizmo(e.clientX, e.clientY);
+      if (camG) {
+        selectCamGizmo(camG);
+        return;
+      }
       // Default mode: click selects; left-drag still rotates the view (orbit).
       const root = pickRoot(e.clientX, e.clientY);
       if (root) {
@@ -2584,15 +2896,26 @@ function DirectorStageInner(
       // During keyframe playback the camera is driven manually; OrbitControls
       // would otherwise re-derive position from its target and override us.
       if (!state.recordPlaying) orbit.update();
+      // 机位摄像机模型:实时相机贴得太近时隐藏(刚建机位/切到该机位时
+      // 模型正好在眼前,会糊住整个视野);离开后自动恢复。
+      for (const g of state.camGizmos.values()) {
+        g.visible = state.camera.position.distanceToSquared(g.position) > 0.5;
+      }
       const dt = state.clock.getDelta();
-      for (const a of state.anims.values()) a.mixer.update(dt);
-      // MMD 模型:mixer/手工摆姿写完 FK 骨后,足ＩＫ链 + Grant(付与)每帧求解。
-      // IK 不在播动画时也跑(MMD 原生摆姿 = 拖 IK 骨,腿脚跟着走);Grant 是
-      // 叠乘、非幂等,只在 mixer 播放中跑(详见 directorMmd.attachMmdRuntime)。
+      for (const a of state.anims.values()) {
+        // MMD:mixer 写 FK 前先恢复上一帧的骨骼快照 —— VMD 没有轨道的骨骼
+        // (捩骨/付与目标/物理骨)不恢复会被 IK/Grant/物理逐帧叠加,表现为
+        // 脚踝扭曲、部件穿模(帧序详见 directorMmd.attachMmdRuntime)。
+        (a.target.userData?.mmdPreAnim as (() => void) | undefined)?.();
+        a.mixer.update(dt);
+      }
+      // MMD 模型:mixer/手工摆姿写完 FK 骨后,快照 + 足ＩＫ链 + Grant(付与)
+      // + 物理每帧求解。IK 不在播动画时也跑(MMD 原生摆姿 = 拖 IK 骨,腿脚
+      // 跟着走);Grant/物理只在 mixer 播放中跑(详见 attachMmdRuntime)。
       for (const c of state.modelsGroup.children) {
-        (c.userData?.mmdUpdate as ((playing?: boolean) => void) | undefined)?.(
-          state.anims.has(c),
-        );
+        (c.userData?.mmdUpdate as
+          | ((playing?: boolean, delta?: number) => void)
+          | undefined)?.(state.anims.has(c), dt);
       }
       // 播放条回传「选中对象」的动画:身份/暂停态变化(含换选)立即发,
       // 播放中进度节流到 ~10Hz;seek 由入口即时回传。
@@ -2649,6 +2972,8 @@ function DirectorStageInner(
       state.envRT?.dispose();
       state.pmrem?.dispose();
       disposeSlotRays(state);
+      for (const g of state.camGizmos.values()) disposeCamGizmo(g);
+      state.camGizmos.clear();
       disposeScene(scene);
       renderer.dispose();
       renderer.forceContextLoss();
@@ -2894,6 +3219,11 @@ async function recordCanvas(
   s.renderer.setSize(width, height, false);
   s.camera.aspect = width / height;
   s.camera.updateProjectionMatrix();
+  // 摄像机模型 + 移动/旋转/缩放控制环是编辑辅助物,不进导出视频。
+  const prevGizVis = s.camGizmoGroup.visible;
+  const prevHelperVis = s.transformHelper.visible;
+  s.camGizmoGroup.visible = false;
+  s.transformHelper.visible = false;
 
   const stream = canvas.captureStream(fps);
   const recorder = new MediaRecorder(stream, {
@@ -2906,6 +3236,8 @@ async function recordCanvas(
   };
 
   const restore = () => {
+    s.camGizmoGroup.visible = prevGizVis;
+    s.transformHelper.visible = prevHelperVis;
     s.renderer.setPixelRatio(prevPR);
     s.renderer.setSize(liveSize.x, liveSize.y, false);
     s.camera.aspect = liveSize.x / liveSize.y;
@@ -3015,6 +3347,191 @@ function syncSlotRays(s: StageState): void {
       s.rayLines.delete(id);
     }
   }
+  // 机位摄像机模型与机位列表同步(Blender 同款 3D gizmo)。
+  syncCamGizmos(s);
+}
+
+// ── 机位摄像机模型(Blender 风格 3D gizmo)────────────────────────
+// 每个机位在场景里有一个可点选/可拖动的小摄像机模型:机身线框盒 +
+// 镜头锥(指向 -Z,即 three.js 相机前方)+ 顶部朝向三角。拖动/旋转
+// 该模型 = 直接改机位的 position/quaternion(target 保持原距离沿新前方)。
+
+const CAM_GIZMO_COLOR = 0x22d3ee;
+
+/** Build one camera-model gizmo group. userData.cameraSlotId 标记所属机位。 */
+function buildCameraGizmo(slotId: string): THREE.Group {
+  const g = new THREE.Group();
+  g.name = `__camGizmo_${slotId}`;
+  g.userData.cameraSlotId = slotId;
+
+  const lineMat = new THREE.LineBasicMaterial({ color: CAM_GIZMO_COLOR, transparent: true, opacity: 0.95 });
+  const fillMat = new THREE.MeshBasicMaterial({
+    color: CAM_GIZMO_COLOR,
+    transparent: true,
+    opacity: 0.14,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+
+  // 机身(box)。相机前方为 -Z。
+  const bodyGeo = new THREE.BoxGeometry(0.34, 0.26, 0.5);
+  const body = new THREE.Mesh(bodyGeo, fillMat);
+  body.userData.cameraSlotId = slotId;
+  const bodyEdges = new THREE.LineSegments(new THREE.EdgesGeometry(bodyGeo), lineMat);
+  g.add(body, bodyEdges);
+
+  // 镜头锥(四棱锥,尖朝机身、口朝 -Z 外张,与 Blender 相机一致)。
+  const coneGeo = new THREE.ConeGeometry(0.17, 0.3, 4, 1, true);
+  coneGeo.rotateY(Math.PI / 4); // 棱对齐水平/垂直
+  coneGeo.rotateX(-Math.PI / 2); // 轴向 → Z
+  coneGeo.translate(0, 0, -0.4);
+  const cone = new THREE.Mesh(coneGeo, fillMat);
+  cone.userData.cameraSlotId = slotId;
+  const coneEdges = new THREE.LineSegments(new THREE.EdgesGeometry(coneGeo, 1), lineMat);
+  g.add(cone, coneEdges);
+
+  // 顶部朝向三角(Blender 的"这边是上"标记)。
+  const triShape = new THREE.Shape();
+  triShape.moveTo(-0.1, 0);
+  triShape.lineTo(0.1, 0);
+  triShape.lineTo(0, 0.14);
+  triShape.closePath();
+  const triGeo = new THREE.ShapeGeometry(triShape);
+  triGeo.translate(0, 0.14, 0); // 顶到机身上沿
+  const tri = new THREE.Mesh(triGeo, fillMat);
+  tri.userData.cameraSlotId = slotId;
+  const triEdges = new THREE.LineSegments(new THREE.EdgesGeometry(triGeo), lineMat);
+  g.add(tri, triEdges);
+
+  // 拍摄范围辅助线(Blender 相机视锥同款):原点→远面四角 + 远面矩形,
+  // 8 段 16 顶点;远面尺寸由 syncCamGizmos 按机位 FOV × LookAt 距离实时更新。
+  const frusGeo = new THREE.BufferGeometry();
+  frusGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(16 * 3), 3));
+  const frusMat = new THREE.LineBasicMaterial({
+    color: CAM_GIZMO_COLOR,
+    transparent: true,
+    opacity: 0.35,
+  });
+  const frustum = new THREE.LineSegments(frusGeo, frusMat);
+  frustum.name = '__camFrustum';
+  frustum.frustumCulled = false;
+  frustum.raycast = () => {}; // 辅助线不参与点选
+  g.add(frustum);
+  g.userData.frustum = frustum;
+
+  return g;
+}
+
+/** 更新拍摄范围辅助线:视锥远面 = LookAt 距离处的 FOV 取景面(16:9)。 */
+function updateCamGizmoFrustum(g: THREE.Group, slot: CameraSlot): void {
+  const frustum = g.userData.frustum as THREE.LineSegments | undefined;
+  if (!frustum) return;
+  _v0.set(...slot.position);
+  _v1.set(...slot.target);
+  const d = Math.max(_v0.distanceTo(_v1), 0.6);
+  const hh = Math.tan(THREE.MathUtils.degToRad(slot.fov / 2)) * d;
+  const hw = hh * (16 / 9);
+  const pos = frustum.geometry.getAttribute('position') as THREE.BufferAttribute;
+  // 四角(gizmo 本地空间,相机前方 -Z)
+  const corners: [number, number, number][] = [
+    [-hw, -hh, -d],
+    [hw, -hh, -d],
+    [hw, hh, -d],
+    [-hw, hh, -d],
+  ];
+  let i = 0;
+  const seg = (a: [number, number, number], b: [number, number, number]) => {
+    pos.setXYZ(i++, a[0], a[1], a[2]);
+    pos.setXYZ(i++, b[0], b[1], b[2]);
+  };
+  const O: [number, number, number] = [0, 0, 0];
+  seg(O, corners[0]);
+  seg(O, corners[1]);
+  seg(O, corners[2]);
+  seg(O, corners[3]);
+  seg(corners[0], corners[1]);
+  seg(corners[1], corners[2]);
+  seg(corners[2], corners[3]);
+  seg(corners[3], corners[0]);
+  pos.needsUpdate = true;
+}
+
+function disposeCamGizmo(g: THREE.Group): void {
+  g.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (mesh.geometry) mesh.geometry.dispose();
+    const mat = (mesh as { material?: THREE.Material }).material;
+    if (mat) mat.dispose();
+  });
+}
+
+/** Create/update/remove camera-model gizmos so they mirror s.cameraSlots. */
+function syncCamGizmos(s: StageState): void {
+  for (const slot of s.cameraSlots) {
+    let g = s.camGizmos.get(slot.id);
+    if (!g) {
+      g = buildCameraGizmo(slot.id);
+      s.camGizmoGroup.add(g);
+      s.camGizmos.set(slot.id, g);
+    }
+    g.position.set(...slot.position);
+    g.quaternion.set(...slot.quaternion);
+    g.scale.set(1, 1, 1); // 缩放对机位无意义,始终复位
+    updateCamGizmoFrustum(g, slot);
+  }
+  const ids = new Set(s.cameraSlots.map((x) => x.id));
+  for (const [id, g] of [...s.camGizmos]) {
+    if (!ids.has(id)) {
+      // 若正被 transform gizmo 挂着,先卸下再删,避免悬空引用。
+      if ((s.transform as unknown as { object?: THREE.Object3D }).object === g) {
+        s.transform.detach();
+        s.selectedCamSlot = null;
+      }
+      s.camGizmoGroup.remove(g);
+      disposeCamGizmo(g);
+      s.camGizmos.delete(id);
+    }
+  }
+}
+
+/**
+ * 机位模型的「缩放」= 推拉镜头距离(dolly):位置/朝向不动,只把 target
+ * 沿前方移到 基准距离×手柄倍率 处(视锥辅助线随之伸缩)。
+ * 模型 scale 读完立即复位 —— TransformControls 每次 pointermove 都从
+ * 拖拽起点重算 scale(非增量),复位不影响下一次事件,却避免了模型
+ * 忽大忽小、被 sync 复位互拽出现的抖动/翻滚。
+ */
+function applyCamGizmoScale(s: StageState, slotId: string, g: THREE.Object3D): void {
+  const slot = s.cameraSlots.find((x) => x.id === slotId);
+  const base = s.camDragBaseDist;
+  if (!slot || base == null) {
+    g.scale.set(1, 1, 1);
+    return;
+  }
+  // 等比口径:三轴均值;负向拖过手柄中心时取绝对值并设下限,不反向翻转。
+  const f = Math.max(
+    (Math.abs(g.scale.x) + Math.abs(g.scale.y) + Math.abs(g.scale.z)) / 3,
+    0.02,
+  );
+  g.scale.set(1, 1, 1);
+  const dist = THREE.MathUtils.clamp(base * f, 0.2, 500);
+  _v0.set(0, 0, -1).applyQuaternion(g.quaternion).multiplyScalar(dist);
+  slot.target = [g.position.x + _v0.x, g.position.y + _v0.y, g.position.z + _v0.z];
+  syncSlotRays(s);
+}
+
+/** 拖动摄像机模型后,把新位姿写回机位(target 沿新前方保持原距离)。 */
+function writeBackCamGizmo(s: StageState, slotId: string, g: THREE.Object3D): void {
+  const slot = s.cameraSlots.find((x) => x.id === slotId);
+  if (!slot) return;
+  _v0.set(...slot.position);
+  _v1.set(...slot.target);
+  const dist = Math.max(_v0.distanceTo(_v1), 0.1);
+  slot.position = [g.position.x, g.position.y, g.position.z];
+  slot.quaternion = [g.quaternion.x, g.quaternion.y, g.quaternion.z, g.quaternion.w];
+  _v0.set(0, 0, -1).applyQuaternion(g.quaternion).multiplyScalar(dist);
+  slot.target = [g.position.x + _v0.x, g.position.y + _v0.y, g.position.z + _v0.z];
+  syncSlotRays(s);
 }
 
 function disposeSlotRays(s: StageState): void {
@@ -3066,7 +3583,15 @@ function renderPreview(
   cam.far = s.camera.far;
   cam.updateProjectionMatrix();
 
+  // 摄像机模型 + 移动/旋转/缩放控制环都是编辑辅助物,不进机位缩略图
+  // (否则会怼在镜头前 / 满屏控制环)。
+  const gizVis = s.camGizmoGroup.visible;
+  const helperVis = s.transformHelper.visible;
+  s.camGizmoGroup.visible = false;
+  s.transformHelper.visible = false;
   renderStageToTarget(s, cam, s.thumbRT);
+  s.camGizmoGroup.visible = gizVis;
+  s.transformHelper.visible = helperVis;
 
   const buf = new Uint8Array(w * h * 4);
   s.renderer.readRenderTargetPixels(s.thumbRT, 0, 0, w, h, buf);
@@ -3082,19 +3607,167 @@ function renderPreview(
   ctx.putImageData(img, 0, 0);
 }
 
-/** Drive the live camera to the interpolated state at absolute time `t`. */
+/** 切换激活轨道:存回旧轨、换入新轨('free' 或机位 id)。 */
+function setActiveTrackState(s: StageState, id: string): void {
+  if (id === s.activeTrack) return;
+  s.tracksStore.set(s.activeTrack, s.keyframes);
+  s.keyframes = s.tracksStore.get(id) ?? [];
+  s.activeTrack = id;
+}
+
+/** 取某轨道的关键帧(激活轨在 s.keyframes,其余在 store)。 */
+function trackOf(s: StageState, id: string): CameraKeyframe[] {
+  return id === s.activeTrack ? s.keyframes : s.tracksStore.get(id) ?? [];
+}
+
+/** 按机位切换点把多机位编排「拍扁」成单相机关键帧流(导出成片镜头用):
+ *  每段复制该机位轨内的关键帧,段首/段尾补插值位姿;切点处用相邻帧
+ *  (1/30s)实现硬切 —— MMD 相机 VMD 的标准做法。无切换点 = 激活轨副本。 */
+function flattenCutsToKeys(s: StageState): CameraKeyframe[] {
+  const cuts = s.cuts.filter((c) => s.cameraSlots.some((x) => x.id === c.slotId));
+  if (cuts.length === 0) return s.keyframes.map((k) => ({ ...k }));
+  const CUT_EPS = 1 / 30;
+  // 成片末端:参与机位轨的末帧与最后切点的最大值。
+  let end = cuts[cuts.length - 1].t;
+  for (const c of cuts) {
+    const ks = trackOf(s, c.slotId);
+    if (ks.length) end = Math.max(end, ks[ks.length - 1].t);
+  }
+  const poseAt = (slotId: string, t: number) => {
+    const pose = sampleKeysPose(trackOf(s, slotId), t);
+    if (pose) return pose;
+    const slot = s.cameraSlots.find((x) => x.id === slotId)!;
+    return {
+      position: [...slot.position] as [number, number, number],
+      quaternion: [...slot.quaternion] as [number, number, number, number],
+      fov: slot.fov,
+    };
+  };
+  const out: CameraKeyframe[] = [];
+  const push = (
+    t: number,
+    pose: ReturnType<typeof poseAt>,
+    slotId: string,
+  ) => {
+    if (out.length && t - out[out.length - 1].t < 1e-4) return; // 防时间重叠
+    out.push({ id: newSlotId(), t, ...pose, slotId });
+  };
+  for (let i = 0; i < cuts.length; i++) {
+    const c = cuts[i];
+    const segEnd = i + 1 < cuts.length ? cuts[i + 1].t : end;
+    push(c.t, poseAt(c.slotId, c.t), c.slotId);
+    for (const k of trackOf(s, c.slotId)) {
+      if (k.t > c.t + 1e-4 && k.t < segEnd - 1e-4) {
+        push(
+          k.t,
+          {
+            position: [...k.position],
+            quaternion: [...k.quaternion],
+            fov: k.fov,
+          },
+          c.slotId,
+        );
+      }
+    }
+    // 段尾:切点前 1/30s 停在本段位姿(下一个切点帧紧跟 = 硬切)。
+    if (i + 1 < cuts.length) {
+      const tHold = Math.max(c.t, segEnd - CUT_EPS);
+      push(tHold, poseAt(c.slotId, tHold), c.slotId);
+    } else if (end > c.t + 1e-4) {
+      push(end, poseAt(c.slotId, end), c.slotId);
+    }
+  }
+  return out;
+}
+
+/** 保存工程用:自由轨 → recordKeyframes(向后兼容),机位轨 → cameraTracks,
+ *  切换点 → cameraCuts。已删除机位/空轨不入档。 */
+function serializeCameraTracks(
+  s: StageState,
+): Pick<DirectorSceneData, 'recordKeyframes' | 'cameraTracks' | 'cameraCuts'> {
+  const slotTracks: Record<string, CameraKeyframe[]> = {};
+  const collect = (id: string, ks: CameraKeyframe[]) => {
+    if (id === 'free' || ks.length === 0 || !s.cameraSlots.some((c) => c.id === id)) return;
+    slotTracks[id] = ks.map((k) => ({ ...k }));
+  };
+  for (const [id, ks] of s.tracksStore) collect(id, ks);
+  collect(s.activeTrack, s.keyframes);
+  return {
+    recordKeyframes: trackOf(s, 'free').map((k) => ({ ...k })),
+    ...(Object.keys(slotTracks).length ? { cameraTracks: slotTracks } : null),
+    ...(s.cuts.length ? { cameraCuts: s.cuts.map((c) => ({ ...c })) } : null),
+  };
+}
+
+/**
+ * Blender 式:关键帧 K 在"相机物体"上,所以时间轴移动时相机模型沿轨迹飞。
+ * 有镜头轨关键帧的机位 → 模型摆到 t 时刻的插值位姿(纯视觉,不写回机位
+ * 「原位」数据);无关键帧 → 停在原位。正被 transform 手柄拖动的机位跳过
+ * (避免与用户拖拽互抢)。视锥辅助线随插值 FOV 伸缩。
+ */
+function syncCamGizmosToTime(s: StageState, t: number): void {
+  const dragging = (s.transform as unknown as { dragging?: boolean }).dragging;
+  for (const slot of s.cameraSlots) {
+    const g = s.camGizmos.get(slot.id);
+    if (!g) continue;
+    if (dragging && s.selectedCamSlot === slot.id) continue;
+    const pose = sampleKeysPose(trackOf(s, slot.id), t);
+    if (pose) {
+      g.position.set(...pose.position);
+      g.quaternion.set(...pose.quaternion);
+      updateCamGizmoFrustum(g, { ...slot, fov: pose.fov });
+    } else {
+      g.position.set(...slot.position);
+      g.quaternion.set(...slot.quaternion);
+      updateCamGizmoFrustum(g, slot);
+    }
+  }
+}
+
+/**
+ * Drive the live camera to the interpolated state at absolute time `t`.
+ * 有机位切换点时 = 多机位成片模式(Blender Marker 绑定相机同款):
+ * 取 t 时刻的活动机位,走它自己的镜头轨;该轨无关键帧则停在机位静态位姿。
+ */
 function applyInterpolatedCamera(s: StageState, t: number): void {
-  const ks = s.keyframes;
-  if (ks.length === 0) return;
-  if (ks.length === 1 || t <= ks[0].t) {
-    setCameraFromKeyframe(s, ks[0]);
+  // 机位模型跟着时间轴动(播放 / 拖游标 / 导出采样统一走这里)。
+  syncCamGizmosToTime(s, t);
+  const cuts = s.cuts.filter((c) => s.cameraSlots.some((x) => x.id === c.slotId));
+  if (cuts.length > 0) {
+    let cut = cuts[0];
+    for (const c of cuts) {
+      if (c.t <= t) cut = c;
+      else break;
+    }
+    const ks = trackOf(s, cut.slotId);
+    if (ks.length > 0) {
+      applyKeysInterpolated(s, ks, t);
+      return;
+    }
+    const slot = s.cameraSlots.find((x) => x.id === cut.slotId)!;
+    s.camera.position.set(...slot.position);
+    s.camera.quaternion.set(...slot.quaternion);
+    s.camera.fov = slot.fov;
+    s.camera.updateProjectionMatrix();
     return;
   }
+  applyKeysInterpolated(s, s.keyframes, t);
+}
+
+/** 纯采样:一条轨道在 t 时刻的插值位姿(smoothstep 缓入缓出,端点钳制)。 */
+function sampleKeysPose(
+  ks: readonly CameraKeyframe[],
+  t: number,
+): { position: [number, number, number]; quaternion: [number, number, number, number]; fov: number } | null {
+  if (ks.length === 0) return null;
+  const pick = (k: CameraKeyframe) => ({
+    position: [...k.position] as [number, number, number],
+    quaternion: [...k.quaternion] as [number, number, number, number],
+    fov: k.fov,
+  });
+  if (ks.length === 1 || t <= ks[0].t) return pick(ks[0]);
   const last = ks[ks.length - 1];
-  if (t >= last.t) {
-    setCameraFromKeyframe(s, last);
-    return;
-  }
+  if (t >= last.t) return pick(last);
   let i = 0;
   while (i < ks.length - 1 && ks[i + 1].t <= t) i++;
   const a = ks[i];
@@ -3107,9 +3780,20 @@ function applyInterpolatedCamera(s: StageState, t: number): void {
   _q0.set(...a.quaternion);
   _q1.set(...b.quaternion);
   _q0.slerp(_q1, u);
-  s.camera.position.copy(_v0);
-  s.camera.quaternion.copy(_q0);
-  s.camera.fov = a.fov + (b.fov - a.fov) * u;
+  return {
+    position: [_v0.x, _v0.y, _v0.z],
+    quaternion: [_q0.x, _q0.y, _q0.z, _q0.w],
+    fov: a.fov + (b.fov - a.fov) * u,
+  };
+}
+
+/** Interpolate the live camera along one keyframe track at absolute time `t`. */
+function applyKeysInterpolated(s: StageState, ks: readonly CameraKeyframe[], t: number): void {
+  const pose = sampleKeysPose(ks, t);
+  if (!pose) return;
+  s.camera.position.set(...pose.position);
+  s.camera.quaternion.set(...pose.quaternion);
+  s.camera.fov = pose.fov;
   s.camera.updateProjectionMatrix();
 }
 
@@ -3142,8 +3826,24 @@ async function recordKeyframeAnimation(
   if (typeof canvas.captureStream !== 'function') throw new Error('canvas.captureStream 不可用');
 
   const ks = s.keyframes;
-  const tStart = ks[0].t;
-  const tEnd = ks[ks.length - 1].t;
+  // 选择性导出:rangeSec 指定入/出点(时间轴坐标);未指定 = 关键帧全程。
+  // 有机位切换点 = 多机位成片:范围覆盖所有轨道末帧与最后切换点。
+  let tStart = ks.length ? ks[0].t : 0;
+  let tEnd = ks.length ? ks[ks.length - 1].t : 0;
+  if (s.cuts.length > 0) {
+    tStart = Math.min(tStart, s.cuts[0].t);
+    tEnd = Math.max(tEnd, s.cuts[s.cuts.length - 1].t);
+    for (const arr of s.tracksStore.values()) {
+      if (arr.length) tEnd = Math.max(tEnd, arr[arr.length - 1].t);
+    }
+  }
+  if (opts.rangeSec) {
+    const [rIn, rOut] = opts.rangeSec;
+    if (Number.isFinite(rIn) && Number.isFinite(rOut) && rOut > rIn) {
+      tStart = rIn;
+      tEnd = rOut;
+    }
+  }
   const spanSec = Math.max(opts.durationSec > 0 ? opts.durationSec : tEnd - tStart, 0.2);
 
   const liveSize = new THREE.Vector2();
@@ -3175,6 +3875,11 @@ async function recordKeyframeAnimation(
   s.camera.aspect = rw / rh;
   s.camera.updateProjectionMatrix();
   s.recordPlaying = true;
+  // 摄像机模型 + 移动/旋转/缩放控制环是编辑辅助物,不进导出视频。
+  const prevGizVis = s.camGizmoGroup.visible;
+  const prevHelperVis = s.transformHelper.visible;
+  s.camGizmoGroup.visible = false;
+  s.transformHelper.visible = false;
 
   // MediaRecorder 录「输出画布」:每帧把 renderer 画布的居中裁剪区 blit 过去
   // (canvas.captureStream 无法直接裁剪)。全屏时 rw==width/rh==height,等价直拷。
@@ -3184,6 +3889,8 @@ async function recordKeyframeAnimation(
   const ctx = out.getContext('2d');
   if (!ctx) {
     s.recordPlaying = false;
+    s.camGizmoGroup.visible = prevGizVis;
+    s.transformHelper.visible = prevHelperVis;
     s.renderer.setPixelRatio(prevPR);
     s.renderer.setSize(liveSize.x, liveSize.y, false);
     s.camera.aspect = liveSize.x / liveSize.y;
@@ -3203,6 +3910,8 @@ async function recordKeyframeAnimation(
 
   const restore = () => {
     s.recordPlaying = false;
+    s.camGizmoGroup.visible = prevGizVis;
+    s.transformHelper.visible = prevHelperVis;
     s.renderer.setPixelRatio(prevPR);
     s.renderer.setSize(liveSize.x, liveSize.y, false);
     s.camera.aspect = liveSize.x / liveSize.y;
@@ -4152,12 +4861,20 @@ function renderAtResolution(
   beforeRender: () => void,
   height?: number,
 ): string {
+  // 摄像机模型 + 移动/旋转/缩放控制环是编辑辅助物,不进截图。
+  const prevGizVis = s.camGizmoGroup.visible;
+  const prevHelperVis = s.transformHelper.visible;
+  s.camGizmoGroup.visible = false;
+  s.transformHelper.visible = false;
   const size = new THREE.Vector2();
   s.renderer.getSize(size);
   if (!height || height <= 0) {
     beforeRender();
     renderStage(s, s.camera);
-    return s.renderer.domElement.toDataURL('image/png');
+    const dataUrl = s.renderer.domElement.toDataURL('image/png');
+    s.camGizmoGroup.visible = prevGizVis;
+    s.transformHelper.visible = prevHelperVis;
+    return dataUrl;
   }
   const aspect = size.x / size.y;
   const w = Math.round(height * aspect);
@@ -4168,6 +4885,8 @@ function renderAtResolution(
   renderStage(s, s.camera);
   const url = s.renderer.domElement.toDataURL('image/png');
   // restore live viewport
+  s.camGizmoGroup.visible = prevGizVis;
+  s.transformHelper.visible = prevHelperVis;
   s.renderer.setPixelRatio(prevPR);
   s.renderer.setSize(size.x, size.y, false);
   renderStage(s, s.camera);
@@ -4202,6 +4921,11 @@ function renderAspectCrop(s: StageState, ratio: number, short: number): string {
 
   const prevPR = s.renderer.getPixelRatio();
   const prevAspect = s.camera.aspect;
+  // 摄像机模型 + 移动/旋转/缩放控制环是编辑辅助物,不进截图。
+  const prevGizVis = s.camGizmoGroup.visible;
+  const prevHelperVis = s.transformHelper.visible;
+  s.camGizmoGroup.visible = false;
+  s.transformHelper.visible = false;
   s.renderer.setPixelRatio(1);
   s.renderer.setSize(rw, rh, false);
   s.camera.aspect = rw / rh; // == av → framing unchanged vs live view
@@ -4221,6 +4945,8 @@ function renderAspectCrop(s: StageState, ratio: number, short: number): string {
   }
 
   // restore live viewport + framing
+  s.camGizmoGroup.visible = prevGizVis;
+  s.transformHelper.visible = prevHelperVis;
   s.renderer.setPixelRatio(prevPR);
   s.renderer.setSize(size.x, size.y, false);
   s.camera.aspect = prevAspect;

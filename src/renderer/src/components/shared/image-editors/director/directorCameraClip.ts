@@ -29,6 +29,9 @@ export interface CameraKeyframe {
   position: [number, number, number];
   quaternion: [number, number, number, number];
   fov: number;
+  /** 来源机位 id(机位拖入时间轴 / 镜头装入机位时打标)——机位轨道展示用;
+   *  导出 VMD/glb 时自然丢弃,JSON 往返保留亦无害。 */
+  slotId?: string;
 }
 
 /** 导出 .json 的包裹格式(可再导入本软件;也兼容裸 AnimationClip JSON)。 */
@@ -266,6 +269,44 @@ export function normalizeCameraKeys(
     id: newCameraKeyId(),
     t: startAt + (k.t - t0),
   }));
+}
+
+/** 锚点位姿:镜头文件装入时的「镜头起始位置约束」基准。 */
+export interface CameraAnchorPose {
+  position: [number, number, number];
+  quaternion: [number, number, number, number];
+}
+
+/**
+ * 把镜头关键帧重定位到锚点(Blender「相机约束」同思路):
+ * 首帧位姿刚体对齐到 anchor(位置 + 朝向),其余帧保持与首帧的相对运动。
+ * 即:导入的镜头文件不再用文件里的绝对世界坐标,而是从用户摆好的
+ * 摄像机起始位置开始播——p'ᵢ = p_a + q_d·(pᵢ − p₀),q'ᵢ = q_d·qᵢ,
+ * 其中 q_d = q_a·q₀⁻¹。FOV 原样保留。keys 为空返回空数组;不改入参。
+ */
+export function retargetCameraKeysToPose(
+  keys: readonly CameraKeyframe[],
+  anchor: CameraAnchorPose,
+): CameraKeyframe[] {
+  if (keys.length === 0) return [];
+  const sorted = [...keys].sort((a, b) => a.t - b.t);
+  const k0 = sorted[0];
+  const q0 = new THREE.Quaternion(...k0.quaternion).normalize();
+  const qa = new THREE.Quaternion(...anchor.quaternion).normalize();
+  const qd = qa.clone().multiply(q0.clone().invert());
+  const p0 = new THREE.Vector3(...k0.position);
+  const pa = new THREE.Vector3(...anchor.position);
+  const out = sorted.map((k) => {
+    const rel = new THREE.Vector3(...k.position).sub(p0).applyQuaternion(qd).add(pa);
+    const q = qd.clone().multiply(new THREE.Quaternion(...k.quaternion));
+    return {
+      ...k,
+      position: [rel.x, rel.y, rel.z] as [number, number, number],
+      quaternion: [q.x, q.y, q.z, q.w] as [number, number, number, number],
+    };
+  });
+  hemisphereContinuity(out);
+  return out;
 }
 
 // ── MMD .vmd 相机(MMD / 恋活 Koikatsu / BowlRoll 社区通用格式) ──────
