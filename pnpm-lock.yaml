@@ -74,6 +74,9 @@ importers:
       '@modelcontextprotocol/server':
         specifier: ^2.0.0-alpha.2
         version: 2.0.0-alpha.2(@cfworker/json-schema@4.1.1)
+      '@moeru/three-mmd':
+        specifier: 0.1.0-beta.3
+        version: 0.1.0-beta.3(@types/three@0.184.1)(three@0.184.0)
       '@monaco-editor/react':
         specifier: ^4.7.0
         version: 4.7.0(monaco-editor@0.55.1)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
@@ -1236,6 +1239,12 @@ packages:
     peerDependenciesMeta:
       '@cfworker/json-schema':
         optional: true
+
+  '@moeru/three-mmd@0.1.0-beta.3':
+    resolution: {integrity: sha512-31rmU0YnUdfSDyPTsnk8OFjo/zAkS2BfaOyu4y0F0bt7Kz4IKrWkotngv+DcxECexFWSsyOqr0Fcmyubz9VvYA==}
+    peerDependencies:
+      '@types/three': ^0.180.0
+      three: ^0.180.0
 
   '@monaco-editor/loader@1.7.0':
     resolution: {integrity: sha512-gIwR1HrJrrx+vfyOhYmCZ0/JcWqG5kbfG7+d3f/C1LXk2EvzAbHSg3MQ5lO2sMlo9izoAZ04shohfKLVT6crVA==}
@@ -7360,6 +7369,11 @@ snapshots:
       zod: 4.4.3
     optionalDependencies:
       '@cfworker/json-schema': 4.1.1
+
+  '@moeru/three-mmd@0.1.0-beta.3(@types/three@0.184.1)(three@0.184.0)':
+    dependencies:
+      '@types/three': 0.184.1
+      three: 0.184.0
 
   '@monaco-editor/loader@1.7.0':
     dependencies:

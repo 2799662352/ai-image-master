@@ -116,6 +116,8 @@ export interface SelectionInfo {
 export interface AddModelOpts {
   modelId?: string;
   isFbx?: boolean;
+  /** 文件扩展名(pmx/pmd/zip 走 MMD 加载器;objectURL 无后缀,必须显式给)。 */
+  ext?: string;
   /** place at this world position; defaults to origin. */
   position?: [number, number, number];
 }
@@ -139,6 +141,8 @@ export interface DirectorModelMeta {
   /** load URL for model/advanced (CDN or, for imports, resolved from modelId). */
   url?: string;
   isFbx?: boolean;
+  /** 文件扩展名(MMD 的 pmx/pmd/zip 还原工程时需要走 MMD 加载器)。 */
+  ext?: string;
   /** catalog id, `adv-<color>` for advanced, or an IndexedDB asset id for imports. */
   modelId?: string;
   /** crowd layout opts (普通假人/路人) when source==='crowd'. */
@@ -300,7 +304,8 @@ export interface DirectorStageHandle {
   /**
    * 把动画剪辑(目录/我的动画)采样成 K 动画姿势关键帧(拖动画到 K 时间轴):
    * 选中高级假人上临时跑 mixer 逐时刻采样骨骼,采完恢复原姿势,不改现场。
-   * 采样密度 4Hz,上限 `maxKeys`(默认 20)—— 帧数可编辑不失控。
+   * 采样密度 4Hz,上限 `maxKeys`(默认 600 ≈ 150s;上限过低会把长剪辑的
+   * 快动作抹平成慢漂移)。MMD 采 FK 原始值,IK/Grant 由回放时逐帧活算。
    */
   sampleAnimToPoseKeys(url: string, ext?: string, maxKeys?: number): Promise<PoseKeyframe[]>;
   /** Single screenshot → PNG data URL. `height` (px) overrides output resolution. */
@@ -775,7 +780,10 @@ function DirectorStageInner(
     // 每个假人各自持有 mixer:给 B 播不影响 A(多假人同时播)。
     const prev = st.anims.get(target); // 同目标换剪辑:复用快照与 mixer
     const poseSnap = prev ? prev.poseSnap : capturePose(target);
-    const mixer = prev ? prev.mixer : new THREE.AnimationMixer(target);
+    // MMD:VMD 剪辑的轨道名是 `.bones[骨名]`,PropertyBinding 只能从带
+    // skeleton 的 SkinnedMesh 根解析 → mixer 根用 mmdMesh(骨名轨道同样可解)。
+    const mixerRoot = (target.userData?.mmdMesh as THREE.SkinnedMesh | undefined) ?? target;
+    const mixer = prev ? prev.mixer : new THREE.AnimationMixer(mixerRoot);
     mixer.stopAllAction();
     const action = mixer.clipAction(retargetClipTracks(clip, target));
     action.reset();
@@ -1031,15 +1039,19 @@ function DirectorStageInner(
       async addModel(url, opts) {
         const s = stateRef.current;
         if (!s) return;
-        const obj = await loadModel(url, !!opts?.isFbx);
+        const obj = await loadModel(url, !!opts?.isFbx, opts?.ext);
         if (!stateRef.current) return; // unmounted mid-load
         // Snap rigs to their bind pose first so measuring/grounding and the
         // captured rest baseline are consistent with the skinning bind matrices.
-        resetSkeletonsToBind(obj);
+        // MMD 例外:PMX 的绑定姿势由加载器建立,skeleton.pose() 会破坏
+        // Grant/IK 初始状态,跳过。
+        if (!obj.userData.mmdMesh) resetSkeletonsToBind(obj);
         // Normalize: center on ground, scale to a sensible height.
         normalizeModel(obj);
         // Kill back-face-culled "invisible walls" + grazing-angle texture shimmer.
-        hardenImportedMaterials(obj, s.renderer);
+        // MMD 例外:MMDToon 材质的单双面由 PMX 材质标志决定,强制 DoubleSide
+        // 会破坏头发/脸的剔除技巧。
+        if (!obj.userData.mmdMesh) hardenImportedMaterials(obj, s.renderer);
         if (opts?.position) obj.position.set(...opts.position);
         obj.userData.modelId = opts?.modelId;
         // Tag how this object was created so 「保存工程」 can recreate it later.
@@ -1048,6 +1060,7 @@ function DirectorStageInner(
           source: advanced ? 'advanced' : 'model',
           url,
           isFbx: !!opts?.isFbx,
+          ext: opts?.ext,
           modelId: opts?.modelId,
         } satisfies DirectorModelMeta;
         storeRestPose(obj);
@@ -1333,7 +1346,7 @@ function DirectorStageInner(
         const s = stateRef.current;
         const target = s?.selected;
         if (!s || !target || !target.userData?.isFbxBot) return;
-        const clip = await loadAnimClip(url, ext);
+        const clip = await loadClipForTarget(target, url, ext);
         if (stateRef.current?.selected !== target) return; // 加载期间选择已变,丢弃
         startClipOnTarget(target, clip, url, name, { ext, assetId });
       },
@@ -1430,13 +1443,16 @@ function DirectorStageInner(
         })) as ArrayBuffer;
         return new Blob([buf], { type: 'model/gltf-binary' });
       },
-      async sampleAnimToPoseKeys(url, ext, maxKeys = 20) {
+      // maxKeys 上限 600(不是 20!):采样率固定 4 帧/秒,长剪辑(MMD 舞蹈动辄
+      // 90s+)被压到 20 帧会把所有快动作抹平成慢漂移 —— 用户直观感受是
+      // 「拖到时间轴后动画变慢了」。600 帧覆盖 150s@4Hz,再长才开始降密。
+      async sampleAnimToPoseKeys(url, ext, maxKeys = 600) {
         const s = stateRef.current;
         const target = s?.selected;
         if (!s || !target || !target.userData?.isFbxBot) {
           throw new Error('请先选中一个高级假人');
         }
-        const clip = retargetClipTracks(await loadAnimClip(url, ext), target);
+        const clip = retargetClipTracks(await loadClipForTarget(target, url, ext), target);
         // 采样不留痕:先停在播动画(其停止逻辑自带姿势恢复),再快照当前姿势,
         // 采完 restorePose 原样放回。
         if (s.anims.has(target)) stopAnimFor(target);
@@ -1444,15 +1460,19 @@ function DirectorStageInner(
         const dur = Math.max(0.1, clip.duration);
         const n = Math.min(Math.max(2, maxKeys), Math.max(2, Math.ceil(dur * 4) + 1));
         // 位移数据在 position 轨上(Mixamo 挂 Hips.position;行走/跳跃全靠它)。
-        // 只对剪辑里真的有 position 轨的骨骼采位置,别的骨骼不用存。
+        // VMD 轨道名形如 `.bones[センター].position`,剥壳取真实骨名。
         const posTrackBones = new Set<string>();
         for (const tr of clip.tracks) {
           if (tr.name.endsWith('.position')) {
-            const node = tr.name.slice(0, -'.position'.length);
+            let node = tr.name.slice(0, -'.position'.length);
+            const m = /^\.bones\[(.+)\]$/.exec(node);
+            if (m) node = m[1];
             if (node) posTrackBones.add(node);
           }
         }
-        const mixer = new THREE.AnimationMixer(target);
+        const mixerRoot =
+          (target.userData?.mmdMesh as THREE.SkinnedMesh | undefined) ?? target;
+        const mixer = new THREE.AnimationMixer(mixerRoot);
         const action = mixer.clipAction(clip);
         action.setLoop(THREE.LoopOnce, 1);
         action.clampWhenFinished = true;
@@ -1462,6 +1482,10 @@ function DirectorStageInner(
           const t = (dur * i) / (n - 1);
           // 末帧收 epsilon:LoopOnce 在 t == duration 处 action 已 finished。
           mixer.setTime(Math.min(t, dur - 1e-4));
+          // MMD 刻意**不**在采样时跑 IK/Grant(采 FK 原始值):回放走与直接播
+          // VMD 完全相同的通路 —— mixer 写 FK + RAF 每帧活算 IK/Grant。若在
+          // 这里烘焙求解结果,回放时求解器会在烘焙值上再算一遍(Grant 叠乘
+          // 双倍旋转、IK 二次求解),正是脚踝扭曲/部件穿模的来源。
           const bones: Record<string, [number, number, number, number]> = {};
           const bonePos: Record<string, [number, number, number]> = {};
           for (const b of collectSkeletonBones(target)) {
@@ -1480,7 +1504,7 @@ function DirectorStageInner(
           });
         }
         mixer.stopAllAction();
-        mixer.uncacheRoot(target);
+        mixer.uncacheRoot(mixerRoot);
         restorePose(snap);
         updateSkeletons(target);
         return keys;
@@ -1886,9 +1910,9 @@ function DirectorStageInner(
                 if (resolved) url = resolved;
               }
               if (!url) continue;
-              obj = await loadModel(url, !!m.isFbx);
+              obj = await loadModel(url, !!m.isFbx, m.ext);
               if (!stateRef.current) return; // unmounted mid-load
-              resetSkeletonsToBind(obj);
+              if (!obj.userData.mmdMesh) resetSkeletonsToBind(obj);
             }
             if (!obj) continue;
             obj.userData.modelId = m.modelId;
@@ -1897,6 +1921,7 @@ function DirectorStageInner(
               source: m.source,
               url: m.url,
               isFbx: m.isFbx,
+              ext: m.ext,
               modelId: m.modelId,
               crowd: m.crowd,
             } satisfies DirectorModelMeta;
@@ -1929,7 +1954,7 @@ function DirectorStageInner(
               if (resolved) url = resolved;
             }
             if (!url) continue;
-            const clip = await loadAnimClip(url, anim.ext);
+            const clip = await loadClipForTarget(obj, url, anim.ext);
             if (!stateRef.current) return; // unmounted mid-load
             startClipOnTarget(obj, clip, url, anim.name, {
               ext: anim.ext,
@@ -2561,6 +2586,14 @@ function DirectorStageInner(
       if (!state.recordPlaying) orbit.update();
       const dt = state.clock.getDelta();
       for (const a of state.anims.values()) a.mixer.update(dt);
+      // MMD 模型:mixer/手工摆姿写完 FK 骨后,足ＩＫ链 + Grant(付与)每帧求解。
+      // IK 不在播动画时也跑(MMD 原生摆姿 = 拖 IK 骨,腿脚跟着走);Grant 是
+      // 叠乘、非幂等,只在 mixer 播放中跑(详见 directorMmd.attachMmdRuntime)。
+      for (const c of state.modelsGroup.children) {
+        (c.userData?.mmdUpdate as ((playing?: boolean) => void) | undefined)?.(
+          state.anims.has(c),
+        );
+      }
       // 播放条回传「选中对象」的动画:身份/暂停态变化(含换选)立即发,
       // 播放中进度节流到 ~10Hz;seek 由入口即时回传。
       const sel = state.selected ? state.anims.get(state.selected) : undefined;
@@ -2689,6 +2722,27 @@ function loadAnimClip(url: string, ext?: string): Promise<THREE.AnimationClip> {
     animClipCache.set(url, p);
   }
   return p;
+}
+
+/**
+ * 目标相关的剪辑加载:动作 VMD 必须按目标 MMD 网格的骨骼编译(日文骨名 +
+ * `.bones[…]` 轨道),不能走按 URL 缓存的 loadAnimClip;其余格式原路。
+ */
+async function loadClipForTarget(
+  target: THREE.Object3D,
+  url: string,
+  ext?: string,
+): Promise<THREE.AnimationClip> {
+  const kind = (ext ?? extFromUrl(url) ?? '').toLowerCase();
+  if (kind === 'vmd') {
+    const mesh = target.userData?.mmdMesh as THREE.SkinnedMesh | undefined;
+    if (!mesh) {
+      throw new Error('动作 VMD 只能应用到 MMD 模型(请先导入 PMX/PMD/zip 模型并选中)');
+    }
+    const m = await import('./directorMmd');
+    return m.loadVmdMotionClip(url, mesh);
+  }
+  return loadAnimClip(url, ext);
 }
 
 /** 从 URL 路径末尾提取扩展名(objectURL / 无点路径返回 null)。 */
@@ -3205,7 +3259,14 @@ async function recordKeyframeAnimation(
   });
 }
 
-function loadModel(url: string, isFbx: boolean): Promise<THREE.Object3D> {
+function loadModel(url: string, isFbx: boolean, ext?: string): Promise<THREE.Object3D> {
+  const kind = (ext ?? extFromUrl(url) ?? '').toLowerCase();
+  if (kind === 'pmx' || kind === 'pmd' || kind === 'zip') {
+    // MMD 走独立模块(@moeru/three-mmd + jszip 动态加载,不进主包)。
+    return import('./directorMmd').then((m) =>
+      m.loadMmdModel(url, kind).then((r) => r.object),
+    );
+  }
   return new Promise((resolve, reject) => {
     if (isFbx || /\.fbx(\?|$)/i.test(url)) {
       fbxLoader.load(url, (obj) => resolve(obj), undefined, reject);

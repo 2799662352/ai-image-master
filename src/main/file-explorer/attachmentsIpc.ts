@@ -60,6 +60,12 @@ const ALLOWED_MIME_BY_EXT: Record<string, string> = {
   gltf: 'model/gltf+json',
   fbx: 'application/octet-stream',
   json: 'application/json',
+  // MMD 生态:pmx/pmd 模型、vmd 动作/镜头、zip(pmx+贴图打包)。没有这几项
+  // 时 agent 导本地 MMD 文件会被拒,只能自开 HTTP 服务绕行(实测踩过)。
+  vmd: 'application/octet-stream',
+  pmx: 'application/octet-stream',
+  pmd: 'application/octet-stream',
+  zip: 'application/zip',
 }
 
 function mimeFromExt(p: string): string | undefined {

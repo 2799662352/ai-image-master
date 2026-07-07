@@ -1,6 +1,6 @@
 {
   "name": "catimation-cyberpunk-master",
-  "version": "4.3.80",
+  "version": "4.3.81",
   "description": "CATIMATION-Cyberpunk Master - AI图片生成桌面应用",
   "main": "dist/main/index.js",
   "author": "CATIMATION",
@@ -104,6 +104,7 @@
     "@modelcontextprotocol/express": "^2.0.0-alpha.2",
     "@modelcontextprotocol/node": "^2.0.0-alpha.2",
     "@modelcontextprotocol/server": "^2.0.0-alpha.2",
+    "@moeru/three-mmd": "0.1.0-beta.3",
     "@monaco-editor/react": "^4.7.0",
     "@parcel/watcher": "^2.5.6",
     "@prisma/adapter-pg": "^7.8.0",

@@ -1786,10 +1786,14 @@ through 6 tools. Modeled on the Unreal Engine 5.8 MCP discipline.
 → optionally \`director_record action=capture_video\` to hand the user a video.
 
 **Import the user's own files (导入本地模型/动画)**: \`add_model\` and
-\`play_animation\` both accept a LOCAL file path (glb/gltf/fbx, anim also json)
-— e.g. a model the user downloaded, or the .glb you just exported via
-\`export_pose_clip_glb\`. Pass the OS path directly as \`url\`; the bridge reads
-the bytes and loads them. No manual upload step needed.
+\`play_animation\` both accept a LOCAL file path (model: glb/gltf/fbx/pmx/pmd/
+zip; anim: fbx/glb/json/vmd) — e.g. a model the user downloaded, or the .glb
+you just exported via \`export_pose_clip_glb\`. Pass the OS path directly as
+\`url\`; the bridge reads the bytes and loads them. No manual upload step, and
+NEVER spin up a local HTTP server to feed files.
+MMD 专项:pmx/pmd 模型请连同贴图打成 zip 传 \`add_model\`;.vmd 动作只能播
+在 MMD 模型上(先 add_model 导入 PMX 并 \`select\`,再 \`play_animation\` 传
+.vmd 路径);MMD 镜头 .vmd 走 \`director_record action=import_camera_clip\`。
 
 **Author a custom animation (K 动画)**: select mannequin → pose frame 1 →
 \`capture_pose_keyframe\` (returns {bones, rootPos}) → store it with t=0 →
@@ -1802,7 +1806,9 @@ for clean loops.
 (orbit via set_transform on nothing = use \`apply_camera_slot\` or
 \`director_exec\` camera math) → \`add_keyframe {t:0}\` → move camera →
 \`add_keyframe {t:4}\` … → \`play\` to preview → \`export {durationSec,
-resolution, fps}\` → returns videoPath.
+resolution, fps}\` → returns videoPath. To load a ready-made camera file
+(local or https json/vmd/glb/gltf/fbx, e.g. an MMD camera .vmd) use
+\`import_camera_clip {url, mode?}\` instead of re-keyframing by hand.
 
 **Save / restore**: \`director_snapshot mode=full\` returns the complete scene
 doc — keep it to restore later via \`director_scene action=restore_scene

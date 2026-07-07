@@ -341,8 +341,10 @@ export default function DirectorEditor({
     try {
       // assetId 随动画进场景:保存工程时以资产 id 记录,跨会话可还原。
       await st.playAnimation(url, a.name, a.ext, a.id);
-    } catch {
-      alert(`动画加载失败:${a.name}(文件无法解析,确认含动画剪辑)`);
+    } catch (e) {
+      alert(
+        `动画加载失败:${a.name}\n${e instanceof Error ? e.message : '文件无法解析,确认含动画剪辑'}`,
+      );
     } finally {
       setAnimBusy(null);
     }
@@ -387,9 +389,15 @@ export default function DirectorEditor({
 
   /** 统一模型加载入口:目录模型直接用 CDN/桶 URL;本地导入的用 objectURL 并在加载后回收. */
   const loadModel = useCallback(
-    async (url: string, opts: { isFbx?: boolean; modelId?: string; revoke?: boolean }) => {
+    async (url: string, opts: { isFbx?: boolean; modelId?: string; revoke?: boolean; ext?: string }) => {
       try {
-        await stageRef.current?.addModel(url, { isFbx: opts.isFbx, modelId: opts.modelId });
+        await stageRef.current?.addModel(url, {
+          isFbx: opts.isFbx,
+          modelId: opts.modelId,
+          ext: opts.ext,
+        });
+      } catch (e) {
+        alert(`模型加载失败:${e instanceof Error ? e.message : '文件无法解析'}`);
       } finally {
         if (opts.revoke) URL.revokeObjectURL(url);
       }
@@ -1299,7 +1307,7 @@ export default function DirectorEditor({
               <div style={styles.hint}>动画目录加载中…</div>
             ) : (
               <>
-                {/* 我的动画:导入(fbx/glb/gltf/json)+ K 动画入口 */}
+                {/* 我的动画:导入(fbx/glb/gltf/json/vmd)+ K 动画入口 */}
                 <div style={styles.poseToolRow}>
                   <button
                     style={styles.toolBtn}
@@ -2059,7 +2067,10 @@ function ModelLibrary({
   catalog: ReturnType<typeof getCatalog>;
   onPick: (m: DirectorModel) => void;
   /** 加载任意 URL(本地导入用 objectURL + revoke). */
-  onLoad: (url: string, opts: { isFbx?: boolean; modelId?: string; revoke?: boolean }) => void;
+  onLoad: (
+    url: string,
+    opts: { isFbx?: boolean; modelId?: string; revoke?: boolean; ext?: string },
+  ) => void;
   onClose: () => void;
 }) {
   const [cat, setCat] = useState(catalog[0]?.key ?? '');
@@ -2085,9 +2096,17 @@ function ModelLibrary({
           const ext = extOf(file.name);
           if (!isModelExt(ext)) {
             alert(
-              `不支持的模型格式:.${ext}\n支持:${MODEL_EXTS.map((e) => '.' + e).join(' / ')}`,
+              `不支持的模型格式:.${ext}\n支持:${MODEL_EXTS.map((e) => '.' + e).join(' / ')}\n(MMD 模型请把 pmx 和贴图一起打成 zip 导入)`,
             );
             continue;
+          }
+          if (ext === 'zip') {
+            // zip 只用于 MMD:必须内含 pmx/pmd,否则拒收(避免误导入无关压缩包)。
+            const { zipContainsMmd } = await import('./directorMmd');
+            if (!(await zipContainsMmd(file))) {
+              alert(`${file.name} 里没有找到 .pmx / .pmd 模型文件\nzip 导入仅支持「MMD 模型+贴图」打包`);
+              continue;
+            }
           }
           await putAsset({
             kind: 'model',
@@ -2111,7 +2130,7 @@ function ModelLibrary({
     async (a: DirectorAsset) => {
       const r = await openAssetUrl(a.id);
       if (!r) return;
-      onLoad(r.url, { isFbx: r.asset.isFbx, modelId: a.id, revoke: true });
+      onLoad(r.url, { isFbx: r.asset.isFbx, modelId: a.id, revoke: true, ext: r.asset.ext });
     },
     [onLoad],
   );
@@ -2136,7 +2155,7 @@ function ModelLibrary({
       <input
         ref={fileRef}
         type="file"
-        accept=".glb,.gltf,.fbx"
+        accept={MODEL_EXTS.map((e) => '.' + e).join(',')}
         multiple
         style={{ display: 'none' }}
         onChange={(e) => onFiles(e.target.files)}
@@ -2237,6 +2256,11 @@ function ImportHints({ kind }: { kind: 'model' | 'panorama' }) {
           <li>
             支持格式:<b>.glb</b>(推荐,单文件自带贴图)、<b>.gltf</b>(需内嵌 buffer/贴图,
             多文件分离的 .gltf 暂不支持)、<b>.fbx</b>。
+          </li>
+          <li>
+            MMD 模型:<b>.zip</b>(推荐,把 pmx/pmd 和贴图文件夹一起打包)、裸 <b>.pmx/.pmd</b>
+            (贴图取不到,只有素模)。MMD 模型可直接播放 <b>.vmd 动作</b>(舞蹈等,
+            在「动画 → 导入动画」里导入),IK/付与骨每帧自动求解。
           </li>
           <li>
             体积:建议 ≤ {formatBytes(MODEL_SIZE_HINT)};过大将影响加载与帧率。导入后会自动

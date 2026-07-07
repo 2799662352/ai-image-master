@@ -104,13 +104,15 @@ async function normalizePoseKeys(value: unknown): Promise<PoseKeyframe[]> {
  * 刚落盘的 .glb 直接喂回 play_animation。
  */
 async function resolveAssetUrl(rawUrl: string): Promise<{ url: string; ext?: string }> {
-  const extMatch = /\.(glb|gltf|fbx|json)(?:[?#]|$)/i.exec(rawUrl);
+  // vmd(MMD 动作/镜头)、pmx/pmd/zip(MMD 模型)与 glb/gltf/fbx/json 同级支持;
+  // 本地路径经 IPC 转 blob: 后没有扩展名,这里嗅探到的 ext 必须随 URL 一起传下去。
+  const extMatch = /\.(glb|gltf|fbx|json|vmd|pmx|pmd|zip)(?:[?#]|$)/i.exec(rawUrl);
   const ext = extMatch ? extMatch[1].toLowerCase() : undefined;
   const { resolveMediaSrcOnce } = await import('../../media/useResolvedMediaSrc');
   const resolved = await resolveMediaSrcOnce(rawUrl, 'auto', { fullFidelity: true });
   if (!resolved) {
     throw new Error(
-      `无法读取模型/动画文件:${rawUrl}(文件不存在,或扩展名不受支持 —— 仅支持 glb/gltf/fbx/json)。`,
+      `无法读取模型/动画文件:${rawUrl}(文件不存在,或扩展名不受支持 —— 支持 glb/gltf/fbx/json/vmd/pmx/pmd/zip)。`,
     );
   }
   return { url: resolved, ext };
@@ -352,6 +354,25 @@ class DirectorBridge {
       case 'clear':
         h.recordClearKeyframes();
         return { ok: true };
+      case 'import_camera_clip': {
+        // 从镜头文件装关键帧:json(director-camera@1)/ vmd(MMD 镜头)/ glb/gltf/fbx。
+        // 本地路径经 resolveAssetUrl → IPC 转 blob:,不用再自开 HTTP 服务。
+        const raw = str(params.url);
+        if (!raw) {
+          throw new Error('import_camera_clip 需要 url(本地或远程镜头文件:json/vmd/glb/gltf/fbx)。');
+        }
+        const asset = await resolveAssetUrl(raw);
+        const clip = await h.importCameraClip(asset.url, str(params.ext) ?? asset.ext);
+        const mode = str(params.mode) === 'append' ? 'append' : 'replace';
+        const keys = h.recordLoadKeyframes(clip.keys, mode, num(params.atSec));
+        return {
+          ok: true,
+          name: clip.name,
+          imported: clip.keys.length,
+          total: keys.length,
+          durationSec: keys.length ? keys[keys.length - 1].t - keys[0].t : 0,
+        };
+      }
       case 'seek': {
         const t = num(params.t);
         if (t == null) throw new Error('seek 需要 t(秒)。');
@@ -454,11 +475,13 @@ class DirectorBridge {
       }
       case 'add_model': {
         const raw = str(params.url);
-        if (!raw) throw new Error('add_model 需要 url(可先 list_model_catalog 查目录;也接受本地 glb/gltf/fbx 文件路径)。');
+        if (!raw) throw new Error('add_model 需要 url(可先 list_model_catalog 查目录;也接受本地 glb/gltf/fbx/pmx/pmd/zip 文件路径,zip = MMD 模型+贴图打包)。');
         const asset = await resolveAssetUrl(raw);
         await h.addModel(asset.url, {
           isFbx: params.isFbx === true || asset.ext === 'fbx',
           modelId: str(params.modelId),
+          // blob: URL 没有扩展名,MMD(pmx/pmd/zip)分流全靠这里传下去。
+          ext: str(params.ext) ?? asset.ext,
         });
         return { ok: true, objects: h.listObjects() };
       }
@@ -633,7 +656,15 @@ class DirectorBridge {
       }
       case 'play_animation': {
         const raw = str(params.url);
-        if (!raw) throw new Error('play_animation 需要 url(可先 search_animations;也接受本地 fbx/glb/json 动画文件路径,含 export_pose_clip_glb 刚导出的 .glb)。');
+        if (!raw) throw new Error('play_animation 需要 url(可先 search_animations;也接受本地 fbx/glb/json/vmd 动画文件路径,含 export_pose_clip_glb 刚导出的 .glb;.vmd 需先选中 MMD 模型)。');
+        // handle.playAnimation 对「无选中/选中不可动画」是静默 no-op(UI 语义);
+        // agent 语义必须显式报错,否则会拿到 ok:true 却什么都没发生。
+        if (!h.hasSkeleton()) {
+          return {
+            ok: false,
+            error: '当前没有选中可动画的骨骼模型 —— 先 add_mannequin/add_model 并 select,再 play_animation。',
+          };
+        }
         const asset = await resolveAssetUrl(raw);
         await h.playAnimation(asset.url, str(params.name), str(params.ext) ?? asset.ext);
         return { ok: true };

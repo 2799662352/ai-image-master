@@ -84,6 +84,35 @@ function makeFakeHandle(): DirectorStageHandle {
     recordListKeyframes: vi.fn(() => []),
     recordRemoveKeyframe: vi.fn(),
     recordClearKeyframes: vi.fn(),
+    recordLoadKeyframes: vi.fn((keys: readonly unknown[]) =>
+      keys.map((k, i) => ({ ...(k as object), id: `k${i}` })),
+    ),
+    importCameraClip: vi.fn(async () => ({
+      name: 'mmd-cam',
+      keys: [
+        {
+          id: 'a',
+          t: 0,
+          position: [0, 1, 5] as [number, number, number],
+          quaternion: [0, 0, 0, 1] as [number, number, number, number],
+          target: [0, 1, 0] as [number, number, number],
+          fov: 40,
+        },
+        {
+          id: 'b',
+          t: 2,
+          position: [0, 1, 3] as [number, number, number],
+          quaternion: [0, 0, 0, 1] as [number, number, number, number],
+          target: [0, 1, 0] as [number, number, number],
+          fov: 45,
+        },
+      ],
+    })),
+    getCameraPose: vi.fn(() => ({
+      position: [0, 1, 5] as [number, number, number],
+      target: [0, 1, 0] as [number, number, number],
+      fov: 40,
+    })),
     recordSeek: vi.fn(),
     recordPlay: vi.fn(
       (_startSec: number, _endSec: number, _onTime: (t: number) => void, onDone: () => void) => {
@@ -306,6 +335,7 @@ describe('directorBridge', () => {
       expect(handle.addModel).toHaveBeenCalledWith('blob:mock-asset', {
         isFbx: false,
         modelId: undefined,
+        ext: 'glb',
       });
 
       await directorBridge.handle('director_scene', {
@@ -323,6 +353,100 @@ describe('directorBridge', () => {
       });
       expect(readThumb).not.toHaveBeenCalled();
       expect(handle.playAnimation).toHaveBeenCalledWith('https://cdn/walk.fbx', undefined, 'fbx');
+    } finally {
+      (URL as unknown as { createObjectURL: typeof origCreate }).createObjectURL = origCreate;
+      delete (window as unknown as { electronAPI?: unknown }).electronAPI;
+    }
+  });
+
+  it('scene: MMD 本地文件(zip 模型 / vmd 动作)经 IPC 转 blob: 且 ext 随行', async () => {
+    const readThumb = vi.fn(async () => ({
+      ok: true as const,
+      base64: 'QUJD',
+      mime: 'application/octet-stream',
+    }));
+    (window as unknown as { electronAPI?: unknown }).electronAPI = {
+      attachments: { readThumb },
+    };
+    const origCreate = URL.createObjectURL;
+    (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = () =>
+      'blob:mock-mmd';
+    try {
+      // zip(PMX+贴图打包)模型:ext 必须传给 addModel 才能分流到 MMD 加载器。
+      const model = (await directorBridge.handle('director_scene', {
+        action: 'add_model',
+        url: 'D:\\mmd\\初音未来.zip',
+      })) as { ok: boolean };
+      expect(model.ok).toBe(true);
+      expect(readThumb).toHaveBeenCalledWith('D:\\mmd\\初音未来.zip');
+      expect(handle.addModel).toHaveBeenCalledWith('blob:mock-mmd', {
+        isFbx: false,
+        modelId: undefined,
+        ext: 'zip',
+      });
+
+      // 本地 vmd 动作:曾因扩展名白名单缺 vmd 被拒,只能自开 HTTP 服务绕行。
+      const anim = (await directorBridge.handle('director_scene', {
+        action: 'play_animation',
+        url: 'C:\\mmd\\dance.vmd',
+      })) as { ok: boolean };
+      expect(anim.ok).toBe(true);
+      expect(handle.playAnimation).toHaveBeenCalledWith('blob:mock-mmd', undefined, 'vmd');
+    } finally {
+      (URL as unknown as { createObjectURL: typeof origCreate }).createObjectURL = origCreate;
+      delete (window as unknown as { electronAPI?: unknown }).electronAPI;
+    }
+  });
+
+  it('scene: play_animation 未选中可动画模型时返回 ok:false(不再静默 no-op)', async () => {
+    (handle.hasSkeleton as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    const res = (await directorBridge.handle('director_scene', {
+      action: 'play_animation',
+      url: 'https://cdn/walk.fbx',
+    })) as { ok: boolean; error?: string };
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain('select');
+    expect(handle.playAnimation).not.toHaveBeenCalled();
+  });
+
+  it('record: import_camera_clip 本地 vmd → 装入时间轴并返回统计', async () => {
+    const readThumb = vi.fn(async () => ({
+      ok: true as const,
+      base64: 'QUJD',
+      mime: 'application/octet-stream',
+    }));
+    (window as unknown as { electronAPI?: unknown }).electronAPI = {
+      attachments: { readThumb },
+    };
+    const origCreate = URL.createObjectURL;
+    (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = () =>
+      'blob:mock-cam';
+    try {
+      const noUrl = (await directorBridge.handle('director_record', {
+        action: 'import_camera_clip',
+      })) as { ok: boolean };
+      expect(noUrl.ok).toBe(false);
+
+      const res = (await directorBridge.handle('director_record', {
+        action: 'import_camera_clip',
+        url: 'D:\\mmd\\camera.vmd',
+      })) as { ok: boolean; name: string; imported: number; total: number; durationSec: number };
+      expect(res.ok).toBe(true);
+      expect(handle.importCameraClip).toHaveBeenCalledWith('blob:mock-cam', 'vmd');
+      expect(handle.recordLoadKeyframes).toHaveBeenCalledWith(expect.any(Array), 'replace', undefined);
+      expect(res.name).toBe('mmd-cam');
+      expect(res.imported).toBe(2);
+      expect(res.total).toBe(2);
+      expect(res.durationSec).toBe(2);
+
+      await directorBridge.handle('director_record', {
+        action: 'import_camera_clip',
+        url: 'https://cdn/cam.json',
+        mode: 'append',
+        atSec: 3,
+      });
+      expect(handle.importCameraClip).toHaveBeenLastCalledWith('https://cdn/cam.json', 'json');
+      expect(handle.recordLoadKeyframes).toHaveBeenLastCalledWith(expect.any(Array), 'append', 3);
     } finally {
       (URL as unknown as { createObjectURL: typeof origCreate }).createObjectURL = origCreate;
       delete (window as unknown as { electronAPI?: unknown }).electronAPI;

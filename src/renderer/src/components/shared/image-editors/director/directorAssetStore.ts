@@ -135,10 +135,12 @@ export const ANIM_DND_MIME = 'application/x-director-anim';
 
 // ── 文件辅助 ─────────────────────────────────────────────────────
 
-export const MODEL_EXTS = ['glb', 'gltf', 'fbx'] as const;
+/** 模型:glb/gltf/fbx 通用格式;pmx/pmd 为 MMD 模型,zip = 「pmx+贴图」打包(推荐)。 */
+export const MODEL_EXTS = ['glb', 'gltf', 'fbx', 'pmx', 'pmd', 'zip'] as const;
 export const PANORAMA_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'avif'] as const;
-/** 动画剪辑:fbx(Mixamo 等)/ glb/gltf(取 animations[0])/ json(本软件 K 动画导出)。 */
-export const ANIM_EXTS = ['fbx', 'glb', 'gltf', 'json'] as const;
+/** 动画剪辑:fbx(Mixamo 等)/ glb/gltf(取 animations[0])/ json(本软件 K 动画导出)
+ *  / vmd(MMD 动作,仅能应用到 PMX/PMD 模型)。 */
+export const ANIM_EXTS = ['fbx', 'glb', 'gltf', 'json', 'vmd'] as const;
 /** 镜头剪辑:json(director-camera@1 / 裸 AnimationClip)/ glb/gltf/fbx(相机动画烘焙采样)。 */
 export const CAMERA_EXTS = ['json', 'glb', 'gltf', 'fbx', 'vmd'] as const;
 /** 建议体积上限(字节)。超过仍可导入,只是给出提醒。 */
