@@ -5,7 +5,7 @@
   "main": "dist/main/index.js",
   "author": "CATIMATION",
   "license": "MIT",
-  "codexCliVersion": "0.142.5",
+  "codexCliVersion": "0.143.0",
   "dockerMcpGatewayVersion": "0.42.1",
   "ffmpegBuildTag": "8.1.1",
   "packageManager": "pnpm@10.12.4",
