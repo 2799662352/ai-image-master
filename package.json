@@ -1,11 +1,11 @@
 {
   "name": "catimation-cyberpunk-master",
-  "version": "4.3.82",
+  "version": "4.3.83",
   "description": "CATIMATION-Cyberpunk Master - AI图片生成桌面应用",
   "main": "dist/main/index.js",
   "author": "CATIMATION",
   "license": "MIT",
-  "codexCliVersion": "0.142.5",
+  "codexCliVersion": "0.143.0",
   "dockerMcpGatewayVersion": "0.42.1",
   "ffmpegBuildTag": "8.1.1",
   "packageManager": "pnpm@10.12.4",

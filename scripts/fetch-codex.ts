@@ -59,6 +59,31 @@ function getCodexBinaryName(target: string): string {
   return target.startsWith('win32-') ? 'codex.exe' : 'codex'
 }
 
+/**
+ * Windows-only sibling helper binaries required by Codex 0.140+'s native
+ * sandbox (`windows-sandbox-rs`). At runtime codex resolves them via
+ * `bundled_executable_path_for_exe()` — first candidate is "same directory as
+ * codex.exe" — so we download the per-target release assets and rename them to
+ * the exact filenames codex probes for. Without these, any code path that
+ * touches the Windows sandbox (setup refresh, apply_patch/fs helper — see
+ * openai/codex#29200 #29072 #20942) throws a per-invocation Windows
+ * "cannot find file" dialog even under `danger-full-access`.
+ */
+function getWindowsHelperBinaries(target: string): Array<{ assetName: string; fileName: string }> {
+  if (!target.startsWith('win32-')) return []
+  const triple = target === 'win32-arm64' ? 'aarch64-pc-windows-msvc' : 'x86_64-pc-windows-msvc'
+  return [
+    {
+      assetName: `codex-windows-sandbox-setup-${triple}.exe`,
+      fileName: 'codex-windows-sandbox-setup.exe',
+    },
+    {
+      assetName: `codex-command-runner-${triple}.exe`,
+      fileName: 'codex-command-runner.exe',
+    },
+  ]
+}
+
 function getTargetAliases(target: string): string[] {
   const aliases: Record<string, string[]> = {
     'win32-x64': ['win32-x64', 'windows-x64', 'x64-pc-windows', 'x86_64-pc-windows', 'x86_64-windows'],
@@ -243,7 +268,12 @@ async function extractBinaryFromZip(bytes: Buffer, binaryName: string): Promise<
   return await binaryEntry.async('nodebuffer')
 }
 
-async function writeCodexBinary(target: string, asset: GitHubReleaseAsset, version: string): Promise<void> {
+async function writeCodexBinary(
+  release: GitHubRelease,
+  target: string,
+  asset: GitHubReleaseAsset,
+  version: string,
+): Promise<void> {
   const targetDir = path.join(process.cwd(), 'resources', 'codex', target)
   const binaryName = getCodexBinaryName(target)
   const binaryPath = path.join(targetDir, binaryName)
@@ -265,6 +295,36 @@ async function writeCodexBinary(target: string, asset: GitHubReleaseAsset, versi
   await writeFile(binaryPath, binaryBytes)
   await chmod(binaryPath, 0o755)
   console.log(`Fetched Codex ${version} for ${target}: ${path.relative(process.cwd(), binaryPath)}`)
+
+  await writeWindowsHelperBinaries(release, target, targetDir, version)
+}
+
+/**
+ * Downloads the Windows sandbox helper exes next to codex.exe. The release
+ * ships them as raw `.exe` assets (plus .zip/.zst variants we don't need).
+ * Missing assets are a hard error for pinned versions >= 0.140 since a build
+ * without them ships the sandbox popup bug to users.
+ */
+async function writeWindowsHelperBinaries(
+  release: GitHubRelease,
+  target: string,
+  targetDir: string,
+  version: string,
+): Promise<void> {
+  for (const helper of getWindowsHelperBinaries(target)) {
+    const asset = release.assets.find((candidate) => candidate.name === helper.assetName)
+    if (!asset) {
+      throw new Error(
+        `Codex release is missing Windows helper asset "${helper.assetName}" required for ${target}. `
+        + 'Codex 0.140+ needs codex-windows-sandbox-setup.exe / codex-command-runner.exe next to codex.exe.',
+      )
+    }
+    const bytes = await fetchBytes(asset.browser_download_url)
+    const helperPath = path.join(targetDir, helper.fileName)
+    await writeFile(helperPath, bytes)
+    await chmod(helperPath, 0o755)
+    console.log(`Fetched Codex helper ${version} for ${target}: ${path.relative(process.cwd(), helperPath)}`)
+  }
 }
 
 async function main(): Promise<void> {
@@ -303,7 +363,7 @@ async function main(): Promise<void> {
 
   for (const target of targets) {
     const asset = findAssetForTarget(release, target)
-    await writeCodexBinary(target, asset, resolvedVersion)
+    await writeCodexBinary(release, target, asset, resolvedVersion)
   }
 
   if (isLatestBump) {

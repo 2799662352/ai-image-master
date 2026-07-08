@@ -65,6 +65,51 @@ describe('CodexProviderStore', () => {
     expect(persisted.apiKeys.apiyi).toBe('sk-legacy-key')
   })
 
+  it('remaps retired rightcode-pro state onto rightcode at load time', async () => {
+    // Right.Codes retired /codex-pro on 2026-06-12 (merged into /codex). A
+    // user who had selected the old preset must come back to a WORKING
+    // provider with their key intact, without re-entering anything.
+    await fs.writeFile(
+      path.join(tmpDir, 'codex-providers.json'),
+      JSON.stringify({
+        version: 1,
+        selectedProviderId: 'rightcode-pro',
+        apiKeys: { 'rightcode-pro': 'sk-rc-key', apiyi: 'sk-apiyi' },
+        customProviders: [],
+      }),
+    )
+
+    const store = makeStore()
+    const state = await store.load()
+    expect(state.selectedProviderId).toBe('rightcode')
+    expect(state.apiKeys.rightcode).toBe('sk-rc-key')
+    expect(state.apiKeys['rightcode-pro']).toBeUndefined()
+    expect(state.apiKeys.apiyi).toBe('sk-apiyi')
+
+    // Same remap on the sync path used at AgentManager construction.
+    const syncStore = new CodexProviderStore({ userDataDir: tmpDir })
+    const syncState = syncStore.loadSync()
+    expect(syncState.selectedProviderId).toBe('rightcode')
+    expect(syncState.apiKeys.rightcode).toBe('sk-rc-key')
+  })
+
+  it('rightcode-pro key does NOT clobber an existing rightcode key', async () => {
+    await fs.writeFile(
+      path.join(tmpDir, 'codex-providers.json'),
+      JSON.stringify({
+        version: 1,
+        selectedProviderId: 'apiyi',
+        apiKeys: { 'rightcode-pro': 'sk-old-pro', rightcode: 'sk-current' },
+        customProviders: [],
+      }),
+    )
+
+    const store = makeStore()
+    const state = await store.load()
+    expect(state.apiKeys.rightcode).toBe('sk-current')
+    expect(state.apiKeys['rightcode-pro']).toBeUndefined()
+  })
+
   it('treats malformed json as fresh defaults rather than crashing', async () => {
     await fs.writeFile(path.join(tmpDir, 'codex-providers.json'), '{not json')
     const store = makeStore()

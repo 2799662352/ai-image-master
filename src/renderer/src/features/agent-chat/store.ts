@@ -2044,6 +2044,18 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       return
     }
     if (event.type === 'notice') {
+      // `steerFallback` means the main process converted a lost turn/steer
+      // race into a FRESH turn on this thread (AgentManager.steer). Our
+      // isRunning went false at the original turn_completed, so re-arm it —
+      // otherwise the fallback turn streams with no stop button and no
+      // sidebar dot, and the user could fire a parallel send into it.
+      const noticeThreadId = event.notice.threadId
+      if (event.notice.kind === 'steerFallback' && noticeThreadId) {
+        set((state) => ({
+          runningByThread: { ...state.runningByThread, [noticeThreadId]: true },
+          ...(state.threadId === noticeThreadId ? { isRunning: true } : {}),
+        }))
+      }
       // Notices render as panel-wide banners; show regardless of which thread
       // they came from now that multiple chats can stream at once.
       get().pushNotice(event.notice)

@@ -308,6 +308,17 @@ export class AgentManager {
    */
   private legacySessionsMigrated = false
 
+  /**
+   * Serialization chain for codex respawns triggered by settings changes
+   * (provider switch, key rotation, custom-provider edits). Respawning takes
+   * seconds; queuing through one chain guarantees rapid successive changes
+   * never race two spawns, while letting callers choose whether to await the
+   * respawn (MCP key rotations do) or return immediately for a snappy UI
+   * (provider switches / gateway key saves don't). Errors are logged inside
+   * the queued task so the chain itself never rejects.
+   */
+  private restartChain: Promise<void> = Promise.resolve()
+
   constructor(opts: AgentManagerOptions) {
     this.win = opts.win
     this.store = opts.store
@@ -490,25 +501,55 @@ export class AgentManager {
     this.activeProviderId = id
     this.codexApiKey = persisted.apiKeys[id] ?? ''
     this.backend.setProvider?.(provider)
-    // Restart codex so the new base_url + model take effect immediately
-    // instead of waiting for the next user message. We swallow restart
-    // errors here — the renderer has already updated its state and a
-    // failed restart will surface as the next message timing out, which is
-    // less confusing than the settings save throwing.
-    if (this.backend.restartCodex) {
-      try {
-        await this.backend.restartCodex(this.workspacePaths())
-      } catch (err) {
-        console.warn('[AgentManager] restartCodex after setActiveProvider failed:', err)
-      }
-    }
+    // Respawn codex so the new base_url + model take effect immediately
+    // instead of waiting for the next user message — but in the BACKGROUND.
+    // Blocking this IPC on a multi-second spawn made every tile click in the
+    // Settings page feel frozen. The old client keeps serving until the new
+    // spawn is ready (see CodexLocalBackend.restartCodex), and errors are
+    // logged inside the queue — a failed respawn surfaces as the next
+    // message timing out, which is less confusing than the settings save
+    // throwing.
+    void this.queueBackendRestart('setActiveProvider')
     return { ok: true, activeId: id }
+  }
+
+  /**
+   * Enqueue a codex respawn on {@link restartChain}. Returns the promise for
+   * callers that must await completion; UI-latency-sensitive callers drop it
+   * (`void`) so the IPC reply is instant. No-op resolve when the backend has
+   * no restart hook (stub backends in tests).
+   */
+  private queueBackendRestart(reason: string): Promise<void> {
+    const restart = this.backend.restartCodex?.bind(this.backend)
+    if (!restart) return Promise.resolve()
+    const next = this.restartChain.then(async () => {
+      try {
+        await restart(this.workspacePaths())
+      } catch (err) {
+        console.warn(`[AgentManager] restartCodex (${reason}) failed:`, err)
+      }
+    })
+    this.restartChain = next
+    return next
   }
 
   async setProviderApiKey(id: string, key: string): Promise<{ ok: true }> {
     await this.providerStore.setApiKey(id, key)
     if (id === this.activeProviderId) {
-      this.codexApiKey = (key ?? '').trim()
+      const next = (key ?? '').trim()
+      const changed = next !== this.codexApiKey
+      this.codexApiKey = next
+      // The gateway key reaches codex ONLY via spawn env (buildCodexSpawnEnv),
+      // so an already-running codex keeps the stale key until respawn — which
+      // used to mean "restart the whole app to apply the key". Hot-respawn in
+      // the background on a REAL change instead (non-blocking so the 保存 KEY
+      // button stays snappy). Guards: `changed` avoids a restart storm from
+      // the renderer's idempotent re-pushes; `isHealthy()` skips the respawn
+      // when codex has not spawned yet (the next lazy start reads the fresh
+      // key via getApiKey anyway, and restarting here would eagerly spawn).
+      if (changed && this.backend.isHealthy()) {
+        void this.queueBackendRestart('active provider key change')
+      }
     }
     // The renderer mirrors its image-gen Miau token here (id='qwen') so Path B
     // subagents can reach the qwen understanding gateway. Keep the in-memory
@@ -530,12 +571,8 @@ export class AgentManager {
       const next = (key ?? '').trim()
       const changed = next !== this.apiyiMcpKey
       this.apiyiMcpKey = next
-      if (changed && next && this.backend.restartCodex) {
-        try {
-          await this.backend.restartCodex(this.workspacePaths())
-        } catch (err) {
-          console.warn('[AgentManager] restartCodex after apiyi-mcp key change failed:', err)
-        }
+      if (changed && next) {
+        await this.queueBackendRestart('apiyi-mcp key change')
       }
     }
     // The renderer mirrors the 设置 → 运镜知识库 key here (id='cinematography-kb')
@@ -549,15 +586,8 @@ export class AgentManager {
       const next = (key ?? '').trim()
       const changed = next !== this.cinematographyKbKey
       this.cinematographyKbKey = next
-      if (changed && next && this.backend.restartCodex) {
-        try {
-          await this.backend.restartCodex(this.workspacePaths())
-        } catch (err) {
-          console.warn(
-            '[AgentManager] restartCodex after cinematography-kb key change failed:',
-            err,
-          )
-        }
+      if (changed && next) {
+        await this.queueBackendRestart('cinematography-kb key change')
       }
     }
     // The renderer mirrors the 设置 → 运镜知识库 DashVector key here
@@ -567,15 +597,8 @@ export class AgentManager {
       const next = (key ?? '').trim()
       const changed = next !== this.dashVectorKey
       this.dashVectorKey = next
-      if (changed && next && this.backend.restartCodex) {
-        try {
-          await this.backend.restartCodex(this.workspacePaths())
-        } catch (err) {
-          console.warn(
-            '[AgentManager] restartCodex after dashvector key change failed:',
-            err,
-          )
-        }
+      if (changed && next) {
+        await this.queueBackendRestart('dashvector key change')
       }
     }
     return { ok: true }
@@ -611,13 +634,7 @@ export class AgentManager {
       const persisted = await this.providerStore.load()
       const refreshed = resolveActiveProvider(id, persisted.customProviders)
       this.backend.setProvider?.(refreshed)
-      if (this.backend.restartCodex) {
-        try {
-          await this.backend.restartCodex(this.workspacePaths())
-        } catch (err) {
-          console.warn('[AgentManager] restartCodex after updateCustomProvider failed:', err)
-        }
-      }
+      void this.queueBackendRestart('updateCustomProvider')
     }
     return { ok: true }
   }
@@ -634,13 +651,7 @@ export class AgentManager {
       this.codexApiKey = persisted.apiKeys[this.activeProviderId] ?? ''
       const provider = resolveActiveProvider(this.activeProviderId, persisted.customProviders)
       this.backend.setProvider?.(provider)
-      if (this.backend.restartCodex) {
-        try {
-          await this.backend.restartCodex(this.workspacePaths())
-        } catch (err) {
-          console.warn('[AgentManager] restartCodex after removeCustomProvider failed:', err)
-        }
-      }
+      void this.queueBackendRestart('removeCustomProvider')
     }
     return { ok: true, activeId: this.activeProviderId }
   }
@@ -1344,7 +1355,9 @@ export class AgentManager {
    * rides the SAME turn's event stream that the original `sendMessage`'s
    * `forwardEvents` loop is still draining, so we do NOT start a new forward
    * loop here; we only persist the user message and fire the steer RPC. A
-   * missing/ended turn surfaces as an `error` event so the renderer can react.
+   * missing/ended turn ("no active turn") is a benign race and automatically
+   * falls back to delivering the message as a fresh turn (+ an info notice);
+   * other failures surface as an `error` event so the renderer can react.
    */
   async steer(payload: AgentSendMessagePayload): Promise<AgentSendMessageResult> {
     const threadIdIn = payload.threadId
@@ -1376,14 +1389,36 @@ export class AgentManager {
     try {
       await this.backend.steer(codexThreadId, input)
     } catch (error) {
-      // Turn likely already completed between the user's keypress and the RPC.
-      // The persisted user message stays (it IS part of the conversation); the
-      // renderer surfaces the notice and can resend it as a fresh turn.
-      this.emitEvent({
-        type: 'error',
-        threadId,
-        error: error instanceof Error ? error.message : String(error),
-      })
+      const detail = error instanceof Error ? error.message : String(error)
+      if (isNoActiveTurnSteerError(detail)) {
+        // Lost the inherent turn/steer race: the turn completed between the
+        // user's keypress and the RPC (steering targets the CURRENT turn by
+        // design — openai/codex#10821). The message is already assembled and
+        // persisted, so deliver it as a FRESH turn instead of dumping a raw
+        // protocol error on the user and making them retype/resend.
+        this.emitEvent({
+          type: 'notice',
+          notice: {
+            id: `steer-fallback:${Date.now()}`,
+            kind: 'steerFallback',
+            level: 'info',
+            threadId,
+            message: '上一回合刚好已结束,插话已作为新一轮消息发送。',
+          },
+        })
+        void this.forwardEvents(threadId, input).catch((err: unknown) => {
+          this.emitEvent({
+            type: 'error',
+            threadId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        })
+      } else {
+        // Genuine failure (transport down, backend crash…): the persisted user
+        // message stays (it IS part of the conversation); the renderer surfaces
+        // the error and the user can resend it as a fresh turn.
+        this.emitEvent({ type: 'error', threadId, error: detail })
+      }
     }
     const cloneableItems = userTimelineItems.length > 0
       ? (JSON.parse(JSON.stringify(userTimelineItems)) as typeof userTimelineItems)
@@ -1999,6 +2034,18 @@ function isOversizedRequestError(error: unknown): boolean {
  */
 function isPoisonedThreadError(error: unknown): boolean {
   return isInvalidEncryptedContentError(error) || isOversizedRequestError(error)
+}
+
+/**
+ * `turn/steer` rejection meaning the targeted turn already finished (or never
+ * existed) — CodexProtocolClient throws `turn/steer: no active turn on thread
+ * <uuid>` locally, and the codex app-server rejects the RPC with an equivalent
+ * "no active/in-flight turn" message when it loses the same race server-side.
+ * These are benign timing races, not failures: `steer()` converts them into a
+ * fresh turn instead of surfacing an error.
+ */
+function isNoActiveTurnSteerError(message: string): boolean {
+  return /no (active|in.?flight) turn/i.test(message)
 }
 
 /**

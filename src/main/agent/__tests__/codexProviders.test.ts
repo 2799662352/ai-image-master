@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   BUILTIN_PROVIDER_PRESETS,
   DEFAULT_PROVIDER_ID,
+  RETIRED_RIGHTCODE_PRO_ID,
   findProviderById,
   isBuiltinProviderId,
   type ProviderPreset,
@@ -22,7 +23,9 @@ describe('codexProviders', () => {
     // From https://docs.right.codes/docs/rc_cli_config/codex.html
     expect(rc!.baseUrl).toBe('https://right.codes/codex/v1')
     expect(rc!.envKey).toBe('OPENAI_API_KEY')
-    expect(rc!.model).toBe('gpt-5.2')
+    // gpt-5.2 was retired upstream (site announcement 2026-06-02); the docs
+    // example now pins gpt-5.5.
+    expect(rc!.model).toBe('gpt-5.5')
     expect(rc!.reasoningEffort).toBe('xhigh')
     expect(rc!.verbosity).toBe('high')
     expect(rc!.requiresOpenaiAuth).toBe(true)
@@ -35,22 +38,18 @@ describe('codexProviders', () => {
     for (const p of BUILTIN_PROVIDER_PRESETS) expect(Object.isFrozen(p)).toBe(true)
   })
 
-  it('ships rightcode-pro fallback at /codex-pro for high-stability workloads', () => {
-    const pro = BUILTIN_PROVIDER_PRESETS.find((p) => p.id === 'rightcode-pro')
-    expect(pro).toBeDefined()
-    expect(pro!.baseUrl).toBe('https://right.codes/codex-pro/v1')
-    expect(pro!.model).toBe('gpt-5.2')
-    expect(pro!.reasoningEffort).toBe('xhigh')
-    expect(pro!.requiresOpenaiAuth).toBe(true)
-    // Same caching semantics as the cheaper rightcode tier; the difference is
-    // billing multiplier (0.4x vs 0.2x) and stability — encoded in the
-    // human-facing description, not the runtime config.
+  it('no longer ships the retired rightcode-pro preset (/codex-pro 404s since 2026-06-12)', () => {
+    // Right.Codes merged /codex-pro into /codex on 2026-06-12 (site
+    // announcement); the /codex-pro/v1 route now returns a route-level 404,
+    // so shipping the preset would give users a provider that can never talk.
+    expect(BUILTIN_PROVIDER_PRESETS.find((p) => p.id === 'rightcode-pro')).toBeUndefined()
+    expect(RETIRED_RIGHTCODE_PRO_ID).toBe('rightcode-pro')
   })
 
   it('isBuiltinProviderId discriminates builtins from custom ids', () => {
     expect(isBuiltinProviderId('apiyi')).toBe(true)
     expect(isBuiltinProviderId('rightcode')).toBe(true)
-    expect(isBuiltinProviderId('rightcode-pro')).toBe(true)
+    expect(isBuiltinProviderId('rightcode-pro')).toBe(false)
     expect(isBuiltinProviderId('custom-1234')).toBe(false)
     expect(isBuiltinProviderId('')).toBe(false)
   })

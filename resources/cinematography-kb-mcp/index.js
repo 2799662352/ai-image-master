@@ -72,6 +72,30 @@ const SAKUGA_OUTPUT_FIELDS = [
   'height',
 ]
 
+// --- Local full-video store (sakugabooru2025 dump) --------------------------
+// Source videos live as sources/sakuga_{postId}.{mp4|webm|...}. The MCP never
+// cuts video itself — it only reports the local source path + the clip's scene
+// timecodes; consuming agents seek/cut with their own ffmpeg as needed.
+const SAKUGA_VIDEO_DIR =
+  (process.env.SAKUGA_VIDEO_DIR || '').trim() || 'D:\\tecx\\text\\videos\\sakuga-full\\sources'
+const SOURCE_EXTS = ['.mp4', '.webm', '.gif', '.mkv', '.avi']
+
+/** Locate the local source video for a sakugabooru post id, if downloaded. */
+function localSourcePath(postId) {
+  for (const ext of SOURCE_EXTS) {
+    const p = path.join(SAKUGA_VIDEO_DIR, `sakuga_${postId}${ext}`)
+    if (fs.existsSync(p)) return p
+  }
+  return null
+}
+
+/** Normalize '102939:9' / '102939_9' → { docId: '102939_9', postId: '102939' }. */
+function parseIdentifier(identifier) {
+  const m = String(identifier || '').trim().match(/^(\d+)[:_](\d+)$/)
+  if (!m) return null
+  return { docId: `${m[1]}_${m[2]}`, postId: m[1] }
+}
+
 // sakugabooru tag-type dictionary (built by scripts/sakuga/build_tag_dict.py):
 // classifies each user_tag token as artist (作画人员) / copyright (作品) /
 // general (技法词条) / character / circle (工作室). Loaded once, lazily.
@@ -405,6 +429,13 @@ function formatSakugaHits(payload) {
       }
       parts.push(src)
     }
+    const idParsed = parseIdentifier(hit.id != null ? hit.id : f.identifier)
+    if (idParsed) {
+      const local = localSourcePath(idParsed.postId)
+      if (local) {
+        parts.push(`本地原片: ${local} (按上面时间区间用 ffmpeg 截取观看)`)
+      }
+    }
     lines.push(parts.join('\n'))
   })
   return lines.join('\n\n')
@@ -537,6 +568,40 @@ async function querySakugaClips(args) {
   return { success: true, text: lines.join('\n\n') }
 }
 
+/**
+ * get_sakuga_clip: resolve identifier → local source video path + scene
+ * timecodes (from DashVector). No cutting — the consuming agent seeks/cuts
+ * with its own ffmpeg.
+ */
+async function getSakugaClip(args) {
+  const idParsed = parseIdentifier(args.identifier)
+  if (!idParsed) {
+    return { success: false, error: `Invalid identifier '${args.identifier}' (expected e.g. 102939:9 or 102939_9).` }
+  }
+  const metaById = await fetchSakugaMeta([idParsed.docId])
+  const doc = isObject(metaById[idParsed.docId]) ? metaById[idParsed.docId] : null
+  const fields = doc && isObject(doc.fields) ? doc.fields : null
+  const start = String((fields && fields.scene_start_time) || '')
+  const end = String((fields && fields.scene_end_time) || '')
+  const src = localSourcePath(idParsed.postId)
+  if (!src) {
+    return {
+      success: false,
+      error:
+        `Source video for post ${idParsed.postId} not found locally (dir: ${SAKUGA_VIDEO_DIR}). ` +
+        'The full dump may still be downloading, or the post is missing from the archive.',
+    }
+  }
+  const parts = [`identifier: ${idParsed.docId}`, `本地原片: ${src}`]
+  if (fields && fields.text_description) parts.push(`描述: ${String(fields.text_description).slice(0, 300)}`)
+  if (start && end) {
+    parts.push(`片段区间: ${start} – ${end} (用自带 ffmpeg 按此区间截取观看)`)
+  } else {
+    parts.push('(未获得场景时间戳 — 该 identifier 可能不在 DashVector 中,可观看整个原片)')
+  }
+  return { success: true, text: parts.join('\n') }
+}
+
 const TOOLS = [
   {
     name: 'search_cinematography_kb',
@@ -623,6 +688,25 @@ const TOOLS = [
       required: ['query'],
     },
   },
+  {
+    name: 'get_sakuga_clip',
+    description:
+      'Resolve a Sakuga-42M clip identifier (from query_sakuga_dataset results, e.g. ' +
+      '"102939:9") to the locally stored sakugabooru source video path plus the ' +
+      "clip's scene start/end timecodes. No video processing happens server-side — " +
+      'use your own ffmpeg to seek/extract the segment (e.g. ' +
+      'ffmpeg -i <path> -ss <start> -to <end> ...) or watch the source directly.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        identifier: {
+          type: 'string',
+          description: "Clip identifier, e.g. '102939:9' or '102939_9'.",
+        },
+      },
+      required: ['identifier'],
+    },
+  },
 ]
 
 async function handleRequest(request) {
@@ -647,6 +731,19 @@ async function handleRequest(request) {
         return
       }
       const result = await searchKb(query, args.top_k)
+      if (result.success) {
+        sendResult(id, { content: [{ type: 'text', text: result.text || '(empty)' }] })
+      } else {
+        let msg = result.error || 'unknown error'
+        if (result.detail) msg += `\n${result.detail}`
+        sendResult(id, { content: [{ type: 'text', text: msg }], isError: true })
+      }
+    } else if (toolName === 'get_sakuga_clip') {
+      if (!args.identifier) {
+        sendResult(id, { content: [{ type: 'text', text: "Error: 'identifier' is required." }], isError: true })
+        return
+      }
+      const result = await getSakugaClip(args)
       if (result.success) {
         sendResult(id, { content: [{ type: 'text', text: result.text || '(empty)' }] })
       } else {
@@ -703,4 +800,4 @@ if (require.main === module) {
 
 // Exposed for unit tests (pure functions + tool descriptors); the stdio loop
 // only starts when this file is the entrypoint.
-module.exports = { TOOLS, buildSakugaQueryBody, formatSakugaHits, parseAvNode, formatClipHit }
+module.exports = { TOOLS, buildSakugaQueryBody, formatSakugaHits, parseAvNode, formatClipHit, parseIdentifier, localSourcePath }

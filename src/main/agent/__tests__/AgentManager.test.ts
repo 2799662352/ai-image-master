@@ -125,6 +125,109 @@ describe('AgentManager codex api key', () => {
   })
 })
 
+// The gateway key is injected into the codex process env at SPAWN time
+// (buildCodexSpawnEnv). Before this suite existed, saving a new key for the
+// active provider only updated the in-memory copy — the already-running codex
+// kept its stale env until the user restarted the whole app. Now a change to
+// the ACTIVE provider's key hot-restarts codex (change-guarded, healthy-only).
+describe('AgentManager active provider key hot-reload', () => {
+  function makeRestartBackend() {
+    const restarts: unknown[] = []
+    const backend = Object.assign(makeStubBackend([]), {
+      async restartCodex(paths: unknown) {
+        restarts.push(paths)
+      },
+    })
+    return { backend, restarts }
+  }
+
+  it('restarts codex when the active provider key changes, but not on idempotent re-push', async () => {
+    const { backend, restarts } = makeRestartBackend()
+    const mgr = new AgentManager({ userDataDir: tmpDir, backend })
+
+    // Default active provider is apiyi.
+    await mgr.setProviderApiKey('apiyi', 'sk-first')
+    await flushMicrotasks()
+    expect(restarts.length).toBe(1)
+
+    // Same key again (renderer re-pushes idempotently) → no restart storm.
+    await mgr.setProviderApiKey('apiyi', 'sk-first')
+    await flushMicrotasks()
+    expect(restarts.length).toBe(1)
+
+    // Real change → restart again.
+    await mgr.setProviderApiKey('apiyi', 'sk-second')
+    await flushMicrotasks()
+    expect(restarts.length).toBe(2)
+
+    // A key for an INACTIVE provider is consumed at the next provider switch /
+    // spawn — no restart now.
+    await mgr.setProviderApiKey('rightcode', 'sk-rc')
+    await flushMicrotasks()
+    expect(restarts.length).toBe(2)
+  })
+
+  it('skips the restart when the backend has not started yet (key lands at next spawn)', async () => {
+    const { backend, restarts } = makeRestartBackend()
+    backend.isHealthy = () => false
+    const mgr = new AgentManager({ userDataDir: tmpDir, backend })
+
+    await mgr.setProviderApiKey('apiyi', 'sk-early')
+    await flushMicrotasks()
+    expect(restarts.length).toBe(0)
+    expect(mgr.getCodexApiKey()).toBe('sk-early')
+  })
+})
+
+// Provider switches respawn codex to apply the new base_url/model — a
+// multi-second operation. Blocking the IPC reply on it made every tile click
+// in 设置 feel frozen. The respawn now runs in the BACKGROUND (serialized so
+// rapid clicks can't race two spawns) and the IPC returns as soon as the
+// selection is persisted.
+describe('AgentManager provider switch responsiveness', () => {
+  it('setActiveProvider resolves before the codex respawn completes', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const started: number[] = []
+    const backend = Object.assign(makeStubBackend([]), {
+      async restartCodex() {
+        started.push(started.length)
+        await gate
+      },
+    })
+    const mgr = new AgentManager({ userDataDir: tmpDir, backend })
+
+    // If setActiveProvider awaited the restart this would deadlock on `gate`
+    // and the test would time out.
+    const result = await mgr.setActiveProvider('rightcode')
+    expect(result).toEqual({ ok: true, activeId: 'rightcode' })
+
+    await flushMicrotasks()
+    expect(started.length).toBe(1)
+    release()
+  })
+
+  it('rapid provider switches serialize their background respawns', async () => {
+    const releases: Array<() => void> = []
+    const backend = Object.assign(makeStubBackend([]), {
+      restartCodex: () =>
+        new Promise<void>((resolve) => { releases.push(resolve) }),
+    })
+    const mgr = new AgentManager({ userDataDir: tmpDir, backend })
+
+    await mgr.setActiveProvider('rightcode')
+    await mgr.setActiveProvider('apiyi')
+    await flushMicrotasks()
+
+    // Second respawn must wait for the first to finish — no parallel spawns.
+    expect(releases.length).toBe(1)
+    releases[0]()
+    await flushMicrotasks()
+    expect(releases.length).toBe(2)
+    releases[1]()
+  })
+})
+
 // The renderer mirrors the 设置 → API易 key to the main process under the
 // dedicated `apiyi-mcp` slot. AgentManager keeps an in-memory copy (injected at
 // spawn via `-c mcp_servers.apiyi.env.APIYI_API_KEY`) and restarts codex ON

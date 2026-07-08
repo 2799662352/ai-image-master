@@ -584,6 +584,9 @@ interface StageState {
    *  播放/导出时依 1→2→3→4 依序切活动机位,每段内走该机位自己的轨道。 */
   cuts: { t: number; slotId: string }[];
   recordPlaying: boolean;
+  /** 录制时间轴当前游标时刻(seek/播放/导出统一回写)。机位缩略图按此
+   *  时刻采样机位轨位姿(Blender 相机预览 = 当前帧求值后位姿,同款口径)。 */
+  recordT: number;
   /** 光感/调色后处理(曝光/辉光/调色/景深),与全景共用 createLightFx. */
   lightFx: LightFx;
   /** IBL 环境贴图(全景 PMREM)及其生成器 —— 给金属模型真实反射. */
@@ -1955,7 +1958,14 @@ function DirectorStageInner(
       },
       recordSeek(t) {
         const s = stateRef.current;
-        if (!s || (s.keyframes.length === 0 && s.cuts.length === 0)) return;
+        if (!s) return;
+        // 任一轨有关键帧或有切换点即可 seek(即使激活轨是空的自由轨,
+        // 机位缩略图与机位模型也要跟着游标走)。
+        const hasAny =
+          s.keyframes.length > 0 ||
+          s.cuts.length > 0 ||
+          [...s.tracksStore.values()].some((ks) => ks.length > 0);
+        if (!hasAny) return;
         applyInterpolatedCamera(s, t);
       },
       recordPlay(startSec, endSec, onTime, onDone, loop = false) {
@@ -2434,6 +2444,7 @@ function DirectorStageInner(
       activeTrack: 'free',
       cuts: [],
       recordPlaying: false,
+      recordT: 0,
       multi: [],
       pivot: null,
       marquee: false,
@@ -3569,9 +3580,19 @@ function renderPreview(
   }
   const cam = s.thumbCam;
   if (slot) {
-    cam.position.set(...slot.position);
-    cam.quaternion.set(...slot.quaternion);
-    cam.fov = slot.fov;
+    // Blender 相机预览口径:取该机位轨在当前游标时刻的**动画求值位姿**
+    // (与主相机播放共用 sampleKeysPose,预览与成片逐帧对齐);
+    // 该机位轨没有关键帧时才退回机位静态基准位姿。
+    const pose = sampleKeysPose(trackOf(s, slot.id), s.recordT);
+    if (pose) {
+      cam.position.set(...pose.position);
+      cam.quaternion.set(...pose.quaternion);
+      cam.fov = pose.fov;
+    } else {
+      cam.position.set(...slot.position);
+      cam.quaternion.set(...slot.quaternion);
+      cam.fov = slot.fov;
+    }
   } else {
     cam.position.copy(s.camera.position);
     cam.quaternion.copy(s.camera.quaternion);
@@ -3731,6 +3752,7 @@ function syncCamGizmosToTime(s: StageState, t: number): void {
  */
 function applyInterpolatedCamera(s: StageState, t: number): void {
   // 机位模型跟着时间轴动(播放 / 拖游标 / 导出采样统一走这里)。
+  s.recordT = t;
   syncCamGizmosToTime(s, t);
   const cuts = s.cuts.filter((c) => s.cameraSlots.some((x) => x.id === c.slotId));
   if (cuts.length > 0) {

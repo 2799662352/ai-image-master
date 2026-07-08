@@ -316,15 +316,13 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     // by 6.4x the official budget, ballooning replayed history straight
     // into the gateway byte cap. `-c` outranks config.toml.
     '-c', 'tool_output_token_limit=10000',
-    // Enable rmcp transport so URL-based MCP servers (e.g.
-    // `[mcp_servers.context7] url = "https://mcp.context7.com/mcp"`) are
-    // actually started. With Codex 0.128, omitting this flag silently skips
-    // streamable-HTTP servers without surfacing an error. See
-    // openai/codex#4707 — every workaround in that thread sets it at the top
-    // of `config.toml`. We pin it via `-c` instead so users don't have to
-    // edit any file by hand. OAuth login and tool-call surfaces both require
-    // this client on the server side.
-    '-c', 'experimental_use_rmcp_client=true',
+    // NOTE (0.143.0): `experimental_use_rmcp_client` was REMOVED from codex —
+    // zero hits across the repo at rust-v0.143.0 and gone from
+    // config-schema.json. The rmcp client is now the unconditional MCP
+    // transport, so URL-based servers (streamable-HTTP + OAuth) start without
+    // any flag. We used to pin `-c experimental_use_rmcp_client=true` here
+    // (openai/codex#4707, needed since 0.128); keeping it would only emit an
+    // "unknown config key" configWarning notice in the chat panel.
     // Subagents (parallel delegation). Codex can spawn specialized worker
     // agents that explore/analyze/tackle work concurrently — but it only does
     // so when explicitly asked, and the concurrency ceiling lives under the

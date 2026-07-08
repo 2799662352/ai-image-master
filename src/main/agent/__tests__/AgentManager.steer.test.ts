@@ -125,6 +125,88 @@ describe('AgentManager.steer (turn/steer)', () => {
     expect(result.threadId).toBe('pending')
   })
 
+  it('falls back to a fresh turn (backend.send) when steer rejects with "no active turn"', async () => {
+    const events: AgentStreamEvent[] = []
+    const sendCalls: Array<string | undefined> = []
+    // First send establishes the codex-id mapping and completes its turn;
+    // steer then races the completed turn and gets rejected — exactly the
+    // "turn/steer: no active turn" path from CodexProtocolClient.steer.
+    const backend = {
+      sendCalls,
+      async start() {},
+      async stop() {},
+      isHealthy() { return true },
+      async cancel() {},
+      async steer() {
+        throw new Error('turn/steer: no active turn on thread 019f3da3-d4ee-7472-aa8b-a173358ae832')
+      },
+      async *send(threadId: string | undefined) {
+        sendCalls.push(threadId)
+        yield { type: 'thread_created', threadId: CODEX_UUID } as AgentStreamEvent
+        yield { type: 'turn_completed', threadId: CODEX_UUID, turnId: 'turn-1' } as AgentStreamEvent
+      },
+    } as unknown as IAgentBackend
+
+    const mgr = new AgentManager({
+      userDataDir: tmpDir,
+      store: { ...persistStubs, createThread: async () => ({ id: 'db-f' }) } as any,
+      attachments: { ingest: async () => [] } as any,
+      eventSink: (e) => events.push(e),
+      backend,
+    })
+
+    const first = await mgr.sendMessage({ content: 'start', attachments: [] })
+    await flushMicrotasks()
+    expect(sendCalls).toHaveLength(1)
+
+    await mgr.steer({ threadId: first.threadId, content: 'late interjection', attachments: [] })
+    await flushMicrotasks()
+
+    // The interjection is delivered as a NEW turn instead of surfacing an error.
+    expect(sendCalls).toHaveLength(2)
+    expect(sendCalls[1]).toBe(CODEX_UUID)
+    expect(events.some((e) => e.type === 'error')).toBe(false)
+    // The user is told the interjection was converted into a fresh turn.
+    expect(events.some((e) => e.type === 'notice')).toBe(true)
+  })
+
+  it('still emits an error event when steer rejects for other reasons', async () => {
+    const events: AgentStreamEvent[] = []
+    const sendCalls: Array<string | undefined> = []
+    const backend = {
+      async start() {},
+      async stop() {},
+      isHealthy() { return true },
+      async cancel() {},
+      async steer() {
+        throw new Error('websocket closed')
+      },
+      async *send(threadId: string | undefined) {
+        sendCalls.push(threadId)
+        yield { type: 'thread_created', threadId: CODEX_UUID } as AgentStreamEvent
+        yield { type: 'turn_completed', threadId: CODEX_UUID, turnId: 'turn-1' } as AgentStreamEvent
+      },
+    } as unknown as IAgentBackend
+
+    const mgr = new AgentManager({
+      userDataDir: tmpDir,
+      store: { ...persistStubs, createThread: async () => ({ id: 'db-g' }) } as any,
+      attachments: { ingest: async () => [] } as any,
+      eventSink: (e) => events.push(e),
+      backend,
+    })
+
+    const first = await mgr.sendMessage({ content: 'start', attachments: [] })
+    await flushMicrotasks()
+
+    await mgr.steer({ threadId: first.threadId, content: 'oops', attachments: [] })
+    await flushMicrotasks()
+
+    // No silent fallback turn — the failure is surfaced as an error event.
+    expect(sendCalls).toHaveLength(1)
+    expect(events.some((e) => e.type === 'error' && /websocket closed/.test((e as { error: string }).error))).toBe(true)
+  })
+
   it('emits an error event when the backend does not support steering', async () => {
     const events: AgentStreamEvent[] = []
     // A backend WITHOUT a steer method (optional on IAgentBackend).

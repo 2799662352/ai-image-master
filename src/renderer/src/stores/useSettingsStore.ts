@@ -262,14 +262,31 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   selectProvider: async (id) => {
     const bridge = getAgentBridge()
     if (!bridge?.setActiveProvider) return
-    const result = (await bridge.setActiveProvider(id)) as { ok?: boolean; activeId?: string }
-    if (result?.ok === false) return
-    const newActive = result?.activeId ?? id
-    const { providers } = get()
-    set({
-      providers: { ...providers, activeId: newActive },
-      codexApiKey: providers.apiKeys[newActive] ?? '',
-    })
+    // Optimistic: highlight the tile + swap the key input immediately so the
+    // click feels instant (main also replies fast now — the codex respawn
+    // runs in the background there). Roll back if the IPC rejects.
+    const prevActiveId = get().providers.activeId
+    set((state) => ({
+      providers: { ...state.providers, activeId: id },
+      codexApiKey: state.providers.apiKeys[id] ?? '',
+    }))
+    try {
+      const result = (await bridge.setActiveProvider(id)) as { ok?: boolean; activeId?: string }
+      if (result?.ok === false) throw new Error('setActiveProvider rejected')
+      const confirmed = result?.activeId ?? id
+      if (confirmed !== id) {
+        set((state) => ({
+          providers: { ...state.providers, activeId: confirmed },
+          codexApiKey: state.providers.apiKeys[confirmed] ?? '',
+        }))
+      }
+    } catch (err) {
+      console.warn('selectProvider failed, reverting:', err)
+      set((state) => ({
+        providers: { ...state.providers, activeId: prevActiveId },
+        codexApiKey: state.providers.apiKeys[prevActiveId] ?? '',
+      }))
+    }
   },
 
   saveProviderKey: async (id, key) => {

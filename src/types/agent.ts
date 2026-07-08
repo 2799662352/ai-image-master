@@ -288,6 +288,12 @@ export type AgentNoticeKind =
   | 'threadContextReset'
   | 'attachmentSkipped'
   /**
+   * A `turn/steer` interjection lost the race against turn completion ("no
+   * active turn"), so the already-persisted message was delivered as a fresh
+   * turn instead. Informational — the conversation keeps flowing.
+   */
+  | 'steerFallback'
+  /**
    * Auto-recovery from PGlite NODEFS abort (upstream PGlite #884 / #794):
    * the local pgdata couldn't be reopened (crash, force-quit, dual instance,
    * installer overwrite) so we either moved the corrupt dir aside and rebuilt,

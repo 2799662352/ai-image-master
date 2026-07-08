@@ -3,6 +3,7 @@ import path from 'node:path'
 import {
   BUILTIN_PROVIDER_PRESETS,
   DEFAULT_PROVIDER_ID,
+  RETIRED_RIGHTCODE_PRO_ID,
   isBuiltinProviderId,
   type ProviderPreset,
 } from './codexProviders'
@@ -270,7 +271,7 @@ export class CodexProviderStore {
 function parseOrDefault(raw: string): PersistedProvidersV1 {
   try {
     const parsed = JSON.parse(raw) as Partial<PersistedProvidersV1>
-    return {
+    return migrateRetiredRightcodePro({
       version: 1,
       selectedProviderId:
         typeof parsed.selectedProviderId === 'string' && parsed.selectedProviderId
@@ -293,10 +294,29 @@ function parseOrDefault(raw: string): PersistedProvidersV1 {
               !isBuiltinProviderId((p as ProviderPreset).id),
           )
         : [],
-    }
+    })
   } catch {
     return clone(DEFAULT_STATE)
   }
+}
+
+/**
+ * Read-time migration for the retired `rightcode-pro` preset (Right.Codes
+ * merged `/codex-pro` into `/codex` on 2026-06-12; the old route 404s). The
+ * saved key moves to the surviving `rightcode` slot — unless the user already
+ * has a distinct rightcode key, which wins. Like the legacy codex-agent.json
+ * migration this is in-memory only; the next write persists the new shape.
+ */
+function migrateRetiredRightcodePro(state: PersistedProvidersV1): PersistedProvidersV1 {
+  const proKey = state.apiKeys[RETIRED_RIGHTCODE_PRO_ID]
+  if (proKey !== undefined) {
+    if (!state.apiKeys.rightcode) state.apiKeys.rightcode = proKey
+    delete state.apiKeys[RETIRED_RIGHTCODE_PRO_ID]
+  }
+  if (state.selectedProviderId === RETIRED_RIGHTCODE_PRO_ID) {
+    state.selectedProviderId = 'rightcode'
+  }
+  return state
 }
 
 /** Public — useful when callers want the resolved active provider record. */

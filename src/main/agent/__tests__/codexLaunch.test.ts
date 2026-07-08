@@ -26,7 +26,6 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'model_context_window=272000',
       '-c', 'model_auto_compact_token_limit=220000',
       '-c', 'tool_output_token_limit=10000',
-      '-c', 'experimental_use_rmcp_client=true',
       '-c', 'agents.max_threads=8',
       '-c', 'agents.max_depth=1',
       // Bare MCP tool names (openai/codex#21576) so the model calls `ask_user`
@@ -66,7 +65,6 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'model_context_window=272000',
       '-c', 'model_auto_compact_token_limit=220000',
       '-c', 'tool_output_token_limit=10000',
-      '-c', 'experimental_use_rmcp_client=true',
       '-c', 'agents.max_threads=8',
       '-c', 'agents.max_depth=1',
       '-c', 'features.non_prefixed_mcp_tool_names=true',
@@ -223,13 +221,13 @@ describe('buildCodexLaunchArgs', () => {
     expect(args).toContain('tool_output_token_limit=10000')
   })
 
-  it('enables rmcp client so URL-based MCP servers actually start', () => {
-    // Without `experimental_use_rmcp_client=true`, Codex 0.128 silently skips
-    // streamable-HTTP MCP servers (e.g. context7 / huggingface MCP). See
-    // openai/codex#4707 — pinned via `-c` so users do not have to edit
-    // ~/.codex/config.toml by hand.
+  it('no longer pins the removed experimental_use_rmcp_client flag (codex 0.143+)', () => {
+    // Codex 0.143.0 removed `experimental_use_rmcp_client` entirely (rmcp is
+    // now the unconditional MCP transport — zero repo hits at rust-v0.143.0,
+    // gone from config-schema.json). Passing it would only produce an
+    // "unknown config key" configWarning notice in the chat panel.
     const args = buildCodexLaunchArgs()
-    expect(args).toContain('experimental_use_rmcp_client=true')
+    expect(args.some((a) => a.includes('experimental_use_rmcp_client'))).toBe(false)
   })
 
   it('does NOT inject a catimation MCP entry when no runtime is provided', () => {

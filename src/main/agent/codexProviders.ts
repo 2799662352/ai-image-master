@@ -28,13 +28,22 @@ const APIYI_PRESET: ProviderPreset = {
 /**
  * Right Code (https://www.right.codes) preset — values pinned to the
  * official docs at https://docs.right.codes/docs/rc_cli_config/codex.html
- * (last verified 2026-05). When their docs change, update this preset and
- * bump the unit test in `codexProviders.test.ts`.
+ * (last verified 2026-07-08 against the live gateway + in-console 模型列表).
+ * When their docs change, update this preset and bump the unit test in
+ * `codexProviders.test.ts`.
+ *
+ * 2026-06-12 upstream change (site announcement): the `/codex-pro` route was
+ * RETIRED and merged into `/codex` — the 日抛plus pool is gone and `/codex`
+ * now serves the Pro pool at 0.4x billing. `/codex-pro/v1/*` returns a
+ * route-level 404 today, so the old `rightcode-pro` preset was removed (see
+ * {@link RETIRED_RIGHTCODE_PRO_ID} for the store-side migration).
  *
  * Why we pin every flag explicitly:
- *  - `model="gpt-5.2"` + `model_reasoning_effort="xhigh"` are the documented
- *    "qualifying" model for Right Code's Codex route. Without them the
- *    server falls back to weaker routing.
+ *  - `model="gpt-5.5"` + `model_reasoning_effort="xhigh"` mirror the docs'
+ *    example config. gpt-5.2 was retired upstream on 2026-06-02 ("OpenAI 官方
+ *    已下架 gpt-5.2 与 gpt-5.3-codex") — pinning it made every turn fail with
+ *    model-not-found. Current 模型列表: gpt-5.4 family / gpt-5.5 /
+ *    gpt-5.5-openai-compact.
  *  - `disable_response_storage=true` follows the docs' privacy posture and
  *    matches what most OpenAI-compatible gateways expect (no upstream
  *    storage of inputs).
@@ -46,16 +55,15 @@ const APIYI_PRESET: ProviderPreset = {
  */
 const RIGHTCODE_PRESET: ProviderPreset = {
   id: 'rightcode',
-  name: 'Right.Codes (日抛plus)',
-  // /codex endpoint = "Codex 日抛plus" (0.2x billing). Cheapest tier with full
-  // prompt-cache support. Per docs.right.codes/docs/rc_cli_config/codex.html
-  // and verified at https://www.right.codes/models, this endpoint **only**
-  // accepts /v1/responses — never /v1/chat/completions. Our Codex CLI uses
-  // wire_api="responses" so we're safe; do not let users override that field
-  // for this preset (the Settings UI doesn't expose wire_api anyway).
+  name: 'Right.Codes',
+  // /codex is the ONLY Codex route since 2026-06-12 (Pro pool, 0.4x). This
+  // endpoint **only** accepts /v1/responses — never /v1/chat/completions. Our
+  // Codex CLI uses wire_api="responses" so we're safe; do not let users
+  // override that field for this preset (the Settings UI doesn't expose
+  // wire_api anyway).
   baseUrl: 'https://right.codes/codex/v1',
   envKey: 'OPENAI_API_KEY',
-  model: 'gpt-5.2',
+  model: 'gpt-5.5',
   reasoningEffort: 'xhigh',
   verbosity: 'high',
   requiresOpenaiAuth: true,
@@ -63,32 +71,18 @@ const RIGHTCODE_PRESET: ProviderPreset = {
     disable_response_storage: true,
     windows_wsl_setup_acknowledged: true,
   }),
-  description: '日抛池 0.2x · cache_read $0.035/M · gpt-5.2 xhigh',
+  description: 'Pro号池 0.4x · cache_read 1/10 输入价 · gpt-5.5 xhigh',
 }
 
 /**
- * Right Code "正价" route (`/codex-pro`, 0.4x billing). Recommended fallback
- * when the cheaper `/codex` (rightcode) is rate-limited or showing high error
- * rates — Right Code's own homepage banner currently advises switching to
- * `/codex-pro` "for high-stability requirements". Same caching policy as
- * rightcode (cache_create $0/M, cache_read at 1/10 of input) but at 2x the
- * input price. We keep it as a separate preset so users can swap in one click.
+ * The retired "Right.Codes (正价)" preset id. The `/codex-pro` route 404s
+ * since Right.Codes merged it into `/codex` on 2026-06-12, so the preset no
+ * longer ships. `CodexProviderStore` remaps persisted state that still
+ * references this id onto `'rightcode'` at load time (selected id + saved
+ * API key) so upgrading users keep a working provider without re-entering
+ * their key.
  */
-const RIGHTCODE_PRO_PRESET: ProviderPreset = {
-  id: 'rightcode-pro',
-  name: 'Right.Codes (正价)',
-  baseUrl: 'https://right.codes/codex-pro/v1',
-  envKey: 'OPENAI_API_KEY',
-  model: 'gpt-5.2',
-  reasoningEffort: 'xhigh',
-  verbosity: 'high',
-  requiresOpenaiAuth: true,
-  extraTopLevelConfig: Object.freeze({
-    disable_response_storage: true,
-    windows_wsl_setup_acknowledged: true,
-  }),
-  description: '正价池 0.4x · 高稳定性兜底 · cache_read $0.07/M',
-}
+export const RETIRED_RIGHTCODE_PRO_ID = 'rightcode-pro' as const
 
 /**
  * Provider id + config for the qwen UNDERSTANDING capability (Path B). This is
@@ -172,7 +166,6 @@ export const DASHVECTOR_PROVIDER_ID = 'dashvector' as const
 export const BUILTIN_PROVIDER_PRESETS: readonly ProviderPreset[] = Object.freeze([
   Object.freeze(APIYI_PRESET),
   Object.freeze(RIGHTCODE_PRESET),
-  Object.freeze(RIGHTCODE_PRO_PRESET),
 ] as const)
 
 export const DEFAULT_PROVIDER_ID = 'apiyi' as const

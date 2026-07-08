@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
 import { useSettingsStore } from '../useSettingsStore'
 import type { ApiActions } from '../../hooks/useService'
 
@@ -201,6 +201,67 @@ describe('useSettingsStore', () => {
       await useSettingsStore.getState().saveAll(api)
 
       expect(localStorage.getItem('codex_api_key')).toBe('sk-toSave')
+    })
+  })
+
+  describe('selectProvider', () => {
+    interface AgentBridgeWindow {
+      electronAPI?: { agent?: { setActiveProvider?: (id: string) => Promise<unknown> } }
+    }
+
+    function installBridge(setActiveProvider: (id: string) => Promise<unknown>) {
+      ;(window as unknown as AgentBridgeWindow).electronAPI = { agent: { setActiveProvider } }
+    }
+
+    afterEach(() => {
+      delete (window as unknown as AgentBridgeWindow).electronAPI
+    })
+
+    beforeEach(() => {
+      useSettingsStore.setState({
+        providers: {
+          builtins: [],
+          custom: [],
+          activeId: 'apiyi',
+          apiKeys: { apiyi: 'sk-apiyi', rightcode: 'sk-rc' },
+          loaded: true,
+          loadError: null,
+        },
+        codexApiKey: 'sk-apiyi',
+      })
+    })
+
+    it('updates the tile OPTIMISTICALLY before the IPC resolves', async () => {
+      let resolveIpc!: (v: unknown) => void
+      installBridge(() => new Promise((resolve) => { resolveIpc = resolve }))
+
+      const pending = useSettingsStore.getState().selectProvider('rightcode')
+
+      // The click must reflect instantly — no waiting on main's reply.
+      expect(useSettingsStore.getState().providers.activeId).toBe('rightcode')
+      expect(useSettingsStore.getState().codexApiKey).toBe('sk-rc')
+
+      resolveIpc({ ok: true, activeId: 'rightcode' })
+      await pending
+      expect(useSettingsStore.getState().providers.activeId).toBe('rightcode')
+    })
+
+    it('rolls back to the previous provider when the IPC rejects', async () => {
+      installBridge(() => Promise.reject(new Error('unknown provider')))
+
+      await useSettingsStore.getState().selectProvider('rightcode')
+
+      expect(useSettingsStore.getState().providers.activeId).toBe('apiyi')
+      expect(useSettingsStore.getState().codexApiKey).toBe('sk-apiyi')
+    })
+
+    it('rolls back when main replies ok:false', async () => {
+      installBridge(() => Promise.resolve({ ok: false }))
+
+      await useSettingsStore.getState().selectProvider('rightcode')
+
+      expect(useSettingsStore.getState().providers.activeId).toBe('apiyi')
+      expect(useSettingsStore.getState().codexApiKey).toBe('sk-apiyi')
     })
   })
 
