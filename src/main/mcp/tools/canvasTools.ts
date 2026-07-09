@@ -93,15 +93,20 @@ export function registerCanvasTools(server: McpServer, router: ToolRouter): void
 
   server.registerTool('canvas_focus_region', {
     description:
-      "Move your viewport to a region of the canvas — the navigation half of tiered canvas_snapshot. Pass either `bounds` (e.g. a peripheralCluster's bounds from canvas_snapshot) or `shapeIds` (zooms to fit their union). After it returns, call canvas_snapshot again: the shapes in the new viewport come back in full/blurry detail and the PNG shows that region. Use this to explore a large canvas cluster-by-cluster instead of forcing full:true.",
+      "Move YOUR viewport (not the user's) to a region of the canvas — the navigation half of tiered canvas_snapshot. Pass either `bounds` (e.g. a peripheralCluster's bounds from canvas_snapshot) or `shapeIds` (frames their union). Default mode 'virtual' records an agent-side viewport: the user's camera does NOT move, and the next canvas_snapshot returns that region in detail with the PNG cropped to it. Use mode:'camera' ONLY when the user asks to be shown/taken somewhere — it moves the shared camera the user is looking through. Pass clear:true to drop the agent viewport and follow the user's camera again. Explore a large canvas cluster-by-cluster this way instead of forcing full:true.",
     inputSchema: z.object({
       shapeIds: z.array(z.string()).optional().describe('Shape ids to frame (union of their bounds).'),
       bounds: z
         .object({ x: z.number(), y: z.number(), w: z.number(), h: z.number() })
         .optional()
         .describe('Page-space region to frame, e.g. a peripheralCluster bounds.'),
+      mode: z
+        .enum(['virtual', 'camera'])
+        .optional()
+        .describe("'virtual' (default): agent-only viewport, user camera untouched. 'camera': move the real shared camera (only when the user asks to be shown)."),
+      clear: z.boolean().optional().describe('true = forget the agent viewport; canvas_snapshot follows the user camera again.'),
     }),
-    // Moves the camera only — no shape data is touched.
+    // Virtual mode touches no shared state; camera mode moves the camera only — no shape data is touched either way.
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async (params) => asResult(await router.call('canvas_focus_region', params as Record<string, unknown>)))
 

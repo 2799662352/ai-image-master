@@ -117,12 +117,29 @@ describe('canvasBridge canvas_arrange / canvas_focus_region dispatch', () => {
     expect(String(res.error)).toContain('shape:a')
   })
 
-  it('canvas_focus_region returns viewportBounds plus a re-snapshot hint', async () => {
-    const { editor } = makeEditor()
+  it('canvas_focus_region defaults to VIRTUAL mode: agent viewport set, user camera untouched', async () => {
+    const { editor, calls } = makeEditor()
     canvasBridge.setEditor(editor)
     const res: any = await canvasBridge.handle('canvas_focus_region', { bounds: { x: 0, y: 0, w: 100, h: 100 } })
-    expect(res.ok).toBe(true)
-    expect(res.viewportBounds).toEqual({ x: -10, y: -20, w: 800, h: 600 })
+    expect(res).toMatchObject({ ok: true, mode: 'virtual', viewportBounds: { x: 0, y: 0, w: 100, h: 100 } })
     expect(String(res.hint)).toContain('canvas_snapshot')
+    // The real camera must NOT have moved.
+    expect(calls.find((c) => c.method === 'zoomToBounds')).toBeUndefined()
+  })
+
+  it("canvas_focus_region mode:'camera' moves the shared camera and syncs the agent viewport", async () => {
+    const { editor, calls } = makeEditor()
+    canvasBridge.setEditor(editor)
+    const res: any = await canvasBridge.handle('canvas_focus_region', { bounds: { x: 0, y: 0, w: 100, h: 100 }, mode: 'camera' })
+    expect(res).toMatchObject({ ok: true, mode: 'camera', viewportBounds: { x: -10, y: -20, w: 800, h: 600 } })
+    expect(calls.find((c) => c.method === 'zoomToBounds')).toBeTruthy()
+  })
+
+  it('canvas_focus_region clear:true forgets the agent viewport', async () => {
+    const { editor } = makeEditor()
+    canvasBridge.setEditor(editor)
+    await canvasBridge.handle('canvas_focus_region', { bounds: { x: 0, y: 0, w: 100, h: 100 } })
+    const res: any = await canvasBridge.handle('canvas_focus_region', { clear: true })
+    expect(res).toMatchObject({ ok: true, cleared: true })
   })
 })

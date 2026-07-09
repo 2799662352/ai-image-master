@@ -344,10 +344,13 @@ export interface TieredShapesResult {
 export function buildTieredShapes(
   editor: Editor,
   summaries: ShapeSummary[],
-  opts: { threshold?: number; full?: boolean; focusShapeIds?: string[]; selectedIds?: string[] } = {},
+  opts: { threshold?: number; full?: boolean; focusShapeIds?: string[]; selectedIds?: string[]; viewportOverride?: Bounds } = {},
 ): TieredShapesResult {
   const threshold = opts.threshold ?? TIERED_SNAPSHOT_THRESHOLD
-  const viewport = (editor as unknown as { getViewportPageBounds?: () => Box }).getViewportPageBounds?.()
+  // The agent's virtual viewport (canvas_focus_region mode:'virtual') takes
+  // precedence over the user's real camera, so the agent can explore a large
+  // canvas without hijacking what the user is looking at.
+  const viewport = opts.viewportOverride ?? (editor as unknown as { getViewportPageBounds?: () => Box }).getViewportPageBounds?.()
   if (opts.full || summaries.length <= threshold || !viewport) {
     return { detailLevel: 'full', shapes: summaries.map(sanitizeSummaryForAgent) }
   }
@@ -597,19 +600,24 @@ export function zoomToFitShapes(editor: Editor, shapeIds: string[]): void {
  * (union of their page bounds). Unlike zoomToFitShapes this is an explicit
  * navigation request, so it MAY zoom in past the user's current level.
  */
-export function focusRegion(
+/** Resolve a focus request (explicit bounds OR shape ids) to one page-space
+ * rect. Shared by camera-mode focusRegion and the virtual agent viewport. */
+export function computeFocusTarget(
   editor: Editor,
   opts: { shapeIds?: string[]; bounds?: { x: number; y: number; w: number; h: number } },
-): { ok: true; viewportBounds: { x: number; y: number; w: number; h: number } } | { ok: false; error: string } {
-  let target: { x: number; y: number; w: number; h: number } | undefined
+): { ok: true; target: Bounds } | { ok: false; error: string } {
   if (opts.bounds && Number.isFinite(opts.bounds.x) && Number.isFinite(opts.bounds.y)) {
-    target = {
-      x: opts.bounds.x,
-      y: opts.bounds.y,
-      w: Math.max(1, Number(opts.bounds.w) || 1),
-      h: Math.max(1, Number(opts.bounds.h) || 1),
+    return {
+      ok: true,
+      target: {
+        x: opts.bounds.x,
+        y: opts.bounds.y,
+        w: Math.max(1, Number(opts.bounds.w) || 1),
+        h: Math.max(1, Number(opts.bounds.h) || 1),
+      },
     }
-  } else if (opts.shapeIds && opts.shapeIds.length > 0) {
+  }
+  if (opts.shapeIds && opts.shapeIds.length > 0) {
     // Manual union instead of Box.Common: getShapePageBounds returns plain
     // {x,y,w,h}-compatible objects in tests, and Box.Common needs Box instances.
     let minX = Number.POSITIVE_INFINITY
@@ -625,10 +633,18 @@ export function focusRegion(
       maxY = Math.max(maxY, b.y + b.h)
     }
     if (!Number.isFinite(minX)) return { ok: false, error: 'None of the given shapeIds have page bounds.' }
-    target = { x: minX, y: minY, w: Math.max(1, maxX - minX), h: Math.max(1, maxY - minY) }
+    return { ok: true, target: { x: minX, y: minY, w: Math.max(1, maxX - minX), h: Math.max(1, maxY - minY) } }
   }
-  if (!target) return { ok: false, error: 'canvas_focus_region needs `bounds` or non-empty `shapeIds`.' }
-  editor.zoomToBounds(target, { inset: 48, animation: { duration: CAMERA_ANIM_MS } })
+  return { ok: false, error: 'canvas_focus_region needs `bounds` or non-empty `shapeIds`.' }
+}
+
+export function focusRegion(
+  editor: Editor,
+  opts: { shapeIds?: string[]; bounds?: { x: number; y: number; w: number; h: number } },
+): { ok: true; viewportBounds: { x: number; y: number; w: number; h: number } } | { ok: false; error: string } {
+  const resolved = computeFocusTarget(editor, opts)
+  if (!resolved.ok) return resolved
+  editor.zoomToBounds(resolved.target, { inset: 48, animation: { duration: CAMERA_ANIM_MS } })
   const vp = editor.getViewportPageBounds()
   return {
     ok: true,

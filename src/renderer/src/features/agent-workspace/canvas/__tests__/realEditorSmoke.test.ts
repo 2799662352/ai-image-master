@@ -153,10 +153,14 @@ describe('real tldraw Editor smoke: new agent tool chain', () => {
     // The stranded shapes should also trip the far-from-origin lint.
     expect((snap1.lints ?? []).some((l: any) => l.kind === 'far-from-origin')).toBe(true)
 
-    // Navigate to the far cluster like the agent would.
-    const cluster = snap1.peripheralClusters![0]
-    const focus: any = await canvasBridge.handle('canvas_focus_region', { bounds: cluster.bounds })
-    expect(focus.ok).toBe(true)
+    // Navigate to the far cluster like the agent would — VIRTUAL viewport:
+    // the user's real camera must stay where it was.
+    const cameraBefore = { ...editor.getCamera() }
+    const farCluster = snap1.peripheralClusters!.find((c: any) => c.bounds.x > 10000)
+    expect(farCluster).toBeTruthy()
+    const focus: any = await canvasBridge.handle('canvas_focus_region', { bounds: farCluster.bounds, threadId: 'thread-smoke' })
+    expect(focus).toMatchObject({ ok: true, mode: 'virtual' })
+    expect(editor.getCamera()).toEqual(cameraBefore)
 
     // Mutate between looks: the diff must pick it up.
     editor.updateShape({ id: createShapeId('near0'), type: 'geo', x: 9999 })
@@ -168,6 +172,13 @@ describe('real tldraw Editor smoke: new agent tool chain', () => {
     expect(diff.updated).toContain(String(createShapeId('near0')))
     expect(diff.deleted).toContain(String(createShapeId('far9')))
     expect(diff.created).toEqual([])
+
+    // The re-snapshot must now tier around the AGENT viewport: the far shapes
+    // land in the blurry overview and the near ones fall out into clusters.
+    expect(snap2.detailLevel).toBe('tiered')
+    const overviewIds = new Set((snap2.shapes as Array<{ id: string }>).map((s) => s.id))
+    expect(overviewIds.has(String(createShapeId('far0')))).toBe(true)
+    expect(overviewIds.has(String(createShapeId('near1')))).toBe(false)
   })
 
   it('full-mode snapshot of a small canvas carries no huge data: URL (P0 hygiene, real store)', async () => {

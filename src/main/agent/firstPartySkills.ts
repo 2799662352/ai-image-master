@@ -1059,9 +1059,12 @@ the marks are. Pass \`screenshot: false\` when you only need the structured data
 On LARGE canvases (>40 shapes) the snapshot is TIERED: viewport shapes come as a
 reduced overview, off-viewport shapes are grouped into \`peripheralClusters\`
 (bounds + count + type histogram), and the PNG is cropped to the viewport. To
-explore: call \`canvas_focus_region\` with a cluster's \`bounds\` (or \`shapeIds\`) to
-move your viewport there, then re-call \`canvas_snapshot\` to see that region in
-detail. \`focusShapeIds: […]\` gets full detail for specific shapes; \`full: true\`
+explore: call \`canvas_focus_region\` with a cluster's \`bounds\` (or \`shapeIds\`) —
+by default this sets YOUR OWN virtual viewport (the user's camera does NOT
+move), then re-call \`canvas_snapshot\` to see that region in detail. Pass
+\`mode: 'camera'\` ONLY when the user asks to be shown/taken somewhere (it moves
+the shared camera), and \`clear: true\` to follow the user's camera again.
+\`focusShapeIds: […]\` gets full detail for specific shapes; \`full: true\`
 forces the complete dump (large).
 
 ### Picking and fetching one image (list → fetch)

@@ -1,6 +1,6 @@
-import { getSnapshot, loadSnapshot, type Editor } from 'tldraw'
-import type { CanvasStatePayload } from '../../../../../types/canvas'
-import { arrangeShapes, buildCanvasLints, buildTieredShapes, createHolder, createImageVersion, deleteShapesById, diffShapeFingerprints, fingerprintSummaries, focusRegion, insertFilePlaceholder, insertImageAt, insertImageIntoHolder, insertTextNote, insertVideo, listImageShapes, readCanvasState, resolveShapeId, summarizeShape, truncateDataUrl, updateShapePartial, ARRANGE_OPERATIONS, type ArrangeOperation, type CanvasLint, type SnapshotDiff, type TieredShapesResult } from './shapeOps'
+import { Box, getSnapshot, loadSnapshot, type Editor } from 'tldraw'
+import type { Bounds, CanvasStatePayload } from '../../../../../types/canvas'
+import { arrangeShapes, buildCanvasLints, buildTieredShapes, computeFocusTarget, createHolder, createImageVersion, deleteShapesById, diffShapeFingerprints, fingerprintSummaries, focusRegion, insertFilePlaceholder, insertImageAt, insertImageIntoHolder, insertTextNote, insertVideo, listImageShapes, readCanvasState, resolveShapeId, summarizeShape, truncateDataUrl, updateShapePartial, ARRANGE_OPERATIONS, type ArrangeOperation, type CanvasLint, type SnapshotDiff, type TieredShapesResult } from './shapeOps'
 import { executeCanvasCode, searchEditorApi } from './shapeExec'
 import { parseAnnotations } from './annotationParser'
 import { editPrompt, findPreferredHolder, generationPrompt, holderSize } from './promptBuilders'
@@ -72,6 +72,12 @@ class CanvasBridge {
       const pending = this.waiters
       this.waiters = []
       for (const resolve of pending) resolve(editor)
+    } else {
+      // Canvas tab closed: the agent viewports and snapshot fingerprints
+      // describe an editor instance that no longer exists — a re-opened canvas
+      // may hold a different document, so a stale diff/viewport would lie.
+      this.agentViewports.clear()
+      this.lastSnapshotFingerprints.clear()
     }
   }
 
@@ -104,6 +110,11 @@ class CanvasBridge {
   /** Per-thread shape fingerprints from the previous canvas_snapshot, used to
    * report `changedSinceLastSnapshot` (user actions between agent looks). */
   private lastSnapshotFingerprints = new Map<string, Map<string, string>>()
+
+  /** Per-thread AGENT viewport (official Agent Kit's "context bounds" idea):
+   * canvas_focus_region mode:'virtual' records the region here instead of
+   * moving the user's camera; canvas_snapshot then tiers + crops around it. */
+  private agentViewports = new Map<string, Bounds>()
 
   /**
    * Wrap a canvas-mutating operation so a tldraw validation/transaction error is
@@ -288,9 +299,22 @@ class CanvasBridge {
         })
       case 'canvas_focus_region': {
         // Viewport navigation: the action half of the tiered snapshot loop.
+        // Two modes (official Agent Kit keeps the agent's "context bounds"
+        // separate from the user's camera):
+        //   - 'virtual' (default): record an AGENT viewport per thread; the
+        //     next canvas_snapshot tiers + crops its PNG around it. The user's
+        //     camera never moves — the agent can explore without hijacking
+        //     what the user is looking at.
+        //   - 'camera': actually move the shared camera (only when the user
+        //     asks to be SHOWN something).
         // Self-heal each shapeId (hallucinated / prefix-less ids return
         // candidates instead of silently focusing nothing).
         const editor = this.requireEditor()
+        const viewportKey = typeof params.threadId === 'string' && params.threadId ? params.threadId : '__no_thread__'
+        if (params.clear === true) {
+          this.agentViewports.delete(viewportKey)
+          return { ok: true, cleared: true, hint: 'Agent viewport cleared — canvas_snapshot follows the user viewport again.' }
+        }
         const rawIds = Array.isArray(params.shapeIds) ? params.shapeIds.map(String) : []
         const resolvedIds: string[] = []
         for (const raw of rawIds) {
@@ -299,9 +323,30 @@ class CanvasBridge {
           resolvedIds.push(r.id)
         }
         const bounds = params.bounds as { x: number; y: number; w: number; h: number } | undefined
-        const res = focusRegion(editor, { shapeIds: resolvedIds.length > 0 ? resolvedIds : undefined, bounds })
-        if (!res.ok) return { ok: false, failed: true, tool: 'canvas_focus_region', error: res.error }
-        return { ...res, hint: 'Viewport moved. Call canvas_snapshot to see this region in full detail.' }
+        const focusOpts = { shapeIds: resolvedIds.length > 0 ? resolvedIds : undefined, bounds }
+        if (params.mode === 'camera') {
+          const res = focusRegion(editor, focusOpts)
+          if (!res.ok) return { ok: false, failed: true, tool: 'canvas_focus_region', error: res.error }
+          // Keep the agent viewport in sync so a later snapshot matches what
+          // the agent just framed for the user.
+          this.agentViewports.set(viewportKey, res.viewportBounds)
+          return { ...res, mode: 'camera', hint: 'Camera moved (user sees this too). Call canvas_snapshot to see this region in full detail.' }
+        }
+        const resolved = computeFocusTarget(editor, focusOpts)
+        if (!resolved.ok) return { ok: false, failed: true, tool: 'canvas_focus_region', error: resolved.error }
+        const target = {
+          x: Math.round(resolved.target.x),
+          y: Math.round(resolved.target.y),
+          w: Math.round(resolved.target.w),
+          h: Math.round(resolved.target.h),
+        }
+        this.agentViewports.set(viewportKey, target)
+        return {
+          ok: true,
+          mode: 'virtual',
+          viewportBounds: target,
+          hint: "Agent viewport set (the user's camera did NOT move). Call canvas_snapshot: shapes in this region come back in detail and the PNG is cropped to it. Pass clear:true to follow the user viewport again, or mode:'camera' to actually move the shared camera.",
+        }
       }
       case 'canvas_arrange': {
         // Batch layout (align/distribute/stack/pack) — one atomic transaction
@@ -432,10 +477,12 @@ class CanvasBridge {
     const prevFingerprints = this.lastSnapshotFingerprints.get(diffKey)
     const changedSinceLastSnapshot = prevFingerprints ? diffShapeFingerprints(prevFingerprints, state.shapes) : undefined
     this.lastSnapshotFingerprints.set(diffKey, fingerprintSummaries(state.shapes))
+    const agentViewport = this.agentViewports.get(diffKey)
     const tiered = buildTieredShapes(editor, state.shapes, {
       full: opts.full,
       focusShapeIds: opts.focusShapeIds,
       selectedIds: state.selection.selectedShapeIds,
+      viewportOverride: agentViewport,
     })
     let imagePath: string | undefined
     let screenshotScope: 'viewport' | 'full' | undefined
@@ -453,7 +500,13 @@ class CanvasBridge {
       screenshotScope = tiered.detailLevel === 'tiered' ? 'viewport' : 'full'
       const exportOpts =
         screenshotScope === 'viewport'
-          ? { format: 'png' as const, background: true, bounds: editor.getViewportPageBounds() }
+          ? // Crop to the agent's virtual viewport when set, else the user's camera.
+            // (toImageDataUrl wants a real Box, not a plain rect.)
+            {
+              format: 'png' as const,
+              background: true,
+              bounds: agentViewport ? new Box(agentViewport.x, agentViewport.y, agentViewport.w, agentViewport.h) : editor.getViewportPageBounds(),
+            }
           : { format: 'png' as const, background: true }
       const exported = await editor.toImageDataUrl(ids, exportOpts)
       const decoded = exported?.url ? await srcToBase64(exported.url) : null

@@ -371,13 +371,16 @@ export class AgentToolExecutor {
       toolName === 'canvas_snapshot' ||
       toolName === 'get_canvas_image' ||
       toolName === 'get_canvas_video' ||
-      toolName === 'save_snapshot'
+      toolName === 'save_snapshot' ||
+      toolName === 'canvas_focus_region'
     ) {
       // These persist an exported file as a thread-scoped attachment (FK on
       // threadId), so hand the bridge the active chat thread; without it the
       // image export is dropped (canvas_snapshot) / omitted (get_canvas_image) /
       // the get_canvas_video materialize fallback can't save a copy /
-      // save_snapshot returns no imagePath.
+      // save_snapshot returns no imagePath. canvas_focus_region needs it too:
+      // the agent's VIRTUAL viewport is keyed per thread so the next
+      // canvas_snapshot (same thread) tiers around it.
       const threadId = useAgentChatStore.getState().threadId
       return canvasBridge.handle(toolName, { ...params, threadId })
     }
