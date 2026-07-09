@@ -20,17 +20,18 @@ describe('CharacterAnchorSchema (5-field: name + anchor + face + outfit + marker
     expect(result.characters[0].outfit).toContain('teal')
   })
 
-  it('accepts characters without markers (optional)', () => {
+  it('accepts empty-string markers (schema: required string, "" when none — OpenAI structured outputs need all fields present)', () => {
     const result = CharacterAnchorSchema.parse({
       characters: [{
         name: 'Kael',
         anchor: 'dark skin, sharp eyes, silver-white twin tails, navy blue sailor uniform',
         face: 'dark skin, sharp eyes, silver-white twin tails',
         outfit: 'navy blue sailor uniform',
+        markers: '',
       }],
     })
     expect(result.characters).toHaveLength(1)
-    expect(result.characters[0].markers).toBeUndefined()
+    expect(result.characters[0].markers).toBe('')
   })
 
   it('rejects characters missing anchor (required)', () => {
@@ -79,7 +80,7 @@ describe('Pass 2 structured recovery', () => {
     const result = CharacterAnchorSchema.parse({
       characters: [
         { name: 'Aria', anchor: 'long mint-green hair, dark teal military coat, white folding fan', face: 'long mint-green hair', outfit: 'dark teal military coat', markers: 'white folding fan' },
-        { name: 'Kael', anchor: 'silver-white twin tails, navy blue sailor uniform, blue beret', face: 'silver-white twin tails', outfit: 'navy blue sailor uniform, blue beret' },
+        { name: 'Kael', anchor: 'silver-white twin tails, navy blue sailor uniform, blue beret', face: 'silver-white twin tails', outfit: 'navy blue sailor uniform, blue beret', markers: '' },
       ],
     })
     expect(result.characters).toHaveLength(2)

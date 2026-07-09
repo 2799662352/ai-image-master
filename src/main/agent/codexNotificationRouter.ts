@@ -1,4 +1,10 @@
-import type { AgentStreamEvent, AgentTokenUsage, AgentTokenUsageDelta } from '../../types/agent'
+import type {
+  AgentStreamEvent,
+  AgentTokenUsage,
+  AgentTokenUsageDelta,
+  CodexReconcileTextElement,
+  CodexUserMessageReconcile,
+} from '../../types/agent'
 import type { ThreadGoal } from '../../types/codexGoals'
 import { MIN_SNAPSHOT_PREFIX_LEN } from '../../types/agent-timeline'
 import { countDiffLines, parseChange } from '../../shared/diffUtils'
@@ -28,6 +34,47 @@ type CodexItem = {
   path?: string
   error?: string
   [k: string]: unknown
+}
+
+/**
+ * Extract the canonical rollout view from a completed `userMessage` item
+ * (`{id, clientId, content}`, app-server v2). Defensive on purpose: gateways
+ * drift between camelCase and snake_case for both the content-entry type tags
+ * (`localImage` vs `local_image`) and the element field names (`text_elements`
+ * vs `textElements`, `byteRange` vs `byte_range`), so probe both spellings and
+ * silently drop anything malformed — reconcile data is an enhancement, never
+ * worth crashing the stream over.
+ */
+function parseUserMessageReconcile(item: CodexItem): CodexUserMessageReconcile {
+  const clientIdRaw = item.clientId ?? item.client_id
+  const clientId = typeof clientIdRaw === 'string' && clientIdRaw.length > 0 ? clientIdRaw : undefined
+
+  const localImages: string[] = []
+  const textElements: CodexReconcileTextElement[] = []
+  const content = Array.isArray(item.content) ? item.content : []
+  for (const entry of content) {
+    if (!entry || typeof entry !== 'object') continue
+    const rec = entry as Record<string, unknown>
+    if (rec.type === 'localImage' || rec.type === 'local_image') {
+      if (typeof rec.path === 'string' && rec.path.length > 0) localImages.push(rec.path)
+      continue
+    }
+    if (rec.type !== 'text') continue
+    const rawElements = rec.text_elements ?? rec.textElements
+    if (!Array.isArray(rawElements)) continue
+    for (const el of rawElements) {
+      if (!el || typeof el !== 'object') continue
+      const elRec = el as Record<string, unknown>
+      const range = (elRec.byteRange ?? elRec.byte_range) as Record<string, unknown> | undefined
+      if (!range || typeof range !== 'object') continue
+      if (typeof range.start !== 'number' || typeof range.end !== 'number') continue
+      textElements.push({
+        byteRange: { start: range.start, end: range.end },
+        placeholder: typeof elRec.placeholder === 'string' ? elRec.placeholder : null,
+      })
+    }
+  }
+  return { codexItemId: String(item.id), ...(clientId ? { clientId } : {}), localImages, textElements }
 }
 
 /**
@@ -931,9 +978,18 @@ export class CodexNotificationRouter {
 
         switch (item.type) {
           case 'userMessage':
-            // Mirror the `item/started` drop so a late completion notification
-            // can't sneak through the activity fallback.
-            return null
+            // Never rendered (the local user bubble already exists — see the
+            // `item/started` drop), but the completed echo carries the
+            // canonical rollout view of the message: `clientId` (our
+            // clientUserMessageId = persisted row id), localImage paths and
+            // text_elements. Surface it as an internal reconcile event so
+            // AgentManager can fold that data back onto our DB row.
+            return {
+              type: 'user_message_reconciled',
+              threadId: params.threadId,
+              turnId: params.turnId,
+              reconcile: parseUserMessageReconcile(item),
+            }
           case 'agentMessage': {
             const key = itemStateKey(params.threadId, item.id)
             if (key && this.streamedDeltaItemIds.has(key)) {

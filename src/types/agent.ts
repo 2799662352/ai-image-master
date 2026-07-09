@@ -1,6 +1,11 @@
-import type { TimelineItem } from './agent-timeline'
+import type { CodexUserMessageReconcile, TimelineItem } from './agent-timeline'
 import type { AgentReference } from './agent-reference'
 import type { ThreadGoal } from './codexGoals'
+
+// Canonical home is agent-timeline.ts (BaseItem.codexReconcile persists the
+// same shape); re-exported here because stream-event consumers import all
+// event payload types from types/agent.
+export type { CodexReconcileTextElement, CodexUserMessageReconcile } from './agent-timeline'
 
 export type AgentRole = 'user' | 'assistant' | 'system' | 'tool'
 export type AgentToolStatus = 'pending' | 'running' | 'success' | 'error' | 'cancelled'
@@ -15,6 +20,19 @@ export interface AgentAttachmentInput {
 }
 
 export interface AgentSkillRef {
+  name: string
+  path: string
+}
+
+/**
+ * Plugin / app invocation resolved from an `@token` in `content`. Mirrors the
+ * codex app-server `mention` input item: `path` is the exact
+ * `plugin://<plugin-name>@<marketplace-name>` returned by `plugin/installed`
+ * (or `app://<connector-id>` for ChatGPT apps). Per the README, sending the
+ * mention item alongside the text token is what makes codex use the exact
+ * target "rather than guessing by name".
+ */
+export interface AgentMentionRef {
   name: string
   path: string
 }
@@ -40,6 +58,20 @@ export interface AgentSendMessagePayload {
    * model resolve `$name` itself (which adds latency).
    */
   skills?: AgentSkillRef[]
+  /**
+   * Plugins/apps explicitly invoked via `@token` in `content`, resolved by the
+   * renderer against `plugin/installed`. The main process attaches one
+   * `mention` input item per unique path so codex activates the exact plugin.
+   */
+  mentions?: AgentMentionRef[]
+  /**
+   * EXPERIMENTAL collaboration-mode preset KIND selected in the composer
+   * ('plan' = codex's built-in Plan mode). The renderer only picks a kind; the
+   * main process expands it into the full codex `CollaborationMode` (mode +
+   * settings with the resolved model) for `turn/start`. Absent or 'default'
+   * = today's behaviour, nothing extra on the wire.
+   */
+  collaborationModeKind?: 'plan' | 'default'
 }
 
 /**
@@ -329,6 +361,13 @@ export type AgentStreamEvent =
    */
   | (AgentStreamEventBase & { type: 'error'; error: string; willRetry?: boolean })
   | (AgentStreamEventBase & { type: 'cancelled' })
+  /**
+   * Internal (main-process only): the turn's canonical `userMessage` echo.
+   * AgentManager consumes this to reconcile rollout data onto our DB row and
+   * never forwards it to the renderer — the user bubble was already rendered
+   * locally by `store.send()`, so surfacing it would duplicate the message.
+   */
+  | (AgentStreamEventBase & { type: 'user_message_reconciled'; reconcile: CodexUserMessageReconcile })
   | (AgentStreamEventBase & { type: 'attachment_error'; name: string; error: string })
   | { type: 'mcp_status_updated'; name: string; status: string; error: string | null }
   | { type: 'mcp_oauth_completed'; name: string; success: boolean; error: string | null }

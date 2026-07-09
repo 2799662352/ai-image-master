@@ -1,7 +1,41 @@
+/**
+ * Mirror of the app-server v2 `TextElement` (camelCase wire shape): a byte
+ * range into the UTF-8 text buffer plus an optional display placeholder.
+ * Carried on the `userMessage` echo so history/resume can restore rich
+ * mention chips without re-deriving them from raw text.
+ */
+export interface CodexReconcileTextElement {
+  byteRange: { start: number; end: number }
+  placeholder: string | null
+}
+
+/**
+ * Canonical user-message data echoed back by codex on the turn's
+ * `userMessage` thread item (`{id, clientId, content}`). `clientId` is the
+ * `clientUserMessageId` we passed to `turn/start`/`turn/steer` — i.e. our
+ * persisted AgentMessage row id — which lets AgentManager reconcile the
+ * rollout's canonical view (localImage paths, text_elements) onto that row.
+ */
+export interface CodexUserMessageReconcile {
+  codexItemId: string
+  clientId?: string
+  localImages: string[]
+  textElements: CodexReconcileTextElement[]
+}
+
 export interface BaseItem {
   id: string
   startedAt: number
   endedAt?: number
+  /**
+   * Row-level reconcile metadata from the codex rollout's canonical
+   * `userMessage` echo. Only ever written onto the FIRST item of a persisted
+   * user message row by `ThreadStore.attachCodexReconcile` — it describes the
+   * whole message, not this specific item. Renderers ignore it; the
+   * edit-resend chip-restore path may use `localImages` as a fallback when DB
+   * attachment rows are missing.
+   */
+  codexReconcile?: CodexUserMessageReconcile
 }
 
 export interface TextItem extends BaseItem {

@@ -206,7 +206,21 @@ export class AttachmentService extends EventEmitter {
   async cleanup(cutoffMs = 7 * 24 * 60 * 60 * 1000): Promise<number> {
     const cutoff = new Date(Date.now() - cutoffMs)
     const uploadsDir = path.join(app.getPath('userData'), 'agent', 'uploads')
-    const stale = await this.prisma.agentAttachment.findMany({ where: { uploadedAt: { lt: cutoff } } })
+    const staleByAge = await this.prisma.agentAttachment.findMany({ where: { uploadedAt: { lt: cutoff } } })
+
+    // Age alone is NOT deletability: chat history (AgentMessage.items) persists
+    // `local-file:///<uploads path>` attachment URIs and raw-path text mentions,
+    // and the renderer resolves them lazily on thread switch. Sweeping a file a
+    // message still points at silently breaks old threads (dangling chips —
+    // the "悬空引用" bug). This mirrors upstream codex, where rollouts embed
+    // attachment content so history never depends on a sweepable cache.
+    const referencedHaystack = staleByAge.length > 0 ? await this.loadMessageReferenceHaystack() : ''
+    if (referencedHaystack === null) {
+      // Fail SAFE: the reference scan broke (sidecar DB hiccup) — we cannot
+      // tell what is still referenced, so delete nothing this run.
+      return 0
+    }
+    const stale = staleByAge.filter((item) => !referencedHaystack.includes(normalizePathForMatch(item.localPath)))
     const candidatePaths = new Set(stale.map((item) => item.localPath))
 
     for (const item of stale) {
@@ -228,6 +242,33 @@ export class AttachmentService extends EventEmitter {
     const relative = path.relative(dir, filePath)
     return relative.length > 0 && !relative.startsWith('..') && !path.isAbsolute(relative)
   }
+
+  /**
+   * Flatten every persisted message's `items` JSON into one normalized string
+   * so `haystack.includes(normalizedLocalPath)` answers "does any chat message
+   * still reference this file?" — covering both the structured attachment URI
+   * (`local-file:///D:/...` with forward slashes) and raw OS paths embedded in
+   * text mentions (backslashes on Windows). Cleanup runs once at startup, so a
+   * single batched scan is acceptable; if this table ever grows huge, switch
+   * to paged scanning keyed on the candidate set.
+   *
+   * Returns null when the scan itself fails — the caller must then skip the
+   * sweep entirely (fail safe) instead of treating everything as unreferenced.
+   */
+  private async loadMessageReferenceHaystack(): Promise<string | null> {
+    try {
+      const messages = await this.prisma.agentMessage.findMany({ select: { items: true } })
+      return normalizePathForMatch(messages.map((m) => JSON.stringify(m.items)).join('\n'))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.warn(`[AttachmentService] cleanup reference scan failed; skipping sweep this run: ${message}`)
+      return null
+    }
+  }
+}
+
+function normalizePathForMatch(value: string): string {
+  return value.replace(/\\\\/g, '/').replace(/\\/g, '/').toLowerCase()
 }
 
 function* splitBuffer(buffer: Buffer, chunkSize: number): Generator<Buffer> {

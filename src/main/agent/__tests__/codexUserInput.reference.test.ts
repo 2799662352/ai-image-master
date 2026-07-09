@@ -359,6 +359,78 @@ describe('Codex structured reference inputs', () => {
     expect(backend.calls).toEqual([])
   })
 
+  // The fs IPC gate (fsIpc.resolveAllowedRoots) has ALWAYS whitelisted
+  // `<userData>/agent/uploads` so attachment chips are clickable, but the
+  // send gate historically validated references against workspace roots
+  // only — so referencing a canonical uploads-cache path (drag from the
+  // ATTACHMENTS tree, edit-and-resend of a sent message) previewed fine
+  // and then died at click-Send with "Reference path is outside allowed
+  // roots". The two gates must share the uploads whitelist.
+  it('allows local references under the uploads cache directory', async () => {
+    const uploadsDir = path.join(tmpDir, 'agent', 'uploads')
+    const uploadedImage = path.join(uploadsDir, 'sha-cat.png')
+    const backend = makeBackend()
+    const mgr = makeManager(backend)
+    await mgr.setCodexApiKey('sk-test')
+    await fs.mkdir(uploadsDir, { recursive: true })
+    await fs.writeFile(uploadedImage, 'image')
+    await mgr.setAllowedRoots([workspaceDir])
+
+    await mgr.sendMessage({
+      content: 'describe this',
+      attachments: [],
+      references: [localReference(uploadedImage, { openBehavior: 'image', preview: { mime: 'image/png' } })],
+    })
+    await flushMicrotasks()
+
+    expect(backend.calls[0].input.items).toContainEqual({ type: 'localImage', path: path.resolve(uploadedImage) })
+  })
+
+  // Stale references (uploads written on another machine / user profile, or
+  // cleaned up by AttachmentService.cleanup) used to hard-fail the whole
+  // send: fs.realpath threw ENOENT and mapReferencesToInputItems rethrew as
+  // "Reference path is outside allowed roots", holding the user's message
+  // hostage to a dead chip. Unreadable paths are now SKIPPED with a notice;
+  // only paths that EXIST outside allowed roots still hard-reject (that is
+  // the arbitrary-file-read security boundary and it stays).
+  it('skips stale (unreadable) local references instead of rejecting the send, and emits a notice', async () => {
+    const stalePath = path.join(tmpDir, 'gone', 'other-machine.png')
+    const events: AgentStreamEvent[] = []
+    const backend = makeBackend()
+    const mgr = new AgentManager({
+      userDataDir: tmpDir,
+      backend,
+      store: {
+        createThread: async () => ({ id: 'thread-1' }),
+        addMessage: async () => ({ id: 'msg-1' }),
+        updateLastMessageAt: async () => undefined,
+      } as any,
+      attachments: { ingest: async () => [] } as any,
+      eventSink: (event) => events.push(event),
+    })
+    await mgr.setCodexApiKey('sk-test')
+    await mgr.setAllowedRoots([workspaceDir])
+
+    await mgr.sendMessage({
+      content: 'describe this',
+      attachments: [],
+      references: [localReference(stalePath, { openBehavior: 'image', preview: { mime: 'image/png' } })],
+    })
+    await flushMicrotasks()
+
+    // The send goes through without the dead reference.
+    expect(backend.calls).toHaveLength(1)
+    expect(backend.calls[0].input.items.some((item) => item.type === 'localImage')).toBe(false)
+
+    const notice = events.find(
+      (event): event is Extract<AgentStreamEvent, { type: 'notice' }> => event.type === 'notice',
+    )
+    expect(notice).toBeDefined()
+    expect(notice?.notice.kind).toBe('attachmentSkipped')
+    expect(notice?.notice.level).toBe('warning')
+    expect(notice?.notice.message).toContain('other-machine.png')
+  })
+
   it('rejects local reference paths that symlink outside allowed roots', async () => {
     const outsideDir = path.join(tmpDir, 'outside-target')
     const outsideImage = path.join(outsideDir, 'secret.png')

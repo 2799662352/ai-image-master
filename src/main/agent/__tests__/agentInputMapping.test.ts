@@ -49,4 +49,18 @@ describe('mapUserInput (AgentInput.items -> CodexUserInput[])', () => {
       { type: 'skill', name: 'skill-creator', path: '/Users/me/.codex/skills/skill-creator/SKILL.md' },
     ])
   })
+
+  it('maps a mention item with name + path verbatim (codex app-server @plugin / $app protocol)', () => {
+    // Per codex-rs/app-server README, mention paths are `plugin://<name>@<marketplace>`
+    // (from plugin/installed) or `app://<connector-id>`:
+    //   { "type": "mention", "name": "Sample Plugin", "path": "plugin://sample@test" }
+    const items: AgentInput['items'] = [
+      { type: 'mention', name: 'Sample Plugin', path: 'plugin://sample@test' },
+      { type: 'mention', name: 'Demo App', path: 'app://demo-app' },
+    ]
+    expect(mapUserInput(items)).toEqual([
+      { type: 'mention', name: 'Sample Plugin', path: 'plugin://sample@test' },
+      { type: 'mention', name: 'Demo App', path: 'app://demo-app' },
+    ])
+  })
 })

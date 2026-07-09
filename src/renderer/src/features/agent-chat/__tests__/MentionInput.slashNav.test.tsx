@@ -93,6 +93,7 @@ describe('MentionInput `/goal` command prefills instead of executing', () => {
     // Composer is prefilled with the goal prefix (trailing space) — ready for
     // the user to type their objective — and no message was dispatched.
     expect(useAgentChatStore.getState().input).toBe('/goal ')
-    expect(window.electronAPI.agent.sendMessage).not.toHaveBeenCalled()
+    const api = (window as unknown as { electronAPI: { agent: { sendMessage: ReturnType<typeof vi.fn> } } }).electronAPI
+    expect(api.agent.sendMessage).not.toHaveBeenCalled()
   })
 })

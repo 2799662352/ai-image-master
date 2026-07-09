@@ -9,6 +9,7 @@ import type {
   AgentAttachmentInput,
   AgentCancelPayload,
   AgentApiResult,
+  AgentMentionRef,
   AgentNotice,
   AgentSendMessagePayload,
   AgentSendMessageResult,
@@ -23,6 +24,7 @@ import type {
   ItemDeltaPatch,
 } from '../../../../types/agent'
 import type { GoalRpcResult, ThreadGoal, ThreadGoalStatus } from '../../../../types/codexGoals'
+import type { PluginInstalledParams, PluginInstalledResponse } from '../../../../types/codexPlugins'
 import type { AgentReference } from '../../../../types/agent-reference'
 import type { ArtifactItem, ArtifactSaveInfo, AttachmentRef, ChoiceAnswer, ChoiceOption, ChoiceRequestItem, Message, PlanStep, TimelineItem } from '../../../../types/agent-timeline'
 import {
@@ -166,6 +168,10 @@ type AgentElectronApi = {
     clearGoal?: (threadId: string) => Promise<GoalRpcResult<{ cleared: boolean }>>
     // Codex native `/compact` (thread/compact/start). threadId = DB thread id.
     compactThread?: (threadId: string) => Promise<GoalRpcResult<{ started: boolean }>>
+    // Codex native plugin/installed (≥0.140) — mention candidate source.
+    listInstalledPlugins?: (
+      params?: PluginInstalledParams,
+    ) => Promise<{ ok: boolean; error?: string; data?: PluginInstalledResponse }>
   }
 }
 
@@ -188,6 +194,81 @@ export function extractSkillTokens(text: string): string[] {
     out.push(m[1])
   }
   return out
+}
+
+/**
+ * Extract `@token` plugin-mention markers from a chat input. Mirrors the
+ * codex app-server "Invoke a plugin" syntax — the UI mention token (e.g.
+ * `@sample`) stays in the text while a `mention` input item with the exact
+ * `plugin://<name>@<marketplace>` path rides along. `@` only counts at start
+ * of input or after whitespace, and requires a following non-`@` word char,
+ * so emails (`me@example.com`) and mid-word `@` never trigger. Tokens allow
+ * dots so marketplace-style names like `@org.tool` survive.
+ *
+ * Used by `send()`/`steer()` to resolve tokens against
+ * `availablePluginMentions` and forward `payload.mentions`.
+ */
+export function extractMentionTokens(text: string): string[] {
+  const out: string[] = []
+  const re = /(?:^|\s)@([A-Za-z0-9_][\w.-]*)/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    out.push(m[1])
+  }
+  return out
+}
+
+/**
+ * A plugin the user can invoke with `@token`. `token` is the plugin's wire
+ * name (what the user types), `name` is the display name shown in the popup
+ * and sent on the mention item, `path` is the exact
+ * `plugin://<plugin-name>@<marketplace-name>` from `plugin/installed`.
+ */
+export interface PluginMentionCandidate {
+  token: string
+  name: string
+  path: string
+}
+
+/**
+ * Flatten a `plugin/installed` response into mention candidates: only
+ * installed + enabled + not admin-disabled plugins are invocable per the
+ * codex README ("mention item with the exact path returned by
+ * plugin/installed").
+ */
+export function pluginMentionCandidates(response: PluginInstalledResponse): PluginMentionCandidate[] {
+  const out: PluginMentionCandidate[] = []
+  for (const marketplace of response.marketplaces) {
+    for (const plugin of marketplace.plugins) {
+      if (!plugin.installed || !plugin.enabled || plugin.availability === 'DISABLED_BY_ADMIN') continue
+      out.push({
+        token: plugin.name,
+        name: plugin.interface?.displayName ?? plugin.name,
+        path: `plugin://${plugin.name}@${marketplace.name}`,
+      })
+    }
+  }
+  return out
+}
+
+/**
+ * Resolve `@token`s in `content` to mention refs against the installed-plugin
+ * cache. Unknown tokens travel as plain text (codex tolerates a bare token —
+ * it just falls back to guessing by name). Dedupe by path so `@foo @foo`
+ * yields one mention item.
+ */
+function resolveMentions(content: string, candidates: PluginMentionCandidate[]): AgentMentionRef[] | undefined {
+  if (candidates.length === 0) return undefined
+  const byToken = new Map(candidates.map((c) => [c.token, c]))
+  const seen = new Set<string>()
+  const out: AgentMentionRef[] = []
+  for (const token of extractMentionTokens(content)) {
+    const candidate = byToken.get(token)
+    if (!candidate || seen.has(candidate.path)) continue
+    seen.add(candidate.path)
+    out.push({ name: candidate.name, path: candidate.path })
+  }
+  return out.length > 0 ? out : undefined
 }
 
 interface PreviewState {
@@ -271,6 +352,15 @@ interface AgentChatState {
   selectedModelId: string
   /** User-selected image render channel (authoritative for generate_image). */
   selectedImageChannel: string
+  /**
+   * Composer collaboration-mode preset for the ACTIVE thread ('plan' = codex
+   * Plan mode via the experimental `turn/start.collaborationMode`; 'default'
+   * = nothing extra on the wire). Only the KIND travels in the payload — the
+   * main process expands it into the full CollaborationMode object.
+   */
+  collabModeKind: 'plan' | 'default'
+  /** Per-thread memory for `collabModeKind`, restored on switchThread. */
+  collabModeByThread: Record<string, 'plan' | 'default'>
   messages: Message[]
   /**
    * Background per-thread streaming state for chats that are NOT the active
@@ -323,6 +413,7 @@ interface AgentChatState {
   setError: (error?: string) => void
   setSelectedModel: (modelId: string) => void
   setSelectedImageChannel: (channelId: string) => void
+  setCollabMode: (kind: 'plan' | 'default') => void
   addAttachment: (attachment: AgentAttachmentInput) => void
   removeAttachment: (name: string) => void
   removeAttachmentForReference: (reference: AgentReference) => void
@@ -493,6 +584,15 @@ interface AgentChatState {
    */
   availableSkills: CodexSkillSummary[]
   loadAvailableSkills: () => Promise<void>
+
+  /**
+   * Installed-plugin mention candidates (codex `plugin/installed`), refreshed
+   * lazily by `MentionInput` mount. Consumed by `send()`/`steer()` to resolve
+   * `@token`s into `payload.mentions` and by the `@` popup's plugin group.
+   * Empty array is fine — tokens then travel as plain text.
+   */
+  availablePluginMentions: PluginMentionCandidate[]
+  loadAvailablePluginMentions: () => Promise<void>
 
   bootstrap: () => Promise<void>
   refreshThreadList: () => Promise<void>
@@ -703,17 +803,64 @@ function localPathFromAttachmentUri(uri: string): string | undefined {
   return undefined
 }
 
+const IMAGE_MIME_BY_EXT: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  bmp: 'image/bmp',
+  avif: 'image/avif',
+}
+
+function inferImageMime(path: string): string {
+  const ext = path.split('.').pop()?.toLowerCase() ?? ''
+  return IMAGE_MIME_BY_EXT[ext] ?? 'application/octet-stream'
+}
+
+/**
+ * Rebuild the composer's attachment chips from a persisted user message.
+ *
+ * Two sources, DB-authoritative with rollout fallback (mirrors the official
+ * TUI, which rehydrates history chips from the rollout's `userMessage` echo —
+ * `local_images` + `text_elements`, openai/codex PR #9116/#9331):
+ *   1. DB `attachment` items — richer metadata (name/mime/size), added first.
+ *   2. `codexReconcile.localImages` (the rollout's canonical echo persisted by
+ *      `ThreadStore.attachCodexReconcile`) — appended for any path the DB rows
+ *      don't already cover, with metadata inferred from the filename. This is
+ *      what keeps edit-resend chips alive when DB attachment rows are missing
+ *      (e.g. rows written by an older build, or a partial persist).
+ */
 function attachmentsFromMessage(message: Message): AgentAttachmentInput[] {
   const out: AgentAttachmentInput[] = []
+  const seenPaths = new Set<string>()
   for (const item of message.items) {
     if (item.type !== 'attachment') continue
     for (const ref of item.attachments) {
       const path = localPathFromAttachmentUri(ref.uri)
       if (!path) continue
+      seenPaths.add(normalizeReferencePath(path))
       out.push({
         name: ref.name,
         mime: ref.mime || 'application/octet-stream',
         size: typeof ref.size === 'number' ? ref.size : 0,
+        path,
+      })
+    }
+  }
+  for (const item of message.items) {
+    const reconcile = item.codexReconcile
+    if (!reconcile || !Array.isArray(reconcile.localImages)) continue
+    for (const rawPath of reconcile.localImages) {
+      if (typeof rawPath !== 'string' || rawPath.length === 0) continue
+      const path = rawPath.replace(/\\/g, '/')
+      const key = normalizeReferencePath(path)
+      if (seenPaths.has(key)) continue
+      seenPaths.add(key)
+      out.push({
+        name: path.split('/').pop() ?? path,
+        mime: inferImageMime(path),
+        size: 0,
         path,
       })
     }
@@ -1069,6 +1216,8 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   chatScrollByThread: loadChatScrollByThread(),
   selectedModelId: readPersistedModelId(),
   selectedImageChannel: readPersistedImageChannel(),
+  collabModeKind: 'default',
+  collabModeByThread: {},
   panelWidth: readPersistedPanelWidth(),
   tokenUsage: undefined,
   contextWatermarkSeen: {},
@@ -1080,6 +1229,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   codexThreadListLoading: false,
   bootstrapped: false,
   availableSkills: [],
+  availablePluginMentions: [],
   preview: { open: false, images: [], index: 0 },
   openPreview: (images, startIndex) => {
     if (images.length === 0) return
@@ -1285,6 +1435,13 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     persistImageChannel(channelId)
     set({ selectedImageChannel: channelId })
   },
+  setCollabMode: (kind) =>
+    set((state) => ({
+      collabModeKind: kind,
+      collabModeByThread: state.threadId
+        ? { ...state.collabModeByThread, [state.threadId]: kind }
+        : state.collabModeByThread,
+    })),
   addAttachment: (attachment) => set((state) => ({ attachments: [...state.attachments, attachment] })),
   removeAttachment: (name) => set((state) => ({
     attachments: state.attachments.filter((item) => item.name !== name),
@@ -1593,6 +1750,9 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         return path ? { name, path } : null
       })
       .filter((s): s is { name: string; path: string } => s !== null)
+    // `@plugin` tokens → mention items with exact plugin:// paths, so codex
+    // activates the installed plugin instead of guessing by name.
+    const mentions = resolveMentions(content, state.availablePluginMentions)
 
     try {
       const result = await getAgentApi().sendMessage({
@@ -1603,11 +1763,19 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         currentPage: window.location.hash.slice(1),
         model: modelId,
         skills: skills.length > 0 ? skills : undefined,
+        mentions,
+        // Spread-omit: only Plan travels; 'default' means nothing on the wire.
+        ...(state.collabModeKind === 'plan' ? { collaborationModeKind: 'plan' as const } : {}),
       })
       const wasNewThread = state.threadId == null
       set((current) => ({
         threadId: result.threadId,
         runningByThread: { ...current.runningByThread, [result.threadId]: true },
+        // A brand-new chat adopts the composer's current mode as its memory.
+        collabModeByThread: {
+          ...current.collabModeByThread,
+          [result.threadId]: current.collabModeKind,
+        },
       }))
       get().lockChatScrollToBottom(result.threadId)
       // Refresh the sidebar immediately so a brand-new chat's row appears the
@@ -1713,6 +1881,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         return path ? { name, path } : null
       })
       .filter((s): s is { name: string; path: string } => s !== null)
+    const mentions = resolveMentions(content, state.availablePluginMentions)
 
     try {
       const result = await steer({
@@ -1723,6 +1892,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         currentPage: window.location.hash.slice(1),
         model: state.selectedModelId,
         skills: skills.length > 0 ? skills : undefined,
+        mentions,
       })
       if (result.userMessageItems && result.userMessageItems.length > 0) {
         const canonicalItems = result.userMessageItems
@@ -2034,6 +2204,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         tokenUsage: restored!.tokenUsage,
         error: restored!.error,
         pendingApprovals: [],
+        collabModeKind: cur.collabModeByThread[threadId] ?? 'default',
       }
     })
   },
@@ -2173,6 +2344,19 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     } catch {
       // Skills are an optional convenience — keep the previous cache rather
       // than burning a banner on the chat panel for a transient IPC failure.
+    }
+  },
+
+  loadAvailablePluginMentions: async () => {
+    const agent = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.agent
+    if (!agent?.listInstalledPlugins) return
+    try {
+      const result = await agent.listInstalledPlugins()
+      if (!result.ok || !result.data) return
+      set({ availablePluginMentions: pluginMentionCandidates(result.data) })
+    } catch {
+      // Same policy as loadAvailableSkills: mentions are a convenience —
+      // keep the previous cache on transient IPC failure.
     }
   },
 

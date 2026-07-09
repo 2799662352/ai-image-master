@@ -21,6 +21,7 @@ import type {
   CodexWorkspacePaths,
 } from '../../types/agent'
 import type { AgentInput, IAgentBackend, ListThreadsParams } from './types'
+import type { CollaborationModeListResponse } from './codexProtocol'
 import type {
   AppsListParams,
   AppsListResponse,
@@ -78,6 +79,12 @@ export interface CodexLocalBackendOptions {
    * env — so callers can rely on an explicit key path.
    */
   getApiKey?: () => string | undefined
+  /**
+   * Announce `capabilities.experimentalApi` at initialize, unlocking
+   * `#[experimental]`-gated RPCs (collaborationMode/list,
+   * turn/start.collaborationMode). Forwarded to CodexProtocolClient.
+   */
+  experimentalApi?: boolean
   /**
    * Test seam for the `child_process.spawn` call in the spawn-mode branch.
    * Defaults to Node's `spawn`. Tests inject a stub that records the call
@@ -324,6 +331,7 @@ export class CodexLocalBackend implements IAgentBackend {
       clientInfo: { name: 'catimation', version: '0.0.0' },
       sessionConfig: this.sessionConfig,
       connectTimeoutMs: 5_000,
+      experimentalApi: this.options.experimentalApi,
       onApprovalRequest: this.options.onApprovalRequest,
       onMcpNotification: this.options.onMcpNotification,
       onGoalNotification: this.options.onGoalNotification,
@@ -437,6 +445,7 @@ export class CodexLocalBackend implements IAgentBackend {
       clientInfo: { name: 'catimation', version: '0.0.0' },
       sessionConfig: this.sessionConfig,
       connectTimeoutMs: this.options.connectTimeoutMs ?? DEFAULT_SPAWN_CONNECT_TIMEOUT_MS,
+      experimentalApi: this.options.experimentalApi,
       onLog: (line) => log.write(line + '\n'),
       onApprovalRequest: this.options.onApprovalRequest,
       onMcpNotification: this.options.onMcpNotification,
@@ -629,6 +638,11 @@ export class CodexLocalBackend implements IAgentBackend {
   async listMcpServers(params?: unknown): Promise<unknown> {
     if (!this.client) throw new Error('CodexLocalBackend.listMcpServers called before start')
     return this.client.listMcpServers(params as any)
+  }
+
+  async listCollaborationModes(): Promise<CollaborationModeListResponse> {
+    if (!this.client) throw new Error('CodexLocalBackend.listCollaborationModes called before start')
+    return this.client.listCollaborationModes()
   }
 
   async batchWriteConfig(edits: unknown[], reloadUserConfig?: boolean): Promise<void> {

@@ -27,13 +27,13 @@ const fakeAgent = {
 
 beforeEach(() => {
   approvalRequestHandler = undefined
-  ;(globalThis as unknown as { window: Record<string, unknown> }).window = {
-    ...(globalThis as unknown as { window: Record<string, unknown> }).window,
+  // Mutate the real jsdom window instead of replacing it with a spread copy —
+  // spreading only copies own enumerable props, so prototype methods like
+  // window.getComputedStyle vanish and useAutosizeTextarea crashes on render.
+  Object.assign(window as unknown as Record<string, unknown>, {
     electronAPI: { agent: fakeAgent },
-    innerWidth: 1600,
-    addEventListener: () => undefined,
-    removeEventListener: () => undefined,
-  }
+  })
+  Object.defineProperty(window, 'innerWidth', { value: 1600, configurable: true, writable: true })
   fakeAgent.listThreads.mockResolvedValue([])
   fakeAgent.openThread.mockResolvedValue({ id: 't1', messages: [] })
   fakeAgent.onApprovalRequest.mockImplementation(((handler: (request: CodexApprovalRequest) => void) => {

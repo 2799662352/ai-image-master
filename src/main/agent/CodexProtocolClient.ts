@@ -12,6 +12,7 @@ import {
   isServerNotification,
   isServerRequest,
   type ClientInfo,
+  type CollaborationModeListResponse,
   type ServerMessage,
   type ThreadStartParams,
   type ThreadStartResponse,
@@ -20,6 +21,7 @@ import {
 } from './codexProtocol'
 import type {
   AgentStreamEvent,
+  AgentStreamEventBase,
   CodexApprovalRequest,
   CodexApprovalResponse,
   CodexSessionConfig,
@@ -110,7 +112,15 @@ type TurnQueue = {
   closed: boolean
 }
 
-type OrphanNotification = { event: AgentStreamEvent; turnId: string }
+/**
+ * The thread/turn-scoped subset of `AgentStreamEvent` — everything that
+ * carries a top-level `threadId` (per-turn item stream + goal side channel).
+ * Out-of-band variants (mcp_*, skills_changed, notice) are excluded: they are
+ * dispatched to dedicated callbacks and never enter the per-turn queues.
+ */
+type TurnScopedStreamEvent = Extract<AgentStreamEvent, AgentStreamEventBase>
+
+type OrphanNotification = { event: TurnScopedStreamEvent; turnId: string }
 
 type PendingServerRequest = {
   wireId: number
@@ -127,6 +137,13 @@ export interface CodexProtocolClientOptions {
   connectIntervalMs?: number
   rpcTimeoutMs?: number
   approvalTimeoutMs?: number
+  /**
+   * Opt into `#[experimental(...)]`-gated app-server surface by announcing
+   * `capabilities: { experimentalApi: true }` at initialize (needed for
+   * `collaborationMode/list` and `turn/start.collaborationMode`). Off by
+   * default so the stable wire behaviour stays byte-identical.
+   */
+  experimentalApi?: boolean
   onLog?: (line: string) => void
   onApprovalRequest?: (request: CodexApprovalRequest) => void
   onMcpNotification?: (event: AgentStreamEvent) => void
@@ -203,7 +220,10 @@ export class CodexProtocolClient {
       this.clearPendingServerRequests()
     })
 
-    await this.rpc('initialize', { clientInfo: this.options.clientInfo, capabilities: null })
+    await this.rpc('initialize', {
+      clientInfo: this.options.clientInfo,
+      capabilities: this.options.experimentalApi ? { experimentalApi: true } : null,
+    })
     this.notify('initialized', {})
   }
 
@@ -249,9 +269,18 @@ export class CodexProtocolClient {
         yield { type: 'thread_created', threadId: actualThreadId }
       }
 
+      // `clientUserMessageId` (app-server v2): echoed back as `clientId` on
+      // the turn's `userMessage` item, letting rollout history reconcile to
+      // our persisted AgentMessage rows. Spread-omit when absent — older
+      // binaries reject unknown/null fields.
+      // `collaborationMode` (EXPERIMENTAL, needs experimentalApi capability):
+      // preset that takes precedence over model/effort/instructions for this
+      // and subsequent turns. Same spread-omit posture as clientUserMessageId.
       const turnResponse = await this.rpc<TurnStartResponse>('turn/start', {
         threadId: actualThreadId,
         input: mapUserInput(input.items),
+        ...(input.clientUserMessageId ? { clientUserMessageId: input.clientUserMessageId } : {}),
+        ...(input.collaborationMode ? { collaborationMode: input.collaborationMode } : {}),
       })
       const turnId = turnResponse.turn.id
       this.turnIdByThread.set(actualThreadId, turnId)
@@ -297,6 +326,7 @@ export class CodexProtocolClient {
       threadId,
       input: mapUserInput(input.items),
       expectedTurnId,
+      ...(input.clientUserMessageId ? { clientUserMessageId: input.clientUserMessageId } : {}),
     })
     return response.turnId
   }
@@ -421,6 +451,17 @@ export class CodexProtocolClient {
     nextCursor?: string
   }> {
     return this.rpc('experimentalFeature/list', params ?? {})
+  }
+
+  /**
+   * List collaboration-mode presets (`collaborationMode/list`, EXPERIMENTAL —
+   * requires the client to have announced `capabilities.experimentalApi` at
+   * initialize, i.e. the `experimentalApi: true` constructor option). Returns
+   * masks like `{name: "Plan", mode: "plan", …}` used to populate a Plan/Code
+   * mode picker; the chosen preset is sent as `turn/start.collaborationMode`.
+   */
+  async listCollaborationModes(): Promise<CollaborationModeListResponse> {
+    return this.rpc('collaborationMode/list', {})
   }
 
   async reloadMcpServers(): Promise<void> {
@@ -764,6 +805,11 @@ export class CodexProtocolClient {
     }
     if (event.type === 'goal_updated' || event.type === 'goal_cleared') {
       this.options.onGoalNotification?.(event)
+      return
+    }
+    if (event.type === 'skills_changed' || event.type === 'notice') {
+      // Not turn-scoped (no threadId); the router never produces these today.
+      // Drop rather than wedge them into a per-turn queue they don't belong to.
       return
     }
     const threadId = event.threadId

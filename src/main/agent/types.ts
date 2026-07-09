@@ -8,6 +8,7 @@ import type {
   CodexWorkspacePaths,
 } from '../../types/agent'
 import type { CodexProviderConfig } from './codexLaunch'
+import type { CodexCollaborationMode, CollaborationModeListResponse } from './codexProtocol'
 import type { DoctorReport } from './codexDoctor'
 import type {
   AppsListParams,
@@ -39,11 +40,27 @@ import type {
 export interface AgentInput extends AgentSendMessagePayload {
   model: string
   cwd: string
+  /**
+   * Codex app-server v2 `clientUserMessageId` for `turn/start` / `turn/steer`.
+   * Optional; when supplied, the rollout's `userMessage` item echoes it back
+   * as `clientId`. We pass our persisted AgentMessage row id so codex-native
+   * history (thread/read, fork, resume) can be reconciled 1:1 against our DB
+   * rows without text-content heuristics.
+   */
+  clientUserMessageId?: string
+  /**
+   * EXPERIMENTAL Codex collaboration-mode preset for `turn/start` (requires
+   * the backend to have initialized with `capabilities.experimentalApi`).
+   * Takes precedence over model/effort/instructions for this and subsequent
+   * turns. Omitted = today's behaviour.
+   */
+  collaborationMode?: CodexCollaborationMode
   items: Array<
     | { type: 'text'; text: string }
     | { type: 'localImage'; path: string }
     | { type: 'image'; url: string }
     | { type: 'skill'; name: string; path: string }
+    | { type: 'mention'; name: string; path: string }
   >
 }
 
@@ -127,6 +144,16 @@ export interface IAgentBackend {
   // Native manual context compaction (thread/compact/start, app-server v2).
   // Optional — non-Codex backends omit it; the AgentManager RPC wrapper guards.
   compactThread?(threadId: string): Promise<Record<string, never>>
+
+  /**
+   * `collaborationMode/list` (EXPERIMENTAL, needs `experimentalApi`). Returns
+   * the built-in preset masks — per upstream README the Plan preset selects
+   * medium reasoning effort and presets never select a model. The manager
+   * consumes the Plan mask when expanding the composer's 'plan' kind instead
+   * of hardcoding settings. Optional: non-Codex backends / stubs omit it and
+   * the manager falls back to `reasoning_effort: null`.
+   */
+  listCollaborationModes?(): Promise<CollaborationModeListResponse>
 
   // Native plugin / marketplace / apps / external-agent-import (app-server v2,
   // ≥0.140). Codex-specific — optional so non-Codex backends can omit them.

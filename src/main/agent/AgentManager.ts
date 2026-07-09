@@ -38,6 +38,7 @@ import {
 import { discoverCodexSkills, readMcpSummary, readRawCodexConfig } from './codexConfigDiscovery'
 import { mapReferencesToInputItems } from './codexUserInput'
 import { validateSessionConfigPatch } from './sessionConfigValidation'
+import type { CodexCollaborationModeMask } from './codexProtocol'
 import type { BrowserWindow } from 'electron'
 import type {
   AgentSendMessagePayload,
@@ -238,6 +239,16 @@ export class AgentManager {
    */
   private cinematographyKbKey = ''
   /**
+   * Cached `collaborationMode/list` preset masks (EXPERIMENTAL RPC), fetched
+   * lazily on the first Plan-mode turn and reused for the session. Upstream
+   * semantics (app-server README): "Built-in presets do not select a model;
+   * the Plan preset selects medium reasoning effort" — so we take
+   * `reasoning_effort` from the Plan mask instead of hardcoding it, and keep
+   * the user's resolved model. A failed fetch is NOT cached (retried on the
+   * next Plan turn) and degrades to `reasoning_effort: null`.
+   */
+  private collabModePresets: CodexCollaborationModeMask[] | null = null
+  /**
    * DashVector API key for the cinematography-kb-mcp server's
    * `query_sakuga_dataset` tool. Persisted under apiKeys['dashvector'] (the
    * renderer mirrors the 设置 → 运镜知识库 DashVector key there via
@@ -339,6 +350,10 @@ export class AgentManager {
       provider: activeProvider,
       sessionConfig: this.sessionConfig,
       catimationMcp: opts.mcpRuntime,
+      // Unlock experimental-gated RPCs (turn/start.collaborationMode for the
+      // composer's Plan preset; collaborationMode/list). Smoke-verified on the
+      // bundled binary: initialize + stable RPC behaviour are unaffected.
+      experimentalApi: true,
       getUnderstandProvider: () =>
         this.miauToken
           ? { provider: QWEN_UNDERSTAND_PROVIDER, token: this.miauToken }
@@ -1442,7 +1457,16 @@ export class AgentManager {
     if (!this.store || !this.attachments) {
       throw new Error('AgentManager.assembleTurnInput called without store/attachments')
     }
-    const referenceMapping = await mapReferencesToInputItems(payload.references, this.allowedRoots)
+    // The uploads cache is a first-class reference root: AttachmentService
+    // canonicalizes every attachment into `<userData>/agent/uploads/<sha>.<ext>`
+    // and the fs IPC gate (fsIpc.resolveAllowedRoots) has always whitelisted
+    // it so chips are clickable. Mirror that here, otherwise referencing an
+    // uploaded file (drag from the ATTACHMENTS tree, edit-and-resend) previews
+    // fine and then dies at send with "Reference path is outside allowed roots".
+    const referenceMapping = await mapReferencesToInputItems(payload.references, [
+      ...this.allowedRoots,
+      path.join(this.userDataDir, 'agent', 'uploads'),
+    ])
     const model = payload.model?.trim() || DEFAULT_AGENT_MODEL
     const thread = payload.threadId
       ? { id: payload.threadId }
@@ -1450,6 +1474,18 @@ export class AgentManager {
           title: payload.content.slice(0, 40) || 'New Agent Thread',
           model,
         })
+    if (referenceMapping.skippedReferences.length > 0) {
+      this.emitEvent({
+        type: 'notice',
+        notice: {
+          id: `stale-reference:${thread.id}:${Date.now()}`,
+          kind: 'attachmentSkipped',
+          level: 'warning',
+          threadId: thread.id,
+          message: `已跳过 ${referenceMapping.skippedReferences.length} 个失效附件引用:${referenceMapping.skippedReferences.join('、')}`,
+        },
+      })
+    }
     const attachmentInputs = payload.attachments ?? []
     // Per-attachment failures are non-fatal: AttachmentService emits an
     // 'attachment-error' event for each skipped file, we relay it to the
@@ -1501,9 +1537,16 @@ export class AgentManager {
       // instructions twice and burns tokens.
       .filter((skill, idx, arr) => arr.findIndex((s) => s.name === skill.name) === idx)
       .map((skill) => ({ type: 'skill' as const, name: skill.name, path: skill.path }))
+    // Plugin/app `mention` items (codex app-server "Invoke a plugin"): dedupe
+    // by path — the path IS the identity (`plugin://<name>@<marketplace>`),
+    // and a doubled `@foo @foo` must not activate the plugin twice.
+    const mentionItems: AgentInput['items'] = (payload.mentions ?? [])
+      .filter((mention, idx, arr) => arr.findIndex((m) => m.path === mention.path) === idx)
+      .map((mention) => ({ type: 'mention' as const, name: mention.name, path: mention.path }))
     const items: AgentInput['items'] = [
       { type: 'text', text: promptText },
       ...skillItems,
+      ...mentionItems,
       ...referenceItems,
       ...savedAttachments
         .filter((item) => item.mime.startsWith('image/'))
@@ -1523,6 +1566,7 @@ export class AgentManager {
     //      assistant message later — its gate `messages.length < 2` was the
     //      reason auto-titles never appeared in the thread switcher.
     const userTimelineItems = this.buildUserTimelineItems(payload.content, savedAttachments)
+    let clientUserMessageId: string | undefined
     if (userTimelineItems.length > 0) {
       // Same JSON round-trip as the assistant path: TimelineItem is a tagged
       // union and Prisma's InputJsonValue rejects it at compile time even
@@ -1530,7 +1574,12 @@ export class AgentManager {
       const userJsonItems = JSON.parse(JSON.stringify(userTimelineItems)) as Parameters<
         ThreadStore['addMessage']
       >[0]['items']
-      await this.store.addMessage({ threadId: thread.id, role: 'user', items: userJsonItems })
+      const savedMessage = await this.store.addMessage({ threadId: thread.id, role: 'user', items: userJsonItems })
+      // Official-compat: forward our persisted row id as the app-server v2
+      // `clientUserMessageId` — the rollout's `userMessage` item echoes it as
+      // `clientId`, so codex-native history (thread/read, fork, resume) maps
+      // 1:1 to our DB rows without content heuristics.
+      clientUserMessageId = savedMessage?.id
       // best-effort: failing to bump lastMessageAt should not block the turn
       await this.store.updateLastMessageAt(thread.id).catch(() => undefined)
     }
@@ -1539,10 +1588,48 @@ export class AgentManager {
       ...payload,
       model,
       cwd: this.sessionConfig.writableRoots[0] ?? process.cwd(),
+      clientUserMessageId,
       items,
     }
 
+    // Expand the composer's preset KIND into the full experimental codex
+    // `CollaborationMode` (turn/start only — upstream turn/steer has no such
+    // field). `developer_instructions: null` = codex's built-in Plan-mode
+    // instructions; the model rides along so the preset never downgrades the
+    // user's explicit model pick; `reasoning_effort` comes from the official
+    // Plan preset mask (medium). 'default'/absent → nothing on the wire.
+    if (payload.collaborationModeKind === 'plan') {
+      input.collaborationMode = {
+        mode: 'plan',
+        settings: {
+          model,
+          reasoning_effort: await this.planPresetReasoningEffort(),
+          developer_instructions: null,
+        },
+      }
+    }
+
     return { threadId: thread.id, model, input, userTimelineItems }
+  }
+
+  /**
+   * Reasoning effort for Plan-mode turns, sourced from the official
+   * `collaborationMode/list` Plan preset mask (see {@link collabModePresets}).
+   * Never throws — the preset lookup is best-effort polish, not a gate on
+   * sending the turn.
+   */
+  private async planPresetReasoningEffort(): Promise<string | null> {
+    if (!this.collabModePresets) {
+      if (typeof this.backend.listCollaborationModes !== 'function') return null
+      try {
+        const res = await this.backend.listCollaborationModes()
+        this.collabModePresets = res.data
+      } catch {
+        return null
+      }
+    }
+    const plan = this.collabModePresets.find((mask) => mask.mode === 'plan')
+    return plan?.reasoning_effort ?? null
   }
 
   private buildUserTimelineItems(
@@ -1910,10 +1997,29 @@ export class AgentManager {
             }
             break
           }
+          if (event.type === 'user_message_reconciled') {
+            // Internal event: fold the rollout's canonical userMessage echo
+            // onto our persisted row (located by clientId = the row id we
+            // sent as clientUserMessageId) and swallow it — the renderer
+            // already shows the local user bubble, so forwarding would
+            // duplicate the message. Best-effort by design: no clientId, no
+            // store hook, or a DB hiccup just skips the enhancement.
+            const rowId = event.reconcile.clientId
+            if (rowId && this.store?.attachCodexReconcile) {
+              const reconcileJson = JSON.parse(JSON.stringify(event.reconcile)) as Parameters<
+                ThreadStore['attachCodexReconcile']
+              >[1]
+              await this.store.attachCodexReconcile(rowId, reconcileJson).catch((err: unknown) => {
+                console.warn('[AgentManager] userMessage reconcile persist failed (best-effort):', err)
+              })
+            }
+            continue
+          }
           if (!this.eventSink && this.win?.isDestroyed()) return
           // Renderer's chat store filters events by its DB threadId. Always rewrite
-          // so codex-side UUIDs never leak into the UI layer.
-          this.emitEvent({ ...event, threadId: dbThreadId })
+          // so codex-side UUIDs never leak into the UI layer. Out-of-band variants
+          // (mcp_*, skills_changed, notice) carry no threadId — forward untouched.
+          this.emitEvent('threadId' in event ? { ...event, threadId: dbThreadId } : event)
 
           assistantItems = applyAssistantEvent(assistantItems, event)
 
@@ -2157,6 +2263,14 @@ function createItemFromStarted(
         ...(typeof payload.detail === 'string' ? { detail: payload.detail } : {}),
         status: safeStatus,
       }
+    }
+    case 'choiceRequest':
+      // Mirrors the renderer reducer's contract: choiceRequest cards are
+      // created locally via ask() and never arrive as agent-started events.
+      throw new Error('choiceRequest items are created via ask(), not agent-started events')
+    default: {
+      const exhaustive: never = itemType
+      throw new Error(`unhandled timeline item type: ${String(exhaustive)}`)
     }
   }
 }

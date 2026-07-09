@@ -12,6 +12,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useAgentChatStore } from '../store'
 import { Lightbox } from '../Lightbox'
 
+// jsdom has no electronAPI, so the real useResolvedMediaSrc (IPC byte read →
+// blob: URL) resolves to null and the Lightbox stays on "Loading…" forever.
+// Pass the src through — these tests assert image/video branch selection and
+// click/keyboard navigation, not the IPC byte plumbing.
+vi.mock('../../../components/shared/media/useResolvedMediaSrc', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../../components/shared/media/useResolvedMediaSrc')>()
+  return {
+    ...actual,
+    useResolvedMediaSrc: (src: string) =>
+      typeof src === 'string' && src.length > 0 ? src : null,
+  }
+})
+
 afterEach(() => {
   cleanup()
 })

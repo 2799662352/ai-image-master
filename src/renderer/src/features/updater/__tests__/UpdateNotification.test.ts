@@ -30,7 +30,11 @@ describe('UpdateNotification updater event compatibility', () => {
       onError?.({ message: 'network failed' })
     }).not.toThrow()
 
-    const title = document.querySelector('.update-title')?.textContent
-    expect(title).toContain('更新失败')
+    // Markup was redesigned to the cyberpunk "dn-" classes with an English
+    // title; the payload message lands in .dn-error-msg.
+    const title = document.querySelector('.dn-title-text')?.textContent
+    expect(title).toContain('UPDATE FAILED')
+    const msg = document.querySelector('.dn-error-msg')?.textContent
+    expect(msg).toContain('network failed')
   })
 })

@@ -23,6 +23,53 @@ describe('ThreadStore', () => {
   })
 })
 
+describe('ThreadStore.attachCodexReconcile', () => {
+  const RECONCILE = {
+    codexItemId: 'item-1',
+    clientId: 'msg_1',
+    localImages: ['C:/uploads/a.png'],
+    textElements: [{ byteRange: { start: 0, end: 4 }, placeholder: 'Foo' }],
+  }
+
+  function makePrisma(row: unknown) {
+    return {
+      agentMessage: {
+        findUnique: vi.fn().mockResolvedValue(row),
+        update: vi.fn().mockResolvedValue(undefined),
+      },
+    } as any
+  }
+
+  it('folds the reconcile block onto the FIRST item of the row', async () => {
+    const prisma = makePrisma({
+      items: [
+        { type: 'text', id: 'i1', startedAt: 1, content: 'hello' },
+        { type: 'attachment', id: 'i2', startedAt: 1, attachments: [] },
+      ],
+    })
+    const store = new ThreadStore(prisma)
+    await store.attachCodexReconcile('msg_1', RECONCILE)
+    expect(prisma.agentMessage.update).toHaveBeenCalledWith({
+      where: { id: 'msg_1' },
+      data: {
+        items: [
+          { type: 'text', id: 'i1', startedAt: 1, content: 'hello', codexReconcile: RECONCILE },
+          { type: 'attachment', id: 'i2', startedAt: 1, attachments: [] },
+        ],
+      },
+    })
+  })
+
+  it('no-ops when the row is missing or has no items', async () => {
+    for (const row of [null, { items: [] }, { items: 'not-an-array' }]) {
+      const prisma = makePrisma(row)
+      const store = new ThreadStore(prisma)
+      await store.attachCodexReconcile('msg_1', RECONCILE)
+      expect(prisma.agentMessage.update).not.toHaveBeenCalled()
+    }
+  })
+})
+
 describe('ThreadStore.listThreads', () => {
   it('orders by lastMessageAt desc then updatedAt desc, and surfaces lastMessageAt + manualTitle', async () => {
     const fakeRows = [

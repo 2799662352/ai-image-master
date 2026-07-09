@@ -101,6 +101,27 @@ export class ThreadStore {
     })
   }
 
+  /**
+   * Fold the rollout's canonical userMessage echo (localImage paths +
+   * text_elements, see `CodexUserMessageReconcile`) onto a persisted user
+   * message row. Stored as a `codexReconcile` field on the row's FIRST
+   * timeline item — row-level metadata, not a new visible item, so no
+   * renderer switch has to learn a new item type. No-op when the row is gone
+   * or empty: reconcile is a best-effort enhancement over DB-authoritative
+   * data, never a reason to throw inside the streaming hot path.
+   */
+  async attachCodexReconcile(messageId: string, reconcile: Prisma.InputJsonValue): Promise<void> {
+    const row = await this.prisma.agentMessage.findUnique({
+      where: { id: messageId },
+      select: { items: true },
+    })
+    if (!row || !Array.isArray(row.items) || row.items.length === 0) return
+    const [first, ...rest] = row.items as Prisma.JsonArray
+    if (!first || typeof first !== 'object' || Array.isArray(first)) return
+    const items = [{ ...first, codexReconcile: reconcile }, ...rest] as Prisma.InputJsonValue
+    await this.prisma.agentMessage.update({ where: { id: messageId }, data: { items } })
+  }
+
   /** Read the persisted Codex thread UUID for a DB thread (null if none yet). */
   async getCodexThreadId(threadId: string): Promise<string | null> {
     const row = await this.prisma.agentThread.findUnique({

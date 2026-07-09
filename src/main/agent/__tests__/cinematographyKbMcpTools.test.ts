@@ -78,7 +78,11 @@ describe('cinematography-kb-mcp sakuga tool', () => {
     })
     expect(text).toContain('1:2')
     expect(text).toContain('A smear-heavy chase.')
-    expect(text).toContain('smears fighting')
+    // user_tags are classified via the booru tag-type dictionary and rendered
+    // comma-joined under a bucket heading (raw `smears fighting` no longer
+    // appears verbatim).
+    expect(text).toContain('technique terms')
+    expect(text).toContain('smears, fighting')
     expect(text).toContain('https://sakugabooru.com/x.mp4')
     expect(text).toContain('00:00:01')
   })

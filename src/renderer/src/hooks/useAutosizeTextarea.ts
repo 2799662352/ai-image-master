@@ -17,7 +17,8 @@ import { useLayoutEffect, type RefObject } from 'react'
  * the textarea draws an unnecessary scrollbar. We toggle that here.
  */
 export function useAutosizeTextarea(
-  ref: RefObject<HTMLTextAreaElement>,
+  // React 19: `useRef<T>(null)` yields `RefObject<T | null>`.
+  ref: RefObject<HTMLTextAreaElement | null>,
   value: string,
   opts: { minRows?: number; maxRows?: number } = {},
 ): void {

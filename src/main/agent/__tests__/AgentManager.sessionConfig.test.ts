@@ -25,6 +25,14 @@ afterEach(async () => {
   await fs.rm(tmpDir, { recursive: true, force: true })
 })
 
+/**
+ * NOTE on defaults: DEFAULT_CODEX_SESSION_CONFIG is intentionally
+ * `never`/`danger-full-access`/`live` (commit 2500249 — the app runs codex
+ * fully autonomous by default). The unsafe-confirmation dialog is
+ * EDGE-triggered: it only fires when a patch moves a field from a safe value
+ * to an unsafe one, so tests that exercise the dialog must first downgrade
+ * to safe values (a safe patch never prompts).
+ */
 describe('AgentManager session config updates', () => {
   it('merges a safe patch and returns updated status', async () => {
     const mgr = new AgentManager({ userDataDir: tmpDir })
@@ -36,7 +44,7 @@ describe('AgentManager session config updates', () => {
 
     expect(status).toMatchObject({
       sandboxMode: 'read-only',
-      approvalPolicy: 'on-request',
+      approvalPolicy: 'never', // untouched by the patch — stays at the default
       webSearch: 'disabled',
     })
     expect(dialog.showMessageBox).not.toHaveBeenCalled()
@@ -44,6 +52,14 @@ describe('AgentManager session config updates', () => {
 
   it('confirms newly unsafe values before applying them', async () => {
     const mgr = new AgentManager({ userDataDir: tmpDir })
+    // Downgrade to safe values first — the defaults are already unsafe, so a
+    // direct unsafe patch would be a no-op edge and never prompt.
+    await mgr.setSessionConfigPatch({
+      sandboxMode: 'read-only',
+      approvalPolicy: 'on-request',
+      webSearch: 'disabled',
+    })
+    expect(dialog.showMessageBox).not.toHaveBeenCalled()
 
     const status = await mgr.setSessionConfigPatch({
       sandboxMode: 'danger-full-access',
@@ -60,9 +76,10 @@ describe('AgentManager session config updates', () => {
   })
 
   it('throws and preserves config when an unsafe confirmation is cancelled', async () => {
-    vi.mocked(dialog.showMessageBox).mockResolvedValueOnce({ response: 1, checkboxChecked: false })
     const mgr = new AgentManager({ userDataDir: tmpDir })
+    await mgr.setSessionConfigPatch({ approvalPolicy: 'on-request' })
 
+    vi.mocked(dialog.showMessageBox).mockResolvedValueOnce({ response: 1, checkboxChecked: false })
     await expect(mgr.setSessionConfigPatch({ approvalPolicy: 'never' }))
       .rejects.toThrow('session config change cancelled')
 
@@ -75,7 +92,7 @@ describe('AgentManager session config updates', () => {
     await expect(mgr.setSessionConfigPatch({ approvalPolicy: 'on-failure' }))
       .rejects.toThrow(/approvalPolicy/i)
 
-    expect(mgr.getSessionStatus().approvalPolicy).toBe('on-request')
+    expect(mgr.getSessionStatus().approvalPolicy).toBe('never')
     expect(dialog.showMessageBox).not.toHaveBeenCalled()
   })
 

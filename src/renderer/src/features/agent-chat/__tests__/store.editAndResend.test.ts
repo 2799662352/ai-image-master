@@ -107,6 +107,117 @@ describe('startEditMessage', () => {
     ])
   })
 
+  it('restores chips from codexReconcile.localImages when the DB attachment item is missing (rollout-canonical fallback)', () => {
+    useAgentChatStore.setState({
+      messages: [
+        {
+          id: 'msg-reconcile-only',
+          role: 'user',
+          createdAt: Date.now(),
+          items: [
+            {
+              type: 'text',
+              id: 'txt',
+              startedAt: Date.now(),
+              content: 'caption',
+              codexReconcile: {
+                codexItemId: 'item-1',
+                clientId: 'msg-reconcile-only',
+                localImages: ['C:/Users/me/AppData/Roaming/app/agent/uploads/cat.png'],
+                textElements: [],
+              },
+            },
+          ],
+        },
+      ],
+    })
+
+    useAgentChatStore.getState().startEditMessage('msg-reconcile-only')
+
+    expect(useAgentChatStore.getState().attachments).toEqual([
+      {
+        name: 'cat.png',
+        mime: 'image/png',
+        size: 0,
+        path: 'C:/Users/me/AppData/Roaming/app/agent/uploads/cat.png',
+      },
+    ])
+  })
+
+  it('does not duplicate a reconcile path already covered by a DB attachment ref (DB metadata wins)', () => {
+    useAgentChatStore.setState({
+      messages: [
+        {
+          id: 'msg-both',
+          role: 'user',
+          createdAt: Date.now(),
+          items: [
+            {
+              type: 'attachment',
+              id: 'att-item',
+              startedAt: Date.now(),
+              codexReconcile: {
+                codexItemId: 'item-1',
+                clientId: 'msg-both',
+                localImages: [
+                  // Same file, different separators/case — must dedupe.
+                  'c:\\Users\\me\\AppData\\Roaming\\app\\agent\\uploads\\CAT.png',
+                  // Not in the DB rows — must be appended from reconcile.
+                  'C:/Users/me/AppData/Roaming/app/agent/uploads/extra.jpg',
+                ],
+                textElements: [],
+              },
+              attachments: [
+                {
+                  id: 'img-1',
+                  kind: 'image',
+                  name: 'cat.png',
+                  mime: 'image/png',
+                  size: 123,
+                  uri: 'local-file:///C:/Users/me/AppData/Roaming/app/agent/uploads/cat.png',
+                },
+                {
+                  id: 'file-1',
+                  kind: 'file',
+                  name: 'notes.txt',
+                  mime: 'text/plain',
+                  size: 456,
+                  uri: 'local-file:///C:/Users/me/AppData/Roaming/app/agent/uploads/notes.txt',
+                },
+              ],
+            },
+            { type: 'text', id: 'txt', startedAt: Date.now(), content: 'caption' },
+          ],
+        },
+      ],
+    })
+
+    useAgentChatStore.getState().startEditMessage('msg-both')
+
+    expect(useAgentChatStore.getState().attachments).toEqual([
+      // DB rows keep their richer metadata (size), non-image files survive.
+      {
+        name: 'cat.png',
+        mime: 'image/png',
+        size: 123,
+        path: 'C:/Users/me/AppData/Roaming/app/agent/uploads/cat.png',
+      },
+      {
+        name: 'notes.txt',
+        mime: 'text/plain',
+        size: 456,
+        path: 'C:/Users/me/AppData/Roaming/app/agent/uploads/notes.txt',
+      },
+      // Rollout-only path appended with inferred metadata.
+      {
+        name: 'extra.jpg',
+        mime: 'image/jpeg',
+        size: 0,
+        path: 'C:/Users/me/AppData/Roaming/app/agent/uploads/extra.jpg',
+      },
+    ])
+  })
+
   it('backs up the in-flight draft so cancel can restore it', () => {
     useAgentChatStore.getState().startEditMessage('msg-0')
     expect(useAgentChatStore.getState().draftBackup?.input).toBe('in-flight draft')

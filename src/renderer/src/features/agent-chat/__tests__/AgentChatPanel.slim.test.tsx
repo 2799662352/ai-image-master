@@ -26,7 +26,7 @@ afterEach(() => {
   Reflect.deleteProperty(window, 'electronAPI')
   useAgentChatStore.setState({ isOpen: false, messages: [], pendingApprovals: [], error: undefined })
   useAgentWorkspaceStore.setState({ section: 'overview', configDirty: false })
-  useTabStore.setState({ activeTab: 'home' })
+  useTabStore.setState({ activeTab: 'generate' })
   vi.clearAllMocks()
 })
 

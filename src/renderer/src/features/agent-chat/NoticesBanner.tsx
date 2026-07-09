@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import type { AgentNotice } from '../../../../types/agent'
 import { useAgentChatStore } from './store'
 

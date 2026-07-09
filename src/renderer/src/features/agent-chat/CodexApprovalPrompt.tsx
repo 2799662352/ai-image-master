@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import type { JSX } from 'react'
 import type { CodexApprovalRequest, CodexApprovalResponse } from '../../../../types/agent'
 import { useAutosizeTextarea } from '../../hooks/useAutosizeTextarea'
 

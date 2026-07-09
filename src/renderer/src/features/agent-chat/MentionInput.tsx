@@ -1,11 +1,13 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { JSX } from 'react'
 import type { CodexSkillSummary } from '../../../../types/agent'
 import type { AgentReference } from '../../../../types/agent-reference'
+import { CollabModeToggle } from './CollabModeToggle'
 import { ModelPicker } from './ModelPicker'
 import { ImageChannelPicker } from './ImageChannelPicker'
 import { ReferenceChip } from './references/ReferenceChip'
 import { makeFileReference } from './references/referenceUtils'
-import { useAgentChatStore } from './store'
+import { useAgentChatStore, type PluginMentionCandidate } from './store'
 import { parseFileDrop, parseQuoteDrop } from '../file-explorer/dragHelpers'
 import { useFileExplorerStore } from '../file-explorer/store'
 import type { FileNode } from '../file-explorer/types'
@@ -437,6 +439,8 @@ export function MentionInput() {
   const openReference = useFileExplorerStore((state) => state.openReference)
   const availableSkills = useAgentChatStore((state) => state.availableSkills)
   const loadAvailableSkills = useAgentChatStore((state) => state.loadAvailableSkills)
+  const availablePluginMentions = useAgentChatStore((state) => state.availablePluginMentions)
+  const loadAvailablePluginMentions = useAgentChatStore((state) => state.loadAvailablePluginMentions)
   const workspaceTree = useFileExplorerStore((state) => state.workspaceTree)
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -462,6 +466,13 @@ export function MentionInput() {
   useEffect(() => {
     void loadAvailableSkills()
   }, [loadAvailableSkills])
+
+  // Same lazy-load for `@plugin` mention candidates (codex plugin/installed).
+  // Bails out silently when the IPC surface is unavailable, so the `@` popup
+  // simply shows files only.
+  useEffect(() => {
+    void loadAvailablePluginMentions()
+  }, [loadAvailablePluginMentions])
 
   function refreshTriggerPopups(): void {
     const el = textareaRef.current
@@ -640,7 +651,7 @@ export function MentionInput() {
           kind: 'configWarning',
           level: 'info',
           message:
-            'Triggers: `$skill-name` invokes a skill · `@file` attaches a workspace file · `/` opens this palette · ⌘/Ctrl+Enter sends · Esc closes any popup.',
+            'Triggers: `@` searches plugins, skills and files in one popup · `$skill-name` invokes a skill directly · `/` opens this palette · ⌘/Ctrl+Enter sends · Esc closes any popup.',
         })
         break
       case 'compact':
@@ -674,10 +685,12 @@ export function MentionInput() {
         setInput(INIT_AGENTS_MD_PROMPT)
         void send()
         break
-      case 'goal':
-        // Unreachable: `/goal` is intercepted above (prefill `/goal `) so it
-        // never falls through to the action switch. Kept for switch completeness.
-        break
+      // No `goal` case: `/goal` is intercepted above (prefill `/goal ` + early
+      // return), so TS narrows it out of the union before this switch.
+      default: {
+        const exhaustive: never = item.command.action
+        void exhaustive
+      }
     }
   }
 
@@ -696,6 +709,114 @@ export function MentionInput() {
       .sort((a, b) => b.score - a.score)
       .slice(0, 8)
   }, [filePopup, allWorkspaceFiles])
+
+  // Installed plugins matching the `@` query. Rendered ABOVE the file rows in
+  // the same popup; the keyboard highlight walks a single flat list
+  // (plugins first, then files), so `fileHighlight` indexes into
+  // plugins.length + files.length.
+  const filteredPlugins = useMemo<PluginMentionCandidate[]>(() => {
+    if (!filePopup) return []
+    const q = filePopup.query.toLowerCase()
+    const list = q
+      ? availablePluginMentions.filter(
+          (p) => p.token.toLowerCase().includes(q) || p.name.toLowerCase().includes(q),
+        )
+      : availablePluginMentions
+    // 4 keeps the plugin group compact so files remain reachable.
+    return [...list]
+      .sort((a, b) => Number(b.token.toLowerCase().startsWith(q)) - Number(a.token.toLowerCase().startsWith(q)))
+      .slice(0, 4)
+  }, [filePopup, availablePluginMentions])
+
+  // Skills matching the `@` query (MentionsV2 parity — openai/codex#19068,
+  // promoted to default by #27499): the unified popup searches plugins,
+  // skills and files in one flow. Rendered between the plugin and file
+  // groups; committing inserts the official `$name ` marker so the existing
+  // `$`-token send pipeline (extractSkillTokens → payload.skills) is reused
+  // verbatim. The legacy `$` trigger stays for compatibility.
+  const filteredAtSkills = useMemo<CodexSkillSummary[]>(() => {
+    if (!filePopup) return []
+    const q = filePopup.query.toLowerCase()
+    const list = q
+      ? availableSkills.filter(
+          (s) => s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q),
+        )
+      : availableSkills
+    // 4 keeps the skill group compact so files remain reachable (same cap as
+    // the plugin group).
+    return [...list]
+      .sort((a, b) => Number(b.name.toLowerCase().startsWith(q)) - Number(a.name.toLowerCase().startsWith(q)))
+      .slice(0, 4)
+  }, [filePopup, availableSkills])
+
+  const atPopupItemCount = filteredPlugins.length + filteredAtSkills.length + filteredFiles.length
+
+  /**
+   * Commit a plugin mention: unlike files (token replaced by a reference
+   * chip), the `@token ` STAYS in the text — per the codex README the text
+   * token and the `mention` input item travel together. The send pipeline
+   * (extractMentionTokens → resolveMentions) attaches the mention item.
+   */
+  function commitPluginMention(plugin: PluginMentionCandidate): void {
+    if (!filePopup) return
+    const el = textareaRef.current
+    if (!el) return
+    const caret = el.selectionStart ?? el.value.length
+    const before = input.slice(0, filePopup.start)
+    const after = input.slice(caret)
+    const inserted = `@${plugin.token} `
+    const next = `${before}${inserted}${after}`
+    setInput(next)
+    setFilePopup(null)
+    requestAnimationFrame(() => {
+      const node = textareaRef.current
+      if (!node) return
+      const newCaret = filePopup.start + inserted.length
+      node.selectionStart = node.selectionEnd = newCaret
+      node.focus()
+    })
+  }
+
+  /**
+   * Commit a skill picked from the unified `@` popup: replaces the `@query`
+   * with the official `$name ` marker (upstream MentionsV2: "selecting a
+   * plugin or skill inserts the corresponding `$name`"), so the send pipeline
+   * treats it exactly like a hand-typed `$` skill token.
+   */
+  function commitSkillFromAtPopup(skill: CodexSkillSummary): void {
+    if (!filePopup) return
+    const el = textareaRef.current
+    if (!el) return
+    const caret = el.selectionStart ?? el.value.length
+    const before = input.slice(0, filePopup.start)
+    const after = input.slice(caret)
+    const inserted = `$${skill.name} `
+    const next = `${before}${inserted}${after}`
+    setInput(next)
+    setFilePopup(null)
+    requestAnimationFrame(() => {
+      const node = textareaRef.current
+      if (!node) return
+      const newCaret = filePopup.start + inserted.length
+      node.selectionStart = node.selectionEnd = newCaret
+      node.focus()
+    })
+  }
+
+  /** Commit whatever sits at a flat `@` popup index (plugins → skills → files). */
+  function commitAtPopupIndex(idx: number): void {
+    if (idx < filteredPlugins.length) {
+      commitPluginMention(filteredPlugins[idx])
+      return
+    }
+    const skillIdx = idx - filteredPlugins.length
+    if (skillIdx < filteredAtSkills.length) {
+      commitSkillFromAtPopup(filteredAtSkills[skillIdx])
+      return
+    }
+    const file = filteredFiles[skillIdx - filteredAtSkills.length]
+    if (file) commitFile(file)
+  }
 
   /**
    * Attach a single file by path: stat it, enforce attachment limits, push
@@ -915,10 +1036,12 @@ export function MentionInput() {
       const name = c.path.split(/[\\/]/).pop() ?? c.path
       addAttachment({ name, mime, size, path: c.path })
       // Tier 2 (internal MIME, no preStat) pushes a pending reference — the
-      // file came from the workspace tree, so the path passes main-side
-      // assertContained inside mapReferencesToInputItems. Tier 3 (external OS
-      // drop, preStat set) must NOT push a reference: the original OS path is
-      // by design outside allowedRoots, and `agent:send-message` would throw
+      // file came from the workspace or ATTACHMENTS tree, and the send-side
+      // gate (mapReferencesToInputItems) whitelists workspace roots plus the
+      // `<userData>/agent/uploads` cache, mirroring the fs IPC gate
+      // (fsIpc.resolveAllowedRoots). Tier 3 (external OS drop, preStat set)
+      // must NOT push a reference: the original OS path is by design outside
+      // both gates' whitelists, and `agent:send-message` would throw
       // "Reference path is outside allowed roots" at click-Send. The matching
       // attachment still gets ingested by AttachmentService into
       // `<userData>/agent/uploads/<hash>.ext` (an in-root canonical path),
@@ -1127,10 +1250,10 @@ export function MentionInput() {
                 return
               }
             }
-            if (filePopup && filteredFiles.length > 0) {
+            if (filePopup && atPopupItemCount > 0) {
               if (event.key === 'ArrowDown') {
                 event.preventDefault()
-                setFileHighlight((h) => Math.min(h + 1, filteredFiles.length - 1))
+                setFileHighlight((h) => Math.min(h + 1, atPopupItemCount - 1))
                 return
               }
               if (event.key === 'ArrowUp') {
@@ -1140,7 +1263,7 @@ export function MentionInput() {
               }
               if (event.key === 'Enter' || event.key === 'Tab') {
                 event.preventDefault()
-                commitFile(filteredFiles[fileHighlight])
+                commitAtPopupIndex(fileHighlight)
                 return
               }
               if (event.key === 'Escape') {
@@ -1311,20 +1434,22 @@ export function MentionInput() {
             ))}
           </ul>
         ) : null}
-        {filePopup && filteredFiles.length > 0 ? (
+        {filePopup && atPopupItemCount > 0 ? (
           <ul
             role="listbox"
-            aria-label="File suggestions"
+            aria-label="Mention suggestions"
             className="absolute bottom-full left-0 z-10 mb-1 max-h-64 w-full overflow-auto rounded-md border border-cyan-400/20 bg-zinc-950/95 p-1 shadow-lg shadow-black/40 backdrop-blur"
           >
-            {filteredFiles.map((file, idx) => (
+            {filteredPlugins.map((plugin, idx) => (
               <li
-                key={file.path}
+                key={plugin.path}
                 role="option"
                 aria-selected={idx === fileHighlight}
                 onMouseDown={(event) => {
+                  // mousedown (not click) so we commit BEFORE the textarea
+                  // blurs and unmounts us.
                   event.preventDefault()
-                  commitFile(file)
+                  commitPluginMention(plugin)
                 }}
                 onMouseEnter={() => setFileHighlight(idx)}
                 className={
@@ -1333,15 +1458,71 @@ export function MentionInput() {
                 }
               >
                 <div className="flex items-baseline gap-1.5">
-                  <span className="font-mono text-[12px] text-cyan-200">{file.name}</span>
+                  <span className="font-mono text-[12px] text-cyan-200">@{plugin.token}</span>
+                  <span className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">plugin</span>
                 </div>
-                {file.relPath !== file.name ? (
-                  <div className="mt-0.5 truncate text-[11px] text-zinc-400" title={file.relPath}>
-                    {file.relPath}
-                  </div>
-                ) : null}
+                <div className="mt-0.5 truncate text-[11px] text-zinc-400" title={plugin.path}>
+                  {plugin.name}
+                </div>
               </li>
             ))}
+            {filteredAtSkills.map((skill, idx) => {
+              const flatIdx = filteredPlugins.length + idx
+              return (
+                <li
+                  key={skill.path}
+                  role="option"
+                  aria-selected={flatIdx === fileHighlight}
+                  onMouseDown={(event) => {
+                    // mousedown (not click) so we commit BEFORE the textarea
+                    // blurs and unmounts us.
+                    event.preventDefault()
+                    commitSkillFromAtPopup(skill)
+                  }}
+                  onMouseEnter={() => setFileHighlight(flatIdx)}
+                  className={
+                    'cursor-pointer rounded px-2 py-1 ' +
+                    (flatIdx === fileHighlight ? 'bg-cyan-400/20 text-cyan-50' : 'text-zinc-200')
+                  }
+                >
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="font-mono text-[12px] text-cyan-200">${skill.name}</span>
+                    <span className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">skill</span>
+                  </div>
+                  {skill.description ? (
+                    <div className="mt-0.5 truncate text-[11px] text-zinc-400">{skill.description}</div>
+                  ) : null}
+                </li>
+              )
+            })}
+            {filteredFiles.map((file, idx) => {
+              const flatIdx = filteredPlugins.length + filteredAtSkills.length + idx
+              return (
+                <li
+                  key={file.path}
+                  role="option"
+                  aria-selected={flatIdx === fileHighlight}
+                  onMouseDown={(event) => {
+                    event.preventDefault()
+                    commitFile(file)
+                  }}
+                  onMouseEnter={() => setFileHighlight(flatIdx)}
+                  className={
+                    'cursor-pointer rounded px-2 py-1 ' +
+                    (flatIdx === fileHighlight ? 'bg-cyan-400/20 text-cyan-50' : 'text-zinc-200')
+                  }
+                >
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="font-mono text-[12px] text-cyan-200">{file.name}</span>
+                  </div>
+                  {file.relPath !== file.name ? (
+                    <div className="mt-0.5 truncate text-[11px] text-zinc-400" title={file.relPath}>
+                      {file.relPath}
+                    </div>
+                  ) : null}
+                </li>
+              )
+            })}
           </ul>
         ) : null}
       </div>
@@ -1390,6 +1571,7 @@ export function MentionInput() {
           {isEditing ? 'Editing' : isRunning ? 'Running' : 'Agent'}
         </span>
         <ModelPicker disabled={isRunning} />
+        <CollabModeToggle disabled={isRunning} />
         <ImageChannelPicker disabled={isRunning} />
         <div className="flex-1" />
         {isEditing ? (

@@ -21,7 +21,12 @@ export function isServerRequest(msg: ServerMessage): msg is JsonRpcServerRequest
 }
 
 export interface ClientInfo { name: string; title?: string | null; version: string }
-export interface InitializeParams { clientInfo: ClientInfo; capabilities: null }
+/**
+ * `capabilities.experimentalApi` unlocks `#[experimental(...)]`-gated surface
+ * (collaborationMode/list, turn/start.collaborationMode, thread/items/list…).
+ * `null` = today's stable-only behaviour, byte-identical wire output.
+ */
+export interface InitializeParams { clientInfo: ClientInfo; capabilities: { experimentalApi: true } | null }
 export interface InitializeResponse { userAgent: string; codexHome: string; platformFamily: string; platformOs: string }
 
 export interface Thread { id: string; preview: string; cwd: string }
@@ -52,8 +57,19 @@ export interface ThreadStartParams {
 }
 export interface ThreadStartResponse { thread: Thread }
 
+/**
+ * App-server v2 `TextElement`: a UI-defined span within the parent `text`
+ * buffer. `byteRange` is in UTF-8 BYTES (the server is Rust — indexing by JS
+ * UTF-16 code units corrupts spans after any non-ASCII character), and
+ * `placeholder` is the optional human-readable label the UI renders for it.
+ */
+export interface CodexTextElement {
+  byteRange: { start: number; end: number }
+  placeholder: string | null
+}
+
 export type CodexUserInput =
-  | { type: 'text'; text: string; text_elements: [] }
+  | { type: 'text'; text: string; text_elements: CodexTextElement[] }
   | { type: 'image'; url: string }
   | { type: 'localImage'; path: string }
   /**
@@ -63,8 +79,51 @@ export type CodexUserInput =
    *   marker and try to locate the skill, which can add latency."
    */
   | { type: 'skill'; name: string; path: string }
+  /**
+   * Plugin / app invocation: `path` is `plugin://<name>@<marketplace>` (from
+   * `plugin/installed` / `plugin/list`) or `app://<connector-id>`. Per README,
+   * pairing the mention item with the `@token` in the text makes the server
+   * "use the exact path rather than guessing by name".
+   */
+  | { type: 'mention'; name: string; path: string }
 
-export interface TurnStartParams { threadId: string; input: CodexUserInput[] }
+/**
+ * EXPERIMENTAL collaboration-mode preset (`turn/start.collaborationMode`,
+ * gated behind `capabilities.experimentalApi`). Wire shapes pinned from
+ * codex-rs `protocol/src/config_types.rs` (`CollaborationMode` / `Settings` —
+ * snake_case fields) and `app-server-protocol/src/protocol/v2/
+ * collaboration_mode.rs` (`CollaborationModeMask` — camelCase except the
+ * explicitly renamed `reasoning_effort`).
+ *
+ * `settings.developer_instructions: null` means "use the built-in
+ * instructions for the selected mode" — exactly what we want for Plan mode.
+ */
+export type CodexCollaborationModeKind = 'plan' | 'default'
+
+export interface CodexCollaborationMode {
+  mode: CodexCollaborationModeKind
+  settings: {
+    model: string
+    reasoning_effort: string | null
+    developer_instructions: string | null
+  }
+}
+
+/** One preset row from `collaborationMode/list` (all-optional mask). */
+export interface CodexCollaborationModeMask {
+  name: string
+  mode: CodexCollaborationModeKind | null
+  model: string | null
+  reasoning_effort?: string | null
+}
+
+export interface CollaborationModeListResponse { data: CodexCollaborationModeMask[] }
+
+export interface TurnStartParams {
+  threadId: string
+  input: CodexUserInput[]
+  collaborationMode?: CodexCollaborationMode
+}
 export interface TurnStartResponse { turn: Turn }
 
 // `turn/steer` (openai/codex#10821): append user input to the in-flight turn

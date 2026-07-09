@@ -1173,10 +1173,12 @@ describe('CodexNotificationRouter', () => {
 
     // Codex echoes the user's prompt back as an `item.type === 'userMessage'`
     // notification so it shows up in the canonical thread items[]. Our store
-    // already pushed a local user bubble in `store.send()`, so showing the
-    // echo as an "ACT userMessage" pill duplicates the message and looks
-    // broken to the user. Drop it.
-    it('drops userMessage echoes (item/started + item/completed) — already rendered locally', () => {
+    // already pushed a local user bubble in `store.send()`, so it must never
+    // render as a visible "ACT userMessage" pill. `item/started` stays dropped;
+    // `item/completed` is now routed into the INTERNAL `user_message_reconciled`
+    // event (consumed by AgentManager for DB reconciliation, never forwarded to
+    // the renderer — see codexNotificationRouter.userMessage.test.ts).
+    it('userMessage echoes: started dropped, completed becomes internal reconcile event (never a visible item)', () => {
       const router = new CodexNotificationRouter()
       expect(
         router.route('item/started', {
@@ -1185,13 +1187,12 @@ describe('CodexNotificationRouter', () => {
           item: { type: 'userMessage', id: 'um-1', text: 'hi' },
         }),
       ).toBeNull()
-      expect(
-        router.route('item/completed', {
-          threadId: 't',
-          turnId: 'u',
-          item: { type: 'userMessage', id: 'um-1', text: 'hi' },
-        }),
-      ).toBeNull()
+      const completed = router.route('item/completed', {
+        threadId: 't',
+        turnId: 'u',
+        item: { type: 'userMessage', id: 'um-1', text: 'hi' },
+      })
+      expect(completed?.type).toBe('user_message_reconciled')
     })
   })
 
