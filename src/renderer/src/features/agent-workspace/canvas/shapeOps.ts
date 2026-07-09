@@ -775,8 +775,19 @@ export function updateShapePartial(
     touched = true
   }
   if (!touched) return { ok: false, error: 'canvas_update_shape: no updatable fields given (x/y/w/h/rotation/text/color).' }
+  // richText + w/h cannot share ONE write: GeoShapeUtil.onBeforeUpdate
+  // re-measures the label when richText changes and overrides w/h in the same
+  // record, silently discarding the caller's explicit size (verified against a
+  // real 5.2 Editor in realEditorSmoke.test.ts). Write the text first, then
+  // re-assert the size — both inside one editor.run so undo stays a single step.
+  const textFirst =
+    'richText' in props && (typeof props.w !== 'undefined' || typeof props.h !== 'undefined')
+      ? { id: shape.id, type: shape.type, props: { richText: props.richText } }
+      : undefined
+  if (textFirst) delete props.richText
   if (Object.keys(props).length > 0) update.props = props
   editor.run(() => {
+    if (textFirst) editor.updateShape(textFirst as never)
     editor.updateShape(update as never)
   })
   const updated = editor.getShape(shapeId as never)
