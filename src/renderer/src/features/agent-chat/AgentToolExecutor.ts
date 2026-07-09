@@ -240,6 +240,7 @@ export class AgentToolExecutor {
       case 'canvas_search':
       case 'canvas_focus_region':
       case 'canvas_arrange':
+      case 'canvas_create_shape':
       case 'canvas_update_shape':
       case 'canvas_delete_shapes':
       // Internal helpers (no MCP surface): driven by the understand_canvas_video

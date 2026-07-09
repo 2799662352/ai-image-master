@@ -181,6 +181,83 @@ describe('real tldraw Editor smoke: new agent tool chain', () => {
     expect(overviewIds.has(String(createShapeId('near1')))).toBe(false)
   })
 
+  it('canvas_create_shape: geo with label / note / wrapped text survive real schema validation', async () => {
+    const geo: any = await canvasBridge.handle('canvas_create_shape', {
+      kind: 'geo', geoType: 'circle', x: 10, y: 20, w: 200, h: 200, text: '开始', color: 'blue', fill: 'semi',
+    })
+    if (!geo.ok) throw new Error(`geo create failed: ${geo.error}`)
+    const geoShape = editor.getShape(geo.shape.id) as any
+    expect(geoShape.props.geo).toBe('ellipse') // circle alias
+    expect(geoShape.props.fill).toBe('semi')
+    expect(JSON.stringify(geoShape.props.richText)).toContain('开始')
+
+    const note: any = await canvasBridge.handle('canvas_create_shape', { kind: 'note', x: 300, y: 20, text: '便签', color: 'yellow' })
+    if (!note.ok) throw new Error(`note create failed: ${note.error}`)
+    expect((editor.getShape(note.shape.id) as any).type).toBe('note')
+
+    const text: any = await canvasBridge.handle('canvas_create_shape', { kind: 'text', x: 0, y: 300, text: '一段会换行的说明文字', maxWidth: 240 })
+    if (!text.ok) throw new Error(`text create failed: ${text.error}`)
+    const textShape = editor.getShape(text.shape.id) as any
+    expect(textShape.props.autoSize).toBe(false)
+    expect(textShape.props.w).toBe(240)
+  })
+
+  it('canvas_create_shape: line from endpoints; arrow BINDS to shapes and follows them', async () => {
+    const line: any = await canvasBridge.handle('canvas_create_shape', { kind: 'line', x1: 500, y1: 100, x2: 300, y2: 250 })
+    if (!line.ok) throw new Error(`line create failed: ${line.error}`)
+    const lineShape = editor.getShape(line.shape.id) as any
+    expect(lineShape.x).toBe(300) // min of endpoints
+    expect(lineShape.y).toBe(100)
+
+    createGeo('src', 0, 0)
+    createGeo('dst', 600, 400)
+    const arrow: any = await canvasBridge.handle('canvas_create_shape', {
+      kind: 'arrow', fromId: 'src', toId: 'shape:dst', text: '下一镜', // mixed sloppy ids on purpose
+    })
+    if (!arrow.ok) throw new Error(`arrow create failed: ${arrow.error}`)
+    const bindings = editor.getBindingsFromShape(arrow.shape.id, 'arrow')
+    expect(bindings.length).toBe(2)
+    // Bound arrow must FOLLOW its target: move dst and the arrow's bounds change.
+    const before = editor.getShapePageBounds(arrow.shape.id)!.w
+    editor.updateShape({ id: createShapeId('dst'), type: 'geo', x: 1200 })
+    const after = editor.getShapePageBounds(arrow.shape.id)!.w
+    expect(after).toBeGreaterThan(before)
+  })
+
+  it('canvas_create_shape rejects bad input with structured errors (no crash)', async () => {
+    const badGeo: any = await canvasBridge.handle('canvas_create_shape', { kind: 'geo', geoType: 'dodecahedron' })
+    expect(badGeo.ok).toBe(false)
+    expect(String(badGeo.error)).toContain('geoType')
+    const badArrow: any = await canvasBridge.handle('canvas_create_shape', { kind: 'arrow', x1: 0, y1: 0 })
+    expect(badArrow.ok).toBe(false)
+    // Editor still alive.
+    createGeo('alive', 0, 0)
+    expect(editor.getShape(createShapeId('alive'))).toBeTruthy()
+  })
+
+  it('canvas_arrange z-order ops reorder real shapes without touching the camera', async () => {
+    createGeo('bottom', 0, 0)
+    createGeo('top', 20, 20) // created later → renders above
+    const cameraBefore = { ...editor.getCamera() }
+    const res: any = await canvasBridge.handle('canvas_arrange', { shapeIds: ['shape:bottom'], operation: 'bring-to-front' })
+    expect(res).toMatchObject({ ok: true, arrangedCount: 1 })
+    const order = editor.getCurrentPageShapesSorted().map((s) => String(s.id))
+    expect(order.indexOf(String(createShapeId('bottom')))).toBeGreaterThan(order.indexOf(String(createShapeId('top'))))
+    expect(editor.getCamera()).toEqual(cameraBefore)
+
+    const back: any = await canvasBridge.handle('canvas_arrange', { shapeIds: ['shape:bottom'], operation: 'send-to-back' })
+    expect(back.ok).toBe(true)
+    const order2 = editor.getCurrentPageShapesSorted().map((s) => String(s.id))
+    expect(order2.indexOf(String(createShapeId('bottom')))).toBeLessThan(order2.indexOf(String(createShapeId('top'))))
+  })
+
+  it('snapshot reports userViewportBounds (the USER camera, not the agent virtual viewport)', async () => {
+    createGeo('g1', 0, 0)
+    const snap: any = await canvasBridge.snapshot('thread-uservp', { screenshot: false })
+    const vp = editor.getViewportPageBounds()
+    expect(snap.userViewportBounds).toEqual({ x: Math.round(vp.x), y: Math.round(vp.y), w: Math.round(vp.w), h: Math.round(vp.h) })
+  })
+
   it('full-mode snapshot of a small canvas carries no huge data: URL (P0 hygiene, real store)', async () => {
     createGeo('g1', 0, 0)
     // A file-card whose meta carries a big inline payload — the leak shape.

@@ -1,6 +1,6 @@
 import { Box, getSnapshot, loadSnapshot, type Editor } from 'tldraw'
 import type { Bounds, CanvasStatePayload } from '../../../../../types/canvas'
-import { arrangeShapes, buildCanvasLints, buildTieredShapes, computeFocusTarget, createHolder, createImageVersion, deleteShapesById, diffShapeFingerprints, fingerprintSummaries, focusRegion, insertFilePlaceholder, insertImageAt, insertImageIntoHolder, insertTextNote, insertVideo, listImageShapes, readCanvasState, resolveShapeId, summarizeShape, truncateDataUrl, updateShapePartial, ARRANGE_OPERATIONS, type ArrangeOperation, type CanvasLint, type SnapshotDiff, type TieredShapesResult } from './shapeOps'
+import { arrangeShapes, buildCanvasLints, buildTieredShapes, computeFocusTarget, createHolder, createImageVersion, createSimpleShape, deleteShapesById, diffShapeFingerprints, fingerprintSummaries, focusRegion, insertFilePlaceholder, insertImageAt, insertImageIntoHolder, insertTextNote, insertVideo, listImageShapes, readCanvasState, resolveShapeId, summarizeShape, truncateDataUrl, updateShapePartial, ARRANGE_OPERATIONS, type ArrangeOperation, type CanvasLint, type CreateSimpleShapeParams, type SnapshotDiff, type TieredShapesResult } from './shapeOps'
 import { executeCanvasCode, searchEditorApi } from './shapeExec'
 import { parseAnnotations } from './annotationParser'
 import { editPrompt, findPreferredHolder, generationPrompt, holderSize } from './promptBuilders'
@@ -110,6 +110,13 @@ class CanvasBridge {
   /** Per-thread shape fingerprints from the previous canvas_snapshot, used to
    * report `changedSinceLastSnapshot` (user actions between agent looks). */
   private lastSnapshotFingerprints = new Map<string, Map<string, string>>()
+
+  /** The user's real camera viewport, rounded — undefined if the editor can't report it (test fakes). */
+  private readUserViewportBounds(editor: Editor): Bounds | undefined {
+    const vp = (editor as unknown as { getViewportPageBounds?: () => Bounds }).getViewportPageBounds?.()
+    if (!vp) return undefined
+    return { x: Math.round(vp.x), y: Math.round(vp.y), w: Math.round(vp.w), h: Math.round(vp.h) }
+  }
 
   /** Per-thread AGENT viewport (official Agent Kit's "context bounds" idea):
    * canvas_focus_region mode:'virtual' records the region here instead of
@@ -392,6 +399,29 @@ class CanvasBridge {
           return res
         })
       }
+      case 'canvas_create_shape': {
+        // Structured creation of native tldraw shapes (geo/note/text/line/
+        // arrow-with-bindings) — the official kit's Create action. fromId/toId
+        // self-heal so "arrow from IMG_1 to IMG_2" works with sloppy ids.
+        const editor = this.requireEditor()
+        let fromId: string | undefined
+        let toId: string | undefined
+        if (typeof params.fromId === 'string' && params.fromId) {
+          const r = resolveShapeId(editor, params.fromId)
+          if (!r.ok) return { ok: false, failed: true, tool: 'canvas_create_shape', error: r.error }
+          fromId = r.id
+        }
+        if (typeof params.toId === 'string' && params.toId) {
+          const r = resolveShapeId(editor, params.toId)
+          if (!r.ok) return { ok: false, failed: true, tool: 'canvas_create_shape', error: r.error }
+          toId = r.id
+        }
+        return this.safeWrite('canvas_create_shape', () => {
+          const res = createSimpleShape(editor, { ...(params as unknown as CreateSimpleShapeParams), fromId, toId })
+          if (!res.ok) throw new Error(res.error)
+          return res
+        })
+      }
       case 'canvas_delete_shapes': {
         // Structured batch delete with self-healed ids; single undo entry.
         const editor = this.requireEditor()
@@ -466,6 +496,7 @@ class CanvasBridge {
       hint?: string
       lints?: CanvasLint[]
       changedSinceLastSnapshot?: SnapshotDiff
+      userViewportBounds?: Bounds
     } & Omit<TieredShapesResult, 'shapes'>
   > {
     const editor = this.requireEditor()
@@ -533,6 +564,10 @@ class CanvasBridge {
       focusedShapes: tiered.focusedShapes,
       peripheralClusters: tiered.peripheralClusters,
       viewportBounds: tiered.viewportBounds,
+      // Where the USER is looking right now (official kit sends both agent and
+      // user viewports) — needed to resolve "the images on MY screen" when the
+      // agent's virtual viewport is elsewhere.
+      userViewportBounds: this.readUserViewportBounds(editor),
       selection: state.selection.selectedShapeIds,
       imagePath,
       screenshotScope: imagePath ? screenshotScope : undefined,

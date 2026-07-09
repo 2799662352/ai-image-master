@@ -82,7 +82,7 @@ export function registerCanvasTools(server: McpServer, router: ToolRouter): void
 
   server.registerTool('canvas_snapshot', {
     description:
-      'SEE the current canvas. Returns a structured list of every shape (images, dashed holders, arrows/circles/text annotations with positions/bounds/assetPath/assetId/intrinsic size) PLUS `imagePath` — an on-disk PNG render you can open and view (`screenshotScope` says whether it shows the whole canvas or just the viewport). On LARGE canvases (>40 shapes) the response is tiered to protect your context: viewport shapes come as a reduced overview, selected shapes stay full-detail in `focusedShapes`, and off-viewport shapes are grouped into `peripheralClusters` (bounds + count + type histogram) — and the PNG is cropped to the viewport so its pixels stay readable. Use `canvas_focus_region` to move the viewport, then re-snapshot. Pass `focusShapeIds` to get full detail for specific shapes, `full: true` to force the complete dump, or `screenshot: false` to skip the PNG export (faster when you only need the structured data). The response also carries `changedSinceLastSnapshot` ({created/updated/deleted} shape ids) when the canvas changed since your previous snapshot in this thread — check it to notice what the user moved/edited/deleted between your looks. Call this whenever the user asks what is on the canvas, or to inspect the layout before editing/inserting.',
+      'SEE the current canvas. Returns a structured list of every shape (images, dashed holders, arrows/circles/text annotations with positions/bounds/assetPath/assetId/intrinsic size) PLUS `imagePath` — an on-disk PNG render you can open and view (`screenshotScope` says whether it shows the whole canvas or just the viewport). On LARGE canvases (>40 shapes) the response is tiered to protect your context: viewport shapes come as a reduced overview, selected shapes stay full-detail in `focusedShapes`, and off-viewport shapes are grouped into `peripheralClusters` (bounds + count + type histogram) — and the PNG is cropped to the viewport so its pixels stay readable. Use `canvas_focus_region` to move the viewport, then re-snapshot. Pass `focusShapeIds` to get full detail for specific shapes, `full: true` to force the complete dump, or `screenshot: false` to skip the PNG export (faster when you only need the structured data). The response also carries `changedSinceLastSnapshot` ({created/updated/deleted} shape ids) when the canvas changed since your previous snapshot in this thread — check it to notice what the user moved/edited/deleted between your looks. `userViewportBounds` is the region the USER is currently looking at (may differ from your virtual viewport) — use it to resolve "the shapes on my screen". Call this whenever the user asks what is on the canvas, or to inspect the layout before editing/inserting.',
     inputSchema: z.object({
       focusShapeIds: z.array(z.string()).optional().describe('Shape ids to return in FULL detail even when the snapshot is tiered.'),
       full: z.boolean().optional().describe('Force full per-shape detail regardless of canvas size (large output).'),
@@ -112,20 +112,46 @@ export function registerCanvasTools(server: McpServer, router: ToolRouter): void
 
   server.registerTool('canvas_arrange', {
     description:
-      "Batch-layout shapes in ONE call instead of updating x/y one shape at a time: align-left/right/top/bottom, align-center-horizontal/vertical, distribute-horizontal/vertical (needs ≥3 shapes), stack-horizontal/vertical (row/column with a gap), or pack (grid). Pass the shapeIds (from canvas_snapshot / list_canvas_images) and the operation; optional `gap` for stack/pack. Perfect for tidying storyboard grids and image rows.",
+      "Batch-layout shapes in ONE call instead of updating x/y one shape at a time: align-left/right/top/bottom, align-center-horizontal/vertical, distribute-horizontal/vertical (needs ≥3 shapes), stack-horizontal/vertical (row/column with a gap), pack (grid), or z-order with bring-to-front/send-to-back (≥1 shape, e.g. a note hidden behind an image). Pass the shapeIds (from canvas_snapshot / list_canvas_images) and the operation; optional `gap` for stack/pack. Perfect for tidying storyboard grids and image rows.",
     inputSchema: z.object({
-      shapeIds: z.array(z.string()).min(2).describe('Shapes to arrange (≥2; distribute needs ≥3).'),
+      shapeIds: z.array(z.string()).min(1).describe('Shapes to arrange (layout ops need ≥2; distribute needs ≥3; z-order ops accept 1).'),
       operation: z.enum([
         'align-left', 'align-right', 'align-top', 'align-bottom',
         'align-center-horizontal', 'align-center-vertical',
         'distribute-horizontal', 'distribute-vertical',
         'stack-horizontal', 'stack-vertical', 'pack',
+        'bring-to-front', 'send-to-back',
       ]),
       gap: z.number().optional().describe('Gap in px for stack/pack (defaults: editor margin / 16).'),
     }),
     // Repositions existing shapes; never deletes. Re-running the same align is a no-op → idempotent-ish, but stack/pack move things → mark non-idempotent.
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   }, async (params) => asResult(await router.call('canvas_arrange', params as Record<string, unknown>)))
+
+  server.registerTool('canvas_create_shape', {
+    description:
+      "Create ONE native tldraw shape in a structured call — no canvas_exec code for basic drawing. Kinds: 'geo' (box/ellipse/star/cloud/… via geoType, optional text label + fill), 'note' (sticky note), 'text' (free text, maxWidth wraps), 'line' (x1/y1→x2/y2), 'arrow' (connector: bind fromId/toId to shapes so the arrow FOLLOWS them when moved — preferred — or explicit x1/y1/x2/y2; optional text label + bend). Use for flowcharts, storyboard shot connectors, section labels, callout notes. For images/videos/files use the dedicated insert tools instead.",
+    inputSchema: z.object({
+      kind: z.enum(['geo', 'note', 'text', 'line', 'arrow']),
+      geoType: z.string().optional().describe("geo only: rectangle (default), ellipse, triangle, diamond, star, cloud, heart, hexagon, octagon, pentagon, oval/pill, trapezoid, rhombus, x-box, check-box, arrow-right/left/up/down."),
+      x: z.number().optional().describe('Page x (geo/note/text). Default 0.'),
+      y: z.number().optional().describe('Page y (geo/note/text). Default 0.'),
+      w: z.number().optional().describe('geo only: width px (default 160).'),
+      h: z.number().optional().describe('geo only: height px (default 120).'),
+      x1: z.number().optional().describe('line/arrow: start point x (page space).'),
+      y1: z.number().optional().describe('line/arrow: start point y.'),
+      x2: z.number().optional().describe('line/arrow: end point x.'),
+      y2: z.number().optional().describe('line/arrow: end point y.'),
+      fromId: z.string().optional().describe('arrow only: shape id to bind the tail to (arrow follows it).'),
+      toId: z.string().optional().describe('arrow only: shape id to bind the head to.'),
+      text: z.string().optional().describe('Label/content (geo label, note/text content, arrow label).'),
+      color: z.string().optional().describe("tldraw palette name: black (default), grey, red, light-red, orange, yellow, green, light-green, blue, light-blue, violet, light-violet, white."),
+      fill: z.string().optional().describe("geo only: none (default), semi, solid, pattern."),
+      maxWidth: z.number().optional().describe('text only: wrap width in px (otherwise auto-sizes to one line).'),
+      bend: z.number().optional().describe('arrow only: curvature offset in px (0 = straight).'),
+    }),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  }, async (params) => asResult(await router.call('canvas_create_shape', params as Record<string, unknown>)))
 
   server.registerTool('canvas_update_shape', {
     description:

@@ -1156,8 +1156,23 @@ To line up multiple shapes (storyboard grids, image rows, comparison columns),
 call \`canvas_arrange { shapeIds, operation, gap? }\` instead of nudging x/y one
 shape at a time. Operations: \`align-left/right/top/bottom\`,
 \`align-center-horizontal/vertical\`, \`distribute-horizontal/vertical\` (≥3 shapes),
-\`stack-horizontal/vertical\` (row/column with a gap), \`pack\` (grid). One atomic
-transaction, and the camera frames the result.
+\`stack-horizontal/vertical\` (row/column with a gap), \`pack\` (grid),
+\`bring-to-front\`/\`send-to-back\` (z-order, ≥1 shape — e.g. a note hidden behind
+an image). One atomic transaction, and the camera frames the result (z-order
+ops leave the camera alone).
+
+## Draw native shapes (canvas_create_shape)
+
+To draw boxes, sticky notes, labels, lines and connector arrows, call
+\`canvas_create_shape\` instead of writing canvas_exec code:
+
+- \`{ kind:'geo', geoType:'rectangle|ellipse|star|cloud|…', x, y, w?, h?, text?, color?, fill? }\` — labeled boxes/shapes.
+- \`{ kind:'note', x, y, text?, color? }\` — sticky note.
+- \`{ kind:'text', x, y, text, maxWidth?, color? }\` — free text (maxWidth wraps).
+- \`{ kind:'line', x1, y1, x2, y2, color? }\` — plain line.
+- \`{ kind:'arrow', fromId, toId, text?, bend?, color? }\` — connector BOUND to two
+  shapes: it follows them when they move. Prefer bindings over raw x1/y1/x2/y2
+  for storyboard shot-flow arrows and diagram edges.
 
 ## Edit / delete single shapes (canvas_update_shape / canvas_delete_shapes)
 
@@ -1172,12 +1187,15 @@ transaction, and the camera frames the result.
 \`canvas_snapshot\` returns \`changedSinceLastSnapshot\` ({created/updated/deleted}
 shape ids) whenever the canvas changed since your previous snapshot in this
 thread. Check it first — if the user moved/edited/deleted shapes while you were
-working, re-read those shapes before acting on stale positions.
+working, re-read those shapes before acting on stale positions. The snapshot
+also carries \`userViewportBounds\` — the region the USER is looking at right now
+(it may differ from your virtual viewport): when the user says "the images on
+my screen", match shapes against THAT box, not yours.
 
 ## Free-form canvas control (canvas_exec + canvas_search)
 
-For layout/edits the structured tools above don't cover — group, reorder,
-draw custom shapes/connectors, multi-step transforms — use the escape
+For layout/edits the structured tools above don't cover — group, complex
+reorder, multi-step transforms, exotic shape props — use the escape
 hatch:
 
 1. \`canvas_search { code }\` (read-only): write JS that gets \`spec\` and returns a

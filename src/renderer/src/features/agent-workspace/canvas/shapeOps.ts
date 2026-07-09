@@ -665,6 +665,8 @@ export type ArrangeOperation =
   | 'stack-horizontal'
   | 'stack-vertical'
   | 'pack'
+  | 'bring-to-front'
+  | 'send-to-back'
 
 export const ARRANGE_OPERATIONS: readonly ArrangeOperation[] = [
   'align-left',
@@ -678,6 +680,8 @@ export const ARRANGE_OPERATIONS: readonly ArrangeOperation[] = [
   'stack-horizontal',
   'stack-vertical',
   'pack',
+  'bring-to-front',
+  'send-to-back',
 ]
 
 /**
@@ -693,9 +697,10 @@ export function arrangeShapes(
   operation: ArrangeOperation,
   gap?: number,
 ): { ok: true; operation: ArrangeOperation; arrangedCount: number } | { ok: false; error: string } {
-  const minimum = operation.startsWith('distribute') ? 3 : 2
+  const isZOrder = operation === 'bring-to-front' || operation === 'send-to-back'
+  const minimum = operation.startsWith('distribute') ? 3 : isZOrder ? 1 : 2
   if (shapeIds.length < minimum) {
-    return { ok: false, error: `"${operation}" needs at least ${minimum} shapes (got ${shapeIds.length}).` }
+    return { ok: false, error: `"${operation}" needs at least ${minimum} shape${minimum > 1 ? 's' : ''} (got ${shapeIds.length}).` }
   }
   const ids = shapeIds as never[]
   editor.run(() => {
@@ -733,13 +738,20 @@ export function arrangeShapes(
       case 'pack':
         editor.packShapes(ids, gap ?? 16)
         break
+      case 'bring-to-front':
+        editor.bringToFront(ids)
+        break
+      case 'send-to-back':
+        editor.sendToBack(ids)
+        break
       default: {
         const exhausted: never = operation
         throw new Error(`Unknown arrange operation: ${String(exhausted)}`)
       }
     }
   })
-  zoomToFitShapes(editor, shapeIds)
+  // Z-order changes don't move anything — leave the camera alone.
+  if (!isZOrder) zoomToFitShapes(editor, shapeIds)
   return { ok: true, operation, arrangedCount: shapeIds.length }
 }
 
@@ -808,6 +820,212 @@ export function updateShapePartial(
   })
   const updated = editor.getShape(shapeId as never)
   return { ok: true, shape: sanitizeSummaryForAgent(summarizeShape(editor, updated)) }
+}
+
+/** tldraw's default color palette — invalid names throw ValidationError and crash the canvas, so gate up front. */
+const TLDRAW_COLORS = new Set([
+  'black', 'grey', 'light-violet', 'violet', 'blue', 'light-blue',
+  'yellow', 'orange', 'green', 'light-green', 'light-red', 'red', 'white',
+])
+
+const TLDRAW_FILLS = new Set(['none', 'semi', 'solid', 'pattern'])
+
+/** tldraw's native geo prop enum + the official Agent Kit's friendlier aliases. */
+const GEO_TYPES = new Set([
+  'rectangle', 'ellipse', 'triangle', 'diamond', 'pentagon', 'hexagon', 'octagon',
+  'star', 'rhombus', 'rhombus-2', 'oval', 'trapezoid', 'cloud', 'heart',
+  'x-box', 'check-box', 'arrow-right', 'arrow-left', 'arrow-up', 'arrow-down',
+])
+const GEO_ALIASES: Record<string, string> = {
+  'pill': 'oval',
+  'fat-arrow-right': 'arrow-right',
+  'fat-arrow-left': 'arrow-left',
+  'fat-arrow-up': 'arrow-up',
+  'fat-arrow-down': 'arrow-down',
+  'parallelogram-right': 'rhombus',
+  'parallelogram-left': 'rhombus-2',
+  'circle': 'ellipse',
+  'square': 'rectangle',
+}
+
+export interface CreateSimpleShapeParams {
+  kind: 'geo' | 'note' | 'text' | 'line' | 'arrow'
+  /** geo only: shape flavor (rectangle/ellipse/star/cloud/…). Default rectangle. */
+  geoType?: string
+  x?: number
+  y?: number
+  w?: number
+  h?: number
+  /** line/arrow: explicit endpoints in page space. */
+  x1?: number
+  y1?: number
+  x2?: number
+  y2?: number
+  /** arrow only: bind terminals to shapes — the arrow then FOLLOWS them when moved. Resolved by the caller. */
+  fromId?: string
+  toId?: string
+  text?: string
+  color?: string
+  fill?: string
+  /** text only: wrap width (autoSize off). */
+  maxWidth?: number
+  /** arrow only: curvature offset in px (0 = straight). */
+  bend?: number
+}
+
+/**
+ * Structured creation of NATIVE tldraw shapes (official Agent Kit's Create
+ * action) — geo boxes, sticky notes, text, lines, and arrows that can BIND to
+ * shapes (fromId/toId) so connectors follow their targets. Before this the
+ * only way for the agent to draw a flowchart arrow or drop a section label was
+ * raw canvas_exec code — the highest-error-rate path (schema validation,
+ * binding anchor math). Ids are resolved by the caller; everything runs in one
+ * editor.run so undo is a single step.
+ */
+export function createSimpleShape(
+  editor: Editor,
+  params: CreateSimpleShapeParams,
+): { ok: true; shape: ShapeSummary } | { ok: false; error: string } {
+  const color = params.color ?? 'black'
+  if (!TLDRAW_COLORS.has(color)) {
+    return { ok: false, error: `Unknown color "${color}". Valid: ${Array.from(TLDRAW_COLORS).join(', ')}.` }
+  }
+  const fill = params.fill ?? 'none'
+  if (!TLDRAW_FILLS.has(fill)) {
+    return { ok: false, error: `Unknown fill "${fill}". Valid: ${Array.from(TLDRAW_FILLS).join(', ')}.` }
+  }
+  const shapeId = createShapeId(`agent_${crypto.randomUUID().slice(0, 8)}`)
+  const finish = (): { ok: true; shape: ShapeSummary } => {
+    zoomToFitShapes(editor, [String(shapeId)])
+    return { ok: true, shape: sanitizeSummaryForAgent(summarizeShape(editor, editor.getShape(shapeId as never))) }
+  }
+
+  switch (params.kind) {
+    case 'geo': {
+      const requested = params.geoType ?? 'rectangle'
+      const geo = GEO_ALIASES[requested] ?? requested
+      if (!GEO_TYPES.has(geo)) {
+        return { ok: false, error: `Unknown geoType "${requested}". Valid: ${Array.from(GEO_TYPES).join(', ')} (aliases: ${Object.keys(GEO_ALIASES).join(', ')}).` }
+      }
+      const props: Record<string, unknown> = {
+        geo,
+        w: Math.max(1, Number(params.w) || 160),
+        h: Math.max(1, Number(params.h) || 120),
+        color,
+        fill,
+      }
+      if (typeof params.text === 'string' && params.text) props.richText = toRichText(params.text)
+      editor.run(() => {
+        editor.createShape({ id: shapeId, type: 'geo', x: Number(params.x) || 0, y: Number(params.y) || 0, props } as never)
+      })
+      return finish()
+    }
+    case 'note': {
+      const props: Record<string, unknown> = { color }
+      if (typeof params.text === 'string' && params.text) props.richText = toRichText(params.text)
+      editor.run(() => {
+        editor.createShape({ id: shapeId, type: 'note', x: Number(params.x) || 0, y: Number(params.y) || 0, props } as never)
+      })
+      return finish()
+    }
+    case 'text': {
+      const text = typeof params.text === 'string' ? params.text.trim() : ''
+      if (!text) return { ok: false, error: "kind:'text' requires non-empty `text`." }
+      const props: Record<string, unknown> = { richText: toRichText(text), color }
+      if (Number.isFinite(params.maxWidth) && Number(params.maxWidth) > 0) {
+        props.w = Number(params.maxWidth)
+        props.autoSize = false
+      }
+      editor.run(() => {
+        editor.createShape({ id: shapeId, type: 'text', x: Number(params.x) || 0, y: Number(params.y) || 0, props } as never)
+      })
+      return finish()
+    }
+    case 'line': {
+      if (![params.x1, params.y1, params.x2, params.y2].every((n) => Number.isFinite(n))) {
+        return { ok: false, error: "kind:'line' requires numeric x1/y1/x2/y2." }
+      }
+      const x1 = Number(params.x1); const y1 = Number(params.y1)
+      const x2 = Number(params.x2); const y2 = Number(params.y2)
+      const x = Math.min(x1, x2)
+      const y = Math.min(y1, y2)
+      editor.run(() => {
+        editor.createShape({
+          id: shapeId,
+          type: 'line',
+          x,
+          y,
+          props: {
+            color,
+            points: {
+              a1: { id: 'a1', index: 'a1', x: x1 - x, y: y1 - y },
+              a2: { id: 'a2', index: 'a2', x: x2 - x, y: y2 - y },
+            },
+          },
+        } as never)
+      })
+      return finish()
+    }
+    case 'arrow': {
+      // Terminals: bound shapes win over explicit coords (their centers), so
+      // the model can just say "arrow from shape A to shape B".
+      const fromBounds = params.fromId ? editor.getShapePageBounds(params.fromId as never) : undefined
+      const toBounds = params.toId ? editor.getShapePageBounds(params.toId as never) : undefined
+      if (params.fromId && !fromBounds) return { ok: false, error: `fromId ${params.fromId} has no page bounds.` }
+      if (params.toId && !toBounds) return { ok: false, error: `toId ${params.toId} has no page bounds.` }
+      const start = fromBounds
+        ? { x: fromBounds.x + fromBounds.w / 2, y: fromBounds.y + fromBounds.h / 2 }
+        : Number.isFinite(params.x1) && Number.isFinite(params.y1)
+          ? { x: Number(params.x1), y: Number(params.y1) }
+          : undefined
+      const end = toBounds
+        ? { x: toBounds.x + toBounds.w / 2, y: toBounds.y + toBounds.h / 2 }
+        : Number.isFinite(params.x2) && Number.isFinite(params.y2)
+          ? { x: Number(params.x2), y: Number(params.y2) }
+          : undefined
+      if (!start || !end) {
+        return { ok: false, error: "kind:'arrow' needs each terminal as either a bound shape (fromId/toId) or explicit coords (x1/y1, x2/y2)." }
+      }
+      const x = Math.min(start.x, end.x)
+      const y = Math.min(start.y, end.y)
+      const props: Record<string, unknown> = {
+        color,
+        start: { x: start.x - x, y: start.y - y },
+        end: { x: end.x - x, y: end.y - y },
+        bend: Number.isFinite(params.bend) ? Number(params.bend) : 0,
+      }
+      // Arrow schema has richText, NOT text (see buildVersionArrowProps note).
+      if (typeof params.text === 'string' && params.text) props.richText = toRichText(params.text)
+      editor.run(() => {
+        editor.createShape({ id: shapeId, type: 'arrow', x, y, props } as never)
+        const bindings: unknown[] = []
+        if (params.fromId) {
+          bindings.push({
+            id: createBindingId(),
+            type: 'arrow',
+            fromId: shapeId,
+            toId: params.fromId,
+            props: { terminal: 'start', normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: false, isPrecise: false },
+          })
+        }
+        if (params.toId) {
+          bindings.push({
+            id: createBindingId(),
+            type: 'arrow',
+            fromId: shapeId,
+            toId: params.toId,
+            props: { terminal: 'end', normalizedAnchor: { x: 0.5, y: 0.5 }, isExact: false, isPrecise: false },
+          })
+        }
+        if (bindings.length > 0) editor.createBindings(bindings as never[])
+      })
+      return finish()
+    }
+    default: {
+      const exhausted: never = params.kind
+      return { ok: false, error: `Unknown kind "${String(exhausted)}". Valid: geo, note, text, line, arrow.` }
+    }
+  }
 }
 
 /**
