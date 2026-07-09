@@ -181,7 +181,20 @@ export class StorageBridge {
         if (!shouldKeepOriginalUrls && newItem.originalUrls) {
           delete newItem.originalUrls
         }
-        
+
+        // P0 闪退修复(2026-07-09): referenceImages 超过 1MB 的 data: 条目
+        // 在跨 IPC 前就地替换。新写入的 refs 已被 HistoryDataService 缩成
+        // 640px JPEG(几十 KB)不受影响; 这里兜的是旧版本落盘的原始大图 —
+        // 老记录每次全量保存都会原样跨 IPC(结构化克隆数百 MB)→ 主进程
+        // stringify OOM。替换后首次保存即完成一次性清洗。
+        if (Array.isArray(newItem.referenceImages) && newItem.referenceImages.length > 0) {
+          newItem.referenceImages = newItem.referenceImages.map((ref: string) =>
+            typeof ref === 'string' && ref.startsWith('data:') && ref.length > 1024 * 1024
+              ? '[base64-removed]'
+              : ref
+          )
+        }
+
         return newItem
       }))
       

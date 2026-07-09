@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { ResultUploadMeta } from '../../stores/useGenerateStore'
 import { useGenerateStore } from '../../stores/useGenerateStore'
 import { useDisplaySrc } from '../../hooks/useDisplaySrc'
+import { appendCosThumb } from '../../utils/cosThumb'
 import ImageEditToolbar from '../../components/shared/image-editors/ImageEditToolbar'
 import ImageEditorModal from '../../components/shared/image-editors/ImageEditorModal'
 import { addImageUrlToReferences } from '../../components/shared/image-editors/referenceTargets'
@@ -12,8 +13,11 @@ import { addImageUrlToReferences } from '../../components/shared/image-editors/r
  * 切换/卸载时自动 revoke,互不干扰。
  */
 function ResultCell({ url, alt }: { url: string; alt: string }) {
-  const imgSrc = useDisplaySrc(url)
-  return <img src={imgSrc} alt={alt} className="w-full object-contain" />
+  // 网格缩略图: COS 源经数据万象实时缩成 1024px WebP(2 列布局卡片较宽,
+  // 1024 保证 retina 清晰)。blob:/临时 http 原样透传。点击放大的 lightbox
+  // 由父组件用原始 resultUrls 打开, 永远是无损原图。
+  const imgSrc = useDisplaySrc(appendCosThumb(url, 1024))
+  return <img src={imgSrc} alt={alt} decoding="async" className="w-full object-contain" />
 }
 
 interface ResultGridProps {

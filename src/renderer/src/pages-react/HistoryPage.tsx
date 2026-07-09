@@ -91,7 +91,14 @@ export default function HistoryPage() {
    */
   const handleEdit = useCallback((item: DonorItemView) => {
     const isBatch = typeof item.type === 'string' && item.type.startsWith('batch')
-    const refsRaw = Array.isArray(item.referenceImages) ? item.referenceImages : undefined
+    // 老记录里的超大参考图在保存链上会被替换成 '[base64-removed]' 占位符,
+    // 回灌前过滤掉, 否则表单里出现一张永远加载不出来的"参考图"。
+    const refsFiltered = Array.isArray(item.referenceImages)
+      ? item.referenceImages.filter(
+          (r) => typeof r === 'string' && r.length > 0 && !r.startsWith('['),
+        )
+      : undefined
+    const refsRaw = refsFiltered && refsFiltered.length > 0 ? refsFiltered : undefined
 
     if (isBatch) {
       useBatchStore.getState().restoreForEdit({

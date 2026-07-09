@@ -2278,11 +2278,14 @@ export class ApiService {
       }
     }
 
+    // P0 闪退修复(2026-07-09): 成功分支不再回带 rawResponse。base64 直出模型
+    // (nano2 4K 等)的 data 里内嵌全部图片 base64(单张 10-40MB), 挂在结果对象
+    // 上会随调用方生命周期多活一整份, 是渲染进程瞬时峰值的放大器。全仓只有
+    // 错误路径(ErrorHandler 技术详情)消费 rawResponse, 成功路径无人读。
     return {
       success: true,
       images,
-      urls: images,  // 兼容旧 API 格式
-      rawResponse: data
+      urls: images  // 兼容旧 API 格式
     }
   }
 

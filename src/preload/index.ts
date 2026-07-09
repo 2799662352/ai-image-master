@@ -607,6 +607,17 @@ export interface ElectronAPI {
       | { success: true; url: string; key: string }
       | { success: false; error: string }
     >
+    /**
+     * 字节版 fire-and-forget 入队 (P0 闪退修复 2026-07-09)。
+     * 渲染端传 ArrayBuffer(结构化克隆原始字节), 避免 40MB 级 base64
+     * 字符串跨 IPC 在两侧 V8 堆各驻留一份。结果走 onUploadResult 事件。
+     */
+    enqueueUploadBytes: (
+      requestId: string,
+      bytes: ArrayBuffer,
+      mimeType?: string,
+      metadata?: Record<string, unknown>,
+    ) => Promise<{ queued: true } | { queued: false; error: string }>
   }
   // Seedance 视频生成（codex `generate_video` 工具）。Key 走主进程
   // safeStorage，渲染端只见 masked 状态；任务进度经 `seedance:task-update`
@@ -1336,11 +1347,28 @@ const electronAPI: ElectronAPI = {
         'cos:enqueue-upload-from-url',
         { requestId, sourceUrl, mimeType, metadata },
       ),
+    /**
+     * 字节版 fire-and-forget 入队 (P0 闪退修复 2026-07-09):
+     * ArrayBuffer 结构化克隆是原始字节拷贝, 比 base64 字符串小 25%,
+     * 且两侧都不进 V8 字符串堆。上传结果统一走 onUploadResult 事件。
+     */
+    enqueueUploadBytes: (
+      requestId: string,
+      bytes: ArrayBuffer,
+      mimeType?: string,
+      metadata?: Record<string, unknown>,
+    ) =>
+      safeInvoke<{ queued: true } | { queued: false; error: string }>(
+        'cos:enqueue-upload-bytes',
+        { requestId, bytes, mimeType, metadata },
+      ),
     onUploadResult: (
       cb: (
         result:
-          | { requestId: string; success: true; url: string; key: string }
-          | { requestId: string; success: false; error: string },
+          // localPath (2026-07-09): 主进程上传前先把字节落到
+          // userData/generated-images 的本地副本路径; 写盘失败时缺省。
+          | { requestId: string; success: true; url: string; key: string; localPath?: string }
+          | { requestId: string; success: false; error: string; localPath?: string },
       ) => void,
     ) => {
       const handler = (_evt: IpcRendererEvent, data: any): void => cb(data)

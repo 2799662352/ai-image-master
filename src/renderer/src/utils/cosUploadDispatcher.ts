@@ -14,15 +14,21 @@
  *   这种"我只是告诉你存一下, 别拖累我"的场景。
  */
 
-type CosResult =
-  | { requestId: string; success: true; url: string; key: string }
-  | { requestId: string; success: false; error: string }
+export type CosResult =
+  | { requestId: string; success: true; url: string; key: string; localPath?: string }
+  | { requestId: string; success: false; error: string; localPath?: string }
 
 interface ElectronAPILike {
   cos?: {
     enqueueUploadFromUrl?: (
       requestId: string,
       sourceUrl: string,
+      mimeType?: string,
+      metadata?: Record<string, unknown>,
+    ) => Promise<{ queued: true } | { queued: false; error: string }>
+    enqueueUploadBytes?: (
+      requestId: string,
+      bytes: ArrayBuffer,
       mimeType?: string,
       metadata?: Record<string, unknown>,
     ) => Promise<{ queued: true } | { queued: false; error: string }>
@@ -103,4 +109,44 @@ export function enqueueCosUpload(
   // 故意 void: IPC promise resolve 只表示"入队成功", 不代表上传完成。
   // 调用方不关心入队结果, 上传结果走 onUploadResult 事件。
   void bridge.enqueueUploadFromUrl(requestId, sourceUrl, undefined, metadata)
+}
+
+/**
+ * 字节版入队 (P0 闪退修复, 2026-07-09): 直接传 Blob 的二进制, 不再让
+ * 40MB 级 base64 字符串跨 IPC。ArrayBuffer 走结构化克隆是原始字节拷贝,
+ * 体积比 base64 小 25%, 且两侧都不占 V8 字符串堆。
+ *
+ * 与 enqueueCosUpload 一样是 fire-and-forget: 内部的 blob.arrayBuffer()
+ * 是异步的, 但调用方无需等待 —— 上传结果统一走 onUploadResult 事件。
+ * 旧 preload(无 enqueueUploadBytes)时回退 base64 通道, 保证版本错配可用。
+ */
+export function enqueueCosUploadBlob(
+  itemId: string,
+  blob: Blob,
+  metadata?: Record<string, unknown>,
+): void {
+  const bridge = getBridge()
+  if (!bridge) return
+  const source = typeof metadata?.source === 'string' ? metadata.source : 'unknown'
+  const requestId = `${source}:${itemId}`
+  const mimeType = blob.type || undefined
+
+  if (bridge.enqueueUploadBytes) {
+    const send = bridge.enqueueUploadBytes
+    void blob
+      .arrayBuffer()
+      .then((bytes) => send(requestId, bytes, mimeType, metadata))
+      .catch((err) => console.warn('[cosUploadDispatcher] blob→bytes 入队失败:', err))
+    return
+  }
+
+  if (bridge.enqueueUploadFromUrl) {
+    // 降级通道: 老 preload 只认 sourceUrl 字符串, 只能转回 dataURL。
+    const send = bridge.enqueueUploadFromUrl
+    const fr = new FileReader()
+    fr.onload = () => {
+      void send(requestId, fr.result as string, mimeType, metadata)
+    }
+    fr.readAsDataURL(blob)
+  }
 }

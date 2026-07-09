@@ -55,7 +55,8 @@ describe('ApiService.gpt-image-2 三参数 config', () => {
     const cfg = service.getModelConfig('gpt-image-2')!
     // resolution 轴 = 1K/2K/4K（与 vip 一致），不再是 low/medium/high
     expect(cfg.resolutions?.map((r) => r.key)).toEqual(['1K', '2K', '4K'])
-    expect(cfg.defaultResolution).toBe('1K')
+    // 默认档后来上调到 2K(与腾讯 image2 同规格), 不再是最低档 1K
+    expect(cfg.defaultResolution).toBe('2K')
   })
 
   it('exposes an independent quality axis (auto/low/medium/high) default auto', async () => {

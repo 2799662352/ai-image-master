@@ -2,7 +2,18 @@ import { create } from 'zustand'
 import type { ApiActions } from '../hooks/useService'
 import { useTemplateStore } from '../react-app/stores/useTemplateStore'
 import { composePromptWithTemplate } from '../react-app/constants/templates'
-import { enqueueCosUpload, registerCosUploadHandler } from '../utils/cosUploadDispatcher'
+import {
+  enqueueCosUpload,
+  enqueueCosUploadBlob,
+  registerCosUploadHandler,
+} from '../utils/cosUploadDispatcher'
+import {
+  materializeImageUrls,
+  revokeLater,
+  isPersistableUrl,
+  type MaterializedImage,
+} from '../utils/imageResources'
+import { toRenderableUri } from '../features/file-explorer/uri'
 
 export type BatchMode = 'card' | 'multi'
 
@@ -35,12 +46,21 @@ export interface BatchItem {
   prompt: string
   status: 'pending' | 'generating' | 'done' | 'error'
   /**
-   * 模型直出 URL(通常是 base64 dataURL)— 上传未完成 / 失败时作为 fallback 显示。
-   * P0 OOM 修复: COS 上传**成功后会被置空**, 释放 4K ~10MB 的 base64, 改由 cosUrl 显示。
+   * 展示用轻量 URL — 上传未完成 / 失败时作为 fallback 显示。
+   * P0 闪退修复(2026-07-09): 模型直出的 base64 在进 store 前已被物化成
+   * blob: URL(底层 Blob 在堆外), V8 堆里不再驻留 40MB 级字符串;
+   * COS 上传**成功后仍会被置空**(并 revoke blob), 改由 cosUrl 显示。
    */
   resultUrl?: string
   /** COS 持久化 URL — 一旦有值就优先显示 */
   cosUrl?: string
+  /**
+   * 本地磁盘副本的绝对路径 (2026-07-09, 参照 codex 页 MCP 出图):
+   * 主进程上传前先把字节落到 userData/generated-images。COS 失败时
+   * history 写 local-file:// 形式的这份副本 —— 跨重启仍可显示,
+   * 不再依赖几小时就过期的模型直出签名 URL。
+   */
+  localPath?: string
   uploadStatus?: BatchUploadStatus
   uploadError?: string
   error?: string
@@ -213,6 +233,7 @@ const MAX_ITEMS = 200
 /**
  * 把 items 数组裁到不超过 MAX_ITEMS 条: 从前往后扫, 只丢已结束(done/error)
  * 的, 直到满足上限或者无可丢为止。pending / generating 任意位置都跳过。
+ * 被丢弃项若还持有 blob: resultUrl, 延迟 revoke 释放底层 Blob。
  */
 function trimItems(items: BatchItem[]): BatchItem[] {
   if (items.length <= MAX_ITEMS) return items
@@ -222,6 +243,7 @@ function trimItems(items: BatchItem[]): BatchItem[] {
   for (const item of items) {
     if (dropped < toDrop && (item.status === 'done' || item.status === 'error')) {
       dropped++
+      revokeLater(item.resultUrl)
       continue
     }
     kept.push(item)
@@ -270,6 +292,8 @@ export const useBatchStore = create<BatchState>((set, get) => ({
   },
 
   removeItem: (id) => {
+    // 被删项若持有 blob: resultUrl, 延迟释放底层 Blob。
+    revokeLater(get().items.find((i) => i.id === id)?.resultUrl)
     set((s) => ({
       items: s.items.filter((i) => i.id !== id),
     }))
@@ -290,6 +314,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
 
   clearAll: () => {
     pendingBatchHistoryContext.clear()
+    for (const i of get().items) revokeLater(i.resultUrl)
     set({ items: [] })
   },
 
@@ -452,9 +477,8 @@ export const useBatchStore = create<BatchState>((set, get) => ({
 
             // 组图: 一次请求可能返回多张(wan2.7 系列)。第 0 张回填原 item,
             // 其余作为"兄弟卡"紧跟其后插入, 各自独立走 COS 上传 + history。
-            const urls = result.urls ?? result.images ?? []
-            const url = urls[0]
-            if (!url) {
+            const rawUrls = result.urls ?? result.images ?? []
+            if (!rawUrls[0]) {
               set((state) => ({
                 items: state.items.map((i) =>
                   i.id === item.id
@@ -465,12 +489,23 @@ export const useBatchStore = create<BatchState>((set, get) => ({
               continue
             }
 
+            // P0 闪退修复(2026-07-09): 模型直出的 data: base64(nano2 4K 一张
+            // ≈ 10-40MB 字符串)在进 store 前就地物化成 blob: URL —— 底层字节
+            // 进堆外 Blob 存储, store/React/IPC 全链路只见几十字节的 URL。
+            // http(s) URL 原样透传, 零开销。
+            const materialized = await materializeImageUrls(rawUrls)
+            if (ac.signal.aborted) {
+              for (const m of materialized) if (m.blob) revokeLater(m.displayUrl)
+              break
+            }
+            const url = materialized[0].displayUrl
+
             // 为多出来的系列图(urls[1..])建兄弟卡, 复用原 item 的 prompt/ratio/refs/snapshot。
-            const siblings: BatchItem[] = urls.slice(1).map((u) => ({
+            const siblings: BatchItem[] = materialized.slice(1).map((m) => ({
               ...item,
               id: crypto.randomUUID(),
               status: 'done' as const,
-              resultUrl: u,
+              resultUrl: m.displayUrl,
               uploadStatus: 'uploading' as const,
             }))
 
@@ -497,22 +532,28 @@ export const useBatchStore = create<BatchState>((set, get) => ({
             // 关键: 在 enqueue 前把写 history 所需的上下文 stash 到
             // pendingBatchHistoryContext, 让 event handler 能拿到
             // prompt/ratio/refRaw/modelUrl 等(refRaw 共享浅引用即可)。
-            const enqueueOne = (id: string, modelUrl: string) => {
+            //
+            // 物化出 Blob 的(base64 模型)走字节版 IPC —— ArrayBuffer 结构化
+            // 克隆, 不再让 base64 字符串跨进程; http URL 仍走 from-url 通道
+            // 让主进程自己 fetch。
+            const enqueueOne = (id: string, image: MaterializedImage) => {
               pendingBatchHistoryContext.set(id, {
-                modelUrl,
+                modelUrl: image.displayUrl,
                 prompt: item.prompt,
                 ratio: item.ratio ?? ratio,
                 modelKey: itemModel,
                 refRaw: item.referenceImages ?? refRaw,
               })
-              enqueueCosUpload(id, modelUrl, {
+              const uploadMeta = {
                 source: 'batch',
                 prompt: item.prompt,
                 model: itemModel,
-              })
+              }
+              if (image.blob) enqueueCosUploadBlob(id, image.blob, uploadMeta)
+              else enqueueCosUpload(id, image.displayUrl, uploadMeta)
             }
-            enqueueOne(item.id, url)
-            for (const sib of siblings) enqueueOne(sib.id, sib.resultUrl!)
+            enqueueOne(item.id, materialized[0])
+            siblings.forEach((sib, i) => enqueueOne(sib.id, materialized[i + 1]))
           } catch (err) {
             if (ac.signal.aborted) break
             set((state) => ({
@@ -704,17 +745,23 @@ interface HistoryServiceBridge {
 registerCosUploadHandler('batch:', (result) => {
   const itemId = result.requestId.slice('batch:'.length)
 
+  // 上传成功即将热切到 cosUrl —— 旧的 blob: resultUrl 延迟 revoke,
+  // 释放堆外 Blob(http URL 输入时 no-op)。
+  if (result.success) {
+    revokeLater(useBatchStore.getState().items.find((i) => i.id === itemId)?.resultUrl)
+  }
+
   useBatchStore.setState((state) => ({
     items: state.items.map((i) =>
       i.id === itemId
         ? result.success
-          // P0 OOM 修复(2026-06-23): 上传成功后清空 resultUrl(模型直出 base64,
-          // 4K ≈ 10MB/张), 改用持久 cosUrl 显示。否则 base64 + useDisplaySrc
-          // 产出的 blob + 解码位图会一整次会话常驻(上限 200 条)→ 渲染进程
-          // 内存耗尽卡死黑屏。grid 的 displayUrl 已改为 cosUrl 优先。
-          ? { ...i, cosUrl: result.url, uploadStatus: 'uploaded' as const, uploadError: undefined, resultUrl: undefined }
+          // P0 OOM 修复(2026-06-23): 上传成功后清空 resultUrl(模型直出临时源),
+          // 改用持久 cosUrl 显示。2026-07-09 起 resultUrl 已是 blob:(堆外),
+          // 此处置空 + 上面的 revokeLater 一起把底层 Blob 也归还。
+          // localPath = 主进程落的本地磁盘副本(参照 codex 页), 一并记录。
+          ? { ...i, cosUrl: result.url, localPath: result.localPath, uploadStatus: 'uploaded' as const, uploadError: undefined, resultUrl: undefined }
           // 失败: 保留 resultUrl 兜底, cosUrl 没回来时它是唯一可显示的源。
-          : { ...i, uploadStatus: 'failed' as const, uploadError: result.error }
+          : { ...i, localPath: result.localPath, uploadStatus: 'failed' as const, uploadError: result.error }
         : i,
     ),
   }))
@@ -730,7 +777,20 @@ registerCosUploadHandler('batch:', (result) => {
   }).historyDataServiceTS
   if (!historyService?.addToHistory) return
 
-  const persistUrl = result.success ? result.url : ctx.modelUrl
+  // P0 闪退修复(2026-07-09): 上传失败时按持久性排序兜底 ——
+  //   ① 本地磁盘副本(local-file:// 形式, 主进程上传前已落盘, 永不过期)
+  //   ② http 模型直出 URL(临时签名, 几小时过期, 聊胜于无)
+  // blob:/data: 跨重启即失效, 绝不写入 history(避免 40MB 级 base64
+  // 灌进全量保存链 IPC + stringify + 落盘 → 主进程 OOM)。
+  const localUri = result.localPath ? toRenderableUri(result.localPath) : null
+  const persistUrl = result.success
+    ? result.url
+    : localUri ??
+      (isPersistableUrl(ctx.modelUrl) ? ctx.modelUrl : null)
+  if (!persistUrl) {
+    console.warn('[Batch] COS 上传失败且无本地副本/可持久化直出源, 跳过 history 写入:', itemId)
+    return
+  }
   const hasRefs = ctx.refRaw.length > 0
   void historyService
     .addToHistory(

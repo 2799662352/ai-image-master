@@ -1655,24 +1655,36 @@ function rejectOversizedBase64(s: unknown): string | null {
 const inflightUploads = new Set<Promise<void>>()
 const MAX_CONCURRENT_UPLOADS_MAIN = 4
 
-async function enqueueUpload(
-  opts: Parameters<typeof uploadBufferToBucket>[0],
-): Promise<string> {
+/**
+ * 占一个上传并发槽位, 返回释放函数。
+ *
+ * 单独抽出来(而不只在 enqueueUpload 里内联)是为了让 fire-and-forget
+ * 通道能把 **fetch/base64 解码也圈进闸门**: 修复前 N 个入队请求会先各自
+ * 分配 Buffer 再排队等槽位, N 份 30MB+ buffer 同时驻留主进程 → OOM 闪退。
+ */
+async function acquireUploadSlot(): Promise<() => void> {
   while (inflightUploads.size >= MAX_CONCURRENT_UPLOADS_MAIN) {
     await Promise.race(inflightUploads)
   }
-
   let resolveSlot!: () => void
   const slot = new Promise<void>((r) => {
     resolveSlot = r
   })
   inflightUploads.add(slot)
+  return () => {
+    inflightUploads.delete(slot)
+    resolveSlot()
+  }
+}
 
+async function enqueueUpload(
+  opts: Parameters<typeof uploadBufferToBucket>[0],
+): Promise<string> {
+  const release = await acquireUploadSlot()
   try {
     return await uploadBufferToBucket(opts)
   } finally {
-    inflightUploads.delete(slot)
-    resolveSlot()
+    release()
   }
 }
 
@@ -1745,13 +1757,38 @@ ipcMain.handle(
 //     event back-patches cosUrl into the item by id afterwards.
 function broadcastUploadResult(
   result:
-    | { requestId: string; success: true; url: string; key: string }
-    | { requestId: string; success: false; error: string },
+    | { requestId: string; success: true; url: string; key: string; localPath?: string }
+    | { requestId: string; success: false; error: string; localPath?: string },
 ): void {
   for (const w of BrowserWindow.getAllWindows()) {
     if (!w.isDestroyed()) {
       w.webContents.send('cos:upload-result', result)
     }
+  }
+}
+
+/**
+ * 生成图先落本地盘 (2026-07-09, 参照 codex 页 MCP 出图的 saveToFilePanel):
+ * 上传通道拿到字节后, 先写一份到 userData/generated-images, 再推 COS。
+ * 本地文件是"永不丢图"的兜底 —— COS 失败/断网时渲染端可切
+ * local-file:// 显示并把本地路径写进 history(跨重启仍可用);
+ * 模型直出的临时签名 URL 几小时就 404, 之前失败即等于丢图。
+ * 写盘失败(磁盘满等)不阻塞上传, 返回 null 即可。
+ */
+async function saveGeneratedImageLocally(
+  requestId: string,
+  body: Buffer,
+  mimeType: string,
+): Promise<string | undefined> {
+  try {
+    const safeId = requestId.replace(/[^a-zA-Z0-9_-]+/g, '-').slice(0, 64)
+    const filename = `${Date.now()}-${safeId}-${randomBytes(4).toString('hex')}.${mimeTypeToExtension(mimeType)}`
+    const filePath = path.join(imagesDir, filename)
+    await fs.promises.writeFile(filePath, body)
+    return filePath
+  } catch (err: any) {
+    console.warn('[cos-upload] 本地落盘失败(不影响上传):', err?.message ?? err)
+    return undefined
   }
 }
 
@@ -1777,8 +1814,18 @@ ipcMain.handle(
       return { queued: false, error: 'sourceUrl must be http(s):// or data:' }
     }
 
+    // 大 base64 在 IPC 入口直接拒绝 (P0 加固): 修复后正常路径走
+    // cos:enqueue-upload-bytes, 还在传超大 data: 字符串的一定是异常调用方。
+    if (sourceUrl.startsWith('data:')) {
+      const oversized = rejectOversizedBase64(sourceUrl)
+      if (oversized) return { queued: false, error: oversized }
+    }
+
     // Don't await — kick off background work and return synchronously.
     void (async () => {
+      // P0 闪退修复: 先占并发槽位再 fetch/解码。修复前 N 个入队各自先
+      // 分配 30MB+ Buffer 再排队, N 份同时驻留主进程堆 → OOM。
+      const release = await acquireUploadSlot()
       try {
         let body: Buffer
         let mimeType: string
@@ -1815,17 +1862,30 @@ ipcMain.handle(
           mimeType = mimeFromUrl(sourceUrl)
         }
 
-        const key = generateImageHistoryKey(mimeType)
-        const url = await enqueueUpload({
-          bucket: IMAGE_HISTORY_BUCKET,
-          region: IMAGE_HISTORY_REGION,
-          key,
-          body,
-          contentType: mimeType,
-        })
+        // 先落本地盘再推 COS —— 临时签名的模型直出 URL 几小时就过期,
+        // 这份本地副本保证"生成过的图永远找得回来"。
+        const localPath = await saveGeneratedImageLocally(requestId, body, mimeType)
 
-        void metadata
-        broadcastUploadResult({ requestId, success: true, url, key })
+        try {
+          const key = generateImageHistoryKey(mimeType)
+          const url = await uploadBufferToBucket({
+            bucket: IMAGE_HISTORY_BUCKET,
+            region: IMAGE_HISTORY_REGION,
+            key,
+            body,
+            contentType: mimeType,
+          })
+          void metadata
+          broadcastUploadResult({ requestId, success: true, url, key, localPath })
+        } catch (uploadErr: any) {
+          console.error('[cos:enqueue-upload-from-url] upload failed:', uploadErr?.message ?? uploadErr)
+          broadcastUploadResult({
+            requestId,
+            success: false,
+            error: uploadErr?.message ?? String(uploadErr) ?? 'upload failed',
+            localPath,
+          })
+        }
       } catch (err: any) {
         console.error('[cos:enqueue-upload-from-url] background failed:', err?.message ?? err)
         broadcastUploadResult({
@@ -1833,6 +1893,89 @@ ipcMain.handle(
           success: false,
           error: err?.message ?? String(err) ?? 'upload failed',
         })
+      } finally {
+        release()
+      }
+    })()
+
+    return { queued: true }
+  },
+)
+
+/**
+ * 字节版 fire-and-forget 入队 (P0 闪退修复, 2026-07-09)。
+ *
+ * 渲染端把模型直出 base64 就地转成 Blob 后, 经此通道传 ArrayBuffer:
+ *   - 结构化克隆按原始字节拷贝, 比 base64 字符串体积小 25%;
+ *   - 到达后 Buffer.from(ArrayBuffer) 是零拷贝视图, 不进 V8 字符串堆;
+ *   - 主进程从头到尾不再持有任何 40MB 级字符串。
+ * 结果同样通过 'cos:upload-result' 广播回渲染端。
+ */
+const MAX_IPC_UPLOAD_BYTES = 64 * 1024 * 1024 // 64MB binary, 4K PNG 极限 ~30MB 留足余量
+
+ipcMain.handle(
+  'cos:enqueue-upload-bytes',
+  async (
+    _event,
+    payload: {
+      requestId: string
+      bytes: ArrayBuffer | Uint8Array
+      mimeType?: string
+      metadata?: Record<string, unknown>
+    },
+  ): Promise<{ queued: true } | { queued: false; error: string }> => {
+    const { requestId, bytes, mimeType: hintMime, metadata } = payload || ({} as any)
+    if (typeof requestId !== 'string' || !requestId) {
+      return { queued: false, error: 'invalid requestId' }
+    }
+    // SCA 会把 ArrayBuffer 原样送达; Buffer/TypedArray 到达为 Uint8Array。两者都接。
+    let body: Buffer
+    if (bytes instanceof ArrayBuffer) {
+      body = Buffer.from(bytes)
+    } else if (ArrayBuffer.isView(bytes)) {
+      body = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+    } else {
+      return { queued: false, error: 'invalid bytes payload' }
+    }
+    if (body.byteLength === 0) {
+      return { queued: false, error: 'empty bytes payload' }
+    }
+    if (body.byteLength > MAX_IPC_UPLOAD_BYTES) {
+      const mb = (body.byteLength / 1024 / 1024).toFixed(1)
+      return {
+        queued: false,
+        error: `bytes payload too large: ${mb}MB (limit ${MAX_IPC_UPLOAD_BYTES / 1024 / 1024}MB)`,
+      }
+    }
+    const mimeType =
+      typeof hintMime === 'string' && hintMime.startsWith('image/') ? hintMime : 'image/png'
+
+    void (async () => {
+      const release = await acquireUploadSlot()
+      // 先落本地盘 (参照 codex 页): 本地副本永不过期, 是 COS 失败时的
+      // 持久兜底, 也让用户能在 userData/generated-images 里直接找到原图。
+      const localPath = await saveGeneratedImageLocally(requestId, body, mimeType)
+      try {
+        const key = generateImageHistoryKey(mimeType)
+        const url = await uploadBufferToBucket({
+          bucket: IMAGE_HISTORY_BUCKET,
+          region: IMAGE_HISTORY_REGION,
+          key,
+          body,
+          contentType: mimeType,
+        })
+        void metadata
+        broadcastUploadResult({ requestId, success: true, url, key, localPath })
+      } catch (err: any) {
+        console.error('[cos:enqueue-upload-bytes] background failed:', err?.message ?? err)
+        broadcastUploadResult({
+          requestId,
+          success: false,
+          error: err?.message ?? String(err) ?? 'upload failed',
+          localPath,
+        })
+      } finally {
+        release()
       }
     })()
 
@@ -2016,10 +2159,63 @@ ipcMain.handle('delete-image', async (_event, filename: string) => {
   }
 })
 
-// 历史记录
-ipcMain.handle('save-history', async (_event, history: any[]) => {
+// ==================== 历史记录 (P0 丢失修复, 2026-07-09) ====================
+//
+// 修复前的三个丢失/闪退根因:
+//   ① 非原子写: writeFile 途中崩溃(常因同时刻的 base64 OOM) → history.json
+//      截断 → 下次启动 JSON.parse 抛错 → 返回 [] → 记录"全丢"。
+//   ② 并发写: 多张图同时完成会并发触发全量保存, 两个 writeFile 交错写同一
+//      文件 → 内容交叉损坏。
+//   ③ 巨型 payload: 上传失败兜底/参考图把 40MB 级 base64 写进 item,
+//      JSON.stringify(整个数组) 直接把主进程堆打爆。
+// 对策: 写盘串行化 + tmp→rename 原子替换 + 上一份好文件滚动为 .bak +
+// 落盘前剥离一切超大 data: 字符串(防御性, 渲染层同样已修)。
+
+/** 单个字符串字段落盘上限。缩图后的参考图 ~100KB, 1MB 已留足余量。 */
+const MAX_HISTORY_STRING_CHARS = 1 * 1024 * 1024
+
+function sanitizeHistoryValue(value: unknown): unknown {
+  if (typeof value === 'string') {
+    return value.length > MAX_HISTORY_STRING_CHARS && value.startsWith('data:')
+      ? '[base64-removed]'
+      : value
+  }
+  if (Array.isArray(value)) return value.map(sanitizeHistoryValue)
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = sanitizeHistoryValue(v)
+    }
+    return out
+  }
+  return value
+}
+
+let historyWriteChain: Promise<void> = Promise.resolve()
+
+async function writeHistoryAtomic(history: unknown[]): Promise<void> {
+  const sanitized = sanitizeHistoryValue(history)
+  // 紧凑序列化: pretty-print 会让文件体积翻倍, 对 MB 级数组纯浪费。
+  const json = JSON.stringify(sanitized)
+  const tmpFile = `${historyFile}.tmp`
+  const bakFile = `${historyFile}.bak`
+  await fs.promises.writeFile(tmpFile, json, 'utf-8')
+  // 旧的好文件先滚动成 .bak(rename 原子), 再把 tmp 转正。任一步之间崩溃,
+  // load-history 都能从 file 或 .bak 恢复出一份完整 JSON。
   try {
-    await fs.promises.writeFile(historyFile, JSON.stringify(history, null, 2), 'utf-8')
+    await fs.promises.rename(historyFile, bakFile)
+  } catch (err: any) {
+    if (err?.code !== 'ENOENT') throw err
+  }
+  await fs.promises.rename(tmpFile, historyFile)
+}
+
+ipcMain.handle('save-history', async (_event, history: any[]) => {
+  // 串行化: 并发 save 依次排队, 后写覆盖先写(全量快照语义), 永不交错。
+  const run = historyWriteChain.then(() => writeHistoryAtomic(history))
+  historyWriteChain = run.catch(() => {})
+  try {
+    await run
     return { success: true }
   } catch (error: any) {
     console.error('保存历史记录失败:', error)
@@ -2028,15 +2224,25 @@ ipcMain.handle('save-history', async (_event, history: any[]) => {
 })
 
 ipcMain.handle('load-history', async () => {
-  try {
-    const data = await fs.promises.readFile(historyFile, 'utf-8')
-    return JSON.parse(data)
-  } catch (error: any) {
-    if (error.code !== 'ENOENT') {
-      console.error('读取历史记录失败:', error)
+  // 主文件损坏(上个会话崩在写盘途中)时回退 .bak, 最多丢一次保存的增量,
+  // 而不是像修复前那样整库清零。
+  for (const file of [historyFile, `${historyFile}.bak`]) {
+    try {
+      const data = await fs.promises.readFile(file, 'utf-8')
+      const parsed = JSON.parse(data)
+      if (Array.isArray(parsed)) {
+        if (file !== historyFile) {
+          console.warn('[load-history] history.json 损坏, 已从 .bak 恢复')
+        }
+        return parsed
+      }
+    } catch (error: any) {
+      if (error.code !== 'ENOENT') {
+        console.error(`读取历史记录失败 (${path.basename(file)}):`, error.message)
+      }
     }
-    return []
   }
+  return []
 })
 
 // 存储信息

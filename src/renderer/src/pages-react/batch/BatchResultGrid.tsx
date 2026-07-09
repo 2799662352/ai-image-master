@@ -2,6 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { Grid, type CellComponentProps } from 'react-window'
 import type { BatchItem } from '../../stores/useBatchStore'
 import { useDisplaySrc } from '../../hooks/useDisplaySrc'
+import { appendCosThumb } from '../../utils/cosThumb'
 
 /**
  * (v) 虚拟化布局常量
@@ -170,10 +171,11 @@ const ResultCard = memo(function ResultCard({
   const isFail = item.status === 'error'
   const isRun = item.status === 'generating'
   const displayUrl = pickDisplayUrl(item)
-  // imgSrc 是 displayUrl 在 dataURL 时换出来的 blob: URL, 用于 <img src>。
-  // displayUrl 自己保持不变 —— onPreview / download 这些消费方仍要拿
-  // 原始 dataURL/http 去走 API + IPC, blob: URL 在主进程不可读。
-  const imgSrc = useDisplaySrc(displayUrl)
+  // 卡片缩略图: COS 源经数据万象 imageMogr2 实时缩成 512px WebP(几十 KB),
+  // 渲染进程不再拉取/解码 4K 原图(一张 4000×3000 PNG 解码 ≈ 48MB RGBA)。
+  // 非 COS 源(blob:/临时签名 http)原样透传。onPreview / download 仍用
+  // displayUrl 原图 —— lightbox 与保存永远是无损原件。
+  const imgSrc = useDisplaySrc(appendCosThumb(displayUrl))
   const isDone = item.status === 'done' && !!displayUrl
   // 同步切到 COS 之后, UI 用一个小角标提示当前展示的是哪种 URL。
   const upload = item.uploadStatus

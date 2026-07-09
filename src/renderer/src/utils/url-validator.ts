@@ -18,11 +18,14 @@ export function isValidImageUrl(url: string | null | undefined): boolean {
   if (url.startsWith('[')) return false  // [base64-removed], [local-removed] 等
   
   // 允许的 URL 类型
+  // local-file: 是应用注册的自定义协议(2026-07-09): COS 上传失败时
+  // history 存的是主进程落盘副本的 local-file:// URI, <img> 可直接渲染。
   return (
     url.startsWith('http://') ||
     url.startsWith('https://') ||
     url.startsWith('data:image/') ||
-    url.startsWith('blob:')
+    url.startsWith('blob:') ||
+    url.startsWith('local-file:')
   )
 }
 

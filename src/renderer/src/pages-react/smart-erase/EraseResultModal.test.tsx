@@ -56,6 +56,8 @@ describe('EraseResultModal', () => {
 
   it('displays filename in modal header', () => {
     render(<EraseResultModal />)
-    expect(screen.getByText(/test\.mp4/)).toBeTruthy()
+    // The filename appears in the header and again in the metadata row —
+    // getAllByText tolerates both without pinning the exact count.
+    expect(screen.getAllByText(/test\.mp4/).length).toBeGreaterThan(0)
   })
 })

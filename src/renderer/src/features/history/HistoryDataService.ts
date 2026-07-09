@@ -9,6 +9,7 @@
 import { HistoryManager, HistoryItem, HistoryManagerConfig, getHistoryManager } from './HistoryManager'
 import { getStorageBridge, StorageBridge } from '../../services/storage'
 import { getR2StorageService, R2StorageService } from '../../services/r2-storage'
+import { thumbnailRefsForHistory } from '../../utils/imageResources'
 
 export interface StorageStats {
   historySize: string
@@ -120,6 +121,15 @@ export class HistoryDataService {
       return url
     })
 
+    // P0 闪退修复(2026-07-09): 参考图不再逐字复制原始 base64 进 history。
+    // 一批 16 张参考图 × 数 MB × 每张结果各复制一份, 是 history 数组膨胀
+    // → 全量保存链 (IPC 结构化克隆 + JSON.stringify + 落盘) OOM 的主要来源。
+    // 压成 640px JPEG dataURL(重编辑回灌当参考图足够), http URL 原样保留;
+    // 同一批共享的 refs 数组按引用缓存, 整批只压一次。
+    const rawRefs = extras?.referenceImages
+    const referenceImages =
+      rawRefs && rawRefs.length > 0 ? await thumbnailRefsForHistory(rawRefs) : undefined
+
     const historyItem: Partial<HistoryItem> = {
       id: Date.now(),
       type,
@@ -128,13 +138,10 @@ export class HistoryDataService {
       originalUrls: hasBase64 ? urls : undefined,
       ratio,
       model,
-      // 参考图作为 dataURL/http URL 数组直接持久化进 history item。
-      // 重新编辑按钮会从这里把它们回灌到 useGenerateStore.referenceImages。
+      // 参考图(已缩图化)持久化进 history item。重新编辑按钮会从这里把
+      // 它们回灌到 useGenerateStore.referenceImages。
       // 空数组 / undefined 都不写, 节省存储 + 让 UI 判 "有没有 refs" 简单。
-      referenceImages:
-        extras?.referenceImages && extras.referenceImages.length > 0
-          ? [...extras.referenceImages]
-          : undefined,
+      referenceImages,
       timestamp: new Date().toISOString(),
       uploading: hasBase64,
       r2Storage: false

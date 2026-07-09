@@ -2,7 +2,13 @@ import { create } from 'zustand'
 import type { ApiActions } from '../hooks/useService'
 import { useTemplateStore } from '../react-app/stores/useTemplateStore'
 import { composePromptWithTemplate } from '../react-app/constants/templates'
-import { enqueueCosUpload, registerCosUploadHandler } from '../utils/cosUploadDispatcher'
+import {
+  enqueueCosUpload,
+  enqueueCosUploadBlob,
+  registerCosUploadHandler,
+} from '../utils/cosUploadDispatcher'
+import { materializeImageUrls, revokeLater, isPersistableUrl } from '../utils/imageResources'
+import { toRenderableUri } from '../features/file-explorer/uri'
 
 /**
  * 单张生成结果的异步存储状态。
@@ -36,6 +42,12 @@ export interface ResultUploadMeta {
   id: string
   modelUrl: string
   cosUrl?: string
+  /**
+   * 本地磁盘副本绝对路径 (2026-07-09, 参照 codex 页 MCP 出图):
+   * 主进程上传前先落 userData/generated-images。COS 失败时 history
+   * 写 local-file:// 形式的这份副本, 跨重启仍可显示。
+   */
+  localPath?: string
   uploadStatus: ResultUploadStatus
   uploadError?: string
   snapshot?: GenerateSnapshot
@@ -161,7 +173,11 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
     if (removed > 0) set({ referenceImages: kept })
     return removed
   },
-  clearResults: () => set({ resultUrls: [], resultMeta: [], error: null }),
+  clearResults: () => {
+    // blob: 结果延迟 revoke 释放堆外 Blob(http/cos URL no-op)。
+    for (const u of get().resultUrls) revokeLater(u)
+    set({ resultUrls: [], resultMeta: [], error: null })
+  },
 
   restoreForEdit: (snapshot) => {
     // Partial: 缺哪个字段就不动哪个, 保留当前 store 现状。
@@ -211,7 +227,13 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
         model: modelKey,
         referenceImages: refsSnapshot,
       })
-      const urls = result.urls ?? result.images ?? []
+      const rawUrls = result.urls ?? result.images ?? []
+
+      // P0 闪退修复(2026-07-09): 模型直出的 data: base64(nano2 4K 一张
+      // ≈ 10-40MB 字符串)在进 store 前就地物化成 blob: URL, 底层字节进
+      // 堆外 Blob 存储。http(s) URL 原样透传, 零开销。
+      const materialized = await materializeImageUrls(rawUrls)
+      const urls = materialized.map((m) => m.displayUrl)
 
       // 为每张图分配 id + meta, 同步推入 resultUrls / resultMeta 两个数组。
       // snapshot 同一批 N 张图共享 — 浅引用即可, restoreForEdit 在写入时
@@ -231,6 +253,8 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
         const combinedUrls = [...s.resultUrls, ...urls]
         const combinedMeta = [...s.resultMeta, ...newMetas]
         const overflow = Math.max(0, combinedUrls.length - MAX_RESULT_HISTORY)
+        // FIFO 丢弃的旧结果若还持有 blob: URL, 延迟 revoke 释放底层 Blob。
+        for (let i = 0; i < overflow; i++) revokeLater(combinedUrls[i])
         return {
           resultUrls: overflow > 0 ? combinedUrls.slice(overflow) : combinedUrls,
           resultMeta: overflow > 0 ? combinedMeta.slice(overflow) : combinedMeta,
@@ -248,7 +272,7 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
       // pendingHistoryContext 保存写 history 所需的上下文(prompt/ratio/refs
       // 这些每次 generate 的不同变量), 事件回调按 id 查表。和上面 forEach
       // 闭包捕获等价, 只是通过 Map 解耦了上传链。
-      newMetas.forEach((meta) => {
+      newMetas.forEach((meta, i) => {
         pendingHistoryContext.set(meta.id, {
           modelUrl: meta.modelUrl,
           prompt,
@@ -256,11 +280,12 @@ export const useGenerateStore = create<GenerateState>((set, get) => ({
           modelKey,
           refsSnapshot,
         })
-        enqueueCosUpload(meta.id, meta.modelUrl, {
-          source: 'generate',
-          prompt: finalPrompt,
-          model: modelKey,
-        })
+        // 物化出 Blob 的(base64 模型)走字节版 IPC(ArrayBuffer 结构化克隆,
+        // 不让 base64 字符串跨进程); http URL 走 from-url 让主进程自己 fetch。
+        const uploadMeta = { source: 'generate', prompt: finalPrompt, model: modelKey }
+        const image = materialized[i]
+        if (image?.blob) enqueueCosUploadBlob(meta.id, image.blob, uploadMeta)
+        else enqueueCosUpload(meta.id, meta.modelUrl, uploadMeta)
       })
     } catch (err) {
       set((s) => {
@@ -310,6 +335,14 @@ interface HistoryServiceBridge {
 registerCosUploadHandler('generate:', (result) => {
   const id = result.requestId.slice('generate:'.length)
 
+  // 上传成功即将热切到 cosUrl —— 旧的 blob: URL 延迟 revoke 释放堆外
+  // Blob(http URL 输入时 no-op)。要在 setState 前用旧值捕获。
+  if (result.success) {
+    const st = useGenerateStore.getState()
+    const idx = st.resultMeta.findIndex((m) => m.id === id)
+    if (idx >= 0) revokeLater(st.resultUrls[idx])
+  }
+
   // 先做状态热切 —— 不依赖 history ctx。即使 ctx 已被清理(并发追加 /
   // clearResults / FIFO 溢出丢弃), 也必须保证内存能释放, 否则 P0 黑屏复发。
   useGenerateStore.setState((s) => {
@@ -320,20 +353,22 @@ registerCosUploadHandler('generate:', (result) => {
       nextMeta[idx] = {
         ...nextMeta[idx],
         cosUrl: result.url,
+        localPath: result.localPath,
         uploadStatus: 'uploaded',
         uploadError: undefined,
       }
-      // P0 OOM 修复(2026-06-23): 把 resultUrls 同位置热切到轻量 cosUrl,
-      // 释放模型直出 base64(4K ≈ 10MB/张)。否则一整次会话每张都常驻
-      // (上限 200) → 渲染进程堆 + blob + 解码位图耗尽 → 卡死黑屏。
-      // ResultGrid 早有注释「上传完成后这里会被替换成 cosUrl」, 这才真正落地。
+      // P0 OOM 修复(2026-06-23): 把 resultUrls 同位置热切到轻量 cosUrl。
+      // 2026-07-09 起这里换下来的是 blob: URL(base64 已在生成时物化),
+      // 配合上面的 revokeLater 把底层 Blob 一并归还。
       const nextUrls = s.resultUrls.slice()
       nextUrls[idx] = result.url
       return { resultMeta: nextMeta, resultUrls: nextUrls }
     }
-    // 失败: 保留 modelUrl(base64)兜底, cosUrl 不存在时它是唯一可显示的源。
+    // 失败: 保留 modelUrl(blob:/http)兜底, cosUrl 不存在时它是唯一可显示的源。
+    // localPath 照记 —— history 兜底与后续"打开本地文件"入口都用得上。
     nextMeta[idx] = {
       ...nextMeta[idx],
+      localPath: result.localPath,
       uploadStatus: 'failed',
       uploadError: result.error,
     }
@@ -348,7 +383,18 @@ registerCosUploadHandler('generate:', (result) => {
     historyDataServiceTS?: HistoryServiceBridge
   }).historyDataServiceTS
   if (historyService?.addToHistory) {
-    const persistUrl = result.success ? result.url : ctx.modelUrl
+    // P0 闪退修复(2026-07-09): 失败兜底按持久性排序 ——
+    //   ① 本地磁盘副本(local-file://, 主进程上传前已落盘, 永不过期)
+    //   ② http 模型直出 URL(临时签名, 几小时过期)
+    // blob:/data: 跨重启即失效, 绝不写入 history。
+    const localUri = result.localPath ? toRenderableUri(result.localPath) : null
+    const persistUrl = result.success
+      ? result.url
+      : localUri ?? (isPersistableUrl(ctx.modelUrl) ? ctx.modelUrl : null)
+    if (!persistUrl) {
+      console.warn('[Generate] COS 上传失败且无本地副本/可持久化直出源, 跳过 history 写入:', id)
+      return
+    }
     const historyType =
       ctx.refsSnapshot && ctx.refsSnapshot.length > 0
         ? 'generate-with-reference'

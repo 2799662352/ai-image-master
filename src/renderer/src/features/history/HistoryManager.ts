@@ -37,8 +37,12 @@ export interface HistoryManagerConfig {
 export type HistoryChangeCallback = (history: HistoryItem[], action: string) => void
 
 const DEFAULT_CONFIG: HistoryManagerConfig = {
-  maxLocalHistory: 30,
-  maxCloudHistory: 100,
+  // 2026-07-09: 30 → 120。此前 item 里可能内嵌整张 base64(几十 MB), 30 条
+  // 就是保存链的极限; 现在主结果只存 cos/http URL、参考图缩成 640px JPEG,
+  // 单条 ≤ 几百 KB, 上限可以放开。批量页一批就产几十条, 30 条上限会让
+  // 用户觉得"历史记录丢了"(其实是被 enforceLimit 顶掉)。
+  maxLocalHistory: 120,
+  maxCloudHistory: 200,
   storageKey: 'ai_image_history',
   autoMigrate: true
 }

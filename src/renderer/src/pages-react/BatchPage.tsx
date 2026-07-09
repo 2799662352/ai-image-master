@@ -23,6 +23,7 @@ import { BatchBudgetReceipt } from './batch/BatchBudgetReceipt'
 import { extractPriceFromModel } from '../utils/model-price'
 import { TemplateInline } from '../react-app/components/TemplateInline'
 import { useRefImageModelSync } from '../hooks/useRefImageModelSync'
+import { revokeLater } from '../utils/imageResources'
 
 type ModelConfigSnapshot = ImageParamModelConfig & {
   name?: string
@@ -158,8 +159,13 @@ export default function BatchPage() {
 
   // ---- handlers ----
   const handleClearResults = () => {
-    // 仅清掉 done/error, 保留 pending/generating
-    const keep = items.filter((i) => i.status === 'pending' || i.status === 'generating')
+    // 仅清掉 done/error, 保留 pending/generating; 被清项若持有 blob:
+    // resultUrl(base64 物化产物), 延迟 revoke 释放堆外 Blob。
+    const keep: BatchItem[] = []
+    for (const i of items) {
+      if (i.status === 'pending' || i.status === 'generating') keep.push(i)
+      else revokeLater(i.resultUrl)
+    }
     useBatchStore.setState({ items: keep })
     addToast({ message: '已清除已完成结果', type: 'info' })
   }
@@ -220,7 +226,9 @@ export default function BatchPage() {
     const its = useBatchStore.getState().items
     const doneUrls = its
       .filter((i) => i.status === 'done')
-      .map((i) => i.resultUrl ?? i.cosUrl)
+      // cosUrl 优先(持久 + 不占内存), 与 BatchResultGrid.pickDisplayUrl 对齐;
+      // 上传未完成/失败时回落 blob:/http 直出源。
+      .map((i) => i.cosUrl ?? i.resultUrl)
       .filter((u): u is string => !!u)
     setLightbox({ urls: doneUrls, index: Math.max(0, doneUrls.indexOf(url)), kind: 'results' })
   }, [])
