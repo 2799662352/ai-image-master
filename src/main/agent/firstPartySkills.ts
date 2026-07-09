@@ -1182,12 +1182,28 @@ To draw boxes, sticky notes, labels, lines and connector arrows, call
 - \`canvas_delete_shapes { shapeIds }\`: batch-delete shapes (single undo step).
   Destructive — only delete what the user clearly wants gone.
 
+## Relative placement — never do coordinate math yourself
+
+Both \`canvas_update_shape\` and \`canvas_create_shape\` accept
+\`{ referenceId, side, align?, sideOffset?, alignOffset? }\`: the shape lands on
+\`side\` (top/bottom/left/right) of the reference shape, aligned \`start/center/end\`
+(default center), with optional px offsets. The math runs in code against REAL
+measured bounds. Use it for captions under images, shot numbers pinned to a
+corner (\`side:'top', align:'start'\`), labels beside file cards. Example — a
+caption 16px below an image, centered:
+\`canvas_create_shape { kind:'text', text:'Shot 3 — dawn alley', referenceId: IMG_ID, side:'bottom', sideOffset:16, maxWidth:360 }\`.
+Placement wins over x/y in the same call.
+
 ## Noticing user changes between looks
 
 \`canvas_snapshot\` returns \`changedSinceLastSnapshot\` ({created/updated/deleted}
 shape ids) whenever the canvas changed since your previous snapshot in this
-thread. Check it first — if the user moved/edited/deleted shapes while you were
-working, re-read those shapes before acting on stale positions. The snapshot
+thread; its \`byAgent\` field lists the subset YOU wrote via the structured tools
+— treat ids NOT in \`byAgent\` as the user's edits and respect them (don't "fix"
+them back). Check it first — if the user moved/edited/deleted shapes while you
+were working, re-read those shapes before acting on stale positions. Canvas
+\`lints\` are surfaced ONCE per thread — react when you see one; absence later
+doesn't mean it was fixed. The snapshot
 also carries \`userViewportBounds\` — the region the USER is looking at right now
 (it may differ from your virtual viewport): when the user says "the images on
 my screen", match shapes against THAT box, not yours.

@@ -251,6 +251,80 @@ describe('real tldraw Editor smoke: new agent tool chain', () => {
     expect(order2.indexOf(String(createShapeId('bottom')))).toBeLessThan(order2.indexOf(String(createShapeId('top'))))
   })
 
+  it('relative placement: create a caption below an image-sized geo, then re-place it to the right', async () => {
+    createGeo('img', 100, 100) // 100×80 at (100,100)
+    const cap: any = await canvasBridge.handle('canvas_create_shape', {
+      kind: 'geo', w: 50, h: 20, referenceId: 'img', side: 'bottom', sideOffset: 16,
+    })
+    if (!cap.ok) throw new Error(`placed create failed: ${cap.error}`)
+    const capBounds = editor.getShapePageBounds(cap.shape.id)!
+    expect(Math.round(capBounds.y)).toBe(100 + 80 + 16)
+    expect(Math.round(capBounds.x + capBounds.w / 2)).toBe(150) // centered on the reference
+
+    const move: any = await canvasBridge.handle('canvas_update_shape', {
+      shapeId: cap.shape.id, referenceId: 'shape:img', side: 'right', align: 'start', sideOffset: 10,
+    })
+    if (!move.ok) throw new Error(`placed update failed: ${move.error}`)
+    const after = editor.getShapePageBounds(cap.shape.id)!
+    expect(Math.round(after.x)).toBe(100 + 100 + 10)
+    expect(Math.round(after.y)).toBe(100) // align start = reference top
+  })
+
+  it('placement uses the FINAL bounds when combined with a resize in the same call', async () => {
+    createGeo('base', 0, 0)
+    createGeo('mover', 500, 500)
+    const res: any = await canvasBridge.handle('canvas_update_shape', {
+      shapeId: 'mover', w: 60, h: 30, referenceId: 'base', side: 'bottom',
+    })
+    if (!res.ok) throw new Error(`resize+place failed: ${res.error}`)
+    const b = editor.getShapePageBounds(createShapeId('mover'))!
+    expect(Math.round(b.w)).toBe(60)
+    expect(Math.round(b.y)).toBe(80) // below base using the NEW height context
+    expect(Math.round(b.x + b.w / 2)).toBe(50) // centered on base's 100-wide bounds
+  })
+
+  it('lints surface ONCE per thread; a new lint still comes through later', async () => {
+    // Two heavily overlapping images trip the overlapping-images lint.
+    const mkImage = (id: string, x: number): void => {
+      editor.createShape({ id: createShapeId(id), type: 'image', x, y: 0, props: { w: 100, h: 100 } } as never)
+    }
+    mkImage('i1', 0)
+    mkImage('i2', 10)
+    const snap1: any = await canvasBridge.snapshot('thread-lints', { screenshot: false })
+    expect((snap1.lints ?? []).some((l: any) => l.kind === 'overlapping-images')).toBe(true)
+
+    // Same canvas, same thread: the already-surfaced lint stays silent.
+    const snap2: any = await canvasBridge.snapshot('thread-lints', { screenshot: false })
+    expect((snap2.lints ?? []).some((l: any) => l.kind === 'overlapping-images')).toBe(false)
+
+    // A NEW overlap (different shape pair) must still surface.
+    mkImage('i3', 20000)
+    mkImage('i4', 20010)
+    const snap3: any = await canvasBridge.snapshot('thread-lints', { screenshot: false })
+    const kinds3 = (snap3.lints ?? []).filter((l: any) => l.kind === 'overlapping-images')
+    expect(kinds3.length).toBe(1)
+    expect(kinds3[0].shapeIds.sort()).toEqual([String(createShapeId('i3')), String(createShapeId('i4'))].sort())
+  })
+
+  it('changedSinceLastSnapshot attributes agent writes via byAgent; user edits stay unattributed', async () => {
+    createGeo('mine', 0, 0)
+    createGeo('yours', 300, 0)
+    await canvasBridge.snapshot('thread-attrib', { screenshot: false }) // baseline
+
+    // Agent write through the structured tool…
+    const upd: any = await canvasBridge.handle('canvas_update_shape', { shapeId: 'mine', x: 50 })
+    expect(upd.ok).toBe(true)
+    // …and a "user" edit straight on the editor (no bridge involvement).
+    editor.updateShape({ id: createShapeId('yours'), type: 'geo', x: 999 })
+
+    const snap: any = await canvasBridge.snapshot('thread-attrib', { screenshot: false })
+    const diff = snap.changedSinceLastSnapshot
+    expect(diff.updated).toContain(String(createShapeId('mine')))
+    expect(diff.updated).toContain(String(createShapeId('yours')))
+    expect(diff.byAgent).toContain(String(createShapeId('mine')))
+    expect(diff.byAgent).not.toContain(String(createShapeId('yours')))
+  })
+
   it('snapshot reports userViewportBounds (the USER camera, not the agent virtual viewport)', async () => {
     createGeo('g1', 0, 0)
     const snap: any = await canvasBridge.snapshot('thread-uservp', { screenshot: false })

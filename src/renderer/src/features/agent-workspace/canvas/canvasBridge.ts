@@ -1,6 +1,6 @@
 import { Box, getSnapshot, loadSnapshot, type Editor } from 'tldraw'
 import type { Bounds, CanvasStatePayload } from '../../../../../types/canvas'
-import { arrangeShapes, buildCanvasLints, buildTieredShapes, computeFocusTarget, createHolder, createImageVersion, createSimpleShape, deleteShapesById, diffShapeFingerprints, fingerprintSummaries, focusRegion, insertFilePlaceholder, insertImageAt, insertImageIntoHolder, insertTextNote, insertVideo, listImageShapes, readCanvasState, resolveShapeId, summarizeShape, truncateDataUrl, updateShapePartial, ARRANGE_OPERATIONS, type ArrangeOperation, type CanvasLint, type CreateSimpleShapeParams, type SnapshotDiff, type TieredShapesResult } from './shapeOps'
+import { arrangeShapes, buildCanvasLints, buildTieredShapes, computeFocusTarget, createHolder, createImageVersion, createSimpleShape, deleteShapesById, diffShapeFingerprints, fingerprintSummaries, focusRegion, insertFilePlaceholder, insertImageAt, insertImageIntoHolder, insertTextNote, insertVideo, listImageShapes, readCanvasState, resolveShapeId, summarizeShape, truncateDataUrl, updateShapePartial, ARRANGE_OPERATIONS, type ArrangeOperation, type CanvasLint, type CreateSimpleShapeParams, type PlaceParams, type SnapshotDiff, type TieredShapesResult } from './shapeOps'
 import { executeCanvasCode, searchEditorApi } from './shapeExec'
 import { parseAnnotations } from './annotationParser'
 import { editPrompt, findPreferredHolder, generationPrompt, holderSize } from './promptBuilders'
@@ -78,6 +78,9 @@ class CanvasBridge {
       // may hold a different document, so a stale diff/viewport would lie.
       this.agentViewports.clear()
       this.lastSnapshotFingerprints.clear()
+      this.surfacedLints.clear()
+      this.agentWriteSeqByShape.clear()
+      this.lastSnapshotSeq.clear()
     }
   }
 
@@ -110,6 +113,54 @@ class CanvasBridge {
   /** Per-thread shape fingerprints from the previous canvas_snapshot, used to
    * report `changedSinceLastSnapshot` (user actions between agent looks). */
   private lastSnapshotFingerprints = new Map<string, Map<string, string>>()
+
+  /** Lint fingerprints already surfaced per thread (official kit's
+   * markLintsAsSurfaced): the same lint is reported ONCE, not on every
+   * snapshot — repeated warnings train the agent to ignore them, or worse, to
+   * "fix" overlaps the user placed on purpose. */
+  private surfacedLints = new Map<string, Set<string>>()
+
+  /** Attribution for changedSinceLastSnapshot (official kit tracks user
+   * actions via store.listen source:'user'; we do the cheap inverse): every
+   * structured write stamps its shape ids with a monotonic sequence, and a
+   * diff entry is `byAgent` when its stamp is newer than the thread's previous
+   * snapshot. A shape touched by BOTH agent and user still reads as byAgent —
+   * acceptable ambiguity for the price. */
+  private agentWriteSeqByShape = new Map<string, number>()
+  private agentWriteSeq = 0
+  private lastSnapshotSeq = new Map<string, number>()
+
+  /** Record that the AGENT just wrote these shapes (called by every structured write path). */
+  private markAgentWrite(ids: Array<string | undefined>): void {
+    this.agentWriteSeq++
+    for (const id of ids) {
+      if (id) this.agentWriteSeqByShape.set(String(id), this.agentWriteSeq)
+    }
+  }
+
+  /** Parse the flat relative-placement params (referenceId/side/align/offsets)
+   * shared by canvas_update_shape and canvas_create_shape. Returns undefined
+   * when absent, a PlaceParams with the reference id self-healed, or the
+   * standard failure envelope. */
+  private parsePlace(
+    editor: Editor,
+    params: Record<string, unknown>,
+    tool: string,
+  ): PlaceParams | undefined | { ok: false; failed: true; tool: string; error: string } {
+    if (typeof params.referenceId !== 'string' || !params.referenceId) return undefined
+    if (typeof params.side !== 'string' || !params.side) {
+      return { ok: false, failed: true, tool, error: 'referenceId given without `side` — pass side: top|bottom|left|right.' }
+    }
+    const r = resolveShapeId(editor, params.referenceId)
+    if (!r.ok) return { ok: false, failed: true, tool, error: r.error }
+    return {
+      referenceId: r.id,
+      side: params.side as PlaceParams['side'],
+      align: typeof params.align === 'string' ? (params.align as PlaceParams['align']) : undefined,
+      sideOffset: typeof params.sideOffset === 'number' && Number.isFinite(params.sideOffset) ? params.sideOffset : undefined,
+      alignOffset: typeof params.alignOffset === 'number' && Number.isFinite(params.alignOffset) ? params.alignOffset : undefined,
+    }
+  }
 
   /** The user's real camera viewport, rounded — undefined if the editor can't report it (test fakes). */
   private readUserViewportBounds(editor: Editor): Bounds | undefined {
@@ -371,21 +422,26 @@ class CanvasBridge {
           resolvedIds.push(r.id)
         }
         const gap = typeof params.gap === 'number' && Number.isFinite(params.gap) ? params.gap : undefined
-        return this.safeWrite('canvas_arrange', () => {
+        const arrangeResult = await this.safeWrite('canvas_arrange', () => {
           const res = arrangeShapes(editor, resolvedIds, operation, gap)
           if (!res.ok) throw new Error(res.error)
           return res
         })
+        if ((arrangeResult as { ok?: boolean }).ok) this.markAgentWrite(resolvedIds)
+        return arrangeResult
       }
       case 'canvas_update_shape': {
-        // Structured single-shape update (position/size/rotation/text/color) —
-        // the official kit's update action, so the model stops writing raw
-        // canvas_exec code for simple edits. Ids self-heal like everywhere else.
+        // Structured single-shape update (position/size/rotation/text/color/
+        // place) — the official kit's update + place actions, so the model
+        // stops writing raw canvas_exec code for simple edits. Ids self-heal
+        // like everywhere else.
         const editor = this.requireEditor()
         const resolved = resolveShapeId(editor, params.shapeId)
         if (!resolved.ok) return { ok: false, failed: true, tool: 'canvas_update_shape', error: resolved.error }
         const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
-        return this.safeWrite('canvas_update_shape', () => {
+        const place = this.parsePlace(editor, params, 'canvas_update_shape')
+        if (place && 'failed' in place) return place
+        const updateResult = await this.safeWrite('canvas_update_shape', () => {
           const res = updateShapePartial(editor, resolved.id, {
             x: num(params.x),
             y: num(params.y),
@@ -394,10 +450,13 @@ class CanvasBridge {
             rotation: num(params.rotation),
             text: typeof params.text === 'string' ? params.text : undefined,
             color: typeof params.color === 'string' ? params.color : undefined,
+            place,
           })
           if (!res.ok) throw new Error(res.error)
           return res
         })
+        if ((updateResult as { ok?: boolean }).ok) this.markAgentWrite([resolved.id])
+        return updateResult
       }
       case 'canvas_create_shape': {
         // Structured creation of native tldraw shapes (geo/note/text/line/
@@ -416,11 +475,16 @@ class CanvasBridge {
           if (!r.ok) return { ok: false, failed: true, tool: 'canvas_create_shape', error: r.error }
           toId = r.id
         }
-        return this.safeWrite('canvas_create_shape', () => {
-          const res = createSimpleShape(editor, { ...(params as unknown as CreateSimpleShapeParams), fromId, toId })
+        const place = this.parsePlace(editor, params, 'canvas_create_shape')
+        if (place && 'failed' in place) return place
+        const createResult = await this.safeWrite('canvas_create_shape', () => {
+          const res = createSimpleShape(editor, { ...(params as unknown as CreateSimpleShapeParams), fromId, toId, place })
           if (!res.ok) throw new Error(res.error)
           return res
         })
+        const created = createResult as { ok?: boolean; shape?: { id?: string } }
+        if (created.ok) this.markAgentWrite([created.shape?.id])
+        return createResult
       }
       case 'canvas_delete_shapes': {
         // Structured batch delete with self-healed ids; single undo entry.
@@ -435,11 +499,13 @@ class CanvasBridge {
           if (!r.ok) return { ok: false, failed: true, tool: 'canvas_delete_shapes', error: r.error }
           resolvedIds.push(r.id)
         }
-        return this.safeWrite('canvas_delete_shapes', () => {
+        const deleteResult = await this.safeWrite('canvas_delete_shapes', () => {
           const res = deleteShapesById(editor, resolvedIds)
           if (!res.ok) throw new Error(res.error)
           return res
         })
+        if ((deleteResult as { ok?: boolean }).ok) this.markAgentWrite(resolvedIds)
+        return deleteResult
       }
       case 'list_canvas_images':
         // Read-only flat index of image shapes (borrowed from sora-canvas-mcp):
@@ -508,6 +574,18 @@ class CanvasBridge {
     const prevFingerprints = this.lastSnapshotFingerprints.get(diffKey)
     const changedSinceLastSnapshot = prevFingerprints ? diffShapeFingerprints(prevFingerprints, state.shapes) : undefined
     this.lastSnapshotFingerprints.set(diffKey, fingerprintSummaries(state.shapes))
+    // Attribute diff entries: ids the agent wrote (via structured tools) after
+    // this thread's previous snapshot are `byAgent` — the rest were the user.
+    if (changedSinceLastSnapshot) {
+      const sinceSeq = this.lastSnapshotSeq.get(diffKey) ?? -1
+      const byAgent = [
+        ...changedSinceLastSnapshot.created,
+        ...changedSinceLastSnapshot.updated,
+        ...changedSinceLastSnapshot.deleted,
+      ].filter((id) => (this.agentWriteSeqByShape.get(id) ?? -1) > sinceSeq)
+      if (byAgent.length > 0) changedSinceLastSnapshot.byAgent = byAgent
+    }
+    this.lastSnapshotSeq.set(diffKey, this.agentWriteSeq)
     const agentViewport = this.agentViewports.get(diffKey)
     const tiered = buildTieredShapes(editor, state.shapes, {
       full: opts.full,
@@ -555,8 +633,22 @@ class CanvasBridge {
     }
     // Attention hints (overlaps / empty holders / degenerate or stranded
     // shapes) computed over the FULL summary list, not the tiered view, so a
-    // problem hiding off-viewport still surfaces.
-    const lints = buildCanvasLints(state.shapes)
+    // problem hiding off-viewport still surfaces. Surfaced-once per thread
+    // (official markLintsAsSurfaced): a lint you've already seen stays silent
+    // until its shape set changes.
+    const allLints = buildCanvasLints(state.shapes)
+    let surfaced = this.surfacedLints.get(diffKey)
+    if (!surfaced) {
+      surfaced = new Set()
+      this.surfacedLints.set(diffKey, surfaced)
+    }
+    const lints: CanvasLint[] = []
+    for (const lint of allLints) {
+      const fingerprint = `${lint.kind}:${[...lint.shapeIds].sort().join(',')}`
+      if (surfaced.has(fingerprint)) continue
+      surfaced.add(fingerprint)
+      lints.push(lint)
+    }
     return {
       shapeCount: state.shapes.length,
       detailLevel: tiered.detailLevel,

@@ -755,6 +755,99 @@ export function arrangeShapes(
   return { ok: true, operation, arrangedCount: shapeIds.length }
 }
 
+export type PlaceSide = 'top' | 'bottom' | 'left' | 'right'
+export type PlaceAlign = 'start' | 'center' | 'end'
+
+export interface PlaceParams {
+  /** Shape to place relative to (resolved by the caller). */
+  referenceId: string
+  side: PlaceSide
+  /** Alignment along the reference's other axis. Default center. */
+  align?: PlaceAlign
+  /** Gap between the shapes along `side`, px. Default 0. */
+  sideOffset?: number
+  /** Shift along the alignment axis, px. Default 0. */
+  alignOffset?: number
+}
+
+/**
+ * Pure placement math (official Agent Kit's Place action, all 12
+ * side×align combinations): where should the TARGET's page bounds land so it
+ * sits on `side` of the REFERENCE, aligned `align`, with the given offsets?
+ * Kept pure so it's unit-testable; models are terrible at exactly this
+ * arithmetic, which is why the official kit ships it as code.
+ */
+export function computePlacement(
+  target: { w: number; h: number },
+  ref: Bounds,
+  side: PlaceSide,
+  align: PlaceAlign = 'center',
+  sideOffset = 0,
+  alignOffset = 0,
+): Point {
+  let x: number
+  let y: number
+  if (side === 'top' || side === 'bottom') {
+    y = side === 'top' ? ref.y - target.h - sideOffset : ref.y + ref.h + sideOffset
+    x =
+      align === 'start' ? ref.x + alignOffset
+      : align === 'end' ? ref.x + ref.w - target.w - alignOffset
+      : ref.x + ref.w / 2 - target.w / 2 + alignOffset
+  } else {
+    x = side === 'left' ? ref.x - target.w - sideOffset : ref.x + ref.w + sideOffset
+    y =
+      align === 'start' ? ref.y + alignOffset
+      : align === 'end' ? ref.y + ref.h - target.h - alignOffset
+      : ref.y + ref.h / 2 - target.h / 2 + alignOffset
+  }
+  return { x, y }
+}
+
+/**
+ * Move ONE shape so its page bounds sit at the computed placement. Applies the
+ * delta to shape.x/y (bounds min corner ≠ shape origin for rotated shapes and
+ * lines — the official kit assumes they're equal; using the delta is correct
+ * for both). Must run inside an editor.run started by the caller.
+ */
+function applyPlacement(
+  editor: Editor,
+  shapeId: string,
+  place: PlaceParams,
+): { ok: true } | { ok: false; error: string } {
+  const targetBounds = editor.getShapePageBounds(shapeId as never)
+  if (!targetBounds) return { ok: false, error: `Shape ${shapeId} has no page bounds.` }
+  const refBounds = editor.getShapePageBounds(place.referenceId as never)
+  if (!refBounds) return { ok: false, error: `Reference shape ${place.referenceId} has no page bounds.` }
+  const dest = computePlacement(
+    { w: targetBounds.w, h: targetBounds.h },
+    { x: refBounds.x, y: refBounds.y, w: refBounds.w, h: refBounds.h },
+    place.side,
+    place.align,
+    place.sideOffset,
+    place.alignOffset,
+  )
+  const shape = editor.getShape(shapeId as never) as { id: string; type: string; x: number; y: number } | undefined
+  if (!shape) return { ok: false, error: `No shape found: ${shapeId}` }
+  editor.updateShape({
+    id: shape.id,
+    type: shape.type,
+    x: shape.x + (dest.x - targetBounds.x),
+    y: shape.y + (dest.y - targetBounds.y),
+  } as never)
+  return { ok: true }
+}
+
+const PLACE_SIDES: readonly PlaceSide[] = ['top', 'bottom', 'left', 'right']
+const PLACE_ALIGNS: readonly PlaceAlign[] = ['start', 'center', 'end']
+
+function validatePlace(place: PlaceParams): string | null {
+  if (!PLACE_SIDES.includes(place.side)) return `Unknown side "${place.side}". Valid: ${PLACE_SIDES.join(', ')}.`
+  if (place.align !== undefined && !PLACE_ALIGNS.includes(place.align)) {
+    return `Unknown align "${place.align}". Valid: ${PLACE_ALIGNS.join(', ')}.`
+  }
+  return null
+}
+
 /**
  * Structured single-shape update (official Agent Starter Kit ships dedicated
  * update/move/resize/label actions instead of forcing everything through raw
@@ -766,12 +859,15 @@ export function arrangeShapes(
  *   - w/h: shape props when present (geo/image/video/file-card/note…);
  *   - text: richText for shapes with a richText prop (geo/text/note/arrow),
  *     plain `text` prop otherwise, file-card falls back to `title`;
- *   - color: shapes with a `color` prop.
+ *   - color: shapes with a `color` prop;
+ *   - place: relative positioning next to a reference shape (official Place
+ *     action) — applied AFTER size/text so it uses the final bounds; wins over
+ *     explicit x/y.
  */
 export function updateShapePartial(
   editor: Editor,
   shapeId: string,
-  patch: { x?: number; y?: number; w?: number; h?: number; rotation?: number; text?: string; color?: string },
+  patch: { x?: number; y?: number; w?: number; h?: number; rotation?: number; text?: string; color?: string; place?: PlaceParams },
 ): { ok: true; shape: ShapeSummary } | { ok: false; error: string } {
   const shape = editor.getShape(shapeId as never) as { id: string; type: string; props?: Record<string, unknown> } | undefined
   if (!shape) return { ok: false, error: `No shape found: ${shapeId}` }
@@ -802,7 +898,15 @@ export function updateShapePartial(
     props.color = patch.color
     touched = true
   }
-  if (!touched) return { ok: false, error: 'canvas_update_shape: no updatable fields given (x/y/w/h/rotation/text/color).' }
+  if (patch.place) {
+    const placeError = validatePlace(patch.place)
+    if (placeError) return { ok: false, error: placeError }
+    if (!editor.getShape(patch.place.referenceId as never)) {
+      return { ok: false, error: `No reference shape found: ${patch.place.referenceId}` }
+    }
+    touched = true
+  }
+  if (!touched) return { ok: false, error: 'canvas_update_shape: no updatable fields given (x/y/w/h/rotation/text/color/place).' }
   // richText + w/h cannot share ONE write: GeoShapeUtil.onBeforeUpdate
   // re-measures the label when richText changes and overrides w/h in the same
   // record, silently discarding the caller's explicit size (verified against a
@@ -814,10 +918,18 @@ export function updateShapePartial(
       : undefined
   if (textFirst) delete props.richText
   if (Object.keys(props).length > 0) update.props = props
+  let placeFailure: string | undefined
   editor.run(() => {
     if (textFirst) editor.updateShape(textFirst as never)
     editor.updateShape(update as never)
+    // Placement LAST so it positions the final (possibly resized/relabeled)
+    // bounds; the store commits synchronously inside run, so bounds are fresh.
+    if (patch.place) {
+      const placed = applyPlacement(editor, String(shape.id), patch.place)
+      if (!placed.ok) placeFailure = placed.error
+    }
   })
+  if (placeFailure) return { ok: false, error: placeFailure }
   const updated = editor.getShape(shapeId as never)
   return { ok: true, shape: sanitizeSummaryForAgent(summarizeShape(editor, updated)) }
 }
@@ -871,6 +983,8 @@ export interface CreateSimpleShapeParams {
   maxWidth?: number
   /** arrow only: curvature offset in px (0 = straight). */
   bend?: number
+  /** geo/note/text: place the new shape relative to a reference shape (wins over x/y). */
+  place?: PlaceParams
 }
 
 /**
@@ -894,8 +1008,26 @@ export function createSimpleShape(
   if (!TLDRAW_FILLS.has(fill)) {
     return { ok: false, error: `Unknown fill "${fill}". Valid: ${Array.from(TLDRAW_FILLS).join(', ')}.` }
   }
+  if (params.place) {
+    const placeError = validatePlace(params.place)
+    if (placeError) return { ok: false, error: placeError }
+    if (!editor.getShape(params.place.referenceId as never)) {
+      return { ok: false, error: `No reference shape found: ${params.place.referenceId}` }
+    }
+  }
   const shapeId = createShapeId(`agent_${crypto.randomUUID().slice(0, 8)}`)
-  const finish = (): { ok: true; shape: ShapeSummary } => {
+  const finish = (): { ok: true; shape: ShapeSummary } | { ok: false; error: string } => {
+    // Relative placement (official Place action): position the freshly created
+    // shape next to its reference using REAL measured bounds — critical for
+    // auto-sized text whose final size the model cannot know up front.
+    if (params.place) {
+      let placeFailure: string | undefined
+      editor.run(() => {
+        const placed = applyPlacement(editor, String(shapeId), params.place!)
+        if (!placed.ok) placeFailure = placed.error
+      })
+      if (placeFailure) return { ok: false, error: placeFailure }
+    }
     zoomToFitShapes(editor, [String(shapeId)])
     return { ok: true, shape: sanitizeSummaryForAgent(summarizeShape(editor, editor.getShape(shapeId as never))) }
   }
@@ -1067,6 +1199,9 @@ export interface SnapshotDiff {
   created: string[]
   updated: string[]
   deleted: string[]
+  /** Subset of the ids above that the AGENT itself wrote via structured tools
+   * since the previous snapshot — the rest were (most likely) the user. */
+  byAgent?: string[]
 }
 
 const DIFF_ID_CAP = 100

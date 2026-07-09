@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { ShapeSummary } from '../../../../../types/canvas'
 import {
   buildTieredShapes,
+  computePlacement,
   deleteShapesById,
   diffShapeFingerprints,
   fingerprintSummaries,
@@ -223,5 +224,27 @@ describe('diffShapeFingerprints (P2)', () => {
     const before = fingerprintSummaries([summary({ id: 'shape:t', text: 'old' })])
     const diff = diffShapeFingerprints(before, [summary({ id: 'shape:t', text: 'new' })])!
     expect(diff.updated).toEqual(['shape:t'])
+  })
+})
+
+describe('computePlacement (official Place action math)', () => {
+  const ref = { x: 100, y: 100, w: 200, h: 100 } // reference bounds
+  const target = { w: 50, h: 20 }
+
+  it('bottom/center with a gap — the caption-under-image case', () => {
+    expect(computePlacement(target, ref, 'bottom', 'center', 16)).toEqual({ x: 175, y: 216 })
+  })
+
+  it('top/start — shot number pinned to the top-left corner', () => {
+    expect(computePlacement(target, ref, 'top', 'start', 8, 4)).toEqual({ x: 104, y: 72 })
+  })
+
+  it('right/end and left/center', () => {
+    expect(computePlacement(target, ref, 'right', 'end', 10, 6)).toEqual({ x: 310, y: 174 })
+    expect(computePlacement(target, ref, 'left', 'center')).toEqual({ x: 50, y: 140 })
+  })
+
+  it('defaults: align center, zero offsets', () => {
+    expect(computePlacement(target, ref, 'bottom')).toEqual({ x: 175, y: 200 })
   })
 })

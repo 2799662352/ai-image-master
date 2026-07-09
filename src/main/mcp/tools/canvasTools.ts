@@ -82,7 +82,7 @@ export function registerCanvasTools(server: McpServer, router: ToolRouter): void
 
   server.registerTool('canvas_snapshot', {
     description:
-      'SEE the current canvas. Returns a structured list of every shape (images, dashed holders, arrows/circles/text annotations with positions/bounds/assetPath/assetId/intrinsic size) PLUS `imagePath` — an on-disk PNG render you can open and view (`screenshotScope` says whether it shows the whole canvas or just the viewport). On LARGE canvases (>40 shapes) the response is tiered to protect your context: viewport shapes come as a reduced overview, selected shapes stay full-detail in `focusedShapes`, and off-viewport shapes are grouped into `peripheralClusters` (bounds + count + type histogram) — and the PNG is cropped to the viewport so its pixels stay readable. Use `canvas_focus_region` to move the viewport, then re-snapshot. Pass `focusShapeIds` to get full detail for specific shapes, `full: true` to force the complete dump, or `screenshot: false` to skip the PNG export (faster when you only need the structured data). The response also carries `changedSinceLastSnapshot` ({created/updated/deleted} shape ids) when the canvas changed since your previous snapshot in this thread — check it to notice what the user moved/edited/deleted between your looks. `userViewportBounds` is the region the USER is currently looking at (may differ from your virtual viewport) — use it to resolve "the shapes on my screen". Call this whenever the user asks what is on the canvas, or to inspect the layout before editing/inserting.',
+      'SEE the current canvas. Returns a structured list of every shape (images, dashed holders, arrows/circles/text annotations with positions/bounds/assetPath/assetId/intrinsic size) PLUS `imagePath` — an on-disk PNG render you can open and view (`screenshotScope` says whether it shows the whole canvas or just the viewport). On LARGE canvases (>40 shapes) the response is tiered to protect your context: viewport shapes come as a reduced overview, selected shapes stay full-detail in `focusedShapes`, and off-viewport shapes are grouped into `peripheralClusters` (bounds + count + type histogram) — and the PNG is cropped to the viewport so its pixels stay readable. Use `canvas_focus_region` to move the viewport, then re-snapshot. Pass `focusShapeIds` to get full detail for specific shapes, `full: true` to force the complete dump, or `screenshot: false` to skip the PNG export (faster when you only need the structured data). The response also carries `changedSinceLastSnapshot` ({created/updated/deleted} shape ids, with `byAgent` marking the subset YOU wrote — the rest were the user) when the canvas changed since your previous snapshot in this thread — check it to notice what the user moved/edited/deleted between your looks. `lints` are surfaced ONCE per thread: an empty/missing lints field does not mean earlier warnings were fixed. `userViewportBounds` is the region the USER is currently looking at (may differ from your virtual viewport) — use it to resolve "the shapes on my screen". Call this whenever the user asks what is on the canvas, or to inspect the layout before editing/inserting.',
     inputSchema: z.object({
       focusShapeIds: z.array(z.string()).optional().describe('Shape ids to return in FULL detail even when the snapshot is tiered.'),
       full: z.boolean().optional().describe('Force full per-shape detail regardless of canvas size (large output).'),
@@ -149,13 +149,18 @@ export function registerCanvasTools(server: McpServer, router: ToolRouter): void
       fill: z.string().optional().describe("geo only: none (default), semi, solid, pattern."),
       maxWidth: z.number().optional().describe('text only: wrap width in px (otherwise auto-sizes to one line).'),
       bend: z.number().optional().describe('arrow only: curvature offset in px (0 = straight).'),
+      referenceId: z.string().optional().describe('geo/note/text: create the shape RELATIVE to this shape (wins over x/y) — e.g. a caption directly below an image, no coordinate math.'),
+      side: z.enum(['top', 'bottom', 'left', 'right']).optional().describe('Which side of the reference shape (required with referenceId).'),
+      align: z.enum(['start', 'center', 'end']).optional().describe('Alignment along the other axis (default center).'),
+      sideOffset: z.number().optional().describe('Gap from the reference shape in px (default 0).'),
+      alignOffset: z.number().optional().describe('Shift along the alignment axis in px (default 0).'),
     }),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   }, async (params) => asResult(await router.call('canvas_create_shape', params as Record<string, unknown>)))
 
   server.registerTool('canvas_update_shape', {
     description:
-      "Update ONE shape's position/size/rotation/text/color in a single structured call — no canvas_exec code needed for simple edits. Pass the shapeId (from canvas_snapshot / list_canvas_images) plus only the fields to change: `x`/`y` (absolute page position), `w`/`h` (resize, shapes with size props only), `rotation` (degrees, absolute), `text` (replaces the label/text), `color` (tldraw palette name like 'red'/'blue'). Returns the updated shape summary. For moving/aligning MANY shapes use canvas_arrange instead.",
+      "Update ONE shape's position/size/rotation/text/color in a single structured call — no canvas_exec code needed for simple edits. Pass the shapeId (from canvas_snapshot / list_canvas_images) plus only the fields to change: `x`/`y` (absolute page position), `w`/`h` (resize, shapes with size props only), `rotation` (degrees, absolute), `text` (replaces the label/text), `color` (tldraw palette name like 'red'/'blue'). To position RELATIVE to another shape (no coordinate math!), pass `referenceId` + `side` (+ optional align/sideOffset/alignOffset) instead of x/y — e.g. put a caption below an image: referenceId:IMG, side:'bottom', sideOffset:16. Returns the updated shape summary. For moving/aligning MANY shapes use canvas_arrange instead.",
     inputSchema: z.object({
       shapeId: z.string().min(1).describe('Shape id from canvas_snapshot / list_canvas_images.'),
       x: z.number().optional().describe('New absolute page x.'),
@@ -165,6 +170,11 @@ export function registerCanvasTools(server: McpServer, router: ToolRouter): void
       rotation: z.number().optional().describe('Absolute rotation in DEGREES.'),
       text: z.string().optional().describe('Replacement text/label for text-like shapes.'),
       color: z.string().optional().describe("tldraw palette color name, e.g. 'red', 'blue', 'green'."),
+      referenceId: z.string().optional().describe('Relative placement: id of the shape to place this one next to (wins over x/y).'),
+      side: z.enum(['top', 'bottom', 'left', 'right']).optional().describe('Which side of the reference shape to place on (required with referenceId).'),
+      align: z.enum(['start', 'center', 'end']).optional().describe('Alignment along the other axis (default center).'),
+      sideOffset: z.number().optional().describe('Gap from the reference shape in px (default 0).'),
+      alignOffset: z.number().optional().describe('Shift along the alignment axis in px (default 0).'),
     }),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async (params) => asResult(await router.call('canvas_update_shape', params as Record<string, unknown>)))
