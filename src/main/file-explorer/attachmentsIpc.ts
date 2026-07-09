@@ -54,6 +54,12 @@ const ALLOWED_MIME_BY_EXT: Record<string, string> = {
   wav: 'audio/wav',
   flac: 'audio/flac',
   aac: 'audio/aac',
+  // 画布 file-card 内联播放器:canvasBridge.insertFileAt 的 isAudio 分类含这
+  // 四个扩展名,缺席时卡片能建但 readThumb 拒读,播放器永远转圈。
+  m4a: 'audio/mp4',
+  opus: 'audio/ogg',
+  oga: 'audio/ogg',
+  weba: 'audio/webm',
   // 3D 资产:导演台 agent 导入本地模型/动画(add_model / play_animation 的
   // 本地路径 → blob: 转换)要经本 IPC 读字节。纯读操作,与媒体同级风险。
   glb: 'model/gltf-binary',

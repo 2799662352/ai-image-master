@@ -1,6 +1,6 @@
 import { getSnapshot, loadSnapshot, type Editor } from 'tldraw'
 import type { CanvasStatePayload } from '../../../../../types/canvas'
-import { createHolder, createImageVersion, insertFilePlaceholder, insertImageAt, insertImageIntoHolder, insertTextNote, insertVideo, listImageShapes, readCanvasState, summarizeShape } from './shapeOps'
+import { arrangeShapes, buildCanvasLints, buildTieredShapes, createHolder, createImageVersion, deleteShapesById, diffShapeFingerprints, fingerprintSummaries, focusRegion, insertFilePlaceholder, insertImageAt, insertImageIntoHolder, insertTextNote, insertVideo, listImageShapes, readCanvasState, resolveShapeId, summarizeShape, truncateDataUrl, updateShapePartial, ARRANGE_OPERATIONS, type ArrangeOperation, type CanvasLint, type SnapshotDiff, type TieredShapesResult } from './shapeOps'
 import { executeCanvasCode, searchEditorApi } from './shapeExec'
 import { parseAnnotations } from './annotationParser'
 import { editPrompt, findPreferredHolder, generationPrompt, holderSize } from './promptBuilders'
@@ -75,6 +75,11 @@ class CanvasBridge {
     }
   }
 
+  /** Whether a live tldraw editor is currently registered (canvas mounted). */
+  hasEditor(): boolean {
+    return this.editor !== null
+  }
+
   /** Resolve once the Canvas tab has mounted its tldraw editor (or reject on timeout). */
   waitForEditor(timeoutMs = 8000): Promise<Editor> {
     if (this.editor) return Promise.resolve(this.editor)
@@ -95,6 +100,10 @@ class CanvasBridge {
     if (!this.editor) throw new Error('Canvas is not open. Ask the user to open the Canvas tab, or call canvas_open first.')
     return this.editor
   }
+
+  /** Per-thread shape fingerprints from the previous canvas_snapshot, used to
+   * report `changedSinceLastSnapshot` (user actions between agent looks). */
+  private lastSnapshotFingerprints = new Map<string, Map<string, string>>()
 
   /**
    * Wrap a canvas-mutating operation so a tldraw validation/transaction error is
@@ -200,8 +209,12 @@ class CanvasBridge {
       }
       case 'insert_image_into_holder': {
         const editor = this.requireEditor()
+        // Self-heal a hallucinated/prefix-less holder id BEFORE paying the image
+        // load, so a bad id returns candidates instead of "Holder not found".
+        const holderId = resolveShapeId(editor, params.holderShapeId, { preferType: 'geo' })
+        if (!holderId.ok) return { ok: false, failed: true, tool: 'insert_image_into_holder', error: holderId.error }
         const assetUrl = await this.toLoadable(String(params.imagePath))
-        return this.safeWrite('insert_image_into_holder', () => insertImageIntoHolder(editor, { holderShapeId: String(params.holderShapeId), assetUrl, assetPath: String(params.imagePath), title: params.title as string | undefined }))
+        return this.safeWrite('insert_image_into_holder', () => insertImageIntoHolder(editor, { holderShapeId: holderId.id, assetUrl, assetPath: String(params.imagePath), title: params.title as string | undefined }))
       }
       case 'insert_video': {
         const editor = this.requireEditor()
@@ -230,8 +243,10 @@ class CanvasBridge {
       }
       case 'create_image_version': {
         const editor = this.requireEditor()
+        const sourceId = resolveShapeId(editor, params.sourceShapeId, { preferType: 'image' })
+        if (!sourceId.ok) return { ok: false, failed: true, tool: 'create_image_version', error: sourceId.error }
         const assetUrl = await this.toLoadable(String(params.imagePath))
-        return this.safeWrite('create_image_version', () => createImageVersion(editor, { sourceShapeId: String(params.sourceShapeId), assetUrl, assetPath: String(params.imagePath), title: params.title as string | undefined }))
+        return this.safeWrite('create_image_version', () => createImageVersion(editor, { sourceShapeId: sourceId.id, assetUrl, assetPath: String(params.imagePath), title: params.title as string | undefined }))
       }
       case 'save_snapshot': {
         // tldraw persistenceKey already persists; reading state flushes listeners.
@@ -266,7 +281,91 @@ class CanvasBridge {
       case 'canvas_snapshot':
         // threadId is injected by the renderer caller (AgentToolExecutor) from the
         // active chat thread so the snapshot PNG can be persisted (FK requirement).
-        return this.snapshot(typeof params.threadId === 'string' ? params.threadId : undefined)
+        return this.snapshot(typeof params.threadId === 'string' ? params.threadId : undefined, {
+          full: params.full === true,
+          focusShapeIds: Array.isArray(params.focusShapeIds) ? params.focusShapeIds.map(String) : undefined,
+          screenshot: params.screenshot === false ? false : undefined,
+        })
+      case 'canvas_focus_region': {
+        // Viewport navigation: the action half of the tiered snapshot loop.
+        // Self-heal each shapeId (hallucinated / prefix-less ids return
+        // candidates instead of silently focusing nothing).
+        const editor = this.requireEditor()
+        const rawIds = Array.isArray(params.shapeIds) ? params.shapeIds.map(String) : []
+        const resolvedIds: string[] = []
+        for (const raw of rawIds) {
+          const r = resolveShapeId(editor, raw)
+          if (!r.ok) return { ok: false, failed: true, tool: 'canvas_focus_region', error: r.error }
+          resolvedIds.push(r.id)
+        }
+        const bounds = params.bounds as { x: number; y: number; w: number; h: number } | undefined
+        const res = focusRegion(editor, { shapeIds: resolvedIds.length > 0 ? resolvedIds : undefined, bounds })
+        if (!res.ok) return { ok: false, failed: true, tool: 'canvas_focus_region', error: res.error }
+        return { ...res, hint: 'Viewport moved. Call canvas_snapshot to see this region in full detail.' }
+      }
+      case 'canvas_arrange': {
+        // Batch layout (align/distribute/stack/pack) — one atomic transaction
+        // instead of N per-shape coordinate updates.
+        const editor = this.requireEditor()
+        const operation = String(params.operation ?? '') as ArrangeOperation
+        if (!ARRANGE_OPERATIONS.includes(operation)) {
+          return { ok: false, failed: true, tool: 'canvas_arrange', error: `Unknown operation "${operation}". Valid: ${ARRANGE_OPERATIONS.join(', ')}.` }
+        }
+        const rawIds = Array.isArray(params.shapeIds) ? params.shapeIds.map(String) : []
+        const resolvedIds: string[] = []
+        for (const raw of rawIds) {
+          const r = resolveShapeId(editor, raw)
+          if (!r.ok) return { ok: false, failed: true, tool: 'canvas_arrange', error: r.error }
+          resolvedIds.push(r.id)
+        }
+        const gap = typeof params.gap === 'number' && Number.isFinite(params.gap) ? params.gap : undefined
+        return this.safeWrite('canvas_arrange', () => {
+          const res = arrangeShapes(editor, resolvedIds, operation, gap)
+          if (!res.ok) throw new Error(res.error)
+          return res
+        })
+      }
+      case 'canvas_update_shape': {
+        // Structured single-shape update (position/size/rotation/text/color) —
+        // the official kit's update action, so the model stops writing raw
+        // canvas_exec code for simple edits. Ids self-heal like everywhere else.
+        const editor = this.requireEditor()
+        const resolved = resolveShapeId(editor, params.shapeId)
+        if (!resolved.ok) return { ok: false, failed: true, tool: 'canvas_update_shape', error: resolved.error }
+        const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
+        return this.safeWrite('canvas_update_shape', () => {
+          const res = updateShapePartial(editor, resolved.id, {
+            x: num(params.x),
+            y: num(params.y),
+            w: num(params.w),
+            h: num(params.h),
+            rotation: num(params.rotation),
+            text: typeof params.text === 'string' ? params.text : undefined,
+            color: typeof params.color === 'string' ? params.color : undefined,
+          })
+          if (!res.ok) throw new Error(res.error)
+          return res
+        })
+      }
+      case 'canvas_delete_shapes': {
+        // Structured batch delete with self-healed ids; single undo entry.
+        const editor = this.requireEditor()
+        const rawIds = Array.isArray(params.shapeIds) ? params.shapeIds.map(String) : []
+        if (rawIds.length === 0) {
+          return { ok: false, failed: true, tool: 'canvas_delete_shapes', error: 'canvas_delete_shapes requires shapeIds (non-empty array).' }
+        }
+        const resolvedIds: string[] = []
+        for (const raw of rawIds) {
+          const r = resolveShapeId(editor, raw)
+          if (!r.ok) return { ok: false, failed: true, tool: 'canvas_delete_shapes', error: r.error }
+          resolvedIds.push(r.id)
+        }
+        return this.safeWrite('canvas_delete_shapes', () => {
+          const res = deleteShapesById(editor, resolvedIds)
+          if (!res.ok) throw new Error(res.error)
+          return res
+        })
+      }
       case 'list_canvas_images':
         // Read-only flat index of image shapes (borrowed from sora-canvas-mcp):
         // lets Codex pick a shapeId before paying any get_canvas_image cost.
@@ -302,24 +401,61 @@ class CanvasBridge {
    * mcp-app live-read idea, adapted to our ToolRouter/IPC + Codex's ability to
    * read image files. The PNG export goes through tldraw's rasterizer (resolves
    * `asset:` refs internally), so it never hits the connect-src CSP.
+   *
+   * Large canvases (> TIERED_SNAPSHOT_THRESHOLD shapes) switch to the tiered
+   * format borrowed from tldraw's official Agent Starter Kit — blurry viewport
+   * overview + full detail for selected/focusShapeIds shapes + clusters for
+   * off-viewport shapes — so the structured payload can't blow up the model's
+   * context. `full: true` forces the old full dump.
    */
-  async snapshot(threadId?: string): Promise<{
-    shapeCount: number
-    shapes: CanvasStatePayload['shapes']
-    selection: string[]
-    imagePath?: string
-  }> {
+  async snapshot(
+    threadId?: string,
+    opts: { full?: boolean; focusShapeIds?: string[]; screenshot?: boolean } = {},
+  ): Promise<
+    {
+      shapeCount: number
+      shapes: TieredShapesResult['shapes']
+      selection: string[]
+      imagePath?: string
+      screenshotScope?: 'viewport' | 'full'
+      hint?: string
+      lints?: CanvasLint[]
+      changedSinceLastSnapshot?: SnapshotDiff
+    } & Omit<TieredShapesResult, 'shapes'>
+  > {
     const editor = this.requireEditor()
     const state = this.state()
+    // "What changed since your last snapshot" (per thread): the poor man's
+    // version of the official kit's user-action context. Diffing fingerprints
+    // catches user drags/edits/deletes between two agent looks at the canvas.
+    const diffKey = threadId ?? '__no_thread__'
+    const prevFingerprints = this.lastSnapshotFingerprints.get(diffKey)
+    const changedSinceLastSnapshot = prevFingerprints ? diffShapeFingerprints(prevFingerprints, state.shapes) : undefined
+    this.lastSnapshotFingerprints.set(diffKey, fingerprintSummaries(state.shapes))
+    const tiered = buildTieredShapes(editor, state.shapes, {
+      full: opts.full,
+      focusShapeIds: opts.focusShapeIds,
+      selectedIds: state.selection.selectedShapeIds,
+    })
     let imagePath: string | undefined
+    let screenshotScope: 'viewport' | 'full' | undefined
     const ids = Array.from(editor.getCurrentPageShapeIds()) as never[]
     // The PNG is persisted via the thread-scoped attachments store, whose DB row
     // has a threadId foreign key. Passing a non-existent id (the old literal
     // 'canvas') violates AgentAttachment_threadId_fkey and the file is dropped.
     // Only save when we have the real active thread; otherwise still return the
     // structured shapes so Codex isn't left totally blind.
-    if (ids.length > 0 && threadId) {
-      const exported = await editor.toImageDataUrl(ids, { format: 'png', background: true })
+    if (ids.length > 0 && threadId && opts.screenshot !== false) {
+      // Match the PNG to the structured payload: a tiered snapshot describes the
+      // VIEWPORT, so crop the export to the viewport too — a whole-page export
+      // of a large canvas renders every shape at unreadably small scale (and
+      // costs a big rasterize). Full snapshots keep the whole-page export.
+      screenshotScope = tiered.detailLevel === 'tiered' ? 'viewport' : 'full'
+      const exportOpts =
+        screenshotScope === 'viewport'
+          ? { format: 'png' as const, background: true, bounds: editor.getViewportPageBounds() }
+          : { format: 'png' as const, background: true }
+      const exported = await editor.toImageDataUrl(ids, exportOpts)
       const decoded = exported?.url ? await srcToBase64(exported.url) : null
       const api = (window as Window & { electronAPI?: { attachments?: AttachmentsSaveApi } }).electronAPI?.attachments
       if (decoded && api?.save) {
@@ -333,11 +469,26 @@ class CanvasBridge {
         if (res.ok) imagePath = res.path
       }
     }
+    // Attention hints (overlaps / empty holders / degenerate or stranded
+    // shapes) computed over the FULL summary list, not the tiered view, so a
+    // problem hiding off-viewport still surfaces.
+    const lints = buildCanvasLints(state.shapes)
     return {
       shapeCount: state.shapes.length,
-      shapes: state.shapes,
+      detailLevel: tiered.detailLevel,
+      shapes: tiered.shapes,
+      focusedShapes: tiered.focusedShapes,
+      peripheralClusters: tiered.peripheralClusters,
+      viewportBounds: tiered.viewportBounds,
       selection: state.selection.selectedShapeIds,
       imagePath,
+      screenshotScope: imagePath ? screenshotScope : undefined,
+      lints: lints.length > 0 ? lints : undefined,
+      changedSinceLastSnapshot,
+      hint:
+        tiered.detailLevel === 'tiered'
+          ? 'Large canvas: viewport shapes are a reduced overview (the PNG at imagePath shows the viewport pixels), off-viewport shapes are grouped into peripheralClusters. Use canvas_focus_region to move the viewport to a cluster/shapes, then re-call canvas_snapshot; or pass focusShapeIds:[…] / full:true.'
+          : undefined,
     }
   }
 
@@ -361,6 +512,10 @@ class CanvasBridge {
   > {
     if (!shapeId) return { ok: false, error: 'get_canvas_image requires shapeId (get it from list_canvas_images).' }
     const editor = this.requireEditor()
+    // Self-heal hallucinated / prefix-less ids (returns candidates on failure).
+    const resolved = resolveShapeId(editor, shapeId, { preferType: 'image' })
+    if (!resolved.ok) return { ok: false, error: resolved.error }
+    shapeId = resolved.id
     const shape = editor.getShape(shapeId as never) as { type?: string } | undefined
     if (!shape) return { ok: false, error: `No shape found: ${shapeId}` }
     if (shape.type !== 'image') return { ok: false, error: `Shape ${shapeId} is a "${shape.type}", not an image.` }
@@ -376,7 +531,8 @@ class CanvasBridge {
       imageHeight: summary.imageHeight,
       mimeType: 'image/png',
       assetPath: summary.assetPath ?? null,
-      assetUrl: summary.assetUrl ?? null,
+      // The pixels travel via imagePath — never echo a multi-MB data: URL.
+      assetUrl: summary.assetUrl ? truncateDataUrl(summary.assetUrl) : null,
       imagePath,
     }
   }

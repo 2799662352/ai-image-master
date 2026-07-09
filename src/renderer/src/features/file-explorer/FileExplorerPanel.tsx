@@ -14,7 +14,7 @@ import { DiffMergeView } from './DiffMergeView'
 import { AiChangeViewer } from './AiChangeViewer'
 import { CanvasSection } from '../agent-workspace/CanvasSection'
 import { resolveExternalPaths } from './dragHelpers'
-import type { FileNode } from './types'
+import type { FileNode, FileTab } from './types'
 
 function findNodeFlat(tree: FileNode[], target: string): FileNode | null {
   for (const n of tree) {
@@ -36,9 +36,43 @@ function parentDirOf(p: string): string {
   return idx > 0 ? p.slice(0, idx) : p
 }
 
-function ActiveViewer() {
+/**
+ * Center display host. The canvas gets KEEP-ALIVE treatment: once its tab
+ * exists, <CanvasSection> stays MOUNTED for the tab's whole lifetime and is
+ * merely hidden with CSS (`invisible` = visibility:hidden, dims preserved)
+ * while another tab is active. Rationale: the tldraw editor instance is the
+ * backing runtime for every agent canvas_* tool (canvasBridge.setEditor in
+ * CanvasSection's onMount); the old switch-based ActiveViewer unmounted the
+ * component whenever the user viewed another file, which nulled the editor and
+ * made mid-flight agent tool calls fail with "Canvas is not open" (a pure
+ * mount-lifecycle race, not a tldraw limitation). `visibility:hidden` rather
+ * than display:none keeps the container's size so the tldraw viewport/camera
+ * don't collapse to 0×0 while hidden; pointer-events-none + aria-hidden keep
+ * the hidden layer inert. Unmount (and canvasBridge.setEditor(null)) now only
+ * happens when the canvas tab itself is CLOSED.
+ */
+export function ViewerHost() {
   const { tabs, activeTabId } = useFileExplorerStore()
-  const tab = tabs.find((t) => t.id === activeTabId)
+  const canvasTab = tabs.find((t) => t.kind === 'canvas')
+  const activeTab = tabs.find((t) => t.id === activeTabId)
+  const canvasActive = activeTab?.kind === 'canvas'
+  return (
+    <div className="relative h-full">
+      {canvasTab && (
+        <div
+          data-testid="canvas-keepalive"
+          aria-hidden={!canvasActive}
+          className={canvasActive ? 'absolute inset-0' : 'pointer-events-none invisible absolute inset-0'}
+        >
+          <CanvasSection />
+        </div>
+      )}
+      {!canvasActive && <ActiveViewer tab={activeTab} />}
+    </div>
+  )
+}
+
+function ActiveViewer({ tab }: { tab: FileTab | undefined }) {
   if (!tab) {
     return (
       <div className="flex h-full items-center justify-center text-xs text-cyan-300/30">
@@ -78,7 +112,8 @@ function ActiveViewer() {
     case 'ai-change':
       return <AiChangeViewer tab={tab} />
     case 'canvas':
-      return <CanvasSection />
+      // Rendered by ViewerHost's keep-alive layer, never through this switch.
+      return null
   }
 }
 
@@ -288,7 +323,7 @@ export function FileExplorerPanel({ rightOffset }: { rightOffset: number }) {
           <LatestPreviewBanner />
           <FileTabStrip />
           <div className="min-h-0 flex-1 overflow-auto bg-black/40">
-            <ActiveViewer />
+            <ViewerHost />
           </div>
         </div>
       </div>

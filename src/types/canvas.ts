@@ -89,6 +89,39 @@ export interface ImageShapeListItem {
   hasFile: boolean
 }
 
+/**
+ * Compact "blurry" view of one shape — modeled on the official tldraw Agent
+ * Starter Kit's `BlurryShape` tier. Used by `canvas_snapshot` when the canvas
+ * is large: shapes inside the viewport are sent in this reduced format (no
+ * `meta` object, truncated text, integer bounds) so the model gets an overview
+ * without the full per-shape payload blowing up its context. Full detail stays
+ * available per-shape via `get_canvas_image` / `focusShapeIds` / `full:true`.
+ */
+export interface BlurryShape {
+  id: string
+  type: string
+  role?: AiCanvasRole
+  bounds: Bounds
+  /** Truncated to a preview length; fetch the shape for the full text. */
+  text?: string
+  assetPath?: string
+  assetId?: string
+  sourceUrl?: string
+}
+
+/**
+ * Group of shapes OUTSIDE the agent's viewport — the Agent Starter Kit's
+ * `PeripheralShapeCluster` tier. Only the cluster's bounds, member count and a
+ * type histogram are sent, giving the model awareness that content exists
+ * elsewhere on the page without paying for its detail.
+ */
+export interface PeripheralShapeCluster {
+  bounds: Bounds
+  count: number
+  /** Histogram of shape types in the cluster, e.g. { image: 3, text: 2 }. */
+  types: Record<string, number>
+}
+
 export interface SelectionSnapshot {
   canvasId: string
   pageId: string

@@ -42,6 +42,12 @@ describe('attachments:read-thumb 扩展名白名单', () => {
     ['miku.pmx', 'application/octet-stream'],
     ['old.pmd', 'application/octet-stream'],
     ['miku-textures.zip', 'application/zip'],
+    // 画布 file-card 内联播放器:canvasBridge isAudio 分类的全部扩展名必须可读,
+    // 否则卡片能建但播放器拿不到字节。
+    ['voice.m4a', 'audio/mp4'],
+    ['clip.opus', 'audio/ogg'],
+    ['clip.oga', 'audio/ogg'],
+    ['clip.weba', 'audio/webm'],
   ])('%s 可读且 mime 正确', async (name, mime) => {
     const res = await handleReadThumb(await writeTmp(name))
     expect(res.ok).toBe(true)

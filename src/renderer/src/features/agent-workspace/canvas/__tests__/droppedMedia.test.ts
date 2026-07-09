@@ -63,23 +63,26 @@ describe('insertImageAt (workspace file → canvas)', () => {
 describe('canvasBridge.insertFileAt routing', () => {
   afterEach(() => canvasBridge.setEditor(null))
 
-  it('drops an AUDIO file as a placeholder note carrying its real workspace path', async () => {
+  it('drops an AUDIO file as a file-card carrying its real workspace path', async () => {
     const { editor, shapes } = makeEditor()
     canvasBridge.setEditor(editor)
     const res = await canvasBridge.insertFileAt('D:/work/theme.mp3', { x: 40, y: 60 })
     expect(res).toEqual({ ok: true, kind: 'audio' })
-    const note = shapes.find((s) => s.type === 'text' && s.typeName !== 'asset')
-    expect(note.meta.assetKind).toBe('audio')
-    expect(note.meta.assetPath).toBe('D:/work/theme.mp3')
+    const card = shapes.find((s) => s.type === 'file-card' && s.typeName !== 'asset')
+    expect(card.meta.assetKind).toBe('audio')
+    expect(card.meta.assetPath).toBe('D:/work/theme.mp3')
+    expect(card.props.kind).toBe('audio')
+    expect(card.props.assetPath).toBe('D:/work/theme.mp3')
   })
 
-  it('drops ANY other file (.txt/.zip/.pdf) as a placeholder with its path', async () => {
+  it('drops ANY other file (.txt/.zip/.pdf) as a file-card with its path', async () => {
     const { editor, shapes } = makeEditor()
     canvasBridge.setEditor(editor)
     const res = await canvasBridge.insertFileAt('C:/notes.txt', { x: 0, y: 0 })
     expect(res).toEqual({ ok: true, kind: 'file' })
-    const note = shapes.find((s) => s.type === 'text' && s.typeName !== 'asset')
-    expect(note.meta.assetKind).toBe('file')
-    expect(note.meta.assetPath).toBe('C:/notes.txt')
+    const card = shapes.find((s) => s.type === 'file-card' && s.typeName !== 'asset')
+    expect(card.meta.assetKind).toBe('file')
+    expect(card.meta.assetPath).toBe('C:/notes.txt')
+    expect(card.props.kind).toBe('file')
   })
 })

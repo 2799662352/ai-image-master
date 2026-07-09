@@ -185,22 +185,36 @@ function makeFakeEditor(): { editor: any; shapes: any[] } {
   return { editor, shapes }
 }
 
-describe('insertFilePlaceholder (path-bearing note for non-renderable files)', () => {
-  it('creates a text shape whose meta carries assetPath + audio kind', () => {
+describe('insertFilePlaceholder (path-bearing file-card for non-renderable files)', () => {
+  it('creates a file-card shape whose props+meta carry assetPath + audio kind', () => {
     const { editor, shapes } = makeFakeEditor()
     insertFilePlaceholder(editor, { assetPath: 'D:/a/song.mp3', title: 'song.mp3', kind: 'audio', x: 10, y: 20 })
-    const note = shapes.find((s) => s.type === 'text')
-    expect(note.meta.assetKind).toBe('audio')
-    expect(note.meta.assetPath).toBe('D:/a/song.mp3')
-    expect(note.meta.aiCanvasRole).toBe('dropped_audio')
+    const card = shapes.find((s) => s.type === 'file-card')
+    expect(card.props.kind).toBe('audio')
+    expect(card.props.title).toBe('song.mp3')
+    expect(card.props.assetPath).toBe('D:/a/song.mp3')
+    expect(card.meta.assetKind).toBe('audio')
+    expect(card.meta.assetPath).toBe('D:/a/song.mp3')
+    expect(card.meta.aiCanvasRole).toBe('dropped_audio')
   })
 
-  it('still drops a (path-less) note when no disk path could be resolved', () => {
+  it('still drops a (path-less) card when no disk path could be resolved', () => {
     const { editor, shapes } = makeFakeEditor()
     insertFilePlaceholder(editor, { title: 'mystery.bin', kind: 'file' })
-    const note = shapes.find((s) => s.type === 'text')
-    expect(note.meta.assetKind).toBe('file')
-    expect(note.meta.assetPath).toBeUndefined()
+    const card = shapes.find((s) => s.type === 'file-card')
+    expect(card.props.assetPath).toBe('')
+    expect(card.meta.assetKind).toBe('file')
+    expect(card.meta.assetPath).toBeUndefined()
+  })
+
+  it('grows the card to fit the inline player for playable-src AND disk-path audio', () => {
+    const { editor, shapes } = makeFakeEditor()
+    insertFilePlaceholder(editor, { title: 'a.mp3', kind: 'audio', assetUrl: 'data:audio/mpeg;base64,AAA' })
+    insertFilePlaceholder(editor, { title: 'p.mp3', kind: 'audio', assetPath: 'D:/music/p.mp3' })
+    insertFilePlaceholder(editor, { title: 'b.mp3', kind: 'audio' })
+    const [bySrc, byPath, plain] = shapes.filter((s) => s.type === 'file-card')
+    expect(bySrc.props.h).toBeGreaterThan(plain.props.h)
+    expect(byPath.props.h).toBeGreaterThan(plain.props.h)
   })
 })
 

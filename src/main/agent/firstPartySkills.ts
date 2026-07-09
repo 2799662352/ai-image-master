@@ -1050,10 +1050,19 @@ You CAN inspect the canvas — do not tell the user you cannot see it. Call
 \`canvas_snapshot\`: it returns a structured list of every shape (images, dashed
 holders, arrows/circles/text annotations with their positions/bounds, plus each
 image's \`assetId\`/\`assetPath\`/intrinsic size) AND an \`imagePath\` — a real on-disk
-PNG render of the whole canvas. Open/view that \`imagePath\` to actually see the
-pixels (layout, what the user drew, current image). Use \`canvas_snapshot\` whenever
-the user asks "what's on the canvas / 看一下画布", or before editing so you know the
-exact target and where the marks are.
+PNG render (\`screenshotScope\` tells you if it shows the whole canvas or just the
+viewport). Open/view that \`imagePath\` to actually see the pixels (layout, what the
+user drew, current image). Use \`canvas_snapshot\` whenever the user asks "what's on
+the canvas / 看一下画布", or before editing so you know the exact target and where
+the marks are. Pass \`screenshot: false\` when you only need the structured data.
+
+On LARGE canvases (>40 shapes) the snapshot is TIERED: viewport shapes come as a
+reduced overview, off-viewport shapes are grouped into \`peripheralClusters\`
+(bounds + count + type histogram), and the PNG is cropped to the viewport. To
+explore: call \`canvas_focus_region\` with a cluster's \`bounds\` (or \`shapeIds\`) to
+move your viewport there, then re-call \`canvas_snapshot\` to see that region in
+detail. \`focusShapeIds: […]\` gets full detail for specific shapes; \`full: true\`
+forces the complete dump (large).
 
 ### Picking and fetching one image (list → fetch)
 
@@ -1138,10 +1147,34 @@ To apply the current marks once without the loop: \`prepare_annotation_edit\`
 (optionally with a \`targetShapeId\`) returns the parsed annotation plan + a ready
 \`editPrompt\`. Then do generate_image → create_image_version exactly as above.
 
+## Tidy layout in one call (canvas_arrange)
+
+To line up multiple shapes (storyboard grids, image rows, comparison columns),
+call \`canvas_arrange { shapeIds, operation, gap? }\` instead of nudging x/y one
+shape at a time. Operations: \`align-left/right/top/bottom\`,
+\`align-center-horizontal/vertical\`, \`distribute-horizontal/vertical\` (≥3 shapes),
+\`stack-horizontal/vertical\` (row/column with a gap), \`pack\` (grid). One atomic
+transaction, and the camera frames the result.
+
+## Edit / delete single shapes (canvas_update_shape / canvas_delete_shapes)
+
+- \`canvas_update_shape { shapeId, x?, y?, w?, h?, rotation?, text?, color? }\`:
+  change ONE shape's position, size, rotation (degrees), text/label or color in
+  a single structured call — no canvas_exec code needed for simple edits.
+- \`canvas_delete_shapes { shapeIds }\`: batch-delete shapes (single undo step).
+  Destructive — only delete what the user clearly wants gone.
+
+## Noticing user changes between looks
+
+\`canvas_snapshot\` returns \`changedSinceLastSnapshot\` ({created/updated/deleted}
+shape ids) whenever the canvas changed since your previous snapshot in this
+thread. Check it first — if the user moved/edited/deleted shapes while you were
+working, re-read those shapes before acting on stale positions.
+
 ## Free-form canvas control (canvas_exec + canvas_search)
 
-For layout/edits the fixed tools above don't cover — move, align, distribute,
-group, delete, resize, reorder, draw custom shapes/connectors — use the escape
+For layout/edits the structured tools above don't cover — group, reorder,
+draw custom shapes/connectors, multi-step transforms — use the escape
 hatch:
 
 1. \`canvas_search { code }\` (read-only): write JS that gets \`spec\` and returns a

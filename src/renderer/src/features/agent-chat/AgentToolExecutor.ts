@@ -238,6 +238,10 @@ export class AgentToolExecutor {
       case 'list_checkpoints':
       case 'canvas_exec':
       case 'canvas_search':
+      case 'canvas_focus_region':
+      case 'canvas_arrange':
+      case 'canvas_update_shape':
+      case 'canvas_delete_shapes':
       // Internal helpers (no MCP surface): driven by the understand_canvas_video
       // main-side orchestrator via router.call to read the selected canvas video
       // and write the understanding result back as a canvas note.
@@ -349,6 +353,19 @@ export class AgentToolExecutor {
       useFileExplorerStore.getState().openCanvasTab()
       await canvasBridge.waitForEditor()
       return { opened: true }
+    }
+    // Cold-start self-heal: every other canvas tool needs the live editor. If
+    // it's absent (canvas never opened this session), open the Canvas tab and
+    // wait for the mount instead of failing with "Canvas is not open" — this
+    // used to force a manual canvas_open→retry dance on the agent. With the
+    // keep-alive mount in ViewerHost the editor survives tab switches, so this
+    // only ever fires ONCE per session (true cold start); the deliberate tab
+    // focus steal is confined to that case. canvas_search (curated API spec)
+    // and list_checkpoints (IPC-only) don't touch the editor — skip for those
+    // so read-only discovery never yanks the user's active tab.
+    if (toolName !== 'canvas_search' && toolName !== 'list_checkpoints' && !canvasBridge.hasEditor()) {
+      useFileExplorerStore.getState().openCanvasTab()
+      await canvasBridge.waitForEditor()
     }
     if (
       toolName === 'canvas_snapshot' ||

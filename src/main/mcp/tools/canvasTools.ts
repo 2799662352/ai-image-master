@@ -82,10 +82,70 @@ export function registerCanvasTools(server: McpServer, router: ToolRouter): void
 
   server.registerTool('canvas_snapshot', {
     description:
-      'SEE the current canvas. Returns a structured list of every shape (images, dashed holders, arrows/circles/text annotations with positions/bounds/assetPath/assetId/intrinsic size) PLUS `imagePath` — an on-disk PNG render of the whole canvas you can open and view. Call this whenever the user asks what is on the canvas, or to inspect the layout before editing/inserting.',
-    inputSchema: z.object({}),
+      'SEE the current canvas. Returns a structured list of every shape (images, dashed holders, arrows/circles/text annotations with positions/bounds/assetPath/assetId/intrinsic size) PLUS `imagePath` — an on-disk PNG render you can open and view (`screenshotScope` says whether it shows the whole canvas or just the viewport). On LARGE canvases (>40 shapes) the response is tiered to protect your context: viewport shapes come as a reduced overview, selected shapes stay full-detail in `focusedShapes`, and off-viewport shapes are grouped into `peripheralClusters` (bounds + count + type histogram) — and the PNG is cropped to the viewport so its pixels stay readable. Use `canvas_focus_region` to move the viewport, then re-snapshot. Pass `focusShapeIds` to get full detail for specific shapes, `full: true` to force the complete dump, or `screenshot: false` to skip the PNG export (faster when you only need the structured data). The response also carries `changedSinceLastSnapshot` ({created/updated/deleted} shape ids) when the canvas changed since your previous snapshot in this thread — check it to notice what the user moved/edited/deleted between your looks. Call this whenever the user asks what is on the canvas, or to inspect the layout before editing/inserting.',
+    inputSchema: z.object({
+      focusShapeIds: z.array(z.string()).optional().describe('Shape ids to return in FULL detail even when the snapshot is tiered.'),
+      full: z.boolean().optional().describe('Force full per-shape detail regardless of canvas size (large output).'),
+      screenshot: z.boolean().optional().describe('Set false to skip the PNG export and return only structured data (faster).'),
+    }),
     annotations: { readOnlyHint: true, idempotentHint: false, openWorldHint: false },
-  }, async () => asResult(await router.call('canvas_snapshot', {})))
+  }, async (params) => asResult(await router.call('canvas_snapshot', params as Record<string, unknown>)))
+
+  server.registerTool('canvas_focus_region', {
+    description:
+      "Move your viewport to a region of the canvas — the navigation half of tiered canvas_snapshot. Pass either `bounds` (e.g. a peripheralCluster's bounds from canvas_snapshot) or `shapeIds` (zooms to fit their union). After it returns, call canvas_snapshot again: the shapes in the new viewport come back in full/blurry detail and the PNG shows that region. Use this to explore a large canvas cluster-by-cluster instead of forcing full:true.",
+    inputSchema: z.object({
+      shapeIds: z.array(z.string()).optional().describe('Shape ids to frame (union of their bounds).'),
+      bounds: z
+        .object({ x: z.number(), y: z.number(), w: z.number(), h: z.number() })
+        .optional()
+        .describe('Page-space region to frame, e.g. a peripheralCluster bounds.'),
+    }),
+    // Moves the camera only — no shape data is touched.
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async (params) => asResult(await router.call('canvas_focus_region', params as Record<string, unknown>)))
+
+  server.registerTool('canvas_arrange', {
+    description:
+      "Batch-layout shapes in ONE call instead of updating x/y one shape at a time: align-left/right/top/bottom, align-center-horizontal/vertical, distribute-horizontal/vertical (needs ≥3 shapes), stack-horizontal/vertical (row/column with a gap), or pack (grid). Pass the shapeIds (from canvas_snapshot / list_canvas_images) and the operation; optional `gap` for stack/pack. Perfect for tidying storyboard grids and image rows.",
+    inputSchema: z.object({
+      shapeIds: z.array(z.string()).min(2).describe('Shapes to arrange (≥2; distribute needs ≥3).'),
+      operation: z.enum([
+        'align-left', 'align-right', 'align-top', 'align-bottom',
+        'align-center-horizontal', 'align-center-vertical',
+        'distribute-horizontal', 'distribute-vertical',
+        'stack-horizontal', 'stack-vertical', 'pack',
+      ]),
+      gap: z.number().optional().describe('Gap in px for stack/pack (defaults: editor margin / 16).'),
+    }),
+    // Repositions existing shapes; never deletes. Re-running the same align is a no-op → idempotent-ish, but stack/pack move things → mark non-idempotent.
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  }, async (params) => asResult(await router.call('canvas_arrange', params as Record<string, unknown>)))
+
+  server.registerTool('canvas_update_shape', {
+    description:
+      "Update ONE shape's position/size/rotation/text/color in a single structured call — no canvas_exec code needed for simple edits. Pass the shapeId (from canvas_snapshot / list_canvas_images) plus only the fields to change: `x`/`y` (absolute page position), `w`/`h` (resize, shapes with size props only), `rotation` (degrees, absolute), `text` (replaces the label/text), `color` (tldraw palette name like 'red'/'blue'). Returns the updated shape summary. For moving/aligning MANY shapes use canvas_arrange instead.",
+    inputSchema: z.object({
+      shapeId: z.string().min(1).describe('Shape id from canvas_snapshot / list_canvas_images.'),
+      x: z.number().optional().describe('New absolute page x.'),
+      y: z.number().optional().describe('New absolute page y.'),
+      w: z.number().optional().describe('New width in px (shapes with w/h props).'),
+      h: z.number().optional().describe('New height in px (shapes with w/h props).'),
+      rotation: z.number().optional().describe('Absolute rotation in DEGREES.'),
+      text: z.string().optional().describe('Replacement text/label for text-like shapes.'),
+      color: z.string().optional().describe("tldraw palette color name, e.g. 'red', 'blue', 'green'."),
+    }),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async (params) => asResult(await router.call('canvas_update_shape', params as Record<string, unknown>)))
+
+  server.registerTool('canvas_delete_shapes', {
+    description:
+      'DELETE shapes from the canvas by id (batch, single undo step). Use for cleaning up wrong/duplicate/leftover shapes the user asked to remove — e.g. an accidental extra image, stale annotations, an empty holder. Ids self-heal like everywhere else (prefix-less/fuzzy ids resolve when unambiguous). Destructive: only delete what the user clearly wants gone.',
+    inputSchema: z.object({
+      shapeIds: z.array(z.string()).min(1).describe('Shape ids to delete (from canvas_snapshot / list_canvas_images).'),
+    }),
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  }, async (params) => asResult(await router.call('canvas_delete_shapes', params as Record<string, unknown>)))
 
   server.registerTool('list_canvas_images', {
     description:

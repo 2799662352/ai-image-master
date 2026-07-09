@@ -1,5 +1,5 @@
 import { AssetRecordType, Box, type Editor, createBindingId, createShapeId, getSnapshot, toRichText } from 'tldraw'
-import type { Bounds, CanvasStatePayload, ImageShapeListItem, ShapeSummary } from '../../../../../types/canvas'
+import type { BlurryShape, Bounds, CanvasStatePayload, ImageShapeListItem, PeripheralShapeCluster, Point, ShapeSummary } from '../../../../../types/canvas'
 
 /**
  * tldraw validates record `meta` with its `jsonValue` validator: a meta object
@@ -45,6 +45,8 @@ export function extractText(editor: Editor, shape: { props?: Record<string, unkn
   const props = shape.props ?? {}
   if (typeof props.text === 'string' && props.text.trim()) return props.text.trim()
   if (typeof props.label === 'string' && props.label.trim()) return props.label.trim()
+  // Custom file-card shapes carry their filename in props.title.
+  if (typeof props.title === 'string' && props.title.trim()) return props.title.trim()
   const richText = props.richText as { content?: unknown[] } | undefined
   if (!richText) return undefined
   const parts: string[] = []
@@ -104,6 +106,11 @@ export function summarizeShape(editor: Editor, shape: any): ShapeSummary {
       if (!summary.assetPath && typeof asset.meta?.assetPath === 'string') summary.assetPath = asset.meta.assetPath
     }
   }
+  // Custom file-card (audio/zip/pdf placeholder): the disk path lives in props
+  // too — fall back to it so the path survives even if meta was stripped.
+  if (shape.type === 'file-card' && !summary.assetPath && typeof shape.props?.assetPath === 'string' && shape.props.assetPath) {
+    summary.assetPath = shape.props.assetPath
+  }
   // Origin URL — the link counterpart of assetPath, so EVERY way content reaches
   // the canvas exposes its source in canvas_snapshot (the "公用能力"):
   //   • a pasted web link → tldraw makes a `bookmark` (or `embed`) whose
@@ -118,6 +125,323 @@ export function summarizeShape(editor: Editor, shape: any): ShapeSummary {
     summary.sourceUrl = meta.sourceUrl
   }
   return summary
+}
+
+/**
+ * Sanitize a model-supplied shape id (official Agent Starter Kit's
+ * `ensureShapeIdExists` idea): the model hallucinates, drops the `shape:`
+ * prefix, or references a shape deleted since it last looked. Instead of
+ * failing the whole tool call with "not found" and forcing a snapshot→retry
+ * round-trip, try to self-heal:
+ *   1. exact id,
+ *   2. missing `shape:` prefix,
+ *   3. unique case-insensitive / suffix match against live page shape ids.
+ * Ambiguous or hopeless ids return a structured error carrying nearby
+ * candidate ids (+types) so the model can correct itself in ONE step.
+ */
+export function resolveShapeId(
+  editor: Editor,
+  rawId: unknown,
+  opts: { preferType?: string } = {},
+): { ok: true; id: string; corrected: boolean } | { ok: false; error: string } {
+  const raw = String(rawId ?? '').trim()
+  if (!raw) return { ok: false, error: 'Missing shapeId.' }
+  const getShape = (id: string): unknown => {
+    try {
+      return editor.getShape(id as never)
+    } catch {
+      return undefined
+    }
+  }
+  if (getShape(raw)) return { ok: true, id: raw, corrected: false }
+  if (!raw.startsWith('shape:') && getShape(`shape:${raw}`)) {
+    return { ok: true, id: `shape:${raw}`, corrected: true }
+  }
+  let pageShapes: Array<{ id: string; type?: string }> = []
+  try {
+    pageShapes = (editor.getCurrentPageShapes() as Array<{ id: string; type?: string }>) ?? []
+  } catch {
+    pageShapes = []
+  }
+  const lowered = raw.toLowerCase()
+  const matches = pageShapes.filter((s) => {
+    const id = String(s.id).toLowerCase()
+    return id === lowered || id === `shape:${lowered}` || id.endsWith(lowered) || (lowered.length >= 6 && id.includes(lowered))
+  })
+  if (matches.length === 1) return { ok: true, id: String(matches[0].id), corrected: true }
+  const pool = opts.preferType ? pageShapes.filter((s) => s.type === opts.preferType) : pageShapes
+  const candidates = (matches.length > 1 ? matches : pool)
+    .slice(0, 6)
+    .map((s) => `${s.id} (${s.type ?? 'unknown'})`)
+    .join(', ')
+  const reason = matches.length > 1 ? `Ambiguous shapeId "${raw}"` : `No shape found for "${raw}"`
+  return {
+    ok: false,
+    error: `${reason}. ${candidates ? `Candidates: ${candidates}.` : 'The canvas has no matching shapes.'} Call canvas_snapshot or list_canvas_images for current ids.`,
+  }
+}
+
+/** Above this many shapes, canvas_snapshot switches from full summaries to the
+ * tiered format (blurry viewport shapes + peripheral clusters). */
+export const TIERED_SNAPSHOT_THRESHOLD = 40
+
+const BLURRY_TEXT_MAX = 80
+
+/** Longest inline `data:` URL we let through to the model before replacing it
+ * with a short descriptor. Anything above this is pure context poison. */
+const DATA_URL_MAX = 256
+
+/**
+ * Replace a huge base64 `data:` URL with a short human/model-readable
+ * descriptor. The official Agent Starter Kit never sends raw asset payloads to
+ * the model (its Blurry/Focused formats carry no src at all) — we keep a stub
+ * so the agent still knows an inline asset EXISTS and how to get the pixels.
+ */
+export function truncateDataUrl(value: string): string {
+  if (!value.startsWith('data:') || value.length <= DATA_URL_MAX) return value
+  const headEnd = value.indexOf(',')
+  const head = headEnd > 0 ? value.slice(5, headEnd) : ''
+  const mime = head.split(';')[0] || 'unknown'
+  const kb = Math.max(1, Math.round((value.length * 0.75) / 1024))
+  return `[inline ${mime} ~${kb}KB omitted — use assetPath or get_canvas_image/get_canvas_video]`
+}
+
+function sanitizeJsonValue(value: unknown): unknown {
+  if (typeof value === 'string') return truncateDataUrl(value)
+  if (Array.isArray(value)) return value.map(sanitizeJsonValue)
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = sanitizeJsonValue(v)
+    return out
+  }
+  return value
+}
+
+function roundPoint(p: Point): Point {
+  return { x: Math.round(p.x), y: Math.round(p.y) }
+}
+
+/**
+ * Payload hygiene for AGENT-FACING shape summaries (canvas_snapshot full mode,
+ * focusedShapes, list/get image tools). summarizeShape itself stays full
+ * fidelity because internal consumers (getSelectedVideo upload, annotation
+ * export) need the real data: URL; this boundary copy:
+ *   - rounds bounds / arrow points (official kit rounds all numbers sent to
+ *     the model — sub-pixel floats are token noise),
+ *   - replaces multi-MB base64 `assetUrl`s with a short descriptor,
+ *   - sanitizes `meta` values the same way (meta.assetUrl mirrors the leak).
+ * Without this, ONE generated image echoed ~2MB of base64 into the context.
+ */
+export function sanitizeSummaryForAgent(summary: ShapeSummary): ShapeSummary {
+  const out: ShapeSummary = {
+    ...summary,
+    bounds: {
+      x: Math.round(summary.bounds.x),
+      y: Math.round(summary.bounds.y),
+      w: Math.round(summary.bounds.w),
+      h: Math.round(summary.bounds.h),
+    },
+  }
+  if (out.arrowStart) out.arrowStart = roundPoint(out.arrowStart)
+  if (out.arrowEnd) out.arrowEnd = roundPoint(out.arrowEnd)
+  if (typeof out.assetUrl === 'string') out.assetUrl = truncateDataUrl(out.assetUrl)
+  if (out.meta) out.meta = sanitizeJsonValue(out.meta) as ShapeSummary['meta']
+  return out
+}
+
+/**
+ * Reduce a full ShapeSummary to the compact "blurry" tier (official Agent
+ * Starter Kit pattern): integer bounds, truncated text, no `meta` object. The
+ * addressing fields the agent needs to drill down (id, assetPath, assetId) are
+ * kept so a follow-up get_canvas_image / focusShapeIds call is always possible.
+ */
+export function toBlurryShape(summary: ShapeSummary): BlurryShape {
+  const text = summary.text && summary.text.length > BLURRY_TEXT_MAX ? `${summary.text.slice(0, BLURRY_TEXT_MAX)}…` : summary.text
+  const blurry: BlurryShape = {
+    id: summary.id,
+    type: summary.type,
+    bounds: {
+      x: Math.round(summary.bounds.x),
+      y: Math.round(summary.bounds.y),
+      w: Math.round(summary.bounds.w),
+      h: Math.round(summary.bounds.h),
+    },
+  }
+  if (summary.role) blurry.role = summary.role
+  if (text) blurry.text = text
+  if (summary.assetPath) blurry.assetPath = summary.assetPath
+  if (summary.assetId) blurry.assetId = summary.assetId
+  if (summary.sourceUrl) blurry.sourceUrl = summary.sourceUrl
+  return blurry
+}
+
+/**
+ * Group off-viewport shapes into spatial clusters (the Agent Starter Kit's
+ * PeripheralShapeCluster tier). Grid-bucket clustering: shapes whose centers
+ * fall in the same `cellSize` grid cell merge into one cluster carrying the
+ * union bounds, a count and a type histogram. Deterministic and O(n) — good
+ * enough for "there are ~12 images up-left of your viewport" awareness.
+ */
+export function clusterPeripheralShapes(summaries: ShapeSummary[], cellSize = 1200): PeripheralShapeCluster[] {
+  const cells = new Map<string, { minX: number; minY: number; maxX: number; maxY: number; count: number; types: Record<string, number> }>()
+  for (const s of summaries) {
+    const cx = s.bounds.x + s.bounds.w / 2
+    const cy = s.bounds.y + s.bounds.h / 2
+    const key = `${Math.floor(cx / cellSize)}:${Math.floor(cy / cellSize)}`
+    const cell = cells.get(key)
+    if (cell) {
+      cell.minX = Math.min(cell.minX, s.bounds.x)
+      cell.minY = Math.min(cell.minY, s.bounds.y)
+      cell.maxX = Math.max(cell.maxX, s.bounds.x + s.bounds.w)
+      cell.maxY = Math.max(cell.maxY, s.bounds.y + s.bounds.h)
+      cell.count += 1
+      cell.types[s.type] = (cell.types[s.type] ?? 0) + 1
+    } else {
+      cells.set(key, {
+        minX: s.bounds.x,
+        minY: s.bounds.y,
+        maxX: s.bounds.x + s.bounds.w,
+        maxY: s.bounds.y + s.bounds.h,
+        count: 1,
+        types: { [s.type]: 1 },
+      })
+    }
+  }
+  return Array.from(cells.values()).map((cell) => ({
+    bounds: {
+      x: Math.round(cell.minX),
+      y: Math.round(cell.minY),
+      w: Math.round(cell.maxX - cell.minX),
+      h: Math.round(cell.maxY - cell.minY),
+    },
+    count: cell.count,
+    types: cell.types,
+  }))
+}
+
+export interface TieredShapesResult {
+  detailLevel: 'full' | 'tiered'
+  /** Full summaries ('full') or blurry viewport shapes ('tiered'). */
+  shapes: ShapeSummary[] | BlurryShape[]
+  /** Only in 'tiered': full summaries for selected + focusShapeIds shapes. */
+  focusedShapes?: ShapeSummary[]
+  /** Only in 'tiered': grouped shapes outside the viewport. */
+  peripheralClusters?: PeripheralShapeCluster[]
+  /** Only in 'tiered': the viewport used to split in/out. */
+  viewportBounds?: Bounds
+}
+
+/**
+ * Split full shape summaries into the tiered canvas_snapshot format (Agent
+ * Starter Kit's Blurry/Focused/Peripheral levels) once a canvas outgrows
+ * `threshold` shapes:
+ *   - viewport shapes → BlurryShape overview,
+ *   - selected + explicitly requested (focusShapeIds) shapes → full summaries,
+ *   - off-viewport shapes → PeripheralShapeCluster groups.
+ * Below the threshold (or with `full: true`, or when the editor can't report a
+ * viewport — e.g. simple fakes) everything is returned in full as before.
+ */
+export function buildTieredShapes(
+  editor: Editor,
+  summaries: ShapeSummary[],
+  opts: { threshold?: number; full?: boolean; focusShapeIds?: string[]; selectedIds?: string[] } = {},
+): TieredShapesResult {
+  const threshold = opts.threshold ?? TIERED_SNAPSHOT_THRESHOLD
+  const viewport = (editor as unknown as { getViewportPageBounds?: () => Box }).getViewportPageBounds?.()
+  if (opts.full || summaries.length <= threshold || !viewport) {
+    return { detailLevel: 'full', shapes: summaries.map(sanitizeSummaryForAgent) }
+  }
+  const focusIds = new Set<string>([...(opts.focusShapeIds ?? []), ...(opts.selectedIds ?? [])])
+  const inViewport = (b: Bounds): boolean =>
+    b.x + b.w >= viewport.x && b.x <= viewport.x + viewport.w && b.y + b.h >= viewport.y && b.y <= viewport.y + viewport.h
+  const focused: ShapeSummary[] = []
+  const blurry: BlurryShape[] = []
+  const peripheral: ShapeSummary[] = []
+  for (const s of summaries) {
+    if (focusIds.has(s.id)) {
+      focused.push(sanitizeSummaryForAgent(s))
+    } else if (inViewport(s.bounds)) {
+      blurry.push(toBlurryShape(s))
+    } else {
+      peripheral.push(s)
+    }
+  }
+  return {
+    detailLevel: 'tiered',
+    shapes: blurry,
+    focusedShapes: focused,
+    peripheralClusters: clusterPeripheralShapes(peripheral),
+    viewportBounds: { x: Math.round(viewport.x), y: Math.round(viewport.y), w: Math.round(viewport.w), h: Math.round(viewport.h) },
+  }
+}
+
+export interface CanvasLint {
+  kind: 'overlapping-images' | 'empty-holder' | 'degenerate-shape' | 'far-from-origin'
+  shapeIds: string[]
+  message: string
+}
+
+const LINT_MAX = 10
+
+function overlapArea(a: Bounds, b: Bounds): number {
+  const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)
+  const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y)
+  return w > 0 && h > 0 ? w * h : 0
+}
+
+/**
+ * Cheap heuristics flagging LIKELY layout problems, attached to canvas_snapshot
+ * (the official Agent Starter Kit feeds similar "lints" to its agent). Not
+ * validation — just attention hints so the agent (esp. the auto-retouch loop)
+ * spots issues without diffing the PNG pixel by pixel:
+ *   - overlapping-images: two images covering >25% of the smaller one,
+ *   - empty-holder: a dashed holder no inserted image references,
+ *   - degenerate-shape: near-zero width/height (probably an accidental write),
+ *   - far-from-origin: content stranded >20k px out (easy to lose).
+ */
+export function buildCanvasLints(summaries: ShapeSummary[]): CanvasLint[] {
+  const lints: CanvasLint[] = []
+  const images = summaries.filter((s) => s.type === 'image')
+  outer: for (let i = 0; i < images.length; i++) {
+    for (let j = i + 1; j < images.length; j++) {
+      const a = images[i]
+      const b = images[j]
+      const overlap = overlapArea(a.bounds, b.bounds)
+      const smaller = Math.min(a.bounds.w * a.bounds.h, b.bounds.w * b.bounds.h)
+      if (smaller > 0 && overlap / smaller > 0.25) {
+        lints.push({
+          kind: 'overlapping-images',
+          shapeIds: [a.id, b.id],
+          message: `Images ${a.id} and ${b.id} overlap by >25% of the smaller one.`,
+        })
+        if (lints.length >= LINT_MAX) break outer
+      }
+    }
+  }
+  const filledHolderIds = new Set(summaries.map((s) => s.meta?.holderId).filter(Boolean))
+  for (const s of summaries) {
+    if (lints.length >= LINT_MAX) break
+    if (s.role === 'image_holder' && !filledHolderIds.has(s.id)) {
+      lints.push({ kind: 'empty-holder', shapeIds: [s.id], message: `Holder ${s.id} ("${s.text ?? ''}") has no image yet.` })
+    }
+  }
+  for (const s of summaries) {
+    if (lints.length >= LINT_MAX) break
+    if (s.bounds.w < 2 || s.bounds.h < 2) {
+      // text/arrow shapes legitimately report 0-height bounds from fallbacks — only
+      // flag media/geo where a degenerate size is clearly wrong.
+      if (s.type === 'image' || s.type === 'video' || s.type === 'geo') {
+        lints.push({ kind: 'degenerate-shape', shapeIds: [s.id], message: `Shape ${s.id} (${s.type}) has near-zero size (${Math.round(s.bounds.w)}×${Math.round(s.bounds.h)}).` })
+      }
+    }
+  }
+  for (const s of summaries) {
+    if (lints.length >= LINT_MAX) break
+    if (Math.abs(s.bounds.x) > 20000 || Math.abs(s.bounds.y) > 20000) {
+      lints.push({ kind: 'far-from-origin', shapeIds: [s.id], message: `Shape ${s.id} sits >20000px from the origin — easy to lose.` })
+    }
+  }
+  return lints.slice(0, LINT_MAX)
 }
 
 /** Minimal shape of a tldraw 'file' external-asset handler (what the editor's
@@ -192,7 +516,8 @@ export function listImageShapes(editor: Editor): { items: ImageShapeListItem[] }
         version: summary.version,
         title: summary.meta?.title,
         assetPath: summary.assetPath ?? null,
-        assetUrl: summary.assetUrl ?? null,
+        // list_canvas_images is agent-facing: never echo a multi-MB data: URL.
+        assetUrl: summary.assetUrl ? truncateDataUrl(summary.assetUrl) : null,
         hasFile: Boolean(summary.assetPath),
       }
     })
@@ -260,6 +585,268 @@ export function zoomToFitShapes(editor: Editor, shapeIds: string[]): void {
     e.setCamera({ x: cameraX, y: cameraY, z: zoom }, { animation: { duration: CAMERA_ANIM_MS } })
   } catch {
     // Camera framing is best-effort; never let it break a canvas write.
+  }
+}
+
+/**
+ * Move the agent's viewport to a region — the action half of the tiered
+ * snapshot loop (official Agent Kit's "move its viewport" capability). The
+ * blurry overview / peripheralClusters tell the agent WHERE things are; this
+ * lets it actually go there, then re-snapshot for full viewport detail.
+ * Accepts either explicit page bounds (e.g. a cluster's bounds) or shape ids
+ * (union of their page bounds). Unlike zoomToFitShapes this is an explicit
+ * navigation request, so it MAY zoom in past the user's current level.
+ */
+export function focusRegion(
+  editor: Editor,
+  opts: { shapeIds?: string[]; bounds?: { x: number; y: number; w: number; h: number } },
+): { ok: true; viewportBounds: { x: number; y: number; w: number; h: number } } | { ok: false; error: string } {
+  let target: { x: number; y: number; w: number; h: number } | undefined
+  if (opts.bounds && Number.isFinite(opts.bounds.x) && Number.isFinite(opts.bounds.y)) {
+    target = {
+      x: opts.bounds.x,
+      y: opts.bounds.y,
+      w: Math.max(1, Number(opts.bounds.w) || 1),
+      h: Math.max(1, Number(opts.bounds.h) || 1),
+    }
+  } else if (opts.shapeIds && opts.shapeIds.length > 0) {
+    // Manual union instead of Box.Common: getShapePageBounds returns plain
+    // {x,y,w,h}-compatible objects in tests, and Box.Common needs Box instances.
+    let minX = Number.POSITIVE_INFINITY
+    let minY = Number.POSITIVE_INFINITY
+    let maxX = Number.NEGATIVE_INFINITY
+    let maxY = Number.NEGATIVE_INFINITY
+    for (const id of opts.shapeIds) {
+      const b = editor.getShapePageBounds(id as never)
+      if (!b) continue
+      minX = Math.min(minX, b.x)
+      minY = Math.min(minY, b.y)
+      maxX = Math.max(maxX, b.x + b.w)
+      maxY = Math.max(maxY, b.y + b.h)
+    }
+    if (!Number.isFinite(minX)) return { ok: false, error: 'None of the given shapeIds have page bounds.' }
+    target = { x: minX, y: minY, w: Math.max(1, maxX - minX), h: Math.max(1, maxY - minY) }
+  }
+  if (!target) return { ok: false, error: 'canvas_focus_region needs `bounds` or non-empty `shapeIds`.' }
+  editor.zoomToBounds(target, { inset: 48, animation: { duration: CAMERA_ANIM_MS } })
+  const vp = editor.getViewportPageBounds()
+  return {
+    ok: true,
+    viewportBounds: { x: Math.round(vp.x), y: Math.round(vp.y), w: Math.round(vp.w), h: Math.round(vp.h) },
+  }
+}
+
+/** Operations exposed by canvas_arrange — thin names over tldraw's batch layout APIs. */
+export type ArrangeOperation =
+  | 'align-left'
+  | 'align-right'
+  | 'align-top'
+  | 'align-bottom'
+  | 'align-center-horizontal'
+  | 'align-center-vertical'
+  | 'distribute-horizontal'
+  | 'distribute-vertical'
+  | 'stack-horizontal'
+  | 'stack-vertical'
+  | 'pack'
+
+export const ARRANGE_OPERATIONS: readonly ArrangeOperation[] = [
+  'align-left',
+  'align-right',
+  'align-top',
+  'align-bottom',
+  'align-center-horizontal',
+  'align-center-vertical',
+  'distribute-horizontal',
+  'distribute-vertical',
+  'stack-horizontal',
+  'stack-vertical',
+  'pack',
+]
+
+/**
+ * Batch layout for the agent (official Agent Kit's align/distribute/stack
+ * capability). Without this the agent lays out grids by updating x/y one shape
+ * at a time — slow, round-trip heavy, and usually crooked. Wraps tldraw's
+ * native alignShapes / distributeShapes / stackShapes / packShapes in one
+ * atomic transaction and frames the result.
+ */
+export function arrangeShapes(
+  editor: Editor,
+  shapeIds: string[],
+  operation: ArrangeOperation,
+  gap?: number,
+): { ok: true; operation: ArrangeOperation; arrangedCount: number } | { ok: false; error: string } {
+  const minimum = operation.startsWith('distribute') ? 3 : 2
+  if (shapeIds.length < minimum) {
+    return { ok: false, error: `"${operation}" needs at least ${minimum} shapes (got ${shapeIds.length}).` }
+  }
+  const ids = shapeIds as never[]
+  editor.run(() => {
+    switch (operation) {
+      case 'align-left':
+        editor.alignShapes(ids, 'left')
+        break
+      case 'align-right':
+        editor.alignShapes(ids, 'right')
+        break
+      case 'align-top':
+        editor.alignShapes(ids, 'top')
+        break
+      case 'align-bottom':
+        editor.alignShapes(ids, 'bottom')
+        break
+      case 'align-center-horizontal':
+        editor.alignShapes(ids, 'center-horizontal')
+        break
+      case 'align-center-vertical':
+        editor.alignShapes(ids, 'center-vertical')
+        break
+      case 'distribute-horizontal':
+        editor.distributeShapes(ids, 'horizontal')
+        break
+      case 'distribute-vertical':
+        editor.distributeShapes(ids, 'vertical')
+        break
+      case 'stack-horizontal':
+        editor.stackShapes(ids, 'horizontal', gap)
+        break
+      case 'stack-vertical':
+        editor.stackShapes(ids, 'vertical', gap)
+        break
+      case 'pack':
+        editor.packShapes(ids, gap ?? 16)
+        break
+      default: {
+        const exhausted: never = operation
+        throw new Error(`Unknown arrange operation: ${String(exhausted)}`)
+      }
+    }
+  })
+  zoomToFitShapes(editor, shapeIds)
+  return { ok: true, operation, arrangedCount: shapeIds.length }
+}
+
+/**
+ * Structured single-shape update (official Agent Starter Kit ships dedicated
+ * update/move/resize/label actions instead of forcing everything through raw
+ * store code). Applies only the given fields; prop writes are guarded by "does
+ * this shape type actually have that prop" so a bad request returns a friendly
+ * error instead of a tldraw ValidationError crashing the canvas.
+ *   - x/y: absolute page position; rotation: DEGREES (converted to radians —
+ *     models think in degrees), absolute;
+ *   - w/h: shape props when present (geo/image/video/file-card/note…);
+ *   - text: richText for shapes with a richText prop (geo/text/note/arrow),
+ *     plain `text` prop otherwise, file-card falls back to `title`;
+ *   - color: shapes with a `color` prop.
+ */
+export function updateShapePartial(
+  editor: Editor,
+  shapeId: string,
+  patch: { x?: number; y?: number; w?: number; h?: number; rotation?: number; text?: string; color?: string },
+): { ok: true; shape: ShapeSummary } | { ok: false; error: string } {
+  const shape = editor.getShape(shapeId as never) as { id: string; type: string; props?: Record<string, unknown> } | undefined
+  if (!shape) return { ok: false, error: `No shape found: ${shapeId}` }
+  const update: Record<string, unknown> = { id: shape.id, type: shape.type }
+  const props: Record<string, unknown> = {}
+  const hasProp = (key: string): boolean => shape.props != null && key in shape.props
+  let touched = false
+  if (Number.isFinite(patch.x)) { update.x = Number(patch.x); touched = true }
+  if (Number.isFinite(patch.y)) { update.y = Number(patch.y); touched = true }
+  if (Number.isFinite(patch.rotation)) { update.rotation = (Number(patch.rotation) * Math.PI) / 180; touched = true }
+  if (Number.isFinite(patch.w) || Number.isFinite(patch.h)) {
+    if (!hasProp('w') || !hasProp('h')) {
+      return { ok: false, error: `Shape ${shapeId} (${shape.type}) has no w/h props — it cannot be resized this way.` }
+    }
+    if (Number.isFinite(patch.w)) props.w = Math.max(1, Number(patch.w))
+    if (Number.isFinite(patch.h)) props.h = Math.max(1, Number(patch.h))
+    touched = true
+  }
+  if (typeof patch.text === 'string') {
+    if (hasProp('richText')) props.richText = toRichText(patch.text)
+    else if (hasProp('text')) props.text = patch.text
+    else if (hasProp('title')) props.title = patch.text
+    else return { ok: false, error: `Shape ${shapeId} (${shape.type}) has no text-like prop to update.` }
+    touched = true
+  }
+  if (typeof patch.color === 'string' && patch.color) {
+    if (!hasProp('color')) return { ok: false, error: `Shape ${shapeId} (${shape.type}) has no color prop.` }
+    props.color = patch.color
+    touched = true
+  }
+  if (!touched) return { ok: false, error: 'canvas_update_shape: no updatable fields given (x/y/w/h/rotation/text/color).' }
+  if (Object.keys(props).length > 0) update.props = props
+  editor.run(() => {
+    editor.updateShape(update as never)
+  })
+  const updated = editor.getShape(shapeId as never)
+  return { ok: true, shape: sanitizeSummaryForAgent(summarizeShape(editor, updated)) }
+}
+
+/**
+ * Structured batch delete — the missing destructive counterpart of the insert
+ * tools (previously only reachable via raw canvas_exec code). Ids are resolved
+ * by the caller (canvasBridge runs resolveShapeId per id), so everything here
+ * is known to exist; wrapped in editor.run for a single undo entry.
+ */
+export function deleteShapesById(
+  editor: Editor,
+  shapeIds: string[],
+): { ok: true; deletedCount: number; deletedIds: string[] } | { ok: false; error: string } {
+  if (shapeIds.length === 0) return { ok: false, error: 'canvas_delete_shapes requires at least one shapeId.' }
+  editor.run(() => {
+    editor.deleteShapes(shapeIds as never[])
+  })
+  return { ok: true, deletedCount: shapeIds.length, deletedIds: shapeIds }
+}
+
+/**
+ * Cheap per-shape fingerprint for the "what changed since your last snapshot"
+ * diff (the official Agent Starter Kit feeds the agent the user's recent
+ * actions; we approximate it by diffing snapshots). Captures identity +
+ * geometry + text + version — enough to notice moves/resizes/edits without
+ * hashing the whole shape record.
+ */
+export function fingerprintSummary(s: ShapeSummary): string {
+  const b = s.bounds
+  return `${s.type}|${Math.round(b.x)},${Math.round(b.y)},${Math.round(b.w)},${Math.round(b.h)}|${s.text ?? ''}|${s.version ?? ''}`
+}
+
+export function fingerprintSummaries(summaries: ShapeSummary[]): Map<string, string> {
+  const map = new Map<string, string>()
+  for (const s of summaries) map.set(s.id, fingerprintSummary(s))
+  return map
+}
+
+export interface SnapshotDiff {
+  created: string[]
+  updated: string[]
+  deleted: string[]
+}
+
+const DIFF_ID_CAP = 100
+
+/** Diff the previous snapshot's fingerprints against the current summaries.
+ * Returns undefined when nothing changed (so the field is omitted entirely). */
+export function diffShapeFingerprints(prev: Map<string, string>, current: ShapeSummary[]): SnapshotDiff | undefined {
+  const created: string[] = []
+  const updated: string[] = []
+  const seen = new Set<string>()
+  for (const s of current) {
+    seen.add(s.id)
+    const old = prev.get(s.id)
+    if (old === undefined) created.push(s.id)
+    else if (old !== fingerprintSummary(s)) updated.push(s.id)
+  }
+  const deleted: string[] = []
+  for (const id of prev.keys()) {
+    if (!seen.has(id)) deleted.push(id)
+  }
+  if (created.length === 0 && updated.length === 0 && deleted.length === 0) return undefined
+  return {
+    created: created.slice(0, DIFF_ID_CAP),
+    updated: updated.slice(0, DIFF_ID_CAP),
+    deleted: deleted.slice(0, DIFF_ID_CAP),
   }
 }
 
@@ -418,33 +1005,40 @@ export function insertTextNote(
 }
 
 /**
- * Drop a labeled PLACEHOLDER note for a file tldraw cannot render as a shape —
- * audio (mp3/wav…), archives, pdf, arbitrary docs. tldraw only makes real shapes
- * for image/video, so without this such files would land NOWHERE and the agent
- * could never see them. The placeholder is a normal text shape whose `meta`
- * carries the real on-disk `assetPath` (+ `assetKind`), so `summarizeShape`
- * surfaces the path in canvas_snapshot exactly like a media shape — the agent can
- * then e.g. mux an mp3 with ffmpeg by reading that path. Atomic editor.run +
- * best-effort zoom-to-fit, same discipline as the media inserts.
+ * Drop a PLACEHOLDER card for a file tldraw cannot render as a shape — audio
+ * (mp3/wav…), archives, pdf, arbitrary docs. tldraw only makes real shapes for
+ * image/video, so without this such files would land NOWHERE and the agent
+ * could never see them. Creates our custom `file-card` shape (registered via
+ * canvasShapeUtils): a styled card with icon/name/ext/path and, for audio with
+ * a loadable src, an inline player. `meta` still carries the on-disk
+ * `assetPath` (+ `assetKind`), so `summarizeShape` surfaces the path in
+ * canvas_snapshot exactly like a media shape — the agent can e.g. mux an mp3
+ * with ffmpeg by reading that path. Atomic editor.run + best-effort
+ * zoom-to-fit, same discipline as the media inserts.
  */
 export function insertFilePlaceholder(
   editor: Editor,
   payload: { assetPath?: string; assetUrl?: string; title: string; kind: 'audio' | 'file'; x?: number; y?: number },
 ): { shapeId: string; bounds: Bounds } {
   const title = String(payload.title ?? 'file').trim() || 'file'
-  const icon = payload.kind === 'audio' ? '🎵' : '📎'
-  const label = payload.assetPath ? `${icon} ${title}\n${payload.assetPath}` : `${icon} ${title}`
   const x = Number(payload.x ?? 100)
   const y = Number(payload.y ?? 100)
-  const w = 360
+  const w = 320
+  // Extra row for the inline audio player: either a directly playable src OR a
+  // disk path (FileCardShapeUtil resolves paths to blob: via the attachments IPC).
+  const playable =
+    payload.kind === 'audio' &&
+    ((typeof payload.assetUrl === 'string' && /^(data|blob|https?):/.test(payload.assetUrl)) ||
+      (typeof payload.assetPath === 'string' && payload.assetPath.length > 0))
+  const h = playable ? 128 : 88
   const shapeId = createShapeId(`file_${crypto.randomUUID().slice(0, 8)}`) as never
   editor.run(() => {
     editor.createShape({
       id: shapeId,
-      type: 'text',
+      type: 'file-card',
       x,
       y,
-      props: { richText: toRichText(label), w, autoSize: false, color: 'grey', size: 's', textAlign: 'start' },
+      props: { w, h, kind: payload.kind, title, assetPath: payload.assetPath ?? '', assetUrl: payload.assetUrl ?? '' },
       meta: cleanMeta({
         aiCanvasRole: payload.kind === 'audio' ? 'dropped_audio' : 'dropped_file',
         assetKind: payload.kind,
@@ -457,7 +1051,7 @@ export function insertFilePlaceholder(
     editor.select(shapeId)
   })
   zoomToFitShapes(editor, [String(shapeId)])
-  return { shapeId: String(shapeId), bounds: { x, y, w, h: 0 } }
+  return { shapeId: String(shapeId), bounds: { x, y, w, h } }
 }
 
 /** Minimal shape of tldraw's 'files' external-CONTENT handler (`editor
