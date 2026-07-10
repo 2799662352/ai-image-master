@@ -101,4 +101,4 @@ resources/first-party-skills/<name>/SKILL.md ← App-only skill 权威源(canvas
 - 重构前:12 条依赖环、14 处 fanout 超预算、18 处模型名单尾巴、hook 全文注入 sd2-pe/orchestrator;「生成视频」会命中十余个 skill。
 - 重构后:审计 0 违规;普通单镜请求收敛到入口 + sd2-pe 两个 skill;专业/制片场景仍可逐级升级到 orchestrator/film-studio,角色一致性与资产门保留在专业/制片级。
 - `catimation-video-director-router` 未删除,降级为症状查找表兼容壳;其分类/套餐逻辑已并入 `catimation-video` 正文。
-- 本轮只改本地代码与验证,未发布 COS / 市场热更新 / 远端 Git。
+- 发布状态(2026-07-10):插件/skill 市场已随重构内容发布(6 插件 + 51 单技能,catalog.json 更新);重构与 v4.3.92 版本提交已推送 GitHub main;`npm run release:cn` 已产出安装包并上传 COS,`releases/latest.yml` 指向 4.3.92。
