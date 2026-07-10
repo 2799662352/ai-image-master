@@ -121,4 +121,40 @@ describe('CodexProtocolClient approvals', () => {
 
     expect(() => client!.respondToServerRequest({ id: '42', approved: true })).toThrow(/No pending/)
   })
+
+  it('uses the 0.144 MCP elicitation response envelope instead of approved:boolean', async () => {
+    const approvals: CodexApprovalRequest[] = []
+    server = await startFakeApprovalServer()
+    client = new CodexProtocolClient({
+      url: server.url,
+      clientInfo: { name: 'catimation-test', version: '0.0.0' },
+      onApprovalRequest: (request) => approvals.push(request),
+    })
+    await client.start()
+
+    server.sendRequest({
+      id: 43,
+      method: 'mcpServer/elicitation/request',
+      params: {
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        serverName: 'codex_apps',
+        mode: 'url',
+        message: 'Sign in to continue',
+        url: 'https://example.com/auth',
+        elicitationId: 'elicit-1',
+      },
+    })
+    await vi.waitFor(() => expect(approvals).toHaveLength(1))
+
+    client.respondToServerRequest({ id: '43', approved: true })
+
+    await vi.waitFor(() => {
+      expect(server.receivedFromClient).toContainEqual({
+        jsonrpc: '2.0',
+        id: 43,
+        result: { action: 'accept', content: null, _meta: null },
+      })
+    })
+  })
 })

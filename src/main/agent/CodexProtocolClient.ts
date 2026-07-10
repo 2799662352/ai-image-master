@@ -13,6 +13,8 @@ import {
   isServerRequest,
   type ClientInfo,
   type CollaborationModeListResponse,
+  type CodexModelListParams,
+  type CodexModelListResponse,
   type ServerMessage,
   type ThreadStartParams,
   type ThreadStartResponse,
@@ -124,6 +126,7 @@ type OrphanNotification = { event: TurnScopedStreamEvent; turnId: string }
 
 type PendingServerRequest = {
   wireId: number
+  method: string
   timer: ReturnType<typeof setTimeout>
 }
 
@@ -279,6 +282,8 @@ export class CodexProtocolClient {
       const turnResponse = await this.rpc<TurnStartResponse>('turn/start', {
         threadId: actualThreadId,
         input: mapUserInput(input.items),
+        model: input.model,
+        ...(input.reasoningEffort ? { effort: input.reasoningEffort } : {}),
         ...(input.clientUserMessageId ? { clientUserMessageId: input.clientUserMessageId } : {}),
         ...(input.collaborationMode ? { collaborationMode: input.collaborationMode } : {}),
       })
@@ -435,6 +440,11 @@ export class CodexProtocolClient {
     return this.rpc('config/read', {})
   }
 
+  /** List the runtime's model catalog instead of guessing model slugs in UI code. */
+  async listModels(params?: CodexModelListParams): Promise<CodexModelListResponse> {
+    return this.rpc<CodexModelListResponse>('model/list', params ?? {})
+  }
+
   /**
    * List Codex feature flags with stage metadata + enabled/default state
    * (`experimentalFeature/list`, app-server v2). Used to discover the exact
@@ -511,8 +521,9 @@ export class CodexProtocolClient {
 
   // ─── Native Plugin / Marketplace / Connectors RPC (app-server v2, ≥0.140) ──
   // Method strings pinned from openai/codex
-  // `app-server-protocol/src/protocol/common.rs` (client_request_definitions!)
-  // at tag rust-v0.141.0. These require a Codex binary ≥0.140; remote catalogs
+  // `app-server-protocol/src/protocol/common.rs` (client_request_definitions!),
+  // originally at rust-v0.141.0 and revalidated at rust-v0.144.1. These require
+  // a Codex binary ≥0.140; remote catalogs
   // (`vertical` / `created-by-me-remote`) and `app/list` are additionally
   // gated behind ChatGPT auth / experimental feature flags server-side.
   // NOTE: the wire method is `app/list` (singular) even though the Rust enum
@@ -591,10 +602,17 @@ export class CodexProtocolClient {
     if (!pending) throw new Error(`No pending Codex server request for id ${response.id}`)
     this.pendingServerRequests.delete(response.id)
     clearTimeout(pending.timer)
-    this.sendServerRequestResponse(pending.wireId, {
-      approved: response.approved,
-      ...(response.message ? { message: response.message } : {}),
-    })
+    const result = pending.method === 'mcpServer/elicitation/request'
+      ? {
+          action: response.approved ? 'accept' : 'decline',
+          content: null,
+          _meta: null,
+        }
+      : {
+          approved: response.approved,
+          ...(response.message ? { message: response.message } : {}),
+        }
+    this.sendServerRequestResponse(pending.wireId, result)
   }
 
   private openOnce(url: string): Promise<WebSocket> {
@@ -711,10 +729,10 @@ export class CodexProtocolClient {
   private queueServerRequest(msg: { id: number; method: string; params?: unknown }): void {
     const id = String(msg.id)
     if (this.pendingServerRequests.has(id)) {
-      this.sendServerRequestResponse(msg.id, {
-        approved: false,
-        message: 'duplicate approval request id',
-      })
+      this.sendServerRequestResponse(
+        msg.id,
+        this.serverRequestRejection(msg.method, 'duplicate approval request id', 'decline'),
+      )
       return
     }
 
@@ -723,13 +741,13 @@ export class CodexProtocolClient {
       const pending = this.pendingServerRequests.get(id)
       if (!pending) return
       this.pendingServerRequests.delete(id)
-      this.sendServerRequestResponse(pending.wireId, {
-        approved: false,
-        message: 'approval request timed out',
-      })
+      this.sendServerRequestResponse(
+        pending.wireId,
+        this.serverRequestRejection(pending.method, 'approval request timed out', 'cancel'),
+      )
     }, this.approvalTimeoutMs)
     timer.unref?.()
-    this.pendingServerRequests.set(id, { wireId: msg.id, timer })
+    this.pendingServerRequests.set(id, { wireId: msg.id, method: msg.method, timer })
 
     this.options.onApprovalRequest?.({
       id,
@@ -740,17 +758,31 @@ export class CodexProtocolClient {
     })
   }
 
-  private sendServerRequestResponse(id: number, result: { approved: boolean; message?: string }): void {
+  private sendServerRequestResponse(id: number, result: unknown): void {
     if (this.ws?.readyState !== WebSocket.OPEN) return
     const payload = { jsonrpc: '2.0' as const, id, result }
     this.ws.send(JSON.stringify(payload))
+  }
+
+  private serverRequestRejection(
+    method: string,
+    message: string,
+    elicitationAction: 'decline' | 'cancel',
+  ): unknown {
+    if (method === 'mcpServer/elicitation/request') {
+      return { action: elicitationAction, content: null, _meta: null }
+    }
+    return { approved: false, message }
   }
 
   private denyAllServerRequests(message: string): void {
     for (const [id, pending] of this.pendingServerRequests) {
       this.pendingServerRequests.delete(id)
       clearTimeout(pending.timer)
-      this.sendServerRequestResponse(pending.wireId, { approved: false, message })
+      this.sendServerRequestResponse(
+        pending.wireId,
+        this.serverRequestRejection(pending.method, message, 'cancel'),
+      )
     }
   }
 

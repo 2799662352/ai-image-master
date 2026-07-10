@@ -12,6 +12,12 @@ export type AgentToolStatus = 'pending' | 'running' | 'success' | 'error' | 'can
 export type AgentArtifactType = 'image' | 'file' | 'link'
 
 export interface AgentAttachmentInput {
+  /**
+   * Renderer-only stable identity for composer chips. Filenames are not unique
+   * (clipboard screenshots commonly all arrive as `image.png`), so UI list
+   * reconciliation and removal must not use `name` as identity.
+   */
+  composerId?: string
   name: string
   mime: string
   size: number
@@ -49,6 +55,11 @@ export interface AgentSendMessagePayload {
    * via `AgentManager.sendMessage`.
    */
   model?: string
+  /**
+   * Native Codex reasoning-effort override for the selected model. This is
+   * independent from the model slug and is forwarded as `turn/start.effort`.
+   */
+  reasoningEffort?: string
   /**
    * Skills explicitly invoked via `$skill-name` tokens in `content`. When the
    * renderer can resolve the path locally (e.g. via `getSkillsSummary`) it

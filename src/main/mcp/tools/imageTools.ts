@@ -29,6 +29,8 @@ interface BatchTaskResult {
 export const GENERATE_IMAGE_BLOCKING_BUDGET_MS = 60_000
 /** check_image_task 服务端长轮询窗口(须 < codex 工具超时,留足余量)。 */
 export const CHECK_IMAGE_LONG_POLL_MS = 25_000
+/** One MCP batch may contain up to 20 prompts; renderer executes them through a bounded worker pool. */
+export const GENERATE_IMAGES_MAX_PROMPTS = 20
 
 export interface ImageToolsOptions {
   /** 注入图片任务管理器(测试用);默认进程级单例。 */
@@ -463,7 +465,7 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
     description:
       'Batch image generation tool for when the user asks for MULTIPLE images (e.g. "生成 3 张", ' +
       '"make 5 variations", "几张图", "批量生成"). Prefer this over calling generate_image repeatedly: ' +
-      'it fans out one generate_image call per prompt concurrently inside CATIMATION, so the images ' +
+      'it runs 2–20 prompts through a bounded concurrent worker pool inside CATIMATION, so the images ' +
       'render in chat in parallel and the model receives one concise combined DONE/FAILED result. ' +
       'Use one prompt per desired image; for variations, write distinct but related prompts. Do not ' +
       'use subagents for image fan-out. ' +
@@ -473,8 +475,8 @@ export function registerImageTools(server: McpServer, router: ToolRouter, option
       'tell the user they are generating and call check_image_task with that taskId, repeatedly, until ' +
       'DONE or FAILED. Before calling, briefly tell the user you are submitting the batch.',
     inputSchema: z.object({
-      prompts: z.array(z.string().min(1)).min(2).max(8).describe(
-        'One prompt per image. If the user asks for N images, provide N prompts here.',
+      prompts: z.array(z.string().min(1)).min(2).max(GENERATE_IMAGES_MAX_PROMPTS).describe(
+        'One prompt per image (2–20). If the user asks for N images, provide N prompts here.',
       ),
       model: modelSchema,
       ratio: ratioSchema,

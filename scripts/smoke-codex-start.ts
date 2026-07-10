@@ -18,7 +18,8 @@
 //
 // Usage:  npx tsx scripts/smoke-codex-start.ts
 
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
@@ -46,20 +47,50 @@ async function runSmoke(): Promise<void> {
   // URL transport to a dead port: codex registers the MCP server from the `-c`
   // overrides (so skills.config imagegen-disable is also emitted) but does NOT
   // block app-server `initialize` on the connection — perfect for a handshake
-  // smoke that proves the config parses on 0.141.
+  // smoke that proves the config parses on the pinned 0.144.1 binary.
+  // The upgrade smoke must be reproducible. A user's stale ~/.codex/config.toml
+  // can contain an invalid MCP block and fail before initialize, which tests
+  // their personal config rather than the bundled binary. Production still
+  // uses the stable real home; only this offline probe gets an empty temp home.
+  const smokeCodexHome = mkdtempSync(path.join(os.tmpdir(), 'catimation-codex-smoke-'))
+  // Production boot seeds these app-managed MCP entries before Codex starts.
+  // Reproduce the transport-bearing shape so dotted `-c` leaf overrides do
+  // not synthesize command-less entries that strict config validation rejects.
+  writeFileSync(
+    path.join(smokeCodexHome, 'config.toml'),
+    [
+      '[mcp_servers.apiyi]',
+      'command = "node"',
+      'args = []',
+      'enabled = false',
+      '',
+      '[mcp_servers.cinematography_kb]',
+      'command = "node"',
+      'args = []',
+      'enabled = false',
+      '',
+    ].join('\n'),
+    'utf8',
+  )
   const backend = new CodexLocalBackend({
     resourceRoot,
     catimationMcp: { port: 59999, token: 'smoke-token' },
+    codexHome: smokeCodexHome,
   })
 
   const t0 = Date.now()
-  await backend.start()
-  console.log(`[smoke] ✅ app-server spawned + initialize OK in ${Date.now() - t0}ms (${pinnedVersion}, full prod -c args accepted)`)
-
   try {
+    await backend.start()
+    console.log(`[smoke] ✅ app-server spawned + initialize OK in ${Date.now() - t0}ms (${pinnedVersion}, full prod -c args accepted)`)
+
     const cfg = await backend.readConfig()
     const keys = Object.keys(cfg?.config ?? {})
     console.log(`[smoke] ✅ config/read round-trip OK (${keys.length} top-level keys)`)
+
+    const models = await backend.listModels({ includeHidden: false })
+    const modelNames = models.data.map((model) => model.model)
+    if (modelNames.length === 0) throw new Error('model/list returned no visible models')
+    console.log(`[smoke] ✅ model/list round-trip OK — models: [${modelNames.join(', ')}]`)
 
     // Bounded probe: with a dead catimation URL, codex keeps retrying the rmcp
     // transport, so a status query that waits for connection can stall. We only
@@ -76,7 +107,20 @@ async function runSmoke(): Promise<void> {
       console.log('[smoke] ⏭️ mcpServerStatus/list skipped (dead-port MCP retry — expected in smoke, non-fatal)')
     }
   } finally {
-    await backend.stop()
+    await backend.stop().catch(() => undefined)
+    try {
+      rmSync(smokeCodexHome, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 200,
+      })
+    } catch (error) {
+      // Windows can briefly retain a plugin-clone handle after app-server
+      // exits. The probe result is still valid; leave OS temp cleanup to reap
+      // the directory instead of turning a successful handshake into failure.
+      console.warn('[smoke] temp cleanup deferred:', error instanceof Error ? error.message : error)
+    }
     console.log('[smoke] ✅ stopped cleanly (no fd leak path)')
   }
 }

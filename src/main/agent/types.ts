@@ -8,7 +8,12 @@ import type {
   CodexWorkspacePaths,
 } from '../../types/agent'
 import type { CodexProviderConfig } from './codexLaunch'
-import type { CodexCollaborationMode, CollaborationModeListResponse } from './codexProtocol'
+import type {
+  CodexCollaborationMode,
+  CodexModelListParams,
+  CodexModelListResponse,
+  CollaborationModeListResponse,
+} from './codexProtocol'
 import type { DoctorReport } from './codexDoctor'
 import type {
   AppsListParams,
@@ -132,6 +137,7 @@ export interface IAgentBackend {
   batchWriteConfig?(edits: unknown[], reloadUserConfig?: boolean): Promise<void>
   writeConfigValue?(keyPath: string, value: unknown): Promise<void>
   readConfig?(): Promise<{ config: Record<string, unknown> }>
+  listModels?(params?: CodexModelListParams): Promise<CodexModelListResponse>
   reloadMcpServers?(): Promise<void>
   mcpOAuthLogin?(name: string): Promise<{ authorization_url: string }>
 

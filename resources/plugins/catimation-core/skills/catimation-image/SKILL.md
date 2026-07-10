@@ -164,8 +164,11 @@ Rules:
   (e.g. a character sheet + a background, several angles, a subject + a style
   reference). Pass all of them together so the model can combine/condition on
   the whole set, not just the first.
-- Pass the local file path(s) directly (the tool reads the full-resolution bytes
-  itself); you do not need to convert them.
+- Pass the local file path(s) directly. The tool sends the original reference
+  bytes and does not resize or recompress them automatically.
+- If the provider rejects the reference payload with HTTP 413 / 文件大小超过限制,
+  load `ffmpeg-win`, create smaller derivative copies without overwriting the
+  originals, then retry once with the derivative paths.
 - If you are unsure whether the user wants the reference followed, prefer reusing
   it and say briefly that you based it on their image(s).
 
@@ -178,10 +181,11 @@ serialize those calls even when asked to be parallel. `generate_images` is the
 parallel-safe batch wrapper and fans out the renderer calls concurrently inside
 CATIMATION.
 
-- If the user asks for N images, pass exactly N prompts to `generate_images.prompts`.
+- If the user asks for N images (2–20), pass exactly N prompts to
+  `generate_images.prompts`.
 - For variations, write N distinct but related prompts so the outputs are not clones.
-- For many more than 8 images, ask the user to split into batches; the tool caps
-  each batch to keep the UI and gateway stable.
+- The tool accepts up to 20 prompts and uses bounded concurrency internally; for
+  more than 20 images, split them into batches.
 - After `generate_images` returns, confirm once and cite the saved `paths`; don't
   re-announce each image separately.
 

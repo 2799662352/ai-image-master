@@ -1,7 +1,8 @@
 // App-server v2 plugin / marketplace / apps / external-agent-import DTOs.
 //
 // Mirrors the generated TypeScript schema under openai/codex
-// `codex-rs/app-server-protocol/schema/typescript/v2/*` at tag rust-v0.141.0.
+// `codex-rs/app-server-protocol/schema/typescript/v2/*`; originally pinned at
+// rust-v0.141.0 and compatibility-checked through rust-v0.144.1.
 // `AbsolutePathBuf` is a plain string on the wire. Fields that reference deep,
 // rarely-needed subtrees (share principals, migration item variants, app info
 // internals) are kept loose (`unknown` / index signatures) on purpose — the

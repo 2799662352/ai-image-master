@@ -23,6 +23,19 @@ function callGenerate(params: Record<string, unknown>): Promise<unknown> {
   return (new AgentToolExecutor() as unknown as { generateImage: (p: unknown) => Promise<unknown> }).generateImage(params)
 }
 
+function callGenerateBatch(
+  params: Record<string, unknown>,
+  executor = new AgentToolExecutor(),
+): Promise<{ successes: unknown[]; failures: Array<{ index: number; error: string }>; savedPaths: string[] }> {
+  return (
+    executor as unknown as {
+      generateImages: (
+        p: unknown,
+      ) => Promise<{ successes: unknown[]; failures: Array<{ index: number; error: string }>; savedPaths: string[] }>
+    }
+  ).generateImages(params)
+}
+
 function setChannel(id: string): void {
   useAgentChatStore.setState({ selectedImageChannel: id })
 }
@@ -389,5 +402,65 @@ describe('AgentToolExecutor.generateImage', () => {
       // No dangling "generating" bubble — resolution failed before begin.
       expect(useAgentChatStore.getState().messages).toHaveLength(0)
     })
+  })
+})
+
+describe('AgentToolExecutor.generateImages', () => {
+  afterEach(() => {
+    delete (window as unknown as { electronAPI?: unknown }).electronAPI
+  })
+
+  it('runs a 9-image batch with bounded concurrency while preserving result order', async () => {
+    const executor = new AgentToolExecutor()
+    const prompts = Array.from({ length: 9 }, (_, i) => `shot-${i + 1}`)
+    let active = 0
+    let maxActive = 0
+
+    ;(
+      executor as unknown as {
+        generateImage: (params: { prompt: string }) => Promise<{ ok: true; paths: string[] }>
+      }
+    ).generateImage = vi.fn(async ({ prompt }) => {
+      active++
+      maxActive = Math.max(maxActive, active)
+      await new Promise<void>((resolve) => setTimeout(resolve, 5))
+      active--
+      return { ok: true, paths: [`C:\\out\\${prompt}.png`] }
+    })
+
+    const result = await callGenerateBatch({ prompts }, executor)
+
+    expect(maxActive).toBe(3)
+    expect(result.successes).toHaveLength(9)
+    expect(result.failures).toEqual([])
+    expect(result.savedPaths).toEqual(prompts.map((prompt) => `C:\\out\\${prompt}.png`))
+  })
+
+  it('reads one shared local reference at full fidelity only once before fan-out', async () => {
+    const localPath = 'C:\\Users\\me\\AppData\\Roaming\\app\\agent\\uploads\\large.png'
+    const readThumb = vi.fn(async () => ({
+      ok: true as const,
+      base64: 'FULL_RESOLUTION',
+      mime: 'image/png',
+    }))
+    ;(window as unknown as { electronAPI?: unknown }).electronAPI = {
+      attachments: { readThumb },
+    }
+
+    const api: ApiFake = {
+      generateImage: vi.fn(async () => ({ success: true, images: ['data:image/png;base64,AAA'] })),
+    }
+    registerFakes(api, makeHistory())
+    const prompts = Array.from({ length: 9 }, (_, i) => `variation-${i + 1}`)
+
+    const result = await callGenerateBatch({ prompts, referenceImages: [localPath] })
+
+    expect(result.successes).toHaveLength(9)
+    expect(readThumb).toHaveBeenCalledTimes(1)
+    expect(readThumb).toHaveBeenCalledWith(localPath)
+    expect(api.generateImage).toHaveBeenCalledTimes(9)
+    for (const [request] of api.generateImage.mock.calls) {
+      expect(request.referenceImages).toEqual(['data:image/png;base64,FULL_RESOLUTION'])
+    }
   })
 })

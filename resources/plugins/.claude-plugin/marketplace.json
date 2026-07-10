@@ -9,7 +9,7 @@
     {
       "name": "catimation-director",
       "description": "导演模式总调度:以 13 维电影摄制框架(物理可复现参数优先于情绪形容词)编排镜头/构图/光影/连续性/角色一致性等导演技法,产出结构化提示词。含 13 个 director-* skill 与 /director 命令。",
-      "version": "1.0.7",
+      "version": "1.0.8",
       "source": "./catimation-director",
       "author": {
         "name": "CATIMATION",
@@ -59,7 +59,7 @@
     {
       "name": "catimation-core",
       "description": "CATIMATION 应用核心集成:应用内出图 generate_image / 人像库管理 / 创意头脑风暴。含 /gen-image、/brainstorm 命令。",
-      "version": "1.0.11",
+      "version": "1.0.12",
       "source": "./catimation-core",
       "author": {
         "name": "CATIMATION",

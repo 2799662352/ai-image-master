@@ -12,8 +12,8 @@ interface CodexApprovalPromptProps {
 }
 
 /**
- * Dispatch table for the three typed approval requests codex's app-server
- * surfaces (per `app-server-protocol/src/protocol.rs`). Anything not in
+ * Dispatch table for typed approval and MCP elicitation requests Codex's
+ * app-server surfaces (per `app-server-protocol/src/protocol.rs`). Anything not in
  * this list falls back to the generic Approve/Deny prompt — which is also
  * what older codex builds emit, so this stays backwards-compatible.
  *
@@ -22,12 +22,13 @@ interface CodexApprovalPromptProps {
  * permission grant. Different verbs (Execute / Apply / Grant) make the
  * action concrete; same Approve color (emerald) signals "safe to proceed".
  */
-type ApprovalKind = 'command' | 'fileChange' | 'permissions' | 'generic'
+type ApprovalKind = 'command' | 'fileChange' | 'permissions' | 'elicitation' | 'generic'
 
 function classifyMethod(method: string): ApprovalKind {
   if (method === 'item/commandExecution/requestApproval') return 'command'
   if (method === 'item/fileChange/requestApproval') return 'fileChange'
   if (method === 'item/permissions/requestApproval') return 'permissions'
+  if (method === 'mcpServer/elicitation/request') return 'elicitation'
   return 'generic'
 }
 
@@ -130,6 +131,14 @@ function labelsFor(kind: ApprovalKind): {
         deny: 'Deny',
         denialLabel: 'Reason for denying',
       }
+    case 'elicitation':
+      return {
+        tagline: 'MCP authentication',
+        title: 'External service sign-in',
+        approve: 'Continue',
+        deny: 'Decline',
+        denialLabel: 'Reason for declining',
+      }
     case 'generic':
       return {
         tagline: 'approval required',
@@ -137,6 +146,8 @@ function labelsFor(kind: ApprovalKind): {
         deny: 'Deny',
         denialLabel: 'Denial message',
       }
+    default:
+      return assertNever(kind)
   }
 }
 
@@ -203,6 +214,18 @@ function ApprovalDetails({
       </ul>
     )
   }
+  if (kind === 'elicitation') {
+    const serverName = stringField(params, 'serverName')
+    const message = stringField(params, 'message')
+    const url = stringField(params, 'url')
+    return (
+      <div className="mt-2 space-y-1 rounded-lg border border-amber-300/15 bg-black/25 p-2 text-xs text-amber-50/90">
+        {serverName ? <p><span className="opacity-60">server: </span>{serverName}</p> : null}
+        {message ? <p>{message}</p> : null}
+        {url ? <p className="break-all font-mono text-cyan-200">{url}</p> : null}
+      </div>
+    )
+  }
   // Generic fallback — same compact dump as the original component, kept
   // for unknown / older / custom approval methods.
   return (
@@ -245,4 +268,8 @@ function safeStringify(value: unknown): string {
 
 function truncate(value: string, limit: number): string {
   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unhandled approval kind: ${String(value)}`)
 }

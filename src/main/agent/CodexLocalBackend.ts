@@ -21,7 +21,11 @@ import type {
   CodexWorkspacePaths,
 } from '../../types/agent'
 import type { AgentInput, IAgentBackend, ListThreadsParams } from './types'
-import type { CollaborationModeListResponse } from './codexProtocol'
+import type {
+  CodexModelListParams,
+  CodexModelListResponse,
+  CollaborationModeListResponse,
+} from './codexProtocol'
 import type {
   AppsListParams,
   AppsListResponse,
@@ -658,6 +662,11 @@ export class CodexLocalBackend implements IAgentBackend {
   async readConfig(): Promise<{ config: Record<string, unknown> }> {
     if (!this.client) throw new Error('CodexLocalBackend.readConfig called before start')
     return this.client.readConfig()
+  }
+
+  async listModels(params?: CodexModelListParams): Promise<CodexModelListResponse> {
+    if (!this.client) throw new Error('CodexLocalBackend.listModels called before start')
+    return this.client.listModels(params)
   }
 
   async experimentalFeatureList(params?: {

@@ -6,8 +6,8 @@ import { CodexProtocolClient } from '../CodexProtocolClient'
 // a fake WebSocketServer (same harness style as CodexProtocolClient.mcp.test.ts)
 // so we assert the exact wire method strings + params without spawning the real
 // Rust binary. Method strings are pinned from openai/codex
-// `app-server-protocol/src/protocol/common.rs` (client_request_definitions!) at
-// tag rust-v0.141.0.
+// `app-server-protocol/src/protocol/common.rs` (client_request_definitions!),
+// originally at rust-v0.141.0 and revalidated at rust-v0.144.1.
 function createTestServer(port: number) {
   const wss = new WebSocketServer({ port })
   const messages: unknown[] = []

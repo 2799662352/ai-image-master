@@ -294,22 +294,15 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     // since this is a local dev/agent surface.
     '-c', 'show_raw_agent_reasoning=true',
     '-c', 'model_reasoning_summary="auto"',
-    // Tell Codex the model's hard context limit so its tokenUsage
-    // notifications carry `contextWindow`, and so it auto-compacts before
-    // running into a wall. 272K matches Codex's official gpt-5.5 / gpt-5.4
-    // model catalog; use the real catalog value so the UI meter and compaction
-    // heuristics line up with upstream.
-    //
-    // auto_compact at 220k (~81%), not the stock 90% ratio: stateless relay
-    // gateways (apiyi) replay the FULL history per request and enforce a
-    // request-BODY-BYTE cap ("request_too_large") that text+image-heavy
-    // threads can hit before the official 90% token trigger. 220k gives the
-    // user much more long-thread runway than the earlier conservative 100k,
-    // while still leaving ~52k tokens of headroom before the declared window.
-    '-c', 'model_context_window=272000',
+    // Do NOT pin `model_context_window`: Codex 0.144's catalog advertises 372K
+    // for GPT-5.6 and 272K for GPT-5.5/5.4. A global 272K override silently
+    // discards 100K of the new models' context and makes token-usage telemetry
+    // lie. Keep only the earlier compaction trigger: stateless relay gateways
+    // replay the FULL history and enforce a request-body byte cap, so 220K
+    // remains a deliberate guard against `request_too_large` / HTTP 413.
     '-c', 'model_auto_compact_token_limit=220000',
     // Official per-tool-call output budget. codex-rs/models-manager/
-    // models.json pins truncation at 10_000 tokens for gpt-5.5/5.4/5.3
+    // models.json pins truncation at 10_000 tokens for gpt-5.6/5.5/5.4
     // (10_000 bytes for 5.2 and unknown slugs). Without this pin a
     // user-level ~/.codex/config.toml (observed in the wild with
     // `tool_output_token_limit = 64_000`) multiplies every large file read

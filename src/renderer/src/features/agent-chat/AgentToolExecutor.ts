@@ -135,6 +135,34 @@ const MAX_HISTORY_LIMIT = 100
  * running in the background.
  */
 const PERSISTENCE_BUDGET_MS = 10_000
+/** Keep large batches parallel without opening an unbounded number of multi-minute HTTP uploads. */
+const CODEX_IMAGE_BATCH_CONCURRENCY = 3
+
+async function settleWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<Array<PromiseSettledResult<R>>> {
+  const results = new Array<PromiseSettledResult<R>>(items.length)
+  let nextIndex = 0
+
+  const runWorker = async (): Promise<void> => {
+    while (true) {
+      const index = nextIndex
+      nextIndex++
+      if (index >= items.length) return
+      try {
+        results[index] = { status: 'fulfilled', value: await worker(items[index], index) }
+      } catch (reason) {
+        results[index] = { status: 'rejected', reason }
+      }
+    }
+  }
+
+  const workerCount = Math.min(Math.max(1, concurrency), items.length)
+  await Promise.all(Array.from({ length: workerCount }, () => runWorker()))
+  return results
+}
 
 export class AgentToolExecutor {
   start(): () => void {
@@ -419,7 +447,11 @@ export class AgentToolExecutor {
     return chat.ask({ question, options, mode, allowFreeText, allowSkip }, reqThreadId)
   }
 
-  private async generateImage(params: GenerateImageToolParams, requestThreadId?: string): Promise<unknown> {
+  private async generateImage(
+    params: GenerateImageToolParams,
+    requestThreadId?: string,
+    resolvedReferenceImages?: string[],
+  ): Promise<unknown> {
     const api = ServiceRegistry.getRequired<{ generateImage: (params: GenerateImageParams) => Promise<GenerateResult> }>(
       SERVICE_KEYS.API,
     )
@@ -428,16 +460,17 @@ export class AgentToolExecutor {
     // passes uploads-dir file PATHS (e.g. `C:\...\agent\uploads\<hash>.jpg`),
     // but the renderer's ApiService can only `fetch()` data:/http URLs — a raw
     // path becomes `data:image/jpeg;base64,C:\...` → ERR_INVALID_URL. We read
-    // each path's bytes through the mime+size-gated attachments IPC and inline
-    // it as a data URL. Doing this before `beginImageGeneration` keeps a bad
-    // path from leaving a dangling "generating" bubble — it surfaces as a clean
-    // explicit error to the agent instead. Only `await` when refs are actually
-    // present so the no-ref (text-to-image) path still shows its in-progress
-    // bubble synchronously.
+    // each path's original bytes through the mime+size-gated attachments IPC
+    // and inline them as a data URL. Doing this before `beginImageGeneration`
+    // keeps a bad path from leaving a dangling "generating" bubble — it
+    // surfaces as a clean explicit error to the agent instead. Only `await`
+    // when refs are actually present so the no-ref (text-to-image) path still
+    // shows its in-progress bubble synchronously.
     const referenceImages =
-      Array.isArray(params.referenceImages) && params.referenceImages.length > 0
+      resolvedReferenceImages ??
+      (Array.isArray(params.referenceImages) && params.referenceImages.length > 0
         ? await this.resolveReferenceImages(params.referenceImages)
-        : undefined
+        : undefined)
 
     // Agent autonomy first (explicit valid `params.model` wins, e.g. 万相 for a
     // 组图 series), else the user's picked channel, else VIP.
@@ -546,12 +579,11 @@ export class AgentToolExecutor {
   }
 
   /**
-   * Batch render: fan out N single renders concurrently (each drives its OWN
-   * "generating" bubble in the requesting chat, identical UX to before) and
-   * fold the outcomes into one combined result. Uses `allSettled` so a partial
-   * failure never sinks the whole batch — failures are reported per-index in the
-   * combined banner main builds from this. The reference images / model / ratio
-   * / resolution / quality apply to every prompt.
+   * Batch render: run N single renders through a bounded worker pool (each drives
+   * its OWN "generating" bubble in the requesting chat) and fold the outcomes
+   * into one combined result. Settled outcomes preserve prompt order, so a
+   * partial failure never sinks the whole batch and is still reported at the
+   * correct index. Shared references are resolved once and reused by every job.
    */
   private async generateImages(
     params: GenerateImagesToolParams,
@@ -562,8 +594,18 @@ export class AgentToolExecutor {
       : []
     if (prompts.length === 0) throw new Error('generate_images requires a non-empty prompts[]')
 
-    const settled = await Promise.allSettled(
-      prompts.map((prompt) =>
+    // Resolve shared local references ONCE. The previous implementation
+    // re-read and base64-encoded the same full-resolution files for every prompt,
+    // multiplying IPC/memory pressure before N identical uploads.
+    const sharedReferenceImages =
+      Array.isArray(params.referenceImages) && params.referenceImages.length > 0
+        ? await this.resolveReferenceImages(params.referenceImages)
+        : undefined
+
+    const settled = await settleWithConcurrency(
+      prompts,
+      CODEX_IMAGE_BATCH_CONCURRENCY,
+      (prompt) =>
         this.generateImage(
           {
             prompt,
@@ -571,11 +613,11 @@ export class AgentToolExecutor {
             ratio: params.ratio,
             resolution: params.resolution,
             quality: params.quality,
-            referenceImages: params.referenceImages,
+            referenceImages: sharedReferenceImages,
           } as unknown as GenerateImageToolParams,
           requestThreadId,
+          sharedReferenceImages,
         ),
-      ),
     )
 
     const successes: unknown[] = []
@@ -691,10 +733,10 @@ export class AgentToolExecutor {
    * Normalize `referenceImages` into browser-loadable sources for ApiService.
    *
    * `data:`/`http(s):` entries pass through untouched. Anything else is treated
-   * as a local filesystem path (codex hands us uploads-dir paths) and read via
-   * the `attachments.readThumb` IPC — the renderer cannot `fetch()` a raw OS
-   * path, and that channel is the right security scope (mime + size whitelist)
-   * for a file the user/agent already produced in the uploads dir.
+   * as a local filesystem path (codex hands us uploads-dir paths) and read once
+   * through `attachments.readThumb`. The tool deliberately preserves original
+   * bytes; if an upstream rejects them with HTTP 413, the agent may create a
+   * smaller derivative with its media tools and retry using that new path.
    *
    * Returns `undefined` for no refs (text-to-image). If refs were provided but
    * NONE could be read, throws an explicit error so the agent learns the path
@@ -706,10 +748,17 @@ export class AgentToolExecutor {
     const api = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.attachments
     const resolved: string[] = []
     const failures: string[] = []
+    const seen = new Set<string>()
 
     for (const raw of refs) {
       if (typeof raw !== 'string' || raw.length === 0) continue
-      if (raw.startsWith('data:') || raw.startsWith('http://') || raw.startsWith('https://')) {
+      const isInlineOrRemote = raw.startsWith('data:') || raw.startsWith('http://') || raw.startsWith('https://')
+      // Windows paths are case-insensitive and agents may mix slash/case styles.
+      // Keep URL/data keys byte-exact because URL paths and base64 are case-sensitive.
+      const dedupKey = isInlineOrRemote ? raw : raw.replace(/\\/g, '/').toLowerCase()
+      if (seen.has(dedupKey)) continue
+      seen.add(dedupKey)
+      if (isInlineOrRemote) {
         resolved.push(raw)
         continue
       }
@@ -717,11 +766,11 @@ export class AgentToolExecutor {
         failures.push(`${raw} (attachments API unavailable)`)
         continue
       }
-      const res = await api.readThumb(raw)
-      if (res.ok) {
-        resolved.push(`data:${res.mime};base64,${res.base64}`)
+      const full = await api.readThumb(raw)
+      if (full.ok) {
+        resolved.push(`data:${full.mime};base64,${full.base64}`)
       } else {
-        failures.push(`${raw} (${res.reason})`)
+        failures.push(`${raw} (${full.reason})`)
       }
     }
 

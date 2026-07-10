@@ -895,18 +895,18 @@ export function MentionInput() {
     if (pending != null) appendInput(pending)
   }, [pendingChatInsert, consumePendingChatInsert])
 
-  async function onFileChange(event: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(event.target.files ?? [])
-    const remainingSlots = Math.max(MAX_ATTACHMENTS - attachments.length, 0)
-    let totalBytes = attachments.reduce((sum, item) => sum + item.size, 0)
+  async function attachFiles(files: File[]): Promise<void> {
+    const currentAttachments = useAgentChatStore.getState().attachments
+    const remainingSlots = Math.max(MAX_ATTACHMENTS - currentAttachments.length, 0)
+    let totalBytes = currentAttachments.reduce((sum, item) => sum + item.size, 0)
     let skipped = 0
 
     // Prefer "path-only" attachments: ask the preload (via webUtils.getPathForFile,
     // Electron ≥ 32) for the on-disk path. When we have a path we never copy the
     // file contents into renderer memory or into an IPC structuredClone — the
     // main process streams the bytes off disk itself. This mirrors the drag-and-
-    // drop path and is the same model Codex landed in openai/codex#21108 to fix
-    // attachment-induced freezes (issues #13508, #15270).
+    // drop path and follows the path-based staging direction proposed in
+    // openai/codex#21108 for avoiding attachment-induced freezes.
     //
     // Fallback to arrayBuffer() only when the source isn't a real file (e.g. a
     // synthetic File from a clipboard paste); preload returns "" in that case.
@@ -941,8 +941,29 @@ export function MentionInput() {
 
     if (files.length > remainingSlots) skipped += files.length - remainingSlots
     setError(skipped > 0 ? `Skipped ${skipped} file(s) because of attachment limits.` : undefined)
+  }
 
+  async function onFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    await attachFiles(Array.from(event.target.files ?? []))
     event.target.value = ''
+  }
+
+  async function onPaste(event: React.ClipboardEvent<HTMLTextAreaElement>): Promise<void> {
+    const itemImages = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null)
+    // Chromium normally exposes screenshots through `items`; `files` is a
+    // compatibility fallback for clipboard providers that omit item entries.
+    const imageFiles = itemImages.length > 0
+      ? itemImages
+      : Array.from(event.clipboardData.files).filter((file) => file.type.startsWith('image/'))
+    if (imageFiles.length === 0) return
+
+    // Stop Chromium from also inserting an image URL/HTML representation into
+    // the textarea. Plain-text-only paste remains fully native.
+    event.preventDefault()
+    await attachFiles(imageFiles)
   }
 
   async function onDrop(event: React.DragEvent): Promise<void> {
@@ -1191,6 +1212,7 @@ export function MentionInput() {
             // reads the post-change caret instead of a stale one.
             requestAnimationFrame(refreshTriggerPopups)
           }}
+          onPaste={(event) => void onPaste(event)}
           onKeyUp={refreshTriggerPopups}
           onClick={refreshTriggerPopups}
           onBlur={() => {
@@ -1296,7 +1318,7 @@ export function MentionInput() {
               ? 'Edit your message — Enter to save & submit, Esc to cancel'
               : isRunning
                 ? '运行中… 输入可插话(steer)追加到当前回合,↵ 发送 · ⇧↵ 换行 · Stop 取消'
-                : 'Ask Codex to generate, inspect, batch, or edit…   /  command   ·   $ skill   ·   @ file   ·   ↵ send · ⇧↵ newline'
+                : 'Ask Codex to generate, inspect, batch, or edit…   / command · $ skill · @ file · Ctrl+V image · ↵ send · ⇧↵ newline'
           }
           value={input}
         />

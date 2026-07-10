@@ -119,6 +119,16 @@ describe('registerImageTools / generate_image schema', () => {
       quality: 'high',
     }).success).toBe(true)
   })
+
+  it('accepts 9–20 prompts in one batch and rejects more than 20', () => {
+    const { tools, server, router } = capture()
+    registerImageTools(server, router)
+    const schema = tools.find((t) => t.name === 'generate_images')!.config.inputSchema
+
+    expect(schema.safeParse({ prompts: Array.from({ length: 9 }, (_, i) => `shot ${i + 1}`) }).success).toBe(true)
+    expect(schema.safeParse({ prompts: Array.from({ length: 20 }, (_, i) => `shot ${i + 1}`) }).success).toBe(true)
+    expect(schema.safeParse({ prompts: Array.from({ length: 21 }, (_, i) => `shot ${i + 1}`) }).success).toBe(false)
+  })
 })
 
 // ---------------------------------------------------------------------------

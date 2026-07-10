@@ -61,11 +61,12 @@ describe('CodexApprovalPrompt', () => {
   })
 
   // ---------------------------------------------------------------------
-  // Codex app-server typed approval prompts. The router forwards three
-  // distinct method names that each deserve a tailored UI:
+  // Codex app-server typed approval prompts. The router forwards distinct
+  // method names that each deserve a tailored UI:
   //   - `item/commandExecution/requestApproval` → Execute / Block
   //   - `item/fileChange/requestApproval`        → Apply / Reject
   //   - `item/permissions/requestApproval`       → Grant / Deny
+  //   - `mcpServer/elicitation/request`           → Continue / Decline
   // ---------------------------------------------------------------------
   describe('typed renderers', () => {
     it('renders a command execution request with Execute/Block buttons', () => {
@@ -129,6 +130,31 @@ describe('CodexApprovalPrompt', () => {
       expect(screen.getByRole('button', { name: /deny/i })).toBeTruthy()
       expect(screen.getByText(/network:fetch/)).toBeTruthy()
       expect(screen.getByText(/fs:write:\/tmp/)).toBeTruthy()
+    })
+
+    it('renders a Codex 0.144 MCP authentication elicitation with its URL', () => {
+      render(
+        <CodexApprovalPrompt
+          request={{
+            id: 'elicit-1',
+            threadId: 'thread-1',
+            method: 'mcpServer/elicitation/request',
+            params: {
+              serverName: 'codex_apps',
+              mode: 'url',
+              message: 'Sign in to continue',
+              url: 'https://example.com/auth',
+            },
+            createdAt: '2026-07-10T00:00:00.000Z',
+          }}
+          onRespond={vi.fn()}
+        />,
+      )
+
+      expect(screen.getByRole('button', { name: /continue/i })).toBeTruthy()
+      expect(screen.getByRole('button', { name: /decline/i })).toBeTruthy()
+      expect(screen.getByText('codex_apps')).toBeTruthy()
+      expect(screen.getByText('https://example.com/auth')).toBeTruthy()
     })
 
     it('falls back to generic Approve/Deny when the method is unknown', () => {

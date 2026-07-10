@@ -32,7 +32,7 @@ import {
   trimRetriedStreamItemsInLastMessage,
   upsertItemInLastMessage,
 } from '../../../../types/agent-timeline'
-import { AGENT_MODELS, DEFAULT_MODEL_ID } from './models'
+import { AGENT_MODELS, DEFAULT_MODEL_ID, resolveModelSelection } from './models'
 import { contextUsedPercent } from './contextWindowDefaults'
 import { DEFAULT_IMAGE_CHANNEL_ID, isSelectableImageChannel } from './imageChannels'
 import { useFileExplorerStore } from '../file-explorer/store'
@@ -52,6 +52,22 @@ const SIDEBAR_WIDTH_MIN = 200
 const SIDEBAR_WIDTH_MAX = 360
 const SIDEBAR_OPEN_DEFAULT = true
 const THREAD_LIST_TITLE_REFRESH_DELAYS_MS = [500, 2_500, 8_500] as const
+let nextComposerAttachmentId = 0
+
+function withComposerAttachmentId(attachment: AgentAttachmentInput): AgentAttachmentInput {
+  if (attachment.composerId) return attachment
+  nextComposerAttachmentId += 1
+  const identified = { ...attachment }
+  // UI-only metadata stays non-enumerable so the existing attachment payload
+  // contract and persisted/edit-restored value shape remain byte-for-byte clean.
+  Object.defineProperty(identified, 'composerId', {
+    configurable: false,
+    enumerable: false,
+    value: `composer-attachment:${Date.now()}:${nextComposerAttachmentId}`,
+    writable: false,
+  })
+  return identified
+}
 
 function scheduleThreadListTitleRefreshes(run: () => void): void {
   for (const delay of THREAD_LIST_TITLE_REFRESH_DELAYS_MS) {
@@ -415,7 +431,7 @@ interface AgentChatState {
   setSelectedImageChannel: (channelId: string) => void
   setCollabMode: (kind: 'plan' | 'default') => void
   addAttachment: (attachment: AgentAttachmentInput) => void
-  removeAttachment: (name: string) => void
+  removeAttachment: (attachment: AgentAttachmentInput) => void
   removeAttachmentForReference: (reference: AgentReference) => void
   addPendingReference: (reference: AgentReference) => void
   removePendingReference: (referenceId: string) => void
@@ -865,7 +881,7 @@ function attachmentsFromMessage(message: Message): AgentAttachmentInput[] {
       })
     }
   }
-  return out
+  return out.map(withComposerAttachmentId)
 }
 
 function getAgentApi(): NonNullable<AgentElectronApi['agent']> {
@@ -1442,10 +1458,18 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         ? { ...state.collabModeByThread, [state.threadId]: kind }
         : state.collabModeByThread,
     })),
-  addAttachment: (attachment) => set((state) => ({ attachments: [...state.attachments, attachment] })),
-  removeAttachment: (name) => set((state) => ({
-    attachments: state.attachments.filter((item) => item.name !== name),
-  })),
+  addAttachment: (attachment) =>
+    set((state) => ({
+      attachments: [...state.attachments, withComposerAttachmentId(attachment)],
+    })),
+  removeAttachment: (attachment) =>
+    set((state) => ({
+      attachments: state.attachments.filter((item) =>
+        attachment.composerId
+          ? item.composerId !== attachment.composerId
+          : item !== attachment,
+      ),
+    })),
   removeAttachmentForReference: (reference) =>
     set((state) => {
       if (reference.source.kind !== 'localPath') {
@@ -1683,7 +1707,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     if (state.isRunning) return
     if (!content && attachments.length === 0 && references.length === 0) return
 
-    const modelId = state.selectedModelId
+    const modelSelection = resolveModelSelection(state.selectedModelId)
     const now = Date.now()
     const items: TimelineItem[] = []
     if (attachments.length > 0) {
@@ -1761,7 +1785,8 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         attachments,
         references,
         currentPage: window.location.hash.slice(1),
-        model: modelId,
+        model: modelSelection.model,
+        reasoningEffort: modelSelection.reasoningEffort,
         skills: skills.length > 0 ? skills : undefined,
         mentions,
         // Spread-omit: only Plan travels; 'default' means nothing on the wire.
@@ -1884,13 +1909,15 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     const mentions = resolveMentions(content, state.availablePluginMentions)
 
     try {
+      const modelSelection = resolveModelSelection(state.selectedModelId)
       const result = await steer({
         threadId,
         content,
         attachments,
         references,
         currentPage: window.location.hash.slice(1),
-        model: state.selectedModelId,
+        model: modelSelection.model,
+        reasoningEffort: modelSelection.reasoningEffort,
         skills: skills.length > 0 ? skills : undefined,
         mentions,
       })

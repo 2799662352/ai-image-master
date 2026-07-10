@@ -233,6 +233,31 @@ describe('useAgentChatStore selected model', () => {
       model: 'gpt-4o',
     })
   })
+
+  it('splits an effort picker option into canonical model + reasoningEffort', async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ threadId: 'tx' })
+    ;(window as any).electronAPI = {
+      agent: {
+        sendMessage,
+        cancel: vi.fn().mockResolvedValue(undefined),
+      },
+    }
+    useAgentChatStore.setState({
+      threadId: undefined,
+      input: 'deep review',
+      attachments: [],
+      messages: [],
+      isRunning: false,
+      selectedModelId: 'gpt-5.5-xhigh',
+    })
+
+    await useAgentChatStore.getState().send()
+
+    expect(sendMessage.mock.calls[0][0]).toMatchObject({
+      model: 'gpt-5.5',
+      reasoningEffort: 'xhigh',
+    })
+  })
 })
 
 describe('useAgentChatStore — attachment URI synthesis (regression: empty src)', () => {

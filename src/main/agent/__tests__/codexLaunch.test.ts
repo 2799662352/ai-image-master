@@ -23,7 +23,6 @@ describe('buildCodexLaunchArgs', () => {
       // even when reasoningOutputTokens > 0.
       '-c', 'show_raw_agent_reasoning=true',
       '-c', 'model_reasoning_summary="auto"',
-      '-c', 'model_context_window=272000',
       '-c', 'model_auto_compact_token_limit=220000',
       '-c', 'tool_output_token_limit=10000',
       '-c', 'agents.max_threads=8',
@@ -62,7 +61,6 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'web_search="live"',
       '-c', 'show_raw_agent_reasoning=true',
       '-c', 'model_reasoning_summary="auto"',
-      '-c', 'model_context_window=272000',
       '-c', 'model_auto_compact_token_limit=220000',
       '-c', 'tool_output_token_limit=10000',
       '-c', 'agents.max_threads=8',
@@ -200,18 +198,17 @@ describe('buildCodexLaunchArgs', () => {
     expect(flat).not.toContain('model_providers.')
   })
 
-  it('passes model_context_window and model_auto_compact_token_limit so Codex auto-compacts', () => {
-    // 272k is the official gpt-5.5 / gpt-5.4 model catalog context window.
-    // 220k (~81%) gives long-thread runway while still compacting earlier than
-    // the stock 90% ratio, leaving headroom for apiyi's request-BODY-BYTE cap.
+  it('uses each model catalog window while keeping the 220k gateway compaction guard', () => {
+    // Codex 0.144 advertises 372k for GPT-5.6 and 272k for GPT-5.5/5.4.
+    // A global 272k override would silently reduce the new model window.
     const args = buildCodexLaunchArgs()
-    expect(args).toContain('model_context_window=272000')
+    expect(args.some((arg) => arg.startsWith('model_context_window='))).toBe(false)
     expect(args).toContain('model_auto_compact_token_limit=220000')
   })
 
   it('pins tool_output_token_limit to the official catalog value (10k)', () => {
     // codex-rs/models-manager/models.json caps per-tool-call output at
-    // 10_000 tokens for gpt-5.5/5.4/5.3 (bytes for 5.2). A user-level
+    // 10_000 tokens for gpt-5.6/5.5/5.4 (bytes for 5.2). A user-level
     // ~/.codex/config.toml carrying e.g. `tool_output_token_limit = 64_000`
     // makes every big file read inject 6.4x the official budget into
     // history — ballooning replayed requests straight into the gateway's

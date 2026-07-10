@@ -119,9 +119,38 @@ export interface CodexCollaborationModeMask {
 
 export interface CollaborationModeListResponse { data: CodexCollaborationModeMask[] }
 
+/** Stable app-server v2 `model/list` catalog row (Codex 0.144.1 schema). */
+export interface CodexModel {
+  id: string
+  model: string
+  displayName: string
+  description: string
+  hidden: boolean
+  supportedReasoningEfforts: Array<{ reasoningEffort: string; description: string }>
+  defaultReasoningEffort: string
+  inputModalities: string[]
+  supportsPersonality: boolean
+  isDefault: boolean
+  upgrade: string | null
+}
+
+export interface CodexModelListParams {
+  cursor?: string | null
+  limit?: number | null
+  includeHidden?: boolean | null
+}
+
+export interface CodexModelListResponse {
+  data: CodexModel[]
+  nextCursor: string | null
+}
+
 export interface TurnStartParams {
   threadId: string
   input: CodexUserInput[]
+  model?: string
+  effort?: string
+  clientUserMessageId?: string
   collaborationMode?: CodexCollaborationMode
 }
 export interface TurnStartResponse { turn: Turn }
