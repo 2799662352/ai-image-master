@@ -1,6 +1,6 @@
 {
   "name": "catimation-cyberpunk-master",
-  "version": "4.3.90",
+  "version": "4.3.91",
   "description": "CATIMATION-Cyberpunk Master - AI图片生成桌面应用",
   "main": "dist/main/index.js",
   "author": "CATIMATION",
