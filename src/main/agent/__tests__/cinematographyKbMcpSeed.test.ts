@@ -45,28 +45,33 @@ describe('getCinematographyKbMcpEntryPath', () => {
 })
 
 describe('mergeEnvWithScaffold', () => {
-  // The scaffold is now EMPTY (the DASHSCOPE key is injected at spawn from 设置,
-  // never baked). So the merge only normalizes broken env / no-ops otherwise.
-  it('has an empty scaffold (no baked secret)', () => {
-    expect(CINEMATOGRAPHY_KB_ENV_SCAFFOLD).toEqual({})
+  // The scaffold bakes ONLY the (non-secret) DashVector endpoint; keys are
+  // injected at spawn from 设置 and never baked.
+  it('bakes the DashVector endpoint and no secret', () => {
+    expect(CINEMATOGRAPHY_KB_ENV_SCAFFOLD).toEqual({
+      DASHVECTOR_ENDPOINT: 'vrs-cn-1zz4v38oq0001l.dashvector.cn-beijing.aliyuncs.com',
+    })
+    expect(Object.keys(CINEMATOGRAPHY_KB_ENV_SCAFFOLD).some((k) => k.includes('KEY'))).toBe(false)
   })
 
-  it('returns null for an already-object env (nothing to add)', () => {
-    expect(mergeEnvWithScaffold({})).toBeNull()
+  it('adds the endpoint to an env that lacks it', () => {
+    expect(mergeEnvWithScaffold({})).toEqual({ ...CINEMATOGRAPHY_KB_ENV_SCAFFOLD })
+    expect(mergeEnvWithScaffold({ DASHSCOPE_API_KEY: 'sk-user-own' })).toEqual({
+      DASHSCOPE_API_KEY: 'sk-user-own',
+      ...CINEMATOGRAPHY_KB_ENV_SCAFFOLD,
+    })
+  })
+
+  it('returns null once the scaffold is already present (idempotent)', () => {
     expect(mergeEnvWithScaffold({ ...CINEMATOGRAPHY_KB_ENV_SCAFFOLD })).toBeNull()
   })
 
-  it('returns null for an absent env so seed→skip stays idempotent', () => {
-    expect(mergeEnvWithScaffold(undefined)).toBeNull()
-    expect(mergeEnvWithScaffold(null)).toBeNull()
+  it('never overwrites a user-set endpoint (own cluster)', () => {
+    expect(mergeEnvWithScaffold({ DASHVECTOR_ENDPOINT: 'vrs-user-own.example.com' })).toBeNull()
   })
 
-  it('preserves a user-set key and never overwrites it', () => {
-    expect(mergeEnvWithScaffold({ DASHSCOPE_API_KEY: 'sk-user-own' })).toBeNull()
-  })
-
-  it('normalizes a present-but-non-object env into an empty object', () => {
-    expect(mergeEnvWithScaffold('broken')).toEqual({})
+  it('normalizes a present-but-non-object env into the scaffold', () => {
+    expect(mergeEnvWithScaffold('broken')).toEqual({ ...CINEMATOGRAPHY_KB_ENV_SCAFFOLD })
   })
 })
 

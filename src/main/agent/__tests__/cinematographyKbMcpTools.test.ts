@@ -4,6 +4,7 @@
  * 不触发 stdio 主循环、不发网络。
  */
 import { createRequire } from 'node:module'
+import { createHmac } from 'node:crypto'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
@@ -27,6 +28,14 @@ const mcp = req(mcpPath) as {
     output_fields: string[]
   }
   formatSakugaHits: (payload: unknown) => string
+  signOssGetUrl: (input: {
+    bucket: string
+    endpoint: string
+    accessKeyId: string
+    accessKeySecret: string
+    objectKey: string
+    expires: number
+  }) => string
 }
 
 describe('cinematography-kb-mcp sakuga tool', () => {
@@ -90,5 +99,26 @@ describe('cinematography-kb-mcp sakuga tool', () => {
   it('formatSakugaHits handles empty/unexpected payloads gracefully', () => {
     expect(mcp.formatSakugaHits({ output: [] })).toContain('no results')
     expect(mcp.formatSakugaHits(null)).toContain('no results')
+  })
+
+  it('signs private OSS GET URLs for remote source access', () => {
+    const input = {
+      bucket: 'sakuga-videos',
+      endpoint: 'oss-cn-beijing.aliyuncs.com',
+      accessKeyId: 'test-ak',
+      accessKeySecret: 'test-secret',
+      objectKey: 'sources/sakuga_102939.mp4',
+      expires: 1_800_000_000,
+    }
+    const url = new URL(mcp.signOssGetUrl(input))
+    const expected = createHmac('sha1', input.accessKeySecret)
+      .update(`GET\n\n\n${input.expires}\n/${input.bucket}/${input.objectKey}`)
+      .digest('base64')
+
+    expect(url.hostname).toBe('sakuga-videos.oss-cn-beijing.aliyuncs.com')
+    expect(url.pathname).toBe('/sources/sakuga_102939.mp4')
+    expect(url.searchParams.get('OSSAccessKeyId')).toBe('test-ak')
+    expect(url.searchParams.get('Expires')).toBe(String(input.expires))
+    expect(url.searchParams.get('Signature')).toBe(expected)
   })
 })

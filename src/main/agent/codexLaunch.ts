@@ -1,4 +1,5 @@
 import { CATIMATION_MCP_HOST, CATIMATION_MCP_TOKEN_HEADER } from '../mcp/config'
+import { CINEMATOGRAPHY_KB_ENV_SCAFFOLD } from './cinematographyKbMcpLauncher'
 import type {
   CodexApprovalPolicy,
   CodexSandboxMode,
@@ -387,8 +388,34 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     // to DirectModelOnly so they're never deferred. (This is a top-level
     // features array — NOT under `mcp_servers.apiyi` — so it never synthesizes a
     // transport-less entry even if apiyi isn't installed.)
+    //
+    // `cinematography_kb` is the third first-party server (运镜知识库:
+    // search_cinematography_kb / query_sakuga_dataset / search_sakuga_clips /
+    // get_sakuga_clip) and needs the same promotion. It was added (v4.3.75+)
+    // after this list was written and got left behind — so its 4 tools were
+    // deferred behind tool_search and the agent's session registry showed
+    // ZERO KB tools even though the seeded server starts and lists fine
+    // (observed as "运镜知识库无法使用": config.toml entry OK, standalone
+    // tools/list OK, in-session discovery empty).
+    //
+    // RE-VERIFIED against rust-v0.143.0 (the bundled binary):
+    //   • mcp_tool_exposure.rs::build_mcp_tool_exposure defers ALL MCP tools
+    //     unconditionally whenever `search_tool_enabled` (`direct_tools:
+    //     Vec::new()` — there is NO tool-count threshold in 0.143.0).
+    //   • spec_plan.rs::apply_direct_model_only_namespace_overrides still
+    //     promotes `Direct | Deferred → DirectModelOnly` for listed namespaces.
+    // UPGRADE HEADS-UP (upstream main, post-0.143): exposure gains a
+    // `DIRECT_MCP_TOOL_EXPOSURE_THRESHOLD = 100` — MCP tools stay direct until
+    // 100+ are registered (or `Feature::ToolSearchAlwaysDeferMcpTools` is on).
+    // Do NOT drop this list on that upgrade: the promotion also matches the
+    // `Direct` arm, so it stays a harmless no-op below the threshold and the
+    // ONLY deterministic guard above it (openai/codex#24536 — deferred tools
+    // let `exec` finish "empty" with reasoning only; #29122 — upstream calls
+    // this list the only deterministic mitigation, and warns the derived
+    // namespace string is not a stable contract, which is why we pin BOTH the
+    // bare and `mcp__`-prefixed forms of every first-party server).
     '-c', 'features.code_mode.enabled=false',
-    '-c', 'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi"]',
+    '-c', 'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi", "cinematography_kb", "mcp__cinematography_kb"]',
     // ─────────────────────────────────────────────────────────────────────────
     // Native AGENTS.md (project-doc) alignment. The engine already loads
     // AGENTS.md by walking from the `.git` project root down to the thread cwd
@@ -590,6 +617,16 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     args.push(
       '-c',
       `mcp_servers.cinematography_kb.env.DASHVECTOR_API_KEY=${quote(dashVectorKey)}`,
+    )
+  }
+
+  // Non-secret cluster host for query_sakuga_dataset — always overlay so app
+  // agents hit the paid 1.1M collection even when config.toml predates the bake.
+  const dashVectorEndpoint = CINEMATOGRAPHY_KB_ENV_SCAFFOLD.DASHVECTOR_ENDPOINT?.trim()
+  if (dashVectorEndpoint) {
+    args.push(
+      '-c',
+      `mcp_servers.cinematography_kb.env.DASHVECTOR_ENDPOINT=${quote(dashVectorEndpoint)}`,
     )
   }
 

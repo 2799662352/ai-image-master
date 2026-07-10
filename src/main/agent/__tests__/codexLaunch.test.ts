@@ -36,7 +36,7 @@ describe('buildCodexLaunchArgs', () => {
       // root cause of the `ask_user` "unsupported call: catimationaskuser"
       // failure. See codexLaunch.ts for the full source-level rationale.
       '-c', 'features.code_mode.enabled=false',
-      '-c', 'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi"]',
+      '-c', 'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi", "cinematography_kb", "mcp__cinematography_kb"]',
       // Native AGENTS.md (project-doc) alignment: bigger budget, pinned .git
       // root marker, and CLAUDE.md/GEMINI.md fallbacks. See codexLaunch.ts.
       '-c', 'project_doc_max_bytes=65536',
@@ -48,6 +48,7 @@ describe('buildCodexLaunchArgs', () => {
       // No apiyi key configured (neither 设置/localStorage nor config.toml) →
       // keep apiyi dormant so a keyless apiyi-mcp can't hang the first turn.
       '-c', 'mcp_servers.apiyi.enabled=false',
+      '-c', 'mcp_servers.cinematography_kb.env.DASHVECTOR_ENDPOINT="vrs-cn-1zz4v38oq0001l.dashvector.cn-beijing.aliyuncs.com"',
     ])
   })
 
@@ -67,12 +68,13 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'agents.max_depth=1',
       '-c', 'features.non_prefixed_mcp_tool_names=true',
       '-c', 'features.code_mode.enabled=false',
-      '-c', 'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi"]',
+      '-c', 'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi", "cinematography_kb", "mcp__cinematography_kb"]',
       '-c', 'project_doc_max_bytes=65536',
       '-c', 'project_root_markers=[".git"]',
       '-c', 'project_doc_fallback_filenames=["CLAUDE.md", "GEMINI.md"]',
       '-c', 'features.memories=true',
       '-c', 'mcp_servers.apiyi.enabled=false',
+      '-c', 'mcp_servers.cinematography_kb.env.DASHVECTOR_ENDPOINT="vrs-cn-1zz4v38oq0001l.dashvector.cn-beijing.aliyuncs.com"',
     ])
     const listenIdx = args.indexOf('--listen')
     const firstConfigIdx = args.indexOf('-c')
@@ -94,7 +96,7 @@ describe('buildCodexLaunchArgs', () => {
     const args = buildCodexLaunchArgs()
     expect(args).toContain('features.code_mode.enabled=false')
     expect(args).toContain(
-      'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi"]',
+      'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi", "cinematography_kb", "mcp__cinematography_kb"]',
     )
     // It must be unconditional — present even with a custom provider/MCP wired.
     const withMcp = buildCodexLaunchArgs({
@@ -102,7 +104,7 @@ describe('buildCodexLaunchArgs', () => {
       catimationMcp: { port: 7842, token: 'deadbeef' },
     })
     expect(withMcp).toContain(
-      'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi"]',
+      'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi", "cinematography_kb", "mcp__cinematography_kb"]',
     )
   })
 
@@ -466,8 +468,23 @@ describe('buildCodexLaunchArgs', () => {
   // (previously) sometimes did not. Unconditional (no key needed).
   it('lists apiyi in direct_only_tool_namespaces unconditionally', () => {
     expect(buildCodexLaunchArgs()).toContain(
-      'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi"]',
+      'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi", "cinematography_kb", "mcp__cinematography_kb"]',
     )
+  })
+
+  // cinematography_kb must ALSO be promoted to DirectModelOnly. Same deferral
+  // mechanism (codex 0.142.2 PR #29486) that hid ask_user/apiyi: the KB server
+  // seeds into config.toml and lists its 4 tools fine standalone, but a session
+  // whose namespace is NOT in direct_only_tool_namespaces gets them deferred
+  // behind tool_search, where discovery intermittently fails — observed as
+  // "运镜知识库无法使用" (registry shows 0 KB tools, tool_search finds none).
+  // Unconditional: the server is never key-gated (tools list statically).
+  it('lists cinematography_kb in direct_only_tool_namespaces unconditionally', () => {
+    const flag = buildCodexLaunchArgs().find((a) =>
+      a.startsWith('features.code_mode.direct_only_tool_namespaces='),
+    )
+    expect(flag).toContain('"cinematography_kb"')
+    expect(flag).toContain('"mcp__cinematography_kb"')
   })
 
   // No key in 设置 (the only key source) → keep apiyi DORMANT at launch so a
@@ -512,15 +529,17 @@ describe('buildCodexLaunchArgs', () => {
 
   // Unlike apiyi, the KB server is NEVER disabled when keyless: `tools/list` is
   // static so the tool always appears; only the CALL reports the missing key. So
-  // with no key we emit NO cinematography_kb `-c` at all (and no enabled=false).
-  it('emits no cinematography_kb -c when no key is configured (never disabled)', () => {
+  // with no key we emit no secret/disable override; the non-secret production
+  // DashVector endpoint is still pinned independently below.
+  it('emits no cinematography_kb secret or disable override when no key is configured', () => {
     const args = buildCodexLaunchArgs()
-    expect(args.some((a) => a.startsWith('mcp_servers.cinematography_kb.'))).toBe(false)
+    expect(args.some((a) => a.includes('DASHSCOPE_API_KEY'))).toBe(false)
+    expect(args).not.toContain('mcp_servers.cinematography_kb.enabled=false')
   })
 
-  it('treats a whitespace-only cinematographyKbKey as no key → no injection', () => {
+  it('treats a whitespace-only cinematographyKbKey as no secret injection', () => {
     const args = buildCodexLaunchArgs({ cinematographyKbKey: '   ' })
-    expect(args.some((a) => a.startsWith('mcp_servers.cinematography_kb.'))).toBe(false)
+    expect(args.some((a) => a.includes('DASHSCOPE_API_KEY'))).toBe(false)
   })
 
   // DashVector key (Sakuga-42M raw-dataset retrieval, 设置 → 运镜知识库): same
@@ -540,6 +559,13 @@ describe('buildCodexLaunchArgs', () => {
     expect(
       buildCodexLaunchArgs({ dashVectorKey: '  ' }).some((a) => a.includes('DASHVECTOR_API_KEY')),
     ).toBe(false)
+  })
+
+  it('always overlays cinematography_kb DASHVECTOR_ENDPOINT (non-secret prod cluster)', () => {
+    const args = buildCodexLaunchArgs()
+    expect(args).toContain(
+      'mcp_servers.cinematography_kb.env.DASHVECTOR_ENDPOINT="vrs-cn-1zz4v38oq0001l.dashvector.cn-beijing.aliyuncs.com"',
+    )
   })
 
   it('registers extraProviders WITHOUT changing the active model_provider or top-level model', () => {

@@ -41,13 +41,16 @@ export function getCinematographyKbMcpEntryPath(options: CinematographyKbMcpPath
  *
  * `query_sakuga_dataset` additionally reads `DASHVECTOR_API_KEY` (runtime `-c`
  * overlay, same as the DASHSCOPE key — never seeded here) and
- * `DASHVECTOR_ENDPOINT` (NOT a secret: the app's Sakuga-42M cluster host).
- * The endpoint will be baked into this scaffold once the DashVector cluster
- * exists (see docs/superpowers/plans/2026-07-05-sakuga-cloud-native-kb.md,
- * Task 2) so external codex CLI users get it for free; until then the tool
- * CALL reports the missing endpoint.
+ * `DASHVECTOR_ENDPOINT` (NOT a secret: the app's Sakuga-42M cluster host,
+ * baked below per docs/superpowers/plans/2026-07-05-sakuga-cloud-native-kb.md
+ * Task 2 so external codex CLI users get it for free). The endpoint points at
+ * the PAID Serverless cluster `catimation-sakuga-prod` holding the full 1.1M
+ * Sakuga-42M metadata; the merge never overwrites a user-set value, so anyone
+ * pointing at their own cluster keeps it.
  */
-export const CINEMATOGRAPHY_KB_ENV_SCAFFOLD: Readonly<Record<string, string>> = Object.freeze({})
+export const CINEMATOGRAPHY_KB_ENV_SCAFFOLD: Readonly<Record<string, string>> = Object.freeze({
+  DASHVECTOR_ENDPOINT: 'vrs-cn-1zz4v38oq0001l.dashvector.cn-beijing.aliyuncs.com',
+})
 
 export interface CinematographyKbMcpConfigEntry {
   command: string

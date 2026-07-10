@@ -23,6 +23,7 @@
 
 'use strict'
 
+const crypto = require('node:crypto')
 const fs = require('node:fs')
 const https = require('node:https')
 const path = require('node:path')
@@ -80,6 +81,24 @@ const SAKUGA_VIDEO_DIR =
   (process.env.SAKUGA_VIDEO_DIR || '').trim() || 'D:\\tecx\\text\\videos\\sakuga-full\\sources'
 const SOURCE_EXTS = ['.mp4', '.webm', '.gif', '.mkv', '.avi']
 
+// Optional OSS mirror of the same sources/ tree (private Standard bucket).
+// When AccessKey env is present, query/get tools also emit a time-limited
+// signed URL so remote agents can fetch the source without local disk.
+const SAKUGA_OSS_BUCKET =
+  (process.env.SAKUGA_OSS_BUCKET || '').trim() || 'catimation-sakuga-videos'
+const SAKUGA_OSS_ENDPOINT =
+  (process.env.SAKUGA_OSS_ENDPOINT || '').trim() || 'oss-cn-beijing.aliyuncs.com'
+const SAKUGA_OSS_PREFIX = (process.env.SAKUGA_OSS_PREFIX || '').trim() || 'sources'
+const SAKUGA_OSS_AK =
+  (process.env.SAKUGA_OSS_ACCESS_KEY_ID || process.env.ALIBABA_CLOUD_ACCESS_KEY_ID || '').trim()
+const SAKUGA_OSS_SK =
+  (process.env.SAKUGA_OSS_ACCESS_KEY_SECRET || process.env.ALIBABA_CLOUD_ACCESS_KEY_SECRET || '').trim()
+const SAKUGA_OSS_URL_TTL_SEC = Math.max(
+  60,
+  Number.parseInt(process.env.SAKUGA_OSS_URL_TTL_SEC || '3600', 10) || 3600,
+)
+const SAKUGA_OSS_MIRROR_READY = process.env.SAKUGA_OSS_MIRROR_READY === '1'
+
 /** Locate the local source video for a sakugabooru post id, if downloaded. */
 function localSourcePath(postId) {
   for (const ext of SOURCE_EXTS) {
@@ -87,6 +106,64 @@ function localSourcePath(postId) {
     if (fs.existsSync(p)) return p
   }
   return null
+}
+
+/** Prefer local ext when present; otherwise default to .mp4 for OSS key. */
+function sourceExtForPost(postId) {
+  const local = localSourcePath(postId)
+  if (local) return path.extname(local)
+  return '.mp4'
+}
+
+/** Build a private OSS object key for a post, e.g. sources/sakuga_102939.mp4. */
+function ossObjectKey(postId) {
+  return `${SAKUGA_OSS_PREFIX}/sakuga_${postId}${sourceExtForPost(postId)}`
+}
+
+/** Pure OSS V1 GET signer; `expires` is an absolute Unix timestamp. */
+function signOssGetUrl({ bucket, endpoint, accessKeyId, accessKeySecret, objectKey, expires }) {
+  const resource = `/${bucket}/${objectKey}`
+  const stringToSign = `GET\n\n\n${expires}\n${resource}`
+  const signature = crypto
+    .createHmac('sha1', accessKeySecret)
+    .update(stringToSign)
+    .digest('base64')
+  const qs =
+    `OSSAccessKeyId=${encodeURIComponent(accessKeyId)}` +
+    `&Expires=${expires}` +
+    `&Signature=${encodeURIComponent(signature)}`
+  return `https://${bucket}.${endpoint}/${objectKey}?${qs}`
+}
+
+/**
+ * Sign a GET URL for a private OSS object (OSS V1 signature).
+ * Returns null when AccessKey env is missing.
+ */
+function signedOssUrl(objectKey, expiresInSec = SAKUGA_OSS_URL_TTL_SEC) {
+  if (!SAKUGA_OSS_AK || !SAKUGA_OSS_SK || !objectKey) return null
+  return signOssGetUrl({
+    bucket: SAKUGA_OSS_BUCKET,
+    endpoint: SAKUGA_OSS_ENDPOINT,
+    accessKeyId: SAKUGA_OSS_AK,
+    accessKeySecret: SAKUGA_OSS_SK,
+    objectKey,
+    expires: Math.floor(Date.now() / 1000) + expiresInSec,
+  })
+}
+
+/**
+ * Prefer local path. Attach a signed OSS URL only after the full mirror has
+ * been verified and SAKUGA_OSS_MIRROR_READY=1, avoiding dead URLs mid-sync.
+ */
+function sourceAccessLines(postId) {
+  const lines = []
+  const local = localSourcePath(postId)
+  if (local) lines.push(`本地原片: ${local} (按上面时间区间用 ffmpeg 截取观看)`)
+  const ossUrl = SAKUGA_OSS_MIRROR_READY ? signedOssUrl(ossObjectKey(postId)) : null
+  if (ossUrl) {
+    lines.push(`OSS原片(签名URL,约${Math.round(SAKUGA_OSS_URL_TTL_SEC / 60)}分钟有效): ${ossUrl}`)
+  }
+  return lines
 }
 
 /** Normalize '102939:9' / '102939_9' → { docId: '102939_9', postId: '102939' }. */
@@ -431,10 +508,7 @@ function formatSakugaHits(payload) {
     }
     const idParsed = parseIdentifier(hit.id != null ? hit.id : f.identifier)
     if (idParsed) {
-      const local = localSourcePath(idParsed.postId)
-      if (local) {
-        parts.push(`本地原片: ${local} (按上面时间区间用 ffmpeg 截取观看)`)
-      }
+      for (const line of sourceAccessLines(idParsed.postId)) parts.push(line)
     }
     lines.push(parts.join('\n'))
   })
@@ -569,9 +643,9 @@ async function querySakugaClips(args) {
 }
 
 /**
- * get_sakuga_clip: resolve identifier → local source video path + scene
- * timecodes (from DashVector). No cutting — the consuming agent seeks/cuts
- * with its own ffmpeg.
+ * get_sakuga_clip: resolve identifier → local source path and/or signed OSS
+ * source URL + scene timecodes (from DashVector). No cutting — the consuming
+ * agent seeks/cuts with its own ffmpeg.
  */
 async function getSakugaClip(args) {
   const idParsed = parseIdentifier(args.identifier)
@@ -583,16 +657,18 @@ async function getSakugaClip(args) {
   const fields = doc && isObject(doc.fields) ? doc.fields : null
   const start = String((fields && fields.scene_start_time) || '')
   const end = String((fields && fields.scene_end_time) || '')
-  const src = localSourcePath(idParsed.postId)
-  if (!src) {
+  const access = sourceAccessLines(idParsed.postId)
+  if (!access.length) {
     return {
       success: false,
       error:
-        `Source video for post ${idParsed.postId} not found locally (dir: ${SAKUGA_VIDEO_DIR}). ` +
-        'The full dump may still be downloading, or the post is missing from the archive.',
+        `Source video for post ${idParsed.postId} not found locally (dir: ${SAKUGA_VIDEO_DIR}) ` +
+        'and the OSS mirror is not ready for signed access. ' +
+        'After the full sync is verified, set SAKUGA_OSS_MIRROR_READY=1 plus ' +
+        'SAKUGA_OSS_ACCESS_KEY_ID/SECRET (or ALIBABA_CLOUD_ACCESS_KEY_*) for signed URLs.',
     }
   }
-  const parts = [`identifier: ${idParsed.docId}`, `本地原片: ${src}`]
+  const parts = [`identifier: ${idParsed.docId}`, ...access]
   if (fields && fields.text_description) parts.push(`描述: ${String(fields.text_description).slice(0, 300)}`)
   if (start && end) {
     parts.push(`片段区间: ${start} – ${end} (用自带 ffmpeg 按此区间截取观看)`)
@@ -692,10 +768,10 @@ const TOOLS = [
     name: 'get_sakuga_clip',
     description:
       'Resolve a Sakuga-42M clip identifier (from query_sakuga_dataset results, e.g. ' +
-      '"102939:9") to the locally stored sakugabooru source video path plus the ' +
-      "clip's scene start/end timecodes. No video processing happens server-side — " +
-      'use your own ffmpeg to seek/extract the segment (e.g. ' +
-      'ffmpeg -i <path> -ss <start> -to <end> ...) or watch the source directly.',
+      '"102939:9") to its sakugabooru source video plus scene start/end timecodes. ' +
+      'Returns a local path when available and, after the mirror is marked ready, ' +
+      'a time-limited signed OSS URL so remote agents can fetch the original. ' +
+      'No server-side cutting: use ffmpeg -i <path-or-url> -ss <start> -to <end> ...',
     inputSchema: {
       type: 'object',
       properties: {
@@ -800,4 +876,16 @@ if (require.main === module) {
 
 // Exposed for unit tests (pure functions + tool descriptors); the stdio loop
 // only starts when this file is the entrypoint.
-module.exports = { TOOLS, buildSakugaQueryBody, formatSakugaHits, parseAvNode, formatClipHit, parseIdentifier, localSourcePath }
+module.exports = {
+  TOOLS,
+  buildSakugaQueryBody,
+  formatSakugaHits,
+  parseAvNode,
+  formatClipHit,
+  parseIdentifier,
+  localSourcePath,
+  signOssGetUrl,
+  signedOssUrl,
+  ossObjectKey,
+  sourceAccessLines,
+}

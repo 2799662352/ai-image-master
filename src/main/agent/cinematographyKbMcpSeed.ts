@@ -45,15 +45,15 @@ function needsTransportRepair(entry: Record<string, unknown>): boolean {
 
 /**
  * Merge scaffold env into an existing block, ADDING only absent keys.
- * User-set values are sacred and never overwritten. Returns `null` when nothing
- * changed.
+ * User-set values are sacred and never overwritten (a user pointing
+ * DASHVECTOR_ENDPOINT at their own cluster keeps it). Returns `null` when
+ * nothing changed.
  *
- * With the (now EMPTY) scaffold this only ever normalizes a present-but-broken
- * (non-object) env into an object. A completely ABSENT env (`undefined`/`null`)
- * with an empty scaffold has nothing to add → returns `null` (skip), which is
- * essential for seed→skip idempotency: a fresh seed writes an empty env, and if
- * the TOML serializer omits the empty table, the re-read env is `undefined` and
- * must NOT be treated as a change.
+ * Seed→skip idempotency: a fresh seed writes the scaffold env (non-empty since
+ * the DashVector endpoint got baked), so the re-read env already contains every
+ * scaffold key → the next merge returns `null` (skip). An ABSENT env
+ * (`undefined`/`null`) gets the scaffold added → 'backfilled', which is how
+ * pre-endpoint configs converge on boot.
  */
 export function mergeEnvWithScaffold(existingEnv: unknown): Record<string, string> | null {
   const base = isPlainObject(existingEnv) ? existingEnv : {}

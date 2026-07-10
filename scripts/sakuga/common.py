@@ -29,8 +29,9 @@ def env(name: str) -> str:
     return v
 
 
-def embed_batch(texts: list, retries: int = 5) -> list:
-    """DashScope text-embedding-v4,512 维,单请求 ≤10 条。限流指数退避。"""
+def embed_batch(texts: list, retries: int = 8) -> list:
+    """DashScope text-embedding-v4,512 维,单请求 ≤10 条。限流与网络瞬断
+    (SSL EOF/连接重置/超时)均指数退避重试。"""
     url = (
         "https://dashscope.aliyuncs.com/api/v1/services/embeddings/"
         "text-embedding/text-embedding"
@@ -44,18 +45,23 @@ def embed_batch(texts: list, retries: int = 5) -> list:
         "input": {"texts": texts},
         "parameters": {"dimension": DIM},
     }
-    last = None
+    last_err = None
     for attempt in range(retries):
-        r = requests.post(url, headers=headers, json=body, timeout=60)
-        last = r
+        try:
+            r = requests.post(url, headers=headers, json=body, timeout=60)
+        except requests.exceptions.RequestException as e:
+            last_err = f"{type(e).__name__}: {str(e)[:200]}"
+            time.sleep(min(2**attempt, 60))
+            continue
         if r.status_code == 200:
             out = r.json()["output"]["embeddings"]
             return [e["embedding"] for e in sorted(out, key=lambda x: x["text_index"])]
-        if r.status_code in (429, 500, 503):
-            time.sleep(2**attempt)
+        last_err = f"HTTP {r.status_code}: {r.text[:300]}"
+        if r.status_code in (429, 500, 502, 503, 504):
+            time.sleep(min(2**attempt, 60))
             continue
-        raise RuntimeError(f"embed HTTP {r.status_code}: {r.text[:300]}")
-    raise RuntimeError(f"embed: retries exhausted (last HTTP {last.status_code})")
+        raise RuntimeError(f"embed {last_err}")
+    raise RuntimeError(f"embed: retries exhausted ({last_err})")
 
 
 class DashVector:
@@ -87,15 +93,19 @@ class DashVector:
     def upsert(self, docs: list, retries: int = 5) -> dict:
         """POST /docs/upsert(PUT /docs 是 update 语义,key 不存在会失败)。
         顶层 code==0 不代表逐条成功,必须校验 output 里每条的 code。"""
-        last = None
+        last_err = None
         for attempt in range(retries):
-            r = requests.post(
-                f"{self.base}/collections/{COLLECTION}/docs/upsert",
-                headers=self.h,
-                json={"docs": docs},
-                timeout=120,
-            )
-            last = r
+            try:
+                r = requests.post(
+                    f"{self.base}/collections/{COLLECTION}/docs/upsert",
+                    headers=self.h,
+                    json={"docs": docs},
+                    timeout=120,
+                )
+            except requests.exceptions.RequestException as e:
+                last_err = f"{type(e).__name__}: {str(e)[:200]}"
+                time.sleep(min(2**attempt, 60))
+                continue
             if r.status_code == 200:
                 j = r.json()
                 per_doc = j.get("output") or []
@@ -104,8 +114,9 @@ class DashVector:
                     return j
                 if bad:
                     raise RuntimeError(f"upsert per-doc failures: {bad[:3]}")
-            time.sleep(2**attempt)
-        raise RuntimeError(f"upsert failed: {last.status_code} {last.text[:300]}")
+            last_err = f"HTTP {r.status_code}: {r.text[:300]}"
+            time.sleep(min(2**attempt, 60))
+        raise RuntimeError(f"upsert failed: {last_err}")
 
     def fetch(self, ids: list) -> dict:
         r = requests.get(
