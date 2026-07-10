@@ -11,6 +11,8 @@ import {
   installFirstPartySkills,
   type FirstPartySkill,
 } from '../firstPartySkills'
+// 单一真源生成器(仓库脚本,无 .d.ts,类型由 checkJs 推断)
+import { renderGeneratedModule, GENERATED_RELATIVE_PATH } from '../../../../scripts/generate-first-party-skills.mjs'
 
 function frontmatterDescription(content: string): string {
   const match = content.match(/\ndescription:\s*>-\n([\s\S]*?)\n---/)
@@ -316,6 +318,25 @@ describe('installFirstPartySkills', () => {
         'utf8',
       )
       expect(written).toBe(CATIMATION_FFMPEG_WIN_SKILL.content)
+    })
+  })
+
+  describe('single-source parity', () => {
+    it('generated module matches its Markdown sources (run generate-first-party-skills.mjs if this fails)', async () => {
+      const repoRoot = path.resolve(__dirname, '..', '..', '..', '..')
+      const onDisk = await readFile(
+        path.join(repoRoot, ...(GENERATED_RELATIVE_PATH as string).split('/')),
+        'utf8',
+      )
+      const rendered = await renderGeneratedModule()
+      expect(onDisk.replaceAll('\r\n', '\n')).toBe(rendered)
+    })
+
+    it('every shipped skill content ends with a newline and uses LF', () => {
+      for (const skill of FIRST_PARTY_SKILLS) {
+        expect(skill.content.includes('\r\n'), `${skill.name} contains CRLF`).toBe(false)
+        expect(skill.content.endsWith('\n'), `${skill.name} missing trailing newline`).toBe(true)
+      }
     })
   })
 })

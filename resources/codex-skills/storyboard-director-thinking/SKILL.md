@@ -1,9 +1,10 @@
 ---
 name: storyboard-director-thinking
-description: 用于建立 AI 视频导演思维,避免只做提示词工具人。适用于 Seedance/可灵/海螺/NanoBananaPro 的空间调度、场面调度、Z轴纵深、动机光源、视差运镜、核心行动、叙事优先、剪辑补拍、A-roll/B-roll、多镜头组合、从一键直出升级为导演控制。
+description: 用于建立 AI 视频导演思维,避免只做提示词工具人。适用于空间调度、场面调度、Z轴纵深、动机光源、视差运镜、核心行动、叙事优先、剪辑补拍、A-roll/B-roll、多镜头组合、从一键直出升级为导演控制。
 ---
 
 # Storyboard Director Thinking / AI 视频导演思维
+<!-- skill-budget: fast -->
 
 核心信念:工具进步不等于创作能力进步。真正决定作品上限的是导演思维:空间调度、核心行动、剪辑与补拍。AI 直出只是素材,导演负责节奏和意义。
 

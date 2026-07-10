@@ -4,6 +4,7 @@ description: 用于控制 AI 图像/视频的色彩体系、HEX 色卡、电影�
 ---
 
 # Storyboard Color Grading Control / 数据与 HEX 调色控制
+<!-- skill-budget: fast -->
 
 核心信念:色彩不是“氛围词”,而是可控的数据结构。不要让 AI 猜“复古”“电影感”“青橙色调”,要用 HEX 色卡、色彩 DNA、光比、色温和验证闭环接管画面的色彩。
 
@@ -110,6 +111,6 @@ description: 用于控制 AI 图像/视频的色彩体系、HEX 色卡、电影�
 - 视频是否用首帧延续调色,而不是重新写风格词?
 - 是否经过 A/B 色彩验证和迭代?
 
-## 何时改用其他 skill
+## 本 skill 的边界
 
-- 只需基础色板与主/点缀色比例 → `storyboard-style`。本 skill 侧重系统化 LUT/HEX 调色、色彩 DNA 与 A/B 验证。
+- 本 skill 侧重系统化 LUT/HEX 调色、色彩 DNA 与 A/B 验证;只需基础色板与主/点缀色比例时,交给分镜风格基础规范处理。

@@ -4,6 +4,7 @@ description: 【分镜模式·规避审查 / Storyboard · Dodge】触发词:规
 ---
 
 # Storyboard Dodge / 规避审查改写
+<!-- skill-budget: fast -->
 
 ## Overview
 

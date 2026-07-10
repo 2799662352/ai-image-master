@@ -1,9 +1,11 @@
 ---
 name: director-anime-quality-boost
-description: 【导演模式·动画质感 / Director · Anime Look】触发词:动画质感 / 日式动画截图 / 赛璐璐 / cel / 去厚涂 / 油画感 / 二次元 / 番剧风 / anime screenshot / no painterly。Use when output drifts toward painterly / 厚涂 / oil-painterly texture instead of cel-shaded anime screenshot style, character identity must lock across panels (hair / outfit / accessories), or applying Color Harmony / No-Painterly 强制(内部参数,成品以 markdown 交付、不输出 JSON,日式动画截图) — applies to image-generation models (Midjourney, DALL-E, FLUX, Stable Diffusion, Imagen, Ideogram, Recraft), video-generation models (Sora, Veo, Runway, Kling, Seedance, Hailuo, Higgsfield, Hunyuan), screenplays, scripts, storyboards, AI video, AI image, 提示词, 视频模型, 图像模型, 写剧本, 脚本, 分镜.
+description: 【导演模式·动画质感 / Director · Anime Look】触发词:动画质感 / 日式动画截图 / 赛璐璐 / cel / 去厚涂 / 油画感 / 二次元 / 番剧风 / anime screenshot / no painterly。Use when 输出跑偏成厚涂 / 油画 / 3D 质感、需要拉回赛璐璐日式动画截图风格,或角色跨格身份(发型 / 服装 / 配饰)需要锁定时;Color Harmony / No-Painterly 为内部参数,成品以 markdown 交付、不输出 JSON。
 ---
 
 # 导演模式 · 动画质感强制(Anime Look)
+
+<!-- skill-budget: fast -->
 
 ## Overview
 
@@ -25,7 +27,7 @@ Core principle: 基本人設は変えない、演出は変えてよい (characte
 
 ## 风格强制清单(成品 · 正向 markdown,直接喂模型)
 
-最终交付**不输出 JSON**(遵循 director-orchestrator)。把以下正向强制句拼进成品提示词即可:
+最终交付**不输出 JSON**(遵循编排层交付纪律)。把以下正向强制句拼进成品提示词即可:
 
 ```
 STYLE ENFORCEMENT (BINDING):
@@ -42,7 +44,7 @@ CHARACTER IDENTITY LOCK: Strictly follow reference image character designs. Hair
 
 ## (可选)内部参数结构
 
-下面 JSON 仅作**内部参数结构参考**(Color Harmony / No-Painterly 等权重的含义),**属内部结构,最终交付遵循 director-orchestrator 不输出 JSON**;真正喂给模型 / 交付用户的是上面的 markdown 强制清单:
+下面 JSON 仅作**内部参数结构参考**(Color Harmony / No-Painterly 等权重的含义),**属内部结构,最终交付不输出 JSON**;真正喂给模型 / 交付用户的是上面的 markdown 强制清单:
 
 ```json
 {

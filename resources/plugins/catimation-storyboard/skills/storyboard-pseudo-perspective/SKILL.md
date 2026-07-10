@@ -4,6 +4,7 @@ description: 用于打破 AI 图像的平面感,通过伪透视词、方向延�
 ---
 
 # Storyboard Pseudo Perspective / 伪透视空间控制
+<!-- skill-budget: fast -->
 
 核心信念:AI 不真正理解三维几何,它在模仿像素规律。我们可以用“伪透视词”欺骗它,让它生成更深、更广、更有 Z 轴的画面。
 

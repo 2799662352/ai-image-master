@@ -1,9 +1,10 @@
 ---
 name: storyboard-character-acting
-description: 用于修复 AI 视频角色的“NPC感”“假笑”“摆拍”“面无表情流泪”“用力过猛”等演技问题。适用于 Sora/Kling/Runway/Seedance/Hailuo 视频提示词、角色演技、微表情控制、肢体语言、情绪因果、环境音效、声音视觉化、AI导演思维。把“开心/生气/悲伤”等情绪标签改写成微表情序列、协同肢体小动作和环境声音线索。
+description: 用于修复 AI 视频角色的“NPC感”“假笑”“摆拍”“面无表情流泪”“用力过猛”等演技问题。把“开心/生气/悲伤”等情绪标签改写成微表情序列、协同肢体小动作和环境声音线索。适用于角色演技、微表情控制、肢体语言、情绪因果、声音视觉化。
 ---
 
 # Storyboard Character Acting / AI 视频角色演技
+<!-- skill-budget: standard -->
 
 核心信念:高级演技不是把“开心、愤怒、悲伤”写在脸上,而是让观众从**微表情的过渡、身体的下意识反应、环境声音线索**里自己读出情绪。AI 角色像 NPC,通常不是因为脸不够精致,而是因为情绪被写成了标签,动作没有因果,环境像静音壁纸。
 
@@ -178,9 +179,7 @@ AI 容易把情绪词映射到模板表情:happy → 标准微笑,angry → 皱�
 ## 何时调用其他 skill
 
 - 演技三件套(各有侧重,可互补):动作缺"为什么发生" → `storyboard-character-motivation`(行为动机/有事可做);人物"好看但塑料假" → `storyboard-live-character-realism`(环境对抗+局部光影哑光)。本 skill 侧重微表情序列与情绪因果。
-- 需要把参考视频拆成时间线/空间结构:调用 `storyboard-scene-breakdown`。
 - 需要更物理化的动作参数:调用 `storyboard-physics`。
-- 需要声音分层设计:调用 `storyboard-audio`。
 
 ## 出稿前检查
 

@@ -4,6 +4,7 @@ description: 用于利用 AI 绘画的特征塌陷机制,主动压缩非主体�
 ---
 
 # Storyboard Feature Collapse / 特征塌陷美学
+<!-- skill-budget: fast -->
 
 核心信念:AI 的“糊、塌、细节丢失”不一定是废片。主动压缩非主体特征,保留关键锚点,可以让画面从糖水片变成有情绪浓度的艺术图。
 

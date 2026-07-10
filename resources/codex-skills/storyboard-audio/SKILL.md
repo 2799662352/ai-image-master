@@ -4,6 +4,7 @@ description: 【分镜模式·音频 / Storyboard · Audio】触发词:配乐 / 
 ---
 
 # Storyboard Audio / 分镜音频设计
+<!-- skill-budget: fast -->
 
 ## Overview
 

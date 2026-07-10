@@ -4,6 +4,7 @@ description: 【分镜模式·视觉 / Storyboard · Visual】触发词:物理�
 ---
 
 # Storyboard Visual / 分镜视觉
+<!-- skill-budget: standard -->
 
 ## Overview
 

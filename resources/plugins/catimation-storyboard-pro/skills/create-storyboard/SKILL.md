@@ -1,9 +1,11 @@
 ---
 name: create-storyboard
-description: Create complete director-grade storyboard production packages for Image 2 and SceneDance/Seedance video generation. Use when the user provides a script, scene idea, ad concept, short drama, long-form drama, period drama, sci-fi animation, product video, or asks for 分镜图, 剧本分镜, SceneDance/Seedance 视频素材, Image 2/Img2 prompts, character consistency sheets, continuity bibles, shot cards, clip references, keyframes, Jianying/CapCut edit lists, or image-to-video production assets. 触发词:制片包、分镜制片、剧本分镜、连续性分镜、shot card、衔接矩阵、剪辑边界、Image2 提示词、Seedance 素材、图生视频素材包、竖屏短剧、口播短视频、9:16 图生视频、运营号短剧。
+description: Create complete director-grade storyboard production packages for Image 2 and SceneDance/Seedance video generation. Use when the user provides a script, scene idea, ad concept, drama, animation, or product video, or asks for 分镜图, 剧本分镜, SceneDance/Seedance 视频素材, Image 2 prompts, continuity bibles, shot cards, keyframes, CapCut edit lists, or image-to-video production assets. 触发词:制片包、分镜制片、剧本分镜、连续性分镜、shot card、衔接矩阵、剪辑边界、Image2 提示词、Seedance 素材、图生视频素材包、竖屏短剧、9:16 图生视频。
 ---
 
 # Create Storyboard / 连续性优先的制片包生成器
+
+<!-- skill-budget: standard -->
 
 ## Overview
 
@@ -22,7 +24,7 @@ description: Create complete director-grade storyboard production packages for I
 ## When to Use
 
 - 用户给剧本/场景概念/广告概念/短剧/长剧/古装/科幻动画/产品视频,要"分镜图 / 剧本分镜 / SceneDance 素材 / Image2 提示词 / 角色一致性表 / 连贯性圣经 / shot cards / 关键帧 / 剪映清单 / 图生视频素材包"。
-- **何时不用:** 单镜画面打磨/参考图反推 → 用 `catimation-storyboard` 技法库;端到端"做成片" → 用 `film-studio` 编排(它会在需要时调本 skill)。
+- **何时不用:** 单镜画面打磨/参考图反推 → 交给单点画面工艺技能库(见本插件入口卡的周边插件分工);端到端"做成片" → 由上层成片编排器负责(它会在需要时调本 skill)。
 
 ## Quick Reference
 
@@ -245,4 +247,4 @@ fallback_plan: ""
 ## 与本 app 的衔接
 
 - 视频提示词最终经 `sd2-pe` 工程化(八大要素 + 多模态绑定)后再交生成工具;每段 Seedance ≤15s。
-- 端到端"做成片"由 `film-studio` 编排,在 G2/G3 调用本 skill 产出制片包;单镜画面打磨用 `catimation-storyboard` 技法库。
+- 端到端"做成片"由上层成片编排器负责,在其分镜阶段调用本 skill 产出制片包;单镜画面打磨交单点画面工艺技能库(两者的名称与分工见本插件入口卡 references/family-catalog.md)。

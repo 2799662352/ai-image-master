@@ -1,9 +1,11 @@
 ---
 name: director-scene-analysis-depth
-description: 【导演模式·场景分析 / Director · Scene Analysis】触发词:场景分析 / 参考图分析 / 环境提取 / 主体清单 / 风格提取 / 看图拆解 / scene analysis / reference breakdown。Use when extracting from a reference image the env field (location + time + atmosphere + weather in one sentence), a subjects array (one entry per visible person/animal/object with spatial relationships), and a style field (art style + color palette + lighting quality + emotional tone), reading time of day from shadow angles and light color — applies to image-generation models (Midjourney, DALL-E, FLUX, Stable Diffusion, Imagen, Ideogram, Recraft), video-generation models (Sora, Veo, Runway, Kling, Seedance, Hailuo, Higgsfield, Hunyuan), screenplays, scripts, storyboards, AI video, AI image, 提示词, 视频模型, 图像模型, 写剧本, 脚本, 分镜.
+description: 【导演模式·场景分析 / Director · Scene Analysis】触发词:场景分析 / 参考图分析 / 环境提取 / 主体清单 / 风格提取 / 看图拆解 / scene analysis / reference breakdown。Use when 拿到参考图要做反推 / 复刻的前置拆解时:提取 env 字段(地点+时刻+氛围+天气一句话)、主体清单(逐个可见人物含空间关系)、style 字段(美术+色板+光质+情绪),时刻由阴影角与光色读出。
 ---
 
 # 导演模式 · 场景分析
+
+<!-- skill-budget: fast -->
 
 ## Overview
 

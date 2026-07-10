@@ -94,6 +94,7 @@ videos/Sakuga-42M/
 scripts/sakuga/__pycache__/
 scripts/sakuga/vectors/
 scripts/sakuga/vectors_top/
+scripts/sakuga/vectors_full/
 scripts/sakuga/checkpoint*.txt
 scripts/sakuga/named_batch*.txt
 scripts/sakuga/upload_batches_done.txt

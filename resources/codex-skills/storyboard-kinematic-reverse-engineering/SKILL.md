@@ -4,6 +4,7 @@ description: 用于反推 AI 视频或参考视频的运动学规律,避免只�
 ---
 
 # Storyboard Kinematic Reverse Engineering / 运动学反推
+<!-- skill-budget: standard -->
 
 核心信念:视频不是会动的图,而是时间和空间参数的连续变化。只给 AI 一张截图,只能得到“像这张图”的画面;要复刻视频神韵,必须反推运动过程、相机结构和矢量参数。
 

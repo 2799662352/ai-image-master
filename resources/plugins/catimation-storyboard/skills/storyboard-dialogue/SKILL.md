@@ -4,6 +4,7 @@ description: 【分镜模式·对白 / Storyboard · Dialogue】触发词:对白
 ---
 
 # Storyboard Dialogue / 分镜对白
+<!-- skill-budget: fast -->
 
 ## Overview
 

@@ -1,9 +1,11 @@
 ---
 name: director-structured-captioning
-description: 【导演模式·结构化描述 / Director · Structured Captioning】触发词:结构化描述 / HoloCine / 全局+角色+分镜 / 省token / 角色标签 / [char1] / 锁定外观 / structured caption / token saving。Use when prompts repeat character appearance across panels and waste tokens — restructure as HoloCine: GLOBAL (scene, time, weather, mood) → CHARACTER DEFINITIONS ([char1]: anchor, [char2]: anchor) → PER-SHOT (references [char1] tag, never re-describes appearance), cutting tokens ~40% and locking one canonical look — applies to image-generation models (Midjourney, DALL-E, FLUX, Stable Diffusion, Imagen, Ideogram, Recraft), video-generation models (Sora, Veo, Runway, Kling, Seedance, Hailuo, Higgsfield, Hunyuan), screenplays, scripts, storyboards, AI video, AI image, 提示词, 视频模型, 图像模型, 写剧本, 脚本, 分镜.
+description: 【导演模式·结构化描述 / Director · Structured Captioning】触发词:结构化描述 / HoloCine / 全局+角色+分镜 / 省token / 角色标签 / [char1] / 锁定外观 / structured caption / token saving。Use when 多格提示词反复重描角色外貌、token 浪费、外观微漂移时:改 HoloCine 结构 GLOBAL → CHARACTER DEFINITIONS → PER-SHOT(只用 [char1] 标签引用,不重描外貌),省约 40% token 并锁定唯一外观。
 ---
 
 # 导演模式 · 结构化描述(HoloCine)
+
+<!-- skill-budget: fast -->
 
 ## Overview
 

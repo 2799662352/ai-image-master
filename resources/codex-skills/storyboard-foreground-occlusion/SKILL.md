@@ -1,9 +1,10 @@
 ---
 name: storyboard-foreground-occlusion
-description: 用于通过前景遮挡去除 AI 画面的塑料感、真空感、壁纸感、证件照感,建立机位感、Z轴空间、偷窥感、空气透视和电影感。适用于 AI生图、图生视频、Midjourney、NanoBananaPro、Kling、Hailuo、Seedance、前景遮挡、物理遮挡、氛围遮挡、丁达尔效应、微尘、薄雾、景深、电影构图。
+description: 用于画面平、塑料感、真空感、壁纸感、证件照感、缺纵深时,通过前景遮挡建立机位感、Z轴空间、偷窥感、空气透视和电影感。适用于物理遮挡、氛围遮挡、丁达尔效应、微尘、薄雾、景深、电影构图。
 ---
 
 # Storyboard Foreground Occlusion / 前景遮挡电影感
+<!-- skill-budget: fast -->
 
 核心信念:很多 AI 画面不是不真实,而是太干净、太直接、太像“全知视角”。电影感常来自合理的前景遮挡:它告诉观众摄影机在哪里,并在二维画面里制造 Z 轴深度。
 

@@ -1,7 +1,9 @@
 ---
 name: codex-research-grounded-prompting
-description: Use when writing high-stakes prompts for video or image generation models (Sora, Midjourney, Kling, Veo, Stable Diffusion), when designing prompt-engineering systems, or when the user wants outputs grounded in both academic research and creator craft. Triggers on phrases such as "Sora prompt", "video generation prompt", "视频提示词", "动画 prompt", "怎么写更好的提示词", "prompt 方法论", or any task that demands rigor — source verification, multi-perspective structure, weight tuning, priority hierarchy, persuasion-over-accuracy, granularity alignment, or verification checklists.
+description: Use when writing high-stakes prompts for video or image generation models (e.g. Sora, Midjourney), when designing prompt-engineering systems, or when the user wants outputs grounded in both academic research and creator craft. Triggers on "Sora prompt", "video generation prompt", "视频提示词", "动画 prompt", "怎么写更好的提示词", "prompt 方法论", or tasks demanding rigor — source verification, multi-perspective structure, weight tuning, priority hierarchy, verification checklists.
 ---
+
+<!-- skill-budget: standard -->
 
 <overview>
 This skill operationalizes a single belief: high-stakes generation prompts get better when they fuse three tracks — academic research conclusions, creator-craft references, and a directing philosophy that defines what to sacrifice first.
@@ -227,34 +229,13 @@ Three or more "No" answers means the prompt is not ready and the model rewrites 
 
 <companion-skills>
 
-This skill is **the method**. The 19 sibling skills under `$HOME/.agents/skills/{director-*,storyboard-*}/` are **the recipes** — every one of them is a battle-tested in-app prompt-craft rule set ported verbatim from the storyboard pipeline and director mode of this application. The method tells you *what to do at each step*; the recipes give the exact *rules for how to write the words*. Use them in tandem; never use the method alone when a matching recipe exists.
+This skill is **the method**. The 19 sibling skills under `$HOME/.agents/skills/{director-*,storyboard-*}/` are **the recipes** — battle-tested in-app prompt-craft rule sets ported verbatim from the storyboard pipeline and director mode of this application. The method tells you *what to do at each step*; the recipes give the exact *rules for how to write the words*. Use them in tandem; never use the method alone when a matching recipe exists.
 
-| Step you are at | Read & follow this sibling skill | What it gives you |
-|---|---|---|
-| Pillar 2 — pick N-field structure | `director-prompt-engineering` | 7-field prompt order (Subject+Action → Character ref → Scene → Shot+Camera → Lighting → Composition → Style+Mood) + negative-prompt hygiene |
-| Pillar 2 — caption template | `director-structured-captioning` | VGoT structured caption fields |
-| Pillar 4 — animation exaggeration | `director-anime-quality-boost` | impact frames, speed lines, smear-frame craft, "wrongness is the point" |
-| Pillar 4 — body / motion physics | `storyboard-physics` | motion vectors (°/cm/m·s⁻¹), muscle tension, micro-expression in mm (not adjectives) |
-| Pillar 5 — continuity verify (visual) | `director-visual-continuity` | per-panel checklist for visual element coherence across the scene |
-| Pillar 5 — continuity verify (light) | `director-lighting-continuity` | key/fill/rim direction + color temperature + HDR coherence across panels |
-| Pillar 5 — continuity verify (style) | `director-style-consistency` | style descriptor verbatim across every panel, no paraphrase drift |
-| Lens 1 — intent extraction | `director-scene-analysis-depth` | physical / spatial / narrative depth dimensions for any scene |
-| Lens 2 — character anchors | `director-character-consistency` + `director-anchor-extraction-quality` | anchor schema (face/hair/build/outfit/markers) + density and specificity rules |
-| Lens 3 — style extraction | `storyboard-style` + `storyboard-visual` + `director-cinematic-composition` | palette ratio (≥7:3), key/fill/rim lighting, lens [mm] f/[stop], Z-axis fg/mg/bg, rule-of-thirds composition |
-| Lens 4 — shot-rhythm extraction | `director-shot-sequence-patterns` + `director-narrative-flow` + `storyboard-structure` | shot type cycle (wide / medium / CU / POV) + per-shot emotional arc + single-action mid-action freeze discipline |
-| Per-shot audio design (when domain warrants) | `storyboard-audio` | 3-layer audio: score (real composer ref + tension-value-to-bpm formula) / SFX (Hz + decay + spatial) / voice (Hz + breath% + 字/秒) |
-| Dialogue / character-name handling | `storyboard-dialogue` | extract dialogue + character names *verbatim* from the screenplay, never fabricate |
-| Sensitive content evasion | `storyboard-dodge` | artistic dodge rule set (contour / physics / shadow over explicit anatomical or graphic terms) |
+**The full step→recipe crosswalk lives in `references/skill-crosswalk.md`** (relative to this skill directory) — read it whenever the conversation reaches pillar 2/4/5 or any extraction lens, then load only the matching sibling(s). Three anchors worth naming here because they carry the most weight:
 
-**How to invoke them in a Codex chat.** When the conversation reaches a step listed above:
-
-1. Mention the sibling skill by name in your reasoning, e.g. *"Now applying `storyboard-style` for palette decomposition + `director-lighting-continuity` for cross-panel light coherence"*. This makes the lineage traceable for the user.
-2. *Quote* the specific rule(s) you are following from that sibling's body — not the whole body, only the rules that apply to the current step.
-3. If multiple siblings collide at the same step (e.g. Lens 3 has four candidates), pick the one whose rules best fit the user's actual brief, or compose two of them when they cover different sub-dimensions (palette vs. lighting vs. composition).
-
-Codex CLI keeps every USER-scope SKILL.md in the session registry — you can reference any sibling freely; the user does **not** need to manually `/skill load` each one. They become a part of your reasoning toolkit the moment this skill activates.
-
-**One caveat.** The siblings were originally authored for two specific in-app pipelines (UnderstandPage's storyboard pipeline, GeneratePage's director mode). In the source files those pipelines hooked on a `appliesTo:` frontmatter field — stripped during the port to Codex registry because it is not part of Codex's frontmatter schema. The *rule bodies* themselves are domain-agnostic and apply whenever you are writing the matching kind of prompt content.
+- Pillar 2 (N-field structure) → `director-prompt-engineering` (7-field prompt order + negative-prompt hygiene)
+- Lens 2 (character anchors) → `director-character-consistency` (anchor schema: face/hair/build/outfit/markers)
+- Lens 3 (style extraction) → `storyboard-style` (palette ratio ≥7:3, lighting, composition decomposition)
 
 **Don't double up unnecessarily.** When the user's task only needs a single sibling (e.g. "decompose this palette into hex + ratio"), invoke just that sibling — do not gratuitously layer all five pillars on top of a one-shot recipe call. The method is for high-stakes multi-dimensional briefs; the recipes alone are enough for narrow, well-defined sub-tasks.
 
@@ -262,11 +243,12 @@ Codex CLI keeps every USER-scope SKILL.md in the session registry — you can re
 
 <references>
 
-Two companion files live alongside this `SKILL.md` inside `$HOME/.agents/skills/codex-research-grounded-prompting/`:
+Three companion files live alongside this `SKILL.md` inside `$HOME/.agents/skills/codex-research-grounded-prompting/`:
 
+- `references/skill-crosswalk.md` — the full 19-sibling step→recipe crosswalk plus invocation etiquette. Read it whenever a pillar or lens has a matching recipe.
 - `references/methodology-rationale.md` — why these five pillars and five lenses exist, the failure modes each one prevents, the research lines and craft traditions that motivated them, and an anti-example showing what happens without each pillar.
 - `references/papers.md` — short reading-list of public research papers (AniSora, CRAVE, MiraData, Open-Sora 2.0, Video-Bench) with arXiv / HuggingFace links and 2-3 sentence rationale for why each one matters here.
 
-Read those when the user asks "why this rule" or "where did this come from", or when designing N-field structures for a new domain not already covered.
+Read the latter two when the user asks "why this rule" or "where did this come from", or when designing N-field structures for a new domain not already covered.
 
 </references>

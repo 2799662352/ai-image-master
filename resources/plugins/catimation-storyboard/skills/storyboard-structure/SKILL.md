@@ -4,6 +4,7 @@ description: 【分镜模式·结构 / Storyboard · Structure】触发词:分�
 ---
 
 # Storyboard Structure / 分镜结构
+<!-- skill-budget: fast -->
 
 ## Overview
 

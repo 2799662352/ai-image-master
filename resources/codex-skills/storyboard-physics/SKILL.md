@@ -4,6 +4,7 @@ description: 【分镜模式·物理 / Storyboard · Physics】触发词:物理�
 ---
 
 # Storyboard Physics / 分镜物理描述
+<!-- skill-budget: fast -->
 
 ## Overview
 
@@ -12,7 +13,7 @@ description: 【分镜模式·物理 / Storyboard · Physics】触发词:物理�
 ## When to Use
 
 - 需要把"恐惧/愤怒"等情绪改写成可复现的身体物理参数时。
-- 何时改用:需要情绪因果与肢体小动作而非纯参数 → `storyboard-character-acting`。
+- 本 skill 只管纯物理参数;需要情绪因果与肢体小动作时,交给演技类技法处理。
 
 Physics Rules:
 - Physical description only: skin texture, muscle tension, bone structure

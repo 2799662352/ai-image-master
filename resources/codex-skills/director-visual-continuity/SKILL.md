@@ -1,9 +1,11 @@
 ---
 name: director-visual-continuity
-description: 【导演模式·连续性 / Director · Continuity】触发词:连续性 / 一致性 / 配色一致 / 色温 / 比例一致 / 穿帮检查 / 地标一致 / continuity / consistency / color temperature / scale drift。Use when verifying that a scene's 2-3 dominant colors stay consistent, color temperature does not mix warm and cool, object-to-character scale holds (table at waist height stays at waist height, ≤20% drift), and architecture / environment landmarks keep their spatial relationships across panels — applies to image-generation models (Midjourney, DALL-E, FLUX, Stable Diffusion, Imagen, Ideogram, Recraft), video-generation models (Sora, Veo, Runway, Kling, Seedance, Hailuo, Higgsfield, Hunyuan), screenplays, scripts, storyboards, AI video, AI image, 提示词, 视频模型, 图像模型, 写剧本, 脚本, 分镜.
+description: 【导演模式·连续性 / Director · Continuity】触发词:连续性 / 一致性 / 配色一致 / 色温 / 比例一致 / 穿帮检查 / 地标一致 / continuity / consistency / color temperature / scale drift。Use when 同场景多格配色乱、冷暖混用、物体相对人物比例漂移(桌子从齐腰变齐胸)、地标空间关系穿帮时:锁 2-3 主色、色温只随时段变、比例漂移控制在 20% 内。
 ---
 
 # 导演模式 · 视觉连续性
+
+<!-- skill-budget: fast -->
 
 ## Overview
 

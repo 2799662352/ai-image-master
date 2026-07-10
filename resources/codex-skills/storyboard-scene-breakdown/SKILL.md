@@ -1,9 +1,10 @@
 ---
 name: storyboard-scene-breakdown
-description: 用于把爆款视频、参考图、截图或文字描述拆解成可复刻的 AI 视频/图像提示词。适用于“反推提示词”“复刻视频”“画面结构拆解”“逐帧拆解”“时间线”“空间关系”“镜头轨迹”“分镜分析”“Seedance/Sora/Kling/Runway 提示词”等场景。不要生成标签词堆砌,而是输出时间切片、构图机位、主体动作、光影方向、环境纵深和镜头运动。
+description: 用于把爆款视频、参考图、截图或文字描述拆解成可复刻的 AI 视频/图像提示词。适用于“反推提示词”“复刻视频”“画面结构拆解”“逐帧拆解”“时间线”“空间关系”“镜头轨迹”“分镜分析”等场景。不输出标签词堆砌,而是输出时间切片、构图机位、主体动作、光影方向、环境纵深和镜头运动。
 ---
 
 # Storyboard Scene Breakdown / 画面结构拆解法
+<!-- skill-budget: standard -->
 
 核心信念:复刻失败通常不是因为标签词不够多,而是因为提示词只写了“画面里有什么”,没有写清楚**动作怎么发生、镜头怎么走、物体在空间里怎么摆、光从哪里来**。不要把 AI 当“提示词反推器”,要把它当“视觉分析师 + 分镜画师”。
 
@@ -126,10 +127,7 @@ description: 用于把爆款视频、参考图、截图或文字描述拆解成�
 
 ## 何时调用其他 skill
 
-- 人物动作显得僵硬/摆拍:同时调用 `storyboard-character-motivation` 补“当前任务 → 动作触发 → 微反应”。
-- 需要镜头序列节奏:调用 `director-shot-sequence-patterns` + `director-narrative-flow`。
-- 需要物理量化动作:调用 `storyboard-physics`。
-- 需要前中后景、镜头和光线参数:调用 `storyboard-visual` + `director-cinematic-composition`。
+- 拆解之外的补强技法(人物动机、镜头序列节奏、物理量化、前中后景光学参数)→ Read references/related-techniques.md(相对本 skill 目录)。
 
 ## 出稿前检查
 

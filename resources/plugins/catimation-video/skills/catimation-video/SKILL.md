@@ -1,358 +1,202 @@
 ---
 name: catimation-video
 description: >-
-  FIRST-CHOICE video generator in the CATIMATION desktop app. Trigger whenever the
-  user asks to generate / create / render a video, clip, or animation, to animate
-  an image, or says 生成视频 / 来段视频 / 做个动画 / 让它动起来 / 图生视频 / 视频编辑 / 视频延长.
-  Covers text-to-video, image-to-video, omni-reference (全能参考, the default), plus
-  video editing and extension — all via the in-app generate_video tool (Seedance
-  2.0 / 2.0-fast). Do not call a built-in video tool; see the body for usage.
+  FIRST-CHOICE video generator and the ONLY top-level video orchestrator in the
+  CATIMATION desktop app. Trigger whenever the user asks to generate / create /
+  render a video or animation, animate a still, or says 生成视频 / 图生视频 /
+  让它动起来 / 视频编辑 / 视频延长. Covers text-to-video, still-to-video,
+  omni-reference (全能参考, default), editing and extension via the in-app
+  generate_video tool (Seedance 2.0), and grades every request into
+  快速/标准/专业/制片 four tiers before loading any other skill.
 ---
 
-# Generate videos in CATIMATION (first-choice, blocking like generate_image)
+<!-- skill-budget: pro -->
+
+# Generate videos in CATIMATION(唯一视频入口 · 分级调度)
 
 When the user wants a video, call the **`generate_video`** tool from the
-`catimation` MCP server. It is a SINGLE blocking call: it submits the render
-and returns only when the video is DONE (or FAILED) — you do not need to poll,
-sleep, or check anything in between. The user watches a live progress bubble
-the whole time, and the finished MP4 plays inline in the chat, is saved to a
-local file, and lands in the app history page.
+`catimation` MCP server. It is a SINGLE blocking call: it submits the render and
+returns only when the video is DONE (or FAILED) — no polling, no sleeping. The
+user watches a live progress bubble; the finished MP4 plays inline in the chat,
+is saved to a local file, and lands in the app history page.
 
-## Default mode = 全能参考 (omni-reference) — use it unless told otherwise
+**本 skill 是视频生成的唯一顶层编排者。** 其它 skill(导演/分镜/工艺/QA)都由这里
+按任务分级选择性加载;任何下游 skill 不得反过来重跑路由或重新编排本流程。
 
-For almost EVERY video request, default to **全能参考 (omni-reference)** — and
-prefer it heavily. Feed the user's material as references and let the model keep
-subject/motion/voice consistent. Caps:
+## STEP 0 — 任务分级(先定级,再加载,不许「只要相关就加载」)
 
-- `referenceImages`: up to **9** images.
-- `referenceVideos`: up to **3** videos, COMBINED total duration **≤15s**.
-- `referenceAudios`: up to **3** audios, COMBINED total duration **≤15s**.
+默认进入**快速**模式;只有命中升级条件才升级。定级后在心里记住执行状态
+(`task_mode / direction_confirmed / spec_confirmed / prompt_engineered /
+generated / visual_qa_done / content_qa_done`),已完成的步骤**不再重复执行**:
+规格确认过就不再问、提示词写好就不再重写、QA 做过就不再重抽。
 
-> **音频参考/音频素材导入只收真实音频 `mp3` / `wav`。** 视频容器(`.mov` / `.mp4`,
-> 哪怕是**黑屏或波形占位**)会被音频接口拒收:`Unsupported audio format: mov.
-> Allowed formats: mp3, wav.`。素材若是视频或含视频轨,先用 `ffmpeg-win` 抽音轨:
-> `ffmpeg -y -i in.mov -vn -acodec libmp3lame -q:a 2 out.mp3`(或 `-vn out.wav`),
-> 再把 `out.mp3` / `out.wav` 传 `referenceAudios`。⚠️ 把音频包成「黑屏 MP4」**只用于
-> `understand_video`(视频理解接口)**,绝不能当作音频参考 / 音频分析素材上传。
+| 模式 | 典型请求 | 加载预算(含本 skill) | 默认动作 |
+|---|---|---|---|
+| **快速** | 「让这张图动起来」「生成5秒海浪」单镜简单请求 | ≤2 个 skill:本入口 + `sd2-pe` | 合理默认,直接生成,快速 QA |
+| **标准** | 单人物表演、简单电影感、带参考图的单镜 | ≤5 个 skill:+2–3 个对症技法 | 按症状表挑技法,视觉 QA |
+| **专业** | 武打/多人/参考复刻/复杂运镜/跨镜一致性 | 5–9 个 skill:+ `director-orchestrator` | 13 维按需展开,视觉+内容 QA |
+| **制片** | 多镜短片、宣传片、完整成片交付 | 按阶段加载,禁止一次全量 | 移交 `film-studio` 门控流水线 |
 
-Only switch to other modes when the user **specifically asks** for them or clearly
-needs them — e.g. strict `firstFrame`/`lastFrame` (fixed first/last frame). Do
-NOT reach for first/last-frame mode by default.
+**升级条件(仅此四类,别自行放大):** ① 明确的人物演技/复杂动作/武打;
+② 参考图·视频·电影的风格复刻;③ 跨镜/系列的角色·风格一致性;④ 多镜、成片、
+正式交付,或用户明确要求专业制作。超预算加载必须能说出具体风险,
+「可能有帮助」不是理由。
 
-**Always name the mode you used.** In your reply, state it explicitly in the
-user's language — e.g.「我用**全能参考**模式生成」「用**视频延长**模式串联了 3 段」
-「按你要求用**首尾帧**模式」. When you default to omni-reference (the usual case),
-say 全能参考 out loud so the user knows which path you took.
+**方向开放时先共创,别自己猜。** 用户说「更电影感/更高级/给我选项/共创」或方向
+不明的高成本任务 → 先载入 catimation-brainstorm 用 `ask_user` 弹一张可点击选项
+卡(一次一个聚焦问题、3–6 个具体方向、标注推荐项),选定即 `direction_confirmed`,
+后续不再反复追问。明确的简单请求跳过弹卡,直接快速模式。
 
-## All modes share ONE tool (`generate_video`) — pick by inputs + prompt
+## 模式与素材规则(所有等级通用)
 
-Seedance has no separate edit/extend endpoints; every mode is the same call with
-different content + prompt wording. Use these when the user asks:
+**Default mode = 全能参考 (omni-reference)** — use it unless told otherwise.
+Caps: `referenceImages` ≤9 张;`referenceVideos` ≤3 段、合计 ≤15s;
+`referenceAudios` ≤3 段、合计 ≤15s。Only switch to strict `firstFrame`/`lastFrame`
+when the user explicitly asks. **Always name the mode you used**(如「我用**全能
+参考**模式生成」)。
 
-- **文生视频 (text-to-video)**: `prompt` only, no references. Pure imagination.
-- **图生视频 (image-to-video)**: put the still in `referenceImages` (default) — or
-  `firstFrame` (+`lastFrame`) only if the user wants that exact frame fixed.
-- **全能参考 (omni-reference, DEFAULT)**: `referenceImages`/`referenceVideos`/
-  `referenceAudios` — inherit subject, motion/运镜, voice/音色.
-- **视频编辑 (video editing — 替换/增删/修改元素)**: pass the source clip in
-  `referenceVideos` (+ any new element image in `referenceImages`) and write an
-  edit prompt. Formulas: 增加元素=描述「元素特征+出现时机+位置」; 删除元素=点名要删的、
-  强调要保留的; 修改元素=直接描述更换后的样子（如「将视频1礼盒中的香水替换成图片1中的面霜，运镜不变」）.
-- **视频延长 (video extension / 多片段串联)**: pass **1–3** source clips in
-  `referenceVideos` and describe how they连接/向前向后延长（如「向后延长视频1：…」或
-  「视频1 + 过渡描述 + 接视频2 + 接视频3」）.
+All modes share ONE tool (`generate_video`) — pick by inputs + prompt:
 
-**Prompt material-reference rule (必须遵守)**: in the prompt, refer to inputs by
-ordinal — `图片1 / 视频1 / 音频1` (the Nth item of that type in the request) — NEVER
-by assetId. ✅「图片1中的美妆博主」 ❌「asset-2026… 是美妆博主」.
+- **文生视频**: `prompt` only. **图生视频**: still into `referenceImages`(或用户
+  指明才用 `firstFrame`)。
+- **视频编辑**: source clip into `referenceVideos`(+新元素图入 `referenceImages`),
+  增加元素=「特征+时机+位置」;删除=点名要删的、强调保留的;修改=直接描述换后的样子。
+- **视频延长**: 1–3 段源片入 `referenceVideos`,描述连接/向前向后延长。
 
-**Real human faces**: Seedance does NOT accept real human faces in reference
-images/videos directly. Use a 人像库 virtual-avatar `asset://assetId`, or a clip
-Seedance itself generated earlier (model-product 二创 is审核-safe). When reusing an
-earlier generated video for edit/extend, pass its saved local path / asset:// —
-remote upstream URLs expire in ~24h, so prefer the local copy.
+**素材引用铁律**:prompt 里用序号 `图片1 / 视频1 / 音频1` 指代,严禁裸写 assetId。
+**音频参考只收 mp3 / wav**;视频容器(.mov/.mp4,哪怕黑屏占位)会被拒收——先用
+`ffmpeg-win` 抽音轨(`ffmpeg -y -i in.mov -vn -acodec libmp3lame -q:a 2 out.mp3`)。
+黑屏 MP4 只用于 understand_video,绝不能当音频参考上传。
+**真人脸**:Seedance 不收真人脸参考,用人像库虚拟形象 `asset://assetId` 或
+Seedance 自产片段二创。**别把未处理的 Seedance 视频整段回喂**(二次编码打折)——
+优先用 `ffmpeg-win` 抽尾帧/关键帧成静图(下一镜 `firstFrame` 最稳)或抽音轨续节奏;
+整段回喂只作规避真人脸审核的兜底。
 
-**别把未经处理的 Seedance 视频直接当视频参考喂回去(效果打折)**: 把上一段 Seedance
-生成的 MP4 原封不动塞进 `referenceVideos` 去做延长/编辑/续接,会经历一次二次编码 +
-运动重采样,画质与跨镜一致性明显打折。**优先用 `ffmpeg-win` 把它先「降维」成干净的延续
-条件再喂回去**——抽**尾帧/关键帧成静图**(尾帧做下一段 `firstFrame` 衔接最稳,或抽
-3×3 多宫格关键帧塞 `referenceImages` 传递主体/风格),或**抽出音频/音乐**塞
-`referenceAudios` 续接节奏/配乐。确实需要整段视频参考时(例如靠它规避真人脸审核)再退回
-直接传 MP4——那是兜底,不是首选。要做抽帧/抽音频先载入 `ffmpeg-win` 技能。
+## 角色片 / 多镜(标准及以上):先备齐资产,再开生成
 
-## Co-direct the shot — brainstorm with the user + your local craft skills
+只要有**反复出现的角色**或**不止一个镜头**,先锁资产再生成(绑定语法与路径 A/B
+判定以 `sd2-pe` 为准):
 
-Before you write the `prompt`, **load `director-orchestrator`** (the 导演总调度
-router): it runs a mandatory STEP 0 self-reflection — 「涉及 13 维里哪几维?要用哪些本地
-director-* / storyboard- skill?」 — loads the matching craft skills, and writes
-the prompt as structured text (never JSON) with physical/camera-reproducible
-params over emotion adjectives. Do this even when YOU generate a clip for your
-own answer. Then take a beat to shape the shot **with** the user.
-You have a LARGE library of local video / storytelling craft skills in your own
-skills directory (usually `~/.agents/skills/`, e.g. `C:\Users\<you>\.agents\skills`)
-— 镜头/景别/运镜, 导演思维, 前景遮挡, 打光/光影, 构图/伪透视, 角色动机与演技, 调色,
-分镜/storyboard, 画面反推, 规避审查, and many more. They are intentionally NOT listed
-here: **browse your skills directory freely and load whatever fits** — there's a
-lot in there, so lean on it generously instead of reinventing technique. The user
-may also trigger one directly through their prompt.
+1. **人物卡先锁人**:每个出镜角色一张大头照 + 一张全身照存入人像库作唯一身份锚
+   (三视图/四视图仅可选补充,慎用——易 ID 漂移)。缺图用 `generate_image` 补定妆照,
+   `add_to_portrait_library` 存成 `asset://assetId`,prompt 里绑
+   `<主体1> 面部参考 图片1、妆造参考 图片2`。
+2. **多镜先排故事板**:拆成 镜头1/镜头2/…,每镜按 运镜→主体动作/表情→位置/空间→音频
+   写清,给用户过一遍。一镜一运镜、用镜头序号、不写绝对秒数。
+3. **资产齐备 GATE(硬门)**:逐镜清点人物卡/场景图/道具/氛围参考/参考视频/音频,
+   任一该有未备的先补齐再生成。推荐每镜 4–5 个素材。缺口处理三选一:
+   ① 项目/人像库里找现成(`list_portrait_library`);② 非身份关键的自己
+   `generate_image` 补;③ 身份/IP/品牌关键的用 `ask_user` 请用户提供。
+4. **生成用上全部可用资产**:图/视频/音频逐一传入并在 prompt 里绑定,
+   有素材却只发纯文字 = 错。
+5. **一次生成一个专属素材夹**(如 `<workspace>/assets/jobs/S01_<slug>/`),
+   复用、检查、定位问题都只看一个夹。
 
-**Scale the collaboration to the request — don't over-interrogate:**
+> 轻量例外:单图「让它动起来」这类一次性请求(快速模式)不必强排人物卡/故事板。
 
-- **Clear / simple ask** (e.g.「让这张图动起来」) → pick sensible defaults, load the
-  obvious craft skill, and just generate. A heavy Q&A here only annoys the user.
-- **Open-ended or high-stakes ask** (e.g.「做个产品宣传片」「来个有电影感的片段」) →
-  guide the user the way a director would, in short focused exchanges. For this,
-  load the **`catimation-brainstorm`** skill — it drives a clickable
-  `ask_user` card so the user just taps a choice instead of typing:
-  1. Ask **one question at a time** via `ask_user`, with concrete options —
-     「想要什么景别?(特写 / 中景 / 广角)」「什么情绪和风格?」「要不要某种运镜?(推 / 拉 / 环绕 / 手持)」
-  2. Offer **as many concrete visual directions as you actually have** (3–6 is
-     common, up to 8) inside ONE `ask_user` card — each with a one-line
-     trade-off, and mark the one you'd recommend. Never list 方案 as plain text.
-  3. Once the direction is set, load the matching local craft skill(s) and fold
-     their technique into the prompt.
+## 写 prompt:`sd2-pe` 是底座,技法按症状加载
 
-Keep it lightweight and collaborative — you're co-directing, not running a survey.
-When unsure, propose a sensible default out loud and let the user correct you.
+**生成前必须把提示词用 skill 写到位,不许凭记忆硬写**(快速模式也要——`sd2-pe`
+路径 A 本身就是给简单镜的最短句式):
 
-## 角色片 / 多镜项目:先备齐资产,再开生成(人物卡 → 故事板 → 分镜多参)
+1. **`sd2-pe`(必经底座)**:八大要素 + 路径 A/B 判定 + 多模态绑定;结构化文本
+   never JSON;物理/可复现参数(焦段 mm、光圈、色温 K)优先于情绪形容词。
+2. **写运镜/景别前先调 `search_cinematography_kb` 工具**(本地运镜与结构化描述库)
+   拿真实术语再落笔;工具不可用再退回联网检索。
+3. **标准模式:按症状表挑 2–3 个技法 skill**(浏览 `~/.agents/skills/`,plain-text
+   名称按需加载,不是全量):
 
-只要视频里有**反复出现的角色**或**不止一个镜头/事件**,就**不要**直接 `generate_video`。
-先把资产锁好——这正是跨镜一致性的来源(`sd2-pe` 把素材拆成「空间层(画面里有什么)+
-时间层(怎么随时间变化)」来理解,素材越齐、绑定越清,出片越稳)。绑定语法与路径 A/B 判定
-统一以 **`sd2-pe`** skill 为准,先把它载入。
+   | 症状 / 任务信号 | 对症技法(按需挑,非必载) |
+   |---|---|
+   | 太假/塑料/空洞/站桩/NPC | storyboard-live-character-realism · storyboard-character-acting · storyboard-character-motivation |
+   | 像壁纸/没纵深/没电影感 | storyboard-foreground-occlusion · storyboard-pseudo-perspective · director-cinematic-composition |
+   | 动作怪/武打飘/打击感差 | storyboard-physics · storyboard-kinematic-reverse-engineering |
+   | 光平/糖水/塑料高光 | storyboard-light-reconstruction · director-lighting-continuity |
+   | 风格不像/调色跑偏 | storyboard-color-grading-control · storyboard-style-extraction-logic · director-style-consistency |
+   | 多角色混脸 | storyboard-multi-character-control · director-character-consistency |
+   | 提示词太长/权重稀释 | storyboard-video-prompt-optimization |
+   | 提到真实电影/导演/品牌/时代,或「像·复刻·高级」 | codex-research-grounded-prompting(先查证再落笔) |
+   | 日式动画质感/作画 | animation-craft · director-anime-quality-boost |
 
-1. **人物卡 (Character Card) — 先锁人,再开拍。** 每个出镜角色先建一张人物卡并存进
-   人像库,作为该角色**唯一身份锚**,全片所有镜头都引用同一张卡:
-   - 一张**大头照**(仅头部、正脸、无表情)+ 一张**全身照**(定妆造 / 服装 / 配饰)。
-     默认用此单锚点,**三视图 / 四视图可作可选补充,慎用**——多视图易触发 ID 漂移与双胞胎(`sd2-pe` 人脸最佳实践)。
-   - 缺图就先用 `generate_image` 出一张定妆照补齐,再 `add_to_portrait_library`
-     存成 `asset://assetId`;默认**不**拿现成多视图整张当唯一身份锚(如需,多视图可作可选补充参考)。
-   - 提示词里绑成稳定主体:`<主体1> 的面部参考 图片1(大头照)、妆造参考 图片2(全身照)`。
-
-2. **故事板 / 分镜 (Storyboard) — 多事件 / 多镜先排板。** 只要不是「单场景一个连续动作」
-   (`sd2-pe` 路径 A),就先排故事板:拆成 `镜头1 / 镜头2 / …`,每镜按
-   **运镜 → 主体动作 / 表情 → 位置 / 空间 → 音频** 四要素写清(`sd2-pe` 路径 B 三段论),
-   给用户过一遍再开生成。**一镜一运镜、用镜头序号、不写绝对秒数。**
-
-3. **资产齐备 GATE — 备齐才开生成(硬门)。** 调 `generate_video` 之前,逐镜清点该镜
-   **所有可用资产**是否就位:人物卡(大头照 + 全身照)、场景 / 环境图、关键道具图、
-   氛围 / 色调参考图、运镜 / 动作 / 风格参考视频(如需)、音乐 / 配乐 / 音色参考音频(如需)。
-   **任一该有却没备的,先补齐再生成,绝不先生成再补。** 推荐每镜 **4–5 个素材**,够用即可,
-   不必塞满上限。**注意:参考视频和音乐 / 音频本身就是素材**——它们和图片一样走 全能参考,
-   在生成时一并喂入(`referenceVideos` / `referenceAudios`,各 ≤3 个、合计 ≤15s),见第 4 条。
-
-   **缺资产时不要干等,也不要硬生——先用一句话向用户报缺口清单**(缺什么、各项你打算
-   怎么补),再按情况**三选一**逐项处理:
-   - **① 先在项目 / 库里找。** 翻用户工作区的 `assets/` 等目录、`list_portrait_library`
-     找现成的人物卡 / 场景 / 道具 / 氛围图——能复用就别重造,顺手保住一致性。
-   - **② 能自己出的就自主补。** 非身份关键、可合理想象的资产(环境 / 场景图、氛围 / 色调
-     参考图、通用道具、空镜)——直接用 `generate_image` 当场出图,再 `add_to_portrait_library`
-     入库,然后带进生成。补出来的图先按上面的「自检」过一眼再用。
-   - **③ 必须用户给的才问。** 身份 / 意图关键、你不能凭空捏造的(特定真人形象、用户指定的
-     角色 / IP、品牌 Logo、特定真实产品、用户心里已有具体样子的道具)——用 `ask_user`
-     请用户上传图或给 `asset://`。用户给不出时,和他敲定一个可生成的替代方案,别硬编。
-
-4. **生成必须用上全部可用资产 (use ALL usable assets)。** 调用时把已备齐的每一项都
-   传进去并在 prompt 里逐一绑定:角色卡 / 场景图 / 道具 / 氛围图 → `referenceImages`,
-   运镜 / 动作 / 风格参考视频 → `referenceVideos`,音乐 / 配乐 / 音色参考音频 →
-   `referenceAudios`(或严格首尾帧 → `firstFrame` / `lastFrame`),并用
-   `图片N / 视频N / 音频N` 指代。**图片、视频、音乐 / 音频都是全能参考素材,一个都别落下;
-   有素材却只发纯文字 = 错。**
-
-5. **每次生成的素材归一个新建专属文件夹(便于复用与检查)。** 把这一镜 / 这次生成要用到的
-   全部素材(人物卡、场景 / 环境、道具、氛围图、参考视频、音频)先**复制**进一个**新建的专属夹**
-   ——一次生成对应一个夹子,例如 `<workspace>/assets/jobs/S01_<slug>/`(非项目场景用一个
-   临时素材夹即可);再从该夹取本地路径喂给 `generate_video`。这样每次用的料都聚在一起:
-   复用时直接拷夹子,检查时只看一个夹,出问题也能一眼定位是哪份素材。
-
-> **轻量例外:** 单图「让它动起来」「随手来一段」这类一次性简单请求,不必强排人物卡 /
-> 故事板——把用户给的那张图当参考 / 首帧直接动起来,本身就已是「用上了全部可用资产」。
-> 这套纪律是给**角色片 / 多镜 / 项目级**工作准备的(也正是 `film-studio` 编排器的
-> G3 → G5 阶段)。
-
-## 写 `prompt` 前先用 skill 渐进式写好(强制,不许脱离 skill + 素材硬写)
-
-**生成前必须先把提示词用相关 skill 编写到位——绝不脱离 skill 和已备素材凭记忆自行硬写。**
-按下列顺序、**渐进式披露**地加载并应用(只加载这一镜实际涉及的维度,用不到的不强加):
-
-1. **导演 / 镜头(先):** 载入 `director-orchestrator` 跑它的 STEP 0 反问(这镜涉及 13 维里
-   哪几维?要用哪些本地 `director-*` / `storyboard-*`?),据此按需加载景别 / 运镜 / 构图 /
-   前景遮挡 / 打光 / 调色 / 角色演技 / 连续性等技法 skill。
-2. **提示词工程(后):** 用 `sd2-pe`(八大要素 + 路径 A/B 判定 + 多模态绑定 `@图片N` / `<主体N>`)
-   与 `storyboard-video-prompt-optimization` 把这镜落成**结构化文本**(never JSON),物理 /
-   可复现参数(焦段 mm、光圈、色温 K、运镜)优先于情绪形容词,并把已备素材逐一绑进 prompt。
-3. **渐进式披露:** 边写边按需要继续加载缺的技法 skill;真实技法词来源不确定时先联网查证再落笔。
-
-> 即便你只是为自己的回答顺手出一个镜头,也要走这套。**没用 skill、凭空想出来的 prompt = 错。**
-
-| 你冒出的念头 | 现实 |
-|---|---|
-| 「这镜很简单,直接写 prompt 就行」 | 简单镜也先过 skill;`sd2-pe` 路径 A 本身就是给简单镜的最短句式。 |
-| 「我记得怎么写运镜 / 打光」 | 记得概念 ≠ 用了 skill;载入对应 `director-*` 拿真实技法词。 |
-| 「素材一会儿再说,先把词写了」 | 反了——先备齐素材(见上一节),prompt 要绑定的是**已经在手的**素材。 |
-| 「skill 太多懒得加载」 | 渐进式披露:只加载这镜用得到的那几个,不是全量。 |
+4. **专业模式:载入 `director-orchestrator`** 做复杂镜头设计(13 维按需展开、
+   多技法协同);它只做镜头设计与提示词结构,不重跑本入口的分级与路由。
+5. **制片模式:移交 `film-studio`**,由其 G0–G8 门控按阶段编排(剧本/分镜/资产/
+   出图/出片/后期),本 skill 只负责其中每一镜的 `generate_video` 执行。
 
 ## Steps
 
-1. Turn the request into one clear video prompt. Cover subject, action, camera
-   movement (运镜/景别), scene, lighting, and mood. Dialogue lines and
-   `--style` parameters may be appended. **First co-direct the shot** (see the
-   section above): consult your local craft skills and ask the user any quick
-   clarifying question that would improve the result.
-1.5. **Proactively confirm the output spec before rendering.** Unless the user
-   already stated it, fire one `ask_user` card to let them pick the 规格 —
-   typically resolution (`480p` draft / **`720p` default** / `1080p` HD),
-   duration (4–15s, default 5), and aspect ratio (`16:9` / `9:16`). Recommend
-   the defaults (满血 2.0 model + 720p) and let them tap to confirm or change.
-   **Do NOT silently default to 1080p** — 720p is the default unless the user
-   asks for HD. Keep it to one quick card; skip it only when the user already
-   gave an explicit spec.
-2. Call `generate_video` with:
-   - `prompt` (required): the description from step 1.
-   - `model` (optional): `2.0` (default — 满血/full-quality, best for almost
-     every request: top quality, complex multi-shot motion, 1080p). Only switch to
-     `2.0-fast` when the user explicitly asks for fast/cheap/draft.
-   - `resolution` (optional): `480p` draft, `720p` default, `1080p` (model
-     `2.0` only).
-   - `ratio` (optional): `16:9` default; `9:16` for vertical/手机 video.
-   - `duration` (optional): 4–15 seconds, default 5. Longer = more expensive.
-   - `referenceImages` (全能参考, default & **important**): up to 9 images for
-     character/subject consistency (人物一致性). **If the user attached or
-     referenced any image, you MUST pass it here** (paths appear in the prompt
-     under `[Attached files at these local paths: …]`). `asset://assetId` from
-     the 人像库 page also works.
-   - `referenceVideos` / `referenceAudios` (全能参考): up to 3 each (total ≤15s)
-     for motion/style or lip-sync/voice. Each clip ≤50MB and 4–15s.
-   - `firstFrame` / `lastFrame` (strict mode, **only on explicit request**):
-     image to start/end the video from — local path, https URL, or
-     `asset://assetId`.
-3. Wait for the tool to return — it blocks until the render finishes. There is
-   nothing useful to do in between; do NOT resubmit, do NOT call other tools to
-   "check progress".
-4. Read the result banner:
-   - `✅ generate_video DONE` + `📁 SAVED FILE: <path>` → the task is COMPLETE.
-     The video is already playing in the chat. Confirm briefly in the user's
-     language, **name the mode you used** (e.g.「已用全能参考生成」), and cite the
-     saved path. Do NOT re-check, do NOT search the filesystem, do NOT re-generate.
-   - `✅ DONE` with "local file save … background/FAILED" → generation itself is
-     complete; mention the save status briefly.
-   - `⏳ STILL RUNNING` (rare, >10 min renders) → call `check_video_task` with
-     the returned taskId repeatedly (each call long-polls ~25s) until DONE or
-     FAILED. Never resubmit `generate_video` for the same request.
-   - `❌ FAILED` → report the upstream error. You may retry ONCE with an
-     adjusted prompt only if the error suggests a content/parameter problem.
+1. Turn the request into one clear video prompt(subject, action, camera 运镜/景别,
+   scene, lighting, mood;dialogue 与 `--style` 可后置)。
+2. **规格确认(spec_confirmed)**:用户没说规格时,发一张 `ask_user` 卡确认
+   分辨率(`480p` 草稿 / **`720p` 默认** / `1080p`)、时长(4–15s,默认 5)、
+   比例(`16:9` / `9:16`),推荐默认项。**不要静默升 1080p**;用户已给规格或本会话
+   已确认过就跳过。
+3. Call `generate_video`:`prompt`(必填)、`model`(`2.0` 默认,用户明确要
+   快/便宜才 `2.0-fast`)、`resolution` / `ratio` / `duration`、
+   `referenceImages`(**用户给过的图必须传**;支持 `asset://assetId`)、
+   `referenceVideos` / `referenceAudios`(每段 ≤50MB、4–15s)、或显式要求时的
+   `firstFrame` / `lastFrame`。
+4. Wait for the tool to return — it blocks until done. Do NOT resubmit or
+   "check progress" in between.
+5. Read the result banner:
+   - `✅ DONE` + `📁 SAVED FILE: <path>` → task COMPLETE. Confirm briefly,
+     **name the mode**, cite the saved path. Do NOT re-check or re-generate.
+   - `✅ DONE` with background save pending → generation complete; mention briefly.
+   - `⏳ STILL RUNNING`(rare, >10 min)→ call `check_video_task` with the taskId
+     repeatedly (long-polls ~25s) until DONE/FAILED. Never resubmit.
+   - `❌ FAILED` → report the upstream error; retry ONCE only if it suggests a
+     content/parameter fix.
 
-## QA the clip: 九宫格 contact sheet + understand_video(合成一次自检,别二选一)
+## QA:按风险分级,不是每条视频全套跑
 
-`view_image` can't open an MP4 directly, and injecting the raw video bytes into the
-chat is wasteful — so a real self-check pairs **two complementary lenses in ONE
-pass** (the grid samples only ~9 frames; `understand_video` covers what happens
-between them — you need both):
+| QA 级别 | 触发条件 | 动作 |
+|---|---|---|
+| **快速 QA**(快速模式默认) | 普通单镜、无人脸特写、无复杂动作 | 确认 DONE banner + 时长/文件正常即可;不自动抽帧、不自动上传理解模型 |
+| **视觉 QA** | 人脸/手部是重点、多人物、武打/复杂动作、用户要求查画质、疑似穿帮 | 九宫格 contact sheet + `view_image`(见下) |
+| **内容 QA** | 多镜剧情、台词/字幕/口型、连续性检查、视频编辑核对、用户明确要求审片 | `catimation-understand` 的 understand_video 看整段 |
+| **发布 QA**(制片交付) | 正式交付/成片 | ffprobe 编码/分辨率/帧率/响度 + 九宫格 + 内容审查 + 平台规格(走 `ffmpeg-win` 的 inspect→process→verify 循环) |
 
-0. **拿到 `<clip>.mp4` 的本地路径(别搜盘).** If you already generated the clip you
-   have its path. If the clip lives **ON THE CANVAS** (a video shape), call
-   `get_canvas_video` (the video sibling of `get_canvas_image`) — it returns
-   `videoPath`, an absolute on-disk mp4/webm/mov for the selected (or only) canvas
-   video: the recorded path, or a freshly materialized copy if the shape had none.
-   Use that `videoPath` as `<clip>` below. **Never** `canvas_exec`-probe or hunt the
-   disk by filename/size for a canvas video — that path is solved by this tool.
+**九宫格做法**(视觉 QA):用 `ffmpeg-win` 抽 9 帧拼图,
+`ffmpeg -i "<clip>.mp4" -vf "fps=9/<DURATION>,scale=320:-1,tile=3x3:padding=6:color=black" -frames:v 1 -y "<clip>_grid.png"`,
+然后 `view_image` 那张 `_grid.png`。画布上的视频用 `get_canvas_video` 拿
+`videoPath`,别搜盘。判定标尺(源自 VisionReward/WorldReasonBench 核心项):
+视觉美观 s_a、时间一致性 s_c(主体稳定/运动平滑/不闪烁)、物理合理 s_r、
+prompt 对齐,逐项判通过/不通过;**单帧崩坏一票否决**(最差帧原则),首帧从严。
+需要总分时 `S(v) = 0.4·s_r + 0.3·s_c + 0.3·s_a`。
 
-1. **视觉扫描 — 九宫格 contact sheet.** Extract 9 evenly-spaced frames tiled into a
-   grid with ffmpeg (`ffmpeg-win` or any ffmpeg). Set `fps ≈ 9 / clip_duration` so
-   the 9 tiles span the whole clip:
+触发了视觉+内容两级时,两面是同一次自检,别二选一。任一不达标 → 带**针对性**
+改进点重生成(补哪个技法的哪个字段,不是泛泛「优化一下」),
+**iterate at MOST 2–3 times** — each render costs money and ~1–3 min。
+**Never** inject the full MP4 or raw bytes into the chat;用户已在聊天里看着它播。
+做过的 QA 记入 `visual_qa_done` / `content_qa_done`,下游不重复抽帧。
 
-   ```
-   ffmpeg -i "<clip>.mp4" -vf "fps=9/<DURATION>,scale=320:-1,tile=3x3:padding=6:color=black" -frames:v 1 -y "<clip>_grid.png"
-   ```
-
-   (For a 5s clip, `fps=9/5=1.8`; set `<DURATION>` to the real length. Nudge fps if
-   tiles come out too few/many.) Then `view_image` the `_grid.png` and judge
-   subject/character consistency, motion sanity (no melting / teleporting / extra
-   limbs), artifacts, and prompt adherence. One small PNG — cheap and safe.
-2. **内容审查 — `understand_video`.** Run `catimation-understand`'s `understand_video`
-   to "watch" the WHOLE clip for 剧情 / 字幕 / 连续性 / 穿帮 that a 9-frame grid
-   samples too sparsely to catch. **这两步是同一次自检的两面,不是二选一。**
-2.5. **多维质量评分 — 给自检一把可判定的标尺(别只凭「感觉还行」).** 看九宫格 +
-   `understand_video` 时,按维度逐项判 **通过 / 不通过**(源自 VisionReward 64 维视频质检取核心项,
-   对齐 WorldReasonBench 的 S(v) 三维):
-   - **视觉美观 (s_a):** 构图 / 焦点 / 色彩 / 光影 / 清晰度 / 细节精细度 —— 无明显缺陷且悦目。
-   - **时间一致性 (s_c,官方代码亦称「内容保真 content fidelity」)—— 视频区别于图的关键,必查:**
-     主体形状全程稳定(不崩、不渐变)、运动平滑无跳变、画质稳定不闪烁、镜头稳定。
-   - **推理正确性 / 物理合理 (s_r):** 世界演化符合物理 / 因果 / 逻辑、运动真实、文字无乱码。
-   - **(单列)prompt 对齐:** 是否满足用户在 `prompt` 里的核心要求(VisionReward 头四项就是查这个;
-     注意这与 s_r 不是一回事)。
-   需要加权总分时用 WorldReasonBench 的真实公式:`S(v) = 0.4·s_r + 0.3·s_c + 0.3·s_a`
-   (s_r = 推理正确性,**非** prompt 对齐;权重来自官方 README / 代码)。
-   **单帧崩坏一票否决(SDVG「最差帧」原则):** 九宫格里只要有一格明显崩(脸崩 / 多肢 / 融化 /
-   乱码),整段判**不通过** —— 用逐帧**最差值**判定,绝不用平均「大致还行」蒙混过去。
-   **首帧 / 首镜从严:** 第一帧定构图 / 主体 / 风格,后续全继承,它崩比中段崩更该重做(SDVG 强制重画首块)。
-3. If either lens flags a problem, regenerate with an adjusted prompt (or switch
-   mode) and re-check. Iterate at MOST 2–3 times — each render costs money and ~1–3 min.
-4. **Never** inject the full MP4 or its raw bytes into the chat — inspect via the
-   contact sheet + `understand_video`, never by dumping the video. The user is
-   already watching the clip play inline.
-
-> 进阶 — 上面这套「九宫格 + understand_video」自检,背后是一个**跨两个技能的
-> inspect→process→verify 大循环**,**不止发布前审片**:任何要**理解或处理 视频/音频/多媒体**
-> 的时候都自主触发——处理前先 probe 摸清、处理后必复核,**九宫格视觉与 understand_video
-> 内容两面一起看,不拆开**。`ffmpeg-win` 主导技术面(ffprobe 粗检 → 九宫格视觉 → 响度 →
-> 修复 → release checkpoint,checkpoint 仅交付时),`catimation-understand`
-> (`understand_video`)同一循环里负责模型内容理解/审查(剧情/字幕/连续性/穿帮);不达标就
-> ffmpeg 修复后回到粗检复检,过了再交付。详见 `ffmpeg-win` 技能的 **inspect→process→verify** 段。
-
-> 宫格图 / 故事板 = 素材,不只是检查工具:按剧情裁剪、拼接出的九宫格、分镜板本身是**优质可复用参考**——回喂 `referenceImages` 传主体/风格,或抽其中关键帧/尾帧作下一镜 `firstFrame`(配合上文「别把未处理的 Seedance 视频直接当参考」纪律:跨镜续接优先抽帧,不整段回喂)。
+> 宫格图/故事板 = 素材,不只是检查工具:可回喂 `referenceImages` 传主体/风格,
+> 或抽关键帧/尾帧作下一镜 `firstFrame`(跨镜续接优先抽帧,不整段回喂)。
 
 ## Organize finished clips into the user's workspace (when in a project)
 
-When working inside a user project/workspace, **COPY** the finalized MP4 (and its
-`_grid.png` contact sheet) into a tidy assets subfolder with a descriptive,
-ordered name — e.g. `<workspace>/assets/video/S01_station_wide.mp4` and
-`<workspace>/assets/contact-sheets/S01_station_wide_grid.png`.
+**COPY, don't move** the finalized MP4(和它的 `_grid.png`)into a tidy assets
+subfolder with zero-padded shot ordinals — e.g.
+`<workspace>/assets/video/S01_station_wide.mp4`、
+`<workspace>/assets/contact-sheets/S01_station_wide_grid.png` — so clips
+assemble in order for a later ffmpeg concat. Skip for one-off casual clips.
 
-- **COPY, don't move**, from the saved path in the `DONE` banner so the chat /
-  history copy stays intact.
-- Use zero-padded shot ordinals (`S01_`, `S02_`…) so clips assemble in order — this
-  is exactly what a later ffmpeg concat/拼接 step needs.
-- Skip for a one-off casual clip unless the user asks.
-
-## Portrait library (人像库) — push materials in, then reference
+## Portrait library(人像库)— push materials in, then reference
 
 The `catimation` MCP server exposes portrait-library tools
-(`add_to_portrait_library`, `list_portrait_library`, `edit_portrait_library`,
-`download_portrait_asset` — see the `catimation-portrait-library` skill). Use
-them **proactively** around video generation:
-
-- Every input image you pass to `generate_video` is automatically imported into
-  the library and referenced as `asset://assetId`; identical images dedupe
-  upstream, keeping the SAME character consistent across multiple videos.
-- When the user gives you OTHER material to save/reuse for the video (a video or
-  audio reference, or "记住这个角色/场景"), call `add_to_portrait_library` first,
-  then pass the returned `asset://assetId` into `referenceImages` /
-  `referenceVideos` / `referenceAudios` (全能参考), or `firstFrame` if the user
-  asked for strict first-frame mode.
-- To reuse an earlier character/scene ("还是上次那个人/同一角色"), call
-  `list_portrait_library` to find the matching `asset://assetId` and reference
-  it — this is what keeps identity consistent.
-- The user can also pick assets on the 人像库 page and give you an
-  `asset://assetId` directly — pass it straight in without conversion.
+(`add_to_portrait_library` / `list_portrait_library` / `edit_portrait_library` /
+`download_portrait_asset`,详见 catimation-portrait-library skill),围绕视频
+生成主动使用:传给 `generate_video` 的输入图会自动入库并 dedupe 成同一
+`asset://assetId`;用户给的要记住/复用的素材先 `add_to_portrait_library` 再引用;
+「还是上次那个人」用 `list_portrait_library` 找回同一 asset 保持身份一致;用户在
+人像库页给的 `asset://assetId` 直接传入。
 
 ## Notes
 
-- One `generate_video` call produces ONE video. For several videos, call the
-  tool once per video, reusing the same asset:// references for character
-  consistency. You MAY run multiple in parallel — but **if you're about to launch
-  20 or more video tasks at once, STOP and confirm with the user first**: each
-  video costs money and renders ~1–3 min, so a large batch is a real time/cost
-  commitment worth a quick "确认要并发生成 N 个视频吗?".
-- Local input files are handled for you: small files are inlined, larger files
-  are relayed through the app's upload pipeline automatically — pass plain
-  local paths and let the tool deal with size limits (images ≤30MB,
-  video/audio ≤50MB & 4–15s).
-- To self-check quality, build an ffmpeg 九宫格 contact sheet and `view_image`
-  that (see the QA section above) — never open the resulting MP4 with view_image
-  or read its raw bytes; the user is already watching it play in the chat.
-- **Background saving never blocks you.** Success is decided by the render: once
-  the banner says DONE the video is already playing, even if the local file is
-  still saving in the background (`persistencePending`). Treat the task as
-  COMPLETE and reply right away — do NOT wait for, poll, or re-check the save.
+- One `generate_video` call = ONE video. 多条就多次调用、复用同一 asset://
+  保持一致性;可并行,但**一次要发 20+ 个任务先向用户确认**(每条都花钱且渲染
+  1–3 分钟)。
+- Local input files are handled for you(images ≤30MB, video/audio ≤50MB & 4–15s);
+  pass plain local paths, the tool deals with size limits.
+- **Background saving never blocks you**: banner DONE = 视频已在播,本地保存可能
+  还在后台(`persistencePending`),当作 COMPLETE 立即回复,不要等待或轮询保存。

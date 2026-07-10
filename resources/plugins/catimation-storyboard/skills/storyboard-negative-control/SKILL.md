@@ -4,6 +4,7 @@ description: 用于通过负向提示词和边界限制反向控制 AI 画质,�
 ---
 
 # Storyboard Negative Control / 负向与误解控制
+<!-- skill-budget: fast -->
 
 核心信念:AI 经常把你的词误解成默认效果、夸张特效或自动补齐。越想真实,越要会“禁止”:禁止过度锐化、塑料皮肤、脏纹理、混乱细节、自动添加背景。
 

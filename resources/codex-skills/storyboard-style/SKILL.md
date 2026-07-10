@@ -4,6 +4,7 @@ description: 【分镜模式·风格 / Storyboard · Style】触发词:配色 / 
 ---
 
 # Storyboard Style / 分镜风格
+<!-- skill-budget: fast -->
 
 ## Overview
 
@@ -12,7 +13,7 @@ description: 【分镜模式·风格 / Storyboard · Style】触发词:配色 / 
 ## When to Use
 
 - 需要锁定基础色板与光源类型时。
-- 何时改用:要加镜头规格(mm/光圈)与 Z 轴前中后景 → `storyboard-visual`;要系统化 LUT/HEX 调色与色彩 DNA → `storyboard-color-grading-control`。
+- 何时改用:要系统化 LUT/HEX 调色与色彩 DNA → `storyboard-color-grading-control`;要加镜头规格(mm/光圈)与 Z 轴前中后景,交给分镜视觉基础规范处理。
 
 Style Rules:
 - Color palette: dominated by [hex] + accent [hex], ratio ≥ 7:3

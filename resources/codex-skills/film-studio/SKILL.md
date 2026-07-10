@@ -1,7 +1,16 @@
 ---
 name: film-studio
-description: 端到端「做电影/做片子」的总编排器(制片导演),把一个想法/故事一条龙串成成片时使用——概念 → 剧本 → 分镜镜头表 → 角色与场景设定锚点 → 逐镜出图 → 图生视频(Seedance 2.0)→ 配音配乐 → ffmpeg 拼接 → 爆款体检交付,每个阶段带审批门(gate),并在每一步调用本 app 本地已装的工艺 skill(screenwriter / scene-blueprint / storyboard-* / director-* / animation-craft / seedance-video-craft / ffmpeg-win),而不是把它们重写。End-to-end AI film/animation production orchestrator that chains local craft skills with approval gates. 触发词:做电影、做片子、做短片、拍一部、做一部片、成片、一条龙、端到端、从剧本到成片、制片、总编排、短片项目、宣传片、微电影、make a film、short film、produce a video、full production、film pipeline、concept to delivery。
+description: >-
+  端到端「做电影/做片子」的制片总编排器,仅用于真正的多镜成片项目——把一个
+  想法/故事一条龙串成成片:概念 → 剧本 → 分镜镜头表 → 角色与场景锚点 →
+  逐镜出图 → 图生视频 → 配音配乐 → 拼接 → 体检交付,每阶段带审批门(gate),
+  并按阶段调用本地工艺 skill 而不是重写它们。单镜/简单视频请求不触发本技能
+  (那是视频入口快速/标准模式的事)。触发词:做电影、做短片、拍一部、成片、
+  一条龙、从剧本到成片、制片、宣传片、微电影、short film、full production、
+  film pipeline。
 ---
+
+<!-- skill-budget: studio -->
 
 # Film Studio / 端到端制片编排器
 
@@ -105,6 +114,7 @@ description: 端到端「做电影/做片子」的总编排器(制片导演),把
 
 ## 编排行为准则
 
+0. **按阶段加载,禁止一次加载全部:** 制片模式的技能预算是「按当前门(G0–G8)加载该阶段点名的工艺 skill」,不在 G1 就把 G5 的技能全读进来;进入下一门再加载下一批。上游入口(catimation-image / catimation-video)已确认过的方向、规格、提示词工程结论直接沿用,不重跑。
 1. **当制片人,不当单镜工具:** 按顺序跑阶段,每道门展示成果再前进。
 2. **绝不跳门:** 哪怕用户很急。门是为了早抓问题——一致性向下游复利。
 3. **锚点逐字下传:** G3 的角色/场景锚点必须**原文**粘进 G4 每条出图 prompt、G5 每条视频 prompt;人物卡的 `asset://` 句柄一路复用,保证同一角色跨镜不漂移。

@@ -1,14 +1,18 @@
 ---
 name: catimation-image
 description: >-
-  FIRST-CHOICE image generator in the CATIMATION desktop app — use IN PREFERENCE
-  TO the built-in imagegen / image_gen tool (which is unavailable on Windows and
-  does not persist results). Trigger whenever the user asks to generate / draw /
-  render / edit / restyle an image, picture, illustration, poster, or icon, or
-  says 生成图片 / 画一张 / 配图 / 出图 / 来张图 / 改图. Runs the in-app generate_image tool.
+  FIRST-CHOICE image generator and the ONLY top-level image orchestrator in the
+  CATIMATION desktop app — use INSTEAD OF the built-in imagegen / image_gen
+  tool (unavailable on Windows, no persistence). Trigger
+  whenever the user asks to generate / draw / render / edit / restyle an image,
+  illustration, poster, or icon, or says 生成图片 / 画一张 / 配图 / 出图 /
+  改图. Runs the in-app generate_image tool and grades every request
+  into 快速/标准/专业/制片 four tiers before loading any other skill.
 ---
 
-# Generate images in CATIMATION (first-choice, replaces built-in image_gen)
+<!-- skill-budget: pro -->
+
+# Generate images in CATIMATION(唯一出图入口 · 分级调度)
 
 When the user wants one image, call the **`generate_image`** tool. When the user
 wants MORE THAN ONE image, call **`generate_images`** instead. Both tools are
@@ -16,24 +20,50 @@ provided by the `catimation` MCP server and replace the built-in imagegen /
 image_gen skill: they render inside the chat AND persist results to local files
 (paths returned), the app's history page, and the ATTACHMENTS file panel.
 
+**本 skill 是出图的唯一顶层编排者。** 导演/分镜/工艺 skill 由这里按任务分级选择性
+加载;下游 skill 不得反过来重跑路由或重新编排本流程。
+
 ## When to Use
 
-- 用户要生成 / 画 / 渲染 / 编辑 / 重绘图片、插画、海报、图标、配图(生成图片 / 画一张 / 出图 / 改图)。
+- 用户要生成 / 画 / 渲染 / 编辑 / 重绘图片、插画、海报、图标、配图。
 - 你自己回答时需要一张配图。
 - 用户给了图想以图改图 / 换风格 → 走本 skill 并带上 `referenceImages`。
 - 优先于内置 imagegen / image_gen(后者 Windows 不可用且不落盘)。
 
+## STEP 0 — 任务分级(先定级,再加载)
+
+默认进入**快速**模式;只有命中升级条件才升级。规格/方向确认过一次就不再重复问,
+自检做过就不再重复做。
+
+| 模式 | 典型请求 | 加载预算(含本 skill) | 默认动作 |
+|---|---|---|---|
+| **快速** | 一次性配图、图标、简单插画、明确的单图请求 | ≤2 个 skill | 直接写 prompt 生成,四项验收自检 |
+| **标准** | 带风格目标/参考图/人物的单图 | ≤5 个:+2–3 个对症技法 | 按症状表挑技法再写 prompt |
+| **专业** | 复杂构图与光影、系列一致性、参考复刻、角色锚点 | 5–9 个:+ `director-orchestrator` | 13 维按需展开 |
+| **制片** | 电影/分镜项目的角色卡、场景卡、逐镜出图 | 按 `film-studio` 阶段加载 | 过资产门,锚点逐字下传 |
+
+**升级条件:** ① 明确的风格复刻/真实作品·品牌·时代参考;② 系列/组图/角色一致性;
+③ 复杂镜头设计(构图·打光·调色多维协同);④ 制片流程内的出图任务。超预算加载
+必须能说出具体风险。**方向开放**(「更高级/更有电影感/给我选项」)时先载入
+catimation-brainstorm 用 `ask_user` 弹一张选项卡定向,别自己猜。
+
+**标准模式症状表**(浏览 `~/.agents/skills/`,plain-text 名称按需加载 2–3 个):
+
+| 症状 / 任务信号 | 对症技法(按需挑,非必载) |
+|---|---|
+| 人物假/塑料/空洞 | storyboard-live-character-realism |
+| 画面平/像壁纸/没纵深 | storyboard-foreground-occlusion · storyboard-pseudo-perspective |
+| 光平/糖水/塑料高光 | storyboard-light-reconstruction |
+| 色调跑偏/要 HEX 色卡 | storyboard-color-grading-control |
+| 风格不像/系列不统一 | director-style-consistency · director-character-consistency |
+| 提到真实电影/导演/品牌/时代 | codex-research-grounded-prompting(先查证再落笔) |
+| 涉敏感/合规内容 | `storyboard-negative-control` |
+
 ## Steps
 
-0. **Before writing the prompt, load `director-orchestrator`** (the
-   导演总调度 router). It runs a STEP 0 self-reflection on which `director-*` /
-   `storyboard-*` craft skills apply, then writes the prompt as structured text
-   on the 13-dimension framework (physical params over emotion adjectives,
-   positive prompts by default). Do this even when YOU generate an illustration
-   for your own answer. For open-ended asks, go through `catimation-brainstorm`
-   first. Skip only for a trivially clear one-off.
 1. Turn the request into one clear, descriptive prompt. Cover subject, style,
-   composition, lighting, and mood. Keep it concise.
+   composition, lighting, and mood. Keep it concise. 标准及以上模式先按 STEP 0
+   把对症技法折进 prompt(物理/可复现参数优先于情绪形容词,默认只写正向提示词)。
 2. If the user asks for exactly ONE image, call `generate_image` with:
    - `prompt` (required): the description from step 1.
    - `model` (optional): rendering channel **override**. **Omit it** to honor the
@@ -85,11 +115,10 @@ image_gen skill: they render inside the chat AND persist results to local files
    - **② 质量合理**:无多/缺手指与肢体、无崩脸、无乱码文字、无明显伪影/拼接错位;
      分辨率与清晰度匹配用途。
    - **③ 风格一致**:与用户指定风格一致;**系列/组图**内各帧画风、色调、角色外观前后一致;
-     若项目有角色锚点 / 圣经(character_bible)或既定风格,新图须与之吻合(见
-     `director-style-consistency` / `director-character-consistency`)。
-   - **④ 过 skill / 插件门**:提示词是否经 `director-orchestrator` 的 13 维框架(物理参数优先);
+     若项目有角色锚点 / 圣经(character_bible)或既定风格,新图须与之吻合。
+   - **④ 过本级门**:标准及以上时,对症技法的落地证据是否出现在 prompt 里;
      角色身份是否遵循单锚点纪律(默认大头照+全身照,三视图/四视图为可选补充);
-     涉敏感/合规内容是否过 `storyboard-negative-control`;在制片流程中是否满足 `film-studio` 的资产门。
+     制片流程中是否满足 `film-studio` 的资产门。快速模式只查 ①–③。
    - 若任一项不达标:简述哪里不对,**带改进后的提示词重生成**(保留可用部分时把上一版回传为
      `referenceImages` 做图生图),再复检。最多迭代 2–3 次即收敛——别在边角小瑕疵上死磕,
      每次重生成都花钱。
@@ -212,6 +241,7 @@ directory and give it a descriptive, ordered name — e.g.
 - 用户点名某渠道却不显式传 `model`(应显式传:vip/官逆 → `gpt-image-2-vip`、
   官方/旗舰/image2 官方 → `gpt-image-2`、nano/nano2 → `gemini-3.1-flash-image`、
   万相/组图 → `wan2.7-image-pro`)。
+- 快速任务硬套专业流程(简单配图不需要 13 维框架);专业任务却跳过分级直接硬写。
 
 ## Notes
 

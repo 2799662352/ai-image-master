@@ -1,9 +1,11 @@
 ---
 name: ffmpeg-win
-description: Process video/audio with FFmpeg 8.1, preferring the bundled local ffmpeg/ffprobe CLI (on PATH, zero Docker, zero install) with the ffmpeg-win Docker MCP tool as a parallel fallback. Use for transcoding, resizing, trimming, speed change, compression, audio extraction, concat, cropping, fades, overlays, thumbnails, GIFs, inspection, and the technical half of the inspect→process→verify loop that fires for ANY video/audio/multimedia task — autonomously probe the input BEFORE processing and verify the output AFTER, not just at 发布前审片 (ffprobe 粗检 + 九宫格视觉 + loudness + 修复 + release checkpoint; hands off to catimation-understand for model content review). Triggers on "用 ffmpeg", "处理/理解视频", "转码/压缩/裁剪/拼接视频", "提取音频", "竖屏适配", "加 BGM", "拿到一个视频/音频文件", "审片/质检/检查成片质量", "能不能发/达标了吗", "ffmpeg-win", or any multimedia handling / CATIMATION 出片 post-processing. References cover filters, codecs, audio, streaming/hwaccel, platform export, and the CATIMATION workflow.
+description: Process video/audio locally with the bundled FFmpeg 8.1 CLI (ffmpeg/ffprobe on PATH, zero Docker); ffmpeg-win Docker MCP tool as fallback. Use for transcoding, resizing, trimming, compression, audio extraction, concat, frame extraction, 3x3 contact sheets (九宫格), GIFs, inspection, and the technical half of the multimedia inspect→process→verify loop (ffprobe 粗检 + 九宫格视觉 + loudness + 修复). Triggers on "用 ffmpeg", "转码/压缩/裁剪/拼接视频", "提取音频", "抽帧", "九宫格", "审片/质检", "ffmpeg-win".
 ---
 
 # FFmpeg (local CLI preferred · ffmpeg-win Docker MCP fallback)
+
+<!-- skill-budget: fast -->
 
 This skill drives FFmpeg through **two interchangeable backends**. Every recipe
 below is written as a **Backend A command** (`ffmpeg …` with native Windows

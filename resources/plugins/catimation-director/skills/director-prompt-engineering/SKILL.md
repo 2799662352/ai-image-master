@@ -1,9 +1,11 @@
 ---
 name: director-prompt-engineering
-description: 【导演模式·提示词结构 / Director · Prompt Structure】触发词:提示词结构 / 七字段 / 提示词模板 / 怎么写提示词 / 镜头+灯光+构图+风格 / prompt structure / 7-field / prompt template。Use when assembling a prompt in the canonical 7-field order — Subject+Action → Character Ref ([char1] tags) → Scene → Shot+Camera (e.g. 50mm, eye-level) → Lighting (direction, quality, color temperature) → Composition (rule of thirds, DoF) → Style+Mood — within 120 words and paired with negative prompts (blurry, deformed, bad anatomy, extra limbs, watermark) — applies to image-generation models (Midjourney, DALL-E, FLUX, Stable Diffusion, Imagen, Ideogram, Recraft), video-generation models (Sora, Veo, Runway, Kling, Seedance, Hailuo, Higgsfield, Hunyuan), screenplays, scripts, storyboards, AI video, AI image, 提示词, 视频模型, 图像模型, 写剧本, 脚本, 分镜.
+description: 【导演模式·提示词结构 / Director · Prompt Structure】触发词:提示词结构 / 七字段 / 提示词模板 / 怎么写提示词 / 镜头+灯光+构图+风格 / prompt structure / 7-field / prompt template。Use when 提示词字段乱序、丢字段导致出图不稳,需要一条规范可复现的成品提示词时:按七字段顺序拼装(主体动作 → 角色引用 → 场景 → 镜头相机 → 光照 → 构图 → 风格情绪),120 词内,负向按需补充。
 ---
 
 # 导演模式 · 提示词结构(7 字段)
+
+<!-- skill-budget: fast -->
 
 ## Overview
 
@@ -31,7 +33,7 @@ Prompt Hygiene:
 - Maximum 120 words per panel prompt; beyond that generators lose coherence
 
 Negative Prompt(默认正向,按需补充):
-- 默认正向描述(与 `director-orchestrator` 一致):画质要求写成正向(sharp focus, correct anatomy, five clear fingers, natural proportions),而非堆"不要…"清单。
+- 默认正向描述:画质要求写成正向(sharp focus, correct anatomy, five clear fingers, natural proportions),而非堆"不要…"清单。
 - 仅当目标模型有独立负向字段且确需时补充:blurry, deformed, bad anatomy, extra limbs, watermark, text;人像可加 cross-eyed, asymmetric face,建筑可加 impossible geometry。
 
 ## Example

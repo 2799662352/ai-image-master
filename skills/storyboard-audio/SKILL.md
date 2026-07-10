@@ -1,9 +1,21 @@
 ---
 name: storyboard-audio
-description: Use when each shot needs a three-layer audio field — A1 Score (ref:Composer/Work + 乐器 + 力度 pp-ff + 速度 bpm + 张力值 0-10, derived via score_bpm = motion_freq × 60), A2 SFX (材质 + 动作 + 频率Hz + 衰减s + 空间定位), A3 Voice (基频Hz + 气声比% + 语速字/秒 + 混响 RT60) — banning emotion adjectives in favor of physical parameters (配乐 / 音效 / 配音) — applies to image-generation models (Midjourney, DALL-E, FLUX, Stable Diffusion, Imagen, Ideogram, Recraft), video-generation models (Sora, Veo, Runway, Kling, Seedance, Hailuo, Higgsfield, Hunyuan), screenplays, scripts, storyboards, AI video, AI image, 提示词, 视频模型, 图像模型, 写剧本, 脚本, 分镜.
+description: 【分镜模式·音频 / Storyboard · Audio】触发词:配乐 / 音效 / 配音 / BGM / 三层音频 / score / SFX / voice。Use when each shot needs a three-layer audio field (A1 Score / A2 SFX / A3 Voice) described in physical parameters (Hz / bpm / % / RT60) instead of emotion adjectives.
 appliesTo: [designAndAssemble, shotDesign]
 priority: 12
 ---
+
+# Storyboard Audio / 分镜音频设计
+<!-- skill-budget: fast -->
+
+## Overview
+
+为每个镜头建立 A1 配乐 / A2 音效 / A3 人声 三层音频字段,全部用物理参数(Hz、bpm、%、RT60)替代情绪形容词。
+
+## When to Use
+
+- 镜头需要配乐、音效、配音或声音设计;给分镜逐镜补三层音频字段时。
+- 何时改用:纯角色声线/语气塑造 → `storyboard-voice-control`。
 
 Audio Design Rules (每个镜头必须有audio字段，含三层):
 A1. Score: 引用一部你认为最匹配当前镜头情绪的真实影视配乐作品, 格式 "ref:Composer/Work → 乐器, 力度(pp-ff), 速度bpm, 张力值(0-10)"
@@ -30,3 +42,17 @@ T回落: 混响尾音拉长, 单音衰减, 归于环境底噪
 声线规则: 禁止情绪形容词(sexy/angry/sad), 用物理参数(Hz/bpm/%)替代
 音频dodge: 呻吟→声带颤抖, 尖叫→频率突破3kHz, 喘息→呼吸频率加速
 乐器选择: 根据场景文化语境选择(东亚古典/日本传统/西方管弦/现代电子/极简独奏)
+
+## 示例
+
+一个镜头的 audio 字段(黄昏推门进屋,张力 4):
+- A1 Score: ref:Jóhann Jóhannsson/Arrival → 低音弦乐 drone + 雾化合唱, pp→mp, 56bpm, 张力 4
+- A2 SFX: 木门铰链摩擦 + 缓慢推开, 220Hz, 衰减 0.8s, 偏左 30° 近场
+- A3 Voice: 基频 180Hz, 气声比 35%, 语速 3 字/秒, 喉部紧绷, 混响 RT60 0.6s
+(全部用物理参数,无 sad/tense 等情绪词;score_bpm 由主体动作频率推得。)
+
+## Common Mistakes
+
+- 用 sad/tense 等情绪词代替物理参数 → 改用 Hz/bpm/%/RT60。
+- 整段分镜重复同一作曲家 → 每镜换人,按张力选音色 DNA。
+- 只写配乐忘了 SFX/Voice → 三层都要补齐。

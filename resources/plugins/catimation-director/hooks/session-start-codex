@@ -1,31 +1,14 @@
 #!/usr/bin/env bash
 # Codex SessionStart hook for catimation-director plugin.
-# Injects the director-orchestrator router (the "每次必用" entry skill) so the
-# agent always routes image/video/prompt work through the 13-dimension
-# cinematography framework before writing any prompt.
+# Injects a compact pointer: director-*/storyboard-* are on-demand knowledge
+# modules; complex shot design is loaded by the entry skills at pro/production
+# tier. Skill bodies are loaded via the Skill tool — never inlined here.
 # Codex variant: always emits nested hookSpecificOutput.additionalContext.
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-
-orchestrator_content=$(cat "${PLUGIN_ROOT}/skills/director-orchestrator/SKILL.md" 2>&1 || echo "Error reading director-orchestrator skill")
-
-# Escape a string for JSON embedding (single-pass bash substitutions).
-escape_for_json() {
-    local s="$1"
-    s="${s//\\/\\\\}"
-    s="${s//\"/\\\"}"
-    s="${s//$'\n'/\\n}"
-    s="${s//$'\r'/\\r}"
-    s="${s//$'\t'/\\t}"
-    printf '%s' "$s"
-}
-
-orchestrator_escaped=$(escape_for_json "$orchestrator_content")
 stage_discipline="\n\n【3D 导演台工具纪律】若本会话可用 director_* MCP 工具(CATIMATION 应用内 3D 导演台:摆模型/摆姿势/播动画/K动画/打光/机位/运镜录制),必须遵守:① 串行调用,绝不并发两个 director_* 调用(同一个活 3D 场景);② 先 director_open,再 director_snapshot 读场景,后动手;③ 姿势/动画/K动画 action 先 add_mannequin + select 高级假人;④ 每次有意义的改动后 director_capture 亲眼验收(构图/姿势/光),不截图不许声称摆好了;⑤ director_exec 是最后手段,优先用具名 action;⑥ K动画流程:摆姿势 → capture_pose_keyframe → 换 t 重复 → play_pose_clip 预览 → export_pose_clip_glb 落盘;⑦ 衔接出图:导演台截图是姿势/构图/机位/光位锚,不是角色 ID 锚——角色长相仍由单锚点纪律负责(大头照+全身照),出图时两者一起作 referenceImages 并注明灰假人仅供 pose/composition 参考;先摆好 capture 自检通过再出图;成品过四项质检时构图/姿势/机位/光向须与 staging 截图一致。"
-session_context="<EXTREMELY_IMPORTANT>\nCATIMATION 导演模式已启用。\n\n只要本次任务涉及 图片 / 视频 / 动画 / 提示词(包括你自发为回答配图配视频),都必须先载入并执行下面的 director-orchestrator 总调度,走完 STEP 0 反问与技能路由,再动笔。其它 director-* / storyboard-* 技法技能用 Skill 工具按需加载。也可用 /director 命令直接进入。${stage_discipline}\n\n下面是 director-orchestrator 技能全文:\n\n${orchestrator_escaped}\n</EXTREMELY_IMPORTANT>"
+session_context="<IMPORTANT>\nCATIMATION 导演模式已启用。\n\n本插件提供 director-*(镜头/构图/连续性)与 storyboard-*(物理/风格/对白)专业技法技能,均为按需加载的知识模块,不做全局强制。任务分级与编排由唯一入口负责:出图走 catimation-image、出视频走 catimation-video——简单生成不必加载导演技能;涉及复杂镜头设计、专业构图光影、参考复刻或多镜连续性时,由入口在专业/制片级用 Skill 工具加载 director-orchestrator(13 维镜头设计调度),再由它按维度路由具体技法。对已生成结果有明确症状(太假/AI味/动作怪/站桩/风格跑偏/混脸)时,加载 catimation-video-director-router 查「症状→技法」映射做针对性修复。也可用 /director 命令手动进入。${stage_discipline}\n</IMPORTANT>"
 
 printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$session_context" | cat
 

@@ -4,6 +4,7 @@ description: 用于让 AI 画面从模板化、安全答案、过度稳定中轻
 ---
 
 # Storyboard Robustness Breaking / 鲁棒性破坏
+<!-- skill-budget: fast -->
 
 核心信念:AI 的鲁棒性会把画面推向“最安全、最典型、最稳定”的模板答案:主体居中、光线均匀、背景干净、风格统一。高级感来自可控范围内的轻微失稳。
 

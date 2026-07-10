@@ -2,14 +2,16 @@
 name: catimation-portrait-library
 description: >-
   Autonomously manage the CATIMATION portrait library (人像库 / 素材库) — the
-  persistent, deduplicated pool of image / video / audio assets that powers video
-  generation and keeps characters & scenes consistent. Use whenever the user
-  mentions 人像库 / 素材库 / 参考素材 / 角色库, wants to save / 收藏 / 搜索 / 整理 / 重命名 / 分组 /
-  删除 / 下载 a reference asset, or whenever you need an asset for 视频生成 / video
-  generation. Add, search, organize, rename, group, hide, download proactively.
+  persistent, deduplicated pool of image / video / audio reference assets that
+  keeps characters & scenes consistent. Use when the user mentions 人像库 / 素材库 /
+  参考素材 / 角色库, wants to save / 收藏 / 搜索 / 整理 / 重命名 / 分组 / 删除 / 下载 a reference
+  asset, or when a reference asset is needed for 视频生成 / video generation. Add,
+  search, organize, rename, group, hide, download proactively.
 ---
 
 # Autonomously manage the CATIMATION portrait library (人像库)
+
+<!-- skill-budget: fast -->
 
 The portrait library is a persistent, content-deduplicated pool of image /
 video / audio assets. It feeds `generate_video` (reference images, first/last

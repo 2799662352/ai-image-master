@@ -8,7 +8,9 @@ param(
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = 'Continue'
-$log = Join-Path (Split-Path -Parent $SourceDir) 'oss_sync.log'
+$workDir = Split-Path -Parent $SourceDir
+Set-Location $workDir
+$log = Join-Path $workDir 'oss_sync.log'
 $attempt = 0
 
 while ($attempt -lt $MaxAttempts) {

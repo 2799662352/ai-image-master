@@ -2,7 +2,7 @@
 # Codex SessionStart hook for catimation-storyboard plugin.
 set -euo pipefail
 
-session_context="<IMPORTANT>\nCATIMATION 分镜技法库已启用(29 个 storyboard-* craft skill:光影重建/角色演技/构图遮挡/调色/运动学反推/负向控制/物理/对白/风格/网格故事板法…)。当任务涉及单镜画面打磨、参考图反推、提示词去 AI 味时,用 Skill 工具按需加载相关 storyboard-* 技能;要一张图出整套分镜/网格故事板用 storyboard-grid-to-seedance;成套写镜头先过 director-orchestrator。命令:/storyboard 写镜头提示词,/reverse-shot 反推参考图/视频。\n</IMPORTANT>"
+session_context="<IMPORTANT>\nCATIMATION 分镜技法库已启用(29 个 storyboard-* craft skill:光影重建/角色演技/构图遮挡/调色/运动学反推/负向控制/物理/对白/风格/网格故事板法…)。当任务涉及单镜画面打磨、参考图反推、提示词去 AI 味时,用 Skill 工具按需加载相关 storyboard-* 技能;要一张图出整套分镜/网格故事板用 storyboard-grid-to-seedance;storyboard-* 均为纯知识叶子,产出提示词片段后交回 catimation-image / catimation-video 入口生成;复杂成套镜头设计由入口在专业/制片级按需加载 director-orchestrator。命令:/storyboard 写镜头提示词,/reverse-shot 反推参考图/视频。\n</IMPORTANT>"
 
 printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$session_context" | cat
 exit 0

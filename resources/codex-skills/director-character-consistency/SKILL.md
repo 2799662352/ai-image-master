@@ -1,7 +1,9 @@
 ---
 name: director-character-consistency
-description: 【导演模式·角色一致性 / Director · Character Consistency】触发词:角色一致性 / 同一人物 / 跨镜一致 / 不变脸 / 服装道具不变 / 角色稳定 / character consistency / same character。Use when the same character must appear identical across panels — anchored by face / build / outfit / markers, with hair / outfit / props unchanged across cuts and relative skin-tone descriptors used instead of absolute color — applies to image-generation models (Midjourney, DALL-E, FLUX, Stable Diffusion, Imagen, Ideogram, Recraft), video-generation models (Sora, Veo, Runway, Kling, Seedance, Hailuo, Higgsfield, Hunyuan), screenplays, scripts, storyboards, AI video, AI image, 提示词, 视频模型, 图像模型, 写剧本, 脚本, 分镜.
+description: 【导演模式·角色一致性 / Director · Character Consistency】触发词:角色一致性 / 同一人物 / 跨镜一致 / 不变脸 / 服装道具不变 / 角色稳定 / character consistency / same character。Use when 同一角色跨格出现变脸、发型服装道具漂移时:按 Face / Build / Outfit / Markers 锚定,跨格锁定发型 / 服装 / 道具,肤色用相对描述而非绝对色。
 ---
+
+<!-- skill-budget: fast -->
 
 CHARACTER ANCHOR FORMAT — every character MUST include ALL of:
 

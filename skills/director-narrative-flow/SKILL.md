@@ -1,9 +1,22 @@
 ---
 name: narrative-flow
-description: Use when sequencing shots — open with an establishing wide, follow with mediums for interaction, save close-ups for emotional peaks; enforce the 180-degree rule, eye-line matches, action continuity across cuts, and alternate scales to avoid 3-in-a-row of the same shot type — applies to image-generation models (Midjourney, DALL-E, FLUX, Stable Diffusion, Imagen, Ideogram, Recraft), video-generation models (Sora, Veo, Runway, Kling, Seedance, Hailuo, Higgsfield, Hunyuan), screenplays, scripts, storyboards, AI video, AI image, 提示词, 视频模型, 图像模型, 写剧本, 脚本, 分镜.
+description: 【导演模式·叙事节奏 / Director · Narrative Flow】触发词:叙事 / 镜头顺序 / 节奏 / 180度轴线 / 视线匹配 / 景别交替 / 剪辑流 / shot sequencing / 180-degree rule / eye-line。Use when 一组分镜读起来不连贯、越轴、视线不匹配、节奏平时:建立镜开场 → 中景交互 → 特写留给情绪峰值;守 180 度轴线、视线对位、动作跨格衔接,交替景别避免同景别连排。
 appliesTo: [taskPlanning, designAndAssemble, verifyConsistency]
 priority: 2
 ---
+
+# 导演模式 · 叙事节奏
+
+<!-- skill-budget: fast -->
+
+## Overview
+
+让多格"讲故事"而非只罗列图:镜头推进(建立→中景→情绪特写→收尾)、连续性(180°轴线/视线匹配/动作衔接)、节奏(交替景别、张弛控制)。
+
+## When to Use
+
+- 用:整段镜头如何排序、连续性与节奏把控;一组分镜读起来不连贯。
+- 不用:只要一场戏的现成景别套路与转场标注 → 改用 `director-shot-sequence-patterns`。
 
 NARRATIVE SEQUENCING — panels must tell a story, not just show images:
 
@@ -22,3 +35,20 @@ Pacing:
 - Alternate shot scales to create visual rhythm (don't stack 3 close-ups in a row)
 - For tension: decrease panel time span, tighten framing
 - For relief: widen shots, increase perceived time between beats
+
+## Example
+
+4-beat sequence:
+1. Wide establish — rainy alley at night (location + mood).
+2. Medium — [char1] steps in, [char2] turns (180° line kept; both stay on consistent screen sides).
+3. Close-up — [char1] eyes widen (emotional peak; eye-line matches what [char2] revealed).
+4. Wide — both walk off (resolution).
+→ Scales alternate (no 3 same-size in a row); eye-lines and screen sides stay continuous.
+
+## Common Mistakes
+
+| 错误 | 正确 |
+|------|------|
+| 越轴、视线不匹配 | 守 180° 轴线 + 视线对位 |
+| 动作跨格断裂 | 上格起手,下格接上 |
+| 连排同景别无节奏 | 交替景别,张弛有度 |

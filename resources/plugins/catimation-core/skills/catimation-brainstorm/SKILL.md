@@ -70,23 +70,23 @@ ask_user({
 
 ## Hand off to the shot orchestrator (导演总调度)
 
-Once the direction is set (or for any clear ask that needs a prompt), **load
-`director-orchestrator` BEFORE writing the prompt or calling
-`generate_image` / `generate_video`.** It is the using-superpowers-style router
-for all `director-*` / `storyboard-*` craft skills:
+Once the direction is set (or for any clear ask that needs a prompt), complex
+shot design goes back to the upstream entries, loaded tier by tier — typically
+director-orchestrator, the using-superpowers-style router for the
+director-* / storyboard-* craft skills:
 
-1. It runs a mandatory STEP 0 self-reflection — 「这次涉及 13 维里的哪几维?要用到哪些本地
+1. It runs a STEP 0 self-reflection — 「这次涉及 13 维里的哪几维?要用到哪些本地
    director-* / storyboard- skill?」 — and loads the matching craft skills.
 2. It writes the prompt as **structured text (never JSON)** on the 13-dimension
    cinematography framework, physical/camera-reproducible params over emotion
    adjectives, positive prompts by default.
-3. Then it hands the finished prompt to `catimation-image` / `catimation-video`.
+3. Then it hands the finished prompt to catimation-image / catimation-video.
 
 So the full loop is: **brainstorm (here, ask_user) → director-orchestrator
 (reflect + route + write) → catimation-image / catimation-video (generate)**.
-Even when you skip brainstorming for a simple ask, still pass through
-`director-orchestrator` before generating — including when YOU generate your own
-illustration for an answer.
+Even when you skip brainstorming for a simple ask, routing the prompt through
+director-orchestrator first is still the recommended path — including when YOU
+generate your own illustration for an answer.
 
 ## 怎么把弹窗真正弹出来(直接调用,别只是「想」)⚠️
 
@@ -102,5 +102,5 @@ illustration for an answer.
   (方案1 / 方案2 / …,让用户回个数字)继续推进,别让流程卡死。
 - This skill is general-purpose: use it for video, image, or any creative
   decision that's genuinely the user's to make.
-- It pairs with `catimation-video` / `catimation-image`: brainstorm here, then
+- It pairs with catimation-video / catimation-image: brainstorm here, then
   generate there.

@@ -1,0 +1,301 @@
+{
+  "schemaVersion": 1,
+  "evaluation": "semantic-model",
+  "description": "Goldens for a later model-based Skill trigger evaluator. Deterministic CI validates only this fixture's schema and coverage; it must not reduce these prompts to keyword matching.",
+  "cases": [
+    {
+      "id": "single-image-simple",
+      "prompt": "画一张戴红围巾的橘猫，白色背景。",
+      "expected": {
+        "shouldTrigger": ["catimation-image"],
+        "shouldNotTrigger": ["catimation-video", "film-studio", "director-orchestrator"],
+        "budget": "fast"
+      },
+      "tags": ["single-image", "simple"]
+    },
+    {
+      "id": "single-image-edit",
+      "prompt": "把我附上的照片改成水彩插画，人物身份不要变。",
+      "expected": {
+        "shouldTrigger": ["catimation-image", "director-character-consistency"],
+        "shouldNotTrigger": ["catimation-video", "film-studio"],
+        "budget": "standard"
+      },
+      "tags": ["single-image", "image-edit", "character-consistency"]
+    },
+    {
+      "id": "single-icon",
+      "prompt": "生成一个极简的日历 App 图标。",
+      "expected": {
+        "shouldTrigger": ["catimation-image"],
+        "shouldNotTrigger": ["catimation-video", "director-orchestrator", "film-studio"],
+        "budget": "fast"
+      },
+      "tags": ["single-image", "icon", "simple"]
+    },
+    {
+      "id": "batch-unrelated-images",
+      "prompt": "分别生成三张图：咖啡杯、雨夜街道、太空站。",
+      "expected": {
+        "shouldTrigger": ["catimation-image"],
+        "shouldNotTrigger": ["catimation-video", "film-studio"],
+        "budget": "fast"
+      },
+      "tags": ["multi-image", "batch"]
+    },
+    {
+      "id": "character-sheet",
+      "prompt": "给这个原创侦探角色做一张定妆照，后续镜头要保持同一张脸。",
+      "expected": {
+        "shouldTrigger": ["catimation-image", "director-character-consistency"],
+        "shouldNotTrigger": ["catimation-video", "film-studio"],
+        "budget": "standard"
+      },
+      "tags": ["single-image", "character-consistency"]
+    },
+    {
+      "id": "animate-attached-image",
+      "prompt": "让这张猫咪图片轻轻眨眼，做成 5 秒视频。",
+      "expected": {
+        "shouldTrigger": ["catimation-video"],
+        "shouldNotTrigger": ["catimation-image", "film-studio", "director-orchestrator"],
+        "budget": "fast"
+      },
+      "tags": ["single-shot", "image-to-video", "simple"]
+    },
+    {
+      "id": "single-shot-text-video",
+      "prompt": "生成一个 5 秒镜头：落叶被风吹过空荡站台。",
+      "expected": {
+        "shouldTrigger": ["catimation-video"],
+        "shouldNotTrigger": ["catimation-image", "film-studio"],
+        "budget": "fast"
+      },
+      "tags": ["single-shot", "text-to-video"]
+    },
+    {
+      "id": "cinematic-single-shot",
+      "prompt": "来一段有电影感的雨夜人物特写，镜头缓慢推进。",
+      "expected": {
+        "shouldTrigger": [
+          "catimation-video",
+          "director-cinematic-composition",
+          "director-lighting-continuity"
+        ],
+        "shouldNotTrigger": ["catimation-image", "film-studio"],
+        "budget": "standard"
+      },
+      "tags": ["single-shot", "cinematic"]
+    },
+    {
+      "id": "open-cinematic-direction",
+      "prompt": "想做个高级、有电影感的短片段，但我还没想好方向，你给我几个选择。",
+      "expected": {
+        "shouldTrigger": ["catimation-brainstorm", "catimation-video"],
+        "shouldNotTrigger": ["catimation-image", "film-studio"],
+        "budget": "standard"
+      },
+      "tags": ["single-shot", "cinematic", "open-ended"]
+    },
+    {
+      "id": "three-shot-continuity",
+      "prompt": "做三个连续镜头：女孩进门、发现信件、抬头看向窗外，同一角色和房间要连续。",
+      "expected": {
+        "shouldTrigger": [
+          "catimation-video",
+          "director-character-consistency",
+          "director-narrative-flow",
+          "director-shot-sequence-patterns"
+        ],
+        "shouldNotTrigger": ["catimation-image", "film-studio"],
+        "budget": "pro"
+      },
+      "tags": ["multi-shot", "character-consistency"]
+    },
+    {
+      "id": "multi-character-shot",
+      "prompt": "一个镜头里两名角色交接钥匙，左右位置不能串，动作要自然。",
+      "expected": {
+        "shouldTrigger": ["catimation-video", "storyboard-multi-character-control"],
+        "shouldNotTrigger": ["catimation-image", "film-studio"],
+        "budget": "standard"
+      },
+      "tags": ["single-shot", "multi-character", "character-consistency"]
+    },
+    {
+      "id": "full-product-commercial",
+      "prompt": "从概念、脚本、分镜到成片，完整制作一支 30 秒护肤品宣传片。",
+      "expected": {
+        "shouldTrigger": ["film-studio"],
+        "shouldNotTrigger": ["catimation-image", "catimation-video"],
+        "budget": "studio"
+      },
+      "tags": ["full-production", "commercial"]
+    },
+    {
+      "id": "full-trailer",
+      "prompt": "把这个故事做成完整预告片，包含剧本、角色设定、镜头、配音、配乐和最终剪辑。",
+      "expected": {
+        "shouldTrigger": ["film-studio"],
+        "shouldNotTrigger": ["catimation-image", "catimation-video"],
+        "budget": "studio"
+      },
+      "tags": ["full-production", "trailer"]
+    },
+    {
+      "id": "full-music-video",
+      "prompt": "一条龙制作一支完整 MV，从视觉概念一直做到可交付的视频文件。",
+      "expected": {
+        "shouldTrigger": ["film-studio"],
+        "shouldNotTrigger": ["catimation-image", "catimation-video"],
+        "budget": "studio"
+      },
+      "tags": ["full-production", "music-video"]
+    },
+    {
+      "id": "focal-length-question",
+      "prompt": "电影镜头里的 35mm 和 85mm 焦段有什么区别？只解释概念，不生成内容。",
+      "expected": {
+        "shouldTrigger": ["director-cinematic-composition"],
+        "shouldNotTrigger": ["catimation-image", "catimation-video", "film-studio"],
+        "budget": "fast"
+      },
+      "tags": ["terminology", "question-only"]
+    },
+    {
+      "id": "seedance-question",
+      "prompt": "Seedance 的全能参考是什么意思？",
+      "expected": {
+        "shouldTrigger": ["sd2-pe"],
+        "shouldNotTrigger": ["catimation-image", "catimation-video", "film-studio"],
+        "budget": "fast"
+      },
+      "tags": ["terminology", "question-only"]
+    },
+    {
+      "id": "storyboard-definition",
+      "prompt": "什么是正反打？请用文字举例，不要画图或生成视频。",
+      "expected": {
+        "shouldTrigger": ["director-shot-sequence-patterns"],
+        "shouldNotTrigger": ["catimation-image", "catimation-video", "film-studio"],
+        "budget": "fast"
+      },
+      "tags": ["terminology", "question-only"]
+    },
+    {
+      "id": "cinematic-term-question",
+      "prompt": "大家常说的“电影感”通常由哪些视觉因素构成？只做术语解释。",
+      "expected": {
+        "shouldTrigger": ["director-cinematic-composition"],
+        "shouldNotTrigger": ["catimation-image", "catimation-video", "film-studio"],
+        "budget": "fast"
+      },
+      "tags": ["cinematic", "terminology", "question-only"]
+    },
+    {
+      "id": "transcode-only",
+      "prompt": "把 D:/clips/input.mov 转码成 H.264 MP4。",
+      "expected": {
+        "shouldTrigger": ["ffmpeg-win"],
+        "shouldNotTrigger": ["catimation-image", "catimation-video", "film-studio"],
+        "budget": "fast"
+      },
+      "tags": ["transcode", "post-production"]
+    },
+    {
+      "id": "compress-only",
+      "prompt": "把这个视频压到 20MB 以内，画面比例保持不变。",
+      "expected": {
+        "shouldTrigger": ["ffmpeg-win"],
+        "shouldNotTrigger": ["catimation-image", "catimation-video", "film-studio"],
+        "budget": "fast"
+      },
+      "tags": ["transcode", "compression"]
+    },
+    {
+      "id": "extract-audio-only",
+      "prompt": "从现有 MP4 里提取 WAV 音轨。",
+      "expected": {
+        "shouldTrigger": ["ffmpeg-win"],
+        "shouldNotTrigger": ["catimation-image", "catimation-video", "film-studio"],
+        "budget": "fast"
+      },
+      "tags": ["transcode", "audio"]
+    },
+    {
+      "id": "inspect-codec-only",
+      "prompt": "检查这个成片的编码、分辨率、帧率和音频流，不要重新生成视频。",
+      "expected": {
+        "shouldTrigger": ["ffmpeg-win"],
+        "shouldNotTrigger": ["catimation-image", "catimation-video", "film-studio"],
+        "budget": "fast"
+      },
+      "tags": ["inspection", "post-production"]
+    },
+    {
+      "id": "understand-existing-video",
+      "prompt": "总结这段现有视频讲了什么，并检查字幕和剧情连续性。",
+      "expected": {
+        "shouldTrigger": ["catimation-understand", "ffmpeg-win"],
+        "shouldNotTrigger": ["catimation-image", "catimation-video", "film-studio"],
+        "budget": "standard"
+      },
+      "tags": ["understanding", "inspection"]
+    },
+    {
+      "id": "grade-existing-video",
+      "prompt": "把现有片段调得更暖一些，只做后期调色，不要生成新镜头。",
+      "expected": {
+        "shouldTrigger": ["ffmpeg-win"],
+        "shouldNotTrigger": ["catimation-image", "catimation-video", "film-studio"],
+        "budget": "fast"
+      },
+      "tags": ["post-production", "color"]
+    },
+    {
+      "id": "brainstorm-text-only",
+      "prompt": "先别生成，帮我给这个广告想五个视觉方向，让我选。",
+      "expected": {
+        "shouldTrigger": ["catimation-brainstorm"],
+        "shouldNotTrigger": ["catimation-image", "catimation-video", "film-studio"],
+        "budget": "fast"
+      },
+      "tags": ["brainstorm", "question-only"]
+    },
+    {
+      "id": "screenplay-only",
+      "prompt": "只写一页双人对话剧本，不做分镜也不生成任何图片或视频。",
+      "expected": {
+        "shouldTrigger": ["screenwriter"],
+        "shouldNotTrigger": ["catimation-image", "catimation-video", "film-studio"],
+        "budget": "fast"
+      },
+      "tags": ["screenplay", "question-only"]
+    },
+    {
+      "id": "optimize-video-prompt-only",
+      "prompt": "优化这段 Seedance 提示词，但不要调用生成工具：一个人在雪地奔跑。",
+      "expected": {
+        "shouldTrigger": ["sd2-pe"],
+        "shouldNotTrigger": ["catimation-image", "catimation-video", "film-studio"],
+        "budget": "fast"
+      },
+      "tags": ["prompt-only", "single-shot"]
+    },
+    {
+      "id": "ui-animation-not-video",
+      "prompt": "给这个 React 按钮加一个 hover 动画，不要制作媒体文件。",
+      "expected": {
+        "shouldTrigger": [],
+        "shouldNotTrigger": [
+          "animation-craft",
+          "catimation-image",
+          "catimation-video",
+          "film-studio"
+        ],
+        "budget": "fast"
+      },
+      "tags": ["negative", "ui-animation"]
+    }
+  ]
+}

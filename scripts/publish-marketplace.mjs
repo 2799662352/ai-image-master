@@ -150,8 +150,16 @@ async function main() {
     )
   }
 
-  // ---- STEP 2: sync plugin skills → per-skill tree -------------------------
+  // ---- STEP 2: sync plugin skills → per-skill tree + derived copies --------
   run('Sync skills', 'scripts/sync-plugin-skills-to-codex.mjs', dryRun ? [] : ['--apply'])
+  // 单一真源派生副本:首方内置(generated.ts)+ 顶层管线镜像(skills/)。
+  // dry-run 只做 parity 校验;真跑直接回填,保证发布内容与插件源一致。
+  run(
+    'Generate first-party skills',
+    'scripts/generate-first-party-skills.mjs',
+    dryRun ? ['--check'] : [],
+  )
+  run('Sync top-level skill mirrors', 'scripts/sync-top-level-skills.mjs', dryRun ? ['--check'] : [])
 
   // ---- STEP 3: audit (real run only; dry hasn't written manifests yet) -----
   if (!dryRun) {

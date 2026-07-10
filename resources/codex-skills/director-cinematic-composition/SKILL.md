@@ -1,9 +1,11 @@
 ---
 name: director-cinematic-composition
-description: 【导演模式·构图 / Director · Composition】触发词:构图 / 取景 / 三分法 / 景深 / 前中后景 / 引导线 / 焦段 / 留白 / 机位 / composition / framing / rule of thirds / leading lines / focal length。Use when framing a shot — placing the subject at a rule-of-thirds intersection, building foreground / midground / background layers, deploying leading lines, varying focal length wide → medium → close-up, and tuning negative space / look-space for tension vs calm — applies to image-generation models (Midjourney, DALL-E, FLUX, Stable Diffusion, Imagen, Ideogram, Recraft), video-generation models (Sora, Veo, Runway, Kling, Seedance, Hailuo, Higgsfield, Hunyuan), screenplays, scripts, storyboards, AI video, AI image, 提示词, 视频模型, 图像模型, 写剧本, 脚本, 分镜.
+description: 【导演模式·构图 / Director · Composition】触发词:构图 / 取景 / 三分法 / 景深 / 前中后景 / 引导线 / 焦段 / 留白 / 机位 / composition / framing / rule of thirds / leading lines / focal length。Use when 单格取景构图:主体置三分线交点、前中后景分层、引导线导向焦点、焦段随景别变化、以留白 / look-space 调张弛;画面扁平死居中、视线前无留白时用。
 ---
 
 # 导演模式 · 电影构图
+
+<!-- skill-budget: fast -->
 
 ## Overview
 

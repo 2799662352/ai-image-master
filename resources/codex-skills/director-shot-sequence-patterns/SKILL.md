@@ -1,9 +1,11 @@
 ---
 name: director-shot-sequence-patterns
-description: 【导演模式·镜头 / Director · Shots】触发词:镜头 / 景别 / 分镜序列 / 转场 / 建立镜头 / 正反打 / 动作镜头 / 情绪镜头 / shot / shot sequence / cut / dolly / establishing / shot-reverse-shot。Use when picking the shot pattern that matches the scene's dramatic intent — Establishing (wide → medium → close-up → detail), Dialogue (two-shot → shot-reverse-shot → reaction → re-establish), Action (wide → medium action → close-up impact → wide aftermath), Emotional (medium → close-up → extreme close-up → release) — and labeling every transition ("cut to", "dolly in", "match cut", "time skip") — applies to image-generation models (Midjourney, DALL-E, FLUX, Stable Diffusion, Imagen, Ideogram, Recraft), video-generation models (Sora, Veo, Runway, Kling, Seedance, Hailuo, Higgsfield, Hunyuan), screenplays, scripts, storyboards, AI video, AI image, 提示词, 视频模型, 图像模型, 写剧本, 脚本, 分镜.
+description: 【导演模式·镜头 / Director · Shots】触发词:镜头 / 景别 / 分镜序列 / 转场 / 建立镜头 / 正反打 / 动作镜头 / 情绪镜头 / shot / shot sequence / cut / dolly / establishing / shot-reverse-shot。Use when 一场戏需要现成景别套路与转场标注时:按戏剧意图选建立 / 对话 / 动作 / 情绪四种镜头模式,并给转场打标(cut to / dolly in / match cut / time skip)。
 ---
 
 # 导演模式 · 镜头序列模式
+
+<!-- skill-budget: fast -->
 
 ## Overview
 
@@ -14,7 +16,7 @@ description: 【导演模式·镜头 / Director · Shots】触发词:镜头 / �
 ## When to Use
 
 - 用:需要现成的景别推进套路、转场标注;一场戏的镜头怎么排。
-- 不用:跨镜连续性规则(180°/视线匹配)与整体叙事节奏 → 改用 `director-narrative-flow`。
+- 不用:跨镜连续性规则(180°/视线匹配)与整体叙事节奏(交叙事节奏技法)。
 
 SHOT SEQUENCE PATTERNS — select the pattern that matches the scene's dramatic intent:
 

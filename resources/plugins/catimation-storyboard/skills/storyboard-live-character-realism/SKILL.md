@@ -4,6 +4,7 @@ description: 用于赋予 AI 角色“活人感”,去除塑料AI味、油腻感
 ---
 
 # Storyboard Live Character Realism / 角色活人感
+<!-- skill-budget: fast -->
 
 核心信念:AI 人物“一眼假”往往不是模型不强,而是缺少三块真实感基石:**微神态与潜动作、环境对抗与物理惯性、局部光影与哑光质感**。皮肤和脸已经很真时,真正的假来自“状态的假”。
 
@@ -89,6 +90,5 @@ description: 用于赋予 AI 角色“活人感”,去除塑料AI味、油腻感
 
 ## 何时改用其他 skill
 
-- 需要细化微表情序列与情绪因果 → `storyboard-character-acting`。
 - 动作缺"为什么发生" → `storyboard-character-motivation`(行为动机)。
-- 本 skill 侧重去塑料感:环境对抗、物理惯性、局部光影哑光。
+- 本 skill 侧重去塑料感:环境对抗、物理惯性、局部光影哑光;细化微表情序列与情绪因果属于演技技法的范畴。

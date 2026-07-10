@@ -1,9 +1,11 @@
 ---
 name: director-narrative-flow
-description: 【导演模式·叙事节奏 / Director · Narrative Flow】触发词:叙事 / 镜头顺序 / 节奏 / 180度轴线 / 视线匹配 / 景别交替 / 剪辑流 / shot sequencing / 180-degree rule / eye-line。Use when sequencing shots — open with an establishing wide, follow with mediums for interaction, save close-ups for emotional peaks; enforce the 180-degree rule, eye-line matches, action continuity across cuts, and alternate scales to avoid 3-in-a-row of the same shot type — applies to image-generation models (Midjourney, DALL-E, FLUX, Stable Diffusion, Imagen, Ideogram, Recraft), video-generation models (Sora, Veo, Runway, Kling, Seedance, Hailuo, Higgsfield, Hunyuan), screenplays, scripts, storyboards, AI video, AI image, 提示词, 视频模型, 图像模型, 写剧本, 脚本, 分镜.
+description: 【导演模式·叙事节奏 / Director · Narrative Flow】触发词:叙事 / 镜头顺序 / 节奏 / 180度轴线 / 视线匹配 / 景别交替 / 剪辑流 / shot sequencing / 180-degree rule / eye-line。Use when 一组分镜读起来不连贯、越轴、视线不匹配、节奏平时:建立镜开场 → 中景交互 → 特写留给情绪峰值;守 180 度轴线、视线对位、动作跨格衔接,交替景别避免同景别连排。
 ---
 
 # 导演模式 · 叙事节奏
+
+<!-- skill-budget: fast -->
 
 ## Overview
 

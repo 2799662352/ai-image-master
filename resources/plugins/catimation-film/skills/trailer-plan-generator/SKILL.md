@@ -5,6 +5,8 @@ description: Generate five professional 90-second trailer plan options from a pr
 
 # Trailer Plan Generator
 
+<!-- skill-budget: fast -->
+
 ## Core workflow
 
 1. Read the user's script, synopsis, or scene list. If no script is provided, ask for it before generating plans.

@@ -2,7 +2,7 @@
 # SessionStart hook for catimation-core plugin.
 set -euo pipefail
 
-session_context="<IMPORTANT>\nCATIMATION 核心集成已启用。应用内出图首选 catimation-image 的 generate_image / generate_images(渲染进聊天并落盘+历史);多张用 generate_images 一次批量。人像/角色锚点管理用 catimation-portrait-library。\n交互弹窗:任何时候你准备给用户列 2 个以上选项/方案/选项/方向,或遇到该由用户拍板的决策(景别/风格/运镜/模型/下一步…),直接调用 ask_user 工具渲染可点击选项卡——它是系统级工具,和 generate_image / view_image 同级,永远可用,不限头脑风暴;别只发纯文字编号列表。开放/高价值创意可走 /brainstorm。\n命令:/gen-image 出图,/brainstorm 头脑风暴。写提示词前先过 director-orchestrator。\n运镜知识库:写运镜/景别/机位/结构化镜头描述前,或用户问运镜/分镜术语时,先调 search_cinematography_kb 工具查「运镜与结构化描述库」(阿里百炼 RAG,权威运镜术语+结构化描述范式),拿库里真实术语再落笔;工具不可用/未配 key 时退回联网检索。\n</IMPORTANT>"
+session_context="<IMPORTANT>\nCATIMATION 核心集成已启用。应用内出图首选 catimation-image 的 generate_image / generate_images(渲染进聊天并落盘+历史);多张用 generate_images 一次批量。人像/角色锚点管理用 catimation-portrait-library。\n交互弹窗:任何时候你准备给用户列 2 个以上选项/方案/选项/方向,或遇到该由用户拍板的决策(景别/风格/运镜/模型/下一步…),直接调用 ask_user 工具渲染可点击选项卡——它是系统级工具,和 generate_image / view_image 同级,永远可用,不限头脑风暴;别只发纯文字编号列表。开放/高价值创意可走 /brainstorm。\n命令:/gen-image 出图,/brainstorm 头脑风暴。出图由 catimation-image 唯一入口分级(快速/标准/专业/制片)后按预算加载技能;复杂镜头设计仅专业/制片级按需加载 director-orchestrator。\n运镜知识库:写运镜/景别/机位/结构化镜头描述前,或用户问运镜/分镜术语时,先调 search_cinematography_kb 工具查「运镜与结构化描述库」(阿里百炼 RAG,权威运镜术语+结构化描述范式),拿库里真实术语再落笔;工具不可用/未配 key 时退回联网检索。\n</IMPORTANT>"
 
 if [ -n "${CURSOR_PLUGIN_ROOT:-}" ]; then
   printf '{\n  "additional_context": "%s"\n}\n' "$session_context"

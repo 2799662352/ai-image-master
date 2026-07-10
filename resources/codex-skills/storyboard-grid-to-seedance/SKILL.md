@@ -4,6 +4,7 @@ description: 用一张多格故事板网格(3×3/4×4/16 格)锁住镜头序列�
 ---
 
 # Storyboard Grid to Seedance（网格故事板 → 图生视频）
+<!-- skill-budget: fast -->
 
 ## Overview
 
@@ -24,9 +25,9 @@ description: 用一张多格故事板网格(3×3/4×4/16 格)锁住镜头序列�
 - 漫画页 / 多帧蒙太奇 / 试镜网格这类"格子即时间轴"的玩法。
 
 **不用本 skill,改用:**
-- 要逐镜连续性受控的完整制片包(角色/场景圣经 + 衔接矩阵 + 剪辑边界矩阵 + 双语提示词)→ `catimation-storyboard-pro` 的 `create-storyboard`。
+- 要逐镜连续性受控的完整制片包(角色/场景圣经 + 衔接矩阵 + 剪辑边界矩阵 + 双语提示词)→ 超出本 skill 范围,交给上层制片包编排流程。
 - 单镜画面问题(光不对/动作不实/角色不一致/构图弱)→ 对应的 `storyboard-*` 技法 skill。
-- 端到端成片编排 → `film-studio`。
+- 端到端成片编排 → 交给上层成片编排入口,不在本 skill 范围。
 
 ## Quick Reference
 
@@ -106,11 +107,10 @@ cinematic lighting/pacing. No new shots, no reordering.
 | 跳过 sd2-pe 直接生成 | 视频提示词最终必经 `sd2-pe` 工程化 |
 | 网格未逐格审稿就进视频 | 先在便宜的图像阶段锁定每一格,再做昂贵的视频渲染 |
 
-## 何时调用其他 skill / 参考
+## 何时看参考
 
-- **STEP 0 反问**:画幅/时长/受众/风格未定 → 先用 `director-orchestrator`。
+- **STEP 0 反问**:画幅/时长/受众/风格未定 → 先在上游把需求问清,再进网格法。
 - **视频提示词工程化**:产出的 Seedance 提示词 → 交 `sd2-pe`。
-- **要完整制片包**(圣经/衔接矩阵/剪辑边界/双语提示词)→ `catimation-storyboard-pro` 的 `create-storyboard`。
 - **逐镜工艺深填**:
   - 9 维度逐项填充(景别/机位/灯光/调色/氛围/画面/台词/音效/备注)→ `references/seedance-9dim-shot-table.md`
   - 调色 LUT 参数 → `references/lut-aesthetics.md`
