@@ -13,6 +13,8 @@ import type {
   CodexModelListParams,
   CodexModelListResponse,
   CollaborationModeListResponse,
+  ThreadSettingsUpdateParams,
+  ThreadSettingsUpdateResponse,
 } from './codexProtocol'
 import type { DoctorReport } from './codexDoctor'
 import type {
@@ -156,10 +158,13 @@ export interface IAgentBackend {
    * the built-in preset masks — per upstream README the Plan preset selects
    * medium reasoning effort and presets never select a model. The manager
    * consumes the Plan mask when expanding the composer's 'plan' kind instead
-   * of hardcoding settings. Optional: non-Codex backends / stubs omit it and
-   * the manager falls back to `reasoning_effort: null`.
+   * of hardcoding settings. Optional: non-Codex backends / stubs omit it;
+   * Plan Auto then resolves through the shared safe default (`medium`).
    */
   listCollaborationModes?(): Promise<CollaborationModeListResponse>
+  updateThreadSettings?(
+    params: ThreadSettingsUpdateParams,
+  ): Promise<ThreadSettingsUpdateResponse>
 
   // Native plugin / marketplace / apps / external-agent-import (app-server v2,
   // ≥0.140). Codex-specific — optional so non-Codex backends can omit them.

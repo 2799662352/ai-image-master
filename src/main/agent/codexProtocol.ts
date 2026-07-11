@@ -109,6 +109,33 @@ export interface CodexCollaborationMode {
   }
 }
 
+export interface ThreadSettingsUpdateParams {
+  threadId: string
+  collaborationMode?: CodexCollaborationMode | null
+}
+
+export type ThreadSettingsUpdateResponse = Record<string, never>
+
+export interface CodexThreadSettings {
+  cwd: string
+  approvalPolicy: string
+  approvalsReviewer: string
+  sandboxPolicy: Record<string, unknown>
+  activePermissionProfile: Record<string, unknown> | null
+  model: string
+  modelProvider: string
+  serviceTier: string | null
+  effort: string | null
+  summary: string | null
+  collaborationMode: CodexCollaborationMode
+  personality: string | null
+}
+
+export interface ThreadSettingsUpdatedNotification {
+  threadId: string
+  threadSettings: CodexThreadSettings
+}
+
 /** One preset row from `collaborationMode/list` (all-optional mask). */
 export interface CodexCollaborationModeMask {
   name: string

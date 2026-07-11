@@ -52,6 +52,30 @@ describe('MentionInput — 运行中插话 (turn/steer) routing', () => {
     expect((textarea as HTMLTextAreaElement).disabled).toBe(false)
   })
 
+  it('orders and disables the model, collaboration, and image controls while running', () => {
+    useAgentChatStore.setState({
+      isRunning: true,
+      threadId: 'thread-1',
+      input: '',
+      collabModeKind: 'default',
+      collabModeByThread: { 'thread-1': 'default' },
+      collabModePendingByThread: {},
+    } as never)
+    render(<MentionInput />)
+
+    const model = screen.getByRole('button', { name: /GPT-/ })
+    const collaboration = screen.getByRole('button', { name: '切换到 Plan' })
+    const image = screen.getByRole('button', { name: /出图渠道/ })
+
+    expect(model.compareDocumentPosition(collaboration) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy()
+    expect(collaboration.compareDocumentPosition(image) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy()
+    expect((model as HTMLButtonElement).disabled).toBe(true)
+    expect((collaboration as HTMLButtonElement).disabled).toBe(true)
+    expect((image as HTMLButtonElement).disabled).toBe(true)
+  })
+
   it('still routes to send when idle', () => {
     const steer = vi.fn(async () => undefined)
     const send = vi.fn(async () => undefined)

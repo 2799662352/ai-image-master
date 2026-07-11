@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AddressInfo } from 'node:net'
 import { WebSocketServer } from 'ws'
 import type WebSocket from 'ws'
@@ -23,6 +23,7 @@ import type { AgentInput } from '../types'
 interface FakeCodexServer {
   url: string
   receivedFromClient: any[]
+  sendNotification: (method: string, params: Record<string, unknown>) => void
   close: () => Promise<void>
 }
 
@@ -56,6 +57,8 @@ async function startFakeCodexServer(): Promise<FakeCodexServer> {
             ],
           },
         }))
+      } else if (msg.method === 'thread/settings/update') {
+        ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {} }))
       } else if (msg.method === 'turn/start') {
         ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { turn: { id: 'turn-1', status: 'inProgress' } } }))
       }
@@ -65,6 +68,9 @@ async function startFakeCodexServer(): Promise<FakeCodexServer> {
   return {
     url: `ws://127.0.0.1:${port}`,
     receivedFromClient: received,
+    sendNotification(method, params) {
+      activeSocket?.send(JSON.stringify({ jsonrpc: '2.0', method, params }))
+    },
     async close() {
       try { activeSocket?.close() } catch { /* ignore */ }
       await new Promise<void>((resolve) => wss.close(() => resolve()))
@@ -126,6 +132,94 @@ describe('CodexProtocolClient collaborationMode', () => {
     expect(server.receivedFromClient.some((m) => m.method === 'collaborationMode/list')).toBe(true)
     expect(result.data.map((m) => m.name)).toEqual(['Plan', 'Code'])
     expect(result.data[0].mode).toBe('plan')
+  })
+
+  it('updateThreadSettings sends thread/settings/update with camelCase params', async () => {
+    server = await startFakeCodexServer()
+    client = new CodexProtocolClient({
+      url: server.url,
+      clientInfo: { name: 't', version: '0' },
+      experimentalApi: true,
+    })
+    await client.start()
+
+    const collaborationMode = {
+      mode: 'default' as const,
+      settings: {
+        model: 'gpt-5.5',
+        reasoning_effort: 'high',
+        developer_instructions: null,
+      },
+    }
+    const result = await client.updateThreadSettings({
+      threadId: 'thread-1',
+      collaborationMode,
+    })
+
+    const request = server.receivedFromClient.find((m) => m.method === 'thread/settings/update')
+    expect(request?.method).toBe('thread/settings/update')
+    expect(request?.params).toEqual({
+      threadId: 'thread-1',
+      collaborationMode,
+    })
+    expect(result).toEqual({})
+  })
+
+  it('dispatches thread/settings/updated through the dedicated callback without entering the turn queue', async () => {
+    server = await startFakeCodexServer()
+    const onThreadSettingsNotification = vi.fn()
+    client = new CodexProtocolClient({
+      url: server.url,
+      clientInfo: { name: 't', version: '0' },
+      experimentalApi: true,
+      onThreadSettingsNotification,
+    })
+    await client.start()
+
+    const input = { items: [{ type: 'text', text: 'hi' }] } as unknown as AgentInput
+    const iterator = client.send('codex-thread-1', input)[Symbol.asyncIterator]()
+    const nextEvent = iterator.next()
+    await waitUntil(() => client!.hasActiveTurns())
+
+    server.sendNotification('thread/settings/updated', {
+      threadId: 'codex-thread-1',
+      threadSettings: {
+        model: 'gpt-5.5',
+        effort: 'high',
+        collaborationMode: {
+          mode: 'default',
+          settings: {
+            model: 'gpt-5.5',
+            reasoning_effort: 'high',
+            developer_instructions: null,
+          },
+        },
+      },
+    })
+    await waitUntil(() => onThreadSettingsNotification.mock.calls.length === 1)
+
+    expect(onThreadSettingsNotification).toHaveBeenCalledWith({
+      type: 'thread_settings_updated',
+      threadId: 'codex-thread-1',
+      mode: 'default',
+      model: 'gpt-5.5',
+      effort: 'high',
+    })
+    await expect(
+      Promise.race([
+        nextEvent.then(() => 'queue-event'),
+        new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), 25)),
+      ]),
+    ).resolves.toBe('pending')
+
+    server.sendNotification('turn/completed', {
+      threadId: 'codex-thread-1',
+      turn: { id: 'turn-1' },
+    })
+    await expect(nextEvent).resolves.toMatchObject({
+      value: { type: 'turn_completed', threadId: 'codex-thread-1', turnId: 'turn-1' },
+      done: false,
+    })
   })
 
   it('turn/start carries collaborationMode when the input provides one', async () => {

@@ -27,6 +27,9 @@ import type {
 import type {
   AgentApiResult,
   AgentCancelPayload,
+  AgentCollaborationCapabilitiesResult,
+  AgentCollaborationModeUpdatePayload,
+  AgentCollaborationModeUpdateResult,
   AgentSendMessagePayload,
   AgentSendMessageResult,
   AgentStreamEvent,
@@ -261,6 +264,8 @@ const IPC_CHANNELS = {
     GOAL_GET: 'agent:goal-get',
     GOAL_CLEAR: 'agent:goal-clear',
     COMPACT_START: 'agent:compact-start',
+    COLLABORATION_CAPABILITIES: 'agent:collaboration-capabilities',
+    COLLABORATION_UPDATE: 'agent:collaboration-update',
     PLUGIN_LIST: 'agent:plugin-list',
     PLUGIN_INSTALLED: 'agent:plugin-installed',
     PLUGIN_READ: 'agent:plugin-read',
@@ -500,6 +505,12 @@ export interface ElectronAPI {
     testConnection: () => Promise<AgentApiResult>
     getSessionStatus: () => Promise<CodexSessionStatus>
     setSessionConfig: (patch: Partial<CodexSessionConfig>) => Promise<CodexSessionStatus>
+    getCollaborationCapabilities: (
+      model: string,
+    ) => Promise<AgentCollaborationCapabilitiesResult>
+    updateCollaborationMode: (
+      payload: AgentCollaborationModeUpdatePayload,
+    ) => Promise<AgentCollaborationModeUpdateResult>
     setAllowedRoots: (roots: string[]) => Promise<string[]>
     getMcpSummary: () => Promise<CodexMcpSummary>
     getSkillsSummary: () => Promise<CodexSkillsSummary>
@@ -1093,6 +1104,18 @@ const electronAPI: ElectronAPI = {
 
     setSessionConfig: (patch: Partial<CodexSessionConfig>) =>
       safeInvoke<CodexSessionStatus>(IPC_CHANNELS.AGENT.SET_SESSION_CONFIG, patch),
+
+    getCollaborationCapabilities: (model: string) =>
+      safeInvoke<AgentCollaborationCapabilitiesResult>(
+        IPC_CHANNELS.AGENT.COLLABORATION_CAPABILITIES,
+        model,
+      ),
+
+    updateCollaborationMode: (payload: AgentCollaborationModeUpdatePayload) =>
+      safeInvoke<AgentCollaborationModeUpdateResult>(
+        IPC_CHANNELS.AGENT.COLLABORATION_UPDATE,
+        payload,
+      ),
 
     setAllowedRoots: (roots: string[]) =>
       safeInvoke<string[]>(IPC_CHANNELS.AGENT.SET_ALLOWED_ROOTS, roots),

@@ -16,6 +16,8 @@ import {
   type CodexModelListParams,
   type CodexModelListResponse,
   type ServerMessage,
+  type ThreadSettingsUpdateParams,
+  type ThreadSettingsUpdateResponse,
   type ThreadStartParams,
   type ThreadStartResponse,
   type TurnStartResponse,
@@ -156,6 +158,9 @@ export interface CodexProtocolClientOptions {
    * bypass the per-turn queue and go straight to the renderer's goal state.
    */
   onGoalNotification?: (event: AgentStreamEvent) => void
+  onThreadSettingsNotification?: (
+    event: Extract<AgentStreamEvent, { type: 'thread_settings_updated' }>,
+  ) => void
 }
 
 /**
@@ -472,6 +477,12 @@ export class CodexProtocolClient {
    */
   async listCollaborationModes(): Promise<CollaborationModeListResponse> {
     return this.rpc('collaborationMode/list', {})
+  }
+
+  async updateThreadSettings(
+    params: ThreadSettingsUpdateParams,
+  ): Promise<ThreadSettingsUpdateResponse> {
+    return this.rpc<ThreadSettingsUpdateResponse>('thread/settings/update', params)
   }
 
   async reloadMcpServers(): Promise<void> {
@@ -837,6 +848,10 @@ export class CodexProtocolClient {
     }
     if (event.type === 'goal_updated' || event.type === 'goal_cleared') {
       this.options.onGoalNotification?.(event)
+      return
+    }
+    if (event.type === 'thread_settings_updated') {
+      this.options.onThreadSettingsNotification?.(event)
       return
     }
     if (event.type === 'skills_changed' || event.type === 'notice') {

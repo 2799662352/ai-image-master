@@ -3,7 +3,11 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { app, dialog, shell } from 'electron'
-import { CodexLocalBackend, resolveStableCodexHome } from './CodexLocalBackend'
+import {
+  CodexLocalBackend,
+  resolveStableCodexHome,
+  type CodexLocalBackendOptions,
+} from './CodexLocalBackend'
 import { migrateLegacyCodexSessions } from './codexSessionMigration'
 import { CodexProviderStore, type NewCustomProvider } from './CodexProviderStore'
 import { DEFAULT_CODEX_SESSION_CONFIG, type CatimationMcpLaunchInfo } from './codexLaunch'
@@ -38,9 +42,21 @@ import {
 import { discoverCodexSkills, readMcpSummary, readRawCodexConfig } from './codexConfigDiscovery'
 import { mapReferencesToInputItems } from './codexUserInput'
 import { validateSessionConfigPatch } from './sessionConfigValidation'
-import type { CodexCollaborationModeMask } from './codexProtocol'
+import {
+  normaliseSupportedPlanEfforts,
+  resolvePlanReasoningEffort,
+  type CollaborationModeKind,
+  type PlanReasoningEffort,
+} from '../../shared/collaborationMode'
+import type {
+  CodexCollaborationMode,
+  CodexCollaborationModeMask,
+} from './codexProtocol'
 import type { BrowserWindow } from 'electron'
 import type {
+  AgentCollaborationCapabilitiesResult,
+  AgentCollaborationModeUpdatePayload,
+  AgentCollaborationModeUpdateResult,
   AgentSendMessagePayload,
   AgentSendMessageResult,
   AgentStreamEvent,
@@ -193,6 +209,11 @@ export interface AgentManagerOptions {
    */
   backend?: IAgentBackend
   /**
+   * Narrow constructor seam for verifying default-backend callback plumbing.
+   * Production omits it and constructs CodexLocalBackend directly.
+   */
+  backendFactory?: (options: CodexLocalBackendOptions) => IAgentBackend
+  /**
    * Local catimation MCP server coordinates produced by
    * `startCatimationMcpServer` (+ stdio bridge launch info when available).
    * Forwarded to the default `CodexLocalBackend` so the spawned Codex
@@ -245,9 +266,21 @@ export class AgentManager {
    * the Plan preset selects medium reasoning effort" — so we take
    * `reasoning_effort` from the Plan mask instead of hardcoding it, and keep
    * the user's resolved model. A failed fetch is NOT cached (retried on the
-   * next Plan turn) and degrades to `reasoning_effort: null`.
+   * next Plan turn); Plan Auto safely resolves to medium when unavailable.
    */
   private collabModePresets: CodexCollaborationModeMask[] | null = null
+  /**
+   * Backend generation that owns the collaboration-mode caches. Undefined
+   * means either no epoch-aware cache access has happened yet or the backend
+   * does not expose generations (legacy backends retain their old behavior).
+   */
+  private collaborationCacheEpoch: number | undefined
+  /**
+   * Feature support belongs to the current Codex process generation. Once an
+   * older binary rejects `thread/settings/update`, avoid repeating the same
+   * missing RPC until a successful restart gives us a new process to probe.
+   */
+  private threadSettingsUpdateSupport: 'unknown' | 'supported' | 'unsupported' = 'unknown'
   /**
    * DashVector API key for the cinematography-kb-mcp server's
    * `query_sakuga_dataset` tool. Persisted under apiKeys['dashvector'] (the
@@ -345,26 +378,33 @@ export class AgentManager {
     this.cinematographyKbKey = (persisted.apiKeys[CINEMATOGRAPHY_KB_PROVIDER_ID] ?? '').trim()
     this.dashVectorKey = (persisted.apiKeys[DASHVECTOR_PROVIDER_ID] ?? '').trim()
     const activeProvider = resolveActiveProvider(this.activeProviderId, persisted.customProviders)
-    this.backend = opts.backend ?? new CodexLocalBackend({
-      getApiKey: () => this.codexApiKey,
-      provider: activeProvider,
-      sessionConfig: this.sessionConfig,
-      catimationMcp: opts.mcpRuntime,
-      // Unlock experimental-gated RPCs (turn/start.collaborationMode for the
-      // composer's Plan preset; collaborationMode/list). Smoke-verified on the
-      // bundled binary: initialize + stable RPC behaviour are unaffected.
-      experimentalApi: true,
-      getUnderstandProvider: () =>
-        this.miauToken
-          ? { provider: QWEN_UNDERSTAND_PROVIDER, token: this.miauToken }
-          : undefined,
-      getApiyiKey: () => this.apiyiMcpKey || undefined,
-      getCinematographyKbKey: () => this.cinematographyKbKey || undefined,
-      getDashVectorKey: () => this.dashVectorKey || undefined,
-      onApprovalRequest: (request) => this.emitApprovalRequest(request),
-      onMcpNotification: (event) => this.handleMcpNotification(event),
-      onGoalNotification: (event) => this.handleGoalNotification(event),
-    })
+    if (opts.backend) {
+      this.backend = opts.backend
+    } else {
+      const createBackend = opts.backendFactory
+        ?? ((options: CodexLocalBackendOptions): IAgentBackend => new CodexLocalBackend(options))
+      this.backend = createBackend({
+        getApiKey: () => this.codexApiKey,
+        provider: activeProvider,
+        sessionConfig: this.sessionConfig,
+        catimationMcp: opts.mcpRuntime,
+        // Unlock experimental-gated RPCs (turn/start.collaborationMode for the
+        // composer's Plan preset; collaborationMode/list). Smoke-verified on the
+        // bundled binary: initialize + stable RPC behaviour are unaffected.
+        experimentalApi: true,
+        getUnderstandProvider: () =>
+          this.miauToken
+            ? { provider: QWEN_UNDERSTAND_PROVIDER, token: this.miauToken }
+            : undefined,
+        getApiyiKey: () => this.apiyiMcpKey || undefined,
+        getCinematographyKbKey: () => this.cinematographyKbKey || undefined,
+        getDashVectorKey: () => this.dashVectorKey || undefined,
+        onApprovalRequest: (request) => this.emitApprovalRequest(request),
+        onMcpNotification: (event) => this.handleMcpNotification(event),
+        onGoalNotification: (event) => this.handleGoalNotification(event),
+        onThreadSettingsNotification: (event) => this.handleThreadSettingsNotification(event),
+      })
+    }
     if (this.store) {
       this.summarizer = new ThreadTitleSummarizer(this.store, this.backend, DEFAULT_AGENT_MODEL)
     }
@@ -402,6 +442,19 @@ export class AgentManager {
     if (typeof e.threadId !== 'string') return
     const dbThreadId = this.resolveDbThreadId(e.threadId) ?? e.threadId
     win.webContents.send('agent:goal', { ...event, threadId: dbThreadId })
+  }
+
+  /**
+   * Persistent thread-setting confirmations are keyed by Codex UUIDs. Resolve
+   * through the existing DB→Codex map and drop unknown/background-orphaned
+   * notifications so a protocol id can never leak into renderer state.
+   */
+  private handleThreadSettingsNotification(
+    event: Extract<AgentStreamEvent, { type: 'thread_settings_updated' }>,
+  ): void {
+    const dbThreadId = this.resolveDbThreadId(event.threadId)
+    if (!dbThreadId) return
+    this.emitEvent({ ...event, threadId: dbThreadId })
   }
 
   private handleMcpNotification(event: AgentStreamEvent): void {
@@ -539,13 +592,38 @@ export class AgentManager {
     if (!restart) return Promise.resolve()
     const next = this.restartChain.then(async () => {
       try {
-        await restart(this.workspacePaths())
+        await this.restartBackendWithGenerationCheck(restart)
       } catch (err) {
         console.warn(`[AgentManager] restartCodex (${reason}) failed:`, err)
       }
     })
     this.restartChain = next
     return next
+  }
+
+  private async restartBackendWithGenerationCheck(
+    restart: (paths: CodexWorkspacePaths) => Promise<void>,
+  ): Promise<void> {
+    this.syncCollaborationProcessCaches()
+    await restart(this.workspacePaths())
+    this.syncCollaborationProcessCaches()
+    // Legacy/test backends without currentEpoch cannot prove that a restart
+    // actually replaced the process (CodexLocalBackend may legitimately
+    // early-return while a turn is active). Conservatively retain caches.
+  }
+
+  private syncCollaborationProcessCaches(): void {
+    const currentEpoch = this.backend.currentEpoch?.()
+    if (currentEpoch === undefined) return
+    if (this.collaborationCacheEpoch === undefined) {
+      this.collaborationCacheEpoch = currentEpoch
+      return
+    }
+    if (this.collaborationCacheEpoch === currentEpoch) return
+
+    this.collabModePresets = null
+    this.threadSettingsUpdateSupport = 'unknown'
+    this.collaborationCacheEpoch = currentEpoch
   }
 
   async setProviderApiKey(id: string, key: string): Promise<{ ok: true }> {
@@ -810,7 +888,124 @@ export class AgentManager {
 
   async restartCodex() {
     if (!this.backend.restartCodex) throw new Error('Codex restart API is unavailable')
-    return this.backend.restartCodex(this.workspacePaths())
+    await this.restartBackendWithGenerationCheck(this.backend.restartCodex.bind(this.backend))
+  }
+
+  async getCollaborationCapabilitiesRpc(
+    model: string,
+  ): Promise<AgentCollaborationCapabilitiesResult> {
+    const fallback: AgentCollaborationCapabilitiesResult = {
+      ok: true,
+      data: {
+        planDefaultEffort: 'medium',
+        supportedPlanEfforts: [],
+        source: 'fallback',
+      },
+    }
+    if (
+      typeof this.backend.listCollaborationModes !== 'function'
+      || typeof this.backend.listModels !== 'function'
+    ) {
+      return fallback
+    }
+
+    try {
+      const [presets, models] = await Promise.all([
+        this.loadCollaborationModePresets(),
+        this.backend.listModels({ includeHidden: true }),
+      ])
+      const planPreset = presets.find((preset) => preset.mode === 'plan')
+      const modelRow = models.data.find((row) => row.id === model || row.model === model)
+      if (!modelRow) return fallback
+      return {
+        ok: true,
+        data: {
+          planDefaultEffort: resolvePlanReasoningEffort(
+            'auto',
+            planPreset?.reasoning_effort,
+          ),
+          supportedPlanEfforts: normaliseSupportedPlanEfforts(
+            modelRow.supportedReasoningEfforts.map((effort) => effort.reasoningEffort),
+          ),
+          source: 'codex',
+        },
+      }
+    } catch {
+      return fallback
+    }
+  }
+
+  async updateCollaborationModeRpc(
+    payload: AgentCollaborationModeUpdatePayload,
+  ): Promise<AgentCollaborationModeUpdateResult> {
+    if (typeof this.backend.updateThreadSettings !== 'function') {
+      return {
+        ok: false,
+        error: 'Codex thread settings update API is unavailable',
+        requestVersion: payload.requestVersion,
+      }
+    }
+    this.syncCollaborationProcessCaches()
+    if (this.threadSettingsUpdateSupport === 'unsupported') {
+      return {
+        ok: true,
+        data: {
+          compatibility: 'next-turn',
+          requestVersion: payload.requestVersion,
+        },
+      }
+    }
+    // Reuse the normal send path's generation-aware resolver. It resumes a
+    // stale/persisted Codex thread after an app-server respawn (including a
+    // full desktop restart) but never creates a replacement thread merely to
+    // persist a mode toggle.
+    const codexThreadId = await this.resolveCodexThreadForSend(payload.threadId)
+    if (!codexThreadId) {
+      return {
+        ok: false,
+        error: `No resumable Codex thread exists for DB thread ${payload.threadId}`,
+        requestVersion: payload.requestVersion,
+      }
+    }
+
+    const collaborationMode = await this.buildCollaborationMode(
+      payload.mode,
+      payload.model,
+      payload.defaultReasoningEffort,
+      payload.planReasoningEffort,
+    )
+    try {
+      await this.backend.updateThreadSettings({
+        threadId: codexThreadId,
+        collaborationMode,
+      })
+      this.syncCollaborationProcessCaches()
+      this.threadSettingsUpdateSupport = 'supported'
+      return {
+        ok: true,
+        data: {
+          compatibility: 'immediate',
+          requestVersion: payload.requestVersion,
+        },
+      }
+    } catch (error) {
+      if (isUnsupportedThreadSettingsUpdate(error)) {
+        this.syncCollaborationProcessCaches()
+        this.threadSettingsUpdateSupport = 'unsupported'
+        return {
+          ok: true,
+          data: {
+            compatibility: 'next-turn',
+            requestVersion: payload.requestVersion,
+          },
+        }
+      }
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        requestVersion: payload.requestVersion,
+      }
+    }
   }
 
   async listMcpServersRpc(params?: unknown): Promise<{ ok: boolean; error?: string; data?: unknown }> {
@@ -1594,19 +1789,16 @@ export class AgentManager {
 
     // Expand the composer's preset KIND into the full experimental codex
     // `CollaborationMode` (turn/start only — upstream turn/steer has no such
-    // field). `developer_instructions: null` = codex's built-in Plan-mode
-    // instructions; the model rides along so the preset never downgrades the
-    // user's explicit model pick; `reasoning_effort` comes from the official
-    // Plan preset mask (medium). 'default'/absent → nothing on the wire.
-    if (payload.collaborationModeKind === 'plan') {
-      input.collaborationMode = {
-        mode: 'plan',
-        settings: {
-          model,
-          reasoning_effort: await this.planPresetReasoningEffort(),
-          developer_instructions: null,
-        },
-      }
+    // field). Explicit Plan and Default are both persistent mode selections,
+    // so both get a complete wire object. Only a genuinely absent KIND keeps
+    // legacy callers byte-compatible by omitting the field.
+    if (payload.collaborationModeKind !== undefined) {
+      input.collaborationMode = await this.buildCollaborationMode(
+        payload.collaborationModeKind,
+        model,
+        payload.reasoningEffort,
+        payload.planReasoningEffort ?? 'auto',
+      )
     }
 
     return { threadId: thread.id, model, input, userTimelineItems }
@@ -1618,18 +1810,49 @@ export class AgentManager {
    * Never throws — the preset lookup is best-effort polish, not a gate on
    * sending the turn.
    */
-  private async planPresetReasoningEffort(): Promise<string | null> {
-    if (!this.collabModePresets) {
-      if (typeof this.backend.listCollaborationModes !== 'function') return null
-      try {
-        const res = await this.backend.listCollaborationModes()
-        this.collabModePresets = res.data
-      } catch {
-        return null
-      }
+  private async loadCollaborationModePresets(): Promise<CodexCollaborationModeMask[]> {
+    this.syncCollaborationProcessCaches()
+    if (this.collabModePresets) return this.collabModePresets
+    if (typeof this.backend.listCollaborationModes !== 'function') {
+      throw new Error('Codex collaboration mode list API is unavailable')
     }
-    const plan = this.collabModePresets.find((mask) => mask.mode === 'plan')
-    return plan?.reasoning_effort ?? null
+    const response = await this.backend.listCollaborationModes()
+    this.collabModePresets = response.data
+    return this.collabModePresets
+  }
+
+  private async planPresetReasoningEffort(): Promise<string | null> {
+    try {
+      const presets = await this.loadCollaborationModePresets()
+      return presets.find((mask) => mask.mode === 'plan')?.reasoning_effort ?? null
+    } catch {
+      return null
+    }
+  }
+
+  private async buildCollaborationMode(
+    mode: CollaborationModeKind,
+    model: string,
+    defaultEffort: string | undefined,
+    planPreference: PlanReasoningEffort,
+  ): Promise<CodexCollaborationMode> {
+    const reasoningEffort = mode === 'plan'
+      ? planPreference === 'auto'
+        ? resolvePlanReasoningEffort(
+            planPreference,
+            await this.planPresetReasoningEffort(),
+          )
+        : planPreference
+      : defaultEffort ?? null
+
+    return {
+      mode,
+      settings: {
+        model,
+        reasoning_effort: reasoningEffort,
+        developer_instructions: null,
+      },
+    }
   }
 
   private buildUserTimelineItems(
@@ -1906,6 +2129,11 @@ export class AgentManager {
     const stored = this.codexThreadEpochByDbThreadId.get(dbThreadId)
     if (stored === undefined || stored === current) return id
 
+    // A crash/self-heal can advance the backend epoch outside an explicit
+    // Manager.restartCodex() call. Keep process-scoped capability caches
+    // synchronized before this thread is resumed into the new app-server.
+    this.syncCollaborationProcessCaches()
+
     // Stale generation: attempt to reload the persisted thread so the user keeps
     // their conversation context across the respawn.
     if (this.backend.resumeThread) {
@@ -2091,6 +2319,12 @@ function validateCodexThreadId(threadId: string): string {
     throw new Error('Codex thread id must be a non-empty string')
   }
   return threadId
+}
+
+function isUnsupportedThreadSettingsUpdate(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /method not found|unknown method|thread\/settings\/update.*(?:unsupported|requires experimentalApi)/i
+    .test(message)
 }
 
 /**
