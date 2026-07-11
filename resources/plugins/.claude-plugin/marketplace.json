@@ -49,7 +49,7 @@
     {
       "name": "catimation-video",
       "description": "视频出片与后期:sd2-pe 提示词工程化(总兜底,/sd2)→ Seedance 2.0 出片技法、catimation 应用内 generate_video(/gen-video)→ ffmpeg 剪辑拼接(/edit-video);研究驱动提示词。",
-      "version": "1.0.15",
+      "version": "1.0.17",
       "source": "./catimation-video",
       "author": {
         "name": "CATIMATION",

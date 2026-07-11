@@ -49,7 +49,8 @@ QA 触发(由入口唯一执行,自动修正上限 2 次,继续付费重试需�
 | Skill | 角色 |
 |---|---|
 | `catimation-image` / `catimation-video` | 唯一入口 + 任务分级者 + 规格确认 + 生成调用 + QA 升级;预算标记 `pro` |
-| `sd2-pe` | Seedance 提示词格式与素材绑定规则,纯工艺叶子 |
+| `sd2-pe` | Seedance 提示词格式与素材绑定规则,纯工艺叶子;每次视频任务保留八要素与路径 A/B,再用真人/2D/3D 可组合媒介 profile 输出不可删减的 12 字段格式化骨架;“电影”是检索创作技法的意图词 |
+| `seedance-cinematic-format` | `sd2-pe` 的渐进披露辅助叶子:提供 12 字段定义、真人/2D/3D 媒介差异、语言建议、动态权重与导演/作品参考替换规则;不做入口路由、不调用生成或 QA |
 | `director-orchestrator` | 复杂镜头 13 维设计调度器,仅专业/制片级由入口加载;不再「每次必用」,无 STEP -1 强制路由 |
 | `catimation-video-director-router` | 症状修复查找表:仅当用户反馈「太假/动作怪/站桩/混脸/风格跑偏」等具体问题时使用;不是生成前置门,fanout 0 |
 | `seedance-video-craft` | 复杂 Seedance 任务(多模态参考、多镜叙事、编辑/延长、商业交付)专业知识模块;假定上游已完成基础路由 |

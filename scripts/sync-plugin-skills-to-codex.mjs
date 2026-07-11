@@ -25,6 +25,8 @@
  * Usage:
  *   node scripts/sync-plugin-skills-to-codex.mjs            # dry-run (report only)
  *   node scripts/sync-plugin-skills-to-codex.mjs --apply    # write files + bump versions
+ *   node scripts/sync-plugin-skills-to-codex.mjs --apply --only=sd2-pe,helper
+ *                                                         # sync selected skills only
  */
 import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
@@ -38,12 +40,25 @@ const CODEX_SKILLS = path.join(REPO_ROOT, 'resources', 'codex-skills')
 const VERSIONS_FILE = path.join(CODEX_SKILLS, 'skill-versions.json')
 
 const apply = process.argv.includes('--apply')
+const onlyArg = process.argv.find((arg) => arg.startsWith('--only='))
+const onlyNames = onlyArg
+  ? new Set(
+      onlyArg
+        .slice('--only='.length)
+        .split(',')
+        .map((name) => name.trim())
+        .filter(Boolean),
+    )
+  : null
 
 // New craft skills explicitly allowed to JOIN the standalone marketplace.
-// catimation-video-director-router is the STEP -1 companion of director-orchestrator
-// (already curated here); ship it standalone too so orchestrator's router handoff
-// doesn't dangle for users who install skills individually rather than the plugin.
-const ADD_LIST = new Set(['storyboard-grid-to-seedance', 'catimation-video-director-router'])
+// Keep companion leaves alongside the standalone skills that reference them so
+// individual installs never contain a dangling progressive-disclosure pointer.
+const ADD_LIST = new Set([
+  'storyboard-grid-to-seedance',
+  'catimation-video-director-router',
+  'seedance-cinematic-format',
+])
 
 async function listDirs(dir) {
   const entries = await fs.readdir(dir, { withFileTypes: true })
@@ -93,7 +108,10 @@ function bumpPatch(v) {
 }
 
 async function main() {
-  console.log(`🔁 Curated skill sync plugins → codex-skills  ${apply ? '(APPLY)' : '(dry-run)'}\n`)
+  const selection = onlyNames ? ` only=[${[...onlyNames].join(', ')}]` : ''
+  console.log(
+    `🔁 Curated skill sync plugins → codex-skills  ${apply ? '(APPLY)' : '(dry-run)'}${selection}\n`,
+  )
 
   const versionsDoc = JSON.parse(await fs.readFile(VERSIONS_FILE, 'utf8'))
   const versions = versionsDoc.skills ?? {}
@@ -123,12 +141,20 @@ async function main() {
     }
   }
 
+  if (onlyNames) {
+    const unknown = [...onlyNames].filter((name) => !pluginSkills.has(name))
+    if (unknown.length > 0) {
+      throw new Error(`Unknown --only skill(s): ${unknown.join(', ')}`)
+    }
+  }
+
   const changed = []
   const added = []
   const unchanged = []
   const skippedAppOnly = []
 
   for (const [name, info] of [...pluginSkills.entries()].sort()) {
+    if (onlyNames && !onlyNames.has(name)) continue
     const inCodex = codexNames.has(name)
     const allowed = inCodex || ADD_LIST.has(name)
     if (!allowed) {
