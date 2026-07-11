@@ -1196,6 +1196,48 @@ describe('CodexNotificationRouter', () => {
     })
   })
 
+  describe('thread/settings/updated', () => {
+    it('emits the confirmed thread settings as an internal event', () => {
+      const router = new CodexNotificationRouter()
+      expect(
+        router.route('thread/settings/updated', {
+          threadId: 'codex-thread-1',
+          threadSettings: {
+            model: 'gpt-5.5',
+            effort: 'high',
+            collaborationMode: {
+              mode: 'default',
+              settings: {
+                model: 'gpt-5.5',
+                reasoning_effort: 'high',
+                developer_instructions: null,
+              },
+            },
+          },
+        }),
+      ).toEqual({
+        type: 'thread_settings_updated',
+        threadId: 'codex-thread-1',
+        mode: 'default',
+        model: 'gpt-5.5',
+        effort: 'high',
+      })
+    })
+
+    it.each([
+      ['empty threadId', { threadId: '', threadSettings: { model: 'gpt-5.5', collaborationMode: { mode: 'default' } } }],
+      ['missing threadSettings', { threadId: 'codex-thread-1' }],
+      ['array threadSettings', { threadId: 'codex-thread-1', threadSettings: [] }],
+      ['missing collaborationMode', { threadId: 'codex-thread-1', threadSettings: { model: 'gpt-5.5' } }],
+      ['array collaborationMode', { threadId: 'codex-thread-1', threadSettings: { model: 'gpt-5.5', collaborationMode: [] } }],
+      ['invalid mode', { threadId: 'codex-thread-1', threadSettings: { model: 'gpt-5.5', collaborationMode: { mode: 'review' } } }],
+      ['empty model', { threadId: 'codex-thread-1', threadSettings: { model: '', collaborationMode: { mode: 'plan' } } }],
+    ])('returns null for malformed payload: %s', (_label, params) => {
+      const router = new CodexNotificationRouter()
+      expect(router.route('thread/settings/updated', params)).toBeNull()
+    })
+  })
+
   describe('thread/tokenUsage/updated', () => {
     it('emits token_usage_updated with input/output tokens', () => {
       const router = new CodexNotificationRouter()

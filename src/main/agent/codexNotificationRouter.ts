@@ -582,6 +582,38 @@ function readNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
+function parseThreadSettingsUpdated(
+  params: Record<string, unknown>,
+): Extract<AgentStreamEvent, { type: 'thread_settings_updated' }> | null {
+  const threadId = params.threadId
+  if (typeof threadId !== 'string' || threadId.trim().length === 0) return null
+
+  const rawThreadSettings = params.threadSettings
+  if (!rawThreadSettings || typeof rawThreadSettings !== 'object' || Array.isArray(rawThreadSettings)) {
+    return null
+  }
+  const threadSettings = rawThreadSettings as Record<string, unknown>
+
+  const rawCollaborationMode = threadSettings.collaborationMode
+  if (!rawCollaborationMode || typeof rawCollaborationMode !== 'object' || Array.isArray(rawCollaborationMode)) {
+    return null
+  }
+  const collaborationMode = rawCollaborationMode as Record<string, unknown>
+  const mode = collaborationMode.mode
+  if (mode !== 'default' && mode !== 'plan') return null
+
+  const model = threadSettings.model
+  if (typeof model !== 'string' || model.trim().length === 0) return null
+
+  return {
+    type: 'thread_settings_updated',
+    threadId,
+    mode,
+    model,
+    effort: typeof threadSettings.effort === 'string' ? threadSettings.effort : null,
+  }
+}
+
 function lacksStringUnifiedDiff(change: unknown): boolean {
   if (!change || typeof change !== 'object') return false
   const unifiedDiff = (change as { unifiedDiff?: unknown }).unifiedDiff
@@ -1161,6 +1193,9 @@ export class CodexNotificationRouter {
           usage,
         }
       }
+
+      case 'thread/settings/updated':
+        return parseThreadSettingsUpdated(params)
 
       case 'turn/completed':
         this.clearThreadState(params.threadId)

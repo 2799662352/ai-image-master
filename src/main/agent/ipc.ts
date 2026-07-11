@@ -1,5 +1,12 @@
 import { ipcMain } from 'electron'
-import type { AgentToolResponse, CodexApprovalResponse, ImageTaskUpdate } from '../../types/agent'
+import { isPlanReasoningEffort } from '../../shared/collaborationMode'
+import type {
+  AgentCollaborationModeUpdatePayload,
+  AgentCollaborationModeUpdateResult,
+  AgentToolResponse,
+  CodexApprovalResponse,
+  ImageTaskUpdate,
+} from '../../types/agent'
 import type { ToolRouter } from '../mcp/ToolRouter'
 import type { AgentManager } from './AgentManager'
 import { imageTaskManager } from '../mcp/tools/imageTaskRegistry'
@@ -47,6 +54,8 @@ const AGENT_HANDLE_CHANNELS = [
   'agent:goal-get',
   'agent:goal-clear',
   'agent:compact-start',
+  'agent:collaboration-capabilities',
+  'agent:collaboration-update',
   'agent:plugin-list',
   'agent:plugin-installed',
   'agent:plugin-read',
@@ -289,6 +298,31 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
     (await getManager()).compactThreadRpc(threadId),
   )
 
+  // ----- Codex collaboration mode settings -----
+  ipcMain.handle('agent:collaboration-capabilities', async (_event, model: unknown) => {
+    try {
+      if (typeof model !== 'string' || model.trim().length === 0) {
+        throw new Error('Collaboration capabilities model must be a non-empty string')
+      }
+      return await (await getManager()).getCollaborationCapabilitiesRpc(model)
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+  ipcMain.handle('agent:collaboration-update', async (_event, payload: unknown) => {
+    const requestVersion = safeCollaborationRequestVersion(payload)
+    try {
+      const validated = validateCollaborationModeUpdate(payload)
+      return await (await getManager()).updateCollaborationModeRpc(validated)
+    } catch (err) {
+      return {
+        ok: false as const,
+        error: err instanceof Error ? err.message : String(err),
+        requestVersion,
+      } satisfies AgentCollaborationModeUpdateResult
+    }
+  })
+
   // ----- Codex native plugin / marketplace / apps / external-agent-import -----
   ipcMain.handle('agent:plugin-list', async (_event, params?: unknown) =>
     (await getManager()).listPluginsRpc(params as never),
@@ -466,6 +500,52 @@ function validateThreadId(value: unknown): string {
     throw new Error('Codex thread id must be a non-empty string')
   }
   return value
+}
+
+function safeCollaborationRequestVersion(value: unknown): number {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return 0
+  const requestVersion = (value as Record<string, unknown>).requestVersion
+  return typeof requestVersion === 'number' &&
+    Number.isFinite(requestVersion) &&
+    requestVersion >= 0
+    ? requestVersion
+    : 0
+}
+
+function validateCollaborationModeUpdate(value: unknown): AgentCollaborationModeUpdatePayload {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Collaboration update payload must be an object')
+  }
+  const input = value as Record<string, unknown>
+  if (typeof input.threadId !== 'string' || input.threadId.trim().length === 0) {
+    throw new Error('Collaboration update threadId must be a non-empty string')
+  }
+  if (typeof input.model !== 'string' || input.model.trim().length === 0) {
+    throw new Error('Collaboration update model must be a non-empty string')
+  }
+  if (input.mode !== 'default' && input.mode !== 'plan') {
+    throw new Error('Collaboration update mode must be default or plan')
+  }
+  if (!isPlanReasoningEffort(input.planReasoningEffort)) {
+    throw new Error(
+      'Collaboration update planReasoningEffort must be auto, low, medium, high, or xhigh',
+    )
+  }
+  if (
+    input.defaultReasoningEffort !== undefined &&
+    typeof input.defaultReasoningEffort !== 'string'
+  ) {
+    throw new Error('Collaboration update defaultReasoningEffort must be a string when provided')
+  }
+  if (
+    typeof input.requestVersion !== 'number' ||
+    !Number.isFinite(input.requestVersion) ||
+    input.requestVersion < 0 ||
+    !Number.isInteger(input.requestVersion)
+  ) {
+    throw new Error('Collaboration update requestVersion must be a non-negative integer')
+  }
+  return value as AgentCollaborationModeUpdatePayload
 }
 
 function validateListThreadsParams(

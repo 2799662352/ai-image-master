@@ -8,6 +8,10 @@ import {
 import type {
   AgentAttachmentInput,
   AgentCancelPayload,
+  AgentCollaborationCapabilities,
+  AgentCollaborationCapabilitiesResult,
+  AgentCollaborationModeUpdatePayload,
+  AgentCollaborationModeUpdateResult,
   AgentApiResult,
   AgentMentionRef,
   AgentNotice,
@@ -32,6 +36,11 @@ import {
   trimRetriedStreamItemsInLastMessage,
   upsertItemInLastMessage,
 } from '../../../../types/agent-timeline'
+import {
+  isPlanReasoningEffort,
+  type CollaborationModeKind,
+  type PlanReasoningEffort,
+} from '../../../../shared/collaborationMode'
 import { AGENT_MODELS, DEFAULT_MODEL_ID, resolveModelSelection } from './models'
 import { contextUsedPercent } from './contextWindowDefaults'
 import { DEFAULT_IMAGE_CHANNEL_ID, isSelectableImageChannel } from './imageChannels'
@@ -40,6 +49,11 @@ import { rehydrateCodexArtifacts } from './codexArtifactPersistence'
 
 const SELECTED_MODEL_STORAGE_KEY = 'catimation.agent.selectedModel'
 const SELECTED_IMAGE_CHANNEL_STORAGE_KEY = 'catimation.agent.selectedImageChannel'
+const PLAN_EFFORT_STORAGE_KEY = 'agent.planReasoningEffort:v1'
+const THREAD_MODE_STORAGE_KEY = 'agent.collaborationModesByThread:v1'
+const THREAD_MODE_STORAGE_LIMIT = 200
+const DELETED_THREAD_TOMBSTONE_LIMIT = 200
+const COLLAB_MODE_LIFECYCLE_LIMIT = DELETED_THREAD_TOMBSTONE_LIMIT
 const PANEL_WIDTH_STORAGE_KEY = 'catimation.agent.panelWidth'
 const PANEL_WIDTH_DEFAULT = 420
 const PANEL_WIDTH_MIN = 360
@@ -53,6 +67,116 @@ const SIDEBAR_WIDTH_MAX = 360
 const SIDEBAR_OPEN_DEFAULT = true
 const THREAD_LIST_TITLE_REFRESH_DELAYS_MS = [500, 2_500, 8_500] as const
 let nextComposerAttachmentId = 0
+
+function isCollaborationModeKind(value: unknown): value is CollaborationModeKind {
+  return value === 'default' || value === 'plan'
+}
+
+function readPlanReasoningEffort(): PlanReasoningEffort {
+  try {
+    const value = globalThis.localStorage?.getItem(PLAN_EFFORT_STORAGE_KEY)
+    return isPlanReasoningEffort(value) ? value : 'auto'
+  } catch {
+    return 'auto'
+  }
+}
+
+function persistPlanReasoningEffort(value: PlanReasoningEffort): void {
+  try {
+    globalThis.localStorage?.setItem(PLAN_EFFORT_STORAGE_KEY, value)
+  } catch {
+    // Storage is optional in private/restricted renderer contexts.
+  }
+}
+
+function limitThreadCollaborationModes(
+  modes: Record<string, CollaborationModeKind>,
+): Record<string, CollaborationModeKind> {
+  const entries = Object.entries(modes)
+    .filter(
+      (entry): entry is [string, CollaborationModeKind] =>
+        isCollaborationModeKind(entry[1]),
+    )
+    .slice(-THREAD_MODE_STORAGE_LIMIT)
+  return Object.fromEntries(entries)
+}
+
+function readThreadCollaborationModes(): Record<string, CollaborationModeKind> {
+  try {
+    const raw = globalThis.localStorage?.getItem(THREAD_MODE_STORAGE_KEY)
+    if (!raw) return {}
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return limitThreadCollaborationModes(Object.fromEntries(
+      Object.entries(parsed).filter(
+        (entry): entry is [string, CollaborationModeKind] =>
+          isCollaborationModeKind(entry[1]),
+      ),
+    ))
+  } catch {
+    return {}
+  }
+}
+
+function persistThreadCollaborationModes(
+  modes: Record<string, CollaborationModeKind>,
+): void {
+  try {
+    globalThis.localStorage?.setItem(
+      THREAD_MODE_STORAGE_KEY,
+      JSON.stringify(limitThreadCollaborationModes(modes)),
+    )
+  } catch {
+    // Storage is optional in private/restricted renderer contexts.
+  }
+}
+
+function withoutRecordKey<T>(record: Record<string, T>, key: string): Record<string, T> {
+  if (!Object.prototype.hasOwnProperty.call(record, key)) return record
+  const next = { ...record }
+  delete next[key]
+  return next
+}
+
+function withBoundedLifecycleGeneration(
+  generations: Record<string, number>,
+  threadId: string,
+  generation: number,
+): Record<string, number> {
+  const next = { ...generations }
+  // Reinsert so object order is an LRU-like order aligned with tombstone cleanup.
+  delete next[threadId]
+  next[threadId] = generation
+  const entries = Object.entries(next).slice(-COLLAB_MODE_LIFECYCLE_LIMIT)
+  return Object.fromEntries(entries)
+}
+
+const restoredThreadCollaborationModes = readThreadCollaborationModes()
+const restoredCollaborationThreads = Object.fromEntries(
+  Object.keys(restoredThreadCollaborationModes).map((threadId) => [threadId, true] as const),
+)
+const FALLBACK_COLLABORATION_CAPABILITIES: AgentCollaborationCapabilities = {
+  planDefaultEffort: 'medium',
+  supportedPlanEfforts: [],
+  source: 'fallback',
+}
+const deletedCollaborationThreadTombstones = new Map<string, number>()
+
+function addDeletedThreadTombstone(threadId: string, generation: number): void {
+  // Reinsert so Map order reflects the latest deletion before trimming. The
+  // value identifies which deletion a pending explicit reopen expects.
+  deletedCollaborationThreadTombstones.delete(threadId)
+  deletedCollaborationThreadTombstones.set(threadId, generation)
+  while (deletedCollaborationThreadTombstones.size > DELETED_THREAD_TOMBSTONE_LIMIT) {
+    const oldest = deletedCollaborationThreadTombstones.keys().next().value
+    if (typeof oldest !== 'string') break
+    deletedCollaborationThreadTombstones.delete(oldest)
+  }
+}
+
+function clearDeletedThreadTombstone(threadId: string): void {
+  deletedCollaborationThreadTombstones.delete(threadId)
+}
 
 function withComposerAttachmentId(attachment: AgentAttachmentInput): AgentAttachmentInput {
   if (attachment.composerId) return attachment
@@ -175,6 +299,12 @@ type AgentElectronApi = {
     listCodexThreads?: () => Promise<CodexThreadSummary[]>
     forkCodexThread?: (threadId: string) => Promise<CodexThreadSummary>
     getSkillsSummary?: () => Promise<CodexSkillsSummary>
+    getCollaborationCapabilities?: (
+      model: string,
+    ) => Promise<AgentCollaborationCapabilitiesResult>
+    updateCollaborationMode?: (
+      payload: AgentCollaborationModeUpdatePayload,
+    ) => Promise<AgentCollaborationModeUpdateResult>
     // Codex native `/goal` (thread/goal/*). threadId = DB thread id.
     setGoal?: (
       threadId: string,
@@ -308,6 +438,8 @@ export interface RewoundTurn {
   preview: string
 }
 
+type CollabModeCompatibility = 'immediate' | 'next-turn'
+
 interface AgentChatState {
   isOpen: boolean
   threadId?: string
@@ -368,15 +500,59 @@ interface AgentChatState {
   selectedModelId: string
   /** User-selected image render channel (authoritative for generate_image). */
   selectedImageChannel: string
+  /** Current composer target/display for the active thread or unsaved draft. */
+  collabModeKind: CollaborationModeKind
   /**
-   * Composer collaboration-mode preset for the ACTIVE thread ('plan' = codex
-   * Plan mode via the experimental `turn/start.collaborationMode`; 'default'
-   * = nothing extra on the wire). Only the KIND travels in the payload — the
-   * main process expands it into the full CollaborationMode object.
+   * Last server-confirmed mode in this renderer session. Restart-restored
+   * entries are present here for thread switching but remain marked in
+   * `collabModeRestoredByThread` until a live server event confirms them.
    */
-  collabModeKind: 'plan' | 'default'
-  /** Per-thread memory for `collabModeKind`, restored on switchThread. */
-  collabModeByThread: Record<string, 'plan' | 'default'>
+  collabModeByThread: Record<string, CollaborationModeKind>
+  /** In-flight existing-thread requests; confirmed state remains untouched. */
+  collabModePendingByThread: Record<string, {
+    target: CollaborationModeKind
+    requestVersion: number
+  }>
+  /** Store-wide monotonic source for requestVersion; never reset on delete/reopen. */
+  collabModeRequestSequence: number
+  /** Latest requestVersion per thread; safe to clear because the sequence is global. */
+  collabModeRequestVersionByThread: Record<string, number>
+  /** Store-wide monotonic source for lifecycle generations. */
+  collabModeLifecycleSequence: number
+  /** Bounded delete/reopen generation authority per recently known thread id. */
+  collabModeLifecycleByThread: Record<string, number>
+  /** Latest async thread navigation; older openThread results must not commit. */
+  collabModeNavigationSequence: number
+  /**
+   * Display-only compatibility reported by the latest non-stale response.
+   * Never use this to skip renderer IPC: AgentManager owns the backend-epoch
+   * support cache so a Codex restart can probe the new generation again.
+   */
+  collabModeCompatibility: CollabModeCompatibility
+  /** Per-thread compatibility authority; top-level value is the active projection. */
+  collabModeCompatibilityByThread: Record<string, CollabModeCompatibility>
+  /** Restart cache entries that still require explicit next-turn submission. */
+  collabModeRestoredByThread: Record<string, true>
+  /** Unconfirmed targets retained when immediate settings update is unavailable. */
+  collabModeNextTurnByThread: Record<string, CollaborationModeKind>
+  /** Global Plan-only effort preference, independent from model/default effort. */
+  planReasoningEffort: PlanReasoningEffort
+  collaborationCapabilities?: AgentCollaborationCapabilities
+  /** Canonical model slug that owns `collaborationCapabilities`. */
+  collaborationCapabilitiesModel?: string
+  /**
+   * Explicit Plan effort awaiting capabilities for one model/thread owner.
+   * Carries every owner dimension so model, thread, or preference changes
+   * invalidate it instead of applying settings to another active thread.
+   */
+  deferredPlanEffortIntent?: {
+    model: string
+    effort: Exclude<PlanReasoningEffort, 'auto'>
+    threadId: string | undefined
+  }
+  collaborationError?: string
+  /** Per-thread error authority; top-level value is the active projection. */
+  collaborationErrorByThread: Record<string, string>
   messages: Message[]
   /**
    * Background per-thread streaming state for chats that are NOT the active
@@ -429,7 +605,11 @@ interface AgentChatState {
   setError: (error?: string) => void
   setSelectedModel: (modelId: string) => void
   setSelectedImageChannel: (channelId: string) => void
-  setCollabMode: (kind: 'plan' | 'default') => void
+  /** Compatibility alias used by the existing toggle until its UI task lands. */
+  setCollabMode: (kind: CollaborationModeKind) => void
+  requestCollabMode: (kind: CollaborationModeKind) => Promise<void>
+  setPlanReasoningEffort: (effort: PlanReasoningEffort) => Promise<void>
+  loadCollaborationCapabilities: () => Promise<void>
   addAttachment: (attachment: AgentAttachmentInput) => void
   removeAttachment: (attachment: AgentAttachmentInput) => void
   removeAttachmentForReference: (reference: AgentReference) => void
@@ -618,6 +798,36 @@ interface AgentChatState {
   setSidebarWidth: (width: number) => void
   renameThread: (threadId: string, title: string) => Promise<void>
   deleteThread: (threadId: string) => Promise<void>
+}
+
+/**
+ * Resolve the safe value that may cross the renderer/main boundary.
+ * `planReasoningEffort` remains the durable user preference; an explicit
+ * value is effective only after current-model Codex capabilities confirm it.
+ */
+export function selectEffectivePlanReasoningEffort(
+  state: Pick<
+    AgentChatState,
+    | 'selectedModelId'
+    | 'planReasoningEffort'
+    | 'collaborationCapabilities'
+    | 'collaborationCapabilitiesModel'
+  >,
+): PlanReasoningEffort {
+  const preference = state.planReasoningEffort
+  if (preference === 'auto') return 'auto'
+  const canonicalModel = resolveModelSelection(state.selectedModelId).model
+  const capabilities =
+    state.collaborationCapabilitiesModel === canonicalModel
+      ? state.collaborationCapabilities
+      : undefined
+  if (
+    capabilities?.source !== 'codex'
+    || !capabilities.supportedPlanEfforts.includes(preference)
+  ) {
+    return 'auto'
+  }
+  return preference
 }
 
 function createId(): string {
@@ -1233,7 +1443,23 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   selectedModelId: readPersistedModelId(),
   selectedImageChannel: readPersistedImageChannel(),
   collabModeKind: 'default',
-  collabModeByThread: {},
+  collabModeByThread: restoredThreadCollaborationModes,
+  collabModePendingByThread: {},
+  collabModeRequestSequence: 0,
+  collabModeRequestVersionByThread: {},
+  collabModeLifecycleSequence: 0,
+  collabModeLifecycleByThread: {},
+  collabModeNavigationSequence: 0,
+  collabModeCompatibility: 'immediate',
+  collabModeCompatibilityByThread: {},
+  collabModeRestoredByThread: restoredCollaborationThreads,
+  collabModeNextTurnByThread: {},
+  planReasoningEffort: readPlanReasoningEffort(),
+  collaborationCapabilities: undefined,
+  collaborationCapabilitiesModel: undefined,
+  deferredPlanEffortIntent: undefined,
+  collaborationError: undefined,
+  collaborationErrorByThread: {},
   panelWidth: readPersistedPanelWidth(),
   tokenUsage: undefined,
   contextWatermarkSeen: {},
@@ -1444,20 +1670,346 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   setSelectedModel: (modelId) => {
     if (!AGENT_MODELS.some((m) => m.id === modelId)) return
     persistModelId(modelId)
-    set({ selectedModelId: modelId })
+    const canonicalModel = resolveModelSelection(modelId).model
+    set((state) => ({
+      selectedModelId: modelId,
+      ...(state.deferredPlanEffortIntent?.model !== canonicalModel
+        ? { deferredPlanEffortIntent: undefined }
+        : {}),
+    }))
+    void get().loadCollaborationCapabilities()
   },
   setSelectedImageChannel: (channelId) => {
     if (!isSelectableImageChannel(channelId)) return
     persistImageChannel(channelId)
     set({ selectedImageChannel: channelId })
   },
-  setCollabMode: (kind) =>
-    set((state) => ({
-      collabModeKind: kind,
-      collabModeByThread: state.threadId
-        ? { ...state.collabModeByThread, [state.threadId]: kind }
-        : state.collabModeByThread,
-    })),
+  setCollabMode: (kind) => {
+    void get().requestCollabMode(kind)
+  },
+  requestCollabMode: async (kind) => {
+    const snapshot = get()
+    if (snapshot.isRunning) return
+    const threadId = snapshot.threadId
+    if (!threadId) {
+      set({
+        collabModeKind: kind,
+        collabModeCompatibility: 'immediate',
+        collaborationError: undefined,
+      })
+      return
+    }
+
+    const requestVersion = snapshot.collabModeRequestSequence + 1
+    set((state) => {
+      const nextTurn = { ...state.collabModeNextTurnByThread }
+      delete nextTurn[threadId]
+      const errors = { ...state.collaborationErrorByThread }
+      delete errors[threadId]
+      return {
+        collabModeKind: kind,
+        collabModePendingByThread: {
+          ...state.collabModePendingByThread,
+          [threadId]: { target: kind, requestVersion },
+        },
+        collabModeRequestSequence: requestVersion,
+        collabModeRequestVersionByThread: {
+          ...state.collabModeRequestVersionByThread,
+          [threadId]: requestVersion,
+        },
+        collabModeNextTurnByThread: nextTurn,
+        collaborationErrorByThread: errors,
+        ...(state.threadId === threadId ? { collaborationError: undefined } : {}),
+      }
+    })
+
+    const modelSelection = resolveModelSelection(snapshot.selectedModelId)
+    const payload: AgentCollaborationModeUpdatePayload = {
+      threadId,
+      mode: kind,
+      model: modelSelection.model,
+      defaultReasoningEffort: modelSelection.reasoningEffort,
+      planReasoningEffort: selectEffectivePlanReasoningEffort(get()),
+      requestVersion,
+    }
+    // Always ask Manager, even when the prior result was next-turn. Manager's
+    // backend-epoch cache is authoritative and is reset after a Codex restart;
+    // renderer compatibility is presentation state only.
+    let result: AgentCollaborationModeUpdateResult
+    const update = (window as Window & { electronAPI?: AgentElectronApi })
+      .electronAPI?.agent?.updateCollaborationMode
+    if (!update) {
+      result = {
+        ok: false,
+        error: 'Electron collaboration settings API is unavailable',
+        requestVersion,
+      }
+    } else {
+      try {
+        result = await update(payload)
+      } catch (error) {
+        result = {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+          requestVersion,
+        }
+      }
+    }
+
+    set((state) => {
+      const pending = state.collabModePendingByThread[threadId]
+      const resultVersion = result.ok
+        ? result.data.requestVersion
+        : result.requestVersion
+      if (
+        !pending
+        || pending.requestVersion !== requestVersion
+        || resultVersion !== requestVersion
+      ) {
+        return {}
+      }
+
+      if (!result.ok) {
+        const nextPending = { ...state.collabModePendingByThread }
+        delete nextPending[threadId]
+        const collaborationError = `协作模式更新失败：${result.error}`
+        return {
+          collabModePendingByThread: nextPending,
+          collaborationErrorByThread: {
+            ...state.collaborationErrorByThread,
+            [threadId]: collaborationError,
+          },
+          ...(state.threadId === threadId
+            ? {
+                collabModeKind: state.collabModeByThread[threadId] ?? 'default',
+                collaborationError,
+              }
+            : {}),
+        }
+      }
+
+      if (result.data.compatibility === 'next-turn') {
+        const nextPending = { ...state.collabModePendingByThread }
+        delete nextPending[threadId]
+        const errors = { ...state.collaborationErrorByThread }
+        delete errors[threadId]
+        return {
+          collabModePendingByThread: nextPending,
+          collabModeNextTurnByThread: {
+            ...state.collabModeNextTurnByThread,
+            [threadId]: pending.target,
+          },
+          collabModeCompatibilityByThread: {
+            ...state.collabModeCompatibilityByThread,
+            [threadId]: 'next-turn',
+          },
+          collaborationErrorByThread: errors,
+          ...(state.threadId === threadId
+            ? {
+                collabModeCompatibility: 'next-turn',
+                collaborationError: undefined,
+              }
+            : {}),
+        }
+      }
+
+      // An immediate RPC acknowledgement only means Codex accepted the write.
+      // Keep pending until its thread_settings_updated event confirms storage.
+      const errors = { ...state.collaborationErrorByThread }
+      delete errors[threadId]
+      return {
+        collabModeCompatibilityByThread: {
+          ...state.collabModeCompatibilityByThread,
+          [threadId]: 'immediate',
+        },
+        collaborationErrorByThread: errors,
+        ...(state.threadId === threadId
+          ? {
+              collabModeCompatibility: 'immediate',
+              collaborationError: undefined,
+            }
+          : {}),
+      }
+    })
+  },
+  setPlanReasoningEffort: async (effort) => {
+    const before = get()
+    const canonicalModel = resolveModelSelection(before.selectedModelId).model
+    const capabilities =
+      before.collaborationCapabilitiesModel === canonicalModel
+        ? before.collaborationCapabilities
+        : undefined
+    const normalised =
+      effort !== 'auto'
+      && capabilities?.source === 'codex'
+      && !capabilities.supportedPlanEfforts.includes(effort)
+        ? 'auto'
+        : effort
+    const shouldDefer =
+      capabilities?.source !== 'codex'
+      && normalised !== 'auto'
+      && before.collabModeKind === 'plan'
+      && before.threadId !== undefined
+      && !before.isRunning
+    persistPlanReasoningEffort(normalised)
+    set((state) => {
+      const errors = { ...state.collaborationErrorByThread }
+      if (before.threadId) delete errors[before.threadId]
+      return {
+        planReasoningEffort: normalised,
+        deferredPlanEffortIntent: shouldDefer
+          ? { model: canonicalModel, effort: normalised, threadId: before.threadId }
+          : undefined,
+        collaborationErrorByThread: errors,
+        ...(state.threadId === before.threadId ? { collaborationError: undefined } : {}),
+      }
+    })
+
+    const state = get()
+    if (
+      state.collabModeKind === 'plan'
+      && state.threadId
+      && !state.isRunning
+      && capabilities?.source === 'codex'
+    ) {
+      await state.requestCollabMode('plan')
+    }
+  },
+  loadCollaborationCapabilities: async () => {
+    let owner = get()
+    const model = resolveModelSelection(owner.selectedModelId).model
+    const ownerThreadId = owner.threadId
+    if (
+      ownerThreadId !== undefined
+      && owner.collabModeLifecycleByThread[ownerThreadId] === undefined
+    ) {
+      const generation = owner.collabModeLifecycleSequence + 1
+      set({
+        collabModeLifecycleSequence: generation,
+        collabModeLifecycleByThread: withBoundedLifecycleGeneration(
+          owner.collabModeLifecycleByThread,
+          ownerThreadId,
+          generation,
+        ),
+      })
+      owner = get()
+    }
+    const ownerLifecycleGeneration =
+      ownerThreadId === undefined
+        ? undefined
+        : owner.collabModeLifecycleByThread[ownerThreadId]
+    const isOwnerLifecycleCurrent = (): boolean => {
+      if (ownerThreadId === undefined) return true
+      if (ownerLifecycleGeneration === undefined) return false
+      if (deletedCollaborationThreadTombstones.has(ownerThreadId)) return false
+      return get().collabModeLifecycleByThread[ownerThreadId] === ownerLifecycleGeneration
+    }
+    const applyFallback = (error?: string): void => {
+      if (resolveModelSelection(get().selectedModelId).model !== model) return
+      if (!isOwnerLifecycleCurrent()) return
+      set((state) => {
+        const hasKnownCodexCapabilities =
+          state.collaborationCapabilitiesModel === model
+          && state.collaborationCapabilities?.source === 'codex'
+        const errors = { ...state.collaborationErrorByThread }
+        if (ownerThreadId) {
+          if (error) errors[ownerThreadId] = error
+          else delete errors[ownerThreadId]
+        }
+        const shouldDefer =
+          !hasKnownCodexCapabilities
+          && state.planReasoningEffort !== 'auto'
+          && ownerThreadId !== undefined
+          && state.threadId === ownerThreadId
+          && state.collabModeKind === 'plan'
+          && !state.isRunning
+        return {
+          ...(hasKnownCodexCapabilities
+            ? {}
+            : {
+                collaborationCapabilities: FALLBACK_COLLABORATION_CAPABILITIES,
+                collaborationCapabilitiesModel: model,
+              }),
+          ...(shouldDefer
+            ? {
+                deferredPlanEffortIntent: {
+                  model,
+                  effort: state.planReasoningEffort as Exclude<PlanReasoningEffort, 'auto'>,
+                  threadId: ownerThreadId,
+                },
+              }
+            : {}),
+          collaborationErrorByThread: errors,
+          ...(state.threadId === ownerThreadId ? { collaborationError: error } : {}),
+        }
+      })
+    }
+    const agent = (window as Window & { electronAPI?: AgentElectronApi })
+      .electronAPI?.agent
+    if (!agent?.getCollaborationCapabilities) {
+      applyFallback('协作能力暂不可用，已安全回退为 Auto。')
+      return
+    }
+    try {
+      const result = await agent.getCollaborationCapabilities(model)
+      if (!isOwnerLifecycleCurrent()) return
+      if (!result.ok) {
+        applyFallback('协作能力暂不可用，已安全回退为 Auto。')
+        return
+      }
+      if (resolveModelSelection(get().selectedModelId).model !== model) return
+      if (result.data.source !== 'codex') {
+        applyFallback()
+        return
+      }
+
+      const state = get()
+      const preference = state.planReasoningEffort
+      const unsupported =
+        preference !== 'auto'
+        && !result.data.supportedPlanEfforts.includes(preference)
+      const deferred = state.deferredPlanEffortIntent
+      const shouldSubmitDeferred =
+        !unsupported
+        && deferred?.model === model
+        && deferred.effort === preference
+        && result.data.supportedPlanEfforts.includes(deferred.effort)
+        && state.collabModeKind === 'plan'
+        && state.threadId !== undefined
+        && state.threadId === deferred.threadId
+        && !state.isRunning
+
+      const errors = { ...state.collaborationErrorByThread }
+      if (ownerThreadId) delete errors[ownerThreadId]
+      set({
+        collaborationCapabilities: result.data,
+        collaborationCapabilitiesModel: model,
+        collaborationErrorByThread: errors,
+        ...(get().threadId === ownerThreadId ? { collaborationError: undefined } : {}),
+        ...(deferred ? { deferredPlanEffortIntent: undefined } : {}),
+        ...(unsupported ? { planReasoningEffort: 'auto' as const } : {}),
+      })
+
+      if (unsupported) {
+        persistPlanReasoningEffort('auto')
+        get().pushNotice({
+          id: 'collaboration-plan-effort-reset',
+          kind: 'configWarning',
+          level: 'info',
+          message: '当前模型不支持已保存的 Plan 推理强度，已恢复为 Auto。',
+        })
+        return
+      }
+
+      if (shouldSubmitDeferred) {
+        await get().requestCollabMode('plan')
+      }
+    } catch {
+      // Capabilities are optional metadata; degrade without touching chat flow.
+      if (!isOwnerLifecycleCurrent()) return
+      applyFallback('协作能力暂不可用，已安全回退为 Auto。')
+    }
+  },
   addAttachment: (attachment) =>
     set((state) => ({
       attachments: [...state.attachments, withComposerAttachmentId(attachment)],
@@ -1789,19 +2341,63 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         reasoningEffort: modelSelection.reasoningEffort,
         skills: skills.length > 0 ? skills : undefined,
         mentions,
-        // Spread-omit: only Plan travels; 'default' means nothing on the wire.
-        ...(state.collabModeKind === 'plan' ? { collaborationModeKind: 'plan' as const } : {}),
+        collaborationModeKind: state.collabModeKind,
+        planReasoningEffort: selectEffectivePlanReasoningEffort(state),
       })
       const wasNewThread = state.threadId == null
-      set((current) => ({
-        threadId: result.threadId,
-        runningByThread: { ...current.runningByThread, [result.threadId]: true },
-        // A brand-new chat adopts the composer's current mode as its memory.
-        collabModeByThread: {
-          ...current.collabModeByThread,
-          [result.threadId]: current.collabModeKind,
-        },
-      }))
+      // Only a new-thread send proves this id belongs to a new lifecycle.
+      // A late response from an existing thread deleted in-flight must not.
+      if (wasNewThread) clearDeletedThreadTombstone(result.threadId)
+      set((current) => {
+        const compatibility =
+          current.collabModeCompatibilityByThread[result.threadId] ?? 'immediate'
+        const collaborationError = current.collaborationErrorByThread[result.threadId]
+        const base = {
+          threadId: result.threadId,
+          runningByThread: { ...current.runningByThread, [result.threadId]: true },
+          ...(wasNewThread
+            ? {
+                collabModeCompatibilityByThread: {
+                  ...current.collabModeCompatibilityByThread,
+                  [result.threadId]: compatibility,
+                },
+                collabModeCompatibility: compatibility,
+                collaborationError,
+              }
+            : {}),
+        }
+        if (!wasNewThread) return base
+
+        // A thread_settings_updated notification can beat the IPC response.
+        // Persisted restart entries also live in collabModeByThread, so map
+        // presence alone is insufficient: only an entry whose restored marker
+        // has been cleared is confirmed by this process.
+        const confirmedInThisProcess =
+          Object.prototype.hasOwnProperty.call(current.collabModeByThread, result.threadId)
+          && current.collabModeRestoredByThread[result.threadId] !== true
+        if (confirmedInThisProcess) {
+          const nextTurn = { ...current.collabModeNextTurnByThread }
+          delete nextTurn[result.threadId]
+          const nextPending = { ...current.collabModePendingByThread }
+          delete nextPending[result.threadId]
+          return {
+            ...base,
+            collabModeKind: current.collabModeByThread[result.threadId],
+            collabModeNextTurnByThread: nextTurn,
+            collabModePendingByThread: nextPending,
+          }
+        }
+
+        // No live confirmation yet: retain exactly the draft submitted on this
+        // first send, but do not promote it to server-confirmed state.
+        return {
+          ...base,
+          collabModeNextTurnByThread: {
+            ...current.collabModeNextTurnByThread,
+            [result.threadId]: state.collabModeKind,
+          },
+        }
+      })
       get().lockChatScrollToBottom(result.threadId)
       // Refresh the sidebar immediately so a brand-new chat's row appears the
       // moment it's sent (the thread is already persisted by `sendMessage`).
@@ -1920,6 +2516,11 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         reasoningEffort: modelSelection.reasoningEffort,
         skills: skills.length > 0 ? skills : undefined,
         mentions,
+        // AgentManager keeps these on the assembled input for its no-active-turn
+        // fresh-turn fallback; CodexProtocolClient deliberately omits them from
+        // a genuine upstream turn/steer request.
+        collaborationModeKind: state.collabModeKind,
+        planReasoningEffort: selectEffectivePlanReasoningEffort(state),
       })
       if (result.userMessageItems && result.userMessageItems.length > 0) {
         const canonicalItems = result.userMessageItems
@@ -2147,20 +2748,77 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         rewoundTurns: [],
         editingMessageId: undefined,
         draftBackup: undefined,
+        deferredPlanEffortIntent: undefined,
+        // An empty composer is also a navigation target; invalidate any
+        // openThread promise that was started before this user action.
+        collabModeNavigationSequence: current.collabModeNavigationSequence + 1,
+        collabModeCompatibility: 'immediate',
+        collaborationError: undefined,
       }
     }),
   switchThread: async (threadId: string) => {
-    if (get().threadId === threadId) return
+    const initial = get()
+    const navigationToken = initial.collabModeNavigationSequence + 1
+    if (initial.threadId === threadId) {
+      set({ collabModeNavigationSequence: navigationToken })
+      return
+    }
+    const wasTombstoned = deletedCollaborationThreadTombstones.has(threadId)
+    const expectedTombstoneGeneration = wasTombstoned
+      ? deletedCollaborationThreadTombstones.get(threadId)
+      : undefined
+    const existingGeneration = initial.collabModeLifecycleByThread[threadId]
+    const startsNewLifecycle = wasTombstoned || existingGeneration === undefined
+    const lifecycleGeneration = startsNewLifecycle
+      ? initial.collabModeLifecycleSequence + 1
+      : existingGeneration
+    // The user has left the intent's owner thread. Invalidate immediately,
+    // before a potentially async openThread, so a capabilities response cannot
+    // submit thread A settings while navigation to thread B is in flight.
+    set({
+      deferredPlanEffortIntent: undefined,
+      collabModeNavigationSequence: navigationToken,
+      ...(startsNewLifecycle
+        ? {
+            collabModeLifecycleSequence: lifecycleGeneration,
+            collabModeLifecycleByThread: withBoundedLifecycleGeneration(
+              initial.collabModeLifecycleByThread,
+              threadId,
+              lifecycleGeneration,
+            ),
+          }
+        : {}),
+    })
+    const isNavigationCurrent = (): boolean => {
+      const state = get()
+      return (
+        state.collabModeNavigationSequence === navigationToken
+        && state.collabModeLifecycleByThread[threadId] === lifecycleGeneration
+        && (
+          wasTombstoned
+            ? deletedCollaborationThreadTombstones.get(threadId)
+              === expectedTombstoneGeneration
+            : !deletedCollaborationThreadTombstones.has(threadId)
+        )
+      )
+    }
 
     // Prefer the live background slice (a chat that streamed while we were
     // viewing another one) — it's fresher than the persisted server snapshot.
-    let restored: ThreadSlice | null = get().threadSlices[threadId] ?? null
+    let restored: ThreadSlice | null =
+      wasTombstoned ? null : get().threadSlices[threadId] ?? null
 
     if (!restored) {
       const agent = (window as Window & { electronAPI?: { agent?: { openThread?: (id: string) => Promise<unknown> } } })
         .electronAPI?.agent
       if (!agent?.openThread) return
-      const thread = await agent.openThread(threadId)
+      let thread: unknown
+      try {
+        thread = await agent.openThread(threadId)
+      } catch (error) {
+        throw error
+      }
+      if (!isNavigationCurrent()) return
       if (!thread || typeof thread !== 'object') return
 
       const rawMessages = (thread as { messages?: unknown }).messages
@@ -2209,10 +2867,26 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       }
     }
 
+    if (!isNavigationCurrent()) return
     // Commit atomically: snapshot the OUTGOING active view into its background
     // slice (so its in-flight turn keeps streaming there), drop the incoming
     // thread from the background map (it's the active view now), and install it.
+    // For explicit reopen, validation and tombstone clearing happen in this
+    // same synchronous state transition; stale/failed opens never clear it.
     set((cur) => {
+      if (
+        cur.collabModeNavigationSequence !== navigationToken
+        || cur.collabModeLifecycleByThread[threadId] !== lifecycleGeneration
+        || (
+          wasTombstoned
+            ? deletedCollaborationThreadTombstones.get(threadId)
+              !== expectedTombstoneGeneration
+            : deletedCollaborationThreadTombstones.has(threadId)
+        )
+      ) {
+        return {}
+      }
+      if (wasTombstoned) clearDeletedThreadTombstone(threadId)
       const threadSlices = { ...cur.threadSlices }
       if (cur.threadId) {
         threadSlices[cur.threadId] = {
@@ -2231,11 +2905,94 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         tokenUsage: restored!.tokenUsage,
         error: restored!.error,
         pendingApprovals: [],
-        collabModeKind: cur.collabModeByThread[threadId] ?? 'default',
+        collabModeKind:
+          cur.collabModePendingByThread[threadId]?.target
+          ?? cur.collabModeNextTurnByThread[threadId]
+          ?? cur.collabModeByThread[threadId]
+          ?? 'default',
+        collabModeCompatibility:
+          cur.collabModeCompatibilityByThread[threadId] ?? 'immediate',
+        collaborationError: cur.collaborationErrorByThread[threadId],
       }
     })
   },
   applyEvent: (event) => {
+    if (event.type === 'thread_settings_updated') {
+      if (deletedCollaborationThreadTombstones.has(event.threadId)) return
+      const before = get()
+      const pending = before.collabModePendingByThread[event.threadId]
+      const previous = before.collabModeByThread[event.threadId]
+      const matchingPending = pending?.target === event.mode
+      const matchingNextTurn =
+        before.collabModeNextTurnByThread[event.threadId] === event.mode
+      const shouldNotice =
+        !matchingPending
+        && !matchingNextTurn
+        && previous !== undefined
+        && previous !== event.mode
+
+      set((state) => {
+        // Reinsert the key so persistence order tracks the latest confirmation.
+        const confirmed = { ...state.collabModeByThread }
+        delete confirmed[event.threadId]
+        confirmed[event.threadId] = event.mode
+        persistThreadCollaborationModes(confirmed)
+
+        const nextPending = { ...state.collabModePendingByThread }
+        if (matchingPending) delete nextPending[event.threadId]
+        const nextRestored = { ...state.collabModeRestoredByThread }
+        delete nextRestored[event.threadId]
+        const nextTurn = { ...state.collabModeNextTurnByThread }
+        const nextTurnTarget = nextTurn[event.threadId]
+        const matchingNextTurn = nextTurnTarget === event.mode
+        if (matchingNextTurn) delete nextTurn[event.threadId]
+        const remainingTarget =
+          nextPending[event.threadId]?.target
+          ?? nextTurn[event.threadId]
+          ?? event.mode
+        const compatibility: CollabModeCompatibility =
+          nextTurnTarget !== undefined && !matchingNextTurn
+            ? state.collabModeCompatibilityByThread[event.threadId] ?? 'next-turn'
+            : 'immediate'
+        const compatibilityByThread = {
+          ...state.collabModeCompatibilityByThread,
+          [event.threadId]: compatibility,
+        }
+        const errors = { ...state.collaborationErrorByThread }
+        if (matchingPending || matchingNextTurn) delete errors[event.threadId]
+        const isActiveThread = state.threadId === event.threadId
+
+        return {
+          collabModeByThread: confirmed,
+          collabModePendingByThread: nextPending,
+          collabModeRestoredByThread: nextRestored,
+          collabModeNextTurnByThread: nextTurn,
+          collabModeCompatibilityByThread: compatibilityByThread,
+          collaborationErrorByThread: errors,
+          ...(isActiveThread
+            ? {
+                collabModeKind: remainingTarget,
+                collabModeCompatibility: compatibility,
+              }
+            : {}),
+          ...(isActiveThread && (matchingPending || matchingNextTurn)
+            ? { collaborationError: undefined }
+            : {}),
+        }
+      })
+
+      if (shouldNotice) {
+        get().pushNotice({
+          id: `collaboration-server-override:${event.threadId}:${event.mode}`,
+          kind: 'configWarning',
+          level: 'info',
+          threadId: event.threadId,
+          message: `服务器已确认 ${event.mode === 'plan' ? 'Plan' : 'Default'} 模式。`,
+        })
+      }
+      return
+    }
+
     // Panel-global events (no per-thread routing).
     if (event.type === 'skills_changed') {
       void get().loadAvailableSkills()
@@ -2390,6 +3147,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   bootstrap: async () => {
     if (get().bootstrapped || get().threadListLoading) return
     set({ threadListLoading: true })
+    void get().loadCollaborationCapabilities()
     const agent = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.agent
     if (!agent?.listThreads) {
       set({ threadListLoading: false, bootstrapped: true })
@@ -2480,6 +3238,8 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     const agent = (window as Window & { electronAPI?: AgentElectronApi }).electronAPI?.agent
     if (!agent?.deleteThread) return
     await agent.deleteThread(threadId)
+    const lifecycleGeneration = get().collabModeLifecycleSequence + 1
+    addDeletedThreadTombstone(threadId, lifecycleGeneration)
     // Unblock any pending ask_user cards owned by the deleted thread (active view
     // OR a background slice) so their blocked agent calls return instead of
     // leaking a resolver forever.
@@ -2487,14 +3247,60 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     set((s) => {
       const isActive = s.threadId === threadId
       const msgs = isActive ? s.messages : s.threadSlices[threadId]?.messages
-      if (!msgs) return {}
-      const r = expirePendingChoices(msgs)
-      expiredIds.push(...r.ids)
-      if (r.messages === msgs) return {}
-      if (isActive) return { messages: r.messages }
+      const expired = msgs ? expirePendingChoices(msgs) : null
+      if (expired) expiredIds.push(...expired.ids)
+
+      const collabModeByThread = withoutRecordKey(s.collabModeByThread, threadId)
+      persistThreadCollaborationModes(collabModeByThread)
+      const collaborationPatch = {
+        collabModeByThread,
+        // Pending/version maps are lifecycle-local and may be cleared. The
+        // generation survives delete and explicit reopen, so late async work
+        // from the old lifecycle cannot attach to a reused thread id. The map
+        // is bounded with the same 200-entry policy as deletion tombstones.
+        collabModeLifecycleSequence: lifecycleGeneration,
+        collabModeLifecycleByThread: withBoundedLifecycleGeneration(
+          s.collabModeLifecycleByThread,
+          threadId,
+          lifecycleGeneration,
+        ),
+        collabModePendingByThread: withoutRecordKey(
+          s.collabModePendingByThread,
+          threadId,
+        ),
+        collabModeRequestVersionByThread: withoutRecordKey(
+          s.collabModeRequestVersionByThread,
+          threadId,
+        ),
+        collabModeRestoredByThread: withoutRecordKey(
+          s.collabModeRestoredByThread,
+          threadId,
+        ),
+        collabModeNextTurnByThread: withoutRecordKey(
+          s.collabModeNextTurnByThread,
+          threadId,
+        ),
+        collabModeCompatibilityByThread: withoutRecordKey(
+          s.collabModeCompatibilityByThread,
+          threadId,
+        ),
+        collaborationErrorByThread: withoutRecordKey(
+          s.collaborationErrorByThread,
+          threadId,
+        ),
+      }
+
+      if (!expired || expired.messages === msgs) return collaborationPatch
+      if (isActive) return { ...collaborationPatch, messages: expired.messages }
       const slice = s.threadSlices[threadId]
-      if (!slice) return {}
-      return { threadSlices: { ...s.threadSlices, [threadId]: { ...slice, messages: r.messages } } }
+      if (!slice) return collaborationPatch
+      return {
+        ...collaborationPatch,
+        threadSlices: {
+          ...s.threadSlices,
+          [threadId]: { ...slice, messages: expired.messages },
+        },
+      }
     })
     resolveAbandonedChoices(expiredIds)
     if (get().threadId === threadId) {
@@ -2506,6 +3312,9 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         error: undefined,
         isRunning: false,
         pendingApprovals: [],
+        deferredPlanEffortIntent: undefined,
+        collabModeCompatibility: 'immediate',
+        collaborationError: undefined,
       })
     }
     await get().refreshThreadList()

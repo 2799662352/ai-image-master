@@ -1,6 +1,7 @@
 import type { CodexUserMessageReconcile, TimelineItem } from './agent-timeline'
 import type { AgentReference } from './agent-reference'
 import type { ThreadGoal } from './codexGoals'
+import type { PlanReasoningEffort } from '../shared/collaborationMode'
 
 // Canonical home is agent-timeline.ts (BaseItem.codexReconcile persists the
 // same shape); re-exported here because stream-event consumers import all
@@ -43,6 +44,35 @@ export interface AgentMentionRef {
   path: string
 }
 
+export interface AgentCollaborationCapabilities {
+  planDefaultEffort: string
+  supportedPlanEfforts: string[]
+  source: 'codex' | 'fallback'
+}
+
+export type AgentCollaborationCapabilitiesResult =
+  | { ok: true; data: AgentCollaborationCapabilities }
+  | { ok: false; error: string }
+
+export interface AgentCollaborationModeUpdatePayload {
+  threadId: string
+  mode: 'default' | 'plan'
+  model: string
+  defaultReasoningEffort?: string
+  planReasoningEffort: PlanReasoningEffort
+  requestVersion: number
+}
+
+export type AgentCollaborationModeUpdateResult =
+  | {
+      ok: true
+      data: {
+        compatibility: 'immediate' | 'next-turn'
+        requestVersion: number
+      }
+    }
+  | { ok: false; error: string; requestVersion: number }
+
 export interface AgentSendMessagePayload {
   threadId?: string
   content: string
@@ -77,12 +107,14 @@ export interface AgentSendMessagePayload {
   mentions?: AgentMentionRef[]
   /**
    * EXPERIMENTAL collaboration-mode preset KIND selected in the composer
-   * ('plan' = codex's built-in Plan mode). The renderer only picks a kind; the
-   * main process expands it into the full codex `CollaborationMode` (mode +
-   * settings with the resolved model) for `turn/start`. Absent or 'default'
-   * = today's behaviour, nothing extra on the wire.
+   * ('plan' = codex's built-in Plan mode). The main process expands an
+   * explicitly supplied Plan or Default into the full codex
+   * `CollaborationMode` for `turn/start`; only a genuinely absent field keeps
+   * legacy callers' wire behavior unchanged.
    */
   collaborationModeKind?: 'plan' | 'default'
+  /** Plan-only effort preference; Auto resolves against Codex's Plan preset. */
+  planReasoningEffort?: PlanReasoningEffort
 }
 
 /**
@@ -379,6 +411,17 @@ export type AgentStreamEvent =
    * locally by `store.send()`, so surfacing it would duplicate the message.
    */
   | (AgentStreamEventBase & { type: 'user_message_reconciled'; reconcile: CodexUserMessageReconcile })
+  /**
+   * Internal confirmation of persisted Codex thread settings. Thread-scoped
+   * but turn-independent, so it bypasses the per-turn lifecycle queue.
+   */
+  | {
+      type: 'thread_settings_updated'
+      threadId: string
+      mode: 'default' | 'plan'
+      model: string
+      effort: string | null
+    }
   | (AgentStreamEventBase & { type: 'attachment_error'; name: string; error: string })
   | { type: 'mcp_status_updated'; name: string; status: string; error: string | null }
   | { type: 'mcp_oauth_completed'; name: string; success: boolean; error: string | null }

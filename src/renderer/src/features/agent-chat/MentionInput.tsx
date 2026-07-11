@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { JSX } from 'react'
 import type { CodexSkillSummary } from '../../../../types/agent'
 import type { AgentReference } from '../../../../types/agent-reference'
-import { CollabModeToggle } from './CollabModeToggle'
+import { CollabModeControl } from './CollabModeControl'
 import { ModelPicker } from './ModelPicker'
 import { ImageChannelPicker } from './ImageChannelPicker'
 import { ReferenceChip } from './references/ReferenceChip'
@@ -1593,7 +1593,7 @@ export function MentionInput() {
           {isEditing ? 'Editing' : isRunning ? 'Running' : 'Agent'}
         </span>
         <ModelPicker disabled={isRunning} />
-        <CollabModeToggle disabled={isRunning} />
+        <CollabModeControl disabled={isRunning} />
         <ImageChannelPicker disabled={isRunning} />
         <div className="flex-1" />
         {isEditing ? (

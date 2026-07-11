@@ -25,6 +25,8 @@ import type {
   CodexModelListParams,
   CodexModelListResponse,
   CollaborationModeListResponse,
+  ThreadSettingsUpdateParams,
+  ThreadSettingsUpdateResponse,
 } from './codexProtocol'
 import type {
   AppsListParams,
@@ -160,6 +162,10 @@ export interface CodexLocalBackendOptions {
   onMcpNotification?: (event: AgentStreamEvent) => void
   /** Out-of-band native `/goal` updates (`thread/goal/updated|cleared`). */
   onGoalNotification?: (event: AgentStreamEvent) => void
+  /** Confirmed persistent collaboration settings (`thread/settings/updated`). */
+  onThreadSettingsNotification?: (
+    event: Extract<AgentStreamEvent, { type: 'thread_settings_updated' }>,
+  ) => void
   /**
    * Pin the `CODEX_HOME` used for EVERY spawn (initial + `restartCodex`).
    * Defaults to {@link resolveStableCodexHome} (`~/.codex`, honoring a
@@ -339,6 +345,7 @@ export class CodexLocalBackend implements IAgentBackend {
       onApprovalRequest: this.options.onApprovalRequest,
       onMcpNotification: this.options.onMcpNotification,
       onGoalNotification: this.options.onGoalNotification,
+      onThreadSettingsNotification: this.options.onThreadSettingsNotification,
     })
     await client.start()
     this.epoch += 1
@@ -454,6 +461,7 @@ export class CodexLocalBackend implements IAgentBackend {
       onApprovalRequest: this.options.onApprovalRequest,
       onMcpNotification: this.options.onMcpNotification,
       onGoalNotification: this.options.onGoalNotification,
+      onThreadSettingsNotification: this.options.onThreadSettingsNotification,
     })
 
     try {
@@ -647,6 +655,15 @@ export class CodexLocalBackend implements IAgentBackend {
   async listCollaborationModes(): Promise<CollaborationModeListResponse> {
     if (!this.client) throw new Error('CodexLocalBackend.listCollaborationModes called before start')
     return this.client.listCollaborationModes()
+  }
+
+  async updateThreadSettings(
+    params: ThreadSettingsUpdateParams,
+  ): Promise<ThreadSettingsUpdateResponse> {
+    if (!this.client) {
+      throw new Error('CodexLocalBackend.updateThreadSettings called before start')
+    }
+    return this.client.updateThreadSettings(params)
   }
 
   async batchWriteConfig(edits: unknown[], reloadUserConfig?: boolean): Promise<void> {
