@@ -1089,10 +1089,13 @@ export class AgentManager {
         payload.defaultReasoningEffort,
         payload.planReasoningEffort,
       )
-      await this.backend.updateThreadSettings({
-        threadId: codexThreadId,
-        collaborationMode: builtCollaborationMode.collaborationMode,
-      })
+      await this.commitWithCollaborationModeOwner(
+        builtCollaborationMode,
+        () => this.backend.updateThreadSettings({
+          threadId: codexThreadId,
+          collaborationMode: builtCollaborationMode.collaborationMode,
+        }),
+      )
       this.syncCollaborationProcessCaches()
       this.threadSettingsUpdateSupport = 'supported'
       return {
@@ -2035,6 +2038,21 @@ export class AgentManager {
     )
   }
 
+  private commitWithCollaborationModeOwner<T>(
+    built: BuiltCollaborationMode,
+    submit: () => T,
+  ): T {
+    if (
+      built.owner !== undefined
+      && !this.isCollaborationCapabilityOwnerCurrent(built.owner)
+    ) {
+      throw new Error(
+        'Plan capability owner changed at commit boundary; please retry',
+      )
+    }
+    return submit()
+  }
+
   private async stabilizeCollaborationMode(
     built: BuiltCollaborationMode,
     mode: CollaborationModeKind,
@@ -2427,6 +2445,7 @@ export class AgentManager {
 
     while (true) {
       const codexThreadId = await this.resolveCodexThreadForSend(dbThreadId)
+      let builtForCommit: BuiltCollaborationMode | undefined
       if (
         currentInput.collaborationModeKind !== undefined
         && currentInput.collaborationMode !== undefined
@@ -2446,6 +2465,7 @@ export class AgentManager {
           collaborationMode: stable.collaborationMode,
         }
         currentCollaborationModeOwner = stable.owner
+        builtForCommit = stable
       }
       // Accumulate the assistant turn's timeline items in main-process memory so
       // we can write a single AgentMessage row at turn_completed time. Mirrors
@@ -2453,7 +2473,13 @@ export class AgentManager {
       // avoid a circular renderer→main import.
       let assistantItems: TimelineItem[] = []
       try {
-        for await (const event of this.backend.send(codexThreadId, currentInput)) {
+        const eventStream = builtForCommit === undefined
+          ? this.backend.send(codexThreadId, currentInput)
+          : this.commitWithCollaborationModeOwner(
+              builtForCommit,
+              () => this.backend.send(codexThreadId, currentInput),
+            )
+        for await (const event of eventStream) {
           if (event.type === 'thread_created' && event.threadId) {
             this.rememberCodexThread(dbThreadId, event.threadId)
           }

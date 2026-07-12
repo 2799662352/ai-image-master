@@ -574,6 +574,77 @@ describe('AgentManager collaboration mode effort isolation', () => {
     expect(addMessage).toHaveBeenCalledTimes(1)
   })
 
+  it('guards send synchronously when epoch flips after helper check but before caller continuation', async () => {
+    let markIngestStarted!: () => void
+    const ingestStarted = new Promise<void>((resolve) => { markIngestStarted = resolve })
+    let releaseIngest!: () => void
+    const ingestGate = new Promise<void>((resolve) => { releaseIngest = resolve })
+    const addMessage = vi.fn().mockResolvedValue({ id: 'msg-1' })
+    const events: AgentStreamEvent[] = []
+    const backend = makeCollaborationBackend({
+      initialEpoch: 1,
+      listModes: async () => UPSTREAM_PRESETS,
+      listModels: async () => ({
+        data: [modelRow({
+          id: 'gpt-5.5',
+          supportedReasoningEfforts: [
+            { reasoningEffort: 'max', description: 'supported in epoch 1' },
+          ],
+        })],
+        nextCursor: null,
+      }),
+    })
+    let armEpochFlip = false
+    let epochFlipQueued = false
+    backend.currentEpoch = () => {
+      const current = backend.epoch!
+      if (armEpochFlip && !epochFlipQueued) {
+        epochFlipQueued = true
+        queueMicrotask(() => { backend.epoch = current + 1 })
+      }
+      return current
+    }
+    const manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend,
+      store: {
+        createThread: async () => ({ id: 'thread-1' }),
+        addMessage,
+        updateLastMessageAt: async () => undefined,
+      } as any,
+      attachments: {
+        ingest: async () => {
+          markIngestStarted()
+          await ingestGate
+          return []
+        },
+      } as any,
+      eventSink: (event) => events.push(event),
+    })
+    await manager.setCodexApiKey('sk-test')
+
+    const pending = manager.sendMessage({
+      content: 'flip after helper',
+      attachments: [],
+      model: 'gpt-5.5',
+      collaborationModeKind: 'plan',
+      planReasoningEffort: 'max',
+    })
+    await ingestStarted
+    armEpochFlip = true
+    releaseIngest()
+    await pending
+
+    await vi.waitFor(() => {
+      expect(events).toContainEqual(expect.objectContaining({
+        type: 'error',
+        error: expect.stringMatching(/owner.*commit boundary/i),
+      }))
+    })
+    expect(backend.calls).toEqual([])
+    expect(addMessage).toHaveBeenCalledTimes(1)
+  })
+
   it('allows explicit Plan Max on Right Code gpt-5.6-sol send', async () => {
     const backend = makeCollaborationBackend({
       listModes: async () => UPSTREAM_PRESETS,
@@ -995,6 +1066,59 @@ describe('AgentManager collaboration mode updates', () => {
     await expect(pending).resolves.toEqual({
       ok: false,
       error: expect.stringMatching(/max.*not supported/i),
+      requestVersion: 7,
+    })
+    expect(backend.updateCalls).toEqual([])
+  })
+
+  it('guards update synchronously when epoch flips after helper check but before caller continuation', async () => {
+    let markResumeStarted!: () => void
+    const resumeStarted = new Promise<void>((resolve) => { markResumeStarted = resolve })
+    let releaseResume!: () => void
+    const resumeGate = new Promise<void>((resolve) => { releaseResume = resolve })
+    const backend = makeCollaborationBackend({
+      initialEpoch: 2,
+      resumeThread: async () => {
+        markResumeStarted()
+        await resumeGate
+      },
+      listModes: async () => UPSTREAM_PRESETS,
+      listModels: async () => ({
+        data: [modelRow({
+          id: 'gpt-5.5',
+          supportedReasoningEfforts: [
+            { reasoningEffort: 'max', description: 'supported in epoch 2' },
+          ],
+        })],
+        nextCursor: null,
+      }),
+      updateThreadSettings: async () => ({}),
+    })
+    let armEpochFlip = false
+    let epochFlipQueued = false
+    backend.currentEpoch = () => {
+      const current = backend.epoch!
+      if (armEpochFlip && !epochFlipQueued) {
+        epochFlipQueued = true
+        queueMicrotask(() => { backend.epoch = current + 1 })
+      }
+      return current
+    }
+    const manager = makeManager(backend)
+    ;(manager as any).codexThreadIdByDbThreadId.set('db-thread-1', 'codex-thread-1')
+    ;(manager as any).codexThreadEpochByDbThreadId.set('db-thread-1', 1)
+
+    const pending = manager.updateCollaborationModeRpc({
+      ...UPDATE_PAYLOAD,
+      planReasoningEffort: 'max',
+    })
+    await resumeStarted
+    armEpochFlip = true
+    releaseResume()
+
+    await expect(pending).resolves.toEqual({
+      ok: false,
+      error: expect.stringMatching(/owner.*commit boundary/i),
       requestVersion: 7,
     })
     expect(backend.updateCalls).toEqual([])
