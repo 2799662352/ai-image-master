@@ -119,7 +119,11 @@ describe('model settings capabilities', () => {
     (model) => {
       expect(defaultContextWindowForModel(model)).toBe(UNKNOWN_MODEL_CONTEXT_WINDOW)
       expect(modelContextOptions(model)).toEqual([
-        { value: UNKNOWN_MODEL_CONTEXT_WINDOW, experimental: false },
+        {
+          value: UNKNOWN_MODEL_CONTEXT_WINDOW,
+          experimental: false,
+          conservative: true,
+        },
         { value: EXPERIMENTAL_CONTEXT_WINDOW, experimental: true },
       ])
     },
@@ -132,10 +136,23 @@ describe('model settings capabilities', () => {
     ['gpt-5.5', 272_000],
     ['gpt-5.4', 272_000],
     ['gpt-5.4-mini', 272_000],
-    ['custom-model', UNKNOWN_MODEL_CONTEXT_WINDOW],
-  ])('adds an experimental 1M option for %s', (model, expectedDefault) => {
+  ])('keeps verified defaults unmarked and adds experimental 1M for %s', (
+    model,
+    expectedDefault,
+  ) => {
     expect(modelContextOptions(model)).toEqual([
       { value: expectedDefault, experimental: false },
+      { value: EXPERIMENTAL_CONTEXT_WINDOW, experimental: true },
+    ])
+  })
+
+  it('marks an unknown model context as a conservative default', () => {
+    expect(modelContextOptions('custom-model')).toEqual([
+      {
+        value: UNKNOWN_MODEL_CONTEXT_WINDOW,
+        experimental: false,
+        conservative: true,
+      },
       { value: EXPERIMENTAL_CONTEXT_WINDOW, experimental: true },
     ])
   })

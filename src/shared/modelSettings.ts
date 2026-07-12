@@ -15,6 +15,7 @@ export const EXPERIMENTAL_CONTEXT_WINDOW = 1_000_000
 export interface ModelContextOption {
   value: number
   experimental: boolean
+  conservative?: boolean
 }
 
 export interface ModelSettingsCapabilities {
@@ -73,12 +74,17 @@ export function defaultContextWindowForModel(model: string): number {
 
 export function modelContextOptions(model: string): ModelContextOption[] {
   const defaultContextWindow = defaultContextWindowForModel(model)
+  const defaultOption: ModelContextOption = {
+    value: defaultContextWindow,
+    experimental: false,
+    ...(!VERIFIED_CONTEXTS.has(model) ? { conservative: true } : {}),
+  }
   if (defaultContextWindow === EXPERIMENTAL_CONTEXT_WINDOW) {
-    return [{ value: defaultContextWindow, experimental: false }]
+    return [defaultOption]
   }
 
   return [
-    { value: defaultContextWindow, experimental: false },
+    defaultOption,
     { value: EXPERIMENTAL_CONTEXT_WINDOW, experimental: true },
   ]
 }

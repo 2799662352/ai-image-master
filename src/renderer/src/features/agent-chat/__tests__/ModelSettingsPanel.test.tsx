@@ -5,34 +5,39 @@ import type {
   ModelReasoningEffort,
   ModelSettingsCapabilities,
 } from '../../../../../shared/modelSettings'
+import { mergeModelSettingsCapabilities } from '../../../../../shared/modelSettings'
 import {
   ModelSettingsPanel,
   formatContextWindow,
 } from '../ModelSettingsPanel'
 
-const SOL_CAPABILITIES: ModelSettingsCapabilities = {
+const SOL_CAPABILITIES: ModelSettingsCapabilities = mergeModelSettingsCapabilities({
   model: 'gpt-5.6-sol',
   provider: 'rightcode',
-  defaultContextWindow: 372_000,
-  contextOptions: [
-    { value: 372_000, experimental: false },
-    { value: 1_000_000, experimental: true },
-  ],
   defaultReasoningEffort: 'medium',
-  supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
-}
+  supportedReasoningEfforts: [
+    'low',
+    'medium',
+    'high',
+    'xhigh',
+    'max',
+    'ultra',
+    'fast',
+  ],
+})
 
-const GPT_55_CAPABILITIES: ModelSettingsCapabilities = {
+const GPT_55_CAPABILITIES: ModelSettingsCapabilities = mergeModelSettingsCapabilities({
   model: 'gpt-5.5',
   provider: 'rightcode',
-  defaultContextWindow: 272_000,
-  contextOptions: [
-    { value: 272_000, experimental: false },
-    { value: 1_000_000, experimental: true },
-  ],
   defaultReasoningEffort: 'medium',
-  supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
-}
+  supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'fast'],
+})
+
+const UNKNOWN_CAPABILITIES: ModelSettingsCapabilities = mergeModelSettingsCapabilities({
+  model: 'vendor-new-model',
+  provider: 'rightcode',
+  supportedReasoningEfforts: ['low', 'medium'],
+})
 
 interface RenderPanelOptions {
   capabilities?: ModelSettingsCapabilities
@@ -80,7 +85,9 @@ describe('ModelSettingsPanel', () => {
     }
     expect(screen.queryByRole('option', { name: /Ultra/i })).toBeNull()
     expect(screen.queryByRole('option', { name: /Fast/i })).toBeNull()
-    expect(screen.getByText(/Provider 可能拒绝/).textContent).toMatch(/成本.*延迟/)
+    expect(screen.getByText(
+      '强制客户端按 1M 管理上下文；Provider 可能拒绝、返回 HTTP 413、增加费用或延迟。',
+    )).toBeTruthy()
   })
 
   it('does not render Max when gpt-5.5 capabilities omit it', () => {
@@ -105,6 +112,14 @@ describe('ModelSettingsPanel', () => {
       expect(option.getAttribute('aria-disabled')).toBe('true')
       fireEvent.click(option)
     }
+    for (const listbox of screen.getAllByRole('listbox')) {
+      const groupOptions = within(listbox).getAllByRole('option') as HTMLButtonElement[]
+      const initialTabStops = groupOptions.map((option) => option.tabIndex)
+      const tabStop = groupOptions.find((option) => option.tabIndex === 0)
+      expect(tabStop).toBeTruthy()
+      fireEvent.keyDown(tabStop!, { key: 'ArrowRight' })
+      expect(groupOptions.map((option) => option.tabIndex)).toEqual(initialTabStops)
+    }
     expect(onReasoningChange).not.toHaveBeenCalled()
     expect(onContextChange).not.toHaveBeenCalled()
   })
@@ -127,7 +142,7 @@ describe('ModelSettingsPanel', () => {
 
     expect(status.getAttribute('aria-live')).toBe('polite')
     expect(status.textContent).toContain('Provider 更新失败')
-    expect(status.textContent).not.toContain('保存中')
+    expect(status.textContent).not.toContain('正在应用并恢复线程')
 
     rerender(
       <ModelSettingsPanel
@@ -140,7 +155,7 @@ describe('ModelSettingsPanel', () => {
         onContextChange={vi.fn().mockResolvedValue(undefined)}
       />,
     )
-    expect(screen.getByRole('status').textContent).toContain('保存中')
+    expect(screen.getByRole('status').textContent).toBe('正在应用并恢复线程')
   })
 
   it('connects named sections and marks both current selections', () => {
@@ -156,6 +171,116 @@ describe('ModelSettingsPanel', () => {
     expect(screen.getByRole('option', { name: 'High' }).getAttribute('aria-selected')).toBe(
       'true',
     )
+  })
+
+  it('uses the selected option as each group tab stop and falls back to the first option', () => {
+    const { rerender } = renderPanel({ reasoningEffort: 'high', contextWindow: 1_000_000 })
+    const contextOptions = within(
+      screen.getByRole('listbox', { name: '模型上下文' }),
+    ).getAllByRole('option') as HTMLButtonElement[]
+    const reasoningOptions = within(
+      screen.getByRole('listbox', { name: '推理强度' }),
+    ).getAllByRole('option') as HTMLButtonElement[]
+
+    expect(contextOptions.map((option) => option.tabIndex)).toEqual([-1, 0])
+    expect(reasoningOptions.map((option) => option.tabIndex)).toEqual([
+      -1,
+      -1,
+      -1,
+      0,
+      -1,
+      -1,
+    ])
+
+    rerender(
+      <ModelSettingsPanel
+        capabilities={GPT_55_CAPABILITIES}
+        reasoningEffort="max"
+        contextWindow={999}
+        disabled={false}
+        pending={false}
+        onReasoningChange={vi.fn()}
+        onContextChange={vi.fn().mockResolvedValue(undefined)}
+      />,
+    )
+
+    const fallbackContextOptions = within(
+      screen.getByRole('listbox', { name: '模型上下文' }),
+    ).getAllByRole('option') as HTMLButtonElement[]
+    const fallbackReasoningOptions = within(
+      screen.getByRole('listbox', { name: '推理强度' }),
+    ).getAllByRole('option') as HTMLButtonElement[]
+    expect(fallbackContextOptions.map((option) => option.tabIndex)).toEqual([0, -1])
+    expect(fallbackReasoningOptions.map((option) => option.tabIndex)).toEqual([
+      0,
+      -1,
+      -1,
+      -1,
+      -1,
+    ])
+  })
+
+  it('moves context focus cyclically with arrows, Home, and End without selecting', () => {
+    const { onContextChange } = renderPanel()
+    const contextOptions = within(
+      screen.getByRole('listbox', { name: '模型上下文' }),
+    ).getAllByRole('option') as HTMLButtonElement[]
+    const [standard, experimental] = contextOptions
+
+    standard.focus()
+    fireEvent.keyDown(standard, { key: 'ArrowRight' })
+    expect(document.activeElement).toBe(experimental)
+    expect(contextOptions.map((option) => option.tabIndex)).toEqual([-1, 0])
+
+    fireEvent.keyDown(experimental, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(standard)
+    fireEvent.keyDown(standard, { key: 'ArrowLeft' })
+    expect(document.activeElement).toBe(experimental)
+    fireEvent.keyDown(experimental, { key: 'ArrowUp' })
+    expect(document.activeElement).toBe(standard)
+    fireEvent.keyDown(standard, { key: 'End' })
+    expect(document.activeElement).toBe(experimental)
+    fireEvent.keyDown(experimental, { key: 'Home' })
+    expect(document.activeElement).toBe(standard)
+
+    expect(contextOptions.map((option) => option.tabIndex)).toEqual([0, -1])
+    expect(onContextChange).not.toHaveBeenCalled()
+  })
+
+  it('applies the same roving focus behavior to reasoning options', () => {
+    const { onReasoningChange } = renderPanel()
+    const reasoningOptions = within(
+      screen.getByRole('listbox', { name: '推理强度' }),
+    ).getAllByRole('option') as HTMLButtonElement[]
+    const medium = screen.getByRole('option', { name: 'Medium' }) as HTMLButtonElement
+    const high = screen.getByRole('option', { name: 'High' }) as HTMLButtonElement
+    const auto = screen.getByRole('option', { name: 'Auto' }) as HTMLButtonElement
+    const max = screen.getByRole('option', { name: 'Max' }) as HTMLButtonElement
+
+    medium.focus()
+    fireEvent.keyDown(medium, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(high)
+    fireEvent.keyDown(high, { key: 'Home' })
+    expect(document.activeElement).toBe(auto)
+    fireEvent.keyDown(auto, { key: 'ArrowLeft' })
+    expect(document.activeElement).toBe(max)
+    fireEvent.keyDown(max, { key: 'ArrowRight' })
+    expect(document.activeElement).toBe(auto)
+    fireEvent.keyDown(auto, { key: 'End' })
+    expect(document.activeElement).toBe(max)
+
+    expect(reasoningOptions.filter((option) => option.tabIndex === 0)).toEqual([max])
+    expect(onReasoningChange).not.toHaveBeenCalled()
+  })
+
+  it('labels the unknown-model context as a conservative default', () => {
+    renderPanel({
+      capabilities: UNKNOWN_CAPABILITIES,
+      contextWindow: 200_000,
+      reasoningEffort: 'auto',
+    })
+
+    expect(screen.getByRole('option', { name: /200K.*保守默认/ })).toBeTruthy()
   })
 
   it('consumes a rejected context update without an unhandled rejection', async () => {
