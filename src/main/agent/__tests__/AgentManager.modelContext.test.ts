@@ -412,6 +412,78 @@ describe('AgentManager transactional model context apply', () => {
     expect(backend.restartCalls).toBe(2)
   })
 
+  it('reapplies the confirmed value after rollback failure instead of taking the no-op path', async () => {
+    let failResume = true
+    const { manager, backend } = makeManager({
+      resume: async () => {
+        if (failResume) throw new Error('resume transport unavailable')
+      },
+    })
+
+    const failed = await manager.applyModelContextRpc(APPLY_PAYLOAD)
+    expectFailure(failed, 'resume')
+    expect(failed.rollback).toEqual({
+      ok: false,
+      error: expect.stringContaining('resume transport unavailable'),
+      effectiveConfig: null,
+    })
+    expect((manager as unknown as { contextRecoveryRequired: boolean })
+      .contextRecoveryRequired).toBe(true)
+
+    failResume = false
+    const recovered = await manager.applyModelContextRpc({
+      ...APPLY_PAYLOAD,
+      contextWindow: PREVIOUS_CONFIG.modelContextWindow,
+      requestVersion: 8,
+    })
+
+    expect(recovered).toMatchObject({
+      ok: true,
+      data: {
+        contextWindow: PREVIOUS_CONFIG.modelContextWindow,
+        requestVersion: 8,
+      },
+    })
+    expect(backend.restartCalls).toBe(3)
+    expect((manager as unknown as { contextRecoveryRequired: boolean })
+      .contextRecoveryRequired).toBe(false)
+  })
+
+  it('keeps recovery required when an explicit recovery apply also cannot prove rollback', async () => {
+    const { manager } = makeManager({
+      restart: async (instance, call) => {
+        if (call === 3) throw new Error('recovery replacement failed')
+        instance.epoch += 1
+      },
+      resume: async (_instance, _threadId, call) => {
+        if (call <= 2) throw new Error('initial resume remains unavailable')
+      },
+    })
+
+    await manager.applyModelContextRpc(APPLY_PAYLOAD)
+    const recovery = await manager.applyModelContextRpc({
+      ...APPLY_PAYLOAD,
+      contextWindow: PREVIOUS_CONFIG.modelContextWindow,
+      requestVersion: 8,
+    })
+
+    expect(recovery).toMatchObject({
+      ok: false,
+      stage: 'restart',
+      error: expect.stringContaining('recovery replacement failed'),
+      previousConfig: PREVIOUS_CONFIG,
+      attemptedConfig: PREVIOUS_CONFIG,
+      requestVersion: 8,
+    })
+    if (recovery.ok) throw new Error('Expected recovery failure')
+    expect(recovery.rollback).toEqual({
+      ok: true,
+      activeConfig: PREVIOUS_CONFIG,
+    })
+    expect((manager as unknown as { contextRecoveryRequired: boolean })
+      .contextRecoveryRequired).toBe(true)
+  })
+
   it('compensates unchanged-epoch failure when backend health cannot be proven', async () => {
     const { manager, backend } = makeManager({
       exposeHealth: false,

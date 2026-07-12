@@ -13,7 +13,7 @@ export interface ModelSettingsPanelProps {
   pending: boolean
   error?: string
   onReasoningChange: (effort: ModelReasoningEffort) => void
-  onContextChange: (contextWindow: number) => Promise<void>
+  onContextChange: (contextWindow: number) => Promise<unknown>
 }
 
 const REASONING_LABELS: Record<ModelReasoningEffort, string> = {

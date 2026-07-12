@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -99,9 +100,9 @@ function unknownModel(id: string, provider: string): PickerModel {
 function moveModelFocus(
   event: ReactKeyboardEvent<HTMLButtonElement>,
   index: number,
+  count: number,
   refs: { current: Array<HTMLButtonElement | null> },
 ): void {
-  const count = refs.current.length
   if (count === 0) return
   let target: number | null = null
   switch (event.key) {
@@ -141,6 +142,9 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
     (state) => state.modelSettingsLoading,
   )
   const modelSettingsError = useAgentChatStore((state) => state.modelSettingsError)
+  const modelSettingsPersistenceWarnings = useAgentChatStore(
+    (state) => state.modelSettingsPersistenceWarnings,
+  )
   const isRunning = useAgentChatStore((state) => state.isRunning)
   const hasPendingCollabMode = useAgentChatStore((state) =>
     state.threadId
@@ -162,6 +166,7 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const searchRef = useRef<HTMLInputElement | null>(null)
   const modelRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const focusFrameRef = useRef<number | null>(null)
 
   const provider = catalog?.provider ?? 'unknown'
   const baseRows = useMemo(
@@ -217,8 +222,36 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
       .filter((group) => group.items.length > 0)
   }, [availableModels, query])
   const flatModels = grouped.flatMap((group) => group.items)
+  const persistenceWarning = Object.values(modelSettingsPersistenceWarnings)
+    .filter((warning): warning is string => Boolean(warning))
+    .join('；')
+  const settingsMessage = [modelSettingsError, persistenceWarning]
+    .filter((message): message is string => Boolean(message))
+    .join('；') || undefined
 
-  function closePicker(restoreFocus: boolean): void {
+  useLayoutEffect(() => {
+    modelRefs.current.length = flatModels.length
+  }, [flatModels.length])
+
+  useEffect(() => () => {
+    if (focusFrameRef.current !== null) {
+      cancelAnimationFrame(focusFrameRef.current)
+    }
+  }, [])
+
+  function scheduleTriggerFocus(): void {
+    if (focusFrameRef.current !== null) {
+      cancelAnimationFrame(focusFrameRef.current)
+    }
+    focusFrameRef.current = requestAnimationFrame(() => {
+      focusFrameRef.current = null
+      if (triggerRef.current && !triggerRef.current.disabled) {
+        triggerRef.current.focus()
+      }
+    })
+  }
+
+  function closePicker(restoreFocus: boolean, deferFocus = false): void {
     const activeElement = document.activeElement
     const focusOwned =
       activeElement instanceof Node
@@ -228,10 +261,11 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
     if (
       restoreFocus
       && focusOwned
-      && triggerRef.current
-      && !triggerRef.current.disabled
     ) {
-      triggerRef.current.focus()
+      if (deferFocus) scheduleTriggerFocus()
+      else if (triggerRef.current && !triggerRef.current.disabled) {
+        triggerRef.current.focus()
+      }
     }
   }
 
@@ -263,14 +297,14 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
   async function handlePick(id: string): Promise<void> {
     if (settingsInteractionsDisabled || id === selectedModelId) return
     setModelSelectionPending(true)
+    let selectionApplied = false
     try {
       await setSelectedModel(id)
-      if (useAgentChatStore.getState().selectedModelId === id) {
-        closePicker(true)
-      }
+      selectionApplied = useAgentChatStore.getState().selectedModelId === id
     } finally {
       setModelSelectionPending(false)
     }
+    if (selectionApplied) closePicker(true, true)
   }
 
   function handleRootBlur(event: ReactFocusEvent<HTMLDivElement>): void {
@@ -334,7 +368,10 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
               onKeyDown={(event) => {
                 if (event.key === 'ArrowDown') {
                   event.preventDefault()
-                  modelRefs.current[0]?.focus()
+                  modelRefs.current
+                    .slice(0, flatModels.length)
+                    .find((node) => node !== null)
+                    ?.focus()
                 }
               }}
               placeholder="Search models"
@@ -348,7 +385,7 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
               role="status"
               className="border-b border-amber-300/15 bg-amber-300/[0.04] px-3 py-1.5 text-[9px] leading-4 text-amber-200/80"
             >
-              能力未确认 · 当前目录使用保守默认，实时 Codex 能力恢复后会自动更新。
+              模型可用性与能力未确认 · 当前目录使用保守默认，实时 Codex 能力恢复后会自动更新。
             </div>
           ) : null}
 
@@ -386,7 +423,7 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
                           void handlePick(model.id)
                         }}
                         onKeyDown={(event) => {
-                          moveModelFocus(event, index, modelRefs)
+                          moveModelFocus(event, index, flatModels.length, modelRefs)
                         }}
                         className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-[12px] transition disabled:cursor-wait disabled:opacity-60 ${
                           isActive
@@ -424,7 +461,7 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
                 || modelSettingsLoading
               }
               pending={modelContextPending !== undefined || modelSelectionPending}
-              error={modelSettingsError}
+              error={settingsMessage}
               onReasoningChange={(effort) => {
                 setModelReasoningEffort(selectedModelId, effort)
               }}

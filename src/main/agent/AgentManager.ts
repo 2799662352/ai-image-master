@@ -431,6 +431,8 @@ export class AgentManager {
    * transaction's finally handler from clearing a newer owner.
    */
   private contextTransitionOwner: symbol | null = null
+  /** True when rollback could not prove which Context config the backend uses. */
+  private contextRecoveryRequired = false
 
   constructor(opts: AgentManagerOptions) {
     this.win = opts.win
@@ -700,10 +702,13 @@ export class AgentManager {
       before: PersistedProvidersV1,
     ) => Promise<DesiredProviderMutation>,
   ): Promise<{ ok: true } & AgentProviderMutationResult> {
+    let capabilityReady = false
     const transaction = this.restartChain.then(async () => {
       const before = await this.providerStore.load()
       const previousAppliedId = this.activeProviderId
       const previousKey = this.codexApiKey
+      const previousEpoch = this.backend.currentEpoch?.()
+      const previousHealthy = this.backend.isHealthy()
       const previousProvider = resolveActiveProvider(
         previousAppliedId,
         before.customProviders,
@@ -731,18 +736,64 @@ export class AgentManager {
 
         this.activeProviderId = desired.activeId
         this.codexApiKey = nextKey
+        capabilityReady = true
         return {
           ok: true as const,
           activeId: desired.activeId,
           ...(providerGeneration !== undefined ? { providerGeneration } : {}),
         }
       } catch (error) {
+        const recoveryFailures: string[] = []
         try {
-          if (desiredPersisted) await this.providerStore.restore(before)
+          if (desiredPersisted) {
+            try {
+              await this.providerStore.restore(before)
+            } catch (restoreError) {
+              recoveryFailures.push(`store: ${errorMessage(restoreError)}`)
+            }
+          }
         } finally {
           this.activeProviderId = previousAppliedId
           this.codexApiKey = previousKey
           this.backend.setProvider?.(previousProvider)
+        }
+
+        if (previousHealthy) {
+          const oldGenerationStillHealthy =
+            previousEpoch !== undefined
+            && this.backend.currentEpoch?.() === previousEpoch
+            && this.backend.isHealthy()
+          if (!oldGenerationStillHealthy) {
+            const restart = this.backend.restartCodex?.bind(this.backend)
+            if (!restart) {
+              recoveryFailures.push('restart: Codex restart API is unavailable')
+            } else {
+              const recoveryEpoch = this.backend.currentEpoch?.()
+              try {
+                await this.restartBackendWithGenerationCheck(restart)
+                const restoredEpoch = this.backend.currentEpoch?.()
+                if (!this.backend.isHealthy()) {
+                  throw new Error('old Provider recovery completed without a healthy backend')
+                }
+                if (
+                  recoveryEpoch === undefined
+                  || restoredEpoch === undefined
+                  || restoredEpoch === recoveryEpoch
+                ) {
+                  throw new Error('old Provider recovery did not create a new backend generation')
+                }
+              } catch (recoveryError) {
+                recoveryFailures.push(`restart: ${errorMessage(recoveryError)}`)
+              }
+            }
+          }
+        }
+        capabilityReady = recoveryFailures.length === 0
+        if (recoveryFailures.length > 0) {
+          throw new Error(
+            `${errorMessage(error)}; Provider recovery failed: ${recoveryFailures.join('; ')}`,
+            { cause: error },
+          )
         }
         throw error
       }
@@ -755,7 +806,10 @@ export class AgentManager {
       () => undefined,
       () => undefined,
     )
-    this.providerCapabilityBarrier = this.restartChain.then(() => true)
+    this.providerCapabilityBarrier = transaction.then(
+      () => true,
+      () => capabilityReady,
+    )
     return transaction
   }
 
@@ -1090,13 +1144,11 @@ export class AgentManager {
   }
 
   async getModelSettingsCatalogRpc(): Promise<AgentModelSettingsCatalogResult> {
-    while (true) {
-      let providerBarrier = this.providerCapabilityBarrier
-      let providerReady = await providerBarrier
-      while (providerBarrier !== this.providerCapabilityBarrier) {
-        providerBarrier = this.providerCapabilityBarrier
-        providerReady = await providerBarrier
-      }
+    const maxOwnerAttempts = 3
+    for (let attempt = 1; attempt <= maxOwnerAttempts; attempt += 1) {
+      const providerBarrier = this.providerCapabilityBarrier
+      const providerReady = await providerBarrier
+      if (providerBarrier !== this.providerCapabilityBarrier) continue
 
       const provider = this.activeProviderId
       const backendEpoch = this.backend.currentEpoch?.()
@@ -1143,6 +1195,11 @@ export class AgentManager {
         return { ok: true, data: this.fallbackModelSettingsCatalog(provider) }
       }
     }
+    const provider = this.activeProviderId
+    console.warn(
+      `[AgentManager] model settings catalog owner changed ${maxOwnerAttempts} times; using fallback for ${provider}`,
+    )
+    return { ok: true, data: this.fallbackModelSettingsCatalog(provider) }
   }
 
   getModelContextConfigRpc(): Promise<AgentModelContextSnapshotResult> {
@@ -1174,6 +1231,8 @@ export class AgentManager {
       payload,
       model,
       attemptedConfig,
+      this.contextRecoveryRequired
+        && sameModelContextConfig(previousConfig, attemptedConfig),
     )
     if (validationError) {
       return Promise.resolve(this.modelContextFailure(
@@ -1210,7 +1269,10 @@ export class AgentManager {
       ))
     }
 
-    if (sameModelContextConfig(previousConfig, attemptedConfig)) {
+    if (
+      !this.contextRecoveryRequired
+      && sameModelContextConfig(previousConfig, attemptedConfig)
+    ) {
       return Promise.resolve({
         ok: true,
         data: {
@@ -1284,6 +1346,7 @@ export class AgentManager {
     payload: AgentModelContextApplyPayload,
     model: string,
     attemptedConfig: CodexModelContextConfig,
+    allowConfirmedRecovery = false,
   ): string | null {
     if (!model) return 'Model must be a non-empty string'
     if (!Number.isSafeInteger(payload.requestVersion) || payload.requestVersion < 0) {
@@ -1291,7 +1354,7 @@ export class AgentManager {
     }
     const allowed = modelContextOptions(model).some(
       (option) => option.value === attemptedConfig.modelContextWindow,
-    )
+    ) || allowConfirmedRecovery
     if (!allowed) {
       return `Context window ${String(payload.contextWindow)} is not supported for model ${model}`
     }
@@ -1304,6 +1367,7 @@ export class AgentManager {
     previousConfig: CodexModelContextConfig,
     attemptedConfig: CodexModelContextConfig,
   ): Promise<AgentModelContextApplyResult> {
+    const recoveryWasRequired = this.contextRecoveryRequired
     // A send admitted before this request may have published in-flight state
     // while this transaction was waiting behind it on the shared tail.
     if (this.backend.hasInFlightWork?.()) {
@@ -1407,6 +1471,7 @@ export class AgentManager {
       }
       // Never publish an in-memory confirmation before the atomic rename wins.
       this.runtimeSettings = cloneRuntimeSettings(confirmedSettings)
+      this.contextRecoveryRequired = false
       return {
         ok: true,
         data: {
@@ -1427,6 +1492,8 @@ export class AgentManager {
         codexThreadId,
         restartRequired: processMayUseTarget,
       })
+      this.contextRecoveryRequired =
+        !rollback.ok || (recoveryWasRequired && !processMayUseTarget)
       return this.modelContextFailure(
         payload,
         previousConfig,

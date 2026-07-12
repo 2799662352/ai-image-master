@@ -134,4 +134,25 @@ describe('TokenUsageMeter', () => {
     )
     expect(screen.getByRole('button').textContent).toContain('24%')
   })
+
+  it('sanitizes non-finite and negative token values before rendering', () => {
+    const { container } = render(
+      <TokenUsageMeter
+        usage={{
+          inputTokens: Number.NaN,
+          outputTokens: Number.POSITIVE_INFINITY,
+          contextUsage: -50,
+          contextWindow: Number.NEGATIVE_INFINITY,
+        }}
+        fallbackContextWindow={-1}
+      />,
+    )
+
+    const rendered = container.innerHTML
+    expect(rendered).not.toMatch(/NaN|Infinity/)
+    expect(screen.getByRole('button').getAttribute('aria-label')).toBe(
+      'Tokens used: in=0 out=0',
+    )
+    expect(container.querySelector('[stroke-dasharray]')).toBeNull()
+  })
 })

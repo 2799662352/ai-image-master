@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentModelSettingsCatalog } from '../../../../../types/agent'
 import { ModelPicker } from '../ModelPicker'
@@ -75,6 +75,7 @@ function setPickerState(
     modelContextPending: undefined,
     modelSettingsLoading: false,
     modelSettingsError: undefined,
+    modelSettingsPersistenceWarnings: {},
     collabModeKind: 'plan',
     collabModePendingByThread: {},
     isRunning: false,
@@ -98,6 +99,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  vi.restoreAllMocks()
   useAgentChatStore.setState(originalActions as never)
 })
 
@@ -143,7 +145,7 @@ describe('ModelPicker model settings integration', () => {
     render(<ModelPicker />)
     openPicker()
 
-    expect(screen.getByText(/能力未确认/)).toBeTruthy()
+    expect(screen.getByText(/模型可用性与能力未确认/)).toBeTruthy()
     expect(screen.getAllByText(/保守默认/).length).toBeGreaterThan(0)
   })
 
@@ -246,5 +248,57 @@ describe('ModelPicker model settings integration', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('listbox', { name: '模型列表' })).toBeNull()
     expect(document.activeElement).toBe(trigger)
+  })
+
+  it('restores trigger focus only after async model selection clears pending', async () => {
+    let releaseSelection!: () => void
+    const selectionGate = new Promise<void>((resolve) => {
+      releaseSelection = resolve
+    })
+    let focusFrame: FrameRequestCallback | undefined
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      focusFrame = callback
+      return 1
+    })
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined)
+    setSelectedModel.mockImplementation(async (modelId) => {
+      await selectionGate
+      useAgentChatStore.setState({ selectedModelId: modelId })
+    })
+    render(<ModelPicker />)
+    const trigger = screen.getByRole('button', { name: /选择模型/ })
+    openPicker()
+    fireEvent.click(screen.getByRole('option', { name: 'GPT-5.5' }))
+    expect((trigger as HTMLButtonElement).disabled).toBe(true)
+
+    await act(async () => {
+      releaseSelection()
+      await selectionGate
+    })
+    await waitFor(() => {
+      expect((trigger as HTMLButtonElement).disabled).toBe(false)
+      expect(screen.queryByRole('listbox', { name: '模型列表' })).toBeNull()
+    })
+    expect(document.activeElement).not.toBe(trigger)
+
+    act(() => {
+      focusFrame?.(performance.now())
+    })
+    expect(document.activeElement).toBe(trigger)
+  })
+
+  it('keeps keyboard navigation within the filtered flat model list', () => {
+    render(<ModelPicker />)
+    openPicker()
+    const search = screen.getByRole('textbox', { name: 'Search models' })
+    fireEvent.change(search, { target: { value: 'GPT-5.5' } })
+    fireEvent.keyDown(search, { key: 'ArrowDown' })
+    const onlyOption = screen.getByRole('option', { name: 'GPT-5.5' })
+    expect(document.activeElement).toBe(onlyOption)
+
+    fireEvent.keyDown(onlyOption, { key: 'End' })
+    expect(document.activeElement).toBe(onlyOption)
+    fireEvent.keyDown(onlyOption, { key: 'ArrowDown' })
+    expect(document.activeElement).toBe(onlyOption)
   })
 })

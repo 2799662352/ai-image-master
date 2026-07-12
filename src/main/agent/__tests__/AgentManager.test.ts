@@ -498,6 +498,55 @@ describe('AgentManager transactional provider application', () => {
     expect(persisted.selectedProviderId).toBe('apiyi')
   })
 
+  it('compensates an unhealthy failed Provider switch with a verified old generation', async () => {
+    let healthy = true
+    const backend = makeTransactionalBackend(async (call) => {
+      if (call === 1) {
+        healthy = false
+        throw new Error('stop-first replacement failed')
+      }
+      backend.epoch += 1
+      healthy = true
+    })
+    backend.isHealthy = () => healthy
+    const mgr = new AgentManager({ userDataDir: tmpDir, backend })
+
+    await expect(mgr.setActiveProvider('rightcode')).rejects.toThrow(
+      'stop-first replacement failed',
+    )
+
+    expect(backend.restartCalls).toBe(2)
+    expect(backend.configuredProviders).toEqual(['rightcode', 'apiyi'])
+    expect(backend.epoch).toBe(2)
+    expect(backend.isHealthy()).toBe(true)
+    await expect(
+      (mgr as unknown as { providerCapabilityBarrier: Promise<boolean> })
+        .providerCapabilityBarrier,
+    ).resolves.toBe(true)
+  })
+
+  it('marks Provider capabilities not ready when compensation restart also fails', async () => {
+    let healthy = true
+    const backend = makeTransactionalBackend(async (call) => {
+      healthy = false
+      if (call === 1) throw new Error('stop-first replacement failed')
+      throw new Error('old Provider recovery failed')
+    })
+    backend.isHealthy = () => healthy
+    const mgr = new AgentManager({ userDataDir: tmpDir, backend })
+
+    await expect(mgr.setActiveProvider('rightcode')).rejects.toThrow(
+      /stop-first replacement failed.*old Provider recovery failed/i,
+    )
+
+    expect(backend.restartCalls).toBe(2)
+    expect(backend.configuredProviders).toEqual(['rightcode', 'apiyi'])
+    await expect(
+      (mgr as unknown as { providerCapabilityBarrier: Promise<boolean> })
+        .providerCapabilityBarrier,
+    ).resolves.toBe(false)
+  })
+
   it('serializes rapid A then B transitions so B is the final applied Provider', async () => {
     const releases: Array<() => void> = []
     const backend = makeTransactionalBackend(async () => {

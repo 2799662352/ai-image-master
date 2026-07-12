@@ -314,15 +314,29 @@ function persistCanonicalModelId(id: string): boolean {
   }
 }
 
+function updateModelSettingsPersistenceWarning(
+  current: AgentChatState['modelSettingsPersistenceWarnings'],
+  kind: keyof AgentChatState['modelSettingsPersistenceWarnings'],
+  warning: string | undefined,
+): AgentChatState['modelSettingsPersistenceWarnings'] {
+  const next = { ...current }
+  if (warning) next[kind] = warning
+  else delete next[kind]
+  return next
+}
+
 interface RestoredModelSettings {
   selectedModelId: string
   modelReasoningEffortByModel: Record<string, ModelReasoningEffort>
   modelContextWindowByModel: Record<string, number>
+  persistenceWarnings: AgentChatState['modelSettingsPersistenceWarnings']
 }
 
 function restoreModelSettings(): RestoredModelSettings {
   const modelReasoningEffortByModel = readModelReasoningEfforts()
   const modelContextWindowByModel = readModelContextWindows()
+  const persistenceWarnings:
+    AgentChatState['modelSettingsPersistenceWarnings'] = {}
   let selectedModelId = DEFAULT_MODEL_ID
 
   try {
@@ -332,11 +346,18 @@ function restoreModelSettings(): RestoredModelSettings {
     if (canonical !== null && canonical !== undefined) {
       selectedModelId =
         canonical.trim().length > 0 ? canonical : DEFAULT_MODEL_ID
-      if (selectedModelId !== canonical) persistCanonicalModelId(selectedModelId)
+      if (
+        selectedModelId !== canonical
+        && !persistCanonicalModelId(selectedModelId)
+      ) {
+        persistenceWarnings.model =
+          '模型设置仅本次会话有效，未能持久化。'
+      }
       return {
         selectedModelId,
         modelReasoningEffortByModel,
         modelContextWindowByModel,
+        persistenceWarnings,
       }
     }
 
@@ -355,14 +376,20 @@ function restoreModelSettings(): RestoredModelSettings {
     if (needsLegacyEffortWrite) {
       modelReasoningEffortByModel[selectedModelId] = migrated.reasoningEffort
       if (!persistModelReasoningEfforts(modelReasoningEffortByModel)) {
+        persistenceWarnings.reasoning =
+          'Reasoning 设置仅本次会话有效，未能持久化。'
         return {
           selectedModelId,
           modelReasoningEffortByModel,
           modelContextWindowByModel,
+          persistenceWarnings,
         }
       }
     }
-    persistCanonicalModelId(selectedModelId)
+    if (!persistCanonicalModelId(selectedModelId)) {
+      persistenceWarnings.model =
+        '模型设置仅本次会话有效，未能持久化。'
+    }
   } catch {
     // Keep safe in-memory defaults when storage access itself is unavailable.
   }
@@ -371,6 +398,7 @@ function restoreModelSettings(): RestoredModelSettings {
     selectedModelId,
     modelReasoningEffortByModel,
     modelContextWindowByModel,
+    persistenceWarnings,
   }
 }
 
@@ -675,6 +703,10 @@ interface AgentChatState {
   modelSettingsError?: string
   /** Sticky fatal owner set when rollback cannot prove an effective backend config. */
   modelSettingsRecoveryRequired: boolean
+  modelSettingsPersistenceWarnings: Partial<Record<
+    'model' | 'reasoning' | 'context',
+    string
+  >>
   /** Invalidates older catalog/context bootstrap reads after Provider changes. */
   modelSettingsLoadGeneration: number
   /** Monotonic owner for model-context apply results. */
@@ -788,7 +820,7 @@ interface AgentChatState {
   setError: (error?: string) => void
   setSelectedModel: (modelId: string) => Promise<void>
   setModelReasoningEffort: (model: string, effort: ModelReasoningEffort) => void
-  setModelContextWindow: (contextWindow: number) => Promise<void>
+  setModelContextWindow: (contextWindow: number) => Promise<boolean>
   loadModelSettingsCatalog: (providerId?: string) => Promise<void>
   setSelectedImageChannel: (channelId: string) => void
   /** Compatibility alias used by the existing toggle until its UI task lands. */
@@ -997,6 +1029,18 @@ let modelSettingsLoadInflight:
   | { generation: number; promise: Promise<void> }
   | undefined
 
+interface ModelContextIntent {
+  set: SetAgentChatState
+  model: string
+  contextWindow: number
+  requestVersion: number
+  threadId?: string
+  resolve: (applied: boolean) => void
+}
+
+let activeModelContextIntent: ModelContextIntent | undefined
+let queuedModelContextIntent: ModelContextIntent | undefined
+
 export function formatContextApplyError(
   result: Extract<AgentModelContextApplyResult, { ok: false }>,
 ): string {
@@ -1012,6 +1056,7 @@ async function applyModelContextForModel(
   set: SetAgentChatState,
   model: string,
   contextWindow: number,
+  explicit = false,
 ): Promise<boolean> {
   if (
     !isSafeModelSettingsKey(model)
@@ -1026,6 +1071,7 @@ async function applyModelContextForModel(
   }
 
   const owner = get()
+  if (owner.modelSettingsRecoveryRequired && !explicit) return false
   const requestVersion = owner.modelContextRequestSequence + 1
   const pending = { model, contextWindow, requestVersion }
   set({
@@ -1036,43 +1082,76 @@ async function applyModelContextForModel(
       : { modelSettingsError: undefined }),
   })
 
+  return new Promise<boolean>((resolve) => {
+    const intent: ModelContextIntent = {
+      set,
+      model,
+      contextWindow,
+      requestVersion,
+      ...(owner.threadId ? { threadId: owner.threadId } : {}),
+      resolve,
+    }
+    if (activeModelContextIntent) {
+      queuedModelContextIntent?.resolve(false)
+      queuedModelContextIntent = intent
+      return
+    }
+    activeModelContextIntent = intent
+    void drainModelContextIntents()
+  })
+}
+
+async function executeModelContextIntent(
+  intent: ModelContextIntent,
+): Promise<{ applied: boolean; fatal: boolean }> {
+  const {
+    set,
+    model,
+    contextWindow,
+    requestVersion,
+    threadId,
+  } = intent
+  set((state) =>
+    state.modelSettingsRecoveryRequired
+      ? {}
+      : { modelSettingsError: undefined })
   const apply = (window as Window & { electronAPI?: AgentElectronApi })
     .electronAPI?.agent?.applyModelContext
   if (!apply) {
     set((state) =>
-      state.modelContextPending?.requestVersion === requestVersion
-        ? {
-            modelContextPending: undefined,
-            ...(state.modelSettingsRecoveryRequired
-              ? {}
-              : { modelSettingsError: 'Electron Context API 不可用。' }),
-          }
-        : {})
-    return false
+      ({
+        ...(state.modelContextPending?.requestVersion === requestVersion
+          ? { modelContextPending: undefined }
+          : {}),
+        ...(state.modelSettingsRecoveryRequired
+          ? {}
+          : { modelSettingsError: 'Electron Context API 不可用。' }),
+      }))
+    return { applied: false, fatal: false }
   }
 
   let result: AgentModelContextApplyResult
   try {
     result = await apply({
-      ...(owner.threadId ? { threadId: owner.threadId } : {}),
+      ...(threadId ? { threadId } : {}),
       model,
       contextWindow,
       requestVersion,
     })
   } catch (error) {
     set((state) =>
-      state.modelContextPending?.requestVersion === requestVersion
-        ? {
-            modelContextPending: undefined,
-            ...(state.modelSettingsRecoveryRequired
-              ? {}
-              : {
-                  modelSettingsError:
-                    error instanceof Error ? error.message : String(error),
-                }),
-          }
-        : {})
-    return false
+      ({
+        ...(state.modelContextPending?.requestVersion === requestVersion
+          ? { modelContextPending: undefined }
+          : {}),
+        ...(state.modelSettingsRecoveryRequired
+          ? {}
+          : {
+              modelSettingsError:
+                error instanceof Error ? error.message : String(error),
+            }),
+      }))
+    return { applied: false, fatal: false }
   }
 
   const resultVersion = result.ok
@@ -1080,25 +1159,30 @@ async function applyModelContextForModel(
     : result.requestVersion
   if (resultVersion !== requestVersion) {
     set((state) =>
-      state.modelContextPending?.requestVersion === requestVersion
-        ? {
-            modelContextPending: undefined,
-            ...(state.modelSettingsRecoveryRequired
-              ? {}
-              : { modelSettingsError: 'Context 响应版本不匹配，请重试。' }),
-          }
-        : {})
-    return false
+      ({
+        ...(state.modelContextPending?.requestVersion === requestVersion
+          ? { modelContextPending: undefined }
+          : {}),
+        ...(state.modelSettingsRecoveryRequired
+          ? {}
+          : { modelSettingsError: 'Context 响应版本不匹配，请重试。' }),
+      }))
+    return { applied: false, fatal: false }
   }
 
   let applied = false
+  let fatal = false
   set((state) => {
-    if (state.modelContextPending?.requestVersion !== requestVersion) return {}
+    const ownsPending =
+      state.modelContextPending?.requestVersion === requestVersion
     if (!result.ok) {
       const rollbackFailed =
         !result.rollback.ok && result.rollback.effectiveConfig === null
+      fatal = rollbackFailed
       return {
-        modelContextPending: undefined,
+        ...(ownsPending || rollbackFailed
+          ? { modelContextPending: undefined }
+          : {}),
         ...(result.rollback.ok
           ? {
               activeModelContextWindow:
@@ -1118,16 +1202,42 @@ async function applyModelContextForModel(
       ...state.modelContextWindowByModel,
       [model]: result.data.contextWindow,
     }
-    persistModelContextWindows(modelContextWindowByModel)
+    const persisted = persistModelContextWindows(modelContextWindowByModel)
     return {
       activeModelContextWindow: result.data.contextWindow,
       modelContextWindowByModel,
-      modelContextPending: undefined,
+      ...(ownsPending ? { modelContextPending: undefined } : {}),
       modelSettingsRecoveryRequired: false,
       modelSettingsError: undefined,
+      modelSettingsPersistenceWarnings: updateModelSettingsPersistenceWarning(
+        state.modelSettingsPersistenceWarnings,
+        'context',
+        persisted
+          ? undefined
+          : 'Context 设置仅本次会话有效，未能持久化。',
+      ),
     }
   })
-  return applied
+  return { applied, fatal }
+}
+
+async function drainModelContextIntents(): Promise<void> {
+  while (activeModelContextIntent) {
+    const intent = activeModelContextIntent
+    const outcome = await executeModelContextIntent(intent)
+    intent.resolve(outcome.applied)
+    if (outcome.fatal) {
+      queuedModelContextIntent?.resolve(false)
+      queuedModelContextIntent = undefined
+      activeModelContextIntent = undefined
+      return
+    }
+    // Let a model-switch caller commit the successfully applied model before
+    // the next queued Context IPC starts against that confirmed UI state.
+    await Promise.resolve()
+    activeModelContextIntent = queuedModelContextIntent
+    queuedModelContextIntent = undefined
+  }
 }
 
 function resolveOrdinaryModelSelection(
@@ -1811,6 +1921,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   modelContextPending: undefined,
   modelSettingsError: undefined,
   modelSettingsRecoveryRequired: false,
+  modelSettingsPersistenceWarnings: restoredModelSettings.persistenceWarnings,
   modelSettingsLoadGeneration: 0,
   modelContextRequestSequence: 0,
   selectedImageChannel: readPersistedImageChannel(),
@@ -2069,15 +2180,23 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         set,
         canonicalModel,
         targetContextWindow,
+        false,
       )
     ) {
       void get().loadCollaborationCapabilities()
       return
     }
 
-    persistCanonicalModelId(canonicalModel)
+    const persisted = persistCanonicalModelId(canonicalModel)
     set((state) => ({
       selectedModelId: canonicalModel,
+      modelSettingsPersistenceWarnings: updateModelSettingsPersistenceWarning(
+        state.modelSettingsPersistenceWarnings,
+        'model',
+        persisted
+          ? undefined
+          : '模型设置仅本次会话有效，未能持久化。',
+      ),
       ...(state.deferredPlanEffortIntent?.model !== canonicalModel
         ? { deferredPlanEffortIntent: undefined }
         : {}),
@@ -2091,8 +2210,17 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         ...state.modelReasoningEffortByModel,
         [model]: effort,
       }
-      persistModelReasoningEfforts(modelReasoningEffortByModel)
-      return { modelReasoningEffortByModel }
+      const persisted = persistModelReasoningEfforts(modelReasoningEffortByModel)
+      return {
+        modelReasoningEffortByModel,
+        modelSettingsPersistenceWarnings: updateModelSettingsPersistenceWarning(
+          state.modelSettingsPersistenceWarnings,
+          'reasoning',
+          persisted
+            ? undefined
+            : 'Reasoning 设置仅本次会话有效，未能持久化。',
+        ),
+      }
     })
   },
   setModelContextWindow: async (contextWindow) => {
@@ -2102,8 +2230,27 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       contextWindow === state.activeModelContextWindow
       && state.modelContextPending === undefined
       && !state.modelSettingsRecoveryRequired
-    ) return
-    await applyModelContextForModel(get, set, model, contextWindow)
+    ) {
+      set((current) => {
+        const modelContextWindowByModel = {
+          ...current.modelContextWindowByModel,
+          [model]: contextWindow,
+        }
+        const persisted = persistModelContextWindows(modelContextWindowByModel)
+        return {
+          modelContextWindowByModel,
+          modelSettingsPersistenceWarnings: updateModelSettingsPersistenceWarning(
+            current.modelSettingsPersistenceWarnings,
+            'context',
+            persisted
+              ? undefined
+              : 'Context 设置仅本次会话有效，未能持久化。',
+          ),
+        }
+      })
+      return true
+    }
+    return applyModelContextForModel(get, set, model, contextWindow, true)
   },
   loadModelSettingsCatalog: (providerId) => {
     const loadOwner = get()
@@ -2155,7 +2302,11 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
           && state.modelContextRequestSequence === contextRequestSequence
           && state.modelContextPending === undefined
 
-        if (catalogResult.ok && catalogResult.value.ok) {
+        if (!catalogResult.ok) {
+          errors.push(catalogResult.error)
+        } else if (!catalogResult.value.ok) {
+          errors.push(catalogResult.value.error)
+        } else {
           if (
             providerId !== undefined
             && catalogResult.value.data.provider !== providerId
@@ -2166,25 +2317,17 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
           } else {
             modelSettingsCatalog = catalogResult.value.data
           }
-        } else {
-          errors.push(
-            catalogResult.ok
-              ? catalogResult.value.error
-              : catalogResult.error,
-          )
         }
 
-        if (snapshotResult.ok && snapshotResult.value.ok) {
+        if (!snapshotResult.ok) {
+          errors.push(snapshotResult.error)
+        } else if (!snapshotResult.value.ok) {
+          errors.push(snapshotResult.value.error)
+        } else {
           if (contextOwnerStillCurrent) {
             activeModelContextWindow =
               snapshotResult.value.data.modelContextWindow
           }
-        } else {
-          errors.push(
-            snapshotResult.ok
-              ? snapshotResult.value.error
-              : snapshotResult.error,
-          )
         }
         const loadError = errors.length > 0
           ? errors.join('；')

@@ -196,6 +196,33 @@ describe('AgentManager model settings catalog and snapshot', () => {
     ])
   })
 
+  it('falls back after the bounded retry budget when backend ownership keeps drifting', async () => {
+    const backend = makeBackend([])
+    backend.listModels = async (params) => {
+      backend.modelCalls.push(params ?? {})
+      backend.epoch += 1
+      return {
+        data: [modelRow({
+          id: `stale-model-${backend.modelCalls.length}`,
+          model: `stale-model-${backend.modelCalls.length}`,
+        })],
+        nextCursor: null,
+      }
+    }
+    const manager = makeManager(backend)
+
+    const result = await manager.getModelSettingsCatalogRpc()
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        provider: 'apiyi',
+        source: 'fallback',
+      },
+    })
+    expect(backend.modelCalls).toHaveLength(3)
+  })
+
   it('maps exact runtime rows through shared provider policy', async () => {
     const backend = makeBackend([
       modelRow(),
