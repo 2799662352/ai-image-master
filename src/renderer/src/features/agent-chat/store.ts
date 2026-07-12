@@ -264,22 +264,30 @@ function readModelContextWindows(): Record<string, number> {
 
 function persistModelReasoningEfforts(
   efforts: Record<string, ModelReasoningEffort>,
-): void {
+): boolean {
   try {
-    globalThis.localStorage?.setItem(
+    const storage = globalThis.localStorage
+    if (!storage) return false
+    storage.setItem(
       MODEL_REASONING_STORAGE_KEY,
       JSON.stringify(efforts),
     )
+    return true
   } catch {
     // Storage is optional in private/restricted renderer contexts.
+    return false
   }
 }
 
-function persistCanonicalModelId(id: string): void {
+function persistCanonicalModelId(id: string): boolean {
   try {
-    globalThis.localStorage?.setItem(CANONICAL_SELECTED_MODEL_STORAGE_KEY, id)
+    const storage = globalThis.localStorage
+    if (!storage) return false
+    storage.setItem(CANONICAL_SELECTED_MODEL_STORAGE_KEY, id)
+    return true
   } catch {
     // localStorage unavailable (SSR / sandbox); silently ignore.
+    return false
   }
 }
 
@@ -299,7 +307,8 @@ function restoreModelSettings(): RestoredModelSettings {
       CANONICAL_SELECTED_MODEL_STORAGE_KEY,
     )
     if (canonical !== null && canonical !== undefined) {
-      selectedModelId = canonical.length > 0 ? canonical : DEFAULT_MODEL_ID
+      selectedModelId =
+        canonical.trim().length > 0 ? canonical : DEFAULT_MODEL_ID
       if (selectedModelId !== canonical) persistCanonicalModelId(selectedModelId)
       return {
         selectedModelId,
@@ -313,16 +322,22 @@ function restoreModelSettings(): RestoredModelSettings {
     )
     const migrated = migrateLegacyModelSelection(legacy || DEFAULT_MODEL_ID)
     selectedModelId = migrated.model || DEFAULT_MODEL_ID
-    if (
+    const needsLegacyEffortWrite =
       migrated.migrated
       && migrated.reasoningEffort !== 'auto'
       && !Object.prototype.hasOwnProperty.call(
         modelReasoningEffortByModel,
         selectedModelId,
       )
-    ) {
+    if (needsLegacyEffortWrite) {
       modelReasoningEffortByModel[selectedModelId] = migrated.reasoningEffort
-      persistModelReasoningEfforts(modelReasoningEffortByModel)
+      if (!persistModelReasoningEfforts(modelReasoningEffortByModel)) {
+        return {
+          selectedModelId,
+          modelReasoningEffortByModel,
+          modelContextWindowByModel,
+        }
+      }
     }
     persistCanonicalModelId(selectedModelId)
   } catch {
@@ -620,7 +635,10 @@ interface AgentChatState {
   selectedModelId: string
   /** Ordinary/default-mode reasoning preference, independently persisted per model. */
   modelReasoningEffortByModel: Record<string, ModelReasoningEffort>
-  /** Per-model context preference; backend application is intentionally separate. */
+  /**
+   * Read-only persistence scaffold for Task 5. Context write/application
+   * actions intentionally do not exist yet.
+   */
   modelContextWindowByModel: Record<string, number>
   /** User-selected image render channel (authoritative for generate_image). */
   selectedImageChannel: string

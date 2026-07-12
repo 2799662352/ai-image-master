@@ -58,20 +58,34 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
   const isApplyingRef = useRef(false)
   const focusLeftRootDuringApplyRef = useRef(false)
 
-  const selected = findModel(selectedModelId) ?? AGENT_MODELS[0]
+  const knownSelected = findModel(selectedModelId)
+  const unknownSelected = useMemo<ModelOption>(
+    () => ({
+      id: selectedModelId,
+      label: `Unknown · ${selectedModelId}`,
+      tier: 'Medium',
+      description: '当前 Provider 提供的未识别模型',
+    }),
+    [selectedModelId],
+  )
+  const selected = knownSelected ?? unknownSelected
+  const availableModels = useMemo(
+    () => knownSelected ? AGENT_MODELS : [unknownSelected, ...AGENT_MODELS],
+    [knownSelected, unknownSelected],
+  )
   const controlsDisabled = Boolean(disabled) || isRunning || hasPendingCollabMode
 
   // Filter + group
   const grouped = useMemo(() => {
     const q = query.trim().toLowerCase()
     const filtered = q
-      ? AGENT_MODELS.filter(
+      ? availableModels.filter(
           (m) =>
             m.label.toLowerCase().includes(q) ||
             m.id.toLowerCase().includes(q) ||
             m.description.toLowerCase().includes(q),
         )
-      : [...AGENT_MODELS]
+      : [...availableModels]
 
     const buckets = new Map<ModelTier, ModelOption[]>()
     for (const tier of TIER_ORDER) buckets.set(tier, [])
@@ -79,7 +93,7 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
     return TIER_ORDER
       .map((tier) => ({ tier, items: buckets.get(tier) ?? [] }))
       .filter((g) => g.items.length > 0)
-  }, [query])
+  }, [availableModels, query])
 
   function closePicker(restoreFocus: boolean): void {
     const root = rootRef.current

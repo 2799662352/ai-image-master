@@ -61,6 +61,12 @@ export function isModelReasoningEffort(value: unknown): value is ModelReasoningE
   )
 }
 
+export function isConcreteModelReasoningEffort(
+  value: unknown,
+): value is ConcreteModelReasoningEffort {
+  return isModelReasoningEffort(value) && value !== 'auto'
+}
+
 export function defaultContextWindowForModel(model: string): number {
   return VERIFIED_CONTEXTS.get(model) ?? UNKNOWN_MODEL_CONTEXT_WINDOW
 }

@@ -18,7 +18,9 @@ beforeEach(() => {
 
 afterEach(() => {
   localStorage.clear()
+  vi.restoreAllMocks()
   vi.resetModules()
+  delete (window as unknown as { electronAPI?: unknown }).electronAPI
 })
 
 describe('useAgentChatStore model settings persistence', () => {
@@ -45,6 +47,76 @@ describe('useAgentChatStore model settings persistence', () => {
     expect(localStorage.getItem(CANONICAL_SELECTED_MODEL_STORAGE_KEY)).toBe('gpt-5.5')
   })
 
+  it('retries legacy effort migration after its reasoning-map write hits quota', async () => {
+    localStorage.setItem(LEGACY_SELECTED_MODEL_STORAGE_KEY, 'gpt-5.5-xhigh')
+    const nativeSetItem = Storage.prototype.setItem
+    let failReasoningWrite = true
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
+      this: Storage,
+      key: string,
+      value: string,
+    ): void {
+      if (key === MODEL_REASONING_STORAGE_KEY && failReasoningWrite) {
+        throw new DOMException('Storage quota exceeded', 'QuotaExceededError')
+      }
+      nativeSetItem.call(this, key, value)
+    })
+
+    const firstStore = await loadFreshStore()
+
+    expect(firstStore.getState().modelReasoningEffortByModel).toEqual({
+      'gpt-5.5': 'xhigh',
+    })
+    expect(localStorage.getItem(MODEL_REASONING_STORAGE_KEY)).toBeNull()
+    expect(localStorage.getItem(CANONICAL_SELECTED_MODEL_STORAGE_KEY)).toBeNull()
+
+    failReasoningWrite = false
+    const secondStore = await loadFreshStore()
+
+    expect(secondStore.getState().selectedModelId).toBe('gpt-5.5')
+    expect(secondStore.getState().modelReasoningEffortByModel).toEqual({
+      'gpt-5.5': 'xhigh',
+    })
+    expect(JSON.parse(localStorage.getItem(MODEL_REASONING_STORAGE_KEY) ?? '{}')).toEqual({
+      'gpt-5.5': 'xhigh',
+    })
+    expect(localStorage.getItem(CANONICAL_SELECTED_MODEL_STORAGE_KEY)).toBe('gpt-5.5')
+  })
+
+  it('retries only the v2 boundary after its write fails', async () => {
+    localStorage.setItem(LEGACY_SELECTED_MODEL_STORAGE_KEY, 'gpt-5.5-xhigh')
+    const nativeSetItem = Storage.prototype.setItem
+    let failCanonicalWrite = true
+    let reasoningWrites = 0
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (
+      this: Storage,
+      key: string,
+      value: string,
+    ): void {
+      if (key === MODEL_REASONING_STORAGE_KEY) reasoningWrites += 1
+      if (key === CANONICAL_SELECTED_MODEL_STORAGE_KEY && failCanonicalWrite) {
+        throw new DOMException('Storage quota exceeded', 'QuotaExceededError')
+      }
+      nativeSetItem.call(this, key, value)
+    })
+
+    const firstStore = await loadFreshStore()
+    expect(firstStore.getState().modelReasoningEffortByModel).toEqual({
+      'gpt-5.5': 'xhigh',
+    })
+    expect(localStorage.getItem(CANONICAL_SELECTED_MODEL_STORAGE_KEY)).toBeNull()
+    expect(reasoningWrites).toBe(1)
+
+    failCanonicalWrite = false
+    const secondStore = await loadFreshStore()
+
+    expect(secondStore.getState().modelReasoningEffortByModel).toEqual({
+      'gpt-5.5': 'xhigh',
+    })
+    expect(localStorage.getItem(CANONICAL_SELECTED_MODEL_STORAGE_KEY)).toBe('gpt-5.5')
+    expect(reasoningWrites).toBe(1)
+  })
+
   it('treats a v2 effort-looking slug as canonical and never lets legacy storage override it', async () => {
     localStorage.setItem(CANONICAL_SELECTED_MODEL_STORAGE_KEY, 'gpt-5.5-xhigh')
     localStorage.setItem(LEGACY_SELECTED_MODEL_STORAGE_KEY, 'gpt-5.4-high')
@@ -55,6 +127,49 @@ describe('useAgentChatStore model settings persistence', () => {
     expect(store.getState().modelReasoningEffortByModel).toEqual({})
     expect(localStorage.getItem(CANONICAL_SELECTED_MODEL_STORAGE_KEY)).toBe('gpt-5.5-xhigh')
   })
+
+  it('preserves an unknown v2 slug across cold reload and sends that exact model', async () => {
+    localStorage.setItem(CANONICAL_SELECTED_MODEL_STORAGE_KEY, 'vendor-future-1m')
+    const sendMessage = vi.fn().mockResolvedValue({ threadId: 'thread-future' })
+    ;(window as unknown as { electronAPI: unknown }).electronAPI = {
+      agent: {
+        sendMessage,
+        cancel: vi.fn().mockResolvedValue(undefined),
+      },
+    }
+
+    const firstStore = await loadFreshStore()
+    expect(firstStore.getState().selectedModelId).toBe('vendor-future-1m')
+    const store = await loadFreshStore()
+    expect(store.getState().selectedModelId).toBe('vendor-future-1m')
+
+    store.setState({
+      input: 'future model request',
+      attachments: [],
+      pendingReferences: [],
+      messages: [],
+      isRunning: false,
+    } as never)
+    await store.getState().send()
+
+    expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      model: 'vendor-future-1m',
+    }))
+  })
+
+  it.each(['', '   '])(
+    'treats an empty or whitespace-only v2 slug %j as invalid without reviving legacy semantics',
+    async (canonicalModel) => {
+      localStorage.setItem(CANONICAL_SELECTED_MODEL_STORAGE_KEY, canonicalModel)
+      localStorage.setItem(LEGACY_SELECTED_MODEL_STORAGE_KEY, 'gpt-5.4-high')
+
+      const store = await loadFreshStore()
+
+      expect(store.getState().selectedModelId).toBe('gpt-5.5')
+      expect(store.getState().modelReasoningEffortByModel).toEqual({})
+      expect(localStorage.getItem(CANONICAL_SELECTED_MODEL_STORAGE_KEY)).toBe('gpt-5.5')
+    },
+  )
 
   it('preserves an existing per-model effort while migrating the legacy selected model', async () => {
     localStorage.setItem(LEGACY_SELECTED_MODEL_STORAGE_KEY, 'gpt-5.5-xhigh')

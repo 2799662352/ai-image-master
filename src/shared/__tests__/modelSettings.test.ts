@@ -3,6 +3,7 @@ import {
   EXPERIMENTAL_CONTEXT_WINDOW,
   UNKNOWN_MODEL_CONTEXT_WINDOW,
   defaultContextWindowForModel,
+  isConcreteModelReasoningEffort,
   isModelReasoningEffort,
   mergeModelSettingsCapabilities,
   migrateLegacyModelSelection,
@@ -84,6 +85,20 @@ describe('model settings capabilities', () => {
     'rejects unsupported model reasoning effort %j',
     (effort) => {
       expect(isModelReasoningEffort(effort)).toBe(false)
+    },
+  )
+
+  it.each(['low', 'medium', 'high', 'xhigh', 'max'])(
+    'accepts concrete model reasoning effort %s',
+    (effort) => {
+      expect(isConcreteModelReasoningEffort(effort)).toBe(true)
+    },
+  )
+
+  it.each(['auto', 'ultra', 'future-level', '', null, undefined, 1, true])(
+    'rejects non-concrete model reasoning effort %j',
+    (effort) => {
+      expect(isConcreteModelReasoningEffort(effort)).toBe(false)
     },
   )
 

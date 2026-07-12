@@ -62,7 +62,7 @@ const VALID_UPDATE: AgentCollaborationModeUpdatePayload = {
   threadId: 'thread-1',
   mode: 'plan',
   model: 'gpt-5.5',
-  defaultReasoningEffort: 'high',
+  defaultReasoningEffort: 'max',
   planReasoningEffort: 'xhigh',
   requestVersion: 7,
 }
@@ -141,6 +141,9 @@ describe('registerAgentIpc collaboration mode handlers', () => {
     ['model', { ...VALID_UPDATE, model: '' }, 7],
     ['mode', { ...VALID_UPDATE, mode: 'chat' }, 7],
     ['planReasoningEffort', { ...VALID_UPDATE, planReasoningEffort: 'ultra' }, 7],
+    ['defaultReasoningEffort', { ...VALID_UPDATE, defaultReasoningEffort: 'auto' }, 7],
+    ['defaultReasoningEffort', { ...VALID_UPDATE, defaultReasoningEffort: 'ultra' }, 7],
+    ['defaultReasoningEffort', { ...VALID_UPDATE, defaultReasoningEffort: 'future-level' }, 7],
     ['defaultReasoningEffort', { ...VALID_UPDATE, defaultReasoningEffort: 1 }, 7],
     ['requestVersion', { ...VALID_UPDATE, requestVersion: Number.POSITIVE_INFINITY }, 0],
     ['requestVersion', { ...VALID_UPDATE, requestVersion: -1 }, 0],

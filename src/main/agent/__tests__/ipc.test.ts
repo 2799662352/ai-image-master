@@ -185,6 +185,49 @@ describe('registerAgentIpc thread management handlers', () => {
     expect(result).toEqual({ threadId: 't1' })
   })
 
+  it.each([
+    ['agent:send-message', 'sendMessage'],
+    ['agent:turn-steer', 'steer'],
+  ] as const)(
+    '%s accepts concrete Max reasoning effort',
+    async (channel, managerMethod) => {
+      const payload = {
+        threadId: 't1',
+        content: 'use maximum ordinary reasoning',
+        attachments: [],
+        reasoningEffort: 'max',
+      }
+
+      await get(channel)!({}, payload)
+
+      expect(manager[managerMethod]).toHaveBeenCalledWith(payload)
+    },
+  )
+
+  it.each([
+    ['agent:send-message', 'sendMessage', 'auto'],
+    ['agent:send-message', 'sendMessage', 'ultra'],
+    ['agent:send-message', 'sendMessage', 'future-level'],
+    ['agent:send-message', 'sendMessage', 1],
+    ['agent:turn-steer', 'steer', 'auto'],
+    ['agent:turn-steer', 'steer', 'ultra'],
+    ['agent:turn-steer', 'steer', 'future-level'],
+    ['agent:turn-steer', 'steer', null],
+  ] as const)(
+    '%s rejects invalid ordinary reasoning effort %j',
+    async (channel, managerMethod, reasoningEffort) => {
+      const payload = {
+        threadId: 't1',
+        content: 'do not forward',
+        attachments: [],
+        reasoningEffort,
+      }
+
+      await expect(get(channel)!({}, payload)).rejects.toThrow(/reasoningEffort.*concrete/i)
+      expect(manager[managerMethod]).not.toHaveBeenCalled()
+    },
+  )
+
   it('registers agent:rename-thread and forwards id + title', async () => {
     const handler = get('agent:rename-thread')
     expect(handler).toBeTypeOf('function')

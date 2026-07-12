@@ -1,8 +1,10 @@
 import { ipcMain } from 'electron'
 import { isPlanReasoningEffort } from '../../shared/collaborationMode'
+import { isConcreteModelReasoningEffort } from '../../shared/modelSettings'
 import type {
   AgentCollaborationModeUpdatePayload,
   AgentCollaborationModeUpdateResult,
+  AgentSendMessagePayload,
   AgentToolResponse,
   CodexApprovalResponse,
   ImageTaskUpdate,
@@ -146,12 +148,14 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
     ipcMain.removeAllListeners(channel)
   }
 
-  ipcMain.handle('agent:send-message', async (_event, payload) =>
-    (await getManager()).sendMessage(payload),
-  )
-  ipcMain.handle('agent:turn-steer', async (_event, payload) =>
-    (await getManager()).steer(payload),
-  )
+  ipcMain.handle('agent:send-message', async (_event, payload: unknown) => {
+    const validated = validateAgentTurnPayload(payload, 'Send message')
+    return (await getManager()).sendMessage(validated)
+  })
+  ipcMain.handle('agent:turn-steer', async (_event, payload: unknown) => {
+    const validated = validateAgentTurnPayload(payload, 'Turn steer')
+    return (await getManager()).steer(validated)
+  })
   ipcMain.handle('agent:cancel', async (_event, payload) => {
     await (await getManager()).cancel(payload.threadId)
     return { success: true }
@@ -498,6 +502,25 @@ function validateApprovalResponse(payload: unknown): CodexApprovalResponse {
   }
 }
 
+function validateAgentTurnPayload(
+  value: unknown,
+  label: string,
+): AgentSendMessagePayload {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${label} payload must be an object`)
+  }
+  const input = value as Record<string, unknown>
+  if (
+    input.reasoningEffort !== undefined
+    && !isConcreteModelReasoningEffort(input.reasoningEffort)
+  ) {
+    throw new Error(
+      `${label} reasoningEffort must be a supported concrete model effort`,
+    )
+  }
+  return value as AgentSendMessagePayload
+}
+
 function validateThreadId(value: unknown): string {
   if (typeof value !== 'string' || value.trim().length === 0) {
     throw new Error('Codex thread id must be a non-empty string')
@@ -534,9 +557,11 @@ function validateCollaborationModeUpdate(value: unknown): AgentCollaborationMode
   }
   if (
     input.defaultReasoningEffort !== undefined &&
-    typeof input.defaultReasoningEffort !== 'string'
+    !isConcreteModelReasoningEffort(input.defaultReasoningEffort)
   ) {
-    throw new Error('Collaboration update defaultReasoningEffort must be a string when provided')
+    throw new Error(
+      'Collaboration update defaultReasoningEffort must be a supported concrete model effort',
+    )
   }
   if (
     typeof input.requestVersion !== 'number' ||

@@ -62,6 +62,25 @@ describe('ModelPicker canonical model rows', () => {
     expect(screen.queryByRole('option', { name: /GPT-5\.5 \(Extra High\)/ })).toBeNull()
   })
 
+  it('shows the exact current unknown slug in both trigger and option list', () => {
+    setPickerState({
+      selectedModelId: 'vendor-future-1m',
+      modelReasoningEffortByModel: {},
+    })
+    render(<ModelPicker />)
+
+    expect(screen.getByRole('button', {
+      name: /选择模型：Unknown · vendor-future-1m/,
+    })).toBeTruthy()
+    openPicker()
+
+    const unknownOption = screen.getByRole('option', {
+      name: 'Unknown · vendor-future-1m',
+    })
+    expect(unknownOption.getAttribute('aria-selected')).toBe('true')
+    expect(screen.getAllByText('vendor-future-1m').length).toBeGreaterThan(0)
+  })
+
   it.each(['plan', 'default'] as const)(
     'selects a real model directly in %s mode without mutating Plan effort',
     (collabModeKind) => {
