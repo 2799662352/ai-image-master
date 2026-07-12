@@ -38,12 +38,12 @@ const APIYI_PRESET: ProviderPreset = {
  * route-level 404 today, so the old `rightcode-pro` preset was removed (see
  * {@link RETIRED_RIGHTCODE_PRO_ID} for the store-side migration).
  *
- * Why we pin every flag explicitly:
- *  - `model="gpt-5.5"` + `model_reasoning_effort="xhigh"` mirror the docs'
- *    example config. gpt-5.2 was retired upstream on 2026-06-02 ("OpenAI 官方
- *    已下架 gpt-5.2 与 gpt-5.3-codex") — pinning it made every turn fail with
- *    model-not-found. Current 模型列表: gpt-5.4 family / gpt-5.5 /
- *    gpt-5.5-openai-compact.
+ * Why we pin these flags explicitly:
+ *  - `model="gpt-5.5"` mirrors the docs' model while reasoning effort is
+ *    intentionally omitted: Auto must leave ordinary turns unforced. gpt-5.2
+ *    was retired upstream on 2026-06-02 ("OpenAI 官方已下架 gpt-5.2 与
+ *    gpt-5.3-codex") — pinning it made every turn fail with model-not-found.
+ *    Current 模型列表: gpt-5.4 family / gpt-5.5 / gpt-5.5-openai-compact.
  *  - `disable_response_storage=true` follows the docs' privacy posture and
  *    matches what most OpenAI-compatible gateways expect (no upstream
  *    storage of inputs).
@@ -64,14 +64,13 @@ const RIGHTCODE_PRESET: ProviderPreset = {
   baseUrl: 'https://right.codes/codex/v1',
   envKey: 'OPENAI_API_KEY',
   model: 'gpt-5.5',
-  reasoningEffort: 'xhigh',
   verbosity: 'high',
   requiresOpenaiAuth: true,
   extraTopLevelConfig: Object.freeze({
     disable_response_storage: true,
     windows_wsl_setup_acknowledged: true,
   }),
-  description: 'Pro号池 0.4x · cache_read 1/10 输入价 · gpt-5.5 xhigh',
+  description: 'Pro号池 0.4x · cache_read 1/10 输入价',
 }
 
 /**

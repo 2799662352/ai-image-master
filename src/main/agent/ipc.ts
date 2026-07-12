@@ -527,9 +527,7 @@ function validateCollaborationModeUpdate(value: unknown): AgentCollaborationMode
     throw new Error('Collaboration update mode must be default or plan')
   }
   if (!isPlanReasoningEffort(input.planReasoningEffort)) {
-    throw new Error(
-      'Collaboration update planReasoningEffort must be auto, low, medium, high, or xhigh',
-    )
+    throw new Error('Collaboration update planReasoningEffort must be a supported Plan effort')
   }
   if (
     input.defaultReasoningEffort !== undefined &&

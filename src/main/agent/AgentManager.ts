@@ -43,11 +43,11 @@ import { discoverCodexSkills, readMcpSummary, readRawCodexConfig } from './codex
 import { mapReferencesToInputItems } from './codexUserInput'
 import { validateSessionConfigPatch } from './sessionConfigValidation'
 import {
-  normaliseSupportedPlanEfforts,
   resolvePlanReasoningEffort,
   type CollaborationModeKind,
   type PlanReasoningEffort,
 } from '../../shared/collaborationMode'
+import { mergeModelSettingsCapabilities } from '../../shared/modelSettings'
 import type {
   CodexCollaborationMode,
   CodexCollaborationModeMask,
@@ -112,7 +112,7 @@ const EMPTY_KEY_ERROR = '请在设置页填写 Codex Agent API Key'
  * the renderer-side `DEFAULT_MODEL_ID` in
  * `src/renderer/src/features/agent-chat/models.ts`.
  *
- * Provider-specific defaults (e.g. Right.Codes' `gpt-5.2` + `xhigh`) live in
+ * Provider-specific defaults (e.g. Right.Codes' `gpt-5.5` model) live in
  * `codexProviders.ts:BUILTIN_PROVIDER_PRESETS` and are wired through
  * `appendProviderArgs` — this constant is the renderer-facing fallback only.
  */
@@ -892,7 +892,7 @@ export class AgentManager {
   }
 
   async getCollaborationCapabilitiesRpc(
-    model: string,
+    modelId: string,
   ): Promise<AgentCollaborationCapabilitiesResult> {
     const fallback: AgentCollaborationCapabilitiesResult = {
       ok: true,
@@ -915,8 +915,17 @@ export class AgentManager {
         this.backend.listModels({ includeHidden: true }),
       ])
       const planPreset = presets.find((preset) => preset.mode === 'plan')
-      const modelRow = models.data.find((row) => row.id === model || row.model === model)
+      const modelRow = models.data.find((row) => row.id === modelId || row.model === modelId)
       if (!modelRow) return fallback
+      const model = modelRow.model
+      const modelSettings = mergeModelSettingsCapabilities({
+        model,
+        provider: this.activeProviderId,
+        defaultReasoningEffort: modelRow.defaultReasoningEffort,
+        supportedReasoningEfforts: modelRow.supportedReasoningEfforts.map(
+          (effort) => effort.reasoningEffort,
+        ),
+      })
       return {
         ok: true,
         data: {
@@ -924,9 +933,7 @@ export class AgentManager {
             'auto',
             planPreset?.reasoning_effort,
           ),
-          supportedPlanEfforts: normaliseSupportedPlanEfforts(
-            modelRow.supportedReasoningEfforts.map((effort) => effort.reasoningEffort),
-          ),
+          supportedPlanEfforts: modelSettings.supportedReasoningEfforts,
           source: 'codex',
         },
       }

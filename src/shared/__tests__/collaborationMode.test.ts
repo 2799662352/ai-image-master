@@ -20,6 +20,12 @@ describe('resolvePlanReasoningEffort', () => {
 })
 
 describe('normaliseSupportedPlanEfforts', () => {
+  it('keeps every model effort in canonical order and filters unknown values', () => {
+    expect(
+      normaliseSupportedPlanEfforts(['low', 'medium', 'high', 'xhigh', 'max', 'ultra']),
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+  })
+
   it('deduplicates known efforts in display order', () => {
     expect(normaliseSupportedPlanEfforts(['xhigh', 'low', 'low', 'medium'])).toEqual([
       'low',
@@ -34,7 +40,7 @@ describe('normaliseSupportedPlanEfforts', () => {
 })
 
 describe('isPlanReasoningEffort', () => {
-  it.each(['auto', 'low', 'medium', 'high', 'xhigh'])(
+  it.each(['auto', 'low', 'medium', 'high', 'xhigh', 'max'])(
     'accepts the known effort %s',
     (value) => {
       expect(isPlanReasoningEffort(value)).toBe(true)

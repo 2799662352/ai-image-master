@@ -139,7 +139,7 @@ describe('registerAgentIpc collaboration mode handlers', () => {
     ['threadId', { ...VALID_UPDATE, threadId: '  ' }, 7],
     ['model', { ...VALID_UPDATE, model: '' }, 7],
     ['mode', { ...VALID_UPDATE, mode: 'chat' }, 7],
-    ['planReasoningEffort', { ...VALID_UPDATE, planReasoningEffort: 'max' }, 7],
+    ['planReasoningEffort', { ...VALID_UPDATE, planReasoningEffort: 'ultra' }, 7],
     ['defaultReasoningEffort', { ...VALID_UPDATE, defaultReasoningEffort: 1 }, 7],
     ['requestVersion', { ...VALID_UPDATE, requestVersion: Number.POSITIVE_INFINITY }, 0],
     ['requestVersion', { ...VALID_UPDATE, requestVersion: -1 }, 0],
@@ -158,7 +158,7 @@ describe('registerAgentIpc collaboration mode handlers', () => {
     },
   )
 
-  it.each(['auto', 'low', 'medium', 'high', 'xhigh'] as const)(
+  it.each(['auto', 'low', 'medium', 'high', 'xhigh', 'max'] as const)(
     'accepts planReasoningEffort %s',
     async (planReasoningEffort) => {
       const payload = { ...VALID_UPDATE, planReasoningEffort }

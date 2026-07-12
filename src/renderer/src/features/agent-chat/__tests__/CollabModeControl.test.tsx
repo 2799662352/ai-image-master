@@ -142,6 +142,24 @@ describe('CollabModeControl', () => {
     expect(screen.queryByText(/turbo/i)).toBeNull()
   })
 
+  it('offers Max with its provider-aware description when capabilities support it', () => {
+    setControlState({
+      selectedModelId: 'gpt-5.6-sol',
+      collaborationCapabilities: {
+        planDefaultEffort: 'medium',
+        supportedPlanEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+        source: 'codex',
+      },
+      collaborationCapabilitiesModel: 'gpt-5.6-sol',
+    })
+    render(<CollabModeControl />)
+    fireEvent.click(screen.getByRole('button', { name: 'Plan 推理设置' }))
+
+    expect(screen.getByRole('option', { name: /Max/ }).textContent).toContain(
+      '最大推理深度；仅在当前模型与 Provider 支持时可用',
+    )
+  })
+
   it('labels fallback Auto honestly and exposes no concrete efforts without a catalog', () => {
     setControlState({
       collaborationCapabilities: {

@@ -456,6 +456,70 @@ describe('AgentManager collaboration mode effort isolation', () => {
 })
 
 describe('AgentManager collaboration capabilities', () => {
+  it('keeps Plan Max for Right Code gpt-5.6-sol through the shared provider policy', async () => {
+    const backend = makeCollaborationBackend({
+      listModes: async () => UPSTREAM_PRESETS,
+      listModels: async () => ({
+        data: [modelRow({
+          id: 'gpt-5.6-sol',
+          model: 'gpt-5.6-sol',
+          supportedReasoningEfforts: [
+            { reasoningEffort: 'ultra', description: 'unknown' },
+            { reasoningEffort: 'max', description: 'max' },
+            { reasoningEffort: 'xhigh', description: 'xhigh' },
+            { reasoningEffort: 'high', description: 'high' },
+            { reasoningEffort: 'medium', description: 'medium' },
+            { reasoningEffort: 'low', description: 'low' },
+          ],
+        })],
+        nextCursor: null,
+      }),
+    })
+    const manager = makeManager(backend)
+    await manager.setActiveProvider('rightcode')
+
+    await expect(manager.getCollaborationCapabilitiesRpc('gpt-5.6-sol')).resolves.toEqual({
+      ok: true,
+      data: {
+        planDefaultEffort: 'medium',
+        supportedPlanEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+        source: 'codex',
+      },
+    })
+  })
+
+  it('filters Plan Max for Right Code gpt-5.5 through the shared provider policy', async () => {
+    const backend = makeCollaborationBackend({
+      listModes: async () => UPSTREAM_PRESETS,
+      listModels: async () => ({
+        data: [modelRow({
+          id: 'gpt-5.5',
+          model: 'gpt-5.5',
+          supportedReasoningEfforts: [
+            { reasoningEffort: 'low', description: 'low' },
+            { reasoningEffort: 'medium', description: 'medium' },
+            { reasoningEffort: 'high', description: 'high' },
+            { reasoningEffort: 'xhigh', description: 'xhigh' },
+            { reasoningEffort: 'max', description: 'max' },
+            { reasoningEffort: 'ultra', description: 'unknown' },
+          ],
+        })],
+        nextCursor: null,
+      }),
+    })
+    const manager = makeManager(backend)
+    await manager.setActiveProvider('rightcode')
+
+    await expect(manager.getCollaborationCapabilitiesRpc('gpt-5.5')).resolves.toEqual({
+      ok: true,
+      data: {
+        planDefaultEffort: 'medium',
+        supportedPlanEfforts: ['low', 'medium', 'high', 'xhigh'],
+        source: 'codex',
+      },
+    })
+  })
+
   it('combines the Plan preset with normalized model capabilities matched by canonical model', async () => {
     const backend = makeCollaborationBackend({
       listModes: async () => UPSTREAM_PRESETS,

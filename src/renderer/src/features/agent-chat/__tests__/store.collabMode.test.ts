@@ -1687,13 +1687,13 @@ describe('thread isolation and restart persistence', () => {
     expect(freshStore.getState().collabModeRestoredByThread).toEqual({ persisted: true })
   })
 
-  it('drops malformed and unknown localStorage values safely', async () => {
+  it('restores persisted Max while dropping malformed and unknown thread modes safely', async () => {
     localStorage.setItem(PLAN_EFFORT_STORAGE_KEY, 'max')
     localStorage.setItem(THREAD_MODE_STORAGE_KEY, '{"good":"plan","bad":"unknown"}')
     vi.resetModules()
     const { useAgentChatStore: freshStore } = await import('../store')
 
-    expect(freshStore.getState().planReasoningEffort).toBe('auto')
+    expect(freshStore.getState().planReasoningEffort).toBe('max')
     expect(freshStore.getState().collabModeByThread).toEqual({ good: 'plan' })
 
     localStorage.setItem(THREAD_MODE_STORAGE_KEY, '{broken')

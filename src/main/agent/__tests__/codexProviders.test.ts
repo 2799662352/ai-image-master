@@ -26,8 +26,9 @@ describe('codexProviders', () => {
     // gpt-5.2 was retired upstream (site announcement 2026-06-02); the docs
     // example now pins gpt-5.5.
     expect(rc!.model).toBe('gpt-5.5')
-    expect(rc!.reasoningEffort).toBe('xhigh')
+    expect(rc).not.toHaveProperty('reasoningEffort')
     expect(rc!.verbosity).toBe('high')
+    expect(rc!.description).toBe('Pro号池 0.4x · cache_read 1/10 输入价')
     expect(rc!.requiresOpenaiAuth).toBe(true)
     expect(rc!.extraTopLevelConfig?.disable_response_storage).toBe(true)
     expect(rc!.extraTopLevelConfig?.windows_wsl_setup_acknowledged).toBe(true)
