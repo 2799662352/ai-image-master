@@ -1101,7 +1101,8 @@ export class AgentManager {
       const provider = this.activeProviderId
       const backendEpoch = this.backend.currentEpoch?.()
       const ownerStillCurrent = (): boolean =>
-        this.activeProviderId === provider
+        this.providerCapabilityBarrier === providerBarrier
+        && this.activeProviderId === provider
         && (
           backendEpoch === undefined
           || this.backend.currentEpoch?.() === backendEpoch

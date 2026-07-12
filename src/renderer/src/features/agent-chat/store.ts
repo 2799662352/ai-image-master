@@ -1001,7 +1001,8 @@ export function formatContextApplyError(
   if (result.rollback.ok) {
     return `Context 应用失败：${result.error}；已恢复原 Context。`
   }
-  return `Context 应用失败：${result.error}；回滚失败，请手动重启 Codex 后再继续。`
+  return `Context 应用失败：${result.error}；回滚失败：${result.rollback.error}；`
+    + '请手动重启 Agent Workspace/Codex。'
 }
 
 async function applyModelContextForModel(
@@ -2080,7 +2081,10 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     await applyModelContextForModel(get, set, model, contextWindow)
   },
   loadModelSettingsCatalog: (providerId) => {
-    const generation = get().modelSettingsLoadGeneration
+    const loadOwner = get()
+    const generation = loadOwner.modelSettingsLoadGeneration
+    const contextRequestSequence = loadOwner.modelContextRequestSequence
+    const contextPendingAtLoad = loadOwner.modelContextPending?.requestVersion
     if (modelSettingsLoadInflight?.generation === generation) {
       return modelSettingsLoadInflight.promise
     }
@@ -2100,17 +2104,19 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
           return Promise.reject(error)
         }
       }
-      const catalogPromise = invoke(
-        agent?.getModelSettingsCatalog,
-        'Model settings catalog',
-      )
-      const snapshotPromise = invoke(
-        agent?.getModelContextConfig,
-        'Model context snapshot',
-      )
-      const [catalogResult, snapshotResult] = await Promise.allSettled([
-        catalogPromise,
-        snapshotPromise,
+      const safeInvoke = async <T>(
+        operation: (() => Promise<T>) | undefined,
+        label: string,
+      ): Promise<{ ok: true; value: T } | { ok: false; error: string }> => {
+        try {
+          return { ok: true, value: await invoke(operation, label) }
+        } catch (error) {
+          return { ok: false, error: errorMessage(error) }
+        }
+      }
+      const [catalogResult, snapshotResult] = await Promise.all([
+        safeInvoke(agent?.getModelSettingsCatalog, 'Model settings catalog'),
+        safeInvoke(agent?.getModelContextConfig, 'Model context snapshot'),
       ])
       if (get().modelSettingsLoadGeneration !== generation) return
 
@@ -2120,7 +2126,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         let modelSettingsCatalog = state.modelSettingsCatalog
         let activeModelContextWindow = state.activeModelContextWindow
 
-        if (catalogResult.status === 'fulfilled' && catalogResult.value.ok) {
+        if (catalogResult.ok && catalogResult.value.ok) {
           if (
             providerId !== undefined
             && catalogResult.value.data.provider !== providerId
@@ -2133,20 +2139,26 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
           }
         } else {
           errors.push(
-            catalogResult.status === 'rejected'
-              ? errorMessage(catalogResult.reason)
-              : catalogResult.value.error,
+            catalogResult.ok
+              ? catalogResult.value.error
+              : catalogResult.error,
           )
         }
 
-        if (snapshotResult.status === 'fulfilled' && snapshotResult.value.ok) {
-          activeModelContextWindow =
-            snapshotResult.value.data.modelContextWindow
+        if (snapshotResult.ok && snapshotResult.value.ok) {
+          const snapshotStillOwnsContext =
+            contextPendingAtLoad === undefined
+            && state.modelContextRequestSequence === contextRequestSequence
+            && state.modelContextPending === undefined
+          if (snapshotStillOwnsContext) {
+            activeModelContextWindow =
+              snapshotResult.value.data.modelContextWindow
+          }
         } else {
           errors.push(
-            snapshotResult.status === 'rejected'
-              ? errorMessage(snapshotResult.reason)
-              : snapshotResult.value.error,
+            snapshotResult.ok
+              ? snapshotResult.value.error
+              : snapshotResult.error,
           )
         }
 

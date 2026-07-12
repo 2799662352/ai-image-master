@@ -146,6 +146,56 @@ describe('AgentManager model settings catalog and snapshot', () => {
     ])
   })
 
+  it('discards a model/list response when a Provider transition queues before it returns', async () => {
+    let releaseFirst!: () => void
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    const backend = makeBackend([])
+    backend.listModels = async (params) => {
+      backend.modelCalls.push(params ?? {})
+      if (backend.modelCalls.length === 1) {
+        await firstGate
+        return {
+          data: [modelRow({
+            id: 'old-provider-model',
+            model: 'old-provider-model',
+          })],
+          nextCursor: null,
+        }
+      }
+      return {
+        data: [modelRow({
+          id: 'rightcode-model',
+          model: 'rightcode-model',
+        })],
+        nextCursor: null,
+      }
+    }
+    const manager = makeManager(backend)
+
+    const pendingCatalog = manager.getModelSettingsCatalogRpc()
+    await vi.waitFor(() => {
+      expect(backend.modelCalls).toHaveLength(1)
+    })
+    const switching = manager.setActiveProvider('rightcode')
+    releaseFirst()
+
+    await switching
+    await expect(pendingCatalog).resolves.toMatchObject({
+      ok: true,
+      data: {
+        provider: 'rightcode',
+        source: 'codex',
+        models: [{ id: 'rightcode-model' }],
+      },
+    })
+    expect(backend.modelCalls).toEqual([
+      { includeHidden: false },
+      { includeHidden: false },
+    ])
+  })
+
   it('maps exact runtime rows through shared provider policy', async () => {
     const backend = makeBackend([
       modelRow(),

@@ -39,6 +39,10 @@ type AgentEventApi = {
   }
 }
 
+function isValidContextWindow(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) > 0
+}
+
 export function AgentChatPanel() {
   const isOpen = useAgentChatStore((state) => state.isOpen)
   const messages = useAgentChatStore((state) => state.messages)
@@ -76,6 +80,9 @@ export function AgentChatPanel() {
   )
   const modelContextWindowByModel = useAgentChatStore(
     (state) => state.modelContextWindowByModel,
+  )
+  const activeModelContextWindow = useAgentChatStore(
+    (state) => state.activeModelContextWindow,
   )
   const fxOpen = useFileExplorerStore((state) => state.fxOpen)
   const toggleFx = useFileExplorerStore((state) => state.toggleFx)
@@ -187,10 +194,16 @@ export function AgentChatPanel() {
   const runtimeModel = modelSettingsCatalog?.models.find(
     (model) => model.id === canonicalModel,
   )
-  const fallbackContextWindow =
-    modelContextWindowByModel[canonicalModel]
-    ?? runtimeModel?.capabilities.defaultContextWindow
-    ?? defaultContextWindowForModel(canonicalModel)
+  const rememberedContextWindow = modelContextWindowByModel[canonicalModel]
+  const runtimeDefaultContextWindow =
+    runtimeModel?.capabilities.defaultContextWindow
+  const fallbackContextWindow = isValidContextWindow(activeModelContextWindow)
+    ? activeModelContextWindow
+    : isValidContextWindow(rememberedContextWindow)
+      ? rememberedContextWindow
+      : isValidContextWindow(runtimeDefaultContextWindow)
+        ? runtimeDefaultContextWindow
+        : defaultContextWindowForModel(canonicalModel)
 
   if (!isOpen) {
     return (

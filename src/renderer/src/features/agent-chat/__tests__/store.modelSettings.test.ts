@@ -421,6 +421,78 @@ describe('useAgentChatStore model settings lifecycle', () => {
     expect(store.getState().activeModelContextWindow).toBe(1_000_000)
   })
 
+  it('does not let an older context snapshot overwrite a newer successful apply', async () => {
+    const catalogResult = deferred<AgentModelSettingsCatalogResult>()
+    const snapshotResult = deferred<AgentModelContextSnapshotResult>()
+    const applyResult = deferred<AgentModelContextApplyResult>()
+    installModelSettingsApi({
+      getModelSettingsCatalog: vi.fn(() => catalogResult.promise),
+      getModelContextConfig: vi.fn(() => snapshotResult.promise),
+      applyModelContext: vi.fn(() => applyResult.promise),
+    })
+    const store = await loadFreshStore()
+    store.setState({
+      selectedModelId: 'gpt-5.6-sol',
+      activeModelContextWindow: 372_000,
+      modelContextWindowByModel: {},
+    } as never)
+
+    const loading = store.getState().loadModelSettingsCatalog()
+    const applying = store.getState().setModelContextWindow(1_000_000)
+    applyResult.resolve({
+      ok: true,
+      data: {
+        model: 'gpt-5.6-sol',
+        contextWindow: 1_000_000,
+        autoCompactTokenLimit: 900_000,
+        threadRestored: false,
+        requestVersion: 1,
+      },
+    })
+    await applying
+    expect(store.getState().activeModelContextWindow).toBe(1_000_000)
+
+    catalogResult.resolve({ ok: true, data: modelCatalog() })
+    snapshotResult.resolve({
+      ok: true,
+      data: {
+        modelContextWindow: 372_000,
+        modelAutoCompactTokenLimit: 334_800,
+      },
+    })
+    await loading
+
+    expect(store.getState().modelSettingsCatalog).toEqual(modelCatalog())
+    expect(store.getState().activeModelContextWindow).toBe(1_000_000)
+  })
+
+  it('preserves both apply and rollback errors in the manual-restart message', async () => {
+    const { formatContextApplyError } = await import('../store')
+
+    expect(formatContextApplyError({
+      ok: false,
+      error: 'restart failed',
+      stage: 'restart',
+      previousConfig: {
+        modelContextWindow: 372_000,
+        modelAutoCompactTokenLimit: 334_800,
+      },
+      attemptedConfig: {
+        modelContextWindow: 1_000_000,
+        modelAutoCompactTokenLimit: 900_000,
+      },
+      requestVersion: 1,
+      rollback: {
+        ok: false,
+        error: 'rollback restart failed',
+        effectiveConfig: null,
+      },
+    })).toBe(
+      'Context 应用失败：restart failed；回滚失败：rollback restart failed；'
+      + '请手动重启 Agent Workspace/Codex。',
+    )
+  })
+
   it('commits and persists context only after matching request success', async () => {
     const apply = deferred<AgentModelContextApplyResult>()
     const applyModelContext = vi.fn(() => apply.promise)
