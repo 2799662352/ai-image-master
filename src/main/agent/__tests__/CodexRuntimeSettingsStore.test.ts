@@ -18,8 +18,8 @@ import {
 const DEFAULT_SETTINGS: PersistedCodexRuntimeSettingsV1 = {
   version: 1,
   confirmed: {
-    modelContextWindow: 200_000,
-    modelAutoCompactTokenLimit: 180_000,
+    modelContextWindow: 272_000,
+    modelAutoCompactTokenLimit: 244_800,
   },
 }
 
@@ -37,7 +37,7 @@ describe('CodexRuntimeSettingsStore', () => {
     rmSync(userDataDir, { recursive: true, force: true })
   })
 
-  it('returns the fresh 200K/180K default when the file does not exist', () => {
+  it('returns the default model 272K/244800 config when the file does not exist', () => {
     const store = new CodexRuntimeSettingsStore(userDataDir)
 
     expect(store.loadSync()).toEqual(DEFAULT_SETTINGS)

@@ -198,6 +198,8 @@ describe('useAgentChatStore selected model', () => {
   beforeEach(() => {
     localStorage.clear()
     useAgentChatStore.setState({
+      selectedModelId: DEFAULT_MODEL_ID,
+      activeModelContextWindow: 372_000,
       modelReasoningEffortByModel: {},
       modelContextWindowByModel: {},
     } as never)
@@ -208,8 +210,8 @@ describe('useAgentChatStore selected model', () => {
     expect(useAgentChatStore.getState().selectedModelId).toBe(DEFAULT_MODEL_ID)
   })
 
-  it('persists setSelectedModel to localStorage', () => {
-    useAgentChatStore.getState().setSelectedModel('gpt-5.6-sol')
+  it('persists setSelectedModel to localStorage', async () => {
+    await useAgentChatStore.getState().setSelectedModel('gpt-5.6-sol')
     expect(useAgentChatStore.getState().selectedModelId).toBe('gpt-5.6-sol')
     expect(localStorage.getItem('agent.selectedModel:v2')).toBe('gpt-5.6-sol')
     expect(localStorage.getItem('catimation.agent.selectedModel')).toBeNull()
@@ -291,6 +293,69 @@ describe('useAgentChatStore selected model', () => {
     const payload = sendMessage.mock.calls[0][0]
     expect(payload.model).toBe('gpt-5.6-sol')
     expect(Object.prototype.hasOwnProperty.call(payload, 'reasoningEffort')).toBe(false)
+  })
+
+  it('restores a new-thread draft when send is rejected before admission', async () => {
+    const sendMessage = vi.fn().mockRejectedValue(
+      new Error('Codex context settings are being applied'),
+    )
+    ;(window as any).electronAPI = {
+      agent: {
+        sendMessage,
+        cancel: vi.fn().mockResolvedValue(undefined),
+      },
+    }
+    useAgentChatStore.setState({
+      threadId: undefined,
+      input: 'keep this draft',
+      attachments: [],
+      messages: [],
+      isRunning: false,
+      selectedModelId: 'gpt-5.6-sol',
+      modelReasoningEffortByModel: {},
+    })
+
+    await useAgentChatStore.getState().send()
+
+    expect(useAgentChatStore.getState()).toMatchObject({
+      threadId: undefined,
+      input: 'keep this draft',
+      messages: [],
+      isRunning: false,
+      error: 'Codex context settings are being applied',
+    })
+  })
+
+  it('removes the optimistic steer bubble when admission is rejected', async () => {
+    const steer = vi.fn().mockRejectedValue(
+      new Error('模型上下文配置正在切换，请稍后重试。'),
+    )
+    ;(window as any).electronAPI = {
+      agent: {
+        steer,
+        sendMessage: vi.fn(),
+        cancel: vi.fn().mockResolvedValue(undefined),
+      },
+    }
+    useAgentChatStore.setState({
+      threadId: 'thread-steer',
+      input: 'keep this interjection',
+      attachments: [],
+      pendingReferences: [],
+      messages: [],
+      isRunning: true,
+      selectedModelId: 'gpt-5.6-sol',
+      modelReasoningEffortByModel: {},
+    })
+
+    await useAgentChatStore.getState().steer()
+
+    expect(useAgentChatStore.getState()).toMatchObject({
+      input: 'keep this interjection',
+      messages: [],
+      isRunning: true,
+      error: '模型上下文配置正在切换，请稍后重试。',
+    })
   })
 })
 

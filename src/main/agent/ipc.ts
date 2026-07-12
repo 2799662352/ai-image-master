@@ -398,7 +398,7 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
     try {
       const validated = validateWorkspaceId(id, 'Provider id')
       const result = await (await getManager()).setActiveProvider(validated)
-      return { ok: true as const, ...result }
+      return result
     } catch (err) {
       return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
     }
@@ -412,7 +412,7 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
           validated,
           typeof key === 'string' ? key : '',
         )
-        return { ok: true as const, ...result }
+        return result
       } catch (err) {
         return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
       }
@@ -438,7 +438,7 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
           validatedId,
           validatedPatch,
         )
-        return { ok: true as const, ...result }
+        return result
       } catch (err) {
         return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
       }
@@ -448,7 +448,7 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
     try {
       const validated = validateWorkspaceId(id, 'Provider id')
       const result = await (await getManager()).removeCustomProvider(validated)
-      return { ok: true as const, ...result }
+      return result
     } catch (err) {
       return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
     }

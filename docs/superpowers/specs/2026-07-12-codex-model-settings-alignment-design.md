@@ -1,7 +1,7 @@
 # Codex 模型设置对齐设计
 
 日期：2026-07-12  
-状态：已获用户批准，待书面审阅  
+状态：已实现并验证
 基线：Codex CLI / app-server 0.144.1，应用版本分支 `release/v4.3.94`
 
 ## 目标
@@ -309,6 +309,21 @@ Provider 在后续大上下文 turn 中报 413/上下文超限时：
 9. 旧模型选择偏好迁移后不丢失。
 10. 相关 Vitest、agent-chat/main-agent 回归、lint、typecheck 与 `build:vite`
     使用新鲜命令验证；Electron E2E 的已知基线失败单独报告。
+
+## 实现验证（2026-07-13）
+
+- 模型设置聚焦回归：22 个测试文件，588/588 通过。
+- Agent Chat：89 个测试文件，711/711 通过。
+- Main Agent：80 个测试文件、866 个测试通过；唯一未收集套件
+  `firstPartySkills.test.ts` 的 Vite 8 shebang 解析失败已在基线提交
+  `150048c` 精确复现。
+- Preload：2 个测试文件，4/4 通过。
+- `thread/resume` 真实 bundled CLI 冒烟：generation A 写入非空 rollout，
+  generation B 成功恢复同一 thread id。
+- Context 冒烟：`372000` / `334800` 通过生产 getter 与 `config/read`
+  往返确认，输出 `SMOKE_CONTEXT_OK`。
+- `typecheck:evals` 与 `build:vite` 通过。全仓 `typecheck` 仍返回基线
+  既有错误；当前分支与 `150048c` 均输出 955 行同类诊断，改动文件未新增类型错误。
 
 ## 风险
 

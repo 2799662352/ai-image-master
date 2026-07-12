@@ -293,8 +293,8 @@ describe('AgentManager model settings catalog and snapshot', () => {
     expect(first).toEqual({
       ok: true,
       data: {
-        modelContextWindow: 200_000,
-        modelAutoCompactTokenLimit: 180_000,
+        modelContextWindow: 272_000,
+        modelAutoCompactTokenLimit: 244_800,
         recoveryRequired: false,
       },
     })
@@ -304,8 +304,8 @@ describe('AgentManager model settings catalog and snapshot', () => {
     await expect(manager.getModelContextConfigRpc()).resolves.toEqual({
       ok: true,
       data: {
-        modelContextWindow: 200_000,
-        modelAutoCompactTokenLimit: 180_000,
+        modelContextWindow: 272_000,
+        modelAutoCompactTokenLimit: 244_800,
         recoveryRequired: false,
       },
     })

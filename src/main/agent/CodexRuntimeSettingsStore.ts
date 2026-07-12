@@ -24,8 +24,8 @@ const SETTINGS_VERSION = 1 as const
 const SETTINGS_FILENAME = 'codex-runtime-settings.json'
 const replaceRenameTails = new Map<string, Promise<void>>()
 const DEFAULT_MODEL_CONTEXT_CONFIG: Readonly<CodexModelContextConfig> = {
-  modelContextWindow: 200_000,
-  modelAutoCompactTokenLimit: 180_000,
+  modelContextWindow: 272_000,
+  modelAutoCompactTokenLimit: 244_800,
 }
 
 export interface PersistedCodexRuntimeSettingsV1 {

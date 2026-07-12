@@ -11,8 +11,8 @@ import type {
 
 export const DEFAULT_LISTEN_URL = 'ws://127.0.0.1:7345'
 export const DEFAULT_CODEX_MODEL_CONTEXT_CONFIG: Readonly<CodexModelContextConfig> = Object.freeze({
-  modelContextWindow: 200_000,
-  modelAutoCompactTokenLimit: 180_000,
+  modelContextWindow: 272_000,
+  modelAutoCompactTokenLimit: 244_800,
 })
 
 const RESERVED_PROVIDER_TOP_LEVEL_KEYS = new Set([

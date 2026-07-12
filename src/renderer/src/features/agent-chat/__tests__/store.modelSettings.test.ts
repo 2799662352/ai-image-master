@@ -111,6 +111,13 @@ afterEach(() => {
 })
 
 describe('useAgentChatStore model settings persistence', () => {
+  it('initializes the active Context from the selected default model', async () => {
+    const store = await loadFreshStore()
+
+    expect(store.getState().selectedModelId).toBe('gpt-5.5')
+    expect(store.getState().activeModelContextWindow).toBe(272_000)
+  })
+
   it('migrates a legacy effort picker id and immediately establishes the v2 boundary', async () => {
     localStorage.setItem(LEGACY_SELECTED_MODEL_STORAGE_KEY, 'gpt-5.5-xhigh')
 

@@ -22,10 +22,13 @@
 
 import { spawn, type ChildProcess } from 'node:child_process'
 import { promises as fs } from 'node:fs'
+import { createServer } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import WebSocket from 'ws'
+import { seedApiyiMcpEntry } from '../../src/main/agent/apiyiMcpSeed'
 import { buildCodexLaunchArgs, type CodexProviderConfig } from '../../src/main/agent/codexLaunch'
+import { seedCinematographyKbMcpEntry } from '../../src/main/agent/cinematographyKbMcpSeed'
 
 export const CONNECT_TIMEOUT_MS = 15_000
 export const RPC_TIMEOUT_MS = 20_000
@@ -35,6 +38,42 @@ export const DEFAULT_SECRET = 'BANANA-42'
 export type Logger = (msg: string) => void
 
 const noop: Logger = () => undefined
+
+async function allocateFreeLoopbackPort(): Promise<number> {
+  return await new Promise<number>((resolve, reject) => {
+    const server = createServer()
+    server.unref()
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address()
+      if (!address || typeof address === 'string') {
+        server.close()
+        reject(new Error('Could not resolve an ephemeral loopback port'))
+        return
+      }
+      server.close((error) => {
+        if (error) reject(error)
+        else resolve(address.port)
+      })
+    })
+  })
+}
+
+export async function allocateFreeLoopbackPorts(
+  count: number,
+  excluded: readonly number[] = [],
+): Promise<number[]> {
+  if (!Number.isSafeInteger(count) || count <= 0 || count > 16) {
+    throw new TypeError('Port count must be a positive safe integer no greater than 16')
+  }
+
+  const ports = new Set(excluded)
+  const initialSize = ports.size
+  while (ports.size < initialSize + count) {
+    ports.add(await allocateFreeLoopbackPort())
+  }
+  return [...ports].slice(initialSize)
+}
 
 export async function killProc(proc: ChildProcess | null): Promise<void> {
   if (!proc || proc.exitCode !== null) return
@@ -62,6 +101,49 @@ export interface SpawnOpts {
   provider?: CodexProviderConfig
   apiKey?: string
   log?: Logger
+  offline?: boolean
+}
+
+const SENSITIVE_ENV_KEY =
+  /(?:^|[_-])(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|CREDENTIALS?)(?:[_-]|$)/i
+
+export function buildResumeSpawnEnv(
+  codexHome: string,
+  opts: SpawnOpts = {},
+  baseEnv: Readonly<NodeJS.ProcessEnv> = process.env,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...baseEnv, CODEX_HOME: codexHome }
+  if (opts.offline) {
+    for (const key of Object.keys(env)) {
+      if (SENSITIVE_ENV_KEY.test(key)) delete env[key]
+    }
+  } else if (opts.provider && opts.apiKey) {
+    env[opts.provider.envKey] = opts.apiKey
+  }
+  return env
+}
+
+/**
+ * Mirror the production boot seeds required by buildCodexLaunchArgs' dotted
+ * MCP overrides. A standalone harness starts with an empty CODEX_HOME, so
+ * those overrides otherwise synthesize transport-less entries and Codex exits
+ * with `invalid transport` before the WebSocket can bind.
+ */
+export async function prepareResumeCodexHome(
+  codexHome: string,
+  resourceRoot: string,
+): Promise<void> {
+  const personalConfigToml = path.join(codexHome, 'config.toml')
+  await seedApiyiMcpEntry({
+    personalConfigToml,
+    entryPath: path.join(resourceRoot, 'apiyi-mcp', 'dist', 'index.js'),
+    command: process.execPath,
+  })
+  await seedCinematographyKbMcpEntry({
+    personalConfigToml,
+    entryPath: path.join(resourceRoot, 'cinematography-kb-mcp', 'index.js'),
+    command: process.execPath,
+  })
 }
 
 /** Spawn the real bundled codex app-server with the production launch args. */
@@ -73,8 +155,7 @@ export function spawnCodexAppServer(
 ): ChildProcess {
   const log = opts.log ?? noop
   const args = buildCodexLaunchArgs({ listenUrl, provider: opts.provider })
-  const env: NodeJS.ProcessEnv = { ...process.env, CODEX_HOME: codexHome }
-  if (opts.provider && opts.apiKey) env[opts.provider.envKey] = opts.apiKey
+  const env = buildResumeSpawnEnv(codexHome, opts)
   log(
     `spawn ${path.basename(binaryPath)} app-server --listen ${listenUrl}` +
       (opts.provider ? ` (provider=${opts.provider.id}, model=${opts.provider.model ?? '<gateway default>'})` : ''),
@@ -269,6 +350,33 @@ export async function findRolloutFor(codexHome: string, threadId: string): Promi
   return null
 }
 
+export async function waitForPersistedRollout(
+  codexHome: string,
+  threadId: string,
+  options: {
+    timeoutMs?: number
+    pollIntervalMs?: number
+  } = {},
+): Promise<string> {
+  const timeoutMs = options.timeoutMs ?? 10_000
+  const pollIntervalMs = options.pollIntervalMs ?? 100
+  const deadline = Date.now() + timeoutMs
+
+  while (Date.now() <= deadline) {
+    const rolloutPath = await findRolloutFor(codexHome, threadId)
+    if (rolloutPath) {
+      try {
+        if ((await fs.stat(rolloutPath)).size > 0) return rolloutPath
+      } catch {
+        // The writer may be between creating and replacing the rollout.
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
+  }
+
+  throw new Error(`rollout was not persisted for thread ${threadId}`)
+}
+
 /**
  * A "method not found / unsupported" error means the binary lacks `thread/resume`
  * entirely — that would break the crash-continuity premise (hard FAIL). Any other
@@ -300,85 +408,110 @@ export interface ResumeCoreOptions {
 export interface ResumeCoreResult {
   threadId: string
   rolloutPersisted: boolean
-  resumeOutcome: 'resolved' | 'graceful-error'
-  resumeError?: string
+  resumeOutcome: 'resolved'
+}
+
+export function assertResumedThreadId(
+  response: { thread?: { id?: string } },
+  expectedThreadId: string,
+): asserts response is { thread: { id: string } } {
+  const resumedThreadId = response.thread?.id
+  if (!resumedThreadId) {
+    throw new Error('thread/resume did not return a thread id')
+  }
+  if (resumedThreadId !== expectedThreadId) {
+    throw new Error(
+      `resume returned a different thread id (${resumedThreadId} != ${expectedThreadId})`,
+    )
+  }
 }
 
 /**
- * OFFLINE: prove `thread/resume` is a real, wired method on the bundled binary
- * that fails GRACEFULLY (never "method not found", never a hang) when a thread
- * isn't on disk. A zero-turn thread can't be persisted offline, so happy-path
- * recall is covered by {@link runResumeRecall}. Throws iff the method is missing.
+ * OFFLINE: start a turn without credentials so Codex writes the user message
+ * and session metadata before provider authentication fails, then prove a fresh
+ * app-server generation can strictly resume that persisted thread.
  */
 export async function runResumeCore(options: ResumeCoreOptions): Promise<ResumeCoreResult> {
   const log = options.log ?? noop
-  const portA = options.portA ?? 7611
-  const portB = options.portB ?? 7612
+  const fixedPorts = [options.portA, options.portB].filter(
+    (port): port is number => port !== undefined,
+  )
+  const allocatedPorts = fixedPorts.length < 2
+    ? await allocateFreeLoopbackPorts(2 - fixedPorts.length, fixedPorts)
+    : []
+  const portA = options.portA ?? allocatedPorts.shift()!
+  const portB = options.portB ?? allocatedPorts.shift()!
   const urlA = `ws://127.0.0.1:${portA}`
   const urlB = `ws://127.0.0.1:${portB}`
   const codexHome = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-resume-core-'))
+  const resourceRoot = path.resolve(path.dirname(options.binaryPath), '..', '..')
   let procA: ChildProcess | null = null
   let procB: ChildProcess | null = null
   const a = new RawClient()
   const b = new RawClient()
   try {
-    procA = spawnCodexAppServer(options.binaryPath, urlA, codexHome, { log })
+    await prepareResumeCodexHome(codexHome, resourceRoot)
+    procA = spawnCodexAppServer(options.binaryPath, urlA, codexHome, {
+      log,
+      offline: true,
+    })
     await a.connect(urlA)
     await a.initialize()
     log('A: initialize OK (thread/start + thread/resume RPCs exist)')
     const started = await a.rpc<{ thread: { id: string } }>('thread/start', threadStartParams(options.cwd))
     const threadId = started.thread.id
     log(`A: thread/start OK → threadId=${threadId}`)
-
-    let rollout: string | null = null
-    for (let i = 0; i < 8 && !rollout; i++) {
-      rollout = await findRolloutFor(codexHome, threadId)
-      if (!rollout) await new Promise((r) => setTimeout(r, 250))
-    }
-    const rolloutPersisted = rollout !== null
-    log(
-      rolloutPersisted
-        ? `A: rollout persisted on disk → ${path.basename(rollout!)}`
-        : 'A: zero-turn thread NOT persisted to disk (rollout is written on first turn — expected)',
-    )
+    await a.rpc('turn/start', {
+      threadId,
+      input: [{
+        type: 'text',
+        text: 'Persist this offline resume smoke thread.',
+        text_elements: [],
+      }],
+    })
+    const rollout = await waitForPersistedRollout(codexHome, threadId)
+    const rolloutPersisted = true
+    log(`A: rollout persisted on disk → ${path.basename(rollout)}`)
 
     a.close()
     await killProc(procA)
     procA = null
     log('A: app-server killed (simulates 闪退 — its in-memory thread is gone)')
 
-    procB = spawnCodexAppServer(options.binaryPath, urlB, codexHome, { log })
+    procB = spawnCodexAppServer(options.binaryPath, urlB, codexHome, {
+      log,
+      offline: true,
+    })
     await b.connect(urlB)
     await b.initialize()
     log('B: initialize OK (fresh generation, empty in-memory threads)')
 
-    let resumeOutcome: 'resolved' | 'graceful-error'
-    let resumeError: string | undefined
     try {
       const resumed = await b.rpc<{ thread?: { id?: string } }>('thread/resume', { threadId })
-      const resumedId = resumed?.thread?.id
-      if (resumedId && resumedId !== threadId) {
-        throw new Error(`resume returned a different thread id (${resumedId} != ${threadId})`)
-      }
-      resumeOutcome = 'resolved'
-      log(`B: thread/resume RESOLVED → reopened dead generation's thread from disk (id=${resumedId ?? threadId})`)
+      assertResumedThreadId(resumed, threadId)
+      log(`B: thread/resume RESOLVED → reopened dead generation's thread from disk (id=${resumed.thread.id})`)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       if (isMethodMissingError(message)) {
         throw new Error(`binary has no usable thread/resume: ${message}`)
       }
-      resumeOutcome = 'graceful-error'
-      resumeError = message
-      log(`B: thread/resume returned a graceful domain error (RPC wired, safe-fallback path): "${message}"`)
+      throw new Error(`persisted thread failed to resume: ${message}`)
     }
 
-    return { threadId, rolloutPersisted, resumeOutcome, resumeError }
+    return { threadId, rolloutPersisted, resumeOutcome: 'resolved' }
   } finally {
     a.close()
     b.close()
     await killProc(procA)
     await killProc(procB)
-    await fs.rm(codexHome, { recursive: true, force: true }).catch(() => undefined)
+    await fs.rm(codexHome, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 200,
+    }).catch((error) => {
+      log(`cleanup deferred for ${codexHome}: ${error instanceof Error ? error.message : String(error)}`)
+    })
   }
 }
 
@@ -411,17 +544,25 @@ export interface ResumeRecallResult {
 export async function runResumeRecall(options: ResumeRecallOptions): Promise<ResumeRecallResult> {
   const log = options.log ?? noop
   const secret = options.secret ?? DEFAULT_SECRET
-  const portA = options.portA ?? 7621
-  const portB = options.portB ?? 7622
+  const fixedPorts = [options.portA, options.portB].filter(
+    (port): port is number => port !== undefined,
+  )
+  const allocatedPorts = fixedPorts.length < 2
+    ? await allocateFreeLoopbackPorts(2 - fixedPorts.length, fixedPorts)
+    : []
+  const portA = options.portA ?? allocatedPorts.shift()!
+  const portB = options.portB ?? allocatedPorts.shift()!
   const urlA = `ws://127.0.0.1:${portA}`
   const urlB = `ws://127.0.0.1:${portB}`
   const { provider, apiKey, model } = options
   const codexHome = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-resume-mem-'))
+  const resourceRoot = path.resolve(path.dirname(options.binaryPath), '..', '..')
   let procA: ChildProcess | null = null
   let procB: ChildProcess | null = null
   const a = new RawClient()
   const b = new RawClient()
   try {
+    await prepareResumeCodexHome(codexHome, resourceRoot)
     // ── Generation A: establish context (a real turn PERSISTS the rollout) ──
     procA = spawnCodexAppServer(options.binaryPath, urlA, codexHome, { provider, apiKey, log })
     await a.connect(urlA)
@@ -460,6 +601,13 @@ export async function runResumeRecall(options: ResumeRecallOptions): Promise<Res
     b.close()
     await killProc(procA)
     await killProc(procB)
-    await fs.rm(codexHome, { recursive: true, force: true }).catch(() => undefined)
+    await fs.rm(codexHome, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 200,
+    }).catch((error) => {
+      log(`cleanup deferred for ${codexHome}: ${error instanceof Error ? error.message : String(error)}`)
+    })
   }
 }

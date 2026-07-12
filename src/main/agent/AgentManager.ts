@@ -2475,7 +2475,7 @@ export class AgentManager {
         threadId,
         error: CONTEXT_TRANSITION_BUSY_ERROR,
       })
-      return { threadId }
+      throw new Error(CONTEXT_TRANSITION_BUSY_ERROR)
     }
     return this.enqueueTurnAdmission(
       () => this.sendMessageAfterProviderBarrier(payload),
@@ -2488,7 +2488,7 @@ export class AgentManager {
     if (!this.codexApiKey) {
       const threadId = payload.threadId ?? 'pending'
       this.emitEvent({ type: 'error', threadId, error: EMPTY_KEY_ERROR })
-      return { threadId }
+      throw new Error(EMPTY_KEY_ERROR)
     }
 
     if (!this.store || !this.attachments) {
@@ -2506,19 +2506,12 @@ export class AgentManager {
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err)
       const threadId = payload.threadId ?? 'pending'
-      this.emitEvent({ type: 'error', threadId, error: `Codex 后端启动失败:${detail}` })
-      return { threadId }
+      const message = `Codex 后端启动失败:${detail}`
+      this.emitEvent({ type: 'error', threadId, error: message })
+      throw new Error(message)
     }
 
-    const assembled = await this.assembleTurnInput(payload, true).catch((error: unknown) => {
-      this.emitEvent({
-        type: 'error',
-        threadId: payload.threadId ?? 'pending',
-        error: error instanceof Error ? error.message : String(error),
-      })
-      return null
-    })
-    if (!assembled) return { threadId: payload.threadId ?? 'pending' }
+    const assembled = await this.assembleTurnInput(payload, true)
     const { threadId, input, userTimelineItems, collaborationModeOwner } = assembled
 
     let admitted = false
@@ -2576,7 +2569,7 @@ export class AgentManager {
         threadId,
         error: CONTEXT_TRANSITION_BUSY_ERROR,
       })
-      return { threadId }
+      throw new Error(CONTEXT_TRANSITION_BUSY_ERROR)
     }
     if (!threadIdIn) {
       // Steering only applies to an existing thread with an active turn.
@@ -2584,8 +2577,9 @@ export class AgentManager {
     }
     const steer = this.backend.steer?.bind(this.backend)
     if (!steer) {
-      this.emitEvent({ type: 'error', threadId: threadIdIn, error: '当前后端不支持运行中插话(turn/steer)。' })
-      return { threadId: threadIdIn }
+      const error = '当前后端不支持运行中插话(turn/steer)。'
+      this.emitEvent({ type: 'error', threadId: threadIdIn, error })
+      throw new Error(error)
     }
     return this.enqueueTurnAdmission(
       () => this.steerAfterProviderBarrier(payload, threadIdIn, steer),
@@ -2599,7 +2593,7 @@ export class AgentManager {
   ): Promise<AgentSendMessageResult> {
     if (!this.codexApiKey) {
       this.emitEvent({ type: 'error', threadId: threadIdIn, error: EMPTY_KEY_ERROR })
-      return { threadId: threadIdIn }
+      throw new Error(EMPTY_KEY_ERROR)
     }
     if (!this.store || !this.attachments) {
       throw new Error('AgentManager.steer called without store/attachments')
@@ -2608,19 +2602,12 @@ export class AgentManager {
       await this.ensureBackendStarted()
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err)
-      this.emitEvent({ type: 'error', threadId: threadIdIn, error: `Codex 后端启动失败:${detail}` })
-      return { threadId: threadIdIn }
+      const message = `Codex 后端启动失败:${detail}`
+      this.emitEvent({ type: 'error', threadId: threadIdIn, error: message })
+      throw new Error(message)
     }
 
-    const assembled = await this.assembleTurnInput(payload, true).catch((error: unknown) => {
-      this.emitEvent({
-        type: 'error',
-        threadId: threadIdIn,
-        error: error instanceof Error ? error.message : String(error),
-      })
-      return null
-    })
-    if (!assembled) return { threadId: threadIdIn }
+    const assembled = await this.assembleTurnInput(payload, true)
     const { threadId, input, userTimelineItems, collaborationModeOwner } = assembled
     const codexThreadId = this.codexThreadIdByDbThreadId.get(threadId) ?? threadId
     try {
@@ -2704,23 +2691,33 @@ export class AgentManager {
       throw new Error('AgentManager.assembleTurnInput called without store/attachments')
     }
     const model = payload.model?.trim() || DEFAULT_AGENT_MODEL
-    const builtCollaborationMode = payload.collaborationModeKind === undefined
-      ? undefined
-      : await (
-          providerAdmissionHeld
-            ? this.buildCollaborationModeWithProviderAdmissionHeld(
-                payload.collaborationModeKind,
-                model,
-                payload.reasoningEffort,
-                payload.planReasoningEffort ?? 'auto',
-              )
-            : this.buildCollaborationMode(
-                payload.collaborationModeKind,
-                model,
-                payload.reasoningEffort,
-                payload.planReasoningEffort ?? 'auto',
-              )
-        )
+    let builtCollaborationMode: BuiltCollaborationMode | undefined
+    try {
+      builtCollaborationMode = payload.collaborationModeKind === undefined
+        ? undefined
+        : await (
+            providerAdmissionHeld
+              ? this.buildCollaborationModeWithProviderAdmissionHeld(
+                  payload.collaborationModeKind,
+                  model,
+                  payload.reasoningEffort,
+                  payload.planReasoningEffort ?? 'auto',
+                )
+              : this.buildCollaborationMode(
+                  payload.collaborationModeKind,
+                  model,
+                  payload.reasoningEffort,
+                  payload.planReasoningEffort ?? 'auto',
+                )
+          )
+    } catch (error) {
+      this.emitEvent({
+        type: 'error',
+        threadId: payload.threadId ?? 'pending',
+        error: error instanceof Error ? error.message : String(error),
+      })
+      throw error instanceof Error ? error : new Error(String(error))
+    }
     // The uploads cache is a first-class reference root: AttachmentService
     // canonicalizes every attachment into `<userData>/agent/uploads/<sha>.<ext>`
     // and the fs IPC gate (fsIpc.resolveAllowedRoots) has always whitelisted
@@ -3294,7 +3291,7 @@ export class AgentManager {
     // than the gateway rejecting oversized history.
     const message = reason === 'codex_restarted'
       ? 'Codex 引擎刚刚重启（崩溃自愈或切换了模型/配置），上一段对话的引擎侧记忆已随旧进程释放，已自动在全新上下文中继续——本条消息正常处理，但 AI 不再记得此前的对话内容。建议把关键结论重新粘贴给它。'
-      : '上一段对话上下文已超出网关限制，已自动在全新上下文中继续——本条消息正常处理，但 AI 不再记得此前的对话内容。建议把关键结论重新粘贴给它。'
+      : '上一段对话上下文已超出网关限制，已自动在全新上下文中继续——本条消息正常处理，但 AI 不再记得此前的对话内容。建议切回模型官方 Context 并重试，同时把关键结论重新粘贴给它。'
     this.emitEvent({
       type: 'notice',
       notice: {

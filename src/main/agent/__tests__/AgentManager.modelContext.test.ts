@@ -17,8 +17,8 @@ import type {
 } from '../../../types/agent'
 
 const PREVIOUS_CONFIG: CodexModelContextConfig = {
-  modelContextWindow: 200_000,
-  modelAutoCompactTokenLimit: 180_000,
+  modelContextWindow: 272_000,
+  modelAutoCompactTokenLimit: 244_800,
 }
 const TARGET_CONFIG: CodexModelContextConfig = {
   modelContextWindow: 1_000_000,
@@ -300,17 +300,17 @@ describe('AgentManager transactional model context apply', () => {
     const { manager, backend } = makeManager()
 
     const result = await manager.applyModelContextRpc({
-      model: 'custom-model',
-      contextWindow: 200_000,
+      model: 'gpt-5.5',
+      contextWindow: 272_000,
       requestVersion: 8,
     })
 
     expect(result).toEqual({
       ok: true,
       data: {
-        model: 'custom-model',
-        contextWindow: 200_000,
-        autoCompactTokenLimit: 180_000,
+        model: 'gpt-5.5',
+        contextWindow: 272_000,
+        autoCompactTokenLimit: 244_800,
         threadRestored: false,
         requestVersion: 8,
       },
@@ -681,8 +681,8 @@ describe('AgentManager transactional model context apply', () => {
     })
     const second = manager.applyModelContextRpc({ ...APPLY_PAYLOAD, requestVersion: 8 })
 
-    await expect(send).resolves.toEqual({ threadId: 'pending' })
-    await expect(steer).resolves.toEqual({ threadId: 'db-thread-1' })
+    await expect(send).rejects.toThrow('模型上下文配置正在切换，请稍后重试。')
+    await expect(steer).rejects.toThrow('模型上下文配置正在切换，请稍后重试。')
     const secondResult = await second
     expectFailure(secondResult, 'busy', 8)
     expect(threadStore.addMessage).not.toHaveBeenCalled()

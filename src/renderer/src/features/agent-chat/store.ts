@@ -47,7 +47,6 @@ import {
   type PlanReasoningEffort,
 } from '../../../../shared/collaborationMode'
 import {
-  UNKNOWN_MODEL_CONTEXT_WINDOW,
   defaultContextWindowForModel,
   isModelReasoningEffort,
   migrateLegacyModelSelection,
@@ -1977,7 +1976,11 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     restoredModelSettings.modelContextWindowByModel,
   modelSettingsCatalog: undefined,
   modelSettingsLoading: false,
-  activeModelContextWindow: UNKNOWN_MODEL_CONTEXT_WINDOW,
+  activeModelContextWindow:
+    restoredModelSettings.modelContextWindowByModel[
+      restoredModelSettings.selectedModelId
+    ]
+    ?? defaultContextWindowForModel(restoredModelSettings.selectedModelId),
   modelContextPending: undefined,
   modelSettingsError: undefined,
   modelSettingsRecoveryRequired: false,

@@ -850,11 +850,11 @@ describe('AgentManager sendMessage empty-key gate', () => {
       eventSink: (event) => events.push(event),
     })
 
-    const result = await mgr.sendMessage({
+    await expect(mgr.sendMessage({
       threadId: 't1',
       content: 'hi',
       attachments: [],
-    })
+    })).rejects.toThrow('请在设置页填写 Codex Agent API Key')
 
     expect(events).toHaveLength(1)
     expect(events[0]).toMatchObject({
@@ -862,7 +862,6 @@ describe('AgentManager sendMessage empty-key gate', () => {
       threadId: 't1',
       error: '请在设置页填写 Codex Agent API Key',
     })
-    expect(result.threadId).toBe('t1')
   })
 
   it('uses a placeholder threadId when sendMessage called without threadId and key is empty', async () => {
@@ -872,7 +871,9 @@ describe('AgentManager sendMessage empty-key gate', () => {
       eventSink: (event) => events.push(event),
     })
 
-    await mgr.sendMessage({ content: 'hi', attachments: [] })
+    await expect(
+      mgr.sendMessage({ content: 'hi', attachments: [] }),
+    ).rejects.toThrow('请在设置页填写 Codex Agent API Key')
 
     expect(events).toHaveLength(1)
     expect(events[0]?.type).toBe('error')
@@ -904,7 +905,9 @@ describe('AgentManager sendMessage empty-key gate', () => {
       eventSink: () => {},
     })
 
-    await mgr.sendMessage({ threadId: 't-empty', content: 'hi', attachments: [] })
+    await expect(
+      mgr.sendMessage({ threadId: 't-empty', content: 'hi', attachments: [] }),
+    ).rejects.toThrow('请在设置页填写 Codex Agent API Key')
 
     expect(createCalls).toBe(0)
     expect(ingestCalls).toBe(0)
@@ -1536,7 +1539,8 @@ describe('AgentManager codex thread id mapping (regression: invalid thread id)',
     const notices = events.filter(
       (e): e is Extract<AgentStreamEvent, { type: 'notice' }> => e.type === 'notice',
     )
-    expect(notices.some((n) => n.notice.kind === 'threadContextReset')).toBe(true)
+    const resetNotice = notices.find((notice) => notice.notice.kind === 'threadContextReset')
+    expect(resetNotice?.notice.message).toContain('切回模型官方 Context 并重试')
   })
 
   it('forwards payload.model through to backend.send when caller selects a model', async () => {
@@ -1863,7 +1867,9 @@ describe('AgentManager codex thread id mapping (regression: invalid thread id)',
       backend,
     })
 
-    await mgr.sendMessage({ content: 'hi', attachments: [] })
+    await expect(
+      mgr.sendMessage({ content: 'hi', attachments: [] }),
+    ).rejects.toThrow('Codex 后端启动失败:`wire_api = "chat"` is no longer supported')
     await flushMicrotasks(20)
 
     expect(sendCalled).toBe(false)

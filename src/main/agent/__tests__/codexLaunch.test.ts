@@ -6,6 +6,7 @@ import {
   DEFAULT_LISTEN_URL,
   resolveCodexSessionConfig,
 } from '../codexLaunch'
+import { resolveSmokeContextConfig } from '../../../../scripts/smoke-codex-compaction'
 
 describe('buildCodexLaunchArgs', () => {
   it('uses app-server with the default listen URL and maximum-permission defaults', () => {
@@ -49,8 +50,8 @@ describe('buildCodexLaunchArgs', () => {
       // keep apiyi dormant so a keyless apiyi-mcp can't hang the first turn.
       '-c', 'mcp_servers.apiyi.enabled=false',
       '-c', 'mcp_servers.cinematography_kb.env.DASHVECTOR_ENDPOINT="vrs-cn-1zz4v38oq0001l.dashvector.cn-beijing.aliyuncs.com"',
-      '-c', 'model_context_window=200000',
-      '-c', 'model_auto_compact_token_limit=180000',
+      '-c', 'model_context_window=272000',
+      '-c', 'model_auto_compact_token_limit=244800',
     ])
   })
 
@@ -76,8 +77,8 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'features.memories=true',
       '-c', 'mcp_servers.apiyi.enabled=false',
       '-c', 'mcp_servers.cinematography_kb.env.DASHVECTOR_ENDPOINT="vrs-cn-1zz4v38oq0001l.dashvector.cn-beijing.aliyuncs.com"',
-      '-c', 'model_context_window=200000',
-      '-c', 'model_auto_compact_token_limit=180000',
+      '-c', 'model_context_window=272000',
+      '-c', 'model_auto_compact_token_limit=244800',
     ])
     const listenIdx = args.indexOf('--listen')
     const firstConfigIdx = args.indexOf('-c')
@@ -203,24 +204,36 @@ describe('buildCodexLaunchArgs', () => {
     expect(flat).not.toContain('model_providers.')
   })
 
-  it('uses the persisted 200K/180K runtime defaults and never emits the legacy 220K limit', () => {
+  it('uses the default model 272K/244800 runtime config and never emits the legacy 220K limit', () => {
     const args = buildCodexLaunchArgs()
-    expect(args).toContain('model_context_window=200000')
-    expect(args).toContain('model_auto_compact_token_limit=180000')
+    expect(args).toContain('model_context_window=272000')
+    expect(args).toContain('model_auto_compact_token_limit=244800')
     expect(args.join(' ')).not.toContain('220000')
   })
 
   it('uses an explicit 372K/334800 runtime context config', () => {
-    const args = buildCodexLaunchArgs({
-      modelContextConfig: {
-        modelContextWindow: 372_000,
-        modelAutoCompactTokenLimit: 334_800,
-      },
-    })
+    const contextConfig = resolveSmokeContextConfig({})
+    const args = buildCodexLaunchArgs({ modelContextConfig: contextConfig })
 
     expect(args).toContain('model_context_window=372000')
     expect(args).toContain('model_auto_compact_token_limit=334800')
   })
+
+  it('derives the compaction smoke override through the shared 90% context rule', () => {
+    expect(resolveSmokeContextConfig({ CODEX_SMOKE_CONTEXT_WINDOW: '1000000' })).toEqual({
+      modelContextWindow: 1_000_000,
+      modelAutoCompactTokenLimit: 900_000,
+    })
+  })
+
+  it.each(['NaN', 'Infinity', '0', '-1', '9007199254740992', '372000.5'])(
+    'rejects invalid compaction smoke context input before launch: %s',
+    (value) => {
+      expect(() => resolveSmokeContextConfig({
+        CODEX_SMOKE_CONTEXT_WINDOW: value,
+      })).toThrow(/CODEX_SMOKE_CONTEXT_WINDOW.*positive safe integer/i)
+    },
+  )
 
   it.each([
     ['NaN context', { modelContextWindow: Number.NaN, modelAutoCompactTokenLimit: 1 }],
@@ -249,8 +262,8 @@ describe('buildCodexLaunchArgs', () => {
     }).toThrow()
 
     const args = buildCodexLaunchArgs()
-    expect(args).toContain('model_context_window=200000')
-    expect(args).toContain('model_auto_compact_token_limit=180000')
+    expect(args).toContain('model_context_window=272000')
+    expect(args).toContain('model_auto_compact_token_limit=244800')
   })
 
   it('pins tool_output_token_limit to the official catalog value (10k)', () => {

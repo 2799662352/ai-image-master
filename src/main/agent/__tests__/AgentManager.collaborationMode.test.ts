@@ -493,13 +493,13 @@ describe('AgentManager collaboration mode effort isolation', () => {
     await manager.setActiveProvider('rightcode')
     await manager.setCodexApiKey('sk-test')
 
-    await manager.sendMessage({
+    await expect(manager.sendMessage({
       content: 'must not send',
       attachments: [],
       model: 'gpt-5.5',
       collaborationModeKind: 'plan',
       planReasoningEffort: 'max',
-    })
+    })).rejects.toThrow(/max.*not supported/i)
     await flushMicrotasks()
 
     expect(backend.calls).toEqual([])

@@ -453,9 +453,10 @@ describe('AgentManager.steer (turn/steer)', () => {
       backend,
     })
 
-    const result = await mgr.steer({ threadId: 'db-y', content: 'hi', attachments: [] })
+    await expect(
+      mgr.steer({ threadId: 'db-y', content: 'hi', attachments: [] }),
+    ).rejects.toThrow('当前后端不支持运行中插话')
 
-    expect(result.threadId).toBe('db-y')
     expect(events.some((e) => e.type === 'error')).toBe(true)
   })
 })
