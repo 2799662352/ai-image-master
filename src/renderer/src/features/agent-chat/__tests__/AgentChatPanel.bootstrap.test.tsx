@@ -1,3 +1,4 @@
+import { StrictMode } from 'react'
 import { act, cleanup, render, screen, fireEvent } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentChatPanel } from '../AgentChatPanel'
@@ -23,6 +24,9 @@ const fakeAgent = {
   testConnection: vi.fn(),
   getSessionStatus: vi.fn(),
   setSessionConfig: vi.fn(),
+  getModelSettingsCatalog: vi.fn(),
+  getModelContextConfig: vi.fn(),
+  applyModelContext: vi.fn(),
 }
 
 beforeEach(() => {
@@ -50,6 +54,21 @@ beforeEach(() => {
     webSearch: 'live',
     writableRoots: [],
   })
+  fakeAgent.getModelSettingsCatalog.mockResolvedValue({
+    ok: true,
+    data: {
+      provider: 'apiyi',
+      source: 'fallback',
+      models: [],
+    },
+  })
+  fakeAgent.getModelContextConfig.mockResolvedValue({
+    ok: true,
+    data: {
+      modelContextWindow: 200_000,
+      modelAutoCompactTokenLimit: 180_000,
+    },
+  })
   useAgentChatStore.setState({
     isOpen: true,
     messages: [],
@@ -72,8 +91,14 @@ afterEach(() => {
 
 describe('AgentChatPanel + sidebar integration', () => {
   it('calls bootstrap() on first open', () => {
-    render(<AgentChatPanel />)
+    render(
+      <StrictMode>
+        <AgentChatPanel />
+      </StrictMode>,
+    )
     expect(fakeAgent.listThreads).toHaveBeenCalledTimes(1)
+    expect(fakeAgent.getModelSettingsCatalog).toHaveBeenCalledTimes(1)
+    expect(fakeAgent.getModelContextConfig).toHaveBeenCalledTimes(1)
   })
 
   it('sets right offset = sidebarWidth when sidebar is open', () => {

@@ -1,9 +1,13 @@
 import { ipcMain } from 'electron'
 import { isPlanReasoningEffort } from '../../shared/collaborationMode'
-import { isConcreteModelReasoningEffort } from '../../shared/modelSettings'
+import {
+  isConcreteModelReasoningEffort,
+  modelContextOptions,
+} from '../../shared/modelSettings'
 import type {
   AgentCollaborationModeUpdatePayload,
   AgentCollaborationModeUpdateResult,
+  AgentModelContextApplyPayload,
   AgentSendMessagePayload,
   AgentToolResponse,
   CodexApprovalResponse,
@@ -58,6 +62,9 @@ const AGENT_HANDLE_CHANNELS = [
   'agent:compact-start',
   'agent:collaboration-capabilities',
   'agent:collaboration-update',
+  'agent:model-settings-catalog',
+  'agent:model-context-get',
+  'agent:model-context-apply',
   'agent:plugin-list',
   'agent:plugin-installed',
   'agent:plugin-read',
@@ -326,6 +333,15 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
       } satisfies AgentCollaborationModeUpdateResult
     }
   })
+  ipcMain.handle('agent:model-settings-catalog', async () =>
+    (await getManager()).getModelSettingsCatalogRpc(),
+  )
+  ipcMain.handle('agent:model-context-get', async () =>
+    (await getManager()).getModelContextConfigRpc(),
+  )
+  ipcMain.handle('agent:model-context-apply', async (_event, payload: unknown) =>
+    (await getManager()).applyModelContextRpc(validateModelContextApplyPayload(payload)),
+  )
 
   // ----- Codex native plugin / marketplace / apps / external-agent-import -----
   ipcMain.handle('agent:plugin-list', async (_event, params?: unknown) =>
@@ -572,6 +588,51 @@ function validateCollaborationModeUpdate(value: unknown): AgentCollaborationMode
     throw new Error('Collaboration update requestVersion must be a non-negative integer')
   }
   return value as AgentCollaborationModeUpdatePayload
+}
+
+function validateModelContextApplyPayload(value: unknown): AgentModelContextApplyPayload {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Model context apply payload must be a plain object')
+  }
+  const prototype = Object.getPrototypeOf(value)
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new Error('Model context apply payload must be a plain object')
+  }
+
+  const allowedKeys = new Set(['threadId', 'model', 'contextWindow', 'requestVersion'])
+  const ownKeys = Reflect.ownKeys(value)
+  if (
+    ownKeys.some((key) => typeof key !== 'string' || !allowedKeys.has(key))
+    || !Object.hasOwn(value, 'model')
+    || !Object.hasOwn(value, 'contextWindow')
+    || !Object.hasOwn(value, 'requestVersion')
+  ) {
+    throw new Error('Model context apply payload contains invalid fields')
+  }
+
+  const input = value as Record<string, unknown>
+  if (typeof input.model !== 'string' || input.model.trim().length === 0) {
+    throw new Error('Model context model must be a non-empty string')
+  }
+  if (
+    !Number.isSafeInteger(input.contextWindow)
+    || (input.contextWindow as number) <= 0
+    || !modelContextOptions(input.model.trim()).some(
+      (option) => option.value === input.contextWindow,
+    )
+  ) {
+    throw new Error('Model context contextWindow is unsupported')
+  }
+  if (!Number.isSafeInteger(input.requestVersion) || (input.requestVersion as number) < 0) {
+    throw new Error('Model context requestVersion must be a non-negative safe integer')
+  }
+  if (
+    input.threadId !== undefined
+    && (typeof input.threadId !== 'string' || input.threadId.trim().length === 0)
+  ) {
+    throw new Error('Model context threadId must be a non-empty string')
+  }
+  return value as AgentModelContextApplyPayload
 }
 
 function validateListThreadsParams(

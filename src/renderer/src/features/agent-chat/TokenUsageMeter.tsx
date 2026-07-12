@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AgentTokenUsage } from '../../../../types/agent'
-import { DEFAULT_MODEL_CONTEXT_WINDOW, contextUsedPercent } from './contextWindowDefaults'
+import { contextUsedPercent } from './contextWindowDefaults'
 import { ContextPopover } from './ContextPopover'
 
 /**
@@ -9,7 +9,13 @@ import { ContextPopover } from './ContextPopover'
  * going. The donut itself still mirrors `usage.contextUsage / contextWindow`
  * — the popover is purely additive.
  */
-export function TokenUsageMeter({ usage }: { usage?: AgentTokenUsage }) {
+export function TokenUsageMeter({
+  usage,
+  fallbackContextWindow,
+}: {
+  usage?: AgentTokenUsage
+  fallbackContextWindow: number
+}) {
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
 
@@ -27,9 +33,11 @@ export function TokenUsageMeter({ usage }: { usage?: AgentTokenUsage }) {
   // contextWindow on early turns. Codex 0.128+ should always report it
   // once `model_context_window` is in effect (see codexLaunch.ts).
   const window =
-    typeof usage.contextWindow === 'number' && usage.contextWindow > 0
+    typeof usage.contextWindow === 'number'
+    && Number.isFinite(usage.contextWindow)
+    && usage.contextWindow > 0
       ? usage.contextWindow
-      : DEFAULT_MODEL_CONTEXT_WINDOW
+      : fallbackContextWindow
   // Codex-aligned percentage: effective window (minus the 12K baseline), used
   // = current context occupancy. Matches the TUI's status indicator exactly
   // (codex-rs/tui/src/token_usage.rs). See contextWindowDefaults.ts.
@@ -92,7 +100,7 @@ export function TokenUsageMeter({ usage }: { usage?: AgentTokenUsage }) {
           usage={usage}
           onClose={() => setOpen(false)}
           triggerRef={triggerRef}
-          fallbackContextWindow={DEFAULT_MODEL_CONTEXT_WINDOW}
+          fallbackContextWindow={fallbackContextWindow}
         />
       ) : null}
     </div>

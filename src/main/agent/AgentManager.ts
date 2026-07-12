@@ -53,6 +53,7 @@ import {
   type PlanReasoningEffort,
 } from '../../shared/collaborationMode'
 import {
+  CANONICAL_MODEL_SETTINGS_ROWS,
   mergeModelSettingsCapabilities,
   modelAutoCompactTokenLimit,
   modelContextOptions,
@@ -75,6 +76,10 @@ import type {
   AgentModelContextApplyResult,
   AgentModelContextApplyStage,
   AgentModelContextRollbackResult,
+  AgentModelContextSnapshotResult,
+  AgentModelSettingsCatalog,
+  AgentModelSettingsCatalogResult,
+  AgentModelSettingsEntry,
   AgentProviderMutationResult,
   AgentSendMessagePayload,
   AgentSendMessageResult,
@@ -1084,6 +1089,68 @@ export class AgentManager {
     )
   }
 
+  async getModelSettingsCatalogRpc(): Promise<AgentModelSettingsCatalogResult> {
+    while (true) {
+      let providerBarrier = this.providerCapabilityBarrier
+      let providerReady = await providerBarrier
+      while (providerBarrier !== this.providerCapabilityBarrier) {
+        providerBarrier = this.providerCapabilityBarrier
+        providerReady = await providerBarrier
+      }
+
+      const provider = this.activeProviderId
+      const backendEpoch = this.backend.currentEpoch?.()
+      const ownerStillCurrent = (): boolean =>
+        this.activeProviderId === provider
+        && (
+          backendEpoch === undefined
+          || this.backend.currentEpoch?.() === backendEpoch
+        )
+
+      if (!providerReady || typeof this.backend.listModels !== 'function') {
+        return { ok: true, data: this.fallbackModelSettingsCatalog(provider) }
+      }
+
+      try {
+        const response = await this.backend.listModels({ includeHidden: false })
+        if (!ownerStillCurrent()) continue
+        const models: AgentModelSettingsEntry[] = response.data.map((row) => ({
+          id: row.id,
+          displayName: row.displayName,
+          description: row.description,
+          hidden: row.hidden,
+          isDefault: row.isDefault,
+          capabilities: mergeModelSettingsCapabilities({
+            model: row.model,
+            provider,
+            defaultReasoningEffort: row.defaultReasoningEffort,
+            supportedReasoningEfforts: row.supportedReasoningEfforts.map(
+              (effort) => effort.reasoningEffort,
+            ),
+          }),
+        }))
+        return {
+          ok: true,
+          data: {
+            provider,
+            source: 'codex',
+            models,
+          },
+        }
+      } catch {
+        if (!ownerStillCurrent()) continue
+        return { ok: true, data: this.fallbackModelSettingsCatalog(provider) }
+      }
+    }
+  }
+
+  getModelContextConfigRpc(): Promise<AgentModelContextSnapshotResult> {
+    return Promise.resolve({
+      ok: true,
+      data: { ...this.runtimeSettings.confirmed },
+    })
+  }
+
   /**
    * Apply a Codex context-window change as one transaction on the same
    * Provider/turn lifecycle tail used by send, steer, and Provider replacement.
@@ -1185,6 +1252,31 @@ export class AgentManager {
         this.contextTransitionOwner = null
       }
     })
+  }
+
+  private fallbackModelSettingsCatalog(provider: string): AgentModelSettingsCatalog {
+    return {
+      provider,
+      source: 'fallback',
+      models: CANONICAL_MODEL_SETTINGS_ROWS.map((row) => ({
+        id: row.id,
+        displayName: row.displayName,
+        description: row.description,
+        hidden: false,
+        isDefault: row.isDefault,
+        capabilities: {
+          ...mergeModelSettingsCapabilities({
+            model: row.id,
+            provider,
+            supportedReasoningEfforts: [],
+          }),
+          contextOptions: modelContextOptions(row.id).map((option) => ({
+            ...option,
+            conservative: true,
+          })),
+        },
+      })),
+    }
   }
 
   private validateModelContextPayload(

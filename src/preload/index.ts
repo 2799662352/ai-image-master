@@ -30,6 +30,10 @@ import type {
   AgentCollaborationCapabilitiesResult,
   AgentCollaborationModeUpdatePayload,
   AgentCollaborationModeUpdateResult,
+  AgentModelContextApplyPayload,
+  AgentModelContextApplyResult,
+  AgentModelContextSnapshotResult,
+  AgentModelSettingsCatalogResult,
   AgentProviderMutationResult,
   AgentSendMessagePayload,
   AgentSendMessageResult,
@@ -267,6 +271,9 @@ const IPC_CHANNELS = {
     COMPACT_START: 'agent:compact-start',
     COLLABORATION_CAPABILITIES: 'agent:collaboration-capabilities',
     COLLABORATION_UPDATE: 'agent:collaboration-update',
+    MODEL_SETTINGS_CATALOG: 'agent:model-settings-catalog',
+    MODEL_CONTEXT_GET: 'agent:model-context-get',
+    MODEL_CONTEXT_APPLY: 'agent:model-context-apply',
     PLUGIN_LIST: 'agent:plugin-list',
     PLUGIN_INSTALLED: 'agent:plugin-installed',
     PLUGIN_READ: 'agent:plugin-read',
@@ -517,6 +524,11 @@ export interface ElectronAPI {
     updateCollaborationMode: (
       payload: AgentCollaborationModeUpdatePayload,
     ) => Promise<AgentCollaborationModeUpdateResult>
+    getModelSettingsCatalog: () => Promise<AgentModelSettingsCatalogResult>
+    getModelContextConfig: () => Promise<AgentModelContextSnapshotResult>
+    applyModelContext: (
+      payload: AgentModelContextApplyPayload,
+    ) => Promise<AgentModelContextApplyResult>
     setAllowedRoots: (roots: string[]) => Promise<string[]>
     getMcpSummary: () => Promise<CodexMcpSummary>
     getSkillsSummary: () => Promise<CodexSkillsSummary>
@@ -1120,6 +1132,22 @@ const electronAPI: ElectronAPI = {
     updateCollaborationMode: (payload: AgentCollaborationModeUpdatePayload) =>
       safeInvoke<AgentCollaborationModeUpdateResult>(
         IPC_CHANNELS.AGENT.COLLABORATION_UPDATE,
+        payload,
+      ),
+
+    getModelSettingsCatalog: () =>
+      safeInvoke<AgentModelSettingsCatalogResult>(
+        IPC_CHANNELS.AGENT.MODEL_SETTINGS_CATALOG,
+      ),
+
+    getModelContextConfig: () =>
+      safeInvoke<AgentModelContextSnapshotResult>(
+        IPC_CHANNELS.AGENT.MODEL_CONTEXT_GET,
+      ),
+
+    applyModelContext: (payload: AgentModelContextApplyPayload) =>
+      safeInvoke<AgentModelContextApplyResult>(
+        IPC_CHANNELS.AGENT.MODEL_CONTEXT_APPLY,
         payload,
       ),
 

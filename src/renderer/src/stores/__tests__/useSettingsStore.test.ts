@@ -357,9 +357,11 @@ describe('useSettingsStore', () => {
       let resolveIpc!: (value: unknown) => void
       const invalidateCollaborationCapabilities = vi.fn()
       const loadCollaborationCapabilities = vi.fn().mockResolvedValue(undefined)
+      const loadModelSettingsCatalog = vi.fn().mockResolvedValue(undefined)
       useAgentChatStore.setState({
         invalidateCollaborationCapabilities,
         loadCollaborationCapabilities,
+        loadModelSettingsCatalog,
       } as never)
       installBridge(() => new Promise((resolve) => { resolveIpc = resolve }))
 
@@ -367,10 +369,12 @@ describe('useSettingsStore', () => {
 
       expect(invalidateCollaborationCapabilities).toHaveBeenCalledTimes(1)
       expect(loadCollaborationCapabilities).not.toHaveBeenCalled()
+      expect(loadModelSettingsCatalog).not.toHaveBeenCalled()
 
       resolveIpc({ ok: true, activeId: 'rightcode' })
       await pending
       expect(loadCollaborationCapabilities).toHaveBeenCalledWith('rightcode')
+      expect(loadModelSettingsCatalog).toHaveBeenCalledWith('rightcode')
     })
 
     it('rolls back to the previous provider when the IPC rejects', async () => {
@@ -396,9 +400,11 @@ describe('useSettingsStore', () => {
     it('invalidates again and reloads the confirmed previous Provider after rollback', async () => {
       const invalidateCollaborationCapabilities = vi.fn()
       const loadCollaborationCapabilities = vi.fn().mockResolvedValue(undefined)
+      const loadModelSettingsCatalog = vi.fn().mockResolvedValue(undefined)
       useAgentChatStore.setState({
         invalidateCollaborationCapabilities,
         loadCollaborationCapabilities,
+        loadModelSettingsCatalog,
       } as never)
       installBridge({
         setActiveProvider: () => Promise.reject(new Error('unknown provider')),
@@ -443,9 +449,11 @@ describe('useSettingsStore', () => {
     it('reloads capabilities after confirmed active key, update, and remove writes', async () => {
       const invalidateCollaborationCapabilities = vi.fn()
       const loadCollaborationCapabilities = vi.fn().mockResolvedValue(undefined)
+      const loadModelSettingsCatalog = vi.fn().mockResolvedValue(undefined)
       useAgentChatStore.setState({
         invalidateCollaborationCapabilities,
         loadCollaborationCapabilities,
+        loadModelSettingsCatalog,
       } as never)
       installBridge({
         setProviderApiKey: vi.fn().mockResolvedValue({
@@ -478,9 +486,13 @@ describe('useSettingsStore', () => {
 
       expect(invalidateCollaborationCapabilities).toHaveBeenCalledTimes(3)
       expect(loadCollaborationCapabilities).toHaveBeenCalledTimes(3)
+      expect(loadModelSettingsCatalog).toHaveBeenCalledTimes(3)
       expect(loadCollaborationCapabilities).toHaveBeenNthCalledWith(1, 'apiyi')
       expect(loadCollaborationCapabilities).toHaveBeenNthCalledWith(2, 'apiyi')
       expect(loadCollaborationCapabilities).toHaveBeenNthCalledWith(3, 'apiyi')
+      expect(loadModelSettingsCatalog).toHaveBeenNthCalledWith(1, 'apiyi')
+      expect(loadModelSettingsCatalog).toHaveBeenNthCalledWith(2, 'apiyi')
+      expect(loadModelSettingsCatalog).toHaveBeenNthCalledWith(3, 'apiyi')
     })
 
     it('does not invalidate or reload capabilities for a non-active key write', async () => {

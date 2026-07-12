@@ -29,6 +29,80 @@ export interface ModelSettingsCapabilities {
   supportedReasoningEfforts: ConcreteModelReasoningEffort[]
 }
 
+export type CanonicalModelTier = 'Fast' | 'Medium' | 'High' | 'Extra High'
+
+export interface CanonicalModelSettingsRow {
+  id: string
+  displayName: string
+  tier: CanonicalModelTier
+  description: string
+  isDefault: boolean
+}
+
+/**
+ * Metadata-only fallback directory shared by main and renderer. Capabilities
+ * are deliberately not encoded here: only a live `model/list` response may
+ * claim Codex-confirmed reasoning support.
+ */
+export const CANONICAL_MODEL_SETTINGS_ROWS: readonly CanonicalModelSettingsRow[] = [
+  {
+    id: 'gpt-5.6-luna',
+    displayName: 'GPT-5.6 Luna',
+    tier: 'Fast',
+    description: 'Fast and affordable agentic coding model (Codex 0.144 catalog).',
+    isDefault: false,
+  },
+  {
+    id: 'gpt-5.4-nano',
+    displayName: 'GPT-5.4 Nano',
+    tier: 'Fast',
+    description: 'Smallest GPT-5.4 size. Cheapest, lowest latency.',
+    isDefault: false,
+  },
+  {
+    id: 'gpt-5.4-mini',
+    displayName: 'GPT-5.4 Mini',
+    tier: 'Fast',
+    description: 'Compact GPT-5.4. Quick edits, triage, drafting.',
+    isDefault: false,
+  },
+  {
+    id: 'gpt-5.4',
+    displayName: 'GPT-5.4',
+    tier: 'Medium',
+    description: 'Default GPT-5.4. Balanced reasoning and latency.',
+    isDefault: false,
+  },
+  {
+    id: 'gpt-5.6-terra',
+    displayName: 'GPT-5.6 Terra',
+    tier: 'Medium',
+    description: 'Balanced agentic coding model for everyday work (Codex 0.144 catalog).',
+    isDefault: false,
+  },
+  {
+    id: 'gpt-5.4-2026-03-05',
+    displayName: 'GPT-5.4 (2026-03-05 snapshot)',
+    tier: 'Medium',
+    description: 'Pinned GPT-5.4 snapshot. Use to lock behavior in evals.',
+    isDefault: false,
+  },
+  {
+    id: 'gpt-5.5',
+    displayName: 'GPT-5.5',
+    tier: 'High',
+    description: 'Newer GPT-5.5 family at default reasoning effort.',
+    isDefault: true,
+  },
+  {
+    id: 'gpt-5.6-sol',
+    displayName: 'GPT-5.6 Sol',
+    tier: 'Extra High',
+    description: 'Latest frontier agentic coding model (Codex 0.144 catalog).',
+    isDefault: false,
+  },
+] as const
+
 export interface LegacyModelSelection {
   model: string
   reasoningEffort: ModelReasoningEffort

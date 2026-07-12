@@ -5,7 +5,7 @@ import type { PlanReasoningEffort } from '../../../../../shared/collaborationMod
 import { ModelPicker } from '../ModelPicker'
 import { useAgentChatStore } from '../store'
 
-const setSelectedModel = vi.fn<(modelId: string) => void>()
+const setSelectedModel = vi.fn<(modelId: string) => Promise<void>>()
 const setPlanReasoningEffort = vi.fn<
   (effort: PlanReasoningEffort) => Promise<void>
 >()
@@ -38,7 +38,9 @@ function openPicker(): void {
 }
 
 beforeEach(() => {
-  setSelectedModel.mockReset()
+  setSelectedModel.mockReset().mockImplementation(async (modelId) => {
+    useAgentChatStore.setState({ selectedModelId: modelId } as never)
+  })
   setPlanReasoningEffort.mockReset().mockResolvedValue(undefined)
   setPickerState()
 })
@@ -83,7 +85,7 @@ describe('ModelPicker canonical model rows', () => {
 
   it.each(['plan', 'default'] as const)(
     'selects a real model directly in %s mode without mutating Plan effort',
-    (collabModeKind) => {
+    async (collabModeKind) => {
       setPickerState({ collabModeKind })
       render(<ModelPicker />)
       openPicker()
@@ -93,7 +95,9 @@ describe('ModelPicker canonical model rows', () => {
       expect(setSelectedModel).toHaveBeenCalledWith('gpt-5.6-sol')
       expect(setPlanReasoningEffort).not.toHaveBeenCalled()
       expect(screen.queryByRole('group', { name: '选择模型作用域' })).toBeNull()
-      expect(screen.queryByRole('listbox')).toBeNull()
+      await waitFor(() => {
+        expect(screen.queryByRole('listbox', { name: '模型列表' })).toBeNull()
+      })
     },
   )
 
@@ -108,14 +112,14 @@ describe('ModelPicker canonical model rows', () => {
     expect(trigger.disabled).toBe(true)
     fireEvent.click(trigger)
 
-    expect(screen.queryByRole('listbox')).toBeNull()
+    expect(screen.queryByRole('listbox', { name: '模型列表' })).toBeNull()
     expect(setSelectedModel).not.toHaveBeenCalled()
   })
 
   it('closes an open picker when a collaboration transition becomes pending', async () => {
     render(<ModelPicker />)
     openPicker()
-    expect(screen.getByRole('listbox')).toBeTruthy()
+    expect(screen.getByRole('listbox', { name: '模型列表' })).toBeTruthy()
 
     useAgentChatStore.setState({
       collabModePendingByThread: {
@@ -125,7 +129,7 @@ describe('ModelPicker canonical model rows', () => {
 
     await waitFor(() => {
       expect(getTrigger().disabled).toBe(true)
-      expect(screen.queryByRole('listbox')).toBeNull()
+      expect(screen.queryByRole('listbox', { name: '模型列表' })).toBeNull()
     })
   })
 
@@ -140,7 +144,7 @@ describe('ModelPicker canonical model rows', () => {
 
     fireEvent.keyDown(document, { key: 'Escape' })
 
-    expect(screen.queryByRole('listbox')).toBeNull()
+    expect(screen.queryByRole('listbox', { name: '模型列表' })).toBeNull()
     expect(document.activeElement).toBe(trigger)
   })
 
@@ -150,6 +154,6 @@ describe('ModelPicker canonical model rows', () => {
 
     fireEvent.pointerDown(document.body)
 
-    expect(screen.queryByRole('listbox')).toBeNull()
+    expect(screen.queryByRole('listbox', { name: '模型列表' })).toBeNull()
   })
 })

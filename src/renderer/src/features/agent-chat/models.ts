@@ -1,7 +1,9 @@
 import type {
+  CanonicalModelTier,
   ConcreteModelReasoningEffort,
   ModelReasoningEffort,
 } from '../../../../shared/modelSettings'
+import { CANONICAL_MODEL_SETTINGS_ROWS } from '../../../../shared/modelSettings'
 
 /**
  * Curated catalog of agent models. The `id` is the raw model name forwarded
@@ -16,7 +18,7 @@ import type {
  * amounts into the UI. Every row is a real provider model slug; ordinary
  * reasoning effort is selected and persisted separately per model.
  */
-export type ModelTier = 'Fast' | 'Medium' | 'High' | 'Extra High'
+export type ModelTier = CanonicalModelTier
 
 export interface ModelOption {
   id: string
@@ -25,56 +27,13 @@ export interface ModelOption {
   description: string
 }
 
-export const AGENT_MODELS: readonly ModelOption[] = [
-  {
-    id: 'gpt-5.6-luna',
-    label: 'GPT-5.6 Luna',
-    tier: 'Fast',
-    description: 'Fast and affordable agentic coding model (Codex 0.144 catalog).',
-  },
-  {
-    id: 'gpt-5.4-nano',
-    label: 'GPT-5.4 Nano',
-    tier: 'Fast',
-    description: 'Smallest GPT-5.4 size. Cheapest, lowest latency.',
-  },
-  {
-    id: 'gpt-5.4-mini',
-    label: 'GPT-5.4 Mini',
-    tier: 'Fast',
-    description: 'Compact GPT-5.4. Quick edits, triage, drafting.',
-  },
-  {
-    id: 'gpt-5.4',
-    label: 'GPT-5.4',
-    tier: 'Medium',
-    description: 'Default GPT-5.4. Balanced reasoning and latency.',
-  },
-  {
-    id: 'gpt-5.6-terra',
-    label: 'GPT-5.6 Terra',
-    tier: 'Medium',
-    description: 'Balanced agentic coding model for everyday work (Codex 0.144 catalog).',
-  },
-  {
-    id: 'gpt-5.4-2026-03-05',
-    label: 'GPT-5.4 (2026-03-05 snapshot)',
-    tier: 'Medium',
-    description: 'Pinned GPT-5.4 snapshot. Use to lock behavior in evals.',
-  },
-  {
-    id: 'gpt-5.5',
-    label: 'GPT-5.5',
-    tier: 'High',
-    description: 'Newer GPT-5.5 family at default reasoning effort.',
-  },
-  {
-    id: 'gpt-5.6-sol',
-    label: 'GPT-5.6 Sol',
-    tier: 'Extra High',
-    description: 'Latest frontier agentic coding model (Codex 0.144 catalog).',
-  },
-] as const
+export const AGENT_MODELS: readonly ModelOption[] =
+  CANONICAL_MODEL_SETTINGS_ROWS.map((row) => ({
+    id: row.id,
+    label: row.displayName,
+    tier: row.tier,
+    description: row.description,
+  }))
 
 export const DEFAULT_MODEL_ID = 'gpt-5.5'
 

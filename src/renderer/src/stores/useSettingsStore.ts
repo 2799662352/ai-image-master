@@ -110,6 +110,14 @@ function getAgentBridge(): AgentBridge | undefined {
   return (window as unknown as { electronAPI?: { agent?: AgentBridge } }).electronAPI?.agent
 }
 
+async function reloadAgentModelCapabilities(providerId: string): Promise<void> {
+  const agentChat = useAgentChatStore.getState()
+  await Promise.all([
+    agentChat.loadCollaborationCapabilities(providerId),
+    agentChat.loadModelSettingsCatalog(providerId),
+  ])
+}
+
 const DEFAULT_PROVIDERS_SLICE: ProvidersSlice = {
   builtins: [],
   custom: [],
@@ -341,14 +349,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
         },
         codexApiKey: state.providers.apiKeys[confirmed] ?? '',
       }))
-      await useAgentChatStore.getState().loadCollaborationCapabilities(confirmed)
+      await reloadAgentModelCapabilities(confirmed)
     } catch (err) {
       if (requestGeneration !== providerWriteGeneration) return
       const snapshot = await recoverProviderSnapshot(bridge, requestGeneration)
       if (!snapshot) return
       const agentChat = useAgentChatStore.getState()
       agentChat.invalidateCollaborationCapabilities()
-      await agentChat.loadCollaborationCapabilities(snapshot.activeId)
+      await reloadAgentModelCapabilities(snapshot.activeId)
       throw err
     }
   },
@@ -393,7 +401,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
             },
             codexApiKey: state.providers.apiKeys[confirmed] ?? '',
           }))
-          await useAgentChatStore.getState().loadCollaborationCapabilities(confirmed)
+          await reloadAgentModelCapabilities(confirmed)
         }
       } catch (err) {
         if (
@@ -404,7 +412,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
           if (snapshot) {
             const agentChat = useAgentChatStore.getState()
             agentChat.invalidateCollaborationCapabilities()
-            await agentChat.loadCollaborationCapabilities(snapshot.activeId)
+            await reloadAgentModelCapabilities(snapshot.activeId)
           }
         } else if (requestGeneration === undefined) {
           set((state) => ({
@@ -483,7 +491,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
             pendingProviderId: null,
           },
         }))
-        await useAgentChatStore.getState().loadCollaborationCapabilities(confirmed)
+        await reloadAgentModelCapabilities(confirmed)
       }
     } catch (err) {
       if (
@@ -494,7 +502,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
         if (snapshot) {
           const agentChat = useAgentChatStore.getState()
           agentChat.invalidateCollaborationCapabilities()
-          await agentChat.loadCollaborationCapabilities(snapshot.activeId)
+          await reloadAgentModelCapabilities(snapshot.activeId)
         }
       }
       throw err
@@ -541,7 +549,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
         }
       })
       if (changesAppliedProvider) {
-        await useAgentChatStore.getState().loadCollaborationCapabilities(confirmed)
+        await reloadAgentModelCapabilities(confirmed)
       }
     } catch (err) {
       if (
@@ -552,7 +560,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
         if (snapshot) {
           const agentChat = useAgentChatStore.getState()
           agentChat.invalidateCollaborationCapabilities()
-          await agentChat.loadCollaborationCapabilities(snapshot.activeId)
+          await reloadAgentModelCapabilities(snapshot.activeId)
         }
       }
       throw err

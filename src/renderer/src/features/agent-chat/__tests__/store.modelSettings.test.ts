@@ -1,5 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type {
+  AgentModelContextApplyResult,
+  AgentModelContextSnapshotResult,
+  AgentModelSettingsCatalog,
+  AgentModelSettingsCatalogResult,
+} from '../../../../../types/agent'
 
 const LEGACY_SELECTED_MODEL_STORAGE_KEY = 'catimation.agent.selectedModel'
 const CANONICAL_SELECTED_MODEL_STORAGE_KEY = 'agent.selectedModel:v2'
@@ -10,6 +16,87 @@ async function loadFreshStore() {
   vi.resetModules()
   const { useAgentChatStore } = await import('../store')
   return useAgentChatStore
+}
+
+interface Deferred<T> {
+  promise: Promise<T>
+  resolve: (value: T | PromiseLike<T>) => void
+  reject: (reason?: unknown) => void
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: Deferred<T>['resolve']
+  let reject!: Deferred<T>['reject']
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
+function modelCatalog(
+  provider = 'apiyi',
+  source: AgentModelSettingsCatalog['source'] = 'codex',
+): AgentModelSettingsCatalog {
+  return {
+    provider,
+    source,
+    models: [
+      {
+        id: 'gpt-5.6-sol',
+        displayName: 'GPT-5.6 Sol',
+        description: 'Frontier coding model',
+        hidden: false,
+        isDefault: true,
+        capabilities: {
+          model: 'gpt-5.6-sol',
+          provider,
+          defaultContextWindow: 372_000,
+          contextOptions: [
+            { value: 372_000, experimental: false },
+            { value: 1_000_000, experimental: true },
+          ],
+          defaultReasoningEffort: 'medium',
+          supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+        },
+      },
+      {
+        id: 'gpt-5.5',
+        displayName: 'GPT-5.5',
+        description: 'Stable coding model',
+        hidden: false,
+        isDefault: false,
+        capabilities: {
+          model: 'gpt-5.5',
+          provider,
+          defaultContextWindow: 272_000,
+          contextOptions: [
+            { value: 272_000, experimental: false },
+            { value: 1_000_000, experimental: true },
+          ],
+          defaultReasoningEffort: 'medium',
+          supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+        },
+      },
+    ],
+  }
+}
+
+function installModelSettingsApi(api: {
+  getModelSettingsCatalog?: () => Promise<AgentModelSettingsCatalogResult>
+  getModelContextConfig?: () => Promise<AgentModelContextSnapshotResult>
+  applyModelContext?: (
+    payload: {
+      threadId?: string
+      model: string
+      contextWindow: number
+      requestVersion: number
+    },
+  ) => Promise<AgentModelContextApplyResult>
+}): void {
+  ;(window as unknown as { electronAPI: unknown }).electronAPI = {
+    agent: api,
+  }
 }
 
 beforeEach(() => {
@@ -234,5 +321,355 @@ describe('useAgentChatStore model settings persistence', () => {
     expect(state.modelContextWindowByModel).toEqual({ valid: 200_000 })
     expect(Object.prototype.hasOwnProperty.call(state.modelReasoningEffortByModel, '__proto__')).toBe(false)
     expect(Object.prototype.hasOwnProperty.call(state.modelContextWindowByModel, '__proto__')).toBe(false)
+  })
+})
+
+describe('useAgentChatStore model settings lifecycle', () => {
+  it('starts catalog and context reads together, dedupes in-flight loads, and commits their owner', async () => {
+    const catalogResult = deferred<AgentModelSettingsCatalogResult>()
+    const snapshotResult = deferred<AgentModelContextSnapshotResult>()
+    const getModelSettingsCatalog = vi.fn(() => catalogResult.promise)
+    const getModelContextConfig = vi.fn(() => snapshotResult.promise)
+    installModelSettingsApi({ getModelSettingsCatalog, getModelContextConfig })
+    const store = await loadFreshStore()
+
+    const first = store.getState().loadModelSettingsCatalog()
+    const duplicate = store.getState().loadModelSettingsCatalog()
+
+    expect(getModelSettingsCatalog).toHaveBeenCalledOnce()
+    expect(getModelContextConfig).toHaveBeenCalledOnce()
+    expect(store.getState().modelSettingsLoading).toBe(true)
+
+    catalogResult.resolve({ ok: true, data: modelCatalog() })
+    snapshotResult.resolve({
+      ok: true,
+      data: {
+        modelContextWindow: 372_000,
+        modelAutoCompactTokenLimit: 334_800,
+      },
+    })
+    await Promise.all([first, duplicate])
+
+    expect(store.getState()).toMatchObject({
+      modelSettingsCatalog: modelCatalog(),
+      activeModelContextWindow: 372_000,
+      modelSettingsLoading: false,
+      modelSettingsError: undefined,
+    })
+  })
+
+  it('keeps prior data on partial load failure while committing the successful half', async () => {
+    const previous = modelCatalog('rightcode')
+    installModelSettingsApi({
+      getModelSettingsCatalog: vi.fn().mockRejectedValue(new Error('catalog offline')),
+      getModelContextConfig: vi.fn().mockResolvedValue({
+        ok: true,
+        data: {
+          modelContextWindow: 1_000_000,
+          modelAutoCompactTokenLimit: 900_000,
+        },
+      }),
+    })
+    const store = await loadFreshStore()
+    store.setState({ modelSettingsCatalog: previous } as never)
+
+    await store.getState().loadModelSettingsCatalog()
+
+    expect(store.getState().modelSettingsCatalog).toBe(previous)
+    expect(store.getState().activeModelContextWindow).toBe(1_000_000)
+    expect(store.getState().modelSettingsError).toMatch(/catalog offline/i)
+    expect(store.getState().modelSettingsLoading).toBe(false)
+  })
+
+  it('ignores an older load generation after Provider invalidation and retry', async () => {
+    const firstCatalog = deferred<AgentModelSettingsCatalogResult>()
+    const firstSnapshot = deferred<AgentModelContextSnapshotResult>()
+    const secondCatalog = deferred<AgentModelSettingsCatalogResult>()
+    const secondSnapshot = deferred<AgentModelContextSnapshotResult>()
+    const getModelSettingsCatalog = vi.fn()
+      .mockReturnValueOnce(firstCatalog.promise)
+      .mockReturnValueOnce(secondCatalog.promise)
+    const getModelContextConfig = vi.fn()
+      .mockReturnValueOnce(firstSnapshot.promise)
+      .mockReturnValueOnce(secondSnapshot.promise)
+    installModelSettingsApi({ getModelSettingsCatalog, getModelContextConfig })
+    const store = await loadFreshStore()
+
+    const first = store.getState().loadModelSettingsCatalog()
+    store.getState().invalidateCollaborationCapabilities()
+    const second = store.getState().loadModelSettingsCatalog('rightcode')
+    secondCatalog.resolve({ ok: true, data: modelCatalog('rightcode') })
+    secondSnapshot.resolve({
+      ok: true,
+      data: {
+        modelContextWindow: 1_000_000,
+        modelAutoCompactTokenLimit: 900_000,
+      },
+    })
+    await second
+    firstCatalog.resolve({ ok: true, data: modelCatalog('apiyi') })
+    firstSnapshot.resolve({
+      ok: true,
+      data: {
+        modelContextWindow: 200_000,
+        modelAutoCompactTokenLimit: 180_000,
+      },
+    })
+    await first
+
+    expect(store.getState().modelSettingsCatalog?.provider).toBe('rightcode')
+    expect(store.getState().activeModelContextWindow).toBe(1_000_000)
+  })
+
+  it('commits and persists context only after matching request success', async () => {
+    const apply = deferred<AgentModelContextApplyResult>()
+    const applyModelContext = vi.fn(() => apply.promise)
+    installModelSettingsApi({ applyModelContext })
+    const store = await loadFreshStore()
+    store.setState({
+      threadId: 'thread-1',
+      selectedModelId: 'gpt-5.6-sol',
+      activeModelContextWindow: 372_000,
+      modelContextWindowByModel: {},
+    } as never)
+
+    const applying = store.getState().setModelContextWindow(1_000_000)
+
+    expect(store.getState().modelContextWindowByModel).toEqual({})
+    expect(store.getState().modelContextPending).toEqual({
+      model: 'gpt-5.6-sol',
+      contextWindow: 1_000_000,
+      requestVersion: 1,
+    })
+    apply.resolve({
+      ok: true,
+      data: {
+        model: 'gpt-5.6-sol',
+        contextWindow: 1_000_000,
+        autoCompactTokenLimit: 900_000,
+        threadRestored: true,
+        requestVersion: 1,
+      },
+    })
+    await applying
+
+    expect(store.getState().activeModelContextWindow).toBe(1_000_000)
+    expect(store.getState().modelContextPending).toBeUndefined()
+    expect(store.getState().modelContextWindowByModel).toEqual({
+      'gpt-5.6-sol': 1_000_000,
+    })
+    expect(JSON.parse(localStorage.getItem(MODEL_CONTEXT_STORAGE_KEY) ?? '{}')).toEqual({
+      'gpt-5.6-sol': 1_000_000,
+    })
+  })
+
+  it('does not let stale success or failure overwrite or clear a newer request', async () => {
+    const first = deferred<AgentModelContextApplyResult>()
+    const second = deferred<AgentModelContextApplyResult>()
+    const applyModelContext = vi.fn()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise)
+    installModelSettingsApi({ applyModelContext })
+    const store = await loadFreshStore()
+    store.setState({
+      selectedModelId: 'gpt-5.6-sol',
+      activeModelContextWindow: 372_000,
+      modelContextWindowByModel: {},
+    } as never)
+
+    const firstApply = store.getState().setModelContextWindow(1_000_000)
+    const secondApply = store.getState().setModelContextWindow(372_000)
+    first.resolve({
+      ok: false,
+      error: 'stale failure',
+      stage: 'restart',
+      previousConfig: {
+        modelContextWindow: 372_000,
+        modelAutoCompactTokenLimit: 334_800,
+      },
+      attemptedConfig: {
+        modelContextWindow: 1_000_000,
+        modelAutoCompactTokenLimit: 900_000,
+      },
+      requestVersion: 1,
+      rollback: {
+        ok: true,
+        activeConfig: {
+          modelContextWindow: 372_000,
+          modelAutoCompactTokenLimit: 334_800,
+        },
+      },
+    })
+    await firstApply
+    expect(store.getState().modelContextPending?.requestVersion).toBe(2)
+    expect(store.getState().modelSettingsError).toBeUndefined()
+
+    second.resolve({
+      ok: true,
+      data: {
+        model: 'gpt-5.6-sol',
+        contextWindow: 372_000,
+        autoCompactTokenLimit: 334_800,
+        threadRestored: false,
+        requestVersion: 2,
+      },
+    })
+    await secondApply
+    expect(store.getState().activeModelContextWindow).toBe(372_000)
+    expect(store.getState().modelContextPending).toBeUndefined()
+  })
+
+  it.each([
+    [
+      'restored rollback',
+      {
+        ok: true,
+        activeConfig: {
+          modelContextWindow: 372_000,
+          modelAutoCompactTokenLimit: 334_800,
+        },
+      },
+      /已恢复原 Context/,
+    ],
+    [
+      'failed rollback',
+      { ok: false, error: 'rollback restart failed', effectiveConfig: null },
+      /手动重启/,
+    ],
+  ] as const)('surfaces %s without claiming the attempted context is active', async (
+    _label,
+    rollback,
+    errorPattern,
+  ) => {
+    installModelSettingsApi({
+      applyModelContext: vi.fn().mockResolvedValue({
+        ok: false,
+        error: 'restart failed',
+        stage: 'restart',
+        previousConfig: {
+          modelContextWindow: 372_000,
+          modelAutoCompactTokenLimit: 334_800,
+        },
+        attemptedConfig: {
+          modelContextWindow: 1_000_000,
+          modelAutoCompactTokenLimit: 900_000,
+        },
+        requestVersion: 1,
+        rollback,
+      }),
+    })
+    const store = await loadFreshStore()
+    store.setState({
+      selectedModelId: 'gpt-5.6-sol',
+      activeModelContextWindow: 372_000,
+      modelContextWindowByModel: {},
+    } as never)
+
+    await store.getState().setModelContextWindow(1_000_000)
+
+    expect(store.getState().activeModelContextWindow).toBe(372_000)
+    expect(store.getState().modelContextWindowByModel).toEqual({})
+    expect(store.getState().modelContextPending).toBeUndefined()
+    expect(store.getState().modelSettingsError).toMatch(errorPattern)
+  })
+
+  it.each(['missing', 'throwing'] as const)(
+    'clears pending safely when the apply API is %s',
+    async (kind) => {
+      installModelSettingsApi({
+        ...(kind === 'throwing'
+          ? { applyModelContext: vi.fn().mockRejectedValue(new Error('bridge down')) }
+          : {}),
+      })
+      const store = await loadFreshStore()
+      store.setState({ selectedModelId: 'gpt-5.6-sol' } as never)
+
+      await store.getState().setModelContextWindow(1_000_000)
+
+      expect(store.getState().modelContextPending).toBeUndefined()
+      expect(store.getState().modelSettingsError).toMatch(
+        kind === 'throwing' ? /bridge down/i : /unavailable|不可用/i,
+      )
+    },
+  )
+
+  it('applies the target remembered context before committing an async model selection', async () => {
+    const apply = deferred<AgentModelContextApplyResult>()
+    const applyModelContext = vi.fn(() => apply.promise)
+    installModelSettingsApi({ applyModelContext })
+    const store = await loadFreshStore()
+    store.setState({
+      modelSettingsCatalog: modelCatalog(),
+      selectedModelId: 'gpt-5.6-sol',
+      activeModelContextWindow: 372_000,
+      modelContextWindowByModel: { 'gpt-5.5': 1_000_000 },
+    } as never)
+
+    const selecting = store.getState().setSelectedModel('gpt-5.5')
+    expect(store.getState().selectedModelId).toBe('gpt-5.6-sol')
+    expect(applyModelContext).toHaveBeenCalledWith(expect.objectContaining({
+      model: 'gpt-5.5',
+      contextWindow: 1_000_000,
+    }))
+    apply.resolve({
+      ok: true,
+      data: {
+        model: 'gpt-5.5',
+        contextWindow: 1_000_000,
+        autoCompactTokenLimit: 900_000,
+        threadRestored: false,
+        requestVersion: 1,
+      },
+    })
+    await selecting
+
+    expect(store.getState().selectedModelId).toBe('gpt-5.5')
+    expect(localStorage.getItem(CANONICAL_SELECTED_MODEL_STORAGE_KEY)).toBe('gpt-5.5')
+  })
+
+  it('keeps the old model when target context apply fails and skips apply for equal context', async () => {
+    const applyModelContext = vi.fn().mockResolvedValue({
+      ok: false,
+      error: 'restart failed',
+      stage: 'restart',
+      previousConfig: {
+        modelContextWindow: 372_000,
+        modelAutoCompactTokenLimit: 334_800,
+      },
+      attemptedConfig: {
+        modelContextWindow: 1_000_000,
+        modelAutoCompactTokenLimit: 900_000,
+      },
+      requestVersion: 1,
+      rollback: {
+        ok: true,
+        activeConfig: {
+          modelContextWindow: 372_000,
+          modelAutoCompactTokenLimit: 334_800,
+        },
+      },
+    } satisfies AgentModelContextApplyResult)
+    installModelSettingsApi({ applyModelContext })
+    const store = await loadFreshStore()
+    store.setState({
+      modelSettingsCatalog: modelCatalog(),
+      selectedModelId: 'gpt-5.6-sol',
+      activeModelContextWindow: 372_000,
+      modelContextWindowByModel: { 'gpt-5.5': 1_000_000 },
+    } as never)
+
+    await store.getState().setSelectedModel('gpt-5.5')
+    expect(store.getState().selectedModelId).toBe('gpt-5.6-sol')
+
+    applyModelContext.mockClear()
+    store.setState({
+      modelContextWindowByModel: { 'gpt-5.5': 372_000 },
+      modelSettingsError: undefined,
+    } as never)
+    await store.getState().setSelectedModel('gpt-5.5')
+    expect(applyModelContext).not.toHaveBeenCalled()
+    expect(store.getState().selectedModelId).toBe('gpt-5.5')
+    expect(store.getState().modelContextWindowByModel['gpt-5.6-sol']).toBeUndefined()
+    expect(store.getState().modelContextWindowByModel['gpt-5.5']).toBe(372_000)
   })
 })

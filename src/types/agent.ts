@@ -2,7 +2,10 @@ import type { CodexUserMessageReconcile, TimelineItem } from './agent-timeline'
 import type { AgentReference } from './agent-reference'
 import type { ThreadGoal } from './codexGoals'
 import type { PlanReasoningEffort } from '../shared/collaborationMode'
-import type { ConcreteModelReasoningEffort } from '../shared/modelSettings'
+import type {
+  ConcreteModelReasoningEffort,
+  ModelSettingsCapabilities,
+} from '../shared/modelSettings'
 
 // Canonical home is agent-timeline.ts (BaseItem.codexReconcile persists the
 // same shape); re-exported here because stream-event consumers import all
@@ -160,6 +163,29 @@ export interface CodexModelContextConfig {
   modelContextWindow: number
   modelAutoCompactTokenLimit: number
 }
+
+export interface AgentModelSettingsEntry {
+  id: string
+  displayName: string
+  description: string
+  hidden: boolean
+  isDefault: boolean
+  capabilities: ModelSettingsCapabilities
+}
+
+export interface AgentModelSettingsCatalog {
+  provider: string
+  source: 'codex' | 'fallback'
+  models: AgentModelSettingsEntry[]
+}
+
+export type AgentModelSettingsCatalogResult =
+  | { ok: true; data: AgentModelSettingsCatalog }
+  | { ok: false; error: string }
+
+export type AgentModelContextSnapshotResult =
+  | { ok: true; data: CodexModelContextConfig }
+  | { ok: false; error: string }
 
 export interface AgentModelContextApplyPayload {
   threadId?: string

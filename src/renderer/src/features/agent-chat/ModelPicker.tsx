@@ -7,34 +7,137 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react'
 import {
-  isPlanReasoningEffort,
-  type PlanReasoningEffort,
-} from '../../../../shared/collaborationMode'
-import {
-  AGENT_MODELS,
-  findModel,
-  resolveModelSelection,
-  type ModelOption,
-  type ModelTier,
-} from './models'
+  CANONICAL_MODEL_SETTINGS_ROWS,
+  isModelReasoningEffort,
+  mergeModelSettingsCapabilities,
+  modelContextOptions,
+  type CanonicalModelTier,
+  type ModelReasoningEffort,
+} from '../../../../shared/modelSettings'
+import type { AgentModelSettingsEntry } from '../../../../types/agent'
+import { findModel } from './models'
+import { ModelSettingsPanel } from './ModelSettingsPanel'
 import { useAgentChatStore } from './store'
 
-const TIER_ORDER: ModelTier[] = ['Fast', 'Medium', 'High', 'Extra High']
+const TIER_ORDER: CanonicalModelTier[] = ['Fast', 'Medium', 'High', 'Extra High']
 
-const TIER_BADGE: Record<ModelTier, string> = {
+const TIER_BADGE: Record<CanonicalModelTier, string> = {
   Fast: 'text-emerald-300/90 bg-emerald-500/10 border-emerald-400/30',
   Medium: 'text-cyan-300/90 bg-cyan-500/10 border-cyan-400/30',
   High: 'text-amber-300/90 bg-amber-500/10 border-amber-400/30',
   'Extra High': 'text-fuchsia-300/90 bg-fuchsia-500/10 border-fuchsia-400/30',
 }
 
+const REASONING_LABELS: Record<ModelReasoningEffort, string> = {
+  auto: 'Auto',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Extra High',
+  max: 'Max',
+}
+
+interface PickerModel extends AgentModelSettingsEntry {
+  label: string
+  tier: CanonicalModelTier
+}
+
 interface ModelPickerProps {
   disabled?: boolean
 }
 
+function conservativeFallbackRows(provider: string): AgentModelSettingsEntry[] {
+  return CANONICAL_MODEL_SETTINGS_ROWS.map((row) => ({
+    id: row.id,
+    displayName: row.displayName,
+    description: row.description,
+    hidden: false,
+    isDefault: row.isDefault,
+    capabilities: {
+      ...mergeModelSettingsCapabilities({
+        model: row.id,
+        provider,
+        supportedReasoningEfforts: [],
+      }),
+      contextOptions: modelContextOptions(row.id).map((option) => ({
+        ...option,
+        conservative: true,
+      })),
+    },
+  }))
+}
+
+function pickerModel(row: AgentModelSettingsEntry): PickerModel {
+  return {
+    ...row,
+    label: row.displayName,
+    tier: findModel(row.id)?.tier ?? 'Medium',
+  }
+}
+
+function unknownModel(id: string, provider: string): PickerModel {
+  return pickerModel({
+    id,
+    displayName: `Unknown · ${id}`,
+    description: '当前 Provider 提供的未识别模型；能力采用保守默认。',
+    hidden: false,
+    isDefault: false,
+    capabilities: {
+      ...mergeModelSettingsCapabilities({
+        model: id,
+        provider,
+        supportedReasoningEfforts: [],
+      }),
+      contextOptions: modelContextOptions(id).map((option) => ({
+        ...option,
+        conservative: true,
+      })),
+    },
+  })
+}
+
+function moveModelFocus(
+  event: ReactKeyboardEvent<HTMLButtonElement>,
+  index: number,
+  refs: { current: Array<HTMLButtonElement | null> },
+): void {
+  const count = refs.current.length
+  if (count === 0) return
+  let target: number | null = null
+  switch (event.key) {
+    case 'ArrowUp':
+      target = (index - 1 + count) % count
+      break
+    case 'ArrowDown':
+      target = (index + 1) % count
+      break
+    case 'Home':
+      target = 0
+      break
+    case 'End':
+      target = count - 1
+      break
+    default:
+      break
+  }
+  if (target === null) return
+  event.preventDefault()
+  refs.current[target]?.focus()
+}
+
 export function ModelPicker({ disabled }: ModelPickerProps) {
   const selectedModelId = useAgentChatStore((state) => state.selectedModelId)
-  const collabModeKind = useAgentChatStore((state) => state.collabModeKind)
+  const catalog = useAgentChatStore((state) => state.modelSettingsCatalog)
+  const modelReasoningEffortByModel = useAgentChatStore(
+    (state) => state.modelReasoningEffortByModel,
+  )
+  const activeModelContextWindow = useAgentChatStore(
+    (state) => state.activeModelContextWindow,
+  )
+  const modelContextPending = useAgentChatStore(
+    (state) => state.modelContextPending,
+  )
+  const modelSettingsError = useAgentChatStore((state) => state.modelSettingsError)
   const isRunning = useAgentChatStore((state) => state.isRunning)
   const hasPendingCollabMode = useAgentChatStore((state) =>
     state.threadId
@@ -42,206 +145,128 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
       : false,
   )
   const setSelectedModel = useAgentChatStore((state) => state.setSelectedModel)
-  const setPlanReasoningEffort = useAgentChatStore(
-    (state) => state.setPlanReasoningEffort,
+  const setModelReasoningEffort = useAgentChatStore(
+    (state) => state.setModelReasoningEffort,
+  )
+  const setModelContextWindow = useAgentChatStore(
+    (state) => state.setModelContextWindow,
   )
 
   const [isOpen, setIsOpen] = useState(false)
   const [query, setQuery] = useState('')
-  const [pendingOption, setPendingOption] = useState<ModelOption | null>(null)
-  const [isApplying, setIsApplying] = useState(false)
-  const [applyError, setApplyError] = useState<string | null>(null)
+  const [modelSelectionPending, setModelSelectionPending] = useState(false)
   const rootRef = useRef<HTMLDivElement | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const searchRef = useRef<HTMLInputElement | null>(null)
-  const planOnlyRef = useRef<HTMLButtonElement | null>(null)
-  const isApplyingRef = useRef(false)
-  const focusLeftRootDuringApplyRef = useRef(false)
+  const modelRefs = useRef<Array<HTMLButtonElement | null>>([])
 
-  const knownSelected = findModel(selectedModelId)
-  const unknownSelected = useMemo<ModelOption>(
-    () => ({
-      id: selectedModelId,
-      label: `Unknown · ${selectedModelId}`,
-      tier: 'Medium',
-      description: '当前 Provider 提供的未识别模型',
-    }),
-    [selectedModelId],
+  const provider = catalog?.provider ?? 'unknown'
+  const baseRows = useMemo(
+    () => (
+      catalog
+        ? catalog.models
+        : conservativeFallbackRows(provider)
+    ).filter((row) => !row.hidden).map(pickerModel),
+    [catalog, provider],
   )
-  const selected = knownSelected ?? unknownSelected
+  const selectedKnown = baseRows.find((model) => model.id === selectedModelId)
+  const selected = useMemo(
+    () => selectedKnown ?? unknownModel(selectedModelId, provider),
+    [provider, selectedKnown, selectedModelId],
+  )
   const availableModels = useMemo(
-    () => knownSelected ? AGENT_MODELS : [unknownSelected, ...AGENT_MODELS],
-    [knownSelected, unknownSelected],
+    () => selectedKnown ? baseRows : [selected, ...baseRows],
+    [baseRows, selected, selectedKnown],
   )
-  const controlsDisabled = Boolean(disabled) || isRunning || hasPendingCollabMode
+  const reasoningEffort = modelReasoningEffortByModel[selectedModelId]
+    ?? (
+      isModelReasoningEffort(selected.capabilities.defaultReasoningEffort)
+        ? selected.capabilities.defaultReasoningEffort
+        : 'auto'
+    )
+  const reasoningLabel = REASONING_LABELS[reasoningEffort]
+  const controlsDisabled =
+    Boolean(disabled)
+    || isRunning
+    || hasPendingCollabMode
+    || modelContextPending !== undefined
+    || modelSelectionPending
+  const capabilitiesUnconfirmed =
+    !catalog
+    || catalog.source === 'fallback'
+    || !selectedKnown
 
-  // Filter + group
   const grouped = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    const filtered = q
-      ? availableModels.filter(
-          (m) =>
-            m.label.toLowerCase().includes(q) ||
-            m.id.toLowerCase().includes(q) ||
-            m.description.toLowerCase().includes(q),
-        )
-      : [...availableModels]
-
-    const buckets = new Map<ModelTier, ModelOption[]>()
-    for (const tier of TIER_ORDER) buckets.set(tier, [])
-    for (const m of filtered) buckets.get(m.tier)?.push(m)
+    const normalizedQuery = query.trim().toLowerCase()
+    const filtered = normalizedQuery
+      ? availableModels.filter((model) =>
+          model.label.toLowerCase().includes(normalizedQuery)
+          || model.id.toLowerCase().includes(normalizedQuery)
+          || model.description.toLowerCase().includes(normalizedQuery))
+      : availableModels
+    const buckets = new Map<CanonicalModelTier, PickerModel[]>(
+      TIER_ORDER.map((tier) => [tier, []]),
+    )
+    for (const model of filtered) buckets.get(model.tier)?.push(model)
     return TIER_ORDER
       .map((tier) => ({ tier, items: buckets.get(tier) ?? [] }))
-      .filter((g) => g.items.length > 0)
+      .filter((group) => group.items.length > 0)
   }, [availableModels, query])
+  const flatModels = grouped.flatMap((group) => group.items)
 
   function closePicker(restoreFocus: boolean): void {
-    const root = rootRef.current
-    const trigger = triggerRef.current
     const activeElement = document.activeElement
-    const focusStillOwned =
+    const focusOwned =
       activeElement instanceof Node
-      && root?.contains(activeElement)
-
+      && rootRef.current?.contains(activeElement) === true
     setIsOpen(false)
-    setPendingOption(null)
-    setApplyError(null)
     setQuery('')
-
     if (
       restoreFocus
-      && focusStillOwned
-      && trigger
-      && !trigger.disabled
+      && focusOwned
+      && triggerRef.current
+      && !triggerRef.current.disabled
     ) {
-      trigger.focus()
+      triggerRef.current.focus()
     }
   }
 
-  function returnToModelList(): void {
-    setPendingOption(null)
-    setApplyError(null)
-  }
-
-  // Close on outside pointerdown + Escape.
   useEffect(() => {
     if (!isOpen) return undefined
     function onOutsidePointerDown(event: PointerEvent): void {
       if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
-        if (isApplyingRef.current) {
-          focusLeftRootDuringApplyRef.current = true
-        }
         closePicker(false)
       }
     }
-    function onKey(event: KeyboardEvent): void {
+    function onKeyDown(event: KeyboardEvent): void {
       if (event.key !== 'Escape') return
-      if (pendingOption) {
-        returnToModelList()
-      } else {
-        closePicker(true)
-      }
+      event.preventDefault()
+      closePicker(true)
     }
     document.addEventListener('pointerdown', onOutsidePointerDown)
-    document.addEventListener('keydown', onKey)
-    if (pendingOption) {
-      planOnlyRef.current?.focus()
-    } else {
-      searchRef.current?.focus()
-    }
+    document.addEventListener('keydown', onKeyDown)
+    searchRef.current?.focus()
     return () => {
       document.removeEventListener('pointerdown', onOutsidePointerDown)
-      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('keydown', onKeyDown)
     }
-  }, [isOpen, pendingOption])
+  }, [isOpen])
 
   useEffect(() => {
-    if (controlsDisabled && isOpen) closePicker(false)
-  }, [controlsDisabled, isOpen])
+    if (controlsDisabled && isOpen && !modelSelectionPending) closePicker(false)
+  }, [controlsDisabled, isOpen, modelSelectionPending])
 
-  function handlePick(id: string): void {
-    if (controlsDisabled || isApplyingRef.current) return
-
-    const current = resolveModelSelection(selectedModelId)
-    const next = resolveModelSelection(id)
-    const needsPlanScope =
-      collabModeKind === 'plan'
-      && current.model === next.model
-      && current.reasoningEffort !== next.reasoningEffort
-
-    if (needsPlanScope) {
-      const option = findModel(id)
-      if (option) {
-        setApplyError(null)
-        setPendingOption(option)
-      }
-      return
-    }
-
-    setSelectedModel(id)
-    closePicker(true)
-  }
-
-  function planEffortFor(option: ModelOption): PlanReasoningEffort {
-    const effort = resolveModelSelection(option.id).reasoningEffort
-    return isPlanReasoningEffort(effort) ? effort : 'auto'
-  }
-
-  async function applyPendingOption(scope: 'plan' | 'all'): Promise<void> {
-    if (
-      !pendingOption
-      || controlsDisabled
-      || isApplyingRef.current
-    ) {
-      return
-    }
-
-    const option = pendingOption
-    const rootAtSubmit = rootRef.current
-    const activeAtSubmit = document.activeElement
-    const focusOwnedAtSubmit =
-      activeAtSubmit instanceof Node
-      && rootAtSubmit?.contains(activeAtSubmit) === true
-    isApplyingRef.current = true
-    focusLeftRootDuringApplyRef.current = false
-    setIsApplying(true)
-    setApplyError(null)
+  async function handlePick(id: string): Promise<void> {
+    if (controlsDisabled || id === selectedModelId) return
+    setModelSelectionPending(true)
     try {
-      if (scope === 'plan') {
-        await setPlanReasoningEffort(planEffortFor(option))
-      } else {
-        setSelectedModel(option.id)
-        await setPlanReasoningEffort('auto')
+      await setSelectedModel(id)
+      if (useAgentChatStore.getState().selectedModelId === id) {
+        closePicker(true)
       }
-      const activeAtCompletion = document.activeElement
-      const focusStillOwned =
-        activeAtCompletion instanceof Node
-        && rootRef.current?.contains(activeAtCompletion) === true
-      closePicker(
-        focusOwnedAtSubmit
-        && !focusLeftRootDuringApplyRef.current
-        && focusStillOwned,
-      )
-    } catch {
-      setApplyError('应用模型范围失败，请重试。')
     } finally {
-      isApplyingRef.current = false
-      focusLeftRootDuringApplyRef.current = false
-      setIsApplying(false)
+      setModelSelectionPending(false)
     }
-  }
-
-  function handleScopeActionKeyDown(
-    event: ReactKeyboardEvent<HTMLButtonElement>,
-  ): void {
-    if (
-      !isApplyingRef.current
-      || (event.key !== 'Enter' && event.key !== ' ')
-    ) {
-      return
-    }
-    event.preventDefault()
-    event.stopPropagation()
   }
 
   function handleRootBlur(event: ReactFocusEvent<HTMLDivElement>): void {
@@ -249,12 +274,7 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
     if (
       nextTarget instanceof Node
       && rootRef.current?.contains(nextTarget)
-    ) {
-      return
-    }
-    if (isApplyingRef.current) {
-      focusLeftRootDuringApplyRef.current = true
-    }
+    ) return
     closePicker(false)
   }
 
@@ -265,23 +285,20 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
         type="button"
         disabled={controlsDisabled}
         onClick={() => {
-          if (isOpen) {
-            closePicker(true)
-          } else {
-            setIsOpen(true)
-          }
+          if (isOpen) closePicker(true)
+          else setIsOpen(true)
         }}
         className="flex items-center gap-1.5 rounded-md border border-zinc-700/80 bg-zinc-900/70 px-2 py-1 text-[11px] text-zinc-200 transition hover:border-cyan-400/40 hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
-        aria-label={`选择模型：${selected.label}`}
+        aria-label={`选择模型：${selected.label} · ${reasoningLabel}`}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
-        title={`${selected.label} · ${selected.tier}`}
+        title={`${selected.label} · ${reasoningLabel}`}
       >
         <span className="font-medium">{selected.label}</span>
         <span
           className={`hidden rounded border px-1 text-[9px] uppercase tracking-wider sm:inline ${TIER_BADGE[selected.tier]}`}
         >
-          {selected.tier}
+          {reasoningLabel}
         </span>
         <svg
           width="10"
@@ -290,159 +307,121 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
           aria-hidden
           className={`opacity-70 transition ${isOpen ? 'rotate-180' : ''}`}
         >
-          <path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+          <path
+            d="M2 4l4 4 4-4"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            fill="none"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
         </svg>
       </button>
 
       {isOpen ? (
         <div
-          role={pendingOption ? undefined : 'listbox'}
-          aria-label={pendingOption ? undefined : '模型列表'}
-          aria-busy={isApplying}
-          className="absolute bottom-full left-0 z-[40001] mb-2 w-[300px] overflow-hidden rounded-lg border border-cyan-400/25 bg-zinc-950/95 shadow-[0_24px_60px_rgba(0,0,0,0.6)] backdrop-blur"
+          className="absolute bottom-full left-0 z-[40001] mb-2 w-[360px] overflow-hidden rounded-lg border border-cyan-400/25 bg-zinc-950/95 shadow-[0_24px_60px_rgba(0,0,0,0.6)] backdrop-blur"
         >
-          {pendingOption ? (
-            <div role="group" aria-label="选择模型作用域">
-              <div className="border-b border-zinc-800/80 px-3 py-2">
-                <button
-                  type="button"
-                  aria-label="返回模型列表"
-                  disabled={isApplying}
-                  onClick={returnToModelList}
-                  className="mb-2 flex items-center gap-1 text-[10px] text-zinc-400 transition hover:text-cyan-100 disabled:cursor-wait disabled:opacity-50"
-                >
-                  <span aria-hidden>←</span>
-                  <span>返回</span>
-                </button>
-                <div className="text-[12px] font-medium text-cyan-100">选择应用范围</div>
-                <p className="mt-1 text-[10px] leading-4 text-zinc-500">
-                  {pendingOption.label} 与当前模型相同，仅推理强度不同。请选择这次调整的作用域。
-                </p>
-              </div>
+          <div className="border-b border-zinc-800/80 p-2">
+            <input
+              ref={searchRef}
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'ArrowDown') {
+                  event.preventDefault()
+                  modelRefs.current[0]?.focus()
+                }
+              }}
+              placeholder="Search models"
+              aria-label="Search models"
+              className="w-full rounded border border-zinc-800 bg-black/40 px-2 py-1 text-[12px] text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-cyan-400/40"
+            />
+          </div>
 
-              <div className="space-y-1 p-2">
-                <button
-                  ref={planOnlyRef}
-                  type="button"
-                  aria-label="仅 Plan"
-                  aria-disabled={isApplying}
-                  onClick={() => {
-                    void applyPendingOption('plan')
-                  }}
-                  onKeyDown={handleScopeActionKeyDown}
-                  className="flex w-full flex-col rounded-md border border-fuchsia-400/25 bg-fuchsia-500/10 px-3 py-2 text-left transition hover:border-fuchsia-300/50 hover:bg-fuchsia-500/15 focus:outline-none focus-visible:ring-1 focus-visible:ring-fuchsia-400/70 aria-disabled:pointer-events-none aria-disabled:cursor-wait aria-disabled:opacity-60"
-                >
-                  <span className="text-[12px] font-medium text-fuchsia-100">仅 Plan</span>
-                  <span className="text-[10px] leading-4 text-zinc-500">
-                    保留当前模型，只调整 Plan 推理强度
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  aria-label="所有模式"
-                  aria-disabled={isApplying}
-                  onClick={() => {
-                    void applyPendingOption('all')
-                  }}
-                  onKeyDown={handleScopeActionKeyDown}
-                  className="flex w-full flex-col rounded-md border border-zinc-700/80 bg-zinc-900/70 px-3 py-2 text-left transition hover:border-cyan-400/40 hover:bg-zinc-800/70 focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400/70 aria-disabled:pointer-events-none aria-disabled:cursor-wait aria-disabled:opacity-60"
-                >
-                  <span className="text-[12px] font-medium text-zinc-100">所有模式</span>
-                  <span className="text-[10px] leading-4 text-zinc-500">
-                    更新模型选项，并将 Plan 专属强度重置为 Auto
-                  </span>
-                </button>
-              </div>
-
-              {applyError ? (
-                <div role="alert" className="border-t border-rose-400/20 px-3 py-2 text-[10px] text-rose-300">
-                  {applyError}
-                </div>
-              ) : null}
+          {capabilitiesUnconfirmed ? (
+            <div
+              role="status"
+              className="border-b border-amber-300/15 bg-amber-300/[0.04] px-3 py-1.5 text-[9px] leading-4 text-amber-200/80"
+            >
+              能力未确认 · 当前目录使用保守默认，实时 Codex 能力恢复后会自动更新。
             </div>
-          ) : (
-            <>
-              <div className="border-b border-zinc-800/80 p-2">
-                <input
-                  ref={searchRef}
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search models"
-                  className="w-full rounded border border-zinc-800 bg-black/40 px-2 py-1 text-[12px] text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-cyan-400/40"
-                />
-              </div>
+          ) : null}
 
-              <div className="max-h-[320px] overflow-y-auto py-1">
-                {grouped.length === 0 ? (
-                  <div className="px-3 py-4 text-center text-[11px] text-zinc-500">No models match.</div>
-                ) : (
-                  grouped.map((group) => (
-                    <div key={group.tier} className="mb-1">
-                      <div className="px-3 py-1 text-[9px] uppercase tracking-[0.18em] text-zinc-500">
-                        {group.tier}
-                      </div>
-                      {group.items.map((m) => {
-                        const isActive = m.id === selectedModelId
-                        return (
-                          <button
-                            key={m.id}
-                            type="button"
-                            role="option"
-                            aria-label={m.label}
-                            aria-selected={isActive}
-                            disabled={controlsDisabled || isApplying}
-                            onClick={() => {
-                              handlePick(m.id)
-                            }}
-                            className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-[12px] transition disabled:cursor-wait disabled:opacity-60 ${
-                              isActive
-                                ? 'bg-cyan-500/10 text-cyan-100'
-                                : 'text-zinc-200 hover:bg-zinc-800/60 hover:text-cyan-100'
-                            }`}
-                            title={m.description}
-                          >
-                            <span className="flex min-w-0 flex-col">
-                              <span className="truncate font-medium">{m.label}</span>
-                              <span className="truncate text-[10px] text-zinc-500">{m.id}</span>
-                            </span>
-                            <span className="flex items-center gap-1.5">
-                              <span
-                                className={`rounded border px-1 py-[1px] text-[9px] uppercase tracking-wider ${TIER_BADGE[m.tier]}`}
-                              >
-                                {m.tier}
-                              </span>
-                              {isActive ? (
-                                <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden>
-                                  <path
-                                    d="M2 6l3 3 5-6"
-                                    stroke="currentColor"
-                                    strokeWidth="1.5"
-                                    fill="none"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                  />
-                                </svg>
-                              ) : null}
-                            </span>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  ))
-                )}
+          <div
+            role="listbox"
+            aria-label="模型列表"
+            aria-busy={modelSelectionPending}
+            className="max-h-[210px] overflow-y-auto py-1"
+          >
+            {grouped.length === 0 ? (
+              <div className="px-3 py-4 text-center text-[11px] text-zinc-500">
+                No models match.
               </div>
-
-              {applyError ? (
-                <div role="alert" className="border-t border-rose-400/20 px-3 py-2 text-[10px] text-rose-300">
-                  {applyError}
+            ) : (
+              grouped.map((group) => (
+                <div key={group.tier} className="mb-1">
+                  <div className="px-3 py-1 text-[9px] uppercase tracking-[0.18em] text-zinc-500">
+                    {group.tier}
+                  </div>
+                  {group.items.map((model) => {
+                    const index = flatModels.findIndex((item) => item.id === model.id)
+                    const isActive = model.id === selectedModelId
+                    return (
+                      <button
+                        key={model.id}
+                        ref={(node) => {
+                          modelRefs.current[index] = node
+                        }}
+                        type="button"
+                        role="option"
+                        aria-label={model.label}
+                        aria-selected={isActive}
+                        disabled={controlsDisabled}
+                        onClick={() => {
+                          void handlePick(model.id)
+                        }}
+                        onKeyDown={(event) => {
+                          moveModelFocus(event, index, modelRefs)
+                        }}
+                        className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-[12px] transition disabled:cursor-wait disabled:opacity-60 ${
+                          isActive
+                            ? 'bg-cyan-500/10 text-cyan-100'
+                            : 'text-zinc-200 hover:bg-zinc-800/60 hover:text-cyan-100'
+                        }`}
+                        title={model.description}
+                      >
+                        <span className="flex min-w-0 flex-col">
+                          <span className="truncate font-medium">{model.label}</span>
+                          <span className="truncate text-[10px] text-zinc-500">{model.id}</span>
+                        </span>
+                        <span
+                          className={`rounded border px-1 py-[1px] text-[9px] uppercase tracking-wider ${TIER_BADGE[model.tier]}`}
+                        >
+                          {model.tier}
+                        </span>
+                      </button>
+                    )
+                  })}
                 </div>
-              ) : null}
+              ))
+            )}
+          </div>
 
-              <div className="border-t border-zinc-800/80 px-3 py-1.5 text-[10px] text-zinc-500">
-                via API易 · base_url <code className="text-zinc-400">https://api.apiyi.com/v1</code>
-              </div>
-            </>
-          )}
+          <div className="border-t border-zinc-800/80 p-2">
+            <ModelSettingsPanel
+              capabilities={selected.capabilities}
+              reasoningEffort={reasoningEffort}
+              contextWindow={activeModelContextWindow}
+              disabled={Boolean(disabled) || isRunning || hasPendingCollabMode}
+              pending={modelContextPending !== undefined || modelSelectionPending}
+              error={modelSettingsError}
+              onReasoningChange={(effort) => {
+                setModelReasoningEffort(selectedModelId, effort)
+              }}
+              onContextChange={setModelContextWindow}
+            />
+          </div>
         </div>
       ) : null}
     </div>

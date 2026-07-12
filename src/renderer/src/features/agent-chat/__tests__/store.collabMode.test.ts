@@ -4,6 +4,8 @@ import type {
   AgentCollaborationCapabilitiesResult,
   AgentCollaborationModeUpdatePayload,
   AgentCollaborationModeUpdateResult,
+  AgentModelContextApplyPayload,
+  AgentModelContextApplyResult,
   AgentSendMessagePayload,
   AgentSendMessageResult,
 } from '../../../../../types/agent'
@@ -37,6 +39,9 @@ const updateCollaborationMode = vi.fn<
 const getCollaborationCapabilities = vi.fn<
   (model: string) => Promise<AgentCollaborationCapabilitiesResult>
 >()
+const applyModelContext = vi.fn<
+  (payload: AgentModelContextApplyPayload) => Promise<AgentModelContextApplyResult>
+>()
 const openThread = vi.fn<(threadId: string) => Promise<unknown>>()
 const deleteThread = vi.fn<(threadId: string) => Promise<void>>()
 
@@ -57,6 +62,16 @@ beforeEach(() => {
       source: 'codex',
     },
   })
+  applyModelContext.mockReset().mockImplementation(async (payload) => ({
+    ok: true,
+    data: {
+      model: payload.model,
+      contextWindow: payload.contextWindow,
+      autoCompactTokenLimit: Math.floor(payload.contextWindow * 0.9),
+      threadRestored: false,
+      requestVersion: payload.requestVersion,
+    },
+  }))
   openThread.mockReset().mockResolvedValue({ messages: [] })
   deleteThread.mockReset().mockResolvedValue(undefined)
   ;(window as unknown as { electronAPI: unknown }).electronAPI = {
@@ -65,6 +80,7 @@ beforeEach(() => {
       steer,
       updateCollaborationMode,
       getCollaborationCapabilities,
+      applyModelContext,
       openThread,
       deleteThread,
       onEvent: () => () => undefined,
@@ -82,6 +98,10 @@ beforeEach(() => {
     selectedModelId: 'gpt-5.5',
     modelReasoningEffortByModel: {},
     modelContextWindowByModel: {},
+    activeModelContextWindow: 272_000,
+    modelContextPending: undefined,
+    modelSettingsError: undefined,
+    modelContextRequestSequence: 0,
     threadSlices: {},
     runningByThread: {},
     threadList: [],
