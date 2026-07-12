@@ -466,6 +466,77 @@ describe('useAgentChatStore model settings lifecycle', () => {
     expect(store.getState().activeModelContextWindow).toBe(1_000_000)
   })
 
+  it.each([
+    ['successful load', false],
+    ['catalog failure', true],
+  ] as const)(
+    'preserves a newer rollback failure after a deferred %s',
+    async (_label, catalogFails) => {
+      const catalogResult = deferred<AgentModelSettingsCatalogResult>()
+      const snapshotResult = deferred<AgentModelContextSnapshotResult>()
+      const applyResult = deferred<AgentModelContextApplyResult>()
+      installModelSettingsApi({
+        getModelSettingsCatalog: vi.fn(() => catalogResult.promise),
+        getModelContextConfig: vi.fn(() => snapshotResult.promise),
+        applyModelContext: vi.fn(() => applyResult.promise),
+      })
+      const store = await loadFreshStore()
+      store.setState({
+        selectedModelId: 'gpt-5.6-sol',
+        activeModelContextWindow: 372_000,
+        modelContextWindowByModel: {},
+      } as never)
+
+      const loading = store.getState().loadModelSettingsCatalog()
+      const applying = store.getState().setModelContextWindow(1_000_000)
+      applyResult.resolve({
+        ok: false,
+        error: 'apply restart failed',
+        stage: 'restart',
+        previousConfig: {
+          modelContextWindow: 372_000,
+          modelAutoCompactTokenLimit: 334_800,
+        },
+        attemptedConfig: {
+          modelContextWindow: 1_000_000,
+          modelAutoCompactTokenLimit: 900_000,
+        },
+        requestVersion: 1,
+        rollback: {
+          ok: false,
+          error: 'rollback restart failed',
+          effectiveConfig: null,
+        },
+      })
+      await applying
+      const contextError =
+        'Context 应用失败：apply restart failed；回滚失败：rollback restart failed；'
+        + '请手动重启 Agent Workspace/Codex。'
+      expect(store.getState().modelSettingsError).toBe(contextError)
+
+      catalogResult.resolve(catalogFails
+        ? { ok: false, error: 'catalog offline' }
+        : { ok: true, data: modelCatalog() })
+      snapshotResult.resolve({
+        ok: true,
+        data: {
+          modelContextWindow: 372_000,
+          modelAutoCompactTokenLimit: 334_800,
+        },
+      })
+      await loading
+
+      expect(store.getState().modelSettingsError).toMatch(
+        new RegExp(`^${contextError.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+      )
+      if (catalogFails) {
+        expect(store.getState().modelSettingsError).toContain('catalog offline')
+      } else {
+        expect(store.getState().modelSettingsError).toBe(contextError)
+      }
+    },
+  )
+
   it('preserves both apply and rollback errors in the manual-restart message', async () => {
     const { formatContextApplyError } = await import('../store')
 

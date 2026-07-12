@@ -73,6 +73,7 @@ function setPickerState(
     modelContextWindowByModel: {},
     activeModelContextWindow: 372_000,
     modelContextPending: undefined,
+    modelSettingsLoading: false,
     modelSettingsError: undefined,
     collabModeKind: 'plan',
     collabModePendingByThread: {},
@@ -219,5 +220,31 @@ describe('ModelPicker model settings integration', () => {
     expect(
       (screen.getByRole('button', { name: /选择模型/ }) as HTMLButtonElement).disabled,
     ).toBe(true)
+  })
+
+  it('blocks model, reasoning, and context actions while loading but keeps Escape focus restore', () => {
+    setPickerState({ modelSettingsLoading: true })
+    render(<ModelPicker />)
+    const trigger = screen.getByRole('button', { name: /选择模型/ })
+
+    expect((trigger as HTMLButtonElement).disabled).toBe(false)
+    fireEvent.click(trigger)
+    const modelOption = screen.getByRole('option', { name: 'GPT-5.5' })
+    const reasoningOption = screen.getByRole('option', { name: 'Max' })
+    const contextOption = screen.getByRole('option', { name: /1M/ })
+    expect((modelOption as HTMLButtonElement).disabled).toBe(true)
+    expect((reasoningOption as HTMLButtonElement).disabled).toBe(true)
+    expect((contextOption as HTMLButtonElement).disabled).toBe(true)
+
+    fireEvent.click(modelOption)
+    fireEvent.click(reasoningOption)
+    fireEvent.click(contextOption)
+    expect(setSelectedModel).not.toHaveBeenCalled()
+    expect(setModelReasoningEffort).not.toHaveBeenCalled()
+    expect(setModelContextWindow).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('listbox', { name: '模型列表' })).toBeNull()
+    expect(document.activeElement).toBe(trigger)
   })
 })

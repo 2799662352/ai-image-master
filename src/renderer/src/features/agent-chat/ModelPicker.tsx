@@ -137,6 +137,9 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
   const modelContextPending = useAgentChatStore(
     (state) => state.modelContextPending,
   )
+  const modelSettingsLoading = useAgentChatStore(
+    (state) => state.modelSettingsLoading,
+  )
   const modelSettingsError = useAgentChatStore((state) => state.modelSettingsError)
   const isRunning = useAgentChatStore((state) => state.isRunning)
   const hasPendingCollabMode = useAgentChatStore((state) =>
@@ -191,6 +194,7 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
     || hasPendingCollabMode
     || modelContextPending !== undefined
     || modelSelectionPending
+  const settingsInteractionsDisabled = controlsDisabled || modelSettingsLoading
   const capabilitiesUnconfirmed =
     !catalog
     || catalog.source === 'fallback'
@@ -257,7 +261,7 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
   }, [controlsDisabled, isOpen, modelSelectionPending])
 
   async function handlePick(id: string): Promise<void> {
-    if (controlsDisabled || id === selectedModelId) return
+    if (settingsInteractionsDisabled || id === selectedModelId) return
     setModelSelectionPending(true)
     try {
       await setSelectedModel(id)
@@ -351,7 +355,7 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
           <div
             role="listbox"
             aria-label="模型列表"
-            aria-busy={modelSelectionPending}
+            aria-busy={modelSelectionPending || modelSettingsLoading}
             className="max-h-[210px] overflow-y-auto py-1"
           >
             {grouped.length === 0 ? (
@@ -377,7 +381,7 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
                         role="option"
                         aria-label={model.label}
                         aria-selected={isActive}
-                        disabled={controlsDisabled}
+                        disabled={settingsInteractionsDisabled}
                         onClick={() => {
                           void handlePick(model.id)
                         }}
@@ -413,7 +417,12 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
               capabilities={selected.capabilities}
               reasoningEffort={reasoningEffort}
               contextWindow={activeModelContextWindow}
-              disabled={Boolean(disabled) || isRunning || hasPendingCollabMode}
+              disabled={
+                Boolean(disabled)
+                || isRunning
+                || hasPendingCollabMode
+                || modelSettingsLoading
+              }
               pending={modelContextPending !== undefined || modelSelectionPending}
               error={modelSettingsError}
               onReasoningChange={(effort) => {

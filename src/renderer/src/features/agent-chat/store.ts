@@ -2092,7 +2092,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     const promise = (async () => {
       set((state) =>
         state.modelSettingsLoadGeneration === generation
-          ? { modelSettingsLoading: true, modelSettingsError: undefined }
+          ? { modelSettingsLoading: true }
           : {})
       const agent = (window as Window & { electronAPI?: AgentElectronApi })
         .electronAPI?.agent
@@ -2125,6 +2125,10 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         const errors: string[] = []
         let modelSettingsCatalog = state.modelSettingsCatalog
         let activeModelContextWindow = state.activeModelContextWindow
+        const contextOwnerStillCurrent =
+          contextPendingAtLoad === undefined
+          && state.modelContextRequestSequence === contextRequestSequence
+          && state.modelContextPending === undefined
 
         if (catalogResult.ok && catalogResult.value.ok) {
           if (
@@ -2146,11 +2150,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         }
 
         if (snapshotResult.ok && snapshotResult.value.ok) {
-          const snapshotStillOwnsContext =
-            contextPendingAtLoad === undefined
-            && state.modelContextRequestSequence === contextRequestSequence
-            && state.modelContextPending === undefined
-          if (snapshotStillOwnsContext) {
+          if (contextOwnerStillCurrent) {
             activeModelContextWindow =
               snapshotResult.value.data.modelContextWindow
           }
@@ -2161,14 +2161,22 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
               : snapshotResult.error,
           )
         }
+        const loadError = errors.length > 0
+          ? errors.join('；')
+          : undefined
+        const modelSettingsError = contextOwnerStillCurrent
+          ? loadError
+          : state.modelSettingsError
+            ? loadError && !state.modelSettingsError.includes(loadError)
+              ? `${state.modelSettingsError}；模型设置加载错误：${loadError}`
+              : state.modelSettingsError
+            : loadError
 
         return {
           modelSettingsCatalog,
           activeModelContextWindow,
           modelSettingsLoading: false,
-          modelSettingsError: errors.length > 0
-            ? errors.join('；')
-            : undefined,
+          modelSettingsError,
         }
       })
     })()
