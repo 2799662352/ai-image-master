@@ -4,10 +4,10 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
-  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
+import { open, rename } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import {
@@ -137,24 +137,24 @@ describe('CodexRuntimeSettingsStore', () => {
         },
       },
     ],
-  ])('rejects required fields inherited through %s prototype', (_label, candidate) => {
+  ])('rejects required fields inherited through %s prototype', async (_label, candidate) => {
     const store = new CodexRuntimeSettingsStore(userDataDir)
 
-    expect(() => store.replace(candidate as PersistedCodexRuntimeSettingsV1)).toThrow(
+    await expect(store.replace(candidate as PersistedCodexRuntimeSettingsV1)).rejects.toThrow(
       /invalid.*runtime settings/i,
     )
     expect(store.loadSync()).toEqual(DEFAULT_SETTINGS)
     expect(existsSync(settingsPath)).toBe(false)
   })
 
-  it('rejects a root with valid own fields but a polluted custom prototype', () => {
+  it('rejects a root with valid own fields but a polluted custom prototype', async () => {
     const candidate = Object.assign(
       Object.create({ polluted: true }),
       DEFAULT_SETTINGS,
     )
     const store = new CodexRuntimeSettingsStore(userDataDir)
 
-    expect(() => store.replace(candidate)).toThrow(/invalid.*runtime settings/i)
+    await expect(store.replace(candidate)).rejects.toThrow(/invalid.*runtime settings/i)
     expect(store.loadSync()).toEqual(DEFAULT_SETTINGS)
   })
 
@@ -236,7 +236,7 @@ describe('CodexRuntimeSettingsStore', () => {
     writeFileSync(settingsPath, JSON.stringify(persisted), 'utf8')
     const diagnostic = vi.fn()
     const store = new CodexRuntimeSettingsStore(userDataDir, {
-      renameSync: () => {
+      renameSyncForRecovery: () => {
         throw new Error('simulated rename failure')
       },
       onDiagnostic: diagnostic,
@@ -263,7 +263,7 @@ describe('CodexRuntimeSettingsStore', () => {
     expect(second.confirmed).not.toBe(first.confirmed)
   })
 
-  it('replace validates before writing', () => {
+  it('replace validates before writing', async () => {
     const store = new CodexRuntimeSettingsStore(userDataDir)
     const invalid = {
       version: 1,
@@ -273,18 +273,18 @@ describe('CodexRuntimeSettingsStore', () => {
       },
     } as PersistedCodexRuntimeSettingsV1
 
-    expect(() => store.replace(invalid)).toThrow(/invalid.*runtime settings/i)
+    await expect(store.replace(invalid)).rejects.toThrow(/invalid.*runtime settings/i)
     expect(existsSync(settingsPath)).toBe(false)
   })
 
-  it('replace writes valid JSON through a same-directory unique temp and rename', () => {
+  it('replace writes valid JSON through a same-directory unique temp and rename', async () => {
     const renames: Array<[string, string]> = []
     const store = new CodexRuntimeSettingsStore(userDataDir, {
-      renameSync: (from, to) => {
+      renameForReplace: async (from, to) => {
         renames.push([from.toString(), to.toString()])
         expect(path.dirname(from.toString())).toBe(userDataDir)
         expect(existsSync(from)).toBe(true)
-        renameSync(from, to)
+        await rename(from, to)
       },
     })
     const next: PersistedCodexRuntimeSettingsV1 = {
@@ -295,7 +295,9 @@ describe('CodexRuntimeSettingsStore', () => {
       },
     }
 
-    store.replace(next)
+    const replacement = store.replace(next)
+    expect(replacement).toBeInstanceOf(Promise)
+    await replacement
 
     expect(renames).toHaveLength(1)
     expect(renames[0][1]).toBe(settingsPath)
@@ -303,9 +305,9 @@ describe('CodexRuntimeSettingsStore', () => {
     expect(readdirSync(userDataDir).filter((name) => name.endsWith('.tmp'))).toEqual([])
   })
 
-  it('replace atomically overwrites an existing settings file', () => {
+  it('replace atomically overwrites an existing settings file', async () => {
     const store = new CodexRuntimeSettingsStore(userDataDir)
-    store.replace(DEFAULT_SETTINGS)
+    await store.replace(DEFAULT_SETTINGS)
     const next: PersistedCodexRuntimeSettingsV1 = {
       version: 1,
       confirmed: {
@@ -314,7 +316,7 @@ describe('CodexRuntimeSettingsStore', () => {
       },
     }
 
-    store.replace(next)
+    await store.replace(next)
 
     expect(JSON.parse(readFileSync(settingsPath, 'utf8'))).toEqual(next)
     expect(readdirSync(userDataDir).filter((name) => name.endsWith('.tmp'))).toEqual([])
@@ -339,10 +341,32 @@ describe('CodexRuntimeSettingsStore', () => {
       },
     ]
 
-    await Promise.all(snapshots.map(async (snapshot) => {
-      await Promise.resolve()
-      new CodexRuntimeSettingsStore(userDataDir).replace(snapshot)
+    let openCount = 0
+    let releaseOpenBarrier!: () => void
+    let reportAllOpened!: () => void
+    const openBarrier = new Promise<void>((resolve) => {
+      releaseOpenBarrier = resolve
+    })
+    const allOpened = new Promise<void>((resolve) => {
+      reportAllOpened = resolve
+    })
+    const openForReplace: typeof open = async (...args: Parameters<typeof open>) => {
+      const handle = await open(...args)
+      openCount += 1
+      if (openCount === snapshots.length) reportAllOpened()
+      await openBarrier
+      return handle
+    }
+    const stores = snapshots.map(() => new CodexRuntimeSettingsStore(userDataDir, {
+      openForReplace,
     }))
+
+    const replacements = snapshots.map((snapshot, index) => stores[index].replace(snapshot))
+    expect(replacements.every((replacement) => replacement instanceof Promise)).toBe(true)
+    await allOpened
+    expect(openCount).toBe(snapshots.length)
+    releaseOpenBarrier()
+    await Promise.all(replacements)
 
     const persisted = JSON.parse(readFileSync(settingsPath, 'utf8'))
     expect(snapshots).toContainEqual(persisted)
@@ -350,26 +374,26 @@ describe('CodexRuntimeSettingsStore', () => {
     expect(readdirSync(userDataDir).filter((name) => name.endsWith('.tmp'))).toEqual([])
   })
 
-  it('replace preserves the confirmed file and cleans its temp when rename fails', () => {
+  it('replace preserves the confirmed file and cleans its temp when rename fails', async () => {
     const initialStore = new CodexRuntimeSettingsStore(userDataDir)
-    initialStore.replace(DEFAULT_SETTINGS)
+    await initialStore.replace(DEFAULT_SETTINGS)
     const original = readFileSync(settingsPath, 'utf8')
     let attemptedTemp = ''
     const failingStore = new CodexRuntimeSettingsStore(userDataDir, {
-      renameSync: (from) => {
+      renameForReplace: async (from) => {
         attemptedTemp = from.toString()
         expect(existsSync(from)).toBe(true)
         throw new Error('simulated rename failure')
       },
     })
 
-    expect(() => failingStore.replace({
+    await expect(failingStore.replace({
       version: 1,
       confirmed: {
         modelContextWindow: 372_000,
         modelAutoCompactTokenLimit: 334_800,
       },
-    })).toThrow('simulated rename failure')
+    })).rejects.toThrow('simulated rename failure')
 
     expect(readFileSync(settingsPath, 'utf8')).toBe(original)
     expect(attemptedTemp).not.toBe('')

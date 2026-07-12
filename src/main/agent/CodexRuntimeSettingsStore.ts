@@ -9,12 +9,20 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
+import {
+  mkdir,
+  open,
+  rename,
+  rm,
+  type FileHandle,
+} from 'node:fs/promises'
 import path from 'node:path'
 import type { CodexModelContextConfig } from '../../types/agent'
 import { isCodexModelContextConfig } from '../../shared/modelSettings'
 
 const SETTINGS_VERSION = 1 as const
 const SETTINGS_FILENAME = 'codex-runtime-settings.json'
+const replaceRenameTails = new Map<string, Promise<void>>()
 const DEFAULT_MODEL_CONTEXT_CONFIG: Readonly<CodexModelContextConfig> = {
   modelContextWindow: 200_000,
   modelAutoCompactTokenLimit: 180_000,
@@ -31,7 +39,9 @@ export interface PersistedCodexRuntimeSettingsV1 {
 }
 
 export interface CodexRuntimeSettingsStoreOptions {
-  renameSync?: typeof renameSync
+  renameSyncForRecovery?: typeof renameSync
+  openForReplace?: typeof open
+  renameForReplace?: typeof rename
   onDiagnostic?: (message: string, error: unknown) => void
 }
 
@@ -109,9 +119,44 @@ function validatePersistedSettings(value: unknown): PersistedCodexRuntimeSetting
   return result
 }
 
+function serializeSettings(settings: PersistedCodexRuntimeSettingsV1): string {
+  return `${JSON.stringify(settings, null, 2)}\n`
+}
+
+function uniqueTemporaryPath(settingsPath: string): string {
+  return path.join(
+    path.dirname(settingsPath),
+    `.${path.basename(settingsPath)}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`,
+  )
+}
+
+async function withReplaceRenameLock(
+  settingsPath: string,
+  action: () => Promise<void>,
+): Promise<void> {
+  const previous = replaceRenameTails.get(settingsPath) ?? Promise.resolve()
+  let release!: () => void
+  const current = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  replaceRenameTails.set(settingsPath, current)
+  await previous
+
+  try {
+    await action()
+  } finally {
+    release()
+    if (replaceRenameTails.get(settingsPath) === current) {
+      replaceRenameTails.delete(settingsPath)
+    }
+  }
+}
+
 export class CodexRuntimeSettingsStore {
   private readonly settingsPath: string
-  private readonly renameFileSync: typeof renameSync
+  private readonly renameSyncForRecovery: typeof renameSync
+  private readonly openForReplace: typeof open
+  private readonly renameForReplace: typeof rename
   private readonly onDiagnostic: (message: string, error: unknown) => void
 
   constructor(
@@ -119,7 +164,9 @@ export class CodexRuntimeSettingsStore {
     options: CodexRuntimeSettingsStoreOptions = {},
   ) {
     this.settingsPath = path.join(userDataDir, SETTINGS_FILENAME)
-    this.renameFileSync = options.renameSync ?? renameSync
+    this.renameSyncForRecovery = options.renameSyncForRecovery ?? renameSync
+    this.openForReplace = options.openForReplace ?? open
+    this.renameForReplace = options.renameForReplace ?? rename
     this.onDiagnostic = options.onDiagnostic ?? ((message, error) => {
       console.error(`[CodexRuntimeSettingsStore] ${message}`, error)
     })
@@ -152,7 +199,7 @@ export class CodexRuntimeSettingsStore {
         confirmed: { ...persisted.confirmed },
       }
       try {
-        this.writeAtomic(recovered)
+        this.writeAtomicSync(recovered)
       } catch (error) {
         this.onDiagnostic('Pending runtime settings recovery failed', error)
       }
@@ -165,30 +212,27 @@ export class CodexRuntimeSettingsStore {
     }
   }
 
-  replace(next: PersistedCodexRuntimeSettingsV1): void {
+  async replace(next: PersistedCodexRuntimeSettingsV1): Promise<void> {
     const validated = validatePersistedSettings(next)
     if (!validated) {
       throw new TypeError('Invalid persisted Codex runtime settings')
     }
-    this.writeAtomic(validated)
+    await this.writeAtomic(validated)
   }
 
-  private writeAtomic(settings: PersistedCodexRuntimeSettingsV1): void {
+  private writeAtomicSync(settings: PersistedCodexRuntimeSettingsV1): void {
     const directory = path.dirname(this.settingsPath)
     mkdirSync(directory, { recursive: true })
-    const temporaryPath = path.join(
-      directory,
-      `.${path.basename(this.settingsPath)}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`,
-    )
+    const temporaryPath = uniqueTemporaryPath(this.settingsPath)
     let fileDescriptor: number | null = null
 
     try {
       fileDescriptor = openSync(temporaryPath, 'wx', 0o600)
-      writeFileSync(fileDescriptor, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
+      writeFileSync(fileDescriptor, serializeSettings(settings), 'utf8')
       fsyncSync(fileDescriptor)
       closeSync(fileDescriptor)
       fileDescriptor = null
-      this.renameFileSync(temporaryPath, this.settingsPath)
+      this.renameSyncForRecovery(temporaryPath, this.settingsPath)
     } finally {
       if (fileDescriptor !== null) {
         try {
@@ -199,6 +243,37 @@ export class CodexRuntimeSettingsStore {
       }
       try {
         rmSync(temporaryPath, { force: true })
+      } catch {
+        // Preserve the original write/rename error; temp cleanup is best effort.
+      }
+    }
+  }
+
+  private async writeAtomic(settings: PersistedCodexRuntimeSettingsV1): Promise<void> {
+    const directory = path.dirname(this.settingsPath)
+    await mkdir(directory, { recursive: true })
+    const temporaryPath = uniqueTemporaryPath(this.settingsPath)
+    let handle: FileHandle | null = null
+
+    try {
+      handle = await this.openForReplace(temporaryPath, 'wx', 0o600)
+      await handle.writeFile(serializeSettings(settings), 'utf8')
+      await handle.sync()
+      await handle.close()
+      handle = null
+      await withReplaceRenameLock(this.settingsPath, async () => {
+        await this.renameForReplace(temporaryPath, this.settingsPath)
+      })
+    } finally {
+      if (handle !== null) {
+        try {
+          await handle.close()
+        } catch {
+          // Best effort: cleanup below still removes our own temp when possible.
+        }
+      }
+      try {
+        await rm(temporaryPath, { force: true })
       } catch {
         // Preserve the original write/rename error; temp cleanup is best effort.
       }
