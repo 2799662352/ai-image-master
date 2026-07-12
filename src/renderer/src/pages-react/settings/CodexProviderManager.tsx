@@ -70,6 +70,7 @@ export function CodexProviderManager() {
   }
 
   const handleUpdate = async (id: string, patch: Partial<CodexCustomProviderInput>) => {
+    if (providers.pendingProviderId !== null) return
     try {
       await updateProvider(id, patch)
       addToast({ message: '已更新', type: 'success' })
@@ -80,7 +81,7 @@ export function CodexProviderManager() {
   }
 
   const handleRemove = async (provider: CodexProvider) => {
-    if (!provider.isCustom) return
+    if (!provider.isCustom || providers.pendingProviderId !== null) return
     if (!confirm(`确定删除自定义 provider "${provider.name}"？`)) return
     try {
       await removeProvider(provider.id)
@@ -140,7 +141,9 @@ export function CodexProviderManager() {
                   <button
                     type="button"
                     onClick={() => setEditing(p)}
-                    className="text-[10px] px-1 py-0.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded"
+                    disabled={providers.pendingProviderId !== null}
+                    aria-disabled={providers.pendingProviderId !== null}
+                    className="text-[10px] px-1 py-0.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                     title="编辑"
                   >
                     编辑
@@ -148,7 +151,9 @@ export function CodexProviderManager() {
                   <button
                     type="button"
                     onClick={() => handleRemove(p)}
-                    className="text-[10px] px-1 py-0.5 bg-red-900/40 hover:bg-red-900 text-red-300 rounded"
+                    disabled={providers.pendingProviderId !== null}
+                    aria-disabled={providers.pendingProviderId !== null}
+                    className="text-[10px] px-1 py-0.5 bg-red-900/40 hover:bg-red-900 text-red-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                     title="删除"
                   >
                     删除

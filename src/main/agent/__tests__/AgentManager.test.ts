@@ -208,6 +208,75 @@ describe('AgentManager transactional provider application', () => {
     return backend
   }
 
+  function makeDeferredReplacementBackend(options: {
+    failReplacement?: boolean
+    eventSink?: (event: AgentStreamEvent) => void
+  } = {}) {
+    let releaseRestart!: () => void
+    let markRestartStarted!: () => void
+    const restartStarted = new Promise<void>((resolve) => {
+      markRestartStarted = resolve
+    })
+    const restartGate = new Promise<void>((resolve) => {
+      releaseRestart = resolve
+    })
+    const sends: Array<{ client: string; providerId: string; apiKey: string }> = []
+    let manager: AgentManager
+    const backend = Object.assign(makeStubBackend([]), {
+      healthy: false,
+      epoch: 1,
+      activeClient: 'old-client',
+      configuredProviderId: 'apiyi',
+      oldClientInterrupted: false,
+      isHealthy() {
+        return backend.healthy
+      },
+      currentEpoch() {
+        return backend.epoch
+      },
+      setProvider(provider: CodexProviderConfig | undefined) {
+        backend.configuredProviderId = provider?.id ?? 'apiyi'
+      },
+      async restartCodex() {
+        markRestartStarted()
+        await restartGate
+        if (options.failReplacement) {
+          throw new Error('replacement spawn failed')
+        }
+        if (sends.some((send) => send.client === 'old-client')) {
+          backend.oldClientInterrupted = true
+        }
+        backend.activeClient = 'new-client'
+        backend.epoch += 1
+      },
+      async *send(_threadId: string | undefined, _input: AgentInput) {
+        sends.push({
+          client: backend.activeClient,
+          providerId: backend.configuredProviderId,
+          apiKey: manager.getCodexApiKey(),
+        })
+      },
+    })
+    manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend,
+      store: {
+        createThread: async () => ({ id: 'thread-admission' }),
+        addMessage: async () => ({ id: 'message-admission' }),
+        updateLastMessageAt: async () => undefined,
+      } as any,
+      attachments: { ingest: async () => [] } as any,
+      eventSink: options.eventSink,
+    })
+    return {
+      backend,
+      manager,
+      sends,
+      restartStarted,
+      releaseRestart,
+    }
+  }
+
   it('confirms a successful switch only after a new backend epoch exists', async () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => { release = resolve })
@@ -233,6 +302,152 @@ describe('AgentManager transactional provider application', () => {
     })
     expect((await mgr.getProvidersSnapshot()).activeId).toBe('rightcode')
     expect(backend.configuredProviders).toEqual(['rightcode'])
+  })
+
+  it('admits a Default send only on the replacement generation after Provider apply succeeds', async () => {
+    const {
+      backend,
+      manager,
+      sends,
+      restartStarted,
+      releaseRestart,
+    } = makeDeferredReplacementBackend()
+    await manager.setCodexApiKey('sk-old')
+    await manager.setProviderApiKey('rightcode', 'sk-new')
+    backend.healthy = true
+
+    const transition = manager.setActiveProvider('rightcode')
+    await restartStarted
+    const send = manager.sendMessage({ content: 'after replacement', attachments: [] })
+    await flushMicrotasks(20)
+
+    expect(sends).toEqual([])
+    expect(backend.oldClientInterrupted).toBe(false)
+
+    releaseRestart()
+    await expect(transition).resolves.toMatchObject({ activeId: 'rightcode' })
+    await send
+    await vi.waitFor(() => expect(sends).toHaveLength(1))
+    expect(sends).toEqual([{
+      client: 'new-client',
+      providerId: 'rightcode',
+      apiKey: 'sk-new',
+    }])
+    expect(backend.oldClientInterrupted).toBe(false)
+  })
+
+  it('waits through a failed keyless Provider apply then sends once with the rolled-back client and key', async () => {
+    const errors: AgentStreamEvent[] = []
+    const {
+      backend,
+      manager,
+      sends,
+      restartStarted,
+      releaseRestart,
+    } = makeDeferredReplacementBackend({
+      failReplacement: true,
+      eventSink: (event) => errors.push(event),
+    })
+    await manager.setCodexApiKey('sk-old')
+    backend.healthy = true
+
+    const transition = manager.setActiveProvider('rightcode')
+    await restartStarted
+    const send = manager.sendMessage({ content: 'survive rollback', attachments: [] })
+    await flushMicrotasks(20)
+
+    expect(sends).toEqual([])
+    releaseRestart()
+    await expect(transition).rejects.toThrow('replacement spawn failed')
+    await send
+    await vi.waitFor(() => expect(sends).toHaveLength(1))
+    expect(sends).toEqual([{
+      client: 'old-client',
+      providerId: 'apiyi',
+      apiKey: 'sk-old',
+    }])
+    expect(errors).not.toContainEqual(
+      expect.objectContaining({ type: 'error', error: expect.stringMatching(/API Key/i) }),
+    )
+  })
+
+  it('holds Provider apply behind send admission until the old generation is marked in-flight', async () => {
+    let releasePersistence!: () => void
+    let markPersistenceStarted!: () => void
+    const persistenceStarted = new Promise<void>((resolve) => {
+      markPersistenceStarted = resolve
+    })
+    const persistenceGate = new Promise<void>((resolve) => {
+      releasePersistence = resolve
+    })
+    let releaseTurn!: () => void
+    const turnGate = new Promise<void>((resolve) => {
+      releaseTurn = resolve
+    })
+    const sends: string[] = []
+    const backend = Object.assign(makeStubBackend([]), {
+      healthy: false,
+      epoch: 1,
+      providerId: 'apiyi',
+      turnInFlight: false,
+      restartCalls: 0,
+      isHealthy() {
+        return backend.healthy
+      },
+      currentEpoch() {
+        return backend.epoch
+      },
+      setProvider(provider: CodexProviderConfig | undefined) {
+        backend.providerId = provider?.id ?? 'apiyi'
+      },
+      async restartCodex() {
+        backend.restartCalls += 1
+        if (backend.turnInFlight) {
+          throw new Error('Current turn is running; retry after it completes')
+        }
+        backend.epoch += 1
+      },
+      async *send() {
+        backend.turnInFlight = true
+        sends.push(backend.providerId)
+        try {
+          await turnGate
+        } finally {
+          backend.turnInFlight = false
+        }
+      },
+    })
+    const manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend,
+      store: {
+        createThread: async () => ({ id: 'thread-locked-admission' }),
+        addMessage: async () => {
+          markPersistenceStarted()
+          await persistenceGate
+          return { id: 'message-locked-admission' }
+        },
+        updateLastMessageAt: async () => undefined,
+      } as any,
+      attachments: { ingest: async () => [] } as any,
+    })
+    await manager.setCodexApiKey('sk-old')
+    await manager.setProviderApiKey('rightcode', 'sk-new')
+    backend.healthy = true
+
+    const send = manager.sendMessage({ content: 'claim old generation', attachments: [] })
+    await persistenceStarted
+    const transition = manager.setActiveProvider('rightcode')
+    await flushMicrotasks(20)
+    expect(backend.restartCalls).toBe(0)
+
+    releasePersistence()
+    await send
+    await expect(transition).rejects.toThrow(/current turn.*retry/i)
+    expect(sends).toEqual(['apiyi'])
+    expect((await manager.getProvidersSnapshot()).activeId).toBe('apiyi')
+
+    releaseTurn()
   })
 
   it('rejects an in-flight switch and keeps the old Provider usable', async () => {

@@ -509,7 +509,7 @@ describe('AgentManager collaboration mode effort isolation', () => {
     }))
   })
 
-  it('revalidates Plan owner before send when Provider and epoch change after capability validation', async () => {
+  it('serializes Provider change after Plan send admission instead of changing owner mid-persistence', async () => {
     let markIngestStarted!: () => void
     const ingestStarted = new Promise<void>((resolve) => { markIngestStarted = resolve })
     let releaseIngest!: () => void
@@ -559,18 +559,18 @@ describe('AgentManager collaboration mode effort isolation', () => {
       planReasoningEffort: 'max',
     })
     await ingestStarted
-    await manager.setActiveProvider('rightcode')
+    const transition = manager.setActiveProvider('rightcode')
     await flushMicrotasks()
     releaseIngest()
     await pending
+    await transition
 
-    await vi.waitFor(() => {
-      expect(events).toContainEqual(expect.objectContaining({
-        type: 'error',
-        error: expect.stringMatching(/max.*not supported/i),
-      }))
-    })
-    expect(backend.calls).toEqual([])
+    expect(events).not.toContainEqual(expect.objectContaining({
+      type: 'error',
+      error: expect.stringMatching(/max.*not supported/i),
+    }))
+    expect(backend.calls).toHaveLength(1)
+    expect(backend.calls[0].input.collaborationMode?.settings.reasoning_effort).toBe('max')
     expect(addMessage).toHaveBeenCalledTimes(1)
   })
 

@@ -444,9 +444,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
   },
 
   updateProvider: async (id, patch) => {
+    const providerState = get().providers
+    if (providerState.pendingProviderId === id) {
+      throw new Error('Provider switch in progress')
+    }
     const bridge = getAgentBridge()
     if (!bridge?.updateCustomProvider) return
-    const providerState = get().providers
     const changesAppliedProvider = id === providerState.activeId
     const requestGeneration = changesAppliedProvider
       ? ++providerWriteGeneration
@@ -499,9 +502,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
   },
 
   removeProvider: async (id) => {
+    const providerState = get().providers
+    if (providerState.pendingProviderId === id) {
+      throw new Error('Provider switch in progress')
+    }
     const bridge = getAgentBridge()
     if (!bridge?.removeCustomProvider) return
-    const providerState = get().providers
     const changesAppliedProvider = id === providerState.activeId
     const requestGeneration = changesAppliedProvider
       ? ++providerWriteGeneration

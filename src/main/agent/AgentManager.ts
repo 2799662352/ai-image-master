@@ -632,6 +632,23 @@ export class AgentManager {
     return result
   }
 
+  /**
+   * Serialize a new turn's admission with Provider replacement. The lifecycle
+   * tail is released as soon as backend.send has registered its first
+   * iterator.next() (CodexProtocolClient increments activeSends synchronously),
+   * not when the whole turn completes. A following Provider apply therefore
+   * observes the in-flight turn and rejects quickly instead of replacing its
+   * client, while sends queued behind a replacement cannot enter the old one.
+   */
+  private enqueueTurnAdmission<T>(admit: () => Promise<T>): Promise<T> {
+    const result = this.restartChain.then(admit)
+    this.restartChain = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    return result
+  }
+
   private enqueueAppliedProviderTransaction(
     mutateDesired: (
       before: PersistedProvidersV1,
@@ -1059,18 +1076,22 @@ export class AgentManager {
   private async resolveCollaborationCapabilities(
     modelId: string,
     includePlanPreset: boolean,
+    providerLifecycleHeld = false,
   ): Promise<ResolvedCollaborationCapabilities> {
-    let restartBarrier = this.restartChain
-    await restartBarrier
-    while (restartBarrier !== this.restartChain) {
-      restartBarrier = this.restartChain
+    let providerReady = true
+    if (!providerLifecycleHeld) {
+      let restartBarrier = this.restartChain
       await restartBarrier
-    }
-    let providerBarrier = this.providerCapabilityBarrier
-    let providerReady = await providerBarrier
-    while (providerBarrier !== this.providerCapabilityBarrier) {
-      providerBarrier = this.providerCapabilityBarrier
+      while (restartBarrier !== this.restartChain) {
+        restartBarrier = this.restartChain
+        await restartBarrier
+      }
+      let providerBarrier = this.providerCapabilityBarrier
       providerReady = await providerBarrier
+      while (providerBarrier !== this.providerCapabilityBarrier) {
+        providerBarrier = this.providerCapabilityBarrier
+        providerReady = await providerBarrier
+      }
     }
     const providerId = this.activeProviderId
     const backendEpoch = this.backend.currentEpoch?.()
@@ -1736,6 +1757,14 @@ export class AgentManager {
   }
 
   async sendMessage(payload: AgentSendMessagePayload): Promise<AgentSendMessageResult> {
+    return this.enqueueTurnAdmission(
+      () => this.sendMessageAfterProviderBarrier(payload),
+    )
+  }
+
+  private async sendMessageAfterProviderBarrier(
+    payload: AgentSendMessagePayload,
+  ): Promise<AgentSendMessageResult> {
     if (!this.codexApiKey) {
       const threadId = payload.threadId ?? 'pending'
       this.emitEvent({ type: 'error', threadId, error: EMPTY_KEY_ERROR })
@@ -1761,7 +1790,7 @@ export class AgentManager {
       return { threadId }
     }
 
-    const assembled = await this.assembleTurnInput(payload).catch((error: unknown) => {
+    const assembled = await this.assembleTurnInput(payload, true).catch((error: unknown) => {
       this.emitEvent({
         type: 'error',
         threadId: payload.threadId ?? 'pending',
@@ -1772,13 +1801,32 @@ export class AgentManager {
     if (!assembled) return { threadId: payload.threadId ?? 'pending' }
     const { threadId, input, userTimelineItems, collaborationModeOwner } = assembled
 
-    void this.forwardEvents(threadId, input, collaborationModeOwner).catch((error: unknown) => {
+    let admitted = false
+    let resolveAdmission!: () => void
+    const admission = new Promise<void>((resolve) => {
+      resolveAdmission = resolve
+    })
+    const markAdmitted = (): void => {
+      if (admitted) return
+      admitted = true
+      resolveAdmission()
+    }
+    void this.forwardEvents(
+      threadId,
+      input,
+      collaborationModeOwner,
+      markAdmitted,
+    ).catch((error: unknown) => {
+      // Never leave the shared lifecycle tail wedged if thread hydration or
+      // another pre-send step fails before backend.send can be admitted.
+      markAdmitted()
       this.emitEvent({
         type: 'error',
         threadId,
         error: error instanceof Error ? error.message : String(error),
       })
     })
+    await admission
     // `userMessageItems` lets the renderer patch its OPTIMISTIC user message
     // (raw OS path, outside the fs allowed-roots gate) with these CANONICAL
     // items (uploads-cache paths that click through immediately). JSON
@@ -1882,7 +1930,10 @@ export class AgentManager {
    * and `steer` (appends to the in-flight turn). Callers guarantee the backend
    * is started and the API key is present.
    */
-  private async assembleTurnInput(payload: AgentSendMessagePayload): Promise<{
+  private async assembleTurnInput(
+    payload: AgentSendMessagePayload,
+    providerLifecycleHeld = false,
+  ): Promise<{
     threadId: string
     model: string
     input: AgentInput
@@ -1900,6 +1951,7 @@ export class AgentManager {
           model,
           payload.reasoningEffort,
           payload.planReasoningEffort ?? 'auto',
+          providerLifecycleHeld,
         )
     // The uploads cache is a first-class reference root: AttachmentService
     // canonicalizes every attachment into `<userData>/agent/uploads/<sha>.<ext>`
@@ -2084,6 +2136,7 @@ export class AgentManager {
     model: string,
     defaultEffort: string | undefined,
     planPreference: PlanReasoningEffort,
+    providerLifecycleHeld = false,
   ): Promise<BuiltCollaborationMode> {
     if (mode === 'default') {
       return {
@@ -2101,6 +2154,7 @@ export class AgentManager {
     const resolved = await this.resolveCollaborationCapabilities(
       model,
       planPreference === 'auto',
+      providerLifecycleHeld,
     )
     const supportedPlanEfforts = resolved.capabilities.supportedPlanEfforts
     if (
@@ -2542,6 +2596,7 @@ export class AgentManager {
     dbThreadId: string,
     input: AgentInput,
     collaborationModeOwner?: CollaborationCapabilityOwner,
+    onTurnAdmitted?: () => void,
   ): Promise<void> {
     let canRetryPoisonedThread = true
     let currentInput = input
@@ -2577,12 +2632,21 @@ export class AgentManager {
       // avoid a circular renderer→main import.
       let assistantItems: TimelineItem[] = []
       try {
-        const eventStream = builtForCommit === undefined
+        let eventStream = builtForCommit === undefined
           ? this.backend.send(codexThreadId, currentInput)
           : this.commitWithCollaborationModeOwner(
               builtForCommit,
               () => this.backend.send(codexThreadId, currentInput),
             )
+        if (onTurnAdmitted) {
+          eventStream = primeAsyncIterable(eventStream)
+          // Async-generator bodies resume from next() on the current job in
+          // V8, but yield one microtask while still holding the lifecycle tail
+          // so alternate backend implementations also publish in-flight state.
+          await Promise.resolve()
+          onTurnAdmitted()
+          onTurnAdmitted = undefined
+        }
         for await (const event of eventStream) {
           if (event.type === 'thread_created' && event.threadId) {
             this.rememberCodexThread(dbThreadId, event.threadId)
@@ -2670,6 +2734,32 @@ export class AgentManager {
         throw error
       }
     }
+  }
+}
+
+/**
+ * Invoke the underlying iterator's first next() immediately, then expose an
+ * equivalent iterable for normal consumption. CodexProtocolClient uses that
+ * synchronous invocation boundary to increment activeSends before any RPC
+ * awaits, which is the precise hand-off needed by Provider lifecycle locking.
+ */
+function primeAsyncIterable<T>(source: AsyncIterable<T>): AsyncIterable<T> {
+  const iterator = source[Symbol.asyncIterator]()
+  const first = iterator.next()
+  return {
+    async *[Symbol.asyncIterator]() {
+      let result = await first
+      try {
+        while (!result.done) {
+          yield result.value
+          result = await iterator.next()
+        }
+      } finally {
+        if (!result.done) {
+          await iterator.return?.()
+        }
+      }
+    },
   }
 }
 

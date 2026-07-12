@@ -543,6 +543,26 @@ describe('useSettingsStore', () => {
       ['update', 'updateCustomProvider', 'updateProvider'],
       ['remove', 'removeCustomProvider', 'removeProvider'],
     ] as const)(
+      'rejects pending-target %s without calling IPC',
+      async (_label, bridgeMethod, storeMethod) => {
+        const ipc = vi.fn().mockResolvedValue({ ok: true, activeId: 'rightcode' })
+        installBridge({ [bridgeMethod]: ipc })
+        useSettingsStore.setState((state) => ({
+          providers: { ...state.providers, pendingProviderId: 'rightcode' },
+        }))
+
+        const action = storeMethod === 'updateProvider'
+          ? useSettingsStore.getState().updateProvider('rightcode', { model: 'gpt-5.6-sol' })
+          : useSettingsStore.getState().removeProvider('rightcode')
+        await expect(action).rejects.toThrow(/switch.*progress/i)
+        expect(ipc).not.toHaveBeenCalled()
+      },
+    )
+
+    it.each([
+      ['update', 'updateCustomProvider', 'updateProvider'],
+      ['remove', 'removeCustomProvider', 'removeProvider'],
+    ] as const)(
       'rejects failed active Provider %s after authoritative reload',
       async (_label, bridgeMethod, storeMethod) => {
         installBridge({

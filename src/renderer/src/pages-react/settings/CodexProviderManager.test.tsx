@@ -56,11 +56,17 @@ describe('CodexProviderManager confirmed Provider state', () => {
     vi.unstubAllGlobals()
   })
 
-  it('renders pending separately from active and disables key writes while switching', () => {
+  it('renders pending separately and disables key, edit, and remove writes while switching', () => {
     const saveProviderKey = vi.fn().mockResolvedValue(undefined)
+    const updateProvider = vi.fn().mockResolvedValue(undefined)
+    const removeProvider = vi.fn().mockResolvedValue(undefined)
+    const confirm = vi.fn(() => true)
+    vi.stubGlobal('confirm', confirm)
     useSettingsStore.setState((state) => ({
       providers: { ...state.providers, pendingProviderId: 'rightcode' },
       saveProviderKey,
+      updateProvider,
+      removeProvider,
     }))
 
     render(<CodexProviderManager />)
@@ -71,6 +77,19 @@ describe('CodexProviderManager confirmed Provider state', () => {
     expect(saveButton.matches(':disabled')).toBe(true)
     fireEvent.click(saveButton)
     expect(saveProviderKey).not.toHaveBeenCalled()
+
+    const editButton = screen.getByRole('button', { name: '编辑' })
+    const removeButton = screen.getByRole('button', { name: '删除' })
+    expect(editButton.matches(':disabled')).toBe(true)
+    expect(removeButton.matches(':disabled')).toBe(true)
+    expect(editButton.getAttribute('aria-disabled')).toBe('true')
+    expect(removeButton.getAttribute('aria-disabled')).toBe('true')
+    fireEvent.click(editButton)
+    fireEvent.click(removeButton)
+    expect(screen.queryByRole('heading', { name: /编辑 Custom One/ })).toBeNull()
+    expect(updateProvider).not.toHaveBeenCalled()
+    expect(removeProvider).not.toHaveBeenCalled()
+    expect(confirm).not.toHaveBeenCalled()
   })
 
   it('shows an error toast when Provider selection fails', async () => {
