@@ -283,7 +283,7 @@ describe('send and steer collaboration payloads', () => {
 })
 
 describe('existing-thread confirmed ownership', () => {
-  it('keeps confirmed state unchanged until the server event arrives', async () => {
+  it('settles a successful RPC acknowledgement and reconciles a later server event', async () => {
     useAgentChatStore.setState({ selectedModelId: 'gpt-5.5-xhigh' } as never)
 
     await useAgentChatStore.getState().requestCollabMode('plan')
@@ -298,12 +298,11 @@ describe('existing-thread confirmed ownership', () => {
     })
     expect(useAgentChatStore.getState()).toMatchObject({
       collabModeKind: 'plan',
-      collabModeByThread: { 'thread-1': 'default' },
-      collabModePendingByThread: {
-        'thread-1': { target: 'plan', requestVersion: 1 },
-      },
+      collabModeByThread: { 'thread-1': 'plan' },
+      collabModePendingByThread: {},
       collabModeCompatibility: 'immediate',
     })
+    expect(localStorage.getItem(THREAD_MODE_STORAGE_KEY)).toBe('{"thread-1":"plan"}')
 
     useAgentChatStore.getState().applyEvent({
       type: 'thread_settings_updated',
@@ -387,9 +386,8 @@ describe('existing-thread confirmed ownership', () => {
     first.resolve({ ok: false, error: 'stale failure', requestVersion: 1 })
     await firstRequest
 
-    expect(useAgentChatStore.getState().collabModePendingByThread).toEqual({
-      'thread-1': { target: 'default', requestVersion: 2 },
-    })
+    expect(useAgentChatStore.getState().collabModePendingByThread).toEqual({})
+    expect(useAgentChatStore.getState().collabModeByThread['thread-1']).toBe('default')
     expect(useAgentChatStore.getState().collaborationError).toBeUndefined()
     expect(useAgentChatStore.getState().collaborationErrorByThread).toEqual({})
     expect(useAgentChatStore.getState().collabModeCompatibilityByThread).toEqual({
@@ -502,6 +500,80 @@ describe('Plan effort ownership and capabilities', () => {
     expect(useAgentChatStore.getState().planReasoningEffort).toBe('high')
     expect(useAgentChatStore.getState().collabModeByThread['thread-1']).toBe('default')
     expect(updateCollaborationMode).not.toHaveBeenCalled()
+  })
+
+  it('treats reselecting the active Plan effort as a no-op without pending state', async () => {
+    useAgentChatStore.setState({
+      collabModeKind: 'plan',
+      collabModeByThread: { 'thread-1': 'plan' },
+      planReasoningEffort: 'high',
+    } as never)
+    useAgentChatStore.getState().applyEvent({
+      type: 'thread_settings_updated',
+      threadId: 'thread-1',
+      mode: 'plan',
+      model: 'gpt-5.5',
+      effort: 'high',
+    })
+
+    await useAgentChatStore.getState().setPlanReasoningEffort('high')
+
+    expect(updateCollaborationMode).toHaveBeenCalledTimes(1)
+    expect(useAgentChatStore.getState().collabModePendingByThread).toEqual({})
+    expect(useAgentChatStore.getState().collabModeRequestSequence).toBe(1)
+  })
+
+  it('retries the same Plan preference after an earlier settings update failed', async () => {
+    useAgentChatStore.setState({
+      collabModeKind: 'plan',
+      collabModeByThread: { 'thread-1': 'plan' },
+    } as never)
+    updateCollaborationMode
+      .mockResolvedValueOnce({ ok: false, error: 'timed out', requestVersion: 1 })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { compatibility: 'immediate', requestVersion: 2 },
+      })
+
+    await useAgentChatStore.getState().setPlanReasoningEffort('high')
+    await useAgentChatStore.getState().setPlanReasoningEffort('high')
+
+    expect(updateCollaborationMode).toHaveBeenCalledTimes(2)
+    expect(updateCollaborationMode.mock.calls[1][0]).toMatchObject({
+      threadId: 'thread-1',
+      mode: 'plan',
+      planReasoningEffort: 'high',
+      requestVersion: 2,
+    })
+  })
+
+  it('normalises unsupported effort to confirmed Auto without creating pending state', async () => {
+    useAgentChatStore.setState({
+      collabModeKind: 'plan',
+      collabModeByThread: { 'thread-1': 'plan' },
+      collaborationCapabilities: {
+        planDefaultEffort: 'medium',
+        supportedPlanEfforts: ['low', 'medium'],
+        source: 'codex',
+      },
+    } as never)
+    useAgentChatStore.getState().applyEvent({
+      type: 'thread_settings_updated',
+      threadId: 'thread-1',
+      mode: 'plan',
+      model: 'gpt-5.5',
+      effort: 'medium',
+    })
+
+    await useAgentChatStore.getState().setPlanReasoningEffort('xhigh')
+
+    expect(useAgentChatStore.getState().planReasoningEffort).toBe('auto')
+    expect(localStorage.getItem(PLAN_EFFORT_STORAGE_KEY)).toBe('auto')
+    expect(updateCollaborationMode).toHaveBeenCalledWith(expect.objectContaining({
+      mode: 'plan',
+      planReasoningEffort: 'auto',
+    }))
+    expect(useAgentChatStore.getState().collabModePendingByThread).toEqual({})
   })
 
   it('immediately resubmits current Plan settings for an idle existing thread', async () => {

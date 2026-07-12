@@ -1813,11 +1813,27 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         }
       }
 
-      // An immediate RPC acknowledgement only means Codex accepted the write.
-      // Keep pending until its thread_settings_updated event confirms storage.
+      // A successful update may be a no-op, in which case Codex deliberately
+      // emits no thread/settings/updated notification. Settle the request from
+      // the RPC acknowledgement; any later notification still reconciles the
+      // authoritative server value through applyEvent.
+      const nextPending = { ...state.collabModePendingByThread }
+      delete nextPending[threadId]
+      const confirmed = { ...state.collabModeByThread }
+      delete confirmed[threadId]
+      confirmed[threadId] = pending.target
+      persistThreadCollaborationModes(confirmed)
+      const nextRestored = { ...state.collabModeRestoredByThread }
+      delete nextRestored[threadId]
+      const nextTurn = { ...state.collabModeNextTurnByThread }
+      delete nextTurn[threadId]
       const errors = { ...state.collaborationErrorByThread }
       delete errors[threadId]
       return {
+        collabModeByThread: confirmed,
+        collabModePendingByThread: nextPending,
+        collabModeRestoredByThread: nextRestored,
+        collabModeNextTurnByThread: nextTurn,
         collabModeCompatibilityByThread: {
           ...state.collabModeCompatibilityByThread,
           [threadId]: 'immediate',
@@ -1825,6 +1841,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         collaborationErrorByThread: errors,
         ...(state.threadId === threadId
           ? {
+              collabModeKind: pending.target,
               collabModeCompatibility: 'immediate',
               collaborationError: undefined,
             }
