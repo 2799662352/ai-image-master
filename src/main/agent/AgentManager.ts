@@ -1076,23 +1076,47 @@ export class AgentManager {
   private async resolveCollaborationCapabilities(
     modelId: string,
     includePlanPreset: boolean,
-    providerLifecycleHeld = false,
   ): Promise<ResolvedCollaborationCapabilities> {
-    let providerReady = true
-    if (!providerLifecycleHeld) {
-      let restartBarrier = this.restartChain
+    let restartBarrier = this.restartChain
+    await restartBarrier
+    while (restartBarrier !== this.restartChain) {
+      restartBarrier = this.restartChain
       await restartBarrier
-      while (restartBarrier !== this.restartChain) {
-        restartBarrier = this.restartChain
-        await restartBarrier
-      }
-      let providerBarrier = this.providerCapabilityBarrier
-      providerReady = await providerBarrier
-      while (providerBarrier !== this.providerCapabilityBarrier) {
-        providerBarrier = this.providerCapabilityBarrier
-        providerReady = await providerBarrier
-      }
     }
+    let providerBarrier = this.providerCapabilityBarrier
+    let providerReady = await providerBarrier
+    while (providerBarrier !== this.providerCapabilityBarrier) {
+      providerBarrier = this.providerCapabilityBarrier
+      providerReady = await providerBarrier
+    }
+    return this.resolveCollaborationCapabilitiesForCurrentOwner(
+      modelId,
+      includePlanPreset,
+      providerReady,
+    )
+  }
+
+  /**
+   * PRECONDITION: the caller owns the Provider/turn admission lifecycle slot.
+   * That slot already excludes Provider apply, so reacquiring restartChain here
+   * would wait on the caller itself. Only send admission internals may use this.
+   */
+  private resolveCollaborationCapabilitiesWithProviderAdmissionHeld(
+    modelId: string,
+    includePlanPreset: boolean,
+  ): Promise<ResolvedCollaborationCapabilities> {
+    return this.resolveCollaborationCapabilitiesForCurrentOwner(
+      modelId,
+      includePlanPreset,
+      true,
+    )
+  }
+
+  private async resolveCollaborationCapabilitiesForCurrentOwner(
+    modelId: string,
+    includePlanPreset: boolean,
+    providerReady: boolean,
+  ): Promise<ResolvedCollaborationCapabilities> {
     const providerId = this.activeProviderId
     const backendEpoch = this.backend.currentEpoch?.()
     const fallback = (): ResolvedCollaborationCapabilities => ({
@@ -1932,7 +1956,7 @@ export class AgentManager {
    */
   private async assembleTurnInput(
     payload: AgentSendMessagePayload,
-    providerLifecycleHeld = false,
+    providerAdmissionHeld = false,
   ): Promise<{
     threadId: string
     model: string
@@ -1946,12 +1970,20 @@ export class AgentManager {
     const model = payload.model?.trim() || DEFAULT_AGENT_MODEL
     const builtCollaborationMode = payload.collaborationModeKind === undefined
       ? undefined
-      : await this.buildCollaborationMode(
-          payload.collaborationModeKind,
-          model,
-          payload.reasoningEffort,
-          payload.planReasoningEffort ?? 'auto',
-          providerLifecycleHeld,
+      : await (
+          providerAdmissionHeld
+            ? this.buildCollaborationModeWithProviderAdmissionHeld(
+                payload.collaborationModeKind,
+                model,
+                payload.reasoningEffort,
+                payload.planReasoningEffort ?? 'auto',
+              )
+            : this.buildCollaborationMode(
+                payload.collaborationModeKind,
+                model,
+                payload.reasoningEffort,
+                payload.planReasoningEffort ?? 'auto',
+              )
         )
     // The uploads cache is a first-class reference root: AttachmentService
     // canonicalizes every attachment into `<userData>/agent/uploads/<sha>.<ext>`
@@ -2136,7 +2168,48 @@ export class AgentManager {
     model: string,
     defaultEffort: string | undefined,
     planPreference: PlanReasoningEffort,
-    providerLifecycleHeld = false,
+  ): Promise<BuiltCollaborationMode> {
+    return this.buildCollaborationModeUsingResolver(
+      mode,
+      model,
+      defaultEffort,
+      planPreference,
+      (modelId, includePlanPreset) =>
+        this.resolveCollaborationCapabilities(modelId, includePlanPreset),
+    )
+  }
+
+  /**
+   * PRECONDITION: called only while sendMessage owns turn admission.
+   */
+  private async buildCollaborationModeWithProviderAdmissionHeld(
+    mode: CollaborationModeKind,
+    model: string,
+    defaultEffort: string | undefined,
+    planPreference: PlanReasoningEffort,
+  ): Promise<BuiltCollaborationMode> {
+    return this.buildCollaborationModeUsingResolver(
+      mode,
+      model,
+      defaultEffort,
+      planPreference,
+      (modelId, includePlanPreset) =>
+        this.resolveCollaborationCapabilitiesWithProviderAdmissionHeld(
+          modelId,
+          includePlanPreset,
+        ),
+    )
+  }
+
+  private async buildCollaborationModeUsingResolver(
+    mode: CollaborationModeKind,
+    model: string,
+    defaultEffort: string | undefined,
+    planPreference: PlanReasoningEffort,
+    resolveCapabilities: (
+      modelId: string,
+      includePlanPreset: boolean,
+    ) => Promise<ResolvedCollaborationCapabilities>,
   ): Promise<BuiltCollaborationMode> {
     if (mode === 'default') {
       return {
@@ -2151,10 +2224,9 @@ export class AgentManager {
       }
     }
 
-    const resolved = await this.resolveCollaborationCapabilities(
+    const resolved = await resolveCapabilities(
       model,
       planPreference === 'auto',
-      providerLifecycleHeld,
     )
     const supportedPlanEfforts = resolved.capabilities.supportedPlanEfforts
     if (
@@ -2218,6 +2290,45 @@ export class AgentManager {
     defaultEffort: string | undefined,
     planPreference: PlanReasoningEffort,
   ): Promise<BuiltCollaborationMode> {
+    return this.stabilizeCollaborationModeUsingRebuild(
+      built,
+      mode,
+      () => this.buildCollaborationMode(
+        mode,
+        model,
+        defaultEffort,
+        planPreference,
+      ),
+    )
+  }
+
+  /**
+   * PRECONDITION: called only while sendMessage owns turn admission.
+   */
+  private async stabilizeCollaborationModeWithProviderAdmissionHeld(
+    built: BuiltCollaborationMode,
+    mode: CollaborationModeKind,
+    model: string,
+    defaultEffort: string | undefined,
+    planPreference: PlanReasoningEffort,
+  ): Promise<BuiltCollaborationMode> {
+    return this.stabilizeCollaborationModeUsingRebuild(
+      built,
+      mode,
+      () => this.buildCollaborationModeWithProviderAdmissionHeld(
+        mode,
+        model,
+        defaultEffort,
+        planPreference,
+      ),
+    )
+  }
+
+  private async stabilizeCollaborationModeUsingRebuild(
+    built: BuiltCollaborationMode,
+    mode: CollaborationModeKind,
+    rebuild: () => Promise<BuiltCollaborationMode>,
+  ): Promise<BuiltCollaborationMode> {
     if (
       mode === 'default'
       || (
@@ -2228,12 +2339,7 @@ export class AgentManager {
       return built
     }
 
-    const rebuilt = await this.buildCollaborationMode(
-      mode,
-      model,
-      defaultEffort,
-      planPreference,
-    )
+    const rebuilt = await rebuild()
     if (
       rebuilt.owner !== undefined
       && !this.isCollaborationCapabilityOwnerCurrent(rebuilt.owner)
@@ -2609,16 +2715,25 @@ export class AgentManager {
         currentInput.collaborationModeKind !== undefined
         && currentInput.collaborationMode !== undefined
       ) {
-        const stable = await this.stabilizeCollaborationMode(
-          {
-            collaborationMode: currentInput.collaborationMode,
-            owner: currentCollaborationModeOwner,
-          },
-          currentInput.collaborationModeKind,
-          currentInput.model,
-          currentInput.reasoningEffort,
-          currentInput.planReasoningEffort ?? 'auto',
-        )
+        const built = {
+          collaborationMode: currentInput.collaborationMode,
+          owner: currentCollaborationModeOwner,
+        }
+        const stable = onTurnAdmitted
+          ? await this.stabilizeCollaborationModeWithProviderAdmissionHeld(
+              built,
+              currentInput.collaborationModeKind,
+              currentInput.model,
+              currentInput.reasoningEffort,
+              currentInput.planReasoningEffort ?? 'auto',
+            )
+          : await this.stabilizeCollaborationMode(
+              built,
+              currentInput.collaborationModeKind,
+              currentInput.model,
+              currentInput.reasoningEffort,
+              currentInput.planReasoningEffort ?? 'auto',
+            )
         currentInput = {
           ...currentInput,
           collaborationMode: stable.collaborationMode,

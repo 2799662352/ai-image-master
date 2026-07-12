@@ -574,6 +574,65 @@ describe('AgentManager collaboration mode effort isolation', () => {
     expect(addMessage).toHaveBeenCalledTimes(1)
   })
 
+  it('rebuilds a stale Plan owner inside held send admission without waiting on itself', async () => {
+    let markIngestStarted!: () => void
+    const ingestStarted = new Promise<void>((resolve) => { markIngestStarted = resolve })
+    let releaseIngest!: () => void
+    const ingestGate = new Promise<void>((resolve) => { releaseIngest = resolve })
+    const backend = makeCollaborationBackend({
+      initialEpoch: 1,
+      listModes: async () => UPSTREAM_PRESETS,
+      listModels: async () => ({
+        data: [modelRow({
+          id: 'gpt-5.5',
+          supportedReasoningEfforts: backend.epoch === 1
+            ? [{ reasoningEffort: 'max', description: 'old generation only' }]
+            : [{ reasoningEffort: 'high', description: 'new generation only' }],
+        })],
+        nextCursor: null,
+      }),
+    })
+    const manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend,
+      store: {
+        createThread: async () => ({ id: 'thread-1' }),
+        addMessage: async () => ({ id: 'msg-1' }),
+        updateLastMessageAt: async () => undefined,
+      } as any,
+      attachments: {
+        ingest: async () => {
+          markIngestStarted()
+          await ingestGate
+          return []
+        },
+      } as any,
+    })
+    await manager.setCodexApiKey('sk-test')
+
+    let settled = false
+    const pending = manager.sendMessage({
+      content: 'rebuild within admission',
+      attachments: [],
+      model: 'gpt-5.5',
+      collaborationModeKind: 'plan',
+      planReasoningEffort: 'auto',
+    }).finally(() => {
+      settled = true
+    })
+    await ingestStarted
+    backend.epoch = 2
+    releaseIngest()
+    await flushMicrotasks(30)
+
+    expect(settled).toBe(true)
+    await pending
+    expect(backend.modelCalls).toHaveLength(2)
+    expect(backend.calls).toHaveLength(1)
+    expect(backend.calls[0].input.collaborationMode?.settings.reasoning_effort).toBe('high')
+    expect(backend.calls[0].input.collaborationMode?.settings.reasoning_effort).not.toBe('max')
+  })
+
   it('guards send synchronously when epoch flips after helper check but before caller continuation', async () => {
     let markIngestStarted!: () => void
     const ingestStarted = new Promise<void>((resolve) => { markIngestStarted = resolve })
