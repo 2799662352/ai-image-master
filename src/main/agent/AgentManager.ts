@@ -1114,7 +1114,7 @@ export class AgentManager {
         attemptedConfig,
         'validate',
         validationError,
-        { success: true, activeConfig: previousConfig },
+        { ok: true, activeConfig: previousConfig },
       ))
     }
 
@@ -1125,7 +1125,7 @@ export class AgentManager {
         attemptedConfig,
         'busy',
         'Another model context transaction is already in progress',
-        { success: true, activeConfig: previousConfig },
+        { ok: true, activeConfig: previousConfig },
       ))
     }
 
@@ -1138,7 +1138,7 @@ export class AgentManager {
         attemptedConfig,
         'verify',
         errorMessage(error),
-        { success: true, activeConfig: previousConfig },
+        { ok: true, activeConfig: previousConfig },
       ))
     }
 
@@ -1162,7 +1162,7 @@ export class AgentManager {
         attemptedConfig,
         'busy',
         'Current turn is running; retry the model context change after it completes',
-        { success: true, activeConfig: previousConfig },
+        { ok: true, activeConfig: previousConfig },
       ))
     }
 
@@ -1220,7 +1220,7 @@ export class AgentManager {
         attemptedConfig,
         'busy',
         'Current turn is running; retry the model context change after it completes',
-        { success: true, activeConfig: previousConfig },
+        { ok: true, activeConfig: previousConfig },
       )
     }
 
@@ -1234,7 +1234,7 @@ export class AgentManager {
         attemptedConfig,
         'verify',
         errorMessage(error),
-        { success: true, activeConfig: previousConfig },
+        { ok: true, activeConfig: previousConfig },
       )
     }
 
@@ -1248,7 +1248,7 @@ export class AgentManager {
         attemptedConfig,
         'resume',
         errorMessage(error),
-        { success: true, activeConfig: previousConfig },
+        { ok: true, activeConfig: previousConfig },
       )
     }
 
@@ -1270,7 +1270,7 @@ export class AgentManager {
         attemptedConfig,
         'persist',
         errorMessage(error),
-        { success: true, activeConfig: previousConfig },
+        { ok: true, activeConfig: previousConfig },
       )
     }
     // Only a durable pending record may affect the restart getter.
@@ -1286,7 +1286,7 @@ export class AgentManager {
         await this.restartBackendWithGenerationCheck(restart)
         processMayUseTarget = true
       } catch (error) {
-        processMayUseTarget = this.modelContextEpochChangedOrUnverifiable(
+        processMayUseTarget = this.modelContextRequiresCompensation(
           previousEpoch,
         )
         throw new ContextApplyError('restart', errorMessage(error), { cause: error })
@@ -1434,13 +1434,24 @@ export class AgentManager {
     }
   }
 
-  private modelContextEpochChangedOrUnverifiable(previousEpoch: number): boolean {
+  private modelContextRequiresCompensation(previousEpoch: number): boolean {
     try {
-      return this.readModelContextEpochStrict() !== previousEpoch
+      if (this.readModelContextEpochStrict() !== previousEpoch) return true
     } catch {
       // A failed replacement with no valid epoch proof is conservatively
       // treated as possibly switched, forcing compensation instead of claiming
       // that the old process is still authoritative.
+      return true
+    }
+
+    const isHealthy = this.backend.isHealthy
+    if (typeof isHealthy !== 'function') return true
+    try {
+      // An unchanged epoch only proves that the generation identifier stayed
+      // the same. Stop-first restart paths may still have torn down that
+      // process, so skipping compensation additionally requires live health.
+      return isHealthy.call(this.backend) !== true
+    } catch {
       return true
     }
   }
@@ -1511,13 +1522,13 @@ export class AgentManager {
 
     if (failures.length > 0) {
       return {
-        success: false,
+        ok: false,
         error: failures.join('; '),
         effectiveConfig: null,
       }
     }
     return {
-      success: true,
+      ok: true,
       activeConfig: { ...input.previousConfig },
     }
   }

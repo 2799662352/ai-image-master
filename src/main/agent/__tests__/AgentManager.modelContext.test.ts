@@ -60,7 +60,9 @@ interface ContextBackend extends IAgentBackend {
 
 interface BackendOptions {
   exposeEpoch?: boolean
+  exposeHealth?: boolean
   currentEpoch?: (backend: ContextBackend) => number | undefined
+  healthy?: (backend: ContextBackend) => boolean
   restart?: (backend: ContextBackend, call: number) => Promise<void>
   resume?: (backend: ContextBackend, threadId: string, call: number) => Promise<void>
   refresh?: (backend: ContextBackend, call: number) => Promise<void>
@@ -78,7 +80,7 @@ function makeBackend(options: BackendOptions = {}): ContextBackend {
     steerCalls: 0,
     async start() {},
     async stop() {},
-    isHealthy() { return true },
+    isHealthy() { return options.healthy?.(backend) ?? true },
     hasInFlightWork() { return backend.inFlight },
     async cancel() {},
     async restartCodex() {
@@ -115,6 +117,9 @@ function makeBackend(options: BackendOptions = {}): ContextBackend {
     backend.currentEpoch = () => options.currentEpoch
       ? options.currentEpoch(backend)
       : backend.epoch
+  }
+  if (options.exposeHealth === false) {
+    delete (backend as { isHealthy?: () => boolean }).isHealthy
   }
   return backend
 }
@@ -288,7 +293,7 @@ describe('AgentManager transactional model context apply', () => {
 
     expectFailure(result, 'busy')
     expect(backend.operations).toEqual([])
-    expect(result.rollback).toEqual({ success: true, activeConfig: PREVIOUS_CONFIG })
+    expect(result.rollback).toEqual({ ok: true, activeConfig: PREVIOUS_CONFIG })
   })
 
   it('returns a successful no-op for the same confirmed context', async () => {
@@ -322,7 +327,7 @@ describe('AgentManager transactional model context apply', () => {
 
     expectFailure(result, 'persist')
     expect(result.error).toContain('disk unavailable')
-    expect(result.rollback).toEqual({ success: true, activeConfig: PREVIOUS_CONFIG })
+    expect(result.rollback).toEqual({ ok: true, activeConfig: PREVIOUS_CONFIG })
     expect(backend.operations).toEqual(['persist-pending'])
     expect(rollback).not.toHaveBeenCalled()
     expect(runtime.store.loadSync()).toEqual({
@@ -344,7 +349,7 @@ describe('AgentManager transactional model context apply', () => {
 
     expectFailure(result, 'restart')
     expect(result.error).toContain('replacement audit failed')
-    expect(result.rollback).toEqual({ success: true, activeConfig: PREVIOUS_CONFIG })
+    expect(result.rollback).toEqual({ ok: true, activeConfig: PREVIOUS_CONFIG })
     expect(rollback).toHaveBeenCalledTimes(1)
     expect(backend.restartCalls).toBe(2)
     expect(runtime.store.loadSync()).toEqual({
@@ -363,8 +368,67 @@ describe('AgentManager transactional model context apply', () => {
     const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
 
     expectFailure(result, 'restart')
-    expect(result.rollback).toEqual({ success: true, activeConfig: PREVIOUS_CONFIG })
+    expect(result.rollback).toEqual({ ok: true, activeConfig: PREVIOUS_CONFIG })
     expect(backend.restartCalls).toBe(1)
+  })
+
+  it('compensates an unchanged-epoch forward restart failure when the backend is unhealthy', async () => {
+    const { manager, backend } = makeManager({
+      healthy: (instance) => instance.restartCalls !== 1,
+      restart: async (instance, call) => {
+        if (call === 1) throw new Error('stop-first reconnect failed')
+        instance.epoch += 1
+      },
+    })
+
+    const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
+
+    expectFailure(result, 'restart')
+    expect(result.error).toContain('stop-first reconnect failed')
+    expect(result.rollback).toEqual({
+      ok: true,
+      activeConfig: PREVIOUS_CONFIG,
+    })
+    expect(backend.restartCalls).toBe(2)
+  })
+
+  it('reports rollback failure when unhealthy unchanged-epoch recovery cannot restart', async () => {
+    const { manager, backend } = makeManager({
+      healthy: () => false,
+      restart: async () => {
+        throw new Error('restart transport unavailable')
+      },
+    })
+
+    const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
+
+    expectFailure(result, 'restart')
+    expect(result.error).toContain('restart transport unavailable')
+    expect(result.rollback).toEqual({
+      ok: false,
+      error: expect.stringContaining('restart transport unavailable'),
+      effectiveConfig: null,
+    })
+    expect(backend.restartCalls).toBe(2)
+  })
+
+  it('compensates unchanged-epoch failure when backend health cannot be proven', async () => {
+    const { manager, backend } = makeManager({
+      exposeHealth: false,
+      restart: async (instance, call) => {
+        if (call === 1) throw new Error('legacy restart failed')
+        instance.epoch += 1
+      },
+    })
+
+    const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
+
+    expectFailure(result, 'restart')
+    expect(result.rollback).toEqual({
+      ok: true,
+      activeConfig: PREVIOUS_CONFIG,
+    })
+    expect(backend.restartCalls).toBe(2)
   })
 
   it('treats an unchanged restart epoch as verify failure and rolls back', async () => {
@@ -378,7 +442,7 @@ describe('AgentManager transactional model context apply', () => {
 
     expectFailure(result, 'verify')
     expect(result.error).toMatch(/generation|epoch/i)
-    expect(result.rollback).toEqual({ success: true, activeConfig: PREVIOUS_CONFIG })
+    expect(result.rollback).toEqual({ ok: true, activeConfig: PREVIOUS_CONFIG })
     expect(backend.restartCalls).toBe(2)
   })
 
@@ -393,7 +457,7 @@ describe('AgentManager transactional model context apply', () => {
 
     expectFailure(result, 'resume')
     expect(result.error).toContain('rollout missing')
-    expect(result.rollback).toEqual({ success: true, activeConfig: PREVIOUS_CONFIG })
+    expect(result.rollback).toEqual({ ok: true, activeConfig: PREVIOUS_CONFIG })
     expect(backend.resumeCalls).toEqual(['codex-thread-1', 'codex-thread-1'])
     expect(backend.sendCalls).toBe(0)
   })
@@ -409,7 +473,7 @@ describe('AgentManager transactional model context apply', () => {
 
     expectFailure(result, 'verify')
     expect(result.error).toContain('model list unavailable')
-    expect(result.rollback).toEqual({ success: true, activeConfig: PREVIOUS_CONFIG })
+    expect(result.rollback).toEqual({ ok: true, activeConfig: PREVIOUS_CONFIG })
     expect(backend.refreshCalls).toBe(2)
   })
 
@@ -421,7 +485,7 @@ describe('AgentManager transactional model context apply', () => {
 
     expectFailure(result, 'persist')
     expect(result.error).toContain('confirm rename failed')
-    expect(result.rollback).toEqual({ success: true, activeConfig: PREVIOUS_CONFIG })
+    expect(result.rollback).toEqual({ ok: true, activeConfig: PREVIOUS_CONFIG })
     expect(runtime.store.loadSync()).toEqual({
       version: 1,
       confirmed: PREVIOUS_CONFIG,
@@ -440,8 +504,27 @@ describe('AgentManager transactional model context apply', () => {
     expectFailure(result, 'resume')
     expect(result.error).toContain('resume always fails')
     expect(result.rollback).toEqual({
-      success: false,
+      ok: false,
       error: expect.stringContaining('resume always fails'),
+      effectiveConfig: null,
+    })
+  })
+
+  it('preserves the original failure when rollback persistence of previous config fails', async () => {
+    const { manager, runtime } = makeManager({
+      resume: async (_instance, _threadId, call) => {
+        if (call === 1) throw new Error('forward resume failed')
+      },
+    })
+    runtime.failReplace(2, new Error('rollback previous rename failed'))
+
+    const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
+
+    expectFailure(result, 'resume')
+    expect(result.error).toContain('forward resume failed')
+    expect(result.rollback).toEqual({
+      ok: false,
+      error: expect.stringContaining('rollback previous rename failed'),
       effectiveConfig: null,
     })
   })
@@ -524,6 +607,40 @@ describe('AgentManager transactional model context apply', () => {
     await applying
   })
 
+  it('releases Context ownership after success so a later apply succeeds', async () => {
+    const { manager, backend } = makeManager()
+
+    await expect(manager.applyModelContextRpc(APPLY_PAYLOAD))
+      .resolves.toMatchObject({ ok: true })
+    await expect(manager.applyModelContextRpc({
+      ...APPLY_PAYLOAD,
+      requestVersion: 8,
+    })).resolves.toMatchObject({ ok: true })
+
+    expect(backend.restartCalls).toBe(1)
+  })
+
+  it('releases Context ownership and lifecycle tail after failure so retry succeeds', async () => {
+    const { manager, backend } = makeManager({
+      refresh: async (_instance, call) => {
+        if (call === 1) throw new Error('transient refresh failure')
+      },
+    })
+
+    const failed = await manager.applyModelContextRpc(APPLY_PAYLOAD)
+    expectFailure(failed, 'verify')
+    expect(failed.rollback).toEqual({
+      ok: true,
+      activeConfig: PREVIOUS_CONFIG,
+    })
+
+    await expect(manager.applyModelContextRpc({
+      ...APPLY_PAYLOAD,
+      requestVersion: 8,
+    })).resolves.toMatchObject({ ok: true })
+    expect(backend.restartCalls).toBe(3)
+  })
+
   it('serializes Provider mutation after the complete context saga without interleaving', async () => {
     const restartGate = deferred<void>()
     const restartStarted = deferred<void>()
@@ -596,7 +713,7 @@ describe('AgentManager transactional model context apply', () => {
     expectFailure(result, 'verify', 0)
     expect(result.error).toMatch(/epoch/i)
     expect(result.rollback).toEqual({
-      success: true,
+      ok: true,
       activeConfig: PREVIOUS_CONFIG,
     })
     expect(backend.operations).toEqual([])
@@ -619,7 +736,7 @@ describe('AgentManager transactional model context apply', () => {
     expectFailure(result, 'verify')
     expect(result.error).toMatch(/epoch/i)
     expect(result.rollback).toEqual({
-      success: true,
+      ok: true,
       activeConfig: PREVIOUS_CONFIG,
     })
     expect(backend.operations).toEqual([])
@@ -644,7 +761,7 @@ describe('AgentManager transactional model context apply', () => {
     expectFailure(result, 'verify')
     expect(result.error).toMatch(/epoch/i)
     expect(result.rollback).toEqual({
-      success: false,
+      ok: false,
       error: expect.stringMatching(/epoch/i),
       effectiveConfig: null,
     })
@@ -673,7 +790,7 @@ describe('AgentManager transactional model context apply', () => {
 
     expectFailure(result, 'resume')
     expect(result.rollback).toEqual({
-      success: false,
+      ok: false,
       error: expect.stringMatching(/epoch/i),
       effectiveConfig: null,
     })
@@ -694,7 +811,7 @@ describe('AgentManager transactional model context apply', () => {
 
     expectFailure(result, 'resume')
     expect(result.rollback).toEqual({
-      success: false,
+      ok: false,
       error: expect.stringMatching(/generation|epoch/i),
       effectiveConfig: null,
     })
@@ -717,7 +834,7 @@ describe('AgentManager transactional model context apply', () => {
 
     expectFailure(result, 'resume')
     expect(result.rollback).toEqual({
-      success: false,
+      ok: false,
       error: expect.stringMatching(/epoch/i),
       effectiveConfig: null,
     })
@@ -741,7 +858,7 @@ describe('AgentManager transactional model context apply', () => {
     expect(result.ok).toBe(false)
     if (result.ok) throw new Error('Expected validation failure')
     expect(result.stage).toBe('validate')
-    expect(result.rollback).toEqual({ success: true, activeConfig: PREVIOUS_CONFIG })
+    expect(result.rollback).toEqual({ ok: true, activeConfig: PREVIOUS_CONFIG })
     expect(backend.operations).toEqual([])
     expect(runtime.snapshots).toEqual([])
   })

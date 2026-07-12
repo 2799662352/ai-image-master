@@ -178,11 +178,11 @@ export type AgentModelContextApplyStage =
 
 export type AgentModelContextRollbackResult =
   | {
-      success: true
+      ok: true
       activeConfig: CodexModelContextConfig
     }
   | {
-      success: false
+      ok: false
       error: string
       effectiveConfig: null
     }
