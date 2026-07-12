@@ -1,10 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { AgentManager } from '../AgentManager'
 import type { AgentInput, IAgentBackend } from '../types'
 import type { AgentStreamEvent } from '../../../types/agent'
+import type { CodexProviderConfig } from '../codexLaunch'
 
 interface BackendCall {
   threadId: string | undefined
@@ -179,52 +180,500 @@ describe('AgentManager active provider key hot-reload', () => {
   })
 })
 
-// Provider switches respawn codex to apply the new base_url/model — a
-// multi-second operation. Blocking the IPC reply on it made every tile click
-// in 设置 feel frozen. The respawn now runs in the BACKGROUND (serialized so
-// rapid clicks can't race two spawns) and the IPC returns as soon as the
-// selection is persisted.
-describe('AgentManager provider switch responsiveness', () => {
-  it('setActiveProvider resolves before the codex respawn completes', async () => {
-    let release!: () => void
-    const gate = new Promise<void>((resolve) => { release = resolve })
-    const started: number[] = []
+describe('AgentManager transactional provider application', () => {
+  function makeTransactionalBackend(
+    restart: (call: number) => Promise<void>,
+  ): IAgentBackend & {
+    calls: BackendCall[]
+    cancelCalls: string[]
+    configuredProviders: Array<string | undefined>
+    restartCalls: number
+    epoch: number
+  } {
     const backend = Object.assign(makeStubBackend([]), {
+      configuredProviders: [] as Array<string | undefined>,
+      restartCalls: 0,
+      epoch: 1,
+      currentEpoch() {
+        return backend.epoch
+      },
+      setProvider(provider: CodexProviderConfig | undefined) {
+        backend.configuredProviders.push(provider?.id)
+      },
       async restartCodex() {
-        started.push(started.length)
-        await gate
+        backend.restartCalls += 1
+        await restart(backend.restartCalls)
       },
     })
+    return backend
+  }
+
+  function makeDeferredReplacementBackend(options: {
+    failReplacement?: boolean
+    eventSink?: (event: AgentStreamEvent) => void
+  } = {}) {
+    let releaseRestart!: () => void
+    let markRestartStarted!: () => void
+    const restartStarted = new Promise<void>((resolve) => {
+      markRestartStarted = resolve
+    })
+    const restartGate = new Promise<void>((resolve) => {
+      releaseRestart = resolve
+    })
+    const sends: Array<{ client: string; providerId: string; apiKey: string }> = []
+    let manager: AgentManager
+    const backend = Object.assign(makeStubBackend([]), {
+      healthy: false,
+      epoch: 1,
+      activeClient: 'old-client',
+      configuredProviderId: 'apiyi',
+      oldClientInterrupted: false,
+      isHealthy() {
+        return backend.healthy
+      },
+      currentEpoch() {
+        return backend.epoch
+      },
+      setProvider(provider: CodexProviderConfig | undefined) {
+        backend.configuredProviderId = provider?.id ?? 'apiyi'
+      },
+      async restartCodex() {
+        markRestartStarted()
+        await restartGate
+        if (options.failReplacement) {
+          throw new Error('replacement spawn failed')
+        }
+        if (sends.some((send) => send.client === 'old-client')) {
+          backend.oldClientInterrupted = true
+        }
+        backend.activeClient = 'new-client'
+        backend.epoch += 1
+      },
+      async *send(_threadId: string | undefined, _input: AgentInput) {
+        sends.push({
+          client: backend.activeClient,
+          providerId: backend.configuredProviderId,
+          apiKey: manager.getCodexApiKey(),
+        })
+      },
+    })
+    manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend,
+      store: {
+        createThread: async () => ({ id: 'thread-admission' }),
+        addMessage: async () => ({ id: 'message-admission' }),
+        updateLastMessageAt: async () => undefined,
+      } as any,
+      attachments: { ingest: async () => [] } as any,
+      eventSink: options.eventSink,
+    })
+    return {
+      backend,
+      manager,
+      sends,
+      restartStarted,
+      releaseRestart,
+    }
+  }
+
+  it('confirms a successful switch only after a new backend epoch exists', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const backend = makeTransactionalBackend(async () => {
+      await gate
+      backend.epoch += 1
+    })
     const mgr = new AgentManager({ userDataDir: tmpDir, backend })
+    let settled = false
 
-    // If setActiveProvider awaited the restart this would deadlock on `gate`
-    // and the test would time out.
-    const result = await mgr.setActiveProvider('rightcode')
-    expect(result).toEqual({ ok: true, activeId: 'rightcode' })
-
+    const pending = mgr.setActiveProvider('rightcode').finally(() => {
+      settled = true
+    })
     await flushMicrotasks()
-    expect(started.length).toBe(1)
+
+    expect(settled).toBe(false)
+    expect((await mgr.getProvidersSnapshot()).activeId).toBe('apiyi')
     release()
+    await expect(pending).resolves.toEqual({
+      ok: true,
+      activeId: 'rightcode',
+      providerGeneration: 2,
+    })
+    expect((await mgr.getProvidersSnapshot()).activeId).toBe('rightcode')
+    expect(backend.configuredProviders).toEqual(['rightcode'])
   })
 
-  it('rapid provider switches serialize their background respawns', async () => {
-    const releases: Array<() => void> = []
+  it('admits a Default send only on the replacement generation after Provider apply succeeds', async () => {
+    const {
+      backend,
+      manager,
+      sends,
+      restartStarted,
+      releaseRestart,
+    } = makeDeferredReplacementBackend()
+    await manager.setCodexApiKey('sk-old')
+    await manager.setProviderApiKey('rightcode', 'sk-new')
+    backend.healthy = true
+
+    const transition = manager.setActiveProvider('rightcode')
+    await restartStarted
+    const send = manager.sendMessage({ content: 'after replacement', attachments: [] })
+    await flushMicrotasks(20)
+
+    expect(sends).toEqual([])
+    expect(backend.oldClientInterrupted).toBe(false)
+
+    releaseRestart()
+    await expect(transition).resolves.toMatchObject({ activeId: 'rightcode' })
+    await send
+    await vi.waitFor(() => expect(sends).toHaveLength(1))
+    expect(sends).toEqual([{
+      client: 'new-client',
+      providerId: 'rightcode',
+      apiKey: 'sk-new',
+    }])
+    expect(backend.oldClientInterrupted).toBe(false)
+  })
+
+  it('waits through a failed keyless Provider apply then sends once with the rolled-back client and key', async () => {
+    const errors: AgentStreamEvent[] = []
+    const {
+      backend,
+      manager,
+      sends,
+      restartStarted,
+      releaseRestart,
+    } = makeDeferredReplacementBackend({
+      failReplacement: true,
+      eventSink: (event) => errors.push(event),
+    })
+    await manager.setCodexApiKey('sk-old')
+    backend.healthy = true
+
+    const transition = manager.setActiveProvider('rightcode')
+    await restartStarted
+    const send = manager.sendMessage({ content: 'survive rollback', attachments: [] })
+    await flushMicrotasks(20)
+
+    expect(sends).toEqual([])
+    releaseRestart()
+    await expect(transition).rejects.toThrow('replacement spawn failed')
+    await send
+    await vi.waitFor(() => expect(sends).toHaveLength(1))
+    expect(sends).toEqual([{
+      client: 'old-client',
+      providerId: 'apiyi',
+      apiKey: 'sk-old',
+    }])
+    expect(errors).not.toContainEqual(
+      expect.objectContaining({ type: 'error', error: expect.stringMatching(/API Key/i) }),
+    )
+  })
+
+  it('holds Provider apply behind send admission until the old generation is marked in-flight', async () => {
+    let releasePersistence!: () => void
+    let markPersistenceStarted!: () => void
+    const persistenceStarted = new Promise<void>((resolve) => {
+      markPersistenceStarted = resolve
+    })
+    const persistenceGate = new Promise<void>((resolve) => {
+      releasePersistence = resolve
+    })
+    let releaseTurn!: () => void
+    const turnGate = new Promise<void>((resolve) => {
+      releaseTurn = resolve
+    })
+    const sends: string[] = []
     const backend = Object.assign(makeStubBackend([]), {
-      restartCodex: () =>
-        new Promise<void>((resolve) => { releases.push(resolve) }),
+      healthy: false,
+      epoch: 1,
+      providerId: 'apiyi',
+      turnInFlight: false,
+      restartCalls: 0,
+      isHealthy() {
+        return backend.healthy
+      },
+      currentEpoch() {
+        return backend.epoch
+      },
+      setProvider(provider: CodexProviderConfig | undefined) {
+        backend.providerId = provider?.id ?? 'apiyi'
+      },
+      async restartCodex() {
+        backend.restartCalls += 1
+        if (backend.turnInFlight) {
+          throw new Error('Current turn is running; retry after it completes')
+        }
+        backend.epoch += 1
+      },
+      async *send() {
+        backend.turnInFlight = true
+        sends.push(backend.providerId)
+        try {
+          await turnGate
+        } finally {
+          backend.turnInFlight = false
+        }
+      },
+    })
+    const manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend,
+      store: {
+        createThread: async () => ({ id: 'thread-locked-admission' }),
+        addMessage: async () => {
+          markPersistenceStarted()
+          await persistenceGate
+          return { id: 'message-locked-admission' }
+        },
+        updateLastMessageAt: async () => undefined,
+      } as any,
+      attachments: { ingest: async () => [] } as any,
+    })
+    await manager.setCodexApiKey('sk-old')
+    await manager.setProviderApiKey('rightcode', 'sk-new')
+    backend.healthy = true
+
+    const send = manager.sendMessage({ content: 'claim old generation', attachments: [] })
+    await persistenceStarted
+    const transition = manager.setActiveProvider('rightcode')
+    await flushMicrotasks(20)
+    expect(backend.restartCalls).toBe(0)
+
+    releasePersistence()
+    await send
+    await expect(transition).rejects.toThrow(/current turn.*retry/i)
+    expect(sends).toEqual(['apiyi'])
+    expect((await manager.getProvidersSnapshot()).activeId).toBe('apiyi')
+
+    releaseTurn()
+  })
+
+  it('rejects an in-flight switch and keeps the old Provider usable', async () => {
+    const backend = makeTransactionalBackend(async (call) => {
+      if (call === 1) {
+        throw new Error('Current turn is running; retry after it completes')
+      }
+      backend.epoch += 1
+    })
+    const mgr = new AgentManager({
+      userDataDir: tmpDir,
+      backend,
+      store: {
+        createThread: async () => ({ id: 'thread-1' }),
+        addMessage: async () => ({ id: 'msg-1' }),
+        updateLastMessageAt: async () => undefined,
+      } as any,
+      attachments: { ingest: async () => [] } as any,
+    })
+
+    await expect(mgr.setActiveProvider('rightcode')).rejects.toThrow(/current turn.*retry/i)
+
+    expect((await mgr.getProvidersSnapshot()).activeId).toBe('apiyi')
+    expect(backend.configuredProviders).toEqual(['rightcode', 'apiyi'])
+    const persisted = JSON.parse(
+      await fs.readFile(path.join(tmpDir, 'codex-providers.json'), 'utf8'),
+    )
+    expect(persisted.selectedProviderId).toBe('apiyi')
+    await mgr.setCodexApiKey('sk-old-provider')
+    await mgr.sendMessage({ content: 'still old', attachments: [] })
+    await vi.waitFor(() => expect(backend.calls).toHaveLength(1))
+  })
+
+  it('rolls back persisted, in-memory, and backend Provider state after spawn failure', async () => {
+    const backend = makeTransactionalBackend(async () => {
+      throw new Error('replacement spawn failed')
     })
     const mgr = new AgentManager({ userDataDir: tmpDir, backend })
 
-    await mgr.setActiveProvider('rightcode')
-    await mgr.setActiveProvider('apiyi')
-    await flushMicrotasks()
+    await expect(mgr.setActiveProvider('rightcode')).rejects.toThrow(/spawn failed/i)
 
-    // Second respawn must wait for the first to finish — no parallel spawns.
-    expect(releases.length).toBe(1)
+    expect(mgr.getCodexApiKey()).toBe('')
+    expect(backend.configuredProviders).toEqual(['rightcode', 'apiyi'])
+    expect(await mgr.getProvidersSnapshot()).toMatchObject({ activeId: 'apiyi' })
+    const persisted = JSON.parse(
+      await fs.readFile(path.join(tmpDir, 'codex-providers.json'), 'utf8'),
+    )
+    expect(persisted.selectedProviderId).toBe('apiyi')
+  })
+
+  it('compensates an unhealthy failed Provider switch with a verified old generation', async () => {
+    let healthy = true
+    const backend = makeTransactionalBackend(async (call) => {
+      if (call === 1) {
+        healthy = false
+        throw new Error('stop-first replacement failed')
+      }
+      backend.epoch += 1
+      healthy = true
+    })
+    backend.isHealthy = () => healthy
+    const mgr = new AgentManager({ userDataDir: tmpDir, backend })
+
+    await expect(mgr.setActiveProvider('rightcode')).rejects.toThrow(
+      'stop-first replacement failed',
+    )
+
+    expect(backend.restartCalls).toBe(2)
+    expect(backend.configuredProviders).toEqual(['rightcode', 'apiyi'])
+    expect(backend.epoch).toBe(2)
+    expect(backend.isHealthy()).toBe(true)
+    await expect(
+      (mgr as unknown as { providerCapabilityBarrier: Promise<boolean> })
+        .providerCapabilityBarrier,
+    ).resolves.toBe(true)
+  })
+
+  it('marks Provider capabilities not ready when compensation restart also fails', async () => {
+    let healthy = true
+    const backend = makeTransactionalBackend(async (call) => {
+      healthy = false
+      if (call === 1) throw new Error('stop-first replacement failed')
+      throw new Error('old Provider recovery failed')
+    })
+    backend.isHealthy = () => healthy
+    const mgr = new AgentManager({ userDataDir: tmpDir, backend })
+
+    await expect(mgr.setActiveProvider('rightcode')).rejects.toThrow(
+      /stop-first replacement failed.*old Provider recovery failed/i,
+    )
+
+    expect(backend.restartCalls).toBe(2)
+    expect(backend.configuredProviders).toEqual(['rightcode', 'apiyi'])
+    await expect(
+      (mgr as unknown as { providerCapabilityBarrier: Promise<boolean> })
+        .providerCapabilityBarrier,
+    ).resolves.toBe(false)
+  })
+
+  it('serializes rapid A then B transitions so B is the final applied Provider', async () => {
+    const releases: Array<() => void> = []
+    const backend = makeTransactionalBackend(async () => {
+      await new Promise<void>((resolve) => { releases.push(resolve) })
+      backend.epoch += 1
+    })
+    const mgr = new AgentManager({ userDataDir: tmpDir, backend })
+
+    const a = mgr.setActiveProvider('rightcode')
+    const b = mgr.setActiveProvider('apiyi')
+
+    await vi.waitFor(() => expect(releases).toHaveLength(1))
     releases[0]()
-    await flushMicrotasks()
-    expect(releases.length).toBe(2)
+    await a
+    await vi.waitFor(() => expect(releases).toHaveLength(2))
     releases[1]()
+    await b
+
+    expect((await mgr.getProvidersSnapshot()).activeId).toBe('apiyi')
+    expect(backend.configuredProviders).toEqual(['rightcode', 'apiyi'])
+    expect(backend.epoch).toBe(3)
+  })
+
+  it('continues with B after a slow A failure and leaves B applied', async () => {
+    let releaseFirst!: () => void
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve })
+    const backend = makeTransactionalBackend(async (call) => {
+      if (call === 1) {
+        await firstGate
+        throw new Error('A failed')
+      }
+      backend.epoch += 1
+    })
+    const mgr = new AgentManager({ userDataDir: tmpDir, backend })
+
+    const a = mgr.setActiveProvider('rightcode')
+    const b = mgr.setActiveProvider('apiyi')
+    await flushMicrotasks()
+    releaseFirst()
+
+    await expect(a).rejects.toThrow('A failed')
+    await expect(b).resolves.toMatchObject({ activeId: 'apiyi' })
+    expect((await mgr.getProvidersSnapshot()).activeId).toBe('apiyi')
+    expect(backend.configuredProviders).toEqual(['rightcode', 'apiyi'])
+  })
+
+  it('applies active key, custom update, and active removal through confirmed generations', async () => {
+    const backend = makeTransactionalBackend(async () => {
+      backend.epoch += 1
+    })
+    const mgr = new AgentManager({ userDataDir: tmpDir, backend })
+
+    await expect(mgr.setProviderApiKey('apiyi', 'sk-applied')).resolves.toEqual({
+      ok: true,
+      activeId: 'apiyi',
+      providerGeneration: 2,
+    })
+    const custom = await mgr.addCustomProvider({
+      id: 'custom-transaction',
+      name: 'Transaction',
+      baseUrl: 'https://old.example.com/v1',
+      envKey: 'OPENAI_API_KEY',
+    })
+    await mgr.setProviderApiKey(custom.id, 'sk-custom')
+    await mgr.setActiveProvider(custom.id)
+
+    await expect(mgr.updateCustomProvider(custom.id, {
+      baseUrl: 'https://new.example.com/v1',
+      model: 'gpt-5.6-sol',
+    })).resolves.toEqual({
+      ok: true,
+      activeId: custom.id,
+      providerGeneration: 4,
+    })
+    await expect(mgr.removeCustomProvider(custom.id)).resolves.toEqual({
+      ok: true,
+      activeId: 'apiyi',
+      providerGeneration: 5,
+    })
+
+    const snapshot = await mgr.getProvidersSnapshot()
+    expect(snapshot.activeId).toBe('apiyi')
+    expect(snapshot.custom).toEqual([])
+    expect(backend.epoch).toBe(5)
+  })
+
+  it('restores active key and custom provider configuration when confirmed apply fails', async () => {
+    let failNext = false
+    const backend = makeTransactionalBackend(async () => {
+      if (failNext) {
+        failNext = false
+        throw new Error('apply failed')
+      }
+      backend.epoch += 1
+    })
+    const mgr = new AgentManager({ userDataDir: tmpDir, backend })
+    await mgr.setProviderApiKey('apiyi', 'sk-old')
+
+    failNext = true
+    await expect(mgr.setProviderApiKey('apiyi', 'sk-new')).rejects.toThrow('apply failed')
+    expect(mgr.getCodexApiKey()).toBe('sk-old')
+
+    const custom = await mgr.addCustomProvider({
+      id: 'custom-rollback',
+      name: 'Rollback',
+      baseUrl: 'https://old.example.com/v1',
+      envKey: 'OPENAI_API_KEY',
+    })
+    await mgr.setActiveProvider(custom.id)
+
+    failNext = true
+    await expect(mgr.updateCustomProvider(custom.id, {
+      baseUrl: 'https://broken.example.com/v1',
+    })).rejects.toThrow('apply failed')
+    expect((await mgr.getProvidersSnapshot()).custom).toContainEqual(
+      expect.objectContaining({
+        id: custom.id,
+        baseUrl: 'https://old.example.com/v1',
+      }),
+    )
+
+    failNext = true
+    await expect(mgr.removeCustomProvider(custom.id)).rejects.toThrow('apply failed')
+    expect(await mgr.getProvidersSnapshot()).toMatchObject({
+      activeId: custom.id,
+      custom: [expect.objectContaining({ id: custom.id })],
+    })
   })
 })
 
@@ -401,11 +850,11 @@ describe('AgentManager sendMessage empty-key gate', () => {
       eventSink: (event) => events.push(event),
     })
 
-    const result = await mgr.sendMessage({
+    await expect(mgr.sendMessage({
       threadId: 't1',
       content: 'hi',
       attachments: [],
-    })
+    })).rejects.toThrow('请在设置页填写 Codex Agent API Key')
 
     expect(events).toHaveLength(1)
     expect(events[0]).toMatchObject({
@@ -413,7 +862,6 @@ describe('AgentManager sendMessage empty-key gate', () => {
       threadId: 't1',
       error: '请在设置页填写 Codex Agent API Key',
     })
-    expect(result.threadId).toBe('t1')
   })
 
   it('uses a placeholder threadId when sendMessage called without threadId and key is empty', async () => {
@@ -423,7 +871,9 @@ describe('AgentManager sendMessage empty-key gate', () => {
       eventSink: (event) => events.push(event),
     })
 
-    await mgr.sendMessage({ content: 'hi', attachments: [] })
+    await expect(
+      mgr.sendMessage({ content: 'hi', attachments: [] }),
+    ).rejects.toThrow('请在设置页填写 Codex Agent API Key')
 
     expect(events).toHaveLength(1)
     expect(events[0]?.type).toBe('error')
@@ -455,7 +905,9 @@ describe('AgentManager sendMessage empty-key gate', () => {
       eventSink: () => {},
     })
 
-    await mgr.sendMessage({ threadId: 't-empty', content: 'hi', attachments: [] })
+    await expect(
+      mgr.sendMessage({ threadId: 't-empty', content: 'hi', attachments: [] }),
+    ).rejects.toThrow('请在设置页填写 Codex Agent API Key')
 
     expect(createCalls).toBe(0)
     expect(ingestCalls).toBe(0)
@@ -871,6 +1323,120 @@ describe('AgentManager codex thread id mapping (regression: invalid thread id)',
     expect(events).toContainEqual({ type: 'turn_completed', threadId: 'cm-db-id-stream-error', turnId: 't2' })
   })
 
+  it('reacquires Provider admission before a poisoned-thread fresh send retry', async () => {
+    let markFirstClosing!: () => void
+    const firstClosing = new Promise<void>((resolve) => { markFirstClosing = resolve })
+    let releaseFirstClose!: () => void
+    const firstCloseGate = new Promise<void>((resolve) => { releaseFirstClose = resolve })
+    let markRestartStarted!: () => void
+    const restartStarted = new Promise<void>((resolve) => { markRestartStarted = resolve })
+    let releaseRestart!: () => void
+    const restartGate = new Promise<void>((resolve) => { releaseRestart = resolve })
+    let markSecondSendStarted!: () => void
+    const secondSendStarted = new Promise<void>((resolve) => { markSecondSendStarted = resolve })
+    const calls: Array<{ client: string; providerId: string; apiKey: string }> = []
+    const added: unknown[] = []
+    let manager: AgentManager
+    const backend = {
+      healthy: false,
+      epoch: 1,
+      activeClient: 'old-client',
+      providerId: 'apiyi',
+      async start() {},
+      async stop() {},
+      isHealthy() { return backend.healthy },
+      currentEpoch() { return backend.epoch },
+      setProvider(provider: CodexProviderConfig | undefined) {
+        backend.providerId = provider?.id ?? 'apiyi'
+      },
+      async restartCodex() {
+        markRestartStarted()
+        await restartGate
+        backend.activeClient = 'new-client'
+        backend.epoch += 1
+      },
+      async cancel() {},
+      async *send() {
+        const call = calls.length
+        calls.push({
+          client: backend.activeClient,
+          providerId: backend.providerId,
+          apiKey: manager.getCodexApiKey(),
+        })
+        if (call === 0) {
+          try {
+            yield {
+              type: 'error',
+              threadId: CODEX_UUID,
+              turnId: 'turn-poisoned',
+              error: '{"error":{"code":"invalid_encrypted_content","message":"encrypted content could not be decrypted"}}',
+            } as AgentStreamEvent
+          } finally {
+            markFirstClosing()
+            await firstCloseGate
+          }
+          return
+        }
+        markSecondSendStarted()
+        yield {
+          type: 'thread_created',
+          threadId: CODEX_UUID,
+        } as AgentStreamEvent
+        yield {
+          type: 'turn_completed',
+          threadId: CODEX_UUID,
+          turnId: 'turn-recovered',
+        } as AgentStreamEvent
+      },
+    } as IAgentBackend & {
+      healthy: boolean
+      epoch: number
+      activeClient: string
+      providerId: string
+    }
+    manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend,
+      store: {
+        ...persistStubs,
+        createThread: async () => ({ id: 'cm-db-provider-retry' }),
+        addMessage: async (message: unknown) => {
+          added.push(message)
+          return { id: 'msg-provider-retry' }
+        },
+      } as any,
+      attachments: { ingest: async () => [] } as any,
+      eventSink: () => {},
+    })
+    await manager.setCodexApiKey('sk-old')
+    await manager.setProviderApiKey('rightcode', 'sk-new')
+    backend.healthy = true
+
+    await manager.sendMessage({ content: 'retry once', attachments: [] })
+    await firstClosing
+    const transition = manager.setActiveProvider('rightcode')
+    await restartStarted
+    releaseFirstClose()
+    await flushMicrotasks(30)
+    const callsBeforeRestartRelease = calls.map((call) => ({ ...call }))
+
+    releaseRestart()
+    await transition
+    await secondSendStarted
+    expect(calls).toHaveLength(2)
+    expect(callsBeforeRestartRelease).toEqual([{
+      client: 'old-client',
+      providerId: 'apiyi',
+      apiKey: 'sk-old',
+    }])
+    expect(calls[1]).toEqual({
+      client: 'new-client',
+      providerId: 'rightcode',
+      apiKey: 'sk-new',
+    })
+    expect(added).toHaveLength(1)
+  })
+
   it('retries on the "missing recognized prefix" encrypted-content variant (apiyi validation_error)', async () => {
     // Live repro 2026-06-11: apiyi's Responses emulation rejects replayed
     // reasoning blocks whose encrypted_content it didn't mint itself with
@@ -973,7 +1539,8 @@ describe('AgentManager codex thread id mapping (regression: invalid thread id)',
     const notices = events.filter(
       (e): e is Extract<AgentStreamEvent, { type: 'notice' }> => e.type === 'notice',
     )
-    expect(notices.some((n) => n.notice.kind === 'threadContextReset')).toBe(true)
+    const resetNotice = notices.find((notice) => notice.notice.kind === 'threadContextReset')
+    expect(resetNotice?.notice.message).toContain('切回模型官方 Context 并重试')
   })
 
   it('forwards payload.model through to backend.send when caller selects a model', async () => {
@@ -1300,7 +1867,9 @@ describe('AgentManager codex thread id mapping (regression: invalid thread id)',
       backend,
     })
 
-    await mgr.sendMessage({ content: 'hi', attachments: [] })
+    await expect(
+      mgr.sendMessage({ content: 'hi', attachments: [] }),
+    ).rejects.toThrow('Codex 后端启动失败:`wire_api = "chat"` is no longer supported')
     await flushMicrotasks(20)
 
     expect(sendCalled).toBe(false)

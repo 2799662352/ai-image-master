@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildCodexLaunchArgs,
+  DEFAULT_CODEX_MODEL_CONTEXT_CONFIG,
   DEFAULT_CODEX_SESSION_CONFIG,
   DEFAULT_LISTEN_URL,
   resolveCodexSessionConfig,
 } from '../codexLaunch'
+import { resolveSmokeContextConfig } from '../../../../scripts/smoke-codex-compaction'
 
 describe('buildCodexLaunchArgs', () => {
   it('uses app-server with the default listen URL and maximum-permission defaults', () => {
@@ -23,7 +25,6 @@ describe('buildCodexLaunchArgs', () => {
       // even when reasoningOutputTokens > 0.
       '-c', 'show_raw_agent_reasoning=true',
       '-c', 'model_reasoning_summary="auto"',
-      '-c', 'model_auto_compact_token_limit=220000',
       '-c', 'tool_output_token_limit=10000',
       '-c', 'agents.max_threads=8',
       '-c', 'agents.max_depth=1',
@@ -49,6 +50,8 @@ describe('buildCodexLaunchArgs', () => {
       // keep apiyi dormant so a keyless apiyi-mcp can't hang the first turn.
       '-c', 'mcp_servers.apiyi.enabled=false',
       '-c', 'mcp_servers.cinematography_kb.env.DASHVECTOR_ENDPOINT="vrs-cn-1zz4v38oq0001l.dashvector.cn-beijing.aliyuncs.com"',
+      '-c', 'model_context_window=272000',
+      '-c', 'model_auto_compact_token_limit=244800',
     ])
   })
 
@@ -62,7 +65,6 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'web_search="live"',
       '-c', 'show_raw_agent_reasoning=true',
       '-c', 'model_reasoning_summary="auto"',
-      '-c', 'model_auto_compact_token_limit=220000',
       '-c', 'tool_output_token_limit=10000',
       '-c', 'agents.max_threads=8',
       '-c', 'agents.max_depth=1',
@@ -75,6 +77,8 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'features.memories=true',
       '-c', 'mcp_servers.apiyi.enabled=false',
       '-c', 'mcp_servers.cinematography_kb.env.DASHVECTOR_ENDPOINT="vrs-cn-1zz4v38oq0001l.dashvector.cn-beijing.aliyuncs.com"',
+      '-c', 'model_context_window=272000',
+      '-c', 'model_auto_compact_token_limit=244800',
     ])
     const listenIdx = args.indexOf('--listen')
     const firstConfigIdx = args.indexOf('-c')
@@ -200,12 +204,66 @@ describe('buildCodexLaunchArgs', () => {
     expect(flat).not.toContain('model_providers.')
   })
 
-  it('uses each model catalog window while keeping the 220k gateway compaction guard', () => {
-    // Codex 0.144 advertises 372k for GPT-5.6 and 272k for GPT-5.5/5.4.
-    // A global 272k override would silently reduce the new model window.
+  it('uses the default model 272K/244800 runtime config and never emits the legacy 220K limit', () => {
     const args = buildCodexLaunchArgs()
-    expect(args.some((arg) => arg.startsWith('model_context_window='))).toBe(false)
-    expect(args).toContain('model_auto_compact_token_limit=220000')
+    expect(args).toContain('model_context_window=272000')
+    expect(args).toContain('model_auto_compact_token_limit=244800')
+    expect(args.join(' ')).not.toContain('220000')
+  })
+
+  it('uses an explicit 372K/334800 runtime context config', () => {
+    const contextConfig = resolveSmokeContextConfig({})
+    const args = buildCodexLaunchArgs({ modelContextConfig: contextConfig })
+
+    expect(args).toContain('model_context_window=372000')
+    expect(args).toContain('model_auto_compact_token_limit=334800')
+  })
+
+  it('derives the compaction smoke override through the shared 90% context rule', () => {
+    expect(resolveSmokeContextConfig({ CODEX_SMOKE_CONTEXT_WINDOW: '1000000' })).toEqual({
+      modelContextWindow: 1_000_000,
+      modelAutoCompactTokenLimit: 900_000,
+    })
+  })
+
+  it.each(['NaN', 'Infinity', '0', '-1', '9007199254740992', '372000.5'])(
+    'rejects invalid compaction smoke context input before launch: %s',
+    (value) => {
+      expect(() => resolveSmokeContextConfig({
+        CODEX_SMOKE_CONTEXT_WINDOW: value,
+      })).toThrow(/CODEX_SMOKE_CONTEXT_WINDOW.*positive safe integer/i)
+    },
+  )
+
+  it.each([
+    ['NaN context', { modelContextWindow: Number.NaN, modelAutoCompactTokenLimit: 1 }],
+    ['negative context', { modelContextWindow: -1, modelAutoCompactTokenLimit: 1 }],
+    [
+      'unsafe context',
+      {
+        modelContextWindow: Number.MAX_SAFE_INTEGER + 1,
+        modelAutoCompactTokenLimit: 1,
+      },
+    ],
+    [
+      'mismatched compact limit',
+      { modelContextWindow: 372_000, modelAutoCompactTokenLimit: 334_799 },
+    ],
+  ])('rejects invalid explicit modelContextConfig at the public boundary: %s', (_label, config) => {
+    expect(() => buildCodexLaunchArgs({
+      modelContextConfig: config,
+    })).toThrow(/invalid.*model context config/i)
+  })
+
+  it('freezes the exported default context config against caller mutation', () => {
+    expect(Object.isFrozen(DEFAULT_CODEX_MODEL_CONTEXT_CONFIG)).toBe(true)
+    expect(() => {
+      (DEFAULT_CODEX_MODEL_CONTEXT_CONFIG as { modelContextWindow: number }).modelContextWindow = 1
+    }).toThrow()
+
+    const args = buildCodexLaunchArgs()
+    expect(args).toContain('model_context_window=272000')
+    expect(args).toContain('model_auto_compact_token_limit=244800')
   })
 
   it('pins tool_output_token_limit to the official catalog value (10k)', () => {
@@ -428,6 +486,91 @@ describe('buildCodexLaunchArgs', () => {
 
     expect(args).toContain('disable_response_storage=true')
     expect(args).toContain('windows_wsl_setup_acknowledged=true')
+  })
+
+  it('appends runtime context limits after provider extraTopLevelConfig so runtime is last-wins', () => {
+    const args = buildCodexLaunchArgs({
+      provider: {
+        id: 'rightcode',
+        name: 'Right.Codes',
+        baseUrl: 'https://right.codes/codex/v1',
+        envKey: 'OPENAI_API_KEY',
+        extraTopLevelConfig: {
+          disable_response_storage: true,
+        },
+      },
+      modelContextConfig: {
+        modelContextWindow: 372_000,
+        modelAutoCompactTokenLimit: 334_800,
+      },
+    })
+
+    expect(args.indexOf('model_context_window=372000')).toBeGreaterThan(
+      args.indexOf('disable_response_storage=true'),
+    )
+    expect(args.indexOf('model_auto_compact_token_limit=334800')).toBeGreaterThan(
+      args.indexOf('disable_response_storage=true'),
+    )
+    expect(args.slice(-4)).toEqual([
+      '-c', 'model_context_window=372000',
+      '-c', 'model_auto_compact_token_limit=334800',
+    ])
+  })
+
+  it.each([
+    'model_context_window',
+    'model_auto_compact_token_limit',
+    ' model_context_window ',
+    ' model_auto_compact_token_limit ',
+    '"model_context_window"',
+    '"model_auto_compact_token_limit"',
+    "'model_context_window'",
+    "'model_auto_compact_token_limit'",
+  ])('rejects reserved provider extraTopLevelConfig key %s', (reservedKey) => {
+    const normalizedKey = reservedKey.trim().replace(/^(['"])(.*)\1$/, '$2')
+    expect(() => buildCodexLaunchArgs({
+      provider: {
+        id: 'custom',
+        name: 'Custom',
+        baseUrl: 'https://example.com/v1',
+        envKey: 'OPENAI_API_KEY',
+        extraTopLevelConfig: {
+          [reservedKey]: 1,
+        },
+      },
+    })).toThrow(new RegExp(`reserved.*${normalizedKey}`, 'i'))
+  })
+
+  it('rejects non-canonical provider extraTopLevelConfig key syntax', () => {
+    expect(() => buildCodexLaunchArgs({
+      provider: {
+        id: 'custom',
+        name: 'Custom',
+        baseUrl: 'https://example.com/v1',
+        envKey: 'OPENAI_API_KEY',
+        extraTopLevelConfig: {
+          ' custom_key ': true,
+        },
+      },
+    })).toThrow(/invalid.*provider.*key/i)
+  })
+
+  it('continues to accept ordinary canonical custom provider keys', () => {
+    const args = buildCodexLaunchArgs({
+      provider: {
+        id: 'custom',
+        name: 'Custom',
+        baseUrl: 'https://example.com/v1',
+        envKey: 'OPENAI_API_KEY',
+        extraTopLevelConfig: {
+          custom_feature_flag: true,
+          'custom.nested_limit': 42,
+        },
+      },
+    })
+
+    expect(args).toContain('custom_feature_flag=true')
+    expect(args).toContain('custom.nested_limit=42')
   })
 
   // apiyiKey is the catimation-style runtime secret injection: the single key

@@ -19,19 +19,35 @@ describe('Codex model catalog', () => {
     expect(ids).not.toContain('gpt-5.2')
   })
 
-  it('maps local effort variants to a canonical model plus native effort', () => {
-    expect(resolveModelSelection('gpt-5.5-xhigh')).toEqual({
-      model: 'gpt-5.5',
-      reasoningEffort: 'xhigh',
-    })
-    expect(resolveModelSelection('gpt-5.4-low')).toEqual({
-      model: 'gpt-5.4',
-      reasoningEffort: 'low',
+  it('uses one unique row per real model slug', () => {
+    const ids = AGENT_MODELS.map((model) => model.id)
+
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(ids).not.toEqual(expect.arrayContaining([
+      'gpt-5.4-low',
+      'gpt-5.4-medium',
+      'gpt-5.4-high',
+      'gpt-5.4-xhigh',
+      'gpt-5.5-xhigh',
+    ]))
+  })
+
+  it('omits the reasoningEffort property for Auto', () => {
+    const selection = resolveModelSelection('gpt-5.6-sol', 'auto')
+
+    expect(selection).toEqual({ model: 'gpt-5.6-sol' })
+    expect(Object.prototype.hasOwnProperty.call(selection, 'reasoningEffort')).toBe(false)
+  })
+
+  it('keeps a concrete Max effort separate from the model slug', () => {
+    expect(resolveModelSelection('gpt-5.6-sol', 'max')).toEqual({
+      model: 'gpt-5.6-sol',
+      reasoningEffort: 'max',
     })
   })
 
   it('passes unknown provider-specific model slugs through unchanged', () => {
-    expect(resolveModelSelection('provider-custom-model')).toEqual({
+    expect(resolveModelSelection('provider-custom-model', 'auto')).toEqual({
       model: 'provider-custom-model',
     })
   })

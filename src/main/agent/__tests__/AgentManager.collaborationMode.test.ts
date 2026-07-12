@@ -70,6 +70,31 @@ function makeBackendWithPresets(
     backend.listCalls += 1
     return listImpl()
   }
+  backend.listModels = async () => ({
+    data: [
+      modelRow({
+        id: 'gpt-5.2-codex',
+        model: 'gpt-5.2-codex',
+        supportedReasoningEfforts: [
+          { reasoningEffort: 'low', description: 'low' },
+          { reasoningEffort: 'medium', description: 'medium' },
+          { reasoningEffort: 'high', description: 'high' },
+          { reasoningEffort: 'xhigh', description: 'xhigh' },
+        ],
+      }),
+      modelRow({
+        id: 'gpt-5.5',
+        supportedReasoningEfforts: [
+          { reasoningEffort: 'low', description: 'low' },
+          { reasoningEffort: 'medium', description: 'medium' },
+          { reasoningEffort: 'high', description: 'high' },
+          { reasoningEffort: 'xhigh', description: 'xhigh' },
+          { reasoningEffort: 'max', description: 'max' },
+        ],
+      }),
+    ],
+    nextCursor: null,
+  })
   return backend
 }
 
@@ -154,10 +179,26 @@ function makeCollaborationBackend(options: {
       return options.listModes!()
     }
   }
-  if (options.listModels) {
+  const listModels = options.listModels
+    ?? (options.updateThreadSettings
+      ? async () => ({
+          data: [modelRow({
+            id: 'gpt-5.5',
+            supportedReasoningEfforts: [
+              { reasoningEffort: 'low', description: 'low' },
+              { reasoningEffort: 'medium', description: 'medium' },
+              { reasoningEffort: 'high', description: 'high' },
+              { reasoningEffort: 'xhigh', description: 'xhigh' },
+              { reasoningEffort: 'max', description: 'max' },
+            ],
+          })],
+          nextCursor: null,
+        })
+      : undefined)
+  if (listModels) {
     backend.listModels = async (params) => {
       backend.modelCalls.push(params ?? {})
-      return options.listModels!(params)
+      return listModels(params)
     }
   }
   if (options.updateThreadSettings) {
@@ -325,7 +366,7 @@ describe('AgentManager collaborationMode', () => {
     expect(backend.calls[1].input.collaborationMode?.settings.reasoning_effort).toBe('medium')
   })
 
-  it("expands Plan Auto with medium reasoning_effort when the backend lacks collaborationMode/list", async () => {
+  it("does not fabricate Plan Auto effort when the backend exposes no model capabilities", async () => {
     const backend = makeBackend()
     const mgr = makeManager(backend)
     await mgr.setCodexApiKey('sk-test')
@@ -343,7 +384,7 @@ describe('AgentManager collaborationMode', () => {
       mode: 'plan',
       settings: {
         model: 'gpt-5.2-codex',
-        reasoning_effort: 'medium',
+        reasoning_effort: null,
         developer_instructions: null,
       },
     })
@@ -405,6 +446,295 @@ describe('AgentManager collaboration mode effort isolation', () => {
     expect(backend.calls[0].input.collaborationMode?.settings.reasoning_effort).toBe('medium')
   })
 
+  it('uses the first supported effort when Plan Auto preset and medium are unsupported', async () => {
+    const backend = makeCollaborationBackend({
+      listModes: async () => UPSTREAM_PRESETS,
+      listModels: async () => ({
+        data: [modelRow({
+          id: 'gpt-5.5',
+          supportedReasoningEfforts: [
+            { reasoningEffort: 'low', description: 'only supported effort' },
+          ],
+        })],
+        nextCursor: null,
+      }),
+    })
+    const manager = makeManager(backend)
+    await manager.setCodexApiKey('sk-test')
+
+    await manager.sendMessage({
+      content: 'plan safely',
+      attachments: [],
+      model: 'gpt-5.5',
+      collaborationModeKind: 'plan',
+      planReasoningEffort: 'auto',
+    })
+    await flushMicrotasks()
+
+    expect(backend.calls[0].input.collaborationMode?.settings.reasoning_effort).toBe('low')
+  })
+
+  it('blocks explicit Plan Max on Right Code gpt-5.5 before a send reaches the backend', async () => {
+    const events: AgentStreamEvent[] = []
+    const backend = makeCollaborationBackend({
+      listModes: async () => UPSTREAM_PRESETS,
+      listModels: async () => ({
+        data: [modelRow({
+          id: 'gpt-5.5',
+          supportedReasoningEfforts: [
+            { reasoningEffort: 'xhigh', description: 'supported' },
+            { reasoningEffort: 'max', description: 'filtered by provider' },
+          ],
+        })],
+        nextCursor: null,
+      }),
+    })
+    const manager = makeManager(backend, (event) => events.push(event))
+    await manager.setActiveProvider('rightcode')
+    await manager.setCodexApiKey('sk-test')
+
+    await expect(manager.sendMessage({
+      content: 'must not send',
+      attachments: [],
+      model: 'gpt-5.5',
+      collaborationModeKind: 'plan',
+      planReasoningEffort: 'max',
+    })).rejects.toThrow(/max.*not supported/i)
+    await flushMicrotasks()
+
+    expect(backend.calls).toEqual([])
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'error',
+      error: expect.stringMatching(/max.*not supported/i),
+    }))
+  })
+
+  it('serializes Provider change after Plan send admission instead of changing owner mid-persistence', async () => {
+    let markIngestStarted!: () => void
+    const ingestStarted = new Promise<void>((resolve) => { markIngestStarted = resolve })
+    let releaseIngest!: () => void
+    const ingestGate = new Promise<void>((resolve) => { releaseIngest = resolve })
+    const addMessage = vi.fn().mockResolvedValue({ id: 'msg-1' })
+    const events: AgentStreamEvent[] = []
+    const backend = makeCollaborationBackend({
+      initialEpoch: 1,
+      restartCodex: async (instance) => {
+        instance.epoch = (instance.epoch ?? 0) + 1
+      },
+      listModes: async () => UPSTREAM_PRESETS,
+      listModels: async () => ({
+        data: [modelRow({
+          id: 'gpt-5.5',
+          supportedReasoningEfforts: [
+            { reasoningEffort: 'max', description: 'API Yi only' },
+          ],
+        })],
+        nextCursor: null,
+      }),
+    })
+    const manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend,
+      store: {
+        createThread: async () => ({ id: 'thread-1' }),
+        addMessage,
+        updateLastMessageAt: async () => undefined,
+      } as any,
+      attachments: {
+        ingest: async () => {
+          markIngestStarted()
+          await ingestGate
+          return []
+        },
+      } as any,
+      eventSink: (event) => events.push(event),
+    })
+    await manager.setCodexApiKey('sk-test')
+
+    const pending = manager.sendMessage({
+      content: 'validated on API Yi',
+      attachments: [],
+      model: 'gpt-5.5',
+      collaborationModeKind: 'plan',
+      planReasoningEffort: 'max',
+    })
+    await ingestStarted
+    const transition = manager.setActiveProvider('rightcode')
+    await flushMicrotasks()
+    releaseIngest()
+    await pending
+    await transition
+
+    expect(events).not.toContainEqual(expect.objectContaining({
+      type: 'error',
+      error: expect.stringMatching(/max.*not supported/i),
+    }))
+    expect(backend.calls).toHaveLength(1)
+    expect(backend.calls[0].input.collaborationMode?.settings.reasoning_effort).toBe('max')
+    expect(addMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it('rebuilds a stale Plan owner inside held send admission without waiting on itself', async () => {
+    let markIngestStarted!: () => void
+    const ingestStarted = new Promise<void>((resolve) => { markIngestStarted = resolve })
+    let releaseIngest!: () => void
+    const ingestGate = new Promise<void>((resolve) => { releaseIngest = resolve })
+    const backend = makeCollaborationBackend({
+      initialEpoch: 1,
+      listModes: async () => UPSTREAM_PRESETS,
+      listModels: async () => ({
+        data: [modelRow({
+          id: 'gpt-5.5',
+          supportedReasoningEfforts: backend.epoch === 1
+            ? [{ reasoningEffort: 'max', description: 'old generation only' }]
+            : [{ reasoningEffort: 'high', description: 'new generation only' }],
+        })],
+        nextCursor: null,
+      }),
+    })
+    const manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend,
+      store: {
+        createThread: async () => ({ id: 'thread-1' }),
+        addMessage: async () => ({ id: 'msg-1' }),
+        updateLastMessageAt: async () => undefined,
+      } as any,
+      attachments: {
+        ingest: async () => {
+          markIngestStarted()
+          await ingestGate
+          return []
+        },
+      } as any,
+    })
+    await manager.setCodexApiKey('sk-test')
+
+    let settled = false
+    const pending = manager.sendMessage({
+      content: 'rebuild within admission',
+      attachments: [],
+      model: 'gpt-5.5',
+      collaborationModeKind: 'plan',
+      planReasoningEffort: 'auto',
+    }).finally(() => {
+      settled = true
+    })
+    await ingestStarted
+    backend.epoch = 2
+    releaseIngest()
+    await flushMicrotasks(30)
+
+    expect(settled).toBe(true)
+    await pending
+    expect(backend.modelCalls).toHaveLength(2)
+    expect(backend.calls).toHaveLength(1)
+    expect(backend.calls[0].input.collaborationMode?.settings.reasoning_effort).toBe('high')
+    expect(backend.calls[0].input.collaborationMode?.settings.reasoning_effort).not.toBe('max')
+  })
+
+  it('guards send synchronously when epoch flips after helper check but before caller continuation', async () => {
+    let markIngestStarted!: () => void
+    const ingestStarted = new Promise<void>((resolve) => { markIngestStarted = resolve })
+    let releaseIngest!: () => void
+    const ingestGate = new Promise<void>((resolve) => { releaseIngest = resolve })
+    const addMessage = vi.fn().mockResolvedValue({ id: 'msg-1' })
+    const events: AgentStreamEvent[] = []
+    const backend = makeCollaborationBackend({
+      initialEpoch: 1,
+      listModes: async () => UPSTREAM_PRESETS,
+      listModels: async () => ({
+        data: [modelRow({
+          id: 'gpt-5.5',
+          supportedReasoningEfforts: [
+            { reasoningEffort: 'max', description: 'supported in epoch 1' },
+          ],
+        })],
+        nextCursor: null,
+      }),
+    })
+    let armEpochFlip = false
+    let epochFlipQueued = false
+    backend.currentEpoch = () => {
+      const current = backend.epoch!
+      if (armEpochFlip && !epochFlipQueued) {
+        epochFlipQueued = true
+        queueMicrotask(() => { backend.epoch = current + 1 })
+      }
+      return current
+    }
+    const manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend,
+      store: {
+        createThread: async () => ({ id: 'thread-1' }),
+        addMessage,
+        updateLastMessageAt: async () => undefined,
+      } as any,
+      attachments: {
+        ingest: async () => {
+          markIngestStarted()
+          await ingestGate
+          return []
+        },
+      } as any,
+      eventSink: (event) => events.push(event),
+    })
+    await manager.setCodexApiKey('sk-test')
+
+    const pending = manager.sendMessage({
+      content: 'flip after helper',
+      attachments: [],
+      model: 'gpt-5.5',
+      collaborationModeKind: 'plan',
+      planReasoningEffort: 'max',
+    })
+    await ingestStarted
+    armEpochFlip = true
+    releaseIngest()
+    await pending
+
+    await vi.waitFor(() => {
+      expect(events).toContainEqual(expect.objectContaining({
+        type: 'error',
+        error: expect.stringMatching(/owner.*commit boundary/i),
+      }))
+    })
+    expect(backend.calls).toEqual([])
+    expect(addMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it('allows explicit Plan Max on Right Code gpt-5.6-sol send', async () => {
+    const backend = makeCollaborationBackend({
+      listModes: async () => UPSTREAM_PRESETS,
+      listModels: async () => ({
+        data: [modelRow({
+          id: 'gpt-5.6-sol',
+          model: 'gpt-5.6-sol',
+          supportedReasoningEfforts: [
+            { reasoningEffort: 'max', description: 'supported' },
+          ],
+        })],
+        nextCursor: null,
+      }),
+    })
+    const manager = makeManager(backend)
+    await manager.setActiveProvider('rightcode')
+    await manager.setCodexApiKey('sk-test')
+
+    await manager.sendMessage({
+      content: 'use max',
+      attachments: [],
+      model: 'gpt-5.6-sol',
+      collaborationModeKind: 'plan',
+      planReasoningEffort: 'max',
+    })
+    await flushMicrotasks()
+
+    expect(backend.calls).toHaveLength(1)
+    expect(backend.calls[0].input.collaborationMode?.settings.reasoning_effort).toBe('max')
+  })
+
   it.each(['low', 'medium', 'high', 'xhigh'] as const)(
     'uses explicit Plan %s without requesting the preset',
     async (planReasoningEffort) => {
@@ -456,6 +786,139 @@ describe('AgentManager collaboration mode effort isolation', () => {
 })
 
 describe('AgentManager collaboration capabilities', () => {
+  it('waits for the queued Provider respawn before reading capability metadata', async () => {
+    let releaseRestart!: () => void
+    const restartGate = new Promise<void>((resolve) => { releaseRestart = resolve })
+    const backend = makeCollaborationBackend({
+      initialEpoch: 1,
+      restartCodex: async (instance) => {
+        await restartGate
+        instance.epoch = 2
+      },
+      listModes: async () => UPSTREAM_PRESETS,
+      listModels: async () => ({
+        data: [modelRow({
+          id: 'gpt-5.5',
+          supportedReasoningEfforts: [
+            { reasoningEffort: 'medium', description: 'medium' },
+          ],
+        })],
+        nextCursor: null,
+      }),
+    })
+    const manager = makeManager(backend)
+    const switching = manager.setActiveProvider('rightcode')
+    await flushMicrotasks()
+
+    const pending = manager.getCollaborationCapabilitiesRpc('gpt-5.5')
+    await flushMicrotasks()
+    expect(backend.modelCalls).toEqual([])
+
+    releaseRestart()
+    await switching
+    await expect(pending).resolves.toEqual({
+      ok: true,
+      data: {
+        providerId: 'rightcode',
+        backendEpoch: 2,
+        planDefaultEffort: 'medium',
+        supportedPlanEfforts: ['medium'],
+        source: 'codex',
+      },
+    })
+  })
+
+  it('rejects and rolls back when the Provider respawn cannot confirm a new epoch', async () => {
+    const backend = makeCollaborationBackend({
+      initialEpoch: 1,
+      restartCodex: async () => undefined,
+      listModes: async () => UPSTREAM_PRESETS,
+      listModels: async () => ({
+        data: [modelRow({ id: 'gpt-5.5' })],
+        nextCursor: null,
+      }),
+    })
+    const manager = makeManager(backend)
+    await expect(manager.setActiveProvider('rightcode')).rejects.toThrow(
+      /new backend generation/i,
+    )
+
+    await expect(manager.getCollaborationCapabilitiesRpc('gpt-5.5')).resolves.toMatchObject({
+      ok: true,
+      data: {
+        providerId: 'apiyi',
+        backendEpoch: 1,
+      },
+    })
+    expect(backend.modelCalls).toHaveLength(1)
+  })
+
+  it('keeps Plan Max for Right Code gpt-5.6-sol through the shared provider policy', async () => {
+    const backend = makeCollaborationBackend({
+      listModes: async () => UPSTREAM_PRESETS,
+      listModels: async () => ({
+        data: [modelRow({
+          id: 'gpt-5.6-sol',
+          model: 'gpt-5.6-sol',
+          supportedReasoningEfforts: [
+            { reasoningEffort: 'ultra', description: 'unknown' },
+            { reasoningEffort: 'max', description: 'max' },
+            { reasoningEffort: 'xhigh', description: 'xhigh' },
+            { reasoningEffort: 'high', description: 'high' },
+            { reasoningEffort: 'medium', description: 'medium' },
+            { reasoningEffort: 'low', description: 'low' },
+          ],
+        })],
+        nextCursor: null,
+      }),
+    })
+    const manager = makeManager(backend)
+    await manager.setActiveProvider('rightcode')
+
+    await expect(manager.getCollaborationCapabilitiesRpc('gpt-5.6-sol')).resolves.toEqual({
+      ok: true,
+      data: {
+        providerId: 'rightcode',
+        planDefaultEffort: 'medium',
+        supportedPlanEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+        source: 'codex',
+      },
+    })
+  })
+
+  it('filters Plan Max for Right Code gpt-5.5 through the shared provider policy', async () => {
+    const backend = makeCollaborationBackend({
+      listModes: async () => UPSTREAM_PRESETS,
+      listModels: async () => ({
+        data: [modelRow({
+          id: 'gpt-5.5',
+          model: 'gpt-5.5',
+          supportedReasoningEfforts: [
+            { reasoningEffort: 'low', description: 'low' },
+            { reasoningEffort: 'medium', description: 'medium' },
+            { reasoningEffort: 'high', description: 'high' },
+            { reasoningEffort: 'xhigh', description: 'xhigh' },
+            { reasoningEffort: 'max', description: 'max' },
+            { reasoningEffort: 'ultra', description: 'unknown' },
+          ],
+        })],
+        nextCursor: null,
+      }),
+    })
+    const manager = makeManager(backend)
+    await manager.setActiveProvider('rightcode')
+
+    await expect(manager.getCollaborationCapabilitiesRpc('gpt-5.5')).resolves.toEqual({
+      ok: true,
+      data: {
+        providerId: 'rightcode',
+        planDefaultEffort: 'medium',
+        supportedPlanEfforts: ['low', 'medium', 'high', 'xhigh'],
+        source: 'codex',
+      },
+    })
+  })
+
   it('combines the Plan preset with normalized model capabilities matched by canonical model', async () => {
     const backend = makeCollaborationBackend({
       listModes: async () => UPSTREAM_PRESETS,
@@ -469,7 +932,8 @@ describe('AgentManager collaboration capabilities', () => {
     await expect(manager.getCollaborationCapabilitiesRpc('gpt-5.5')).resolves.toEqual({
       ok: true,
       data: {
-        planDefaultEffort: 'medium',
+        providerId: 'apiyi',
+        planDefaultEffort: 'low',
         supportedPlanEfforts: ['low', 'high'],
         source: 'codex',
       },
@@ -493,8 +957,46 @@ describe('AgentManager collaboration capabilities', () => {
     expect(result).toEqual({
       ok: true,
       data: {
-        planDefaultEffort: 'medium',
+        providerId: 'apiyi',
+        planDefaultEffort: 'low',
         supportedPlanEfforts: ['low', 'high'],
+        source: 'codex',
+      },
+    })
+  })
+
+  it('prefers an exact model row id over an earlier canonical-model alias match', async () => {
+    const backend = makeCollaborationBackend({
+      listModes: async () => UPSTREAM_PRESETS,
+      listModels: async () => ({
+        data: [
+          modelRow({
+            id: 'canonical-alias',
+            model: 'gpt-5.6-sol',
+            supportedReasoningEfforts: [
+              { reasoningEffort: 'low', description: 'alias row' },
+            ],
+          }),
+          modelRow({
+            id: 'gpt-5.6-sol',
+            model: 'gpt-5.6-sol',
+            supportedReasoningEfforts: [
+              { reasoningEffort: 'max', description: 'exact row' },
+            ],
+          }),
+        ],
+        nextCursor: null,
+      }),
+    })
+    const manager = makeManager(backend)
+    await manager.setActiveProvider('rightcode')
+
+    await expect(manager.getCollaborationCapabilitiesRpc('gpt-5.6-sol')).resolves.toEqual({
+      ok: true,
+      data: {
+        providerId: 'rightcode',
+        planDefaultEffort: 'max',
+        supportedPlanEfforts: ['max'],
         source: 'codex',
       },
     })
@@ -503,33 +1005,218 @@ describe('AgentManager collaboration capabilities', () => {
   it.each([
     ['collaborationMode/list unavailable', makeCollaborationBackend({
       listModels: async () => ({ data: [modelRow()], nextCursor: null }),
-    })],
+    }), {
+      providerId: 'apiyi',
+      planDefaultEffort: 'low',
+      supportedPlanEfforts: ['low', 'high'],
+      source: 'codex',
+    }],
     ['model/list unavailable', makeCollaborationBackend({
       listModes: async () => UPSTREAM_PRESETS,
-    })],
+    }), {
+      providerId: 'apiyi',
+      planDefaultEffort: null,
+      supportedPlanEfforts: [],
+      source: 'fallback',
+    }],
     ['collaborationMode/list failure', makeCollaborationBackend({
       listModes: async () => { throw new Error('presets failed') },
       listModels: async () => ({ data: [modelRow()], nextCursor: null }),
-    })],
+    }), {
+      providerId: 'apiyi',
+      planDefaultEffort: 'low',
+      supportedPlanEfforts: ['low', 'high'],
+      source: 'codex',
+    }],
     ['model/list failure', makeCollaborationBackend({
       listModes: async () => UPSTREAM_PRESETS,
       listModels: async () => { throw new Error('models failed') },
-    })],
-  ])('returns a safe fallback when %s', async (_label, backend) => {
+    }), {
+      providerId: 'apiyi',
+      planDefaultEffort: null,
+      supportedPlanEfforts: [],
+      source: 'fallback',
+    }],
+  ])('returns safe capabilities when %s', async (_label, backend, expected) => {
     const manager = makeManager(backend)
 
     await expect(manager.getCollaborationCapabilitiesRpc('gpt-5.5')).resolves.toEqual({
       ok: true,
-      data: {
-        planDefaultEffort: 'medium',
-        supportedPlanEfforts: [],
-        source: 'fallback',
-      },
+      data: expected,
     })
   })
 })
 
 describe('AgentManager collaboration mode updates', () => {
+  it('returns a structured error and blocks Right Code gpt-5.5 Max before thread update', async () => {
+    const backend = makeCollaborationBackend({
+      queuedThreadIds: ['codex-thread-1'],
+      listModes: async () => UPSTREAM_PRESETS,
+      listModels: async () => ({
+        data: [modelRow({
+          id: 'gpt-5.5',
+          supportedReasoningEfforts: [
+            { reasoningEffort: 'xhigh', description: 'supported' },
+            { reasoningEffort: 'max', description: 'filtered by provider' },
+          ],
+        })],
+        nextCursor: null,
+      }),
+      updateThreadSettings: async () => ({}),
+    })
+    const manager = makeManager(backend)
+    await manager.setActiveProvider('rightcode')
+    await manager.setCodexApiKey('sk-test')
+    await createCodexThreadMapping(manager)
+
+    await expect(manager.updateCollaborationModeRpc({
+      ...UPDATE_PAYLOAD,
+      planReasoningEffort: 'max',
+    })).resolves.toEqual({
+      ok: false,
+      error: expect.stringMatching(/max.*not supported/i),
+      requestVersion: 7,
+    })
+    expect(backend.updateCalls).toEqual([])
+  })
+
+  it('rebuilds once and rejects stale API Yi Max before updating a new Provider generation', async () => {
+    let markResumeStarted!: () => void
+    const resumeStarted = new Promise<void>((resolve) => { markResumeStarted = resolve })
+    let releaseResume!: () => void
+    const resumeGate = new Promise<void>((resolve) => { releaseResume = resolve })
+    const backend = makeCollaborationBackend({
+      initialEpoch: 1,
+      restartCodex: async (instance) => {
+        instance.epoch = (instance.epoch ?? 0) + 1
+      },
+      resumeThread: async () => {
+        markResumeStarted()
+        await resumeGate
+      },
+      listModes: async () => UPSTREAM_PRESETS,
+      listModels: async () => ({
+        data: [modelRow({
+          id: 'gpt-5.5',
+          supportedReasoningEfforts: [
+            { reasoningEffort: 'max', description: 'API Yi only' },
+          ],
+        })],
+        nextCursor: null,
+      }),
+      updateThreadSettings: async () => ({}),
+    })
+    const manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend,
+      store: {
+        getCodexThreadId: async () => 'codex-thread-1',
+      } as any,
+    })
+
+    const pending = manager.updateCollaborationModeRpc({
+      ...UPDATE_PAYLOAD,
+      planReasoningEffort: 'max',
+    })
+    await resumeStarted
+    await manager.setActiveProvider('rightcode')
+    await flushMicrotasks()
+    releaseResume()
+
+    await expect(pending).resolves.toEqual({
+      ok: false,
+      error: expect.stringMatching(/max.*not supported/i),
+      requestVersion: 7,
+    })
+    expect(backend.updateCalls).toEqual([])
+  })
+
+  it('guards update synchronously when epoch flips after helper check but before caller continuation', async () => {
+    let markResumeStarted!: () => void
+    const resumeStarted = new Promise<void>((resolve) => { markResumeStarted = resolve })
+    let releaseResume!: () => void
+    const resumeGate = new Promise<void>((resolve) => { releaseResume = resolve })
+    const backend = makeCollaborationBackend({
+      initialEpoch: 2,
+      resumeThread: async () => {
+        markResumeStarted()
+        await resumeGate
+      },
+      listModes: async () => UPSTREAM_PRESETS,
+      listModels: async () => ({
+        data: [modelRow({
+          id: 'gpt-5.5',
+          supportedReasoningEfforts: [
+            { reasoningEffort: 'max', description: 'supported in epoch 2' },
+          ],
+        })],
+        nextCursor: null,
+      }),
+      updateThreadSettings: async () => ({}),
+    })
+    let armEpochFlip = false
+    let epochFlipQueued = false
+    backend.currentEpoch = () => {
+      const current = backend.epoch!
+      if (armEpochFlip && !epochFlipQueued) {
+        epochFlipQueued = true
+        queueMicrotask(() => { backend.epoch = current + 1 })
+      }
+      return current
+    }
+    const manager = makeManager(backend)
+    ;(manager as any).codexThreadIdByDbThreadId.set('db-thread-1', 'codex-thread-1')
+    ;(manager as any).codexThreadEpochByDbThreadId.set('db-thread-1', 1)
+
+    const pending = manager.updateCollaborationModeRpc({
+      ...UPDATE_PAYLOAD,
+      planReasoningEffort: 'max',
+    })
+    await resumeStarted
+    armEpochFlip = true
+    releaseResume()
+
+    await expect(pending).resolves.toEqual({
+      ok: false,
+      error: expect.stringMatching(/owner.*commit boundary/i),
+      requestVersion: 7,
+    })
+    expect(backend.updateCalls).toEqual([])
+  })
+
+  it('updates stable Right Code gpt-5.6-sol Max exactly once', async () => {
+    const backend = makeCollaborationBackend({
+      queuedThreadIds: ['codex-thread-1'],
+      listModes: async () => UPSTREAM_PRESETS,
+      listModels: async () => ({
+        data: [modelRow({
+          id: 'gpt-5.6-sol',
+          model: 'gpt-5.6-sol',
+          supportedReasoningEfforts: [
+            { reasoningEffort: 'max', description: 'supported' },
+          ],
+        })],
+        nextCursor: null,
+      }),
+      updateThreadSettings: async () => ({}),
+    })
+    const manager = makeManager(backend)
+    await manager.setActiveProvider('rightcode')
+    await manager.setCodexApiKey('sk-test')
+    await createCodexThreadMapping(manager)
+
+    await expect(manager.updateCollaborationModeRpc({
+      ...UPDATE_PAYLOAD,
+      model: 'gpt-5.6-sol',
+      planReasoningEffort: 'max',
+    })).resolves.toEqual({
+      ok: true,
+      data: { compatibility: 'immediate', requestVersion: 7 },
+    })
+    expect(backend.updateCalls).toHaveLength(1)
+    expect(backend.updateCalls[0].collaborationMode.settings.reasoning_effort).toBe('max')
+  })
+
   it('maps an existing DB thread to Codex and updates complete settings immediately', async () => {
     const backend = makeCollaborationBackend({
       queuedThreadIds: ['codex-thread-1'],

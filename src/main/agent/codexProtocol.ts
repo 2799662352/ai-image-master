@@ -147,6 +147,12 @@ export interface CodexCollaborationModeMask {
 export interface CollaborationModeListResponse { data: CodexCollaborationModeMask[] }
 
 /** Stable app-server v2 `model/list` catalog row (Codex 0.144.1 schema). */
+export interface CodexModelServiceTier {
+  id: string
+  name: string
+  description: string
+}
+
 export interface CodexModel {
   id: string
   model: string
@@ -159,6 +165,9 @@ export interface CodexModel {
   supportsPersonality: boolean
   isDefault: boolean
   upgrade: string | null
+  additionalSpeedTiers: string[]
+  defaultServiceTier: string | null
+  serviceTiers: CodexModelServiceTier[]
 }
 
 export interface CodexModelListParams {

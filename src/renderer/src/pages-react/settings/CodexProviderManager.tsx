@@ -4,8 +4,12 @@ import type {
   CodexCustomProviderInput,
   CodexProvider,
 } from '../../stores/useSettingsStore'
-import { useToastStore } from '../../stores'
+import { useToastStore } from '../../stores/useToastStore'
 import { ApiKeyInput } from './ApiKeyInput'
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
 
 /**
  * Codex provider switcher + custom provider editor.
@@ -37,14 +41,22 @@ export function CodexProviderManager() {
   const active = all.find((p) => p.id === providers.activeId)
 
   const handleSelect = async (id: string) => {
-    if (id === providers.activeId) return
-    await selectProvider(id)
+    if (id === providers.activeId || id === providers.pendingProviderId) return
+    try {
+      await selectProvider(id)
+    } catch (error) {
+      addToast({ message: errorMessage(error), type: 'error' })
+    }
   }
 
   const handleSaveKey = async () => {
-    if (!active) return
-    await saveProviderKey(active.id, codexApiKey)
-    addToast({ message: `${active.name} key saved`, type: 'success' })
+    if (!active || providers.pendingProviderId !== null) return
+    try {
+      await saveProviderKey(active.id, codexApiKey)
+      addToast({ message: `${active.name} key saved`, type: 'success' })
+    } catch (error) {
+      addToast({ message: errorMessage(error), type: 'error' })
+    }
   }
 
   const handleAdd = async (input: CodexCustomProviderInput) => {
@@ -58,16 +70,25 @@ export function CodexProviderManager() {
   }
 
   const handleUpdate = async (id: string, patch: Partial<CodexCustomProviderInput>) => {
-    await updateProvider(id, patch)
-    addToast({ message: '已更新', type: 'success' })
-    setEditing(null)
+    if (providers.pendingProviderId !== null) return
+    try {
+      await updateProvider(id, patch)
+      addToast({ message: '已更新', type: 'success' })
+      setEditing(null)
+    } catch (error) {
+      addToast({ message: errorMessage(error), type: 'error' })
+    }
   }
 
   const handleRemove = async (provider: CodexProvider) => {
-    if (!provider.isCustom) return
+    if (!provider.isCustom || providers.pendingProviderId !== null) return
     if (!confirm(`确定删除自定义 provider "${provider.name}"？`)) return
-    await removeProvider(provider.id)
-    addToast({ message: `已删除 ${provider.name}`, type: 'success' })
+    try {
+      await removeProvider(provider.id)
+      addToast({ message: `已删除 ${provider.name}`, type: 'success' })
+    } catch (error) {
+      addToast({ message: errorMessage(error), type: 'error' })
+    }
   }
 
   return (
@@ -75,6 +96,7 @@ export function CodexProviderManager() {
       <div className="grid grid-cols-2 gap-3">
         {all.map((p) => {
           const isActive = p.id === providers.activeId
+          const isPending = p.id === providers.pendingProviderId
           return (
             <div
               key={p.id}
@@ -86,15 +108,21 @@ export function CodexProviderManager() {
             >
               <button
                 onClick={() => handleSelect(p.id)}
-                className="block w-full text-left"
+                disabled={isPending}
+                aria-pressed={isActive}
+                className="block w-full text-left disabled:cursor-wait"
               >
                 <div className="flex items-center justify-between gap-2">
                   <div className="font-semibold truncate">{p.name}</div>
-                  {p.isCustom && (
+                  {isPending ? (
+                    <span className="text-[10px] px-1 py-0.5 bg-zinc-800 text-cyberpunk-yellow rounded">
+                      切换中…
+                    </span>
+                  ) : p.isCustom ? (
                     <span className="text-[10px] px-1 py-0.5 bg-zinc-800 text-zinc-400 rounded uppercase tracking-wider">
                       custom
                     </span>
-                  )}
+                  ) : null}
                 </div>
                 {p.description ? (
                   <div className="text-xs mt-1 opacity-70 truncate">{p.description}</div>
@@ -113,7 +141,9 @@ export function CodexProviderManager() {
                   <button
                     type="button"
                     onClick={() => setEditing(p)}
-                    className="text-[10px] px-1 py-0.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded"
+                    disabled={providers.pendingProviderId !== null}
+                    aria-disabled={providers.pendingProviderId !== null}
+                    className="text-[10px] px-1 py-0.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                     title="编辑"
                   >
                     编辑
@@ -121,7 +151,9 @@ export function CodexProviderManager() {
                   <button
                     type="button"
                     onClick={() => handleRemove(p)}
-                    className="text-[10px] px-1 py-0.5 bg-red-900/40 hover:bg-red-900 text-red-300 rounded"
+                    disabled={providers.pendingProviderId !== null}
+                    aria-disabled={providers.pendingProviderId !== null}
+                    className="text-[10px] px-1 py-0.5 bg-red-900/40 hover:bg-red-900 text-red-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                     title="删除"
                   >
                     删除
@@ -141,7 +173,10 @@ export function CodexProviderManager() {
       </div>
 
       {active && (
-        <div className="space-y-2">
+        <fieldset
+          disabled={providers.pendingProviderId !== null}
+          className="space-y-2 disabled:opacity-60"
+        >
           <div className="text-xs text-zinc-500">
             当前 provider: <span className="text-cyberpunk-yellow">{active.name}</span> · base_url:{' '}
             <code className="text-zinc-400">{active.baseUrl}</code>
@@ -152,12 +187,13 @@ export function CodexProviderManager() {
             placeholder={`${active.envKey || 'OPENAI_API_KEY'} (sk-...)`}
           />
           <button
+            type="button"
             onClick={handleSaveKey}
             className="w-full py-1.5 px-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs uppercase tracking-tight rounded transition-colors"
           >
             💾 保存 {active.name} 的 Key
           </button>
-        </div>
+        </fieldset>
       )}
 
       {showAdd && (

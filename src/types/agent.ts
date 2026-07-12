@@ -2,6 +2,10 @@ import type { CodexUserMessageReconcile, TimelineItem } from './agent-timeline'
 import type { AgentReference } from './agent-reference'
 import type { ThreadGoal } from './codexGoals'
 import type { PlanReasoningEffort } from '../shared/collaborationMode'
+import type {
+  ConcreteModelReasoningEffort,
+  ModelSettingsCapabilities,
+} from '../shared/modelSettings'
 
 // Canonical home is agent-timeline.ts (BaseItem.codexReconcile persists the
 // same shape); re-exported here because stream-event consumers import all
@@ -45,9 +49,18 @@ export interface AgentMentionRef {
 }
 
 export interface AgentCollaborationCapabilities {
-  planDefaultEffort: string
+  providerId: string
+  backendEpoch?: number
+  planDefaultEffort: string | null
   supportedPlanEfforts: string[]
   source: 'codex' | 'fallback'
+}
+
+/** Confirmed applied Codex Provider state returned by Provider write IPCs. */
+export interface AgentProviderMutationResult {
+  activeId: string
+  /** Backend generation that owns activeId; absent for non-generational backends. */
+  providerGeneration?: number
 }
 
 export type AgentCollaborationCapabilitiesResult =
@@ -58,7 +71,7 @@ export interface AgentCollaborationModeUpdatePayload {
   threadId: string
   mode: 'default' | 'plan'
   model: string
-  defaultReasoningEffort?: string
+  defaultReasoningEffort?: ConcreteModelReasoningEffort
   planReasoningEffort: PlanReasoningEffort
   requestVersion: number
 }
@@ -89,7 +102,7 @@ export interface AgentSendMessagePayload {
    * Native Codex reasoning-effort override for the selected model. This is
    * independent from the model slug and is forwarded as `turn/start.effort`.
    */
-  reasoningEffort?: string
+  reasoningEffort?: ConcreteModelReasoningEffort
   /**
    * Skills explicitly invoked via `$skill-name` tokens in `content`. When the
    * renderer can resolve the path locally (e.g. via `getSkillsSummary`) it
@@ -145,6 +158,86 @@ export interface AgentSendMessageResult {
 export type CodexSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
 export type CodexApprovalPolicy = 'untrusted' | 'on-request' | 'never'
 export type CodexWebSearchMode = 'cached' | 'live' | 'disabled'
+
+export interface CodexModelContextConfig {
+  modelContextWindow: number
+  modelAutoCompactTokenLimit: number
+}
+
+export interface AgentModelSettingsEntry {
+  id: string
+  displayName: string
+  description: string
+  hidden: boolean
+  isDefault: boolean
+  capabilities: ModelSettingsCapabilities
+}
+
+export interface AgentModelSettingsCatalog {
+  provider: string
+  source: 'codex' | 'fallback'
+  models: AgentModelSettingsEntry[]
+}
+
+export type AgentModelSettingsCatalogResult =
+  | { ok: true; data: AgentModelSettingsCatalog }
+  | { ok: false; error: string }
+
+export type AgentModelContextSnapshot = CodexModelContextConfig & {
+  recoveryRequired: boolean
+  recoveryError?: string
+}
+
+export type AgentModelContextSnapshotResult =
+  | { ok: true; data: AgentModelContextSnapshot }
+  | { ok: false; error: string }
+
+export interface AgentModelContextApplyPayload {
+  threadId?: string
+  model: string
+  contextWindow: number
+  requestVersion: number
+}
+
+export type AgentModelContextApplyStage =
+  | 'validate'
+  | 'busy'
+  | 'persist'
+  | 'restart'
+  | 'resume'
+  | 'verify'
+
+export type AgentModelContextRollbackResult =
+  | {
+      ok: true
+      activeConfig: CodexModelContextConfig
+    }
+  | {
+      ok: false
+      error: string
+      effectiveConfig: null
+    }
+
+export type AgentModelContextApplyResult =
+  | {
+      ok: true
+      data: {
+        model: string
+        contextWindow: number
+        autoCompactTokenLimit: number
+        threadRestored: boolean
+        requestVersion: number
+      }
+    }
+  | {
+      ok: false
+      error: string
+      stage: AgentModelContextApplyStage
+      previousConfig: CodexModelContextConfig
+      attemptedConfig: CodexModelContextConfig
+      requestVersion: number
+      rollback: AgentModelContextRollbackResult
+    }
 
 export interface CodexSessionConfig {
   sandboxMode: CodexSandboxMode

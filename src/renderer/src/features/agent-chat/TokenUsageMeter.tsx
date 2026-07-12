@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AgentTokenUsage } from '../../../../types/agent'
-import { DEFAULT_MODEL_CONTEXT_WINDOW, contextUsedPercent } from './contextWindowDefaults'
+import { contextUsedPercent } from './contextWindowDefaults'
 import { ContextPopover } from './ContextPopover'
 
 /**
@@ -9,7 +9,13 @@ import { ContextPopover } from './ContextPopover'
  * going. The donut itself still mirrors `usage.contextUsage / contextWindow`
  * — the popover is purely additive.
  */
-export function TokenUsageMeter({ usage }: { usage?: AgentTokenUsage }) {
+export function TokenUsageMeter({
+  usage,
+  fallbackContextWindow,
+}: {
+  usage?: AgentTokenUsage
+  fallbackContextWindow: number
+}) {
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
 
@@ -22,14 +28,33 @@ export function TokenUsageMeter({ usage }: { usage?: AgentTokenUsage }) {
 
   if (!usage) return null
 
-  const used = usage.contextUsage ?? usage.inputTokens + usage.outputTokens
+  const inputTokens = finiteNonNegative(usage.inputTokens)
+  const outputTokens = finiteNonNegative(usage.outputTokens)
+  const contextUsage = usage.contextUsage === undefined
+    ? undefined
+    : finiteNonNegative(usage.contextUsage)
+  const cachedInputTokens = usage.cachedInputTokens === undefined
+    ? undefined
+    : finiteNonNegative(usage.cachedInputTokens)
+  const safeUsage: AgentTokenUsage = {
+    ...usage,
+    inputTokens,
+    outputTokens,
+    ...(contextUsage === undefined ? {} : { contextUsage }),
+    ...(cachedInputTokens === undefined ? {} : { cachedInputTokens }),
+    contextWindow:
+      finitePositive(usage.contextWindow) ? usage.contextWindow : undefined,
+  }
+  const used = contextUsage ?? inputTokens + outputTokens
   // Fallback so the donut + percent render even when a gateway omits
   // contextWindow on early turns. Codex 0.128+ should always report it
   // once `model_context_window` is in effect (see codexLaunch.ts).
   const window =
-    typeof usage.contextWindow === 'number' && usage.contextWindow > 0
+    finitePositive(usage.contextWindow)
       ? usage.contextWindow
-      : DEFAULT_MODEL_CONTEXT_WINDOW
+      : finitePositive(fallbackContextWindow)
+        ? fallbackContextWindow
+        : 0
   // Codex-aligned percentage: effective window (minus the 12K baseline), used
   // = current context occupancy. Matches the TUI's status indicator exactly
   // (codex-rs/tui/src/token_usage.rs). See contextWindowDefaults.ts.
@@ -47,7 +72,7 @@ export function TokenUsageMeter({ usage }: { usage?: AgentTokenUsage }) {
   const ariaLabel =
     ratio != null
       ? `Context: ${used} / ${window} tokens (${pct}%)`
-      : `Tokens used: in=${usage.inputTokens} out=${usage.outputTokens}`
+      : `Tokens used: in=${inputTokens} out=${outputTokens}`
 
   return (
     <div className="relative">
@@ -61,8 +86,8 @@ export function TokenUsageMeter({ usage }: { usage?: AgentTokenUsage }) {
         title={
           ratio != null
             ? `Context: ${used} / ${window} tokens (${pct}%) — Codex compacts when full`
-            : `Tokens used: in=${usage.inputTokens} out=${usage.outputTokens}${
-                usage.cachedInputTokens != null ? ` cached=${usage.cachedInputTokens}` : ''
+            : `Tokens used: in=${inputTokens} out=${outputTokens}${
+                cachedInputTokens != null ? ` cached=${cachedInputTokens}` : ''
               }`
         }
         className="flex items-center gap-1.5 rounded-full border border-zinc-700/80 bg-zinc-900/60 px-2 py-0.5 text-[10px] text-zinc-300 transition hover:border-cyan-300/60 hover:text-cyan-100"
@@ -89,14 +114,26 @@ export function TokenUsageMeter({ usage }: { usage?: AgentTokenUsage }) {
       </button>
       {open ? (
         <ContextPopover
-          usage={usage}
+          usage={safeUsage}
           onClose={() => setOpen(false)}
           triggerRef={triggerRef}
-          fallbackContextWindow={DEFAULT_MODEL_CONTEXT_WINDOW}
+          fallbackContextWindow={finitePositive(fallbackContextWindow)
+            ? fallbackContextWindow
+            : 0}
         />
       ) : null}
     </div>
   )
+}
+
+function finiteNonNegative(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? value
+    : 0
+}
+
+function finitePositive(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
 }
 
 function pickTone(ratio: number | null): { stroke: string; text: string } {

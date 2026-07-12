@@ -5,6 +5,7 @@ import path from 'node:path'
 import { AgentManager } from '../AgentManager'
 import type { AgentInput, IAgentBackend } from '../types'
 import type { AgentStreamEvent } from '../../../types/agent'
+import type { CodexProviderConfig } from '../codexLaunch'
 
 // Codex mints a UUID thread id via thread/start; our DB rows are CUIDs. The
 // manager translates between the two, and `steer` must reach the backend with
@@ -14,6 +15,12 @@ const CODEX_UUID = '11111111-2222-3333-4444-555555555555'
 interface SteerCall {
   threadId: string
   input: AgentInput
+}
+
+interface ProviderBoundCall {
+  client: string
+  providerId: string
+  apiKey: string
 }
 
 function makeSteerableBackend(script: AgentStreamEvent[]): IAgentBackend & {
@@ -46,6 +53,82 @@ function flushMicrotasks(times = 20): Promise<void> {
   return p
 }
 
+function makeDeferredProviderBackend(options: {
+  failReplacement?: boolean
+  noActiveTurn?: boolean
+} = {}) {
+  let releaseRestart!: () => void
+  let markRestartStarted!: () => void
+  const restartStarted = new Promise<void>((resolve) => {
+    markRestartStarted = resolve
+  })
+  const restartGate = new Promise<void>((resolve) => {
+    releaseRestart = resolve
+  })
+  let readApiKey = (): string => ''
+  const steerCalls: ProviderBoundCall[] = []
+  const sendCalls: ProviderBoundCall[] = []
+  const backend = {
+    healthy: false,
+    epoch: 1,
+    activeClient: 'old-client',
+    providerId: 'apiyi',
+    async start() {},
+    async stop() {},
+    isHealthy() { return backend.healthy },
+    currentEpoch() { return backend.epoch },
+    setProvider(provider: CodexProviderConfig | undefined) {
+      backend.providerId = provider?.id ?? 'apiyi'
+    },
+    async restartCodex() {
+      markRestartStarted()
+      await restartGate
+      if (options.failReplacement) throw new Error('replacement failed')
+      backend.activeClient = 'new-client'
+      backend.epoch += 1
+    },
+    async cancel() {},
+    async steer() {
+      steerCalls.push({
+        client: backend.activeClient,
+        providerId: backend.providerId,
+        apiKey: readApiKey(),
+      })
+      if (options.noActiveTurn) {
+        throw new Error('turn/steer: no active turn on thread db-provider')
+      }
+      return 'turn-provider'
+    },
+    async *send() {
+      sendCalls.push({
+        client: backend.activeClient,
+        providerId: backend.providerId,
+        apiKey: readApiKey(),
+      })
+      yield {
+        type: 'turn_completed',
+        threadId: CODEX_UUID,
+        turnId: 'turn-provider',
+      } as AgentStreamEvent
+    },
+  } as IAgentBackend & {
+    healthy: boolean
+    epoch: number
+    activeClient: string
+    providerId: string
+  }
+  return {
+    backend,
+    steerCalls,
+    sendCalls,
+    restartStarted,
+    releaseRestart,
+    bindManager(manager: AgentManager) {
+      readApiKey = () => manager.getCodexApiKey()
+    },
+  }
+}
+
 const persistStubs = {
   addMessage: async () => ({ id: 'msg-stub' }),
   updateLastMessageAt: async () => undefined,
@@ -67,6 +150,150 @@ afterEach(async () => {
 })
 
 describe('AgentManager.steer (turn/steer)', () => {
+  it('waits for Provider replacement before steering on the confirmed client and key', async () => {
+    const fixture = makeDeferredProviderBackend()
+    const added: unknown[] = []
+    const manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend: fixture.backend,
+      store: {
+        ...persistStubs,
+        addMessage: async (message: unknown) => {
+          added.push(message)
+          return { id: 'msg-provider' }
+        },
+      } as any,
+      attachments: { ingest: async () => [] } as any,
+      eventSink: () => {},
+    })
+    fixture.bindManager(manager)
+    await manager.setCodexApiKey('sk-old')
+    await manager.setProviderApiKey('rightcode', 'sk-new')
+    fixture.backend.healthy = true
+
+    const transition = manager.setActiveProvider('rightcode')
+    await fixture.restartStarted
+    const steering = manager.steer({
+      threadId: 'db-provider',
+      content: 'confirmed steer',
+      attachments: [],
+    })
+    await flushMicrotasks()
+
+    expect(fixture.steerCalls).toEqual([])
+    fixture.releaseRestart()
+    await transition
+    await steering
+
+    expect(fixture.steerCalls).toEqual([{
+      client: 'new-client',
+      providerId: 'rightcode',
+      apiKey: 'sk-new',
+    }])
+    expect(fixture.sendCalls).toEqual([])
+    expect(added).toHaveLength(1)
+  })
+
+  it('keeps no-active fallback inside admission and sends fresh once on the confirmed client', async () => {
+    const fixture = makeDeferredProviderBackend({ noActiveTurn: true })
+    const added: unknown[] = []
+    const manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend: fixture.backend,
+      store: {
+        ...persistStubs,
+        addMessage: async (message: unknown) => {
+          added.push(message)
+          return { id: 'msg-fallback' }
+        },
+      } as any,
+      attachments: { ingest: async () => [] } as any,
+      eventSink: () => {},
+    })
+    fixture.bindManager(manager)
+    await manager.setCodexApiKey('sk-old')
+    await manager.setProviderApiKey('rightcode', 'sk-new')
+    fixture.backend.healthy = true
+
+    const transition = manager.setActiveProvider('rightcode')
+    await fixture.restartStarted
+    const steering = manager.steer({
+      threadId: 'db-provider',
+      content: 'fallback after replacement',
+      attachments: [],
+    })
+    await flushMicrotasks()
+
+    expect(fixture.steerCalls).toEqual([])
+    expect(fixture.sendCalls).toEqual([])
+    fixture.releaseRestart()
+    await transition
+    await steering
+
+    expect(fixture.steerCalls).toEqual([{
+      client: 'new-client',
+      providerId: 'rightcode',
+      apiKey: 'sk-new',
+    }])
+    expect(fixture.sendCalls).toEqual([{
+      client: 'new-client',
+      providerId: 'rightcode',
+      apiKey: 'sk-new',
+    }])
+    expect(added).toHaveLength(1)
+  })
+
+  it('uses the rolled-back client once for steer fallback when Provider replacement fails', async () => {
+    const fixture = makeDeferredProviderBackend({
+      failReplacement: true,
+      noActiveTurn: true,
+    })
+    const added: unknown[] = []
+    const manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend: fixture.backend,
+      store: {
+        ...persistStubs,
+        addMessage: async (message: unknown) => {
+          added.push(message)
+          return { id: 'msg-rollback' }
+        },
+      } as any,
+      attachments: { ingest: async () => [] } as any,
+      eventSink: () => {},
+    })
+    fixture.bindManager(manager)
+    await manager.setCodexApiKey('sk-old')
+    fixture.backend.healthy = true
+
+    const transition = manager.setActiveProvider('rightcode')
+    await fixture.restartStarted
+    const steering = manager.steer({
+      threadId: 'db-provider',
+      content: 'fallback after rollback',
+      attachments: [],
+    })
+    await flushMicrotasks()
+
+    expect(fixture.steerCalls).toEqual([])
+    expect(fixture.sendCalls).toEqual([])
+    fixture.releaseRestart()
+    await expect(transition).rejects.toThrow('replacement failed')
+    await steering
+
+    expect(fixture.steerCalls).toEqual([{
+      client: 'old-client',
+      providerId: 'apiyi',
+      apiKey: 'sk-old',
+    }])
+    expect(fixture.sendCalls).toEqual([{
+      client: 'old-client',
+      providerId: 'apiyi',
+      apiKey: 'sk-old',
+    }])
+    expect(added).toHaveLength(1)
+  })
+
   it('appends to the active turn: calls backend.steer with the codex thread id and persists the user message', async () => {
     const added: Array<{ role: string }> = []
     const fakeStore = {
@@ -226,9 +453,10 @@ describe('AgentManager.steer (turn/steer)', () => {
       backend,
     })
 
-    const result = await mgr.steer({ threadId: 'db-y', content: 'hi', attachments: [] })
+    await expect(
+      mgr.steer({ threadId: 'db-y', content: 'hi', attachments: [] }),
+    ).rejects.toThrow('当前后端不支持运行中插话')
 
-    expect(result.threadId).toBe('db-y')
     expect(events.some((e) => e.type === 'error')).toBe(true)
   })
 })

@@ -1,10 +1,16 @@
+import {
+  MODEL_REASONING_EFFORTS,
+  type ConcreteModelReasoningEffort,
+  type ModelReasoningEffort,
+} from './modelSettings'
+
 export type CollaborationModeKind = 'default' | 'plan'
 
-export const PLAN_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const
+export const PLAN_EFFORTS = MODEL_REASONING_EFFORTS
 
-export type ConcretePlanReasoningEffort = (typeof PLAN_EFFORTS)[number]
+export type ConcretePlanReasoningEffort = ConcreteModelReasoningEffort
 
-export type PlanReasoningEffort = 'auto' | ConcretePlanReasoningEffort
+export type PlanReasoningEffort = ModelReasoningEffort
 
 const PLAN_EFFORT_SET: ReadonlySet<string> = new Set(PLAN_EFFORTS)
 

@@ -44,6 +44,13 @@ import type {
   ThreadGoalClearResponse,
 } from '../../types/codexGoals'
 
+export type {
+  AgentModelContextApplyPayload,
+  AgentModelContextApplyResult,
+  AgentModelContextApplyStage,
+  AgentModelContextRollbackResult,
+} from '../../types/agent'
+
 export interface AgentInput extends AgentSendMessagePayload {
   model: string
   cwd: string
@@ -93,6 +100,11 @@ export interface IAgentBackend {
    */
   steer?(threadId: string, input: AgentInput): Promise<string>
   isHealthy(): boolean
+  /**
+   * True while a send is entering a turn or a turn remains active. Backends
+   * that expose runtime restart controls use this to reject unsafe restarts.
+   */
+  hasInFlightWork?(): boolean
   /**
    * Monotonic generation counter that increments every time the underlying
    * agent process is (re)spawned — crash self-heal via `start()`, or a

@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { promises as fs, type WriteStream } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { assertCodexModelContextConfig } from '../../shared/modelSettings'
 import { buildCodexLaunchArgs, resolveCodexSessionConfig, type CatimationMcpLaunchInfo, type CodexProviderConfig } from './codexLaunch'
 import { mergeCodexConfigs } from './codexConfigMerge'
 import { appendAuditLog, atomicWriteFile } from './codexConfigStore'
@@ -15,6 +16,7 @@ import type {
   AgentStreamEvent,
   CodexApprovalRequest,
   CodexApprovalResponse,
+  CodexModelContextConfig,
   CodexSessionConfig,
   CodexThreadDetail,
   CodexThreadSummary,
@@ -98,6 +100,11 @@ export interface CodexLocalBackendOptions {
    */
   spawnFactory?: typeof spawn
   /**
+   * Test seam for the production log path. Defaults to createAgentLogStream;
+   * context getter validation must complete before this factory is touched.
+   */
+  createLogStream?: typeof createAgentLogStream
+  /**
    * Connect timeout forwarded to `CodexProtocolClient` in the spawn-mode
    * branch. Defaults to 10s in production. Tests can shrink this so an
    * unreachable spawn fails fast without affecting the wsUrl branch.
@@ -112,6 +119,12 @@ export interface CodexLocalBackendOptions {
    */
   provider?: CodexProviderConfig
   sessionConfig?: Partial<CodexSessionConfig>
+  /**
+   * Reads the last confirmed runtime context limits immediately before every
+   * fresh process spawn. Keeping this as a getter ensures restartCodex consumes
+   * settings confirmed after the previous process was launched.
+   */
+  getModelContextConfig?: () => CodexModelContextConfig
   /**
    * Local in-process catimation MCP server coordinates. Forwarded to
    * `buildCodexLaunchArgs` so the spawned Codex subprocess gets an ephemeral
@@ -361,6 +374,10 @@ export class CodexLocalBackend implements IAgentBackend {
   }
 
   private async startSpawnedClient(): Promise<SpawnedCodexClient> {
+    const modelContextConfig = this.options.getModelContextConfig?.()
+    if (this.options.getModelContextConfig) {
+      assertCodexModelContextConfig(modelContextConfig)
+    }
     const port = await pickFreePort(4222)
     const listenUrl = `ws://127.0.0.1:${port}`
     const resourceRoot = this.resolveResourceRoot()
@@ -369,7 +386,7 @@ export class CodexLocalBackend implements IAgentBackend {
     // 可关; 走真实 file 那条会把 WriteStream 存到 ownedLog, 在 stop() 里 .end() 它。
     const ownedLog: WriteStream | null = this.resourceRootOverride
       ? null
-      : createAgentLogStream('codex')
+      : (this.options.createLogStream ?? createAgentLogStream)('codex')
     const log: NodeJS.WritableStream = ownedLog ?? process.stderr
     const recentOutput = new RingBuffer(STARTUP_LOG_TAIL)
     const captureOutput = (chunk: Buffer | string): void => {
@@ -403,6 +420,7 @@ export class CodexLocalBackend implements IAgentBackend {
       listenUrl,
       provider: this.currentProvider,
       sessionConfig: this.sessionConfig,
+      modelContextConfig,
       catimationMcp: this.options.catimationMcp,
       extraProviders: understand ? [understand.provider] : undefined,
       apiyiKey: this.options.getApiyiKey?.(),
@@ -521,7 +539,9 @@ export class CodexLocalBackend implements IAgentBackend {
     // model_provider*` launch args on the respawn below.
     this.configDirty = true
 
-    if (this.client?.hasInFlightWork()) return
+    if (this.client?.hasInFlightWork()) {
+      throw new Error('Current turn is running; retry the Provider change after it completes')
+    }
 
     if (this.wsUrlOverride) {
       await this.stop()
@@ -632,6 +652,10 @@ export class CodexLocalBackend implements IAgentBackend {
     if (!this.client?.isOpen()) return false
     if (this.wsUrlOverride) return true
     return this.proc !== null && this.proc.exitCode === null
+  }
+
+  hasInFlightWork(): boolean {
+    return this.client?.hasInFlightWork() ?? false
   }
 
   currentEpoch(): number {

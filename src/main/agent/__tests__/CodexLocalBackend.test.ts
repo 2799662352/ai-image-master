@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import type { AddressInfo } from 'node:net'
@@ -285,7 +285,35 @@ describe('CodexLocalBackend (with a fake codex app-server)', () => {
     expect(events.find((e) => e.type === 'turn_completed')).toBeDefined()
   })
 
-  it('defers restart while an active turn is running without closing the stream', async () => {
+  it('exposes the protocol client in-flight state', async () => {
+    server = await startFakeServer({ autoCompleteTurn: false })
+    backend = new CodexLocalBackend({ wsUrl: server.url })
+    await backend.start()
+    expect(backend.hasInFlightWork()).toBe(false)
+
+    const consumer = (async () => {
+      for await (const _event of backend!.send(undefined, baseInput)) {
+        // Consume until the fake server completes the turn.
+      }
+    })()
+
+    const deadline = Date.now() + 2_000
+    while (Date.now() < deadline) {
+      if (server.receivedFromClient.some((message) => message.method === 'turn/start')) break
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    expect(backend.hasInFlightWork()).toBe(true)
+
+    server.pushNotification('turn/completed', {
+      threadId: 'fake-thread',
+      turn: { id: 'fake-turn', status: 'completed' },
+    })
+    await consumer
+
+    expect(backend.hasInFlightWork()).toBe(false)
+  })
+
+  it('rejects restart while an active turn is running without closing the stream', async () => {
     const workspace = await createWorkspacePaths()
     try {
       server = await startFakeServer({ autoCompleteTurn: false })
@@ -307,7 +335,9 @@ describe('CodexLocalBackend (with a fake codex app-server)', () => {
       expect(server.receivedFromClient.some((m) => m.method === 'turn/start')).toBe(true)
 
       const socketBeforeRestart = server.socket()
-      await backend.restartCodex(workspace.paths)
+      await expect(backend.restartCodex(workspace.paths)).rejects.toThrow(
+        /current turn.*running.*retry/i,
+      )
 
       expect(backend.isConfigDirty()).toBe(true)
       expect(server.socket()).toBe(socketBeforeRestart)
@@ -341,10 +371,12 @@ describe('CodexLocalBackend (with a fake codex app-server)', () => {
     }
   })
 
-  it('defers restart while turn/start is still pending without closing the stream', async () => {
+  it('rejects restart while turn/start is still pending without closing the stream', async () => {
     const workspace = await createWorkspacePaths()
     try {
-      server = await startFakeServer({ delayTurnStartMs: 100 })
+      // Keep turn/start pending long enough to remain deterministic even when
+      // this suite runs in parallel with CPU-heavy renderer tests.
+      server = await startFakeServer({ delayTurnStartMs: 3_000 })
       backend = new CodexLocalBackend({ wsUrl: server.url })
       await backend.start()
 
@@ -363,7 +395,9 @@ describe('CodexLocalBackend (with a fake codex app-server)', () => {
       expect(server.receivedFromClient.some((m) => m.method === 'turn/start')).toBe(true)
 
       const socketBeforeRestart = server.socket()
-      await backend.restartCodex(workspace.paths)
+      await expect(backend.restartCodex(workspace.paths)).rejects.toThrow(
+        /current turn.*running.*retry/i,
+      )
 
       expect(backend.isConfigDirty()).toBe(true)
       expect(server.socket()).toBe(socketBeforeRestart)
@@ -552,6 +586,56 @@ describe('CodexLocalBackend spawn env injection', () => {
     return proc
   }
 
+  it('reads a throwing context getter before production log/resource creation', async () => {
+    const spawnFactory = vi.fn()
+    const createLogStream = vi.fn(() => new PassThrough())
+    const backend = new CodexLocalBackend({
+      getModelContextConfig: () => {
+        throw new Error('context getter unavailable')
+      },
+      spawnFactory: spawnFactory as any,
+      createLogStream: createLogStream as any,
+    })
+
+    await expect(backend.start()).rejects.toThrow('context getter unavailable')
+
+    expect(createLogStream).not.toHaveBeenCalled()
+    expect(spawnFactory).not.toHaveBeenCalled()
+    expect(backend.currentEpoch()).toBe(0)
+    expect(backend.isHealthy()).toBe(false)
+  })
+
+  it.each([
+    ['NaN', { modelContextWindow: Number.NaN, modelAutoCompactTokenLimit: 1 }],
+    ['negative', { modelContextWindow: -1, modelAutoCompactTokenLimit: 1 }],
+    [
+      'unsafe',
+      {
+        modelContextWindow: Number.MAX_SAFE_INTEGER + 1,
+        modelAutoCompactTokenLimit: 1,
+      },
+    ],
+    [
+      'mismatched',
+      { modelContextWindow: 372_000, modelAutoCompactTokenLimit: 334_799 },
+    ],
+  ])('rejects %s context config before spawn and epoch mutation', async (_label, config) => {
+    const spawnFactory = vi.fn()
+    const createLogStream = vi.fn(() => new PassThrough())
+    const backend = new CodexLocalBackend({
+      getModelContextConfig: () => config,
+      spawnFactory: spawnFactory as any,
+      createLogStream: createLogStream as any,
+    })
+
+    await expect(backend.start()).rejects.toThrow(/invalid.*model context config/i)
+
+    expect(createLogStream).not.toHaveBeenCalled()
+    expect(spawnFactory).not.toHaveBeenCalled()
+    expect(backend.currentEpoch()).toBe(0)
+    expect(backend.isHealthy()).toBe(false)
+  })
+
   it('passes OPENAI_API_KEY to spawn when getApiKey returns a value', async () => {
     let captured: NodeJS.ProcessEnv | undefined
     const fakeProc = makeFakeChildProc()
@@ -623,6 +707,43 @@ describe('CodexLocalBackend spawn env injection', () => {
     expect(capturedEnv?.MIAU_API_KEY).toBeUndefined()
     expect(capturedArgs?.some((a) => a.includes('model_providers.qwen'))).toBe(false)
     await backend.stop()
+  })
+
+  it('reads the latest model context config before every fresh spawn', async () => {
+    const workspace = await createWorkspacePaths()
+    const capturedArgs: string[][] = []
+    let currentConfig = {
+      modelContextWindow: 200_000,
+      modelAutoCompactTokenLimit: 180_000,
+    }
+    const backend = new CodexLocalBackend({
+      resourceRoot: '/tmp/codex-fake-root',
+      getModelContextConfig: () => ({ ...currentConfig }),
+      spawnFactory: ((_bin: string, args: string[]) => {
+        capturedArgs.push([...args])
+        return makeFakeCodexServerChildProc(args)
+      }) as any,
+      connectTimeoutMs: 500,
+    })
+
+    try {
+      await backend.start()
+      currentConfig = {
+        modelContextWindow: 372_000,
+        modelAutoCompactTokenLimit: 334_800,
+      }
+
+      await backend.restartCodex(workspace.paths)
+
+      expect(capturedArgs).toHaveLength(2)
+      expect(capturedArgs[0]).toContain('model_context_window=200000')
+      expect(capturedArgs[0]).toContain('model_auto_compact_token_limit=180000')
+      expect(capturedArgs[1]).toContain('model_context_window=372000')
+      expect(capturedArgs[1]).toContain('model_auto_compact_token_limit=334800')
+    } finally {
+      await backend.stop()
+      await rm(workspace.tmp, { recursive: true, force: true })
+    }
   })
 
   it('pins ONE stable CODEX_HOME on BOTH the initial spawn and restartCodex (sessions never drift across launches)', async () => {
@@ -708,6 +829,47 @@ describe('CodexLocalBackend spawn env injection', () => {
       expect(spawned).toHaveLength(2)
       expect(spawned[0].exitCode).toBeNull()
       expect(spawned[1].exitCode).toBe(0)
+      expect(backend.isHealthy()).toBe(true)
+      expect(backend.isConfigDirty()).toBe(true)
+    } finally {
+      await backend.stop()
+      await rm(workspace.tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the old spawned backend untouched when replacement context getter throws', async () => {
+    const workspace = await createWorkspacePaths()
+    const spawned: any[] = []
+    let getterError: Error | null = null
+    const backend = new CodexLocalBackend({
+      resourceRoot: '/tmp/codex-fake-root',
+      getModelContextConfig: () => {
+        if (getterError) throw getterError
+        return {
+          modelContextWindow: 200_000,
+          modelAutoCompactTokenLimit: 180_000,
+        }
+      },
+      spawnFactory: ((_bin: string, args: string[]) => {
+        const proc = makeFakeCodexServerChildProc(args)
+        spawned.push(proc)
+        return proc
+      }) as any,
+      connectTimeoutMs: 500,
+    })
+
+    try {
+      await backend.start()
+      const epochBeforeRestart = backend.currentEpoch()
+      getterError = new Error('replacement context getter failed')
+
+      await expect(backend.restartCodex(workspace.paths)).rejects.toThrow(
+        'replacement context getter failed',
+      )
+
+      expect(spawned).toHaveLength(1)
+      expect(spawned[0].exitCode).toBeNull()
+      expect(backend.currentEpoch()).toBe(epochBeforeRestart)
       expect(backend.isHealthy()).toBe(true)
       expect(backend.isConfigDirty()).toBe(true)
     } finally {

@@ -9,7 +9,11 @@ import {
   type CodexLocalBackendOptions,
 } from './CodexLocalBackend'
 import { migrateLegacyCodexSessions } from './codexSessionMigration'
-import { CodexProviderStore, type NewCustomProvider } from './CodexProviderStore'
+import {
+  CodexProviderStore,
+  type NewCustomProvider,
+  type PersistedProvidersV1,
+} from './CodexProviderStore'
 import { DEFAULT_CODEX_SESSION_CONFIG, type CatimationMcpLaunchInfo } from './codexLaunch'
 import {
   BUILTIN_PROVIDER_PRESETS,
@@ -43,26 +47,47 @@ import { discoverCodexSkills, readMcpSummary, readRawCodexConfig } from './codex
 import { mapReferencesToInputItems } from './codexUserInput'
 import { validateSessionConfigPatch } from './sessionConfigValidation'
 import {
-  normaliseSupportedPlanEfforts,
   resolvePlanReasoningEffort,
   type CollaborationModeKind,
+  type ConcretePlanReasoningEffort,
   type PlanReasoningEffort,
 } from '../../shared/collaborationMode'
+import {
+  CANONICAL_MODEL_SETTINGS_ROWS,
+  mergeModelSettingsCapabilities,
+  modelAutoCompactTokenLimit,
+  modelContextOptions,
+} from '../../shared/modelSettings'
 import type {
   CodexCollaborationMode,
   CodexCollaborationModeMask,
 } from './codexProtocol'
+import {
+  CodexRuntimeSettingsStore,
+  type PersistedCodexRuntimeSettingsV1,
+} from './CodexRuntimeSettingsStore'
 import type { BrowserWindow } from 'electron'
 import type {
+  AgentCollaborationCapabilities,
   AgentCollaborationCapabilitiesResult,
   AgentCollaborationModeUpdatePayload,
   AgentCollaborationModeUpdateResult,
+  AgentModelContextApplyPayload,
+  AgentModelContextApplyResult,
+  AgentModelContextApplyStage,
+  AgentModelContextRollbackResult,
+  AgentModelContextSnapshotResult,
+  AgentModelSettingsCatalog,
+  AgentModelSettingsCatalogResult,
+  AgentModelSettingsEntry,
+  AgentProviderMutationResult,
   AgentSendMessagePayload,
   AgentSendMessageResult,
   AgentStreamEvent,
   CodexApprovalRequest,
   CodexApprovalResponse,
   CodexMcpSummary,
+  CodexModelContextConfig,
   CodexSessionConfig,
   CodexSessionStatus,
   CodexSkillInput,
@@ -103,6 +128,7 @@ import { ThreadTitleSummarizer } from './ThreadTitleSummarizer'
 import { setFsAllowedRoots } from '../file-explorer/fsIpc'
 
 const EMPTY_KEY_ERROR = '请在设置页填写 Codex Agent API Key'
+const CONTEXT_TRANSITION_BUSY_ERROR = '模型上下文配置正在切换，请稍后重试。'
 
 /**
  * Default Codex agent model used by the ThreadTitleSummarizer (and as the
@@ -112,7 +138,7 @@ const EMPTY_KEY_ERROR = '请在设置页填写 Codex Agent API Key'
  * the renderer-side `DEFAULT_MODEL_ID` in
  * `src/renderer/src/features/agent-chat/models.ts`.
  *
- * Provider-specific defaults (e.g. Right.Codes' `gpt-5.2` + `xhigh`) live in
+ * Provider-specific defaults (e.g. Right.Codes' `gpt-5.5` model) live in
  * `codexProviders.ts:BUILTIN_PROVIDER_PRESETS` and are wired through
  * `appendProviderArgs` — this constant is the renderer-facing fallback only.
  */
@@ -128,6 +154,37 @@ interface PromptAttachment {
   localPath: string
   mime: string
   size: number
+}
+
+interface ResolvedCollaborationCapabilities {
+  model: string
+  capabilities: AgentCollaborationCapabilities
+}
+
+interface CollaborationCapabilityOwner {
+  providerId: string
+  backendEpoch: number | undefined
+}
+
+interface BuiltCollaborationMode {
+  collaborationMode: CodexCollaborationMode
+  owner?: CollaborationCapabilityOwner
+}
+
+interface DesiredProviderMutation {
+  activeId: string
+  requiresApply: boolean
+}
+
+class ContextApplyError extends Error {
+  constructor(
+    readonly stage: AgentModelContextApplyStage,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options)
+    this.name = 'ContextApplyError'
+  }
 }
 
 /**
@@ -213,6 +270,8 @@ export interface AgentManagerOptions {
    * Production omits it and constructs CodexLocalBackend directly.
    */
   backendFactory?: (options: CodexLocalBackendOptions) => IAgentBackend
+  /** Runtime context-settings persistence seam. Production uses userDataDir. */
+  runtimeSettingsStore?: CodexRuntimeSettingsStore
   /**
    * Local catimation MCP server coordinates produced by
    * `startCatimationMcpServer` (+ stdio bridge launch info when available).
@@ -231,6 +290,8 @@ export class AgentManager {
   private readonly eventSink: ((event: AgentStreamEvent) => void) | undefined
   private readonly userDataDir: string
   private readonly providerStore: CodexProviderStore
+  private readonly runtimeSettingsStore: CodexRuntimeSettingsStore
+  private runtimeSettings: PersistedCodexRuntimeSettingsV1
   private activeProviderId: string
   private codexApiKey = ''
   /**
@@ -356,12 +417,24 @@ export class AgentManager {
    * Serialization chain for codex respawns triggered by settings changes
    * (provider switch, key rotation, custom-provider edits). Respawning takes
    * seconds; queuing through one chain guarantees rapid successive changes
-   * never race two spawns, while letting callers choose whether to await the
-   * respawn (MCP key rotations do) or return immediately for a snappy UI
-   * (provider switches / gateway key saves don't). Errors are logged inside
-   * the queued task so the chain itself never rejects.
+   * never race two spawns. Applied Provider transactions return their own
+   * rejection while replacing the shared chain with a settled continuation;
+   * best-effort auxiliary MCP key restarts still log and absorb failures.
    */
   private restartChain: Promise<void> = Promise.resolve()
+  /** Latest Provider selection's proof that a real backend generation was applied. */
+  private providerCapabilityBarrier: Promise<boolean> = Promise.resolve(true)
+  /**
+   * Synchronously claimed by a Context transaction before it joins the shared
+   * lifecycle tail. New send/steer calls fail immediately while the owner is
+   * queued, applying, or compensating; a unique token prevents an older
+   * transaction's finally handler from clearing a newer owner.
+   */
+  private contextTransitionOwner: symbol | null = null
+  /** True when rollback could not prove which Context config the backend uses. */
+  private contextRecoveryRequired = false
+  /** Last main-owned apply + rollback summary while effective Context is unknown. */
+  private contextRecoveryError: string | undefined
 
   constructor(opts: AgentManagerOptions) {
     this.win = opts.win
@@ -370,6 +443,9 @@ export class AgentManager {
     this.eventSink = opts.eventSink
     this.userDataDir = opts.userDataDir
     this.providerStore = new CodexProviderStore({ userDataDir: opts.userDataDir })
+    this.runtimeSettingsStore = opts.runtimeSettingsStore
+      ?? new CodexRuntimeSettingsStore(opts.userDataDir)
+    this.runtimeSettings = this.runtimeSettingsStore.loadSync()
     const persisted = this.providerStore.loadSync()
     this.activeProviderId = persisted.selectedProviderId
     this.codexApiKey = persisted.apiKeys[this.activeProviderId] ?? ''
@@ -387,6 +463,9 @@ export class AgentManager {
         getApiKey: () => this.codexApiKey,
         provider: activeProvider,
         sessionConfig: this.sessionConfig,
+        getModelContextConfig: () => ({
+          ...(this.runtimeSettings.pending?.target ?? this.runtimeSettings.confirmed),
+        }),
         catimationMcp: opts.mcpRuntime,
         // Unlock experimental-gated RPCs (turn/start.collaborationMode for the
         // composer's Plan preset; collaborationMode/list). Smoke-verified on the
@@ -551,34 +630,28 @@ export class AgentManager {
     return {
       builtins: BUILTIN_PROVIDER_PRESETS.map((p) => ({ ...p })),
       custom: persisted.customProviders.map((p) => ({ ...p })),
-      activeId: persisted.selectedProviderId,
+      // selectedProviderId is the desired value while a transaction is in
+      // flight. Settings/capability consumers must only observe the Provider
+      // owned by the currently applied backend generation.
+      activeId: this.activeProviderId,
       apiKeys: { ...persisted.apiKeys },
     }
   }
 
-  async setActiveProvider(id: string): Promise<{ ok: true; activeId: string }> {
-    const persisted = await this.providerStore.load()
-    const provider = resolveActiveProvider(id, persisted.customProviders)
-    // resolveActiveProvider falls back to the apiyi preset when the id is
-    // unknown — surface that as an explicit error so UI bugs don't silently
-    // pin the user to an unintended provider.
-    if (provider.id !== id) {
-      throw new Error(`Unknown Codex provider id "${id}"`)
-    }
-    await this.providerStore.setSelectedId(id)
-    this.activeProviderId = id
-    this.codexApiKey = persisted.apiKeys[id] ?? ''
-    this.backend.setProvider?.(provider)
-    // Respawn codex so the new base_url + model take effect immediately
-    // instead of waiting for the next user message — but in the BACKGROUND.
-    // Blocking this IPC on a multi-second spawn made every tile click in the
-    // Settings page feel frozen. The old client keeps serving until the new
-    // spawn is ready (see CodexLocalBackend.restartCodex), and errors are
-    // logged inside the queue — a failed respawn surfaces as the next
-    // message timing out, which is less confusing than the settings save
-    // throwing.
-    void this.queueBackendRestart('setActiveProvider')
-    return { ok: true, activeId: id }
+  async setActiveProvider(
+    id: string,
+  ): Promise<{ ok: true } & AgentProviderMutationResult> {
+    return this.enqueueAppliedProviderTransaction(async (before) => {
+      const provider = resolveActiveProvider(id, before.customProviders)
+      if (provider.id !== id) {
+        throw new Error(`Unknown Codex provider id "${id}"`)
+      }
+      await this.providerStore.setSelectedId(id)
+      return {
+        activeId: id,
+        requiresApply: id !== this.activeProviderId,
+      }
+    })
   }
 
   /**
@@ -601,15 +674,186 @@ export class AgentManager {
     return next
   }
 
+  private enqueueProviderStoreOperation<T>(operation: () => Promise<T>): Promise<T> {
+    return this.enqueueLifecycleOperation(operation)
+  }
+
+  private enqueueLifecycleOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.restartChain.then(operation)
+    this.restartChain = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    return result
+  }
+
+  /**
+   * Serialize a new turn's admission with Provider replacement. The lifecycle
+   * tail is released as soon as backend.send has registered its first
+   * iterator.next() (CodexProtocolClient increments activeSends synchronously),
+   * not when the whole turn completes. A following Provider apply therefore
+   * observes the in-flight turn and rejects quickly instead of replacing its
+   * client, while sends queued behind a replacement cannot enter the old one.
+   */
+  private enqueueTurnAdmission<T>(admit: () => Promise<T>): Promise<T> {
+    return this.enqueueLifecycleOperation(admit)
+  }
+
+  private enqueueAppliedProviderTransaction(
+    mutateDesired: (
+      before: PersistedProvidersV1,
+    ) => Promise<DesiredProviderMutation>,
+  ): Promise<{ ok: true } & AgentProviderMutationResult> {
+    let capabilityReady = false
+    const transaction = this.restartChain.then(async () => {
+      const before = await this.providerStore.load()
+      const previousAppliedId = this.activeProviderId
+      const previousKey = this.codexApiKey
+      const previousEpoch = this.backend.currentEpoch?.()
+      const previousHealthy = this.backend.isHealthy()
+      const previousProvider = resolveActiveProvider(
+        previousAppliedId,
+        before.customProviders,
+      )
+      let desiredPersisted = false
+
+      try {
+        const desired = await mutateDesired(before)
+        desiredPersisted = true
+        const persisted = await this.providerStore.load()
+        const provider = resolveActiveProvider(
+          desired.activeId,
+          persisted.customProviders,
+        )
+        if (provider.id !== desired.activeId) {
+          throw new Error(`Unknown Codex provider id "${desired.activeId}"`)
+        }
+        const nextKey = persisted.apiKeys[desired.activeId] ?? ''
+        let providerGeneration = this.backend.currentEpoch?.()
+
+        if (desired.requiresApply) {
+          this.codexApiKey = nextKey
+          providerGeneration = await this.applyProviderGeneration(provider)
+        }
+
+        this.activeProviderId = desired.activeId
+        this.codexApiKey = nextKey
+        capabilityReady = true
+        return {
+          ok: true as const,
+          activeId: desired.activeId,
+          ...(providerGeneration !== undefined ? { providerGeneration } : {}),
+        }
+      } catch (error) {
+        const recoveryFailures: string[] = []
+        try {
+          if (desiredPersisted) {
+            try {
+              await this.providerStore.restore(before)
+            } catch (restoreError) {
+              recoveryFailures.push(`store: ${errorMessage(restoreError)}`)
+            }
+          }
+        } finally {
+          this.activeProviderId = previousAppliedId
+          this.codexApiKey = previousKey
+          this.backend.setProvider?.(previousProvider)
+        }
+
+        if (previousHealthy) {
+          const oldGenerationStillHealthy =
+            previousEpoch !== undefined
+            && this.backend.currentEpoch?.() === previousEpoch
+            && this.backend.isHealthy()
+          if (!oldGenerationStillHealthy) {
+            const restart = this.backend.restartCodex?.bind(this.backend)
+            if (!restart) {
+              recoveryFailures.push('restart: Codex restart API is unavailable')
+            } else {
+              const recoveryEpoch = this.backend.currentEpoch?.()
+              try {
+                await this.restartBackendWithGenerationCheck(restart)
+                const restoredEpoch = this.backend.currentEpoch?.()
+                if (!this.backend.isHealthy()) {
+                  throw new Error('old Provider recovery completed without a healthy backend')
+                }
+                if (
+                  recoveryEpoch === undefined
+                  || restoredEpoch === undefined
+                  || restoredEpoch === recoveryEpoch
+                ) {
+                  throw new Error('old Provider recovery did not create a new backend generation')
+                }
+              } catch (recoveryError) {
+                recoveryFailures.push(`restart: ${errorMessage(recoveryError)}`)
+              }
+            }
+          }
+        }
+        capabilityReady = recoveryFailures.length === 0
+        if (recoveryFailures.length > 0) {
+          throw new Error(
+            `${errorMessage(error)}; Provider recovery failed: ${recoveryFailures.join('; ')}`,
+            { cause: error },
+          )
+        }
+        throw error
+      }
+    })
+
+    // The chain remains usable after a failed transaction, but each caller
+    // still receives its own rejection. Capabilities wait for the latest
+    // transaction (including rollback) before binding a Provider owner.
+    this.restartChain = transaction.then(
+      () => undefined,
+      () => undefined,
+    )
+    this.providerCapabilityBarrier = transaction.then(
+      () => true,
+      () => capabilityReady,
+    )
+    return transaction
+  }
+
+  private async applyProviderGeneration(
+    provider: ProviderPreset,
+  ): Promise<number | undefined> {
+    const previousEpoch = this.backend.currentEpoch?.()
+    this.backend.setProvider?.(provider)
+
+    // No live generation exists, so setting the pending backend config is the
+    // complete apply operation. The next lazy start owns this Provider.
+    if (!this.backend.isHealthy()) return previousEpoch
+
+    const restart = this.backend.restartCodex?.bind(this.backend)
+    if (!restart) {
+      // Alternate/test backends without Provider plumbing retain their legacy
+      // immediate semantics. A backend exposing setProvider must also expose a
+      // restart hook so a healthy generation can be proven.
+      if (!this.backend.setProvider) return previousEpoch
+      throw new Error('Active backend cannot apply Provider changes without restart support')
+    }
+
+    await this.restartBackendWithGenerationCheck(restart)
+    const nextEpoch = this.backend.currentEpoch?.()
+    if (!this.backend.isHealthy()) {
+      throw new Error('Provider restart completed without a healthy backend')
+    }
+    if (
+      previousEpoch !== undefined
+      && (nextEpoch === undefined || nextEpoch === previousEpoch)
+    ) {
+      throw new Error('Provider restart did not create a new backend generation')
+    }
+    return nextEpoch
+  }
+
   private async restartBackendWithGenerationCheck(
     restart: (paths: CodexWorkspacePaths) => Promise<void>,
   ): Promise<void> {
     this.syncCollaborationProcessCaches()
     await restart(this.workspacePaths())
     this.syncCollaborationProcessCaches()
-    // Legacy/test backends without currentEpoch cannot prove that a restart
-    // actually replaced the process (CodexLocalBackend may legitimately
-    // early-return while a turn is active). Conservatively retain caches.
   }
 
   private syncCollaborationProcessCaches(): void {
@@ -626,30 +870,39 @@ export class AgentManager {
     this.collaborationCacheEpoch = currentEpoch
   }
 
-  async setProviderApiKey(id: string, key: string): Promise<{ ok: true }> {
-    await this.providerStore.setApiKey(id, key)
-    if (id === this.activeProviderId) {
-      const next = (key ?? '').trim()
-      const changed = next !== this.codexApiKey
-      this.codexApiKey = next
-      // The gateway key reaches codex ONLY via spawn env (buildCodexSpawnEnv),
-      // so an already-running codex keeps the stale key until respawn — which
-      // used to mean "restart the whole app to apply the key". Hot-respawn in
-      // the background on a REAL change instead (non-blocking so the 保存 KEY
-      // button stays snappy). Guards: `changed` avoids a restart storm from
-      // the renderer's idempotent re-pushes; `isHealthy()` skips the respawn
-      // when codex has not spawned yet (the next lazy start reads the fresh
-      // key via getApiKey anyway, and restarting here would eagerly spawn).
-      if (changed && this.backend.isHealthy()) {
-        void this.queueBackendRestart('active provider key change')
-      }
+  async setProviderApiKey(
+    id: string,
+    key: string,
+  ): Promise<{ ok: true } & AgentProviderMutationResult> {
+    const next = (key ?? '').trim()
+    const isAuxiliaryProviderKey =
+      id === QWEN_UNDERSTAND_PROVIDER_ID
+      || id === APIYI_MCP_PROVIDER_ID
+      || id === CINEMATOGRAPHY_KB_PROVIDER_ID
+      || id === DASHVECTOR_PROVIDER_ID
+
+    if (!isAuxiliaryProviderKey) {
+      return this.enqueueAppliedProviderTransaction(async (before) => {
+        const previous = before.apiKeys[id] ?? ''
+        await this.providerStore.setApiKey(id, next)
+        return {
+          activeId: this.activeProviderId,
+          requiresApply: id === this.activeProviderId && next !== previous,
+        }
+      })
     }
+
+    // Auxiliary MCP/understanding keys are intentionally not Codex Provider
+    // selection transactions. Preserve their dedicated restart behavior.
+    await this.enqueueProviderStoreOperation(
+      () => this.providerStore.setApiKey(id, next),
+    )
     // The renderer mirrors its image-gen Miau token here (id='qwen') so Path B
     // subagents can reach the qwen understanding gateway. Keep the in-memory
     // copy fresh; it is consumed at the next codex (re)start via
     // getUnderstandProvider.
     if (id === QWEN_UNDERSTAND_PROVIDER_ID) {
-      this.miauToken = (key ?? '').trim()
+      this.miauToken = next
     }
     // The renderer mirrors the 设置 → API易 key here (id='apiyi-mcp') so the
     // bundled apiyi-mcp server gets its `APIYI_API_KEY` injected at spawn via
@@ -661,7 +914,6 @@ export class AgentManager {
     // storm. On boot the in-memory copy is preloaded from the provider store,
     // so the first idempotent push is a no-op.
     if (id === APIYI_MCP_PROVIDER_ID) {
-      const next = (key ?? '').trim()
       const changed = next !== this.apiyiMcpKey
       this.apiyiMcpKey = next
       if (changed && next) {
@@ -676,7 +928,6 @@ export class AgentManager {
     // restart storm; the constructor preloads the in-memory copy so the first
     // idempotent re-push is a no-op).
     if (id === CINEMATOGRAPHY_KB_PROVIDER_ID) {
-      const next = (key ?? '').trim()
       const changed = next !== this.cinematographyKbKey
       this.cinematographyKbKey = next
       if (changed && next) {
@@ -687,14 +938,18 @@ export class AgentManager {
     // (id='dashvector') for query_sakuga_dataset. Same change-guarded restart
     // rationale as the two blocks above.
     if (id === DASHVECTOR_PROVIDER_ID) {
-      const next = (key ?? '').trim()
       const changed = next !== this.dashVectorKey
       this.dashVectorKey = next
       if (changed && next) {
         await this.queueBackendRestart('dashvector key change')
       }
     }
-    return { ok: true }
+    const providerGeneration = this.backend.currentEpoch?.()
+    return {
+      ok: true,
+      activeId: this.activeProviderId,
+      ...(providerGeneration !== undefined ? { providerGeneration } : {}),
+    }
   }
 
   async addCustomProvider(input: NewCustomProvider): Promise<ProviderPreset> {
@@ -705,13 +960,15 @@ export class AgentManager {
     } catch {
       throw new Error('Provider baseUrl must be a valid URL')
     }
-    return this.providerStore.addCustomProvider({ ...input, name: trimmedName })
+    return this.enqueueProviderStoreOperation(
+      () => this.providerStore.addCustomProvider({ ...input, name: trimmedName }),
+    )
   }
 
   async updateCustomProvider(
     id: string,
     patch: Partial<Omit<ProviderPreset, 'id' | 'isCustom'>>,
-  ): Promise<{ ok: true }> {
+  ): Promise<{ ok: true } & AgentProviderMutationResult> {
     if (isBuiltinProviderId(id)) throw new Error('Cannot update builtin provider')
     if (patch.baseUrl !== undefined) {
       try {
@@ -720,33 +977,27 @@ export class AgentManager {
         throw new Error('Provider baseUrl must be a valid URL')
       }
     }
-    await this.providerStore.updateCustomProvider(id, patch)
-    if (id === this.activeProviderId) {
-      // Re-resolve the active provider with the patched data and restart so
-      // the new model / baseUrl reaches Codex without an app reload.
-      const persisted = await this.providerStore.load()
-      const refreshed = resolveActiveProvider(id, persisted.customProviders)
-      this.backend.setProvider?.(refreshed)
-      void this.queueBackendRestart('updateCustomProvider')
-    }
-    return { ok: true }
+    return this.enqueueAppliedProviderTransaction(async () => {
+      await this.providerStore.updateCustomProvider(id, patch)
+      return {
+        activeId: this.activeProviderId,
+        requiresApply: id === this.activeProviderId,
+      }
+    })
   }
 
-  async removeCustomProvider(id: string): Promise<{ ok: true; activeId: string }> {
+  async removeCustomProvider(
+    id: string,
+  ): Promise<{ ok: true } & AgentProviderMutationResult> {
     if (isBuiltinProviderId(id)) throw new Error('Cannot remove builtin provider')
-    await this.providerStore.removeCustomProvider(id)
-    const persisted = await this.providerStore.load()
-    // If the removed provider was active, the store has already reverted to
-    // DEFAULT_PROVIDER_ID. Mirror that into the in-memory state and respawn
-    // codex so traffic doesn't keep flowing to a now-unknown gateway.
-    if (this.activeProviderId === id) {
-      this.activeProviderId = persisted.selectedProviderId
-      this.codexApiKey = persisted.apiKeys[this.activeProviderId] ?? ''
-      const provider = resolveActiveProvider(this.activeProviderId, persisted.customProviders)
-      this.backend.setProvider?.(provider)
-      void this.queueBackendRestart('removeCustomProvider')
-    }
-    return { ok: true, activeId: this.activeProviderId }
+    return this.enqueueAppliedProviderTransaction(async () => {
+      const wasActive = this.activeProviderId === id
+      await this.providerStore.removeCustomProvider(id)
+      return {
+        activeId: wasActive ? DEFAULT_PROVIDER_ID : this.activeProviderId,
+        requiresApply: wasActive,
+      }
+    })
   }
 
   async setAllowedRoots(roots: unknown): Promise<string[]> {
@@ -888,50 +1139,732 @@ export class AgentManager {
 
   async restartCodex() {
     if (!this.backend.restartCodex) throw new Error('Codex restart API is unavailable')
-    await this.restartBackendWithGenerationCheck(this.backend.restartCodex.bind(this.backend))
+    const restart = this.backend.restartCodex.bind(this.backend)
+    await this.enqueueLifecycleOperation(
+      () => this.restartBackendWithGenerationCheck(restart),
+    )
   }
 
-  async getCollaborationCapabilitiesRpc(
-    model: string,
-  ): Promise<AgentCollaborationCapabilitiesResult> {
-    const fallback: AgentCollaborationCapabilitiesResult = {
+  async getModelSettingsCatalogRpc(): Promise<AgentModelSettingsCatalogResult> {
+    const maxOwnerAttempts = 3
+    for (let attempt = 1; attempt <= maxOwnerAttempts; attempt += 1) {
+      const providerBarrier = this.providerCapabilityBarrier
+      const providerReady = await providerBarrier
+      if (providerBarrier !== this.providerCapabilityBarrier) continue
+
+      const provider = this.activeProviderId
+      const backendEpoch = this.backend.currentEpoch?.()
+      const ownerStillCurrent = (): boolean =>
+        this.providerCapabilityBarrier === providerBarrier
+        && this.activeProviderId === provider
+        && (
+          backendEpoch === undefined
+          || this.backend.currentEpoch?.() === backendEpoch
+        )
+
+      if (!providerReady || typeof this.backend.listModels !== 'function') {
+        return { ok: true, data: this.fallbackModelSettingsCatalog(provider) }
+      }
+
+      try {
+        const response = await this.backend.listModels({ includeHidden: false })
+        if (!ownerStillCurrent()) continue
+        const models: AgentModelSettingsEntry[] = response.data.map((row) => ({
+          id: row.id,
+          displayName: row.displayName,
+          description: row.description,
+          hidden: row.hidden,
+          isDefault: row.isDefault,
+          capabilities: mergeModelSettingsCapabilities({
+            model: row.model,
+            provider,
+            defaultReasoningEffort: row.defaultReasoningEffort,
+            supportedReasoningEfforts: row.supportedReasoningEfforts.map(
+              (effort) => effort.reasoningEffort,
+            ),
+          }),
+        }))
+        return {
+          ok: true,
+          data: {
+            provider,
+            source: 'codex',
+            models,
+          },
+        }
+      } catch {
+        if (!ownerStillCurrent()) continue
+        return { ok: true, data: this.fallbackModelSettingsCatalog(provider) }
+      }
+    }
+    const provider = this.activeProviderId
+    console.warn(
+      `[AgentManager] model settings catalog owner changed ${maxOwnerAttempts} times; using fallback for ${provider}`,
+    )
+    return { ok: true, data: this.fallbackModelSettingsCatalog(provider) }
+  }
+
+  getModelContextConfigRpc(): Promise<AgentModelContextSnapshotResult> {
+    return Promise.resolve({
       ok: true,
       data: {
-        planDefaultEffort: 'medium',
-        supportedPlanEfforts: [],
-        source: 'fallback',
+        ...this.runtimeSettings.confirmed,
+        recoveryRequired: this.contextRecoveryRequired,
+        ...(this.contextRecoveryError
+          ? { recoveryError: this.contextRecoveryError }
+          : {}),
       },
+    })
+  }
+
+  /**
+   * Apply a Codex context-window change as one transaction on the same
+   * Provider/turn lifecycle tail used by send, steer, and Provider replacement.
+   *
+   * This method deliberately is not `async`: it claims `contextTransitionOwner`
+   * synchronously before returning the transaction promise, so a send/steer
+   * invoked later in the same tick cannot persist a message and then discover
+   * that its backend generation is being replaced.
+   */
+  applyModelContextRpc(
+    payload: AgentModelContextApplyPayload,
+  ): Promise<AgentModelContextApplyResult> {
+    const previousConfig = { ...this.runtimeSettings.confirmed }
+    const attemptedConfig: CodexModelContextConfig = {
+      modelContextWindow: payload.contextWindow,
+      modelAutoCompactTokenLimit: modelAutoCompactTokenLimit(payload.contextWindow),
     }
-    if (
-      typeof this.backend.listCollaborationModes !== 'function'
-      || typeof this.backend.listModels !== 'function'
-    ) {
-      return fallback
+    const model = typeof payload.model === 'string' ? payload.model.trim() : ''
+    const validationError = this.validateModelContextPayload(
+      payload,
+      model,
+      attemptedConfig,
+      this.contextRecoveryRequired
+        && sameModelContextConfig(previousConfig, attemptedConfig),
+    )
+    if (validationError) {
+      return Promise.resolve(this.modelContextFailure(
+        payload,
+        previousConfig,
+        attemptedConfig,
+        'validate',
+        validationError,
+        { ok: true, activeConfig: previousConfig },
+      ))
+    }
+
+    if (this.contextTransitionOwner !== null) {
+      return Promise.resolve(this.modelContextFailure(
+        payload,
+        previousConfig,
+        attemptedConfig,
+        'busy',
+        'Another model context transaction is already in progress',
+        { ok: true, activeConfig: previousConfig },
+      ))
     }
 
     try {
-      const [presets, models] = await Promise.all([
-        this.loadCollaborationModePresets(),
-        this.backend.listModels({ includeHidden: true }),
-      ])
-      const planPreset = presets.find((preset) => preset.mode === 'plan')
-      const modelRow = models.data.find((row) => row.id === model || row.model === model)
-      if (!modelRow) return fallback
+      this.readModelContextEpochStrict()
+    } catch (error) {
+      return Promise.resolve(this.modelContextFailure(
+        payload,
+        previousConfig,
+        attemptedConfig,
+        'verify',
+        errorMessage(error),
+        { ok: true, activeConfig: previousConfig },
+      ))
+    }
+
+    if (
+      !this.contextRecoveryRequired
+      && sameModelContextConfig(previousConfig, attemptedConfig)
+    ) {
+      return Promise.resolve({
+        ok: true,
+        data: {
+          model,
+          contextWindow: attemptedConfig.modelContextWindow,
+          autoCompactTokenLimit: attemptedConfig.modelAutoCompactTokenLimit,
+          threadRestored: false,
+          requestVersion: payload.requestVersion,
+        },
+      })
+    }
+
+    if (this.backend.hasInFlightWork?.()) {
+      return Promise.resolve(this.modelContextFailure(
+        payload,
+        previousConfig,
+        attemptedConfig,
+        'busy',
+        'Current turn is running; retry the model context change after it completes',
+        { ok: true, activeConfig: previousConfig },
+      ))
+    }
+
+    const owner = Symbol('model-context-transition')
+    this.contextTransitionOwner = owner
+    const transaction = this.restartChain.then(() =>
+      this.runModelContextTransaction(
+        payload,
+        model,
+        previousConfig,
+        attemptedConfig,
+      ))
+    this.restartChain = transaction.then(
+      () => undefined,
+      () => undefined,
+    )
+
+    return transaction.finally(() => {
+      if (this.contextTransitionOwner === owner) {
+        this.contextTransitionOwner = null
+      }
+    })
+  }
+
+  private fallbackModelSettingsCatalog(provider: string): AgentModelSettingsCatalog {
+    return {
+      provider,
+      source: 'fallback',
+      models: CANONICAL_MODEL_SETTINGS_ROWS.map((row) => ({
+        id: row.id,
+        displayName: row.displayName,
+        description: row.description,
+        hidden: false,
+        isDefault: row.isDefault,
+        capabilities: {
+          ...mergeModelSettingsCapabilities({
+            model: row.id,
+            provider,
+            supportedReasoningEfforts: [],
+          }),
+          contextOptions: modelContextOptions(row.id).map((option) => ({
+            ...option,
+            conservative: true,
+          })),
+        },
+      })),
+    }
+  }
+
+  private validateModelContextPayload(
+    payload: AgentModelContextApplyPayload,
+    model: string,
+    attemptedConfig: CodexModelContextConfig,
+    allowConfirmedRecovery = false,
+  ): string | null {
+    if (!model) return 'Model must be a non-empty string'
+    if (!Number.isSafeInteger(payload.requestVersion) || payload.requestVersion < 0) {
+      return 'requestVersion must be a non-negative safe integer'
+    }
+    const allowed = modelContextOptions(model).some(
+      (option) => option.value === attemptedConfig.modelContextWindow,
+    ) || allowConfirmedRecovery
+    if (!allowed) {
+      return `Context window ${String(payload.contextWindow)} is not supported for model ${model}`
+    }
+    return null
+  }
+
+  private async runModelContextTransaction(
+    payload: AgentModelContextApplyPayload,
+    model: string,
+    previousConfig: CodexModelContextConfig,
+    attemptedConfig: CodexModelContextConfig,
+  ): Promise<AgentModelContextApplyResult> {
+    const recoveryWasRequired = this.contextRecoveryRequired
+    // A send admitted before this request may have published in-flight state
+    // while this transaction was waiting behind it on the shared tail.
+    if (this.backend.hasInFlightWork?.()) {
+      return this.modelContextFailure(
+        payload,
+        previousConfig,
+        attemptedConfig,
+        'busy',
+        'Current turn is running; retry the model context change after it completes',
+        { ok: true, activeConfig: previousConfig },
+      )
+    }
+
+    let previousEpoch: number
+    try {
+      previousEpoch = this.readModelContextEpochStrict()
+    } catch (error) {
+      return this.modelContextFailure(
+        payload,
+        previousConfig,
+        attemptedConfig,
+        'verify',
+        errorMessage(error),
+        { ok: true, activeConfig: previousConfig },
+      )
+    }
+
+    let codexThreadId: string | undefined
+    try {
+      codexThreadId = await this.resolveModelContextThreadId(payload.threadId)
+    } catch (error) {
+      return this.modelContextFailure(
+        payload,
+        previousConfig,
+        attemptedConfig,
+        'resume',
+        errorMessage(error),
+        { ok: true, activeConfig: previousConfig },
+      )
+    }
+
+    const pendingSettings: PersistedCodexRuntimeSettingsV1 = {
+      version: 1,
+      confirmed: { ...previousConfig },
+      pending: {
+        target: { ...attemptedConfig },
+        requestVersion: payload.requestVersion,
+        startedAt: new Date().toISOString(),
+      },
+    }
+    try {
+      await this.runtimeSettingsStore.replace(pendingSettings)
+    } catch (error) {
+      return this.modelContextFailure(
+        payload,
+        previousConfig,
+        attemptedConfig,
+        'persist',
+        errorMessage(error),
+        { ok: true, activeConfig: previousConfig },
+      )
+    }
+    // Only a durable pending record may affect the restart getter.
+    this.runtimeSettings = cloneRuntimeSettings(pendingSettings)
+
+    let processMayUseTarget = false
+    try {
+      const restart = this.backend.restartCodex?.bind(this.backend)
+      if (!restart) {
+        throw new ContextApplyError('restart', 'Codex restart API is unavailable')
+      }
+      try {
+        await this.restartBackendWithGenerationCheck(restart)
+        processMayUseTarget = true
+      } catch (error) {
+        processMayUseTarget = this.modelContextRequiresCompensation(
+          previousEpoch,
+        )
+        throw new ContextApplyError('restart', errorMessage(error), { cause: error })
+      }
+      const appliedEpoch = this.assertModelContextEpochChanged(previousEpoch)
+
+      if (payload.threadId && codexThreadId) {
+        await this.resumeModelContextThreadStrict(
+          payload.threadId,
+          codexThreadId,
+          appliedEpoch,
+        )
+      }
+      await this.refreshModelsForContext()
+      this.assertModelContextEpochStable(appliedEpoch)
+
+      const confirmedSettings: PersistedCodexRuntimeSettingsV1 = {
+        version: 1,
+        confirmed: { ...attemptedConfig },
+      }
+      try {
+        await this.runtimeSettingsStore.replace(confirmedSettings)
+      } catch (error) {
+        throw new ContextApplyError('persist', errorMessage(error), { cause: error })
+      }
+      // Never publish an in-memory confirmation before the atomic rename wins.
+      this.runtimeSettings = cloneRuntimeSettings(confirmedSettings)
+      this.contextRecoveryRequired = false
+      this.contextRecoveryError = undefined
       return {
         ok: true,
         data: {
-          planDefaultEffort: resolvePlanReasoningEffort(
-            'auto',
-            planPreset?.reasoning_effort,
-          ),
-          supportedPlanEfforts: normaliseSupportedPlanEfforts(
-            modelRow.supportedReasoningEfforts.map((effort) => effort.reasoningEffort),
-          ),
+          model,
+          contextWindow: attemptedConfig.modelContextWindow,
+          autoCompactTokenLimit: attemptedConfig.modelAutoCompactTokenLimit,
+          threadRestored: Boolean(payload.threadId && codexThreadId),
+          requestVersion: payload.requestVersion,
+        },
+      }
+    } catch (error) {
+      const contextError = error instanceof ContextApplyError
+        ? error
+        : new ContextApplyError('verify', errorMessage(error), { cause: error })
+      const rollback = await this.rollbackModelContextOnce({
+        previousConfig,
+        dbThreadId: payload.threadId,
+        codexThreadId,
+        restartRequired: processMayUseTarget,
+      })
+      this.contextRecoveryRequired =
+        !rollback.ok || (recoveryWasRequired && !processMayUseTarget)
+      if (!rollback.ok) {
+        this.contextRecoveryError =
+          `Context apply failed: ${contextError.message}; rollback failed: ${rollback.error}`
+      } else if (!this.contextRecoveryRequired) {
+        this.contextRecoveryError = undefined
+      }
+      return this.modelContextFailure(
+        payload,
+        previousConfig,
+        attemptedConfig,
+        contextError.stage,
+        contextError.message,
+        rollback,
+      )
+    }
+  }
+
+  private async resolveModelContextThreadId(
+    dbThreadId: string | undefined,
+  ): Promise<string | undefined> {
+    if (!dbThreadId) return undefined
+    const mapped = this.codexThreadIdByDbThreadId.get(dbThreadId)
+    if (mapped) return mapped
+    if (!this.store?.getCodexThreadId) return undefined
+    try {
+      return (await this.store.getCodexThreadId(dbThreadId)) ?? undefined
+    } catch (error) {
+      throw new ContextApplyError(
+        'resume',
+        `Failed to resolve Codex thread ${dbThreadId}: ${errorMessage(error)}`,
+        { cause: error },
+      )
+    }
+  }
+
+  private async resumeModelContextThreadStrict(
+    dbThreadId: string,
+    codexThreadId: string,
+    epoch: number,
+  ): Promise<void> {
+    if (!this.backend.resumeThread) {
+      throw new ContextApplyError(
+        'resume',
+        'Codex strict thread resume API is unavailable',
+      )
+    }
+    try {
+      await this.backend.resumeThread(codexThreadId)
+      this.codexThreadIdByDbThreadId.set(dbThreadId, codexThreadId)
+      this.codexThreadEpochByDbThreadId.set(dbThreadId, epoch)
+      await this.store?.setCodexThreadId?.(dbThreadId, codexThreadId)
+    } catch (error) {
+      throw new ContextApplyError('resume', errorMessage(error), { cause: error })
+    }
+  }
+
+  private async refreshModelsForContext(): Promise<void> {
+    if (!this.backend.listModels) {
+      throw new ContextApplyError('verify', 'Codex model list API is unavailable')
+    }
+    try {
+      await this.backend.listModels({ includeHidden: true })
+    } catch (error) {
+      throw new ContextApplyError('verify', errorMessage(error), { cause: error })
+    }
+  }
+
+  private readModelContextEpochStrict(): number {
+    const currentEpoch = this.backend.currentEpoch
+    if (typeof currentEpoch !== 'function') {
+      throw new ContextApplyError(
+        'verify',
+        'Model context apply requires a backend epoch getter',
+      )
+    }
+    const epoch = currentEpoch.call(this.backend)
+    if (!Number.isSafeInteger(epoch) || epoch < 0) {
+      throw new ContextApplyError(
+        'verify',
+        `Model context backend epoch must be a non-negative safe integer; received ${String(epoch)}`,
+      )
+    }
+    return epoch
+  }
+
+  private assertModelContextEpochChanged(previousEpoch: number): number {
+    const currentEpoch = this.readModelContextEpochStrict()
+    if (currentEpoch === previousEpoch) {
+      throw new ContextApplyError(
+        'verify',
+        'Model context restart did not change backend epoch/generation',
+      )
+    }
+    return currentEpoch
+  }
+
+  private assertModelContextEpochStable(expectedEpoch: number): void {
+    const currentEpoch = this.readModelContextEpochStrict()
+    if (currentEpoch !== expectedEpoch) {
+      throw new ContextApplyError(
+        'verify',
+        'Model context backend epoch/generation changed before confirmation',
+      )
+    }
+  }
+
+  private modelContextRequiresCompensation(previousEpoch: number): boolean {
+    try {
+      if (this.readModelContextEpochStrict() !== previousEpoch) return true
+    } catch {
+      // A failed replacement with no valid epoch proof is conservatively
+      // treated as possibly switched, forcing compensation instead of claiming
+      // that the old process is still authoritative.
+      return true
+    }
+
+    const isHealthy = this.backend.isHealthy
+    if (typeof isHealthy !== 'function') return true
+    try {
+      // An unchanged epoch only proves that the generation identifier stayed
+      // the same. Stop-first restart paths may still have torn down that
+      // process, so skipping compensation additionally requires live health.
+      return isHealthy.call(this.backend) !== true
+    } catch {
+      return true
+    }
+  }
+
+  private async rollbackModelContextOnce(input: {
+    previousConfig: CodexModelContextConfig
+    dbThreadId?: string
+    codexThreadId?: string
+    restartRequired: boolean
+  }): Promise<AgentModelContextRollbackResult> {
+    const previousSettings: PersistedCodexRuntimeSettingsV1 = {
+      version: 1,
+      confirmed: { ...input.previousConfig },
+    }
+    const failures: string[] = []
+    try {
+      await this.runtimeSettingsStore.replace(previousSettings)
+    } catch (error) {
+      failures.push(`persist: ${errorMessage(error)}`)
+    }
+    // The getter must point at the previous configuration before any
+    // compensating restart, even when the disk cleanup itself failed.
+    this.runtimeSettings = cloneRuntimeSettings(previousSettings)
+
+    if (input.restartRequired) {
+      const restart = this.backend.restartCodex?.bind(this.backend)
+      if (!restart) {
+        failures.push('restart: Codex restart API is unavailable')
+      } else {
+        let previousEpoch: number | undefined
+        try {
+          previousEpoch = this.readModelContextEpochStrict()
+        } catch (error) {
+          failures.push(`restart: ${errorMessage(error)}`)
+        }
+
+        let restoredEpoch: number | undefined
+        if (previousEpoch !== undefined) {
+          try {
+            await this.restartBackendWithGenerationCheck(restart)
+            restoredEpoch = this.assertModelContextEpochChanged(previousEpoch)
+          } catch (error) {
+            failures.push(`restart: ${errorMessage(error)}`)
+          }
+        }
+
+        if (restoredEpoch !== undefined) {
+          if (input.dbThreadId && input.codexThreadId) {
+            try {
+              await this.resumeModelContextThreadStrict(
+                input.dbThreadId,
+                input.codexThreadId,
+                restoredEpoch,
+              )
+            } catch (error) {
+              failures.push(`resume: ${errorMessage(error)}`)
+            }
+          }
+          try {
+            await this.refreshModelsForContext()
+            this.assertModelContextEpochStable(restoredEpoch)
+          } catch (error) {
+            failures.push(`verify: ${errorMessage(error)}`)
+          }
+        }
+      }
+    }
+
+    if (failures.length > 0) {
+      return {
+        ok: false,
+        error: failures.join('; '),
+        effectiveConfig: null,
+      }
+    }
+    return {
+      ok: true,
+      activeConfig: { ...input.previousConfig },
+    }
+  }
+
+  private modelContextFailure(
+    payload: AgentModelContextApplyPayload,
+    previousConfig: CodexModelContextConfig,
+    attemptedConfig: CodexModelContextConfig,
+    stage: AgentModelContextApplyStage,
+    error: string,
+    rollback: AgentModelContextRollbackResult,
+  ): Extract<AgentModelContextApplyResult, { ok: false }> {
+    return {
+      ok: false,
+      error,
+      stage,
+      previousConfig: { ...previousConfig },
+      attemptedConfig: { ...attemptedConfig },
+      requestVersion: payload.requestVersion,
+      rollback,
+    }
+  }
+
+  async getCollaborationCapabilitiesRpc(
+    modelId: string,
+  ): Promise<AgentCollaborationCapabilitiesResult> {
+    try {
+      const resolved = await this.resolveCollaborationCapabilities(modelId, true)
+      return {
+        ok: true,
+        data: resolved.capabilities,
+      }
+    } catch {
+      return {
+        ok: true,
+        data: this.fallbackCollaborationCapabilities(
+          this.activeProviderId,
+          this.backend.currentEpoch?.(),
+        ),
+      }
+    }
+  }
+
+  private fallbackCollaborationCapabilities(
+    providerId: string,
+    backendEpoch: number | undefined,
+  ): AgentCollaborationCapabilities {
+    return {
+      providerId,
+      ...(backendEpoch === undefined ? {} : { backendEpoch }),
+      planDefaultEffort: null,
+      supportedPlanEfforts: [],
+      source: 'fallback',
+    }
+  }
+
+  private async resolveCollaborationCapabilities(
+    modelId: string,
+    includePlanPreset: boolean,
+  ): Promise<ResolvedCollaborationCapabilities> {
+    let restartBarrier = this.restartChain
+    await restartBarrier
+    while (restartBarrier !== this.restartChain) {
+      restartBarrier = this.restartChain
+      await restartBarrier
+    }
+    let providerBarrier = this.providerCapabilityBarrier
+    let providerReady = await providerBarrier
+    while (providerBarrier !== this.providerCapabilityBarrier) {
+      providerBarrier = this.providerCapabilityBarrier
+      providerReady = await providerBarrier
+    }
+    return this.resolveCollaborationCapabilitiesForCurrentOwner(
+      modelId,
+      includePlanPreset,
+      providerReady,
+    )
+  }
+
+  /**
+   * PRECONDITION: the caller owns the Provider/turn admission lifecycle slot.
+   * That slot already excludes Provider apply, so reacquiring restartChain here
+   * would wait on the caller itself. Only send admission internals may use this.
+   */
+  private resolveCollaborationCapabilitiesWithProviderAdmissionHeld(
+    modelId: string,
+    includePlanPreset: boolean,
+  ): Promise<ResolvedCollaborationCapabilities> {
+    return this.resolveCollaborationCapabilitiesForCurrentOwner(
+      modelId,
+      includePlanPreset,
+      true,
+    )
+  }
+
+  private async resolveCollaborationCapabilitiesForCurrentOwner(
+    modelId: string,
+    includePlanPreset: boolean,
+    providerReady: boolean,
+  ): Promise<ResolvedCollaborationCapabilities> {
+    const providerId = this.activeProviderId
+    const backendEpoch = this.backend.currentEpoch?.()
+    const fallback = (): ResolvedCollaborationCapabilities => ({
+      model: modelId,
+      capabilities: this.fallbackCollaborationCapabilities(providerId, backendEpoch),
+    })
+    const ownerStillCurrent = (): boolean =>
+      this.activeProviderId === providerId
+      && (
+        backendEpoch === undefined
+        || this.backend.currentEpoch?.() === backendEpoch
+      )
+
+    if (!providerReady || typeof this.backend.listModels !== 'function') return fallback()
+
+    try {
+      const [models, planPresetEffort] = await Promise.all([
+        this.backend.listModels({ includeHidden: true }),
+        includePlanPreset
+          ? this.planPresetReasoningEffort()
+          : Promise.resolve<string | null>(null),
+      ])
+      if (!ownerStillCurrent()) {
+        throw new Error('Collaboration capability owner changed while loading')
+      }
+      const modelRow =
+        models.data.find((row) => row.id === modelId)
+        ?? models.data.find((row) => row.model === modelId)
+      if (!modelRow) return fallback()
+
+      const model = modelRow.model
+      const modelSettings = mergeModelSettingsCapabilities({
+        model,
+        provider: providerId,
+        defaultReasoningEffort: modelRow.defaultReasoningEffort,
+        supportedReasoningEfforts: modelRow.supportedReasoningEfforts.map(
+          (effort) => effort.reasoningEffort,
+        ),
+      })
+      const supportedPlanEfforts = modelSettings.supportedReasoningEfforts
+      const preferredDefault = resolvePlanReasoningEffort('auto', planPresetEffort)
+      const planDefaultEffort: ConcretePlanReasoningEffort | null =
+        supportedPlanEfforts.includes(preferredDefault)
+          ? preferredDefault
+          : supportedPlanEfforts.includes('medium')
+            ? 'medium'
+            : supportedPlanEfforts[0] ?? null
+
+      return {
+        model,
+        capabilities: {
+          providerId,
+          ...(backendEpoch === undefined ? {} : { backendEpoch }),
+          planDefaultEffort,
+          supportedPlanEfforts,
           source: 'codex',
         },
       }
-    } catch {
-      return fallback
+    } catch (error) {
+      if (!ownerStillCurrent()) throw error
+      return fallback()
     }
   }
 
@@ -942,6 +1875,22 @@ export class AgentManager {
       return {
         ok: false,
         error: 'Codex thread settings update API is unavailable',
+        requestVersion: payload.requestVersion,
+      }
+    }
+    const updateThreadSettings = this.backend.updateThreadSettings.bind(this.backend)
+    let builtCollaborationMode: BuiltCollaborationMode
+    try {
+      builtCollaborationMode = await this.buildCollaborationMode(
+        payload.mode,
+        payload.model,
+        payload.defaultReasoningEffort,
+        payload.planReasoningEffort,
+      )
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
         requestVersion: payload.requestVersion,
       }
     }
@@ -968,17 +1917,21 @@ export class AgentManager {
       }
     }
 
-    const collaborationMode = await this.buildCollaborationMode(
-      payload.mode,
-      payload.model,
-      payload.defaultReasoningEffort,
-      payload.planReasoningEffort,
-    )
     try {
-      await this.backend.updateThreadSettings({
-        threadId: codexThreadId,
-        collaborationMode,
-      })
+      builtCollaborationMode = await this.stabilizeCollaborationMode(
+        builtCollaborationMode,
+        payload.mode,
+        payload.model,
+        payload.defaultReasoningEffort,
+        payload.planReasoningEffort,
+      )
+      await this.commitWithCollaborationModeOwner(
+        builtCollaborationMode,
+        () => updateThreadSettings({
+          threadId: codexThreadId,
+          collaborationMode: builtCollaborationMode.collaborationMode,
+        }),
+      )
       this.syncCollaborationProcessCaches()
       this.threadSettingsUpdateSupport = 'supported'
       return {
@@ -1515,10 +2468,27 @@ export class AgentManager {
   }
 
   async sendMessage(payload: AgentSendMessagePayload): Promise<AgentSendMessageResult> {
+    if (this.contextTransitionOwner !== null) {
+      const threadId = payload.threadId ?? 'pending'
+      this.emitEvent({
+        type: 'error',
+        threadId,
+        error: CONTEXT_TRANSITION_BUSY_ERROR,
+      })
+      throw new Error(CONTEXT_TRANSITION_BUSY_ERROR)
+    }
+    return this.enqueueTurnAdmission(
+      () => this.sendMessageAfterProviderBarrier(payload),
+    )
+  }
+
+  private async sendMessageAfterProviderBarrier(
+    payload: AgentSendMessagePayload,
+  ): Promise<AgentSendMessageResult> {
     if (!this.codexApiKey) {
       const threadId = payload.threadId ?? 'pending'
       this.emitEvent({ type: 'error', threadId, error: EMPTY_KEY_ERROR })
-      return { threadId }
+      throw new Error(EMPTY_KEY_ERROR)
     }
 
     if (!this.store || !this.attachments) {
@@ -1536,19 +2506,40 @@ export class AgentManager {
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err)
       const threadId = payload.threadId ?? 'pending'
-      this.emitEvent({ type: 'error', threadId, error: `Codex 后端启动失败:${detail}` })
-      return { threadId }
+      const message = `Codex 后端启动失败:${detail}`
+      this.emitEvent({ type: 'error', threadId, error: message })
+      throw new Error(message)
     }
 
-    const { threadId, input, userTimelineItems } = await this.assembleTurnInput(payload)
+    const assembled = await this.assembleTurnInput(payload, true)
+    const { threadId, input, userTimelineItems, collaborationModeOwner } = assembled
 
-    void this.forwardEvents(threadId, input).catch((error: unknown) => {
+    let admitted = false
+    let resolveAdmission!: () => void
+    const admission = new Promise<void>((resolve) => {
+      resolveAdmission = resolve
+    })
+    const markAdmitted = (): void => {
+      if (admitted) return
+      admitted = true
+      resolveAdmission()
+    }
+    void this.forwardEvents(
+      threadId,
+      input,
+      collaborationModeOwner,
+      markAdmitted,
+    ).catch((error: unknown) => {
+      // Never leave the shared lifecycle tail wedged if thread hydration or
+      // another pre-send step fails before backend.send can be admitted.
+      markAdmitted()
       this.emitEvent({
         type: 'error',
         threadId,
         error: error instanceof Error ? error.message : String(error),
       })
     })
+    await admission
     // `userMessageItems` lets the renderer patch its OPTIMISTIC user message
     // (raw OS path, outside the fs allowed-roots gate) with these CANONICAL
     // items (uploads-cache paths that click through immediately). JSON
@@ -1571,17 +2562,38 @@ export class AgentManager {
    */
   async steer(payload: AgentSendMessagePayload): Promise<AgentSendMessageResult> {
     const threadIdIn = payload.threadId
+    if (this.contextTransitionOwner !== null) {
+      const threadId = threadIdIn ?? 'pending'
+      this.emitEvent({
+        type: 'error',
+        threadId,
+        error: CONTEXT_TRANSITION_BUSY_ERROR,
+      })
+      throw new Error(CONTEXT_TRANSITION_BUSY_ERROR)
+    }
     if (!threadIdIn) {
       // Steering only applies to an existing thread with an active turn.
       return { threadId: 'pending' }
     }
-    if (!this.backend.steer) {
-      this.emitEvent({ type: 'error', threadId: threadIdIn, error: '当前后端不支持运行中插话(turn/steer)。' })
-      return { threadId: threadIdIn }
+    const steer = this.backend.steer?.bind(this.backend)
+    if (!steer) {
+      const error = '当前后端不支持运行中插话(turn/steer)。'
+      this.emitEvent({ type: 'error', threadId: threadIdIn, error })
+      throw new Error(error)
     }
+    return this.enqueueTurnAdmission(
+      () => this.steerAfterProviderBarrier(payload, threadIdIn, steer),
+    )
+  }
+
+  private async steerAfterProviderBarrier(
+    payload: AgentSendMessagePayload,
+    threadIdIn: string,
+    steer: NonNullable<IAgentBackend['steer']>,
+  ): Promise<AgentSendMessageResult> {
     if (!this.codexApiKey) {
       this.emitEvent({ type: 'error', threadId: threadIdIn, error: EMPTY_KEY_ERROR })
-      return { threadId: threadIdIn }
+      throw new Error(EMPTY_KEY_ERROR)
     }
     if (!this.store || !this.attachments) {
       throw new Error('AgentManager.steer called without store/attachments')
@@ -1590,14 +2602,16 @@ export class AgentManager {
       await this.ensureBackendStarted()
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err)
-      this.emitEvent({ type: 'error', threadId: threadIdIn, error: `Codex 后端启动失败:${detail}` })
-      return { threadId: threadIdIn }
+      const message = `Codex 后端启动失败:${detail}`
+      this.emitEvent({ type: 'error', threadId: threadIdIn, error: message })
+      throw new Error(message)
     }
 
-    const { threadId, input, userTimelineItems } = await this.assembleTurnInput(payload)
+    const assembled = await this.assembleTurnInput(payload, true)
+    const { threadId, input, userTimelineItems, collaborationModeOwner } = assembled
     const codexThreadId = this.codexThreadIdByDbThreadId.get(threadId) ?? threadId
     try {
-      await this.backend.steer(codexThreadId, input)
+      await steer(codexThreadId, input)
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
       if (isNoActiveTurnSteerError(detail)) {
@@ -1616,13 +2630,33 @@ export class AgentManager {
             message: '上一回合刚好已结束,插话已作为新一轮消息发送。',
           },
         })
-        void this.forwardEvents(threadId, input).catch((err: unknown) => {
+        let admitted = false
+        let resolveAdmission!: () => void
+        const admission = new Promise<void>((resolve) => {
+          resolveAdmission = resolve
+        })
+        const markAdmitted = (): void => {
+          if (admitted) return
+          admitted = true
+          resolveAdmission()
+        }
+        void this.forwardEvents(
+          threadId,
+          input,
+          collaborationModeOwner,
+          markAdmitted,
+        ).catch((err: unknown) => {
+          markAdmitted()
           this.emitEvent({
             type: 'error',
             threadId,
             error: err instanceof Error ? err.message : String(err),
           })
         })
+        // The fresh turn must register backend.send as in-flight before steer
+        // releases its lifecycle slot. Otherwise a Provider replacement can
+        // splice itself between the no-active response and fallback send.
+        await admission
       } else {
         // Genuine failure (transport down, backend crash…): the persisted user
         // message stays (it IS part of the conversation); the renderer surfaces
@@ -1643,14 +2677,46 @@ export class AgentManager {
    * and `steer` (appends to the in-flight turn). Callers guarantee the backend
    * is started and the API key is present.
    */
-  private async assembleTurnInput(payload: AgentSendMessagePayload): Promise<{
+  private async assembleTurnInput(
+    payload: AgentSendMessagePayload,
+    providerAdmissionHeld = false,
+  ): Promise<{
     threadId: string
     model: string
     input: AgentInput
     userTimelineItems: TimelineItem[]
+    collaborationModeOwner?: CollaborationCapabilityOwner
   }> {
     if (!this.store || !this.attachments) {
       throw new Error('AgentManager.assembleTurnInput called without store/attachments')
+    }
+    const model = payload.model?.trim() || DEFAULT_AGENT_MODEL
+    let builtCollaborationMode: BuiltCollaborationMode | undefined
+    try {
+      builtCollaborationMode = payload.collaborationModeKind === undefined
+        ? undefined
+        : await (
+            providerAdmissionHeld
+              ? this.buildCollaborationModeWithProviderAdmissionHeld(
+                  payload.collaborationModeKind,
+                  model,
+                  payload.reasoningEffort,
+                  payload.planReasoningEffort ?? 'auto',
+                )
+              : this.buildCollaborationMode(
+                  payload.collaborationModeKind,
+                  model,
+                  payload.reasoningEffort,
+                  payload.planReasoningEffort ?? 'auto',
+                )
+          )
+    } catch (error) {
+      this.emitEvent({
+        type: 'error',
+        threadId: payload.threadId ?? 'pending',
+        error: error instanceof Error ? error.message : String(error),
+      })
+      throw error instanceof Error ? error : new Error(String(error))
     }
     // The uploads cache is a first-class reference root: AttachmentService
     // canonicalizes every attachment into `<userData>/agent/uploads/<sha>.<ext>`
@@ -1662,7 +2728,6 @@ export class AgentManager {
       ...this.allowedRoots,
       path.join(this.userDataDir, 'agent', 'uploads'),
     ])
-    const model = payload.model?.trim() || DEFAULT_AGENT_MODEL
     const thread = payload.threadId
       ? { id: payload.threadId }
       : await this.store.createThread({
@@ -1792,16 +2857,17 @@ export class AgentManager {
     // field). Explicit Plan and Default are both persistent mode selections,
     // so both get a complete wire object. Only a genuinely absent KIND keeps
     // legacy callers byte-compatible by omitting the field.
-    if (payload.collaborationModeKind !== undefined) {
-      input.collaborationMode = await this.buildCollaborationMode(
-        payload.collaborationModeKind,
-        model,
-        payload.reasoningEffort,
-        payload.planReasoningEffort ?? 'auto',
-      )
+    if (builtCollaborationMode !== undefined) {
+      input.collaborationMode = builtCollaborationMode.collaborationMode
     }
 
-    return { threadId: thread.id, model, input, userTimelineItems }
+    return {
+      threadId: thread.id,
+      model,
+      input,
+      userTimelineItems,
+      collaborationModeOwner: builtCollaborationMode?.owner,
+    }
   }
 
   /**
@@ -1835,24 +2901,187 @@ export class AgentManager {
     model: string,
     defaultEffort: string | undefined,
     planPreference: PlanReasoningEffort,
-  ): Promise<CodexCollaborationMode> {
-    const reasoningEffort = mode === 'plan'
-      ? planPreference === 'auto'
-        ? resolvePlanReasoningEffort(
-            planPreference,
-            await this.planPresetReasoningEffort(),
-          )
+  ): Promise<BuiltCollaborationMode> {
+    return this.buildCollaborationModeUsingResolver(
+      mode,
+      model,
+      defaultEffort,
+      planPreference,
+      (modelId, includePlanPreset) =>
+        this.resolveCollaborationCapabilities(modelId, includePlanPreset),
+    )
+  }
+
+  /**
+   * PRECONDITION: called only while sendMessage owns turn admission.
+   */
+  private async buildCollaborationModeWithProviderAdmissionHeld(
+    mode: CollaborationModeKind,
+    model: string,
+    defaultEffort: string | undefined,
+    planPreference: PlanReasoningEffort,
+  ): Promise<BuiltCollaborationMode> {
+    return this.buildCollaborationModeUsingResolver(
+      mode,
+      model,
+      defaultEffort,
+      planPreference,
+      (modelId, includePlanPreset) =>
+        this.resolveCollaborationCapabilitiesWithProviderAdmissionHeld(
+          modelId,
+          includePlanPreset,
+        ),
+    )
+  }
+
+  private async buildCollaborationModeUsingResolver(
+    mode: CollaborationModeKind,
+    model: string,
+    defaultEffort: string | undefined,
+    planPreference: PlanReasoningEffort,
+    resolveCapabilities: (
+      modelId: string,
+      includePlanPreset: boolean,
+    ) => Promise<ResolvedCollaborationCapabilities>,
+  ): Promise<BuiltCollaborationMode> {
+    if (mode === 'default') {
+      return {
+        collaborationMode: {
+          mode,
+          settings: {
+            model,
+            reasoning_effort: defaultEffort ?? null,
+            developer_instructions: null,
+          },
+        },
+      }
+    }
+
+    const resolved = await resolveCapabilities(
+      model,
+      planPreference === 'auto',
+    )
+    const supportedPlanEfforts = resolved.capabilities.supportedPlanEfforts
+    if (
+      planPreference !== 'auto'
+      && !supportedPlanEfforts.includes(planPreference)
+    ) {
+      throw new Error(
+        `Plan reasoning effort "${planPreference}" is not supported for `
+        + `${resolved.model} on Provider "${resolved.capabilities.providerId}"`,
+      )
+    }
+    const reasoningEffort =
+      planPreference === 'auto'
+        ? resolved.capabilities.planDefaultEffort
         : planPreference
-      : defaultEffort ?? null
 
     return {
-      mode,
-      settings: {
-        model,
-        reasoning_effort: reasoningEffort,
-        developer_instructions: null,
+      collaborationMode: {
+        mode,
+        settings: {
+          model,
+          reasoning_effort: reasoningEffort,
+          developer_instructions: null,
+        },
+      },
+      owner: {
+        providerId: resolved.capabilities.providerId,
+        backendEpoch: resolved.capabilities.backendEpoch,
       },
     }
+  }
+
+  private isCollaborationCapabilityOwnerCurrent(
+    owner: CollaborationCapabilityOwner,
+  ): boolean {
+    return (
+      this.activeProviderId === owner.providerId
+      && this.backend.currentEpoch?.() === owner.backendEpoch
+    )
+  }
+
+  private commitWithCollaborationModeOwner<T>(
+    built: BuiltCollaborationMode,
+    submit: () => T,
+  ): T {
+    if (
+      built.owner !== undefined
+      && !this.isCollaborationCapabilityOwnerCurrent(built.owner)
+    ) {
+      throw new Error(
+        'Plan capability owner changed at commit boundary; please retry',
+      )
+    }
+    return submit()
+  }
+
+  private async stabilizeCollaborationMode(
+    built: BuiltCollaborationMode,
+    mode: CollaborationModeKind,
+    model: string,
+    defaultEffort: string | undefined,
+    planPreference: PlanReasoningEffort,
+  ): Promise<BuiltCollaborationMode> {
+    return this.stabilizeCollaborationModeUsingRebuild(
+      built,
+      mode,
+      () => this.buildCollaborationMode(
+        mode,
+        model,
+        defaultEffort,
+        planPreference,
+      ),
+    )
+  }
+
+  /**
+   * PRECONDITION: called only while sendMessage owns turn admission.
+   */
+  private async stabilizeCollaborationModeWithProviderAdmissionHeld(
+    built: BuiltCollaborationMode,
+    mode: CollaborationModeKind,
+    model: string,
+    defaultEffort: string | undefined,
+    planPreference: PlanReasoningEffort,
+  ): Promise<BuiltCollaborationMode> {
+    return this.stabilizeCollaborationModeUsingRebuild(
+      built,
+      mode,
+      () => this.buildCollaborationModeWithProviderAdmissionHeld(
+        mode,
+        model,
+        defaultEffort,
+        planPreference,
+      ),
+    )
+  }
+
+  private async stabilizeCollaborationModeUsingRebuild(
+    built: BuiltCollaborationMode,
+    mode: CollaborationModeKind,
+    rebuild: () => Promise<BuiltCollaborationMode>,
+  ): Promise<BuiltCollaborationMode> {
+    if (
+      mode === 'default'
+      || (
+        built.owner !== undefined
+        && this.isCollaborationCapabilityOwnerCurrent(built.owner)
+      )
+    ) {
+      return built
+    }
+
+    const rebuilt = await rebuild()
+    if (
+      rebuilt.owner !== undefined
+      && !this.isCollaborationCapabilityOwnerCurrent(rebuilt.owner)
+    ) {
+      throw new Error(
+        'Plan capability owner changed repeatedly before backend submission; please retry',
+      )
+    }
+    return rebuilt
   }
 
   private buildUserTimelineItems(
@@ -2062,7 +3291,7 @@ export class AgentManager {
     // than the gateway rejecting oversized history.
     const message = reason === 'codex_restarted'
       ? 'Codex 引擎刚刚重启（崩溃自愈或切换了模型/配置），上一段对话的引擎侧记忆已随旧进程释放，已自动在全新上下文中继续——本条消息正常处理，但 AI 不再记得此前的对话内容。建议把关键结论重新粘贴给它。'
-      : '上一段对话上下文已超出网关限制，已自动在全新上下文中继续——本条消息正常处理，但 AI 不再记得此前的对话内容。建议把关键结论重新粘贴给它。'
+      : '上一段对话上下文已超出网关限制，已自动在全新上下文中继续——本条消息正常处理，但 AI 不再记得此前的对话内容。建议切回模型官方 Context 并重试，同时把关键结论重新粘贴给它。'
     this.emitEvent({
       type: 'notice',
       notice: {
@@ -2202,18 +3431,121 @@ export class AgentManager {
     }
   }
 
-  private async forwardEvents(dbThreadId: string, input: AgentInput): Promise<void> {
+  /**
+   * PRECONDITION: the caller owns the Provider/turn admission lifecycle slot.
+   * Resolve/hydrate the Codex thread, revalidate Plan ownership, invoke send,
+   * and synchronously prime its iterator before returning. Priming publishes
+   * CodexProtocolClient's in-flight state while replacement is still excluded.
+   */
+  private async startForwardAttemptWithProviderAdmissionHeld(
+    dbThreadId: string,
+    input: AgentInput,
+    collaborationModeOwner?: CollaborationCapabilityOwner,
+  ): Promise<{
+    codexThreadId: string | undefined
+    input: AgentInput
+    collaborationModeOwner?: CollaborationCapabilityOwner
+    eventStream: AsyncIterable<AgentStreamEvent>
+  }> {
+    const codexThreadId = await this.resolveCodexThreadForSend(dbThreadId)
+    let currentInput = input
+    let currentCollaborationModeOwner = collaborationModeOwner
+    let builtForCommit: BuiltCollaborationMode | undefined
+    if (
+      currentInput.collaborationModeKind !== undefined
+      && currentInput.collaborationMode !== undefined
+    ) {
+      const stable = await this.stabilizeCollaborationModeWithProviderAdmissionHeld(
+        {
+          collaborationMode: currentInput.collaborationMode,
+          owner: currentCollaborationModeOwner,
+        },
+        currentInput.collaborationModeKind,
+        currentInput.model,
+        currentInput.reasoningEffort,
+        currentInput.planReasoningEffort ?? 'auto',
+      )
+      currentInput = {
+        ...currentInput,
+        collaborationMode: stable.collaborationMode,
+      }
+      currentCollaborationModeOwner = stable.owner
+      builtForCommit = stable
+    }
+    const source = builtForCommit === undefined
+      ? this.backend.send(codexThreadId, currentInput)
+      : this.commitWithCollaborationModeOwner(
+          builtForCommit,
+          () => this.backend.send(codexThreadId, currentInput),
+        )
+    const eventStream = primeAsyncIterable(source)
+    // Async-generator bodies resume from next() on the current job in V8, but
+    // yield once while retaining admission so other backend implementations
+    // can publish their equivalent in-flight state.
+    await Promise.resolve()
+    return {
+      codexThreadId,
+      input: currentInput,
+      collaborationModeOwner: currentCollaborationModeOwner,
+      eventStream,
+    }
+  }
+
+  private async forwardEvents(
+    dbThreadId: string,
+    input: AgentInput,
+    collaborationModeOwner?: CollaborationCapabilityOwner,
+    onTurnAdmitted?: () => void,
+  ): Promise<void> {
     let canRetryPoisonedThread = true
+    let currentInput = input
+    let currentCollaborationModeOwner = collaborationModeOwner
 
     while (true) {
-      const codexThreadId = await this.resolveCodexThreadForSend(dbThreadId)
+      let attempt: Awaited<ReturnType<AgentManager['startForwardAttemptWithProviderAdmissionHeld']>>
+      if (onTurnAdmitted) {
+        const markAdmitted = onTurnAdmitted
+        try {
+          // Initial send/fallback is already inside its caller's admission.
+          attempt = await this.startForwardAttemptWithProviderAdmissionHeld(
+            dbThreadId,
+            currentInput,
+            currentCollaborationModeOwner,
+          )
+        } catch (error) {
+          markAdmitted()
+          onTurnAdmitted = undefined
+          throw error
+        }
+        markAdmitted()
+        onTurnAdmitted = undefined
+      } else {
+        // Poisoned-thread recovery creates another backend.send after the first
+        // stream has ended. Re-admit every such attempt so Provider replacement
+        // cannot splice itself between the two generations.
+        attempt = await this.enqueueTurnAdmission(
+          () => this.startForwardAttemptWithProviderAdmissionHeld(
+            dbThreadId,
+            currentInput,
+            currentCollaborationModeOwner,
+          ),
+        )
+      }
+      const {
+        codexThreadId,
+        input: admittedInput,
+        collaborationModeOwner: admittedOwner,
+        eventStream,
+      } = attempt
+      currentInput = admittedInput
+      currentCollaborationModeOwner = admittedOwner
       // Accumulate the assistant turn's timeline items in main-process memory so
       // we can write a single AgentMessage row at turn_completed time. Mirrors
       // (a tiny subset of) the renderer's `applyEvent` reducer; kept inline to
       // avoid a circular renderer→main import.
       let assistantItems: TimelineItem[] = []
       try {
-        for await (const event of this.backend.send(codexThreadId, input)) {
+        for await (const event of eventStream) {
           if (event.type === 'thread_created' && event.threadId) {
             this.rememberCodexThread(dbThreadId, event.threadId)
           }
@@ -2303,6 +3635,32 @@ export class AgentManager {
   }
 }
 
+/**
+ * Invoke the underlying iterator's first next() immediately, then expose an
+ * equivalent iterable for normal consumption. CodexProtocolClient uses that
+ * synchronous invocation boundary to increment activeSends before any RPC
+ * awaits, which is the precise hand-off needed by Provider lifecycle locking.
+ */
+function primeAsyncIterable<T>(source: AsyncIterable<T>): AsyncIterable<T> {
+  const iterator = source[Symbol.asyncIterator]()
+  const first = iterator.next()
+  return {
+    async *[Symbol.asyncIterator]() {
+      let result = await first
+      try {
+        while (!result.done) {
+          yield result.value
+          result = await iterator.next()
+        }
+      } finally {
+        if (!result.done) {
+          await iterator.return?.()
+        }
+      }
+    },
+  }
+}
+
 function createTimelineId(): string {
   return crypto.randomUUID()
 }
@@ -2384,6 +3742,38 @@ function isPoisonedThreadError(error: unknown): boolean {
  * These are benign timing races, not failures: `steer()` converts them into a
  * fresh turn instead of surfacing an error.
  */
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function sameModelContextConfig(
+  left: CodexModelContextConfig,
+  right: CodexModelContextConfig,
+): boolean {
+  return (
+    left.modelContextWindow === right.modelContextWindow
+    && left.modelAutoCompactTokenLimit === right.modelAutoCompactTokenLimit
+  )
+}
+
+function cloneRuntimeSettings(
+  settings: PersistedCodexRuntimeSettingsV1,
+): PersistedCodexRuntimeSettingsV1 {
+  return {
+    version: 1,
+    confirmed: { ...settings.confirmed },
+    ...(settings.pending
+      ? {
+          pending: {
+            target: { ...settings.pending.target },
+            requestVersion: settings.pending.requestVersion,
+            startedAt: settings.pending.startedAt,
+          },
+        }
+      : {}),
+  }
+}
+
 function isNoActiveTurnSteerError(message: string): boolean {
   return /no (active|in.?flight) turn/i.test(message)
 }

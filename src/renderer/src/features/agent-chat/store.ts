@@ -13,6 +13,11 @@ import type {
   AgentCollaborationModeUpdatePayload,
   AgentCollaborationModeUpdateResult,
   AgentApiResult,
+  AgentModelContextApplyPayload,
+  AgentModelContextApplyResult,
+  AgentModelContextSnapshotResult,
+  AgentModelSettingsCatalog,
+  AgentModelSettingsCatalogResult,
   AgentMentionRef,
   AgentNotice,
   AgentSendMessagePayload,
@@ -41,13 +46,22 @@ import {
   type CollaborationModeKind,
   type PlanReasoningEffort,
 } from '../../../../shared/collaborationMode'
+import {
+  defaultContextWindowForModel,
+  isModelReasoningEffort,
+  migrateLegacyModelSelection,
+  type ModelReasoningEffort,
+} from '../../../../shared/modelSettings'
 import { AGENT_MODELS, DEFAULT_MODEL_ID, resolveModelSelection } from './models'
 import { contextUsedPercent } from './contextWindowDefaults'
 import { DEFAULT_IMAGE_CHANNEL_ID, isSelectableImageChannel } from './imageChannels'
 import { useFileExplorerStore } from '../file-explorer/store'
 import { rehydrateCodexArtifacts } from './codexArtifactPersistence'
 
-const SELECTED_MODEL_STORAGE_KEY = 'catimation.agent.selectedModel'
+const LEGACY_SELECTED_MODEL_STORAGE_KEY = 'catimation.agent.selectedModel'
+const CANONICAL_SELECTED_MODEL_STORAGE_KEY = 'agent.selectedModel:v2'
+const MODEL_REASONING_STORAGE_KEY = 'agent.modelReasoningByModel:v1'
+const MODEL_CONTEXT_STORAGE_KEY = 'agent.modelContextByModel:v1'
 const SELECTED_IMAGE_CHANNEL_STORAGE_KEY = 'catimation.agent.selectedImageChannel'
 const PLAN_EFFORT_STORAGE_KEY = 'agent.planReasoningEffort:v1'
 const THREAD_MODE_STORAGE_KEY = 'agent.collaborationModesByThread:v1'
@@ -155,10 +169,13 @@ const restoredThreadCollaborationModes = readThreadCollaborationModes()
 const restoredCollaborationThreads = Object.fromEntries(
   Object.keys(restoredThreadCollaborationModes).map((threadId) => [threadId, true] as const),
 )
-const FALLBACK_COLLABORATION_CAPABILITIES: AgentCollaborationCapabilities = {
-  planDefaultEffort: 'medium',
-  supportedPlanEfforts: [],
-  source: 'fallback',
+function fallbackCollaborationCapabilities(providerId: string): AgentCollaborationCapabilities {
+  return {
+    providerId,
+    planDefaultEffort: null,
+    supportedPlanEfforts: [],
+    source: 'fallback',
+  }
 }
 const deletedCollaborationThreadTombstones = new Map<string, number>()
 
@@ -200,23 +217,191 @@ function scheduleThreadListTitleRefreshes(run: () => void): void {
 }
 
 
-function readPersistedModelId(): string {
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
+}
+
+function errorMessage(value: unknown): string {
+  return value instanceof Error ? value.message : String(value)
+}
+
+function isSafeModelSettingsKey(key: string): boolean {
+  return (
+    key.length > 0
+    && key !== '__proto__'
+    && key !== 'prototype'
+    && key !== 'constructor'
+  )
+}
+
+function readModelReasoningEfforts(): Record<string, ModelReasoningEffort> {
   try {
-    const raw = globalThis.localStorage?.getItem(SELECTED_MODEL_STORAGE_KEY)
-    if (!raw) return DEFAULT_MODEL_ID
-    return AGENT_MODELS.some((m) => m.id === raw) ? raw : DEFAULT_MODEL_ID
+    const raw = globalThis.localStorage?.getItem(MODEL_REASONING_STORAGE_KEY)
+    if (!raw) return {}
+    const parsed: unknown = JSON.parse(raw)
+    if (!isPlainRecord(parsed)) return {}
+    const entries = Object.entries(parsed).filter(
+      (entry): entry is [string, ModelReasoningEffort] =>
+        isSafeModelSettingsKey(entry[0]) && isModelReasoningEffort(entry[1]),
+    )
+    return Object.fromEntries(entries)
   } catch {
-    return DEFAULT_MODEL_ID
+    return {}
   }
 }
 
-function persistModelId(id: string): void {
+function readModelContextWindows(): Record<string, number> {
   try {
-    globalThis.localStorage?.setItem(SELECTED_MODEL_STORAGE_KEY, id)
+    const raw = globalThis.localStorage?.getItem(MODEL_CONTEXT_STORAGE_KEY)
+    if (!raw) return {}
+    const parsed: unknown = JSON.parse(raw)
+    if (!isPlainRecord(parsed)) return {}
+    const entries = Object.entries(parsed).filter(
+      (entry): entry is [string, number] =>
+        isSafeModelSettingsKey(entry[0])
+        && typeof entry[1] === 'number'
+        && Number.isFinite(entry[1])
+        && Number.isInteger(entry[1])
+        && entry[1] > 0,
+    )
+    return Object.fromEntries(entries)
   } catch {
-    // localStorage unavailable (SSR / sandbox); silently ignore.
+    return {}
   }
 }
+
+function persistModelReasoningEfforts(
+  efforts: Record<string, ModelReasoningEffort>,
+): boolean {
+  try {
+    const storage = globalThis.localStorage
+    if (!storage) return false
+    storage.setItem(
+      MODEL_REASONING_STORAGE_KEY,
+      JSON.stringify(efforts),
+    )
+    return true
+  } catch {
+    // Storage is optional in private/restricted renderer contexts.
+    return false
+  }
+}
+
+function persistModelContextWindows(contexts: Record<string, number>): boolean {
+  try {
+    const storage = globalThis.localStorage
+    if (!storage) return false
+    storage.setItem(MODEL_CONTEXT_STORAGE_KEY, JSON.stringify(contexts))
+    return true
+  } catch {
+    // Storage is optional in private/restricted renderer contexts.
+    return false
+  }
+}
+
+function persistCanonicalModelId(id: string): boolean {
+  try {
+    const storage = globalThis.localStorage
+    if (!storage) return false
+    storage.setItem(CANONICAL_SELECTED_MODEL_STORAGE_KEY, id)
+    return true
+  } catch {
+    // localStorage unavailable (SSR / sandbox); silently ignore.
+    return false
+  }
+}
+
+function updateModelSettingsPersistenceWarning(
+  current: AgentChatState['modelSettingsPersistenceWarnings'],
+  kind: keyof AgentChatState['modelSettingsPersistenceWarnings'],
+  warning: string | undefined,
+): AgentChatState['modelSettingsPersistenceWarnings'] {
+  const next = { ...current }
+  if (warning) next[kind] = warning
+  else delete next[kind]
+  return next
+}
+
+interface RestoredModelSettings {
+  selectedModelId: string
+  modelReasoningEffortByModel: Record<string, ModelReasoningEffort>
+  modelContextWindowByModel: Record<string, number>
+  persistenceWarnings: AgentChatState['modelSettingsPersistenceWarnings']
+}
+
+function restoreModelSettings(): RestoredModelSettings {
+  const modelReasoningEffortByModel = readModelReasoningEfforts()
+  const modelContextWindowByModel = readModelContextWindows()
+  const persistenceWarnings:
+    AgentChatState['modelSettingsPersistenceWarnings'] = {}
+  let selectedModelId = DEFAULT_MODEL_ID
+
+  try {
+    const canonical = globalThis.localStorage?.getItem(
+      CANONICAL_SELECTED_MODEL_STORAGE_KEY,
+    )
+    if (canonical !== null && canonical !== undefined) {
+      selectedModelId =
+        canonical.trim().length > 0 ? canonical : DEFAULT_MODEL_ID
+      if (
+        selectedModelId !== canonical
+        && !persistCanonicalModelId(selectedModelId)
+      ) {
+        persistenceWarnings.model =
+          '模型设置仅本次会话有效，未能持久化。'
+      }
+      return {
+        selectedModelId,
+        modelReasoningEffortByModel,
+        modelContextWindowByModel,
+        persistenceWarnings,
+      }
+    }
+
+    const legacy = globalThis.localStorage?.getItem(
+      LEGACY_SELECTED_MODEL_STORAGE_KEY,
+    )
+    const migrated = migrateLegacyModelSelection(legacy || DEFAULT_MODEL_ID)
+    selectedModelId = migrated.model || DEFAULT_MODEL_ID
+    const needsLegacyEffortWrite =
+      migrated.migrated
+      && migrated.reasoningEffort !== 'auto'
+      && !Object.prototype.hasOwnProperty.call(
+        modelReasoningEffortByModel,
+        selectedModelId,
+      )
+    if (needsLegacyEffortWrite) {
+      modelReasoningEffortByModel[selectedModelId] = migrated.reasoningEffort
+      if (!persistModelReasoningEfforts(modelReasoningEffortByModel)) {
+        persistenceWarnings.reasoning =
+          'Reasoning 设置仅本次会话有效，未能持久化。'
+        return {
+          selectedModelId,
+          modelReasoningEffortByModel,
+          modelContextWindowByModel,
+          persistenceWarnings,
+        }
+      }
+    }
+    if (!persistCanonicalModelId(selectedModelId)) {
+      persistenceWarnings.model =
+        '模型设置仅本次会话有效，未能持久化。'
+    }
+  } catch {
+    // Keep safe in-memory defaults when storage access itself is unavailable.
+  }
+
+  return {
+    selectedModelId,
+    modelReasoningEffortByModel,
+    modelContextWindowByModel,
+    persistenceWarnings,
+  }
+}
+
+const restoredModelSettings = restoreModelSettings()
 
 function readPersistedImageChannel(): string {
   try {
@@ -305,6 +490,11 @@ type AgentElectronApi = {
     updateCollaborationMode?: (
       payload: AgentCollaborationModeUpdatePayload,
     ) => Promise<AgentCollaborationModeUpdateResult>
+    getModelSettingsCatalog?: () => Promise<AgentModelSettingsCatalogResult>
+    getModelContextConfig?: () => Promise<AgentModelContextSnapshotResult>
+    applyModelContext?: (
+      payload: AgentModelContextApplyPayload,
+    ) => Promise<AgentModelContextApplyResult>
     // Codex native `/goal` (thread/goal/*). threadId = DB thread id.
     setGoal?: (
       threadId: string,
@@ -498,6 +688,28 @@ interface AgentChatState {
   isRunning: boolean
   error?: string
   selectedModelId: string
+  /** Ordinary/default-mode reasoning preference, independently persisted per model. */
+  modelReasoningEffortByModel: Record<string, ModelReasoningEffort>
+  modelContextWindowByModel: Record<string, number>
+  modelSettingsCatalog?: AgentModelSettingsCatalog
+  modelSettingsLoading: boolean
+  activeModelContextWindow: number
+  modelContextPending?: {
+    model: string
+    contextWindow: number
+    requestVersion: number
+  }
+  modelSettingsError?: string
+  /** Sticky fatal owner set when rollback cannot prove an effective backend config. */
+  modelSettingsRecoveryRequired: boolean
+  modelSettingsPersistenceWarnings: Partial<Record<
+    'model' | 'reasoning' | 'context',
+    string
+  >>
+  /** Invalidates older catalog/context bootstrap reads after Provider changes. */
+  modelSettingsLoadGeneration: number
+  /** Monotonic owner for model-context apply results. */
+  modelContextRequestSequence: number
   /** User-selected image render channel (authoritative for generate_image). */
   selectedImageChannel: string
   /** Current composer target/display for the active thread or unsaved draft. */
@@ -540,6 +752,8 @@ interface AgentChatState {
   collaborationCapabilities?: AgentCollaborationCapabilities
   /** Canonical model slug that owns `collaborationCapabilities`. */
   collaborationCapabilitiesModel?: string
+  /** Monotonic request owner used to discard stale Provider/model responses. */
+  collaborationCapabilityRequestSequence: number
   /**
    * Explicit Plan effort awaiting capabilities for one model/thread owner.
    * Carries every owner dimension so model, thread, or preference changes
@@ -603,13 +817,17 @@ interface AgentChatState {
   setInput: (input: string) => void
   appendInputText: (text: string) => void
   setError: (error?: string) => void
-  setSelectedModel: (modelId: string) => void
+  setSelectedModel: (modelId: string) => Promise<void>
+  setModelReasoningEffort: (model: string, effort: ModelReasoningEffort) => void
+  setModelContextWindow: (contextWindow: number) => Promise<boolean>
+  loadModelSettingsCatalog: (providerId?: string) => Promise<void>
   setSelectedImageChannel: (channelId: string) => void
   /** Compatibility alias used by the existing toggle until its UI task lands. */
   setCollabMode: (kind: CollaborationModeKind) => void
   requestCollabMode: (kind: CollaborationModeKind) => Promise<void>
   setPlanReasoningEffort: (effort: PlanReasoningEffort) => Promise<void>
-  loadCollaborationCapabilities: () => Promise<void>
+  invalidateCollaborationCapabilities: () => void
+  loadCollaborationCapabilities: (providerId?: string) => Promise<void>
   addAttachment: (attachment: AgentAttachmentInput) => void
   removeAttachment: (attachment: AgentAttachmentInput) => void
   removeAttachmentForReference: (reference: AgentReference) => void
@@ -798,6 +1016,317 @@ interface AgentChatState {
   setSidebarWidth: (width: number) => void
   renameThread: (threadId: string, title: string) => Promise<void>
   deleteThread: (threadId: string) => Promise<void>
+}
+
+type SetAgentChatState = (
+  partial:
+    | Partial<AgentChatState>
+    | ((state: AgentChatState) => Partial<AgentChatState>),
+) => void
+
+let modelSettingsLoadInflight:
+  | { generation: number; promise: Promise<void> }
+  | undefined
+
+interface ModelContextIntent {
+  get: () => AgentChatState
+  set: SetAgentChatState
+  model: string
+  contextWindow: number
+  requestVersion: number
+  ownerGeneration: number
+  threadId?: string
+  resolve: (applied: boolean) => void
+}
+
+let activeModelContextIntent: ModelContextIntent | undefined
+let queuedModelContextIntent: ModelContextIntent | undefined
+
+function reconcileModelSettingsAfterStaleIntent(
+  get: () => AgentChatState,
+): void {
+  const generation = get().modelSettingsLoadGeneration
+  const currentLoad =
+    modelSettingsLoadInflight?.generation === generation
+      ? modelSettingsLoadInflight.promise
+      : undefined
+  void (async () => {
+    try {
+      await currentLoad
+    } catch {
+      // A fresh authoritative read below owns reconciliation diagnostics.
+    }
+    const state = get()
+    if (state.modelSettingsLoadGeneration !== generation) return
+    await state.loadModelSettingsCatalog()
+  })()
+}
+
+export function formatContextApplyError(
+  result: Extract<AgentModelContextApplyResult, { ok: false }>,
+): string {
+  if (result.rollback.ok) {
+    return `Context 应用失败：${result.error}；已恢复原 Context。`
+  }
+  return `Context 应用失败：${result.error}；回滚失败：${result.rollback.error}；`
+    + '请手动重启 Agent Workspace/Codex。'
+}
+
+async function applyModelContextForModel(
+  get: () => AgentChatState,
+  set: SetAgentChatState,
+  model: string,
+  contextWindow: number,
+  explicit = false,
+): Promise<boolean> {
+  if (
+    !isSafeModelSettingsKey(model)
+    || !Number.isSafeInteger(contextWindow)
+    || contextWindow <= 0
+  ) {
+    set((state) =>
+      state.modelSettingsRecoveryRequired
+        ? {}
+        : { modelSettingsError: 'Context 参数无效。' })
+    return false
+  }
+
+  const owner = get()
+  if (owner.modelSettingsRecoveryRequired && !explicit) return false
+  const requestVersion = owner.modelContextRequestSequence + 1
+  const pending = { model, contextWindow, requestVersion }
+  set({
+    modelContextPending: pending,
+    modelContextRequestSequence: requestVersion,
+    ...(owner.modelSettingsRecoveryRequired
+      ? {}
+      : { modelSettingsError: undefined }),
+  })
+
+  return new Promise<boolean>((resolve) => {
+    const intent: ModelContextIntent = {
+      get,
+      set,
+      model,
+      contextWindow,
+      requestVersion,
+      ownerGeneration: owner.modelSettingsLoadGeneration,
+      ...(owner.threadId ? { threadId: owner.threadId } : {}),
+      resolve,
+    }
+    if (activeModelContextIntent) {
+      queuedModelContextIntent?.resolve(false)
+      queuedModelContextIntent = intent
+      return
+    }
+    activeModelContextIntent = intent
+    void drainModelContextIntents()
+  })
+}
+
+async function executeModelContextIntent(
+  intent: ModelContextIntent,
+): Promise<{ applied: boolean; fatal: boolean; ownerStale: boolean }> {
+  const {
+    set,
+    model,
+    contextWindow,
+    requestVersion,
+    ownerGeneration,
+    threadId,
+  } = intent
+  set((state) =>
+    state.modelSettingsLoadGeneration !== ownerGeneration
+    || state.modelSettingsRecoveryRequired
+      ? {}
+      : { modelSettingsError: undefined })
+  const apply = (window as Window & { electronAPI?: AgentElectronApi })
+    .electronAPI?.agent?.applyModelContext
+  if (!apply) {
+    let ownerStale = false
+    set((state) => {
+      if (state.modelSettingsLoadGeneration !== ownerGeneration) {
+        ownerStale = true
+        return {}
+      }
+      return {
+        ...(state.modelContextPending?.requestVersion === requestVersion
+          ? { modelContextPending: undefined }
+          : {}),
+        ...(state.modelSettingsRecoveryRequired
+          ? {}
+          : { modelSettingsError: 'Electron Context API 不可用。' }),
+      }
+    })
+    return { applied: false, fatal: false, ownerStale }
+  }
+
+  let result: AgentModelContextApplyResult
+  try {
+    result = await apply({
+      ...(threadId ? { threadId } : {}),
+      model,
+      contextWindow,
+      requestVersion,
+    })
+  } catch (error) {
+    let ownerStale = false
+    set((state) => {
+      if (state.modelSettingsLoadGeneration !== ownerGeneration) {
+        ownerStale = true
+        return {}
+      }
+      return {
+        ...(state.modelContextPending?.requestVersion === requestVersion
+          ? { modelContextPending: undefined }
+          : {}),
+        ...(state.modelSettingsRecoveryRequired
+          ? {}
+          : {
+              modelSettingsError:
+                error instanceof Error ? error.message : String(error),
+            }),
+      }
+    })
+    return { applied: false, fatal: false, ownerStale }
+  }
+
+  const resultVersion = result.ok
+    ? result.data.requestVersion
+    : result.requestVersion
+  if (resultVersion !== requestVersion) {
+    let ownerStale = false
+    set((state) => {
+      if (state.modelSettingsLoadGeneration !== ownerGeneration) {
+        ownerStale = true
+        return {}
+      }
+      return {
+        ...(state.modelContextPending?.requestVersion === requestVersion
+          ? { modelContextPending: undefined }
+          : {}),
+        ...(state.modelSettingsRecoveryRequired
+          ? {}
+          : { modelSettingsError: 'Context 响应版本不匹配，请重试。' }),
+      }
+    })
+    return { applied: false, fatal: false, ownerStale }
+  }
+
+  let applied = false
+  let fatal = false
+  let ownerStale = false
+  set((state) => {
+    if (state.modelSettingsLoadGeneration !== ownerGeneration) {
+      ownerStale = true
+      if (result.ok) {
+        return { activeModelContextWindow: result.data.contextWindow }
+      }
+      return result.rollback.ok
+        ? {
+            activeModelContextWindow:
+              result.rollback.activeConfig.modelContextWindow,
+          }
+        : {}
+    }
+    const ownsPending =
+      state.modelContextPending?.requestVersion === requestVersion
+    if (!result.ok) {
+      const rollbackFailed =
+        !result.rollback.ok && result.rollback.effectiveConfig === null
+      fatal = rollbackFailed
+      return {
+        ...(ownsPending || rollbackFailed
+          ? { modelContextPending: undefined }
+          : {}),
+        ...(result.rollback.ok
+          ? {
+              activeModelContextWindow:
+                result.rollback.activeConfig.modelContextWindow,
+            }
+          : {}),
+        modelSettingsRecoveryRequired:
+          state.modelSettingsRecoveryRequired || rollbackFailed,
+        ...(state.modelSettingsRecoveryRequired
+          ? {}
+          : { modelSettingsError: formatContextApplyError(result) }),
+      }
+    }
+
+    applied = true
+    const modelContextWindowByModel = {
+      ...state.modelContextWindowByModel,
+      [model]: result.data.contextWindow,
+    }
+    const persisted = persistModelContextWindows(modelContextWindowByModel)
+    return {
+      activeModelContextWindow: result.data.contextWindow,
+      modelContextWindowByModel,
+      ...(ownsPending ? { modelContextPending: undefined } : {}),
+      modelSettingsRecoveryRequired: false,
+      modelSettingsError: undefined,
+      modelSettingsPersistenceWarnings: updateModelSettingsPersistenceWarning(
+        state.modelSettingsPersistenceWarnings,
+        'context',
+        persisted
+          ? undefined
+          : 'Context 设置仅本次会话有效，未能持久化。',
+      ),
+    }
+  })
+  return { applied, fatal, ownerStale }
+}
+
+async function drainModelContextIntents(): Promise<void> {
+  while (activeModelContextIntent) {
+    const intent = activeModelContextIntent
+    const outcome = await executeModelContextIntent(intent)
+    intent.resolve(outcome.applied)
+    if (outcome.ownerStale) {
+      reconcileModelSettingsAfterStaleIntent(intent.get)
+    }
+    if (outcome.fatal) {
+      queuedModelContextIntent?.resolve(false)
+      queuedModelContextIntent = undefined
+      activeModelContextIntent = undefined
+      return
+    }
+    // Let a model-switch caller commit the successfully applied model before
+    // the next queued Context IPC starts against that confirmed UI state.
+    await Promise.resolve()
+    activeModelContextIntent = queuedModelContextIntent
+    queuedModelContextIntent = undefined
+  }
+}
+
+function resolveOrdinaryModelSelection(
+  state: Pick<
+    AgentChatState,
+    'selectedModelId' | 'modelReasoningEffortByModel'
+  >,
+): ReturnType<typeof resolveModelSelection> {
+  const effort = Object.prototype.hasOwnProperty.call(
+    state.modelReasoningEffortByModel,
+    state.selectedModelId,
+  )
+    ? state.modelReasoningEffortByModel[state.selectedModelId]
+    : 'auto'
+  return resolveModelSelection(
+    state.selectedModelId,
+    isModelReasoningEffort(effort) ? effort : 'auto',
+  )
+}
+
+function resolveModelSelectionForMode(
+  state: Pick<
+    AgentChatState,
+    'selectedModelId' | 'modelReasoningEffortByModel'
+  >,
+  mode: CollaborationModeKind,
+): ReturnType<typeof resolveModelSelection> {
+  return mode === 'plan'
+    ? resolveModelSelection(state.selectedModelId, 'auto')
+    : resolveOrdinaryModelSelection(state)
 }
 
 /**
@@ -1440,7 +1969,24 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   threadSlices: {},
   runningByThread: {},
   chatScrollByThread: loadChatScrollByThread(),
-  selectedModelId: readPersistedModelId(),
+  selectedModelId: restoredModelSettings.selectedModelId,
+  modelReasoningEffortByModel:
+    restoredModelSettings.modelReasoningEffortByModel,
+  modelContextWindowByModel:
+    restoredModelSettings.modelContextWindowByModel,
+  modelSettingsCatalog: undefined,
+  modelSettingsLoading: false,
+  activeModelContextWindow:
+    restoredModelSettings.modelContextWindowByModel[
+      restoredModelSettings.selectedModelId
+    ]
+    ?? defaultContextWindowForModel(restoredModelSettings.selectedModelId),
+  modelContextPending: undefined,
+  modelSettingsError: undefined,
+  modelSettingsRecoveryRequired: false,
+  modelSettingsPersistenceWarnings: restoredModelSettings.persistenceWarnings,
+  modelSettingsLoadGeneration: 0,
+  modelContextRequestSequence: 0,
   selectedImageChannel: readPersistedImageChannel(),
   collabModeKind: 'default',
   collabModeByThread: restoredThreadCollaborationModes,
@@ -1457,6 +2003,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   planReasoningEffort: readPlanReasoningEffort(),
   collaborationCapabilities: undefined,
   collaborationCapabilitiesModel: undefined,
+  collaborationCapabilityRequestSequence: 0,
   deferredPlanEffortIntent: undefined,
   collaborationError: undefined,
   collaborationErrorByThread: {},
@@ -1667,17 +2214,252 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   setInput: (input) => set({ input }),
   appendInputText: (text) => set((state) => ({ input: state.input + text })),
   setError: (error) => set({ error }),
-  setSelectedModel: (modelId) => {
-    if (!AGENT_MODELS.some((m) => m.id === modelId)) return
-    persistModelId(modelId)
+  setSelectedModel: async (modelId) => {
+    const before = get()
+    const ownerGeneration = before.modelSettingsLoadGeneration
+    const ownerProvider = before.modelSettingsCatalog?.provider
+    const catalogRow = before.modelSettingsCatalog?.models.find(
+      (row) => row.id === modelId,
+    )
+    if (!catalogRow && !AGENT_MODELS.some((model) => model.id === modelId)) return
+
     const canonicalModel = resolveModelSelection(modelId).model
+    if (canonicalModel !== resolveModelSelection(before.selectedModelId).model) {
+      // Claim capability ownership before an async Context restart. Otherwise
+      // the previous model's delayed capability response could consume a
+      // deferred Plan intent while the new-model transition is in flight.
+      set((state) => ({
+        collaborationCapabilityRequestSequence:
+          state.collaborationCapabilityRequestSequence + 1,
+        deferredPlanEffortIntent: undefined,
+      }))
+    }
+    const targetContextWindow =
+      before.modelContextWindowByModel[canonicalModel]
+      ?? catalogRow?.capabilities.defaultContextWindow
+      ?? defaultContextWindowForModel(canonicalModel)
+    const contextIntentInProgress =
+      before.modelContextPending !== undefined
+      || activeModelContextIntent !== undefined
+    const shouldApplyContext =
+      targetContextWindow !== before.activeModelContextWindow
+      || contextIntentInProgress
+      || before.modelSettingsRecoveryRequired
+    if (shouldApplyContext) {
+      const applied = await applyModelContextForModel(
+        get,
+        set,
+        canonicalModel,
+        targetContextWindow,
+        before.modelSettingsRecoveryRequired,
+      )
+      if (!applied) {
+        void get().loadCollaborationCapabilities()
+        return
+      }
+    }
+
+    const currentOwner = get()
+    const currentProvider = currentOwner.modelSettingsCatalog?.provider
+    if (
+      currentOwner.modelSettingsLoadGeneration !== ownerGeneration
+      || (
+        ownerProvider !== undefined
+        && currentProvider !== undefined
+        && currentProvider !== ownerProvider
+      )
+    ) {
+      void currentOwner.loadCollaborationCapabilities()
+      return
+    }
+
+    const persisted = persistCanonicalModelId(canonicalModel)
     set((state) => ({
-      selectedModelId: modelId,
+      selectedModelId: canonicalModel,
+      modelSettingsPersistenceWarnings: updateModelSettingsPersistenceWarning(
+        state.modelSettingsPersistenceWarnings,
+        'model',
+        persisted
+          ? undefined
+          : '模型设置仅本次会话有效，未能持久化。',
+      ),
       ...(state.deferredPlanEffortIntent?.model !== canonicalModel
         ? { deferredPlanEffortIntent: undefined }
         : {}),
     }))
-    void get().loadCollaborationCapabilities()
+    await get().loadCollaborationCapabilities()
+  },
+  setModelReasoningEffort: (model, effort) => {
+    if (!isSafeModelSettingsKey(model) || !isModelReasoningEffort(effort)) return
+    set((state) => {
+      const modelReasoningEffortByModel = {
+        ...state.modelReasoningEffortByModel,
+        [model]: effort,
+      }
+      const persisted = persistModelReasoningEfforts(modelReasoningEffortByModel)
+      return {
+        modelReasoningEffortByModel,
+        modelSettingsPersistenceWarnings: updateModelSettingsPersistenceWarning(
+          state.modelSettingsPersistenceWarnings,
+          'reasoning',
+          persisted
+            ? undefined
+            : 'Reasoning 设置仅本次会话有效，未能持久化。',
+        ),
+      }
+    })
+  },
+  setModelContextWindow: async (contextWindow) => {
+    const state = get()
+    const model = resolveModelSelection(state.selectedModelId).model
+    if (
+      contextWindow === state.activeModelContextWindow
+      && state.modelContextPending === undefined
+      && !state.modelSettingsRecoveryRequired
+    ) {
+      set((current) => {
+        const modelContextWindowByModel = {
+          ...current.modelContextWindowByModel,
+          [model]: contextWindow,
+        }
+        const persisted = persistModelContextWindows(modelContextWindowByModel)
+        return {
+          modelContextWindowByModel,
+          modelSettingsPersistenceWarnings: updateModelSettingsPersistenceWarning(
+            current.modelSettingsPersistenceWarnings,
+            'context',
+            persisted
+              ? undefined
+              : 'Context 设置仅本次会话有效，未能持久化。',
+          ),
+        }
+      })
+      return true
+    }
+    return applyModelContextForModel(get, set, model, contextWindow, true)
+  },
+  loadModelSettingsCatalog: (providerId) => {
+    const loadOwner = get()
+    const generation = loadOwner.modelSettingsLoadGeneration
+    const contextRequestSequence = loadOwner.modelContextRequestSequence
+    const contextPendingAtLoad = loadOwner.modelContextPending?.requestVersion
+    if (modelSettingsLoadInflight?.generation === generation) {
+      return modelSettingsLoadInflight.promise
+    }
+
+    const promise = (async () => {
+      set((state) =>
+        state.modelSettingsLoadGeneration === generation
+          ? { modelSettingsLoading: true }
+          : {})
+      const agent = (window as Window & { electronAPI?: AgentElectronApi })
+        .electronAPI?.agent
+      const invoke = <T>(operation: (() => Promise<T>) | undefined, label: string): Promise<T> => {
+        if (!operation) return Promise.reject(new Error(`${label} API unavailable`))
+        try {
+          return Promise.resolve(operation())
+        } catch (error) {
+          return Promise.reject(error)
+        }
+      }
+      const safeInvoke = async <T>(
+        operation: (() => Promise<T>) | undefined,
+        label: string,
+      ): Promise<{ ok: true; value: T } | { ok: false; error: string }> => {
+        try {
+          return { ok: true, value: await invoke(operation, label) }
+        } catch (error) {
+          return { ok: false, error: errorMessage(error) }
+        }
+      }
+      const [catalogResult, snapshotResult] = await Promise.all([
+        safeInvoke(agent?.getModelSettingsCatalog, 'Model settings catalog'),
+        safeInvoke(agent?.getModelContextConfig, 'Model context snapshot'),
+      ])
+      if (get().modelSettingsLoadGeneration !== generation) return
+
+      set((state) => {
+        if (state.modelSettingsLoadGeneration !== generation) return {}
+        const errors: string[] = []
+        let modelSettingsCatalog = state.modelSettingsCatalog
+        let activeModelContextWindow = state.activeModelContextWindow
+        let snapshotRecoveryRequired = false
+        let snapshotRecoveryError: string | undefined
+        const contextOwnerStillCurrent =
+          contextPendingAtLoad === undefined
+          && state.modelContextRequestSequence === contextRequestSequence
+          && state.modelContextPending === undefined
+
+        if (!catalogResult.ok) {
+          errors.push(catalogResult.error)
+        } else if (!catalogResult.value.ok) {
+          errors.push(catalogResult.value.error)
+        } else {
+          if (
+            providerId !== undefined
+            && catalogResult.value.data.provider !== providerId
+          ) {
+            errors.push(
+              `模型目录 Provider 不匹配：期望 ${providerId}，收到 ${catalogResult.value.data.provider}`,
+            )
+          } else {
+            modelSettingsCatalog = catalogResult.value.data
+          }
+        }
+
+        if (!snapshotResult.ok) {
+          errors.push(snapshotResult.error)
+        } else if (!snapshotResult.value.ok) {
+          errors.push(snapshotResult.value.error)
+        } else {
+          if (contextOwnerStillCurrent) {
+            activeModelContextWindow =
+              snapshotResult.value.data.modelContextWindow
+            snapshotRecoveryRequired =
+              snapshotResult.value.data.recoveryRequired === true
+            if (snapshotRecoveryRequired) {
+              snapshotRecoveryError =
+                snapshotResult.value.data.recoveryError
+                || '上次 Context 回滚失败，请手动重启或重新应用。'
+            }
+          }
+        }
+        const loadError = errors.length > 0
+          ? errors.join('；')
+          : undefined
+        const preserveCurrentError =
+          state.modelSettingsRecoveryRequired || !contextOwnerStillCurrent
+        const recoveryRequired =
+          state.modelSettingsRecoveryRequired || snapshotRecoveryRequired
+        const primaryError = snapshotRecoveryRequired
+          ? snapshotRecoveryError
+          : preserveCurrentError
+            ? state.modelSettingsError
+            : undefined
+        const modelSettingsError = recoveryRequired || preserveCurrentError
+          ? primaryError
+            ? loadError && !primaryError.includes(loadError)
+              ? `${primaryError}；模型设置加载错误：${loadError}`
+              : primaryError
+            : loadError
+          : loadError
+
+        return {
+          modelSettingsCatalog,
+          activeModelContextWindow,
+          modelSettingsLoading: false,
+          modelSettingsRecoveryRequired: recoveryRequired,
+          modelSettingsError,
+        }
+      })
+    })()
+    modelSettingsLoadInflight = { generation, promise }
+    void promise.finally(() => {
+      if (modelSettingsLoadInflight?.promise === promise) {
+        modelSettingsLoadInflight = undefined
+      }
+    })
+    return promise
   },
   setSelectedImageChannel: (channelId) => {
     if (!isSelectableImageChannel(channelId)) return
@@ -1723,12 +2505,14 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       }
     })
 
-    const modelSelection = resolveModelSelection(snapshot.selectedModelId)
+    const modelSelection = resolveModelSelectionForMode(snapshot, kind)
     const payload: AgentCollaborationModeUpdatePayload = {
       threadId,
       mode: kind,
       model: modelSelection.model,
-      defaultReasoningEffort: modelSelection.reasoningEffort,
+      ...(modelSelection.reasoningEffort
+        ? { defaultReasoningEffort: modelSelection.reasoningEffort }
+        : {}),
       planReasoningEffort: selectEffectivePlanReasoningEffort(get()),
       requestVersion,
     }
@@ -1892,8 +2676,31 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       await state.requestCollabMode('plan')
     }
   },
-  loadCollaborationCapabilities: async () => {
+  invalidateCollaborationCapabilities: () => {
+    queuedModelContextIntent?.resolve(false)
+    queuedModelContextIntent = undefined
+    set((state) => ({
+      collaborationCapabilities: undefined,
+      collaborationCapabilitiesModel: undefined,
+      collaborationCapabilityRequestSequence:
+        state.collaborationCapabilityRequestSequence + 1,
+      deferredPlanEffortIntent: undefined,
+      modelSettingsCatalog: undefined,
+      modelSettingsLoading: false,
+      ...(state.modelSettingsRecoveryRequired
+        ? {}
+        : { modelSettingsError: undefined }),
+      modelContextPending: undefined,
+      modelSettingsLoadGeneration: state.modelSettingsLoadGeneration + 1,
+    }))
+  },
+  loadCollaborationCapabilities: async (providerId) => {
+    void get().loadModelSettingsCatalog(providerId)
     let owner = get()
+    const capabilityRequestSequence =
+      owner.collaborationCapabilityRequestSequence + 1
+    set({ collaborationCapabilityRequestSequence: capabilityRequestSequence })
+    owner = get()
     const model = resolveModelSelection(owner.selectedModelId).model
     const ownerThreadId = owner.threadId
     if (
@@ -1915,6 +2722,8 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       ownerThreadId === undefined
         ? undefined
         : owner.collabModeLifecycleByThread[ownerThreadId]
+    const isCapabilityRequestCurrent = (): boolean =>
+      get().collaborationCapabilityRequestSequence === capabilityRequestSequence
     const isOwnerLifecycleCurrent = (): boolean => {
       if (ownerThreadId === undefined) return true
       if (ownerLifecycleGeneration === undefined) return false
@@ -1922,12 +2731,17 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       return get().collabModeLifecycleByThread[ownerThreadId] === ownerLifecycleGeneration
     }
     const applyFallback = (error?: string): void => {
+      if (!isCapabilityRequestCurrent()) return
       if (resolveModelSelection(get().selectedModelId).model !== model) return
       if (!isOwnerLifecycleCurrent()) return
       set((state) => {
         const hasKnownCodexCapabilities =
           state.collaborationCapabilitiesModel === model
           && state.collaborationCapabilities?.source === 'codex'
+          && (
+            providerId === undefined
+            || state.collaborationCapabilities.providerId === providerId
+          )
         const errors = { ...state.collaborationErrorByThread }
         if (ownerThreadId) {
           if (error) errors[ownerThreadId] = error
@@ -1944,7 +2758,9 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
           ...(hasKnownCodexCapabilities
             ? {}
             : {
-                collaborationCapabilities: FALLBACK_COLLABORATION_CAPABILITIES,
+                collaborationCapabilities: fallbackCollaborationCapabilities(
+                  providerId ?? state.collaborationCapabilities?.providerId ?? 'unknown',
+                ),
                 collaborationCapabilitiesModel: model,
               }),
           ...(shouldDefer
@@ -1969,12 +2785,14 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     }
     try {
       const result = await agent.getCollaborationCapabilities(model)
+      if (!isCapabilityRequestCurrent()) return
       if (!isOwnerLifecycleCurrent()) return
       if (!result.ok) {
         applyFallback('协作能力暂不可用，已安全回退为 Auto。')
         return
       }
       if (resolveModelSelection(get().selectedModelId).model !== model) return
+      if (providerId !== undefined && result.data.providerId !== providerId) return
       if (result.data.source !== 'codex') {
         applyFallback()
         return
@@ -2023,6 +2841,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       }
     } catch {
       // Capabilities are optional metadata; degrade without touching chat flow.
+      if (!isCapabilityRequestCurrent()) return
       if (!isOwnerLifecycleCurrent()) return
       applyFallback('协作能力暂不可用，已安全回退为 Auto。')
     }
@@ -2276,7 +3095,10 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     if (state.isRunning) return
     if (!content && attachments.length === 0 && references.length === 0) return
 
-    const modelSelection = resolveModelSelection(state.selectedModelId)
+    const modelSelection = resolveModelSelectionForMode(
+      state,
+      state.collabModeKind,
+    )
     const now = Date.now()
     const items: TimelineItem[] = []
     if (attachments.length > 0) {
@@ -2354,8 +3176,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         attachments,
         references,
         currentPage: window.location.hash.slice(1),
-        model: modelSelection.model,
-        reasoningEffort: modelSelection.reasoningEffort,
+        ...modelSelection,
         skills: skills.length > 0 ? skills : undefined,
         mentions,
         collaborationModeKind: state.collabModeKind,
@@ -2522,15 +3343,17 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     const mentions = resolveMentions(content, state.availablePluginMentions)
 
     try {
-      const modelSelection = resolveModelSelection(state.selectedModelId)
+      const modelSelection = resolveModelSelectionForMode(
+        state,
+        state.collabModeKind,
+      )
       const result = await steer({
         threadId,
         content,
         attachments,
         references,
         currentPage: window.location.hash.slice(1),
-        model: modelSelection.model,
-        reasoningEffort: modelSelection.reasoningEffort,
+        ...modelSelection,
         skills: skills.length > 0 ? skills : undefined,
         mentions,
         // AgentManager keeps these on the assembled input for its no-active-turn

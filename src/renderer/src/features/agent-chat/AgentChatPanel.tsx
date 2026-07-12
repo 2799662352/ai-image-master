@@ -14,7 +14,8 @@ import { TokenUsageMeter } from './TokenUsageMeter'
 import { CodexApprovalPrompt } from './CodexApprovalPrompt'
 import { CodexStatusPanel } from './CodexStatusPanel'
 import { NoticesBanner } from './NoticesBanner'
-import { findModel } from './models'
+import { defaultContextWindowForModel } from '../../../../shared/modelSettings'
+import { findModel, resolveModelSelection } from './models'
 import { createEventCoalescer } from './eventCoalescer'
 import { useAgentChatStore } from './store'
 import { useAgentWorkspaceStore } from '../agent-workspace/useAgentWorkspaceStore'
@@ -36,6 +37,10 @@ type AgentEventApi = {
     getSessionStatus?: () => Promise<CodexSessionStatus>
     restartCodex?: () => Promise<{ ok: boolean; error?: string }>
   }
+}
+
+function isValidContextWindow(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) > 0
 }
 
 export function AgentChatPanel() {
@@ -66,7 +71,19 @@ export function AgentChatPanel() {
   const sidebarWidth = useAgentChatStore((state) => state.sidebarWidth)
   const toggleSidebar = useAgentChatStore((state) => state.toggleSidebar)
   const bootstrap = useAgentChatStore((state) => state.bootstrap)
+  const loadModelSettingsCatalog = useAgentChatStore(
+    (state) => state.loadModelSettingsCatalog,
+  )
   const selectedModelId = useAgentChatStore((state) => state.selectedModelId)
+  const modelSettingsCatalog = useAgentChatStore(
+    (state) => state.modelSettingsCatalog,
+  )
+  const modelContextWindowByModel = useAgentChatStore(
+    (state) => state.modelContextWindowByModel,
+  )
+  const activeModelContextWindow = useAgentChatStore(
+    (state) => state.activeModelContextWindow,
+  )
   const fxOpen = useFileExplorerStore((state) => state.fxOpen)
   const toggleFx = useFileExplorerStore((state) => state.toggleFx)
   const setFxOpen = useFileExplorerStore((state) => state.setFxOpen)
@@ -118,7 +135,8 @@ export function AgentChatPanel() {
   useEffect(() => {
     if (!isOpen) return
     void bootstrap()
-  }, [isOpen, bootstrap])
+    void loadModelSettingsCatalog()
+  }, [isOpen, bootstrap, loadModelSettingsCatalog])
 
   useEffect(() => {
     if (!isOpen) return
@@ -172,6 +190,20 @@ export function AgentChatPanel() {
   // right-edge stack disappears, and when the sidebar is collapsed the chat
   // panel slides flush against the right edge (no 24px rail residue).
   const panelRightOffset = sidebarOpen ? sidebarWidth : 0
+  const canonicalModel = resolveModelSelection(selectedModelId).model
+  const runtimeModel = modelSettingsCatalog?.models.find(
+    (model) => model.id === canonicalModel,
+  )
+  const rememberedContextWindow = modelContextWindowByModel[canonicalModel]
+  const runtimeDefaultContextWindow =
+    runtimeModel?.capabilities.defaultContextWindow
+  const fallbackContextWindow = isValidContextWindow(activeModelContextWindow)
+    ? activeModelContextWindow
+    : isValidContextWindow(rememberedContextWindow)
+      ? rememberedContextWindow
+      : isValidContextWindow(runtimeDefaultContextWindow)
+        ? runtimeDefaultContextWindow
+        : defaultContextWindowForModel(canonicalModel)
 
   if (!isOpen) {
     return (
@@ -222,7 +254,10 @@ export function AgentChatPanel() {
                     : undefined
                 }
               />
-              <TokenUsageMeter usage={tokenUsage} />
+              <TokenUsageMeter
+                usage={tokenUsage}
+                fallbackContextWindow={fallbackContextWindow}
+              />
               <button
                 type="button"
                 aria-label={fxOpen ? 'Hide files' : 'Show files'}

@@ -1,8 +1,14 @@
 import { ipcMain } from 'electron'
 import { isPlanReasoningEffort } from '../../shared/collaborationMode'
+import {
+  isConcreteModelReasoningEffort,
+  modelContextOptions,
+} from '../../shared/modelSettings'
 import type {
   AgentCollaborationModeUpdatePayload,
   AgentCollaborationModeUpdateResult,
+  AgentModelContextApplyPayload,
+  AgentSendMessagePayload,
   AgentToolResponse,
   CodexApprovalResponse,
   ImageTaskUpdate,
@@ -56,6 +62,9 @@ const AGENT_HANDLE_CHANNELS = [
   'agent:compact-start',
   'agent:collaboration-capabilities',
   'agent:collaboration-update',
+  'agent:model-settings-catalog',
+  'agent:model-context-get',
+  'agent:model-context-apply',
   'agent:plugin-list',
   'agent:plugin-installed',
   'agent:plugin-read',
@@ -146,12 +155,14 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
     ipcMain.removeAllListeners(channel)
   }
 
-  ipcMain.handle('agent:send-message', async (_event, payload) =>
-    (await getManager()).sendMessage(payload),
-  )
-  ipcMain.handle('agent:turn-steer', async (_event, payload) =>
-    (await getManager()).steer(payload),
-  )
+  ipcMain.handle('agent:send-message', async (_event, payload: unknown) => {
+    const validated = validateAgentTurnPayload(payload, 'Send message')
+    return (await getManager()).sendMessage(validated)
+  })
+  ipcMain.handle('agent:turn-steer', async (_event, payload: unknown) => {
+    const validated = validateAgentTurnPayload(payload, 'Turn steer')
+    return (await getManager()).steer(validated)
+  })
   ipcMain.handle('agent:cancel', async (_event, payload) => {
     await (await getManager()).cancel(payload.threadId)
     return { success: true }
@@ -322,6 +333,15 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
       } satisfies AgentCollaborationModeUpdateResult
     }
   })
+  ipcMain.handle('agent:model-settings-catalog', async () =>
+    (await getManager()).getModelSettingsCatalogRpc(),
+  )
+  ipcMain.handle('agent:model-context-get', async () =>
+    (await getManager()).getModelContextConfigRpc(),
+  )
+  ipcMain.handle('agent:model-context-apply', async (_event, payload: unknown) =>
+    (await getManager()).applyModelContextRpc(validateModelContextApplyPayload(payload)),
+  )
 
   // ----- Codex native plugin / marketplace / apps / external-agent-import -----
   ipcMain.handle('agent:plugin-list', async (_event, params?: unknown) =>
@@ -378,7 +398,7 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
     try {
       const validated = validateWorkspaceId(id, 'Provider id')
       const result = await (await getManager()).setActiveProvider(validated)
-      return { ok: true as const, activeId: result.activeId }
+      return result
     } catch (err) {
       return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
     }
@@ -388,11 +408,11 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
     async (_event, id: unknown, key: unknown) => {
       try {
         const validated = validateWorkspaceId(id, 'Provider id')
-        await (await getManager()).setProviderApiKey(
+        const result = await (await getManager()).setProviderApiKey(
           validated,
           typeof key === 'string' ? key : '',
         )
-        return { ok: true as const }
+        return result
       } catch (err) {
         return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
       }
@@ -414,8 +434,11 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
       try {
         const validatedId = validateWorkspaceId(id, 'Provider id')
         const validatedPatch = validateCustomProviderPatch(patch)
-        await (await getManager()).updateCustomProvider(validatedId, validatedPatch)
-        return { ok: true as const }
+        const result = await (await getManager()).updateCustomProvider(
+          validatedId,
+          validatedPatch,
+        )
+        return result
       } catch (err) {
         return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
       }
@@ -425,7 +448,7 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
     try {
       const validated = validateWorkspaceId(id, 'Provider id')
       const result = await (await getManager()).removeCustomProvider(validated)
-      return { ok: true as const, activeId: result.activeId }
+      return result
     } catch (err) {
       return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
     }
@@ -495,6 +518,25 @@ function validateApprovalResponse(payload: unknown): CodexApprovalResponse {
   }
 }
 
+function validateAgentTurnPayload(
+  value: unknown,
+  label: string,
+): AgentSendMessagePayload {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${label} payload must be an object`)
+  }
+  const input = value as Record<string, unknown>
+  if (
+    input.reasoningEffort !== undefined
+    && !isConcreteModelReasoningEffort(input.reasoningEffort)
+  ) {
+    throw new Error(
+      `${label} reasoningEffort must be a supported concrete model effort`,
+    )
+  }
+  return value as AgentSendMessagePayload
+}
+
 function validateThreadId(value: unknown): string {
   if (typeof value !== 'string' || value.trim().length === 0) {
     throw new Error('Codex thread id must be a non-empty string')
@@ -527,15 +569,15 @@ function validateCollaborationModeUpdate(value: unknown): AgentCollaborationMode
     throw new Error('Collaboration update mode must be default or plan')
   }
   if (!isPlanReasoningEffort(input.planReasoningEffort)) {
-    throw new Error(
-      'Collaboration update planReasoningEffort must be auto, low, medium, high, or xhigh',
-    )
+    throw new Error('Collaboration update planReasoningEffort must be a supported Plan effort')
   }
   if (
     input.defaultReasoningEffort !== undefined &&
-    typeof input.defaultReasoningEffort !== 'string'
+    !isConcreteModelReasoningEffort(input.defaultReasoningEffort)
   ) {
-    throw new Error('Collaboration update defaultReasoningEffort must be a string when provided')
+    throw new Error(
+      'Collaboration update defaultReasoningEffort must be a supported concrete model effort',
+    )
   }
   if (
     typeof input.requestVersion !== 'number' ||
@@ -546,6 +588,51 @@ function validateCollaborationModeUpdate(value: unknown): AgentCollaborationMode
     throw new Error('Collaboration update requestVersion must be a non-negative integer')
   }
   return value as AgentCollaborationModeUpdatePayload
+}
+
+function validateModelContextApplyPayload(value: unknown): AgentModelContextApplyPayload {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Model context apply payload must be a plain object')
+  }
+  const prototype = Object.getPrototypeOf(value)
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new Error('Model context apply payload must be a plain object')
+  }
+
+  const allowedKeys = new Set(['threadId', 'model', 'contextWindow', 'requestVersion'])
+  const ownKeys = Reflect.ownKeys(value)
+  if (
+    ownKeys.some((key) => typeof key !== 'string' || !allowedKeys.has(key))
+    || !Object.hasOwn(value, 'model')
+    || !Object.hasOwn(value, 'contextWindow')
+    || !Object.hasOwn(value, 'requestVersion')
+  ) {
+    throw new Error('Model context apply payload contains invalid fields')
+  }
+
+  const input = value as Record<string, unknown>
+  if (typeof input.model !== 'string' || input.model.trim().length === 0) {
+    throw new Error('Model context model must be a non-empty string')
+  }
+  if (
+    !Number.isSafeInteger(input.contextWindow)
+    || (input.contextWindow as number) <= 0
+    || !modelContextOptions(input.model.trim()).some(
+      (option) => option.value === input.contextWindow,
+    )
+  ) {
+    throw new Error('Model context contextWindow is unsupported')
+  }
+  if (!Number.isSafeInteger(input.requestVersion) || (input.requestVersion as number) < 0) {
+    throw new Error('Model context requestVersion must be a non-negative safe integer')
+  }
+  if (
+    input.threadId !== undefined
+    && (typeof input.threadId !== 'string' || input.threadId.trim().length === 0)
+  ) {
+    throw new Error('Model context threadId must be a non-empty string')
+  }
+  return value as AgentModelContextApplyPayload
 }
 
 function validateListThreadsParams(

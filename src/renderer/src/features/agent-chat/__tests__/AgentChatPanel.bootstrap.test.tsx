@@ -1,8 +1,12 @@
+import { StrictMode } from 'react'
 import { act, cleanup, render, screen, fireEvent } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentChatPanel } from '../AgentChatPanel'
 import { useAgentChatStore } from '../store'
-import type { CodexApprovalRequest } from '../../../../../types/agent'
+import type {
+  AgentModelSettingsCatalog,
+  CodexApprovalRequest,
+} from '../../../../../types/agent'
 
 let approvalRequestHandler: ((request: CodexApprovalRequest) => void) | undefined
 
@@ -23,6 +27,9 @@ const fakeAgent = {
   testConnection: vi.fn(),
   getSessionStatus: vi.fn(),
   setSessionConfig: vi.fn(),
+  getModelSettingsCatalog: vi.fn(),
+  getModelContextConfig: vi.fn(),
+  applyModelContext: vi.fn(),
 }
 
 beforeEach(() => {
@@ -50,6 +57,21 @@ beforeEach(() => {
     webSearch: 'live',
     writableRoots: [],
   })
+  fakeAgent.getModelSettingsCatalog.mockResolvedValue({
+    ok: true,
+    data: {
+      provider: 'apiyi',
+      source: 'fallback',
+      models: [],
+    },
+  })
+  fakeAgent.getModelContextConfig.mockResolvedValue({
+    ok: true,
+    data: {
+      modelContextWindow: 200_000,
+      modelAutoCompactTokenLimit: 180_000,
+    },
+  })
   useAgentChatStore.setState({
     isOpen: true,
     messages: [],
@@ -72,8 +94,81 @@ afterEach(() => {
 
 describe('AgentChatPanel + sidebar integration', () => {
   it('calls bootstrap() on first open', () => {
-    render(<AgentChatPanel />)
+    render(
+      <StrictMode>
+        <AgentChatPanel />
+      </StrictMode>,
+    )
     expect(fakeAgent.listThreads).toHaveBeenCalledTimes(1)
+    expect(fakeAgent.getModelSettingsCatalog).toHaveBeenCalledTimes(1)
+    expect(fakeAgent.getModelContextConfig).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses the main confirmed snapshot before local or model defaults for token fallback', async () => {
+    const catalog: AgentModelSettingsCatalog = {
+      provider: 'apiyi',
+      source: 'codex',
+      models: [{
+        id: 'gpt-5.6-sol',
+        displayName: 'GPT-5.6 Sol',
+        description: 'Frontier coding model',
+        hidden: false,
+        isDefault: true,
+        capabilities: {
+          model: 'gpt-5.6-sol',
+          provider: 'apiyi',
+          defaultContextWindow: 372_000,
+          contextOptions: [
+            { value: 372_000, experimental: false },
+            { value: 1_000_000, experimental: true },
+          ],
+          defaultReasoningEffort: 'medium',
+          supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+        },
+      }],
+    }
+    fakeAgent.getModelSettingsCatalog.mockResolvedValue({ ok: true, data: catalog })
+    fakeAgent.getModelContextConfig.mockResolvedValue({
+      ok: true,
+      data: {
+        modelContextWindow: 1_000_000,
+        modelAutoCompactTokenLimit: 900_000,
+      },
+    })
+    useAgentChatStore.getState().invalidateCollaborationCapabilities()
+    useAgentChatStore.setState({
+      selectedModelId: 'gpt-5.6-sol',
+      activeModelContextWindow: 372_000,
+      modelContextWindowByModel: { 'gpt-5.6-sol': 372_000 },
+      tokenUsage: {
+        inputTokens: 100_000,
+        outputTokens: 0,
+        contextWindow: Number.NaN,
+      },
+    })
+    await act(async () => {
+      await useAgentChatStore.getState().loadModelSettingsCatalog()
+    })
+    expect(useAgentChatStore.getState().activeModelContextWindow).toBe(1_000_000)
+
+    render(<AgentChatPanel />)
+
+    expect(screen.getByRole('button', {
+      name: 'Context: 100000 / 1000000 tokens (9%)',
+    })).toBeTruthy()
+
+    act(() => {
+      useAgentChatStore.setState({
+        tokenUsage: {
+          inputTokens: 100_000,
+          outputTokens: 0,
+          contextWindow: 100_000,
+        },
+      })
+    })
+    expect(screen.getByRole('button', {
+      name: 'Context: 100000 / 100000 tokens (100%)',
+    })).toBeTruthy()
   })
 
   it('sets right offset = sidebarWidth when sidebar is open', () => {

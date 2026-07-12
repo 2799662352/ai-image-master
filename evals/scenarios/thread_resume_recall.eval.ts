@@ -11,10 +11,9 @@ import { runResumeCore, runResumeRecall } from '../harness/resumeClient'
  * Two tiers (each self-skips when its prerequisites are absent):
  *
  *   CORE   (offline; needs only the bundled binary)
- *     Proves `thread/resume` is a WIRED RPC on the shipped binary that fails
- *     GRACEFULLY for a thread that was never persisted (zero-turn threads aren't
- *     written to disk) — i.e. the safe-fallback the fix relies on. A "method not
- *     found" / hang would fail; a graceful domain error or a resolve both pass.
+ *     Starts an unauthenticated turn to persist session metadata, kills the
+ *     first app-server, then requires a fresh generation to resume the exact
+ *     same thread id from disk.
  *
  *   MEMORY (live; needs eval creds — auto-uses the app's saved provider key)
  *     The true end-to-end proof: turn 1 plants a secret token, the app-server is
@@ -24,16 +23,15 @@ import { runResumeCore, runResumeRecall } from '../harness/resumeClient'
 
 describe.skipIf(!hasCodexBinary())('thread/resume wiring (offline)', () => {
   it(
-    'is a wired RPC that resolves or fails gracefully after an app-server restart',
+    'restores the same persisted thread after an app-server restart',
     async () => {
       const result = await runResumeCore({
         binaryPath: resolveCodexBinaryPath(),
         cwd: process.cwd(),
         log: (m) => console.log(`[resume-core] ${m}`),
       })
-      // Either outcome proves the method exists and didn't hang; runResumeCore
-      // throws only when the binary lacks thread/resume entirely.
-      expect(['resolved', 'graceful-error']).toContain(result.resumeOutcome)
+      expect(result.rolloutPersisted).toBe(true)
+      expect(result.resumeOutcome).toBe('resolved')
     },
     120_000,
   )

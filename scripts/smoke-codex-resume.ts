@@ -11,12 +11,10 @@
 // Two tiers, picked automatically:
 //
 //   CORE  (always, OFFLINE — no API key needed)
-//     A: spawn → initialize → thread/start → threadId; kill A;
-//     B: spawn (same CODEX_HOME) → thread/resume{threadId}. A zero-turn thread
-//     isn't persisted to disk (the rollout is written on the first turn), so
-//     resume returns a GRACEFUL domain error — proving the RPC is wired AND the
-//     safe-fallback path the fix relies on. (FAIL only if the method is missing
-//     or hangs.)
+//     A: spawn → initialize → thread/start → start an unauthenticated turn so
+//     Codex persists session metadata + the user message; kill A.
+//     B: spawn (same CODEX_HOME) → thread/resume{threadId}. PASS only when the
+//     exact persisted thread is reopened by the fresh generation.
 //
 //   MEMORY (only when OPENAI_API_KEY / SMOKE_CODEX_API_KEY is set — needs network)
 //     A: thread/start → turn "remember SECRET=…" (PERSISTS the rollout); kill A;
@@ -49,12 +47,12 @@ async function main(): Promise<void> {
   const binaryPath = resolveCodexBinary(resourceRoot)
 
   // ── CORE (offline) ──
-  const core = await runResumeCore({ binaryPath, cwd: projectRoot, portA: 7611, portB: 7612, log })
-  log(
-    core.resumeOutcome === 'resolved'
-      ? 'CORE ✅ PASS — thread/resume reopened a persisted thread from disk'
-      : 'CORE ✅ PASS — thread/resume is wired and fails GRACEFULLY for unpersisted threads (safe-fallback proven)',
-  )
+  const core = await runResumeCore({
+    binaryPath,
+    cwd: projectRoot,
+    log,
+  })
+  log('CORE ✅ PASS — thread/resume reopened the persisted thread from disk')
 
   // ── MEMORY (online) ──
   const apiKey = (process.env.SMOKE_CODEX_API_KEY || process.env.OPENAI_API_KEY || '').trim()
@@ -80,8 +78,6 @@ async function main(): Promise<void> {
     model: provider.model!,
     cwd: projectRoot,
     secret: SECRET,
-    portA: 7621,
-    portB: 7622,
     log,
   })
   if (!memory.recalled) {
@@ -91,7 +87,12 @@ async function main(): Promise<void> {
   log('DONE')
 }
 
-main().catch((error) => {
-  console.error('[resume-smoke] FAIL:', error instanceof Error ? error.message : error)
-  process.exit(1)
-})
+if (
+  process.argv[1]
+  && path.resolve(process.argv[1]) === path.resolve(__filename)
+) {
+  main().catch((error) => {
+    console.error('[resume-smoke] FAIL:', error instanceof Error ? error.message : error)
+    process.exit(1)
+  })
+}

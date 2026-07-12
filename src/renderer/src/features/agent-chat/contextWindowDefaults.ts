@@ -1,3 +1,7 @@
+import { UNKNOWN_MODEL_CONTEXT_WINDOW } from '../../../../shared/modelSettings'
+
+export { UNKNOWN_MODEL_CONTEXT_WINDOW }
+
 /**
  * Renderer-side fallback for the model's hard context window in tokens.
  *
@@ -7,10 +11,10 @@
  * the field — we use this constant so the donut/percent UI can keep
  * functioning instead of falling back to the raw token label.
  *
- * Keep in sync with the `model_context_window` value in
- * `src/main/agent/codexLaunch.ts` (currently 200_000).
+ * One-release compatibility alias for existing callers and tests. New model
+ * capability code should use `UNKNOWN_MODEL_CONTEXT_WINDOW` directly.
  */
-export const DEFAULT_MODEL_CONTEXT_WINDOW = 200_000
+export const DEFAULT_MODEL_CONTEXT_WINDOW = UNKNOWN_MODEL_CONTEXT_WINDOW
 
 /**
  * Fixed floor Codex reserves for the always-resident system prompt + tool

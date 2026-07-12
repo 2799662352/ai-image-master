@@ -48,6 +48,13 @@ async function startFakeCodexServer(): Promise<FakeCodexServer> {
               supportsPersonality: true,
               isDefault: true,
               upgrade: null,
+              additionalSpeedTiers: ['fast'],
+              defaultServiceTier: 'priority',
+              serviceTiers: [{
+                id: 'priority',
+                name: 'Priority',
+                description: 'Fastest available tier',
+              }],
             }],
             nextCursor: null,
           },
@@ -105,7 +112,26 @@ describe('CodexProtocolClient model catalog and selection', () => {
 
     const response = await client.listModels({ includeHidden: false, limit: 20 })
 
-    expect(response.data[0].model).toBe('gpt-5.6-sol')
+    expect(response.data[0]).toEqual({
+      id: 'gpt-5.6-sol',
+      model: 'gpt-5.6-sol',
+      displayName: 'GPT-5.6-Sol',
+      description: 'Latest frontier agentic coding model.',
+      hidden: false,
+      supportedReasoningEfforts: [],
+      defaultReasoningEffort: 'low',
+      inputModalities: ['text', 'image'],
+      supportsPersonality: true,
+      isDefault: true,
+      upgrade: null,
+      additionalSpeedTiers: ['fast'],
+      defaultServiceTier: 'priority',
+      serviceTiers: [{
+        id: 'priority',
+        name: 'Priority',
+        description: 'Fastest available tier',
+      }],
+    })
     expect(server.received.find((message) => message.method === 'model/list')).toMatchObject({
       params: { includeHidden: false, limit: 20 },
     })

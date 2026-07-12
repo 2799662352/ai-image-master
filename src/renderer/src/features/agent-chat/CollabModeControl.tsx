@@ -34,6 +34,7 @@ const EFFORT_LABELS: Record<PlanReasoningEffort, string> = {
   medium: 'Medium',
   high: 'High',
   xhigh: 'Extra high',
+  max: 'Max',
 }
 
 const EFFORT_DESCRIPTIONS: Record<ConcretePlanReasoningEffort, string> = {
@@ -41,6 +42,7 @@ const EFFORT_DESCRIPTIONS: Record<ConcretePlanReasoningEffort, string> = {
   medium: '平衡计划深度、用量与延迟',
   high: '更深入；可能增加用量与延迟',
   xhigh: '最深入；可能显著增加用量与延迟',
+  max: '最大推理深度；仅在当前模型与 Provider 支持时可用',
 }
 
 const OPTION_KEYS = [
@@ -116,11 +118,13 @@ export function CollabModeControl({ disabled = false }: CollabModeControlProps) 
   )
 
   const effortOptions = useMemo<EffortOption[]>(() => {
-    const planDefaultEffort = capabilities?.planDefaultEffort || 'medium'
+    const planDefaultEffort = capabilities?.planDefaultEffort
     const autoDescription =
       capabilities?.source === 'codex'
-        ? `跟随 Codex Plan 预设 · 当前 ${planDefaultEffort}`
-        : `默认兼容值 · ${planDefaultEffort}（未读取官方预设）`
+        ? planDefaultEffort
+          ? `跟随 Codex Plan 预设 · 当前 ${planDefaultEffort}`
+          : '跟随 Codex Plan 预设 · 当前未强制推理强度'
+        : '未读取官方预设 · 当前未强制推理强度'
 
     return [
       {
