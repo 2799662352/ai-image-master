@@ -2173,8 +2173,14 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       before.modelContextWindowByModel[canonicalModel]
       ?? catalogRow?.capabilities.defaultContextWindow
       ?? defaultContextWindowForModel(canonicalModel)
+    const contextIntentInProgress =
+      before.modelContextPending !== undefined
+      || activeModelContextIntent !== undefined
     if (
-      targetContextWindow !== before.activeModelContextWindow
+      (
+        targetContextWindow !== before.activeModelContextWindow
+        || contextIntentInProgress
+      )
       && !await applyModelContextForModel(
         get,
         set,
