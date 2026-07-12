@@ -137,6 +137,16 @@ interface ResolvedCollaborationCapabilities {
   capabilities: AgentCollaborationCapabilities
 }
 
+interface CollaborationCapabilityOwner {
+  providerId: string
+  backendEpoch: number | undefined
+}
+
+interface BuiltCollaborationMode {
+  collaborationMode: CodexCollaborationMode
+  owner?: CollaborationCapabilityOwner
+}
+
 /**
  * Prepend a one-shot "[Attached files at these local paths:]" block to the
  * user's prompt when there are attachments. Without this the agent has no
@@ -1033,9 +1043,9 @@ export class AgentManager {
         requestVersion: payload.requestVersion,
       }
     }
-    let collaborationMode: CodexCollaborationMode
+    let builtCollaborationMode: BuiltCollaborationMode
     try {
-      collaborationMode = await this.buildCollaborationMode(
+      builtCollaborationMode = await this.buildCollaborationMode(
         payload.mode,
         payload.model,
         payload.defaultReasoningEffort,
@@ -1072,9 +1082,16 @@ export class AgentManager {
     }
 
     try {
+      builtCollaborationMode = await this.stabilizeCollaborationMode(
+        builtCollaborationMode,
+        payload.mode,
+        payload.model,
+        payload.defaultReasoningEffort,
+        payload.planReasoningEffort,
+      )
       await this.backend.updateThreadSettings({
         threadId: codexThreadId,
-        collaborationMode,
+        collaborationMode: builtCollaborationMode.collaborationMode,
       })
       this.syncCollaborationProcessCaches()
       this.threadSettingsUpdateSupport = 'supported'
@@ -1646,9 +1663,9 @@ export class AgentManager {
       return null
     })
     if (!assembled) return { threadId: payload.threadId ?? 'pending' }
-    const { threadId, input, userTimelineItems } = assembled
+    const { threadId, input, userTimelineItems, collaborationModeOwner } = assembled
 
-    void this.forwardEvents(threadId, input).catch((error: unknown) => {
+    void this.forwardEvents(threadId, input, collaborationModeOwner).catch((error: unknown) => {
       this.emitEvent({
         type: 'error',
         threadId,
@@ -1709,7 +1726,7 @@ export class AgentManager {
       return null
     })
     if (!assembled) return { threadId: threadIdIn }
-    const { threadId, input, userTimelineItems } = assembled
+    const { threadId, input, userTimelineItems, collaborationModeOwner } = assembled
     const codexThreadId = this.codexThreadIdByDbThreadId.get(threadId) ?? threadId
     try {
       await this.backend.steer(codexThreadId, input)
@@ -1731,7 +1748,7 @@ export class AgentManager {
             message: '上一回合刚好已结束,插话已作为新一轮消息发送。',
           },
         })
-        void this.forwardEvents(threadId, input).catch((err: unknown) => {
+        void this.forwardEvents(threadId, input, collaborationModeOwner).catch((err: unknown) => {
           this.emitEvent({
             type: 'error',
             threadId,
@@ -1763,12 +1780,13 @@ export class AgentManager {
     model: string
     input: AgentInput
     userTimelineItems: TimelineItem[]
+    collaborationModeOwner?: CollaborationCapabilityOwner
   }> {
     if (!this.store || !this.attachments) {
       throw new Error('AgentManager.assembleTurnInput called without store/attachments')
     }
     const model = payload.model?.trim() || DEFAULT_AGENT_MODEL
-    const collaborationMode = payload.collaborationModeKind === undefined
+    const builtCollaborationMode = payload.collaborationModeKind === undefined
       ? undefined
       : await this.buildCollaborationMode(
           payload.collaborationModeKind,
@@ -1915,9 +1933,17 @@ export class AgentManager {
     // field). Explicit Plan and Default are both persistent mode selections,
     // so both get a complete wire object. Only a genuinely absent KIND keeps
     // legacy callers byte-compatible by omitting the field.
-    if (collaborationMode !== undefined) input.collaborationMode = collaborationMode
+    if (builtCollaborationMode !== undefined) {
+      input.collaborationMode = builtCollaborationMode.collaborationMode
+    }
 
-    return { threadId: thread.id, model, input, userTimelineItems }
+    return {
+      threadId: thread.id,
+      model,
+      input,
+      userTimelineItems,
+      collaborationModeOwner: builtCollaborationMode?.owner,
+    }
   }
 
   /**
@@ -1951,14 +1977,16 @@ export class AgentManager {
     model: string,
     defaultEffort: string | undefined,
     planPreference: PlanReasoningEffort,
-  ): Promise<CodexCollaborationMode> {
+  ): Promise<BuiltCollaborationMode> {
     if (mode === 'default') {
       return {
-        mode,
-        settings: {
-          model,
-          reasoning_effort: defaultEffort ?? null,
-          developer_instructions: null,
+        collaborationMode: {
+          mode,
+          settings: {
+            model,
+            reasoning_effort: defaultEffort ?? null,
+            developer_instructions: null,
+          },
         },
       }
     }
@@ -1983,13 +2011,62 @@ export class AgentManager {
         : planPreference
 
     return {
-      mode,
-      settings: {
-        model,
-        reasoning_effort: reasoningEffort,
-        developer_instructions: null,
+      collaborationMode: {
+        mode,
+        settings: {
+          model,
+          reasoning_effort: reasoningEffort,
+          developer_instructions: null,
+        },
+      },
+      owner: {
+        providerId: resolved.capabilities.providerId,
+        backendEpoch: resolved.capabilities.backendEpoch,
       },
     }
+  }
+
+  private isCollaborationCapabilityOwnerCurrent(
+    owner: CollaborationCapabilityOwner,
+  ): boolean {
+    return (
+      this.activeProviderId === owner.providerId
+      && this.backend.currentEpoch?.() === owner.backendEpoch
+    )
+  }
+
+  private async stabilizeCollaborationMode(
+    built: BuiltCollaborationMode,
+    mode: CollaborationModeKind,
+    model: string,
+    defaultEffort: string | undefined,
+    planPreference: PlanReasoningEffort,
+  ): Promise<BuiltCollaborationMode> {
+    if (
+      mode === 'default'
+      || (
+        built.owner !== undefined
+        && this.isCollaborationCapabilityOwnerCurrent(built.owner)
+      )
+    ) {
+      return built
+    }
+
+    const rebuilt = await this.buildCollaborationMode(
+      mode,
+      model,
+      defaultEffort,
+      planPreference,
+    )
+    if (
+      rebuilt.owner !== undefined
+      && !this.isCollaborationCapabilityOwnerCurrent(rebuilt.owner)
+    ) {
+      throw new Error(
+        'Plan capability owner changed repeatedly before backend submission; please retry',
+      )
+    }
+    return rebuilt
   }
 
   private buildUserTimelineItems(
@@ -2339,18 +2416,44 @@ export class AgentManager {
     }
   }
 
-  private async forwardEvents(dbThreadId: string, input: AgentInput): Promise<void> {
+  private async forwardEvents(
+    dbThreadId: string,
+    input: AgentInput,
+    collaborationModeOwner?: CollaborationCapabilityOwner,
+  ): Promise<void> {
     let canRetryPoisonedThread = true
+    let currentInput = input
+    let currentCollaborationModeOwner = collaborationModeOwner
 
     while (true) {
       const codexThreadId = await this.resolveCodexThreadForSend(dbThreadId)
+      if (
+        currentInput.collaborationModeKind !== undefined
+        && currentInput.collaborationMode !== undefined
+      ) {
+        const stable = await this.stabilizeCollaborationMode(
+          {
+            collaborationMode: currentInput.collaborationMode,
+            owner: currentCollaborationModeOwner,
+          },
+          currentInput.collaborationModeKind,
+          currentInput.model,
+          currentInput.reasoningEffort,
+          currentInput.planReasoningEffort ?? 'auto',
+        )
+        currentInput = {
+          ...currentInput,
+          collaborationMode: stable.collaborationMode,
+        }
+        currentCollaborationModeOwner = stable.owner
+      }
       // Accumulate the assistant turn's timeline items in main-process memory so
       // we can write a single AgentMessage row at turn_completed time. Mirrors
       // (a tiny subset of) the renderer's `applyEvent` reducer; kept inline to
       // avoid a circular renderer→main import.
       let assistantItems: TimelineItem[] = []
       try {
-        for await (const event of this.backend.send(codexThreadId, input)) {
+        for await (const event of this.backend.send(codexThreadId, currentInput)) {
           if (event.type === 'thread_created' && event.threadId) {
             this.rememberCodexThread(dbThreadId, event.threadId)
           }
