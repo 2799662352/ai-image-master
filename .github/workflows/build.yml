@@ -10,18 +10,8 @@ on:
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            platform: win
-          - os: macos-latest
-            platform: mac
-          - os: ubuntu-latest
-            platform: linux
-
-    runs-on: ${{ matrix.os }}
+    name: Build (Windows)
+    runs-on: windows-latest
 
     steps:
       - name: Checkout code
@@ -39,22 +29,28 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Fetch Windows runtime binaries
+        run: |
+          pnpm codex:fetch
+          pnpm ffmpeg:fetch
+          pnpm docker-mcp:fetch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build Electron app
-        run: pnpm run build:${{ matrix.platform }}
+        run: pnpm run build:win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.platform }}-build
+          name: win-build
           path: |
-            dist/*.exe
-            dist/*.dmg
-            dist/*.zip
-            dist/*.AppImage
-            dist/*.deb
-          if-no-files-found: ignore
+            release/*.exe
+            release/*.blockmap
+            release/latest*.yml
+          if-no-files-found: error
           retention-days: 7
 
   release:
@@ -78,10 +74,8 @@ jobs:
         with:
           files: |
             artifacts/**/*.exe
-            artifacts/**/*.dmg
-            artifacts/**/*.zip
-            artifacts/**/*.AppImage
-            artifacts/**/*.deb
+            artifacts/**/*.blockmap
+            artifacts/**/latest*.yml
           generate_release_notes: true
           draft: false
           prerelease: false
