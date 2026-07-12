@@ -53,6 +53,16 @@ describe('model settings capabilities', () => {
     })
   })
 
+  it('keeps max for gpt-5.5 on non-Right Code providers', () => {
+    expect(
+      mergeModelSettingsCapabilities({
+        model: 'gpt-5.5',
+        provider: 'apiyi',
+        supportedReasoningEfforts: ['max', 'ultra'],
+      }).supportedReasoningEfforts,
+    ).toEqual(['max'])
+  })
+
   it('whitelists and normalises upstream reasoning efforts', () => {
     expect(
       mergeModelSettingsCapabilities({
@@ -89,6 +99,17 @@ describe('model settings capabilities', () => {
     expect(defaultContextWindowForModel(model)).toBe(expected)
   })
 
+  it.each(['constructor', 'toString', '__proto__'])(
+    'treats Object.prototype key %s as an unknown model',
+    (model) => {
+      expect(defaultContextWindowForModel(model)).toBe(UNKNOWN_MODEL_CONTEXT_WINDOW)
+      expect(modelContextOptions(model)).toEqual([
+        { value: UNKNOWN_MODEL_CONTEXT_WINDOW, experimental: false },
+        { value: EXPERIMENTAL_CONTEXT_WINDOW, experimental: true },
+      ])
+    },
+  )
+
   it.each([
     ['gpt-5.6-sol', 372_000],
     ['gpt-5.6-terra', 372_000],
@@ -118,7 +139,19 @@ describe('model settings capabilities', () => {
     expect(migrateLegacyModelSelection(id)).toEqual(expected)
   })
 
+  it.each(['constructor', 'toString', '__proto__'])(
+    'treats Object.prototype key %s as an unknown legacy selection',
+    (id) => {
+      expect(migrateLegacyModelSelection(id)).toEqual({
+        model: id,
+        reasoningEffort: 'auto',
+        migrated: false,
+      })
+    },
+  )
+
   it.each([
+    [11, 9],
     [200_000, 180_000],
     [272_000, 244_800],
     [372_000, 334_800],

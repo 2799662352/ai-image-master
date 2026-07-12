@@ -34,23 +34,25 @@ export interface LegacyModelSelection {
 
 const MODEL_REASONING_EFFORT_SET: ReadonlySet<string> = new Set(MODEL_REASONING_EFFORTS)
 
-const VERIFIED_CONTEXTS: Readonly<Record<string, number>> = Object.freeze({
-  'gpt-5.6-sol': 372_000,
-  'gpt-5.6-terra': 372_000,
-  'gpt-5.6-luna': 372_000,
-  'gpt-5.5': 272_000,
-  'gpt-5.4': 272_000,
-  'gpt-5.4-mini': 272_000,
-})
+const VERIFIED_CONTEXTS: ReadonlyMap<string, number> = new Map([
+  ['gpt-5.6-sol', 372_000],
+  ['gpt-5.6-terra', 372_000],
+  ['gpt-5.6-luna', 372_000],
+  ['gpt-5.5', 272_000],
+  ['gpt-5.4', 272_000],
+  ['gpt-5.4-mini', 272_000],
+])
 
-const LEGACY_SELECTIONS: Readonly<Record<string, Omit<LegacyModelSelection, 'migrated'>>> =
-  Object.freeze({
-    'gpt-5.4-low': { model: 'gpt-5.4', reasoningEffort: 'low' },
-    'gpt-5.4-medium': { model: 'gpt-5.4', reasoningEffort: 'medium' },
-    'gpt-5.4-high': { model: 'gpt-5.4', reasoningEffort: 'high' },
-    'gpt-5.4-xhigh': { model: 'gpt-5.4', reasoningEffort: 'xhigh' },
-    'gpt-5.5-xhigh': { model: 'gpt-5.5', reasoningEffort: 'xhigh' },
-  })
+const LEGACY_SELECTIONS: ReadonlyMap<
+  string,
+  Omit<LegacyModelSelection, 'migrated'>
+> = new Map([
+  ['gpt-5.4-low', { model: 'gpt-5.4', reasoningEffort: 'low' }],
+  ['gpt-5.4-medium', { model: 'gpt-5.4', reasoningEffort: 'medium' }],
+  ['gpt-5.4-high', { model: 'gpt-5.4', reasoningEffort: 'high' }],
+  ['gpt-5.4-xhigh', { model: 'gpt-5.4', reasoningEffort: 'xhigh' }],
+  ['gpt-5.5-xhigh', { model: 'gpt-5.5', reasoningEffort: 'xhigh' }],
+])
 
 export function isModelReasoningEffort(value: unknown): value is ModelReasoningEffort {
   return (
@@ -60,7 +62,7 @@ export function isModelReasoningEffort(value: unknown): value is ModelReasoningE
 }
 
 export function defaultContextWindowForModel(model: string): number {
-  return VERIFIED_CONTEXTS[model] ?? UNKNOWN_MODEL_CONTEXT_WINDOW
+  return VERIFIED_CONTEXTS.get(model) ?? UNKNOWN_MODEL_CONTEXT_WINDOW
 }
 
 export function modelContextOptions(model: string): ModelContextOption[] {
@@ -101,8 +103,12 @@ export function mergeModelSettingsCapabilities(input: {
   }
 }
 
+/**
+ * Migrates only values read from legacy model-picker persistence.
+ * Storage version/source boundaries must decide whether a value is legacy.
+ */
 export function migrateLegacyModelSelection(id: string): LegacyModelSelection {
-  const legacy = LEGACY_SELECTIONS[id]
+  const legacy = LEGACY_SELECTIONS.get(id)
   return legacy
     ? { ...legacy, migrated: true }
     : { model: id, reasoningEffort: 'auto', migrated: false }
