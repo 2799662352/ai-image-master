@@ -946,6 +946,18 @@ function resolveOrdinaryModelSelection(
   )
 }
 
+function resolveModelSelectionForMode(
+  state: Pick<
+    AgentChatState,
+    'selectedModelId' | 'modelReasoningEffortByModel'
+  >,
+  mode: CollaborationModeKind,
+): ReturnType<typeof resolveModelSelection> {
+  return mode === 'plan'
+    ? resolveModelSelection(state.selectedModelId, 'auto')
+    : resolveOrdinaryModelSelection(state)
+}
+
 /**
  * Resolve the safe value that may cross the renderer/main boundary.
  * `planReasoningEffort` remains the durable user preference; an explicit
@@ -1885,7 +1897,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       }
     })
 
-    const modelSelection = resolveOrdinaryModelSelection(snapshot)
+    const modelSelection = resolveModelSelectionForMode(snapshot, kind)
     const payload: AgentCollaborationModeUpdatePayload = {
       threadId,
       mode: kind,
@@ -2465,7 +2477,10 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     if (state.isRunning) return
     if (!content && attachments.length === 0 && references.length === 0) return
 
-    const modelSelection = resolveOrdinaryModelSelection(state)
+    const modelSelection = resolveModelSelectionForMode(
+      state,
+      state.collabModeKind,
+    )
     const now = Date.now()
     const items: TimelineItem[] = []
     if (attachments.length > 0) {
@@ -2710,7 +2725,10 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     const mentions = resolveMentions(content, state.availablePluginMentions)
 
     try {
-      const modelSelection = resolveOrdinaryModelSelection(state)
+      const modelSelection = resolveModelSelectionForMode(
+        state,
+        state.collabModeKind,
+      )
       const result = await steer({
         threadId,
         content,

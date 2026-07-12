@@ -245,13 +245,20 @@ describe('send and steer collaboration payloads', () => {
     })
   })
 
-  it('uses ordinary model effort for steer without leaking it into the Plan preference', async () => {
+  it('isolates Plan request/send/steer from ordinary effort and restores it for Default', async () => {
+    updateCollaborationMode.mockImplementation(async (payload) => ({
+      ok: true,
+      data: {
+        compatibility: 'immediate',
+        requestVersion: payload.requestVersion,
+      },
+    }))
     useAgentChatStore.setState({
-      input: 'interrupt with max',
-      isRunning: true,
+      input: 'plan with high',
+      isRunning: false,
       selectedModelId: 'gpt-5.6-sol',
       modelReasoningEffortByModel: { 'gpt-5.6-sol': 'max' },
-      collabModeKind: 'plan',
+      collabModeKind: 'default',
       planReasoningEffort: 'high',
       collaborationCapabilities: {
         providerId: 'apiyi',
@@ -262,14 +269,55 @@ describe('send and steer collaboration payloads', () => {
       collaborationCapabilitiesModel: 'gpt-5.6-sol',
     } as never)
 
-    await useAgentChatStore.getState().steer()
-
-    expect(steer).toHaveBeenCalledWith(expect.objectContaining({
+    await useAgentChatStore.getState().requestCollabMode('plan')
+    const planRequest = updateCollaborationMode.mock.calls[0][0]
+    expect(planRequest).toMatchObject({
+      mode: 'plan',
       model: 'gpt-5.6-sol',
-      reasoningEffort: 'max',
+      planReasoningEffort: 'high',
+    })
+    expect(Object.prototype.hasOwnProperty.call(
+      planRequest,
+      'defaultReasoningEffort',
+    )).toBe(false)
+
+    await useAgentChatStore.getState().send()
+    const planSend = sendMessage.mock.calls[0][0]
+    expect(planSend).toMatchObject({
+      model: 'gpt-5.6-sol',
       collaborationModeKind: 'plan',
       planReasoningEffort: 'high',
-    }))
+    })
+    expect(Object.prototype.hasOwnProperty.call(planSend, 'reasoningEffort')).toBe(false)
+
+    useAgentChatStore.setState({ input: 'interrupt Plan' } as never)
+    await useAgentChatStore.getState().steer()
+    const planSteer = steer.mock.calls[0][0]
+    expect(planSteer).toMatchObject({
+      model: 'gpt-5.6-sol',
+      collaborationModeKind: 'plan',
+      planReasoningEffort: 'high',
+    })
+    expect(Object.prototype.hasOwnProperty.call(planSteer, 'reasoningEffort')).toBe(false)
+
+    useAgentChatStore.setState({ isRunning: false } as never)
+    await useAgentChatStore.getState().requestCollabMode('default')
+    expect(updateCollaborationMode.mock.calls[1][0]).toMatchObject({
+      mode: 'default',
+      model: 'gpt-5.6-sol',
+      defaultReasoningEffort: 'max',
+      planReasoningEffort: 'high',
+    })
+
+    useAgentChatStore.setState({ input: 'default with max' } as never)
+    await useAgentChatStore.getState().send()
+    expect(sendMessage.mock.calls[1][0]).toMatchObject({
+      model: 'gpt-5.6-sol',
+      reasoningEffort: 'max',
+      collaborationModeKind: 'default',
+      planReasoningEffort: 'high',
+    })
+
     expect(useAgentChatStore.getState().planReasoningEffort).toBe('high')
   })
 
@@ -327,10 +375,13 @@ describe('existing-thread confirmed ownership', () => {
       threadId: 'thread-1',
       mode: 'plan',
       model: 'gpt-5.5',
-      defaultReasoningEffort: 'xhigh',
       planReasoningEffort: 'auto',
       requestVersion: 1,
     })
+    expect(Object.prototype.hasOwnProperty.call(
+      updateCollaborationMode.mock.calls[0][0],
+      'defaultReasoningEffort',
+    )).toBe(false)
     expect(useAgentChatStore.getState()).toMatchObject({
       collabModeKind: 'plan',
       collabModeByThread: { 'thread-1': 'plan' },
@@ -353,6 +404,28 @@ describe('existing-thread confirmed ownership', () => {
       collabModePendingByThread: {},
     })
     expect(localStorage.getItem(THREAD_MODE_STORAGE_KEY)).toBe('{"thread-1":"plan"}')
+  })
+
+  it('omits ordinary effort when the target mode is Default with Auto selected', async () => {
+    useAgentChatStore.setState({
+      collabModeKind: 'plan',
+      collabModeByThread: { 'thread-1': 'plan' },
+      modelReasoningEffortByModel: { 'gpt-5.5': 'auto' },
+      planReasoningEffort: 'high',
+    } as never)
+
+    await useAgentChatStore.getState().requestCollabMode('default')
+
+    const payload = updateCollaborationMode.mock.calls[0][0]
+    expect(payload).toMatchObject({
+      mode: 'default',
+      model: 'gpt-5.5',
+      planReasoningEffort: 'high',
+    })
+    expect(Object.prototype.hasOwnProperty.call(
+      payload,
+      'defaultReasoningEffort',
+    )).toBe(false)
   })
 
   it('rejects mode changes while a turn is running', async () => {
@@ -933,9 +1006,12 @@ describe('Plan effort ownership and capabilities', () => {
     await useAgentChatStore.getState().requestCollabMode('plan')
     expect(updateCollaborationMode.mock.calls[1][0]).toMatchObject({
       mode: 'plan',
-      defaultReasoningEffort: 'xhigh',
       planReasoningEffort: 'low',
     })
+    expect(Object.prototype.hasOwnProperty.call(
+      updateCollaborationMode.mock.calls[1][0],
+      'defaultReasoningEffort',
+    )).toBe(false)
   })
 
   it('resets an unsupported saved effort to Auto and notifies only once', async () => {
