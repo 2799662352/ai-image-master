@@ -285,7 +285,7 @@ describe('CodexLocalBackend (with a fake codex app-server)', () => {
     expect(events.find((e) => e.type === 'turn_completed')).toBeDefined()
   })
 
-  it('defers restart while an active turn is running without closing the stream', async () => {
+  it('rejects restart while an active turn is running without closing the stream', async () => {
     const workspace = await createWorkspacePaths()
     try {
       server = await startFakeServer({ autoCompleteTurn: false })
@@ -307,7 +307,9 @@ describe('CodexLocalBackend (with a fake codex app-server)', () => {
       expect(server.receivedFromClient.some((m) => m.method === 'turn/start')).toBe(true)
 
       const socketBeforeRestart = server.socket()
-      await backend.restartCodex(workspace.paths)
+      await expect(backend.restartCodex(workspace.paths)).rejects.toThrow(
+        /current turn.*running.*retry/i,
+      )
 
       expect(backend.isConfigDirty()).toBe(true)
       expect(server.socket()).toBe(socketBeforeRestart)
@@ -341,10 +343,12 @@ describe('CodexLocalBackend (with a fake codex app-server)', () => {
     }
   })
 
-  it('defers restart while turn/start is still pending without closing the stream', async () => {
+  it('rejects restart while turn/start is still pending without closing the stream', async () => {
     const workspace = await createWorkspacePaths()
     try {
-      server = await startFakeServer({ delayTurnStartMs: 100 })
+      // Keep turn/start pending long enough to remain deterministic even when
+      // this suite runs in parallel with CPU-heavy renderer tests.
+      server = await startFakeServer({ delayTurnStartMs: 3_000 })
       backend = new CodexLocalBackend({ wsUrl: server.url })
       await backend.start()
 
@@ -363,7 +367,9 @@ describe('CodexLocalBackend (with a fake codex app-server)', () => {
       expect(server.receivedFromClient.some((m) => m.method === 'turn/start')).toBe(true)
 
       const socketBeforeRestart = server.socket()
-      await backend.restartCodex(workspace.paths)
+      await expect(backend.restartCodex(workspace.paths)).rejects.toThrow(
+        /current turn.*running.*retry/i,
+      )
 
       expect(backend.isConfigDirty()).toBe(true)
       expect(server.socket()).toBe(socketBeforeRestart)

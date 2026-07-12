@@ -181,6 +181,42 @@ describe('CodexProviderStore', () => {
     expect(await reopened.getApiKey(created.id)).toBe('')
   })
 
+  it('atomically restores a complete snapshot after an applied Provider transaction fails', async () => {
+    const store = makeStore()
+    const created = await store.addCustomProvider({
+      id: 'custom-rollback',
+      name: 'Before',
+      baseUrl: 'https://before.example.com/v1',
+      envKey: 'OPENAI_API_KEY',
+    })
+    await store.setSelectedId(created.id)
+    await store.setApiKey(created.id, 'sk-before')
+    const before = await store.load()
+
+    await store.updateCustomProvider(created.id, {
+      baseUrl: 'https://after.example.com/v1',
+    })
+    await store.setApiKey(created.id, 'sk-after')
+    await store.setSelectedId('apiyi')
+    await store.restore(before)
+
+    const reopened = makeStore()
+    expect(await reopened.load()).toEqual(before)
+  })
+
+  it('serializes concurrent Provider mutations without losing selected id or keys', async () => {
+    const store = makeStore()
+
+    await Promise.all([
+      store.setSelectedId('rightcode'),
+      store.setApiKey('rightcode', 'sk-rightcode'),
+    ])
+
+    const reopened = makeStore()
+    expect(await reopened.getSelectedId()).toBe('rightcode')
+    expect(await reopened.getApiKey('rightcode')).toBe('sk-rightcode')
+  })
+
   it('atomic write does not corrupt existing file when interrupted', async () => {
     const store = makeStore()
     await store.setApiKey('apiyi', 'sk-good')

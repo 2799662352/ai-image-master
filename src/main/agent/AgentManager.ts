@@ -9,7 +9,11 @@ import {
   type CodexLocalBackendOptions,
 } from './CodexLocalBackend'
 import { migrateLegacyCodexSessions } from './codexSessionMigration'
-import { CodexProviderStore, type NewCustomProvider } from './CodexProviderStore'
+import {
+  CodexProviderStore,
+  type NewCustomProvider,
+  type PersistedProvidersV1,
+} from './CodexProviderStore'
 import { DEFAULT_CODEX_SESSION_CONFIG, type CatimationMcpLaunchInfo } from './codexLaunch'
 import {
   BUILTIN_PROVIDER_PRESETS,
@@ -59,6 +63,7 @@ import type {
   AgentCollaborationCapabilitiesResult,
   AgentCollaborationModeUpdatePayload,
   AgentCollaborationModeUpdateResult,
+  AgentProviderMutationResult,
   AgentSendMessagePayload,
   AgentSendMessageResult,
   AgentStreamEvent,
@@ -145,6 +150,11 @@ interface CollaborationCapabilityOwner {
 interface BuiltCollaborationMode {
   collaborationMode: CodexCollaborationMode
   owner?: CollaborationCapabilityOwner
+}
+
+interface DesiredProviderMutation {
+  activeId: string
+  requiresApply: boolean
 }
 
 /**
@@ -373,10 +383,9 @@ export class AgentManager {
    * Serialization chain for codex respawns triggered by settings changes
    * (provider switch, key rotation, custom-provider edits). Respawning takes
    * seconds; queuing through one chain guarantees rapid successive changes
-   * never race two spawns, while letting callers choose whether to await the
-   * respawn (MCP key rotations do) or return immediately for a snappy UI
-   * (provider switches / gateway key saves don't). Errors are logged inside
-   * the queued task so the chain itself never rejects.
+   * never race two spawns. Applied Provider transactions return their own
+   * rejection while replacing the shared chain with a settled continuation;
+   * best-effort auxiliary MCP key restarts still log and absorb failures.
    */
   private restartChain: Promise<void> = Promise.resolve()
   /** Latest Provider selection's proof that a real backend generation was applied. */
@@ -570,44 +579,28 @@ export class AgentManager {
     return {
       builtins: BUILTIN_PROVIDER_PRESETS.map((p) => ({ ...p })),
       custom: persisted.customProviders.map((p) => ({ ...p })),
-      activeId: persisted.selectedProviderId,
+      // selectedProviderId is the desired value while a transaction is in
+      // flight. Settings/capability consumers must only observe the Provider
+      // owned by the currently applied backend generation.
+      activeId: this.activeProviderId,
       apiKeys: { ...persisted.apiKeys },
     }
   }
 
-  async setActiveProvider(id: string): Promise<{ ok: true; activeId: string }> {
-    const persisted = await this.providerStore.load()
-    const provider = resolveActiveProvider(id, persisted.customProviders)
-    // resolveActiveProvider falls back to the apiyi preset when the id is
-    // unknown — surface that as an explicit error so UI bugs don't silently
-    // pin the user to an unintended provider.
-    if (provider.id !== id) {
-      throw new Error(`Unknown Codex provider id "${id}"`)
-    }
-    await this.providerStore.setSelectedId(id)
-    this.activeProviderId = id
-    this.codexApiKey = persisted.apiKeys[id] ?? ''
-    this.backend.setProvider?.(provider)
-    // Respawn codex so the new base_url + model take effect immediately
-    // instead of waiting for the next user message — but in the BACKGROUND.
-    // Blocking this IPC on a multi-second spawn made every tile click in the
-    // Settings page feel frozen. The old client keeps serving until the new
-    // spawn is ready (see CodexLocalBackend.restartCodex), and errors are
-    // logged inside the queue — a failed respawn surfaces as the next
-    // message timing out, which is less confusing than the settings save
-    // throwing.
-    const previousEpoch = this.backend.currentEpoch?.()
-    const restart = this.queueBackendRestart('setActiveProvider')
-    this.providerCapabilityBarrier = restart.then(() => {
-      const currentEpoch = this.backend.currentEpoch?.()
-      return (
-        previousEpoch === undefined
-        || currentEpoch === undefined
-        || currentEpoch !== previousEpoch
-        || !this.backend.isHealthy()
-      )
+  async setActiveProvider(
+    id: string,
+  ): Promise<{ ok: true } & AgentProviderMutationResult> {
+    return this.enqueueAppliedProviderTransaction(async (before) => {
+      const provider = resolveActiveProvider(id, before.customProviders)
+      if (provider.id !== id) {
+        throw new Error(`Unknown Codex provider id "${id}"`)
+      }
+      await this.providerStore.setSelectedId(id)
+      return {
+        activeId: id,
+        requiresApply: id !== this.activeProviderId,
+      }
     })
-    return { ok: true, activeId: id }
   }
 
   /**
@@ -630,15 +623,118 @@ export class AgentManager {
     return next
   }
 
+  private enqueueProviderStoreOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.restartChain.then(operation)
+    this.restartChain = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    return result
+  }
+
+  private enqueueAppliedProviderTransaction(
+    mutateDesired: (
+      before: PersistedProvidersV1,
+    ) => Promise<DesiredProviderMutation>,
+  ): Promise<{ ok: true } & AgentProviderMutationResult> {
+    const transaction = this.restartChain.then(async () => {
+      const before = await this.providerStore.load()
+      const previousAppliedId = this.activeProviderId
+      const previousKey = this.codexApiKey
+      const previousProvider = resolveActiveProvider(
+        previousAppliedId,
+        before.customProviders,
+      )
+      let desiredPersisted = false
+
+      try {
+        const desired = await mutateDesired(before)
+        desiredPersisted = true
+        const persisted = await this.providerStore.load()
+        const provider = resolveActiveProvider(
+          desired.activeId,
+          persisted.customProviders,
+        )
+        if (provider.id !== desired.activeId) {
+          throw new Error(`Unknown Codex provider id "${desired.activeId}"`)
+        }
+        const nextKey = persisted.apiKeys[desired.activeId] ?? ''
+        let providerGeneration = this.backend.currentEpoch?.()
+
+        if (desired.requiresApply) {
+          this.codexApiKey = nextKey
+          providerGeneration = await this.applyProviderGeneration(provider)
+        }
+
+        this.activeProviderId = desired.activeId
+        this.codexApiKey = nextKey
+        return {
+          ok: true as const,
+          activeId: desired.activeId,
+          ...(providerGeneration !== undefined ? { providerGeneration } : {}),
+        }
+      } catch (error) {
+        try {
+          if (desiredPersisted) await this.providerStore.restore(before)
+        } finally {
+          this.activeProviderId = previousAppliedId
+          this.codexApiKey = previousKey
+          this.backend.setProvider?.(previousProvider)
+        }
+        throw error
+      }
+    })
+
+    // The chain remains usable after a failed transaction, but each caller
+    // still receives its own rejection. Capabilities wait for the latest
+    // transaction (including rollback) before binding a Provider owner.
+    this.restartChain = transaction.then(
+      () => undefined,
+      () => undefined,
+    )
+    this.providerCapabilityBarrier = this.restartChain.then(() => true)
+    return transaction
+  }
+
+  private async applyProviderGeneration(
+    provider: ProviderPreset,
+  ): Promise<number | undefined> {
+    const previousEpoch = this.backend.currentEpoch?.()
+    this.backend.setProvider?.(provider)
+
+    // No live generation exists, so setting the pending backend config is the
+    // complete apply operation. The next lazy start owns this Provider.
+    if (!this.backend.isHealthy()) return previousEpoch
+
+    const restart = this.backend.restartCodex?.bind(this.backend)
+    if (!restart) {
+      // Alternate/test backends without Provider plumbing retain their legacy
+      // immediate semantics. A backend exposing setProvider must also expose a
+      // restart hook so a healthy generation can be proven.
+      if (!this.backend.setProvider) return previousEpoch
+      throw new Error('Active backend cannot apply Provider changes without restart support')
+    }
+
+    await this.restartBackendWithGenerationCheck(restart)
+    const nextEpoch = this.backend.currentEpoch?.()
+    if (!this.backend.isHealthy()) {
+      throw new Error('Provider restart completed without a healthy backend')
+    }
+    if (
+      previousEpoch !== undefined
+      && (nextEpoch === undefined || nextEpoch === previousEpoch)
+    ) {
+      throw new Error('Provider restart did not create a new backend generation')
+    }
+    return nextEpoch
+  }
+
   private async restartBackendWithGenerationCheck(
     restart: (paths: CodexWorkspacePaths) => Promise<void>,
   ): Promise<void> {
     this.syncCollaborationProcessCaches()
     await restart(this.workspacePaths())
     this.syncCollaborationProcessCaches()
-    // Legacy/test backends without currentEpoch cannot prove that a restart
-    // actually replaced the process (CodexLocalBackend may legitimately
-    // early-return while a turn is active). Conservatively retain caches.
   }
 
   private syncCollaborationProcessCaches(): void {
@@ -655,30 +751,39 @@ export class AgentManager {
     this.collaborationCacheEpoch = currentEpoch
   }
 
-  async setProviderApiKey(id: string, key: string): Promise<{ ok: true }> {
-    await this.providerStore.setApiKey(id, key)
-    if (id === this.activeProviderId) {
-      const next = (key ?? '').trim()
-      const changed = next !== this.codexApiKey
-      this.codexApiKey = next
-      // The gateway key reaches codex ONLY via spawn env (buildCodexSpawnEnv),
-      // so an already-running codex keeps the stale key until respawn — which
-      // used to mean "restart the whole app to apply the key". Hot-respawn in
-      // the background on a REAL change instead (non-blocking so the 保存 KEY
-      // button stays snappy). Guards: `changed` avoids a restart storm from
-      // the renderer's idempotent re-pushes; `isHealthy()` skips the respawn
-      // when codex has not spawned yet (the next lazy start reads the fresh
-      // key via getApiKey anyway, and restarting here would eagerly spawn).
-      if (changed && this.backend.isHealthy()) {
-        void this.queueBackendRestart('active provider key change')
-      }
+  async setProviderApiKey(
+    id: string,
+    key: string,
+  ): Promise<{ ok: true } & AgentProviderMutationResult> {
+    const next = (key ?? '').trim()
+    const isAuxiliaryProviderKey =
+      id === QWEN_UNDERSTAND_PROVIDER_ID
+      || id === APIYI_MCP_PROVIDER_ID
+      || id === CINEMATOGRAPHY_KB_PROVIDER_ID
+      || id === DASHVECTOR_PROVIDER_ID
+
+    if (!isAuxiliaryProviderKey) {
+      return this.enqueueAppliedProviderTransaction(async (before) => {
+        const previous = before.apiKeys[id] ?? ''
+        await this.providerStore.setApiKey(id, next)
+        return {
+          activeId: this.activeProviderId,
+          requiresApply: id === this.activeProviderId && next !== previous,
+        }
+      })
     }
+
+    // Auxiliary MCP/understanding keys are intentionally not Codex Provider
+    // selection transactions. Preserve their dedicated restart behavior.
+    await this.enqueueProviderStoreOperation(
+      () => this.providerStore.setApiKey(id, next),
+    )
     // The renderer mirrors its image-gen Miau token here (id='qwen') so Path B
     // subagents can reach the qwen understanding gateway. Keep the in-memory
     // copy fresh; it is consumed at the next codex (re)start via
     // getUnderstandProvider.
     if (id === QWEN_UNDERSTAND_PROVIDER_ID) {
-      this.miauToken = (key ?? '').trim()
+      this.miauToken = next
     }
     // The renderer mirrors the 设置 → API易 key here (id='apiyi-mcp') so the
     // bundled apiyi-mcp server gets its `APIYI_API_KEY` injected at spawn via
@@ -690,7 +795,6 @@ export class AgentManager {
     // storm. On boot the in-memory copy is preloaded from the provider store,
     // so the first idempotent push is a no-op.
     if (id === APIYI_MCP_PROVIDER_ID) {
-      const next = (key ?? '').trim()
       const changed = next !== this.apiyiMcpKey
       this.apiyiMcpKey = next
       if (changed && next) {
@@ -705,7 +809,6 @@ export class AgentManager {
     // restart storm; the constructor preloads the in-memory copy so the first
     // idempotent re-push is a no-op).
     if (id === CINEMATOGRAPHY_KB_PROVIDER_ID) {
-      const next = (key ?? '').trim()
       const changed = next !== this.cinematographyKbKey
       this.cinematographyKbKey = next
       if (changed && next) {
@@ -716,14 +819,18 @@ export class AgentManager {
     // (id='dashvector') for query_sakuga_dataset. Same change-guarded restart
     // rationale as the two blocks above.
     if (id === DASHVECTOR_PROVIDER_ID) {
-      const next = (key ?? '').trim()
       const changed = next !== this.dashVectorKey
       this.dashVectorKey = next
       if (changed && next) {
         await this.queueBackendRestart('dashvector key change')
       }
     }
-    return { ok: true }
+    const providerGeneration = this.backend.currentEpoch?.()
+    return {
+      ok: true,
+      activeId: this.activeProviderId,
+      ...(providerGeneration !== undefined ? { providerGeneration } : {}),
+    }
   }
 
   async addCustomProvider(input: NewCustomProvider): Promise<ProviderPreset> {
@@ -734,13 +841,15 @@ export class AgentManager {
     } catch {
       throw new Error('Provider baseUrl must be a valid URL')
     }
-    return this.providerStore.addCustomProvider({ ...input, name: trimmedName })
+    return this.enqueueProviderStoreOperation(
+      () => this.providerStore.addCustomProvider({ ...input, name: trimmedName }),
+    )
   }
 
   async updateCustomProvider(
     id: string,
     patch: Partial<Omit<ProviderPreset, 'id' | 'isCustom'>>,
-  ): Promise<{ ok: true }> {
+  ): Promise<{ ok: true } & AgentProviderMutationResult> {
     if (isBuiltinProviderId(id)) throw new Error('Cannot update builtin provider')
     if (patch.baseUrl !== undefined) {
       try {
@@ -749,33 +858,27 @@ export class AgentManager {
         throw new Error('Provider baseUrl must be a valid URL')
       }
     }
-    await this.providerStore.updateCustomProvider(id, patch)
-    if (id === this.activeProviderId) {
-      // Re-resolve the active provider with the patched data and restart so
-      // the new model / baseUrl reaches Codex without an app reload.
-      const persisted = await this.providerStore.load()
-      const refreshed = resolveActiveProvider(id, persisted.customProviders)
-      this.backend.setProvider?.(refreshed)
-      void this.queueBackendRestart('updateCustomProvider')
-    }
-    return { ok: true }
+    return this.enqueueAppliedProviderTransaction(async () => {
+      await this.providerStore.updateCustomProvider(id, patch)
+      return {
+        activeId: this.activeProviderId,
+        requiresApply: id === this.activeProviderId,
+      }
+    })
   }
 
-  async removeCustomProvider(id: string): Promise<{ ok: true; activeId: string }> {
+  async removeCustomProvider(
+    id: string,
+  ): Promise<{ ok: true } & AgentProviderMutationResult> {
     if (isBuiltinProviderId(id)) throw new Error('Cannot remove builtin provider')
-    await this.providerStore.removeCustomProvider(id)
-    const persisted = await this.providerStore.load()
-    // If the removed provider was active, the store has already reverted to
-    // DEFAULT_PROVIDER_ID. Mirror that into the in-memory state and respawn
-    // codex so traffic doesn't keep flowing to a now-unknown gateway.
-    if (this.activeProviderId === id) {
-      this.activeProviderId = persisted.selectedProviderId
-      this.codexApiKey = persisted.apiKeys[this.activeProviderId] ?? ''
-      const provider = resolveActiveProvider(this.activeProviderId, persisted.customProviders)
-      this.backend.setProvider?.(provider)
-      void this.queueBackendRestart('removeCustomProvider')
-    }
-    return { ok: true, activeId: this.activeProviderId }
+    return this.enqueueAppliedProviderTransaction(async () => {
+      const wasActive = this.activeProviderId === id
+      await this.providerStore.removeCustomProvider(id)
+      return {
+        activeId: wasActive ? DEFAULT_PROVIDER_ID : this.activeProviderId,
+        requiresApply: wasActive,
+      }
+    })
   }
 
   async setAllowedRoots(roots: unknown): Promise<string[]> {
@@ -1043,6 +1146,7 @@ export class AgentManager {
         requestVersion: payload.requestVersion,
       }
     }
+    const updateThreadSettings = this.backend.updateThreadSettings.bind(this.backend)
     let builtCollaborationMode: BuiltCollaborationMode
     try {
       builtCollaborationMode = await this.buildCollaborationMode(
@@ -1091,7 +1195,7 @@ export class AgentManager {
       )
       await this.commitWithCollaborationModeOwner(
         builtCollaborationMode,
-        () => this.backend.updateThreadSettings({
+        () => updateThreadSettings({
           threadId: codexThreadId,
           collaborationMode: builtCollaborationMode.collaborationMode,
         }),

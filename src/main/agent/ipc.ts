@@ -378,7 +378,7 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
     try {
       const validated = validateWorkspaceId(id, 'Provider id')
       const result = await (await getManager()).setActiveProvider(validated)
-      return { ok: true as const, activeId: result.activeId }
+      return { ok: true as const, ...result }
     } catch (err) {
       return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
     }
@@ -388,11 +388,11 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
     async (_event, id: unknown, key: unknown) => {
       try {
         const validated = validateWorkspaceId(id, 'Provider id')
-        await (await getManager()).setProviderApiKey(
+        const result = await (await getManager()).setProviderApiKey(
           validated,
           typeof key === 'string' ? key : '',
         )
-        return { ok: true as const }
+        return { ok: true as const, ...result }
       } catch (err) {
         return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
       }
@@ -414,8 +414,11 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
       try {
         const validatedId = validateWorkspaceId(id, 'Provider id')
         const validatedPatch = validateCustomProviderPatch(patch)
-        await (await getManager()).updateCustomProvider(validatedId, validatedPatch)
-        return { ok: true as const }
+        const result = await (await getManager()).updateCustomProvider(
+          validatedId,
+          validatedPatch,
+        )
+        return { ok: true as const, ...result }
       } catch (err) {
         return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
       }
@@ -425,7 +428,7 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
     try {
       const validated = validateWorkspaceId(id, 'Provider id')
       const result = await (await getManager()).removeCustomProvider(validated)
-      return { ok: true as const, activeId: result.activeId }
+      return { ok: true as const, ...result }
     } catch (err) {
       return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
     }

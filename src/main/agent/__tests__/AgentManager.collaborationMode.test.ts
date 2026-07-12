@@ -748,13 +748,15 @@ describe('AgentManager collaboration capabilities', () => {
       }),
     })
     const manager = makeManager(backend)
-    await manager.setActiveProvider('rightcode')
+    const switching = manager.setActiveProvider('rightcode')
+    await flushMicrotasks()
 
     const pending = manager.getCollaborationCapabilitiesRpc('gpt-5.5')
     await flushMicrotasks()
     expect(backend.modelCalls).toEqual([])
 
     releaseRestart()
+    await switching
     await expect(pending).resolves.toEqual({
       ok: true,
       data: {
@@ -767,7 +769,7 @@ describe('AgentManager collaboration capabilities', () => {
     })
   })
 
-  it('returns fallback capabilities when the Provider respawn cannot confirm a new epoch', async () => {
+  it('rejects and rolls back when the Provider respawn cannot confirm a new epoch', async () => {
     const backend = makeCollaborationBackend({
       initialEpoch: 1,
       restartCodex: async () => undefined,
@@ -778,19 +780,18 @@ describe('AgentManager collaboration capabilities', () => {
       }),
     })
     const manager = makeManager(backend)
-    await manager.setActiveProvider('rightcode')
+    await expect(manager.setActiveProvider('rightcode')).rejects.toThrow(
+      /new backend generation/i,
+    )
 
-    await expect(manager.getCollaborationCapabilitiesRpc('gpt-5.5')).resolves.toEqual({
+    await expect(manager.getCollaborationCapabilitiesRpc('gpt-5.5')).resolves.toMatchObject({
       ok: true,
       data: {
-        providerId: 'rightcode',
+        providerId: 'apiyi',
         backendEpoch: 1,
-        planDefaultEffort: null,
-        supportedPlanEfforts: [],
-        source: 'fallback',
       },
     })
-    expect(backend.modelCalls).toEqual([])
+    expect(backend.modelCalls).toHaveLength(1)
   })
 
   it('keeps Plan Max for Right Code gpt-5.6-sol through the shared provider policy', async () => {

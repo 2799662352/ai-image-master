@@ -61,6 +61,7 @@ export class CodexProviderStore {
   private readonly filePath: string
   private readonly legacyFilePath: string
   private cache: PersistedProvidersV1 | undefined
+  private mutationChain: Promise<void> = Promise.resolve()
 
   constructor(opts: CodexProviderStoreOptions) {
     this.filePath = path.join(opts.userDataDir, FILE_NAME)
@@ -151,9 +152,11 @@ export class CodexProviderStore {
   }
 
   async setSelectedId(id: string): Promise<void> {
-    const state = await this.load()
-    state.selectedProviderId = id || DEFAULT_PROVIDER_ID
-    await this.persist(state)
+    await this.enqueueMutation(async () => {
+      const state = await this.load()
+      state.selectedProviderId = id || DEFAULT_PROVIDER_ID
+      await this.persist(state)
+    })
   }
 
   async getApiKey(id: string): Promise<string> {
@@ -162,11 +165,13 @@ export class CodexProviderStore {
   }
 
   async setApiKey(id: string, key: string): Promise<void> {
-    const state = await this.load()
-    const trimmed = (key ?? '').trim()
-    if (trimmed) state.apiKeys[id] = trimmed
-    else delete state.apiKeys[id]
-    await this.persist(state)
+    await this.enqueueMutation(async () => {
+      const state = await this.load()
+      const trimmed = (key ?? '').trim()
+      if (trimmed) state.apiKeys[id] = trimmed
+      else delete state.apiKeys[id]
+      await this.persist(state)
+    })
   }
 
   async getCustomProviders(): Promise<ProviderPreset[]> {
@@ -174,67 +179,92 @@ export class CodexProviderStore {
   }
 
   async addCustomProvider(input: NewCustomProvider): Promise<ProviderPreset> {
-    const state = await this.load()
-    const id = input.id?.trim() || `custom-${Date.now().toString(36)}`
-    if (isBuiltinProviderId(id)) {
-      throw new Error(`Cannot add custom provider with builtin id "${id}"`)
-    }
-    if (state.customProviders.some((p) => p.id === id)) {
-      throw new Error(`Custom provider with id "${id}" already exists`)
-    }
-    const created: ProviderPreset = {
-      id,
-      name: input.name,
-      baseUrl: input.baseUrl,
-      envKey: input.envKey || 'OPENAI_API_KEY',
-      ...(input.model !== undefined ? { model: input.model } : {}),
-      ...(input.reasoningEffort !== undefined ? { reasoningEffort: input.reasoningEffort } : {}),
-      ...(input.verbosity !== undefined ? { verbosity: input.verbosity } : {}),
-      ...(input.requiresOpenaiAuth !== undefined
-        ? { requiresOpenaiAuth: input.requiresOpenaiAuth }
-        : {}),
-      ...(input.extraTopLevelConfig
-        ? { extraTopLevelConfig: { ...input.extraTopLevelConfig } }
-        : {}),
-      ...(input.description !== undefined ? { description: input.description } : {}),
-      isCustom: true,
-    }
-    state.customProviders.push(created)
-    await this.persist(state)
-    return { ...created }
+    return this.enqueueMutation(async () => {
+      const state = await this.load()
+      const id = input.id?.trim() || `custom-${Date.now().toString(36)}`
+      if (isBuiltinProviderId(id)) {
+        throw new Error(`Cannot add custom provider with builtin id "${id}"`)
+      }
+      if (state.customProviders.some((p) => p.id === id)) {
+        throw new Error(`Custom provider with id "${id}" already exists`)
+      }
+      const created: ProviderPreset = {
+        id,
+        name: input.name,
+        baseUrl: input.baseUrl,
+        envKey: input.envKey || 'OPENAI_API_KEY',
+        ...(input.model !== undefined ? { model: input.model } : {}),
+        ...(input.reasoningEffort !== undefined ? { reasoningEffort: input.reasoningEffort } : {}),
+        ...(input.verbosity !== undefined ? { verbosity: input.verbosity } : {}),
+        ...(input.requiresOpenaiAuth !== undefined
+          ? { requiresOpenaiAuth: input.requiresOpenaiAuth }
+          : {}),
+        ...(input.extraTopLevelConfig
+          ? { extraTopLevelConfig: { ...input.extraTopLevelConfig } }
+          : {}),
+        ...(input.description !== undefined ? { description: input.description } : {}),
+        isCustom: true,
+      }
+      state.customProviders.push(created)
+      await this.persist(state)
+      return { ...created }
+    })
   }
 
   async updateCustomProvider(
     id: string,
     patch: Partial<Omit<ProviderPreset, 'id' | 'isCustom'>>,
   ): Promise<void> {
-    if (isBuiltinProviderId(id)) {
-      throw new Error(`Cannot update builtin provider "${id}"`)
-    }
-    const state = await this.load()
-    const idx = state.customProviders.findIndex((p) => p.id === id)
-    if (idx < 0) throw new Error(`Custom provider "${id}" not found`)
-    const current = state.customProviders[idx]
-    state.customProviders[idx] = { ...current, ...patch, id, isCustom: true }
-    await this.persist(state)
+    await this.enqueueMutation(async () => {
+      if (isBuiltinProviderId(id)) {
+        throw new Error(`Cannot update builtin provider "${id}"`)
+      }
+      const state = await this.load()
+      const idx = state.customProviders.findIndex((p) => p.id === id)
+      if (idx < 0) throw new Error(`Custom provider "${id}" not found`)
+      const current = state.customProviders[idx]
+      state.customProviders[idx] = { ...current, ...patch, id, isCustom: true }
+      await this.persist(state)
+    })
   }
 
   async removeCustomProvider(id: string): Promise<void> {
-    if (isBuiltinProviderId(id)) {
-      throw new Error(`Cannot remove builtin provider "${id}"`)
-    }
-    const state = await this.load()
-    const before = state.customProviders.length
-    state.customProviders = state.customProviders.filter((p) => p.id !== id)
-    if (state.customProviders.length === before) return
-    if (state.selectedProviderId === id) state.selectedProviderId = DEFAULT_PROVIDER_ID
-    delete state.apiKeys[id]
-    await this.persist(state)
+    await this.enqueueMutation(async () => {
+      if (isBuiltinProviderId(id)) {
+        throw new Error(`Cannot remove builtin provider "${id}"`)
+      }
+      const state = await this.load()
+      const before = state.customProviders.length
+      state.customProviders = state.customProviders.filter((p) => p.id !== id)
+      if (state.customProviders.length === before) return
+      if (state.selectedProviderId === id) state.selectedProviderId = DEFAULT_PROVIDER_ID
+      delete state.apiKeys[id]
+      await this.persist(state)
+    })
+  }
+
+  /**
+   * Restore a previously loaded snapshot with the same atomic temp-file rename
+   * used by normal writes. AgentManager uses this only to roll back a failed
+   * applied-Provider transaction after the desired state was persisted but a
+   * replacement backend generation could not be confirmed.
+   */
+  async restore(snapshot: PersistedProvidersV1): Promise<void> {
+    await this.enqueueMutation(() => this.persist(clone(snapshot)))
   }
 
   /** Test seam — drops the in-memory cache so the next load() re-reads disk. */
   invalidateCache(): void {
     this.cache = undefined
+  }
+
+  private enqueueMutation<T>(mutation: () => Promise<T>): Promise<T> {
+    const result = this.mutationChain.then(mutation)
+    this.mutationChain = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    return result
   }
 
   private async tryMigrateLegacy(): Promise<PersistedProvidersV1 | null> {

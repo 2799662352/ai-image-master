@@ -207,11 +207,25 @@ describe('useSettingsStore', () => {
 
   describe('selectProvider', () => {
     interface AgentBridgeWindow {
-      electronAPI?: { agent?: { setActiveProvider?: (id: string) => Promise<unknown> } }
+      electronAPI?: {
+        agent?: {
+          getProviders?: () => Promise<unknown>
+          setActiveProvider?: (id: string) => Promise<unknown>
+          setProviderApiKey?: (id: string, key: string) => Promise<unknown>
+          updateCustomProvider?: (id: string, patch: unknown) => Promise<unknown>
+          removeCustomProvider?: (id: string) => Promise<unknown>
+        }
+      }
     }
 
-    function installBridge(setActiveProvider: (id: string) => Promise<unknown>) {
-      ;(window as unknown as AgentBridgeWindow).electronAPI = { agent: { setActiveProvider } }
+    function installBridge(
+      bridge:
+        | NonNullable<NonNullable<AgentBridgeWindow['electronAPI']>['agent']>
+        | ((id: string) => Promise<unknown>),
+    ) {
+      ;(window as unknown as AgentBridgeWindow).electronAPI = {
+        agent: typeof bridge === 'function' ? { setActiveProvider: bridge } : bridge,
+      }
     }
 
     afterEach(() => {
@@ -224,6 +238,7 @@ describe('useSettingsStore', () => {
           builtins: [],
           custom: [],
           activeId: 'apiyi',
+          appliedId: 'apiyi',
           apiKeys: { apiyi: 'sk-apiyi', rightcode: 'sk-rc' },
           loaded: true,
           loadError: null,
@@ -245,6 +260,55 @@ describe('useSettingsStore', () => {
       resolveIpc({ ok: true, activeId: 'rightcode' })
       await pending
       expect(useSettingsStore.getState().providers.activeId).toBe('rightcode')
+    })
+
+    it('ignores a stale A success after a newer B request has confirmed', async () => {
+      let resolveA!: (value: unknown) => void
+      let resolveB!: (value: unknown) => void
+      const setActiveProvider = vi.fn((id: string) =>
+        new Promise((resolve) => {
+          if (id === 'rightcode') resolveA = resolve
+          else resolveB = resolve
+        }))
+      installBridge(setActiveProvider)
+      const loadCollaborationCapabilities = vi.fn().mockResolvedValue(undefined)
+      useAgentChatStore.setState({ loadCollaborationCapabilities } as never)
+
+      const a = useSettingsStore.getState().selectProvider('rightcode')
+      const b = useSettingsStore.getState().selectProvider('apiyi')
+      resolveB({ ok: true, activeId: 'apiyi', providerGeneration: 3 })
+      await b
+      resolveA({ ok: true, activeId: 'rightcode', providerGeneration: 2 })
+      await a
+
+      expect(useSettingsStore.getState().providers).toMatchObject({
+        activeId: 'apiyi',
+        appliedId: 'apiyi',
+      })
+      expect(loadCollaborationCapabilities).toHaveBeenCalledTimes(1)
+      expect(loadCollaborationCapabilities).toHaveBeenCalledWith('apiyi')
+    })
+
+    it('ignores a stale A failure after a newer B request has confirmed', async () => {
+      let rejectA!: (error: Error) => void
+      let resolveB!: (value: unknown) => void
+      installBridge((id) =>
+        new Promise((resolve, reject) => {
+          if (id === 'rightcode') rejectA = reject
+          else resolveB = resolve
+        }))
+
+      const a = useSettingsStore.getState().selectProvider('rightcode')
+      const b = useSettingsStore.getState().selectProvider('apiyi')
+      resolveB({ ok: true, activeId: 'apiyi', providerGeneration: 3 })
+      await b
+      rejectA(new Error('A failed late'))
+      await a
+
+      expect(useSettingsStore.getState().providers).toMatchObject({
+        activeId: 'apiyi',
+        appliedId: 'apiyi',
+      })
     })
 
     it('invalidates immediately and reloads capabilities only after Provider confirmation', async () => {
@@ -298,6 +362,63 @@ describe('useSettingsStore', () => {
       await useSettingsStore.getState().selectProvider('rightcode')
 
       expect(useSettingsStore.getState().providers.activeId).toBe('apiyi')
+      expect(useSettingsStore.getState().codexApiKey).toBe('sk-apiyi')
+    })
+
+    it('reloads capabilities after confirmed active key, update, and remove writes', async () => {
+      const invalidateCollaborationCapabilities = vi.fn()
+      const loadCollaborationCapabilities = vi.fn().mockResolvedValue(undefined)
+      useAgentChatStore.setState({
+        invalidateCollaborationCapabilities,
+        loadCollaborationCapabilities,
+      } as never)
+      installBridge({
+        setProviderApiKey: vi.fn().mockResolvedValue({
+          ok: true,
+          activeId: 'apiyi',
+          providerGeneration: 2,
+        }),
+        updateCustomProvider: vi.fn().mockResolvedValue({
+          ok: true,
+          activeId: 'apiyi',
+          providerGeneration: 3,
+        }),
+        removeCustomProvider: vi.fn().mockResolvedValue({
+          ok: true,
+          activeId: 'apiyi',
+          providerGeneration: 4,
+        }),
+        getProviders: vi.fn().mockResolvedValue({
+          ok: true,
+          builtins: [],
+          custom: [],
+          activeId: 'apiyi',
+          apiKeys: { apiyi: 'sk-next' },
+        }),
+      })
+
+      await useSettingsStore.getState().saveProviderKey('apiyi', 'sk-next')
+      await useSettingsStore.getState().updateProvider('apiyi', { model: 'gpt-5.6-sol' })
+      await useSettingsStore.getState().removeProvider('apiyi')
+
+      expect(invalidateCollaborationCapabilities).toHaveBeenCalledTimes(3)
+      expect(loadCollaborationCapabilities).toHaveBeenCalledTimes(3)
+      expect(loadCollaborationCapabilities).toHaveBeenNthCalledWith(1, 'apiyi')
+      expect(loadCollaborationCapabilities).toHaveBeenNthCalledWith(2, 'apiyi')
+      expect(loadCollaborationCapabilities).toHaveBeenNthCalledWith(3, 'apiyi')
+    })
+
+    it('rolls back an active key when confirmed apply fails', async () => {
+      installBridge({
+        setProviderApiKey: vi.fn().mockResolvedValue({
+          ok: false,
+          error: 'restart failed',
+        }),
+      })
+
+      await useSettingsStore.getState().saveProviderKey('apiyi', 'sk-new')
+
+      expect(useSettingsStore.getState().providers.apiKeys.apiyi).toBe('sk-apiyi')
       expect(useSettingsStore.getState().codexApiKey).toBe('sk-apiyi')
     })
   })

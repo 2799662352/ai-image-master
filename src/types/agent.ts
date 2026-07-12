@@ -52,6 +52,13 @@ export interface AgentCollaborationCapabilities {
   source: 'codex' | 'fallback'
 }
 
+/** Confirmed applied Codex Provider state returned by Provider write IPCs. */
+export interface AgentProviderMutationResult {
+  activeId: string
+  /** Backend generation that owns activeId; absent for non-generational backends. */
+  providerGeneration?: number
+}
+
 export type AgentCollaborationCapabilitiesResult =
   | { ok: true; data: AgentCollaborationCapabilities }
   | { ok: false; error: string }

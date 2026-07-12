@@ -30,6 +30,7 @@ import type {
   AgentCollaborationCapabilitiesResult,
   AgentCollaborationModeUpdatePayload,
   AgentCollaborationModeUpdateResult,
+  AgentProviderMutationResult,
   AgentSendMessagePayload,
   AgentSendMessageResult,
   AgentStreamEvent,
@@ -461,6 +462,11 @@ export interface CodexCustomProviderInput {
   description?: string
 }
 
+export type CodexProviderMutationResponse = {
+  ok: boolean
+  error?: string
+} & Partial<AgentProviderMutationResult>
+
 export interface ElectronAPI {
   isElectron: boolean
   // AI Skills
@@ -586,16 +592,16 @@ export interface ElectronAPI {
       activeId?: string
       apiKeys?: Record<string, string>
     }>
-    setActiveProvider: (id: string) => Promise<{ ok: boolean; error?: string; activeId?: string }>
-    setProviderApiKey: (id: string, key: string) => Promise<{ ok: boolean; error?: string }>
+    setActiveProvider: (id: string) => Promise<CodexProviderMutationResponse>
+    setProviderApiKey: (id: string, key: string) => Promise<CodexProviderMutationResponse>
     addCustomProvider: (
       input: CodexCustomProviderInput,
     ) => Promise<{ ok: boolean; error?: string; provider?: CodexProviderRecord }>
     updateCustomProvider: (
       id: string,
       patch: Partial<CodexCustomProviderInput>,
-    ) => Promise<{ ok: boolean; error?: string }>
-    removeCustomProvider: (id: string) => Promise<{ ok: boolean; error?: string; activeId?: string }>
+    ) => Promise<CodexProviderMutationResponse>
+    removeCustomProvider: (id: string) => Promise<CodexProviderMutationResponse>
   }
   // Shell helpers (clipboard / save dialog)
   shell: {
@@ -1291,13 +1297,13 @@ const electronAPI: ElectronAPI = {
       }>(IPC_CHANNELS.AGENT.GET_PROVIDERS),
 
     setActiveProvider: (id: string) =>
-      safeInvoke<{ ok: boolean; error?: string; activeId?: string }>(
+      safeInvoke<CodexProviderMutationResponse>(
         IPC_CHANNELS.AGENT.SET_ACTIVE_PROVIDER,
         id,
       ),
 
     setProviderApiKey: (id: string, key: string) =>
-      safeInvoke<{ ok: boolean; error?: string }>(
+      safeInvoke<CodexProviderMutationResponse>(
         IPC_CHANNELS.AGENT.SET_PROVIDER_API_KEY,
         id,
         key,
@@ -1310,14 +1316,14 @@ const electronAPI: ElectronAPI = {
       ),
 
     updateCustomProvider: (id: string, patch: Partial<CodexCustomProviderInput>) =>
-      safeInvoke<{ ok: boolean; error?: string }>(
+      safeInvoke<CodexProviderMutationResponse>(
         IPC_CHANNELS.AGENT.UPDATE_CUSTOM_PROVIDER,
         id,
         patch,
       ),
 
     removeCustomProvider: (id: string) =>
-      safeInvoke<{ ok: boolean; error?: string; activeId?: string }>(
+      safeInvoke<CodexProviderMutationResponse>(
         IPC_CHANNELS.AGENT.REMOVE_CUSTOM_PROVIDER,
         id,
       ),

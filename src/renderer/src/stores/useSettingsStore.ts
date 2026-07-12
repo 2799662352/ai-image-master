@@ -38,7 +38,10 @@ export interface CodexCustomProviderInput {
 interface ProvidersSlice {
   builtins: CodexProvider[]
   custom: CodexProvider[]
+  /** Optimistic tile/input selection. */
   activeId: string
+  /** Last Provider confirmed as applied by the main-process backend. */
+  appliedId: string
   apiKeys: Record<string, string>
   loaded: boolean
   loadError: string | null
@@ -78,6 +81,14 @@ interface SettingsState {
 }
 
 const CODEX_API_KEY_STORAGE_KEY = 'codex_api_key'
+let providerWriteGeneration = 0
+
+interface ProviderMutationResponse {
+  ok?: boolean
+  error?: string
+  activeId?: string
+  providerGeneration?: number
+}
 
 interface AgentBridge {
   getProviders?: () => Promise<unknown>
@@ -101,6 +112,7 @@ const DEFAULT_PROVIDERS_SLICE: ProvidersSlice = {
   builtins: [],
   custom: [],
   activeId: 'apiyi',
+  appliedId: 'apiyi',
   apiKeys: {},
   loaded: false,
   loadError: null,
@@ -246,7 +258,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       }
       const codexKey = snapshot.apiKeys[snapshot.activeId] ?? ''
       set({
-        providers: { ...snapshot, loaded: true, loadError: null },
+        providers: {
+          ...snapshot,
+          appliedId: snapshot.activeId,
+          loaded: true,
+          loadError: null,
+        },
         codexApiKey: codexKey,
       })
     } catch (err) {
@@ -263,51 +280,101 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   selectProvider: async (id) => {
     const bridge = getAgentBridge()
     if (!bridge?.setActiveProvider) return
-    // Optimistic: highlight the tile + swap the key input immediately so the
-    // click feels instant (main also replies fast now — the codex respawn
-    // runs in the background there). Roll back if the IPC rejects.
-    const prevActiveId = get().providers.activeId
+    const requestGeneration = ++providerWriteGeneration
+    const previousAppliedId = get().providers.appliedId
     set((state) => ({
       providers: { ...state.providers, activeId: id },
       codexApiKey: state.providers.apiKeys[id] ?? '',
     }))
     useAgentChatStore.getState().invalidateCollaborationCapabilities()
     try {
-      const result = (await bridge.setActiveProvider(id)) as { ok?: boolean; activeId?: string }
-      if (result?.ok === false) throw new Error('setActiveProvider rejected')
-      const confirmed = result?.activeId ?? id
-      if (confirmed !== id) {
-        set((state) => ({
-          providers: { ...state.providers, activeId: confirmed },
-          codexApiKey: state.providers.apiKeys[confirmed] ?? '',
-        }))
+      const result = (await bridge.setActiveProvider(id)) as ProviderMutationResponse
+      if (result?.ok !== true) {
+        throw new Error(result?.error || 'setActiveProvider rejected')
       }
+      if (requestGeneration !== providerWriteGeneration) return
+      const confirmed = result?.activeId ?? id
+      set((state) => ({
+        providers: {
+          ...state.providers,
+          activeId: confirmed,
+          appliedId: confirmed,
+        },
+        codexApiKey: state.providers.apiKeys[confirmed] ?? '',
+      }))
       await useAgentChatStore.getState().loadCollaborationCapabilities(confirmed)
     } catch (err) {
+      if (requestGeneration !== providerWriteGeneration) return
       console.warn('selectProvider failed, reverting:', err)
       set((state) => ({
-        providers: { ...state.providers, activeId: prevActiveId },
-        codexApiKey: state.providers.apiKeys[prevActiveId] ?? '',
+        providers: {
+          ...state.providers,
+          activeId: previousAppliedId,
+          appliedId: previousAppliedId,
+        },
+        codexApiKey: state.providers.apiKeys[previousAppliedId] ?? '',
       }))
       const agentChat = useAgentChatStore.getState()
       agentChat.invalidateCollaborationCapabilities()
-      await agentChat.loadCollaborationCapabilities(prevActiveId)
+      await agentChat.loadCollaborationCapabilities(previousAppliedId)
     }
   },
 
   saveProviderKey: async (id, key) => {
     const trimmed = key.trim()
     const { providers } = get()
+    const previousKey = providers.apiKeys[id] ?? ''
+    const changesAppliedProvider =
+      id === providers.appliedId || id === providers.activeId
+    const requestGeneration = changesAppliedProvider
+      ? ++providerWriteGeneration
+      : undefined
     // Optimistic local update first so UI feels instant.
     set({
       providers: { ...providers, apiKeys: { ...providers.apiKeys, [id]: trimmed } },
       ...(id === providers.activeId ? { codexApiKey: trimmed } : {}),
     })
+    if (changesAppliedProvider) {
+      useAgentChatStore.getState().invalidateCollaborationCapabilities()
+    }
     const bridge = getAgentBridge()
     if (bridge?.setProviderApiKey) {
       try {
-        await bridge.setProviderApiKey(id, trimmed)
+        const result = (await bridge.setProviderApiKey(id, trimmed)) as ProviderMutationResponse
+        if (result?.ok !== true) {
+          throw new Error(result?.error || 'setProviderApiKey rejected')
+        }
+        if (
+          requestGeneration !== undefined
+          && requestGeneration === providerWriteGeneration
+        ) {
+          const confirmed = result.activeId ?? providers.appliedId
+          set((state) => ({
+            providers: {
+              ...state.providers,
+              activeId: confirmed,
+              appliedId: confirmed,
+            },
+            codexApiKey: state.providers.apiKeys[confirmed] ?? '',
+          }))
+          await useAgentChatStore.getState().loadCollaborationCapabilities(confirmed)
+        }
       } catch (err) {
+        if (
+          requestGeneration !== undefined
+          && requestGeneration === providerWriteGeneration
+        ) {
+          set((state) => ({
+            providers: {
+              ...state.providers,
+              apiKeys: { ...state.providers.apiKeys, [id]: previousKey },
+            },
+            codexApiKey: previousKey,
+          }))
+          const agentChat = useAgentChatStore.getState()
+          agentChat.invalidateCollaborationCapabilities()
+          await agentChat.loadCollaborationCapabilities(providers.appliedId)
+        }
         console.warn('saveProviderKey failed:', err)
       }
     }
@@ -340,11 +407,52 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   updateProvider: async (id, patch) => {
     const bridge = getAgentBridge()
     if (!bridge?.updateCustomProvider) return
+    const providerState = get().providers
+    const changesAppliedProvider =
+      id === providerState.appliedId || id === providerState.activeId
+    const requestGeneration = changesAppliedProvider
+      ? ++providerWriteGeneration
+      : undefined
+    if (changesAppliedProvider) {
+      useAgentChatStore.getState().invalidateCollaborationCapabilities()
+    }
     try {
-      await bridge.updateCustomProvider(id, patch)
-      // Reload to pull canonical post-merge state.
-      await get().loadProviders()
+      const result = (await bridge.updateCustomProvider(id, patch)) as ProviderMutationResponse
+      if (result?.ok !== true) {
+        throw new Error(result?.error || 'updateCustomProvider rejected')
+      }
+      if (
+        requestGeneration !== undefined
+        && requestGeneration !== providerWriteGeneration
+      ) return
+      set((state) => ({
+        providers: {
+          ...state.providers,
+          custom: state.providers.custom.map((provider) =>
+            provider.id === id ? { ...provider, ...patch } : provider),
+        },
+      }))
+      if (changesAppliedProvider) {
+        const confirmed = result.activeId ?? id
+        set((state) => ({
+          providers: {
+            ...state.providers,
+            activeId: confirmed,
+            appliedId: confirmed,
+          },
+        }))
+        await useAgentChatStore.getState().loadCollaborationCapabilities(confirmed)
+      }
     } catch (err) {
+      if (
+        changesAppliedProvider
+        && requestGeneration === providerWriteGeneration
+      ) {
+        const appliedId = get().providers.appliedId
+        const agentChat = useAgentChatStore.getState()
+        agentChat.invalidateCollaborationCapabilities()
+        await agentChat.loadCollaborationCapabilities(appliedId)
+      }
       console.warn('updateProvider failed:', err)
     }
   },
@@ -352,14 +460,52 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   removeProvider: async (id) => {
     const bridge = getAgentBridge()
     if (!bridge?.removeCustomProvider) return
+    const providerState = get().providers
+    const changesAppliedProvider =
+      id === providerState.appliedId || id === providerState.activeId
+    const requestGeneration = changesAppliedProvider
+      ? ++providerWriteGeneration
+      : undefined
+    if (changesAppliedProvider) {
+      useAgentChatStore.getState().invalidateCollaborationCapabilities()
+    }
     try {
-      const raw = (await bridge.removeCustomProvider(id)) as {
-        ok?: boolean
-        activeId?: string
+      const result = (await bridge.removeCustomProvider(id)) as ProviderMutationResponse
+      if (result?.ok !== true) {
+        throw new Error(result?.error || 'removeCustomProvider rejected')
       }
-      if (raw?.ok === false) return
-      await get().loadProviders()
+      if (
+        requestGeneration !== undefined
+        && requestGeneration !== providerWriteGeneration
+      ) return
+      const confirmed = result.activeId ?? get().providers.appliedId
+      set((state) => {
+        const apiKeys = { ...state.providers.apiKeys }
+        delete apiKeys[id]
+        return {
+          providers: {
+            ...state.providers,
+            custom: state.providers.custom.filter((provider) => provider.id !== id),
+            activeId: confirmed,
+            appliedId: confirmed,
+            apiKeys,
+          },
+          codexApiKey: apiKeys[confirmed] ?? '',
+        }
+      })
+      if (changesAppliedProvider) {
+        await useAgentChatStore.getState().loadCollaborationCapabilities(confirmed)
+      }
     } catch (err) {
+      if (
+        changesAppliedProvider
+        && requestGeneration === providerWriteGeneration
+      ) {
+        const appliedId = get().providers.appliedId
+        const agentChat = useAgentChatStore.getState()
+        agentChat.invalidateCollaborationCapabilities()
+        await agentChat.loadCollaborationCapabilities(appliedId)
+      }
       console.warn('removeProvider failed:', err)
     }
   },

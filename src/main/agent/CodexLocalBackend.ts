@@ -521,7 +521,9 @@ export class CodexLocalBackend implements IAgentBackend {
     // model_provider*` launch args on the respawn below.
     this.configDirty = true
 
-    if (this.client?.hasInFlightWork()) return
+    if (this.client?.hasInFlightWork()) {
+      throw new Error('Current turn is running; retry the Provider change after it completes')
+    }
 
     if (this.wsUrlOverride) {
       await this.stop()

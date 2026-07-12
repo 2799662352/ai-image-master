@@ -84,8 +84,16 @@ function makeManager(): FakeManager {
       activeId: 'apiyi',
       apiKeys: {},
     }),
-    setActiveProvider: vi.fn().mockResolvedValue({ ok: true, activeId: 'rightcode' }),
-    setProviderApiKey: vi.fn().mockResolvedValue({ ok: true }),
+    setActiveProvider: vi.fn().mockResolvedValue({
+      ok: true,
+      activeId: 'rightcode',
+      providerGeneration: 2,
+    }),
+    setProviderApiKey: vi.fn().mockResolvedValue({
+      ok: true,
+      activeId: 'apiyi',
+      providerGeneration: 3,
+    }),
     addCustomProvider: vi.fn().mockResolvedValue({
       id: 'custom-1',
       name: 'My',
@@ -93,8 +101,16 @@ function makeManager(): FakeManager {
       envKey: 'OPENAI_API_KEY',
       isCustom: true,
     }),
-    updateCustomProvider: vi.fn().mockResolvedValue({ ok: true }),
-    removeCustomProvider: vi.fn().mockResolvedValue({ ok: true, activeId: 'apiyi' }),
+    updateCustomProvider: vi.fn().mockResolvedValue({
+      ok: true,
+      activeId: 'custom-1',
+      providerGeneration: 4,
+    }),
+    removeCustomProvider: vi.fn().mockResolvedValue({
+      ok: true,
+      activeId: 'apiyi',
+      providerGeneration: 5,
+    }),
   }
 }
 
@@ -257,9 +273,13 @@ describe('registerAgentIpc thread management handlers', () => {
   it('agent:set-active-provider validates id and forwards through', async () => {
     const handler = get('agent:set-active-provider')
     expect(handler).toBeTypeOf('function')
-    const result = (await handler!({}, 'rightcode')) as { ok: boolean; activeId?: string }
+    const result = (await handler!({}, 'rightcode')) as {
+      ok: boolean
+      activeId?: string
+      providerGeneration?: number
+    }
     expect(manager.setActiveProvider).toHaveBeenCalledWith('rightcode')
-    expect(result).toEqual({ ok: true, activeId: 'rightcode' })
+    expect(result).toEqual({ ok: true, activeId: 'rightcode', providerGeneration: 2 })
 
     const bad = (await handler!({}, '')) as { ok: boolean; error?: string }
     expect(bad.ok).toBe(false)
@@ -269,9 +289,13 @@ describe('registerAgentIpc thread management handlers', () => {
   it('agent:set-provider-api-key forwards id and key', async () => {
     const handler = get('agent:set-provider-api-key')
     expect(handler).toBeTypeOf('function')
-    const result = (await handler!({}, 'apiyi', 'sk-x')) as { ok: boolean }
+    const result = (await handler!({}, 'apiyi', 'sk-x')) as {
+      ok: boolean
+      activeId?: string
+      providerGeneration?: number
+    }
     expect(manager.setProviderApiKey).toHaveBeenCalledWith('apiyi', 'sk-x')
-    expect(result).toEqual({ ok: true })
+    expect(result).toEqual({ ok: true, activeId: 'apiyi', providerGeneration: 3 })
 
     // Non-string key gets coerced to '' so we never crash on undefined.
     await handler!({}, 'apiyi', undefined)
@@ -318,10 +342,15 @@ describe('registerAgentIpc thread management handlers', () => {
   it('agent:update-custom-provider forwards id + sanitized patch', async () => {
     const handler = get('agent:update-custom-provider')
     expect(handler).toBeTypeOf('function')
-    await handler!({}, 'custom-1', { name: '  Renamed  ', model: 'gpt-5.5' })
+    const result = await handler!({}, 'custom-1', { name: '  Renamed  ', model: 'gpt-5.5' })
     expect(manager.updateCustomProvider).toHaveBeenCalledWith('custom-1', {
       name: 'Renamed',
       model: 'gpt-5.5',
+    })
+    expect(result).toEqual({
+      ok: true,
+      activeId: 'custom-1',
+      providerGeneration: 4,
     })
 
     const bad = (await handler!({}, '', { name: 'x' })) as { ok: boolean; error?: string }
@@ -331,8 +360,12 @@ describe('registerAgentIpc thread management handlers', () => {
   it('agent:remove-custom-provider forwards id and surfaces new active id', async () => {
     const handler = get('agent:remove-custom-provider')
     expect(handler).toBeTypeOf('function')
-    const result = (await handler!({}, 'custom-1')) as { ok: boolean; activeId?: string }
+    const result = (await handler!({}, 'custom-1')) as {
+      ok: boolean
+      activeId?: string
+      providerGeneration?: number
+    }
     expect(manager.removeCustomProvider).toHaveBeenCalledWith('custom-1')
-    expect(result).toEqual({ ok: true, activeId: 'apiyi' })
+    expect(result).toEqual({ ok: true, activeId: 'apiyi', providerGeneration: 5 })
   })
 })
