@@ -2,6 +2,7 @@ import type { CodexUserMessageReconcile, TimelineItem } from './agent-timeline'
 import type { AgentReference } from './agent-reference'
 import type { ThreadGoal } from './codexGoals'
 import type { PlanReasoningEffort } from '../shared/collaborationMode'
+import type { ConcreteModelReasoningEffort } from '../shared/modelSettings'
 
 // Canonical home is agent-timeline.ts (BaseItem.codexReconcile persists the
 // same shape); re-exported here because stream-event consumers import all
@@ -67,7 +68,7 @@ export interface AgentCollaborationModeUpdatePayload {
   threadId: string
   mode: 'default' | 'plan'
   model: string
-  defaultReasoningEffort?: string
+  defaultReasoningEffort?: ConcreteModelReasoningEffort
   planReasoningEffort: PlanReasoningEffort
   requestVersion: number
 }
@@ -98,7 +99,7 @@ export interface AgentSendMessagePayload {
    * Native Codex reasoning-effort override for the selected model. This is
    * independent from the model slug and is forwarded as `turn/start.effort`.
    */
-  reasoningEffort?: string
+  reasoningEffort?: ConcreteModelReasoningEffort
   /**
    * Skills explicitly invoked via `$skill-name` tokens in `content`. When the
    * renderer can resolve the path locally (e.g. via `getSkillsSummary`) it

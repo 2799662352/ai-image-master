@@ -41,13 +41,21 @@ import {
   type CollaborationModeKind,
   type PlanReasoningEffort,
 } from '../../../../shared/collaborationMode'
+import {
+  isModelReasoningEffort,
+  migrateLegacyModelSelection,
+  type ModelReasoningEffort,
+} from '../../../../shared/modelSettings'
 import { AGENT_MODELS, DEFAULT_MODEL_ID, resolveModelSelection } from './models'
 import { contextUsedPercent } from './contextWindowDefaults'
 import { DEFAULT_IMAGE_CHANNEL_ID, isSelectableImageChannel } from './imageChannels'
 import { useFileExplorerStore } from '../file-explorer/store'
 import { rehydrateCodexArtifacts } from './codexArtifactPersistence'
 
-const SELECTED_MODEL_STORAGE_KEY = 'catimation.agent.selectedModel'
+const LEGACY_SELECTED_MODEL_STORAGE_KEY = 'catimation.agent.selectedModel'
+const CANONICAL_SELECTED_MODEL_STORAGE_KEY = 'agent.selectedModel:v2'
+const MODEL_REASONING_STORAGE_KEY = 'agent.modelReasoningByModel:v1'
+const MODEL_CONTEXT_STORAGE_KEY = 'agent.modelContextByModel:v1'
 const SELECTED_IMAGE_CHANNEL_STORAGE_KEY = 'catimation.agent.selectedImageChannel'
 const PLAN_EFFORT_STORAGE_KEY = 'agent.planReasoningEffort:v1'
 const THREAD_MODE_STORAGE_KEY = 'agent.collaborationModesByThread:v1'
@@ -203,23 +211,132 @@ function scheduleThreadListTitleRefreshes(run: () => void): void {
 }
 
 
-function readPersistedModelId(): string {
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
+}
+
+function isSafeModelSettingsKey(key: string): boolean {
+  return (
+    key.length > 0
+    && key !== '__proto__'
+    && key !== 'prototype'
+    && key !== 'constructor'
+  )
+}
+
+function readModelReasoningEfforts(): Record<string, ModelReasoningEffort> {
   try {
-    const raw = globalThis.localStorage?.getItem(SELECTED_MODEL_STORAGE_KEY)
-    if (!raw) return DEFAULT_MODEL_ID
-    return AGENT_MODELS.some((m) => m.id === raw) ? raw : DEFAULT_MODEL_ID
+    const raw = globalThis.localStorage?.getItem(MODEL_REASONING_STORAGE_KEY)
+    if (!raw) return {}
+    const parsed: unknown = JSON.parse(raw)
+    if (!isPlainRecord(parsed)) return {}
+    const entries = Object.entries(parsed).filter(
+      (entry): entry is [string, ModelReasoningEffort] =>
+        isSafeModelSettingsKey(entry[0]) && isModelReasoningEffort(entry[1]),
+    )
+    return Object.fromEntries(entries)
   } catch {
-    return DEFAULT_MODEL_ID
+    return {}
   }
 }
 
-function persistModelId(id: string): void {
+function readModelContextWindows(): Record<string, number> {
   try {
-    globalThis.localStorage?.setItem(SELECTED_MODEL_STORAGE_KEY, id)
+    const raw = globalThis.localStorage?.getItem(MODEL_CONTEXT_STORAGE_KEY)
+    if (!raw) return {}
+    const parsed: unknown = JSON.parse(raw)
+    if (!isPlainRecord(parsed)) return {}
+    const entries = Object.entries(parsed).filter(
+      (entry): entry is [string, number] =>
+        isSafeModelSettingsKey(entry[0])
+        && typeof entry[1] === 'number'
+        && Number.isFinite(entry[1])
+        && Number.isInteger(entry[1])
+        && entry[1] > 0,
+    )
+    return Object.fromEntries(entries)
+  } catch {
+    return {}
+  }
+}
+
+function persistModelReasoningEfforts(
+  efforts: Record<string, ModelReasoningEffort>,
+): void {
+  try {
+    globalThis.localStorage?.setItem(
+      MODEL_REASONING_STORAGE_KEY,
+      JSON.stringify(efforts),
+    )
+  } catch {
+    // Storage is optional in private/restricted renderer contexts.
+  }
+}
+
+function persistCanonicalModelId(id: string): void {
+  try {
+    globalThis.localStorage?.setItem(CANONICAL_SELECTED_MODEL_STORAGE_KEY, id)
   } catch {
     // localStorage unavailable (SSR / sandbox); silently ignore.
   }
 }
+
+interface RestoredModelSettings {
+  selectedModelId: string
+  modelReasoningEffortByModel: Record<string, ModelReasoningEffort>
+  modelContextWindowByModel: Record<string, number>
+}
+
+function restoreModelSettings(): RestoredModelSettings {
+  const modelReasoningEffortByModel = readModelReasoningEfforts()
+  const modelContextWindowByModel = readModelContextWindows()
+  let selectedModelId = DEFAULT_MODEL_ID
+
+  try {
+    const canonical = globalThis.localStorage?.getItem(
+      CANONICAL_SELECTED_MODEL_STORAGE_KEY,
+    )
+    if (canonical !== null && canonical !== undefined) {
+      selectedModelId = canonical.length > 0 ? canonical : DEFAULT_MODEL_ID
+      if (selectedModelId !== canonical) persistCanonicalModelId(selectedModelId)
+      return {
+        selectedModelId,
+        modelReasoningEffortByModel,
+        modelContextWindowByModel,
+      }
+    }
+
+    const legacy = globalThis.localStorage?.getItem(
+      LEGACY_SELECTED_MODEL_STORAGE_KEY,
+    )
+    const migrated = migrateLegacyModelSelection(legacy || DEFAULT_MODEL_ID)
+    selectedModelId = migrated.model || DEFAULT_MODEL_ID
+    if (
+      migrated.migrated
+      && migrated.reasoningEffort !== 'auto'
+      && !Object.prototype.hasOwnProperty.call(
+        modelReasoningEffortByModel,
+        selectedModelId,
+      )
+    ) {
+      modelReasoningEffortByModel[selectedModelId] = migrated.reasoningEffort
+      persistModelReasoningEfforts(modelReasoningEffortByModel)
+    }
+    persistCanonicalModelId(selectedModelId)
+  } catch {
+    // Keep safe in-memory defaults when storage access itself is unavailable.
+  }
+
+  return {
+    selectedModelId,
+    modelReasoningEffortByModel,
+    modelContextWindowByModel,
+  }
+}
+
+const restoredModelSettings = restoreModelSettings()
 
 function readPersistedImageChannel(): string {
   try {
@@ -501,6 +618,10 @@ interface AgentChatState {
   isRunning: boolean
   error?: string
   selectedModelId: string
+  /** Ordinary/default-mode reasoning preference, independently persisted per model. */
+  modelReasoningEffortByModel: Record<string, ModelReasoningEffort>
+  /** Per-model context preference; backend application is intentionally separate. */
+  modelContextWindowByModel: Record<string, number>
   /** User-selected image render channel (authoritative for generate_image). */
   selectedImageChannel: string
   /** Current composer target/display for the active thread or unsaved draft. */
@@ -609,6 +730,7 @@ interface AgentChatState {
   appendInputText: (text: string) => void
   setError: (error?: string) => void
   setSelectedModel: (modelId: string) => void
+  setModelReasoningEffort: (model: string, effort: ModelReasoningEffort) => void
   setSelectedImageChannel: (channelId: string) => void
   /** Compatibility alias used by the existing toggle until its UI task lands. */
   setCollabMode: (kind: CollaborationModeKind) => void
@@ -804,6 +926,24 @@ interface AgentChatState {
   setSidebarWidth: (width: number) => void
   renameThread: (threadId: string, title: string) => Promise<void>
   deleteThread: (threadId: string) => Promise<void>
+}
+
+function resolveOrdinaryModelSelection(
+  state: Pick<
+    AgentChatState,
+    'selectedModelId' | 'modelReasoningEffortByModel'
+  >,
+): ReturnType<typeof resolveModelSelection> {
+  const effort = Object.prototype.hasOwnProperty.call(
+    state.modelReasoningEffortByModel,
+    state.selectedModelId,
+  )
+    ? state.modelReasoningEffortByModel[state.selectedModelId]
+    : 'auto'
+  return resolveModelSelection(
+    state.selectedModelId,
+    isModelReasoningEffort(effort) ? effort : 'auto',
+  )
 }
 
 /**
@@ -1446,7 +1586,11 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   threadSlices: {},
   runningByThread: {},
   chatScrollByThread: loadChatScrollByThread(),
-  selectedModelId: readPersistedModelId(),
+  selectedModelId: restoredModelSettings.selectedModelId,
+  modelReasoningEffortByModel:
+    restoredModelSettings.modelReasoningEffortByModel,
+  modelContextWindowByModel:
+    restoredModelSettings.modelContextWindowByModel,
   selectedImageChannel: readPersistedImageChannel(),
   collabModeKind: 'default',
   collabModeByThread: restoredThreadCollaborationModes,
@@ -1676,7 +1820,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   setError: (error) => set({ error }),
   setSelectedModel: (modelId) => {
     if (!AGENT_MODELS.some((m) => m.id === modelId)) return
-    persistModelId(modelId)
+    persistCanonicalModelId(modelId)
     const canonicalModel = resolveModelSelection(modelId).model
     set((state) => ({
       selectedModelId: modelId,
@@ -1685,6 +1829,17 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         : {}),
     }))
     void get().loadCollaborationCapabilities()
+  },
+  setModelReasoningEffort: (model, effort) => {
+    if (!isSafeModelSettingsKey(model) || !isModelReasoningEffort(effort)) return
+    set((state) => {
+      const modelReasoningEffortByModel = {
+        ...state.modelReasoningEffortByModel,
+        [model]: effort,
+      }
+      persistModelReasoningEfforts(modelReasoningEffortByModel)
+      return { modelReasoningEffortByModel }
+    })
   },
   setSelectedImageChannel: (channelId) => {
     if (!isSelectableImageChannel(channelId)) return
@@ -1730,12 +1885,14 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       }
     })
 
-    const modelSelection = resolveModelSelection(snapshot.selectedModelId)
+    const modelSelection = resolveOrdinaryModelSelection(snapshot)
     const payload: AgentCollaborationModeUpdatePayload = {
       threadId,
       mode: kind,
       model: modelSelection.model,
-      defaultReasoningEffort: modelSelection.reasoningEffort,
+      ...(modelSelection.reasoningEffort
+        ? { defaultReasoningEffort: modelSelection.reasoningEffort }
+        : {}),
       planReasoningEffort: selectEffectivePlanReasoningEffort(get()),
       requestVersion,
     }
@@ -2308,7 +2465,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     if (state.isRunning) return
     if (!content && attachments.length === 0 && references.length === 0) return
 
-    const modelSelection = resolveModelSelection(state.selectedModelId)
+    const modelSelection = resolveOrdinaryModelSelection(state)
     const now = Date.now()
     const items: TimelineItem[] = []
     if (attachments.length > 0) {
@@ -2386,8 +2543,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         attachments,
         references,
         currentPage: window.location.hash.slice(1),
-        model: modelSelection.model,
-        reasoningEffort: modelSelection.reasoningEffort,
+        ...modelSelection,
         skills: skills.length > 0 ? skills : undefined,
         mentions,
         collaborationModeKind: state.collabModeKind,
@@ -2554,15 +2710,14 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     const mentions = resolveMentions(content, state.availablePluginMentions)
 
     try {
-      const modelSelection = resolveModelSelection(state.selectedModelId)
+      const modelSelection = resolveOrdinaryModelSelection(state)
       const result = await steer({
         threadId,
         content,
         attachments,
         references,
         currentPage: window.location.hash.slice(1),
-        model: modelSelection.model,
-        reasoningEffort: modelSelection.reasoningEffort,
+        ...modelSelection,
         skills: skills.length > 0 ? skills : undefined,
         mentions,
         // AgentManager keeps these on the assembled input for its no-active-turn

@@ -80,6 +80,8 @@ beforeEach(() => {
     availableSkills: [],
     availablePluginMentions: [],
     selectedModelId: 'gpt-5.5',
+    modelReasoningEffortByModel: {},
+    modelContextWindowByModel: {},
     threadSlices: {},
     runningByThread: {},
     threadList: [],
@@ -243,6 +245,34 @@ describe('send and steer collaboration payloads', () => {
     })
   })
 
+  it('uses ordinary model effort for steer without leaking it into the Plan preference', async () => {
+    useAgentChatStore.setState({
+      input: 'interrupt with max',
+      isRunning: true,
+      selectedModelId: 'gpt-5.6-sol',
+      modelReasoningEffortByModel: { 'gpt-5.6-sol': 'max' },
+      collabModeKind: 'plan',
+      planReasoningEffort: 'high',
+      collaborationCapabilities: {
+        providerId: 'apiyi',
+        planDefaultEffort: 'medium',
+        supportedPlanEfforts: ['high'],
+        source: 'codex',
+      },
+      collaborationCapabilitiesModel: 'gpt-5.6-sol',
+    } as never)
+
+    await useAgentChatStore.getState().steer()
+
+    expect(steer).toHaveBeenCalledWith(expect.objectContaining({
+      model: 'gpt-5.6-sol',
+      reasoningEffort: 'max',
+      collaborationModeKind: 'plan',
+      planReasoningEffort: 'high',
+    }))
+    expect(useAgentChatStore.getState().planReasoningEffort).toBe('high')
+  })
+
   it('uses effective Auto for true steer while an explicit preference is temporarily suppressed', async () => {
     useAgentChatStore.setState({
       input: 'interrupt safely',
@@ -286,7 +316,10 @@ describe('send and steer collaboration payloads', () => {
 
 describe('existing-thread confirmed ownership', () => {
   it('settles a successful RPC acknowledgement and reconciles a later server event', async () => {
-    useAgentChatStore.setState({ selectedModelId: 'gpt-5.5-xhigh' } as never)
+    useAgentChatStore.setState({
+      selectedModelId: 'gpt-5.5',
+      modelReasoningEffortByModel: { 'gpt-5.5': 'xhigh' },
+    } as never)
 
     await useAgentChatStore.getState().requestCollabMode('plan')
 
@@ -876,7 +909,8 @@ describe('Plan effort ownership and capabilities', () => {
 
   it('keeps normal model effort isolated across Plan → Default → Plan', async () => {
     useAgentChatStore.setState({
-      selectedModelId: 'gpt-5.5-xhigh',
+      selectedModelId: 'gpt-5.5',
+      modelReasoningEffortByModel: { 'gpt-5.5': 'xhigh' },
       collabModeKind: 'plan',
       collabModeByThread: { 'thread-1': 'plan' },
     } as never)
@@ -1025,11 +1059,11 @@ describe('Plan effort ownership and capabilities', () => {
     expect(localStorage.getItem(PLAN_EFFORT_STORAGE_KEY)).toBe('auto')
   })
 
-  it('loads capabilities with the canonical model when model selection changes', async () => {
-    useAgentChatStore.getState().setSelectedModel('gpt-5.5-xhigh')
+  it('loads capabilities with the selected canonical model when selection changes', async () => {
+    useAgentChatStore.getState().setSelectedModel('gpt-5.6-sol')
     await vi.waitFor(() => {
-      expect(getCollaborationCapabilities).toHaveBeenCalledWith('gpt-5.5')
-      expect(useAgentChatStore.getState().collaborationCapabilitiesModel).toBe('gpt-5.5')
+      expect(getCollaborationCapabilities).toHaveBeenCalledWith('gpt-5.6-sol')
+      expect(useAgentChatStore.getState().collaborationCapabilitiesModel).toBe('gpt-5.6-sol')
     })
   })
 
@@ -1109,7 +1143,8 @@ describe('Plan effort ownership and capabilities', () => {
       source: 'codex' as const,
     }
     useAgentChatStore.setState({
-      selectedModelId: 'gpt-5.5-xhigh',
+      selectedModelId: 'gpt-5.5',
+      modelReasoningEffortByModel: { 'gpt-5.5': 'xhigh' },
       planReasoningEffort: 'high',
       collaborationCapabilities: knownCapabilities,
       collaborationCapabilitiesModel: 'gpt-5.5',
