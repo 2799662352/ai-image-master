@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { promises as fs, type WriteStream } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { assertCodexModelContextConfig } from '../../shared/modelSettings'
 import { buildCodexLaunchArgs, resolveCodexSessionConfig, type CatimationMcpLaunchInfo, type CodexProviderConfig } from './codexLaunch'
 import { mergeCodexConfigs } from './codexConfigMerge'
 import { appendAuditLog, atomicWriteFile } from './codexConfigStore'
@@ -98,6 +99,11 @@ export interface CodexLocalBackendOptions {
    * (notably the `env` arg) and returns an `EventEmitter`-shaped child.
    */
   spawnFactory?: typeof spawn
+  /**
+   * Test seam for the production log path. Defaults to createAgentLogStream;
+   * context getter validation must complete before this factory is touched.
+   */
+  createLogStream?: typeof createAgentLogStream
   /**
    * Connect timeout forwarded to `CodexProtocolClient` in the spawn-mode
    * branch. Defaults to 10s in production. Tests can shrink this so an
@@ -368,6 +374,10 @@ export class CodexLocalBackend implements IAgentBackend {
   }
 
   private async startSpawnedClient(): Promise<SpawnedCodexClient> {
+    const modelContextConfig = this.options.getModelContextConfig?.()
+    if (this.options.getModelContextConfig) {
+      assertCodexModelContextConfig(modelContextConfig)
+    }
     const port = await pickFreePort(4222)
     const listenUrl = `ws://127.0.0.1:${port}`
     const resourceRoot = this.resolveResourceRoot()
@@ -376,7 +386,7 @@ export class CodexLocalBackend implements IAgentBackend {
     // 可关; 走真实 file 那条会把 WriteStream 存到 ownedLog, 在 stop() 里 .end() 它。
     const ownedLog: WriteStream | null = this.resourceRootOverride
       ? null
-      : createAgentLogStream('codex')
+      : (this.options.createLogStream ?? createAgentLogStream)('codex')
     const log: NodeJS.WritableStream = ownedLog ?? process.stderr
     const recentOutput = new RingBuffer(STARTUP_LOG_TAIL)
     const captureOutput = (chunk: Buffer | string): void => {
@@ -406,7 +416,6 @@ export class CodexLocalBackend implements IAgentBackend {
     // apiyi key policy is FORCE-设置-only: the boot seed wipes any hand-typed
     // config.toml key, so 设置 → API易 (getApiyiKey) is the single source and
     // no config.toml read is needed here.
-    const modelContextConfig = this.options.getModelContextConfig?.()
     const launchArgs = buildCodexLaunchArgs({
       listenUrl,
       provider: this.currentProvider,

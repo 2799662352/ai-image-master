@@ -1,4 +1,5 @@
 import { CATIMATION_MCP_HOST, CATIMATION_MCP_TOKEN_HEADER } from '../mcp/config'
+import { assertCodexModelContextConfig } from '../../shared/modelSettings'
 import { CINEMATOGRAPHY_KB_ENV_SCAFFOLD } from './cinematographyKbMcpLauncher'
 import type {
   CodexApprovalPolicy,
@@ -9,15 +10,16 @@ import type {
 } from '../../types/agent'
 
 export const DEFAULT_LISTEN_URL = 'ws://127.0.0.1:7345'
-export const DEFAULT_CODEX_MODEL_CONTEXT_CONFIG: Readonly<CodexModelContextConfig> = {
+export const DEFAULT_CODEX_MODEL_CONTEXT_CONFIG: Readonly<CodexModelContextConfig> = Object.freeze({
   modelContextWindow: 200_000,
   modelAutoCompactTokenLimit: 180_000,
-}
+})
 
 const RESERVED_PROVIDER_TOP_LEVEL_KEYS = new Set([
   'model_context_window',
   'model_auto_compact_token_limit',
 ])
+const CANONICAL_PROVIDER_TOP_LEVEL_KEY = /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/
 
 export const DEFAULT_CODEX_SESSION_CONFIG: CodexSessionConfig = {
   approvalPolicy: 'never',
@@ -207,8 +209,19 @@ function serializeScalar(value: string | boolean | number): string {
 function assertNoReservedProviderConfig(provider: CodexProviderConfig): void {
   if (!provider.extraTopLevelConfig) return
   for (const key of Object.keys(provider.extraTopLevelConfig)) {
-    if (RESERVED_PROVIDER_TOP_LEVEL_KEYS.has(key)) {
-      throw new Error(`Reserved provider extraTopLevelConfig key "${key}" is owned by runtime settings`)
+    const trimmedKey = key.trim()
+    const quote = trimmedKey.at(0)
+    const semanticKey = (
+      (quote === '"' || quote === "'")
+      && trimmedKey.at(-1) === quote
+    )
+      ? trimmedKey.slice(1, -1).trim()
+      : trimmedKey
+    if (RESERVED_PROVIDER_TOP_LEVEL_KEYS.has(semanticKey)) {
+      throw new Error(`Reserved provider extraTopLevelConfig key "${semanticKey}" is owned by runtime settings`)
+    }
+    if (key !== trimmedKey || semanticKey !== trimmedKey || !CANONICAL_PROVIDER_TOP_LEVEL_KEY.test(key)) {
+      throw new Error(`Invalid provider extraTopLevelConfig key syntax: "${key}"`)
     }
   }
 }
@@ -300,6 +313,8 @@ export function appendExtraProviders(
 }
 
 export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
+  const modelContextConfig = options?.modelContextConfig ?? DEFAULT_CODEX_MODEL_CONTEXT_CONFIG
+  assertCodexModelContextConfig(modelContextConfig)
   const url = options?.listenUrl ?? DEFAULT_LISTEN_URL
   const sessionConfig = resolveCodexSessionConfig(options?.sessionConfig)
   const args: string[] = [
@@ -651,7 +666,6 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
 
   const withActive = appendProviderArgs(args, options?.provider)
   const withProviders = appendExtraProviders(withActive, options?.extraProviders)
-  const modelContextConfig = options?.modelContextConfig ?? DEFAULT_CODEX_MODEL_CONTEXT_CONFIG
   // Runtime settings are authoritative. Append both reserved keys after every
   // provider override so Codex's last-wins `-c` precedence cannot be hijacked
   // by a provider preset.

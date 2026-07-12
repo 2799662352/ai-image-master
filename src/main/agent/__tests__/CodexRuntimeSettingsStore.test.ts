@@ -50,8 +50,20 @@ describe('CodexRuntimeSettingsStore', () => {
     ['a non-object root', JSON.stringify(['not', 'an', 'object'])],
     ['a null root', 'null'],
     [
-      'a dangerous prototype key',
+      'a dangerous root prototype key',
       '{"version":1,"confirmed":{"modelContextWindow":372000,"modelAutoCompactTokenLimit":334800},"__proto__":{"polluted":true}}',
+    ],
+    [
+      'a dangerous confirmed prototype key',
+      '{"version":1,"confirmed":{"modelContextWindow":372000,"modelAutoCompactTokenLimit":334800,"__proto__":{"polluted":true}}}',
+    ],
+    [
+      'a dangerous pending prototype key',
+      '{"version":1,"confirmed":{"modelContextWindow":200000,"modelAutoCompactTokenLimit":180000},"pending":{"target":{"modelContextWindow":372000,"modelAutoCompactTokenLimit":334800},"requestVersion":1,"startedAt":"2026-07-12T10:00:00.000Z","__proto__":{"polluted":true}}}',
+    ],
+    [
+      'a dangerous pending target prototype key',
+      '{"version":1,"confirmed":{"modelContextWindow":200000,"modelAutoCompactTokenLimit":180000},"pending":{"target":{"modelContextWindow":372000,"modelAutoCompactTokenLimit":334800,"__proto__":{"polluted":true}},"requestVersion":1,"startedAt":"2026-07-12T10:00:00.000Z"}}',
     ],
   ])('safely falls back for %s', (_label, raw) => {
     writeFileSync(settingsPath, raw, 'utf8')
@@ -77,6 +89,73 @@ describe('CodexRuntimeSettingsStore', () => {
     writeFileSync(settingsPath, JSON.stringify({ version: 1, confirmed }), 'utf8')
 
     expect(new CodexRuntimeSettingsStore(userDataDir).loadSync()).toEqual(DEFAULT_SETTINGS)
+  })
+
+  it.each([
+    [
+      'root',
+      Object.create({
+        version: 1,
+        confirmed: DEFAULT_SETTINGS.confirmed,
+      }),
+    ],
+    [
+      'confirmed',
+      {
+        version: 1,
+        confirmed: Object.create({
+          modelContextWindow: 200_000,
+          modelAutoCompactTokenLimit: 180_000,
+        }),
+      },
+    ],
+    [
+      'pending',
+      {
+        ...DEFAULT_SETTINGS,
+        pending: Object.create({
+          target: {
+            modelContextWindow: 372_000,
+            modelAutoCompactTokenLimit: 334_800,
+          },
+          requestVersion: 1,
+          startedAt: '2026-07-12T10:00:00.000Z',
+        }),
+      },
+    ],
+    [
+      'pending.target',
+      {
+        ...DEFAULT_SETTINGS,
+        pending: {
+          target: Object.create({
+            modelContextWindow: 372_000,
+            modelAutoCompactTokenLimit: 334_800,
+          }),
+          requestVersion: 1,
+          startedAt: '2026-07-12T10:00:00.000Z',
+        },
+      },
+    ],
+  ])('rejects required fields inherited through %s prototype', (_label, candidate) => {
+    const store = new CodexRuntimeSettingsStore(userDataDir)
+
+    expect(() => store.replace(candidate as PersistedCodexRuntimeSettingsV1)).toThrow(
+      /invalid.*runtime settings/i,
+    )
+    expect(store.loadSync()).toEqual(DEFAULT_SETTINGS)
+    expect(existsSync(settingsPath)).toBe(false)
+  })
+
+  it('rejects a root with valid own fields but a polluted custom prototype', () => {
+    const candidate = Object.assign(
+      Object.create({ polluted: true }),
+      DEFAULT_SETTINGS,
+    )
+    const store = new CodexRuntimeSettingsStore(userDataDir)
+
+    expect(() => store.replace(candidate)).toThrow(/invalid.*runtime settings/i)
+    expect(store.loadSync()).toEqual(DEFAULT_SETTINGS)
   })
 
   it.each([
@@ -221,6 +300,53 @@ describe('CodexRuntimeSettingsStore', () => {
     expect(renames).toHaveLength(1)
     expect(renames[0][1]).toBe(settingsPath)
     expect(JSON.parse(readFileSync(settingsPath, 'utf8'))).toEqual(next)
+    expect(readdirSync(userDataDir).filter((name) => name.endsWith('.tmp'))).toEqual([])
+  })
+
+  it('replace atomically overwrites an existing settings file', () => {
+    const store = new CodexRuntimeSettingsStore(userDataDir)
+    store.replace(DEFAULT_SETTINGS)
+    const next: PersistedCodexRuntimeSettingsV1 = {
+      version: 1,
+      confirmed: {
+        modelContextWindow: 372_000,
+        modelAutoCompactTokenLimit: 334_800,
+      },
+    }
+
+    store.replace(next)
+
+    expect(JSON.parse(readFileSync(settingsPath, 'utf8'))).toEqual(next)
+    expect(readdirSync(userDataDir).filter((name) => name.endsWith('.tmp'))).toEqual([])
+  })
+
+  it('concurrent replace attempts leave one complete valid snapshot and no temp files', async () => {
+    const snapshots: PersistedCodexRuntimeSettingsV1[] = [
+      DEFAULT_SETTINGS,
+      {
+        version: 1,
+        confirmed: {
+          modelContextWindow: 272_000,
+          modelAutoCompactTokenLimit: 244_800,
+        },
+      },
+      {
+        version: 1,
+        confirmed: {
+          modelContextWindow: 372_000,
+          modelAutoCompactTokenLimit: 334_800,
+        },
+      },
+    ]
+
+    await Promise.all(snapshots.map(async (snapshot) => {
+      await Promise.resolve()
+      new CodexRuntimeSettingsStore(userDataDir).replace(snapshot)
+    }))
+
+    const persisted = JSON.parse(readFileSync(settingsPath, 'utf8'))
+    expect(snapshots).toContainEqual(persisted)
+    expect(new CodexRuntimeSettingsStore(userDataDir).loadSync()).toEqual(persisted)
     expect(readdirSync(userDataDir).filter((name) => name.endsWith('.tmp'))).toEqual([])
   })
 

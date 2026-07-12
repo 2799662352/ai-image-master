@@ -1,3 +1,5 @@
+import type { CodexModelContextConfig } from '../types/agent'
+
 export const MODEL_REASONING_EFFORTS = [
   'low',
   'medium',
@@ -128,4 +130,56 @@ export function migrateLegacyModelSelection(id: string): LegacyModelSelection {
 
 export function modelAutoCompactTokenLimit(contextWindow: number): number {
   return Math.floor(contextWindow * 0.9)
+}
+
+const MODEL_CONTEXT_CONFIG_KEYS = [
+  'modelContextWindow',
+  'modelAutoCompactTokenLimit',
+] as const
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
+}
+
+function hasExactOwnKeys(
+  value: Record<string, unknown>,
+  expectedKeys: readonly string[],
+): boolean {
+  const ownKeys = Reflect.ownKeys(value)
+  return (
+    ownKeys.length === expectedKeys.length
+    && ownKeys.every(
+      (key) => typeof key === 'string' && expectedKeys.includes(key),
+    )
+    && expectedKeys.every((key) => Object.hasOwn(value, key))
+  )
+}
+
+export function isCodexModelContextConfig(
+  value: unknown,
+): value is CodexModelContextConfig {
+  if (!isPlainRecord(value)) return false
+  if (!hasExactOwnKeys(value, MODEL_CONTEXT_CONFIG_KEYS)) return false
+
+  const contextWindow = value.modelContextWindow
+  const compactLimit = value.modelAutoCompactTokenLimit
+  return (
+    typeof contextWindow === 'number'
+    && Number.isSafeInteger(contextWindow)
+    && contextWindow > 0
+    && typeof compactLimit === 'number'
+    && Number.isSafeInteger(compactLimit)
+    && compactLimit > 0
+    && compactLimit === modelAutoCompactTokenLimit(contextWindow)
+  )
+}
+
+export function assertCodexModelContextConfig(
+  value: unknown,
+): asserts value is CodexModelContextConfig {
+  if (!isCodexModelContextConfig(value)) {
+    throw new TypeError('Invalid Codex model context config')
+  }
 }

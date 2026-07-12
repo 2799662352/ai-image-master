@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildCodexLaunchArgs,
+  DEFAULT_CODEX_MODEL_CONTEXT_CONFIG,
   DEFAULT_CODEX_SESSION_CONFIG,
   DEFAULT_LISTEN_URL,
   resolveCodexSessionConfig,
@@ -219,6 +220,37 @@ describe('buildCodexLaunchArgs', () => {
 
     expect(args).toContain('model_context_window=372000')
     expect(args).toContain('model_auto_compact_token_limit=334800')
+  })
+
+  it.each([
+    ['NaN context', { modelContextWindow: Number.NaN, modelAutoCompactTokenLimit: 1 }],
+    ['negative context', { modelContextWindow: -1, modelAutoCompactTokenLimit: 1 }],
+    [
+      'unsafe context',
+      {
+        modelContextWindow: Number.MAX_SAFE_INTEGER + 1,
+        modelAutoCompactTokenLimit: 1,
+      },
+    ],
+    [
+      'mismatched compact limit',
+      { modelContextWindow: 372_000, modelAutoCompactTokenLimit: 334_799 },
+    ],
+  ])('rejects invalid explicit modelContextConfig at the public boundary: %s', (_label, config) => {
+    expect(() => buildCodexLaunchArgs({
+      modelContextConfig: config,
+    })).toThrow(/invalid.*model context config/i)
+  })
+
+  it('freezes the exported default context config against caller mutation', () => {
+    expect(Object.isFrozen(DEFAULT_CODEX_MODEL_CONTEXT_CONFIG)).toBe(true)
+    expect(() => {
+      (DEFAULT_CODEX_MODEL_CONTEXT_CONFIG as { modelContextWindow: number }).modelContextWindow = 1
+    }).toThrow()
+
+    const args = buildCodexLaunchArgs()
+    expect(args).toContain('model_context_window=200000')
+    expect(args).toContain('model_auto_compact_token_limit=180000')
   })
 
   it('pins tool_output_token_limit to the official catalog value (10k)', () => {
@@ -475,7 +507,14 @@ describe('buildCodexLaunchArgs', () => {
   it.each([
     'model_context_window',
     'model_auto_compact_token_limit',
+    ' model_context_window ',
+    ' model_auto_compact_token_limit ',
+    '"model_context_window"',
+    '"model_auto_compact_token_limit"',
+    "'model_context_window'",
+    "'model_auto_compact_token_limit'",
   ])('rejects reserved provider extraTopLevelConfig key %s', (reservedKey) => {
+    const normalizedKey = reservedKey.trim().replace(/^(['"])(.*)\1$/, '$2')
     expect(() => buildCodexLaunchArgs({
       provider: {
         id: 'custom',
@@ -486,7 +525,39 @@ describe('buildCodexLaunchArgs', () => {
           [reservedKey]: 1,
         },
       },
-    })).toThrow(new RegExp(`reserved.*${reservedKey}`, 'i'))
+    })).toThrow(new RegExp(`reserved.*${normalizedKey}`, 'i'))
+  })
+
+  it('rejects non-canonical provider extraTopLevelConfig key syntax', () => {
+    expect(() => buildCodexLaunchArgs({
+      provider: {
+        id: 'custom',
+        name: 'Custom',
+        baseUrl: 'https://example.com/v1',
+        envKey: 'OPENAI_API_KEY',
+        extraTopLevelConfig: {
+          ' custom_key ': true,
+        },
+      },
+    })).toThrow(/invalid.*provider.*key/i)
+  })
+
+  it('continues to accept ordinary canonical custom provider keys', () => {
+    const args = buildCodexLaunchArgs({
+      provider: {
+        id: 'custom',
+        name: 'Custom',
+        baseUrl: 'https://example.com/v1',
+        envKey: 'OPENAI_API_KEY',
+        extraTopLevelConfig: {
+          custom_feature_flag: true,
+          'custom.nested_limit': 42,
+        },
+      },
+    })
+
+    expect(args).toContain('custom_feature_flag=true')
+    expect(args).toContain('custom.nested_limit=42')
   })
 
   // apiyiKey is the catimation-style runtime secret injection: the single key

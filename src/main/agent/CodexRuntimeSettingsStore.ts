@@ -11,6 +11,7 @@ import {
 } from 'node:fs'
 import path from 'node:path'
 import type { CodexModelContextConfig } from '../../types/agent'
+import { isCodexModelContextConfig } from '../../shared/modelSettings'
 
 const SETTINGS_VERSION = 1 as const
 const SETTINGS_FILENAME = 'codex-runtime-settings.json'
@@ -47,9 +48,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null
 }
 
-function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
-  const allowedKeys = new Set(allowed)
-  return Object.keys(value).every((key) => allowedKeys.has(key))
+function hasExactOwnKeys(
+  value: Record<string, unknown>,
+  expectedKeys: readonly string[],
+): boolean {
+  const ownKeys = Reflect.ownKeys(value)
+  return (
+    ownKeys.length === expectedKeys.length
+    && ownKeys.every(
+      (key) => typeof key === 'string' && expectedKeys.includes(key),
+    )
+    && expectedKeys.every((key) => Object.hasOwn(value, key))
+  )
 }
 
 function isPositiveSafeInteger(value: unknown): value is number {
@@ -57,19 +67,7 @@ function isPositiveSafeInteger(value: unknown): value is number {
 }
 
 function validateModelContextConfig(value: unknown): CodexModelContextConfig | null {
-  if (!isRecord(value)) return null
-  if (!hasOnlyKeys(value, ['modelContextWindow', 'modelAutoCompactTokenLimit'])) return null
-
-  const modelContextWindow = value.modelContextWindow
-  const modelAutoCompactTokenLimit = value.modelAutoCompactTokenLimit
-  if (!isPositiveSafeInteger(modelContextWindow)) return null
-  if (!isPositiveSafeInteger(modelAutoCompactTokenLimit)) return null
-  if (modelAutoCompactTokenLimit !== Math.floor(modelContextWindow * 0.9)) return null
-
-  return {
-    modelContextWindow,
-    modelAutoCompactTokenLimit,
-  }
+  return isCodexModelContextConfig(value) ? { ...value } : null
 }
 
 function isCanonicalIsoTimestamp(value: unknown): value is string {
@@ -80,7 +78,11 @@ function isCanonicalIsoTimestamp(value: unknown): value is string {
 
 function validatePersistedSettings(value: unknown): PersistedCodexRuntimeSettingsV1 | null {
   if (!isRecord(value)) return null
-  if (!hasOnlyKeys(value, ['version', 'confirmed', 'pending'])) return null
+  const hasPending = Object.hasOwn(value, 'pending')
+  const rootKeys = hasPending
+    ? ['version', 'confirmed', 'pending']
+    : ['version', 'confirmed']
+  if (!hasExactOwnKeys(value, rootKeys)) return null
   if (value.version !== SETTINGS_VERSION) return null
 
   const confirmed = validateModelContextConfig(value.confirmed)
@@ -90,9 +92,9 @@ function validatePersistedSettings(value: unknown): PersistedCodexRuntimeSetting
     version: SETTINGS_VERSION,
     confirmed,
   }
-  if (value.pending === undefined) return result
+  if (!hasPending) return result
   if (!isRecord(value.pending)) return null
-  if (!hasOnlyKeys(value.pending, ['target', 'requestVersion', 'startedAt'])) return null
+  if (!hasExactOwnKeys(value.pending, ['target', 'requestVersion', 'startedAt'])) return null
 
   const target = validateModelContextConfig(value.pending.target)
   if (!target) return null
