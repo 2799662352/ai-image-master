@@ -51,6 +51,7 @@ beforeEach(() => {
   getCollaborationCapabilities.mockReset().mockResolvedValue({
     ok: true,
     data: {
+      providerId: 'apiyi',
       planDefaultEffort: 'medium',
       supportedPlanEfforts: ['low', 'medium', 'high', 'xhigh'],
       source: 'codex',
@@ -98,6 +99,7 @@ beforeEach(() => {
     collabModeNextTurnByThread: {},
     planReasoningEffort: 'auto',
     collaborationCapabilities: {
+      providerId: 'apiyi',
       planDefaultEffort: 'medium',
       supportedPlanEfforts: ['low', 'medium', 'high', 'xhigh'],
       source: 'codex',
@@ -619,6 +621,7 @@ describe('Plan effort ownership and capabilities', () => {
     modelBCapabilities.resolve({
       ok: true,
       data: {
+        providerId: 'apiyi',
         planDefaultEffort: 'medium',
         supportedPlanEfforts: ['xhigh'],
         source: 'codex',
@@ -627,6 +630,62 @@ describe('Plan effort ownership and capabilities', () => {
     await vi.waitFor(() => {
       expect(useAgentChatStore.getState().collaborationCapabilitiesModel).toBe('gpt-5.4')
     })
+  })
+
+  it('invalidates old Provider capabilities and drops its late response before reloading', async () => {
+    const apiyiCapabilities = deferred<AgentCollaborationCapabilitiesResult>()
+    const rightcodeCapabilities = deferred<AgentCollaborationCapabilitiesResult>()
+    getCollaborationCapabilities
+      .mockReturnValueOnce(apiyiCapabilities.promise)
+      .mockReturnValueOnce(rightcodeCapabilities.promise)
+    useAgentChatStore.setState({
+      planReasoningEffort: 'max',
+      collaborationCapabilities: {
+        providerId: 'apiyi',
+        planDefaultEffort: 'medium',
+        supportedPlanEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+        source: 'codex',
+      },
+      collaborationCapabilitiesModel: 'gpt-5.5',
+    } as never)
+
+    const staleLoad = useAgentChatStore.getState().loadCollaborationCapabilities('apiyi')
+    await vi.waitFor(() => expect(getCollaborationCapabilities).toHaveBeenCalledTimes(1))
+
+    useAgentChatStore.getState().invalidateCollaborationCapabilities()
+    expect(useAgentChatStore.getState().collaborationCapabilities).toBeUndefined()
+    expect(selectEffectivePlanReasoningEffort(useAgentChatStore.getState())).toBe('auto')
+
+    const currentLoad = useAgentChatStore.getState().loadCollaborationCapabilities('rightcode')
+    await vi.waitFor(() => expect(getCollaborationCapabilities).toHaveBeenCalledTimes(2))
+    apiyiCapabilities.resolve({
+      ok: true,
+      data: {
+        providerId: 'apiyi',
+        planDefaultEffort: 'medium',
+        supportedPlanEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+        source: 'codex',
+      },
+    })
+    await staleLoad
+    expect(useAgentChatStore.getState().collaborationCapabilities).toBeUndefined()
+
+    rightcodeCapabilities.resolve({
+      ok: true,
+      data: {
+        providerId: 'rightcode',
+        planDefaultEffort: 'medium',
+        supportedPlanEfforts: ['low', 'medium', 'high', 'xhigh'],
+        source: 'codex',
+      },
+    })
+    await currentLoad
+
+    expect(useAgentChatStore.getState().collaborationCapabilities).toMatchObject({
+      providerId: 'rightcode',
+      supportedPlanEfforts: ['low', 'medium', 'high', 'xhigh'],
+    })
+    expect(useAgentChatStore.getState().planReasoningEffort).toBe('auto')
   })
 
   it('submits one deferred Plan effort update after matching capabilities confirm support', async () => {
@@ -649,6 +708,7 @@ describe('Plan effort ownership and capabilities', () => {
     modelBCapabilities.resolve({
       ok: true,
       data: {
+        providerId: 'apiyi',
         planDefaultEffort: 'medium',
         supportedPlanEfforts: ['high', 'xhigh'],
         source: 'codex',
@@ -703,6 +763,7 @@ describe('Plan effort ownership and capabilities', () => {
     capabilities.resolve({
       ok: true,
       data: {
+        providerId: 'apiyi',
         planDefaultEffort: 'medium',
         supportedPlanEfforts: ['xhigh'],
         source: 'codex',
@@ -739,6 +800,7 @@ describe('Plan effort ownership and capabilities', () => {
     modelB.resolve({
       ok: true,
       data: {
+        providerId: 'apiyi',
         planDefaultEffort: 'medium',
         supportedPlanEfforts: ['xhigh'],
         source: 'codex',
@@ -747,6 +809,7 @@ describe('Plan effort ownership and capabilities', () => {
     modelC.resolve({
       ok: true,
       data: {
+        providerId: 'apiyi',
         planDefaultEffort: 'medium',
         supportedPlanEfforts: ['xhigh'],
         source: 'codex',
@@ -773,6 +836,7 @@ describe('Plan effort ownership and capabilities', () => {
     preferenceCapabilities.resolve({
       ok: true,
       data: {
+        providerId: 'apiyi',
         planDefaultEffort: 'medium',
         supportedPlanEfforts: ['high', 'xhigh'],
         source: 'codex',
@@ -797,6 +861,7 @@ describe('Plan effort ownership and capabilities', () => {
     defaultCapabilities.resolve({
       ok: true,
       data: {
+        providerId: 'apiyi',
         planDefaultEffort: 'medium',
         supportedPlanEfforts: ['xhigh'],
         source: 'codex',
@@ -845,6 +910,7 @@ describe('Plan effort ownership and capabilities', () => {
     getCollaborationCapabilities.mockResolvedValue({
       ok: true,
       data: {
+        providerId: 'apiyi',
         planDefaultEffort: 'medium',
         supportedPlanEfforts: ['low', 'medium'],
         source: 'codex',
@@ -871,7 +937,8 @@ describe('Plan effort ownership and capabilities', () => {
     getCollaborationCapabilities.mockResolvedValue({
       ok: true,
       data: {
-        planDefaultEffort: 'medium',
+        providerId: 'apiyi',
+        planDefaultEffort: null,
         supportedPlanEfforts: [],
         source: 'fallback',
       },
@@ -907,7 +974,8 @@ describe('Plan effort ownership and capabilities', () => {
       .mockResolvedValueOnce({
         ok: true,
         data: {
-          planDefaultEffort: 'medium',
+          providerId: 'apiyi',
+          planDefaultEffort: null,
           supportedPlanEfforts: [],
           source: 'fallback',
         },
@@ -915,6 +983,7 @@ describe('Plan effort ownership and capabilities', () => {
       .mockResolvedValueOnce({
         ok: true,
         data: {
+          providerId: 'apiyi',
           planDefaultEffort: 'medium',
           supportedPlanEfforts: ['high'],
           source: 'codex',
@@ -981,6 +1050,7 @@ describe('Plan effort ownership and capabilities', () => {
     ).toBe(true)
 
     const usefulCapabilities = {
+      providerId: 'apiyi',
       planDefaultEffort: 'medium',
       supportedPlanEfforts: ['low', 'medium', 'high'],
       source: 'codex' as const,
@@ -1021,7 +1091,8 @@ describe('Plan effort ownership and capabilities', () => {
 
     expect(useAgentChatStore.getState().collaborationCapabilitiesModel).toBe('gpt-5.4')
     expect(useAgentChatStore.getState().collaborationCapabilities).toEqual({
-      planDefaultEffort: 'medium',
+      providerId: 'unknown',
+      planDefaultEffort: null,
       supportedPlanEfforts: [],
       source: 'fallback',
     })
@@ -1032,6 +1103,7 @@ describe('Plan effort ownership and capabilities', () => {
 
   it('retains known Codex capabilities when the same model returns temporary fallback', async () => {
     const knownCapabilities = {
+      providerId: 'apiyi',
       planDefaultEffort: 'medium',
       supportedPlanEfforts: ['low', 'medium', 'high'],
       source: 'codex' as const,
@@ -1045,7 +1117,8 @@ describe('Plan effort ownership and capabilities', () => {
     getCollaborationCapabilities.mockResolvedValueOnce({
       ok: true,
       data: {
-        planDefaultEffort: 'medium',
+        providerId: 'apiyi',
+        planDefaultEffort: null,
         supportedPlanEfforts: [],
         source: 'fallback',
       },
@@ -1194,6 +1267,7 @@ describe('thread isolation and restart persistence', () => {
       .mockResolvedValueOnce({
         ok: true,
         data: {
+          providerId: 'apiyi',
           planDefaultEffort: 'medium',
           supportedPlanEfforts: ['high'],
           source: 'codex',

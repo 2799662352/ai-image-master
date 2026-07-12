@@ -46,6 +46,7 @@ describe('preload collaboration mode API', () => {
     const expected: AgentCollaborationCapabilitiesResult = {
       ok: true,
       data: {
+        providerId: 'apiyi',
         planDefaultEffort: 'medium',
         supportedPlanEfforts: ['low', 'medium', 'high', 'xhigh'],
         source: 'codex',

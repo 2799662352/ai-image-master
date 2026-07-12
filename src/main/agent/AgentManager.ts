@@ -45,6 +45,7 @@ import { validateSessionConfigPatch } from './sessionConfigValidation'
 import {
   resolvePlanReasoningEffort,
   type CollaborationModeKind,
+  type ConcretePlanReasoningEffort,
   type PlanReasoningEffort,
 } from '../../shared/collaborationMode'
 import { mergeModelSettingsCapabilities } from '../../shared/modelSettings'
@@ -54,6 +55,7 @@ import type {
 } from './codexProtocol'
 import type { BrowserWindow } from 'electron'
 import type {
+  AgentCollaborationCapabilities,
   AgentCollaborationCapabilitiesResult,
   AgentCollaborationModeUpdatePayload,
   AgentCollaborationModeUpdateResult,
@@ -128,6 +130,11 @@ interface PromptAttachment {
   localPath: string
   mime: string
   size: number
+}
+
+interface ResolvedCollaborationCapabilities {
+  model: string
+  capabilities: AgentCollaborationCapabilities
 }
 
 /**
@@ -362,6 +369,8 @@ export class AgentManager {
    * the queued task so the chain itself never rejects.
    */
   private restartChain: Promise<void> = Promise.resolve()
+  /** Latest Provider selection's proof that a real backend generation was applied. */
+  private providerCapabilityBarrier: Promise<boolean> = Promise.resolve(true)
 
   constructor(opts: AgentManagerOptions) {
     this.win = opts.win
@@ -577,7 +586,17 @@ export class AgentManager {
     // logged inside the queue — a failed respawn surfaces as the next
     // message timing out, which is less confusing than the settings save
     // throwing.
-    void this.queueBackendRestart('setActiveProvider')
+    const previousEpoch = this.backend.currentEpoch?.()
+    const restart = this.queueBackendRestart('setActiveProvider')
+    this.providerCapabilityBarrier = restart.then(() => {
+      const currentEpoch = this.backend.currentEpoch?.()
+      return (
+        previousEpoch === undefined
+        || currentEpoch === undefined
+        || currentEpoch !== previousEpoch
+        || !this.backend.isHealthy()
+      )
+    })
     return { ok: true, activeId: id }
   }
 
@@ -894,51 +913,113 @@ export class AgentManager {
   async getCollaborationCapabilitiesRpc(
     modelId: string,
   ): Promise<AgentCollaborationCapabilitiesResult> {
-    const fallback: AgentCollaborationCapabilitiesResult = {
-      ok: true,
-      data: {
-        planDefaultEffort: 'medium',
-        supportedPlanEfforts: [],
-        source: 'fallback',
-      },
+    try {
+      const resolved = await this.resolveCollaborationCapabilities(modelId, true)
+      return {
+        ok: true,
+        data: resolved.capabilities,
+      }
+    } catch {
+      return {
+        ok: true,
+        data: this.fallbackCollaborationCapabilities(
+          this.activeProviderId,
+          this.backend.currentEpoch?.(),
+        ),
+      }
     }
-    if (
-      typeof this.backend.listCollaborationModes !== 'function'
-      || typeof this.backend.listModels !== 'function'
-    ) {
-      return fallback
+  }
+
+  private fallbackCollaborationCapabilities(
+    providerId: string,
+    backendEpoch: number | undefined,
+  ): AgentCollaborationCapabilities {
+    return {
+      providerId,
+      ...(backendEpoch === undefined ? {} : { backendEpoch }),
+      planDefaultEffort: null,
+      supportedPlanEfforts: [],
+      source: 'fallback',
     }
+  }
+
+  private async resolveCollaborationCapabilities(
+    modelId: string,
+    includePlanPreset: boolean,
+  ): Promise<ResolvedCollaborationCapabilities> {
+    let restartBarrier = this.restartChain
+    await restartBarrier
+    while (restartBarrier !== this.restartChain) {
+      restartBarrier = this.restartChain
+      await restartBarrier
+    }
+    let providerBarrier = this.providerCapabilityBarrier
+    let providerReady = await providerBarrier
+    while (providerBarrier !== this.providerCapabilityBarrier) {
+      providerBarrier = this.providerCapabilityBarrier
+      providerReady = await providerBarrier
+    }
+    const providerId = this.activeProviderId
+    const backendEpoch = this.backend.currentEpoch?.()
+    const fallback = (): ResolvedCollaborationCapabilities => ({
+      model: modelId,
+      capabilities: this.fallbackCollaborationCapabilities(providerId, backendEpoch),
+    })
+    const ownerStillCurrent = (): boolean =>
+      this.activeProviderId === providerId
+      && (
+        backendEpoch === undefined
+        || this.backend.currentEpoch?.() === backendEpoch
+      )
+
+    if (!providerReady || typeof this.backend.listModels !== 'function') return fallback()
 
     try {
-      const [presets, models] = await Promise.all([
-        this.loadCollaborationModePresets(),
+      const [models, planPresetEffort] = await Promise.all([
         this.backend.listModels({ includeHidden: true }),
+        includePlanPreset
+          ? this.planPresetReasoningEffort()
+          : Promise.resolve<string | null>(null),
       ])
-      const planPreset = presets.find((preset) => preset.mode === 'plan')
-      const modelRow = models.data.find((row) => row.id === modelId || row.model === modelId)
-      if (!modelRow) return fallback
+      if (!ownerStillCurrent()) {
+        throw new Error('Collaboration capability owner changed while loading')
+      }
+      const modelRow =
+        models.data.find((row) => row.id === modelId)
+        ?? models.data.find((row) => row.model === modelId)
+      if (!modelRow) return fallback()
+
       const model = modelRow.model
       const modelSettings = mergeModelSettingsCapabilities({
         model,
-        provider: this.activeProviderId,
+        provider: providerId,
         defaultReasoningEffort: modelRow.defaultReasoningEffort,
         supportedReasoningEfforts: modelRow.supportedReasoningEfforts.map(
           (effort) => effort.reasoningEffort,
         ),
       })
+      const supportedPlanEfforts = modelSettings.supportedReasoningEfforts
+      const preferredDefault = resolvePlanReasoningEffort('auto', planPresetEffort)
+      const planDefaultEffort: ConcretePlanReasoningEffort | null =
+        supportedPlanEfforts.includes(preferredDefault)
+          ? preferredDefault
+          : supportedPlanEfforts.includes('medium')
+            ? 'medium'
+            : supportedPlanEfforts[0] ?? null
+
       return {
-        ok: true,
-        data: {
-          planDefaultEffort: resolvePlanReasoningEffort(
-            'auto',
-            planPreset?.reasoning_effort,
-          ),
-          supportedPlanEfforts: modelSettings.supportedReasoningEfforts,
+        model,
+        capabilities: {
+          providerId,
+          ...(backendEpoch === undefined ? {} : { backendEpoch }),
+          planDefaultEffort,
+          supportedPlanEfforts,
           source: 'codex',
         },
       }
-    } catch {
-      return fallback
+    } catch (error) {
+      if (!ownerStillCurrent()) throw error
+      return fallback()
     }
   }
 
@@ -949,6 +1030,21 @@ export class AgentManager {
       return {
         ok: false,
         error: 'Codex thread settings update API is unavailable',
+        requestVersion: payload.requestVersion,
+      }
+    }
+    let collaborationMode: CodexCollaborationMode
+    try {
+      collaborationMode = await this.buildCollaborationMode(
+        payload.mode,
+        payload.model,
+        payload.defaultReasoningEffort,
+        payload.planReasoningEffort,
+      )
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
         requestVersion: payload.requestVersion,
       }
     }
@@ -975,12 +1071,6 @@ export class AgentManager {
       }
     }
 
-    const collaborationMode = await this.buildCollaborationMode(
-      payload.mode,
-      payload.model,
-      payload.defaultReasoningEffort,
-      payload.planReasoningEffort,
-    )
     try {
       await this.backend.updateThreadSettings({
         threadId: codexThreadId,
@@ -1547,7 +1637,16 @@ export class AgentManager {
       return { threadId }
     }
 
-    const { threadId, input, userTimelineItems } = await this.assembleTurnInput(payload)
+    const assembled = await this.assembleTurnInput(payload).catch((error: unknown) => {
+      this.emitEvent({
+        type: 'error',
+        threadId: payload.threadId ?? 'pending',
+        error: error instanceof Error ? error.message : String(error),
+      })
+      return null
+    })
+    if (!assembled) return { threadId: payload.threadId ?? 'pending' }
+    const { threadId, input, userTimelineItems } = assembled
 
     void this.forwardEvents(threadId, input).catch((error: unknown) => {
       this.emitEvent({
@@ -1601,7 +1700,16 @@ export class AgentManager {
       return { threadId: threadIdIn }
     }
 
-    const { threadId, input, userTimelineItems } = await this.assembleTurnInput(payload)
+    const assembled = await this.assembleTurnInput(payload).catch((error: unknown) => {
+      this.emitEvent({
+        type: 'error',
+        threadId: threadIdIn,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      return null
+    })
+    if (!assembled) return { threadId: threadIdIn }
+    const { threadId, input, userTimelineItems } = assembled
     const codexThreadId = this.codexThreadIdByDbThreadId.get(threadId) ?? threadId
     try {
       await this.backend.steer(codexThreadId, input)
@@ -1659,6 +1767,15 @@ export class AgentManager {
     if (!this.store || !this.attachments) {
       throw new Error('AgentManager.assembleTurnInput called without store/attachments')
     }
+    const model = payload.model?.trim() || DEFAULT_AGENT_MODEL
+    const collaborationMode = payload.collaborationModeKind === undefined
+      ? undefined
+      : await this.buildCollaborationMode(
+          payload.collaborationModeKind,
+          model,
+          payload.reasoningEffort,
+          payload.planReasoningEffort ?? 'auto',
+        )
     // The uploads cache is a first-class reference root: AttachmentService
     // canonicalizes every attachment into `<userData>/agent/uploads/<sha>.<ext>`
     // and the fs IPC gate (fsIpc.resolveAllowedRoots) has always whitelisted
@@ -1669,7 +1786,6 @@ export class AgentManager {
       ...this.allowedRoots,
       path.join(this.userDataDir, 'agent', 'uploads'),
     ])
-    const model = payload.model?.trim() || DEFAULT_AGENT_MODEL
     const thread = payload.threadId
       ? { id: payload.threadId }
       : await this.store.createThread({
@@ -1799,14 +1915,7 @@ export class AgentManager {
     // field). Explicit Plan and Default are both persistent mode selections,
     // so both get a complete wire object. Only a genuinely absent KIND keeps
     // legacy callers byte-compatible by omitting the field.
-    if (payload.collaborationModeKind !== undefined) {
-      input.collaborationMode = await this.buildCollaborationMode(
-        payload.collaborationModeKind,
-        model,
-        payload.reasoningEffort,
-        payload.planReasoningEffort ?? 'auto',
-      )
-    }
+    if (collaborationMode !== undefined) input.collaborationMode = collaborationMode
 
     return { threadId: thread.id, model, input, userTimelineItems }
   }
@@ -1843,14 +1952,35 @@ export class AgentManager {
     defaultEffort: string | undefined,
     planPreference: PlanReasoningEffort,
   ): Promise<CodexCollaborationMode> {
-    const reasoningEffort = mode === 'plan'
-      ? planPreference === 'auto'
-        ? resolvePlanReasoningEffort(
-            planPreference,
-            await this.planPresetReasoningEffort(),
-          )
+    if (mode === 'default') {
+      return {
+        mode,
+        settings: {
+          model,
+          reasoning_effort: defaultEffort ?? null,
+          developer_instructions: null,
+        },
+      }
+    }
+
+    const resolved = await this.resolveCollaborationCapabilities(
+      model,
+      planPreference === 'auto',
+    )
+    const supportedPlanEfforts = resolved.capabilities.supportedPlanEfforts
+    if (
+      planPreference !== 'auto'
+      && !supportedPlanEfforts.includes(planPreference)
+    ) {
+      throw new Error(
+        `Plan reasoning effort "${planPreference}" is not supported for `
+        + `${resolved.model} on Provider "${resolved.capabilities.providerId}"`,
+      )
+    }
+    const reasoningEffort =
+      planPreference === 'auto'
+        ? resolved.capabilities.planDefaultEffort
         : planPreference
-      : defaultEffort ?? null
 
     return {
       mode,

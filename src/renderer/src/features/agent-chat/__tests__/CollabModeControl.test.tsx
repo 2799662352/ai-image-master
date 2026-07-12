@@ -36,6 +36,7 @@ function setControlState(
     planReasoningEffort: 'auto',
     selectedModelId: 'gpt-5.5',
     collaborationCapabilities: {
+      providerId: 'apiyi',
       planDefaultEffort: 'medium',
       supportedPlanEfforts: ['low', 'medium', 'high', 'xhigh'],
       source: 'codex',
@@ -125,6 +126,7 @@ describe('CollabModeControl', () => {
   it('renders Auto first with the official current preset and only supported efforts', () => {
     setControlState({
       collaborationCapabilities: {
+        providerId: 'apiyi',
         planDefaultEffort: 'medium',
         supportedPlanEfforts: ['low', 'high', 'turbo'],
         source: 'codex',
@@ -146,6 +148,7 @@ describe('CollabModeControl', () => {
     setControlState({
       selectedModelId: 'gpt-5.6-sol',
       collaborationCapabilities: {
+        providerId: 'rightcode',
         planDefaultEffort: 'medium',
         supportedPlanEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
         source: 'codex',
@@ -163,7 +166,8 @@ describe('CollabModeControl', () => {
   it('labels fallback Auto honestly and exposes no concrete efforts without a catalog', () => {
     setControlState({
       collaborationCapabilities: {
-        planDefaultEffort: 'medium',
+        providerId: 'apiyi',
+        planDefaultEffort: null,
         supportedPlanEfforts: [],
         source: 'fallback',
       },
@@ -173,7 +177,7 @@ describe('CollabModeControl', () => {
 
     const options = screen.getAllByRole('option')
     expect(options).toHaveLength(1)
-    expect(options[0].textContent).toContain('默认兼容值 · medium（未读取官方预设）')
+    expect(options[0].textContent).toContain('未读取官方预设 · 当前未强制推理强度')
   })
 
   it('shows effective Auto while clearly preserving a temporarily suppressed High preference', () => {
@@ -182,7 +186,8 @@ describe('CollabModeControl', () => {
       collabModeByThread: { 'thread-1': 'plan' },
       planReasoningEffort: 'high',
       collaborationCapabilities: {
-        planDefaultEffort: 'medium',
+        providerId: 'apiyi',
+        planDefaultEffort: null,
         supportedPlanEfforts: [],
         source: 'fallback',
       },

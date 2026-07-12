@@ -118,11 +118,13 @@ export function CollabModeControl({ disabled = false }: CollabModeControlProps) 
   )
 
   const effortOptions = useMemo<EffortOption[]>(() => {
-    const planDefaultEffort = capabilities?.planDefaultEffort || 'medium'
+    const planDefaultEffort = capabilities?.planDefaultEffort
     const autoDescription =
       capabilities?.source === 'codex'
-        ? `跟随 Codex Plan 预设 · 当前 ${planDefaultEffort}`
-        : `默认兼容值 · ${planDefaultEffort}（未读取官方预设）`
+        ? planDefaultEffort
+          ? `跟随 Codex Plan 预设 · 当前 ${planDefaultEffort}`
+          : '跟随 Codex Plan 预设 · 当前未强制推理强度'
+        : '未读取官方预设 · 当前未强制推理强度'
 
     return [
       {

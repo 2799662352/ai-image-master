@@ -155,10 +155,13 @@ const restoredThreadCollaborationModes = readThreadCollaborationModes()
 const restoredCollaborationThreads = Object.fromEntries(
   Object.keys(restoredThreadCollaborationModes).map((threadId) => [threadId, true] as const),
 )
-const FALLBACK_COLLABORATION_CAPABILITIES: AgentCollaborationCapabilities = {
-  planDefaultEffort: 'medium',
-  supportedPlanEfforts: [],
-  source: 'fallback',
+function fallbackCollaborationCapabilities(providerId: string): AgentCollaborationCapabilities {
+  return {
+    providerId,
+    planDefaultEffort: null,
+    supportedPlanEfforts: [],
+    source: 'fallback',
+  }
 }
 const deletedCollaborationThreadTombstones = new Map<string, number>()
 
@@ -540,6 +543,8 @@ interface AgentChatState {
   collaborationCapabilities?: AgentCollaborationCapabilities
   /** Canonical model slug that owns `collaborationCapabilities`. */
   collaborationCapabilitiesModel?: string
+  /** Monotonic request owner used to discard stale Provider/model responses. */
+  collaborationCapabilityRequestSequence: number
   /**
    * Explicit Plan effort awaiting capabilities for one model/thread owner.
    * Carries every owner dimension so model, thread, or preference changes
@@ -609,7 +614,8 @@ interface AgentChatState {
   setCollabMode: (kind: CollaborationModeKind) => void
   requestCollabMode: (kind: CollaborationModeKind) => Promise<void>
   setPlanReasoningEffort: (effort: PlanReasoningEffort) => Promise<void>
-  loadCollaborationCapabilities: () => Promise<void>
+  invalidateCollaborationCapabilities: () => void
+  loadCollaborationCapabilities: (providerId?: string) => Promise<void>
   addAttachment: (attachment: AgentAttachmentInput) => void
   removeAttachment: (attachment: AgentAttachmentInput) => void
   removeAttachmentForReference: (reference: AgentReference) => void
@@ -1457,6 +1463,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   planReasoningEffort: readPlanReasoningEffort(),
   collaborationCapabilities: undefined,
   collaborationCapabilitiesModel: undefined,
+  collaborationCapabilityRequestSequence: 0,
   deferredPlanEffortIntent: undefined,
   collaborationError: undefined,
   collaborationErrorByThread: {},
@@ -1892,8 +1899,21 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       await state.requestCollabMode('plan')
     }
   },
-  loadCollaborationCapabilities: async () => {
+  invalidateCollaborationCapabilities: () => {
+    set((state) => ({
+      collaborationCapabilities: undefined,
+      collaborationCapabilitiesModel: undefined,
+      collaborationCapabilityRequestSequence:
+        state.collaborationCapabilityRequestSequence + 1,
+      deferredPlanEffortIntent: undefined,
+    }))
+  },
+  loadCollaborationCapabilities: async (providerId) => {
     let owner = get()
+    const capabilityRequestSequence =
+      owner.collaborationCapabilityRequestSequence + 1
+    set({ collaborationCapabilityRequestSequence: capabilityRequestSequence })
+    owner = get()
     const model = resolveModelSelection(owner.selectedModelId).model
     const ownerThreadId = owner.threadId
     if (
@@ -1915,6 +1935,8 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       ownerThreadId === undefined
         ? undefined
         : owner.collabModeLifecycleByThread[ownerThreadId]
+    const isCapabilityRequestCurrent = (): boolean =>
+      get().collaborationCapabilityRequestSequence === capabilityRequestSequence
     const isOwnerLifecycleCurrent = (): boolean => {
       if (ownerThreadId === undefined) return true
       if (ownerLifecycleGeneration === undefined) return false
@@ -1922,12 +1944,17 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       return get().collabModeLifecycleByThread[ownerThreadId] === ownerLifecycleGeneration
     }
     const applyFallback = (error?: string): void => {
+      if (!isCapabilityRequestCurrent()) return
       if (resolveModelSelection(get().selectedModelId).model !== model) return
       if (!isOwnerLifecycleCurrent()) return
       set((state) => {
         const hasKnownCodexCapabilities =
           state.collaborationCapabilitiesModel === model
           && state.collaborationCapabilities?.source === 'codex'
+          && (
+            providerId === undefined
+            || state.collaborationCapabilities.providerId === providerId
+          )
         const errors = { ...state.collaborationErrorByThread }
         if (ownerThreadId) {
           if (error) errors[ownerThreadId] = error
@@ -1944,7 +1971,9 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
           ...(hasKnownCodexCapabilities
             ? {}
             : {
-                collaborationCapabilities: FALLBACK_COLLABORATION_CAPABILITIES,
+                collaborationCapabilities: fallbackCollaborationCapabilities(
+                  providerId ?? state.collaborationCapabilities?.providerId ?? 'unknown',
+                ),
                 collaborationCapabilitiesModel: model,
               }),
           ...(shouldDefer
@@ -1969,12 +1998,14 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     }
     try {
       const result = await agent.getCollaborationCapabilities(model)
+      if (!isCapabilityRequestCurrent()) return
       if (!isOwnerLifecycleCurrent()) return
       if (!result.ok) {
         applyFallback('协作能力暂不可用，已安全回退为 Auto。')
         return
       }
       if (resolveModelSelection(get().selectedModelId).model !== model) return
+      if (providerId !== undefined && result.data.providerId !== providerId) return
       if (result.data.source !== 'codex') {
         applyFallback()
         return
@@ -2023,6 +2054,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       }
     } catch {
       // Capabilities are optional metadata; degrade without touching chat flow.
+      if (!isCapabilityRequestCurrent()) return
       if (!isOwnerLifecycleCurrent()) return
       applyFallback('协作能力暂不可用，已安全回退为 Auto。')
     }

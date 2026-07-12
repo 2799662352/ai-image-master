@@ -45,7 +45,9 @@ export interface AgentMentionRef {
 }
 
 export interface AgentCollaborationCapabilities {
-  planDefaultEffort: string
+  providerId: string
+  backendEpoch?: number
+  planDefaultEffort: string | null
   supportedPlanEfforts: string[]
   source: 'codex' | 'fallback'
 }

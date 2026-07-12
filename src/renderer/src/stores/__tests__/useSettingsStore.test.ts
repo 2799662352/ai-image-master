@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
 import { useSettingsStore } from '../useSettingsStore'
 import type { ApiActions } from '../../hooks/useService'
+import { useAgentChatStore } from '../../features/agent-chat/store'
 
 function createMockApi(overrides: Partial<ApiActions> = {}): ApiActions {
   return {
@@ -246,6 +247,26 @@ describe('useSettingsStore', () => {
       expect(useSettingsStore.getState().providers.activeId).toBe('rightcode')
     })
 
+    it('invalidates immediately and reloads capabilities only after Provider confirmation', async () => {
+      let resolveIpc!: (value: unknown) => void
+      const invalidateCollaborationCapabilities = vi.fn()
+      const loadCollaborationCapabilities = vi.fn().mockResolvedValue(undefined)
+      useAgentChatStore.setState({
+        invalidateCollaborationCapabilities,
+        loadCollaborationCapabilities,
+      } as never)
+      installBridge(() => new Promise((resolve) => { resolveIpc = resolve }))
+
+      const pending = useSettingsStore.getState().selectProvider('rightcode')
+
+      expect(invalidateCollaborationCapabilities).toHaveBeenCalledTimes(1)
+      expect(loadCollaborationCapabilities).not.toHaveBeenCalled()
+
+      resolveIpc({ ok: true, activeId: 'rightcode' })
+      await pending
+      expect(loadCollaborationCapabilities).toHaveBeenCalledWith('rightcode')
+    })
+
     it('rolls back to the previous provider when the IPC rejects', async () => {
       installBridge(() => Promise.reject(new Error('unknown provider')))
 
@@ -253,6 +274,22 @@ describe('useSettingsStore', () => {
 
       expect(useSettingsStore.getState().providers.activeId).toBe('apiyi')
       expect(useSettingsStore.getState().codexApiKey).toBe('sk-apiyi')
+    })
+
+    it('invalidates again and reloads the confirmed previous Provider after rollback', async () => {
+      const invalidateCollaborationCapabilities = vi.fn()
+      const loadCollaborationCapabilities = vi.fn().mockResolvedValue(undefined)
+      useAgentChatStore.setState({
+        invalidateCollaborationCapabilities,
+        loadCollaborationCapabilities,
+      } as never)
+      installBridge(() => Promise.reject(new Error('unknown provider')))
+
+      await useSettingsStore.getState().selectProvider('rightcode')
+
+      expect(invalidateCollaborationCapabilities).toHaveBeenCalledTimes(2)
+      expect(loadCollaborationCapabilities).toHaveBeenCalledWith('apiyi')
+      expect(useSettingsStore.getState().providers.activeId).toBe('apiyi')
     })
 
     it('rolls back when main replies ok:false', async () => {

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { ApiActions } from '../hooks/useService'
 import type { ApiSite } from '../services/api'
+import { useAgentChatStore } from '../features/agent-chat/store'
 
 /**
  * Renderer-side mirror of `ProviderPreset` from
@@ -270,6 +271,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       providers: { ...state.providers, activeId: id },
       codexApiKey: state.providers.apiKeys[id] ?? '',
     }))
+    useAgentChatStore.getState().invalidateCollaborationCapabilities()
     try {
       const result = (await bridge.setActiveProvider(id)) as { ok?: boolean; activeId?: string }
       if (result?.ok === false) throw new Error('setActiveProvider rejected')
@@ -280,12 +282,16 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
           codexApiKey: state.providers.apiKeys[confirmed] ?? '',
         }))
       }
+      await useAgentChatStore.getState().loadCollaborationCapabilities(confirmed)
     } catch (err) {
       console.warn('selectProvider failed, reverting:', err)
       set((state) => ({
         providers: { ...state.providers, activeId: prevActiveId },
         codexApiKey: state.providers.apiKeys[prevActiveId] ?? '',
       }))
+      const agentChat = useAgentChatStore.getState()
+      agentChat.invalidateCollaborationCapabilities()
+      await agentChat.loadCollaborationCapabilities(prevActiveId)
     }
   },
 
