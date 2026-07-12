@@ -38,10 +38,12 @@ export interface CodexCustomProviderInput {
 interface ProvidersSlice {
   builtins: CodexProvider[]
   custom: CodexProvider[]
-  /** Optimistic tile/input selection. */
+  /** Provider confirmed as applied by the main-process backend. */
   activeId: string
   /** Last Provider confirmed as applied by the main-process backend. */
   appliedId: string
+  /** Latest requested Provider while main applies a new backend generation. */
+  pendingProviderId: string | null
   apiKeys: Record<string, string>
   loaded: boolean
   loadError: string | null
@@ -113,6 +115,7 @@ const DEFAULT_PROVIDERS_SLICE: ProvidersSlice = {
   custom: [],
   activeId: 'apiyi',
   appliedId: 'apiyi',
+  pendingProviderId: null,
   apiKeys: {},
   loaded: false,
   loadError: null,
@@ -137,7 +140,59 @@ function unwrapSnapshot(raw: unknown): {
   return { builtins, custom, activeId, apiKeys }
 }
 
-export const useSettingsStore = create<SettingsState>((set, get) => ({
+type ProviderSnapshot = NonNullable<ReturnType<typeof unwrapSnapshot>>
+
+async function fetchProviderSnapshot(bridge: AgentBridge): Promise<ProviderSnapshot> {
+  if (!bridge.getProviders) {
+    throw new Error('getProviders unavailable')
+  }
+  const snapshot = unwrapSnapshot(await bridge.getProviders())
+  if (!snapshot) {
+    throw new Error('invalid Provider snapshot')
+  }
+  return snapshot
+}
+
+export const useSettingsStore = create<SettingsState>((set, get) => {
+  const commitProviderSnapshot = (snapshot: ProviderSnapshot) => {
+    const codexKey = snapshot.apiKeys[snapshot.activeId] ?? ''
+    set({
+      providers: {
+        ...snapshot,
+        appliedId: snapshot.activeId,
+        pendingProviderId: null,
+        loaded: true,
+        loadError: null,
+      },
+      codexApiKey: codexKey,
+    })
+  }
+
+  const recoverProviderSnapshot = async (
+    bridge: AgentBridge,
+    requestGeneration: number,
+  ): Promise<ProviderSnapshot | null> => {
+    let snapshot: ProviderSnapshot
+    try {
+      snapshot = await fetchProviderSnapshot(bridge)
+    } catch (error) {
+      if (requestGeneration === providerWriteGeneration) {
+        set((state) => ({
+          providers: {
+            ...state.providers,
+            pendingProviderId: null,
+            loadError: error instanceof Error ? error.message : String(error),
+          },
+        }))
+      }
+      throw error
+    }
+    if (requestGeneration !== providerWriteGeneration) return null
+    commitProviderSnapshot(snapshot)
+    return snapshot
+  }
+
+  return {
   sites: {},
   activeSiteKey: '',
   apiKey: '',
@@ -250,22 +305,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       return
     }
     try {
-      const raw = await bridge.getProviders()
-      const snapshot = unwrapSnapshot(raw)
-      if (!snapshot) {
-        set({ providers: { ...DEFAULT_PROVIDERS_SLICE, loaded: true, loadError: 'invalid snapshot' } })
-        return
-      }
-      const codexKey = snapshot.apiKeys[snapshot.activeId] ?? ''
-      set({
-        providers: {
-          ...snapshot,
-          appliedId: snapshot.activeId,
-          loaded: true,
-          loadError: null,
-        },
-        codexApiKey: codexKey,
-      })
+      commitProviderSnapshot(await fetchProviderSnapshot(bridge))
     } catch (err) {
       set({
         providers: {
@@ -281,10 +321,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const bridge = getAgentBridge()
     if (!bridge?.setActiveProvider) return
     const requestGeneration = ++providerWriteGeneration
-    const previousAppliedId = get().providers.appliedId
     set((state) => ({
-      providers: { ...state.providers, activeId: id },
-      codexApiKey: state.providers.apiKeys[id] ?? '',
+      providers: { ...state.providers, pendingProviderId: id },
     }))
     useAgentChatStore.getState().invalidateCollaborationCapabilities()
     try {
@@ -299,33 +337,30 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
           ...state.providers,
           activeId: confirmed,
           appliedId: confirmed,
+          pendingProviderId: null,
         },
         codexApiKey: state.providers.apiKeys[confirmed] ?? '',
       }))
       await useAgentChatStore.getState().loadCollaborationCapabilities(confirmed)
     } catch (err) {
       if (requestGeneration !== providerWriteGeneration) return
-      console.warn('selectProvider failed, reverting:', err)
-      set((state) => ({
-        providers: {
-          ...state.providers,
-          activeId: previousAppliedId,
-          appliedId: previousAppliedId,
-        },
-        codexApiKey: state.providers.apiKeys[previousAppliedId] ?? '',
-      }))
+      const snapshot = await recoverProviderSnapshot(bridge, requestGeneration)
+      if (!snapshot) return
       const agentChat = useAgentChatStore.getState()
       agentChat.invalidateCollaborationCapabilities()
-      await agentChat.loadCollaborationCapabilities(previousAppliedId)
+      await agentChat.loadCollaborationCapabilities(snapshot.activeId)
+      throw err
     }
   },
 
   saveProviderKey: async (id, key) => {
     const trimmed = key.trim()
     const { providers } = get()
+    if (providers.pendingProviderId !== null) {
+      throw new Error('Provider switch in progress')
+    }
     const previousKey = providers.apiKeys[id] ?? ''
-    const changesAppliedProvider =
-      id === providers.appliedId || id === providers.activeId
+    const changesAppliedProvider = id === providers.activeId
     const requestGeneration = changesAppliedProvider
       ? ++providerWriteGeneration
       : undefined
@@ -354,6 +389,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
               ...state.providers,
               activeId: confirmed,
               appliedId: confirmed,
+              pendingProviderId: null,
             },
             codexApiKey: state.providers.apiKeys[confirmed] ?? '',
           }))
@@ -364,18 +400,21 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
           requestGeneration !== undefined
           && requestGeneration === providerWriteGeneration
         ) {
+          const snapshot = await recoverProviderSnapshot(bridge, requestGeneration)
+          if (snapshot) {
+            const agentChat = useAgentChatStore.getState()
+            agentChat.invalidateCollaborationCapabilities()
+            await agentChat.loadCollaborationCapabilities(snapshot.activeId)
+          }
+        } else if (requestGeneration === undefined) {
           set((state) => ({
             providers: {
               ...state.providers,
               apiKeys: { ...state.providers.apiKeys, [id]: previousKey },
             },
-            codexApiKey: previousKey,
           }))
-          const agentChat = useAgentChatStore.getState()
-          agentChat.invalidateCollaborationCapabilities()
-          await agentChat.loadCollaborationCapabilities(providers.appliedId)
         }
-        console.warn('saveProviderKey failed:', err)
+        throw err
       }
     }
   },
@@ -408,8 +447,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const bridge = getAgentBridge()
     if (!bridge?.updateCustomProvider) return
     const providerState = get().providers
-    const changesAppliedProvider =
-      id === providerState.appliedId || id === providerState.activeId
+    const changesAppliedProvider = id === providerState.activeId
     const requestGeneration = changesAppliedProvider
       ? ++providerWriteGeneration
       : undefined
@@ -439,6 +477,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
             ...state.providers,
             activeId: confirmed,
             appliedId: confirmed,
+            pendingProviderId: null,
           },
         }))
         await useAgentChatStore.getState().loadCollaborationCapabilities(confirmed)
@@ -448,12 +487,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         changesAppliedProvider
         && requestGeneration === providerWriteGeneration
       ) {
-        const appliedId = get().providers.appliedId
-        const agentChat = useAgentChatStore.getState()
-        agentChat.invalidateCollaborationCapabilities()
-        await agentChat.loadCollaborationCapabilities(appliedId)
+        const snapshot = await recoverProviderSnapshot(bridge, requestGeneration)
+        if (snapshot) {
+          const agentChat = useAgentChatStore.getState()
+          agentChat.invalidateCollaborationCapabilities()
+          await agentChat.loadCollaborationCapabilities(snapshot.activeId)
+        }
       }
-      console.warn('updateProvider failed:', err)
+      throw err
     }
   },
 
@@ -461,8 +502,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const bridge = getAgentBridge()
     if (!bridge?.removeCustomProvider) return
     const providerState = get().providers
-    const changesAppliedProvider =
-      id === providerState.appliedId || id === providerState.activeId
+    const changesAppliedProvider = id === providerState.activeId
     const requestGeneration = changesAppliedProvider
       ? ++providerWriteGeneration
       : undefined
@@ -488,6 +528,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
             custom: state.providers.custom.filter((provider) => provider.id !== id),
             activeId: confirmed,
             appliedId: confirmed,
+            pendingProviderId: null,
             apiKeys,
           },
           codexApiKey: apiKeys[confirmed] ?? '',
@@ -501,12 +542,15 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         changesAppliedProvider
         && requestGeneration === providerWriteGeneration
       ) {
-        const appliedId = get().providers.appliedId
-        const agentChat = useAgentChatStore.getState()
-        agentChat.invalidateCollaborationCapabilities()
-        await agentChat.loadCollaborationCapabilities(appliedId)
+        const snapshot = await recoverProviderSnapshot(bridge, requestGeneration)
+        if (snapshot) {
+          const agentChat = useAgentChatStore.getState()
+          agentChat.invalidateCollaborationCapabilities()
+          await agentChat.loadCollaborationCapabilities(snapshot.activeId)
+        }
       }
-      console.warn('removeProvider failed:', err)
+      throw err
     }
   },
-}))
+  }
+})
