@@ -537,6 +537,125 @@ describe('useAgentChatStore model settings lifecycle', () => {
     },
   )
 
+  it('keeps a fatal rollback failure sticky until a later context apply succeeds', async () => {
+    const contextError =
+      'Context 应用失败：apply restart failed；回滚失败：rollback restart failed；'
+      + '请手动重启 Agent Workspace/Codex。'
+    installModelSettingsApi({
+      getModelSettingsCatalog: vi.fn().mockResolvedValue({
+        ok: true,
+        data: modelCatalog(),
+      }),
+      getModelContextConfig: vi.fn().mockResolvedValue({
+        ok: true,
+        data: {
+          modelContextWindow: 372_000,
+          modelAutoCompactTokenLimit: 334_800,
+        },
+      }),
+      applyModelContext: vi.fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          error: 'apply restart failed',
+          stage: 'restart',
+          previousConfig: {
+            modelContextWindow: 372_000,
+            modelAutoCompactTokenLimit: 334_800,
+          },
+          attemptedConfig: {
+            modelContextWindow: 1_000_000,
+            modelAutoCompactTokenLimit: 900_000,
+          },
+          requestVersion: 1,
+          rollback: {
+            ok: false,
+            error: 'rollback restart failed',
+            effectiveConfig: null,
+          },
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          data: {
+            model: 'gpt-5.6-sol',
+            contextWindow: 372_000,
+            autoCompactTokenLimit: 334_800,
+            threadRestored: false,
+            requestVersion: 2,
+          },
+        }),
+    })
+    const store = await loadFreshStore()
+    store.setState({
+      selectedModelId: 'gpt-5.6-sol',
+      activeModelContextWindow: 372_000,
+      modelContextWindowByModel: {},
+    } as never)
+
+    await store.getState().setModelContextWindow(1_000_000)
+    expect(store.getState().modelSettingsRecoveryRequired).toBe(true)
+    expect(store.getState().modelSettingsError).toBe(contextError)
+
+    await store.getState().loadModelSettingsCatalog()
+    expect(store.getState().modelSettingsRecoveryRequired).toBe(true)
+    expect(store.getState().modelSettingsError).toBe(contextError)
+
+    await store.getState().setModelContextWindow(372_000)
+    expect(store.getState().modelSettingsRecoveryRequired).toBe(false)
+    expect(store.getState().modelSettingsError).toBeUndefined()
+    expect(store.getState().activeModelContextWindow).toBe(372_000)
+  })
+
+  it('allows a successful load to clear an ordinary failure after rollback succeeds', async () => {
+    installModelSettingsApi({
+      getModelSettingsCatalog: vi.fn().mockResolvedValue({
+        ok: true,
+        data: modelCatalog(),
+      }),
+      getModelContextConfig: vi.fn().mockResolvedValue({
+        ok: true,
+        data: {
+          modelContextWindow: 372_000,
+          modelAutoCompactTokenLimit: 334_800,
+        },
+      }),
+      applyModelContext: vi.fn().mockResolvedValue({
+        ok: false,
+        error: 'apply restart failed',
+        stage: 'restart',
+        previousConfig: {
+          modelContextWindow: 372_000,
+          modelAutoCompactTokenLimit: 334_800,
+        },
+        attemptedConfig: {
+          modelContextWindow: 1_000_000,
+          modelAutoCompactTokenLimit: 900_000,
+        },
+        requestVersion: 1,
+        rollback: {
+          ok: true,
+          activeConfig: {
+            modelContextWindow: 372_000,
+            modelAutoCompactTokenLimit: 334_800,
+          },
+        },
+      }),
+    })
+    const store = await loadFreshStore()
+    store.setState({
+      selectedModelId: 'gpt-5.6-sol',
+      activeModelContextWindow: 372_000,
+      modelContextWindowByModel: {},
+    } as never)
+
+    await store.getState().setModelContextWindow(1_000_000)
+    expect(store.getState().modelSettingsRecoveryRequired).toBe(false)
+    expect(store.getState().modelSettingsError).toMatch(/已恢复原 Context/)
+
+    await store.getState().loadModelSettingsCatalog()
+    expect(store.getState().modelSettingsRecoveryRequired).toBe(false)
+    expect(store.getState().modelSettingsError).toBeUndefined()
+  })
+
   it('preserves both apply and rollback errors in the manual-restart message', async () => {
     const { formatContextApplyError } = await import('../store')
 

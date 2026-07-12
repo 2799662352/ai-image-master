@@ -673,6 +673,8 @@ interface AgentChatState {
     requestVersion: number
   }
   modelSettingsError?: string
+  /** Sticky fatal owner set when rollback cannot prove an effective backend config. */
+  modelSettingsRecoveryRequired: boolean
   /** Invalidates older catalog/context bootstrap reads after Provider changes. */
   modelSettingsLoadGeneration: number
   /** Monotonic owner for model-context apply results. */
@@ -1016,7 +1018,10 @@ async function applyModelContextForModel(
     || !Number.isSafeInteger(contextWindow)
     || contextWindow <= 0
   ) {
-    set({ modelSettingsError: 'Context 参数无效。' })
+    set((state) =>
+      state.modelSettingsRecoveryRequired
+        ? {}
+        : { modelSettingsError: 'Context 参数无效。' })
     return false
   }
 
@@ -1026,7 +1031,9 @@ async function applyModelContextForModel(
   set({
     modelContextPending: pending,
     modelContextRequestSequence: requestVersion,
-    modelSettingsError: undefined,
+    ...(owner.modelSettingsRecoveryRequired
+      ? {}
+      : { modelSettingsError: undefined }),
   })
 
   const apply = (window as Window & { electronAPI?: AgentElectronApi })
@@ -1036,7 +1043,9 @@ async function applyModelContextForModel(
       state.modelContextPending?.requestVersion === requestVersion
         ? {
             modelContextPending: undefined,
-            modelSettingsError: 'Electron Context API 不可用。',
+            ...(state.modelSettingsRecoveryRequired
+              ? {}
+              : { modelSettingsError: 'Electron Context API 不可用。' }),
           }
         : {})
     return false
@@ -1055,7 +1064,12 @@ async function applyModelContextForModel(
       state.modelContextPending?.requestVersion === requestVersion
         ? {
             modelContextPending: undefined,
-            modelSettingsError: error instanceof Error ? error.message : String(error),
+            ...(state.modelSettingsRecoveryRequired
+              ? {}
+              : {
+                  modelSettingsError:
+                    error instanceof Error ? error.message : String(error),
+                }),
           }
         : {})
     return false
@@ -1069,7 +1083,9 @@ async function applyModelContextForModel(
       state.modelContextPending?.requestVersion === requestVersion
         ? {
             modelContextPending: undefined,
-            modelSettingsError: 'Context 响应版本不匹配，请重试。',
+            ...(state.modelSettingsRecoveryRequired
+              ? {}
+              : { modelSettingsError: 'Context 响应版本不匹配，请重试。' }),
           }
         : {})
     return false
@@ -1079,6 +1095,8 @@ async function applyModelContextForModel(
   set((state) => {
     if (state.modelContextPending?.requestVersion !== requestVersion) return {}
     if (!result.ok) {
+      const rollbackFailed =
+        !result.rollback.ok && result.rollback.effectiveConfig === null
       return {
         modelContextPending: undefined,
         ...(result.rollback.ok
@@ -1087,7 +1105,11 @@ async function applyModelContextForModel(
                 result.rollback.activeConfig.modelContextWindow,
             }
           : {}),
-        modelSettingsError: formatContextApplyError(result),
+        modelSettingsRecoveryRequired:
+          state.modelSettingsRecoveryRequired || rollbackFailed,
+        ...(state.modelSettingsRecoveryRequired
+          ? {}
+          : { modelSettingsError: formatContextApplyError(result) }),
       }
     }
 
@@ -1101,6 +1123,7 @@ async function applyModelContextForModel(
       activeModelContextWindow: result.data.contextWindow,
       modelContextWindowByModel,
       modelContextPending: undefined,
+      modelSettingsRecoveryRequired: false,
       modelSettingsError: undefined,
     }
   })
@@ -1787,6 +1810,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   activeModelContextWindow: UNKNOWN_MODEL_CONTEXT_WINDOW,
   modelContextPending: undefined,
   modelSettingsError: undefined,
+  modelSettingsRecoveryRequired: false,
   modelSettingsLoadGeneration: 0,
   modelContextRequestSequence: 0,
   selectedImageChannel: readPersistedImageChannel(),
@@ -2077,6 +2101,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     if (
       contextWindow === state.activeModelContextWindow
       && state.modelContextPending === undefined
+      && !state.modelSettingsRecoveryRequired
     ) return
     await applyModelContextForModel(get, set, model, contextWindow)
   },
@@ -2164,13 +2189,15 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         const loadError = errors.length > 0
           ? errors.join('；')
           : undefined
-        const modelSettingsError = contextOwnerStillCurrent
-          ? loadError
-          : state.modelSettingsError
+        const preserveCurrentError =
+          state.modelSettingsRecoveryRequired || !contextOwnerStillCurrent
+        const modelSettingsError = preserveCurrentError
+          ? state.modelSettingsError
             ? loadError && !state.modelSettingsError.includes(loadError)
               ? `${state.modelSettingsError}；模型设置加载错误：${loadError}`
               : state.modelSettingsError
             : loadError
+          : loadError
 
         return {
           modelSettingsCatalog,
@@ -2412,7 +2439,9 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       deferredPlanEffortIntent: undefined,
       modelSettingsCatalog: undefined,
       modelSettingsLoading: false,
-      modelSettingsError: undefined,
+      ...(state.modelSettingsRecoveryRequired
+        ? {}
+        : { modelSettingsError: undefined }),
       modelSettingsLoadGeneration: state.modelSettingsLoadGeneration + 1,
     }))
   },
