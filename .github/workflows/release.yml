@@ -74,20 +74,10 @@ jobs:
           retention-days: 7
 
   release:
-    name: Build (${{ matrix.platform }})
-    runs-on: ${{ matrix.os }}
+    name: Build (Windows)
+    runs-on: windows-latest
     needs: [validate]
     if: always() && (needs.validate.result == 'success' || needs.validate.result == 'skipped')
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            platform: win
-          - os: macos-latest
-            platform: mac
-          # - os: ubuntu-latest
-          #   platform: linux
 
     steps:
       - name: Checkout code
@@ -107,14 +97,21 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Fetch Windows runtime binaries
+        run: |
+          pnpm codex:fetch
+          pnpm ffmpeg:fetch
+          pnpm docker-mcp:fetch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build with electron-vite
         run: pnpm run build:vite
         env:
           NODE_ENV: production
 
       - name: Build and publish (Windows)
-        if: matrix.platform == 'win'
-        run: pnpm run build
+        run: pnpm exec electron-builder --win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_ENV: production
@@ -122,28 +119,14 @@ jobs:
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CERTIFICATE_PASSWORD }}
           WIN_CERTIFICATE_SUBJECT_NAME: ${{ secrets.WIN_CERTIFICATE_SUBJECT_NAME }}
 
-      - name: Build and publish (macOS)
-        if: matrix.platform == 'mac'
-        run: pnpm run build
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NODE_ENV: production
-          CSC_LINK: ${{ secrets.MAC_CERTIFICATE }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.platform }}
+          name: release-win
           path: |
-            dist/*.exe
-            dist/*.dmg
-            dist/*.zip
-            dist/*.yml
-            dist/*.blockmap
+            release/*.exe
+            release/latest*.yml
+            release/*.blockmap
           retention-days: 30
 
   create-release:
@@ -222,9 +205,7 @@ jobs:
           body: ${{ steps.changelog.outputs.changelog }}
           files: |
             release-artifacts/**/*.exe
-            release-artifacts/**/*.dmg
-            release-artifacts/**/*.zip
-            release-artifacts/**/*.yml
+            release-artifacts/**/latest*.yml
             release-artifacts/**/*.blockmap
           draft: true
           prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}

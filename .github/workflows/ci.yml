@@ -29,6 +29,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Run workflow contract tests
+        run: pnpm run test:workflows
+
       - name: Run TypeScript type check
         run: pnpm run typecheck
         # TODO: pre-existing 847 TS errors on main (inherited tech debt from
@@ -114,12 +117,9 @@ jobs:
           retention-days: 7
 
   build:
-    name: Build
-    runs-on: ${{ matrix.os }}
+    name: Build (Windows)
+    runs-on: windows-latest
     needs: unit-tests
-    strategy:
-      matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -136,19 +136,24 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build with electron-vite
-        run: pnpm run build:vite
+      - name: Fetch Windows runtime binaries
+        run: |
+          pnpm codex:fetch
+          pnpm ffmpeg:fetch
+          pnpm docker-mcp:fetch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build Electron app
-        run: pnpm run build
+        run: pnpm run build:win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: build-${{ matrix.os }}
-          path: dist/
+          name: build-windows
+          path: release/
           retention-days: 7
 
   e2e-tests:
@@ -180,7 +185,7 @@ jobs:
           pnpm run build
 
       - name: Run E2E tests
-        run: pnpm run test:e2e -- --project=electron
+        run: pnpm exec playwright test --project=electron
         env:
           CI: true
 
@@ -227,7 +232,7 @@ jobs:
         run: pnpm run build:vite
 
       - name: Run visual regression tests
-        run: pnpm run test:e2e -- --project=visual
+        run: pnpm exec playwright test --project=visual
         env:
           CI: true
         continue-on-error: true
