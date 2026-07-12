@@ -161,6 +161,53 @@ export interface CodexModelContextConfig {
   modelAutoCompactTokenLimit: number
 }
 
+export interface AgentModelContextApplyPayload {
+  threadId?: string
+  model: string
+  contextWindow: number
+  requestVersion: number
+}
+
+export type AgentModelContextApplyStage =
+  | 'validate'
+  | 'busy'
+  | 'persist'
+  | 'restart'
+  | 'resume'
+  | 'verify'
+
+export type AgentModelContextRollbackResult =
+  | {
+      success: true
+      activeConfig: CodexModelContextConfig
+    }
+  | {
+      success: false
+      error: string
+      effectiveConfig: null
+    }
+
+export type AgentModelContextApplyResult =
+  | {
+      ok: true
+      data: {
+        model: string
+        contextWindow: number
+        autoCompactTokenLimit: number
+        threadRestored: boolean
+        requestVersion: number
+      }
+    }
+  | {
+      ok: false
+      error: string
+      stage: AgentModelContextApplyStage
+      previousConfig: CodexModelContextConfig
+      attemptedConfig: CodexModelContextConfig
+      requestVersion: number
+      rollback: AgentModelContextRollbackResult
+    }
+
 export interface CodexSessionConfig {
   sandboxMode: CodexSandboxMode
   approvalPolicy: CodexApprovalPolicy

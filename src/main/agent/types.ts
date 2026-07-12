@@ -44,6 +44,13 @@ import type {
   ThreadGoalClearResponse,
 } from '../../types/codexGoals'
 
+export type {
+  AgentModelContextApplyPayload,
+  AgentModelContextApplyResult,
+  AgentModelContextApplyStage,
+  AgentModelContextRollbackResult,
+} from '../../types/agent'
+
 export interface AgentInput extends AgentSendMessagePayload {
   model: string
   cwd: string

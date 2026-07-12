@@ -72,8 +72,8 @@ function hasExactOwnKeys(
   )
 }
 
-function isPositiveSafeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 }
 
 function validateModelContextConfig(value: unknown): CodexModelContextConfig | null {
@@ -108,7 +108,7 @@ function validatePersistedSettings(value: unknown): PersistedCodexRuntimeSetting
 
   const target = validateModelContextConfig(value.pending.target)
   if (!target) return null
-  if (!isPositiveSafeInteger(value.pending.requestVersion)) return null
+  if (!isNonNegativeSafeInteger(value.pending.requestVersion)) return null
   if (!isCanonicalIsoTimestamp(value.pending.startedAt)) return null
 
   result.pending = {

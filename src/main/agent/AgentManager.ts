@@ -52,17 +52,29 @@ import {
   type ConcretePlanReasoningEffort,
   type PlanReasoningEffort,
 } from '../../shared/collaborationMode'
-import { mergeModelSettingsCapabilities } from '../../shared/modelSettings'
+import {
+  mergeModelSettingsCapabilities,
+  modelAutoCompactTokenLimit,
+  modelContextOptions,
+} from '../../shared/modelSettings'
 import type {
   CodexCollaborationMode,
   CodexCollaborationModeMask,
 } from './codexProtocol'
+import {
+  CodexRuntimeSettingsStore,
+  type PersistedCodexRuntimeSettingsV1,
+} from './CodexRuntimeSettingsStore'
 import type { BrowserWindow } from 'electron'
 import type {
   AgentCollaborationCapabilities,
   AgentCollaborationCapabilitiesResult,
   AgentCollaborationModeUpdatePayload,
   AgentCollaborationModeUpdateResult,
+  AgentModelContextApplyPayload,
+  AgentModelContextApplyResult,
+  AgentModelContextApplyStage,
+  AgentModelContextRollbackResult,
   AgentProviderMutationResult,
   AgentSendMessagePayload,
   AgentSendMessageResult,
@@ -70,6 +82,7 @@ import type {
   CodexApprovalRequest,
   CodexApprovalResponse,
   CodexMcpSummary,
+  CodexModelContextConfig,
   CodexSessionConfig,
   CodexSessionStatus,
   CodexSkillInput,
@@ -110,6 +123,7 @@ import { ThreadTitleSummarizer } from './ThreadTitleSummarizer'
 import { setFsAllowedRoots } from '../file-explorer/fsIpc'
 
 const EMPTY_KEY_ERROR = '请在设置页填写 Codex Agent API Key'
+const CONTEXT_TRANSITION_BUSY_ERROR = '模型上下文配置正在切换，请稍后重试。'
 
 /**
  * Default Codex agent model used by the ThreadTitleSummarizer (and as the
@@ -155,6 +169,17 @@ interface BuiltCollaborationMode {
 interface DesiredProviderMutation {
   activeId: string
   requiresApply: boolean
+}
+
+class ContextApplyError extends Error {
+  constructor(
+    readonly stage: AgentModelContextApplyStage,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options)
+    this.name = 'ContextApplyError'
+  }
 }
 
 /**
@@ -240,6 +265,8 @@ export interface AgentManagerOptions {
    * Production omits it and constructs CodexLocalBackend directly.
    */
   backendFactory?: (options: CodexLocalBackendOptions) => IAgentBackend
+  /** Runtime context-settings persistence seam. Production uses userDataDir. */
+  runtimeSettingsStore?: CodexRuntimeSettingsStore
   /**
    * Local catimation MCP server coordinates produced by
    * `startCatimationMcpServer` (+ stdio bridge launch info when available).
@@ -258,6 +285,8 @@ export class AgentManager {
   private readonly eventSink: ((event: AgentStreamEvent) => void) | undefined
   private readonly userDataDir: string
   private readonly providerStore: CodexProviderStore
+  private readonly runtimeSettingsStore: CodexRuntimeSettingsStore
+  private runtimeSettings: PersistedCodexRuntimeSettingsV1
   private activeProviderId: string
   private codexApiKey = ''
   /**
@@ -390,6 +419,13 @@ export class AgentManager {
   private restartChain: Promise<void> = Promise.resolve()
   /** Latest Provider selection's proof that a real backend generation was applied. */
   private providerCapabilityBarrier: Promise<boolean> = Promise.resolve(true)
+  /**
+   * Synchronously claimed by a Context transaction before it joins the shared
+   * lifecycle tail. New send/steer calls fail immediately while the owner is
+   * queued, applying, or compensating; a unique token prevents an older
+   * transaction's finally handler from clearing a newer owner.
+   */
+  private contextTransitionOwner: symbol | null = null
 
   constructor(opts: AgentManagerOptions) {
     this.win = opts.win
@@ -398,6 +434,9 @@ export class AgentManager {
     this.eventSink = opts.eventSink
     this.userDataDir = opts.userDataDir
     this.providerStore = new CodexProviderStore({ userDataDir: opts.userDataDir })
+    this.runtimeSettingsStore = opts.runtimeSettingsStore
+      ?? new CodexRuntimeSettingsStore(opts.userDataDir)
+    this.runtimeSettings = this.runtimeSettingsStore.loadSync()
     const persisted = this.providerStore.loadSync()
     this.activeProviderId = persisted.selectedProviderId
     this.codexApiKey = persisted.apiKeys[this.activeProviderId] ?? ''
@@ -415,6 +454,9 @@ export class AgentManager {
         getApiKey: () => this.codexApiKey,
         provider: activeProvider,
         sessionConfig: this.sessionConfig,
+        getModelContextConfig: () => ({
+          ...(this.runtimeSettings.pending?.target ?? this.runtimeSettings.confirmed),
+        }),
         catimationMcp: opts.mcpRuntime,
         // Unlock experimental-gated RPCs (turn/start.collaborationMode for the
         // composer's Plan preset; collaborationMode/list). Smoke-verified on the
@@ -624,6 +666,10 @@ export class AgentManager {
   }
 
   private enqueueProviderStoreOperation<T>(operation: () => Promise<T>): Promise<T> {
+    return this.enqueueLifecycleOperation(operation)
+  }
+
+  private enqueueLifecycleOperation<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.restartChain.then(operation)
     this.restartChain = result.then(
       () => undefined,
@@ -641,12 +687,7 @@ export class AgentManager {
    * client, while sends queued behind a replacement cannot enter the old one.
    */
   private enqueueTurnAdmission<T>(admit: () => Promise<T>): Promise<T> {
-    const result = this.restartChain.then(admit)
-    this.restartChain = result.then(
-      () => undefined,
-      () => undefined,
-    )
-    return result
+    return this.enqueueLifecycleOperation(admit)
   }
 
   private enqueueAppliedProviderTransaction(
@@ -1037,7 +1078,399 @@ export class AgentManager {
 
   async restartCodex() {
     if (!this.backend.restartCodex) throw new Error('Codex restart API is unavailable')
-    await this.restartBackendWithGenerationCheck(this.backend.restartCodex.bind(this.backend))
+    const restart = this.backend.restartCodex.bind(this.backend)
+    await this.enqueueLifecycleOperation(
+      () => this.restartBackendWithGenerationCheck(restart),
+    )
+  }
+
+  /**
+   * Apply a Codex context-window change as one transaction on the same
+   * Provider/turn lifecycle tail used by send, steer, and Provider replacement.
+   *
+   * This method deliberately is not `async`: it claims `contextTransitionOwner`
+   * synchronously before returning the transaction promise, so a send/steer
+   * invoked later in the same tick cannot persist a message and then discover
+   * that its backend generation is being replaced.
+   */
+  applyModelContextRpc(
+    payload: AgentModelContextApplyPayload,
+  ): Promise<AgentModelContextApplyResult> {
+    const previousConfig = { ...this.runtimeSettings.confirmed }
+    const attemptedConfig: CodexModelContextConfig = {
+      modelContextWindow: payload.contextWindow,
+      modelAutoCompactTokenLimit: modelAutoCompactTokenLimit(payload.contextWindow),
+    }
+    const model = typeof payload.model === 'string' ? payload.model.trim() : ''
+    const validationError = this.validateModelContextPayload(
+      payload,
+      model,
+      attemptedConfig,
+    )
+    if (validationError) {
+      return Promise.resolve(this.modelContextFailure(
+        payload,
+        previousConfig,
+        attemptedConfig,
+        'validate',
+        validationError,
+        { success: true, activeConfig: previousConfig },
+      ))
+    }
+
+    if (this.contextTransitionOwner !== null) {
+      return Promise.resolve(this.modelContextFailure(
+        payload,
+        previousConfig,
+        attemptedConfig,
+        'busy',
+        'Another model context transaction is already in progress',
+        { success: true, activeConfig: previousConfig },
+      ))
+    }
+
+    if (sameModelContextConfig(previousConfig, attemptedConfig)) {
+      return Promise.resolve({
+        ok: true,
+        data: {
+          model,
+          contextWindow: attemptedConfig.modelContextWindow,
+          autoCompactTokenLimit: attemptedConfig.modelAutoCompactTokenLimit,
+          threadRestored: false,
+          requestVersion: payload.requestVersion,
+        },
+      })
+    }
+
+    if (this.backend.hasInFlightWork?.()) {
+      return Promise.resolve(this.modelContextFailure(
+        payload,
+        previousConfig,
+        attemptedConfig,
+        'busy',
+        'Current turn is running; retry the model context change after it completes',
+        { success: true, activeConfig: previousConfig },
+      ))
+    }
+
+    const owner = Symbol('model-context-transition')
+    this.contextTransitionOwner = owner
+    const transaction = this.restartChain.then(() =>
+      this.runModelContextTransaction(
+        payload,
+        model,
+        previousConfig,
+        attemptedConfig,
+      ))
+    this.restartChain = transaction.then(
+      () => undefined,
+      () => undefined,
+    )
+
+    return transaction.finally(() => {
+      if (this.contextTransitionOwner === owner) {
+        this.contextTransitionOwner = null
+      }
+    })
+  }
+
+  private validateModelContextPayload(
+    payload: AgentModelContextApplyPayload,
+    model: string,
+    attemptedConfig: CodexModelContextConfig,
+  ): string | null {
+    if (!model) return 'Model must be a non-empty string'
+    if (!Number.isSafeInteger(payload.requestVersion) || payload.requestVersion < 0) {
+      return 'requestVersion must be a non-negative safe integer'
+    }
+    const allowed = modelContextOptions(model).some(
+      (option) => option.value === attemptedConfig.modelContextWindow,
+    )
+    if (!allowed) {
+      return `Context window ${String(payload.contextWindow)} is not supported for model ${model}`
+    }
+    return null
+  }
+
+  private async runModelContextTransaction(
+    payload: AgentModelContextApplyPayload,
+    model: string,
+    previousConfig: CodexModelContextConfig,
+    attemptedConfig: CodexModelContextConfig,
+  ): Promise<AgentModelContextApplyResult> {
+    // A send admitted before this request may have published in-flight state
+    // while this transaction was waiting behind it on the shared tail.
+    if (this.backend.hasInFlightWork?.()) {
+      return this.modelContextFailure(
+        payload,
+        previousConfig,
+        attemptedConfig,
+        'busy',
+        'Current turn is running; retry the model context change after it completes',
+        { success: true, activeConfig: previousConfig },
+      )
+    }
+
+    let codexThreadId: string | undefined
+    try {
+      codexThreadId = await this.resolveModelContextThreadId(payload.threadId)
+    } catch (error) {
+      return this.modelContextFailure(
+        payload,
+        previousConfig,
+        attemptedConfig,
+        'resume',
+        errorMessage(error),
+        { success: true, activeConfig: previousConfig },
+      )
+    }
+
+    const pendingSettings: PersistedCodexRuntimeSettingsV1 = {
+      version: 1,
+      confirmed: { ...previousConfig },
+      pending: {
+        target: { ...attemptedConfig },
+        requestVersion: payload.requestVersion,
+        startedAt: new Date().toISOString(),
+      },
+    }
+    try {
+      await this.runtimeSettingsStore.replace(pendingSettings)
+    } catch (error) {
+      return this.modelContextFailure(
+        payload,
+        previousConfig,
+        attemptedConfig,
+        'persist',
+        errorMessage(error),
+        { success: true, activeConfig: previousConfig },
+      )
+    }
+    // Only a durable pending record may affect the restart getter.
+    this.runtimeSettings = cloneRuntimeSettings(pendingSettings)
+
+    let processMayUseTarget = false
+    try {
+      const restart = this.backend.restartCodex?.bind(this.backend)
+      if (!restart) {
+        throw new ContextApplyError('restart', 'Codex restart API is unavailable')
+      }
+      const previousEpoch = this.backend.currentEpoch?.()
+      try {
+        await this.restartBackendWithGenerationCheck(restart)
+        processMayUseTarget = true
+      } catch (error) {
+        const currentEpoch = this.backend.currentEpoch?.()
+        processMayUseTarget = previousEpoch === undefined
+          || currentEpoch === undefined
+          || currentEpoch !== previousEpoch
+        throw new ContextApplyError('restart', errorMessage(error), { cause: error })
+      }
+      this.assertModelContextEpochChanged(previousEpoch, 'verify')
+
+      if (payload.threadId && codexThreadId) {
+        await this.resumeModelContextThreadStrict(payload.threadId, codexThreadId)
+      }
+      await this.refreshModelsForContext()
+
+      const confirmedSettings: PersistedCodexRuntimeSettingsV1 = {
+        version: 1,
+        confirmed: { ...attemptedConfig },
+      }
+      try {
+        await this.runtimeSettingsStore.replace(confirmedSettings)
+      } catch (error) {
+        throw new ContextApplyError('persist', errorMessage(error), { cause: error })
+      }
+      // Never publish an in-memory confirmation before the atomic rename wins.
+      this.runtimeSettings = cloneRuntimeSettings(confirmedSettings)
+      return {
+        ok: true,
+        data: {
+          model,
+          contextWindow: attemptedConfig.modelContextWindow,
+          autoCompactTokenLimit: attemptedConfig.modelAutoCompactTokenLimit,
+          threadRestored: Boolean(payload.threadId && codexThreadId),
+          requestVersion: payload.requestVersion,
+        },
+      }
+    } catch (error) {
+      const contextError = error instanceof ContextApplyError
+        ? error
+        : new ContextApplyError('verify', errorMessage(error), { cause: error })
+      const rollback = await this.rollbackModelContextOnce({
+        previousConfig,
+        dbThreadId: payload.threadId,
+        codexThreadId,
+        restartRequired: processMayUseTarget,
+      })
+      return this.modelContextFailure(
+        payload,
+        previousConfig,
+        attemptedConfig,
+        contextError.stage,
+        contextError.message,
+        rollback,
+      )
+    }
+  }
+
+  private async resolveModelContextThreadId(
+    dbThreadId: string | undefined,
+  ): Promise<string | undefined> {
+    if (!dbThreadId) return undefined
+    const mapped = this.codexThreadIdByDbThreadId.get(dbThreadId)
+    if (mapped) return mapped
+    if (!this.store?.getCodexThreadId) return undefined
+    try {
+      return (await this.store.getCodexThreadId(dbThreadId)) ?? undefined
+    } catch (error) {
+      throw new ContextApplyError(
+        'resume',
+        `Failed to resolve Codex thread ${dbThreadId}: ${errorMessage(error)}`,
+        { cause: error },
+      )
+    }
+  }
+
+  private async resumeModelContextThreadStrict(
+    dbThreadId: string,
+    codexThreadId: string,
+  ): Promise<void> {
+    if (!this.backend.resumeThread) {
+      throw new ContextApplyError(
+        'resume',
+        'Codex strict thread resume API is unavailable',
+      )
+    }
+    try {
+      await this.backend.resumeThread(codexThreadId)
+      this.codexThreadIdByDbThreadId.set(dbThreadId, codexThreadId)
+      const epoch = this.backend.currentEpoch?.()
+      if (epoch === undefined) {
+        this.codexThreadEpochByDbThreadId.delete(dbThreadId)
+      } else {
+        this.codexThreadEpochByDbThreadId.set(dbThreadId, epoch)
+      }
+      await this.store?.setCodexThreadId?.(dbThreadId, codexThreadId)
+    } catch (error) {
+      throw new ContextApplyError('resume', errorMessage(error), { cause: error })
+    }
+  }
+
+  private async refreshModelsForContext(): Promise<void> {
+    if (!this.backend.listModels) {
+      throw new ContextApplyError('verify', 'Codex model list API is unavailable')
+    }
+    try {
+      await this.backend.listModels({ includeHidden: true })
+    } catch (error) {
+      throw new ContextApplyError('verify', errorMessage(error), { cause: error })
+    }
+  }
+
+  private assertModelContextEpochChanged(
+    previousEpoch: number | undefined,
+    stage: AgentModelContextApplyStage,
+  ): void {
+    // Legacy/test backends without an epoch API retain compatibility. If an
+    // epoch existed before restart, losing it or retaining it cannot prove that
+    // the requested process generation owns the new context.
+    if (previousEpoch === undefined) return
+    const currentEpoch = this.backend.currentEpoch?.()
+    if (currentEpoch === undefined || currentEpoch === previousEpoch) {
+      throw new ContextApplyError(
+        stage,
+        'Model context restart did not create a new backend generation',
+      )
+    }
+  }
+
+  private async rollbackModelContextOnce(input: {
+    previousConfig: CodexModelContextConfig
+    dbThreadId?: string
+    codexThreadId?: string
+    restartRequired: boolean
+  }): Promise<AgentModelContextRollbackResult> {
+    const previousSettings: PersistedCodexRuntimeSettingsV1 = {
+      version: 1,
+      confirmed: { ...input.previousConfig },
+    }
+    const failures: string[] = []
+    try {
+      await this.runtimeSettingsStore.replace(previousSettings)
+    } catch (error) {
+      failures.push(`persist: ${errorMessage(error)}`)
+    }
+    // The getter must point at the previous configuration before any
+    // compensating restart, even when the disk cleanup itself failed.
+    this.runtimeSettings = cloneRuntimeSettings(previousSettings)
+
+    if (input.restartRequired) {
+      const restart = this.backend.restartCodex?.bind(this.backend)
+      if (!restart) {
+        failures.push('restart: Codex restart API is unavailable')
+      } else {
+        const previousEpoch = this.backend.currentEpoch?.()
+        let restarted = false
+        try {
+          await this.restartBackendWithGenerationCheck(restart)
+          restarted = true
+          this.assertModelContextEpochChanged(previousEpoch, 'verify')
+        } catch (error) {
+          failures.push(`restart: ${errorMessage(error)}`)
+        }
+
+        if (restarted) {
+          if (input.dbThreadId && input.codexThreadId) {
+            try {
+              await this.resumeModelContextThreadStrict(
+                input.dbThreadId,
+                input.codexThreadId,
+              )
+            } catch (error) {
+              failures.push(`resume: ${errorMessage(error)}`)
+            }
+          }
+          try {
+            await this.refreshModelsForContext()
+          } catch (error) {
+            failures.push(`verify: ${errorMessage(error)}`)
+          }
+        }
+      }
+    }
+
+    if (failures.length > 0) {
+      return {
+        success: false,
+        error: failures.join('; '),
+        effectiveConfig: null,
+      }
+    }
+    return {
+      success: true,
+      activeConfig: { ...input.previousConfig },
+    }
+  }
+
+  private modelContextFailure(
+    payload: AgentModelContextApplyPayload,
+    previousConfig: CodexModelContextConfig,
+    attemptedConfig: CodexModelContextConfig,
+    stage: AgentModelContextApplyStage,
+    error: string,
+    rollback: AgentModelContextRollbackResult,
+  ): Extract<AgentModelContextApplyResult, { ok: false }> {
+    return {
+      ok: false,
+      error,
+      stage,
+      previousConfig: { ...previousConfig },
+      attemptedConfig: { ...attemptedConfig },
+      requestVersion: payload.requestVersion,
+      rollback,
+    }
   }
 
   async getCollaborationCapabilitiesRpc(
@@ -1781,6 +2214,15 @@ export class AgentManager {
   }
 
   async sendMessage(payload: AgentSendMessagePayload): Promise<AgentSendMessageResult> {
+    if (this.contextTransitionOwner !== null) {
+      const threadId = payload.threadId ?? 'pending'
+      this.emitEvent({
+        type: 'error',
+        threadId,
+        error: CONTEXT_TRANSITION_BUSY_ERROR,
+      })
+      return { threadId }
+    }
     return this.enqueueTurnAdmission(
       () => this.sendMessageAfterProviderBarrier(payload),
     )
@@ -1873,22 +2315,33 @@ export class AgentManager {
    */
   async steer(payload: AgentSendMessagePayload): Promise<AgentSendMessageResult> {
     const threadIdIn = payload.threadId
+    if (this.contextTransitionOwner !== null) {
+      const threadId = threadIdIn ?? 'pending'
+      this.emitEvent({
+        type: 'error',
+        threadId,
+        error: CONTEXT_TRANSITION_BUSY_ERROR,
+      })
+      return { threadId }
+    }
     if (!threadIdIn) {
       // Steering only applies to an existing thread with an active turn.
       return { threadId: 'pending' }
     }
-    if (!this.backend.steer) {
+    const steer = this.backend.steer?.bind(this.backend)
+    if (!steer) {
       this.emitEvent({ type: 'error', threadId: threadIdIn, error: '当前后端不支持运行中插话(turn/steer)。' })
       return { threadId: threadIdIn }
     }
     return this.enqueueTurnAdmission(
-      () => this.steerAfterProviderBarrier(payload, threadIdIn),
+      () => this.steerAfterProviderBarrier(payload, threadIdIn, steer),
     )
   }
 
   private async steerAfterProviderBarrier(
     payload: AgentSendMessagePayload,
     threadIdIn: string,
+    steer: NonNullable<IAgentBackend['steer']>,
   ): Promise<AgentSendMessageResult> {
     if (!this.codexApiKey) {
       this.emitEvent({ type: 'error', threadId: threadIdIn, error: EMPTY_KEY_ERROR })
@@ -1917,7 +2370,7 @@ export class AgentManager {
     const { threadId, input, userTimelineItems, collaborationModeOwner } = assembled
     const codexThreadId = this.codexThreadIdByDbThreadId.get(threadId) ?? threadId
     try {
-      await this.backend.steer(codexThreadId, input)
+      await steer(codexThreadId, input)
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
       if (isNoActiveTurnSteerError(detail)) {
@@ -3038,6 +3491,38 @@ function isPoisonedThreadError(error: unknown): boolean {
  * These are benign timing races, not failures: `steer()` converts them into a
  * fresh turn instead of surfacing an error.
  */
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function sameModelContextConfig(
+  left: CodexModelContextConfig,
+  right: CodexModelContextConfig,
+): boolean {
+  return (
+    left.modelContextWindow === right.modelContextWindow
+    && left.modelAutoCompactTokenLimit === right.modelAutoCompactTokenLimit
+  )
+}
+
+function cloneRuntimeSettings(
+  settings: PersistedCodexRuntimeSettingsV1,
+): PersistedCodexRuntimeSettingsV1 {
+  return {
+    version: 1,
+    confirmed: { ...settings.confirmed },
+    ...(settings.pending
+      ? {
+          pending: {
+            target: { ...settings.pending.target },
+            requestVersion: settings.pending.requestVersion,
+            startedAt: settings.pending.startedAt,
+          },
+        }
+      : {}),
+  }
+}
+
 function isNoActiveTurnSteerError(message: string): boolean {
   return /no (active|in.?flight) turn/i.test(message)
 }

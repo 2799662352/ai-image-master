@@ -168,10 +168,10 @@ describe('CodexRuntimeSettingsStore', () => {
       },
     ],
     [
-      'non-positive requestVersion',
+      'negative requestVersion',
       {
         target: { modelContextWindow: 372_000, modelAutoCompactTokenLimit: 334_800 },
-        requestVersion: 0,
+        requestVersion: -1,
         startedAt: '2026-07-12T10:00:00.000Z',
       },
     ],
