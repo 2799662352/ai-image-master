@@ -156,6 +156,11 @@ export type CodexSandboxMode = 'read-only' | 'workspace-write' | 'danger-full-ac
 export type CodexApprovalPolicy = 'untrusted' | 'on-request' | 'never'
 export type CodexWebSearchMode = 'cached' | 'live' | 'disabled'
 
+export interface CodexModelContextConfig {
+  modelContextWindow: number
+  modelAutoCompactTokenLimit: number
+}
+
 export interface CodexSessionConfig {
   sandboxMode: CodexSandboxMode
   approvalPolicy: CodexApprovalPolicy

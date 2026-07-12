@@ -2,12 +2,22 @@ import { CATIMATION_MCP_HOST, CATIMATION_MCP_TOKEN_HEADER } from '../mcp/config'
 import { CINEMATOGRAPHY_KB_ENV_SCAFFOLD } from './cinematographyKbMcpLauncher'
 import type {
   CodexApprovalPolicy,
+  CodexModelContextConfig,
   CodexSandboxMode,
   CodexSessionConfig,
   CodexWebSearchMode,
 } from '../../types/agent'
 
 export const DEFAULT_LISTEN_URL = 'ws://127.0.0.1:7345'
+export const DEFAULT_CODEX_MODEL_CONTEXT_CONFIG: Readonly<CodexModelContextConfig> = {
+  modelContextWindow: 200_000,
+  modelAutoCompactTokenLimit: 180_000,
+}
+
+const RESERVED_PROVIDER_TOP_LEVEL_KEYS = new Set([
+  'model_context_window',
+  'model_auto_compact_token_limit',
+])
 
 export const DEFAULT_CODEX_SESSION_CONFIG: CodexSessionConfig = {
   approvalPolicy: 'never',
@@ -117,6 +127,7 @@ export interface CodexLaunchOptions {
    */
   extraProviders?: readonly CodexProviderConfig[]
   sessionConfig?: Partial<CodexSessionConfig>
+  modelContextConfig?: CodexModelContextConfig
   /**
    * Local in-process catimation MCP server coordinates. When present we
    * inject an ephemeral `[mcp_servers.catimation]` entry via `-c` so the
@@ -193,11 +204,21 @@ function serializeScalar(value: string | boolean | number): string {
   return String(value)
 }
 
+function assertNoReservedProviderConfig(provider: CodexProviderConfig): void {
+  if (!provider.extraTopLevelConfig) return
+  for (const key of Object.keys(provider.extraTopLevelConfig)) {
+    if (RESERVED_PROVIDER_TOP_LEVEL_KEYS.has(key)) {
+      throw new Error(`Reserved provider extraTopLevelConfig key "${key}" is owned by runtime settings`)
+    }
+  }
+}
+
 export function appendProviderArgs(
   args: string[],
   provider?: CodexProviderConfig,
 ): string[] {
   if (!provider) return args
+  assertNoReservedProviderConfig(provider)
   const id = provider.id
   args.push(
     '-c', `model_provider="${id}"`,
@@ -260,6 +281,7 @@ export function appendExtraProviders(
 ): string[] {
   if (!extras || extras.length === 0) return args
   for (const p of extras) {
+    assertNoReservedProviderConfig(p)
     const id = p.id
     args.push(
       '-c', `model_providers.${id}.name="${p.name}"`,
@@ -295,13 +317,6 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     // since this is a local dev/agent surface.
     '-c', 'show_raw_agent_reasoning=true',
     '-c', 'model_reasoning_summary="auto"',
-    // Do NOT pin `model_context_window`: Codex 0.144's catalog advertises 372K
-    // for GPT-5.6 and 272K for GPT-5.5/5.4. A global 272K override silently
-    // discards 100K of the new models' context and makes token-usage telemetry
-    // lie. Keep only the earlier compaction trigger: stateless relay gateways
-    // replay the FULL history and enforce a request-body byte cap, so 220K
-    // remains a deliberate guard against `request_too_large` / HTTP 413.
-    '-c', 'model_auto_compact_token_limit=220000',
     // Official per-tool-call output budget. codex-rs/models-manager/
     // models.json pins truncation at 10_000 tokens for gpt-5.6/5.5/5.4
     // (10_000 bytes for 5.2 and unknown slugs). Without this pin a
@@ -635,5 +650,14 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
   }
 
   const withActive = appendProviderArgs(args, options?.provider)
-  return appendExtraProviders(withActive, options?.extraProviders)
+  const withProviders = appendExtraProviders(withActive, options?.extraProviders)
+  const modelContextConfig = options?.modelContextConfig ?? DEFAULT_CODEX_MODEL_CONTEXT_CONFIG
+  // Runtime settings are authoritative. Append both reserved keys after every
+  // provider override so Codex's last-wins `-c` precedence cannot be hijacked
+  // by a provider preset.
+  withProviders.push(
+    '-c', `model_context_window=${modelContextConfig.modelContextWindow}`,
+    '-c', `model_auto_compact_token_limit=${modelContextConfig.modelAutoCompactTokenLimit}`,
+  )
+  return withProviders
 }

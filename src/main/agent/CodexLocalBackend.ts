@@ -15,6 +15,7 @@ import type {
   AgentStreamEvent,
   CodexApprovalRequest,
   CodexApprovalResponse,
+  CodexModelContextConfig,
   CodexSessionConfig,
   CodexThreadDetail,
   CodexThreadSummary,
@@ -112,6 +113,12 @@ export interface CodexLocalBackendOptions {
    */
   provider?: CodexProviderConfig
   sessionConfig?: Partial<CodexSessionConfig>
+  /**
+   * Reads the last confirmed runtime context limits immediately before every
+   * fresh process spawn. Keeping this as a getter ensures restartCodex consumes
+   * settings confirmed after the previous process was launched.
+   */
+  getModelContextConfig?: () => CodexModelContextConfig
   /**
    * Local in-process catimation MCP server coordinates. Forwarded to
    * `buildCodexLaunchArgs` so the spawned Codex subprocess gets an ephemeral
@@ -399,10 +406,12 @@ export class CodexLocalBackend implements IAgentBackend {
     // apiyi key policy is FORCE-设置-only: the boot seed wipes any hand-typed
     // config.toml key, so 设置 → API易 (getApiyiKey) is the single source and
     // no config.toml read is needed here.
+    const modelContextConfig = this.options.getModelContextConfig?.()
     const launchArgs = buildCodexLaunchArgs({
       listenUrl,
       provider: this.currentProvider,
       sessionConfig: this.sessionConfig,
+      modelContextConfig,
       catimationMcp: this.options.catimationMcp,
       extraProviders: understand ? [understand.provider] : undefined,
       apiyiKey: this.options.getApiyiKey?.(),
@@ -634,6 +643,10 @@ export class CodexLocalBackend implements IAgentBackend {
     if (!this.client?.isOpen()) return false
     if (this.wsUrlOverride) return true
     return this.proc !== null && this.proc.exitCode === null
+  }
+
+  hasInFlightWork(): boolean {
+    return this.client?.hasInFlightWork() ?? false
   }
 
   currentEpoch(): number {

@@ -23,7 +23,6 @@ describe('buildCodexLaunchArgs', () => {
       // even when reasoningOutputTokens > 0.
       '-c', 'show_raw_agent_reasoning=true',
       '-c', 'model_reasoning_summary="auto"',
-      '-c', 'model_auto_compact_token_limit=220000',
       '-c', 'tool_output_token_limit=10000',
       '-c', 'agents.max_threads=8',
       '-c', 'agents.max_depth=1',
@@ -49,6 +48,8 @@ describe('buildCodexLaunchArgs', () => {
       // keep apiyi dormant so a keyless apiyi-mcp can't hang the first turn.
       '-c', 'mcp_servers.apiyi.enabled=false',
       '-c', 'mcp_servers.cinematography_kb.env.DASHVECTOR_ENDPOINT="vrs-cn-1zz4v38oq0001l.dashvector.cn-beijing.aliyuncs.com"',
+      '-c', 'model_context_window=200000',
+      '-c', 'model_auto_compact_token_limit=180000',
     ])
   })
 
@@ -62,7 +63,6 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'web_search="live"',
       '-c', 'show_raw_agent_reasoning=true',
       '-c', 'model_reasoning_summary="auto"',
-      '-c', 'model_auto_compact_token_limit=220000',
       '-c', 'tool_output_token_limit=10000',
       '-c', 'agents.max_threads=8',
       '-c', 'agents.max_depth=1',
@@ -75,6 +75,8 @@ describe('buildCodexLaunchArgs', () => {
       '-c', 'features.memories=true',
       '-c', 'mcp_servers.apiyi.enabled=false',
       '-c', 'mcp_servers.cinematography_kb.env.DASHVECTOR_ENDPOINT="vrs-cn-1zz4v38oq0001l.dashvector.cn-beijing.aliyuncs.com"',
+      '-c', 'model_context_window=200000',
+      '-c', 'model_auto_compact_token_limit=180000',
     ])
     const listenIdx = args.indexOf('--listen')
     const firstConfigIdx = args.indexOf('-c')
@@ -200,12 +202,23 @@ describe('buildCodexLaunchArgs', () => {
     expect(flat).not.toContain('model_providers.')
   })
 
-  it('uses each model catalog window while keeping the 220k gateway compaction guard', () => {
-    // Codex 0.144 advertises 372k for GPT-5.6 and 272k for GPT-5.5/5.4.
-    // A global 272k override would silently reduce the new model window.
+  it('uses the persisted 200K/180K runtime defaults and never emits the legacy 220K limit', () => {
     const args = buildCodexLaunchArgs()
-    expect(args.some((arg) => arg.startsWith('model_context_window='))).toBe(false)
-    expect(args).toContain('model_auto_compact_token_limit=220000')
+    expect(args).toContain('model_context_window=200000')
+    expect(args).toContain('model_auto_compact_token_limit=180000')
+    expect(args.join(' ')).not.toContain('220000')
+  })
+
+  it('uses an explicit 372K/334800 runtime context config', () => {
+    const args = buildCodexLaunchArgs({
+      modelContextConfig: {
+        modelContextWindow: 372_000,
+        modelAutoCompactTokenLimit: 334_800,
+      },
+    })
+
+    expect(args).toContain('model_context_window=372000')
+    expect(args).toContain('model_auto_compact_token_limit=334800')
   })
 
   it('pins tool_output_token_limit to the official catalog value (10k)', () => {
@@ -428,6 +441,52 @@ describe('buildCodexLaunchArgs', () => {
 
     expect(args).toContain('disable_response_storage=true')
     expect(args).toContain('windows_wsl_setup_acknowledged=true')
+  })
+
+  it('appends runtime context limits after provider extraTopLevelConfig so runtime is last-wins', () => {
+    const args = buildCodexLaunchArgs({
+      provider: {
+        id: 'rightcode',
+        name: 'Right.Codes',
+        baseUrl: 'https://right.codes/codex/v1',
+        envKey: 'OPENAI_API_KEY',
+        extraTopLevelConfig: {
+          disable_response_storage: true,
+        },
+      },
+      modelContextConfig: {
+        modelContextWindow: 372_000,
+        modelAutoCompactTokenLimit: 334_800,
+      },
+    })
+
+    expect(args.indexOf('model_context_window=372000')).toBeGreaterThan(
+      args.indexOf('disable_response_storage=true'),
+    )
+    expect(args.indexOf('model_auto_compact_token_limit=334800')).toBeGreaterThan(
+      args.indexOf('disable_response_storage=true'),
+    )
+    expect(args.slice(-4)).toEqual([
+      '-c', 'model_context_window=372000',
+      '-c', 'model_auto_compact_token_limit=334800',
+    ])
+  })
+
+  it.each([
+    'model_context_window',
+    'model_auto_compact_token_limit',
+  ])('rejects reserved provider extraTopLevelConfig key %s', (reservedKey) => {
+    expect(() => buildCodexLaunchArgs({
+      provider: {
+        id: 'custom',
+        name: 'Custom',
+        baseUrl: 'https://example.com/v1',
+        envKey: 'OPENAI_API_KEY',
+        extraTopLevelConfig: {
+          [reservedKey]: 1,
+        },
+      },
+    })).toThrow(new RegExp(`reserved.*${reservedKey}`, 'i'))
   })
 
   // apiyiKey is the catimation-style runtime secret injection: the single key

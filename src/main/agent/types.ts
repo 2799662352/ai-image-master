@@ -94,6 +94,11 @@ export interface IAgentBackend {
   steer?(threadId: string, input: AgentInput): Promise<string>
   isHealthy(): boolean
   /**
+   * True while a send is entering a turn or a turn remains active. Backends
+   * that expose runtime restart controls use this to reject unsafe restarts.
+   */
+  hasInFlightWork?(): boolean
+  /**
    * Monotonic generation counter that increments every time the underlying
    * agent process is (re)spawned — crash self-heal via `start()`, or a
    * provider/config `restartCodex()`. Lets `AgentManager` detect that a
