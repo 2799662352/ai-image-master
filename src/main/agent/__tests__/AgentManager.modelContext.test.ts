@@ -60,6 +60,7 @@ interface ContextBackend extends IAgentBackend {
 
 interface BackendOptions {
   exposeEpoch?: boolean
+  currentEpoch?: (backend: ContextBackend) => number | undefined
   restart?: (backend: ContextBackend, call: number) => Promise<void>
   resume?: (backend: ContextBackend, threadId: string, call: number) => Promise<void>
   refresh?: (backend: ContextBackend, call: number) => Promise<void>
@@ -111,7 +112,9 @@ function makeBackend(options: BackendOptions = {}): ContextBackend {
     },
   }
   if (options.exposeEpoch !== false) {
-    backend.currentEpoch = () => backend.epoch
+    backend.currentEpoch = () => options.currentEpoch
+      ? options.currentEpoch(backend)
+      : backend.epoch
   }
   return backend
 }
@@ -582,22 +585,143 @@ describe('AgentManager transactional model context apply', () => {
     ])
   })
 
-  it('accepts requestVersion zero and applies on a backend without epoch support using the compatibility policy', async () => {
-    const { manager } = makeManager({ exposeEpoch: false })
+  it('rejects Context apply before persistence when the backend exposes no epoch API', async () => {
+    const { manager, backend, runtime } = makeManager({ exposeEpoch: false })
 
-    await expect(manager.applyModelContextRpc({
+    const result = await manager.applyModelContextRpc({
       ...APPLY_PAYLOAD,
       requestVersion: 0,
-    })).resolves.toEqual({
-      ok: true,
-      data: {
-        model: 'gpt-5.6-sol',
-        contextWindow: 1_000_000,
-        autoCompactTokenLimit: 900_000,
-        threadRestored: true,
-        requestVersion: 0,
+    })
+
+    expectFailure(result, 'verify', 0)
+    expect(result.error).toMatch(/epoch/i)
+    expect(result.rollback).toEqual({
+      success: true,
+      activeConfig: PREVIOUS_CONFIG,
+    })
+    expect(backend.operations).toEqual([])
+    expect(runtime.snapshots).toEqual([])
+  })
+
+  it.each([
+    ['undefined', undefined],
+    ['NaN', Number.NaN],
+    ['negative', -1],
+    ['fractional', 1.5],
+    ['unsafe', Number.MAX_SAFE_INTEGER + 1],
+  ])('rejects an initially invalid %s epoch before persistence', async (_label, epoch) => {
+    const { manager, backend, runtime } = makeManager({
+      currentEpoch: () => epoch,
+    })
+
+    const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
+
+    expectFailure(result, 'verify')
+    expect(result.error).toMatch(/epoch/i)
+    expect(result.rollback).toEqual({
+      success: true,
+      activeConfig: PREVIOUS_CONFIG,
+    })
+    expect(backend.operations).toEqual([])
+    expect(runtime.snapshots).toEqual([])
+  })
+
+  it.each([
+    ['undefined', undefined],
+    ['NaN', Number.NaN],
+  ])('fails verify and rollback when epoch becomes %s after forward restart', async (_label, epoch) => {
+    let restarted = false
+    const { manager, runtime } = makeManager({
+      currentEpoch: (backend) => restarted ? epoch : backend.epoch,
+      restart: async (backend) => {
+        backend.epoch += 1
+        restarted = true
       },
     })
+
+    const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
+
+    expectFailure(result, 'verify')
+    expect(result.error).toMatch(/epoch/i)
+    expect(result.rollback).toEqual({
+      success: false,
+      error: expect.stringMatching(/epoch/i),
+      effectiveConfig: null,
+    })
+    expect(runtime.store.loadSync()).toEqual({
+      version: 1,
+      confirmed: PREVIOUS_CONFIG,
+    })
+  })
+
+  it('does not claim previous active when rollback starts without a valid epoch', async () => {
+    let rollbackStarted = false
+    const { manager, backend } = makeManager({
+      currentEpoch: (instance) => rollbackStarted ? undefined : instance.epoch,
+      restart: async (instance) => {
+        instance.epoch += 1
+      },
+      resume: async (_instance, _threadId, call) => {
+        if (call === 1) {
+          rollbackStarted = true
+          throw new Error('forward resume failed')
+        }
+      },
+    })
+
+    const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
+
+    expectFailure(result, 'resume')
+    expect(result.rollback).toEqual({
+      success: false,
+      error: expect.stringMatching(/epoch/i),
+      effectiveConfig: null,
+    })
+    expect(backend.restartCalls).toBe(1)
+  })
+
+  it('does not claim previous active when rollback restart epoch does not change', async () => {
+    const { manager, backend } = makeManager({
+      restart: async (instance, call) => {
+        if (call === 1) instance.epoch += 1
+      },
+      resume: async (_instance, _threadId, call) => {
+        if (call === 1) throw new Error('forward resume failed')
+      },
+    })
+
+    const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
+
+    expectFailure(result, 'resume')
+    expect(result.rollback).toEqual({
+      success: false,
+      error: expect.stringMatching(/generation|epoch/i),
+      effectiveConfig: null,
+    })
+    expect(backend.restartCalls).toBe(2)
+  })
+
+  it('does not claim previous active when rollback restart loses its epoch', async () => {
+    const { manager, backend } = makeManager({
+      currentEpoch: (instance) =>
+        instance.restartCalls >= 2 ? undefined : instance.epoch,
+      restart: async (instance) => {
+        instance.epoch += 1
+      },
+      resume: async (_instance, _threadId, call) => {
+        if (call === 1) throw new Error('forward resume failed')
+      },
+    })
+
+    const result = await manager.applyModelContextRpc(APPLY_PAYLOAD)
+
+    expectFailure(result, 'resume')
+    expect(result.rollback).toEqual({
+      success: false,
+      error: expect.stringMatching(/epoch/i),
+      effectiveConfig: null,
+    })
+    expect(backend.restartCalls).toBe(2)
   })
 
   it.each([

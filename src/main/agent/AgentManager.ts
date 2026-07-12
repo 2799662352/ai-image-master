@@ -1129,6 +1129,19 @@ export class AgentManager {
       ))
     }
 
+    try {
+      this.readModelContextEpochStrict()
+    } catch (error) {
+      return Promise.resolve(this.modelContextFailure(
+        payload,
+        previousConfig,
+        attemptedConfig,
+        'verify',
+        errorMessage(error),
+        { success: true, activeConfig: previousConfig },
+      ))
+    }
+
     if (sameModelContextConfig(previousConfig, attemptedConfig)) {
       return Promise.resolve({
         ok: true,
@@ -1211,6 +1224,20 @@ export class AgentManager {
       )
     }
 
+    let previousEpoch: number
+    try {
+      previousEpoch = this.readModelContextEpochStrict()
+    } catch (error) {
+      return this.modelContextFailure(
+        payload,
+        previousConfig,
+        attemptedConfig,
+        'verify',
+        errorMessage(error),
+        { success: true, activeConfig: previousConfig },
+      )
+    }
+
     let codexThreadId: string | undefined
     try {
       codexThreadId = await this.resolveModelContextThreadId(payload.threadId)
@@ -1255,23 +1282,26 @@ export class AgentManager {
       if (!restart) {
         throw new ContextApplyError('restart', 'Codex restart API is unavailable')
       }
-      const previousEpoch = this.backend.currentEpoch?.()
       try {
         await this.restartBackendWithGenerationCheck(restart)
         processMayUseTarget = true
       } catch (error) {
-        const currentEpoch = this.backend.currentEpoch?.()
-        processMayUseTarget = previousEpoch === undefined
-          || currentEpoch === undefined
-          || currentEpoch !== previousEpoch
+        processMayUseTarget = this.modelContextEpochChangedOrUnverifiable(
+          previousEpoch,
+        )
         throw new ContextApplyError('restart', errorMessage(error), { cause: error })
       }
-      this.assertModelContextEpochChanged(previousEpoch, 'verify')
+      const appliedEpoch = this.assertModelContextEpochChanged(previousEpoch)
 
       if (payload.threadId && codexThreadId) {
-        await this.resumeModelContextThreadStrict(payload.threadId, codexThreadId)
+        await this.resumeModelContextThreadStrict(
+          payload.threadId,
+          codexThreadId,
+          appliedEpoch,
+        )
       }
       await this.refreshModelsForContext()
+      this.assertModelContextEpochStable(appliedEpoch)
 
       const confirmedSettings: PersistedCodexRuntimeSettingsV1 = {
         version: 1,
@@ -1336,6 +1366,7 @@ export class AgentManager {
   private async resumeModelContextThreadStrict(
     dbThreadId: string,
     codexThreadId: string,
+    epoch: number,
   ): Promise<void> {
     if (!this.backend.resumeThread) {
       throw new ContextApplyError(
@@ -1346,12 +1377,7 @@ export class AgentManager {
     try {
       await this.backend.resumeThread(codexThreadId)
       this.codexThreadIdByDbThreadId.set(dbThreadId, codexThreadId)
-      const epoch = this.backend.currentEpoch?.()
-      if (epoch === undefined) {
-        this.codexThreadEpochByDbThreadId.delete(dbThreadId)
-      } else {
-        this.codexThreadEpochByDbThreadId.set(dbThreadId, epoch)
-      }
+      this.codexThreadEpochByDbThreadId.set(dbThreadId, epoch)
       await this.store?.setCodexThreadId?.(dbThreadId, codexThreadId)
     } catch (error) {
       throw new ContextApplyError('resume', errorMessage(error), { cause: error })
@@ -1369,20 +1395,53 @@ export class AgentManager {
     }
   }
 
-  private assertModelContextEpochChanged(
-    previousEpoch: number | undefined,
-    stage: AgentModelContextApplyStage,
-  ): void {
-    // Legacy/test backends without an epoch API retain compatibility. If an
-    // epoch existed before restart, losing it or retaining it cannot prove that
-    // the requested process generation owns the new context.
-    if (previousEpoch === undefined) return
-    const currentEpoch = this.backend.currentEpoch?.()
-    if (currentEpoch === undefined || currentEpoch === previousEpoch) {
+  private readModelContextEpochStrict(): number {
+    const currentEpoch = this.backend.currentEpoch
+    if (typeof currentEpoch !== 'function') {
       throw new ContextApplyError(
-        stage,
-        'Model context restart did not create a new backend generation',
+        'verify',
+        'Model context apply requires a backend epoch getter',
       )
+    }
+    const epoch = currentEpoch.call(this.backend)
+    if (!Number.isSafeInteger(epoch) || epoch < 0) {
+      throw new ContextApplyError(
+        'verify',
+        `Model context backend epoch must be a non-negative safe integer; received ${String(epoch)}`,
+      )
+    }
+    return epoch
+  }
+
+  private assertModelContextEpochChanged(previousEpoch: number): number {
+    const currentEpoch = this.readModelContextEpochStrict()
+    if (currentEpoch === previousEpoch) {
+      throw new ContextApplyError(
+        'verify',
+        'Model context restart did not change backend epoch/generation',
+      )
+    }
+    return currentEpoch
+  }
+
+  private assertModelContextEpochStable(expectedEpoch: number): void {
+    const currentEpoch = this.readModelContextEpochStrict()
+    if (currentEpoch !== expectedEpoch) {
+      throw new ContextApplyError(
+        'verify',
+        'Model context backend epoch/generation changed before confirmation',
+      )
+    }
+  }
+
+  private modelContextEpochChangedOrUnverifiable(previousEpoch: number): boolean {
+    try {
+      return this.readModelContextEpochStrict() !== previousEpoch
+    } catch {
+      // A failed replacement with no valid epoch proof is conservatively
+      // treated as possibly switched, forcing compensation instead of claiming
+      // that the old process is still authoritative.
+      return true
     }
   }
 
@@ -1411,22 +1470,30 @@ export class AgentManager {
       if (!restart) {
         failures.push('restart: Codex restart API is unavailable')
       } else {
-        const previousEpoch = this.backend.currentEpoch?.()
-        let restarted = false
+        let previousEpoch: number | undefined
         try {
-          await this.restartBackendWithGenerationCheck(restart)
-          restarted = true
-          this.assertModelContextEpochChanged(previousEpoch, 'verify')
+          previousEpoch = this.readModelContextEpochStrict()
         } catch (error) {
           failures.push(`restart: ${errorMessage(error)}`)
         }
 
-        if (restarted) {
+        let restoredEpoch: number | undefined
+        if (previousEpoch !== undefined) {
+          try {
+            await this.restartBackendWithGenerationCheck(restart)
+            restoredEpoch = this.assertModelContextEpochChanged(previousEpoch)
+          } catch (error) {
+            failures.push(`restart: ${errorMessage(error)}`)
+          }
+        }
+
+        if (restoredEpoch !== undefined) {
           if (input.dbThreadId && input.codexThreadId) {
             try {
               await this.resumeModelContextThreadStrict(
                 input.dbThreadId,
                 input.codexThreadId,
+                restoredEpoch,
               )
             } catch (error) {
               failures.push(`resume: ${errorMessage(error)}`)
@@ -1434,6 +1501,7 @@ export class AgentManager {
           }
           try {
             await this.refreshModelsForContext()
+            this.assertModelContextEpochStable(restoredEpoch)
           } catch (error) {
             failures.push(`verify: ${errorMessage(error)}`)
           }
