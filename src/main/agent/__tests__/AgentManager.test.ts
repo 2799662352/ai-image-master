@@ -1271,6 +1271,120 @@ describe('AgentManager codex thread id mapping (regression: invalid thread id)',
     expect(events).toContainEqual({ type: 'turn_completed', threadId: 'cm-db-id-stream-error', turnId: 't2' })
   })
 
+  it('reacquires Provider admission before a poisoned-thread fresh send retry', async () => {
+    let markFirstClosing!: () => void
+    const firstClosing = new Promise<void>((resolve) => { markFirstClosing = resolve })
+    let releaseFirstClose!: () => void
+    const firstCloseGate = new Promise<void>((resolve) => { releaseFirstClose = resolve })
+    let markRestartStarted!: () => void
+    const restartStarted = new Promise<void>((resolve) => { markRestartStarted = resolve })
+    let releaseRestart!: () => void
+    const restartGate = new Promise<void>((resolve) => { releaseRestart = resolve })
+    let markSecondSendStarted!: () => void
+    const secondSendStarted = new Promise<void>((resolve) => { markSecondSendStarted = resolve })
+    const calls: Array<{ client: string; providerId: string; apiKey: string }> = []
+    const added: unknown[] = []
+    let manager: AgentManager
+    const backend = {
+      healthy: false,
+      epoch: 1,
+      activeClient: 'old-client',
+      providerId: 'apiyi',
+      async start() {},
+      async stop() {},
+      isHealthy() { return backend.healthy },
+      currentEpoch() { return backend.epoch },
+      setProvider(provider: CodexProviderConfig | undefined) {
+        backend.providerId = provider?.id ?? 'apiyi'
+      },
+      async restartCodex() {
+        markRestartStarted()
+        await restartGate
+        backend.activeClient = 'new-client'
+        backend.epoch += 1
+      },
+      async cancel() {},
+      async *send() {
+        const call = calls.length
+        calls.push({
+          client: backend.activeClient,
+          providerId: backend.providerId,
+          apiKey: manager.getCodexApiKey(),
+        })
+        if (call === 0) {
+          try {
+            yield {
+              type: 'error',
+              threadId: CODEX_UUID,
+              turnId: 'turn-poisoned',
+              error: '{"error":{"code":"invalid_encrypted_content","message":"encrypted content could not be decrypted"}}',
+            } as AgentStreamEvent
+          } finally {
+            markFirstClosing()
+            await firstCloseGate
+          }
+          return
+        }
+        markSecondSendStarted()
+        yield {
+          type: 'thread_created',
+          threadId: CODEX_UUID,
+        } as AgentStreamEvent
+        yield {
+          type: 'turn_completed',
+          threadId: CODEX_UUID,
+          turnId: 'turn-recovered',
+        } as AgentStreamEvent
+      },
+    } as IAgentBackend & {
+      healthy: boolean
+      epoch: number
+      activeClient: string
+      providerId: string
+    }
+    manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend,
+      store: {
+        ...persistStubs,
+        createThread: async () => ({ id: 'cm-db-provider-retry' }),
+        addMessage: async (message: unknown) => {
+          added.push(message)
+          return { id: 'msg-provider-retry' }
+        },
+      } as any,
+      attachments: { ingest: async () => [] } as any,
+      eventSink: () => {},
+    })
+    await manager.setCodexApiKey('sk-old')
+    await manager.setProviderApiKey('rightcode', 'sk-new')
+    backend.healthy = true
+
+    await manager.sendMessage({ content: 'retry once', attachments: [] })
+    await firstClosing
+    const transition = manager.setActiveProvider('rightcode')
+    await restartStarted
+    releaseFirstClose()
+    await flushMicrotasks(30)
+    const callsBeforeRestartRelease = calls.map((call) => ({ ...call }))
+
+    releaseRestart()
+    await transition
+    await secondSendStarted
+    expect(calls).toHaveLength(2)
+    expect(callsBeforeRestartRelease).toEqual([{
+      client: 'old-client',
+      providerId: 'apiyi',
+      apiKey: 'sk-old',
+    }])
+    expect(calls[1]).toEqual({
+      client: 'new-client',
+      providerId: 'rightcode',
+      apiKey: 'sk-new',
+    })
+    expect(added).toHaveLength(1)
+  })
+
   it('retries on the "missing recognized prefix" encrypted-content variant (apiyi validation_error)', async () => {
     // Live repro 2026-06-11: apiyi's Responses emulation rejects replayed
     // reasoning blocks whose encrypted_content it didn't mint itself with

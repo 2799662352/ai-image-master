@@ -1881,6 +1881,15 @@ export class AgentManager {
       this.emitEvent({ type: 'error', threadId: threadIdIn, error: '当前后端不支持运行中插话(turn/steer)。' })
       return { threadId: threadIdIn }
     }
+    return this.enqueueTurnAdmission(
+      () => this.steerAfterProviderBarrier(payload, threadIdIn),
+    )
+  }
+
+  private async steerAfterProviderBarrier(
+    payload: AgentSendMessagePayload,
+    threadIdIn: string,
+  ): Promise<AgentSendMessageResult> {
     if (!this.codexApiKey) {
       this.emitEvent({ type: 'error', threadId: threadIdIn, error: EMPTY_KEY_ERROR })
       return { threadId: threadIdIn }
@@ -1896,7 +1905,7 @@ export class AgentManager {
       return { threadId: threadIdIn }
     }
 
-    const assembled = await this.assembleTurnInput(payload).catch((error: unknown) => {
+    const assembled = await this.assembleTurnInput(payload, true).catch((error: unknown) => {
       this.emitEvent({
         type: 'error',
         threadId: threadIdIn,
@@ -1927,13 +1936,33 @@ export class AgentManager {
             message: '上一回合刚好已结束,插话已作为新一轮消息发送。',
           },
         })
-        void this.forwardEvents(threadId, input, collaborationModeOwner).catch((err: unknown) => {
+        let admitted = false
+        let resolveAdmission!: () => void
+        const admission = new Promise<void>((resolve) => {
+          resolveAdmission = resolve
+        })
+        const markAdmitted = (): void => {
+          if (admitted) return
+          admitted = true
+          resolveAdmission()
+        }
+        void this.forwardEvents(
+          threadId,
+          input,
+          collaborationModeOwner,
+          markAdmitted,
+        ).catch((err: unknown) => {
+          markAdmitted()
           this.emitEvent({
             type: 'error',
             threadId,
             error: err instanceof Error ? err.message : String(err),
           })
         })
+        // The fresh turn must register backend.send as in-flight before steer
+        // releases its lifecycle slot. Otherwise a Provider replacement can
+        // splice itself between the no-active response and fallback send.
+        await admission
       } else {
         // Genuine failure (transport down, backend crash…): the persisted user
         // message stays (it IS part of the conversation); the renderer surfaces
@@ -2698,6 +2727,66 @@ export class AgentManager {
     }
   }
 
+  /**
+   * PRECONDITION: the caller owns the Provider/turn admission lifecycle slot.
+   * Resolve/hydrate the Codex thread, revalidate Plan ownership, invoke send,
+   * and synchronously prime its iterator before returning. Priming publishes
+   * CodexProtocolClient's in-flight state while replacement is still excluded.
+   */
+  private async startForwardAttemptWithProviderAdmissionHeld(
+    dbThreadId: string,
+    input: AgentInput,
+    collaborationModeOwner?: CollaborationCapabilityOwner,
+  ): Promise<{
+    codexThreadId: string | undefined
+    input: AgentInput
+    collaborationModeOwner?: CollaborationCapabilityOwner
+    eventStream: AsyncIterable<AgentStreamEvent>
+  }> {
+    const codexThreadId = await this.resolveCodexThreadForSend(dbThreadId)
+    let currentInput = input
+    let currentCollaborationModeOwner = collaborationModeOwner
+    let builtForCommit: BuiltCollaborationMode | undefined
+    if (
+      currentInput.collaborationModeKind !== undefined
+      && currentInput.collaborationMode !== undefined
+    ) {
+      const stable = await this.stabilizeCollaborationModeWithProviderAdmissionHeld(
+        {
+          collaborationMode: currentInput.collaborationMode,
+          owner: currentCollaborationModeOwner,
+        },
+        currentInput.collaborationModeKind,
+        currentInput.model,
+        currentInput.reasoningEffort,
+        currentInput.planReasoningEffort ?? 'auto',
+      )
+      currentInput = {
+        ...currentInput,
+        collaborationMode: stable.collaborationMode,
+      }
+      currentCollaborationModeOwner = stable.owner
+      builtForCommit = stable
+    }
+    const source = builtForCommit === undefined
+      ? this.backend.send(codexThreadId, currentInput)
+      : this.commitWithCollaborationModeOwner(
+          builtForCommit,
+          () => this.backend.send(codexThreadId, currentInput),
+        )
+    const eventStream = primeAsyncIterable(source)
+    // Async-generator bodies resume from next() on the current job in V8, but
+    // yield once while retaining admission so other backend implementations
+    // can publish their equivalent in-flight state.
+    await Promise.resolve()
+    return {
+      codexThreadId,
+      input: currentInput,
+      collaborationModeOwner: currentCollaborationModeOwner,
+      eventStream,
+    }
+  }
+
   private async forwardEvents(
     dbThreadId: string,
     input: AgentInput,
@@ -2709,59 +2798,49 @@ export class AgentManager {
     let currentCollaborationModeOwner = collaborationModeOwner
 
     while (true) {
-      const codexThreadId = await this.resolveCodexThreadForSend(dbThreadId)
-      let builtForCommit: BuiltCollaborationMode | undefined
-      if (
-        currentInput.collaborationModeKind !== undefined
-        && currentInput.collaborationMode !== undefined
-      ) {
-        const built = {
-          collaborationMode: currentInput.collaborationMode,
-          owner: currentCollaborationModeOwner,
+      let attempt: Awaited<ReturnType<AgentManager['startForwardAttemptWithProviderAdmissionHeld']>>
+      if (onTurnAdmitted) {
+        const markAdmitted = onTurnAdmitted
+        try {
+          // Initial send/fallback is already inside its caller's admission.
+          attempt = await this.startForwardAttemptWithProviderAdmissionHeld(
+            dbThreadId,
+            currentInput,
+            currentCollaborationModeOwner,
+          )
+        } catch (error) {
+          markAdmitted()
+          onTurnAdmitted = undefined
+          throw error
         }
-        const stable = onTurnAdmitted
-          ? await this.stabilizeCollaborationModeWithProviderAdmissionHeld(
-              built,
-              currentInput.collaborationModeKind,
-              currentInput.model,
-              currentInput.reasoningEffort,
-              currentInput.planReasoningEffort ?? 'auto',
-            )
-          : await this.stabilizeCollaborationMode(
-              built,
-              currentInput.collaborationModeKind,
-              currentInput.model,
-              currentInput.reasoningEffort,
-              currentInput.planReasoningEffort ?? 'auto',
-            )
-        currentInput = {
-          ...currentInput,
-          collaborationMode: stable.collaborationMode,
-        }
-        currentCollaborationModeOwner = stable.owner
-        builtForCommit = stable
+        markAdmitted()
+        onTurnAdmitted = undefined
+      } else {
+        // Poisoned-thread recovery creates another backend.send after the first
+        // stream has ended. Re-admit every such attempt so Provider replacement
+        // cannot splice itself between the two generations.
+        attempt = await this.enqueueTurnAdmission(
+          () => this.startForwardAttemptWithProviderAdmissionHeld(
+            dbThreadId,
+            currentInput,
+            currentCollaborationModeOwner,
+          ),
+        )
       }
+      const {
+        codexThreadId,
+        input: admittedInput,
+        collaborationModeOwner: admittedOwner,
+        eventStream,
+      } = attempt
+      currentInput = admittedInput
+      currentCollaborationModeOwner = admittedOwner
       // Accumulate the assistant turn's timeline items in main-process memory so
       // we can write a single AgentMessage row at turn_completed time. Mirrors
       // (a tiny subset of) the renderer's `applyEvent` reducer; kept inline to
       // avoid a circular renderer→main import.
       let assistantItems: TimelineItem[] = []
       try {
-        let eventStream = builtForCommit === undefined
-          ? this.backend.send(codexThreadId, currentInput)
-          : this.commitWithCollaborationModeOwner(
-              builtForCommit,
-              () => this.backend.send(codexThreadId, currentInput),
-            )
-        if (onTurnAdmitted) {
-          eventStream = primeAsyncIterable(eventStream)
-          // Async-generator bodies resume from next() on the current job in
-          // V8, but yield one microtask while still holding the lifecycle tail
-          // so alternate backend implementations also publish in-flight state.
-          await Promise.resolve()
-          onTurnAdmitted()
-          onTurnAdmitted = undefined
-        }
         for await (const event of eventStream) {
           if (event.type === 'thread_created' && event.threadId) {
             this.rememberCodexThread(dbThreadId, event.threadId)
