@@ -429,6 +429,16 @@ describe('AgentManager transactional model context apply', () => {
     })
     expect((manager as unknown as { contextRecoveryRequired: boolean })
       .contextRecoveryRequired).toBe(true)
+    await expect(manager.getModelContextConfigRpc()).resolves.toEqual({
+      ok: true,
+      data: {
+        ...PREVIOUS_CONFIG,
+        recoveryRequired: true,
+        recoveryError: expect.stringMatching(
+          /resume transport unavailable.*resume transport unavailable/i,
+        ),
+      },
+    })
 
     failResume = false
     const recovered = await manager.applyModelContextRpc({
@@ -447,6 +457,13 @@ describe('AgentManager transactional model context apply', () => {
     expect(backend.restartCalls).toBe(3)
     expect((manager as unknown as { contextRecoveryRequired: boolean })
       .contextRecoveryRequired).toBe(false)
+    await expect(manager.getModelContextConfigRpc()).resolves.toEqual({
+      ok: true,
+      data: {
+        ...PREVIOUS_CONFIG,
+        recoveryRequired: false,
+      },
+    })
   })
 
   it('keeps recovery required when an explicit recovery apply also cannot prove rollback', async () => {

@@ -730,6 +730,83 @@ describe('useAgentChatStore model settings lifecycle', () => {
     expect(store.getState().modelSettingsError).toBeUndefined()
   })
 
+  it('cancels old-provider queued intents and reconciles an active old result by snapshot', async () => {
+    const firstGate = deferred<void>()
+    const catalogResult = deferred<AgentModelSettingsCatalogResult>()
+    const snapshotResult = deferred<AgentModelContextSnapshotResult>()
+    const getModelSettingsCatalog = vi.fn(() => catalogResult.promise)
+    const getModelContextConfig = vi.fn(() => snapshotResult.promise)
+    const applyModelContext = vi.fn(async (payload) => {
+      if (applyModelContext.mock.calls.length === 1) {
+        await firstGate.promise
+      }
+      return {
+        ok: true as const,
+        data: {
+          model: payload.model,
+          contextWindow: payload.contextWindow,
+          autoCompactTokenLimit: Math.floor(payload.contextWindow * 0.9),
+          threadRestored: false,
+          requestVersion: payload.requestVersion,
+        },
+      }
+    })
+    installModelSettingsApi({
+      getModelSettingsCatalog,
+      getModelContextConfig,
+      applyModelContext,
+    })
+    const store = await loadFreshStore()
+    store.setState({
+      selectedModelId: 'gpt-5.6-sol',
+      activeModelContextWindow: 372_000,
+      modelContextWindowByModel: {
+        'gpt-5.6-sol': 1_000_000,
+      },
+      modelSettingsCatalog: modelCatalog('apiyi'),
+    } as never)
+
+    const activeOldSwitch = store.getState().setSelectedModel('gpt-5.5')
+    const queuedOldSwitch = store.getState().setSelectedModel('gpt-5.6-sol')
+    await vi.waitFor(() => expect(applyModelContext).toHaveBeenCalledTimes(1))
+
+    store.getState().invalidateCollaborationCapabilities()
+    store.setState({ modelSettingsError: 'new provider loading' } as never)
+    firstGate.resolve()
+    await Promise.all([activeOldSwitch, queuedOldSwitch])
+
+    expect(applyModelContext).toHaveBeenCalledTimes(1)
+    expect(store.getState().activeModelContextWindow).toBe(272_000)
+    expect(store.getState().selectedModelId).toBe('gpt-5.6-sol')
+    expect(store.getState().modelContextWindowByModel).toEqual({
+      'gpt-5.6-sol': 1_000_000,
+    })
+    expect(store.getState().modelSettingsError).toBe('new provider loading')
+
+    const reconciliation = store.getState().loadModelSettingsCatalog('rightcode')
+    catalogResult.resolve({
+      ok: true,
+      data: modelCatalog('rightcode'),
+    })
+    snapshotResult.resolve({
+      ok: true,
+      data: {
+        modelContextWindow: 372_000,
+        modelAutoCompactTokenLimit: 334_800,
+        recoveryRequired: false,
+      },
+    })
+    await reconciliation
+    await vi.waitFor(() => expect(getModelContextConfig).toHaveBeenCalledTimes(2))
+
+    expect(store.getState().modelSettingsCatalog?.provider).toBe('rightcode')
+    expect(store.getState().activeModelContextWindow).toBe(372_000)
+    expect(store.getState().selectedModelId).toBe('gpt-5.6-sol')
+    expect(store.getState().modelContextWindowByModel).toEqual({
+      'gpt-5.6-sol': 1_000_000,
+    })
+  })
+
   it('stops automatic queued intents after fatal rollback but permits later explicit recovery', async () => {
     const firstGate = deferred<void>()
     const applyModelContext = vi.fn(async (payload) => {
@@ -1072,6 +1149,110 @@ describe('useAgentChatStore model settings lifecycle', () => {
     expect(store.getState().modelSettingsRecoveryRequired).toBe(false)
     expect(store.getState().modelSettingsError).toBeUndefined()
     expect(store.getState().activeModelContextWindow).toBe(372_000)
+  })
+
+  it('restores main-owned fatal recovery on cold load and requires a real same-value apply', async () => {
+    const applyModelContext = vi.fn(async (payload) => ({
+      ok: true as const,
+      data: {
+        model: payload.model,
+        contextWindow: payload.contextWindow,
+        autoCompactTokenLimit: Math.floor(payload.contextWindow * 0.9),
+        threadRestored: false,
+        requestVersion: payload.requestVersion,
+      },
+    }))
+    installModelSettingsApi({
+      getModelSettingsCatalog: async () => ({
+        ok: true,
+        data: modelCatalog(),
+      }),
+      getModelContextConfig: async () => ({
+        ok: true,
+        data: {
+          modelContextWindow: 372_000,
+          modelAutoCompactTokenLimit: 334_800,
+          recoveryRequired: true,
+          recoveryError:
+            'Context apply failed: restart failed; rollback failed: recovery restart failed',
+        },
+      }),
+      applyModelContext,
+    })
+    const store = await loadFreshStore()
+    store.setState({
+      selectedModelId: 'gpt-5.6-sol',
+      activeModelContextWindow: 200_000,
+      modelSettingsRecoveryRequired: false,
+      modelSettingsError: undefined,
+    } as never)
+
+    await store.getState().loadModelSettingsCatalog()
+
+    expect(store.getState().activeModelContextWindow).toBe(372_000)
+    expect(store.getState().modelSettingsRecoveryRequired).toBe(true)
+    expect(store.getState().modelSettingsError).toMatch(
+      /restart failed.*recovery restart failed/i,
+    )
+
+    await expect(
+      store.getState().setModelContextWindow(372_000),
+    ).resolves.toBe(true)
+    expect(applyModelContext).toHaveBeenCalledTimes(1)
+    expect(store.getState().modelSettingsRecoveryRequired).toBe(false)
+    expect(store.getState().modelSettingsError).toBeUndefined()
+  })
+
+  it('uses a same-model selection as an explicit recovery apply after cold reload', async () => {
+    const applyModelContext = vi.fn(async (payload) => ({
+      ok: true as const,
+      data: {
+        model: payload.model,
+        contextWindow: payload.contextWindow,
+        autoCompactTokenLimit: Math.floor(payload.contextWindow * 0.9),
+        threadRestored: false,
+        requestVersion: payload.requestVersion,
+      },
+    }))
+    const getModelContextConfig = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          modelContextWindow: 372_000,
+          modelAutoCompactTokenLimit: 334_800,
+          recoveryRequired: true,
+          recoveryError: 'main still requires Context recovery',
+        },
+      })
+      .mockResolvedValue({
+        ok: true,
+        data: {
+          modelContextWindow: 372_000,
+          modelAutoCompactTokenLimit: 334_800,
+          recoveryRequired: false,
+        },
+      })
+    installModelSettingsApi({
+      getModelSettingsCatalog: async () => ({
+        ok: true,
+        data: modelCatalog(),
+      }),
+      getModelContextConfig,
+      applyModelContext,
+    })
+    const store = await loadFreshStore()
+    store.setState({
+      selectedModelId: 'gpt-5.6-sol',
+      activeModelContextWindow: 372_000,
+      modelContextWindowByModel: { 'gpt-5.6-sol': 372_000 },
+    } as never)
+    await store.getState().loadModelSettingsCatalog()
+
+    await store.getState().setSelectedModel('gpt-5.6-sol')
+
+    expect(applyModelContext).toHaveBeenCalledTimes(1)
+    expect(store.getState().modelSettingsRecoveryRequired).toBe(false)
+    expect(store.getState().modelSettingsError).toBeUndefined()
   })
 
   it('allows a successful load to clear an ordinary failure after rollback succeeds', async () => {

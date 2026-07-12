@@ -94,6 +94,8 @@ describe('registerAgentIpc model settings handlers', () => {
       data: {
         modelContextWindow: 372_000,
         modelAutoCompactTokenLimit: 334_800,
+        recoveryRequired: true,
+        recoveryError: 'forward restart failed; rollback restart failed',
       },
     }
     manager.getModelSettingsCatalogRpc.mockResolvedValue(catalog)

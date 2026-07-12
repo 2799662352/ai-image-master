@@ -183,8 +183,13 @@ export type AgentModelSettingsCatalogResult =
   | { ok: true; data: AgentModelSettingsCatalog }
   | { ok: false; error: string }
 
+export type AgentModelContextSnapshot = CodexModelContextConfig & {
+  recoveryRequired: boolean
+  recoveryError?: string
+}
+
 export type AgentModelContextSnapshotResult =
-  | { ok: true; data: CodexModelContextConfig }
+  | { ok: true; data: AgentModelContextSnapshot }
   | { ok: false; error: string }
 
 export interface AgentModelContextApplyPayload {

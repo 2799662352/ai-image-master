@@ -433,6 +433,8 @@ export class AgentManager {
   private contextTransitionOwner: symbol | null = null
   /** True when rollback could not prove which Context config the backend uses. */
   private contextRecoveryRequired = false
+  /** Last main-owned apply + rollback summary while effective Context is unknown. */
+  private contextRecoveryError: string | undefined
 
   constructor(opts: AgentManagerOptions) {
     this.win = opts.win
@@ -1205,7 +1207,13 @@ export class AgentManager {
   getModelContextConfigRpc(): Promise<AgentModelContextSnapshotResult> {
     return Promise.resolve({
       ok: true,
-      data: { ...this.runtimeSettings.confirmed },
+      data: {
+        ...this.runtimeSettings.confirmed,
+        recoveryRequired: this.contextRecoveryRequired,
+        ...(this.contextRecoveryError
+          ? { recoveryError: this.contextRecoveryError }
+          : {}),
+      },
     })
   }
 
@@ -1472,6 +1480,7 @@ export class AgentManager {
       // Never publish an in-memory confirmation before the atomic rename wins.
       this.runtimeSettings = cloneRuntimeSettings(confirmedSettings)
       this.contextRecoveryRequired = false
+      this.contextRecoveryError = undefined
       return {
         ok: true,
         data: {
@@ -1494,6 +1503,12 @@ export class AgentManager {
       })
       this.contextRecoveryRequired =
         !rollback.ok || (recoveryWasRequired && !processMayUseTarget)
+      if (!rollback.ok) {
+        this.contextRecoveryError =
+          `Context apply failed: ${contextError.message}; rollback failed: ${rollback.error}`
+      } else if (!this.contextRecoveryRequired) {
+        this.contextRecoveryError = undefined
+      }
       return this.modelContextFailure(
         payload,
         previousConfig,

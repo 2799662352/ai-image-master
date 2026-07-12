@@ -1030,16 +1030,38 @@ let modelSettingsLoadInflight:
   | undefined
 
 interface ModelContextIntent {
+  get: () => AgentChatState
   set: SetAgentChatState
   model: string
   contextWindow: number
   requestVersion: number
+  ownerGeneration: number
   threadId?: string
   resolve: (applied: boolean) => void
 }
 
 let activeModelContextIntent: ModelContextIntent | undefined
 let queuedModelContextIntent: ModelContextIntent | undefined
+
+function reconcileModelSettingsAfterStaleIntent(
+  get: () => AgentChatState,
+): void {
+  const generation = get().modelSettingsLoadGeneration
+  const currentLoad =
+    modelSettingsLoadInflight?.generation === generation
+      ? modelSettingsLoadInflight.promise
+      : undefined
+  void (async () => {
+    try {
+      await currentLoad
+    } catch {
+      // A fresh authoritative read below owns reconciliation diagnostics.
+    }
+    const state = get()
+    if (state.modelSettingsLoadGeneration !== generation) return
+    await state.loadModelSettingsCatalog()
+  })()
+}
 
 export function formatContextApplyError(
   result: Extract<AgentModelContextApplyResult, { ok: false }>,
@@ -1084,10 +1106,12 @@ async function applyModelContextForModel(
 
   return new Promise<boolean>((resolve) => {
     const intent: ModelContextIntent = {
+      get,
       set,
       model,
       contextWindow,
       requestVersion,
+      ownerGeneration: owner.modelSettingsLoadGeneration,
       ...(owner.threadId ? { threadId: owner.threadId } : {}),
       resolve,
     }
@@ -1103,31 +1127,39 @@ async function applyModelContextForModel(
 
 async function executeModelContextIntent(
   intent: ModelContextIntent,
-): Promise<{ applied: boolean; fatal: boolean }> {
+): Promise<{ applied: boolean; fatal: boolean; ownerStale: boolean }> {
   const {
     set,
     model,
     contextWindow,
     requestVersion,
+    ownerGeneration,
     threadId,
   } = intent
   set((state) =>
-    state.modelSettingsRecoveryRequired
+    state.modelSettingsLoadGeneration !== ownerGeneration
+    || state.modelSettingsRecoveryRequired
       ? {}
       : { modelSettingsError: undefined })
   const apply = (window as Window & { electronAPI?: AgentElectronApi })
     .electronAPI?.agent?.applyModelContext
   if (!apply) {
-    set((state) =>
-      ({
+    let ownerStale = false
+    set((state) => {
+      if (state.modelSettingsLoadGeneration !== ownerGeneration) {
+        ownerStale = true
+        return {}
+      }
+      return {
         ...(state.modelContextPending?.requestVersion === requestVersion
           ? { modelContextPending: undefined }
           : {}),
         ...(state.modelSettingsRecoveryRequired
           ? {}
           : { modelSettingsError: 'Electron Context API 不可用。' }),
-      }))
-    return { applied: false, fatal: false }
+      }
+    })
+    return { applied: false, fatal: false, ownerStale }
   }
 
   let result: AgentModelContextApplyResult
@@ -1139,8 +1171,13 @@ async function executeModelContextIntent(
       requestVersion,
     })
   } catch (error) {
-    set((state) =>
-      ({
+    let ownerStale = false
+    set((state) => {
+      if (state.modelSettingsLoadGeneration !== ownerGeneration) {
+        ownerStale = true
+        return {}
+      }
+      return {
         ...(state.modelContextPending?.requestVersion === requestVersion
           ? { modelContextPending: undefined }
           : {}),
@@ -1150,29 +1187,49 @@ async function executeModelContextIntent(
               modelSettingsError:
                 error instanceof Error ? error.message : String(error),
             }),
-      }))
-    return { applied: false, fatal: false }
+      }
+    })
+    return { applied: false, fatal: false, ownerStale }
   }
 
   const resultVersion = result.ok
     ? result.data.requestVersion
     : result.requestVersion
   if (resultVersion !== requestVersion) {
-    set((state) =>
-      ({
+    let ownerStale = false
+    set((state) => {
+      if (state.modelSettingsLoadGeneration !== ownerGeneration) {
+        ownerStale = true
+        return {}
+      }
+      return {
         ...(state.modelContextPending?.requestVersion === requestVersion
           ? { modelContextPending: undefined }
           : {}),
         ...(state.modelSettingsRecoveryRequired
           ? {}
           : { modelSettingsError: 'Context 响应版本不匹配，请重试。' }),
-      }))
-    return { applied: false, fatal: false }
+      }
+    })
+    return { applied: false, fatal: false, ownerStale }
   }
 
   let applied = false
   let fatal = false
+  let ownerStale = false
   set((state) => {
+    if (state.modelSettingsLoadGeneration !== ownerGeneration) {
+      ownerStale = true
+      if (result.ok) {
+        return { activeModelContextWindow: result.data.contextWindow }
+      }
+      return result.rollback.ok
+        ? {
+            activeModelContextWindow:
+              result.rollback.activeConfig.modelContextWindow,
+          }
+        : {}
+    }
     const ownsPending =
       state.modelContextPending?.requestVersion === requestVersion
     if (!result.ok) {
@@ -1218,7 +1275,7 @@ async function executeModelContextIntent(
       ),
     }
   })
-  return { applied, fatal }
+  return { applied, fatal, ownerStale }
 }
 
 async function drainModelContextIntents(): Promise<void> {
@@ -1226,6 +1283,9 @@ async function drainModelContextIntents(): Promise<void> {
     const intent = activeModelContextIntent
     const outcome = await executeModelContextIntent(intent)
     intent.resolve(outcome.applied)
+    if (outcome.ownerStale) {
+      reconcileModelSettingsAfterStaleIntent(intent.get)
+    }
     if (outcome.fatal) {
       queuedModelContextIntent?.resolve(false)
       queuedModelContextIntent = undefined
@@ -2153,6 +2213,8 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   setError: (error) => set({ error }),
   setSelectedModel: async (modelId) => {
     const before = get()
+    const ownerGeneration = before.modelSettingsLoadGeneration
+    const ownerProvider = before.modelSettingsCatalog?.provider
     const catalogRow = before.modelSettingsCatalog?.models.find(
       (row) => row.id === modelId,
     )
@@ -2176,20 +2238,35 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     const contextIntentInProgress =
       before.modelContextPending !== undefined
       || activeModelContextIntent !== undefined
-    if (
-      (
-        targetContextWindow !== before.activeModelContextWindow
-        || contextIntentInProgress
-      )
-      && !await applyModelContextForModel(
+    const shouldApplyContext =
+      targetContextWindow !== before.activeModelContextWindow
+      || contextIntentInProgress
+      || before.modelSettingsRecoveryRequired
+    if (shouldApplyContext) {
+      const applied = await applyModelContextForModel(
         get,
         set,
         canonicalModel,
         targetContextWindow,
-        false,
+        before.modelSettingsRecoveryRequired,
+      )
+      if (!applied) {
+        void get().loadCollaborationCapabilities()
+        return
+      }
+    }
+
+    const currentOwner = get()
+    const currentProvider = currentOwner.modelSettingsCatalog?.provider
+    if (
+      currentOwner.modelSettingsLoadGeneration !== ownerGeneration
+      || (
+        ownerProvider !== undefined
+        && currentProvider !== undefined
+        && currentProvider !== ownerProvider
       )
     ) {
-      void get().loadCollaborationCapabilities()
+      void currentOwner.loadCollaborationCapabilities()
       return
     }
 
@@ -2303,6 +2380,8 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         const errors: string[] = []
         let modelSettingsCatalog = state.modelSettingsCatalog
         let activeModelContextWindow = state.activeModelContextWindow
+        let snapshotRecoveryRequired = false
+        let snapshotRecoveryError: string | undefined
         const contextOwnerStillCurrent =
           contextPendingAtLoad === undefined
           && state.modelContextRequestSequence === contextRequestSequence
@@ -2333,6 +2412,13 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
           if (contextOwnerStillCurrent) {
             activeModelContextWindow =
               snapshotResult.value.data.modelContextWindow
+            snapshotRecoveryRequired =
+              snapshotResult.value.data.recoveryRequired === true
+            if (snapshotRecoveryRequired) {
+              snapshotRecoveryError =
+                snapshotResult.value.data.recoveryError
+                || '上次 Context 回滚失败，请手动重启或重新应用。'
+            }
           }
         }
         const loadError = errors.length > 0
@@ -2340,11 +2426,18 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
           : undefined
         const preserveCurrentError =
           state.modelSettingsRecoveryRequired || !contextOwnerStillCurrent
-        const modelSettingsError = preserveCurrentError
-          ? state.modelSettingsError
-            ? loadError && !state.modelSettingsError.includes(loadError)
-              ? `${state.modelSettingsError}；模型设置加载错误：${loadError}`
-              : state.modelSettingsError
+        const recoveryRequired =
+          state.modelSettingsRecoveryRequired || snapshotRecoveryRequired
+        const primaryError = snapshotRecoveryRequired
+          ? snapshotRecoveryError
+          : preserveCurrentError
+            ? state.modelSettingsError
+            : undefined
+        const modelSettingsError = recoveryRequired || preserveCurrentError
+          ? primaryError
+            ? loadError && !primaryError.includes(loadError)
+              ? `${primaryError}；模型设置加载错误：${loadError}`
+              : primaryError
             : loadError
           : loadError
 
@@ -2352,6 +2445,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
           modelSettingsCatalog,
           activeModelContextWindow,
           modelSettingsLoading: false,
+          modelSettingsRecoveryRequired: recoveryRequired,
           modelSettingsError,
         }
       })
@@ -2580,6 +2674,8 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     }
   },
   invalidateCollaborationCapabilities: () => {
+    queuedModelContextIntent?.resolve(false)
+    queuedModelContextIntent = undefined
     set((state) => ({
       collaborationCapabilities: undefined,
       collaborationCapabilitiesModel: undefined,
@@ -2591,6 +2687,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       ...(state.modelSettingsRecoveryRequired
         ? {}
         : { modelSettingsError: undefined }),
+      modelContextPending: undefined,
       modelSettingsLoadGeneration: state.modelSettingsLoadGeneration + 1,
     }))
   },

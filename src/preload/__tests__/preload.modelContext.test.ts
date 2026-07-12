@@ -53,6 +53,7 @@ describe('preload model settings API', () => {
       data: {
         modelContextWindow: 200_000,
         modelAutoCompactTokenLimit: 180_000,
+        recoveryRequired: false,
       },
     }
     electronMocks.invoke

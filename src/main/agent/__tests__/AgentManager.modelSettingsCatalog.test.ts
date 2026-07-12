@@ -295,6 +295,7 @@ describe('AgentManager model settings catalog and snapshot', () => {
       data: {
         modelContextWindow: 200_000,
         modelAutoCompactTokenLimit: 180_000,
+        recoveryRequired: false,
       },
     })
     if (!first.ok) throw new Error('Expected context snapshot')
@@ -305,6 +306,7 @@ describe('AgentManager model settings catalog and snapshot', () => {
       data: {
         modelContextWindow: 200_000,
         modelAutoCompactTokenLimit: 180_000,
+        recoveryRequired: false,
       },
     })
   })
