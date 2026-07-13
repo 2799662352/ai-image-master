@@ -187,6 +187,10 @@ test('formal release is manual, serialized, and reuses quality/build workflows',
   ])
   assert.equal(workflow.jobs.publish.environment, 'production')
   assert.match(workflow.jobs.publish.if, /dry_run == false/)
+  const publishCheckout = workflow.jobs.publish.steps.find(
+    (step) => step.name === 'Checkout release control plane',
+  )
+  assert.equal(publishCheckout.with.ref, '${{ github.sha }}')
   assert.equal(workflow.jobs.summary.if, 'always()')
   assert.ok(workflow.jobs.summary.needs.includes('publish'))
   assert.ok(workflow.jobs.summary.needs.includes('quality'))
