@@ -1,4 +1,12 @@
-# AI Image Master
+# CATIMATION Cyberpunk Master / AI Image Master
+
+An open-source Electron desktop workspace for AI-assisted image and video creation, visual storyboarding, and creative production workflows.
+
+**Downloads:** Official Windows installers are available from [GitHub Releases](https://github.com/2799662352/ai-image-master/releases).
+
+**Code signing:** This project is applying for sponsored Windows code signing through the [SignPath Foundation](https://signpath.org/). Once approved, official Windows release binaries will be signed through SignPath's controlled build and signing process.
+
+## 中文简介
 
 AI 图片生成桌面应用 — Electron + React + LangChain/LangGraph。
 支持文生图、参考图、批量生成、Director 多阶段流水线和 StoryboardPro 分镜系统。
