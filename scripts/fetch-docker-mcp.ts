@@ -4,10 +4,16 @@ import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import process from 'node:process'
 import os from 'node:os'
+import {
+  expectedRuntimeAssetDigest,
+  readRuntimeAssetLock,
+  verifyRuntimeAssetBytes,
+} from './runtime-asset-integrity.mjs'
 
 type GitHubReleaseAsset = {
   name: string
   browser_download_url: string
+  digest?: string | null
 }
 
 type GitHubRelease = {
@@ -19,6 +25,9 @@ const GITHUB_REPO = 'mcp-gateway'
 
 const pkg = JSON.parse(readFileSync(path.join(process.cwd(), 'package.json'), 'utf-8'))
 const dockerMcpVersion: string = process.env.DOCKER_MCP_VERSION ?? pkg.dockerMcpGatewayVersion ?? '0.42.1'
+const runtimeAssetLock = readRuntimeAssetLock(
+  path.join(process.cwd(), 'scripts', 'runtime-assets.lock.json'),
+)
 
 const targets = (process.env.DOCKER_MCP_TARGETS ?? `${process.platform}-${process.arch}`)
   .split(',')
@@ -134,7 +143,10 @@ async function downloadWithRetry(target: string, asset: GitHubReleaseAsset): Pro
   const binaryName = getBinaryName(target)
   const binaryPath = path.join(targetDir, binaryName)
 
-  if (await fileExists(binaryPath)) {
+  if (
+    process.env.GITHUB_ACTIONS !== 'true' &&
+    (await fileExists(binaryPath))
+  ) {
     console.log(`Cached: ${path.relative(process.cwd(), binaryPath)} already exists, skipping download.`)
     return
   }
@@ -146,6 +158,13 @@ async function downloadWithRetry(target: string, asset: GitHubReleaseAsset): Pro
     try {
       console.log(`Downloading ${asset.name} (attempt ${attempt}/${MAX_RETRIES})...`)
       const bytes = await fetchBytes(asset.browser_download_url)
+      const expectedDigest = expectedRuntimeAssetDigest(runtimeAssetLock, {
+        component: 'dockerMcp',
+        version: dockerMcpVersion,
+        target,
+        assetName: asset.name,
+      })
+      verifyRuntimeAssetBytes(bytes, expectedDigest, asset.name)
 
       const tmpTarGz = path.join(os.tmpdir(), `docker-mcp-${target}-${Date.now()}.tar.gz`)
       await writeFile(tmpTarGz, bytes)

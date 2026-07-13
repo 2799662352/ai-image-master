@@ -19,8 +19,8 @@
 
 | 工具 | 最低版本 | 推荐版本 |
 |------|---------|---------|
-| Node.js | 18.0.0 | 20.x LTS |
-| npm | 9.0.0 | 10.x |
+| Node.js | 20.0.0 | 20.x LTS |
+| pnpm | 10.12.4 | 10.12.4 |
 | Python | 3.x | (仅 Windows 原生模块需要) |
 | Visual Studio Build Tools | 2019+ | (仅 Windows 原生模块需要) |
 
@@ -28,10 +28,10 @@
 
 ```bash
 # 启动开发服务器 (带 HMR)
-npm run dev
+pnpm run dev
 
 # 预览生产构建
-npm run preview
+pnpm run preview
 ```
 
 ## 构建流程
@@ -39,37 +39,35 @@ npm run preview
 ### 完整构建流程
 
 ```bash
-# 1. 安装依赖
-npm install
+# 1. 安装锁定依赖
+pnpm install --frozen-lockfile
 
-# 2. 类型检查
-npm run typecheck
+# 2. CI 诊断债务门禁（严格零错误检查仍为 pnpm run typecheck）
+pnpm run typecheck:ci
 
 # 3. 运行测试
-npm test
+pnpm run test:ci
 
 # 4. 构建应用
-npm run build:win     # Windows
-npm run build:mac     # macOS
-npm run build:linux   # Linux
-npm run build:all     # 所有平台
+pnpm run build:vite
+pnpm run build:win64  # 本地 Windows x64 验证，不发布
 ```
 
 ### 构建脚本说明
 
 | 脚本 | 说明 |
 |------|------|
-| `npm run build:vite` | 仅构建 Vite (main/preload/renderer) |
-| `npm run build` | Vite 构建 + Windows 打包 |
-| `npm run build:win` | Windows NSIS + Portable |
-| `npm run build:win64` | Windows x64 |
-| `npm run build:mac` | macOS DMG + ZIP |
-| `npm run build:linux` | Linux AppImage + DEB |
-| `npm run build:all` | 所有平台 |
-| `npm run build:dir` | 目录打包 (用于测试) |
-| `npm run pack` | 仅打包目录，不生成安装程序 |
-| `npm run dist` | 仅 electron-builder (需先运行 build:vite) |
-| `npm run release` | 构建并发布到 GitHub |
+| `pnpm run build:vite` | 仅构建 main/preload/renderer |
+| `pnpm run build:win64` | 本地 Windows x64 NSIS 验证 |
+| `pnpm run build:dir` | 目录打包（用于调试） |
+| `pnpm run pack` | 仅打包目录，不生成安装程序 |
+
+正式安装包不从本地命令发布。唯一生产入口是 GitHub Actions 的 `Release` 工作流，
+它调用 `_windows-release-build.yml` 并强制
+`electron-builder --win --x64 --publish never`。
+已有 canonical 目录可先设置 `$env:RELEASE_DIR='<目录>'`，再用
+`pnpm run release:verify` 做只读复核；
+配置 COS 只读凭据后，可用 `pnpm run release:cos:dry` 检查上传计划，不写远端。
 
 ### 构建输出
 
@@ -81,8 +79,9 @@ release/
 │   │   ├── app.asar                 # 应用代码 (压缩)
 │   │   └── app.asar.unpacked/       # 解压的资源
 │   └── locales/                     # 语言包
-├── CATIMATION-Cyberpunk Master-1.0.2-Setup.exe  # NSIS 安装程序
-├── CATIMATION-Cyberpunk Master-1.0.2-Portable.exe  # 便携版
+├── catimation-cyberpunk-master-1.0.2-setup.exe  # NSIS 安装程序
+├── catimation-cyberpunk-master-1.0.2-setup.exe.blockmap
+├── latest.yml / beta.yml / alpha.yml            # 由版本频道决定
 └── builder-debug.yml                # 构建调试信息
 ```
 
@@ -146,9 +145,7 @@ nsis:
   differentialPackage: true
 ```
 
-**Portable 便携版：**
-- 无需安装，解压即用
-- 配置文件存储在应用目录
+当前正式交付只包含 Windows x64 NSIS，不发布 Portable、macOS 或 Linux 制品。
 
 ### macOS
 
@@ -183,10 +180,8 @@ mac:
 ```yaml
 # electron-builder.yml
 publish:
-  provider: github
-  owner: 2799662352
-  repo: ai-image-master
-  releaseType: release
+  - provider: generic
+    url: https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/
 
 generateUpdatesFilesForAllChannels: true
 ```
@@ -204,16 +199,10 @@ autoUpdater.checkForUpdatesAndNotify()
 
 ### 发布流程
 
-```bash
-# 1. 更新版本号
-npm version patch  # 或 minor, major
-
-# 2. 构建并发布
-npm run release
-
-# 3. 在 GitHub 发布 Release
-# electron-builder 会自动上传构建产物
-```
+更新 `package.json` / `pnpm-lock.yaml`，新增
+`docs/releases/v<version>.md`，合并到 `main` 后手动运行 GitHub Actions
+`Release`。先执行 `dry_run=true`；成功后再以相同版本正式运行。详细状态机、基线迁移和
+回退见 `docs/hot-update.md`。
 
 ## 代码签名
 
@@ -232,10 +221,16 @@ win:
 ```
 
 3. **环境变量**:
-```bash
-CSC_LINK=path/to/certificate.pfx
-CSC_KEY_PASSWORD=your_password
+GitHub `production` Environment 使用：
+
+```text
+WIN_CERTIFICATE=<PFX/P12 的 base64、路径或 HTTPS URL>
+WIN_CERTIFICATE_PASSWORD=<证书密码>
+WIN_CERTIFICATE_SUBJECT_NAME=<可选的主题校验值>
 ```
+
+三个值完全未配置时允许生成明确标记为 unsigned 的发布；证书或密码只配置一部分会阻止
+发布。signed 模式必须通过 Authenticode 状态、主题和时间戳验证。
 
 ### macOS
 
@@ -262,8 +257,8 @@ APPLE_APP_SPECIFIC_PASSWORD=xxxx-xxxx-xxxx-xxxx
 ```bash
 # 重新安装依赖
 rm -rf node_modules
-npm install
-npm run postinstall
+pnpm install --frozen-lockfile
+pnpm run postinstall
 ```
 
 **Q: Windows 打包失败 "EPERM"**
@@ -285,13 +280,13 @@ asarUnpack:
 
 ```bash
 # 生成目录打包 (不压缩，便于检查)
-npm run build:dir
+pnpm run build:dir
 
 # 查看构建调试信息
 cat release/builder-debug.yml
 
 # 验证 ASAR 内容
-npx asar list release/win-unpacked/resources/app.asar
+pnpm exec asar list release/win-unpacked/resources/app.asar
 ```
 
 ### 日志位置

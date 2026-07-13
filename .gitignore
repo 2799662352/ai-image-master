@@ -4,8 +4,8 @@ node_modules/
 # Build output
 dist/
 out/
-release/
-release2/
+/release/
+/release2/
 release-notes-*.md
 
 # Recovery tracking artifacts

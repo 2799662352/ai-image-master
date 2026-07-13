@@ -18,8 +18,25 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: false,
-    testTimeout: 15000,
-    include: ['src/**/__tests__/**/*.test.{ts,tsx}', 'src/**/*.test.{ts,tsx}'],
+    // Keep CI deterministic on 4-core hosted runners. Unbounded file workers
+    // make PGlite, websocket, and dynamic-import suites starve each other.
+    maxWorkers: 4,
+    testTimeout: 30000,
+    hookTimeout: 30000,
+    include: [
+      'src/**/__tests__/**/*.test.{ts,tsx}',
+      'src/**/*.test.{ts,tsx}',
+    ],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'json-summary', 'lcov'],
+      thresholds: {
+        lines: 45,
+        functions: 45,
+        branches: 40,
+        statements: 44,
+      },
+    },
     setupFiles: ['./vitest.setup.ts'],
   },
 })
