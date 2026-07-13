@@ -4,7 +4,11 @@ An open-source Electron desktop workspace for AI-assisted image and video creati
 
 **Downloads:** Official Windows installers are available from [GitHub Releases](https://github.com/2799662352/ai-image-master/releases).
 
-**Code signing:** This project is applying for sponsored Windows code signing through the [SignPath Foundation](https://signpath.org/). Once approved, official Windows release binaries will be signed through SignPath's controlled build and signing process.
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+Official Windows releases follow the project's [Code signing policy](docs/CODE_SIGNING_POLICY.md). Data handling is documented in the [Privacy Policy](docs/PRIVACY.md).
 
 ## 中文简介
 
