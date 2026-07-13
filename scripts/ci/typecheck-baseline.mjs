@@ -12,6 +12,20 @@ function diagnosticKey(diagnostic) {
   return `${diagnostic.file}\u0000${diagnostic.code}\u0000${diagnostic.message}`
 }
 
+function normalizeDiagnosticMessage(message, repoRoot) {
+  const root = String(repoRoot).replace(/[\\/]+$/, '')
+  const rootVariants = new Set([
+    root,
+    root.replaceAll('\\', '/'),
+    root.replaceAll('/', '\\'),
+  ])
+  let normalized = message.trim()
+  for (const variant of rootVariants) {
+    if (variant) normalized = normalized.replaceAll(variant, '<repo>')
+  }
+  return normalized
+}
+
 export function parseTypeScriptDiagnostics(output, repoRoot = process.cwd()) {
   const diagnostics = []
   const positionedPattern =
@@ -26,7 +40,7 @@ export function parseTypeScriptDiagnostics(output, repoRoot = process.cwd()) {
       diagnostics.push({
         file: file.replaceAll('\\', '/'),
         code: positioned[4],
-        message: positioned[5].trim(),
+        message: normalizeDiagnosticMessage(positioned[5], repoRoot),
       })
       continue
     }
@@ -35,7 +49,7 @@ export function parseTypeScriptDiagnostics(output, repoRoot = process.cwd()) {
       diagnostics.push({
         file: '<global>',
         code: global[1],
-        message: global[2].trim(),
+        message: normalizeDiagnosticMessage(global[2], repoRoot),
       })
       continue
     }

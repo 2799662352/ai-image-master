@@ -50,6 +50,11 @@ function elapsedSeconds(task: ImageTaskState): number {
   return Math.max(0, Math.round((Date.now() - task.createdAt) / 1000))
 }
 
+/** Windows is the production target, but CI may interpret saved paths on Linux. */
+function basenameFromSavedPath(filePath: string): string {
+  return path.win32.basename(filePath)
+}
+
 /** Best-effort image mime from a saved filename, for the resource_link block. */
 function mimeFromPath(filePath: string): string {
   switch (path.extname(filePath).toLowerCase()) {
@@ -209,7 +214,7 @@ function buildImageDoneContent(result: unknown): ImageToolContent {
     content.push({
       type: 'resource_link',
       uri: pathToFileURL(p).href,
-      name: path.basename(p),
+      name: basenameFromSavedPath(p),
       mimeType: mimeFromPath(p),
       description: 'Generated image saved locally (also in app history + chat).',
     })
@@ -270,7 +275,7 @@ function buildBatchContent(data: BatchTaskResult): ImageToolContent {
     content.push({
       type: 'resource_link',
       uri: pathToFileURL(p).href,
-      name: path.basename(p),
+      name: basenameFromSavedPath(p),
       mimeType: mimeFromPath(p),
       description: 'Generated image saved locally (also in app history + chat).',
     })
