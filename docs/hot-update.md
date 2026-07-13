@@ -1,140 +1,150 @@
 # CATIMATION 热更新发布指南
 
-## 架构概览
+> 自 2026-07-13 起，应用安装包只能由 GitHub Actions 的 `Release`
+> 工作流正式发布。本地 `upload:cos` / `release:cn` 入口已删除。
 
-应用采用 **COS 优先 + GitHub 兜底** 的双源热更新机制：
+## 当前架构
 
-```
-用户客户端启动
-  │
-  ├─① 检查腾讯云 COS（国内加速）
-  │    https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/latest.yml
-  │
-  ├─ 成功 → 提示更新 / 下载安装
-  │
-  └─ 失败 → ② 自动切换 GitHub Releases（海外 / 备用）
-       https://github.com/2799662352/ai-image-master/releases
+终端客户端只从腾讯云 COS 检查和下载更新：
+
+```text
+stable  -> releases/latest.yml
+beta    -> releases/beta.yml
+alpha   -> releases/alpha.yml
 ```
 
-核心文件：
+频道由版本自动推导：`x.y.z` 为 stable，`x.y.z-beta.n` 为 beta，
+`x.y.z-alpha.n` 为 alpha。客户端不会在 COS 失败后回退到 GitHub。
 
-| 文件 | 作用 |
-|------|------|
-| `src/main/updater.ts` | AutoUpdater 类，封装 electron-updater，支持 `switchProvider` 和 `fallback` |
-| `src/main/index.ts` | 初始化 updater，配置 COS 主源 + GitHub fallback |
-| `electron-builder.yml` | 构建配置，`publish` 段声明 COS + GitHub 双发布目标 |
-| `scripts/upload-cos.js` | COS 上传脚本（exe + blockmap + latest.yml） |
-| `cos-credentials.json` | 腾讯云 COS 内置凭据（gitignored，打包时通过 extraResources 带入） |
+GitHub Release 只承担维护者审计、canonical artifact 留档和备用人工下载，不是
+`electron-updater` provider。GitHub 与 COS 消费同一个 Actions artifact，并由
+`release-manifest.json` 和 `SHA256SUMS.txt` 校验。
+构建时下载的 Codex、FFmpeg、Docker MCP Windows runtime 还必须匹配
+`scripts/runtime-assets.lock.json` 中与版本绑定的 SHA-256；同 tag 资产被替换会直接
+终止构建。
 
-## 发布新版本
+关键实现：
 
-### 1. 修改版本号
+- `.github/workflows/release.yml`：唯一正式发布编排；
+- `.github/workflows/_windows-release-build.yml`：单次 Windows x64 打包；
+- `.github/workflows/migrate-release-baseline.yml`：一次性登记 4.3.95 基线；
+- `.github/workflows/rollback-hot-update.yml`：只移动已验证的频道指针；
+- `scripts/release/`：版本、制品、GitHub Release 和 COS 状态机；
+- `src/main/updater.ts`：按应用版本选择 `latest` / `beta` / `alpha`；
+- `electron-builder.yml`：只声明 generic COS 更新源，构建阶段永不直接发布。
 
-```bash
-# package.json → "version": "x.y.z"
+## 正式发布
+
+1. 在 `main` 上更新 `package.json` 和 `pnpm-lock.yaml` 到完全一致的目标版本。
+2. 新建非空发行说明 `docs/releases/v<version>.md`，不得保留
+   `TODO`、`TBD`、`FIXME` 等占位符。
+3. 合并并推送 `main`，确认 CI 的共享质量门禁通过（其中 workflow 会先经过
+   固定版本和 SHA-256 的 `actionlint` 校验）。
+4. 在 Actions 中手动运行 `Release`：
+   - `version`：不带 `v`；
+   - `dry_run`：首次验证时选 `true`；
+   - `canonical_run_id`：通常留空，只有历史 artifact digest 冲突时填写。
+5. dry run 成功后，以同一版本运行正式发布。
+
+流水线顺序固定为：
+
+```text
+输入/远端只读校验
+  -> 共享质量门禁
+  -> 选择或构建唯一 canonical artifact
+  -> Windows 重新核对 canonical Authenticode 声明
+  -> tag + GitHub draft + assets
+  -> COS 不可变版本资产
+  -> 发布 GitHub Release
+  -> release-ready.json
+  -> 最后以单个事务晋级 COS 频道 manifest + 匿名 URL 回读验证
 ```
 
-### 2. 构建
+`dry_run=true` 会完成门禁、Windows 构建和制品验证，但不会创建 tag、GitHub
+Release 或任何 COS 对象。
 
-```bash
-npm run build:win
-```
+独立的 `Release Summary` job 使用 `if: always()`，即使 preflight、质量门禁、canonical
+或 Authenticode 阶段提前失败，也会记录失败阶段、actor/run、制品散列（若已生成）、
+频道当前/恢复版本、安全续跑条件和 rollback 入口。
 
-产物在 `release/` 目录下：
-- `catimation-cyberpunk-master-{version}-setup.exe` — 安装包
-- `catimation-cyberpunk-master-{version}-setup.exe.blockmap` — 差分更新数据
-- `latest.yml` — 版本元数据（electron-updater 靠它判断是否有新版）
+## 制品与缓存
 
-### 3. 上传到 COS（国内用户）
+每次发布的 canonical artifact 只包含：
 
-```bash
-npm run upload:cos
-```
+- 一个 Windows x64 NSIS `.exe`；
+- 对应 `.exe.blockmap`；
+- 当前频道的一个 updater YAML；
+- `release-manifest.json`；
+- `SHA256SUMS.txt`。
 
-需要 `.env` 文件中配置：
-```
-COS_SECRET_ID=你的SecretId
-COS_SECRET_KEY=你的SecretKey
-COS_BUCKET=map-tiles-bucket-1345773498
-COS_REGION=ap-guangzhou
-```
+按版本命名的安装包、blockmap 和版本元数据使用 immutable 缓存；可变频道 YAML
+使用 `no-cache, max-age=0, must-revalidate`。频道晋级失败时会恢复旧内容；旧频道
+原本不存在时只允许删除 `latest.yml`、`beta.yml` 或 `alpha.yml` 中对应的一个。
+即使频道正文未变化，也会核对并在必要时修复 cache/content-type metadata。
+恢复后还会用新的 cache-buster 重试匿名公网验收；仅 COS 私有回读成功不足以判定恢复
+成功。
 
-或一步到位（构建 + 上传）：
-```bash
-npm run release:cn
-```
+## 失败续跑
 
-### 4. 上传到 GitHub（海外 / 备用）
+相同版本可以重新运行 `Release`。工作流会优先复用：
 
-手动上传：
-1. 到 https://github.com/2799662352/ai-image-master/releases 创建新 Release
-2. Tag 填 `v{version}`（如 `v4.1.16`）
-3. 上传 `release/` 下的三个文件
+1. 内容完整且匹配的 GitHub Release assets；
+2. 受信任历史 release run 的 canonical artifact；
+3. 只有不存在任何远端版本状态时才重新构建。
 
-或用 CLI：
-```bash
-gh release create v4.1.16 --title "v4.1.16" --notes "更新说明" \
-  release/catimation-cyberpunk-master-4.1.16-setup.exe \
-  release/catimation-cyberpunk-master-4.1.16-setup.exe.blockmap \
-  release/latest.yml
-```
+stable 发布后还会通过 GitHub `/releases/latest` 复核其确为 latest release；
+beta/alpha 保持 prerelease，不参与该 latest 指针。
 
-## Fallback 机制
+远端同名不可变对象内容不同时会硬失败，不会覆盖。若存在远端状态但 canonical
+artifact 已丢失，按工作流摘要人工恢复，不要重新签名或重建来伪装同一版本。
 
-在 `updater.ts` 中实现：
+## 4.3.95 基线迁移
 
-```typescript
-// 初始化时配置 fallback
-const updater = getAutoUpdaterInstance({
-  provider: 'generic',
-  url: 'https://...cos.../releases/',
-  fallback: {
-    provider: 'github',
-    owner: '2799662352',
-    repo: 'ai-image-master'
-  }
-})
-```
+新状态机首次启用前，只运行一次 `Migrate Release Baseline`。输入和确认值都必须是
+`4.3.95`。它从当前公开 `latest.yml` 下载并校验安装包与 blockmap，检测既有
+Authenticode 状态，以 `legacy-import` provenance 登记不可变元数据。重跑会验证并复用
+首次写入的元数据，不会把已前进的 stable 指针重新指回基线；若首次运行只写完 manifest
+便中断，则补建可确定恢复的 `SHA256SUMS.txt`，再用确定性的 eligibility 补齐登记。
+若 GitHub 上已有 v4.3.95 Release，则对其中存在的同名安装包、blockmap/频道资产逐一核对
+大小和 SHA-256；缺失旧 GitHub 历史本身不阻断 COS 基线迁移。
+4.3.95 未出现有效 `release-ready.json` 前，更高 stable 会被拒绝。不伪造原构建时间、
+工具版本或 commit。这里的“有效”包括完整 manifest/散列/资产/eligibility 校验，并要求
+ready 中的 repository、workflow、run ID/attempt 与迁移 provenance 一致；空或损坏对象
+不能解除门禁。
 
-当 COS 检查更新失败（网络超时、DNS 错误等），`autoUpdater.on('error')` 触发后：
-1. 如果还没 fallback 过 → 自动调用 `switchProvider()` 切换到 GitHub
-2. 用 GitHub 源重新 `checkForUpdates()`
-3. 如果 GitHub 也失败 → 向用户显示错误
+## 热更新回退
+
+运行 `Roll Back Hot Update`，输入历史目标版本并在 `confirm` 中逐字重复。工作流会：
+
+- 从版本后缀推导频道；
+- 验证目标 `release-ready.json`、manifest、安装包和 blockmap；
+- 对 GitHub eligibility 实时确认公开 Release 与 asset 散列；
+- 仅允许回到同频道、严格更低的版本；
+- 不重建、不改 tag、不删除 GitHub Release。
+
+回退只会阻止坏版本继续扩散，并让仍在旧版本的客户端看到目标版本；已经安装更高版本
+的客户端不会自动降级。
+
+## GitHub Environment 配置
+
+创建受保护 Environment `production`：
+
+- Deployment branches 只允许 `main`，并配置 required reviewer；
+- Secrets：`COS_SECRET_ID`、`COS_SECRET_KEY`；
+- Variables：`COS_BUCKET`、`COS_REGION`、`COS_PREFIX`；
+- 可选签名 Secrets：`WIN_CERTIFICATE`、`WIN_CERTIFICATE_PASSWORD`、
+  `WIN_CERTIFICATE_SUBJECT_NAME`。
+
+COS 子账号需要版本化对象和三个频道 manifest 所需的最小读写权限，包括
+`name/cos:GetBucketVersioning`、用于分页列举 `releases/versions/` 的
+`name/cos:GetBucket`、对象读写/复制、分片上传，以及仅限三个频道 manifest 的删除
+权限。Bucket versioning 必须保持未配置；状态为 `Enabled` 或 `Suspended` 都会
+fail closed。完整 action/resource 范围见 CI/CD hardening design。
 
 ## 差分更新
 
-`electron-builder` 的 NSIS 差分更新（blockmap）已启用：
-
-```yaml
-# electron-builder.yml
-nsis:
-  differentialPackage: true
-```
-
-用户更新时只下载变化的部分，而非整个 250MB 安装包。前提是 COS / GitHub 上同时存在：
-- 新版 `.exe` + `.blockmap`
-- `latest.yml`
-
-## 常见问题
-
-### Q: 老版本客户端检测不到 COS 上的更新？
-
-老版本（< v4.1.15）在代码中硬编码了 `provider: 'github'`，只会检查 GitHub。用户需要先手动安装 v4.1.15+，之后的热更新才会走 COS。
-
-### Q: COS 和 GitHub 的 latest.yml 版本不一致？
-
-两边独立上传，可能短暂不一致。建议每次发版都同时上传两边。COS 用 `npm run upload:cos`，GitHub 手动上传或用 `gh` CLI。
-
-### Q: 上传 COS 时 ECONNRESET？
-
-通常是代理/VPN 干扰了 TLS 握手。切换直连或换节点后重试。
-
-### Q: latest.yml 在 COS 上缓存了旧版本？
-
-腾讯云 COS 默认不缓存，上传即生效。如果用了 CDN 加速，需要刷新缓存：
-```
-https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/latest.yml
-```
+NSIS `differentialPackage` 已启用。频道 YAML、安装包和同名 blockmap 均通过公开 COS
+URL 回读后，频道才视为晋级成功。
 
 ## 技能 / 插件商城热更新(免发版)
 

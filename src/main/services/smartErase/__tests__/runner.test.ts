@@ -386,7 +386,7 @@ describe('smartErase/runner.runEraseJob', () => {
     // or a terminal Status from Tencent can end it.
     //
     // We let the mock pin to PROCESSING forever, advance fake time by
-    // a year (!), and verify (a) the promise has not settled and
+    // three hours, and verify (a) the promise has not settled and
     // (b) the runner is still polling. This is the spec-level lock-in:
     // "不要限制 不要主动退出 不要有时间限制".
     describeTaskDetailMock.mockResolvedValue({ Status: 'PROCESSING' })
@@ -404,12 +404,13 @@ describe('smartErase/runner.runEraseJob', () => {
       () => { settled = true },
     )
 
-    // 1 year of fake time. That's >24,000× the legacy deadline.
-    await vi.advanceTimersByTimeAsync(365 * 24 * 60 * 60 * 1000)
+    // Three hours is 3× the removed 60-minute deadline and yields over
+    // 100 polls without forcing coverage runs through ~525,000 callbacks.
+    await vi.advanceTimersByTimeAsync(3 * 60 * 60 * 1000)
 
     expect(settled).toBe(false)
     // Lower bound: at least 100 polls — the actual count is much higher
-    // (year / 60s cap ≈ 525,000) but we don't need to pin the exact value.
+    // (three hours / 60s cap ≈ 180) but we don't need to pin the exact value.
     expect(describeTaskDetailMock.mock.calls.length).toBeGreaterThan(100)
 
     // Only the user's cancel ends it — terminating cleanly so the test

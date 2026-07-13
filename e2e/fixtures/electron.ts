@@ -10,6 +10,7 @@
 import { test as base, _electron as electron, ElectronApplication, Page } from '@playwright/test'
 import * as path from 'path'
 import * as fs from 'fs'
+import * as os from 'os'
 
 export interface ElectronFixtures {
   electronApp: ElectronApplication
@@ -39,33 +40,41 @@ function getMainProcessPath(): string {
 export const test = base.extend<ElectronFixtures>({
   electronApp: async ({}, use) => {
     const mainPath = getMainProcessPath()
+    const userDataDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'catimation-e2e-'),
+    )
     console.log(`[E2E] Launching Electron from: ${mainPath}`)
-    
-    // 启动 Electron 应用
-    const app = await electron.launch({
-      args: [mainPath],
-      env: {
-        ...process.env,
-        NODE_ENV: 'test',
-        // 禁用硬件加速以提高测试稳定性
-        ELECTRON_DISABLE_GPU: '1',
-        // 禁用沙箱以支持 CI 环境
-        ELECTRON_DISABLE_SANDBOX: '1'
-      },
-      timeout: 120000 // 120 秒超时
-    })
+    let app: ElectronApplication | null = null
+    try {
+      // 启动 Electron 应用；每个测试使用独立 profile，避免 single-instance
+      // lock 与本机已安装实例或前一测试的残留锁互相干扰。
+      app = await electron.launch({
+        args: [mainPath, `--user-data-dir=${userDataDir}`],
+        env: {
+          ...process.env,
+          NODE_ENV: 'test',
+          // 禁用硬件加速以提高测试稳定性
+          ELECTRON_DISABLE_GPU: '1',
+          // 禁用沙箱以支持 CI 环境
+          ELECTRON_DISABLE_SANDBOX: '1'
+        },
+        timeout: 120000 // 120 秒超时
+      })
 
-    // 等待应用就绪
-    await app.evaluate(async ({ app }) => {
-      await app.whenReady()
-    })
+      // 等待应用就绪
+      await app.evaluate(async ({ app }) => {
+        await app.whenReady()
+      })
 
-    console.log('[E2E] Electron app launched successfully')
-    await use(app)
-
-    // 测试完成后关闭应用
-    await app.close()
-    console.log('[E2E] Electron app closed')
+      console.log('[E2E] Electron app launched successfully')
+      await use(app)
+    } finally {
+      if (app) {
+        await app.close().catch(() => {})
+        console.log('[E2E] Electron app closed')
+      }
+      fs.rmSync(userDataDir, { recursive: true, force: true })
+    }
   },
 
   page: async ({ electronApp }, use) => {

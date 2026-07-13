@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // Use vi.hoisted to create mocks that are hoisted along with vi.mock
 const { mockAutoUpdater, mockIpcMain, mockApp, mockBrowserWindow } = vi.hoisted(() => {
+  let currentChannel = 'latest'
   const mockAutoUpdater = {
     autoDownload: false,
     autoInstallOnAppQuit: false,
@@ -17,6 +18,16 @@ const { mockAutoUpdater, mockIpcMain, mockApp, mockBrowserWindow } = vi.hoisted(
     quitAndInstall: vi.fn(),
     on: vi.fn()
   }
+  Object.defineProperty(mockAutoUpdater, 'channel', {
+    configurable: true,
+    get: () => currentChannel,
+    set: (value: string) => {
+      currentChannel = value
+      // electron-updater's channel setter may re-enable downgrade when
+      // generateUpdatesFilesForAllChannels is active.
+      mockAutoUpdater.allowDowngrade = true
+    }
+  })
 
   const mockIpcMain = {
     handle: vi.fn()
@@ -50,7 +61,13 @@ vi.mock('electron', () => ({
 }))
 
 // Import after mocking
-import { AutoUpdater, createAutoUpdater, getAutoUpdaterInstance } from '../../src/main/updater'
+import {
+  AutoUpdater,
+  createAutoUpdater,
+  getAutoUpdaterInstance,
+  normalizeReleaseChannel,
+  releaseChannelForVersion
+} from '../../src/main/updater'
 
 describe('AutoUpdater', () => {
   beforeEach(() => {
@@ -60,7 +77,9 @@ describe('AutoUpdater', () => {
     mockAutoUpdater.autoDownload = false
     mockAutoUpdater.autoInstallOnAppQuit = false
     mockAutoUpdater.allowPrerelease = false
+    mockAutoUpdater.channel = 'latest'
     mockAutoUpdater.allowDowngrade = false
+    mockApp.getVersion.mockReturnValue('1.0.0')
     mockAutoUpdater.checkForUpdates.mockResolvedValue({
       updateInfo: { version: '2.0.0' }
     })
@@ -79,8 +98,8 @@ describe('AutoUpdater', () => {
     it('should configure autoUpdater with defaults', () => {
       createAutoUpdater()
       
-      expect(mockAutoUpdater.autoDownload).toBe(false)
-      expect(mockAutoUpdater.autoInstallOnAppQuit).toBe(true)
+      expect(mockAutoUpdater.autoDownload).toBe(true)
+      expect(mockAutoUpdater.autoInstallOnAppQuit).toBe(false)
       expect(mockAutoUpdater.autoRunAppAfterInstall).toBe(true)
     })
 
@@ -196,6 +215,50 @@ describe('AutoUpdater', () => {
       updater.updateConfig({ allowPrerelease: true })
       
       expect(mockAutoUpdater.allowPrerelease).toBe(true)
+    })
+
+    it.each([
+      ['1.2.3', 'latest', false],
+      ['1.2.3-beta.1', 'beta', true],
+      ['1.2.3-alpha.1', 'alpha', true]
+    ] as const)(
+      'should derive the %s app version as the %s channel',
+      (version, expectedChannel, expectedPrerelease) => {
+        mockApp.getVersion.mockReturnValue(version)
+
+        createAutoUpdater()
+
+        expect(mockAutoUpdater.channel).toBe(expectedChannel)
+        expect(mockAutoUpdater.allowPrerelease).toBe(expectedPrerelease)
+        expect(mockAutoUpdater.allowDowngrade).toBe(false)
+      }
+    )
+
+    it('should normalize stable to the electron-updater latest channel', () => {
+      createAutoUpdater({ channel: 'stable', allowDowngrade: true })
+
+      expect(mockAutoUpdater.channel).toBe('latest')
+      expect(mockAutoUpdater.allowDowngrade).toBe(false)
+    })
+  })
+
+  describe('release channel helpers', () => {
+    it.each([
+      ['1.2.3', 'latest'],
+      ['1.2.3-beta.1', 'beta'],
+      ['1.2.3-alpha.1', 'alpha'],
+      ['1.2.3-rc.1', 'latest']
+    ] as const)('maps %s to %s', (version, channel) => {
+      expect(releaseChannelForVersion(version)).toBe(channel)
+    })
+
+    it.each([
+      ['stable', 'latest'],
+      ['latest', 'latest'],
+      ['beta', 'beta'],
+      ['alpha', 'alpha']
+    ] as const)('normalizes %s to %s', (channel, normalized) => {
+      expect(normalizeReleaseChannel(channel)).toBe(normalized)
     })
   })
 

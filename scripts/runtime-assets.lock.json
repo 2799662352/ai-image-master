@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "components": {
+    "codex": {
+      "version": "0.144.1",
+      "targets": {
+        "win32-x64": {
+          "codex-x86_64-pc-windows-msvc.exe": "sha256:cbacbb9726262ef558b4af0438a1b2a5bba9076132401d947b5b4d2bf92ab0e4",
+          "codex-windows-sandbox-setup-x86_64-pc-windows-msvc.exe": "sha256:eb4d4cc098de57a0b9c9d8ec184d5346b4735e3bd65c39ce92269969d2ed643e",
+          "codex-command-runner-x86_64-pc-windows-msvc.exe": "sha256:712f535d0a01f28adfe22b13f6a222d2a54f6f0956b25520c7ca70c042bf2d81"
+        }
+      }
+    },
+    "ffmpeg": {
+      "version": "8.1.1",
+      "targets": {
+        "win32-x64": {
+          "ffmpeg-8.1.1-full_build-shared.zip": "sha256:4296b396bdfd5fbc3dfc75ab4c8703354a56963232d65c4182993543df2d2f45"
+        }
+      }
+    },
+    "dockerMcp": {
+      "version": "0.42.1",
+      "targets": {
+        "win32-x64": {
+          "docker-mcp-windows-amd64.tar.gz": "sha256:be9ac6d05dd1908cd738a5e904bc324207ba4d5bcc067b772c8059e154cd76c9"
+        }
+      }
+    }
+  }
+}

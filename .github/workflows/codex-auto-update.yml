@@ -8,8 +8,8 @@ name: Auto-update Codex CLI
 # main. The PR locks the specific version in `package.json.codexCliVersion`,
 # which keeps `pnpm codex:fetch` reproducible for all downstream builds.
 #
-# The workflow also fetches binaries for all four shipping targets — if the
-# upstream release is missing any asset we'd need at build time, the fetch
+# The workflow also fetches the Windows x64 binary we currently ship — if the
+# upstream release is missing the asset needed at build time, the fetch
 # fails here BEFORE the PR is opened, so we never propose a broken bump.
 
 on:
@@ -27,13 +27,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '20.x'
           cache: 'pnpm'
@@ -49,15 +49,14 @@ jobs:
         env:
           # Authenticated GitHub API call avoids the 60/hr unauth rate limit.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Validate every target we ship — a missing asset on any platform
-          # fails this step before we open a bump PR.
-          CODEX_TARGETS: win32-x64,darwin-arm64,darwin-x64,linux-x64
+          # Windows x64 is the only release target in the current pipeline.
+          CODEX_TARGETS: win32-x64
         run: pnpm codex:fetch:latest
 
       - name: Detect version bump
         id: diff
         run: |
-          if git diff --quiet -- package.json; then
+          if git diff --quiet -- package.json scripts/runtime-assets.lock.json; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "Codex CLI is already up to date — nothing to do."
           else
@@ -69,7 +68,7 @@ jobs:
 
       - name: Open or update bump PR
         if: steps.diff.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           branch: chore/codex-bump-${{ steps.diff.outputs.version }}
@@ -86,14 +85,15 @@ jobs:
 
             * Release notes: https://github.com/openai/codex/releases/tag/rust-v${{ steps.diff.outputs.version }}
             * Triggered by: `${{ github.event_name }}` (workflow `codex-auto-update.yml`)
-            * Validated assets: `win32-x64`, `darwin-arm64`, `darwin-x64`, `linux-x64`
+            * Validated asset: `win32-x64` with pinned SHA-256 digests
 
             ### Reviewer checklist
             - [ ] Scan release notes for protocol / wire-format changes that touch `codexNotificationRouter` or `AgentManager`
-            - [ ] Confirm CI passes (build matrix + tests)
+            - [ ] Confirm the shared CI quality gate passes
             - [ ] If notes mention removed APIs (e.g. `PermissionProfile`), grep the codebase for usage
           labels: |
             dependencies
             codex
           add-paths: |
             package.json
+            scripts/runtime-assets.lock.json

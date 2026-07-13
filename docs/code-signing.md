@@ -1,6 +1,8 @@
 # 代码签名配置指南
 
 本文档说明如何为 CATIMATION-Cyberpunk Master 配置代码签名。
+当前生产流水线只发布 Windows x64，并直接支持可导出的 PFX/P12 证书。Azure Trusted
+Signing、SignPath 和下文 macOS 流程仅作选型参考，尚未接入正式 workflow。
 
 ---
 
@@ -94,10 +96,11 @@ Export-PfxCertificate -Cert $cert -FilePath "dev-cert.pfx" -Password (ConvertTo-
    base64 -i certificate.pfx -o cert-base64.txt
    ```
 
-5. **存储到 GitHub Secrets**
-   - 转到仓库 Settings > Secrets and variables > Actions
+5. **存储到 GitHub `production` Environment Secrets**
+   - 转到仓库 Settings > Environments > production
    - 添加 `WIN_CERTIFICATE`: Base64 编码的证书内容
    - 添加 `WIN_CERTIFICATE_PASSWORD`: 证书密码
+   - 可选添加 `WIN_CERTIFICATE_SUBJECT_NAME`: 预期证书主题
 
 ### macOS 证书获取步骤
 
@@ -138,7 +141,7 @@ Export-PfxCertificate -Cert $cert -FilePath "dev-cert.pfx" -Password (ConvertTo-
    - 推荐: DigiCert, Sectigo, GlobalSign, Comodo
    - 参考上方 "证书获取指南"
 
-2. **设置环境变量**
+2. **本地构建环境变量**
    
    ```bash
    # Windows 签名证书配置
@@ -146,7 +149,11 @@ Export-PfxCertificate -Cert $cert -FilePath "dev-cert.pfx" -Password (ConvertTo-
    set CSC_KEY_PASSWORD=your-certificate-password
    ```
 
-   或使用 Windows 证书存储:
+   GitHub Actions 不直接读取以上本地变量。受保护的 `production` Environment 使用
+   `WIN_CERTIFICATE` / `WIN_CERTIFICATE_PASSWORD`，工作流仅在打包 step 内映射到
+   electron-builder 的 `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD`。
+
+   或在本地使用 Windows 证书存储:
    
    ```bash
    set CSC_NAME="Your Certificate Subject Name"
@@ -154,20 +161,17 @@ Export-PfxCertificate -Cert $cert -FilePath "dev-cert.pfx" -Password (ConvertTo-
 
 ### electron-builder 配置
 
-在 `package.json` 的 `build` 配置中:
+项目使用 `electron-builder.yml`，不提交证书路径或密码：
 
-```json
-{
-  "build": {
-    "win": {
-      "sign": "./scripts/sign.js",
-      "signingHashAlgorithms": ["sha256"],
-      "certificateSubjectName": "Your Company Name",
-      "publisherName": "Your Company Name"
-    }
-  }
-}
+```yaml
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  forceCodeSigning: false
 ```
+
+`forceCodeSigning: false` 允许明确的 unsigned 模式；它不放宽 signed 模式的发布验证。
 
 ## macOS 代码签名
 
@@ -229,58 +233,23 @@ macOS 10.15+ 要求应用公证:
 
 ## CI/CD 集成
 
-### GitHub Actions 示例
+正式 Windows x64 签名只在
+`.github/workflows/_windows-release-build.yml` 中执行，并由手动 `Release` 工作流调用。
+PR 工作流不声明 `production` Environment，也接触不到证书。
 
-```yaml
-name: Build and Sign
+签名状态采用 fail-closed 三态：
 
-on:
-  push:
-    tags:
-      - 'v*'
+1. 证书和密码都未配置：允许构建，但 manifest 与 Release 正文明确标记
+   `unsigned`；
+2. 证书和密码都配置：自动签名，并要求 Authenticode `Valid`、主题匹配（若配置）且
+   `TimeStamperCertificate` 存在；
+3. 只配置一部分：立即失败，不产出可晋级制品。
 
-jobs:
-  build-windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '20'
-      
-      - name: Install dependencies
-        run: npm ci
-      
-      - name: Build and Sign
-        env:
-          CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE }}
-          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-        run: npm run build:win
-
-  build-macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '20'
-      
-      - name: Install dependencies
-        run: npm ci
-      
-      - name: Build and Sign
-        env:
-          CSC_LINK: ${{ secrets.MAC_CERTIFICATE }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npm run build:mac
-```
+`electron-builder` 始终使用 `--publish never`。签名后的同一个 canonical `.exe`
+经过 PowerShell 验证、SHA-256/SHA-512 记录后，才上传为 Actions artifact；后续
+GitHub Release 与 COS 都只复用该文件。发布编排在使用本次构建或恢复出的 canonical
+artifact 前，还会在独立 Windows job 上再次核对实际 `.exe` 与 manifest 的
+signed/unsigned 声明、证书主题和可信时间戳，Ubuntu 上的散列验证不能替代该步骤。
 
 ## 验证签名
 

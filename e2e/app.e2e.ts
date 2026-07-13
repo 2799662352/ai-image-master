@@ -187,18 +187,20 @@ test.describe('CATIMATION-Cyberpunk Master E2E', () => {
 // 页面导航测试
 test.describe('页面导航', () => {
   test('历史记录页面应该能加载', async ({ page }) => {
-    // 尝试点击历史记录标签
-    const historyTab = page.locator('[data-tab="history"], button:has-text("历史")')
-    
-    if (await historyTab.count() > 0) {
-      await historyTab.first().click()
-      
-      // 等待页面切换
-      await page.waitForTimeout(500)
-      
-      // 验证页面已切换（检查是否有历史相关的内容）
-      const pageContent = await page.content()
-      expect(pageContent).toBeTruthy()
-    }
+    await skipIntroIfPresent(page)
+    await waitForMainContent(page, 15000)
+
+    const historyTab = page
+      .locator('[data-tab="history"]:visible, button:visible:has-text("历史")')
+      .first()
+    await expect(historyTab).toBeVisible()
+    await historyTab.click()
+
+    // 等待页面切换
+    await page.waitForTimeout(500)
+
+    // 验证页面已切换（检查是否有历史相关的内容）
+    const pageContent = await page.content()
+    expect(pageContent).toBeTruthy()
   })
 })

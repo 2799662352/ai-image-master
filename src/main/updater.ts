@@ -6,6 +6,35 @@ export type UpdateProvider = 'github' | 'generic' | 's3'
 
 /** V17: 发布渠道类型 */
 export type ReleaseChannel = 'latest' | 'stable' | 'beta' | 'alpha'
+type ElectronUpdaterChannel = Exclude<ReleaseChannel, 'stable'>
+
+export function releaseChannelForVersion(version: string): ElectronUpdaterChannel {
+  const prereleaseChannel = version.match(
+    /^\d+\.\d+\.\d+-(beta|alpha)(?:[.-]|$)/i,
+  )?.[1]?.toLowerCase()
+
+  if (prereleaseChannel === 'beta') return 'beta'
+  if (prereleaseChannel === 'alpha') return 'alpha'
+  return 'latest'
+}
+
+export function normalizeReleaseChannel(
+  channel: ReleaseChannel,
+): ElectronUpdaterChannel {
+  switch (channel) {
+    case 'latest':
+    case 'stable':
+      return 'latest'
+    case 'beta':
+      return 'beta'
+    case 'alpha':
+      return 'alpha'
+    default: {
+      const exhaustiveChannel: never = channel
+      throw new Error(`Unsupported release channel: ${exhaustiveChannel}`)
+    }
+  }
+}
 
 export interface UpdaterConfig {
   /** 更新源类型 */
@@ -103,15 +132,16 @@ export class AutoUpdater {
   static isInstallingUpdate = false
 
   constructor(config: UpdaterConfig = {}) {
+    const defaultChannel = config.channel ?? releaseChannelForVersion(app.getVersion())
     this.config = {
       provider: 'github',
       autoDownload: true,
       allowPrerelease: false,
-      allowDowngrade: false,
       maxRetries: 3,
       retryDelay: 2000,
-      channel: 'latest',
-      ...config
+      ...config,
+      channel: defaultChannel,
+      allowDowngrade: false,
     }
 
     this.configureAutoUpdater()
@@ -133,18 +163,17 @@ export class AutoUpdater {
     autoUpdater.autoInstallOnAppQuit = false
     autoUpdater.autoRunAppAfterInstall = true
     
-    // V17: 渠道配置 - beta/alpha 渠道自动允许预发布版本
-    const channel = this.config.channel ?? 'latest'
-    if (channel === 'beta' || channel === 'alpha') {
-      autoUpdater.allowPrerelease = true
-      autoUpdater.allowDowngrade = this.config.allowDowngrade ?? true // beta 渠道允许降级到 stable
-    } else {
-      autoUpdater.allowPrerelease = this.config.allowPrerelease ?? false
-      autoUpdater.allowDowngrade = this.config.allowDowngrade ?? false
-    }
-    
-    // V17: 设置渠道 (影响 latest-{channel}.yml 文件选择)
+    // beta/alpha 自动接收预发布版本；stable 是 latest 的 UI 别名。
+    const channel = normalizeReleaseChannel(this.config.channel ?? 'latest')
+    autoUpdater.allowPrerelease =
+      channel === 'beta' || channel === 'alpha'
+        ? true
+        : (this.config.allowPrerelease ?? false)
+
+    // electron-updater 的 channel setter 在启用多频道更新文件时可能重新打开
+    // allowDowngrade，因此必须最后显式关闭，避免回退频道变成客户端自动降级。
     autoUpdater.channel = channel
+    autoUpdater.allowDowngrade = false
 
     // 配置 provider
     this.setFeedURL()
@@ -224,7 +253,7 @@ export class AutoUpdater {
    * 更新配置
    */
   updateConfig(config: Partial<UpdaterConfig>): void {
-    this.config = { ...this.config, ...config }
+    this.config = { ...this.config, ...config, allowDowngrade: false }
     this.configureAutoUpdater()
   }
 

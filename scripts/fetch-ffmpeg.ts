@@ -23,16 +23,25 @@
  *      builds. Override per-invocation with `FFMPEG_BUILD_TAG=<tag>`.
  *   2. `--latest` (or `FFMPEG_BUILD_TAG=latest`) — queries GyanD/codexffmpeg for
  *      the most recent stable versioned release, fetches it, then writes the
- *      resolved tag back to `package.json.ffmpegBuildTag`.
+ *      resolved tag and verified asset SHA-256 to `package.json` and
+ *      `scripts/runtime-assets.lock.json`.
  */
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
 import JSZip from 'jszip'
+import {
+  expectedRuntimeAssetDigest,
+  githubAssetDigest,
+  readRuntimeAssetLock,
+  verifyRuntimeAssetBytes,
+  writeRuntimeAssetComponent,
+} from './runtime-asset-integrity.mjs'
 
 type GitHubReleaseAsset = {
   name: string
   browser_download_url: string
+  digest?: string | null
 }
 
 type GitHubRelease = {
@@ -59,6 +68,12 @@ const projectRoot = path.resolve(
   '..',
 )
 const packageJsonPath = path.join(projectRoot, 'package.json')
+const runtimeAssetLockPath = path.join(
+  projectRoot,
+  'scripts',
+  'runtime-assets.lock.json',
+)
+const runtimeAssetLock = readRuntimeAssetLock(runtimeAssetLockPath)
 
 // gyan ships Windows only. Non-Windows targets fall back to system/Docker
 // ffmpeg, so we skip them instead of failing the whole build.
@@ -187,7 +202,13 @@ async function extractFfmpegBinaries(bytes: Buffer, targetDir: string): Promise<
   return written
 }
 
-async function writeFfmpegBundle(target: string, asset: GitHubReleaseAsset, tag: string): Promise<void> {
+async function writeFfmpegBundle(
+  target: string,
+  asset: GitHubReleaseAsset,
+  tag: string,
+  recordNewDigests: boolean,
+  recordedTargets: Record<string, Record<string, string>>,
+): Promise<void> {
   const targetDir = path.join(process.cwd(), 'resources', 'ffmpeg', target)
   if (!target.startsWith('win32-')) {
     // gyan ships Windows only. Still create the (empty) target dir so the
@@ -199,6 +220,17 @@ async function writeFfmpegBundle(target: string, asset: GitHubReleaseAsset, tag:
     return
   }
   const bytes = await fetchBytes(asset.browser_download_url)
+  const expectedDigest = recordNewDigests
+    ? githubAssetDigest(asset)
+    : expectedRuntimeAssetDigest(runtimeAssetLock, {
+        component: 'ffmpeg',
+        version: tag,
+        target,
+        assetName: asset.name,
+      })
+  verifyRuntimeAssetBytes(bytes, expectedDigest, asset.name)
+  recordedTargets[target] ??= {}
+  recordedTargets[target][asset.name] = expectedDigest
 
   await rm(targetDir, { recursive: true, force: true })
   await mkdir(targetDir, { recursive: true })
@@ -220,6 +252,7 @@ async function main(): Promise<void> {
   let release: GitHubRelease
   let tag: string
   let isLatestBump = false
+  const recordedTargets: Record<string, Record<string, string>> = {}
 
   if (requestedLatest) {
     const pinned = await resolvePinnedTag().catch(() => '')
@@ -239,12 +272,30 @@ async function main(): Promise<void> {
 
   const asset = findSharedZipAsset(release)
   for (const target of targets) {
-    await writeFfmpegBundle(target, asset, tag)
+    await writeFfmpegBundle(
+      target,
+      asset,
+      tag,
+      isLatestBump,
+      recordedTargets,
+    )
   }
 
   if (isLatestBump) {
+    if (!recordedTargets['win32-x64']) {
+      throw new Error(
+        'FFmpeg version bumps must fetch win32-x64 to update the production digest lock',
+      )
+    }
+    writeRuntimeAssetComponent(runtimeAssetLockPath, runtimeAssetLock, {
+      component: 'ffmpeg',
+      version: tag,
+      targets: recordedTargets,
+    })
     await writePackageFfmpegTag(tag)
-    console.log(`Updated package.json ffmpegBuildTag → ${tag}`)
+    console.log(
+      `Updated package.json ffmpegBuildTag and runtime asset digests → ${tag}`,
+    )
   }
 
   console.log(`Fetched gyan ffmpeg release ${tag} from ${GITHUB_OWNER}/${GITHUB_REPO}`)

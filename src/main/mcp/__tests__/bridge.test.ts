@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { BrowserWindow } from 'electron'
 import { startCatimationMcpServer, type McpRuntime } from '../server'
 import { CATIMATION_MCP_HOST } from '../config'
+import { imageTaskManager } from '../tools/imageTaskRegistry'
 
 /**
  * stdio-bridge transport tests — the Plan-B cutover after the hardened
@@ -139,7 +140,16 @@ describe('catimation stdio bridge listener', () => {
     })
     // Intercept generate_image in-main so the test controls completion timing
     // (no renderer in this harness anyway).
-    runtime.router.registerMain('generate_image', async () => gate)
+    runtime.router.registerMain('generate_image', async (params) => {
+      const result = await gate
+      imageTaskManager.applyUpdate({
+        taskId: String(params.__taskId),
+        kind: 'single',
+        status: 'succeeded',
+        result,
+      })
+      return { accepted: true }
+    })
 
     const dial = async (): Promise<{ socket: Socket; onLine: (h: (line: string) => void) => void }> => {
       const socket = connect({ host: CATIMATION_MCP_HOST, port: runtime.bridge!.port })

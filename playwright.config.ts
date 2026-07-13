@@ -47,9 +47,25 @@ export default defineConfig({
   
   projects: [
     {
-      name: 'electron',
+      name: 'electron-stable',
+      testMatch: ['agent-chat.e2e.ts', 'app.e2e.ts'],
+      grepInvert: /@quarantine/,
+    },
+    {
+      name: 'electron-extended',
       testMatch: '**/*.e2e.ts',
-      testIgnore: '**/*.visual.e2e.ts'
+      testIgnore: [
+        '**/*.visual.e2e.ts',
+        '**/agent-chat.e2e.ts',
+        '**/app.e2e.ts',
+      ],
+      grepInvert: /@quarantine/,
+    },
+    {
+      name: 'electron-quarantine',
+      testMatch: '**/*.e2e.ts',
+      testIgnore: '**/*.visual.e2e.ts',
+      grep: /@quarantine/,
     },
     {
       name: 'visual',

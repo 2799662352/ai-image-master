@@ -7,7 +7,8 @@
  *      or `CODEX_RELEASE_TAG=<tag>`.
  *   2. `--latest` (or `CODEX_CLI_VERSION=latest`) — queries the GitHub release
  *      list for the most recent stable `rust-v*` tag, fetches binaries, then
- *      writes the resolved version back to `package.json.codexCliVersion`. The
+ *      writes the resolved version and verified GitHub asset SHA-256 values
+ *      back to `package.json` and `scripts/runtime-assets.lock.json`. The
  *      scheduled `codex-auto-update.yml` workflow uses this to open a bump PR
  *      whenever a new Codex stable lands; humans can also run
  *      `pnpm codex:fetch:latest` locally to do the same thing in one shot.
@@ -22,10 +23,18 @@ import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
 import JSZip from 'jszip'
+import {
+  expectedRuntimeAssetDigest,
+  githubAssetDigest,
+  readRuntimeAssetLock,
+  verifyRuntimeAssetBytes,
+  writeRuntimeAssetComponent,
+} from './runtime-asset-integrity.mjs'
 
 type GitHubReleaseAsset = {
   name: string
   browser_download_url: string
+  digest?: string | null
 }
 
 type GitHubRelease = {
@@ -48,6 +57,33 @@ const requestedLatest = argv.has('--latest') || process.env.CODEX_CLI_VERSION ==
 
 const projectRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, '$1'), '..')
 const packageJsonPath = path.join(projectRoot, 'package.json')
+const runtimeAssetLockPath = path.join(
+  projectRoot,
+  'scripts',
+  'runtime-assets.lock.json',
+)
+const runtimeAssetLock = readRuntimeAssetLock(runtimeAssetLockPath)
+
+function verifyDownloadedAsset(
+  bytes: Buffer,
+  target: string,
+  asset: GitHubReleaseAsset,
+  version: string,
+  recordNewDigests: boolean,
+  recordedTargets: Record<string, Record<string, string>>,
+): void {
+  const expectedDigest = recordNewDigests
+    ? githubAssetDigest(asset)
+    : expectedRuntimeAssetDigest(runtimeAssetLock, {
+        component: 'codex',
+        version,
+        target,
+        assetName: asset.name,
+      })
+  verifyRuntimeAssetBytes(bytes, expectedDigest, asset.name)
+  recordedTargets[target] ??= {}
+  recordedTargets[target][asset.name] = expectedDigest
+}
 
 const releaseTag = process.env.CODEX_RELEASE_TAG
 const targets = (process.env.CODEX_TARGETS ?? `${process.platform}-${process.arch}`)
@@ -273,6 +309,8 @@ async function writeCodexBinary(
   target: string,
   asset: GitHubReleaseAsset,
   version: string,
+  recordNewDigests: boolean,
+  recordedTargets: Record<string, Record<string, string>>,
 ): Promise<void> {
   const targetDir = path.join(process.cwd(), 'resources', 'codex', target)
   const binaryName = getCodexBinaryName(target)
@@ -284,6 +322,14 @@ async function writeCodexBinary(
   }
 
   const bytes = await fetchBytes(asset.browser_download_url)
+  verifyDownloadedAsset(
+    bytes,
+    target,
+    asset,
+    version,
+    recordNewDigests,
+    recordedTargets,
+  )
 
   await rm(targetDir, { recursive: true, force: true })
   await mkdir(targetDir, { recursive: true })
@@ -296,7 +342,14 @@ async function writeCodexBinary(
   await chmod(binaryPath, 0o755)
   console.log(`Fetched Codex ${version} for ${target}: ${path.relative(process.cwd(), binaryPath)}`)
 
-  await writeWindowsHelperBinaries(release, target, targetDir, version)
+  await writeWindowsHelperBinaries(
+    release,
+    target,
+    targetDir,
+    version,
+    recordNewDigests,
+    recordedTargets,
+  )
 }
 
 /**
@@ -310,6 +363,8 @@ async function writeWindowsHelperBinaries(
   target: string,
   targetDir: string,
   version: string,
+  recordNewDigests: boolean,
+  recordedTargets: Record<string, Record<string, string>>,
 ): Promise<void> {
   for (const helper of getWindowsHelperBinaries(target)) {
     const asset = release.assets.find((candidate) => candidate.name === helper.assetName)
@@ -320,6 +375,14 @@ async function writeWindowsHelperBinaries(
       )
     }
     const bytes = await fetchBytes(asset.browser_download_url)
+    verifyDownloadedAsset(
+      bytes,
+      target,
+      asset,
+      version,
+      recordNewDigests,
+      recordedTargets,
+    )
     const helperPath = path.join(targetDir, helper.fileName)
     await writeFile(helperPath, bytes)
     await chmod(helperPath, 0o755)
@@ -336,6 +399,7 @@ async function main(): Promise<void> {
   let tag: string
   let resolvedVersion: string
   let isLatestBump = false
+  const recordedTargets: Record<string, Record<string, string>> = {}
 
   if (requestedLatest) {
     const pinned = await resolvePinnedVersion()
@@ -363,12 +427,31 @@ async function main(): Promise<void> {
 
   for (const target of targets) {
     const asset = findAssetForTarget(release, target)
-    await writeCodexBinary(release, target, asset, resolvedVersion)
+    await writeCodexBinary(
+      release,
+      target,
+      asset,
+      resolvedVersion,
+      isLatestBump,
+      recordedTargets,
+    )
   }
 
   if (isLatestBump) {
+    if (!recordedTargets['win32-x64']) {
+      throw new Error(
+        'Codex version bumps must fetch win32-x64 to update the production digest lock',
+      )
+    }
+    writeRuntimeAssetComponent(runtimeAssetLockPath, runtimeAssetLock, {
+      component: 'codex',
+      version: resolvedVersion,
+      targets: recordedTargets,
+    })
     await writePackageCodexVersion(resolvedVersion)
-    console.log(`Updated package.json codexCliVersion → ${resolvedVersion}`)
+    console.log(
+      `Updated package.json codexCliVersion and runtime asset digests → ${resolvedVersion}`,
+    )
   }
 
   console.log(`Fetched Codex release ${tag} from ${GITHUB_OWNER}/${GITHUB_REPO}`)

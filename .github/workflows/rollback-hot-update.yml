@@ -1,0 +1,92 @@
+name: Roll Back Hot Update
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Historical target version
+        required: true
+        type: string
+      confirm:
+        description: Re-enter the exact target version
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    name: Move verified COS channel backward
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Validate explicit confirmation
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_CONFIRM: ${{ inputs.confirm }}
+          WORKFLOW_REF: ${{ github.ref }}
+        run: node scripts/release/validate-confirmation.mjs
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '20'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify packaged and runtime updater URLs
+        env:
+          COS_BUCKET: ${{ vars.COS_BUCKET }}
+          COS_REGION: ${{ vars.COS_REGION }}
+          COS_PREFIX: ${{ vars.COS_PREFIX }}
+        run: node scripts/release/update-url-contract.mjs
+
+      - name: Verify target and roll back its derived channel
+        id: rollback
+        env:
+          COS_SECRET_ID: ${{ secrets.COS_SECRET_ID }}
+          COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY }}
+          COS_BUCKET: ${{ vars.COS_BUCKET }}
+          COS_REGION: ${{ vars.COS_REGION }}
+          COS_PREFIX: ${{ vars.COS_PREFIX }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/release/cos-release.mjs rollback
+
+      - name: Record rollback scope
+        if: always()
+        env:
+          TARGET_VERSION: ${{ inputs.version }}
+          PREVIOUS_VERSION: ${{ steps.rollback.outputs.previous_version }}
+          MANIFEST_SHA256: ${{ steps.rollback.outputs.manifest_sha256 }}
+          CHANGED: ${{ steps.rollback.outputs.changed }}
+          OUTCOME: ${{ steps.rollback.outcome }}
+          ACTOR: ${{ github.actor }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo "## Hot-update rollback"
+            echo "- Actor/run: $ACTOR / $RUN_URL"
+            echo "- Outcome: $OUTCOME"
+            echo "- Previous channel version: ${PREVIOUS_VERSION:-unknown}"
+            echo "- Target: $TARGET_VERSION"
+            echo "- Target manifest SHA-256: ${MANIFEST_SHA256:-unknown}"
+            echo "- Channel pointer changed: ${CHANGED:-unknown}"
+            echo "- Channel was derived from the version suffix."
+            echo "- This stops further rollout to clients still on older versions."
+            echo "- Clients that already installed a higher version are not downgraded."
+          } >> "$GITHUB_STEP_SUMMARY"
