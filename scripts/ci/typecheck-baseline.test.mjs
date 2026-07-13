@@ -35,6 +35,23 @@ test('normalizes TypeScript diagnostics without line-number churn', () => {
   ])
 })
 
+test('normalizes repository paths embedded in diagnostic messages', () => {
+  const windowsDiagnostic = parseTypeScriptDiagnostics(
+    'src/a.ts(1,1): error TS2322: Type \'import("D:/work/repo/src/types/index").HistoryItem[]\' is not assignable.',
+    'D:\\work\\repo',
+  )
+  const linuxDiagnostic = parseTypeScriptDiagnostics(
+    'src/a.ts(1,1): error TS2322: Type \'import("/home/runner/work/repo/repo/src/types/index").HistoryItem[]\' is not assignable.',
+    '/home/runner/work/repo/repo',
+  )
+
+  assert.deepEqual(windowsDiagnostic, linuxDiagnostic)
+  assert.equal(
+    windowsDiagnostic[0].message,
+    'Type \'import("<repo>/src/types/index").HistoryItem[]\' is not assignable.',
+  )
+})
+
 test('captures global diagnostics and fails closed on unknown error formats', () => {
   assert.deepEqual(
     parseTypeScriptDiagnostics(

@@ -1848,7 +1848,7 @@
     {
       "file": "src/renderer/src/services/storage/StorageBridge.ts",
       "code": "TS2322",
-      "message": "Type 'import(\"D:/tecx/text/temp-ai-image-master-source/src/types/index\").HistoryItem[]' is not assignable to type 'import(\"D:/tecx/text/temp-ai-image-master-source/src/renderer/src/services/storage/StorageBridge\").HistoryItem[]'.",
+      "message": "Type 'import(\"<repo>/src/types/index\").HistoryItem[]' is not assignable to type 'import(\"<repo>/src/renderer/src/services/storage/StorageBridge\").HistoryItem[]'.",
       "count": 1
     },
     {
