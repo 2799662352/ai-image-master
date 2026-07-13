@@ -15,6 +15,7 @@ import {
   validateReleaseManifest,
   validateReleaseNotes,
 } from './release-contract.mjs'
+import { selectUniqueReleaseByTag } from './github-release-core.mjs'
 import { appendGithubOutputs } from './github-output.mjs'
 
 const API_ROOT = 'https://api.github.com'
@@ -113,11 +114,19 @@ async function ensureTag(context) {
 }
 
 async function getRelease(context) {
-  return github(
+  const byTag = await github(
     `/repos/${context.repository}/releases/tags/${encodeURIComponent(context.tag)}`,
     {},
     true,
   )
+  if (byTag) return byTag
+
+  // GitHub's tag endpoint omits drafts even for authenticated callers.
+  // Listing releases is the supported recovery path after a draft was created.
+  const releases = await github(
+    `/repos/${context.repository}/releases?per_page=100`,
+  )
+  return selectUniqueReleaseByTag(releases, context.tag)
 }
 
 function releaseBody(context) {
