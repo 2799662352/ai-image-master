@@ -1,6 +1,6 @@
 {
   "name": "catimation-video",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "description": "AI 视频出片与后期:sd2-pe 提示词工程化(总兜底,/sd2)→ Seedance 2.0 出片(/gen-video)→ ffmpeg 剪辑拼接(/edit-video)。",
   "author": {
     "name": "CATIMATION",

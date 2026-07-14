@@ -54,6 +54,8 @@ export interface InstallFirstPartySkillsOptions {
   officialRoot: string
   /** Override the shipped set (tests). Defaults to {@link FIRST_PARTY_SKILLS}. */
   skills?: FirstPartySkill[]
+  /** Override the safe legacy-adoption allowlist (tests). */
+  knownUnmarkedSkillHashes?: ReadonlyMap<string, ReadonlySet<string>>
 }
 
 export interface FirstPartySkillReport {
@@ -77,6 +79,45 @@ const MANAGED_MARKER = '.catimation-managed'
 
 function sha256(text: string): string {
   return crypto.createHash('sha256').update(text, 'utf8').digest('hex')
+}
+
+function normalizedSha256(text: string): string {
+  return sha256(text.replace(/\r\n/g, '\n'))
+}
+
+// Markerless copies are normally user-owned and must never be overwritten.
+// `ffmpeg-win` is the one historical exception: before the managed sidecar was
+// introduced it was distributed through the app/skills installer in these
+// exact canonical forms. Matching normalized hashes prove the file was not
+// edited, so it is safe to adopt and refresh. Keep this allowlist append-only.
+export const KNOWN_UNMARKED_FIRST_PARTY_SKILL_HASHES: ReadonlyMap<
+  string,
+  ReadonlySet<string>
+> = new Map([
+  [
+    'ffmpeg-win',
+    new Set([
+      // 8c432db2 → dcba09ba (marketplace v1.0.0 through the
+      // single-entry orchestration refactor).
+      'c24cfd4c15b9c459ab31d3eb85d42b2d4fa8b36ae0eacfc316f738fbe6a477a0',
+      'c8ff5fb98e6d5ed89a11390f7308cd3152130a60f4261b0b8ea1c26f81473a3c',
+      '1afaace17075bc49d9ca01beda16ebbf99dcea6c06e842a9769e829877fc8ae5',
+      '524d07e412b5621030b4f3cac79b0fe57017115910456a6acc5ee36a7f493a83',
+      'afea328a3370ca2b6006da3e75c16261e35e4172a36058f02ca5d4053ab4661a',
+      'a21c9b2c7dacdccc92c96ab6c73219221ad95a0b0cf1b58e3ad656990925a557',
+      'b21308a1232e11a7d8fc678ca2340d75a4fee0e8aedeed978c95f21a38da7840',
+    ]),
+  ],
+])
+
+function canAdoptUnmarkedCopy(
+  skill: FirstPartySkill,
+  existing: string,
+  knownHashes: ReadonlyMap<string, ReadonlySet<string>>,
+): boolean {
+  const existingHash = normalizedSha256(existing)
+  if (existingHash === normalizedSha256(skill.content)) return true
+  return knownHashes.get(skill.name)?.has(existingHash) ?? false
 }
 
 async function readFileOrNull(file: string): Promise<string | null> {
@@ -106,6 +147,8 @@ export async function installFirstPartySkills(
   options: InstallFirstPartySkillsOptions,
 ): Promise<FirstPartySkillReport> {
   const skills = options.skills ?? FIRST_PARTY_SKILLS
+  const knownUnmarkedSkillHashes =
+    options.knownUnmarkedSkillHashes ?? KNOWN_UNMARKED_FIRST_PARTY_SKILL_HASHES
   const report: FirstPartySkillReport = { installed: [], updated: [], removed: [], preserved: [] }
 
   await fs.mkdir(options.officialRoot, { recursive: true })
@@ -122,6 +165,16 @@ export async function installFirstPartySkills(
 
     const marker = (await readFileOrNull(path.join(dir, MANAGED_MARKER)))?.trim() ?? null
     const isAppManaged = marker !== null && marker === sha256(existing)
+
+    if (
+      !isAppManaged &&
+      marker === null &&
+      canAdoptUnmarkedCopy(skill, existing, knownUnmarkedSkillHashes)
+    ) {
+      await writeManaged(dir, skill)
+      report.updated.push(skill.name)
+      continue
+    }
 
     if (!isAppManaged) {
       report.preserved.push(skill.name)
@@ -211,7 +264,7 @@ export const CATIMATION_DIRECTOR_STAGE_SKILL: FirstPartySkill = {
  * installed an app-managed copy, remove it on startup so Codex stops discovering
  * it. User-edited copies are preserved.
  */
-const RETIRED_FIRST_PARTY_SKILL_NAMES = ['catimation-subagents']
+const RETIRED_FIRST_PARTY_SKILL_NAMES = ['catimation-subagents', 'mediakit-cli']
 
 /** All skills this app ships into the Codex USER scope on startup. */
 export const FIRST_PARTY_SKILLS: FirstPartySkill[] = [
