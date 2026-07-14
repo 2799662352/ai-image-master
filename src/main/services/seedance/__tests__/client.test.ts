@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 const fetchMock = vi.fn()
 
@@ -9,7 +9,7 @@ vi.mock('electron', () => ({
   },
 }))
 
-import { seedanceClient } from '../client'
+import { seedanceClient, ARK_REQUEST_TIMEOUT_MS } from '../client'
 
 function jsonResponse(body: unknown, status = 200) {
   return {
@@ -101,5 +101,33 @@ describe('seedanceClient.queryTask', () => {
     await seedanceClient.queryTask('t3', 'key')
     const [url] = fetchMock.mock.calls[0] as [string]
     expect(url).toBe('https://vvdance.yongmuai.com/api/v3/contents/generations/tasks/t3')
+  })
+})
+
+describe('arkRequest 硬超时（防 net.fetch 永久悬挂 → turn 卡满 2000s）', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('createTask/queryTask 都带 AbortSignal，超时后以明确错误 reject', async () => {
+    vi.useFakeTimers()
+    // 模拟半开连接：fetch 永不 settle，只在被 abort 时 reject（真实 net.fetch 行为）。
+    fetchMock.mockImplementation((_url: string, init: { signal: AbortSignal }) => {
+      expect(init.signal).toBeInstanceOf(AbortSignal)
+      return new Promise((_resolve, reject) => {
+        init.signal.addEventListener('abort', () => reject(new Error('aborted')))
+      })
+    })
+
+    const pending = seedanceClient.queryTask('t-hang', 'key')
+    const assertion = expect(pending).rejects.toThrow(/timed out after 30s/)
+    await vi.advanceTimersByTimeAsync(ARK_REQUEST_TIMEOUT_MS + 1)
+    await assertion
+  })
+
+  it('未超时的正常响应不受影响', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ id: 't-fast', status: 'running' }))
+    const res = await seedanceClient.queryTask('t-fast', 'key')
+    expect(res.status).toBe('running')
   })
 })

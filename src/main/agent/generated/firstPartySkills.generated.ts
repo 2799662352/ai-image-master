@@ -122,10 +122,17 @@ catimation-brainstorm 用 \`ask_user\` 弹一张选项卡定向,别自己猜。
    the image is already shown to the user and saved to history + the file panel.
    You do **not** need to embed, re-describe, or base64 the pixels. Just confirm
    briefly in the user's language and cite the saved path(s) when relevant.
-5. **Self-review the result, then improve if needed (autonomous QA loop).**
-   A \`✅ DONE\` return means the image is ALREADY rendered in the chat. Before you
-   hand off, open the generated image(s) with \`view_image\`(支持批量;超大批量看代表性子集)
-   and过一遍**四项验收清单**:
+5. **交付优先,然后自检(deliver first, then QA)。**
+   A \`✅ DONE\` return means the image is ALREADY rendered in the chat.
+   - **第一步永远是交付**:先用一句话向用户确认(图已出 + 保存路径),**再**做任何
+     自检。用户看不到工具调用——先闷头质检再回话,在用户眼里就是「卡死」
+     (2026-07-14 实录教训)。
+   - **QA 要出声**:决定自检时,先对用户说一句「正在快速质检…」之类,再开始。
+   - **看图上限**(上下文保护,与工具 banner 一致):单图最多 \`view_image\` 那 1 张;
+     组图/批量看**代表性 1 张**(最多 2 张),绝不批量全看——批量 view_image 会注入
+     数 MB base64 直接撑爆线程(2026-06-11 实录)。快速模式若画面简单、无人物,
+     可以只核对 DONE banner 不看图。
+   然后过一遍**四项验收清单**:
    - **① 符合用户要求**:主体 / 数量 / 画幅比例 / 文字内容 / 明确指定的元素是否都对上;
      用户给了 \`referenceImages\` 时是否真的体现了参考(而非从零另画)。
    - **② 质量合理**:无多/缺手指与肢体、无崩脸、无乱码文字、无明显伪影/拼接错位;
@@ -135,9 +142,10 @@ catimation-brainstorm 用 \`ask_user\` 弹一张选项卡定向,别自己猜。
    - **④ 过本级门**:标准及以上时,对症技法的落地证据是否出现在 prompt 里;
      角色身份是否遵循单锚点纪律(默认大头照+全身照,三视图/四视图为可选补充);
      制片流程中是否满足 \`film-studio\` 的资产门。快速模式只查 ①–③。
-   - 若任一项不达标:简述哪里不对,**带改进后的提示词重生成**(保留可用部分时把上一版回传为
-     \`referenceImages\` 做图生图),再复检。最多迭代 2–3 次即收敛——别在边角小瑕疵上死磕,
-     每次重生成都花钱。
+   - 若任一项不达标:**先告诉用户**哪里不对、准备怎么改,再**带改进后的提示词重生成**
+     (保留可用部分时把上一版回传为 \`referenceImages\` 做图生图),再复检。最多迭代
+     2–3 次即收敛——别在边角小瑕疵上死磕,每次重生成都花钱。重生成期间用户能看到
+     新的生成气泡,但你的说明让 ta 知道**为什么**在重来。
    - When it's good (or good enough), confirm briefly in the user's language and
      cite the saved path(s). Don't over-narrate each pass.
    - You still do NOT need \`query_history\` to find an image you just generated,
@@ -425,15 +433,22 @@ prompt;不要等用户说「优化提示词」才加载:
 4. Wait for the tool to return — it blocks until done. Do NOT resubmit or
    "check progress" in between.
 5. Read the result banner:
-   - \`✅ DONE\` + \`📁 SAVED FILE: <path>\` → task COMPLETE. Confirm briefly,
-     **name the mode**, cite the saved path. Do NOT re-check or re-generate.
+   - \`✅ DONE\` + \`📁 SAVED FILE: <path>\` → task COMPLETE. **第一步永远是交付**:
+     先用一句话向用户确认(成片已在聊天里播放 + 保存路径,**name the mode**),
+     **然后**才做任何 QA。Do NOT re-check or re-generate.
    - \`✅ DONE\` with background save pending → generation complete; mention briefly.
-   - \`⏳ STILL RUNNING\`(rare, >10 min)→ call \`check_video_task\` with the taskId
-     repeatedly (long-polls ~25s) until DONE/FAILED. Never resubmit.
+   - \`⏳ STILL RUNNING\` → 先向用户说一句「正在生成中」(如果还没说过),再 call
+     \`check_video_task\` with the taskId repeatedly (long-polls ~25s) until
+     DONE/FAILED. Never resubmit. 多轮轮询之间不要让用户干等无声。
    - \`❌ FAILED\` → report the upstream error; retry ONCE only if it suggests a
      content/parameter fix.
 
 ## QA:按风险分级,不是每条视频全套跑
+
+**交付优先铁律**:任何级别的 QA 都发生在**向用户交付之后**——先一句话交付成片,
+决定跑 QA 时再说一句「正在做视觉质检(抽帧九宫格)…」之类**出声**再动手。用户看
+不到工具调用,先闷头抽帧/审片再回话,在用户眼里就是「卡死」(2026-07-14 实录教训)。
+QA 发现问题需要重生成时,同样先告诉用户哪里不达标、准备怎么改。
 
 | QA 级别 | 触发条件 | 动作 |
 |---|---|---|

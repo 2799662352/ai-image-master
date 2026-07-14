@@ -105,6 +105,8 @@ describe('registerVideoTools / schemas', () => {
     const text = (res.content[0] as { text: string }).text
     expect(text).toContain('DONE')
     expect(text).toContain('D:/save/v.mp4')
+    // 交付优先:DONE banner 必须要求先给用户一句话交付,再做任何 QA。
+    expect(text).toMatch(/send the user a one-line delivery message NOW/i)
     expect((res.content[1] as { type: string; mimeType: string }).type).toBe('resource_link')
     // 提交 1 次 + 轮询 2 次,全部走 router
     expect(router.call).toHaveBeenCalledTimes(3)

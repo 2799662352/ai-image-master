@@ -35,16 +35,40 @@ interface ArkEnvelope<T> {
   message?: string
 }
 
+/**
+ * 单次 Ark HTTP 请求的硬超时。createTask/queryTask 都是轻量 JSON 接口，正常 <2s；
+ * 之前完全没超时——代理/上游 TCP 半开时 `net.fetch` 会永远悬挂，generate_video
+ * 只能靠 codex 的 2000s 工具超时兜底(用户视角=turn 卡死半小时)。超时后:
+ * queryTask 由 pollLoop 的 catch 容忍并在下一轮重试;createTask 抛给 submit →
+ * announceFailed,用户立刻看到失败卡片而不是无限转圈。
+ */
+export const ARK_REQUEST_TIMEOUT_MS = 30_000
+
 async function arkRequest<T>(url: string, apiKey: string, init?: RequestInit): Promise<T> {
-  const res = await net.fetch(url, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-      ...(init?.headers as Record<string, string> | undefined),
-    },
-  })
-  const text = await res.text()
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), ARK_REQUEST_TIMEOUT_MS)
+  timer.unref?.()
+  let res: Awaited<ReturnType<typeof net.fetch>>
+  let text: string
+  try {
+    res = await net.fetch(url, {
+      ...init,
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+        ...(init?.headers as Record<string, string> | undefined),
+      },
+    })
+    text = await res.text()
+  } catch (e) {
+    if (controller.signal.aborted) {
+      throw new Error(`Seedance API request timed out after ${Math.round(ARK_REQUEST_TIMEOUT_MS / 1000)}s`)
+    }
+    throw e
+  } finally {
+    clearTimeout(timer)
+  }
   let json: (ArkEnvelope<T> & Partial<T>) | null = null
   try {
     json = JSON.parse(text) as ArkEnvelope<T> & Partial<T>
