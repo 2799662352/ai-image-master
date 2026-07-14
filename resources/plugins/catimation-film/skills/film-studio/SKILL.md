@@ -4,8 +4,8 @@ description: >-
   端到端「做电影/做片子」的制片总编排器,仅用于真正的多镜成片项目——把一个
   想法/故事一条龙串成成片:概念 → 剧本 → 分镜镜头表 → 角色与场景锚点 →
   逐镜出图 → 图生视频 → 配音配乐 → 拼接 → 体检交付,每阶段带审批门(gate),
-  并按阶段调用本地工艺 skill 而不是重写它们。单镜/简单视频请求不触发本技能
-  (那是视频入口快速/标准模式的事)。触发词:做电影、做短片、拍一部、成片、
+  并按阶段调用本地工艺 skill 而不是重写它们。单镜等非成片请求不触发本技能
+  (那是视频入口快速/标准模式的事,规格同样不降)。触发词:做电影、做短片、拍一部、成片、
   一条龙、从剧本到成片、制片、宣传片、微电影、short film、full production、
   film pipeline。
 ---
@@ -30,7 +30,7 @@ description: >-
 
 **正向提示词(默认):** 全流程默认只写正向提示词,**不写反向/负向提示词**,把「不要 X」改写成对应的「要 Y」,用真实技法词把目标状态写具体。
 
-**★ 每个出图/出视频阶段(G4 / G5)必先过总调度,且 prompt 必须用 skill 渐进式写:** 在 G4 逐镜出图、G5 图生视频写 prompt 之前,**先载入 `director-orchestrator` 执行它的 STEP 0 反问**(13 维定位 → 列出要载入的 director-*/storyboard- → 核实技法文档 → 确认目标模型与素材),再用 `sd2-pe`(八大要素 + 路径 A/B + 多模态绑定)与 `storyboard-video-prompt-optimization` 把该镜落成结构化文本(物理可复现参数优先),并把已备素材逐一绑进去。**渐进式披露**:只加载这镜实际涉及维度对应的 skill。把结论一行说给用户听,再写提示词。**禁止跳过反问、禁止脱离 skill + 素材凭记忆硬写 prompt。**
+**★ 每个出图/出视频阶段(G4 / G5)必先过总调度,且 prompt 必须用 skill 渐进式写:** 在 G4 逐镜出图、G5 图生视频写 prompt 之前,**先载入 `director-orchestrator` 执行它的 STEP 0 反问**(13 维定位 → 列出要载入的 director-*/storyboard- → 核实技法文档 → 确认目标模型与素材),再用 `sd2-pe`(八大要素 + 统一三段结构 + 多模态绑定)与 `storyboard-video-prompt-optimization` 把该镜落成结构化文本(物理可复现参数优先),并把已备素材逐一绑进去。**渐进式披露**:只加载这镜实际涉及维度对应的 skill。把结论一行说给用户听,再写提示词。**禁止跳过反问、禁止脱离 skill + 素材凭记忆硬写 prompt。**
 
 ---
 
@@ -75,7 +75,7 @@ description: >-
 
 ### G5 · 图生视频(Animate)— 分镜多参,用上全部可用资产
 - **做:** 把关键帧 + 运动描述喂给 Seedance 2.0 出片;**每镜把 G4.5 备齐的全部资产都喂进去(分镜多参)**:角色卡/场景图 → 参考图,运镜参考 → 参考视频,音色 → 参考音频(或严格首尾帧),并按 `sd2-pe` 语法用 `图片N/视频N/<主体N>` 在 prompt 里逐一绑定。**有素材却只发纯文字 = 错。** 分配全能参考配额;生成前做爆款体检。
-- **调:** `seedance-video-craft`(模型对齐/配额/提示词/体检);提示词结构与多参绑定以 `sd2-pe` 为准(路径 B 三段论 + 其必载结构叶子 seedance-cinematic-format 的 12 字段骨架,每镜最终提示词按骨架输出、字段可短不可删);动画片叠 `animation-craft`(运动法则/计时节拍);提示词优化 `storyboard-video-prompt-optimization`。
+- **调:** `seedance-video-craft`(模型对齐/配额/提示词/体检);提示词结构与多参绑定以 `sd2-pe` 为准(统一三段结构 + 其必载结构叶子 seedance-cinematic-format 的 12 字段骨架,每镜最终提示词按骨架输出、字段可短不可删);动画片叠 `animation-craft`(运动法则/计时节拍);提示词优化 `storyboard-video-prompt-optimization`。
 - **门 G5:** 每镜先过 `ffmpeg-win` 视觉门——抽帧拼 3×3 九宫格 contact sheet,`view_image` 那张宫格图自检(首尾帧/连续性/穿帮);要看懂剧情/连续性用 `catimation-understand` 的 `understand_video`,但别拿 `view_image` 开 MP4、别把原始字节塞进聊天;通过后再用 animation-craft 的审查 rubric(先故事/连贯后打磨)交用户审。
 
 ### G6 · 配音配乐(Sound)

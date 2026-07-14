@@ -4,9 +4,9 @@ description: 生成视频 — 先用 sd2-pe 工程化提示词(总兜底),再 Se
 
 出视频时,**一切围绕 `sd2-pe` 展开**:
 
-1. **总起点(必做):载入 `sd2-pe`(Skill 工具加载 `sd2-pe`)**,把用户的想法/草稿/多模态 JSON 走完它的 Step 0→Step 4,产出工程化提示词(八大要素 + 路径 A/B + 兜底包);落笔前必载结构叶子 `seedance-cinematic-format`,按 12 字段骨架输出(快速/路径 A 也要,字段可短不可删)。需求不全先按 sd2-pe Step 0 提问,关键歧义按 Step 3.1 停下确认。
+1. **总起点(必做):载入 `sd2-pe`(Skill 工具加载 `sd2-pe`)**,把用户的想法/草稿/多模态 JSON 走完它的 Step 0→Step 4,产出工程化提示词(八大要素 + 统一三段结构 + 兜底包,无「简单视频」降级路径);落笔前主动检索核实 2–3 个真实影视参考候选给用户选(Step 3.3),并必载结构叶子 `seedance-cinematic-format`,按 12 字段骨架输出(单镜快速任务也要,字段可短不可删)。需求不全先按 sd2-pe Step 0 提问,关键歧义按 Step 3.1 停下确认。
 2. **衍生叠加(按需)**:
-   - 成套分镜/多事件链 → 先用 `director-orchestrator` 做 13 维 STEP 0 定位,再回到 sd2-pe 路径 B 三段论落地。
+   - 成套分镜/多事件链 → 先用 `director-orchestrator` 做 13 维 STEP 0 定位,再回到 sd2-pe 多镜三段结构落地。
    - 模型能力对齐/全能参考配额/爆款体检 → `seedance-video-craft`。
    - 单镜画面问题(光影/演技/调色/去 AI 味)→ 对应 `storyboard-*`。
    - 提示词过长/指令冲突 → `storyboard-video-prompt-optimization`(在 sd2-pe 结构内精简)。
