@@ -150,15 +150,22 @@ prompt;不要等用户说「优化提示词」才加载:
 4. Wait for the tool to return — it blocks until done. Do NOT resubmit or
    "check progress" in between.
 5. Read the result banner:
-   - `✅ DONE` + `📁 SAVED FILE: <path>` → task COMPLETE. Confirm briefly,
-     **name the mode**, cite the saved path. Do NOT re-check or re-generate.
+   - `✅ DONE` + `📁 SAVED FILE: <path>` → task COMPLETE. **第一步永远是交付**:
+     先用一句话向用户确认(成片已在聊天里播放 + 保存路径,**name the mode**),
+     **然后**才做任何 QA。Do NOT re-check or re-generate.
    - `✅ DONE` with background save pending → generation complete; mention briefly.
-   - `⏳ STILL RUNNING`(rare, >10 min)→ call `check_video_task` with the taskId
-     repeatedly (long-polls ~25s) until DONE/FAILED. Never resubmit.
+   - `⏳ STILL RUNNING` → 先向用户说一句「正在生成中」(如果还没说过),再 call
+     `check_video_task` with the taskId repeatedly (long-polls ~25s) until
+     DONE/FAILED. Never resubmit. 多轮轮询之间不要让用户干等无声。
    - `❌ FAILED` → report the upstream error; retry ONCE only if it suggests a
      content/parameter fix.
 
 ## QA:按风险分级,不是每条视频全套跑
+
+**交付优先铁律**:任何级别的 QA 都发生在**向用户交付之后**——先一句话交付成片,
+决定跑 QA 时再说一句「正在做视觉质检(抽帧九宫格)…」之类**出声**再动手。用户看
+不到工具调用,先闷头抽帧/审片再回话,在用户眼里就是「卡死」(2026-07-14 实录教训)。
+QA 发现问题需要重生成时,同样先告诉用户哪里不达标、准备怎么改。
 
 | QA 级别 | 触发条件 | 动作 |
 |---|---|---|

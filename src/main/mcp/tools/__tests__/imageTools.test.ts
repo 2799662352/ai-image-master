@@ -355,7 +355,9 @@ describe('generate_images (single kick + combined banner)', () => {
     expect(text).toContain(paths[0])
     expect(text).toContain(paths[1])
     expect(text).toContain(paths[2])
-    expect(text).toMatch(/Do NOT open these files with view_image/i)
+    // 交付优先 + 上下文保护:先一句话交付,QA 需要看图时最多 1 张代表图。
+    expect(text).toMatch(/send the user a one-line delivery message NOW/i)
+    expect(text).toMatch(/Do NOT batch-open these files with view_image/i)
     expect(content.filter((c) => c.type === 'resource_link')).toHaveLength(3)
   })
 

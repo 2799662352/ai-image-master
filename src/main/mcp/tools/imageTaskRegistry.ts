@@ -46,6 +46,21 @@ export interface ImageTaskState {
 /** 终态任务保留多久后回收（与视频任务一致：app 重启 / ~30 分钟后丢弃）。 */
 const TASK_TTL_AFTER_TERMINAL_MS = 30 * 60_000
 
+/**
+ * running 任务的最长存活时间（与 Seedance 的 30 分钟轮询上限对齐）。
+ *
+ * 终态回报只靠一条无 ack 的 renderer→main `image:task-update` IPC。若渲染进程在
+ * 广播前重载/崩溃（图片可能已经渲染并显示给用户了），主进程任务表会永远停在
+ * running —— 模型每 ~25s 轮询一次 check_image_task 直到 codex 2000s 工具超时，
+ * 用户视角就是「图早出来了 agent 还卡着」。超过上限即判定终态丢失，自动转
+ * failed 并给出「先跟用户确认、勿盲目重提交」的指引。
+ */
+const MAX_RUNNING_MS = 30 * 60_000
+
+/** 终态丢失时的兜底错误文案（banner 会原样带给模型）。 */
+export const IMAGE_TASK_TIMEOUT_ERROR =
+  'Task timed out after 30 minutes without a terminal report. The image may have ALREADY been rendered and shown in the chat — ask the user to confirm before doing anything else, and do NOT blindly resubmit (that could create a duplicate).'
+
 export class ImageTaskManager {
   private tasks = new Map<string, ImageTaskState>()
   /** 每个 taskId 上等待终态的唤醒回调（长轮询用）。 */
@@ -98,7 +113,16 @@ export class ImageTaskManager {
   }
 
   get(taskId: string): ImageTaskState | undefined {
+    this.expireIfOverdue(this.tasks.get(taskId))
     return this.tasks.get(taskId)
+  }
+
+  /** running 超过 MAX_RUNNING_MS ⇒ 终态广播已丢失，就地判失败（幂等，settle 内部有保护）。 */
+  private expireIfOverdue(task: ImageTaskState | undefined): void {
+    if (!task || task.status !== 'running') return
+    if (Date.now() - task.createdAt > MAX_RUNNING_MS) {
+      this.settle(task.taskId, 'failed', { error: IMAGE_TASK_TIMEOUT_ERROR })
+    }
   }
 
   /**
@@ -108,6 +132,7 @@ export class ImageTaskManager {
   async waitForTerminal(taskId: string, timeoutMs: number): Promise<ImageTaskState | undefined> {
     const task = this.tasks.get(taskId)
     if (!task) return undefined
+    this.expireIfOverdue(task)
     if (task.status !== 'running') return task
 
     await new Promise<void>((resolve) => {

@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { ImageTaskManager } from '../imageTaskRegistry'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ImageTaskManager, IMAGE_TASK_TIMEOUT_ERROR } from '../imageTaskRegistry'
 
 describe('ImageTaskManager', () => {
   it('creates a running task with a unique id', () => {
@@ -78,5 +78,47 @@ describe('ImageTaskManager', () => {
     const id = reg.create('cat') // never settles
     const snap = await reg.waitForTerminal(id, 10)
     expect(snap!.status).toBe('running')
+  })
+
+  describe('lost-terminal-IPC watchdog（running 超 30 分钟自动判失败）', () => {
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('running 超过 30 分钟后 waitForTerminal 立即返回 failed（不再无限轮询）', async () => {
+      vi.useFakeTimers()
+      const reg = new ImageTaskManager()
+      const id = reg.create('cat') // 终态广播「丢失」，永不 settle
+      vi.advanceTimersByTime(30 * 60_000 + 1)
+      const snap = await reg.waitForTerminal(id, 25_000)
+      expect(snap!.status).toBe('failed')
+      expect(snap!.error).toBe(IMAGE_TASK_TIMEOUT_ERROR)
+    })
+
+    it('get() 同样触发过期判定', () => {
+      vi.useFakeTimers()
+      const reg = new ImageTaskManager()
+      const id = reg.create('cat')
+      vi.advanceTimersByTime(30 * 60_000 + 1)
+      expect(reg.get(id)!.status).toBe('failed')
+    })
+
+    it('30 分钟内的 running 任务不受影响', async () => {
+      vi.useFakeTimers()
+      const reg = new ImageTaskManager()
+      const id = reg.create('cat')
+      vi.advanceTimersByTime(29 * 60_000)
+      expect(reg.get(id)!.status).toBe('running')
+    })
+
+    it('迟到的真实终态到达已过期任务时被幂等忽略（不覆盖 failed）', () => {
+      vi.useFakeTimers()
+      const reg = new ImageTaskManager()
+      const id = reg.create('cat')
+      vi.advanceTimersByTime(30 * 60_000 + 1)
+      expect(reg.get(id)!.status).toBe('failed')
+      reg.applyUpdate({ taskId: id, kind: 'single', status: 'succeeded', result: { ok: true } })
+      expect(reg.get(id)!.status).toBe('failed')
+    })
   })
 })

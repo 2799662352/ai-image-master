@@ -100,6 +100,16 @@ function collectPaths(raw: unknown): string[] {
 }
 
 /**
+ * 「交付优先」硬指令 —— 治「图早出来了 agent 还在闷头 QA」(2026-07-14 实录):
+ * skill 的四项验收自检本身合理,但模型倾向于拿到 DONE 后先静默跑完全部质检再回话,
+ * turn 在用户看来就是卡死。banner 是模型每次必读的位置,在这里强制「先一句话交付 →
+ * 出声再 QA」;与下方「勿批量 view_image」的上下文保护条款配合(QA 需要看图时,
+ * 出声后最多看 1 张代表图)。
+ */
+const DELIVER_FIRST_IMAGE =
+  'FIRST, before anything else: send the user a one-line delivery message NOW (the image is already visible in the chat; cite the saved path). Only AFTER that message may you run any QA/self-review — and announce it briefly (e.g. 「正在快速质检…」) before starting. NEVER run silent QA before replying; the user cannot see tool calls and will think you are stuck.'
+
+/**
  * Build the plain-text result the agent actually reads. Kept deliberately short
  * (well under Codex's ~10 KiB / 256-line tool-result cap, openai/codex#6544) and
  * front-loaded with the completion signal + exact location so the agent treats
@@ -125,6 +135,7 @@ function buildCompletionBanner(result: unknown, paths: string[], dir: string | u
     return [
       `✅ generate_image DONE — ${count} image(s) generated and shown to the user.`,
       'Local file save is still finishing in the background, so no path is available yet.',
+      DELIVER_FIRST_IMAGE,
       'Treat this generation as COMPLETE — do NOT retry or re-generate.',
       'If you genuinely need the file path later, call query_history then; otherwise just confirm to the user.',
       machine,
@@ -137,6 +148,7 @@ function buildCompletionBanner(result: unknown, paths: string[], dir: string | u
     return [
       `✅ generate_image DONE — ${count} image(s) generated and shown to the user.`,
       'No local file path was returned this time; the image is in the app chat + history.',
+      DELIVER_FIRST_IMAGE,
       'Do NOT call query_history or search the filesystem to "find" it — just confirm to the user.',
       machine,
     ].join('\n')
@@ -147,11 +159,12 @@ function buildCompletionBanner(result: unknown, paths: string[], dir: string | u
     dir ? `📁 SAVED FOLDER: ${dir}` : '',
     'FILES:',
     ...paths.map((p) => `- ${p}`),
+    DELIVER_FIRST_IMAGE,
     // The "do not self-inspect" line is load-bearing: a batch of view_image
     // calls on these full-res files injects N × multi-MB base64 into the next
     // model request, which exceeds relay gateways' request-size cap and wedges
     // the thread (observed live 2026-06-11: 5 images → 5 view_image → hang).
-    'Do NOT open these files with view_image to "double-check" — the user is already looking at the image(s) in chat. Viewing them injects multi-MB base64 into context and can kill the thread (request_too_large). Only view if the user explicitly asks, and then at most ONE image.',
+    'Do NOT batch-open these files with view_image — the user is already looking at the image(s) in chat, and viewing them injects multi-MB base64 into context that can kill the thread (request_too_large). If your QA tier genuinely requires a visual check (or the user asks), view at most ONE representative image, AFTER your delivery message.',
     'Do NOT run query_history and do NOT search the filesystem to locate these — the paths above are authoritative and the task is complete.',
     machine,
   ]
@@ -180,7 +193,8 @@ function buildBatchCompletionBanner(results: unknown[], paths: string[]): string
     pendingCount > 0
       ? `${pendingCount} file save(s) are still finishing in the background — their paths are not listed yet. The generation itself is COMPLETE; do NOT retry. Use query_history later only if a missing path is genuinely needed.`
       : '',
-    'Do NOT open these files with view_image to "double-check" — the user is already looking at the image(s) in chat. Viewing them injects multi-MB base64 into context and can kill the thread (request_too_large). Only view if the user explicitly asks, and then at most ONE image.',
+    DELIVER_FIRST_IMAGE,
+    'Do NOT batch-open these files with view_image — the user is already looking at the image(s) in chat, and viewing them injects multi-MB base64 into context that can kill the thread (request_too_large). If your QA tier genuinely requires a visual check (or the user asks), view at most ONE representative image, AFTER your delivery message.',
     pendingCount === 0
       ? 'Do NOT run query_history and do NOT search the filesystem to locate these — the paths above are authoritative and the batch task is complete.'
       : '',
@@ -237,6 +251,7 @@ export function buildImageRunningHandoffBanner(task: ImageTaskState): string {
 export function buildImageCheckRunningBanner(task: ImageTaskState): string {
   return [
     `⏳ check_image_task — still rendering. Elapsed: ${elapsedSeconds(task)}s.`,
+    'If you have NOT yet told the user the render is in progress, say so in one short line BEFORE polling again — never leave the user in silence across multiple polls.',
     'Call check_image_task again with the same taskId (it long-polls ~25s server-side, so just call it immediately). Do NOT resubmit generate_image — the task is alive and the user sees its progress bubble.',
     JSON.stringify({ taskId: task.taskId, status: 'running', elapsedSeconds: elapsedSeconds(task) }),
   ].join('\n')

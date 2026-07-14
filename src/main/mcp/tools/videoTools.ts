@@ -99,18 +99,29 @@ export function buildRunningBanner(task: SeedanceTaskState): string {
   const label = task.status === 'queued' ? 'queued (waiting for a worker)' : 'running (rendering)'
   return [
     `⏳ check_video_task — still ${label}. Elapsed: ${elapsedSeconds(task)}s.`,
+    'If you have NOT yet told the user the render is in progress, say so in one short line BEFORE polling again — never leave the user in silence across multiple polls.',
     'Call check_video_task again with the same taskId (it long-polls ~25s server-side, so just call it immediately).',
     'Do NOT resubmit generate_video — the task is alive and the user sees its progress bubble.',
     machineLine(task),
   ].join('\n')
 }
 
+/**
+ * 「交付优先」硬指令 —— 治「视频早出来了 agent 还在闷头 QA」(2026-07-14 实录):
+ * skill 的 QA 分级(抽帧九宫格/understand_video)本身合理,但模型倾向于拿到 DONE
+ * 后先静默跑完全部质检再回话,turn 在用户看来就是卡死。banner 是模型每次必读的
+ * 位置,在这里强制「先一句话交付 → 出声再 QA」,与 skill 的 QA 纪律互补不冲突。
+ */
+const DELIVER_FIRST_VIDEO =
+  'FIRST, before anything else: send the user a one-line delivery message NOW (the video is already playing in the chat; cite the saved path). Only AFTER that message may you run QA/verification (frame grids, understand_video, etc.) — and announce it briefly (e.g. 「正在快速质检…」) before starting. NEVER run silent QA before replying; the user cannot see tool calls and will think you are stuck.'
+
 export function buildDoneBanner(task: SeedanceTaskState): string {
   if (task.localPath) {
     return [
       '✅ generate_video DONE — video generated, saved locally, and already playing in the chat.',
       `📁 SAVED FILE: ${task.localPath}`,
-      'This path is authoritative and the task is COMPLETE — do NOT call check_video_task again, do NOT search the filesystem, and do NOT re-generate. Just confirm briefly to the user.',
+      DELIVER_FIRST_VIDEO,
+      'This path is authoritative and the task is COMPLETE — do NOT call check_video_task again, do NOT search the filesystem, and do NOT re-generate.',
       machineLine(task),
     ].join('\n')
   }
@@ -118,6 +129,7 @@ export function buildDoneBanner(task: SeedanceTaskState): string {
     return [
       '✅ generate_video DONE — video generated and playing in the chat, but the local file save FAILED.',
       task.videoUrl ? `Remote video URL (validity window unknown): ${task.videoUrl}` : '',
+      DELIVER_FIRST_VIDEO,
       'The generation itself is COMPLETE — do NOT retry. Mention to the user that local save failed.',
       machineLine(task),
     ]
@@ -129,6 +141,7 @@ export function buildDoneBanner(task: SeedanceTaskState): string {
   return [
     '✅ generate_video DONE — video generated and already playing in the chat.',
     'Local file save is still finishing in the background (persistencePending) — treat this task as COMPLETE; do NOT retry.',
+    DELIVER_FIRST_VIDEO,
     'If you genuinely need the saved path, call check_video_task ONCE more in ~10s; otherwise just confirm to the user.',
     machineLine(task),
   ].join('\n')
