@@ -8,7 +8,7 @@ description: Seedance 2.0 提示词工程化 — sd2-pe 总兜底引擎,把任�
 2. **Step 1** 判定任务类型(多模态参考/编辑/延长/组合)与复杂度(路径 A 单段 / 路径 B 三段论)。
 3. **Step 2** 素材映射(`@图片N`/`@视频N`/`@音频N`、`<主体N>` 绑定、大头照+全身照策略)。
 4. **Step 3** 仅在关键歧义时打断;非关键缺失自动补全并透明披露。
-5. **Step 4** 按路径输出结构化提示词 + 优化问题 + 相关原则。
+5. **Step 4** 落笔前用 Skill 工具加载 `seedance-cinematic-format`(必载结构叶子,快速/路径 A 也要),按 12 字段骨架输出结构化提示词 + 优化问题 + 相关原则,字段可短不可删。
 
 产出工程化提示词后,再按需叠加衍生技法:`seedance-video-craft`(模型对齐/配额/爆款体检)、`storyboard-*`(逐镜画面打磨)、`director-orchestrator`(成套分镜的 13 维定位)。最终交 `catimation-video` 的 `generate_video` 出片。
 

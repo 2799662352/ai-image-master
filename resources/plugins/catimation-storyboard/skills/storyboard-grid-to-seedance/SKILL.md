@@ -93,7 +93,7 @@ cinematic lighting/pacing. No new shots, no reordering.
 2. **关键人物/产品镜**:主输入用干净关键帧,网格作为顺序提示叠加;产品镜加 `keep the product appearance completely unchanged, camera movement only, no rotation`。
 3. **单段 ≤15s、单格动作简单**:片段越短、单格内容越简单,动作越准、漂移越少。
 4. **提示词宁短勿长**:Seedance 更看重方向性清晰度而非穷举细节——写运动意图,别堆场景细节。
-5. **最终经 sd2-pe 工程化**:无论方法①②产出的视频提示词,落地前都交 `sd2-pe` 做工程化再生成。
+5. **最终经 sd2-pe 工程化**:无论方法①②产出的视频提示词,落地前都交 `sd2-pe` 做工程化(含其必载结构叶子的 12 字段骨架输出)再生成。
 
 ## Common Mistakes
 

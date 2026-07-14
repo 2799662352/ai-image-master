@@ -1,6 +1,6 @@
 {
   "name": "catimation-director",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "description": "导演模式总调度:以 13 维电影摄制框架编排镜头/构图/光影/连续性/角色一致性技法,产出结构化提示词。",
   "author": {
     "name": "CATIMATION",

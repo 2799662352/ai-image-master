@@ -5,7 +5,7 @@
 ## 路由总则(单入口 + 四级分层)
 
 0. **出图 → `catimation-image` 是唯一图片顶层入口;出视频/让静帧动起来 → `catimation-video` 是唯一视频顶层入口**。入口先把任务分成 快速/标准/专业/制片 四级并维护本回合 routing receipt(`task_level`、`spec_confirmed`、`prompt_engineered`、`qa_completed`、`generation_attempts`),再按预算加载下游 skill。其它任何 skill 不得反向调用入口或重跑分级。
-1. **视频提示词工程 → 入口按需加载 `sd2-pe`**(Seedance 格式、素材绑定、路径 A/B、兜底包 + 每次必有的 12 字段格式化骨架)。sd2-pe 是纯工艺叶子,不再是流程起点;复杂或混合媒介时可查 seedance-cinematic-format 的真人/2D/3D profile reference。
+1. **视频提示词工程 → 相关任务自动加载 `sd2-pe`,并必载其结构叶子 `seedance-cinematic-format`**(出片 / 写·改·优化视频提示词 / Seedance 语法问答即载;八大要素、路径 A/B、素材绑定、兜底包 + **每次**输出 12 字段骨架,快速任务也不省)。真人/2D/3D profile reference 仍可渐进披露。导演/分镜/技法仍按症状与预算加载,禁止「可能有帮助就全载」。
 2. **复杂镜头设计(13 维镜头语言、专业构图打光、参考复刻、跨镜一致性)→ 专业/制片级才加载 `director-orchestrator`**。快速/标准任务不触发;它也不再调用 router 或生成工具。
 3. **要做整片(多镜短片/宣传片/成片交付)→ `/make-film`**(film-studio,制片级外壳),按阶段加载所需 skill,每镜生成仍委托 catimation-image / catimation-video。
 4. **单镜打磨 / 反推参考图 → `/storyboard`、`/reverse-shot`**;**一张图出网格分镜 → storyboard-grid-to-seedance**;**连续性制片包 → `/create-storyboard`**(catimation-storyboard-pro)。这些产出提示词/制品,生成一律回到入口。

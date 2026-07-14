@@ -1,11 +1,20 @@
 ---
 name: seedance-cinematic-format
-description: Seedance 结构化成片提示词的纯知识辅助模块。由 sd2-pe 在需要查询字段定义、真人/2D 动画/3D 动画媒介差异、语言建议、电影感检索、导演与参考系调查规则或完整性检查时使用。输入已完成素材映射与路径判定的提示词草稿，输出可直接叠加的媒介格式规范；不做入口路由、不调用生成或 QA 工具。
+description: >-
+  Seedance 12-field structured prompt format (pure knowledge leaf). Always load
+  together with sd2-pe for video prompt engineering — including quick path-A
+  shots — for the mandatory field skeleton, live-action/2D/3D media profiles,
+  language defaults, and completeness checks. Input: draft after asset mapping
+  and path A/B. Output: overlay format only; no routing or QA tools.
 ---
 
 # Seedance Cinematic Prompt Format
 
 <!-- skill-budget: fast -->
+
+## 自动触发(视频提示词必载)
+与上游提示词工程一起加载——快速 / 路径 A / 路径 B 都要,不因「任务简单」跳过。
+只提供 12 字段骨架与媒介 profile;类别 reference 可再按需渐进披露。
 
 ## 角色与边界
 

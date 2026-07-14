@@ -29,6 +29,8 @@ test('sd2-pe keeps its existing workflow and adds the mandatory cinematic format
   assert.match(source, /媒介 profile.*真人.*2D 动画.*3D 动画/s)
   assert.match(source, /电影.*检索.*意图词/s)
   assert.match(source, /seedance-cinematic-format/)
+  assert.match(source, /每次\s*视频任务.*都必须先加载该 skill/s)
+  assert.doesNotMatch(source, /简单任务\s*不必额外加载/)
 })
 
 test('cinematic format helper is a leaf and defines all common fields plus three category overlays', async () => {
