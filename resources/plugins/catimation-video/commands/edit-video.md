@@ -2,7 +2,9 @@
 description: 视频后期 — 用 ffmpeg-win 做剪辑/拼接/字幕/调速/转码/平台导出
 ---
 
-载入 **ffmpeg-win** 技能(用 Skill 工具加载 `ffmpeg-win`),通过 ffmpeg MCP 工具完成后期:
+载入 **ffmpeg-win** 技能(用 Skill 工具加载 `ffmpeg-win`),先执行
+`ffmpeg -version` 选择后端:本地 CLI 可用时优先直接运行配方;只有本地
+FFmpeg/ffprobe 不可用时才改用 ffmpeg-win Docker MCP 工具:
 
 - 拼接片段、加转场、烧/挂字幕、调速、混音、加水印。
 - 平台导出规格见其 `references/platform-export.md`;音频处理见 `references/audio-processing.md`;硬件加速见 `references/streaming-and-hwaccel.md`;与 catimation 的衔接见 `references/catimation-workflow.md`。

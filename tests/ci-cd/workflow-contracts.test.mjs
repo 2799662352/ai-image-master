@@ -318,6 +318,17 @@ test('Windows release build never publishes from electron-builder', () => {
     build.steps.find((step) => step.name === 'Install dependencies').run,
     'pnpm install --frozen-lockfile',
   )
+  const fetchRuntimeStep = build.steps.find(
+    (step) => step.name === 'Fetch Windows runtime binaries',
+  )
+  assert.match(fetchRuntimeStep.run, /pnpm codex:fetch/)
+  assert.match(fetchRuntimeStep.run, /pnpm ffmpeg:fetch/)
+  assert.match(fetchRuntimeStep.run, /pnpm docker-mcp:fetch/)
+  assert.doesNotMatch(
+    fetchRuntimeStep.run,
+    /mediakit/i,
+    'retired mediakit runtime must not return to release packaging',
+  )
   const packageStep = build.steps.find(
     (step) => step.name === 'Package Windows x64 artifact',
   )
@@ -362,6 +373,21 @@ test('production runtime binaries are pinned by version and SHA-256', () => {
       path.join(repoRoot, 'scripts', 'runtime-assets.lock.json'),
       'utf8',
     ),
+  )
+  assert.deepEqual(
+    Object.keys(lock.components).sort(),
+    ['codex', 'dockerMcp', 'ffmpeg'],
+    'runtime lock must contain only the production binaries we intentionally ship',
+  )
+  assert.equal(packageJson.mediakitCliVersion, undefined)
+  assert.equal(packageJson.scripts['mediakit:fetch'], undefined)
+  assert.equal(
+    existsSync(path.join(repoRoot, 'scripts', 'fetch-mediakit.ts')),
+    false,
+  )
+  assert.doesNotMatch(
+    readFileSync(path.join(repoRoot, 'electron-builder.yml'), 'utf8'),
+    /mediakit/i,
   )
   assert.equal(lock.components.codex.version, packageJson.codexCliVersion)
   assert.equal(lock.components.ffmpeg.version, packageJson.ffmpegBuildTag)

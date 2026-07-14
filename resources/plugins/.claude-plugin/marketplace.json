@@ -49,7 +49,7 @@
     {
       "name": "catimation-video",
       "description": "视频出片与后期:sd2-pe 提示词工程化(总兜底,/sd2)→ Seedance 2.0 出片技法、catimation 应用内 generate_video(/gen-video)→ ffmpeg 剪辑拼接(/edit-video);研究驱动提示词。",
-      "version": "1.0.19",
+      "version": "1.0.20",
       "source": "./catimation-video",
       "author": {
         "name": "CATIMATION",
@@ -59,7 +59,7 @@
     {
       "name": "catimation-core",
       "description": "CATIMATION 应用核心集成:应用内出图 generate_image / 人像库管理 / 创意头脑风暴。含 /gen-image、/brainstorm 命令。",
-      "version": "1.0.15",
+      "version": "1.0.16",
       "source": "./catimation-core",
       "author": {
         "name": "CATIMATION",

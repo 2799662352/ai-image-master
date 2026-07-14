@@ -1,4 +1,5 @@
 import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from 'node:fs/promises'
+import crypto from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -8,6 +9,7 @@ import {
   CATIMATION_UNDERSTAND_SKILL,
   CATIMATION_FFMPEG_WIN_SKILL,
   FIRST_PARTY_SKILLS,
+  KNOWN_UNMARKED_FIRST_PARTY_SKILL_HASHES,
   installFirstPartySkills,
   type FirstPartySkill,
 } from '../firstPartySkills'
@@ -87,6 +89,72 @@ describe('installFirstPartySkills', () => {
       'utf8',
     )
     expect(written).toBe(skillV2.content)
+  })
+
+  it('adopts a markerless copy when it exactly matches the shipped content', async () => {
+    const officialRoot = await makeTempRoot()
+    const skillDir = path.join(officialRoot, skillV1.name)
+    await mkdir(skillDir, { recursive: true })
+    await writeFile(
+      path.join(skillDir, 'SKILL.md'),
+      skillV1.content.replace(/\n/g, '\r\n'),
+      'utf8',
+    )
+
+    const report = await installFirstPartySkills({ officialRoot, skills: [skillV1] })
+
+    expect(report.updated).toEqual(['demo-skill'])
+    expect(report.preserved).toEqual([])
+    expect(await readFile(path.join(skillDir, 'SKILL.md'), 'utf8')).toBe(skillV1.content)
+    expect(await readFile(path.join(skillDir, '.catimation-managed'), 'utf8')).toMatch(
+      /^[a-f0-9]{64}\n$/,
+    )
+  })
+
+  it('safely upgrades a recognized historical markerless copy', async () => {
+    const officialRoot = await makeTempRoot()
+    const skillDir = path.join(officialRoot, skillV1.name)
+    await mkdir(skillDir, { recursive: true })
+    await writeFile(path.join(skillDir, 'SKILL.md'), skillV1.content, 'utf8')
+    const historicalHash = crypto
+      .createHash('sha256')
+      .update(skillV1.content, 'utf8')
+      .digest('hex')
+
+    const report = await installFirstPartySkills({
+      officialRoot,
+      skills: [skillV2],
+      knownUnmarkedSkillHashes: new Map([
+        ['demo-skill', new Set([historicalHash])],
+      ]),
+    })
+
+    expect(report.updated).toEqual(['demo-skill'])
+    expect(report.preserved).toEqual([])
+    expect(await readFile(path.join(skillDir, 'SKILL.md'), 'utf8')).toBe(skillV2.content)
+  })
+
+  it('recognizes the earliest published markerless ffmpeg-win copy', () => {
+    expect(
+      KNOWN_UNMARKED_FIRST_PARTY_SKILL_HASHES.get('ffmpeg-win')?.has(
+        'c24cfd4c15b9c459ab31d3eb85d42b2d4fa8b36ae0eacfc316f738fbe6a477a0',
+      ),
+    ).toBe(true)
+  })
+
+  it('preserves an unknown markerless copy as user-owned', async () => {
+    const officialRoot = await makeTempRoot()
+    const skillDir = path.join(officialRoot, skillV1.name)
+    const userCopy =
+      '---\nname: demo-skill\ndescription: independently installed.\n---\n\ncustom\n'
+    await mkdir(skillDir, { recursive: true })
+    await writeFile(path.join(skillDir, 'SKILL.md'), userCopy, 'utf8')
+
+    const report = await installFirstPartySkills({ officialRoot, skills: [skillV2] })
+
+    expect(report.updated).toEqual([])
+    expect(report.preserved).toEqual(['demo-skill'])
+    expect(await readFile(path.join(skillDir, 'SKILL.md'), 'utf8')).toBe(userCopy)
   })
 
   it('preserves a user-edited skill (does not clobber manual changes)', async () => {

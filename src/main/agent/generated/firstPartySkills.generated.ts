@@ -1090,7 +1090,7 @@ unavailable; fall back to calling the three tools directly and tell the user.
 
 export const FFMPEG_WIN_SKILL_CONTENT = `---
 name: ffmpeg-win
-description: Process video/audio locally with the bundled FFmpeg 8.1 CLI (ffmpeg/ffprobe on PATH, zero Docker); ffmpeg-win Docker MCP tool as fallback. Use for transcoding, resizing, trimming, compression, audio extraction, concat, frame extraction, 3x3 contact sheets (九宫格), GIFs, inspection, and the technical half of the multimedia inspect→process→verify loop (ffprobe 粗检 + 九宫格视觉 + loudness + 修复). Triggers on "用 ffmpeg", "转码/压缩/裁剪/拼接视频", "提取音频", "抽帧", "九宫格", "审片/质检", "ffmpeg-win".
+description: Process video/audio locally with the bundled FFmpeg 8.1 CLI (ffmpeg/ffprobe on PATH, zero Docker); ffmpeg-win Docker MCP tool as fallback. Use for transcode, resize, trim, compress, concat, subtitle burn-in, watermark, speed, fade, flip, audio extract/mix/mux, frame extraction, 3x3 contact sheets (九宫格), GIFs, inspection, and the inspect→process→verify loop. Triggers on "用 ffmpeg", 转码/压缩/裁剪/拼接视频, 给视频加字幕/加水印/混音/变速/调音量/淡入淡出/镜像翻转, 提取音频, 抽帧, 九宫格, 审片/质检.
 ---
 
 # FFmpeg (local CLI preferred · ffmpeg-win Docker MCP fallback)
@@ -1253,6 +1253,25 @@ To AAC: \`-vn -acodec aac -b:a 192k "D:/out.m4a"\`. To WAV: \`-vn "D:/out.wav"\`
 > 或 \`-vn\`(wav),再导入。反过来,把音频包成「黑屏/波形 MP4」的技巧**只服务
 > \`understand_video\`(视频理解接口,不原生收音频)**,不要拿去喂音频接口。
 
+## Mix / Mux Audio
+
+Add or replace a video's audio track (mux, stop at the shorter stream):
+\`\`\`
+ffmpeg -y -i "D:/video.mp4" -i "D:/bgm.mp3" -map 0:v -map 1:a -c:v copy -c:a aac -shortest "D:/out.mp4"
+\`\`\`
+Keep the original voice and mix BGM underneath (voice 1.0 + bgm 0.3):
+\`\`\`
+ffmpeg -y -i "D:/video.mp4" -i "D:/bgm.mp3" -filter_complex "[1:a]volume=0.3[bg];[0:a][bg]amix=inputs=2:duration=first:dropout_transition=2[a]" -map 0:v -map "[a]" -c:v copy -c:a aac "D:/out.mp4"
+\`\`\`
+Delay a track 2s before mixing: prepend \`adelay=2000|2000,\` to that input's
+chain. Auto-duck BGM under voice → [references/catimation-workflow.md](references/catimation-workflow.md).
+
+## Flip / Rotate
+
+Mirror horizontally: \`-vf hflip -c:a copy\`. Vertically: \`-vf vflip -c:a copy\`.
+Rotate 90° clockwise: \`-vf "transpose=1"\` (\`2\` = counter-clockwise; 180° =
+\`transpose=1,transpose=1\`).
+
 ## Crop
 
 \`crop=w:h:x:y\`:
@@ -1296,6 +1315,26 @@ ffmpeg -y -i "D:/video.mp4" -i "D:/wm.png" -filter_complex "overlay=W-w-10:H-h-1
 \`\`\`
 Text overlay: \`-vf "drawtext=text='Hello':fontsize=24:fontcolor=white:x=10:y=10"\`.
 Picture-in-picture: \`-filter_complex "[1:v]scale=320:-1[pip];[0:v][pip]overlay=W-w-10:H-h-10"\`.
+Semi-transparent watermark: pre-fade the PNG layer —
+\`-filter_complex "[1:v]format=rgba,colorchannelmixer=aa=0.5[wm];[0:v][wm]overlay=W-w-10:H-h-10"\`.
+
+## Subtitles (burn-in)
+
+Hard-burn an SRT into the picture (re-encodes video; audio untouched):
+\`\`\`
+ffmpeg -y -i "D:/in.mp4" -vf "subtitles='D\\:/subs/final.srt'" -c:a copy "D:/out.mp4"
+\`\`\`
+- **Windows path escaping is special INSIDE the filter**: escape the drive
+  colon (\`D\\:/…\`), keep forward slashes, and single-quote the filename as
+  shown. On Backend B the whole \`subtitles=…\` filter stays ONE token.
+- Style without editing the SRT: append \`:force_style='FontSize=24,Alignment=2,MarginV=30'\`
+  inside the filter (numpad layout: \`2\` = bottom-center, \`8\` = top-center).
+  中文字幕加 \`FontName=Microsoft YaHei\` 防豆腐块。ASS files carry their own
+  styles — use \`-vf "ass='D\\:/subs.ass'"\` instead.
+- Soft subtitle track instead (toggleable, no re-encode):
+  \`ffmpeg -y -i "D:/in.mp4" -i "D:/subs.srt" -c copy -c:s mov_text "D:/out.mp4"\`
+  (MP4 only accepts \`mov_text\`).
+- No subtitle file yet? Write the SRT with your file-write tool first, then burn.
 
 ## Thumbnails / GIF
 

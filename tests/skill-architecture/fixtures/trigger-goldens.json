@@ -213,6 +213,26 @@
       "tags": ["transcode", "compression"]
     },
     {
+      "id": "burn-subtitles-existing",
+      "prompt": "给 D:/out/final.mp4 压上这段 SRT 字幕，位置底部居中。",
+      "expected": {
+        "shouldTrigger": ["ffmpeg-win"],
+        "shouldNotTrigger": ["catimation-image", "catimation-video", "film-studio"],
+        "budget": "fast"
+      },
+      "tags": ["post-production", "subtitles"]
+    },
+    {
+      "id": "watermark-existing-video",
+      "prompt": "在现有视频右下角加一个半透明 logo 水印，不要重新生成画面。",
+      "expected": {
+        "shouldTrigger": ["ffmpeg-win"],
+        "shouldNotTrigger": ["catimation-image", "catimation-video", "film-studio"],
+        "budget": "fast"
+      },
+      "tags": ["post-production", "watermark"]
+    },
+    {
       "id": "extract-audio-only",
       "prompt": "从现有 MP4 里提取 WAV 音轨。",
       "expected": {

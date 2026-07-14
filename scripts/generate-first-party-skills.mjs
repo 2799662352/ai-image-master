@@ -1,6 +1,7 @@
-#!/usr/bin/env node
 /**
  * 首方 skill 单一真源生成器。
+ * (无 shebang:该模块被 vitest 的 parity 测试直接 import,rolldown 的
+ * SSR transform 不接受拼接后位于句中的 `#!` 行;统一用 `node scripts/…` 调用。)
  *
  * 权威源(Markdown):
  *   - 共享 skill(同时进插件市场):resources/plugins/<plugin>/skills/<name>/SKILL.md
