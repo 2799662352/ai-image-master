@@ -15,8 +15,8 @@ test('sd2-pe keeps its existing workflow and adds the mandatory cinematic format
 
   for (const existingContract of [
     '## 八大核心要素',
-    '路径 A：简单视频',
-    '路径 B：复杂影视化场景',
+    '统一高规格单轨',
+    '总体设定 → 镜头分镜 → 风格与约束',
     '## 音频通道',
     '## 特殊字符规范',
     '## 强制约束',
@@ -25,10 +25,22 @@ test('sd2-pe keeps its existing workflow and adds the mandatory cinematic format
   }
 
   assert.match(source, /每次视频任务.*格式化骨架/s)
-  assert.match(source, /只能叠加.*不得替代.*路径 A.*路径 B/s)
+  assert.match(source, /只能叠加.*不得替代.*三段内容/s)
   assert.match(source, /媒介 profile.*真人.*2D 动画.*3D 动画/s)
   assert.match(source, /电影.*检索.*意图词/s)
   assert.match(source, /seedance-cinematic-format/)
+  assert.match(source, /每次\s*视频任务.*都必须先加载该 skill/s)
+  assert.doesNotMatch(source, /简单任务\s*不必额外加载/)
+
+  // 无简单视频降级路径:删除路径 A/B 双轨,单镜只减镜头数不降规格。
+  assert.match(source, /没有"简单视频"路径/)
+  assert.doesNotMatch(source, /路径 A|路径 B|路径A|路径B/)
+  assert.match(source, /单镜.*只写 `镜头1`|分镜段只有 `镜头1`/s)
+
+  // 参考候选:落笔前主动检索 2–3 个已核实真实影视参考供用户挑选。
+  assert.match(source, /#### 3\.3 参考候选/)
+  assert.match(source, /2–3 个已核实的真实影视参考候选/)
+  assert.match(source, /供用户挑选/)
 })
 
 test('cinematic format helper is a leaf and defines all common fields plus three category overlays', async () => {
@@ -123,6 +135,29 @@ test('media profiles stay flexible, inherit dialogue language, and preserve temp
 
   assert.match(helper, /references\/research-methods\.md/)
   assert.match(helper, /references\/prompt-output-template\.md/)
+
+  // 永不降级 + 检索复用:导演与参考系每次都要有已核实的真实参考,不分任务档位;
+  // 回执写回参考知识库、先复用后检索;仅检索工具完全不可用时才写无归属技法。
+  assert.match(helper, /永不降级/)
+  assert.match(helper, /复用/)
+  assert.doesNotMatch(helper, /允许完全不写人名/)
+  assert.doesNotMatch(helper, /只有用户点名[\s\S]{0,40}才由上游/)
+  assert.doesNotMatch(helper, /轻量核实/)
+  assert.match(sd2, /永不降级/)
+  assert.match(sd2, /复用/)
+  assert.match(research, /永不降级/)
+  assert.match(research, /先复用后检索/)
+  assert.match(research, /## 调查回执与复用/)
+  assert.match(research, /reference-receipts\.md/)
+  assert.doesNotMatch(research, /不是每次视频任务的前置门/)
+  assert.match(template, /已核实参考：\[必填/)
+  assert.match(template, /仅当检索工具完全不可用/)
+
+  // 参考候选给用户选 + 无路径 A/B 残留(镜头规划以 单镜/多镜 表述)。
+  assert.match(helper, /供用户挑选/)
+  assert.match(template, /单镜：\[镜头1/)
+  assert.doesNotMatch(helper, /路径 A|路径 B/)
+  assert.doesNotMatch(template, /路径 A|路径 B/)
   assert.match(helper, /真人.*2D.*3D.*媒介 profile.*允许.*组合/s)
   assert.match(helper, /电影.*检索.*意图词/s)
   assert.doesNotMatch(helper, /只选择一个主体类别|只选一个主体类别/)
@@ -155,5 +190,8 @@ test('media profiles stay flexible, inherit dialogue language, and preserve temp
   for (const hook of hooks) {
     assert.match(hook, /真人、2D、3D是可组合profile.*电影是检索意图词/s)
     assert.match(hook, /台词语言按用户要求或原文/)
+    assert.match(hook, /无简单视频降级路径/)
+    assert.match(hook, /真实影视参考候选/)
+    assert.doesNotMatch(hook, /路径A·B|路径 A\/B/)
   }
 })

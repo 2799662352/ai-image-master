@@ -51,6 +51,7 @@
     "test:release": "node --test scripts/release/*.test.mjs",
     "release:verify": "node scripts/release/prepare-release.mjs verify",
     "release:cos:dry": "node scripts/release/cos-release.mjs upload-assets --dry-run",
+    "pages:generate": "node scripts/release/generate-download-page.mjs",
     "test:ui": "vitest --ui",
     "test:e2e": "playwright test",
     "test:e2e:stable": "playwright test --project=electron-stable",

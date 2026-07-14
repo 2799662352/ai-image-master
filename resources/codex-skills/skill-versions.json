@@ -8,7 +8,7 @@
     "director-anime-quality-boost": "1.0.4",
     "director-character-consistency": "1.0.5",
     "director-cinematic-composition": "1.0.6",
-    "director-orchestrator": "1.0.8",
+    "director-orchestrator": "1.0.10",
     "director-lighting-continuity": "1.0.4",
     "director-narrative-flow": "1.0.4",
     "director-prompt-engineering": "1.0.4",
@@ -42,18 +42,18 @@
     "storyboard-style": "1.0.4",
     "storyboard-style-extraction-logic": "1.0.2",
     "storyboard-time-words": "1.0.2",
-    "storyboard-video-prompt-optimization": "1.0.7",
+    "storyboard-video-prompt-optimization": "1.0.9",
     "storyboard-visual": "1.0.4",
     "storyboard-voice-control": "1.0.2",
     "find-skills": "1.0.0",
     "ffmpeg-win": "1.0.8",
     "screenwriter": "1.0.3",
-    "seedance-video-craft": "1.0.10",
+    "seedance-video-craft": "1.0.12",
     "animation-craft": "1.0.7",
-    "film-studio": "1.0.7",
-    "sd2-pe": "1.0.10",
-    "storyboard-grid-to-seedance": "1.0.2",
+    "film-studio": "1.0.10",
+    "sd2-pe": "1.0.17",
+    "storyboard-grid-to-seedance": "1.0.3",
     "catimation-video-director-router": "1.0.2",
-    "seedance-cinematic-format": "1.0.2"
+    "seedance-cinematic-format": "1.0.7"
   }
 }
