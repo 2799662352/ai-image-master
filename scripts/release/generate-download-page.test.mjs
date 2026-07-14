@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 
 import {
   buildDownloadPageData,
+  SITE_COPY,
   writeDownloadPageBundle,
 } from './generate-download-page.mjs'
 
@@ -67,6 +68,8 @@ test('builds download metadata from release manifest and notes', () => {
     'CI 统一使用阻断式质量门禁',
     'Windows 安装包只构建一次',
   ])
+  assert.equal(data.site.summary, SITE_COPY.summary)
+  assert.equal(data.site.features.length, 6)
 })
 
 test('writes data.json and copies logo assets', () => {

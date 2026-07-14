@@ -5,83 +5,172 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="下载 CATIMATION-Cyberpunk Master Windows 安装包。支持自动热更新与 GitHub Release 兜底。"
+      content="CATIMATION-Cyberpunk Master 官方下载页。Windows 桌面 AI 图片与视频创作工具，支持 Agent、分镜导演与自动热更新。"
     />
     <title>下载 · CATIMATION-Cyberpunk Master</title>
     <link rel="icon" href="assets/logo.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Orbitron:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <div class="backdrop" aria-hidden="true"></div>
+    <div class="ambient" aria-hidden="true">
+      <span class="orb orb-a"></span>
+      <span class="orb orb-b"></span>
+      <span class="orb orb-c"></span>
+      <span class="grid"></span>
+      <span class="scanline"></span>
+    </div>
+
+    <header class="topbar">
+      <div class="brand">
+        <img class="brand-logo" src="assets/logo.svg" width="36" height="36" alt="" />
+        <span class="brand-name">CATIMATION</span>
+      </div>
+      <nav class="topnav">
+        <a href="#about">这是什么</a>
+        <a href="#features">能力</a>
+        <a href="#download">下载</a>
+        <a id="github-nav-link" href="#" rel="noopener noreferrer">GitHub</a>
+      </nav>
+    </header>
+
     <main class="shell">
-      <header class="hero">
-        <img class="logo" src="assets/logo.svg" width="88" height="88" alt="" />
-        <p class="eyebrow">Windows Desktop · AI Creation</p>
-        <h1 id="product-name">CATIMATION-Cyberpunk Master</h1>
-        <p class="tagline" id="tagline">AI 图片与视频创作桌面应用 · Windows x64</p>
-      </header>
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Official Download Portal</p>
+          <h1 id="product-name">CATIMATION-Cyberpunk Master</h1>
+          <p class="tagline" id="tagline">AI 图片与视频创作桌面应用 · Windows x64</p>
+          <p class="intro" id="about-summary"></p>
 
-      <section class="card download-card" aria-labelledby="download-heading">
-        <div class="card-head">
-          <div>
-            <p class="label">最新稳定版</p>
-            <h2 id="download-heading">
-              v<span id="version">…</span>
-            </h2>
+          <div class="hero-actions">
+            <a class="button primary" id="hero-download-button" href="#download">
+              立即下载最新版
+            </a>
+            <a class="button ghost" id="hero-release-button" href="#" rel="noopener noreferrer">
+              查看 Release 说明
+            </a>
           </div>
-          <span class="badge" id="channel-badge">stable</span>
-        </div>
 
-        <div class="meta-grid">
-          <div>
-            <span class="meta-label">平台</span>
-            <strong id="platform-label">Windows x64</strong>
-          </div>
-          <div>
-            <span class="meta-label">大小</span>
-            <strong id="size-label">…</strong>
-          </div>
-          <div>
-            <span class="meta-label">签名</span>
-            <strong id="signing-label">…</strong>
-          </div>
-          <div>
-            <span class="meta-label">发布时间</span>
-            <strong id="published-at">…</strong>
+          <div class="trust-row">
+            <span class="trust-pill">自动热更新</span>
+            <span class="trust-pill">COS 全球加速</span>
+            <span class="trust-pill">SHA-256 可校验</span>
           </div>
         </div>
 
-        <a class="button primary" id="download-button" href="#" rel="noopener">
-          下载 Windows 安装包
-        </a>
-        <p class="hint" id="installer-name"></p>
+        <aside class="hero-panel" id="download" aria-labelledby="download-heading">
+          <div class="panel-glow" aria-hidden="true"></div>
+          <div class="panel-inner">
+            <div class="panel-head">
+              <div>
+                <p class="label">最新稳定版</p>
+                <h2 id="download-heading">
+                  v<span id="version">…</span>
+                </h2>
+              </div>
+              <span class="badge live">
+                <span class="live-dot"></span>
+                <span id="channel-badge">stable</span>
+              </span>
+            </div>
 
-        <details class="checksum">
-          <summary>SHA-256 校验</summary>
-          <code id="sha256"></code>
-        </details>
+            <div class="stat-grid">
+              <article class="stat">
+                <span class="stat-label">平台</span>
+                <strong id="platform-label">Windows x64</strong>
+              </article>
+              <article class="stat">
+                <span class="stat-label">安装包</span>
+                <strong id="size-label">…</strong>
+              </article>
+              <article class="stat">
+                <span class="stat-label">签名</span>
+                <strong id="signing-label">…</strong>
+              </article>
+              <article class="stat">
+                <span class="stat-label">发布时间</span>
+                <strong id="published-at">…</strong>
+              </article>
+            </div>
+
+            <a class="button primary wide" id="download-button" href="#" rel="noopener">
+              <span>下载 Windows 安装包</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10m0 0 4-4m-4 4-4-4M5 21h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+            <p class="hint" id="installer-name"></p>
+
+            <div class="checksum">
+              <div class="checksum-head">
+                <span>SHA-256</span>
+                <button class="text-button" id="copy-sha256" type="button">复制</button>
+              </div>
+              <code id="sha256"></code>
+            </div>
+          </div>
+        </aside>
       </section>
 
-      <section class="card" aria-labelledby="highlights-heading">
-        <h2 id="highlights-heading">本版亮点</h2>
+      <section class="section" id="about" aria-labelledby="about-heading">
+        <div class="section-head">
+          <p class="section-kicker">About This Page</p>
+          <h2 id="about-heading">这个页面是做什么的？</h2>
+        </div>
+        <div class="about-grid">
+          <article class="glass-card">
+            <h3>官方下载入口</h3>
+            <p id="about-page-purpose"></p>
+          </article>
+          <article class="glass-card">
+            <h3>应用本身</h3>
+            <p id="about-product"></p>
+          </article>
+          <article class="glass-card">
+            <h3>更新方式</h3>
+            <p id="about-updates"></p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="features" aria-labelledby="features-heading">
+        <div class="section-head">
+          <p class="section-kicker">Capabilities</p>
+          <h2 id="features-heading">你能用它做什么</h2>
+        </div>
+        <div class="feature-grid" id="feature-grid"></div>
+      </section>
+
+      <section class="section" aria-labelledby="highlights-heading">
+        <div class="section-head">
+          <p class="section-kicker">Release Notes</p>
+          <h2 id="highlights-heading">v<span id="version-inline">…</span> 本版亮点</h2>
+        </div>
         <ul class="highlights" id="highlights"></ul>
       </section>
 
-      <section class="card links-card">
-        <h2>其他入口</h2>
-        <div class="links">
-          <a id="github-release-link" href="#" rel="noopener noreferrer">GitHub Release</a>
-          <a id="hot-update-link" href="#" rel="noopener noreferrer">热更新清单 latest.yml</a>
-          <a href="https://github.com/2799662352/ai-image-master" rel="noopener noreferrer">项目仓库</a>
+      <section class="section links-section">
+        <div class="links-card">
+          <div>
+            <h2>维护者与进阶用户</h2>
+            <p class="footnote">
+              需要核对版本、blockmap 或热更新频道时，可使用下方链接。普通用户只需下载安装包即可。
+            </p>
+          </div>
+          <div class="links">
+            <a id="github-release-link" href="#" rel="noopener noreferrer">GitHub Release</a>
+            <a id="hot-update-link" href="#" rel="noopener noreferrer">latest.yml</a>
+            <a id="repo-link" href="#" rel="noopener noreferrer">源码仓库</a>
+          </div>
         </div>
-        <p class="footnote">
-          已安装用户会通过应用内自动更新收到新版本；此页面仅用于首次下载与手动重装。
-        </p>
       </section>
     </main>
 
     <footer class="footer">
-      <p>© 2024–2026 CATIMATION · 安装包托管于腾讯云 COS · 页面由 GitHub Pages 提供</p>
+      <p>© 2024–2026 CATIMATION · 安装包托管于腾讯云 COS · 页面由 GitHub Pages 免费提供</p>
     </footer>
 
     <script src="app.js" defer></script>
