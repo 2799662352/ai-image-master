@@ -412,6 +412,54 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node scripts/release/cos-release.mjs promote
 
+  update-download-page:
+    name: Update Download Page
+    needs: [validate, publish, canonical]
+    if: inputs.dry_run == false && needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Checkout control plane
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '20'
+      - name: Download canonical artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ${{ needs.canonical.outputs.artifact_name }}
+          path: canonical
+      - name: Generate download page metadata
+        env:
+          RELEASE_DIR: canonical
+          RELEASE_NOTES_PATH: ${{ needs.validate.outputs.notes_path }}
+          COS_BUCKET: ${{ vars.COS_BUCKET }}
+          COS_REGION: ${{ vars.COS_REGION }}
+          COS_PREFIX: ${{ vars.COS_PREFIX }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RELEASE_URL: ${{ needs.publish.outputs.release_url }}
+        run: node scripts/release/generate-download-page.mjs
+      - name: Commit download page update
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/download/
+          if git diff --staged --quiet; then
+            echo "Download page already up to date"
+            exit 0
+          fi
+          git commit -m "chore(pages): update download page for v${RELEASE_VERSION}"
+          git push
+
   summary:
     name: Release Summary
     needs:

@@ -224,6 +224,34 @@ test('formal release is manual, serialized, and reuses quality/build workflows',
   )
 })
 
+test('formal release updates the public download page after publish', () => {
+  const workflow = loadWorkflow('release.yml')
+  const updateJob = workflow.jobs['update-download-page']
+  assert.ok(updateJob)
+  assert.match(updateJob.if, /dry_run == false/)
+  assert.ok(updateJob.needs.includes('publish'))
+  assert.ok(updateJob.needs.includes('canonical'))
+  const generateStep = updateJob.steps.find(
+    (step) => step.name === 'Generate download page metadata',
+  )
+  assert.match(generateStep.run, /generate-download-page\.mjs/)
+  const checkoutStep = updateJob.steps.find(
+    (step) => step.name === 'Checkout control plane',
+  )
+  assert.equal(checkoutStep.with.ref, '${{ github.sha }}')
+})
+
+test('download page deploys from docs/download via GitHub Pages', () => {
+  const workflow = loadWorkflow('pages.yml')
+  assert.equal(workflow.permissions.pages, 'write')
+  assert.equal(workflow.permissions['id-token'], 'write')
+  assert.equal(workflow.jobs.deploy.environment.name, 'github-pages')
+  const uploadStep = workflow.jobs.deploy.steps.find(
+    (step) => step.name === 'Upload Pages artifact',
+  )
+  assert.equal(uploadStep.with.path, 'docs/download')
+})
+
 test('release writes external state in the required order and promotes last', () => {
   const workflow = loadWorkflow('release.yml')
   const names = workflow.jobs.publish.steps.map((step) => step.name)
@@ -394,6 +422,7 @@ test('third-party actions are pinned to immutable commit SHAs', () => {
     '_windows-release-build.yml',
     'nonblocking-quality.yml',
     'release.yml',
+    'pages.yml',
     'migrate-release-baseline.yml',
     'rollback-hot-update.yml',
     'codex-auto-update.yml',

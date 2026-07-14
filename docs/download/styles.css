@@ -1,0 +1,245 @@
+:root {
+  color-scheme: dark;
+  --bg: #070b14;
+  --bg-soft: rgba(12, 18, 32, 0.82);
+  --line: rgba(0, 255, 255, 0.18);
+  --text: #e8f7ff;
+  --muted: #8aa0b8;
+  --cyan: #00f5ff;
+  --magenta: #ff2bd6;
+  --orange: #ff8a3d;
+  --shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+  --radius: 20px;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(circle at 20% 20%, rgba(0, 245, 255, 0.12), transparent 32%),
+    radial-gradient(circle at 80% 10%, rgba(255, 43, 214, 0.12), transparent 28%),
+    linear-gradient(180deg, #05070f 0%, #0a1020 45%, #070b14 100%);
+  pointer-events: none;
+}
+
+.backdrop::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.7), transparent);
+}
+
+.shell {
+  position: relative;
+  width: min(920px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 48px 0 72px;
+}
+
+.hero {
+  text-align: center;
+  margin-bottom: 28px;
+}
+
+.logo {
+  display: inline-block;
+  filter: drop-shadow(0 0 24px rgba(255, 138, 61, 0.35));
+}
+
+.eyebrow {
+  margin: 18px 0 8px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  color: var(--cyan);
+}
+
+h1,
+h2 {
+  margin: 0;
+}
+
+h1 {
+  font-size: clamp(2rem, 5vw, 3rem);
+  letter-spacing: 0.02em;
+}
+
+.tagline {
+  margin: 12px auto 0;
+  max-width: 640px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.card {
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(14px);
+  padding: 24px;
+  margin-bottom: 18px;
+}
+
+.download-card {
+  border-image: linear-gradient(135deg, rgba(0, 245, 255, 0.45), rgba(255, 43, 214, 0.35)) 1;
+}
+
+.card-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.label {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+#download-heading {
+  font-size: clamp(1.8rem, 4vw, 2.4rem);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 245, 255, 0.35);
+  color: var(--cyan);
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 22px;
+}
+
+.meta-label {
+  display: block;
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin-bottom: 4px;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 54px;
+  border-radius: 14px;
+  text-decoration: none;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.button.primary {
+  color: #041018;
+  background: linear-gradient(135deg, var(--cyan), #7cf7ff 40%, var(--orange));
+  box-shadow: 0 12px 40px rgba(0, 245, 255, 0.18);
+}
+
+.button.primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 16px 44px rgba(0, 245, 255, 0.24);
+}
+
+.hint {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  word-break: break-all;
+}
+
+.checksum {
+  margin-top: 18px;
+  color: var(--muted);
+}
+
+.checksum summary {
+  cursor: pointer;
+  color: var(--text);
+}
+
+.checksum code {
+  display: block;
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #b8ffe8;
+  word-break: break-all;
+  font-size: 0.82rem;
+}
+
+.highlights {
+  margin: 12px 0 0;
+  padding-left: 20px;
+  color: #d7e7f7;
+  line-height: 1.7;
+}
+
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.links a {
+  color: var(--cyan);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(0, 245, 255, 0.35);
+}
+
+.links a:hover {
+  color: #fff;
+}
+
+.footnote,
+.footer {
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.6;
+}
+
+.footer {
+  position: relative;
+  text-align: center;
+  padding: 0 16px 32px;
+}
+
+@media (max-width: 640px) {
+  .shell {
+    width: min(100%, calc(100% - 20px));
+    padding-top: 28px;
+  }
+
+  .meta-grid {
+    grid-template-columns: 1fr;
+  }
+}
