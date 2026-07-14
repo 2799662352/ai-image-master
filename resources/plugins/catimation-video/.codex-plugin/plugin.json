@@ -23,7 +23,7 @@
   "interface": {
     "displayName": "CATIMATION Video",
     "shortDescription": "sd2-pe 提示词工程化(总兜底)+ Seedance 出片 + ffmpeg 后期",
-    "longDescription": "AI 视频从提示词到成片,一切围绕 sd2-pe(Seedance 2.0 Prompt Optimizer)展开——它是视频与提示词的总兜底和起点:任何想法/草稿/多模态 JSON 先经它的八大要素自检、任务分类、素材映射与路径 A(单段)/路径 B(三段论)结构化重写,并自动挂载画质/稳定/水印/双胞胎等兜底包。其上叠加衍生:seedance-video-craft(模型对齐/全能参考配额/爆款体检)、director-orchestrator(成套分镜的 13 维定位)、storyboard-*(逐镜画面打磨);出片走应用内 generate_video,剪辑拼接/字幕/转码走 ffmpeg-win。",
+    "longDescription": "AI 视频从提示词到成片,一切围绕 sd2-pe(Seedance 2.0 Prompt Optimizer)展开——它是视频与提示词的总兜底和起点:任何想法/草稿/多模态 JSON 先经它的八大要素自检、任务分类、素材映射与统一三段结构(总体设定→镜头分镜→风格约束,无简单视频降级路径)结构化重写,并自动挂载画质/稳定/水印/双胞胎等兜底包。其上叠加衍生:seedance-video-craft(模型对齐/全能参考配额/爆款体检)、director-orchestrator(成套分镜的 13 维定位)、storyboard-*(逐镜画面打磨);出片走应用内 generate_video,剪辑拼接/字幕/转码走 ffmpeg-win。",
     "developerName": "CATIMATION",
     "category": "Creative",
     "capabilities": [

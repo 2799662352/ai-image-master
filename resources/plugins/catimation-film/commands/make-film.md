@@ -13,7 +13,7 @@ description: 端到端制片 — 用 film-studio 把一个想法一条龙做成�
 - **绝不跳门**:每道门产出成果 → 给用户看 → 确认后再前进。
 - 每步**调用本地工艺 skill**(screenwriter / storyboard-* / director-* / sd2-pe / seedance-video-craft / ffmpeg-win / animation-craft),不重写它们。
 - **G4 出图前先过 `director-orchestrator` STEP 0**。
-- **G5 图生视频:每条镜头提示词都必须先经 `sd2-pe`(视频与提示词的总兜底/起点)结构化**(八大要素 + 路径 A/B 三段论 + 兜底包 + 必载结构叶子 seedance-cinematic-format 的 12 字段骨架输出),再交 `generate_video`;成套分镜先用 director-orchestrator 做 13 维定位,落地仍回到 sd2-pe。
+- **G5 图生视频:每条镜头提示词都必须先经 `sd2-pe`(视频与提示词的总兜底/起点)结构化**(八大要素 + 统一三段结构 + 兜底包 + 必载结构叶子 seedance-cinematic-format 的 12 字段骨架输出),再交 `generate_video`;成套分镜先用 director-orchestrator 做 13 维定位,落地仍回到 sd2-pe。
 - 角色/场景锚点(G3)必须逐字下传到每条出图/视频 prompt。
 
 诉求在下方:
