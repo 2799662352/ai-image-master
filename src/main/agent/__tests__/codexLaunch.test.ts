@@ -321,9 +321,10 @@ describe('buildCodexLaunchArgs', () => {
     // Custom auth header via TOML inline table (the `-c` value is TOML-parsed).
     expect(args).toContain('mcp_servers.catimation.http_headers={ "x-catimation-token" = "deadbeef" }')
 
-    // Generous per-tool timeout so Codex waits for a real image render (minutes
-    // at 2K/4K high) instead of aborting + retrying mid-generation.
-    expect(args).toContain('mcp_servers.catimation.tool_timeout_sec=2000')
+    // Last-resort per-tool ceiling: above ToolRouter's 6h ask_user window so a
+    // human answering an option card hours later still reaches codex (compute
+    // tools are guarded by the router's own ~33min budget regardless).
+    expect(args).toContain('mcp_servers.catimation.tool_timeout_sec=25000')
   })
 
   it('uses the ephemeral port when the OS reassigned it', () => {
@@ -363,7 +364,7 @@ describe('buildCodexLaunchArgs', () => {
     expect(args.some((a) => a.includes('transport'))).toBe(false)
 
     // Transport-agnostic knobs still apply on the stdio path.
-    expect(args).toContain('mcp_servers.catimation.tool_timeout_sec=2000')
+    expect(args).toContain('mcp_servers.catimation.tool_timeout_sec=25000')
     expect(args).toContain('mcp_servers.catimation.supports_parallel_tool_calls=true')
     expect(args).toContain('skills.config=[{ name = "imagegen", enabled = false }]')
   })

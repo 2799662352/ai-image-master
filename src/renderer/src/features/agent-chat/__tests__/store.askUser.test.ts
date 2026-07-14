@@ -151,6 +151,93 @@ describe('ask / settleChoiceRequest', () => {
     expect(lastChoice().answer?.selected[0]?.id).toBe('a')
   })
 
+  describe('turn-terminal expiry (turn_completed / error / cancelled)', () => {
+    it('turn_completed freezes a pending card in the active thread and resolves the promise', async () => {
+      useAgentChatStore.setState({ threadId: 't1', messages: [], threadSlices: {} })
+      const promise = useAgentChatStore.getState().ask({
+        question: 'q',
+        options: [{ id: 'a', label: 'A' }],
+        mode: 'single',
+        allowFreeText: false,
+        allowSkip: true,
+      })
+      expect(lastChoice().status).toBe('pending')
+
+      useAgentChatStore.getState().applyEvent({ type: 'turn_completed', threadId: 't1' })
+
+      const answer = await promise
+      expect(answer.skipped).toBe(true)
+      const item = lastChoice()
+      expect(item.status).toBe('answered')
+      expect(item.expired).toBe(true)
+    })
+
+    it('a terminal error freezes the pending card; a willRetry error does NOT', async () => {
+      useAgentChatStore.setState({ threadId: 't1', messages: [], threadSlices: {} })
+      const promise = useAgentChatStore.getState().ask({
+        question: 'q',
+        options: [{ id: 'a', label: 'A' }],
+        mode: 'single',
+        allowFreeText: false,
+        allowSkip: true,
+      })
+
+      // Transient stream error: the backend retries the same turn — the card
+      // must stay clickable.
+      useAgentChatStore
+        .getState()
+        .applyEvent({ type: 'error', threadId: 't1', error: 'transient', willRetry: true })
+      expect(lastChoice().status).toBe('pending')
+
+      useAgentChatStore
+        .getState()
+        .applyEvent({ type: 'error', threadId: 't1', error: 'fatal' })
+      const answer = await promise
+      expect(answer.skipped).toBe(true)
+      expect(lastChoice().expired).toBe(true)
+    })
+
+    it('a terminal event for ANOTHER thread leaves the active card pending', () => {
+      useAgentChatStore.setState({ threadId: 't1', messages: [], threadSlices: {} })
+      void useAgentChatStore.getState().ask({
+        question: 'q',
+        options: [{ id: 'a', label: 'A' }],
+        mode: 'single',
+        allowFreeText: false,
+        allowSkip: true,
+      })
+
+      useAgentChatStore.getState().applyEvent({ type: 'turn_completed', threadId: 'other' })
+
+      expect(lastChoice().status).toBe('pending')
+    })
+
+    it('turn_completed freezes a pending card living in a background slice', async () => {
+      useAgentChatStore.setState({ threadId: 'active', messages: [], threadSlices: {} })
+      const promise = useAgentChatStore.getState().ask(
+        {
+          question: 'q',
+          options: [{ id: 'a', label: 'A' }],
+          mode: 'single',
+          allowFreeText: false,
+          allowSkip: true,
+        },
+        'background',
+      )
+
+      useAgentChatStore
+        .getState()
+        .applyEvent({ type: 'turn_completed', threadId: 'background' })
+
+      const answer = await promise
+      expect(answer.skipped).toBe(true)
+      const settled = useAgentChatStore.getState().threadSlices['background'].messages[0]
+        .items[0] as ChoiceRequestItem
+      expect(settled.status).toBe('answered')
+      expect(settled.expired).toBe(true)
+    })
+  })
+
   describe('abandonment (cancel / deleteThread)', () => {
     it('cancel() resolves a pending card as skipped and freezes it', async () => {
       ;(globalThis as any).window = globalThis

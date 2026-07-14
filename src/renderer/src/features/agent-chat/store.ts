@@ -1434,7 +1434,13 @@ function expirePendingChoices(messages: Message[]): { messages: Message[]; ids: 
       if (item.type === 'choiceRequest' && item.status === 'pending') {
         itemChanged = true
         ids.push(item.requestId)
-        return { ...item, status: 'answered' as const, answer: ABANDONED_CHOICE_ANSWER, endedAt: Date.now() }
+        return {
+          ...item,
+          status: 'answered' as const,
+          answer: ABANDONED_CHOICE_ANSWER,
+          expired: true,
+          endedAt: Date.now(),
+        }
       }
       return item
     })
@@ -3887,6 +3893,36 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         const next = { ...get().runningByThread }
         delete next[evtId]
         set({ runningByThread: next })
+      }
+      // The turn is over — any still-pending ask_user card in this thread can
+      // never deliver its answer (its blocked tool call has already returned
+      // via timeout / error / cancel). Freeze it as expired so the user isn't
+      // left with a clickable-but-dead button (the "过一段时间再点就卡住"
+      // bug), and resolve the renderer-side ask() promise so the executor's
+      // await doesn't leak. Normal turns are unaffected: while a card is
+      // pending the turn is blocked on the tool call, so a terminal event with
+      // a pending card is by definition an orphan.
+      if (evtId) {
+        const expiredIds: string[] = []
+        set((s) => {
+          if (s.threadId === evtId) {
+            const r = expirePendingChoices(s.messages)
+            expiredIds.push(...r.ids)
+            return r.messages === s.messages ? {} : { messages: r.messages }
+          }
+          const slice = s.threadSlices[evtId]
+          if (!slice) return {}
+          const r = expirePendingChoices(slice.messages)
+          expiredIds.push(...r.ids)
+          if (r.messages === slice.messages) return {}
+          return {
+            threadSlices: {
+              ...s.threadSlices,
+              [evtId]: { ...slice, messages: r.messages },
+            },
+          }
+        })
+        resolveAbandonedChoices(expiredIds)
       }
     }
     if (event.type === 'turn_completed') {

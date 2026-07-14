@@ -12,6 +12,23 @@ import type { AgentToolRequest, AgentToolResponse } from '../../types/agent'
 // never answers at all (crash / closed window).
 const RENDERER_TOOL_TIMEOUT_MS = 2_000_000
 
+// `ask_user` blocks on a HUMAN decision, not on compute — users routinely walk
+// away mid-pipeline and come back an hour later expecting the option card to
+// still work. The old shared ~33-min ceiling killed the pending call while the
+// card stayed rendered as clickable, so a late click was silently dropped here
+// ("卡住了"). Give the ask a 6-hour window instead; codex's own per-server
+// `tool_timeout_sec` is raised above this in codexLaunch.ts so this rejection
+// (a clean, explicit error) always reaches the model before codex invents its
+// own timeout. When it does fire, the turn ends and the renderer store expires
+// the card (see store.ts turn-terminal expiry), so no zombie button remains.
+const ASK_USER_TOOL_TIMEOUT_MS = 21_600_000
+
+function rendererToolTimeoutMs(toolName: string): number {
+  // Aliases (askuser/catimationaskuser/…) are normalized to the canonical name
+  // before reaching the router (askTools.ts delegates), so one check suffices.
+  return toolName === 'ask_user' ? ASK_USER_TOOL_TIMEOUT_MS : RENDERER_TOOL_TIMEOUT_MS
+}
+
 /**
  * `threadId` is the resolved DB thread id of the chat that issued the tool
  * call (reverse-mapped from the codex thread UUID), so main-process tools
@@ -89,7 +106,7 @@ export class ToolRouter {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         if (this.pending.delete(id)) reject(new Error(`Renderer tool timed out: ${toolName}`))
-      }, RENDERER_TOOL_TIMEOUT_MS)
+      }, rendererToolTimeoutMs(toolName))
 
       this.pending.set(id, { resolve, reject, timeout })
       try {
