@@ -246,6 +246,11 @@ jobs:
   authenticode:
     name: Verify Canonical Authenticode
     needs: canonical
+    if: >-
+      ${{
+        always() &&
+        needs.canonical.result == 'success'
+      }}
     runs-on: windows-latest
     timeout-minutes: 15
     permissions:
@@ -303,7 +308,15 @@ jobs:
   publish:
     name: Publish GitHub and COS
     needs: [validate, quality, canonical, authenticode]
-    if: inputs.dry_run == false
+    if: >-
+      ${{
+        always() &&
+        inputs.dry_run == false &&
+        needs.validate.result == 'success' &&
+        needs.quality.result == 'success' &&
+        needs.canonical.result == 'success' &&
+        needs.authenticode.result == 'success'
+      }}
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 90

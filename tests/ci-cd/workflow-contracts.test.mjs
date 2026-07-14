@@ -173,6 +173,11 @@ test('formal release is manual, serialized, and reuses quality/build workflows',
   assert.match(historicalDownload.with['run-id'], /discover\.outputs\.run_id/)
   assert.equal(workflow.jobs.authenticode['runs-on'], 'windows-latest')
   assert.equal(workflow.jobs.authenticode.needs, 'canonical')
+  assert.match(workflow.jobs.authenticode.if, /always\(\)/)
+  assert.match(
+    workflow.jobs.authenticode.if,
+    /needs\.canonical\.result == 'success'/,
+  )
   const canonicalSignatureCheck = workflow.jobs.authenticode.steps.find(
     (step) => step.name === 'Verify declared Windows signature state',
   )
@@ -186,7 +191,14 @@ test('formal release is manual, serialized, and reuses quality/build workflows',
     'authenticode',
   ])
   assert.equal(workflow.jobs.publish.environment, 'production')
+  assert.match(workflow.jobs.publish.if, /always\(\)/)
   assert.match(workflow.jobs.publish.if, /dry_run == false/)
+  for (const requiredJob of workflow.jobs.publish.needs) {
+    assert.match(
+      workflow.jobs.publish.if,
+      new RegExp(`needs\\.${requiredJob}\\.result == 'success'`),
+    )
+  }
   const publishCheckout = workflow.jobs.publish.steps.find(
     (step) => step.name === 'Checkout release control plane',
   )
