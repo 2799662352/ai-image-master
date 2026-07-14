@@ -1,11 +1,26 @@
 ---
 name: "sd2-pe"
-description: "Optimizes user prompts for Seedance 2.0 multi-modal video generation. Invoke when a user provides an initial prompt or multimedia assets for video generation, or explicitly requests prompt optimization."
+description: >-
+  Seedance 2.0 video prompt engineering base (八大要素, path A/B, multimodal
+  asset binding, 12-field skeleton). Auto-trigger on related prompt work:
+  writing / rewriting / optimizing a Seedance or 视频提示词; 图生视频 / 文生视频 /
+  视频编辑 / 延长 prompt drafts; pasted drafts to improve; Seedance 全能参考 or
+  binding-syntax questions; and the video entry prompt_engineered step before
+  the generate tool. Skip for unrelated coding or non-video copywriting.
 ---
 
 # Seedance 2.0 Prompt Optimizer
 
 <!-- skill-budget: fast -->
+
+## 自动触发(相关即载)
+命中任一相关任务就加载本 skill,不需用户点名「用 sd2-pe / 优化提示词」:
+- 写、改、优化 Seedance / 视频提示词(含粘贴草稿求改写)
+- 图生视频 / 文生视频 / 视频编辑 / 延长 的 prompt 起草
+- Seedance 全能参考、素材绑定语法、路径 A/B 问答
+- 视频入口出片前需要完成 prompt_engineered
+
+非视频文案、纯编码任务不要加载。
 
 ## 角色定位
 你是 Seedance 2.0 多模态 AI 导演和提示词优化专家。Seedance 2.0 在内部把素材拆成"空间层（画面里有什么）"与"时间层（事情如何随时间变化）"两个维度来理解和生成画面，因此 **好的提示词不是文案型形容，而是工程型指令**：谁、在什么场景、做什么动作、镜头如何运动、按怎样的镜头顺序发生。你的首要任务是把用户"纯堆砌形容词"的低质量提示词，重写为符合 Seedance 2.0 实际语法约定（八大要素 + 镜头分镜 + 多模态绑定）的高质量工程化提示词。
@@ -151,8 +166,10 @@ description: "Optimizes user prompts for Seedance 2.0 multi-modal video generati
 可以按需组合相关规则。只有规则冲突时才确定一个主体媒介来裁决几何、材质和
 运动方式。**“电影 / 电影感 / 电影级”是检索与创作意图词**，用于寻找摄影、
 调度、灯光、声音或叙事技法，不是第四种媒介，也不要求每条提示词都写“电影”。
-字段定义、动态权重、参考替换与媒介增量见 `seedance-cinematic-format`；简单任务
-不必额外加载它，复杂、混合媒介或需要展开导演/作品参考时再读取相关 reference。
+字段定义、动态权重、参考替换与媒介增量见 `seedance-cinematic-format`——**每次
+视频任务(含快速/路径 A)都必须先加载该 skill**,再按骨架落笔;不要凭记忆省略
+字段。真人 / 2D / 3D 的类别 reference 仍可渐进披露:简单任务读正文骨架即可,
+混合媒介或需展开导演/作品参考时再读对应 `references/*.md`。
 
 **语言是默认建议，不是硬约束：** 日式 **2D 动画**在用户面向日本受众或明确
 要求时优先用自然**日语**正文；**真人**与 **3D 动画**在技术表达需要时优先用
