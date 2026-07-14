@@ -9,7 +9,7 @@
     {
       "name": "catimation-director",
       "description": "导演模式总调度:以 13 维电影摄制框架(物理可复现参数优先于情绪形容词)编排镜头/构图/光影/连续性/角色一致性等导演技法,产出结构化提示词。含 13 个 director-* skill 与 /director 命令。",
-      "version": "1.0.10",
+      "version": "1.0.11",
       "source": "./catimation-director",
       "author": {
         "name": "CATIMATION",
@@ -19,7 +19,7 @@
     {
       "name": "catimation-storyboard",
       "description": "分镜技法库:光影重建、角色演技、构图遮挡、调色、运动学反推、负向控制等 29 个 storyboard-* craft skill,配 /storyboard 与 /reverse-shot 命令。",
-      "version": "1.0.7",
+      "version": "1.0.8",
       "source": "./catimation-storyboard",
       "author": {
         "name": "CATIMATION",
@@ -29,7 +29,7 @@
     {
       "name": "catimation-storyboard-pro",
       "description": "连续性优先的图生视频制片包生成器:剧本→角色/场景/道具/风格/连贯性圣经 + shot cards + handoff 衔接矩阵 + 剪辑边界矩阵 + 中英分离 Image2 提示词 + Seedance 逐镜提示词 + 剪映/CapCut 清单。含 create-storyboard skill 与 /create-storyboard 命令。",
-      "version": "1.0.6",
+      "version": "1.0.7",
       "source": "./catimation-storyboard-pro",
       "author": {
         "name": "CATIMATION",
@@ -39,7 +39,7 @@
     {
       "name": "catimation-film",
       "description": "端到端制片编排器:概念→剧本→分镜→出图→图生视频→配音→拼接→交付的门控流水线。含 film-studio / screenwriter / trailer-plan-generator / animation-craft 与 /make-film、/write-script、/trailer 命令。",
-      "version": "1.0.7",
+      "version": "1.0.8",
       "source": "./catimation-film",
       "author": {
         "name": "CATIMATION",
@@ -49,7 +49,7 @@
     {
       "name": "catimation-video",
       "description": "视频出片与后期:sd2-pe 提示词工程化(总兜底,/sd2)→ Seedance 2.0 出片技法、catimation 应用内 generate_video(/gen-video)→ ffmpeg 剪辑拼接(/edit-video);研究驱动提示词。",
-      "version": "1.0.18",
+      "version": "1.0.19",
       "source": "./catimation-video",
       "author": {
         "name": "CATIMATION",
