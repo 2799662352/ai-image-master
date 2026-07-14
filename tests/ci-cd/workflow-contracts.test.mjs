@@ -224,27 +224,26 @@ test('formal release is manual, serialized, and reuses quality/build workflows',
   )
 })
 
-test('formal release updates the public download page after publish', () => {
+test('formal release refreshes the public download page after publish', () => {
   const workflow = loadWorkflow('release.yml')
   const updateJob = workflow.jobs['update-download-page']
   assert.ok(updateJob)
   assert.match(updateJob.if, /dry_run == false/)
   assert.ok(updateJob.needs.includes('publish'))
-  assert.ok(updateJob.needs.includes('canonical'))
-  const stepNames = updateJob.steps.map((step) => step.name)
-  assert.ok(
-    stepNames.indexOf('Install dependencies') <
-      stepNames.indexOf('Generate download page metadata'),
-    'download page job must install node_modules before generating metadata',
+  assert.equal(
+    updateJob.permissions.contents,
+    'read',
+    'the release run must never write to protected branches for the download page',
   )
-  const generateStep = updateJob.steps.find(
-    (step) => step.name === 'Generate download page metadata',
+  const dispatchStep = updateJob.steps.find(
+    (step) => step.name === 'Dispatch GitHub Pages deployment',
   )
-  assert.match(generateStep.run, /generate-download-page\.mjs/)
-  const checkoutStep = updateJob.steps.find(
-    (step) => step.name === 'Checkout control plane',
+  assert.match(dispatchStep.run, /gh workflow run pages\.yml/)
+  assert.equal(
+    updateJob.steps.some((step) => /git push/.test(step.run ?? '')),
+    false,
+    'download page updates must go through the Pages workflow, not git push',
   )
-  assert.equal(checkoutStep.with.ref, '${{ github.sha }}')
 })
 
 test('download page deploys from docs/download via GitHub Pages', () => {
@@ -252,6 +251,22 @@ test('download page deploys from docs/download via GitHub Pages', () => {
   assert.equal(workflow.permissions.pages, 'write')
   assert.equal(workflow.permissions['id-token'], 'write')
   assert.equal(workflow.jobs.deploy.environment.name, 'github-pages')
+  const stepNames = workflow.jobs.deploy.steps.map((step) => step.name)
+  assert.ok(
+    stepNames.indexOf('Install dependencies') <
+      stepNames.indexOf('Refresh download metadata from release channel'),
+    'pages deploy must install node_modules before refreshing metadata',
+  )
+  assert.ok(
+    stepNames.indexOf('Refresh download metadata from release channel') <
+      stepNames.indexOf('Upload Pages artifact'),
+    'metadata must be refreshed before the artifact is uploaded',
+  )
+  const refreshStep = workflow.jobs.deploy.steps.find(
+    (step) => step.name === 'Refresh download metadata from release channel',
+  )
+  assert.match(refreshStep.run, /refresh-download-page\.mjs/)
+  assert.equal(refreshStep.env.COS_BUCKET, '${{ vars.COS_BUCKET }}')
   const uploadStep = workflow.jobs.deploy.steps.find(
     (step) => step.name === 'Upload Pages artifact',
   )
