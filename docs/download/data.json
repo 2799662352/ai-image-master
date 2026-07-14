@@ -3,9 +3,9 @@
   "productName": "CATIMATION-Cyberpunk Master",
   "tagline": "AI 图片与视频创作桌面应用 · Windows x64",
   "repository": "2799662352/ai-image-master",
-  "version": "4.3.96",
+  "version": "4.3.97",
   "channel": "stable",
-  "publishedAt": "2026-07-13T22:32:55.5368661Z",
+  "publishedAt": "2026-07-14T16:33:21.9065959Z",
   "signing": {
     "status": "unsigned",
     "subject": null
@@ -14,19 +14,21 @@
     "os": "Windows",
     "arch": "x64",
     "label": "Windows x64",
-    "installerName": "catimation-cyberpunk-master-4.3.96-setup.exe",
-    "sizeBytes": 483000907,
+    "installerName": "catimation-cyberpunk-master-4.3.97-setup.exe",
+    "sizeBytes": 482939196,
     "sizeLabel": "460.6 MB",
-    "sha256": "0e60a6e046639b0d73d1670952b52446b32daac658191b4948c9030441fa8b90",
-    "downloadUrl": "https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/catimation-cyberpunk-master-4.3.96-setup.exe"
+    "sha256": "83750679d803413108a11da320d30baaf68809f1a5fef9d36fe847343bcadf3b",
+    "downloadUrl": "https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/catimation-cyberpunk-master-4.3.97-setup.exe"
   },
-  "githubReleaseUrl": "https://github.com/2799662352/ai-image-master/releases/tag/v4.3.96",
+  "githubReleaseUrl": "https://github.com/2799662352/ai-image-master/releases/tag/v4.3.97",
   "hotUpdateUrl": "https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/latest.yml",
   "highlights": [
-    "CI 统一使用阻断式质量门禁，覆盖 TypeScript、单元测试、稳定 E2E 与 Vite 构建",
-    "Windows 安装包只构建一次，GitHub Release 与 COS 共用同一份规范制品",
-    "GitHub Release 与 COS 发布支持安全重试、公开复验与热更新频道回退",
-    "内置 Codex CLI 升级至 0.144.3，Windows x64 运行时资产固定 SHA-256 校验"
+    "Seedance Ark API 请求新增 30 秒硬超时（AbortController）：网络层挂起",
+    "图片任务注册表新增 30 分钟 running 看门狗：终态 IPC 丢失时任务自动判",
+    "工具完成 / 运行中横幅全面改为「先交付、再质检」纪律：生成完成后模型",
+    "`catimation-image` / `catimation-video` skill 同步更新：质检前先交付、",
+    "内置 Codex CLI 从 0.144.3 升级到 0.144.4。",
+    "上游本次为补丁版本，官方说明无用户可见变更；唯一改动是 Guardian 自动"
   ],
   "site": {
     "summary": "面向创作者的 Windows 桌面工作站：从 AI 出图、视频分镜到 Agent 协作，一套工具完成视觉生产流程。",
@@ -66,5 +68,5 @@
       }
     ]
   },
-  "updatedAt": "2026-07-14T00:00:00.000Z"
+  "updatedAt": "2026-07-14T17:49:19.894Z"
 }
