@@ -35,4 +35,62 @@ describe('ToolRouter', () => {
     const [, request] = send.mock.calls[0]
     expect(request.threadId).toBeUndefined()
   })
+
+  describe('renderer tool timeouts', () => {
+    it('a regular renderer tool still times out at the ~33-min ceiling', async () => {
+      vi.useFakeTimers()
+      try {
+        const win = { webContents: { send: vi.fn() } } as any
+        const router = new ToolRouter(win)
+        const call = router.call('generate_image', { prompt: 'x' })
+        call.catch(() => {}) // avoid an unhandled rejection between ticks
+
+        vi.advanceTimersByTime(2_000_000 + 1)
+
+        await expect(call).rejects.toThrow('Renderer tool timed out: generate_image')
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('ask_user survives the regular ceiling and only times out after 6 hours', async () => {
+      vi.useFakeTimers()
+      try {
+        const send = vi.fn()
+        const win = { webContents: { send } } as any
+        const router = new ToolRouter(win)
+        const call = router.call('ask_user', { question: 'q' })
+        const settled = vi.fn()
+        call.catch(settled)
+
+        // Past the regular renderer ceiling: the human may still be away.
+        vi.advanceTimersByTime(2_000_000 + 1)
+        await Promise.resolve()
+        expect(settled).not.toHaveBeenCalled()
+
+        // A late click still resolves the pending call.
+        const [, request] = send.mock.calls[0]
+        router.handleRendererResponse({ id: request.id, ok: true, result: { answered: true } })
+        await expect(call).resolves.toEqual({ answered: true })
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('ask_user rejects once the 6-hour window elapses', async () => {
+      vi.useFakeTimers()
+      try {
+        const win = { webContents: { send: vi.fn() } } as any
+        const router = new ToolRouter(win)
+        const call = router.call('ask_user', { question: 'q' })
+        call.catch(() => {}) // avoid an unhandled rejection between ticks
+
+        vi.advanceTimersByTime(21_600_000 + 1)
+
+        await expect(call).rejects.toThrow('Renderer tool timed out: ask_user')
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+  })
 })

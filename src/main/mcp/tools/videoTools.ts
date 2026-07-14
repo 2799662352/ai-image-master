@@ -5,7 +5,7 @@
 //   渲染完成前就停止轮询（turn 结束/自行判断「已提交」），视频出来了用户却
 //   没有拿到结果。
 // - v2 对齐 catimation `generate_image` 策略：stdio 桥上长工具调用是安全的
-//   （坑 1 只影响 streamable HTTP；codexLaunch 配了 tool_timeout_sec=2000），
+//   （坑 1 只影响 streamable HTTP；codexLaunch 配了 tool_timeout_sec=25000），
 //   所以 `generate_video` 内部轮询任务直到终态才返回 —— 「生成完才回归」，
 //   模型零轮询负担、不可能提前弃坑。
 // - `check_video_task` 是常规续轮询：首个阻塞窗口（~75s）烧完就交还 taskId，模型

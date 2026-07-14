@@ -178,6 +178,22 @@ function AnsweredSummary({ item }: { item: ChoiceRequestItem }) {
   const text = answer?.freeText?.trim()
   const skipped = answer?.skipped === true && labels.length === 0 && !text
 
+  // Frozen without a real user answer (turn ended / cancelled / timed out):
+  // tell the user how to continue instead of implying they chose to skip.
+  if (item.expired) {
+    return (
+      <div
+        data-testid="ask-user-card-expired"
+        className="mb-1 rounded-lg border border-zinc-700/60 bg-zinc-900/40 px-3 py-2.5"
+      >
+        <p className="mb-1 text-[12px] leading-snug text-zinc-400">{item.question}</p>
+        <p className="text-[12.5px] font-medium text-zinc-500">
+          该提问已过期（本回合已结束）——直接在下方输入框回复即可继续。
+        </p>
+      </div>
+    )
+  }
+
   return (
     <div
       data-testid="ask-user-card-answered"

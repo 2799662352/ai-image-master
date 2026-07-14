@@ -218,6 +218,14 @@ export interface ChoiceRequestItem extends BaseItem {
   status: 'pending' | 'answered'
   /** Filled once answered so the card renders a read-only summary. */
   answer?: ChoiceAnswer
+  /**
+   * Set when the card was frozen WITHOUT a real user answer — its turn ended
+   * (completed / errored / cancelled / thread deleted) so the blocked tool
+   * call can never deliver a click. The card renders as an expired notice
+   * steering the user to reply in the composer instead of leaving a
+   * clickable-but-dead button.
+   */
+  expired?: boolean
 }
 
 export type TimelineItem =

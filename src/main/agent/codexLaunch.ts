@@ -527,15 +527,20 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
       )
     }
     args.push(
-      // Give `generate_image` room to finish. Codex 0.141 raised the default
-      // per-tool timeout to 300s (openai/codex#28234), but a real image render
-      // on the vip channel — at 2K/4K high quality a single call can run for
-      // minutes — still blows past it. When Codex aborts first, the agent narrates a
-      // "tool timed out" and retries, even though the renderer kept going and
-      // the image actually completed + saved. ~2000s makes Codex wait for the
-      // real result (or an explicit error) instead of inventing a timeout. The
-      // value is plain seconds (codex deserializes it via `option_duration_secs`).
-      '-c', 'mcp_servers.catimation.tool_timeout_sec=2000',
+      // LAST-RESORT ceiling only. Codex 0.141's default per-tool timeout is
+      // 300s (openai/codex#28234); real calls need much more: a 2K/4K vip
+      // image render runs for minutes, and `ask_user` blocks on a HUMAN who
+      // may be away for hours (its option card stays valid for 6h — see
+      // ASK_USER_TOOL_TIMEOUT_MS in ToolRouter.ts). Every catimation tool is
+      // guarded by our own in-process ToolRouter budget (~33min for compute
+      // tools, 6h for ask_user), which always returns an explicit result or
+      // error, so codex's ceiling only matters if the main process itself
+      // wedges. 25000s (~6.9h) keeps it strictly ABOVE the 6h ask window so a
+      // late-but-valid click reaches codex instead of codex inventing its own
+      // timeout first (which killed the turn while the card still looked
+      // clickable — the "过一段时间再点就卡住" bug). Plain seconds
+      // (deserialized via `option_duration_secs`).
+      '-c', 'mcp_servers.catimation.tool_timeout_sec=25000',
       // Let the agent fire several `generate_image` calls in ONE turn without the
       // turn blocking on each render serially. Codex gates MCP parallelism per
       // server: `ToolRouter::tool_supports_parallel` only returns true when the
