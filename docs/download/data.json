@@ -3,9 +3,9 @@
   "productName": "CATIMATION-Cyberpunk Master",
   "tagline": "AI 图片与视频创作桌面应用 · Windows x64",
   "repository": "2799662352/ai-image-master",
-  "version": "4.3.97",
+  "version": "4.3.98",
   "channel": "stable",
-  "publishedAt": "2026-07-14T16:33:21.9065959Z",
+  "publishedAt": "2026-07-14T19:12:22.0051986Z",
   "signing": {
     "status": "unsigned",
     "subject": null
@@ -14,21 +14,21 @@
     "os": "Windows",
     "arch": "x64",
     "label": "Windows x64",
-    "installerName": "catimation-cyberpunk-master-4.3.97-setup.exe",
-    "sizeBytes": 482939196,
+    "installerName": "catimation-cyberpunk-master-4.3.98-setup.exe",
+    "sizeBytes": 482940186,
     "sizeLabel": "460.6 MB",
-    "sha256": "83750679d803413108a11da320d30baaf68809f1a5fef9d36fe847343bcadf3b",
-    "downloadUrl": "https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/catimation-cyberpunk-master-4.3.97-setup.exe"
+    "sha256": "a754c673aa936f18a8f04f8d797cd59ee02bc53eb1c2d0b2d711c390ba7ce1b1",
+    "downloadUrl": "https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/catimation-cyberpunk-master-4.3.98-setup.exe"
   },
-  "githubReleaseUrl": "https://github.com/2799662352/ai-image-master/releases/tag/v4.3.97",
+  "githubReleaseUrl": "https://github.com/2799662352/ai-image-master/releases/tag/v4.3.98",
   "hotUpdateUrl": "https://map-tiles-bucket-1345773498.cos.ap-guangzhou.myqcloud.com/releases/latest.yml",
   "highlights": [
-    "Seedance Ark API 请求新增 30 秒硬超时（AbortController）：网络层挂起",
-    "图片任务注册表新增 30 分钟 running 看门狗：终态 IPC 丢失时任务自动判",
-    "工具完成 / 运行中横幅全面改为「先交付、再质检」纪律：生成完成后模型",
-    "`catimation-image` / `catimation-video` skill 同步更新：质检前先交付、",
-    "内置 Codex CLI 从 0.144.3 升级到 0.144.4。",
-    "上游本次为补丁版本，官方说明无用户可见变更；唯一改动是 Guardian 自动"
+    "根因：`ask_user` 调用链上同时挂着两个约 33 分钟的超时（渲染层工具等待",
+    "`ToolRouter`：`ask_user` 单独给 6 小时等待窗口，其他工具维持约 33 分钟",
+    "Codex 启动配置：catimation 工具超时天花板从 2000s 抬到 25000s（约",
+    "渲染层：回合终结（完成 / 取消 / 终态错误）时冻结该线程所有 pending 选",
+    "过期卡片显示明确提示（「该提问已过期——直接在下方输入框回复即可继续」），",
+    "修复后行为：6 小时内回来点击可直接继续跑；超过 6 小时或回合已死，卡片"
   ],
   "site": {
     "summary": "面向创作者的 Windows 桌面工作站：从 AI 出图、视频分镜到 Agent 协作，一套工具完成视觉生产流程。",
@@ -68,5 +68,5 @@
       }
     ]
   },
-  "updatedAt": "2026-07-14T17:49:19.894Z"
+  "updatedAt": "2026-07-14T19:29:07.030Z"
 }
