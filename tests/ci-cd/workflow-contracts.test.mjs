@@ -231,6 +231,12 @@ test('formal release updates the public download page after publish', () => {
   assert.match(updateJob.if, /dry_run == false/)
   assert.ok(updateJob.needs.includes('publish'))
   assert.ok(updateJob.needs.includes('canonical'))
+  const stepNames = updateJob.steps.map((step) => step.name)
+  assert.ok(
+    stepNames.indexOf('Install dependencies') <
+      stepNames.indexOf('Generate download page metadata'),
+    'download page job must install node_modules before generating metadata',
+  )
   const generateStep = updateJob.steps.find(
     (step) => step.name === 'Generate download page metadata',
   )
