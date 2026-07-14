@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="下载 CATIMATION-Cyberpunk Master Windows 安装包。支持自动热更新与 GitHub Release 兜底。"
+    />
+    <title>下载 · CATIMATION-Cyberpunk Master</title>
+    <link rel="icon" href="assets/logo.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="backdrop" aria-hidden="true"></div>
+    <main class="shell">
+      <header class="hero">
+        <img class="logo" src="assets/logo.svg" width="88" height="88" alt="" />
+        <p class="eyebrow">Windows Desktop · AI Creation</p>
+        <h1 id="product-name">CATIMATION-Cyberpunk Master</h1>
+        <p class="tagline" id="tagline">AI 图片与视频创作桌面应用 · Windows x64</p>
+      </header>
+
+      <section class="card download-card" aria-labelledby="download-heading">
+        <div class="card-head">
+          <div>
+            <p class="label">最新稳定版</p>
+            <h2 id="download-heading">
+              v<span id="version">…</span>
+            </h2>
+          </div>
+          <span class="badge" id="channel-badge">stable</span>
+        </div>
+
+        <div class="meta-grid">
+          <div>
+            <span class="meta-label">平台</span>
+            <strong id="platform-label">Windows x64</strong>
+          </div>
+          <div>
+            <span class="meta-label">大小</span>
+            <strong id="size-label">…</strong>
+          </div>
+          <div>
+            <span class="meta-label">签名</span>
+            <strong id="signing-label">…</strong>
+          </div>
+          <div>
+            <span class="meta-label">发布时间</span>
+            <strong id="published-at">…</strong>
+          </div>
+        </div>
+
+        <a class="button primary" id="download-button" href="#" rel="noopener">
+          下载 Windows 安装包
+        </a>
+        <p class="hint" id="installer-name"></p>
+
+        <details class="checksum">
+          <summary>SHA-256 校验</summary>
+          <code id="sha256"></code>
+        </details>
+      </section>
+
+      <section class="card" aria-labelledby="highlights-heading">
+        <h2 id="highlights-heading">本版亮点</h2>
+        <ul class="highlights" id="highlights"></ul>
+      </section>
+
+      <section class="card links-card">
+        <h2>其他入口</h2>
+        <div class="links">
+          <a id="github-release-link" href="#" rel="noopener noreferrer">GitHub Release</a>
+          <a id="hot-update-link" href="#" rel="noopener noreferrer">热更新清单 latest.yml</a>
+          <a href="https://github.com/2799662352/ai-image-master" rel="noopener noreferrer">项目仓库</a>
+        </div>
+        <p class="footnote">
+          已安装用户会通过应用内自动更新收到新版本；此页面仅用于首次下载与手动重装。
+        </p>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>© 2024–2026 CATIMATION · 安装包托管于腾讯云 COS · 页面由 GitHub Pages 提供</p>
+    </footer>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>
