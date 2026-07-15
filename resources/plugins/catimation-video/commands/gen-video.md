@@ -10,7 +10,7 @@ description: 生成视频 — 先用 sd2-pe 工程化提示词(总兜底),再 Se
    - 模型能力对齐/全能参考配额/爆款体检 → `seedance-video-craft`。
    - 单镜画面问题(光影/演技/调色/去 AI 味)→ 对应 `storyboard-*`。
    - 提示词过长/指令冲突 → `storyboard-video-prompt-optimization`(在 sd2-pe 结构内精简)。
-3. **出片**:把 sd2-pe 产出的提示词交 `catimation-video` 的 `generate_video`(默认全能参考);素材按 `@图片N`/`@视频N`/`@音频N` 顺序引用。
+3. **出片**:把 sd2-pe 产出的提示词交 `catimation-video` 的 `generate_video`(默认全能参考);素材按规范形式 `图片N`/`视频N`/`音频N` 顺序引用。
 4. 出片后简短确认,**不要自检**。
 
 诉求在下方(可附关键帧/参考路径):

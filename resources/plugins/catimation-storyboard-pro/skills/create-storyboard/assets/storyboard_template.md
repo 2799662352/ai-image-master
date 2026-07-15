@@ -10,7 +10,7 @@
 | 项目名称 |  |
 | 视频类型 | 短剧 / 广告片 / 长剧 / 古装 / 科幻 / 动画 / 产品片 / 其他 |
 | 目标时长 |  |
-| 画幅 | 待确认：9:16 / 16:9 / 1:1 / 其他 |
+| 画幅 | 待确认：16:9 / 9:16 / 4:3 / 3:4 / 1:1 / 21:9 |
 | 平台 / 用途 |  |
 | 核心受众 |  |
 | 叙事目标 |  |
@@ -61,7 +61,7 @@
 
 | 连续性维度 | 锁定内容 | 影响镜头 | 检查方法 |
 | --- | --- | --- | --- |
-| 人物外貌 |  | C001 / C002 | 对照角色 360 与表情表 |
+| 人物外貌 |  | C001 / C002 | 对照用户最终选定的 identity-hard 主锚 |
 | 服装/发型 |  | 全片 | 每个 keyframe 复核 |
 | 场景空间关系 |  | S001 | 建立图、平面方向、主机位 |
 | 180 度轴线 |  | SH001-SH### | 标注角色左右关系和镜头站位 |
@@ -76,8 +76,10 @@
 
 | 图片 ID | 类型 | 归属 ID | 用途 | 视角 / 构图 | 必要性 | 中文提示词路径 | 英文提示词路径 | 生成图路径 | 选中图路径 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| C001_turnaround | 角色 360 | C001 | 保持人物一致性 | 正面、背面、左右侧、三分之四 | 必需 |  |  |  |  |
-| C001_expression | 表情九宫格 | C001 | 表演一致性 | 9 格表情 | 情绪戏必需 |  |  |  |  |
+| C001_headshot | 角色大头照 | C001 | identity-hard 候选：锁面部 | 正脸、无表情、干净背景 | 按选定方案 |  |  |  |  |
+| C001_fullbody | 角色全身照 | C001 | identity-hard 候选：锁妆造/体型 | 正面全身、干净背景 | 按选定方案 |  |  |  |  |
+| C001_turnaround | 多视图角色板 | C001 | identity-hard 候选/主锚 | 三/四/多视图，同一角色 | 按选定方案 |  |  |  |  |
+| C001_expression | 表情九宫格 | C001 | 表演参考 | 9 格表情 | 视情况 |  |  |  |  |
 | C001_pose_action | 动作姿势表 | C001 | 动作连续性 | 起始、中间、结束 | 复杂动作必需 |  |  |  |  |
 | S001_establishing | 场景建立图 | S001 | 空间/光线/方向 | 大远景或主机位 | 必需 |  |  |  |  |
 | S001_reverse_angle | 场景反打图 | S001 | 视线和轴线 | 反打方向 | 对话/对望必需 |  |  |  |  |
@@ -89,6 +91,8 @@
 | CLIP001_key_panel | Clip 分镜 panel 源图 | CLIP001 | 最终分镜板视觉源 | KEY ACTION 干净画面，无文字 | 必需 |  |  |  |  |
 | CLIP001_out_panel | Clip 分镜 panel 源图 | CLIP001 | 最终分镜板视觉源 | EDIT OUT 干净画面，无文字 | 必需 |  |  |  |  |
 | CLIP001_storyboard_0-6s | Clip 生产分镜板 | CLIP001 | 制片审阅与生产统筹 | 确定性排版，含可读镜头/动作/剪辑信息 | 必需 |  |  |  |  |
+| SEQ_S001_3x3 | 序列/氛围总览板 | S001 | 色彩/光线/材质/时代感/空间气质/视觉母题 | 3×3/4×4 | 视情况 |  |  |  |  |
+| ART_S001_16x9 | 电影美术设定板 | S001 | 场景地理/机位/材质/灯光/色板 | 俯视图+镜头表+立剖面+材质灯光+角色剧情 | 视情况 |  |  |  |  |
 
 ## 6. 分镜总表
 
@@ -122,9 +126,13 @@ occlusion_carrier: "门框、人物背影、黑场、前景物体、烟雾、光
 visual_bridge: "颜色、形状、亮度、构图、前景元素或道具的视觉接力"
 handoff_risk_reduction: "说明该接力如何降低身份跳变、空间跳变、光线跳变、动作断裂或节奏断裂"
 reference_images:
-  - C001_turnaround
+  - C001_identity_anchor_primary
   - S001_establishing
   - KF_CLIP001_start
+reference_roles:
+  - "C001_identity_anchor_primary: identity-hard; source=user-selected headshot+fullbody / multi-view board / approved asset"
+  - "KF_CLIP001_start: keyframe-strong"
+  - "SEQ_S001_3x3 / ART_S001_16x9: atmosphere-loose; prompt=primary; must_not_copy=边框、编号、文字、拼贴版式"
 scenedance_prompt: "一条清晰动作链 + 一个主运镜 + 接棒入点 + 交棒出点 + 连续性锁定"
 prev_transition: "片头 / 来自上一镜头的衔接方式"
 next_transition: "切到下一镜头的衔接方式"
@@ -167,9 +175,9 @@ fallback_plan: "改成更短镜头 / 切道具特写 / 插入反应镜头 / 重�
 
 ## 9. SceneDance 参考图组合表
 
-| Clip ID | 主输入关键帧 | 人物参考 | 场景参考 | 道具参考 | 动作/表情参考 | 分镜图参考 | 为什么需要这些参考图 | 不使用哪些图 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| CLIP001 | KF_CLIP001_start | C001_turnaround | S001_establishing | P001_reference | C001_pose_action | CLIP001_storyboard_0-6s | 锁定身份、空间、道具和动作起点 | 不把带表格文字的分镜图作为唯一主输入 |
+| Clip ID | 主输入关键帧 | identity-hard | keyframe-strong | atmosphere-loose | director-free | must_not_copy | 为什么需要 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| CLIP001 | KF_CLIP001_start | C001_identity_anchor_primary / P001_hero | KF_CLIP001_start | SEQ_S001_3x3 / ART_S001_16x9 | 转场、微动作、运镜插值、粒子、节奏 | 网格边框、编号、文字、表格、拼贴版式 | 用户选定身份锚与关键帧强约束；总览板只供氛围 |
 
 ## 10. 镜头接力矩阵
 
@@ -195,15 +203,22 @@ fallback_plan: "改成更短镜头 / 切道具特写 / 插入反应镜头 / 重�
 
 | Panel ID | Clip ID | Panel 角色 | 时间点 | 参考输入图 | 生成方式 | 图片路径 | 完成状态 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| CLIP001_start_panel | CLIP001 | START | 0s | C001_turnaround / S001_establishing / KF_CLIP001_start | Image 2 生成干净视觉 panel；禁止文字、表格、caption 和多 clip overview | final_image_package/clip_storyboards/panels/CLIP001_start.png | pending |
-| CLIP001_key_panel | CLIP001 | KEY ACTION | 2-5s | C001_turnaround / S001_establishing / KF_CLIP001_key | Image 2 生成干净视觉 panel；禁止文字、表格、caption 和多 clip overview | final_image_package/clip_storyboards/panels/CLIP001_key.png | pending |
-| CLIP001_out_panel | CLIP001 | EDIT OUT / HANDOFF | 6s | C001_turnaround / S001_establishing / KF_CLIP001_out | Image 2 生成干净视觉 panel；禁止文字、表格、caption 和多 clip overview | final_image_package/clip_storyboards/panels/CLIP001_out.png | pending |
+| CLIP001_start_panel | CLIP001 | START | 0s | C001_identity_anchor_primary / S001_establishing / KF_CLIP001_start | Image 2 生成干净视觉 panel；禁止文字、表格、caption 和多 clip overview | final_image_package/clip_storyboards/panels/CLIP001_start.png | pending |
+| CLIP001_key_panel | CLIP001 | KEY ACTION | 2-5s | C001_identity_anchor_primary / S001_establishing / KF_CLIP001_key | Image 2 生成干净视觉 panel；禁止文字、表格、caption 和多 clip overview | final_image_package/clip_storyboards/panels/CLIP001_key.png | pending |
+| CLIP001_out_panel | CLIP001 | EDIT OUT / HANDOFF | 6s | C001_identity_anchor_primary / S001_establishing / KF_CLIP001_out | Image 2 生成干净视觉 panel；禁止文字、表格、caption 和多 clip overview | final_image_package/clip_storyboards/panels/CLIP001_out.png | pending |
 
 ### 13.2 Final Production Board
 
 | 分镜板 ID | Clip ID | 时间轴 | Clip 时长 | 视觉 panel | 文本来源 | 生成方式 | 图片路径 | 完成状态 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | CLIP001_storyboard_0-6s | CLIP001 | 0-6s | 6s | CLIP001_start_panel / CLIP001_key_panel / CLIP001_out_panel | `shot_cards.md` / `handoff_design_matrix.md` / `edit_boundary_matrix.md` / `scenedance_shot_prompts.md` | 本地确定性排版；必须包含可读 Clip ID、时间、START/KEY ACTION/EDIT OUT、镜头、动作、剪辑、音频桥、参考图和风险信息 | final_image_package/clip_storyboards/CLIP001_storyboard_0-6s.png | pending |
+
+### 13.3 Optional Project Overview Boards
+
+| Board ID | 类型 | 负责 | 不负责 | 视觉层 | 信息层 | 图片路径 | 状态 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| SEQ_S001_3x3 | 序列/氛围总览板 | 色彩、光线、材质、时代感、空间气质、视觉母题 | 故事、构图、动作、顺序、时长、身份 | 图像模型生成缩略图/panel | 本地叠加镜头编号与简短说明 | final_image_package/overview_boards/sequence/SEQ_S001_3x3.png | optional |
+| ART_S001_16x9 | 电影美术设定板 | 色彩、光线、材质、时代感、空间气质、视觉母题 | 故事、构图、动作、顺序、时长、身份 | 图像模型生成平面/立剖面/材质灯光视觉源 | 本地叠加机位、尺寸、镜头表与生产文字 | final_image_package/overview_boards/art_direction/ART_S001_16x9.png | optional |
 
 ## 14. 后期剪辑计划
 
@@ -225,4 +240,6 @@ fallback_plan: "改成更短镜头 / 切道具特写 / 插入反应镜头 / 重�
 | Clip 分镜 panel 源图 | Clip 数量 × 3 起 | final_image_package/clip_storyboards/panels/ | pending |
 | Clip 起始关键帧 | Clip 数量 | final_image_package/clip_keyframes/ | pending |
 | 角色/场景/道具参考图 | 资产清单数量 | final_image_package/support_assets/ | pending |
+| 序列/氛围总览板 | 按项目需要 | final_image_package/overview_boards/sequence/ | optional |
+| 电影美术设定板 | 按项目需要 | final_image_package/overview_boards/art_direction/ | optional |
 | 图片清单 | 1 | final_image_package/image_manifest.md | pending |

@@ -24,6 +24,9 @@ generate_image / generate_video
 - **唯一入口**:`catimation-image` 与 `catimation-video` 分别独占图片/视频领域的宽泛触发词(生成图片、出视频、让静帧动起来等)。其它任何 skill 的 description 不得再认领这些宽泛入口。
 - **单向依赖(DAG)**:入口可以按需加载 craft;craft 是叶子节点,不得反向调用入口、router、orchestrator、生成工具或 QA 工具。正文中只有**反引号**引用的 skill 名才算依赖边,纯文本提及不算。
 - **幂等状态**:入口维护本回合 routing receipt——`task_level`、`direction_confirmed`、`spec_confirmed`、`prompt_engineered`、`qa_completed`、`generation_attempts`。下游只读取,不重复执行已完成阶段;规格(画幅/时长/分辨率)整回合只确认一次。
+- **身份锚点用户驱动**:大头照+全身照、三视图/四视图/多视图角色板或其它确认
+  资产都可作为 `identity-hard`;用户已指定就采用,多套候选拿不准且身份关键时询问,
+  仅低风险未指定时使用轻量默认。
 - **制片外壳**:`film-studio` 只负责真正的多镜成片项目,按 G0–G8 阶段加载所需 skill,每镜生成仍委托两个入口。
 
 ## 2. 四级任务分层与调用预算
@@ -50,7 +53,7 @@ QA 触发(由入口唯一执行,自动修正上限 2 次,继续付费重试需�
 |---|---|
 | `catimation-image` / `catimation-video` | 唯一入口 + 任务分级者 + 规格确认 + 生成调用 + QA 升级;预算标记 `pro` |
 | `sd2-pe` | Seedance 提示词格式与素材绑定规则,纯工艺叶子;每次视频任务保留八要素与统一三段结构(无「简单视频」降级路径,单镜只减镜头数不降规格),再用真人/2D/3D 可组合媒介 profile 输出不可删减的 12 字段格式化骨架,并主动出已核实影视参考候选供用户选;“电影”是检索创作技法的意图词 |
-| `seedance-cinematic-format` | `sd2-pe` 的**必载**结构叶子:每次视频提示词任务都加载,提供 12 字段定义、真人/2D/3D 媒介差异、语言建议、动态权重与导演/作品参考替换规则;类别 reference 仍可渐进披露;不做入口路由、不调用生成或 QA |
+| `seedance-cinematic-format` | `sd2-pe` 的**必载**结构叶子:每次视频提示词任务都加载,提供 12 字段定义、真人/2D/3D 媒介差异、语言建议、prompt-primary/identity-hard/keyframe-strong/atmosphere-loose/director-free 语义优先级与导演/作品参考替换规则;使用故事板/多宫格时强制提示词主导前缀;类别 reference 仍可渐进披露;不做入口路由、不调用生成或 QA |
 | `director-orchestrator` | 复杂镜头 13 维设计调度器,仅专业/制片级由入口加载;不再「每次必用」,无 STEP -1 强制路由 |
 | `catimation-video-director-router` | 症状修复查找表:仅当用户反馈「太假/动作怪/站桩/混脸/风格跑偏」等具体问题时使用;不是生成前置门,fanout 0 |
 | `seedance-video-craft` | 复杂 Seedance 任务(多模态参考、多镜叙事、编辑/延长、商业交付)专业知识模块;假定上游已完成基础路由 |

@@ -36,6 +36,10 @@ Verification Scoring:
 
 本 skill 管「已有角色的跨镜一致性」。当角色**还没立起来**(没有可锚定的外貌/性格/弧光)时,先用 `references/character-design-profiles.md` 走「信息收集 → 档案构建 → 编剧/美术/选角三版」把角色设计出来,其中**美术版**的字段可直接映射成上面的 CHARACTER ANCHOR(Face/Build/Outfit/Markers)。
 
-默认用**单锚点人像库**:大头照(正脸无表情)+ 全身照;三视图/四视图可作可选补充,**慎用**(多视图易触发 ID 漂移与双胞胎)。需要多视图设计稿 / 360° 转台 / 六表情模组时,见 `references/character-multiview-supplement.md`(含四视图合图 A-pose+三点布光的中英提示词模板,已适配本 app 工具)。
+身份锚点按用户需要选择：大头照+全身照、三视图/四视图/多视图角色板或其它确认
+资产都可作为主锚。用户已指定就采用；多套候选拿不准时先询问，低风险未指定才默认
+大头照+全身照。需要多视图设计稿 / 360° 转台 / 六表情模组时,见
+`references/character-multiview-supplement.md`(含四视图合图 A-pose+三点布光的中英
+提示词模板,已适配本 app 工具)。
 
 **何时改用 `director-anchor-extraction-quality`:** 需要**从参考图新提取**锚点、把握提取质量(≥40 词、相似角色区分、遮挡标 [inferred])时,用 anchor-extraction;本 skill 负责锚点**确定后跨镜复用与一致性校验**。

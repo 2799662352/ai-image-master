@@ -64,6 +64,16 @@
       "tags": ["single-shot", "image-to-video", "simple"]
     },
     {
+      "id": "multiview-identity-anchor-video",
+      "prompt": "我已经提供角色三视图，请直接把这张多视图角色板作为主身份锚生成视频，不要强制改成大头照加全身照。",
+      "expected": {
+        "shouldTrigger": ["catimation-video", "director-character-consistency"],
+        "shouldNotTrigger": ["catimation-image", "film-studio"],
+        "budget": "standard"
+      },
+      "tags": ["image-to-video", "multi-view", "character-consistency"]
+    },
+    {
       "id": "single-shot-text-video",
       "prompt": "生成一个 5 秒镜头：落叶被风吹过空荡站台。",
       "expected": {
@@ -171,6 +181,61 @@
         "budget": "fast"
       },
       "tags": ["terminology", "question-only"]
+    },
+    {
+      "id": "storyboard-grid-image",
+      "prompt": "用图像模型先生成一张 3×3 九宫格电影故事板，按从左到右、从上到下展示同一角色发现密室的九个剧情节拍，暂时不要生成视频。",
+      "expected": {
+        "shouldTrigger": ["catimation-image", "storyboard-grid-to-seedance"],
+        "shouldNotTrigger": ["catimation-video", "film-studio"],
+        "budget": "standard"
+      },
+      "tags": ["storyboard-grid", "image-generation", "multi-panel"]
+    },
+    {
+      "id": "industrial-gpt-image-storyboard",
+      "prompt": "用首选 GPT Image 模板做一张 21:9 工业化电影故事板工作台，镜头格内部 9:16，红箭头标角色运动、蓝箭头标运镜、绿箭头标灯光，包含角色区、场景区、分镜表和底部备注，先不生成视频。",
+      "expected": {
+        "shouldTrigger": ["catimation-image", "storyboard-grid-to-seedance"],
+        "shouldNotTrigger": ["catimation-video", "film-studio"],
+        "budget": "standard"
+      },
+      "tags": ["storyboard-grid", "industrial-board", "image-generation"]
+    },
+    {
+      "id": "cinematic-art-direction-board-image",
+      "prompt": "为这一场古宅钢琴戏生成 16:9 电影美术设定板：左上俯视机位图、右上镜头表、中部立面剖面、底部材质和灯光，文字标注后续本地排版，不做视频。",
+      "expected": {
+        "shouldTrigger": ["catimation-image", "storyboard-grid-to-seedance"],
+        "shouldNotTrigger": ["catimation-video", "film-studio"],
+        "budget": "standard"
+      },
+      "tags": ["art-direction-board", "image-generation", "pre-production"]
+    },
+    {
+      "id": "grid-loose-video-reference",
+      "prompt": "用角色大头照和全身照锁身份，干净关键帧锁这段画质；九宫格只是氛围图，只参考色彩、光线、材质和空间气质，故事、构图、动作与顺序以文字提示词为主，让导演自由设计运镜并生成视频。",
+      "expected": {
+        "shouldTrigger": ["catimation-video", "storyboard-grid-to-seedance"],
+        "shouldNotTrigger": ["catimation-image", "film-studio"],
+        "budget": "standard"
+      },
+      "tags": ["storyboard-grid", "image-to-video", "loose-reference"]
+    },
+    {
+      "id": "contact-sheet-video-qa",
+      "prompt": "把现有成片均匀抽 9 帧拼成九宫格，用来检查闪烁和人物变形，不要生成新镜头。",
+      "expected": {
+        "shouldTrigger": ["ffmpeg-win"],
+        "shouldNotTrigger": [
+          "storyboard-grid-to-seedance",
+          "catimation-image",
+          "catimation-video",
+          "film-studio"
+        ],
+        "budget": "fast"
+      },
+      "tags": ["contact-sheet", "inspection", "negative-storyboard-grid"]
     },
     {
       "id": "storyboard-definition",

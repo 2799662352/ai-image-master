@@ -1,6 +1,6 @@
 ---
 name: codex-research-grounded-prompting
-description: Use when writing high-stakes prompts for video or image generation models (e.g. Sora, Midjourney), when designing prompt-engineering systems, or when the user wants outputs grounded in both academic research and creator craft. Triggers on "Sora prompt", "video generation prompt", "视频提示词", "动画 prompt", "怎么写更好的提示词", "prompt 方法论", or tasks demanding rigor — source verification, multi-perspective structure, weight tuning, priority hierarchy, verification checklists.
+description: Use when writing high-stakes prompts for video or image generation models (e.g. Sora, Midjourney), when designing prompt-engineering systems, or when the user wants outputs grounded in both academic research and creator craft. Triggers on "Sora prompt", "video generation prompt", "视频提示词", "动画 prompt", "怎么写更好的提示词", "prompt 方法论", or tasks demanding rigor — source verification, multi-perspective structure, priority tuning, and verification checklists.
 ---
 
 <!-- skill-budget: standard -->
@@ -8,7 +8,7 @@ description: Use when writing high-stakes prompts for video or image generation 
 <overview>
 This skill operationalizes a single belief: high-stakes generation prompts get better when they fuse three tracks — academic research conclusions, creator-craft references, and a directing philosophy that defines what to sacrifice first.
 
-Most prompts fail not because the model is weak but because they were written from memory — the author named a "宫崎骏 style" without ever confirming what that means today, cited exactly two reference works for a 10-second cut, and let the model fill the rest. This skill replaces that pattern with verified-source-first, multi-dimensional, weighted, and verified-on-the-way-out prompting.
+Most prompts fail not because the model is weak but because they were written from memory — the author named a "宫崎骏 style" without ever confirming what that means today, cited exactly two reference works for a 10-second cut, and let the model fill the rest. This skill replaces that pattern with verified-source-first, multi-dimensional, explicitly prioritized, and verified-on-the-way-out prompting.
 
 It applies broadly. Sora 2 motion brief, Midjourney v7 style sheet, Kling 1.5 reference pack, Stable Diffusion ControlNet plan — same five pillars, same five extraction lenses, same verification pass.
 
@@ -52,16 +52,17 @@ _Miniature example (illustrative; substitute whatever the user actually names):_
 
 The reader instantiates their own N-field format when the domain is not animation — for a Midjourney still, the 4 fields might be subject / setting / camera-lens / lighting; for a Kling motion brief, motion-type / duration / camera-movement / continuity-anchor.
 
-**Pillar 3 — Weighted by intent.** Default weight ratios rarely fit a specific task. Scan the user's wording for trigger keywords and switch mode before writing:
+**Pillar 3 — Prioritized by intent.** Numeric percentages are not generation-model
+parameters. Scan the user's wording and declare an ordered sacrifice rule before writing:
 
-| Trigger words in user input | Mode | Weight redistribution |
+| Trigger words in user input | Mode | Ordered priority |
 |---|---|---|
-| 感情, 演出, ドラマ, 物語, 情感, 心理 | Drama-first | direction 80% / quality 15% / aux 4% / storyboard 1% |
-| 品質, 作画, 崩壊禁止, SNS, 投稿 | Quality-first | quality 40% / direction 50% / aux 8% / storyboard 2% |
-| 構図, 分鏡, レイアウト, 配置, 厳守 | Layout-first | storyboard 30% / direction 50% / quality 15% / aux 5% |
-| キャラ, IP, 一貫性, 似せて, 人設 | Character-first | character 25% / direction 50% / quality 20% / aux 5% |
-| 自由, 実験, 創意, 挑戦, 革新 | Experimental | direction 60% / quality 15% / aux 15% / storyboard 5% / character 5% |
-| Explicit `%` numbers in user input | User-specified | Apply exactly, verify sum ≈ 100% |
+| 感情, 演出, ドラマ, 物語, 情感, 心理 | Drama-first | identity/core story → direction/performance → quality → board details |
+| 品質, 作画, 崩壊禁止, SNS, 投稿 | Quality-first | identity → structural quality/continuity → direction → optional flourish |
+| 構図, 分鏡, レイアウト, 配置, 厳守 | Layout-first | identity → clean keyframe/layout → direction → atmosphere-board details |
+| キャラ, IP, 一貫性, 似せて, 人設 | Character-first | identity-hard → continuity → performance/direction → style flourish |
+| 自由, 実験, 創意, 挑戦, 革新 | Experimental | prompt/core intent → identity → director-free choices → quality floor → atmosphere-board details |
+| Explicit `%` numbers in user input | User-specified intent | Preserve the requested emphasis, translate it into ordered roles; do not present it as an API weight |
 
 When constraints collide (lighting wants warm but mood wants cold), the prompt explicitly declares which one yields. Implicit priority causes the model to average — which kills both.
 

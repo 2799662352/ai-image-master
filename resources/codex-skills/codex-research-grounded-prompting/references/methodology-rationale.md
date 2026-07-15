@@ -24,15 +24,24 @@ The framing throughout is: prompt engineering for high-stakes generation works o
 
 **Anti-example.** "Write a Midjourney prompt for a cyberpunk street scene." Single-field. The model invents a rainy Tokyo alley, blade-runner-ish neon, no people, by default — because cyberpunk averaging in training data lands there. Under pillar 2, the prompt explicitly addresses *subject* (a young courier on an electric scooter), *setting* (mid-rise commercial strip at dusk in São Paulo, not Tokyo), *camera* (low-angle 35mm, rule-of-thirds with the subject right), *lighting* (cool teal storefront fluorescents, warm sodium-vapor streetlights, atmospheric haze), *style* (Cyberpunk Edgerunners cinematography, not Blade Runner). Now the model has fifteen dimensions instead of one.
 
-## Pillar 3 — Weighted by intent
+## Pillar 3 — Prioritized by intent
 
 **Failure mode it prevents.** "Implicit-priority averaging." When the user signals a strong preference (say, "I care most about the *feeling* of this scene; the layout is flexible"), but the prompt treats all constraints with equal weight, the model averages them — landing exactly in the middle of feeling and layout, satisfying neither. This is especially common when the user has unusual priorities: "I want technical perfection even at the cost of emotion" or "I want experimental composition even at the cost of brand consistency."
 
-**Research line that motivated it.** The Open-Sora 2.0 training notes document explicitly that aligning model behavior with user intent requires *priority signaling* in the conditioning input — not just constraint enumeration. Without explicit priority, the model interpolates. With explicit priority, the model can sacrifice the right things in the right order.
+**Evidence boundary.** Prompt priority language can clarify what should yield when instructions
+conflict, but percentages in natural-language prompts are not API weights and do not guarantee a
+measurable allocation inside the model. Use an ordered sacrifice rule instead of pseudo-precision.
 
-**Craft tradition that motivated it.** The 70/20/8/1/1 weight system in the user's source methodology (direction / quality / aux / character / storyboard) is itself an adaptation of the older 監督主導 production tradition in Japanese animation, where the director's 演出 is granted authoritative priority over individual animator preferences. Live-action film has the same pattern under different names: "director's cut" vs. "studio cut", "DP's vision" vs. "production's brief". Every craft has a tacit weight system; this pillar makes it explicit.
+**Craft tradition that motivated it.** Film and animation production already use ordered authority:
+the brief and identity bible define non-negotiables; the director decides dramatic trade-offs; the
+DP, animation, art, sound, and edit departments optimize within those boundaries. This pillar makes
+that order explicit without inventing numeric controls.
 
-**Anti-example.** A user writes: "I want this video to feel like Girls Band Cry — really raw emotion, real moments. Don't worry too much about technical polish." If the prompt treats all five constraint types equally — direction 20% / quality 20% / aux 20% / character 20% / storyboard 20% — the model produces a polished but emotionally cold result, because polish is easier than rawness at training-data scale. Under pillar 3, the prompt declares direction 80% / quality 15% / aux 4% / storyboard 1% explicitly, and the model now knows that if a moment must choose between *raw and rough* vs. *smooth and clean*, raw wins.
+**Anti-example.** A user writes: "I want this video to feel raw and emotionally immediate; layout
+is flexible." A pseudo-precise ratio does not create a real control knob. Under pillar 3, the prompt
+states: preserve identity and core story; when polish conflicts with emotionally raw performance,
+performance wins; storyboard layout is only a loose suggestion. The model receives an actionable
+conflict rule.
 
 ## Pillar 4 — Persuasion over accuracy
 

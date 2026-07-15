@@ -20,8 +20,8 @@ description: >-
 本 skill 不重跑路由,`references/prompt-engineering.md` 定位为「sd2-pe 之上的
 Seedance 模型对齐补充」,不替代它。
 
-**理论基础:** 字节跳动 Seedance 2.0 技术报告《Seedance 2.0: Advancing Video
-Generation for World Complexity》(arXiv 2604.14148)+ Seed2.0 Model Card,2026‑02。
+**事实边界:** 能力背景参考公开技术资料；可调用参数、分辨率、时长和枚举以本 app
+`generate_video` 工具 schema 为准，不把模型内部机制或宣传效果写成事实保证。
 **写法借鉴:** Higgsfield AI 的 Marketing Studio 模式分类 与 Virality Predictor
 (`brain_activity`)爆款打分维度。
 
@@ -45,13 +45,13 @@ Animétudes / ANN / AniDB,详见 animation-craft 技能)。把查到的**实在�
 
 ## 一、先记住模型的真实能力(不要假设)
 
-Seedance 2.0 是**原生统一多模态音视频联合生成**模型,一次前向同时产出画面 +
-双声道音频。关键参数(详见 `references/seedance-2.0-capabilities.md`):
+Seedance 2.0 在本 app 中支持文本/图像/视频/音频参考并可生成带音频的视频。
+关键运行时参数见 `references/seedance-2.0-capabilities.md`:
 
 | 维度 | 真实值 | 出片含义 |
 |---|---|---|
 | 时长 | **4–15 秒**(满血版直接出) | 别想一条出 1 分钟;长片靠多段拼 |
-| 原生分辨率 | **480p / 720p**(默认 720p) | 1080p 不是原生,需上采;本 app 默认 720p |
+| 输出分辨率 | **480p / 720p / 1080p**(默认 720p) | 1080p 仅满血 `2.0` |
 | 输入模态 | 文本 / 图像 / 音频 / 视频(4 种) | 这就是「全能参考」的来源 |
 | 参考上限 | **最多 9 图 + 3 视频 + 3 音频** | 全能参考的配额,要会分配 |
 | 原生音频 | 单次前向出双声道立体声 + 口型 | 提示词要主动写声音,别只写画面 |
@@ -81,8 +81,9 @@ Seedance 2.0 是**原生统一多模态音视频联合生成**模型,一次前�
 
 ## 三、复杂任务出片流程(假定上游已定级、已确认规格)
 
-1. **核对规格**(上游已确认的不重复问):分辨率(默认 720p)、时长(4–15s)、
-   画幅(9:16/16:9/1:1)、是否要原生音频/口型。
+1. **核对规格**(上游已确认的不重复问):分辨率(480p/720p/1080p,默认 720p；
+   1080p 仅满血 2.0)、时长(4–15s)、画幅(16:9/9:16/4:3/3:4/1:1/21:9)、
+   是否要原生音频/口型。
 2. **选模式**(见上表),默认全能参考。
 3. **分配参考配额**(9 图/3 视频/3 音频)——见 `references/all-around-reference.md`。
 4. **写提示词**——在上游 sd2-pe 工程化结果之上(该结果已按 seedance-cinematic-format
@@ -108,7 +109,11 @@ Seedance 2.0 是**原生统一多模态音视频联合生成**模型,一次前�
    不合格带针对性改进点重生成(次数上限由上游把守)。通过后给结果 + 一行摘要
    (模式、时长、分辨率)。多段片用 `ffmpeg-win` 拼接;**跨段续接抽上段尾帧/
    关键帧作下段 firstFrame,而不是把整段 Seedance MP4 当视频参考回喂**——按剧情
-   裁剪/拼接出的宫格图、故事板也是优质可复用素材(回喂 referenceImages)。
+   裁剪/拼接出的宫格图、故事板和美术设定板也是可复用 `referenceImages`,但只作
+   `atmosphere-loose` 辅助:只提取色彩/光线/材质/时代感/空间气质/视觉母题;
+   不承担故事、构图、动作、顺序、时长、身份或 firstFrame,不复制边框/编号/文字。
+   有板时提示词前必带 prompt-primary 职责前缀；精确跟随某格时先拆格、清理并重绘
+   为干净关键帧。
 
 ---
 
@@ -156,7 +161,8 @@ Peak hook 秒 / Sustain% / 最强最弱脑区 / Default Mode 分心)。在**生�
 - `references/virality-scorecard.md` — 爆款体检自评表(改编 Virality Predictor)
 - `references/ad-short-form-modes.md` — 广告/短视频模式分类(改编 Marketing Studio)
 - `references/time-allocation-and-multimodal.md` — 按内容密度切时长(字/秒)+
-  `@素材`/`<图片N>` 多模态绑定(≤12 文件)+ 换人/运镜复刻/产品广告案例
+  `图片N/视频N/音频N` 多模态绑定(上限以本 app 工具 schema 为准)+
+  换人/运镜复刻/产品广告案例
   (移植自 updream jimeng-prompt-pro)
 - `references/camera-motion-primitives.md` — **运镜基元词表(CameraBench-Pro 真实
   taxonomy,245 标签 / 17 技能类)**:平移/旋转/变焦/弧形/7种跟拍/机位角度/
@@ -167,8 +173,8 @@ Peak hook 秒 / Sustain% / 最强最弱脑区 / Default Mode 分心)。在**生�
 
 ## 致谢与边界
 
-本 skill 的事实层来自字节 Seedance 2.0 技术报告(arXiv 2604.14148)与 Seed2.0
-Model Card;爆款打分与广告模式的**写法**借鉴自 Higgsfield AI 开源 skills 仓库
+本 skill 的能力背景来自公开技术资料，运行时契约以本 app 工具 schema 为准；
+爆款打分与广告模式的**写法**借鉴自 Higgsfield AI 开源 skills 仓库
 (`higgsfield-ai/skills`)的 Virality Predictor 与 Marketing Studio,但本 skill
 **不依赖 Higgsfield CLI**——它是模型无关的方法论,落到本 app 内置的 Seedance 2.0
 视频工具上。具体 API/参数以本 app 实际调用为准,枚举值如有出入以运行时为准。

@@ -3,10 +3,10 @@
   "schemaVersion": 1,
   "comment": "Single source of truth for marketplace skill versions. Bump the version when shipping a meaningful update to a skill's SKILL.md or references/. Used by scripts/upload-skills-to-cos.mjs to compute catalog.json.",
   "skills": {
-    "codex-research-grounded-prompting": "1.0.4",
-    "director-anchor-extraction-quality": "1.0.4",
+    "codex-research-grounded-prompting": "1.0.5",
+    "director-anchor-extraction-quality": "1.0.5",
     "director-anime-quality-boost": "1.0.4",
-    "director-character-consistency": "1.0.5",
+    "director-character-consistency": "1.0.6",
     "director-cinematic-composition": "1.0.6",
     "director-orchestrator": "1.0.10",
     "director-lighting-continuity": "1.0.4",
@@ -48,12 +48,12 @@
     "find-skills": "1.0.0",
     "ffmpeg-win": "1.0.9",
     "screenwriter": "1.0.3",
-    "seedance-video-craft": "1.0.12",
+    "seedance-video-craft": "1.0.13",
     "animation-craft": "1.0.7",
-    "film-studio": "1.0.10",
-    "sd2-pe": "1.0.17",
-    "storyboard-grid-to-seedance": "1.0.3",
+    "film-studio": "1.0.11",
+    "sd2-pe": "1.0.18",
+    "storyboard-grid-to-seedance": "1.0.4",
     "catimation-video-director-router": "1.0.2",
-    "seedance-cinematic-format": "1.0.7"
+    "seedance-cinematic-format": "1.0.8"
   }
 }
