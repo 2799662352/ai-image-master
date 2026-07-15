@@ -347,7 +347,9 @@ jobs:
           node-version: '20'
           cache: pnpm
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        # This job only runs pure-JS release/COS scripts. Avoid Electron's
+        # postinstall native rebuild on the minimal OpenCloudOS relay host.
+        run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Download canonical artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
