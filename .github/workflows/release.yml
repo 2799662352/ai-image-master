@@ -317,7 +317,9 @@ jobs:
         needs.canonical.result == 'success' &&
         needs.authenticode.result == 'success'
       }}
-    runs-on: ubuntu-latest
+    # Keep validation/build on GitHub-hosted runners, but publish the 480MB+
+    # canonical installer from the Hong Kong relay close to Guangzhou COS.
+    runs-on: [self-hosted, Linux, X64, tencent-hongkong, cos-publisher]
     environment: production
     timeout-minutes: 90
     permissions:
