@@ -50,6 +50,9 @@ storyboard_projects/<project-slug>/
     ├── clip_storyboards/
     │   └── panels/                    # 干净分镜板视觉源，不是最终 board
     ├── clip_keyframes/
+    ├── overview_boards/
+    │   ├── sequence/                  # 按需：网格镜头/氛围总览
+    │   └── art_direction/             # 按需：场景/材质/灯光美术设定板
     ├── storyboards_15s/               # 旧项目兼容
     ├── seedance_keyframes/            # 旧项目兼容
     ├── transition_bridges/
@@ -60,10 +63,14 @@ storyboard_projects/<project-slug>/
 ## 2. 默认生产逻辑
 
 - 新项目默认 `SH### = CLIP###`：一个电影镜头对应一次 SceneDance 生成。
-- `CLIP###` 必须 `<=15s`，时长根据剧情、动作复杂度、情绪节奏和信息量决定。
+- `CLIP###` 生成请求必须为 `4–15s`，时长根据剧情、动作复杂度、情绪节奏和信息量
+  决定；成片中短于 4s 的节拍由至少 4s 的生成结果后期裁切得到。
 - 只有低风险插入镜头、同一机位微表演或用户明确要求时，才允许一个 `CLIP###` 覆盖多个 `SH###`，且必须在 `clip_plan.md` 说明原因。
-- 用户要求“分镜图 / 重新生成分镜图 / SceneDance 输入图”时，默认交付单位是 `CLIP###`，不是全片总览图。
-- 全片总览图、master storyboard sheet、contact sheet 只能作为审阅辅助，不能计入最终 `CLIP###` 分镜图交付，也不能作为 SceneDance 主输入。
+- 用户要求“分镜图 / 重新生成分镜图 / SceneDance 输入图”时，默认逐 `CLIP###`
+  交付生产板；序列总览板/电影美术设定板按项目需要生成，不能替代逐 clip 交付。
+- 全片总览图、master storyboard sheet、contact sheet 和美术设定板可用于审阅，
+  也可作为 `atmosphere-loose` 氛围辅助参考；不能计入最终 `CLIP###` 分镜图交付，
+  也不能作为 SceneDance 主输入或 `firstFrame`。
 - 最终 `clip_storyboards/` 必须是生产分镜板，不是图片模型直接生成的氛围板、海报、空 caption 三格图或全片概念图。
 - 图片模型只能生成干净视觉源：start panel、key-action panel、edit-out panel、handoff panel 或 clean keyframe；最终 board 的排版和可读文字必须由本地确定性渲染生成。
 - 如果两镜合并使用，必须先在 `clip_plan.md` 合并成一个明确的 `CLIP###`；然后为这个合并 clip 生成一张干净起始关键帧和一张单 clip 生产分镜板。不要把两格或多格分镜表作为 SceneDance 主图。
@@ -86,6 +93,8 @@ storyboard_projects/<project-slug>/
 | 剪辑边界 | `EB_<CLIP_A>_<CLIP_B>` | `EB_CLIP001_CLIP002` | 相邻片段的剪辑边界 |
 | 动作姿势 | `A_<character>_<action>` | `A_C001_turn_head` | 起始 / 中间 / 结束动作参考 |
 | Clip 分镜图 | `<CLIP>_storyboard_<time-range>` | `CLIP001_storyboard_0-6s` | 制片审阅图，不是唯一视频主输入 |
+| 序列总览板 | `SEQ_<scene>_<grid>` | `SEQ_S001_3x3` | 可选氛围/镜头沟通板 |
+| 美术设定板 | `ART_<scene>_<ratio>` | `ART_S001_16x9` | 可选场景地理/材质/灯光/色板板 |
 
 ## 4. 图片命名
 
@@ -97,6 +106,8 @@ storyboard_projects/<project-slug>/
 final_image_package/clip_storyboards/<CLIP###>_storyboard_<time-range>.png
 final_image_package/clip_storyboards/panels/<CLIP###>_<start|key|out|handoff>.png
 final_image_package/clip_keyframes/<keyframe-id>.png
+final_image_package/overview_boards/sequence/<board-id>.png
+final_image_package/overview_boards/art_direction/<board-id>.png
 final_image_package/transition_bridges/<boundary-id>_<role>.png
 final_image_package/support_assets/<asset-id>.png
 ```
@@ -111,7 +122,10 @@ final_image_package/support_assets/<asset-id>.png
 - 分镜图可用于审阅和低权重参考；SceneDance 主输入优先使用干净 keyframe。
 - 生产分镜板必须包含可读的 `CLIP ID`、时间范围、`START / KEY ACTION / EDIT OUT`、镜头方法、动作起止、接力线索、剪辑边界、音频桥、参考图组合和风险/备用方案。
 - 生产分镜板的文字字段必须来自 `clip_plan.md`、`shot_cards.md`、`handoff_design_matrix.md`、`edit_boundary_matrix.md` 或 `scenedance_shot_prompts.md`；不要依赖图片模型生成可读文字。
-- 如需总览图，单独保存到 `final_image_package/overview_boards/` 或写入 manifest 的 review-only 区域，不能替代 `clip_storyboards/`。
+- 如生成序列板，保存到 `overview_boards/sequence/`；如生成美术设定板，保存到
+  `overview_boards/art_direction/`。被视频使用时在 manifest 标
+  `atmosphere-loose`，且对应视频提示词必须带“提示词主导 / 氛围板低约束”前缀。
+  两类板都不能替代 `clip_storyboards/`。
 - 文件名必须包含图片 ID、语言版本和版本号；失败图使用 `v02`、`v03` 递增，不覆盖。
 
 ## 5. 必填文件职责
@@ -203,7 +217,7 @@ fallback_plan: ""
 
 ## 11. 验证清单
 
-- 每个 `CLIP###` 都 `<=15s`。
+- 每个 `CLIP###` 生成请求都在 `4–15s`；短于 4s 的成片节拍已标后期裁切。
 - 默认 `SH### = CLIP###`，例外已说明。
 - 每个 shot card 都有完整 YAML 必填字段。
 - 每个镜头都有动作起点/终点和情绪起点/终点。
@@ -216,5 +230,7 @@ fallback_plan: ""
 - 最终分镜板不是 raw AI-generated board layout；必须由干净 panel/keyframe 确定性排版生成。
 - 每张最终分镜板必须有可读 `CLIP ID`、时间范围、START/KEY ACTION/EDIT OUT、镜头/动作/剪辑/音频/参考图/风险信息，不能有空 caption、乱码字、缺时间码、混多个 clip、海报式单图冒充分镜。
 - `final_image_package/clip_storyboards/` 中的最终分镜图数量等于最终 `CLIP###` 数量；总览图不计入。
+- 任一被视频引用的 overview board 已登记 `atmosphere-loose` 职责，且 prompt
+  manifest 记录了 mandatory 提示词主导前缀。
 - 中文和英文 Image 2 提示词分开。
 - 所有 promised images 在 manifest 中有路径和状态。

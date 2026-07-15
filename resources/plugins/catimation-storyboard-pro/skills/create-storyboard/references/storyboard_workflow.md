@@ -35,17 +35,26 @@ New projects default to `SH### = CLIP###`.
 - `SH###` is the film shot.
 - `CLIP###` is the SceneDance generation.
 - Default: one shot card, one clean start keyframe, one SceneDance prompt, one edit boundary on each side.
-- Exception: a `CLIP###` may contain multiple `SH###` only when all shots are low-risk, share the same scene/axis/action, and the clip remains `<=15s`. Explain the exception in `clip_plan.md`.
-- The deliverable image unit is always `CLIP###`, not the whole film. A full-film overview/contact sheet is allowed only as an extra review artifact and must never replace per-clip storyboard images.
-- If a user asks to regenerate storyboard images for an existing project, generate or update the per-`CLIP###` images first. Do not create a full-film overview board unless the user explicitly asks for a summary board.
+- Exception: a `CLIP###` may contain multiple `SH###` only when all shots are low-risk,
+  share the same scene/axis/action, and the generation remains within `4–15s`. Explain the
+  exception in `clip_plan.md`.
+- The deliverable image unit is always `CLIP###`, not the whole film. A full-film
+  overview/contact sheet never replaces per-clip storyboard images and is never the primary
+  input or `firstFrame`.
+- Sequence/multi-panel and cinematic art-direction boards are optional atmosphere/communication
+  assets. If either board is referenced by a video prompt, mark it `atmosphere-loose` and prepend
+  the mandatory prompt-primary role statement; it never controls story, composition, action,
+  order, or duration.
+- If a user asks to regenerate storyboard images for an existing project, update the per-`CLIP###`
+  images first and update any overview board that project actually includes.
 - If two neighboring shots are merged, first make that merge explicit as one `CLIP###`; then generate one clean start keyframe and one single-clip storyboard for that merged clip. Do not use a two-panel storyboard sheet as the primary SceneDance image.
 - Even when two neighboring shots are merged, the clip must still define one internal receive/action/handoff design. Do not use the merge to hide two unrelated scenes inside one generation.
 
-Duration guidance:
+Generation/edit duration guidance:
 
-- `1.5-2.5s`: very quick insert or impact beat
-- `2-4s`: prop detail, product macro, reaction, cutaway
-- `3-5s`: establishing orientation, simple emotional beat
+- `1.5-2.5s` final edit: generate at least `4s`, then trim a stable insert or impact beat
+- `2-4s` final edit: generate at least `4s`, then trim a prop detail, product macro, reaction, or cutaway
+- `3-5s` final edit: use a `4-5s` generation, then trim if needed
 - `4-7s`: physical action with clear start and finish
 - `6-10s`: performance or dialogue beat with one action chain
 - `8-12s`: sustained atmosphere or controlled blocking
@@ -186,11 +195,25 @@ For every SceneDance shot, list:
 - prop/product references
 - pose/expression references
 - clip storyboard board reference, if useful
+- sequence/multi-panel or cinematic art-direction boards, if the project includes them
 - optional handoff frame, if the boundary needs a clear occlusion/light/object token
 - why each reference is needed
 - which images should not be used as primary input
 
-If the storyboard board includes text, tables, or multiple panels, do not treat it as the only primary SceneDance input.
+Assign every item one role:
+
+- `identity-hard`: user-selected character anchors (headshot+full-body, three/four/multi-view
+  character board, or another approved clean asset) or product hero art. If multiple candidate
+  anchor sets exist and identity is important, ask the user which set is authoritative.
+- `keyframe-strong`: clean start/key/out frame for the current clip
+- `atmosphere-loose`: storyboard/grid/art-direction board for color/light/material/era/spatial mood/visual motifs only
+- `director-free`: transitions, micro-motion, camera interpolation, pacing, particles, and effects
+
+For every `atmosphere-loose` item, record `prompt=primary` and `must_not_copy`: grid borders,
+panel numbers, captions, tables, and collage layout. The video prompt must include the mandatory
+prompt-primary / atmosphere-board-low-constraint preamble. Do not treat the board as primary input
+or `firstFrame`. Exact panel following requires cropping and cleaning the relevant panel into a new
+`keyframe-strong` image.
 
 ## 9. Prompt Writing Priorities
 

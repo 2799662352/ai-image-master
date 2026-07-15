@@ -25,6 +25,7 @@ import {
   mutatePortraitOverlay,
   onPortraitOverlayChange,
 } from './portraitOverlay'
+import { normalizeSeedancePromptReferences } from './promptReferences'
 import { SeedanceTaskManager } from './taskManager'
 import { relayBufferToCos, relayDataUrlToCos } from '../tencent/mediaRelay'
 import type { CreateVideoTaskInput, SeedanceContentItem } from './types'
@@ -188,7 +189,9 @@ async function importImagesToPortraitLibrary(content: SeedanceContentItem[]): Pr
 }
 
 async function buildContent(input: CreateVideoTaskInput): Promise<SeedanceContentItem[]> {
-  const content: SeedanceContentItem[] = [{ type: 'text', text: input.prompt }]
+  const content: SeedanceContentItem[] = [
+    { type: 'text', text: normalizeSeedancePromptReferences(input.prompt) },
+  ]
   if (input.firstFrame) {
     content.push({ type: 'image_url', role: 'first_frame', image_url: { url: await resolveMediaUrl(input.firstFrame, 'firstFrame') } })
   }

@@ -264,7 +264,9 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
       'VIDEO EDITING (替换/增删/修改元素 in an existing clip) and VIDEO EXTENSION (向前/向后延长 or ' +
       'stitching up to 3 clips): both are just omni-reference under the hood — pass the source clip(s) ' +
       'via referenceVideos and write an edit/extend-style prompt (see the catimation-video skill). In ' +
-      'the prompt, refer to materials by ordinal ("视频1 / 图片1 / 音频1"), never by assetId. Note: real ' +
+      'the prompt, refer to materials by canonical ordinal ("视频1 / 图片1 / 音频1"), never by assetId. ' +
+      'The runtime also accepts and normalizes @Video1/@Image1/@Audio1, @视频1/@图片1/@音频1, ' +
+      '【@图片1】, and legacy <图片1> aliases before submission. Note: real ' +
       'human faces cannot be used as references directly — use a 人像库 asset:// (virtual avatar) or a ' +
       'previously Seedance-generated clip.',
     inputSchema: z.object({
@@ -307,8 +309,8 @@ export function registerVideoTools(server: McpServer, router: ToolRouter): void 
     const codexThreadId = extractCodexThreadId(ctx)
     try {
       const task = (await router.call('generate_video', params, codexThreadId)) as SeedanceTaskState
-      // catimation 策略：阻塞到生成完成才返回（与 generate_image 一致），
-      // 模型零轮询负担、不可能提前弃坑。
+      // 优先阻塞等待终态；若约 75s 预算耗尽仍在渲染，则返回 taskId，
+      // 由 check_video_task 继续长轮询，绝不重复提交。
       const final = await waitForTerminal(router, task.taskId, codexThreadId)
       if (!final) return textResult(buildUnknownTaskBanner(task.taskId))
       if (final.status === 'failed') return textResult(buildFailedBanner(final))

@@ -3,7 +3,7 @@
 ## 1. Img2 中文提示词结构
 
 ```text
-【图片用途】<角色一致性 / 表情表 / 动作姿势 / 场景建立 / 场景反打 / 产品英雄图 / 道具参考 / Clip 起始关键帧 / Clip 关键动作帧 / Clip 出点关键帧 / Clip 接力关键帧 / Clip 分镜 panel 源图>
+【图片用途】<角色一致性 / 表情表 / 动作姿势 / 场景建立 / 场景反打 / 产品英雄图 / 道具参考 / Clip 起始关键帧 / Clip 关键动作帧 / Clip 出点关键帧 / Clip 接力关键帧 / Clip 分镜 panel 源图 / 可选序列/氛围总览板 / 可选电影美术设定板>
 【主体 ID】<C001 / S001 / P001 / CLIP001>
 【生产目的】<这张图将如何稳定 SceneDance 生成或剪辑衔接>
 【连续性锁定】<脸型、发型、服装、道具、空间布局、轴线、视线方向、运动方向、光线、天气、时间状态>
@@ -22,7 +22,7 @@
 ## 2. Img2 English Prompt Structure
 
 ```text
-Purpose: <character sheet / expression sheet / action pose sheet / scene establishing / reverse angle / product hero / prop reference / clip start frame / key-action frame / edit-out frame / handoff frame / clean storyboard panel source>.
+Purpose: <character sheet / expression sheet / action pose sheet / scene establishing / reverse angle / product hero / prop reference / clip start frame / key-action frame / edit-out frame / handoff frame / clean storyboard panel source / optional sequence-atmosphere board / optional cinematic art-direction board>.
 Subject ID: <C001 / S001 / P001 / CLIP001>.
 Production purpose: <how this image stabilizes SceneDance generation or edit continuity>.
 Continuity locks: <face, hairstyle, wardrobe, props, scene layout, axis, eyeline, screen direction, light, weather, time state>.
@@ -40,12 +40,16 @@ Output path: <target path>.
 
 ## 3. 角色 / 表情 / 动作资产
 
-### 角色 360
+### 身份锚点方案（按用户需要）
 
-- 同一角色出现在同一张图内，展示正面、背面、左侧、右侧、三分之四视角。
-- 使用干净中性背景，避免强情绪和夸张动作。
-- 明确同一个人、同一套服装、同一发型、同一妆容。
-- 古装、科幻、动画角色必须额外锁定服装层级、材质、纹样、配饰和轮廓。
+- 方案 A：正脸无表情大头照 + 正面全身照。前者负责面部，后者负责妆造/体型。
+- 方案 B：三视图/四视图/多视图角色板。可直接作为 `identity-hard` 主锚，
+  特别适合背面服装、复杂角度、建模或系统角色设计。
+- 方案 C：用户确认的其它干净角色资产/角色设定图。
+- 用户已提供或指定方案时直接采用；同时存在多套候选且主锚不明确时先询问用户。
+  仅在低风险且未指定时默认方案 A。
+- 多视图板内必须明确“同一角色的不同视角”，保持同一脸、发型、妆容、服装和比例，
+  避免被误读为多个角色。
 
 ### 表情九宫格
 
@@ -83,14 +87,27 @@ Output path: <target path>.
 - `handoff frame`：只在相邻 clip 需要更强交接时使用，明确上一 clip 交出的遮挡、光线、道具、空间入口、UI 或运动方向。
 - 每张关键帧必须写明角色位置、视线方向、手部动作、道具位置、场景光线、运动方向和接棒/交棒状态。
 
-## 6. SceneDance Shot 视频提示词结构
+## 6. 可选项目级总览板（使用时前缀必填）
+
+- **序列/氛围总览板**：图像模型生成 3×3/4×4 镜头缩略图；作为视频参考时只
+  提取色彩、光线、材质、时代感、空间气质和视觉母题，标 `atmosphere-loose`。
+- **电影美术设定板**：图像模型生成俯视图、立/剖面、材质、灯光、色板与角色/道具
+  视觉源；本地叠加机位、尺寸、镜头表和生产文字。作为视频参考同样只供氛围。
+- 两类板都不能替代 `identity-hard` 和 `keyframe-strong`。只要被某 clip 引用，
+  该 clip 的提示词必须先写“提示词主导 / 氛围板低约束”前缀。
+- 精确复刻某一格时，裁出相关格，清除边框/文字并重绘为干净 `keyframe-strong`。
+
+## 7. SceneDance Shot 视频提示词结构
 
 ```text
 Shot ID: <SH###>.
 Clip ID: <CLIP###>.
-Duration: <must be <= 15 seconds; story-driven, not averaged>.
+Duration: <generation must be 4-15 seconds; shorter final beats are trimmed from a >=4s render>.
 Primary input image: <selected clean keyframe image id/path>.
 Auxiliary references: <character sheet, scene sheet, prop sheet, pose/expression sheet, storyboard board if useful>.
+Reference roles: <prompt-primary / identity-hard / keyframe-strong / atmosphere-loose / director-free>.
+Board preamble: <required whenever a storyboard/grid/art-direction board is referenced; prompt controls story/composition/action/order/duration, boards supply atmosphere only>.
+Must not copy from boards: <grid borders, panel numbers, captions, tables, collage layout>.
 Shot purpose: <why this shot exists in the edit>.
 Main action: <one clear action chain only>.
 Start receiver state: <what visual/spatial/motion/audio clue this clip receives from the prior clip; "opening" if first clip>.
@@ -112,9 +129,12 @@ Avoid: <identity drift, wardrobe changes, scene jumps, axis flip, eyeline mismat
 ```text
 【Shot ID】<SH###>
 【Clip ID】<CLIP###>
-【建议生成时长】<必须 <=15 秒；按剧情节奏，不平均分配>
+【建议生成时长】<生成必须 4–15 秒；短于 4 秒的成片节拍先生成至少 4 秒再后期裁切>
 【主输入图】<选中的干净关键帧 ID/路径>
 【辅助参考图】<角色图、场景图、道具图、动作/表情图、必要时分镜图>
+【参考职责】<prompt-primary / identity-hard / keyframe-strong / atmosphere-loose / director-free>
+【氛围板前缀】<只要引用故事板/多宫格/美术设定板即必填：提示词主导故事/构图/动作/顺序/时长，板只供色彩/光线/材质/时代感/空间气质/视觉母题>
+【总览板禁止复制】<网格边框、编号、文字、表格、拼贴版式>
 【镜头目的】<这个镜头在剪辑里的作用>
 【主动作】<只写一条清晰动作链>
 【接棒入点】<本 clip 从上一 clip 接住什么视觉/空间/运动/声音线索；首镜写片头>
@@ -133,7 +153,7 @@ Avoid: <identity drift, wardrobe changes, scene jumps, axis flip, eyeline mismat
 【避免事项】<身份漂移、换衣服、空间跳变、轴线反转、视线不匹配、动作未完成、手部错误、logo 变形、让 AI 自行硬插值转场>
 ```
 
-## 7. 镜头接力提示词结构
+## 8. 镜头接力提示词结构
 
 ```text
 Handoff ID: <HO_CLIP001_CLIP002>.
@@ -163,7 +183,7 @@ Fallback if failed: <insert, reaction, prop close-up, empty shot, rebuild keyfra
 【失败备用】<插入镜头 / 反应镜头 / 道具特写 / 空镜 / 重生关键帧 / 缩短 clip>
 ```
 
-## 8. 剪辑边界提示词结构
+## 9. 剪辑边界提示词结构
 
 ```text
 Edit boundary ID: <EB_CLIP001_CLIP002>.
@@ -180,18 +200,23 @@ Risk: <identity jump, object jump, rhythm break, axis flip, eyeline mismatch, li
 Fallback cut: <switch to insert/reaction/prop close-up/empty shot/rebuild keyframe; do not rely on vague AI interpolation>.
 ```
 
-## 9. Image 2 Clip 分镜 panel 源图提示词结构
+## 10. Image 2 Clip 分镜 panel 源图提示词结构
 
 Image 2 只负责生成干净的 storyboard panel 源图，不负责最终生产分镜板排版、可读文字、表格、caption 或标签。
 
 最终 `final_image_package/clip_storyboards/<CLIP###>_storyboard_<time-range>.png` 必须由本地确定性排版生成：把 clean panels/keyframes 放入固定版式，再从 `shot_cards.md`、`handoff_design_matrix.md`、`edit_boundary_matrix.md` 和 `scenedance_shot_prompts.md` 渲染可读文字。不要接受图片模型直接生成的带文字三格板作为最终交付。
 
-禁止把全片多个 `CLIP###` 合在一张最终分镜图里交付。全片总览图只能作为 review-only 辅助图；用户要求“分镜图 / 重新生成分镜图”时，默认要逐个 `CLIP###` 交付最终生产板。若两个镜头被合并，必须先在 `clip_plan.md` 把它们合并为一个明确的 `CLIP###`，再生成该合并 clip 的干净主关键帧、干净 panel 源图和最终生产分镜板。
+禁止把全片多个 `CLIP###` 合在一张最终分镜图里交付。序列/氛围总览板与电影美术
+设定板按项目需要生成；被视频引用时标为 `atmosphere-loose`，必须带提示词主导
+前缀，且不得作为主输入或 `firstFrame`；
+用户要求“分镜图 / 重新生成分镜图”时，默认要逐个 `CLIP###` 交付最终生产板。
+若两个镜头被合并，必须先在 `clip_plan.md` 把它们合并为一个明确的 `CLIP###`，
+再生成该合并 clip 的干净主关键帧、干净 panel 源图和最终生产分镜板。
 
 ```text
 【图片用途】SceneDance Clip 分镜 panel 源图
 【项目】<项目名>
-【Clip】<CLIP###，时间轴，例如 0-6s，时长必须 <=15s>
+【Clip】<CLIP###，成片时间轴例如 0-6s；对应生成请求必须 4–15s>
 【参考输入】<明确列出已加载或已附加的角色图、场景图、道具图、关键帧图>
 【Panel 角色】<START / KEY ACTION / EDIT OUT / HANDOFF；一次只生成一个干净 panel，或生成无文字的 panel strip 源图>
 【画面要求】生成只服务此 clip 的干净视觉画面；不要生成生产板布局、文字栏、表格、caption、箭头说明或可读标签
@@ -206,7 +231,7 @@ Image 2 只负责生成干净的 storyboard panel 源图，不负责最终生产
 【输出路径】final_image_package/clip_storyboards/panels/<CLIP###>_<start|key|out|handoff>.png
 ```
 
-## 10. Final Storyboard Board 确定性排版要求
+## 11. Final Storyboard Board 确定性排版要求
 
 最终生产分镜板不是 Image 2 prompt 产物；它由本地可控渲染生成，输出到：
 
@@ -227,7 +252,7 @@ final_image_package/clip_storyboards/<CLIP###>_storyboard_<time-range>.png
 
 - 空 caption 区、占位文字、乱码、缺少 `CLIP ID`、缺时间范围、缺 START/KEY/EDIT OUT、缺剪辑边界、缺音频桥、缺参考图组合、混入多个 clip、海报式单图冒充分镜、全片 overview 冒充分镜。
 
-## 11. 通用负面提示词
+## 12. 通用负面提示词
 
 ```text
 不要换脸，不要改变年龄，不要改变发型，不要改变服装，不要改变产品包装，不要 logo 变形，不要文字乱码，不要多余手指，不要畸形手，不要肢体穿模，不要场景突然变化，不要光线跳变，不要轴线反转，不要视线错乱，不要运动方向错乱，不要过度磨皮，不要低清晰度，不要水印，不要字幕。
