@@ -101,6 +101,13 @@ export const CANONICAL_MODEL_SETTINGS_ROWS: readonly CanonicalModelSettingsRow[]
     description: 'Latest frontier agentic coding model (Codex 0.144 catalog).',
     isDefault: false,
   },
+  {
+    id: 'grok-4.5',
+    displayName: 'Grok 4.5',
+    tier: 'Extra High',
+    description: 'Frontier coding and agentic model via Right.Codes Responses.',
+    isDefault: false,
+  },
 ] as const
 
 export interface LegacyModelSelection {
@@ -112,6 +119,7 @@ export interface LegacyModelSelection {
 const MODEL_REASONING_EFFORT_SET: ReadonlySet<string> = new Set(MODEL_REASONING_EFFORTS)
 
 const VERIFIED_CONTEXTS: ReadonlyMap<string, number> = new Map([
+  ['grok-4.5', EXPERIMENTAL_CONTEXT_WINDOW],
   ['gpt-5.6-sol', 372_000],
   ['gpt-5.6-terra', 372_000],
   ['gpt-5.6-luna', 372_000],

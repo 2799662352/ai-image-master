@@ -34,6 +34,27 @@ describe('codexProviders', () => {
     expect(rc!.extraTopLevelConfig?.windows_wsl_setup_acknowledged).toBe(true)
   })
 
+  it('ships a dedicated Right.Codes Grok Responses provider', () => {
+    const grok = BUILTIN_PROVIDER_PRESETS.find((p) => p.id === 'rightcode-grok')
+
+    expect(grok).toMatchObject({
+      name: 'Right.Codes Grok',
+      baseUrl: 'https://right.codes/grok/v1',
+      envKey: 'OPENAI_API_KEY',
+      model: 'grok-4.5',
+      credentialId: 'rightcode',
+      allowedModels: ['grok-4.5'],
+      requiresOpenaiAuth: true,
+      description: 'Grok 4.5 · 1M · Responses',
+      extraTopLevelConfig: {
+        disable_response_storage: true,
+        windows_wsl_setup_acknowledged: true,
+      },
+    })
+    expect(grok).not.toHaveProperty('reasoningEffort')
+    expect(grok).not.toHaveProperty('verbosity')
+  })
+
   it('builtin presets are readonly (frozen)', () => {
     expect(Object.isFrozen(BUILTIN_PROVIDER_PRESETS)).toBe(true)
     for (const p of BUILTIN_PROVIDER_PRESETS) expect(Object.isFrozen(p)).toBe(true)
@@ -50,6 +71,7 @@ describe('codexProviders', () => {
   it('isBuiltinProviderId discriminates builtins from custom ids', () => {
     expect(isBuiltinProviderId('apiyi')).toBe(true)
     expect(isBuiltinProviderId('rightcode')).toBe(true)
+    expect(isBuiltinProviderId('rightcode-grok')).toBe(true)
     expect(isBuiltinProviderId('rightcode-pro')).toBe(false)
     expect(isBuiltinProviderId('custom-1234')).toBe(false)
     expect(isBuiltinProviderId('')).toBe(false)
@@ -67,6 +89,7 @@ describe('codexProviders', () => {
     ]
     expect(findProviderById('apiyi', custom)?.id).toBe('apiyi')
     expect(findProviderById('rightcode', custom)?.id).toBe('rightcode')
+    expect(findProviderById('rightcode-grok', custom)?.id).toBe('rightcode-grok')
     expect(findProviderById('custom-1', custom)?.id).toBe('custom-1')
     expect(findProviderById('does-not-exist', custom)).toBeUndefined()
   })
@@ -76,6 +99,7 @@ describe('codexProviders', () => {
     expect(builtinIds.size).toBe(BUILTIN_PROVIDER_PRESETS.length)
     expect(builtinIds.has('apiyi')).toBe(true)
     expect(builtinIds.has('rightcode')).toBe(true)
+    expect(builtinIds.has('rightcode-grok')).toBe(true)
     expect(builtinIds.has('custom-1')).toBe(false)
   })
 })

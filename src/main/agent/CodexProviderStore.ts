@@ -4,6 +4,7 @@ import {
   BUILTIN_PROVIDER_PRESETS,
   DEFAULT_PROVIDER_ID,
   RETIRED_RIGHTCODE_PRO_ID,
+  credentialIdForProvider,
   isBuiltinProviderId,
   type ProviderPreset,
 } from './codexProviders'
@@ -161,15 +162,16 @@ export class CodexProviderStore {
 
   async getApiKey(id: string): Promise<string> {
     const state = await this.load()
-    return state.apiKeys[id] ?? ''
+    return state.apiKeys[credentialIdForProvider(id, state.customProviders)] ?? ''
   }
 
   async setApiKey(id: string, key: string): Promise<void> {
     await this.enqueueMutation(async () => {
       const state = await this.load()
+      const credentialId = credentialIdForProvider(id, state.customProviders)
       const trimmed = (key ?? '').trim()
-      if (trimmed) state.apiKeys[id] = trimmed
-      else delete state.apiKeys[id]
+      if (trimmed) state.apiKeys[credentialId] = trimmed
+      else delete state.apiKeys[credentialId]
       await this.persist(state)
     })
   }

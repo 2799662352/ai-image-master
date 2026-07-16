@@ -277,6 +277,19 @@ describe('AgentManager transactional provider application', () => {
     }
   }
 
+  it('uses the shared Right.Codes credential when switching to the Grok channel', async () => {
+    const backend = makeTransactionalBackend(async () => {
+      backend.epoch += 1
+    })
+    const manager = new AgentManager({ userDataDir: tmpDir, backend })
+
+    await manager.setProviderApiKey('rightcode', 'sk-shared')
+    await manager.setActiveProvider('rightcode-grok')
+
+    expect(manager.getCodexApiKey()).toBe('sk-shared')
+    expect(backend.configuredProviders).toEqual(['rightcode-grok'])
+  })
+
   it('confirms a successful switch only after a new backend epoch exists', async () => {
     let release!: () => void
     const gate = new Promise<void>((resolve) => { release = resolve })

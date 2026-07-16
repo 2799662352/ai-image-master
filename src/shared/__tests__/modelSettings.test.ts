@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CANONICAL_MODEL_SETTINGS_ROWS,
   EXPERIMENTAL_CONTEXT_WINDOW,
   UNKNOWN_MODEL_CONTEXT_WINDOW,
   defaultContextWindowForModel,
@@ -12,6 +13,24 @@ import {
 } from '../modelSettings'
 
 describe('model settings capabilities', () => {
+  it('publishes Grok 4.5 metadata with its verified 1M context', () => {
+    expect(
+      CANONICAL_MODEL_SETTINGS_ROWS.find((row) => row.id === 'grok-4.5'),
+    ).toEqual({
+      id: 'grok-4.5',
+      displayName: 'Grok 4.5',
+      tier: 'Extra High',
+      description: 'Frontier coding and agentic model via Right.Codes Responses.',
+      isDefault: false,
+    })
+    expect(defaultContextWindowForModel('grok-4.5')).toBe(
+      EXPERIMENTAL_CONTEXT_WINDOW,
+    )
+    expect(modelContextOptions('grok-4.5')).toEqual([
+      { value: EXPERIMENTAL_CONTEXT_WINDOW, experimental: false },
+    ])
+  })
+
   it('keeps max and filters ultra for Right Code gpt-5.6-sol', () => {
     expect(
       mergeModelSettingsCapabilities({

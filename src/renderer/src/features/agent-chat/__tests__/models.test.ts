@@ -12,6 +12,14 @@ describe('Codex model catalog', () => {
     ]))
   })
 
+  it('includes the Right.Codes Grok 4.5 model slug', () => {
+    expect(AGENT_MODELS).toContainEqual(expect.objectContaining({
+      id: 'grok-4.5',
+      label: 'Grok 4.5',
+      tier: 'Extra High',
+    }))
+  })
+
   it('hides legacy model families below GPT-5.4 from the chat picker', () => {
     const ids = AGENT_MODELS.map((model) => model.id)
 

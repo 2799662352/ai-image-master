@@ -49,6 +49,20 @@ describe('CodexProviderStore', () => {
     expect(await reopened.getApiKey('nope')).toBe('')
   })
 
+  it('shares one stored credential across builtin channels from the same gateway', async () => {
+    const store = makeStore()
+
+    await store.setApiKey('rightcode', 'sk-shared')
+    expect(await store.getApiKey('rightcode-grok')).toBe('sk-shared')
+
+    await store.setApiKey('rightcode-grok', 'sk-rotated')
+    expect(await store.getApiKey('rightcode')).toBe('sk-rotated')
+    const persisted = JSON.parse(
+      await fs.readFile(path.join(tmpDir, 'codex-providers.json'), 'utf8'),
+    )
+    expect(persisted.apiKeys).toEqual({ rightcode: 'sk-rotated' })
+  })
+
   it('migrates legacy codex-agent.json once into apiyi key slot', async () => {
     const legacyPath = path.join(tmpDir, 'codex-agent.json')
     await fs.writeFile(legacyPath, JSON.stringify({ openaiApiKey: 'sk-legacy-key' }))

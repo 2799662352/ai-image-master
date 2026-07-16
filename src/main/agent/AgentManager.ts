@@ -23,6 +23,7 @@ import {
   APIYI_MCP_PROVIDER_ID,
   CINEMATOGRAPHY_KB_PROVIDER_ID,
   DASHVECTOR_PROVIDER_ID,
+  credentialIdForProvider,
   isBuiltinProviderId,
   resolveActiveProvider,
   type ProviderPreset,
@@ -448,7 +449,9 @@ export class AgentManager {
     this.runtimeSettings = this.runtimeSettingsStore.loadSync()
     const persisted = this.providerStore.loadSync()
     this.activeProviderId = persisted.selectedProviderId
-    this.codexApiKey = persisted.apiKeys[this.activeProviderId] ?? ''
+    this.codexApiKey = persisted.apiKeys[
+      credentialIdForProvider(this.activeProviderId, persisted.customProviders)
+    ] ?? ''
     this.miauToken = (persisted.apiKeys[QWEN_UNDERSTAND_PROVIDER_ID] ?? '').trim()
     this.apiyiMcpKey = (persisted.apiKeys[APIYI_MCP_PROVIDER_ID] ?? '').trim()
     this.cinematographyKbKey = (persisted.apiKeys[CINEMATOGRAPHY_KB_PROVIDER_ID] ?? '').trim()
@@ -728,7 +731,9 @@ export class AgentManager {
         if (provider.id !== desired.activeId) {
           throw new Error(`Unknown Codex provider id "${desired.activeId}"`)
         }
-        const nextKey = persisted.apiKeys[desired.activeId] ?? ''
+        const nextKey = persisted.apiKeys[
+          credentialIdForProvider(desired.activeId, persisted.customProviders)
+        ] ?? ''
         let providerGeneration = this.backend.currentEpoch?.()
 
         if (desired.requiresApply) {
@@ -883,11 +888,16 @@ export class AgentManager {
 
     if (!isAuxiliaryProviderKey) {
       return this.enqueueAppliedProviderTransaction(async (before) => {
-        const previous = before.apiKeys[id] ?? ''
+        const credentialId = credentialIdForProvider(id, before.customProviders)
+        const activeCredentialId = credentialIdForProvider(
+          this.activeProviderId,
+          before.customProviders,
+        )
+        const previous = before.apiKeys[credentialId] ?? ''
         await this.providerStore.setApiKey(id, next)
         return {
           activeId: this.activeProviderId,
-          requiresApply: id === this.activeProviderId && next !== previous,
+          requiresApply: credentialId === activeCredentialId && next !== previous,
         }
       })
     }
@@ -1169,7 +1179,11 @@ export class AgentManager {
       try {
         const response = await this.backend.listModels({ includeHidden: false })
         if (!ownerStillCurrent()) continue
-        const models: AgentModelSettingsEntry[] = response.data.map((row) => ({
+        const allowedModels = this.providerAllowedModels(provider)
+        const rows = allowedModels
+          ? response.data.filter((row) => allowedModels.has(row.model))
+          : response.data
+        const models: AgentModelSettingsEntry[] = rows.map((row) => ({
           id: row.id,
           displayName: row.displayName,
           description: row.description,
@@ -1325,11 +1339,23 @@ export class AgentManager {
     })
   }
 
+  private providerAllowedModels(providerId: string): ReadonlySet<string> | undefined {
+    const persisted = this.providerStore.loadSync()
+    const provider = resolveActiveProvider(providerId, persisted.customProviders)
+    return provider.id === providerId && provider.allowedModels?.length
+      ? new Set(provider.allowedModels)
+      : undefined
+  }
+
   private fallbackModelSettingsCatalog(provider: string): AgentModelSettingsCatalog {
+    const allowedModels = this.providerAllowedModels(provider)
+    const rows = allowedModels
+      ? CANONICAL_MODEL_SETTINGS_ROWS.filter((row) => allowedModels.has(row.id))
+      : CANONICAL_MODEL_SETTINGS_ROWS
     return {
       provider,
       source: 'fallback',
-      models: CANONICAL_MODEL_SETTINGS_ROWS.map((row) => ({
+      models: rows.map((row) => ({
         id: row.id,
         displayName: row.displayName,
         description: row.description,
