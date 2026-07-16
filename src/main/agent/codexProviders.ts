@@ -1,4 +1,10 @@
 import type { CodexProviderConfig } from './codexLaunch'
+import {
+  BUILTIN_CHANNELS,
+  BUILTIN_GATEWAYS,
+  type GatewayPreset,
+  type ProviderChannelPreset,
+} from './gatewayModelRouting'
 
 /**
  * Provider preset shipped with the app. Extends the runtime
@@ -22,60 +28,12 @@ const APIYI_PRESET: ProviderPreset = {
   name: 'API Yi',
   baseUrl: 'https://api.apiyi.com/v1',
   envKey: 'OPENAI_API_KEY',
-  // apiyi accepts whatever model id the gateway proxies; we let users pick
-  // via codex's `/model` command at runtime, so we don't pin a model here.
-  // gpt-5.5 is still our internal "default agent model" used by the
-  // ThreadTitleSummarizer (see AgentManager.DEFAULT_AGENT_MODEL).
   description: 'API易 Responses 网关（默认）',
 }
 
-const APIYI_GROK_PRESET: ProviderPreset = {
-  id: 'apiyi-grok',
-  name: 'API Yi Grok',
-  baseUrl: 'https://api.apiyi.com/v1',
-  envKey: 'OPENAI_API_KEY',
-  model: 'grok-4.5',
-  credentialId: 'apiyi',
-  allowedModels: Object.freeze(['grok-4.5']),
-  description: 'Grok 4.5 · 500K · Responses · 需开通渠道',
-}
-
-/**
- * Right Code (https://www.right.codes) preset — values pinned to the
- * official docs at https://docs.right.codes/docs/rc_cli_config/codex.html
- * (last verified 2026-07-08 against the live gateway + in-console 模型列表).
- * When their docs change, update this preset and bump the unit test in
- * `codexProviders.test.ts`.
- *
- * 2026-06-12 upstream change (site announcement): the `/codex-pro` route was
- * RETIRED and merged into `/codex` — the 日抛plus pool is gone and `/codex`
- * now serves the Pro pool at 0.4x billing. `/codex-pro/v1/*` returns a
- * route-level 404 today, so the old `rightcode-pro` preset was removed (see
- * {@link RETIRED_RIGHTCODE_PRO_ID} for the store-side migration).
- *
- * Why we pin these flags explicitly:
- *  - `model="gpt-5.5"` mirrors the docs' model while reasoning effort is
- *    intentionally omitted: Auto must leave ordinary turns unforced. gpt-5.2
- *    was retired upstream on 2026-06-02 ("OpenAI 官方已下架 gpt-5.2 与
- *    gpt-5.3-codex") — pinning it made every turn fail with model-not-found.
- *    Current 模型列表: gpt-5.4 family / gpt-5.5 / gpt-5.5-openai-compact.
- *  - `disable_response_storage=true` follows the docs' privacy posture and
- *    matches what most OpenAI-compatible gateways expect (no upstream
- *    storage of inputs).
- *  - `windows_wsl_setup_acknowledged=true` quiets the first-run warning
- *    `codex` emits on Windows when WSL is not detected. Harmless on macOS /
- *    Linux (Codex ignores it).
- *  - `requires_openai_auth=true` tells codex this gateway expects the
- *    `Authorization: Bearer <OPENAI_API_KEY>` shape.
- */
 const RIGHTCODE_PRESET: ProviderPreset = {
   id: 'rightcode',
   name: 'Right.Codes',
-  // /codex is the ONLY Codex route since 2026-06-12 (Pro pool, 0.4x). This
-  // endpoint **only** accepts /v1/responses — never /v1/chat/completions. Our
-  // Codex CLI uses wire_api="responses" so we're safe; do not let users
-  // override that field for this preset (the Settings UI doesn't expose
-  // wire_api anyway).
   baseUrl: 'https://right.codes/codex/v1',
   envKey: 'OPENAI_API_KEY',
   model: 'gpt-5.5',
@@ -86,22 +44,6 @@ const RIGHTCODE_PRESET: ProviderPreset = {
     windows_wsl_setup_acknowledged: true,
   }),
   description: 'Pro号池 0.4x · cache_read 1/10 输入价',
-}
-
-const RIGHTCODE_GROK_PRESET: ProviderPreset = {
-  id: 'rightcode-grok',
-  name: 'Right.Codes Grok',
-  baseUrl: 'https://right.codes/grok/v1',
-  envKey: 'OPENAI_API_KEY',
-  model: 'grok-4.5',
-  credentialId: 'rightcode',
-  allowedModels: Object.freeze(['grok-4.5']),
-  requiresOpenaiAuth: true,
-  extraTopLevelConfig: Object.freeze({
-    disable_response_storage: true,
-    windows_wsl_setup_acknowledged: true,
-  }),
-  description: 'Grok 4.5 · 1M · Responses',
 }
 
 /**
@@ -193,14 +135,28 @@ export const CINEMATOGRAPHY_KB_PROVIDER_ID = 'cinematography-kb' as const
  */
 export const DASHVECTOR_PROVIDER_ID = 'dashvector' as const
 
+export { BUILTIN_GATEWAYS, BUILTIN_CHANNELS }
+export type { GatewayPreset, ProviderChannelPreset }
+
+/** User-facing builtin gateway cards (Grok channels are internal only). */
 export const BUILTIN_PROVIDER_PRESETS: readonly ProviderPreset[] = Object.freeze([
   Object.freeze(APIYI_PRESET),
-  Object.freeze(APIYI_GROK_PRESET),
   Object.freeze(RIGHTCODE_PRESET),
-  Object.freeze(RIGHTCODE_GROK_PRESET),
 ] as const)
 
+/** All four internal channel presets, including Grok routes. */
+export const BUILTIN_CHANNEL_PRESETS: readonly ProviderChannelPreset[] = BUILTIN_CHANNELS
+
+/** Alias for gateway presets exported for Task 2+ consumers. */
+export const BUILTIN_GATEWAY_PRESETS: readonly GatewayPreset[] = BUILTIN_GATEWAYS
+
 export const DEFAULT_PROVIDER_ID = 'apiyi' as const
+
+/** Legacy channel ids retained for store migration lookups. */
+export const LEGACY_GROK_CHANNEL_IDS = Object.freeze([
+  'apiyi-grok',
+  'rightcode-grok',
+] as const)
 
 const BUILTIN_IDS: ReadonlySet<string> = new Set(
   BUILTIN_PROVIDER_PRESETS.map((p) => p.id),

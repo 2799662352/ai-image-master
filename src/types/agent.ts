@@ -164,18 +164,46 @@ export interface CodexModelContextConfig {
   modelAutoCompactTokenLimit: number
 }
 
+export type AgentModelFamily = 'openai' | 'xai' | 'other'
+
+export interface AgentModelRoute {
+  gatewayId: string
+  channelId: string
+  modelId: string
+  family: AgentModelFamily
+}
+
+export type AgentModelAvailability =
+  | { status: 'available' }
+  | { status: 'needs-key'; reason: string }
+  | { status: 'unauthorized'; reason: string }
+
+export interface AgentGatewayRecord {
+  id: string
+  name: string
+  description?: string
+  credentialId: string
+  defaultChannelId: string
+  channelIds: string[]
+  isCustom?: boolean
+}
+
 export interface AgentModelSettingsEntry {
   id: string
   displayName: string
   description: string
   hidden: boolean
   isDefault: boolean
+  family: AgentModelFamily
+  route: AgentModelRoute
+  availability: AgentModelAvailability
   capabilities: ModelSettingsCapabilities
 }
 
 export interface AgentModelSettingsCatalog {
-  provider: string
-  source: 'codex' | 'fallback'
+  gatewayId: string
+  revision: string
+  source: 'codex' | 'mixed' | 'fallback'
   models: AgentModelSettingsEntry[]
 }
 

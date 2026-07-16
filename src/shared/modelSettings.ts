@@ -143,22 +143,22 @@ const VERIFIED_CONTEXT_POLICIES: ReadonlyMap<string, ModelContextPolicy> = new M
 ])
 
 const PROVIDER_CONTEXT_POLICIES: ReadonlyMap<string, ModelContextPolicy> = new Map([
-  ['rightcode-grok:grok-4.5', {
-    defaultWindow: EXPERIMENTAL_CONTEXT_WINDOW,
+  ['apiyi:apiyi-grok:grok-4.5', {
+    defaultWindow: 500_000,
+    allowExperimental1M: false,
+  }],
+  ['rightcode:rightcode-grok:grok-4.5', {
+    defaultWindow: 1_000_000,
     allowExperimental1M: false,
   }],
 ])
 
 const PROVIDER_REASONING_POLICIES: ReadonlyMap<string, ProviderReasoningPolicy> = new Map([
-  ['apiyi:grok-4.5', {
+  ['apiyi:apiyi-grok:grok-4.5', {
     defaultEffort: 'high',
     supportedEfforts: ['low', 'medium', 'high'],
   }],
-  ['apiyi-grok:grok-4.5', {
-    defaultEffort: 'high',
-    supportedEfforts: ['low', 'medium', 'high'],
-  }],
-  ['rightcode-grok:grok-4.5', {
+  ['rightcode:rightcode-grok:grok-4.5', {
     defaultEffort: 'high',
     supportedEfforts: ['low', 'medium', 'high'],
   }],
@@ -188,35 +188,55 @@ export function isConcreteModelReasoningEffort(
   return isModelReasoningEffort(value) && value !== 'auto'
 }
 
-function providerModelKey(provider: string, model: string): string {
-  return `${provider}:${model}`
+function providerModelKey(
+  gatewayId: string,
+  channelId: string,
+  model: string,
+): string {
+  return `${gatewayId}:${channelId}:${model}`
 }
 
 function contextPolicy(
   model: string,
-  provider?: string,
+  gatewayId?: string,
+  channelId?: string,
 ): ModelContextPolicy | undefined {
-  return (
-    (provider
-      ? PROVIDER_CONTEXT_POLICIES.get(providerModelKey(provider, model))
-      : undefined)
-    ?? VERIFIED_CONTEXT_POLICIES.get(model)
+  if (gatewayId && channelId) {
+    const routed = PROVIDER_CONTEXT_POLICIES.get(
+      providerModelKey(gatewayId, channelId, model),
+    )
+    if (routed) return routed
+  }
+  return VERIFIED_CONTEXT_POLICIES.get(model)
+}
+
+function reasoningPolicy(
+  model: string,
+  gatewayId: string,
+  channelId: string,
+): ProviderReasoningPolicy | undefined {
+  return PROVIDER_REASONING_POLICIES.get(
+    providerModelKey(gatewayId, channelId, model),
   )
 }
 
 export function defaultContextWindowForModel(
   model: string,
-  provider?: string,
+  gatewayId?: string,
+  channelId?: string,
 ): number {
-  return contextPolicy(model, provider)?.defaultWindow
+  return contextPolicy(model, gatewayId, channelId)?.defaultWindow
     ?? UNKNOWN_MODEL_CONTEXT_WINDOW
 }
 
 export function modelContextOptions(
-  model: string,
-  provider?: string,
+  modelId: string,
+  gatewayId?: string,
+  channelId?: string,
 ): ModelContextOption[] {
-  const policy = contextPolicy(model, provider)
+  const policy = gatewayId && channelId
+    ? contextPolicy(modelId, gatewayId, channelId)
+    : VERIFIED_CONTEXT_POLICIES.get(modelId)
   const defaultContextWindow = policy?.defaultWindow ?? UNKNOWN_MODEL_CONTEXT_WINDOW
   const defaultOption: ModelContextOption = {
     value: defaultContextWindow,
@@ -236,17 +256,27 @@ export function modelContextOptions(
   ]
 }
 
+export function supportedReasoningEfforts(
+  modelId: string,
+  gatewayId: string,
+  channelId: string,
+): ConcreteModelReasoningEffort[] {
+  const verified = reasoningPolicy(modelId, gatewayId, channelId)
+  return verified ? [...verified.supportedEfforts] : []
+}
+
 export function isModelContextWindowSupported(
   model: string,
   contextWindow: number,
-  provider?: string,
+  gatewayId?: string,
+  channelId?: string,
 ): boolean {
   if (
-    modelContextOptions(model, provider).some(
+    modelContextOptions(model, gatewayId, channelId).some(
       (option) => option.value === contextWindow,
     )
   ) return true
-  if (provider) return false
+  if (gatewayId && channelId) return false
   for (const [key, policy] of PROVIDER_CONTEXT_POLICIES) {
     if (
       key.endsWith(`:${model}`)
@@ -258,22 +288,26 @@ export function isModelContextWindowSupported(
 
 export function mergeModelSettingsCapabilities(input: {
   model: string
-  provider: string
+  gatewayId: string
+  channelId: string
   defaultReasoningEffort?: string
-  supportedReasoningEfforts: readonly string[]
+  supportedReasoningEfforts?: readonly string[]
 }): ModelSettingsCapabilities {
-  const verifiedReasoning = PROVIDER_REASONING_POLICIES.get(
-    providerModelKey(input.provider, input.model),
+  const verifiedReasoning = reasoningPolicy(
+    input.model,
+    input.gatewayId,
+    input.channelId,
   )
   const supported = new Set(
-    input.supportedReasoningEfforts.length > 0
+    (input.supportedReasoningEfforts?.length ?? 0) > 0
       ? input.supportedReasoningEfforts
       : verifiedReasoning?.supportedEfforts ?? [],
   )
-  const supportedReasoningEfforts = MODEL_REASONING_EFFORTS.filter((effort) => {
+  const supportedReasoningEffortsList = MODEL_REASONING_EFFORTS.filter((effort) => {
     if (!supported.has(effort)) return false
     return !(
-      input.provider === 'rightcode'
+      input.gatewayId === 'rightcode'
+      && input.channelId === 'rightcode-standard'
       && input.model === 'gpt-5.5'
       && effort === 'max'
     )
@@ -281,13 +315,21 @@ export function mergeModelSettingsCapabilities(input: {
 
   return {
     model: input.model,
-    provider: input.provider,
-    defaultContextWindow: defaultContextWindowForModel(input.model, input.provider),
-    contextOptions: modelContextOptions(input.model, input.provider),
+    provider: input.gatewayId,
+    defaultContextWindow: defaultContextWindowForModel(
+      input.model,
+      input.gatewayId,
+      input.channelId,
+    ),
+    contextOptions: modelContextOptions(
+      input.model,
+      input.gatewayId,
+      input.channelId,
+    ),
     defaultReasoningEffort:
       input.defaultReasoningEffort
       ?? verifiedReasoning?.defaultEffort,
-    supportedReasoningEfforts,
+    supportedReasoningEfforts: supportedReasoningEffortsList,
   }
 }
 

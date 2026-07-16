@@ -57,6 +57,10 @@ export const DEFAULT_CODEX_SESSION_CONFIG: CodexSessionConfig = {
  * (https://docs.right.codes/docs/rc_cli_config/codex.html) — works out of the
  * box without forcing the user to hand-edit `~/.codex/config.toml`.
  */
+export type ProviderCompatibilityPolicy =
+  | 'none'
+  | 'responses-namespace-bridge'
+
 export interface CodexProviderConfig {
   id: string
   name: string
@@ -87,6 +91,7 @@ export interface CodexProviderConfig {
    * strings serialize as `key="value"`.
    */
   extraTopLevelConfig?: Readonly<Record<string, string | boolean | number>>
+  compatibilityPolicy?: ProviderCompatibilityPolicy
 }
 
 /**

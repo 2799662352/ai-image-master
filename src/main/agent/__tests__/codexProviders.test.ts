@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  BUILTIN_CHANNEL_PRESETS,
+  BUILTIN_GATEWAY_PRESETS,
   BUILTIN_PROVIDER_PRESETS,
   DEFAULT_PROVIDER_ID,
   RETIRED_RIGHTCODE_PRO_ID,
@@ -7,6 +9,7 @@ import {
   isBuiltinProviderId,
   type ProviderPreset,
 } from '../codexProviders'
+import { channelsForGateway, resolveProviderChannel } from '../gatewayModelRouting'
 
 describe('codexProviders', () => {
   it('exposes apiyi as the default builtin so existing setups keep working', () => {
@@ -20,11 +23,8 @@ describe('codexProviders', () => {
   it('ships rightcode preset matching the public docs', () => {
     const rc = BUILTIN_PROVIDER_PRESETS.find((p) => p.id === 'rightcode')
     expect(rc).toBeDefined()
-    // From https://docs.right.codes/docs/rc_cli_config/codex.html
     expect(rc!.baseUrl).toBe('https://right.codes/codex/v1')
     expect(rc!.envKey).toBe('OPENAI_API_KEY')
-    // gpt-5.2 was retired upstream (site announcement 2026-06-02); the docs
-    // example now pins gpt-5.5.
     expect(rc!.model).toBe('gpt-5.5')
     expect(rc).not.toHaveProperty('reasoningEffort')
     expect(rc!.verbosity).toBe('high')
@@ -34,62 +34,74 @@ describe('codexProviders', () => {
     expect(rc!.extraTopLevelConfig?.windows_wsl_setup_acknowledged).toBe(true)
   })
 
-  it('ships a dedicated Right.Codes Grok Responses provider', () => {
-    const grok = BUILTIN_PROVIDER_PRESETS.find((p) => p.id === 'rightcode-grok')
+  it('does not expose Grok channels in the user-facing builtin provider list', () => {
+    expect(BUILTIN_PROVIDER_PRESETS.map((p) => p.id)).toEqual(['apiyi', 'rightcode'])
+    expect(BUILTIN_PROVIDER_PRESETS.find((p) => p.id === 'apiyi-grok')).toBeUndefined()
+    expect(BUILTIN_PROVIDER_PRESETS.find((p) => p.id === 'rightcode-grok')).toBeUndefined()
+  })
 
+  it('exports four internal channel presets including Grok routes', () => {
+    expect(BUILTIN_CHANNEL_PRESETS.map((channel) => channel.id)).toEqual([
+      'apiyi-standard',
+      'apiyi-grok',
+      'rightcode-standard',
+      'rightcode-grok',
+    ])
+
+    const grok = resolveProviderChannel('rightcode-grok')
     expect(grok).toMatchObject({
       name: 'Right.Codes Grok',
       baseUrl: 'https://right.codes/grok/v1',
       envKey: 'OPENAI_API_KEY',
       model: 'grok-4.5',
-      credentialId: 'rightcode',
       allowedModels: ['grok-4.5'],
       requiresOpenaiAuth: true,
-      description: 'Grok 4.5 · 1M · Responses',
-      extraTopLevelConfig: {
-        disable_response_storage: true,
-        windows_wsl_setup_acknowledged: true,
-      },
     })
     expect(grok).not.toHaveProperty('reasoningEffort')
     expect(grok).not.toHaveProperty('verbosity')
-  })
 
-  it('ships a dedicated API Yi Grok Responses provider', () => {
-    const grok = BUILTIN_PROVIDER_PRESETS.find((p) => p.id === 'apiyi-grok')
-
-    expect(grok).toMatchObject({
+    const apiyiGrok = resolveProviderChannel('apiyi-grok')
+    expect(apiyiGrok).toMatchObject({
       name: 'API Yi Grok',
       baseUrl: 'https://api.apiyi.com/v1',
       envKey: 'OPENAI_API_KEY',
       model: 'grok-4.5',
-      credentialId: 'apiyi',
       allowedModels: ['grok-4.5'],
-      description: 'Grok 4.5 · 500K · Responses · 需开通渠道',
+      compatibilityPolicy: 'responses-namespace-bridge',
     })
-    expect(grok).not.toHaveProperty('reasoningEffort')
-    expect(grok).not.toHaveProperty('verbosity')
-    expect(grok).not.toHaveProperty('requiresOpenaiAuth')
+    expect(apiyiGrok).not.toHaveProperty('reasoningEffort')
+    expect(apiyiGrok).not.toHaveProperty('verbosity')
+    expect(apiyiGrok).not.toHaveProperty('requiresOpenaiAuth')
+  })
+
+  it('exports two gateway presets with channel membership', () => {
+    expect(BUILTIN_GATEWAY_PRESETS.map((gateway) => gateway.id)).toEqual([
+      'apiyi',
+      'rightcode',
+    ])
+    expect(channelsForGateway('rightcode').map((channel) => channel.id)).toEqual([
+      'rightcode-standard',
+      'rightcode-grok',
+    ])
   })
 
   it('builtin presets are readonly (frozen)', () => {
     expect(Object.isFrozen(BUILTIN_PROVIDER_PRESETS)).toBe(true)
     for (const p of BUILTIN_PROVIDER_PRESETS) expect(Object.isFrozen(p)).toBe(true)
+    expect(Object.isFrozen(BUILTIN_CHANNEL_PRESETS)).toBe(true)
+    expect(Object.isFrozen(BUILTIN_GATEWAY_PRESETS)).toBe(true)
   })
 
   it('no longer ships the retired rightcode-pro preset (/codex-pro 404s since 2026-06-12)', () => {
-    // Right.Codes merged /codex-pro into /codex on 2026-06-12 (site
-    // announcement); the /codex-pro/v1 route now returns a route-level 404,
-    // so shipping the preset would give users a provider that can never talk.
     expect(BUILTIN_PROVIDER_PRESETS.find((p) => p.id === 'rightcode-pro')).toBeUndefined()
     expect(RETIRED_RIGHTCODE_PRO_ID).toBe('rightcode-pro')
   })
 
-  it('isBuiltinProviderId discriminates builtins from custom ids', () => {
+  it('isBuiltinProviderId discriminates gateway builtins from custom ids', () => {
     expect(isBuiltinProviderId('apiyi')).toBe(true)
-    expect(isBuiltinProviderId('apiyi-grok')).toBe(true)
+    expect(isBuiltinProviderId('apiyi-grok')).toBe(false)
     expect(isBuiltinProviderId('rightcode')).toBe(true)
-    expect(isBuiltinProviderId('rightcode-grok')).toBe(true)
+    expect(isBuiltinProviderId('rightcode-grok')).toBe(false)
     expect(isBuiltinProviderId('rightcode-pro')).toBe(false)
     expect(isBuiltinProviderId('custom-1234')).toBe(false)
     expect(isBuiltinProviderId('')).toBe(false)
@@ -106,9 +118,9 @@ describe('codexProviders', () => {
       },
     ]
     expect(findProviderById('apiyi', custom)?.id).toBe('apiyi')
-    expect(findProviderById('apiyi-grok', custom)?.id).toBe('apiyi-grok')
+    expect(findProviderById('apiyi-grok', custom)).toBeUndefined()
     expect(findProviderById('rightcode', custom)?.id).toBe('rightcode')
-    expect(findProviderById('rightcode-grok', custom)?.id).toBe('rightcode-grok')
+    expect(findProviderById('rightcode-grok', custom)).toBeUndefined()
     expect(findProviderById('custom-1', custom)?.id).toBe('custom-1')
     expect(findProviderById('does-not-exist', custom)).toBeUndefined()
   })
@@ -117,9 +129,9 @@ describe('codexProviders', () => {
     const builtinIds = new Set(BUILTIN_PROVIDER_PRESETS.map((p) => p.id))
     expect(builtinIds.size).toBe(BUILTIN_PROVIDER_PRESETS.length)
     expect(builtinIds.has('apiyi')).toBe(true)
-    expect(builtinIds.has('apiyi-grok')).toBe(true)
     expect(builtinIds.has('rightcode')).toBe(true)
-    expect(builtinIds.has('rightcode-grok')).toBe(true)
+    expect(builtinIds.has('apiyi-grok')).toBe(false)
+    expect(builtinIds.has('rightcode-grok')).toBe(false)
     expect(builtinIds.has('custom-1')).toBe(false)
   })
 })

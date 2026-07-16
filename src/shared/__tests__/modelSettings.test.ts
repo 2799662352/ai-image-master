@@ -11,6 +11,7 @@ import {
   migrateLegacyModelSelection,
   modelAutoCompactTokenLimit,
   modelContextOptions,
+  supportedReasoningEfforts,
 } from '../modelSettings'
 
 describe('model settings capabilities', () => {
@@ -26,35 +27,37 @@ describe('model settings capabilities', () => {
     })
   })
 
-  it('uses Provider-specific Grok 4.5 context limits', () => {
+  it('uses Gateway + Channel Grok 4.5 context limits', () => {
     expect(defaultContextWindowForModel('grok-4.5')).toBe(GROK_4_5_CONTEXT_WINDOW)
-    expect(defaultContextWindowForModel('grok-4.5', 'apiyi')).toBe(
+    expect(defaultContextWindowForModel('grok-4.5', 'apiyi', 'apiyi-grok')).toBe(
       GROK_4_5_CONTEXT_WINDOW,
     )
-    expect(defaultContextWindowForModel('grok-4.5', 'apiyi-grok')).toBe(
-      GROK_4_5_CONTEXT_WINDOW,
-    )
-    expect(defaultContextWindowForModel('grok-4.5', 'rightcode-grok')).toBe(
+    expect(defaultContextWindowForModel('grok-4.5', 'rightcode', 'rightcode-grok')).toBe(
       EXPERIMENTAL_CONTEXT_WINDOW,
     )
-    expect(modelContextOptions('grok-4.5', 'apiyi-grok')).toEqual([
-      { value: GROK_4_5_CONTEXT_WINDOW, experimental: false },
-    ])
-    expect(modelContextOptions('grok-4.5', 'rightcode-grok')).toEqual([
-      { value: EXPERIMENTAL_CONTEXT_WINDOW, experimental: false },
-    ])
+    expect(modelContextOptions('grok-4.5', 'apiyi', 'apiyi-grok')).toContainEqual({
+      value: 500_000,
+      experimental: false,
+    })
+    expect(modelContextOptions('grok-4.5', 'rightcode', 'rightcode-grok')).toContainEqual({
+      value: 1_000_000,
+      experimental: false,
+    })
   })
 
   it.each([
-    ['apiyi', GROK_4_5_CONTEXT_WINDOW],
-    ['apiyi-grok', GROK_4_5_CONTEXT_WINDOW],
-    ['rightcode-grok', EXPERIMENTAL_CONTEXT_WINDOW],
-  ])('uses verified Grok reasoning capabilities for %s', (provider, contextWindow) => {
+    ['apiyi', 'apiyi-grok', GROK_4_5_CONTEXT_WINDOW],
+    ['rightcode', 'rightcode-grok', EXPERIMENTAL_CONTEXT_WINDOW],
+  ])('uses verified Grok reasoning capabilities for %s/%s', (
+    gatewayId,
+    channelId,
+    contextWindow,
+  ) => {
     expect(
       mergeModelSettingsCapabilities({
         model: 'grok-4.5',
-        provider,
-        supportedReasoningEfforts: [],
+        gatewayId,
+        channelId,
       }),
     ).toMatchObject({
       defaultContextWindow: contextWindow,
@@ -62,13 +65,17 @@ describe('model settings capabilities', () => {
       defaultReasoningEffort: 'high',
       supportedReasoningEfforts: ['low', 'medium', 'high'],
     })
+    expect(
+      supportedReasoningEfforts('grok-4.5', gatewayId, channelId),
+    ).toEqual(['low', 'medium', 'high'])
   })
 
   it('keeps max and filters ultra for Right Code gpt-5.6-sol', () => {
     expect(
       mergeModelSettingsCapabilities({
         model: 'gpt-5.6-sol',
-        provider: 'rightcode',
+        gatewayId: 'rightcode',
+        channelId: 'rightcode-standard',
         defaultReasoningEffort: 'low',
         supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
       }),
@@ -89,7 +96,8 @@ describe('model settings capabilities', () => {
     expect(
       mergeModelSettingsCapabilities({
         model: 'gpt-5.5',
-        provider: 'rightcode',
+        gatewayId: 'rightcode',
+        channelId: 'rightcode-standard',
         defaultReasoningEffort: 'medium',
         supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
       }),
@@ -110,7 +118,8 @@ describe('model settings capabilities', () => {
     expect(
       mergeModelSettingsCapabilities({
         model: 'gpt-5.5',
-        provider: 'apiyi',
+        gatewayId: 'apiyi',
+        channelId: 'apiyi-standard',
         supportedReasoningEfforts: ['max', 'ultra'],
       }).supportedReasoningEfforts,
     ).toEqual(['max'])
@@ -120,7 +129,8 @@ describe('model settings capabilities', () => {
     expect(
       mergeModelSettingsCapabilities({
         model: 'custom-model',
-        provider: 'custom',
+        gatewayId: 'custom',
+        channelId: 'custom:custom',
         supportedReasoningEfforts: ['ultra', 'xhigh', 'low', 'low', 'future-level'],
       }).supportedReasoningEfforts,
     ).toEqual(['low', 'xhigh'])
