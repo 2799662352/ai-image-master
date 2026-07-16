@@ -17,7 +17,6 @@ import {
 import { DEFAULT_CODEX_SESSION_CONFIG, type CatimationMcpLaunchInfo } from './codexLaunch'
 import {
   BUILTIN_PROVIDER_PRESETS,
-  DEFAULT_PROVIDER_ID,
   QWEN_UNDERSTAND_PROVIDER,
   QWEN_UNDERSTAND_PROVIDER_ID,
   APIYI_MCP_PROVIDER_ID,
@@ -177,7 +176,6 @@ interface BuiltCollaborationMode {
 }
 
 interface DesiredProviderMutation {
-  activeId: string
   requiresApply: boolean
 }
 
@@ -289,13 +287,21 @@ export interface AgentManagerOptions {
 
 function resolvePersistedStartupProvider(
   persisted: PersistedProvidersV2,
-): ProviderPreset {
+): {
+  gatewayId: string
+  channelId: string
+  provider: ProviderPreset
+} {
   const gateway = resolveActiveProvider(
     persisted.selectedGatewayId,
     persisted.customProviders,
   )
   if (gateway.id !== persisted.selectedGatewayId) {
-    return gateway
+    return {
+      gatewayId: persisted.selectedGatewayId,
+      channelId: gateway.id,
+      provider: gateway,
+    }
   }
 
   const route = resolveGatewayModelRoute(
@@ -305,8 +311,12 @@ function resolvePersistedStartupProvider(
   )
   const channel = resolveProviderChannel(route.channelId, persisted.customProviders)
   return {
-    ...channel,
-    model: route.modelId,
+    gatewayId: route.gatewayId,
+    channelId: route.channelId,
+    provider: {
+      ...channel,
+      model: route.modelId,
+    },
   }
 }
 
@@ -320,7 +330,10 @@ export class AgentManager {
   private readonly providerStore: CodexProviderStore
   private readonly runtimeSettingsStore: CodexRuntimeSettingsStore
   private runtimeSettings: PersistedCodexRuntimeSettingsV1
-  private activeProviderId: string
+  /** User-visible Gateway id exposed by Provider settings snapshots. */
+  private activeGatewayId: string
+  /** Internal Channel id currently applied to the backend generation. */
+  private appliedChannelId: string
   private codexApiKey = ''
   /**
    * Miau token for the qwen understanding provider (Path B). Persisted in the
@@ -478,15 +491,17 @@ export class AgentManager {
     // v4.4.2 persistence migration: the store now separates the Gateway
     // choice (selectedGatewayId) from the model/channel choice
     // (selectedModelId) — see CodexProviderStore's PersistedProvidersV2.
-    this.activeProviderId = persisted.selectedGatewayId
+    const restoredProvider = resolvePersistedStartupProvider(persisted)
+    this.activeGatewayId = restoredProvider.gatewayId
+    this.appliedChannelId = restoredProvider.channelId
     this.codexApiKey = persisted.apiKeys[
-      credentialIdForProvider(this.activeProviderId, persisted.customProviders)
+      credentialIdForProvider(this.activeGatewayId, persisted.customProviders)
     ] ?? ''
     this.miauToken = (persisted.apiKeys[QWEN_UNDERSTAND_PROVIDER_ID] ?? '').trim()
     this.apiyiMcpKey = (persisted.apiKeys[APIYI_MCP_PROVIDER_ID] ?? '').trim()
     this.cinematographyKbKey = (persisted.apiKeys[CINEMATOGRAPHY_KB_PROVIDER_ID] ?? '').trim()
     this.dashVectorKey = (persisted.apiKeys[DASHVECTOR_PROVIDER_ID] ?? '').trim()
-    const activeProvider = resolvePersistedStartupProvider(persisted)
+    const activeProvider = restoredProvider.provider
     if (opts.backend) {
       this.backend = opts.backend
     } else {
@@ -639,7 +654,7 @@ export class AgentManager {
    * working — new code paths should prefer `setProviderApiKey(id, key)`.
    */
   async setCodexApiKey(key: string): Promise<void> {
-    await this.setProviderApiKey(this.activeProviderId, key)
+    await this.setProviderApiKey(this.activeGatewayId, key)
   }
 
   // ---------------------------------------------------------------------
@@ -663,10 +678,9 @@ export class AgentManager {
     return {
       builtins: BUILTIN_PROVIDER_PRESETS.map((p) => ({ ...p })),
       custom: persisted.customProviders.map((p) => ({ ...p })),
-      // selectedGatewayId is the desired value while a transaction is in
-      // flight. Settings/capability consumers must only observe the Provider
-      // owned by the currently applied backend generation.
-      activeId: this.activeProviderId,
+      // UI state exposes the user-facing Gateway only. The backend's internal
+      // Channel identity is tracked separately in appliedChannelId.
+      activeId: this.activeGatewayId,
       apiKeys: { ...persisted.apiKeys },
     }
   }
@@ -681,8 +695,7 @@ export class AgentManager {
       }
       await this.providerStore.setSelectedId(id)
       return {
-        activeId: id,
-        requiresApply: id !== this.activeProviderId,
+        requiresApply: false,
       }
     })
   }
@@ -740,43 +753,40 @@ export class AgentManager {
     let capabilityReady = false
     const transaction = this.restartChain.then(async () => {
       const before = await this.providerStore.load()
-      const previousAppliedId = this.activeProviderId
+      const previousActiveGatewayId = this.activeGatewayId
+      const previousAppliedChannelId = this.appliedChannelId
       const previousKey = this.codexApiKey
       const previousEpoch = this.backend.currentEpoch?.()
       const previousHealthy = this.backend.isHealthy()
-      const previousProvider = resolveActiveProvider(
-        previousAppliedId,
-        before.customProviders,
-      )
+      const previousProvider = resolvePersistedStartupProvider(before).provider
       let desiredPersisted = false
 
       try {
         const desired = await mutateDesired(before)
         desiredPersisted = true
         const persisted = await this.providerStore.load()
-        const provider = resolveActiveProvider(
-          desired.activeId,
-          persisted.customProviders,
-        )
-        if (provider.id !== desired.activeId) {
-          throw new Error(`Unknown Codex provider id "${desired.activeId}"`)
-        }
+        const restoredProvider = resolvePersistedStartupProvider(persisted)
+        const provider = restoredProvider.provider
         const nextKey = persisted.apiKeys[
-          credentialIdForProvider(desired.activeId, persisted.customProviders)
+          credentialIdForProvider(restoredProvider.gatewayId, persisted.customProviders)
         ] ?? ''
         let providerGeneration = this.backend.currentEpoch?.()
+        const requiresApply =
+          desired.requiresApply
+          || restoredProvider.channelId !== this.appliedChannelId
 
-        if (desired.requiresApply) {
+        if (requiresApply) {
           this.codexApiKey = nextKey
           providerGeneration = await this.applyProviderGeneration(provider)
         }
 
-        this.activeProviderId = desired.activeId
+        this.activeGatewayId = restoredProvider.gatewayId
+        this.appliedChannelId = restoredProvider.channelId
         this.codexApiKey = nextKey
         capabilityReady = true
         return {
           ok: true as const,
-          activeId: desired.activeId,
+          activeId: restoredProvider.gatewayId,
           ...(providerGeneration !== undefined ? { providerGeneration } : {}),
         }
       } catch (error) {
@@ -790,7 +800,8 @@ export class AgentManager {
             }
           }
         } finally {
-          this.activeProviderId = previousAppliedId
+          this.activeGatewayId = previousActiveGatewayId
+          this.appliedChannelId = previousAppliedChannelId
           this.codexApiKey = previousKey
           this.backend.setProvider?.(previousProvider)
         }
@@ -920,13 +931,12 @@ export class AgentManager {
       return this.enqueueAppliedProviderTransaction(async (before) => {
         const credentialId = credentialIdForProvider(id, before.customProviders)
         const activeCredentialId = credentialIdForProvider(
-          this.activeProviderId,
+          this.activeGatewayId,
           before.customProviders,
         )
         const previous = before.apiKeys[credentialId] ?? ''
         await this.providerStore.setApiKey(id, next)
         return {
-          activeId: this.activeProviderId,
           requiresApply: credentialId === activeCredentialId && next !== previous,
         }
       })
@@ -987,7 +997,7 @@ export class AgentManager {
     const providerGeneration = this.backend.currentEpoch?.()
     return {
       ok: true,
-      activeId: this.activeProviderId,
+      activeId: this.activeGatewayId,
       ...(providerGeneration !== undefined ? { providerGeneration } : {}),
     }
   }
@@ -1020,8 +1030,7 @@ export class AgentManager {
     return this.enqueueAppliedProviderTransaction(async () => {
       await this.providerStore.updateCustomProvider(id, patch)
       return {
-        activeId: this.activeProviderId,
-        requiresApply: id === this.activeProviderId,
+        requiresApply: id === this.activeGatewayId,
       }
     })
   }
@@ -1031,10 +1040,9 @@ export class AgentManager {
   ): Promise<{ ok: true } & AgentProviderMutationResult> {
     if (isBuiltinProviderId(id)) throw new Error('Cannot remove builtin provider')
     return this.enqueueAppliedProviderTransaction(async () => {
-      const wasActive = this.activeProviderId === id
+      const wasActive = this.activeGatewayId === id
       await this.providerStore.removeCustomProvider(id)
       return {
-        activeId: wasActive ? DEFAULT_PROVIDER_ID : this.activeProviderId,
         requiresApply: wasActive,
       }
     })
@@ -1192,11 +1200,11 @@ export class AgentManager {
       const providerReady = await providerBarrier
       if (providerBarrier !== this.providerCapabilityBarrier) continue
 
-      const provider = this.activeProviderId
+      const provider = this.appliedChannelId
       const backendEpoch = this.backend.currentEpoch?.()
       const ownerStillCurrent = (): boolean =>
         this.providerCapabilityBarrier === providerBarrier
-        && this.activeProviderId === provider
+        && this.appliedChannelId === provider
         && (
           backendEpoch === undefined
           || this.backend.currentEpoch?.() === backendEpoch
@@ -1255,7 +1263,7 @@ export class AgentManager {
         return { ok: true, data: this.fallbackModelSettingsCatalog(provider) }
       }
     }
-    const provider = this.activeProviderId
+    const provider = this.appliedChannelId
     console.warn(
       `[AgentManager] model settings catalog owner changed ${maxOwnerAttempts} times; using fallback for ${provider}`,
     )
@@ -1452,7 +1460,7 @@ export class AgentManager {
     if (!Number.isSafeInteger(payload.requestVersion) || payload.requestVersion < 0) {
       return 'requestVersion must be a non-negative safe integer'
     }
-    const route = this.modelRoute(this.activeProviderId, model)
+    const route = this.modelRoute(this.activeGatewayId, model)
     const allowed = modelContextOptions(
       model,
       route.gatewayId,
@@ -1837,7 +1845,7 @@ export class AgentManager {
       return {
         ok: true,
         data: this.fallbackCollaborationCapabilities(
-          this.activeProviderId,
+          this.appliedChannelId,
           this.backend.currentEpoch?.(),
         ),
       }
@@ -1901,14 +1909,14 @@ export class AgentManager {
     includePlanPreset: boolean,
     providerReady: boolean,
   ): Promise<ResolvedCollaborationCapabilities> {
-    const providerId = this.activeProviderId
+    const providerId = this.appliedChannelId
     const backendEpoch = this.backend.currentEpoch?.()
     const fallback = (): ResolvedCollaborationCapabilities => ({
       model: modelId,
       capabilities: this.fallbackCollaborationCapabilities(providerId, backendEpoch),
     })
     const ownerStillCurrent = (): boolean =>
-      this.activeProviderId === providerId
+      this.appliedChannelId === providerId
       && (
         backendEpoch === undefined
         || this.backend.currentEpoch?.() === backendEpoch
@@ -2531,10 +2539,7 @@ export class AgentManager {
     // v4.3.0 — but with multi-provider that would silently mis-route the test
     // and report success against the wrong host.
     const persisted = await this.providerStore.load()
-    const activeProvider = resolveActiveProvider(
-      this.activeProviderId,
-      persisted.customProviders,
-    )
+    const activeProvider = resolvePersistedStartupProvider(persisted).provider
     // Build a fresh, isolated backend so we never disturb the long-lived one.
     // Re-uses the production resourceRoot resolution path inside CodexLocalBackend
     // (app.getAppPath / process.resourcesPath) — the only thing we tighten is
@@ -3095,7 +3100,7 @@ export class AgentManager {
     owner: CollaborationCapabilityOwner,
   ): boolean {
     return (
-      this.activeProviderId === owner.providerId
+      this.appliedChannelId === owner.providerId
       && this.backend.currentEpoch?.() === owner.backendEpoch
     )
   }

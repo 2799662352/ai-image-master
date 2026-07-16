@@ -819,7 +819,7 @@ describe('AgentManager collaboration capabilities', () => {
     await expect(pending).resolves.toEqual({
       ok: true,
       data: {
-        providerId: 'rightcode',
+        providerId: 'rightcode-standard',
         backendEpoch: 2,
         planDefaultEffort: 'medium',
         supportedPlanEfforts: ['medium'],
@@ -846,7 +846,7 @@ describe('AgentManager collaboration capabilities', () => {
     await expect(manager.getCollaborationCapabilitiesRpc('gpt-5.5')).resolves.toMatchObject({
       ok: true,
       data: {
-        providerId: 'apiyi',
+        providerId: 'apiyi-standard',
         backendEpoch: 1,
       },
     })
@@ -878,7 +878,7 @@ describe('AgentManager collaboration capabilities', () => {
     await expect(manager.getCollaborationCapabilitiesRpc('gpt-5.6-sol')).resolves.toEqual({
       ok: true,
       data: {
-        providerId: 'rightcode',
+        providerId: 'rightcode-standard',
         planDefaultEffort: 'medium',
         supportedPlanEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
         source: 'codex',
@@ -911,7 +911,7 @@ describe('AgentManager collaboration capabilities', () => {
     await expect(manager.getCollaborationCapabilitiesRpc('gpt-5.5')).resolves.toEqual({
       ok: true,
       data: {
-        providerId: 'rightcode',
+        providerId: 'rightcode-standard',
         planDefaultEffort: 'medium',
         supportedPlanEfforts: ['low', 'medium', 'high', 'xhigh'],
         source: 'codex',
@@ -932,7 +932,7 @@ describe('AgentManager collaboration capabilities', () => {
     await expect(manager.getCollaborationCapabilitiesRpc('gpt-5.5')).resolves.toEqual({
       ok: true,
       data: {
-        providerId: 'apiyi',
+        providerId: 'apiyi-standard',
         planDefaultEffort: 'low',
         supportedPlanEfforts: ['low', 'high'],
         source: 'codex',
@@ -957,7 +957,7 @@ describe('AgentManager collaboration capabilities', () => {
     expect(result).toEqual({
       ok: true,
       data: {
-        providerId: 'apiyi',
+        providerId: 'apiyi-standard',
         planDefaultEffort: 'low',
         supportedPlanEfforts: ['low', 'high'],
         source: 'codex',
@@ -994,7 +994,7 @@ describe('AgentManager collaboration capabilities', () => {
     await expect(manager.getCollaborationCapabilitiesRpc('gpt-5.6-sol')).resolves.toEqual({
       ok: true,
       data: {
-        providerId: 'rightcode',
+        providerId: 'rightcode-standard',
         planDefaultEffort: 'max',
         supportedPlanEfforts: ['max'],
         source: 'codex',
@@ -1006,7 +1006,7 @@ describe('AgentManager collaboration capabilities', () => {
     ['collaborationMode/list unavailable', makeCollaborationBackend({
       listModels: async () => ({ data: [modelRow()], nextCursor: null }),
     }), {
-      providerId: 'apiyi',
+      providerId: 'apiyi-standard',
       planDefaultEffort: 'low',
       supportedPlanEfforts: ['low', 'high'],
       source: 'codex',
@@ -1014,7 +1014,7 @@ describe('AgentManager collaboration capabilities', () => {
     ['model/list unavailable', makeCollaborationBackend({
       listModes: async () => UPSTREAM_PRESETS,
     }), {
-      providerId: 'apiyi',
+      providerId: 'apiyi-standard',
       planDefaultEffort: null,
       supportedPlanEfforts: [],
       source: 'fallback',
@@ -1023,7 +1023,7 @@ describe('AgentManager collaboration capabilities', () => {
       listModes: async () => { throw new Error('presets failed') },
       listModels: async () => ({ data: [modelRow()], nextCursor: null }),
     }), {
-      providerId: 'apiyi',
+      providerId: 'apiyi-standard',
       planDefaultEffort: 'low',
       supportedPlanEfforts: ['low', 'high'],
       source: 'codex',
@@ -1032,7 +1032,7 @@ describe('AgentManager collaboration capabilities', () => {
       listModes: async () => UPSTREAM_PRESETS,
       listModels: async () => { throw new Error('models failed') },
     }), {
-      providerId: 'apiyi',
+      providerId: 'apiyi-standard',
       planDefaultEffort: null,
       supportedPlanEfforts: [],
       source: 'fallback',

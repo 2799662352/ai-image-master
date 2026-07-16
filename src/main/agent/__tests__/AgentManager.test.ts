@@ -314,11 +314,13 @@ describe('AgentManager transactional provider application', () => {
     calls: BackendCall[]
     cancelCalls: string[]
     configuredProviders: Array<string | undefined>
+    configuredProviderConfigs: CodexProviderConfig[]
     restartCalls: number
     epoch: number
   } {
     const backend = Object.assign(makeStubBackend([]), {
       configuredProviders: [] as Array<string | undefined>,
+      configuredProviderConfigs: [] as CodexProviderConfig[],
       restartCalls: 0,
       epoch: 1,
       currentEpoch() {
@@ -326,6 +328,7 @@ describe('AgentManager transactional provider application', () => {
       },
       setProvider(provider: CodexProviderConfig | undefined) {
         backend.configuredProviders.push(provider?.id)
+        if (provider) backend.configuredProviderConfigs.push(provider)
       },
       async restartCodex() {
         backend.restartCalls += 1
@@ -353,7 +356,7 @@ describe('AgentManager transactional provider application', () => {
       healthy: false,
       epoch: 1,
       activeClient: 'old-client',
-      configuredProviderId: 'apiyi',
+      configuredProviderId: 'apiyi-standard',
       oldClientInterrupted: false,
       isHealthy() {
         return backend.healthy
@@ -362,7 +365,7 @@ describe('AgentManager transactional provider application', () => {
         return backend.epoch
       },
       setProvider(provider: CodexProviderConfig | undefined) {
-        backend.configuredProviderId = provider?.id ?? 'apiyi'
+        backend.configuredProviderId = provider?.id ?? 'apiyi-standard'
       },
       async restartCodex() {
         markRestartStarted()
@@ -415,6 +418,78 @@ describe('AgentManager transactional provider application', () => {
 
     expect(manager.getCodexApiKey()).toBe('sk-shared')
     expect(backend.configuredProviders).toEqual(['rightcode-grok'])
+    await expect(manager.getProvidersSnapshot()).resolves.toMatchObject({
+      activeId: 'rightcode',
+    })
+  })
+
+  it('keeps the restored Grok channel when rotating its active Gateway key', async () => {
+    await fs.writeFile(
+      path.join(tmpDir, 'codex-providers.json'),
+      JSON.stringify({
+        version: 2,
+        selectedGatewayId: 'rightcode',
+        selectedModelId: 'grok-4.5',
+        apiKeys: { rightcode: 'sk-old' },
+        customProviders: [],
+      }),
+      'utf8',
+    )
+    const backend = makeTransactionalBackend(async () => {
+      backend.epoch += 1
+    })
+    const manager = new AgentManager({ userDataDir: tmpDir, backend })
+
+    await manager.setProviderApiKey('rightcode', 'sk-rotated')
+
+    expect(backend.configuredProviderConfigs.at(-1)).toMatchObject({
+      id: 'rightcode-grok',
+      gatewayId: 'rightcode',
+      model: 'grok-4.5',
+      baseUrl: 'https://right.codes/grok/v1',
+    })
+    await expect(manager.getProvidersSnapshot()).resolves.toMatchObject({
+      activeId: 'rightcode',
+    })
+  })
+
+  it('rolls a failed active-key apply back to the restored Grok channel', async () => {
+    await fs.writeFile(
+      path.join(tmpDir, 'codex-providers.json'),
+      JSON.stringify({
+        version: 2,
+        selectedGatewayId: 'rightcode',
+        selectedModelId: 'grok-4.5',
+        apiKeys: { rightcode: 'sk-old' },
+        customProviders: [],
+      }),
+      'utf8',
+    )
+    const backend = makeTransactionalBackend(async () => {
+      throw new Error('replacement spawn failed')
+    })
+    const manager = new AgentManager({ userDataDir: tmpDir, backend })
+
+    await expect(
+      manager.setProviderApiKey('rightcode', 'sk-new'),
+    ).rejects.toThrow('replacement spawn failed')
+
+    expect(backend.configuredProviderConfigs).toHaveLength(2)
+    expect(backend.configuredProviderConfigs[0]).toMatchObject({
+      id: 'rightcode-grok',
+      model: 'grok-4.5',
+      baseUrl: 'https://right.codes/grok/v1',
+    })
+    expect(backend.configuredProviderConfigs[1]).toMatchObject({
+      id: 'rightcode-grok',
+      model: 'grok-4.5',
+      baseUrl: 'https://right.codes/grok/v1',
+    })
+    expect(manager.getCodexApiKey()).toBe('sk-old')
+    await expect(manager.getProvidersSnapshot()).resolves.toMatchObject({
+      activeId: 'rightcode',
+      apiKeys: { rightcode: 'sk-old' },
+    })
   })
 
   it('confirms a successful switch only after a new backend epoch exists', async () => {
@@ -441,7 +516,7 @@ describe('AgentManager transactional provider application', () => {
       providerGeneration: 2,
     })
     expect((await mgr.getProvidersSnapshot()).activeId).toBe('rightcode')
-    expect(backend.configuredProviders).toEqual(['rightcode'])
+    expect(backend.configuredProviders).toEqual(['rightcode-standard'])
   })
 
   it('admits a Default send only on the replacement generation after Provider apply succeeds', async () => {
@@ -470,7 +545,7 @@ describe('AgentManager transactional provider application', () => {
     await vi.waitFor(() => expect(sends).toHaveLength(1))
     expect(sends).toEqual([{
       client: 'new-client',
-      providerId: 'rightcode',
+      providerId: 'rightcode-standard',
       apiKey: 'sk-new',
     }])
     expect(backend.oldClientInterrupted).toBe(false)
@@ -503,7 +578,7 @@ describe('AgentManager transactional provider application', () => {
     await vi.waitFor(() => expect(sends).toHaveLength(1))
     expect(sends).toEqual([{
       client: 'old-client',
-      providerId: 'apiyi',
+      providerId: 'apiyi-standard',
       apiKey: 'sk-old',
     }])
     expect(errors).not.toContainEqual(
@@ -528,7 +603,7 @@ describe('AgentManager transactional provider application', () => {
     const backend = Object.assign(makeStubBackend([]), {
       healthy: false,
       epoch: 1,
-      providerId: 'apiyi',
+      providerId: 'apiyi-standard',
       turnInFlight: false,
       restartCalls: 0,
       isHealthy() {
@@ -538,7 +613,7 @@ describe('AgentManager transactional provider application', () => {
         return backend.epoch
       },
       setProvider(provider: CodexProviderConfig | undefined) {
-        backend.providerId = provider?.id ?? 'apiyi'
+        backend.providerId = provider?.id ?? 'apiyi-standard'
       },
       async restartCodex() {
         backend.restartCalls += 1
@@ -584,7 +659,7 @@ describe('AgentManager transactional provider application', () => {
     releasePersistence()
     await send
     await expect(transition).rejects.toThrow(/current turn.*retry/i)
-    expect(sends).toEqual(['apiyi'])
+    expect(sends).toEqual(['apiyi-standard'])
     expect((await manager.getProvidersSnapshot()).activeId).toBe('apiyi')
 
     releaseTurn()
@@ -611,7 +686,7 @@ describe('AgentManager transactional provider application', () => {
     await expect(mgr.setActiveProvider('rightcode')).rejects.toThrow(/current turn.*retry/i)
 
     expect((await mgr.getProvidersSnapshot()).activeId).toBe('apiyi')
-    expect(backend.configuredProviders).toEqual(['rightcode', 'apiyi'])
+    expect(backend.configuredProviders).toEqual(['rightcode-standard', 'apiyi-standard'])
     const persisted = JSON.parse(
       await fs.readFile(path.join(tmpDir, 'codex-providers.json'), 'utf8'),
     )
@@ -630,7 +705,7 @@ describe('AgentManager transactional provider application', () => {
     await expect(mgr.setActiveProvider('rightcode')).rejects.toThrow(/spawn failed/i)
 
     expect(mgr.getCodexApiKey()).toBe('')
-    expect(backend.configuredProviders).toEqual(['rightcode', 'apiyi'])
+    expect(backend.configuredProviders).toEqual(['rightcode-standard', 'apiyi-standard'])
     expect(await mgr.getProvidersSnapshot()).toMatchObject({ activeId: 'apiyi' })
     const persisted = JSON.parse(
       await fs.readFile(path.join(tmpDir, 'codex-providers.json'), 'utf8'),
@@ -656,7 +731,7 @@ describe('AgentManager transactional provider application', () => {
     )
 
     expect(backend.restartCalls).toBe(2)
-    expect(backend.configuredProviders).toEqual(['rightcode', 'apiyi'])
+    expect(backend.configuredProviders).toEqual(['rightcode-standard', 'apiyi-standard'])
     expect(backend.epoch).toBe(2)
     expect(backend.isHealthy()).toBe(true)
     await expect(
@@ -680,7 +755,7 @@ describe('AgentManager transactional provider application', () => {
     )
 
     expect(backend.restartCalls).toBe(2)
-    expect(backend.configuredProviders).toEqual(['rightcode', 'apiyi'])
+    expect(backend.configuredProviders).toEqual(['rightcode-standard', 'apiyi-standard'])
     await expect(
       (mgr as unknown as { providerCapabilityBarrier: Promise<boolean> })
         .providerCapabilityBarrier,
@@ -706,7 +781,7 @@ describe('AgentManager transactional provider application', () => {
     await b
 
     expect((await mgr.getProvidersSnapshot()).activeId).toBe('apiyi')
-    expect(backend.configuredProviders).toEqual(['rightcode', 'apiyi'])
+    expect(backend.configuredProviders).toEqual(['rightcode-standard', 'apiyi-standard'])
     expect(backend.epoch).toBe(3)
   })
 
@@ -730,7 +805,7 @@ describe('AgentManager transactional provider application', () => {
     await expect(a).rejects.toThrow('A failed')
     await expect(b).resolves.toMatchObject({ activeId: 'apiyi' })
     expect((await mgr.getProvidersSnapshot()).activeId).toBe('apiyi')
-    expect(backend.configuredProviders).toEqual(['rightcode', 'apiyi'])
+    expect(backend.configuredProviders).toEqual(['rightcode-standard', 'apiyi-standard'])
   })
 
   it('applies active key, custom update, and active removal through confirmed generations', async () => {
@@ -974,7 +1049,7 @@ describe('AgentManager testConnection provider resolution', () => {
       const captured = (globalThis as Record<string, unknown>).__capturedProvider as
         | { id?: string }
         | undefined
-      expect(captured?.id).toBe('rightcode')
+      expect(captured?.id).toBe('rightcode-standard')
     } finally {
       CodexLocalBackend.prototype.start = realStart
       delete (globalThis as Record<string, unknown>).__capturedProvider
@@ -1481,13 +1556,13 @@ describe('AgentManager codex thread id mapping (regression: invalid thread id)',
       healthy: false,
       epoch: 1,
       activeClient: 'old-client',
-      providerId: 'apiyi',
+      providerId: 'apiyi-standard',
       async start() {},
       async stop() {},
       isHealthy() { return backend.healthy },
       currentEpoch() { return backend.epoch },
       setProvider(provider: CodexProviderConfig | undefined) {
-        backend.providerId = provider?.id ?? 'apiyi'
+        backend.providerId = provider?.id ?? 'apiyi-standard'
       },
       async restartCodex() {
         markRestartStarted()
@@ -1566,12 +1641,12 @@ describe('AgentManager codex thread id mapping (regression: invalid thread id)',
     expect(calls).toHaveLength(2)
     expect(callsBeforeRestartRelease).toEqual([{
       client: 'old-client',
-      providerId: 'apiyi',
+      providerId: 'apiyi-standard',
       apiKey: 'sk-old',
     }])
     expect(calls[1]).toEqual({
       client: 'new-client',
-      providerId: 'rightcode',
+      providerId: 'rightcode-standard',
       apiKey: 'sk-new',
     })
     expect(added).toHaveLength(1)

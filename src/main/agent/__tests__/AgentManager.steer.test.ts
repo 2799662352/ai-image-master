@@ -72,13 +72,13 @@ function makeDeferredProviderBackend(options: {
     healthy: false,
     epoch: 1,
     activeClient: 'old-client',
-    providerId: 'apiyi',
+    providerId: 'apiyi-standard',
     async start() {},
     async stop() {},
     isHealthy() { return backend.healthy },
     currentEpoch() { return backend.epoch },
     setProvider(provider: CodexProviderConfig | undefined) {
-      backend.providerId = provider?.id ?? 'apiyi'
+      backend.providerId = provider?.id ?? 'apiyi-standard'
     },
     async restartCodex() {
       markRestartStarted()
@@ -187,7 +187,7 @@ describe('AgentManager.steer (turn/steer)', () => {
 
     expect(fixture.steerCalls).toEqual([{
       client: 'new-client',
-      providerId: 'rightcode',
+      providerId: 'rightcode-standard',
       apiKey: 'sk-new',
     }])
     expect(fixture.sendCalls).toEqual([])
@@ -232,12 +232,12 @@ describe('AgentManager.steer (turn/steer)', () => {
 
     expect(fixture.steerCalls).toEqual([{
       client: 'new-client',
-      providerId: 'rightcode',
+      providerId: 'rightcode-standard',
       apiKey: 'sk-new',
     }])
     expect(fixture.sendCalls).toEqual([{
       client: 'new-client',
-      providerId: 'rightcode',
+      providerId: 'rightcode-standard',
       apiKey: 'sk-new',
     }])
     expect(added).toHaveLength(1)
@@ -283,12 +283,12 @@ describe('AgentManager.steer (turn/steer)', () => {
 
     expect(fixture.steerCalls).toEqual([{
       client: 'old-client',
-      providerId: 'apiyi',
+      providerId: 'apiyi-standard',
       apiKey: 'sk-old',
     }])
     expect(fixture.sendCalls).toEqual([{
       client: 'old-client',
-      providerId: 'apiyi',
+      providerId: 'apiyi-standard',
       apiKey: 'sk-old',
     }])
     expect(added).toHaveLength(1)
