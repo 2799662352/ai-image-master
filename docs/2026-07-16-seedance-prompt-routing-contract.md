@@ -72,7 +72,7 @@
 ## 验证与发布
 
 - Skill 架构审计：136 Skills / 36 hooks，0 违规。
-- Skill 架构与契约测试：18/18。
+- Skill 架构与契约测试：19/19。
 - 首方 Skill 安装测试：29/29。
 - first-party、top-level、codex marketplace 镜像无漂移。
 - `build:vite` 通过。
@@ -80,12 +80,12 @@
 
 2026-07-16 已发布：
 
-- 插件：`catimation-video@1.0.22`、`catimation-director@1.0.13`、
-  `catimation-storyboard@1.0.10`、`catimation-storyboard-pro@1.0.9`、
-  `catimation-film@1.0.10`
-- 独立 Skill：`sd2-pe@1.0.26`、`seedance-cinematic-format@1.0.12`、
-  `director-orchestrator@1.0.11`、`seedance-video-craft@1.0.14`、
-  `film-studio@1.0.12`、`storyboard-grid-to-seedance@1.0.5`
+- 插件：`catimation-video@1.0.23`、`catimation-director@1.0.14`、
+  `catimation-storyboard@1.0.11`、`catimation-storyboard-pro@1.0.10`、
+  `catimation-film@1.0.11`、`catimation-core@1.0.18`
+- 独立 Skill：`sd2-pe@1.0.27`、`seedance-cinematic-format@1.0.14`、
+  `director-orchestrator@1.0.13`、`seedance-video-craft@1.0.15`、
+  `film-studio@1.0.13`、`storyboard-grid-to-seedance@1.0.7`
 
 客户端需升级到 v4.4.1，因为路径 A 的条件加载规则同时存在于应用内嵌
 `catimation-video` 与 SessionStart hook；只发布独立 Skill 不能保证旧客户端
