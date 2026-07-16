@@ -101,7 +101,7 @@ describe('AgentManager model settings catalog and snapshot', () => {
     releaseBarrier(true)
     await expect(pending).resolves.toMatchObject({
       ok: true,
-      data: { provider: 'apiyi', source: 'codex' },
+      data: { gatewayId: 'apiyi', source: 'codex' },
     })
     expect(backend.modelCalls).toEqual([{ includeHidden: false }])
   })
@@ -135,7 +135,7 @@ describe('AgentManager model settings catalog and snapshot', () => {
     await expect(pending).resolves.toMatchObject({
       ok: true,
       data: {
-        provider: 'apiyi',
+        gatewayId: 'apiyi',
         source: 'codex',
         models: [{ id: 'gpt-5.6-sol' }],
       },
@@ -185,7 +185,7 @@ describe('AgentManager model settings catalog and snapshot', () => {
     await expect(pendingCatalog).resolves.toMatchObject({
       ok: true,
       data: {
-        provider: 'rightcode',
+        gatewayId: 'rightcode',
         source: 'codex',
         models: [{ id: 'rightcode-model' }],
       },
@@ -216,7 +216,7 @@ describe('AgentManager model settings catalog and snapshot', () => {
     expect(result).toMatchObject({
       ok: true,
       data: {
-        provider: 'apiyi',
+        gatewayId: 'apiyi',
         source: 'fallback',
       },
     })
@@ -242,7 +242,8 @@ describe('AgentManager model settings catalog and snapshot', () => {
     expect(result).toEqual({
       ok: true,
       data: {
-        provider: 'rightcode',
+        gatewayId: 'rightcode',
+        revision: expect.any(String),
         source: 'codex',
         models: [
           expect.objectContaining({
@@ -291,13 +292,13 @@ describe('AgentManager model settings catalog and snapshot', () => {
     await expect(manager.getModelSettingsCatalogRpc()).resolves.toMatchObject({
       ok: true,
       data: {
-        provider: 'rightcode-grok',
+        gatewayId: 'rightcode',
         source: 'codex',
         models: [{
           id: 'grok-4.5',
           displayName: 'Grok 4.5',
           capabilities: {
-            provider: 'rightcode-grok',
+            provider: 'rightcode',
             supportedReasoningEfforts: ['low', 'medium', 'high'],
           },
         }],
@@ -312,7 +313,7 @@ describe('AgentManager model settings catalog and snapshot', () => {
     await expect(manager.getModelSettingsCatalogRpc()).resolves.toMatchObject({
       ok: true,
       data: {
-        provider: 'apiyi-grok',
+        gatewayId: 'apiyi',
         source: 'fallback',
         models: [{ id: 'grok-4.5' }],
       },
@@ -330,7 +331,7 @@ describe('AgentManager model settings catalog and snapshot', () => {
     expect(result).toMatchObject({
       ok: true,
       data: {
-        provider: 'rightcode-grok',
+        gatewayId: 'rightcode',
         source: 'fallback',
         models: [{
           id: 'grok-4.5',
@@ -360,7 +361,7 @@ describe('AgentManager model settings catalog and snapshot', () => {
     await expect(manager.getModelSettingsCatalogRpc()).resolves.toMatchObject({
       ok: true,
       data: {
-        provider: 'apiyi-grok',
+        gatewayId: 'apiyi',
         source: 'fallback',
         models: [{
           id: 'grok-4.5',
@@ -389,7 +390,7 @@ describe('AgentManager model settings catalog and snapshot', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) throw new Error('Expected fallback catalog')
     expect(result.data.source).toBe('fallback')
-    expect(result.data.provider).toBe('apiyi')
+    expect(result.data.gatewayId).toBe('apiyi')
     expect(result.data.models.length).toBeGreaterThan(0)
     expect(result.data.models.every((row) =>
       row.capabilities.contextOptions.every((option) => option.conservative === true),

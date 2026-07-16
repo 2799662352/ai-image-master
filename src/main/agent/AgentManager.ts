@@ -28,6 +28,7 @@ import {
   resolveActiveProvider,
   type ProviderPreset,
 } from './codexProviders'
+import { resolveGatewayModelRoute } from './gatewayModelRouting'
 import { getDockerMcpGatewayService, type CheckInstalledResult, type GatewayStatus } from './dockerMcpGateway'
 import {
   GATEWAY_DEFAULT_PORT,
@@ -1189,25 +1190,33 @@ export class AgentManager {
             data: this.fallbackModelSettingsCatalog(provider),
           }
         }
-        const models: AgentModelSettingsEntry[] = rows.map((row) => ({
-          id: row.id,
-          displayName: row.displayName,
-          description: row.description,
-          hidden: row.hidden,
-          isDefault: row.isDefault,
-          capabilities: mergeModelSettingsCapabilities({
-            model: row.model,
-            provider,
-            defaultReasoningEffort: row.defaultReasoningEffort,
-            supportedReasoningEfforts: row.supportedReasoningEfforts.map(
-              (effort) => effort.reasoningEffort,
-            ),
-          }),
-        }))
+        const models: AgentModelSettingsEntry[] = rows.map((row) => {
+          const route = this.modelRoute(provider, row.model)
+          return {
+            id: row.id,
+            displayName: row.displayName,
+            description: row.description,
+            hidden: row.hidden,
+            isDefault: row.isDefault,
+            family: route.family,
+            route,
+            availability: { status: 'available' },
+            capabilities: mergeModelSettingsCapabilities({
+              model: row.model,
+              gatewayId: route.gatewayId,
+              channelId: route.channelId,
+              defaultReasoningEffort: row.defaultReasoningEffort,
+              supportedReasoningEfforts: row.supportedReasoningEfforts.map(
+                (effort) => effort.reasoningEffort,
+              ),
+            }),
+          }
+        })
         return {
           ok: true,
           data: {
-            provider,
+            gatewayId: credentialIdForProvider(provider),
+            revision: this.modelCatalogRevision('codex'),
             source: 'codex',
             models,
           },
@@ -1353,32 +1362,54 @@ export class AgentManager {
       : undefined
   }
 
+  private modelRoute(providerId: string, modelId: string) {
+    const persisted = this.providerStore.loadSync()
+    const gatewayId = credentialIdForProvider(providerId, persisted.customProviders)
+    return resolveGatewayModelRoute(gatewayId, modelId, persisted.customProviders)
+  }
+
+  private modelCatalogRevision(source: 'codex' | 'fallback'): string {
+    return `${source}:${String(this.backend.currentEpoch?.() ?? 0)}`
+  }
+
   private fallbackModelSettingsCatalog(provider: string): AgentModelSettingsCatalog {
     const allowedModels = this.providerAllowedModels(provider)
     const rows = allowedModels
       ? CANONICAL_MODEL_SETTINGS_ROWS.filter((row) => allowedModels.has(row.id))
       : CANONICAL_MODEL_SETTINGS_ROWS
     return {
-      provider,
+      gatewayId: credentialIdForProvider(provider),
+      revision: this.modelCatalogRevision('fallback'),
       source: 'fallback',
-      models: rows.map((row) => ({
-        id: row.id,
-        displayName: row.displayName,
-        description: row.description,
-        hidden: false,
-        isDefault: row.isDefault,
-        capabilities: {
-          ...mergeModelSettingsCapabilities({
-            model: row.id,
-            provider,
-            supportedReasoningEfforts: [],
-          }),
-          contextOptions: modelContextOptions(row.id, provider).map((option) => ({
-            ...option,
-            conservative: true,
-          })),
-        },
-      })),
+      models: rows.map((row) => {
+        const route = this.modelRoute(provider, row.id)
+        return {
+          id: row.id,
+          displayName: row.displayName,
+          description: row.description,
+          hidden: false,
+          isDefault: row.isDefault,
+          family: route.family,
+          route,
+          availability: { status: 'available' },
+          capabilities: {
+            ...mergeModelSettingsCapabilities({
+              model: row.id,
+              gatewayId: route.gatewayId,
+              channelId: route.channelId,
+              supportedReasoningEfforts: [],
+            }),
+            contextOptions: modelContextOptions(
+              row.id,
+              route.gatewayId,
+              route.channelId,
+            ).map((option) => ({
+              ...option,
+              conservative: true,
+            })),
+          },
+        }
+      }),
     }
   }
 
@@ -1392,7 +1423,12 @@ export class AgentManager {
     if (!Number.isSafeInteger(payload.requestVersion) || payload.requestVersion < 0) {
       return 'requestVersion must be a non-negative safe integer'
     }
-    const allowed = modelContextOptions(model, this.activeProviderId).some(
+    const route = this.modelRoute(this.activeProviderId, model)
+    const allowed = modelContextOptions(
+      model,
+      route.gatewayId,
+      route.channelId,
+    ).some(
       (option) => option.value === attemptedConfig.modelContextWindow,
     ) || allowConfirmedRecovery
     if (!allowed) {
@@ -1867,9 +1903,11 @@ export class AgentManager {
       if (!modelRow) return fallback()
 
       const model = modelRow.model
+      const route = this.modelRoute(providerId, model)
       const modelSettings = mergeModelSettingsCapabilities({
         model,
-        provider: providerId,
+        gatewayId: route.gatewayId,
+        channelId: route.channelId,
         defaultReasoningEffort: modelRow.defaultReasoningEffort,
         supportedReasoningEfforts: modelRow.supportedReasoningEfforts.map(
           (effort) => effort.reasoningEffort,

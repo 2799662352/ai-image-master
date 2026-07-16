@@ -162,6 +162,13 @@ const BUILTIN_IDS: ReadonlySet<string> = new Set(
   BUILTIN_PROVIDER_PRESETS.map((p) => p.id),
 )
 
+function findInternalChannelProvider(id: string): ProviderPreset | undefined {
+  const channel = BUILTIN_CHANNEL_PRESETS.find((preset) => preset.id === id)
+  if (!channel) return undefined
+  const { gatewayId, ...provider } = channel
+  return { ...provider, credentialId: gatewayId }
+}
+
 export function isBuiltinProviderId(id: string): boolean {
   if (!id) return false
   return BUILTIN_IDS.has(id)
@@ -182,7 +189,9 @@ export function credentialIdForProvider(
   id: string,
   customProviders: readonly ProviderPreset[] = [],
 ): string {
-  return findProviderById(id, customProviders)?.credentialId || id
+  const provider = findProviderById(id, customProviders)
+    ?? findInternalChannelProvider(id)
+  return provider?.credentialId || id
 }
 
 /**
@@ -196,5 +205,7 @@ export function resolveActiveProvider(
   id: string,
   customProviders: readonly ProviderPreset[] = [],
 ): ProviderPreset {
-  return findProviderById(id, customProviders) ?? BUILTIN_PROVIDER_PRESETS[0]
+  return findProviderById(id, customProviders)
+    ?? findInternalChannelProvider(id)
+    ?? BUILTIN_PROVIDER_PRESETS[0]
 }

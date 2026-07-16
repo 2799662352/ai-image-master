@@ -5,8 +5,10 @@ import {
   BUILTIN_PROVIDER_PRESETS,
   DEFAULT_PROVIDER_ID,
   RETIRED_RIGHTCODE_PRO_ID,
+  credentialIdForProvider,
   findProviderById,
   isBuiltinProviderId,
+  resolveActiveProvider,
   type ProviderPreset,
 } from '../codexProviders'
 import { channelsForGateway, resolveProviderChannel } from '../gatewayModelRouting'
@@ -105,6 +107,21 @@ describe('codexProviders', () => {
     expect(isBuiltinProviderId('rightcode-pro')).toBe(false)
     expect(isBuiltinProviderId('custom-1234')).toBe(false)
     expect(isBuiltinProviderId('')).toBe(false)
+  })
+
+  it('bridges legacy channel ids without exposing them as builtin cards', () => {
+    expect(credentialIdForProvider('apiyi-grok')).toBe('apiyi')
+    expect(credentialIdForProvider('rightcode-grok')).toBe('rightcode')
+    expect(resolveActiveProvider('apiyi-grok')).toMatchObject({
+      id: 'apiyi-grok',
+      credentialId: 'apiyi',
+      compatibilityPolicy: 'responses-namespace-bridge',
+    })
+    expect(resolveActiveProvider('rightcode-grok')).toMatchObject({
+      id: 'rightcode-grok',
+      credentialId: 'rightcode',
+    })
+    expect(BUILTIN_PROVIDER_PRESETS).toHaveLength(2)
   })
 
   it('findProviderById prefers exact matches across presets and custom list', () => {

@@ -6,6 +6,7 @@ import {
   UNKNOWN_MODEL_CONTEXT_WINDOW,
   defaultContextWindowForModel,
   isConcreteModelReasoningEffort,
+  isModelContextWindowSupported,
   isModelReasoningEffort,
   mergeModelSettingsCapabilities,
   migrateLegacyModelSelection,
@@ -43,6 +44,26 @@ describe('model settings capabilities', () => {
       value: 1_000_000,
       experimental: false,
     })
+  })
+
+  it('rejects partial gateway scope instead of silently using model-only policy', () => {
+    const contextOptions = modelContextOptions as (...args: string[]) => unknown
+    const defaultWindow = defaultContextWindowForModel as (...args: string[]) => unknown
+    const isSupported = isModelContextWindowSupported as (
+      model: string,
+      contextWindow: number,
+      gatewayId?: string,
+    ) => unknown
+
+    expect(() => contextOptions('grok-4.5', 'rightcode')).toThrow(
+      'Gateway and channel ids must be provided together',
+    )
+    expect(() => defaultWindow('grok-4.5', 'rightcode')).toThrow(
+      'Gateway and channel ids must be provided together',
+    )
+    expect(() => isSupported('grok-4.5', 500_000, 'rightcode')).toThrow(
+      'Gateway and channel ids must be provided together',
+    )
   })
 
   it.each([

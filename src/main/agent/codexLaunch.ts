@@ -28,6 +28,11 @@ export const DEFAULT_CODEX_SESSION_CONFIG: CodexSessionConfig = {
   writableRoots: [],
 }
 
+/** Selects an explicit compatibility adapter for a provider channel. */
+export type ProviderCompatibilityPolicy =
+  | 'none'
+  | 'responses-namespace-bridge'
+
 /**
  * Custom Codex model_provider config. When passed, we wire it through the
  * `app-server`'s `-c` overrides so the spawned Codex talks to a third-party
@@ -57,10 +62,6 @@ export const DEFAULT_CODEX_SESSION_CONFIG: CodexSessionConfig = {
  * (https://docs.right.codes/docs/rc_cli_config/codex.html) — works out of the
  * box without forcing the user to hand-edit `~/.codex/config.toml`.
  */
-export type ProviderCompatibilityPolicy =
-  | 'none'
-  | 'responses-namespace-bridge'
-
 export interface CodexProviderConfig {
   id: string
   name: string
@@ -91,6 +92,7 @@ export interface CodexProviderConfig {
    * strings serialize as `key="value"`.
    */
   extraTopLevelConfig?: Readonly<Record<string, string | boolean | number>>
+  /** Optional channel adapter policy; omitted providers use native Responses behavior. */
   compatibilityPolicy?: ProviderCompatibilityPolicy
 }
 

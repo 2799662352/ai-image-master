@@ -60,7 +60,7 @@ function conservativeFallbackRows(provider: string): AgentModelSettingsEntry[] {
         provider,
         supportedReasoningEfforts: [],
       }),
-      contextOptions: modelContextOptions(row.id, provider).map((option) => ({
+      contextOptions: modelContextOptions(row.id).map((option) => ({
         ...option,
         conservative: true,
       })),
@@ -92,7 +92,7 @@ function unknownModel(id: string, provider: string): PickerModel {
         provider,
         supportedReasoningEfforts: [],
       }),
-      contextOptions: modelContextOptions(id, provider).map((option) => ({
+      contextOptions: modelContextOptions(id).map((option) => ({
         ...option,
         conservative: true,
       })),

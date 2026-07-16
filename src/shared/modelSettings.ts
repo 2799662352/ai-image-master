@@ -198,16 +198,26 @@ function providerModelKey(
 
 function contextPolicy(
   model: string,
-  gatewayId?: string,
-  channelId?: string,
+  route?: { gatewayId: string; channelId: string },
 ): ModelContextPolicy | undefined {
-  if (gatewayId && channelId) {
+  if (route) {
     const routed = PROVIDER_CONTEXT_POLICIES.get(
-      providerModelKey(gatewayId, channelId, model),
+      providerModelKey(route.gatewayId, route.channelId, model),
     )
     if (routed) return routed
   }
   return VERIFIED_CONTEXT_POLICIES.get(model)
+}
+
+function contextRoute(
+  gatewayId?: string,
+  channelId?: string,
+): { gatewayId: string; channelId: string } | undefined {
+  if (gatewayId === undefined && channelId === undefined) return undefined
+  if (gatewayId === undefined || channelId === undefined) {
+    throw new TypeError('Gateway and channel ids must be provided together')
+  }
+  return { gatewayId, channelId }
 }
 
 function reasoningPolicy(
@@ -220,23 +230,35 @@ function reasoningPolicy(
   )
 }
 
+/** Returns the verified default for a model, optionally scoped to one route. */
+export function defaultContextWindowForModel(model: string): number
+export function defaultContextWindowForModel(
+  model: string,
+  gatewayId: string,
+  channelId: string,
+): number
 export function defaultContextWindowForModel(
   model: string,
   gatewayId?: string,
   channelId?: string,
 ): number {
-  return contextPolicy(model, gatewayId, channelId)?.defaultWindow
+  return contextPolicy(model, contextRoute(gatewayId, channelId))?.defaultWindow
     ?? UNKNOWN_MODEL_CONTEXT_WINDOW
 }
 
+/** Lists verified context choices for a model or an exact gateway route. */
+export function modelContextOptions(modelId: string): ModelContextOption[]
+export function modelContextOptions(
+  modelId: string,
+  gatewayId: string,
+  channelId: string,
+): ModelContextOption[]
 export function modelContextOptions(
   modelId: string,
   gatewayId?: string,
   channelId?: string,
 ): ModelContextOption[] {
-  const policy = gatewayId && channelId
-    ? contextPolicy(modelId, gatewayId, channelId)
-    : VERIFIED_CONTEXT_POLICIES.get(modelId)
+  const policy = contextPolicy(modelId, contextRoute(gatewayId, channelId))
   const defaultContextWindow = policy?.defaultWindow ?? UNKNOWN_MODEL_CONTEXT_WINDOW
   const defaultOption: ModelContextOption = {
     value: defaultContextWindow,
@@ -265,18 +287,33 @@ export function supportedReasoningEfforts(
   return verified ? [...verified.supportedEfforts] : []
 }
 
+/** Checks a context window against model-only or exact-route policy. */
+export function isModelContextWindowSupported(
+  model: string,
+  contextWindow: number,
+): boolean
+export function isModelContextWindowSupported(
+  model: string,
+  contextWindow: number,
+  gatewayId: string,
+  channelId: string,
+): boolean
 export function isModelContextWindowSupported(
   model: string,
   contextWindow: number,
   gatewayId?: string,
   channelId?: string,
 ): boolean {
+  const route = contextRoute(gatewayId, channelId)
   if (
-    modelContextOptions(model, gatewayId, channelId).some(
+    (route
+      ? modelContextOptions(model, route.gatewayId, route.channelId)
+      : modelContextOptions(model)
+    ).some(
       (option) => option.value === contextWindow,
     )
   ) return true
-  if (gatewayId && channelId) return false
+  if (route) return false
   for (const [key, policy] of PROVIDER_CONTEXT_POLICIES) {
     if (
       key.endsWith(`:${model}`)
