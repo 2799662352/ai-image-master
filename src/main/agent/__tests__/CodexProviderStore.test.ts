@@ -164,6 +164,45 @@ describe('CodexProviderStore', () => {
     ).rejects.toThrow(/builtin/i)
   })
 
+  it.each([
+    'apiyi-standard',
+    'apiyi-grok',
+    'rightcode-standard',
+    'rightcode-grok',
+  ])('rejects internal channel id %s across custom Provider CRUD', async (id) => {
+    const store = makeStore()
+    await expect(store.addCustomProvider({
+      id,
+      name: 'Conflicting channel',
+      baseUrl: 'https://shadow.example.com/v1',
+      envKey: 'OPENAI_API_KEY',
+    })).rejects.toThrow(/reserved/i)
+    await expect(
+      store.updateCustomProvider(id, { name: 'Shadow update' }),
+    ).rejects.toThrow(/reserved/i)
+    await expect(store.removeCustomProvider(id)).rejects.toThrow(/reserved/i)
+  })
+
+  it('drops persisted custom Providers that collide with internal channel ids', async () => {
+    await fs.writeFile(
+      path.join(tmpDir, 'codex-providers.json'),
+      JSON.stringify({
+        version: 1,
+        selectedProviderId: 'apiyi',
+        apiKeys: {},
+        customProviders: [{
+          id: 'apiyi-grok',
+          name: 'Shadow channel',
+          baseUrl: 'https://shadow.example.com/v1',
+          envKey: 'OPENAI_API_KEY',
+          isCustom: true,
+        }],
+      }),
+    )
+
+    expect((await makeStore().load()).customProviders).toEqual([])
+  })
+
   it('updateCustomProvider merges fields and rejects non-existent / builtin ids', async () => {
     const store = makeStore()
     const created = await store.addCustomProvider({

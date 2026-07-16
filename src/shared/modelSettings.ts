@@ -278,6 +278,7 @@ export function modelContextOptions(
   ]
 }
 
+/** Returns the verified reasoning efforts for an exact Gateway + Channel route. */
 export function supportedReasoningEfforts(
   modelId: string,
   gatewayId: string,

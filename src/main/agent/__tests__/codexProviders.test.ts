@@ -8,6 +8,7 @@ import {
   credentialIdForProvider,
   findProviderById,
   isBuiltinProviderId,
+  isReservedProviderId,
   resolveActiveProvider,
   type ProviderPreset,
 } from '../codexProviders'
@@ -107,6 +108,18 @@ describe('codexProviders', () => {
     expect(isBuiltinProviderId('rightcode-pro')).toBe(false)
     expect(isBuiltinProviderId('custom-1234')).toBe(false)
     expect(isBuiltinProviderId('')).toBe(false)
+  })
+
+  it('reserves gateway and internal channel ids without exposing channels as builtins', () => {
+    expect(isReservedProviderId('apiyi')).toBe(true)
+    expect(isReservedProviderId('rightcode')).toBe(true)
+    expect(isReservedProviderId('apiyi-standard')).toBe(true)
+    expect(isReservedProviderId('apiyi-grok')).toBe(true)
+    expect(isReservedProviderId('rightcode-standard')).toBe(true)
+    expect(isReservedProviderId('rightcode-grok')).toBe(true)
+    expect(isReservedProviderId('custom-1')).toBe(false)
+    expect(isBuiltinProviderId('apiyi-grok')).toBe(false)
+    expect(BUILTIN_PROVIDER_PRESETS).toHaveLength(2)
   })
 
   it('bridges legacy channel ids without exposing them as builtin cards', () => {

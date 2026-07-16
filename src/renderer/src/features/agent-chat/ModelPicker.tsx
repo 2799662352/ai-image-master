@@ -11,16 +11,20 @@ import {
   CANONICAL_MODEL_SETTINGS_ROWS,
   isModelReasoningEffort,
   mergeModelSettingsCapabilities,
-  modelContextOptions,
   type CanonicalModelTier,
   type ModelReasoningEffort,
 } from '../../../../shared/modelSettings'
 import type { AgentModelSettingsEntry } from '../../../../types/agent'
+import {
+  builtinGateways,
+  resolveGatewayModelRoute,
+} from '../../../../main/agent/gatewayModelRouting'
 import { findModel } from './models'
 import { ModelSettingsPanel } from './ModelSettingsPanel'
 import { useAgentChatStore } from './store'
 
 const TIER_ORDER: CanonicalModelTier[] = ['Fast', 'Medium', 'High', 'Extra High']
+const DEFAULT_GATEWAY_ID = builtinGateways()[0]?.id ?? 'apiyi'
 
 const TIER_BADGE: Record<CanonicalModelTier, string> = {
   Fast: 'text-emerald-300/90 bg-emerald-500/10 border-emerald-400/30',
@@ -47,25 +51,41 @@ interface ModelPickerProps {
   disabled?: boolean
 }
 
-function conservativeFallbackRows(provider: string): AgentModelSettingsEntry[] {
-  return CANONICAL_MODEL_SETTINGS_ROWS.map((row) => ({
-    id: row.id,
-    displayName: row.displayName,
-    description: row.description,
+function conservativeEntry(
+  gatewayId: string,
+  row: {
+    id: string
+    displayName: string
+    description: string
+    isDefault: boolean
+  },
+): AgentModelSettingsEntry {
+  const route = resolveGatewayModelRoute(gatewayId, row.id)
+  const capabilities = mergeModelSettingsCapabilities({
+    model: row.id,
+    gatewayId: route.gatewayId,
+    channelId: route.channelId,
+    supportedReasoningEfforts: [],
+  })
+  return {
+    ...row,
     hidden: false,
-    isDefault: row.isDefault,
+    family: route.family,
+    route,
+    availability: { status: 'available' },
     capabilities: {
-      ...mergeModelSettingsCapabilities({
-        model: row.id,
-        provider,
-        supportedReasoningEfforts: [],
-      }),
-      contextOptions: modelContextOptions(row.id).map((option) => ({
+      ...capabilities,
+      contextOptions: capabilities.contextOptions.map((option) => ({
         ...option,
         conservative: true,
       })),
     },
-  }))
+  }
+}
+
+function conservativeFallbackRows(gatewayId: string): AgentModelSettingsEntry[] {
+  return CANONICAL_MODEL_SETTINGS_ROWS.map((row) =>
+    conservativeEntry(gatewayId, row))
 }
 
 function pickerModel(row: AgentModelSettingsEntry): PickerModel {
@@ -76,28 +96,16 @@ function pickerModel(row: AgentModelSettingsEntry): PickerModel {
   }
 }
 
-function unknownModel(id: string, provider: string): PickerModel {
+function unknownModel(id: string, gatewayId: string): PickerModel {
   const metadata = findModel(id)
-  return pickerModel({
+  return pickerModel(conservativeEntry(gatewayId, {
     id,
     displayName: metadata?.label ?? `Unknown · ${id}`,
     description:
       metadata?.description
       ?? '当前 Provider 提供的未识别模型；能力采用保守默认。',
-    hidden: false,
     isDefault: false,
-    capabilities: {
-      ...mergeModelSettingsCapabilities({
-        model: id,
-        provider,
-        supportedReasoningEfforts: [],
-      }),
-      contextOptions: modelContextOptions(id).map((option) => ({
-        ...option,
-        conservative: true,
-      })),
-    },
-  })
+  }))
 }
 
 function moveModelFocus(
@@ -171,19 +179,19 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
   const modelRefs = useRef<Array<HTMLButtonElement | null>>([])
   const focusFrameRef = useRef<number | null>(null)
 
-  const provider = catalog?.provider ?? 'unknown'
+  const gatewayId = catalog?.gatewayId ?? DEFAULT_GATEWAY_ID
   const baseRows = useMemo(
     () => (
       catalog
         ? catalog.models
-        : conservativeFallbackRows(provider)
+        : conservativeFallbackRows(gatewayId)
     ).filter((row) => !row.hidden).map(pickerModel),
-    [catalog, provider],
+    [catalog, gatewayId],
   )
   const selectedKnown = baseRows.find((model) => model.id === selectedModelId)
   const selected = useMemo(
-    () => selectedKnown ?? unknownModel(selectedModelId, provider),
-    [provider, selectedKnown, selectedModelId],
+    () => selectedKnown ?? unknownModel(selectedModelId, gatewayId),
+    [gatewayId, selectedKnown, selectedModelId],
   )
   const availableModels = useMemo(
     () => selectedKnown ? baseRows : [selected, ...baseRows],

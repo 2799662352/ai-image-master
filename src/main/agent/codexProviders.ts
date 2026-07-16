@@ -161,6 +161,10 @@ export const LEGACY_GROK_CHANNEL_IDS = Object.freeze([
 const BUILTIN_IDS: ReadonlySet<string> = new Set(
   BUILTIN_PROVIDER_PRESETS.map((p) => p.id),
 )
+const RESERVED_PROVIDER_IDS: ReadonlySet<string> = new Set([
+  ...BUILTIN_IDS,
+  ...BUILTIN_CHANNEL_PRESETS.map((channel) => channel.id),
+])
 
 function findInternalChannelProvider(id: string): ProviderPreset | undefined {
   const channel = BUILTIN_CHANNEL_PRESETS.find((preset) => preset.id === id)
@@ -172,6 +176,12 @@ function findInternalChannelProvider(id: string): ProviderPreset | undefined {
 export function isBuiltinProviderId(id: string): boolean {
   if (!id) return false
   return BUILTIN_IDS.has(id)
+}
+
+/** Returns true for user-facing Gateway ids and every internal Channel id. */
+export function isReservedProviderId(id: string): boolean {
+  if (!id) return false
+  return RESERVED_PROVIDER_IDS.has(id)
 }
 
 export function findProviderById(

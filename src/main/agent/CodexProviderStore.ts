@@ -5,7 +5,7 @@ import {
   DEFAULT_PROVIDER_ID,
   RETIRED_RIGHTCODE_PRO_ID,
   credentialIdForProvider,
-  isBuiltinProviderId,
+  isReservedProviderId,
   type ProviderPreset,
 } from './codexProviders'
 
@@ -184,8 +184,8 @@ export class CodexProviderStore {
     return this.enqueueMutation(async () => {
       const state = await this.load()
       const id = input.id?.trim() || `custom-${Date.now().toString(36)}`
-      if (isBuiltinProviderId(id)) {
-        throw new Error(`Cannot add custom provider with builtin id "${id}"`)
+      if (isReservedProviderId(id)) {
+        throw new Error(`Cannot add custom provider with builtin/internal reserved id "${id}"`)
       }
       if (state.customProviders.some((p) => p.id === id)) {
         throw new Error(`Custom provider with id "${id}" already exists`)
@@ -218,8 +218,8 @@ export class CodexProviderStore {
     patch: Partial<Omit<ProviderPreset, 'id' | 'isCustom'>>,
   ): Promise<void> {
     await this.enqueueMutation(async () => {
-      if (isBuiltinProviderId(id)) {
-        throw new Error(`Cannot update builtin provider "${id}"`)
+      if (isReservedProviderId(id)) {
+        throw new Error(`Cannot update builtin/internal reserved provider "${id}"`)
       }
       const state = await this.load()
       const idx = state.customProviders.findIndex((p) => p.id === id)
@@ -232,8 +232,8 @@ export class CodexProviderStore {
 
   async removeCustomProvider(id: string): Promise<void> {
     await this.enqueueMutation(async () => {
-      if (isBuiltinProviderId(id)) {
-        throw new Error(`Cannot remove builtin provider "${id}"`)
+      if (isReservedProviderId(id)) {
+        throw new Error(`Cannot remove builtin/internal reserved provider "${id}"`)
       }
       const state = await this.load()
       const before = state.customProviders.length
@@ -323,7 +323,7 @@ function parseOrDefault(raw: string): PersistedProvidersV1 {
               p &&
               typeof p === 'object' &&
               typeof (p as ProviderPreset).id === 'string' &&
-              !isBuiltinProviderId((p as ProviderPreset).id),
+              !isReservedProviderId((p as ProviderPreset).id),
           )
         : [],
     })

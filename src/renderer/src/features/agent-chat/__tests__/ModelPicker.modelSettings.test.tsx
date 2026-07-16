@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentModelSettingsCatalog } from '../../../../../types/agent'
+import { resolveGatewayModelRoute } from '../../../../../main/agent/gatewayModelRouting'
 import { ModelPicker } from '../ModelPicker'
 import { useAgentChatStore } from '../store'
 
@@ -15,8 +16,11 @@ const originalActions = {
 }
 
 function runtimeCatalog(source: 'codex' | 'fallback' = 'codex'): AgentModelSettingsCatalog {
+  const solRoute = resolveGatewayModelRoute('rightcode', 'gpt-5.6-sol')
+  const gpt55Route = resolveGatewayModelRoute('rightcode', 'gpt-5.5')
   return {
-    provider: 'rightcode',
+    gatewayId: 'rightcode',
+    revision: `test-${source}`,
     source,
     models: [
       {
@@ -25,6 +29,9 @@ function runtimeCatalog(source: 'codex' | 'fallback' = 'codex'): AgentModelSetti
         description: 'Frontier model',
         hidden: false,
         isDefault: true,
+        family: solRoute.family,
+        route: solRoute,
+        availability: { status: 'available' },
         capabilities: {
           model: 'gpt-5.6-sol',
           provider: 'rightcode',
@@ -43,6 +50,9 @@ function runtimeCatalog(source: 'codex' | 'fallback' = 'codex'): AgentModelSetti
         description: 'Stable model',
         hidden: false,
         isDefault: false,
+        family: gpt55Route.family,
+        route: gpt55Route,
+        availability: { status: 'available' },
         capabilities: {
           model: 'gpt-5.5',
           provider: 'rightcode',
@@ -170,7 +180,8 @@ describe('ModelPicker model settings integration', () => {
     setPickerState({
       selectedModelId: 'vendor-runtime-only',
       modelSettingsCatalog: {
-        provider: 'rightcode',
+        gatewayId: 'rightcode',
+        revision: 'test-empty',
         source: 'codex',
         models: [],
       },
@@ -189,7 +200,8 @@ describe('ModelPicker model settings integration', () => {
     setPickerState({
       selectedModelId: 'grok-4.5',
       modelSettingsCatalog: {
-        provider: 'rightcode-grok',
+        gatewayId: 'rightcode',
+        revision: 'test-rightcode-grok',
         source: 'codex',
         models: [],
       },
@@ -203,6 +215,8 @@ describe('ModelPicker model settings integration', () => {
     })).toBeTruthy()
     openPicker()
     expect(screen.getByRole('option', { name: 'Grok 4.5' })).toBeTruthy()
+    expect(screen.getByRole('option', { name: /1M/ })).toBeTruthy()
+    expect(screen.queryByRole('option', { name: /500K/ })).toBeNull()
     expect(screen.getByText(/能力未确认/)).toBeTruthy()
   })
 
