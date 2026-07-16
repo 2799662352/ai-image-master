@@ -12,6 +12,10 @@ import { createAgentLogStream } from './logger'
 import { getCodexResourceRoot, resolveBundledFfmpegDir, resolveCodexBinary } from './paths'
 import { runCodexDoctor, type DoctorReport } from './codexDoctor'
 import { pickFreePort } from './ports'
+import {
+  startProviderCompatibilityProxies,
+  type ProviderCompatibilityProxyGroup,
+} from './responsesCompatibilityProxy'
 import type {
   AgentStreamEvent,
   CodexApprovalRequest,
@@ -191,6 +195,7 @@ export interface CodexLocalBackendOptions {
 type SpawnedCodexClient = {
   proc: ChildProcess
   client: CodexProtocolClient
+  compatibilityProxies: ProviderCompatibilityProxyGroup | null
   /**
    * (round-5) 显式持有 log WriteStream, 让 stop() 能 .end() 它。
    *
@@ -293,6 +298,7 @@ export class CodexLocalBackend implements IAgentBackend {
    * 文件流。stop() 必须 .end() 它, 否则每次 provider 切换都泄一个 fd。
    */
   private log: WriteStream | null = null
+  private compatibilityProxies: ProviderCompatibilityProxyGroup | null = null
   private readonly options: CodexLocalBackendOptions
   private readonly wsUrlOverride: string | undefined
   private readonly resourceRootOverride: string | undefined
@@ -346,6 +352,7 @@ export class CodexLocalBackend implements IAgentBackend {
     this.proc = started.proc
     this.client = started.client
     this.log = started.log
+    this.compatibilityProxies = started.compatibilityProxies
   }
 
   private async startWsClient(url: string): Promise<CodexProtocolClient> {
@@ -394,54 +401,64 @@ export class CodexLocalBackend implements IAgentBackend {
       recentOutput.push(text)
     }
 
-    const apiKey = this.options.getApiKey?.()
-    // Path B: register the qwen understanding provider + inject its token env
-    // when the Miau token is configured. Inert (undefined) otherwise.
-    const understand = this.options.getUnderstandProvider?.()
-    const extraEnv = understand?.token
-      ? { [understand.provider.envKey]: understand.token }
-      : undefined
-    // Make the bundled gyan ffmpeg/ffprobe visible to Codex's shell (video
-    // transcode / 抽帧 / 字幕 / 封面 / 音频提取) without any user install. Null
-    // when not shipped (non-Windows or dev checkout) → falls back to system PATH.
-    const ffmpegDir = resolveBundledFfmpegDir(resourceRoot)
-    const env = buildCodexSpawnEnv(
-      process.env,
-      apiKey,
-      this.codexHome,
-      extraEnv,
-      ffmpegDir ? [ffmpegDir] : undefined,
-    )
-    const spawnFactory = this.options.spawnFactory ?? spawn
-    // apiyi key policy is FORCE-设置-only: the boot seed wipes any hand-typed
-    // config.toml key, so 设置 → API易 (getApiyiKey) is the single source and
-    // no config.toml read is needed here.
-    const launchArgs = buildCodexLaunchArgs({
-      listenUrl,
-      provider: this.currentProvider,
-      sessionConfig: this.sessionConfig,
-      modelContextConfig,
-      catimationMcp: this.options.catimationMcp,
-      extraProviders: understand ? [understand.provider] : undefined,
-      apiyiKey: this.options.getApiyiKey?.(),
-      cinematographyKbKey: this.options.getCinematographyKbKey?.(),
-      dashVectorKey: this.options.getDashVectorKey?.(),
-    })
-    // DIAGNOSTIC: dump the exact codex spawn command so we can confirm which
-    // config `-c` overrides (e.g. features.non_prefixed_mcp_tool_names,
-    // namespace_tools) are actually present in the running process. Grep the
-    // codex agent log / dev console for "[CodexLaunch] spawn".
-    const spawnLine = `[CodexLaunch] spawn ${bin} ${launchArgs.join(' ')}`
-    log.write(spawnLine + '\n')
-    console.log(spawnLine)
-    const proc = spawnFactory(
-      bin,
-      launchArgs,
-      {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env,
-      },
-    )
+    let compatibilityProxies: ProviderCompatibilityProxyGroup | null = null
+    let proc: ChildProcess | null = null
+    try {
+      const apiKey = this.options.getApiKey?.()
+      const understand = this.options.getUnderstandProvider?.()
+      const providerConfigs = [
+        ...(this.currentProvider ? [this.currentProvider] : []),
+        ...(understand ? [understand.provider] : []),
+      ]
+      compatibilityProxies = providerConfigs.length > 0
+        ? await startProviderCompatibilityProxies(providerConfigs)
+        : null
+      let providerIndex = 0
+      const activeProvider = this.currentProvider
+        ? compatibilityProxies?.providers[providerIndex++]
+        : undefined
+      const understandProvider = understand
+        ? compatibilityProxies?.providers[providerIndex]
+        : undefined
+      const extraEnv = understand?.token
+        ? { [understand.provider.envKey]: understand.token }
+        : undefined
+      const ffmpegDir = resolveBundledFfmpegDir(resourceRoot)
+      const env = buildCodexSpawnEnv(
+        process.env,
+        apiKey,
+        this.codexHome,
+        extraEnv,
+        ffmpegDir ? [ffmpegDir] : undefined,
+      )
+      const launchArgs = buildCodexLaunchArgs({
+        listenUrl,
+        provider: activeProvider,
+        sessionConfig: this.sessionConfig,
+        modelContextConfig,
+        catimationMcp: this.options.catimationMcp,
+        extraProviders: understandProvider ? [understandProvider] : undefined,
+        apiyiKey: this.options.getApiyiKey?.(),
+        cinematographyKbKey: this.options.getCinematographyKbKey?.(),
+        dashVectorKey: this.options.getDashVectorKey?.(),
+      })
+      const spawnLine = `[CodexLaunch] spawn ${bin} ${launchArgs.join(' ')}`
+      log.write(spawnLine + '\n')
+      console.log(spawnLine)
+      proc = (this.options.spawnFactory ?? spawn)(
+        bin,
+        launchArgs,
+        {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env,
+        },
+      )
+    } catch (error) {
+      await this.killProcessInstance(proc)
+      await compatibilityProxies?.close().catch(() => undefined)
+      if (ownedLog) ownedLog.end()
+      throw error
+    }
 
     proc.stdout?.on('data', captureOutput)
     proc.stderr?.on('data', captureOutput)
@@ -488,6 +505,7 @@ export class CodexLocalBackend implements IAgentBackend {
       startupPhase = false
       await client.stop().catch(() => { /* ignore */ })
       await this.killProcessInstance(proc)
+      await compatibilityProxies?.close().catch(() => undefined)
       // 启动失败也要把刚开的 log fd 关掉, 否则失败重试场景下泄一个 fd。
       if (ownedLog) ownedLog.end()
       throw error
@@ -497,20 +515,23 @@ export class CodexLocalBackend implements IAgentBackend {
     // One bump per successful spawn — invalidates any thread id minted by a
     // previous codex generation (see `epoch` field jsdoc).
     this.epoch += 1
-    return { proc, client, log: ownedLog }
+    return { proc, client, log: ownedLog, compatibilityProxies }
   }
 
   async stop(): Promise<void> {
     const client = this.client
     const proc = this.proc
     const log = this.log
+    const compatibilityProxies = this.compatibilityProxies
     this.client = null
     this.proc = null
     this.log = null
+    this.compatibilityProxies = null
     if (client) {
       await client.stop().catch(() => { /* ignore */ })
     }
     await this.killProcessInstance(proc)
+    await compatibilityProxies?.close().catch(() => undefined)
     // 关 log fd: 用 .end() 而不是 .destroy(), 因为 proc.exit 之后 pipe
     // 可能还有未 flush 的最后几行 buffered data, .end() 会 flush 完再关。
     // 包 try 是因为 stream 内部状态可能已经 destroyed (双重关闭无害但报警)。
@@ -554,15 +575,18 @@ export class CodexLocalBackend implements IAgentBackend {
     const oldClient = this.client
     const oldProc = this.proc
     const oldLog = this.log
+    const oldCompatibilityProxies = this.compatibilityProxies
     const replacement = await this.startSpawnedClient()
     this.proc = replacement.proc
     this.client = replacement.client
     this.log = replacement.log
+    this.compatibilityProxies = replacement.compatibilityProxies
 
     if (oldClient) {
       await oldClient.stop().catch(() => { /* ignore */ })
     }
     await this.killProcessInstance(oldProc)
+    await oldCompatibilityProxies?.close().catch(() => undefined)
     // 跟 stop() 同款关 log: provider/config 切换走的就是这条热重启路径,
     // 高频用户最容易在这里累积 fd 泄漏。
     if (oldLog) {

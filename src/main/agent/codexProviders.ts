@@ -29,6 +29,17 @@ const APIYI_PRESET: ProviderPreset = {
   description: 'API易 Responses 网关（默认）',
 }
 
+const APIYI_GROK_PRESET: ProviderPreset = {
+  id: 'apiyi-grok',
+  name: 'API Yi Grok',
+  baseUrl: 'https://api.apiyi.com/v1',
+  envKey: 'OPENAI_API_KEY',
+  model: 'grok-4.5',
+  credentialId: 'apiyi',
+  allowedModels: Object.freeze(['grok-4.5']),
+  description: 'Grok 4.5 · 500K · Responses · 需开通渠道',
+}
+
 /**
  * Right Code (https://www.right.codes) preset — values pinned to the
  * official docs at https://docs.right.codes/docs/rc_cli_config/codex.html
@@ -184,6 +195,7 @@ export const DASHVECTOR_PROVIDER_ID = 'dashvector' as const
 
 export const BUILTIN_PROVIDER_PRESETS: readonly ProviderPreset[] = Object.freeze([
   Object.freeze(APIYI_PRESET),
+  Object.freeze(APIYI_GROK_PRESET),
   Object.freeze(RIGHTCODE_PRESET),
   Object.freeze(RIGHTCODE_GROK_PRESET),
 ] as const)

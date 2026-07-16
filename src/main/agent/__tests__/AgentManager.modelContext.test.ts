@@ -227,6 +227,20 @@ afterEach(async () => {
 })
 
 describe('AgentManager transactional model context apply', () => {
+  it('rejects a context window above the active Provider limit', async () => {
+    const { manager, backend } = makeManager()
+    await manager.setActiveProvider('apiyi-grok')
+    backend.operations.length = 0
+
+    const result = await manager.applyModelContextRpc({
+      ...APPLY_PAYLOAD,
+      model: 'grok-4.5',
+    })
+
+    expectFailure(result, 'validate')
+    expect(backend.operations).toEqual([])
+  })
+
   it('applies pending, restart, strict resume, refresh, and confirmation in exact order', async () => {
     const { manager, backend, runtime, threadStore } = makeManager()
 

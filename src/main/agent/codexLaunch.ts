@@ -240,25 +240,6 @@ export function appendProviderArgs(
     '-c', `model_providers.${id}.env_key="${provider.envKey}"`,
     // See `CodexProviderConfig` above for why this is mandatory.
     '-c', `model_providers.${id}.wire_api="responses"`,
-    // FLATTEN MCP tools into plain `function` specs (openai/codex#26234, shipped
-    // in 0.142.x via the `namespace_tools` provider capability). Codex normally
-    // serializes each MCP server's tools inside a proprietary
-    // `{"type":"namespace","name":"mcp__<server>__","tools":[…]}` wrapper that
-    // ONLY real OpenAI / Azure expand. Every provider WE ship is an
-    // OpenAI-COMPATIBLE GATEWAY (apiyi / right.codes / user-custom), not the
-    // genuine OpenAI endpoint — those relays pass the wrapper through
-    // unexpanded, so the model sees a single non-callable `mcp__catimation__`
-    // entry and emits flattened / separator-dropped names
-    // (`mcp__catimationask_user` → even `mcp__catimationaskuser`), which Codex's
-    // strict-match router rejects as `unsupported call` (the ask_user popup
-    // failure; also #20652/#22970/#24297). With `namespace_tools=false` Codex
-    // emits each tool as a flat `function` named `mcp__<server>__<tool>` AND its
-    // registry resolves flat / proxy-mangled names back to the namespaced
-    // runtime — deterministically across ALL our gateways. The capability
-    // otherwise defaults to `requires_openai_auth` (false for apiyi, but TRUE
-    // for the Right.Codes presets), so pinning it false here is what makes the
-    // fix uniform instead of provider-dependent.
-    '-c', `model_providers.${id}.namespace_tools=false`,
   )
   if (provider.requiresOpenaiAuth) {
     args.push('-c', `model_providers.${id}.requires_openai_auth=true`)
@@ -301,9 +282,6 @@ export function appendExtraProviders(
       '-c', `model_providers.${id}.base_url="${p.baseUrl}"`,
       '-c', `model_providers.${id}.env_key="${p.envKey}"`,
       '-c', `model_providers.${id}.wire_api="${p.wireApi ?? 'responses'}"`,
-      // Flatten MCP tools for extra (subagent) gateways too — see the detailed
-      // rationale in appendProviderArgs (openai/codex#26234).
-      '-c', `model_providers.${id}.namespace_tools=false`,
     )
     if (p.requiresOpenaiAuth) {
       args.push('-c', `model_providers.${id}.requires_openai_auth=true`)
@@ -367,83 +345,7 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     // tool's canonical namespace the bare server name `catimation` (no `mcp__`
     // prefix), which the deferral escape-hatch below keys off.
     '-c', 'features.non_prefixed_mcp_tool_names=true',
-    // ─────────────────────────────────────────────────────────────────────────
-    // ROOT-CAUSE FIX for the `ask_user` "unsupported call: catimationaskuser"
-    // popup failure. Verified against codex rust-v0.142.2 source — NOT a
-    // name-mangling bug in our bridge (the server tool IS literally `ask_user`):
-    //
-    //   • PR #29486 ("Use tool search for MCP tools by default") makes Codex
-    //     DEFER every MCP tool behind `tool_search` whenever
-    //     `model.supports_search_tool && provider.capabilities().namespace_tools`
-    //     (codex-rs/core/src/tools/spec_plan.rs::search_tool_enabled +
-    //     mcp_tool_exposure.rs). A deferred tool stays in the registry but is
-    //     NOT directly model-visible — it must be found via `tool_search`.
-    //   • `ProviderCapabilities::default().namespace_tools` is HARDCODED `true`
-    //     for ALL configured/custom providers (codex-rs/model-provider/src/
-    //     provider.rs — the base `capabilities()` returns the default; the test
-    //     `configured_provider_uses_default_capabilities` pins this). So our
-    //     per-provider `-c model_providers.<id>.namespace_tools=false` is
-    //     SILENTLY IGNORED (it was never a real, config-readable capability key),
-    //     and `supports_search_tool` is not config-overridable
-    //     (model_info::with_config_overrides does not list it).
-    //   • Result: `ask_user` is deferred → invisible → the model reconstructs the
-    //     name from skill-doc memory ("ask_user"), glues on the server namespace
-    //     and drops the underscore → `catimationaskuser` → Codex's strict matcher
-    //     returns `unsupported call`. (generate_image/canvas_snapshot survive
-    //     because the model discovered them via tool_search and copies the exact
-    //     name; a never-typed tool like `ask_user` does not.)
-    //
-    // The ONLY config escape in 0.142.2 — `tool_search` is a removed no-op
-    // (always on) and the two deferral inputs above are unconfigurable — is
-    // `code_mode.direct_only_tool_namespaces`: any runtime whose CANONICAL
-    // namespace is listed is promoted from `Deferred` to `DirectModelOnly` in
-    // `apply_direct_model_only_namespace_overrides` (runs unconditionally, not
-    // gated on the code-mode feature), i.e. it stays DIRECTLY model-visible and
-    // is never deferred. Proven by codex's own
-    // `code_mode_only_exposes_direct_model_only_mcp_namespaces` test. Our MCP
-    // tools' canonical namespace == the sanitized server name `catimation`
-    // (McpHandler::tool_name → ToolInfo::canonical_tool_name → callable_namespace;
-    // with non_prefixed names there's no `mcp__` prefix). We list the prefixed
-    // form too as a belt-and-suspenders guard if a provider ever keeps the
-    // legacy prefix. `enabled=false` keeps the experimental code-mode EXEC
-    // routing OFF — we only want the exposure override (read regardless of
-    // enablement), not nested code-mode tool calling.
-    //
-    // `apiyi` is listed for the EXACT same reason: the bundled apiyi-mcp server
-    // (understand_video / generate_content / 音频·PDF 理解 …) is a first-party
-    // tool path we want ALWAYS directly model-visible. Without this it gets
-    // deferred behind `tool_search` just like ask_user did, which is why apiyi
-    // tools "sometimes don't come back" — the model has to re-discover them via
-    // search and intermittently fails. Listing the namespace here promotes them
-    // to DirectModelOnly so they're never deferred. (This is a top-level
-    // features array — NOT under `mcp_servers.apiyi` — so it never synthesizes a
-    // transport-less entry even if apiyi isn't installed.)
-    //
-    // `cinematography_kb` is the third first-party server (运镜知识库:
-    // search_cinematography_kb / query_sakuga_dataset / search_sakuga_clips /
-    // get_sakuga_clip) and needs the same promotion. It was added (v4.3.75+)
-    // after this list was written and got left behind — so its 4 tools were
-    // deferred behind tool_search and the agent's session registry showed
-    // ZERO KB tools even though the seeded server starts and lists fine
-    // (observed as "运镜知识库无法使用": config.toml entry OK, standalone
-    // tools/list OK, in-session discovery empty).
-    //
-    // RE-VERIFIED against rust-v0.143.0 (the bundled binary):
-    //   • mcp_tool_exposure.rs::build_mcp_tool_exposure defers ALL MCP tools
-    //     unconditionally whenever `search_tool_enabled` (`direct_tools:
-    //     Vec::new()` — there is NO tool-count threshold in 0.143.0).
-    //   • spec_plan.rs::apply_direct_model_only_namespace_overrides still
-    //     promotes `Direct | Deferred → DirectModelOnly` for listed namespaces.
-    // UPGRADE HEADS-UP (upstream main, post-0.143): exposure gains a
-    // `DIRECT_MCP_TOOL_EXPOSURE_THRESHOLD = 100` — MCP tools stay direct until
-    // 100+ are registered (or `Feature::ToolSearchAlwaysDeferMcpTools` is on).
-    // Do NOT drop this list on that upgrade: the promotion also matches the
-    // `Direct` arm, so it stays a harmless no-op below the threshold and the
-    // ONLY deterministic guard above it (openai/codex#24536 — deferred tools
-    // let `exec` finish "empty" with reasoning only; #29122 — upstream calls
-    // this list the only deterministic mitigation, and warns the derived
-    // namespace string is not a stable contract, which is why we pin BOTH the
-    // bare and `mcp__`-prefixed forms of every first-party server).
+    // Keep first-party MCP tools directly visible instead of deferring them behind tool_search.
     '-c', 'features.code_mode.enabled=false',
     '-c', 'features.code_mode.direct_only_tool_namespaces=["catimation", "mcp__catimation", "apiyi", "mcp__apiyi", "cinematography_kb", "mcp__cinematography_kb"]',
     // ─────────────────────────────────────────────────────────────────────────

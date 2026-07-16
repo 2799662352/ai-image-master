@@ -127,6 +127,33 @@ describe('registerAgentIpc model settings handlers', () => {
     )
   })
 
+  it.each([500_000, 1_000_000])(
+    'forwards the %i Grok context candidate for authoritative Provider validation',
+    async (contextWindow) => {
+      const payload: AgentModelContextApplyPayload = {
+        ...VALID_APPLY,
+        model: 'grok-4.5',
+        contextWindow,
+      }
+      const expected: AgentModelContextApplyResult = {
+        ok: true,
+        data: {
+          model: payload.model,
+          contextWindow,
+          autoCompactTokenLimit: Math.floor(contextWindow * 0.9),
+          threadRestored: false,
+          requestVersion: payload.requestVersion,
+        },
+      }
+      manager.applyModelContextRpc.mockResolvedValue(expected)
+
+      await expect(
+        getHandler('agent:model-context-apply')({}, payload),
+      ).resolves.toBe(expected)
+      expect(manager.applyModelContextRpc).toHaveBeenCalledWith(payload)
+    },
+  )
+
   it.each([
     ['non-object null', null],
     ['array', []],

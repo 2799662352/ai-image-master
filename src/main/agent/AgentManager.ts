@@ -1183,6 +1183,12 @@ export class AgentManager {
         const rows = allowedModels
           ? response.data.filter((row) => allowedModels.has(row.model))
           : response.data
+        if (allowedModels && rows.length === 0) {
+          return {
+            ok: true,
+            data: this.fallbackModelSettingsCatalog(provider),
+          }
+        }
         const models: AgentModelSettingsEntry[] = rows.map((row) => ({
           id: row.id,
           displayName: row.displayName,
@@ -1367,7 +1373,7 @@ export class AgentManager {
             provider,
             supportedReasoningEfforts: [],
           }),
-          contextOptions: modelContextOptions(row.id).map((option) => ({
+          contextOptions: modelContextOptions(row.id, provider).map((option) => ({
             ...option,
             conservative: true,
           })),
@@ -1386,7 +1392,7 @@ export class AgentManager {
     if (!Number.isSafeInteger(payload.requestVersion) || payload.requestVersion < 0) {
       return 'requestVersion must be a non-negative safe integer'
     }
-    const allowed = modelContextOptions(model).some(
+    const allowed = modelContextOptions(model, this.activeProviderId).some(
       (option) => option.value === attemptedConfig.modelContextWindow,
     ) || allowConfirmedRecovery
     if (!allowed) {

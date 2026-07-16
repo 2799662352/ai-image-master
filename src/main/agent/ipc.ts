@@ -2,7 +2,7 @@ import { ipcMain } from 'electron'
 import { isPlanReasoningEffort } from '../../shared/collaborationMode'
 import {
   isConcreteModelReasoningEffort,
-  modelContextOptions,
+  isModelContextWindowSupported,
 } from '../../shared/modelSettings'
 import type {
   AgentCollaborationModeUpdatePayload,
@@ -617,8 +617,9 @@ function validateModelContextApplyPayload(value: unknown): AgentModelContextAppl
   if (
     !Number.isSafeInteger(input.contextWindow)
     || (input.contextWindow as number) <= 0
-    || !modelContextOptions(input.model.trim()).some(
-      (option) => option.value === input.contextWindow,
+    || !isModelContextWindowSupported(
+      input.model.trim(),
+      input.contextWindow as number,
     )
   ) {
     throw new Error('Model context contextWindow is unsupported')

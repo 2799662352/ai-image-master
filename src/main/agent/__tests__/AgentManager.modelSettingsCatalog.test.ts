@@ -305,6 +305,20 @@ describe('AgentManager model settings catalog and snapshot', () => {
     })
   })
 
+  it('uses the dedicated fallback when Codex omits every allowed model', async () => {
+    const manager = makeManager(makeBackend([modelRow()]))
+    await manager.setActiveProvider('apiyi-grok')
+
+    await expect(manager.getModelSettingsCatalogRpc()).resolves.toMatchObject({
+      ok: true,
+      data: {
+        provider: 'apiyi-grok',
+        source: 'fallback',
+        models: [{ id: 'grok-4.5' }],
+      },
+    })
+  })
+
   it('limits a dedicated Provider fallback to its declared model slugs', async () => {
     const backend = makeBackend([])
     backend.listError = new Error('model/list unavailable')
@@ -318,11 +332,51 @@ describe('AgentManager model settings catalog and snapshot', () => {
       data: {
         provider: 'rightcode-grok',
         source: 'fallback',
-        models: [{ id: 'grok-4.5' }],
+        models: [{
+          id: 'grok-4.5',
+          capabilities: {
+            defaultContextWindow: 1_000_000,
+            contextOptions: [{
+              value: 1_000_000,
+              experimental: false,
+              conservative: true,
+            }],
+            defaultReasoningEffort: 'high',
+            supportedReasoningEfforts: ['low', 'medium', 'high'],
+          },
+        }],
       },
     })
     if (!result.ok) throw new Error('Expected fallback catalog')
     expect(result.data.models).toHaveLength(1)
+  })
+
+  it('uses API Yi Grok verified limits in its dedicated fallback', async () => {
+    const backend = makeBackend([])
+    backend.listError = new Error('model/list unavailable')
+    const manager = makeManager(backend)
+    await manager.setActiveProvider('apiyi-grok')
+
+    await expect(manager.getModelSettingsCatalogRpc()).resolves.toMatchObject({
+      ok: true,
+      data: {
+        provider: 'apiyi-grok',
+        source: 'fallback',
+        models: [{
+          id: 'grok-4.5',
+          capabilities: {
+            defaultContextWindow: 500_000,
+            contextOptions: [{
+              value: 500_000,
+              experimental: false,
+              conservative: true,
+            }],
+            defaultReasoningEffort: 'high',
+            supportedReasoningEfforts: ['low', 'medium', 'high'],
+          },
+        }],
+      },
+    })
   })
 
   it('returns non-empty conservative canonical fallback rows when model/list fails', async () => {

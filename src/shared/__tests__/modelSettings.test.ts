@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   CANONICAL_MODEL_SETTINGS_ROWS,
   EXPERIMENTAL_CONTEXT_WINDOW,
+  GROK_4_5_CONTEXT_WINDOW,
   UNKNOWN_MODEL_CONTEXT_WINDOW,
   defaultContextWindowForModel,
   isConcreteModelReasoningEffort,
@@ -13,22 +14,54 @@ import {
 } from '../modelSettings'
 
 describe('model settings capabilities', () => {
-  it('publishes Grok 4.5 metadata with its verified 1M context', () => {
+  it('publishes provider-neutral Grok 4.5 metadata', () => {
     expect(
       CANONICAL_MODEL_SETTINGS_ROWS.find((row) => row.id === 'grok-4.5'),
     ).toEqual({
       id: 'grok-4.5',
       displayName: 'Grok 4.5',
       tier: 'Extra High',
-      description: 'Frontier coding and agentic model via Right.Codes Responses.',
+      description: 'Frontier coding and agentic model with native Responses support.',
       isDefault: false,
     })
-    expect(defaultContextWindowForModel('grok-4.5')).toBe(
+  })
+
+  it('uses Provider-specific Grok 4.5 context limits', () => {
+    expect(defaultContextWindowForModel('grok-4.5')).toBe(GROK_4_5_CONTEXT_WINDOW)
+    expect(defaultContextWindowForModel('grok-4.5', 'apiyi')).toBe(
+      GROK_4_5_CONTEXT_WINDOW,
+    )
+    expect(defaultContextWindowForModel('grok-4.5', 'apiyi-grok')).toBe(
+      GROK_4_5_CONTEXT_WINDOW,
+    )
+    expect(defaultContextWindowForModel('grok-4.5', 'rightcode-grok')).toBe(
       EXPERIMENTAL_CONTEXT_WINDOW,
     )
-    expect(modelContextOptions('grok-4.5')).toEqual([
+    expect(modelContextOptions('grok-4.5', 'apiyi-grok')).toEqual([
+      { value: GROK_4_5_CONTEXT_WINDOW, experimental: false },
+    ])
+    expect(modelContextOptions('grok-4.5', 'rightcode-grok')).toEqual([
       { value: EXPERIMENTAL_CONTEXT_WINDOW, experimental: false },
     ])
+  })
+
+  it.each([
+    ['apiyi', GROK_4_5_CONTEXT_WINDOW],
+    ['apiyi-grok', GROK_4_5_CONTEXT_WINDOW],
+    ['rightcode-grok', EXPERIMENTAL_CONTEXT_WINDOW],
+  ])('uses verified Grok reasoning capabilities for %s', (provider, contextWindow) => {
+    expect(
+      mergeModelSettingsCapabilities({
+        model: 'grok-4.5',
+        provider,
+        supportedReasoningEfforts: [],
+      }),
+    ).toMatchObject({
+      defaultContextWindow: contextWindow,
+      contextOptions: [{ value: contextWindow, experimental: false }],
+      defaultReasoningEffort: 'high',
+      supportedReasoningEfforts: ['low', 'medium', 'high'],
+    })
   })
 
   it('keeps max and filters ultra for Right Code gpt-5.6-sol', () => {
@@ -122,6 +155,7 @@ describe('model settings capabilities', () => {
   )
 
   it.each([
+    ['grok-4.5', GROK_4_5_CONTEXT_WINDOW],
     ['gpt-5.6-sol', 372_000],
     ['gpt-5.6-terra', 372_000],
     ['gpt-5.6-luna', 372_000],
