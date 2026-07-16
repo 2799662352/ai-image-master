@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { AgentManager } from '../AgentManager'
+import type { CodexLocalBackendOptions } from '../CodexLocalBackend'
 import type { AgentInput, IAgentBackend } from '../types'
 import type { AgentStreamEvent } from '../../../types/agent'
 import type { CodexProviderConfig } from '../codexLaunch'
@@ -123,6 +124,132 @@ describe('AgentManager codex api key', () => {
 
     const reader = new AgentManager({ userDataDir: tmpDir })
     expect(reader.getCodexApiKey()).toBe('sk-persist')
+  })
+})
+
+describe('AgentManager persisted Gateway/model startup routing', () => {
+  async function writeProvidersState(input: {
+    selectedGatewayId: string
+    selectedModelId: string
+    apiKeys?: Record<string, string>
+    customProviders?: CodexProviderConfig[]
+  }): Promise<void> {
+    await fs.writeFile(
+      path.join(tmpDir, 'codex-providers.json'),
+      JSON.stringify({
+        version: 2,
+        selectedGatewayId: input.selectedGatewayId,
+        selectedModelId: input.selectedModelId,
+        apiKeys: input.apiKeys ?? {},
+        customProviders: input.customProviders ?? [],
+      }),
+      'utf8',
+    )
+  }
+
+  function constructAndCaptureBackend(): CodexLocalBackendOptions {
+    let captured: CodexLocalBackendOptions | undefined
+    new AgentManager({
+      userDataDir: tmpDir,
+      backendFactory: (options) => {
+        captured = options
+        return makeStubBackend([])
+      },
+    })
+    if (!captured) throw new Error('Expected AgentManager to construct its default backend')
+    return captured
+  }
+
+  it.each([
+    {
+      gatewayId: 'apiyi',
+      expectedChannelId: 'apiyi-grok',
+      expectedBaseUrl: 'https://api.apiyi.com/v1',
+    },
+    {
+      gatewayId: 'rightcode',
+      expectedChannelId: 'rightcode-grok',
+      expectedBaseUrl: 'https://right.codes/grok/v1',
+    },
+  ])(
+    'restores $gatewayId + grok-4.5 through its Grok channel',
+    async ({ gatewayId, expectedChannelId, expectedBaseUrl }) => {
+      await writeProvidersState({
+        selectedGatewayId: gatewayId,
+        selectedModelId: 'grok-4.5',
+        apiKeys: { [gatewayId]: 'shared-key' },
+      })
+
+      const options = constructAndCaptureBackend()
+
+      expect(options.provider).toMatchObject({
+        id: expectedChannelId,
+        gatewayId,
+        model: 'grok-4.5',
+        baseUrl: expectedBaseUrl,
+      })
+      expect(options.getApiKey?.()).toBe('shared-key')
+    },
+  )
+
+  it.each([
+    { gatewayId: 'apiyi', expectedChannelId: 'apiyi-standard' },
+    { gatewayId: 'rightcode', expectedChannelId: 'rightcode-standard' },
+  ])(
+    'restores $gatewayId + gpt-5.5 through its standard channel',
+    async ({ gatewayId, expectedChannelId }) => {
+      await writeProvidersState({
+        selectedGatewayId: gatewayId,
+        selectedModelId: 'gpt-5.5',
+      })
+
+      const options = constructAndCaptureBackend()
+
+      expect(options.provider).toMatchObject({
+        id: expectedChannelId,
+        gatewayId,
+        model: 'gpt-5.5',
+      })
+    },
+  )
+
+  it('restores a custom Gateway through its single custom channel', async () => {
+    await writeProvidersState({
+      selectedGatewayId: 'custom-studio',
+      selectedModelId: 'vendor-model',
+      apiKeys: { 'custom-studio': 'custom-key' },
+      customProviders: [{
+        id: 'custom-studio',
+        name: 'Studio Gateway',
+        baseUrl: 'https://studio.example.com/v1',
+        envKey: 'OPENAI_API_KEY',
+        isCustom: true,
+      }],
+    })
+
+    const options = constructAndCaptureBackend()
+
+    expect(options.provider).toMatchObject({
+      id: 'custom:custom-studio',
+      gatewayId: 'custom-studio',
+      model: 'vendor-model',
+      baseUrl: 'https://studio.example.com/v1',
+    })
+    expect(options.getApiKey?.()).toBe('custom-key')
+  })
+
+  it('keeps the existing default-provider fallback for an unknown persisted Gateway', async () => {
+    await writeProvidersState({
+      selectedGatewayId: 'missing-gateway',
+      selectedModelId: 'grok-4.5',
+    })
+
+    const options = constructAndCaptureBackend()
+
+    expect(options.provider).toMatchObject({
+      id: 'apiyi',
+      baseUrl: 'https://api.apiyi.com/v1',
+    })
   })
 })
 

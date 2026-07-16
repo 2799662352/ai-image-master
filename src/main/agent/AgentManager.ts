@@ -28,7 +28,10 @@ import {
   resolveActiveProvider,
   type ProviderPreset,
 } from './codexProviders'
-import { resolveGatewayModelRoute } from './gatewayModelRouting'
+import {
+  resolveGatewayModelRoute,
+  resolveProviderChannel,
+} from './gatewayModelRouting'
 import { getDockerMcpGatewayService, type CheckInstalledResult, type GatewayStatus } from './dockerMcpGateway'
 import {
   GATEWAY_DEFAULT_PORT,
@@ -284,6 +287,29 @@ export interface AgentManagerOptions {
   mcpRuntime?: CatimationMcpLaunchInfo
 }
 
+function resolvePersistedStartupProvider(
+  persisted: PersistedProvidersV2,
+): ProviderPreset {
+  const gateway = resolveActiveProvider(
+    persisted.selectedGatewayId,
+    persisted.customProviders,
+  )
+  if (gateway.id !== persisted.selectedGatewayId) {
+    return gateway
+  }
+
+  const route = resolveGatewayModelRoute(
+    persisted.selectedGatewayId,
+    persisted.selectedModelId,
+    persisted.customProviders,
+  )
+  const channel = resolveProviderChannel(route.channelId, persisted.customProviders)
+  return {
+    ...channel,
+    model: route.modelId,
+  }
+}
+
 export class AgentManager {
   private backend: IAgentBackend
   private win: BrowserWindow | undefined
@@ -460,7 +486,7 @@ export class AgentManager {
     this.apiyiMcpKey = (persisted.apiKeys[APIYI_MCP_PROVIDER_ID] ?? '').trim()
     this.cinematographyKbKey = (persisted.apiKeys[CINEMATOGRAPHY_KB_PROVIDER_ID] ?? '').trim()
     this.dashVectorKey = (persisted.apiKeys[DASHVECTOR_PROVIDER_ID] ?? '').trim()
-    const activeProvider = resolveActiveProvider(this.activeProviderId, persisted.customProviders)
+    const activeProvider = resolvePersistedStartupProvider(persisted)
     if (opts.backend) {
       this.backend = opts.backend
     } else {

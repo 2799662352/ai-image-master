@@ -256,6 +256,7 @@ export class CodexProviderStore {
     return this.setSelectedGatewayId(id)
   }
 
+  /** Returns the persisted user-facing Gateway id. */
   async getSelectedGatewayId(): Promise<string> {
     return (await this.load()).selectedGatewayId
   }
