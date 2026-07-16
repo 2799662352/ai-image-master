@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   channelsForGateway,
+  resolveAuthorizedGatewayModelRoute,
   resolveGatewayModelRoute,
   resolveProviderChannel,
 } from '../gatewayModelRouting'
@@ -38,5 +39,24 @@ describe('gatewayModelRouting', () => {
       'apiyi-standard',
       'apiyi-grok',
     ])
+  })
+
+  it('routes catalog-authorized custom gateways through one custom channel', () => {
+    expect(resolveAuthorizedGatewayModelRoute({
+      source: 'model-catalog',
+      gatewayId: 'custom-studio',
+    }, 'vendor-future-model')).toEqual({
+      gatewayId: 'custom-studio',
+      channelId: 'custom:custom-studio',
+      modelId: 'vendor-future-model',
+      family: 'other',
+    })
+  })
+
+  it('does not treat an ordinary builtin gateway typo as custom', () => {
+    expect(() => resolveAuthorizedGatewayModelRoute({
+      source: 'builtin',
+      gatewayId: 'rightcodes',
+    }, 'grok-4.5')).toThrow('Unknown Codex gateway "rightcodes"')
   })
 })

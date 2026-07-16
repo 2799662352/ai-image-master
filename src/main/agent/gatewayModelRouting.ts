@@ -22,6 +22,10 @@ export interface ProviderChannelPreset extends CodexProviderConfig {
   compatibilityPolicy: ProviderCompatibilityPolicy
 }
 
+export type AuthorizedGatewayRouteContext =
+  | { source: 'builtin'; gatewayId: string }
+  | { source: 'model-catalog'; gatewayId: string }
+
 const BUILTIN_GATEWAYS: readonly GatewayPreset[] = Object.freeze([
   Object.freeze({
     id: 'apiyi',
@@ -91,6 +95,19 @@ export function inferModelFamily(modelId: string): AgentModelFamily {
   return 'other'
 }
 
+function customGatewayModelRoute(
+  gatewayId: string,
+  modelId: string,
+): AgentModelRoute {
+  const normalizedModel = modelId.trim()
+  return {
+    gatewayId,
+    channelId: `custom:${gatewayId}`,
+    modelId: normalizedModel,
+    family: inferModelFamily(normalizedModel),
+  }
+}
+
 /** Returns the shipped builtin gateway presets. */
 export function builtinGateways(): readonly GatewayPreset[] {
   return BUILTIN_GATEWAYS
@@ -138,12 +155,7 @@ export function resolveGatewayModelRoute(
   if (!builtin) {
     const custom = customProviders.find((provider) => provider.id === gatewayId)
     if (!custom) throw new Error(`Unknown Codex gateway "${gatewayId}"`)
-    return {
-      gatewayId,
-      channelId: `custom:${gatewayId}`,
-      modelId: normalizedModel,
-      family,
-    }
+    return customGatewayModelRoute(gatewayId, normalizedModel)
   }
 
   const channelId = family === 'xai'
@@ -160,6 +172,32 @@ export function resolveGatewayModelRoute(
   }
 
   return { gatewayId, channelId, modelId: normalizedModel, family }
+}
+
+/**
+ * Resolves builtin routes normally and permits unknown gateway ids only when
+ * their authority comes from a main-produced model catalog.
+ */
+export function resolveAuthorizedGatewayModelRoute(
+  context: AuthorizedGatewayRouteContext,
+  modelId: string,
+): AgentModelRoute {
+  switch (context.source) {
+    case 'builtin':
+      return resolveGatewayModelRoute(context.gatewayId, modelId)
+    case 'model-catalog':
+      if (BUILTIN_GATEWAYS.some((gateway) => gateway.id === context.gatewayId)) {
+        return resolveGatewayModelRoute(context.gatewayId, modelId)
+      }
+      if (!context.gatewayId) {
+        throw new Error('Catalog-authorized gateway id must be non-empty')
+      }
+      return customGatewayModelRoute(context.gatewayId, modelId)
+    default: {
+      const exhaustive: never = context
+      throw new Error(`Unknown gateway route authority: ${String(exhaustive)}`)
+    }
+  }
 }
 
 export { BUILTIN_GATEWAYS, BUILTIN_CHANNELS }

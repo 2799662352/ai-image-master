@@ -196,6 +196,30 @@ describe('ModelPicker model settings integration', () => {
     expect(screen.getByText(/能力未确认/)).toBeTruthy()
   })
 
+  it('routes an unknown fallback model for a catalog-authorized custom gateway', () => {
+    setPickerState({
+      selectedModelId: 'vendor-custom-future',
+      modelSettingsCatalog: {
+        gatewayId: 'custom-studio',
+        revision: 'test-custom-empty',
+        source: 'codex',
+        models: [],
+      },
+      modelReasoningEffortByModel: { 'vendor-custom-future': 'auto' },
+      activeModelContextWindow: 200_000,
+    })
+
+    render(<ModelPicker />)
+    expect(screen.getByRole('button', {
+      name: /选择模型：Unknown · vendor-custom-future · Auto/,
+    })).toBeTruthy()
+    openPicker()
+    expect(screen.getByRole('option', {
+      name: 'Unknown · vendor-custom-future',
+    })).toBeTruthy()
+    expect(screen.getByRole('option', { name: /200K/ })).toBeTruthy()
+  })
+
   it('keeps canonical metadata for a pinned model omitted by the runtime catalog', () => {
     setPickerState({
       selectedModelId: 'grok-4.5',

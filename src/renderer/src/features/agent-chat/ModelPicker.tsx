@@ -17,7 +17,8 @@ import {
 import type { AgentModelSettingsEntry } from '../../../../types/agent'
 import {
   builtinGateways,
-  resolveGatewayModelRoute,
+  resolveAuthorizedGatewayModelRoute,
+  type AuthorizedGatewayRouteContext,
 } from '../../../../main/agent/gatewayModelRouting'
 import { findModel } from './models'
 import { ModelSettingsPanel } from './ModelSettingsPanel'
@@ -53,6 +54,7 @@ interface ModelPickerProps {
 
 function conservativeEntry(
   gatewayId: string,
+  routeSource: AuthorizedGatewayRouteContext['source'],
   row: {
     id: string
     displayName: string
@@ -60,7 +62,10 @@ function conservativeEntry(
     isDefault: boolean
   },
 ): AgentModelSettingsEntry {
-  const route = resolveGatewayModelRoute(gatewayId, row.id)
+  const route = resolveAuthorizedGatewayModelRoute({
+    source: routeSource,
+    gatewayId,
+  }, row.id)
   const capabilities = mergeModelSettingsCapabilities({
     model: row.id,
     gatewayId: route.gatewayId,
@@ -83,9 +88,12 @@ function conservativeEntry(
   }
 }
 
-function conservativeFallbackRows(gatewayId: string): AgentModelSettingsEntry[] {
+function conservativeFallbackRows(
+  gatewayId: string,
+  routeSource: AuthorizedGatewayRouteContext['source'],
+): AgentModelSettingsEntry[] {
   return CANONICAL_MODEL_SETTINGS_ROWS.map((row) =>
-    conservativeEntry(gatewayId, row))
+    conservativeEntry(gatewayId, routeSource, row))
 }
 
 function pickerModel(row: AgentModelSettingsEntry): PickerModel {
@@ -96,9 +104,13 @@ function pickerModel(row: AgentModelSettingsEntry): PickerModel {
   }
 }
 
-function unknownModel(id: string, gatewayId: string): PickerModel {
+function unknownModel(
+  id: string,
+  gatewayId: string,
+  routeSource: AuthorizedGatewayRouteContext['source'],
+): PickerModel {
   const metadata = findModel(id)
-  return pickerModel(conservativeEntry(gatewayId, {
+  return pickerModel(conservativeEntry(gatewayId, routeSource, {
     id,
     displayName: metadata?.label ?? `Unknown · ${id}`,
     description:
@@ -180,18 +192,19 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
   const focusFrameRef = useRef<number | null>(null)
 
   const gatewayId = catalog?.gatewayId ?? DEFAULT_GATEWAY_ID
+  const routeSource = catalog ? 'model-catalog' : 'builtin'
   const baseRows = useMemo(
     () => (
       catalog
         ? catalog.models
-        : conservativeFallbackRows(gatewayId)
+        : conservativeFallbackRows(gatewayId, routeSource)
     ).filter((row) => !row.hidden).map(pickerModel),
-    [catalog, gatewayId],
+    [catalog, gatewayId, routeSource],
   )
   const selectedKnown = baseRows.find((model) => model.id === selectedModelId)
   const selected = useMemo(
-    () => selectedKnown ?? unknownModel(selectedModelId, gatewayId),
-    [gatewayId, selectedKnown, selectedModelId],
+    () => selectedKnown ?? unknownModel(selectedModelId, gatewayId, routeSource),
+    [gatewayId, routeSource, selectedKnown, selectedModelId],
   )
   const availableModels = useMemo(
     () => selectedKnown ? baseRows : [selected, ...baseRows],
