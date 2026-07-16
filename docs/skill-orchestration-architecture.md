@@ -52,8 +52,8 @@ QA 触发(由入口唯一执行,自动修正上限 2 次,继续付费重试需�
 | Skill | 角色 |
 |---|---|
 | `catimation-image` / `catimation-video` | 唯一入口 + 任务分级者 + 规格确认 + 生成调用 + QA 升级;预算标记 `pro` |
-| `sd2-pe` | Seedance 提示词格式与素材绑定规则,纯工艺叶子;每次视频任务保留八要素与统一三段结构(无「简单视频」降级路径,单镜只减镜头数不降规格),再用真人/2D/3D 可组合媒介 profile 输出不可删减的 12 字段格式化骨架,并主动出已核实影视参考候选供用户选;“电影”是检索创作技法的意图词 |
-| `seedance-cinematic-format` | `sd2-pe` 的**必载**结构叶子:每次视频提示词任务都加载,提供 12 字段定义、真人/2D/3D 媒介差异、语言建议、prompt-primary/identity-hard/keyframe-strong/atmosphere-loose/director-free 语义优先级与导演/作品参考替换规则;使用故事板/多宫格时强制提示词主导前缀;类别 reference 仍可渐进披露;不做入口路由、不调用生成或 QA |
+| `sd2-pe` | Seedance 提示词格式与素材绑定规则,纯工艺叶子;轻量连续任务走路径 A,复杂多镜任务走路径 B,两条路径均覆盖八大核心要素、12 项内容与五大必备块,只改变表达结构不降低交付要求;主动出已核实影视参考候选供用户选;“电影”是检索创作技法的意图词 |
+| `seedance-cinematic-format` | `sd2-pe` 的**条件结构叶子**:路径 B、多镜、混合媒介或需展开导演/作品参考时加载,路径 A 可跳过;提供 12 项内容定义(标题/分段/散文形式自由)、真人/2D/3D 媒介差异、语言建议、prompt-primary/identity-hard/keyframe-strong/atmosphere-loose/director-free 语义优先级与参考替换规则;使用故事板/多宫格时强制提示词主导前缀;类别 reference 渐进披露;不做入口路由、不调用生成或 QA |
 | `director-orchestrator` | 复杂镜头 13 维设计调度器,仅专业/制片级由入口加载;不再「每次必用」,无 STEP -1 强制路由 |
 | `catimation-video-director-router` | 症状修复查找表:仅当用户反馈「太假/动作怪/站桩/混脸/风格跑偏」等具体问题时使用;不是生成前置门,fanout 0 |
 | `seedance-video-craft` | 复杂 Seedance 任务(多模态参考、多镜叙事、编辑/延长、商业交付)专业知识模块;假定上游已完成基础路由 |
