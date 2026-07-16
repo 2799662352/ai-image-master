@@ -38,7 +38,7 @@ description: >-
 
 **正向提示词(默认):** 全流程默认只写正向提示词,**不写反向/负向提示词**,把「不要 X」改写成对应的「要 Y」,用真实技法词把目标状态写具体。
 
-**★ 每个出图/出视频阶段(G4 / G5)必先过总调度,且 prompt 必须用 skill 渐进式写:** 在 G4 逐镜出图、G5 图生视频写 prompt 之前,**先载入 `director-orchestrator` 执行它的 STEP 0 反问**(13 维定位 → 列出要载入的 director-*/storyboard- → 核实技法文档 → 确认目标模型与素材),再用 `sd2-pe`(八大要素 + 统一三段结构 + 多模态绑定)与 `storyboard-video-prompt-optimization` 把该镜落成结构化文本(物理可复现参数优先),并把已备素材逐一绑进去。**渐进式披露**:只加载这镜实际涉及维度对应的 skill。把结论一行说给用户听,再写提示词。**禁止跳过反问、禁止脱离 skill + 素材凭记忆硬写 prompt。**
+**★ 每个出图/出视频阶段(G4 / G5)必先过总调度,且 prompt 必须用 skill 渐进式写:** 在 G4 逐镜出图、G5 图生视频写 prompt 之前,**先载入 `director-orchestrator` 执行它的 STEP 0 反问**(13 维定位 → 列出要载入的 director-*/storyboard- → 核实技法文档 → 确认目标模型与素材),再用 `sd2-pe`(八大要素 + 12 项内容 + 五大必备块 + 多模态绑定，结构与散文形式自由)与 `storyboard-video-prompt-optimization` 把该镜落成结构化文本(物理可复现参数优先),并把已备素材逐一绑进去。**渐进式披露**:只加载这镜实际涉及维度对应的 skill。把结论一行说给用户听,再写提示词。**禁止跳过反问、禁止脱离 skill + 素材凭记忆硬写 prompt。**
 
 ---
 
@@ -67,7 +67,7 @@ description: >-
     资产都可作为主锚。用户已指定就采用；多套候选拿不准时先询问，低风险未指定才
     默认大头照+全身照。
   - 把最终选定人物卡存进**人像库**得到 `asset://assetId`,作为引用句柄;关键场景同理落「场景卡」。缺图先在 G4 思路下补齐。
-- **调:** `director-anchor-extraction-quality`、`director-character-consistency`、`storyboard-multi-character-control`、`director-visual-continuity`;绑定语法用 `sd2-pe`(`<主体N>（参考 图片N）` / 用户选定 identity-hard);台账用 `animation-craft` 的 continuity-ledger 模板;建衔接矩阵/剪辑边界矩阵的列定义参考 `references/continuity-matrices.md`。
+- **调:** `director-anchor-extraction-quality`、`director-character-consistency`、`storyboard-multi-character-control`、`director-visual-continuity`;绑定语法用 `sd2-pe`(`<主体N>（参考 @图片N）` / 用户选定 identity-hard，工具边界自动去除 `@`);台账用 `animation-craft` 的 continuity-ledger 模板;建衔接矩阵/剪辑边界矩阵的列定义参考 `references/continuity-matrices.md`。
 - **门 G3:** 用户批准角色/场景设定 **+ 每个角色的最终选定人物卡已建库**；
   生成了美术设定板时一并批准其氛围方向。
 
