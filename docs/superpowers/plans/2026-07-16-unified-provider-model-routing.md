@@ -126,11 +126,11 @@ Add assertions to `modelSettings.test.ts`:
 ```ts
 expect(modelContextOptions('grok-4.5', 'apiyi', 'apiyi-grok')).toContainEqual({
   value: 500_000,
-  label: '500K',
+  experimental: false,
 })
 expect(modelContextOptions('grok-4.5', 'rightcode', 'rightcode-grok')).toContainEqual({
   value: 1_000_000,
-  label: '1M',
+  experimental: false,
 })
 ```
 
