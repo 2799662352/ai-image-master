@@ -31,6 +31,7 @@ import {
   resolveGatewayModelRoute,
   resolveProviderChannel,
 } from './gatewayModelRouting'
+import { ProviderChannelController } from './ProviderChannelController'
 import { getDockerMcpGatewayService, type CheckInstalledResult, type GatewayStatus } from './dockerMcpGateway'
 import {
   GATEWAY_DEFAULT_PORT,
@@ -332,8 +333,8 @@ export class AgentManager {
   private runtimeSettings: PersistedCodexRuntimeSettingsV1
   /** User-visible Gateway id exposed by Provider settings snapshots. */
   private activeGatewayId: string
-  /** Internal Channel id currently applied to the backend generation. */
-  private appliedChannelId: string
+  /** Internal Channel runtime control for backend generation switches. */
+  private readonly channelController: ProviderChannelController
   private codexApiKey = ''
   /**
    * Miau token for the qwen understanding provider (Path B). Persisted in the
@@ -493,7 +494,6 @@ export class AgentManager {
     // (selectedModelId) — see CodexProviderStore's PersistedProvidersV2.
     const restoredProvider = resolvePersistedStartupProvider(persisted)
     this.activeGatewayId = restoredProvider.gatewayId
-    this.appliedChannelId = restoredProvider.channelId
     this.codexApiKey = persisted.apiKeys[
       credentialIdForProvider(this.activeGatewayId, persisted.customProviders)
     ] ?? ''
@@ -532,6 +532,20 @@ export class AgentManager {
         onThreadSettingsNotification: (event) => this.handleThreadSettingsNotification(event),
       })
     }
+    this.channelController = new ProviderChannelController({
+      backend: {
+        setProvider: (provider) => this.backend.setProvider?.(provider),
+        restartCodex: async (_paths) => {
+          const restart = this.backend.restartCodex?.bind(this.backend)
+          if (!restart) return
+          await this.restartBackendWithGenerationCheck(restart)
+        },
+        currentEpoch: () => this.backend.currentEpoch?.(),
+      },
+      paths: this.workspacePaths(),
+      initialChannelId: restoredProvider.channelId,
+      getCustomProviders: () => this.providerStore.loadSync().customProviders,
+    })
     if (this.store) {
       this.summarizer = new ThreadTitleSummarizer(this.store, this.backend, DEFAULT_AGENT_MODEL)
     }
@@ -679,7 +693,7 @@ export class AgentManager {
       builtins: BUILTIN_PROVIDER_PRESETS.map((p) => ({ ...p })),
       custom: persisted.customProviders.map((p) => ({ ...p })),
       // UI state exposes the user-facing Gateway only. The backend's internal
-      // Channel identity is tracked separately in appliedChannelId.
+      // Channel identity is owned by ProviderChannelController.
       activeId: this.activeGatewayId,
       apiKeys: { ...persisted.apiKeys },
     }
@@ -754,12 +768,13 @@ export class AgentManager {
     const transaction = this.restartChain.then(async () => {
       const before = await this.providerStore.load()
       const previousActiveGatewayId = this.activeGatewayId
-      const previousAppliedChannelId = this.appliedChannelId
+      const previousAppliedChannelId = this.channelController.currentChannelId()
       const previousKey = this.codexApiKey
       const previousEpoch = this.backend.currentEpoch?.()
       const previousHealthy = this.backend.isHealthy()
       const previousProvider = resolvePersistedStartupProvider(before).provider
       let desiredPersisted = false
+      let channelApplyAttempted = false
 
       try {
         const desired = await mutateDesired(before)
@@ -773,15 +788,25 @@ export class AgentManager {
         let providerGeneration = this.backend.currentEpoch?.()
         const requiresApply =
           desired.requiresApply
-          || restoredProvider.channelId !== this.appliedChannelId
+          || restoredProvider.channelId !== this.channelController.currentChannelId()
 
         if (requiresApply) {
           this.codexApiKey = nextKey
-          providerGeneration = await this.applyProviderGeneration(provider)
+          if (
+            restoredProvider.channelId
+            !== this.channelController.currentChannelId()
+          ) {
+            channelApplyAttempted = true
+            providerGeneration = await this.applyChannelGeneration(
+              restoredProvider.channelId,
+              previousProvider,
+            )
+          } else {
+            providerGeneration = await this.applyProviderGeneration(provider)
+          }
         }
 
         this.activeGatewayId = restoredProvider.gatewayId
-        this.appliedChannelId = restoredProvider.channelId
         this.codexApiKey = nextKey
         capabilityReady = true
         return {
@@ -791,6 +816,10 @@ export class AgentManager {
         }
       } catch (error) {
         const recoveryFailures: string[] = []
+        const channelRollbackRecovered =
+          channelApplyAttempted
+          && this.channelController.currentChannelId() === previousAppliedChannelId
+          && this.backend.isHealthy()
         try {
           if (desiredPersisted) {
             try {
@@ -801,12 +830,22 @@ export class AgentManager {
           }
         } finally {
           this.activeGatewayId = previousActiveGatewayId
-          this.appliedChannelId = previousAppliedChannelId
           this.codexApiKey = previousKey
-          this.backend.setProvider?.(previousProvider)
+          if (this.channelController.currentChannelId() !== previousAppliedChannelId) {
+            try {
+              await this.channelController.restore(
+                previousAppliedChannelId,
+                previousProvider,
+              )
+            } catch {
+              this.backend.setProvider?.(previousProvider)
+            }
+          } else if (!channelRollbackRecovered && !channelApplyAttempted) {
+            this.backend.setProvider?.(previousProvider)
+          }
         }
 
-        if (previousHealthy) {
+        if (previousHealthy && !channelRollbackRecovered && !channelApplyAttempted) {
           const oldGenerationStillHealthy =
             previousEpoch !== undefined
             && this.backend.currentEpoch?.() === previousEpoch
@@ -836,7 +875,9 @@ export class AgentManager {
             }
           }
         }
-        capabilityReady = recoveryFailures.length === 0
+        capabilityReady =
+          (!channelApplyAttempted || channelRollbackRecovered)
+          && recoveryFailures.length === 0
         if (recoveryFailures.length > 0) {
           throw new Error(
             `${errorMessage(error)}; Provider recovery failed: ${recoveryFailures.join('; ')}`,
@@ -859,6 +900,30 @@ export class AgentManager {
       () => capabilityReady,
     )
     return transaction
+  }
+
+  private async applyChannelGeneration(
+    channelId: string,
+    rollbackProvider: ProviderPreset,
+  ): Promise<number | undefined> {
+    const previousEpoch = this.backend.currentEpoch?.()
+    const transition = await this.channelController.apply(
+      channelId,
+      rollbackProvider,
+    )
+    if (!transition.changed) return previousEpoch
+
+    if (!this.backend.isHealthy()) {
+      throw new Error('Provider restart completed without a healthy backend')
+    }
+    const nextEpoch = transition.backendEpoch ?? this.backend.currentEpoch?.()
+    if (
+      previousEpoch !== undefined
+      && (nextEpoch === undefined || nextEpoch === previousEpoch)
+    ) {
+      throw new Error('Provider restart did not create a new backend generation')
+    }
+    return nextEpoch
   }
 
   private async applyProviderGeneration(
@@ -1200,11 +1265,11 @@ export class AgentManager {
       const providerReady = await providerBarrier
       if (providerBarrier !== this.providerCapabilityBarrier) continue
 
-      const provider = this.appliedChannelId
+      const provider = this.channelController.currentChannelId()
       const backendEpoch = this.backend.currentEpoch?.()
       const ownerStillCurrent = (): boolean =>
         this.providerCapabilityBarrier === providerBarrier
-        && this.appliedChannelId === provider
+        && this.channelController.currentChannelId() === provider
         && (
           backendEpoch === undefined
           || this.backend.currentEpoch?.() === backendEpoch
@@ -1263,7 +1328,7 @@ export class AgentManager {
         return { ok: true, data: this.fallbackModelSettingsCatalog(provider) }
       }
     }
-    const provider = this.appliedChannelId
+    const provider = this.channelController.currentChannelId()
     console.warn(
       `[AgentManager] model settings catalog owner changed ${maxOwnerAttempts} times; using fallback for ${provider}`,
     )
@@ -1845,7 +1910,7 @@ export class AgentManager {
       return {
         ok: true,
         data: this.fallbackCollaborationCapabilities(
-          this.appliedChannelId,
+          this.channelController.currentChannelId(),
           this.backend.currentEpoch?.(),
         ),
       }
@@ -1909,14 +1974,14 @@ export class AgentManager {
     includePlanPreset: boolean,
     providerReady: boolean,
   ): Promise<ResolvedCollaborationCapabilities> {
-    const providerId = this.appliedChannelId
+    const providerId = this.channelController.currentChannelId()
     const backendEpoch = this.backend.currentEpoch?.()
     const fallback = (): ResolvedCollaborationCapabilities => ({
       model: modelId,
       capabilities: this.fallbackCollaborationCapabilities(providerId, backendEpoch),
     })
     const ownerStillCurrent = (): boolean =>
-      this.appliedChannelId === providerId
+      this.channelController.currentChannelId() === providerId
       && (
         backendEpoch === undefined
         || this.backend.currentEpoch?.() === backendEpoch
@@ -3100,7 +3165,7 @@ export class AgentManager {
     owner: CollaborationCapabilityOwner,
   ): boolean {
     return (
-      this.appliedChannelId === owner.providerId
+      this.channelController.currentChannelId() === owner.providerId
       && this.backend.currentEpoch?.() === owner.backendEpoch
     )
   }

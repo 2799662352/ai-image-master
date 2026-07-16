@@ -688,7 +688,7 @@ describe('CodexLocalBackend spawn env injection', () => {
     await backend.stop()
   })
 
-  it('routes custom Responses providers through loopback compatibility proxies', async () => {
+  it('routes bridged Responses providers through loopback compatibility proxies', async () => {
     let capturedArgs: string[] = []
     const backend = new CodexLocalBackend({
       resourceRoot: '/tmp/codex-fake-root',
@@ -698,6 +698,7 @@ describe('CodexLocalBackend spawn env injection', () => {
         baseUrl: 'https://api.apiyi.com/v1',
         envKey: 'OPENAI_API_KEY',
         model: 'grok-4.5',
+        compatibilityPolicy: 'responses-namespace-bridge',
       },
       getUnderstandProvider: () => ({
         provider: {
@@ -727,11 +728,11 @@ describe('CodexLocalBackend spawn env injection', () => {
       expect(activeBaseUrl).toMatch(
         /^model_providers\.apiyi-grok\.base_url="http:\/\/127\.0\.0\.1:\d+\/v1"$/,
       )
-      expect(extraBaseUrl).toMatch(
-        /^model_providers\.qwen\.base_url="http:\/\/127\.0\.0\.1:\d+\/v1"$/,
+      expect(extraBaseUrl).toBe(
+        'model_providers.qwen.base_url="http://175.178.198.17:3000/v1"',
       )
       expect(activeBaseUrl).not.toContain('api.apiyi.com')
-      expect(extraBaseUrl).not.toContain('175.178.198.17')
+      expect(extraBaseUrl).not.toContain('127.0.0.1')
     } finally {
       await backend.stop()
     }

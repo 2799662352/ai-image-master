@@ -33,6 +33,22 @@ export interface ProviderCompatibilityProxyGroup {
   close: () => Promise<void>
 }
 
+/** Returns whether a provider channel needs the Responses namespace bridge. */
+export function shouldStartResponsesCompatibilityProxy(
+  provider: CodexProviderConfig | undefined,
+): boolean {
+  switch (provider?.compatibilityPolicy ?? 'none') {
+    case 'none':
+      return false
+    case 'responses-namespace-bridge':
+      return true
+    default: {
+      const exhaustive: never = provider?.compatibilityPolicy as never
+      throw new Error(`Unsupported compatibility policy: ${String(exhaustive)}`)
+    }
+  }
+}
+
 function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -392,7 +408,7 @@ export async function startResponsesCompatibilityProxy(
 }
 
 /**
- * Starts one compatibility proxy per custom Provider and returns rewritten configs.
+ * Starts one compatibility proxy per bridged Provider and returns rewritten configs.
  */
 export async function startProviderCompatibilityProxies(
   providers: readonly CodexProviderConfig[],
@@ -401,9 +417,13 @@ export async function startProviderCompatibilityProxies(
   try {
     const rewritten: CodexProviderConfig[] = []
     for (const provider of providers) {
-      const proxy = await startResponsesCompatibilityProxy(provider.baseUrl)
-      proxies.push(proxy)
-      rewritten.push({ ...provider, baseUrl: proxy.baseUrl })
+      if (shouldStartResponsesCompatibilityProxy(provider)) {
+        const proxy = await startResponsesCompatibilityProxy(provider.baseUrl)
+        proxies.push(proxy)
+        rewritten.push({ ...provider, baseUrl: proxy.baseUrl })
+      } else {
+        rewritten.push({ ...provider })
+      }
     }
     return {
       providers: rewritten,

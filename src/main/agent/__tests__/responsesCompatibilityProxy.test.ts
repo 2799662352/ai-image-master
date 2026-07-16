@@ -1,8 +1,10 @@
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { describe, expect, it } from 'vitest'
+import { resolveProviderChannel } from '../gatewayModelRouting'
 import {
   flattenNamespaceTools,
+  shouldStartResponsesCompatibilityProxy,
   startProviderCompatibilityProxies,
   restoreNamespaceToolCalls,
   startResponsesCompatibilityProxy,
@@ -228,19 +230,29 @@ describe('Responses namespace compatibility', () => {
     }
   })
 
-  it('rewrites active and extra Provider URLs as one closeable group', async () => {
+  it('starts compatibility proxies only for channels with a bridge policy', () => {
+    expect(
+      shouldStartResponsesCompatibilityProxy(
+        resolveProviderChannel('apiyi-grok'),
+      ),
+    ).toBe(true)
+    expect(
+      shouldStartResponsesCompatibilityProxy(
+        resolveProviderChannel('rightcode-standard'),
+      ),
+    ).toBe(false)
+  })
+
+  it('rewrites bridged Provider URLs and leaves native providers untouched', async () => {
+    const qwenBaseUrl = 'http://175.178.198.17:3000/v1'
     const group = await startProviderCompatibilityProxies([
-      {
-        id: 'apiyi-grok',
-        name: 'API Yi Grok',
-        baseUrl: 'https://api.apiyi.com/v1',
-        envKey: 'OPENAI_API_KEY',
-      },
+      resolveProviderChannel('apiyi-grok'),
       {
         id: 'qwen',
         name: 'Qwen Understanding',
-        baseUrl: 'http://175.178.198.17:3000/v1',
+        baseUrl: qwenBaseUrl,
         envKey: 'MIAU_API_KEY',
+        compatibilityPolicy: 'none',
       },
     ])
 
@@ -252,10 +264,9 @@ describe('Responses namespace compatibility', () => {
         }),
         expect.objectContaining({
           id: 'qwen',
-          baseUrl: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/v1$/),
+          baseUrl: qwenBaseUrl,
         }),
       ])
-      expect(group.providers[0].baseUrl).not.toBe(group.providers[1].baseUrl)
     } finally {
       await group.close()
     }
