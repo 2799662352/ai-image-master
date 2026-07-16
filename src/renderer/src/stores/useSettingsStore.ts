@@ -17,6 +17,8 @@ export interface CodexProvider {
   model?: string
   reasoningEffort?: string
   verbosity?: string
+  credentialId?: string
+  allowedModels?: readonly string[]
   requiresOpenaiAuth?: boolean
   extraTopLevelConfig?: Record<string, string | boolean | number>
   description?: string
@@ -150,6 +152,23 @@ function unwrapSnapshot(raw: unknown): {
 
 type ProviderSnapshot = NonNullable<ReturnType<typeof unwrapSnapshot>>
 
+function credentialIdForProvider(
+  providers: Pick<ProvidersSlice, 'builtins' | 'custom'>,
+  id: string,
+): string {
+  const provider = [...providers.builtins, ...providers.custom].find(
+    (candidate) => candidate.id === id,
+  )
+  return provider?.credentialId || id
+}
+
+function apiKeyForProvider(
+  providers: Pick<ProvidersSlice, 'builtins' | 'custom' | 'apiKeys'>,
+  id: string,
+): string {
+  return providers.apiKeys[credentialIdForProvider(providers, id)] ?? ''
+}
+
 async function fetchProviderSnapshot(bridge: AgentBridge): Promise<ProviderSnapshot> {
   if (!bridge.getProviders) {
     throw new Error('getProviders unavailable')
@@ -163,7 +182,7 @@ async function fetchProviderSnapshot(bridge: AgentBridge): Promise<ProviderSnaps
 
 export const useSettingsStore = create<SettingsState>((set, get) => {
   const commitProviderSnapshot = (snapshot: ProviderSnapshot) => {
-    const codexKey = snapshot.apiKeys[snapshot.activeId] ?? ''
+    const codexKey = apiKeyForProvider(snapshot, snapshot.activeId)
     set({
       providers: {
         ...snapshot,
@@ -264,11 +283,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
   setCodexApiKey: (key) => {
     const trimmed = key.trim()
     const { providers } = get()
+    const credentialId = credentialIdForProvider(providers, providers.activeId)
     set({
       codexApiKey: trimmed,
       providers: {
         ...providers,
-        apiKeys: { ...providers.apiKeys, [providers.activeId]: trimmed },
+        apiKeys: { ...providers.apiKeys, [credentialId]: trimmed },
       },
     })
   },
@@ -347,9 +367,28 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
           appliedId: confirmed,
           pendingProviderId: null,
         },
-        codexApiKey: state.providers.apiKeys[confirmed] ?? '',
+        codexApiKey: apiKeyForProvider(state.providers, confirmed),
       }))
       await reloadAgentModelCapabilities(confirmed)
+      if (requestGeneration !== providerWriteGeneration) return
+      const current = get().providers
+      const provider = [...current.builtins, ...current.custom].find(
+        (candidate) => candidate.id === confirmed,
+      )
+      const agentChat = useAgentChatStore.getState()
+      const catalog = agentChat.modelSettingsCatalog?.provider === confirmed
+        ? agentChat.modelSettingsCatalog
+        : undefined
+      const selectedInCatalog = catalog?.models.some(
+        (model) => model.id === agentChat.selectedModelId,
+      ) === true
+      const catalogDefault = catalog?.models.find((model) => model.isDefault)
+        ?? catalog?.models[0]
+      const targetModel = provider?.model
+        ?? (selectedInCatalog ? undefined : catalogDefault?.id)
+      if (targetModel && targetModel !== agentChat.selectedModelId) {
+        await agentChat.setSelectedModel(targetModel)
+      }
     } catch (err) {
       if (requestGeneration !== providerWriteGeneration) return
       const snapshot = await recoverProviderSnapshot(bridge, requestGeneration)
@@ -367,14 +406,18 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
     if (providers.pendingProviderId !== null) {
       throw new Error('Provider switch in progress')
     }
-    const previousKey = providers.apiKeys[id] ?? ''
+    const credentialId = credentialIdForProvider(providers, id)
+    const previousKey = providers.apiKeys[credentialId] ?? ''
     const changesAppliedProvider = id === providers.activeId
     const requestGeneration = changesAppliedProvider
       ? ++providerWriteGeneration
       : undefined
     // Optimistic local update first so UI feels instant.
     set({
-      providers: { ...providers, apiKeys: { ...providers.apiKeys, [id]: trimmed } },
+      providers: {
+        ...providers,
+        apiKeys: { ...providers.apiKeys, [credentialId]: trimmed },
+      },
       ...(id === providers.activeId ? { codexApiKey: trimmed } : {}),
     })
     if (changesAppliedProvider) {
@@ -399,7 +442,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
               appliedId: confirmed,
               pendingProviderId: null,
             },
-            codexApiKey: state.providers.apiKeys[confirmed] ?? '',
+            codexApiKey: apiKeyForProvider(state.providers, confirmed),
           }))
           await reloadAgentModelCapabilities(confirmed)
         }
@@ -418,7 +461,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
           set((state) => ({
             providers: {
               ...state.providers,
-              apiKeys: { ...state.providers.apiKeys, [id]: previousKey },
+              apiKeys: { ...state.providers.apiKeys, [credentialId]: previousKey },
             },
           }))
         }

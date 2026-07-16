@@ -9,6 +9,10 @@ import type { CodexProviderConfig } from './codexLaunch'
 export interface ProviderPreset extends CodexProviderConfig {
   /** Short human-readable description shown under the segmented control. */
   description?: string
+  /** Credential slot shared by multiple channels from the same gateway. */
+  credentialId?: string
+  /** Optional exact model slugs exposed by a dedicated gateway channel. */
+  allowedModels?: readonly string[]
   /** True for user-added custom providers. Builtins always omit this flag. */
   isCustom?: boolean
 }
@@ -23,6 +27,17 @@ const APIYI_PRESET: ProviderPreset = {
   // gpt-5.5 is still our internal "default agent model" used by the
   // ThreadTitleSummarizer (see AgentManager.DEFAULT_AGENT_MODEL).
   description: 'API易 Responses 网关（默认）',
+}
+
+const APIYI_GROK_PRESET: ProviderPreset = {
+  id: 'apiyi-grok',
+  name: 'API Yi Grok',
+  baseUrl: 'https://api.apiyi.com/v1',
+  envKey: 'OPENAI_API_KEY',
+  model: 'grok-4.5',
+  credentialId: 'apiyi',
+  allowedModels: Object.freeze(['grok-4.5']),
+  description: 'Grok 4.5 · 500K · Responses · 需开通渠道',
 }
 
 /**
@@ -71,6 +86,22 @@ const RIGHTCODE_PRESET: ProviderPreset = {
     windows_wsl_setup_acknowledged: true,
   }),
   description: 'Pro号池 0.4x · cache_read 1/10 输入价',
+}
+
+const RIGHTCODE_GROK_PRESET: ProviderPreset = {
+  id: 'rightcode-grok',
+  name: 'Right.Codes Grok',
+  baseUrl: 'https://right.codes/grok/v1',
+  envKey: 'OPENAI_API_KEY',
+  model: 'grok-4.5',
+  credentialId: 'rightcode',
+  allowedModels: Object.freeze(['grok-4.5']),
+  requiresOpenaiAuth: true,
+  extraTopLevelConfig: Object.freeze({
+    disable_response_storage: true,
+    windows_wsl_setup_acknowledged: true,
+  }),
+  description: 'Grok 4.5 · 1M · Responses',
 }
 
 /**
@@ -164,7 +195,9 @@ export const DASHVECTOR_PROVIDER_ID = 'dashvector' as const
 
 export const BUILTIN_PROVIDER_PRESETS: readonly ProviderPreset[] = Object.freeze([
   Object.freeze(APIYI_PRESET),
+  Object.freeze(APIYI_GROK_PRESET),
   Object.freeze(RIGHTCODE_PRESET),
+  Object.freeze(RIGHTCODE_GROK_PRESET),
 ] as const)
 
 export const DEFAULT_PROVIDER_ID = 'apiyi' as const
@@ -186,6 +219,14 @@ export function findProviderById(
     BUILTIN_PROVIDER_PRESETS.find((p) => p.id === id) ??
     customProviders.find((p) => p.id === id)
   )
+}
+
+/** Returns the persisted credential slot used by a Provider. */
+export function credentialIdForProvider(
+  id: string,
+  customProviders: readonly ProviderPreset[] = [],
+): string {
+  return findProviderById(id, customProviders)?.credentialId || id
 }
 
 /**

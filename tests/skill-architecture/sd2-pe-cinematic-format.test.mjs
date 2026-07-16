@@ -10,13 +10,15 @@ async function read(relativePath) {
   return readFile(path.join(repoRoot, ...relativePath.split('/')), 'utf8')
 }
 
-test('sd2-pe keeps its existing workflow and adds the mandatory cinematic format layer', async () => {
+test('sd2-pe routes light and complex tasks without lowering content coverage', async () => {
   const source = await read(`${skillRoot}/sd2-pe/SKILL.md`)
 
   for (const existingContract of [
     '## 八大核心要素',
-    '统一高规格单轨',
-    '总体设定 → 镜头分镜 → 风格与约束',
+    '路径 A',
+    '路径 B',
+    '12 项要素覆盖清单',
+    '五大必备内容块',
     '## 音频通道',
     '## 特殊字符规范',
     '## 强制约束',
@@ -24,18 +26,29 @@ test('sd2-pe keeps its existing workflow and adds the mandatory cinematic format
     assert.match(source, new RegExp(existingContract), `existing sd2-pe contract lost: ${existingContract}`)
   }
 
-  assert.match(source, /每次视频任务.*格式化骨架/s)
-  assert.match(source, /只能叠加.*不得替代.*三段内容/s)
+  assert.match(source, /12 项要素是覆盖清单，不是格式模板/)
+  assert.match(source, /不要求逐项写方括号标题、不要求空行分块/)
+  assert.match(source, /八大核心要素同样一项都不能少/)
+  assert.match(source, /后 6 项允许压缩成短语或由优化器自动补全，但不能.*消失/s)
+  assert.match(source, /五大必备内容块缺一不可/)
   assert.match(source, /媒介 profile.*真人.*2D 动画.*3D 动画/s)
   assert.match(source, /电影.*检索.*意图词/s)
   assert.match(source, /seedance-cinematic-format/)
-  assert.match(source, /每次\s*视频任务.*都必须先加载该 skill/s)
-  assert.doesNotMatch(source, /简单任务\s*不必额外加载/)
+  assert.match(source, /路径 A 可跳过该叶子/)
+  assert.match(source, /路径 B、混合媒介或需要展开导演\/作品参考时再加载该叶子/)
+  assert.match(source, /只减少结构开销，不降低交付要求/)
 
-  // 无简单视频降级路径:删除路径 A/B 双轨,单镜只减镜头数不降规格。
-  assert.match(source, /没有"简单视频"路径/)
-  assert.doesNotMatch(source, /路径 A|路径 B|路径A|路径B/)
-  assert.match(source, /单镜.*只写 `镜头1`|分镜段只有 `镜头1`/s)
+  // 复杂度优先于任务类型：简单编辑可走 A，复杂/多镜编辑必须走 B。
+  assert.match(source, /路径 B 条件优先于任务类型/)
+  assert.match(source, /明确多镜.*直接进入路径 B/)
+  assert.doesNotMatch(source, /编辑\s*\/\s*延长\s*\/\s*组合.*一律走.*路径 A/)
+  assert.doesNotMatch(source, /路径 B.*严格三段论|三段必须齐全/)
+  assert.match(source, /路径 B.*三组语义内容.*形式自由/s)
+
+  // 路径 A 不强拆镜头，但不得借“简单”省略内容。
+  assert.match(source, /路径 A：轻量连续任务/)
+  assert.match(source, /内容一段式，不拆镜头/)
+  assert.match(source, /路径 A.*12 项要素.*五大必备内容块/s)
 
   // 参考候选:落笔前主动检索 2–3 个已核实真实影视参考供用户挑选。
   assert.match(source, /#### 3\.3 参考候选/)
@@ -76,11 +89,11 @@ test('storyboard grids and art-direction boards use explicit loose or exact refe
   assert.match(grid, /有板即用的提示词硬门[\s\S]*文字主导[\s\S]*低约束氛围参考/)
   assert.match(grid, /GPT Image 故事板提示词三（首选）/)
 
-  assert.match(sd2, /长图 \/ 九宫格双路径/)
-  assert.match(sd2, /默认·提示词主导氛围板[\s\S]*拆格精确执行/)
+  assert.match(sd2, /长图 \/ 九宫格先问用户/)
+  assert.match(sd2, /拆成单图（推荐默认）[\s\S]*整张作氛围板（低约束）/)
   assert.match(sd2, /文字提示词=`primary`[\s\S]*故事板\/多宫格\/美术设定板=`atmosphere-loose`/)
-  assert.match(sd2, /不是\s+API 数值权重/)
-  assert.match(sd2, /故事板\/多宫格必带前缀[\s\S]*有板即用，不得省略/)
+  assert.match(sd2, /权重=语义收束强调度[\s\S]*不是 API 参数/)
+  assert.match(sd2, /氛围板前缀（用户选择整张参考时必带）/)
 
   for (const source of [helper, template]) {
     assert.match(source, /identity.*hard|身份.*hard/i)
@@ -186,18 +199,25 @@ test('video and storyboard instructions match runtime limits and orchestration c
   }
   assert.match(videoEntry, /标准.*≤3 顶层/s)
   assert.match(videoEntry, /专业.*≤5 顶层/s)
+  assert.match(videoEntry, /路径 A[\s\S]*跳过结构叶子/)
+  assert.match(
+    videoEntry,
+    /复杂、多镜、混合媒介[\s\S]*路径 B[\s\S]*seedance-cinematic-format/,
+  )
   assert.match(videoEntry, /STILL RUNNING \+ taskId[\s\S]*check_video_task/)
   assert.match(videoEntry, /自动修正[\s\S]*最多 2 次/)
   assert.doesNotMatch(videoEntry, /iterate at MOST 2–3 times/)
 
-  assert.match(sd2, /规范形式.*`图片N` \/ `视频N` \/ `音频N`/s)
+  assert.match(sd2, /Skill 写作主形式.*`@图片N` \/ `@视频N` \/ `@音频N`/s)
+  assert.match(sd2, /工具边界规范形式.*`图片N` \/ `视频N` \/ `音频N`/s)
+  assert.match(sd2, /不要把 `@` 描述成上游 API 参数/)
   assert.match(sd2, /接口支持时间戳\/scene-cut 指令/)
   assert.doesNotMatch(sd2, /精确时间支持不稳定/)
   assert.match(promptNormalizer, /@Image1/)
   assert.match(promptNormalizer, /图片1 \/ 视频1 \/ 音频1/)
   assert.match(videoTool, /runtime also accepts and normalizes @Video1\/@Image1\/@Audio1/)
 
-  assert.doesNotMatch(outputTemplate, /内容路径：A|路径 A|路径 B/)
+  assert.match(outputTemplate, /路径 A 使用连续任务正文；路径 B 覆盖总体设定/)
   assert.doesNotMatch(helper, /不新增作品参考/)
   assert.doesNotMatch(outputTemplate, /无新增作品参考/)
   assert.match(outputTemplate, /沿用已核实参考/)
@@ -213,7 +233,7 @@ test('video and storyboard instructions match runtime limits and orchestration c
   assert.match(storyboardTemplate, /Optional Project Overview Boards/)
   assert.match(img2Template, /prompt-primary \/ identity-hard \/ keyframe-strong \/ atmosphere-loose/)
   assert.match(filmStudio, /若使用序列总览板\/多宫格\/电影美术设定板[\s\S]*`atmosphere-loose`/)
-  assert.match(filmStudio, /mandatory 氛围板前缀必须位于 12 字段正文之前/)
+  assert.match(filmStudio, /mandatory 氛围板前缀必须位于正文之前/)
   assert.match(filmStudio, /Skill-first 执行契约/)
   assert.match(filmStudio, /实际加载并使用至少一个与当前风险直接相关的 Skill/)
   assert.match(filmStudio, /Gx skills_used=\[实际加载名称\] applied=/)
@@ -241,13 +261,74 @@ test('video and storyboard instructions match runtime limits and orchestration c
   }
 })
 
-test('cinematic format helper is a leaf and defines all common fields plus three category overlays', async () => {
+test('skill-authored media tokens use @ while runtime canonicalization stays explicit', async () => {
+  const videoEntry = await read(`${skillRoot}/catimation-video/SKILL.md`)
+  const helper = await read(`${skillRoot}/seedance-cinematic-format/SKILL.md`)
+  const animation2d = await read(
+    `${skillRoot}/seedance-cinematic-format/references/2d-animation-film.md`,
+  )
+  const outputTemplate = await read(
+    `${skillRoot}/seedance-cinematic-format/references/prompt-output-template.md`,
+  )
+  const videoCraft = await read(`${skillRoot}/seedance-video-craft/SKILL.md`)
+  const timeAllocation = await read(
+    `${skillRoot}/seedance-video-craft/references/time-allocation-and-multimodal.md`,
+  )
+  const capabilities = await read(
+    `${skillRoot}/seedance-video-craft/references/seedance-2.0-capabilities.md`,
+  )
+  const director = await read(
+    'resources/plugins/catimation-director/skills/director-orchestrator/SKILL.md',
+  )
+  const film = await read('resources/plugins/catimation-film/skills/film-studio/SKILL.md')
+  const grid = await read(
+    'resources/plugins/catimation-storyboard/skills/storyboard-grid-to-seedance/SKILL.md',
+  )
+  const gridRules = await read(
+    'resources/plugins/catimation-storyboard/skills/storyboard-grid-to-seedance/references/seedance-6-rules.md',
+  )
+  const industrialBoard = await read(
+    'resources/plugins/catimation-storyboard/skills/storyboard-grid-to-seedance/references/gpt-image-industrial-storyboard-prompt.md',
+  )
+  const artBoard = await read(
+    'resources/plugins/catimation-storyboard/skills/storyboard-grid-to-seedance/references/cinematic-art-direction-board.md',
+  )
+
+  for (const source of [
+    videoEntry,
+    helper,
+    animation2d,
+    outputTemplate,
+    videoCraft,
+    timeAllocation,
+    director,
+    film,
+    grid,
+    gridRules,
+    industrialBoard,
+    artBoard,
+  ]) {
+    assert.match(source, /@图片N|@图片1/)
+  }
+  assert.match(capabilities, /Skill 写作.*@图片1 \/ @视频1 \/ @音频1/)
+  assert.match(capabilities, /工具边界.*图片1 \/ 视频1 \/ 音频1/)
+  assert.doesNotMatch(videoCraft, /单次前向/)
+  assert.doesNotMatch(gridRules, /独立的推理过程|不会"记住"前一镜/)
+  assert.match(gridRules, /每段重复绑定素材职责/)
+  assert.match(grid, /百分比.*语义收束方向.*不是.*API 参数/s)
+})
+
+test('cinematic format helper is a conditional leaf with 12 content indexes and three profiles', async () => {
   const source = await read(`${skillRoot}/seedance-cinematic-format/SKILL.md`)
   const marketplaceSync = await read('scripts/sync-plugin-skills-to-codex.mjs')
 
   assert.match(source, /角色.*纯知识辅助模块/s)
   assert.match(source, /不负责.*任务编排/s)
   assert.doesNotMatch(source, /generate_video|catimation-video|film-studio|director-orchestrator/)
+  assert.match(source, /复杂、多镜、混合媒介[\s\S]*路径 B/)
+  assert.match(source, /路径 A 只处理简单单镜的轻量连续任务，可跳过本叶子/)
+  assert.match(source, /不要求逐项写方括号标题/)
+  assert.match(source, /方括号名称只是语义索引，不是强制输出模板/)
 
   for (const requiredField of [
     '[任务与创作意图]',
@@ -263,7 +344,7 @@ test('cinematic format helper is a leaf and defines all common fields plus three
     '[多粒度对齐检查]',
     '[综合 Dense Caption]',
   ]) {
-    assert.ok(source.includes(requiredField), `missing mandatory field: ${requiredField}`)
+    assert.ok(source.includes(requiredField), `missing required content index: ${requiredField}`)
   }
 
   for (const categoryReference of [
@@ -273,7 +354,8 @@ test('cinematic format helper is a leaf and defines all common fields plus three
   ]) {
     assert.ok(source.includes(categoryReference), `missing category reference: ${categoryReference}`)
     const category = await read(`${skillRoot}/seedance-cinematic-format/${categoryReference}`)
-    assert.match(category, /不得删减通用骨架字段/)
+    assert.match(category, /不得遗漏通用 12 项内容/)
+    assert.match(category, /标题[\s\S]*语义索引/)
     assert.match(category, /导演与参考作品.*可替换/s)
     assert.equal(
       category.match(/^# /gm)?.length,
@@ -351,11 +433,12 @@ test('media profiles stay flexible, inherit dialogue language, and preserve temp
   assert.match(template, /已核实参考：\[必填/)
   assert.match(template, /仅当检索工具完全不可用/)
 
-  // 参考候选给用户选 + 无路径 A/B 残留(镜头规划以 单镜/多镜 表述)。
+  // 参考候选给用户选 + 路径 A/B 条件加载契约。
   assert.match(helper, /供用户挑选/)
   assert.match(template, /单镜：\[镜头1/)
-  assert.doesNotMatch(helper, /路径 A|路径 B/)
-  assert.doesNotMatch(template, /路径 A|路径 B/)
+  assert.match(helper, /复杂、多镜、混合媒介[\s\S]*路径 B/)
+  assert.match(helper, /路径 A 只处理简单单镜的轻量连续任务，可跳过本叶子/)
+  assert.match(template, /路径 A 使用连续任务正文；路径 B 覆盖总体设定/)
   assert.match(helper, /真人.*2D.*3D.*媒介 profile.*允许.*组合/s)
   assert.match(helper, /电影.*检索.*意图词/s)
   assert.doesNotMatch(helper, /只选择一个主体类别|只选一个主体类别/)
@@ -382,14 +465,16 @@ test('media profiles stay flexible, inherit dialogue language, and preserve temp
   }
   assert.match(template, /完美1\.md.*学习参考/s)
   assert.match(template, /吸收.*演出.*优先级.*空间.*导演.*声音/s)
-  assert.match(template, /不照搬.*固定 10 秒.*固定.*权重.*固定.*导演/s)
+  assert.match(template, /不照搬.*固定 10 秒.*权重.*API 参数.*固定导演/s)
   assert.match(template, /2D.*优先.*日语.*真人.*3D.*优先.*中英/s)
   assert.match(template, /台词.*沿用.*用户.*语言.*不擅自翻译/s)
   for (const hook of hooks) {
     assert.match(hook, /真人、2D、3D是可组合profile.*电影是检索意图词/s)
     assert.match(hook, /台词语言按用户要求或原文/)
-    assert.match(hook, /无简单视频降级路径/)
+    assert.match(hook, /仅简单单镜轻量任务走路径A,可跳过 seedance-cinematic-format/)
+    assert.match(hook, /复杂、多镜、混合媒介.*路径B/)
+    assert.match(hook, /B条件优先于任务类型/)
+    assert.match(hook, /12项内容和五大必备块/)
     assert.match(hook, /真实影视参考候选/)
-    assert.doesNotMatch(hook, /路径A·B|路径 A\/B/)
   }
 })

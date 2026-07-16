@@ -269,6 +269,116 @@ describe('AgentManager model settings catalog and snapshot', () => {
     expect(backend.modelCalls).toEqual([{ includeHidden: false }])
   })
 
+  it('limits a dedicated Provider catalog to its declared model slugs', async () => {
+    const backend = makeBackend([
+      modelRow(),
+      modelRow({
+        id: 'grok-4.5',
+        model: 'grok-4.5',
+        displayName: 'Grok 4.5',
+        description: 'Grok coding model',
+        defaultReasoningEffort: 'high',
+        supportedReasoningEfforts: [
+          { reasoningEffort: 'low', description: 'Low' },
+          { reasoningEffort: 'medium', description: 'Medium' },
+          { reasoningEffort: 'high', description: 'High' },
+        ],
+      }),
+    ])
+    const manager = makeManager(backend)
+    await manager.setActiveProvider('rightcode-grok')
+
+    await expect(manager.getModelSettingsCatalogRpc()).resolves.toMatchObject({
+      ok: true,
+      data: {
+        provider: 'rightcode-grok',
+        source: 'codex',
+        models: [{
+          id: 'grok-4.5',
+          displayName: 'Grok 4.5',
+          capabilities: {
+            provider: 'rightcode-grok',
+            supportedReasoningEfforts: ['low', 'medium', 'high'],
+          },
+        }],
+      },
+    })
+  })
+
+  it('uses the dedicated fallback when Codex omits every allowed model', async () => {
+    const manager = makeManager(makeBackend([modelRow()]))
+    await manager.setActiveProvider('apiyi-grok')
+
+    await expect(manager.getModelSettingsCatalogRpc()).resolves.toMatchObject({
+      ok: true,
+      data: {
+        provider: 'apiyi-grok',
+        source: 'fallback',
+        models: [{ id: 'grok-4.5' }],
+      },
+    })
+  })
+
+  it('limits a dedicated Provider fallback to its declared model slugs', async () => {
+    const backend = makeBackend([])
+    backend.listError = new Error('model/list unavailable')
+    const manager = makeManager(backend)
+    await manager.setActiveProvider('rightcode-grok')
+
+    const result = await manager.getModelSettingsCatalogRpc()
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        provider: 'rightcode-grok',
+        source: 'fallback',
+        models: [{
+          id: 'grok-4.5',
+          capabilities: {
+            defaultContextWindow: 1_000_000,
+            contextOptions: [{
+              value: 1_000_000,
+              experimental: false,
+              conservative: true,
+            }],
+            defaultReasoningEffort: 'high',
+            supportedReasoningEfforts: ['low', 'medium', 'high'],
+          },
+        }],
+      },
+    })
+    if (!result.ok) throw new Error('Expected fallback catalog')
+    expect(result.data.models).toHaveLength(1)
+  })
+
+  it('uses API Yi Grok verified limits in its dedicated fallback', async () => {
+    const backend = makeBackend([])
+    backend.listError = new Error('model/list unavailable')
+    const manager = makeManager(backend)
+    await manager.setActiveProvider('apiyi-grok')
+
+    await expect(manager.getModelSettingsCatalogRpc()).resolves.toMatchObject({
+      ok: true,
+      data: {
+        provider: 'apiyi-grok',
+        source: 'fallback',
+        models: [{
+          id: 'grok-4.5',
+          capabilities: {
+            defaultContextWindow: 500_000,
+            contextOptions: [{
+              value: 500_000,
+              experimental: false,
+              conservative: true,
+            }],
+            defaultReasoningEffort: 'high',
+            supportedReasoningEfforts: ['low', 'medium', 'high'],
+          },
+        }],
+      },
+    })
+  })
+
   it('returns non-empty conservative canonical fallback rows when model/list fails', async () => {
     const backend = makeBackend([])
     backend.listError = new Error('model/list unavailable')

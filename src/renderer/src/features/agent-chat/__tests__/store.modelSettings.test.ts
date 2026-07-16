@@ -82,6 +82,31 @@ function modelCatalog(
   }
 }
 
+function grokCatalog(
+  provider: 'apiyi-grok' | 'rightcode-grok',
+  contextWindow: 500_000 | 1_000_000,
+): AgentModelSettingsCatalog {
+  return {
+    provider,
+    source: 'fallback',
+    models: [{
+      id: 'grok-4.5',
+      displayName: 'Grok 4.5',
+      description: 'Grok coding model',
+      hidden: false,
+      isDefault: true,
+      capabilities: {
+        model: 'grok-4.5',
+        provider,
+        defaultContextWindow: contextWindow,
+        contextOptions: [{ value: contextWindow, experimental: false }],
+        defaultReasoningEffort: 'high',
+        supportedReasoningEfforts: ['low', 'medium', 'high'],
+      },
+    }],
+  }
+}
+
 function installModelSettingsApi(api: {
   getModelSettingsCatalog?: () => Promise<AgentModelSettingsCatalogResult>
   getModelContextConfig?: () => Promise<AgentModelContextSnapshotResult>
@@ -436,6 +461,38 @@ describe('useAgentChatStore model settings persistence', () => {
     setItem.mockRestore()
     await store.getState().setSelectedModel('gpt-5.6-sol')
     expect(store.getState().modelSettingsPersistenceWarnings.model).toBeUndefined()
+  })
+
+  it('ignores a persisted model context unsupported by the active Provider', async () => {
+    const applyModelContext = vi.fn(async (payload: {
+      model: string
+      contextWindow: number
+      requestVersion: number
+    }) => ({
+      ok: true as const,
+      data: {
+        model: payload.model,
+        contextWindow: payload.contextWindow,
+        autoCompactTokenLimit: Math.floor(payload.contextWindow * 0.9),
+        threadRestored: false,
+        requestVersion: payload.requestVersion,
+      },
+    }))
+    installModelSettingsApi({ applyModelContext })
+    const store = await loadFreshStore()
+    store.setState({
+      selectedModelId: 'gpt-5.5',
+      activeModelContextWindow: 272_000,
+      modelContextWindowByModel: { 'grok-4.5': 1_000_000 },
+      modelSettingsCatalog: grokCatalog('apiyi-grok', 500_000),
+    } as never)
+
+    await store.getState().setSelectedModel('grok-4.5')
+
+    expect(applyModelContext).toHaveBeenCalledWith(expect.objectContaining({
+      model: 'grok-4.5',
+      contextWindow: 500_000,
+    }))
   })
 })
 

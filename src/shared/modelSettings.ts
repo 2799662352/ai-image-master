@@ -13,6 +13,7 @@ export type ModelReasoningEffort = 'auto' | ConcreteModelReasoningEffort
 
 export const UNKNOWN_MODEL_CONTEXT_WINDOW = 200_000
 export const EXPERIMENTAL_CONTEXT_WINDOW = 1_000_000
+export const GROK_4_5_CONTEXT_WINDOW = 500_000
 
 export interface ModelContextOption {
   value: number
@@ -101,6 +102,13 @@ export const CANONICAL_MODEL_SETTINGS_ROWS: readonly CanonicalModelSettingsRow[]
     description: 'Latest frontier agentic coding model (Codex 0.144 catalog).',
     isDefault: false,
   },
+  {
+    id: 'grok-4.5',
+    displayName: 'Grok 4.5',
+    tier: 'Extra High',
+    description: 'Frontier coding and agentic model with native Responses support.',
+    isDefault: false,
+  },
 ] as const
 
 export interface LegacyModelSelection {
@@ -111,13 +119,49 @@ export interface LegacyModelSelection {
 
 const MODEL_REASONING_EFFORT_SET: ReadonlySet<string> = new Set(MODEL_REASONING_EFFORTS)
 
-const VERIFIED_CONTEXTS: ReadonlyMap<string, number> = new Map([
-  ['gpt-5.6-sol', 372_000],
-  ['gpt-5.6-terra', 372_000],
-  ['gpt-5.6-luna', 372_000],
-  ['gpt-5.5', 272_000],
-  ['gpt-5.4', 272_000],
-  ['gpt-5.4-mini', 272_000],
+interface ModelContextPolicy {
+  defaultWindow: number
+  allowExperimental1M: boolean
+}
+
+interface ProviderReasoningPolicy {
+  defaultEffort: ConcreteModelReasoningEffort
+  supportedEfforts: readonly ConcreteModelReasoningEffort[]
+}
+
+const VERIFIED_CONTEXT_POLICIES: ReadonlyMap<string, ModelContextPolicy> = new Map([
+  ['grok-4.5', {
+    defaultWindow: GROK_4_5_CONTEXT_WINDOW,
+    allowExperimental1M: false,
+  }],
+  ['gpt-5.6-sol', { defaultWindow: 372_000, allowExperimental1M: true }],
+  ['gpt-5.6-terra', { defaultWindow: 372_000, allowExperimental1M: true }],
+  ['gpt-5.6-luna', { defaultWindow: 372_000, allowExperimental1M: true }],
+  ['gpt-5.5', { defaultWindow: 272_000, allowExperimental1M: true }],
+  ['gpt-5.4', { defaultWindow: 272_000, allowExperimental1M: true }],
+  ['gpt-5.4-mini', { defaultWindow: 272_000, allowExperimental1M: true }],
+])
+
+const PROVIDER_CONTEXT_POLICIES: ReadonlyMap<string, ModelContextPolicy> = new Map([
+  ['rightcode-grok:grok-4.5', {
+    defaultWindow: EXPERIMENTAL_CONTEXT_WINDOW,
+    allowExperimental1M: false,
+  }],
+])
+
+const PROVIDER_REASONING_POLICIES: ReadonlyMap<string, ProviderReasoningPolicy> = new Map([
+  ['apiyi:grok-4.5', {
+    defaultEffort: 'high',
+    supportedEfforts: ['low', 'medium', 'high'],
+  }],
+  ['apiyi-grok:grok-4.5', {
+    defaultEffort: 'high',
+    supportedEfforts: ['low', 'medium', 'high'],
+  }],
+  ['rightcode-grok:grok-4.5', {
+    defaultEffort: 'high',
+    supportedEfforts: ['low', 'medium', 'high'],
+  }],
 ])
 
 const LEGACY_SELECTIONS: ReadonlyMap<
@@ -144,18 +188,45 @@ export function isConcreteModelReasoningEffort(
   return isModelReasoningEffort(value) && value !== 'auto'
 }
 
-export function defaultContextWindowForModel(model: string): number {
-  return VERIFIED_CONTEXTS.get(model) ?? UNKNOWN_MODEL_CONTEXT_WINDOW
+function providerModelKey(provider: string, model: string): string {
+  return `${provider}:${model}`
 }
 
-export function modelContextOptions(model: string): ModelContextOption[] {
-  const defaultContextWindow = defaultContextWindowForModel(model)
+function contextPolicy(
+  model: string,
+  provider?: string,
+): ModelContextPolicy | undefined {
+  return (
+    (provider
+      ? PROVIDER_CONTEXT_POLICIES.get(providerModelKey(provider, model))
+      : undefined)
+    ?? VERIFIED_CONTEXT_POLICIES.get(model)
+  )
+}
+
+export function defaultContextWindowForModel(
+  model: string,
+  provider?: string,
+): number {
+  return contextPolicy(model, provider)?.defaultWindow
+    ?? UNKNOWN_MODEL_CONTEXT_WINDOW
+}
+
+export function modelContextOptions(
+  model: string,
+  provider?: string,
+): ModelContextOption[] {
+  const policy = contextPolicy(model, provider)
+  const defaultContextWindow = policy?.defaultWindow ?? UNKNOWN_MODEL_CONTEXT_WINDOW
   const defaultOption: ModelContextOption = {
     value: defaultContextWindow,
     experimental: false,
-    ...(!VERIFIED_CONTEXTS.has(model) ? { conservative: true } : {}),
+    ...(!policy ? { conservative: true } : {}),
   }
-  if (defaultContextWindow === EXPERIMENTAL_CONTEXT_WINDOW) {
+  if (
+    defaultContextWindow === EXPERIMENTAL_CONTEXT_WINDOW
+    || policy?.allowExperimental1M === false
+  ) {
     return [defaultOption]
   }
 
@@ -165,13 +236,40 @@ export function modelContextOptions(model: string): ModelContextOption[] {
   ]
 }
 
+export function isModelContextWindowSupported(
+  model: string,
+  contextWindow: number,
+  provider?: string,
+): boolean {
+  if (
+    modelContextOptions(model, provider).some(
+      (option) => option.value === contextWindow,
+    )
+  ) return true
+  if (provider) return false
+  for (const [key, policy] of PROVIDER_CONTEXT_POLICIES) {
+    if (
+      key.endsWith(`:${model}`)
+      && policy.defaultWindow === contextWindow
+    ) return true
+  }
+  return false
+}
+
 export function mergeModelSettingsCapabilities(input: {
   model: string
   provider: string
   defaultReasoningEffort?: string
   supportedReasoningEfforts: readonly string[]
 }): ModelSettingsCapabilities {
-  const supported = new Set(input.supportedReasoningEfforts)
+  const verifiedReasoning = PROVIDER_REASONING_POLICIES.get(
+    providerModelKey(input.provider, input.model),
+  )
+  const supported = new Set(
+    input.supportedReasoningEfforts.length > 0
+      ? input.supportedReasoningEfforts
+      : verifiedReasoning?.supportedEfforts ?? [],
+  )
   const supportedReasoningEfforts = MODEL_REASONING_EFFORTS.filter((effort) => {
     if (!supported.has(effort)) return false
     return !(
@@ -184,9 +282,11 @@ export function mergeModelSettingsCapabilities(input: {
   return {
     model: input.model,
     provider: input.provider,
-    defaultContextWindow: defaultContextWindowForModel(input.model),
-    contextOptions: modelContextOptions(input.model),
-    defaultReasoningEffort: input.defaultReasoningEffort,
+    defaultContextWindow: defaultContextWindowForModel(input.model, input.provider),
+    contextOptions: modelContextOptions(input.model, input.provider),
+    defaultReasoningEffort:
+      input.defaultReasoningEffort
+      ?? verifiedReasoning?.defaultEffort,
     supportedReasoningEfforts,
   }
 }

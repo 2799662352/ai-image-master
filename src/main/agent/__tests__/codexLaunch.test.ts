@@ -168,13 +168,7 @@ describe('buildCodexLaunchArgs', () => {
     // 401 + a "Reconnecting...N/5" warning loop. We need plain HTTP Responses
     // API which apiyi actually proxies (https://docs.apiyi.com/api-capabilities/openai-responses).
     expect(pairs(args)).toContainEqual(['-c', 'model_providers.apiyi.wire_api="responses"'])
-    // Legacy `namespace_tools=false` (openai/codex#26234). NOTE: as of codex
-    // 0.142.2 this per-provider key is a no-op — `ProviderCapabilities` is a
-    // hardcoded trait default (namespace_tools=true) for configured providers,
-    // not config-readable. We keep emitting it as a harmless forward-compat
-    // hint; the ACTUAL ask_user deferral fix is
-    // `features.code_mode.direct_only_tool_namespaces` in the base args.
-    expect(pairs(args)).toContainEqual(['-c', 'model_providers.apiyi.namespace_tools=false'])
+    expect(args).not.toContain('model_providers.apiyi.namespace_tools=false')
     // The deprecated `supports_websockets` field was removed in 0.128 — never
     // set it; passing it would just be noise.
     const flat = args.join(' ')
@@ -737,8 +731,7 @@ describe('buildCodexLaunchArgs', () => {
     // Codex removed wire_api="chat" (#7782) — only "responses" is ever emitted.
     expect(args).toContain('model_providers.qwen.wire_api="responses"')
     expect(args).not.toContain('model_providers.qwen.wire_api="chat"')
-    // Extra gateways flatten MCP tools too (openai/codex#26234).
-    expect(args).toContain('model_providers.qwen.namespace_tools=false')
+    expect(args).not.toContain('model_providers.qwen.namespace_tools=false')
     // The extra provider's model must NOT become the global top-level model
     // (it is only used when a subagent selects modelProvider="qwen").
     expect(args).not.toContain('model="qwen3.7-max-dashscope"')

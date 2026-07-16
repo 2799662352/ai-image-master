@@ -60,7 +60,7 @@ function conservativeFallbackRows(provider: string): AgentModelSettingsEntry[] {
         provider,
         supportedReasoningEfforts: [],
       }),
-      contextOptions: modelContextOptions(row.id).map((option) => ({
+      contextOptions: modelContextOptions(row.id, provider).map((option) => ({
         ...option,
         conservative: true,
       })),
@@ -77,10 +77,13 @@ function pickerModel(row: AgentModelSettingsEntry): PickerModel {
 }
 
 function unknownModel(id: string, provider: string): PickerModel {
+  const metadata = findModel(id)
   return pickerModel({
     id,
-    displayName: `Unknown · ${id}`,
-    description: '当前 Provider 提供的未识别模型；能力采用保守默认。',
+    displayName: metadata?.label ?? `Unknown · ${id}`,
+    description:
+      metadata?.description
+      ?? '当前 Provider 提供的未识别模型；能力采用保守默认。',
     hidden: false,
     isDefault: false,
     capabilities: {
@@ -89,7 +92,7 @@ function unknownModel(id: string, provider: string): PickerModel {
         provider,
         supportedReasoningEfforts: [],
       }),
-      contextOptions: modelContextOptions(id).map((option) => ({
+      contextOptions: modelContextOptions(id, provider).map((option) => ({
         ...option,
         conservative: true,
       })),

@@ -38,7 +38,7 @@ description: >-
 
 **正向提示词(默认):** 全流程默认只写正向提示词,**不写反向/负向提示词**,把「不要 X」改写成对应的「要 Y」,用真实技法词把目标状态写具体。
 
-**★ 每个出图/出视频阶段(G4 / G5)必先过总调度,且 prompt 必须用 skill 渐进式写:** 在 G4 逐镜出图、G5 图生视频写 prompt 之前,**先载入 `director-orchestrator` 执行它的 STEP 0 反问**(13 维定位 → 列出要载入的 director-*/storyboard- → 核实技法文档 → 确认目标模型与素材),再用 `sd2-pe`(八大要素 + 统一三段结构 + 多模态绑定)与 `storyboard-video-prompt-optimization` 把该镜落成结构化文本(物理可复现参数优先),并把已备素材逐一绑进去。**渐进式披露**:只加载这镜实际涉及维度对应的 skill。把结论一行说给用户听,再写提示词。**禁止跳过反问、禁止脱离 skill + 素材凭记忆硬写 prompt。**
+**★ 每个出图/出视频阶段(G4 / G5)必先过总调度,且 prompt 必须用 skill 渐进式写:** 在 G4 逐镜出图、G5 图生视频写 prompt 之前,**先载入 `director-orchestrator` 执行它的 STEP 0 反问**(13 维定位 → 列出要载入的 director-*/storyboard- → 核实技法文档 → 确认目标模型与素材),再用 `sd2-pe`(八大要素 + 12 项内容 + 五大必备块 + 多模态绑定，结构与散文形式自由)与 `storyboard-video-prompt-optimization` 把该镜落成结构化文本(物理可复现参数优先),并把已备素材逐一绑进去。**渐进式披露**:只加载这镜实际涉及维度对应的 skill。把结论一行说给用户听,再写提示词。**禁止跳过反问、禁止脱离 skill + 素材凭记忆硬写 prompt。**
 
 ---
 
@@ -67,7 +67,7 @@ description: >-
     资产都可作为主锚。用户已指定就采用；多套候选拿不准时先询问，低风险未指定才
     默认大头照+全身照。
   - 把最终选定人物卡存进**人像库**得到 `asset://assetId`,作为引用句柄;关键场景同理落「场景卡」。缺图先在 G4 思路下补齐。
-- **调:** `director-anchor-extraction-quality`、`director-character-consistency`、`storyboard-multi-character-control`、`director-visual-continuity`;绑定语法用 `sd2-pe`(`<主体N>（参考 图片N）` / 用户选定 identity-hard);台账用 `animation-craft` 的 continuity-ledger 模板;建衔接矩阵/剪辑边界矩阵的列定义参考 `references/continuity-matrices.md`。
+- **调:** `director-anchor-extraction-quality`、`director-character-consistency`、`storyboard-multi-character-control`、`director-visual-continuity`;绑定语法用 `sd2-pe`(`<主体N>（参考 @图片N）` / 用户选定 identity-hard，工具边界自动去除 `@`);台账用 `animation-craft` 的 continuity-ledger 模板;建衔接矩阵/剪辑边界矩阵的列定义参考 `references/continuity-matrices.md`。
 - **门 G3:** 用户批准角色/场景设定 **+ 每个角色的最终选定人物卡已建库**；
   生成了美术设定板时一并批准其氛围方向。
 
@@ -87,8 +87,8 @@ description: >-
 - **门 G4.5:** 每镜资产清单齐备、归入专属夹、`asset://` 句柄就绪——**这是开始生成视频的硬性前置条件**;逐镜边界/衔接是否按 `references/continuity-matrices.md` 填齐。
 
 ### G5 · 图生视频(Animate)— 分镜多参,用上全部可用资产
-- **做:** 把关键帧 + 运动描述喂给 Seedance 2.0 出片;**每镜把 G4.5 备齐的全部资产都喂进去(分镜多参)**:角色卡/场景图 → 参考图,运镜参考 → 参考视频,音色 → 参考音频(或严格首尾帧),并按 `sd2-pe` 语法用 `图片N/视频N/<主体N>` 在 prompt 里逐一绑定。**有素材却只发纯文字 = 错。** 引用故事板/多宫格/美术设定板时,mandatory 氛围板前缀必须位于 12 字段正文之前。分配全能参考配额;生成前做爆款体检。
-- **调:** `seedance-video-craft`(模型对齐/配额/提示词/体检);提示词结构与多参绑定以 `sd2-pe` 为准(统一三段结构 + 其必载结构叶子 seedance-cinematic-format 的 12 字段骨架,每镜最终提示词按骨架输出、字段可短不可删);动画片叠 `animation-craft`(运动法则/计时节拍);提示词优化 `storyboard-video-prompt-optimization`。
+- **做:** 把关键帧 + 运动描述喂给 Seedance 2.0 出片;**每镜把 G4.5 备齐的全部资产都喂进去(分镜多参)**:角色卡/场景图 → 参考图,运镜参考 → 参考视频,音色 → 参考音频(或严格首尾帧),并按 `sd2-pe` 写作用 `@图片N/@视频N/<主体N>` 在 prompt 里逐一绑定(工具边界自动归一)。**有素材却只发纯文字 = 错。** 引用故事板/多宫格/美术设定板时,mandatory 氛围板前缀必须位于正文之前。分配全能参考配额;生成前做爆款体检。
+- **调:** `seedance-video-craft`(模型对齐/配额/提示词/体检);提示词结构与多参绑定以 `sd2-pe` 为准。整片/多镜属于路径 B,加载 `seedance-cinematic-format`,每镜覆盖八大要素、12 项内容与五大必备块;标题、分段与散文形式自由。动画片叠 `animation-craft`(运动法则/计时节拍);提示词优化 `storyboard-video-prompt-optimization`。
 - **门 G5:** 每镜先过 `ffmpeg-win` 视觉门——抽帧拼 3×3 九宫格 contact sheet,`view_image` 那张宫格图自检(首尾帧/连续性/穿帮);要看懂剧情/连续性用 `catimation-understand` 的 `understand_video`,但别拿 `view_image` 开 MP4、别把原始字节塞进聊天;通过后再用 animation-craft 的审查 rubric(先故事/连贯后打磨)交用户审。
 
 ### G6 · 配音配乐(Sound)

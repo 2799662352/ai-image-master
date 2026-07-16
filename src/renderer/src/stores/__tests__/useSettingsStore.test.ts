@@ -377,6 +377,114 @@ describe('useSettingsStore', () => {
       expect(loadModelSettingsCatalog).toHaveBeenCalledWith('rightcode')
     })
 
+    it('selects a Provider-pinned model only after the Provider is confirmed', async () => {
+      let resolveIpc!: (value: unknown) => void
+      const loadCollaborationCapabilities = vi.fn().mockResolvedValue(undefined)
+      const loadModelSettingsCatalog = vi.fn().mockResolvedValue(undefined)
+      const setSelectedModel = vi.fn().mockResolvedValue(undefined)
+      useSettingsStore.setState((state) => ({
+        providers: {
+          ...state.providers,
+          builtins: [{
+            id: 'rightcode-grok',
+            name: 'Right.Codes Grok',
+            baseUrl: 'https://right.codes/grok/v1',
+            envKey: 'OPENAI_API_KEY',
+            model: 'grok-4.5',
+          }],
+        },
+      }))
+      useAgentChatStore.setState({
+        loadCollaborationCapabilities,
+        loadModelSettingsCatalog,
+        setSelectedModel,
+      } as never)
+      installBridge(() => new Promise((resolve) => { resolveIpc = resolve }))
+
+      const pending = useSettingsStore.getState().selectProvider('rightcode-grok')
+
+      expect(setSelectedModel).not.toHaveBeenCalled()
+      resolveIpc({ ok: true, activeId: 'rightcode-grok' })
+      await pending
+      expect(loadModelSettingsCatalog).toHaveBeenCalledWith('rightcode-grok')
+      expect(setSelectedModel).toHaveBeenCalledWith('grok-4.5')
+    })
+
+    it('uses the shared gateway credential after selecting an aliased Provider', async () => {
+      useSettingsStore.setState((state) => ({
+        providers: {
+          ...state.providers,
+          builtins: [{
+            id: 'rightcode-grok',
+            name: 'Right.Codes Grok',
+            baseUrl: 'https://right.codes/grok/v1',
+            envKey: 'OPENAI_API_KEY',
+            credentialId: 'rightcode',
+          }],
+        },
+      }))
+      useAgentChatStore.setState({
+        loadCollaborationCapabilities: vi.fn().mockResolvedValue(undefined),
+        loadModelSettingsCatalog: vi.fn().mockResolvedValue(undefined),
+      } as never)
+      installBridge(async () => ({ ok: true, activeId: 'rightcode-grok' }))
+
+      await useSettingsStore.getState().selectProvider('rightcode-grok')
+
+      expect(useSettingsStore.getState().codexApiKey).toBe('sk-rc')
+    })
+
+    it('falls back to the confirmed catalog default when a Provider has no pinned model', async () => {
+      const setSelectedModel = vi.fn().mockResolvedValue(undefined)
+      useSettingsStore.setState((state) => ({
+        providers: {
+          ...state.providers,
+          activeId: 'rightcode-grok',
+          appliedId: 'rightcode-grok',
+          builtins: [{
+            id: 'apiyi',
+            name: 'API Yi',
+            baseUrl: 'https://api.apiyi.com/v1',
+            envKey: 'OPENAI_API_KEY',
+          }],
+        },
+      }))
+      useAgentChatStore.setState({
+        selectedModelId: 'grok-4.5',
+        loadCollaborationCapabilities: vi.fn().mockResolvedValue(undefined),
+        loadModelSettingsCatalog: vi.fn().mockImplementation(async () => {
+          useAgentChatStore.setState({
+            modelSettingsCatalog: {
+              provider: 'apiyi',
+              source: 'codex',
+              models: [
+                {
+                  id: 'gpt-5.5',
+                  displayName: 'GPT-5.5',
+                  description: 'Default',
+                  hidden: false,
+                  isDefault: true,
+                  capabilities: {
+                    model: 'gpt-5.5',
+                    provider: 'apiyi',
+                    defaultContextWindow: 272_000,
+                    contextOptions: [{ value: 272_000, experimental: false }],
+                    supportedReasoningEfforts: [],
+                  },
+                },
+              ],
+            },
+          } as never)
+        }),
+        setSelectedModel,
+      } as never)
+      installBridge(async () => ({ ok: true, activeId: 'apiyi' }))
+
+      await useSettingsStore.getState().selectProvider('apiyi')
+
+      expect(setSelectedModel).toHaveBeenCalledWith('gpt-5.5')
+    })
+
     it('rolls back to the previous provider when the IPC rejects', async () => {
       installBridge({
         setActiveProvider: () => Promise.reject(new Error('unknown provider')),

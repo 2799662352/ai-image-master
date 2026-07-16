@@ -185,6 +185,27 @@ describe('ModelPicker model settings integration', () => {
     expect(screen.getByText(/能力未确认/)).toBeTruthy()
   })
 
+  it('keeps canonical metadata for a pinned model omitted by the runtime catalog', () => {
+    setPickerState({
+      selectedModelId: 'grok-4.5',
+      modelSettingsCatalog: {
+        provider: 'rightcode-grok',
+        source: 'codex',
+        models: [],
+      },
+      modelReasoningEffortByModel: { 'grok-4.5': 'auto' },
+      activeModelContextWindow: 1_000_000,
+    })
+    render(<ModelPicker />)
+
+    expect(screen.getByRole('button', {
+      name: /选择模型：Grok 4\.5 · Auto/,
+    })).toBeTruthy()
+    openPicker()
+    expect(screen.getByRole('option', { name: 'Grok 4.5' })).toBeTruthy()
+    expect(screen.getByText(/能力未确认/)).toBeTruthy()
+  })
+
   it('routes panel changes to model-scoped actions and removes legacy Plan scope UI', async () => {
     render(<ModelPicker />)
     openPicker()

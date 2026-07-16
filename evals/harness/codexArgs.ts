@@ -3,7 +3,7 @@
  *
  * It mirrors the *production* MCP-exposure `-c` flags from
  * `src/main/agent/codexLaunch.ts` (non_prefixed_mcp_tool_names +
- * code_mode.direct_only_tool_namespaces + per-provider namespace_tools=false)
+ * code_mode.direct_only_tool_namespaces)
  * so the agent SEES tools exactly the way it does in the shipped app — that's
  * the whole point of an eval: reproduce production tool exposure, then assert
  * the agent's decisions. The only intentional differences from production:

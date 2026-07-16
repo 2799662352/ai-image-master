@@ -2240,10 +2240,22 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         deferredPlanEffortIntent: undefined,
       }))
     }
-    const targetContextWindow =
+    const persistedContextWindow =
       before.modelContextWindowByModel[canonicalModel]
+    const persistedContextSupported =
+      persistedContextWindow !== undefined
+      && (
+        catalogRow === undefined
+        || catalogRow.capabilities.contextOptions.length !== 1
+        || catalogRow.capabilities.contextOptions.some(
+          (option) => option.value === persistedContextWindow,
+        )
+      )
+    const targetContextWindow = (
+      persistedContextSupported ? persistedContextWindow : undefined
+    )
       ?? catalogRow?.capabilities.defaultContextWindow
-      ?? defaultContextWindowForModel(canonicalModel)
+      ?? defaultContextWindowForModel(canonicalModel, ownerProvider)
     const contextIntentInProgress =
       before.modelContextPending !== undefined
       || activeModelContextIntent !== undefined

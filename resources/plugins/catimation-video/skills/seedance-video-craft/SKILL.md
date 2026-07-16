@@ -16,7 +16,8 @@ description: >-
 把 **Seedance 2.0 满血版** 当成它论文里真实的样子来用,而不是当成一个「随便写句话
 就出片」的黑盒。本 skill 是「模型对齐 + 复杂任务出片工艺 + 爆款体检」这一层的
 **专业知识模块**:由上游视频入口在复杂 Seedance 任务中加载,**假定上游已完成
-任务分级、方向确认与基础提示词工程**(sd2-pe 八大要素 / 统一三段结构 / 兜底包)——
+任务分级、方向确认与基础提示词工程**(sd2-pe 八大要素 / 12 项内容 /
+五大必备块 / 兜底包，结构与散文形式自由)——
 本 skill 不重跑路由,`references/prompt-engineering.md` 定位为「sd2-pe 之上的
 Seedance 模型对齐补充」,不替代它。
 
@@ -54,7 +55,7 @@ Seedance 2.0 在本 app 中支持文本/图像/视频/音频参考并可生成�
 | 输出分辨率 | **480p / 720p / 1080p**(默认 720p) | 1080p 仅满血 `2.0` |
 | 输入模态 | 文本 / 图像 / 音频 / 视频(4 种) | 这就是「全能参考」的来源 |
 | 参考上限 | **最多 9 图 + 3 视频 + 3 音频** | 全能参考的配额,要会分配 |
-| 原生音频 | 单次前向出双声道立体声 + 口型 | 提示词要主动写声音,别只写画面 |
+| 原生音频 | 可生成带音频视频并支持口型 | 提示词要主动写声音,别只写画面 |
 | 口型语言 | 8+(EN/ZH/JA/KO/ES/FR/DE/PT) | 口播/对白片可直接生成 |
 | 编辑能力 | 主体控制 / 运动操控 / 风格迁移 / 视频延长 | 改片不必从零重生 |
 | 快速版 | Seedance 2.0 Fast(低延迟,质量略降) | 只在用户明确要快/要省时用 |
@@ -86,8 +87,9 @@ Seedance 2.0 在本 app 中支持文本/图像/视频/音频参考并可生成�
    是否要原生音频/口型。
 2. **选模式**(见上表),默认全能参考。
 3. **分配参考配额**(9 图/3 视频/3 音频)——见 `references/all-around-reference.md`。
-4. **写提示词**——在上游 sd2-pe 工程化结果之上(该结果已按 seedance-cinematic-format
-   的 12 字段骨架成形,**本层只增补字段内容,不得拆掉骨架**),按
+4. **写提示词**——在上游 sd2-pe 工程化结果之上(路径 A 可独立完成,路径 B /
+   多镜 / 混合媒介已按需加载 seedance-cinematic-format；两者都覆盖八大要素、
+   12 项内容与五大必备块,**本层只增补内容,不得漏掉既有要素**),按
    `references/prompt-engineering.md` 做 Seedance 模型对齐补充:单一主导动作、
    首帧霸权(图生视频不复述静态帧)、运动矢量语言、主动写声音、**默认只写正向
    提示词(不写反向)**、用真实技法词填充。**运镜/机位用词从
@@ -161,7 +163,8 @@ Peak hook 秒 / Sustain% / 最强最弱脑区 / Default Mode 分心)。在**生�
 - `references/virality-scorecard.md` — 爆款体检自评表(改编 Virality Predictor)
 - `references/ad-short-form-modes.md` — 广告/短视频模式分类(改编 Marketing Studio)
 - `references/time-allocation-and-multimodal.md` — 按内容密度切时长(字/秒)+
-  `图片N/视频N/音频N` 多模态绑定(上限以本 app 工具 schema 为准)+
+  `@图片N/@视频N/@音频N` Skill 写作绑定(工具边界自动归一；上限以本 app
+  工具 schema 为准)+
   换人/运镜复刻/产品广告案例
   (移植自 updream jimeng-prompt-pro)
 - `references/camera-motion-primitives.md` — **运镜基元词表(CameraBench-Pro 真实

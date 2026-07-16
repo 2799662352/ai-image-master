@@ -66,7 +66,7 @@ describe('buildExecArgs', () => {
     expect(cfg.some((c) => c.startsWith('mcp_servers.'))).toBe(false)
   })
 
-  it('wires the apiyi provider via the SHIPPED appendProviderArgs (responses + namespace_tools=false)', () => {
+  it('wires the apiyi provider via the shipped Responses configuration', () => {
     const cfg = configValues(
       buildExecArgs({
         prompt: 'x',
@@ -78,7 +78,7 @@ describe('buildExecArgs', () => {
     expect(cfg).toContain('model_providers.apiyi.base_url="https://api.apiyi.com/v1"')
     expect(cfg).toContain('model_providers.apiyi.env_key="OPENAI_API_KEY"')
     expect(cfg).toContain('model_providers.apiyi.wire_api="responses"')
-    expect(cfg).toContain('model_providers.apiyi.namespace_tools=false')
+    expect(cfg).not.toContain('model_providers.apiyi.namespace_tools=false')
   })
 
   it('carries optional provider fields (model/reasoning/requires_openai_auth) for presets like Right.Codes', () => {

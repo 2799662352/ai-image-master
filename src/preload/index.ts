@@ -450,6 +450,8 @@ export interface CodexProviderRecord {
   model?: string
   reasoningEffort?: string
   verbosity?: string
+  credentialId?: string
+  allowedModels?: readonly string[]
   requiresOpenaiAuth?: boolean
   extraTopLevelConfig?: Record<string, string | boolean | number>
   description?: string
