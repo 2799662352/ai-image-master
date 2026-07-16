@@ -70,6 +70,39 @@ describe('ThreadStore.attachCodexReconcile', () => {
   })
 })
 
+describe('ThreadStore.setThreadModel', () => {
+  it('updates the persisted thread model after confirmed selection', async () => {
+    const update = vi.fn().mockResolvedValue(undefined)
+    const prisma = {
+      agentThread: { update },
+    } as any
+    const store = new ThreadStore(prisma)
+
+    await store.setThreadModel('thread_1', 'grok-4.5')
+
+    expect(update).toHaveBeenCalledWith({
+      where: { id: 'thread_1' },
+      data: { model: 'grok-4.5' },
+    })
+  })
+
+  it('only touches the target thread, never other rows', async () => {
+    const update = vi.fn().mockResolvedValue(undefined)
+    const prisma = {
+      agentThread: { update },
+    } as any
+    const store = new ThreadStore(prisma)
+
+    await store.setThreadModel('thread_target', 'gpt-5.5')
+
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(update).toHaveBeenCalledWith({
+      where: { id: 'thread_target' },
+      data: { model: 'gpt-5.5' },
+    })
+  })
+})
+
 describe('ThreadStore.listThreads', () => {
   it('orders by lastMessageAt desc then updatedAt desc, and surfaces lastMessageAt + manualTitle', async () => {
     const fakeRows = [

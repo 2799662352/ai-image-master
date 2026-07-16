@@ -76,6 +76,18 @@ export class ThreadStore {
     })
   }
 
+  /**
+   * Stores the confirmed model for an existing Agent thread — e.g. after a
+   * Gateway/model switch mid-conversation. Scoped to the target thread only
+   * via `where: { id: threadId }`, matching {@link renameThread}.
+   */
+  async setThreadModel(threadId: string, model: string): Promise<void> {
+    await this.prisma.agentThread.update({
+      where: { id: threadId },
+      data: { model },
+    })
+  }
+
   async deleteThread(threadId: string): Promise<void> {
     await this.prisma.agentThread.delete({ where: { id: threadId } })
   }

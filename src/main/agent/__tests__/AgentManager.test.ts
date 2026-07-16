@@ -111,7 +111,7 @@ describe('AgentManager codex api key', () => {
     )
     // Default active provider is `apiyi` — see codexProviders.ts.
     expect(onDisk.apiKeys.apiyi).toBe('sk-new')
-    expect(onDisk.selectedProviderId).toBe('apiyi')
+    expect(onDisk.selectedGatewayId).toBe('apiyi')
 
     const entries = await fs.readdir(tmpDir)
     expect(entries.some((name) => name.endsWith('.tmp'))).toBe(false)
@@ -488,7 +488,7 @@ describe('AgentManager transactional provider application', () => {
     const persisted = JSON.parse(
       await fs.readFile(path.join(tmpDir, 'codex-providers.json'), 'utf8'),
     )
-    expect(persisted.selectedProviderId).toBe('apiyi')
+    expect(persisted.selectedGatewayId).toBe('apiyi')
     await mgr.setCodexApiKey('sk-old-provider')
     await mgr.sendMessage({ content: 'still old', attachments: [] })
     await vi.waitFor(() => expect(backend.calls).toHaveLength(1))
@@ -508,7 +508,7 @@ describe('AgentManager transactional provider application', () => {
     const persisted = JSON.parse(
       await fs.readFile(path.join(tmpDir, 'codex-providers.json'), 'utf8'),
     )
-    expect(persisted.selectedProviderId).toBe('apiyi')
+    expect(persisted.selectedGatewayId).toBe('apiyi')
   })
 
   it('compensates an unhealthy failed Provider switch with a verified old generation', async () => {
@@ -724,7 +724,7 @@ describe('AgentManager apiyi-mcp key bridge', () => {
     expect(onDisk.apiKeys['apiyi-mcp']).toBe('sk-apiyi')
     // It must NOT have touched the codex gateway provider key (apiyi) or active id.
     expect(onDisk.apiKeys.apiyi).toBeUndefined()
-    expect(onDisk.selectedProviderId).toBe('apiyi')
+    expect(onDisk.selectedGatewayId).toBe('apiyi')
   })
 
   it('a fresh manager preloads the persisted apiyi-mcp key so an idempotent re-push does not restart', async () => {
@@ -776,7 +776,7 @@ describe('AgentManager cinematography-kb key bridge', () => {
     expect(onDisk.apiKeys['cinematography-kb']).toBe('sk-dashscope')
     // It must NOT have touched the apiyi-mcp slot or the active id.
     expect(onDisk.apiKeys['apiyi-mcp']).toBeUndefined()
-    expect(onDisk.selectedProviderId).toBe('apiyi')
+    expect(onDisk.selectedGatewayId).toBe('apiyi')
   })
 
   it('a fresh manager preloads the persisted cinematography-kb key so an idempotent re-push does not restart', async () => {

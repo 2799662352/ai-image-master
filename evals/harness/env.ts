@@ -51,8 +51,8 @@ export function resolveAppCreds(): AppCreds | null {
   try {
     const store = new CodexProviderStore({ userDataDir: resolveUserDataDir() })
     const state = store.loadSync()
-    const provider = resolveActiveProvider(state.selectedProviderId, state.customProviders)
-    const apiKey = (state.apiKeys[state.selectedProviderId] ?? '').trim()
+    const provider = resolveActiveProvider(state.selectedGatewayId, state.customProviders)
+    const apiKey = (state.apiKeys[state.selectedGatewayId] ?? '').trim()
     if (!apiKey) return null
     return { apiKey, provider }
   } catch {

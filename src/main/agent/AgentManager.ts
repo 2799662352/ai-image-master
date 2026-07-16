@@ -12,7 +12,7 @@ import { migrateLegacyCodexSessions } from './codexSessionMigration'
 import {
   CodexProviderStore,
   type NewCustomProvider,
-  type PersistedProvidersV1,
+  type PersistedProvidersV2,
 } from './CodexProviderStore'
 import { DEFAULT_CODEX_SESSION_CONFIG, type CatimationMcpLaunchInfo } from './codexLaunch'
 import {
@@ -449,7 +449,10 @@ export class AgentManager {
       ?? new CodexRuntimeSettingsStore(opts.userDataDir)
     this.runtimeSettings = this.runtimeSettingsStore.loadSync()
     const persisted = this.providerStore.loadSync()
-    this.activeProviderId = persisted.selectedProviderId
+    // v4.4.2 persistence migration: the store now separates the Gateway
+    // choice (selectedGatewayId) from the model/channel choice
+    // (selectedModelId) — see CodexProviderStore's PersistedProvidersV2.
+    this.activeProviderId = persisted.selectedGatewayId
     this.codexApiKey = persisted.apiKeys[
       credentialIdForProvider(this.activeProviderId, persisted.customProviders)
     ] ?? ''
@@ -634,7 +637,7 @@ export class AgentManager {
     return {
       builtins: BUILTIN_PROVIDER_PRESETS.map((p) => ({ ...p })),
       custom: persisted.customProviders.map((p) => ({ ...p })),
-      // selectedProviderId is the desired value while a transaction is in
+      // selectedGatewayId is the desired value while a transaction is in
       // flight. Settings/capability consumers must only observe the Provider
       // owned by the currently applied backend generation.
       activeId: this.activeProviderId,
@@ -705,7 +708,7 @@ export class AgentManager {
 
   private enqueueAppliedProviderTransaction(
     mutateDesired: (
-      before: PersistedProvidersV1,
+      before: PersistedProvidersV2,
     ) => Promise<DesiredProviderMutation>,
   ): Promise<{ ok: true } & AgentProviderMutationResult> {
     let capabilityReady = false
