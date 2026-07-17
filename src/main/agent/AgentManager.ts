@@ -27,6 +27,7 @@ import {
   resolveActiveProvider,
   type ProviderPreset,
 } from './codexProviders'
+import { buildGatewayModelCatalog } from './gatewayModelCatalog'
 import {
   resolveGatewayModelRoute,
   resolveProviderChannel,
@@ -85,9 +86,9 @@ import type {
   AgentModelContextApplyStage,
   AgentModelContextRollbackResult,
   AgentModelContextSnapshotResult,
+  AgentModelAvailability,
   AgentModelSettingsCatalog,
   AgentModelSettingsCatalogResult,
-  AgentModelSettingsEntry,
   AgentProviderMutationResult,
   AgentSendMessagePayload,
   AgentSendMessageResult,
@@ -339,6 +340,11 @@ export class AgentManager {
   /** Internal Channel runtime control for backend generation switches. */
   private readonly channelController: ProviderChannelController
   private codexApiKey = ''
+  /** Per-gateway model availability overrides populated by future probe flows. */
+  private readonly modelAvailabilityByGateway = new Map<
+    string,
+    Map<string, AgentModelAvailability>
+  >()
   /**
    * Miau token for the qwen understanding provider (Path B). Persisted in the
    * provider store under apiKeys['qwen'] (the renderer mirrors its image-gen
@@ -1292,47 +1298,37 @@ export class AgentManager {
       try {
         const response = await this.backend.listModels({ includeHidden: false })
         if (!ownerStillCurrent()) continue
-        const allowedModels = this.providerAllowedModels(provider)
-        const rows = allowedModels
-          ? response.data.filter((row) => allowedModels.has(row.model))
-          : response.data
-        if (allowedModels && rows.length === 0) {
-          return {
-            ok: true,
-            data: this.fallbackModelSettingsCatalog(provider),
-          }
-        }
-        const models: AgentModelSettingsEntry[] = rows.map((row) => {
-          const route = this.modelRoute(provider, row.model)
-          return {
-            id: row.id,
-            displayName: row.displayName,
-            description: row.description,
-            hidden: row.hidden,
-            isDefault: row.isDefault,
-            family: route.family,
-            route,
-            availability: { status: 'available' },
-            capabilities: mergeModelSettingsCapabilities({
-              model: row.model,
-              gatewayId: route.gatewayId,
-              channelId: route.channelId,
-              defaultReasoningEffort: row.defaultReasoningEffort,
-              supportedReasoningEfforts: row.supportedReasoningEfforts.map(
-                (effort) => effort.reasoningEffort,
-              ),
-            }),
-          }
+        const persisted = this.providerStore.loadSync()
+        const dynamicModels = response.data.map((row) => ({
+          id: row.id,
+          displayName: row.displayName,
+          description: row.description,
+          hidden: row.hidden,
+          isDefault: row.isDefault,
+          capabilities: mergeModelSettingsCapabilities({
+            model: row.model,
+            gatewayId: this.activeGatewayId,
+            channelId: resolveGatewayModelRoute(
+              this.activeGatewayId,
+              row.model,
+              persisted.customProviders,
+            ).channelId,
+            defaultReasoningEffort: row.defaultReasoningEffort,
+            supportedReasoningEfforts: row.supportedReasoningEfforts.map(
+              (effort) => effort.reasoningEffort,
+            ),
+          }),
+        }))
+        const catalog = buildGatewayModelCatalog({
+          gatewayId: this.activeGatewayId,
+          dynamicSource: 'codex',
+          dynamicModels,
+          hasCredential: Boolean(this.codexApiKey),
+          availabilityByModel: this.modelAvailabilityByGateway.get(
+            this.activeGatewayId,
+          ) ?? new Map(),
         })
-        return {
-          ok: true,
-          data: {
-            gatewayId: credentialIdForProvider(provider),
-            revision: this.modelCatalogRevision('codex'),
-            source: 'codex',
-            models,
-          },
-        }
+        return { ok: true, data: catalog }
       } catch {
         if (!ownerStillCurrent()) continue
         return { ok: true, data: this.fallbackModelSettingsCatalog(provider) }
@@ -1466,34 +1462,18 @@ export class AgentManager {
     })
   }
 
-  private providerAllowedModels(providerId: string): ReadonlySet<string> | undefined {
-    const persisted = this.providerStore.loadSync()
-    const provider = resolveActiveProvider(providerId, persisted.customProviders)
-    return provider.id === providerId && provider.allowedModels?.length
-      ? new Set(provider.allowedModels)
-      : undefined
-  }
-
   private modelRoute(providerId: string, modelId: string) {
     const persisted = this.providerStore.loadSync()
     const gatewayId = credentialIdForProvider(providerId, persisted.customProviders)
     return resolveGatewayModelRoute(gatewayId, modelId, persisted.customProviders)
   }
 
-  private modelCatalogRevision(source: 'codex' | 'fallback'): string {
-    return `${source}:${String(this.backend.currentEpoch?.() ?? 0)}`
-  }
-
   private fallbackModelSettingsCatalog(provider: string): AgentModelSettingsCatalog {
-    const allowedModels = this.providerAllowedModels(provider)
-    const rows = allowedModels
-      ? CANONICAL_MODEL_SETTINGS_ROWS.filter((row) => allowedModels.has(row.id))
-      : CANONICAL_MODEL_SETTINGS_ROWS
-    return {
-      gatewayId: credentialIdForProvider(provider),
-      revision: this.modelCatalogRevision('fallback'),
-      source: 'fallback',
-      models: rows.map((row) => {
+    const gatewayId = credentialIdForProvider(provider)
+    return buildGatewayModelCatalog({
+      gatewayId,
+      dynamicSource: 'fallback',
+      dynamicModels: CANONICAL_MODEL_SETTINGS_ROWS.map((row) => {
         const route = this.modelRoute(provider, row.id)
         return {
           id: row.id,
@@ -1501,9 +1481,6 @@ export class AgentManager {
           description: row.description,
           hidden: false,
           isDefault: row.isDefault,
-          family: route.family,
-          route,
-          availability: { status: 'available' },
           capabilities: {
             ...mergeModelSettingsCapabilities({
               model: row.id,
@@ -1522,7 +1499,10 @@ export class AgentManager {
           },
         }
       }),
-    }
+      hasCredential: Boolean(this.codexApiKey),
+      availabilityByModel: this.modelAvailabilityByGateway.get(gatewayId)
+        ?? new Map(),
+    })
   }
 
   private validateModelContextPayload(

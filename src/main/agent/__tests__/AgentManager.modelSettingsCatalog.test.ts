@@ -84,11 +84,20 @@ function makeManager(backend: IAgentBackend): AgentManager {
   })
 }
 
+async function makeManagerWithCredential(
+  backend: IAgentBackend,
+  provider = 'apiyi',
+): Promise<AgentManager> {
+  const manager = makeManager(backend)
+  await manager.setProviderApiKey(provider, 'sk-test')
+  return manager
+}
+
 describe('AgentManager model settings catalog and snapshot', () => {
   it('waits for the current Provider barrier before listing models', async () => {
     let releaseBarrier!: (ready: boolean) => void
     const backend = makeBackend([modelRow()])
-    const manager = makeManager(backend)
+    const manager = await makeManagerWithCredential(backend)
     ;(manager as unknown as { providerCapabilityBarrier: Promise<boolean> })
       .providerCapabilityBarrier = new Promise<boolean>((resolve) => {
         releaseBarrier = resolve
@@ -101,7 +110,7 @@ describe('AgentManager model settings catalog and snapshot', () => {
     releaseBarrier(true)
     await expect(pending).resolves.toMatchObject({
       ok: true,
-      data: { gatewayId: 'apiyi', source: 'codex' },
+      data: { gatewayId: 'apiyi', source: 'mixed' },
     })
     expect(backend.modelCalls).toEqual([{ includeHidden: false }])
   })
@@ -123,7 +132,7 @@ describe('AgentManager model settings catalog and snapshot', () => {
       }
       return { data: [modelRow()], nextCursor: null }
     }
-    const manager = makeManager(backend)
+    const manager = await makeManagerWithCredential(backend)
 
     const pending = manager.getModelSettingsCatalogRpc()
     await vi.waitFor(() => {
@@ -136,8 +145,11 @@ describe('AgentManager model settings catalog and snapshot', () => {
       ok: true,
       data: {
         gatewayId: 'apiyi',
-        source: 'codex',
-        models: [{ id: 'gpt-5.6-sol' }],
+        source: 'mixed',
+        models: [
+          expect.objectContaining({ id: 'gpt-5.6-sol' }),
+          expect.objectContaining({ id: 'grok-4.5' }),
+        ],
       },
     })
     expect(backend.modelCalls).toEqual([
@@ -172,7 +184,7 @@ describe('AgentManager model settings catalog and snapshot', () => {
         nextCursor: null,
       }
     }
-    const manager = makeManager(backend)
+    const manager = await makeManagerWithCredential(backend)
 
     const pendingCatalog = manager.getModelSettingsCatalogRpc()
     await vi.waitFor(() => {
@@ -186,8 +198,11 @@ describe('AgentManager model settings catalog and snapshot', () => {
       ok: true,
       data: {
         gatewayId: 'rightcode',
-        source: 'codex',
-        models: [{ id: 'rightcode-model' }],
+        source: 'mixed',
+        models: [
+          expect.objectContaining({ id: 'rightcode-model' }),
+          expect.objectContaining({ id: 'grok-4.5' }),
+        ],
       },
     })
     expect(backend.modelCalls).toEqual([
@@ -234,7 +249,7 @@ describe('AgentManager model settings catalog and snapshot', () => {
         isDefault: false,
       }),
     ])
-    const manager = makeManager(backend)
+    const manager = await makeManagerWithCredential(backend, 'rightcode')
     await manager.setActiveProvider('rightcode')
 
     const result = await manager.getModelSettingsCatalogRpc()
@@ -244,7 +259,7 @@ describe('AgentManager model settings catalog and snapshot', () => {
       data: {
         gatewayId: 'rightcode',
         revision: expect.any(String),
-        source: 'codex',
+        source: 'mixed',
         models: [
           expect.objectContaining({
             id: 'gpt-5.6-sol',
@@ -252,6 +267,7 @@ describe('AgentManager model settings catalog and snapshot', () => {
             description: 'Frontier coding model',
             hidden: false,
             isDefault: true,
+            availability: { status: 'available' },
             capabilities: expect.objectContaining({
               model: 'gpt-5.6-sol',
               provider: 'rightcode',
@@ -260,9 +276,14 @@ describe('AgentManager model settings catalog and snapshot', () => {
           }),
           expect.objectContaining({
             id: 'gpt-5.5',
+            availability: { status: 'available' },
             capabilities: expect.objectContaining({
               supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
             }),
+          }),
+          expect.objectContaining({
+            id: 'grok-4.5',
+            route: expect.objectContaining({ channelId: 'rightcode-grok' }),
           }),
         ],
       },
@@ -270,7 +291,7 @@ describe('AgentManager model settings catalog and snapshot', () => {
     expect(backend.modelCalls).toEqual([{ includeHidden: false }])
   })
 
-  it('limits a dedicated Provider catalog to its declared model slugs', async () => {
+  it('aggregates gateway catalog from a dedicated Grok channel', async () => {
     const backend = makeBackend([
       modelRow(),
       modelRow({
@@ -286,96 +307,96 @@ describe('AgentManager model settings catalog and snapshot', () => {
         ],
       }),
     ])
-    const manager = makeManager(backend)
+    const manager = await makeManagerWithCredential(backend, 'rightcode')
     await manager.setActiveProvider('rightcode-grok')
 
-    await expect(manager.getModelSettingsCatalogRpc()).resolves.toMatchObject({
-      ok: true,
-      data: {
-        gatewayId: 'rightcode',
-        source: 'codex',
-        models: [{
-          id: 'grok-4.5',
-          displayName: 'Grok 4.5',
-          capabilities: {
-            provider: 'rightcode',
-            supportedReasoningEfforts: ['low', 'medium', 'high'],
-          },
-        }],
+    const result = await manager.getModelSettingsCatalogRpc()
+    if (!result.ok) throw new Error('Expected catalog')
+
+    expect(result.data.models.map((model) => model.id)).toEqual([
+      'gpt-5.6-sol',
+      'grok-4.5',
+    ])
+    expect(result.data.models.find((model) => model.id === 'grok-4.5')).toMatchObject({
+      displayName: 'Grok 4.5',
+      route: { channelId: 'rightcode-grok', family: 'xai' },
+      capabilities: {
+        provider: 'rightcode',
+        supportedReasoningEfforts: ['low', 'medium', 'high'],
       },
     })
   })
 
-  it('uses the dedicated fallback when Codex omits every allowed model', async () => {
-    const manager = makeManager(makeBackend([modelRow()]))
+  it('returns mixed catalog when Codex lists non-Grok rows on a Grok channel', async () => {
+    const manager = await makeManagerWithCredential(makeBackend([modelRow()]), 'apiyi')
     await manager.setActiveProvider('apiyi-grok')
 
     await expect(manager.getModelSettingsCatalogRpc()).resolves.toMatchObject({
       ok: true,
       data: {
         gatewayId: 'apiyi',
-        source: 'fallback',
-        models: [{ id: 'grok-4.5' }],
+        source: 'mixed',
+        models: [
+          expect.objectContaining({ id: 'gpt-5.6-sol' }),
+          expect.objectContaining({ id: 'grok-4.5' }),
+        ],
       },
     })
   })
 
-  it('limits a dedicated Provider fallback to its declared model slugs', async () => {
+  it('returns gateway fallback with Grok channel limits on dedicated channels', async () => {
     const backend = makeBackend([])
     backend.listError = new Error('model/list unavailable')
     const manager = makeManager(backend)
     await manager.setActiveProvider('rightcode-grok')
 
     const result = await manager.getModelSettingsCatalogRpc()
+    if (!result.ok) throw new Error('Expected fallback catalog')
 
-    expect(result).toMatchObject({
-      ok: true,
-      data: {
-        gatewayId: 'rightcode',
-        source: 'fallback',
-        models: [{
-          id: 'grok-4.5',
-          capabilities: {
-            defaultContextWindow: 1_000_000,
-            contextOptions: [{
-              value: 1_000_000,
-              experimental: false,
-              conservative: true,
-            }],
-            defaultReasoningEffort: 'high',
-            supportedReasoningEfforts: ['low', 'medium', 'high'],
-          },
+    expect(result.data).toMatchObject({
+      gatewayId: 'rightcode',
+      source: 'fallback',
+    })
+    expect(result.data.models.length).toBeGreaterThan(1)
+    expect(result.data.models.find((model) => model.id === 'grok-4.5')).toMatchObject({
+      route: { channelId: 'rightcode-grok', family: 'xai' },
+      capabilities: {
+        defaultContextWindow: 1_000_000,
+        contextOptions: [{
+          value: 1_000_000,
+          experimental: false,
+          conservative: true,
         }],
+        defaultReasoningEffort: 'high',
+        supportedReasoningEfforts: ['low', 'medium', 'high'],
       },
     })
-    if (!result.ok) throw new Error('Expected fallback catalog')
-    expect(result.data.models).toHaveLength(1)
   })
 
-  it('uses API Yi Grok verified limits in its dedicated fallback', async () => {
+  it('uses API Yi Grok verified limits in gateway fallback', async () => {
     const backend = makeBackend([])
     backend.listError = new Error('model/list unavailable')
     const manager = makeManager(backend)
     await manager.setActiveProvider('apiyi-grok')
 
-    await expect(manager.getModelSettingsCatalogRpc()).resolves.toMatchObject({
-      ok: true,
-      data: {
-        gatewayId: 'apiyi',
-        source: 'fallback',
-        models: [{
-          id: 'grok-4.5',
-          capabilities: {
-            defaultContextWindow: 500_000,
-            contextOptions: [{
-              value: 500_000,
-              experimental: false,
-              conservative: true,
-            }],
-            defaultReasoningEffort: 'high',
-            supportedReasoningEfforts: ['low', 'medium', 'high'],
-          },
+    const result = await manager.getModelSettingsCatalogRpc()
+    if (!result.ok) throw new Error('Expected fallback catalog')
+
+    expect(result.data).toMatchObject({
+      gatewayId: 'apiyi',
+      source: 'fallback',
+    })
+    expect(result.data.models.find((model) => model.id === 'grok-4.5')).toMatchObject({
+      route: { channelId: 'apiyi-grok', family: 'xai' },
+      capabilities: {
+        defaultContextWindow: 500_000,
+        contextOptions: [{
+          value: 500_000,
+          experimental: false,
+          conservative: true,
         }],
+        defaultReasoningEffort: 'high',
+        supportedReasoningEfforts: ['low', 'medium', 'high'],
       },
     })
   })
