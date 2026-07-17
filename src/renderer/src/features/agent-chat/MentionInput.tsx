@@ -420,6 +420,11 @@ function ScopeChip({ scope }: { scope: 'repo' | 'user' | 'system' | string }): J
 export function MentionInput() {
   const input = useAgentChatStore((state) => state.input)
   const isRunning = useAgentChatStore((state) => state.isRunning)
+  // A model-selection transaction may restart the Codex backend; block new
+  // sends and composer channel controls until it commits or rolls back.
+  const modelSelectionPending = useAgentChatStore(
+    (state) => state.modelSelectionPending !== undefined,
+  )
   const attachments = useAgentChatStore((state) => state.attachments)
   const setInput = useAgentChatStore((state) => state.setInput)
   const setError = useAgentChatStore((state) => state.setError)
@@ -1593,8 +1598,8 @@ export function MentionInput() {
           {isEditing ? 'Editing' : isRunning ? 'Running' : 'Agent'}
         </span>
         <ModelPicker disabled={isRunning} />
-        <CollabModeControl disabled={isRunning} />
-        <ImageChannelPicker disabled={isRunning} />
+        <CollabModeControl disabled={isRunning || modelSelectionPending} />
+        <ImageChannelPicker disabled={isRunning || modelSelectionPending} />
         <div className="flex-1" />
         {isEditing ? (
           <button
@@ -1607,8 +1612,17 @@ export function MentionInput() {
         ) : null}
         <button
           className="rounded-lg bg-cyan-300 px-3 py-1.5 text-[12px] font-semibold text-zinc-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
-          disabled={input.trim().length === 0 && attachments.length === 0}
-          title={isRunning && !isEditing ? '插话:把这条追加到当前运行的回合(turn/steer)' : undefined}
+          disabled={
+            modelSelectionPending
+            || (input.trim().length === 0 && attachments.length === 0)
+          }
+          title={
+            modelSelectionPending
+              ? '正在切换模型通道…'
+              : isRunning && !isEditing
+                ? '插话:把这条追加到当前运行的回合(turn/steer)'
+                : undefined
+          }
           type="submit"
         >
           {isEditing ? 'Save & Submit' : isRunning ? 'Steer' : 'Send'}

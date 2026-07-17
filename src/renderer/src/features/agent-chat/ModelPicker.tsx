@@ -182,9 +182,13 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
     (state) => state.setModelContextWindow,
   )
 
+  const storeSelectionPending = useAgentChatStore(
+    (state) => state.modelSelectionPending !== undefined,
+  )
   const [isOpen, setIsOpen] = useState(false)
   const [query, setQuery] = useState('')
-  const [modelSelectionPending, setModelSelectionPending] = useState(false)
+  const [localSelectionPending, setModelSelectionPending] = useState(false)
+  const modelSelectionPending = localSelectionPending || storeSelectionPending
   const rootRef = useRef<HTMLDivElement | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const searchRef = useRef<HTMLInputElement | null>(null)
@@ -323,8 +327,8 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
     setModelSelectionPending(true)
     let selectionApplied = false
     try {
-      await setSelectedModel(id)
-      selectionApplied = useAgentChatStore.getState().selectedModelId === id
+      selectionApplied = (await setSelectedModel(id)) === true
+        || useAgentChatStore.getState().selectedModelId === id
     } finally {
       setModelSelectionPending(false)
     }

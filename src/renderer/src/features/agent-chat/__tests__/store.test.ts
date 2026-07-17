@@ -210,11 +210,70 @@ describe('useAgentChatStore selected model', () => {
     expect(useAgentChatStore.getState().selectedModelId).toBe(DEFAULT_MODEL_ID)
   })
 
-  it('persists setSelectedModel to localStorage', async () => {
-    await useAgentChatStore.getState().setSelectedModel('gpt-5.6-sol')
+  it('persists setSelectedModel to localStorage after main confirms', async () => {
+    ;(window as any).electronAPI = {
+      agent: {
+        applyModelSelection: vi.fn(async (payload: {
+          gatewayId: string
+          modelId: string
+          contextWindow: number
+          catalogRevision: string
+          requestVersion: number
+        }) => ({
+          ok: true,
+          data: {
+            gatewayId: payload.gatewayId,
+            channelId: 'rightcode-standard',
+            modelId: payload.modelId,
+            contextWindow: payload.contextWindow,
+            autoCompactTokenLimit: Math.floor(payload.contextWindow * 0.9),
+            catalogRevision: payload.catalogRevision,
+            backendEpoch: 1,
+            threadRestored: false,
+          },
+        })),
+      },
+    }
+    useAgentChatStore.setState({
+      modelSettingsCatalog: {
+        gatewayId: 'rightcode',
+        revision: 'r1',
+        source: 'codex',
+        models: [{
+          id: 'gpt-5.6-sol',
+          displayName: 'GPT-5.6 Sol',
+          description: 'Frontier coding model',
+          hidden: false,
+          isDefault: true,
+          family: 'openai',
+          route: {
+            gatewayId: 'rightcode',
+            channelId: 'rightcode-standard',
+            modelId: 'gpt-5.6-sol',
+            family: 'openai',
+          },
+          availability: { status: 'available' },
+          capabilities: {
+            model: 'gpt-5.6-sol',
+            provider: 'rightcode',
+            defaultContextWindow: 372_000,
+            contextOptions: [{ value: 372_000, experimental: false }],
+            defaultReasoningEffort: 'medium',
+            supportedReasoningEfforts: ['low', 'medium', 'high'],
+          },
+        }],
+      },
+    } as never)
+
+    await expect(
+      useAgentChatStore.getState().setSelectedModel('gpt-5.6-sol'),
+    ).resolves.toBe(true)
     expect(useAgentChatStore.getState().selectedModelId).toBe('gpt-5.6-sol')
     expect(localStorage.getItem('agent.selectedModel:v2')).toBe('gpt-5.6-sol')
     expect(localStorage.getItem('catimation.agent.selectedModel')).toBeNull()
+
+    useAgentChatStore.setState({ modelSettingsCatalog: undefined } as never)
+    delete (window as any).electronAPI
   })
 
   it('forwards selectedModelId via send → electronAPI.agent.sendMessage', async () => {

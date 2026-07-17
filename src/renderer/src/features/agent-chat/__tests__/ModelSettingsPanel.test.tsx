@@ -13,7 +13,8 @@ import {
 
 const SOL_CAPABILITIES: ModelSettingsCapabilities = mergeModelSettingsCapabilities({
   model: 'gpt-5.6-sol',
-  provider: 'rightcode',
+  gatewayId: 'rightcode',
+  channelId: 'rightcode-standard',
   defaultReasoningEffort: 'medium',
   supportedReasoningEfforts: [
     'low',
@@ -28,14 +29,16 @@ const SOL_CAPABILITIES: ModelSettingsCapabilities = mergeModelSettingsCapabiliti
 
 const GPT_55_CAPABILITIES: ModelSettingsCapabilities = mergeModelSettingsCapabilities({
   model: 'gpt-5.5',
-  provider: 'rightcode',
+  gatewayId: 'rightcode',
+  channelId: 'rightcode-standard',
   defaultReasoningEffort: 'medium',
   supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'fast'],
 })
 
 const UNKNOWN_CAPABILITIES: ModelSettingsCapabilities = mergeModelSettingsCapabilities({
   model: 'vendor-new-model',
-  provider: 'rightcode',
+  gatewayId: 'rightcode',
+  channelId: 'rightcode-standard',
   supportedReasoningEfforts: ['low', 'medium'],
 })
 

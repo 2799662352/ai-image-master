@@ -42,7 +42,57 @@ const getCollaborationCapabilities = vi.fn<
 const applyModelContext = vi.fn<
   (payload: AgentModelContextApplyPayload) => Promise<AgentModelContextApplyResult>
 >()
+const applyModelSelection = vi.fn<
+  (payload: {
+    gatewayId: string
+    modelId: string
+    contextWindow: number
+    catalogRevision: string
+    threadId?: string
+    requestVersion: number
+  }) => Promise<unknown>
+>()
 const openThread = vi.fn<(threadId: string) => Promise<unknown>>()
+
+function collabTestCatalogEntry(id: string) {
+  return {
+    id,
+    displayName: id,
+    description: `${id} entry`,
+    hidden: false,
+    isDefault: false,
+    family: 'openai' as const,
+    route: {
+      gatewayId: 'apiyi',
+      channelId: 'apiyi-standard',
+      modelId: id,
+      family: 'openai' as const,
+    },
+    availability: { status: 'available' as const },
+    capabilities: {
+      model: id,
+      provider: 'apiyi',
+      defaultContextWindow: 272_000,
+      contextOptions: [{ value: 272_000, experimental: false }],
+      defaultReasoningEffort: 'medium' as const,
+      supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh'] as const,
+    },
+  }
+}
+
+function collabTestCatalog() {
+  return {
+    gatewayId: 'apiyi',
+    revision: 'collab-catalog-1',
+    source: 'codex' as const,
+    models: [
+      collabTestCatalogEntry('gpt-5.5'),
+      collabTestCatalogEntry('gpt-5.4'),
+      collabTestCatalogEntry('gpt-5.6-sol'),
+      collabTestCatalogEntry('gpt-5.6-terra'),
+    ],
+  }
+}
 const deleteThread = vi.fn<(threadId: string) => Promise<void>>()
 
 beforeEach(() => {
@@ -72,6 +122,19 @@ beforeEach(() => {
       requestVersion: payload.requestVersion,
     },
   }))
+  applyModelSelection.mockReset().mockImplementation(async (payload) => ({
+    ok: true,
+    data: {
+      gatewayId: payload.gatewayId,
+      channelId: 'apiyi-standard',
+      modelId: payload.modelId,
+      contextWindow: payload.contextWindow,
+      autoCompactTokenLimit: Math.floor(payload.contextWindow * 0.9),
+      catalogRevision: payload.catalogRevision,
+      backendEpoch: 1,
+      threadRestored: false,
+    },
+  }))
   openThread.mockReset().mockResolvedValue({ messages: [] })
   deleteThread.mockReset().mockResolvedValue(undefined)
   ;(window as unknown as { electronAPI: unknown }).electronAPI = {
@@ -81,6 +144,7 @@ beforeEach(() => {
       updateCollaborationMode,
       getCollaborationCapabilities,
       applyModelContext,
+      applyModelSelection,
       openThread,
       deleteThread,
       onEvent: () => () => undefined,
@@ -100,8 +164,12 @@ beforeEach(() => {
     modelContextWindowByModel: {},
     activeModelContextWindow: 272_000,
     modelContextPending: undefined,
+    modelSettingsCatalog: collabTestCatalog(),
     modelSettingsError: undefined,
     modelContextRequestSequence: 0,
+    modelSelectionPending: undefined,
+    modelSelectionFailedIntent: undefined,
+    modelSelectionError: undefined,
     threadSlices: {},
     runningByThread: {},
     threadList: [],
@@ -822,7 +890,7 @@ describe('Plan effort ownership and capabilities', () => {
       collabModeByThread: { 'thread-1': 'plan' },
     } as never)
 
-    useAgentChatStore.getState().setSelectedModel('gpt-5.4')
+    await useAgentChatStore.getState().setSelectedModel('gpt-5.4')
     await useAgentChatStore.getState().setPlanReasoningEffort('xhigh')
     expect(updateCollaborationMode).not.toHaveBeenCalled()
     expect(useAgentChatStore.getState().deferredPlanEffortIntent).toEqual({
@@ -866,7 +934,7 @@ describe('Plan effort ownership and capabilities', () => {
       },
     } as never)
 
-    useAgentChatStore.getState().setSelectedModel('gpt-5.4')
+    await useAgentChatStore.getState().setSelectedModel('gpt-5.4')
     await useAgentChatStore.getState().setPlanReasoningEffort('xhigh')
     expect(useAgentChatStore.getState().deferredPlanEffortIntent).toEqual({
       model: 'gpt-5.4',
@@ -919,9 +987,9 @@ describe('Plan effort ownership and capabilities', () => {
       collabModeByThread: { 'thread-1': 'plan' },
     } as never)
 
-    useAgentChatStore.getState().setSelectedModel('gpt-5.4')
+    await useAgentChatStore.getState().setSelectedModel('gpt-5.4')
     await useAgentChatStore.getState().setPlanReasoningEffort('xhigh')
-    useAgentChatStore.getState().setSelectedModel('gpt-5.6-terra')
+    await useAgentChatStore.getState().setSelectedModel('gpt-5.6-terra')
 
     modelB.resolve({
       ok: true,
@@ -956,7 +1024,7 @@ describe('Plan effort ownership and capabilities', () => {
       collabModeKind: 'plan',
       collabModeByThread: { 'thread-1': 'plan' },
     } as never)
-    useAgentChatStore.getState().setSelectedModel('gpt-5.4')
+    await useAgentChatStore.getState().setSelectedModel('gpt-5.4')
     await useAgentChatStore.getState().setPlanReasoningEffort('xhigh')
     useAgentChatStore.setState({ planReasoningEffort: 'high' } as never)
     preferenceCapabilities.resolve({
