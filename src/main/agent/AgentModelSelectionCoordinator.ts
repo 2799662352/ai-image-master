@@ -54,11 +54,13 @@ export interface AgentModelSelectionCoordinatorOptions {
     threadId?: string
   }>
   /**
-   * Rebuilds the current catalog after a healthy recovery before poison clears.
+   * Rebuilds the current catalog after a healthy recovery before poison
+   * clears. When it returns the refreshed revision, the recovery snapshot is
+   * stamped with it instead of the stale pre-poison revision.
    */
   refreshRecoveryCatalog?: (
     snapshot: AgentModelSelectionSnapshot,
-  ) => Promise<void>
+  ) => Promise<{ catalogRevision: string } | undefined>
   resolveContext?: (
     payload: AgentModelSelectionApplyPayload,
     previous: AgentModelSelectionSnapshot,
@@ -278,12 +280,16 @@ export class AgentModelSelectionCoordinator {
       await this.options.prepareRecovery?.(validated.snapshot)
       await this.options.channelController.recover(validated.snapshot.channelId)
       await this.options.restoreSelection(validated.snapshot, validated.threadId)
-      await this.options.refreshRecoveryCatalog?.(validated.snapshot)
+      const refreshed = await this.options.refreshRecoveryCatalog?.(
+        validated.snapshot,
+      )
       this.recovery = null
       return {
         ok: true,
         recoveryRequired: false,
-        snapshot: validated.snapshot,
+        snapshot: refreshed
+          ? { ...validated.snapshot, catalogRevision: refreshed.catalogRevision }
+          : validated.snapshot,
       }
     } catch (error) {
       const message = errorMessage(error)

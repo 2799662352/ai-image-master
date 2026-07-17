@@ -5,7 +5,10 @@ import path from 'node:path'
 
 import { AgentManager } from '../AgentManager'
 import type { AgentInput, IAgentBackend } from '../types'
-import type { AgentStreamEvent } from '../../../types/agent'
+import type {
+  AgentModelSettingsCatalog,
+  AgentStreamEvent,
+} from '../../../types/agent'
 
 let tmpDir: string
 
@@ -18,6 +21,53 @@ function deferred(): {
     resolve = resolvePromise
   })
   return { promise, resolve }
+}
+
+/**
+ * Poisons a manager through a failed grok Channel switch, then heals restarts
+ * so only the recovery-time validation under test can keep the poison.
+ */
+async function createPoisonedRecoveryManager(): Promise<{
+  manager: AgentManager
+  catalog: AgentModelSettingsCatalog
+}> {
+  let epoch = 1
+  let failRestarts = false
+  const backend = {
+    async start() {},
+    async stop() {},
+    isHealthy: () => true,
+    currentEpoch: () => epoch,
+    setProvider: vi.fn(),
+    async restartCodex() {
+      if (failRestarts) throw new Error('runtime unhealthy')
+      epoch += 1
+    },
+    async cancel() {},
+    async *send(): AsyncIterable<AgentStreamEvent> {},
+  } satisfies IAgentBackend
+  const manager = new AgentManager({
+    userDataDir: tmpDir,
+    backend,
+    store: {
+      createThread: async () => ({ id: 'thread-poisoned-catalog' }),
+      addMessage: async () => ({ id: 'message-poisoned-catalog' }),
+      updateLastMessageAt: async () => undefined,
+    } as never,
+    attachments: { ingest: async () => [] } as never,
+    eventSink: () => {},
+  })
+  await manager.setCodexApiKey('test-key')
+  const catalogResult = await manager.getModelSettingsCatalogRpc()
+  if (!catalogResult.ok) throw new Error(catalogResult.error)
+  failRestarts = true
+  await expect(manager.sendMessage({
+    content: 'poison runtime',
+    attachments: [],
+    model: 'grok-4.5',
+  })).rejects.toThrow(/runtime unhealthy|recovery/i)
+  failRestarts = false
+  return { manager, catalog: catalogResult.data }
 }
 
 beforeEach(async () => {
@@ -666,5 +716,155 @@ describe('AgentManager model-selection turn admission', () => {
     })).resolves.toMatchObject({ threadId: 'legacy-thread' })
     expect(setThreadModel).toHaveBeenCalledWith('legacy-thread', 'gpt-5.5')
     expect(addMessage).toHaveBeenCalled()
+  })
+
+  it('rejects an auxiliary provider key write queued before recovery poison landed', async () => {
+    let epoch = 1
+    let blockNextRestart = false
+    let failRestarts = false
+    let restartCalls = 0
+    const restartStarted = deferred()
+    const releaseRestart = deferred()
+    const backend = {
+      async start() {},
+      async stop() {},
+      isHealthy: () => true,
+      currentEpoch: () => epoch,
+      setProvider: vi.fn(),
+      async restartCodex() {
+        restartCalls += 1
+        if (blockNextRestart) {
+          blockNextRestart = false
+          restartStarted.resolve()
+          await releaseRestart.promise
+        }
+        if (failRestarts) throw new Error('runtime unhealthy')
+        epoch += 1
+      },
+      async cancel() {},
+      async *send(): AsyncIterable<AgentStreamEvent> {},
+    } satisfies IAgentBackend
+    const manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend,
+      eventSink: () => {},
+    })
+    await manager.setCodexApiKey('test-key')
+    const catalog = await manager.getModelSettingsCatalogRpc()
+    if (!catalog.ok) throw new Error(catalog.error)
+    const grok = catalog.data.models.find((model) => model.id === 'grok-4.5')
+    if (!grok) throw new Error('Expected Grok catalog entry')
+    failRestarts = true
+    blockNextRestart = true
+
+    const poisoningSelection = manager.applyModelSelectionRpc({
+      gatewayId: catalog.data.gatewayId,
+      modelId: grok.id,
+      contextWindow: grok.capabilities.defaultContextWindow,
+      catalogRevision: catalog.data.revision,
+      requestVersion: 1,
+    })
+    await restartStarted.promise
+    // Passes the entry-time poison check, then waits behind the selection.
+    const auxKeyWrite = manager.setProviderApiKey('apiyi-mcp', 'aux-key-race')
+    releaseRestart.resolve()
+
+    await expect(poisoningSelection).resolves.toMatchObject({
+      ok: false,
+      recoveryRequired: true,
+    })
+    const restartsAfterPoison = restartCalls
+    await expect(auxKeyWrite).rejects.toThrow(
+      /model.selection recovery required|模型.*恢复/i,
+    )
+    expect(restartCalls).toBe(restartsAfterPoison)
+    const providers = await manager.getProvidersSnapshot()
+    expect(providers.apiKeys['apiyi-mcp']).toBeUndefined()
+  })
+
+  it('keeps poison when the refreshed recovery catalog drops the saved model', async () => {
+    const { manager, catalog } = await createPoisonedRecoveryManager()
+    vi.spyOn(manager, 'getModelSettingsCatalogRpc').mockResolvedValue({
+      ok: true,
+      data: {
+        ...catalog,
+        models: catalog.models.filter((model) => model.id !== 'gpt-5.5'),
+      },
+    })
+
+    await expect(manager.recoverModelSelectionRpc()).resolves.toMatchObject({
+      ok: false,
+      stage: 'recovery',
+      recoveryRequired: true,
+      error: expect.stringMatching(/no longer contains model gpt-5\.5/i),
+    })
+    expect(await manager.getModelContextConfigRpc()).toMatchObject({
+      ok: true,
+      data: { recoveryRequired: true },
+    })
+  })
+
+  it('keeps poison when the saved model is unavailable after recovery', async () => {
+    const { manager, catalog } = await createPoisonedRecoveryManager()
+    vi.spyOn(manager, 'getModelSettingsCatalogRpc').mockResolvedValue({
+      ok: true,
+      data: {
+        ...catalog,
+        models: catalog.models.map((model) => (
+          model.id === 'gpt-5.5'
+            ? {
+                ...model,
+                availability: {
+                  status: 'needs-key' as const,
+                  reason: 'API key required for recovery',
+                },
+              }
+            : model
+        )),
+      },
+    })
+
+    await expect(manager.recoverModelSelectionRpc()).resolves.toMatchObject({
+      ok: false,
+      stage: 'recovery',
+      recoveryRequired: true,
+      error: expect.stringMatching(/API key required for recovery/i),
+    })
+    expect(await manager.getModelContextConfigRpc()).toMatchObject({
+      ok: true,
+      data: { recoveryRequired: true },
+    })
+  })
+
+  it('keeps poison when the saved Context is unsupported after recovery', async () => {
+    const { manager, catalog } = await createPoisonedRecoveryManager()
+    vi.spyOn(manager, 'getModelSettingsCatalogRpc').mockResolvedValue({
+      ok: true,
+      data: {
+        ...catalog,
+        models: catalog.models.map((model) => (
+          model.id === 'gpt-5.5'
+            ? {
+                ...model,
+                capabilities: {
+                  ...model.capabilities,
+                  contextOptions: [{ value: 500_000, experimental: false }],
+                },
+              }
+            : model
+        )),
+      },
+    })
+
+    await expect(manager.recoverModelSelectionRpc()).resolves.toMatchObject({
+      ok: false,
+      stage: 'recovery',
+      recoveryRequired: true,
+      error: expect.stringMatching(/context window 272000.*not supported/i),
+    })
+    expect(await manager.getModelContextConfigRpc()).toMatchObject({
+      ok: true,
+      data: { recoveryRequired: true },
+    })
   })
 })

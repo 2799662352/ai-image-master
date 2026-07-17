@@ -958,7 +958,9 @@ describe('AgentModelSelectionCoordinator', () => {
       },
       threadId: undefined,
     }))
-    const refreshRecoveryCatalog = vi.fn(async () => undefined)
+    const refreshRecoveryCatalog = vi.fn(async () => ({
+      catalogRevision: 'catalog-2',
+    }))
     const coordinator = new AgentModelSelectionCoordinator({
       channelController: harness.channelController,
       getSnapshot: () => ({
@@ -991,6 +993,7 @@ describe('AgentModelSelectionCoordinator', () => {
       recoveryRequired: false,
       snapshot: {
         thread: { exists: false },
+        catalogRevision: 'catalog-2',
       },
     })
     expect(validateRecovery).toHaveBeenCalledWith(

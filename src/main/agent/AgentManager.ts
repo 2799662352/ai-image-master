@@ -1090,9 +1090,12 @@ export class AgentManager {
 
     // Auxiliary MCP/understanding keys are intentionally not Codex Provider
     // selection transactions. Preserve their dedicated restart behavior.
-    await this.enqueueProviderStoreOperation(
-      () => this.providerStore.setApiKey(id, next),
-    )
+    await this.enqueueProviderStoreOperation(() => {
+      // Root gate re-checked at execution time: a queued selection ahead of
+      // this write may poison the runtime after the entry-time check passed.
+      this.assertModelSelectionRecoveryResolved()
+      return this.providerStore.setApiKey(id, next)
+    })
     // The renderer mirrors its image-gen Miau token here (id='qwen') so Path B
     // subagents can reach the qwen understanding gateway. Keep the in-memory
     // copy fresh; it is consumed at the next codex (re)start via
@@ -1709,11 +1712,14 @@ export class AgentManager {
 
   /**
    * Rebuilds the catalog only after the saved Channel has a verified runtime.
-   * Poison clears only when the refreshed catalog still belongs to that Gateway.
+   * Poison clears only when the refreshed catalog still belongs to that
+   * Gateway and can actually serve the saved selection: the saved model must
+   * exist, route to the saved Channel, be available, and support the saved
+   * Context. Returns the refreshed revision for the recovery snapshot.
    */
   private async refreshModelSelectionRecoveryCatalog(
     snapshot: AgentModelSelectionSnapshot,
-  ): Promise<void> {
+  ): Promise<{ catalogRevision: string }> {
     const catalog = await this.getModelSettingsCatalogRpc()
     if (!catalog.ok) throw new Error(catalog.error)
     if (catalog.data.gatewayId !== snapshot.gatewayId) {
@@ -1721,7 +1727,34 @@ export class AgentManager {
         `Recovery catalog Gateway ${catalog.data.gatewayId} does not match ${snapshot.gatewayId}`,
       )
     }
+    const entry = catalog.data.models.find(
+      (model) => model.id === snapshot.modelId,
+    )
+    if (!entry) {
+      throw new Error(
+        `Recovery catalog for ${snapshot.gatewayId} no longer contains model ${snapshot.modelId}`,
+      )
+    }
+    if (entry.route.channelId !== snapshot.channelId) {
+      throw new Error(
+        `Recovery model ${snapshot.modelId} now routes to Channel ${entry.route.channelId} instead of ${snapshot.channelId}`,
+      )
+    }
+    if (entry.availability.status !== 'available') {
+      throw new Error(
+        `Recovery model ${snapshot.modelId} is unavailable: ${entry.availability.reason}`,
+      )
+    }
+    const contextSupported = entry.capabilities.contextOptions.some(
+      (option) => option.value === snapshot.contextWindow,
+    )
+    if (!contextSupported) {
+      throw new Error(
+        `Recovery context window ${String(snapshot.contextWindow)} is not supported for model ${snapshot.modelId}`,
+      )
+    }
     this.currentModelCatalog = catalog.data
+    return { catalogRevision: catalog.data.revision }
   }
 
   private async resumeSelectedThread(threadId: string): Promise<void> {
