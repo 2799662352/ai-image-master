@@ -455,7 +455,8 @@ describe('useSettingsStore', () => {
         loadModelSettingsCatalog: vi.fn().mockImplementation(async () => {
           useAgentChatStore.setState({
             modelSettingsCatalog: {
-              provider: 'apiyi',
+              gatewayId: 'apiyi',
+              revision: 'apiyi-catalog-1',
               source: 'codex',
               models: [
                 {

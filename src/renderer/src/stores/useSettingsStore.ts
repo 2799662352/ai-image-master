@@ -376,7 +376,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
         (candidate) => candidate.id === confirmed,
       )
       const agentChat = useAgentChatStore.getState()
-      const catalog = agentChat.modelSettingsCatalog?.provider === confirmed
+      const catalog = agentChat.modelSettingsCatalog?.gatewayId === confirmed
         ? agentChat.modelSettingsCatalog
         : undefined
       const selectedInCatalog = catalog?.models.some(

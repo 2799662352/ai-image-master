@@ -2541,6 +2541,9 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     // canvas-aware without mutating the visible user message. See notifyCanvasOpened.
     const canvasContext = state.pendingCanvasContext
     if (state.isRunning) return
+    // A model-selection transaction may be restarting the backend Channel;
+    // sending mid-transaction could route to the wrong Gateway/Channel.
+    if (state.modelSelectionPending !== undefined) return
     if (!content && attachments.length === 0 && references.length === 0) return
 
     const modelSelection = resolveModelSelectionForMode(
@@ -2737,6 +2740,9 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     const content = state.input.trim()
     const attachments = state.attachments
     const references = state.pendingReferences
+    // Mirror send(): never inject input while a model-selection transaction
+    // may be restarting the backend Channel.
+    if (state.modelSelectionPending !== undefined) return
     // Steering only makes sense mid-turn on an existing thread. If nothing is
     // running, defer to a normal send so a stray call never silently drops input.
     if (!state.isRunning || !state.threadId) {

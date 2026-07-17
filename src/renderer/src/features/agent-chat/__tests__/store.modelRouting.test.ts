@@ -108,7 +108,9 @@ function selectionSnapshot(
   }
 }
 
-function rollbackFailure(requestVersion: number): AgentModelSelectionApplyResult {
+function rollbackFailure(
+  requestVersion: number,
+): Extract<AgentModelSelectionApplyResult, { ok: false }> {
   return {
     ok: false,
     error: 'gateway timeout',
@@ -207,7 +209,8 @@ describe('useAgentChatStore model routing transactions', () => {
   it('keeps the old model and exposes retry after rollback', async () => {
     const applyModelSelection = vi.fn(async (
       payload: AgentModelSelectionApplyPayload,
-    ) => rollbackFailure(payload.requestVersion))
+    ): Promise<AgentModelSelectionApplyResult> =>
+      rollbackFailure(payload.requestVersion))
     const store = await loadRoutingStore(applyModelSelection)
 
     await expect(store.getState().setSelectedModel('grok-4.5')).resolves.toBe(false)
@@ -334,5 +337,77 @@ describe('useAgentChatStore model routing transactions', () => {
       modelId: 'grok-4.5',
       contextWindow: 1_000_000,
     }))
+  })
+
+  it('poisons the settings owner when a failed selection requires recovery', async () => {
+    const applyModelSelection = vi.fn(async (
+      payload: AgentModelSelectionApplyPayload,
+    ): Promise<AgentModelSelectionApplyResult> => ({
+      ...rollbackFailure(payload.requestVersion),
+      recoveryRequired: true,
+      retryable: false,
+      rollback: {
+        ok: false,
+        error: 'rollback restart failed',
+        effectiveSnapshot: null,
+      },
+    }))
+    const store = await loadRoutingStore(applyModelSelection)
+
+    await expect(store.getState().setSelectedModel('grok-4.5')).resolves.toBe(false)
+
+    expect(store.getState().selectedModelId).toBe('gpt-5.5')
+    expect(store.getState().modelSettingsRecoveryRequired).toBe(true)
+    expect(store.getState().modelSettingsError).toMatch(/回滚未恢复.*手动重启/)
+    expect(store.getState().modelSelectionError).toMatchObject({
+      kind: 'transient',
+      retryable: false,
+    })
+  })
+
+  it('blocks send and steer while a selection transaction is pending', async () => {
+    const gate = deferred<AgentModelSelectionApplyResult>()
+    const sendMessage = vi.fn().mockResolvedValue({ threadId: 'thread-1' })
+    const steer = vi.fn().mockResolvedValue(undefined)
+    ;(window as unknown as { electronAPI: unknown }).electronAPI = {
+      agent: {
+        applyModelSelection: () => gate.promise,
+        sendMessage,
+        steer,
+      },
+    }
+    const store = await loadFreshStore()
+    store.setState({
+      selectedModelId: 'gpt-5.5',
+      activeModelContextWindow: 272_000,
+      modelContextWindowByModel: {},
+      modelSettingsCatalog: routingCatalog(),
+    } as never)
+
+    const pending = store.getState().setSelectedModel('grok-4.5')
+    expect(store.getState().modelSelectionPending?.modelId).toBe('grok-4.5')
+
+    store.setState({
+      input: 'hello during switch',
+      attachments: [],
+      pendingReferences: [],
+      isRunning: false,
+    } as never)
+    await store.getState().send()
+    expect(sendMessage).not.toHaveBeenCalled()
+
+    store.setState({ isRunning: true, threadId: 'thread-1' } as never)
+    await store.getState().steer()
+    expect(steer).not.toHaveBeenCalled()
+
+    store.setState({ isRunning: false } as never)
+    gate.resolve({
+      ok: true,
+      data: { ...selectionSnapshot(), requestVersion: 1 },
+    })
+    await expect(pending).resolves.toBe(true)
+
+    await store.getState().send()
+    expect(sendMessage).toHaveBeenCalledTimes(1)
   })
 })

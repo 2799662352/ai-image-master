@@ -698,6 +698,7 @@ export function createModelRoutingSlice(
         message: string,
         kind: AgentModelSelectionErrorKind,
         retryable: boolean,
+        recoveryRequired = false,
       ): false => {
         // latest-wins: a newer request owns pending/error state now.
         if (get().modelSelectionRequestSequence !== requestVersion) return false
@@ -705,6 +706,17 @@ export function createModelRoutingSlice(
           modelSelectionPending: undefined,
           modelSelectionFailedIntent: payload,
           modelSelectionError: { message, kind, retryable },
+          // A failed rollback poisons the backend config; surface the same
+          // sticky recovery owner the Context path uses so the settings UI
+          // demands an explicit recovery before further automatic applies.
+          ...(recoveryRequired
+            ? {
+                modelSettingsRecoveryRequired: true,
+                modelSettingsError:
+                  `模型切换失败且回滚未恢复：${message}；`
+                  + '请手动重启 Agent Workspace/Codex 或重新应用模型。',
+              }
+            : {}),
         })
         // Re-own capabilities for the kept (old) model after the eager claim.
         void get().loadCollaborationCapabilities()
@@ -732,7 +744,14 @@ export function createModelRoutingSlice(
             : {})
         return false
       }
-      if (!result.ok) return fail(result.error, result.kind, result.retryable)
+      if (!result.ok) {
+        return fail(
+          result.error,
+          result.kind,
+          result.retryable,
+          result.recoveryRequired,
+        )
+      }
 
       const confirmed = result.data
       const persisted = persistCanonicalModelId(confirmed.modelId)
