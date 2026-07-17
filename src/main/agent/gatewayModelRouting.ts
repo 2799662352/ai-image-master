@@ -26,6 +26,21 @@ export type AuthorizedGatewayRouteContext =
   | { source: 'builtin'; gatewayId: string }
   | { source: 'model-catalog'; gatewayId: string }
 
+/**
+ * Thrown when a model is not in the fixed `allowedModels` list of the
+ * builtin Channel its inferred family would route it to (e.g. an
+ * unrecognized Grok variant on a single-model Grok Channel). Callers that
+ * aggregate many models from an untrusted list (dynamic `model/list` rows)
+ * can catch this specific type to skip just the offending row instead of
+ * failing the whole catalog.
+ */
+export class ModelUnavailableInGatewayError extends Error {
+  constructor(readonly modelId: string, readonly gatewayId: string) {
+    super(`Model "${modelId}" is unavailable in gateway "${gatewayId}"`)
+    this.name = 'ModelUnavailableInGatewayError'
+  }
+}
+
 const BUILTIN_GATEWAYS: readonly GatewayPreset[] = Object.freeze([
   Object.freeze({
     id: 'apiyi',
@@ -166,9 +181,7 @@ export function resolveGatewayModelRoute(
     channel.allowedModels
     && !channel.allowedModels.includes(normalizedModel)
   ) {
-    throw new Error(
-      `Model "${normalizedModel}" is unavailable in gateway "${gatewayId}"`,
-    )
+    throw new ModelUnavailableInGatewayError(normalizedModel, gatewayId)
   }
 
   return { gatewayId, channelId, modelId: normalizedModel, family }

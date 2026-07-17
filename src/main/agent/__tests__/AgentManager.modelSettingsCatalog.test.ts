@@ -418,6 +418,73 @@ describe('AgentManager model settings catalog and snapshot', () => {
     )).toBe(true)
   })
 
+  it('routes a real custom gateway through its single custom channel on the dynamic path', async () => {
+    const backend = makeBackend([
+      modelRow({ id: 'acme-vision-1', model: 'acme-vision-1' }),
+    ])
+    const manager = makeManager(backend)
+    await manager.addCustomProvider({
+      id: 'acme',
+      name: 'Acme Gateway',
+      baseUrl: 'https://acme.example/v1',
+      envKey: 'OPENAI_API_KEY',
+    })
+    await manager.setActiveProvider('acme')
+    await manager.setProviderApiKey('acme', 'sk-test')
+
+    const result = await manager.getModelSettingsCatalogRpc()
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('Expected catalog')
+    expect(result.data.gatewayId).toBe('acme')
+    expect(result.data.source).toBe('codex')
+    expect(result.data.models.find((model) => model.id === 'acme-vision-1')).toMatchObject({
+      route: { gatewayId: 'acme', channelId: 'custom:acme' },
+      availability: { status: 'available' },
+    })
+  })
+
+  it('falls back for a real custom gateway without throwing when model/list fails', async () => {
+    const backend = makeBackend([])
+    backend.listError = new Error('model/list unavailable')
+    const manager = makeManager(backend)
+    await manager.addCustomProvider({
+      id: 'acme',
+      name: 'Acme Gateway',
+      baseUrl: 'https://acme.example/v1',
+      envKey: 'OPENAI_API_KEY',
+    })
+    await manager.setActiveProvider('acme')
+    await manager.setProviderApiKey('acme', 'sk-test')
+
+    const result = await manager.getModelSettingsCatalogRpc()
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('Expected fallback catalog')
+    expect(result.data.gatewayId).toBe('acme')
+    expect(result.data.source).toBe('fallback')
+    expect(result.data.models.length).toBeGreaterThan(0)
+    expect(result.data.models.every((model) => model.route.channelId === 'custom:acme'))
+      .toBe(true)
+  })
+
+  it('skips an unroutable dynamic row instead of failing the whole catalog', async () => {
+    const backend = makeBackend([
+      modelRow(),
+      // Inferred as the "xai" family but not in apiyi-grok's fixed allowlist —
+      // must be skipped without dropping the other rows.
+      modelRow({ id: 'grok-3', model: 'grok-3', displayName: 'Grok 3' }),
+    ])
+    const manager = await makeManagerWithCredential(backend, 'apiyi')
+
+    const result = await manager.getModelSettingsCatalogRpc()
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('Expected catalog')
+    expect(result.data.models.map((model) => model.id)).not.toContain('grok-3')
+    expect(result.data.models.find((model) => model.id === 'gpt-5.6-sol')).toBeDefined()
+  })
+
   it('returns a fresh confirmed context snapshot that callers cannot mutate', async () => {
     const manager = makeManager(makeBackend([]))
 

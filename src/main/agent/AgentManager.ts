@@ -70,6 +70,7 @@ import {
 import type {
   CodexCollaborationMode,
   CodexCollaborationModeMask,
+  CodexModelListResponse,
 } from './codexProtocol'
 import {
   CodexRuntimeSettingsStore,
@@ -1282,6 +1283,8 @@ export class AgentManager {
       if (providerBarrier !== this.providerCapabilityBarrier) continue
 
       const provider = this.channelController.currentChannelId()
+      const gatewayId = this.activeGatewayId
+      const customProviders = this.providerStore.loadSync().customProviders
       const backendEpoch = this.backend.currentEpoch?.()
       const ownerStillCurrent = (): boolean =>
         this.providerCapabilityBarrier === providerBarrier
@@ -1292,53 +1295,54 @@ export class AgentManager {
         )
 
       if (!providerReady || typeof this.backend.listModels !== 'function') {
-        return { ok: true, data: this.fallbackModelSettingsCatalog(provider) }
+        return {
+          ok: true,
+          data: this.fallbackModelSettingsCatalog(gatewayId, customProviders),
+        }
       }
 
+      let response: CodexModelListResponse
       try {
-        const response = await this.backend.listModels({ includeHidden: false })
+        response = await this.backend.listModels({ includeHidden: false })
+      } catch {
         if (!ownerStillCurrent()) continue
-        const persisted = this.providerStore.loadSync()
-        const dynamicModels = response.data.map((row) => ({
+        return {
+          ok: true,
+          data: this.fallbackModelSettingsCatalog(gatewayId, customProviders),
+        }
+      }
+      if (!ownerStillCurrent()) continue
+
+      const catalog = buildGatewayModelCatalog({
+        gatewayId,
+        dynamicSource: 'codex',
+        dynamicModels: response.data.map((row) => ({
           id: row.id,
           displayName: row.displayName,
           description: row.description,
           hidden: row.hidden,
           isDefault: row.isDefault,
-          capabilities: mergeModelSettingsCapabilities({
-            model: row.model,
-            gatewayId: this.activeGatewayId,
-            channelId: resolveGatewayModelRoute(
-              this.activeGatewayId,
-              row.model,
-              persisted.customProviders,
-            ).channelId,
-            defaultReasoningEffort: row.defaultReasoningEffort,
-            supportedReasoningEfforts: row.supportedReasoningEfforts.map(
-              (effort) => effort.reasoningEffort,
-            ),
-          }),
-        }))
-        const catalog = buildGatewayModelCatalog({
-          gatewayId: this.activeGatewayId,
-          dynamicSource: 'codex',
-          dynamicModels,
-          hasCredential: Boolean(this.codexApiKey),
-          availabilityByModel: this.modelAvailabilityByGateway.get(
-            this.activeGatewayId,
-          ) ?? new Map(),
-        })
-        return { ok: true, data: catalog }
-      } catch {
-        if (!ownerStillCurrent()) continue
-        return { ok: true, data: this.fallbackModelSettingsCatalog(provider) }
-      }
+          defaultReasoningEffort: row.defaultReasoningEffort,
+          supportedReasoningEfforts: row.supportedReasoningEfforts.map(
+            (effort) => effort.reasoningEffort,
+          ),
+        })),
+        customProviders,
+        hasCredential: Boolean(this.codexApiKey),
+        availabilityByModel: this.modelAvailabilityByGateway.get(gatewayId)
+          ?? new Map(),
+      })
+      return { ok: true, data: catalog }
     }
-    const provider = this.channelController.currentChannelId()
+    const gatewayId = this.activeGatewayId
+    const customProviders = this.providerStore.loadSync().customProviders
     console.warn(
-      `[AgentManager] model settings catalog owner changed ${maxOwnerAttempts} times; using fallback for ${provider}`,
+      `[AgentManager] model settings catalog owner changed ${maxOwnerAttempts} times; using fallback for ${gatewayId}`,
     )
-    return { ok: true, data: this.fallbackModelSettingsCatalog(provider) }
+    return {
+      ok: true,
+      data: this.fallbackModelSettingsCatalog(gatewayId, customProviders),
+    }
   }
 
   getModelContextConfigRpc(): Promise<AgentModelContextSnapshotResult> {
@@ -1468,37 +1472,29 @@ export class AgentManager {
     return resolveGatewayModelRoute(gatewayId, modelId, persisted.customProviders)
   }
 
-  private fallbackModelSettingsCatalog(provider: string): AgentModelSettingsCatalog {
-    const gatewayId = credentialIdForProvider(provider)
+  /**
+   * Builds the canonical fallback catalog for `gatewayId` — the same
+   * user-visible Gateway id used by the live Codex `model/list` path, never
+   * an internal Channel id. `buildGatewayModelCatalog()` resolves each
+   * canonical row's route and marks its context options conservative itself
+   * (via `dynamicSource: 'fallback'`); this method only supplies the raw
+   * canonical rows and availability.
+   */
+  private fallbackModelSettingsCatalog(
+    gatewayId: string,
+    customProviders: readonly ProviderPreset[],
+  ): AgentModelSettingsCatalog {
     return buildGatewayModelCatalog({
       gatewayId,
       dynamicSource: 'fallback',
-      dynamicModels: CANONICAL_MODEL_SETTINGS_ROWS.map((row) => {
-        const route = this.modelRoute(provider, row.id)
-        return {
-          id: row.id,
-          displayName: row.displayName,
-          description: row.description,
-          hidden: false,
-          isDefault: row.isDefault,
-          capabilities: {
-            ...mergeModelSettingsCapabilities({
-              model: row.id,
-              gatewayId: route.gatewayId,
-              channelId: route.channelId,
-              supportedReasoningEfforts: [],
-            }),
-            contextOptions: modelContextOptions(
-              row.id,
-              route.gatewayId,
-              route.channelId,
-            ).map((option) => ({
-              ...option,
-              conservative: true,
-            })),
-          },
-        }
-      }),
+      dynamicModels: CANONICAL_MODEL_SETTINGS_ROWS.map((row) => ({
+        id: row.id,
+        displayName: row.displayName,
+        description: row.description,
+        hidden: false,
+        isDefault: row.isDefault,
+      })),
+      customProviders,
       hasCredential: Boolean(this.codexApiKey),
       availabilityByModel: this.modelAvailabilityByGateway.get(gatewayId)
         ?? new Map(),
