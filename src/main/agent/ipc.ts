@@ -8,6 +8,7 @@ import type {
   AgentCollaborationModeUpdatePayload,
   AgentCollaborationModeUpdateResult,
   AgentModelContextApplyPayload,
+  AgentModelSelectionApplyPayload,
   AgentSendMessagePayload,
   AgentToolResponse,
   CodexApprovalResponse,
@@ -65,6 +66,7 @@ const AGENT_HANDLE_CHANNELS = [
   'agent:model-settings-catalog',
   'agent:model-context-get',
   'agent:model-context-apply',
+  'agent:model-selection-apply',
   'agent:model-selection-recover',
   'agent:plugin-list',
   'agent:plugin-installed',
@@ -84,6 +86,9 @@ const AGENT_HANDLE_CHANNELS = [
   'agent:get-providers',
   'agent:set-active-provider',
   'agent:set-provider-api-key',
+  'agent:get-gateways',
+  'agent:set-active-gateway',
+  'agent:set-gateway-api-key',
   'agent:add-custom-provider',
   'agent:update-custom-provider',
   'agent:remove-custom-provider',
@@ -343,6 +348,15 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
   ipcMain.handle('agent:model-context-apply', async (_event, payload: unknown) =>
     (await getManager()).applyModelContextRpc(validateModelContextApplyPayload(payload)),
   )
+  ipcMain.handle('agent:model-selection-apply', async (_event, payload: unknown) => {
+    try {
+      return await (await getManager()).applyModelSelectionRpc(
+        validateModelSelectionApplyPayload(payload),
+      )
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
   ipcMain.handle('agent:model-selection-recover', async () =>
     (await getManager()).recoverModelSelectionRpc(),
   )
@@ -394,6 +408,32 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
     try {
       const snapshot = await (await getManager()).getProvidersSnapshot()
       return { ok: true as const, ...snapshot }
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+  ipcMain.handle('agent:get-gateways', async () => {
+    try {
+      const snapshot = await (await getManager()).getGatewaysSnapshotRpc()
+      return { ok: true as const, ...snapshot }
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+  ipcMain.handle('agent:set-active-gateway', async (_event, id: unknown) => {
+    try {
+      return await (await getManager()).setActiveGatewayRpc(validateWorkspaceId(id, 'Gateway id'))
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+  ipcMain.handle('agent:set-gateway-api-key', async (_event, id: unknown, key: unknown) => {
+    try {
+      if (typeof key !== 'string') throw new Error('Gateway API key must be a string')
+      return await (await getManager()).setGatewayApiKeyRpc(
+        validateWorkspaceId(id, 'Gateway id'),
+        key,
+      )
     } catch (err) {
       return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
     }
@@ -638,6 +678,66 @@ function validateModelContextApplyPayload(value: unknown): AgentModelContextAppl
     throw new Error('Model context threadId must be a non-empty string')
   }
   return value as AgentModelContextApplyPayload
+}
+
+function validateModelSelectionApplyPayload(value: unknown): AgentModelSelectionApplyPayload {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Model selection apply payload must be a plain object')
+  }
+  const prototype = Object.getPrototypeOf(value)
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new Error('Model selection apply payload must be a plain object')
+  }
+
+  const allowedKeys = new Set([
+    'threadId',
+    'gatewayId',
+    'modelId',
+    'contextWindow',
+    'catalogRevision',
+    'requestVersion',
+  ])
+  const ownKeys = Reflect.ownKeys(value)
+  if (
+    ownKeys.some((key) => typeof key !== 'string' || !allowedKeys.has(key))
+    || !Object.hasOwn(value, 'gatewayId')
+    || !Object.hasOwn(value, 'modelId')
+    || !Object.hasOwn(value, 'contextWindow')
+    || !Object.hasOwn(value, 'catalogRevision')
+    || !Object.hasOwn(value, 'requestVersion')
+  ) {
+    throw new Error('Model selection apply payload contains invalid fields')
+  }
+
+  const input = value as Record<string, unknown>
+  if (typeof input.gatewayId !== 'string' || input.gatewayId.trim().length === 0) {
+    throw new Error('Model selection gatewayId must be a non-empty string')
+  }
+  if (typeof input.modelId !== 'string' || input.modelId.trim().length === 0) {
+    throw new Error('Model selection modelId must be a non-empty string')
+  }
+  if (
+    !Number.isSafeInteger(input.contextWindow)
+    || (input.contextWindow as number) <= 0
+  ) {
+    throw new Error('Model selection contextWindow must be a positive safe integer')
+  }
+  if (
+    typeof input.catalogRevision !== 'string'
+    || input.catalogRevision.trim().length === 0
+  ) {
+    throw new Error('Model selection catalogRevision must be a non-empty string')
+  }
+  if (!Number.isSafeInteger(input.requestVersion) || (input.requestVersion as number) < 0) {
+    throw new Error('Model selection requestVersion must be a non-negative safe integer')
+  }
+  if (
+    input.threadId !== undefined
+    && (typeof input.threadId !== 'string' || input.threadId.trim().length === 0)
+  ) {
+    throw new Error('Model selection threadId must be a non-empty string')
+  }
+  return value as AgentModelSelectionApplyPayload
 }
 
 function validateListThreadsParams(

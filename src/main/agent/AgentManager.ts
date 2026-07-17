@@ -774,6 +774,42 @@ export class AgentManager {
     }
   }
 
+  /**
+   * Gateway-facing snapshot for the renderer. Thin alias over
+   * {@link getProvidersSnapshot}: builtin presets already are the user-facing
+   * Gateway cards (internal Channels stay hidden), so no second source of
+   * truth is introduced.
+   */
+  getGatewaysSnapshotRpc(): Promise<{
+    builtins: ProviderPreset[]
+    custom: ProviderPreset[]
+    activeId: string
+    apiKeys: Record<string, string>
+  }> {
+    return this.getProvidersSnapshot()
+  }
+
+  /**
+   * Activates a user-facing Gateway. Thin alias over {@link setActiveProvider}
+   * so Gateway IPC reuses the single applied-provider transaction.
+   */
+  setActiveGatewayRpc(
+    id: string,
+  ): Promise<{ ok: true } & AgentProviderMutationResult> {
+    return this.setActiveProvider(id)
+  }
+
+  /**
+   * Updates a Gateway credential. Thin alias over {@link setProviderApiKey};
+   * per-gateway keys share the existing credential store and transaction.
+   */
+  setGatewayApiKeyRpc(
+    id: string,
+    key: string,
+  ): Promise<{ ok: true } & AgentProviderMutationResult> {
+    return this.setProviderApiKey(id, key)
+  }
+
   async setActiveProvider(
     id: string,
   ): Promise<{ ok: true } & AgentProviderMutationResult> {
