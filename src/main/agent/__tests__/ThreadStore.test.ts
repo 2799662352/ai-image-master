@@ -101,6 +101,21 @@ describe('ThreadStore.setThreadModel', () => {
       data: { model: 'gpt-5.5' },
     })
   })
+
+  it('reads only the target thread model for transaction rollback', async () => {
+    const findUnique = vi.fn().mockResolvedValue({ model: 'thread-old-model' })
+    const store = new ThreadStore({
+      agentThread: { findUnique },
+    } as any)
+
+    await expect(store.getThreadModel('thread_target')).resolves.toBe(
+      'thread-old-model',
+    )
+    expect(findUnique).toHaveBeenCalledWith({
+      where: { id: 'thread_target' },
+      select: { model: true },
+    })
+  })
 })
 
 describe('ThreadStore.listThreads', () => {

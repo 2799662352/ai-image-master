@@ -88,6 +88,15 @@ export class ThreadStore {
     })
   }
 
+  /** Reads one thread's confirmed model for transaction rollback. */
+  async getThreadModel(threadId: string): Promise<string | null> {
+    const row = await this.prisma.agentThread.findUnique({
+      where: { id: threadId },
+      select: { model: true },
+    })
+    return row?.model ?? null
+  }
+
   async deleteThread(threadId: string): Promise<void> {
     await this.prisma.agentThread.delete({ where: { id: threadId } })
   }

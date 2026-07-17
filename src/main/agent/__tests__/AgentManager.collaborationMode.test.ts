@@ -73,8 +73,8 @@ function makeBackendWithPresets(
   backend.listModels = async () => ({
     data: [
       modelRow({
-        id: 'gpt-5.2-codex',
-        model: 'gpt-5.2-codex',
+        id: 'gpt-5.4',
+        model: 'gpt-5.4',
         supportedReasoningEfforts: [
           { reasoningEffort: 'low', description: 'low' },
           { reasoningEffort: 'medium', description: 'medium' },
@@ -280,7 +280,7 @@ describe('AgentManager collaborationMode', () => {
     await mgr.sendMessage({
       content: 'plan this',
       attachments: [],
-      model: 'gpt-5.2-codex',
+      model: 'gpt-5.4',
       collaborationModeKind: 'plan',
     })
     await flushMicrotasks()
@@ -289,7 +289,7 @@ describe('AgentManager collaborationMode', () => {
     expect(backend.calls[0].input.collaborationMode).toEqual({
       mode: 'plan',
       settings: {
-        model: 'gpt-5.2-codex',
+        model: 'gpt-5.4',
         reasoning_effort: 'medium',
         developer_instructions: null,
       },
@@ -331,7 +331,7 @@ describe('AgentManager collaborationMode', () => {
     await mgr.sendMessage({
       content: 'plan this',
       attachments: [],
-      model: 'gpt-5.2-codex',
+      model: 'gpt-5.4',
       collaborationModeKind: 'plan',
     })
     await flushMicrotasks()
@@ -340,7 +340,7 @@ describe('AgentManager collaborationMode', () => {
     expect(backend.calls[0].input.collaborationMode).toEqual({
       mode: 'plan',
       settings: {
-        model: 'gpt-5.2-codex',
+        model: 'gpt-5.4',
         reasoning_effort: 'medium',
         developer_instructions: null,
       },
@@ -376,7 +376,7 @@ describe('AgentManager collaborationMode', () => {
     await mgr.sendMessage({
       content: 'plan this',
       attachments: [],
-      model: 'gpt-5.2-codex',
+      model: 'gpt-5.4',
       collaborationModeKind: 'plan',
     })
     await flushMicrotasks()
@@ -385,7 +385,7 @@ describe('AgentManager collaborationMode', () => {
     expect(backend.calls[0].input.collaborationMode).toEqual({
       mode: 'plan',
       settings: {
-        model: 'gpt-5.2-codex',
+        model: 'gpt-5.4',
         reasoning_effort: null,
         developer_instructions: null,
       },

@@ -105,6 +105,8 @@ export interface IAgentBackend {
    * that expose runtime restart controls use this to reject unsafe restarts.
    */
   hasInFlightWork?(): boolean
+  /** True only while at least one Codex turn is active. */
+  hasActiveTurns?(): boolean
   /**
    * Monotonic generation counter that increments every time the underlying
    * agent process is (re)spawned — crash self-heal via `start()`, or a

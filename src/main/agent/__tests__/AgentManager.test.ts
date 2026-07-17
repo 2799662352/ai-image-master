@@ -1860,11 +1860,15 @@ describe('AgentManager codex thread id mapping (regression: invalid thread id)',
       backend,
     })
 
-    await mgr.sendMessage({ content: 'hi', attachments: [], model: 'o3-pro' })
+    await mgr.sendMessage({
+      content: 'hi',
+      attachments: [],
+      model: 'gpt-5.4',
+    })
     await flushMicrotasks(20)
 
     expect(backend.calls).toHaveLength(1)
-    expect(backend.calls[0].input.model).toBe('o3-pro')
+    expect(backend.calls[0].input.model).toBe('gpt-5.4')
   })
 
   it('falls back to default model when payload omits model', async () => {

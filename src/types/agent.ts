@@ -223,6 +223,11 @@ export interface AgentModelSelectionIntent {
   modelId: string
   contextWindow: number
   catalogRevision: string
+  /**
+   * `context-only` is reserved for the explicit Context control. Model and turn
+   * selection preserve the active Context whenever the target model supports it.
+   */
+  contextSource?: 'model-selection' | 'context-only'
 }
 
 /** A versioned model-selection request that may be tied to a persisted thread. */
@@ -237,6 +242,8 @@ export interface AgentModelSelectionSnapshot {
   gatewayId: string
   channelId: string
   modelId: string
+  /** Target thread's previous model, used only for thread-scoped rollback. */
+  threadModelId?: string
   contextWindow: number
   autoCompactTokenLimit: number
   catalogRevision: string
@@ -244,11 +251,13 @@ export interface AgentModelSelectionSnapshot {
   threadRestored: boolean
 }
 
+/** Stable classification for selection failures exposed across IPC. */
 export type AgentModelSelectionErrorKind =
   | 'configuration'
   | 'transient'
   | 'transaction'
 
+/** Last transaction stage reached before a selection failed. */
 export type AgentModelSelectionStage =
   | 'validate'
   | 'busy'
@@ -259,6 +268,7 @@ export type AgentModelSelectionStage =
   | 'verify'
   | 'rollback'
 
+/** Atomic selection outcome, including compensation and recovery state. */
 export type AgentModelSelectionApplyResult =
   | {
       ok: true
@@ -270,6 +280,8 @@ export type AgentModelSelectionApplyResult =
       kind: AgentModelSelectionErrorKind
       stage: AgentModelSelectionStage
       retryable: boolean
+      /** Runtime identity is unprovable until an explicit recovery succeeds. */
+      recoveryRequired: boolean
       requestVersion: number
       previous: AgentModelSelectionSnapshot
       rollback:
@@ -298,8 +310,10 @@ export type AgentModelContextApplyStage =
   | 'busy'
   | 'persist'
   | 'restart'
+  | 'catalog'
   | 'resume'
   | 'verify'
+  | 'rollback'
 
 export type AgentModelContextRollbackResult =
   | {

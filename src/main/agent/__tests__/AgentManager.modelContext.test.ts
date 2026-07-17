@@ -23,6 +23,17 @@ const TARGET_CONTEXT = {
 
 let tmpDir: string
 
+function deferred(): {
+  promise: Promise<void>
+  resolve: () => void
+} {
+  let resolve!: () => void
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
+
 beforeEach(async () => {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-model-context-'))
 })
@@ -137,7 +148,7 @@ describe('AgentManager model-context compatibility adapter', () => {
 
     expect(result).toMatchObject({
       ok: false,
-      stage: 'validate',
+      stage: 'catalog',
       rollback: { ok: true, activeConfig: PREVIOUS_CONTEXT },
     })
     expect(operations).toEqual([])
@@ -188,5 +199,77 @@ describe('AgentManager model-context compatibility adapter', () => {
       },
     })
     expect(operations).toEqual([])
+  })
+
+  it('retains an active supported Context during model selection', async () => {
+    const { manager, operations } = await createManager()
+    const explicit = await manager.applyModelContextRpc({
+      model: 'gpt-5.5',
+      contextWindow: 1_000_000,
+      requestVersion: 20,
+    })
+    expect(explicit).toMatchObject({
+      ok: true,
+      data: { contextWindow: 1_000_000 },
+    })
+    operations.length = 0
+    const catalog = await manager.getModelSettingsCatalogRpc()
+    if (!catalog.ok) throw new Error(catalog.error)
+
+    const selected = await manager.applyModelSelectionRpc({
+      gatewayId: catalog.data.gatewayId,
+      modelId: 'gpt-5.4',
+      contextWindow: 272_000,
+      catalogRevision: catalog.data.revision,
+      requestVersion: 21,
+    })
+
+    expect(selected).toMatchObject({
+      ok: true,
+      data: {
+        modelId: 'gpt-5.4',
+        contextWindow: 1_000_000,
+      },
+    })
+    expect(operations).toEqual([])
+  })
+
+  it('keeps confirmed Context public while a replacement restart is pending', async () => {
+    const restartStarted = deferred()
+    const releaseRestart = deferred()
+    const { manager, runtimeStore } = await createManager({
+      restart: async (call) => {
+        if (call !== 2) return
+        restartStarted.resolve()
+        await releaseRestart.promise
+      },
+    })
+
+    const applying = manager.applyModelContextRpc({
+      model: 'gpt-5.6-sol',
+      contextWindow: TARGET_CONTEXT.modelContextWindow,
+      requestVersion: 11,
+    })
+    await restartStarted.promise
+
+    await expect(manager.getModelContextConfigRpc()).resolves.toEqual({
+      ok: true,
+      data: {
+        ...PREVIOUS_CONTEXT,
+        recoveryRequired: false,
+      },
+    })
+    expect(runtimeStore.loadSync()).toEqual({
+      version: 1,
+      confirmed: PREVIOUS_CONTEXT,
+    })
+
+    releaseRestart.resolve()
+    await expect(applying).resolves.toMatchObject({
+      ok: true,
+      data: {
+        contextWindow: TARGET_CONTEXT.modelContextWindow,
+      },
+    })
   })
 })

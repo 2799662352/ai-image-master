@@ -682,6 +682,11 @@ export class CodexLocalBackend implements IAgentBackend {
     return this.client?.hasInFlightWork() ?? false
   }
 
+  /** Reports active Codex turns without conflating pending send setup. */
+  hasActiveTurns(): boolean {
+    return this.client?.hasActiveTurns() ?? false
+  }
+
   currentEpoch(): number {
     return this.epoch
   }

@@ -94,4 +94,17 @@ describe('ProviderChannelController', () => {
     )
     expect(controller.currentChannelId()).toBe('rightcode-standard')
   })
+
+  it('force-verifies the current Channel during explicit recovery', async () => {
+    const backend = createBackend()
+    const controller = createController(backend, 'rightcode-standard')
+
+    await controller.recover('rightcode-standard')
+
+    expect(backend.setProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'rightcode-standard' }),
+    )
+    expect(backend.restartCodex).toHaveBeenCalledTimes(1)
+    expect(controller.currentChannelId()).toBe('rightcode-standard')
+  })
 })

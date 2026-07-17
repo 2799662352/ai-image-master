@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -336,7 +336,7 @@ describe('AgentManager.steer (turn/steer)', () => {
     expect(result.threadId).toBe(first.threadId)
   })
 
-  it('repairs the requested model route before persisting a steering message', async () => {
+  it('repairs a legacy model-only route before persisting a steering message', async () => {
     const operations: string[] = []
     const backend = {
       async start() {},
@@ -379,12 +379,6 @@ describe('AgentManager.steer (turn/steer)', () => {
       content: 'route me before persistence',
       attachments: [],
       model: grok.id,
-      modelSelection: {
-        gatewayId: catalogResult.data.gatewayId,
-        modelId: grok.id,
-        contextWindow: grok.capabilities.defaultContextWindow,
-        catalogRevision: catalogResult.data.revision,
-      },
     })
 
     expect(operations.indexOf('channel:apiyi-grok')).toBeGreaterThanOrEqual(0)
@@ -392,6 +386,52 @@ describe('AgentManager.steer (turn/steer)', () => {
       operations.indexOf('message'),
     )
     expect(operations.indexOf('message')).toBeLessThan(operations.indexOf('steer'))
+  })
+
+  it('rejects steering model mismatch before persistence or backend admission', async () => {
+    const addMessage = vi.fn(async () => ({ id: 'message-mismatch' }))
+    const steer = vi.fn(async () => 'turn-mismatch')
+    const start = vi.fn(async () => undefined)
+    const manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend: {
+        start,
+        async stop() {},
+        isHealthy: () => false,
+        async cancel() {},
+        steer,
+        async *send(): AsyncIterable<AgentStreamEvent> {},
+      },
+      store: {
+        ...persistStubs,
+        addMessage,
+      } as never,
+      attachments: { ingest: async () => [] } as never,
+      eventSink: () => {},
+    })
+    await manager.setCodexApiKey('test-key')
+    const catalogResult = await manager.getModelSettingsCatalogRpc()
+    if (!catalogResult.ok) throw new Error(catalogResult.error)
+    const grok = catalogResult.data.models.find((model) => model.id === 'grok-4.5')
+    if (!grok) throw new Error('Expected Grok catalog entry')
+    start.mockClear()
+
+    await expect(manager.steer({
+      threadId: 'db-mismatch',
+      content: 'mismatch',
+      attachments: [],
+      model: 'gpt-5.5',
+      modelSelection: {
+        gatewayId: catalogResult.data.gatewayId,
+        modelId: grok.id,
+        contextWindow: grok.capabilities.defaultContextWindow,
+        catalogRevision: catalogResult.data.revision,
+      },
+    })).rejects.toThrow(/model.*mismatch|不一致/i)
+
+    expect(start).not.toHaveBeenCalled()
+    expect(addMessage).not.toHaveBeenCalled()
+    expect(steer).not.toHaveBeenCalled()
   })
 
   it('is a no-op (no backend.steer) when called without a threadId', async () => {

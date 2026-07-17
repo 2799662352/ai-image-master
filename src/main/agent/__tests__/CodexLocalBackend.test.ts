@@ -290,6 +290,7 @@ describe('CodexLocalBackend (with a fake codex app-server)', () => {
     backend = new CodexLocalBackend({ wsUrl: server.url })
     await backend.start()
     expect(backend.hasInFlightWork()).toBe(false)
+    expect(backend.hasActiveTurns()).toBe(false)
 
     const consumer = (async () => {
       for await (const _event of backend!.send(undefined, baseInput)) {
@@ -303,6 +304,7 @@ describe('CodexLocalBackend (with a fake codex app-server)', () => {
       await new Promise((resolve) => setTimeout(resolve, 10))
     }
     expect(backend.hasInFlightWork()).toBe(true)
+    expect(backend.hasActiveTurns()).toBe(true)
 
     server.pushNotification('turn/completed', {
       threadId: 'fake-thread',
@@ -311,6 +313,7 @@ describe('CodexLocalBackend (with a fake codex app-server)', () => {
     await consumer
 
     expect(backend.hasInFlightWork()).toBe(false)
+    expect(backend.hasActiveTurns()).toBe(false)
   })
 
   it('rejects restart while an active turn is running without closing the stream', async () => {

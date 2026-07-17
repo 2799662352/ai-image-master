@@ -88,6 +88,7 @@ import type {
   AgentModelAvailability,
   AgentModelSelectionApplyPayload,
   AgentModelSelectionApplyResult,
+  AgentModelSelectionIntent,
   AgentModelSelectionSnapshot,
   AgentModelSettingsCatalog,
   AgentModelSettingsCatalogResult,
@@ -570,17 +571,21 @@ export class AgentManager {
     }
     this.modelSelectionCoordinator = new AgentModelSelectionCoordinator({
       channelController: this.channelController,
-      getSnapshot: () => this.modelSelectionSnapshot(),
+      getSnapshot: (threadId) => this.modelSelectionSnapshot(threadId),
       catalogRevisionIsCurrent: (gatewayId, revision) =>
         this.currentModelCatalog.gatewayId === gatewayId
         && this.currentModelCatalog.revision === revision,
-      applyContext: (contextWindow) => this.applyRuntimeModelContext(contextWindow),
+      applyContext: (contextWindow, requestVersion) =>
+        this.applyRuntimeModelContext(contextWindow, requestVersion),
       persistSelection: (snapshot, threadId) =>
         this.persistModelSelection(snapshot, threadId),
       restoreSelection: (snapshot, threadId) =>
-        this.persistModelSelection(snapshot, threadId),
+        this.restoreModelSelection(snapshot, threadId),
       resumeThread: (threadId) => this.resumeSelectedThread(threadId),
       backendEpoch: () => this.backend.currentEpoch?.(),
+      hasActiveTurns: () => this.backend.hasActiveTurns?.() ?? false,
+      resolveContext: (payload, previous) =>
+        this.resolveModelSelectionContext(payload, previous),
       resolveRoute: (gatewayId, modelId) => {
         const persistedProviders = this.providerStore.loadSync()
         return resolveGatewayModelRoute(
@@ -1385,11 +1390,13 @@ export class AgentManager {
   }
 
   getModelContextConfigRpc(): Promise<AgentModelContextSnapshotResult> {
+    const recovery = this.modelSelectionCoordinator.getRecoveryState()
     return Promise.resolve({
       ok: true,
       data: {
         ...this.runtimeSettings.confirmed,
-        recoveryRequired: false,
+        recoveryRequired: recovery.recoveryRequired,
+        ...(recovery.error ? { recoveryError: recovery.error } : {}),
       },
     })
   }
@@ -1401,9 +1408,15 @@ export class AgentManager {
   applyModelSelectionRpc(
     payload: AgentModelSelectionApplyPayload,
   ): Promise<AgentModelSelectionApplyResult> {
-    this.modelSelectionCoordinator.noteRequestVersion(payload.requestVersion)
+    const modelSelectionPayload: AgentModelSelectionApplyPayload = {
+      ...payload,
+      contextSource: 'model-selection',
+    }
+    this.modelSelectionCoordinator.noteRequestVersion(
+      modelSelectionPayload.requestVersion,
+    )
     return this.enqueueLifecycleOperation(
-      () => this.modelSelectionCoordinator.apply(payload),
+      () => this.modelSelectionCoordinator.apply(modelSelectionPayload),
     )
   }
 
@@ -1414,22 +1427,35 @@ export class AgentManager {
   applyModelContextRpc(
     payload: AgentModelContextApplyPayload,
   ): Promise<AgentModelContextApplyResult> {
-    return this.applyModelSelectionRpc({
+    const contextPayload: AgentModelSelectionApplyPayload = {
       gatewayId: this.activeGatewayId,
       modelId: payload.model,
       contextWindow: payload.contextWindow,
       catalogRevision: this.currentModelCatalog.revision,
       threadId: payload.threadId,
       requestVersion: payload.requestVersion,
-    }).then((result) => mapSelectionResultToContextResult(result, payload))
+      contextSource: 'context-only',
+    }
+    this.modelSelectionCoordinator.noteRequestVersion(
+      contextPayload.requestVersion,
+    )
+    return this.enqueueLifecycleOperation(
+      () => this.modelSelectionCoordinator.apply(contextPayload),
+    ).then((result) => mapSelectionResultToContextResult(result, payload))
   }
 
-  private modelSelectionSnapshot(): AgentModelSelectionSnapshot {
+  private async modelSelectionSnapshot(
+    threadId?: string,
+  ): Promise<AgentModelSelectionSnapshot> {
     const persisted = this.providerStore.loadSync()
+    const threadModelId = threadId
+      ? await this.store?.getThreadModel?.(threadId) ?? undefined
+      : undefined
     return {
       gatewayId: this.activeGatewayId,
       channelId: this.channelController.currentChannelId(),
       modelId: persisted.selectedModelId,
+      ...(threadModelId ? { threadModelId } : {}),
       contextWindow: this.runtimeSettings.confirmed.modelContextWindow,
       autoCompactTokenLimit:
         this.runtimeSettings.confirmed.modelAutoCompactTokenLimit,
@@ -1463,18 +1489,47 @@ export class AgentManager {
     return null
   }
 
-  private async applyRuntimeModelContext(contextWindow: number): Promise<void> {
-    if (this.runtimeSettings.confirmed.modelContextWindow === contextWindow) return
-    const nextSettings: PersistedCodexRuntimeSettingsV1 = {
+  private resolveModelSelectionContext(
+    payload: AgentModelSelectionApplyPayload,
+    previous: AgentModelSelectionSnapshot,
+  ): number {
+    if (payload.contextSource === 'context-only') return payload.contextWindow
+    const entry = this.currentModelCatalog.models.find(
+      (model) => model.id === payload.modelId,
+    )
+    if (!entry) return payload.contextWindow
+    const supported = new Set(
+      entry.capabilities.contextOptions.map((option) => option.value),
+    )
+    if (supported.has(previous.contextWindow)) return previous.contextWindow
+    if (supported.has(payload.contextWindow)) return payload.contextWindow
+    return entry.capabilities.defaultContextWindow
+  }
+
+  private async applyRuntimeModelContext(
+    contextWindow: number,
+    requestVersion: number,
+  ): Promise<void> {
+    if (
+      this.runtimeSettings.confirmed.modelContextWindow === contextWindow
+      && !this.runtimeSettings.pending
+    ) {
+      return
+    }
+    const target = {
+      modelContextWindow: contextWindow,
+      modelAutoCompactTokenLimit: Math.floor(contextWindow * 0.9),
+    }
+    this.runtimeSettings = {
       version: 1,
-      confirmed: {
-        modelContextWindow: contextWindow,
-        modelAutoCompactTokenLimit: Math.floor(contextWindow * 0.9),
+      confirmed: { ...this.runtimeSettings.confirmed },
+      pending: {
+        target,
+        requestVersion,
+        startedAt: new Date().toISOString(),
       },
     }
-    // The default backend reads this getter at process spawn. Keep it in memory
-    // until the coordinator has atomically confirmed the durable selection.
-    this.runtimeSettings = cloneRuntimeSettings(nextSettings)
+    await this.runtimeSettingsStore.replace(this.runtimeSettings)
     if (!this.backend.isHealthy()) return
     const restart = this.backend.restartCodex?.bind(this.backend)
     if (!restart) throw new Error('Codex restart API is unavailable')
@@ -1500,6 +1555,30 @@ export class AgentManager {
     await this.runtimeSettingsStore.replace(settings)
     if (threadId) {
       await this.store?.setThreadModel?.(threadId, snapshot.modelId)
+    }
+    this.runtimeSettings = cloneRuntimeSettings(settings)
+    this.activeGatewayId = snapshot.gatewayId
+  }
+
+  private async restoreModelSelection(
+    snapshot: AgentModelSelectionSnapshot,
+    threadId?: string,
+  ): Promise<void> {
+    await this.providerStore.setSelectedGatewayId(snapshot.gatewayId)
+    await this.providerStore.setSelectedModelId(snapshot.modelId)
+    const settings: PersistedCodexRuntimeSettingsV1 = {
+      version: 1,
+      confirmed: {
+        modelContextWindow: snapshot.contextWindow,
+        modelAutoCompactTokenLimit: snapshot.autoCompactTokenLimit,
+      },
+    }
+    await this.runtimeSettingsStore.replace(settings)
+    if (threadId) {
+      await this.store?.setThreadModel?.(
+        threadId,
+        snapshot.threadModelId ?? snapshot.modelId,
+      )
     }
     this.runtimeSettings = cloneRuntimeSettings(settings)
     this.activeGatewayId = snapshot.gatewayId
@@ -2302,6 +2381,63 @@ export class AgentManager {
     )
   }
 
+  private turnModelSelectionIntent(
+    payload: AgentSendMessagePayload,
+  ): AgentModelSelectionIntent {
+    const payloadModel = payload.model?.trim()
+    if (payload.modelSelection) {
+      const intentModel = payload.modelSelection.modelId.trim()
+      if (payloadModel && payloadModel !== intentModel) {
+        throw new Error(
+          `Model selection mismatch: payload model ${payloadModel} does not match confirmed intent ${intentModel}`,
+        )
+      }
+      return {
+        ...payload.modelSelection,
+        modelId: intentModel,
+        contextSource: 'model-selection',
+      }
+    }
+
+    const persisted = this.providerStore.loadSync()
+    const modelId = payloadModel || persisted.selectedModelId
+    const entry = this.currentModelCatalog.models.find(
+      (model) => model.id === modelId,
+    )
+    if (!entry) {
+      throw new Error(`Model ${modelId} is not in the current catalog`)
+    }
+    return {
+      gatewayId: this.currentModelCatalog.gatewayId,
+      modelId,
+      contextWindow: entry.capabilities.defaultContextWindow,
+      catalogRevision: this.currentModelCatalog.revision,
+      contextSource: 'model-selection',
+    }
+  }
+
+  private async ensureTurnModelSelection(
+    payload: AgentSendMessagePayload,
+  ): Promise<AgentSendMessagePayload> {
+    const intent = this.turnModelSelectionIntent(payload)
+    const result = await this.modelSelectionCoordinator.ensureForTurn(
+      intent,
+      payload.threadId,
+    )
+    if (!result.ok) throw new Error(result.error)
+    return {
+      ...payload,
+      model: result.data.modelId,
+      modelSelection: {
+        gatewayId: result.data.gatewayId,
+        modelId: result.data.modelId,
+        contextWindow: result.data.contextWindow,
+        catalogRevision: result.data.catalogRevision,
+        contextSource: 'model-selection',
+      },
+    }
+  }
+
   private async sendMessageAfterProviderBarrier(
     payload: AgentSendMessagePayload,
   ): Promise<AgentSendMessageResult> {
@@ -2314,6 +2450,8 @@ export class AgentManager {
     if (!this.store || !this.attachments) {
       throw new Error('AgentManager.sendMessage called without store/attachments')
     }
+
+    const confirmedPayload = await this.ensureTurnModelSelection(payload)
 
     // Lazily (re)start the backend if the bootstrap start() failed or never
     // ran. Previously a swallowed boot failure left `this.client` null, so the
@@ -2331,14 +2469,7 @@ export class AgentManager {
       throw new Error(message)
     }
 
-    if (payload.modelSelection) {
-      const route = await this.modelSelectionCoordinator.ensureForTurn(
-        payload.modelSelection,
-      )
-      if (!route.ok) throw new Error(route.error)
-    }
-
-    const assembled = await this.assembleTurnInput(payload, true)
+    const assembled = await this.assembleTurnInput(confirmedPayload, true)
     const { threadId, input, userTimelineItems, collaborationModeOwner } = assembled
 
     let admitted = false
@@ -2416,6 +2547,7 @@ export class AgentManager {
     if (!this.store || !this.attachments) {
       throw new Error('AgentManager.steer called without store/attachments')
     }
+    const confirmedPayload = await this.ensureTurnModelSelection(payload)
     try {
       await this.ensureBackendStarted()
     } catch (err) {
@@ -2425,14 +2557,7 @@ export class AgentManager {
       throw new Error(message)
     }
 
-    if (payload.modelSelection) {
-      const route = await this.modelSelectionCoordinator.ensureForTurn(
-        payload.modelSelection,
-      )
-      if (!route.ok) throw new Error(route.error)
-    }
-
-    const assembled = await this.assembleTurnInput(payload, true)
+    const assembled = await this.assembleTurnInput(confirmedPayload, true)
     const { threadId, input, userTimelineItems, collaborationModeOwner } = assembled
     const codexThreadId = this.codexThreadIdByDbThreadId.get(threadId) ?? threadId
     try {
@@ -3587,15 +3712,10 @@ function mapSelectionResultToContextResult(
       },
     }
   }
-  const contextStage = result.stage === 'catalog' || result.stage === 'rollback'
-    ? result.stage === 'catalog'
-      ? 'validate'
-      : 'verify'
-    : result.stage
   return {
     ok: false,
     error: result.error,
-    stage: contextStage,
+    stage: result.stage,
     previousConfig: {
       modelContextWindow: result.previous.contextWindow,
       modelAutoCompactTokenLimit: result.previous.autoCompactTokenLimit,

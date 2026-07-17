@@ -132,4 +132,23 @@ export class ProviderChannelController {
     }
     this.activeChannelId = channelId
   }
+
+  /**
+   * Force-applies and restarts a Channel even when its recorded id is current.
+   * Used only to explicitly recover an unprovable runtime after apply and
+   * automatic recovery both failed.
+   */
+  async recover(channelId: string): Promise<void> {
+    const provider = resolveProviderChannel(
+      channelId,
+      this.options.getCustomProviders(),
+    )
+    const restart = this.options.backend.restartCodex
+    if (!restart) {
+      throw new Error('Provider Channel recovery requires restart capability')
+    }
+    this.options.backend.setProvider?.(provider)
+    await restart(this.options.paths)
+    this.activeChannelId = channelId
+  }
 }
