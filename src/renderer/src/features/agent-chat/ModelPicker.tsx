@@ -14,7 +14,10 @@ import {
   type CanonicalModelTier,
   type ModelReasoningEffort,
 } from '../../../../shared/modelSettings'
-import type { AgentModelSettingsEntry } from '../../../../types/agent'
+import type {
+  AgentModelFamily,
+  AgentModelSettingsEntry,
+} from '../../../../types/agent'
 import {
   builtinGateways,
   resolveAuthorizedGatewayModelRoute,
@@ -24,8 +27,20 @@ import { findModel } from './models'
 import { ModelSettingsPanel } from './ModelSettingsPanel'
 import { useAgentChatStore } from './store'
 
-const TIER_ORDER: CanonicalModelTier[] = ['Fast', 'Medium', 'High', 'Extra High']
+const FAMILY_ORDER: readonly AgentModelFamily[] = ['openai', 'xai', 'other']
+
+const FAMILY_LABEL: Record<AgentModelFamily, string> = {
+  openai: 'OPENAI',
+  xai: 'XAI',
+  other: 'OTHER',
+}
+
 const DEFAULT_GATEWAY_ID = builtinGateways()[0]?.id ?? 'apiyi'
+
+function gatewayDisplayName(gatewayId: string): string {
+  return builtinGateways().find((gateway) => gateway.id === gatewayId)?.name
+    ?? gatewayId
+}
 
 const TIER_BADGE: Record<CanonicalModelTier, string> = {
   Fast: 'text-emerald-300/90 bg-emerald-500/10 border-emerald-400/30',
@@ -181,10 +196,17 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
   const setModelContextWindow = useAgentChatStore(
     (state) => state.setModelContextWindow,
   )
-
-  const storeSelectionPending = useAgentChatStore(
-    (state) => state.modelSelectionPending !== undefined,
+  const retryModelSelection = useAgentChatStore(
+    (state) => state.retryModelSelection,
   )
+
+  const modelSelectionPendingIntent = useAgentChatStore(
+    (state) => state.modelSelectionPending,
+  )
+  const modelSelectionError = useAgentChatStore(
+    (state) => state.modelSelectionError,
+  )
+  const storeSelectionPending = modelSelectionPendingIntent !== undefined
   const [isOpen, setIsOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [localSelectionPending, setModelSelectionPending] = useState(false)
@@ -241,15 +263,20 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
           || model.id.toLowerCase().includes(normalizedQuery)
           || model.description.toLowerCase().includes(normalizedQuery))
       : availableModels
-    const buckets = new Map<CanonicalModelTier, PickerModel[]>(
-      TIER_ORDER.map((tier) => [tier, []]),
+    const buckets = new Map<AgentModelFamily, PickerModel[]>(
+      FAMILY_ORDER.map((family) => [family, []]),
     )
-    for (const model of filtered) buckets.get(model.tier)?.push(model)
-    return TIER_ORDER
-      .map((tier) => ({ tier, items: buckets.get(tier) ?? [] }))
+    for (const model of filtered) buckets.get(model.family)?.push(model)
+    return FAMILY_ORDER
+      .map((family) => ({ family, items: buckets.get(family) ?? [] }))
       .filter((group) => group.items.length > 0)
   }, [availableModels, query])
   const flatModels = grouped.flatMap((group) => group.items)
+  const pendingModelLabel = modelSelectionPendingIntent
+    ? availableModels.find(
+        (model) => model.id === modelSelectionPendingIntent.modelId,
+      )?.label ?? modelSelectionPendingIntent.modelId
+    : undefined
   const persistenceWarning = Object.values(modelSettingsPersistenceWarnings)
     .filter((warning): warning is string => Boolean(warning))
     .join('；')
@@ -324,6 +351,8 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
 
   async function handlePick(id: string): Promise<void> {
     if (settingsInteractionsDisabled || id === selectedModelId) return
+    const target = availableModels.find((model) => model.id === id)
+    if (target && target.availability.status !== 'available') return
     setModelSelectionPending(true)
     let selectionApplied = false
     try {
@@ -406,6 +435,9 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
               aria-label="Search models"
               className="w-full rounded border border-zinc-800 bg-black/40 px-2 py-1 text-[12px] text-zinc-100 outline-none placeholder:text-zinc-500 focus:border-cyan-400/40"
             />
+            <div className="mt-1 px-1 text-[10px] text-zinc-500">
+              Gateway · {gatewayDisplayName(gatewayId)}
+            </div>
           </div>
 
           {capabilitiesUnconfirmed ? (
@@ -429,13 +461,18 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
               </div>
             ) : (
               grouped.map((group) => (
-                <div key={group.tier} className="mb-1">
+                <div key={group.family} className="mb-1">
                   <div className="px-3 py-1 text-[9px] uppercase tracking-[0.18em] text-zinc-500">
-                    {group.tier}
+                    {FAMILY_LABEL[group.family]}
                   </div>
                   {group.items.map((model) => {
                     const index = flatModels.findIndex((item) => item.id === model.id)
                     const isActive = model.id === selectedModelId
+                    const unavailable = model.availability.status !== 'available'
+                    const unavailableReason =
+                      model.availability.status === 'available'
+                        ? undefined
+                        : model.availability.reason
                     return (
                       <button
                         key={model.id}
@@ -446,6 +483,7 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
                         role="option"
                         aria-label={model.label}
                         aria-selected={isActive}
+                        aria-disabled={unavailable || settingsInteractionsDisabled}
                         disabled={settingsInteractionsDisabled}
                         onClick={() => {
                           void handlePick(model.id)
@@ -456,13 +494,20 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
                         className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-[12px] transition disabled:cursor-wait disabled:opacity-60 ${
                           isActive
                             ? 'bg-cyan-500/10 text-cyan-100'
-                            : 'text-zinc-200 hover:bg-zinc-800/60 hover:text-cyan-100'
+                            : unavailable
+                              ? 'cursor-not-allowed text-zinc-500'
+                              : 'text-zinc-200 hover:bg-zinc-800/60 hover:text-cyan-100'
                         }`}
                         title={model.description}
                       >
                         <span className="flex min-w-0 flex-col">
                           <span className="truncate font-medium">{model.label}</span>
                           <span className="truncate text-[10px] text-zinc-500">{model.id}</span>
+                          {unavailableReason ? (
+                            <span className="truncate text-[10px] text-amber-300/80">
+                              {unavailableReason}
+                            </span>
+                          ) : null}
                         </span>
                         <span
                           className={`rounded border px-1 py-[1px] text-[9px] uppercase tracking-wider ${TIER_BADGE[model.tier]}`}
@@ -476,6 +521,36 @@ export function ModelPicker({ disabled }: ModelPickerProps) {
               ))
             )}
           </div>
+
+          {modelSelectionPendingIntent || modelSelectionError ? (
+            <div className="flex items-center justify-between gap-2 border-t border-zinc-800/80 px-3 py-1.5">
+              <div
+                aria-live="polite"
+                role="status"
+                className={`min-w-0 truncate text-[10px] ${
+                  modelSelectionPendingIntent
+                    ? 'text-cyan-200/90'
+                    : 'text-amber-200/90'
+                }`}
+              >
+                {modelSelectionPendingIntent
+                  ? `正在切换 ${pendingModelLabel} 通道…`
+                  : modelSelectionError?.message}
+              </div>
+              {!modelSelectionPendingIntent
+                && modelSelectionError?.retryable === true ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    void retryModelSelection()
+                  }}
+                  className="shrink-0 rounded border border-amber-400/40 px-1.5 py-0.5 text-[10px] text-amber-200 transition hover:bg-amber-400/10"
+                >
+                  重试
+                </button>
+              ) : null}
+            </div>
+          ) : null}
 
           <div className="border-t border-zinc-800/80 p-2">
             <ModelSettingsPanel

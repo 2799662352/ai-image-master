@@ -508,7 +508,7 @@ export default function SettingsPage() {
           <span className="font-bold text-white uppercase tracking-tight">CODEX AGENT</span>
         </div>
         <p className="text-xs text-zinc-500">
-          用于 AI Agent (Ctrl+Shift+A)。选择内置 provider 或添加自定义网关，每个 provider 单独存储 key。
+          用于 AI Agent (Ctrl+Shift+A)。选择 Codex Gateway（API Yi / Right.Codes）或添加自定义网关，每个 Gateway 只需保存一份共享 Key，GPT 与 Grok 模型在聊天里直接切换。
         </p>
         <CodexProviderManager />
         <button

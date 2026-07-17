@@ -712,4 +712,216 @@ describe('useSettingsStore', () => {
     )
   })
 
+  describe('gateway actions', () => {
+    interface GatewayBridgeWindow {
+      electronAPI?: {
+        agent?: Record<string, unknown>
+      }
+    }
+
+    function installBridge(bridge: Record<string, unknown>) {
+      ;(window as unknown as GatewayBridgeWindow).electronAPI = { agent: bridge }
+    }
+
+    const GATEWAY_SNAPSHOT = {
+      ok: true,
+      builtins: [
+        {
+          id: 'apiyi',
+          name: 'API Yi',
+          baseUrl: 'https://api.apiyi.com/v1',
+          envKey: 'OPENAI_API_KEY',
+          credentialId: 'apiyi',
+        },
+        {
+          id: 'rightcode',
+          name: 'Right.Codes',
+          baseUrl: 'https://right.codes/codex/v1',
+          envKey: 'OPENAI_API_KEY',
+          model: 'gpt-5.5',
+          credentialId: 'rightcode',
+        },
+      ],
+      custom: [],
+      activeId: 'apiyi',
+      apiKeys: { apiyi: 'sk-apiyi', rightcode: 'sk-rc' },
+    }
+
+    beforeEach(() => {
+      useSettingsStore.setState({
+        providers: {
+          builtins: GATEWAY_SNAPSHOT.builtins,
+          custom: [],
+          activeId: 'apiyi',
+          appliedId: 'apiyi',
+          pendingProviderId: null,
+          apiKeys: { apiyi: 'sk-apiyi', rightcode: 'sk-rc' },
+          loaded: true,
+          loadError: null,
+        },
+        codexApiKey: 'sk-apiyi',
+      })
+      useAgentChatStore.setState({
+        selectedModelId: 'gpt-5.6-sol',
+        invalidateCollaborationCapabilities: vi.fn(),
+        loadCollaborationCapabilities: vi.fn().mockResolvedValue(undefined),
+        loadModelSettingsCatalog: vi.fn().mockResolvedValue(undefined),
+        setSelectedModel: vi.fn().mockResolvedValue(true),
+      } as never)
+    })
+
+    afterEach(() => {
+      delete (window as unknown as GatewayBridgeWindow).electronAPI
+    })
+
+    it('loadGateways commits the builtin gateway snapshot from getGateways', async () => {
+      const getGateways = vi.fn().mockResolvedValue({
+        ...GATEWAY_SNAPSHOT,
+        activeId: 'rightcode',
+      })
+      installBridge({ getGateways })
+      useSettingsStore.setState((state) => ({
+        providers: {
+          ...state.providers,
+          builtins: [],
+          loaded: false,
+        },
+      }))
+
+      await useSettingsStore.getState().loadGateways()
+
+      expect(getGateways).toHaveBeenCalledTimes(1)
+      const { providers, codexApiKey } = useSettingsStore.getState()
+      expect(providers.builtins.map((p) => p.name)).toEqual(['API Yi', 'Right.Codes'])
+      expect(providers).toMatchObject({
+        activeId: 'rightcode',
+        appliedId: 'rightcode',
+        pendingProviderId: null,
+        loaded: true,
+        loadError: null,
+      })
+      expect(codexApiKey).toBe('sk-rc')
+    })
+
+    it('selectGateway confirms through setActiveGateway and reloads capabilities', async () => {
+      const setActiveGateway = vi.fn().mockResolvedValue({
+        ok: true,
+        activeId: 'rightcode',
+      })
+      installBridge({ setActiveGateway })
+      const loadCollaborationCapabilities = vi.fn().mockResolvedValue(undefined)
+      const loadModelSettingsCatalog = vi.fn().mockResolvedValue(undefined)
+      const setSelectedModel = vi.fn().mockResolvedValue(true)
+      useAgentChatStore.setState({
+        loadCollaborationCapabilities,
+        loadModelSettingsCatalog,
+        setSelectedModel,
+      } as never)
+
+      await useSettingsStore.getState().selectGateway('rightcode')
+
+      expect(setActiveGateway).toHaveBeenCalledWith('rightcode')
+      expect(useSettingsStore.getState().providers).toMatchObject({
+        activeId: 'rightcode',
+        appliedId: 'rightcode',
+        pendingProviderId: null,
+      })
+      expect(useSettingsStore.getState().codexApiKey).toBe('sk-rc')
+      expect(loadCollaborationCapabilities).toHaveBeenCalledWith('rightcode')
+      expect(loadModelSettingsCatalog).toHaveBeenCalledWith('rightcode')
+      // Pinned-model semantics from selectProvider must be preserved.
+      expect(setSelectedModel).toHaveBeenCalledWith('gpt-5.5')
+    })
+
+    it('selectGateway exposes pending state and blocks key writes while switching', async () => {
+      let resolveIpc!: (value: unknown) => void
+      installBridge({
+        setActiveGateway: () => new Promise((resolve) => { resolveIpc = resolve }),
+      })
+
+      const pending = useSettingsStore.getState().selectGateway('rightcode')
+
+      expect(useSettingsStore.getState().providers).toMatchObject({
+        activeId: 'apiyi',
+        pendingProviderId: 'rightcode',
+      })
+      await expect(
+        useSettingsStore.getState().saveGatewayKey('rightcode', 'sk-x'),
+      ).rejects.toThrow(/switch.*progress/i)
+
+      resolveIpc({ ok: true, activeId: 'rightcode' })
+      await pending
+      expect(useSettingsStore.getState().providers.pendingProviderId).toBeNull()
+    })
+
+    it('selectGateway rolls back through getGateways when main rejects', async () => {
+      installBridge({
+        setActiveGateway: vi.fn().mockResolvedValue({ ok: false, error: 'rejected' }),
+        getGateways: vi.fn().mockResolvedValue(GATEWAY_SNAPSHOT),
+      })
+
+      await expect(
+        useSettingsStore.getState().selectGateway('rightcode'),
+      ).rejects.toThrow('rejected')
+
+      expect(useSettingsStore.getState().providers).toMatchObject({
+        activeId: 'apiyi',
+        appliedId: 'apiyi',
+        pendingProviderId: null,
+      })
+      expect(useSettingsStore.getState().codexApiKey).toBe('sk-apiyi')
+    })
+
+    it('saveGatewayKey routes the shared key through setGatewayApiKey', async () => {
+      const setGatewayApiKey = vi.fn().mockResolvedValue({
+        ok: true,
+        activeId: 'apiyi',
+      })
+      installBridge({ setGatewayApiKey })
+      const loadCollaborationCapabilities = vi.fn().mockResolvedValue(undefined)
+      useAgentChatStore.setState({ loadCollaborationCapabilities } as never)
+
+      await useSettingsStore.getState().saveGatewayKey('apiyi', 'shared-key')
+
+      expect(setGatewayApiKey).toHaveBeenCalledWith('apiyi', 'shared-key')
+      expect(useSettingsStore.getState().providers.apiKeys.apiyi).toBe('shared-key')
+      expect(useSettingsStore.getState().codexApiKey).toBe('shared-key')
+      expect(loadCollaborationCapabilities).toHaveBeenCalledWith('apiyi')
+    })
+
+    it('saveGatewayKey rolls back the active key when the apply fails', async () => {
+      installBridge({
+        setGatewayApiKey: vi.fn().mockResolvedValue({
+          ok: false,
+          error: 'restart failed',
+        }),
+        getGateways: vi.fn().mockResolvedValue(GATEWAY_SNAPSHOT),
+      })
+
+      await expect(
+        useSettingsStore.getState().saveGatewayKey('apiyi', 'sk-broken'),
+      ).rejects.toThrow('restart failed')
+
+      expect(useSettingsStore.getState().providers.apiKeys.apiyi).toBe('sk-apiyi')
+      expect(useSettingsStore.getState().codexApiKey).toBe('sk-apiyi')
+    })
+
+    it('saveGatewayKey for a non-active gateway does not reload capabilities', async () => {
+      const setGatewayApiKey = vi.fn().mockResolvedValue({ ok: true, activeId: 'apiyi' })
+      installBridge({ setGatewayApiKey })
+      const invalidateCollaborationCapabilities = vi.fn()
+      const loadCollaborationCapabilities = vi.fn().mockResolvedValue(undefined)
+      useAgentChatStore.setState({
+        invalidateCollaborationCapabilities,
+        loadCollaborationCapabilities,
+      } as never)
+
+      await useSettingsStore.getState().saveGatewayKey('rightcode', 'sk-new')
+
+      expect(setGatewayApiKey).toHaveBeenCalledWith('rightcode', 'sk-new')
+      expect(invalidateCollaborationCapabilities).not.toHaveBeenCalled()
+      expect(loadCollaborationCapabilities).not.toHaveBeenCalled()
+    })
+  })
+
 })

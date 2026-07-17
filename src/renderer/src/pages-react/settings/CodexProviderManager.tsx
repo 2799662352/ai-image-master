@@ -1,4 +1,5 @@
 import React from 'react'
+import { EXPERIMENTAL_CONTEXT_WINDOW } from '../../../../shared/modelSettings'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import type {
   CodexCustomProviderInput,
@@ -11,20 +12,72 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+type GatewayStatus = 'active' | 'ready' | 'needs-key'
+
+function gatewayStatusFor(hasKey: boolean, isActive: boolean): GatewayStatus {
+  if (!hasKey) return 'needs-key'
+  return isActive ? 'active' : 'ready'
+}
+
+function gatewayStatusLabel(status: GatewayStatus): string {
+  switch (status) {
+    case 'active':
+      return 'Active'
+    case 'ready':
+      return 'Ready'
+    case 'needs-key':
+      return 'Needs key'
+    default: {
+      const exhaustive: never = status
+      throw new Error(`Unknown gateway status: ${String(exhaustive)}`)
+    }
+  }
+}
+
+function gatewayStatusClass(status: GatewayStatus): string {
+  switch (status) {
+    case 'active':
+      return 'bg-cyberpunk-yellow/20 text-cyberpunk-yellow'
+    case 'ready':
+      return 'bg-zinc-800 text-zinc-300'
+    case 'needs-key':
+      return 'bg-red-900/40 text-red-300'
+    default: {
+      const exhaustive: never = status
+      throw new Error(`Unknown gateway status: ${String(exhaustive)}`)
+    }
+  }
+}
+
+function formatContextChip(contextWindow: number): string {
+  if (contextWindow >= 1_000_000) {
+    return `${Math.round(contextWindow / 1_000_000)}M ctx`
+  }
+  return `${Math.round(contextWindow / 1_000)}K ctx`
+}
+
+/** Every builtin Gateway routes GPT and Grok 4.5 through internal channels. */
+const BUILTIN_GATEWAY_CAPABILITIES: readonly string[] = [
+  'GPT',
+  'Grok 4.5',
+  formatContextChip(EXPERIMENTAL_CONTEXT_WINDOW),
+]
+
 /**
- * Codex provider switcher + custom provider editor.
+ * Codex Gateway 选择 + custom provider editor.
  *
- * Renders the built-in (apiyi / rightcode) and user-defined provider tiles,
- * plus an "+ Add custom" button that opens a modal mirroring `right.codes`'s
- * config.toml schema. Used inside SettingsPage to replace the old single-key
- * input.
+ * Renders the two built-in Gateway radio-cards (API Yi / Right.Codes) plus
+ * user-defined provider tiles and an "+ Add custom" button that opens a modal
+ * mirroring `right.codes`'s config.toml schema. Grok channels are internal —
+ * the picker in chat routes models; only Gateways appear here.
  */
 export function CodexProviderManager() {
   const providers = useSettingsStore((s) => s.providers)
   const codexApiKey = useSettingsStore((s) => s.codexApiKey)
   const setCodexApiKey = useSettingsStore((s) => s.setCodexApiKey)
-  const selectProvider = useSettingsStore((s) => s.selectProvider)
-  const saveProviderKey = useSettingsStore((s) => s.saveProviderKey)
+  const loadGateways = useSettingsStore((s) => s.loadGateways)
+  const selectGateway = useSettingsStore((s) => s.selectGateway)
+  const saveGatewayKey = useSettingsStore((s) => s.saveGatewayKey)
   const addProvider = useSettingsStore((s) => s.addProvider)
   const updateProvider = useSettingsStore((s) => s.updateProvider)
   const removeProvider = useSettingsStore((s) => s.removeProvider)
@@ -32,6 +85,11 @@ export function CodexProviderManager() {
 
   const [editing, setEditing] = React.useState<CodexProvider | null>(null)
   const [showAdd, setShowAdd] = React.useState(false)
+
+  const loaded = providers.loaded
+  React.useEffect(() => {
+    if (!loaded) void loadGateways()
+  }, [loaded, loadGateways])
 
   const all: CodexProvider[] = React.useMemo(
     () => [...providers.builtins, ...providers.custom],
@@ -43,7 +101,7 @@ export function CodexProviderManager() {
   const handleSelect = async (id: string) => {
     if (id === providers.activeId || id === providers.pendingProviderId) return
     try {
-      await selectProvider(id)
+      await selectGateway(id)
     } catch (error) {
       addToast({ message: errorMessage(error), type: 'error' })
     }
@@ -52,7 +110,7 @@ export function CodexProviderManager() {
   const handleSaveKey = async () => {
     if (!active || providers.pendingProviderId !== null) return
     try {
-      await saveProviderKey(active.id, codexApiKey)
+      await saveGatewayKey(active.id, codexApiKey)
       addToast({ message: `${active.name} key saved`, type: 'success' })
     } catch (error) {
       addToast({ message: errorMessage(error), type: 'error' })
@@ -93,8 +151,62 @@ export function CodexProviderManager() {
 
   return (
     <div className="space-y-3">
+      <div
+        role="radiogroup"
+        aria-label="Codex Gateway 选择"
+        className="grid grid-cols-2 gap-3"
+      >
+        {providers.builtins.map((gateway) => {
+          const isActive = gateway.id === providers.activeId
+          const isPending = gateway.id === providers.pendingProviderId
+          const credentialId = gateway.credentialId || gateway.id
+          const hasKey = Boolean(providers.apiKeys[credentialId])
+          const status = gatewayStatusFor(hasKey, isActive)
+          return (
+            <button
+              key={gateway.id}
+              type="button"
+              role="radio"
+              aria-checked={isActive}
+              onClick={() => handleSelect(gateway.id)}
+              disabled={isPending}
+              className={`p-3 border-2 rounded text-left transition-all text-sm disabled:cursor-wait focus-visible:outline focus-visible:outline-2 focus-visible:outline-cyberpunk-yellow ${
+                isActive
+                  ? 'border-cyberpunk-yellow bg-cyberpunk-yellow/10 text-cyberpunk-yellow'
+                  : 'border-zinc-700 bg-zinc-900 text-gray-400 hover:border-zinc-500'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="font-semibold truncate">{gateway.name}</div>
+                {isPending ? (
+                  <span className="text-[10px] px-1 py-0.5 bg-zinc-800 text-cyberpunk-yellow rounded">
+                    切换中…
+                  </span>
+                ) : (
+                  <span
+                    className={`text-[10px] px-1 py-0.5 rounded uppercase tracking-wider ${gatewayStatusClass(status)}`}
+                  >
+                    {gatewayStatusLabel(status)}
+                  </span>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1 mt-2">
+                {BUILTIN_GATEWAY_CAPABILITIES.map((capability) => (
+                  <span
+                    key={capability}
+                    className="text-[10px] px-1 py-0.5 bg-zinc-800 text-zinc-400 rounded"
+                  >
+                    {capability}
+                  </span>
+                ))}
+              </div>
+            </button>
+          )
+        })}
+      </div>
+
       <div className="grid grid-cols-2 gap-3">
-        {all.map((p) => {
+        {providers.custom.map((p) => {
           const isActive = p.id === providers.activeId
           const isPending = p.id === providers.pendingProviderId
           return (
@@ -118,11 +230,11 @@ export function CodexProviderManager() {
                     <span className="text-[10px] px-1 py-0.5 bg-zinc-800 text-cyberpunk-yellow rounded">
                       切换中…
                     </span>
-                  ) : p.isCustom ? (
+                  ) : (
                     <span className="text-[10px] px-1 py-0.5 bg-zinc-800 text-zinc-400 rounded uppercase tracking-wider">
                       custom
                     </span>
-                  ) : null}
+                  )}
                 </div>
                 {p.description ? (
                   <div className="text-xs mt-1 opacity-70 truncate">{p.description}</div>
@@ -136,30 +248,28 @@ export function CodexProviderManager() {
                   </div>
                 )}
               </button>
-              {p.isCustom && (
-                <div className="absolute top-1 right-1 flex gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setEditing(p)}
-                    disabled={providers.pendingProviderId !== null}
-                    aria-disabled={providers.pendingProviderId !== null}
-                    className="text-[10px] px-1 py-0.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="编辑"
-                  >
-                    编辑
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleRemove(p)}
-                    disabled={providers.pendingProviderId !== null}
-                    aria-disabled={providers.pendingProviderId !== null}
-                    className="text-[10px] px-1 py-0.5 bg-red-900/40 hover:bg-red-900 text-red-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="删除"
-                  >
-                    删除
-                  </button>
-                </div>
-              )}
+              <div className="absolute top-1 right-1 flex gap-1">
+                <button
+                  type="button"
+                  onClick={() => setEditing(p)}
+                  disabled={providers.pendingProviderId !== null}
+                  aria-disabled={providers.pendingProviderId !== null}
+                  className="text-[10px] px-1 py-0.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="编辑"
+                >
+                  编辑
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleRemove(p)}
+                  disabled={providers.pendingProviderId !== null}
+                  aria-disabled={providers.pendingProviderId !== null}
+                  className="text-[10px] px-1 py-0.5 bg-red-900/40 hover:bg-red-900 text-red-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="删除"
+                >
+                  删除
+                </button>
+              </div>
             </div>
           )
         })}
@@ -178,10 +288,17 @@ export function CodexProviderManager() {
           className="space-y-2 disabled:opacity-60"
         >
           <div className="text-xs text-zinc-500">
-            当前 provider: <span className="text-cyberpunk-yellow">{active.name}</span> · base_url:{' '}
-            <code className="text-zinc-400">{active.baseUrl}</code>
+            当前 Gateway: <span className="text-cyberpunk-yellow">{active.name}</span>
+            {active.isCustom ? (
+              <>
+                {' '}
+                · base_url: <code className="text-zinc-400">{active.baseUrl}</code>
+              </>
+            ) : null}
           </div>
           <ApiKeyInput
+            id="codex-gateway-api-key"
+            label={`${active.name} API Key`}
             value={codexApiKey}
             onChange={setCodexApiKey}
             placeholder={`${active.envKey || 'OPENAI_API_KEY'} (sk-...)`}
@@ -191,7 +308,7 @@ export function CodexProviderManager() {
             onClick={handleSaveKey}
             className="w-full py-1.5 px-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs uppercase tracking-tight rounded transition-colors"
           >
-            💾 保存 {active.name} 的 Key
+            测试并保存
           </button>
         </fieldset>
       )}

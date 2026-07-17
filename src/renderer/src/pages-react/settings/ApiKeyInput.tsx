@@ -5,6 +5,8 @@ interface ApiKeyInputProps {
   onChange: (value: string) => void
   placeholder?: string
   label?: string
+  /** Associates the label with the input so it is reachable by accessible name. */
+  id?: string
   showToggle?: boolean
 }
 
@@ -13,6 +15,7 @@ export function ApiKeyInput({
   onChange,
   placeholder = '请输入 API Key',
   label,
+  id,
   showToggle = true,
 }: ApiKeyInputProps) {
   const [visible, setVisible] = useState(false)
@@ -20,10 +23,13 @@ export function ApiKeyInput({
   return (
     <div className="space-y-1">
       {label && (
-        <label className="block text-sm font-bold text-white">{label}</label>
+        <label htmlFor={id} className="block text-sm font-bold text-white">
+          {label}
+        </label>
       )}
       <div className="relative">
         <input
+          id={id}
           type={visible ? 'text' : 'password'}
           value={value}
           onChange={(e) => onChange(e.target.value)}
