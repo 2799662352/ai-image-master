@@ -336,6 +336,64 @@ describe('AgentManager.steer (turn/steer)', () => {
     expect(result.threadId).toBe(first.threadId)
   })
 
+  it('repairs the requested model route before persisting a steering message', async () => {
+    const operations: string[] = []
+    const backend = {
+      async start() {},
+      async stop() {},
+      isHealthy: () => true,
+      setProvider: (provider: { id: string } | undefined) => {
+        operations.push(`channel:${provider?.id ?? 'none'}`)
+      },
+      async restartCodex() {
+        operations.push('restart')
+      },
+      async cancel() {},
+      async steer() {
+        operations.push('steer')
+        return 'turn-model-selection'
+      },
+      async *send(): AsyncIterable<AgentStreamEvent> {},
+    } satisfies IAgentBackend
+    const manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend,
+      store: {
+        ...persistStubs,
+        addMessage: async () => {
+          operations.push('message')
+          return { id: 'message-model-selection' }
+        },
+      } as never,
+      attachments: { ingest: async () => [] } as never,
+      eventSink: () => {},
+    })
+    const catalogResult = await manager.getModelSettingsCatalogRpc()
+    if (!catalogResult.ok) throw new Error(catalogResult.error)
+    const grok = catalogResult.data.models.find((model) => model.id === 'grok-4.5')
+    if (!grok) throw new Error('Expected Grok catalog entry')
+    operations.length = 0
+
+    await manager.steer({
+      threadId: 'db-model-selection',
+      content: 'route me before persistence',
+      attachments: [],
+      model: grok.id,
+      modelSelection: {
+        gatewayId: catalogResult.data.gatewayId,
+        modelId: grok.id,
+        contextWindow: grok.capabilities.defaultContextWindow,
+        catalogRevision: catalogResult.data.revision,
+      },
+    })
+
+    expect(operations.indexOf('channel:apiyi-grok')).toBeGreaterThanOrEqual(0)
+    expect(operations.indexOf('channel:apiyi-grok')).toBeLessThan(
+      operations.indexOf('message'),
+    )
+    expect(operations.indexOf('message')).toBeLessThan(operations.indexOf('steer'))
+  })
+
   it('is a no-op (no backend.steer) when called without a threadId', async () => {
     const backend = makeSteerableBackend([])
     const mgr = new AgentManager({
