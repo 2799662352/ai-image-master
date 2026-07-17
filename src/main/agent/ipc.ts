@@ -65,6 +65,7 @@ const AGENT_HANDLE_CHANNELS = [
   'agent:model-settings-catalog',
   'agent:model-context-get',
   'agent:model-context-apply',
+  'agent:model-selection-recover',
   'agent:plugin-list',
   'agent:plugin-installed',
   'agent:plugin-read',
@@ -341,6 +342,9 @@ export function registerAgentIpc(getManager: GetAgentManager, getRouter: GetTool
   )
   ipcMain.handle('agent:model-context-apply', async (_event, payload: unknown) =>
     (await getManager()).applyModelContextRpc(validateModelContextApplyPayload(payload)),
+  )
+  ipcMain.handle('agent:model-selection-recover', async () =>
+    (await getManager()).recoverModelSelectionRpc(),
   )
 
   // ----- Codex native plugin / marketplace / apps / external-agent-import -----

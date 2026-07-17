@@ -2,6 +2,7 @@ import type {
   AgentModelContextApplyPayload,
   AgentModelContextApplyResult,
   AgentModelContextSnapshotResult,
+  AgentModelSelectionRecoveryResult,
   AgentModelSettingsCatalogResult,
 } from '../../../types/agent'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -44,6 +45,9 @@ function makeManager() {
     getModelContextConfigRpc: vi.fn<() => Promise<AgentModelContextSnapshotResult>>(),
     applyModelContextRpc: vi.fn<
       (payload: AgentModelContextApplyPayload) => Promise<AgentModelContextApplyResult>
+    >(),
+    recoverModelSelectionRpc: vi.fn<
+      () => Promise<AgentModelSelectionRecoveryResult>
     >(),
   }
 }
@@ -125,6 +129,22 @@ describe('registerAgentIpc model settings handlers', () => {
     expect(manager.applyModelContextRpc.mock.calls[0][0]).not.toHaveProperty(
       'modelAutoCompactTokenLimit',
     )
+  })
+
+  it('forwards the explicit model-selection recovery command unchanged', async () => {
+    const expected: AgentModelSelectionRecoveryResult = {
+      ok: false,
+      error: '模型恢复需等待当前请求或回合结束。',
+      stage: 'busy',
+      retryable: true,
+      recoveryRequired: true,
+    }
+    manager.recoverModelSelectionRpc.mockResolvedValue(expected)
+
+    await expect(
+      getHandler('agent:model-selection-recover')({}),
+    ).resolves.toBe(expected)
+    expect(manager.recoverModelSelectionRpc).toHaveBeenCalledOnce()
   })
 
   it.each([500_000, 1_000_000])(

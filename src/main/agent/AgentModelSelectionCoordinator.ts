@@ -42,6 +42,23 @@ export interface AgentModelSelectionCoordinatorOptions {
   prepareRecovery?: (
     snapshot: AgentModelSelectionSnapshot,
   ) => void | Promise<void>
+  /**
+   * Revalidates poisoned persisted identities before a forced Channel restart.
+   * The returned thread id is omitted when the saved DB thread was deleted.
+   */
+  validateRecovery?: (
+    snapshot: AgentModelSelectionSnapshot,
+    threadId?: string,
+  ) => Promise<{
+    snapshot: AgentModelSelectionSnapshot
+    threadId?: string
+  }>
+  /**
+   * Rebuilds the current catalog after a healthy recovery before poison clears.
+   */
+  refreshRecoveryCatalog?: (
+    snapshot: AgentModelSelectionSnapshot,
+  ) => Promise<void>
   resolveContext?: (
     payload: AgentModelSelectionApplyPayload,
     previous: AgentModelSelectionSnapshot,
@@ -66,6 +83,8 @@ export interface AgentModelSelectionIntentReservation {
   accepted: boolean
   sequence: number
   source: AgentModelSelectionIntentSource
+  /** Latest renderer selection that was already reserved before this intent. */
+  rendererSelectionSequence: number
 }
 
 function errorMessage(error: unknown): string {
@@ -143,6 +162,7 @@ export class AgentModelSelectionCoordinator {
           accepted: false,
           sequence: this.latestIntentSequence,
           source,
+          rendererSelectionSequence: this.latestRendererIntentSequence,
         }
       }
       const previousVersion = this.latestSourceVersion.get(source)
@@ -154,6 +174,7 @@ export class AgentModelSelectionCoordinator {
           accepted: false,
           sequence: this.latestIntentSequence,
           source,
+          rendererSelectionSequence: this.latestRendererIntentSequence,
         }
       }
       this.latestSourceVersion.set(source, requestVersion)
@@ -167,6 +188,7 @@ export class AgentModelSelectionCoordinator {
       accepted: true,
       sequence: this.latestIntentSequence,
       source,
+      rendererSelectionSequence: this.latestRendererIntentSequence,
     }
   }
 
@@ -246,14 +268,22 @@ export class AgentModelSelectionCoordinator {
       }
     }
     try {
-      await this.options.prepareRecovery?.(recovery.previous)
-      await this.options.channelController.recover(recovery.previous.channelId)
-      await this.options.restoreSelection(recovery.previous, recovery.threadId)
+      const validated = await this.options.validateRecovery?.(
+        recovery.previous,
+        recovery.threadId,
+      ) ?? {
+        snapshot: recovery.previous,
+        ...(recovery.threadId ? { threadId: recovery.threadId } : {}),
+      }
+      await this.options.prepareRecovery?.(validated.snapshot)
+      await this.options.channelController.recover(validated.snapshot.channelId)
+      await this.options.restoreSelection(validated.snapshot, validated.threadId)
+      await this.options.refreshRecoveryCatalog?.(validated.snapshot)
       this.recovery = null
       return {
         ok: true,
         recoveryRequired: false,
-        snapshot: recovery.previous,
+        snapshot: validated.snapshot,
       }
     } catch (error) {
       const message = errorMessage(error)
@@ -585,9 +615,8 @@ export class AgentModelSelectionCoordinator {
     reservation: AgentModelSelectionIntentReservation,
   ): boolean {
     if (!reservation.accepted) return true
-    return reservation.source === 'turn'
-      ? reservation.sequence < this.latestRendererIntentSequence
-      : reservation.sequence < this.latestIntentSequence
+    return reservation.source === 'renderer-selection'
+      && reservation.sequence < this.latestRendererIntentSequence
   }
 
   private async rollbackFailure(

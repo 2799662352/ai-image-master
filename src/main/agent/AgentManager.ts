@@ -604,6 +604,10 @@ export class AgentManager {
           },
         }
       },
+      validateRecovery: (snapshot, threadId) =>
+        this.validateModelSelectionRecovery(snapshot, threadId),
+      refreshRecoveryCatalog: (snapshot) =>
+        this.refreshModelSelectionRecoveryCatalog(snapshot),
       resolveContext: (payload, previous) =>
         this.resolveModelSelectionContext(payload, previous),
       resolveRoute: (gatewayId, modelId) => {
@@ -809,6 +813,15 @@ export class AgentManager {
     return this.enqueueLifecycleOperation(operation)
   }
 
+  /** Blocks Provider mutations until an unprovable model runtime is recovered. */
+  private assertModelSelectionRecoveryResolved(): void {
+    const recovery = this.modelSelectionCoordinator.getRecoveryState()
+    if (!recovery.recoveryRequired) return
+    throw new Error(
+      `Model-selection recovery required before Provider mutation: ${recovery.error ?? 'runtime identity is unprovable'}`,
+    )
+  }
+
   private enqueueLifecycleOperation<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.restartChain.then(operation)
     this.restartChain = result.then(
@@ -837,6 +850,7 @@ export class AgentManager {
   ): Promise<{ ok: true } & AgentProviderMutationResult> {
     let capabilityReady = false
     const transaction = this.restartChain.then(async () => {
+      this.assertModelSelectionRecoveryResolved()
       const before = await this.providerStore.load()
       const previousActiveGatewayId = this.activeGatewayId
       const previousAppliedChannelId = this.channelController.currentChannelId()
@@ -1051,6 +1065,7 @@ export class AgentManager {
     id: string,
     key: string,
   ): Promise<{ ok: true } & AgentProviderMutationResult> {
+    this.assertModelSelectionRecoveryResolved()
     const next = (key ?? '').trim()
     const isAuxiliaryProviderKey =
       id === QWEN_UNDERSTAND_PROVIDER_ID
@@ -1134,6 +1149,7 @@ export class AgentManager {
   }
 
   async addCustomProvider(input: NewCustomProvider): Promise<ProviderPreset> {
+    this.assertModelSelectionRecoveryResolved()
     const trimmedName = input.name?.trim() ?? ''
     if (!trimmedName) throw new Error('Provider name is required')
     try {
@@ -1142,7 +1158,10 @@ export class AgentManager {
       throw new Error('Provider baseUrl must be a valid URL')
     }
     return this.enqueueProviderStoreOperation(
-      () => this.providerStore.addCustomProvider({ ...input, name: trimmedName }),
+      () => {
+        this.assertModelSelectionRecoveryResolved()
+        return this.providerStore.addCustomProvider({ ...input, name: trimmedName })
+      },
     )
   }
 
@@ -1150,6 +1169,7 @@ export class AgentManager {
     id: string,
     patch: Partial<Omit<ProviderPreset, 'id' | 'isCustom'>>,
   ): Promise<{ ok: true } & AgentProviderMutationResult> {
+    this.assertModelSelectionRecoveryResolved()
     if (isBuiltinProviderId(id)) throw new Error('Cannot update builtin provider')
     if (patch.baseUrl !== undefined) {
       try {
@@ -1169,6 +1189,7 @@ export class AgentManager {
   async removeCustomProvider(
     id: string,
   ): Promise<{ ok: true } & AgentProviderMutationResult> {
+    this.assertModelSelectionRecoveryResolved()
     if (isBuiltinProviderId(id)) throw new Error('Cannot remove builtin provider')
     return this.enqueueAppliedProviderTransaction(async () => {
       const wasActive = this.activeGatewayId === id
@@ -1645,6 +1666,62 @@ export class AgentManager {
     }
     this.runtimeSettings = cloneRuntimeSettings(settings)
     this.activeGatewayId = snapshot.gatewayId
+  }
+
+  /**
+   * Proves the saved recovery identity still resolves against durable providers.
+   * A DB thread deleted while poisoned is intentionally not resurrected.
+   */
+  private async validateModelSelectionRecovery(
+    snapshot: AgentModelSelectionSnapshot,
+    threadId?: string,
+  ): Promise<{
+    snapshot: AgentModelSelectionSnapshot
+    threadId?: string
+  }> {
+    const persisted = await this.providerStore.load()
+    const route = resolveGatewayModelRoute(
+      snapshot.gatewayId,
+      snapshot.modelId,
+      persisted.customProviders,
+    )
+    if (route.channelId !== snapshot.channelId) {
+      throw new Error(
+        `Saved recovery Channel ${snapshot.channelId} no longer matches Gateway ${snapshot.gatewayId}`,
+      )
+    }
+    const currentThread = threadId
+      ? await this.store?.getThreadModelSnapshot?.(threadId)
+      : undefined
+    const thread = currentThread ?? snapshot.thread
+    return {
+      snapshot: {
+        ...snapshot,
+        ...(thread ? { thread } : {}),
+      },
+      ...(
+        threadId && thread?.exists !== false
+          ? { threadId }
+          : {}
+      ),
+    }
+  }
+
+  /**
+   * Rebuilds the catalog only after the saved Channel has a verified runtime.
+   * Poison clears only when the refreshed catalog still belongs to that Gateway.
+   */
+  private async refreshModelSelectionRecoveryCatalog(
+    snapshot: AgentModelSelectionSnapshot,
+  ): Promise<void> {
+    const catalog = await this.getModelSettingsCatalogRpc()
+    if (!catalog.ok) throw new Error(catalog.error)
+    if (catalog.data.gatewayId !== snapshot.gatewayId) {
+      throw new Error(
+        `Recovery catalog Gateway ${catalog.data.gatewayId} does not match ${snapshot.gatewayId}`,
+      )
+    }
+    this.currentModelCatalog = catalog.data
   }
 
   private async resumeSelectedThread(threadId: string): Promise<void> {
@@ -2449,6 +2526,7 @@ export class AgentManager {
 
   private turnModelSelectionIntent(
     payload: AgentSendMessagePayload,
+    reservation: AgentModelSelectionIntentReservation,
   ): AgentModelSelectionIntent {
     const payloadModel = payload.model?.trim()
     if (payload.modelSelection) {
@@ -2458,6 +2536,9 @@ export class AgentManager {
           `Model selection mismatch: payload model ${payloadModel} does not match confirmed intent ${intentModel}`,
         )
       }
+      if (reservation.rendererSelectionSequence > 0) {
+        return this.confirmedTurnModelSelectionIntent()
+      }
       return {
         ...payload.modelSelection,
         modelId: intentModel,
@@ -2465,8 +2546,28 @@ export class AgentManager {
       }
     }
 
+    if (reservation.rendererSelectionSequence > 0) {
+      return this.confirmedTurnModelSelectionIntent()
+    }
+
     const persisted = this.providerStore.loadSync()
     const modelId = payloadModel || persisted.selectedModelId
+    return this.modelSelectionIntentForModel(modelId)
+  }
+
+  /**
+   * Builds a turn intent from the active confirmed selection after a renderer
+   * selection was already reserved, so stale legacy payloads cannot route back.
+   */
+  private confirmedTurnModelSelectionIntent(): AgentModelSelectionIntent {
+    return this.modelSelectionIntentForModel(
+      this.providerStore.loadSync().selectedModelId,
+    )
+  }
+
+  private modelSelectionIntentForModel(
+    modelId: string,
+  ): AgentModelSelectionIntent {
     const entry = this.currentModelCatalog.models.find(
       (model) => model.id === modelId,
     )
@@ -2486,7 +2587,7 @@ export class AgentManager {
     payload: AgentSendMessagePayload,
     reservation: AgentModelSelectionIntentReservation,
   ): Promise<AgentSendMessagePayload> {
-    const intent = this.turnModelSelectionIntent(payload)
+    const intent = this.turnModelSelectionIntent(payload, reservation)
     const result = await this.modelSelectionCoordinator.ensureForTurn(
       intent,
       payload.threadId,
@@ -2591,9 +2692,6 @@ export class AgentManager {
    * other failures surface as an `error` event so the renderer can react.
    */
   async steer(payload: AgentSendMessagePayload): Promise<AgentSendMessageResult> {
-    const reservation = this.modelSelectionCoordinator.reserveIntentSequence(
-      'turn',
-    )
     const threadIdIn = payload.threadId
     if (!threadIdIn) {
       // Steering only applies to an existing thread with an active turn.
@@ -2605,6 +2703,9 @@ export class AgentManager {
       this.emitEvent({ type: 'error', threadId: threadIdIn, error })
       throw new Error(error)
     }
+    const reservation = this.modelSelectionCoordinator.reserveIntentSequence(
+      'turn',
+    )
     return this.enqueueTurnAdmission(
       () => this.steerAfterProviderBarrier(
         payload,

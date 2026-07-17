@@ -2,6 +2,7 @@ import type {
   AgentModelContextApplyPayload,
   AgentModelContextApplyResult,
   AgentModelContextSnapshotResult,
+  AgentModelSelectionRecoveryResult,
   AgentModelSettingsCatalogResult,
 } from '../../types/agent'
 import type { ElectronAPI } from '../index'
@@ -89,6 +90,22 @@ describe('preload model settings API', () => {
     expect(electronMocks.invoke).toHaveBeenCalledWith('agent:model-context-apply', payload)
     expect(electronMocks.invoke.mock.calls[0][1]).not.toHaveProperty(
       'modelAutoCompactTokenLimit',
+    )
+  })
+
+  it('maps explicit model-selection recovery to its safe invoke channel', async () => {
+    const expected: AgentModelSelectionRecoveryResult = {
+      ok: true,
+      recoveryRequired: false,
+      snapshot: null,
+    }
+    electronMocks.invoke.mockResolvedValueOnce(expected)
+
+    await expect(
+      getExposedApi().agent.recoverModelSelection(),
+    ).resolves.toBe(expected)
+    expect(electronMocks.invoke).toHaveBeenCalledWith(
+      'agent:model-selection-recover',
     )
   })
 })

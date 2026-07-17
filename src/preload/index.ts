@@ -33,6 +33,7 @@ import type {
   AgentModelContextApplyPayload,
   AgentModelContextApplyResult,
   AgentModelContextSnapshotResult,
+  AgentModelSelectionRecoveryResult,
   AgentModelSettingsCatalogResult,
   AgentProviderMutationResult,
   AgentSendMessagePayload,
@@ -274,6 +275,7 @@ const IPC_CHANNELS = {
     MODEL_SETTINGS_CATALOG: 'agent:model-settings-catalog',
     MODEL_CONTEXT_GET: 'agent:model-context-get',
     MODEL_CONTEXT_APPLY: 'agent:model-context-apply',
+    MODEL_SELECTION_RECOVER: 'agent:model-selection-recover',
     PLUGIN_LIST: 'agent:plugin-list',
     PLUGIN_INSTALLED: 'agent:plugin-installed',
     PLUGIN_READ: 'agent:plugin-read',
@@ -531,6 +533,7 @@ export interface ElectronAPI {
     applyModelContext: (
       payload: AgentModelContextApplyPayload,
     ) => Promise<AgentModelContextApplyResult>
+    recoverModelSelection: () => Promise<AgentModelSelectionRecoveryResult>
     setAllowedRoots: (roots: string[]) => Promise<string[]>
     getMcpSummary: () => Promise<CodexMcpSummary>
     getSkillsSummary: () => Promise<CodexSkillsSummary>
@@ -1151,6 +1154,11 @@ const electronAPI: ElectronAPI = {
       safeInvoke<AgentModelContextApplyResult>(
         IPC_CHANNELS.AGENT.MODEL_CONTEXT_APPLY,
         payload,
+      ),
+
+    recoverModelSelection: () =>
+      safeInvoke<AgentModelSelectionRecoveryResult>(
+        IPC_CHANNELS.AGENT.MODEL_SELECTION_RECOVER,
       ),
 
     setAllowedRoots: (roots: string[]) =>

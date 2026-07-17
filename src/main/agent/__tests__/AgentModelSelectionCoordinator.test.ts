@@ -624,7 +624,7 @@ describe('AgentModelSelectionCoordinator', () => {
     })
   })
 
-  it('uses entry-time intent sequence so a later UI selection beats an older queued send', async () => {
+  it('does not let a turn reservation supersede its own renderer selection winner', async () => {
     const harness = createSelectionHarness()
     const coordinator = harness.coordinator as unknown as {
       reserveIntentSequence(source: string, requestVersion?: number): {
@@ -659,11 +659,11 @@ describe('AgentModelSelectionCoordinator', () => {
       undefined,
       queuedSend,
     )).resolves.toMatchObject({
-      ok: false,
-      stage: 'rollback',
+      ok: true,
+      data: { modelId: 'gpt-5.5' },
     })
     expect(harness.restoreSelection).not.toHaveBeenCalled()
-    expect(harness.persistSelection).toHaveBeenCalledTimes(1)
+    expect(harness.persistSelection).toHaveBeenCalledTimes(2)
   })
 
   it('does not compare renderer requestVersion against intervening turn sequences', async () => {
@@ -936,6 +936,121 @@ describe('AgentModelSelectionCoordinator', () => {
     })
     expect(harness.restoreSelection).not.toHaveBeenCalled()
     expect(harness.coordinator.getRecoveryState()).toMatchObject({
+      recoveryRequired: true,
+    })
+  })
+
+  it('revalidates recovery, skips a deleted thread, and refreshes catalog before clearing poison', async () => {
+    const harness = createSelectionHarness()
+    vi.mocked(harness.channelController.apply).mockRejectedValueOnce(
+      new ProviderChannelRecoveryError(
+        new Error('replacement unhealthy'),
+        new Error('recovery unhealthy'),
+      ),
+    )
+    const validateRecovery = vi.fn(async (
+      snapshot: AgentModelSelectionSnapshot,
+      _threadId: string | undefined,
+    ) => ({
+      snapshot: {
+        ...snapshot,
+        thread: { exists: false as const },
+      },
+      threadId: undefined,
+    }))
+    const refreshRecoveryCatalog = vi.fn(async () => undefined)
+    const coordinator = new AgentModelSelectionCoordinator({
+      channelController: harness.channelController,
+      getSnapshot: () => ({
+        gatewayId: 'rightcode',
+        channelId: 'rightcode-standard',
+        modelId: 'gpt-5.5',
+        thread: { exists: true, model: 'gpt-5.5' },
+        contextWindow: 272_000,
+        autoCompactTokenLimit: 244_800,
+        catalogRevision: 'catalog-1',
+        threadRestored: false,
+      }),
+      catalogRevisionIsCurrent: () => true,
+      applyContext: harness.applyContext,
+      persistSelection: harness.persistSelection,
+      restoreSelection: harness.restoreSelection,
+      resumeThread: vi.fn(async () => undefined),
+      backendEpoch: () => 2,
+      validateRecovery,
+      refreshRecoveryCatalog,
+    } as never)
+    await coordinator.apply({
+      ...selection('rightcode', 'grok-4.5', 1),
+      threadId: 'deleted-thread',
+    })
+    harness.restoreSelection.mockClear()
+
+    await expect(coordinator.recover()).resolves.toMatchObject({
+      ok: true,
+      recoveryRequired: false,
+      snapshot: {
+        thread: { exists: false },
+      },
+    })
+    expect(validateRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gatewayId: 'rightcode',
+        channelId: 'rightcode-standard',
+      }),
+      'deleted-thread',
+    )
+    expect(harness.restoreSelection).toHaveBeenCalledWith(
+      expect.any(Object),
+      undefined,
+    )
+    expect(
+      vi.mocked(harness.channelController.recover).mock.invocationCallOrder[0],
+    ).toBeLessThan(harness.restoreSelection.mock.invocationCallOrder[0])
+    expect(
+      harness.restoreSelection.mock.invocationCallOrder[0],
+    ).toBeLessThan(refreshRecoveryCatalog.mock.invocationCallOrder[0])
+  })
+
+  it('keeps poison when the verified recovery catalog cannot refresh', async () => {
+    const harness = createSelectionHarness()
+    vi.mocked(harness.channelController.apply).mockRejectedValueOnce(
+      new ProviderChannelRecoveryError(
+        new Error('replacement unhealthy'),
+        new Error('recovery unhealthy'),
+      ),
+    )
+    const refreshRecoveryCatalog = vi.fn(async () => {
+      throw new Error('catalog refresh failed')
+    })
+    const coordinator = new AgentModelSelectionCoordinator({
+      channelController: harness.channelController,
+      getSnapshot: () => ({
+        gatewayId: 'rightcode',
+        channelId: 'rightcode-standard',
+        modelId: 'gpt-5.5',
+        contextWindow: 272_000,
+        autoCompactTokenLimit: 244_800,
+        catalogRevision: 'catalog-1',
+        threadRestored: false,
+      }),
+      catalogRevisionIsCurrent: () => true,
+      applyContext: harness.applyContext,
+      persistSelection: harness.persistSelection,
+      restoreSelection: harness.restoreSelection,
+      resumeThread: vi.fn(async () => undefined),
+      backendEpoch: () => 2,
+      refreshRecoveryCatalog,
+    } as never)
+    await coordinator.apply(selection('rightcode', 'grok-4.5', 1))
+
+    await expect(coordinator.recover()).resolves.toMatchObject({
+      ok: false,
+      stage: 'recovery',
+      error: 'catalog refresh failed',
+      recoveryRequired: true,
+    })
+    expect(coordinator.getRecoveryState()).toMatchObject({
       recoveryRequired: true,
     })
   })

@@ -218,6 +218,9 @@ describe('AgentManager model-selection turn admission', () => {
       attachments: [],
       model: 'gpt-5.5',
     })).rejects.toThrow(/recovery|恢复|unprovable/i)
+    await expect(manager.setActiveProvider('rightcode')).rejects.toThrow(
+      /model.selection recovery required|模型.*恢复/i,
+    )
 
     const context = await manager.getModelContextConfigRpc()
     expect(context).toMatchObject({
@@ -252,6 +255,30 @@ describe('AgentManager model-selection turn admission', () => {
       data: { recoveryRequired: true },
     })
     failRestarts = false
+    const getCatalog = manager.getModelSettingsCatalogRpc.bind(manager)
+    let failCatalogRefresh = true
+    const catalogRefresh = vi.spyOn(
+      manager,
+      'getModelSettingsCatalogRpc',
+    ).mockImplementation(async () => {
+      if (failCatalogRefresh) {
+        return { ok: false, error: 'catalog refresh failed' }
+      }
+      return getCatalog()
+    })
+    await expect(
+      manager.recoverModelSelectionRpc(),
+    ).resolves.toMatchObject({
+      ok: false,
+      stage: 'recovery',
+      error: 'catalog refresh failed',
+      recoveryRequired: true,
+    })
+    expect(await manager.getModelContextConfigRpc()).toMatchObject({
+      ok: true,
+      data: { recoveryRequired: true },
+    })
+    failCatalogRefresh = false
     await expect(
       (manager as unknown as {
         recoverModelSelectionRpc(): Promise<unknown>
@@ -260,6 +287,7 @@ describe('AgentManager model-selection turn admission', () => {
       ok: true,
       recoveryRequired: false,
     })
+    expect(catalogRefresh).toHaveBeenCalledTimes(2)
     expect(await manager.getModelContextConfigRpc()).toMatchObject({
       ok: true,
       data: { recoveryRequired: false },
@@ -268,12 +296,79 @@ describe('AgentManager model-selection turn admission', () => {
     expect(addMessage).not.toHaveBeenCalled()
   })
 
-  it('reserves turn intent before the lifecycle queue so a later UI selection wins', async () => {
+  it('does not restore a thread deleted while model recovery was poisoned', async () => {
+    let epoch = 1
+    let healthy = false
+    let restartFailures = 0
+    let threadExists = true
+    const setThreadModel = vi.fn(async () => undefined)
+    const manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend: {
+        async start() {},
+        async stop() {},
+        isHealthy: () => healthy,
+        currentEpoch: () => epoch,
+        setProvider: vi.fn(),
+        async restartCodex() {
+          if (restartFailures > 0) {
+            restartFailures -= 1
+            throw new Error('runtime unhealthy')
+          }
+          epoch += 1
+        },
+        async cancel() {},
+        async *send(): AsyncIterable<AgentStreamEvent> {},
+      } satisfies IAgentBackend,
+      store: {
+        getThreadModelSnapshot: async () => (
+          threadExists
+            ? { exists: true as const, model: 'gpt-5.5' }
+            : { exists: false as const }
+        ),
+        setThreadModel,
+      } as never,
+      eventSink: () => {},
+    })
+    await manager.setCodexApiKey('test-key')
+    const catalog = await manager.getModelSettingsCatalogRpc()
+    if (!catalog.ok) throw new Error(catalog.error)
+    const grok = catalog.data.models.find((model) => model.id === 'grok-4.5')
+    if (!grok) throw new Error('Expected Grok catalog entry')
+    healthy = true
+    restartFailures = 2
+
+    await expect(manager.applyModelSelectionRpc({
+      gatewayId: catalog.data.gatewayId,
+      modelId: grok.id,
+      contextWindow: grok.capabilities.defaultContextWindow,
+      catalogRevision: catalog.data.revision,
+      threadId: 'deleted-during-recovery',
+      requestVersion: 1,
+    })).resolves.toMatchObject({
+      ok: false,
+      recoveryRequired: true,
+    })
+    setThreadModel.mockClear()
+    threadExists = false
+
+    await expect(manager.recoverModelSelectionRpc()).resolves.toMatchObject({
+      ok: true,
+      recoveryRequired: false,
+      snapshot: {
+        thread: { exists: false },
+      },
+    })
+    expect(setThreadModel).not.toHaveBeenCalled()
+  })
+
+  it('lets a send keep its confirmed model when a later UI selection queues', async () => {
     let epoch = 1
     let blockNextRestart = false
     const restartStarted = deferred()
     const releaseRestart = deferred()
     const addMessage = vi.fn(async () => ({ id: 'message-stale-send' }))
+    const sentModels: string[] = []
     const backend = {
       async start() {},
       async stop() {},
@@ -289,7 +384,12 @@ describe('AgentManager model-selection turn admission', () => {
         epoch += 1
       },
       async cancel() {},
-      async *send(): AsyncIterable<AgentStreamEvent> {},
+      async *send(
+        _threadId: string | undefined,
+        input: AgentInput,
+      ): AsyncIterable<AgentStreamEvent> {
+        sentModels.push(input.model)
+      },
     } satisfies IAgentBackend
     const manager = new AgentManager({
       userDataDir: tmpDir,
@@ -324,12 +424,139 @@ describe('AgentManager model-selection turn admission', () => {
     releaseRestart.resolve()
 
     await blockingRestart
-    await expect(olderSend).rejects.toThrow(/替代|superseded/i)
+    await expect(olderSend).resolves.toMatchObject({
+      threadId: 'thread-stale-send',
+    })
     await expect(laterSelection).resolves.toMatchObject({
       ok: true,
       data: { modelId: 'gpt-5.4', requestVersion: 1 },
     })
-    expect(addMessage).not.toHaveBeenCalled()
+    expect(addMessage).toHaveBeenCalledOnce()
+    expect(sentModels).toEqual(['gpt-5.5'])
+  })
+
+  it('uses a pending renderer selection instead of a stale legacy send model', async () => {
+    let epoch = 1
+    let blockNextRestart = false
+    const restartStarted = deferred()
+    const releaseRestart = deferred()
+    const sentModels: string[] = []
+    const backend = {
+      async start() {},
+      async stop() {},
+      isHealthy: () => true,
+      currentEpoch: () => epoch,
+      setProvider: vi.fn(),
+      async restartCodex() {
+        if (blockNextRestart) {
+          blockNextRestart = false
+          restartStarted.resolve()
+          await releaseRestart.promise
+        }
+        epoch += 1
+      },
+      async cancel() {},
+      async *send(
+        _threadId: string | undefined,
+        input: AgentInput,
+      ): AsyncIterable<AgentStreamEvent> {
+        sentModels.push(input.model)
+      },
+    } satisfies IAgentBackend
+    const manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend,
+      store: {
+        createThread: async () => ({ id: 'thread-selection-first' }),
+        addMessage: async () => ({ id: 'message-selection-first' }),
+        updateLastMessageAt: async () => undefined,
+      } as never,
+      attachments: { ingest: async () => [] } as never,
+      eventSink: () => {},
+    })
+    await manager.setCodexApiKey('test-key')
+    const catalog = await manager.getModelSettingsCatalogRpc()
+    if (!catalog.ok) throw new Error(catalog.error)
+    const grok = catalog.data.models.find((model) => model.id === 'grok-4.5')
+    if (!grok) throw new Error('Expected Grok catalog entry')
+    blockNextRestart = true
+
+    const selection = manager.applyModelSelectionRpc({
+      gatewayId: catalog.data.gatewayId,
+      modelId: grok.id,
+      contextWindow: grok.capabilities.defaultContextWindow,
+      catalogRevision: catalog.data.revision,
+      requestVersion: 1,
+    })
+    await restartStarted.promise
+    const staleLegacySend = manager.sendMessage({
+      content: 'must not route back to the stale model',
+      attachments: [],
+      model: 'gpt-5.5',
+    })
+    releaseRestart.resolve()
+
+    await expect(selection).resolves.toMatchObject({
+      ok: true,
+      data: { modelId: grok.id },
+    })
+    await expect(staleLegacySend).resolves.toMatchObject({
+      threadId: 'thread-selection-first',
+    })
+    expect(sentModels).toEqual([grok.id])
+  })
+
+  it('does not let a no-op steer reservation supersede a queued selection', async () => {
+    let epoch = 1
+    let blockNextRestart = false
+    const restartStarted = deferred()
+    const releaseRestart = deferred()
+    const manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend: {
+        async start() {},
+        async stop() {},
+        isHealthy: () => true,
+        currentEpoch: () => epoch,
+        setProvider: vi.fn(),
+        async restartCodex() {
+          if (blockNextRestart) {
+            blockNextRestart = false
+            restartStarted.resolve()
+            await releaseRestart.promise
+          }
+          epoch += 1
+        },
+        async cancel() {},
+        async *send(): AsyncIterable<AgentStreamEvent> {},
+      } satisfies IAgentBackend,
+      eventSink: () => {},
+    })
+    await manager.setCodexApiKey('test-key')
+    const catalog = await manager.getModelSettingsCatalogRpc()
+    if (!catalog.ok) throw new Error(catalog.error)
+    blockNextRestart = true
+    const blockingRestart = manager.restartCodex()
+    await restartStarted.promise
+
+    const selection = manager.applyModelSelectionRpc({
+      gatewayId: catalog.data.gatewayId,
+      modelId: 'gpt-5.4',
+      contextWindow: 272_000,
+      catalogRevision: catalog.data.revision,
+      requestVersion: 1,
+    })
+    await expect(manager.steer({
+      content: 'no thread means no steer turn',
+      attachments: [],
+    })).resolves.toEqual({ threadId: 'pending' })
+    releaseRestart.resolve()
+
+    await blockingRestart
+    await expect(selection).resolves.toMatchObject({
+      ok: true,
+      data: { modelId: 'gpt-5.4' },
+    })
   })
 
   it('busy-gates Channel selection during turn/start admission before queue registration', async () => {

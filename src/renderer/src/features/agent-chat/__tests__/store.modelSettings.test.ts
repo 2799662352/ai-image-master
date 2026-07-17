@@ -429,7 +429,18 @@ describe('useAgentChatStore model settings persistence', () => {
   })
 
   it('commits model selection in session when the v2 boundary cannot persist', async () => {
-    installModelSettingsApi({})
+    installModelSettingsApi({
+      applyModelContext: async (payload) => ({
+        ok: true,
+        data: {
+          model: payload.model,
+          contextWindow: payload.contextWindow,
+          autoCompactTokenLimit: Math.floor(payload.contextWindow * 0.9),
+          threadRestored: false,
+          requestVersion: payload.requestVersion,
+        },
+      }),
+    })
     const store = await loadFreshStore()
     store.setState({
       selectedModelId: 'gpt-5.6-sol',
@@ -1603,7 +1614,42 @@ describe('useAgentChatStore model settings lifecycle', () => {
     expect(localStorage.getItem(CANONICAL_SELECTED_MODEL_STORAGE_KEY)).toBe('gpt-5.5')
   })
 
-  it('keeps the old model when target context apply fails and skips apply for equal context', async () => {
+  it('enters the context transaction before committing a model with equal Context', async () => {
+    const apply = deferred<AgentModelContextApplyResult>()
+    const applyModelContext = vi.fn(() => apply.promise)
+    installModelSettingsApi({ applyModelContext })
+    const store = await loadFreshStore()
+    store.setState({
+      modelSettingsCatalog: modelCatalog(),
+      selectedModelId: 'gpt-5.6-sol',
+      activeModelContextWindow: 372_000,
+      modelContextWindowByModel: { 'gpt-5.5': 372_000 },
+    } as never)
+
+    const selecting = store.getState().setSelectedModel('gpt-5.5')
+
+    expect(applyModelContext).toHaveBeenCalledOnce()
+    expect(applyModelContext).toHaveBeenCalledWith(expect.objectContaining({
+      model: 'gpt-5.5',
+      contextWindow: 372_000,
+    }))
+    expect(store.getState().selectedModelId).toBe('gpt-5.6-sol')
+    apply.resolve({
+      ok: true,
+      data: {
+        model: 'gpt-5.5',
+        contextWindow: 372_000,
+        autoCompactTokenLimit: 334_800,
+        threadRestored: false,
+        requestVersion: 1,
+      },
+    })
+    await selecting
+
+    expect(store.getState().selectedModelId).toBe('gpt-5.5')
+  })
+
+  it('keeps the old model when the equal-Context model transaction fails', async () => {
     const applyModelContext = vi.fn().mockResolvedValue({
       ok: false,
       error: 'restart failed',
@@ -1643,8 +1689,8 @@ describe('useAgentChatStore model settings lifecycle', () => {
       modelSettingsError: undefined,
     } as never)
     await store.getState().setSelectedModel('gpt-5.5')
-    expect(applyModelContext).not.toHaveBeenCalled()
-    expect(store.getState().selectedModelId).toBe('gpt-5.5')
+    expect(applyModelContext).toHaveBeenCalledOnce()
+    expect(store.getState().selectedModelId).toBe('gpt-5.6-sol')
     expect(store.getState().modelContextWindowByModel['gpt-5.6-sol']).toBeUndefined()
     expect(store.getState().modelContextWindowByModel['gpt-5.5']).toBe(372_000)
   })

@@ -2230,7 +2230,9 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     if (!catalogRow && !AGENT_MODELS.some((model) => model.id === modelId)) return
 
     const canonicalModel = resolveModelSelection(modelId).model
-    if (canonicalModel !== resolveModelSelection(before.selectedModelId).model) {
+    const modelChanged =
+      canonicalModel !== resolveModelSelection(before.selectedModelId).model
+    if (modelChanged) {
       // Claim capability ownership before an async Context restart. Otherwise
       // the previous model's delayed capability response could consume a
       // deferred Plan intent while the new-model transition is in flight.
@@ -2260,7 +2262,8 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       before.modelContextPending !== undefined
       || activeModelContextIntent !== undefined
     const shouldApplyContext =
-      targetContextWindow !== before.activeModelContextWindow
+      modelChanged
+      || targetContextWindow !== before.activeModelContextWindow
       || contextIntentInProgress
       || before.modelSettingsRecoveryRequired
     if (shouldApplyContext) {
