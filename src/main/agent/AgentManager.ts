@@ -31,7 +31,10 @@ import {
   resolveGatewayModelRoute,
   resolveProviderChannel,
 } from './gatewayModelRouting'
-import { ProviderChannelController } from './ProviderChannelController'
+import {
+  ProviderChannelController,
+  ProviderChannelRecoveryError,
+} from './ProviderChannelController'
 import { getDockerMcpGatewayService, type CheckInstalledResult, type GatewayStatus } from './dockerMcpGateway'
 import {
   GATEWAY_DEFAULT_PORT,
@@ -535,10 +538,26 @@ export class AgentManager {
     this.channelController = new ProviderChannelController({
       backend: {
         setProvider: (provider) => this.backend.setProvider?.(provider),
+        isHealthy: () => this.backend.isHealthy(),
         restartCodex: async (_paths) => {
           const restart = this.backend.restartCodex?.bind(this.backend)
-          if (!restart) return
+          if (!restart) {
+            throw new Error(
+              'Active backend cannot apply Channel changes without restart support',
+            )
+          }
+          const previousEpoch = this.backend.currentEpoch?.()
           await this.restartBackendWithGenerationCheck(restart)
+          const nextEpoch = this.backend.currentEpoch?.()
+          if (!this.backend.isHealthy()) {
+            throw new Error('Provider restart completed without a healthy backend')
+          }
+          if (
+            previousEpoch !== undefined
+            && (nextEpoch === undefined || nextEpoch === previousEpoch)
+          ) {
+            throw new Error('Provider restart did not create a new backend generation')
+          }
         },
         currentEpoch: () => this.backend.currentEpoch?.(),
       },
@@ -820,6 +839,7 @@ export class AgentManager {
           channelApplyAttempted
           && this.channelController.currentChannelId() === previousAppliedChannelId
           && this.backend.isHealthy()
+          && !(error instanceof ProviderChannelRecoveryError)
         try {
           if (desiredPersisted) {
             try {
@@ -837,7 +857,10 @@ export class AgentManager {
                 previousAppliedChannelId,
                 previousProvider,
               )
-            } catch {
+            } catch (restoreError) {
+              recoveryFailures.push(
+                `channel: ${errorMessage(restoreError)}`,
+              )
               this.backend.setProvider?.(previousProvider)
             }
           } else if (!channelRollbackRecovered && !channelApplyAttempted) {
@@ -906,24 +929,11 @@ export class AgentManager {
     channelId: string,
     rollbackProvider: ProviderPreset,
   ): Promise<number | undefined> {
-    const previousEpoch = this.backend.currentEpoch?.()
     const transition = await this.channelController.apply(
       channelId,
       rollbackProvider,
     )
-    if (!transition.changed) return previousEpoch
-
-    if (!this.backend.isHealthy()) {
-      throw new Error('Provider restart completed without a healthy backend')
-    }
-    const nextEpoch = transition.backendEpoch ?? this.backend.currentEpoch?.()
-    if (
-      previousEpoch !== undefined
-      && (nextEpoch === undefined || nextEpoch === previousEpoch)
-    ) {
-      throw new Error('Provider restart did not create a new backend generation')
-    }
-    return nextEpoch
+    return transition.backendEpoch
   }
 
   private async applyProviderGeneration(

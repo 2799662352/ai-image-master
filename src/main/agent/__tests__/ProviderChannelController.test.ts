@@ -77,4 +77,21 @@ describe('ProviderChannelController', () => {
     )
     expect(controller.currentChannelId()).toBe('rightcode-standard')
   })
+
+  it('combines apply and recovery failures without committing the new identity', async () => {
+    const backend = createBackend()
+    vi.mocked(backend.restartCodex!)
+      .mockRejectedValueOnce(new Error('replacement unhealthy'))
+      .mockRejectedValueOnce(new Error('recovery unhealthy'))
+    const controller = createController(backend, 'rightcode-standard')
+
+    await expect(controller.apply('rightcode-grok')).rejects.toThrow(
+      /replacement unhealthy.*recovery unhealthy/i,
+    )
+
+    expect(backend.setProvider).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: 'rightcode-standard' }),
+    )
+    expect(controller.currentChannelId()).toBe('rightcode-standard')
+  })
 })

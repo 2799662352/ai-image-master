@@ -207,10 +207,12 @@ function makeCollaborationBackend(options: {
       return options.updateThreadSettings!(params)
     }
   }
-  if (options.restartCodex) {
+  if (options.restartCodex || options.initialEpoch === undefined) {
     backend.restartCodex = async () => {
       backend.restartCalls += 1
-      await options.restartCodex!(backend)
+      if (options.restartCodex) {
+        await options.restartCodex(backend)
+      }
     }
   }
   if (options.resumeThread) {
@@ -850,7 +852,7 @@ describe('AgentManager collaboration capabilities', () => {
         backendEpoch: 1,
       },
     })
-    expect(backend.modelCalls).toHaveLength(1)
+    expect(backend.modelCalls).toHaveLength(0)
   })
 
   it('keeps Plan Max for Right Code gpt-5.6-sol through the shared provider policy', async () => {

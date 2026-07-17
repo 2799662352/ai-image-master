@@ -740,6 +740,83 @@ describe('AgentManager transactional provider application', () => {
     ).resolves.toBe(true)
   })
 
+  it('rolls back when restart resolves without creating a new generation', async () => {
+    const backend = makeTransactionalBackend(async (call) => {
+      if (call === 2) backend.epoch += 1
+    })
+    const mgr = new AgentManager({ userDataDir: tmpDir, backend })
+
+    await expect(mgr.setActiveProvider('rightcode')).rejects.toThrow(
+      /did not create a new backend generation/i,
+    )
+
+    expect(backend.restartCalls).toBe(2)
+    expect(backend.configuredProviders).toEqual(['rightcode-standard', 'apiyi-standard'])
+    expect(await mgr.getProvidersSnapshot()).toMatchObject({ activeId: 'apiyi' })
+    expect(
+      (mgr as unknown as {
+        channelController: { currentChannelId: () => string }
+      }).channelController.currentChannelId(),
+    ).toBe('apiyi-standard')
+    await expect(
+      (mgr as unknown as { providerCapabilityBarrier: Promise<boolean> })
+        .providerCapabilityBarrier,
+    ).resolves.toBe(true)
+  })
+
+  it('keeps old identity and marks capabilities unavailable when atomic recovery fails', async () => {
+    let healthy = true
+    const backend = makeTransactionalBackend(async (call) => {
+      healthy = false
+      if (call === 2) throw new Error('old Provider recovery failed')
+    })
+    backend.isHealthy = () => healthy
+    const mgr = new AgentManager({ userDataDir: tmpDir, backend })
+
+    await expect(mgr.setActiveProvider('rightcode')).rejects.toThrow(
+      /without a healthy backend.*old Provider recovery failed/i,
+    )
+
+    expect(backend.restartCalls).toBe(2)
+    expect(backend.configuredProviders).toEqual(['rightcode-standard', 'apiyi-standard'])
+    expect(await mgr.getProvidersSnapshot()).toMatchObject({ activeId: 'apiyi' })
+    expect(
+      (mgr as unknown as {
+        channelController: { currentChannelId: () => string }
+      }).channelController.currentChannelId(),
+    ).toBe('apiyi-standard')
+    await expect(
+      (mgr as unknown as { providerCapabilityBarrier: Promise<boolean> })
+        .providerCapabilityBarrier,
+    ).resolves.toBe(false)
+  })
+
+  it('rejects Channel changes when an active backend has no restart support', async () => {
+    const configuredProviders: Array<string | undefined> = []
+    const backend = Object.assign(makeStubBackend([]), {
+      setProvider(provider: CodexProviderConfig | undefined) {
+        configuredProviders.push(provider?.id)
+      },
+    })
+    const mgr = new AgentManager({ userDataDir: tmpDir, backend })
+
+    await expect(mgr.setActiveProvider('rightcode')).rejects.toThrow(
+      /without restart support/i,
+    )
+
+    expect(configuredProviders).toEqual(['rightcode-standard', 'apiyi-standard'])
+    expect(await mgr.getProvidersSnapshot()).toMatchObject({ activeId: 'apiyi' })
+    expect(
+      (mgr as unknown as {
+        channelController: { currentChannelId: () => string }
+      }).channelController.currentChannelId(),
+    ).toBe('apiyi-standard')
+    await expect(
+      (mgr as unknown as { providerCapabilityBarrier: Promise<boolean> })
+        .providerCapabilityBarrier,
+    ).resolves.toBe(false)
+  })
+
   it('marks Provider capabilities not ready when compensation restart also fails', async () => {
     let healthy = true
     const backend = makeTransactionalBackend(async (call) => {
@@ -1016,11 +1093,16 @@ describe('AgentManager testConnection provider resolution', () => {
   })
 
   it('uses the currently selected provider for the probe backend (not a hard-coded default)', async () => {
-    // Stub backend bypasses the real CodexLocalBackend constructor and its
-    // restartCodex hook so we can swap active providers freely. testConnection
-    // ignores opts.backend and builds its own fresh CodexLocalBackend, which
-    // is exactly the path we want to exercise.
-    const stub = makeStubBackend([])
+    // testConnection ignores opts.backend and builds its own fresh
+    // CodexLocalBackend. The manager stub still provides a verified generation
+    // bump because active Channel changes require atomic restart support.
+    let epoch = 1
+    const stub = Object.assign(makeStubBackend([]), {
+      currentEpoch: () => epoch,
+      restartCodex: async () => {
+        epoch += 1
+      },
+    })
     const mgr = new AgentManager({ userDataDir: tmpDir, backend: stub })
 
     // Provision a key for rightcode before switching, so testConnection's

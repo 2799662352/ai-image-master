@@ -3,6 +3,7 @@ import type { CodexProviderConfig } from './codexLaunch'
 import type { ProviderPreset } from './codexProviders'
 import { resolveProviderChannel } from './gatewayModelRouting'
 
+/** Result of applying a Provider Channel to the backend runtime. */
 export interface ProviderChannelTransition {
   changed: boolean
   previousChannelId: string
@@ -10,17 +11,40 @@ export interface ProviderChannelTransition {
   backendEpoch?: number
 }
 
+/** Minimal backend contract required for atomic Channel replacement. */
 export interface ProviderChannelBackend {
   setProvider?: (provider: CodexProviderConfig | undefined) => void
+  isHealthy?: () => boolean
   restartCodex?: (paths: CodexWorkspacePaths) => Promise<void>
   currentEpoch?: () => number
 }
 
+/** Dependencies and initial identity for a Provider Channel controller. */
 export interface ProviderChannelControllerOptions {
   backend: ProviderChannelBackend
   paths: CodexWorkspacePaths
   initialChannelId: string
   getCustomProviders: () => readonly ProviderPreset[]
+}
+
+/** Error raised when both Channel apply and old-Channel recovery fail. */
+export class ProviderChannelRecoveryError extends Error {
+  constructor(
+    readonly applyError: unknown,
+    readonly recoveryError: unknown,
+  ) {
+    const applyMessage = applyError instanceof Error
+      ? applyError.message
+      : String(applyError)
+    const recoveryMessage = recoveryError instanceof Error
+      ? recoveryError.message
+      : String(recoveryError)
+    super(
+      `${applyMessage}; Provider recovery failed: restart: ${recoveryMessage}`,
+      { cause: applyError },
+    )
+    this.name = 'ProviderChannelRecoveryError'
+  }
 }
 
 /** Applies internal Provider Channels to the Codex backend. */
@@ -31,10 +55,15 @@ export class ProviderChannelController {
     this.activeChannelId = options.initialChannelId
   }
 
+  /** Returns the Channel identity proven active by the backend contract. */
   currentChannelId(): string {
     return this.activeChannelId
   }
 
+  /**
+   * Applies a Channel and commits its identity only after atomic restart success.
+   * `rollbackProvider` preserves the old config when persistence already changed.
+   */
   async apply(
     channelId: string,
     rollbackProvider?: CodexProviderConfig,
@@ -58,22 +87,21 @@ export class ProviderChannelController {
       channelId,
       this.options.getCustomProviders(),
     )
+    const restartRequired = this.options.backend.isHealthy?.() ?? true
     try {
       this.options.backend.setProvider?.(provider)
-      await this.options.backend.restartCodex?.(this.options.paths)
+      if (restartRequired) {
+        await this.options.backend.restartCodex?.(this.options.paths)
+      }
       this.activeChannelId = channelId
     } catch (error) {
       this.options.backend.setProvider?.(previousProvider)
       try {
-        await this.options.backend.restartCodex?.(this.options.paths)
+        if (restartRequired) {
+          await this.options.backend.restartCodex?.(this.options.paths)
+        }
       } catch (rollbackRestartError) {
-        const message = error instanceof Error ? error.message : String(error)
-        const rollbackMessage = rollbackRestartError instanceof Error
-          ? rollbackRestartError.message
-          : String(rollbackRestartError)
-        throw new Error(
-          `${message}; Provider recovery failed: restart: ${rollbackMessage}`,
-        )
+        throw new ProviderChannelRecoveryError(error, rollbackRestartError)
       }
       throw error
     }
@@ -85,6 +113,9 @@ export class ProviderChannelController {
     }
   }
 
+  /**
+   * Restores a prior Channel, optionally using its pre-mutation Provider snapshot.
+   */
   async restore(
     channelId: string,
     providerOverride?: CodexProviderConfig,
@@ -96,7 +127,9 @@ export class ProviderChannelController {
         this.options.getCustomProviders(),
       )
     this.options.backend.setProvider?.(provider)
-    await this.options.backend.restartCodex?.(this.options.paths)
+    if (this.options.backend.isHealthy?.() ?? true) {
+      await this.options.backend.restartCodex?.(this.options.paths)
+    }
     this.activeChannelId = channelId
   }
 }

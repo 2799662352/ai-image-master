@@ -37,13 +37,14 @@ export interface ProviderCompatibilityProxyGroup {
 export function shouldStartResponsesCompatibilityProxy(
   provider: CodexProviderConfig | undefined,
 ): boolean {
-  switch (provider?.compatibilityPolicy ?? 'none') {
+  const policy = provider?.compatibilityPolicy ?? 'none'
+  switch (policy) {
     case 'none':
       return false
     case 'responses-namespace-bridge':
       return true
     default: {
-      const exhaustive: never = provider?.compatibilityPolicy as never
+      const exhaustive: never = policy
       throw new Error(`Unsupported compatibility policy: ${String(exhaustive)}`)
     }
   }
