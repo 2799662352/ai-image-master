@@ -75,7 +75,10 @@ import {
   CodexRuntimeSettingsStore,
   type PersistedCodexRuntimeSettingsV1,
 } from './CodexRuntimeSettingsStore'
-import { AgentModelSelectionCoordinator } from './AgentModelSelectionCoordinator'
+import {
+  AgentModelSelectionCoordinator,
+  type AgentModelSelectionIntentReservation,
+} from './AgentModelSelectionCoordinator'
 import type { BrowserWindow } from 'electron'
 import type {
   AgentCollaborationCapabilities,
@@ -89,6 +92,7 @@ import type {
   AgentModelSelectionApplyPayload,
   AgentModelSelectionApplyResult,
   AgentModelSelectionIntent,
+  AgentModelSelectionRecoveryResult,
   AgentModelSelectionSnapshot,
   AgentModelSettingsCatalog,
   AgentModelSettingsCatalogResult,
@@ -583,7 +587,23 @@ export class AgentManager {
         this.restoreModelSelection(snapshot, threadId),
       resumeThread: (threadId) => this.resumeSelectedThread(threadId),
       backendEpoch: () => this.backend.currentEpoch?.(),
-      hasActiveTurns: () => this.backend.hasActiveTurns?.() ?? false,
+      hasInFlightWork: () => this.backend.hasInFlightWork?.()
+        ?? this.backend.hasActiveTurns?.()
+        ?? false,
+      prepareRecovery: (snapshot) => {
+        this.runtimeSettings = {
+          version: 1,
+          confirmed: { ...this.runtimeSettings.confirmed },
+          pending: {
+            target: {
+              modelContextWindow: snapshot.contextWindow,
+              modelAutoCompactTokenLimit: snapshot.autoCompactTokenLimit,
+            },
+            requestVersion: 0,
+            startedAt: new Date().toISOString(),
+          },
+        }
+      },
       resolveContext: (payload, previous) =>
         this.resolveModelSelectionContext(payload, previous),
       resolveRoute: (gatewayId, modelId) => {
@@ -1412,11 +1432,15 @@ export class AgentManager {
       ...payload,
       contextSource: 'model-selection',
     }
-    this.modelSelectionCoordinator.noteRequestVersion(
+    const reservation = this.modelSelectionCoordinator.reserveIntentSequence(
+      'renderer-selection',
       modelSelectionPayload.requestVersion,
     )
     return this.enqueueLifecycleOperation(
-      () => this.modelSelectionCoordinator.apply(modelSelectionPayload),
+      () => this.modelSelectionCoordinator.apply(
+        modelSelectionPayload,
+        reservation,
+      ),
     )
   }
 
@@ -1427,6 +1451,7 @@ export class AgentManager {
   applyModelContextRpc(
     payload: AgentModelContextApplyPayload,
   ): Promise<AgentModelContextApplyResult> {
+    const persistedModelId = this.providerStore.loadSync().selectedModelId
     const contextPayload: AgentModelSelectionApplyPayload = {
       gatewayId: this.activeGatewayId,
       modelId: payload.model,
@@ -1434,28 +1459,58 @@ export class AgentManager {
       catalogRevision: this.currentModelCatalog.revision,
       threadId: payload.threadId,
       requestVersion: payload.requestVersion,
-      contextSource: 'context-only',
+      contextSource: payload.model.trim() === persistedModelId
+        ? 'context-only'
+        : 'model-selection',
     }
-    this.modelSelectionCoordinator.noteRequestVersion(
+    const reservation = this.modelSelectionCoordinator.reserveIntentSequence(
+      'renderer-selection',
       contextPayload.requestVersion,
     )
     return this.enqueueLifecycleOperation(
-      () => this.modelSelectionCoordinator.apply(contextPayload),
+      () => this.modelSelectionCoordinator.apply(contextPayload, reservation),
     ).then((result) => mapSelectionResultToContextResult(result, payload))
+  }
+
+  /**
+   * Explicitly verifies and clears a poisoned model-selection runtime.
+   * Recovery is serialized with Provider/turn admission and never commits the
+   * saved durable snapshot until the forced restart is healthy and has a new
+   * backend generation.
+   */
+  recoverModelSelectionRpc(): Promise<AgentModelSelectionRecoveryResult> {
+    return this.enqueueLifecycleOperation(async () => {
+      if (
+        this.backend.hasInFlightWork?.()
+        ?? this.backend.hasActiveTurns?.()
+        ?? false
+      ) {
+        return {
+          ok: false,
+          error: '模型恢复需等待当前请求或回合结束。',
+          stage: 'busy',
+          retryable: true,
+          recoveryRequired:
+            this.modelSelectionCoordinator.getRecoveryState().recoveryRequired,
+        }
+      }
+      return this.modelSelectionCoordinator.recover()
+    })
   }
 
   private async modelSelectionSnapshot(
     threadId?: string,
   ): Promise<AgentModelSelectionSnapshot> {
     const persisted = this.providerStore.loadSync()
-    const threadModelId = threadId
-      ? await this.store?.getThreadModel?.(threadId) ?? undefined
+    const thread = threadId
+      ? await (this.store?.getThreadModelSnapshot)?.(threadId)
+        ?? { exists: true as const, model: persisted.selectedModelId }
       : undefined
     return {
       gatewayId: this.activeGatewayId,
       channelId: this.channelController.currentChannelId(),
       modelId: persisted.selectedModelId,
-      ...(threadModelId ? { threadModelId } : {}),
+      ...(thread ? { thread } : {}),
       contextWindow: this.runtimeSettings.confirmed.modelContextWindow,
       autoCompactTokenLimit:
         this.runtimeSettings.confirmed.modelAutoCompactTokenLimit,
@@ -1575,9 +1630,17 @@ export class AgentManager {
     }
     await this.runtimeSettingsStore.replace(settings)
     if (threadId) {
+      const threadModel = snapshot.thread?.exists
+        ? snapshot.thread.model
+        : snapshot.modelId
+      if (threadModel === null) {
+        throw new Error(
+          `Cannot restore an unset model for thread ${threadId}`,
+        )
+      }
       await this.store?.setThreadModel?.(
         threadId,
-        snapshot.threadModelId ?? snapshot.modelId,
+        threadModel,
       )
     }
     this.runtimeSettings = cloneRuntimeSettings(settings)
@@ -2376,8 +2439,11 @@ export class AgentManager {
   }
 
   async sendMessage(payload: AgentSendMessagePayload): Promise<AgentSendMessageResult> {
+    const reservation = this.modelSelectionCoordinator.reserveIntentSequence(
+      'turn',
+    )
     return this.enqueueTurnAdmission(
-      () => this.sendMessageAfterProviderBarrier(payload),
+      () => this.sendMessageAfterProviderBarrier(payload, reservation),
     )
   }
 
@@ -2418,11 +2484,13 @@ export class AgentManager {
 
   private async ensureTurnModelSelection(
     payload: AgentSendMessagePayload,
+    reservation: AgentModelSelectionIntentReservation,
   ): Promise<AgentSendMessagePayload> {
     const intent = this.turnModelSelectionIntent(payload)
     const result = await this.modelSelectionCoordinator.ensureForTurn(
       intent,
       payload.threadId,
+      reservation,
     )
     if (!result.ok) throw new Error(result.error)
     return {
@@ -2440,6 +2508,7 @@ export class AgentManager {
 
   private async sendMessageAfterProviderBarrier(
     payload: AgentSendMessagePayload,
+    reservation: AgentModelSelectionIntentReservation,
   ): Promise<AgentSendMessageResult> {
     if (!this.codexApiKey) {
       const threadId = payload.threadId ?? 'pending'
@@ -2451,7 +2520,10 @@ export class AgentManager {
       throw new Error('AgentManager.sendMessage called without store/attachments')
     }
 
-    const confirmedPayload = await this.ensureTurnModelSelection(payload)
+    const confirmedPayload = await this.ensureTurnModelSelection(
+      payload,
+      reservation,
+    )
 
     // Lazily (re)start the backend if the bootstrap start() failed or never
     // ran. Previously a swallowed boot failure left `this.client` null, so the
@@ -2519,6 +2591,9 @@ export class AgentManager {
    * other failures surface as an `error` event so the renderer can react.
    */
   async steer(payload: AgentSendMessagePayload): Promise<AgentSendMessageResult> {
+    const reservation = this.modelSelectionCoordinator.reserveIntentSequence(
+      'turn',
+    )
     const threadIdIn = payload.threadId
     if (!threadIdIn) {
       // Steering only applies to an existing thread with an active turn.
@@ -2531,7 +2606,12 @@ export class AgentManager {
       throw new Error(error)
     }
     return this.enqueueTurnAdmission(
-      () => this.steerAfterProviderBarrier(payload, threadIdIn, steer),
+      () => this.steerAfterProviderBarrier(
+        payload,
+        threadIdIn,
+        steer,
+        reservation,
+      ),
     )
   }
 
@@ -2539,6 +2619,7 @@ export class AgentManager {
     payload: AgentSendMessagePayload,
     threadIdIn: string,
     steer: NonNullable<IAgentBackend['steer']>,
+    reservation: AgentModelSelectionIntentReservation,
   ): Promise<AgentSendMessageResult> {
     if (!this.codexApiKey) {
       this.emitEvent({ type: 'error', threadId: threadIdIn, error: EMPTY_KEY_ERROR })
@@ -2547,7 +2628,10 @@ export class AgentManager {
     if (!this.store || !this.attachments) {
       throw new Error('AgentManager.steer called without store/attachments')
     }
-    const confirmedPayload = await this.ensureTurnModelSelection(payload)
+    const confirmedPayload = await this.ensureTurnModelSelection(
+      payload,
+      reservation,
+    )
     try {
       await this.ensureBackendStarted()
     } catch (err) {

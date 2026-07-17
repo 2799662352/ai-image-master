@@ -234,16 +234,25 @@ export interface AgentModelSelectionIntent {
 export interface AgentModelSelectionApplyPayload
   extends AgentModelSelectionIntent {
   threadId?: string
+  /**
+   * Renderer-owned correlation version. It is not the cross-origin ordering
+   * clock; the main process reserves a separate internal intent sequence.
+   */
   requestVersion: number
 }
+
+/** Thread-scoped model state, preserving missing-vs-unset identity. */
+export type AgentThreadModelSnapshot =
+  | { exists: false }
+  | { exists: true; model: string | null }
 
 /** Fully confirmed Gateway, Channel, model, and context state. */
 export interface AgentModelSelectionSnapshot {
   gatewayId: string
   channelId: string
   modelId: string
-  /** Target thread's previous model, used only for thread-scoped rollback. */
-  threadModelId?: string
+  /** Target thread state used for validation and thread-scoped rollback. */
+  thread?: AgentThreadModelSnapshot
   contextWindow: number
   autoCompactTokenLimit: number
   catalogRevision: string
@@ -287,6 +296,21 @@ export type AgentModelSelectionApplyResult =
       rollback:
         | { ok: true; snapshot: AgentModelSelectionSnapshot }
         | { ok: false; error: string; effectiveSnapshot: null }
+    }
+
+/** Explicit recovery outcome for a poisoned model-selection runtime. */
+export type AgentModelSelectionRecoveryResult =
+  | {
+      ok: true
+      recoveryRequired: false
+      snapshot: AgentModelSelectionSnapshot | null
+    }
+  | {
+      ok: false
+      error: string
+      stage: 'busy' | 'recovery'
+      retryable: boolean
+      recoveryRequired: boolean
     }
 
 export type AgentModelContextSnapshot = CodexModelContextConfig & {

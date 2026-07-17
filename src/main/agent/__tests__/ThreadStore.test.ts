@@ -108,12 +108,30 @@ describe('ThreadStore.setThreadModel', () => {
       agentThread: { findUnique },
     } as any)
 
-    await expect(store.getThreadModel('thread_target')).resolves.toBe(
-      'thread-old-model',
-    )
+    await expect(store.getThreadModelSnapshot('thread_target')).resolves.toEqual({
+      exists: true,
+      model: 'thread-old-model',
+    })
     expect(findUnique).toHaveBeenCalledWith({
       where: { id: 'thread_target' },
       select: { model: true },
+    })
+  })
+
+  it('distinguishes a missing thread from an existing thread with no model', async () => {
+    const findUnique = vi.fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ model: null })
+    const store = new ThreadStore({
+      agentThread: { findUnique },
+    } as any)
+
+    await expect(store.getThreadModelSnapshot('missing')).resolves.toEqual({
+      exists: false,
+    })
+    await expect(store.getThreadModelSnapshot('legacy')).resolves.toEqual({
+      exists: true,
+      model: null,
     })
   })
 })

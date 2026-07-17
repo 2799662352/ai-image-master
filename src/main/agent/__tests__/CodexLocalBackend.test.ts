@@ -396,6 +396,8 @@ describe('CodexLocalBackend (with a fake codex app-server)', () => {
         await new Promise((r) => setTimeout(r, 10))
       }
       expect(server.receivedFromClient.some((m) => m.method === 'turn/start')).toBe(true)
+      expect(backend.hasActiveTurns()).toBe(false)
+      expect(backend.hasInFlightWork()).toBe(true)
 
       const socketBeforeRestart = server.socket()
       await expect(backend.restartCodex(workspace.paths)).rejects.toThrow(

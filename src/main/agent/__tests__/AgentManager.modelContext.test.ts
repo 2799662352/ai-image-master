@@ -203,35 +203,39 @@ describe('AgentManager model-context compatibility adapter', () => {
 
   it('retains an active supported Context during model selection', async () => {
     const { manager, operations } = await createManager()
-    const explicit = await manager.applyModelContextRpc({
-      model: 'gpt-5.5',
+    const selected = await manager.applyModelContextRpc({
+      model: 'gpt-5.4',
       contextWindow: 1_000_000,
-      requestVersion: 20,
-    })
-    expect(explicit).toMatchObject({
-      ok: true,
-      data: { contextWindow: 1_000_000 },
-    })
-    operations.length = 0
-    const catalog = await manager.getModelSettingsCatalogRpc()
-    if (!catalog.ok) throw new Error(catalog.error)
-
-    const selected = await manager.applyModelSelectionRpc({
-      gatewayId: catalog.data.gatewayId,
-      modelId: 'gpt-5.4',
-      contextWindow: 272_000,
-      catalogRevision: catalog.data.revision,
       requestVersion: 21,
     })
 
     expect(selected).toMatchObject({
       ok: true,
       data: {
-        modelId: 'gpt-5.4',
-        contextWindow: 1_000_000,
+        model: 'gpt-5.4',
+        contextWindow: PREVIOUS_CONTEXT.modelContextWindow,
       },
     })
     expect(operations).toEqual([])
+  })
+
+  it('restarts for an explicit Context adjustment on the persisted model', async () => {
+    const { manager, operations } = await createManager()
+
+    const result = await manager.applyModelContextRpc({
+      model: 'gpt-5.5',
+      contextWindow: TARGET_CONTEXT.modelContextWindow,
+      requestVersion: 22,
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        model: 'gpt-5.5',
+        contextWindow: TARGET_CONTEXT.modelContextWindow,
+      },
+    })
+    expect(operations).toEqual(['restart'])
   })
 
   it('keeps confirmed Context public while a replacement restart is pending', async () => {

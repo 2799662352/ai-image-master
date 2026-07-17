@@ -9,6 +9,17 @@ import type { AgentStreamEvent } from '../../../types/agent'
 
 let tmpDir: string
 
+function deferred(): {
+  promise: Promise<void>
+  resolve: () => void
+} {
+  let resolve!: () => void
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
+
 beforeEach(async () => {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-model-selection-'))
 })
@@ -164,12 +175,14 @@ describe('AgentManager model-selection turn admission', () => {
   it('blocks subsequent sends after Channel recovery becomes unprovable', async () => {
     let epoch = 1
     let failRestarts = false
+    let activeWork = false
     const createThread = vi.fn(async () => ({ id: 'thread-poisoned' }))
     const addMessage = vi.fn(async () => ({ id: 'message-poisoned' }))
     const backend = {
       async start() {},
       async stop() {},
       isHealthy: () => true,
+      hasInFlightWork: () => activeWork,
       currentEpoch: () => epoch,
       setProvider: vi.fn(),
       async restartCodex() {
@@ -214,7 +227,217 @@ describe('AgentManager model-selection turn admission', () => {
         recoveryError: expect.stringMatching(/runtime unhealthy/i),
       },
     })
+    activeWork = true
+    await expect(
+      (manager as unknown as {
+        recoverModelSelectionRpc(): Promise<unknown>
+      }).recoverModelSelectionRpc(),
+    ).resolves.toMatchObject({
+      ok: false,
+      stage: 'busy',
+      recoveryRequired: true,
+    })
+    activeWork = false
+    await expect(
+      (manager as unknown as {
+        recoverModelSelectionRpc(): Promise<unknown>
+      }).recoverModelSelectionRpc(),
+    ).resolves.toMatchObject({
+      ok: false,
+      stage: 'recovery',
+      recoveryRequired: true,
+    })
+    expect(await manager.getModelContextConfigRpc()).toMatchObject({
+      ok: true,
+      data: { recoveryRequired: true },
+    })
+    failRestarts = false
+    await expect(
+      (manager as unknown as {
+        recoverModelSelectionRpc(): Promise<unknown>
+      }).recoverModelSelectionRpc(),
+    ).resolves.toMatchObject({
+      ok: true,
+      recoveryRequired: false,
+    })
+    expect(await manager.getModelContextConfigRpc()).toMatchObject({
+      ok: true,
+      data: { recoveryRequired: false },
+    })
     expect(createThread).not.toHaveBeenCalled()
     expect(addMessage).not.toHaveBeenCalled()
+  })
+
+  it('reserves turn intent before the lifecycle queue so a later UI selection wins', async () => {
+    let epoch = 1
+    let blockNextRestart = false
+    const restartStarted = deferred()
+    const releaseRestart = deferred()
+    const addMessage = vi.fn(async () => ({ id: 'message-stale-send' }))
+    const backend = {
+      async start() {},
+      async stop() {},
+      isHealthy: () => true,
+      currentEpoch: () => epoch,
+      setProvider: vi.fn(),
+      async restartCodex() {
+        if (blockNextRestart) {
+          blockNextRestart = false
+          restartStarted.resolve()
+          await releaseRestart.promise
+        }
+        epoch += 1
+      },
+      async cancel() {},
+      async *send(): AsyncIterable<AgentStreamEvent> {},
+    } satisfies IAgentBackend
+    const manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend,
+      store: {
+        createThread: async () => ({ id: 'thread-stale-send' }),
+        addMessage,
+        updateLastMessageAt: async () => undefined,
+      } as never,
+      attachments: { ingest: async () => [] } as never,
+      eventSink: () => {},
+    })
+    await manager.setCodexApiKey('test-key')
+    const catalog = await manager.getModelSettingsCatalogRpc()
+    if (!catalog.ok) throw new Error(catalog.error)
+    blockNextRestart = true
+    const blockingRestart = manager.restartCodex()
+    await restartStarted.promise
+
+    const olderSend = manager.sendMessage({
+      content: 'queued before selection',
+      attachments: [],
+      model: 'gpt-5.5',
+    })
+    const laterSelection = manager.applyModelSelectionRpc({
+      gatewayId: catalog.data.gatewayId,
+      modelId: 'gpt-5.4',
+      contextWindow: 272_000,
+      catalogRevision: catalog.data.revision,
+      requestVersion: 1,
+    })
+    releaseRestart.resolve()
+
+    await blockingRestart
+    await expect(olderSend).rejects.toThrow(/替代|superseded/i)
+    await expect(laterSelection).resolves.toMatchObject({
+      ok: true,
+      data: { modelId: 'gpt-5.4', requestVersion: 1 },
+    })
+    expect(addMessage).not.toHaveBeenCalled()
+  })
+
+  it('busy-gates Channel selection during turn/start admission before queue registration', async () => {
+    const setProvider = vi.fn()
+    const restartCodex = vi.fn(async () => undefined)
+    const manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend: {
+        async start() {},
+        async stop() {},
+        isHealthy: () => true,
+        hasActiveTurns: () => false,
+        hasInFlightWork: () => true,
+        setProvider,
+        restartCodex,
+        async cancel() {},
+        async *send(): AsyncIterable<AgentStreamEvent> {},
+      },
+      eventSink: () => {},
+    })
+    await manager.setCodexApiKey('test-key')
+    const catalog = await manager.getModelSettingsCatalogRpc()
+    if (!catalog.ok) throw new Error(catalog.error)
+    setProvider.mockClear()
+    restartCodex.mockClear()
+
+    await expect(manager.applyModelSelectionRpc({
+      gatewayId: catalog.data.gatewayId,
+      modelId: 'grok-4.5',
+      contextWindow: 500_000,
+      catalogRevision: catalog.data.revision,
+      requestVersion: 1,
+    })).resolves.toMatchObject({
+      ok: false,
+      stage: 'busy',
+      recoveryRequired: false,
+    })
+    expect(setProvider).not.toHaveBeenCalled()
+    expect(restartCodex).not.toHaveBeenCalled()
+  })
+
+  it('rejects a missing existing thread before attachment or message side effects', async () => {
+    const ingest = vi.fn(async () => [])
+    const addMessage = vi.fn(async () => ({ id: 'message-missing-thread' }))
+    const send = vi.fn(async function* (): AsyncIterable<AgentStreamEvent> {})
+    const manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend: {
+        async start() {},
+        async stop() {},
+        isHealthy: () => false,
+        async cancel() {},
+        send,
+      },
+      store: {
+        getThreadModelSnapshot: vi.fn(async () => ({ exists: false })),
+        addMessage,
+        updateLastMessageAt: async () => undefined,
+      } as never,
+      attachments: { ingest } as never,
+      eventSink: () => {},
+    })
+    await manager.setCodexApiKey('test-key')
+
+    await expect(manager.sendMessage({
+      threadId: 'missing-thread',
+      content: 'must not persist',
+      attachments: [],
+      model: 'gpt-5.5',
+    })).rejects.toThrow(/thread.*not found|线程.*不存在/i)
+    expect(ingest).not.toHaveBeenCalled()
+    expect(addMessage).not.toHaveBeenCalled()
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('accepts an existing legacy thread with a null model', async () => {
+    const setThreadModel = vi.fn(async () => undefined)
+    const addMessage = vi.fn(async () => ({ id: 'message-legacy-thread' }))
+    const manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend: {
+        async start() {},
+        async stop() {},
+        isHealthy: () => false,
+        async cancel() {},
+        async *send(): AsyncIterable<AgentStreamEvent> {},
+      },
+      store: {
+        getThreadModelSnapshot: vi.fn(async () => ({
+          exists: true,
+          model: null,
+        })),
+        setThreadModel,
+        addMessage,
+        updateLastMessageAt: async () => undefined,
+      } as never,
+      attachments: { ingest: async () => [] } as never,
+      eventSink: () => {},
+    })
+    await manager.setCodexApiKey('test-key')
+
+    await expect(manager.sendMessage({
+      threadId: 'legacy-thread',
+      content: 'valid legacy thread',
+      attachments: [],
+      model: 'gpt-5.5',
+    })).resolves.toMatchObject({ threadId: 'legacy-thread' })
+    expect(setThreadModel).toHaveBeenCalledWith('legacy-thread', 'gpt-5.5')
+    expect(addMessage).toHaveBeenCalled()
   })
 })

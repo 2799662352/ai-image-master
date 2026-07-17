@@ -5,6 +5,7 @@ import type {
   AgentModelSelectionApplyResult,
   AgentModelSelectionErrorKind,
   AgentModelSelectionIntent,
+  AgentModelSelectionRecoveryResult,
   AgentModelSelectionSnapshot,
   AgentModelSelectionStage,
 } from '../../types/agent'
@@ -32,7 +33,15 @@ export interface AgentModelSelectionCoordinatorOptions {
   ) => Promise<void>
   resumeThread: (threadId: string) => Promise<void>
   backendEpoch: () => number | undefined
-  hasActiveTurns?: () => boolean
+  /** Includes pending send admission as well as registered active turns. */
+  hasInFlightWork?: () => boolean
+  /**
+   * Makes the poisoned snapshot available to the backend spawn getter without
+   * committing Provider/thread/runtime durable state before recovery succeeds.
+   */
+  prepareRecovery?: (
+    snapshot: AgentModelSelectionSnapshot,
+  ) => void | Promise<void>
   resolveContext?: (
     payload: AgentModelSelectionApplyPayload,
     previous: AgentModelSelectionSnapshot,
@@ -45,6 +54,18 @@ export interface AgentModelSelectionCoordinatorOptions {
     payload: AgentModelSelectionApplyPayload,
     route: AgentModelRoute,
   ) => string | null
+}
+
+/** Origin used only to detect stale versions within the renderer selection UI. */
+export type AgentModelSelectionIntentSource =
+  | 'turn'
+  | 'renderer-selection'
+
+/** Entry-time reservation from the coordinator's internal monotonic clock. */
+export interface AgentModelSelectionIntentReservation {
+  accepted: boolean
+  sequence: number
+  source: AgentModelSelectionIntentSource
 }
 
 function errorMessage(error: unknown): string {
@@ -94,7 +115,13 @@ interface SelectionRecoveryState {
  * the concrete Channel restart and durable persistence implementations.
  */
 export class AgentModelSelectionCoordinator {
-  private latestRequestVersion = 0
+  private nextIntentSequence = 0
+  private latestIntentSequence = 0
+  private latestRendererIntentSequence = 0
+  private readonly latestSourceVersion = new Map<
+    AgentModelSelectionIntentSource,
+    number
+  >()
   private chain: Promise<void> = Promise.resolve()
   private recovery: SelectionRecoveryState | null = null
 
@@ -103,24 +130,57 @@ export class AgentModelSelectionCoordinator {
   ) {}
 
   /**
-   * Records a model-selection intent before an external lifecycle queue starts.
-   * This prevents a queued older request from committing after a newer click.
+   * Reserves cross-origin ordering synchronously at an external API boundary.
+   * Renderer versions only reject older requests from the same UI origin.
    */
-  noteRequestVersion(requestVersion: number): void {
-    if (Number.isSafeInteger(requestVersion) && requestVersion >= 0) {
-      this.latestRequestVersion = Math.max(
-        this.latestRequestVersion,
-        requestVersion,
-      )
+  reserveIntentSequence(
+    source: AgentModelSelectionIntentSource,
+    requestVersion?: number,
+  ): AgentModelSelectionIntentReservation {
+    if (requestVersion !== undefined) {
+      if (!Number.isSafeInteger(requestVersion) || requestVersion < 0) {
+        return {
+          accepted: false,
+          sequence: this.latestIntentSequence,
+          source,
+        }
+      }
+      const previousVersion = this.latestSourceVersion.get(source)
+      if (
+        previousVersion !== undefined
+        && requestVersion < previousVersion
+      ) {
+        return {
+          accepted: false,
+          sequence: this.latestIntentSequence,
+          source,
+        }
+      }
+      this.latestSourceVersion.set(source, requestVersion)
+    }
+    this.nextIntentSequence += 1
+    this.latestIntentSequence = this.nextIntentSequence
+    if (source === 'renderer-selection') {
+      this.latestRendererIntentSequence = this.latestIntentSequence
+    }
+    return {
+      accepted: true,
+      sequence: this.latestIntentSequence,
+      source,
     }
   }
 
   /** Queues one atomic Gateway/model/context selection request. */
   apply(
     payload: AgentModelSelectionApplyPayload,
+    reservation = this.reserveIntentSequence(
+      'renderer-selection',
+      payload.requestVersion,
+    ),
   ): Promise<AgentModelSelectionApplyResult> {
-    this.noteRequestVersion(payload.requestVersion)
-    const operation = this.chain.then(() => this.applySerialized(payload))
+    const operation = this.chain.then(
+      () => this.applySerialized(payload, reservation),
+    )
     this.chain = operation.then(() => undefined, () => undefined)
     return operation
   }
@@ -132,13 +192,19 @@ export class AgentModelSelectionCoordinator {
   ensureForTurn(
     intent: AgentModelSelectionIntent,
     threadId?: string,
+    reservation = this.reserveIntentSequence('turn'),
   ): Promise<AgentModelSelectionApplyResult> {
-    return this.apply({
+    const payload: AgentModelSelectionApplyPayload = {
       ...intent,
       contextSource: intent.contextSource ?? 'model-selection',
       ...(threadId ? { threadId } : {}),
-      requestVersion: this.latestRequestVersion + 1,
-    })
+      requestVersion: 0,
+    }
+    const operation = this.chain.then(
+      () => this.applySerialized(payload, reservation),
+    )
+    this.chain = operation.then(() => undefined, () => undefined)
+    return operation
   }
 
   /** Returns the current recovery poison without exposing mutable state. */
@@ -155,12 +221,54 @@ export class AgentModelSelectionCoordinator {
    * Explicitly verifies the last known Channel by forcing controller recovery.
    * Normal apply/ensure calls never clear poison merely because ids still match.
    */
-  async recover(): Promise<void> {
+  recover(): Promise<AgentModelSelectionRecoveryResult> {
+    const operation = this.chain.then(() => this.recoverSerialized())
+    this.chain = operation.then(() => undefined, () => undefined)
+    return operation
+  }
+
+  private async recoverSerialized(): Promise<AgentModelSelectionRecoveryResult> {
     const recovery = this.recovery
-    if (!recovery) return
-    await this.options.restoreSelection(recovery.previous, recovery.threadId)
-    await this.options.channelController.recover(recovery.previous.channelId)
-    this.recovery = null
+    if (!recovery) {
+      return {
+        ok: true,
+        recoveryRequired: false,
+        snapshot: null,
+      }
+    }
+    if (this.options.hasInFlightWork?.()) {
+      return {
+        ok: false,
+        error: '模型恢复需等待当前请求或回合结束。',
+        stage: 'busy',
+        retryable: true,
+        recoveryRequired: true,
+      }
+    }
+    try {
+      await this.options.prepareRecovery?.(recovery.previous)
+      await this.options.channelController.recover(recovery.previous.channelId)
+      await this.options.restoreSelection(recovery.previous, recovery.threadId)
+      this.recovery = null
+      return {
+        ok: true,
+        recoveryRequired: false,
+        snapshot: recovery.previous,
+      }
+    } catch (error) {
+      const message = errorMessage(error)
+      this.recovery = {
+        ...recovery,
+        error: `${recovery.error}; explicit recovery: ${message}`,
+      }
+      return {
+        ok: false,
+        error: message,
+        stage: 'recovery',
+        retryable: true,
+        recoveryRequired: true,
+      }
+    }
   }
 
   private resolveRoute(gatewayId: string, modelId: string): AgentModelRoute {
@@ -170,6 +278,7 @@ export class AgentModelSelectionCoordinator {
 
   private async applySerialized(
     payload: AgentModelSelectionApplyPayload,
+    reservation: AgentModelSelectionIntentReservation,
   ): Promise<AgentModelSelectionApplyResult> {
     const previous = await this.options.getSnapshot(payload.threadId)
     const validationError = validatePayload(payload)
@@ -201,7 +310,19 @@ export class AgentModelSelectionCoordinator {
         },
       )
     }
-    if (payload.requestVersion !== this.latestRequestVersion) {
+    if (payload.threadId && previous.thread?.exists === false) {
+      return this.failure(
+        payload,
+        previous,
+        `Target thread not found: ${payload.threadId}`,
+        'configuration',
+        'validate',
+        false,
+        false,
+        { ok: true, snapshot: previous },
+      )
+    }
+    if (this.isSuperseded(reservation)) {
       return this.superseded(payload, previous)
     }
 
@@ -274,7 +395,7 @@ export class AgentModelSelectionCoordinator {
       previous.contextWindow !== effectivePayload.contextWindow
     if (
       (channelChanged || contextChanged)
-      && this.options.hasActiveTurns?.()
+      && this.options.hasInFlightWork?.()
     ) {
       return this.failure(
         payload,
@@ -293,8 +414,12 @@ export class AgentModelSelectionCoordinator {
       && previous.channelId === route.channelId
       && previous.modelId === route.modelId
       && (
-        previous.threadModelId === undefined
-        || previous.threadModelId === route.modelId
+        !payload.threadId
+        || previous.thread === undefined
+        || (
+          previous.thread.exists
+          && previous.thread.model === route.modelId
+        )
       )
       && previous.contextWindow === effectivePayload.contextWindow
       && previous.catalogRevision === effectivePayload.catalogRevision
@@ -314,11 +439,16 @@ export class AgentModelSelectionCoordinator {
       if (contextChanged) {
         await this.options.applyContext(
           effectivePayload.contextWindow,
-          payload.requestVersion,
+          reservation.sequence,
         )
       }
-      if (payload.requestVersion !== this.latestRequestVersion) {
-        return this.rollbackSuperseded(payload, previous, contextChanged)
+      if (this.isSuperseded(reservation)) {
+        return this.rollbackSuperseded(
+          payload,
+          previous,
+          contextChanged,
+          reservation.sequence,
+        )
       }
       if (!this.catalogIsCurrent(effectivePayload)) {
         return this.rollbackFailure(
@@ -328,6 +458,7 @@ export class AgentModelSelectionCoordinator {
           'configuration',
           'catalog',
           contextChanged,
+          reservation.sequence,
         )
       }
 
@@ -337,8 +468,13 @@ export class AgentModelSelectionCoordinator {
         await this.options.resumeThread(payload.threadId)
         threadRestored = true
       }
-      if (payload.requestVersion !== this.latestRequestVersion) {
-        return this.rollbackSuperseded(payload, previous, contextChanged)
+      if (this.isSuperseded(reservation)) {
+        return this.rollbackSuperseded(
+          payload,
+          previous,
+          contextChanged,
+          reservation.sequence,
+        )
       }
       if (threadRestored && !this.catalogIsCurrent(effectivePayload)) {
         return this.rollbackFailure(
@@ -348,6 +484,7 @@ export class AgentModelSelectionCoordinator {
           'configuration',
           'catalog',
           contextChanged,
+          reservation.sequence,
         )
       }
 
@@ -356,7 +493,7 @@ export class AgentModelSelectionCoordinator {
         channelId: route.channelId,
         modelId: route.modelId,
         ...(payload.threadId
-          ? { threadModelId: route.modelId }
+          ? { thread: { exists: true as const, model: route.modelId } }
           : {}),
         contextWindow: effectivePayload.contextWindow,
         autoCompactTokenLimit: modelAutoCompactTokenLimit(
@@ -368,8 +505,13 @@ export class AgentModelSelectionCoordinator {
       }
       stage = 'persist'
       await this.options.persistSelection(snapshot, payload.threadId)
-      if (payload.requestVersion !== this.latestRequestVersion) {
-        return this.rollbackSuperseded(payload, previous, contextChanged)
+      if (this.isSuperseded(reservation)) {
+        return this.rollbackSuperseded(
+          payload,
+          previous,
+          contextChanged,
+          reservation.sequence,
+        )
       }
       if (!this.catalogIsCurrent(effectivePayload)) {
         return this.rollbackFailure(
@@ -379,6 +521,7 @@ export class AgentModelSelectionCoordinator {
           'configuration',
           'verify',
           contextChanged,
+          reservation.sequence,
         )
       }
       return {
@@ -391,6 +534,7 @@ export class AgentModelSelectionCoordinator {
           previous,
           payload.threadId,
           contextChanged,
+          reservation.sequence,
           error,
         )
         return this.poisonedFailure(
@@ -401,7 +545,12 @@ export class AgentModelSelectionCoordinator {
         )
       }
       const failedStage = stage
-      const rollback = await this.rollback(previous, payload.threadId, contextChanged)
+      const rollback = await this.rollback(
+        previous,
+        payload.threadId,
+        contextChanged,
+        reservation.sequence,
+      )
       if (!rollback.ok) {
         return this.poisonedFailure(
           payload,
@@ -432,6 +581,15 @@ export class AgentModelSelectionCoordinator {
     )
   }
 
+  private isSuperseded(
+    reservation: AgentModelSelectionIntentReservation,
+  ): boolean {
+    if (!reservation.accepted) return true
+    return reservation.source === 'turn'
+      ? reservation.sequence < this.latestRendererIntentSequence
+      : reservation.sequence < this.latestIntentSequence
+  }
+
   private async rollbackFailure(
     payload: AgentModelSelectionApplyPayload,
     previous: AgentModelSelectionSnapshot,
@@ -439,8 +597,14 @@ export class AgentModelSelectionCoordinator {
     kind: AgentModelSelectionErrorKind,
     stage: AgentModelSelectionStage,
     contextChanged: boolean,
+    intentSequence: number,
   ): Promise<AgentModelSelectionApplyResult> {
-    const rollback = await this.rollback(previous, payload.threadId, contextChanged)
+    const rollback = await this.rollback(
+      previous,
+      payload.threadId,
+      contextChanged,
+      intentSequence,
+    )
     if (!rollback.ok) {
       return this.poisonedFailure(payload, previous, error, rollback)
     }
@@ -460,8 +624,14 @@ export class AgentModelSelectionCoordinator {
     payload: AgentModelSelectionApplyPayload,
     previous: AgentModelSelectionSnapshot,
     contextChanged: boolean,
+    intentSequence: number,
   ): Promise<AgentModelSelectionApplyResult> {
-    const rollback = await this.rollback(previous, payload.threadId, contextChanged)
+    const rollback = await this.rollback(
+      previous,
+      payload.threadId,
+      contextChanged,
+      intentSequence,
+    )
     if (!rollback.ok) {
       return this.poisonedFailure(
         payload,
@@ -502,6 +672,7 @@ export class AgentModelSelectionCoordinator {
     previous: AgentModelSelectionSnapshot,
     threadId: string | undefined,
     contextChanged: boolean,
+    intentSequence: number,
     recoveryError?: ProviderChannelRecoveryError,
   ): Promise<Extract<AgentModelSelectionApplyResult, { ok: false }>['rollback']> {
     const failures: string[] = []
@@ -511,7 +682,7 @@ export class AgentModelSelectionCoordinator {
       try {
         await this.options.applyContext(
           previous.contextWindow,
-          this.latestRequestVersion,
+          intentSequence,
         )
       } catch (error) {
         failures.push(`context: ${errorMessage(error)}`)

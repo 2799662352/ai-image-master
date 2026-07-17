@@ -1,5 +1,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client'
 
+import type { AgentThreadModelSnapshot } from '../../types/agent'
+
 export class ThreadStore {
   constructor(private readonly prisma: PrismaClient) {}
 
@@ -88,13 +90,20 @@ export class ThreadStore {
     })
   }
 
-  /** Reads one thread's confirmed model for transaction rollback. */
-  async getThreadModel(threadId: string): Promise<string | null> {
+  /**
+   * Reads one thread's confirmed model while preserving missing-vs-unset
+   * identity for turn admission and transaction rollback.
+   */
+  async getThreadModelSnapshot(
+    threadId: string,
+  ): Promise<AgentThreadModelSnapshot> {
     const row = await this.prisma.agentThread.findUnique({
       where: { id: threadId },
       select: { model: true },
     })
-    return row?.model ?? null
+    return row
+      ? { exists: true, model: row.model ?? null }
+      : { exists: false }
   }
 
   async deleteThread(threadId: string): Promise<void> {

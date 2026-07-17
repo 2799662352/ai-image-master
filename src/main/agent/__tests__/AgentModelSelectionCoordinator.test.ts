@@ -273,7 +273,7 @@ describe('AgentModelSelectionCoordinator', () => {
     payload,
   ) => {
     const harness = createSelectionHarness()
-    const hasActiveTurns = vi.fn(() => true)
+    const hasInFlightWork = vi.fn(() => true)
     const coordinator = new AgentModelSelectionCoordinator({
       channelController: harness.channelController,
       getSnapshot: () => ({
@@ -291,7 +291,7 @@ describe('AgentModelSelectionCoordinator', () => {
       restoreSelection: harness.restoreSelection,
       resumeThread: vi.fn(async () => undefined),
       backendEpoch: () => 2,
-      hasActiveTurns,
+      hasInFlightWork,
     } as never)
 
     const result = await coordinator.apply(payload as AgentModelSelectionApplyPayload)
@@ -302,7 +302,7 @@ describe('AgentModelSelectionCoordinator', () => {
       stage: 'busy',
       retryable: true,
     })
-    expect(hasActiveTurns).toHaveBeenCalled()
+    expect(hasInFlightWork).toHaveBeenCalled()
     expect(harness.channelController.apply).not.toHaveBeenCalled()
     expect(harness.applyContext).not.toHaveBeenCalled()
     expect(harness.persistSelection).not.toHaveBeenCalled()
@@ -545,7 +545,14 @@ describe('AgentModelSelectionCoordinator', () => {
     const restoreSelection = vi.fn(async () => undefined)
     const getSnapshot = vi.fn(async (threadId?: string) => ({
       ...globalSnapshot,
-      ...(threadId ? { threadModelId: threadModels.get(threadId) } : {}),
+      ...(threadId
+        ? {
+            thread: {
+              exists: true as const,
+              model: threadModels.get(threadId) ?? null,
+            },
+          }
+        : {}),
     }))
     const coordinator = new AgentModelSelectionCoordinator({
       channelController: {
@@ -580,12 +587,16 @@ describe('AgentModelSelectionCoordinator', () => {
     expect(getSnapshot).toHaveBeenNthCalledWith(2, 'thread-b')
     expect(restoreSelection).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({ threadModelId: 'thread-a-old' }),
+      expect.objectContaining({
+        thread: { exists: true, model: 'thread-a-old' },
+      }),
       'thread-a',
     )
     expect(restoreSelection).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ threadModelId: 'thread-b-old' }),
+      expect.objectContaining({
+        thread: { exists: true, model: 'thread-b-old' },
+      }),
       'thread-b',
     )
   })
@@ -610,6 +621,322 @@ describe('AgentModelSelectionCoordinator', () => {
         error: expect.stringMatching(/persist rollback failed/i),
         effectiveSnapshot: null,
       },
+    })
+  })
+
+  it('uses entry-time intent sequence so a later UI selection beats an older queued send', async () => {
+    const harness = createSelectionHarness()
+    const coordinator = harness.coordinator as unknown as {
+      reserveIntentSequence(source: string, requestVersion?: number): {
+        accepted: boolean
+        sequence: number
+      }
+      apply(
+        payload: AgentModelSelectionApplyPayload,
+        reservation: { accepted: boolean; sequence: number },
+      ): Promise<unknown>
+      ensureForTurn(
+        intent: AgentModelSelectionApplyPayload,
+        threadId: string | undefined,
+        reservation: { accepted: boolean; sequence: number },
+      ): Promise<unknown>
+    }
+    const queuedSend = coordinator.reserveIntentSequence('turn')
+    const laterSelection = coordinator.reserveIntentSequence(
+      'renderer-selection',
+      1,
+    )
+
+    await expect(coordinator.apply(
+      selection('rightcode', 'gpt-5.6-sol', 1),
+      laterSelection,
+    )).resolves.toMatchObject({
+      ok: true,
+      data: { modelId: 'gpt-5.6-sol' },
+    })
+    await expect(coordinator.ensureForTurn(
+      selection('rightcode', 'gpt-5.5', 0),
+      undefined,
+      queuedSend,
+    )).resolves.toMatchObject({
+      ok: false,
+      stage: 'rollback',
+    })
+    expect(harness.restoreSelection).not.toHaveBeenCalled()
+    expect(harness.persistSelection).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not compare renderer requestVersion against intervening turn sequences', async () => {
+    const harness = createSelectionHarness()
+    const coordinator = harness.coordinator as unknown as {
+      reserveIntentSequence(source: string, requestVersion?: number): {
+        accepted: boolean
+        sequence: number
+      }
+      apply(
+        payload: AgentModelSelectionApplyPayload,
+        reservation: { accepted: boolean; sequence: number },
+      ): Promise<unknown>
+    }
+    coordinator.reserveIntentSequence('turn')
+    coordinator.reserveIntentSequence('turn')
+    coordinator.reserveIntentSequence('turn')
+    const selectionReservation = coordinator.reserveIntentSequence(
+      'renderer-selection',
+      1,
+    )
+
+    expect(selectionReservation.accepted).toBe(true)
+    await expect(coordinator.apply(
+      selection('rightcode', 'gpt-5.6-sol', 1),
+      selectionReservation,
+    )).resolves.toMatchObject({
+      ok: true,
+      data: {
+        modelId: 'gpt-5.6-sol',
+        requestVersion: 1,
+      },
+    })
+  })
+
+  it('does not cancel an earlier compatible turn merely because another turn queued', async () => {
+    const harness = createSelectionHarness()
+    const firstTurn = harness.coordinator.reserveIntentSequence('turn')
+    const secondTurn = harness.coordinator.reserveIntentSequence('turn')
+    const intent = {
+      gatewayId: 'rightcode',
+      modelId: 'gpt-5.5',
+      contextWindow: 272_000,
+      catalogRevision: 'catalog-1',
+    }
+
+    await expect(
+      harness.coordinator.ensureForTurn(intent, undefined, firstTurn),
+    ).resolves.toMatchObject({ ok: true })
+    await expect(
+      harness.coordinator.ensureForTurn(intent, undefined, secondTurn),
+    ).resolves.toMatchObject({ ok: true })
+  })
+
+  it('rejects same-source stale renderer versions without superseding newer work', async () => {
+    const harness = createSelectionHarness()
+    const coordinator = harness.coordinator as unknown as {
+      reserveIntentSequence(source: string, requestVersion?: number): {
+        accepted: boolean
+        sequence: number
+      }
+    }
+    const newer = coordinator.reserveIntentSequence('renderer-selection', 2)
+    const stale = coordinator.reserveIntentSequence('renderer-selection', 1)
+
+    expect(newer.accepted).toBe(true)
+    expect(stale).toMatchObject({
+      accepted: false,
+      sequence: newer.sequence,
+      source: 'renderer-selection',
+    })
+  })
+
+  it('uses in-flight send admission to busy-gate restarts before turn registration', async () => {
+    const harness = createSelectionHarness()
+    const coordinator = new AgentModelSelectionCoordinator({
+      channelController: harness.channelController,
+      getSnapshot: () => ({
+        gatewayId: 'rightcode',
+        channelId: 'rightcode-standard',
+        modelId: 'gpt-5.5',
+        contextWindow: 272_000,
+        autoCompactTokenLimit: 244_800,
+        catalogRevision: 'catalog-1',
+        threadRestored: false,
+      }),
+      catalogRevisionIsCurrent: () => true,
+      applyContext: harness.applyContext,
+      persistSelection: harness.persistSelection,
+      restoreSelection: harness.restoreSelection,
+      resumeThread: vi.fn(async () => undefined),
+      backendEpoch: () => 2,
+      hasInFlightWork: () => true,
+    } as never)
+
+    const result = await coordinator.apply(
+      selection('rightcode', 'grok-4.5', 1),
+    )
+
+    expect(result).toMatchObject({
+      ok: false,
+      stage: 'busy',
+      recoveryRequired: false,
+    })
+    expect(harness.channelController.apply).not.toHaveBeenCalled()
+    expect(harness.applyContext).not.toHaveBeenCalled()
+    expect(harness.persistSelection).not.toHaveBeenCalled()
+  })
+
+  it('rejects a missing target thread before runtime or persistence mutation', async () => {
+    const harness = createSelectionHarness()
+    const coordinator = new AgentModelSelectionCoordinator({
+      channelController: harness.channelController,
+      getSnapshot: () => ({
+        gatewayId: 'rightcode',
+        channelId: 'rightcode-standard',
+        modelId: 'gpt-5.5',
+        thread: { exists: false },
+        contextWindow: 272_000,
+        autoCompactTokenLimit: 244_800,
+        catalogRevision: 'catalog-1',
+        threadRestored: false,
+      }),
+      catalogRevisionIsCurrent: () => true,
+      applyContext: harness.applyContext,
+      persistSelection: harness.persistSelection,
+      restoreSelection: harness.restoreSelection,
+      resumeThread: vi.fn(async () => undefined),
+      backendEpoch: () => 2,
+    } as never)
+
+    const result = await coordinator.apply({
+      ...selection('rightcode', 'gpt-5.5', 1),
+      threadId: 'missing-thread',
+    })
+
+    expect(result).toMatchObject({
+      ok: false,
+      kind: 'configuration',
+      stage: 'validate',
+      error: expect.stringMatching(/thread.*not found|线程.*不存在/i),
+    })
+    expect(harness.channelController.apply).not.toHaveBeenCalled()
+    expect(harness.persistSelection).not.toHaveBeenCalled()
+  })
+
+  it('accepts an existing thread with no model and persists the confirmed model', async () => {
+    const harness = createSelectionHarness()
+    const coordinator = new AgentModelSelectionCoordinator({
+      channelController: harness.channelController,
+      getSnapshot: () => ({
+        gatewayId: 'rightcode',
+        channelId: 'rightcode-standard',
+        modelId: 'gpt-5.5',
+        thread: { exists: true, model: null },
+        contextWindow: 272_000,
+        autoCompactTokenLimit: 244_800,
+        catalogRevision: 'catalog-1',
+        threadRestored: false,
+      }),
+      catalogRevisionIsCurrent: () => true,
+      applyContext: harness.applyContext,
+      persistSelection: harness.persistSelection,
+      restoreSelection: harness.restoreSelection,
+      resumeThread: vi.fn(async () => undefined),
+      backendEpoch: () => 2,
+    } as never)
+
+    await expect(coordinator.apply({
+      ...selection('rightcode', 'gpt-5.5', 1),
+      threadId: 'legacy-thread',
+    })).resolves.toMatchObject({ ok: true })
+    expect(harness.persistSelection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        thread: { exists: true, model: 'gpt-5.5' },
+      }),
+      'legacy-thread',
+    )
+  })
+
+  it('rejects recovery while work is in flight without touching runtime or durable state', async () => {
+    const harness = createSelectionHarness()
+    let inFlightWork = false
+    vi.mocked(harness.channelController.apply).mockRejectedValueOnce(
+      new ProviderChannelRecoveryError(
+        new Error('replacement unhealthy'),
+        new Error('recovery unhealthy'),
+      ),
+    )
+    const coordinator = new AgentModelSelectionCoordinator({
+      channelController: harness.channelController,
+      getSnapshot: () => ({
+        gatewayId: 'rightcode',
+        channelId: 'rightcode-standard',
+        modelId: 'gpt-5.5',
+        contextWindow: 272_000,
+        autoCompactTokenLimit: 244_800,
+        catalogRevision: 'catalog-1',
+        threadRestored: false,
+      }),
+      catalogRevisionIsCurrent: () => true,
+      applyContext: harness.applyContext,
+      persistSelection: harness.persistSelection,
+      restoreSelection: harness.restoreSelection,
+      resumeThread: vi.fn(async () => undefined),
+      backendEpoch: () => 2,
+      hasInFlightWork: () => inFlightWork,
+    } as never)
+    await coordinator.apply(selection('rightcode', 'grok-4.5', 1))
+    harness.restoreSelection.mockClear()
+    inFlightWork = true
+
+    const result = await coordinator.recover()
+
+    expect(result).toMatchObject({
+      ok: false,
+      stage: 'busy',
+      recoveryRequired: true,
+    })
+    expect(harness.channelController.recover).not.toHaveBeenCalled()
+    expect(harness.restoreSelection).not.toHaveBeenCalled()
+  })
+
+  it('commits durable recovery only after verified force restart succeeds', async () => {
+    const harness = createSelectionHarness()
+    vi.mocked(harness.channelController.apply).mockRejectedValueOnce(
+      new ProviderChannelRecoveryError(
+        new Error('replacement unhealthy'),
+        new Error('recovery unhealthy'),
+      ),
+    )
+    await harness.coordinator.apply(selection('rightcode', 'grok-4.5', 1))
+    harness.restoreSelection.mockClear()
+
+    const result = await harness.coordinator.recover()
+
+    expect(result).toMatchObject({
+      ok: true,
+      recoveryRequired: false,
+    })
+    expect(
+      vi.mocked(harness.channelController.recover).mock.invocationCallOrder[0],
+    ).toBeLessThan(harness.restoreSelection.mock.invocationCallOrder[0])
+    expect(harness.coordinator.getRecoveryState()).toEqual({
+      recoveryRequired: false,
+    })
+  })
+
+  it('keeps recovery poison and durable state untouched when force restart fails', async () => {
+    const harness = createSelectionHarness()
+    vi.mocked(harness.channelController.apply).mockRejectedValueOnce(
+      new ProviderChannelRecoveryError(
+        new Error('replacement unhealthy'),
+        new Error('recovery unhealthy'),
+      ),
+    )
+    await harness.coordinator.apply(selection('rightcode', 'grok-4.5', 1))
+    harness.restoreSelection.mockClear()
+    vi.mocked(harness.channelController.recover).mockRejectedValueOnce(
+      new Error('force recovery failed'),
+    )
+
+    const result = await harness.coordinator.recover()
+
+    expect(result).toMatchObject({
+      ok: false,
+      stage: 'recovery',
+      recoveryRequired: true,
+      error: 'force recovery failed',
+    })
+    expect(harness.restoreSelection).not.toHaveBeenCalled()
+    expect(harness.coordinator.getRecoveryState()).toMatchObject({
+      recoveryRequired: true,
     })
   })
 })

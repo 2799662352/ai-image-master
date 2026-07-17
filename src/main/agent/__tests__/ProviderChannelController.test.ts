@@ -15,10 +15,14 @@ const paths: CodexWorkspacePaths = {
 }
 
 function createBackend(): ProviderChannelBackend {
+  let epoch = 1
   return {
     setProvider: vi.fn(),
-    restartCodex: vi.fn(async () => undefined),
-    currentEpoch: vi.fn(() => 2),
+    restartCodex: vi.fn(async () => {
+      epoch += 1
+    }),
+    currentEpoch: vi.fn(() => epoch),
+    isHealthy: vi.fn(() => true),
   }
 }
 
@@ -106,5 +110,25 @@ describe('ProviderChannelController', () => {
     )
     expect(backend.restartCodex).toHaveBeenCalledTimes(1)
     expect(controller.currentChannelId()).toBe('rightcode-standard')
+  })
+
+  it('rejects explicit recovery when restart does not create a new generation', async () => {
+    const backend = createBackend()
+    vi.mocked(backend.restartCodex!).mockResolvedValue(undefined)
+    const controller = createController(backend, 'rightcode-standard')
+
+    await expect(controller.recover('rightcode-standard')).rejects.toThrow(
+      /generation|epoch/i,
+    )
+  })
+
+  it('rejects explicit recovery when the restarted backend is unhealthy', async () => {
+    const backend = createBackend()
+    vi.mocked(backend.isHealthy!).mockReturnValue(false)
+    const controller = createController(backend, 'rightcode-standard')
+
+    await expect(controller.recover('rightcode-standard')).rejects.toThrow(
+      /healthy|unhealthy/i,
+    )
   })
 })

@@ -49,6 +49,7 @@ export type {
   AgentModelContextApplyResult,
   AgentModelContextApplyStage,
   AgentModelContextRollbackResult,
+  AgentModelSelectionRecoveryResult,
 } from '../../types/agent'
 
 export interface AgentInput extends AgentSendMessagePayload {

@@ -147,8 +147,21 @@ export class ProviderChannelController {
     if (!restart) {
       throw new Error('Provider Channel recovery requires restart capability')
     }
+    const previousEpoch = this.options.backend.currentEpoch?.()
     this.options.backend.setProvider?.(provider)
     await restart(this.options.paths)
+    const nextEpoch = this.options.backend.currentEpoch?.()
+    if (this.options.backend.isHealthy && !this.options.backend.isHealthy()) {
+      throw new Error('Provider Channel recovery completed without a healthy backend')
+    }
+    if (
+      previousEpoch !== undefined
+      && (nextEpoch === undefined || nextEpoch === previousEpoch)
+    ) {
+      throw new Error(
+        'Provider Channel recovery did not create a new backend generation',
+      )
+    }
     this.activeChannelId = channelId
   }
 }
