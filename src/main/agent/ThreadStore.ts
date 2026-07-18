@@ -1,6 +1,9 @@
 import type { Prisma, PrismaClient } from '@prisma/client'
 
-import type { AgentThreadModelSnapshot } from '../../types/agent'
+import type {
+  AgentThreadModelSnapshot,
+  AgentThreadRoutingSnapshot,
+} from '../../types/agent'
 
 export class ThreadStore {
   constructor(private readonly prisma: PrismaClient) {}
@@ -103,6 +106,44 @@ export class ThreadStore {
     })
     return row
       ? { exists: true, model: row.model ?? null }
+      : { exists: false }
+  }
+
+  /**
+   * Persists the thread→Gateway/Channel routing binding (Plan B per-thread
+   * provider routing) together with the confirmed model, so re-opening this
+   * thread later routes its turns to the same provider regardless of what the
+   * GLOBAL selection has moved to since. Scoped to the target thread only.
+   */
+  async setThreadRouting(
+    threadId: string,
+    routing: { model: string; gatewayId: string; modelProvider: string },
+  ): Promise<void> {
+    await this.prisma.agentThread.update({
+      where: { id: threadId },
+      data: routing,
+    })
+  }
+
+  /**
+   * Reads one thread's routing binding. Pre-migration rows come back with
+   * null gatewayId/modelProvider — the caller derives a fallback from the
+   * active gateway + the persisted model (migration兜底), never throws.
+   */
+  async getThreadRoutingSnapshot(
+    threadId: string,
+  ): Promise<AgentThreadRoutingSnapshot> {
+    const row = await this.prisma.agentThread.findUnique({
+      where: { id: threadId },
+      select: { model: true, gatewayId: true, modelProvider: true },
+    })
+    return row
+      ? {
+          exists: true,
+          model: row.model ?? null,
+          gatewayId: row.gatewayId ?? null,
+          modelProvider: row.modelProvider ?? null,
+        }
       : { exists: false }
   }
 

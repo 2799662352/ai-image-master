@@ -220,4 +220,28 @@ describe('CodexProtocolClient thread history wrappers', () => {
       modelProvider: 'rightcode-grok',
     })
   })
+
+  it('resumeThread forwards the per-thread context pin via config (Plan B)', async () => {
+    await startClient()
+
+    await client!.resumeThread('codex-thread-1', {
+      model: 'grok-4.5',
+      modelProvider: 'rightcode-grok',
+      config: {
+        model_context_window: 500_000,
+        model_auto_compact_token_limit: 450_000,
+      },
+    })
+
+    const request = server!.receivedFromClient.find((msg) => msg.method === 'thread/resume')
+    expect(request?.params).toEqual({
+      threadId: 'codex-thread-1',
+      model: 'grok-4.5',
+      modelProvider: 'rightcode-grok',
+      config: {
+        model_context_window: 500_000,
+        model_auto_compact_token_limit: 450_000,
+      },
+    })
+  })
 })

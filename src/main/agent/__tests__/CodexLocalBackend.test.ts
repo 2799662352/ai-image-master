@@ -796,6 +796,78 @@ describe('CodexLocalBackend spawn env injection', () => {
     }
   })
 
+  it('registers sibling Gateway channels as EXTRA provider tables with per-channel bridging (Plan B)', async () => {
+    let capturedArgs: string[] = []
+    const backend = new CodexLocalBackend({
+      resourceRoot: '/tmp/codex-fake-root',
+      provider: {
+        id: 'rightcode-standard',
+        name: 'Right.Codes',
+        baseUrl: 'https://right.codes/codex/v1',
+        envKey: 'OPENAI_API_KEY',
+        model: 'gpt-5.5',
+        requiresOpenaiAuth: true,
+        compatibilityPolicy: 'none',
+      },
+      getGatewayChannelProviders: () => [
+        // Includes the ACTIVE channel too — the backend must dedupe it by id
+        // instead of registering it twice / double-proxying it.
+        {
+          id: 'rightcode-standard',
+          name: 'Right.Codes',
+          baseUrl: 'https://right.codes/codex/v1',
+          envKey: 'OPENAI_API_KEY',
+          model: 'gpt-5.5',
+          requiresOpenaiAuth: true,
+          compatibilityPolicy: 'none',
+        },
+        {
+          id: 'rightcode-grok',
+          name: 'Right.Codes Grok',
+          baseUrl: 'https://right.codes/grok/v1',
+          envKey: 'OPENAI_API_KEY',
+          model: 'grok-4.5',
+          requiresOpenaiAuth: true,
+          compatibilityPolicy: 'responses-namespace-bridge',
+        },
+      ],
+      spawnFactory: ((_bin: string, args: string[]) => {
+        capturedArgs = args
+        return makeFakeCodexServerChildProc(args)
+      }) as any,
+      connectTimeoutMs: 500,
+    })
+
+    try {
+      await backend.start()
+      const joined = capturedArgs.join(' ')
+
+      // Active channel stays the top-level model_provider on its direct URL.
+      expect(capturedArgs).toContain('model_provider="rightcode-standard"')
+      expect(capturedArgs).toContain(
+        'model_providers.rightcode-standard.base_url="https://right.codes/codex/v1"',
+      )
+      // The sibling Grok channel is REGISTERED (extra table) but never seizes
+      // the active provider slot.
+      expect(joined).not.toContain('model_provider="rightcode-grok"')
+      expect(capturedArgs).toContain('model_providers.rightcode-grok.name="Right.Codes Grok"')
+      expect(capturedArgs).toContain('model_providers.rightcode-grok.requires_openai_auth=true')
+      expect(capturedArgs).toContain('model_providers.rightcode-grok.wire_api="responses"')
+      // Bridged sibling rides its own loopback compatibility proxy.
+      const grokBaseUrl = capturedArgs.find((arg) =>
+        arg.startsWith('model_providers.rightcode-grok.base_url='))
+      expect(grokBaseUrl).toMatch(
+        /^model_providers\.rightcode-grok\.base_url="http:\/\/127\.0\.0\.1:\d+\/grok\/v1"$/,
+      )
+      // Exactly ONE table per channel id — the active dupe was filtered out.
+      const standardNameArgs = capturedArgs.filter((arg) =>
+        arg.startsWith('model_providers.rightcode-standard.name='))
+      expect(standardNameArgs).toHaveLength(1)
+    } finally {
+      await backend.stop()
+    }
+  })
+
   it('does NOT register the qwen provider when getUnderstandProvider returns undefined', async () => {
     let capturedEnv: NodeJS.ProcessEnv | undefined
     let capturedArgs: string[] | undefined

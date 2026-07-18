@@ -167,6 +167,31 @@ function stripNullInputItemFields(body: JsonObject): void {
   }
 }
 
+const ENCRYPTED_REPLAY_ITEM_TYPES = new Set(['reasoning', 'compaction'])
+
+/**
+ * Drops replayed reasoning/compaction items that carry provider-bound
+ * `encrypted_content`.
+ *
+ * Cross-channel continuation (a GPT thread switched to grok) replays history
+ * containing OpenAI-encrypted reasoning blobs; xAI cannot decrypt them and
+ * fails the whole turn with "Could not decrypt the provided encrypted_content"
+ * (openai/codex #17541). Upstream guidance (#25290) is to remove the WHOLE
+ * item — blanking only the field turns the error into "Missing required
+ * parameter: input[N].encrypted_content". Safe on bridged (xAI-family)
+ * channels: grok itself replays reasoning with `encrypted_content: null`
+ * (verified via live capture), so any non-empty blob here is by construction
+ * foreign replay data the upstream could never use anyway.
+ */
+function dropForeignEncryptedReplayItems(body: JsonObject): void {
+  if (!Array.isArray(body.input)) return
+  body.input = body.input.filter((item) => {
+    if (!isJsonObject(item)) return true
+    if (typeof item.type !== 'string' || !ENCRYPTED_REPLAY_ITEM_TYPES.has(item.type)) return true
+    return typeof item.encrypted_content !== 'string' || item.encrypted_content.length === 0
+  })
+}
+
 /**
  * Converts Codex namespace wrappers into standard Responses function tools.
  */
@@ -175,6 +200,7 @@ export function flattenNamespaceTools<T extends JsonObject>(
 ): FlattenedResponsesRequest<T> {
   const body = cloneJson(request)
   const mutableBody: JsonObject = body
+  dropForeignEncryptedReplayItems(mutableBody)
   stripNullInputItemFields(mutableBody)
   const bindings: NamespaceToolBinding[] = []
   const bindingByIdentity = new Map<string, NamespaceToolBinding>()

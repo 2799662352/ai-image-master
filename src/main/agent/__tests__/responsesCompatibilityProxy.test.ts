@@ -133,14 +133,61 @@ describe('Responses namespace compatibility', () => {
     expect(request.input[1]).toHaveProperty('content', null)
   })
 
-  it('keeps non-null reasoning payloads (encrypted content round-trip) intact', () => {
+  it('drops replayed reasoning/compaction items carrying foreign encrypted content', () => {
+    // Cross-channel switch (GPT thread continued on grok): history replays
+    // OpenAI-encrypted `encrypted_content` blobs that xAI cannot decrypt →
+    // "Could not decrypt the provided encrypted_content" (openai/codex
+    // #17541). Upstream guidance (#25290): remove the WHOLE item — blanking
+    // just the field turns the failure into "Missing required parameter".
+    // xAI itself never emits encrypted_content (verified via live capture:
+    // grok replay always has `encrypted_content: null`), so any non-empty
+    // blob on a bridged channel is provider-foreign by construction.
+    const request = {
+      model: 'grok-4.5',
+      input: [
+        { role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
+        {
+          type: 'reasoning',
+          summary: [{ type: 'summary_text', text: 's' }],
+          encrypted_content: 'gAAAA-opaque-openai-blob',
+          content: null,
+        },
+        {
+          type: 'compaction',
+          encrypted_content: 'gAAAA-opaque-compaction-blob',
+        },
+        {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: 'hello' }],
+        },
+        { role: 'user', content: [{ type: 'input_text', text: '1' }] },
+      ],
+    }
+
+    const result = flattenNamespaceTools(request)
+
+    expect(result.body.input).toEqual([
+      { role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
+      {
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'output_text', text: 'hello' }],
+      },
+      { role: 'user', content: [{ type: 'input_text', text: '1' }] },
+    ])
+    // The original request object is not mutated.
+    expect(request.input).toHaveLength(5)
+  })
+
+  it('keeps reasoning items without encrypted content (null-stripped) in place', () => {
     const request = {
       model: 'grok-4.5',
       input: [
         {
           type: 'reasoning',
           summary: [{ type: 'summary_text', text: 's' }],
-          encrypted_content: 'opaque-blob',
+          encrypted_content: null,
           content: [{ type: 'reasoning_text', text: 'raw' }],
         },
       ],
@@ -148,12 +195,13 @@ describe('Responses namespace compatibility', () => {
 
     const result = flattenNamespaceTools(request)
 
-    expect(result.body.input[0]).toEqual({
-      type: 'reasoning',
-      summary: [{ type: 'summary_text', text: 's' }],
-      encrypted_content: 'opaque-blob',
-      content: [{ type: 'reasoning_text', text: 'raw' }],
-    })
+    expect(result.body.input).toEqual([
+      {
+        type: 'reasoning',
+        summary: [{ type: 'summary_text', text: 's' }],
+        content: [{ type: 'reasoning_text', text: 'raw' }],
+      },
+    ])
   })
 
   it('restores namespace identity on nested function-call response items', () => {

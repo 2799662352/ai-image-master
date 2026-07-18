@@ -107,6 +107,28 @@ describe('ensureSchema', () => {
       // ALIGN_SCHEMA_SQL on the hot-update boot, or resume-on-restart silently
       // degrades back to amnesiac fresh threads.
       expect(colNames).toContain('codexThreadId')
+      // Plan B per-thread provider routing: existing DBs must gain the
+      // binding columns on the hot-update boot, with legacy rows staying
+      // NULL (= unbound, resolved via active-gateway fallback).
+      expect(colNames).toContain('gatewayId')
+      expect(colNames).toContain('modelProvider')
+      const legacyRouting = await db.query<{
+        gatewayId: string | null
+        modelProvider: string | null
+      }>(
+        `SELECT "gatewayId", "modelProvider" FROM "AgentThread" WHERE id = $1`,
+        ['legacy-thread'],
+      )
+      expect(legacyRouting.rows[0]).toEqual({ gatewayId: null, modelProvider: null })
+      await db.query(
+        `UPDATE "AgentThread" SET "gatewayId" = $1, "modelProvider" = $2 WHERE id = $3`,
+        ['rightcode', 'rightcode-grok', 'legacy-thread'],
+      )
+      const boundRouting = await db.query<{ modelProvider: string | null }>(
+        `SELECT "modelProvider" FROM "AgentThread" WHERE id = $1`,
+        ['legacy-thread'],
+      )
+      expect(boundRouting.rows[0]?.modelProvider).toBe('rightcode-grok')
       await db.query(
         `UPDATE "AgentThread" SET "codexThreadId" = $1 WHERE id = $2`,
         ['11111111-2222-3333-4444-555555555555', 'legacy-thread'],

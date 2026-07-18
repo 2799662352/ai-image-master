@@ -15,6 +15,12 @@ model AgentThread {
   // restart can `thread/resume` the same on-disk rollout and keep conversation
   // memory, instead of silently starting a brand-new (amnesiac) codex thread.
   codexThreadId String?
+  // Per-thread provider routing (Plan B): the Gateway + Channel this thread is
+  // pinned to, so switching the GLOBAL selection never re-routes an existing
+  // conversation. Null on pre-migration rows — callers derive a fallback from
+  // the active gateway + the thread's `model`.
+  gatewayId     String?
+  modelProvider String?
   lastMessageAt DateTime?
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt

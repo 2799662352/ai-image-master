@@ -470,14 +470,23 @@ describe('buildCodexLaunchArgs', () => {
     expect(args).toContain('web_search="disabled"')
   })
 
-  it('forwards writableRoots as --add-dir flags', () => {
+  it('forwards writableRoots via sandbox_workspace_write.writable_roots config', () => {
     const args = buildCodexLaunchArgs({
       listenUrl: 'ws://127.0.0.1:1234',
-      sessionConfig: { writableRoots: ['D:/repo/sub'] },
+      sessionConfig: { writableRoots: ['D:/repo/sub', 'D:/repo/other'] },
     })
-    const idx = args.indexOf('--add-dir')
-    expect(idx).toBeGreaterThanOrEqual(0)
-    expect(args[idx + 1]).toBe('D:/repo/sub')
+    // `--add-dir` is a `codex` TUI / `codex exec` flag; `codex app-server`
+    // rejects it with exit code 2, killing every provider-switch restart.
+    expect(args).not.toContain('--add-dir')
+    expect(args).toContain(
+      'sandbox_workspace_write.writable_roots=["D:/repo/sub", "D:/repo/other"]',
+    )
+  })
+
+  it('omits sandbox_workspace_write.writable_roots when no roots are selected', () => {
+    const args = buildCodexLaunchArgs({ listenUrl: 'ws://127.0.0.1:1234' })
+    expect(args).not.toContain('--add-dir')
+    expect(args.some((a) => a.startsWith('sandbox_workspace_write.writable_roots='))).toBe(false)
   })
 
   it('resolves default writableRoots without sharing the default array', () => {

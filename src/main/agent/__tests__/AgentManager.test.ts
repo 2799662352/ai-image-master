@@ -132,7 +132,7 @@ describe('AgentManager persisted Gateway/model startup routing', () => {
     selectedGatewayId: string
     selectedModelId: string
     apiKeys?: Record<string, string>
-    customProviders?: CodexProviderConfig[]
+    customProviders?: Array<CodexProviderConfig & { isCustom?: boolean }>
   }): Promise<void> {
     await fs.writeFile(
       path.join(tmpDir, 'codex-providers.json'),
@@ -236,6 +236,39 @@ describe('AgentManager persisted Gateway/model startup routing', () => {
       baseUrl: 'https://studio.example.com/v1',
     })
     expect(options.getApiKey?.()).toBe('custom-key')
+  })
+
+  it('exposes EVERY channel of the active builtin Gateway for per-thread routing (Plan B)', async () => {
+    await writeProvidersState({
+      selectedGatewayId: 'rightcode',
+      selectedModelId: 'gpt-5.5',
+    })
+
+    const options = constructAndCaptureBackend()
+
+    const channels = options.getGatewayChannelProviders?.() ?? []
+    expect(channels.map((channel) => channel.id)).toEqual([
+      'rightcode-standard',
+      'rightcode-grok',
+    ])
+  })
+
+  it('exposes no sibling channels for a custom Gateway (single custom channel)', async () => {
+    await writeProvidersState({
+      selectedGatewayId: 'custom-studio',
+      selectedModelId: 'vendor-model',
+      customProviders: [{
+        id: 'custom-studio',
+        name: 'Studio Gateway',
+        baseUrl: 'https://studio.example.com/v1',
+        envKey: 'OPENAI_API_KEY',
+        isCustom: true,
+      }],
+    })
+
+    const options = constructAndCaptureBackend()
+
+    expect(options.getGatewayChannelProviders?.()).toEqual([])
   })
 
   it('keeps the existing default-provider fallback for an unknown persisted Gateway', async () => {

@@ -16,6 +16,8 @@ CREATE TABLE "AgentThread" (
     "model" TEXT NOT NULL,
     "manualTitle" BOOLEAN NOT NULL DEFAULT false,
     "codexThreadId" TEXT,
+    "gatewayId" TEXT,
+    "modelProvider" TEXT,
     "lastMessageAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
@@ -101,6 +103,10 @@ ALTER TABLE "AgentAttachment" ADD CONSTRAINT "AgentAttachment_threadId_fkey" FOR
 const ALIGN_SCHEMA_SQL: readonly string[] = [
   `ALTER TABLE "AgentThread" ADD COLUMN IF NOT EXISTS "manualTitle" BOOLEAN NOT NULL DEFAULT false`,
   `ALTER TABLE "AgentThread" ADD COLUMN IF NOT EXISTS "codexThreadId" TEXT`,
+  // Per-thread provider routing (Plan B): existing user DBs pick these up on
+  // the hot-update boot; rows stay NULL (= unbound) until their next send.
+  `ALTER TABLE "AgentThread" ADD COLUMN IF NOT EXISTS "gatewayId" TEXT`,
+  `ALTER TABLE "AgentThread" ADD COLUMN IF NOT EXISTS "modelProvider" TEXT`,
   `ALTER TABLE "AgentThread" ADD COLUMN IF NOT EXISTS "lastMessageAt" TIMESTAMP(3)`,
   `CREATE INDEX IF NOT EXISTS "AgentThread_lastMessageAt_idx" ON "AgentThread"("lastMessageAt" DESC)`,
   `ALTER TABLE "AgentMessage" ADD COLUMN IF NOT EXISTS "items" JSONB NOT NULL DEFAULT '[]'`,

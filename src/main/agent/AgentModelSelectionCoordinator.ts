@@ -19,6 +19,18 @@ import {
   type ProviderChannelController,
 } from './ProviderChannelController'
 
+/**
+ * Thread-scoped routing target forwarded to `resumeThread` when a switch is
+ * served in-process (Plan B): the resume re-binds the codex session to this
+ * registered provider table + model instead of the process-active provider.
+ */
+export interface AgentModelSelectionRouteTarget {
+  gatewayId: string
+  channelId: string
+  modelId: string
+  contextWindow: number
+}
+
 /** Runtime and persistence dependencies for model-selection transactions. */
 export interface AgentModelSelectionCoordinatorOptions {
   channelController: ProviderChannelController
@@ -26,6 +38,24 @@ export interface AgentModelSelectionCoordinatorOptions {
     threadId?: string,
   ) => AgentModelSelectionSnapshot | Promise<AgentModelSelectionSnapshot>
   catalogRevisionIsCurrent: (gatewayId: string, revision: string) => boolean
+  /**
+   * Plan B per-thread provider routing. Returns true when the target Channel
+   * is already registered on the LIVE spawn (a same-gateway sibling table),
+   * so the switch can be served WITHOUT restarting the process: no Channel
+   * restart, no launch-level context restart (the pin rides the thread), and
+   * the busy gate narrows to the TARGET thread only. Absent/false keeps the
+   * original restart transaction.
+   */
+  canRouteInProcess?: (
+    previous: AgentModelSelectionSnapshot,
+    route: AgentModelRoute,
+  ) => boolean
+  /**
+   * Thread-scoped busy probe used only by the in-process routing path. When
+   * absent, in-process switches fall back to the global {@link hasInFlightWork}
+   * gate.
+   */
+  threadHasInFlightWork?: (threadId: string) => boolean
   /**
    * Applies a launch-level context transition (restart). `pin` is the exact
    * override the next spawn must use — `null` means unpinned (Codex-native
@@ -53,7 +83,10 @@ export interface AgentModelSelectionCoordinatorOptions {
     snapshot: AgentModelSelectionSnapshot,
     threadId?: string,
   ) => Promise<void>
-  resumeThread: (threadId: string) => Promise<void>
+  resumeThread: (
+    threadId: string,
+    target?: AgentModelSelectionRouteTarget,
+  ) => Promise<void>
   backendEpoch: () => number | undefined
   /** Includes pending send admission as well as registered active turns. */
   hasInFlightWork?: () => boolean
@@ -480,7 +513,47 @@ export class AgentModelSelectionCoordinator {
       )
     }
 
-    const channelChanged = previous.channelId !== route.channelId
+    // Plan B: a thread that already carries a routing binding compares
+    // against ITS OWN bound Channel, not the process-active one, so sends on
+    // a bound thread neither restart nor churn resume/persist every turn.
+    const threadBinding = payload.threadId && previous.thread?.exists
+      ? previous.thread
+      : undefined
+    if (
+      threadBinding
+      && threadBinding.modelProvider != null
+      && threadBinding.modelProvider === route.channelId
+      && threadBinding.model === route.modelId
+      && (
+        threadBinding.gatewayId == null
+        || threadBinding.gatewayId === effectivePayload.gatewayId.trim()
+      )
+    ) {
+      return {
+        ok: true,
+        data: {
+          ...previous,
+          gatewayId: effectivePayload.gatewayId.trim(),
+          channelId: route.channelId,
+          modelId: route.modelId,
+          contextWindow: effectivePayload.contextWindow,
+          autoCompactTokenLimit: modelAutoCompactTokenLimit(
+            effectivePayload.contextWindow,
+          ),
+          catalogRevision: effectivePayload.catalogRevision,
+          requestVersion: effectivePayload.requestVersion,
+        },
+      }
+    }
+
+    const previousChannelId = threadBinding?.modelProvider
+      ?? previous.channelId
+    const channelChanged = previousChannelId !== route.channelId
+    // In-process routing (Plan B): the target Channel is a registered sibling
+    // table on the live spawn, so the switch is pure data — resume the thread
+    // onto the sibling provider and persist, with zero process mutation.
+    const inProcessRoute = channelChanged
+      && this.options.canRouteInProcess?.(previous, route) === true
     // Restart is driven by the launch pin, not the raw number: switching
     // between two models running at their Codex-native windows (gpt-5.5 272K
     // ↔ gpt-5.6-sol 372K) keeps the process alive because neither needs a
@@ -494,20 +567,29 @@ export class AgentModelSelectionCoordinator {
       effectivePayload.contextWindow,
     )
     const contextChanged = !modelContextPinsEqual(previousPin, nextPin)
-    if (
-      (channelChanged || contextChanged)
-      && this.options.hasInFlightWork?.()
-    ) {
-      return this.failure(
-        payload,
-        previous,
-        '模型或 Context 切换需等待当前回合结束。',
-        'transient',
-        'busy',
-        true,
-        false,
-        { ok: true, snapshot: previous },
-      )
+    if (channelChanged || contextChanged) {
+      // In-process switches never kill the process, so turns running on OTHER
+      // threads are irrelevant — only the TARGET thread must be idle for its
+      // re-binding resume. Restart transitions keep the global gate.
+      const busy = inProcessRoute
+        ? (payload.threadId
+            ? this.options.threadHasInFlightWork?.(payload.threadId)
+              ?? this.options.hasInFlightWork?.()
+              ?? false
+            : false)
+        : this.options.hasInFlightWork?.() ?? false
+      if (busy) {
+        return this.failure(
+          payload,
+          previous,
+          '模型或 Context 切换需等待当前回合结束。',
+          'transient',
+          'busy',
+          true,
+          false,
+          { ok: true, snapshot: previous },
+        )
+      }
     }
 
     if (
@@ -534,15 +616,21 @@ export class AgentModelSelectionCoordinator {
       }
     }
 
+    // In-process routes never mutate the live process, so their rollback must
+    // not restart it either — restoring durable state is enough; the next
+    // send self-heals the thread binding from the DB.
+    const processMutated = !inProcessRoute
     let stage: AgentModelSelectionStage = 'restart'
     try {
-      await this.options.channelController.apply(route.channelId)
-      if (contextChanged) {
-        await this.options.applyContext(
-          effectivePayload.contextWindow,
-          reservation.sequence,
-          nextPin,
-        )
+      if (!inProcessRoute) {
+        await this.options.channelController.apply(route.channelId)
+        if (contextChanged) {
+          await this.options.applyContext(
+            effectivePayload.contextWindow,
+            reservation.sequence,
+            nextPin,
+          )
+        }
       }
       if (this.isSuperseded(reservation)) {
         return this.rollbackSuperseded(
@@ -550,6 +638,7 @@ export class AgentModelSelectionCoordinator {
           previous,
           contextChanged,
           reservation.sequence,
+          processMutated,
         )
       }
       if (!this.catalogIsCurrent(effectivePayload)) {
@@ -561,13 +650,23 @@ export class AgentModelSelectionCoordinator {
           'catalog',
           contextChanged,
           reservation.sequence,
+          processMutated,
         )
       }
 
       let threadRestored = false
       if (payload.threadId && (channelChanged || contextChanged)) {
         stage = 'resume'
-        await this.options.resumeThread(payload.threadId)
+        if (inProcessRoute) {
+          await this.options.resumeThread(payload.threadId, {
+            gatewayId: effectivePayload.gatewayId.trim(),
+            channelId: route.channelId,
+            modelId: route.modelId,
+            contextWindow: effectivePayload.contextWindow,
+          })
+        } else {
+          await this.options.resumeThread(payload.threadId)
+        }
         threadRestored = true
       }
       if (this.isSuperseded(reservation)) {
@@ -576,6 +675,7 @@ export class AgentModelSelectionCoordinator {
           previous,
           contextChanged,
           reservation.sequence,
+          processMutated,
         )
       }
       if (threadRestored && !this.catalogIsCurrent(effectivePayload)) {
@@ -587,6 +687,7 @@ export class AgentModelSelectionCoordinator {
           'catalog',
           contextChanged,
           reservation.sequence,
+          processMutated,
         )
       }
 
@@ -613,6 +714,7 @@ export class AgentModelSelectionCoordinator {
           previous,
           contextChanged,
           reservation.sequence,
+          processMutated,
         )
       }
       if (!this.catalogIsCurrent(effectivePayload)) {
@@ -624,6 +726,7 @@ export class AgentModelSelectionCoordinator {
           'verify',
           contextChanged,
           reservation.sequence,
+          processMutated,
         )
       }
       return {
@@ -637,6 +740,7 @@ export class AgentModelSelectionCoordinator {
           payload.threadId,
           contextChanged,
           reservation.sequence,
+          processMutated,
           error,
         )
         return this.poisonedFailure(
@@ -652,6 +756,7 @@ export class AgentModelSelectionCoordinator {
         payload.threadId,
         contextChanged,
         reservation.sequence,
+        processMutated,
       )
       if (!rollback.ok) {
         return this.poisonedFailure(
@@ -699,12 +804,14 @@ export class AgentModelSelectionCoordinator {
     stage: AgentModelSelectionStage,
     contextChanged: boolean,
     intentSequence: number,
+    processMutated = true,
   ): Promise<AgentModelSelectionApplyResult> {
     const rollback = await this.rollback(
       previous,
       payload.threadId,
       contextChanged,
       intentSequence,
+      processMutated,
     )
     if (!rollback.ok) {
       return this.poisonedFailure(payload, previous, error, rollback)
@@ -726,12 +833,14 @@ export class AgentModelSelectionCoordinator {
     previous: AgentModelSelectionSnapshot,
     contextChanged: boolean,
     intentSequence: number,
+    processMutated = true,
   ): Promise<AgentModelSelectionApplyResult> {
     const rollback = await this.rollback(
       previous,
       payload.threadId,
       contextChanged,
       intentSequence,
+      processMutated,
     )
     if (!rollback.ok) {
       return this.poisonedFailure(
@@ -774,12 +883,13 @@ export class AgentModelSelectionCoordinator {
     threadId: string | undefined,
     contextChanged: boolean,
     intentSequence: number,
+    processMutated = true,
     recoveryError?: ProviderChannelRecoveryError,
   ): Promise<Extract<AgentModelSelectionApplyResult, { ok: false }>['rollback']> {
     const failures: string[] = []
     if (recoveryError) {
       failures.push(errorMessage(recoveryError))
-    } else if (contextChanged) {
+    } else if (contextChanged && processMutated) {
       try {
         await this.options.applyContext(
           previous.contextWindow,
@@ -790,7 +900,10 @@ export class AgentModelSelectionCoordinator {
         failures.push(`context: ${errorMessage(error)}`)
       }
     }
-    if (!recoveryError) {
+    // In-process routes never touched the live process (no restart, no launch
+    // pin change), so rollback only restores durable state below; a thread
+    // already re-bound by resume self-heals from the DB on its next send.
+    if (!recoveryError && processMutated) {
       try {
         await this.options.channelController.restore(previous.channelId)
       } catch (error) {
