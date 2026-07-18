@@ -108,6 +108,67 @@ describe('AgentModelSelectionCoordinator', () => {
     expect(harness.applyContext).not.toHaveBeenCalled()
   })
 
+  it('skips the context restart when the launch pin is unchanged', async () => {
+    // gpt-5.5 272K and gpt-5.6-sol 372K both resolve to the unpinned state, so
+    // the numeric context change must not trigger applyContext (no restart).
+    const harness = createSelectionHarness()
+    const resolveContextPin = vi.fn((modelId: string, contextWindow: number) =>
+      modelId === 'grok-4.5'
+        ? {
+            modelContextWindow: contextWindow,
+            modelAutoCompactTokenLimit: Math.floor(contextWindow * 0.9),
+          }
+        : null)
+    const coordinator = new AgentModelSelectionCoordinator({
+      channelController: harness.channelController,
+      getSnapshot: () => ({
+        gatewayId: 'rightcode',
+        channelId: 'rightcode-standard',
+        modelId: 'gpt-5.5',
+        contextWindow: 272_000,
+        autoCompactTokenLimit: 244_800,
+        catalogRevision: 'catalog-1',
+        backendEpoch: 1,
+        threadRestored: false,
+      }),
+      catalogRevisionIsCurrent: () => true,
+      applyContext: harness.applyContext,
+      resolveContextPin,
+      persistSelection: harness.persistSelection,
+      restoreSelection: harness.restoreSelection,
+      resumeThread: vi.fn(async () => undefined),
+      backendEpoch: () => 2,
+    })
+
+    const result = await coordinator.apply({
+      gatewayId: 'rightcode',
+      modelId: 'gpt-5.6-sol',
+      contextWindow: 372_000,
+      catalogRevision: 'catalog-1',
+      requestVersion: 1,
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: { modelId: 'gpt-5.6-sol', contextWindow: 372_000 },
+    })
+    expect(harness.applyContext).not.toHaveBeenCalled()
+
+    // Pinning the same model to a non-native window still restarts.
+    const pinned = await coordinator.apply({
+      gatewayId: 'rightcode',
+      modelId: 'grok-4.5',
+      contextWindow: 1_000_000,
+      catalogRevision: 'catalog-1',
+      requestVersion: 2,
+    })
+    expect(pinned.ok).toBe(true)
+    expect(harness.applyContext).toHaveBeenCalledWith(1_000_000, expect.any(Number), {
+      modelContextWindow: 1_000_000,
+      modelAutoCompactTokenLimit: 900_000,
+    })
+  })
+
   it('rolls back channel model context and catalog on failure', async () => {
     const harness = createSelectionHarness()
     harness.applyContext.mockRejectedValueOnce(new Error('restart failed'))
@@ -384,7 +445,10 @@ describe('AgentModelSelectionCoordinator', () => {
     })
     expect(catalogRevisionIsCurrent).toHaveBeenCalledTimes(2)
     expect(harness.persistSelection).not.toHaveBeenCalled()
-    expect(harness.applyContext).toHaveBeenLastCalledWith(272_000, 1)
+    expect(harness.applyContext).toHaveBeenLastCalledWith(272_000, 1, {
+      modelContextWindow: 272_000,
+      modelAutoCompactTokenLimit: 244_800,
+    })
   })
 
   it('detects a deferred catalog revision change before persistence', async () => {
@@ -525,7 +589,10 @@ describe('AgentModelSelectionCoordinator', () => {
       ok: true,
       data: { contextWindow: 272_000 },
     })
-    expect(harness.applyContext).toHaveBeenCalledWith(272_000, 2)
+    expect(harness.applyContext).toHaveBeenCalledWith(272_000, 2, {
+      modelContextWindow: 272_000,
+      modelAutoCompactTokenLimit: 244_800,
+    })
   })
 
   it('restores each target thread model instead of the global previous model', async () => {

@@ -9,6 +9,7 @@ import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { StringDecoder } from 'node:string_decoder'
 import type { CodexProviderConfig } from './codexLaunch'
+import { inferModelFamily } from './gatewayModelRouting'
 
 type JsonObject = Record<string, unknown>
 
@@ -25,22 +26,64 @@ export interface FlattenedResponsesRequest<T extends JsonObject> {
 
 export interface ResponsesCompatibilityProxy {
   baseUrl: string
+  /** Effective idle keep-alive window applied to the loopback server. */
+  keepAliveTimeoutMs: number
+  /** Effective headers timeout applied to the loopback server. */
+  headersTimeoutMs: number
   close: () => Promise<void>
 }
+
+/**
+ * codex-rs (reqwest/hyper) keeps pooled connections idle for ~90s. Node's
+ * http.Server default keepAliveTimeout is 5s, so the proxy would close the
+ * idle socket first and the client's next turn on the reused connection dies
+ * with ECONNRESET. Keep the server side open well past the client pool window
+ * so the client always closes first; headersTimeout must stay strictly above
+ * keepAliveTimeout so a request racing the idle close isn't cut off while its
+ * headers are in flight (and both stay below Node's 300s requestTimeout).
+ */
+export const PROXY_KEEP_ALIVE_TIMEOUT_MS = 120_000
+export const PROXY_HEADERS_TIMEOUT_MS = 125_000
 
 export interface ProviderCompatibilityProxyGroup {
   providers: CodexProviderConfig[]
   close: () => Promise<void>
 }
 
+/**
+ * Never-regress guard for xAI-backed channels. Upstream codex serializes
+ * replayed reasoning history with `content: null` and closed the report as
+ * "provider's problem" (openai/codex#11834), so xAI's untagged ModelInput
+ * enum 422s every second turn unless our bridge strips the nulls. Any channel
+ * that can serve a grok-family model therefore MUST run through the bridge —
+ * even when its preset (or a user-defined custom provider) forgot to declare
+ * `compatibilityPolicy: 'responses-namespace-bridge'`.
+ */
+function providerServesXaiModels(provider: BridgeCandidateProvider): boolean {
+  const models = [provider.model, ...(provider.allowedModels ?? [])]
+  return models.some(
+    (model) => typeof model === 'string' && inferModelFamily(model) === 'xai',
+  )
+}
+
+/**
+ * Channel shape the bridge decision understands. `allowedModels` comes from
+ * `ProviderChannelPreset` (multi-model channels); plain custom providers only
+ * carry `model`.
+ */
+export type BridgeCandidateProvider = CodexProviderConfig & {
+  allowedModels?: readonly string[]
+}
+
 /** Returns whether a provider channel needs the Responses namespace bridge. */
 export function shouldStartResponsesCompatibilityProxy(
-  provider: CodexProviderConfig | undefined,
+  provider: BridgeCandidateProvider | undefined,
 ): boolean {
-  const policy = provider?.compatibilityPolicy ?? 'none'
+  if (!provider) return false
+  const policy = provider.compatibilityPolicy ?? 'none'
   switch (policy) {
     case 'none':
-      return false
+      return providerServesXaiModels(provider)
     case 'responses-namespace-bridge':
       return true
     default: {
@@ -104,6 +147,27 @@ function rewriteRequestCalls(
 }
 
 /**
+ * Removes null-valued fields from every replayed `input` item.
+ *
+ * Codex serializes reasoning history it plays back on later turns as
+ * `"content": null` / `"encrypted_content": null`. xAI's Responses `input`
+ * is a Rust untagged enum (`ModelInput`); an explicit `content: null` makes
+ * the WHOLE request fail to deserialize with HTTP 422, while omitting the
+ * field is accepted (verified live against right.codes/grok — turn 1 passed,
+ * every turn 2 failed). Omission and null are semantically identical for a
+ * request payload, so stripping nulls is safe for every Responses server.
+ */
+function stripNullInputItemFields(body: JsonObject): void {
+  if (!Array.isArray(body.input)) return
+  for (const item of body.input) {
+    if (!isJsonObject(item)) continue
+    for (const [key, value] of Object.entries(item)) {
+      if (value === null) delete item[key]
+    }
+  }
+}
+
+/**
  * Converts Codex namespace wrappers into standard Responses function tools.
  */
 export function flattenNamespaceTools<T extends JsonObject>(
@@ -111,6 +175,7 @@ export function flattenNamespaceTools<T extends JsonObject>(
 ): FlattenedResponsesRequest<T> {
   const body = cloneJson(request)
   const mutableBody: JsonObject = body
+  stripNullInputItemFields(mutableBody)
   const bindings: NamespaceToolBinding[] = []
   const bindingByIdentity = new Map<string, NamespaceToolBinding>()
   if (Array.isArray(mutableBody.tools)) {
@@ -384,6 +449,9 @@ export async function startResponsesCompatibilityProxy(
     }
   })
 
+  server.keepAliveTimeout = PROXY_KEEP_ALIVE_TIMEOUT_MS
+  server.headersTimeout = PROXY_HEADERS_TIMEOUT_MS
+
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
     server.listen(0, '127.0.0.1', () => {
@@ -396,6 +464,8 @@ export async function startResponsesCompatibilityProxy(
   let closed = false
   return {
     baseUrl: `http://127.0.0.1:${address.port}${basePath}`,
+    keepAliveTimeoutMs: server.keepAliveTimeout,
+    headersTimeoutMs: server.headersTimeout,
     close: () => new Promise<void>((resolve, reject) => {
       if (closed) {
         resolve()

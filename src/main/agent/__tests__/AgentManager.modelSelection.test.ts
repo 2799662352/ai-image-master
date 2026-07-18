@@ -609,6 +609,183 @@ describe('AgentManager model-selection turn admission', () => {
     })
   })
 
+  it('switches gpt-5.5 to gpt-5.6-sol at native windows without restarting Codex', async () => {
+    // Both models run unpinned (Codex resolves 272K/372K from its bundled
+    // models.json), so a same-channel switch must not tear the process down —
+    // this was the "5.5 切 5.6 卡住" restart.
+    const restartCodex = vi.fn(async () => undefined)
+    const manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend: {
+        async start() {},
+        async stop() {},
+        isHealthy: () => true,
+        hasInFlightWork: () => false,
+        setProvider: vi.fn(),
+        restartCodex,
+        async cancel() {},
+        async *send(): AsyncIterable<AgentStreamEvent> {},
+      },
+      eventSink: () => {},
+    })
+    await manager.setCodexApiKey('test-key')
+    const catalog = await manager.getModelSettingsCatalogRpc()
+    if (!catalog.ok) throw new Error(catalog.error)
+    restartCodex.mockClear()
+
+    await expect(manager.applyModelSelectionRpc({
+      gatewayId: catalog.data.gatewayId,
+      modelId: 'gpt-5.6-sol',
+      contextWindow: 372_000,
+      catalogRevision: catalog.data.revision,
+      requestVersion: 1,
+    })).resolves.toMatchObject({
+      ok: true,
+      data: { modelId: 'gpt-5.6-sol', contextWindow: 372_000 },
+    })
+    expect(restartCodex).not.toHaveBeenCalled()
+
+    await expect(manager.applyModelSelectionRpc({
+      gatewayId: catalog.data.gatewayId,
+      modelId: 'gpt-5.5',
+      contextWindow: 272_000,
+      catalogRevision: catalog.data.revision,
+      requestVersion: 2,
+    })).resolves.toMatchObject({
+      ok: true,
+      data: { modelId: 'gpt-5.5', contextWindow: 272_000 },
+    })
+    expect(restartCodex).not.toHaveBeenCalled()
+  })
+
+  it('still restarts when the selection pins a non-native context window', async () => {
+    const restartCodex = vi.fn(async () => undefined)
+    const manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend: {
+        async start() {},
+        async stop() {},
+        isHealthy: () => true,
+        hasInFlightWork: () => false,
+        setProvider: vi.fn(),
+        restartCodex,
+        async cancel() {},
+        async *send(): AsyncIterable<AgentStreamEvent> {},
+      },
+      eventSink: () => {},
+    })
+    await manager.setCodexApiKey('test-key')
+    const catalog = await manager.getModelSettingsCatalogRpc()
+    if (!catalog.ok) throw new Error(catalog.error)
+    restartCodex.mockClear()
+
+    await expect(manager.applyModelSelectionRpc({
+      gatewayId: catalog.data.gatewayId,
+      modelId: 'gpt-5.6-sol',
+      contextWindow: 1_000_000,
+      catalogRevision: catalog.data.revision,
+      requestVersion: 1,
+    })).resolves.toMatchObject({
+      ok: true,
+      data: { modelId: 'gpt-5.6-sol', contextWindow: 1_000_000 },
+    })
+    expect(restartCodex).toHaveBeenCalledTimes(1)
+
+    // Unpinning back to the native window also requires one restart to drop
+    // the launch override. The explicit Context control is the context-only
+    // path, so it goes through the compatibility adapter.
+    await expect(manager.applyModelContextRpc({
+      model: 'gpt-5.6-sol',
+      contextWindow: 372_000,
+      requestVersion: 2,
+    })).resolves.toMatchObject({
+      ok: true,
+      data: { model: 'gpt-5.6-sol', contextWindow: 372_000 },
+    })
+    expect(restartCodex).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps model-selection and context requestVersion counters in separate namespaces', async () => {
+    // The renderer owns TWO independent monotonic counters:
+    // `modelSelectionRequestSequence` (model switches) and
+    // `modelContextRequestSequence` (Context clicks). Funneling both into one
+    // coordinator version namespace made a fresh Context click look stale as
+    // soon as the user had switched models more often than they had touched
+    // Context — the "点击切换上下文报错：模型选择已被更新的请求替代" bug.
+    const manager = new AgentManager({
+      userDataDir: tmpDir,
+      backend: {
+        async start() {},
+        async stop() {},
+        isHealthy: () => true,
+        hasInFlightWork: () => false,
+        setProvider: vi.fn(),
+        restartCodex: vi.fn(async () => undefined),
+        async cancel() {},
+        async *send(): AsyncIterable<AgentStreamEvent> {},
+      },
+      eventSink: () => {},
+    })
+    await manager.setCodexApiKey('test-key')
+    const catalog = await manager.getModelSettingsCatalogRpc()
+    if (!catalog.ok) throw new Error(catalog.error)
+
+    // Two model switches drive the selection counter to 2.
+    await expect(manager.applyModelSelectionRpc({
+      gatewayId: catalog.data.gatewayId,
+      modelId: 'gpt-5.6-sol',
+      contextWindow: 372_000,
+      catalogRevision: catalog.data.revision,
+      requestVersion: 1,
+    })).resolves.toMatchObject({ ok: true })
+    await expect(manager.applyModelSelectionRpc({
+      gatewayId: catalog.data.gatewayId,
+      modelId: 'gpt-5.6-luna',
+      contextWindow: 372_000,
+      catalogRevision: catalog.data.revision,
+      requestVersion: 2,
+    })).resolves.toMatchObject({ ok: true })
+
+    // First Context click of the session: its own counter starts at 1 and
+    // must NOT be judged stale against the selection counter.
+    await expect(manager.applyModelContextRpc({
+      model: 'gpt-5.6-luna',
+      contextWindow: 1_000_000,
+      requestVersion: 1,
+    })).resolves.toMatchObject({
+      ok: true,
+      data: { model: 'gpt-5.6-luna', contextWindow: 1_000_000 },
+    })
+
+    // Symmetric direction: more Context clicks than model switches must not
+    // block the next model switch either.
+    await expect(manager.applyModelContextRpc({
+      model: 'gpt-5.6-luna',
+      contextWindow: 372_000,
+      requestVersion: 2,
+    })).resolves.toMatchObject({ ok: true })
+    await expect(manager.applyModelContextRpc({
+      model: 'gpt-5.6-luna',
+      contextWindow: 1_000_000,
+      requestVersion: 3,
+    })).resolves.toMatchObject({ ok: true })
+    await expect(manager.applyModelSelectionRpc({
+      gatewayId: catalog.data.gatewayId,
+      modelId: 'gpt-5.5',
+      contextWindow: 272_000,
+      catalogRevision: catalog.data.revision,
+      requestVersion: 3,
+    })).resolves.toMatchObject({ ok: true, data: { modelId: 'gpt-5.5' } })
+
+    // Same-counter staleness is still enforced: an older Context version is
+    // rejected once a newer one from the SAME counter has been reserved.
+    await expect(manager.applyModelContextRpc({
+      model: 'gpt-5.5',
+      contextWindow: 272_000,
+      requestVersion: 2,
+    })).resolves.toMatchObject({ ok: false })
+  })
+
   it('busy-gates Channel selection during turn/start admission before queue registration', async () => {
     const setProvider = vi.fn()
     const restartCodex = vi.fn(async () => undefined)

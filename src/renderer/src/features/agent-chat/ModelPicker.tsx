@@ -27,7 +27,9 @@ import { findModel } from './models'
 import { ModelSettingsPanel } from './ModelSettingsPanel'
 import { useAgentChatStore } from './store'
 
-const FAMILY_ORDER: readonly AgentModelFamily[] = ['openai', 'xai', 'other']
+// XAI (Grok) renders above OPENAI by explicit user request — Grok is the
+// headline channel on these gateways, so it gets the top slot in the picker.
+const FAMILY_ORDER: readonly AgentModelFamily[] = ['xai', 'openai', 'other']
 
 const FAMILY_LABEL: Record<AgentModelFamily, string> = {
   openai: 'OPENAI',

@@ -65,6 +65,8 @@ import {
 import {
   CANONICAL_MODEL_SETTINGS_ROWS,
   mergeModelSettingsCapabilities,
+  modelContextPinsEqual,
+  resolveModelContextPin,
 } from '../../shared/modelSettings'
 import type {
   CodexCollaborationMode,
@@ -97,6 +99,7 @@ import type {
   AgentModelSettingsCatalog,
   AgentModelSettingsCatalogResult,
   AgentProviderMutationResult,
+  CodexModelContextConfig,
   AgentSendMessagePayload,
   AgentSendMessageResult,
   AgentStreamEvent,
@@ -328,6 +331,14 @@ export class AgentManager {
   private readonly providerStore: CodexProviderStore
   private readonly runtimeSettingsStore: CodexRuntimeSettingsStore
   private runtimeSettings: PersistedCodexRuntimeSettingsV1
+  /**
+   * In-flight launch pin for a context restart. `undefined` = no transition in
+   * flight (spawn derives the pin from the committed selection); `null` = the
+   * transition targets the unpinned/native state. Set right before the restart
+   * inside applyRuntimeModelContext and cleared when the surrounding selection
+   * transaction commits (persistSelection) or rolls back (restoreSelection).
+   */
+  private pendingContextPin: CodexModelContextConfig | null | undefined
   /** User-visible Gateway id exposed by Provider settings snapshots. */
   private activeGatewayId: string
   /** Internal Channel runtime control for backend generation switches. */
@@ -506,9 +517,7 @@ export class AgentManager {
         getApiKey: () => this.codexApiKey,
         provider: activeProvider,
         sessionConfig: this.sessionConfig,
-        getModelContextConfig: () => ({
-          ...(this.runtimeSettings.pending?.target ?? this.runtimeSettings.confirmed),
-        }),
+        getModelContextConfig: () => this.currentContextPin(),
         catimationMcp: opts.mcpRuntime,
         // Unlock experimental-gated RPCs (turn/start.collaborationMode for the
         // composer's Plan preset; collaborationMode/list). Smoke-verified on the
@@ -579,8 +588,10 @@ export class AgentManager {
       catalogRevisionIsCurrent: (gatewayId, revision) =>
         this.currentModelCatalog.gatewayId === gatewayId
         && this.currentModelCatalog.revision === revision,
-      applyContext: (contextWindow, requestVersion) =>
-        this.applyRuntimeModelContext(contextWindow, requestVersion),
+      applyContext: (contextWindow, requestVersion, pin) =>
+        this.applyRuntimeModelContext(contextWindow, requestVersion, pin),
+      resolveContextPin: (modelId, contextWindow) =>
+        resolveModelContextPin(modelId, contextWindow),
       persistSelection: (snapshot, threadId) =>
         this.persistModelSelection(snapshot, threadId),
       restoreSelection: (snapshot, threadId) =>
@@ -591,6 +602,10 @@ export class AgentManager {
         ?? this.backend.hasActiveTurns?.()
         ?? false,
       prepareRecovery: (snapshot) => {
+        this.pendingContextPin = resolveModelContextPin(
+          snapshot.modelId,
+          snapshot.contextWindow,
+        )
         this.runtimeSettings = {
           version: 1,
           confirmed: { ...this.runtimeSettings.confirmed },
@@ -1523,8 +1538,11 @@ export class AgentManager {
         ? 'context-only'
         : 'model-selection',
     }
+    // NOTE: the renderer's Context clicks run on their OWN monotonic counter
+    // (`modelContextRequestSequence`), independent from model switches. Reserve
+    // under the dedicated source so the two counters never cross-invalidate.
     const reservation = this.modelSelectionCoordinator.reserveIntentSequence(
-      'renderer-selection',
+      'renderer-context',
       contextPayload.requestVersion,
     )
     return this.enqueueLifecycleOperation(
@@ -1621,13 +1639,37 @@ export class AgentManager {
     return entry.capabilities.defaultContextWindow
   }
 
+  /**
+   * Launch pin the next Codex spawn must use. During a context transition the
+   * explicit in-flight pin wins; otherwise the pin is derived from the
+   * committed model + context selection, so models running at their
+   * Codex-native window launch without `model_context_window` overrides.
+   */
+  private currentContextPin(): CodexModelContextConfig | null {
+    if (this.pendingContextPin !== undefined) {
+      return this.pendingContextPin === null
+        ? null
+        : { ...this.pendingContextPin }
+    }
+    const window = (
+      this.runtimeSettings.pending?.target ?? this.runtimeSettings.confirmed
+    ).modelContextWindow
+    const pin = resolveModelContextPin(
+      this.providerStore.loadSync().selectedModelId,
+      window,
+    )
+    return pin === null ? null : { ...pin }
+  }
+
   private async applyRuntimeModelContext(
     contextWindow: number,
     requestVersion: number,
+    pin: CodexModelContextConfig | null,
   ): Promise<void> {
     if (
       this.runtimeSettings.confirmed.modelContextWindow === contextWindow
       && !this.runtimeSettings.pending
+      && modelContextPinsEqual(pin, this.currentContextPin())
     ) {
       return
     }
@@ -1635,6 +1677,7 @@ export class AgentManager {
       modelContextWindow: contextWindow,
       modelAutoCompactTokenLimit: Math.floor(contextWindow * 0.9),
     }
+    this.pendingContextPin = pin
     this.runtimeSettings = {
       version: 1,
       confirmed: { ...this.runtimeSettings.confirmed },
@@ -1672,6 +1715,9 @@ export class AgentManager {
       await this.store?.setThreadModel?.(threadId, snapshot.modelId)
     }
     this.runtimeSettings = cloneRuntimeSettings(settings)
+    // Selection committed: spawns can derive the pin from the durable
+    // model + context selection again.
+    this.pendingContextPin = undefined
     this.activeGatewayId = snapshot.gatewayId
   }
 
@@ -1704,6 +1750,8 @@ export class AgentManager {
       )
     }
     this.runtimeSettings = cloneRuntimeSettings(settings)
+    // Rollback restored the previous durable selection; drop any in-flight pin.
+    this.pendingContextPin = undefined
     this.activeGatewayId = snapshot.gatewayId
   }
 

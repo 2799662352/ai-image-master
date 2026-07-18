@@ -67,6 +67,9 @@ const BUILTIN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
     name: 'API Yi',
     baseUrl: 'https://api.apiyi.com/v1',
     envKey: 'OPENAI_API_KEY',
+    // Full apiyi endpoint serves gpt-5.5 — run background memory
+    // extraction/consolidation on it instead of codex's gpt-5.4 default.
+    memoriesModel: 'gpt-5.5',
     compatibilityPolicy: 'none',
   }),
   Object.freeze({
@@ -77,6 +80,9 @@ const BUILTIN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
     envKey: 'OPENAI_API_KEY',
     model: 'grok-4.5',
     allowedModels: Object.freeze(['grok-4.5']),
+    // Same full apiyi endpoint as apiyi-standard (only the chat model is
+    // pinned to grok) — memories can use the smarter gpt-5.5.
+    memoriesModel: 'gpt-5.5',
     compatibilityPolicy: 'responses-namespace-bridge',
   }),
   Object.freeze({
@@ -98,7 +104,11 @@ const BUILTIN_CHANNELS: readonly ProviderChannelPreset[] = Object.freeze([
     model: 'grok-4.5',
     allowedModels: Object.freeze(['grok-4.5']),
     requiresOpenaiAuth: true,
-    compatibilityPolicy: 'none',
+    // xAI-backed channel: needs the proxy's input-null sanitize (codex replays
+    // reasoning history with `content: null`, which xAI's ModelInput rejects
+    // with 422 on every second turn) plus namespace flatten/restore so
+    // subagent tools stay callable instead of being stripped upstream.
+    compatibilityPolicy: 'responses-namespace-bridge',
   }),
 ])
 

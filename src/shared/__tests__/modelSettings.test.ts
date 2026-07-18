@@ -12,6 +12,8 @@ import {
   migrateLegacyModelSelection,
   modelAutoCompactTokenLimit,
   modelContextOptions,
+  modelContextPinsEqual,
+  resolveModelContextPin,
   supportedReasoningEfforts,
 } from '../modelSettings'
 
@@ -274,5 +276,74 @@ describe('model settings capabilities', () => {
     [1_000_000, 900_000],
   ])('uses a floor 90 percent compact limit for %i', (window, expected) => {
     expect(modelAutoCompactTokenLimit(window)).toBe(expected)
+  })
+})
+
+describe('model context pin', () => {
+  it.each([
+    ['gpt-5.5', 272_000],
+    ['gpt-5.6-sol', 372_000],
+    ['gpt-5.6-terra', 372_000],
+    ['gpt-5.6-luna', 372_000],
+    ['gpt-5.4', 272_000],
+    ['gpt-5.4-mini', 272_000],
+    ['gpt-5.2', 272_000],
+  ])('does not pin %s at its Codex-native window', (model, native) => {
+    expect(resolveModelContextPin(model, native)).toBeNull()
+  })
+
+  it('pins a Codex-native model at a non-native window', () => {
+    expect(resolveModelContextPin('gpt-5.6-sol', EXPERIMENTAL_CONTEXT_WINDOW)).toEqual({
+      modelContextWindow: 1_000_000,
+      modelAutoCompactTokenLimit: 900_000,
+    })
+    expect(resolveModelContextPin('gpt-5.5', EXPERIMENTAL_CONTEXT_WINDOW)).toEqual({
+      modelContextWindow: 1_000_000,
+      modelAutoCompactTokenLimit: 900_000,
+    })
+  })
+
+  it('always pins models without Codex-native metadata', () => {
+    expect(resolveModelContextPin('grok-4.5', GROK_4_5_CONTEXT_WINDOW)).toEqual({
+      modelContextWindow: 500_000,
+      modelAutoCompactTokenLimit: 450_000,
+    })
+    expect(resolveModelContextPin('custom-model', UNKNOWN_MODEL_CONTEXT_WINDOW)).toEqual({
+      modelContextWindow: 200_000,
+      modelAutoCompactTokenLimit: 180_000,
+    })
+  })
+
+  it.each(['constructor', 'toString', '__proto__'])(
+    'treats Object.prototype key %s as a model without native metadata',
+    (model) => {
+      expect(resolveModelContextPin(model, 272_000)).toEqual({
+        modelContextWindow: 272_000,
+        modelAutoCompactTokenLimit: 244_800,
+      })
+    },
+  )
+
+  it('compares pins structurally including the unpinned state', () => {
+    expect(modelContextPinsEqual(null, null)).toBe(true)
+    expect(modelContextPinsEqual(
+      { modelContextWindow: 272_000, modelAutoCompactTokenLimit: 244_800 },
+      { modelContextWindow: 272_000, modelAutoCompactTokenLimit: 244_800 },
+    )).toBe(true)
+    expect(modelContextPinsEqual(
+      null,
+      { modelContextWindow: 272_000, modelAutoCompactTokenLimit: 244_800 },
+    )).toBe(false)
+    expect(modelContextPinsEqual(
+      { modelContextWindow: 272_000, modelAutoCompactTokenLimit: 244_800 },
+      { modelContextWindow: 372_000, modelAutoCompactTokenLimit: 334_800 },
+    )).toBe(false)
+  })
+
+  it('keeps the 5.5 to 5.6 switch pin-free in both directions', () => {
+    expect(modelContextPinsEqual(
+      resolveModelContextPin('gpt-5.5', 272_000),
+      resolveModelContextPin('gpt-5.6-sol', 372_000),
+    )).toBe(true)
   })
 })

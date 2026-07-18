@@ -15,6 +15,7 @@ import {
   type CollaborationModeListResponse,
   type CodexModelListParams,
   type CodexModelListResponse,
+  type CodexThreadConfigOverrides,
   type ServerMessage,
   type ThreadSettingsUpdateParams,
   type ThreadSettingsUpdateResponse,
@@ -61,6 +62,22 @@ import type {
 } from '../../types/codexGoals'
 
 /**
+ * Spread-omit serializer for {@link CodexThreadConfigOverrides}: absent fields
+ * must not appear on the wire at all (older binaries reject unknown/null
+ * fields, and an explicit field — even null — flips codex's
+ * `has_model_resume_override` and suppresses persisted-metadata restore).
+ */
+function threadConfigOverrideParams(
+  overrides: CodexThreadConfigOverrides | undefined,
+): Partial<CodexThreadConfigOverrides> {
+  if (!overrides) return {}
+  return {
+    ...(overrides.model ? { model: overrides.model } : {}),
+    ...(overrides.modelProvider ? { modelProvider: overrides.modelProvider } : {}),
+  }
+}
+
+/**
  * Mirrors `McpServerStatus` from Codex's generated TS schema at
  * `codex-rs/app-server-protocol/schema/typescript/v2/McpServerStatus.ts`.
  * Field names are camelCase on the wire: `authStatus`, `resourceTemplates`.
@@ -101,6 +118,15 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 10_000
 const DEFAULT_CONNECT_INTERVAL_MS = 100
 const CANCEL_GRACE_MS = 2_000
 const DEFAULT_APPROVAL_TIMEOUT_MS = 5 * 60_000
+/**
+ * Stream-idle watchdog (upstream gap: openai/codex#30526 — app-server can go
+ * permanently silent mid-turn with no turn/completed and no error). If NO
+ * event arrives on an active turn for this long, we synthesize a terminal
+ * error so the UI recovers instead of hanging forever. Generous by design:
+ * long shell commands and pending approval prompts (5 min budget) legitimately
+ * produce quiet stretches — the watchdog only fires past all of those.
+ */
+const DEFAULT_TURN_IDLE_TIMEOUT_MS = 10 * 60_000
 
 type PendingRpc = {
   resolve: (value: unknown) => void
@@ -142,6 +168,12 @@ export interface CodexProtocolClientOptions {
   connectIntervalMs?: number
   rpcTimeoutMs?: number
   approvalTimeoutMs?: number
+  /**
+   * Max silence (no events at all) tolerated on an active turn before the
+   * stream-idle watchdog ends it with a terminal error. `0` disables the
+   * watchdog. Defaults to {@link DEFAULT_TURN_IDLE_TIMEOUT_MS}.
+   */
+  turnIdleTimeoutMs?: number
   /**
    * Opt into `#[experimental(...)]`-gated app-server surface by announcing
    * `capabilities: { experimentalApi: true }` at initialize (needed for
@@ -202,6 +234,7 @@ export class CodexProtocolClient {
   private readonly approvalTimeoutMs: number
   private readonly connectTimeoutMs: number
   private readonly connectIntervalMs: number
+  private readonly turnIdleTimeoutMs: number
   private sessionConfig: CodexSessionConfig
   private pendingServerRequests = new Map<string, PendingServerRequest>()
   private activeSends = 0
@@ -211,6 +244,7 @@ export class CodexProtocolClient {
     this.approvalTimeoutMs = options.approvalTimeoutMs ?? DEFAULT_APPROVAL_TIMEOUT_MS
     this.connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS
     this.connectIntervalMs = options.connectIntervalMs ?? DEFAULT_CONNECT_INTERVAL_MS
+    this.turnIdleTimeoutMs = options.turnIdleTimeoutMs ?? DEFAULT_TURN_IDLE_TIMEOUT_MS
     this.sessionConfig = resolveCodexSessionConfig(options.sessionConfig)
   }
 
@@ -304,7 +338,12 @@ export class CodexProtocolClient {
         while (true) {
           const event = await this.takeEvent(queue)
           yield event
-          if (event.type === 'turn_completed' || event.type === 'error' || event.type === 'cancelled') return
+          if (event.type === 'turn_completed' || event.type === 'cancelled') return
+          // Stream-retry contract (openai/codex#7611): `willRetry: true` means
+          // codex is retrying the SAME request and will re-stream on this same
+          // turn — the queue must stay registered or the retry's events get
+          // orphaned and the UI hangs. Only terminal errors end the stream.
+          if (event.type === 'error' && event.willRetry !== true) return
         }
       } finally {
         queue.closed = true
@@ -378,8 +417,14 @@ export class CodexProtocolClient {
     return normalizeThreadDetail(response)
   }
 
-  async forkThread(threadId: string): Promise<CodexThreadSummary> {
-    const response = await this.rpc<unknown>('thread/fork', { threadId })
+  async forkThread(
+    threadId: string,
+    overrides?: CodexThreadConfigOverrides,
+  ): Promise<CodexThreadSummary> {
+    const response = await this.rpc<unknown>('thread/fork', {
+      threadId,
+      ...threadConfigOverrideParams(overrides),
+    })
     return normalizeThreadSummary(extractThreadRecord(response))
   }
 
@@ -389,13 +434,26 @@ export class CodexProtocolClient {
    * append to it. After an app-server respawn the new process has no in-memory
    * thread; resume loads the rollout from disk into this generation, restoring
    * the conversation. Response shape matches `thread/start` (`{ thread }`) but
-   * the caller keeps the existing id, so we resolve void. Only the required
-   * `threadId` is sent — newer optional fields (e.g. `excludeTurns`) are omitted
-   * for compatibility with the bundled binary; rejections bubble up so the
-   * caller can fall back to a fresh thread.
+   * the caller keeps the existing id, so we resolve void.
+   *
+   * `overrides` matters for cross-channel switches: codex restores the thread's
+   * PERSISTED `model_provider` from metadata on resume (openai/codex#19287),
+   * and after e.g. a grok→gpt switch that old provider table is no longer in
+   * the launch config — resume then fails with "failed to load configuration:
+   * Model provider `<old>` not found". Passing an explicit model/modelProvider
+   * suppresses the persisted-metadata restore (`has_model_resume_override`) and
+   * keeps the thread on the CURRENT selection. Other optional fields (e.g.
+   * `excludeTurns`) stay omitted for compatibility with the bundled binary;
+   * rejections bubble up so the caller can fall back to a fresh thread.
    */
-  async resumeThread(threadId: string): Promise<void> {
-    await this.rpc<unknown>('thread/resume', { threadId })
+  async resumeThread(
+    threadId: string,
+    overrides?: CodexThreadConfigOverrides,
+  ): Promise<void> {
+    await this.rpc<unknown>('thread/resume', {
+      threadId,
+      ...threadConfigOverrideParams(overrides),
+    })
   }
 
   /**
@@ -908,7 +966,30 @@ export class CodexProtocolClient {
         resolve(buffered)
         return
       }
-      queue.waiter = resolve
+      // Stream-idle watchdog: the timer spans exactly one inter-event gap
+      // (armed only while we're actually waiting; any arriving event clears
+      // it), so steady deltas never trip it — only a truly silent turn does.
+      let idleTimer: ReturnType<typeof setTimeout> | undefined
+      const waiter = (event: AgentStreamEvent): void => {
+        if (idleTimer) clearTimeout(idleTimer)
+        resolve(event)
+      }
+      if (this.turnIdleTimeoutMs > 0) {
+        idleTimer = setTimeout(() => {
+          if (queue.waiter === waiter) queue.waiter = undefined
+          this.options.onLog?.(
+            `[codex] turn ${queue.turnId} idle for ${this.turnIdleTimeoutMs}ms — ending stream (watchdog)`,
+          )
+          resolve({
+            type: 'error',
+            threadId: queue.threadId,
+            turnId: queue.turnId,
+            error: `Codex 回合空闲超过 ${Math.round(this.turnIdleTimeoutMs / 1000)}s 无任何事件,已由看门狗终止(stream idle watchdog)`,
+          })
+        }, this.turnIdleTimeoutMs)
+        idleTimer.unref?.()
+      }
+      queue.waiter = waiter
     })
   }
 

@@ -1,4 +1,7 @@
-import { modelAutoCompactTokenLimit } from '../../shared/modelSettings'
+import {
+  modelAutoCompactTokenLimit,
+  modelContextPinsEqual,
+} from '../../shared/modelSettings'
 import type {
   AgentModelRoute,
   AgentModelSelectionApplyPayload,
@@ -8,6 +11,7 @@ import type {
   AgentModelSelectionRecoveryResult,
   AgentModelSelectionSnapshot,
   AgentModelSelectionStage,
+  CodexModelContextConfig,
 } from '../../types/agent'
 import { resolveGatewayModelRoute } from './gatewayModelRouting'
 import {
@@ -22,7 +26,25 @@ export interface AgentModelSelectionCoordinatorOptions {
     threadId?: string,
   ) => AgentModelSelectionSnapshot | Promise<AgentModelSelectionSnapshot>
   catalogRevisionIsCurrent: (gatewayId: string, revision: string) => boolean
-  applyContext: (contextWindow: number, requestVersion: number) => Promise<void>
+  /**
+   * Applies a launch-level context transition (restart). `pin` is the exact
+   * override the next spawn must use — `null` means unpinned (Codex-native
+   * metadata). `contextWindow` stays the user-facing confirmed value.
+   */
+  applyContext: (
+    contextWindow: number,
+    requestVersion: number,
+    pin: CodexModelContextConfig | null,
+  ) => Promise<void>
+  /**
+   * Maps a (model, contextWindow) selection onto its launch pin. When absent,
+   * every context is pinned — the legacy behavior where any numeric context
+   * change restarts.
+   */
+  resolveContextPin?: (
+    modelId: string,
+    contextWindow: number,
+  ) => CodexModelContextConfig | null
   persistSelection: (
     snapshot: AgentModelSelectionSnapshot,
     threadId?: string,
@@ -75,10 +97,24 @@ export interface AgentModelSelectionCoordinatorOptions {
   ) => string | null
 }
 
-/** Origin used only to detect stale versions within the renderer selection UI. */
+/**
+ * Origin used only to detect stale versions within the renderer settings UI.
+ * `renderer-selection` (model switches) and `renderer-context` (explicit
+ * Context clicks) are DIFFERENT renderer counters — each source keeps its own
+ * version namespace, so a fresh Context click is never judged stale merely
+ * because the user has switched models more often (and vice versa).
+ */
 export type AgentModelSelectionIntentSource =
   | 'turn'
   | 'renderer-selection'
+  | 'renderer-context'
+
+/** Renderer-origin sources participate in the cross-intent supersede check. */
+function isRendererIntentSource(
+  source: AgentModelSelectionIntentSource,
+): boolean {
+  return source === 'renderer-selection' || source === 'renderer-context'
+}
 
 /** Entry-time reservation from the coordinator's internal monotonic clock. */
 export interface AgentModelSelectionIntentReservation {
@@ -183,7 +219,7 @@ export class AgentModelSelectionCoordinator {
     }
     this.nextIntentSequence += 1
     this.latestIntentSequence = this.nextIntentSequence
-    if (source === 'renderer-selection') {
+    if (isRendererIntentSource(source)) {
       this.latestRendererIntentSequence = this.latestIntentSequence
     }
     return {
@@ -312,6 +348,24 @@ export class AgentModelSelectionCoordinator {
       ?? resolveGatewayModelRoute(gatewayId, modelId)
   }
 
+  /**
+   * Resolves the launch pin for a selection. Without an injected resolver the
+   * coordinator preserves legacy semantics: every context is treated as
+   * pinned, so any numeric change still restarts.
+   */
+  private contextPinOf(
+    modelId: string,
+    contextWindow: number,
+  ): CodexModelContextConfig | null {
+    if (this.options.resolveContextPin) {
+      return this.options.resolveContextPin(modelId, contextWindow)
+    }
+    return {
+      modelContextWindow: contextWindow,
+      modelAutoCompactTokenLimit: modelAutoCompactTokenLimit(contextWindow),
+    }
+  }
+
   private async applySerialized(
     payload: AgentModelSelectionApplyPayload,
     reservation: AgentModelSelectionIntentReservation,
@@ -427,8 +481,19 @@ export class AgentModelSelectionCoordinator {
     }
 
     const channelChanged = previous.channelId !== route.channelId
-    const contextChanged =
-      previous.contextWindow !== effectivePayload.contextWindow
+    // Restart is driven by the launch pin, not the raw number: switching
+    // between two models running at their Codex-native windows (gpt-5.5 272K
+    // ↔ gpt-5.6-sol 372K) keeps the process alive because neither needs a
+    // `model_context_window` override.
+    const previousPin = this.contextPinOf(
+      previous.modelId,
+      previous.contextWindow,
+    )
+    const nextPin = this.contextPinOf(
+      route.modelId,
+      effectivePayload.contextWindow,
+    )
+    const contextChanged = !modelContextPinsEqual(previousPin, nextPin)
     if (
       (channelChanged || contextChanged)
       && this.options.hasInFlightWork?.()
@@ -476,6 +541,7 @@ export class AgentModelSelectionCoordinator {
         await this.options.applyContext(
           effectivePayload.contextWindow,
           reservation.sequence,
+          nextPin,
         )
       }
       if (this.isSuperseded(reservation)) {
@@ -621,7 +687,7 @@ export class AgentModelSelectionCoordinator {
     reservation: AgentModelSelectionIntentReservation,
   ): boolean {
     if (!reservation.accepted) return true
-    return reservation.source === 'renderer-selection'
+    return isRendererIntentSource(reservation.source)
       && reservation.sequence < this.latestRendererIntentSequence
   }
 
@@ -718,6 +784,7 @@ export class AgentModelSelectionCoordinator {
         await this.options.applyContext(
           previous.contextWindow,
           intentSequence,
+          this.contextPinOf(previous.modelId, previous.contextWindow),
         )
       } catch (error) {
         failures.push(`context: ${errorMessage(error)}`)

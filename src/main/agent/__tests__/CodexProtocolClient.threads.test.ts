@@ -184,4 +184,40 @@ describe('CodexProtocolClient thread history wrappers', () => {
     const request = server!.receivedFromClient.find((msg) => msg.method === 'thread/resume')
     expect(request?.params).toEqual({ threadId: 'codex-thread-1' })
   })
+
+  it('resumeThread forwards explicit model/modelProvider overrides (cross-channel switch)', async () => {
+    // codex thread/resume restores the PERSISTED model_provider from thread
+    // metadata (openai/codex#19287). After a grok→gpt channel switch the old
+    // provider table is no longer in the launch config, so resume dies with
+    // "Model provider `<old>` not found" — unless we override explicitly.
+    await startClient()
+
+    await expect(client!.resumeThread('codex-thread-1', {
+      model: 'gpt-5.6-sol',
+      modelProvider: 'rightcode-standard',
+    })).resolves.toBeUndefined()
+
+    const request = server!.receivedFromClient.find((msg) => msg.method === 'thread/resume')
+    expect(request?.params).toEqual({
+      threadId: 'codex-thread-1',
+      model: 'gpt-5.6-sol',
+      modelProvider: 'rightcode-standard',
+    })
+  })
+
+  it('forkThread forwards explicit model/modelProvider overrides', async () => {
+    await startClient()
+
+    await client!.forkThread('codex-thread-1', {
+      model: 'grok-4.5',
+      modelProvider: 'rightcode-grok',
+    })
+
+    const request = server!.receivedFromClient.find((msg) => msg.method === 'thread/fork')
+    expect(request?.params).toEqual({
+      threadId: 'codex-thread-1',
+      model: 'grok-4.5',
+      modelProvider: 'rightcode-grok',
+    })
+  })
 })

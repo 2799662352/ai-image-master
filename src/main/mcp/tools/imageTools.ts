@@ -240,8 +240,8 @@ function buildImageDoneContent(result: unknown): ImageToolContent {
 export function buildImageRunningHandoffBanner(task: ImageTaskState): string {
   return [
     `⏳ generate_image STILL RUNNING after ${elapsedSeconds(task)}s — taskId: ${task.taskId}.`,
-    'The render is taking longer than usual but the task is alive, and the user ALREADY sees a live "generating" bubble in the chat — the finished image will appear there automatically whether or not you poll.',
-    'You can keep talking to the user now (e.g. say the image is generating). When you want to confirm completion and get the saved file path, call check_image_task with this taskId (it long-polls ~25s server-side); keep calling until DONE or FAILED.',
+    'The render is alive and the user ALREADY sees a live "generating" bubble in the chat — the finished image will appear there automatically.',
+    'NEXT STEP (mandatory): tell the user in ONE short line that the image is generating, then IMMEDIATELY call check_image_task with this taskId (it long-polls ~25s server-side) and KEEP calling it until DONE or FAILED. Do NOT end your turn while the task is still running — ending early is why results feel delayed to the user.',
     'Do NOT resubmit generate_image for the same request — that would render a duplicate.',
     JSON.stringify({ taskId: task.taskId, status: 'running', elapsedSeconds: elapsedSeconds(task) }),
   ].join('\n')
@@ -302,8 +302,8 @@ function buildBatchContent(data: BatchTaskResult): ImageToolContent {
 export function buildBatchRunningHandoffBanner(task: ImageTaskState): string {
   return [
     `⏳ generate_images STILL RUNNING after ${elapsedSeconds(task)}s — taskId: ${task.taskId}.`,
-    'The batch is taking longer than usual but is alive; the user ALREADY sees live "generating" bubbles in the chat — every finished image appears there automatically whether or not you poll.',
-    'You can keep talking to the user now. To confirm completion and get the saved paths, call check_image_task with this taskId (it long-polls ~25s server-side); keep calling until DONE or FAILED.',
+    'The batch is alive; the user ALREADY sees live "generating" bubbles in the chat — every finished image appears there automatically.',
+    'NEXT STEP (mandatory): tell the user in ONE short line that the batch is generating, then IMMEDIATELY call check_image_task with this taskId (it long-polls ~25s server-side) and KEEP calling it until DONE or FAILED. Do NOT end your turn while the batch is still running — ending early is why results feel delayed to the user.',
     'Do NOT resubmit generate_images for the same request — that would render duplicates.',
     JSON.stringify({ taskId: task.taskId, status: 'running', elapsedSeconds: elapsedSeconds(task) }),
   ].join('\n')

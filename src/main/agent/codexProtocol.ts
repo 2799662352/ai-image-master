@@ -58,6 +58,20 @@ export interface ThreadStartParams {
 export interface ThreadStartResponse { thread: Thread }
 
 /**
+ * Explicit config overrides for `thread/resume` / `thread/fork`
+ * (`ThreadResumeParams.model` / `.modelProvider` in app-server v2). When any
+ * of these are present, codex skips restoring the thread's persisted
+ * model/provider metadata (`has_model_resume_override`), which is required to
+ * continue a thread on a DIFFERENT provider channel than the one it was
+ * created under. Spread-omit each absent field — older binaries reject
+ * unknown/null fields.
+ */
+export interface CodexThreadConfigOverrides {
+  model?: string
+  modelProvider?: string
+}
+
+/**
  * App-server v2 `TextElement`: a UI-defined span within the parent `text`
  * buffer. `byteRange` is in UTF-8 BYTES (the server is Rust — indexing by JS
  * UTF-16 code units corrupts spans after any non-ASCII character), and

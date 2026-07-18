@@ -34,6 +34,20 @@ describe('gatewayModelRouting', () => {
     expect(channel.baseUrl).toBe('https://right.codes/grok/v1')
   })
 
+  it('routes memory side requests to the smartest model each endpoint serves', () => {
+    // memories.extract_model / consolidation_model default to gpt-5.4, which
+    // grok-only endpoints reject with 400. Both apiyi channels share the full
+    // api.apiyi.com endpoint (every model available) so memories can run on
+    // the smarter gpt-5.5 — even when chatting on grok. rightcode-standard's
+    // channel model IS gpt-5.5 (fallback covers it); rightcode-grok's endpoint
+    // serves ONLY grok-4.5, so it must not carry a memoriesModel override.
+    expect(resolveProviderChannel('apiyi-standard').memoriesModel).toBe('gpt-5.5')
+    expect(resolveProviderChannel('apiyi-grok').memoriesModel).toBe('gpt-5.5')
+    expect(resolveProviderChannel('rightcode-standard').model).toBe('gpt-5.5')
+    expect(resolveProviderChannel('rightcode-grok').memoriesModel).toBeUndefined()
+    expect(resolveProviderChannel('rightcode-grok').model).toBe('grok-4.5')
+  })
+
   it('keeps builtin gateway cards separate from internal channels', () => {
     expect(channelsForGateway('apiyi').map((channel) => channel.id)).toEqual([
       'apiyi-standard',

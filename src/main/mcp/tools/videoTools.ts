@@ -90,7 +90,7 @@ export function buildBudgetExhaustedBanner(task: SeedanceTaskState): string {
   return [
     `⏳ generate_video STILL RUNNING after ${elapsedSeconds(task)}s — taskId: ${task.taskId}.`,
     'The render is taking unusually long but the task is alive; the user sees a live progress bubble in the chat.',
-    'NEXT STEP: call check_video_task with this taskId (it long-polls ~25s server-side) and keep calling until DONE or FAILED. Do NOT resubmit generate_video.',
+    'NEXT STEP (mandatory): tell the user in ONE short line that the render is in progress, then IMMEDIATELY call check_video_task with this taskId (it long-polls ~25s server-side) and KEEP calling until DONE or FAILED. Do NOT end your turn while the render is still running — ending early is why the finished video feels delayed to the user. Do NOT resubmit generate_video.',
     machineLine(task),
   ].join('\n')
 }

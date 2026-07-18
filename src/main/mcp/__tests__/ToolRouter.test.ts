@@ -93,4 +93,50 @@ describe('ToolRouter', () => {
       }
     })
   })
+
+  describe('failAllPending (renderer reload / crash)', () => {
+    it('rejects every pending renderer call immediately with the given reason', async () => {
+      const win = { webContents: { send: vi.fn() } } as any
+      const router = new ToolRouter(win)
+
+      const a = router.call('generate_image', { prompt: 'x' })
+      const b = router.call('ask_user', { question: 'q' })
+      a.catch(() => {})
+      b.catch(() => {})
+
+      const rejected = router.failAllPending('renderer reloaded')
+
+      expect(rejected).toBe(2)
+      await expect(a).rejects.toThrow('renderer reloaded')
+      await expect(b).rejects.toThrow('renderer reloaded')
+    })
+
+    it('is a no-op when nothing is pending and late responses stay ignored', () => {
+      const win = { webContents: { send: vi.fn() } } as any
+      const router = new ToolRouter(win)
+
+      expect(router.failAllPending('renderer reloaded')).toBe(0)
+      // A stray response for an already-failed id must not throw.
+      expect(() => router.handleRendererResponse({ id: 'nope', ok: true, result: {} } as any)).not.toThrow()
+    })
+
+    it('clears the pending timeout so no late spurious rejection fires', async () => {
+      vi.useFakeTimers()
+      try {
+        const win = { webContents: { send: vi.fn() } } as any
+        const router = new ToolRouter(win)
+        const call = router.call('generate_image', { prompt: 'x' })
+        call.catch(() => {})
+        expect(vi.getTimerCount()).toBe(1)
+
+        router.failAllPending('renderer reloaded')
+
+        // The per-call timeout is gone — nothing left to fire later.
+        expect(vi.getTimerCount()).toBe(0)
+        await expect(call).rejects.toThrow('renderer reloaded')
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+  })
 })

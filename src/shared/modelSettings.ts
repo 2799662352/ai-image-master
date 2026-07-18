@@ -386,6 +386,61 @@ export function modelAutoCompactTokenLimit(contextWindow: number): number {
   return Math.floor(contextWindow * 0.9)
 }
 
+/**
+ * Context windows Codex resolves natively from its bundled models.json
+ * (verified against openai/codex rust-v0.144.5 codex-rs/models-manager/
+ * models.json). Only slugs listed there belong here: for these models Codex
+ * already knows the window AND derives its own auto-compaction budget, so a
+ * launch-time `model_context_window` override is redundant — and harmful,
+ * because the `-c` override applies globally to every model in the process
+ * and forces a full restart whenever it changes.
+ */
+const CODEX_NATIVE_CONTEXT_WINDOWS: ReadonlyMap<string, number> = new Map([
+  ['gpt-5.6-sol', 372_000],
+  ['gpt-5.6-terra', 372_000],
+  ['gpt-5.6-luna', 372_000],
+  ['gpt-5.5', 272_000],
+  ['gpt-5.4', 272_000],
+  ['gpt-5.4-mini', 272_000],
+  ['gpt-5.2', 272_000],
+])
+
+/**
+ * Decides whether a selected context window needs a launch-time pin.
+ *
+ * Returns `null` (unpinned) when the selection matches the model's
+ * Codex-native window: the process then launches WITHOUT
+ * `model_context_window` / `model_auto_compact_token_limit` overrides and
+ * Codex resolves both from its own metadata. Switching between two unpinned
+ * models (e.g. gpt-5.5 272K ↔ gpt-5.6-sol 372K) therefore never restarts.
+ *
+ * Models absent from Codex's catalog (Grok, custom gateways) always pin,
+ * because Codex would otherwise fall back to 272K metadata.
+ */
+export function resolveModelContextPin(
+  model: string,
+  contextWindow: number,
+): CodexModelContextConfig | null {
+  const native = CODEX_NATIVE_CONTEXT_WINDOWS.get(model)
+  if (native !== undefined && native === contextWindow) return null
+  return {
+    modelContextWindow: contextWindow,
+    modelAutoCompactTokenLimit: modelAutoCompactTokenLimit(contextWindow),
+  }
+}
+
+/** Structural equality for pins where `null` means "unpinned". */
+export function modelContextPinsEqual(
+  a: CodexModelContextConfig | null,
+  b: CodexModelContextConfig | null,
+): boolean {
+  if (a === null || b === null) return a === b
+  return (
+    a.modelContextWindow === b.modelContextWindow
+    && a.modelAutoCompactTokenLimit === b.modelAutoCompactTokenLimit
+  )
+}
+
 const MODEL_CONTEXT_CONFIG_KEYS = [
   'modelContextWindow',
   'modelAutoCompactTokenLimit',

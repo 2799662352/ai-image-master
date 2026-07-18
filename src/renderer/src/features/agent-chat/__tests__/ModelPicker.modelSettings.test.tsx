@@ -440,7 +440,7 @@ describe('ModelPicker model settings integration', () => {
 })
 
 describe('ModelPicker family grouping and route transition status', () => {
-  it('groups models by family while keeping one keyboard index', () => {
+  it('groups models by family with XAI above OPENAI in one keyboard index', () => {
     const selectModel = vi.fn(async () => true)
     setGatewayPickerState({ status: 'available' }, {
       setSelectedModel: selectModel,
@@ -448,15 +448,23 @@ describe('ModelPicker family grouping and route transition status', () => {
     render(<ModelPicker />)
     openPicker()
 
-    expect(screen.getByText('OPENAI')).toBeTruthy()
-    expect(screen.getByText('XAI')).toBeTruthy()
+    // User-requested ordering: the Grok (XAI) group renders ABOVE the OpenAI
+    // group in the picker.
+    const xaiHeader = screen.getByText('XAI')
+    const openaiHeader = screen.getByText('OPENAI')
+    expect(
+      xaiHeader.compareDocumentPosition(openaiHeader)
+      & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
     expect(screen.getByText(/Gateway.*Right\.Codes/)).toBeTruthy()
 
-    const gptOption = screen.getByRole('option', { name: 'GPT-5.5' })
-    gptOption.focus()
-    fireEvent.keyDown(gptOption, { key: 'ArrowDown' })
+    // The flat keyboard index spans groups: Grok (first group) → ArrowDown
+    // reaches the first OpenAI model.
     const grokOption = screen.getByRole('option', { name: 'Grok 4.5' })
-    expect(document.activeElement).toBe(grokOption)
+    grokOption.focus()
+    fireEvent.keyDown(grokOption, { key: 'ArrowDown' })
+    const gptOption = screen.getByRole('option', { name: 'GPT-5.5' })
+    expect(document.activeElement).toBe(gptOption)
 
     // Enter on a focused native button activates it; jsdom needs the click.
     fireEvent.click(grokOption)

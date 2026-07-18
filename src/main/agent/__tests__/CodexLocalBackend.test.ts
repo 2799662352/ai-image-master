@@ -83,6 +83,11 @@ async function startFakeServer(opts: FakeServerOptions = {}): Promise<FakeServer
         }
         if (delayTurnStartMs > 0) setTimeout(sendTurnStart, delayTurnStartMs)
         else sendTurnStart()
+      } else if (msg.method === 'thread/resume' && msg.id !== undefined) {
+        ws.send(JSON.stringify({
+          jsonrpc: '2.0', id: msg.id,
+          result: { thread: { id: msg.params.threadId, preview: '', cwd: '/' } },
+        }))
       } else if (msg.method === 'turn/interrupt' && msg.id !== undefined) {
         ws.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {} }))
         setImmediate(() => {
@@ -232,6 +237,54 @@ describe('CodexLocalBackend (with a fake codex app-server)', () => {
     expect(methodsCalled).toContain('initialize')
     expect(methodsCalled).toContain('thread/start')
     expect(methodsCalled).toContain('turn/start')
+  })
+
+  it('resumeThread pins thread/resume to the CURRENT provider (cross-channel switch fix)', async () => {
+    // codex thread/resume restores the persisted model_provider from thread
+    // metadata (openai/codex#19287); after a grok→gpt channel switch that old
+    // provider is no longer in the launch config and resume dies with
+    // "Model provider `<old>` not found". Explicit overrides suppress the
+    // metadata restore and keep the thread on the current selection.
+    server = await startFakeServer()
+    backend = new CodexLocalBackend({
+      wsUrl: server.url,
+      provider: {
+        id: 'rightcode-grok',
+        name: 'Right.Codes Grok',
+        baseUrl: 'https://right.codes/grok/v1',
+        envKey: 'OPENAI_API_KEY',
+        model: 'grok-4.5',
+      },
+    })
+    await backend.start()
+
+    await backend.resumeThread('thread-1')
+    // Channel switch: the coordinator calls setProvider before resuming.
+    backend.setProvider({
+      id: 'rightcode-standard',
+      name: 'Right.Codes',
+      baseUrl: 'https://right.codes/codex/v1',
+      envKey: 'OPENAI_API_KEY',
+      model: 'gpt-5.6-sol',
+    })
+    await backend.resumeThread('thread-1')
+
+    const resumes = server.receivedFromClient.filter((m) => m.method === 'thread/resume')
+    expect(resumes.map((m) => m.params)).toEqual([
+      { threadId: 'thread-1', model: 'grok-4.5', modelProvider: 'rightcode-grok' },
+      { threadId: 'thread-1', model: 'gpt-5.6-sol', modelProvider: 'rightcode-standard' },
+    ])
+  })
+
+  it('resumeThread pins the built-in openai provider when no custom provider is active', async () => {
+    server = await startFakeServer()
+    backend = new CodexLocalBackend({ wsUrl: server.url })
+    await backend.start()
+
+    await backend.resumeThread('thread-2')
+
+    const resume = server.receivedFromClient.find((m) => m.method === 'thread/resume')
+    expect(resume?.params).toEqual({ threadId: 'thread-2', modelProvider: 'openai' })
   })
 
   it('send(existingThreadId, input) skips thread/start and does not emit thread_created', async () => {
@@ -798,6 +851,29 @@ describe('CodexLocalBackend spawn env injection', () => {
     } finally {
       await backend.stop()
       await rm(workspace.tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('spawns WITHOUT a context pin when getModelContextConfig returns null (native metadata)', async () => {
+    const capturedArgs: string[][] = []
+    const backend = new CodexLocalBackend({
+      resourceRoot: '/tmp/codex-fake-root',
+      getModelContextConfig: () => null,
+      spawnFactory: ((_bin: string, args: string[]) => {
+        capturedArgs.push([...args])
+        return makeFakeCodexServerChildProc(args)
+      }) as any,
+      connectTimeoutMs: 500,
+    })
+
+    try {
+      await backend.start()
+      expect(capturedArgs).toHaveLength(1)
+      const flat = capturedArgs[0].join(' ')
+      expect(flat).not.toContain('model_context_window')
+      expect(flat).not.toContain('model_auto_compact_token_limit')
+    } finally {
+      await backend.stop()
     }
   })
 
