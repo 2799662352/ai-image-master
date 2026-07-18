@@ -61,7 +61,7 @@ function renderPanel(options: RenderPanelOptions = {}) {
     <ModelSettingsPanel
       capabilities={options.capabilities ?? SOL_CAPABILITIES}
       reasoningEffort={options.reasoningEffort ?? 'medium'}
-      contextWindow={options.contextWindow ?? 372_000}
+      contextWindow={options.contextWindow ?? 272_000}
       disabled={options.disabled ?? false}
       pending={options.pending ?? false}
       error={options.error}
@@ -81,7 +81,7 @@ describe('ModelSettingsPanel', () => {
   it('renders Right Code gpt-5.6-sol capabilities without unsupported options', () => {
     renderPanel()
 
-    expect(screen.getByRole('option', { name: /^372K$/ })).toBeTruthy()
+    expect(screen.getByRole('option', { name: /^272K$/ })).toBeTruthy()
     expect(screen.getByRole('option', { name: /1M.*实验性/ })).toBeTruthy()
     for (const label of ['Auto', 'Low', 'Medium', 'High', 'Extra high', 'Max']) {
       expect(screen.getByRole('option', { name: label })).toBeTruthy()
@@ -151,7 +151,7 @@ describe('ModelSettingsPanel', () => {
       <ModelSettingsPanel
         capabilities={SOL_CAPABILITIES}
         reasoningEffort="medium"
-        contextWindow={372_000}
+        contextWindow={272_000}
         disabled={false}
         pending
         onReasoningChange={vi.fn()}

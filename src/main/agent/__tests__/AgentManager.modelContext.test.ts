@@ -114,7 +114,7 @@ describe('AgentManager model-context compatibility adapter', () => {
 
     const result = await manager.applyModelContextRpc({
       threadId: 'db-thread-1',
-      model: 'gpt-5.6-sol',
+      model: 'gpt-5.5',
       contextWindow: TARGET_CONTEXT.modelContextWindow,
       requestVersion: 7,
     })
@@ -122,7 +122,7 @@ describe('AgentManager model-context compatibility adapter', () => {
     expect(result).toEqual({
       ok: true,
       data: {
-        model: 'gpt-5.6-sol',
+        model: 'gpt-5.5',
         contextWindow: TARGET_CONTEXT.modelContextWindow,
         autoCompactTokenLimit: TARGET_CONTEXT.modelAutoCompactTokenLimit,
         threadRestored: true,
@@ -130,7 +130,7 @@ describe('AgentManager model-context compatibility adapter', () => {
       },
     })
     expect(operations).toEqual(['restart', 'resume:codex-thread-1'])
-    expect(setThreadModel).toHaveBeenCalledWith('db-thread-1', 'gpt-5.6-sol')
+    expect(setThreadModel).toHaveBeenCalledWith('db-thread-1', 'gpt-5.5')
     expect(runtimeStore.loadSync()).toEqual({
       version: 1,
       confirmed: TARGET_CONTEXT,
@@ -164,7 +164,7 @@ describe('AgentManager model-context compatibility adapter', () => {
     })
 
     const result = await manager.applyModelContextRpc({
-      model: 'gpt-5.6-sol',
+      model: 'gpt-5.5',
       contextWindow: TARGET_CONTEXT.modelContextWindow,
       requestVersion: 1,
     })
@@ -250,7 +250,7 @@ describe('AgentManager model-context compatibility adapter', () => {
     })
 
     const applying = manager.applyModelContextRpc({
-      model: 'gpt-5.6-sol',
+      model: 'gpt-5.5',
       contextWindow: TARGET_CONTEXT.modelContextWindow,
       requestVersion: 11,
     })
