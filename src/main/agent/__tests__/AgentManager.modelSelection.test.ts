@@ -636,12 +636,12 @@ describe('AgentManager model-selection turn admission', () => {
     await expect(manager.applyModelSelectionRpc({
       gatewayId: catalog.data.gatewayId,
       modelId: 'gpt-5.6-sol',
-      contextWindow: 372_000,
+      contextWindow: 272_000,
       catalogRevision: catalog.data.revision,
       requestVersion: 1,
     })).resolves.toMatchObject({
       ok: true,
-      data: { modelId: 'gpt-5.6-sol', contextWindow: 372_000 },
+      data: { modelId: 'gpt-5.6-sol', contextWindow: 272_000 },
     })
     expect(restartCodex).not.toHaveBeenCalled()
 
@@ -679,28 +679,39 @@ describe('AgentManager model-selection turn admission', () => {
     if (!catalog.ok) throw new Error(catalog.error)
     restartCodex.mockClear()
 
+    // Model switches carry the previous window when supported, so the 1M pin
+    // must come from the explicit Context control (context-only path).
     await expect(manager.applyModelSelectionRpc({
       gatewayId: catalog.data.gatewayId,
       modelId: 'gpt-5.6-sol',
-      contextWindow: 1_000_000,
+      contextWindow: 272_000,
       catalogRevision: catalog.data.revision,
       requestVersion: 1,
     })).resolves.toMatchObject({
       ok: true,
-      data: { modelId: 'gpt-5.6-sol', contextWindow: 1_000_000 },
+      data: { modelId: 'gpt-5.6-sol', contextWindow: 272_000 },
+    })
+    expect(restartCodex).not.toHaveBeenCalled()
+
+    await expect(manager.applyModelContextRpc({
+      model: 'gpt-5.6-sol',
+      contextWindow: 1_000_000,
+      requestVersion: 1,
+    })).resolves.toMatchObject({
+      ok: true,
+      data: { model: 'gpt-5.6-sol', contextWindow: 1_000_000 },
     })
     expect(restartCodex).toHaveBeenCalledTimes(1)
 
     // Unpinning back to the native window also requires one restart to drop
-    // the launch override. The explicit Context control is the context-only
-    // path, so it goes through the compatibility adapter.
+    // the launch override.
     await expect(manager.applyModelContextRpc({
       model: 'gpt-5.6-sol',
-      contextWindow: 372_000,
+      contextWindow: 272_000,
       requestVersion: 2,
     })).resolves.toMatchObject({
       ok: true,
-      data: { model: 'gpt-5.6-sol', contextWindow: 372_000 },
+      data: { model: 'gpt-5.6-sol', contextWindow: 272_000 },
     })
     expect(restartCodex).toHaveBeenCalledTimes(2)
   })
@@ -734,14 +745,14 @@ describe('AgentManager model-selection turn admission', () => {
     await expect(manager.applyModelSelectionRpc({
       gatewayId: catalog.data.gatewayId,
       modelId: 'gpt-5.6-sol',
-      contextWindow: 372_000,
+      contextWindow: 272_000,
       catalogRevision: catalog.data.revision,
       requestVersion: 1,
     })).resolves.toMatchObject({ ok: true })
     await expect(manager.applyModelSelectionRpc({
       gatewayId: catalog.data.gatewayId,
       modelId: 'gpt-5.6-luna',
-      contextWindow: 372_000,
+      contextWindow: 272_000,
       catalogRevision: catalog.data.revision,
       requestVersion: 2,
     })).resolves.toMatchObject({ ok: true })
@@ -761,7 +772,7 @@ describe('AgentManager model-selection turn admission', () => {
     // block the next model switch either.
     await expect(manager.applyModelContextRpc({
       model: 'gpt-5.6-luna',
-      contextWindow: 372_000,
+      contextWindow: 272_000,
       requestVersion: 2,
     })).resolves.toMatchObject({ ok: true })
     await expect(manager.applyModelContextRpc({

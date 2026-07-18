@@ -72,6 +72,13 @@ export type ModelRoutingSlice =
  */
 export interface ModelRoutingHost {
   threadId?: string
+  /**
+   * Per-thread model binding mirror (Plan B). Records which model each
+   * conversation last confirmed/used so `switchThread` can restore the
+   * picker to THAT thread's model instead of the global selection. Session
+   * cache only — the authoritative binding lives in the main-process DB.
+   */
+  modelByThread: Record<string, string>
   activeModelContextWindow: number
   modelContextWindowByModel: Record<string, number>
   modelContextPending?: {
@@ -764,6 +771,16 @@ export function createModelRoutingSlice(
           persistModelContextWindows(modelContextWindowByModel)
         return {
           selectedModelId: confirmed.modelId,
+          // Per-thread binding mirror (Plan B): main just pinned this thread to
+          // the confirmed model, so remember it for switchThread restoration.
+          ...(before.threadId
+            ? {
+                modelByThread: {
+                  ...state.modelByThread,
+                  [before.threadId]: confirmed.modelId,
+                },
+              }
+            : {}),
           activeModelContextWindow: confirmed.contextWindow,
           modelContextWindowByModel,
           modelSelectionSnapshot: confirmed,

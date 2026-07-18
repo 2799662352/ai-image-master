@@ -12,6 +12,7 @@ import type {
   CodexCollaborationMode,
   CodexModelListParams,
   CodexModelListResponse,
+  CodexThreadConfigOverrides,
   CollaborationModeListResponse,
   ThreadSettingsUpdateParams,
   ThreadSettingsUpdateResponse,
@@ -70,6 +71,24 @@ export interface AgentInput extends AgentSendMessagePayload {
    * turns. Omitted = today's behaviour.
    */
   collaborationMode?: CodexCollaborationMode
+  /**
+   * Per-thread provider routing (Plan B). When set on a NEW-thread send, the
+   * `thread/start` request carries `modelProvider` so the thread is pinned to
+   * this registered `[model_providers.<id>]` table — which may be a sibling
+   * Channel of the active Gateway — instead of the process-active provider.
+   * Omitted = today's behaviour (active provider).
+   */
+  modelProvider?: string
+  /**
+   * Per-thread context pin (Plan B). When set on a NEW-thread send, emitted
+   * as thread-scoped `model_context_window` / `model_auto_compact_token_limit`
+   * inside `thread/start.config`. `null`/omitted = unpinned (codex resolves
+   * from native per-model metadata).
+   */
+  threadContextPin?: {
+    modelContextWindow: number
+    modelAutoCompactTokenLimit: number
+  } | null
   items: Array<
     | { type: 'text'; text: string }
     | { type: 'localImage'; path: string }
@@ -109,6 +128,19 @@ export interface IAgentBackend {
   /** True only while at least one Codex turn is active. */
   hasActiveTurns?(): boolean
   /**
+   * Thread-scoped busy probe (Plan B per-thread routing): true only when the
+   * given CODEX thread has an active turn. Lets in-process provider switches
+   * gate on the TARGET thread alone instead of the whole process.
+   */
+  hasInFlightWorkForThread?(codexThreadId: string): boolean
+  /**
+   * True when the LIVE spawn registered `[model_providers.<channelId>]` (the
+   * active channel or an extra sibling table). Only such channels can be
+   * targeted by in-process `thread/start.modelProvider` routing — anything
+   * else needs the restart transaction. Absent = no in-process routing.
+   */
+  hasRegisteredProviderChannel?(channelId: string): boolean
+  /**
    * Monotonic generation counter that increments every time the underlying
    * agent process is (re)spawned — crash self-heal via `start()`, or a
    * provider/config `restartCodex()`. Lets `AgentManager` detect that a
@@ -129,8 +161,10 @@ export interface IAgentBackend {
    * archived, oversized, or the param shape is unsupported by the binary), in
    * which case the manager falls back to starting a fresh thread. Optional:
    * backends without a resumable on-disk store (or test stubs) may omit it.
+   * `overrides` (Plan B) pins the resumed thread to its OWN channel/model
+   * route; omitted = the backend defaults to the process-active provider.
    */
-  resumeThread?(threadId: string): Promise<void>
+  resumeThread?(threadId: string, overrides?: CodexThreadConfigOverrides): Promise<void>
   setSessionConfig?(patch: Partial<CodexSessionConfig>): void
   /**
    * Swap the active model provider. The new value is consumed on the next
@@ -141,7 +175,15 @@ export interface IAgentBackend {
   respondToApprovalResponse?(response: CodexApprovalResponse): Promise<void> | void
   listThreads?(params?: ListThreadsParams): Promise<CodexThreadSummary[]>
   readThread?(threadId: string): Promise<CodexThreadDetail>
-  forkThread?(threadId: string): Promise<CodexThreadSummary>
+  forkThread?(threadId: string, overrides?: CodexThreadConfigOverrides): Promise<CodexThreadSummary>
+  /**
+   * Drop this connection's turn/item-event subscription for a codex thread
+   * (`thread/unsubscribe`). Used after an in-process provider switch forks a
+   * conversation off its old codex thread: unsubscribing the abandoned source
+   * lets codex unload it after its idle window instead of pinning it in
+   * memory forever.
+   */
+  unsubscribeThread?(threadId: string): Promise<void>
   archiveThread?(threadId: string): Promise<void>
   unarchiveThread?(threadId: string): Promise<CodexThreadSummary>
   /** Run `codex doctor --json` against the bundled binary (install diagnostics). */

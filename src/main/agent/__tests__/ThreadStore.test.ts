@@ -136,6 +136,65 @@ describe('ThreadStore.setThreadModel', () => {
   })
 })
 
+describe('ThreadStore per-thread routing (Plan B)', () => {
+  it('persists the thread→channel routing binding scoped to the target thread', async () => {
+    const update = vi.fn().mockResolvedValue(undefined)
+    const store = new ThreadStore({ agentThread: { update } } as any)
+
+    await store.setThreadRouting('thread_1', {
+      model: 'grok-4.5',
+      gatewayId: 'rightcode',
+      modelProvider: 'rightcode-grok',
+    })
+
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(update).toHaveBeenCalledWith({
+      where: { id: 'thread_1' },
+      data: {
+        model: 'grok-4.5',
+        gatewayId: 'rightcode',
+        modelProvider: 'rightcode-grok',
+      },
+    })
+  })
+
+  it('reads the routing snapshot, preserving missing-vs-unbound identity', async () => {
+    const findUnique = vi.fn()
+      .mockResolvedValueOnce({
+        model: 'grok-4.5',
+        gatewayId: 'rightcode',
+        modelProvider: 'rightcode-grok',
+      })
+      .mockResolvedValueOnce({ model: 'gpt-5.5', gatewayId: null, modelProvider: null })
+      .mockResolvedValueOnce(null)
+    const store = new ThreadStore({ agentThread: { findUnique } } as any)
+
+    // Bound thread: full routing comes back verbatim.
+    await expect(store.getThreadRoutingSnapshot('bound')).resolves.toEqual({
+      exists: true,
+      model: 'grok-4.5',
+      gatewayId: 'rightcode',
+      modelProvider: 'rightcode-grok',
+    })
+    // Legacy thread (pre-migration rows): nulls signal "derive from the
+    // active gateway + thread model" fallback, NOT an error.
+    await expect(store.getThreadRoutingSnapshot('legacy')).resolves.toEqual({
+      exists: true,
+      model: 'gpt-5.5',
+      gatewayId: null,
+      modelProvider: null,
+    })
+    // Deleted thread stays distinguishable from an unbound one.
+    await expect(store.getThreadRoutingSnapshot('missing')).resolves.toEqual({
+      exists: false,
+    })
+    expect(findUnique).toHaveBeenCalledWith({
+      where: { id: 'bound' },
+      select: { model: true, gatewayId: true, modelProvider: true },
+    })
+  })
+})
+
 describe('ThreadStore.listThreads', () => {
   it('orders by lastMessageAt desc then updatedAt desc, and surfaces lastMessageAt + manualTitle', async () => {
     const fakeRows = [

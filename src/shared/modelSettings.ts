@@ -134,9 +134,11 @@ const VERIFIED_CONTEXT_POLICIES: ReadonlyMap<string, ModelContextPolicy> = new M
     defaultWindow: GROK_4_5_CONTEXT_WINDOW,
     allowExperimental1M: false,
   }],
-  ['gpt-5.6-sol', { defaultWindow: 372_000, allowExperimental1M: true }],
-  ['gpt-5.6-terra', { defaultWindow: 372_000, allowExperimental1M: true }],
-  ['gpt-5.6-luna', { defaultWindow: 372_000, allowExperimental1M: true }],
+  // Codex 0.144.6 hotfix corrected the GPT-5.6 family from 372K to 272K
+  // (openai/codex#33972 / #34009) — 372K was wrong upstream metadata.
+  ['gpt-5.6-sol', { defaultWindow: 272_000, allowExperimental1M: true }],
+  ['gpt-5.6-terra', { defaultWindow: 272_000, allowExperimental1M: true }],
+  ['gpt-5.6-luna', { defaultWindow: 272_000, allowExperimental1M: true }],
   ['gpt-5.5', { defaultWindow: 272_000, allowExperimental1M: true }],
   ['gpt-5.4', { defaultWindow: 272_000, allowExperimental1M: true }],
   ['gpt-5.4-mini', { defaultWindow: 272_000, allowExperimental1M: true }],
@@ -388,17 +390,18 @@ export function modelAutoCompactTokenLimit(contextWindow: number): number {
 
 /**
  * Context windows Codex resolves natively from its bundled models.json
- * (verified against openai/codex rust-v0.144.5 codex-rs/models-manager/
- * models.json). Only slugs listed there belong here: for these models Codex
- * already knows the window AND derives its own auto-compaction budget, so a
+ * (verified against openai/codex rust-v0.144.6 codex-rs/models-manager/
+ * models.json — the 0.144.6 hotfix corrected the GPT-5.6 family from 372K to
+ * 272K). Only slugs listed there belong here: for these models Codex already
+ * knows the window AND derives its own auto-compaction budget, so a
  * launch-time `model_context_window` override is redundant — and harmful,
  * because the `-c` override applies globally to every model in the process
  * and forces a full restart whenever it changes.
  */
 const CODEX_NATIVE_CONTEXT_WINDOWS: ReadonlyMap<string, number> = new Map([
-  ['gpt-5.6-sol', 372_000],
-  ['gpt-5.6-terra', 372_000],
-  ['gpt-5.6-luna', 372_000],
+  ['gpt-5.6-sol', 272_000],
+  ['gpt-5.6-terra', 272_000],
+  ['gpt-5.6-luna', 272_000],
   ['gpt-5.5', 272_000],
   ['gpt-5.4', 272_000],
   ['gpt-5.4-mini', 272_000],

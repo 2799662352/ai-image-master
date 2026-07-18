@@ -105,9 +105,9 @@ describe('model settings capabilities', () => {
     ).toEqual({
       model: 'gpt-5.6-sol',
       provider: 'rightcode',
-      defaultContextWindow: 372_000,
+      defaultContextWindow: 272_000,
       contextOptions: [
-        { value: 372_000, experimental: false },
+        { value: 272_000, experimental: false },
         { value: EXPERIMENTAL_CONTEXT_WINDOW, experimental: true },
       ],
       defaultReasoningEffort: 'low',
@@ -189,9 +189,9 @@ describe('model settings capabilities', () => {
 
   it.each([
     ['grok-4.5', GROK_4_5_CONTEXT_WINDOW],
-    ['gpt-5.6-sol', 372_000],
-    ['gpt-5.6-terra', 372_000],
-    ['gpt-5.6-luna', 372_000],
+    ['gpt-5.6-sol', 272_000],
+    ['gpt-5.6-terra', 272_000],
+    ['gpt-5.6-luna', 272_000],
     ['gpt-5.5', 272_000],
     ['gpt-5.4', 272_000],
     ['gpt-5.4-mini', 272_000],
@@ -216,9 +216,9 @@ describe('model settings capabilities', () => {
   )
 
   it.each([
-    ['gpt-5.6-sol', 372_000],
-    ['gpt-5.6-terra', 372_000],
-    ['gpt-5.6-luna', 372_000],
+    ['gpt-5.6-sol', 272_000],
+    ['gpt-5.6-terra', 272_000],
+    ['gpt-5.6-luna', 272_000],
     ['gpt-5.5', 272_000],
     ['gpt-5.4', 272_000],
     ['gpt-5.4-mini', 272_000],
@@ -282,9 +282,9 @@ describe('model settings capabilities', () => {
 describe('model context pin', () => {
   it.each([
     ['gpt-5.5', 272_000],
-    ['gpt-5.6-sol', 372_000],
-    ['gpt-5.6-terra', 372_000],
-    ['gpt-5.6-luna', 372_000],
+    ['gpt-5.6-sol', 272_000],
+    ['gpt-5.6-terra', 272_000],
+    ['gpt-5.6-luna', 272_000],
     ['gpt-5.4', 272_000],
     ['gpt-5.4-mini', 272_000],
     ['gpt-5.2', 272_000],
@@ -343,7 +343,7 @@ describe('model context pin', () => {
   it('keeps the 5.5 to 5.6 switch pin-free in both directions', () => {
     expect(modelContextPinsEqual(
       resolveModelContextPin('gpt-5.5', 272_000),
-      resolveModelContextPin('gpt-5.6-sol', 372_000),
+      resolveModelContextPin('gpt-5.6-sol', 272_000),
     )).toBe(true)
   })
 })

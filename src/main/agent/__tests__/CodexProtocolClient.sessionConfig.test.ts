@@ -116,4 +116,51 @@ describe('CodexProtocolClient session config', () => {
     expect(JSON.stringify(threadStart?.params)).not.toContain('danger-full-access')
     expect(JSON.stringify(threadStart?.params)).not.toContain('"never"')
   })
+
+  it('routes a new thread to its own provider + context pin via thread/start (Plan B)', async () => {
+    server = await startFakeCodexServer()
+    client = new CodexProtocolClient({
+      url: server.url,
+      clientInfo: { name: 'catimation-test', version: '0.0.0' },
+    })
+    await client.start()
+
+    for await (const _event of client.send(undefined, {
+      ...input,
+      model: 'grok-4.5',
+      modelProvider: 'rightcode-grok',
+      threadContextPin: {
+        modelContextWindow: 500_000,
+        modelAutoCompactTokenLimit: 450_000,
+      },
+    })) {
+      // Drain the turn.
+    }
+
+    const threadStart = server.receivedFromClient.find((msg) => msg.method === 'thread/start')
+    expect(threadStart?.params.model).toBe('grok-4.5')
+    expect(threadStart?.params.modelProvider).toBe('rightcode-grok')
+    expect(threadStart?.params.config).toMatchObject({
+      model_context_window: 500_000,
+      model_auto_compact_token_limit: 450_000,
+    })
+  })
+
+  it('keeps the legacy thread/start wire shape when no per-thread routing is set', async () => {
+    server = await startFakeCodexServer()
+    client = new CodexProtocolClient({
+      url: server.url,
+      clientInfo: { name: 'catimation-test', version: '0.0.0' },
+    })
+    await client.start()
+
+    for await (const _event of client.send(undefined, input)) {
+      // Drain the turn.
+    }
+
+    const threadStart = server.receivedFromClient.find((msg) => msg.method === 'thread/start')
+    expect(threadStart?.params).not.toHaveProperty('modelProvider')
+    expect(threadStart?.params.config).not.toHaveProperty('model_context_window')
+    expect(threadStart?.params.config).not.toHaveProperty('model_auto_compact_token_limit')
+  })
 })

@@ -150,6 +150,16 @@ export interface CodexLocalBackendOptions {
    */
   getUnderstandProvider?: () => { provider: CodexProviderConfig; token: string } | undefined
   /**
+   * Resolves the OTHER Channels of the active Gateway at spawn time (Plan B:
+   * per-thread provider routing). Each returned config is registered as an
+   * EXTRA `[model_providers.<id>]` table — bridged channels are routed through
+   * their own loopback compatibility proxy — so a thread can select any
+   * sibling channel via `thread/start.modelProvider` WITHOUT a codex restart.
+   * The active provider is excluded automatically (id match); returning
+   * `undefined`/empty keeps today's single-provider launch.
+   */
+  getGatewayChannelProviders?: () => readonly CodexProviderConfig[]
+  /**
    * Returns the user's apiyi-mcp key (设置 → API易) at spawn time, or undefined
    * when none is configured. Forwarded to `buildCodexLaunchArgs` as
    * {@link CodexLaunchOptions.apiyiKey} so the secret is injected via `-c`
@@ -302,6 +312,8 @@ export class CodexLocalBackend implements IAgentBackend {
    */
   private log: WriteStream | null = null
   private compatibilityProxies: ProviderCompatibilityProxyGroup | null = null
+  /** Provider tables registered on the live spawn (Plan B routing targets). */
+  private registeredProviderChannelIds = new Set<string>()
   private readonly options: CodexLocalBackendOptions
   private readonly wsUrlOverride: string | undefined
   private readonly resourceRootOverride: string | undefined
@@ -412,10 +424,22 @@ export class CodexLocalBackend implements IAgentBackend {
     try {
       const apiKey = this.options.getApiKey?.()
       const understand = this.options.getUnderstandProvider?.()
+      // Plan B (per-thread provider routing): register the active Gateway's
+      // sibling Channels alongside the active one, each behind its own
+      // compatibility proxy when bridged, so `thread/start.modelProvider`
+      // can route a thread to any of them without a codex restart.
+      const gatewayChannels = (this.options.getGatewayChannelProviders?.() ?? [])
+        .filter((channel) => channel.id !== this.currentProvider?.id)
       const providerConfigs = [
         ...(this.currentProvider ? [this.currentProvider] : []),
         ...(understand ? [understand.provider] : []),
+        ...gatewayChannels,
       ]
+      // Records what THIS spawn can serve: only ids in this set are valid
+      // in-process `thread/start.modelProvider` targets (Plan B).
+      this.registeredProviderChannelIds = new Set(
+        providerConfigs.map((provider) => provider.id),
+      )
       compatibilityProxies = providerConfigs.length > 0
         ? await startProviderCompatibilityProxies(providerConfigs)
         : null
@@ -424,8 +448,9 @@ export class CodexLocalBackend implements IAgentBackend {
         ? compatibilityProxies?.providers[providerIndex++]
         : undefined
       const understandProvider = understand
-        ? compatibilityProxies?.providers[providerIndex]
+        ? compatibilityProxies?.providers[providerIndex++]
         : undefined
+      const gatewayChannelProviders = compatibilityProxies?.providers.slice(providerIndex) ?? []
       const extraEnv = understand?.token
         ? { [understand.provider.envKey]: understand.token }
         : undefined
@@ -443,7 +468,10 @@ export class CodexLocalBackend implements IAgentBackend {
         sessionConfig: this.sessionConfig,
         modelContextConfig,
         catimationMcp: this.options.catimationMcp,
-        extraProviders: understandProvider ? [understandProvider] : undefined,
+        extraProviders: [
+          ...(understandProvider ? [understandProvider] : []),
+          ...gatewayChannelProviders,
+        ],
         apiyiKey: this.options.getApiyiKey?.(),
         cinematographyKbKey: this.options.getCinematographyKbKey?.(),
         dashVectorKey: this.options.getDashVectorKey?.(),
@@ -642,19 +670,32 @@ export class CodexLocalBackend implements IAgentBackend {
     return this.client.readThread(threadId)
   }
 
-  async forkThread(threadId: string): Promise<CodexThreadSummary> {
+  async forkThread(
+    threadId: string,
+    overrides?: CodexThreadConfigOverrides,
+  ): Promise<CodexThreadSummary> {
     if (!this.client) throw new Error('CodexLocalBackend.forkThread called before start')
-    return this.client.forkThread(threadId, this.threadConfigOverrides())
+    return this.client.forkThread(threadId, overrides ?? this.threadConfigOverrides())
   }
 
-  async resumeThread(threadId: string): Promise<void> {
+  async unsubscribeThread(threadId: string): Promise<void> {
+    if (!this.client) throw new Error('CodexLocalBackend.unsubscribeThread called before start')
+    return this.client.unsubscribeThread(threadId)
+  }
+
+  async resumeThread(
+    threadId: string,
+    overrides?: CodexThreadConfigOverrides,
+  ): Promise<void> {
     if (!this.client) throw new Error('CodexLocalBackend.resumeThread called before start')
-    return this.client.resumeThread(threadId, this.threadConfigOverrides())
+    return this.client.resumeThread(threadId, overrides ?? this.threadConfigOverrides())
   }
 
   /**
    * Explicit resume/fork config overrides pinning the thread to the CURRENT
-   * launch selection. Without these, codex restores the thread's persisted
+   * launch selection — the DEFAULT when the caller does not supply per-thread
+   * overrides (Plan B routing passes the thread's own channel/model instead).
+   * Without any overrides, codex restores the thread's persisted
    * `model_provider` from metadata (openai/codex#19287) — and after a
    * cross-channel model switch (grok↔gpt) that old provider table is no longer
    * defined in the running config, so `thread/resume` dies with
@@ -711,6 +752,24 @@ export class CodexLocalBackend implements IAgentBackend {
   /** Reports active Codex turns without conflating pending send setup. */
   hasActiveTurns(): boolean {
     return this.client?.hasActiveTurns() ?? false
+  }
+
+  /**
+   * Thread-scoped busy probe (Plan B): true only when the given CODEX thread
+   * has an active turn, so in-process provider switches ignore other threads.
+   */
+  hasInFlightWorkForThread(codexThreadId: string): boolean {
+    return this.client?.hasActiveTurnOnThread(codexThreadId) ?? false
+  }
+
+  /**
+   * True when the LIVE spawn registered `[model_providers.<channelId>]`
+   * (active channel or extra sibling table) — the precondition for serving a
+   * switch via in-process `thread/start.modelProvider` routing (Plan B).
+   */
+  hasRegisteredProviderChannel(channelId: string): boolean {
+    if (this.registeredProviderChannelIds.has(channelId)) return true
+    return this.currentProvider?.id === channelId
   }
 
   currentEpoch(): number {

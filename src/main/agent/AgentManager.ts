@@ -30,6 +30,7 @@ import {
 } from './codexProviders'
 import { buildGatewayModelCatalog } from './gatewayModelCatalog'
 import {
+  channelsForGateway,
   resolveGatewayModelRoute,
   resolveProviderChannel,
 } from './gatewayModelRouting'
@@ -72,6 +73,7 @@ import type {
   CodexCollaborationMode,
   CodexCollaborationModeMask,
   CodexModelListResponse,
+  CodexThreadConfigOverrides,
 } from './codexProtocol'
 import {
   CodexRuntimeSettingsStore,
@@ -80,6 +82,7 @@ import {
 import {
   AgentModelSelectionCoordinator,
   type AgentModelSelectionIntentReservation,
+  type AgentModelSelectionRouteTarget,
 } from './AgentModelSelectionCoordinator'
 import type { BrowserWindow } from 'electron'
 import type {
@@ -103,6 +106,7 @@ import type {
   AgentSendMessagePayload,
   AgentSendMessageResult,
   AgentStreamEvent,
+  AgentThreadRoutingSnapshot,
   CodexApprovalRequest,
   CodexApprovalResponse,
   CodexMcpSummary,
@@ -527,6 +531,13 @@ export class AgentManager {
           this.miauToken
             ? { provider: QWEN_UNDERSTAND_PROVIDER, token: this.miauToken }
             : undefined,
+        // Plan B: register EVERY Channel of the active Gateway on each spawn
+        // so per-thread `modelProvider` routing can pick sibling channels
+        // (e.g. rightcode-grok alongside rightcode-standard) without a codex
+        // restart. Custom gateways have a single custom channel and thus no
+        // siblings — channelsForGateway returns [] for them. The backend
+        // filters out the active channel itself by id.
+        getGatewayChannelProviders: () => channelsForGateway(this.activeGatewayId),
         getApiyiKey: () => this.apiyiMcpKey || undefined,
         getCinematographyKbKey: () => this.cinematographyKbKey || undefined,
         getDashVectorKey: () => this.dashVectorKey || undefined,
@@ -596,11 +607,30 @@ export class AgentManager {
         this.persistModelSelection(snapshot, threadId),
       restoreSelection: (snapshot, threadId) =>
         this.restoreModelSelection(snapshot, threadId),
-      resumeThread: (threadId) => this.resumeSelectedThread(threadId),
+      resumeThread: (threadId, target) =>
+        this.resumeSelectedThread(threadId, target),
       backendEpoch: () => this.backend.currentEpoch?.(),
       hasInFlightWork: () => this.backend.hasInFlightWork?.()
         ?? this.backend.hasActiveTurns?.()
         ?? false,
+      // Plan B: a switch is servable WITHOUT a restart only when the LIVE
+      // spawn actually registered the target Channel's provider table (the
+      // spawn registers every sibling of its gateway, see
+      // getGatewayChannelProviders). Cross-gateway targets, custom gateways
+      // (no siblings), unhealthy/un-spawned backends, and backends without
+      // the registration probe all keep the original restart transaction.
+      canRouteInProcess: (previous, route) =>
+        route.gatewayId === this.activeGatewayId
+        && previous.gatewayId === this.activeGatewayId
+        && this.backend.isHealthy()
+        && (this.backend.hasRegisteredProviderChannel?.(route.channelId) ?? false),
+      threadHasInFlightWork: (threadId) => {
+        const codexThreadId = this.codexThreadIdByDbThreadId.get(threadId)
+        if (!codexThreadId) return false
+        return this.backend.hasInFlightWorkForThread?.(codexThreadId)
+          ?? this.backend.hasInFlightWork?.()
+          ?? false
+      },
       prepareRecovery: (snapshot) => {
         this.pendingContextPin = resolveModelContextPin(
           snapshot.modelId,
@@ -1580,8 +1610,13 @@ export class AgentManager {
     threadId?: string,
   ): Promise<AgentModelSelectionSnapshot> {
     const persisted = this.providerStore.loadSync()
+    // Prefer the full routing snapshot (Plan B): it carries the thread's
+    // gatewayId/modelProvider binding so the coordinator can detect
+    // already-bound threads and same-gateway in-process routes. Legacy stores
+    // without the routing reader fall back to the model-only snapshot.
     const thread = threadId
-      ? await (this.store?.getThreadModelSnapshot)?.(threadId)
+      ? await (this.store?.getThreadRoutingSnapshot)?.(threadId)
+        ?? await (this.store?.getThreadModelSnapshot)?.(threadId)
         ?? { exists: true as const, model: persisted.selectedModelId }
       : undefined
     return {
@@ -1712,7 +1747,17 @@ export class AgentManager {
     }
     await this.runtimeSettingsStore.replace(settings)
     if (threadId) {
-      await this.store?.setThreadModel?.(threadId, snapshot.modelId)
+      // Plan B: commit the full thread→Channel binding so this conversation
+      // stays pinned to its provider even after the GLOBAL selection moves on.
+      if (this.store?.setThreadRouting) {
+        await this.store.setThreadRouting(threadId, {
+          model: snapshot.modelId,
+          gatewayId: snapshot.gatewayId,
+          modelProvider: snapshot.channelId,
+        })
+      } else {
+        await this.store?.setThreadModel?.(threadId, snapshot.modelId)
+      }
     }
     this.runtimeSettings = cloneRuntimeSettings(settings)
     // Selection committed: spawns can derive the pin from the durable
@@ -1744,10 +1789,26 @@ export class AgentManager {
           `Cannot restore an unset model for thread ${threadId}`,
         )
       }
-      await this.store?.setThreadModel?.(
-        threadId,
-        threadModel,
-      )
+      const previousBinding = snapshot.thread?.exists ? snapshot.thread : null
+      // Rollback restores the thread's PREVIOUS routing binding when it had
+      // one; legacy (null) bindings restore the model column alone so the row
+      // keeps its "unbound → derive from active gateway" semantics.
+      if (
+        this.store?.setThreadRouting
+        && previousBinding?.gatewayId != null
+        && previousBinding.modelProvider != null
+      ) {
+        await this.store.setThreadRouting(threadId, {
+          model: threadModel,
+          gatewayId: previousBinding.gatewayId,
+          modelProvider: previousBinding.modelProvider,
+        })
+      } else {
+        await this.store?.setThreadModel?.(
+          threadId,
+          threadModel,
+        )
+      }
     }
     this.runtimeSettings = cloneRuntimeSettings(settings)
     // Rollback restored the previous durable selection; drop any in-flight pin.
@@ -1841,11 +1902,18 @@ export class AgentManager {
     return { catalogRevision: catalog.data.revision }
   }
 
-  private async resumeSelectedThread(threadId: string): Promise<void> {
+  private async resumeSelectedThread(
+    threadId: string,
+    target?: AgentModelSelectionRouteTarget,
+  ): Promise<void> {
     const persistedThreadId = this.codexThreadIdByDbThreadId.get(threadId)
       ?? await this.store?.getCodexThreadId?.(threadId)
       ?? undefined
     if (!persistedThreadId) return
+    if (target) {
+      await this.rebindThreadInProcess(threadId, persistedThreadId, target)
+      return
+    }
     if (!this.backend.resumeThread) {
       throw new Error('Codex strict thread resume API is unavailable')
     }
@@ -1856,6 +1924,67 @@ export class AgentManager {
       this.codexThreadEpochByDbThreadId.set(threadId, epoch)
     }
     await this.store?.setCodexThreadId?.(threadId, persistedThreadId)
+  }
+
+  /**
+   * Plan B in-process routing: move a conversation onto the TARGET sibling
+   * provider table by FORKING its codex thread with `model`/`modelProvider`
+   * (+ thread-scoped context pin) overrides.
+   *
+   * Why fork, not resume: `thread/resume` on a LOADED thread silently IGNORES
+   * model/modelProvider overrides (upstream `resume_running_thread` — a
+   * subscribed live thread "rejoins" with its old config; verified against
+   * the bundled binary by scripts/smoke-live-thread-provider-switch.ts). That
+   * no-op left the codex session on the OLD provider while turns carried the
+   * NEW model, producing crossed requests like "端点/codex未配置模型grok-4.5".
+   * Upstream's position is that mid-thread provider switches must start a new
+   * thread (openai/codex#18964); `thread/fork` is exactly that with the full
+   * history copied, and its overrides route the fork like `thread/start`.
+   */
+  private async rebindThreadInProcess(
+    dbThreadId: string,
+    codexThreadId: string,
+    target: AgentModelSelectionRouteTarget,
+  ): Promise<void> {
+    if (!this.backend.forkThread) {
+      throw new Error('Codex thread fork API is unavailable')
+    }
+    const pin = resolveModelContextPin(target.modelId, target.contextWindow)
+    const overrides: CodexThreadConfigOverrides = {
+      model: target.modelId,
+      modelProvider: target.channelId,
+      ...(pin
+        ? {
+            config: {
+              model_context_window: pin.modelContextWindow,
+              model_auto_compact_token_limit: pin.modelAutoCompactTokenLimit,
+            },
+          }
+        : {}),
+    }
+    let forked: CodexThreadSummary
+    try {
+      forked = await this.backend.forkThread(codexThreadId, overrides)
+    } catch (error) {
+      if (isMissingRolloutError(error)) {
+        // Turnless thread (started but never completed a turn) — there is no
+        // rollout to fork and no history to lose. Drop the mapping so the next
+        // send opens a FRESH thread that rides the new binding's
+        // `modelProvider` via thread/start.
+        this.forgetCodexThread(dbThreadId)
+        return
+      }
+      throw error
+    }
+    // Best-effort: drop our subscription on the abandoned source thread so
+    // codex can unload it after its idle window (subscribed threads are
+    // pinned in memory forever).
+    void Promise.resolve(this.backend.unsubscribeThread?.(codexThreadId))
+      .catch((err: unknown) => {
+        console.warn('[AgentManager] thread/unsubscribe after rebind fork failed:', err)
+      })
+    // Re-point the conversation at the fork (map + epoch tag + persistence).
+    this.rememberCodexThread(dbThreadId, forked.id)
   }
 
   /**
@@ -2641,10 +2770,10 @@ export class AgentManager {
     )
   }
 
-  private turnModelSelectionIntent(
+  private async turnModelSelectionIntent(
     payload: AgentSendMessagePayload,
     reservation: AgentModelSelectionIntentReservation,
-  ): AgentModelSelectionIntent {
+  ): Promise<AgentModelSelectionIntent> {
     const payloadModel = payload.model?.trim()
     if (payload.modelSelection) {
       const intentModel = payload.modelSelection.modelId.trim()
@@ -2665,6 +2794,27 @@ export class AgentManager {
 
     if (reservation.rendererSelectionSequence > 0) {
       return this.confirmedTurnModelSelectionIntent()
+    }
+
+    // Plan B: an EXISTING thread with no explicit selection keeps riding its
+    // own persisted binding — sending in a Grok-bound conversation must not
+    // silently re-route it just because the GLOBAL selection moved to GPT.
+    // Legacy rows (null binding) and models the current catalog can no longer
+    // serve fall through to the global selection, exactly as before.
+    if (!payloadModel && payload.threadId && this.store) {
+      // Optional call: test harnesses inject partial ThreadStore mocks.
+      const routing = await this.store.getThreadRoutingSnapshot?.(payload.threadId)
+      if (
+        routing?.exists
+        && routing.model !== null
+        && routing.modelProvider !== null
+        && (routing.gatewayId === null || routing.gatewayId === this.activeGatewayId)
+        && this.currentModelCatalog.models.some(
+          (model) => model.id === routing.model,
+        )
+      ) {
+        return this.modelSelectionIntentForModel(routing.model)
+      }
     }
 
     const persisted = this.providerStore.loadSync()
@@ -2704,7 +2854,7 @@ export class AgentManager {
     payload: AgentSendMessagePayload,
     reservation: AgentModelSelectionIntentReservation,
   ): Promise<AgentSendMessagePayload> {
-    const intent = this.turnModelSelectionIntent(payload, reservation)
+    const intent = await this.turnModelSelectionIntent(payload, reservation)
     const result = await this.modelSelectionCoordinator.ensureForTurn(
       intent,
       payload.threadId,
@@ -2980,12 +3130,37 @@ export class AgentManager {
       ...this.allowedRoots,
       path.join(this.userDataDir, 'agent', 'uploads'),
     ])
+    // Plan B routing for the upcoming `thread/start`: when the confirmed
+    // selection routes to a Channel other than the process-active one (a
+    // same-gateway sibling registered as an extra provider table), the new
+    // codex thread must carry `modelProvider` + a thread-scoped context pin —
+    // otherwise it would silently start on the wrong provider.
+    const selection = payload.modelSelection
+    const selectionRoute = selection
+      ? resolveGatewayModelRoute(
+          selection.gatewayId,
+          selection.modelId,
+          this.providerStore.loadSync().customProviders,
+        )
+      : undefined
+    const routesOffActiveChannel = selectionRoute !== undefined
+      && selectionRoute.channelId !== this.channelController.currentChannelId()
     const thread = payload.threadId
       ? { id: payload.threadId }
       : await this.store.createThread({
           title: payload.content.slice(0, 40) || 'New Agent Thread',
           model,
         })
+    if (!payload.threadId && selection && selectionRoute) {
+      // Bind the fresh conversation to its Channel immediately, so a later
+      // GLOBAL switch can never re-route it (and switching THIS thread back
+      // is recognized as a no-op by the coordinator).
+      await this.store.setThreadRouting?.(thread.id, {
+        model: selection.modelId,
+        gatewayId: selection.gatewayId,
+        modelProvider: selectionRoute.channelId,
+      }).catch(() => undefined)
+    }
     if (referenceMapping.skippedReferences.length > 0) {
       this.emitEvent({
         type: 'notice',
@@ -3102,6 +3277,18 @@ export class AgentManager {
       cwd: this.sessionConfig.writableRoots[0] ?? process.cwd(),
       clientUserMessageId,
       items,
+    }
+
+    // Only consumed by `thread/start` (turns on existing codex threads ignore
+    // it): pin the thread to the sibling Channel + its context window when it
+    // routes off the process-active provider. Spread-omit otherwise so the
+    // legacy wire shape stays byte-identical.
+    if (routesOffActiveChannel && selection && selectionRoute) {
+      input.modelProvider = selectionRoute.channelId
+      input.threadContextPin = resolveModelContextPin(
+        selection.modelId,
+        selection.contextWindow,
+      )
     }
 
     // Expand the composer's preset KIND into the full experimental codex
@@ -3589,6 +3776,60 @@ export class AgentManager {
   }
 
   /**
+   * Resume overrides derived from the thread's persisted Plan B binding, so a
+   * respawn/app-restart `thread/resume` re-binds the conversation to ITS OWN
+   * Channel instead of the process-active provider. Returns undefined for
+   * unbound (legacy) threads, cross-gateway bindings, or channels not
+   * registered on the live spawn — those keep the backend's active-provider
+   * fallback, exactly the pre-Plan-B behaviour.
+   */
+  private async threadRoutingResumeOverrides(
+    dbThreadId: string,
+  ): Promise<CodexThreadConfigOverrides | undefined> {
+    if (!this.store) return undefined
+    let routing: AgentThreadRoutingSnapshot | undefined
+    try {
+      routing = await this.store.getThreadRoutingSnapshot?.(dbThreadId)
+    } catch {
+      return undefined
+    }
+    if (!routing?.exists || routing.model === null || routing.modelProvider === null) {
+      return undefined
+    }
+    if (routing.gatewayId !== null && routing.gatewayId !== this.activeGatewayId) {
+      return undefined
+    }
+    const channelId = routing.modelProvider
+    const registered = channelId === this.channelController.currentChannelId()
+      || (this.backend.hasRegisteredProviderChannel?.(channelId) ?? false)
+    if (!registered) return undefined
+    // Per-thread context: the binding doesn't persist a window, so reuse the
+    // confirmed global one when this thread runs the globally-selected model,
+    // else fall back to the bound model's catalog default.
+    const entry = this.currentModelCatalog.models.find(
+      (model) => model.id === routing.model,
+    )
+    const contextWindow = routing.model === this.providerStore.loadSync().selectedModelId
+      ? this.runtimeSettings.confirmed.modelContextWindow
+      : entry?.capabilities.defaultContextWindow
+    const pin = contextWindow !== undefined
+      ? resolveModelContextPin(routing.model, contextWindow)
+      : null
+    return {
+      model: routing.model,
+      modelProvider: channelId,
+      ...(pin
+        ? {
+            config: {
+              model_context_window: pin.modelContextWindow,
+              model_auto_compact_token_limit: pin.modelAutoCompactTokenLimit,
+            },
+          }
+        : {}),
+    }
+  }
+
+  /**
    * Resolve the codex thread id to use for the next `send()` on a db thread,
    * healing across app-server respawns:
    *
@@ -3619,7 +3860,12 @@ export class AgentManager {
     // their conversation context across the respawn.
     if (this.backend.resumeThread) {
       try {
-        await this.backend.resumeThread(id)
+        // Plan B: resume onto the thread's OWN bound Channel (undefined =
+        // unbound → backend falls back to the process-active provider).
+        const overrides = await this.threadRoutingResumeOverrides(dbThreadId)
+        await (overrides
+          ? this.backend.resumeThread(id, overrides)
+          : this.backend.resumeThread(id))
         // Same id is now live in the current generation — re-tag and reuse it.
         this.codexThreadEpochByDbThreadId.set(dbThreadId, current)
         return id
@@ -3672,7 +3918,11 @@ export class AgentManager {
       return undefined
     }
     try {
-      await this.backend.resumeThread(persisted)
+      // Plan B: rebind to the thread's persisted Channel across app restarts.
+      const overrides = await this.threadRoutingResumeOverrides(dbThreadId)
+      await (overrides
+        ? this.backend.resumeThread(persisted, overrides)
+        : this.backend.resumeThread(persisted))
       // Live again in this generation — adopt it (re-tags epoch + re-persists).
       this.rememberCodexThread(dbThreadId, persisted)
       return persisted
@@ -3974,6 +4224,16 @@ function isOversizedRequestError(error: unknown): boolean {
     || /request exceeds the maximum allowed size/i.test(message)
     || /413 payload too large/i.test(message)
   )
+}
+
+/**
+ * `thread/fork`/`thread/resume` rejection for a thread that has no rollout on
+ * disk yet — a thread that was started but never completed a turn. There is
+ * no history to preserve, so callers can safely fall back to a fresh thread.
+ */
+function isMissingRolloutError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /no rollout found/i.test(message)
 }
 
 /**

@@ -74,6 +74,7 @@ function threadConfigOverrideParams(
   return {
     ...(overrides.model ? { model: overrides.model } : {}),
     ...(overrides.modelProvider ? { modelProvider: overrides.modelProvider } : {}),
+    ...(overrides.config ? { config: overrides.config } : {}),
   }
 }
 
@@ -293,6 +294,16 @@ export class CodexProtocolClient {
     return this.activeSends > 0 || this.hasActiveTurns()
   }
 
+  /**
+   * Thread-scoped busy probe (Plan B per-thread routing): reports whether the
+   * given CODEX thread currently has an active turn. Unlike the global
+   * {@link hasInFlightWork}, other threads' turns are invisible here — an
+   * in-process provider switch only needs ITS OWN thread idle.
+   */
+  hasActiveTurnOnThread(threadId: string): boolean {
+    return this.turnIdByThread.has(threadId)
+  }
+
   setSessionConfig(patch: Partial<CodexSessionConfig>): void {
     this.sessionConfig = resolveCodexSessionConfig({
       ...this.sessionConfig,
@@ -426,6 +437,16 @@ export class CodexProtocolClient {
       ...threadConfigOverrideParams(overrides),
     })
     return normalizeThreadSummary(extractThreadRecord(response))
+  }
+
+  /**
+   * `thread/unsubscribe` — drop this connection's event subscription for a
+   * thread. codex only unloads a loaded thread once it has NO subscribers and
+   * has been idle for its unload window, so this is the required cleanup after
+   * a provider-switch fork abandons the source thread.
+   */
+  async unsubscribeThread(threadId: string): Promise<void> {
+    await this.rpc<unknown>('thread/unsubscribe', { threadId })
   }
 
   /**
@@ -720,8 +741,14 @@ export class CodexProtocolClient {
       input.cwd,
       sessionConfig.writableRoots,
     )
+    // Per-thread routing (Plan B): `modelProvider` pins the new thread to a
+    // registered provider table; the thread-scoped context keys pin only this
+    // thread's window (unlike the process-wide `-c model_context_window`).
+    // Both spread-omit so the legacy wire shape stays byte-identical.
+    const pin = input.threadContextPin
     return {
       model: input.model,
+      ...(input.modelProvider ? { modelProvider: input.modelProvider } : {}),
       cwd: input.cwd,
       sandbox: sessionConfig.sandboxMode,
       approvalPolicy: sessionConfig.approvalPolicy,
@@ -731,6 +758,12 @@ export class CodexProtocolClient {
           writable_roots: sessionConfig.writableRoots,
         },
         ...(developerInstructions ? { developer_instructions: developerInstructions } : {}),
+        ...(pin
+          ? {
+              model_context_window: pin.modelContextWindow,
+              model_auto_compact_token_limit: pin.modelAutoCompactTokenLimit,
+            }
+          : {}),
       },
     }
   }

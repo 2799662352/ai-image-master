@@ -241,10 +241,35 @@ export interface AgentModelSelectionApplyPayload
   requestVersion: number
 }
 
-/** Thread-scoped model state, preserving missing-vs-unset identity. */
+/**
+ * Thread-scoped model state, preserving missing-vs-unset identity. The
+ * optional routing fields carry the thread's Plan B provider binding when the
+ * snapshot source knows it; absent/null = unbound (legacy row or global-only
+ * snapshot), which callers resolve against the active gateway.
+ */
 export type AgentThreadModelSnapshot =
   | { exists: false }
-  | { exists: true; model: string | null }
+  | {
+    exists: true
+    model: string | null
+    gatewayId?: string | null
+    modelProvider?: string | null
+  }
+
+/**
+ * Thread-scoped routing binding (Plan B per-thread provider routing). Null
+ * gatewayId/modelProvider mark a pre-migration row — callers must derive a
+ * fallback from the active gateway + the thread's persisted model instead of
+ * treating the thread as broken.
+ */
+export type AgentThreadRoutingSnapshot =
+  | { exists: false }
+  | {
+    exists: true
+    model: string | null
+    gatewayId: string | null
+    modelProvider: string | null
+  }
 
 /** Fully confirmed Gateway, Channel, model, and context state. */
 export interface AgentModelSelectionSnapshot {

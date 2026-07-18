@@ -53,6 +53,16 @@ export interface ThreadStartParams {
      * Omitted entirely when there are no extra repos with docs.
      */
     developer_instructions?: string
+    /**
+     * Per-thread context pin (Plan B). Unlike the launch-level `-c
+     * model_context_window` override — which applies process-wide and forces a
+     * restart to change — these thread-scoped keys pin ONLY this thread's
+     * window/auto-compact budget. Verified accepted by the bundled binary in
+     * scripts/smoke-per-thread-provider.ts. Spread-omit when unpinned so codex
+     * resolves both from its native per-model metadata.
+     */
+    model_context_window?: number
+    model_auto_compact_token_limit?: number
   }
 }
 export interface ThreadStartResponse { thread: Thread }
@@ -69,6 +79,15 @@ export interface ThreadStartResponse { thread: Thread }
 export interface CodexThreadConfigOverrides {
   model?: string
   modelProvider?: string
+  /**
+   * Per-thread context pin forwarded on resume/fork (same thread-scoped keys
+   * as `ThreadStartParams.config`; smoke-verified on the bundled binary).
+   * Spread-omit when the thread is unpinned.
+   */
+  config?: {
+    model_context_window: number
+    model_auto_compact_token_limit: number
+  }
 }
 
 /**

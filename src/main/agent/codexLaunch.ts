@@ -606,8 +606,17 @@ export function buildCodexLaunchArgs(options?: CodexLaunchOptions): string[] {
     )
   }
 
-  for (const root of sessionConfig.writableRoots) {
-    args.push('--add-dir', root)
+  // Workspace roots ride on the `sandbox_workspace_write.writable_roots`
+  // config key. Do NOT use `--add-dir`: that flag only exists on the `codex`
+  // TUI / `codex exec` entrypoints (openai/codex PR #5335) — `codex app-server`
+  // rejects it with exit code 2, which used to kill every provider-switch
+  // restart once a workspace folder had been selected. Upstream confirms the
+  // config-key form is the supported equivalent (openai/codex issue #18448).
+  if (sessionConfig.writableRoots.length > 0) {
+    args.push(
+      '-c',
+      `sandbox_workspace_write.writable_roots=[${sessionConfig.writableRoots.map(quote).join(', ')}]`,
+    )
   }
 
   const withActive = appendProviderArgs(args, options?.provider)

@@ -736,6 +736,15 @@ interface AgentChatState extends ModelRoutingSlice {
    * which chats are still working. Source of truth for cross-thread running.
    */
   runningByThread: Record<string, boolean>
+  /**
+   * Per-thread model binding mirror (Plan B per-thread provider routing).
+   * Filled from `openThread` (persisted `AgentThread.model`), confirmed
+   * selection transactions, and successful sends. `switchThread` restores
+   * `selectedModelId` from here so the picker always shows the CURRENT
+   * conversation's model, not the last globally selected one. Session cache
+   * only — the authoritative binding lives in the main-process DB.
+   */
+  modelByThread: Record<string, string>
   panelWidth: number
   /**
    * Latest cumulative token usage reported by the codex `app-server` for the
@@ -1648,6 +1657,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
   isRunning: false,
   threadSlices: {},
   runningByThread: {},
+  modelByThread: {},
   chatScrollByThread: loadChatScrollByThread(),
   modelReasoningEffortByModel:
     restoredModelSettings.modelReasoningEffortByModel,
@@ -2644,6 +2654,12 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         const base = {
           threadId: result.threadId,
           runningByThread: { ...current.runningByThread, [result.threadId]: true },
+          // Per-thread model mirror (Plan B): this send just ran (and, for a
+          // new thread, bound) the resolved model on this conversation.
+          modelByThread: {
+            ...current.modelByThread,
+            [result.threadId]: modelSelection.model,
+          },
           ...(wasNewThread
             ? {
                 collabModeCompatibilityByThread: {
@@ -3101,6 +3117,9 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     // viewing another one) — it's fresher than the persisted server snapshot.
     let restored: ThreadSlice | null =
       wasTombstoned ? null : get().threadSlices[threadId] ?? null
+    // Persisted per-thread model binding (Plan B). Fresh openThread reads win;
+    // live-slice restores fall back to the session mirror in the commit below.
+    let threadModel: string | undefined
 
     if (!restored) {
       const agent = (window as Window & { electronAPI?: { agent?: { openThread?: (id: string) => Promise<unknown> } } })
@@ -3114,6 +3133,11 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       }
       if (!isNavigationCurrent()) return
       if (!thread || typeof thread !== 'object') return
+
+      const rawModel = (thread as { model?: unknown }).model
+      if (typeof rawModel === 'string' && rawModel.length > 0) {
+        threadModel = rawModel
+      }
 
       const rawMessages = (thread as { messages?: unknown }).messages
       const messages: Message[] = Array.isArray(rawMessages)
@@ -3167,6 +3191,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
     // thread from the background map (it's the active view now), and install it.
     // For explicit reopen, validation and tombstone clearing happen in this
     // same synchronous state transition; stale/failed opens never clear it.
+    const modelBeforeCommit = get().selectedModelId
     set((cur) => {
       if (
         cur.collabModeNavigationSequence !== navigationToken
@@ -3191,9 +3216,27 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         }
       }
       delete threadSlices[threadId]
+      // Per-thread model display (Plan B): the picker follows the INCOMING
+      // conversation's own bound model. Fresh openThread reads refresh the
+      // session mirror; live-slice restores read the mirror. A bound model the
+      // current catalog cannot serve is NOT adopted (main's send path falls
+      // back to the global selection for those too), and an in-flight
+      // selection transaction keeps ownership of `selectedModelId`.
+      const boundModel = threadModel ?? cur.modelByThread[threadId]
+      const adoptModel =
+        boundModel !== undefined
+        && boundModel !== cur.selectedModelId
+        && cur.modelSelectionPending === undefined
+        && cur.modelSettingsCatalog?.models.some(
+          (row) => row.id === boundModel,
+        ) === true
       return {
         threadId,
         threadSlices,
+        ...(threadModel !== undefined
+          ? { modelByThread: { ...cur.modelByThread, [threadId]: threadModel } }
+          : {}),
+        ...(adoptModel ? { selectedModelId: boundModel } : {}),
         messages: restored!.messages,
         isRunning: restored!.isRunning,
         tokenUsage: restored!.tokenUsage,
@@ -3209,6 +3252,14 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
         collaborationError: cur.collaborationErrorByThread[threadId],
       }
     })
+    // Re-own capability surfaces (Plan effort options etc.) for the adopted
+    // per-thread model. No-op when the incoming thread rides the same model.
+    if (
+      get().threadId === threadId
+      && get().selectedModelId !== modelBeforeCommit
+    ) {
+      void get().loadCollaborationCapabilities()
+    }
   },
   applyEvent: (event) => {
     if (event.type === 'thread_settings_updated') {
@@ -3577,6 +3628,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => ({
       const collabModeByThread = withoutRecordKey(s.collabModeByThread, threadId)
       persistThreadCollaborationModes(collabModeByThread)
       const collaborationPatch = {
+        modelByThread: withoutRecordKey(s.modelByThread, threadId),
         collabModeByThread,
         // Pending/version maps are lifecycle-local and may be cleared. The
         // generation survives delete and explicit reopen, so late async work
