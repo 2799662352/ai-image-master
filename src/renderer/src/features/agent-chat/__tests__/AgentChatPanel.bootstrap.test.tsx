@@ -106,7 +106,8 @@ describe('AgentChatPanel + sidebar integration', () => {
 
   it('uses the main confirmed snapshot before local or model defaults for token fallback', async () => {
     const catalog: AgentModelSettingsCatalog = {
-      provider: 'apiyi',
+      gatewayId: 'apiyi',
+      revision: 'catalog-1',
       source: 'codex',
       models: [{
         id: 'gpt-5.6-sol',
@@ -114,6 +115,14 @@ describe('AgentChatPanel + sidebar integration', () => {
         description: 'Frontier coding model',
         hidden: false,
         isDefault: true,
+        family: 'openai',
+        route: {
+          gatewayId: 'apiyi',
+          channelId: 'apiyi-standard',
+          modelId: 'gpt-5.6-sol',
+          family: 'openai',
+        },
+        availability: { status: 'available' },
         capabilities: {
           model: 'gpt-5.6-sol',
           provider: 'apiyi',
